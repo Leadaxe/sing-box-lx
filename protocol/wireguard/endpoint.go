@@ -110,6 +110,12 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 			}
 		}),
 		Workers: options.Workers,
+		// lx:begin awg
+		// Carry AmneziaWG 2.0 obfuscation params to the transport device. They are
+		// applied only under the `with_awg` build tag; otherwise a non-empty value
+		// is rejected with an explicit "awg support not built" error.
+		AmneziaWG: options.AmneziaWGOptions,
+		// lx:end awg
 	})
 	if err != nil {
 		return nil, err

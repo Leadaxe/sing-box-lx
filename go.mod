@@ -166,3 +166,27 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.3.0 // indirect
 )
+
+// lx:begin awg
+// AmneziaWG 2.0: swap the WireGuard implementation for amnezia-vpn/amneziawg-go,
+// which understands the obfuscation IpcSet keys (jc/jmin/jmax/s1/s2/h1..h4/i1..i5)
+// emitted by transport/wireguard/device_awg.go. The module path stays
+// github.com/sagernet/wireguard-go (replace only rewrites resolution, not import
+// paths), so no import edits are needed.
+//
+// IMPORTANT — left commented intentionally. amneziawg-go is a fork of UPSTREAM
+// wireguard-go and is MISSING sagernet-fork additions that sing-box relies on at
+// compile time, notably (*device.Device).InputPacket (used by
+// transport/wireguard/device_system_stack.go) and the sagernet-specific
+// conn.Bind additions (SetReservedForEndpoint on the interface, NewStdNetBind's
+// control.Func parameter). Activating the replace as-is makes the whole module
+// fail to build. The supported path is the submodule + patches approach
+// (SPEC §3.1, hoaxisr/amnezia-box patches/): vendor amneziawg-go under
+// submodules/amneziawg-go, apply the sagernet-compat patches, then point the
+// replace at the local path. See SPECS/003.../IMPLEMENTATION notes.
+//
+// To activate once a sagernet-compat amneziawg-go is available (pin a commit):
+// replace github.com/sagernet/wireguard-go => ./submodules/amneziawg-go
+// or, with the published module once patched:
+// replace github.com/sagernet/wireguard-go => github.com/amnezia-vpn/amneziawg-go v1.0.4
+// lx:end awg

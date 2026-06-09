@@ -1,0 +1,56 @@
+{
+  "log": {
+    "level": "info"
+  },
+  "endpoints": [
+    {
+      "type": "wireguard",
+      "tag": "awg-ep",
+      "system": false,
+      "mtu": 1408,
+      "address": [
+        "10.0.0.2/32"
+      ],
+      "private_key": "usPnwgHGqzDYkuwUcDe4nXqj6ZyxL3g0uNwwcsSjqcs=",
+      "peers": [
+        {
+          "address": "192.0.2.1",
+          "port": 51820,
+          "public_key": "xlTvw9l0d9JrgoGuqTNIcl4MCnEa/MSeC52DrCHxw3A=",
+          "allowed_ips": [
+            "0.0.0.0/0"
+          ],
+          "persistent_keepalive_interval": 25
+        }
+      ],
+      "jc": 4,
+      "jmin": 40,
+      "jmax": 70,
+      "s1": 0,
+      "s2": 0,
+      "h1": 1,
+      "h2": 2,
+      "h3": 3,
+      "h4": 4,
+      "i1": "<b 0xf6677...>",
+      "i2": "<c><t><r 10>",
+      "i3": "",
+      "i4": "",
+      "i5": ""
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "inbound": [],
+        "outbound": "awg-ep"
+      }
+    ]
+  }
+}
