@@ -59,11 +59,13 @@ make -f Makefile.lx lx-build
 
 > `--recurse-submodules` обязателен для `with_awg`: рантайм AmneziaWG подключён submodule'ом `submodules/wireguard-go` → [Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx).
 
-Под капотом — стандартный `go build` с набором тегов:
+Под капотом — стандартный `go build` с набором тегов (единственный источник истины — `make -f Makefile.lx lx-print-tags`):
 
 ```
 with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg
 ```
+
+Это клиентский feature-set upstream **минус** серверные/нерелевантные теги — `with_acme` (серверный выпуск сертов), `with_tailscale`, `with_ccm`/`with_ocm` (AI-прокси) — **плюс** `with_purego` (CGO-free кросс-сборка, чтобы `with_naive_outbound`/cronet собирался при `CGO=0` на любом таргете) и две наши фичи `with_xhttp` / `with_awg`. Всё остальное — ровно как upstream.
 
 Проверка конфигов:
 
