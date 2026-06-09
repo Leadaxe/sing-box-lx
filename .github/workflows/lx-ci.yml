@@ -3,16 +3,32 @@ name: lx-ci
 # Builds sing-box-lx with a toggle matrix over the two downstream features
 # (with_xhttp, with_awg) and a cross-platform matrix, validating the matching
 # sample configs. See docs/lx-config.md and SPECS/004.
+#
+# Trigger policy (keep per-commit cost low):
+#   * Doc-only commits (md/docs/SPECS/LICENSE) skip CI entirely (paths-ignore).
+#   * Every code push runs only the fast jobs: `features` (build + toggle + check)
+#     and `vet`.
+#   * The expensive jobs — `cross` (6 platforms) and `android` (gomobile AAR) —
+#     run only on pull_request and manual workflow_dispatch. A release tag already
+#     builds all 6 desktop targets + both AARs via lx-release.yml, so the full
+#     cross/AAR proof is never skipped before shipping.
+#   * Rapid successive pushes cancel superseded runs (concurrency).
 
 on:
   push:
     branches: [lx]
+    paths-ignore: [ '**.md', 'docs/**', 'SPECS/**', 'LICENSE', '.gitignore' ]
   pull_request:
     branches: [lx]
+    paths-ignore: [ '**.md', 'docs/**', 'SPECS/**', 'LICENSE', '.gitignore' ]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: lx-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   # Client feature set: upstream release/DEFAULT_BUILD_TAGS minus tailscale/ccm/ocm/acme
@@ -92,7 +108,10 @@ jobs:
             ./protocol/wireguard/ ./transport/wireguard/
 
   # ---- Cross-platform: prove the merged AWG fork + XHTTP compile everywhere ----
+  # Heavy (6 targets) → only on PR / manual dispatch, not on every push.
+  # A release tag covers all 6 desktop targets via lx-release.yml.
   cross:
+    if: github.event_name != 'push'
     name: cross ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
     strategy:
@@ -123,7 +142,10 @@ jobs:
 
   # ---- Android libbox AAR: prove libbox builds with the lx features (gomobile) ----
   # build_libbox bakes with_xhttp+with_awg into both AAR variants (see its lx: block).
+  # Heavy (NDK + gomobile) → only on PR / manual dispatch, not on every push.
+  # A release tag builds both AARs via lx-release.yml.
   android:
+    if: github.event_name != 'push'
     name: android libbox.aar
     runs-on: ubuntu-latest
     steps:
