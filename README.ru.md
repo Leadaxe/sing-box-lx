@@ -38,10 +38,10 @@
 
 | # | Фича | Что это | Статус |
 |---|------|---------|--------|
-| **XHTTP** | клиентский транспорт | Xray-совместимый «splithttp» (режимы `auto`/`packet-up`/`stream-up`/`stream-one`) поверх Reality/TLS/h2c | 🟡 собирается, проходит `check`; `sessionId` сверён с Xray; **лайв-тест против Xray-сервера не выполнен** (нет сервера) |
+| **XHTTP** | клиентский транспорт | Xray-совместимый «splithttp» (режимы `auto`/`packet-up`/`stream-up`/`stream-one`) поверх Reality/TLS/h2c | ✅ **проверен живым Xray (3x-ui) сервером** (packet-up/auto): handshake + DNS + HTTPS + скачивание. `stream-one` — известный баг framing |
 | **AmneziaWG 2.0** | клиентский endpoint | обфускация WireGuard: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` + **2.0**: `I1–I5` (CPS — кастомные пакеты-приманки) | ✅ собирается, проходит `check`; зависимость **активирована** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet-база + обфускация); **проверено живым AWG2-сервером**: handshake + keepalive + трафик наружу |
 
-Подробные отчёты — в [`SPECS/002-…`](SPECS/002-F-O-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md) и [`SPECS/003-…`](SPECS/003-F-C-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs/lx-config.md](docs/lx-config.md)**.
+Подробные отчёты — в [`SPECS/002-…`](SPECS/002-F-C-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md) и [`SPECS/003-…`](SPECS/003-F-C-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs/lx-config.md](docs/lx-config.md)**.
 
 ---
 

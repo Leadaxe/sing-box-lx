@@ -38,10 +38,10 @@ In the sing-box ecosystem, forks that add XHTTP / AmneziaWG fall into two camps 
 
 | # | Feature | What it is | Status |
 |---|---------|------------|--------|
-| **XHTTP** | client transport | Xray-compatible "splithttp" (modes `auto`/`packet-up`/`stream-up`/`stream-one`) over Reality/TLS/h2c | 🟡 builds, passes `check`; `sessionId` cross-checked against Xray; **no live test against an Xray server yet** (no server) |
+| **XHTTP** | client transport | Xray-compatible "splithttp" (modes `auto`/`packet-up`/`stream-up`/`stream-one`) over Reality/TLS/h2c | ✅ **live-validated** against a real Xray (3x-ui) server (packet-up/auto): handshake + DNS + HTTPS + download. `stream-one` has a known framing bug |
 | **AmneziaWG 2.0** | client endpoint | WireGuard obfuscation: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` + **2.0**: `I1–I5` (CPS — decoy packets) | ✅ builds, passes `check`; dependency **activated** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet base + obfuscation); **validated against a real AWG2 server**: handshake + keepalive + outbound traffic |
 
-Detailed reports: [`SPECS/002-…`](SPECS/002-F-O-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md) and [`SPECS/003-…`](SPECS/003-F-C-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md). Full config reference — **[docs/lx-config.md](docs/lx-config.md)**.
+Detailed reports: [`SPECS/002-…`](SPECS/002-F-C-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md) and [`SPECS/003-…`](SPECS/003-F-C-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md). Full config reference — **[docs/lx-config.md](docs/lx-config.md)**.
 
 ---
 
