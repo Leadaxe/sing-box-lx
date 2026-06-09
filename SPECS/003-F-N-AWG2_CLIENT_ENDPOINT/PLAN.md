@@ -25,7 +25,7 @@ AmneziaWG = WireGuard-девайс с расширенным конфигом. �
 | `transport/wireguard/device_stub_awg.go` | **new** (`//go:build !with_awg`) | Ошибка «awg not built», если AWG-поля заданы |
 | `protocol/wireguard/endpoint.go` | `// lx:` | Прокинуть AWG-опции в создание девайса (1 ветка под флагом) |
 | `include/awg.go` / правка `include/wireguard.go` | new/`// lx:` | Проводка под тегом (если нужно) |
-| `test/config/awg2_*.json` | **new** | Конфиги для `sing-box check` |
+| `lx-test/config/awg2_*.json` | **new** | Конфиги для `sing-box check` |
 
 ## 4. Зона касания upstream (для ребейза)
 

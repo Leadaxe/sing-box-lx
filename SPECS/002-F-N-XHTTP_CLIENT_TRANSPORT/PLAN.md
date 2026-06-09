@@ -28,7 +28,7 @@ func RegisterClient(typ string, ctor ClientConstructor) { clientRegistry[typ] = 
 | `option/v2ray_transport.go` | `// lx:` | одна строка: поле `XHTTPOptions` в `_V2RayTransportOptions` |
 | `option/v2ray_xhttp.go` | **new** | тип `XHTTPOptions` (mode, path, host, headers, padding…) |
 | `include/v2rayxhttp_stub.go` | **new** | `//go:build !with_xhttp` — понятная ошибка/нет регистрации |
-| `test/config/xhttp_*.json` | **new** | Конфиги для `sing-box check` |
+| `lx-test/config/xhttp_*.json` | **new** | Конфиги для `sing-box check` |
 
 ## 3. Зона касания upstream (для ребейза)
 
