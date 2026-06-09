@@ -15,8 +15,11 @@ permissions:
   contents: read
 
 env:
-  # Functional base tags shared by every build; the two lx features toggle on top.
-  BASE_TAGS: with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api
+  # Full upstream feature set (release/DEFAULT_BUILD_TAGS) + with_purego for the
+  # CGO-free cross matrix; the two lx features (with_xhttp/with_awg) toggle on top.
+  # Mirrors Makefile.lx LX_TAGS minus the features. -checklinkname=0 is supplied by
+  # LX_LDFLAGS (the feature/cross jobs build via `make -f Makefile.lx lx-build`).
+  BASE_TAGS: with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0
 
 jobs:
   # ---- Feature toggle matrix: prove each feature builds alone and together ----
@@ -115,5 +118,38 @@ jobs:
         with:
           name: sing-box-${{ matrix.goos }}-${{ matrix.goarch }}
           path: sing-box-${{ matrix.goos }}-${{ matrix.goarch }}*
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---- Android libbox AAR: prove libbox builds with the lx features (gomobile) ----
+  # build_libbox bakes with_xhttp+with_awg into both AAR variants (see its lx: block).
+  android:
+    name: android libbox.aar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive, fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, check-latest: true }
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with: { ndk-version: r28 }
+      - name: Setup OpenJDK 17
+        run: sudo apt-get update && sudo apt-get install -y openjdk-17-jdk-headless
+      - name: Build libbox.aar + libbox-legacy.aar
+        run: |
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          make lib_android
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libbox-aar
+          path: |
+            libbox.aar
+            libbox-legacy.aar
           if-no-files-found: error
           retention-days: 7

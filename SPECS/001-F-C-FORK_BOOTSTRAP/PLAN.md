@@ -10,6 +10,8 @@ with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_ap
 
 Хранить в `Makefile` (переменная `LX_TAGS`) и продублировать в `SPECS/CONSTITUTION.md` при изменениях.
 
+> **Обновлено в §004:** набор расширен до полного upstream feature-set (`release/DEFAULT_BUILD_TAGS`) + `with_purego` + наши две фичи, с обязательным `-checklinkname=0` в `LX_LDFLAGS`. Актуальный источник истины — `Makefile.lx` (`make -f Makefile.lx lx-print-tags`) и `SPECS/004`.
+
 ## 2. Изменяемые / новые файлы
 
 | Файл | Тип | Изменения |

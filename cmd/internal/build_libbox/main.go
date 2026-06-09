@@ -64,6 +64,13 @@ func init() {
 	debugFlags = append(debugFlags, "-ldflags", "-X github.com/sagernet/sing-box/constant.Version="+currentTag+" -X internal/godebug.defaultGODEBUG=multipathtcp=0 -checklinkname=0")
 
 	sharedTags = append(sharedTags, "with_gvisor", "with_quic", "with_wireguard", "with_utls", "with_naive_outbound", "with_clash_api", "badlinkname", "tfogo_checklinkname0")
+	// lx:begin awg,xhttp
+	// Promote the two downstream features into the Android AAR. They flow into both
+	// the main (SDK23) and legacy (SDK21) variants, since legacy derives from
+	// sharedTags via filterTags() in buildAndroid(). Without these tags libbox
+	// rejects any wireguard-with-AWG or xhttp config at runtime ("support not built").
+	sharedTags = append(sharedTags, "with_xhttp", "with_awg")
+	// lx:end awg,xhttp
 	darwinTags = append(darwinTags, "with_dhcp", "grpcnotrace")
 	// memcTags = append(memcTags, "with_tailscale")
 	sharedTags = append(sharedTags, "with_tailscale", "ts_omit_logtail", "ts_omit_ssh", "ts_omit_drive", "ts_omit_taildrop", "ts_omit_webclient", "ts_omit_doctor", "ts_omit_capture", "ts_omit_kube", "ts_omit_aws", "ts_omit_synology", "ts_omit_bird")
