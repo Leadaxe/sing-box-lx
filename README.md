@@ -59,11 +59,13 @@ make -f Makefile.lx lx-build
 
 > `--recurse-submodules` is required for `with_awg`: the AmneziaWG runtime is wired in as the submodule `submodules/wireguard-go` → [Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx).
 
-Under the hood it is a plain `go build` with this tag set:
+Under the hood it is a plain `go build` with this tag set (`make -f Makefile.lx lx-print-tags` is the single source of truth):
 
 ```
 with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg
 ```
+
+That is upstream's client feature-set **minus** the server/irrelevant tags — `with_acme` (server-side cert issuance), `with_tailscale`, `with_ccm`/`with_ocm` (AI-proxy services) — **plus** `with_purego` (CGO-free cross-compile, so `with_naive_outbound`/cronet builds at `CGO=0` on every target) and our two features `with_xhttp` / `with_awg`. Everything else is exactly upstream.
 
 Validate configs:
 
