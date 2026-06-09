@@ -48,21 +48,12 @@ func NewClientTransport(ctx context.Context, dialer N.Dialer, serverAddr M.Socks
 	if options.Type == "" {
 		return nil, nil
 	}
-	switch options.Type {
-	case C.V2RayTransportTypeHTTP:
-		return v2rayhttp.NewClient(ctx, dialer, serverAddr, options.HTTPOptions, tlsConfig)
-	case C.V2RayTransportTypeGRPC:
-		return NewGRPCClient(ctx, dialer, serverAddr, options.GRPCOptions, tlsConfig)
-	case C.V2RayTransportTypeWebsocket:
-		return v2raywebsocket.NewClient(ctx, dialer, serverAddr, options.WebsocketOptions, tlsConfig)
-	case C.V2RayTransportTypeQUIC:
-		if tlsConfig == nil {
-			return nil, C.ErrTLSRequired
-		}
-		return NewQUICClient(ctx, dialer, serverAddr, options.QUICOptions, tlsConfig)
-	case C.V2RayTransportTypeHTTPUpgrade:
-		return v2rayhttpupgrade.NewClient(ctx, dialer, serverAddr, options.HTTPUpgradeOptions, tlsConfig)
-	default:
+	// lx:begin xhttp — switch replaced by the client transport registry (registry.go);
+	// built-in types are registered there, downstream types (xhttp) register via init().
+	constructor, loaded := lookupClientTransport(options.Type)
+	if !loaded {
 		return nil, E.New("unknown transport type: " + options.Type)
 	}
+	return constructor(ctx, dialer, serverAddr, options, tlsConfig)
+	// lx:end xhttp
 }
