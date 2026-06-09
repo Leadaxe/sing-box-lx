@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/sagernet/sing-box/option" // lx: awg — option.AmneziaWGOptions
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
@@ -28,6 +29,12 @@ type EndpointOptions struct {
 	ResolvePeer  func(domain string) (netip.Addr, error)
 	Peers        []PeerOptions
 	Workers      int
+	// lx:begin awg
+	// AmneziaWG 2.0 obfuscation parameters, carried from the endpoint options.
+	// Consumed only under the `with_awg` build tag (see device_awg.go); with the
+	// tag off, a non-empty value is rejected by device_stub_awg.go.
+	AmneziaWG option.AmneziaWGOptions
+	// lx:end awg
 }
 
 type PeerOptions struct {

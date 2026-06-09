@@ -16,6 +16,14 @@ type WireGuardEndpointOptions struct {
 	Peers      []WireGuardPeer                  `json:"peers,omitempty"`
 	UDPTimeout badoption.Duration               `json:"udp_timeout,omitempty"`
 	Workers    int                              `json:"workers,omitempty"`
+	// lx:begin awg
+	// AmneziaWG 2.0 obfuscation parameters (jc/jmin/jmax/s1/s2/h1..h4/i1..i5).
+	// Embedded (no wrapper key) so AWG fields are promoted to the endpoint root,
+	// matching awg-quick/.conf layout — same pattern as DialerOptions below.
+	// Effective only with the `with_awg` build tag; otherwise setting any field
+	// is an explicit error (see device gating in transport/wireguard).
+	AmneziaWGOptions
+	// lx:end awg
 	DialerOptions
 }
 
