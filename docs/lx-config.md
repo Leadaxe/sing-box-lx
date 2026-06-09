@@ -23,14 +23,14 @@ XHTTP (Xray "splithttp"/"xhttp") is a v2ray transport that tunnels the proxy ove
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `type` | string | — | must be `"xhttp"` |
-| `mode` | string | `auto` | `auto` \| `packet-up` \| `stream-up` \| `stream-one`. `stream-one` = single bidirectional HTTP/2 stream (closest to httpupgrade); `auto` currently behaves as `stream-one`. |
+| `mode` | string | `auto` | `auto` \| `packet-up` \| `stream-up` \| `stream-one`. **`auto` uses `packet-up`** (live-validated against Xray/3x-ui). `stream-one` has a known downlink-framing bug — select it explicitly only if you know the server needs it. |
 | `host` | string | TLS SNI / server | overrides the HTTP `Host` header |
 | `path` | string | `/` | request path prefix; the random session id (and, for `packet-up`, the upload sequence number) are appended |
 | `headers` | object | — | extra request headers sent on every XHTTP request |
 | `x_padding_bytes` | string | `"100-1000"` | inclusive byte range of the `X-Padding` value (`"min-max"` or a single int) to blur the on-wire size |
 | `no_grpc_header` | bool | `false` | omit Xray's gRPC-style headers in some modes (forward-compat) |
 
-> **Note (wire compat):** current Xray places padding as `x_padding=<zeros>` inside the `Referer` header; sing-box-lx currently emits a standalone `X-Padding`. This may need reconciling against the target server's Xray version — see SPECS/002 §7. Client and server Xray versions should match (XHTTP evolves quickly).
+> **Note (wire format):** padding is carried as `x_padding=<zeros>` inside the `Referer` header (Xray's default placement) — live-validated against a real Xray (3x-ui) server. The server validates the `x_padding` length (default 100–1000) and replies `400` without it. Client and server Xray versions should still match (XHTTP evolves quickly).
 
 ### Example — VLESS + XHTTP + Reality
 
