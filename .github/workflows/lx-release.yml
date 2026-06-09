@@ -16,8 +16,10 @@ on:
 permissions:
   contents: write
 
-env:
-  LX_TAGS: with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_xhttp,with_awg
+# Build tags are owned by Makefile.lx (single source of truth). The desktop build
+# uses its LX_TAGS default; the Android AAR uses build_libbox's own tag set + the
+# lx: features baked into it. `make -f Makefile.lx -s lx-print-tags` prints the set
+# for the release notes so nothing is duplicated here.
 
 jobs:
   build:
@@ -56,7 +58,6 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           make -f Makefile.lx lx-build \
-            LX_TAGS="$LX_TAGS" \
             LX_VERSION="${{ steps.ver.outputs.version }}" \
             LX_OUTPUT="sing-box${{ matrix.ext }}"
 
@@ -78,9 +79,62 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  build_android:
+    name: build android (libbox.aar)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+
+      - name: Setup OpenJDK 17
+        run: sudo apt-get update && sudo apt-get install -y openjdk-17-jdk-headless
+
+      - name: Resolve version
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          # build_libbox stamps Libbox.version() from `git describe` — ensure the tag exists.
+          git tag "$TAG" -f
+
+      - name: Build libbox.aar (with_xhttp + with_awg baked in by build_libbox)
+        run: |
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          make lib_android
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+      - name: Package AARs
+        run: |
+          mkdir -p dist
+          V="${{ steps.ver.outputs.version }}"
+          cp libbox.aar "dist/libbox-$V.aar"
+          cp libbox-legacy.aar "dist/libbox-legacy-$V.aar"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-android
+          path: dist/*
+          if-no-files-found: error
+
   release:
     name: publish release
-    needs: build
+    needs: [build, build_android]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,8 +168,11 @@ jobs:
           ### Binaries
           Drop-in \`sing-box\` for {linux, darwin, windows} × {amd64, arm64}. Each archive contains the \`sing-box\` binary (\`sing-box version\` reports \`${{ steps.ver.outputs.version }}\`). Verify downloads against \`SHA256SUMS\`.
 
+          ### Android
+          \`libbox-${{ steps.ver.outputs.version }}.aar\` (+ \`libbox-legacy-…\` for SDK 21) — gomobile build of \`experimental/libbox\` with \`with_xhttp\`+\`with_awg\` enabled, for embedding in an Android app. \`Libbox.version()\` reports the lx version.
+
           ### Build tags
-          \`$LX_TAGS\`
+          Desktop binary: \`$(make -f Makefile.lx -s lx-print-tags)\`
 
           Config reference: [docs/lx-config.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs/lx-config.md).
           EOF

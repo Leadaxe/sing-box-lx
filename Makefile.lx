@@ -2,9 +2,12 @@
 # New file (zero edits to upstream Makefile) — see SPECS/CONSTITUTION.md §3.2.
 # Usage: make -f Makefile.lx lx-build
 
-# Canonical lx build-tag set — single source of truth.
-# Mirror any change in SPECS/CONSTITUTION.md §4 and SPECS/001.../PLAN.md.
-LX_TAGS ?= with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_xhttp,with_awg
+# Canonical lx build-tag set — single source of truth (mirror changes in SPECS/004).
+# = upstream's full feature set (release/DEFAULT_BUILD_TAGS) minus the server-only ccm/ocm services, + with_purego (so the
+# CGO-free cross-compile below covers with_naive_outbound via cronet prebuilts) +
+# our two downstream features. with_purego/badlinkname need -checklinkname=0 in
+# LX_LDFLAGS, otherwise the linker rejects badtls' go:linkname into crypto/tls.
+LX_TAGS ?= with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg
 
 # lx build counter over a given upstream base (override in CI/release: make -f Makefile.lx lx-build LX_BUILD=3).
 LX_BUILD ?= 1
@@ -14,15 +17,20 @@ UPSTREAM_VERSION := $(shell git describe --tags --abbrev=0 --match 'v[0-9]*' --e
 LX_VERSION ?= $(UPSTREAM_VERSION)-lx.$(LX_BUILD)
 
 # Stamp the version via ldflags only — constant/version.go stays untouched (zero upstream diff).
-LX_LDFLAGS = -X 'github.com/sagernet/sing-box/constant.Version=$(LX_VERSION)' -s -w -buildid=
+# -checklinkname=0: required by badlinkname/tfogo_checklinkname0 (Go 1.24 blocks the
+# crypto/tls go:linkname in common/badtls otherwise) — mirrors upstream build_libbox.
+LX_LDFLAGS = -X 'github.com/sagernet/sing-box/constant.Version=$(LX_VERSION)' -checklinkname=0 -s -w -buildid=
 LX_OUTPUT  ?= sing-box
 
-.PHONY: lx-build lx-version lx-check
+.PHONY: lx-build lx-version lx-print-tags lx-check
 lx-build: ## Build the drop-in `sing-box` binary with lx features.
 	CGO_ENABLED=0 go build -v -trimpath -tags "$(LX_TAGS)" -ldflags "$(LX_LDFLAGS)" -o "$(LX_OUTPUT)" ./cmd/sing-box
 
 lx-version: ## Print the computed lx version string (e.g. 1.13.13-lx.1).
 	@echo "$(LX_VERSION)"
+
+lx-print-tags: ## Print the canonical LX_TAGS set (so CI/release don't duplicate it).
+	@echo "$(LX_TAGS)"
 
 lx-check: lx-build ## Validate sample configs with the freshly built binary.
 	./$(LX_OUTPUT) check -c lx-test/config/minimal.json
