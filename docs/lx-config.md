@@ -83,7 +83,7 @@ AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server 
   "type": "wireguard",
   "tag": "awg-out",
   "system": false,
-  "mtu": 1420,
+  "mtu": 1280,
   "address": ["10.0.0.2/32"],
   "private_key": "<client-private-key-base64>",
 
@@ -107,7 +107,28 @@ AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server 
 }
 ```
 
-Map an `awg.conf` / awg-quick file 1:1: `[Interface] PrivateKey/Address/Jc/Jmin/Jmax/S1–S4/H1–H4/I1–I5` → endpoint root; `[Peer] PublicKey/PresharedKey/Endpoint/AllowedIPs/PersistentKeepalive` → `peers[0]` (`Endpoint host:port` → `address`+`port`).
+### MTU
+
+AmneziaWG's `s3`/`s4` prepend junk bytes to **every transport message**, so an AWG endpoint needs a **lower `mtu` than plain WireGuard**. If the obfuscated packet exceeds the path MTU, the OS rejects it and the tunnel completes its handshake but **cannot send data**:
+
+```
+peer(…) - received handshake response
+peer(…) - failed to send data packets: write udp4 …: sendmsg: message too long
+```
+
+Budget the overhead against a 1500-byte path:
+
+```
+mtu ≤ 1500 − 28 (UDP/IP) − 32 (WireGuard) − max(S3, S4) junk bytes
+```
+
+For `S3 = S4 = 60` that is `mtu ≤ 1380`. **Use `1280`** (the AmneziaWG-recommended client MTU) for headroom on smaller path MTUs (PPPoE, nested tunnels). This is unrelated to the handshake — a too-high `mtu` lets the handshake succeed but silently breaks data transfer.
+
+**What sing-box-lx does for you:** if you omit `mtu` on an endpoint that sets `s3`/`s4`, the core defaults to **`1280`** (instead of the plain-WireGuard `1408`). If you set `mtu` explicitly and it is too high for the junk overhead, the core logs a startup warning — against a conservative **1492**-byte (PPPoE) budget, `mtu ≤ 1492 − 28 − 32 − max(S3, S4)`, so it may flag a value a few bytes below the 1500-byte Ethernet ceiling. The warning is advisory; the tunnel still loads.
+
+Also keep `jmax` **below** the real path MTU: amneziawg-go warns that if a junk packet's size reaches the system MTU it gets IP-fragmented, which the same constrained paths then drop. Junk/signature params (`jc`, `s1`–`s4`, `i1`–`i5`) are client-side configuration only.
+
+Map an `awg.conf` / awg-quick file 1:1: `[Interface] PrivateKey/Address/Jc/Jmin/Jmax/S1–S4/H1–H4/I1–I5` → endpoint root; `[Peer] PublicKey/PresharedKey/Endpoint/AllowedIPs/PersistentKeepalive` → `peers[0]` (`Endpoint host:port` → `address`+`port`). If the `awg.conf` omits `MTU` or sets the WireGuard-default `1420`, lower it for AWG2 (see [MTU](#mtu) above).
 
 The runtime is backed by `Leadaxe/wireguard-go` (sagernet/wireguard-go + AmneziaWG obfuscation, wired via the `submodules/wireguard-go` submodule) — see SPECS/003.
 

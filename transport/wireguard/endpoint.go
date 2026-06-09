@@ -110,9 +110,41 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 		return nil, err
 	}
 	allowedAddresses := allowedIPSet.Prefixes()
+	// lx:begin awg
+	// AmneziaWG's s3/s4 prepend junk bytes to every transport message, so an AWG
+	// endpoint needs a lower MTU than plain WireGuard (see docs/lx-config.md §2).
+	// awgJunk = the per-transport-packet overhead = max(s3, s4).
+	awgJunk := options.AmneziaWG.S3
+	if options.AmneziaWG.S4 > awgJunk {
+		awgJunk = options.AmneziaWG.S4
+	}
+	// lx:end awg
 	if options.MTU == 0 {
 		options.MTU = 1408
+		// lx: when AWG junk is active the plain 1408 default already overflows the
+		// path, so fall back to the recommended AWG client MTU instead of shipping
+		// (and then warning about) a value we picked ourselves.
+		if awgJunk > 0 {
+			options.MTU = 1280
+		}
 	}
+	// lx:begin awg
+	// Warn when an explicitly-set MTU is still too high for the junk overhead: the
+	// handshake succeeds but transport packets fail with EMSGSIZE ("sendmsg:
+	// message too long"). The path budget assumes a conservative 1492-byte (PPPoE)
+	// path; raw Ethernet is 1500.
+	if awgJunk > 0 {
+		const pathMTU = 1492
+		const wgOverhead = 28 + 32 // UDP/IP + WireGuard transport header
+		if budget := pathMTU - wgOverhead - int(awgJunk); int(options.MTU) > budget {
+			options.Logger.Warn(fmt.Sprintf(
+				"amneziawg: mtu %d may be too high for s3/s4 junk (%d bytes); "+
+					"transport packets can exceed a %d-byte path and fail with "+
+					"\"message too long\". Consider mtu <= %d (or 1280). See docs/lx-config.md",
+				options.MTU, awgJunk, pathMTU, budget))
+		}
+	}
+	// lx:end awg
 	deviceOptions := DeviceOptions{
 		Context:        options.Context,
 		Logger:         options.Logger,
