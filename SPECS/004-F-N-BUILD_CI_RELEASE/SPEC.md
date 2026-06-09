@@ -18,12 +18,12 @@
 - Версия `vX.Y.Z-lx.N` через ldflags (из 001); для AAR — через `git describe` внутри `build_libbox`.
 
 ### 2.2 CI-матрица
-- **Политика триггеров (стоимость per-commit ↓).** Doc-only коммиты (`**.md`/`docs/**`/`SPECS/**`/LICENSE) **не запускают CI** (`paths-ignore`). На каждый code-push идут только быстрые job'ы (`features` + `vet`). Тяжёлые `cross` (6 таргетов) и `android` (gomobile AAR) — **только на `pull_request` и `workflow_dispatch`** (полную кросс-сборку + AAR на каждый релиз и так гарантирует `lx-release.yml`). Серия быстрых пушей отменяет устаревшие прогоны (`concurrency: cancel-in-progress`).
-- Платформы: `{linux, darwin, windows} × {amd64, arm64}` (full `LX_TAGS`, CGO=0 — здесь же проверяется, что полный набор + `with_purego` кросс-собирается везде).
-- Feature-toggle: baseline / `with_xhttp` / `with_awg` / оба — каждый билд + `sing-box check` своего конфига; negative-check (без тега конфиг фичи отвергается).
-- Шаги: `make lx-build` → `go vet` → `sing-box check` на sample-конфигах XHTTP и AWG2.
-- **Job `android`**: `make lib_android` (NDK+JDK+gomobile) — доказывает, что libbox AAR собирается с lx-фичами.
-- Сборка с submodule (`git submodule update --init`).
+- **Политика триггеров (стоимость per-commit ↓).** Doc-only коммиты (`**.md`/`docs/**`/`SPECS/**`/LICENSE) **не запускают CI** (`paths-ignore`). На каждый push/PR — **только дешёвые** job'ы `lint` + `build-check`. Тяжёлые `cross` (6 таргетов) и `android` (gomobile AAR) — **только вручную, на `workflow_dispatch`** (`gh workflow run lx-ci.yml --ref lx` или кнопка Actions → Run workflow); на push их нет. Полную кросс-сборку + обе AAR на каждый релиз-тег и так гарантирует `lx-release.yml`. Серия быстрых пушей отменяет устаревшие прогоны (`concurrency: cancel-in-progress`).
+- **`lint`** (push/PR): `go vet` по lx-пакетам с полными тегами + `gofmt` только по lx-файлам (`v2rayxhttp|_xhttp|_awg`, не по всему дереву upstream).
+- **`build-check`** (push/PR): один нативный build `with_xhttp,with_awg` + `sing-box check` XHTTP/AWG2-конфигов (должны пройти); затем tagless baseline-бинарь → `check minimal.json` (проходит) + negative-check (XHTTP/AWG2-конфиги без тегов отвергаются).
+- **`cross`** (dispatch): `{linux, darwin, windows} × {amd64, arm64}`, full `LX_TAGS`, CGO=0 — проверка, что полный набор + `with_purego` кросс-собирается везде.
+- **`android`** (dispatch): `make lib_android` (NDK r28 + JDK17 + gomobile) — libbox AAR собирается с lx-фичами.
+- Все job'ы — с submodule (`submodules: recursive`) и `fetch-depth: 0` (для `-lx` версии через `git describe`).
 
 ### 2.3 Авто-ребейз на upstream-тег
 - Workflow по расписанию/`workflow_dispatch`:
@@ -38,7 +38,7 @@
 
 ## 3. Критерии приёмки
 
-- CI зелёный: на code-push быстрые job'ы (`features`+`vet`); полная матрица (`cross` ×6 с полным `LX_TAGS` + `android` AAR) — на `pull_request`/`workflow_dispatch`. Doc-only коммиты CI не триггерят.
+- CI зелёный: на push/PR — дешёвые `lint` + `build-check`; полная матрица (`cross` ×6 с полным `LX_TAGS` + `android` AAR) — вручную на `workflow_dispatch`. Doc-only коммиты CI не триггерят; релиз-тег собирает всё через `lx-release.yml`.
 - Артефакты собираются, бинарь называется `sing-box`, `version` → `-lx.N`.
 - **libbox AAR собирается в CI (job `android`) и публикуется в Release**; `Libbox.version()` → `-lx.N`; конфиг с AWG2/XHTTP не падает с «support not built».
 - Авто-ребейз workflow отрабатывает на `workflow_dispatch` (демо на текущем теге → «уже актуально» или PR).

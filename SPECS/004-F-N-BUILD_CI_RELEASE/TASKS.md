@@ -12,10 +12,11 @@
 - [ ] `Libbox.version()` в AAR отдаёт `-lx.N`; конфиг с AWG2/XHTTP не падает «support not built»
 
 ## CI
-- [x] `lx-ci.yml`: матрица `{linux,darwin,windows}×{amd64,arm64}` на полном `LX_TAGS`, submodule init, vet
-- [x] feature-toggle (baseline/xhttp/awg/оба) + `sing-box check` + negative-check
-- [x] job `android` (`make lib_android`)
-- [ ] Зелёный прогон всей матрицы на GH (верификация полного набора + cronet/naive под 6 таргетов)
+- [x] `lx-ci.yml` триггеры: push/PR (paths-ignore docs) + `workflow_dispatch`; `concurrency: cancel-in-progress`
+- [x] **push/PR — дёшево:** `lint` (go vet lx-пакетов + gofmt lx-файлов) + `build-check` (1 нативный build `full` + `check`, baseline-бинарь + negative-check)
+- [x] **`workflow_dispatch` — тяжёлое (вручную):** `cross` `{linux,darwin,windows}×{amd64,arm64}` на полном `LX_TAGS` + `android` (`make lib_android`); на push не запускаются
+- [x] submodule init (`submodules: recursive`) + `fetch-depth: 0` во всех job'ах
+- [ ] Зелёный прогон `lint`+`build-check` на push; ручной `workflow_dispatch` прогон `cross` ×6 + `android` AAR (cronet/naive под 6 таргетов)
 
 ## Авто-ребейз
 - [ ] `lx-rebase.yml`: fetch upstream tags → выбрать новейший **стабильный** → rebase в CI
