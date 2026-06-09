@@ -20,6 +20,10 @@
 | **TASKS.md** | Чеклист по этапам |
 | **IMPLEMENTATION_REPORT.md** | Отчёт после реализации |
 
+## Конфигурация фич
+
+Пользовательский конфиг XHTTP и AmneziaWG 2.0 (поля + примеры) — **[../docs/lx-config.md](../docs/lx-config.md)**.
+
 ## Корень SPECS
 
 | Файл | Назначение |
