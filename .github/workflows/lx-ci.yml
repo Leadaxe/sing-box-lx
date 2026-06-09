@@ -1,5 +1,9 @@
 name: lx-ci
 
+# Builds sing-box-lx with a toggle matrix over the two downstream features
+# (with_xhttp, with_awg) and a cross-platform matrix, validating the matching
+# sample configs. See docs/lx-config.md and SPECS/004.
+
 on:
   push:
     branches: [lx]
@@ -10,29 +14,106 @@ on:
 permissions:
   contents: read
 
+env:
+  # Functional base tags shared by every build; the two lx features toggle on top.
+  BASE_TAGS: with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api
+
 jobs:
-  build:
-    name: build & check (linux/amd64)
+  # ---- Feature toggle matrix: prove each feature builds alone and together ----
+  features:
+    name: build ${{ matrix.label }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: "baseline (no lx features)"
+            feat: ""
+            checks: "lx-test/config/minimal.json"
+          - label: "with_xhttp"
+            feat: ",with_xhttp"
+            checks: "lx-test/config/xhttp_reality.json"
+          - label: "with_awg"
+            feat: ",with_awg"
+            checks: "lx-test/config/awg2_basic.json"
+          - label: "full (xhttp + awg)"
+            feat: ",with_xhttp,with_awg"
+            checks: "lx-test/config/xhttp_reality.json lx-test/config/awg2_basic.json"
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
-          fetch-depth: 0          # tags required for the -lx version (git describe)
+          submodules: recursive     # with_awg needs submodules/wireguard-go
+          fetch-depth: 0            # tags for the -lx version (git describe)
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version-file: go.mod
           check-latest: true
 
-      - name: Build (lx tags)
-        run: make -f Makefile.lx lx-build
+      - name: Build (${{ matrix.label }})
+        run: make -f Makefile.lx lx-build LX_TAGS="${BASE_TAGS}${{ matrix.feat }}"
 
-      - name: Print version
+      - name: Version
         run: ./sing-box version
 
-      - name: Vet
-        run: go vet ./...
+      - name: Check sample configs
+        run: |
+          for c in ${{ matrix.checks }}; do
+            echo "== check $c =="
+            ./sing-box check -c "$c"
+          done
 
-      - name: Check sample config
-        run: ./sing-box check -c lx-test/config/minimal.json
+      - name: Negative check (feature off rejects its config)
+        if: matrix.label == 'baseline (no lx features)'
+        run: |
+          set +e
+          ./sing-box check -c lx-test/config/xhttp_reality.json; x=$?
+          ./sing-box check -c lx-test/config/awg2_basic.json; a=$?
+          if [ $x -eq 0 ] || [ $a -eq 0 ]; then
+            echo "FAIL: a feature config was accepted without its build tag"; exit 1
+          fi
+          echo "OK: xhttp/awg configs correctly rejected without their tags"
+
+  vet:
+    name: vet (full lx)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive, fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, check-latest: true }
+      - name: Vet lx packages
+        run: |
+          go vet -tags "${BASE_TAGS},with_xhttp,with_awg" \
+            ./option/ ./constant/ ./transport/v2ray/ ./transport/v2rayxhttp/ \
+            ./protocol/wireguard/ ./transport/wireguard/
+
+  # ---- Cross-platform: prove the merged AWG fork + XHTTP compile everywhere ----
+  cross:
+    name: cross ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive, fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, check-latest: true }
+      - name: Cross-build (full lx)
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          make -f Makefile.lx lx-build \
+            LX_TAGS="${BASE_TAGS},with_xhttp,with_awg" \
+            LX_OUTPUT="sing-box-${{ matrix.goos }}-${{ matrix.goarch }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: sing-box-${{ matrix.goos }}-${{ matrix.goarch }}*
+          if-no-files-found: error
+          retention-days: 7
