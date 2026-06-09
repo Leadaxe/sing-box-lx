@@ -2,12 +2,12 @@
 
 ## Сборка (desktop)
 - [x] `Makefile.lx`: `lx-build` (output `sing-box`), `LX_TAGS`, `LX_LDFLAGS`, версия `-lx.N`
-- [x] `LX_TAGS` → полный feature-set (`DEFAULT_BUILD_TAGS`) + `with_purego` + `with_xhttp,with_awg`
+- [x] `LX_TAGS` → клиентский feature-set (`DEFAULT_BUILD_TAGS` минус tailscale/ccm/ocm/acme) + `with_purego` + `with_xhttp,with_awg`
 - [x] `LX_LDFLAGS` += `-checklinkname=0` (иначе линк падает на `badtls`/`crypto/tls`)
 - [x] `lx-print-tags` — единый источник истины для CI/release (без дублирования строки тегов)
 
 ## Сборка (Android libbox AAR)
-- [x] `cmd/internal/build_libbox/main.go`: `with_xhttp,with_awg` в `sharedTags` (lx:-маркер) → обе AAR-варианта
+- [x] `cmd/internal/build_libbox/main.go`: `with_xhttp,with_awg` в `sharedTags` + дроп `with_tailscale` (lx:-маркеры) → обе AAR-варианта
 - [ ] CI собирает `libbox.aar` + `libbox-legacy.aar` зелёным (NDK r28 + OpenJDK 17 + gomobile)
 - [ ] `Libbox.version()` в AAR отдаёт `-lx.N`; конфиг с AWG2/XHTTP не падает «support not built»
 

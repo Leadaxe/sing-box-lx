@@ -62,7 +62,7 @@ make -f Makefile.lx lx-build
 Под капотом — стандартный `go build` с набором тегов:
 
 ```
-with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_xhttp,with_awg
+with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg
 ```
 
 Проверка конфигов:
