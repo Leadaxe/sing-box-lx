@@ -200,6 +200,12 @@ func (c *Client) newRequest(ctx context.Context, method string, u *url.URL, body
 	if request.Header == nil {
 		request.Header = make(http.Header)
 	}
+	// NOTE (wire compat, version-dependent): current Xray-core (config.go) places
+	// padding as a query param "x_padding=<zeros>" inside the Referer header
+	// (Key "x_padding", Header "Referer"); older Xray used a standalone X-Padding
+	// header. We currently emit a standalone X-Padding plus a plain Referer. The
+	// exact placement must be reconciled against the target server's Xray version
+	// during live testing (SPECS/002 §7) — left as-is until a server is available.
 	request.Header.Set("X-Padding", c.padding())
 	if request.Header.Get("Referer") == "" {
 		referer := &url.URL{Scheme: c.scheme, Host: c.host, Path: c.path}
@@ -222,19 +228,22 @@ func (c *Client) padding() string {
 	return strings.Repeat("0", n)
 }
 
-// newSessionID returns a random lowercase-hex session id (16 bytes).
+// newSessionID returns a random session id formatted as a dashed UUID string
+// (8-4-4-4-12), matching Xray's sessionId = uuid.New().String() (verified against
+// XTLS/Xray-core transport/internet/splithttp dialer.go). The server treats it as
+// an opaque grouping key; the dashed format keeps it interchangeable with Xray.
 func newSessionID() string {
 	var b [16]byte
 	for i := range b {
 		b[i] = byte(rand.Intn(256))
 	}
 	const hexdigits = "0123456789abcdef"
-	out := make([]byte, 32)
+	var h [32]byte
 	for i, v := range b {
-		out[i*2] = hexdigits[v>>4]
-		out[i*2+1] = hexdigits[v&0x0f]
+		h[i*2] = hexdigits[v>>4]
+		h[i*2+1] = hexdigits[v&0x0f]
 	}
-	return string(out)
+	return string(h[0:8]) + "-" + string(h[8:12]) + "-" + string(h[12:16]) + "-" + string(h[16:20]) + "-" + string(h[20:32])
 }
 
 func parsePaddingRange(raw string) (int, int, error) {

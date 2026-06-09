@@ -26,7 +26,10 @@
 
 ## Остаточные пробелы (для доведения)
 
-1. **Wire-протокол НЕ сверен с живым Xray** — у workflow-агента был заблокирован egress, реализовано «по памяти» о splithttp. Требуется дифф против `XTLS/Xray-core/transport/internet/splithttp` (path-layout `<path>/<sessionId>[/<seq>]`, заголовок `X-Padding` как прогон '0', `Referer`, h2/h2c). **← следующий шаг (сеть есть).**
+1. **Wire-протокол — частично сверен с Xray-исходниками** (`XTLS/Xray-core/transport/internet/splithttp`, без живого сервера):
+   - ✅ **`sessionId`** исправлен на UUID-формат с дефисами (Xray: `uuid.New().String()`) — было 32-hex.
+   - ✅ path-layout `<path>/<sessionId>[/<seq>]` — совпадает.
+   - ⚠️ **padding placement версионно-зависим:** текущий Xray (`config.go`) кладёт `x_padding=<нули>` query-параметром в **Referer** (Key `x_padding`, Header `Referer`); старый Xray — отдельным `X-Padding`. У нас сейчас отдельный `X-Padding` + plain `Referer` (помечено комментом в `client.go`). **Сверить с версией Xray целевого сервера на лайв-тесте.**
 2. **`mode=auto`** сейчас алиас `stream-one` — реальная негоциация (try stream-one → fallback packet-up) не реализована.
 3. **packet-up** без xmux/переиспользования соединений; **stream-up** допускает, что сервер начинает download-стрим до завершения upload.
 4. **Лайв end-to-end** не выполнялся (нет XHTTP-сервера) — по SPEC §7 это потолок приёмки.
