@@ -35,6 +35,9 @@ jobs:
           - { goos: darwin,  goarch: arm64 }
           - { goos: windows, goarch: amd64, ext: .exe }
           - { goos: windows, goarch: arm64, ext: .exe }
+          # Windows 7 (32-bit): built with a Win7-patched Go, and without
+          # with_naive_outbound (cronet-go has no windows/386 build). See SPECS/004.
+          - { goos: windows, goarch: "386", ext: .exe, legacy_win7: true, legacy_name: windows-7 }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,9 +45,30 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/setup-go@v5
+        if: ${{ ! matrix.legacy_win7 }}
         with:
           go-version-file: go.mod
           check-latest: true
+
+      # Win7 needs a Go toolchain that still targets Windows 7: setup_go_for_windows7.sh
+      # fetches stock Go and applies MetaCubeX/go patches reverting the Win7 removals.
+      - name: Cache Win7 Go toolchain
+        if: matrix.legacy_win7
+        id: cache-go-win7
+        uses: actions/cache@v4
+        with:
+          path: ~/go/go_win7
+          key: go_win7_${{ hashFiles('.github/setup_go_for_windows7.sh') }}
+      - name: Build Win7 Go toolchain
+        if: matrix.legacy_win7 && steps.cache-go-win7.outputs.cache-hit != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash .github/setup_go_for_windows7.sh
+      - name: Use Win7 Go toolchain
+        if: matrix.legacy_win7
+        run: |
+          echo "PATH=$HOME/go/go_win7/bin:$PATH" >> "$GITHUB_ENV"
+          echo "GOROOT=$HOME/go/go_win7" >> "$GITHUB_ENV"
 
       - name: Resolve version
         id: ver
@@ -57,13 +81,22 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
+          TAGS="$(make -f Makefile.lx -s lx-print-tags)"
+          if [ "${{ matrix.legacy_win7 }}" = "true" ]; then
+            # cronet-go (with_naive_outbound) has no windows/386 build — drop it.
+            TAGS="${TAGS/with_naive_outbound,/}"
+          fi
           make -f Makefile.lx lx-build \
+            LX_TAGS="$TAGS" \
             LX_VERSION="${{ steps.ver.outputs.version }}" \
             LX_OUTPUT="sing-box${{ matrix.ext }}"
 
       - name: Package
         run: |
           NAME="sing-box-${{ steps.ver.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ -n "${{ matrix.legacy_name }}" ]; then
+            NAME="${NAME}-legacy-${{ matrix.legacy_name }}"
+          fi
           mkdir -p "stage/$NAME" dist
           cp "sing-box${{ matrix.ext }}" "stage/$NAME/"
           cp LICENSE LICENSING.md README.md "stage/$NAME/" 2>/dev/null || true
@@ -166,7 +199,7 @@ jobs:
           - **XHTTP** transport (\`with_xhttp\`) — live-validated against a real Xray (3x-ui) server in \`packet-up\`/\`auto\` mode (handshake + DNS + HTTPS + download). Xray-compatible "splithttp"; composes with Reality. (\`stream-one\` has a known framing bug — use \`auto\`.)
 
           ### Binaries
-          Drop-in \`sing-box\` for {linux, darwin, windows} × {amd64, arm64}. Each archive contains the \`sing-box\` binary (\`sing-box version\` reports \`${{ steps.ver.outputs.version }}\`). Verify downloads against \`SHA256SUMS\`.
+          Drop-in \`sing-box\` for {linux, darwin, windows} × {amd64, arm64}, plus a **Windows 7 (32-bit)** legacy build (\`sing-box-${{ steps.ver.outputs.version }}-windows-386-legacy-windows-7.zip\` — built with a Win7-patched Go; without naive/cronet, which has no windows/386 target). Each archive contains the \`sing-box\` binary (\`sing-box version\` reports \`${{ steps.ver.outputs.version }}\`). Verify downloads against \`SHA256SUMS\`.
 
           ### Android
           \`libbox-${{ steps.ver.outputs.version }}.aar\` (+ \`libbox-legacy-…\` for SDK 21) — gomobile build of \`experimental/libbox\` with \`with_xhttp\`+\`with_awg\` enabled, for embedding in an Android app. \`Libbox.version()\` reports the lx version.
