@@ -152,12 +152,15 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	sessionID := newSessionID()
 	switch c.mode {
-	case modeStreamOne, modeAuto:
-		return c.dialStreamOne(ctx, sessionID)
+	case modeAuto, modePacketUp:
+		// "auto" uses packet-up: the most broadly compatible XHTTP mode and the one
+		// validated live against Xray (3x-ui). stream-one has a known downlink-framing
+		// issue (see SPECS/002) and must be selected explicitly.
+		return c.dialPacketUp(ctx, sessionID)
 	case modeStreamUp:
 		return c.dialStreamUp(ctx, sessionID)
-	case modePacketUp:
-		return c.dialPacketUp(ctx, sessionID)
+	case modeStreamOne:
+		return c.dialStreamOne(ctx, sessionID)
 	default:
 		return nil, E.New("v2ray-xhttp: unknown mode: ", c.mode)
 	}
@@ -200,17 +203,17 @@ func (c *Client) newRequest(ctx context.Context, method string, u *url.URL, body
 	if request.Header == nil {
 		request.Header = make(http.Header)
 	}
-	// NOTE (wire compat, version-dependent): current Xray-core (config.go) places
-	// padding as a query param "x_padding=<zeros>" inside the Referer header
-	// (Key "x_padding", Header "Referer"); older Xray used a standalone X-Padding
-	// header. We currently emit a standalone X-Padding plus a plain Referer. The
-	// exact placement must be reconciled against the target server's Xray version
-	// during live testing (SPECS/002 §7) — left as-is until a server is available.
-	request.Header.Set("X-Padding", c.padding())
-	if request.Header.Get("Referer") == "" {
-		referer := &url.URL{Scheme: c.scheme, Host: c.host, Path: c.path}
-		request.Header.Set("Referer", referer.String())
-	}
+	// Padding placement matches Xray's default (XPaddingObfsMode off): the value is
+	// carried as a query param "x_padding=<value>" inside the Referer header
+	// (PlacementQueryInHeader, key "x_padding"). The server validates the x_padding
+	// length against its xPaddingBytes range (default 100-1000) and replies 400 if it
+	// is missing or out of range — so it must live in the Referer, not a standalone
+	// X-Padding header. Verified live against an Xray (3x-ui) XHTTP server.
+	referer := &url.URL{Scheme: c.scheme, Host: c.host, Path: u.Path}
+	rq := referer.Query()
+	rq.Set("x_padding", c.padding())
+	referer.RawQuery = rq.Encode()
+	request.Header.Set("Referer", referer.String())
 	if body != nil {
 		request.Body = readCloser{body}
 	}
