@@ -76,6 +76,8 @@ Validate configs:
 
 > `lx-test/config/` holds our samples (upstream `test/` is a separate Go module — we don't use it).
 
+**Android (`libbox.aar`).** `make lib_install && make lib_android` builds the gomobile AAR — `libbox.aar` (SDK 23) + `libbox-legacy.aar` (SDK 21) — with `with_xhttp`/`with_awg` baked in (and `tailscale` dropped), for embedding in an Android consumer app (needs NDK r28 + OpenJDK 17). `Libbox.version()` reports `…-lx.N`.
+
 ---
 
 ## Feature configuration
@@ -141,7 +143,8 @@ upstream  https://github.com/SagerNet/sing-box.git
 | Path | Purpose |
 |------|---------|
 | `Makefile.lx` | build with lx tags and the `-lx` version |
-| `.github/workflows/lx-ci.yml` | CI: feature matrix (baseline/xhttp/awg/full) + negative check + cross-platform |
+| `.github/workflows/lx-ci.yml` | CI: feature matrix (baseline/xhttp/awg/full) + negative check + cross-platform + android AAR |
+| `.github/workflows/lx-release.yml` | release on `v*-lx.*`: desktop ×6 + `libbox.aar` → GitHub Release |
 | `SPECS/` | Spec Kit (constitution, tasks, reports) |
 | `lx-test/config/` | sample configs for `sing-box check` |
 | `transport/v2rayxhttp/` | XHTTP client (new package) |
@@ -156,7 +159,7 @@ Find every upstream-file edit: `grep -rn "// lx"`.
 
 ## Consumer
 
-The core is built for the desktop launcher **singbox-launcher** (which bundles `bin/sing-box`). Mapping `type=xhttp` and AWG fields in the wizard are launcher-side tasks, not here.
+The core is built for the desktop launcher **singbox-launcher** (which bundles `bin/sing-box`). On Android, the consumer embeds **`libbox.aar`** (gomobile) instead of the binary — the same config JSON applies. Mapping `type=xhttp` and AWG fields in the wizard are consumer-side tasks, not here.
 
 ---
 

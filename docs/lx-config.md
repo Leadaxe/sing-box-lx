@@ -120,6 +120,9 @@ git clone --recurse-submodules <repo>           # with_awg needs the submodule
 make -f Makefile.lx lx-build                     # builds ./sing-box with both features
 ./sing-box check -c lx-test/config/xhttp_reality.json
 ./sing-box check -c lx-test/config/awg2_basic.json
+
+# Android (optional): libbox.aar with with_xhttp+with_awg baked in (needs NDK r28 + OpenJDK 17)
+make lib_install && make lib_android             # → libbox.aar (SDK23) + libbox-legacy.aar (SDK21)
 ```
 
-The CI (`.github/workflows/lx-ci.yml`) builds the feature matrix (`baseline` / `xhttp` / `awg` / `full`) and a cross-platform matrix, running `check` on the matching sample configs.
+The CI (`.github/workflows/lx-ci.yml`) builds the feature matrix (`baseline` / `xhttp` / `awg` / `full`), a cross-platform matrix, **and the Android `libbox.aar`** (gomobile), running `check` on the matching sample configs. Pushing a `v*-lx.*` tag runs `lx-release.yml`, which publishes the desktop binaries **and** `libbox-<ver>.aar` / `libbox-legacy-<ver>.aar` as GitHub Release assets.
