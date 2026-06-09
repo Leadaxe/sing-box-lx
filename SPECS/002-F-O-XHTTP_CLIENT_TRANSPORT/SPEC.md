@@ -52,3 +52,18 @@ VLESS/VMess/Trojan outbound с `transport.type = "xhttp"` поднимают р�
 - [V2Ray Transport — sing-box](https://sing-box.sagernet.org/configuration/shared/v2ray-transport/)
 - [hiddify-sing-box (референс XHTTP)](https://github.com/hiddify/hiddify-sing-box)
 - [XHTTP overview (Habr)](https://habr.com/en/articles/990208/)
+
+---
+
+## 7. Разведка порта и выбор подхода (добавлено по ходу)
+
+**Что показал референс `hiddify/hiddify-sing-box` (`transport/v2rayxhttp/client.go`):** XHTTP в hiddify реализован НЕ поверх примитивов sing-box, а через **вендорённое поддерево Xray** под `common/xray/{buf,net,pipe,signal/done,uuid}` + зависимости `quic-go`, `http3`, `golang.org/x/net/http2`, абстракция `DialerClient`/`XmuxClient` и опции `option.V2RayXHTTPOptions{ V2RayXHTTPBaseOptions }`. Целевой интерфейс прост — `adapter.V2RayClientTransport = { DialContext(ctx) (net.Conn, error); Close() error }` — но реализация тянет много транзитивного кода и завязана на старую версию sing-box hiddify.
+
+**Развилка подхода (зафиксировать перед кодом порта):**
+
+- **(A) Faithful-vendor.** Перенести hiddify `common/xray/*` + пакет `v2rayxhttp` как **новые файлы** (namespaced), адаптировать импорты под v1.13.13. Плюс: максимальная совместимость с реальными XHTTP-серверами, проверенный код. Минус: больший footprint (но всё — новые файлы → **нулевая зона касания upstream**, что согласуется с CONSTITUTION). Тащит `quic-go`/`http3` (часть уже в go.mod sing-box).
+- **(B) Lean-native.** Написать компактный XHTTP-клиент на примитивах sing-box (по образцу in-tree `transport/v2rayhttpupgrade`). Плюс: меньше кода, меньше зависимостей. Минус: больше оригинальной работы и риск несовпадения с Xray по краям (`mode=auto`, padding, xmux).
+
+**Рекомендация:** **(A)** — приоритет проекта №2 (корректность/совместимость) важнее объёма, а изоляция в новых файлах сохраняет ребейзопригодность. Footprint велик, но не увеличивает конфликтность ребейза.
+
+**Обязательно для приёмки:** живой XHTTP-сервер (Xray) для end-to-end проверки — синтетического `sing-box check` недостаточно (XHTTP под активной разработкой, версии client↔server должны совпадать).

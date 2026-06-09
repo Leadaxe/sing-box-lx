@@ -39,7 +39,7 @@
 | # | Задача | Статус | Суть |
 |---|--------|--------|------|
 | **001** | FORK_BOOTSTRAP | **C** | Remotes, ветка `lx`, `Makefile.lx`, версия `-lx` (ldflags), CI-скелет, `lx-test/config` — ✅ собрано/проверено |
-| **002** | XHTTP_CLIENT_TRANSPORT | N | Registry-рефактор диспетчера v2ray + пакет `transport/v2rayxhttp` (client) за `with_xhttp` |
+| **002** | XHTTP_CLIENT_TRANSPORT | **O** | Registry-рефактор ✅ (запушен) + константа ✅; порт `transport/v2rayxhttp` — выбор подхода A/B (SPEC §7) |
 | **003** | AWG2_CLIENT_ENDPOINT | N | amneziawg-go (submodule+patches) + расширение wireguard-endpoint за `with_awg` |
 | **004** | BUILD_CI_RELEASE | N | Списки build-тегов, CI-матрица платформ, авто-ребейз на upstream-тег, релизные артефакты |
 
