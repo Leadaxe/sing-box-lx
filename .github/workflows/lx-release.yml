@@ -163,7 +163,7 @@ jobs:
 
           ### Features
           - **AmneziaWG 2.0** (\`with_awg\`) — live-validated against a real AWG2 server (handshake + keepalive + outbound traffic). Config: a \`wireguard\` endpoint with \`jc/jmin/jmax\`, \`s1\`–\`s4\`, \`h1\`–\`h4\`, \`i1\`–\`i5\`.
-          - **XHTTP** transport (\`with_xhttp\`) — builds and passes \`sing-box check\`; live test against an Xray server still pending.
+          - **XHTTP** transport (\`with_xhttp\`) — live-validated against a real Xray (3x-ui) server in \`packet-up\`/\`auto\` mode (handshake + DNS + HTTPS + download). Xray-compatible "splithttp"; composes with Reality. (\`stream-one\` has a known framing bug — use \`auto\`.)
 
           ### Binaries
           Drop-in \`sing-box\` for {linux, darwin, windows} × {amd64, arm64}. Each archive contains the \`sing-box\` binary (\`sing-box version\` reports \`${{ steps.ver.outputs.version }}\`). Verify downloads against \`SHA256SUMS\`.
