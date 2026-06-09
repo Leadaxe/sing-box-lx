@@ -15,11 +15,11 @@ permissions:
   contents: read
 
 env:
-  # Full upstream feature set (release/DEFAULT_BUILD_TAGS) + with_purego for the
-  # CGO-free cross matrix; the two lx features (with_xhttp/with_awg) toggle on top.
-  # Mirrors Makefile.lx LX_TAGS minus the features. -checklinkname=0 is supplied by
-  # LX_LDFLAGS (the feature/cross jobs build via `make -f Makefile.lx lx-build`).
-  BASE_TAGS: with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0
+  # Client feature set: upstream release/DEFAULT_BUILD_TAGS minus tailscale/ccm/ocm/acme
+  # (irrelevant to a VPN client), + with_purego for the CGO-free cross matrix. The two
+  # lx features (with_xhttp/with_awg) toggle on top. Mirrors Makefile.lx LX_TAGS minus
+  # the features. -checklinkname=0 is supplied by LX_LDFLAGS (jobs build via Makefile.lx).
+  BASE_TAGS: with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0
 
 jobs:
   # ---- Feature toggle matrix: prove each feature builds alone and together ----
