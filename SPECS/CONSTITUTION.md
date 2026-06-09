@@ -53,8 +53,9 @@
 - `origin` = `Leadaxe/sing-box-lx`, `upstream` = `SagerNet/sing-box`. Теги тянем из `upstream`.
 
 ### 3.5 Дистрибуция
-- **Имя бинаря — `sing-box`** (drop-in для лаунчера `singbox-launcher`, который ищет `LookPath("sing-box")` → `bin/sing-box`).
-- Идентичность сборки — **в версии**: `sing-box version` → `1.13.13-lx.N` (см. задачу BUILD_CI_RELEASE).
+- **Desktop — бинарь `sing-box`** (drop-in для лаунчера `singbox-launcher`, который ищет `LookPath("sing-box")` → `bin/sing-box`).
+- **Android — `libbox.aar`** (+ `libbox-legacy.aar`, SDK21): gomobile-сборка `experimental/libbox` через upstream `make lib_android`, с зашитыми `with_xhttp`/`with_awg` (`cmd/internal/build_libbox`, `// lx:`-блок; tailscale выкинут). Для встраивания в Android-приложение-потребитель. `Libbox.version()` → `1.13.13-lx.N`.
+- Идентичность сборки — **в версии**: `sing-box version` / `Libbox.version()` → `1.13.13-lx.N` (см. задачу BUILD_CI_RELEASE).
 
 ---
 

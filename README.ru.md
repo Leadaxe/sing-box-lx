@@ -76,6 +76,8 @@ with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_nai
 
 > `lx-test/config/` — наши примеры (upstream `test/` — отдельный Go-модуль, его не используем).
 
+**Android (`libbox.aar`).** `make lib_install && make lib_android` собирает gomobile-AAR — `libbox.aar` (SDK 23) + `libbox-legacy.aar` (SDK 21) — с зашитыми `with_xhttp`/`with_awg` (и без `tailscale`), для встраивания в Android-приложение-потребитель (нужны NDK r28 + OpenJDK 17). `Libbox.version()` отдаёт `…-lx.N`.
+
 ---
 
 ## Конфигурация фич
@@ -141,7 +143,8 @@ upstream  https://github.com/SagerNet/sing-box.git
 | Путь | Назначение |
 |------|------------|
 | `Makefile.lx` | сборка с lx-тегами и версией `-lx` |
-| `.github/workflows/lx-ci.yml` | CI: матрица фич (baseline/xhttp/awg/full) + negative-check + кросс-платформа |
+| `.github/workflows/lx-ci.yml` | CI: матрица фич (baseline/xhttp/awg/full) + negative-check + кросс-платформа + android AAR |
+| `.github/workflows/lx-release.yml` | релиз на `v*-lx.*`: desktop ×6 + `libbox.aar` → GitHub Release |
 | `SPECS/` | Spec Kit (конституция, задачи, отчёты) |
 | `lx-test/config/` | примеры конфигов для `sing-box check` |
 | `transport/v2rayxhttp/` | XHTTP-клиент (новый пакет) |
@@ -156,7 +159,7 @@ upstream  https://github.com/SagerNet/sing-box.git
 
 ## Потребитель
 
-Ядро собирается для десктоп-лаунчера **singbox-launcher** (бандлит `bin/sing-box`). Маппинг `type=xhttp` и AWG-полей в визарде — задачи на стороне лаунчера, не здесь.
+Ядро собирается для десктоп-лаунчера **singbox-launcher** (бандлит `bin/sing-box`). На Android потребитель встраивает **`libbox.aar`** (gomobile) вместо бинаря — конфиг-JSON тот же. Маппинг `type=xhttp` и AWG-полей в визарде — задачи на стороне потребителя, не здесь.
 
 ---
 
