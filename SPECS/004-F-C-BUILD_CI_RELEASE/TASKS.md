@@ -32,5 +32,5 @@
 
 ## Закрытие
 - [x] DoD: зелёная CI-матрица (desktop ×6 + AAR) — релиз v1.13.13-lx.3
-- [ ] IMPLEMENTATION_REPORT.md
-- [ ] Папка → `C`
+- [x] IMPLEMENTATION_REPORT.md
+- [x] Папка → `C` (`004-F-C-BUILD_CI_RELEASE`)
