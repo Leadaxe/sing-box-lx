@@ -25,6 +25,7 @@
 
 - on tag `v*-lx.*` → `build` (6 desktop, tar.gz/zip) + `build_android` (2 AAR) → `release`: `SHA256SUMS` + GitHub Release с notes (база `v1.13.13` + фичи + `lx-print-tags` + строка про AAR). Версия из тега, `sing-box version` → `-lx.N`.
 - **`v1.13.13-lx.3` опубликован** (Latest): 6 архивов + `libbox-1.13.13-lx.3.aar` + `libbox-legacy-1.13.13-lx.3.aar` + `SHA256SUMS` — всё зелёное. Этот прогон впервые вживую подтвердил тяжёлый путь (cross ×6 с naive/cronet/purego + gomobile AAR + publish).
+- **Windows 7 (32-bit)** legacy-таргет: `windows/386` собирается **пропатченным Go** (`.github/setup_go_for_windows7.sh` — реверты удаления Win7 из `MetaCubeX/go`, как в upstream `build.yml`) и **без `with_naive_outbound`** (`cronet-go` не имеет windows/386 — build constraints исключают всё). Артефакт `sing-box-<ver>-windows-386-legacy-windows-7.zip` — под лаунчер-сборку `singbox-launcher-win7-32` (она тоже 386). Остальной `LX_TAGS` (gvisor/quic/xhttp/awg/…) под 386 компилируется — проверено.
 
 ## Авто-ребейз — `lx-rebase.yml`
 
