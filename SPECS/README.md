@@ -40,7 +40,7 @@
 |---|--------|--------|------|
 | **001** | FORK_BOOTSTRAP | **C** | Remotes, ветка `lx`, `Makefile.lx`, версия `-lx` (ldflags), CI-скелет, `lx-test/config` — ✅ собрано/проверено |
 | **002** | XHTTP_CLIENT_TRANSPORT | **O** | Lean-native клиент влит ✅ build+check; wire не сверен с Xray, лайв-тест отложен (REPORT) |
-| **003** | AWG2_CLIENT_ENDPOINT | **O** | Скаффолдинг влит ✅ build+check; **amneziawg-go replace неактивен** (API-дрейф) — нужна активация (REPORT) |
+| **003** | AWG2_CLIENT_ENDPOINT | **C** | ✅ **Функционален, проверен живым AWG2-сервером** (handshake+keepalive+трафик). merged-форк Leadaxe/wireguard-go (sagernet+обфускация) через submodule; S1–S4/H1–H4/I1–I5 |
 | **004** | BUILD_CI_RELEASE | N | Списки build-тегов, CI-матрица платформ, авто-ребейз на upstream-тег, релизные артефакты |
 
 > **Вне этого репозитория:** потребление ядра лаунчером (`singbox-launcher`) — парсинг `type=xhttp` в реальный XHTTP-транспорт (сейчас `023` маппит его в `httpupgrade`), AWG-поля в визарде, замена `bin/sing-box`. Это отдельные задачи в репозитории лаунчера.
