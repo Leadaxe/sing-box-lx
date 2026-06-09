@@ -8,7 +8,7 @@
 | `.github/workflows/lx-ci.yml` | расширение (из 001) | Матрица OS×ARCH, submodule init, build+vet+test+`check` |
 | `.github/workflows/lx-rebase.yml` | **new** | schedule/dispatch: fetch upstream tags → rebase → build → PR/issue |
 | `.github/workflows/lx-release.yml` | **new** | on tag `v*-lx.*`: cross-build, zip, checksums, GitHub Release |
-| `test/config/xhttp_reality.json`, `awg2_basic.json` | из 002/003 | Используются в CI `check` |
+| `lx-test/config/xhttp_reality.json`, `awg2_basic.json` | из 002/003 | Используются в CI `check` |
 | `scripts/lx/cross_build.sh` | **new** | Матрица `GOOS/GOARCH` → `dist/<os>-<arch>/sing-box` |
 
 ## 2. Версия / ldflags

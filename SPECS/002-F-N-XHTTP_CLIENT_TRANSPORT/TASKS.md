@@ -17,7 +17,7 @@
 - [ ] `include/v2rayxhttp_stub.go` (`//go:build !with_xhttp`)
 
 ## Проверки
-- [ ] `test/config/xhttp_reality.json` + `sing-box check`
+- [ ] `lx-test/config/xhttp_reality.json` + `sing-box check`
 - [ ] Ручной коннект к Xray XHTTP-серверу (`stream-one`, `packet-up`)
 - [ ] Сборка без тега: `xhttp` → `unknown transport type`
 - [ ] `go vet ./...`, `go test ./transport/...`

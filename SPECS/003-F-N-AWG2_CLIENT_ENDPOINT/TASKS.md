@@ -17,7 +17,7 @@
 - [ ] Проводка под тегом (`include/awg.go` или правка `include/wireguard.go`)
 
 ## Проверки
-- [ ] `test/config/awg2_basic.json` + `sing-box check`
+- [ ] `lx-test/config/awg2_basic.json` + `sing-box check`
 - [ ] Ручной коннект к серверу AmneziaWG 2.0 (непустой `Jc`, хотя бы `I1`)
 - [ ] Сборка без тега: обычный WG ок; AWG-поля → ошибка
 - [ ] `go vet ./...`, тесты затронутых пакетов
