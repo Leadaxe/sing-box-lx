@@ -27,6 +27,8 @@ type AmneziaWGOptions struct {
 	Jmax uint32 `json:"jmax,omitempty"`
 	S1   uint32 `json:"s1,omitempty"`
 	S2   uint32 `json:"s2,omitempty"`
+	S3   uint32 `json:"s3,omitempty"`
+	S4   uint32 `json:"s4,omitempty"`
 	H1   uint32 `json:"h1,omitempty"`
 	H2   uint32 `json:"h2,omitempty"`
 	H3   uint32 `json:"h3,omitempty"`

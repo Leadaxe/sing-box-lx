@@ -54,6 +54,8 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	writeUint("jmax", o.Jmax)
 	writeUint("s1", o.S1)
 	writeUint("s2", o.S2)
+	writeUint("s3", o.S3)
+	writeUint("s4", o.S4)
 	writeUint("h1", o.H1)
 	writeUint("h2", o.H2)
 	writeUint("h3", o.H3)
