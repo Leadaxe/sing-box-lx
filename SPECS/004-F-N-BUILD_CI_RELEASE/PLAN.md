@@ -4,7 +4,7 @@
 
 | Файл | Тип | Изменения |
 |------|-----|-----------|
-| `Makefile.lx` | дополнение (из 001) | `lx-build` + новый `lx-print-tags`; `LX_TAGS` = полный feature-set + `with_purego` + наши 2; `LX_LDFLAGS` += `-checklinkname=0` |
+| `Makefile.lx` | дополнение (из 001) | `lx-build` + новый `lx-print-tags`; `LX_TAGS` = клиентский feature-set (upstream минус `tailscale`/`ccm`/`ocm`/`acme`) + `with_purego` + наши 2; `LX_LDFLAGS` += `-checklinkname=0` |
 | `cmd/internal/build_libbox/main.go` | upstream-правка (lx:-маркер, §3.3) | `with_xhttp,with_awg` в `sharedTags` → попадают в `libbox.aar` (SDK23) и `libbox-legacy.aar` (SDK21) |
 | `.github/workflows/lx-ci.yml` | расширение (из 001) | full-tag матрица OS×ARCH (CGO=0) + feature-toggle + `go vet` + job **`android`** (`make lib_android`) |
 | `.github/workflows/lx-rebase.yml` | **new** | schedule/dispatch: fetch upstream tags → rebase → build → PR/issue |
@@ -16,8 +16,8 @@
 `LX_LDFLAGS = -X github.com/sagernet/sing-box/constant.Version=<upstream>-lx.<N> -checklinkname=0 -s -w -buildid=`. `<N>` — счётчик lx-релизов поверх upstream-тега. **`-checklinkname=0` обязателен** для полного набора тегов (`badlinkname` → `go:linkname` в `crypto/tls` через `common/badtls`; Go 1.24 блокирует без флага). AAR версионируется отдельно — `build_libbox` берёт `git describe`, поэтому в обоих workflow перед сборкой AAR создаётся/обновляется тег.
 
 **Наборы тегов (два разных, по типу сборки):**
-- Desktop (cross, `CGO_ENABLED=0`): `release/DEFAULT_BUILD_TAGS` + `with_purego` + `with_xhttp,with_awg` → `Makefile.lx` `LX_TAGS`.
-- AAR (gomobile, NDK/CGO): upstream `build_libbox` mobile-set + `with_xhttp,with_awg`. `with_purego`/`with_acme` не добавляем — это desktop/server-теги.
+- Desktop (cross, `CGO_ENABLED=0`): `release/DEFAULT_BUILD_TAGS` **минус `tailscale`/`ccm`/`ocm`/`acme`** + `with_purego` + `with_xhttp,with_awg` → `Makefile.lx` `LX_TAGS`.
+- AAR (gomobile, NDK/CGO): upstream `build_libbox` mobile-set **минус `with_tailscale`** (`// lx:no-tailscale`, как desktop) + `with_xhttp,with_awg`. `with_purego`/`with_acme` не добавляем — это desktop/server-теги.
 
 ## 3. Авто-ребейз (lx-rebase.yml) — логика
 

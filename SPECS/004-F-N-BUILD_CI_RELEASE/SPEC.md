@@ -1,6 +1,6 @@
 # SPEC: 004 — BUILD_CI_RELEASE
 
-Собрать воспроизводимый конвейер сборки/CI/релизов `sing-box-lx`: кросс-платформенные бинари `sing-box` **и Android `libbox.aar`** с полным feature-set + lx-фичами (`with_xhttp`/`with_awg`), версия `-lx.N`, и **авто-ребейз на новый upstream-тег**.
+Собрать воспроизводимый конвейер сборки/CI/релизов `sing-box-lx`: кросс-платформенные бинари `sing-box` **и Android `libbox.aar`** с клиентским feature-set (полный upstream минус серверные/AI-теги) + lx-фичами (`with_xhttp`/`with_awg`), версия `-lx.N`, и **авто-ребейз на новый upstream-тег**.
 
 ---
 
@@ -12,9 +12,9 @@
 
 ### 2.1 Сборка
 - **Desktop-бинарь `sing-box`** (drop-in для лаунчера): цель `make -f Makefile.lx lx-build`, output `sing-box`.
-- **Набор `LX_TAGS`** — полный feature-set upstream (`release/DEFAULT_BUILD_TAGS`: gvisor/quic/dhcp/wireguard/utls/acme/clash_api/tailscale/ccm/ocm/naive_outbound + badlinkname/tfogo_checklinkname0) **+ `with_purego`** (CGO-free кросс-сборка `with_naive_outbound` через prebuilt cronet) **+ `with_xhttp,with_awg`**. `Makefile.lx` — единственный источник истины (`make -f Makefile.lx lx-print-tags`).
+- **Набор `LX_TAGS`** — upstream feature-set (`release/DEFAULT_BUILD_TAGS`) **минус нерелевантные клиенту**: `with_tailscale` (нет tailscale-endpoint'ов), `with_ccm`/`with_ocm` (прокси Claude Code / OpenAI Codex — серверные AI-сервисы), `with_acme` (серверный выпуск TLS-сертов). Итог = `gvisor/quic/dhcp/wireguard/utls/clash_api/naive_outbound + badlinkname/tfogo_checklinkname0` **+ `with_purego`** (CGO-free кросс-сборка `with_naive_outbound` через prebuilt cronet) **+ `with_xhttp,with_awg`**. `Makefile.lx` — единственный источник истины (`make -f Makefile.lx lx-print-tags`).
 - **`LX_LDFLAGS` обязан содержать `-checklinkname=0`** — иначе `badlinkname`/`tfogo_checklinkname0` ломают линк (`common/badtls` использует `go:linkname` в `crypto/tls`, который Go 1.24 блокирует). Зеркалит upstream `build_libbox`.
-- **Android `libbox.aar`**: `make lib_install && make lib_android` (gomobile, NDK r28 + OpenJDK 17). `with_xhttp`/`with_awg` зашиты в `cmd/internal/build_libbox` (lx:-блок) → попадают в `libbox.aar` (SDK 23) и `libbox-legacy.aar` (SDK 21). Набор тегов AAR = upstream mobile-set + наши две фичи (NDK/CGO-сборка, `with_purego` не нужен).
+- **Android `libbox.aar`**: `make lib_install && make lib_android` (gomobile, NDK r28 + OpenJDK 17). `with_xhttp`/`with_awg` зашиты в `cmd/internal/build_libbox` (lx:-блок) → попадают в `libbox.aar` (SDK 23) и `libbox-legacy.aar` (SDK 21). Набор тегов AAR = upstream mobile-set **минус `with_tailscale`** (как desktop — самая тяжёлая либа в APK; правка обёрнута `// lx:no-tailscale`) + наши две фичи (NDK/CGO-сборка, `with_purego` не нужен).
 - Версия `vX.Y.Z-lx.N` через ldflags (из 001); для AAR — через `git describe` внутри `build_libbox`.
 
 ### 2.2 CI-матрица
