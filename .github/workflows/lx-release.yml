@@ -1,0 +1,130 @@
+name: lx-release
+
+# Cross-builds the drop-in `sing-box` binary for all platforms and publishes a
+# GitHub Release with archives + checksums. Triggered by pushing a tag like
+# v1.13.13-lx.1, or manually via workflow_dispatch. See SPECS/004.
+
+on:
+  push:
+    tags: ['v*-lx.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, e.g. v1.13.13-lx.1 (created at the current ref if missing)'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  LX_TAGS: with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_xhttp,with_awg
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64 }
+          - { goos: linux,   goarch: arm64 }
+          - { goos: darwin,  goarch: amd64 }
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: windows, goarch: amd64, ext: .exe }
+          - { goos: windows, goarch: arm64, ext: .exe }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Resolve version
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          make -f Makefile.lx lx-build \
+            LX_TAGS="$LX_TAGS" \
+            LX_VERSION="${{ steps.ver.outputs.version }}" \
+            LX_OUTPUT="sing-box${{ matrix.ext }}"
+
+      - name: Package
+        run: |
+          NAME="sing-box-${{ steps.ver.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir -p "stage/$NAME" dist
+          cp "sing-box${{ matrix.ext }}" "stage/$NAME/"
+          cp LICENSE LICENSING.md README.md "stage/$NAME/" 2>/dev/null || true
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            (cd stage && zip -qr "../dist/$NAME.zip" "$NAME")
+          else
+            tar -C stage -czf "dist/$NAME.tar.gz" "$NAME"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Resolve tag
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checksums
+        run: (cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Release notes
+        run: |
+          cat > notes.md <<EOF
+          **sing-box-lx ${{ steps.ver.outputs.version }}** — a thin downstream of [sing-box](https://github.com/SagerNet/sing-box) (base **v1.13.13**) adding two client-side features.
+
+          ### Features
+          - **AmneziaWG 2.0** (\`with_awg\`) — live-validated against a real AWG2 server (handshake + keepalive + outbound traffic). Config: a \`wireguard\` endpoint with \`jc/jmin/jmax\`, \`s1\`–\`s4\`, \`h1\`–\`h4\`, \`i1\`–\`i5\`.
+          - **XHTTP** transport (\`with_xhttp\`) — builds and passes \`sing-box check\`; live test against an Xray server still pending.
+
+          ### Binaries
+          Drop-in \`sing-box\` for {linux, darwin, windows} × {amd64, arm64}. Each archive contains the \`sing-box\` binary (\`sing-box version\` reports \`${{ steps.ver.outputs.version }}\`). Verify downloads against \`SHA256SUMS\`.
+
+          ### Build tags
+          \`$LX_TAGS\`
+
+          Config reference: [docs/lx-config.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs/lx-config.md).
+          EOF
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" dist/* \
+            --title "sing-box-lx ${{ steps.ver.outputs.version }}" \
+            --notes-file notes.md \
+            --target "$GITHUB_SHA"
