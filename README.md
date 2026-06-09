@@ -39,7 +39,7 @@ In the sing-box ecosystem, forks that add XHTTP / AmneziaWG fall into two camps 
 | # | Feature | What it is | Status |
 |---|---------|------------|--------|
 | **XHTTP** | client transport | Xray-compatible "splithttp" (modes `auto`/`packet-up`/`stream-up`/`stream-one`) over Reality/TLS/h2c | 🟡 builds, passes `check`; `sessionId` cross-checked against Xray; **no live test against an Xray server yet** (no server) |
-| **AmneziaWG 2.0** | client endpoint | WireGuard obfuscation: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` + **2.0**: `I1–I5` (CPS — decoy packets) | ✅ builds, passes `check`; dependency **activated** ([Leadaxe/wireguard-go](https://github.com/Leadaxe/wireguard-go) — sagernet base + obfuscation); **validated against a real AWG2 server**: handshake + keepalive + outbound traffic |
+| **AmneziaWG 2.0** | client endpoint | WireGuard obfuscation: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` + **2.0**: `I1–I5` (CPS — decoy packets) | ✅ builds, passes `check`; dependency **activated** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet base + obfuscation); **validated against a real AWG2 server**: handshake + keepalive + outbound traffic |
 
 Detailed reports: [`SPECS/002-…`](SPECS/002-F-O-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md) and [`SPECS/003-…`](SPECS/003-F-C-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md). Full config reference — **[docs/lx-config.md](docs/lx-config.md)**.
 
@@ -55,7 +55,7 @@ make -f Makefile.lx lx-build
 # → ./sing-box binary with a version like 1.13.13-lx.1
 ```
 
-> `--recurse-submodules` is required for `with_awg`: the AmneziaWG runtime is wired in as the submodule `submodules/wireguard-go` → [Leadaxe/wireguard-go](https://github.com/Leadaxe/wireguard-go).
+> `--recurse-submodules` is required for `with_awg`: the AmneziaWG runtime is wired in as the submodule `submodules/wireguard-go` → [Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx).
 
 Under the hood it is a plain `go build` with this tag set:
 
@@ -142,7 +142,7 @@ upstream  https://github.com/SagerNet/sing-box.git
 | `lx-test/config/` | sample configs for `sing-box check` |
 | `transport/v2rayxhttp/` | XHTTP client (new package) |
 | `transport/wireguard/device_awg.go` | AWG IpcSet parameters (behind `with_awg`) |
-| `submodules/wireguard-go` | submodule: merged AmneziaWG runtime fork ([Leadaxe/wireguard-go](https://github.com/Leadaxe/wireguard-go)) |
+| `submodules/wireguard-go` | submodule: merged AmneziaWG runtime fork ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx)) |
 | `option/v2ray_xhttp.go`, `option/wireguard_awg.go` | feature options |
 | `include/v2rayxhttp.go` | transport registration behind a build tag |
 
@@ -162,7 +162,7 @@ The core is built for the desktop launcher **singbox-launcher** (which bundles `
 |---|---|
 | Upstream | [SagerNet/sing-box](https://github.com/SagerNet/sing-box) · [docs](https://sing-box.sagernet.org/) |
 | This fork | [Leadaxe/sing-box-lx](https://github.com/Leadaxe/sing-box-lx) |
-| AmneziaWG runtime | [Leadaxe/wireguard-go](https://github.com/Leadaxe/wireguard-go) — sagernet base + obfuscation (3-way merge) |
+| AmneziaWG runtime | [Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet base + obfuscation (3-way merge) |
 | AmneziaWG upstream | [amnezia-vpn/amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go) · [docs.amnezia.org](https://docs.amnezia.org/documentation/amnezia-wg/) |
 | XHTTP origin | [XTLS/Xray-core](https://github.com/XTLS/Xray-core) — `transport/internet/splithttp` |
 | Config reference | [docs/lx-config.md](docs/lx-config.md) |

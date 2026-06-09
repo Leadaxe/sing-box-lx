@@ -39,7 +39,7 @@
 | # | Фича | Что это | Статус |
 |---|------|---------|--------|
 | **XHTTP** | клиентский транспорт | Xray-совместимый «splithttp» (режимы `auto`/`packet-up`/`stream-up`/`stream-one`) поверх Reality/TLS/h2c | 🟡 собирается, проходит `check`; `sessionId` сверён с Xray; **лайв-тест против Xray-сервера не выполнен** (нет сервера) |
-| **AmneziaWG 2.0** | клиентский endpoint | обфускация WireGuard: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` + **2.0**: `I1–I5` (CPS — кастомные пакеты-приманки) | ✅ собирается, проходит `check`; зависимость **активирована** ([Leadaxe/wireguard-go](https://github.com/Leadaxe/wireguard-go) — sagernet-база + обфускация); **проверено живым AWG2-сервером**: handshake + keepalive + трафик наружу |
+| **AmneziaWG 2.0** | клиентский endpoint | обфускация WireGuard: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` + **2.0**: `I1–I5` (CPS — кастомные пакеты-приманки) | ✅ собирается, проходит `check`; зависимость **активирована** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet-база + обфускация); **проверено живым AWG2-сервером**: handshake + keepalive + трафик наружу |
 
 Подробные отчёты — в [`SPECS/002-…`](SPECS/002-F-O-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md) и [`SPECS/003-…`](SPECS/003-F-C-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs/lx-config.md](docs/lx-config.md)**.
 
@@ -55,7 +55,7 @@ make -f Makefile.lx lx-build
 # → бинарь ./sing-box с версией вида 1.13.13-lx.1
 ```
 
-> `--recurse-submodules` обязателен для `with_awg`: рантайм AmneziaWG подключён submodule'ом `submodules/wireguard-go` → [Leadaxe/wireguard-go](https://github.com/Leadaxe/wireguard-go).
+> `--recurse-submodules` обязателен для `with_awg`: рантайм AmneziaWG подключён submodule'ом `submodules/wireguard-go` → [Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx).
 
 Под капотом — стандартный `go build` с набором тегов:
 
@@ -142,7 +142,7 @@ upstream  https://github.com/SagerNet/sing-box.git
 | `lx-test/config/` | примеры конфигов для `sing-box check` |
 | `transport/v2rayxhttp/` | XHTTP-клиент (новый пакет) |
 | `transport/wireguard/device_awg.go` | AWG IpcSet-параметры (за `with_awg`) |
-| `submodules/wireguard-go` | submodule: merged-форк AmneziaWG-рантайма ([Leadaxe/wireguard-go](https://github.com/Leadaxe/wireguard-go)) |
+| `submodules/wireguard-go` | submodule: merged-форк AmneziaWG-рантайма ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx)) |
 | `option/v2ray_xhttp.go`, `option/wireguard_awg.go` | опции фич |
 | `include/v2rayxhttp.go` | регистрация транспорта за build-tag |
 
@@ -162,7 +162,7 @@ upstream  https://github.com/SagerNet/sing-box.git
 |---|---|
 | Upstream | [SagerNet/sing-box](https://github.com/SagerNet/sing-box) · [документация](https://sing-box.sagernet.org/) |
 | Этот форк | [Leadaxe/sing-box-lx](https://github.com/Leadaxe/sing-box-lx) |
-| AmneziaWG-рантайм | [Leadaxe/wireguard-go](https://github.com/Leadaxe/wireguard-go) — sagernet-база + обфускация (3-way merge) |
+| AmneziaWG-рантайм | [Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet-база + обфускация (3-way merge) |
 | AmneziaWG upstream | [amnezia-vpn/amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go) · [docs.amnezia.org](https://docs.amnezia.org/documentation/amnezia-wg/) |
 | XHTTP (исток) | [XTLS/Xray-core](https://github.com/XTLS/Xray-core) — `transport/internet/splithttp` |
 | Конфиг фич | [docs/lx-config.md](docs/lx-config.md) |
