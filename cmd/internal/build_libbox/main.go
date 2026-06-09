@@ -73,7 +73,13 @@ func init() {
 	// lx:end awg,xhttp
 	darwinTags = append(darwinTags, "with_dhcp", "grpcnotrace")
 	// memcTags = append(memcTags, "with_tailscale")
-	sharedTags = append(sharedTags, "with_tailscale", "ts_omit_logtail", "ts_omit_ssh", "ts_omit_drive", "ts_omit_taildrop", "ts_omit_webclient", "ts_omit_doctor", "ts_omit_capture", "ts_omit_kube", "ts_omit_aws", "ts_omit_synology", "ts_omit_bird")
+	// lx:begin no-tailscale
+	// Drop Tailscale from the libbox AAR: the client fork has no tailscale endpoints,
+	// and tailscale is the single largest dependency by size in the APK. Keeps the AAR
+	// aligned with the desktop LX_TAGS set (Makefile.lx). The ts_omit_* tags only trim
+	// with_tailscale, so they go with it. Restore the upstream append below to re-enable.
+	// sharedTags = append(sharedTags, "with_tailscale", "ts_omit_logtail", "ts_omit_ssh", "ts_omit_drive", "ts_omit_taildrop", "ts_omit_webclient", "ts_omit_doctor", "ts_omit_capture", "ts_omit_kube", "ts_omit_aws", "ts_omit_synology", "ts_omit_bird")
+	// lx:end no-tailscale
 	notMemcTags = append(notMemcTags, "with_low_memory")
 	debugTags = append(debugTags, "debug")
 }
