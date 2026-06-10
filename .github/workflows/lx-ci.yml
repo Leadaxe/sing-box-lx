@@ -89,6 +89,7 @@ jobs:
         run: |
           ./sing-box check -c lx-test/config/xhttp_reality.json
           ./sing-box check -c lx-test/config/awg2_basic.json
+          ./sing-box check -c lx-test/config/awg2_ranged.json
 
       - name: Build baseline (no lx features) for the negative check
         run: make -f Makefile.lx lx-build LX_TAGS="${BASE_TAGS}" LX_OUTPUT=sing-box-baseline
@@ -101,7 +102,8 @@ jobs:
           set +e
           ./sing-box-baseline check -c lx-test/config/xhttp_reality.json; x=$?
           ./sing-box-baseline check -c lx-test/config/awg2_basic.json; a=$?
-          if [ $x -eq 0 ] || [ $a -eq 0 ]; then
+          ./sing-box-baseline check -c lx-test/config/awg2_ranged.json; r=$?
+          if [ $x -eq 0 ] || [ $a -eq 0 ] || [ $r -eq 0 ]; then
             echo "FAIL: a feature config was accepted without its build tag"; exit 1
           fi
           echo "OK: xhttp/awg configs correctly rejected without their tags"
