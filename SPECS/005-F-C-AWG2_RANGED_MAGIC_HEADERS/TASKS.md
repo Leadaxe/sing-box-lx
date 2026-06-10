@@ -21,4 +21,4 @@
 - [x] `docs/lx-config.md`: `h1`–`h4` `int | "min-max"`, no-overlap, пример с диапазоном, маппинг awg.conf
 - [x] `SPECS/README.md`: строка 005 в roadmap
 - [x] IMPLEMENTATION_REPORT.md, DoD-чеклист, папка → `C`
-- [ ] Тег `v1.13.13-lx.6` → `lx-release.yml` (desktop + AAR)
+- [x] Тег `v1.13.13-lx.6` → `lx-release.yml` (desktop + AAR)
