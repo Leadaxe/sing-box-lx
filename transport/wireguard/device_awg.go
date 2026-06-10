@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/option"
+	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
 )
 
@@ -15,10 +16,13 @@ import (
 //
 // Output format (one key per line, leading "\n", no trailing newline):
 //
-//	\njc=<n>\njmin=<n>\njmax=<n>\ns1=<n>\ns2=<n>\nh1=<n>\nh2=<n>\nh3=<n>\nh4=<n>
+//	\njc=<n>\njmin=<n>\njmax=<n>\ns1=<n>\ns2=<n>\nh1=<spec>\nh2=<spec>\nh3=<spec>\nh4=<spec>
 //	\ni1=<str>\ni2=<str>...
 //
-// Numeric keys are emitted only when non-zero. The I1..I5 keys are emitted only
+// Numeric keys are emitted only when non-zero. The h1..h4 values are magic
+// header specs — a single uint32 ("N") or an inclusive range ("N-M", AWG 2.0)
+// — emitted in the exact format newMagicHeader expects on the uapi side;
+// unset headers are omitted. The I1..I5 keys are emitted only
 // when non-empty and are written verbatim — their value is case-sensitive
 // (uppercase keywords) and must not be normalised. Returns "" when no AWG
 // parameter is set, so a plain WireGuard endpoint produces byte-identical
@@ -49,6 +53,14 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 			b.WriteString(value)
 		}
 	}
+	writeMagic := func(key string, value option.MagicHeader) error {
+		spec, err := value.Spec()
+		if err != nil {
+			return E.Cause(err, key)
+		}
+		writeStr(key, spec)
+		return nil
+	}
 	writeUint("jc", o.Jc)
 	writeUint("jmin", o.Jmin)
 	writeUint("jmax", o.Jmax)
@@ -56,10 +68,14 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	writeUint("s2", o.S2)
 	writeUint("s3", o.S3)
 	writeUint("s4", o.S4)
-	writeUint("h1", o.H1)
-	writeUint("h2", o.H2)
-	writeUint("h3", o.H3)
-	writeUint("h4", o.H4)
+	for _, header := range []struct {
+		key   string
+		value option.MagicHeader
+	}{{"h1", o.H1}, {"h2", o.H2}, {"h3", o.H3}, {"h4", o.H4}} {
+		if err := writeMagic(header.key, header.value); err != nil {
+			return "", err
+		}
+	}
 	writeStr("i1", o.I1)
 	writeStr("i2", o.I2)
 	writeStr("i3", o.I3)
