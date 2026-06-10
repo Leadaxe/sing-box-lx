@@ -1,0 +1,56 @@
+{
+  "log": {
+    "level": "info"
+  },
+  "endpoints": [
+    {
+      "type": "wireguard",
+      "tag": "awg-ranged-ep",
+      "system": false,
+      "mtu": 1280,
+      "address": [
+        "10.8.1.25/32"
+      ],
+      "private_key": "usPnwgHGqzDYkuwUcDe4nXqj6ZyxL3g0uNwwcsSjqcs=",
+      "peers": [
+        {
+          "address": "192.0.2.1",
+          "port": 44733,
+          "public_key": "xlTvw9l0d9JrgoGuqTNIcl4MCnEa/MSeC52DrCHxw3A=",
+          "pre_shared_key": "hHv0e7RbIHsa1BgrTXOXC4JqCGzCDPTwMQDQzG/x10s=",
+          "allowed_ips": [
+            "0.0.0.0/0",
+            "::/0"
+          ],
+          "persistent_keepalive_interval": 25
+        }
+      ],
+      "jc": 5,
+      "jmin": 10,
+      "jmax": 50,
+      "s1": 28,
+      "s2": 121,
+      "s3": 25,
+      "s4": 9,
+      "h1": "43613244-384550127",
+      "h2": "826869626-2105069164",
+      "h3": "2124774725-2141151992",
+      "h4": "2144594503-2146278491",
+      "i1": "<b 0x0844818000010003><r 12>"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "inbound": [],
+        "outbound": "awg-ranged-ep"
+      }
+    ]
+  }
+}
