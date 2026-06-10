@@ -46,5 +46,6 @@
 | **002** | XHTTP_CLIENT_TRANSPORT | **C** | ✅ **live-validated** против Xray (3x-ui): packet-up/auto работают (handshake+DNS+HTTPS+download); stream-one — известный баг (REPORT) |
 | **003** | AWG2_CLIENT_ENDPOINT | **C** | ✅ **Функционален, проверен живым AWG2-сервером** (handshake+keepalive+трафик). merged-форк Leadaxe/wireguard-go (sagernet+обфускация) через submodule; S1–S4/H1–H4/I1–I5 |
 | **004** | BUILD_CI_RELEASE | **C** | ✅ `Makefile.lx`/libbox-теги, дешёвый CI (lint+build-check на push; cross×6+AAR на dispatch), `lx-release.yml` (**релиз v1.13.13-lx.3 опубликован** — 6 desktop + 2 AAR), `lx-rebase.yml` (авто-ребейз → PR/issue, демо зелёное) |
+| **005** | AWG2_RANGED_MAGIC_HEADERS | **C** | ✅ **Проверено живым awg2-сервером с ranged-конфигом** (handshake+трафик). Диапазонные `H1`–`H4` (`"N-M"`) из awg2-экспортов: `option.MagicHeader` (number\|string) → spec-строка в IpcSet; vendored wireguard-go уже умел |
 
 > **Вне этого репозитория:** потребление ядра лаунчером (`singbox-launcher`) — парсинг `type=xhttp` в реальный XHTTP-транспорт (сейчас `023` маппит его в `httpupgrade`), AWG-поля в визарде, замена `bin/sing-box`. Это отдельные задачи в репозитории лаунчера.

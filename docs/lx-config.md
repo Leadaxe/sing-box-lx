@@ -73,8 +73,10 @@ AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server 
 | `jmin` / `jmax` | int | min / max size of those junk packets |
 | `s1` / `s2` | int | junk prepended to the init / response handshake messages |
 | `s3` / `s4` | int | junk prepended to the cookie-reply / transport messages (AWG 2.x) |
-| `h1` / `h2` / `h3` / `h4` | int | magic header values overriding WireGuard's four message types |
+| `h1` / `h2` / `h3` / `h4` | int \| `"min-max"` string | magic header values overriding WireGuard's four message types. Either a single uint32 (`1234567890`, AWG 1.x) or an inclusive range string (`"43613244-384550127"`, AWG 2.0 ranged headers) — the device picks a random value from the range per message |
 | `i1` … `i5` | string | AWG 2.0 CPS decoy packets, **case-sensitive** tag-format strings, sent in order before the handshake. `I1` typically mimics a real protocol (e.g. a QUIC/STUN header). Tags: `<b 0xHEX>` static bytes, `<c>` counter, `<t>` timestamp, `<r N>` random bytes, `<rc N>` random chars, `<rd N>` random digits |
+
+> **Ranged headers (AWG 2.0):** the four `h1`–`h4` ranges (an unset header counts as its WireGuard default — `1`/`2`/`3`/`4`) **must not overlap**, or the device rejects the config with `headers must not overlap`. Set all four together, as awg2 exports do. A plain number `N` is equivalent to the range `"N-N"`; `0` means unset.
 
 ### Example — AmneziaWG 2.0 endpoint
 
@@ -89,6 +91,9 @@ AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server 
 
   "jc": 10, "jmin": 50, "jmax": 100,
   "s1": 20, "s2": 20, "s3": 60, "s4": 60,
+  // single values (AWG 1.x style) — or ranged AWG 2.0 headers, e.g.
+  // "h1": "43613244-384550127", "h2": "826869626-2105069164",
+  // "h3": "2124774725-2141151992", "h4": "2144594503-2146278491",
   "h1": 1234567890, "h2": 1234567891, "h3": 1234567892, "h4": 1234567893,
   "i1": "<b 0x000100002112a442><r 12>",
   "i2": "<b 0x010100002112a442><r 12>",
@@ -128,7 +133,7 @@ For `S3 = S4 = 60` that is `mtu ≤ 1380`. **Use `1280`** (the AmneziaWG-recomme
 
 Also keep `jmax` **below** the real path MTU: amneziawg-go warns that if a junk packet's size reaches the system MTU it gets IP-fragmented, which the same constrained paths then drop. Junk/signature params (`jc`, `s1`–`s4`, `i1`–`i5`) are client-side configuration only.
 
-Map an `awg.conf` / awg-quick file 1:1: `[Interface] PrivateKey/Address/Jc/Jmin/Jmax/S1–S4/H1–H4/I1–I5` → endpoint root; `[Peer] PublicKey/PresharedKey/Endpoint/AllowedIPs/PersistentKeepalive` → `peers[0]` (`Endpoint host:port` → `address`+`port`). If the `awg.conf` omits `MTU` or sets the WireGuard-default `1420`, lower it for AWG2 (see [MTU](#mtu) above).
+Map an `awg.conf` / awg-quick file 1:1: `[Interface] PrivateKey/Address/Jc/Jmin/Jmax/S1–S4/H1–H4/I1–I5` → endpoint root; `[Peer] PublicKey/PresharedKey/Endpoint/AllowedIPs/PersistentKeepalive` → `peers[0]` (`Endpoint host:port` → `address`+`port`). An `H1 = N` line maps to JSON number `N`, a ranged `H1 = N-M` line (awg2 export) maps to JSON string `"N-M"` verbatim. If the `awg.conf` omits `MTU` or sets the WireGuard-default `1420`, lower it for AWG2 (see [MTU](#mtu) above).
 
 The runtime is backed by `Leadaxe/wireguard-go` (sagernet/wireguard-go + AmneziaWG obfuscation, wired via the `submodules/wireguard-go` submodule) — see SPECS/003.
 
