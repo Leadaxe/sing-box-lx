@@ -3,12 +3,12 @@
 # sing-box-lx
 
 > **A thin downstream fork of [SagerNet/sing-box](https://github.com/SagerNet/sing-box).**
-> Exactly two client-side features on top of upstream — **XHTTP** and **AmneziaWG 2.0** — and nothing else.
-> Goal: live by rebasing onto every upstream tag, not by drifting into a separate life.
+> A small set of client-side features on top of upstream — currently **XHTTP** and **AmneziaWG 2.0** — each behind its own build tag.
+> The set may grow; the philosophy doesn't: live by rebasing onto every upstream tag, not by drifting into a separate life.
 
 > 📄 The upstream sing-box README — **[on GitHub](https://github.com/SagerNet/sing-box/blob/main/README.md)** (always current).
 
-This is not a separate project and not an "improved sing-box". It is upstream sing-box **plus two things**, implemented so they can be carried onto new sing-box versions for years with almost no conflicts.
+This is not a separate project and not an "improved sing-box". It is upstream sing-box **plus a few features**, implemented so they can be carried onto new sing-box versions for years with almost no conflicts. More features may land over time — other protocols, new capabilities — but every one of them must live by the same thin-fork rules ([CONSTITUTION](SPECS/CONSTITUTION.md)).
 
 ---
 
@@ -21,7 +21,7 @@ In the sing-box ecosystem, forks that add XHTTP / AmneziaWG fall into two camps 
 | **SagerNet/sing-box** (upstream) | baseline | — | — |
 | **shtorm-7/sing-box-extended** | dozens (WARP, MASQUE, MTProxy, XHTTP, AWG2, …) | "kitchen sink", edits everywhere | separate branch, no rebasing onto tags |
 | **amnezia-vpn/amnezia-box**, **hoaxisr/amnezia-box** | AWG only | heavy fork, in-place edits | branch sync (`dev-next`/`stable-next`) |
-| **➡ sing-box-lx** (this repo) | **XHTTP + AWG2 only** | **thin: new files behind build tags, minimal upstream touch** | **rebase of atomic `// lx` commits onto upstream tags** |
+| **➡ sing-box-lx** (this repo) | **small set (currently XHTTP + AWG2)** | **thin: new files behind build tags, minimal upstream touch** | **rebase of atomic `// lx` commits onto upstream tags** |
 
 **How we differ:**
 
@@ -43,7 +43,7 @@ In the sing-box ecosystem, forks that add XHTTP / AmneziaWG fall into two camps 
 
 Detailed reports: [`SPECS/002-…`](SPECS/002-F-C-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md) and [`SPECS/003-…`](SPECS/003-F-C-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md). Full config reference — **[docs/lx-config.md](docs/lx-config.md)**.
 
-> **Not supported (Reality layer, deferred):** post-quantum Reality (`pqv` / ML-DSA-65) and Xray's `spiderX`. These are Xray-specific Reality features absent from sing-box, and Reality is the upstream TLS layer we keep untouched (it is not one of our two features). Classic X25519 Reality works; a server that *mandates* post-quantum Reality won't connect. This is a sing-box limitation — best addressed upstream (we'd inherit it on rebase).
+> **Not supported (Reality layer, deferred):** post-quantum Reality (`pqv` / ML-DSA-65) and Xray's `spiderX`. These are Xray-specific Reality features absent from sing-box, and Reality is the upstream TLS layer we keep untouched (it is not one of our features). Classic X25519 Reality works; a server that *mandates* post-quantum Reality won't connect. This is a sing-box limitation — best addressed upstream (we'd inherit it on rebase).
 
 ---
 
@@ -65,7 +65,7 @@ Under the hood it is a plain `go build` with this tag set (`make -f Makefile.lx 
 with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg
 ```
 
-That is upstream's client feature-set **minus** the server/irrelevant tags — `with_acme` (server-side cert issuance), `with_tailscale`, `with_ccm`/`with_ocm` (AI-proxy services) — **plus** `with_purego` (CGO-free cross-compile, so `with_naive_outbound`/cronet builds at `CGO=0` on every desktop target except the Windows 7 / 32-bit legacy build, which drops naive — `cronet-go` has no windows/386) and our two features `with_xhttp` / `with_awg`. Everything else is exactly upstream.
+That is upstream's client feature-set **minus** the server/irrelevant tags — `with_acme` (server-side cert issuance), `with_tailscale`, `with_ccm`/`with_ocm` (AI-proxy services) — **plus** `with_purego` (CGO-free cross-compile, so `with_naive_outbound`/cronet builds at `CGO=0` on every desktop target except the Windows 7 / 32-bit legacy build, which drops naive — `cronet-go` has no windows/386) and our features `with_xhttp` / `with_awg`. Everything else is exactly upstream.
 
 Validate configs:
 
@@ -122,7 +122,8 @@ upstream tag (vX.Y.Z)
         └─►  branch lx = upstream + N atomic // lx commits
                  ├─ FORK_BOOTSTRAP (Makefile.lx, CI, version)
                  ├─ XHTTP client transport
-                 └─ AWG2 client endpoint
+                 ├─ AWG2 client endpoint
+                 └─ … (future features — same atomic // lx commits)
 ```
 
 - **Rebase only, never merge.** On a new upstream tag, the `lx` branch is rebased on top of it.

@@ -1,6 +1,6 @@
-# sing-box-lx — configuration of the two downstream features
+# sing-box-lx — configuration of the downstream features
 
-`sing-box-lx` is upstream [sing-box](https://github.com/SagerNet/sing-box) plus exactly two **client-side** features, each gated behind a build tag:
+`sing-box-lx` is upstream [sing-box](https://github.com/SagerNet/sing-box) plus a small set of **client-side** features (currently two), each gated behind a build tag:
 
 | Feature | Build tag | Where it lives in config |
 |---------|-----------|--------------------------|
