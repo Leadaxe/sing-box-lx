@@ -3,12 +3,12 @@
 # sing-box-lx
 
 > **Тонкий downstream-форк [SagerNet/sing-box](https://github.com/SagerNet/sing-box).**
-> Ровно две клиентские фичи поверх upstream — **XHTTP** и **AmneziaWG 2.0** — и больше ничего.
-> Цель: жить ребейзом на каждый upstream-тег, а не отдельной жизнью.
+> Небольшой набор клиентских фич поверх upstream — сейчас **XHTTP** и **AmneziaWG 2.0** — каждая за своим build-tag.
+> Набор может расти, философия — нет: жить ребейзом на каждый upstream-тег, а не отдельной жизнью.
 
 > 📄 README самого upstream sing-box — **[на GitHub](https://github.com/SagerNet/sing-box/blob/main/README.md)** (всегда актуальный).
 
-Это не отдельный проект и не «улучшенный sing-box». Это upstream sing-box **плюс две вещи**, реализованные так, чтобы их можно было переносить на новые версии sing-box годами, почти без конфликтов.
+Это не отдельный проект и не «улучшенный sing-box». Это upstream sing-box **плюс несколько фич**, реализованных так, чтобы их можно было переносить на новые версии sing-box годами, почти без конфликтов. Со временем фич может становиться больше — другие протоколы, новые возможности, — но каждая обязана жить по тем же правилам тонкого форка ([CONSTITUTION](SPECS/CONSTITUTION.md)).
 
 ---
 
@@ -21,7 +21,7 @@
 | **SagerNet/sing-box** (upstream) | базовый | — | — |
 | **shtorm-7/sing-box-extended** | десятки (WARP, MASQUE, MTProxy, XHTTP, AWG2, …) | «комбайн», правки повсюду | отдельная ветка, без ребейза на теги |
 | **amnezia-vpn/amnezia-box**, **hoaxisr/amnezia-box** | только AWG | толстый форк, правки in-place | синк по веткам (`dev-next`/`stable-next`) |
-| **➡ sing-box-lx** (этот репозиторий) | **только XHTTP + AWG2** | **тонкий: новые файлы за build-tag, минимум касаний upstream** | **ребейз атомарных `// lx`-коммитов на upstream-теги** |
+| **➡ sing-box-lx** (этот репозиторий) | **малый набор (сейчас XHTTP + AWG2)** | **тонкий: новые файлы за build-tag, минимум касаний upstream** | **ребейз атомарных `// lx`-коммитов на upstream-теги** |
 
 **Чем мы отличаемся:**
 
@@ -43,7 +43,7 @@
 
 Подробные отчёты — в [`SPECS/002-…`](SPECS/002-F-C-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md) и [`SPECS/003-…`](SPECS/003-F-C-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs/lx-config.md](docs/lx-config.md)**.
 
-> **Не поддерживается (слой Reality, отложено):** post-quantum Reality (`pqv` / ML-DSA-65) и `spiderX` из Xray. Это Xray-специфичные фичи Reality, которых нет в sing-box, а Reality — upstream-слой TLS, который мы держим нетронутым (это не одна из наших двух фич). Классический X25519 Reality работает; сервер, который **требует** post-quantum Reality, не подключится. Это ограничение sing-box — правильнее решать в upstream (получим на ребейзе).
+> **Не поддерживается (слой Reality, отложено):** post-quantum Reality (`pqv` / ML-DSA-65) и `spiderX` из Xray. Это Xray-специфичные фичи Reality, которых нет в sing-box, а Reality — upstream-слой TLS, который мы держим нетронутым (это не одна из наших фич). Классический X25519 Reality работает; сервер, который **требует** post-quantum Reality, не подключится. Это ограничение sing-box — правильнее решать в upstream (получим на ребейзе).
 
 ---
 
@@ -65,7 +65,7 @@ make -f Makefile.lx lx-build
 with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg
 ```
 
-Это клиентский feature-set upstream **минус** серверные/нерелевантные теги — `with_acme` (серверный выпуск сертов), `with_tailscale`, `with_ccm`/`with_ocm` (AI-прокси) — **плюс** `with_purego` (CGO-free кросс-сборка, чтобы `with_naive_outbound`/cronet собирался при `CGO=0` на любом desktop-таргете, кроме Windows 7 / 32-бит legacy-сборки, где naive выкинут — у `cronet-go` нет windows/386) и две наши фичи `with_xhttp` / `with_awg`. Всё остальное — ровно как upstream.
+Это клиентский feature-set upstream **минус** серверные/нерелевантные теги — `with_acme` (серверный выпуск сертов), `with_tailscale`, `with_ccm`/`with_ocm` (AI-прокси) — **плюс** `with_purego` (CGO-free кросс-сборка, чтобы `with_naive_outbound`/cronet собирался при `CGO=0` на любом desktop-таргете, кроме Windows 7 / 32-бит legacy-сборки, где naive выкинут — у `cronet-go` нет windows/386) и наши фичи `with_xhttp` / `with_awg`. Всё остальное — ровно как upstream.
 
 Проверка конфигов:
 
@@ -122,7 +122,8 @@ upstream tag (vX.Y.Z)
         └─►  ветка lx = upstream + N атомарных // lx-коммитов
                  ├─ FORK_BOOTSTRAP (Makefile.lx, CI, версия)
                  ├─ XHTTP client transport
-                 └─ AWG2 client endpoint
+                 ├─ AWG2 client endpoint
+                 └─ … (новые фичи — такими же атомарными // lx-коммитами)
 ```
 
 - **Только ребейз, никогда merge.** На новый upstream-тег ветка `lx` ребейзится поверх него.
