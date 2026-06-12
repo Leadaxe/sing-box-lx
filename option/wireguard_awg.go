@@ -129,22 +129,22 @@ func normalizeMagicHeader(spec string) (MagicHeader, error) {
 //     <r N>) and the order matters; I1 is typically a real protocol snapshot
 //     (e.g. a QUIC Initial). They map 1:1 to the amneziawg-go i1..i5 keys.
 type AmneziaWGOptions struct {
-	Jc   uint32 `json:"jc,omitempty"`
-	Jmin uint32 `json:"jmin,omitempty"`
-	Jmax uint32 `json:"jmax,omitempty"`
-	S1   uint32 `json:"s1,omitempty"`
-	S2   uint32 `json:"s2,omitempty"`
-	S3   uint32 `json:"s3,omitempty"`
-	S4   uint32 `json:"s4,omitempty"`
+	Jc   uint32      `json:"jc,omitempty"`
+	Jmin uint32      `json:"jmin,omitempty"`
+	Jmax uint32      `json:"jmax,omitempty"`
+	S1   uint32      `json:"s1,omitempty"`
+	S2   uint32      `json:"s2,omitempty"`
+	S3   uint32      `json:"s3,omitempty"`
+	S4   uint32      `json:"s4,omitempty"`
 	H1   MagicHeader `json:"h1,omitempty"`
 	H2   MagicHeader `json:"h2,omitempty"`
 	H3   MagicHeader `json:"h3,omitempty"`
 	H4   MagicHeader `json:"h4,omitempty"`
-	I1   string `json:"i1,omitempty"`
-	I2   string `json:"i2,omitempty"`
-	I3   string `json:"i3,omitempty"`
-	I4   string `json:"i4,omitempty"`
-	I5   string `json:"i5,omitempty"`
+	I1   string      `json:"i1,omitempty"`
+	I2   string      `json:"i2,omitempty"`
+	I3   string      `json:"i3,omitempty"`
+	I4   string      `json:"i4,omitempty"`
+	I5   string      `json:"i5,omitempty"`
 }
 
 // IsSet reports whether any AmneziaWG obfuscation parameter has been
