@@ -29,8 +29,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { goos: linux,   goarch: amd64 }
-          - { goos: linux,   goarch: arm64 }
+          # Linux lives in the build_linux_musl job (static musl + naive, for
+          # routers). See SPECS/006. This job covers the purego/native targets
+          # where libdl is a non-issue.
           - { goos: darwin,  goarch: amd64 }
           - { goos: darwin,  goarch: arm64 }
           - { goos: windows, goarch: amd64, ext: .exe }
@@ -112,6 +113,124 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # Static musl Linux builds for routers (AsusWRT Merlin, OpenWrt, Keenetic).
+  # The desktop `build` job ships Linux via with_purego, which pulls a dynamic
+  # libdl.so.2 dependency (purego's //go:cgo_import_dynamic) and won't load on
+  # musl. Here we mirror upstream build.yml: clone cronet-go, fetch the Chromium
+  # musl toolchain via its cmd/build-naive, and build CGO_ENABLED=1 with
+  # `with_musl` — libcronet.a is linked statically and naive is preserved.
+  # See SPECS/006.
+  build_linux_musl:
+    name: build linux-musl/${{ matrix.asset }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64,  asset: linux-amd64 }
+          - { arch: arm64,  asset: linux-arm64 }
+          - { arch: arm,    goarm: "7",        asset: linux-armv7 }
+          - { arch: mipsle, gomips: softfloat, asset: linux-mipsle-softfloat }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Resolve version
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      # cronet-go carries the build-naive tool + the naiveproxy/src Chromium
+      # toolchain sources. Pin to the same commit go.mod depends on.
+      - name: Clone cronet-go
+        run: |
+          set -xeuo pipefail
+          CRONET_GO_VERSION="$(cat .github/CRONET_GO_VERSION)"
+          git init ~/cronet-go
+          git -C ~/cronet-go remote add origin https://github.com/sagernet/cronet-go.git
+          git -C ~/cronet-go fetch --depth=1 origin "$CRONET_GO_VERSION"
+          git -C ~/cronet-go checkout FETCH_HEAD
+          git -C ~/cronet-go submodule update --init --recursive --depth=1
+
+      - name: Regenerate Debian keyring
+        run: |
+          set -xeuo pipefail
+          rm -f ~/cronet-go/naiveproxy/src/build/linux/sysroot_scripts/keyring.gpg
+          cd ~/cronet-go
+          GPG_TTY=/dev/null ./naiveproxy/src/build/linux/sysroot_scripts/generate_keyring.sh
+
+      - name: Cache Chromium toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/cronet-go/naiveproxy/src/third_party/llvm-build/
+            ~/cronet-go/naiveproxy/src/gn/out/
+            ~/cronet-go/naiveproxy/src/chrome/build/pgo_profiles/
+            ~/cronet-go/naiveproxy/src/out/sysroot-build/
+          key: chromium-toolchain-musl-${{ matrix.arch }}-${{ hashFiles('.github/CRONET_GO_VERSION') }}
+
+      - name: Download Chromium musl toolchain
+        run: |
+          set -xeuo pipefail
+          cd ~/cronet-go
+          go run ./cmd/build-naive --target=linux/${{ matrix.arch }} --libc=musl download-toolchain
+
+      - name: Set Chromium toolchain environment
+        run: |
+          set -xeuo pipefail
+          cd ~/cronet-go
+          go run ./cmd/build-naive --target=linux/${{ matrix.arch }} --libc=musl env >> "$GITHUB_ENV"
+
+      - name: Build (musl + naive, static)
+        env:
+          CGO_ENABLED: "1"
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          GOARM: ${{ matrix.goarm }}
+          GOMIPS: ${{ matrix.gomips }}
+        run: |
+          set -xeuo pipefail
+          # LX_TAGS is the single source of truth (Makefile.lx). Swap the purego
+          # cronet loader for the static musl one; with_naive_outbound stays.
+          TAGS="$(make -f Makefile.lx -s lx-print-tags)"
+          TAGS="${TAGS/with_purego/with_musl}"
+          mkdir -p dist
+          go build -v -trimpath -tags "$TAGS" \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${{ steps.ver.outputs.version }}' -checklinkname=0 -s -w -buildid=" \
+            -o dist/sing-box ./cmd/sing-box
+
+      - name: Verify static (no libdl)
+        run: |
+          set -xeuo pipefail
+          file dist/sing-box
+          file dist/sing-box | grep -q "statically linked"
+          if strings -a dist/sing-box | grep -q "libdl.so.2"; then
+            echo "FAIL: libdl.so.2 reference present — not a static musl build"; exit 1
+          fi
+          echo "OK: statically linked, no libdl.so.2"
+
+      - name: Package
+        run: |
+          NAME="sing-box-${{ steps.ver.outputs.version }}-${{ matrix.asset }}"
+          mkdir -p "stage/$NAME"
+          cp dist/sing-box "stage/$NAME/"
+          cp LICENSE LICENSING.md README.md "stage/$NAME/" 2>/dev/null || true
+          tar -C stage -czf "dist/$NAME.tar.gz" "$NAME"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.asset }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
   build_android:
     name: build android (libbox.aar)
     runs-on: ubuntu-latest
@@ -167,7 +286,7 @@ jobs:
 
   release:
     name: publish release
-    needs: [build, build_android]
+    needs: [build, build_linux_musl, build_android]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -199,7 +318,11 @@ jobs:
           - **XHTTP** transport (\`with_xhttp\`) — live-validated against a real Xray (3x-ui) server in \`packet-up\`/\`auto\` mode (handshake + DNS + HTTPS + download). Xray-compatible "splithttp"; composes with Reality. (\`stream-one\` has a known framing bug — use \`auto\`.)
 
           ### Binaries
-          Drop-in \`sing-box\` for {linux, darwin, windows} × {amd64, arm64}, plus a **Windows 7 (32-bit)** legacy build (\`sing-box-${{ steps.ver.outputs.version }}-windows-386-legacy-windows-7.zip\` — built with a Win7-patched Go; without naive/cronet, which has no windows/386 target). Each archive contains the \`sing-box\` binary (\`sing-box version\` reports \`${{ steps.ver.outputs.version }}\`). Verify downloads against \`SHA256SUMS\`.
+          Drop-in \`sing-box\` for **darwin / windows** × {amd64, arm64}, plus a **Windows 7 (32-bit)** legacy build (\`sing-box-${{ steps.ver.outputs.version }}-windows-386-legacy-windows-7.zip\` — built with a Win7-patched Go; without naive/cronet, which has no windows/386 target).
+
+          **Linux — static musl builds for routers** (AsusWRT Merlin, OpenWrt, Keenetic): \`linux-amd64\`, \`linux-arm64\`, \`linux-armv7\`, \`linux-mipsle-softfloat\`. These are statically linked (no \`libdl.so.2\`/glibc dependency) and **keep NaïveProxy** — they run on musl routers where the previous dynamic builds failed with \`libdl.so.2: cannot open shared object file\`. See SPECS/006.
+
+          Each archive contains the \`sing-box\` binary (\`sing-box version\` reports \`${{ steps.ver.outputs.version }}\`). Verify downloads against \`SHA256SUMS\`.
 
           ### Android
           \`libbox-${{ steps.ver.outputs.version }}.aar\` (+ \`libbox-legacy-…\` for SDK 21) — gomobile build of \`experimental/libbox\` with \`with_xhttp\`+\`with_awg\` enabled, for embedding in an Android app. \`Libbox.version()\` reports the lx version.
