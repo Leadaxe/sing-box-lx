@@ -35,7 +35,10 @@ naive **сохраняем** — это upstream-фича (`release/DEFAULT_BUIL
   - `linux-arm64`: ELF 64-bit ARM aarch64, statically linked;
   - `linux-armv7`: ELF 32-bit ARM EABI5, statically linked;
   - `linux-mipsle-softfloat`: ELF 32-bit MIPS32 rel2, statically linked — **mipsle+naive собрался musl-статикой**, fallback не понадобился.
-- Боевой релиз — тег `v1.13.13-lx.7` (fail-safe: `release` job `needs` musl-сборки, битый musl не опубликует релиз).
+- ✅ Боевой релиз [v1.13.13-lx.7](https://github.com/Leadaxe/sing-box-lx/releases/tag/v1.13.13-lx.7) опубликован — 4 musl-арки + desktop (darwin/win/win7) + 2 AAR + SHA256SUMS.
+- ✅ **Field-verified** репортером issue #1 на AsusWRT Merlin RT-AX (`linux/arm64`): ядро устанавливается, стартует, работает; `sing-box version` → `1.13.13-lx.7`, теги включают `with_naive_outbound,with_musl`, `CGO: enabled`. Подтверждение на реальном устройстве, не только в CI.
+
+> **Нейминг — апдейт от потребителя:** репортер подтвердил, что суффикс `-musl` для его скрипта **некритичен** (берёт архив с суффиксом или без). То есть наш выбор «без `-musl`» валиден без оглядки на чужой скрипт — это просто следствие единственного варианта на арку. `-softfloat` у mipsle при этом **обязателен** (FP-ABI, не линковка): softfloat запускается на любом MIPS-роутере, hardfloat — только на чипах с FPU.
 
 ## Побочный hotfix (хвост 005)
 
