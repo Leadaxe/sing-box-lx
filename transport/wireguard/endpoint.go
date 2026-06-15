@@ -286,6 +286,19 @@ func (e *Endpoint) Close() error {
 	return nil
 }
 
+// lx:begin awg
+// Suspend brings the WireGuard device down without closing it, stopping the
+// (junk) handshake machinery. Used by the selector guard to neutralise an
+// AmneziaWG endpoint when a group it detours through switches to a WireGuard
+// member. Idempotent — a nil device (never started / already closed) is a no-op.
+func (e *Endpoint) Suspend() {
+	if e.device != nil {
+		e.device.Down()
+	}
+}
+
+// lx:end awg
+
 func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
 	if e.allowedIPs == nil {
 		return nil

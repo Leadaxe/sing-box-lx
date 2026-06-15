@@ -217,6 +217,24 @@ func awgDetourChainReachesWireGuard(outboundManager adapter.OutboundManager, tag
 	return ""
 }
 
+// IsAmneziaWG reports whether this endpoint runs AmneziaWG. Implements
+// adapter.AmneziaWGSuspendable.
+func (w *Endpoint) IsAmneziaWG() bool {
+	return w.awgActive
+}
+
+// SuspendAmneziaWG brings the device down and marks the endpoint not-ready, so a
+// junk handshake is never sent and every dial fails with "WireGuard is not ready
+// yet". Called by the selector guard when a group this endpoint detours through
+// switches to a WireGuard member (AmneziaWG over WireGuard hangs the kernel on
+// Android). Idempotent. Implements adapter.AmneziaWGSuspendable.
+func (w *Endpoint) SuspendAmneziaWG() {
+	if w.started.CompareAndSwap(true, false) {
+		w.logger.Error("amneziawg endpoint suspended: a selector in its detour chain switched to a wireguard-based member — amneziawg over wireguard is not supported")
+	}
+	w.endpoint.Suspend()
+}
+
 // lx:end awg
 
 func (w *Endpoint) Close() error {
