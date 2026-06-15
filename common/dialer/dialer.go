@@ -25,12 +25,6 @@ type Options struct {
 	NewDialer        bool
 	LegacyDNSDialer  bool
 	DirectOutbound   bool
-	// lx:begin awg
-	// IsAmneziaWG marks the owner of this dialer as an AmneziaWG endpoint. The
-	// detour dialer uses it to reject a detour into another AmneziaWG endpoint
-	// (nested AWG hangs the kernel on Android). See common/dialer/detour.go.
-	IsAmneziaWG bool
-	// lx:end awg
 }
 
 // TODO: merge with NewWithOptions
@@ -53,7 +47,7 @@ func NewWithOptions(options Options) (N.Dialer, error) {
 		if outboundManager == nil {
 			return nil, E.New("missing outbound manager")
 		}
-		dialer = NewDetour(outboundManager, dialOptions.Detour, options.LegacyDNSDialer, options.IsAmneziaWG)
+		dialer = NewDetour(outboundManager, dialOptions.Detour, options.LegacyDNSDialer)
 	} else {
 		dialer, err = NewDefault(options.Context, dialOptions)
 		if err != nil {
