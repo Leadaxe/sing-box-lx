@@ -44,24 +44,24 @@ AWG-нода с `detour` на WireGuard-based цель **не поднимает
 ядро стартует, остальные узлы работают, эта нода не встаёт, ошибка в логе. **Не
 крашимся.**
 
-> **Ревизия 2026-06-16 (см. IMPLEMENTATION_REPORT):** реализация прошла две
-> итерации.
+> **Ревизия 2026-06-16 (см. IMPLEMENTATION_REPORT):** реализация прошла итерации.
 >
-> 1. **lx.8 — ленивый guard в `DetourDialer.init()`** (рантайм, на первом dial).
->    Field-тест на устройстве показал, что он **не срабатывает**: AWG→WG виснет
->    синхронно в `Endpoint.Start` (резолв peer-домена через detour + junk-handshake),
->    **до** первого dial.
+> 1. **lx.8 — ленивый guard в `DetourDialer.init()`** (на первом dial). Field-тест
+>    показал: **не срабатывает** — AWG→WG виснет синхронно в `Endpoint.Start`
+>    (резолв peer-домена через detour + junk-handshake), **до** первого dial.
+>    **Удалён** (непроверяем в UI, `sync.Once`-кэш не ловит смену селектора).
 > 2. **lx.9 — Start-guard в `protocol/wireguard.Endpoint.Start`** (статический обход
->    транзитивной detour-цепи; device не поднимается, `started=false`). **Field-verified
->    на Android** — работает.
+>    транзитивной detour-цепи; device не поднимается). **Field-verified на Android.**
+> 3. **selector-guard в `protocol/group` (`SelectOutbound`)** — закрывает случай
+>    «селектор по середине», который Start-guard статически пропускает: при
+>    переключении селектора на член, ведущий к WireGuard, **до** коммита выбора
+>    гасятся (suspend → `device.Down`, `started=false`) все AmneziaWG-потребители,
+>    что detour-ят на эту группу (транзитивно вверх через `ConsumersOf`).
 >
-> **Итог (после ревизии): оставлен только Start-guard.** Ленивый dialer-guard
-> **удалён** — он непроверяем в реальном UI (LxBox не даёт detour на группу) и
-> кэширует результат через `sync.Once`, т.е. не ловит смену состава селектора в
-> рантайме; в прошлый раз он вообще не сработал. Случай «селектор/urltest по
-> середине» Start-guard **намеренно пропускает** (на группе цель рантайм-зависима) —
-> это **известный непокрытый случай** (см. §5), под него ищется отдельная надёжная
-> точка перехвата на переключении селектора.
+> **Итог: два дополняющих guard'а — Start-guard (статический, прямая цепь) +
+> selector-guard (рантайм, переключение селектора).** Оба дают вариант B и не
+> крашатся. Гашение selector-guard'ом — **до** переключения, поэтому AWG-потребитель
+> опущен раньше, чем группа укажет на WG → гонки нет.
 
 ## 3. Требования
 
@@ -76,44 +76,59 @@ AWG-нода с `detour` на WireGuard-based цель **не поднимает
 - Цепочка обходится **транзитивно** по `detour` (через `OutboundManager.Outbound`
   + `Dependencies()`): AWG→X→…→WG ловится на любой глубине. Защита от циклов — set
   посещённых тегов.
-- На группе (selector/urltest) обход **останавливается** — выбранный член известен
-  только в рантайме (см. §5). Не-WireGuard цели (VLESS и т.д.) — **не** триггер.
+- На группе (selector/urltest) Start-guard обход **останавливается** — выбранный
+  член рантайм-зависим; этот случай ловит selector-guard (§3.3). Не-WireGuard цели
+  (VLESS и т.д.) — **не** триггер.
 
-### 3.3 Где ловить
-- В `protocol/wireguard.Endpoint.Start` (стадия `StartStateStart`), **до**
-  `w.endpoint.Start()`. Это единственная точка, ловящая баг: зависание происходит
-  синхронно в `Start` (резолв peer-домена через detour + junk-handshake), до
-  первого dial — ленивый dialer-guard туда не успевает (доказано на lx.8).
-- Источник — `options.AmneziaWGOptions.IsSet()` (сохранён в `Endpoint.awgActive`);
-  цель — `awgDetourChainReachesWireGuard(outboundManager, detour, …)`.
-- Поведение — **вариант B**: device не поднимается, `started=false`, `return nil`
-  (НЕ error — иначе abort всего инстанса), ошибка в лог. Все outbound'ы
-  зарегистрированы до любого `Start`, поэтому цепочка резолвится по тегам.
+### 3.3 Где ловить — два guard'а
+
+**(a) Start-guard** — `protocol/wireguard.Endpoint.Start` (стадия `StartStateStart`),
+**до** `w.endpoint.Start()`. Зависание происходит синхронно в `Start` (резолв
+peer-домена через detour + junk-handshake), до первого dial — ленивый guard туда не
+успевает (доказано на lx.8). Источник — `Endpoint.awgActive`
+(`AmneziaWGOptions.IsSet()`); цель — `awgDetourChainReachesWireGuard(...)`
+(транзитивный обход detour, **на группе останавливается**). Поведение — **вариант B**:
+device не поднимается, `started=false`, `return nil` (НЕ error — иначе abort
+инстанса), ошибка в лог. Все outbound'ы зарегистрированы до любого `Start`.
+
+**(b) selector-guard** — `protocol/group.Selector.SelectOutbound`, **до** коммита
+выбора (`s.selected.Store`). Если новый член ведёт к WireGuard
+(`chainReachesWireGuard`: сам тип / detour вниз / вложенные группы), идём **вверх**
+по `OutboundManager.ConsumersOf` (reverse-deps, транзитивно: AWG→vless→group) и для
+каждого потребителя с `IsAmneziaWG()` зовём `SuspendAmneziaWG()` (`device.Down`,
+`started=false`). Гашение **до** `Store` → к моменту переключения AWG уже опущен,
+его reconnect вернёт «not ready» → junk в WG не уйдёт (**гонки нет**). Лог — при
+реальном гашении (`CompareAndSwap(true,false)`), без спама на повторных переключениях.
 
 ### 3.4 Изоляция (CONSTITUTION §3.2–3.3)
-- Правка upstream-файла `protocol/wireguard/endpoint.go` — в `// lx:` блоках. Тест
-  — отдельный lx-файл `awg_start_guard_test.go`. `common/dialer/{detour,dialer}.go`
-  ревизией 2026-06-16 **возвращены к upstream** (ленивый guard удалён).
-- Поведение **без** `with_awg` не меняется: AWG-конфиг отвергается раньше
-  («awg support not built»); для плоского WG `awgActive=false` → guard no-op.
+- Start-guard — `// lx:` блоки в `protocol/wireguard/endpoint.go` +
+  `transport/wireguard/endpoint.go` (`Suspend()`); тест `awg_start_guard_test.go`.
+- selector-guard — новый файл `protocol/group/awg_selector_guard.go` + один вызов в
+  `selector.go`; маркер `adapter.AmneziaWGSuspendable` и `OutboundManager.ConsumersOf`
+  в `adapter/outbound.go` + `adapter/outbound/manager.go` (`// lx:`); тест
+  `awg_selector_guard_test.go`.
+- `common/dialer/{detour,dialer}.go` ревизией 2026-06-16 **возвращены к upstream**.
+- Поведение **без** `with_awg` не меняется: AWG-конфиг отвергается раньше; для
+  плоского WG `awgActive=false`/`IsAmneziaWG()==false` → guard'ы no-op.
 
 ## 4. Критерии приёмки
 
 - AWG `detour`→WG и AWG `detour`→AWG: узел не поднимается, ошибка в лог; ядро и
   прочие узлы живут (вариант B). ✅ field-verified на Android lx.9.
 - AWG `detour`→VLESS и WG `detour`→AWG: проходит.
-- AWG→X→…→WG (транзитивно по detour): ловится; циклы не виснут.
-- Юнит-тест зелёный (`awgDetourChainReachesWireGuard`: direct/транзитив/нет-WG/
-  селектор-пропуск/цикл/unknown).
+- AWG→X→…→WG (транзитивно по detour): ловится Start-guard'ом; циклы не виснут.
+- Переключение селектора на WG-член при AWG-потребителе: AWG suspend **до** выбора;
+  не-AWG потребители не трогаются; переключение на не-WG ничего не гасит.
+- Юнит-тесты зелёные: `awgDetourChainReachesWireGuard` (Start-guard) +
+  `chainReachesWireGuard`/`suspendAmneziaWGConsumers` (selector-guard).
 - `go build ./...` без тегов — ок; сборка с `with_awg` — ок; `gofmt -l` пусто.
 
 ## 5. Вне скоупа
 
-- **Селектор/urltest по середине** цепочки (`AWG→…→selector(с WG внутри)`):
-  Start-guard его пропускает (цель рантайм-зависима, меняется переключением). В UI
-  LxBox недостижим (detour только на реальные серверы), но другие потребители ядра
-  могут такое собрать. **Известный непокрытый случай** — под него ищется надёжная
-  точка перехвата на переключении селектора (отдельная задача).
+- **Гонка selector-guard:** закрыта порядком (гасим до `Store`). Остаётся
+  теоретический случай, если потребитель переподключается строго между нашим
+  suspend и его собственным dial в том же тике — практически невозможен, т.к. suspend
+  синхронен и до коммита выбора.
 - **Лечение первопричины** (таймауты/неблокирующая отправка junk в
   `submodules/wireguard-go`) — отдельная будущая задача.
 - Цепочки через route-rule action, а не `detour` — вне скоупа.
