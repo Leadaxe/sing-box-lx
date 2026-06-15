@@ -36,6 +36,9 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	if !o.IsSet() {
 		return "", nil
 	}
+	if err := validateJunk(o); err != nil {
+		return "", err
+	}
 	var b strings.Builder
 	writeUint := func(key string, value uint32) {
 		if value != 0 {
@@ -82,4 +85,22 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	writeStr("i4", o.I4)
 	writeStr("i5", o.I5)
 	return b.String(), nil
+}
+
+// validateJunk rejects a jmin/jmax junk-size range with jmin > jmax before it
+// reaches the device, so a bad config fails at endpoint build / `sing-box check`
+// with a clear error instead of panicking later at handshake time. The vendored
+// amneziawg-go (device/send.go) sizes each junk packet rand(0..jmax-jmin)+jmin
+// before a handshake initiation; jmax < jmin makes rand.Int's argument <= 0 and
+// panics in the retransmit-timer goroutine. amneziawg-go's uapi checks each
+// field > 0 individually but not jmin <= jmax, which is why we add it here.
+//
+// Only this crash case is guarded: jc>0 without sizes (sends empty junk) or
+// sizes without jc (junk never sent) are wasteful but harmless and stay allowed,
+// to keep the diff minimal and avoid rejecting a working real-server config.
+func validateJunk(o option.AmneziaWGOptions) error {
+	if o.Jmin > o.Jmax {
+		return E.New("amneziawg: jmin (", F.ToString(o.Jmin), ") must be <= jmax (", F.ToString(o.Jmax), ")")
+	}
+	return nil
 }
