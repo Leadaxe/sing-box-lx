@@ -114,8 +114,15 @@ Android (нет watchdog/перезапуска) — зависание. Пер�
   `TestAwgDetourChainReachesWireGuard` (Start-guard: direct/транзитив/нет-WG/селектор-пропуск/цикл/unknown).
 - ✅ `gofmt -l` изменённых файлов — пусто (урок 006/005 учтён).
 - ✅ `go vet ./common/dialer/... ./protocol/wireguard/...` — чисто.
-- ⏳ **Field-verify lx.9** на Android: AWG→WG/AWG конфиг — ядро поднимается, узел
-  не встаёт, ошибка в лог, **нет зависания** (lx.8 виснул — см. «Смена подхода»).
+- ✅ **Field-verified на lx.9 (Android, 2026-06-15 22:21).** AWG→AWG конфиг
+  (`warp gen` detour→`🔥☁️ WireGuard + awg`): ядро **поднимается** (не виснет, как
+  lx.8), узел `warp gen` не встаёт с ошибкой `amneziawg endpoint will not start:
+  its detour chain reaches wireguard-based endpoint …`, остальные узлы работают.
+  Смена подхода подтверждена на устройстве.
+- Текст ошибки переформулирован (ревизия 2026-06-16) по фидбэку: убрано
+  «hangs the kernel on Android» из user-сообщения → «amneziawg over wireguard is
+  not supported» (запрет по архитектуре, а не привязка к платформе). Касается обоих
+  guard'ов (Start + dialer); технический «почему» оставлен в комментариях кода.
 
 ## Зона касания upstream (для ребейза)
 
