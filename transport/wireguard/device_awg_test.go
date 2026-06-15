@@ -74,3 +74,26 @@ func TestAwgIpcLinesInvalidHeader(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorContains(t, err, "h3")
 }
+
+// jmin > jmax makes amneziawg-go's rand.Int argument <= 0, which panics in the
+// retransmit-timer goroutine. awgIpcLines must reject it at config time instead
+// — and must not panic doing so.
+func TestAwgIpcLinesJminGreaterThanJmax(t *testing.T) {
+	t.Parallel()
+	require.NotPanics(t, func() {
+		_, err := awgIpcLines(option.AmneziaWGOptions{Jc: 5, Jmin: 70, Jmax: 40})
+		require.Error(t, err)
+		require.ErrorContains(t, err, "jmin")
+		require.ErrorContains(t, err, "jmax")
+	})
+}
+
+// A valid junk range (jmin <= jmax, the shape every real awg2 export uses) and
+// a fully-disabled junk config must both pass.
+func TestAwgIpcLinesValidJunkRange(t *testing.T) {
+	t.Parallel()
+	_, err := awgIpcLines(option.AmneziaWGOptions{Jc: 4, Jmin: 40, Jmax: 70})
+	require.NoError(t, err)
+	_, err = awgIpcLines(option.AmneziaWGOptions{H1: "1"}) // junk off, only a header
+	require.NoError(t, err)
+}
