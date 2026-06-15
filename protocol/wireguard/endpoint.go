@@ -168,7 +168,7 @@ func (w *Endpoint) Start(stage adapter.StartStage) error {
 		if outboundManager := service.FromContext[adapter.OutboundManager](w.ctx); outboundManager != nil {
 			if blockedBy := awgDetourChainReachesWireGuard(outboundManager, w.detour, make(map[string]bool)); blockedBy != "" {
 				w.awgChainBlocked = true
-				w.logger.Error("amneziawg endpoint will not start: its detour chain reaches wireguard-based endpoint ", strconv.Quote(blockedBy), " (detour: ", strconv.Quote(w.detour), "); AmneziaWG inside a WireGuard tunnel hangs the kernel on Android. Use a non-wireguard detour (e.g. vless). Other outbounds are unaffected.")
+				w.logger.Error("amneziawg endpoint will not start: its detour chain reaches wireguard-based endpoint ", strconv.Quote(blockedBy), " — amneziawg over wireguard is not supported. Use a non-wireguard detour (e.g. vless).")
 				return nil
 			}
 		}

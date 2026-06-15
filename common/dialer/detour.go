@@ -81,7 +81,7 @@ func (d *DetourDialer) init() {
 	// above: not a startup error, but every dial through this endpoint fails
 	// here, so the rest of the config keeps working.
 	if d.ownerIsAmneziaWG && detourTargetIsWireGuard(d.outboundManager, dialer, make(map[string]bool)) {
-		d.initErr = E.New("amneziawg endpoint cannot detour through a wireguard-based endpoint (detour: ", d.detour, "): AmneziaWG inside a WireGuard tunnel hangs the kernel on Android; use a non-wireguard detour (e.g. vless)")
+		d.initErr = E.New("amneziawg endpoint cannot detour through a wireguard-based endpoint (detour: ", d.detour, "): amneziawg over wireguard is not supported; use a non-wireguard detour (e.g. vless)")
 		return
 	}
 	// lx:end awg
