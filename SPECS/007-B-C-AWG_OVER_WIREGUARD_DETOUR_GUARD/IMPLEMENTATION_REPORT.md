@@ -27,17 +27,24 @@ Android: такая связка отвергается (**вариант B** �
 detour** (нижний туннель), + device запускает junk-handshake. До `connect()` дело
 не доходит → ленивый guard архитектурно мёртв для этого сценария.
 
-**Решение — два эшелона, дополняющие друг друга:**
+**Решение — Start-guard** (`protocol/wireguard.Endpoint.Start`): статический обход
+транзитивного замыкания `detour` через `OutboundManager` + `Dependencies()`; при
+достижении `Type()==wireguard` — device не поднимается, `started=false`, лог,
+`return nil`. **Вариант B**: ядро и прочие узлы живут. На группе (selector/urltest)
+обход **останавливается** (цель рантайм-зависима). Field-verified на Android lx.9.
 
-| Эшелон | Ловит | Где | Поведение |
-|--------|-------|-----|-----------|
-| **Start-guard** (новый) | `AWG→…→WG` по **прямой транзитивной** цепочке detour (без селектора по середине) | `protocol/wireguard.Endpoint.Start`, статический обход transitive-замыкания `detour` через `OutboundManager`; на группе **останавливается** | device не поднимается, `started=false`, лог — ядро/прочие узлы живут |
-| **Dialer-guard** (из lx.8, оставлен) | случай с **селектором/urltest** по середине — цель рантайм-зависима | `common/dialer/detour.go` `DetourDialer.init()`, лениво, раскрывает группы | ленивая ошибка на dial |
+> **Ревизия после lx.9: ленивый dialer-guard (lx.8) удалён, оставлен только
+> Start-guard.** Изначально dialer-guard оставляли «вторым эшелоном» для случая
+> «селектор по середине». Но: (1) он непроверяем — в UI LxBox detour можно навести
+> только на реальный сервер, не на группу; (2) он кэширует результат через
+> `sync.Once`, т.е. **не ловит** смену состава/выбора селектора в рантайме; (3) в
+> field-тесте он вообще не сработал (виснет в `Start` до dial). Держать
+> непроверяемый и частично-неверный механизм хуже, чем не держать. Файлы
+> `common/dialer/{detour,dialer}.go` возвращены к upstream. **Селектор-по-середине
+> теперь — известный непокрытый случай** (SPEC §5): под него ищется надёжная точка
+> перехвата на переключении селектора (`SelectOutbound`/`interruptGroup`).
 
-Start-guard на селекторе пасует (цель неизвестна статически) → отдаёт этот случай
-dialer-guard'у в рантайме. Прямую цепь dialer-guard не успел бы поймать (виснет в
-Start) → её берёт Start-guard. Главный инвариант обоих: **ядро поднимать, коннект
-не стартовать, ошибку в лог.**
+Главный инвариант: **ядро поднимать, коннект не стартовать, ошибку в лог.**
 
 Баг **нашей** дельты (фича 003 AWG2), не upstream → в скоупе (CONSTITUTION §3.1).
 
@@ -64,29 +71,16 @@ Android (нет watchdog/перезапуска) — зависание. Пер�
 
 ## Что сделано
 
-Поведение скопировано с ядрового запрета `detour to an empty direct outbound`
-(upstream `fb622ccb`) — тот же ленивый `init()`-механизм даёт «вариант B»
-бесплатно (образец взят из [LxBox §128](https://github.com/Leadaxe/LxBox/blob/develop/docs/spec/tasks/128-force-direct-out-detour.md)).
+### Итерация 1 (lx.8) — ленивый dialer-guard, **откачена**
 
-**`common/dialer/detour.go`** (`// lx:` upstream):
-- поле `DetourDialer.ownerIsAmneziaWG`; новый 4-й параметр `NewDetour`;
-- guard в `init()` сразу после empty-direct: если владелец AWG **и**
-  `detourTargetIsWireGuard(...)` → кэшируем `initErr` («amneziawg endpoint cannot
-  detour through a wireguard-based endpoint … use a non-wireguard detour»);
-- `detourTargetIsWireGuard` — рекурсивный обход: цель с `Type()==C.TypeWireGuard`
-  → true; группа (`adapter.OutboundGroup`) раскрывается через `All()`; set
-  посещённых тегов против циклов.
+Поведение копировало ядровой запрет `detour to an empty direct outbound`
+(upstream `fb622ccb`) — guard в `DetourDialer.init()` (`common/dialer/detour.go`),
+флаг владельца через `dialer.Options.IsAmneziaWG`. **Не сработал на устройстве**
+(см. выше) и удалён ревизией 2026-06-16: `common/dialer/{detour,dialer}.go`
+возвращены к upstream, тест `awg_detour_guard_test.go` удалён. Описание оставлено
+как история — в текущем коде этого guard нет.
 
-**`common/dialer/dialer.go`** (`// lx:` upstream): поле `Options.IsAmneziaWG`,
-проброс в `NewDetour`.
-
-**`protocol/wireguard/endpoint.go`** (`// lx:` AWG-шов): в `dialer.Options`
-выставляется `IsAmneziaWG: options.AmneziaWGOptions.IsSet()` — это и есть «источник AWG».
-
-**`common/dialer/awg_detour_guard_test.go`** (новый lx-файл): фейковые
-`Outbound`/`OutboundGroup`/`OutboundManager`; покрыта матрица + init-путь.
-
-### Start-guard (ревизия 2026-06-16)
+### Итерация 2 (lx.9) — Start-guard (актуальное)
 
 **`protocol/wireguard/endpoint.go`** (`// lx:` AWG-шов):
 - поля `Endpoint.awgActive` (= `AmneziaWGOptions.IsSet()`), `detour`,
@@ -99,7 +93,7 @@ Android (нет watchdog/перезапуска) — зависание. Пер�
   (вариант B: `started` остаётся false, dial узла → «WireGuard is not ready yet»,
   device с junk не поднимается → нет зависания). `PostStart` тоже пропускается.
 - `awgDetourChainReachesWireGuard` **останавливается на группе** (selector/urltest)
-  — её рантайм-цель ловит ленивый dialer-guard. Защита от циклов — set посещённых.
+  — её рантайм-цель НЕ ловится (известный непокрытый случай). Защита от циклов — set посещённых.
 
 **`protocol/wireguard/awg_start_guard_test.go`** (новый lx-файл): direct WG,
 транзитив через vless→WG, цепь без WG, селектор-в-середине (пропуск), цикл,
@@ -109,34 +103,33 @@ Android (нет watchdog/перезапуска) — зависание. Пер�
 
 - ✅ `go build ./...` без тегов — ок (для плоского WG `awgActive=false` → guard no-op).
 - ✅ `go build -tags "with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,with_xhttp,with_awg" ./cmd/sing-box` — ок.
-- ✅ `go test ./common/dialer/...` — 8 подтестов (dialer-guard: матрица + init-путь).
 - ✅ `go test ./protocol/wireguard/...` — 6 подтестов
   `TestAwgDetourChainReachesWireGuard` (Start-guard: direct/транзитив/нет-WG/селектор-пропуск/цикл/unknown).
 - ✅ `gofmt -l` изменённых файлов — пусто (урок 006/005 учтён).
-- ✅ `go vet ./common/dialer/... ./protocol/wireguard/...` — чисто.
+- ✅ `go vet ./protocol/wireguard/...` — чисто; `common/dialer` возвращён к upstream.
 - ✅ **Field-verified на lx.9 (Android, 2026-06-15 22:21).** AWG→AWG конфиг
   (`warp gen` detour→`🔥☁️ WireGuard + awg`): ядро **поднимается** (не виснет, как
   lx.8), узел `warp gen` не встаёт с ошибкой `amneziawg endpoint will not start:
   its detour chain reaches wireguard-based endpoint …`, остальные узлы работают.
   Смена подхода подтверждена на устройстве.
-- Текст ошибки переформулирован (ревизия 2026-06-16) по фидбэку: убрано
-  «hangs the kernel on Android» из user-сообщения → «amneziawg over wireguard is
-  not supported» (запрет по архитектуре, а не привязка к платформе). Касается обоих
-  guard'ов (Start + dialer); технический «почему» оставлен в комментариях кода.
+- Текст ошибки переформулирован (ревизия 2026-06-16): убрано «hangs the kernel on
+  Android» из user-сообщения → «amneziawg over wireguard is not supported» (запрет
+  по архитектуре, не платформа); технический «почему» оставлен в комментариях кода.
 
 ## Зона касания upstream (для ребейза)
 
-- `common/dialer/detour.go`, `common/dialer/dialer.go`,
-  `protocol/wireguard/endpoint.go` — upstream-файлы, правки **только** в `// lx:`
-  блоках. Конфликт на ребейзе — лишь если upstream перепишет `DetourDialer.init`,
-  сигнатуру `NewDetour`, `dialer.Options` или конструктор endpoint.
-- Сигнатура `NewDetour` расширена 4-м параметром (`ownerIsAmneziaWG`) —
-  единственный внешний вызов (в `dialer.go`) обновлён; других в дереве нет.
-- `awg_detour_guard_test.go` — lx-собственный, конфликтов не даёт.
+- `protocol/wireguard/endpoint.go` — upstream-файл, правки **только** в `// lx:`
+  блоках (Start-guard). Конфликт на ребейзе — лишь если upstream перепишет
+  `Endpoint.Start` или его структуру.
+- `common/dialer/detour.go`, `common/dialer/dialer.go` — ревизией 2026-06-16
+  **возвращены к upstream** (lx.8-guard откачен) → конфликтов не добавляют.
+- `awg_start_guard_test.go` — lx-собственный, конфликтов не даёт.
 
 ## Вне скоупа
 
+- **Селектор/urltest по середине** detour-цепи — известный непокрытый случай
+  (SPEC §5): Start-guard на группе останавливается, ленивый guard удалён. Ищется
+  надёжный хук на переключении селектора.
 - **Лечение первопричины** в `submodules/wireguard-go` (таймауты/неблокирующая
-  отправка junk; проверка `jmin<=jmax` в device/uapi.go — отдельный найденный
-  баг: при `jmin>jmax` `rand.Int` паникует) — отдельная будущая задача.
-- Цепочки AWG-over-WireGuard, построенные через route-rule action, а не `detour`.
+  отправка junk; смежный баг `jmin>jmax` закрыт задачей 008) — отдельная задача.
+- Цепочки AWG-over-WireGuard через route-rule action, а не `detour`.
