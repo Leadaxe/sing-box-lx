@@ -83,12 +83,6 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 			return !M.ParseAddr(it.Address).IsValid()
 		}),
 		ResolverOnDetour: true,
-		// lx:begin awg
-		// When this endpoint itself runs AmneziaWG, tell the detour dialer so it
-		// can reject a detour into another AmneziaWG endpoint (nested AWG hangs the
-		// kernel on Android). Plain-WG → AWG and AWG → non-AWG stay allowed.
-		IsAmneziaWG: options.AmneziaWGOptions.IsSet(),
-		// lx:end awg
 	})
 	if err != nil {
 		return nil, err
