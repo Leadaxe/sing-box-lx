@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -43,6 +44,20 @@ type Endpoint struct {
 	localAddresses []netip.Prefix
 	endpoint       *wireguard.Endpoint
 	started        atomic.Bool
+	// lx:begin awg
+	// awgActive marks this endpoint as running AmneziaWG (AmneziaWGOptions.IsSet());
+	// detour is its configured upstream tag. Start uses them to refuse to bring up
+	// an AmneziaWG-over-WireGuard chain, which hangs the kernel on Android — see
+	// awgDetourChainReachesWireGuard. The ledger lives here (not just in the dialer
+	// guard) because the hang happens synchronously in Start, before any dial.
+	awgActive bool
+	detour    string
+	// awgChainBlocked is set by Start when the AmneziaWG-over-WireGuard guard
+	// fires: the device is left unstarted (started stays false) so no junk
+	// handshake runs and the kernel cannot hang, while the rest of the instance
+	// comes up. PostStart then skips this endpoint too.
+	awgChainBlocked bool
+	// lx:end awg
 }
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Endpoint, error) {
@@ -53,6 +68,10 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		dnsRouter:      service.FromContext[adapter.DNSRouter](ctx),
 		logger:         logger,
 		localAddresses: options.Address,
+		// lx:begin awg
+		awgActive: options.AmneziaWGOptions.IsSet(),
+		detour:    options.Detour,
+		// lx:end awg
 	}
 	if options.Detour != "" && options.ListenPort != 0 {
 		return nil, E.New("`listen_port` is conflict with `detour`")
@@ -131,6 +150,33 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 }
 
 func (w *Endpoint) Start(stage adapter.StartStage) error {
+	// lx:begin awg
+	// Refuse to bring up an AmneziaWG endpoint whose detour chain reaches a
+	// WireGuard-based endpoint: encapsulating AWG (junk handshake) inside a
+	// WireGuard tunnel hangs the kernel on Android. The hang happens here, in the
+	// synchronous Start path (peer-domain resolution over the detour, then the
+	// device's junk handshake) — before any dial — so the lazy DetourDialer guard
+	// never gets a chance to fire. We must catch it at Start instead.
+	//
+	// Behaviour is "variant B": do NOT return an error (that would abort the whole
+	// instance start). Instead log, skip device startup, and leave started=false
+	// so the rest of the config comes up and every dial through this endpoint
+	// fails cleanly with "WireGuard is not ready yet". A selector/urltest in the
+	// middle hides the real target at start time, so the chain walk stops at a
+	// group and that case is left to the lazy DetourDialer guard at dial time.
+	if stage == adapter.StartStateStart && w.awgActive && w.detour != "" {
+		if outboundManager := service.FromContext[adapter.OutboundManager](w.ctx); outboundManager != nil {
+			if blockedBy := awgDetourChainReachesWireGuard(outboundManager, w.detour, make(map[string]bool)); blockedBy != "" {
+				w.awgChainBlocked = true
+				w.logger.Error("amneziawg endpoint will not start: its detour chain reaches wireguard-based endpoint ", strconv.Quote(blockedBy), " (detour: ", strconv.Quote(w.detour), "); AmneziaWG inside a WireGuard tunnel hangs the kernel on Android. Use a non-wireguard detour (e.g. vless). Other outbounds are unaffected.")
+				return nil
+			}
+		}
+	}
+	if w.awgChainBlocked {
+		return nil
+	}
+	// lx:end awg
 	switch stage {
 	case adapter.StartStateStart:
 		return w.endpoint.Start(false)
@@ -143,6 +189,41 @@ func (w *Endpoint) Start(stage adapter.StartStage) error {
 	}
 	return nil
 }
+
+// lx:begin awg
+// awgDetourChainReachesWireGuard walks the transitive detour chain starting at
+// tag and returns the tag of the first WireGuard-based outbound it reaches
+// (type "wireguard", covering plain WireGuard and AmneziaWG), or "" if none. It
+// follows each outbound's detour dependency; it deliberately does NOT expand
+// selector/urltest groups, whose chosen member is only known at runtime — that
+// case is handled lazily by the DetourDialer guard. visited guards against cyclic
+// detour configs. All outbounds are registered before any Start, so every tag in
+// the chain is resolvable here even though some may not have started yet.
+func awgDetourChainReachesWireGuard(outboundManager adapter.OutboundManager, tag string, visited map[string]bool) string {
+	if tag == "" || visited[tag] {
+		return ""
+	}
+	visited[tag] = true
+	outbound, loaded := outboundManager.Outbound(tag)
+	if !loaded {
+		return ""
+	}
+	if outbound.Type() == C.TypeWireGuard {
+		return tag
+	}
+	if _, isGroup := outbound.(adapter.OutboundGroup); isGroup {
+		// Runtime-resolved target — leave it to the lazy DetourDialer guard.
+		return ""
+	}
+	for _, dependency := range outbound.Dependencies() {
+		if blockedBy := awgDetourChainReachesWireGuard(outboundManager, dependency, visited); blockedBy != "" {
+			return blockedBy
+		}
+	}
+	return ""
+}
+
+// lx:end awg
 
 func (w *Endpoint) Close() error {
 	w.started.Store(false)
