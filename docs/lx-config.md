@@ -164,7 +164,7 @@ from the open-source WireSock reference, `amneziawg-proxy/src/transform.rs`):
 >   `ip=quic` and `ip=stun` produce a hostname-less decoy regardless of `id`.
 > - The motivating use case is easing connections to **Cloudflare WARP**.
 
-**📖 [Detailed examples →](../SPECS/009-F-O-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md)** —
+**📖 [Detailed examples →](../SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md)** —
 full per-profile configs (incl. a Cloudflare WARP one), the generated CPS for each,
 a "which profile to pick" guide and a troubleshooting table of the exact validation
 errors.
