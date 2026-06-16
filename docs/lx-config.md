@@ -63,7 +63,7 @@ XHTTP (Xray "splithttp"/"xhttp") is a v2ray transport that tunnels the proxy ove
 
 AWG is WireGuard + DPI-evasion obfuscation. It is configured as a normal sing-box **`wireguard` endpoint** with extra promoted fields. With `with_awg` these are pushed to the device; a config without any AWG field is a plain WireGuard endpoint (byte-identical to upstream behavior).
 
-AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server must run AmneziaWG with **matching** parameters (the I-packets are configuration, not negotiated).
+AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server must run AmneziaWG with **matching** parameters (the I-packets are configuration, not negotiated). For a friendlier way to set the first decoy, see the WireSock-style [`id`/`ip`/`ib`](#masquerade-id--ip--ib-wiresock-style-sugar-over-i1) sugar below, which generates `i1` for you.
 
 ### Fields (on the `wireguard` endpoint, alongside `private_key`/`peers`/…)
 
@@ -111,6 +111,63 @@ AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server 
   ]
 }
 ```
+
+### Masquerade `id` / `ip` / `ib` (WireSock-style sugar over `i1`)
+
+Hand-writing an `i1` CPS string is fiddly. As a friendlier alternative — the same
+naming [WireSock Secure Connect](https://www.wiresock.net/) uses — you can declare
+a masquerade by **domain / protocol / browser** and the device generates the `i1`
+decoy for you:
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `id` | string | masquerade **domain** (a host that looks normal for your region, e.g. `www.google.com`). Strict LDH hostname (letters/digits/`-`/`_`, labels ≤63, total ≤253). It is embedded into the decoy **only for `ip=dns` (as the QNAME) and `ip=sip` (as the host)** — for `ip=quic`/`ip=stun` the packet has nowhere to carry a hostname, so `id` is ignored there. **Required for `dns`/`sip`, optional for `quic`/`stun`.** Whenever set, it is LDH-validated (invalid/injection-y values are **rejected**) |
+| `ip` | string | masquerade **protocol**: `quic` \| `dns` \| `stun` \| `sip` |
+| `ib` | string | masquerade **browser**: `chrome` \| `firefox` \| `curl`. Only meaningful with `ip=quic`, and even then the effect is **minimal** (see note) |
+
+The decoy is sent before the handshake, exactly like a hand-written `i1`. Each
+profile produces a packet shaped like a real response of that protocol (ported
+from the open-source WireSock reference, `amneziawg-proxy/src/transform.rs`):
+
+- **`quic`** — a QUIC **1-RTT short header** + entropy (no SNI/ClientHello; this is
+  WireSock's actual choice, not a TLS-fingerprinted Initial).
+- **`dns`** — an EDNS **OPT response** whose QNAME is your `id`, carrying random
+  cover bytes as an opaque unknown EDNS option.
+- **`stun`** — a STUN **Binding Success Response** (magic cookie + XOR-MAPPED-ADDRESS
+  + SOFTWARE).
+- **`sip`** — a SIP **`200 OK` response** with `Via`/`From`/`To`/`Call-ID`/`CSeq`
+  headers using your `id` as the host.
+
+```jsonc
+{
+  "type": "wireguard", "tag": "awg-out", "mtu": 1280,
+  "address": ["10.0.0.2/32"], "private_key": "<client-private-key-base64>",
+  "jc": 4, "jmin": 40, "jmax": 70,
+  "id": "www.google.com", "ip": "quic", "ib": "chrome",
+  "peers": [ { "address": "engage.cloudflareclient.com", "port": 2408,
+    "public_key": "<server-public-key-base64>", "allowed_ips": ["0.0.0.0/0", "::/0"] } ]
+}
+```
+
+> **Notes & honest limitations.**
+> - `id`/`ip`/`ib` are **mutually exclusive** with an explicit `i1` — set one or the
+>   other, not both (a config with both is rejected).
+> - This is a **decoy** sent before the handshake, not a full protocol session. The
+>   QUIC short header carries **no SNI**, so unlike a QUIC Initial it does not reveal
+>   the `id` to a censor — and conversely cannot rely on the censor "seeing an
+>   allowed SNI". We do **not** fake a TLS/JA3 fingerprint (the short header has no
+>   ClientHello). `ib` only flips a couple of cosmetic QUIC bits (spin/key-phase),
+>   which are per-packet random in real QUIC anyway — it is accepted for WireSock
+>   config compatibility, not because it produces a distinct fingerprint.
+> - **If you need the censor to actually see `id` on the wire, use `ip=dns` or
+>   `ip=sip`** — those carry the domain in clear text (DNS QNAME / SIP host).
+>   `ip=quic` and `ip=stun` produce a hostname-less decoy regardless of `id`.
+> - The motivating use case is easing connections to **Cloudflare WARP**.
+
+**📖 [Detailed examples →](../SPECS/009-F-O-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md)** —
+full per-profile configs (incl. a Cloudflare WARP one), the generated CPS for each,
+a "which profile to pick" guide and a troubleshooting table of the exact validation
+errors.
 
 ### MTU
 

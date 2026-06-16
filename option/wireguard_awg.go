@@ -128,6 +128,11 @@ func normalizeMagicHeader(spec string) (MagicHeader, error) {
 //     are case-sensitive strings (UPPERCASE keywords like <b 0x...>, <c>, <t>,
 //     <r N>) and the order matters; I1 is typically a real protocol snapshot
 //     (e.g. a QUIC Initial). They map 1:1 to the amneziawg-go i1..i5 keys.
+//   - Id/Ip/Ib: WireSock-style declarative masquerade sugar over I1. Instead of
+//     hand-writing an I1 CPS string, the user names a masquerade domain (Id),
+//     protocol (Ip: quic|dns|stun|sip) and browser (Ib), and the device layer
+//     (transport/wireguard/masque_awg.go) generates the I1 CPS string for them.
+//     They are mutually exclusive with an explicit I1. See SPECS/009-*.
 type AmneziaWGOptions struct {
 	Jc   uint32      `json:"jc,omitempty"`
 	Jmin uint32      `json:"jmin,omitempty"`
@@ -145,6 +150,9 @@ type AmneziaWGOptions struct {
 	I3   string      `json:"i3,omitempty"`
 	I4   string      `json:"i4,omitempty"`
 	I5   string      `json:"i5,omitempty"`
+	Id   string      `json:"id,omitempty"` // masquerade domain; required for ip=dns/sip, optional for quic/stun
+	Ip   string      `json:"ip,omitempty"` // masquerade protocol: quic | dns | stun | sip
+	Ib   string      `json:"ib,omitempty"` // masquerade browser: chrome | firefox | curl (limited effect, see masque_awg.go)
 }
 
 // IsSet reports whether any AmneziaWG obfuscation parameter has been
