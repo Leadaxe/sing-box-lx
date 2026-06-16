@@ -40,8 +40,9 @@
 |---|------|---------|--------|
 | **XHTTP** | клиентский транспорт | Xray-совместимый «splithttp» (режимы `auto`/`packet-up`/`stream-up`/`stream-one`) поверх Reality/TLS/h2c | ✅ **проверен живым Xray (3x-ui) сервером** (packet-up/auto): handshake + DNS + HTTPS + скачивание. `stream-one` — известный баг framing |
 | **AmneziaWG 2.0** | клиентский endpoint | обфускация WireGuard: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` + **2.0**: `I1–I5` (CPS — кастомные пакеты-приманки) | ✅ собирается, проходит `check`; зависимость **активирована** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet-база + обфускация); **проверено живым AWG2-сервером**: handshake + keepalive + трафик наружу |
+| **Маскировка `id/ip/ib`** | сахар над AWG | WireSock-стиль: декларативная маскировка поверх `I1` — задаёшь домен (`id`) + протокол (`ip`: `quic`/`dns`/`stun`/`sip`) + браузер (`ib`), а ядро само собирает `I1`-приманку (структура портирована из open-source WireSock) | ✅ собирается, проходит `check`; все профили принимаются реальным CPS-движком; **проверено вживую** (туннель + трафик на сборке 009, упрощает Cloudflare WARP) |
 
-Подробные отчёты — в [`SPECS/002-…`](SPECS/002-F-C-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md) и [`SPECS/003-…`](SPECS/003-F-C-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs/lx-config.md](docs/lx-config.md)**.
+Подробные отчёты — в [`SPECS/002-…`](SPECS/002-F-C-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/003-…`](SPECS/003-F-C-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) и [`SPECS/009-…`](SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs/lx-config.md](docs/lx-config.md)**.
 
 > **Не поддерживается (слой Reality, отложено):** post-quantum Reality (`pqv` / ML-DSA-65) и `spiderX` из Xray. Это Xray-специфичные фичи Reality, которых нет в sing-box, а Reality — upstream-слой TLS, который мы держим нетронутым (это не одна из наших фич). Классический X25519 Reality работает; сервер, который **требует** post-quantum Reality, не подключится. Это ограничение sing-box — правильнее решать в upstream (получим на ребейзе).
 
@@ -111,6 +112,24 @@ with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_nai
 ```
 
 > `I1–I5` — это конфиг (не согласуется по сети), значения должны **совпадать на клиенте и сервере**, регистрозависимы.
+
+**Сахар-маскировка (`id`/`ip`/`ib`).** Вместо ручного `i1` задаёшь домен, протокол и
+браузер — ядро само собирает `I1`-приманку (стиль WireSock). Удобно для упрощения
+коннекта к **Cloudflare WARP**:
+
+```jsonc
+{
+  "type": "wireguard",
+  // … стандартные поля wireguard …
+  "ip": "quic", "ib": "chrome"          // quic/stun: id необязателен (домен не идёт на провод)
+  // или: "ip": "dns",  "id": "www.google.com"   // dns/sip: id обязателен, идёт как QNAME/host
+}
+```
+
+`ip` ∈ `quic|dns|stun|sip`; `id` обязателен только для `dns`/`sip` (там он идёт на
+провод) и опционален для `quic`/`stun`; `ib` ∈ `chrome|firefox|curl` (только quic,
+эффект минимальный — без JA3-fingerprint). Взаимоисключается с явным `i1`. См.
+[docs/lx-config.md](docs/lx-config.md) и [примеры SPECS/009](SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ---
 
