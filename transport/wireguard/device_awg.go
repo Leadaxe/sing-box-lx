@@ -64,6 +64,19 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 		writeStr(key, spec)
 		return nil
 	}
+	// WireSock-style id/ip/ib masquerade is sugar over I1: it generates the I1
+	// CPS string. masqueI1 returns "" when no masquerade is set, and errors on a
+	// conflict with an explicit I1 or on invalid id/ip/ib. When set, its output
+	// is used as the i1 value below.
+	i1 := o.I1
+	masque, err := masqueI1(o)
+	if err != nil {
+		return "", err
+	}
+	if masque != "" {
+		i1 = masque
+	}
+
 	writeUint("jc", o.Jc)
 	writeUint("jmin", o.Jmin)
 	writeUint("jmax", o.Jmax)
@@ -79,7 +92,7 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 			return "", err
 		}
 	}
-	writeStr("i1", o.I1)
+	writeStr("i1", i1)
 	writeStr("i2", o.I2)
 	writeStr("i3", o.I3)
 	writeStr("i4", o.I4)
