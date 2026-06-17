@@ -40,7 +40,7 @@
 |---|------|---------|--------|
 | **XHTTP** | клиентский транспорт | Xray-совместимый «splithttp» (режимы `auto`/`packet-up`/`stream-up`/`stream-one`) поверх Reality/TLS/h2c | ✅ **проверен живым Xray (3x-ui) сервером** (packet-up/auto): handshake + DNS + HTTPS + скачивание. `stream-one` — известный баг framing |
 | **AmneziaWG 2.0** | клиентский endpoint | обфускация WireGuard: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` + **2.0**: `I1–I5` (CPS — кастомные пакеты-приманки) | ✅ собирается, проходит `check`; зависимость **активирована** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet-база + обфускация); **проверено живым AWG2-сервером**: handshake + keepalive + трафик наружу |
-| **Маскировка `id/ip/ib`** | сахар над AWG | WireSock-стиль: декларативная маскировка поверх `I1` — задаёшь домен (`id`) + протокол (`ip`: `quic`/`dns`/`stun`/`sip`) + браузер (`ib`), а ядро само собирает `I1`-приманку (структура портирована из open-source WireSock) | ✅ собирается, проходит `check`; все профили принимаются реальным CPS-движком; **проверено вживую** (туннель + трафик на сборке 009, упрощает Cloudflare WARP) |
+| **Маскировка `id/ip/ib`** | сахар над AWG | WireSock-стиль: декларативная маскировка поверх `I1` — домен (`id`) + протокол (`ip`: `quic`/`dns`/`stun`/`sip`) + браузер (`ib`), ядро строит клиент-инициированную `I1`-приманку: `quic` = out-of-order фрагментированный Initial (i1+i2), `dns`/`stun`/`sip` = query/Binding-Request/INVITE | ✅ **`ip=quic` device-проверен на реальном LTE/WARP DPI** (~330 мс, упрощает Cloudflare WARP); `dns`/`stun`/`sip` собираются и проходят `check`, но режутся как класс протокола к WARP-edge — для других провайдеров |
 
 Подробные отчёты — в [`SPECS/002-…`](SPECS/002-F-C-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/003-…`](SPECS/003-F-C-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) и [`SPECS/009-…`](SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs/lx-config.md](docs/lx-config.md)**.
 
@@ -126,11 +126,18 @@ with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_nai
 }
 ```
 
-`ip` ∈ `quic|dns|stun|sip`; `id` обязателен для `quic`/`dns`/`sip` (там он идёт на
-провод — для `quic` как SNI в ClientHello) и опционален только для `stun`; `ib` ∈
-`chrome|firefox|curl` (только quic, эффект минимальный — без JA3-fingerprint). Для
-`quic` ядро генерит фрагментированный QUIC Initial (RFC 9001) с перемешанным порядком
-CRYPTO-фреймов, пробивающий line-rate DPI. Взаимоисключается с явным `i1`. См.
+`ip` ∈ `quic|dns|stun|sip`; `id` обязателен для `quic`/`dns` (идёт на провод — SNI / QNAME)
+и опционален для `sip` (без него генерится псевдо-host) и `stun`; `ib` ∈ `chrome|firefox|curl`
+(только quic, эффект минимальный — без JA3-fingerprint). Взаимоисключается с явным `i1`.
+
+Для **`quic`** ядро генерит out-of-order фрагментированный QUIC Initial (RFC 9001) — реальный
+ClientHello, нарезанный на CRYPTO-фреймы в перемешанном порядке, так что line-rate DPI парсит
+мусор и пропускает. Раскладка рандомизируется на каждый вызов (нет межюзерной сигнатуры), и
+`ip=quic` теперь шлёт **два** независимых Initial (i1+i2) — поток читается как развивающаяся
+QUIC-сессия. Это **единственный профиль, device-проверенный на реальном LTE/WARP DPI** (~330 мс).
+`dns`/`stun`/`sip` реализованы как корректные клиент-инициированные запросы, но режутся как класс
+протокола к WARP-edge (raw DNS/STUN/SIP к дата-центровому IP сам по себе аномален) — сохранены
+для других провайдеров, чей DPI проверяет лишь корректность пакета. См.
 [docs/lx-config.md](docs/lx-config.md) и [примеры SPECS/009](SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ---
