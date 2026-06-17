@@ -3,6 +3,7 @@
 package wireguard
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/sagernet/sing-box/option"
@@ -96,4 +97,70 @@ func TestAwgIpcLinesValidJunkRange(t *testing.T) {
 	require.NoError(t, err)
 	_, err = awgIpcLines(option.AmneziaWGOptions{H1: "1"}) // junk off, only a header
 	require.NoError(t, err)
+}
+
+// ip=quic fills BOTH i1 and i2 with independent fragmented Initials (a
+// developing-session decoy, device-verified safe for the WARP handshake). Each
+// must be a valid Initial carrying the SNI; the two must differ (fresh DCID).
+func TestAwgIpcLinesQUICFillsI1AndI2(t *testing.T) {
+	t.Parallel()
+	const sni = "www.google.com"
+	lines, err := awgIpcLines(option.AmneziaWGOptions{Id: sni, Ip: "quic", Ib: "chrome"})
+	require.NoError(t, err)
+
+	i1 := ipcValue(t, lines, "i1")
+	i2 := ipcValue(t, lines, "i2")
+	require.NotEmpty(t, i1, "i1 present")
+	require.NotEmpty(t, i2, "i2 present (second Initial)")
+	require.NotEqual(t, i1, i2, "i1 and i2 are independent (different DCID/random)")
+
+	// Each renders to a valid fragmented Initial carrying the SNI.
+	for name, spec := range map[string]string{"i1": i1, "i2": i2} {
+		pkt := obfuscateCPS(t, spec)
+		require.Equal(t, 1250, len(pkt), "%s is a 1250B Initial", name)
+		d := decryptInitial(t, pkt)
+		require.Equal(t, sni, extractSNI(t, d.clientHello), "%s carries the SNI", name)
+		require.NotEqual(t, uint64(0), d.cryptoFrames[0].offset, "%s first CRYPTO offset != 0 (I1)", name)
+	}
+	// Independent DCIDs (two QUIC sessions starting, not a DCID-reuse continuation).
+	require.NotEqual(t,
+		decryptInitial(t, obfuscateCPS(t, i1)).dcid,
+		decryptInitial(t, obfuscateCPS(t, i2)).dcid,
+		"i1 and i2 use independent DCIDs")
+}
+
+// Non-quic profiles are single-packet: they fill i1 only, leaving i2 empty.
+func TestAwgIpcLinesNonQUICNoI2(t *testing.T) {
+	t.Parallel()
+	for _, o := range []option.AmneziaWGOptions{
+		{Id: "a.com", Ip: "dns"},
+		{Ip: "stun"},
+		{Id: "a.com", Ip: "sip"},
+	} {
+		lines, err := awgIpcLines(o)
+		require.NoError(t, err)
+		require.NotEmpty(t, ipcValue(t, lines, "i1"), "i1 present for ip=%s", o.Ip)
+		require.Empty(t, ipcValue(t, lines, "i2"), "i2 empty for ip=%s", o.Ip)
+	}
+}
+
+// An explicit i2 alongside an ip=quic masquerade is a conflict (the sugar fills
+// i2), mirroring the existing i1 conflict guard.
+func TestAwgIpcLinesQUICExplicitI2Conflict(t *testing.T) {
+	t.Parallel()
+	_, err := awgIpcLines(option.AmneziaWGOptions{Id: "a.com", Ip: "quic", I2: "<b 0x0844>"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "explicit i2 conflicts")
+}
+
+// ipcValue extracts the value of a "\nkey=value" line from awgIpcLines output,
+// or "" if absent.
+func ipcValue(t *testing.T, lines, key string) string {
+	t.Helper()
+	for _, line := range strings.Split(lines, "\n") {
+		if v, ok := strings.CutPrefix(line, key+"="); ok {
+			return v
+		}
+	}
+	return ""
 }
