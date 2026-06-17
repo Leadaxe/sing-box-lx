@@ -53,11 +53,11 @@ S1–S4 padding не используется: он невозможен про�
 
 ## 3. Профили
 
-`sip` портирован из open-source WireSock-референса
-([`github.com/wiresock/amneziawg-install`](https://github.com/wiresock/amneziawg-install),
-Rust/MIT, `amneziawg-proxy/src/transform.rs`). `quic` — собственный фрагментированный QUIC
-Initial (DPI-bypass, §3.1). `stun` — WebRTC Binding **Request** (§3.2). `dns` — клиентский
-DNS query (§3.3). LDH-валидатор домена совпадает с их `quic_handshake.rs::is_valid_sni_hostname`.
+Все профили — собственные клиент-инициированные генераторы: `quic` — фрагментированный QUIC
+Initial (§3.1), `stun` — WebRTC Binding **Request** (§3.2), `dns` — клиентский DNS query (§3.3),
+`sip` — INVITE **request** с SDP (§3.2). SIP-текст исходно вдохновлён WireSock-референсом
+([`amneziawg-install`](https://github.com/wiresock/amneziawg-install), MIT), но переведён из
+response в request. LDH-валидатор домена совпадает с их `quic_handshake.rs::is_valid_sni_hostname`.
 
 > **Device-результат (тест-телефон, LTE с активным DPI):** проходит **только `quic`**
 > (~340 мс). `stun` (Binding Request и полный WebRTC-вариант с MESSAGE-INTEGRITY) и `dns`
@@ -126,8 +126,13 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
   MESSAGE-INTEGRITY структурно валиден, но по произвольному ICE-ключу (реального пароля у
   decoy нет — on-path DPI HMAC всё равно не проверит). Свежая энтропия на вызов; hostname не
   несёт. Генератор — `stun_request_awg.go`.
-- **sip** — `SIP/2.0 200 OK` response + Via(branch)/From(tag)/To/Call-ID/CSeq, CRLF; `Id`
-  как host в URI. (Остаётся response-формой; на тестовом DPI отдельно не проверялся.)
+- **sip** — INVITE **request** с SDP-офером. Request-line `INVITE sip:<user>@<host> SIP/2.0`,
+  Via(branch=z9hG4bK)/Max-Forwards:70/From(tag)/To(без tag)/Call-ID/CSeq:N INVITE/Contact,
+  Content-Type: application/sdp, Content-Length (точная), тело SDP (`v=0`, `m=audio`, rtpmap).
+  Request, а не response: клиент первым шлёт INVITE. Имена пользователей и (если `Id` пуст)
+  host — произносимые псевдо-строки (`PseudoGen`, запечены в `<b>`, уникальны между юзерами);
+  branch/tag/Call-ID/CSeq/SDP-id — per-packet `<rc>`/`<rd>` фикс-ширины (Content-Length
+  стабилен). `Id` опционален: задан → host, пуст → `pgHost()`. Генератор — `sip_invite_awg.go`.
 
 ---
 
@@ -144,8 +149,8 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
 
 - **Взаимоисключение с `I1`** — задан и `i1`, и `id/ip/ib` → ошибка.
 - **`Ip ∈ {quic,dns,stun,sip}`** (lower); пусто при заданном `Id`/`Ib` → ошибка.
-- **`Id` обязателен для `quic`/`dns`/`sip`** (идёт на провод как SNI / QNAME / SIP-host);
-  опционален **только для `stun`**.
+- **`Id` обязателен для `quic`/`dns`** (идёт на провод как SNI / QNAME); **опционален для
+  `sip`** (задан → SIP host, пуст → генерируется псевдо-host) и **`stun`** (hostname-less).
 - **Строгий LDH-чек** применяется **всегда, когда `Id` задан** (метки alnum+hyphen+`_`,
   без edge-hyphen, ≤63, всего ≤253, трейлинг-дот ок). Это security-граница: домен идёт в
   SIP-текст / DNS QNAME / TLS SNI — control-байты (`\r\n\0\t`) и SIP/URI-метасимволы
@@ -159,11 +164,13 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
 | Файл | Зона | Что |
 |------|------|-----|
 | `option/wireguard_awg.go` | lx | поля `Id/Ip/Ib` |
-| `transport/wireguard/masque_awg.go` | lx, `with_awg` | диспетчер `masqueI1` + валидация + DNS/SIP + `cpsBuilder` |
+| `transport/wireguard/masque_awg.go` | lx, `with_awg` | диспетчер `masqueI1` + валидация + DNS query + `cpsBuilder` |
 | `transport/wireguard/quic_initial_awg.go` | lx, `with_awg` | QUIC Initial: varint, рандомизированный frame-план (I1–I4) + `quicGenParams`, сборка RFC 9001 |
 | `transport/wireguard/quic_clienthello_awg.go` | lx, `with_awg` | реалистичный TLS 1.3 ClientHello (SNI=`Id`) |
 | `transport/wireguard/quic_crypto_awg.go` | lx, `with_awg` | HKDF / AES-128-GCM / header protection |
 | `transport/wireguard/stun_request_awg.go` | lx, `with_awg` | STUN WebRTC Binding Request (FINGERPRINT + MESSAGE-INTEGRITY) |
+| `transport/wireguard/sip_invite_awg.go` | lx, `with_awg` | SIP INVITE request + SDP-офер |
+| `transport/wireguard/pseudo_gen_awg.go` | lx, `with_awg` | произносимые псевдо-имена/host/IP (для SIP) |
 | `transport/wireguard/device_awg.go` | lx, `with_awg` | вызов `masqueI1` в `awgIpcLines` |
 | `transport/wireguard/masque_awg_test.go`, `quic_initial_awg_test.go` | lx, `with_awg` | тесты |
 
@@ -178,8 +185,9 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
   PING + PADDING, первый CRYPTO `offset≠0` (I1), CRYPTO реассемблируются в валидный
   ClientHello с SNI=`Id` (I4); DNS — валидный EDNS-OPT **query** (QR=0, QNAME=`Id`, QTYPE
   HTTPS, опция `0xFDE9`, без хвостов); STUN — Binding **Request** (cookie, атрибуты тайлят сообщение, FINGERPRINT
-  CRC-32 сходится, USERNAME + MESSAGE-INTEGRITY присутствуют); SIP — валидный response
-  (status-line + обязательные заголовки + CRLF).
+  CRC-32 сходится, USERNAME + MESSAGE-INTEGRITY присутствуют); SIP — валидный INVITE
+  **request** (request-line `INVITE ... SIP/2.0`, Via/Max-Forwards/From/To-без-tag/Call-ID/
+  CSeq/Contact, SDP-тело, Content-Length точно покрывает тело; имена не захардкожены).
 - **Рандомизация QUIC:** раскладка фрейм-плана и точки разреза свежие на каждый вызов;
   инварианты I1–I4 держатся на каждом сэмпле (стресс-тест), две генерации → разные offset'ы
   фрагментов (нет фикс-сигнатуры). Robustness-ручки (`quicGenParams`: 4–12 фрагментов,

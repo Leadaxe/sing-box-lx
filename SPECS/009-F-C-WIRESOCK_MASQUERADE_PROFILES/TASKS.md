@@ -13,7 +13,7 @@
 - [x] `normalizeMasqueBrowser` (chrome|firefox|curl; только quic)
 - [x] DNS → EDNS OPT query (`masqueDNSQueryCPS`, QR=0, QTYPE HTTPS, QNAME из `Id`)
 - [x] STUN → WebRTC Binding Request (`stun_request_awg.go`, FINGERPRINT + MESSAGE-INTEGRITY)
-- [x] SIP → response-текст (порт `apply_sip_padding`, `Id` как host)
+- [x] SIP → INVITE request + SDP (`sip_invite_awg.go`, PseudoGen-имена, `Id`/псевдо-host)
 - [x] `transport/wireguard/quic_initial_awg.go`: varint, рандомизированный frame-план (I1–I4) + `quicGenParams`, сборка Initial
 - [x] `transport/wireguard/quic_clienthello_awg.go`: реалистичный TLS 1.3 ClientHello (SNI=`Id`)
 - [x] `transport/wireguard/quic_crypto_awg.go`: HKDF / AES-128-GCM / header protection
@@ -28,8 +28,8 @@
 - [x] длинный валидный домен (>77 симв.) генерируется без ошибки (flex-PADDING)
 - [x] DNS: парсится как EDNS OPT query (QR=0, QTYPE HTTPS), QNAME=`Id`, RDLENGTH/OPTION-LENGTH до конца
 - [x] STUN: парсится как Binding Request (0x0001), FINGERPRINT CRC-32 сходится, USERNAME+MESSAGE-INTEGRITY есть
-- [x] SIP: status-line + обязательные заголовки + CRLF + Content-Length:0, без тела
-- [x] валидация: конфликт с I1, неизвестный ip/ib, пустой id (quic/dns/sip), ib без quic — ошибки
+- [x] SIP: request-line INVITE, обязательные заголовки + To без tag, SDP-тело, Content-Length точна, имена не захардкожены; пустой id → псевдо-host
+- [x] валидация: конфликт с I1, неизвестный ip/ib, пустой id (quic/dns), ib без quic — ошибки
 - [x] инъекция домена (CRLF/метасимволы) — отвергается
 - [x] `masque_cps_test.go`: верный реплей CPS-парсера (зеркало `newObfChain`)
 - [x] cross-check: сгенерированный QUIC Initial парсится боевым снифером `common/sniff/quic.go`
