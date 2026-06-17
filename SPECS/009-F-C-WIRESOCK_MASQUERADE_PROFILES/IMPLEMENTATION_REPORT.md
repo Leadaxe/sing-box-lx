@@ -36,11 +36,12 @@ HKDF-Expand-Label / QUIC v1 salt / AES-128-GCM-XOR-nonce AEAD скопирова
 `quicSaltV1`); `deriveInitialKeys` — `quic_initial_awg.go:269`; `encryptInitial` (шифрование +
 header protection) — `quic_initial_awg.go:287`.
 
-### Р4. `Id` обязателен для quic
-`Id` становится SNI в ClientHello → обязателен для `quic`/`dns`/`sip`, опционален только для
-`stun`. Пустой `Id` при `ip=quic` отвергается на `sing-box check`.
-Код: guard `masque_awg.go:97`; LDH-валидатор `validateMasqueDomain` (security-граница, зеркало
-`is_valid_sni_hostname`) — `masque_awg.go:132`.
+### Р4. `Id` обязателен для quic/dns
+`Id` идёт на провод как SNI (quic) / QNAME (dns) → обязателен для `quic`/`dns`; пустой при них
+отвергается на `sing-box check`. Опционален для `sip` (пуст → псевдо-host) и `stun`
+(hostname-less). Заданный `Id` всегда LDH-валидируется.
+Код: guard `masque_awg.go` (quic/dns ветки); LDH-валидатор `validateMasqueDomain`
+(security-граница, зеркало `is_valid_sni_hostname`).
 
 ### Р5. flex-PADDING — payload пинится к length-полю при любой длине SNI
 Один PADDING-run в frame-плане помечен `padFlex` и вычисляется как остаток до payload-таргета
@@ -59,10 +60,17 @@ supported_versions, GREASE `0x0a0a` (RFC 8701 — `quic_clienthello_awg.go:117`)
 валидируется (`normalizeMasqueBrowser` — `masque_awg.go:183`), но на байты пакета не влияет.
 Код: `buildClientHello` — `quic_clienthello_awg.go:67`.
 
-### Р7. sip — порт структуры из WireSock
-SIP портирован из `amneziawg-proxy/src/transform.rs` (MIT): `masqueSIPResponseCPS` (`200 OK`,
-`Id` как host). Модель — standalone decoy (src=nil): длины покрывают только реально записанные
-байты, энтропия `<r>`, не payload-seeded. (DNS см. Р10.)
+### Р7. sip — INVITE request + SDP (PseudoGen-имена)
+`ip=sip` эмитит SIP INVITE **request** с SDP-офером (`masqueSIPInviteCPS` —
+`sip_invite_awg.go`): request-line `INVITE sip:<user>@<host> SIP/2.0`, Via(branch)/Max-Forwards:70/
+From(tag)/To(без tag)/Call-ID/CSeq:N INVITE/Contact, Content-Type: application/sdp, Content-Length
+(точная), SDP-тело (`v=0`, `m=audio`, rtpmap). Причина: прежний `200 OK` response (был
+`masqueSIPResponseCPS`) — аномалия направления; INVITE — то, что UA шлёт первым (и несёт Contact/
+Max-Forwards, которых не было у response). Гибрид-рандомизация: имена пользователей и (при пустом
+`Id`) host — произносимые псевдо-строки через `PseudoGen` (`pseudo_gen_awg.go`, портирован из
+LxBox §127), запечены в `<b>` на сборке (уникальны между юзерами); branch/tag/Call-ID/CSeq/SDP-id —
+per-packet `<rc>`/`<rd>` фикс-ширины (Content-Length стабилен). `Id` опционален для sip (пуст →
+`pgHost()`). Старый `masqueSIPResponseCPS` удалён. (DNS см. Р10.)
 
 ### Р8. Рандомизация QUIC-раскладки + robustness-ручки
 Раскладка фрейм-плана генерится на каждый вызов: случайные точки разреза
@@ -92,7 +100,8 @@ txn/ufrag/ключ на вызов. Код: `stun_request_awg.go` (`buildSTUNBin
 слоте клиента), как у STUN. Правка от прежнего кода — только flags и QTYPE; `encodeDNSName`/OPT/
 cover переиспользованы. TXID/cover свежие на пакет (`<r 2>`/`<r 40>`).
 
-**Device-результат:** DNS query — **Timeout** (как STUN), подтвердив прогноз дизайна.
+**Device-результат:** DNS query — **Timeout** (как STUN), подтвердив прогноз дизайна. SIP INVITE
+(Р7) не тестировался отдельно — ожидаемо так же (та же аномалия назначения).
 
 **Общий вывод (Р9+Р10).** Качество пакета и направление (request vs response) вторичны; решает
 триплет **(протокол + назначение)**. DPI режет STUN/DNS/SIP к WARP-edge `162.159.x:2408` как
@@ -118,11 +127,13 @@ cover переиспользованы. TXID/cover свежие на пакет 
   атрибуты тайлят сообщение, FINGERPRINT CRC-32 сходится, USERNAME+MESSAGE-INTEGRITY есть),
   `TestMasqueSTUNRequestUniqueness`.
 - **dns/sip + валидация** (`masque_awg_test.go`, `masque_cps_test.go`): `TestMasqueDNSQueryStructure`
-  (QR=0, QNAME round-trips, QTYPE HTTPS, OPT до конца) + обратный парсинг SIP +
-  инъекция домена отвергается + конфликт с `i1` / неизвестный ip/ib / пустой id для
-  quic/dns/sip — ошибки.
+  (QR=0, QNAME round-trips, QTYPE HTTPS, OPT до конца); `TestMasqueSIPInviteStructure` +
+  `TestMasqueSIPInviteNoID` (request-line INVITE, To без tag, Content-Length точна, имена не
+  захардкожены, пустой id → псевдо-host); инъекция домена отвергается; конфликт с `i1` /
+  неизвестный ip/ib / пустой id для quic/dns — ошибки.
 - **Адверсариальный ревью** (workflow): подтверждённые находки исправлены (flex-PADDING для
-  длинного SNI — Р5; GREASE `0x4469`→`0x0a0a` — Р6; response→request для STUN — Р9).
+  длинного SNI — Р5; GREASE `0x4469`→`0x0a0a` — Р6; response→request для STUN — Р9; SIP missing
+  Contact / static caller@ — закрыто request-формой с Contact + PseudoGen-именами в Р7).
 - `go build` (с тегами и без) ок; `go test -tags with_awg ./transport/wireguard/...` зелёный;
   `gofmt -l` lx-файлов пусто; `sing-box check` на quic/dns/stun/sip ок, пустой id для quic
   отвергнут; gating без `with_awg` → «awg support not built».

@@ -13,20 +13,20 @@
 
 | Поле | Имя | Значения | Обязательно |
 |------|-----|----------|-------------|
-| `id` | домен | LDH-хост (`www.google.com`, `ozon.ru`, `_dmarc.example.com`) | **для `quic`/`dns`/`sip`** (там он идёт в пакет: SNI / QNAME / SIP-host); опционален **только для `stun`** |
+| `id` | домен | LDH-хост (`www.google.com`, `ozon.ru`, `_dmarc.example.com`) | **для `quic`/`dns`** (идёт в пакет: SNI / QNAME); опционален для `sip` (host или псевдо-host) и `stun` (игнорируется) |
 | `ip` | протокол | `quic` \| `dns` \| `stun` \| `sip` | да |
 | `ib` | браузер | `chrome` \| `firefox` \| `curl` | нет (только при `ip=quic`) |
 
-Минимум: `ip` всегда; плюс `id` — для `quic`/`dns`/`sip`. Только для `stun` хватает
-одного `ip` (`id`/`ib` опциональны). Если `id` задан для `stun` — он валидируется
-(LDH), но в пакет не идёт.
+Минимум: `ip` всегда; плюс `id` — для `quic`/`dns`. Для `sip`/`stun` хватает одного `ip`
+(`id` опционален: для `sip` без него генерируется псевдо-host, для `stun` он не идёт в пакет).
+Если `id` задан — он всегда валидируется (LDH).
 
 ### Куда `id` реально попадает на провод
 
 | `ip` | пакет-приманка | `id` виден цензору? |
 |------|----------------|---------------------|
 | `dns` | EDNS OPT query (QR=0), `id` = **QNAME** | **да**, открытым текстом |
-| `sip` | SIP `200 OK`, `id` = **host** в Via/From/To/Call-ID | **да**, открытым текстом |
+| `sip` | SIP INVITE request, `id` = **host** в URI (или псевдо-host) | **да** (если задан), открытым текстом |
 | `quic` | фрагментированный QUIC Initial, `id` = **SNI** в ClientHello | **да** — цензор выводит ключи из DCID и читает SNI (если соберёт фрагменты по порядку) |
 | `stun` | STUN Binding Success Response | **нет** — в STUN нет поля под домен |
 
@@ -150,9 +150,16 @@ QNAME = `www.google.com` и QTYPE HTTPS (тип 65), OPT RR (TYPE 41, UDP-size 1
 }
 ```
 
-Генерирует SIP `200 OK` response (280 байт): status-line + Via/From/To/Call-ID/CSeq
-(хост = `pbx.example.com`) + `Content-Length: 0`. **`id` — host в Via/From/To,
-виден цензору.**
+Генерирует SIP **INVITE** request (~580 байт): request-line `INVITE sip:<user>@pbx.example.com
+SIP/2.0`, Via(branch)/Max-Forwards:70/From(tag)/To/Call-ID/CSeq:N INVITE/Contact, и SDP-офер
+(`m=audio`, rtpmap). Имена пользователей — произносимые псевдо-строки (не захардкожены).
+**`id` — host в URI, виден цензору.** `id` для sip **опционален**: без него генерируется
+правдоподобный псевдо-host.
+
+> **Не подтверждён на WARP-DPI.** Ожидаемо Timeout (как `dns`/`stun`): SIP к WARP-edge `:2408` —
+> аномалия назначения (SIP живёт на SIP-сервере/`:5060`). INVITE-форма исправляет аномалию
+> направления старого `200 OK`, но назначение не лечит. Для WARP используй `ip=quic`; `ip=sip` —
+> для других провайдеров, чей DPI проверяет только корректность пакета.
 
 ---
 
@@ -192,7 +199,7 @@ go build -tags "with_wireguard with_gvisor with_awg" -o ./sing-box ./cmd/sing-bo
 | `ip` не из набора | `amneziawg: unknown masquerade protocol "ftp"; one of quic\|dns\|stun\|sip` |
 | `ip=quic` без `id` | `amneziawg: id (masquerade domain) is required for ip=quic (it becomes the ClientHello SNI)` |
 | `ip=dns` без `id` | `amneziawg: id (masquerade domain) is required for ip=dns (it becomes the DNS QNAME)` |
-| `ip=sip` без `id` | `amneziawg: id (masquerade domain) is required for ip=sip (it becomes the SIP host)` |
+| `ip=sip` без `id` | **не ошибка** — `id` опционален, генерируется псевдо-host |
 | `ip=stun` без `id` | **не ошибка** — `id` опционален, decoy без домена |
 | домен с `\r\n`/`;`/`@`/пробелом | `amneziawg: invalid masquerade domain "...": illegal character (only a-z A-Z 0-9 - _ allowed)` |
 | `ib` не из набора | `amneziawg: unknown masquerade browser "safari"; one of chrome\|firefox\|curl` |

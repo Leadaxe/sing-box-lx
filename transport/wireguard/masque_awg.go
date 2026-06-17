@@ -77,10 +77,11 @@ func masqueI1(o option.AmneziaWGOptions) (string, error) {
 		return "", E.New("amneziawg: ip (masquerade protocol) is required when id/ib is set; one of quic|dns|stun|sip")
 	}
 
-	// id is carried on the wire by quic (SNI in the ClientHello), dns (QNAME) and
-	// sip (host); only stun produces a hostname-less decoy and ignores it. So id is
-	// required for quic/dns/sip and optional for stun. Whenever id IS set (any
-	// protocol) it is still LDH-validated — it must never reach the wire unchecked.
+	// id is carried on the wire by quic (SNI in the ClientHello) and dns (QNAME),
+	// where it is REQUIRED. sip uses it as the host but falls back to a generated
+	// pseudo-host when empty (so id is optional for sip); stun is hostname-less and
+	// ignores it. Whenever id IS set (any protocol) it is still LDH-validated — it
+	// must never reach the wire unchecked.
 	domain := strings.TrimSpace(o.Id)
 	if domain != "" {
 		if err := validateMasqueDomain(domain); err != nil {
@@ -107,10 +108,9 @@ func masqueI1(o option.AmneziaWGOptions) (string, error) {
 		}
 		return masqueDNSQueryCPS(domain)
 	case masqueProtoSIP:
-		if domain == "" {
-			return "", E.New("amneziawg: id (masquerade domain) is required for ip=sip (it becomes the SIP host)")
-		}
-		return masqueSIPResponseCPS(domain)
+		// id optional for sip: used as the SIP host when set, else a pseudo-host
+		// is generated (PseudoGen). A set id is still LDH-validated above.
+		return masqueSIPInviteCPS(domain)
 	default:
 		return "", E.New("amneziawg: unknown masquerade protocol ", strconv.Quote(proto), "; one of quic|dns|stun|sip")
 	}
@@ -386,43 +386,7 @@ func be16(v uint16) (hi, lo byte) {
 }
 
 // ---------------------------------------------------------------------------
-// SIP — response header block (ported from transform.rs::apply_sip_padding)
+// SIP — the INVITE request generator lives in sip_invite_awg.go (a `200 OK`
+// response sent as the client's first packet was a wrong-direction anomaly,
+// like the old STUN/DNS profiles; an INVITE is what a client sends first).
 // ---------------------------------------------------------------------------
-
-// masqueSIPResponseCPS builds a SIP response header block (RFC 3261 §7.2): a
-// `SIP/2.0 200 OK` status line followed by the mandatory Via/From/To/Call-ID/
-// CSeq headers and a Content-Length, terminated by a blank line. The configured
-// domain is used as the host in the Via/From/To URIs — this is exactly why the
-// strict LDH validation matters: an un-validated domain could inject CRLF and
-// forge headers.
-//
-// Per-packet tokens (branch, tags, Call-ID) are random. We build the whole
-// header text statically (a single <b> tag) except for the random tokens, which
-// are emitted as <rd>/<rc> runs between static <b> fragments. Content-Length is
-// 0 (no message body in the decoy) so the datagram frames as one complete SIP
-// message with no trailing bytes.
-func masqueSIPResponseCPS(domain string) (string, error) {
-	host := strings.TrimSuffix(domain, ".")
-
-	var b cpsBuilder
-	// Status line + Via up to the branch token.
-	b.addBytes([]byte("SIP/2.0 200 OK\r\n" +
-		"Via: SIP/2.0/UDP " + host + ":5060;branch=z9hG4bK"))
-	b.addRandChars(16) // branch token (random alnum-ish; <rc> = letters, RFC-safe)
-	b.addBytes([]byte(";rport\r\n" +
-		"From: <sip:caller@" + host + ">;tag="))
-	b.addRandChars(12) // From tag
-	b.addBytes([]byte("\r\n" +
-		"To: <sip:callee@" + host + ">;tag="))
-	b.addRandChars(12) // To tag
-	b.addBytes([]byte("\r\nCall-ID: "))
-	b.addRandChars(16) // Call-ID local part
-	b.addBytes([]byte("@" + host + "\r\n" +
-		"CSeq: "))
-	b.addRandDigits(5) // CSeq number
-	b.addBytes([]byte(" INVITE\r\n" +
-		"Content-Length: 0\r\n" +
-		"\r\n"))
-
-	return b.String(), nil
-}

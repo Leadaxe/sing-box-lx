@@ -4,6 +4,7 @@ package wireguard
 
 import (
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
 	"strings"
 	"testing"
@@ -58,38 +59,37 @@ func TestMasqueI1MissingProtocol(t *testing.T) {
 	require.Contains(t, err.Error(), "ip (masquerade protocol) is required")
 }
 
-// id is required only for dns/sip (it lands on the wire as QNAME / SIP host);
-// for quic/stun it is optional (hostname-less decoy).
-func TestMasqueI1DomainRequiredForDNSAndSIP(t *testing.T) {
+// id is required for quic (SNI) and dns (QNAME) — it must be on the wire. For
+// sip it is optional (a pseudo-host is generated when absent) and stun ignores
+// it entirely.
+func TestMasqueI1DomainRequiredForQUICAndDNS(t *testing.T) {
 	t.Parallel()
-	for _, proto := range []string{"dns", "sip"} {
+	for _, proto := range []string{"quic", "dns"} {
 		_, err := masqueI1(option.AmneziaWGOptions{Ip: proto})
 		require.Error(t, err, "id should be required for ip=%s", proto)
 		require.Contains(t, err.Error(), "id (masquerade domain) is required for ip="+proto)
 	}
 }
 
-// id lands on the wire for quic (SNI), dns (QNAME) and sip (host); only stun is
-// hostname-less, so id is optional only for stun.
-func TestMasqueI1DomainRequiredForQUIC(t *testing.T) {
+// id is optional for stun (hostname-less) and sip (pseudo-host generated when
+// absent); both must produce a valid decoy without an id.
+func TestMasqueI1DomainOptionalForSTUNAndSIP(t *testing.T) {
 	t.Parallel()
-	_, err := masqueI1(option.AmneziaWGOptions{Ip: "quic"})
-	require.Error(t, err, "id should be required for ip=quic (it becomes the SNI)")
-	require.Contains(t, err.Error(), "id (masquerade domain) is required for ip=quic")
-}
-
-func TestMasqueI1DomainOptionalForSTUN(t *testing.T) {
-	t.Parallel()
-	// stun without id must succeed and produce a valid hostname-less decoy.
+	// stun without id → a valid hostname-less Binding Request.
 	stun, err := masqueI1(option.AmneziaWGOptions{Ip: "stun"})
 	require.NoError(t, err, "stun without id should be valid")
 	require.NotEmpty(t, stun)
 	pkt := obfuscateCPS(t, stun)
 	require.Equal(t, uint16(0x0001), uint16(pkt[0])<<8|uint16(pkt[1]), "stun-without-id is a Binding Request")
 
-	// quic with an INVALID id is still rejected (LDH applies whenever id is set).
+	// sip without id → a valid INVITE with a generated pseudo-host.
+	sip, err := masqueI1(option.AmneziaWGOptions{Ip: "sip"})
+	require.NoError(t, err, "sip without id should be valid (pseudo-host)")
+	require.True(t, strings.HasPrefix(string(obfuscateCPS(t, sip)), "INVITE sip:"), "sip-without-id is an INVITE")
+
+	// An INVALID id is still rejected (LDH applies whenever id is set).
 	_, err = masqueI1(option.AmneziaWGOptions{Ip: "quic", Id: "a.com\r\nx"})
-	require.Error(t, err, "invalid id must be rejected for quic")
+	require.Error(t, err, "invalid id must be rejected")
 	require.Contains(t, err.Error(), "invalid masquerade domain")
 }
 
@@ -265,40 +265,84 @@ func TestMasqueSTUNRequestUniqueness(t *testing.T) {
 	require.NotEqual(t, a, b, "fresh per-call entropy → different blobs")
 }
 
-// --- SIP response (parse back as SIP) ---------------------------------------
+// --- SIP INVITE request (parse back as SIP) ---------------------------------
 
-func TestMasqueSIPResponseStructure(t *testing.T) {
+// ip=sip is now an INVITE *request* with an SDP offer, not a 200 OK response —
+// a client's first packet is a call setup, not a reply. (See the generator's
+// honest-status note: not device-confirmed for WARP.)
+func TestMasqueSIPInviteStructure(t *testing.T) {
 	t.Parallel()
-	spec, err := masqueI1(option.AmneziaWGOptions{Id: "pbx.example.com", Ip: "sip"})
+	const host = "pbx.example.com"
+	spec, err := masqueI1(option.AmneziaWGOptions{Id: host, Ip: "sip"})
 	require.NoError(t, err)
 	pkt := obfuscateCPS(t, spec)
 	text := string(pkt)
+	assertSIPInvite(t, text, host)
+	// User names are pronounceable pseudo-tokens, not hardcoded alice/bob.
+	require.NotContains(t, text, "alice@", "user names must be generated, not hardcoded")
+	require.NotContains(t, text, "bob@", "user names must be generated, not hardcoded")
+}
 
-	require.True(t, strings.HasPrefix(text, "SIP/2.0 200 OK\r\n"), "status line")
+// id is optional for sip: with no id a plausible pseudo-host is generated, so a
+// well-formed INVITE must still be produced.
+func TestMasqueSIPInviteNoID(t *testing.T) {
+	t.Parallel()
+	spec, err := masqueI1(option.AmneziaWGOptions{Ip: "sip"})
+	require.NoError(t, err, "sip without id must succeed (pseudo-host generated)")
+	require.NotEmpty(t, spec)
+	assertSIPInvite(t, string(obfuscateCPS(t, spec)), "" /* any host */)
+}
+
+// assertSIPInvite reverse-parses a SIP INVITE and checks the request-line,
+// mandatory headers, SDP body and an exact Content-Length. If host != "" the
+// request-URI host must equal it; otherwise any host is accepted.
+func assertSIPInvite(t *testing.T, text, host string) {
+	t.Helper()
+	require.True(t, strings.HasPrefix(text, "INVITE sip:"), "request-line starts with INVITE method")
+	rlEnd := strings.Index(text, "\r\n")
+	require.Greater(t, rlEnd, 0)
+	require.True(t, strings.HasSuffix(text[:rlEnd], " SIP/2.0"), "request-line ends SIP/2.0")
+	if host != "" {
+		require.True(t, strings.HasPrefix(text, "INVITE sip:") && strings.Contains(text[:rlEnd], "@"+host+" "),
+			"request-URI host == configured id")
+	}
+
 	headerEnd := strings.Index(text, "\r\n\r\n")
 	require.GreaterOrEqual(t, headerEnd, 0, "header block must terminate with blank line")
-	block := text[:headerEnd]
-	lines := strings.Split(block, "\r\n")
-
-	// Every header line after the status line must contain ':'.
-	for _, line := range lines[1:] {
+	for _, line := range strings.Split(text[:headerEnd], "\r\n")[1:] {
 		require.Contains(t, line, ":", "every SIP header line must contain ':' : %q", line)
 	}
-	// Mandatory headers in canonical order, with the configured domain as host.
 	for _, h := range []string{
-		"Via: SIP/2.0/UDP pbx.example.com:5060;branch=z9hG4bK",
-		"From: <sip:caller@pbx.example.com>;tag=",
-		"To: <sip:callee@pbx.example.com>;tag=",
-		"Call-ID: ",
-		"CSeq: ",
-		"Content-Length: 0",
+		"\r\nVia: SIP/2.0/UDP ",
+		";branch=z9hG4bK",
+		"\r\nMax-Forwards: 70\r\n",
+		"\r\nFrom: <sip:",
+		";tag=",
+		"\r\nTo: <sip:",
+		"\r\nCall-ID: ",
+		"\r\nCSeq: ",
+		" INVITE\r\n",
+		"\r\nContact: <sip:",
+		"\r\nContent-Type: application/sdp\r\n",
 	} {
-		require.Contains(t, text, h, "missing/garbled header: %q", h)
+		require.Contains(t, text, h, "missing/garbled header fragment: %q", h)
 	}
-	// Call-ID host part too.
-	require.Contains(t, text, "@pbx.example.com\r\n", "Call-ID host part")
-	// Nothing after the blank line (Content-Length: 0).
-	require.Equal(t, headerEnd+4, len(pkt), "no body after the header block")
+	// To has no tag in the initial INVITE.
+	toIdx := strings.Index(text, "\r\nTo: ")
+	toLine := text[toIdx+2:]
+	toLine = toLine[:strings.Index(toLine, "\r\n")]
+	require.NotContains(t, toLine, ";tag=", "To must have no tag in the initial INVITE")
+
+	// SDP body present and Content-Length exact.
+	body := text[headerEnd+4:]
+	require.True(t, strings.HasPrefix(body, "v=0\r\n"), "SDP starts with v=0")
+	require.Contains(t, body, "\r\nm=audio ", "SDP offers an audio media line")
+	clIdx := strings.Index(text, "Content-Length: ")
+	require.GreaterOrEqual(t, clIdx, 0)
+	var cl int
+	_, err := fmt.Sscanf(text[clIdx:], "Content-Length: %d", &cl)
+	require.NoError(t, err)
+	require.Equal(t, len(body), cl, "Content-Length must equal the SDP body length")
 }
 
 // TestMasqueSIPDomainCannotInject is the security regression: even if a domain
