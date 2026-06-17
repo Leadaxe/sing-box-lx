@@ -105,7 +105,7 @@ func masqueI1(o option.AmneziaWGOptions) (string, error) {
 		if domain == "" {
 			return "", E.New("amneziawg: id (masquerade domain) is required for ip=dns (it becomes the DNS QNAME)")
 		}
-		return masqueDNSResponseCPS(domain)
+		return masqueDNSQueryCPS(domain)
 	case masqueProtoSIP:
 		if domain == "" {
 			return "", E.New("amneziawg: id (masquerade domain) is required for ip=sip (it becomes the SIP host)")
@@ -250,8 +250,27 @@ func (c *cpsBuilder) String() string {
 }
 
 // ---------------------------------------------------------------------------
-// DNS — EDNS OPT response (ported structure from transform.rs::apply_dns_padding)
+// DNS — EDNS OPT query (a client-initiated lookup; direction-corrected)
 // ---------------------------------------------------------------------------
+//
+// HONEST STATUS. ip=dns emits a DNS QUERY (QR=0) — what a client legitimately
+// sends first, fixing the wrong-direction anomaly of the earlier QR=1 response
+// (a response sent unsolicited as the first packet is a server-role packet in
+// the client's slot; the STUN profile had the same defect). But the decoy still
+// goes to the WARP endpoint (a datacenter Cloudflare IP on UDP/2408), which is
+// NOT a resolver — raw DNS lives on :53. On the LTE/WARP DPI that motivated §146,
+// STUN was blocked as a protocol CLASS toward that destination regardless of
+// packet quality, and a DNS query is expected to behave the same (the
+// destination, not the direction, is the likely blocker). This profile is NOT
+// device-confirmed for WARP — use ip=quic for WARP. ip=dns is kept for other
+// providers whose DPI only checks well-formedness, not protocol-to-destination.
+//
+// Layout (one well-formed DNS query, no trailing bytes):
+//
+//	[ Header 12 ][ Question (QNAME + HTTPS + IN) ][ OPT RR 11 ][ opt hdr 4 ][ cover ]
+//
+// TXID is <r 2> (fresh per packet, like a stub resolver). RDLENGTH covers the
+// option header + option-data; OPTION-LENGTH covers just the cover bytes.
 
 const (
 	// EDNS OPT advertised UDP payload size (modern resolver default, RFC 6891).
@@ -259,39 +278,34 @@ const (
 	// EDNS option code for the opaque cover payload. 0xFDE9 (65001) is in the
 	// IANA local/experimental range (RFC 6891 §6.1.2): resolvers must ignore
 	// unknown options, so it carries opaque cover bytes without the zero-content
-	// expectation of option code 12 (Padding, RFC 7830). Same code WireSock uses.
+	// expectation of option code 12 (Padding, RFC 7830).
 	dnsOptCoverCode uint16 = 0xFDE9
 	// Number of opaque cover bytes (the encrypted-looking OPT option-data). The
 	// standalone decoy has no real ciphertext tail, so we emit a fixed-size
 	// random body to give the message a realistic size.
 	dnsCoverLen = 40
+	// QTYPE HTTPS (RR type 65, RFC 9460): the most common query a modern browser
+	// emits per navigation — the most "expected" query shape on the wire.
+	dnsQTypeHTTPS uint16 = 0x0041
 )
 
-// masqueDNSResponseCPS builds an EDNS-OPT DNS *response* whose Additional
-// section carries the cover bytes as the opaque option-data of a single unknown
-// EDNS option (code 0xFDE9). Unlike WireSock's root-label question, we encode
-// the configured domain as the QNAME so the response mimics an answer to a
-// lookup for that domain. The whole datagram parses as one well-formed DNS
-// message with no trailing bytes.
-//
-// Layout: [ Header 12 ][ Question (QNAME + A + IN) ][ OPT RR 11 ][ opt hdr 4 ]
-//
-//	[ cover <r dnsCoverLen> ]
-//
-// TXID is <r 2> (random, like a fresh query id). RDLENGTH covers the option
-// header + option-data; OPTION-LENGTH covers just the cover bytes.
-func masqueDNSResponseCPS(domain string) (string, error) {
+// masqueDNSQueryCPS builds an EDNS-OPT DNS query (QR=0) for the configured
+// domain (QNAME), carrying the cover bytes as the opaque option-data of a single
+// unknown EDNS option (code 0xFDE9) in the Additional section — the normal EDNS
+// query shape. The whole datagram parses as one well-formed DNS message with no
+// trailing bytes.
+func masqueDNSQueryCPS(domain string) (string, error) {
 	qname, err := encodeDNSName(domain)
 	if err != nil {
 		return "", err
 	}
 
-	// Question section after QNAME: QTYPE A (0x0001) + QCLASS IN (0x0001).
+	// Question section after QNAME: QTYPE HTTPS (0x0041) + QCLASS IN (0x0001).
+	qtHi, qtLo := be16(dnsQTypeHTTPS)
 	question := make([]byte, 0, len(qname)+4)
 	question = append(question, qname...)
-	question = append(question, 0x00, 0x01, 0x00, 0x01)
+	question = append(question, qtHi, qtLo, 0x00, 0x01)
 
-	const optFixedLen = 11    // root NAME(1)+TYPE(2)+CLASS(2)+TTL(4)+RDLENGTH(2)
 	const optOptionHdrLen = 4 // OPTION-CODE(2)+OPTION-LENGTH(2)
 
 	// OPTION-LENGTH covers the cover bytes; RDLENGTH covers option header + data.
@@ -304,9 +318,9 @@ func masqueDNSResponseCPS(domain string) (string, error) {
 	// are the static flags + section counts.
 	hdr.addRand(2) // TXID
 	hdr.addBytes([]byte{
-		0x81, 0x80, // QR=1, opcode=0, AA=0, TC=0, RD=1 | RA=1, Z=0, RCODE=NOERROR
+		0x01, 0x00, // QR=0 (query), opcode=0, AA=0, TC=0, RD=1 | RA=0, Z=0, RCODE=0
 		0x00, 0x01, // QDCOUNT = 1
-		0x00, 0x00, // ANCOUNT = 0 (NODATA)
+		0x00, 0x00, // ANCOUNT = 0
 		0x00, 0x00, // NSCOUNT = 0
 		0x00, 0x01, // ARCOUNT = 1 (the OPT RR)
 	})
@@ -323,7 +337,7 @@ func masqueDNSResponseCPS(domain string) (string, error) {
 		0x00,       // NAME: root label (OPT must use the root name)
 		0x00, 0x29, // TYPE = OPT (41)
 		udpHi, udpLo, // CLASS = requestor UDP size (1232)
-		0x00, 0x00, 0x00, 0x00, // TTL: ext-RCODE 0, EDNS version 0, flags 0
+		0x00, 0x00, 0x00, 0x00, // TTL: ext-RCODE 0, EDNS version 0, flags 0 (DO=0)
 		rdHi, rdLo, // RDLENGTH = option header + option-data
 		ocHi, ocLo, // OPTION-CODE = 0xFDE9 (unknown)
 		olHi, olLo, // OPTION-LENGTH = cover bytes

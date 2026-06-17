@@ -137,8 +137,8 @@ line-rate DPI:
   line-rate DPI that grabs the first frame and assumes offset 0 parses garbage and
   fails open, while a real QUIC server reorders the frames normally. This is the
   device-proven DPI bypass (a plain QUIC short header was empirically blocked).
-- **`dns`** — an EDNS **OPT response** whose QNAME is your `id`, carrying random
-  cover bytes as an opaque unknown EDNS option.
+- **`dns`** — a client DNS **query** (QR=0, QTYPE HTTPS) whose QNAME is your `id`,
+  carrying random cover bytes as an opaque unknown EDNS option.
 - **`stun`** — a STUN **Binding Success Response** (magic cookie + XOR-MAPPED-ADDRESS
   + SOFTWARE).
 - **`sip`** — a SIP **`200 OK` response** with `Via`/`From`/`To`/`Call-ID`/`CSeq`

@@ -59,11 +59,10 @@ supported_versions, GREASE `0x0a0a` (RFC 8701 — `quic_clienthello_awg.go:117`)
 валидируется (`normalizeMasqueBrowser` — `masque_awg.go:183`), но на байты пакета не влияет.
 Код: `buildClientHello` — `quic_clienthello_awg.go:67`.
 
-### Р7. dns/sip — порт структуры из WireSock
-DNS/SIP портированы из `amneziawg-proxy/src/transform.rs` (MIT), в `masque_awg.go`:
-`masqueDNSResponseCPS` (EDNS OPT, QNAME=`Id`, опция `0xFDE9`), `masqueSIPResponseCPS`
-(`200 OK`, `Id` как host). Модель — standalone decoy (src=nil): длины покрывают только реально
-записанные байты, энтропия `<r>`, не payload-seeded.
+### Р7. sip — порт структуры из WireSock
+SIP портирован из `amneziawg-proxy/src/transform.rs` (MIT): `masqueSIPResponseCPS` (`200 OK`,
+`Id` как host). Модель — standalone decoy (src=nil): длины покрывают только реально записанные
+байты, энтропия `<r>`, не payload-seeded. (DNS см. Р10.)
 
 ### Р8. Рандомизация QUIC-раскладки + robustness-ручки
 Раскладка фрейм-плана генерится на каждый вызов: случайные точки разреза
@@ -83,11 +82,25 @@ FINGERPRINT (CRC-32). Причина: Success Response (`0x0101`), послан�
 txn/ufrag/ключ на вызов. Код: `stun_request_awg.go` (`buildSTUNBindingRequest`,
 `masqueSTUNRequestCPS`); диспетч `masque_awg.go:103`. Старый `masqueSTUNResponseCPS` удалён.
 
-**Device-результат (важно):** ни Binding Request, ни полный WebRTC-вариант с MESSAGE-INTEGRITY
-**не прошли** тестовый LTE/WARP DPI (Timeout, тогда как `quic` ✅ ~340 мс). Углубление пакета
-эффекта не дало → DPI режет STUN к дата-центровому Cloudflare-IP **как класс протокола**, не по
-качеству пакета. `sip` по аналогии. `quic` — единственный проверенный рабочий механизм здесь;
-`stun`/`sip` сохранены на случай других провайдеров (DPI без проверки направления/класса).
+**Device-результат:** ни Binding Request, ни полный WebRTC-вариант с MESSAGE-INTEGRITY **не
+прошли** тестовый LTE/WARP DPI (Timeout, тогда как `quic` ✅ ~340 мс). См. общий вывод после Р10.
+
+### Р10. DNS — query вместо response
+`ip=dns` теперь эмитит клиентский DNS **query** (`masqueDNSQueryCPS`, `masque_awg.go`): flags
+`0x0100` (QR=0, RD=1), QNAME=`Id`, QTYPE **HTTPS** (`0x0041`), OPT RR с cover-байтами в опции
+`0xFDE9`. Причина: прежний response (`0x8180`, QR=1) — аномалия направления (ответ без запроса в
+слоте клиента), как у STUN. Правка от прежнего кода — только flags и QTYPE; `encodeDNSName`/OPT/
+cover переиспользованы. TXID/cover свежие на пакет (`<r 2>`/`<r 40>`).
+
+**Device-результат:** DNS query — **Timeout** (как STUN), подтвердив прогноз дизайна.
+
+**Общий вывод (Р9+Р10).** Качество пакета и направление (request vs response) вторичны; решает
+триплет **(протокол + назначение)**. DPI режет STUN/DNS/SIP к WARP-edge `162.159.x:2408` как
+класс протокола — raw STUN/DNS/SIP к дата-центровому IP сами по себе аномальны (DNS живёт на
+:53, STUN — на STUN-сервере). `quic` обходит проверку назначения: QUIC/HTTP3 легитимно идёт
+куда угодно, поэтому QUIC к Cloudflare-IP — ожидаемый трафик. `quic` — единственный проверенный
+рабочий механизм здесь; `dns`/`stun`/`sip` реализованы в правильной клиент-инициированной форме
+и сохранены для других провайдеров (DPI без проверки протокол-к-назначению).
 
 ---
 
@@ -104,7 +117,8 @@ txn/ufrag/ключ на вызов. Код: `stun_request_awg.go` (`buildSTUNBin
 - **STUN Request** (`masque_awg_test.go`): `TestMasqueSTUNRequestStructure` (тип `0x0001`,
   атрибуты тайлят сообщение, FINGERPRINT CRC-32 сходится, USERNAME+MESSAGE-INTEGRITY есть),
   `TestMasqueSTUNRequestUniqueness`.
-- **dns/sip + валидация** (`masque_awg_test.go`, `masque_cps_test.go`): обратный парсинг +
+- **dns/sip + валидация** (`masque_awg_test.go`, `masque_cps_test.go`): `TestMasqueDNSQueryStructure`
+  (QR=0, QNAME round-trips, QTYPE HTTPS, OPT до конца) + обратный парсинг SIP +
   инъекция домена отвергается + конфликт с `i1` / неизвестный ip/ib / пустой id для
   quic/dns/sip — ошибки.
 - **Адверсариальный ревью** (workflow): подтверждённые находки исправлены (flex-PADDING для

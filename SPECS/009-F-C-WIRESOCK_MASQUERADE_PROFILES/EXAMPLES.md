@@ -25,7 +25,7 @@
 
 | `ip` | пакет-приманка | `id` виден цензору? |
 |------|----------------|---------------------|
-| `dns` | EDNS OPT response, `id` = **QNAME** | **да**, открытым текстом |
+| `dns` | EDNS OPT query (QR=0), `id` = **QNAME** | **да**, открытым текстом |
 | `sip` | SIP `200 OK`, `id` = **host** в Via/From/To/Call-ID | **да**, открытым текстом |
 | `quic` | фрагментированный QUIC Initial, `id` = **SNI** в ClientHello | **да** — цензор выводит ключи из DCID и читает SNI (если соберёт фрагменты по порядку) |
 | `stun` | STUN Binding Success Response | **нет** — в STUN нет поля под домен |
@@ -102,10 +102,15 @@ offset-0 фрейм лежит ближе к концу, с интерливом
 }
 ```
 
-Генерирует EDNS OPT *response* (87 байт): DNS-заголовок (QR=1, RD=1, RA=1, NOERROR),
-вопрос с QNAME = `www.google.com`, OPT RR (TYPE 41, UDP-size 1232), и случайные
-cover-байты как opaque-данные неизвестной EDNS-опции `0xFDE9`. Парсится как один
-валидный DNS-ответ. **`id` тут — QNAME, виден цензору.**
+Генерирует клиентский DNS **query** (~87 байт): DNS-заголовок (QR=0, RD=1), вопрос с
+QNAME = `www.google.com` и QTYPE HTTPS (тип 65), OPT RR (TYPE 41, UDP-size 1232) и
+случайные cover-байты как opaque-данные неизвестной EDNS-опции `0xFDE9`. Парсится как один
+валидный DNS-запрос. **`id` тут — QNAME, виден цензору.**
+
+> **Не подтверждён на WARP-DPI.** На тестовом LTE/WARP DPI `ip=dns` — Timeout (как `stun`):
+> DPI режет DNS/STUN к WARP-edge `:2408` как класс протокола (raw DNS живёт на :53, а не на
+> дата-центровом IP). Для WARP используй `ip=quic`. `ip=dns` оставлен для других провайдеров,
+> чей DPI проверяет только корректность пакета.
 
 ### 2.3 STUN
 
