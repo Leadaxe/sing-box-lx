@@ -53,18 +53,27 @@ S1–S4 padding не используется: он невозможен про�
 
 ## 3. Профили
 
-Структура `dns`/`sip` портирована из open-source WireSock-референса
+`sip` портирован из open-source WireSock-референса
 ([`github.com/wiresock/amneziawg-install`](https://github.com/wiresock/amneziawg-install),
 Rust/MIT, `amneziawg-proxy/src/transform.rs`). `quic` — собственный фрагментированный QUIC
-Initial (DPI-bypass, §3.1). `stun` — WebRTC Binding **Request** (§3.2). LDH-валидатор
-домена совпадает с их `quic_handshake.rs::is_valid_sni_hostname`.
+Initial (DPI-bypass, §3.1). `stun` — WebRTC Binding **Request** (§3.2). `dns` — клиентский
+DNS query (§3.3). LDH-валидатор домена совпадает с их `quic_handshake.rs::is_valid_sni_hostname`.
 
-> **Device-результат (тест-телефон, LTE с активным DPI):** проходит только `quic`
-> (~340 мс). `stun` (и Binding Request, и полный WebRTC-вариант с MESSAGE-INTEGRITY) —
-> Timeout: этот DPI режет STUN к дата-центровому Cloudflare-IP **как класс протокола**, а
-> не по качеству пакета (углубление пакета эффекта не дало). `sip` по аналогии ожидаемо
-> так же. `quic` — единственный проверенный рабочий механизм здесь; `stun`/`sip` сохранены
-> на случай других провайдеров (DPI без проверки направления/класса).
+> **Device-результат (тест-телефон, LTE с активным DPI):** проходит **только `quic`**
+> (~340 мс). `stun` (Binding Request и полный WebRTC-вариант с MESSAGE-INTEGRITY) и `dns`
+> (query QR=0, QTYPE HTTPS) — **Timeout**. `sip` по аналогии ожидаемо так же.
+>
+> **Фундаментальный вывод.** Качество пакета и направление (request vs response) —
+> вторичны. Решает триплет **(протокол + назначение)**: DPI режет STUN/DNS/SIP к
+> WARP-edge `162.159.x:2408` **как класс протокола**, потому что raw STUN/DNS/SIP к
+> дата-центровому IP сами по себе аномальны (DNS живёт на :53-резолвере, STUN — на
+> STUN-сервере). Углубление пакета (request вместо response, MESSAGE-INTEGRITY, реальный
+> QTYPE) аномалию назначения не убирает. **`quic` обходит проверку назначения**, потому
+> что QUIC/HTTP3 легитимно идёт куда угодно (весь HTTP/3-веб к CDN), так что QUIC к
+> Cloudflare-IP — ожидаемый трафик. `quic` — единственный проверенный рабочий механизм
+> здесь; `dns`/`stun`/`sip` реализованы в правильной (клиент-инициированной) форме и
+> сохранены на случай других провайдеров, чей DPI проверяет только корректность пакета,
+> а не «протокол-к-назначению».
 
 ### 3.1 QUIC — out-of-order фрагментированный Initial
 
@@ -104,10 +113,12 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
 
 ### 3.2 DNS / STUN / SIP
 
-- **dns** — EDNS OPT *response*. Flags `0x8180` (QR=1,RD=1,RA=1,NOERROR), QDCOUNT=1,
-  ARCOUNT=1; QNAME из `Id`; OPT RR (TYPE `0x0029`, CLASS=1232, TTL=0), RDATA — одна
-  неизвестная EDNS-опция код `0xFDE9` (IANA local-use), OPTION-LENGTH покрывает остаток →
-  весь датаграм парсится как один DNS-месседж. TXID — `<r 2>`.
+- **dns** — клиентский DNS **query**. Flags `0x0100` (QR=0, RD=1; byte2 ноль), QDCOUNT=1,
+  ARCOUNT=1; QNAME из `Id`, QTYPE **HTTPS** (`0x0041`, RR-type 65 — самый частый запрос
+  современного браузера), QCLASS IN; OPT RR (TYPE `0x0029`, CLASS=1232, TTL=0, DO=0) с одной
+  неизвестной EDNS-опцией код `0xFDE9` (IANA local-use), OPTION-LENGTH покрывает cover-байты →
+  весь датаграм парсится как один DNS query. TXID `<r 2>` и cover `<r 40>` свежие на пакет.
+  Query, а не response: клиент первым шлёт запрос. Генератор — `masqueDNSQueryCPS`.
 - **stun** — WebRTC Binding **Request**. type `0x0001`, magic cookie `0x2112A442`, свежий
   txn; атрибуты USERNAME (`0x0006`), ICE-CONTROLLING (`0x802a`), PRIORITY (`0x0024`),
   SOFTWARE (`0x8022` = `libwebrtc`), MESSAGE-INTEGRITY (`0x0008`, HMAC-SHA1), FINGERPRINT
@@ -165,8 +176,8 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
 - **Структурная валидность каждого профиля** (обратным разбором, не тавтология): QUIC —
   собственный вывод AEAD-расшифровывается (тег сходится), frame-walk даёт ≥6 CRYPTO + ≥1
   PING + PADDING, первый CRYPTO `offset≠0` (I1), CRYPTO реассемблируются в валидный
-  ClientHello с SNI=`Id` (I4); DNS — валидный EDNS-OPT месседж (QNAME=`Id`, опция `0xFDE9`,
-  без хвостов); STUN — Binding **Request** (cookie, атрибуты тайлят сообщение, FINGERPRINT
+  ClientHello с SNI=`Id` (I4); DNS — валидный EDNS-OPT **query** (QR=0, QNAME=`Id`, QTYPE
+  HTTPS, опция `0xFDE9`, без хвостов); STUN — Binding **Request** (cookie, атрибуты тайлят сообщение, FINGERPRINT
   CRC-32 сходится, USERNAME + MESSAGE-INTEGRITY присутствуют); SIP — валидный response
   (status-line + обязательные заголовки + CRLF).
 - **Рандомизация QUIC:** раскладка фрейм-плана и точки разреза свежие на каждый вызов;

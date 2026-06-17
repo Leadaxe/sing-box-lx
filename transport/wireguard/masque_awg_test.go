@@ -157,9 +157,12 @@ func TestMasqueBrowserValidation(t *testing.T) {
 // QUIC Initial structural tests (decrypt / frame-walk / reassembly / SNI) live
 // in quic_initial_awg_test.go.
 
-// --- DNS EDNS OPT response (parse back as a DNS message) --------------------
+// --- DNS EDNS OPT query (parse back as a DNS message) -----------------------
 
-func TestMasqueDNSResponseStructure(t *testing.T) {
+// ip=dns is now a QUERY (QR=0) — a client's first packet is a lookup, not an
+// answer. (See the generator's honest-status note: not device-confirmed for
+// WARP; the destination, not the direction, is the likely blocker there.)
+func TestMasqueDNSQueryStructure(t *testing.T) {
 	t.Parallel()
 	spec, err := masqueI1(option.AmneziaWGOptions{Id: "www.google.com", Ip: "dns"})
 	require.NoError(t, err)
@@ -167,9 +170,10 @@ func TestMasqueDNSResponseStructure(t *testing.T) {
 
 	require.GreaterOrEqual(t, len(pkt), 12, "DNS header")
 
-	// Flags 0x8180: QR=1, RD=1, RA=1, NOERROR.
-	require.Equal(t, byte(0x81), pkt[2], "QR=1, RD=1")
-	require.Equal(t, byte(0x80), pkt[3], "RA=1, RCODE=NOERROR")
+	// Flags 0x0100: QR=0 (query), RD=1; byte 3 all zero (RA=0, Z=0, RCODE=0).
+	require.Equal(t, byte(0x01), pkt[2], "QR=0, RD=1")
+	require.Equal(t, byte(0x00), pkt[3], "byte 3 zero (RA=0, RCODE=0)")
+	require.Equal(t, byte(0x00), pkt[2]&0x80, "QR bit clear (query)")
 	// Section counts: QDCOUNT=1, ANCOUNT=0, NSCOUNT=0, ARCOUNT=1.
 	require.Equal(t, uint16(1), binary.BigEndian.Uint16(pkt[4:6]), "QDCOUNT=1")
 	require.Equal(t, uint16(0), binary.BigEndian.Uint16(pkt[6:8]), "ANCOUNT=0")
@@ -179,8 +183,8 @@ func TestMasqueDNSResponseStructure(t *testing.T) {
 	// Parse the QNAME from byte 12 and assert it decodes back to the domain.
 	name, off := parseDNSName(t, pkt, 12)
 	require.Equal(t, "www.google.com", name, "QNAME must encode the configured domain")
-	// QTYPE A (0x0001) + QCLASS IN (0x0001).
-	require.Equal(t, uint16(1), binary.BigEndian.Uint16(pkt[off:off+2]), "QTYPE A")
+	// QTYPE HTTPS (0x0041) + QCLASS IN (0x0001).
+	require.Equal(t, uint16(0x0041), binary.BigEndian.Uint16(pkt[off:off+2]), "QTYPE HTTPS(65)")
 	require.Equal(t, uint16(1), binary.BigEndian.Uint16(pkt[off+2:off+4]), "QCLASS IN")
 	off += 4
 
