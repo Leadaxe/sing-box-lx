@@ -9,7 +9,7 @@
 // several out-of-order CRYPTO frames passed reliably (device-proven A/B, see
 // LxBox docs/spec/tasks/146-warp-quic-initial-fragmented-i1.md §2).
 //
-// WHY OUT-OF-ORDER WORKS (mechanism, §146 §1). A real QUIC server reassembles
+// WHY OUT-OF-ORDER WORKS (mechanism). A real QUIC server reassembles
 // CRYPTO frames by their offset before TLS parsing; a line-rate DPI does not
 // keep a reassembly buffer — it grabs the FIRST CRYPTO frame, assumes it starts
 // at offset 0, and parses TLS from there. When the first wire frame has
@@ -74,7 +74,7 @@ func appendQUICVarint(dst []byte, v uint64) []byte {
 }
 
 // ---------------------------------------------------------------------------
-// QUIC Initial geometry (etalon from §146 §3.2/§3.3).
+// QUIC Initial geometry (device-proven etalon).
 // ---------------------------------------------------------------------------
 
 const (
@@ -90,7 +90,7 @@ const (
 // DPI bypass: the first emitted CRYPTO frame is offset≠0, the offset-0 frame is
 // emitted near the end, PING/PADDING are interleaved between CRYPTO frames.
 //
-// Invariants (§146 §3.2), enforced by buildInitialPayload + asserted by tests:
+// Invariants (I1–I4), enforced by buildInitialPayload + asserted by tests:
 //   I1. first CRYPTO frame in wire order has offset≠0.
 //   I2. the offset-0 CRYPTO frame is NOT first.
 //   I3. PADDING runs and ≥1 PING between CRYPTO frames.
@@ -136,7 +136,7 @@ type quicGenParams struct {
 
 // defaultQUICGenParams returns the device-proven baseline: 6 fragments, 2 PINGs,
 // a fixed 1250-byte datagram (totalLenMin==totalLenMax). This reproduces the
-// shape that passed real-DPI testing (§146); only the per-call layout/cutpoints
+// shape that passed real-DPI testing; only the per-call layout/cutpoints
 // are randomized on top of it.
 func defaultQUICGenParams() quicGenParams {
 	return quicGenParams{
@@ -153,7 +153,7 @@ type cryptoFragment struct {
 	data   []byte
 }
 
-// The device-proven baseline (§146) was 6 fragments at offsets
+// The device-proven baseline was 6 fragments at offsets
 // [0,236,266,275,283,290] in a fixed wire order with first CRYPTO offset=236.
 // That exact layout is now ONE sample of the randomized space below: per call we
 // pick random cut points (planFragmentsN) and a random out-of-order wire plan

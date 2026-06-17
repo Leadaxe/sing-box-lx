@@ -1,19 +1,20 @@
 //go:build with_awg
 
-// Masquerade I1 generators — WireSock-style declarative obfuscation.
+// Masquerade I1 generators (009) — WireSock-style declarative obfuscation.
 //
-// The protocol packet structures (QUIC short header, EDNS OPT response, STUN
-// Binding Success Response, SIP response) are ported from the open-source
-// WireSock reference implementation:
+// All four profiles are client-initiated decoys: QUIC = fragmented Initial
+// (quic_initial_awg.go), STUN = WebRTC Binding Request (stun_request_awg.go),
+// DNS = client query (masqueDNSQueryCPS below), SIP = INVITE request with SDP
+// (sip_invite_awg.go). The DNS/SIP packet shapes are inspired by the open-source
+// WireSock reference, but translated from its server-side responses into the
+// client-side requests a UA actually sends first:
 //
 //	https://github.com/wiresock/amneziawg-install
 //	amneziawg-proxy/src/transform.rs (MIT License, Copyright (c) WireSock)
 //	amneziawg-proxy/src/quic_handshake.rs::is_valid_sni_hostname
 //
 // The LDH hostname validator (validateMasqueDomain) mirrors WireSock's
-// is_valid_sni_hostname. The QUIC generator lives in quic_initial_awg.go (with
-// its ClientHello builder in quic_clienthello_awg.go and crypto in
-// quic_crypto_awg.go).
+// is_valid_sni_hostname.
 //
 // IMPORTANT — model difference from WireSock. WireSock is a *server-side* UDP
 // proxy that rewrites the leading S1–S4 padding of a datagram whose tail is the
@@ -175,7 +176,7 @@ const (
 //
 // HONESTY NOTE: the QUIC masquerade now emits a fragmented QUIC Initial with a
 // real ClientHello (see quic_initial_awg.go), but the DPI bypass works on
-// out-of-order CRYPTO-frame fragmentation, NOT on a TLS fingerprint (§146 §7).
+// out-of-order CRYPTO-frame fragmentation, NOT on a TLS fingerprint.
 // We therefore do NOT imitate a specific browser JA3/JA4. Ib is accepted for
 // syntax compatibility with WireSock configs and validated, but currently does
 // not change the generated ClientHello. For dns/stun/sip it has no effect; ib is
@@ -258,7 +259,7 @@ func (c *cpsBuilder) String() string {
 // (a response sent unsolicited as the first packet is a server-role packet in
 // the client's slot; the STUN profile had the same defect). But the decoy still
 // goes to the WARP endpoint (a datacenter Cloudflare IP on UDP/2408), which is
-// NOT a resolver — raw DNS lives on :53. On the LTE/WARP DPI that motivated §146,
+// NOT a resolver — raw DNS lives on :53. On the LTE/WARP DPI this feature targets,
 // STUN was blocked as a protocol CLASS toward that destination regardless of
 // packet quality, and a DNS query is expected to behave the same (the
 // destination, not the direction, is the likely blocker). This profile is NOT
