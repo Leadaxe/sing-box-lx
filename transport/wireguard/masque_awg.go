@@ -78,11 +78,11 @@ func masqueI1(o option.AmneziaWGOptions) (string, error) {
 		return "", E.New("amneziawg: ip (masquerade protocol) is required when id/ib is set; one of quic|dns|stun|sip")
 	}
 
-	// id is carried on the wire by quic (SNI in the ClientHello) and dns (QNAME),
-	// where it is REQUIRED. sip uses it as the host but falls back to a generated
-	// pseudo-host when empty (so id is optional for sip); stun is hostname-less and
-	// ignores it. Whenever id IS set (any protocol) it is still LDH-validated — it
-	// must never reach the wire unchecked.
+	// id is REQUIRED only for quic (it becomes the ClientHello SNI). dns and sip
+	// use it on the wire (QNAME / SIP host) but fall back to a generated pseudo
+	// name when empty, so id is optional there; stun is hostname-less and ignores
+	// it. Whenever id IS set (any protocol) it is still LDH-validated — it must
+	// never reach the wire unchecked.
 	domain := strings.TrimSpace(o.Id)
 	if domain != "" {
 		if err := validateMasqueDomain(domain); err != nil {
@@ -104,8 +104,10 @@ func masqueI1(o option.AmneziaWGOptions) (string, error) {
 	case masqueProtoSTUN:
 		return masqueSTUNRequestCPS()
 	case masqueProtoDNS:
+		// id optional for dns: used as the QNAME when set, else a pseudo-domain is
+		// generated (PseudoGen, domain-only — never an IP). A set id is LDH-validated above.
 		if domain == "" {
-			return "", E.New("amneziawg: id (masquerade domain) is required for ip=dns (it becomes the DNS QNAME)")
+			domain = pgDomainHost()
 		}
 		return masqueDNSQueryCPS(domain)
 	case masqueProtoSIP:

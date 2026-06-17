@@ -126,7 +126,7 @@ with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_nai
 }
 ```
 
-`ip` ∈ `quic|dns|stun|sip`; `id` обязателен для `quic`/`dns` (идёт на провод — SNI / QNAME)
+`ip` ∈ `quic|dns|stun|sip`; `id` обязателен только для `quic` (SNI); для `dns`/`sip` опционален (без него генерится псевдо-имя), `stun` игнорирует. Где задан — идёт на провод (SNI / QNAME / host)
 и опционален для `sip` (без него генерится псевдо-host) и `stun`; `ib` ∈ `chrome|firefox|curl`
 (только quic, эффект минимальный — без JA3-fingerprint). Взаимоисключается с явным `i1`.
 

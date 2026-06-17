@@ -126,7 +126,7 @@ easing **Cloudflare WARP**:
 }
 ```
 
-`ip` ∈ `quic|dns|stun|sip`; `id` is required for `quic`/`dns` (where it appears on the
+`ip` ∈ `quic|dns|stun|sip`; `id` is required only for `quic` (SNI); for `dns`/`sip` it is optional (a pseudo name is generated when absent) and `stun` ignores it. Where set it appears on the
 wire — SNI / QNAME) and optional for `sip` (pseudo-host generated when absent) and `stun`;
 `ib` ∈ `chrome|firefox|curl` (quic only, minimal — no JA3 fingerprint). Mutually exclusive
 with an explicit `i1`.

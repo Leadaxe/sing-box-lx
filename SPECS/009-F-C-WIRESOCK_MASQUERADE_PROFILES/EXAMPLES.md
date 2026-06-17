@@ -13,11 +13,11 @@
 
 | Поле | Имя | Значения | Обязательно |
 |------|-----|----------|-------------|
-| `id` | домен | LDH-хост (`www.google.com`, `ozon.ru`, `_dmarc.example.com`) | **для `quic`/`dns`** (идёт в пакет: SNI / QNAME); опционален для `sip` (host или псевдо-host) и `stun` (игнорируется) |
+| `id` | домен | LDH-хост (`www.google.com`, `ozon.ru`, `_dmarc.example.com`) | **обязателен только для `quic`** (SNI); опционален для `dns` (QNAME или псевдо-домен), `sip` (host или псевдо-host) и `stun` (игнорируется) |
 | `ip` | протокол | `quic` \| `dns` \| `stun` \| `sip` | да |
 | `ib` | браузер | `chrome` \| `firefox` \| `curl` | нет (только при `ip=quic`) |
 
-Минимум: `ip` всегда; плюс `id` — для `quic`/`dns`. Для `sip`/`stun` хватает одного `ip`
+Минимум: `ip` всегда; плюс `id` — для `quic`. Для `dns`/`sip`/`stun` хватает одного `ip`
 (`id` опционален: для `sip` без него генерируется псевдо-host, для `stun` он не идёт в пакет).
 Если `id` задан — он всегда валидируется (LDH).
 
@@ -198,7 +198,7 @@ go build -tags "with_wireguard with_gvisor with_awg" -o ./sing-box ./cmd/sing-bo
 | `id` есть, `ip` нет | `amneziawg: ip (masquerade protocol) is required when id/ib is set; one of quic\|dns\|stun\|sip` |
 | `ip` не из набора | `amneziawg: unknown masquerade protocol "ftp"; one of quic\|dns\|stun\|sip` |
 | `ip=quic` без `id` | `amneziawg: id (masquerade domain) is required for ip=quic (it becomes the ClientHello SNI)` |
-| `ip=dns` без `id` | `amneziawg: id (masquerade domain) is required for ip=dns (it becomes the DNS QNAME)` |
+| `ip=dns` без `id` | **не ошибка** — генерится псевдо-домен (QNAME) |
 | `ip=sip` без `id` | **не ошибка** — `id` опционален, генерируется псевдо-host |
 | `ip=stun` без `id` | **не ошибка** — `id` опционален, decoy без домена |
 | домен с `\r\n`/`;`/`@`/пробелом | `amneziawg: invalid masquerade domain "...": illegal character (only a-z A-Z 0-9 - _ allowed)` |

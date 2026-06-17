@@ -36,11 +36,11 @@ HKDF-Expand-Label / QUIC v1 salt / AES-128-GCM-XOR-nonce AEAD скопирова
 `quicSaltV1`); `deriveInitialKeys` — `quic_initial_awg.go:269`; `encryptInitial` (шифрование +
 header protection) — `quic_initial_awg.go:287`.
 
-### Р4. `Id` обязателен для quic/dns
-`Id` идёт на провод как SNI (quic) / QNAME (dns) → обязателен для `quic`/`dns`; пустой при них
+### Р4. `Id` обязателен только для quic
+`Id` идёт на провод как SNI (quic) → обязателен только для `quic`; пустой при quic
 отвергается на `sing-box check`. Опционален для `sip` (пуст → псевдо-host) и `stun`
 (hostname-less). Заданный `Id` всегда LDH-валидируется.
-Код: guard `masque_awg.go` (quic/dns ветки); LDH-валидатор `validateMasqueDomain`
+dns/sip при пустом `Id` генерируют псевдо-имя (PseudoGen), stun его игнорирует. Код: guard `masque_awg.go` (quic ветка); LDH-валидатор `validateMasqueDomain`
 (security-граница, зеркало `is_valid_sni_hostname`).
 
 ### Р5. flex-PADDING — payload пинится к length-полю при любой длине SNI
@@ -142,12 +142,12 @@ DCID-reuse (невозможное QUIC-состояние) — два неза�
   (QR=0, QNAME round-trips, QTYPE HTTPS, OPT до конца); `TestMasqueSIPInviteStructure` +
   `TestMasqueSIPInviteNoID` (request-line INVITE, To без tag, Content-Length точна, имена не
   захардкожены, пустой id → псевдо-host); инъекция домена отвергается; конфликт с `i1` /
-  неизвестный ip/ib / пустой id для quic/dns — ошибки.
+  неизвестный ip/ib / пустой id для quic — ошибки.
 - **Адверсариальный ревью** (workflow): подтверждённые находки исправлены (flex-PADDING для
   длинного SNI — Р5; GREASE `0x4469`→`0x0a0a` — Р6; response→request для STUN — Р9; SIP missing
   Contact / static caller@ — закрыто request-формой с Contact + PseudoGen-именами в Р7).
 - `go build` (с тегами и без) ок; `go test -tags with_awg ./transport/wireguard/...` зелёный;
-  `gofmt -l` lx-файлов пусто; `sing-box check` на quic/dns/stun/sip ок, пустой id для quic
+  `gofmt -l` lx-файлов пусто; `sing-box check` на quic/dns/stun/sip ок (dns/sip/stun без id тоже), пустой id для quic
   отвергнут; gating без `with_awg` → «awg support not built».
 - **Device-smoke:** узел `ip=quic` с фрагментированным Initial поднимает туннель и проводит
   реальный трафик через активный DPI.
