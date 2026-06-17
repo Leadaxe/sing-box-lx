@@ -11,7 +11,9 @@
 //	amneziawg-proxy/src/quic_handshake.rs::is_valid_sni_hostname
 //
 // The LDH hostname validator (validateMasqueDomain) mirrors WireSock's
-// is_valid_sni_hostname. The QUIC generator lives in masque_quic_awg.go.
+// is_valid_sni_hostname. The QUIC generator lives in quic_initial_awg.go (with
+// its ClientHello builder in quic_clienthello_awg.go and crypto in
+// quic_crypto_awg.go).
 //
 // IMPORTANT — model difference from WireSock. WireSock is a *server-side* UDP
 // proxy that rewrites the leading S1–S4 padding of a datagram whose tail is the
@@ -75,10 +77,10 @@ func masqueI1(o option.AmneziaWGOptions) (string, error) {
 		return "", E.New("amneziawg: ip (masquerade protocol) is required when id/ib is set; one of quic|dns|stun|sip")
 	}
 
-	// id is only carried on the wire by dns (QNAME) and sip (host); quic/stun
-	// produce a hostname-less decoy and ignore it. So id is required only for
-	// dns/sip, and optional for quic/stun. Whenever id IS set (any protocol) it
-	// is still LDH-validated — it must never reach the wire un-checked.
+	// id is carried on the wire by quic (SNI in the ClientHello), dns (QNAME) and
+	// sip (host); only stun produces a hostname-less decoy and ignores it. So id is
+	// required for quic/dns/sip and optional for stun. Whenever id IS set (any
+	// protocol) it is still LDH-validated — it must never reach the wire unchecked.
 	domain := strings.TrimSpace(o.Id)
 	if domain != "" {
 		if err := validateMasqueDomain(domain); err != nil {
@@ -93,7 +95,10 @@ func masqueI1(o option.AmneziaWGOptions) (string, error) {
 
 	switch proto {
 	case masqueProtoQUIC:
-		return masqueQUICShortHeaderCPS(domain, browser), nil
+		if domain == "" {
+			return "", E.New("amneziawg: id (masquerade domain) is required for ip=quic (it becomes the ClientHello SNI)")
+		}
+		return masqueQUICInitialCPS(domain, browser)
 	case masqueProtoSTUN:
 		return masqueSTUNResponseCPS(), nil
 	case masqueProtoDNS:
@@ -114,7 +119,8 @@ func masqueI1(o option.AmneziaWGOptions) (string, error) {
 // validateMasqueDomain enforces a strict LDH (letter-digit-hyphen) hostname,
 // mirroring WireSock's quic_handshake.rs::is_valid_sni_hostname. This is a
 // SECURITY boundary, not cosmetics: the domain is interpolated into SIP header
-// text and encoded into a DNS QNAME, so control bytes (\r \n \0 \t) or SIP/URI
+// text, encoded into a DNS QNAME, and placed in the QUIC ClientHello SNI
+// (server_name) extension, so control bytes (\r \n \0 \t) or SIP/URI
 // metacharacters (> ; @ " space) would allow header injection / label
 // corruption. Only ASCII alphanumerics, '-' and '_' are allowed; '_' is
 // permitted because it is legal in DNS QNAMEs (service labels) and cannot break
@@ -167,13 +173,13 @@ const (
 // normalizeMasqueBrowser validates Ib against the accepted set and returns it
 // lower-cased, or "" when unset.
 //
-// HONESTY NOTE: WireSock's real QUIC masquerade is a 1-RTT short header with no
-// ClientHello — there is no TLS fingerprint (JA3/JA4) to imitate. We therefore
-// do NOT fake a browser fingerprint. Ib is accepted for syntax compatibility
-// with WireSock configs and validated; its only effect is to seed a couple of
-// otherwise-meaningless QUIC short-header bits (spin / key_phase), which are
-// per-packet random in real QUIC anyway. For dns/stun/sip it has no effect.
-// Ib is only meaningful (even minimally) for ip=quic.
+// HONESTY NOTE: the QUIC masquerade now emits a fragmented QUIC Initial with a
+// real ClientHello (see quic_initial_awg.go), but the DPI bypass works on
+// out-of-order CRYPTO-frame fragmentation, NOT on a TLS fingerprint (§146 §7).
+// We therefore do NOT imitate a specific browser JA3/JA4. Ib is accepted for
+// syntax compatibility with WireSock configs and validated, but currently does
+// not change the generated ClientHello. For dns/stun/sip it has no effect; ib is
+// only meaningful (and even then only as a future hook) for ip=quic.
 func normalizeMasqueBrowser(ib, proto string) (string, error) {
 	browser := strings.ToLower(strings.TrimSpace(ib))
 	if browser == "" {

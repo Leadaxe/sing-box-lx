@@ -1,8 +1,14 @@
 # TASKS — 009-F-O-WIRESOCK_MASQUERADE_PROFILES
 
+> **§146 amendment (2026-06-17):** `ip=quic` позже переведён на **out-of-order
+> фрагментированный QUIC Initial** с SNI=`id` (см. `quic_initial_awg.go`, LxBox-таск
+> §146), сменив 1-RTT short header. `id` для `quic` стал обязателен;
+> `masque_quic_awg.go` удалён. QUIC-строки ниже — исторические.
+
 ## Развилки (зафиксированы, см. PLAN)
 - [x] Механизм: **I1 CPS только** (S1–S4 невозможен против WARP; сабмодуль не трогаем)
-- [x] QUIC: **1-RTT short header** (не Initial; без SNI/JA3)
+- [x] QUIC: **1-RTT short header** (не Initial; без SNI/JA3) — _§146: развёрнуто на
+  фрагментированный Initial с SNI; см. amendment выше_
 - [x] Структуры: порт из WireSock `transform.rs`
 - [x] `Ib`: валидация + честная документация минимального эффекта (нет fingerprint)
 
@@ -15,7 +21,7 @@
 - [x] DNS → EDNS OPT response (порт `apply_dns_padding`, QNAME из Id)
 - [x] STUN → Binding Success Response (порт `apply_stun_padding`)
 - [x] SIP → response-текст (порт `apply_sip_padding`, Id как host)
-- [x] `transport/wireguard/masque_quic_awg.go`: QUIC 1-RTT short header (порт `apply_quic_padding_short`)
+- [x] ~~`transport/wireguard/masque_quic_awg.go`: QUIC 1-RTT short header (порт `apply_quic_padding_short`)~~ — _§146: заменён на `quic_initial_awg.go`/`quic_clienthello_awg.go`/`quic_crypto_awg.go` (фрагментированный Initial с SNI); `masque_quic_awg.go` удалён_
 - [x] `device_awg.go`: вызов `masqueI1` в `awgIpcLines`, подстановка как `i1`
 
 ## Тест

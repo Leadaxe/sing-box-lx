@@ -11,14 +11,20 @@
 
 ## 1. Три поля
 
+> **§146 (2026-06-17):** `ip=quic` теперь эмитит **out-of-order фрагментированный
+> QUIC Initial** (RFC 9001) с реалистичным ClientHello, где `id` идёт как **SNI** —
+> это сменило прежний 1-RTT short header. Поэтому `id` стал **обязателен** для
+> `quic` (как и для `dns`/`sip`), и домен теперь **виден** цензору в ClientHello.
+> Детали ниже уже отражают это поведение. См. квик-секцию §2.1 и LxBox-таск §146.
+
 | Поле | Имя | Значения | Обязательно |
 |------|-----|----------|-------------|
-| `id` | домен | LDH-хост (`www.google.com`, `ozon.ru`, `_dmarc.example.com`) | **только для `dns`/`sip`** (там он идёт в пакет); для `quic`/`stun` — опционален |
+| `id` | домен | LDH-хост (`www.google.com`, `ozon.ru`, `_dmarc.example.com`) | **для `quic`/`dns`/`sip`** (там он идёт в пакет: SNI / QNAME / SIP-host); опционален **только для `stun`** |
 | `ip` | протокол | `quic` \| `dns` \| `stun` \| `sip` | да |
 | `ib` | браузер | `chrome` \| `firefox` \| `curl` | нет (только при `ip=quic`) |
 
-Минимум: `ip` всегда; плюс `id` — для `dns`/`sip`. Для `quic`/`stun` хватает одного
-`ip` (`id`/`ib` опциональны). Если `id` задан для `quic`/`stun` — он валидируется
+Минимум: `ip` всегда; плюс `id` — для `quic`/`dns`/`sip`. Только для `stun` хватает
+одного `ip` (`id`/`ib` опциональны). Если `id` задан для `stun` — он валидируется
 (LDH), но в пакет не идёт.
 
 ### Куда `id` реально попадает на провод
@@ -27,12 +33,12 @@
 |------|----------------|---------------------|
 | `dns` | EDNS OPT response, `id` = **QNAME** | **да**, открытым текстом |
 | `sip` | SIP `200 OK`, `id` = **host** в Via/From/To/Call-ID | **да**, открытым текстом |
-| `quic` | QUIC 1-RTT short header | **нет** — short header не несёт SNI; `id` валидируется, но в пакет не идёт |
+| `quic` | фрагментированный QUIC Initial, `id` = **SNI** в ClientHello | **да** — цензор выводит ключи из DCID и читает SNI (если соберёт фрагменты по порядку) |
 | `stun` | STUN Binding Success Response | **нет** — в STUN нет поля под домен |
 
-**Вывод:** если цель — чтобы DPI **увидел** разрешённый домен, бери `ip=dns` или
-`ip=sip`. `quic`/`stun` дают приманку без домена (маскировка по *форме* протокола,
-а не по имени хоста). Это 1:1 поведение WireSock (их QUIC тоже short-header без SNI).
+**Вывод:** `ip=dns`/`ip=sip`/`ip=quic` несут домен на провод (`id` как QNAME /
+SIP-host / SNI соответственно). `stun` даёт приманку без домена (маскировка по
+*форме* протокола, а не по имени хоста).
 
 ---
 
@@ -66,22 +72,29 @@ endpoint'а. Подставь свои `private_key` / `peers` / `address`.
 }
 ```
 
-Генерирует `i1 = <b 0x60><r 40>` (41 байт): первый байт `0x60` — валидный QUIC
-1-RTT short header (form=0, fixed=1, spin=1 для chrome), дальше 40 случайных байт =
-«зашифрованный 1-RTT payload». `ib` меняет только косметические биты первого байта:
+Генерирует **out-of-order фрагментированный QUIC Initial** (RFC 9001): реалистичный
+ClientHello, где `id` (`www.google.com`) — это **SNI**, разбитый на CRYPTO-фреймы,
+которые идут на провод **не по порядку** — первый CRYPTO-фрейм имеет offset≠0, а
+offset-0 фрейм лежит ближе к концу, с интерливом PING/PADDING. Line-rate DPI хватает
+первый фрейм, считает его offset 0, парсит мусор и пропускает (fail-open). `ib`
+выбирает профиль ClientHello (порядок расширений / GREASE) под соответствующий
+браузер. Подробная спецификация — LxBox-таск §146
+(`146-warp-quic-initial-fragmented-i1.md`), генератор — `quic_initial_awg.go`,
+`quic_clienthello_awg.go`, `quic_crypto_awg.go`.
 
-| `ib` | первый байт | CPS |
-|------|-------------|-----|
-| `chrome` | `0x60` | `<b 0x60><r 40>` |
-| `firefox` | `0x45` | `<b 0x45><r 40>` |
-| `curl` | `0x67` | `<b 0x67><r 40>` |
-| (нет) | `0x40` | `<b 0x40><r 40>` |
+> **§146 amendment (2026-06-17):** прежний дизайн эмитил 1-RTT short header
+> (`<b 0x60><r 40>` и т.п. для chrome/firefox/curl, файл `masque_quic_awg.go`,
+> функции `masqueQUICShortHeaderCPS` / `quicFirstByte`). Тот short header был
+> **эмпирически заблокирован реальным LTE-DPI**, поэтому заменён на
+> фрагментированный Initial выше; `masque_quic_awg.go` удалён. Описание
+> short-header ниже более не отражает текущее поведение — оставлено как
+> исторический контекст. **`id` для `quic` теперь обязателен** (становится SNI).
 
-`id` для `quic` не идёт в пакет, поэтому его можно вообще не указывать — минимальный
-вариант это просто `"ip": "quic"` (или `"ip": "quic", "ib": "chrome"`):
+`id` для `quic` теперь **обязателен** (он становится SNI в ClientHello). Минимальный
+вариант — `"id": "<домен>", "ip": "quic"` (плюс опциональный `"ib"`):
 
 ```jsonc
-{ /* ...endpoint... */ "jc": 4, "jmin": 40, "jmax": 70, "ip": "quic", "ib": "chrome" }
+{ /* ...endpoint... */ "jc": 4, "jmin": 40, "jmax": 70, "id": "www.google.com", "ip": "quic", "ib": "chrome" }
 ```
 
 ### 2.2 DNS (домен виден на проводе)
@@ -155,10 +168,11 @@ cover-байты как opaque-данные неизвестной EDNS-опци
 
 ## 3. Что выбрать
 
-- **Просто упростить коннект к WARP** → `ip=quic`, `ib=chrome`. Самый малозаметный
-  тип (доминирующий short-header QUIC), не ломается на размере.
-- **Нужно, чтобы DPI увидел «разрешённый» домен** → `ip=dns` или `ip=sip` с
-  региональным популярным `id`.
+- **Коннект к WARP под реальным DPI** → `ip=quic`, `id=<популярный домен>`,
+  `ib=chrome`. Фрагментированный QUIC Initial с `id` как SNI (§146); device-proven
+  против реального LTE-DPI, где прежний short-header был заблокирован.
+- **Нужно, чтобы DPI увидел «разрешённый» домен** → `ip=quic`/`ip=dns`/`ip=sip` с
+  региональным популярным `id` (SNI / QNAME / SIP-host).
 - **STUN** — нишево (выглядит как ответ STUN-сервера); домен не несёт.
 
 ---
@@ -186,9 +200,10 @@ go build -tags "with_wireguard with_gvisor with_awg" -o ./sing-box ./cmd/sing-bo
 | `i1` **и** `id`/`ip`/`ib` вместе | `amneziawg: id/ip/ib masquerade conflicts with an explicit i1; use one or the other` |
 | `id` есть, `ip` нет | `amneziawg: ip (masquerade protocol) is required when id/ib is set; one of quic\|dns\|stun\|sip` |
 | `ip` не из набора | `amneziawg: unknown masquerade protocol "ftp"; one of quic\|dns\|stun\|sip` |
+| `ip=quic` без `id` | `amneziawg: id (masquerade domain) is required for ip=quic (it becomes the ClientHello SNI)` |
 | `ip=dns` без `id` | `amneziawg: id (masquerade domain) is required for ip=dns (it becomes the DNS QNAME)` |
 | `ip=sip` без `id` | `amneziawg: id (masquerade domain) is required for ip=sip (it becomes the SIP host)` |
-| `ip=quic`/`ip=stun` без `id` | **не ошибка** — `id` опционален, decoy без домена |
+| `ip=stun` без `id` | **не ошибка** — `id` опционален, decoy без домена |
 | домен с `\r\n`/`;`/`@`/пробелом | `amneziawg: invalid masquerade domain "...": illegal character (only a-z A-Z 0-9 - _ allowed)` |
 | `ib` не из набора | `amneziawg: unknown masquerade browser "safari"; one of chrome\|firefox\|curl` |
 | `ib` с `ip≠quic` | `amneziawg: ib (browser) is only meaningful with ip=quic, got ip="dns"` |
@@ -205,16 +220,21 @@ DNS QNAME, поэтому control-байты и метасимволы отве�
 
 - Это **decoy перед handshake**, не полноценная протокол-сессия. Один пакет нужной
   формы, дальше — обычный AWG-трафик.
-- **QUIC не раскрывает SNI** (short header, не Initial) — `id` для `quic`/`stun`
-  на провод не идёт (см. §1). Это сознательный выбор WireSock, не баг.
-- **`ib` не делает JA3/TLS-fingerprint** — в short-header QUIC нет ClientHello.
-  Поле принято для совместимости синтаксиса; единственный эффект — пара
-  косметических бит первого QUIC-байта (в реальном QUIC они per-packet random).
+- **QUIC раскрывает SNI** (фрагментированный Initial, §146): `id` идёт на провод как
+  SNI в ClientHello. `stun` домен не несёт (см. §1). DPI-обход — за счёт out-of-order
+  фрагментации CRYPTO-фреймов (line-rate DPI парсит первый фрейм как offset 0, видит
+  мусор и пропускает), не за счёт сокрытия SNI.
+- **`ib` выбирает профиль ClientHello** (порядок расширений / GREASE под браузер),
+  но **не претендует на полную JA3/JA4-эквивалентность** конкретной сборке браузера.
+  В прежнем short-header дизайне `ib` не делал ничего значимого (косметические биты
+  первого байта) — §146 дал ему реальный, хоть и приближённый, эффект.
 - Байт-в-байт replay именно WireSock-трафика **не** делается: энтропия наша
   (криптослучайная `<r>`), а не payload-seeded PRNG (у нас нет ciphertext-хвоста,
   т.к. это standalone I1, а не серверный S1–S4 padding).
-- Полевая проверка против реального DPI/живого WARP-сервера не проводилась —
-  подтверждены приём движком, структурная валидность и `sing-box check`.
+- Полевая проверка: `ip=quic` (фрагментированный Initial, §146) **device-proven
+  против реального LTE-DPI** — прежний short-header там был эмпирически заблокирован.
+  Для `dns`/`stun`/`sip` систематическая полевая A/B-проверка против конкретного DPI
+  не проводилась — подтверждены приём движком, структурная валидность и `sing-box check`.
 
 См. также: [SPEC.md](SPEC.md), [PLAN.md](PLAN.md),
 [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md),

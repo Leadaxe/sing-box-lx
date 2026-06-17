@@ -121,14 +121,16 @@ with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_nai
 {
   "type": "wireguard",
   // … стандартные поля wireguard …
-  "ip": "quic", "ib": "chrome"          // quic/stun: id необязателен (домен не идёт на провод)
-  // или: "ip": "dns",  "id": "www.google.com"   // dns/sip: id обязателен, идёт как QNAME/host
+  "id": "www.google.com", "ip": "quic", "ib": "chrome"   // quic: id идёт как SNI в ClientHello
+  // или: "ip": "dns",  "id": "www.google.com"   // dns/sip: id идёт как QNAME/host
 }
 ```
 
-`ip` ∈ `quic|dns|stun|sip`; `id` обязателен только для `dns`/`sip` (там он идёт на
-провод) и опционален для `quic`/`stun`; `ib` ∈ `chrome|firefox|curl` (только quic,
-эффект минимальный — без JA3-fingerprint). Взаимоисключается с явным `i1`. См.
+`ip` ∈ `quic|dns|stun|sip`; `id` обязателен для `quic`/`dns`/`sip` (там он идёт на
+провод — для `quic` как SNI в ClientHello) и опционален только для `stun`; `ib` ∈
+`chrome|firefox|curl` (только quic, эффект минимальный — без JA3-fingerprint). Для
+`quic` ядро генерит фрагментированный QUIC Initial (RFC 9001) с перемешанным порядком
+CRYPTO-фреймов, пробивающий line-rate DPI. Взаимоисключается с явным `i1`. См.
 [docs/lx-config.md](docs/lx-config.md) и [примеры SPECS/009](SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ---

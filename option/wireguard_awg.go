@@ -150,7 +150,7 @@ type AmneziaWGOptions struct {
 	I3   string      `json:"i3,omitempty"`
 	I4   string      `json:"i4,omitempty"`
 	I5   string      `json:"i5,omitempty"`
-	Id   string      `json:"id,omitempty"` // masquerade domain; required for ip=dns/sip, optional for quic/stun
+	Id   string      `json:"id,omitempty"` // masquerade domain; required for ip=quic/dns/sip, optional for stun
 	Ip   string      `json:"ip,omitempty"` // masquerade protocol: quic | dns | stun | sip
 	Ib   string      `json:"ib,omitempty"` // masquerade browser: chrome | firefox | curl (limited effect, see masque_awg.go)
 }

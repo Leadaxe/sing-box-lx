@@ -2,11 +2,18 @@
 
 ## Решённые развилки (НЕ передоговариваем)
 
+> **§146 amendment (2026-06-17):** `ip=quic` теперь эмитит **out-of-order
+> фрагментированный QUIC Initial** (RFC 9001) с ClientHello, где `id` = SNI —
+> см. `quic_initial_awg.go` и LxBox-таск §146, — **сменив** 1-RTT short-header дизайн
+> ниже. `id` для `quic` теперь обязателен. Файл `masque_quic_awg.go` удалён.
+> Механизм по-прежнему I1 CPS — менялся только QUIC-профиль.
+
 - **Механизм — I1 CPS только.** S1–S4 padding отвергнут: он невозможен против
   Cloudflare WARP, ради упрощения коннекта к которому фича и существует. Сабмодуль
   `submodules/wireguard-go` **не трогаем** (и ребейз дешевле — CONSTITUTION §2).
 - **QUIC — 1-RTT short header** (как WireSock `apply_quic_padding_short`), НЕ Initial.
-  Нет SNI, нет ClientHello, нет JA3 — честно, без «byte-perfect».
+  Нет SNI, нет ClientHello, нет JA3 — честно, без «byte-perfect». _(§146: развёрнуто —
+  теперь фрагментированный Initial с SNI; см. amendment выше.)_
 - **Структура протоколов** — порт из WireSock `transform.rs` (MIT). DNS = EDNS OPT
   response, STUN = Binding Success Response, SIP = response-текст.
 - **`Ib`** — валидируется (`chrome|firefox|curl`), но **не выдумывает fingerprint**:
@@ -44,7 +51,7 @@ option.AmneziaWGOptions{Id,Ip,Ib}
 |------|------|-----|
 | `option/wireguard_awg.go` | lx | +`Id/Ip/Ib string` (json `id`/`ip`/`ib`); `IsSet()` учтёт автоматически |
 | `transport/wireguard/masque_awg.go` | lx, `with_awg` | `masqueI1` диспетчер, `validateMasqueDomain` (LDH), `normalizeMasqueBrowser`, `cpsBuilder`, DNS/STUN/SIP генераторы |
-| `transport/wireguard/masque_quic_awg.go` | lx, `with_awg` | QUIC 1-RTT short header (`masqueQUICShortHeaderCPS`, `quicFirstByte`) |
+| `transport/wireguard/quic_initial_awg.go` (+ `quic_clienthello_awg.go`, `quic_crypto_awg.go`) | lx, `with_awg` | QUIC out-of-order фрагментированный Initial с SNI (§146; ранее `masque_quic_awg.go` с `masqueQUICShortHeaderCPS`/`quicFirstByte` — удалён) |
 | `transport/wireguard/device_awg.go` | lx, `with_awg` | вызов `masqueI1(o)` в `awgIpcLines`, подстановка как `i1` |
 | `transport/wireguard/masque_awg_test.go` | lx, `with_awg` | структурные тесты (обратный парсинг), KAT, валидация, инъекция |
 | `transport/wireguard/masque_cps_test.go` | lx, `with_awg` | test-only верный реплей CPS-парсера (зеркало `newObfChain`) |
@@ -58,8 +65,10 @@ option.AmneziaWGOptions{Id,Ip,Ib}
 1. `Id/Ip/Ib` пусты → `""` (нет маскировки), конфиг = upstream.
 2. Конфликт с явным `I1` → ошибка.
 3. `Ip` пуст при заданном `Id/Ib` → ошибка; `Ip ∉ {quic,dns,stun,sip}` → ошибка.
-4. `Id` обязателен **только для `dns`/`sip`** (там он идёт на провод как QNAME /
-   SIP-host); для `quic`/`stun` опционален. Когда задан — **строгий LDH** (зеркало
+4. `Id` обязателен **для `quic`/`dns`/`sip`** (идёт на провод как SNI / QNAME /
+   SIP-host); опционален **только для `stun`**. _(§146: было «только dns/sip» — после
+   перехода `quic` на Initial с SNI стал обязателен и для `quic`.)_
+   Когда задан — **строгий LDH** (зеркало
    `is_valid_sni_hostname`): метки
    alnum+`-`+`_`, без edge-дефиса, ≤63, всего ≤253, трейлинг-дот ок. Это
    **security-граница** — домен идёт в SIP-текст и DNS QNAME.

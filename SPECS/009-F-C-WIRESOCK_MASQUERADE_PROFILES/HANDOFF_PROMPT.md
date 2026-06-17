@@ -7,6 +7,29 @@
 Сначала прочитай его целиком, потом `SPEC.md` в этой папке (он ПЕРЕПИСАН под верное
 понимание), потом `transform.rs` WireSock, потом начинай писать генераторы с нуля.
 
+> ## §146 amendment (2026-06-17) — читать первым, перекрывает QUIC-разделы ниже
+>
+> Этот хэндофф вёл к 1-RTT **short-header** QUIC. Тот дизайн был реализован,
+> зарелизен (lx.11) и **впоследствии заменён** фичей §146: `ip=quic` теперь эмитит
+> **out-of-order фрагментированный QUIC Initial** (RFC 9001) с реалистичным
+> ClientHello, где `id` = **SNI**. Причина — прежний short header был **эмпирически
+> заблокирован реальным LTE-DPI**; фрагментированный Initial обходит line-rate DPI
+> тем, что первый CRYPTO-фрейм на проводе имеет offset≠0 (DPI парсит его как offset 0,
+> читает мусор, fail-open), offset-0 фрейм лежит ближе к концу, PING/PADDING
+> интерливятся. Файлы: `transport/wireguard/quic_initial_awg.go`,
+> `quic_clienthello_awg.go`, `quic_crypto_awg.go`. Полная спека — LxBox-таск §146
+> (`146-warp-quic-initial-fragmented-i1.md`).
+>
+> **Что изменилось против текста ниже:**
+> - `id` для `quic` теперь **обязателен** (становится SNI), а не опционален.
+> - QUIC теперь **Initial с ClientHello и SNI**, а не short-header без SNI.
+> - `masque_quic_awg.go` (функции `masqueQUICShortHeaderCPS`, `quicFirstByte`)
+>   **удалён**.
+> - Развилка §2.5 (Initial vs short-header) разрешена в пользу Initial — но не
+>   byte-perfect статикой, а out-of-order фрагментацией CRYPTO.
+>
+> Всё про DNS/STUN/SIP, механизм I1, валидацию домена (LDH) — без изменений.
+
 ---
 
 ## 0. ТЕКУЩЕЕ СОСТОЯНИЕ (после отката — читай первым)
