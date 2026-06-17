@@ -145,6 +145,17 @@ func pgHost() string {
 	}
 }
 
+// pgDomainHost returns a pseudo DOMAIN name only — a 2-/3-level LDH hostname,
+// never an IP or a sip-prefixed subdomain. Used as a DNS QNAME when no id is
+// given: a query for a bare IP or a "sip." name would be implausible, whereas a
+// plain domain lookup is the normal case. 60% 3-level / 40% 2-level.
+func pgDomainHost() string {
+	if pgIntn(100) < 60 {
+		return pgWord() + "." + pgWord() + "." + pgPick(pgTLD) // 3-level
+	}
+	return pgWord() + "." + pgPick(pgTLD) // 2-level
+}
+
 // itoa is a tiny non-allocating-ish base-10 itoa for the IP octets (avoids a
 // strconv import for three call sites).
 func itoa(n int) string {

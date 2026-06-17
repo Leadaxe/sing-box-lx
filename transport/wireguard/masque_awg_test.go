@@ -59,21 +59,18 @@ func TestMasqueI1MissingProtocol(t *testing.T) {
 	require.Contains(t, err.Error(), "ip (masquerade protocol) is required")
 }
 
-// id is required for quic (SNI) and dns (QNAME) — it must be on the wire. For
-// sip it is optional (a pseudo-host is generated when absent) and stun ignores
-// it entirely.
-func TestMasqueI1DomainRequiredForQUICAndDNS(t *testing.T) {
+// id is required only for quic (it becomes the ClientHello SNI). dns/sip/stun
+// all work without it (dns/sip generate a pseudo name, stun ignores it).
+func TestMasqueI1DomainRequiredForQUICOnly(t *testing.T) {
 	t.Parallel()
-	for _, proto := range []string{"quic", "dns"} {
-		_, err := masqueI1(option.AmneziaWGOptions{Ip: proto})
-		require.Error(t, err, "id should be required for ip=%s", proto)
-		require.Contains(t, err.Error(), "id (masquerade domain) is required for ip="+proto)
-	}
+	_, err := masqueI1(option.AmneziaWGOptions{Ip: "quic"})
+	require.Error(t, err, "id should be required for ip=quic")
+	require.Contains(t, err.Error(), "id (masquerade domain) is required for ip=quic")
 }
 
-// id is optional for stun (hostname-less) and sip (pseudo-host generated when
-// absent); both must produce a valid decoy without an id.
-func TestMasqueI1DomainOptionalForSTUNAndSIP(t *testing.T) {
+// id is optional for dns/sip (a pseudo name is generated when absent) and stun
+// (hostname-less); all must produce a valid decoy without an id.
+func TestMasqueI1DomainOptionalForNonQUIC(t *testing.T) {
 	t.Parallel()
 	// stun without id → a valid hostname-less Binding Request.
 	stun, err := masqueI1(option.AmneziaWGOptions{Ip: "stun"})
@@ -86,6 +83,17 @@ func TestMasqueI1DomainOptionalForSTUNAndSIP(t *testing.T) {
 	sip, err := masqueI1(option.AmneziaWGOptions{Ip: "sip"})
 	require.NoError(t, err, "sip without id should be valid (pseudo-host)")
 	require.True(t, strings.HasPrefix(string(obfuscateCPS(t, sip)), "INVITE sip:"), "sip-without-id is an INVITE")
+
+	// dns without id → a valid DNS query whose QNAME is a generated pseudo-domain.
+	dns, err := masqueI1(option.AmneziaWGOptions{Ip: "dns"})
+	require.NoError(t, err, "dns without id should be valid (pseudo-domain)")
+	dpkt := obfuscateCPS(t, dns)
+	require.Equal(t, byte(0x00), dpkt[2]&0x80, "dns-without-id is a query (QR=0)")
+	name, off := parseDNSName(t, dpkt, 12)
+	require.NotEmpty(t, name, "QNAME is a generated pseudo-domain")
+	require.NotContains(t, name, "_", "pseudo-domain has no underscore")
+	require.Contains(t, name, ".", "pseudo-domain is multi-label (not a bare IP)")
+	require.Equal(t, uint16(0x0041), binary.BigEndian.Uint16(dpkt[off:off+2]), "QTYPE HTTPS")
 
 	// An INVALID id is still rejected (LDH applies whenever id is set).
 	_, err = masqueI1(option.AmneziaWGOptions{Ip: "quic", Id: "a.com\r\nx"})

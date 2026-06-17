@@ -149,7 +149,7 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
 
 - **Взаимоисключение с `I1`** — задан и `i1`, и `id/ip/ib` → ошибка.
 - **`Ip ∈ {quic,dns,stun,sip}`** (lower); пусто при заданном `Id`/`Ib` → ошибка.
-- **`Id` обязателен для `quic`/`dns`** (идёт на провод как SNI / QNAME); **опционален для
+- **`Id` обязателен только для `quic`** (SNI); **опционален для `dns`** (QNAME или псевдо-домен) и для
   `sip`** (задан → SIP host, пуст → генерируется псевдо-host) и **`stun`** (hostname-less).
 - **Строгий LDH-чек** применяется **всегда, когда `Id` задан** (метки alnum+hyphen+`_`,
   без edge-hyphen, ≤63, всего ≤253, трейлинг-дот ок). Это security-граница: домен идёт в
@@ -197,7 +197,7 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
 - **Длинный домен:** валидный LDH-домен любой длины (≤253) генерируется без ошибки (payload
   пинится к length-полю flex-PADDING-run; CH растёт с длиной SNI, инварианты сохраняются).
 - **CPS принят реальным движком:** прогон через `newObfChain` из `submodules/wireguard-go`.
-- **Валидация:** конфликт с `I1`, неизвестный `Ip`, пустой `Id` для quic/dns/sip,
+- **Валидация:** конфликт с `I1`, неизвестный `Ip`, пустой `Id` для quic,
   control-байт/метасимвол в домене, `Ib` вне набора / не при quic — ошибки; нет паники.
 - **Gating:** `Id/Ip/Ib` без `with_awg` → «awg support not built».
 - **Регресс:** плоский WG и явный `I1` без masquerade — байт-в-байт.

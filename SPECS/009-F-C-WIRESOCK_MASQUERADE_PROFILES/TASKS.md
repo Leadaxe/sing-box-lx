@@ -29,7 +29,7 @@
 - [x] DNS: парсится как EDNS OPT query (QR=0, QTYPE HTTPS), QNAME=`Id`, RDLENGTH/OPTION-LENGTH до конца
 - [x] STUN: парсится как Binding Request (0x0001), FINGERPRINT CRC-32 сходится, USERNAME+MESSAGE-INTEGRITY есть
 - [x] SIP: request-line INVITE, обязательные заголовки + To без tag, SDP-тело, Content-Length точна, имена не захардкожены; пустой id → псевдо-host
-- [x] валидация: конфликт с I1, неизвестный ip/ib, пустой id (quic/dns), ib без quic — ошибки
+- [x] валидация: конфликт с I1, неизвестный ip/ib, пустой id (только quic), ib без quic — ошибки
 - [x] инъекция домена (CRLF/метасимволы) — отвергается
 - [x] `masque_cps_test.go`: верный реплей CPS-парсера (зеркало `newObfChain`)
 - [x] cross-check: сгенерированный QUIC Initial парсится боевым снифером `common/sniff/quic.go`
