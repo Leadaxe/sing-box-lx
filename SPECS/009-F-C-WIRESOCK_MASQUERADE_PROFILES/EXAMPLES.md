@@ -11,12 +11,6 @@
 
 ## 1. Три поля
 
-> **§146 (2026-06-17):** `ip=quic` теперь эмитит **out-of-order фрагментированный
-> QUIC Initial** (RFC 9001) с реалистичным ClientHello, где `id` идёт как **SNI** —
-> это сменило прежний 1-RTT short header. Поэтому `id` стал **обязателен** для
-> `quic` (как и для `dns`/`sip`), и домен теперь **виден** цензору в ClientHello.
-> Детали ниже уже отражают это поведение. См. квик-секцию §2.1 и LxBox-таск §146.
-
 | Поле | Имя | Значения | Обязательно |
 |------|-----|----------|-------------|
 | `id` | домен | LDH-хост (`www.google.com`, `ozon.ru`, `_dmarc.example.com`) | **для `quic`/`dns`/`sip`** (там он идёт в пакет: SNI / QNAME / SIP-host); опционален **только для `stun`** |
@@ -77,20 +71,11 @@ ClientHello, где `id` (`www.google.com`) — это **SNI**, разбитый
 которые идут на провод **не по порядку** — первый CRYPTO-фрейм имеет offset≠0, а
 offset-0 фрейм лежит ближе к концу, с интерливом PING/PADDING. Line-rate DPI хватает
 первый фрейм, считает его offset 0, парсит мусор и пропускает (fail-open). `ib`
-выбирает профиль ClientHello (порядок расширений / GREASE) под соответствующий
-браузер. Подробная спецификация — LxBox-таск §146
-(`146-warp-quic-initial-fragmented-i1.md`), генератор — `quic_initial_awg.go`,
-`quic_clienthello_awg.go`, `quic_crypto_awg.go`.
+валидируется (`chrome|firefox|curl`), но на байты пакета не влияет — bypass держится
+на фрагментации, а не на TLS-fingerprint (JA3 не имитируется). Генератор —
+`quic_initial_awg.go`, `quic_clienthello_awg.go`, `quic_crypto_awg.go`.
 
-> **§146 amendment (2026-06-17):** прежний дизайн эмитил 1-RTT short header
-> (`<b 0x60><r 40>` и т.п. для chrome/firefox/curl, файл `masque_quic_awg.go`,
-> функции `masqueQUICShortHeaderCPS` / `quicFirstByte`). Тот short header был
-> **эмпирически заблокирован реальным LTE-DPI**, поэтому заменён на
-> фрагментированный Initial выше; `masque_quic_awg.go` удалён. Описание
-> short-header ниже более не отражает текущее поведение — оставлено как
-> исторический контекст. **`id` для `quic` теперь обязателен** (становится SNI).
-
-`id` для `quic` теперь **обязателен** (он становится SNI в ClientHello). Минимальный
+`id` для `quic` **обязателен** (он становится SNI в ClientHello). Минимальный
 вариант — `"id": "<домен>", "ip": "quic"` (плюс опциональный `"ib"`):
 
 ```jsonc
@@ -169,8 +154,8 @@ cover-байты как opaque-данные неизвестной EDNS-опци
 ## 3. Что выбрать
 
 - **Коннект к WARP под реальным DPI** → `ip=quic`, `id=<популярный домен>`,
-  `ib=chrome`. Фрагментированный QUIC Initial с `id` как SNI (§146); device-proven
-  против реального LTE-DPI, где прежний short-header был заблокирован.
+  `ib=chrome`. Фрагментированный QUIC Initial с `id` как SNI; device-proven против
+  реального LTE-DPI.
 - **Нужно, чтобы DPI увидел «разрешённый» домен** → `ip=quic`/`ip=dns`/`ip=sip` с
   региональным популярным `id` (SNI / QNAME / SIP-host).
 - **STUN** — нишево (выглядит как ответ STUN-сервера); домен не несёт.
@@ -224,18 +209,17 @@ DNS QNAME, поэтому control-байты и метасимволы отве�
   SNI в ClientHello. `stun` домен не несёт (см. §1). DPI-обход — за счёт out-of-order
   фрагментации CRYPTO-фреймов (line-rate DPI парсит первый фрейм как offset 0, видит
   мусор и пропускает), не за счёт сокрытия SNI.
-- **`ib` выбирает профиль ClientHello** (порядок расширений / GREASE под браузер),
-  но **не претендует на полную JA3/JA4-эквивалентность** конкретной сборке браузера.
-  В прежнем short-header дизайне `ib` не делал ничего значимого (косметические биты
-  первого байта) — §146 дал ему реальный, хоть и приближённый, эффект.
+- **`ib` валидируется, но на байты пакета не влияет.** JA3/JA4-fingerprint не
+  имитируется: DPI-обход держится на out-of-order фрагментации CRYPTO-фреймов, а не на
+  TLS-fingerprint. `ib` принимается для совместимости синтаксиса с WireSock-конфигами.
 - Байт-в-байт replay именно WireSock-трафика **не** делается: энтропия наша
-  (криптослучайная `<r>`), а не payload-seeded PRNG (у нас нет ciphertext-хвоста,
-  т.к. это standalone I1, а не серверный S1–S4 padding).
-- Полевая проверка: `ip=quic` (фрагментированный Initial, §146) **device-proven
-  против реального LTE-DPI** — прежний short-header там был эмпирически заблокирован.
-  Для `dns`/`stun`/`sip` систематическая полевая A/B-проверка против конкретного DPI
-  не проводилась — подтверждены приём движком, структурная валидность и `sing-box check`.
+  (криптослучайная `<r>`, для QUIC — свежие DCID/random/x25519 на вызов), а не
+  payload-seeded PRNG (это standalone I1, а не серверный S1–S4 padding).
+- Полевая проверка: `ip=quic` (фрагментированный Initial) **device-proven против
+  реального LTE-DPI**. Для `dns`/`stun`/`sip` систематическая полевая A/B-проверка
+  против конкретного DPI не проводилась — подтверждены приём движком, структурная
+  валидность и `sing-box check`.
 
-См. также: [SPEC.md](SPEC.md), [PLAN.md](PLAN.md),
+См. также: [SPEC.md](SPEC.md),
 [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md),
 краткая версия — `docs/lx-config.md` (секция «Masquerade id/ip/ib»).
