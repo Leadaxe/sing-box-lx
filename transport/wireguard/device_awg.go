@@ -64,17 +64,31 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 		writeStr(key, spec)
 		return nil
 	}
-	// WireSock-style id/ip/ib masquerade is sugar over I1: it generates the I1
-	// CPS string. masqueI1 returns "" when no masquerade is set, and errors on a
-	// conflict with an explicit I1 or on invalid id/ip/ib. When set, its output
-	// is used as the i1 value below.
+	// WireSock-style id/ip/ib masquerade is sugar over I1 (and, for ip=quic, I2):
+	// it generates the CPS strings. masqueI1 returns "" when no masquerade is set,
+	// and errors on a conflict with an explicit I1 or on invalid id/ip/ib. When
+	// set, its output is used as the i1 value below.
 	i1 := o.I1
+	i2 := o.I2
 	masque, err := masqueI1(o)
 	if err != nil {
 		return "", err
 	}
 	if masque != "" {
 		i1 = masque
+		// ip=quic also fills i2 with a second independent fragmented Initial
+		// (developing-session decoy). A user-supplied i2 alongside id/ip/ib is
+		// ambiguous, exactly like the i1 conflict masqueI1 already rejects.
+		masque2, err := masqueI2(o)
+		if err != nil {
+			return "", err
+		}
+		if masque2 != "" {
+			if o.I2 != "" {
+				return "", E.New("amneziawg: id/ip/ib masquerade (ip=quic) fills i2; an explicit i2 conflicts with it")
+			}
+			i2 = masque2
+		}
 	}
 
 	writeUint("jc", o.Jc)
@@ -93,7 +107,7 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 		}
 	}
 	writeStr("i1", i1)
-	writeStr("i2", o.I2)
+	writeStr("i2", i2)
 	writeStr("i3", o.I3)
 	writeStr("i4", o.I4)
 	writeStr("i5", o.I5)
