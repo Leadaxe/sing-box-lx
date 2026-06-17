@@ -59,12 +59,35 @@ supported_versions, GREASE `0x0a0a` (RFC 8701 — `quic_clienthello_awg.go:117`)
 валидируется (`normalizeMasqueBrowser` — `masque_awg.go:183`), но на байты пакета не влияет.
 Код: `buildClientHello` — `quic_clienthello_awg.go:67`.
 
-### Р7. dns/stun/sip — порт структуры из WireSock
-Структуры портированы из `amneziawg-proxy/src/transform.rs` (MIT). Всё в `masque_awg.go`:
-`masqueDNSResponseCPS` (EDNS OPT, QNAME=`Id`, опция `0xFDE9`), `masqueSTUNResponseCPS`
-(Binding Response, cookie `0x2112A442`), `masqueSIPResponseCPS` (`200 OK`, `Id` как host).
-Модель — standalone decoy (src=nil), поэтому длины покрывают только реально записанные байты,
-энтропия криптослучайная (`<r>`), не payload-seeded.
+### Р7. dns/sip — порт структуры из WireSock
+DNS/SIP портированы из `amneziawg-proxy/src/transform.rs` (MIT), в `masque_awg.go`:
+`masqueDNSResponseCPS` (EDNS OPT, QNAME=`Id`, опция `0xFDE9`), `masqueSIPResponseCPS`
+(`200 OK`, `Id` как host). Модель — standalone decoy (src=nil): длины покрывают только реально
+записанные байты, энтропия `<r>`, не payload-seeded.
+
+### Р8. Рандомизация QUIC-раскладки + robustness-ручки
+Раскладка фрейм-плана генерится на каждый вызов: случайные точки разреза
+(`planFragmentsN`) и случайный out-of-order порядок (`randomizedWirePlan`), при этом I1–I4
+держатся по построению (перестановка фрагментов + ремонт «offset-0 не первый» + flex-PADDING).
+Убирает фиксированную межюзерную сигнатуру (раньше был зашит `etalonWirePlan`, удалён).
+`quicGenParams` (`defaultQUICGenParams` — 6 фрагментов, 2 PING, 1250б) — ручки эскалации без
+правки кода: число фрагментов/PING и диапазон размера датаграммы; length-поле/payload
+пересчитываются от размера. Код: `quic_initial_awg.go` (`quicGenParams`, `planFragmentsN`,
+`randomizedWirePlan`, `pickTotalLen`). Стресс-тест: 300 случайных пакетов держат I1–I4.
+
+### Р9. STUN — Binding Request вместо Response
+`ip=stun` теперь эмитит WebRTC Binding **Request** (`0x0001`): USERNAME, ICE-CONTROLLING,
+PRIORITY, SOFTWARE=`libwebrtc`, MESSAGE-INTEGRITY (HMAC-SHA1 по случайному ICE-ключу),
+FINGERPRINT (CRC-32). Причина: Success Response (`0x0101`), посланный клиентом первым и без
+запроса — аномалия направления; Request — то, что ICE-клиент шлёт первым. Свежий
+txn/ufrag/ключ на вызов. Код: `stun_request_awg.go` (`buildSTUNBindingRequest`,
+`masqueSTUNRequestCPS`); диспетч `masque_awg.go:103`. Старый `masqueSTUNResponseCPS` удалён.
+
+**Device-результат (важно):** ни Binding Request, ни полный WebRTC-вариант с MESSAGE-INTEGRITY
+**не прошли** тестовый LTE/WARP DPI (Timeout, тогда как `quic` ✅ ~340 мс). Углубление пакета
+эффекта не дало → DPI режет STUN к дата-центровому Cloudflare-IP **как класс протокола**, не по
+качеству пакета. `sip` по аналогии. `quic` — единственный проверенный рабочий механизм здесь;
+`stun`/`sip` сохранены на случай других провайдеров (DPI без проверки направления/класса).
 
 ---
 
@@ -75,11 +98,17 @@ supported_versions, GREASE `0x0a0a` (RFC 8701 — `quic_clienthello_awg.go:117`)
   1250 / length 1232; уникальность DCID+random; длинный домен генерируется.
 - **Cross-check боевым снифером:** сгенерированный Initial парсится `common/sniff/quic.go`
   (SNI извлечён, классификация chromium).
-- **dns/stun/sip + валидация** (`masque_awg_test.go`, `masque_cps_test.go`): обратный парсинг
-  каждого профиля + инъекция домена отвергается + конфликт с `i1` / неизвестный ip/ib /
-  пустой id для quic/dns/sip — ошибки.
+- **Рандомизация QUIC** (`quic_initial_awg_test.go`): `TestQUICInitialRandomizedInvariants`
+  (80 сэмплов, I1–I4 + offset'ы различаются) и `TestQUICInitialRobustnessKnobs` (4/10/12
+  фрагментов, переменный размер).
+- **STUN Request** (`masque_awg_test.go`): `TestMasqueSTUNRequestStructure` (тип `0x0001`,
+  атрибуты тайлят сообщение, FINGERPRINT CRC-32 сходится, USERNAME+MESSAGE-INTEGRITY есть),
+  `TestMasqueSTUNRequestUniqueness`.
+- **dns/sip + валидация** (`masque_awg_test.go`, `masque_cps_test.go`): обратный парсинг +
+  инъекция домена отвергается + конфликт с `i1` / неизвестный ip/ib / пустой id для
+  quic/dns/sip — ошибки.
 - **Адверсариальный ревью** (workflow): подтверждённые находки исправлены (flex-PADDING для
-  длинного SNI — Р5; GREASE `0x4469`→`0x0a0a` — Р6; gofmt; стале-комментарии).
+  длинного SNI — Р5; GREASE `0x4469`→`0x0a0a` — Р6; response→request для STUN — Р9).
 - `go build` (с тегами и без) ок; `go test -tags with_awg ./transport/wireguard/...` зелёный;
   `gofmt -l` lx-файлов пусто; `sing-box check` на quic/dns/stun/sip ок, пустой id для quic
   отвергнут; gating без `with_awg` → «awg support not built».
