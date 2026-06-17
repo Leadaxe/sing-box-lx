@@ -160,7 +160,7 @@ DPI:
 }
 ```
 
-> **Notes & honest limitations.**
+> **Notes & limitations.**
 > - `id`/`ip`/`ib` are **mutually exclusive** with an explicit `i1` — set one or the
 >   other, not both (a config with both is rejected).
 > - This is a **decoy** sent before the handshake, not a full protocol session — the

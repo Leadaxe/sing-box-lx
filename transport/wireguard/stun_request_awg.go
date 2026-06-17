@@ -9,7 +9,7 @@
 // Binding REQUEST (0x0001) is what an ICE agent legitimately sends first, so it
 // is the RFC-consistent shape for a client-initiated decoy.
 //
-// HONEST STATUS. On the LTE/WARP DPI this feature targets this did NOT pass
+// Device status. On the LTE/WARP DPI this feature targets this did NOT pass
 // device testing — neither this nor a minimal Binding Request — which indicates
 // that DPI blocks STUN toward a datacenter Cloudflare IP as a protocol class,
 // not on packet quality. We ship the strongest possible STUN shape anyway: it

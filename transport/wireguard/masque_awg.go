@@ -197,13 +197,13 @@ const (
 // normalizeMasqueBrowser validates Ib against the accepted set and returns it
 // lower-cased, or "" when unset.
 //
-// HONESTY NOTE: the QUIC masquerade now emits a fragmented QUIC Initial with a
-// real ClientHello (see quic_initial_awg.go), but the DPI bypass works on
-// out-of-order CRYPTO-frame fragmentation, NOT on a TLS fingerprint.
-// We therefore do NOT imitate a specific browser JA3/JA4. Ib is accepted for
-// syntax compatibility with WireSock configs and validated, but currently does
-// not change the generated ClientHello. For dns/stun/sip it has no effect; ib is
-// only meaningful (and even then only as a future hook) for ip=quic.
+// Note: the QUIC masquerade emits a fragmented QUIC Initial with a real
+// ClientHello (see quic_initial_awg.go), but the DPI bypass works on
+// out-of-order CRYPTO-frame fragmentation, not on a TLS fingerprint, so no
+// specific browser JA3/JA4 is imitated. Ib is accepted for syntax compatibility
+// with WireSock configs and validated, but currently does not change the
+// generated ClientHello. For dns/stun/sip it has no effect; ib is only
+// meaningful (and even then only as a future hook) for ip=quic.
 func normalizeMasqueBrowser(ib, proto string) (string, error) {
 	browser := strings.ToLower(strings.TrimSpace(ib))
 	if browser == "" {
@@ -277,7 +277,7 @@ func (c *cpsBuilder) String() string {
 // DNS — EDNS OPT query (a client-initiated lookup; direction-corrected)
 // ---------------------------------------------------------------------------
 //
-// HONEST STATUS. ip=dns emits a DNS QUERY (QR=0) — what a client legitimately
+// Device status. ip=dns emits a DNS QUERY (QR=0) — what a client legitimately
 // sends first, fixing the wrong-direction anomaly of the earlier QR=1 response
 // (a response sent unsolicited as the first packet is a server-role packet in
 // the client's slot; the STUN profile had the same defect). But the decoy still
