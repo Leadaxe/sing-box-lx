@@ -11,7 +11,7 @@
 // missing as a flow opener (request-line with the INVITE method, Max-Forwards,
 // Contact) plus a realistic SDP offer.
 //
-// HONEST STATUS. On the LTE/WARP DPI this feature targets, the sibling DNS/STUN
+// Device status. On the LTE/WARP DPI this feature targets, the sibling DNS/STUN
 // profiles are blocked as a protocol CLASS toward the datacenter WARP edge
 // (162.159.x:2408) regardless of packet quality — SIP is expected to behave the
 // same (SIP lives on a SIP server / :5060, not a datacenter edge). NOT
