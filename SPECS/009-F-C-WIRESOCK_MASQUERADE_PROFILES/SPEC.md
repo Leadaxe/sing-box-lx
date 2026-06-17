@@ -1,230 +1,185 @@
 # SPEC: 009 — WIRESOCK_MASQUERADE_PROFILES
 
 Декларативные поля маскировки **`Id` / `Ip` / `Ib`** (домен / протокол / браузер) —
-взятые из [WireSock Secure Connect](https://www.wiresock.net/), — которые
-**на уровне конфига разворачиваются в AmneziaWG `I1` CPS-строку**. Вместо ручного
-`i1=<b 0x...>` пользователь пишет осмысленные строки, а движок собирает
-правдоподобный пакет-приманку нужного протокола.
-
-> **Статус: SPEC переписан после реверта первой реализации.** Первая попытка
-> (uncommitted) строилась на НЕВЕРНОМ референсе (`mini_quic_generator` — модель
-> «расшифровываемый QUIC Initial с SNI») и была откачена. Этот SPEC опирается на
-> **авторитетный open-source код самого WireSock** (см. §1.2) — их реальная модель
-> мимикрии иная. Код генераторов пишется с нуля по этому SPEC.
+из [WireSock Secure Connect](https://www.wiresock.net/) — которые **на уровне конфига
+разворачиваются в AmneziaWG `I1` CPS-строку**. Вместо ручного `i1=<b 0x...>` пользователь
+пишет осмысленные поля, а движок собирает пакет-приманку нужного протокола.
 
 Тип: **Feature**, расширение [003 AWG2_CLIENT_ENDPOINT](../003-F-C-AWG2_CLIENT_ENDPOINT)
 и [005 AWG2_RANGED_MAGIC_HEADERS](../005-F-C-AWG2_RANGED_MAGIC_HEADERS).
-Укладывается в CONSTITUTION §3 (новые файлы, тег `with_awg`; правка сабмодуля —
-по выбору механизма, см. §3.1, держать минимальной/изолированной если нужна).
+Тег `with_awg`; новые файлы в зонах lx; сабмодуль не трогается.
 
 ---
 
-## 1. Проблема / контекст
+## 1. Что это
 
-### 1.1 Что такое Id/Ip/Ib (источник — WireSock)
-
-| Поле | Имя | Значение |
-|------|-----|----------|
-| `Id` | **Domain** | домен для маскировки (популярный в регионе: `ozon.ru`, `google.com`…) |
-| `Ip` | **Protocol** | протокол маскировки: **quic** \| **dns** \| **stun** \| **sip** |
-| `Ib` | **Browser** | у WireSock — подпись браузера; **в их реальном QUIC-коде НЕ выражается JA3-fingerprint'ом** (см. §3.3). Поле принимается, но влияние ограничено — задокументировать честно. |
-
-WireSock называет это «более понятной заменой переусложнённой для обычного
-пользователя модели AmneziaWG I1–I5». То есть `Id/Ip/Ib` — **декларативная обёртка**,
-порождающая CPS-пакет (`<b 0x..>`/`<r N>`/`<rc N>`), отправляемый как приманка.
-
-### 1.2 Авторитетный референс (open source, MIT)
-
-Сам WireSock Secure Connect — **проприетарный**. Но его команда публикует
-open-source реализацию той же мимикрии:
-**[`github.com/wiresock/amneziawg-install`](https://github.com/wiresock/amneziawg-install)**
-(Rust, MIT), пакет `amneziawg-proxy/src/`:
-- **`transform.rs`** — эталон построения протокол-пакетов: `apply_quic_padding_short`,
-  `apply_dns_padding` (EDNS OPT), `apply_stun_padding`, `apply_sip_padding`.
-- `quic_handshake.rs` — `is_valid_sni_hostname` (строгий LDH-чек; мы уже совпали).
-
-**ВАЖНО:** WireSock — это **серверный UDP-прокси**, который (а) отвечает на DPI-пробы
-валидным пакетом протокола и (б) переписывает **S1–S4 padding** под отпечаток
-протокола. Их DNS/STUN/SIP — это **responses** (серверная сторона). Мы берём
-**структуру протокола** из их кода; механизм у нас — **развилка I1 CPS vs S1–S4**
-(см. §3.1), рекомендация — I1, но это решение реализатора.
-
-### 1.3 Как WireSock реально строит каждый протокол (из `transform.rs`)
-
-> **§146 amendment (2026-06-17):** `ip=quic` теперь эмитит **out-of-order
-> фрагментированный QUIC Initial** (RFC 9001) с реалистичным ClientHello, где `id`
-> идёт как **SNI** — см. `quic_initial_awg.go` / `quic_clienthello_awg.go` /
-> `quic_crypto_awg.go` и LxBox-таск §146. Это **сменило** 1-RTT short-header дизайн,
-> описанный ниже в этом пункте. `id` для `quic` теперь **обязателен** (становится
-> SNI). Прежняя аргументация «short header не ломается на размере, поэтому лучше
-> Initial» **развёрнута полевыми данными**: short header был эмпирически заблокирован
-> реальным LTE-DPI; фрагментированный Initial обходит line-rate DPI тем, что первый
-> CRYPTO-фрейм на проводе имеет offset≠0 (DPI парсит его как offset 0 → мусор →
-> fail-open). Файл `masque_quic_awg.go` (`masqueQUICShortHeaderCPS` / `quicFirstByte`)
-> **удалён**. Описание short-header ниже — исторический контекст, не текущее поведение.
-
-- **QUIC = 1-RTT SHORT header, НЕ Initial/ClientHello.** Первый байт
-  `0x40 | (spin<<5) | (key_phase<<2) | pn_len_bits` (form=0, fixed=1), далее
-  псевдослучайные байты = «зашифрованный 1-RTT ciphertext». Нет version, нет
-  length, **нет SNI**. Их причина: QUIC Initial требует датаграм ≥1200 байт
-  (RFC 9000 §14.1), а 1-RTT short header не имеет минимума размера и доминирует в
-  реальном QUIC, и его нельзя «сломать». → CPS: `<b 0x4X><r N>`.
-- **DNS = EDNS OPT *response*, НЕ query.** Flags `0x8180` (QR=1,RD=1,RA=1,NOERROR),
-  QDCOUNT=1, ARCOUNT=1; root-label question; OPT RR (TYPE `0x0029`, CLASS=1232,
-  TTL=0), RDATA = одна неизвестная EDNS-опция код `0xFDE9` (IANA local-use),
-  OPTION-LENGTH покрывает остаток → весь датаграм парсится как один DNS-месседж.
-  TXID из первых 2 байт payload.
-- **STUN = Binding Success Response.** type `0x0101`, length=байты атрибутов, magic
-  cookie `0x2112A442`, 12-байт txn, затем XOR-MAPPED-ADDRESS (`0x0020`) +
-  SOFTWARE (`0x8022`, printable ASCII, ≤124, 4-align).
-- **SIP = *response*.** `SIP/2.0 <status>` + Via(branch)/From(tag)/To/Call-ID/CSeq,
-  CRLF.
-
-### 1.4 Семантика CPS-движка (что можно эмитить)
-
-Из `submodules/wireguard-go/device/obf.go` (`newObfChain` + `obfBuilders`):
-`<b 0xHEX>` статичные байты · `<r N>` N криптослучайных байт · `<rc N>` ASCII-буквы
-· `<rd N>` цифры · `<t>` таймстамп · `<d>/<ds>/<dz>` data-теги (не нужны: src=nil).
-I1-пакеты шлются как приманки перед handshake с `Obfuscate(buf, nil)` (src=nil,
-реальных данных нет — `send.go:135`).
-
----
-
-## 2. Цель
-
-Пользователь задаёт на корне endpoint'а:
+`Id/Ip/Ib` — декларативная обёртка над `I1`. На корне endpoint'а пользователь задаёт:
 
 ```jsonc
 { "type": "wireguard", /* ... */ "id": "www.google.com", "ip": "quic", "ib": "chrome" }
 ```
 
-и получает сгенерированную `i1`-строку, как если бы вписал её руками.
-`Id/Ip/Ib` — сахар над `I1`, **без нового рантайма** в device.
+и получает сгенерированную `i1`-строку, как если бы вписал её руками. Новый рантайм в
+device не добавляется — генерация целиком в option/transport-слое.
 
-Профили (структура — по WireSock §1.3, оформление — самодостаточный I1 CPS):
-- **quic** — _§146: out-of-order фрагментированный QUIC Initial с SNI=`Id` (см. §1.3);
-  ранее — 1-RTT short header + энтропия._
-- **dns** — EDNS OPT response, QNAME из `Id`.
-- **stun** — Binding Success Response.
-- **sip** — SIP response с доменом `Id`.
+| Поле | Имя | Значение |
+|------|-----|----------|
+| `Id` | **Domain** | домен для маскировки (массовый легитимный: `www.google.com`, `ozon.ru`…). Идёт на провод как SNI / QNAME / SIP-host |
+| `Ip` | **Protocol** | протокол маскировки: **quic** \| **dns** \| **stun** \| **sip** |
+| `Ib` | **Browser** | `chrome` \| `firefox` \| `curl`. Валидируется; на сгенерированный пакет не влияет (нет JA3-имитации — см. §4) |
+
+> Нейминг проприетарный WireSock (`i`nterface **d**omain/**p**rotocol/**b**rowser); `ip` —
+> это «protocol», НЕ IP-адрес. Эти ключи понимают только WireSock и это ядро; меняться
+> не могут (контракт на входе). Результат же — стандартный AmneziaWG `i1` CPS-тег.
 
 ---
 
-## 3. Требования
+## 2. Механизм — I1 CPS
 
-### 3.1 Механизм — I1 CPS vs S1–S4 padding (развилка, рекомендация — I1)
+Генерируется CPS-строка в option/transport-слое; device-стек не меняется, сабмодуль
+`submodules/wireguard-go` не трогается. Путь: option → `masqueI1` → `awgIpcLines` →
+vendored `obf.go` (`newObfChain`). `I1`-пакет шлётся приманкой перед handshake с
+`Obfuscate(buf, nil)` (src=nil, реальных данных нет — `send.go:135`).
 
-Это **развилка для реализатора**, не догма. Реши осознанно и зафиксируй выбор здесь.
+Семантика CPS-движка (`submodules/wireguard-go/device/obf.go`): `<b 0xHEX>` статичные
+байты · `<r N>` N криптослучайных байт · `<rc N>` ASCII-буквы · `<rd N>` цифры. Decoy
+самодостаточен — это `<b>`-скелет плюс, где нужно, `<r>/<rc>/<rd>`-энтропия.
 
-**Рекомендация: I1 CPS** — генерировать CPS-строку в option/transport-слое, device-стек
-не меняется. Аргументы за:
-- транспорт под I1 уже готов (option → `awgIpcLines` → vendored `obf.go`), сабмодуль не
-  трогается → дешевле ребейз (CONSTITUTION §2 ценит минимальный дифф);
-- WireSock'овский 1-RTT-short трюк опирается на реальный WG-ciphertext **за** padding в
-  том же датаграме; standalone I1 (src=nil) такого «хвоста» не имеет — для I1 структуру
-  придётся делать самодостаточной (`<b>`-скелет + `<r>/<rc>`).
+S1–S4 padding не используется: он невозможен против Cloudflare WARP (init/response
+должны оставаться бит-в-бит как plain WG, иначе сервер отвергает handshake), ради
+упрощения коннекта к которому фича и существует.
 
-**Альтернатива: S1–S4 padding (как реально делает WireSock).** Править сабмодуль **не
-запрещено** — это tradeoff, а не инвариант. За S1–S4:
-- 1:1 с подходом WireSock (`transform.rs` переписывает именно S1–S4 padding);
-- мимикрия на **каждом** пакете, а не только приманкой перед handshake.
+---
 
-Против: правки `submodules/wireguard-go/device/send.go` (дороже ребейз, надо аккуратно
-изолировать и пометить происхождение). Если выберешь S1–S4 — допустимо, обоснуй выбор и
-держи правку сабмодуля минимальной/изолированной.
+## 3. Профили
 
-В любом варианте **структуру протокола** берём из `transform.rs`.
+Структура протоколов `dns`/`stun`/`sip` портирована из open-source WireSock-референса
+([`github.com/wiresock/amneziawg-install`](https://github.com/wiresock/amneziawg-install),
+Rust/MIT, `amneziawg-proxy/src/transform.rs`). Профиль `quic` — собственный
+фрагментированный QUIC Initial (DPI-bypass, см. §3.1). LDH-валидатор домена совпадает с
+их `quic_handshake.rs::is_valid_sni_hostname`.
 
-### 3.2 Опции (option-слой) — добавить (откачено вместе с остальным кодом)
+### 3.1 QUIC — out-of-order фрагментированный Initial
 
-Три поля в `option.AmneziaWGOptions` (`option/wireguard_awg.go`, lx-файл; ~12 строк):
-```go
-Id string `json:"id,omitempty"` // masquerade domain
-Ip string `json:"ip,omitempty"` // quic | dns | stun | sip
-Ib string `json:"ib,omitempty"` // browser (limited effect — see §3.3)
-```
-`IsSet()` (сравнение со `AmneziaWGOptions{}`) учтёт их автоматически → без `with_awg`
-отвергаются stub'ом; пустые → конфиг байт-в-байт upstream.
+`ip=quic` эмитит полный **QUIC Initial (RFC 9001)** с реалистичным браузерным
+ClientHello, где `Id` идёт как **SNI**. ClientHello нарезан на 6 CRYPTO-фреймов,
+выложенных в payload в **перемешанном (out-of-order) порядке**: первый CRYPTO-фрейм на
+проводе имеет `offset≠0`, фрейм с `offset=0` — почти в конце, между CRYPTO-фреймами
+вставлены PING и PADDING.
 
-### 3.3 Браузер (`Ib`) — честно
+**Почему так.** Настоящий QUIC-сервер реассемблирует CRYPTO-фреймы по offset до TLS-парсинга;
+line-rate DPI reassembly-буфер не держит — берёт первый CRYPTO-фрейм, считает, что он с
+offset 0, и парсит TLS оттуда. При первом фрейме `offset≠0` DPI парсит середину ClientHello
+как начало → длины TLS-записи не сходятся → парс прерывается → DPI пропускает (fail-open:
+настоящий Chrome тоже легитимно фрагментирует большие ClientHello). Сервер фреймы
+переупорядочит, DPI — нет.
 
-В реальном QUIC-коде WireSock **нет ClientHello и нет JA3-fingerprint'а** (QUIC =
-1-RTT short header). Поэтому **не выдумывать** браузерный fingerprint. Варианты
-(решить в PLAN): принять `Ib` для совместимости синтаксиса и валидировать
-(`chrome|firefox|curl`), но честно задокументировать, что влияние минимально/нет;
-либо использовать как seed для незначимых псевдослучайных битов (spin/key_phase).
-**Запрещено** заявлять JA3-имитацию, которой нет.
+`i1` — decoy (src=nil, шлётся перед WG-handshake); реальный TLS-handshake он не завершает,
+его задача — чтобы первый пакет потока выглядел как легитимный старт QUIC-сессии к CDN.
 
-### 3.4 Правила валидации (fail-fast)
+Инварианты (проверяются обратным разбором в тестах):
+- **I1.** первый CRYPTO-фрейм в wire-порядке имеет `offset≠0`;
+- **I2.** фрейм с `offset=0` выложен не первым;
+- **I3.** между CRYPTO-фреймами есть PADDING-runs и ≥1 PING;
+- **I4.** объединение CRYPTO-фреймов по offset = непрерывный валидный ClientHello `[0..N)`,
+  без дыр/перекрытий, SNI на месте.
 
-- **Взаимоисключение с `I1`** — конфликт → ошибка.
+Крипта — RFC 9001 §5 (HKDF-Extract по DCID → `client in` → `quic key/iv/hp`,
+AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x25519 на каждый
+вызов → разный ciphertext (нет общей сигнатуры между юзерами). Пакет ≈1250б, length-поле
+1232 (padded ≥1200, RFC 9000 §14.1).
+
+### 3.2 DNS / STUN / SIP
+
+- **dns** — EDNS OPT *response*. Flags `0x8180` (QR=1,RD=1,RA=1,NOERROR), QDCOUNT=1,
+  ARCOUNT=1; QNAME из `Id`; OPT RR (TYPE `0x0029`, CLASS=1232, TTL=0), RDATA — одна
+  неизвестная EDNS-опция код `0xFDE9` (IANA local-use), OPTION-LENGTH покрывает остаток →
+  весь датаграм парсится как один DNS-месседж. TXID — `<r 2>`.
+- **stun** — Binding Success Response. type `0x0101`, length=байты атрибутов, magic cookie
+  `0x2112A442`, 12-байт txn, XOR-MAPPED-ADDRESS (`0x0020`) + SOFTWARE (`0x8022`, printable
+  ASCII, ≤124, 4-align). Hostname не несёт.
+- **sip** — `SIP/2.0 200 OK` response + Via(branch)/From(tag)/To/Call-ID/CSeq, CRLF; `Id`
+  как host в URI.
+
+---
+
+## 4. Браузер (`Ib`)
+
+В сгенерированном QUIC Initial браузерный JA3/JA4-fingerprint **не имитируется**: DPI-bypass
+держится на фрагментации CRYPTO-фреймов, а не на TLS-fingerprint. `Ib` принимается для
+синтаксической совместимости с WireSock-конфигами и валидируется (`chrome|firefox|curl`,
+только при `ip=quic`), но на байты пакета не влияет. Заявлять JA3-имитацию запрещено.
+
+---
+
+## 5. Валидация (fail-fast)
+
+- **Взаимоисключение с `I1`** — задан и `i1`, и `id/ip/ib` → ошибка.
 - **`Ip ∈ {quic,dns,stun,sip}`** (lower); пусто при заданном `Id`/`Ib` → ошибка.
-- **`Id` обязателен для `quic`/`dns`/`sip`** (идёт на провод как SNI / QNAME /
-  SIP-host); опционален **только для `stun`** (STUN не несёт домен). _(§146 amendment
-  2026-06-17: было «обязателен только для dns/sip» — после перехода `quic` на
-  фрагментированный Initial с SNI `id` стал обязателен и для `quic`; см. §1.3.)_
-  **Строгий LDH-hostname-чек** применяется **всегда, когда `Id` задан**
-  (метки alnum+hyphen+`_`, без edge-hyphen, ≤63, всего ≤253, трейлинг-дот ок). Это
-  **security-граница**: домен идёт в SIP-текст и DNS QNAME — control-байты
-  (`\r\n\0\t`) и SIP/URI-метасимволы (`> ; @ "`) → инъекция. Совпадает с
-  `is_valid_sni_hostname` WireSock.
-- **`Ib`** валидировать (`chrome|firefox|curl`), эффект — см. §3.3.
+- **`Id` обязателен для `quic`/`dns`/`sip`** (идёт на провод как SNI / QNAME / SIP-host);
+  опционален **только для `stun`**.
+- **Строгий LDH-чек** применяется **всегда, когда `Id` задан** (метки alnum+hyphen+`_`,
+  без edge-hyphen, ≤63, всего ≤253, трейлинг-дот ок). Это security-граница: домен идёт в
+  SIP-текст / DNS QNAME / TLS SNI — control-байты (`\r\n\0\t`) и SIP/URI-метасимволы
+  (`> ; @ "`) дали бы инъекцию. Совпадает с `is_valid_sni_hostname`.
+- **`Ib` ∈ {chrome,firefox,curl}** и только при `ip=quic`; иначе ошибка.
 
-### 3.5 Изоляция (CONSTITUTION §3.2–3.3)
+---
+
+## 6. Файлы (зоны)
 
 | Файл | Зона | Что |
 |------|------|-----|
-| `option/wireguard_awg.go` | lx | +`Id/Ip/Ib` |
-| `transport/wireguard/masque_awg.go` | lx, `with_awg` | диспетчер `masqueI1` + валидация + DNS/STUN/SIP + CPS-хелперы |
-| `transport/wireguard/quic_initial_awg.go` (+ `quic_clienthello_awg.go`, `quic_crypto_awg.go`) | lx, `with_awg` | QUIC out-of-order фрагментированный Initial с SNI (§146; ранее `masque_quic_awg.go` — 1-RTT short header, удалён) |
+| `option/wireguard_awg.go` | lx | поля `Id/Ip/Ib` |
+| `transport/wireguard/masque_awg.go` | lx, `with_awg` | диспетчер `masqueI1` + валидация + DNS/STUN/SIP + `cpsBuilder` |
+| `transport/wireguard/quic_initial_awg.go` | lx, `with_awg` | QUIC Initial: varint, frame-план (I1–I4), сборка RFC 9001 |
+| `transport/wireguard/quic_clienthello_awg.go` | lx, `with_awg` | реалистичный TLS 1.3 ClientHello (SNI=`Id`) |
+| `transport/wireguard/quic_crypto_awg.go` | lx, `with_awg` | HKDF / AES-128-GCM / header protection |
 | `transport/wireguard/device_awg.go` | lx, `with_awg` | вызов `masqueI1` в `awgIpcLines` |
-| `transport/wireguard/masque_awg_test.go` | lx, `with_awg` | тесты |
+| `transport/wireguard/masque_awg_test.go`, `quic_initial_awg_test.go` | lx, `with_awg` | тесты |
 
-Таблица — для механизма I1 (рекомендация §3.1): новых upstream-швов нет, сабмодуль не
-трогаем. При выборе S1–S4 добавится изолированная правка `submodules/wireguard-go`.
+Сабмодуль `submodules/wireguard-go` не трогается.
 
 ---
 
-## 4. Критерии приёмки
+## 7. Критерии приёмки
 
-- **Структурная валидность каждого профиля** (НЕ тавтология): сгенерированный
-  decoy парсится обратно как заявленный протокол — QUIC как валидный
-  фрагментированный Initial с ClientHello (SNI=Id; §146 — ранее как 1-RTT short
-  header, первый байт `0x40|...`); DNS как валидный EDNS-OPT месседж (QNAME=Id,
-  OPT RR, опция `0xFDE9`, без хвостов); STUN как Binding Response (cookie, длина
-  покрывает атрибуты); SIP как валидный response (status-line + обязательные
-  заголовки, CRLF).
-- **CPS принят реальным движком:** прогон через настоящий `newObfChain` из
-  `submodules/wireguard-go/device` (GOFLAGS=-mod=mod, затем `git checkout` go.mod).
-- **Валидация:** конфликт с `I1`, неизвестный `Ip`, пустой `Id`,
-  control-байт/метасимвол в домене, `Ib` вне набора — ошибки; нет паники.
-- **Инъекция домена** (`a.com\nx`, `a.com>;q=1`, …) — отвергается.
+- **Структурная валидность каждого профиля** (обратным разбором, не тавтология): QUIC —
+  собственный вывод AEAD-расшифровывается (тег сходится), frame-walk даёт ≥6 CRYPTO + ≥1
+  PING + PADDING, первый CRYPTO `offset≠0` (I1), CRYPTO реассемблируются в валидный
+  ClientHello с SNI=`Id` (I4); DNS — валидный EDNS-OPT месседж (QNAME=`Id`, опция `0xFDE9`,
+  без хвостов); STUN — Binding Response (cookie, длина покрывает атрибуты); SIP — валидный
+  response (status-line + обязательные заголовки + CRLF).
+- **Уникальность QUIC:** два вызова с одним SNI → разные DCID, разный TLS random → разный
+  ciphertext.
+- **Длинный домен:** валидный LDH-домен любой длины (≤253) генерируется без ошибки (payload
+  пинится к length-полю flex-PADDING-run; CH растёт с длиной SNI, инварианты сохраняются).
+- **CPS принят реальным движком:** прогон через `newObfChain` из `submodules/wireguard-go`.
+- **Валидация:** конфликт с `I1`, неизвестный `Ip`, пустой `Id` для quic/dns/sip,
+  control-байт/метасимвол в домене, `Ib` вне набора / не при quic — ошибки; нет паники.
 - **Gating:** `Id/Ip/Ib` без `with_awg` → «awg support not built».
-- **Регресс:** старые `device_awg_test.go` зелёные; плоский WG и явный `I1` без
-  masquerade — байт-в-байт. `lx-test/config/awg2_*.json` валидны.
-- `go build ./...` (без тегов) ок; `go build -tags with_awg` ок;
-  `go test -tags with_awg ./transport/wireguard/...` зелёный; `gofmt -l` пусто.
-- **Тесты НЕ тавтологичны:** не «два случайных вывода различны». Проверять
-  структуру/инварианты.
+- **Регресс:** плоский WG и явный `I1` без masquerade — байт-в-байт.
+- `go build` (без тегов и `-tags with_awg`) ок; `go test -tags with_awg ./transport/wireguard/...`
+  зелёный; `gofmt -l` lx-файлов пусто.
+- **Device-smoke:** узел `ip=quic` с фрагментированным Initial поднимает туннель и проводит
+  реальный трафик через активный DPI — проверено вживую.
 
 ---
 
-## 5. Вне скоупа
+## 8. Вне скоупа
 
-- Серверная сторона (client-only) — probe-response не делаем.
-- Byte-identical имитация именно WireSock-трафика.
-- JA3/uTLS браузерный fingerprint (его нет даже в WireSock QUIC, §3.3).
-
-(Механизм S1–S4 и связанная правка `submodules/wireguard-go` — НЕ вне скоупа; это
-открытая развилка в §3.1 с рекомендацией в пользу I1, решает реализатор.)
+- `dns`/`stun`/`sip` фрагментация (отдельная таска при необходимости).
+- Серверная сторона / probe-response (client-only).
+- Byte-identical имитация конкретного снимка трафика (рандомизация снижает сигнатуру).
+- JA3/uTLS браузерный fingerprint (§4).
 
 ---
 
-## 6. Ссылки
+## 9. Ссылки
 
-- WireSock open-source: <https://github.com/wiresock/amneziawg-install> (`amneziawg-proxy/src/transform.rs`, `quic_handshake.rs`)
-- WireSock advanced params: <https://wiresock.net/documentation/wiresock-secure-connect/advanced-parameters.html>
-- RFC 9000 §17.3.1 (QUIC short header), §14.1 (Initial ≥1200) · RFC 6891 (EDNS OPT) · RFC 5389 (STUN) · RFC 3261 (SIP)
+- RFC 9000 §16 (varint), §14.1 (Initial ≥1200), §17.2.2 (Initial), §19.6 (CRYPTO), §19.7 (PING), §19.1 (PADDING)
+- RFC 9001 §5 (Initial secrets), §5.4 (header protection) · RFC 6891 (EDNS OPT) · RFC 5389 (STUN) · RFC 3261 (SIP)
+- WireSock open-source (dns/stun/sip структура): <https://github.com/wiresock/amneziawg-install> (`amneziawg-proxy/src/transform.rs`, `quic_handshake.rs`)
 - CPS-движок: `submodules/wireguard-go/device/obf.go`, `send.go:135`
 - Проводка: `transport/wireguard/device_awg.go`, `option/wireguard_awg.go`
-- Память: [[wiresock-id-ip-ib-feasibility]]
+- Память: [[wiresock-id-ip-ib-feasibility]], [[qtls-helpers-reuse-for-quic-initial]]
