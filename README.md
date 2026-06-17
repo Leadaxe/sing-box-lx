@@ -40,7 +40,7 @@ In the sing-box ecosystem, forks that add XHTTP / AmneziaWG fall into two camps 
 |---|---------|------------|--------|
 | **XHTTP** | client transport | Xray-compatible "splithttp" (modes `auto`/`packet-up`/`stream-up`/`stream-one`) over Reality/TLS/h2c | ✅ **live-validated** against a real Xray (3x-ui) server (packet-up/auto): handshake + DNS + HTTPS + download. `stream-one` has a known framing bug |
 | **AmneziaWG 2.0** | client endpoint | WireGuard obfuscation: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` + **2.0**: `I1–I5` (CPS — decoy packets) | ✅ builds, passes `check`; dependency **activated** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet base + obfuscation); **validated against a real AWG2 server**: handshake + keepalive + outbound traffic |
-| **Masquerade `id/ip/ib`** | AWG sugar | WireSock-style declarative masquerade over `I1`: name a domain (`id`) + protocol (`ip`: `quic`/`dns`/`stun`/`sip`) + browser (`ib`) and the core generates the `I1` decoy for you (structure ported from the open-source WireSock reference) | ✅ builds, passes `check`; every profile accepted by the real CPS engine; **live-verified** (tunnel up + traffic on a 009 build, eases Cloudflare WARP) |
+| **Masquerade `id/ip/ib`** | AWG sugar | WireSock-style declarative masquerade over `I1`: name a domain (`id`) + protocol (`ip`: `quic`/`dns`/`stun`/`sip`) + browser (`ib`) and the core builds the client-initiated `I1` decoy for you — `quic` = out-of-order fragmented Initial (i1+i2), `dns`/`stun`/`sip` = query/Binding-Request/INVITE | ✅ **`ip=quic` device-proven against a real LTE/WARP DPI** (~330 ms, eases Cloudflare WARP); `dns`/`stun`/`sip` build & pass `check` but are blocked as a protocol class to the WARP edge — for other providers |
 
 Detailed reports: [`SPECS/002-…`](SPECS/002-F-C-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/003-…`](SPECS/003-F-C-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) and [`SPECS/009-…`](SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Full config reference — **[docs/lx-config.md](docs/lx-config.md)**.
 
@@ -126,11 +126,19 @@ easing **Cloudflare WARP**:
 }
 ```
 
-`ip` ∈ `quic|dns|stun|sip`; `id` is required for `quic`/`dns`/`sip` (where it appears
-on the wire — for `quic` as the ClientHello SNI) and optional only for `stun`; `ib` ∈
-`chrome|firefox|curl` (quic only, minimal effect — no JA3 fingerprint). For `quic` the
-core emits an out-of-order fragmented QUIC Initial (RFC 9001) that bypasses line-rate
-DPI. Mutually exclusive with an explicit `i1`. See
+`ip` ∈ `quic|dns|stun|sip`; `id` is required for `quic`/`dns` (where it appears on the
+wire — SNI / QNAME) and optional for `sip` (pseudo-host generated when absent) and `stun`;
+`ib` ∈ `chrome|firefox|curl` (quic only, minimal — no JA3 fingerprint). Mutually exclusive
+with an explicit `i1`.
+
+For **`quic`** the core emits an out-of-order fragmented QUIC Initial (RFC 9001) — a real
+ClientHello split across CRYPTO frames in a shuffled order so a line-rate DPI parses garbage
+and fails open. The layout is randomized per call (no cross-user signature), and `ip=quic`
+now sends **two** independent Initials (i1+i2) so the flow reads as a developing QUIC session.
+This is the **only profile device-proven against a real LTE/WARP DPI** (~330 ms). `dns`/`stun`/
+`sip` are implemented as correct client-initiated requests but are blocked as a protocol class
+toward the Cloudflare WARP edge (raw DNS/STUN/SIP to a datacenter IP is itself anomalous) —
+they are kept for other providers whose DPI only checks packet well-formedness. See
 [docs/lx-config.md](docs/lx-config.md) and [SPECS/009 examples](SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ---

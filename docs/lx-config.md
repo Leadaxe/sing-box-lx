@@ -126,23 +126,28 @@ decoy for you:
 | `ib` | string | masquerade **browser**: `chrome` \| `firefox` \| `curl`. Only meaningful with `ip=quic`, and even then the effect is **minimal** (see note) |
 
 The decoy is sent before the handshake, exactly like a hand-written `i1`. Each
-profile produces a packet shaped like that protocol — `dns`/`stun`/`sip` are
-ported from the open-source WireSock reference (`amneziawg-proxy/src/transform.rs`),
-while `quic` is a full RFC 9001 QUIC Initial built specifically to bypass
-line-rate DPI:
+profile is a **client-initiated** packet shaped like that protocol (the shapes are
+inspired by the open-source WireSock reference, `amneziawg-proxy/src/transform.rs`,
+but emitted as the client request a peer actually sends first, not a server
+response); `quic` is a purpose-built RFC 9001 QUIC Initial that bypasses line-rate
+DPI:
 
 - **`quic`** — a full **QUIC Initial (RFC 9001)** carrying a realistic browser-shaped
   ClientHello (with your `id` as the SNI) **split across several out-of-order CRYPTO
   frames**: the first frame on the wire starts mid-ClientHello (offset≠0), so a
   line-rate DPI that grabs the first frame and assumes offset 0 parses garbage and
-  fails open, while a real QUIC server reorders the frames normally. This is the
-  device-proven DPI bypass (a plain QUIC short header was empirically blocked).
+  fails open, while a real QUIC server reorders the frames normally. The layout is
+  randomized per call (no fixed cross-user signature), and `ip=quic` fills **both `i1`
+  and `i2`** with two independent Initials so the flow reads as a developing QUIC
+  session. This is the device-proven DPI bypass (a plain QUIC short header was
+  empirically blocked).
 - **`dns`** — a client DNS **query** (QR=0, QTYPE HTTPS) whose QNAME is your `id`,
   carrying random cover bytes as an opaque unknown EDNS option.
-- **`stun`** — a STUN **Binding Success Response** (magic cookie + XOR-MAPPED-ADDRESS
-  + SOFTWARE).
-- **`sip`** — a SIP **`200 OK` response** with `Via`/`From`/`To`/`Call-ID`/`CSeq`
-  headers using your `id` as the host.
+- **`stun`** — a WebRTC STUN **Binding Request** (magic cookie + USERNAME +
+  ICE-CONTROLLING + PRIORITY + SOFTWARE + MESSAGE-INTEGRITY + FINGERPRINT).
+- **`sip`** — a SIP **INVITE request** with an SDP offer (request-line + Via/
+  Max-Forwards/From/To/Call-ID/CSeq/Contact + `m=audio`), using your `id` (or a
+  generated pseudo-host) as the host and pronounceable pseudo user names.
 
 ```jsonc
 {
