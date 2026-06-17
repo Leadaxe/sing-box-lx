@@ -17,7 +17,7 @@ import (
 )
 
 // This file verifies the generated QUIC Initial by REVERSE-PARSING our own
-// output — the §146 §5 control vectors. The decryptor is a faithful mirror of
+// output — the §5 control vectors of the masquerade spec. The decryptor mirrors
 // the live QUIC sniffer (common/sniff/quic.go): derive Initial keys from the
 // DCID, strip header protection, AEAD-open, walk frames, reassemble CRYPTO. If
 // our generator and the decryptor agree, the crypto is correct (a wrong tag,

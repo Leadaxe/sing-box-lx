@@ -1,6 +1,6 @@
 //go:build with_awg
 
-// TLS 1.3 ClientHello builder for the QUIC Initial masquerade (§146 §3.1).
+// TLS 1.3 ClientHello builder for the QUIC Initial masquerade (009, ip=quic).
 //
 // This emits a realistic browser-shaped ClientHello (~294 bytes), NOT a bare
 // SNI-only stub. The realism is load-bearing for the DPI bypass: the decoy must
@@ -8,12 +8,12 @@
 // key_share, ALPN "h3", quic_transport_params, supported_versions TLS1.3) so
 // that when a DPI does reassemble or partially parse it, it classifies the flow
 // as "QUIC to a CDN" rather than something to fingerprint. The exact extension
-// set/order is not byte-critical (§146 §3.1) — what matters is that the required
-// extensions are present and the total length lands near the etalon so the
-// fragment cutpoints stay valid.
+// set/order is not byte-critical — what matters is that the required extensions
+// are present and the total length lands near the etalon so the fragment
+// cutpoints stay valid.
 //
-// We do not imitate a specific JA3/JA4 fingerprint (§146 §7): the bypass works
-// on CRYPTO-frame fragmentation, not on TLS fingerprint, so a plausible generic
+// We do not imitate a specific JA3/JA4 fingerprint: the bypass works on
+// CRYPTO-frame fragmentation, not on TLS fingerprint, so a plausible generic
 // ClientHello suffices.
 package wireguard
 
@@ -49,7 +49,7 @@ func appendExtension(dst []byte, extType uint16, data []byte) []byte {
 
 // buildClientHello assembles a TLS 1.3 ClientHello for the given SNI, using the
 // supplied 32-byte TLS random and 32-byte x25519 public key. browser is accepted
-// for API symmetry but does not change the structure (no JA3 imitation, §146 §7).
+// for API symmetry but does not change the structure (no JA3 imitation).
 //
 // Layout (RFC 8446 §4.1.2, wrapped as a handshake message):
 //
@@ -65,7 +65,7 @@ func appendExtension(dst []byte, extType uint16, data []byte) []byte {
 //	                 psk_key_exchange_modes, ALPN(h3), compress_certificate,
 //	                 supported_versions(TLS1.3), padding(to target length)
 func buildClientHello(sni string, tlsRandom [32]byte, x25519Pub []byte, browser string) ([]byte, error) {
-	_ = browser // structure is browser-independent (§146 §7)
+	_ = browser // structure is browser-independent (no JA3 imitation)
 	if sni == "" {
 		return nil, E.New("amneziawg: ip=quic requires a non-empty id (SNI) for the ClientHello")
 	}
@@ -106,7 +106,7 @@ func buildClientHello(sni string, tlsRandom [32]byte, x25519Pub []byte, browser 
 
 	// quic_transport_params (0x0039): opaque plausible filler. The decoy never
 	// completes a handshake, and DPI does not parse these; the byte content is
-	// not validated, only the presence + plausible length matters (§146 §6.2).
+	// not validated, only the presence + plausible length matters.
 	// Each param is varint(id) ‖ varint(len) ‖ value; we emit a few common ones.
 	qtp := buildQUICTransportParams()
 	exts = appendExtension(exts, 0x0039, qtp)
@@ -175,7 +175,7 @@ func buildClientHello(sni string, tlsRandom [32]byte, x25519Pub []byte, browser 
 }
 
 // buildQUICTransportParams returns an opaque-but-plausible quic_transport_params
-// extension body (§146 §6.2): a handful of common parameters with sane values.
+// extension body: a handful of common parameters with sane values.
 // Not semantically validated by the decoy; present for realism only.
 func buildQUICTransportParams() []byte {
 	var p []byte
