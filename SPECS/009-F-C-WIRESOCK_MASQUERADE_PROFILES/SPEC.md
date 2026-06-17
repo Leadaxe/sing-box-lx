@@ -53,19 +53,32 @@ S1–S4 padding не используется: он невозможен про�
 
 ## 3. Профили
 
-Структура протоколов `dns`/`stun`/`sip` портирована из open-source WireSock-референса
+Структура `dns`/`sip` портирована из open-source WireSock-референса
 ([`github.com/wiresock/amneziawg-install`](https://github.com/wiresock/amneziawg-install),
-Rust/MIT, `amneziawg-proxy/src/transform.rs`). Профиль `quic` — собственный
-фрагментированный QUIC Initial (DPI-bypass, см. §3.1). LDH-валидатор домена совпадает с
-их `quic_handshake.rs::is_valid_sni_hostname`.
+Rust/MIT, `amneziawg-proxy/src/transform.rs`). `quic` — собственный фрагментированный QUIC
+Initial (DPI-bypass, §3.1). `stun` — WebRTC Binding **Request** (§3.2). LDH-валидатор
+домена совпадает с их `quic_handshake.rs::is_valid_sni_hostname`.
+
+> **Device-результат (тест-телефон, LTE с активным DPI):** проходит только `quic`
+> (~340 мс). `stun` (и Binding Request, и полный WebRTC-вариант с MESSAGE-INTEGRITY) —
+> Timeout: этот DPI режет STUN к дата-центровому Cloudflare-IP **как класс протокола**, а
+> не по качеству пакета (углубление пакета эффекта не дало). `sip` по аналогии ожидаемо
+> так же. `quic` — единственный проверенный рабочий механизм здесь; `stun`/`sip` сохранены
+> на случай других провайдеров (DPI без проверки направления/класса).
 
 ### 3.1 QUIC — out-of-order фрагментированный Initial
 
 `ip=quic` эмитит полный **QUIC Initial (RFC 9001)** с реалистичным браузерным
-ClientHello, где `Id` идёт как **SNI**. ClientHello нарезан на 6 CRYPTO-фреймов,
-выложенных в payload в **перемешанном (out-of-order) порядке**: первый CRYPTO-фрейм на
-проводе имеет `offset≠0`, фрейм с `offset=0` — почти в конце, между CRYPTO-фреймами
-вставлены PING и PADDING.
+ClientHello, где `Id` идёт как **SNI**. ClientHello нарезан на CRYPTO-фреймы, выложенные в
+payload в **перемешанном (out-of-order) порядке**: первый CRYPTO-фрейм на проводе имеет
+`offset≠0`, фрейм с `offset=0` — не первый, между CRYPTO-фреймами вставлены PING и PADDING.
+
+**Раскладка рандомизируется на каждый вызов** (случайные точки разреза + случайный
+out-of-order порядок), при сохранении инвариантов I1–I4 — так нет фиксированной
+межюзерной сигнатуры. Параметры robustness (`quicGenParams`: число фрагментов, число PING,
+диапазон размера датаграммы) — «ручки» для эскалации обфускации без правки кода, если DPI
+поумнеет (напр. начнёт держать reassembly-буфер → больше фрагментов). По умолчанию —
+device-проверенная база: 6 фрагментов, 2 PING, 1250б.
 
 **Почему так.** Настоящий QUIC-сервер реассемблирует CRYPTO-фреймы по offset до TLS-парсинга;
 line-rate DPI reassembly-буфер не держит — берёт первый CRYPTO-фрейм, считает, что он с
@@ -95,11 +108,15 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
   ARCOUNT=1; QNAME из `Id`; OPT RR (TYPE `0x0029`, CLASS=1232, TTL=0), RDATA — одна
   неизвестная EDNS-опция код `0xFDE9` (IANA local-use), OPTION-LENGTH покрывает остаток →
   весь датаграм парсится как один DNS-месседж. TXID — `<r 2>`.
-- **stun** — Binding Success Response. type `0x0101`, length=байты атрибутов, magic cookie
-  `0x2112A442`, 12-байт txn, XOR-MAPPED-ADDRESS (`0x0020`) + SOFTWARE (`0x8022`, printable
-  ASCII, ≤124, 4-align). Hostname не несёт.
+- **stun** — WebRTC Binding **Request**. type `0x0001`, magic cookie `0x2112A442`, свежий
+  txn; атрибуты USERNAME (`0x0006`), ICE-CONTROLLING (`0x802a`), PRIORITY (`0x0024`),
+  SOFTWARE (`0x8022` = `libwebrtc`), MESSAGE-INTEGRITY (`0x0008`, HMAC-SHA1), FINGERPRINT
+  (`0x8028`, CRC-32). Request, а не response: клиент первым шлёт именно запрос.
+  MESSAGE-INTEGRITY структурно валиден, но по произвольному ICE-ключу (реального пароля у
+  decoy нет — on-path DPI HMAC всё равно не проверит). Свежая энтропия на вызов; hostname не
+  несёт. Генератор — `stun_request_awg.go`.
 - **sip** — `SIP/2.0 200 OK` response + Via(branch)/From(tag)/To/Call-ID/CSeq, CRLF; `Id`
-  как host в URI.
+  как host в URI. (Остаётся response-формой; на тестовом DPI отдельно не проверялся.)
 
 ---
 
@@ -131,10 +148,11 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
 | Файл | Зона | Что |
 |------|------|-----|
 | `option/wireguard_awg.go` | lx | поля `Id/Ip/Ib` |
-| `transport/wireguard/masque_awg.go` | lx, `with_awg` | диспетчер `masqueI1` + валидация + DNS/STUN/SIP + `cpsBuilder` |
-| `transport/wireguard/quic_initial_awg.go` | lx, `with_awg` | QUIC Initial: varint, frame-план (I1–I4), сборка RFC 9001 |
+| `transport/wireguard/masque_awg.go` | lx, `with_awg` | диспетчер `masqueI1` + валидация + DNS/SIP + `cpsBuilder` |
+| `transport/wireguard/quic_initial_awg.go` | lx, `with_awg` | QUIC Initial: varint, рандомизированный frame-план (I1–I4) + `quicGenParams`, сборка RFC 9001 |
 | `transport/wireguard/quic_clienthello_awg.go` | lx, `with_awg` | реалистичный TLS 1.3 ClientHello (SNI=`Id`) |
 | `transport/wireguard/quic_crypto_awg.go` | lx, `with_awg` | HKDF / AES-128-GCM / header protection |
+| `transport/wireguard/stun_request_awg.go` | lx, `with_awg` | STUN WebRTC Binding Request (FINGERPRINT + MESSAGE-INTEGRITY) |
 | `transport/wireguard/device_awg.go` | lx, `with_awg` | вызов `masqueI1` в `awgIpcLines` |
 | `transport/wireguard/masque_awg_test.go`, `quic_initial_awg_test.go` | lx, `with_awg` | тесты |
 
@@ -148,10 +166,15 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
   собственный вывод AEAD-расшифровывается (тег сходится), frame-walk даёт ≥6 CRYPTO + ≥1
   PING + PADDING, первый CRYPTO `offset≠0` (I1), CRYPTO реассемблируются в валидный
   ClientHello с SNI=`Id` (I4); DNS — валидный EDNS-OPT месседж (QNAME=`Id`, опция `0xFDE9`,
-  без хвостов); STUN — Binding Response (cookie, длина покрывает атрибуты); SIP — валидный
-  response (status-line + обязательные заголовки + CRLF).
-- **Уникальность QUIC:** два вызова с одним SNI → разные DCID, разный TLS random → разный
-  ciphertext.
+  без хвостов); STUN — Binding **Request** (cookie, атрибуты тайлят сообщение, FINGERPRINT
+  CRC-32 сходится, USERNAME + MESSAGE-INTEGRITY присутствуют); SIP — валидный response
+  (status-line + обязательные заголовки + CRLF).
+- **Рандомизация QUIC:** раскладка фрейм-плана и точки разреза свежие на каждый вызов;
+  инварианты I1–I4 держатся на каждом сэмпле (стресс-тест), две генерации → разные offset'ы
+  фрагментов (нет фикс-сигнатуры). Robustness-ручки (`quicGenParams`: 4–12 фрагментов,
+  переменный размер) тоже держат I1–I4.
+- **Уникальность:** два вызова QUIC с одним SNI → разные DCID/TLS random → разный
+  ciphertext; два вызова STUN → разный txn/ufrag/ключ → разный blob.
 - **Длинный домен:** валидный LDH-домен любой длины (≤253) генерируется без ошибки (payload
   пинится к length-полю flex-PADDING-run; CH растёт с длиной SNI, инварианты сохраняются).
 - **CPS принят реальным движком:** прогон через `newObfChain` из `submodules/wireguard-go`.

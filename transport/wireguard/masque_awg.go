@@ -100,7 +100,7 @@ func masqueI1(o option.AmneziaWGOptions) (string, error) {
 		}
 		return masqueQUICInitialCPS(domain, browser)
 	case masqueProtoSTUN:
-		return masqueSTUNResponseCPS(), nil
+		return masqueSTUNRequestCPS()
 	case masqueProtoDNS:
 		if domain == "" {
 			return "", E.New("amneziawg: id (masquerade domain) is required for ip=dns (it becomes the DNS QNAME)")
@@ -356,76 +356,19 @@ func encodeDNSName(domain string) ([]byte, error) {
 }
 
 // ---------------------------------------------------------------------------
-// STUN — Binding Success Response (ported from transform.rs::apply_stun_padding)
+// STUN — magic cookie constant (the Binding Request generator lives in
+// stun_request_awg.go; the old Binding Success Response decoy was replaced — a
+// response sent as the client's first packet is a wrong-direction anomaly).
 // ---------------------------------------------------------------------------
 
 // stunMagicCookie is the RFC 5389 magic cookie.
 const stunMagicCookie uint32 = 0x2112A442
-
-// stunSoftwareLen is the length of the SOFTWARE attribute value we emit. It is
-// a multiple of 4 (so the TLV ends on a 4-byte boundary) and < 128 per RFC 5389
-// §15.10. We use random printable-ASCII filler via <rc>.
-const stunSoftwareLen = 16
-
-// masqueSTUNResponseCPS builds a STUN Binding Success Response: type 0x0101,
-// the magic cookie, a random 96-bit transaction ID, an XOR-MAPPED-ADDRESS
-// attribute (what makes it read as a genuine Binding response) and a SOFTWARE
-// attribute filling the advertised message. The advertised length covers
-// exactly the attributes written, so a strict parser frames the whole datagram
-// with no malformed/trailing bytes.
-//
-// Unlike WireSock (which derives a stable txn from the payload seed and XORs a
-// payload-derived address), the standalone decoy has no payload, so the txn,
-// XOR address and SOFTWARE value are random (<r>/<rc>). The XOR-MAPPED-ADDRESS
-// value is still a real value — XORing random bytes is still a valid attribute;
-// we just don't claim it encodes a meaningful address.
-func masqueSTUNResponseCPS() string {
-	const xorMappedLen = 12 // TLV header(4) + IPv4 value(8)
-	// Message length covers XOR-MAPPED-ADDRESS + SOFTWARE (header 4 + value).
-	msgLen := uint16(xorMappedLen + 4 + stunSoftwareLen)
-
-	var b cpsBuilder
-
-	// Header (20 B): type + length + cookie + transaction ID.
-	mlHi, mlLo := be16(msgLen)
-	ck := be32(stunMagicCookie)
-	b.addBytes([]byte{
-		0x01, 0x01, // type = Binding Success Response
-		mlHi, mlLo, // message length (attributes only)
-		ck[0], ck[1], ck[2], ck[3], // magic cookie
-	})
-	b.addRand(12) // 96-bit transaction ID
-
-	// XOR-MAPPED-ADDRESS (0x0020), IPv4: type + len + reserved + family + xport + xaddr.
-	b.addBytes([]byte{
-		0x00, 0x20, // attribute type = XOR-MAPPED-ADDRESS
-		0x00, 0x08, // attribute length = 8
-		0x00, 0x01, // reserved=0, family=IPv4
-	})
-	b.addRand(2) // X-Port (port ^ cookie high half — random is a valid value)
-	b.addRand(4) // X-Address (addr ^ cookie — random is a valid value)
-
-	// SOFTWARE (0x8022): type + len + printable value (random ASCII letters).
-	swHi, swLo := be16(uint16(stunSoftwareLen))
-	b.addBytes([]byte{
-		0x80, 0x22, // attribute type = SOFTWARE
-		swHi, swLo, // value length
-	})
-	b.addRandChars(stunSoftwareLen)
-
-	return b.String()
-}
 
 // be16 splits a uint16 into big-endian (hi, lo) bytes. Used so multi-byte
 // header fields can be written into a []byte literal without per-field
 // constant-overflow conversions.
 func be16(v uint16) (hi, lo byte) {
 	return byte(v >> 8), byte(v & 0xFF)
-}
-
-// be32 splits a uint32 into 4 big-endian bytes.
-func be32(v uint32) [4]byte {
-	return [4]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v & 0xFF)}
 }
 
 // ---------------------------------------------------------------------------

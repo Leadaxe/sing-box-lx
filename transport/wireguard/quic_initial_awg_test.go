@@ -347,6 +347,90 @@ func TestQUICInitialLongSNI(t *testing.T) {
 	require.Greater(t, len(d.clientHello), quicCHTargetLen, "long SNI grows the ClientHello past the etalon")
 }
 
+// Randomization: the layout is fresh per call (random cut points + wire order),
+// but the I1–I4 invariants must hold on EVERY sample, and two calls must differ
+// in their fragment offsets (no fixed cross-user signature). This guards the
+// randomizedWirePlan / planFragmentsN paths against a bad seed breaking an
+// invariant.
+func TestQUICInitialRandomizedInvariants(t *testing.T) {
+	t.Parallel()
+	const sni = "www.google.com"
+	var firstOffsets [][]uint64
+	for iter := 0; iter < 80; iter++ {
+		pkt, err := buildInitialPacket(sni, "chrome", defaultQUICGenParams())
+		require.NoError(t, err)
+		require.Equal(t, quicInitialTotalLen, len(pkt))
+		d := decryptInitial(t, pkt)
+		// I1 + I2
+		require.NotEqual(t, uint64(0), d.cryptoFrames[0].offset, "I1: first wire CRYPTO offset != 0 (iter %d)", iter)
+		// I3
+		var pings, pads int
+		for _, ft := range d.frameTypes {
+			switch ft {
+			case 0x01:
+				pings++
+			case 0x00:
+				pads++
+			}
+		}
+		require.GreaterOrEqual(t, pings, 1, "I3 PING (iter %d)", iter)
+		require.Greater(t, pads, 0, "I3 PADDING (iter %d)", iter)
+		// I4
+		require.Equal(t, byte(0x01), d.clientHello[0])
+		require.Equal(t, sni, extractSNI(t, d.clientHello), "I4 SNI (iter %d)", iter)
+
+		offs := make([]uint64, len(d.cryptoFrames))
+		for i, f := range d.cryptoFrames {
+			offs[i] = f.offset
+		}
+		firstOffsets = append(firstOffsets, offs)
+	}
+	// Cross-user signature check: not all layouts identical (cut points vary).
+	allSame := true
+	for i := 1; i < len(firstOffsets); i++ {
+		if !equalU64(firstOffsets[0], firstOffsets[i]) {
+			allSame = false
+			break
+		}
+	}
+	require.False(t, allSame, "randomized cut points must differ across calls (no fixed signature)")
+}
+
+// Robustness knobs: more fragments, more PINGs, and a variable datagram size
+// must all still satisfy I1–I4 and stay within the configured size range.
+func TestQUICInitialRobustnessKnobs(t *testing.T) {
+	t.Parallel()
+	const sni = "gosuslugi.ru"
+	for _, p := range []quicGenParams{
+		{fragments: 10, pings: 3, totalLenMin: 1250, totalLenMax: 1400},
+		{fragments: 4, pings: 1, totalLenMin: 1200, totalLenMax: 1300},
+		{fragments: 12, pings: 4, totalLenMin: 1300, totalLenMax: 1500},
+	} {
+		for iter := 0; iter < 30; iter++ {
+			pkt, err := buildInitialPacket(sni, "chrome", p)
+			require.NoError(t, err, "fragments=%d", p.fragments)
+			require.GreaterOrEqual(t, len(pkt), p.totalLenMin)
+			require.LessOrEqual(t, len(pkt), p.totalLenMax)
+			d := decryptInitial(t, pkt)
+			require.Equal(t, p.fragments, len(d.cryptoFrames), "fragment count knob")
+			require.NotEqual(t, uint64(0), d.cryptoFrames[0].offset, "I1 at fragments=%d", p.fragments)
+			require.Equal(t, sni, extractSNI(t, d.clientHello), "I4 SNI at fragments=%d", p.fragments)
+		}
+	}
+}
+
+func equalU64(a, b []uint64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // varint round-trip against the local encoder.
 func TestQUICVarintRoundTrip(t *testing.T) {
 	t.Parallel()

@@ -4,6 +4,7 @@ package wireguard
 
 import (
 	"encoding/binary"
+	"hash/crc32"
 	"strings"
 	"testing"
 
@@ -84,7 +85,7 @@ func TestMasqueI1DomainOptionalForSTUN(t *testing.T) {
 	require.NoError(t, err, "stun without id should be valid")
 	require.NotEmpty(t, stun)
 	pkt := obfuscateCPS(t, stun)
-	require.Equal(t, uint16(0x0101), uint16(pkt[0])<<8|uint16(pkt[1]), "stun-without-id still a Binding Response")
+	require.Equal(t, uint16(0x0001), uint16(pkt[0])<<8|uint16(pkt[1]), "stun-without-id is a Binding Request")
 
 	// quic with an INVALID id is still rejected (LDH applies whenever id is set).
 	_, err = masqueI1(option.AmneziaWGOptions{Ip: "quic", Id: "a.com\r\nx"})
@@ -201,52 +202,63 @@ func TestMasqueDNSResponseStructure(t *testing.T) {
 
 // --- STUN Binding Success Response (parse back as STUN) ---------------------
 
-func TestMasqueSTUNResponseStructure(t *testing.T) {
+// STUN is now a WebRTC-style Binding REQUEST (0x0001), not a Success Response —
+// a client's first packet is legitimately a request. Verify by reverse-parsing:
+// type, magic cookie, attribute framing, required ICE attributes, and a VALID
+// FINGERPRINT CRC-32 (proves the whole packet is internally consistent).
+func TestMasqueSTUNRequestStructure(t *testing.T) {
 	t.Parallel()
-	spec, err := masqueI1(option.AmneziaWGOptions{Id: "a.com", Ip: "stun"})
+	spec, err := masqueI1(option.AmneziaWGOptions{Ip: "stun"})
 	require.NoError(t, err)
 	pkt := obfuscateCPS(t, spec)
 
 	require.GreaterOrEqual(t, len(pkt), 20, "STUN header")
-	// Type = Binding Success Response.
-	require.Equal(t, uint16(0x0101), binary.BigEndian.Uint16(pkt[0:2]), "Binding Success Response")
-	// Magic cookie.
+	require.Equal(t, uint16(0x0001), binary.BigEndian.Uint16(pkt[0:2]), "Binding Request")
 	require.Equal(t, uint32(0x2112A442), binary.BigEndian.Uint32(pkt[4:8]), "magic cookie")
-	// Top 2 bits of byte 0 are 0 (STUN messages start with 00).
 	require.Equal(t, byte(0x00), pkt[0]&0xC0, "STUN leading two bits zero")
 
-	// Advertised length must cover exactly the attribute bytes and be 4-aligned.
 	msgLen := binary.BigEndian.Uint16(pkt[2:4])
-	require.Equal(t, 0, int(msgLen)%4, "STUN message length must be 4-aligned")
-	require.Equal(t, len(pkt), 20+int(msgLen), "message length covers exactly the attributes")
+	require.Equal(t, len(pkt), 20+int(msgLen), "message length covers all attributes incl FINGERPRINT")
 
-	// Walk the attribute TLVs: each must frame itself within the advertised length.
+	// Walk attribute TLVs; collect which appeared and where FINGERPRINT sits.
 	off := 20
 	end := 20 + int(msgLen)
-	sawXOR, sawSoftware := false, false
+	var seen []uint16
+	fpOff := -1
 	for off < end {
 		require.LessOrEqual(t, off+4, end, "attribute header must fit")
 		atype := binary.BigEndian.Uint16(pkt[off : off+2])
 		alen := int(binary.BigEndian.Uint16(pkt[off+2 : off+4]))
-		require.LessOrEqual(t, off+4+alen, end, "attribute value must fit in message")
-		switch atype {
-		case 0x0020:
-			sawXOR = true
-			require.Equal(t, 8, alen, "XOR-MAPPED-ADDRESS IPv4 length")
-			require.Equal(t, byte(0x01), pkt[off+5], "address family IPv4")
-		case 0x8022:
-			sawSoftware = true
-			require.Less(t, alen, 128, "SOFTWARE value < 128 (RFC 5389 §15.10)")
-			for _, c := range pkt[off+4 : off+4+alen] {
-				require.True(t, c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z', "SOFTWARE printable letters")
-			}
+		require.LessOrEqual(t, off+4+alen, end, "attribute value must fit")
+		seen = append(seen, atype)
+		if atype == 0x8028 {
+			fpOff = off
+			require.Equal(t, 4, alen, "FINGERPRINT value is 4 bytes")
 		}
-		// 4-byte alignment of the next attribute.
-		padded := (alen + 3) &^ 3
-		off += 4 + padded
+		if atype == 0x0008 {
+			require.Equal(t, 20, alen, "MESSAGE-INTEGRITY is 20 bytes (HMAC-SHA1)")
+		}
+		off += 4 + ((alen + 3) &^ 3)
 	}
-	require.True(t, sawXOR, "must emit XOR-MAPPED-ADDRESS")
-	require.True(t, sawSoftware, "must emit SOFTWARE")
+	require.Equal(t, end, off, "attributes tile the message exactly")
+	require.Contains(t, seen, uint16(0x0006), "USERNAME present")
+	require.Contains(t, seen, uint16(0x0008), "MESSAGE-INTEGRITY present")
+	require.Equal(t, uint16(0x8028), seen[len(seen)-1], "FINGERPRINT is the last attribute")
+
+	// FINGERPRINT must verify: CRC-32 of the message up to FINGERPRINT, XOR magic.
+	require.Greater(t, fpOff, 0)
+	wantCRC := crc32.ChecksumIEEE(pkt[:fpOff]) ^ 0x5354554e
+	require.Equal(t, wantCRC, binary.BigEndian.Uint32(pkt[fpOff+4:fpOff+8]), "FINGERPRINT CRC-32 must verify")
+}
+
+// Two STUN requests differ entirely (fresh txn / ufrag / integrity key per call).
+func TestMasqueSTUNRequestUniqueness(t *testing.T) {
+	t.Parallel()
+	a, err := masqueI1(option.AmneziaWGOptions{Ip: "stun"})
+	require.NoError(t, err)
+	b, err := masqueI1(option.AmneziaWGOptions{Ip: "stun"})
+	require.NoError(t, err)
+	require.NotEqual(t, a, b, "fresh per-call entropy → different blobs")
 }
 
 // --- SIP response (parse back as SIP) ---------------------------------------
