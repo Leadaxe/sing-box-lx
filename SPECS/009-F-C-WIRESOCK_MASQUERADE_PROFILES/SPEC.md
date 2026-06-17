@@ -51,6 +51,18 @@ open-source реализацию той же мимикрии:
 
 ### 1.3 Как WireSock реально строит каждый протокол (из `transform.rs`)
 
+> **§146 amendment (2026-06-17):** `ip=quic` теперь эмитит **out-of-order
+> фрагментированный QUIC Initial** (RFC 9001) с реалистичным ClientHello, где `id`
+> идёт как **SNI** — см. `quic_initial_awg.go` / `quic_clienthello_awg.go` /
+> `quic_crypto_awg.go` и LxBox-таск §146. Это **сменило** 1-RTT short-header дизайн,
+> описанный ниже в этом пункте. `id` для `quic` теперь **обязателен** (становится
+> SNI). Прежняя аргументация «short header не ломается на размере, поэтому лучше
+> Initial» **развёрнута полевыми данными**: short header был эмпирически заблокирован
+> реальным LTE-DPI; фрагментированный Initial обходит line-rate DPI тем, что первый
+> CRYPTO-фрейм на проводе имеет offset≠0 (DPI парсит его как offset 0 → мусор →
+> fail-open). Файл `masque_quic_awg.go` (`masqueQUICShortHeaderCPS` / `quicFirstByte`)
+> **удалён**. Описание short-header ниже — исторический контекст, не текущее поведение.
+
 - **QUIC = 1-RTT SHORT header, НЕ Initial/ClientHello.** Первый байт
   `0x40 | (spin<<5) | (key_phase<<2) | pn_len_bits` (form=0, fixed=1), далее
   псевдослучайные байты = «зашифрованный 1-RTT ciphertext». Нет version, нет
@@ -90,7 +102,8 @@ I1-пакеты шлются как приманки перед handshake с `Ob
 `Id/Ip/Ib` — сахар над `I1`, **без нового рантайма** в device.
 
 Профили (структура — по WireSock §1.3, оформление — самодостаточный I1 CPS):
-- **quic** — 1-RTT short header + энтропия.
+- **quic** — _§146: out-of-order фрагментированный QUIC Initial с SNI=`Id` (см. §1.3);
+  ранее — 1-RTT short header + энтропия._
 - **dns** — EDNS OPT response, QNAME из `Id`.
 - **stun** — Binding Success Response.
 - **sip** — SIP response с доменом `Id`.
@@ -146,9 +159,11 @@ Ib string `json:"ib,omitempty"` // browser (limited effect — see §3.3)
 
 - **Взаимоисключение с `I1`** — конфликт → ошибка.
 - **`Ip ∈ {quic,dns,stun,sip}`** (lower); пусто при заданном `Id`/`Ib` → ошибка.
-- **`Id` обязателен только для `dns`/`sip`** (там он идёт на провод как QNAME /
-  SIP-host); для `quic`/`stun` опционален (short-header QUIC / STUN не несут домен,
-  см. §1.3). **Строгий LDH-hostname-чек** применяется **всегда, когда `Id` задан**
+- **`Id` обязателен для `quic`/`dns`/`sip`** (идёт на провод как SNI / QNAME /
+  SIP-host); опционален **только для `stun`** (STUN не несёт домен). _(§146 amendment
+  2026-06-17: было «обязателен только для dns/sip» — после перехода `quic` на
+  фрагментированный Initial с SNI `id` стал обязателен и для `quic`; см. §1.3.)_
+  **Строгий LDH-hostname-чек** применяется **всегда, когда `Id` задан**
   (метки alnum+hyphen+`_`, без edge-hyphen, ≤63, всего ≤253, трейлинг-дот ок). Это
   **security-граница**: домен идёт в SIP-текст и DNS QNAME — control-байты
   (`\r\n\0\t`) и SIP/URI-метасимволы (`> ; @ "`) → инъекция. Совпадает с
@@ -161,7 +176,7 @@ Ib string `json:"ib,omitempty"` // browser (limited effect — see §3.3)
 |------|------|-----|
 | `option/wireguard_awg.go` | lx | +`Id/Ip/Ib` |
 | `transport/wireguard/masque_awg.go` | lx, `with_awg` | диспетчер `masqueI1` + валидация + DNS/STUN/SIP + CPS-хелперы |
-| `transport/wireguard/masque_quic_awg.go` | lx, `with_awg` | QUIC 1-RTT short header |
+| `transport/wireguard/quic_initial_awg.go` (+ `quic_clienthello_awg.go`, `quic_crypto_awg.go`) | lx, `with_awg` | QUIC out-of-order фрагментированный Initial с SNI (§146; ранее `masque_quic_awg.go` — 1-RTT short header, удалён) |
 | `transport/wireguard/device_awg.go` | lx, `with_awg` | вызов `masqueI1` в `awgIpcLines` |
 | `transport/wireguard/masque_awg_test.go` | lx, `with_awg` | тесты |
 
@@ -173,8 +188,9 @@ Ib string `json:"ib,omitempty"` // browser (limited effect — see §3.3)
 ## 4. Критерии приёмки
 
 - **Структурная валидность каждого профиля** (НЕ тавтология): сгенерированный
-  decoy парсится обратно как заявленный протокол — QUIC 1-RTT short header (первый
-  байт `0x40|...`, форма верна); DNS как валидный EDNS-OPT месседж (QNAME=Id,
+  decoy парсится обратно как заявленный протокол — QUIC как валидный
+  фрагментированный Initial с ClientHello (SNI=Id; §146 — ранее как 1-RTT short
+  header, первый байт `0x40|...`); DNS как валидный EDNS-OPT месседж (QNAME=Id,
   OPT RR, опция `0xFDE9`, без хвостов); STUN как Binding Response (cookie, длина
   покрывает атрибуты); SIP как валидный response (status-line + обязательные
   заголовки, CRLF).

@@ -68,29 +68,27 @@ func TestMasqueI1DomainRequiredForDNSAndSIP(t *testing.T) {
 	}
 }
 
-func TestMasqueI1DomainOptionalForQUICAndSTUN(t *testing.T) {
+// id lands on the wire for quic (SNI), dns (QNAME) and sip (host); only stun is
+// hostname-less, so id is optional only for stun.
+func TestMasqueI1DomainRequiredForQUIC(t *testing.T) {
 	t.Parallel()
-	// quic/stun without id must succeed and produce a valid hostname-less decoy.
-	quic, err := masqueI1(option.AmneziaWGOptions{Ip: "quic"})
-	require.NoError(t, err, "quic without id should be valid")
-	require.NotEmpty(t, quic)
-	pkt := obfuscateCPS(t, quic)
-	require.Equal(t, byte(0x40), pkt[0]&0xC0, "quic-without-id still a valid 1-RTT short header")
+	_, err := masqueI1(option.AmneziaWGOptions{Ip: "quic"})
+	require.Error(t, err, "id should be required for ip=quic (it becomes the SNI)")
+	require.Contains(t, err.Error(), "id (masquerade domain) is required for ip=quic")
+}
 
+func TestMasqueI1DomainOptionalForSTUN(t *testing.T) {
+	t.Parallel()
+	// stun without id must succeed and produce a valid hostname-less decoy.
 	stun, err := masqueI1(option.AmneziaWGOptions{Ip: "stun"})
 	require.NoError(t, err, "stun without id should be valid")
 	require.NotEmpty(t, stun)
-	pkt = obfuscateCPS(t, stun)
+	pkt := obfuscateCPS(t, stun)
 	require.Equal(t, uint16(0x0101), uint16(pkt[0])<<8|uint16(pkt[1]), "stun-without-id still a Binding Response")
-
-	// quic with id is also fine — id is validated but not put on the wire.
-	withID, err := masqueI1(option.AmneziaWGOptions{Ip: "quic", Id: "www.google.com", Ib: "chrome"})
-	require.NoError(t, err)
-	require.Equal(t, quicFirstByte(masqueBrowserChrome), obfuscateCPS(t, withID)[0])
 
 	// quic with an INVALID id is still rejected (LDH applies whenever id is set).
 	_, err = masqueI1(option.AmneziaWGOptions{Ip: "quic", Id: "a.com\r\nx"})
-	require.Error(t, err, "invalid id must be rejected even for quic")
+	require.Error(t, err, "invalid id must be rejected for quic")
 	require.Contains(t, err.Error(), "invalid masquerade domain")
 }
 
@@ -155,40 +153,8 @@ func TestMasqueBrowserValidation(t *testing.T) {
 	require.Contains(t, err.Error(), "only meaningful with ip=quic")
 }
 
-// --- QUIC short header (structural, not tautological) -----------------------
-
-func TestMasqueQUICShortHeaderStructure(t *testing.T) {
-	t.Parallel()
-	spec, err := masqueI1(option.AmneziaWGOptions{Id: "a.com", Ip: "quic", Ib: "chrome"})
-	require.NoError(t, err)
-	pkt := obfuscateCPS(t, spec)
-
-	require.GreaterOrEqual(t, len(pkt), 9, "DCID(8)+payload should follow the first byte")
-	// RFC 9000 §17.3.1: form=0, fixed=1 => (b & 0xC0) == 0x40.
-	require.Equal(t, byte(0x40), pkt[0]&0xC0, "must be a 1-RTT short header (form=0, fixed=1)")
-	// Reserved bits (0x18) cleared per RFC 9000 §17.3.
-	require.Equal(t, byte(0x00), pkt[0]&0x18, "reserved bits must be cleared")
-}
-
-func TestMasqueQUICBrowserDistinctFirstByte(t *testing.T) {
-	t.Parallel()
-	// Real (non-tautological) check: the *deterministic* first byte differs per
-	// browser. The first byte is static (<b>), so it does not depend on
-	// randomness — this isolates the browser-selected bits, unlike comparing the
-	// random tail.
-	require.Equal(t, byte(0x60), quicFirstByte(masqueBrowserChrome))
-	require.Equal(t, byte(0x45), quicFirstByte(masqueBrowserFirefox))
-	require.Equal(t, byte(0x67), quicFirstByte(masqueBrowserCurl))
-	require.Equal(t, byte(0x40), quicFirstByte(""))
-	// All are valid 1-RTT short-header first bytes.
-	for _, br := range []string{masqueBrowserChrome, masqueBrowserFirefox, masqueBrowserCurl, ""} {
-		b := quicFirstByte(br)
-		require.Equal(t, byte(0x40), b&0xC0, "form/fixed for %q", br)
-		require.Equal(t, byte(0x00), b&0x18, "reserved cleared for %q", br)
-	}
-	// They are not all identical (the browser hint actually changes the byte).
-	require.NotEqual(t, quicFirstByte(masqueBrowserChrome), quicFirstByte(masqueBrowserFirefox))
-}
+// QUIC Initial structural tests (decrypt / frame-walk / reassembly / SNI) live
+// in quic_initial_awg_test.go.
 
 // --- DNS EDNS OPT response (parse back as a DNS message) --------------------
 

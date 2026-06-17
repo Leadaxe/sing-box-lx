@@ -121,16 +121,22 @@ decoy for you:
 
 | Key | Type | Meaning |
 |-----|------|---------|
-| `id` | string | masquerade **domain** (a host that looks normal for your region, e.g. `www.google.com`). Strict LDH hostname (letters/digits/`-`/`_`, labels ≤63, total ≤253). It is embedded into the decoy **only for `ip=dns` (as the QNAME) and `ip=sip` (as the host)** — for `ip=quic`/`ip=stun` the packet has nowhere to carry a hostname, so `id` is ignored there. **Required for `dns`/`sip`, optional for `quic`/`stun`.** Whenever set, it is LDH-validated (invalid/injection-y values are **rejected**) |
+| `id` | string | masquerade **domain** (a host that looks normal for your region, e.g. `www.google.com`). Strict LDH hostname (letters/digits/`-`/`_`, labels ≤63, total ≤253). It is embedded into the decoy for `ip=quic` (as the **ClientHello SNI**), `ip=dns` (as the QNAME) and `ip=sip` (as the host) — only `ip=stun` has nowhere to carry a hostname and ignores it. **Required for `quic`/`dns`/`sip`, optional only for `stun`.** Whenever set, it is LDH-validated (invalid/injection-y values are **rejected**) |
 | `ip` | string | masquerade **protocol**: `quic` \| `dns` \| `stun` \| `sip` |
 | `ib` | string | masquerade **browser**: `chrome` \| `firefox` \| `curl`. Only meaningful with `ip=quic`, and even then the effect is **minimal** (see note) |
 
 The decoy is sent before the handshake, exactly like a hand-written `i1`. Each
-profile produces a packet shaped like a real response of that protocol (ported
-from the open-source WireSock reference, `amneziawg-proxy/src/transform.rs`):
+profile produces a packet shaped like that protocol — `dns`/`stun`/`sip` are
+ported from the open-source WireSock reference (`amneziawg-proxy/src/transform.rs`),
+while `quic` is a full RFC 9001 QUIC Initial built specifically to bypass
+line-rate DPI:
 
-- **`quic`** — a QUIC **1-RTT short header** + entropy (no SNI/ClientHello; this is
-  WireSock's actual choice, not a TLS-fingerprinted Initial).
+- **`quic`** — a full **QUIC Initial (RFC 9001)** carrying a realistic browser-shaped
+  ClientHello (with your `id` as the SNI) **split across several out-of-order CRYPTO
+  frames**: the first frame on the wire starts mid-ClientHello (offset≠0), so a
+  line-rate DPI that grabs the first frame and assumes offset 0 parses garbage and
+  fails open, while a real QUIC server reorders the frames normally. This is the
+  device-proven DPI bypass (a plain QUIC short header was empirically blocked).
 - **`dns`** — an EDNS **OPT response** whose QNAME is your `id`, carrying random
   cover bytes as an opaque unknown EDNS option.
 - **`stun`** — a STUN **Binding Success Response** (magic cookie + XOR-MAPPED-ADDRESS
@@ -152,16 +158,17 @@ from the open-source WireSock reference, `amneziawg-proxy/src/transform.rs`):
 > **Notes & honest limitations.**
 > - `id`/`ip`/`ib` are **mutually exclusive** with an explicit `i1` — set one or the
 >   other, not both (a config with both is rejected).
-> - This is a **decoy** sent before the handshake, not a full protocol session. The
->   QUIC short header carries **no SNI**, so unlike a QUIC Initial it does not reveal
->   the `id` to a censor — and conversely cannot rely on the censor "seeing an
->   allowed SNI". We do **not** fake a TLS/JA3 fingerprint (the short header has no
->   ClientHello). `ib` only flips a couple of cosmetic QUIC bits (spin/key-phase),
->   which are per-packet random in real QUIC anyway — it is accepted for WireSock
->   config compatibility, not because it produces a distinct fingerprint.
-> - **If you need the censor to actually see `id` on the wire, use `ip=dns` or
->   `ip=sip`** — those carry the domain in clear text (DNS QNAME / SIP host).
->   `ip=quic` and `ip=stun` produce a hostname-less decoy regardless of `id`.
+> - This is a **decoy** sent before the handshake, not a full protocol session — the
+>   `quic` Initial never completes a TLS handshake (it only needs to make the first
+>   packet of the flow look like a legitimate QUIC start). The `id` **is** placed on
+>   the wire as the ClientHello SNI (a DPI that publicly decrypts the Initial can read
+>   it), so pick a **plausible, allowed** domain — never a VPN/Cloudflare marker.
+> - The DPI bypass rests on **CRYPTO-frame fragmentation, not on a TLS/JA3
+>   fingerprint** — we do not imitate a specific browser fingerprint. `ib` is accepted
+>   for WireSock config compatibility and validated, but currently does not change the
+>   generated ClientHello.
+> - `id` is carried on the wire for `quic` (SNI), `dns` (QNAME) and `sip` (host); only
+>   `ip=stun` produces a hostname-less decoy regardless of `id`.
 > - The motivating use case is easing connections to **Cloudflare WARP**.
 
 **📖 [Detailed examples →](../SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md)** —

@@ -121,14 +121,16 @@ easing **Cloudflare WARP**:
 {
   "type": "wireguard",
   // … standard wireguard fields …
-  "ip": "quic", "ib": "chrome"          // quic/stun: id optional (no SNI on the wire)
-  // or: "ip": "dns",  "id": "www.google.com"   // dns/sip: id required, carried as QNAME/host
+  "id": "www.google.com", "ip": "quic", "ib": "chrome"   // quic: id carried as the ClientHello SNI
+  // or: "ip": "dns",  "id": "www.google.com"   // dns/sip: id carried as QNAME/host
 }
 ```
 
-`ip` ∈ `quic|dns|stun|sip`; `id` is required only for `dns`/`sip` (where it appears
-on the wire) and optional for `quic`/`stun`; `ib` ∈ `chrome|firefox|curl` (quic only,
-minimal effect — no JA3 fingerprint). Mutually exclusive with an explicit `i1`. See
+`ip` ∈ `quic|dns|stun|sip`; `id` is required for `quic`/`dns`/`sip` (where it appears
+on the wire — for `quic` as the ClientHello SNI) and optional only for `stun`; `ib` ∈
+`chrome|firefox|curl` (quic only, minimal effect — no JA3 fingerprint). For `quic` the
+core emits an out-of-order fragmented QUIC Initial (RFC 9001) that bypasses line-rate
+DPI. Mutually exclusive with an explicit `i1`. See
 [docs/lx-config.md](docs/lx-config.md) and [SPECS/009 examples](SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ---

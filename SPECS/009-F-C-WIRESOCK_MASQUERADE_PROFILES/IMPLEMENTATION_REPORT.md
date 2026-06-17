@@ -3,6 +3,18 @@
 **Дата:** 2026-06-17 · **Статус:** Closed — код+тесты+DoD; **механизм проверен
 вживую (туннель + трафик на 009)**; релиз `v1.13.13-lx.11` · **База:** `v1.13.13`
 
+> **§146 amendment (2026-06-17):** `ip=quic` впоследствии переведён с 1-RTT
+> short header на **out-of-order фрагментированный QUIC Initial** (RFC 9001) с
+> ClientHello, где `id` = **SNI** — см. `quic_initial_awg.go` /
+> `quic_clienthello_awg.go` / `quic_crypto_awg.go` и LxBox-таск §146. Причина: прежний
+> short header был **эмпирически заблокирован реальным LTE-DPI**; фрагментированный
+> Initial обходит line-rate DPI (первый CRYPTO-фрейм имеет offset≠0 → DPI парсит как
+> offset 0 → мусор → fail-open) и **device-proven** против того DPI. Следствия:
+> `id` для `quic` стал **обязателен** (становится SNI), `masque_quic_awg.go`
+> (`masqueQUICShortHeaderCPS`/`quicFirstByte`) **удалён**. QUIC-разделы ниже
+> (short-header дизайн, `id`-опционален-для-quic, `ib`-без-эффекта) — исторический
+> контекст до §146.
+
 ## Итог
 
 Добавлены декларативные поля маскировки **`id` / `ip` / `ib`** (домен / протокол /
@@ -53,7 +65,7 @@ message-length, SIP Content-Length=0) покрывают **только реал
 |------|------|-----|
 | `option/wireguard_awg.go` | lx | +`Id/Ip/Ib string` (json `id`/`ip`/`ib`); `IsSet()` учёл автоматически |
 | `transport/wireguard/masque_awg.go` | lx, `with_awg` | `masqueI1` диспетчер + валидация (LDH/Ip/Ib/конфликт-с-I1) + `cpsBuilder` + DNS/STUN/SIP генераторы |
-| `transport/wireguard/masque_quic_awg.go` | lx, `with_awg` | QUIC 1-RTT short header |
+| `transport/wireguard/quic_initial_awg.go` (+ `quic_clienthello_awg.go`, `quic_crypto_awg.go`) | lx, `with_awg` | QUIC out-of-order фрагментированный Initial с SNI (§146; ранее `masque_quic_awg.go` — 1-RTT short header, удалён) |
 | `transport/wireguard/device_awg.go` | lx, `with_awg` | вызов `masqueI1` в `awgIpcLines`, подстановка как `i1` |
 | `transport/wireguard/masque_awg_test.go` | lx, `with_awg` | структурные тесты (обратный парсинг), валидация, инъекция, browser |
 | `transport/wireguard/masque_cps_test.go` | lx, `with_awg` | test-only верный реплей CPS-парсера (зеркало `newObfChain`) |
@@ -64,9 +76,10 @@ message-length, SIP Content-Length=0) покрывают **только реал
 
 ## Валидация (fail-fast в `masqueI1`)
 
-Конфликт с явным `I1`; пустой `Ip`/неизвестный `Ip`; **`Id` обязателен только для
-`dns`/`sip`** (там он идёт на провод как QNAME / SIP-host), для `quic`/`stun` —
-опционален (decoy без домена); **строгий LDH** домена применяется **всегда, когда
+Конфликт с явным `I1`; пустой `Ip`/неизвестный `Ip`; **`Id` обязателен для
+`quic`/`dns`/`sip`** (идёт на провод как SNI / QNAME / SIP-host), опционален **только
+для `stun`** (decoy без домена) _(§146: было «только dns/sip», после перехода `quic`
+на Initial с SNI стал обязателен и для `quic`)_; **строгий LDH** домена применяется **всегда, когда
 `Id` задан** (зеркало `is_valid_sni_hostname`: метки alnum+`-`+`_`, без edge-дефиса,
 ≤63, всего ≤253, трейлинг-дот ок) — это **security-граница** (домен идёт в SIP-текст
 и DNS QNAME, инъекция через control-байты/метасимволы); неизвестный `Ib`; `Ib` без
