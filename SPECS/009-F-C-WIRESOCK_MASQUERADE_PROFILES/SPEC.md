@@ -55,25 +55,25 @@ S1–S4 padding не используется: он невозможен про�
 
 Все профили — собственные клиент-инициированные генераторы: `quic` — фрагментированный QUIC
 Initial (§3.1), `stun` — WebRTC Binding **Request** (§3.2), `dns` — клиентский DNS query (§3.3),
-`sip` — INVITE **request** с SDP (§3.2). SIP-текст исходно вдохновлён WireSock-референсом
-([`amneziawg-install`](https://github.com/wiresock/amneziawg-install), MIT), но переведён из
-response в request. LDH-валидатор домена совпадает с их `quic_handshake.rs::is_valid_sni_hostname`.
+`sip` — начало звонка: INVITE (i1) + 100 Trying (i2), два самостоятельных пакета одного диалога
+(§3.2). Структура — стандартный SIP call-setup (RFC 3261 §17). LDH-валидатор домена совпадает с
+WireSock-референсом ([`amneziawg-install`](https://github.com/wiresock/amneziawg-install), MIT),
+`quic_handshake.rs::is_valid_sni_hostname`.
 
-> **Device-результат (тест-телефон, LTE с активным DPI):** проходит **только `quic`**
-> (~340 мс). `stun` (Binding Request и полный WebRTC-вариант с MESSAGE-INTEGRITY) и `dns`
-> (query QR=0, QTYPE HTTPS) — **Timeout**. `sip` по аналогии ожидаемо так же.
+> **Device-результат (тест-телефон, LTE с активным DPI):** на момент прошлых прогонов проходил
+> **только `quic`** (~340 мс); `stun` (Binding Request и полный WebRTC-вариант с
+> MESSAGE-INTEGRITY) и `dns` (query QR=0, QTYPE HTTPS) — **Timeout**. `sip` тогда был одиночным
+> пакетом и не проверялся отдельно.
 >
-> **Фундаментальный вывод.** Качество пакета и направление (request vs response) —
-> вторичны. Решает триплет **(протокол + назначение)**: DPI режет STUN/DNS/SIP к
-> WARP-edge `162.159.x:2408` **как класс протокола**, потому что raw STUN/DNS/SIP к
-> дата-центровому IP сами по себе аномальны (DNS живёт на :53-резолвере, STUN — на
-> STUN-сервере). Углубление пакета (request вместо response, MESSAGE-INTEGRITY, реальный
-> QTYPE) аномалию назначения не убирает. **`quic` обходит проверку назначения**, потому
-> что QUIC/HTTP3 легитимно идёт куда угодно (весь HTTP/3-веб к CDN), так что QUIC к
-> Cloudflare-IP — ожидаемый трафик. `quic` — единственный проверенный рабочий механизм
-> здесь; `dns`/`stun`/`sip` реализованы в правильной (клиент-инициированной) форме и
-> сохранены на случай других провайдеров, чей DPI проверяет только корректность пакета,
-> а не «протокол-к-назначению».
+> **Гипотеза, которую мы сейчас проверяем.** Почему `dns`/`stun`/`sip` упирались в Timeout,
+> точно **не установлено**. Рабочая гипотеза была «DPI режет STUN/DNS/SIP к WARP-edge
+> `162.159.x:2408` как класс протокола» (raw STUN/DNS/SIP к дата-центровому IP аномальны по
+> назначению), но это не доказано. По подсказке `sip` переведён на **multi-packet i1+i2**:
+> i1 = полный INVITE, i2 = полный `100 Trying` того же диалога (стандартный call-setup), оба —
+> самостоятельные валидные SIP-пакеты, и профиль рассчитан на работу с `junk`. Так поток читается
+> как начало реального звонка, а не одиночный опенер. Заработает ли это против WARP —
+> **ожидает device-проверки**; `quic` остаётся подтверждённо рабочим механизмом, `dns`/`stun`
+> реализованы в правильной клиент-инициированной форме и сохранены для проверки/других провайдеров.
 
 ### 3.1 QUIC — out-of-order фрагментированный Initial
 
@@ -126,13 +126,25 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
   MESSAGE-INTEGRITY структурно валиден, но по произвольному ICE-ключу (реального пароля у
   decoy нет — on-path DPI HMAC всё равно не проверит). Свежая энтропия на вызов; hostname не
   несёт. Генератор — `stun_request_awg.go`.
-- **sip** — INVITE **request** с SDP-офером. Request-line `INVITE sip:<user>@<host> SIP/2.0`,
-  Via(branch=z9hG4bK)/Max-Forwards:70/From(tag)/To(без tag)/Call-ID/CSeq:N INVITE/Contact,
-  Content-Type: application/sdp, Content-Length (точная), тело SDP (`v=0`, `m=audio`, rtpmap).
-  Request, а не response: клиент первым шлёт INVITE. Имена пользователей и (если `Id` пуст)
-  host — произносимые псевдо-строки (`PseudoGen`, запечены в `<b>`, уникальны между юзерами);
-  branch/tag/Call-ID/CSeq/SDP-id — per-packet `<rc>`/`<rd>` фикс-ширины (Content-Length
-  стабилен). `Id` опционален: задан → host, пуст → `pgHost()`. Генератор — `sip_invite_awg.go`.
+- **sip** — начало SIP-звонка (call setup, RFC 3261 §17) — **два самостоятельных пакета** одного диалога:
+  **i1 = полный INVITE** (request-line + Via(branch=z9hG4bK)/To(без tag)/From(tag)/Call-ID/CSeq:N
+  INVITE/Max-Forwards:70/Contact/Content-Type/`Content-Length: 0`, **без SDP-тела**), **i2 = полный
+  `SIP/2.0 100 Trying`** (статус-строка + те же Via/To/From/Call-ID/CSeq + `Content-Length: 0`).
+  **Почему два целых пакета, а не фрагментация.** i1/i2 уходят как **независимые UDP-датаграммы**
+  (amneziawg-go `send.go`, `src=nil`), а у UDP нет потоковой реассемблеризации — пакетный DPI
+  смотрит каждую датаграмму отдельно. INVITE и 100 Trying валидны **каждый сам по себе**; вместе —
+  каноническое начало вызова (UAC шлёт INVITE → сервер сразу отвечает 100 Trying). Прежняя
+  фрагментация одного INVITE (head→i1, SDP→i2) оставляла каждую датаграмму битой и заменена.
+  **Один диалог.** Via branch / From tag / Call-ID / CSeq **идентичны** в i1 и i2 — поэтому строятся
+  **одним проходом** (`newSIPDialog` → `masqueSIPInviteCPS` + `masqueSIPTryingCPS`) и запекаются в
+  `<b>` обеих половин (не per-packet `<rc>`/`<rd>`, иначе токены разошлись бы между слотами).
+  Имена пользователей (display + local) и (если `Id` пуст) host — произносимые `PseudoGen`-строки,
+  свежие на генерацию; это **не** хардкод RFC-примера `alice@atlanta.com`/`bob@biloxi.com` (он —
+  публичный DPI-маяк). `Id` опционален: задан → host, пуст → `pgHost()`. Явный `i2` рядом с
+  `id/ip/ib` отвергается как конфликт (зеркало гарда `i1`). Генератор — `sip_invite_awg.go`,
+  диспетчер обоих слотов — `masqueI1I2`.
+  **Требует junk** (`jc/jmin/jmax > 0`): профиль рассчитан на отправку вместе с junk-пакетами в
+  том же пред-handshake-залпе.
 
 ---
 
@@ -185,7 +197,7 @@ device-proven generic-путь; uTLS-вариант крупнее и сам п�
 | `transport/wireguard/quic_clienthello_utls_stub_awg.go` | lx, `with_awg && !with_utls` | fallback на generic, когда uTLS не собран |
 | `transport/wireguard/quic_crypto_awg.go` | lx, `with_awg` | HKDF / AES-128-GCM / header protection |
 | `transport/wireguard/stun_request_awg.go` | lx, `with_awg` | STUN WebRTC Binding Request (FINGERPRINT + MESSAGE-INTEGRITY) |
-| `transport/wireguard/sip_invite_awg.go` | lx, `with_awg` | SIP INVITE request + SDP-офер |
+| `transport/wireguard/sip_invite_awg.go` | lx, `with_awg` | начало SIP-звонка: INVITE (i1) + `100 Trying` (i2), один диалог, без SDP |
 | `transport/wireguard/pseudo_gen_awg.go` | lx, `with_awg` | произносимые псевдо-имена/host/IP (для SIP) |
 | `transport/wireguard/device_awg.go` | lx, `with_awg` | вызов `masqueI1` в `awgIpcLines` |
 | `transport/wireguard/masque_awg_test.go`, `quic_initial_awg_test.go` | lx, `with_awg` | тесты |
@@ -201,9 +213,12 @@ device-proven generic-путь; uTLS-вариант крупнее и сам п�
   PING + PADDING, первый CRYPTO `offset≠0` (I1), CRYPTO реассемблируются в валидный
   ClientHello с SNI=`Id` (I4); DNS — валидный EDNS-OPT **query** (QR=0, QNAME=`Id`, QTYPE
   HTTPS, опция `0xFDE9`, без хвостов); STUN — Binding **Request** (cookie, атрибуты тайлят сообщение, FINGERPRINT
-  CRC-32 сходится, USERNAME + MESSAGE-INTEGRITY присутствуют); SIP — валидный INVITE
-  **request** (request-line `INVITE ... SIP/2.0`, Via/Max-Forwards/From/To-без-tag/Call-ID/
-  CSeq/Contact, SDP-тело, Content-Length точно покрывает тело; имена не захардкожены).
+  CRC-32 сходится, USERNAME + MESSAGE-INTEGRITY присутствуют); SIP — **два самостоятельных
+  пакета** одного диалога: i1 — валидный INVITE **request** (request-line `INVITE ... SIP/2.0`,
+  Via/Max-Forwards/From/To-без-tag/Call-ID/CSeq/Contact, `Content-Length: 0`, без SDP-тела),
+  i2 — валидный `SIP/2.0 100 Trying` (статус-строка + те же Via/To/From/Call-ID/CSeq,
+  `Content-Length: 0`); branch/tag/Call-ID/CSeq **идентичны** в i1 и i2 (один диалог), имена
+  не захардкожены.
 - **Рандомизация QUIC:** раскладка фрейм-плана и точки разреза свежие на каждый вызов;
   инварианты I1–I4 держатся на каждом сэмпле (стресс-тест), две генерации → разные offset'ы
   фрагментов (нет фикс-сигнатуры). Robustness-ручки (`quicGenParams`: 4–12 фрагментов,
@@ -310,92 +325,39 @@ WireSock архитектурно (без байт-спек и без измер
 
 ---
 
-## 9. Многопакетная QUIC-последовательность (реализовано)
+## 9. QUIC — один Initial (multi-packet рассмотрен и отклонён)
 
-`ip=quic` эмитит **два** независимых фрагментированных Initial: `i1` (как раньше) и `i2`
-(`masqueQUICSecondInitialCPS`, диспетч `masqueI2` → проводка `awgIpcLines`). Поток читается как
-**развивающаяся QUIC-сессия** (два старта Initial), а не одиночный opener — снижает сигнатуру
-одиночного пакета. Слоты движка `i1..i5` (`device.go` `ipackets [5]*obfChain`, каждый парсится в
-`uapi.go`, каждый шлётся своим UDP-датаграмом в `send.go`) делают это возможным без правки
-сабмодуля; `i3..i5` остаются пустыми (резерв-эскалация).
+`ip=quic` эмитит **ОДИН** фрагментированный Initial (`i1`; `i2..i5` пусты). Один Initial — это
+ровно то, что реальный клиент шлёт, открывая одну QUIC-сессию; правдоподобие даёт
+браузер-точный ClientHello (`Ib` → uTLS, §4), а не число пакетов.
 
-**Device-verified.** На том же LTE/WARP DPI: конфиг с явными `i1+i2` поднимает туннель **без
-регресса** латентности относительно `i1`-only (~340 мс). Подтверждает §9.1: добавление `i2` не
-трогает реальный handshake.
+**Отклонённая альтернатива — два независимых Initial (i1+i2).** Идея «развивающейся сессии» была
+реализована и device-проверена как безопасная для WARP-handshake (туннель встаёт без регресса
+латентности), но **концептуально неверна**: каждый DCID — отдельное QUIC-соединение, поэтому два
+Initial с разными DCID читаются как **два брошенных соединения**, а не одна развивающаяся сессия —
+для DPI с отслеживанием по DCID это *более* аномально, не менее. Настоящее «продолжение» (1-RTT
+short-header с тем же DCID) невозможно: short-header device-blocked (коммит `64ce4a47`), а 1-RTT до
+ответа сервера — невозможное QUIC-состояние. Вывод: один чистый Initial честнее любого
+двухпакетного варианта. (`masqueQUICSecondInitialCPS` удалён.)
 
-> **Почему НЕ short-header.** `i2` — это **полноценный второй фрагментированный Initial с
-> независимым DCID**, НЕ QUIC short-header (1-RTT) continuation. Short-header — тот самый конструкт,
-> который коммит `64ce4a47` УДАЛИЛ как device-blocked (все short-header-варианты давали Timeout). И
-> DCID-reuse (1-RTT с DCID из `i1` без ответа сервера) — невозможное QUIC-состояние, читаемое как
-> аномалия. Два **независимых** Initial с разными DCID выглядят как два старта QUIC-сессии — что
-> браузер делает рутинно. Это устойчивая форма, а не повторное использование уже заблокированного
-> short header.
-
-### 9.1 Почему это не сломает WARP
-
-Разобрано построчно по `submodules/wireguard-go/device/send.go` `SendHandshakeInitiation`: `i2` (как
-и любой decoy `i2..i5`) не может задержать, переупорядочить, испортить или изменить ни одного
-валидируемого байта реального `MessageInitiation`.
-
-1. **Handshake строится ДО и НЕЗАВИСИМО от decoy.** `CreateMessageInitiation(peer)` исполняется в
-   начале функции, **до** входа в цикл по `ipackets`. Decoy не аргументы `msg` и идут после того,
-   как `msg` уже вычислен.
-2. **Decoy — самодостаточные UDP-датаграмы без реального ciphertext.** `ObfuscatedLen(0)` +
-   `Obfuscate(buf, nil)` (src=nil); каждый decoy добавляется в `sendBuffer` отдельным элементом.
-   `i2` — ещё один такой элемент, как `i1`; ни конкатенации, ни XOR с подлинным пакетом.
-3. **Подлинный пакет добавляется последним и байт-идентичен стоковому WG.** После decoy- и
-   `jc`-junk-циклов: `binary.Write(msg)`, `AddMacs(packet)`, опц. init-padding,
-   `append(sendBuffer, packet)`, весь батч уходит одним `SendBuffers`. `i2` меняет только число
-   элементов перед `packet`, не байты `packet`.
-4. **Cloudflare реагирует только на валидный `MessageInitiation`.** WARP — стоковый WG-responder:
-   `i1` (`0xC0..`) и любой `i2` (не WG-type-1, без валидных MAC) отбрасываются как не-WG-шум.
-   Handshake завершается на подлинном пакете — ровно как сегодня с `i1`-only (~340 мс).
-5. **Эмпирическая непрерывность.** `i1`-only уже сейчас шлёт один QUIC-decoy перед подлинным
-   пакетом, и WARP-handshake идёт. `i2` — тот же механизм (+1 не-WG-датаграм), строго в режиме,
-   который `jc` уже рутинно эксплуатирует. Нового кода на пути подлинного handshake нет.
-
-### 9.2 Остаточные риски (после реализации)
-
-Дизайн `i2` обходит главные грабли (short-header → второй фрагментированный Initial; DCID-reuse →
-независимый DCID). Остаются ограничиваемые риски:
-
-1. **Retry-амплификация.** `SendHandshakeInitiation` гоняет весь decoy-цикл **на каждом retry**. На
-   лоссовом LTE дизайн увеличивает head-of-line-байты (`i1`~1250б + `i2`~1250б + `jc`) ровно когда
-   линк хуже всего. Поэтому (decoy + jc) — **единый бюджет ведущих пакетов**: `ip=quic` уже тратит 2
-   из него, не задирать `jc` сверх ~2–3 junk. `i3..i5` оставлены пустыми именно по этой причине.
-2. **Flood/anti-amplification.** 2 decoy + малый `jc` — ниже правдоподобного порога, та же форма
-   всплеска, что `jc` уже рутинно даёт.
-3. **MTU.** Оба Initial ~1250б (как device-proven одиночный) → нет IP-фрагментации на LTE.
-4. **Нет серверного responder.** `i2` помогает только против **пассивной** flow-классификации, НЕ
-   против активной пробы (§8) — ответить на QUIC Version Negotiation мы не можем (WARP не наш). На
-   текущем DPI `i1`-only и так проходит, поэтому ценность `i2` — задел против будущего DPI, который
-   начнёт давить одиночный Initial; на сегодня это «не хуже», а не измеримое «лучше».
-5. **Регресс `i1`.** `i2` генерится тем же `buildInitialPacket`, что и `i1`, с независимым DCID;
-   байты `i1` не изменились (тесты `quic_initial_awg_test.go` зелёные). Откат к `i1`-only —
-   тривиален (вернуть `masqueI2` → "").
-
-### 9.3 Что проверено и что осталось
-
-**Device-verified:** `i1+i2` поднимает туннель без регресса латентности vs `i1`-only (~340 мс) —
-многопакетность безопасна для WARP-handshake (§9.1).
-
-**Осталось (не блокирует отгрузку — задел, а не текущая нужда):**
-1. **`i3..i5` эскалация:** третий Initial — только если будущий DPI начнёт давить 2-пакетную форму,
-   и строго внутри бюджета ведущих датаграмов (п.1 §9.2).
-2. **Поведенческая плоскость:** межпакетные задержки / вариативность размеров между подключениями
-   (статья отмечает, что DPI палит и по timing) — отдельное направление, если passive-shape станет
-   недостаточно.
+> **Замечание про send.go (валидно для sip i1+i2, §3.2).** Decoy-слоты `i1..i5` шлются как
+> независимые UDP-датаграмы ПЕРЕД подлинным `MessageInitiation`: `CreateMessageInitiation` считается
+> до цикла по `ipackets`, каждый decoy — `Obfuscate(buf, nil)` отдельным элементом `sendBuffer`,
+> подлинный пакет добавляется последним и байт-идентичен стоковому WG; Cloudflare реагирует только
+> на валидный `MessageInitiation`, decoy отбрасывает как не-WG-шум. Поэтому любой decoy (в т.ч.
+> sip-i2) не может изменить handshake — это и делало multi-packet безопасным.
 
 ---
 
 ## 10. Вне скоупа
 
-- `dns`/`stun`/`sip` фрагментация (отдельная таска при необходимости).
+- `dns`/`stun` фрагментация (отдельная таска при необходимости).
 - Серверная сторона / probe-response (client-only) — но см. §8: non-QUIC профили осмысленны
   только со своим сервером-ответчиком (это и есть серверная сторона, вне скоупа 009).
 - Byte-identical имитация конкретного снимка трафика (рандомизация снижает сигнатуру).
-- JA3/uTLS браузерный fingerprint (§4).
-- `i3..i5` эскалация многопакетного QUIC (§9.3) — задел, реализуется при необходимости.
+- Многопакетный QUIC (i1+i2) — рассмотрен и отклонён (§9).
+- Поведенческая плоскость (timing / вариативность размеров между подключениями) — отдельное
+  направление, если passive-shape станет недостаточно.
 
 ---
 

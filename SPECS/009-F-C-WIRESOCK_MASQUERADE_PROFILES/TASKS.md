@@ -13,7 +13,7 @@
 - [x] `normalizeMasqueBrowser` (chrome|firefox|curl; только quic)
 - [x] DNS → EDNS OPT query (`masqueDNSQueryCPS`, QR=0, QTYPE HTTPS, QNAME из `Id`)
 - [x] STUN → WebRTC Binding Request (`stun_request_awg.go`, FINGERPRINT + MESSAGE-INTEGRITY)
-- [x] SIP → INVITE request + SDP (`sip_invite_awg.go`, PseudoGen-имена, `Id`/псевдо-host)
+- [x] SIP → INVITE (i1) + `100 Trying` (i2), один диалог, без SDP, требует junk (`sip_invite_awg.go`: `newSIPDialog`/`masqueSIPInviteCPS`/`masqueSIPTryingCPS`, диспетч `masqueI1I2`, PseudoGen-имена, `Id`/псевдо-host)
 - [x] `transport/wireguard/quic_initial_awg.go`: varint, рандомизированный frame-план (I1–I4) + `quicGenParams`, сборка Initial
 - [x] `transport/wireguard/quic_clienthello_awg.go`: реалистичный TLS 1.3 ClientHello (SNI=`Id`)
 - [x] `transport/wireguard/quic_crypto_awg.go`: HKDF / AES-128-GCM / header protection
@@ -28,7 +28,7 @@
 - [x] длинный валидный домен (>77 симв.) генерируется без ошибки (flex-PADDING)
 - [x] DNS: парсится как EDNS OPT query (QR=0, QTYPE HTTPS), QNAME=`Id`, RDLENGTH/OPTION-LENGTH до конца
 - [x] STUN: парсится как Binding Request (0x0001), FINGERPRINT CRC-32 сходится, USERNAME+MESSAGE-INTEGRITY есть
-- [x] SIP: request-line INVITE, обязательные заголовки + To без tag, SDP-тело, Content-Length точна, имена не захардкожены; пустой id → псевдо-host
+- [x] SIP: i1 INVITE (request-line, обязательные заголовки + To без tag, `Content-Length: 0`, без SDP) + i2 `100 Trying`, согласованный диалог (общий branch/tag/Call-ID/CSeq), имена не захардкожены; пустой id → псевдо-host
 - [x] валидация: конфликт с I1, неизвестный ip/ib, пустой id (только quic), ib без quic — ошибки
 - [x] инъекция домена (CRLF/метасимволы) — отвергается
 - [x] `masque_cps_test.go`: верный реплей CPS-парсера (зеркало `newObfChain`)

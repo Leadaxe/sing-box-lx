@@ -64,28 +64,26 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 		writeStr(key, spec)
 		return nil
 	}
-	// WireSock-style id/ip/ib masquerade is sugar over I1 (and, for ip=quic, I2):
-	// it generates the CPS strings. masqueI1 returns "" when no masquerade is set,
-	// and errors on a conflict with an explicit I1 or on invalid id/ip/ib. When
-	// set, its output is used as the i1 value below.
+	// WireSock-style id/ip/ib masquerade is sugar over I1 (and, for ip=quic and
+	// ip=sip, also I2): masqueI1I2 generates both CPS strings in one pass. It
+	// returns "" for both when no masquerade is set, and errors on a conflict
+	// with an explicit I1 or on invalid id/ip/ib. When set, its output is used
+	// as the i1/i2 values below.
 	i1 := o.I1
 	i2 := o.I2
-	masque, err := masqueI1(o)
+	masque, masque2, err := masqueI1I2(o)
 	if err != nil {
 		return "", err
 	}
 	if masque != "" {
 		i1 = masque
-		// ip=quic also fills i2 with a second independent fragmented Initial
-		// (developing-session decoy). A user-supplied i2 alongside id/ip/ib is
-		// ambiguous, exactly like the i1 conflict masqueI1 already rejects.
-		masque2, err := masqueI2(o)
-		if err != nil {
-			return "", err
-		}
+		// ip=sip fills i2 with the matching 100 Trying of the INVITE dialog (quic
+		// and dns/stun are single-packet and leave i2 empty). A user-supplied i2
+		// alongside an i2-filling sugar profile is ambiguous, exactly like the i1
+		// conflict masqueI1 already rejects.
 		if masque2 != "" {
 			if o.I2 != "" {
-				return "", E.New("amneziawg: id/ip/ib masquerade (ip=quic) fills i2; an explicit i2 conflicts with it")
+				return "", E.New("amneziawg: id/ip/ib masquerade (ip=sip) fills i2; an explicit i2 conflicts with it")
 			}
 			i2 = masque2
 		}

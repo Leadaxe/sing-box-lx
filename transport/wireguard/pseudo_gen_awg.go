@@ -96,6 +96,37 @@ func pgUser() string {
 	return u
 }
 
+// pgHex returns n lowercase hex characters from crypto/rand. Used for SIP
+// dialog tokens (Via branch suffix, Call-ID local part) that must be IDENTICAL
+// across the INVITE (i1) and its 100 Trying (i2) — so they are generated once
+// and baked into the static <b> bytes of both halves, not emitted per-packet
+// via <rc> (which would differ between the two slots and break dialog identity).
+func pgHex(n int) string {
+	const hexDigits = "0123456789abcdef"
+	var b strings.Builder
+	b.Grow(n)
+	for i := 0; i < n; i++ {
+		b.WriteByte(hexDigits[pgIntn(16)])
+	}
+	return b.String()
+}
+
+// pgDigits returns n decimal digits from crypto/rand, with no leading zero (so
+// it reads as a natural number — From tag, CSeq sequence). Like pgHex, used for
+// dialog tokens shared verbatim between i1 and i2.
+func pgDigits(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(n)
+	b.WriteByte(byte('1' + pgIntn(9))) // first digit 1..9 (no leading zero)
+	for i := 1; i < n; i++ {
+		b.WriteByte(byte('0' + pgIntn(10)))
+	}
+	return b.String()
+}
+
 // pgIsReservedIP reports whether a.b.x.x is reserved/private (unfit as a public
 // VoIP host — it would expose the forgery).
 func pgIsReservedIP(a, b int) bool {
