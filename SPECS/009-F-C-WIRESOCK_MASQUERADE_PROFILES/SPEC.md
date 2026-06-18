@@ -138,10 +138,24 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
 
 ## 4. Браузер (`Ib`)
 
-В сгенерированном QUIC Initial браузерный JA3/JA4-fingerprint **не имитируется**: DPI-bypass
-держится на фрагментации CRYPTO-фреймов, а не на TLS-fingerprint. `Ib` принимается для
-синтаксической совместимости с WireSock-конфигами и валидируется (`chrome|firefox|curl`,
-только при `ip=quic`), но на байты пакета не влияет — JA3-имитации в этом профиле нет.
+`Ib` валидируется (`chrome|firefox|curl`, только при `ip=quic`) и **управляет JA3/JA4
+ClientHello** (build с `with_utls`):
+
+- **`ib=""` / `ib=curl`** → собственный generic ClientHello (~294б, device-proven; §3.1). uTLS не
+  имеет curl-QUIC-fingerprint, поэтому curl деградирует на generic.
+- **`ib=chrome` / `ib=firefox`** → ClientHello строится через **uTLS** (`github.com/metacubex/utls`,
+  тот же, что у Reality): `UQUICClient` с fingerprint `HelloChrome_120` / `HelloFirefox_120` →
+  настоящий браузерный JA3/JA4 (cipher_suites, supported_groups, порядок extensions, GREASE у
+  Chrome). ALPN форсируется в `h3` (это QUIC, не TCP-TLS). PQ-гибрид key_share
+  (`X25519MLKEM768`, ~1.2КБ) удаляется — он не влез бы в один Initial; следствие: JA3 как у
+  конца-2023 браузера, не у текущего PQ-включённого. CH крупнее (~510–620б), фрагментация
+  адаптируется (planFragmentsN режет любую длину, I1–I4 держатся).
+- Без тега `with_utls` `ib=chrome/firefox` грациозно деградируют на generic CH (stub-файл).
+
+**Назначение `Ib` — задел против будущего JA3/JA4-классифицирующего DPI.** На текущем целевом DPI
+`ip=quic` проходит на фрагментации (fingerprint не проверяется), поэтому дефолт `ib=""` сохраняет
+device-proven generic-путь; uTLS-вариант крупнее и сам по себе на устройстве не верифицирован.
+Код: `quic_clienthello_utls_awg.go` (+ stub `…_utls_stub_awg.go`).
 
 ---
 
@@ -166,7 +180,9 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
 | `option/wireguard_awg.go` | lx | поля `Id/Ip/Ib` |
 | `transport/wireguard/masque_awg.go` | lx, `with_awg` | диспетчер `masqueI1` + валидация + DNS query + `cpsBuilder` |
 | `transport/wireguard/quic_initial_awg.go` | lx, `with_awg` | QUIC Initial: varint, рандомизированный frame-план (I1–I4) + `quicGenParams`, сборка RFC 9001 |
-| `transport/wireguard/quic_clienthello_awg.go` | lx, `with_awg` | реалистичный TLS 1.3 ClientHello (SNI=`Id`) |
+| `transport/wireguard/quic_clienthello_awg.go` | lx, `with_awg` | generic TLS 1.3 ClientHello (SNI=`Id`) + диспетч по `Ib` |
+| `transport/wireguard/quic_clienthello_utls_awg.go` | lx, `with_awg && with_utls` | uTLS браузерный ClientHello (chrome/firefox JA3, §4) |
+| `transport/wireguard/quic_clienthello_utls_stub_awg.go` | lx, `with_awg && !with_utls` | fallback на generic, когда uTLS не собран |
 | `transport/wireguard/quic_crypto_awg.go` | lx, `with_awg` | HKDF / AES-128-GCM / header protection |
 | `transport/wireguard/stun_request_awg.go` | lx, `with_awg` | STUN WebRTC Binding Request (FINGERPRINT + MESSAGE-INTEGRITY) |
 | `transport/wireguard/sip_invite_awg.go` | lx, `with_awg` | SIP INVITE request + SDP-офер |
@@ -194,6 +210,10 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
   переменный размер) тоже держат I1–I4.
 - **Уникальность:** два вызова QUIC с одним SNI → разные DCID/TLS random → разный
   ciphertext; два вызова STUN → разный txn/ufrag/ключ → разный blob.
+- **`Ib` JA3 (build с `with_utls`):** `ib=chrome`/`firefox` → uTLS-ClientHello, расшифровывается,
+  SNI=`Id`, первый CRYPTO offset≠0 (I1), пакет 1250б; chrome содержит GREASE cipher, firefox нет;
+  длины chrome≠firefox≠generic. `ib=""`/`curl` → generic ~294б. Без `with_utls` chrome/firefox
+  деградируют на generic (stub компилируется и тестируется).
 - **Длинный домен:** валидный LDH-домен любой длины (≤253) генерируется без ошибки (payload
   пинится к length-полю flex-PADDING-run; CH растёт с длиной SNI, инварианты сохраняются).
 - **CPS принят реальным движком:** прогон через `newObfChain` из `submodules/wireguard-go`.
