@@ -4,7 +4,7 @@
 - [x] Механизм: **I1 CPS только** (S1–S4 невозможен против WARP; сабмодуль не трогаем)
 - [x] QUIC: **out-of-order фрагментированный QUIC Initial** (RFC 9001) с SNI=`id`
 - [x] Структуры dns/stun/sip: порт из WireSock `transform.rs`
-- [x] `Ib`: валидация (chrome|firefox|curl, только quic); на байты пакета не влияет (нет JA3)
+- [x] `Ib`: chrome/firefox → uTLS браузерный ClientHello (реальный JA3); ""/curl → generic; build-tag split utls/stub
 
 ## Код
 - [x] `option/wireguard_awg.go`: `Id/Ip/Ib string` (json `id`/`ip`/`ib`)

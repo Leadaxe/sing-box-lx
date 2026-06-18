@@ -47,9 +47,32 @@ func appendExtension(dst []byte, extType uint16, data []byte) []byte {
 	return append(dst, data...)
 }
 
-// buildClientHello assembles a TLS 1.3 ClientHello for the given SNI, using the
-// supplied 32-byte TLS random and 32-byte x25519 public key. browser is accepted
-// for API symmetry but does not change the structure (no JA3 imitation).
+// buildClientHello produces the ClientHello bytes for the QUIC Initial. The
+// browser hint (Ib) selects how it is built:
+//
+//   - "" or "curl" → buildGenericClientHello: our own ~294-byte device-proven CH
+//     (the default that passed the real LTE/WARP DPI; uTLS has no curl-QUIC fp).
+//   - "chrome"/"firefox" → buildBrowserClientHello (uTLS, with_utls builds only):
+//     a real browser QUIC ClientHello with that browser's genuine JA3/JA4. Bigger
+//     (~530–630B), so the fragment plan cuts it differently — see buildInitialPacket.
+//     Without the with_utls tag it falls back to the generic CH (see the stub file).
+//
+// The uTLS path needs neither tlsRandom nor x25519Pub (uTLS makes its own fresh
+// random and key_share), so those are used only by the generic path.
+func buildClientHello(sni string, tlsRandom [32]byte, x25519Pub []byte, browser string) ([]byte, error) {
+	switch browser {
+	case masqueBrowserChrome, masqueBrowserFirefox:
+		return buildBrowserClientHello(sni, browser)
+	default: // "" or "curl"
+		return buildGenericClientHello(sni, tlsRandom, x25519Pub)
+	}
+}
+
+// buildGenericClientHello assembles our own TLS 1.3 ClientHello for the given
+// SNI (~294 bytes, padded to the etalon), using the supplied 32-byte TLS random
+// and 32-byte x25519 public key. This is the device-proven default; it does not
+// imitate a specific browser JA3 (the bypass works on fragmentation, not on a
+// TLS fingerprint).
 //
 // Layout (RFC 8446 §4.1.2, wrapped as a handshake message):
 //
@@ -64,8 +87,7 @@ func appendExtension(dst []byte, extType uint16, data []byte) []byte {
 //	                 key_share(x25519), quic_transport_params, GREASE,
 //	                 psk_key_exchange_modes, ALPN(h3), compress_certificate,
 //	                 supported_versions(TLS1.3), padding(to target length)
-func buildClientHello(sni string, tlsRandom [32]byte, x25519Pub []byte, browser string) ([]byte, error) {
-	_ = browser // structure is browser-independent (no JA3 imitation)
+func buildGenericClientHello(sni string, tlsRandom [32]byte, x25519Pub []byte) ([]byte, error) {
 	if sni == "" {
 		return nil, E.New("amneziawg: ip=quic requires a non-empty id (SNI) for the ClientHello")
 	}

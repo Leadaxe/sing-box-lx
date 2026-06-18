@@ -123,6 +123,17 @@ DCID-reuse (невозможное QUIC-состояние) — два неза�
 **Device-результат:** конфиг `i1+i2` поднимает туннель **без регресса** латентности vs `i1`-only
 (~340 мс) — многопакетность подтверждена на железе. Откат к `i1`-only тривиален (`masqueI2` → "").
 
+### Р12. `Ib` → реальный браузерный JA3 через uTLS
+`ib=chrome`/`firefox` теперь строит ClientHello через uTLS (`github.com/metacubex/utls`, тот же,
+что у Reality) в QUIC-режиме (`UQUICClient` + `HelloChrome_120`/`HelloFirefox_120`) → настоящий
+браузерный JA3/JA4. ALPN форсируется в `h3`, PQ-гибрид key_share (`X25519MLKEM768`) удаляется (не
+влез бы в один Initial; паттерн из `reality_client.go`). Решение «`ib` опционален»: `ib=""`/`curl`
+→ generic device-proven ~294б CH (дефолт не трогаем); `ib=chrome`/`firefox` → uTLS (~510–620б).
+Build-tag split: `quic_clienthello_utls_awg.go` (`with_utls`) / `…_stub_awg.go` (`!with_utls` →
+fallback на generic). Фрагментация (`planFragmentsN`) режет CH любой длины — I1–I4 держатся.
+Это задел против будущего JA3/JA4-DPI; на текущем DPI `ip=quic` проходит на фрагментации, поэтому
+uTLS-вариант сам по себе device не верифицирован, а дефолт `ib=""` остаётся проверенным.
+
 ---
 
 ## Верификация
