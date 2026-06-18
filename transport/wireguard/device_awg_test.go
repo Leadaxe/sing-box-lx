@@ -99,43 +99,35 @@ func TestAwgIpcLinesValidJunkRange(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// ip=quic fills BOTH i1 and i2 with independent fragmented Initials (a
-// developing-session decoy, device-verified safe for the WARP handshake). Each
-// must be a valid Initial carrying the SNI; the two must differ (fresh DCID).
-func TestAwgIpcLinesQUICFillsI1AndI2(t *testing.T) {
+// ip=quic is a SINGLE Initial: i1 only, i2 empty. One Initial is what a real
+// client sends to open one QUIC session; the realism is in the browser-accurate
+// ClientHello (Ib), not in packet count. The i1 must be a valid fragmented
+// Initial carrying the SNI.
+func TestAwgIpcLinesQUICSingleInitial(t *testing.T) {
 	t.Parallel()
 	const sni = "www.google.com"
 	lines, err := awgIpcLines(option.AmneziaWGOptions{Id: sni, Ip: "quic", Ib: "chrome"})
 	require.NoError(t, err)
 
 	i1 := ipcValue(t, lines, "i1")
-	i2 := ipcValue(t, lines, "i2")
 	require.NotEmpty(t, i1, "i1 present")
-	require.NotEmpty(t, i2, "i2 present (second Initial)")
-	require.NotEqual(t, i1, i2, "i1 and i2 are independent (different DCID/random)")
+	require.Empty(t, ipcValue(t, lines, "i2"), "quic is single-packet: i2 empty")
 
-	// Each renders to a valid fragmented Initial carrying the SNI.
-	for name, spec := range map[string]string{"i1": i1, "i2": i2} {
-		pkt := obfuscateCPS(t, spec)
-		require.Equal(t, 1250, len(pkt), "%s is a 1250B Initial", name)
-		d := decryptInitial(t, pkt)
-		require.Equal(t, sni, extractSNI(t, d.clientHello), "%s carries the SNI", name)
-		require.NotEqual(t, uint64(0), d.cryptoFrames[0].offset, "%s first CRYPTO offset != 0 (I1)", name)
-	}
-	// Independent DCIDs (two QUIC sessions starting, not a DCID-reuse continuation).
-	require.NotEqual(t,
-		decryptInitial(t, obfuscateCPS(t, i1)).dcid,
-		decryptInitial(t, obfuscateCPS(t, i2)).dcid,
-		"i1 and i2 use independent DCIDs")
+	pkt := obfuscateCPS(t, i1)
+	require.Equal(t, 1250, len(pkt), "i1 is a 1250B Initial")
+	d := decryptInitial(t, pkt)
+	require.Equal(t, sni, extractSNI(t, d.clientHello), "i1 carries the SNI")
+	require.NotEqual(t, uint64(0), d.cryptoFrames[0].offset, "first CRYPTO offset != 0 (I1)")
 }
 
-// Non-quic profiles are single-packet: they fill i1 only, leaving i2 empty.
-func TestAwgIpcLinesNonQUICNoI2(t *testing.T) {
+// dns/stun/quic are single-packet: they fill i1 only, leaving i2 empty. (sip is
+// multi-packet — INVITE + 100 Trying — covered by its own test below.)
+func TestAwgIpcLinesNonSIPNoI2(t *testing.T) {
 	t.Parallel()
 	for _, o := range []option.AmneziaWGOptions{
 		{Id: "a.com", Ip: "dns"},
 		{Ip: "stun"},
-		{Id: "a.com", Ip: "sip"},
+		{Id: "a.com", Ip: "quic"},
 	} {
 		lines, err := awgIpcLines(o)
 		require.NoError(t, err)
@@ -144,12 +136,34 @@ func TestAwgIpcLinesNonQUICNoI2(t *testing.T) {
 	}
 }
 
-// An explicit i2 alongside an ip=quic masquerade is a conflict (the sugar fills
-// i2), mirroring the existing i1 conflict guard.
-func TestAwgIpcLinesQUICExplicitI2Conflict(t *testing.T) {
+// ip=sip is multi-packet: i1 = a complete INVITE, i2 = the matching 100 Trying.
+// Both must be whole valid SIP messages wired into the device, and they must
+// share one dialog (Via branch / tag / Call-ID / CSeq) — the cross-slot check.
+func TestAwgIpcLinesSIPFillsI1AndI2(t *testing.T) {
 	t.Parallel()
-	_, err := awgIpcLines(option.AmneziaWGOptions{Id: "a.com", Ip: "quic", I2: "<b 0x0844>"})
-	require.Error(t, err)
+	const host = "pbx.example.com"
+	lines, err := awgIpcLines(option.AmneziaWGOptions{Id: host, Ip: "sip"})
+	require.NoError(t, err)
+
+	i1 := ipcValue(t, lines, "i1")
+	i2 := ipcValue(t, lines, "i2")
+	require.NotEmpty(t, i1, "i1 (INVITE) present")
+	require.NotEmpty(t, i2, "i2 (100 Trying) present")
+
+	invite := string(obfuscateCPS(t, i1))
+	trying := string(obfuscateCPS(t, i2))
+	assertSIPInvite(t, invite, host)
+	assertSIPTrying(t, trying)
+	assertSameSIPDialog(t, invite, trying)
+}
+
+// ip=sip is the only multi-packet sugar profile, so an explicit i2 alongside it
+// is a conflict (the sugar fills i2), mirroring the i1 conflict guard. quic/dns/
+// stun are single-packet and leave i2 free, so a user i2 there is not a conflict.
+func TestAwgIpcLinesSIPExplicitI2Conflict(t *testing.T) {
+	t.Parallel()
+	_, err := awgIpcLines(option.AmneziaWGOptions{Id: "a.com", Ip: "sip", I2: "<b 0x0844>"})
+	require.Error(t, err, "ip=sip + explicit i2 must conflict")
 	require.Contains(t, err.Error(), "explicit i2 conflicts")
 }
 

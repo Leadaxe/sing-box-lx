@@ -578,26 +578,3 @@ func masqueQUICInitialCPS(domain, browser string) (string, error) {
 	b.addBytes(packet)
 	return b.String(), nil
 }
-
-// masqueQUICSecondInitialCPS builds a SECOND fragmented QUIC Initial for the i2
-// slot — making the decoy flow read as a developing QUIC session (two Initials)
-// rather than a single opener. It is a full independent Initial with its OWN
-// fresh DCID/random (NOT a DCID-reuse short-header continuation: the short
-// header was device-blocked, and reusing i1's DCID in a 1-RTT packet is an
-// impossible QUIC state that reads as anomalous — see the spec §9 risks). Two
-// independent Initials simply look like two QUIC sessions starting, which a
-// browser does routinely.
-//
-// Device-verified safe for the WARP handshake: i1 and i2 are separate UDP
-// datagrams sent before the genuine MessageInitiation (send.go), so adding i2
-// cannot touch the real handshake — confirmed on the live LTE/WARP DPI (tunnel
-// up, no latency regression vs i1-only).
-func masqueQUICSecondInitialCPS(domain, browser string) (string, error) {
-	packet, err := buildInitialPacket(domain, browser, defaultQUICGenParams())
-	if err != nil {
-		return "", err
-	}
-	var b cpsBuilder
-	b.addBytes(packet)
-	return b.String(), nil
-}

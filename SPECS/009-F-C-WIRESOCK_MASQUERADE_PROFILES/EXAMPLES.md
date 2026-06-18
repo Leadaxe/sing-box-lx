@@ -150,16 +150,21 @@ QNAME = `www.google.com` и QTYPE HTTPS (тип 65), OPT RR (TYPE 41, UDP-size 1
 }
 ```
 
-Генерирует SIP **INVITE** request (~580 байт): request-line `INVITE sip:<user>@pbx.example.com
-SIP/2.0`, Via(branch)/Max-Forwards:70/From(tag)/To/Call-ID/CSeq:N INVITE/Contact, и SDP-офер
-(`m=audio`, rtpmap). Имена пользователей — произносимые псевдо-строки (не захардкожены).
+Генерирует начало SIP-звонка из **двух пакетов** одного диалога: **i1 — полный INVITE**
+(`INVITE sip:<user>@pbx.example.com SIP/2.0`, Via(branch)/To/From(tag)/Call-ID/CSeq:N INVITE/
+Max-Forwards:70/Contact, `Content-Length: 0`, без SDP) и **i2 — `SIP/2.0 100 Trying`** (тот же
+диалог: общий branch/tag/Call-ID/CSeq). Каждый пакет валиден сам по себе (UDP не реассемблируется).
+Имена пользователей — произносимые псевдо-строки (не захардкожены, не RFC-маяк alice/bob).
 **`id` — host в URI, виден цензору.** `id` для sip **опционален**: без него генерируется
 правдоподобный псевдо-host.
 
-> **Не подтверждён на WARP-DPI.** Ожидаемо Timeout (как `dns`/`stun`): SIP к WARP-edge `:2408` —
-> аномалия назначения (SIP живёт на SIP-сервере/`:5060`). INVITE-форма исправляет аномалию
-> направления старого `200 OK`, но назначение не лечит. Для WARP используй `ip=quic`; `ip=sip` —
-> для других провайдеров, чей DPI проверяет только корректность пакета.
+> **Нужен `junk`.** Профиль рассчитан на `jc/jmin/jmax > 0` (в примере выше заданы) — SIP-декои
+> уходят вместе с junk-пакетами в одном пред-handshake-залпе.
+>
+> **Статус на WARP-DPI: ожидает проверки.** Почему прежде `dns`/`stun`/`sip` упирались в Timeout —
+> точно не установлено. По подсказке `sip` переведён на пару INVITE + 100 Trying (стандартный
+> call-setup) с junk; заработает ли против WARP — проверяется на устройстве. `ip=quic` остаётся
+> подтверждённо рабочим.
 
 ---
 

@@ -60,17 +60,24 @@ supported_versions, GREASE `0x0a0a` (RFC 8701 — `quic_clienthello_awg.go:117`)
 валидируется (`normalizeMasqueBrowser` — `masque_awg.go:183`), но на байты пакета не влияет.
 Код: `buildClientHello` — `quic_clienthello_awg.go:67`.
 
-### Р7. sip — INVITE request + SDP (PseudoGen-имена)
-`ip=sip` эмитит SIP INVITE **request** с SDP-офером (`masqueSIPInviteCPS` —
-`sip_invite_awg.go`): request-line `INVITE sip:<user>@<host> SIP/2.0`, Via(branch)/Max-Forwards:70/
-From(tag)/To(без tag)/Call-ID/CSeq:N INVITE/Contact, Content-Type: application/sdp, Content-Length
-(точная), SDP-тело (`v=0`, `m=audio`, rtpmap). Причина: прежний `200 OK` response (был
-`masqueSIPResponseCPS`) — аномалия направления; INVITE — то, что UA шлёт первым (и несёт Contact/
-Max-Forwards, которых не было у response). Гибрид-рандомизация: имена пользователей и (при пустом
-`Id`) host — произносимые псевдо-строки через `PseudoGen` (`pseudo_gen_awg.go`, портирован из
-LxBox §127), запечены в `<b>` на сборке (уникальны между юзерами); branch/tag/Call-ID/CSeq/SDP-id —
-per-packet `<rc>`/`<rd>` фикс-ширины (Content-Length стабилен). `Id` опционален для sip (пуст →
-`pgHost()`). Старый `masqueSIPResponseCPS` удалён. (DNS см. Р10.)
+### Р7. sip — начало звонка: INVITE (i1) + 100 Trying (i2), один диалог
+`ip=sip` эмитит **начало SIP-звонка из двух самостоятельных пакетов** одного диалога (RFC 3261
+§17 call-setup), `sip_invite_awg.go`: i1 = полный INVITE **request** (`masqueSIPInviteCPS`):
+request-line `INVITE sip:<user>@<host> SIP/2.0`, Via(branch=z9hG4bK)/To(без tag)/From(tag)/Call-ID/
+CSeq:N INVITE/Max-Forwards:70/Contact/Content-Type: application/sdp/`Content-Length: 0`, пустая
+строка — **без SDP-тела**; i2 = полный `SIP/2.0 100 Trying` provisional response
+(`masqueSIPTryingCPS`): статус-строка + те же Via/To/From/Call-ID/CSeq + `Content-Length: 0`.
+Каждый пакет — валидное самодостаточное SIP-сообщение: UDP не реассемблируется, пакетный DPI
+смотрит каждую датаграмму отдельно. **Один диалог**: Via branch / From tag / Call-ID / CSeq
+идентичны в i1 и i2 — общий диалог строит `newSIPDialog(domain)` одним проходом, оба слота
+наполняет диспетчер `masqueI1I2`. Значения запечены в `<b>` на сборке (НЕ per-packet `<rc>`/`<rd>`),
+уникальны между юзерами. Имена пользователей (display+local) и host (при пустом `Id`) —
+произносимые псевдо-строки через `PseudoGen` (`pseudo_gen_awg.go`, портирован из LxBox §127),
+свежие на генерацию; **не** хардкод RFC-примера `alice@atlanta.com`/`bob@biloxi.com` (публичный
+DPI-маяк). Профиль **требует junk** (`jc/jmin/jmax > 0`): декои уходят вместе с junk-пакетами в
+одном пред-handshake-залпе. `Id` опционален для sip (пуст → `pgHost()`). Прежняя одиночная форма
+(один INVITE с SDP, затем короткая версия «фрагментация INVITE на head→i1 + SDP→i2») — заменена.
+(DNS см. Р10.)
 
 ### Р8. Рандомизация QUIC-раскладки + robustness-ручки
 Раскладка фрейм-плана генерится на каждый вызов: случайные точки разреза
@@ -100,8 +107,9 @@ txn/ufrag/ключ на вызов. Код: `stun_request_awg.go` (`buildSTUNBin
 слоте клиента), как у STUN. Правка от прежнего кода — только flags и QTYPE; `encodeDNSName`/OPT/
 cover переиспользованы. TXID/cover свежие на пакет (`<r 2>`/`<r 40>`).
 
-**Device-результат:** DNS query — **Timeout** (как STUN), подтвердив прогноз дизайна. SIP INVITE
-(Р7) не тестировался отдельно — ожидаемо так же (та же аномалия назначения).
+**Device-результат:** DNS query — **Timeout** (как STUN). SIP (Р7, двухпакетный INVITE+100 Trying)
+**ожидает проверки на устройстве** — причина прошлых таймаутов точно не установлена, сейчас
+проверяем гипотезу с multi-packet-формой и junk.
 
 **Общий вывод (Р9+Р10).** Качество пакета и направление (request vs response) вторичны; решает
 триплет **(протокол + назначение)**. DPI режет STUN/DNS/SIP к WARP-edge `162.159.x:2408` как
@@ -111,17 +119,15 @@ cover переиспользованы. TXID/cover свежие на пакет 
 рабочий механизм здесь; `dns`/`stun`/`sip` реализованы в правильной клиент-инициированной форме
 и сохранены для других провайдеров (DPI без проверки протокол-к-назначению).
 
-### Р11. Многопакетный QUIC — i1+i2 (два независимых Initial)
-`ip=quic` теперь заполняет **два** слота: `i1` (как раньше) и `i2` — второй независимый
-фрагментированный Initial со своим свежим DCID (`masqueQUICSecondInitialCPS` → диспетч `masqueI2`
-→ проводка `awgIpcLines`, guard на явный `o.I2`). Поток читается как развивающаяся QUIC-сессия
-(два старта), снижая сигнатуру одиночного пакета. **НЕ** short-header (device-blocked) и **НЕ**
-DCID-reuse (невозможное QUIC-состояние) — два независимых Initial = два старта сессии, что браузер
-делает рутинно. Безопасность для WARP-handshake разобрана построчно по `send.go` (decoys —
-отдельные датаграмы перед независимо собранным `MessageInitiation`).
-
-**Device-результат:** конфиг `i1+i2` поднимает туннель **без регресса** латентности vs `i1`-only
-(~340 мс) — многопакетность подтверждена на железе. Откат к `i1`-only тривиален (`masqueI2` → "").
+### Р11. Многопакетный QUIC (i1+i2) — рассмотрен и ОТКЛОНЁН
+Был реализован вариант «два независимых Initial» (i1+i2) и device-проверен как безопасный для
+WARP-handshake (туннель без регресса латентности). Затем **отклонён** как концептуально неверный:
+каждый DCID — отдельное QUIC-соединение, поэтому два Initial с разными DCID читаются как два
+*брошенных* соединения, что для DPI с DCID-tracking более аномально, не менее. Настоящее
+«продолжение» невозможно (short-header device-blocked; 1-RTT до ответа сервера — невозможное
+состояние). Итог: `ip=quic` = **один** фрагментированный Initial с браузер-точным ClientHello (§4);
+`masqueI1I2` для quic возвращает i2="", `masqueQUICSecondInitialCPS` удалён. Безопасность slots-механизма
+(send.go: decoy перед независимым `MessageInitiation`) остаётся актуальной для sip i1+i2 (Р7).
 
 ### Р12. `Ib` → реальный браузерный JA3 через uTLS
 `ib=chrome`/`firefox` теперь строит ClientHello через uTLS (`github.com/metacubex/utls`, тот же,
@@ -151,8 +157,10 @@ uTLS-вариант сам по себе device не верифицирован,
   `TestMasqueSTUNRequestUniqueness`.
 - **dns/sip + валидация** (`masque_awg_test.go`, `masque_cps_test.go`): `TestMasqueDNSQueryStructure`
   (QR=0, QNAME round-trips, QTYPE HTTPS, OPT до конца); `TestMasqueSIPInviteStructure` +
-  `TestMasqueSIPInviteNoID` (request-line INVITE, To без tag, Content-Length точна, имена не
-  захардкожены, пустой id → псевдо-host); инъекция домена отвергается; конфликт с `i1` /
+  `TestMasqueSIPInviteNoID` проверяют пару i1 INVITE (`Content-Length: 0`, без SDP) + i2
+  `100 Trying` и согласованность диалога (`assertSIPInvite`/`assertSIPTrying`/`assertSameSIPDialog`:
+  request-line INVITE, To без tag, общий branch/tag/Call-ID/CSeq, имена не захардкожены, пустой
+  id → псевдо-host); инъекция домена отвергается; конфликт с `i1` /
   неизвестный ip/ib / пустой id для quic — ошибки.
 - **Адверсариальный ревью** (workflow): подтверждённые находки исправлены (flex-PADDING для
   длинного SNI — Р5; GREASE `0x4469`→`0x0a0a` — Р6; response→request для STUN — Р9; SIP missing

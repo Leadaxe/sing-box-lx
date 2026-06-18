@@ -4,7 +4,6 @@ package wireguard
 
 import (
 	"encoding/binary"
-	"fmt"
 	"hash/crc32"
 	"strings"
 	"testing"
@@ -273,37 +272,66 @@ func TestMasqueSTUNRequestUniqueness(t *testing.T) {
 	require.NotEqual(t, a, b, "fresh per-call entropy → different blobs")
 }
 
-// --- SIP INVITE request (parse back as SIP) ---------------------------------
+// --- SIP call setup: INVITE (i1) + 100 Trying (i2) --------------------------
 
-// ip=sip is now an INVITE *request* with an SDP offer, not a 200 OK response —
-// a client's first packet is a call setup, not a reply. (See the generator's
-// honest-status note: not device-confirmed for WARP.)
+// ip=sip is the opening exchange of a SIP call: i1 = a complete INVITE request
+// (Content-Length: 0, no body), i2 = the matching "100 Trying" provisional
+// response. Each datagram is a WHOLE valid SIP message on its own (UDP has no
+// reassembly), and the two share Via branch / From tag / Call-ID / CSeq so they
+// read as one dialog — that cross-slot agreement is the real test.
 func TestMasqueSIPInviteStructure(t *testing.T) {
 	t.Parallel()
 	const host = "pbx.example.com"
-	spec, err := masqueI1(option.AmneziaWGOptions{Id: host, Ip: "sip"})
+	i1, i2, err := masqueI1I2(option.AmneziaWGOptions{Id: host, Ip: "sip"})
 	require.NoError(t, err)
-	pkt := obfuscateCPS(t, spec)
-	text := string(pkt)
-	assertSIPInvite(t, text, host)
-	// User names are pronounceable pseudo-tokens, not hardcoded alice/bob.
-	require.NotContains(t, text, "alice@", "user names must be generated, not hardcoded")
-	require.NotContains(t, text, "bob@", "user names must be generated, not hardcoded")
+	require.NotEmpty(t, i1, "i1 (INVITE) present")
+	require.NotEmpty(t, i2, "i2 (100 Trying) present")
+	invite := string(obfuscateCPS(t, i1))
+	trying := string(obfuscateCPS(t, i2))
+
+	assertSIPInvite(t, invite, host)
+	assertSIPTrying(t, trying)
+	assertSameSIPDialog(t, invite, trying)
+
+	// Three-host scheme (RFC 3261 §24.2 shape): id is the caller domain (From);
+	// the request-URI/To callee is a DIFFERENT domain; the UA host (Via/Call-ID/
+	// Contact) is a pcNN subdomain of the caller domain.
+	requestURI := invite[len("INVITE sip:"):strings.Index(invite, " SIP/2.0")]
+	require.NotContains(t, requestURI, "@"+host, "callee (request-URI) is NOT the configured id — a real call dials out")
+	// UA host = the "pcNN.<id>" that follows "Via: SIP/2.0/UDP " — must also be
+	// the Call-ID and Contact host (same UA across the message).
+	uaHost := sipField(t, invite, "Via: SIP/2.0/UDP ", ";")
+	require.True(t, strings.HasPrefix(uaHost, "pc"), "UA host is a pcNN subdomain: %q", uaHost)
+	require.True(t, strings.HasSuffix(uaHost, "."+host), "UA host is a subdomain of the configured id: %q", uaHost)
+	require.Contains(t, invite, "Call-ID: "+sipField(t, invite, "Call-ID: ", "@")+"@"+uaHost, "Call-ID host == UA host")
+	require.Contains(t, invite, "Contact: <sip:"+sipField(t, invite, "Contact: <sip:", "@")+"@"+uaHost+">", "Contact host == UA host")
+
+	// User names are pronounceable pseudo-tokens, not the hardcoded RFC 3261
+	// alice/bob beacon a DPI would fingerprint.
+	for _, beacon := range []string{"alice@", "bob@", "biloxi.com", "atlanta.com"} {
+		require.NotContains(t, invite, beacon, "names must be generated, not the RFC template")
+	}
 }
 
 // id is optional for sip: with no id a plausible pseudo-host is generated, so a
-// well-formed INVITE must still be produced.
+// well-formed INVITE + 100 Trying pair must still be produced.
 func TestMasqueSIPInviteNoID(t *testing.T) {
 	t.Parallel()
-	spec, err := masqueI1(option.AmneziaWGOptions{Ip: "sip"})
+	i1, i2, err := masqueI1I2(option.AmneziaWGOptions{Ip: "sip"})
 	require.NoError(t, err, "sip without id must succeed (pseudo-host generated)")
-	require.NotEmpty(t, spec)
-	assertSIPInvite(t, string(obfuscateCPS(t, spec)), "" /* any host */)
+	require.NotEmpty(t, i1)
+	require.NotEmpty(t, i2)
+	invite := string(obfuscateCPS(t, i1))
+	trying := string(obfuscateCPS(t, i2))
+	assertSIPInvite(t, invite, "" /* any host */)
+	assertSIPTrying(t, trying)
+	assertSameSIPDialog(t, invite, trying)
 }
 
-// assertSIPInvite reverse-parses a SIP INVITE and checks the request-line,
-// mandatory headers, SDP body and an exact Content-Length. If host != "" the
-// request-URI host must equal it; otherwise any host is accepted.
+// assertSIPInvite checks the i1 INVITE: request-line, mandatory headers, no body
+// (Content-Length: 0). If host != "" the configured id must appear as the caller
+// domain in the From header (the three-host scheme puts id in From, not the
+// request-URI, which carries the callee — a different domain).
 func assertSIPInvite(t *testing.T, text, host string) {
 	t.Helper()
 	require.True(t, strings.HasPrefix(text, "INVITE sip:"), "request-line starts with INVITE method")
@@ -311,46 +339,90 @@ func assertSIPInvite(t *testing.T, text, host string) {
 	require.Greater(t, rlEnd, 0)
 	require.True(t, strings.HasSuffix(text[:rlEnd], " SIP/2.0"), "request-line ends SIP/2.0")
 	if host != "" {
-		require.True(t, strings.HasPrefix(text, "INVITE sip:") && strings.Contains(text[:rlEnd], "@"+host+" "),
-			"request-URI host == configured id")
+		fromLine := sipField(t, text, "\r\nFrom: ", "\r\n")
+		require.Contains(t, fromLine, "@"+host+">", "configured id is the caller domain (From host)")
 	}
+	assertSIPHeaderBlock(t, text)
+	for _, h := range []string{
+		"\r\nMax-Forwards: 70\r\n",
+		"\r\nContact: <sip:",
+		"\r\nContent-Type: application/sdp\r\n",
+		"\r\nContent-Length: 0\r\n",
+	} {
+		require.Contains(t, text, h, "missing/garbled INVITE header: %q", h)
+	}
+	// No body: the message ends right after the blank line.
+	require.True(t, strings.HasSuffix(text, "\r\n\r\n"), "INVITE has no body (ends at blank line)")
+	require.Equal(t, strings.Index(text, "\r\n\r\n")+4, len(text), "nothing follows the header block")
+}
 
+// assertSIPTrying checks the i2 provisional response.
+func assertSIPTrying(t *testing.T, text string) {
+	t.Helper()
+	require.True(t, strings.HasPrefix(text, "SIP/2.0 100 Trying\r\n"), "status line is 100 Trying")
+	assertSIPHeaderBlock(t, text)
+	require.Contains(t, text, "\r\nContent-Length: 0\r\n", "100 Trying has Content-Length: 0")
+	// A provisional response omits the request-only headers.
+	require.NotContains(t, text, "Max-Forwards", "100 Trying must not carry Max-Forwards")
+	require.NotContains(t, text, "Contact:", "100 Trying must not carry Contact")
+	require.True(t, strings.HasSuffix(text, "\r\n\r\n"), "100 Trying ends at the blank line")
+}
+
+// assertSIPHeaderBlock checks the headers shared by INVITE and 100 Trying:
+// Via/To/From/Call-ID/CSeq present and well-framed, To has no tag (initial
+// transaction), every header line has a colon.
+func assertSIPHeaderBlock(t *testing.T, text string) {
+	t.Helper()
 	headerEnd := strings.Index(text, "\r\n\r\n")
-	require.GreaterOrEqual(t, headerEnd, 0, "header block must terminate with blank line")
+	require.GreaterOrEqual(t, headerEnd, 0, "header block must terminate with a blank line")
 	for _, line := range strings.Split(text[:headerEnd], "\r\n")[1:] {
 		require.Contains(t, line, ":", "every SIP header line must contain ':' : %q", line)
 	}
 	for _, h := range []string{
 		"\r\nVia: SIP/2.0/UDP ",
 		";branch=z9hG4bK",
-		"\r\nMax-Forwards: 70\r\n",
-		"\r\nFrom: <sip:",
+		"\r\nTo: ",
+		"\r\nFrom: ",
 		";tag=",
-		"\r\nTo: <sip:",
 		"\r\nCall-ID: ",
 		"\r\nCSeq: ",
 		" INVITE\r\n",
-		"\r\nContact: <sip:",
-		"\r\nContent-Type: application/sdp\r\n",
 	} {
-		require.Contains(t, text, h, "missing/garbled header fragment: %q", h)
+		require.Contains(t, text, h, "missing/garbled shared header: %q", h)
 	}
-	// To has no tag in the initial INVITE.
+	// To has no tag (initial INVITE / its provisional response).
 	toIdx := strings.Index(text, "\r\nTo: ")
 	toLine := text[toIdx+2:]
 	toLine = toLine[:strings.Index(toLine, "\r\n")]
-	require.NotContains(t, toLine, ";tag=", "To must have no tag in the initial INVITE")
+	require.NotContains(t, toLine, ";tag=", "To must have no tag in the initial transaction")
+}
 
-	// SDP body present and Content-Length exact.
-	body := text[headerEnd+4:]
-	require.True(t, strings.HasPrefix(body, "v=0\r\n"), "SDP starts with v=0")
-	require.Contains(t, body, "\r\nm=audio ", "SDP offers an audio media line")
-	clIdx := strings.Index(text, "Content-Length: ")
-	require.GreaterOrEqual(t, clIdx, 0)
-	var cl int
-	_, err := fmt.Sscanf(text[clIdx:], "Content-Length: %d", &cl)
-	require.NoError(t, err)
-	require.Equal(t, len(body), cl, "Content-Length must equal the SDP body length")
+// assertSameSIPDialog verifies the INVITE (i1) and the 100 Trying (i2) belong to
+// ONE dialog: identical Via branch, From tag, Call-ID and CSeq. This is the core
+// invariant of the call-setup decoy — if these diverge the pair is incoherent.
+func assertSameSIPDialog(t *testing.T, invite, trying string) {
+	t.Helper()
+	for _, field := range []struct{ name, prefix, end string }{
+		{"Via branch", "branch=z9hG4bK", "\r\n"}, // Via ends ...;branch=<hex>\r\n (no trailing param)
+		{"From tag", ";tag=", "\r\n"},
+		{"Call-ID", "\r\nCall-ID: ", "\r\n"},
+		{"CSeq", "\r\nCSeq: ", "\r\n"},
+	} {
+		a := sipField(t, invite, field.prefix, field.end)
+		b := sipField(t, trying, field.prefix, field.end)
+		require.Equal(t, a, b, "%s must match across INVITE and 100 Trying", field.name)
+	}
+}
+
+// sipField extracts the substring after prefix up to the next end delimiter.
+func sipField(t *testing.T, text, prefix, end string) string {
+	t.Helper()
+	i := strings.Index(text, prefix)
+	require.GreaterOrEqual(t, i, 0, "field prefix %q present", prefix)
+	rest := text[i+len(prefix):]
+	j := strings.Index(rest, end)
+	require.GreaterOrEqual(t, j, 0, "field terminator %q present after %q", end, prefix)
+	return rest[:j]
 }
 
 // TestMasqueSIPDomainCannotInject is the security regression: even if a domain
