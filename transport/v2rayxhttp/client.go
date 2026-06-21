@@ -64,6 +64,9 @@ type Client struct {
 	paddingMin   int
 	paddingMax   int
 	noGRPCHeader bool
+	// realityEnabled records whether the TLS config is a Reality client config.
+	// It drives mode=auto resolution (Reality → stream-one, like Xray).
+	realityEnabled bool
 }
 
 // NewClient builds an XHTTP client transport. The tlsConfig (possibly Reality)
@@ -134,28 +137,35 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	}
 
 	return &Client{
-		ctx:          ctx,
-		dialer:       dialer,
-		serverAddr:   serverAddr,
-		transport:    transport,
-		scheme:       scheme,
-		host:         host,
-		path:         path,
-		mode:         mode,
-		headers:      headers,
-		paddingMin:   paddingMin,
-		paddingMax:   paddingMax,
-		noGRPCHeader: options.NoGRPCHeader,
+		ctx:            ctx,
+		dialer:         dialer,
+		serverAddr:     serverAddr,
+		transport:      transport,
+		scheme:         scheme,
+		host:           host,
+		path:           path,
+		mode:           mode,
+		headers:        headers,
+		paddingMin:     paddingMin,
+		paddingMax:     paddingMax,
+		noGRPCHeader:   options.NoGRPCHeader,
+		realityEnabled: tlsConfigIsReality(tlsConfig),
 	}, nil
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	sessionID := newSessionID()
 	switch c.mode {
-	case modeAuto, modePacketUp:
-		// "auto" uses packet-up: the most broadly compatible XHTTP mode and the one
-		// validated live against Xray (3x-ui). stream-one has a known downlink-framing
-		// issue (see SPECS/002) and must be selected explicitly.
+	case modeAuto:
+		// Match Xray's auto resolution (transport/internet/splithttp/dialer.go):
+		// Reality → stream-one; otherwise → packet-up (the most broadly compatible
+		// mode, live-validated against Xray 3x-ui). Xray also picks stream-up when
+		// downloadSettings is present, but we don't support asymmetric transport.
+		if c.realityEnabled {
+			return c.dialStreamOne(ctx, sessionID)
+		}
+		return c.dialPacketUp(ctx, sessionID)
+	case modePacketUp:
 		return c.dialPacketUp(ctx, sessionID)
 	case modeStreamUp:
 		return c.dialStreamUp(ctx, sessionID)
@@ -180,6 +190,21 @@ func (c *Client) requestURL(elem ...string) (*url.URL, error) {
 	u := &url.URL{
 		Scheme: c.scheme,
 		Host:   c.serverAddr.String(),
+	}
+	// stream-one targets the bare normalized path with no trailing segment (and
+	// no sessionId): Xray's splithttp server routes a request to the bidirectional
+	// stream-one handler only when sessionId is empty, so the URL must be exactly
+	// "<path>" — not "<path>/" (a trailing slash would be parsed as an empty
+	// sessionId segment by some server-side path matchers). strings.Join of an
+	// empty slice yields "", which would otherwise produce "<path>/".
+	if len(elem) == 0 {
+		if err := sHTTP.URLSetPath(u, c.path); err != nil {
+			return nil, E.Cause(err, "parse path")
+		}
+		if !strings.HasPrefix(u.Path, "/") {
+			u.Path = "/" + u.Path
+		}
+		return u, nil
 	}
 	fullPath := c.path + "/" + strings.Join(elem, "/")
 	if err := sHTTP.URLSetPath(u, fullPath); err != nil {
