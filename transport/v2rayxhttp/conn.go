@@ -15,10 +15,17 @@ import (
 )
 
 // dialStreamOne opens a single bidirectional HTTP/2 stream: the request body is
-// the upload direction, the response body is the download direction. This is
-// the simplest XHTTP mode and the fallback for "auto".
+// the upload direction, the response body is the download direction. With Reality
+// it is also what "auto" resolves to (matching Xray).
+//
+// Unlike stream-up/packet-up, the request targets the BARE path with NO sessionId:
+// Xray's splithttp server keys the stream-one (bidirectional) branch on an empty
+// sessionId. Sending "<path>/<sessionId>" instead routes the server into the
+// stream-down branch, which never pairs with a stream-up POST, so the response
+// body carries non-VLESS bytes and the VLESS layer fails with "unknown version".
 func (c *Client) dialStreamOne(ctx context.Context, sessionID string) (net.Conn, error) {
-	u, err := c.requestURL(sessionID)
+	_ = sessionID // intentionally unused: stream-one sends no sessionId on the wire
+	u, err := c.requestURL()
 	if err != nil {
 		return nil, err
 	}
