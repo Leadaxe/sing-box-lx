@@ -28,13 +28,13 @@
 
 Проверено против VLESS + Reality + `type=xhttp` ноды (панель 3x-ui):
 - ✅ **packet-up** (и `auto` → packet-up): handshake + DNS + HTTPS (example.com 200) + скачивание 2 МБ @ ~2.1 МБ/с — трафик выходит через IP сервера.
-- ❌ **stream-one**: `unknown version` — баг framing'а при чтении downlink-ответа (выбирается только явно).
+- ❌ **stream-one**: `unknown version` — баг при чтении downlink-ответа (выбирается только явно). → **Исправлено в задаче 011** (корень: stream-one должен слать голый путь без sessionId; auto+reality → stream-one). Принято на синтетике, лайв отложен.
 
 **Ключевой фикс (по исходникам Xray hub.go/config.go + лайв):** padding кладётся как `x_padding=<нули>` в **query внутри заголовка `Referer`** (Xray default `PlacementQueryInHeader`, key `x_padding`), а **не** отдельным `X-Padding`. Сервер валидирует длину `x_padding` (дефолт 100–1000) и без неё отвечает **400 Bad Request**. Плюс `mode=auto` переключён на **packet-up**. Коммит `5a398a5e`. Также ранее: `sessionId` → UUID-формат, path-layout `<path>/<sessionId>[/<seq>]` сверены.
 
 ## Остаточные пробелы
 
-1. **stream-one** — баг framing downlink (`unknown version`); по умолчанию недоступен (`auto` = packet-up). Фикс — отдельной задачей.
+1. ~~**stream-one** — баг framing downlink (`unknown version`)~~ → **исправлено в 011** (голый путь без sessionId; `auto`+reality → stream-one). Лайв-подтверждение — открытый TODO в 011.
 2. **packet-up** без xmux/переиспользования соединений; **stream-up** не лайв-тестился.
 3. `x_padding_bytes` — строка «min-max» (нет Range-типа в badoption); дефолт 100–1000.
 

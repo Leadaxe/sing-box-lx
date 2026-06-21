@@ -1,4 +1,4 @@
-# TASKS — 011-B-W-XHTTP_STREAM_ONE_DOWNLINK
+# TASKS — 011-B-C-XHTTP_STREAM_ONE_DOWNLINK
 
 ## Подготовка
 - [x] Ветка `lx-xhttp-streamone` от `lx` (имя `lx/xhttp` невозможно — ref `lx` уже лист)
@@ -25,14 +25,14 @@
 - [x] `gofmt -l` по затронутым файлам — пусто
 - [x] `go build ./...` без тегов — ок (xhttp отсутствует)
 
-## Лайв (DoD — синтетики недостаточно) — ⏳ ОЖИДАЕТСЯ (нет доступа к ноде)
+## Лайв — ⚠️ ОТЛОЖЕН (нет доступа к ноде; принято на синтетике, открытый TODO)
 - [ ] Реальная Xray reality-XHTTP-нода: `mode:stream-one` — handshake + DNS + HTTPS + загрузка
 - [ ] Та же нода `mode:auto` — идентичный результат (резолвится в stream-one)
 - [ ] Регрессия: `mode:packet-up` на packet-up-ноде по-прежнему работает
 
 ## Закрытие
 - [x] TASKS отражают факт (`[x]`)
-- [x] IMPLEMENTATION_REPORT.md (корень бага, фикс, синтетика; лайв — pending)
-- [ ] Обновить [002 IMPLEMENTATION_REPORT](../002-F-C-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md): stream-one fixed (ссылка на 011) — **после лайв-подтверждения**
-- [ ] Папка → `011-B-C-...` — **после лайва**
+- [x] IMPLEMENTATION_REPORT.md (корень бага, фикс, синтетика; лайв — honest caveat)
+- [x] Обновить [002 IMPLEMENTATION_REPORT](../002-F-C-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md): stream-one fixed на синтетике (ссылка на 011)
+- [x] Папка → `011-B-C-...` (принято на синтетике; лайв — открытый TODO в REPORT)
 - [ ] (опц.) Закрыть GH-issue по жалобе — комментарий со ссылкой на коммит (lx-память)
