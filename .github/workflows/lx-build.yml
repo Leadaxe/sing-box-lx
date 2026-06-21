@@ -1,0 +1,192 @@
+# On-demand builder — builds any artifact this repo knows how to build, from ANY branch.
+# Lives on the default branch (lx) so `gh workflow run` can find it; each job checks
+# out whatever `branch` you pass, so lx source is never required for the build.
+#
+#   gh workflow run lx-build.yml -f target=android-aar      -f branch=<branch>
+#   gh workflow run lx-build.yml -f target=apple-xcframework -f branch=<branch>
+#   gh workflow run lx-build.yml -f target=binary           -f branch=<branch>
+#   gh workflow run lx-build.yml -f target=linux-musl       -f branch=<branch>
+#   gh workflow run lx-build.yml -f target=all              -f branch=<branch>
+#
+# Mirrors the build jobs in lx-release.yml but is manual-only and uploads each
+# result as a workflow artifact instead of cutting a release.
+name: lx build (on-demand)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "What to build"
+        required: true
+        type: choice
+        default: android-aar
+        options:
+          - android-aar
+          - apple-xcframework
+          - binary
+          - linux-musl
+          - all
+      branch:
+        description: "Branch/tag of this repo to build from"
+        required: true
+        default: lx
+
+jobs:
+  # ---- Android AAR (libbox.aar + libbox-legacy.aar) -------------------------
+  android-aar:
+    name: android-aar (${{ inputs.branch }})
+    if: ${{ inputs.target == 'android-aar' || inputs.target == 'all' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+      - name: Setup OpenJDK 17
+        run: sudo apt-get update && sudo apt-get install -y openjdk-17-jdk-headless
+      - name: Ensure a describe-able tag
+        run: git tag -f "build-aar"
+      - name: Build (make lib_android)
+        run: |
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          make lib_android
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp libbox.aar dist/
+          cp libbox-legacy.aar dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-aar-${{ inputs.branch }}
+          path: dist/*
+          if-no-files-found: error
+
+  # ---- Apple xcframework (Libbox.xcframework) ------------------------------
+  apple-xcframework:
+    name: apple-xcframework (${{ inputs.branch }})
+    if: ${{ inputs.target == 'apple-xcframework' || inputs.target == 'all' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Ensure a describe-able tag
+        run: git tag -f "build-apple"
+      - name: Build (make lib_apple)
+        run: |
+          make lib_install
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          make lib_apple
+      - name: Package
+        run: |
+          mkdir -p dist
+          # xcframework is a directory bundle — zip it for the artifact.
+          ditto -c -k --sequesterRsrc --keepParent Libbox.xcframework dist/Libbox.xcframework.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apple-xcframework-${{ inputs.branch }}
+          path: dist/*
+          if-no-files-found: error
+
+  # ---- Drop-in sing-box binary (host: linux/amd64) -------------------------
+  binary:
+    name: binary linux/amd64 (${{ inputs.branch }})
+    if: ${{ inputs.target == 'binary' || inputs.target == 'all' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Ensure a describe-able tag
+        run: git tag -f "build-binary"
+      - name: Build (Makefile.lx lx-build)
+        run: make -f Makefile.lx lx-build LX_OUTPUT=sing-box
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp sing-box dist/sing-box-linux-amd64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-linux-amd64-${{ inputs.branch }}
+          path: dist/*
+          if-no-files-found: error
+
+  # ---- Static musl router binary (linux/amd64) -----------------------------
+  # Mirrors build_linux_musl in lx-release.yml: cronet-go + Chromium musl
+  # toolchain, CGO_ENABLED=1, with_purego swapped to with_musl.
+  linux-musl:
+    name: linux-musl amd64 (${{ inputs.branch }})
+    if: ${{ inputs.target == 'linux-musl' || inputs.target == 'all' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: recursive
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Clone cronet-go (musl toolchain provider)
+        run: |
+          CRONET_REF="$(cat .github/CRONET_GO_VERSION 2>/dev/null || echo main)"
+          git clone --depth=1 --branch "$CRONET_REF" https://github.com/sagernet/cronet-go ~/cronet-go \
+            || git clone --depth=1 https://github.com/sagernet/cronet-go ~/cronet-go
+          git -C ~/cronet-go submodule update --init --recursive --depth=1
+      - name: Download Chromium musl toolchain
+        run: |
+          cd ~/cronet-go
+          go run ./cmd/build-naive --target=linux/amd64 --libc=musl download-toolchain
+          go run ./cmd/build-naive --target=linux/amd64 --libc=musl env >> "$GITHUB_ENV"
+      - name: Ensure a describe-able tag
+        run: git tag -f "build-musl"
+      - name: Build (musl + naive, static)
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: "1"
+        run: |
+          TAGS="$(make -f Makefile.lx -s lx-print-tags)"
+          TAGS="${TAGS/with_purego/with_musl}"
+          go build -v -trimpath -tags "$TAGS" \
+            -ldflags "-X github.com/sagernet/sing-box/constant.Version=$(git describe --tags --always) -checklinkname=0 -s -w -buildid=" \
+            -o sing-box-musl-amd64 ./cmd/sing-box
+          if ldd sing-box-musl-amd64 2>&1 | grep -q 'libdl.so.2'; then
+            echo "FAIL: dynamic libdl reference present — not a static musl build"; exit 1
+          fi
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp sing-box-musl-amd64 dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-musl-amd64-${{ inputs.branch }}
+          path: dist/*
+          if-no-files-found: error
