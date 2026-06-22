@@ -7,11 +7,32 @@ lx-ядро, собранное с зондом из [PROBE.md](PROBE.md). Це�
 
 ## Предусловия
 
-- Получено lx-ядро с зондом, установлено на CPH2411 (USB нестабилен при 100% заряда —
-  держать <100% / wifi-adb `ensure-wifi-adb.sh`; IP плавает — сверять).
-- Env ядра `LX_CONN_TRACE=1` выставлен (способ установки env уточнить у команды ядра —
-  через конфиг/launcher LxBox; проверить, что зонд активен).
+- ✅ **Тестовая сборка готова (22.06.2026):** APK с зондом собран —
+  `app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk` (29.3 МБ).
+  Зонд подтверждён в `lib/arm64-v8a/libbox.so` (строки `LX_CONN_TRACE`,
+  `conn_trace_lx.go`). AAR-зонд подменён в `app/android/app/libs/libbox.aar`
+  (sha `221c0e35…`), version-метка сбита на `lx-conn-trace-probe`, собрано в обход
+  `fetch-libbox.sh` (иначе перекачал бы релиз). **Бэкап релиза:**
+  `/tmp/libbox-release-backup.aar` (sha `c50786a6…`, =`v1.13.13-lx.14`) +
+  `/tmp/.libbox.version.backup` — для отката после прогона.
+- ⚠️ **Доставка env `LX_CONN_TRACE=1` в процесс ядра — НЕ решена кодом.** `Libbox` API
+  не имеет `Setenv`; `os.Getenv` в Go читает env процесса. Кандидат для рут-устройства:
+  Android wrap-property — `adb shell su -c 'setprop wrap.com.leadaxe.lxbox "LX_CONN_TRACE=1 "'`
+  затем перезапуск приложения (Zygote стартует процесс с этой env). **Проверить на
+  железе, что зонд активировался** (в core-логе при висящем зомби должны пойти
+  `lx-trace download tick#k`). Если wrap-prop не сработает — запросить у команды ядра
+  правку Kotlin (`os.Setenv`/JNI перед `Libbox.setup`) или чтение флага из конфига.
+- CPH2411: USB нестабилен при 100% заряда; wifi-adb IP плавает (.181/.219) — сверять,
+  `ensure-wifi-adb.sh`. На момент готовности APK устройство было отключено — переткнуть кабель.
 - Debug API жив: `adb forward tcp:9269 tcp:9269`, token из памяти `project_dev_endpoints`.
+
+## Установка сборки
+
+```
+adb install -r app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+adb shell am start -n com.leadaxe.lxbox/.MainActivity   # стартануть, чтобы Debug API слушал
+```
+versionCode авто-согласован (§125, vc=2xxx) → встанет поверх релиза без downgrade.
 
 ## Шаги
 

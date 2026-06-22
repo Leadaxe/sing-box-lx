@@ -92,7 +92,7 @@ lx-trace download final:    read=<N> write=<M> err=<...> timeout=<bool>   ← о
 
 1. Применить артефакт к чистому релизному дереву (`route/conn.go` + новый файл):
    ```
-   git apply SPECS/012-B-O-TCP_DOWNLINK_STALL_ZOMBIE_CONNS/instrumentation.patch
+   git apply SPECS/012-B-C-TCP_DOWNLINK_STALL_ZOMBIE_CONNS/instrumentation.patch
    # либо вручную: diff для conn.go + создать route/conn_trace_lx.go из хвоста патча
    ```
    (на момент написания зонд уже лежит в рабочем дереве: `M route/conn.go`,
