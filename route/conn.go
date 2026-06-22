@@ -259,6 +259,24 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 }
 
 func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn, destination net.Conn, direction bool, done *atomic.Bool, onClose N.CloseHandlerFunc) {
+	// lx ПРОТОТИП: под LX_CONN_TRACE считаем байты read(source)/write(destination)
+	// этого направления, чтобы развести место застревания (см. conn_trace_lx.go).
+	// Обёртки ставятся в copy-цепочку ТОЛЬКО под гейтом — вне его поведение и путь
+	// копирования не меняются.
+	var traceSrc, traceDst *lxTraceConn
+	if tick := lxConnTrace(); tick > 0 {
+		traceSrc = newLxTraceConn(source)
+		traceDst = newLxTraceConn(destination)
+		source = traceSrc
+		destination = traceDst
+		// Периодический тик: пока copy жив, раз в tick логируем текущие счётчики.
+		// Нужен для ВИСЯЩЕГО зомби — финальный снимок ниже выйдет только при
+		// возврате copy (т.е. при закрытии/отвисании), а тик показывает stuck
+		// в реальном времени. Останавливается при завершении горутины.
+		stopTick := make(chan struct{})
+		defer close(stopTick)
+		go m.lxTraceTicker(ctx, traceSrc, traceDst, direction, tick, stopTick)
+	}
 	_, err := bufio.CopyWithIncreateBuffer(destination, source, bufio.DefaultIncreaseBufferAfter, bufio.DefaultBatchSize)
 	if err != nil {
 		common.Close(source, destination)
@@ -291,6 +309,42 @@ func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn,
 			m.logger.ErrorContext(ctx, "connection download closed: ", err)
 		} else {
 			m.logger.TraceContext(ctx, "connection download closed")
+		}
+	}
+	// lx ПРОТОТИП: снимок счётчиков под LX_CONN_TRACE. read=байты, отданные
+	// source (для download — расшифрованный remoteConn); write=байты, принятые
+	// destination (для download — gVisor tun клиента). read=0 → застряло выше
+	// copy (proxy-расшифровка); read>0,write=0 → застряла запись приложению.
+	if traceSrc != nil {
+		dirName := "upload"
+		if direction {
+			dirName = "download"
+		}
+		m.logger.InfoContext(ctx, "lx-trace ", dirName, " final",
+			": read=", traceSrc.lxRead(), " write=", traceDst.lxWrite(),
+			" err=", err, " timeout=", err != nil && os.IsTimeout(err))
+	}
+}
+
+// lxTraceTicker (lx ПРОТОТИП) логирует текущие счётчики раз в tick, пока copy
+// жив. Завершается, когда connectionCopy закрывает stop (defer close). Читает
+// атомарные счётчики обёртки — гонок нет. См. conn_trace_lx.go.
+func (m *ConnectionManager) lxTraceTicker(ctx context.Context, src, dst *lxTraceConn, direction bool, tick time.Duration, stop <-chan struct{}) {
+	dirName := "upload"
+	if direction {
+		dirName = "download"
+	}
+	ticker := time.NewTicker(tick)
+	defer ticker.Stop()
+	var n int
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			n++
+			m.logger.InfoContext(ctx, "lx-trace ", dirName, " tick#", n,
+				": read=", src.lxRead(), " write=", dst.lxWrite())
 		}
 	}
 }
