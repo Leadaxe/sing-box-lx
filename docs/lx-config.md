@@ -176,7 +176,7 @@ DPI:
 >   `ip=stun` produces a hostname-less decoy regardless of `id`.
 > - The motivating use case is easing connections to **Cloudflare WARP**.
 
-**📖 [Detailed examples →](../SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md)** —
+**📖 [Detailed examples →](../SPECS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md)** —
 full per-profile configs (incl. a Cloudflare WARP one), the generated CPS for each,
 a "which profile to pick" guide and a troubleshooting table of the exact validation
 errors.

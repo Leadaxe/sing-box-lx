@@ -1,15 +1,29 @@
 # SPECS — sing-box-lx (Spec Kit)
 
-Все задачи — папки `NNN-T-S-NAME`. Внутри: SPEC.md → PLAN.md → TASKS.md → IMPLEMENTATION_REPORT.md.
+Все задачи — папки `NNN-NAME`. Внутри: SPEC.md → PLAN.md → TASKS.md → IMPLEMENTATION_REPORT.md.
 
-## Имя папки: `NNN-T-S-NAME`
+## Имя папки: `NNN-NAME`
 
 | Часть | Значение | Расшифровка |
 |-------|----------|-------------|
-| **NNN** | 001, 002, … | Сквозной номер |
-| **T** (тип) | F / B / Q | Feature / Bug / Question (исследование) |
-| **S** (статус) | N / O / W / C | New / Open (в работе) / Wait / Complete |
+| **NNN** | 001, 002, … | Сквозной номер — **стабильный якорь**, не меняется никогда |
 | **NAME** | UPPER_SNAKE | Название |
+
+Имя папки **не несёт** тип/статус: они меняются по ходу задачи, а имя должно
+оставаться стабильным (на него ссылаются из кода, доков и сабмодуля). Ссылки
+давай короткой формой `SPECS/NNN-NAME` — она переживёт смену статуса.
+
+## Тип и статус — в шапке SPEC.md + Roadmap
+
+Источник правды по типу/статусу — **таблица-шапка в начале `SPEC.md`** каждой
+задачи; [Roadmap](#roadmap-план-задач) ниже её агрегирует.
+
+```markdown
+| Поле | Значение |
+|------|----------|
+| Тип | F (feature) \| B (bug) \| Q (question/исследование) |
+| Статус | N (new) \| O (open) \| W (wait) \| C (complete) |
+```
 
 ## Файлы внутри папки
 
@@ -33,10 +47,10 @@
 
 ## Workflow
 
-1. Папка `SPECS/NNN-T-S-NAME/` (следующий номер, статус `N`).
+1. Папка `SPECS/NNN-NAME/` (следующий номер). В шапке SPEC.md — `Тип` + `Статус: N`.
 2. SPEC.md → PLAN.md → TASKS.md.
 3. Реализация по TASKS с учётом IMPLEMENTATION_PROMPT и CONSTITUTION.
-4. IMPLEMENTATION_REPORT.md, DoD-чеклист, переименование папки в `…-C-…`.
+4. IMPLEMENTATION_REPORT.md, DoD-чеклист, статус в шапке SPEC.md и Roadmap → `C`.
 
 ## Roadmap (план задач)
 
@@ -51,6 +65,8 @@
 | **007** | AWG_OVER_WIREGUARD_DETOUR_GUARD | **C** | ✅ **Код+тесты+DoD, Start-guard field-verified (Android lx.9).** Bug в 003: AWG-нода с `detour` на WireGuard-туннель (плоский WG или AWG) вешает ядро на Android (AWG внутри WG). **Два дополняющих guard'а:** Start-guard (`Endpoint.Start`, статическая транзитивная detour-цепь — device не поднимается) + selector-guard (`SelectOutbound` — при переключении селектора на WG гасит AWG-потребителей **до** переключения, через `ConsumersOf`). Оба — **вариант B** (ядро живёт, узел не встаёт, ошибка в лог). Ленивый dialer-guard (lx.8) откачен. detour на VLESS и WG→AWG — разрешены. Чинит [#2](https://github.com/Leadaxe/sing-box-lx/issues/2) |
 | **008** | AWG_JUNK_PARAM_VALIDATION | **C** | ✅ **Код+тесты+DoD**. Bug в 003 (найден при 007): `jmin > jmax` паникует `rand.Int` в amneziawg-go (краш в timer-горутине). `validateJunk` в `awgIpcLines` отвергает на уровне конфига (`check`/старт), без паники. Узко — только краш-кейс; jc-несогласованность осознанно не трогаем (минимальный дифф, совместимость). Чинит [#3](https://github.com/Leadaxe/sing-box-lx/issues/3) |
 | **009** | WIRESOCK_MASQUERADE_PROFILES | **C** | ✅ **Код+тесты+DoD; механизм проверен вживую (туннель + трафик на 009), релиз `v1.13.13-lx.11`.** WireSock-стиль `id`/`ip`/`ib` (домен/протокол/браузер) — декларативный сахар над `I1` CPS. Профили **quic** (1-RTT short header) / **dns** (EDNS OPT response) / **stun** (Binding Success Response) / **sip** (200 OK response), структуры портированы из open-source WireSock `amneziawg-proxy/src/transform.rs` (MIT). Механизм — **I1 only** (S1–S4 невозможен против WARP, сабмодуль не трогаем). `id` обязателен только для dns/sip (там идёт на провод), для quic/stun опционален. Строгая LDH-валидация домена (security-граница: инъекция в SIP/DNS). `ib` — без JA3-fingerprint (честно задокументировано). Все профили приняты реальным `newObfChain`; `sing-box check` зелёный; адверсариальный ревью (6 агентов) — 0 находок |
+| **010** | WG_ENDPOINT_GRO_SPLIT_BRAIN | **C** | ✅ **Корень подтверждён на железе, фикс верифицирован** (download 0.44→20.7 Mbps), вмержен в `lx` (lx.14). Bug: WG-**endpoint** без `detour` на Android режет download (GRO split-brain — UDP_GRO включён, а receive-путь linux-only). Фикс — гейт `UDP_GRO` за `!android` в сабмодуле `wireguard-go` (`conn/`). UDP/WG-only |
 | **011** | XHTTP_STREAM_ONE_DOWNLINK | **C** | ⚠️ **Принято на синтетике; лайв НЕ прогонялся** (нет reality+xhttp ноды). Bug в 002 (жалоба): `vless+reality+xhttp+mode:auto` не работал. Корень (сверено с Xray + [issue #5635](https://github.com/XTLS/Xray-core/issues/5635) + hiddify): stream-one слал `<path>/<sessionId>`, а Xray-сервер роутит stream-one только при пустом sessionId → downlink не-VLESS → `unknown version`. Фикс: голый путь без sessionId; `mode:auto`+reality → stream-one (детект reality по имени типа, без with_utls-зависимости). Юнит-тесты (URL-layout + reality-детект), `check`, сборки зелёные. Ветка `lx-xhttp-streamone`, **в `lx` не влито**; лайв — открытый TODO в REPORT |
+| **012** | TCP_DOWNLINK_STALL_ZOMBIE_CONNS | **C** | ⚠️ **НЕ воспроизводится на lx.14** (статус закрытия — «not reproducible»). Симптом (↑517 ↓0, WhatsApp/Telegram «висят») наблюдался на РАЗНЫХ нодах, включая WG → зонтик над «↓0»-сталлом, не один баг. WG-долю закрыл [010](010-WG_ENDPOINT_GRO_SPLIT_BRAIN/SPEC.md) (UDP/WG-only). Для не-WG (VLESS/reality) отдельного код-фикса нет — симптом сейчас не воспроизводится без подтверждённого объяснения. Артефакты: зонд `LX_CONN_TRACE` (не прогнан в бою), [PROBE.md](012-TCP_DOWNLINK_STALL_ZOMBIE_CONNS/PROBE.md) |
 
 > **Вне этого репозитория:** потребление ядра лаунчером (`singbox-launcher`) — парсинг `type=xhttp` в реальный XHTTP-транспорт (сейчас `023` маппит его в `httpupgrade`), AWG-поля в визарде, замена `bin/sing-box`. Это отдельные задачи в репозитории лаунчера.

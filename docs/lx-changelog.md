@@ -46,7 +46,7 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
   so they are kept for other providers whose DPI only checks packet well-formedness.
 * `id` is required for `quic`/`dns` (SNI / QNAME), optional for `sip` (pseudo-host
   generated when absent) and `stun`.
-* No submodule changes. See `SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES`.
+* No submodule changes. See `SPECS/009-WIRESOCK_MASQUERADE_PROFILES`.
 
 #### v1.13.13-lx.11
 
