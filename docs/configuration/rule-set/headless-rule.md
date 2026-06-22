@@ -2,6 +2,11 @@
 icon: material/new-box
 ---
 
+!!! quote "Changes in sing-box 1.14.0"
+
+    :material-plus: [package_name_regex](#package_name_regex)  
+    :material-alert: [query_type](#query_type)
+
 !!! quote "Changes in sing-box 1.13.0"
 
     :material-plus: [network_interface_address](#network_interface_address)  
@@ -78,6 +83,9 @@ icon: material/new-box
       "package_name": [
         "com.termux"
       ],
+      "package_name_regex": [
+        "^com\\.termux.*"
+      ],
       "network_type": [
         "wifi"
       ],
@@ -124,6 +132,20 @@ icon: material/new-box
     `other fields`
 
 #### query_type
+
+!!! quote "Changes in sing-box 1.14.0"
+
+    When a DNS rule references this rule-set, this field now also applies
+    when the DNS rule is matched from an internal domain resolution that
+    does not target a specific DNS server. In earlier versions, only DNS
+    queries received from a client evaluated this field. See
+    [Migration](/migration/#ip_version-and-query_type-behavior-changes-in-dns-rules)
+    for the full list.
+
+    When a DNS rule references a rule-set containing this field, the DNS
+    rule is incompatible in the same DNS configuration with Legacy Address
+    Filter Fields in DNS rules, the Legacy `strategy` DNS rule action
+    option, and the Legacy `rule_set_ip_cidr_accept_empty` DNS rule item.
 
 DNS query type. Values can be integers or type name strings.
 
@@ -204,6 +226,12 @@ Match process path using regular expression.
 #### package_name
 
 Match android package name.
+
+#### package_name_regex
+
+!!! question "Since sing-box 1.14.0"
+
+Match android package name using regular expression.
 
 #### network_type
 

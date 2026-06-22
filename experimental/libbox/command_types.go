@@ -1,13 +1,30 @@
 package libbox
 
 import (
+	"context"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sagernet/sing-box/daemon"
 	M "github.com/sagernet/sing/common/metadata"
 )
+
+type streamSession struct {
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closeOnce sync.Once
+	closeDone chan struct{}
+}
+
+func (s *streamSession) Close() error {
+	s.closeOnce.Do(func() {
+		s.cancel()
+	})
+	<-s.closeDone
+	return nil
+}
 
 type StatusMessage struct {
 	Memory           int64
@@ -337,6 +354,22 @@ func outboundGroupIteratorFromGRPC(groups *daemon.Groups) OutboundGroupIterator 
 		libboxGroups = append(libboxGroups, libboxGroup)
 	}
 	return newIterator(libboxGroups)
+}
+
+func outboundGroupItemListFromGRPC(list *daemon.OutboundList) OutboundGroupItemIterator {
+	if list == nil || len(list.Outbounds) == 0 {
+		return newIterator([]*OutboundGroupItem{})
+	}
+	var items []*OutboundGroupItem
+	for _, ob := range list.Outbounds {
+		items = append(items, &OutboundGroupItem{
+			Tag:          ob.Tag,
+			Type:         ob.Type,
+			URLTestTime:  ob.UrlTestTime,
+			URLTestDelay: ob.UrlTestDelay,
+		})
+	}
+	return newIterator(items)
 }
 
 func connectionFromGRPC(conn *daemon.Connection) Connection {

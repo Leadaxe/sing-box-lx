@@ -28,9 +28,14 @@ type InboundTLSOptions struct {
 	KeyPath                          string                              `json:"key_path,omitempty"`
 	KernelTx                         bool                                `json:"kernel_tx,omitempty"`
 	KernelRx                         bool                                `json:"kernel_rx,omitempty"`
-	ACME                             *InboundACMEOptions                 `json:"acme,omitempty"`
-	ECH                              *InboundECHOptions                  `json:"ech,omitempty"`
-	Reality                          *InboundRealityOptions              `json:"reality,omitempty"`
+	HandshakeTimeout                 badoption.Duration                  `json:"handshake_timeout,omitempty"`
+	CertificateProvider              *CertificateProviderOptions         `json:"certificate_provider,omitempty"`
+
+	// Deprecated: use certificate_provider
+	ACME *InboundACMEOptions `json:"acme,omitempty"`
+
+	ECH     *InboundECHOptions     `json:"ech,omitempty"`
+	Reality *InboundRealityOptions `json:"reality,omitempty"`
 }
 
 type ClientAuthType tls.ClientAuthType
@@ -96,6 +101,7 @@ func (o *InboundTLSOptionsContainer) ReplaceInboundTLSOptions(options *InboundTL
 
 type OutboundTLSOptions struct {
 	Enabled                    bool                                `json:"enabled,omitempty"`
+	Engine                     string                              `json:"engine,omitempty"`
 	DisableSNI                 bool                                `json:"disable_sni,omitempty"`
 	ServerName                 string                              `json:"server_name,omitempty"`
 	Insecure                   bool                                `json:"insecure,omitempty"`
@@ -114,8 +120,11 @@ type OutboundTLSOptions struct {
 	Fragment                   bool                                `json:"fragment,omitempty"`
 	FragmentFallbackDelay      badoption.Duration                  `json:"fragment_fallback_delay,omitempty"`
 	RecordFragment             bool                                `json:"record_fragment,omitempty"`
+	Spoof                      string                              `json:"spoof,omitempty"`
+	SpoofMethod                string                              `json:"spoof_method,omitempty"`
 	KernelTx                   bool                                `json:"kernel_tx,omitempty"`
 	KernelRx                   bool                                `json:"kernel_rx,omitempty"`
+	HandshakeTimeout           badoption.Duration                  `json:"handshake_timeout,omitempty"`
 	ECH                        *OutboundECHOptions                 `json:"ech,omitempty"`
 	UTLS                       *OutboundUTLSOptions                `json:"utls,omitempty"`
 	Reality                    *OutboundRealityOptions             `json:"reality,omitempty"`

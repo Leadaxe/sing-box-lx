@@ -40,6 +40,27 @@ type PlatformInterface interface {
 	SendNotification(notification *Notification) error
 
 	MyInterfaceAddress() []netip.Addr
+
+	UsePlatformNeighborResolver() bool
+	StartNeighborMonitor(listener NeighborUpdateListener) error
+	CloseNeighborMonitor(listener NeighborUpdateListener) error
+
+	UsePlatformShell() bool
+	CheckPlatformShell() error
+	OpenShellSession(user *PlatformUser, command string, env []string, term string, rows int32, cols int32) (ShellSession, error)
+	LookupUser(username string) (*PlatformUser, error)
+	LookupSFTPServer() (string, error)
+	ReadSystemSSHHostKey() ([]byte, error)
+	TailscaleHostname() string
+}
+
+type PlatformUser struct {
+	Username string
+	Uid      int
+	Gid      int
+	HomeDir  string
+	Shell    string
+	Groups   []int
 }
 
 type FindConnectionOwnerRequest struct {

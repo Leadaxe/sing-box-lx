@@ -4,8 +4,10 @@ icon: material/new-box
 
 !!! quote "Changes in sing-box 1.14.0"
 
-    :material-plus: [include_mac_address](#include_mac_address)
-    :material-plus: [exclude_mac_address](#exclude_mac_address)
+    :material-plus: [include_mac_address](#include_mac_address)  
+    :material-plus: [exclude_mac_address](#exclude_mac_address)  
+    :material-plus: [dns_mode](#dns_mode)  
+    :material-plus: [dns_address](#dns_address)
 
 !!! quote "Changes in sing-box 1.13.3"
 
@@ -73,6 +75,11 @@ icon: material/new-box
     "fdfe:dcba:9876::1/126"
   ],
   "mtu": 9000,
+  "dns_mode": "hijack",
+  "dns_address": [
+    "172.18.0.2",
+    "fdfe:dcba:9876::2"
+  ],
   "auto_route": true,
   "iproute2_table_index": 2022,
   "iproute2_rule_index": 9000,
@@ -133,6 +140,12 @@ icon: material/new-box
   ],
   "exclude_package": [
     "com.android.captiveportallogin"
+  ],
+  "include_mac_address": [
+    "00:11:22:33:44:55"
+  ],
+  "exclude_mac_address": [
+    "66:77:88:99:aa:bb"
   ],
   "platform": {
     "http_proxy": {
@@ -209,6 +222,52 @@ IPv6 prefix for the tun interface.
 #### mtu
 
 The maximum transmission unit.
+
+#### dns_mode
+
+!!! question "Since sing-box 1.14.0"
+
+How DNS is handled on the TUN interface.
+
+| Mode       | Description                                                                                                                                                |
+|------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `disabled` | Do not configure native DNS and do not hijack DNS traffic.                                                                                                 |
+| `native`   | Set the platform's native interface DNS where possible: per-interface DNS on Windows and Apple platforms, and `systemd-resolved` interface DNS on Linux.   |
+| `hijack`   | Same as `native`, with additional port 53 hijacking described below. Used by default.                                                                      |
+
+`hijack` adds the following on top of `native`:
+
+*On Linux*: only DNS sent to non-local destinations can be intercepted.
+Traffic destined to addresses on the host's own interfaces (such as
+`127.0.0.53` or the host's LAN-side IP) is delivered through the kernel
+`local` routing table before any user rule applies, and `OUTPUT` NAT cannot
+redirect packets going through `lo`.
+
+- Without `auto_redirect`, an `iproute2` rule makes port 53 skip the `main`
+  table's specific-route lookup, forcing DNS that would otherwise be
+  delivered through a directly-attached subnet through the TUN. Destination
+  addresses are not rewritten.
+- With `auto_redirect`, an nftables rule DNATs port 53 traffic directly to
+  [`dns_address`](#dns_address).
+
+*On Windows with [`strict_route`](#strict_route)*: a WFP filter blocks port
+53 traffic going through interfaces other than the TUN.
+
+#### dns_address
+
+!!! question "Since sing-box 1.14.0"
+
+List of DNS server addresses used by [`dns_mode`](#dns_mode).
+
+When unset, sing-box derives one address per family by taking the next IP after
+the first IPv4/IPv6 entry in [`address`](#address). Connections toward those
+derived addresses are additionally hijacked into the sing-box DNS module,
+equivalent to a [`hijack-dns`](/configuration/route/rule_action/#hijack-dns)
+route action; this preserves the behaviour from before this option was added.
+
+When set, this auto-hijack is not applied; configure an explicit
+[`hijack-dns`](/configuration/route/rule_action/#hijack-dns) route rule if the
+behaviour is still required.
 
 #### gso
 
@@ -559,6 +618,30 @@ Limit android packages in route.
 #### exclude_package
 
 Exclude android packages in route.
+
+#### include_mac_address
+
+!!! question "Since sing-box 1.14.0"
+
+!!! quote ""
+
+    Only supported on Linux with `auto_route` and `auto_redirect` enabled.
+
+Limit MAC addresses in route. Not limited by default.
+
+Conflict with `exclude_mac_address`.
+
+#### exclude_mac_address
+
+!!! question "Since sing-box 1.14.0"
+
+!!! quote ""
+
+    Only supported on Linux with `auto_route` and `auto_redirect` enabled.
+
+Exclude MAC addresses in route.
+
+Conflict with `include_mac_address`.
 
 #### platform
 

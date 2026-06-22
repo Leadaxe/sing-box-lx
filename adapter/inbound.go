@@ -2,13 +2,17 @@ package adapter
 
 import (
 	"context"
+	"net"
 	"net/netip"
 	"time"
 
+	"github.com/sagernet/sing-box/common/tlsspoof"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
+
+	"github.com/miekg/dns"
 )
 
 type Inbound interface {
@@ -19,12 +23,12 @@ type Inbound interface {
 
 type TCPInjectableInbound interface {
 	Inbound
-	ConnectionHandlerEx
+	ConnectionHandler
 }
 
 type UDPInjectableInbound interface {
 	Inbound
-	PacketConnectionHandlerEx
+	PacketConnectionHandler
 }
 
 type InboundRegistry interface {
@@ -72,18 +76,24 @@ type InboundContext struct {
 	TLSFragment               bool
 	TLSFragmentFallbackDelay  time.Duration
 	TLSRecordFragment         bool
+	TLSSpoof                  string
+	TLSSpoofMethod            tlsspoof.Method
 
 	NetworkStrategy     *C.NetworkStrategy
 	NetworkType         []C.InterfaceType
 	FallbackNetworkType []C.InterfaceType
 	FallbackDelay       time.Duration
 
-	DestinationAddresses []netip.Addr
-	SourceGeoIPCode      string
-	GeoIPCode            string
-	ProcessInfo          *ConnectionOwner
-	QueryType            uint16
-	FakeIP               bool
+	DestinationAddresses                []netip.Addr
+	DNSResponse                         *dns.Msg
+	DestinationAddressMatchFromResponse bool
+	SourceGeoIPCode                     string
+	GeoIPCode                           string
+	ProcessInfo                         *ConnectionOwner
+	SourceMACAddress                    net.HardwareAddr
+	SourceHostname                      string
+	QueryType                           uint16
+	FakeIP                              bool
 
 	// rule cache
 
@@ -110,6 +120,51 @@ func (c *InboundContext) ResetRuleMatchCache() {
 	c.DestinationAddressMatch = false
 	c.DestinationPortMatch = false
 	c.DidMatch = false
+}
+
+func (c *InboundContext) DNSResponseAddressesForMatch() []netip.Addr {
+	return DNSResponseAddresses(c.DNSResponse)
+}
+
+func DNSResponseAddresses(response *dns.Msg) []netip.Addr {
+	if response == nil || response.Rcode != dns.RcodeSuccess {
+		return nil
+	}
+	addresses := make([]netip.Addr, 0, len(response.Answer))
+	for _, rawRecord := range response.Answer {
+		switch record := rawRecord.(type) {
+		case *dns.A:
+			addr := M.AddrFromIP(record.A)
+			if addr.IsValid() {
+				addresses = append(addresses, addr)
+			}
+		case *dns.AAAA:
+			addr := M.AddrFromIP(record.AAAA)
+			if addr.IsValid() {
+				addresses = append(addresses, addr)
+			}
+		case *dns.HTTPS:
+			for _, value := range record.SVCB.Value {
+				switch hint := value.(type) {
+				case *dns.SVCBIPv4Hint:
+					for _, ip := range hint.Hint {
+						addr := M.AddrFromIP(ip).Unmap()
+						if addr.IsValid() {
+							addresses = append(addresses, addr)
+						}
+					}
+				case *dns.SVCBIPv6Hint:
+					for _, ip := range hint.Hint {
+						addr := M.AddrFromIP(ip)
+						if addr.IsValid() {
+							addresses = append(addresses, addr)
+						}
+					}
+				}
+			}
+		}
+	}
+	return addresses
 }
 
 type inboundContextKey struct{}

@@ -18,6 +18,38 @@ type PlatformInterface interface {
 	SystemCertificates() StringIterator
 	ClearDNSCache()
 	SendNotification(notification *Notification) error
+	StartNeighborMonitor(listener NeighborUpdateListener) error
+	CloseNeighborMonitor(listener NeighborUpdateListener) error
+	RegisterMyInterface(name string)
+	UsePlatformShell() bool
+	CheckPlatformShell() error
+	OpenShellSession(user *PlatformUser, command string, environ StringIterator, term string, rows int32, cols int32) (ShellSession, error)
+	LookupUser(username string) (*PlatformUser, error)
+	LookupSFTPServer() (string, error)
+	ReadSystemSSHHostKey() (string, error)
+	TailscaleHostname() string
+}
+
+type PlatformUser struct {
+	Username string
+	Uid      int32
+	Gid      int32
+	HomeDir  string
+	Shell    string
+
+	groups []int32
+}
+
+func (u *PlatformUser) SetGroups(groups Int32Iterator) {
+	u.groups = iteratorToArray[int32](groups)
+}
+
+func (u *PlatformUser) Groups() Int32Iterator {
+	return newIterator(u.groups)
+}
+
+type NeighborUpdateListener interface {
+	UpdateNeighborTable(entries NeighborEntryIterator)
 }
 
 type ConnectionOwner struct {

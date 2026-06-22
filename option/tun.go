@@ -14,6 +14,8 @@ type TunInboundOptions struct {
 	InterfaceName                 string                           `json:"interface_name,omitempty"`
 	MTU                           uint32                           `json:"mtu,omitempty"`
 	Address                       badoption.Listable[netip.Prefix] `json:"address,omitempty"`
+	DNSMode                       string                           `json:"dns_mode,omitempty"`
+	DNSAddress                    badoption.Listable[netip.Addr]   `json:"dns_address,omitempty"`
 	AutoRoute                     bool                             `json:"auto_route,omitempty"`
 	IPRoute2TableIndex            int                              `json:"iproute2_table_index,omitempty"`
 	IPRoute2RuleIndex             int                              `json:"iproute2_rule_index,omitempty"`
@@ -39,6 +41,8 @@ type TunInboundOptions struct {
 	IncludeAndroidUser            badoption.Listable[int]          `json:"include_android_user,omitempty"`
 	IncludePackage                badoption.Listable[string]       `json:"include_package,omitempty"`
 	ExcludePackage                badoption.Listable[string]       `json:"exclude_package,omitempty"`
+	IncludeMACAddress             badoption.Listable[string]       `json:"include_mac_address,omitempty"`
+	ExcludeMACAddress             badoption.Listable[string]       `json:"exclude_mac_address,omitempty"`
 	UDPTimeout                    UDPTimeoutCompat                 `json:"udp_timeout,omitempty"`
 	Stack                         string                           `json:"stack,omitempty"`
 	Platform                      *TunPlatformOptions              `json:"platform,omitempty"`
