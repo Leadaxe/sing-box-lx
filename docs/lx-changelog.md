@@ -9,6 +9,27 @@ sing-box). Upstream's own changelog is in [changelog.md](changelog.md); this fil
 tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`.
 
+#### v1.13.13-lx.15
+
+* **`package_name_regex` route/DNS/headless rule item.** Backport of the upstream
+  1.14 feature onto the stable 1.13.13 base — matches the Android package name by
+  regular expression (e.g. `"package_name_regex": ["^com\\.termux.*"]`), the regex
+  counterpart of the existing exact-match `package_name`. Works in route rules, DNS
+  rules and rule-set headless rules. See `SPECS/013`.
+* The full 1.14 migration is **deferred to v1.14.0 stable** (the feature exists only
+  in 1.14-alpha upstream; a feasibility pass put the migration at ~1.5–2 days, the
+  main cost being the AmneziaWG `wireguard-go` submodule rebase). `lx-rebase.yml`
+  excludes alpha/beta/rc by design, so it will pick up 1.14 only once it is stable.
+
+#### v1.13.13-lx.14
+
+* **WireGuard-endpoint GRO split-brain on Android — fixed.** A WireGuard *endpoint*
+  without a `detour` killed download throughput on Android (UDP_GRO was enabled, but
+  the GRO receive path is linux-only — packets coalesced on send, never un-coalesced
+  on receive). Fix gates `UDP_GRO` behind `!android` in the `wireguard-go` submodule
+  (`conn/`). Device-verified on real hardware (download 0.44 → 20.7 Mbps). UDP/WG-only.
+  See `SPECS/010`.
+
 #### v1.13.13-lx.13
 
 * `ip=quic`: **`ib` now drives a real browser TLS fingerprint.** `ib=chrome`/`firefox`
