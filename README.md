@@ -42,7 +42,7 @@ In the sing-box ecosystem, forks that add XHTTP / AmneziaWG fall into two camps 
 | **AmneziaWG 2.0** | client endpoint | WireGuard obfuscation: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` + **2.0**: `I1–I5` (CPS — decoy packets) | ✅ builds, passes `check`; dependency **activated** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet base + obfuscation); **validated against a real AWG2 server**: handshake + keepalive + outbound traffic |
 | **Masquerade `id/ip/ib`** | AWG sugar | WireSock-style declarative masquerade over `I1`: name a domain (`id`) + protocol (`ip`: `quic`/`dns`/`stun`/`sip`) + browser (`ib`) and the core builds the client-initiated `I1` decoy for you — `quic` = out-of-order fragmented Initial (i1+i2), `dns`/`stun`/`sip` = query/Binding-Request/INVITE | ✅ **`ip=quic` device-proven against a real LTE/WARP DPI** (~330 ms, eases Cloudflare WARP); `dns`/`stun`/`sip` build & pass `check` but are blocked as a protocol class to the WARP edge — for other providers |
 
-Detailed reports: [`SPECS/002-…`](SPECS/002-F-C-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/003-…`](SPECS/003-F-C-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) and [`SPECS/009-…`](SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Full config reference — **[docs/lx-config.md](docs/lx-config.md)**.
+Detailed reports: [`SPECS/002-…`](SPECS/002-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/003-…`](SPECS/003-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) and [`SPECS/009-…`](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Full config reference — **[docs/lx-config.md](docs/lx-config.md)**.
 
 > **Not supported (Reality layer, deferred):** post-quantum Reality (`pqv` / ML-DSA-65) and Xray's `spiderX`. These are Xray-specific Reality features absent from sing-box, and Reality is the upstream TLS layer we keep untouched (it is not one of our features). Classic X25519 Reality works; a server that *mandates* post-quantum Reality won't connect. This is a sing-box limitation — best addressed upstream (we'd inherit it on rebase).
 
@@ -139,7 +139,7 @@ This is the **only profile device-proven against a real LTE/WARP DPI** (~330 ms)
 `sip` are implemented as correct client-initiated requests but are blocked as a protocol class
 toward the Cloudflare WARP edge (raw DNS/STUN/SIP to a datacenter IP is itself anomalous) —
 they are kept for other providers whose DPI only checks packet well-formedness. See
-[docs/lx-config.md](docs/lx-config.md) and [SPECS/009 examples](SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
+[docs/lx-config.md](docs/lx-config.md) and [SPECS/009 examples](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ---
 

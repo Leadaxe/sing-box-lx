@@ -42,7 +42,7 @@
 | **AmneziaWG 2.0** | клиентский endpoint | обфускация WireGuard: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` + **2.0**: `I1–I5` (CPS — кастомные пакеты-приманки) | ✅ собирается, проходит `check`; зависимость **активирована** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet-база + обфускация); **проверено живым AWG2-сервером**: handshake + keepalive + трафик наружу |
 | **Маскировка `id/ip/ib`** | сахар над AWG | WireSock-стиль: декларативная маскировка поверх `I1` — домен (`id`) + протокол (`ip`: `quic`/`dns`/`stun`/`sip`) + браузер (`ib`), ядро строит клиент-инициированную `I1`-приманку: `quic` = out-of-order фрагментированный Initial (i1+i2), `dns`/`stun`/`sip` = query/Binding-Request/INVITE | ✅ **`ip=quic` device-проверен на реальном LTE/WARP DPI** (~330 мс, упрощает Cloudflare WARP); `dns`/`stun`/`sip` собираются и проходят `check`, но режутся как класс протокола к WARP-edge — для других провайдеров |
 
-Подробные отчёты — в [`SPECS/002-…`](SPECS/002-F-C-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/003-…`](SPECS/003-F-C-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) и [`SPECS/009-…`](SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs/lx-config.md](docs/lx-config.md)**.
+Подробные отчёты — в [`SPECS/002-…`](SPECS/002-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/003-…`](SPECS/003-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) и [`SPECS/009-…`](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs/lx-config.md](docs/lx-config.md)**.
 
 > **Не поддерживается (слой Reality, отложено):** post-quantum Reality (`pqv` / ML-DSA-65) и `spiderX` из Xray. Это Xray-специфичные фичи Reality, которых нет в sing-box, а Reality — upstream-слой TLS, который мы держим нетронутым (это не одна из наших фич). Классический X25519 Reality работает; сервер, который **требует** post-quantum Reality, не подключится. Это ограничение sing-box — правильнее решать в upstream (получим на ребейзе).
 
@@ -138,7 +138,7 @@ QUIC-сессия. Это **единственный профиль, device-пр
 `dns`/`stun`/`sip` реализованы как корректные клиент-инициированные запросы, но режутся как класс
 протокола к WARP-edge (raw DNS/STUN/SIP к дата-центровому IP сам по себе аномален) — сохранены
 для других провайдеров, чей DPI проверяет лишь корректность пакета. См.
-[docs/lx-config.md](docs/lx-config.md) и [примеры SPECS/009](SPECS/009-F-C-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
+[docs/lx-config.md](docs/lx-config.md) и [примеры SPECS/009](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ---
 
