@@ -337,7 +337,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Pre-release tags (-rc.N / -alpha.N / -beta.N) publish as GitHub
+          # pre-releases so an unverified build never becomes "Latest". A plain
+          # vX.Y.Z-lx.N tag (no such suffix) publishes as a normal release.
+          EXTRA=""
+          case "${{ steps.ver.outputs.tag }}" in
+            *-rc.*|*-alpha.*|*-beta.*) EXTRA="--prerelease" ;;
+          esac
           gh release create "${{ steps.ver.outputs.tag }}" dist/* \
             --title "sing-box-lx ${{ steps.ver.outputs.version }}" \
             --notes-file notes.md \
-            --target "$GITHUB_SHA"
+            --target "$GITHUB_SHA" \
+            $EXTRA

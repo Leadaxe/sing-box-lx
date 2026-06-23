@@ -7,7 +7,34 @@ icon: material/alert-decagram
 Changes in the `sing-box-lx` fork (the `lx` features layered on top of upstream
 sing-box). Upstream's own changelog is in [changelog.md](changelog.md); this file
 tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
-`lx-release.yml`.
+`lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
+as GitHub **pre-releases** and never become "Latest".
+
+#### v1.14.0-lx.1-rc.1
+
+**Pre-release — not device-verified.** First build on the upstream 1.14 base. The
+WireGuard-endpoint GRO fix (§010) now lands at the submodule source on AmneziaWG
+`v0.0.3` (no downstream guard), but the Android download-stall path has **not** been
+re-verified on real hardware yet — hence the `-rc.1` tag. Promote to a plain
+`v1.14.0-lx.1` tag once on-device verification passes.
+
+* **Migrated onto upstream sing-box 1.14** (merge of `v1.14.0-alpha.33` into the lx
+  layer + AmneziaWG `wireguard-go` submodule re-grafted on `v0.0.3`). Brings the full
+  1.14 feature set: the native sing-box API service / remote control, the DNS rework
+  (`evaluate` action + `match_response`, optimistic cache, `store_dns`,
+  per-evaluation `ip_version`/`query_type`), native Apple/Windows TLS engines, TLS
+  spoof, Hysteria2 BBR/NAT-traversal, and closed-connection history in the
+  CommandClient connection tracker (1000 entries / 5 min). See upstream
+  [changelog.md](changelog.md) for the per-alpha breakdown.
+* **`with_clash_api` dropped from the Android AAR and the desktop `LX_TAGS`.** LxBox
+  is moving to manage the core over the native libbox `CommandClient`
+  (group / url-test / select / connections streams), so the Clash REST API is dead
+  weight on the client. A config that references `experimental.clash_api` now fails
+  fast (`clash api is not included in this build, rebuild with -tags with_clash_api`)
+  rather than silently degrading. lx configs do not use it.
+* **`lx-release.yml`: `-rc.N` / `-alpha.N` / `-beta.N` tags publish as pre-releases**
+  (`gh release create --prerelease`), so an unverified build can never displace the
+  stable `lx` release as "Latest".
 
 #### v1.13.13-lx.15
 

@@ -67,7 +67,12 @@ func init() {
 	// service that contradicts the client-trim philosophy and Android client configs
 	// never reference usbip endpoints (a missing tag only yields a stub-registration
 	// error if a config uses it, which lx configs won't).
-	sharedTags = append(sharedTags, "with_gvisor", "with_quic", "with_wireguard", "with_utls", "with_naive_outbound", "with_clash_api", "badlinkname", "tfogo_checklinkname0")
+	// lx: with_clash_api is intentionally omitted — LxBox manages the core over the
+	// native libbox CommandClient (group/url-test/select/connections streams), so the
+	// Clash REST API is dead weight on the client. Without the tag a config referencing
+	// experimental.clash_api fails fast with "clash api is not included in this build,
+	// rebuild with -tags with_clash_api" (no silent fallback). lx configs won't.
+	sharedTags = append(sharedTags, "with_gvisor", "with_quic", "with_wireguard", "with_utls", "with_naive_outbound", "badlinkname", "tfogo_checklinkname0")
 	// lx:begin awg,xhttp
 	// Promote the two downstream features into the Android AAR. They flow into both
 	// the main (SDK23) and legacy (SDK21) variants, since legacy derives from
