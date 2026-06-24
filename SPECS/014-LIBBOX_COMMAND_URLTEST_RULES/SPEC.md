@@ -140,6 +140,27 @@ Handler (`daemon/started_service_command_lx.go`): снапшот (unary, пра�
 - Существующие стримы истории (`SubscribeOutbounds` — все outbound'ы И endpoint'ы; `SubscribeGroups` — узлы в группах) — без изменений; результат `URLTestOutbound` течёт в них штатно через общий `urlTestHistoryStorage` (карта каналов в §3.2). Отдельный history-RPC НЕ вводится (delay возвращается синхронно из `URLTestOutbound`).
 - `experimental/clashapi/` — эталон семантики, код не тянуть.
 
+### 3.8 Follow-on фикс — Android start fatal от `with_clash_api`-дропа (rc.3)
+Удаление `with_clash_api` (rc.1) сделало **любой старт на Android фатальным**:
+`create clash-server: clash api is not included in this build` — **даже без**
+`clash_api` в конфиге. Корень в апстрим-`box.go`: `PlatformLogWriter != nil`
+(всегда на Android/libbox) форсил `needClashAPI = true` (Clash-сервер исторически
+был единственным наблюдателем логов/трафика), а `needClashAPI` ведёт к
+`NewClashServer()`. Десктоп не затронут (`PlatformLogWriter == nil`).
+
+**Фикс (`box.go`, `// lx:` шов, commit `029acd11`, пререлиз `v1.14.0-lx.1-rc.3`):**
+расщепить заботы — `PlatformLogWriter` взводит новый `needObservable`
+(`= needClashAPI || needAPIService || PlatformLogWriter != nil`) для Observable
+log factory + traffic/connection-tracker; **только** явный `experimental.clash_api`
+по-прежнему взводит `needClashAPI` → `NewClashServer`. daemon уже nil-safe к
+отсутствию `clashServer` → Clash-mode деградирует мягко. Проверено: стартует без
+`clash_api`; всё ещё fail-fast с ним.
+
+**WATCH — апстрим issue [SagerNet/sing-box#4240](https://github.com/SagerNet/sing-box/issues/4240)**
+(подан как чистый upstream-репро, форк НЕ упомянут). Когда апстрим починит —
+**снять наш `// lx:` шов в `box.go`** на следующем ребейзе (сверить статус #4240
+перед переналожением). До тех пор живём на своём фиксе.
+
 ---
 
 ## 4. Критерии приёмки
