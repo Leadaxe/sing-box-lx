@@ -72,12 +72,29 @@ Handler — `daemon/started_service_command_lx.go` (+ `_stub.go`):
 
   Handler **всегда** возвращает `(resp, nil)` — транспортный gRPC-error остаётся `nil` для всех прикладных исходов.
 - **ИНВАРИАНТ для клиента (записать в доке/комменте):** источник истины — поле `error`. `delay` валиден ⟺ `error == ""`. Случай `delay==0 && error==""` = **успех 0 мс**, НЕ ошибка (иначе воркер словит ложный фейл на быстром локальном узле).
-- **История:** при успехе `urlTestHistoryStorage.StoreURLTestHistory(group.RealTag(detour), {Time: now, Delay: delay})`; при ошибке `DeleteURLTestHistory(realTag)` — паритет с Clash и групповым URLTest (история затем течёт в `OutboundGroupItem` для узлов в группах).
+- **История (запись):** при успехе `urlTestHistoryStorage.StoreURLTestHistory(group.RealTag(detour), {Time: now, Delay: delay})`; при ошибке `DeleteURLTestHistory(realTag)` — паритет с Clash и групповым URLTest. `RealTag(detour)` для одиночного outbound/endpoint = `detour.Tag()` (для группы — `group.Now()`, но сюда группы не приходят).
+
+- **Куда попадает delay и в каком канале его искать (карта для клиента/LxBox):** `StoreURLTestHistory`/`DeleteURLTestHistory` будят общий `urlTestObserver` ([started_service.go](../../daemon/started_service.go)), на который подписаны ОБА групповых стрима. Поэтому результат `URLTestOutbound` виден в трёх местах:
+
+  | Канал | Что отдаёт | Покрытие узлов |
+  |-------|-----------|----------------|
+  | **Синхронный ответ RPC** (`URLTestOutboundResponse.delay`/`error`) | измеренный delay немедленно | **любой** узел — outbound ИЛИ endpoint. Единственный гарантированный канал; UI ручного пинга читает его. |
+  | **`SubscribeOutbounds`** (`OutboundList`, плоский список) | `GroupItem.UrlTestDelay`/`UrlTestTime` из истории | **все** outbound'ы (`outboundManager.Outbounds()`) **И все** endpoint'ы (`endpointManager.Endpoints()` — WG/AWG/Tailscale). Это канал, в котором delay endpoint'а вообще появляется в стриме. |
+  | **`SubscribeGroups`** (`Groups`→`GroupItem`) | то же поле из истории | **только** узлы внутри `OutboundGroup` (`readGroups` итерирует `iGroup.All()`). Одиночные outbound вне групп и **любые endpoint'ы сюда НЕ попадают**. |
+
+  Практика: для экрана «один узел / ручной пинг» — берите delay из **ответа RPC** (не ждите стрим). Для живого списка узлов (включая endpoint'ы) подписывайтесь на **`SubscribeOutbounds`**. `SubscribeGroups` обновится сам для членов групп — отдельной синхронизации UI не нужно.
 
 Клиентский метод — `experimental/libbox/command_client_command_lx.go`:
 ```go
-func (c *CommandClient) URLTestOutbound(outboundTag, link string, timeoutMs uint32) (delay uint16, errMsg string, err error)
+func (c *CommandClient) URLTestOutbound(outboundTag, link string, timeout int32) (*URLTestOutboundResult, error)
+
+type URLTestOutboundResult struct {
+	Delay int32  // мс, валиден ⟺ Error == ""
+	Error string // "" = ок; иначе причина (см. таблицу выше)
+}
 ```
+**Почему не дословно из SPEC-черновика `(uint16, string, error)`:** libbox экспортируется через gomobile в AAR, а gomobile НЕ биндит ни три возврата, ни `uint16`/`uint32`. Поэтому: возврат — `(*URLTestOutboundResult, error)` (struct-обёртка, как `*SystemProxyStatus`; gomobile отдаёт геттеры `getDelay()`/`getError()`); параметр `timeout` (не `timeoutMs`); типы `int32`. Возвращаемый Go-`error` — **только транспортный сбой** (соединение/gRPC); прикладной исход — в `Result.Error` (Вариант B сохранён). `timeout` в мс (`0` → дефолт ядра).
+
 Worker-pool (параллельный масс-пинг N узлов, concurrency=10) живёт **в клиенте/LxBox**, не в ядре: ядро меряет один узел синхронно и stateless. Отмена масс-пинга = закрытие/реконнект CommandClient-соединения (рвёт conn → серверный `ctx` отменяется → in-flight тесты падают), как старый `cancelDelays`. Отдельный per-call cancel-handle НЕ вводится.
 
 ### 3.3 RPC #2 — `GetRules` (route + DNS)
@@ -120,7 +137,7 @@ Handler (`daemon/started_service_command_lx.go`): снапшот (unary, пра�
 ### 3.7 Что НЕ трогаем
 - Существующий `rpc URLTest` (групповой) — **без изменений** (нулевой дифф в `started_service.go`).
 - Data-path, серверная/inbound-логика — §3.1 client-only.
-- `OutboundGroupItem` / стрим групп — история по-прежнему течёт туда; отдельный history-RPC НЕ вводится (delay возвращается синхронно из `URLTestOutbound`).
+- Существующие стримы истории (`SubscribeOutbounds` — все outbound'ы И endpoint'ы; `SubscribeGroups` — узлы в группах) — без изменений; результат `URLTestOutbound` течёт в них штатно через общий `urlTestHistoryStorage` (карта каналов в §3.2). Отдельный history-RPC НЕ вводится (delay возвращается синхронно из `URLTestOutbound`).
 - `experimental/clashapi/` — эталон семантики, код не тянуть.
 
 ---
@@ -143,7 +160,7 @@ Handler (`daemon/started_service_command_lx.go`): снапшот (unary, пра�
 ---
 
 ## 5. Вне скоупа
-- Отдельный history-RPC (`GetURLTestHistory`) — отклонён: delay синхронен, групповая история в стриме.
+- Отдельный history-RPC (`GetURLTestHistory`) — отклонён: delay синхронен в ответе RPC, а живая история уже течёт в `SubscribeOutbounds` (outbound'ы + endpoint'ы) и `SubscribeGroups` (узлы в группах) — см. карту каналов в §3.2.
 - Per-call cancel-handle / batch-RPC — отклонены: отмена через close conn, батч в клиенте.
 - `timeout` в микросекундах / смена типа delay — отклонены: мс, `uint16`→`uint32`.
 - DNS rule-set (headless) snapshot, server/inbound RPC — будущие SPEC при необходимости.
