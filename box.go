@@ -150,7 +150,16 @@ func New(options Options) (*Box, error) {
 	if experimentalOptions.CacheFile != nil && experimentalOptions.CacheFile.Enabled || options.PlatformLogWriter != nil {
 		needCacheFile = true
 	}
-	if experimentalOptions.ClashAPI != nil || options.PlatformLogWriter != nil {
+	// lx:begin lx_command
+	// A platform log writer (always set on Android/libbox) historically forced
+	// needClashAPI, because the Clash server was the only log/traffic observer.
+	// With with_clash_api dropped (lx), that turned every Android start into a
+	// fatal "clash api is not included in this build". Split the concern: the
+	// platform writer needs *observability* (Observable log factory + traffic
+	// manager), NOT the Clash server specifically. Only an explicit clash_api
+	// config block now creates the Clash server; the native CommandClient
+	// (SubscribeLog / SubscribeConnections) serves the platform client instead.
+	if experimentalOptions.ClashAPI != nil {
 		needClashAPI = true
 	}
 	if experimentalOptions.V2RayAPI != nil && experimentalOptions.V2RayAPI.Listen != "" {
@@ -159,6 +168,10 @@ func New(options Options) (*Box, error) {
 	needAPIService := common.Any(options.Services, func(it option.Service) bool {
 		return it.Type == C.TypeAPI
 	})
+	// Observability (log stream + connection/traffic tracking) is required by the
+	// platform client and by either API surface, independent of the Clash server.
+	needObservable := needClashAPI || needAPIService || options.PlatformLogWriter != nil
+	// lx:end lx_command
 	if service.PtrFromContext[urltest.HistoryStorage](ctx) == nil {
 		ctx = service.ContextWithPtr(ctx, urltest.NewHistoryStorage())
 	}
@@ -170,7 +183,7 @@ func New(options Options) (*Box, error) {
 	logFactory, err := log.New(log.Options{
 		Context:        ctx,
 		Options:        common.PtrValueOrDefault(options.Log),
-		Observable:     needClashAPI || needAPIService,
+		Observable:     needObservable, // lx: was needClashAPI || needAPIService
 		DefaultWriter:  defaultLogWriter,
 		BaseTime:       createdAt,
 		PlatformWriter: options.PlatformLogWriter,
@@ -230,7 +243,7 @@ func New(options Options) (*Box, error) {
 	if err != nil {
 		return nil, E.Cause(err, "initialize router")
 	}
-	if needClashAPI || needAPIService {
+	if needObservable { // lx: was needClashAPI || needAPIService — platform writer needs the tracker too
 		trafficManager := trafficcontrol.NewManager(outboundManager)
 		service.MustRegisterPtr(ctx, trafficManager)
 		router.AppendTracker(trafficManager)

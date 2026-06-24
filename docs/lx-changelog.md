@@ -10,6 +10,23 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.3
+
+**Pre-release — not device-verified.** Fixes a fatal Android start regression
+introduced by the `with_clash_api` drop (`rc.1`).
+
+* **Android start no longer fails with "clash api is not included in this build".**
+  Upstream `box.go` forced `needClashAPI` whenever a `PlatformLogWriter` was set
+  (always true on Android/libbox), because the Clash server used to be the only
+  log/traffic observer. With `with_clash_api` dropped that turned every Android
+  start into a fatal — even with no `clash_api` in the config. Split the concern
+  (`// lx:` seam): the platform writer now requests *observability* (Observable
+  log factory + connection/traffic tracker), served by the native CommandClient
+  (`SubscribeLog` / `SubscribeConnections`), **not** the Clash server. Only an
+  explicit `experimental.clash_api` block still creates the Clash server (and
+  still fails fast without the tag). The daemon is already nil-safe to a missing
+  Clash server, so Clash-mode degrades gracefully. Desktop was unaffected.
+
 #### v1.14.0-lx.1-rc.2
 
 **Pre-release — not device-verified.** Adds the SPEC 014 libbox command-protocol
