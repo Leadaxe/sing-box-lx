@@ -10,6 +10,35 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.2
+
+**Pre-release — not device-verified.** Adds the SPEC 014 libbox command-protocol
+extensions on top of `rc.1`; the §010 Android download-stall path is still pending
+on-device re-verification, so this stays a `-rc` tag. Client/command-side only — no
+data-path change.
+
+* **Native `CommandClient` per-node delay test + rule-table snapshot** (`SPECS/014`).
+  Two new RPCs restore, over the native libbox `CommandClient`, what upstream only
+  exposed through the (now-dropped) Clash API:
+    * **`URLTestOutbound`** — measures the latency of a single node (an outbound **or**
+      a WG/AWG/Tailscale endpoint) with a caller-supplied URL and timeout, returning a
+      synchronous `{delay, error}`. Unlike the group-level `URLTest` it never requires
+      an `OutboundGroup`; mass-pinging stays a client-side worker pool. Errors travel in
+      the response payload (not as a gRPC error), and `delay==0 && error==""` is a
+      successful 0 ms test — parity with Clash `/proxies/{name}/delay`.
+    * **`GetRules`** — a snapshot of the routing rule table, **route and DNS** rules,
+      split by `isDNS`. Route fields match Clash `/rules`; DNS rules go beyond Clash,
+      which never exposed them (needs a new `adapter.DNSRouter.Rules()` getter).
+  Both handlers are gated by the **`with_lx_command`** build-tag (real handler vs a
+  `codes.Unimplemented` stub twin, mirroring `started_service_usbip{,_stub}.go`); the
+  tag is baked into the Android AAR (`build_libbox` `sharedTags`) and the desktop
+  `LX_TAGS`. A tag-less build is behaviourally equivalent to upstream.
+* **Pinned, reproducible proto regeneration** (`Makefile.lx`: `lx-proto` /
+  `lx-proto-install`). The codegen plugins are pinned — `protoc-gen-go` v1.36.11
+  (= go.mod) and `protoc-gen-go-grpc` v1.5.1 — so `*.pb.go` regenerates idempotently
+  across a rebase instead of drifting on `@latest`. The `.proto` seam sits under a
+  `// lx:` marker; the generated code carries no markers.
+
 #### v1.14.0-lx.1-rc.1
 
 **Pre-release — not device-verified.** First build on the upstream 1.14 base. The

@@ -80,6 +80,13 @@ func init() {
 	// rejects any wireguard-with-AWG or xhttp config at runtime ("support not built").
 	sharedTags = append(sharedTags, "with_xhttp", "with_awg")
 	// lx:end awg,xhttp
+	// lx:begin lx_command
+	// SPEC 014 — bake the libbox command-protocol extensions (URLTestOutbound, GetRules)
+	// into the AAR. Without the tag the generated RPCs are still registered but the
+	// daemon answers codes.Unimplemented (started_service_command_lx_stub.go), so LxBox's
+	// per-node delay test and rule-table screen would fail. CONSTITUTION §3.6 pt.6.
+	sharedTags = append(sharedTags, "with_lx_command")
+	// lx:end lx_command
 	darwinTags = append(darwinTags, "with_dhcp", "grpcnotrace")
 	// memcTags = append(memcTags, "with_tailscale")
 	// lx:begin no-tailscale

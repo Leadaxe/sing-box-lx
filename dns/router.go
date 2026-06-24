@@ -126,6 +126,18 @@ func (r *Router) Initialize(rules []option.DNSRule) error {
 	return nil
 }
 
+// lx:begin lx_command
+// Rules exposes the live DNS rule table for the SPEC 014 GetRules command RPC
+// (adapter.DNSRouter has no rule getter upstream — see adapter/dns.go). Read under
+// rulesAccess because Start/Close swap r.rules under the same lock.
+func (r *Router) Rules() []adapter.DNSRule {
+	r.rulesAccess.RLock()
+	defer r.rulesAccess.RUnlock()
+	return r.rules
+}
+
+// lx:end lx_command
+
 func (r *Router) Start(stage adapter.StartStage) error {
 	monitor := taskmonitor.New(r.logger, C.StartTimeout)
 	switch stage {

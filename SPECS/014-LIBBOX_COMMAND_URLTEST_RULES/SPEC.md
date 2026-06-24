@@ -3,7 +3,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — расширение libbox command-протокола (§3.6) |
-| Статус | D (draft) |
+| Статус | A (accepted) — реализовано на ветке `lx-1.14`, пререлиз `v1.14.0-lx.1-rc.2` |
 
 Добавить в нативный libbox **CommandClient** (gRPC `StartedService`) два RPC, восстанавливающих в нашем канале управления то, что upstream отдаёт только через вырезанный Clash API:
 
@@ -110,8 +110,9 @@ Handler (`daemon/started_service_command_lx.go`): снапшот (unary, пра�
 
 ### 3.5 Детерминированная регенерация proto (ОБЯЗАТЕЛЬНЫЙ deliverable, §3.6 п.5)
 Сегодня генерация невоспроизводима: `make proto` ([Makefile](../../Makefile)) шеллит системный `protoc` из PATH, `proto_install` ставит `protoc-gen-go@latest` / `protoc-gen-go-grpc@latest`. На ребейзе `.pb.go` нельзя воспроизвести байт-в-байт.
-- Добавить в `Makefile.lx` proto-таргет с **зафиксированными** версиями `protoc` и обоих плагинов (pin в команде/переменных).
+- Добавлены в `Makefile.lx` таргеты `lx-proto-install` / `lx-proto` с **зафиксированными** версиями плагинов: `protoc-gen-go` = **v1.36.11** (= go.mod `google.golang.org/protobuf`), `protoc-gen-go-grpc` = **v1.5.1** (совместим с `grpc.SupportPackageIsVersion9`). `protoc` сам — внешняя зависимость (ставится пакетным менеджером, напр. `brew install protobuf`); генератор `cmd/internal/protogen` его драйвит и срезает version-баннер (`NormalizeGeneratedProtoFile`), так что номер сборки `protoc` в вывод **не течёт**. `gofumpt -w` нормализует импорты под committed-стиль. Регенерация **идемпотентна** под этим тулчейном (повторный прогон даёт нулевой дифф).
 - `*.pb.go` / `*_grpc.pb.go` — машинный вывод, руками не правятся, маркеров не несут; на ребейзе **регенерируются** из смерженного `.proto`, не мёржатся текстом.
+- **Цена pinned-тулчейна (audited):** committed `.pb.go` исторически сгенерированы иным тулчейном, чем пин (string-rawDesc + `(Enum)(0)`-стиль — комбинация, недостижимая одной версией protoc-gen-go с локальным `protoc`). Поэтому первая регенерация под пином — помимо `daemon/started_service.*` — косметически переписывает и соседние generated-файлы того же `make proto`-набора: `daemon/managed_service.{pb,_grpc.pb}.go`, `experimental/v2rayapi/stats.{pb,_grpc.pb}.go`, `transport/v2raygrpc/stream.{pb,_grpc.pb}.go` (`(Enum)(0)`→`Enum(0)`, `status.Error`→`Errorf`, import-order). Это разовая нормализация под канонический пин; дальше всё воспроизводимо.
 
 ### 3.6 CI-инвариант (§3.6 п.7)
 В `lx-ci.yml` — проверка обеих сборок: **без** `with_lx_command` (компилируется, `*_stub.go` отдаёт `Unimplemented`, поведение = upstream) и **с** тегом (RPC обслуживается). Usbip-паттерн делает проверку дешёвой.
@@ -132,7 +133,12 @@ Handler (`daemon/started_service_command_lx.go`): снапшот (unary, пра�
 4. `Makefile.lx` proto-таргет регенерирует `*.pb.go` воспроизводимо (зафиксированные версии); сгенерированный код gofmt-чист и не содержит `// lx:`-маркеров.
 5. CI зелёный на обеих сборках (§3.6).
 6. `with_lx_command` в `sharedTags` (AAR) и `LX_TAGS` (desktop); `Libbox.version()` → `1.14.0-lx.N`.
-7. Перечень тронутых общих файлов в SPEC совпадает с фактическим диффом (§3.6 п.8): `daemon/started_service.proto` (+регенерация `.pb.go`/`_grpc.pb.go`), `adapter/dns.go`, `dns/router.go`, `cmd/internal/build_libbox/main.go`, `Makefile.lx`, `lx-ci.yml`. Логика — в новых `*_lx.go`/`*_stub.go`.
+7. Перечень тронутых общих файлов в SPEC совпадает с фактическим диффом (§3.6 п.8):
+   - **Швы под `// lx:`-маркером:** `daemon/started_service.proto`, `adapter/dns.go`, `dns/router.go`, `cmd/internal/build_libbox/main.go`.
+   - **Сборка/CI:** `Makefile.lx` (LX_TAGS + pinned proto-таргет), `.github/workflows/lx-ci.yml`.
+   - **Регенерация SPEC-proto:** `daemon/started_service.{pb,_grpc.pb}.go`.
+   - **Косметическая регенерация под пин (разовая, см. §3.5):** `daemon/managed_service.{pb,_grpc.pb}.go`, `experimental/v2rayapi/stats.{pb,_grpc.pb}.go`, `transport/v2raygrpc/stream.{pb,_grpc.pb}.go`.
+   - **Логика — в новых файлах:** `daemon/started_service_command_lx.go` + `_stub.go`, `experimental/libbox/command_client_command_lx.go`.
 
 ---
 

@@ -38,6 +38,13 @@ service StartedService {
   rpc StartTailscaleSSHSession(stream TailscaleSSHClientMessage) returns (stream TailscaleSSHServerMessage) {}
   rpc ProvideUSBDevices(stream USBProviderMessage) returns (stream USBServerMessage) {}
   rpc SubscribeUSBIPServerStatus(google.protobuf.Empty) returns (stream USBIPServerStatusUpdate) {}
+
+  // lx:begin lx_command
+
+  rpc URLTestOutbound(URLTestOutboundRequest) returns (URLTestOutboundResponse) {}
+  rpc GetRules(google.protobuf.Empty) returns (RuleList) {}
+
+  // lx:end lx_command
 }
 
 message Version {
@@ -516,3 +523,27 @@ enum USBBackend {
   USB_BACKEND_DARWIN_IOKIT = 3;
   USB_BACKEND_WINDOWS_VBOXUSB = 4;
 }
+
+// lx:begin lx_command
+
+message URLTestOutboundRequest {
+  string outboundTag = 1;
+  string link = 2;
+  uint32 timeout = 3;
+}
+message URLTestOutboundResponse {
+  uint32 delay = 1;
+  string error = 2;
+}
+
+message Rule {
+  string type = 1;
+  string payload = 2;
+  string action = 3;
+  bool isDNS = 4;
+}
+message RuleList {
+  repeated Rule rules = 1;
+}
+
+// lx:end lx_command

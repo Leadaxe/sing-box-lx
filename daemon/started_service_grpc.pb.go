@@ -43,6 +43,8 @@ const (
 	StartedService_StartTailscaleSSHSession_FullMethodName   = "/daemon.StartedService/StartTailscaleSSHSession"
 	StartedService_ProvideUSBDevices_FullMethodName          = "/daemon.StartedService/ProvideUSBDevices"
 	StartedService_SubscribeUSBIPServerStatus_FullMethodName = "/daemon.StartedService/SubscribeUSBIPServerStatus"
+	StartedService_URLTestOutbound_FullMethodName            = "/daemon.StartedService/URLTestOutbound"
+	StartedService_GetRules_FullMethodName                   = "/daemon.StartedService/GetRules"
 )
 
 // StartedServiceClient is the client API for StartedService service.
@@ -77,6 +79,8 @@ type StartedServiceClient interface {
 	StartTailscaleSSHSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TailscaleSSHClientMessage, TailscaleSSHServerMessage], error)
 	ProvideUSBDevices(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[USBProviderMessage, USBServerMessage], error)
 	SubscribeUSBIPServerStatus(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[USBIPServerStatusUpdate], error)
+	URLTestOutbound(ctx context.Context, in *URLTestOutboundRequest, opts ...grpc.CallOption) (*URLTestOutboundResponse, error)
+	GetRules(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RuleList, error)
 }
 
 type startedServiceClient struct {
@@ -481,6 +485,26 @@ func (c *startedServiceClient) SubscribeUSBIPServerStatus(ctx context.Context, i
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type StartedService_SubscribeUSBIPServerStatusClient = grpc.ServerStreamingClient[USBIPServerStatusUpdate]
 
+func (c *startedServiceClient) URLTestOutbound(ctx context.Context, in *URLTestOutboundRequest, opts ...grpc.CallOption) (*URLTestOutboundResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(URLTestOutboundResponse)
+	err := c.cc.Invoke(ctx, StartedService_URLTestOutbound_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) GetRules(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RuleList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RuleList)
+	err := c.cc.Invoke(ctx, StartedService_GetRules_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StartedServiceServer is the server API for StartedService service.
 // All implementations must embed UnimplementedStartedServiceServer
 // for forward compatibility.
@@ -513,6 +537,8 @@ type StartedServiceServer interface {
 	StartTailscaleSSHSession(grpc.BidiStreamingServer[TailscaleSSHClientMessage, TailscaleSSHServerMessage]) error
 	ProvideUSBDevices(grpc.BidiStreamingServer[USBProviderMessage, USBServerMessage]) error
 	SubscribeUSBIPServerStatus(*emptypb.Empty, grpc.ServerStreamingServer[USBIPServerStatusUpdate]) error
+	URLTestOutbound(context.Context, *URLTestOutboundRequest) (*URLTestOutboundResponse, error)
+	GetRules(context.Context, *emptypb.Empty) (*RuleList, error)
 	mustEmbedUnimplementedStartedServiceServer()
 }
 
@@ -524,115 +550,123 @@ type StartedServiceServer interface {
 type UnimplementedStartedServiceServer struct{}
 
 func (UnimplementedStartedServiceServer) GetVersion(context.Context, *emptypb.Empty) (*Version, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetVersion not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method GetVersion not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeServiceStatus(*emptypb.Empty, grpc.ServerStreamingServer[ServiceStatus]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeServiceStatus not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeServiceStatus not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeLog(*emptypb.Empty, grpc.ServerStreamingServer[Log]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeLog not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeLog not implemented")
 }
 
 func (UnimplementedStartedServiceServer) GetDefaultLogLevel(context.Context, *emptypb.Empty) (*DefaultLogLevel, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetDefaultLogLevel not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method GetDefaultLogLevel not implemented")
 }
 
 func (UnimplementedStartedServiceServer) ClearLogs(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method ClearLogs not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method ClearLogs not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeStatus(*SubscribeStatusRequest, grpc.ServerStreamingServer[Status]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeStatus not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeStatus not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeGroups(*emptypb.Empty, grpc.ServerStreamingServer[Groups]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeGroups not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeGroups not implemented")
 }
 
 func (UnimplementedStartedServiceServer) GetClashModeStatus(context.Context, *emptypb.Empty) (*ClashModeStatus, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetClashModeStatus not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method GetClashModeStatus not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeClashMode(*emptypb.Empty, grpc.ServerStreamingServer[ClashMode]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeClashMode not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeClashMode not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SetClashMode(context.Context, *ClashMode) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method SetClashMode not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method SetClashMode not implemented")
 }
 
 func (UnimplementedStartedServiceServer) URLTest(context.Context, *URLTestRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method URLTest not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method URLTest not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SelectOutbound(context.Context, *SelectOutboundRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method SelectOutbound not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method SelectOutbound not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SetGroupExpand(context.Context, *SetGroupExpandRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method SetGroupExpand not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method SetGroupExpand not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeConnections(*SubscribeConnectionsRequest, grpc.ServerStreamingServer[ConnectionEvents]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeConnections not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeConnections not implemented")
 }
 
 func (UnimplementedStartedServiceServer) CloseConnection(context.Context, *CloseConnectionRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method CloseConnection not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method CloseConnection not implemented")
 }
 
 func (UnimplementedStartedServiceServer) CloseAllConnections(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method CloseAllConnections not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method CloseAllConnections not implemented")
 }
 
 func (UnimplementedStartedServiceServer) GetDeprecatedWarnings(context.Context, *emptypb.Empty) (*DeprecatedWarnings, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetDeprecatedWarnings not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method GetDeprecatedWarnings not implemented")
 }
 
 func (UnimplementedStartedServiceServer) GetStartedAt(context.Context, *emptypb.Empty) (*StartedAt, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetStartedAt not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method GetStartedAt not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeOutbounds(*emptypb.Empty, grpc.ServerStreamingServer[OutboundList]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeOutbounds not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeOutbounds not implemented")
 }
 
 func (UnimplementedStartedServiceServer) StartNetworkQualityTest(*NetworkQualityTestRequest, grpc.ServerStreamingServer[NetworkQualityTestProgress]) error {
-	return status.Error(codes.Unimplemented, "method StartNetworkQualityTest not implemented")
+	return status.Errorf(codes.Unimplemented, "method StartNetworkQualityTest not implemented")
 }
 
 func (UnimplementedStartedServiceServer) StartSTUNTest(*STUNTestRequest, grpc.ServerStreamingServer[STUNTestProgress]) error {
-	return status.Error(codes.Unimplemented, "method StartSTUNTest not implemented")
+	return status.Errorf(codes.Unimplemented, "method StartSTUNTest not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeTailscaleStatus(*emptypb.Empty, grpc.ServerStreamingServer[TailscaleStatusUpdate]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeTailscaleStatus not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeTailscaleStatus not implemented")
 }
 
 func (UnimplementedStartedServiceServer) StartTailscalePing(*TailscalePingRequest, grpc.ServerStreamingServer[TailscalePingResponse]) error {
-	return status.Error(codes.Unimplemented, "method StartTailscalePing not implemented")
+	return status.Errorf(codes.Unimplemented, "method StartTailscalePing not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SetTailscaleExitNode(context.Context, *SetTailscaleExitNodeRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method SetTailscaleExitNode not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method SetTailscaleExitNode not implemented")
 }
 
 func (UnimplementedStartedServiceServer) TailscaleLogout(context.Context, *TailscaleLogoutRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method TailscaleLogout not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method TailscaleLogout not implemented")
 }
 
 func (UnimplementedStartedServiceServer) StartTailscaleSSHSession(grpc.BidiStreamingServer[TailscaleSSHClientMessage, TailscaleSSHServerMessage]) error {
-	return status.Error(codes.Unimplemented, "method StartTailscaleSSHSession not implemented")
+	return status.Errorf(codes.Unimplemented, "method StartTailscaleSSHSession not implemented")
 }
 
 func (UnimplementedStartedServiceServer) ProvideUSBDevices(grpc.BidiStreamingServer[USBProviderMessage, USBServerMessage]) error {
-	return status.Error(codes.Unimplemented, "method ProvideUSBDevices not implemented")
+	return status.Errorf(codes.Unimplemented, "method ProvideUSBDevices not implemented")
 }
 
 func (UnimplementedStartedServiceServer) SubscribeUSBIPServerStatus(*emptypb.Empty, grpc.ServerStreamingServer[USBIPServerStatusUpdate]) error {
-	return status.Error(codes.Unimplemented, "method SubscribeUSBIPServerStatus not implemented")
+	return status.Errorf(codes.Unimplemented, "method SubscribeUSBIPServerStatus not implemented")
+}
+
+func (UnimplementedStartedServiceServer) URLTestOutbound(context.Context, *URLTestOutboundRequest) (*URLTestOutboundResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method URLTestOutbound not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetRules(context.Context, *emptypb.Empty) (*RuleList, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRules not implemented")
 }
 func (UnimplementedStartedServiceServer) mustEmbedUnimplementedStartedServiceServer() {}
 func (UnimplementedStartedServiceServer) testEmbeddedByValue()                        {}
@@ -645,7 +679,7 @@ type UnsafeStartedServiceServer interface {
 }
 
 func RegisterStartedServiceServer(s grpc.ServiceRegistrar, srv StartedServiceServer) {
-	// If the following call panics, it indicates UnimplementedStartedServiceServer was
+	// If the following call pancis, it indicates UnimplementedStartedServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
@@ -1053,6 +1087,42 @@ func _StartedService_SubscribeUSBIPServerStatus_Handler(srv interface{}, stream 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type StartedService_SubscribeUSBIPServerStatusServer = grpc.ServerStreamingServer[USBIPServerStatusUpdate]
 
+func _StartedService_URLTestOutbound_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(URLTestOutboundRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).URLTestOutbound(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_URLTestOutbound_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).URLTestOutbound(ctx, req.(*URLTestOutboundRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_GetRules_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetRules(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetRules_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetRules(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StartedService_ServiceDesc is the grpc.ServiceDesc for StartedService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1115,6 +1185,14 @@ var StartedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TailscaleLogout",
 			Handler:    _StartedService_TailscaleLogout_Handler,
+		},
+		{
+			MethodName: "URLTestOutbound",
+			Handler:    _StartedService_URLTestOutbound_Handler,
+		},
+		{
+			MethodName: "GetRules",
+			Handler:    _StartedService_GetRules_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
