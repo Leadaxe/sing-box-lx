@@ -3,7 +3,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — расширения libbox command-протокола (CONSTITUTION §3.6) |
-| Статус | M (mixed) — `URLTestOutbound` + `GetRules` сделаны/зашиплены (`v1.14.0-lx.1-rc.2`); `getGroups`/`getOutbounds` + фикс `len<2` — TODO (target `rc.4`) |
+| Статус | M (mixed) — `URLTestOutbound` + `GetRules` в `v1.14.0-lx.1-rc.2`; `GetGroups`/`GetOutbounds` + фикс `len<2` в `v1.14.0-lx.1-rc.4` |
 
 **Единый дом всех доработок нативного libbox CommandClient** (gRPC `StartedService`), доведших его до минимума, на котором UI LxBox реально работает после переезда с Clash API (см. [SPEC 014](../014-CLASH_API_TO_COMMANDCLIENT_MIGRATION/SPEC.md) — сам переезд).
 
@@ -13,9 +13,9 @@
 |---|-----------|-----------|--------|
 | 1 | `URLTestOutbound` | per-node delay-тест (outbound/endpoint), URL + timeout, синхронный ответ | ✅ rc.2 |
 | 2 | `GetRules` | снапшот таблицы правил (route + DNS) | ✅ rc.2 |
-| 3 | `GetGroups` | unary pull-снапшот групп (дыра pull vs push) | ⬜ rc.4 |
-| 4 | `GetOutbounds` | unary pull-снапшот плоского списка узлов | ⬜ rc.4 |
-| 5 | фикс `len<2` в `readGroups()` | upstream-баг: группы с 0–1 узлом молча теряются | ⬜ rc.4 |
+| 3 | `GetGroups` | unary pull-снапшот групп (дыра pull vs push) | ✅ rc.4 |
+| 4 | `GetOutbounds` | unary pull-снапшот плоского списка узлов | ✅ rc.4 |
+| 5 | фикс `len<2` в `readGroups()` | upstream-баг: группы с 0–1 узлом молча теряются | ✅ rc.4 |
 
 Scope: **client/command-сторона only** (§3.1 client-only, §3.6 п.1 «только мост»). Build-tag: **`with_lx_command`**.
 
@@ -137,7 +137,7 @@ Clash DNS-правила не отдавал — эталона нет, мы п�
 
 Клиент: `func (c *CommandClient) GetRules() (RuleIterator, error)`.
 
-### 3.3 `GetGroups` ⬜ rc.4 — закрытие дыры pull vs push
+### 3.3 `GetGroups` ✅ rc.4 — закрытие дыры pull vs push
 
 **Проблема (pull vs push).** Clash был **pull**: `GET /proxies` → снапшот групп в любой момент. CommandClient — **push**: группы приходят только потоком `SubscribeGroups`. Стрим шлёт начальный снапшот первым `Send` (`readGroups()` до `select`) — НО только если открылся: `waitForStarted` ([started_service.go](../../daemon/started_service.go)) отклоняет подписку с ошибкой, когда сервис не `STARTED`/`STARTING` (`IDLE`, `STOPPING`, `FATAL` при рестарте/реконнекте). Если стрим не открылся или порвался — **перечитать нечем**: клиент вынужден пересоздавать весь `screenClient` (тяжёлый `refreshScreen`, рвущий `SubscribeConnections`). **На устройстве подтверждено:** watchdog делает 2 ретрая через `refreshScreen`, группы остаются пустыми (`tunnel=connected`, трафик идёт, но `groups=[]`, `nodes=0`). Переподписка ≠ pull.
 
@@ -151,7 +151,7 @@ Handler (`started_service_command_lx.go`): `waitForStarted(ctx)` (как стр�
 
 Клиент: `func (c *CommandClient) GetGroups() (GroupIterator, error)`.
 
-### 3.4 `GetOutbounds` ⬜ rc.4
+### 3.4 `GetOutbounds` ✅ rc.4
 
 Та же дыра pull vs push для плоского списка узлов. `SubscribeGroups` покрывает лишь узлы внутри групп; **одиночные outbound и любые endpoint'ы** (WG/AWG) видны только через `SubscribeOutbounds` (см. карту §3.1). Поэтому нужен **и** `GetOutbounds`, не только `GetGroups`.
 ```proto
@@ -163,7 +163,7 @@ Handler: `readOutbounds` как отдельной функции **нет** (`S
 
 Клиент: `func (c *CommandClient) GetOutbounds() (OutboundGroupItemIterator, error)`.
 
-### 3.5 Фикс `len<2` в `readGroups()` ⬜ rc.4 — upstream-баг
+### 3.5 Фикс `len<2` в `readGroups()` ✅ rc.4 — upstream-баг
 
 `started_service.go:495`:
 ```go

@@ -10,6 +10,26 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.4
+
+**Pre-release — not device-verified.** Completes the command-protocol work (SPEC 015)
+needed for the Clash-API → CommandClient migration. All behind `with_lx_command`.
+
+* **`GetGroups` / `GetOutbounds` — unary pull-snapshots of outbound groups and the
+  flat outbound/endpoint list.** The native CommandClient was push-only: groups arrived
+  solely via the `SubscribeGroups` stream, whose initial snapshot is lost if the stream
+  never opened (service not yet `STARTED` at subscribe) or broke. The client then had no
+  cheap way to re-read group state — the main screen could stay empty (tunnel connected,
+  traffic flowing, `groups=[]`). These two getters fetch the current snapshot on demand,
+  Clash-`GET /proxies`-style, without recreating the whole client / tearing down other
+  streams. Both are needed: `SubscribeGroups` covers only in-group nodes, whereas
+  standalone outbounds and endpoints (WG/AWG/Tailscale) appear only in the flat list.
+* **Single-node / empty groups no longer disappear.** `readGroups()` silently dropped
+  any group with fewer than 2 items (upstream commit `5bc0dfa9`), hiding single-node
+  selectors — a regression vs Clash, whose `/proxies` returned `group.All()` unfiltered.
+  `readGroups()` is the single source feeding both the `SubscribeGroups` startup
+  broadcast and the new `GetGroups`, so the fix covers both paths.
+
 #### v1.14.0-lx.1-rc.3
 
 **Pre-release — not device-verified.** Fixes a fatal Android start regression
