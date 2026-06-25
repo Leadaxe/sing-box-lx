@@ -45,6 +45,8 @@ const (
 	StartedService_SubscribeUSBIPServerStatus_FullMethodName = "/daemon.StartedService/SubscribeUSBIPServerStatus"
 	StartedService_URLTestOutbound_FullMethodName            = "/daemon.StartedService/URLTestOutbound"
 	StartedService_GetRules_FullMethodName                   = "/daemon.StartedService/GetRules"
+	StartedService_GetGroups_FullMethodName                  = "/daemon.StartedService/GetGroups"
+	StartedService_GetOutbounds_FullMethodName               = "/daemon.StartedService/GetOutbounds"
 )
 
 // StartedServiceClient is the client API for StartedService service.
@@ -81,6 +83,8 @@ type StartedServiceClient interface {
 	SubscribeUSBIPServerStatus(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[USBIPServerStatusUpdate], error)
 	URLTestOutbound(ctx context.Context, in *URLTestOutboundRequest, opts ...grpc.CallOption) (*URLTestOutboundResponse, error)
 	GetRules(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RuleList, error)
+	GetGroups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Groups, error)
+	GetOutbounds(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*OutboundList, error)
 }
 
 type startedServiceClient struct {
@@ -505,6 +509,26 @@ func (c *startedServiceClient) GetRules(ctx context.Context, in *emptypb.Empty, 
 	return out, nil
 }
 
+func (c *startedServiceClient) GetGroups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Groups, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Groups)
+	err := c.cc.Invoke(ctx, StartedService_GetGroups_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *startedServiceClient) GetOutbounds(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*OutboundList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OutboundList)
+	err := c.cc.Invoke(ctx, StartedService_GetOutbounds_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StartedServiceServer is the server API for StartedService service.
 // All implementations must embed UnimplementedStartedServiceServer
 // for forward compatibility.
@@ -539,6 +563,8 @@ type StartedServiceServer interface {
 	SubscribeUSBIPServerStatus(*emptypb.Empty, grpc.ServerStreamingServer[USBIPServerStatusUpdate]) error
 	URLTestOutbound(context.Context, *URLTestOutboundRequest) (*URLTestOutboundResponse, error)
 	GetRules(context.Context, *emptypb.Empty) (*RuleList, error)
+	GetGroups(context.Context, *emptypb.Empty) (*Groups, error)
+	GetOutbounds(context.Context, *emptypb.Empty) (*OutboundList, error)
 	mustEmbedUnimplementedStartedServiceServer()
 }
 
@@ -667,6 +693,14 @@ func (UnimplementedStartedServiceServer) URLTestOutbound(context.Context, *URLTe
 
 func (UnimplementedStartedServiceServer) GetRules(context.Context, *emptypb.Empty) (*RuleList, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetRules not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetGroups(context.Context, *emptypb.Empty) (*Groups, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetGroups not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetOutbounds(context.Context, *emptypb.Empty) (*OutboundList, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetOutbounds not implemented")
 }
 func (UnimplementedStartedServiceServer) mustEmbedUnimplementedStartedServiceServer() {}
 func (UnimplementedStartedServiceServer) testEmbeddedByValue()                        {}
@@ -1123,6 +1157,42 @@ func _StartedService_GetRules_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StartedService_GetGroups_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetGroups(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetGroups_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetGroups(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StartedService_GetOutbounds_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetOutbounds(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetOutbounds_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetOutbounds(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StartedService_ServiceDesc is the grpc.ServiceDesc for StartedService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1193,6 +1263,14 @@ var StartedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetRules",
 			Handler:    _StartedService_GetRules_Handler,
+		},
+		{
+			MethodName: "GetGroups",
+			Handler:    _StartedService_GetGroups_Handler,
+		},
+		{
+			MethodName: "GetOutbounds",
+			Handler:    _StartedService_GetOutbounds_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

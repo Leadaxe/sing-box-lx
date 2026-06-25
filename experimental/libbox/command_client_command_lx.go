@@ -71,6 +71,35 @@ func (c *CommandClient) GetRules() (RuleIterator, error) {
 	})
 }
 
+// GetGroups returns a pull snapshot of the outbound groups — the same data the
+// CommandGroup subscription pushes, but fetched synchronously on demand. SPEC 015 §3.3:
+// the subscription only delivers an initial snapshot if its stream opened; a lost or
+// never-opened stream left the client unable to re-read group state (empty main screen).
+// This getter closes that gap without recreating the client. Reuses the same gRPC→libbox
+// conversion as the subscription, so the returned iterator is identical in shape.
+func (c *CommandClient) GetGroups() (OutboundGroupIterator, error) {
+	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (OutboundGroupIterator, error) {
+		groups, err := client.GetGroups(ctx, &emptypb.Empty{})
+		if err != nil {
+			return nil, E.Cause(err, "get groups")
+		}
+		return outboundGroupIteratorFromGRPC(groups), nil
+	})
+}
+
+// GetOutbounds returns a pull snapshot of the flat outbound/endpoint list — the same
+// data SubscribeOutbounds pushes. Needed alongside GetGroups because standalone outbounds
+// and endpoints (WG/AWG/Tailscale) appear only in this flat list, not in CommandGroup.
+func (c *CommandClient) GetOutbounds() (OutboundGroupItemIterator, error) {
+	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (OutboundGroupItemIterator, error) {
+		list, err := client.GetOutbounds(ctx, &emptypb.Empty{})
+		if err != nil {
+			return nil, E.Cause(err, "get outbounds")
+		}
+		return outboundGroupItemListFromGRPC(list), nil
+	})
+}
+
 // Rule is the libbox view of one routing rule. Type/Payload/Action mirror the Clash
 // /rules JSON; IsDNS distinguishes route rules (false) from DNS rules (true).
 type Rule struct {

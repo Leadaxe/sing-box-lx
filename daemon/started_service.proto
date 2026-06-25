@@ -43,6 +43,8 @@ service StartedService {
 
   rpc URLTestOutbound(URLTestOutboundRequest) returns (URLTestOutboundResponse) {}
   rpc GetRules(google.protobuf.Empty) returns (RuleList) {}
+  rpc GetGroups(google.protobuf.Empty) returns (Groups) {}
+  rpc GetOutbounds(google.protobuf.Empty) returns (OutboundList) {}
 
   // lx:end lx_command
 }

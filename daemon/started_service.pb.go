@@ -5291,7 +5291,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x17USB_BACKEND_LINUX_SYSFS\x10\x01\x12\x17\n" +
 	"\x13USB_BACKEND_DYNAMIC\x10\x02\x12\x1c\n" +
 	"\x18USB_BACKEND_DARWIN_IOKIT\x10\x03\x12\x1f\n" +
-	"\x1bUSB_BACKEND_WINDOWS_VBOXUSB\x10\x042\xe2\x11\n" +
+	"\x1bUSB_BACKEND_WINDOWS_VBOXUSB\x10\x042\xd9\x12\n" +
 	"\x0eStartedService\x127\n" +
 	"\n" +
 	"GetVersion\x12\x16.google.protobuf.Empty\x1a\x0f.daemon.Version\"\x00\x12K\n" +
@@ -5323,7 +5323,9 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x11ProvideUSBDevices\x12\x1a.daemon.USBProviderMessage\x1a\x18.daemon.USBServerMessage\"\x00(\x010\x01\x12Y\n" +
 	"\x1aSubscribeUSBIPServerStatus\x12\x16.google.protobuf.Empty\x1a\x1f.daemon.USBIPServerStatusUpdate\"\x000\x01\x12T\n" +
 	"\x0fURLTestOutbound\x12\x1e.daemon.URLTestOutboundRequest\x1a\x1f.daemon.URLTestOutboundResponse\"\x00\x126\n" +
-	"\bGetRules\x12\x16.google.protobuf.Empty\x1a\x10.daemon.RuleList\"\x00B%Z#github.com/sagernet/sing-box/daemonb\x06proto3"
+	"\bGetRules\x12\x16.google.protobuf.Empty\x1a\x10.daemon.RuleList\"\x00\x125\n" +
+	"\tGetGroups\x12\x16.google.protobuf.Empty\x1a\x0e.daemon.Groups\"\x00\x12>\n" +
+	"\fGetOutbounds\x12\x16.google.protobuf.Empty\x1a\x14.daemon.OutboundList\"\x00B%Z#github.com/sagernet/sing-box/daemonb\x06proto3"
 
 var (
 	file_daemon_started_service_proto_rawDescOnce sync.Once
@@ -5488,38 +5490,42 @@ var file_daemon_started_service_proto_depIdxs = []int32{
 	71, // 69: daemon.StartedService.SubscribeUSBIPServerStatus:input_type -> google.protobuf.Empty
 	66, // 70: daemon.StartedService.URLTestOutbound:input_type -> daemon.URLTestOutboundRequest
 	71, // 71: daemon.StartedService.GetRules:input_type -> google.protobuf.Empty
-	5,  // 72: daemon.StartedService.GetVersion:output_type -> daemon.Version
-	6,  // 73: daemon.StartedService.SubscribeServiceStatus:output_type -> daemon.ServiceStatus
-	8,  // 74: daemon.StartedService.SubscribeLog:output_type -> daemon.Log
-	9,  // 75: daemon.StartedService.GetDefaultLogLevel:output_type -> daemon.DefaultLogLevel
-	71, // 76: daemon.StartedService.ClearLogs:output_type -> google.protobuf.Empty
-	10, // 77: daemon.StartedService.SubscribeStatus:output_type -> daemon.Status
-	11, // 78: daemon.StartedService.SubscribeGroups:output_type -> daemon.Groups
-	18, // 79: daemon.StartedService.GetClashModeStatus:output_type -> daemon.ClashModeStatus
-	17, // 80: daemon.StartedService.SubscribeClashMode:output_type -> daemon.ClashMode
-	71, // 81: daemon.StartedService.SetClashMode:output_type -> google.protobuf.Empty
-	71, // 82: daemon.StartedService.URLTest:output_type -> google.protobuf.Empty
-	71, // 83: daemon.StartedService.SelectOutbound:output_type -> google.protobuf.Empty
-	71, // 84: daemon.StartedService.SetGroupExpand:output_type -> google.protobuf.Empty
-	21, // 85: daemon.StartedService.SubscribeConnections:output_type -> daemon.ConnectionEvents
-	71, // 86: daemon.StartedService.CloseConnection:output_type -> google.protobuf.Empty
-	71, // 87: daemon.StartedService.CloseAllConnections:output_type -> google.protobuf.Empty
-	25, // 88: daemon.StartedService.GetDeprecatedWarnings:output_type -> daemon.DeprecatedWarnings
-	27, // 89: daemon.StartedService.GetStartedAt:output_type -> daemon.StartedAt
-	28, // 90: daemon.StartedService.SubscribeOutbounds:output_type -> daemon.OutboundList
-	30, // 91: daemon.StartedService.StartNetworkQualityTest:output_type -> daemon.NetworkQualityTestProgress
-	32, // 92: daemon.StartedService.StartSTUNTest:output_type -> daemon.STUNTestProgress
-	33, // 93: daemon.StartedService.SubscribeTailscaleStatus:output_type -> daemon.TailscaleStatusUpdate
-	38, // 94: daemon.StartedService.StartTailscalePing:output_type -> daemon.TailscalePingResponse
-	71, // 95: daemon.StartedService.SetTailscaleExitNode:output_type -> google.protobuf.Empty
-	71, // 96: daemon.StartedService.TailscaleLogout:output_type -> google.protobuf.Empty
-	45, // 97: daemon.StartedService.StartTailscaleSSHSession:output_type -> daemon.TailscaleSSHServerMessage
-	52, // 98: daemon.StartedService.ProvideUSBDevices:output_type -> daemon.USBServerMessage
-	63, // 99: daemon.StartedService.SubscribeUSBIPServerStatus:output_type -> daemon.USBIPServerStatusUpdate
-	67, // 100: daemon.StartedService.URLTestOutbound:output_type -> daemon.URLTestOutboundResponse
-	69, // 101: daemon.StartedService.GetRules:output_type -> daemon.RuleList
-	72, // [72:102] is the sub-list for method output_type
-	42, // [42:72] is the sub-list for method input_type
+	71, // 72: daemon.StartedService.GetGroups:input_type -> google.protobuf.Empty
+	71, // 73: daemon.StartedService.GetOutbounds:input_type -> google.protobuf.Empty
+	5,  // 74: daemon.StartedService.GetVersion:output_type -> daemon.Version
+	6,  // 75: daemon.StartedService.SubscribeServiceStatus:output_type -> daemon.ServiceStatus
+	8,  // 76: daemon.StartedService.SubscribeLog:output_type -> daemon.Log
+	9,  // 77: daemon.StartedService.GetDefaultLogLevel:output_type -> daemon.DefaultLogLevel
+	71, // 78: daemon.StartedService.ClearLogs:output_type -> google.protobuf.Empty
+	10, // 79: daemon.StartedService.SubscribeStatus:output_type -> daemon.Status
+	11, // 80: daemon.StartedService.SubscribeGroups:output_type -> daemon.Groups
+	18, // 81: daemon.StartedService.GetClashModeStatus:output_type -> daemon.ClashModeStatus
+	17, // 82: daemon.StartedService.SubscribeClashMode:output_type -> daemon.ClashMode
+	71, // 83: daemon.StartedService.SetClashMode:output_type -> google.protobuf.Empty
+	71, // 84: daemon.StartedService.URLTest:output_type -> google.protobuf.Empty
+	71, // 85: daemon.StartedService.SelectOutbound:output_type -> google.protobuf.Empty
+	71, // 86: daemon.StartedService.SetGroupExpand:output_type -> google.protobuf.Empty
+	21, // 87: daemon.StartedService.SubscribeConnections:output_type -> daemon.ConnectionEvents
+	71, // 88: daemon.StartedService.CloseConnection:output_type -> google.protobuf.Empty
+	71, // 89: daemon.StartedService.CloseAllConnections:output_type -> google.protobuf.Empty
+	25, // 90: daemon.StartedService.GetDeprecatedWarnings:output_type -> daemon.DeprecatedWarnings
+	27, // 91: daemon.StartedService.GetStartedAt:output_type -> daemon.StartedAt
+	28, // 92: daemon.StartedService.SubscribeOutbounds:output_type -> daemon.OutboundList
+	30, // 93: daemon.StartedService.StartNetworkQualityTest:output_type -> daemon.NetworkQualityTestProgress
+	32, // 94: daemon.StartedService.StartSTUNTest:output_type -> daemon.STUNTestProgress
+	33, // 95: daemon.StartedService.SubscribeTailscaleStatus:output_type -> daemon.TailscaleStatusUpdate
+	38, // 96: daemon.StartedService.StartTailscalePing:output_type -> daemon.TailscalePingResponse
+	71, // 97: daemon.StartedService.SetTailscaleExitNode:output_type -> google.protobuf.Empty
+	71, // 98: daemon.StartedService.TailscaleLogout:output_type -> google.protobuf.Empty
+	45, // 99: daemon.StartedService.StartTailscaleSSHSession:output_type -> daemon.TailscaleSSHServerMessage
+	52, // 100: daemon.StartedService.ProvideUSBDevices:output_type -> daemon.USBServerMessage
+	63, // 101: daemon.StartedService.SubscribeUSBIPServerStatus:output_type -> daemon.USBIPServerStatusUpdate
+	67, // 102: daemon.StartedService.URLTestOutbound:output_type -> daemon.URLTestOutboundResponse
+	69, // 103: daemon.StartedService.GetRules:output_type -> daemon.RuleList
+	11, // 104: daemon.StartedService.GetGroups:output_type -> daemon.Groups
+	28, // 105: daemon.StartedService.GetOutbounds:output_type -> daemon.OutboundList
+	74, // [74:106] is the sub-list for method output_type
+	42, // [42:74] is the sub-list for method input_type
 	42, // [42:42] is the sub-list for extension type_name
 	42, // [42:42] is the sub-list for extension extendee
 	0,  // [0:42] is the sub-list for field type_name

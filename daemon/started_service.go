@@ -492,9 +492,13 @@ func (s *StartedService) readGroups() *Groups {
 			}
 			g.Items = append(g.Items, &item)
 		}
-		if len(g.Items) < 2 {
-			continue
-		}
+		// lx:begin lx_command
+		// Upstream dropped groups with < 2 items here (commit 5bc0dfa9 gRPC refactor),
+		// which silently hides single-node selectors and empty groups — a regression
+		// vs Clash, whose /proxies returned group.All() unfiltered. readGroups() is the
+		// single source feeding both SubscribeGroups (startup broadcast) and GetGroups,
+		// so emitting every group of any size fixes both. SPEC 015 §3.5.
+		// lx:end lx_command
 		gs.Group = append(gs.Group, &g)
 	}
 	return &gs

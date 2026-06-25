@@ -22,3 +22,11 @@ func (s *StartedService) URLTestOutbound(ctx context.Context, request *URLTestOu
 func (s *StartedService) GetRules(ctx context.Context, empty *emptypb.Empty) (*RuleList, error) {
 	return nil, status.Error(codes.Unimplemented, "GetRules is not included in this build, rebuild with -tags with_lx_command")
 }
+
+func (s *StartedService) GetGroups(ctx context.Context, empty *emptypb.Empty) (*Groups, error) {
+	return nil, status.Error(codes.Unimplemented, "GetGroups is not included in this build, rebuild with -tags with_lx_command")
+}
+
+func (s *StartedService) GetOutbounds(ctx context.Context, empty *emptypb.Empty) (*OutboundList, error) {
+	return nil, status.Error(codes.Unimplemented, "GetOutbounds is not included in this build, rebuild with -tags with_lx_command")
+}

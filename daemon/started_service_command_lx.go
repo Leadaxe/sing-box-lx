@@ -13,6 +13,8 @@ import (
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -117,4 +119,58 @@ func (s *StartedService) GetRules(ctx context.Context, empty *emptypb.Empty) (*R
 		}
 	}
 	return &RuleList{Rules: rules}, nil
+}
+
+// GetGroups returns a pull snapshot of the outbound groups — the same payload
+// SubscribeGroups emits as its first message. SPEC 015 §3.3: the CommandClient is
+// push-only, so if the SubscribeGroups stream never opened (service not yet STARTED
+// at subscribe time) or broke, the client had no cheap way to re-read group state and
+// the main screen stayed empty (tunnel connected, groups=[]). This unary getter closes
+// that gap without recreating the whole client / tearing down other streams. It reuses
+// the existing s.readGroups() builder (single source, also fixes the len<2 drop) under
+// the same RLock the stream uses. Errors via status.Error (unary read convention, like
+// GetRules — not the Variant-B payload model of URLTestOutbound).
+func (s *StartedService) GetGroups(ctx context.Context, empty *emptypb.Empty) (*Groups, error) {
+	s.serviceAccess.RLock()
+	if s.serviceStatus.Status != ServiceStatus_STARTED {
+		s.serviceAccess.RUnlock()
+		return nil, status.Error(codes.FailedPrecondition, "service is not started")
+	}
+	groups := s.readGroups()
+	s.serviceAccess.RUnlock()
+	return groups, nil
+}
+
+// GetOutbounds returns a pull snapshot of the flat outbound/endpoint list — the same
+// payload SubscribeOutbounds emits. Needed alongside GetGroups (SPEC 015 §3.4) because
+// SubscribeGroups covers only in-group nodes, whereas standalone outbounds and any
+// endpoints (WG/AWG/Tailscale) appear only here. No readOutbounds() helper exists —
+// SubscribeOutbounds builds OutboundList inline — so the builder is duplicated here
+// rather than refactoring the upstream started_service.go.
+func (s *StartedService) GetOutbounds(ctx context.Context, empty *emptypb.Empty) (*OutboundList, error) {
+	s.serviceAccess.RLock()
+	if s.serviceStatus.Status != ServiceStatus_STARTED {
+		s.serviceAccess.RUnlock()
+		return nil, status.Error(codes.FailedPrecondition, "service is not started")
+	}
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	historyStorage := boxService.urlTestHistoryStorage
+	var list OutboundList
+	appendItem := func(detour adapter.Outbound) {
+		item := &GroupItem{Tag: detour.Tag(), Type: detour.Type()}
+		if history := historyStorage.LoadURLTestHistory(adapter.OutboundTag(detour)); history != nil {
+			item.UrlTestTime = history.Time.Unix()
+			item.UrlTestDelay = int32(history.Delay)
+		}
+		list.Outbounds = append(list.Outbounds, item)
+	}
+	for _, ob := range boxService.outboundManager.Outbounds() {
+		appendItem(ob)
+	}
+	for _, ep := range boxService.endpointManager.Endpoints() {
+		appendItem(ep) // adapter.Endpoint embeds adapter.Outbound
+	}
+	return &list, nil
 }
