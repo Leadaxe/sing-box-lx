@@ -147,9 +147,9 @@ Clash DNS-правила не отдавал — эталона нет, мы п�
 rpc GetGroups(google.protobuf.Empty) returns (Groups) {}
 // lx:end lx_command
 ```
-Handler (`started_service_command_lx.go`): `waitForStarted(ctx)` (как стрим — вернёт `status.Error` при не-STARTED, что для unary даже честнее: клиент сразу узнаёт причину), затем под `serviceAccess.RLock` вызвать `s.readGroups()` и вернуть. Тело — калька подготовки из `SubscribeGroups`, но один `readGroups()` + `return` вместо цикла с `Send`. Ошибки — через `status.Error` (unary read-конвенция, как `GetRules`; НЕ Вариант-B).
+Handler (`started_service_command_lx.go`): под `serviceAccess.RLock` проверить `serviceStatus == STARTED` (как `GetRules`; для unary честнее вернуть ошибку сразу, чем `waitForStarted` ждать перехода фазы — клиент узнаёт причину немедленно), затем вызвать `s.readGroups()` и вернуть. Тело — калька подготовки из `SubscribeGroups`, но один `readGroups()` + `return` вместо цикла с `Send`. Ошибка при не-`STARTED` — `status.Error(codes.FailedPrecondition, ...)` (unary read-конвенция, как `GetRules`; НЕ Вариант-B).
 
-Клиент: `func (c *CommandClient) GetGroups() (GroupIterator, error)`.
+Клиент: `func (c *CommandClient) GetGroups() (OutboundGroupIterator, error)` — переиспользует тот же итератор и `outboundGroupIteratorFromGRPC`-конвертер, что `SubscribeGroups`.
 
 ### 3.4 `GetOutbounds` ✅ rc.4
 
@@ -159,7 +159,7 @@ Handler (`started_service_command_lx.go`): `waitForStarted(ctx)` (как стр�
 rpc GetOutbounds(google.protobuf.Empty) returns (OutboundList) {}
 // lx:end lx_command
 ```
-Handler: `readOutbounds` как отдельной функции **нет** (`SubscribeOutbounds` строит `OutboundList` инлайн: обход `outboundManager.Outbounds()` + `endpointManager.Endpoints()` + `LoadURLTestHistory`). Чтобы **не трогать апстрим-`started_service.go`** лишним рефактором — **продублировать построитель в `_lx.go`** и вернуть `OutboundList` (переиспользуя существующий message). `waitForStarted` + `status.Error`, как `GetGroups`.
+Handler: `readOutbounds` как отдельной функции **нет** (`SubscribeOutbounds` строит `OutboundList` инлайн: обход `outboundManager.Outbounds()` + `endpointManager.Endpoints()` + `LoadURLTestHistory`). Чтобы **не трогать апстрим-`started_service.go`** лишним рефактором — **продублировать построитель в `_lx.go`** и вернуть `OutboundList` (переиспользуя существующий message). `RLock` + проверка `STARTED` + `status.Error`, как `GetGroups`.
 
 Клиент: `func (c *CommandClient) GetOutbounds() (OutboundGroupItemIterator, error)`.
 
@@ -183,9 +183,9 @@ if len(g.Items) < 2 {
 
 1. (✅ rc.2) Сборка с `with_lx_command`: `URLTestOutbound` меряет outbound И endpoint (AWG/WG); кастомный `link`/`timeout` применяются; `error`-поле по таблице §3.1; `delay==0 && error==""` = успех 0 мс.
 2. (✅ rc.2) `GetRules` возвращает route- и DNS-правила с `isDNS`-разделением; route-поля совпадают с Clash.
-3. (⬜ rc.4) `GetGroups` возвращает тот же снапшот, что первый `Send` `SubscribeGroups`; вызываем в любой момент при `STARTED`, не трогая активные стримы; при не-`STARTED` — `status.Error` с причиной.
-4. (⬜ rc.4) `GetOutbounds` возвращает то же, что `SubscribeOutbounds` (все outbound'ы + endpoint'ы с delay из истории).
-5. (⬜ rc.4) После фикса `len<2`: группы с 1 узлом видны и в стартовом бродкасте `SubscribeGroups`, и в `GetGroups`.
+3. (✅ rc.4) `GetGroups` возвращает тот же снапшот, что первый `Send` `SubscribeGroups`; вызываем в любой момент при `STARTED`, не трогая активные стримы; при не-`STARTED` — `status.Error` с причиной.
+4. (✅ rc.4) `GetOutbounds` возвращает то же, что `SubscribeOutbounds` (все outbound'ы + endpoint'ы с delay из истории).
+5. (✅ rc.4) После фикса `len<2`: группы с 1 узлом видны и в стартовом бродкасте `SubscribeGroups`, и в `GetGroups`.
 6. Сборка **без** `with_lx_command`: компилируется, все RPC → `codes.Unimplemented`, поведение = upstream.
 7. `Makefile.lx` proto-таргет регенерирует `*.pb.go` воспроизводимо; сгенерированный код gofmt-чист, без `// lx:`-маркеров.
 8. CI зелёный на обеих сборках (§2.3).
