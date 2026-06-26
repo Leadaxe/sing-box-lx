@@ -10,6 +10,28 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.5
+
+**Pre-release — not device-verified.** Fixes in-flight cancellation of the per-node
+delay test (SPEC 015 §3.6). Behind `with_lx_command`; client/command-side only — no
+data-path change.
+
+* **`URLTestOutbound` now honours cancellation of the gRPC call.** The handler parented
+  the delay test to the long-lived `boxService.ctx` instead of the gRPC per-call ctx, so
+  a cancelled call could not reach the in-flight dial — the test outlived it and the only
+  lever was tearing down the whole connection. Now parented to the call ctx (`testCtx :=
+  ctx`): dropping the call aborts that single test at its `DialContext`/`client.Do`,
+  before `C.TCPTimeout`, without touching other streams. This restores the granular
+  per-node cancel the Clash API had implicitly via `r.Context()` (there was never a
+  `cancelDelays` endpoint — the cancel lived in the per-request HTTP context).
+* **Mass-cancel of a ping batch** is unblocked on the existing gomobile binding with no
+  native-surface change: run the ping worker-pool on a *separate* `CommandClient` instance
+  and call `Disconnect()` on it — its `cancel()` + `conn.Close()` reach the test ctx and
+  kill the in-flight dials, while the main client's Connections/Groups streams stay up.
+  No per-call cancel handle and no server-side batch RPC are added (see SPEC 015 §3.6/§5).
+* Docs: SPEC 015 §3.6 (cancellation), SPEC 014 (#4240 was deleted upstream — switch the
+  `box.go` seam-removal criterion from issue-status to upstream-code).
+
 #### v1.14.0-lx.1-rc.4
 
 **Pre-release — not device-verified.** Completes the command-protocol work (SPEC 015)

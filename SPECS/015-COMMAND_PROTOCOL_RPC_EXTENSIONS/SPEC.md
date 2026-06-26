@@ -3,7 +3,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — расширения libbox command-протокола (CONSTITUTION §3.6) |
-| Статус | M (mixed) — `URLTestOutbound` + `GetRules` в `v1.14.0-lx.1-rc.2`; `GetGroups`/`GetOutbounds` + фикс `len<2` в `v1.14.0-lx.1-rc.4` |
+| Статус | M (mixed) — `URLTestOutbound` + `GetRules` в `v1.14.0-lx.1-rc.2`; `GetGroups`/`GetOutbounds` + фикс `len<2` в `v1.14.0-lx.1-rc.4`; `URLTestOutbound` cancel-fix (ctx-bind, §3.6) — в коде, ждёт релиз-тега. Слой 2 (масс-отмена) разблокирован на клиенте без правок биндинга (отдельный ping-client + `Disconnect()`); LxBox-фидбэк закрыт |
 
 **Единый дом всех доработок нативного libbox CommandClient** (gRPC `StartedService`), доведших его до минимума, на котором UI LxBox реально работает после переезда с Clash API (см. [SPEC 014](../014-CLASH_API_TO_COMMANDCLIENT_MIGRATION/SPEC.md) — сам переезд).
 
@@ -107,7 +107,7 @@ type URLTestOutboundResult struct {
 ```
 **Почему не `(uint16, string, error)`:** gomobile НЕ биндит ни три возврата, ни `uint16`/`uint32`. Возврат — struct-обёртка (как `*SystemProxyStatus`, геттеры `getDelay()`/`getError()`); параметр `timeout` (не `timeoutMs`); типы `int32`. Возвращаемый Go-`error` — **только транспортный сбой**; прикладной исход — в `Result.Error` (Вариант B). `timeout` в мс (`0` → дефолт).
 
-Worker-pool (масс-пинг N узлов, concurrency=10) — **в клиенте/LxBox**, не в ядре: ядро меряет один узел синхронно и stateless. Отмена масс-пинга = закрытие/реконнект CommandClient-соединения (рвёт conn → серверный `ctx` отменяется → in-flight падают). Per-call cancel-handle НЕ вводится.
+Worker-pool (масс-пинг N узлов, concurrency=10) — **в клиенте/LxBox**, не в ядре: ядро меряет один узел синхронно и stateless. Отмена — см. **§3.6**: после ctx-b'a тест привязан к gRPC per-call `ctx`, отмена одного вызова рвёт один тест (per-node, как Clash); масс-отмена = отмена N pooled-вызовов на клиенте. (Раньше тут было «отмена = закрытие conn» — это следствие бага привязки к `boxService.ctx`, исправлено в §3.6.)
 
 ### 3.2 `GetRules` (route + DNS) ✅ rc.2
 Шов под тем же `// lx:`-маркером:
@@ -177,6 +177,32 @@ if len(g.Items) < 2 {
 
 **Фикс:** убрать условие `len(g.Items) < 2 { continue }` — группы любого размера валидны. (Если апстрим вводил его как анти-шум — обоснования в коде нет; Clash-паритет требует отдавать все.)
 
+### 3.6 Отмена `URLTestOutbound` (per-node cancel)
+
+**Как было в Clash (для истории).** Отдельного «cancel»-эндпоинта в Clash API **не было** — миф про `cancelDelays` не подтверждается: `experimental/clashapi/proxies.go` выставлял только `GET /proxies/{name}/delay` (unary). Отмена была **per-request и неявная**: каждый delay-тест шёл отдельным HTTP-запросом, chi привязывал `r.Context()` к жизни этого запроса, а `getProxyDelay` оборачивал его в `context.WithTimeout(r.Context(), …)` и передавал в `urltest.URLTest(ctx, …)`. Клиент рвал/абортил HTTP-запрос → `r.Context()` отменялся → `DialContext` падал. «Отменить весь масс-пинг» = клиент абортил свои N запросов; единой серверной кнопки не существовало.
+
+**Что сломалось при переезде (баг, не дизайн).** Первая реализация `URLTestOutbound` (rc.2) привязывала тест к **долгоживущему** `boxService.ctx`, игнорируя gRPC per-call `ctx` хэндлера:
+```go
+testCtx := boxService.ctx                                  // ← живёт, пока жив ВЕСЬ сервис
+if request.Timeout > 0 { testCtx, _ = context.WithTimeout(boxService.ctx, …) }
+```
+Поэтому отмена вызова на клиенте (gRPC CANCELLED / разрыв стрима) **не доходила** до dial: тест переживал вызов и дотухал сам. Единственным рычагом оставалось снести **всё** соединение (рвёт и Connections/Groups-стримы). Это и породило формулировку «отмена = закрытие conn» — следствие бага, а не намеренное решение.
+
+**Фикс (слой 1, сделано в коде).** Привязать тест к gRPC per-call `ctx` — первому аргументу хэндлера, который gRPC отменяет автоматически при отмене вызова/разрыве стрима:
+```go
+testCtx := ctx                                             // ← gRPC call ctx (отменяется клиентом)
+if request.Timeout > 0 { testCtx, cancel = context.WithTimeout(ctx, …); defer cancel() }
+```
+Это **дословный аналог** Clash (`r.Context()` → `testCtx`): отмена одного вызова обрывает один тест на его dial/handshake, **не трогая** остальные стримы. `boxService` ниже всё ещё нужен (резолв тега, история) — лишних переменных нет. Цена — 2 строки, нулевой риск. Тронут только `daemon/started_service_command_lx.go` (handler) + комментарий в `experimental/libbox/command_client_command_lx.go`.
+
+**Отмена масс-пинга (слой 2, на клиенте) — через отдельный ping-client.** Уточнено по фидбэку LxBox: gomobile-биндинг **не экспонирует per-call cancel** — у `urlTestOutbound(tag, link, timeoutMs)` нет cancel-параметра/handle, а Go-`CommandClient` держит **один** `c.ctx` на все вызовы инстанса (`getClientForCall` → общий `c.ctx`, один `c.cancel`). Поэтому «per-call `call.cancel()`» **нереализуемо** на текущем биндинге — единственный рычаг caller'а — `Disconnect()`.
+
+Решение **без правок биндинга**: держать **отдельный `CommandClient`-инстанс под масс-пинг** (`pingClient ≠ statusClient/screenClient`). Каждый `NewCommandClient` поднимает свой `c.ctx`/`c.cancel`/`grpcConn`, поэтому `pingClient.Disconnect()` (`c.cancel()` + `grpcConn.Close()`) отменяет **только** per-call ctx ping-тестов, не трогая другие стримы. Цепочка проверена: disconnect → gRPC рвёт серверные stream-ctx этого conn → `testCtx` (слой 1) отменяется → `urltest.URLTest` обрывает `DialContext`/`client.Do` **до** `C.TCPTimeout` (оба ctx-aware). Это закрывает «зомби»-тесты (до ~concurrency in-flight dial'ов), которые epoch-гейт сам по себе не гасил (он гасит применение результата в UI, не серверный dial). При отмене: epoch-бамп (UI) + `pingClient.disconnect()` (ядро) + свежий pingClient под следующий прогон.
+
+**Серверный batch-`CancelURLTests` (отложено, см. §5).** Единый серверный RPC «отменить весь пинг одним вызовом» по токену сэкономил бы N cancel'ов по сети, но требует **stateful-реестра** в ядре (`map[token][]CancelFunc` + мьютекс + жизненный цикл токенов) — категория «новой подсистемы», которую §3.6 просит избегать («только мост»). Выгода (микросекунды против stateful-слоя) не оправдывает дифф к upstream. Отклонено **с условием**: вернуться, если профайл покажет, что N клиентских cancel'ов реально дороги. Не нужен и для масс-отмены: `pingClient.Disconnect()` гасит весь батч одним вызовом без серверного состояния.
+
+**Статус слоя 2.** Разблокирован на текущем биндинге (вариант #2: отдельный ping-client + `Disconnect()`); правок нативной поверхности не требуется. LxBox-фидбэк (`CLIENT_FEEDBACK_urltest_cancel_binding.md`) закрыт. Остаётся on-device verify на стороне LxBox: масс-пинг недоступных узлов → отмена → серверные dial'ы рвутся до `C.TCPTimeout`, прочие стримы целы (критерий §4.5a). Гранулярный per-node cancel (#1/#3) — в запасе под будущий UX, YAGNI.
+
 ---
 
 ## 4. Критерии приёмки
@@ -186,6 +212,7 @@ if len(g.Items) < 2 {
 3. (✅ rc.4) `GetGroups` возвращает тот же снапшот, что первый `Send` `SubscribeGroups`; вызываем в любой момент при `STARTED`, не трогая активные стримы; при не-`STARTED` — `status.Error` с причиной.
 4. (✅ rc.4) `GetOutbounds` возвращает то же, что `SubscribeOutbounds` (все outbound'ы + endpoint'ы с delay из истории).
 5. (✅ rc.4) После фикса `len<2`: группы с 1 узлом видны и в стартовом бродкасте `SubscribeGroups`, и в `GetGroups`.
+5a. (§3.6) `URLTestOutbound` привязан к gRPC per-call `ctx`, не к `boxService.ctx`: отмена вызова (gRPC CANCELLED) обрывает один in-flight тест на dial, прочие стримы (Connections/Groups) живы; сервис не останавливается. Масс-отмену делает клиент (N pooled-вызовов). Серверный batch-RPC не вводится.
 6. Сборка **без** `with_lx_command`: компилируется, все RPC → `codes.Unimplemented`, поведение = upstream.
 7. `Makefile.lx` proto-таргет регенерирует `*.pb.go` воспроизводимо; сгенерированный код gofmt-чист, без `// lx:`-маркеров.
 8. CI зелёный на обеих сборках (§2.3).
@@ -195,13 +222,13 @@ if len(g.Items) < 2 {
     - **Сборка/CI:** `Makefile.lx`, `.github/workflows/lx-ci.yml`.
     - **Регенерация SPEC-proto:** `daemon/started_service.{pb,_grpc.pb}.go`.
     - **Косметическая регенерация под пин (разовая, §2.2):** `daemon/managed_service.*`, `experimental/v2rayapi/stats.*`, `transport/v2raygrpc/stream.*`.
-    - **Логика — в новых файлах:** `daemon/started_service_command_lx.go` + `_stub.go`, `experimental/libbox/command_client_command_lx.go`.
+    - **Логика — в новых файлах:** `daemon/started_service_command_lx.go` + `_stub.go`, `experimental/libbox/command_client_command_lx.go`. Cancel-fix §3.6 правит первые два (handler: `testCtx := ctx`; client: комментарий) — те же файлы, без новых.
 
 ---
 
 ## 5. Вне скоупа
 - Отдельный history-RPC (`GetURLTestHistory`) — отклонён: delay синхронен в ответе RPC, живая история течёт в `SubscribeOutbounds`/`SubscribeGroups`.
-- Per-call cancel-handle / batch-RPC — отклонены: отмена через close conn, батч в клиенте.
+- Серверный batch-`CancelURLTests` RPC — **отложен** (§3.6): per-node cancel уже даёт gRPC call ctx (слой 1), масс-отмена — N вызовов на клиенте (слой 2); серверный stateful-реестр токенов противоречит §3.6 «только мост». Условие возврата — профайл-доказательство, что N клиентских cancel'ов дороги. (Раньше формулировка была «per-call cancel / batch отклонены: отмена через close conn» — устарела: close conn был следствием бага §3.6, не дизайном.)
 - `timeout` в микросекундах / смена типа delay — отклонены: мс, `uint16`→`uint32`.
 - DNS rule-set (headless) snapshot, server/inbound RPC — будущие SPEC.
 

@@ -21,3 +21,4 @@
 CLAUDE.md
 AGENTS.md
 /.claude/
+/test/cache.db

@@ -30,7 +30,13 @@ type URLTestOutboundResult struct {
 // core default, no explicit deadline). It mirrors the Clash /proxies/{name}/delay
 // semantics that the trimmed Clash API used to provide. Mass-pinging N nodes is the
 // caller's job (a worker pool in LxBox); the core measures one node synchronously and
-// stateless. Cancelling an in-flight batch means closing the CommandClient connection.
+// stateless. Cancellation (SPEC 015 §3.6): the core handler parents the test to the gRPC
+// call ctx, so dropping the call aborts that in-flight test at its dial. The gomobile
+// binding exposes no per-call cancel and this CommandClient shares one c.ctx across all
+// calls, so mass-cancel is done by running the ping pool on a SEPARATE CommandClient
+// instance and calling Disconnect() on it — its c.cancel()+conn.Close() reach the test
+// ctx without touching other streams. No server-side batch RPC exists yet (deferred, see
+// SPEC 015 §5). Detail: CLIENT_FEEDBACK_urltest_cancel_binding.md.
 func (c *CommandClient) URLTestOutbound(outboundTag string, link string, timeout int32) (*URLTestOutboundResult, error) {
 	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*URLTestOutboundResult, error) {
 		response, err := client.URLTestOutbound(ctx, &daemon.URLTestOutboundRequest{

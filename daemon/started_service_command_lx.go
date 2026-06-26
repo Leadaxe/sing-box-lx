@@ -61,13 +61,18 @@ func (s *StartedService) URLTestOutbound(ctx context.Context, request *URLTestOu
 		return &URLTestOutboundResponse{Error: "outbound or endpoint not found: " + tag}, nil
 	}
 
-	// timeout == 0 → the long-lived service context (no explicit deadline, core default);
-	// > 0 → a bounded child context in milliseconds. Cancellation of an in-flight mass
-	// ping is the client closing the conn (boxService.ctx then drives the dial down).
-	testCtx := boxService.ctx
+	// Cancellation (SPEC 015 §3.6): the test is parented to the gRPC per-call ctx, NOT
+	// boxService.ctx. gRPC cancels this ctx automatically when the client cancels the call
+	// (or the conn drops), so a single in-flight test aborts at its dial/handshake without
+	// touching other streams — the granular per-node cancel Clash had via r.Context().
+	// Parenting to boxService.ctx (the old code) made the test outlive the call: client
+	// cancel could not reach the dial, and the only lever was tearing down the whole conn.
+	// timeout == 0 → bounded only by the call ctx (core default, no extra deadline);
+	// > 0 → a bounded child context in milliseconds layered on top of the call ctx.
+	testCtx := ctx
 	if request.Timeout > 0 {
 		var cancel context.CancelFunc
-		testCtx, cancel = context.WithTimeout(boxService.ctx, time.Duration(request.Timeout)*time.Millisecond)
+		testCtx, cancel = context.WithTimeout(ctx, time.Duration(request.Timeout)*time.Millisecond)
 		defer cancel()
 	}
 
