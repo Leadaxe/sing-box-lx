@@ -8,11 +8,13 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/dnstrack"
 	"github.com/sagernet/sing-box/common/urltest"
 	"github.com/sagernet/sing-box/protocol/group"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -178,4 +180,82 @@ func (s *StartedService) GetOutbounds(ctx context.Context, empty *emptypb.Empty)
 		appendItem(ep) // adapter.Endpoint embeds adapter.Outbound
 	}
 	return &list, nil
+}
+
+// SubscribeDNSQueries streams structured, process-attributed DNS resolutions (SPEC 018).
+// Unlike SubscribeConnections it is event-driven, not ticked: each resolution in the core
+// emits one QueryEvent (dns/client_log.go), forwarded here as it arrives. The dnstrack
+// manager lives in the box service context, registered only when observability is on; a
+// missing manager means DNS tracking is unavailable (mirrors the connections guard).
+func (s *StartedService) SubscribeDNSQueries(request *SubscribeDNSQueriesRequest, server grpc.ServerStreamingServer[DnsQueryEvent]) error {
+	if err := s.waitForStarted(server.Context()); err != nil {
+		return err
+	}
+	s.serviceAccess.RLock()
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	manager := service.FromContext[*dnstrack.Manager](boxService.ctx)
+	if manager == nil {
+		return status.Error(codes.Unimplemented, "DNS query tracking not available")
+	}
+
+	subscription, done, err := manager.SubscribeEvents()
+	if err != nil {
+		return err
+	}
+	defer manager.UnSubscribeEvents(subscription)
+
+	includeAnswers := request.GetIncludeAnswers()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case <-server.Context().Done():
+			return server.Context().Err()
+		case <-done:
+			return nil
+		case event := <-subscription:
+			if err := server.Send(dnsQueryEventToProto(event, includeAnswers)); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// dnsQueryEventToProto maps a core dnstrack event to the wire message, reusing the shared
+// ProcessInfo shape. answers are dropped unless the subscriber asked for them — the core
+// always captures them (cheap, the message is already parsed), the per-subscriber filter
+// lives here so one emit serves every subscriber. SPEC 018.
+func dnsQueryEventToProto(event dnstrack.QueryEvent, includeAnswers bool) *DnsQueryEvent {
+	proto := &DnsQueryEvent{
+		Domain:    event.Domain,
+		QueryType: uint32(event.QueryType),
+		Rcode:     event.Rcode,
+		Ttl:       event.TTL,
+		Source:    string(event.Source),
+		Failed:    event.Failed,
+		Error:     event.Error,
+	}
+	if event.ProcessInfo != nil {
+		proto.ProcessInfo = &ProcessInfo{
+			ProcessId:    event.ProcessInfo.ProcessID,
+			UserId:       event.ProcessInfo.UserId,
+			UserName:     event.ProcessInfo.UserName,
+			ProcessPath:  event.ProcessInfo.ProcessPath,
+			PackageNames: event.ProcessInfo.AndroidPackageNames,
+		}
+	}
+	if includeAnswers && len(event.Answers) > 0 {
+		proto.Answers = make([]*DnsAnswer, 0, len(event.Answers))
+		for _, answer := range event.Answers {
+			proto.Answers = append(proto.Answers, &DnsAnswer{
+				Name:  answer.Name,
+				Type:  uint32(answer.Type),
+				Rdata: answer.RData,
+				Ttl:   answer.TTL,
+			})
+		}
+	}
+	return proto
 }

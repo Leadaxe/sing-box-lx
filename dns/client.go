@@ -9,6 +9,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/compatible"
+	"github.com/sagernet/sing-box/common/dnstrack"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -210,17 +211,20 @@ func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, m
 	messageId := message.Id
 	contextTransport, clientSubnetLoaded := transportTagFromContext(ctx)
 	if clientSubnetLoaded && transport.Tag() == contextTransport {
+		emitFailedQuery(ctx, question, dnstrack.RcodeNoAnswer, "loopback") // lx: SPEC 018
 		return nil, E.New("DNS query loopback in transport[", contextTransport, "]")
 	}
 	ctx = contextWithTransportTag(ctx, transport.Tag())
 	if !disableCache && responseChecker != nil && c.rdrc != nil {
 		rejected := c.rdrc.LoadRDRC(transport.Tag(), question.Name, question.Qtype)
 		if rejected {
+			emitFailedQuery(ctx, question, dnstrack.RcodeNoAnswer, "rejected (cached)") // lx: SPEC 018
 			return nil, ErrResponseRejectedCached
 		}
 	}
 	response, err := c.exchangeToTransport(ctx, transport, message, options.Timeout)
 	if err != nil {
+		emitFailedQuery(ctx, question, dnstrack.RcodeNoAnswer, err.Error()) // lx: SPEC 018 (timeout / network)
 		return nil, err
 	}
 	disableCache = disableCache || (response.Rcode != dns.RcodeSuccess && response.Rcode != dns.RcodeNameError)
@@ -236,6 +240,7 @@ func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, m
 				c.rdrc.SaveRDRCAsync(transport.Tag(), question.Name, question.Qtype, c.logger)
 			}
 			logRejectedResponse(c.logger, ctx, response)
+			emitFailedQuery(ctx, question, int32(response.Rcode), "rejected") // lx: SPEC 018 (SERVFAIL / checker)
 			return response, ErrResponseRejected
 		}
 	}

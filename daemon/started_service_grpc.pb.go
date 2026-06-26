@@ -46,6 +46,7 @@ const (
 	StartedService_GetRules_FullMethodName                   = "/daemon.StartedService/GetRules"
 	StartedService_GetGroups_FullMethodName                  = "/daemon.StartedService/GetGroups"
 	StartedService_GetOutbounds_FullMethodName               = "/daemon.StartedService/GetOutbounds"
+	StartedService_SubscribeDNSQueries_FullMethodName        = "/daemon.StartedService/SubscribeDNSQueries"
 )
 
 // StartedServiceClient is the client API for StartedService service.
@@ -84,6 +85,7 @@ type StartedServiceClient interface {
 	GetRules(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RuleList, error)
 	GetGroups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Groups, error)
 	GetOutbounds(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*OutboundList, error)
+	SubscribeDNSQueries(ctx context.Context, in *SubscribeDNSQueriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DnsQueryEvent], error)
 }
 
 type startedServiceClient struct {
@@ -528,6 +530,25 @@ func (c *startedServiceClient) GetOutbounds(ctx context.Context, in *emptypb.Emp
 	return out, nil
 }
 
+func (c *startedServiceClient) SubscribeDNSQueries(ctx context.Context, in *SubscribeDNSQueriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DnsQueryEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &StartedService_ServiceDesc.Streams[14], StartedService_SubscribeDNSQueries_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SubscribeDNSQueriesRequest, DnsQueryEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type StartedService_SubscribeDNSQueriesClient = grpc.ServerStreamingClient[DnsQueryEvent]
+
 // StartedServiceServer is the server API for StartedService service.
 // All implementations must embed UnimplementedStartedServiceServer
 // for forward compatibility.
@@ -564,6 +585,7 @@ type StartedServiceServer interface {
 	GetRules(context.Context, *emptypb.Empty) (*RuleList, error)
 	GetGroups(context.Context, *emptypb.Empty) (*Groups, error)
 	GetOutbounds(context.Context, *emptypb.Empty) (*OutboundList, error)
+	SubscribeDNSQueries(*SubscribeDNSQueriesRequest, grpc.ServerStreamingServer[DnsQueryEvent]) error
 	mustEmbedUnimplementedStartedServiceServer()
 }
 
@@ -669,6 +691,9 @@ func (UnimplementedStartedServiceServer) GetGroups(context.Context, *emptypb.Emp
 }
 func (UnimplementedStartedServiceServer) GetOutbounds(context.Context, *emptypb.Empty) (*OutboundList, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetOutbounds not implemented")
+}
+func (UnimplementedStartedServiceServer) SubscribeDNSQueries(*SubscribeDNSQueriesRequest, grpc.ServerStreamingServer[DnsQueryEvent]) error {
+	return status.Errorf(codes.Unimplemented, "method SubscribeDNSQueries not implemented")
 }
 func (UnimplementedStartedServiceServer) mustEmbedUnimplementedStartedServiceServer() {}
 func (UnimplementedStartedServiceServer) testEmbeddedByValue()                        {}
@@ -1161,6 +1186,17 @@ func _StartedService_GetOutbounds_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StartedService_SubscribeDNSQueries_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(SubscribeDNSQueriesRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(StartedServiceServer).SubscribeDNSQueries(m, &grpc.GenericServerStream[SubscribeDNSQueriesRequest, DnsQueryEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type StartedService_SubscribeDNSQueriesServer = grpc.ServerStreamingServer[DnsQueryEvent]
+
 // StartedService_ServiceDesc is the grpc.ServiceDesc for StartedService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1312,6 +1348,11 @@ var StartedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "SubscribeUSBIPServerStatus",
 			Handler:       _StartedService_SubscribeUSBIPServerStatus_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "SubscribeDNSQueries",
+			Handler:       _StartedService_SubscribeDNSQueries_Handler,
 			ServerStreams: true,
 		},
 	},

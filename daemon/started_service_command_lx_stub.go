@@ -5,6 +5,7 @@ package daemon
 import (
 	"context"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -29,4 +30,8 @@ func (s *StartedService) GetGroups(ctx context.Context, empty *emptypb.Empty) (*
 
 func (s *StartedService) GetOutbounds(ctx context.Context, empty *emptypb.Empty) (*OutboundList, error) {
 	return nil, status.Error(codes.Unimplemented, "GetOutbounds is not included in this build, rebuild with -tags with_lx_command")
+}
+
+func (s *StartedService) SubscribeDNSQueries(request *SubscribeDNSQueriesRequest, server grpc.ServerStreamingServer[DnsQueryEvent]) error {
+	return status.Error(codes.Unimplemented, "SubscribeDNSQueries is not included in this build, rebuild with -tags with_lx_command")
 }

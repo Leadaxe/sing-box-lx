@@ -16,6 +16,7 @@ import (
 	boxService "github.com/sagernet/sing-box/adapter/service"
 	"github.com/sagernet/sing-box/common/certificate"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/dnstrack"
 	"github.com/sagernet/sing-box/common/httpclient"
 	"github.com/sagernet/sing-box/common/taskmonitor"
 	"github.com/sagernet/sing-box/common/tls"
@@ -248,6 +249,12 @@ func New(options Options) (*Box, error) {
 		service.MustRegisterPtr(ctx, trafficManager)
 		router.AppendTracker(trafficManager)
 		internalServices = append(internalServices, trafficManager)
+		// lx: SPEC 018 — DNS query stream. Registered as *dnstrack.Manager so the dns
+		// client (service.FromContext in dns/client_log.go) emits structured, process-
+		// attributed query events that the command server exposes as SubscribeDNSQueries.
+		dnsQueryManager := dnstrack.NewManager()
+		service.MustRegisterPtr(ctx, dnsQueryManager)
+		internalServices = append(internalServices, dnsQueryManager)
 	}
 	ntpOptions := common.PtrValueOrDefault(options.NTP)
 	var timeService *tls.TimeServiceWrapper

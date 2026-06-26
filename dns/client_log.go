@@ -4,10 +4,86 @@ import (
 	"context"
 	"strings"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/dnstrack"
 	"github.com/sagernet/sing/common/logger"
+	"github.com/sagernet/sing/service"
 
 	"github.com/miekg/dns"
 )
+
+// emitQueryEvent publishes a structured DNS-query event to the lx dnstrack stream
+// (SPEC 018). It runs alongside the text log at every successful resolution outcome;
+// ProcessInfo is pulled from the request context (already populated by the router's
+// process search), so the event carries app attribution the text log lacks. A missing
+// manager (observability off / core built without it) is a no-op via the nil receiver.
+//
+// Answers carries the entire response.Answer in wire order (CNAME hops + final A/AAAA), so
+// a client can rebuild the CNAME chain from one event. The per-subscriber includeAnswers
+// flag is applied by the command server, not here — the emit is shared across subscribers.
+func emitQueryEvent(ctx context.Context, response *dns.Msg, source dnstrack.Source, ttl uint32) {
+	manager := service.FromContext[*dnstrack.Manager](ctx)
+	if manager == nil || response == nil || len(response.Question) == 0 {
+		return
+	}
+	question := response.Question[0]
+	manager.Emit(dnstrack.QueryEvent{
+		Domain:      FqdnToDomain(question.Name),
+		QueryType:   question.Qtype,
+		Rcode:       int32(response.Rcode),
+		TTL:         ttl,
+		Source:      source,
+		ProcessInfo: processInfoFromContext(ctx),
+		Answers:     answersFromMessage(response),
+	})
+}
+
+// emitFailedQuery publishes a failure event from the resolver path where response is nil
+// or rejected (SPEC 018 пункт 1) — timeout, loopback, rejected-cached, SERVFAIL-reject.
+// Without this the stream would silently drop every DNS failure, the primary diagnostic
+// signal. domain/qtype come from the request question (a failed exchange has no response).
+// rcode is the real code when a response exists, RcodeNoAnswer (-1) when it does not.
+func emitFailedQuery(ctx context.Context, question dns.Question, rcode int32, cause string) {
+	manager := service.FromContext[*dnstrack.Manager](ctx)
+	if manager == nil {
+		return
+	}
+	manager.Emit(dnstrack.QueryEvent{
+		Domain:      FqdnToDomain(question.Name),
+		QueryType:   question.Qtype,
+		Rcode:       rcode,
+		Source:      dnstrack.SourceFailed,
+		Failed:      true,
+		Error:       cause,
+		ProcessInfo: processInfoFromContext(ctx),
+	})
+}
+
+func processInfoFromContext(ctx context.Context) *adapter.ConnectionOwner {
+	if metadata := adapter.ContextFrom(ctx); metadata != nil {
+		return metadata.ProcessInfo
+	}
+	return nil
+}
+
+// answersFromMessage flattens response.Answer to the wire-order RR list, preserving CNAME
+// hops (NOT filtered down to A/AAAA — the chain would be lost). SPEC 018 Q2.
+func answersFromMessage(response *dns.Msg) []dnstrack.Answer {
+	if len(response.Answer) == 0 {
+		return nil
+	}
+	answers := make([]dnstrack.Answer, 0, len(response.Answer))
+	for _, record := range response.Answer {
+		header := record.Header()
+		answers = append(answers, dnstrack.Answer{
+			Name:  FqdnToDomain(header.Name),
+			Type:  header.Rrtype,
+			RData: FormatQuestion(record.String()),
+			TTL:   header.Ttl,
+		})
+	}
+	return answers
+}
 
 func logCachedResponse(logger logger.ContextLogger, ctx context.Context, response *dns.Msg, ttl int) {
 	if logger == nil || len(response.Question) == 0 {
@@ -20,6 +96,7 @@ func logCachedResponse(logger logger.ContextLogger, ctx context.Context, respons
 			logger.InfoContext(ctx, "cached ", dns.Type(record.Header().Rrtype).String(), " ", FormatQuestion(record.String()))
 		}
 	}
+	emitQueryEvent(ctx, response, dnstrack.SourceCached, uint32(ttl)) // lx: SPEC 018
 }
 
 func logOptimisticResponse(logger logger.ContextLogger, ctx context.Context, response *dns.Msg) {
@@ -33,6 +110,7 @@ func logOptimisticResponse(logger logger.ContextLogger, ctx context.Context, res
 			logger.InfoContext(ctx, "optimistic ", dns.Type(record.Header().Rrtype).String(), " ", FormatQuestion(record.String()))
 		}
 	}
+	emitQueryEvent(ctx, response, dnstrack.SourceOptimistic, 0) // lx: SPEC 018 (optimistic carries no fresh TTL)
 }
 
 func logExchangedResponse(logger logger.ContextLogger, ctx context.Context, response *dns.Msg, ttl uint32) {
@@ -46,6 +124,7 @@ func logExchangedResponse(logger logger.ContextLogger, ctx context.Context, resp
 			logger.InfoContext(ctx, "exchanged ", dns.Type(record.Header().Rrtype).String(), " ", FormatQuestion(record.String()))
 		}
 	}
+	emitQueryEvent(ctx, response, dnstrack.SourceExchanged, ttl) // lx: SPEC 018
 }
 
 func logRefreshedResponse(logger logger.ContextLogger, ctx context.Context, response *dns.Msg, ttl uint32) {
@@ -59,6 +138,7 @@ func logRefreshedResponse(logger logger.ContextLogger, ctx context.Context, resp
 			logger.InfoContext(ctx, "refreshed ", dns.Type(record.Header().Rrtype).String(), " ", FormatQuestion(record.String()))
 		}
 	}
+	emitQueryEvent(ctx, response, dnstrack.SourceRefreshed, ttl) // lx: SPEC 018
 }
 
 func logRejectedResponse(logger logger.ContextLogger, ctx context.Context, response *dns.Msg) {
@@ -70,6 +150,8 @@ func logRejectedResponse(logger logger.ContextLogger, ctx context.Context, respo
 			logger.InfoContext(ctx, "rejected ", dns.Type(record.Header().Rrtype).String(), " ", FormatQuestion(record.String()))
 		}
 	}
+	// lx: SPEC 018 — the rejected case is emitted as a failure (SourceFailed) from
+	// client.go Exchange via emitFailedQuery, not here, to avoid a double emit.
 }
 
 func FqdnToDomain(fqdn string) string {

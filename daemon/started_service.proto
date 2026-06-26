@@ -45,6 +45,7 @@ service StartedService {
   rpc GetRules(google.protobuf.Empty) returns (RuleList) {}
   rpc GetGroups(google.protobuf.Empty) returns (Groups) {}
   rpc GetOutbounds(google.protobuf.Empty) returns (OutboundList) {}
+  rpc SubscribeDNSQueries(SubscribeDNSQueriesRequest) returns (stream DnsQueryEvent) {}
 
   // lx:end lx_command
 }
@@ -548,6 +549,33 @@ message Rule {
 }
 message RuleList {
   repeated Rule rules = 1;
+}
+
+// SPEC 018 — one structured DNS resolution. source is the resolver verb
+// (exchanged/cached/optimistic/refreshed/failed); processInfo carries app attribution
+// (package/uid) the text log lacks. Reuses the existing ProcessInfo message.
+// failed+error cover timeout/SERVFAIL/rejected (пункт 1); rcode is -1 when there was no
+// response. answers is the full response.Answer (CNAME hops + A/AAAA) in wire order, only
+// populated when the subscriber set includeAnswers (пункт 2).
+message SubscribeDNSQueriesRequest {
+  bool includeAnswers = 1;
+}
+message DnsQueryEvent {
+  string domain = 1;
+  uint32 queryType = 2;
+  int32 rcode = 3;
+  uint32 ttl = 4;
+  string source = 5;
+  ProcessInfo processInfo = 6;
+  bool failed = 7;
+  string error = 8;
+  repeated DnsAnswer answers = 9;
+}
+message DnsAnswer {
+  string name = 1;
+  uint32 type = 2;
+  string rdata = 3;
+  uint32 ttl = 4;
 }
 
 // lx:end lx_command

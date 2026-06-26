@@ -10,6 +10,36 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.7
+
+**Pre-release — not device-verified.** Adds a structured, process-attributed DNS-query
+stream (SPEC 018) so a client can observe DNS resolutions with app attribution, instead of
+parsing the text log. New `SubscribeDNSQueries` RPC behind `with_lx_command`; no data-path
+change.
+
+* **`SubscribeDNSQueries` — live DNS-query stream with `processInfo`.** Hijacked DNS (the
+  norm on an Android VPN) is answered before a connection becomes a traffic tracker, so DNS
+  queries never appear in the connections stream — the only egress was the text log, which
+  carries no package attribution. New `common/dnstrack` (a `Subscriber[QueryEvent]` mirror
+  of `trafficcontrol`) emits one event per resolution from `dns/client.go`, attributed via
+  `adapter.ContextFrom(ctx).ProcessInfo` (already populated by the router's process search,
+  so cache-hits are attributed too, not just cache-misses).
+* **Failures are first-class.** Timeout / loopback / rejected-cached / SERVFAIL-reject emit
+  a `failed=true` event with `error` and `rcode=-1` (no response) — without this the stream
+  would be blind to DNS failures, the primary "DNS is being throttled" signal. Successful
+  resolutions carry `source` (exchanged/cached/optimistic/refreshed), `qtype`, `rcode`,
+  `ttl`.
+* **CNAME chains preserved.** With `includeAnswers` on the subscription, each event carries
+  the full `response.Answer` in wire order — CNAME hops AND final A/AAAA, not filtered to
+  IPs — so a client rebuilds the CNAME chain from one event. Off by default (size); the
+  field exists in proto from v1 for later DNS↔TCP IP-attribution without a proto bump.
+* Wire: `rpc SubscribeDNSQueries(SubscribeDNSQueriesRequest) returns (stream DnsQueryEvent)`
+  plus `DnsAnswer` (additive); server stream mirrors `SubscribeConnections` (event-driven,
+  no ticker); libbox `SubscribeDNSQueries(includeAnswers, handler) → DnsQuerySubscription`.
+  Tag-less core answers `codes.Unimplemented` (graceful fallback). `Detour`/`Chain` and all
+  other streams unchanged.
+* Docs: `SPECS/018-DNS_QUERY_STREAM`.
+
 #### v1.14.0-lx.1-rc.6
 
 **Pre-release — not device-verified.** Adds the transport detour tail of a connection's

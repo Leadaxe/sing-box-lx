@@ -9,6 +9,138 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+// DnsQuery is the libbox view of one DNS resolution (SPEC 018). Failed marks
+// timeout/SERVFAIL/rejected; Rcode is -1 when there was no response. Answers is the full
+// response (CNAME hops + A/AAAA) in order, present only when SubscribeDNSQueries was asked
+// to include it. ProcessInfo carries the same app attribution as a Connection.
+type DnsQuery struct {
+	Domain      string
+	QueryType   int32
+	Rcode       int32
+	TTL         int32
+	Source      string
+	Failed      bool
+	Error       string
+	ProcessInfo *ProcessInfo
+	answers     []*DnsAnswer
+}
+
+// Answers returns the resolution's resource records (CNAME chain + final addresses) in
+// wire order. Empty unless includeAnswers was set on the subscription.
+func (q *DnsQuery) Answers() DnsAnswerIterator {
+	return newIterator(q.answers)
+}
+
+// DnsAnswer is one resource record. Type is dns.Type; RData is the textual record (CNAME
+// target or IP). Kept distinct from the final IP so a client can rebuild the CNAME chain.
+type DnsAnswer struct {
+	Name  string
+	Type  int32
+	RData string
+	TTL   int32
+}
+
+type DnsAnswerIterator interface {
+	Next() *DnsAnswer
+	HasNext() bool
+}
+
+// DnsQueryHandler receives DNS-query events. OnQuery fires per resolution; OnError on a
+// stream failure (the subscription is then done).
+type DnsQueryHandler interface {
+	OnQuery(query *DnsQuery)
+	OnError(message string)
+}
+
+// DnsQuerySubscription is the live handle; Close() stops the stream (mirrors the other
+// libbox stream sessions).
+type DnsQuerySubscription struct {
+	streamSession
+}
+
+// SubscribeDNSQueries opens the structured DNS-query stream (SPEC 018). includeAnswers asks
+// the core to attach the full answer set per event (heavier; off for plain attribution).
+// On a core built without with_lx_command the call returns codes.Unimplemented, surfaced
+// here as an error — the caller keeps whatever fallback it had.
+func (c *CommandClient) SubscribeDNSQueries(includeAnswers bool, handler DnsQueryHandler) (*DnsQuerySubscription, error) {
+	client, parentCtx, err := c.getClientForCall()
+	if err != nil {
+		return nil, E.Cause(err, "subscribe dns queries")
+	}
+
+	streamCtx, cancel := context.WithCancel(parentCtx)
+	subscription := &DnsQuerySubscription{
+		streamSession: streamSession{
+			ctx:       streamCtx,
+			cancel:    cancel,
+			closeDone: make(chan struct{}),
+		},
+	}
+
+	stream, err := client.SubscribeDNSQueries(streamCtx, &daemon.SubscribeDNSQueriesRequest{
+		IncludeAnswers: includeAnswers,
+	})
+	if err != nil {
+		cancel()
+		if c.standalone {
+			c.closeConnection()
+		}
+		return nil, E.Cause(err, "subscribe dns queries")
+	}
+
+	standalone := c.standalone
+	go func() {
+		defer func() {
+			close(subscription.closeDone)
+			if standalone {
+				c.closeConnection()
+			}
+		}()
+		for {
+			event, recvErr := stream.Recv()
+			if recvErr != nil {
+				if subscription.ctx.Err() != nil {
+					return
+				}
+				handler.OnError(E.Cause(recvErr, "dns query stream recv").Error())
+				return
+			}
+			handler.OnQuery(dnsQueryFromGRPC(event))
+		}
+	}()
+	return subscription, nil
+}
+
+func dnsQueryFromGRPC(event *daemon.DnsQueryEvent) *DnsQuery {
+	query := &DnsQuery{
+		Domain:    event.Domain,
+		QueryType: int32(event.QueryType),
+		Rcode:     event.Rcode,
+		TTL:       int32(event.Ttl),
+		Source:    event.Source,
+		Failed:    event.Failed,
+		Error:     event.Error,
+	}
+	if event.ProcessInfo != nil {
+		query.ProcessInfo = &ProcessInfo{
+			ProcessID:    int64(event.ProcessInfo.ProcessId),
+			UserID:       event.ProcessInfo.UserId,
+			UserName:     event.ProcessInfo.UserName,
+			ProcessPath:  event.ProcessInfo.ProcessPath,
+			packageNames: event.ProcessInfo.PackageNames,
+		}
+	}
+	for _, answer := range event.Answers {
+		query.answers = append(query.answers, &DnsAnswer{
+			Name:  answer.Name,
+			Type:  int32(answer.Type),
+			RData: answer.Rdata,
+			TTL:   int32(answer.Ttl),
+		})
+	}
+	return query
+}
+
 // SPEC 014 — client side of the libbox command-protocol extensions (CONSTITUTION §3.6).
 // The generated gRPC stubs (client.URLTestOutbound / client.GetRules) always exist after
 // proto regeneration, so this wrapper is not behind a build-tag: the method is present in
