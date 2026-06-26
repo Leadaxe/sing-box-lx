@@ -26,7 +26,11 @@ const (
 	SourceCached     Source = "cached"
 	SourceOptimistic Source = "optimistic"
 	SourceRefreshed  Source = "refreshed"
-	SourceRejected   Source = "rejected"
+	// No SourceRejected: a rejected resolution (loopback / rejected-cached / SERVFAIL-reject)
+	// is folded into SourceFailed at the emit site (dns/client.go via emitFailedQuery), so
+	// "rejected" never reaches the wire — see dns/client_log.go logRejectedResponse. Adding it
+	// back would create an unreachable case on the client.
+	//
 	// SourceFailed marks a resolution that produced no usable answer (timeout, loopback,
 	// rejected-cached, SERVFAIL-reject). Without it the stream would be blind to DNS
 	// failures — the primary "DNS is being throttled" signal. See SPEC 018 пункт 1.

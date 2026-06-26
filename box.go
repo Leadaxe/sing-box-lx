@@ -250,8 +250,10 @@ func New(options Options) (*Box, error) {
 		router.AppendTracker(trafficManager)
 		internalServices = append(internalServices, trafficManager)
 		// lx: SPEC 018 — DNS query stream. Registered as *dnstrack.Manager so the dns
-		// client (service.FromContext in dns/client_log.go) emits structured, process-
-		// attributed query events that the command server exposes as SubscribeDNSQueries.
+		// client (service.PtrFromContext in dns/client_log.go — pairs with MustRegisterPtr;
+		// FromContext[*T] keys on **T and silently returns nil, the §180 dead-stream bug)
+		// emits structured, process-attributed query events the command server exposes as
+		// SubscribeDNSQueries.
 		dnsQueryManager := dnstrack.NewManager()
 		service.MustRegisterPtr(ctx, dnsQueryManager)
 		internalServices = append(internalServices, dnsQueryManager)
