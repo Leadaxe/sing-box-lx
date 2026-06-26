@@ -10,6 +10,31 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.10
+
+**Pre-release — not device-verified.** Adds the DNS server + outbound channel to the
+DNS-query stream (SPEC 018, LxBox feedback) and gates event construction on an active
+subscriber. Behind `with_lx_command`; no data-path change.
+
+* **`DnsQuery` now carries `dnsServer` / `dnsServerType` / `outbound`.** A DNS rule selects a
+  *server* (`dns/router.go` matchDNS by `action.Server`), not an outbound; the channel a query
+  goes out through is the server's own detour, fixed at config time. `dnsServer` = the
+  resolving transport's `Tag()`, `dnsServerType` its `Type()` (udp/tls/https/quic) — both
+  available on every emit path because `transport` is the `Exchange` parameter. `outbound` is
+  the server's detour tag, captured once at transport creation (`TransportAdapter.OutboundTag()`
+  from `DialerOptions.Detour`); the server expands a selector tag to its live node via `Now()`
+  when streaming to a subscriber (consistent with `Connection.Detour`, SPEC 017). Empty on
+  cached/optimistic — the query never left the device.
+* **Events are built only when a profiler is attached.** `dnstrack.Manager` now tracks live
+  subscriptions; the emit sites check `HasSubscribers()` before constructing anything. Without
+  an open `SubscribeDNSQueries` stream the DNS hot path does zero work — no event, no answers
+  slice, no outbound lookup (previously every resolution built an event that was then dropped
+  for lack of a listener). The selector `Now()` resolution thus never touches the hot path.
+* Wire: additive `dnsServer`/`dnsServerType`/`outbound` on `DnsQueryEvent`; new `OutboundTag()`
+  on the `DNSTransport` interface (satisfied by the embedded `TransportAdapter`, no per-transport
+  change). libbox `DnsQuery.DNSServer`/`DNSServerType`/`Outbound()`. No client change needed for
+  §180 — fields the client reads as soon as the core fills them.
+
 #### v1.14.0-lx.1-rc.9
 
 **Pre-release — not device-verified.** Fixes DNS-query attribution (LxBox §180-2: 0/119

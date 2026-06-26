@@ -21,13 +21,16 @@ import (
 // Answers carries the entire response.Answer in wire order (CNAME hops + final A/AAAA), so
 // a client can rebuild the CNAME chain from one event. The per-subscriber includeAnswers
 // flag is applied by the command server, not here — the emit is shared across subscribers.
-func emitQueryEvent(ctx context.Context, response *dns.Msg, source dnstrack.Source, ttl uint32) {
+func emitQueryEvent(ctx context.Context, transport adapter.DNSTransport, response *dns.Msg, source dnstrack.Source, ttl uint32) {
 	manager := service.PtrFromContext[dnstrack.Manager](ctx)
-	if manager == nil || response == nil || len(response.Question) == 0 {
+	// HasSubscribers gate: with no profiler attached, build nothing — not the event, not the
+	// answers slice, not the outbound tag. The query never left for cached/optimistic, so its
+	// channel (outbound) is left empty there; dnsServer/type still identify the resolver.
+	if manager == nil || !manager.HasSubscribers() || response == nil || len(response.Question) == 0 {
 		return
 	}
 	question := response.Question[0]
-	manager.Emit(dnstrack.QueryEvent{
+	event := dnstrack.QueryEvent{
 		Domain:      FqdnToDomain(question.Name),
 		QueryType:   question.Qtype,
 		Rcode:       int32(response.Rcode),
@@ -35,7 +38,18 @@ func emitQueryEvent(ctx context.Context, response *dns.Msg, source dnstrack.Sour
 		Source:      source,
 		ProcessInfo: processInfoFromContext(ctx),
 		Answers:     answersFromMessage(response),
-	})
+	}
+	if transport != nil {
+		event.DNSServer = transport.Tag()
+		event.DNSServerType = transport.Type()
+		// Outbound only where the query actually went out — not cached/optimistic.
+		if source == dnstrack.SourceExchanged || source == dnstrack.SourceRefreshed {
+			if tag := transport.OutboundTag(); tag != "" {
+				event.Outbound = []string{tag}
+			}
+		}
+	}
+	manager.Emit(event)
 }
 
 // emitFailedQuery publishes a failure event from the resolver path where response is nil
@@ -43,12 +57,12 @@ func emitQueryEvent(ctx context.Context, response *dns.Msg, source dnstrack.Sour
 // Without this the stream would silently drop every DNS failure, the primary diagnostic
 // signal. domain/qtype come from the request question (a failed exchange has no response).
 // rcode is the real code when a response exists, RcodeNoAnswer (-1) when it does not.
-func emitFailedQuery(ctx context.Context, question dns.Question, rcode int32, cause string) {
+func emitFailedQuery(ctx context.Context, transport adapter.DNSTransport, question dns.Question, rcode int32, cause string) {
 	manager := service.PtrFromContext[dnstrack.Manager](ctx)
-	if manager == nil {
+	if manager == nil || !manager.HasSubscribers() {
 		return
 	}
-	manager.Emit(dnstrack.QueryEvent{
+	event := dnstrack.QueryEvent{
 		Domain:      FqdnToDomain(question.Name),
 		QueryType:   question.Qtype,
 		Rcode:       rcode,
@@ -56,7 +70,17 @@ func emitFailedQuery(ctx context.Context, question dns.Question, rcode int32, ca
 		Failed:      true,
 		Error:       cause,
 		ProcessInfo: processInfoFromContext(ctx),
-	})
+	}
+	if transport != nil {
+		event.DNSServer = transport.Tag()
+		event.DNSServerType = transport.Type()
+		// A failed exchange still went out (timeout/SERVFAIL), so the outbound applies;
+		// loopback/rejected-cached never left, but transport is the intended server either way.
+		if tag := transport.OutboundTag(); tag != "" {
+			event.Outbound = []string{tag}
+		}
+	}
+	manager.Emit(event)
 }
 
 func processInfoFromContext(ctx context.Context) *adapter.ConnectionOwner {
@@ -91,7 +115,7 @@ func answersFromMessage(response *dns.Msg) []dnstrack.Answer {
 	return answers
 }
 
-func logCachedResponse(logger logger.ContextLogger, ctx context.Context, response *dns.Msg, ttl int) {
+func logCachedResponse(logger logger.ContextLogger, ctx context.Context, transport adapter.DNSTransport, response *dns.Msg, ttl int) {
 	if logger == nil || len(response.Question) == 0 {
 		return
 	}
@@ -102,10 +126,10 @@ func logCachedResponse(logger logger.ContextLogger, ctx context.Context, respons
 			logger.InfoContext(ctx, "cached ", dns.Type(record.Header().Rrtype).String(), " ", FormatQuestion(record.String()))
 		}
 	}
-	emitQueryEvent(ctx, response, dnstrack.SourceCached, uint32(ttl)) // lx: SPEC 018
+	emitQueryEvent(ctx, transport, response, dnstrack.SourceCached, uint32(ttl)) // lx: SPEC 018
 }
 
-func logOptimisticResponse(logger logger.ContextLogger, ctx context.Context, response *dns.Msg) {
+func logOptimisticResponse(logger logger.ContextLogger, ctx context.Context, transport adapter.DNSTransport, response *dns.Msg) {
 	if logger == nil || len(response.Question) == 0 {
 		return
 	}
@@ -116,10 +140,10 @@ func logOptimisticResponse(logger logger.ContextLogger, ctx context.Context, res
 			logger.InfoContext(ctx, "optimistic ", dns.Type(record.Header().Rrtype).String(), " ", FormatQuestion(record.String()))
 		}
 	}
-	emitQueryEvent(ctx, response, dnstrack.SourceOptimistic, 0) // lx: SPEC 018 (optimistic carries no fresh TTL)
+	emitQueryEvent(ctx, transport, response, dnstrack.SourceOptimistic, 0) // lx: SPEC 018 (optimistic carries no fresh TTL)
 }
 
-func logExchangedResponse(logger logger.ContextLogger, ctx context.Context, response *dns.Msg, ttl uint32) {
+func logExchangedResponse(logger logger.ContextLogger, ctx context.Context, transport adapter.DNSTransport, response *dns.Msg, ttl uint32) {
 	if logger == nil || len(response.Question) == 0 {
 		return
 	}
@@ -130,10 +154,10 @@ func logExchangedResponse(logger logger.ContextLogger, ctx context.Context, resp
 			logger.InfoContext(ctx, "exchanged ", dns.Type(record.Header().Rrtype).String(), " ", FormatQuestion(record.String()))
 		}
 	}
-	emitQueryEvent(ctx, response, dnstrack.SourceExchanged, ttl) // lx: SPEC 018
+	emitQueryEvent(ctx, transport, response, dnstrack.SourceExchanged, ttl) // lx: SPEC 018
 }
 
-func logRefreshedResponse(logger logger.ContextLogger, ctx context.Context, response *dns.Msg, ttl uint32) {
+func logRefreshedResponse(logger logger.ContextLogger, ctx context.Context, transport adapter.DNSTransport, response *dns.Msg, ttl uint32) {
 	if logger == nil || len(response.Question) == 0 {
 		return
 	}
@@ -144,7 +168,7 @@ func logRefreshedResponse(logger logger.ContextLogger, ctx context.Context, resp
 			logger.InfoContext(ctx, "refreshed ", dns.Type(record.Header().Rrtype).String(), " ", FormatQuestion(record.String()))
 		}
 	}
-	emitQueryEvent(ctx, response, dnstrack.SourceRefreshed, ttl) // lx: SPEC 018
+	emitQueryEvent(ctx, transport, response, dnstrack.SourceRefreshed, ttl) // lx: SPEC 018
 }
 
 func logRejectedResponse(logger logger.ContextLogger, ctx context.Context, response *dns.Msg) {

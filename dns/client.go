@@ -197,11 +197,11 @@ func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, m
 		if response != nil {
 			if isStale && !options.DisableOptimisticCache {
 				c.backgroundRefreshDNS(transport, question, message.Copy(), options, responseChecker)
-				logOptimisticResponse(c.logger, ctx, response)
+				logOptimisticResponse(c.logger, ctx, transport, response)
 				response.Id = message.Id
 				return response, nil
 			} else if !isStale {
-				logCachedResponse(c.logger, ctx, response, ttl)
+				logCachedResponse(c.logger, ctx, transport, response, ttl)
 				response.Id = message.Id
 				return response, nil
 			}
@@ -211,20 +211,20 @@ func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, m
 	messageId := message.Id
 	contextTransport, clientSubnetLoaded := transportTagFromContext(ctx)
 	if clientSubnetLoaded && transport.Tag() == contextTransport {
-		emitFailedQuery(ctx, question, dnstrack.RcodeNoAnswer, "loopback") // lx: SPEC 018
+		emitFailedQuery(ctx, transport, question, dnstrack.RcodeNoAnswer, "loopback") // lx: SPEC 018
 		return nil, E.New("DNS query loopback in transport[", contextTransport, "]")
 	}
 	ctx = contextWithTransportTag(ctx, transport.Tag())
 	if !disableCache && responseChecker != nil && c.rdrc != nil {
 		rejected := c.rdrc.LoadRDRC(transport.Tag(), question.Name, question.Qtype)
 		if rejected {
-			emitFailedQuery(ctx, question, dnstrack.RcodeNoAnswer, "rejected (cached)") // lx: SPEC 018
+			emitFailedQuery(ctx, transport, question, dnstrack.RcodeNoAnswer, "rejected (cached)") // lx: SPEC 018
 			return nil, ErrResponseRejectedCached
 		}
 	}
 	response, err := c.exchangeToTransport(ctx, transport, message, options.Timeout)
 	if err != nil {
-		emitFailedQuery(ctx, question, dnstrack.RcodeNoAnswer, err.Error()) // lx: SPEC 018 (timeout / network)
+		emitFailedQuery(ctx, transport, question, dnstrack.RcodeNoAnswer, err.Error()) // lx: SPEC 018 (timeout / network)
 		return nil, err
 	}
 	disableCache = disableCache || (response.Rcode != dns.RcodeSuccess && response.Rcode != dns.RcodeNameError)
@@ -240,7 +240,7 @@ func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, m
 				c.rdrc.SaveRDRCAsync(transport.Tag(), question.Name, question.Qtype, c.logger)
 			}
 			logRejectedResponse(c.logger, ctx, response)
-			emitFailedQuery(ctx, question, int32(response.Rcode), "rejected") // lx: SPEC 018 (SERVFAIL / checker)
+			emitFailedQuery(ctx, transport, question, int32(response.Rcode), "rejected") // lx: SPEC 018 (SERVFAIL / checker)
 			return response, ErrResponseRejected
 		}
 	}
@@ -259,7 +259,7 @@ func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, m
 			response.SetEdns0(responseEDNSOpt.UDPSize(), responseEDNSOpt.Do())
 		}
 	}
-	logExchangedResponse(c.logger, ctx, response, timeToLive)
+	logExchangedResponse(c.logger, ctx, transport, response, timeToLive)
 	return response, nil
 }
 
@@ -391,7 +391,7 @@ func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTranspo
 			return nil, ErrNotCached
 		}
 		c.backgroundRefreshDNS(transport, question, c.prepareExchangeMessage(message.Copy(), options), options, responseChecker)
-		logOptimisticResponse(c.logger, ctx, response)
+		logOptimisticResponse(c.logger, ctx, transport, response)
 	}
 	if response.Rcode != dns.RcodeSuccess {
 		return nil, RcodeError(response.Rcode)
@@ -522,7 +522,7 @@ func (c *Client) backgroundRefreshDNS(transport adapter.DNSTransport, question d
 		}
 		timeToLive := applyResponseOptions(question, response, options)
 		c.storeCache(transport, question, response, timeToLive)
-		logRefreshedResponse(c.logger, ctx, response, timeToLive)
+		logRefreshedResponse(c.logger, ctx, transport, response, timeToLive)
 	}()
 }
 

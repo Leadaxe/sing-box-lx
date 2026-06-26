@@ -220,7 +220,7 @@ func (s *StartedService) SubscribeDNSQueries(request *SubscribeDNSQueriesRequest
 		case <-done:
 			return nil
 		case event := <-subscription:
-			if err := server.Send(dnsQueryEventToProto(event, includeAnswers)); err != nil {
+			if err := server.Send(dnsQueryEventToProto(event, includeAnswers, boxService.outboundManager)); err != nil {
 				return err
 			}
 		}
@@ -231,15 +231,18 @@ func (s *StartedService) SubscribeDNSQueries(request *SubscribeDNSQueriesRequest
 // ProcessInfo shape. answers are dropped unless the subscriber asked for them — the core
 // always captures them (cheap, the message is already parsed), the per-subscriber filter
 // lives here so one emit serves every subscriber. SPEC 018.
-func dnsQueryEventToProto(event dnstrack.QueryEvent, includeAnswers bool) *DnsQueryEvent {
+func dnsQueryEventToProto(event dnstrack.QueryEvent, includeAnswers bool, outboundManager adapter.OutboundManager) *DnsQueryEvent {
 	proto := &DnsQueryEvent{
-		Domain:    event.Domain,
-		QueryType: uint32(event.QueryType),
-		Rcode:     event.Rcode,
-		Ttl:       event.TTL,
-		Source:    string(event.Source),
-		Failed:    event.Failed,
-		Error:     event.Error,
+		Domain:        event.Domain,
+		QueryType:     uint32(event.QueryType),
+		Rcode:         event.Rcode,
+		Ttl:           event.TTL,
+		Source:        string(event.Source),
+		Failed:        event.Failed,
+		Error:         event.Error,
+		DnsServer:     event.DNSServer,
+		DnsServerType: event.DNSServerType,
+		Outbound:      resolveOutboundChain(event.Outbound, outboundManager),
 	}
 	if event.ProcessInfo != nil {
 		proto.ProcessInfo = &ProcessInfo{
@@ -262,4 +265,29 @@ func dnsQueryEventToProto(event dnstrack.QueryEvent, includeAnswers bool) *DnsQu
 		}
 	}
 	return proto
+}
+
+// resolveOutboundChain expands the DNS server's static detour tag to the live channel:
+// if the tag is a selector/urltest group, append its active Now() node so the client sees
+// the real outbound, not just the group name (consistent with Connection.Detour, SPEC 017).
+// Done here, server-side, only for subscribers — never on the DNS hot path. Empty in →
+// empty out (cached/optimistic, where the query never left).
+func resolveOutboundChain(tags []string, outboundManager adapter.OutboundManager) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	chain := make([]string, 0, len(tags)+1)
+	for _, tag := range tags {
+		chain = append(chain, tag)
+		detour, loaded := outboundManager.Outbound(tag)
+		if !loaded {
+			continue
+		}
+		if group, isGroup := detour.(adapter.OutboundGroup); isGroup {
+			if now := group.Now(); now != "" {
+				chain = append(chain, now)
+			}
+		}
+	}
+	return chain
 }

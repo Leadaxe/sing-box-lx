@@ -14,21 +14,30 @@ import (
 // response (CNAME hops + A/AAAA) in order, present only when SubscribeDNSQueries was asked
 // to include it. ProcessInfo carries the same app attribution as a Connection.
 type DnsQuery struct {
-	Domain      string
-	QueryType   int32
-	Rcode       int32
-	TTL         int32
-	Source      string
-	Failed      bool
-	Error       string
-	ProcessInfo *ProcessInfo
-	answers     []*DnsAnswer
+	Domain        string
+	QueryType     int32
+	Rcode         int32
+	TTL           int32
+	Source        string
+	Failed        bool
+	Error         string
+	DNSServer     string // which DNS server (transport) resolved this (SPEC 018)
+	DNSServerType string // udp / tls / https / quic
+	ProcessInfo   *ProcessInfo
+	answers       []*DnsAnswer
+	outbound      []string
 }
 
 // Answers returns the resolution's resource records (CNAME chain + final addresses) in
 // wire order. Empty unless includeAnswers was set on the subscription.
 func (q *DnsQuery) Answers() DnsAnswerIterator {
 	return newIterator(q.answers)
+}
+
+// Outbound returns the channel the query went out through: the DNS server's detour, with a
+// selector expanded to its live node. Empty on cached/optimistic (the query never left).
+func (q *DnsQuery) Outbound() StringIterator {
+	return newIterator(q.outbound)
 }
 
 // DnsAnswer is one resource record. Type is dns.Type; RData is the textual record (CNAME
@@ -113,13 +122,16 @@ func (c *CommandClient) SubscribeDNSQueries(includeAnswers bool, handler DnsQuer
 
 func dnsQueryFromGRPC(event *daemon.DnsQueryEvent) *DnsQuery {
 	query := &DnsQuery{
-		Domain:    event.Domain,
-		QueryType: int32(event.QueryType),
-		Rcode:     event.Rcode,
-		TTL:       int32(event.Ttl),
-		Source:    event.Source,
-		Failed:    event.Failed,
-		Error:     event.Error,
+		Domain:        event.Domain,
+		QueryType:     int32(event.QueryType),
+		Rcode:         event.Rcode,
+		TTL:           int32(event.Ttl),
+		Source:        event.Source,
+		Failed:        event.Failed,
+		Error:         event.Error,
+		DNSServer:     event.DnsServer,
+		DNSServerType: event.DnsServerType,
+		outbound:      event.Outbound,
 	}
 	if event.ProcessInfo != nil {
 		query.ProcessInfo = &ProcessInfo{

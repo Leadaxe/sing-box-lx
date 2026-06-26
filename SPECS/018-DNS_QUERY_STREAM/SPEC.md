@@ -162,9 +162,30 @@ type QueryEvent struct {
     Error       string                    // причина: "timeout"/"loopback"/"rejected"/…; "" на успехе
     ProcessInfo *adapter.ConnectionOwner
     Answers     []Answer                  // ВЕСЬ response.Answer; nil если includeAnswers=false
+    // rc.10: какой DNS-сервер резолвил + канал, к которому он привязан
+    DNSServer     string                  // transport.Tag()
+    DNSServerType string                  // transport.Type(): udp/tls/https/quic
+    Outbound      []string                // detour-тег DNS-сервера; пусто на cached/optimistic
 }
 type Answer struct { Name string; Type uint16; RData string; TTL uint32 }
 ```
+
+**DNS-сервер + outbound (rc.10).** DNS-правило выбирает СЕРВЕР (transport, по `action.Server`
+в `dns/router.go:matchDNS`), не outbound. Канал, через который DNS физически уходит, — это
+detour самого transport'а, жёстко связанный с сервером в конфиге (`DialerOptions.Detour`).
+- `DNSServer`/`DNSServerType` = `transport.Tag()`/`Type()` — `transport` это параметр
+  `Exchange`, доступен на ВСЕХ путях эмита (успех+провал), проброшен в `log*`/`emitFailedQuery`.
+- `Outbound` = detour-тег transport'а, собранный ОДИН раз при создании транспорта
+  (`TransportAdapter.outboundTag` из `DialerOptions.Detour`, геттер `OutboundTag()` на
+  интерфейсе `DNSTransport`). Ядро кладёт СТАТИЧЕСКИЙ тег (ноль стоимости на горячем пути);
+  СЕРВЕР при отдаче разворачивает селектор в активный узел через `Now()`
+  (`resolveOutboundChain`, как `Connection.Detour` SPEC 017) — только для подписчиков, не на
+  DNS-резолве. Пусто на `cached`/`optimistic` (запрос не уходил).
+
+**Subscriber-гейт (rc.10).** `dnstrack.Manager` считает активные подписки (atomic);
+`HasSubscribers()` проверяется в `emitQueryEvent`/`emitFailedQuery` ПЕРЕД построением события.
+Без открытого профайлера DNS-горячий путь не строит ни событие, ни `answers`, ни тег —
+нулевая стоимость в обычном режиме (раньше событие строилось всегда, даже без слушателя).
 
 **`Source`:** добавляется `SourceFailed = "failed"` (провал отличим по `source`, не только
 по флагу).

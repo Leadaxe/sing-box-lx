@@ -4902,16 +4902,22 @@ func (x *SubscribeDNSQueriesRequest) GetIncludeAnswers() bool {
 }
 
 type DnsQueryEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Domain        string                 `protobuf:"bytes,1,opt,name=domain,proto3" json:"domain,omitempty"`
-	QueryType     uint32                 `protobuf:"varint,2,opt,name=queryType,proto3" json:"queryType,omitempty"`
-	Rcode         int32                  `protobuf:"varint,3,opt,name=rcode,proto3" json:"rcode,omitempty"`
-	Ttl           uint32                 `protobuf:"varint,4,opt,name=ttl,proto3" json:"ttl,omitempty"`
-	Source        string                 `protobuf:"bytes,5,opt,name=source,proto3" json:"source,omitempty"`
-	ProcessInfo   *ProcessInfo           `protobuf:"bytes,6,opt,name=processInfo,proto3" json:"processInfo,omitempty"`
-	Failed        bool                   `protobuf:"varint,7,opt,name=failed,proto3" json:"failed,omitempty"`
-	Error         string                 `protobuf:"bytes,8,opt,name=error,proto3" json:"error,omitempty"`
-	Answers       []*DnsAnswer           `protobuf:"bytes,9,rep,name=answers,proto3" json:"answers,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Domain      string                 `protobuf:"bytes,1,opt,name=domain,proto3" json:"domain,omitempty"`
+	QueryType   uint32                 `protobuf:"varint,2,opt,name=queryType,proto3" json:"queryType,omitempty"`
+	Rcode       int32                  `protobuf:"varint,3,opt,name=rcode,proto3" json:"rcode,omitempty"`
+	Ttl         uint32                 `protobuf:"varint,4,opt,name=ttl,proto3" json:"ttl,omitempty"`
+	Source      string                 `protobuf:"bytes,5,opt,name=source,proto3" json:"source,omitempty"`
+	ProcessInfo *ProcessInfo           `protobuf:"bytes,6,opt,name=processInfo,proto3" json:"processInfo,omitempty"`
+	Failed      bool                   `protobuf:"varint,7,opt,name=failed,proto3" json:"failed,omitempty"`
+	Error       string                 `protobuf:"bytes,8,opt,name=error,proto3" json:"error,omitempty"`
+	Answers     []*DnsAnswer           `protobuf:"bytes,9,rep,name=answers,proto3" json:"answers,omitempty"`
+	// SPEC 018 — which DNS server (transport) resolved this, and the outbound channel that
+	// server is bound to. A selector tag is resolved to the live node via Now() server-side.
+	// outbound is empty on cached/optimistic paths (the query never left the device).
+	DnsServer     string   `protobuf:"bytes,10,opt,name=dnsServer,proto3" json:"dnsServer,omitempty"`
+	DnsServerType string   `protobuf:"bytes,11,opt,name=dnsServerType,proto3" json:"dnsServerType,omitempty"`
+	Outbound      []string `protobuf:"bytes,12,rep,name=outbound,proto3" json:"outbound,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5005,6 +5011,27 @@ func (x *DnsQueryEvent) GetError() string {
 func (x *DnsQueryEvent) GetAnswers() []*DnsAnswer {
 	if x != nil {
 		return x.Answers
+	}
+	return nil
+}
+
+func (x *DnsQueryEvent) GetDnsServer() string {
+	if x != nil {
+		return x.DnsServer
+	}
+	return ""
+}
+
+func (x *DnsQueryEvent) GetDnsServerType() string {
+	if x != nil {
+		return x.DnsServerType
+	}
+	return ""
+}
+
+func (x *DnsQueryEvent) GetOutbound() []string {
+	if x != nil {
+		return x.Outbound
 	}
 	return nil
 }
@@ -5508,7 +5535,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\bRuleList\x12\"\n" +
 	"\x05rules\x18\x01 \x03(\v2\f.daemon.RuleR\x05rules\"D\n" +
 	"\x1aSubscribeDNSQueriesRequest\x12&\n" +
-	"\x0eincludeAnswers\x18\x01 \x01(\bR\x0eincludeAnswers\"\x97\x02\n" +
+	"\x0eincludeAnswers\x18\x01 \x01(\bR\x0eincludeAnswers\"\xf7\x02\n" +
 	"\rDnsQueryEvent\x12\x16\n" +
 	"\x06domain\x18\x01 \x01(\tR\x06domain\x12\x1c\n" +
 	"\tqueryType\x18\x02 \x01(\rR\tqueryType\x12\x14\n" +
@@ -5518,7 +5545,11 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\vprocessInfo\x18\x06 \x01(\v2\x13.daemon.ProcessInfoR\vprocessInfo\x12\x16\n" +
 	"\x06failed\x18\a \x01(\bR\x06failed\x12\x14\n" +
 	"\x05error\x18\b \x01(\tR\x05error\x12+\n" +
-	"\aanswers\x18\t \x03(\v2\x11.daemon.DnsAnswerR\aanswers\"[\n" +
+	"\aanswers\x18\t \x03(\v2\x11.daemon.DnsAnswerR\aanswers\x12\x1c\n" +
+	"\tdnsServer\x18\n" +
+	" \x01(\tR\tdnsServer\x12$\n" +
+	"\rdnsServerType\x18\v \x01(\tR\rdnsServerType\x12\x1a\n" +
+	"\boutbound\x18\f \x03(\tR\boutbound\"[\n" +
 	"\tDnsAnswer\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\rR\x04type\x12\x14\n" +

@@ -86,6 +86,8 @@ type DNSTransport interface {
 	Type() string
 	Tag() string
 	Dependencies() []string
+	// OutboundTag is the detour tag this DNS server is bound to (lx: SPEC 018); "" = default.
+	OutboundTag() string
 	// Reset closes the transport's existing connections so later requests use fresh connections.
 	// Exchanges that are currently using those connections may fail.
 	Reset()

@@ -11,6 +11,8 @@
 package dnstrack
 
 import (
+	"sync/atomic"
+
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing/common/observable"
 )
@@ -59,6 +61,13 @@ type QueryEvent struct {
 	Error       string // human cause when Failed; "" on success
 	ProcessInfo *adapter.ConnectionOwner
 	Answers     []Answer // full response.Answer in order; nil unless the subscriber asked for it
+	// DNSServer/DNSServerType identify which DNS server (transport) resolved the query —
+	// the DNS rule picks a server, not an outbound. Outbound is the channel that server is
+	// statically bound to (its detour), resolved through a selector's Now() to the live
+	// node; empty on cached/optimistic paths where the query never left the device.
+	DNSServer     string
+	DNSServerType string
+	Outbound      []string
 }
 
 var _ adapter.LifecycleService = (*Manager)(nil)
@@ -69,6 +78,7 @@ var _ adapter.LifecycleService = (*Manager)(nil)
 type Manager struct {
 	eventSubscriber *observable.Subscriber[QueryEvent]
 	eventObserver   *observable.Observer[QueryEvent]
+	subscribers     atomic.Int32 // live SubscribeDNSQueries streams; gates event construction
 }
 
 func NewManager() *Manager {
@@ -77,6 +87,18 @@ func NewManager() *Manager {
 	}
 	manager.eventObserver = observable.NewObserver(manager.eventSubscriber, 64)
 	return manager
+}
+
+// HasSubscribers reports whether any SubscribeDNSQueries stream is open. The emit sites
+// check this BEFORE building a QueryEvent, so when no profiler is attached the DNS hot path
+// does zero work (not even constructing the event, let alone resolving the outbound). The
+// observable Emit already drops events with no listener, but the construction cost — and
+// the Now() outbound resolution — would still be paid; this gate removes it.
+func (m *Manager) HasSubscribers() bool {
+	if m == nil {
+		return false
+	}
+	return m.subscribers.Load() > 0
 }
 
 func (m *Manager) Name() string {
@@ -103,9 +125,14 @@ func (m *Manager) Emit(event QueryEvent) {
 // SubscribeEvents returns a channel of events and a done channel, mirroring
 // trafficcontrol.Manager so the command server reuses the same subscription pattern.
 func (m *Manager) SubscribeEvents() (observable.Subscription[QueryEvent], <-chan struct{}, error) {
-	return m.eventObserver.Subscribe()
+	subscription, done, err := m.eventObserver.Subscribe()
+	if err == nil {
+		m.subscribers.Add(1)
+	}
+	return subscription, done, err
 }
 
 func (m *Manager) UnSubscribeEvents(subscription observable.Subscription[QueryEvent]) {
 	m.eventObserver.UnSubscribe(subscription)
+	m.subscribers.Add(-1)
 }

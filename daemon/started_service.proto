@@ -570,6 +570,12 @@ message DnsQueryEvent {
   bool failed = 7;
   string error = 8;
   repeated DnsAnswer answers = 9;
+  // SPEC 018 — which DNS server (transport) resolved this, and the outbound channel that
+  // server is bound to. A selector tag is resolved to the live node via Now() server-side.
+  // outbound is empty on cached/optimistic paths (the query never left the device).
+  string dnsServer = 10;
+  string dnsServerType = 11;
+  repeated string outbound = 12;
 }
 message DnsAnswer {
   string name = 1;
