@@ -61,6 +61,12 @@ DNS-запросы приложений на Android-VPN перехватыва�
 
 ## Решение: пакет `dnstrack` поверх существующего `observable`
 
+> **ФИНАЛЬНЫЙ КОНТРАКТ — раздел «Согласованная форма» ниже.** Этот раздел и proto-эскизы в
+> нём ИЛЛЮСТРАТИВНЫ (ранний черновик с `Empty`-входом и без `failed`/`answers`). При
+> расхождении — главенствует «Согласованная форма»: RPC принимает
+> `SubscribeDNSQueriesRequest{includeAnswers}`, событие несёт `failed`/`error`/`answers`,
+> `rcode=-1` на провале. Реализация уже следует финалу.
+
 `SubscribeConnections` доставляет live-поток через `common/observable.Subscriber[T]`
 (generic pub/sub, `common/trafficcontrol/manager.go:47-91`). Тот же слой переиспользуется
 для DNS — не нужен новый транспорт.
@@ -166,6 +172,10 @@ type Answer struct { Name string; Type uint16; RData string; TTL uint32 }
 **Решения по развилкам:**
 - **Q1 — `Rcode = -1` при `response == nil`** (timeout): sentinel «нет ответа», явно
   отличается от `0`=NOERROR. При `response != nil` — реальный `response.Rcode`.
+  *Клиентское примечание:* proto-тип `int32` (signed varint) — `-1` едет как отдельное
+  значение, на проводе физически отличное от `65535` (verified). На Kotlin/Dart маппить
+  `rcode == -1` → «нет ответа» ДО любого `.toUInt()`, иначе `-1` станет `4294967295`. Это
+  забота клиента; ядро отдаёт чистый signed `-1`.
 - **Q2 — `SourceFailed`** на всех провальных путях (плюс `Failed=true`).
 - **Q3 — флаг `includeAnswers`** в запросе подписки: `answers[]` едут ТОЛЬКО когда клиент
   запросил (иначе пустой трафик). Меняет RPC-вход с `Empty` на `SubscribeDNSQueriesRequest`.
