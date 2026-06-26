@@ -10,6 +10,34 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.6
+
+**Pre-release — not device-verified.** Adds the transport detour tail of a connection's
+final outbound as a new connection field (SPEC 017), so the client can show the real
+physical packet path. Additive proto field; `Chain` / Clash-API unchanged.
+
+* **`Connection.Detour` — the detour tail `Chain` omits by design.** Upstream `chain`
+  answers "how routing picked the final outbound" (selector groups + the chosen node) and
+  stops there (`common/trafficcontrol/tracker.go`): its loop only unwinds `OutboundGroup`
+  via `Now()` and breaks on the first non-group, so a node's own `detour` (e.g. a node
+  detouring through WARP) never appears. That is by design, not a bug — `detour` is a
+  transport detail, not a routing choice. New `Detour []string` on `TrackerMetadata`
+  unwinds the final outbound's detour tail via `Dependencies()` (which for a non-group
+  outbound is exactly its detour, `adapter/outbound/adapter.go`), descending into groups
+  through `Now()` against the **same atomic snapshot** so a detour-into-a-group reflects
+  the live selection. A `seen` guard prevents detour cycles.
+* **Resolved in the core, not reassembled on the client.** Because a detour can point at a
+  group whose active node changes at runtime, building the path client-side would mean
+  stitching `chain` + `GetOutbounds` + `GetGroups` snapshots that can drift between calls.
+  The core resolves it once at connection-creation time (consistent `Now()` across all
+  groups); the per-tick `SubscribeConnections` stream just carries the ready field. Wire
+  cost is +1 short tag list per connection (usually 1 element); no extra RPC or channel.
+* Wire: `repeated string detourList = 23` added to the `Connection` proto message
+  (additive — old clients ignore it); mapped in `connectionToProto`; surfaced on the
+  libbox `Connection` as `Detour() StringIterator` next to `Chain()`. Order: final
+  outbound → outward; full path from the node = `Chain().first ⊕ Detour()`.
+* Docs: `SPECS/017-CONNECTION_DETOUR_CHAIN`.
+
 #### v1.14.0-lx.1-rc.5
 
 **Pre-release — not device-verified.** Fixes in-flight cancellation of the per-node

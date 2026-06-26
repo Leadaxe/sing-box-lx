@@ -962,6 +962,7 @@ func buildConnectionProto(metadata *trafficcontrol.TrackerMetadata) *Connection 
 		Outbound:      metadata.Outbound,
 		OutboundType:  metadata.OutboundType,
 		ChainList:     metadata.Chain,
+		DetourList:    metadata.Detour, // lx: SPEC 017 — transport detour tail
 		ProcessInfo:   processInfo,
 	}
 }

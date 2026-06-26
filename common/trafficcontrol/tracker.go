@@ -15,13 +15,21 @@ import (
 )
 
 type TrackerMetadata struct {
-	ID           uuid.UUID
-	Metadata     adapter.InboundContext
-	CreatedAt    time.Time
-	ClosedAt     time.Time
-	Upload       *atomic.Int64
-	Download     *atomic.Int64
-	Chain        []string
+	ID        uuid.UUID
+	Metadata  adapter.InboundContext
+	CreatedAt time.Time
+	ClosedAt  time.Time
+	Upload    *atomic.Int64
+	Download  *atomic.Int64
+	Chain     []string
+	// lx:begin detour-chain (SPEC 017)
+	// Detour carries the transport detour tail of the final outbound — the part the
+	// upstream Chain omits by design (Chain = routing groups + final outbound only).
+	// Resolved in newTrackerMetadata against the same atomic group snapshot, so a
+	// detour that points at a group reflects that group's live Now(). Order is from
+	// the final outbound outward (node → its detour → …).
+	Detour []string
+	// lx:end detour-chain
 	Rule         adapter.Rule
 	Outbound     string
 	OutboundType string
@@ -81,6 +89,12 @@ func (m *Manager) newTrackerMetadata(metadata adapter.InboundContext, matchedRul
 	} else {
 		next = m.outbound.Default().Tag()
 	}
+	// lx:begin detour-chain (SPEC 017)
+	// finalOutbound is the non-group outbound the upstream loop stops at; its detour
+	// tail (omitted from Chain by design) is unwound below into a separate field.
+	var finalOutbound adapter.Outbound
+	seen := make(map[string]bool)
+	// lx:end detour-chain
 	for {
 		detour, loaded := m.outbound.Outbound(next)
 		if !loaded {
@@ -89,12 +103,48 @@ func (m *Manager) newTrackerMetadata(metadata adapter.InboundContext, matchedRul
 		chain = append(chain, next)
 		outbound = detour.Tag()
 		outboundType = detour.Type()
+		seen[next] = true // lx: detour-chain — remember routing-chain tags to avoid revisiting
 		outboundGroup, isGroup := detour.(adapter.OutboundGroup)
 		if !isGroup {
+			finalOutbound = detour // lx: detour-chain
 			break
 		}
 		next = outboundGroup.Now()
 	}
+	// lx:begin detour-chain (SPEC 017)
+	// Walk the detour tail of the final outbound. Dependencies()[0] of a non-group
+	// outbound is exactly its detour (adapter/outbound/adapter.go); a detour that
+	// points at a group is descended via Now() against this same snapshot. seen
+	// guards against detour cycles. Order: final outbound → outward.
+	var detourChain []string
+	for cur := finalOutbound; cur != nil; {
+		deps := cur.Dependencies()
+		if len(deps) == 0 || seen[deps[0]] {
+			break
+		}
+		step, loaded := m.outbound.Outbound(deps[0])
+		if !loaded {
+			break
+		}
+		detourChain = append(detourChain, deps[0])
+		seen[deps[0]] = true
+		if group, isGroup := step.(adapter.OutboundGroup); isGroup {
+			now := group.Now()
+			if now == "" || seen[now] {
+				break
+			}
+			nowOutbound, loaded := m.outbound.Outbound(now)
+			if !loaded {
+				break
+			}
+			detourChain = append(detourChain, now)
+			seen[now] = true
+			cur = nowOutbound
+			continue
+		}
+		cur = step
+	}
+	// lx:end detour-chain
 	return TrackerMetadata{
 		ID:           id,
 		Metadata:     metadata,
@@ -102,6 +152,7 @@ func (m *Manager) newTrackerMetadata(metadata adapter.InboundContext, matchedRul
 		Upload:       upload,
 		Download:     download,
 		Chain:        common.Reverse(chain),
+		Detour:       detourChain, // lx: detour-chain (SPEC 017)
 		Rule:         matchedRule,
 		Outbound:     outbound,
 		OutboundType: outboundType,

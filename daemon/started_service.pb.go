@@ -1282,6 +1282,7 @@ type Connection struct {
 	OutboundType  string                 `protobuf:"bytes,20,opt,name=outboundType,proto3" json:"outboundType,omitempty"`
 	ChainList     []string               `protobuf:"bytes,21,rep,name=chainList,proto3" json:"chainList,omitempty"`
 	ProcessInfo   *ProcessInfo           `protobuf:"bytes,22,opt,name=processInfo,proto3" json:"processInfo,omitempty"`
+	DetourList    []string               `protobuf:"bytes,23,rep,name=detourList,proto3" json:"detourList,omitempty"` // lx: SPEC 017
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1466,6 +1467,14 @@ func (x *Connection) GetChainList() []string {
 func (x *Connection) GetProcessInfo() *ProcessInfo {
 	if x != nil {
 		return x.ProcessInfo
+	}
+	return nil
+}
+
+// lx: SPEC 017
+func (x *Connection) GetDetourList() []string {
+	if x != nil {
+		return x.DetourList
 	}
 	return nil
 }
@@ -4977,7 +4986,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\bclosedAt\x18\x06 \x01(\x03R\bclosedAt\"Y\n" +
 	"\x10ConnectionEvents\x12/\n" +
 	"\x06events\x18\x01 \x03(\v2\x17.daemon.ConnectionEventR\x06events\x12\x14\n" +
-	"\x05reset\x18\x02 \x01(\bR\x05reset\"\x95\x05\n" +
+	"\x05reset\x18\x02 \x01(\bR\x05reset\"\xb5\x05\n" +
 	"\n" +
 	"Connection\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
@@ -5002,7 +5011,8 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\boutbound\x18\x13 \x01(\tR\boutbound\x12\"\n" +
 	"\foutboundType\x18\x14 \x01(\tR\foutboundType\x12\x1c\n" +
 	"\tchainList\x18\x15 \x03(\tR\tchainList\x125\n" +
-	"\vprocessInfo\x18\x16 \x01(\v2\x13.daemon.ProcessInfoR\vprocessInfo\"\xa5\x01\n" +
+	"\vprocessInfo\x18\x16 \x01(\v2\x13.daemon.ProcessInfoR\vprocessInfo\x12\x1e\n" +
+	"\ndetourList\x18\x17 \x03(\tR\ndetourList\"\xa5\x01\n" +
 	"\vProcessInfo\x12\x1c\n" +
 	"\tprocessId\x18\x01 \x01(\rR\tprocessId\x12\x16\n" +
 	"\x06userId\x18\x02 \x01(\x05R\x06userId\x12\x1a\n" +

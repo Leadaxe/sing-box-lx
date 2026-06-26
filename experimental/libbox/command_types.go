@@ -289,11 +289,19 @@ type Connection struct {
 	Outbound      string
 	OutboundType  string
 	chainList     []string
+	detourList    []string // lx: SPEC 017 — transport detour tail of the final outbound
 	ProcessInfo   *ProcessInfo
 }
 
 func (c *Connection) Chain() StringIterator {
 	return newIterator(c.chainList)
+}
+
+// Detour returns the transport detour tail of the final outbound (SPEC 017) — the part
+// Chain omits by design. Order: final outbound → outward; empty when the outbound has no
+// detour. Full physical path from the node = Chain().first ⊕ Detour().
+func (c *Connection) Detour() StringIterator {
+	return newIterator(c.detourList)
 }
 
 func (c *Connection) DisplayDestination() string {
@@ -405,6 +413,7 @@ func connectionFromGRPC(conn *daemon.Connection) Connection {
 		Outbound:      conn.Outbound,
 		OutboundType:  conn.OutboundType,
 		chainList:     conn.ChainList,
+		detourList:    conn.DetourList, // lx: SPEC 017
 		ProcessInfo:   processInfo,
 	}
 }

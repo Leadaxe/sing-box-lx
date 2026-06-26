@@ -195,6 +195,9 @@ message Connection {
   string outboundType = 20;
   repeated string chainList = 21;
   ProcessInfo processInfo = 22;
+  // lx: SPEC 017 — transport detour tail of the final outbound (Chain omits it by
+  // design). Order: final outbound → outward. Empty for outbounds without a detour.
+  repeated string detourList = 23;
 }
 
 message ProcessInfo {
