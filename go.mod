@@ -40,14 +40,14 @@ require (
 	github.com/sagernet/gomobile v0.1.12
 	github.com/sagernet/gvisor v0.0.0-20250811.0-sing-box-mod.1
 	github.com/sagernet/quic-go v0.59.0-sing-box-mod.4
-	github.com/sagernet/sing v0.8.11-0.20260514110501-905ad103a4df
-	github.com/sagernet/sing-cloudflared v0.1.1-0.20260620151903-a1d6358fe953
+	github.com/sagernet/sing v0.8.12-0.20260625092856-31bbf21d4b12
+	github.com/sagernet/sing-cloudflared v0.1.1
 	github.com/sagernet/sing-mux v0.3.5
 	github.com/sagernet/sing-quic v0.6.2-0.20260525051024-9467ede27fb7
 	github.com/sagernet/sing-shadowsocks v0.2.8
 	github.com/sagernet/sing-shadowsocks2 v0.2.1
 	github.com/sagernet/sing-shadowtls v0.2.1
-	github.com/sagernet/sing-tun v0.8.12-0.20260620141852-d8bba3691575
+	github.com/sagernet/sing-tun v0.8.12-0.20260623031040-54c9dbda5fe7
 	github.com/sagernet/sing-vmess v0.2.8-0.20250909125414-3aed155119a1
 	github.com/sagernet/smux v1.5.50-sing-box-mod.1
 	github.com/sagernet/tailscale v1.92.4-sing-box-1.13-mod.7.0.20260527101438-dc40932c32d9
@@ -190,4 +190,5 @@ require (
 // Local-path replace for iteration; switch to a pinned Leadaxe/wireguard-go commit
 // for CI/release once validated against a live AWG2 server. See SPECS/003.
 replace github.com/sagernet/wireguard-go => ./submodules/wireguard-go
+
 // lx:end awg

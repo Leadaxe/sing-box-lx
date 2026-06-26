@@ -528,7 +528,6 @@ enum USBBackend {
   USB_BACKEND_DARWIN_IOKIT = 3;
   USB_BACKEND_WINDOWS_VBOXUSB = 4;
 }
-
 // lx:begin lx_command
 
 message URLTestOutboundRequest {

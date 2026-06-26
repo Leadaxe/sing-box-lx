@@ -1,13 +1,12 @@
 package daemon
 
 import (
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
-
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
 )
 
 const (
@@ -239,17 +238,15 @@ func file_daemon_managed_service_proto_rawDescGZIP() []byte {
 	return file_daemon_managed_service_proto_rawDescData
 }
 
-var (
-	file_daemon_managed_service_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-	file_daemon_managed_service_proto_msgTypes  = make([]protoimpl.MessageInfo, 3)
-	file_daemon_managed_service_proto_goTypes   = []any{
-		DebugCrashRequest_Type(0),            // 0: daemon.DebugCrashRequest.Type
-		(*SystemProxyStatus)(nil),            // 1: daemon.SystemProxyStatus
-		(*SetSystemProxyEnabledRequest)(nil), // 2: daemon.SetSystemProxyEnabledRequest
-		(*DebugCrashRequest)(nil),            // 3: daemon.DebugCrashRequest
-		(*emptypb.Empty)(nil),                // 4: google.protobuf.Empty
-	}
-)
+var file_daemon_managed_service_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_daemon_managed_service_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_daemon_managed_service_proto_goTypes = []any{
+	(DebugCrashRequest_Type)(0),          // 0: daemon.DebugCrashRequest.Type
+	(*SystemProxyStatus)(nil),            // 1: daemon.SystemProxyStatus
+	(*SetSystemProxyEnabledRequest)(nil), // 2: daemon.SetSystemProxyEnabledRequest
+	(*DebugCrashRequest)(nil),            // 3: daemon.DebugCrashRequest
+	(*emptypb.Empty)(nil),                // 4: google.protobuf.Empty
+}
 var file_daemon_managed_service_proto_depIdxs = []int32{
 	0, // 0: daemon.DebugCrashRequest.type:type_name -> daemon.DebugCrashRequest.Type
 	4, // 1: daemon.ManagedService.StopService:input_type -> google.protobuf.Empty

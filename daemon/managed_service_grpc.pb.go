@@ -2,7 +2,6 @@ package daemon
 
 import (
 	context "context"
-
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -126,23 +125,18 @@ type UnimplementedManagedServiceServer struct{}
 func (UnimplementedManagedServiceServer) StopService(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method StopService not implemented")
 }
-
 func (UnimplementedManagedServiceServer) ReloadService(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReloadService not implemented")
 }
-
 func (UnimplementedManagedServiceServer) GetSystemProxyStatus(context.Context, *emptypb.Empty) (*SystemProxyStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetSystemProxyStatus not implemented")
 }
-
 func (UnimplementedManagedServiceServer) SetSystemProxyEnabled(context.Context, *SetSystemProxyEnabledRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetSystemProxyEnabled not implemented")
 }
-
 func (UnimplementedManagedServiceServer) TriggerDebugCrash(context.Context, *DebugCrashRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TriggerDebugCrash not implemented")
 }
-
 func (UnimplementedManagedServiceServer) TriggerOOMReport(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TriggerOOMReport not implemented")
 }
