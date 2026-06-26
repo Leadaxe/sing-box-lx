@@ -229,13 +229,26 @@ transaction ID, негоден). Но и не нужен: CNAME-цепочка �
 (см. «Объём поля»). (Связка split A/AAAA как РАЗНЫХ событий — возможное будущее additive
 `query_id`, не сейчас.)
 
-### Пункт 3 — ProcessInfo на cached/optimistic (проверено — регрессии нет)
+### Пункт 3 — ProcessInfo (ИСПРАВЛЕНО в rc.9 — прежнее утверждение было неверным)
 
-`logCachedResponse` (`:203`), `logOptimisticResponse` (`:199`), `logExchangedResponse`
-(`:257`) получают ОДИН ctx — параметр `Exchange`. Cache-hit идёт коротким путём, но из
-того же ctx. `adapter.ContextFrom(ctx).ProcessInfo` непуст одинаково на всех путях.
-`refreshed` (`:520`) — background-горутина с тем же ctx из замыкания. Атрибуция cached-DNS
-корректна.
+**Прежний анализ был НЕПОЛНЫМ и устройство это вскрыло (§180-2: 0/119 attributed).** Верно,
+что все `log*Response` получают один ctx (это про путь ВНУТРИ `Exchange`). Ошибка: я не
+проверил, что в этот ctx вообще положили `ProcessInfo` ДО входа в резолвер. На
+Android-VPN не положили.
+
+Механизм (по коду): DNS на TUN+DNS-proto хайджекается на FAST-PATH —
+`route/route.go:91-94` (stream) и `:226-228` (packet) — которые делают `return` ДО
+`matchRule`. А `searchProcessInfo` (заполняющий `metadata.ProcessInfo`) живёт ВНУТРИ
+`matchRule` (`route/route.go:416`). Значит fast-path-хайджекнутый DNS (это БОЛЬШИНСТВО DNS
+на VPN, особенно UDP) доходит до эмита с `ProcessInfo == nil`. Атрибутированы лишь редкие
+запросы, прошедшие `matchRule`; `found package name` в логе — часто от TCP-коннекта того же
+app, не от DNS-запроса. Детерминированно (два code-path), не гонка.
+
+**Фикс (rc.9):** вызвать `r.searchProcessInfo(ctx, &metadata)` ПЕРЕД обоими fast-path
+hijack-вызовами. Идемпотентен (ранний выход на `ProcessInfo != nil`) и кэширован
+(`findProcessInfoCached` по `{network,source,destination}`), так что цена — один lookup на
+flow. `Source`/`Destination` валидны на TUN к этой точке; `OriginDestination` может быть
+пуст, но `searchProcessInfo` фолбэчит на `Destination` (IP DNS-сервера).
 
 ## Критерии готовности
 

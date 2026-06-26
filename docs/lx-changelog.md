@@ -10,6 +10,27 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.9
+
+**Pre-release — not device-verified.** Fixes DNS-query attribution (LxBox §180-2: 0/119
+events had a package) and the answer `rdata` format. SPEC 018; behind `with_lx_command`.
+
+* **DNS queries now carry `ProcessInfo`.** On a TUN VPN, DNS is hijacked on a fast-path
+  (`route/route.go` — TUN+DNS protocol returns before `matchRule`), and `searchProcessInfo`
+  (which fills `metadata.ProcessInfo`) lives *inside* `matchRule`. So every fast-path DNS
+  query reached the resolver — and the `SubscribeDNSQueries` emit — with a nil ProcessInfo,
+  i.e. unattributed (the bulk of DNS on a VPN, especially UDP). Now `searchProcessInfo` is
+  called before both fast-path hijacks (stream + packet). It's idempotent and cached
+  (`findProcessInfoCached`), so the cost is one lookup per flow. This corrects SPEC 018's
+  пункт 3, whose earlier "cached attribution is correct" claim was wrong — it checked the
+  ctx was consistent inside `Exchange` but not that ProcessInfo was populated before it.
+* **`DnsAnswer.rdata` is now the bare value.** It was the full RR string
+  (`"google.com. 29 IN A 64.233.165.139"`) from `RR.String()`; now the header prefix is
+  stripped so clients get `"64.233.165.139"` / the CNAME target directly, no last-field
+  parsing. CNAME chain order unchanged.
+* No proto/wire change; rc.7 contract intact. LxBox §180 needs no client change — both fixes
+  populate fields the client already reads.
+
 #### v1.14.0-lx.1-rc.8
 
 **Pre-release — not device-verified.** Fixes SPEC 018 `SubscribeDNSQueries` returning

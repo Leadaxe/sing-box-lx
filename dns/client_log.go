@@ -68,6 +68,11 @@ func processInfoFromContext(ctx context.Context) *adapter.ConnectionOwner {
 
 // answersFromMessage flattens response.Answer to the wire-order RR list, preserving CNAME
 // hops (NOT filtered down to A/AAAA — the chain would be lost). SPEC 018 Q2.
+//
+// RData is the BARE record value (the CNAME target / IP), not the full RR string. miekg's
+// RR.String() returns "name TTL IN TYPE rdata"; we strip the header prefix (its String()
+// is exactly that leading part) so the client gets "64.233.165.139", not
+// "google.com. 29 IN A 64.233.165.139" (§180-2 had the client parsing the last field).
 func answersFromMessage(response *dns.Msg) []dnstrack.Answer {
 	if len(response.Answer) == 0 {
 		return nil
@@ -75,10 +80,11 @@ func answersFromMessage(response *dns.Msg) []dnstrack.Answer {
 	answers := make([]dnstrack.Answer, 0, len(response.Answer))
 	for _, record := range response.Answer {
 		header := record.Header()
+		rdata := strings.TrimPrefix(record.String(), header.String())
 		answers = append(answers, dnstrack.Answer{
 			Name:  FqdnToDomain(header.Name),
 			Type:  header.Rrtype,
-			RData: FormatQuestion(record.String()),
+			RData: rdata,
 			TTL:   header.Ttl,
 		})
 	}

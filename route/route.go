@@ -89,6 +89,12 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 		return E.New("global UoT (legacy) not supported since sing-box v1.7.0.")
 	}
 	if metadata.InboundType == C.TypeTun && metadata.Protocol == C.ProtocolDNS {
+		// lx: SPEC 018 — attribute the DNS query to its process BEFORE hijacking. This
+		// fast-path returns before matchRule (where searchProcessInfo normally runs), so
+		// without this every TUN-hijacked DNS query reached the resolver with a nil
+		// ProcessInfo and the SubscribeDNSQueries stream emitted it unattributed (§180-2).
+		// Idempotent + cached (findProcessInfoCached), so the cost is one lookup per flow.
+		r.searchProcessInfo(ctx, &metadata)
 		N.CloseOnHandshakeFailure(conn, onClose, r.hijackDNSStream(ctx, conn, metadata))
 		return nil
 	}
@@ -224,6 +230,9 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 		conn = deadline.NewPacketConn(bufio.NewNetPacketConn(conn))
 	}*/
 	if metadata.InboundType == C.TypeTun && metadata.Protocol == C.ProtocolDNS {
+		// lx: SPEC 018 — attribute before hijack (same reason as the stream path above);
+		// UDP DNS is the bulk of DNS on an Android VPN, so this is the main attribution gap.
+		r.searchProcessInfo(ctx, &metadata)
 		return r.hijackDNSPacket(ctx, conn, nil, metadata, onClose)
 	}
 	selectedRule, _, _, packetBuffers, err := r.matchRule(ctx, &metadata, false, false, nil, conn)
