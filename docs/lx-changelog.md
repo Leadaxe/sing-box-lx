@@ -14,7 +14,23 @@ as GitHub **pre-releases** and never become "Latest".
 
 **Pre-release — not device-verified.** Adds the transport detour tail of a connection's
 final outbound as a new connection field (SPEC 017), so the client can show the real
-physical packet path. Additive proto field; `Chain` / Clash-API unchanged.
+physical packet path. Additive proto field; `Chain` / Clash-API unchanged. **Also merges
+upstream `v1.14.0-alpha.35`** (114 commits since alpha.33) — the lx layer rebased on top.
+
+* **Merged upstream `testing` → `v1.14.0-alpha.35`.** Conflicts resolved keeping all lx
+  patches: `box.go` observable gate (`needObservable`, the rc.3 Android-fatal fix),
+  trimmed AAR build tags (no `with_clash_api` / `with_usbip`; keeps `with_lx_command` /
+  `with_awg` / `with_xhttp`), the lx command-RPC block, and the new `detourList` field.
+  AmneziaWG submodule re-graft (`wireguard-go` → `./submodules`, pinned `e5feca7`) was
+  preserved against upstream's "Rebase wireguard-go to official". Dependency versions
+  (`sing` 0.8.12, `sing-tun`, `sing-cloudflared`) taken from upstream. Generated `.pb.go`
+  regenerated; `go build ./...` green, package tests pass. Notable upstream additions now
+  in tree: TLS spoof, optimistic DNS cache, USB/IP service (build-tag-gated off for the
+  AAR), hysteria2 realm, certificate CGO JNI bridge, oom-killer improvements.
+* **Verify on device:** the trimmed AAR omits `with_usbip` by design — confirm no lx
+  config references a usbip endpoint (a missing tag fails fast at runtime, no silent
+  fallback). Also exercise the WG/AWG path (submodule + dependency churn) and the
+  connection stream (`detourList`).
 
 * **`Connection.Detour` — the detour tail `Chain` omits by design.** Upstream `chain`
   answers "how routing picked the final outbound" (selector groups + the chosen node) and
