@@ -22,7 +22,7 @@ import (
 // a client can rebuild the CNAME chain from one event. The per-subscriber includeAnswers
 // flag is applied by the command server, not here — the emit is shared across subscribers.
 func emitQueryEvent(ctx context.Context, response *dns.Msg, source dnstrack.Source, ttl uint32) {
-	manager := service.FromContext[*dnstrack.Manager](ctx)
+	manager := service.PtrFromContext[dnstrack.Manager](ctx)
 	if manager == nil || response == nil || len(response.Question) == 0 {
 		return
 	}
@@ -44,7 +44,7 @@ func emitQueryEvent(ctx context.Context, response *dns.Msg, source dnstrack.Sour
 // signal. domain/qtype come from the request question (a failed exchange has no response).
 // rcode is the real code when a response exists, RcodeNoAnswer (-1) when it does not.
 func emitFailedQuery(ctx context.Context, question dns.Question, rcode int32, cause string) {
-	manager := service.FromContext[*dnstrack.Manager](ctx)
+	manager := service.PtrFromContext[dnstrack.Manager](ctx)
 	if manager == nil {
 		return
 	}

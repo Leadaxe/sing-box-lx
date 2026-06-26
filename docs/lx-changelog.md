@@ -10,6 +10,25 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.8
+
+**Pre-release — not device-verified.** Fixes SPEC 018 `SubscribeDNSQueries` returning
+`Unimplemented` on device (LxBox §180) — the DNS stream never delivered a single event in
+rc.7. Behind `with_lx_command`; no data-path change.
+
+* **DNS query stream was dead in rc.7 — service-registry key mismatch.** `dnstrack.Manager`
+  is registered with `service.MustRegisterPtr` (keys on `*dnstrack.Manager`), but both the
+  server (`SubscribeDNSQueries`) and the emit sites (`dns/client_log.go`) read it with
+  `service.FromContext[*dnstrack.Manager]`, which keys on `**dnstrack.Manager` — so the
+  lookup always returned nil. Server-side that surfaced as `codes.Unimplemented "DNS query
+  tracking not available"`; emit-side it silently dropped every event (double failure).
+  Fixed all three readers to `service.PtrFromContext[dnstrack.Manager]`, the pair of
+  `MustRegisterPtr` — exactly how `trafficManager` is resolved (`daemon/instance.go`).
+  Verified: the manager now resolves to the same pointer box.go registered.
+* No proto/wire change — rc.7's `DnsQueryEvent`/`SubscribeDNSQueries` contract is intact;
+  this only fixes the core wiring so the stream actually starts. LxBox §180 needs no client
+  change (subscription already in place, was catching the Unimplemented gracefully).
+
 #### v1.14.0-lx.1-rc.7
 
 **Pre-release — not device-verified.** Adds a structured, process-attributed DNS-query

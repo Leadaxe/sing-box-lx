@@ -195,7 +195,11 @@ func (s *StartedService) SubscribeDNSQueries(request *SubscribeDNSQueriesRequest
 	boxService := s.instance
 	s.serviceAccess.RUnlock()
 
-	manager := service.FromContext[*dnstrack.Manager](boxService.ctx)
+	// PtrFromContext (not FromContext[*T]): the manager is registered via MustRegisterPtr
+	// in box.go, which keys on *dnstrack.Manager. FromContext[*dnstrack.Manager] would key
+	// on **dnstrack.Manager and never find it — that was the §180 Unimplemented bug. This
+	// mirrors how trafficManager is resolved (daemon/instance.go PtrFromContext).
+	manager := service.PtrFromContext[dnstrack.Manager](boxService.ctx)
 	if manager == nil {
 		return status.Error(codes.Unimplemented, "DNS query tracking not available")
 	}
