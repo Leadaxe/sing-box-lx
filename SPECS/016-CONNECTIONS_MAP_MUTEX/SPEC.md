@@ -1,11 +1,36 @@
 # SPEC 016 — Connections: гонка map (нет мьютекса в ApplyEvents/Filter/Iterator)
 
 **Тип:** долг ядра (bug, data race → fatal)
-**Статус:** Open — обойдено клиент-стороной в LxBox §170, в ядре НЕ исправлено
-**Приоритет:** High (приводит к `fatal error` → abort всего процесса при ≥2
+**Статус:** Fixed — `sync.Mutex` добавлен в `Connections`, race-тест зелёный под `-race`.
+Клиентский обход LxBox §170 (per-client аккумуляторы) остаётся как штатная схема для
+потребителей разной скорости/фильтра; мьютекс — страховка корректности класса и защита
+от 3-го потребителя, не повод откатывать клиентскую схему.
+**Приоритет:** High (приводил к `fatal error` → abort всего процесса при ≥2
 подписчиках `CommandConnections`)
 **Файл:** `experimental/libbox/command_types.go`
 **Связано:** SPEC 014 (Clash→CommandClient), SPEC 015 (RPC extensions)
+
+## Реализация (Fixed)
+
+`Connections` получил `access sync.Mutex`. Под локом — все публичные методы, трогающие
+`connectionMap`/`input`/`filtered`: `ApplyEvents`, `FilterState`, `SortByDate/Traffic/TrafficTotal`,
+`Iterator`. Тонкости, заложенные в фикс:
+
+- **Нереентрантность.** `ApplyEvents` внутри звал `FilterState` (строка 174). `sync.Mutex`
+  не реентрантный → прямой лок в обоих методах = deadlock. Поэтому `FilterState` разделён
+  на публичный (берёт лок) и приватный `filterState` (тело без лока); `ApplyEvents` зовёт
+  приватный под уже взятым локом. Поле `filterState int32` переименовано в `filterStateValue`
+  (имя `filterState` занято приватным методом — поле и метод в одном namespace типа).
+- **`evictClosedConnections`** оставлен без собственного лока: он приватный и вызывается
+  только из `ApplyEvents`, который лок уже держит.
+- **`Iterator` отдаёт КОПИЮ** `filtered` (`append([]Connection(nil), c.filtered...)`):
+  gomobile-потребитель обходит итератор уже вне Go-вызова (лок отпущен), поэтому снимок, а
+  не живой срез, который параллельный `ApplyEvents`/`SortBy` перезаписывает.
+
+Верификация: `experimental/libbox/command_types_race_test.go` —
+`go test -race -run TestConnectionsConcurrentAccess` зелёный (writer `ApplyEvents` ∥ 3
+readers `Iterator`/`FilterState`/`SortByDate` на одном `*Connections`, 2000 раундов).
+`go build ./...` и `-tags with_lx_command` зелёные, `gofmt` чистый.
 
 ## Симптом
 
