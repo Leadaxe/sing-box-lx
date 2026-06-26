@@ -310,12 +310,28 @@ jobs:
 
       - name: Release notes
         run: |
+          # What's-new for THIS tag comes from docs/lx-changelog.md (single source of
+          # truth, kept per release) — extract the section for this version, between its
+          # "#### vX" header and the next "#### ", into a SEPARATE file. It must NOT be
+          # interpolated through the heredoc below: changelog prose contains backticks and
+          # $(...) that the shell would execute (command injection from doc text). We splice
+          # the file in with sed after the heredoc instead.
+          VERSION="${{ steps.ver.outputs.version }}"
+          awk -v v="#### v${VERSION}" '
+            $0==v {f=1; next} /^#### / {f=0} f' docs/lx-changelog.md > changes.md
+          if [ -z "$(tr -d '[:space:]' < changes.md)" ]; then
+            echo "See [docs/lx-changelog.md](https://github.com/Leadaxe/sing-box-lx/blob/lx-1.14/docs/lx-changelog.md)." > changes.md
+          fi
           cat > notes.md <<EOF
-          **sing-box-lx ${{ steps.ver.outputs.version }}** — a thin downstream of [sing-box](https://github.com/SagerNet/sing-box) (base **v1.13.13**) adding two client-side features.
+          **sing-box-lx ${{ steps.ver.outputs.version }}** — a thin downstream of [sing-box](https://github.com/SagerNet/sing-box) (base **v1.14.0-alpha.35**, branch \`lx-1.14\`).
 
-          ### Features
-          - **AmneziaWG 2.0** (\`with_awg\`) — live-validated against a real AWG2 server (handshake + keepalive + outbound traffic). Config: a \`wireguard\` endpoint with \`jc/jmin/jmax\`, \`s1\`–\`s4\`, \`h1\`–\`h4\`, \`i1\`–\`i5\`.
-          - **XHTTP** transport (\`with_xhttp\`) — live-validated against a real Xray (3x-ui) server in \`packet-up\`/\`auto\` mode (handshake + DNS + HTTPS + download). Xray-compatible "splithttp"; composes with Reality. (\`stream-one\` has a known framing bug — use \`auto\`.)
+          ### What's new in this release
+          __CHANGES__
+
+          ### Standing features
+          - **AmneziaWG 2.0** (\`with_awg\`) — \`wireguard\` endpoint with \`jc/jmin/jmax\`, \`s1\`–\`s4\`, \`h1\`–\`h4\`, \`i1\`–\`i5\`.
+          - **XHTTP** transport (\`with_xhttp\`) — Xray-compatible "splithttp", composes with Reality (use \`auto\`; \`stream-one\` has a known framing bug).
+          - **CommandClient extensions** (\`with_lx_command\`) — native libbox gRPC parity for the dropped Clash API: URLTestOutbound, GetRules, GetGroups/GetOutbounds, Connection.Detour, SubscribeDNSQueries.
 
           ### Binaries
           Drop-in \`sing-box\` for **darwin / windows** × {amd64, arm64}, plus a **Windows 7 (32-bit)** legacy build (\`sing-box-${{ steps.ver.outputs.version }}-windows-386-legacy-windows-7.zip\` — built with a Win7-patched Go; without naive/cronet, which has no windows/386 target).
@@ -332,6 +348,13 @@ jobs:
 
           Config reference: [docs/lx-config.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs/lx-config.md).
           EOF
+
+          # Splice the changelog section in place of the placeholder. `sed r` inserts the
+          # file verbatim (no shell/sed interpretation of its contents), so backticks and
+          # $(...) in the prose are inert. Then drop the placeholder line itself. Written
+          # via a temp file (not sed -i, whose flag syntax differs BSD vs GNU).
+          sed -e '/__CHANGES__/r changes.md' -e '/__CHANGES__/d' notes.md > notes.final.md
+          mv notes.final.md notes.md
 
       - name: Publish
         env:
