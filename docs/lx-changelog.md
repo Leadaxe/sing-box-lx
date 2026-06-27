@@ -12,9 +12,10 @@ as GitHub **pre-releases** and never become "Latest".
 
 #### v1.14.0-lx.1-rc.11
 
-**Pre-release — not device-verified.** Adds load-balancing to the `urltest` group
-(SPEC 019) and lands the SPEC 016 connections-map mutex. No data-path change for existing
-configs — `urltest` without `mode` behaves exactly as before.
+**Pre-release.** Adds load-balancing to the `urltest` group (SPEC 019, live-verified on
+5 vless nodes — see `SPECS/019-URLTEST_MODE_STICKY/TEST_REPORT.md`) and lands the SPEC 016
+connections-map mutex. No data-path change for existing configs — `urltest` without `mode`
+behaves exactly as before.
 
 * **`urltest` gains a `mode`.** `least_test` (default, unchanged: pick the lowest-delay node)
   plus `round_robin` (rotate across the live nodes — those with a fresh URL-test result that
