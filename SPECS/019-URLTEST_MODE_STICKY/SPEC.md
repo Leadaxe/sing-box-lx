@@ -1,7 +1,8 @@
 # SPEC 019 — URLTest: режимы балансировки `mode` + липкость `sticky`
 
 **Тип:** lx-фича (расширение группы `urltest` — балансировка нагрузки)
-**Статус:** Open → реализуется на ветке `lx-1.14`
+**Статус:** Реализовано + протестировано (юнит + живой прогон на 5 vless-нодах) —
+см. [TEST_REPORT.md](TEST_REPORT.md). Релиз `v1.14.0-lx.1-rc.11`.
 **Приоритет:** Medium (распределение трафика по нескольким узлам, а не выбор одного «лучшего»)
 **Файлы ядра:** `option/group.go`, `protocol/group/urltest.go`, `constant/proxy.go`
 **Связано:** upstream issue [#4110](https://github.com/SagerNet/sing-box/issues/4110)

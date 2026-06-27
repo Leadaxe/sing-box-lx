@@ -110,5 +110,13 @@ not rotate). Allowed values:
 - `process`: the source process (Android package name, else executable path).
 - `domain`: the destination domain (empty for IP destinations).
 - `source_ip`: the source IP.
-- `dest_ip`: the destination IP.
+- `dest_ip`: the destination IP — **empty until the destination is resolved**, so for
+  domain-based traffic (socks5h / sniffed) it is `""` when the key is built.
 - `dest_port`: the destination port.
+
+!!! warning
+
+    For domain-based traffic, put `domain` in `hash`. A key of only
+    `source_ip` / `dest_ip` / `dest_port` collapses to `""` for an unresolved
+    destination, so with a single source every flow shares one key and sticks to a
+    single node — correct stickiness, but not the granularity you want.
