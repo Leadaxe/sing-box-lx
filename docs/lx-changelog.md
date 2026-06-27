@@ -22,7 +22,7 @@ configs — `urltest` without `mode` behaves exactly as before.
   node; the existing health ticker is the single source of liveness; when nothing is live the
   first usable outbound is the fallback. `least_connection` is reserved (phase 2) and currently
   rejected at config time. Implemented as a separate branch in `DialContext`/`ListenPacket`
-  (`protocol/group/urltest_balance.go`) so the legacy `selectedOutbound*` cache path is
+  (`protocol/group/urltest_balance_lx.go`) so the legacy `selectedOutbound*` cache path is
   untouched.
 * **`sticky` binds one flow to one node.** Optional object `{mode, timeout, cap, hash}` for the
   balanced modes. `hash` selects key components (`process`, `domain`, `source_ip`, `dest_ip`,
