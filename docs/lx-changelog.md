@@ -10,6 +10,36 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.11
+
+**Pre-release — not device-verified.** Adds load-balancing to the `urltest` group
+(SPEC 019) and lands the SPEC 016 connections-map mutex. No data-path change for existing
+configs — `urltest` without `mode` behaves exactly as before.
+
+* **`urltest` gains a `mode`.** `least_test` (default, unchanged: pick the lowest-delay node)
+  plus `round_robin` (rotate across the live nodes — those with a fresh URL-test result that
+  support the network). Selection runs once per connection, so a UDP/QUIC session stays on one
+  node; the existing health ticker is the single source of liveness; when nothing is live the
+  first usable outbound is the fallback. `least_connection` is reserved (phase 2) and currently
+  rejected at config time. Implemented as a separate branch in `DialContext`/`ListenPacket`
+  (`protocol/group/urltest_balance.go`) so the legacy `selectedOutbound*` cache path is
+  untouched.
+* **`sticky` binds one flow to one node.** Optional object `{mode, timeout, cap, hash}` for the
+  balanced modes. `hash` selects key components (`process`, `domain`, `source_ip`, `dest_ip`,
+  `dest_port`), concatenated in order; an absent component contributes `""`, and an all-empty
+  key maps to a single fixed node so keyless flows never rotate. `mode` is `jumphash` (default,
+  stateless consistent hash over the live set — adding/removing a node remaps only ~1/n of keys)
+  or `ttlmap` (a `key→node` table with lazy + ticker eviction, a `2000`-entry LRU cap, and a
+  `10m` TTL; a dead bound node re-pins to a survivor). `Now()` reports the last-picked tag in
+  balanced modes.
+* **SPEC 016 — `sync.Mutex` on `Connections`** (libbox `command_types.go`). The client-side
+  connections accumulator raced its `connectionMap` across per-subscriber goroutines
+  (`ApplyEvents` iterating while another writes → `fatal error: concurrent map iteration and map
+  write` → process abort with ≥2 `CommandConnections` subscribers). Guarded all map/slice
+  mutators; `FilterState` split into public-locks / private-body for non-reentrancy; `Iterator`
+  returns a copy so the gomobile caller walks a snapshot, not a live slice. Verified with a
+  writer-∥-3-readers race test.
+
 #### v1.14.0-lx.1-rc.10
 
 **Pre-release — not device-verified.** Adds the DNS server + outbound channel to the

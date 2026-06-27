@@ -44,9 +44,18 @@ type URLTest struct {
 	idleTimeout                  time.Duration
 	group                        *URLTestGroup
 	interruptExternalConnections bool
+	balancer                     *balancer // lx: SPEC 019 — nil for least_test (default)
 }
 
 func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.URLTestOutboundOptions) (adapter.Outbound, error) {
+	// lx: SPEC 019 — load-balancing mode + stickiness; nil balancer keeps legacy behaviour.
+	balancer, err := newBalancer(options)
+	if err != nil {
+		return nil, err
+	}
+	if balancer == nil && options.Sticky != nil && len(options.Sticky.Hash) > 0 {
+		logger.Warn("urltest: sticky is ignored in least_test mode")
+	}
 	outbound := &URLTest{
 		Adapter:                      outbound.NewAdapter(C.TypeURLTest, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.Outbounds),
 		ctx:                          ctx,
@@ -59,6 +68,7 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 		tolerance:                    options.Tolerance,
 		idleTimeout:                  time.Duration(options.IdleTimeout),
 		interruptExternalConnections: options.InterruptExistConnections,
+		balancer:                     balancer,
 	}
 	if len(outbound.tags) == 0 {
 		return nil, E.New("missing tags")
@@ -89,12 +99,19 @@ func (s *URLTest) PostStart() error {
 }
 
 func (s *URLTest) Close() error {
+	if s.balancer != nil {
+		s.balancer.close() // lx: SPEC 019 — stop sticky ttlmap sweeper
+	}
 	return common.Close(
 		common.PtrOrNil(s.group),
 	)
 }
 
 func (s *URLTest) Now() string {
+	// lx: SPEC 019 — balanced modes have no single "current" node; report the last picked tag.
+	if s.balancer != nil {
+		return s.group.lastSelected.Load()
+	}
 	if s.group.selectedOutboundTCP != nil {
 		return s.group.selectedOutboundTCP.Tag()
 	} else if s.group.selectedOutboundUDP != nil {
@@ -115,19 +132,40 @@ func (s *URLTest) CheckOutbounds() {
 	s.group.CheckOutbounds(true)
 }
 
+// selectBalanced picks an outbound per-connection in round_robin/least_connection mode.
+// lx: SPEC 019. Returns nil only when there is no usable outbound at all.
+func (s *URLTest) selectBalanced(ctx context.Context, network string, destination M.Socksaddr) adapter.Outbound {
+	live := s.group.liveOutbounds(network)
+	fallback, _ := s.group.Select(network) // outbounds[0]-style fallback when nothing is live
+	selected := s.balancer.pick(ctx, destination, live, fallback)
+	if selected != nil {
+		s.group.lastSelected.Store(selected.Tag())
+	}
+	return selected
+}
+
 func (s *URLTest) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	s.group.Touch()
 	var outbound adapter.Outbound
-	switch N.NetworkName(network) {
-	case N.NetworkTCP:
-		outbound = s.group.selectedOutboundTCP
-	case N.NetworkUDP:
-		outbound = s.group.selectedOutboundUDP
-	default:
-		return nil, E.Extend(N.ErrUnknownNetwork, network)
-	}
-	if outbound == nil {
-		outbound, _ = s.group.Select(network)
+	if s.balancer != nil {
+		switch N.NetworkName(network) {
+		case N.NetworkTCP, N.NetworkUDP:
+			outbound = s.selectBalanced(ctx, network, destination)
+		default:
+			return nil, E.Extend(N.ErrUnknownNetwork, network)
+		}
+	} else {
+		switch N.NetworkName(network) {
+		case N.NetworkTCP:
+			outbound = s.group.selectedOutboundTCP
+		case N.NetworkUDP:
+			outbound = s.group.selectedOutboundUDP
+		default:
+			return nil, E.Extend(N.ErrUnknownNetwork, network)
+		}
+		if outbound == nil {
+			outbound, _ = s.group.Select(network)
+		}
 	}
 	if outbound == nil {
 		return nil, E.New("missing supported outbound")
@@ -143,9 +181,14 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 
 func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	s.group.Touch()
-	outbound := s.group.selectedOutboundUDP
-	if outbound == nil {
-		outbound, _ = s.group.Select(N.NetworkUDP)
+	var outbound adapter.Outbound
+	if s.balancer != nil {
+		outbound = s.selectBalanced(ctx, N.NetworkUDP, destination)
+	} else {
+		outbound = s.group.selectedOutboundUDP
+		if outbound == nil {
+			outbound, _ = s.group.Select(N.NetworkUDP)
+		}
 	}
 	if outbound == nil {
 		return nil, E.New("missing supported outbound")
@@ -206,6 +249,7 @@ type URLTestGroup struct {
 	close                        chan struct{}
 	started                      bool
 	lastActive                   common.TypedValue[time.Time]
+	lastSelected                 common.TypedValue[string] // lx: SPEC 019 — Now() in balanced modes
 }
 
 func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManager, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, tolerance uint16, idleTimeout time.Duration, interruptExternalConnections bool) (*URLTestGroup, error) {
