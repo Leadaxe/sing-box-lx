@@ -1492,6 +1492,12 @@ func (s *StartedService) WriteMessage(level log.Level, message string) {
 	}
 }
 
+func (s *StartedService) SavedLog() []*log.Entry {
+	s.logAccess.RLock()
+	defer s.logAccess.RUnlock()
+	return s.logLines.Array()
+}
+
 func (s *StartedService) Instance() *Instance {
 	s.serviceAccess.RLock()
 	defer s.serviceAccess.RUnlock()
