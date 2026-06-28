@@ -589,23 +589,41 @@ func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int) map[s
 	result := g.testNodes(ctx, poolNodes, true)
 	liveTag := func(tag string) bool { _, ok := result[tag]; return ok }
 
-	// 2. Build the next occupancy: keep live members, find replacements for dead/empty slots.
-	next := make([]string, 0, size)
-	for _, tag := range current {
+	// 2. Build the next occupancy IN PLACE: a live member keeps its exact slot index; a dead or
+	// empty slot becomes "" (a hole to be refilled). Never compact — shifting a living node
+	// across slots would move every sticky key bound to it (the SPEC invariant, see the file
+	// header in urltest_balance_lx.go). next is at least `size` long so the pool can grow.
+	slotCount := size
+	if len(current) > slotCount {
+		slotCount = len(current)
+	}
+	next := make([]string, slotCount)
+	for i, tag := range current {
 		if tag != "" && liveTag(tag) {
-			next = append(next, tag)
+			next[i] = tag
 		}
 	}
-	// 2b. Top up dead/empty slots: walk non-pool nodes in config order, testing in batches of
-	// `size` (a full pool's worth) in parallel, until the pool is full or nodes run out.
-	if len(next) < size {
+	// emptySlot returns the first hole at/after `from`, or -1 when the pool is full.
+	emptySlot := func(from int) int {
+		for i := from; i < len(next); i++ {
+			if next[i] == "" {
+				return i
+			}
+		}
+		return -1
+	}
+	// 2b. Refill holes (dead/empty slots) by writing replacements INTO the hole's own index:
+	// walk non-pool nodes in config order, testing in batches of `size` (a full pool's worth)
+	// in parallel, until no holes remain or nodes run out.
+	if emptySlot(0) >= 0 {
 		candidates := make([]adapter.Outbound, 0, len(g.outbounds))
 		for _, detour := range g.outbounds {
 			if !inPool[detour.Tag()] {
 				candidates = append(candidates, detour)
 			}
 		}
-		for start := 0; start < len(candidates) && len(next) < size; start += size {
+		fill := 0
+		for start := 0; start < len(candidates) && emptySlot(fill) >= 0; start += size {
 			end := start + size
 			if end > len(candidates) {
 				end = len(candidates)
@@ -614,25 +632,44 @@ func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int) map[s
 			tested := g.testNodes(ctx, batch, true)
 			// Take live ones in config order (batch is already in config order).
 			for _, detour := range batch {
-				if len(next) >= size {
+				slot := emptySlot(fill)
+				if slot < 0 {
 					break
 				}
 				tag := detour.Tag()
 				if delay, ok := tested[tag]; ok {
-					next = append(next, tag)
+					next[slot] = tag
+					fill = slot + 1
 					result[tag] = delay
 				}
 			}
 		}
 	}
-	// 3. If still short (not enough live nodes), keep the dead members to never shrink the pool.
-	if len(next) < size {
+	// 3. Any hole left (not enough live nodes): put a dead member back in it so the pool never
+	// shrinks. A dead occupant keeps the slot it already held when possible; otherwise the
+	// remaining dead members fill the leftover holes (order does not matter — all are dead).
+	if emptySlot(0) >= 0 {
+		// Slots that still hold their original dead occupant: leave them be.
+		for i, tag := range current {
+			if i < len(next) && next[i] == "" && tag != "" && !liveTag(tag) {
+				next[i] = tag
+			}
+		}
+		// Surplus dead members (slots that no longer fit) drop into any leftover hole.
+		placed := make(map[string]bool, len(next))
+		for _, tag := range next {
+			if tag != "" {
+				placed[tag] = true
+			}
+		}
 		for _, tag := range current {
-			if len(next) >= size {
+			slot := emptySlot(0)
+			if slot < 0 {
 				break
 			}
-			if tag != "" && !liveTag(tag) {
-				next = append(next, tag)
+			if tag != "" && !liveTag(tag) && !placed[tag] {
+				next[slot] = tag
+				placed[tag] = true
 			}
 		}
 	}
@@ -658,8 +695,10 @@ func (g *URLTestGroup) balancePoolTolerant(ctx context.Context, size int) map[st
 	return result
 }
 
-// rebuildPool re-derives slot occupancy after a forced full test (manual URLTest). It mirrors
-// the tolerant path's selection from whatever history is now present.
+// rebuildPool re-derives slot occupancy after a forced full test (manual URLTest) from the
+// history now present. It honours pool_tolerance: with tolerance == 0 it keeps living members
+// in their slots (first-live discipline — a manual test must not reshuffle a stable pool and
+// break sticky bindings); with tolerance > 0 it re-ranks by delay like the steady-state path.
 func (g *URLTestGroup) rebuildPool() {
 	size := g.poolSize()
 	if size == 0 {
@@ -674,8 +713,37 @@ func (g *URLTestGroup) rebuildPool() {
 			results[tag] = candidate{tag: tag, alive: false}
 		}
 	}
-	next := planTolerantPool(g.balancer.poolTags(), results, size, g.balancer.poolTolerance)
-	g.balancer.setSlots(next)
+	current := g.balancer.poolTags()
+	if g.balancer.poolTolerance == 0 {
+		live := make(map[string]bool, len(results))
+		inPool := make(map[string]bool, len(current))
+		for _, tag := range current {
+			if tag != "" {
+				inPool[tag] = true
+			}
+		}
+		for tag, c := range results {
+			if c.alive {
+				live[tag] = true
+			}
+		}
+		// Fill holes with live non-pool nodes, fastest first (history is warm after the force test).
+		fillCandidates := make([]candidate, 0, len(results))
+		for _, detour := range g.outbounds {
+			tag := detour.Tag()
+			if c, ok := results[tag]; ok && c.alive && !inPool[tag] {
+				fillCandidates = append(fillCandidates, c)
+			}
+		}
+		sortCandidatesByDelay(fillCandidates)
+		fillOrder := make([]string, len(fillCandidates))
+		for i, c := range fillCandidates {
+			fillOrder[i] = c.tag
+		}
+		g.balancer.setSlots(planFirstLivePool(current, live, fillOrder, size))
+		return
+	}
+	g.balancer.setSlots(planTolerantPool(current, results, size, g.balancer.poolTolerance))
 }
 
 // seedPool fills the pool before the first health-check: prefer nodes with live history (the

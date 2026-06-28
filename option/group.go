@@ -28,6 +28,8 @@ type URLTestBalancerOptions struct {
 	Pool          int    `json:"pool,omitempty"`           // rotation pool size, default 3, < 1 is an error
 	PoolTolerance uint16 `json:"pool_tolerance,omitempty"` // ms; 0 = first-live-fill, > 0 = top-N-by-delay with eviction threshold
 	// StickyHash key components: process|domain|source_ip|dest_ip|dest_port.
-	// nil (field omitted) → default ["process","domain"]; [] (explicit) → stickiness off.
+	// Omitted → default ["process","domain"]. To DISABLE stickiness use ["none"] — a bare [] is
+	// NOT honoured because the config decoder (badjson.UnmarshallExcludedContext) re-marshals
+	// the struct and collapses an empty array to nil, indistinguishable from "omitted".
 	StickyHash []string `json:"sticky_hash,omitempty"`
 }

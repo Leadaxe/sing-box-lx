@@ -105,10 +105,12 @@ periodic health-check does.
 ##### balancer.sticky_hash
 
 Binds one flow to one node, so the same key (e.g. the same destination domain) always
-reaches the same pool node. Key components, concatenated in order. **Omitted → defaults to
-`["process", "domain"]`** (stickiness on); an explicit `[]` disables stickiness (pure
-round-robin). An absent component contributes an empty string; when all are empty the key is
-`""`, which maps to a single fixed slot (so keyless flows do not rotate). Allowed values:
+reaches the same pool node. Key components, concatenated in order. **Omitted (or `[]`) →
+defaults to `["process", "domain"]`** (stickiness on). To **disable** stickiness (pure
+round-robin) use the sentinel **`["none"]`** — a bare `[]` cannot be used because the config
+decoder collapses an empty array to "omitted" (see the note below). An absent component
+contributes an empty string; when all are empty the key is `""`, which maps to a single fixed
+slot (so keyless flows do not rotate). Allowed values:
 
 - `process`: the source process (Android package name, else executable path).
 - `domain`: the destination domain (empty for IP destinations).
@@ -116,6 +118,15 @@ round-robin). An absent component contributes an empty string; when all are empt
 - `dest_ip`: the destination IP — **empty until the destination is resolved**, so for
   domain-based traffic (socks5h / sniffed) it is `""` when the key is built.
 - `dest_port`: the destination port.
+- `none`: **disables** stickiness. Must be the only element (mixing it with a real component
+  is an error).
+
+!!! note
+
+    `["none"]` rather than `[]` is required to turn stickiness off: the sing-box config decoder
+    re-marshals each outbound and an empty JSON array does not survive that round-trip (it
+    becomes indistinguishable from an omitted field, which means *default*). The `"none"`
+    sentinel is unambiguous.
 
 Binding is to a fixed **slot index** (`slot[hash(key) % pool]`), not a node position. Since
 slots never move and a replacement takes the exact slot it evicts, a node that stays in its

@@ -66,9 +66,13 @@ func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {
 		if bo.Pool > 0 {
 			pool = bo.Pool
 		}
-		// nil StickyHash (field omitted) → default; explicit [] → stickiness off.
-		if bo.StickyHash == nil {
+		// Omitted (nil) or empty → default. To DISABLE stickiness use the explicit ["none"]
+		// sentinel: the config decoder collapses a bare [] to nil (see URLTestStickyNone), so an
+		// empty list cannot mean "off". ["none"] → stickiness off (no components).
+		if len(bo.StickyHash) == 0 {
 			stickyHash = []string{C.URLTestStickyProcess, C.URLTestStickyDomain}
+		} else if len(bo.StickyHash) == 1 && bo.StickyHash[0] == C.URLTestStickyNone {
+			stickyHash = nil // sticky off → pure counter rotation
 		} else {
 			stickyHash = bo.StickyHash
 		}
@@ -80,6 +84,10 @@ func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {
 		switch component {
 		case C.URLTestStickyProcess, C.URLTestStickyDomain, C.URLTestStickySourceIP,
 			C.URLTestStickyDestIP, C.URLTestStickyDestPort:
+		case C.URLTestStickyNone:
+			// "none" is only valid as the sole component (handled above); mixed with real
+			// components it is ambiguous (disable AND key by something?) — reject.
+			return nil, E.New("urltest sticky_hash: \"none\" must be the only component (it disables stickiness)")
 		default:
 			return nil, E.New("unknown urltest sticky_hash component: ", component)
 		}
@@ -166,6 +174,14 @@ func stickyComponent(component string, metadata *adapter.InboundContext, destina
 		}
 		return metadata.ProcessInfo.ProcessPath
 	case C.URLTestStickyDomain:
+		// The router resolves a domain destination to an IP and overwrites metadata.Destination
+		// (route.go: `metadata.Destination = M.Socksaddr{Addr: ...}`) BEFORE the group's
+		// DialContext runs — so destination.Fqdn is empty here for domain traffic. The original
+		// domain survives in metadata.Domain (set by sniffing / reverse mapping). Read that first;
+		// fall back to destination.Fqdn only if it is still a domain (no metadata, direct dial).
+		if metadata != nil && metadata.Domain != "" {
+			return metadata.Domain
+		}
 		return destination.Fqdn
 	case C.URLTestStickySourceIP:
 		if metadata == nil || !metadata.Source.Addr.IsValid() {
@@ -205,6 +221,71 @@ type candidate struct {
 	tag   string
 	delay uint16
 	alive bool
+}
+
+// planFirstLivePool (pool_tolerance == 0) computes slot occupancy WITHOUT ranking by delay:
+// every live slot member keeps its exact index, dead/empty slots are refilled from fillOrder
+// (live nodes not already pooled, in caller order), and any leftover hole keeps a dead member
+// so the pool never shrinks. This is the replace-in-slot twin of balancePoolFirstLive, used by
+// the manual-test rebuild path where re-ranking would needlessly relocate living nodes and
+// break their sticky bindings.
+//
+// current = present slot tags (slot order). live = set of tags that tested alive now.
+// fillOrder = candidate tags to drop into holes (already filtered to non-pool, in order).
+func planFirstLivePool(current []string, live map[string]bool, fillOrder []string, size int) []string {
+	slotCount := size
+	if len(current) > slotCount {
+		slotCount = len(current)
+	}
+	next := make([]string, slotCount)
+	for i, tag := range current {
+		if tag != "" && live[tag] {
+			next[i] = tag
+		}
+	}
+	placed := make(map[string]bool, len(next))
+	for _, tag := range next {
+		if tag != "" {
+			placed[tag] = true
+		}
+	}
+	// Refill holes with fresh live nodes, writing each into the hole's own index.
+	fi := 0
+	for i := range next {
+		if next[i] != "" {
+			continue
+		}
+		for fi < len(fillOrder) {
+			tag := fillOrder[fi]
+			fi++
+			if tag != "" && live[tag] && !placed[tag] {
+				next[i] = tag
+				placed[tag] = true
+				break
+			}
+		}
+	}
+	// Any hole still open: keep a dead member there (never shrink). A dead occupant first keeps
+	// the slot it already held; surplus dead members fall into leftover holes.
+	for i, tag := range current {
+		if i < len(next) && next[i] == "" && tag != "" && !live[tag] && !placed[tag] {
+			next[i] = tag
+			placed[tag] = true
+		}
+	}
+	for i := range next {
+		if next[i] != "" {
+			continue
+		}
+		for _, tag := range current {
+			if tag != "" && !live[tag] && !placed[tag] {
+				next[i] = tag
+				placed[tag] = true
+				break
+			}
+		}
+	}
+	return next
 }
 
 // planTolerantPool (pool_tolerance > 0): pick the top-`size` live candidates by delay, but
@@ -248,7 +329,11 @@ func planTolerantPool(current []string, results map[string]candidate, size int, 
 			}
 		}
 	}
-	// Eviction: for each slot, if a faster-than-by-tolerance unused alive node exists, swap.
+	// Eviction: for each slot, if a faster-than-by-tolerance unused alive node exists, swap it
+	// IN PLACE. We do NOT return the evicted occupant to the candidate set: re-inserting it at a
+	// later slot would relocate a node across slots and move every sticky key bound to it. A
+	// surviving occupant therefore always keeps its slot index; only the evicted-and-replaced
+	// slot changes its node (the SPEC replace-in-slot invariant).
 	for i := range next {
 		occupant := next[i]
 		occDelay, occAlive := slotDelay(occupant, results)
@@ -258,7 +343,6 @@ func planTolerantPool(current []string, results map[string]candidate, size int, 
 			}
 			// Replace if the slot is dead, or the candidate beats it by > tolerance.
 			if !occAlive || (occAlive && c.delay+tolerance < occDelay) {
-				delete(inPool, occupant)
 				next[i] = c.tag
 				inPool[c.tag] = true
 				break

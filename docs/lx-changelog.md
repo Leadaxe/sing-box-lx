@@ -10,6 +10,52 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.15
+
+**Pre-release.** Device verification of SPEC 019 v2 `round_robin` on a real pool surfaced
+**three** bugs, all fixed here. The headline one: with the default `sticky_hash:
+["process","domain"]`, **every connection collapsed onto a single pool node** — the domain
+component was always empty at selection time, so the key degenerated to the process alone and one
+browser pinned all its traffic to one slot. On a device this measured 28/1/1 across a 3-node pool
+(uniformity 0.27); after the fix the same traffic spreads across the pool (0.95+).
+
+* **The sticky key's `domain` component was always empty, collapsing all traffic to one node.**
+  The router resolves a domain destination to an IP and overwrites `metadata.Destination` *before*
+  a group's `DialContext` runs, so `destination.Fqdn` is empty when the balancer builds the sticky
+  key. `stickyComponent("domain")` read `destination.Fqdn` and got `""`, so a single process's key
+  was `process + "\0"` for every site — one fixed slot. The original domain survives in
+  `metadata.Domain` (set by sniffing / reverse mapping); the key now reads that, falling back to
+  `destination.Fqdn` only for a direct dial. `dest_ip` was unaffected (the IP *is* present at dial
+  time), so adding it to `sticky_hash` is a viable workaround on an already-built core.
+
+* **Living pool nodes could change slot index during a health-check, moving sticky keys.** The
+  SPEC invariant is *replace-in-slot*: a living node always keeps its exact slot index; only an
+  evicted slot's occupant changes (sticky binds keys to `slot[hash(key) % pool]`). Two code paths
+  broke it:
+  - `balancePoolFirstLive` (`pool_tolerance: 0`) rebuilt the pool with a filtering `append`, so a
+    transiently-dead slot left no placeholder and every living node *after* it shifted left one
+    slot. On a device this produced a single `DE→FI→DE` outlier for one key.
+  - `planTolerantPool` (`pool_tolerance > 0`) did `delete(inPool, occupant)` on eviction, letting
+    the evicted-but-living node re-enter a *later* slot — relocating it (and cascading across
+    slots from one fast newcomer).
+  - the manual `URLTest` rebuild ran through the tolerant planner even at `pool_tolerance: 0`,
+    re-ranking a stable first-live pool by delay and reshuffling living nodes.
+
+  All three now preserve slot index (fixed-length `copy(current)`, only dead/empty slots rewritten
+  in place; manual rebuild at `pool_tolerance: 0` uses a dedicated first-live planner). Regression
+  tests pin survivors to their slot indices (they fail against the pre-fix code).
+
+* **Stickiness could not be disabled — `sticky_hash: []` was silently ignored.** The design used a
+  bare `[]` to mean "off" (vs. omitted = default), relying on `encoding/json` distinguishing a nil
+  slice from an empty one. But the sing-box config decoder (`badjson.UnmarshallExcludedContext`)
+  re-marshals each outbound, and an empty JSON array does not survive that round-trip — it arrives
+  as nil, indistinguishable from "omitted", so the default `["process", "domain"]` always kicked in
+  and a `round_robin` group never actually rotated. A local run pinned every connection to one node
+  until this was found. **Fix:** disabling stickiness now uses the explicit sentinel
+  `sticky_hash: ["none"]`, which survives any re-marshal. Omitted or `[]` → default; `["none"]` →
+  off (pure even rotation); `"none"` mixed with a real component → error. Confirmed locally:
+  `["none"]` rotates 10/10/10, `["domain"]` pins each domain to one node.
+
 #### v1.14.0-lx.1-rc.14
 
 **Pre-release.** Desktop smoke-test follow-up to rc.13's SPEC 019 v2. No behaviour change to
