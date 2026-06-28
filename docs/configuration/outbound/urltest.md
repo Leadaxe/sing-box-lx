@@ -113,7 +113,9 @@ contributes an empty string; when all are empty the key is `""`, which maps to a
 slot (so keyless flows do not rotate). Allowed values:
 
 - `process`: the source process (Android package name, else executable path).
-- `domain`: the destination domain (empty for IP destinations).
+- `domain`: the destination domain from the original (sniffed) request — read from
+  `metadata.Domain`, which survives the router's domain→IP resolve, so it is populated
+  for normal domain traffic. Only truly empty for raw-IP destinations (no domain to sniff).
 - `source_ip`: the source IP.
 - `dest_ip`: the destination IP — **empty until the destination is resolved**, so for
   domain-based traffic (socks5h / sniffed) it is `""` when the key is built.
@@ -132,12 +134,14 @@ Binding is to a fixed **slot index** (`slot[hash(key) % pool]`), not a node posi
 slots never move and a replacement takes the exact slot it evicts, a node that stays in its
 slot keeps all its keys when other slots change — no needless reconnects, no per-key state.
 
-!!! warning
+!!! note
 
-    For domain-based traffic, keep `domain` in `sticky_hash`. A key of only
-    `source_ip` / `dest_ip` / `dest_port` collapses to `""` for an unresolved
-    destination, so with a single source every flow shares one key and sticks to a
-    single node — correct stickiness, but not the granularity you want.
+    For domain-based traffic, `domain` is the natural sticky key and works out of the
+    box (it reads the sniffed domain, which survives domain→IP resolution). `dest_ip`
+    remains a valid alternative, but note it is `""` until the destination is resolved,
+    so a key of only `source_ip` / `dest_ip` / `dest_port` can collapse to one shared
+    key for an unresolved destination from a single source — correct stickiness, but
+    coarser granularity. For raw-IP destinations (no domain to sniff) use `dest_ip`.
 
 !!! tip
 

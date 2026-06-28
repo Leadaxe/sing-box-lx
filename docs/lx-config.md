@@ -208,7 +208,115 @@ The runtime is backed by `Leadaxe/wireguard-go` (sagernet/wireguard-go + Amnezia
 
 ---
 
-## 3. Validate & build
+## 3. round_robin load balancing (SPEC 019)
+
+Upstream `urltest` always selects the single lowest-delay node. sing-box-lx adds a
+`round_robin` **mode** that rotates traffic over a fixed-size **pool** of nodes — built to
+scale to large node lists (only the pool is health-checked, not every node). Selection
+happens once per connection; a UDP/QUIC session stays on its node. With `mode` omitted (or
+`least_test`) the outbound behaves exactly like upstream and `balancer` must not be set.
+
+The `GetPool` CommandClient method (see [§4](#4-observability-commandclient-extensions)) is
+behind `with_lx_command`; the `mode`/`balancer` config fields themselves are always available.
+
+### Fields (on a `urltest` outbound)
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `mode` | string | `least_test` | `least_test` (upstream behaviour) \| `round_robin` (rotate over the pool). `least_connection` is rejected (round_robin is statistically even) |
+| `balancer` | object | — | round_robin parameters; **only valid with `mode: round_robin`** (error otherwise). The upstream `tolerance` field is ignored in round_robin (a warning is logged) — use `pool_tolerance` |
+
+#### `balancer` fields
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `pool` | int | `3` | rotation pool size. `0`/omitted → `3`; negative is an error. Effective size is `min(pool, number of outbounds)`. Only the pool is URL-tested each `interval`, so a list of hundreds of nodes does **not** mean hundreds of tests |
+| `pool_tolerance` | int (ms) | `0` | `0` = keep the pool full of **live** nodes (delay not ranked), testing no more than needed — the cheap mode for large lists. `> 0` = test **all** nodes and keep the fastest `pool`; a member is replaced only when an outside node beats it by more than `pool_tolerance` ms (hysteresis). A dead pool node keeps its slot until a live replacement is found (the pool never empties); a dial error never changes the pool — only the periodic health-check does |
+| `sticky_hash` | string[] | `["process","domain"]` | flow-stickiness key components (see below). Omitted/`[]` → the default. **To disable** stickiness use the sentinel **`["none"]`** — never a bare `[]`. Components: `process` \| `domain` \| `source_ip` \| `dest_ip` \| `dest_port` |
+
+> **badjson `[]` caveat.** Do not write `"sticky_hash": []` to turn stickiness off: the
+> sing-box config decoder re-marshals each outbound and an empty JSON array does not survive
+> the round-trip — it collapses to "omitted", which means *default* (`["process","domain"]`,
+> i.e. stickiness **on**). Use the explicit **`["none"]`** sentinel; it is the only element
+> allowed when present (mixing `none` with a real component is an error).
+
+### Slot-hash binding
+
+`sticky_hash` binds a flow to a fixed **slot index** — `slot[hash(key) % pool]` (FNV-64a over
+the concatenated components) — not to a node position. Slots never move and a replacement node
+takes the exact slot it evicts, so a node that stays in its slot keeps all of its keys when
+other slots change: no needless reconnects and no per-key state. The default `["process","domain"]`
+gives per-process, per-destination-domain affinity; `domain` reads the original sniffed domain
+(it survives the router's domain→IP resolve, so it is populated for normal domain traffic, not
+only literal-IP destinations). For domain-based traffic keep `domain` in the key — a key of only
+`source_ip`/`dest_ip`/`dest_port` can collapse to `""` for an unresolved destination, sticking
+every flow of one source to a single slot.
+
+### Example — urltest with round_robin
+
+```jsonc
+{
+  "type": "urltest",
+  "tag": "auto",
+  "outbounds": ["proxy-a", "proxy-b", "proxy-c", "proxy-d", "proxy-e"],
+  "interval": "15m",
+  "mode": "round_robin",
+  "balancer": {
+    "pool": 3,
+    "pool_tolerance": 0,
+    "sticky_hash": ["process", "domain"]   // ["none"] to disable stickiness
+  }
+}
+```
+
+> **Status.** Even rotation is locally verified (10/10/10 with stickiness off); the rc.15
+> `domain` fix takes on-device per-domain uniformity from ~0.27 to 0.95+. For a large node
+> list, `pool_tolerance: 0` + a small `pool` + a longer `interval` is the recommended,
+> lowest-overhead setup.
+
+**📖 [Full reference →](configuration/outbound/urltest.md)** — every field, the per-component
+sticky semantics, the pool fill/maintain rules and tuning tips.
+
+---
+
+## 4. Observability (CommandClient extensions)
+
+These are **client-API additions, not config** — extra methods on libbox's `CommandClient`
+(the native gRPC management channel), all gated behind `with_lx_command` and consumed by
+LxBox. They add nothing to a sing-box config file; you enable them by building with the tag
+and calling them from the client. Without the tag the methods are absent and the daemon
+serves only the upstream command set.
+
+The added `CommandClient` methods:
+
+- **`URLTestOutbound(tag, link, timeout)`** — synchronously measure the latency of a single
+  outbound **or endpoint** on demand (not just a group's periodic test).
+- **`GetRules()`** — pull a snapshot of the routing rule table (route rules + DNS rules).
+- **`GetGroups()`** — pull a snapshot of the outbound groups (same data the group stream
+  pushes).
+- **`GetOutbounds()`** — pull the flat outbound/endpoint list (needed alongside `GetGroups`
+  because standalone outbounds are not in any group).
+- **`GetPool(groupTag)`** — read a `urltest` group's current round_robin rotation pool, slot
+  by slot (SPEC 019; see [§3](#3-round_robin-load-balancing-spec-019)).
+- **`SubscribeDNSQueries(includeAnswers, handler)`** — a structured live DNS-query stream
+  (SPEC 018): per query the `domain`, `qtype`, `rcode` (**`-1` = lookup failure**, a
+  first-class state), the CNAME chain / answers (when `includeAnswers`), process attribution,
+  and `dnsServer` / `dnsServerType` / `outbound` (an empty `outbound` means direct/system —
+  a valid state, not a bug).
+
+SPEC 017 also enriches the existing connection stream: a tracked `Connection` now carries a
+separate **`detourList`** field — the transport-detour tail of the final outbound, exposed
+distinctly from the proxy `chain` (the chain omits the detour by design).
+
+Build with the tag to get them:
+
+```sh
+make -f Makefile.lx lx-build   # includes with_lx_command (and with_xhttp/with_awg)
+```
+
+---
+
+## 5. Validate & build
 
 ```sh
 git clone --recurse-submodules <repo>           # with_awg needs the submodule
