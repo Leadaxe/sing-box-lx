@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
@@ -298,6 +299,39 @@ func TestStickyKeyComponents(t *testing.T) {
 	stEmpty, _ := newStickyTable(&option.URLTestStickyOptions{Hash: []string{C.URLTestStickyDomain}})
 	if k := stEmpty.key(context.Background(), M.Socksaddr{}); k != "" {
 		t.Fatalf("absent domain must yield empty key, got %q", k)
+	}
+}
+
+// --- Now() cold-start fallback ------------------------------------------------------
+
+// TestSelectColdStartFallback covers the fact Now() relies on: before any URL-test has
+// run (empty history), Select() returns the first usable outbound with exists=false —
+// the same node DialContext dials. Now() now mirrors this instead of returning "".
+func TestSelectColdStartFallback(t *testing.T) {
+	g := &URLTestGroup{
+		outbounds: nodes("a", "b", "c"),
+		history:   urltest.NewHistoryStorage(),
+		tolerance: 50,
+	}
+	got, exists := g.Select(N.NetworkTCP)
+	if got == nil {
+		t.Fatal("cold-start Select must return a fallback outbound, got nil")
+	}
+	if exists {
+		t.Fatal("cold-start fallback must report exists=false (unmeasured)")
+	}
+	if got.Tag() != "a" {
+		t.Fatalf("cold-start fallback must be the first usable outbound, got %s", got.Tag())
+	}
+}
+
+func TestSelectColdStartNoOutbounds(t *testing.T) {
+	g := &URLTestGroup{
+		outbounds: nil,
+		history:   urltest.NewHistoryStorage(),
+	}
+	if got, _ := g.Select(N.NetworkTCP); got != nil {
+		t.Fatalf("no outbounds must yield nil (Now → \"\"), got %s", got.Tag())
 	}
 }
 

@@ -117,6 +117,16 @@ func (s *URLTest) Now() string {
 	} else if s.group.selectedOutboundUDP != nil {
 		return s.group.selectedOutboundUDP.Tag()
 	}
+	// lx: SPEC 019 — cold start: before the first URL-test, selectedOutbound* is nil but
+	// traffic already flows via the Select() fallback (outbounds[0] when no history yet).
+	// Mirror exactly what the next DialContext would pick, so the UI shows the real node
+	// instead of blank. Select() is the same source of truth DialContext uses.
+	if outbound, _ := s.group.Select(N.NetworkTCP); outbound != nil {
+		return outbound.Tag()
+	}
+	if outbound, _ := s.group.Select(N.NetworkUDP); outbound != nil {
+		return outbound.Tag()
+	}
 	return ""
 }
 

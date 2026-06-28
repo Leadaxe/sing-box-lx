@@ -10,6 +10,23 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.12
+
+**Pre-release.** One UI-facing fix on top of rc.11's SPEC 019 load-balancing: the
+`urltest` group now reports the node it actually dials during the cold-start window,
+instead of showing blank. No data-path change.
+
+* **`urltest` `Now()` cold-start fallback** (SPEC 019). Before the first URL-test fills
+  the delay history, `selectedOutbound*` is still nil — but traffic already flows through
+  the `Select()` fallback (the first usable outbound). Previously `Now()` returned `""` in
+  that window, so the UI showed no server even though connections were live. `Now()` now
+  falls through to `Select(tcp)`/`Select(udp)` and reports the same node the next
+  `DialContext` will pick — the same source of truth the dial path uses, not a guess. Only
+  `least_test` (the default) is affected; `round_robin`/`ttlmap` already reported the
+  last-picked tag and are unchanged. (Note: when the process is not unloaded from memory —
+  a fast config restart on Android — the in-memory history survives, so `Now()` shows the
+  prior pick immediately with no warm-up; that's upstream behaviour.)
+
 #### v1.14.0-lx.1-rc.11
 
 **Pre-release.** Adds load-balancing to the `urltest` group (SPEC 019, live-verified on
