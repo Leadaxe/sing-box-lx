@@ -10,6 +10,18 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.14
+
+**Pre-release.** Desktop smoke-test follow-up to rc.13's SPEC 019 v2. No behaviour change to
+the pool/sticky logic — one validation fix found by running the rc.13 binary locally.
+
+* **`balancer.pool: 0` is now the default, not an error.** A Go `int` with `omitempty` cannot
+  distinguish `0` from an omitted field, so `pool: 0` reaching `< 1` validation rejected a
+  config that should have used the default. Now `pool` `0`/omitted → default `3`; only a
+  negative `pool` is rejected. Verified on the rc.13 desktop binary alongside the round_robin
+  pool fill (`pool_tolerance: 0` tests only pool-many nodes; `> 0` tests all), config
+  fail-fast, and live routing.
+
 #### v1.14.0-lx.1-rc.13
 
 **Pre-release.** Reworks `urltest` `round_robin` (SPEC 019 v2) to scale to large node lists

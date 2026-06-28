@@ -96,13 +96,28 @@ func TestBalancerStickyHashExplicitEmptyDisables(t *testing.T) {
 	}
 }
 
-func TestBalancerPoolBelowOneRejected(t *testing.T) {
+func TestBalancerNegativePoolRejected(t *testing.T) {
 	_, err := newBalancer(option.URLTestOutboundOptions{
 		Mode:     C.URLTestModeRoundRobin,
 		Balancer: &option.URLTestBalancerOptions{Pool: -1},
 	})
 	if err == nil {
-		t.Fatal("pool < 1 must error")
+		t.Fatal("negative pool must error")
+	}
+}
+
+func TestBalancerZeroPoolIsDefault(t *testing.T) {
+	// pool:0 is indistinguishable from "omitted" for a Go int with omitempty, so it means
+	// the default — NOT an error.
+	b, err := newBalancer(option.URLTestOutboundOptions{
+		Mode:     C.URLTestModeRoundRobin,
+		Balancer: &option.URLTestBalancerOptions{Pool: 0},
+	})
+	if err != nil {
+		t.Fatalf("pool:0 must be treated as default, got error: %v", err)
+	}
+	if b.poolSize != C.DefaultURLTestPool {
+		t.Fatalf("pool:0 → default %d, got %d", C.DefaultURLTestPool, b.poolSize)
 	}
 }
 

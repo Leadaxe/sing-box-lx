@@ -58,7 +58,12 @@ func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {
 	pool := C.DefaultURLTestPool
 	var stickyHash []string
 	if bo != nil {
-		if bo.Pool != 0 {
+		// pool: a Go int with omitempty can't tell "0" from "absent", so 0 means default.
+		// Only an explicitly negative value is rejected.
+		if bo.Pool < 0 {
+			return nil, E.New("urltest balancer.pool must be >= 1")
+		}
+		if bo.Pool > 0 {
 			pool = bo.Pool
 		}
 		// nil StickyHash (field omitted) → default; explicit [] → stickiness off.
@@ -70,9 +75,6 @@ func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {
 	} else {
 		// round_robin without balancer → defaults, stickiness on by default.
 		stickyHash = []string{C.URLTestStickyProcess, C.URLTestStickyDomain}
-	}
-	if pool < 1 {
-		return nil, E.New("urltest balancer.pool must be >= 1")
 	}
 	for _, component := range stickyHash {
 		switch component {

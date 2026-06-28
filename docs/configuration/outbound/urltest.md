@@ -83,10 +83,10 @@ warning is logged) — use `pool_tolerance` instead.
 
 ##### balancer.pool
 
-The rotation pool size — how many nodes are in rotation at once. `3` if empty; must be
-`>= 1`. The effective size is `min(pool, number of outbounds)`. Only the pool is
-health-checked each interval, so a list of hundreds/thousands of nodes does not mean
-hundreds/thousands of URL tests.
+The rotation pool size — how many nodes are in rotation at once. `0` or omitted uses the
+default `3`; a negative value is an error. The effective size is
+`min(pool, number of outbounds)`. Only the pool is health-checked each interval, so a list
+of hundreds/thousands of nodes does not mean hundreds/thousands of URL tests.
 
 ##### balancer.pool_tolerance
 
