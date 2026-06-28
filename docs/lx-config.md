@@ -269,10 +269,10 @@ every flow of one source to a single slot.
 }
 ```
 
-> **Status.** Even rotation is locally verified (10/10/10 with stickiness off); the rc.15
-> `domain` fix takes on-device per-domain uniformity from ~0.27 to 0.95+. For a large node
-> list, `pool_tolerance: 0` + a small `pool` + a longer `interval` is the recommended,
-> lowest-overhead setup.
+> **Status.** Even rotation is verified locally (10/10/10 with stickiness off) and
+> **device-verified end to end** on a real multi-node pool — the rc.15 `domain` fix takes
+> on-device per-domain uniformity from ~0.27 to 0.95+. For a large node list, `pool_tolerance: 0`
+> + a small `pool` + a longer `interval` is the recommended, lowest-overhead setup.
 
 **📖 [Full reference →](configuration/outbound/urltest.md)** — every field, the per-component
 sticky semantics, the pool fill/maintain rules and tuning tips.
