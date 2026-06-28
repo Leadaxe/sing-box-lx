@@ -46,6 +46,7 @@ service StartedService {
   rpc GetGroups(google.protobuf.Empty) returns (Groups) {}
   rpc GetOutbounds(google.protobuf.Empty) returns (OutboundList) {}
   rpc SubscribeDNSQueries(SubscribeDNSQueriesRequest) returns (stream DnsQueryEvent) {}
+  rpc GetPool(GetPoolRequest) returns (PoolList) {}
 
   // lx:end lx_command
 }
@@ -582,6 +583,22 @@ message DnsAnswer {
   uint32 type = 2;
   string rdata = 3;
   uint32 ttl = 4;
+}
+
+// SPEC 019 v2 — the round_robin rotation pool of a urltest group. One PoolSlot per fixed
+// slot. delay is the node's last test result in ms; 0 means dead/not-measured (a live node
+// is clamped to >= 1 server-side). A non-round_robin group (selector/least_test) returns an
+// empty slots list — "this group has no pool", not an error.
+message GetPoolRequest {
+  string groupTag = 1;
+}
+message PoolSlot {
+  uint32 slot = 1;
+  string tag = 2;
+  uint32 delay = 3;
+}
+message PoolList {
+  repeated PoolSlot slots = 1;
 }
 
 // lx:end lx_command

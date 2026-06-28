@@ -47,18 +47,11 @@ const (
 
 // lx: SPEC 019 — URLTest balancing mode (urltest "mode" option).
 const (
-	URLTestModeLeastTest       = "least_test"       // default — pick lowest-delay node (legacy urltest behaviour)
-	URLTestModeRoundRobin      = "round_robin"      // rotate across live nodes
-	URLTestModeLeastConnection = "least_connection" // fewest active conns — phase 2, not yet implemented
+	URLTestModeLeastTest  = "least_test"  // default — pick lowest-delay node (legacy urltest behaviour)
+	URLTestModeRoundRobin = "round_robin" // rotate over a fixed-size pool of live nodes
 )
 
-// lx: SPEC 019 — URLTest sticky binding mechanism (urltest "sticky.mode" option).
-const (
-	URLTestStickyJumpHash = "jumphash" // stateless consistent hash over live nodes (default)
-	URLTestStickyTTLMap   = "ttlmap"   // key->node table with TTL + LRU cap
-)
-
-// lx: SPEC 019 — URLTest sticky key components (urltest "sticky.hash" entries).
+// lx: SPEC 019 — balancer.sticky_hash key components.
 const (
 	URLTestStickyProcess  = "process"
 	URLTestStickyDomain   = "domain"
@@ -67,8 +60,8 @@ const (
 	URLTestStickyDestPort = "dest_port"
 )
 
-// lx: SPEC 019 — sticky ttlmap default cap (DefaultURLTestStickyTimeout lives in timeout.go).
-const DefaultURLTestStickyCap = 2000
+// lx: SPEC 019 — default rotation pool size when balancer.pool is unset.
+const DefaultURLTestPool = 3
 
 func ProxyDisplayName(proxyType string) string {
 	switch proxyType {

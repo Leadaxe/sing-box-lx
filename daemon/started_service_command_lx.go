@@ -182,6 +182,44 @@ func (s *StartedService) GetOutbounds(ctx context.Context, empty *emptypb.Empty)
 	return &list, nil
 }
 
+// poolProvider is any outbound exposing a round_robin rotation pool (SPEC 019 v2). Only
+// urltest groups in round_robin mode implement it; everything else falls through to an
+// empty PoolList — "this group has no pool", not an error.
+type poolProvider interface {
+	Pool() []group.PoolSlot
+}
+
+// GetPool returns the current round_robin rotation pool of a urltest group (SPEC 019 v2).
+// delay is clamped 0->1 for live nodes inside Pool(), so 0 in the response unambiguously
+// means dead/not-measured. A non-round_robin group (or unknown tag) returns empty slots.
+func (s *StartedService) GetPool(ctx context.Context, request *GetPoolRequest) (*PoolList, error) {
+	s.serviceAccess.RLock()
+	if s.serviceStatus.Status != ServiceStatus_STARTED {
+		s.serviceAccess.RUnlock()
+		return nil, status.Error(codes.FailedPrecondition, "service is not started")
+	}
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	var list PoolList
+	detour, loaded := boxService.outboundManager.Outbound(request.GroupTag)
+	if !loaded {
+		return &list, nil // unknown tag → empty pool (not an error)
+	}
+	provider, ok := detour.(poolProvider)
+	if !ok {
+		return &list, nil // not a round_robin group → empty pool
+	}
+	for _, slot := range provider.Pool() {
+		list.Slots = append(list.Slots, &PoolSlot{
+			Slot:  uint32(slot.Slot),
+			Tag:   slot.Tag,
+			Delay: uint32(slot.Delay),
+		})
+	}
+	return &list, nil
+}
+
 // SubscribeDNSQueries streams structured, process-attributed DNS resolutions (SPEC 018).
 // Unlike SubscribeConnections it is event-driven, not ticked: each resolution in the core
 // emits one QueryEvent (dns/client_log.go), forwarded here as it arrives. The dnstrack

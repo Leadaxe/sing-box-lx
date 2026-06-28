@@ -10,6 +10,43 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.13
+
+**Pre-release.** Reworks `urltest` `round_robin` (SPEC 019 v2) to scale to large node lists
+(hundreds–thousands) and exposes the rotation pool to clients. **Breaking** for the rc.11/12
+`round_robin` shape — config moved under a `balancer` object; `least_test` (the default) is
+untouched. Not yet device-verified.
+
+* **Fixed-size rotation pool.** `round_robin` no longer rotates over *all* live nodes (which
+  meant URL-testing every node each interval — unworkable at 1000 nodes). Instead it keeps a
+  fixed pool of `balancer.pool` nodes (default 3) and rotates only within it. The pool is
+  lazily health-checked: with `pool_tolerance: 0` (cheap mode) the core tests no more nodes
+  than needed to keep the pool full of live nodes and then stops; with `pool_tolerance > 0`
+  it tests all nodes and keeps the fastest, evicting a pool member only when an outsider beats
+  it by more than the tolerance (ms). A dead pool node keeps its slot until a live replacement
+  is found — the pool never empties. A dial error never changes the pool (the cause — dead
+  node vs. dead destination vs. local network drop — is unknowable from one failure); only the
+  health-check does.
+* **New config shape.** Balancing options moved into a `balancer` object on `urltest`:
+  `{ "mode": "round_robin", "balancer": { "pool": 3, "pool_tolerance": 0, "sticky_hash": ["process","domain"] } }`.
+  `balancer` is only valid with `round_robin` (error otherwise); the upstream `tolerance`
+  field is ignored in `round_robin` (warned). `sticky_hash` omitted → defaults to
+  `["process","domain"]`; explicit `[]` disables stickiness.
+* **Sticky via fixed slots (strict zero reconnects).** Stickiness now binds a flow's key to a
+  fixed *slot index* (`slot[hash(key) % pool]`), not a node position. Because slot indices
+  never move and a replacement takes the exact slot it evicts, a node that stays in its slot
+  keeps **all** its keys when other slots churn — zero needless reconnects, zero per-key state
+  (no table to grow or sweep). Replaces both rc.11 sticky mechanisms (`jumphash` over the live
+  list — which broke on mid-list eviction — and `ttl_map`), which are removed.
+* **`GetPool` RPC.** New `CommandClient.GetPool(groupTag)` returns the current pool — one
+  `PoolSlot{slot, tag, delay}` per slot — so the client can show which N nodes are actually in
+  rotation, with their delays, instead of the full config list. `delay` is `0` only for a
+  dead/unmeasured node (a live sub-ms node is clamped to 1). A non-`round_robin` group returns
+  an empty pool, not an error. Additive proto/libbox, behind `with_lx_command`.
+* **`least_connection` dropped** from the roadmap: `round_robin` is statistically even, and
+  per-node active-connection counting (with decrement-on-close, leak risk) was not worth its
+  complexity.
+
 #### v1.14.0-lx.1-rc.12
 
 **Pre-release.** One UI-facing fix on top of rc.11's SPEC 019 load-balancing: the

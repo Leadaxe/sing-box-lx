@@ -3,121 +3,154 @@ package group
 import (
 	"context"
 	"hash/fnv"
-	"sort"
 	"strconv"
 	"sync"
-	"time"
+	"sync/atomic"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
-// lx: SPEC 019 — load-balancing for the urltest group.
+// lx: SPEC 019 v2 — round_robin load-balancing for the urltest group.
 //
-// least_test (the default) keeps the legacy "pick lowest-delay node" behaviour and
-// is handled entirely by URLTestGroup.Select; this file only drives round_robin (and,
-// in phase 2, least_connection). The selection runs once per connection (DialContext /
-// ListenPacket) over the set of *live* nodes — those with a fresh URL-test history that
-// support the network — so the existing health ticker is the single source of liveness.
+// least_test (the default) keeps the legacy "pick lowest-delay node" behaviour and is
+// handled by URLTestGroup.Select; this file drives round_robin only.
+//
+// Model: a FIXED-SIZE pool of slots. Slot indices [0..pool-1] never move and are never
+// re-sorted — nodes flow THROUGH slots, a replacement takes the exact slot of the node it
+// evicts. Two independent orderings (do not conflate — that was the v1 bug):
+//   - slot order (fixed)      → sticky binding: slot[hash(key) % pool]
+//   - node rank by last delay → only to find which node to evict (computed on the fly)
+//
+// The pool is lazily health-checked: we test no more nodes than needed to keep it full of
+// live nodes. Selection runs once per new connection (DialContext/ListenPacket).
 
-// balancer holds the per-group balancing state. It is nil when mode == least_test.
-type balancer struct {
-	mode    string
-	sticky  *stickyTable // nil when no sticky.hash configured
-	access  sync.Mutex
-	counter uint64 // round-robin cursor (guarded by access)
+// slot is one fixed position in the pool. tag is the node currently occupying it.
+type slot struct {
+	tag string
 }
 
-// newBalancer builds the balancer from validated options. Returns nil for least_test
-// (and for an empty mode), so callers can cheaply branch on a nil balancer.
+// balancer holds the per-group round_robin state. nil for least_test.
+type balancer struct {
+	poolSize      int      // target slot count (config pool, before min(pool,nodes))
+	poolTolerance uint16   // ms; 0 = first-live-fill, > 0 = top-N-by-delay with eviction threshold
+	stickyHash    []string // sticky key components; empty → no stickiness (counter rotation)
+
+	access  sync.Mutex // guards slots
+	slots   []slot     // the pool; len == min(poolSize, available nodes), index = fixed slot number
+	counter atomic.Uint64
+}
+
+// newBalancer builds the balancer from validated options. Returns nil for least_test (and
+// empty mode), so callers branch cheaply on a nil balancer.
 func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {
 	mode := options.Mode
 	if mode == "" || mode == C.URLTestModeLeastTest {
 		return nil, nil
 	}
-	switch mode {
-	case C.URLTestModeRoundRobin:
-	case C.URLTestModeLeastConnection:
-		return nil, E.New("urltest mode ", C.URLTestModeLeastConnection, " is not implemented yet (SPEC 019 phase 2)")
-	default:
+	if mode != C.URLTestModeRoundRobin {
 		return nil, E.New("unknown urltest mode: ", mode)
 	}
-	b := &balancer{mode: mode}
-	if options.Sticky != nil && len(options.Sticky.Hash) > 0 {
-		sticky, err := newStickyTable(options.Sticky)
-		if err != nil {
-			return nil, err
+	bo := options.Balancer
+	pool := C.DefaultURLTestPool
+	var stickyHash []string
+	if bo != nil {
+		if bo.Pool != 0 {
+			pool = bo.Pool
 		}
-		b.sticky = sticky
+		// nil StickyHash (field omitted) → default; explicit [] → stickiness off.
+		if bo.StickyHash == nil {
+			stickyHash = []string{C.URLTestStickyProcess, C.URLTestStickyDomain}
+		} else {
+			stickyHash = bo.StickyHash
+		}
+	} else {
+		// round_robin without balancer → defaults, stickiness on by default.
+		stickyHash = []string{C.URLTestStickyProcess, C.URLTestStickyDomain}
 	}
-	return b, nil
+	if pool < 1 {
+		return nil, E.New("urltest balancer.pool must be >= 1")
+	}
+	for _, component := range stickyHash {
+		switch component {
+		case C.URLTestStickyProcess, C.URLTestStickyDomain, C.URLTestStickySourceIP,
+			C.URLTestStickyDestIP, C.URLTestStickyDestPort:
+		default:
+			return nil, E.New("unknown urltest sticky_hash component: ", component)
+		}
+	}
+	var poolTolerance uint16
+	if bo != nil {
+		poolTolerance = bo.PoolTolerance
+	}
+	return &balancer{poolSize: pool, poolTolerance: poolTolerance, stickyHash: stickyHash}, nil
 }
 
-// pick selects one live outbound for this connection. live must be the tag-sorted live
-// set for the network; fallback is the node returned when live is empty (outbounds[0]).
-func (b *balancer) pick(ctx context.Context, destination M.Socksaddr, live []adapter.Outbound, fallback adapter.Outbound) adapter.Outbound {
-	if len(live) == 0 {
+// pick selects one node for this connection from the current pool. fallback is returned
+// when the pool is empty (start, before the first health-check fills it).
+func (b *balancer) pick(ctx context.Context, destination M.Socksaddr, fallback adapter.Outbound, resolve func(tag string) adapter.Outbound) adapter.Outbound {
+	b.access.Lock()
+	n := len(b.slots)
+	if n == 0 {
+		b.access.Unlock()
 		return fallback
 	}
-	if len(live) == 1 {
-		return live[0]
+	var tag string
+	if len(b.stickyHash) > 0 {
+		// slot-hash: fixed slot index from the key; living node in its slot keeps its keys.
+		idx := int(hashKey(b.stickyKey(ctx, destination)) % uint64(n))
+		tag = b.slots[idx].tag
+	} else {
+		// plain round-robin over the fixed slots.
+		idx := int(b.counter.Add(1)-1) % n
+		tag = b.slots[idx].tag
 	}
-	// Sticky binding takes precedence: a bound key always returns its node (re-pinned
-	// only when that node drops out of the live set).
-	if b.sticky != nil {
-		key := b.sticky.key(ctx, destination)
-		if node := b.sticky.lookup(key, live, b.rotate); node != nil {
-			return node
-		}
+	b.access.Unlock()
+	if node := resolve(tag); node != nil {
+		return node
 	}
-	return b.rotate(live)
+	return fallback
 }
 
-// rotate is the non-sticky selector for the configured mode. round_robin advances a
-// shared cursor across the live set; the cursor is monotonic so the start point is
-// stable (the live set is sorted by tag, and Select already begins from the best node).
-func (b *balancer) rotate(live []adapter.Outbound) adapter.Outbound {
-	switch b.mode {
-	case C.URLTestModeRoundRobin:
-		b.access.Lock()
-		idx := b.counter % uint64(len(live))
-		b.counter++
-		b.access.Unlock()
-		return live[idx]
-	default:
-		// least_connection is rejected at construction; nothing else reaches here.
-		return live[0]
+// poolTags returns the current slot tags (snapshot under lock). Used by Pool()/GetPool.
+func (b *balancer) poolTags() []string {
+	b.access.Lock()
+	defer b.access.Unlock()
+	tags := make([]string, len(b.slots))
+	for i, s := range b.slots {
+		tags[i] = s.tag
 	}
+	return tags
 }
 
-func (b *balancer) close() {
-	if b.sticky != nil {
-		b.sticky.close()
+// setSlots replaces the pool atomically. The health-check (urltest.go) computes the new
+// occupancy — which tag sits in which slot — and hands the ordered tag list here.
+func (b *balancer) setSlots(tags []string) {
+	b.access.Lock()
+	defer b.access.Unlock()
+	b.slots = make([]slot, len(tags))
+	for i, tag := range tags {
+		b.slots[i] = slot{tag: tag}
 	}
 }
 
 // --- sticky key ---------------------------------------------------------------------
 
-// stickyKeyBuilder extracts the configured key components in order. An absent component
-// contributes "" (per SPEC 019: empty components are kept, all-empty yields key "").
-type stickyKeyBuilder struct {
-	components []string
-}
-
-func (k stickyKeyBuilder) build(ctx context.Context, destination M.Socksaddr) string {
+// stickyKey builds the binding key from the configured components, in order. An absent
+// component contributes "" (SPEC: all-empty → key "" → one fixed slot).
+func (b *balancer) stickyKey(ctx context.Context, destination M.Socksaddr) string {
 	metadata := adapter.ContextFrom(ctx)
-	var b []byte
-	for i, component := range k.components {
+	var buf []byte
+	for i, component := range b.stickyHash {
 		if i > 0 {
-			b = append(b, 0) // NUL separator — components can't collide across boundaries
+			buf = append(buf, 0) // NUL separator
 		}
-		b = append(b, stickyComponent(component, metadata, destination)...)
+		buf = append(buf, stickyComponent(component, metadata, destination)...)
 	}
-	return string(b)
+	return string(buf)
 }
 
 func stickyComponent(component string, metadata *adapter.InboundContext, destination M.Socksaddr) string {
@@ -152,197 +185,106 @@ func stickyComponent(component string, metadata *adapter.InboundContext, destina
 	}
 }
 
-// --- sticky table -------------------------------------------------------------------
-
-type stickyEntry struct {
-	tag      string
-	lastTime time.Time
-}
-
-// stickyTable binds keys to nodes. mode jumphash is stateless (table/ticker unused);
-// mode ttlmap keeps a key->{tag,lastTime} map with lazy + ticker eviction and an LRU cap.
-type stickyTable struct {
-	builder stickyKeyBuilder
-	mode    string
-	timeout time.Duration
-	cap     int
-
-	access  sync.Mutex
-	entries map[string]*stickyEntry
-	ticker  *time.Ticker
-	done    chan struct{}
-}
-
-func newStickyTable(options *option.URLTestStickyOptions) (*stickyTable, error) {
-	mode := options.Mode
-	if mode == "" {
-		mode = C.URLTestStickyJumpHash
-	}
-	if mode != C.URLTestStickyJumpHash && mode != C.URLTestStickyTTLMap {
-		return nil, E.New("unknown urltest sticky mode: ", mode)
-	}
-	for _, component := range options.Hash {
-		switch component {
-		case C.URLTestStickyProcess, C.URLTestStickyDomain, C.URLTestStickySourceIP,
-			C.URLTestStickyDestIP, C.URLTestStickyDestPort:
-		default:
-			return nil, E.New("unknown urltest sticky hash component: ", component)
-		}
-	}
-	if options.Cap < 0 {
-		return nil, E.New("urltest sticky cap must be >= 0")
-	}
-	t := &stickyTable{
-		builder: stickyKeyBuilder{components: options.Hash},
-		mode:    mode,
-	}
-	if mode == C.URLTestStickyTTLMap {
-		t.timeout = time.Duration(options.Timeout)
-		if t.timeout <= 0 {
-			t.timeout = C.DefaultURLTestStickyTimeout
-		}
-		t.cap = options.Cap
-		if t.cap == 0 {
-			t.cap = C.DefaultURLTestStickyCap
-		}
-		t.entries = make(map[string]*stickyEntry)
-		t.ticker = time.NewTicker(t.timeout)
-		t.done = make(chan struct{})
-		// Pass the channels by value so the sweeper never reads t.ticker/t.done after
-		// close() mutates them under the lock (mirrors URLTestGroup.loopCheck).
-		go t.sweepLoop(t.ticker.C, t.done)
-	}
-	return t, nil
-}
-
-func (t *stickyTable) key(ctx context.Context, destination M.Socksaddr) string {
-	return t.builder.build(ctx, destination)
-}
-
-// lookup resolves key to a live node. For jumphash it is a pure function of (key, live).
-// For ttlmap it returns the bound node when alive, otherwise picks via repick, records
-// the result, and re-pins on a dead node.
-func (t *stickyTable) lookup(key string, live []adapter.Outbound, repick func([]adapter.Outbound) adapter.Outbound) adapter.Outbound {
-	if t.mode == C.URLTestStickyJumpHash {
-		return live[jumpConsistentHash(hashKey(key), len(live))]
-	}
-	now := time.Now()
-	t.access.Lock()
-	defer t.access.Unlock()
-	if entry, ok := t.entries[key]; ok {
-		if node := findLive(entry.tag, live); node != nil {
-			entry.lastTime = now
-			return node
-		}
-		// Bound node died — re-pin to a fresh choice.
-		node := repick(live)
-		entry.tag = node.Tag()
-		entry.lastTime = now
-		return node
-	}
-	node := repick(live)
-	t.entries[key] = &stickyEntry{tag: node.Tag(), lastTime: now}
-	t.evictLocked(now)
-	return node
-}
-
-// evictLocked drops expired entries and enforces the cap (oldest-first). Caller holds access.
-func (t *stickyTable) evictLocked(now time.Time) {
-	for key, entry := range t.entries {
-		if now.Sub(entry.lastTime) > t.timeout {
-			delete(t.entries, key)
-		}
-	}
-	for len(t.entries) > t.cap {
-		var oldestKey string
-		var oldest time.Time
-		first := true
-		for key, entry := range t.entries {
-			if first || entry.lastTime.Before(oldest) {
-				oldestKey = key
-				oldest = entry.lastTime
-				first = false
-			}
-		}
-		delete(t.entries, oldestKey)
-	}
-}
-
-func (t *stickyTable) sweepLoop(tick <-chan time.Time, done <-chan struct{}) {
-	for {
-		select {
-		case <-done:
-			return
-		case <-tick:
-			now := time.Now()
-			t.access.Lock()
-			t.evictLocked(now)
-			t.access.Unlock()
-		}
-	}
-}
-
-func (t *stickyTable) close() {
-	if t.mode != C.URLTestStickyTTLMap {
-		return
-	}
-	t.access.Lock()
-	defer t.access.Unlock()
-	if t.ticker == nil {
-		return
-	}
-	t.ticker.Stop()
-	t.ticker = nil
-	close(t.done)
-}
-
-func findLive(tag string, live []adapter.Outbound) adapter.Outbound {
-	for _, node := range live {
-		if node.Tag() == tag {
-			return node
-		}
-	}
-	return nil
-}
-
-// --- hashing ------------------------------------------------------------------------
-
 func hashKey(key string) uint64 {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(key))
 	return h.Sum64()
 }
 
-// jumpConsistentHash is the Lamping–Veach jump consistent hash: maps key to a bucket in
-// [0, numBuckets) such that adding/removing a bucket remaps only ~1/n of keys.
-func jumpConsistentHash(key uint64, numBuckets int) int {
-	if numBuckets <= 1 {
-		return 0
-	}
-	var b, j int64 = -1, 0
-	for j < int64(numBuckets) {
-		b = j
-		key = key*2862933555777941757 + 1
-		j = int64(float64(b+1) * (float64(int64(1)<<31) / float64((key>>33)+1)))
-	}
-	return int(b)
+// --- pool maintenance (pure planning, no I/O) ---------------------------------------
+//
+// These compute the NEW slot occupancy from current slots + fresh test results, honouring
+// the SPEC invariants: fixed slot count, replace-in-slot, never shrink, dead node keeps its
+// slot until a live replacement exists. The caller (urltest.go health-check) runs the actual
+// URL tests and applies the result via setSlots.
+
+// candidate is a node and its just-measured delay (0 == not measured / dead).
+type candidate struct {
+	tag   string
+	delay uint16
+	alive bool
 }
 
-// liveOutbounds returns the tag-sorted live nodes for network: those with a fresh
-// URL-test history that support the network. The sort makes jumphash deterministic.
-func (g *URLTestGroup) liveOutbounds(network string) []adapter.Outbound {
-	live := make([]adapter.Outbound, 0, len(g.outbounds))
-	for _, detour := range g.outbounds {
-		if !common.Contains(detour.Network(), network) {
-			continue
+// planTolerantPool (pool_tolerance > 0): pick the top-`size` live candidates by delay, but
+// keep a node in its current slot when it survives (replace-in-slot, no needless churn). A
+// living slot is only displaced when some out-of-pool node is faster than it by > tolerance.
+//
+// current = present slot tags (in slot order). results = delay for every node that was
+// tested (alive ones); size = min(poolSize, len(all nodes)).
+func planTolerantPool(current []string, results map[string]candidate, size int, tolerance uint16) []string {
+	// Rank all alive candidates by delay ascending (tag breaks ties — deterministic).
+	alive := make([]candidate, 0, len(results))
+	for _, c := range results {
+		if c.alive {
+			alive = append(alive, c)
 		}
-		if g.history.LoadURLTestHistory(RealTag(detour)) == nil {
-			continue
-		}
-		live = append(live, detour)
 	}
-	sort.Slice(live, func(i, j int) bool {
-		return live[i].Tag() < live[j].Tag()
-	})
-	return live
+	sortCandidatesByDelay(alive)
+
+	next := make([]string, len(current))
+	copy(next, current)
+	// Grow to size if we have spare slots and alive nodes not yet placed.
+	inPool := make(map[string]bool, len(next))
+	for _, tag := range next {
+		if tag != "" {
+			inPool[tag] = true
+		}
+	}
+	for len(next) < size {
+		next = append(next, "")
+	}
+	// Fill empty slots first with the fastest unused alive nodes.
+	for i := range next {
+		if next[i] != "" {
+			continue
+		}
+		for _, c := range alive {
+			if !inPool[c.tag] {
+				next[i] = c.tag
+				inPool[c.tag] = true
+				break
+			}
+		}
+	}
+	// Eviction: for each slot, if a faster-than-by-tolerance unused alive node exists, swap.
+	for i := range next {
+		occupant := next[i]
+		occDelay, occAlive := slotDelay(occupant, results)
+		for _, c := range alive {
+			if inPool[c.tag] {
+				continue
+			}
+			// Replace if the slot is dead, or the candidate beats it by > tolerance.
+			if !occAlive || (occAlive && c.delay+tolerance < occDelay) {
+				delete(inPool, occupant)
+				next[i] = c.tag
+				inPool[c.tag] = true
+				break
+			}
+		}
+	}
+	return next
+}
+
+func slotDelay(tag string, results map[string]candidate) (uint16, bool) {
+	if tag == "" {
+		return 0, false
+	}
+	if c, ok := results[tag]; ok {
+		return c.delay, c.alive
+	}
+	return 0, false
+}
+
+func sortCandidatesByDelay(cs []candidate) {
+	// insertion sort — pool/result sets are tiny; avoids pulling sort.Slice closure cost.
+	for i := 1; i < len(cs); i++ {
+		for j := i; j > 0; j-- {
+			a, b := cs[j-1], cs[j]
+			if a.delay < b.delay || (a.delay == b.delay && a.tag <= b.tag) {
+				break
+			}
+			cs[j-1], cs[j] = cs[j], cs[j-1]
+		}
+	}
 }

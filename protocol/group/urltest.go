@@ -48,13 +48,16 @@ type URLTest struct {
 }
 
 func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.URLTestOutboundOptions) (adapter.Outbound, error) {
-	// lx: SPEC 019 — load-balancing mode + stickiness; nil balancer keeps legacy behaviour.
+	// lx: SPEC 019 v2 — round_robin balancer; nil balancer keeps legacy least_test behaviour.
 	balancer, err := newBalancer(options)
 	if err != nil {
 		return nil, err
 	}
-	if balancer == nil && options.Sticky != nil && len(options.Sticky.Hash) > 0 {
-		logger.Warn("urltest: sticky is ignored in least_test mode")
+	if balancer != nil && options.Tolerance != 0 {
+		logger.Warn("urltest: tolerance is ignored in round_robin mode; use balancer.pool_tolerance")
+	}
+	if balancer == nil && options.Balancer != nil {
+		return nil, E.New("urltest: balancer is only valid with mode: round_robin")
 	}
 	outbound := &URLTest{
 		Adapter:                      outbound.NewAdapter(C.TypeURLTest, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.Outbounds),
@@ -89,6 +92,7 @@ func (s *URLTest) Start() error {
 	if err != nil {
 		return err
 	}
+	group.balancer = s.balancer // lx: SPEC 019 v2 — health-check drives the pool through it
 	s.group = group
 	return nil
 }
@@ -99,9 +103,6 @@ func (s *URLTest) PostStart() error {
 }
 
 func (s *URLTest) Close() error {
-	if s.balancer != nil {
-		s.balancer.close() // lx: SPEC 019 — stop sticky ttlmap sweeper
-	}
 	return common.Close(
 		common.PtrOrNil(s.group),
 	)
@@ -134,6 +135,36 @@ func (s *URLTest) All() []string {
 	return s.tags
 }
 
+// PoolSlot is one entry of the round_robin rotation pool. lx: SPEC 019 v2.
+type PoolSlot struct {
+	Slot  int
+	Tag   string
+	Delay uint16 // ms; 0 = not measured / dead. A living node is clamped to >= 1 (see Pool).
+}
+
+// Pool returns the current rotation pool (one entry per slot) for round_robin groups. For
+// least_test (nil balancer) it returns nil — "this group has no pool". Delay is read from
+// history and clamped 0->1 for live nodes so 0 in the output unambiguously means dead/untested.
+// lx: SPEC 019 v2 (exposed to clients via the GetPool RPC).
+func (s *URLTest) Pool() []PoolSlot {
+	if s.balancer == nil || s.group == nil {
+		return nil
+	}
+	tags := s.balancer.poolTags()
+	slots := make([]PoolSlot, len(tags))
+	for i, tag := range tags {
+		var delay uint16
+		if history := s.group.history.LoadURLTestHistory(tag); history != nil {
+			delay = history.Delay
+			if delay == 0 {
+				delay = 1 // live sub-ms node: never report 0 (0 is reserved for dead/untested)
+			}
+		}
+		slots[i] = PoolSlot{Slot: i, Tag: tag, Delay: delay}
+	}
+	return slots
+}
+
 func (s *URLTest) URLTest(ctx context.Context) (map[string]uint16, error) {
 	return s.group.URLTest(ctx)
 }
@@ -142,12 +173,18 @@ func (s *URLTest) CheckOutbounds() {
 	s.group.CheckOutbounds(true)
 }
 
-// selectBalanced picks an outbound per-connection in round_robin/least_connection mode.
-// lx: SPEC 019. Returns nil only when there is no usable outbound at all.
+// selectBalanced picks an outbound per-connection in round_robin mode from the balancer's
+// fixed-size pool. lx: SPEC 019 v2. fallback (Select's outbounds[0]) covers the cold-start
+// window before the first health-check fills the pool. Returns nil only when nothing usable.
 func (s *URLTest) selectBalanced(ctx context.Context, network string, destination M.Socksaddr) adapter.Outbound {
-	live := s.group.liveOutbounds(network)
-	fallback, _ := s.group.Select(network) // outbounds[0]-style fallback when nothing is live
-	selected := s.balancer.pick(ctx, destination, live, fallback)
+	fallback, _ := s.group.Select(network)
+	selected := s.balancer.pick(ctx, destination, fallback, func(tag string) adapter.Outbound {
+		node, _ := s.outbound.Outbound(tag)
+		if node != nil && !common.Contains(node.Network(), network) {
+			return nil
+		}
+		return node
+	})
 	if selected != nil {
 		s.group.lastSelected.Store(selected.Tag())
 	}
@@ -185,7 +222,12 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
-	s.group.history.DeleteURLTestHistory(outbound.Tag())
+	// lx: SPEC 019 v2 — in round_robin a dial error must NOT touch the pool: the cause is
+	// unknown (dead node vs. dead destination vs. local network drop). Only the health-check
+	// changes pool membership. least_test keeps the upstream behaviour (drop the history).
+	if s.balancer == nil {
+		s.group.history.DeleteURLTestHistory(outbound.Tag())
+	}
 	return nil, err
 }
 
@@ -208,7 +250,10 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 		return s.group.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
-	s.group.history.DeleteURLTestHistory(outbound.Tag())
+	// lx: SPEC 019 v2 — round_robin dial error leaves the pool untouched (see DialContext).
+	if s.balancer == nil {
+		s.group.history.DeleteURLTestHistory(outbound.Tag())
+	}
 	return nil, err
 }
 
@@ -260,6 +305,7 @@ type URLTestGroup struct {
 	started                      bool
 	lastActive                   common.TypedValue[time.Time]
 	lastSelected                 common.TypedValue[string] // lx: SPEC 019 — Now() in balanced modes
+	balancer                     *balancer                 // lx: SPEC 019 v2 — round_robin pool; nil for least_test
 }
 
 func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManager, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, tolerance uint16, idleTimeout time.Duration, interruptExternalConnections bool) (*URLTestGroup, error) {
@@ -301,6 +347,9 @@ func (g *URLTestGroup) PostStart() {
 	defer g.access.Unlock()
 	g.started = true
 	g.lastActive.Store(time.Now())
+	// lx: SPEC 019 v2 — seed the pool so round_robin can route from the first connection,
+	// before the first health-check completes (history-warm nodes first, else config order).
+	g.seedPool()
 	go g.CheckOutbounds(false)
 }
 
@@ -418,10 +467,30 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 		return result, nil
 	}
 	defer g.checking.Store(false)
+	// lx: SPEC 019 v2 — round_robin uses a lazy, pool-bounded health-check that tests no more
+	// nodes than needed (unless force, e.g. a manual URLTest, which always tests everything).
+	if g.balancer != nil && !force {
+		return g.balancePool(ctx), nil
+	}
+	result = g.testNodes(ctx, g.outbounds, force)
+	if g.balancer != nil {
+		// force path (manual URLTest tested all nodes): rebuild the pool from fresh results.
+		g.rebuildPool()
+	} else {
+		g.performUpdateCheck()
+	}
+	return result, nil
+}
+
+// testNodes runs the URL test over the given outbounds (skipping fresh history unless force),
+// stores/deletes history, and returns tag->delay for the live ones. lx: shared by least_test
+// and the round_robin force path.
+func (g *URLTestGroup) testNodes(ctx context.Context, outbounds []adapter.Outbound, force bool) map[string]uint16 {
+	result := make(map[string]uint16)
 	b, _ := batch.New(ctx, batch.WithConcurrencyNum[any](10))
 	checked := make(map[string]bool)
 	var resultAccess sync.Mutex
-	for _, detour := range g.outbounds {
+	for _, detour := range outbounds {
 		tag := detour.Tag()
 		realTag := RealTag(detour)
 		if checked[realTag] {
@@ -457,8 +526,7 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 		})
 	}
 	b.Wait()
-	g.performUpdateCheck()
-	return result, nil
+	return result
 }
 
 func (g *URLTestGroup) performUpdateCheck() {
@@ -478,4 +546,188 @@ func (g *URLTestGroup) performUpdateCheck() {
 	if updated {
 		g.interruptGroup.Interrupt(g.interruptExternalConnections)
 	}
+}
+
+// --- round_robin pool health-check (lx: SPEC 019 v2) --------------------------------
+
+// poolSize is the effective pool size for the current node set: min(configured, available).
+func (g *URLTestGroup) poolSize() int {
+	size := g.balancer.poolSize
+	if size > len(g.outbounds) {
+		size = len(g.outbounds)
+	}
+	return size
+}
+
+// balancePool is the per-interval lazy health-check for round_robin. It tests no more nodes
+// than needed to keep the pool full of live nodes, then applies the new slot occupancy.
+// Returns tag->delay for every node it tested live (for the URLTest map / UI).
+func (g *URLTestGroup) balancePool(ctx context.Context) map[string]uint16 {
+	size := g.poolSize()
+	if size == 0 {
+		return map[string]uint16{}
+	}
+	if g.balancer.poolTolerance > 0 {
+		return g.balancePoolTolerant(ctx, size)
+	}
+	return g.balancePoolFirstLive(ctx, size)
+}
+
+// balancePoolFirstLive (pool_tolerance == 0): re-test the nodes already in the pool, then —
+// only if the pool is short of live nodes — walk the rest in config order, testing until the
+// pool is full again. A dead pool node keeps its slot until a live replacement is found.
+func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int) map[string]uint16 {
+	current := g.balancer.poolTags()
+	inPool := make(map[string]bool, len(current))
+	for _, tag := range current {
+		if tag != "" {
+			inPool[tag] = true
+		}
+	}
+	// 1. Re-test current pool members; collect which slots went dead.
+	poolNodes := g.outboundsByTags(current)
+	result := g.testNodes(ctx, poolNodes, true)
+	liveTag := func(tag string) bool { _, ok := result[tag]; return ok }
+
+	// 2. Build the next occupancy: keep live members, find replacements for dead/empty slots.
+	next := make([]string, 0, size)
+	for _, tag := range current {
+		if tag != "" && liveTag(tag) {
+			next = append(next, tag)
+		}
+	}
+	// 2b. Top up dead/empty slots: walk non-pool nodes in config order, testing in batches of
+	// `size` (a full pool's worth) in parallel, until the pool is full or nodes run out.
+	if len(next) < size {
+		candidates := make([]adapter.Outbound, 0, len(g.outbounds))
+		for _, detour := range g.outbounds {
+			if !inPool[detour.Tag()] {
+				candidates = append(candidates, detour)
+			}
+		}
+		for start := 0; start < len(candidates) && len(next) < size; start += size {
+			end := start + size
+			if end > len(candidates) {
+				end = len(candidates)
+			}
+			batch := candidates[start:end]
+			tested := g.testNodes(ctx, batch, true)
+			// Take live ones in config order (batch is already in config order).
+			for _, detour := range batch {
+				if len(next) >= size {
+					break
+				}
+				tag := detour.Tag()
+				if delay, ok := tested[tag]; ok {
+					next = append(next, tag)
+					result[tag] = delay
+				}
+			}
+		}
+	}
+	// 3. If still short (not enough live nodes), keep the dead members to never shrink the pool.
+	if len(next) < size {
+		for _, tag := range current {
+			if len(next) >= size {
+				break
+			}
+			if tag != "" && !liveTag(tag) {
+				next = append(next, tag)
+			}
+		}
+	}
+	g.balancer.setSlots(next)
+	return result
+}
+
+// balancePoolTolerant (pool_tolerance > 0): test all nodes, then pick the top-`size` by delay,
+// replacing a pool member only when an outside node beats it by more than the tolerance.
+func (g *URLTestGroup) balancePoolTolerant(ctx context.Context, size int) map[string]uint16 {
+	result := g.testNodes(ctx, g.outbounds, true)
+	results := make(map[string]candidate, len(g.outbounds))
+	for _, detour := range g.outbounds {
+		tag := detour.Tag()
+		if delay, ok := result[tag]; ok {
+			results[tag] = candidate{tag: tag, delay: delay, alive: true}
+		} else {
+			results[tag] = candidate{tag: tag, alive: false}
+		}
+	}
+	next := planTolerantPool(g.balancer.poolTags(), results, size, g.balancer.poolTolerance)
+	g.balancer.setSlots(next)
+	return result
+}
+
+// rebuildPool re-derives slot occupancy after a forced full test (manual URLTest). It mirrors
+// the tolerant path's selection from whatever history is now present.
+func (g *URLTestGroup) rebuildPool() {
+	size := g.poolSize()
+	if size == 0 {
+		return
+	}
+	results := make(map[string]candidate, len(g.outbounds))
+	for _, detour := range g.outbounds {
+		tag := detour.Tag()
+		if history := g.history.LoadURLTestHistory(RealTag(detour)); history != nil {
+			results[tag] = candidate{tag: tag, delay: history.Delay, alive: true}
+		} else {
+			results[tag] = candidate{tag: tag, alive: false}
+		}
+	}
+	next := planTolerantPool(g.balancer.poolTags(), results, size, g.balancer.poolTolerance)
+	g.balancer.setSlots(next)
+}
+
+// seedPool fills the pool before the first health-check: prefer nodes with live history (the
+// process was not unloaded), else the first `size` nodes in config order. lx: SPEC 019 v2.
+func (g *URLTestGroup) seedPool() {
+	if g.balancer == nil {
+		return
+	}
+	size := g.poolSize()
+	if size == 0 {
+		return
+	}
+	// Nodes with existing history first (top by delay), then config order to fill.
+	withHistory := make([]candidate, 0, len(g.outbounds))
+	for _, detour := range g.outbounds {
+		if history := g.history.LoadURLTestHistory(RealTag(detour)); history != nil {
+			withHistory = append(withHistory, candidate{tag: detour.Tag(), delay: history.Delay, alive: true})
+		}
+	}
+	sortCandidatesByDelay(withHistory)
+	next := make([]string, 0, size)
+	seen := make(map[string]bool)
+	for _, c := range withHistory {
+		if len(next) >= size {
+			break
+		}
+		next = append(next, c.tag)
+		seen[c.tag] = true
+	}
+	for _, detour := range g.outbounds {
+		if len(next) >= size {
+			break
+		}
+		tag := detour.Tag()
+		if !seen[tag] {
+			next = append(next, tag)
+			seen[tag] = true
+		}
+	}
+	g.balancer.setSlots(next)
+}
+
+// outboundsByTags resolves slot tags back to live outbound objects (skipping empties/unknowns).
+func (g *URLTestGroup) outboundsByTags(tags []string) []adapter.Outbound {
+	out := make([]adapter.Outbound, 0, len(tags))
+	for _, tag := range tags {
+		if tag == "" {
+			continue
+		}
+		if node, ok := g.outbound.Outbound(tag); ok {
+			out = append(out, node)
+		}
+	}
+	return out
 }

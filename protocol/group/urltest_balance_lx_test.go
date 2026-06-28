@@ -3,20 +3,16 @@ package group
 import (
 	"context"
 	"net/netip"
-	"strconv"
 	"testing"
-	"time"
 
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
 
-// balNode is a minimal adapter.Outbound exposing only Tag/Network, which is all the
-// balancer reads. The embedded nil interface panics on any other method — none are called.
+// balNode is a minimal adapter.Outbound exposing only Tag/Network — all pick() reads.
 type balNode struct {
 	adapter.Outbound
 	tag string
@@ -25,17 +21,22 @@ type balNode struct {
 func (n *balNode) Tag() string       { return n.tag }
 func (n *balNode) Network() []string { return []string{N.NetworkTCP, N.NetworkUDP} }
 
-func nodes(tags ...string) []adapter.Outbound {
-	out := make([]adapter.Outbound, len(tags))
-	for i, tag := range tags {
-		out[i] = &balNode{tag: tag}
+// resolveFrom builds a pick() resolver over a fixed tag→node set.
+func resolveFrom(tags ...string) ([]adapter.Outbound, func(string) adapter.Outbound) {
+	nodes := map[string]adapter.Outbound{}
+	for _, t := range tags {
+		nodes[t] = &balNode{tag: t}
 	}
-	return out
+	return nil, func(tag string) adapter.Outbound { return nodes[tag] }
 }
 
-func rrBalancer(t *testing.T) *balancer {
+func rrBalancer(t *testing.T, pool int, stickyHash []string) *balancer {
 	t.Helper()
-	b, err := newBalancer(option.URLTestOutboundOptions{Mode: C.URLTestModeRoundRobin})
+	opts := option.URLTestOutboundOptions{
+		Mode:     C.URLTestModeRoundRobin,
+		Balancer: &option.URLTestBalancerOptions{Pool: pool, StickyHash: stickyHash},
+	}
+	b, err := newBalancer(opts)
 	if err != nil {
 		t.Fatalf("newBalancer: %v", err)
 	}
@@ -44,6 +45,10 @@ func rrBalancer(t *testing.T) *balancer {
 	}
 	return b
 }
+
+func destDomain(host string) M.Socksaddr { return M.Socksaddr{Fqdn: host} }
+
+// --- newBalancer: modes, defaults, validation ---------------------------------------
 
 func TestBalancerLeastTestIsNil(t *testing.T) {
 	for _, mode := range []string{"", C.URLTestModeLeastTest} {
@@ -57,292 +62,253 @@ func TestBalancerLeastTestIsNil(t *testing.T) {
 	}
 }
 
-func TestBalancerLeastConnectionRejected(t *testing.T) {
-	_, err := newBalancer(option.URLTestOutboundOptions{Mode: C.URLTestModeLeastConnection})
-	if err == nil {
-		t.Fatal("least_connection must be rejected in phase 1")
-	}
-}
-
 func TestBalancerUnknownModeRejected(t *testing.T) {
 	if _, err := newBalancer(option.URLTestOutboundOptions{Mode: "bogus"}); err == nil {
 		t.Fatal("unknown mode must error")
 	}
 }
 
-func TestRoundRobinDistribution(t *testing.T) {
-	b := rrBalancer(t)
-	live := nodes("a", "b", "c")
-	fallback := live[0]
+func TestBalancerDefaults(t *testing.T) {
+	// round_robin without balancer → pool 3, stickiness on by [process,domain].
+	b, err := newBalancer(option.URLTestOutboundOptions{Mode: C.URLTestModeRoundRobin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.poolSize != C.DefaultURLTestPool {
+		t.Fatalf("default pool = %d, want %d", b.poolSize, C.DefaultURLTestPool)
+	}
+	if len(b.stickyHash) != 2 {
+		t.Fatalf("default sticky_hash must be [process,domain], got %v", b.stickyHash)
+	}
+}
+
+func TestBalancerStickyHashExplicitEmptyDisables(t *testing.T) {
+	// Explicit [] → stickiness off. nil (omitted) → default. Distinguished by the slice.
+	b, err := newBalancer(option.URLTestOutboundOptions{
+		Mode:     C.URLTestModeRoundRobin,
+		Balancer: &option.URLTestBalancerOptions{StickyHash: []string{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.stickyHash) != 0 {
+		t.Fatalf("explicit [] must disable stickiness, got %v", b.stickyHash)
+	}
+}
+
+func TestBalancerPoolBelowOneRejected(t *testing.T) {
+	_, err := newBalancer(option.URLTestOutboundOptions{
+		Mode:     C.URLTestModeRoundRobin,
+		Balancer: &option.URLTestBalancerOptions{Pool: -1},
+	})
+	if err == nil {
+		t.Fatal("pool < 1 must error")
+	}
+}
+
+func TestBalancerUnknownStickyComponentRejected(t *testing.T) {
+	_, err := newBalancer(option.URLTestOutboundOptions{
+		Mode:     C.URLTestModeRoundRobin,
+		Balancer: &option.URLTestBalancerOptions{StickyHash: []string{"bogus"}},
+	})
+	if err == nil {
+		t.Fatal("unknown sticky_hash component must error")
+	}
+}
+
+// --- pick: rotation, fallback ------------------------------------------------------
+
+func TestRoundRobinRotation(t *testing.T) {
+	b := rrBalancer(t, 3, []string{}) // no stickiness → pure counter rotation
+	b.setSlots([]string{"a", "b", "c"})
+	_, resolve := resolveFrom("a", "b", "c")
+	fb := &balNode{tag: "fb"}
 	const rounds = 3000
 	count := map[string]int{}
 	for i := 0; i < rounds; i++ {
-		count[b.pick(context.Background(), M.Socksaddr{}, live, fallback).Tag()]++
+		count[b.pick(context.Background(), M.Socksaddr{}, fb, resolve).Tag()]++
 	}
 	for _, tag := range []string{"a", "b", "c"} {
-		// pure rotation over 3 nodes → exactly rounds/3 each.
-		if count[tag] != rounds/len(live) {
-			t.Errorf("node %s got %d, want %d", tag, count[tag], rounds/len(live))
+		if count[tag] != rounds/3 {
+			t.Errorf("node %s got %d, want %d", tag, count[tag], rounds/3)
 		}
 	}
 }
 
-func TestRoundRobinFallbackWhenNoneLive(t *testing.T) {
-	b := rrBalancer(t)
-	fallback := &balNode{tag: "fb"}
-	got := b.pick(context.Background(), M.Socksaddr{}, nil, fallback)
-	if got != adapter.Outbound(fallback) {
-		t.Fatalf("empty live set must return fallback, got %v", got)
+func TestPickEmptyPoolFallback(t *testing.T) {
+	b := rrBalancer(t, 3, []string{})
+	_, resolve := resolveFrom("a")
+	fb := &balNode{tag: "fb"}
+	// no setSlots → empty pool → fallback.
+	if got := b.pick(context.Background(), M.Socksaddr{}, fb, resolve); got.Tag() != "fb" {
+		t.Fatalf("empty pool must return fallback, got %s", got.Tag())
 	}
 }
 
-func TestRoundRobinSingleLive(t *testing.T) {
-	b := rrBalancer(t)
-	live := nodes("only")
-	for i := 0; i < 5; i++ {
-		if got := b.pick(context.Background(), M.Socksaddr{}, live, live[0]).Tag(); got != "only" {
-			t.Fatalf("single live node must always be picked, got %s", got)
-		}
+func TestPickUnresolvableTagFallsBack(t *testing.T) {
+	b := rrBalancer(t, 1, []string{})
+	b.setSlots([]string{"gone"})
+	_, resolve := resolveFrom() // resolves nothing
+	fb := &balNode{tag: "fb"}
+	if got := b.pick(context.Background(), M.Socksaddr{}, fb, resolve); got.Tag() != "fb" {
+		t.Fatalf("unresolvable slot tag must fall back, got %s", got.Tag())
 	}
 }
 
-// --- jump consistent hash -----------------------------------------------------------
+// --- sticky slot-hash: strict-zero reconnects ---------------------------------------
 
-func TestJumpConsistentHashBounds(t *testing.T) {
-	for _, n := range []int{1, 2, 3, 8, 64} {
-		for k := uint64(0); k < 1000; k++ {
-			b := jumpConsistentHash(k*2654435761, n)
-			if b < 0 || b >= n {
-				t.Fatalf("jumphash out of range: key %d buckets %d -> %d", k, n, b)
-			}
-		}
-	}
-}
-
-func TestJumpConsistentHashStable(t *testing.T) {
-	// Same key + same bucket count must always map to the same bucket.
-	for k := uint64(0); k < 100; k++ {
-		first := jumpConsistentHash(k, 7)
-		for i := 0; i < 10; i++ {
-			if jumpConsistentHash(k, 7) != first {
-				t.Fatalf("jumphash not deterministic for key %d", k)
-			}
-		}
-	}
-}
-
-// --- sticky jumphash ----------------------------------------------------------------
-
-func stickyBalancer(t *testing.T, stickyMode string, hash []string) *balancer {
-	t.Helper()
-	b, err := newBalancer(option.URLTestOutboundOptions{
-		Mode:   C.URLTestModeRoundRobin,
-		Sticky: &option.URLTestStickyOptions{Mode: stickyMode, Hash: hash},
-	})
-	if err != nil {
-		t.Fatalf("newBalancer sticky: %v", err)
-	}
-	return b
-}
-
-func ctxWithDomain() context.Context { return context.Background() }
-
-func destDomain(host string) M.Socksaddr { return M.Socksaddr{Fqdn: host} }
-
-func TestStickyJumphashSameKeySameNode(t *testing.T) {
-	b := stickyBalancer(t, C.URLTestStickyJumpHash, []string{C.URLTestStickyDomain})
-	live := nodes("a", "b", "c", "d")
-	first := b.pick(ctxWithDomain(), destDomain("example.com"), live, live[0]).Tag()
+func TestStickySlotHashStable(t *testing.T) {
+	b := rrBalancer(t, 4, []string{C.URLTestStickyDomain})
+	b.setSlots([]string{"a", "b", "c", "d"})
+	_, resolve := resolveFrom("a", "b", "c", "d")
+	first := b.pick(context.Background(), destDomain("example.com"), nil, resolve).Tag()
 	for i := 0; i < 100; i++ {
-		got := b.pick(ctxWithDomain(), destDomain("example.com"), live, live[0]).Tag()
+		got := b.pick(context.Background(), destDomain("example.com"), nil, resolve).Tag()
 		if got != first {
-			t.Fatalf("sticky domain must always map to the same node: %s != %s", got, first)
+			t.Fatalf("sticky key must map to one node: %s != %s", got, first)
 		}
-	}
-	// A different domain may land elsewhere — just confirm it stays in-set.
-	other := b.pick(ctxWithDomain(), destDomain("other.org"), live, live[0]).Tag()
-	if findLive(other, live) == nil {
-		t.Fatalf("picked node %s not in live set", other)
 	}
 }
 
-func TestStickyEmptyKeyFixedNode(t *testing.T) {
-	// All components empty (no domain on the destination) → key "" → one fixed node.
-	b := stickyBalancer(t, C.URLTestStickyJumpHash, []string{C.URLTestStickyDomain})
-	live := nodes("a", "b", "c")
-	first := b.pick(context.Background(), M.Socksaddr{}, live, live[0]).Tag()
+func TestStickySlotHashLivingNodeKeepsKeysAcrossOtherSlotChanges(t *testing.T) {
+	// The strict-zero-reconnect invariant: replacing the occupant of OTHER slots must not
+	// move a key whose slot occupant is unchanged.
+	b := rrBalancer(t, 4, []string{C.URLTestStickyDomain})
+	b.setSlots([]string{"a", "b", "c", "d"})
+	_, resolve := resolveFrom("a", "b", "c", "d", "x", "y")
+	dst := destDomain("keep.me")
+	pinnedTag := b.pick(context.Background(), dst, nil, resolve).Tag()
+	pinnedSlot := int(hashKey("keep.me") % 4)
+
+	// Replace every OTHER slot's occupant; the pinned slot keeps its tag.
+	newSlots := []string{"a", "b", "c", "d"}
+	for i := range newSlots {
+		if i != pinnedSlot {
+			newSlots[i] = []string{"x", "y", "x", "y"}[i]
+		}
+	}
+	b.setSlots(newSlots)
+	_, resolve2 := resolveFrom(append(newSlots, pinnedTag)...)
+	if got := b.pick(context.Background(), dst, nil, resolve2).Tag(); got != pinnedTag {
+		t.Fatalf("living node in its slot must keep its key: %s != %s", got, pinnedTag)
+	}
+}
+
+func TestStickyEmptyKeyFixedSlot(t *testing.T) {
+	// All components empty (no domain) → key "" → one fixed slot, no rotation.
+	b := rrBalancer(t, 3, []string{C.URLTestStickyDomain})
+	b.setSlots([]string{"a", "b", "c"})
+	_, resolve := resolveFrom("a", "b", "c")
+	first := b.pick(context.Background(), M.Socksaddr{}, nil, resolve).Tag()
 	for i := 0; i < 50; i++ {
-		if got := b.pick(context.Background(), M.Socksaddr{}, live, live[0]).Tag(); got != first {
+		if got := b.pick(context.Background(), M.Socksaddr{}, nil, resolve).Tag(); got != first {
 			t.Fatalf("empty-key flows must not rotate: %s != %s", got, first)
 		}
-	}
-}
-
-// --- sticky ttlmap ------------------------------------------------------------------
-
-func TestStickyTTLMapStickAndExpire(t *testing.T) {
-	b, err := newBalancer(option.URLTestOutboundOptions{
-		Mode: C.URLTestModeRoundRobin,
-		Sticky: &option.URLTestStickyOptions{
-			Mode:    C.URLTestStickyTTLMap,
-			Hash:    []string{C.URLTestStickyDomain},
-			Timeout: 0, // → default 10m
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.close()
-	live := nodes("a", "b", "c")
-	dst := destDomain("sticky.test")
-	first := b.pick(context.Background(), dst, live, live[0]).Tag()
-	for i := 0; i < 20; i++ {
-		if got := b.pick(context.Background(), dst, live, live[0]).Tag(); got != first {
-			t.Fatalf("ttlmap key must stick: %s != %s", got, first)
-		}
-	}
-
-	// Force expiry by aging the entry past the timeout, then a new pick must re-record.
-	st := b.sticky
-	st.access.Lock()
-	for _, e := range st.entries {
-		e.lastTime = time.Now().Add(-st.timeout - time.Hour)
-	}
-	st.access.Unlock()
-	st.access.Lock()
-	st.evictLocked(time.Now())
-	n := len(st.entries)
-	st.access.Unlock()
-	if n != 0 {
-		t.Fatalf("expired entries must be evicted, %d remain", n)
-	}
-}
-
-func TestStickyTTLMapDeadNodeRepick(t *testing.T) {
-	b, err := newBalancer(option.URLTestOutboundOptions{
-		Mode: C.URLTestModeRoundRobin,
-		Sticky: &option.URLTestStickyOptions{
-			Mode: C.URLTestStickyTTLMap,
-			Hash: []string{C.URLTestStickyDomain},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.close()
-	dst := destDomain("repick.test")
-	full := nodes("a", "b", "c")
-	bound := b.pick(context.Background(), dst, full, full[0]).Tag()
-
-	// Remove the bound node from the live set; the key must re-pin to a surviving node.
-	var reduced []adapter.Outbound
-	for _, n := range full {
-		if n.Tag() != bound {
-			reduced = append(reduced, n)
-		}
-	}
-	got := b.pick(context.Background(), dst, reduced, reduced[0]).Tag()
-	if got == bound {
-		t.Fatalf("dead bound node %s must not be returned", bound)
-	}
-	if findLive(got, reduced) == nil {
-		t.Fatalf("re-pinned node %s not in reduced live set", got)
-	}
-	// And the new binding must now be stable.
-	for i := 0; i < 10; i++ {
-		if again := b.pick(context.Background(), dst, reduced, reduced[0]).Tag(); again != got {
-			t.Fatalf("re-pin not stable: %s != %s", again, got)
-		}
-	}
-}
-
-func TestStickyTTLMapCap(t *testing.T) {
-	b, err := newBalancer(option.URLTestOutboundOptions{
-		Mode: C.URLTestModeRoundRobin,
-		Sticky: &option.URLTestStickyOptions{
-			Mode: C.URLTestStickyTTLMap,
-			Hash: []string{C.URLTestStickyDomain},
-			Cap:  10,
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.close()
-	live := nodes("a", "b", "c")
-	for i := 0; i < 100; i++ {
-		b.pick(context.Background(), destDomain("host-"+strconv.Itoa(i)), live, live[0])
-	}
-	b.sticky.access.Lock()
-	n := len(b.sticky.entries)
-	b.sticky.access.Unlock()
-	if n > 10 {
-		t.Fatalf("ttlmap exceeded cap: %d > 10", n)
 	}
 }
 
 // --- sticky key building ------------------------------------------------------------
 
 func TestStickyKeyComponents(t *testing.T) {
-	st, err := newStickyTable(&option.URLTestStickyOptions{
-		Hash: []string{C.URLTestStickyDestIP, C.URLTestStickyDestPort},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := rrBalancer(t, 3, []string{C.URLTestStickyDestIP, C.URLTestStickyDestPort})
 	dst := M.Socksaddr{Addr: netip.MustParseAddr("203.0.113.7"), Port: 443}
-	key := st.key(context.Background(), dst)
-	if key != "203.0.113.7\x00443" {
+	if key := b.stickyKey(context.Background(), dst); key != "203.0.113.7\x00443" {
 		t.Fatalf("unexpected key %q", key)
 	}
-	// Empty components collapse to "".
-	stEmpty, _ := newStickyTable(&option.URLTestStickyOptions{Hash: []string{C.URLTestStickyDomain}})
-	if k := stEmpty.key(context.Background(), M.Socksaddr{}); k != "" {
-		t.Fatalf("absent domain must yield empty key, got %q", k)
+	// Absent components collapse to "".
+	b2 := rrBalancer(t, 3, []string{C.URLTestStickyDomain})
+	if key := b2.stickyKey(context.Background(), M.Socksaddr{}); key != "" {
+		t.Fatalf("absent domain must yield empty key, got %q", key)
 	}
 }
 
-// --- Now() cold-start fallback ------------------------------------------------------
+// --- planTolerantPool: top-N, replace-in-slot, fixed slots --------------------------
 
-// TestSelectColdStartFallback covers the fact Now() relies on: before any URL-test has
-// run (empty history), Select() returns the first usable outbound with exists=false —
-// the same node DialContext dials. Now() now mirrors this instead of returning "".
-func TestSelectColdStartFallback(t *testing.T) {
-	g := &URLTestGroup{
-		outbounds: nodes("a", "b", "c"),
-		history:   urltest.NewHistoryStorage(),
-		tolerance: 50,
+func cand(tag string, delay uint16) candidate {
+	return candidate{tag: tag, delay: delay, alive: true}
+}
+
+func TestPlanTolerantPoolTopN(t *testing.T) {
+	// Empty pool, 5 nodes, size 3 → 3 fastest by delay.
+	results := map[string]candidate{
+		"a": cand("a", 100), "b": cand("b", 20), "c": cand("c", 50),
+		"d": cand("d", 10), "e": cand("e", 80),
 	}
-	got, exists := g.Select(N.NetworkTCP)
-	if got == nil {
-		t.Fatal("cold-start Select must return a fallback outbound, got nil")
+	next := planTolerantPool(nil, results, 3, 0)
+	if len(next) != 3 {
+		t.Fatalf("pool size = %d, want 3", len(next))
 	}
-	if exists {
-		t.Fatal("cold-start fallback must report exists=false (unmeasured)")
+	got := map[string]bool{}
+	for _, tag := range next {
+		got[tag] = true
 	}
-	if got.Tag() != "a" {
-		t.Fatalf("cold-start fallback must be the first usable outbound, got %s", got.Tag())
+	// fastest three: d(10), b(20), c(50)
+	for _, tag := range []string{"d", "b", "c"} {
+		if !got[tag] {
+			t.Errorf("top-3 must include %s, got %v", tag, next)
+		}
 	}
 }
 
-func TestSelectColdStartNoOutbounds(t *testing.T) {
-	g := &URLTestGroup{
-		outbounds: nil,
-		history:   urltest.NewHistoryStorage(),
+func TestPlanTolerantPoolKeepsLivingInSlot(t *testing.T) {
+	// Current pool [a,b,c] all alive; a faster outsider exists but within tolerance → no churn.
+	current := []string{"a", "b", "c"}
+	results := map[string]candidate{
+		"a": cand("a", 100), "b": cand("b", 100), "c": cand("c", 100),
+		"x": cand("x", 90), // faster, but by only 10 — within tolerance 50
 	}
-	if got, _ := g.Select(N.NetworkTCP); got != nil {
-		t.Fatalf("no outbounds must yield nil (Now → \"\"), got %s", got.Tag())
+	next := planTolerantPool(current, results, 3, 50)
+	for i, tag := range []string{"a", "b", "c"} {
+		if next[i] != tag {
+			t.Fatalf("living node within tolerance must keep slot %d: got %v", i, next)
+		}
 	}
 }
 
-func TestStickyValidation(t *testing.T) {
-	if _, err := newStickyTable(&option.URLTestStickyOptions{Mode: "bogus", Hash: []string{C.URLTestStickyDomain}}); err == nil {
-		t.Fatal("unknown sticky mode must error")
+func TestPlanTolerantPoolEvictsBeyondTolerance(t *testing.T) {
+	// Outsider beats the slot occupant by more than tolerance → it takes that slot.
+	current := []string{"a", "b", "c"}
+	results := map[string]candidate{
+		"a": cand("a", 100), "b": cand("b", 100), "c": cand("c", 100),
+		"x": cand("x", 10), // beats by 90 > tolerance 50
 	}
-	if _, err := newStickyTable(&option.URLTestStickyOptions{Hash: []string{"bogus"}}); err == nil {
-		t.Fatal("unknown hash component must error")
+	next := planTolerantPool(current, results, 3, 50)
+	found := false
+	for _, tag := range next {
+		if tag == "x" {
+			found = true
+		}
 	}
-	if _, err := newStickyTable(&option.URLTestStickyOptions{Hash: []string{C.URLTestStickyDomain}, Cap: -1}); err == nil {
-		t.Fatal("negative cap must error")
+	if !found {
+		t.Fatalf("outsider faster by > tolerance must enter the pool: %v", next)
+	}
+	if len(next) != 3 {
+		t.Fatalf("pool must stay size 3, got %v", next)
+	}
+}
+
+func TestPlanTolerantPoolDeadSlotReplaced(t *testing.T) {
+	// b died; a live outsider must replace it (replace-in-slot, pool stays full).
+	current := []string{"a", "b", "c"}
+	results := map[string]candidate{
+		"a": cand("a", 30), "c": cand("c", 30),
+		"b": {tag: "b", alive: false},
+		"x": cand("x", 40),
+	}
+	next := planTolerantPool(current, results, 3, 0)
+	if len(next) != 3 {
+		t.Fatalf("pool must stay full, got %v", next)
+	}
+	hasX, hasB := false, false
+	for _, tag := range next {
+		if tag == "x" {
+			hasX = true
+		}
+		if tag == "b" {
+			hasB = true
+		}
+	}
+	if !hasX || hasB {
+		t.Fatalf("dead b must be replaced by live x: %v", next)
 	}
 }

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	context "context"
+
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -47,6 +48,7 @@ const (
 	StartedService_GetGroups_FullMethodName                  = "/daemon.StartedService/GetGroups"
 	StartedService_GetOutbounds_FullMethodName               = "/daemon.StartedService/GetOutbounds"
 	StartedService_SubscribeDNSQueries_FullMethodName        = "/daemon.StartedService/SubscribeDNSQueries"
+	StartedService_GetPool_FullMethodName                    = "/daemon.StartedService/GetPool"
 )
 
 // StartedServiceClient is the client API for StartedService service.
@@ -86,6 +88,7 @@ type StartedServiceClient interface {
 	GetGroups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Groups, error)
 	GetOutbounds(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*OutboundList, error)
 	SubscribeDNSQueries(ctx context.Context, in *SubscribeDNSQueriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DnsQueryEvent], error)
+	GetPool(ctx context.Context, in *GetPoolRequest, opts ...grpc.CallOption) (*PoolList, error)
 }
 
 type startedServiceClient struct {
@@ -549,6 +552,16 @@ func (c *startedServiceClient) SubscribeDNSQueries(ctx context.Context, in *Subs
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type StartedService_SubscribeDNSQueriesClient = grpc.ServerStreamingClient[DnsQueryEvent]
 
+func (c *startedServiceClient) GetPool(ctx context.Context, in *GetPoolRequest, opts ...grpc.CallOption) (*PoolList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PoolList)
+	err := c.cc.Invoke(ctx, StartedService_GetPool_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StartedServiceServer is the server API for StartedService service.
 // All implementations must embed UnimplementedStartedServiceServer
 // for forward compatibility.
@@ -586,6 +599,7 @@ type StartedServiceServer interface {
 	GetGroups(context.Context, *emptypb.Empty) (*Groups, error)
 	GetOutbounds(context.Context, *emptypb.Empty) (*OutboundList, error)
 	SubscribeDNSQueries(*SubscribeDNSQueriesRequest, grpc.ServerStreamingServer[DnsQueryEvent]) error
+	GetPool(context.Context, *GetPoolRequest) (*PoolList, error)
 	mustEmbedUnimplementedStartedServiceServer()
 }
 
@@ -599,101 +613,137 @@ type UnimplementedStartedServiceServer struct{}
 func (UnimplementedStartedServiceServer) GetVersion(context.Context, *emptypb.Empty) (*Version, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetVersion not implemented")
 }
+
 func (UnimplementedStartedServiceServer) SubscribeServiceStatus(*emptypb.Empty, grpc.ServerStreamingServer[ServiceStatus]) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeServiceStatus not implemented")
 }
+
 func (UnimplementedStartedServiceServer) SubscribeLog(*emptypb.Empty, grpc.ServerStreamingServer[Log]) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeLog not implemented")
 }
+
 func (UnimplementedStartedServiceServer) GetDefaultLogLevel(context.Context, *emptypb.Empty) (*DefaultLogLevel, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetDefaultLogLevel not implemented")
 }
+
 func (UnimplementedStartedServiceServer) ClearLogs(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ClearLogs not implemented")
 }
+
 func (UnimplementedStartedServiceServer) SubscribeStatus(*SubscribeStatusRequest, grpc.ServerStreamingServer[Status]) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeStatus not implemented")
 }
+
 func (UnimplementedStartedServiceServer) SubscribeGroups(*emptypb.Empty, grpc.ServerStreamingServer[Groups]) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeGroups not implemented")
 }
+
 func (UnimplementedStartedServiceServer) GetClashModeStatus(context.Context, *emptypb.Empty) (*ClashModeStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetClashModeStatus not implemented")
 }
+
 func (UnimplementedStartedServiceServer) SubscribeClashMode(*emptypb.Empty, grpc.ServerStreamingServer[ClashMode]) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeClashMode not implemented")
 }
+
 func (UnimplementedStartedServiceServer) SetClashMode(context.Context, *ClashMode) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetClashMode not implemented")
 }
+
 func (UnimplementedStartedServiceServer) URLTest(context.Context, *URLTestRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method URLTest not implemented")
 }
+
 func (UnimplementedStartedServiceServer) SelectOutbound(context.Context, *SelectOutboundRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SelectOutbound not implemented")
 }
+
 func (UnimplementedStartedServiceServer) SetGroupExpand(context.Context, *SetGroupExpandRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetGroupExpand not implemented")
 }
+
 func (UnimplementedStartedServiceServer) SubscribeConnections(*SubscribeConnectionsRequest, grpc.ServerStreamingServer[ConnectionEvents]) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeConnections not implemented")
 }
+
 func (UnimplementedStartedServiceServer) CloseConnection(context.Context, *CloseConnectionRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CloseConnection not implemented")
 }
+
 func (UnimplementedStartedServiceServer) CloseAllConnections(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CloseAllConnections not implemented")
 }
+
 func (UnimplementedStartedServiceServer) GetDeprecatedWarnings(context.Context, *emptypb.Empty) (*DeprecatedWarnings, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetDeprecatedWarnings not implemented")
 }
+
 func (UnimplementedStartedServiceServer) GetStartedAt(context.Context, *emptypb.Empty) (*StartedAt, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetStartedAt not implemented")
 }
+
 func (UnimplementedStartedServiceServer) SubscribeOutbounds(*emptypb.Empty, grpc.ServerStreamingServer[OutboundList]) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeOutbounds not implemented")
 }
+
 func (UnimplementedStartedServiceServer) StartNetworkQualityTest(*NetworkQualityTestRequest, grpc.ServerStreamingServer[NetworkQualityTestProgress]) error {
 	return status.Errorf(codes.Unimplemented, "method StartNetworkQualityTest not implemented")
 }
+
 func (UnimplementedStartedServiceServer) StartSTUNTest(*STUNTestRequest, grpc.ServerStreamingServer[STUNTestProgress]) error {
 	return status.Errorf(codes.Unimplemented, "method StartSTUNTest not implemented")
 }
+
 func (UnimplementedStartedServiceServer) SubscribeTailscaleStatus(*emptypb.Empty, grpc.ServerStreamingServer[TailscaleStatusUpdate]) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeTailscaleStatus not implemented")
 }
+
 func (UnimplementedStartedServiceServer) StartTailscalePing(*TailscalePingRequest, grpc.ServerStreamingServer[TailscalePingResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method StartTailscalePing not implemented")
 }
+
 func (UnimplementedStartedServiceServer) SetTailscaleExitNode(context.Context, *SetTailscaleExitNodeRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetTailscaleExitNode not implemented")
 }
+
 func (UnimplementedStartedServiceServer) TailscaleLogout(context.Context, *TailscaleLogoutRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TailscaleLogout not implemented")
 }
+
 func (UnimplementedStartedServiceServer) StartTailscaleSSHSession(grpc.BidiStreamingServer[TailscaleSSHClientMessage, TailscaleSSHServerMessage]) error {
 	return status.Errorf(codes.Unimplemented, "method StartTailscaleSSHSession not implemented")
 }
+
 func (UnimplementedStartedServiceServer) ProvideUSBDevices(grpc.BidiStreamingServer[USBProviderMessage, USBServerMessage]) error {
 	return status.Errorf(codes.Unimplemented, "method ProvideUSBDevices not implemented")
 }
+
 func (UnimplementedStartedServiceServer) SubscribeUSBIPServerStatus(*emptypb.Empty, grpc.ServerStreamingServer[USBIPServerStatusUpdate]) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeUSBIPServerStatus not implemented")
 }
+
 func (UnimplementedStartedServiceServer) URLTestOutbound(context.Context, *URLTestOutboundRequest) (*URLTestOutboundResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method URLTestOutbound not implemented")
 }
+
 func (UnimplementedStartedServiceServer) GetRules(context.Context, *emptypb.Empty) (*RuleList, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetRules not implemented")
 }
+
 func (UnimplementedStartedServiceServer) GetGroups(context.Context, *emptypb.Empty) (*Groups, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetGroups not implemented")
 }
+
 func (UnimplementedStartedServiceServer) GetOutbounds(context.Context, *emptypb.Empty) (*OutboundList, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetOutbounds not implemented")
 }
+
 func (UnimplementedStartedServiceServer) SubscribeDNSQueries(*SubscribeDNSQueriesRequest, grpc.ServerStreamingServer[DnsQueryEvent]) error {
 	return status.Errorf(codes.Unimplemented, "method SubscribeDNSQueries not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetPool(context.Context, *GetPoolRequest) (*PoolList, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetPool not implemented")
 }
 func (UnimplementedStartedServiceServer) mustEmbedUnimplementedStartedServiceServer() {}
 func (UnimplementedStartedServiceServer) testEmbeddedByValue()                        {}
@@ -1197,6 +1247,24 @@ func _StartedService_SubscribeDNSQueries_Handler(srv interface{}, stream grpc.Se
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type StartedService_SubscribeDNSQueriesServer = grpc.ServerStreamingServer[DnsQueryEvent]
 
+func _StartedService_GetPool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPoolRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetPool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetPool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetPool(ctx, req.(*GetPoolRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StartedService_ServiceDesc is the grpc.ServiceDesc for StartedService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1275,6 +1343,10 @@ var StartedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetOutbounds",
 			Handler:    _StartedService_GetOutbounds_Handler,
+		},
+		{
+			MethodName: "GetPool",
+			Handler:    _StartedService_GetPool_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

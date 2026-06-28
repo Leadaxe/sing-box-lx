@@ -264,3 +264,40 @@ type RuleIterator interface {
 	Next() *Rule
 	HasNext() bool
 }
+
+// PoolSlot is the libbox view of one round_robin rotation-pool slot (SPEC 019 v2). Slot is
+// the fixed slot index; Tag is the node currently in it; Delay is its last test result in
+// ms (0 = dead/not-measured — a live node is clamped to >= 1 server-side).
+type PoolSlot struct {
+	Slot  int32
+	Tag   string
+	Delay int32
+}
+
+// PoolSlotIterator binds the pool snapshot for gomobile.
+type PoolSlotIterator interface {
+	Next() *PoolSlot
+	HasNext() bool
+}
+
+// GetPool returns the current round_robin rotation pool of a urltest group (SPEC 019 v2).
+// A non-round_robin group (selector/least_test) or unknown tag yields an empty iterator —
+// "no pool", not an error. Lets the UI show which N nodes are actually in rotation, with
+// their delays, instead of the full 1000-node config list.
+func (c *CommandClient) GetPool(groupTag string) (PoolSlotIterator, error) {
+	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (PoolSlotIterator, error) {
+		list, err := client.GetPool(ctx, &daemon.GetPoolRequest{GroupTag: groupTag})
+		if err != nil {
+			return nil, E.Cause(err, "get pool")
+		}
+		slots := make([]*PoolSlot, 0, len(list.Slots))
+		for _, slot := range list.Slots {
+			slots = append(slots, &PoolSlot{
+				Slot:  int32(slot.Slot),
+				Tag:   slot.Tag,
+				Delay: int32(slot.Delay),
+			})
+		}
+		return newIterator(slots), nil
+	})
+}

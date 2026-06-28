@@ -35,3 +35,7 @@ func (s *StartedService) GetOutbounds(ctx context.Context, empty *emptypb.Empty)
 func (s *StartedService) SubscribeDNSQueries(request *SubscribeDNSQueriesRequest, server grpc.ServerStreamingServer[DnsQueryEvent]) error {
 	return status.Error(codes.Unimplemented, "SubscribeDNSQueries is not included in this build, rebuild with -tags with_lx_command")
 }
+
+func (s *StartedService) GetPool(ctx context.Context, request *GetPoolRequest) (*PoolList, error) {
+	return nil, status.Error(codes.Unimplemented, "GetPool is not included in this build, rebuild with -tags with_lx_command")
+}
