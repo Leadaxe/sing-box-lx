@@ -157,6 +157,37 @@ batch=128 ради GRO-throughput; неактивные (принимают ~0 �
 
 ---
 
+## Логика фикса (PRIMARY-рычаг)
+
+**Суть.** `bufsArrs = make([]*[65535]byte, maxBatchSize)` (`receive.go:89`), где
+`maxBatchSize = bind.BatchSize()`. Для `StdNetBind` на android это **128** → 8 МБ на
+recv-горутину × 22 = 176 МБ. Уменьшить `BatchSize()` → пропорционально меньше `bufsArrs`.
+
+**Изменение — одна точка:** `conn/bind_std.go:322`, `StdNetBind.BatchSize()`:
+```go
+// было:  if linux || android { return IdealBatchSize }  // 128
+// стало: if android { return <малая константа: 8 или 16> }
+//        if linux   { return IdealBatchSize }            // 128 не трогаем
+```
+
+**Что протянется автоматически (без других правок):**
+- `BindUpdate` (`device.go:558`) читает `bind.BatchSize()` → передаёт в
+  `RoutineReceiveIncoming` как `maxBatchSize` → `bufsArrs` становится размером 8, не 128.
+- `getMessages()` в `receiveIP` (`bind_std.go:260`) завязан на `len(bufs)`, который
+  теперь 8 → `ReadBatch` читает в полный 8-массив. **Потеря пакетов исключена** (массив
+  полный, просто короче).
+- Обе recv-горутины (v4 + v6) — через общий `BatchSize()`, бьёт обе.
+
+**Эффект:** 8 МБ → ~0.5 МБ на recv-горутину; 176 МБ → ~11 МБ при 11 устройствах;
+GC-нагрев уходит. `MaxSegmentSize` (65535) НЕ трогается → GRO цел (см. §010).
+
+**Единственный риск:** GRO батчит меньше сегментов за syscall → на **гигабитном** канале
+download может просесть. На мобильном/WARP — НЕ просел (замерено). Перед релизом —
+замер на быстром Wi-Fi; если просядет, переключиться на динамический рычаг (активный
+128 / idle 8).
+
+---
+
 ## Верификация (стенд доступен — Debug API)
 
 - **Сделано — доказательство корня:** heap `/diag/pprof?profile=heap` при разном числе
