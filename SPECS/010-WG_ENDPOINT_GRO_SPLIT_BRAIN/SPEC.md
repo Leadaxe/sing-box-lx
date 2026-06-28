@@ -3,7 +3,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — расследование |
-| Статус | **C (closed)** — корень подтверждён на железе (probe v2.1: `rxoffload=true`+`dispatch=single`), фикс верифицирован (download 0.44→20.7 Mbps, вровень с контрольной нодой), вмержен в `lx` (submodule `fb8d8d8`). Кандидат №2 не понадобился. |
+| Статус | **C (closed)** — корень подтверждён на железе (probe v2.1: `rxoffload=true`+`dispatch=single`), фикс верифицирован (download 0.44→20.7 Mbps, вровень с контрольной нодой), вмержен в `lx` (submodule `fb8d8d8`). Кандидат №2 не понадобился. **Обновление 1.14:** наш патч БОЛЬШЕ НЕ НУЖЕН — при миграции на v0.0.3 (re-graft submodule) фикс стал upstream-родным: коммит upstream `24ea133 «conn: harmonize GOOS checks between "linux" and "android"»` добавил `\|\| runtime.GOOS == "android"` в gейты приёмного пути `conn/bind_std.go` (строки 206/215/267/323/458). Наш §010-guard при миграции DROPPED (memory `wg-1.14-migration-is-submodule-rebase`). **Следствие:** GRO на Android теперь полностью рабочий (включается в `controlfns_linux.go:104` без android-guard + разбирается upstream-кодом) → большой `MaxSegmentSize=65535` (`device/queueconstants_android.go`) ему нужен как топливо. ⚠️ Откат `MaxSegmentSize→2200` ради экономии памяти задушит GRO-производительность download (то самое, что §010 чинил). Память от multi-WG нагрева лечить числом устройств, НЕ размером буфера. |
 | Зона | ядро `sing-box-lx` + submodule `wireguard-go` (`conn/`) |
 
 ---
