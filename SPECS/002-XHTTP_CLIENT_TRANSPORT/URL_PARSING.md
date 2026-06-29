@@ -264,3 +264,80 @@ vless://c59eb5ed-…@199.232.244.214:443?type=xhttp&mode=packet-up&security=tls&
 - [ ] `flow=""` для XHTTP.
 - [ ] `scMaxConcurrentPosts` и server-only поля игнорируются (или приняты-но-неактивны).
 - [ ] Результат проходит `sing-box check -c`.
+
+---
+
+## 8. Эталон (golden fixture для round-trip / маппинг-тестов)
+
+Готовая фикстура: все **14 новых полей** в **не-дефолтных** значениях (чтобы тест ловил перепутанные
+имена/значения, а не просто отсутствие ключа). ✅ **Проверено `sing-box check -c` на текущем lx-бинаре
+(`with_xhttp`).**
+
+> Реальный аналог в репозитории: [lx-test/config/xhttp_obfs_full.json](../../lx-test/config/xhttp_obfs_full.json)
+> (та же фикстура + server-only/legacy поля для покрытия accept-but-ignore).
+
+### 8.1 Эталонный `transport`-блок (sing-box JSON)
+
+```jsonc
+{
+  "type": "xhttp",
+  "host": "www.example.com",
+  "path": "/xhttp",
+  "mode": "packet-up",
+  "headers": { "User-Agent": "Mozilla/5.0" },
+
+  "x_padding_bytes": "100-1000",
+  "no_grpc_header": true,
+
+  "session_placement": "header",          // != default "path"
+  "session_key": "X-Session",
+  "seq_placement": "query",               // != default "path"
+  "seq_key": "x_seq",
+
+  "uplink_data_placement": "header",      // != default "auto" (требует mode=packet-up)
+  "uplink_data_key": "X-Data",
+  "uplink_chunk_size": "3000-4000",
+  "uplink_http_method": "POST",
+
+  "x_padding_obfs_mode": true,            // != default false
+  "x_padding_key": "x_padding",
+  "x_padding_header": "X-Padding",
+  "x_padding_placement": "header",        // != default "queryInHeader"
+  "x_padding_method": "tokenish",         // != default "repeat-x"
+
+  "sc_max_each_post_bytes": "1000000-1000000",
+  "sc_min_posts_interval_ms": "30-30"
+}
+```
+
+(Полный outbound с этим блоком: vless + tls/utls + этот transport → проходит `sing-box check`.)
+
+### 8.2 Эквивалентная `vless://`-ссылка (плоский camelCase — то, что пишет `toUri()`)
+
+Тот же transport в URL-форме (для round-trip-теста `parseUri` → `toSingbox`):
+
+```
+vless://b831381d-6324-4d53-ad4f-8cda48b30811@www.example.com:443?type=xhttp&security=tls&sni=www.example.com&fp=chrome&encryption=none&host=www.example.com&path=%2Fxhttp&mode=packet-up&xPaddingBytes=100-1000&noGRPCHeader=true&sessionPlacement=header&sessionKey=X-Session&seqPlacement=query&seqKey=x_seq&uplinkDataPlacement=header&uplinkDataKey=X-Data&uplinkChunkSize=3000-4000&uplinkHTTPMethod=POST&xPaddingObfsMode=true&xPaddingKey=x_padding&xPaddingHeader=X-Padding&xPaddingPlacement=header&xPaddingMethod=tokenish&scMaxEachPostBytes=1000000&scMinPostsIntervalMs=30#golden
+```
+
+(`scMaxEachPostBytes`/`scMinPostsIntervalMs` тут даны одиночным числом `1000000`/`30` — транспорт
+принимает и `"N"`, и `"N-N"`; на выходе `toSingbox` нормализуйте в строку.)
+
+### 8.3 Таблица дефолтов (для omitempty в `toUri()` — НЕ писать, если == дефолт)
+
+| Поле (camelCase) | Дефолт | Писать в toUri только если |
+|------------------|--------|----------------------------|
+| `sessionPlacement`   | `path`         | != path |
+| `seqPlacement`       | `path`         | != path |
+| `uplinkDataPlacement`| `auto`         | != auto |
+| `uplinkHTTPMethod`   | `POST`         | != POST |
+| `xPaddingObfsMode`   | `false`        | == true |
+| `xPaddingPlacement`  | `queryInHeader`| != queryInHeader |
+| `xPaddingMethod`     | `repeat-x`     | != repeat-x |
+| `xPaddingBytes`      | `100-1000`     | != 100-1000 |
+| `*Key` / `*Header`   | placement-зависимый (`X-Session`/`x_session`, `X-Seq`/`x_seq`, `X-Data`/`x_data`, `x_padding`/`X-Padding`) | задан явно != дефолта |
+| `scMaxEachPostBytes`   | `1000000`     | != 1000000 |
+| `scMinPostsIntervalMs` | `30`          | != 30 |
+
+> Записывая в `toUri()` только не-дефолтные поля, вы сохраняете инвариант `parseUri(toUri(spec)) ≈ spec`
+> без раздувания URI: на входе отсутствующее поле и поле-с-дефолтом дают одну и ту же `spec`.
