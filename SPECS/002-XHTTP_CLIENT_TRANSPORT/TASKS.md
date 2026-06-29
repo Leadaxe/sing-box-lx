@@ -30,8 +30,10 @@
 - [x] `make -f Makefile.lx lx-build` → ок; `go vet`/`gofmt` → чисто; tagged/untagged build → ок
 - [x] Негатив: без `with_xhttp` → `unknown transport type: xhttp`
 
-### Открытый TODO
-- [ ] **Лайв не-дефолтного режима** против Xray-сервера с obfs/placement (как и v1 — нужен сервер)
+### Лайв-верификация
+- [x] **Дефолтный путь лайв-подтверждён** на реальных нодах (igareck/vpn-configs): 4 живых XHTTP-сервера,
+  packet-up + stream-one(reality), скачивание 1 МБ через IP сервера — закрывает stream-one-TODO из §011
+- [ ] **Лайв obfs/placement** против сервера, *настроенного* на obfs (публичные ноды на дефолте — не закрывают)
 
 ### Закрытие
 - [x] IMPLEMENTATION_REPORT.md (секция v2)
