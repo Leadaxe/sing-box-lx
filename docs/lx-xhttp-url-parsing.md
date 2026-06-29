@@ -242,6 +242,13 @@ vless://c59eb5ed-…@199.232.244.214:443?type=xhttp&mode=packet-up&security=tls&
 - `downloadSettings` (асимметричный download-транспорт) — не поддержан; `mode=auto`+reality+downloadSettings
   у нас всё равно даст stream-one, не stream-up.
 - `spx` (spiderX), Xray browser-dialer — нет аналога.
+- **HTTP/3 (`alpn=h3` / QUIC).** Наш XHTTP-клиент работает поверх **HTTP/2** (`http2.Transport`). Xray
+  умеет H1/H2/H3. Ноды, помеченные `alpn=h3`, мы обслуживаем по H2 (если сервер допускает); если сервер
+  **требует строго h3** — коннект не встанет. Это архитектурное ограничение транспорта, вне SPEC 002
+  (отдельная будущая задача «XHTTP over HTTP/3»). Парсеру: `alpn` маппить как есть, но `h3`-only ноды
+  помечать как потенциально неработающие.
+- `fragment` / `fm` (TLS-фрагментация Xray) — не часть XHTTP; маппить в свою TLS-fragment-фичу (если есть)
+  или опускать.
 
 ---
 
