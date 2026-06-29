@@ -2,7 +2,7 @@
 
 > Справочник для команд **Android-клиента** и **лаунчера**: как превратить VLESS-ссылку
 > с XHTTP-транспортом в `outbound.transport` конфига sing-box-lx (тег сборки `with_xhttp`).
-> Источник полей — [SPECS/002-XHTTP_CLIENT_TRANSPORT/PARAM_MAP.md](../SPECS/002-XHTTP_CLIENT_TRANSPORT/PARAM_MAP.md).
+> Источник полей — [PARAM_MAP.md](PARAM_MAP.md) (в этой же папке спеки).
 > Версия транспорта: SPEC 002 v2 (полная клиентская поддержка).
 
 ---

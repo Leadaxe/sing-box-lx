@@ -90,7 +90,7 @@ session/seq в path; payload в body; метод POST. Тест `TestDefaultLega
    требуют сервера, *настроенного* на них; ни одна публичная нода так не настроена. Покрыто unit-тестами +
    `check`, лайв — остаётся TODO.
 2. **HTTP/3 (`alpn=h3`)** — клиент HTTP/2-only; h3-only ноды не обслуживаются (вне SPEC 002, отдельная
-   задача). Задокументировано в `docs/lx-xhttp-url-parsing.md`.
+   задача). Задокументировано в [URL_PARSING.md](URL_PARSING.md).
 3. Зависимость `golang.org/x/net/http2/hpack` для tokenish — уже транзитивно в go.mod (HTTP/2 transport).
 4. xmux/переиспользование соединений — вне скоупа (см. SPEC §8).
 
