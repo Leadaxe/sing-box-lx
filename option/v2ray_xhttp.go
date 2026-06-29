@@ -105,6 +105,15 @@ type V2RayXHTTPOptions struct {
 	// to "30-30".
 	ScMinPostsIntervalMs string `json:"sc_min_posts_interval_ms,omitempty"`
 
+	// ---- legacy / accepted-but-ignored -------------------------------------
+
+	// ScMaxConcurrentPosts is a legacy Xray knob (removed from current Xray-core
+	// and sing-box-extended) that once capped concurrent upload POSTs. Current
+	// Xray serializes to one POST body in flight at a time (matching our
+	// sequential packet-up upload), so this field is accepted for config/link
+	// symmetry but IGNORED. See SPECS/002 PARAM_MAP.md.
+	ScMaxConcurrentPosts int `json:"sc_max_concurrent_posts,omitempty"`
+
 	// ---- server-only (accepted for config symmetry, IGNORED by the client) --
 
 	// ServerMaxHeaderBytes is server-only (http.Server.MaxHeaderBytes). Ignored

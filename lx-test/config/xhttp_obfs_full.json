@@ -52,6 +52,7 @@
         "uplink_http_method": "POST",
         "sc_max_each_post_bytes": "1000000-1000000",
         "sc_min_posts_interval_ms": "30-30",
+        "sc_max_concurrent_posts": 100,
         "server_max_header_bytes": 8192,
         "no_sse_header": false,
         "sc_max_buffered_posts": 30,

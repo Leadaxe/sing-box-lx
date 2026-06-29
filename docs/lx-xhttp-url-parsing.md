@@ -105,7 +105,7 @@ JSON-ключи sing-box — **snake_case**. Источник в URL — camelCa
 
 | URL-параметр | Действие |
 |--------------|----------|
-| `scMaxConcurrentPosts` | **Не маппить.** Клиент sing-box-lx шлёт upload-POST последовательно; поле не поддержано (см. §6). Игнорировать молча. |
+| `scMaxConcurrentPosts` | **Accept-but-ignore.** Legacy-поле старого Xray (в текущем Xray/extended его нет — там 1 POST-тело за раз). Клиент sing-box-lx шлёт upload-POST последовательно (= текущий Xray). Можно влить как `sc_max_concurrent_posts` (принято, но не используется) — или опустить (см. §6). |
 | `serverMaxHeaderBytes`, `noSSEHeader`, `scMaxBufferedPosts`, `scStreamUpServerSecs` | server-only. Можно влить как `server_max_header_bytes`/`no_sse_header`/`sc_max_buffered_posts`/`sc_stream_up_server_secs` (клиент их принимает, но игнорирует) — или просто опустить. |
 | `fragment`, `fm`, `fragment=...` | TLS-фрагментация (Xray-специфика). **Не часть XHTTP.** Маппить в свою TLS-fragment-фичу, если есть; иначе опустить. |
 | `flow` | Для XHTTP всегда пустой (vision несовместим). |
@@ -238,7 +238,7 @@ vless://c59eb5ed-…@199.232.244.214:443?type=xhttp&mode=packet-up&security=tls&
 
 ## 6. Известные ограничения клиента (что НЕ маппить)
 
-- `scMaxConcurrentPosts` — параллельные upload-POST не реализованы (последовательная отправка). Игнорировать.
+- `scMaxConcurrentPosts` — legacy-поле (удалено из текущего Xray-core и sing-box-extended; там upload сериализован в 1 POST-тело за раз). Наш клиент тоже шлёт последовательно = текущий Xray. Поле принимается (`sc_max_concurrent_posts`), но игнорируется.
 - `downloadSettings` (асимметричный download-транспорт) — не поддержан; `mode=auto`+reality+downloadSettings
   у нас всё равно даст stream-one, не stream-up.
 - `spx` (spiderX), Xray browser-dialer — нет аналога.
