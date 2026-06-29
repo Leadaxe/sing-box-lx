@@ -10,6 +10,43 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.16
+
+**Pre-release.** Full client-side support for the extended Xray/sing-box-extended **XHTTP**
+parameters (SPEC 002 v2), on the existing lean-native client — no Xray vendoring. The default
+(non-obfs) wire shape is unchanged and stays byte-identical to the live-verified v1, so existing
+configs behave exactly as before; the new fields are all opt-in.
+
+* **12 client-relevant XHTTP params + 2 tuning fields.** On a `xhttp` transport you can now set:
+  - **session/seq placement** — `session_placement` / `seq_placement` (`path` default, or
+    `query`/`header`/`cookie`) with `session_key` / `seq_key`.
+  - **uplink-data placement** — `uplink_data_placement` (`body`/`auto` default, or `header`/`cookie`
+    with chunked base64) + `uplink_data_key` + `uplink_chunk_size`.
+  - **`uplink_http_method`** — upper-cased; `GET` allowed only in packet-up.
+  - **X-Padding obfuscation** — `x_padding_obfs_mode` + `x_padding_placement`
+    (`cookie`/`header`/`query`/`queryInHeader`) + `x_padding_key` / `x_padding_header` +
+    `x_padding_method` (`repeat-x` or `tokenish`, the latter HPACK-Huffman-length-tuned).
+  - **packet-up tuning** — `sc_max_each_post_bytes` (POST split threshold) and
+    `sc_min_posts_interval_ms` (anti-burst throttle).
+  Range fields use the `"min-max"` string form. Four server-only fields
+  (`server_max_header_bytes`, `no_sse_header`, `sc_max_buffered_posts`, `sc_stream_up_server_secs`)
+  and the legacy `sc_max_concurrent_posts` are accepted but ignored by the client.
+
+* **Wire-protocol audit: 0 confirmed mismatches.** Every new param was checked byte-for-byte
+  against `PARAM_MAP.md` (an audit of Xray-core `splithttp` + sing-box-extended) — base64 variant
+  (`RawURLEncoding`), chunk naming (`X-Data-<i>` / `x_data_<i>`), default keys (`X-Session` header
+  vs `x_session` query/cookie), path-segment order, and the `["none"]`-style defaults all match
+  Xray's normalizers. 16/16 unit tests, `sing-box check` on the full-obfs config, `go vet`/`gofmt`
+  clean.
+
+* **Verification status.** The default path (packet-up + `auto`→stream-one on reality) is
+  **live-verified** on 4 real public nodes (1 MB download each), which also closes the task-011
+  stream-one TODO. The non-default obfs/placement modes are covered by unit tests + `check` + the
+  wire audit but are **not yet live-tested** against an Xray server configured for them (no public
+  node uses them).
+
+Also merges upstream/testing (version bump, linux ping fix).
+
 #### v1.14.0-lx.1-rc.15
 
 **Pre-release.** Device verification of SPEC 019 v2 `round_robin` on a real pool surfaced
