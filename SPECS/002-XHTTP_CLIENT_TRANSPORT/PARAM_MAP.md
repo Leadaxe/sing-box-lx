@@ -39,6 +39,7 @@
 | 15 | `noSSEHeader`         | `no_sse_header`          | ❌ | server-only | Сервер не шлёт `Content-Type: text/event-stream` |
 | 16 | `scMaxBufferedPosts`  | `sc_max_buffered_posts`  | ❌ | server-only | Глубина буфера переупорядочивания upload на сервере |
 | 17 | `scStreamUpServerSecs`| `sc_stream_up_server_secs`| ❌ | server-only | Интервал keepalive-padding в ответе stream-up (сервер) |
+| 18 | `scMaxConcurrentPosts`| `sc_max_concurrent_posts`| ❌ | legacy/ignore | Legacy-лимит параллельных upload-POST; **удалён из текущего Xray** |
 
 \* `sessionKey` не входил в исходный список NekoBox+ из 16, но это парный к `sessionPlacement`
 ключ (так же как `seqKey` парен к `seqPlacement`); без него placement query/header/cookie для session
@@ -321,6 +322,27 @@ document-and-skip без полей в struct) тоже допустима; фи
   `…ScStreamUpServerSecs`; `hub.go` `ListenXH`/`ServeHTTP`/`upsertSession`; extended `server.go` зеркало.
   `noSSEHeader` — без нормализатора, читается как сырой bool.
 
+### `scMaxConcurrentPosts` — legacy, удалено из upstream (accept-but-ignore)
+
+- **Статус:** **поля НЕТ** в текущих Xray-core и sing-box-extended. Подтверждено: `grep` пусто,
+  GitHub code search `scMaxConcurrentPosts repo:XTLS/Xray-core` → `total: 0`, нет
+  `GetNormalizedScMaxConcurrentPosts`. Это knob **старого** релиза Xray, удалённый при редизайне
+  upload-пути. Встречается в реальных `vless://`-ссылках (в `extra={...}`) как legacy-артефакт клиента,
+  сгенерировавшего ссылку.
+- **Что было:** когда-то ограничивал число параллельных upload-POST в packet-up.
+- **Текущий механизм Xray (вместо него):** **не семафор**, а (a) bounded pipe (backpressure) +
+  `scMaxBufferedPosts` (server reorder window, default 30) и (b) сериализация на
+  `<-wroteRequest.Wait()` для `DefaultDialerClient` — следующий POST не диспетчится, пока тело текущего
+  не дописано в провод. Фактически **1 POST-тело в полёте за раз**. Seq инкрементируется per-packet
+  синхронно в writer-goroutine; переупорядочивание — server-side по seq (`upload_queue.go`, heap).
+- **Наш клиент:** `packetConn.Write` шлёт upload-POST **последовательно** (один `sendPacket` за раз) —
+  это уже соответствует текущему поведению Xray (1 тело за раз). Истинная bounded-concurrency (N в
+  полёте) была бы **улучшением над upstream**, не совместимостью.
+- **Решение:** поле `sc_max_concurrent_posts` принимается в опциях (чтобы legacy-конфиги/ссылки не
+  падали на парсинге), но **игнорируется**. Тир — `legacy/ignore`.
+- **Источник:** Xray `dialer.go` writer-loop (нет concurrency-cap), `upload_queue.go` (heap по `Seq`);
+  отсутствие символа подтверждено code search.
+
 ---
 
 ## 6. Что из этого реализуем в sing-box-lx (резюме)
@@ -330,6 +352,8 @@ document-and-skip без полей в struct) тоже допустима; фи
   плюс `sc_max_each_post_bytes` / `sc_min_posts_interval_ms` для packet-up.
 - **Не реализуем (4 server-only):** `server_max_header_bytes`, `no_sse_header`, `sc_max_buffered_posts`,
   `sc_stream_up_server_secs` — accept-but-ignore в опциях.
+- **Не реализуем (1 legacy):** `sc_max_concurrent_posts` — удалено из upstream; наш последовательный
+  upload = текущий Xray; accept-but-ignore.
 - **Зависимости:** только `golang.org/x/net/http2/hpack` для tokenish (уже есть). Без вендоринга Xray.
 - **Совместимость:** все дефолты сохраняют текущее (рабочее, лайв-проверенное) поведение байт-в-байт.
 
