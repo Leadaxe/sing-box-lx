@@ -606,6 +606,11 @@ framing above where they differ: source-verified measurement (SPEC.md) proved th
 GC/heat holder is the recv-worker `bufsArrs`, and light sleep (`timersStop`) does
 NOT free it. So the shipped mechanism is **Down/Up (deep)**, not light sleep.
 
+> **Live device-verification: [TEST_PLAN_idle_suspend.md](TEST_PLAN_idle_suspend.md).**
+> Build + config + commands + pass criteria for confirming suspend/wake/memory on
+> a real run (uses the user's WARP/AWG + plain-WG nodes). Run this in a fresh chat;
+> report the `grep "lx idle:"` output and pprof before/after back here.
+
 ### 13.1 What shipped (commit c55cf11e)
 
 idle-suspend via `device.Down()` / `device.Up()`:
