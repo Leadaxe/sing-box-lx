@@ -14,23 +14,229 @@ Without a tag the feature is absent: an `xhttp` transport or an AWG field is rej
 
 ---
 
+## 0. Every field at a glance (exhaustive example)
+
+One config carrying **every** field sing-box-lx adds on top of upstream — XHTTP transport,
+AmneziaWG 2.0 endpoint, the `id`/`ip`/`ib` masquerade sugar, and the `urltest` `round_robin`
+balancer. This is a **kitchen-sink reference**, not a recommended config: many fields are
+mutually exclusive (e.g. the `id`/`ip`/`ib` sugar vs. a hand-written `i1`) or are server-only
+and ignored by the client — those are flagged inline. For a working setup, copy only the block
+you need and read its section below. Each comment shows the **default** and the **allowed values**.
+
+```jsonc
+{
+  "outbounds": [
+    // ─────────────────────────────────────────────────────────────────────────
+    // XHTTP transport (§1) — attaches to a VLESS / VMess / Trojan outbound.
+    // Needs the with_xhttp build tag.
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      "type": "vless",
+      "tag": "xhttp-out",
+      "server": "example.com",
+      "server_port": 443,
+      "uuid": "00000000-0000-0000-0000-000000000000",
+      "tls": {
+        "enabled": true,
+        "server_name": "example.com",
+        "utls": { "enabled": true, "fingerprint": "chrome" },
+        "reality": { "enabled": true, "public_key": "<reality-public-key-base64>", "short_id": "0123abcd" }
+      },
+      "transport": {
+        "type": "xhttp",                        // selector — must be "xhttp"
+
+        // ── core (v1) ──
+        "mode": "auto",                         // auto | packet-up | stream-up | stream-one.
+                                                //   auto → stream-one on Reality, else packet-up
+        "host": "example.com",                  // default: TLS SNI / server. Overrides Host header
+        "path": "/xhttp",                       // default: "" (root). Session id / seq appended as path segments
+        "headers": { "X-Foo": "bar" },          // default: none. Extra headers on every request
+        "x_padding_bytes": "100-1000",          // default: "100-1000". "min-max" or single int — padding length
+        "no_grpc_header": false,                // default: false. Omit Xray gRPC-style headers (forward-compat)
+
+        // ── session / seq placement (v2) ──
+        "session_placement": "path",            // default: path. path | query | header | cookie
+        "session_key": "",                      // default: X-Session (header) / x_session (query|cookie); unused for path
+        "seq_placement": "path",                // default: path. path | query | header | cookie (packet-up)
+        "seq_key": "",                          // default: X-Seq (header) / x_seq (query|cookie); unused for path
+
+        // ── uplink-data placement (v2, packet-up) ──
+        "uplink_data_placement": "auto",        // default: auto (== body). body | auto | header | cookie.
+                                                //   header/cookie ONLY valid in packet-up
+        "uplink_data_key": "",                  // default: X-Data (header) / x_data (cookie); "" for body
+        "uplink_chunk_size": "",                // default: cookie 2048-3072 / header 3000-4000 / else = sc_max_each_post_bytes.
+                                                //   "min-max" base64 chars, min floored to 64
+        "uplink_http_method": "POST",           // default: POST. Upper-cased. GET only in packet-up
+
+        // ── X-Padding obfuscation (v2) — all below apply only when obfs_mode=true ──
+        "x_padding_obfs_mode": false,           // default: false. Master switch. false → legacy Referer x_padding
+        "x_padding_placement": "queryInHeader", // default: queryInHeader. cookie | header | query | queryInHeader
+        "x_padding_key": "x_padding",           // default: x_padding. Cookie/query param name
+        "x_padding_header": "X-Padding",         // default: X-Padding. Header name (header / queryInHeader placement)
+        "x_padding_method": "repeat-x",         // default: repeat-x. repeat-x ('X'*N) | tokenish (HPACK-tuned base62)
+
+        // ── packet-up tuning (v2) ──
+        "sc_max_each_post_bytes": "1000000-1000000", // default: "1000000-1000000". POST split threshold ("min-max")
+        "sc_min_posts_interval_ms": "30-30",    // default: "30-30". Anti-burst delay between POSTs, ms ("min-max")
+
+        // ── accepted but IGNORED by the client (config/link symmetry only) ──
+        "sc_max_concurrent_posts": 0,           // IGNORED — legacy Xray knob; client serializes one POST in flight
+        "server_max_header_bytes": 0,           // IGNORED — server-only (http.Server.MaxHeaderBytes)
+        "no_sse_header": false,                 // IGNORED — server-only (SSE Content-Type on downlink)
+        "sc_max_buffered_posts": 0,             // IGNORED — server-only (upload reorder buffer depth)
+        "sc_stream_up_server_secs": ""          // IGNORED — server-only (stream-up keepalive interval)
+      }
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // AmneziaWG 2.0 endpoint (§2) — a wireguard endpoint with obfuscation.
+    // Needs the with_awg build tag. All AWG fields sit at the endpoint ROOT
+    // (none on a peer), mirroring an awg-quick .conf [Interface] section.
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      "type": "wireguard",
+      "tag": "awg-out",
+      "system": false,
+      "mtu": 1280,                              // lower than plain WG (s3/s4 junk); core defaults 1280 if s3/s4 set
+      "address": ["10.0.0.2/32"],
+      "private_key": "<client-private-key-base64>",
+
+      // ── junk packets before the handshake ──
+      "jc": 10,                                 // default: 0 (unset). Count of junk packets
+      "jmin": 50,                               // default: 0. Min size of each junk packet
+      "jmax": 100,                              // default: 0. Max size of each junk packet (keep below path MTU)
+
+      // ── handshake-message junk (s1/s2) + AWG 2.0 junk-size (s3/s4) ──
+      "s1": 20,                                 // default: 0. Junk prepended to the handshake INIT message
+      "s2": 20,                                 // default: 0. Junk prepended to the handshake RESPONSE message
+      "s3": 60,                                 // default: 0. AWG 2.0 junk-size param
+      "s4": 60,                                 // default: 0. AWG 2.0 junk-size param
+
+      // ── magic headers: single uint32 (AWG 1.x) OR "min-max" range (AWG 2.0) ──
+      // ranges must NOT overlap; 0 / "" = unset (counts as the WG default 1/2/3/4)
+      "h1": 1234567890,                         // or "43613244-384550127"   — WG message type 1
+      "h2": 1234567891,                         // or "826869626-2105069164" — type 2
+      "h3": 1234567892,                         // or "2124774725-2141151992" — type 3
+      "h4": 1234567893,                         // or "2144594503-2146278491" — type 4
+
+      // ── CPS decoy packets i1..i5 (case-sensitive; sent in order pre-handshake) ──
+      // tags: <b 0xHEX> bytes, <c> counter, <t> timestamp, <r N> random bytes,
+      //       <rc N> random chars, <rd N> random digits.
+      // i1 is MUTUALLY EXCLUSIVE with the id/ip/ib sugar below — use one or the other.
+      "i1": "<b 0x000100002112a442><r 12>",     // default: "". CPS packet 1
+      "i2": "<b 0x010100002112a442><r 12>",     // default: "". CPS packet 2
+      "i3": "<r 24>",                            // default: "". CPS packet 3
+      "i4": "",                                  // default: "". CPS packet 4
+      "i5": "",                                  // default: "". CPS packet 5
+
+      // ── masquerade sugar (§2 → id/ip/ib) — generates i1 for you.
+      //    MUTUALLY EXCLUSIVE with an explicit i1 above. Shown here for reference;
+      //    in a real config use EITHER i1..i5 OR id/ip/ib, not both. ──
+      "id": "www.google.com",                   // default: "". Masquerade domain (SNI/QNAME/SIP host). Required for ip=quic
+      "ip": "quic",                             // default: "". quic | dns | stun | sip
+      "ib": "chrome",                           // default: "". chrome | firefox | curl. Only meaningful with ip=quic
+
+      "peers": [
+        {
+          "address": "server.example.com",
+          "port": 51821,
+          "public_key": "<server-public-key-base64>",
+          "pre_shared_key": "<preshared-key-base64>",
+          "allowed_ips": ["0.0.0.0/0", "::/0"],
+          "persistent_keepalive_interval": 25
+        }
+      ]
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // urltest round_robin load balancing (§3). Config fields always available;
+    // the GetPool client method needs with_lx_command.
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": ["xhttp-out", "proxy-b", "proxy-c", "proxy-d", "proxy-e"],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "15m",
+      "mode": "round_robin",                    // default: least_test. least_test | round_robin
+      "balancer": {                             // only valid with mode: round_robin
+        "pool": 3,                              // default: 3. 0/omitted → 3; effective = min(pool, #outbounds)
+        "pool_tolerance": 0,                    // default: 0 (ms). 0 = keep-live-fill; >0 = top-N-by-delay hysteresis
+        "sticky_hash": ["process", "domain"]    // default: ["process","domain"]. Components:
+                                                //   process | domain | source_ip | dest_ip | dest_port.
+                                                //   DISABLE with the sentinel ["none"] — never a bare []
+      }
+    }
+  ]
+}
+```
+
+> **Field count:** 26 XHTTP + 21 AmneziaWG (incl. `id`/`ip`/`ib`) + 5 `urltest` (`mode` +
+> `balancer{pool,pool_tolerance,sticky_hash}`). Mutually-exclusive / ignored fields are
+> labelled inline above; the sections below give the per-field semantics, gotchas and live
+> verification status.
+
+---
+
 ## 1. XHTTP transport
 
 XHTTP (Xray "splithttp"/"xhttp") is a v2ray transport that tunnels the proxy over plain HTTP/2 requests. It attaches to VLESS / VMess / Trojan via the shared `transport` block and composes with TLS, including **Reality**. (XHTTP is incompatible with XTLS-Vision — that is a protocol limitation, not ours.)
 
 ### Fields (`transport`)
 
+The default wire shape (everything below at its default) is **byte-identical to the
+live-verified v1 client**, so existing configs are unaffected — the v2 fields are all opt-in.
+
+**Core (v1):**
+
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `type` | string | — | must be `"xhttp"` |
-| `mode` | string | `auto` | `auto` \| `packet-up` \| `stream-up` \| `stream-one`. **`auto` uses `packet-up`** (live-validated against Xray/3x-ui). `stream-one` has a known downlink-framing bug — select it explicitly only if you know the server needs it. |
+| `mode` | string | `auto` | `auto` \| `packet-up` \| `stream-up` \| `stream-one`. **`auto` resolves to `stream-one` on a Reality TLS, else `packet-up`** (both live-validated). `stream-one` had a downlink-framing bug, fixed in task 011 and live-verified on Reality nodes; select it explicitly only if you know the server needs it. |
 | `host` | string | TLS SNI / server | overrides the HTTP `Host` header |
-| `path` | string | `/` | request path prefix; the random session id (and, for `packet-up`, the upload sequence number) are appended |
+| `path` | string | `""` (root) | request path prefix; the session id (and, for `packet-up`, the upload sequence number) are appended as path segments when their placement is `path` |
 | `headers` | object | — | extra request headers sent on every XHTTP request |
-| `x_padding_bytes` | string | `"100-1000"` | inclusive byte range of the `X-Padding` value (`"min-max"` or a single int) to blur the on-wire size |
+| `x_padding_bytes` | string | `"100-1000"` | inclusive byte-length **range** of the padding value (`"min-max"` or a single int). Drives both the legacy Referer `x_padding` length and the obfs-mode padding length |
 | `no_grpc_header` | bool | `false` | omit Xray's gRPC-style headers in some modes (forward-compat) |
 
-> **Note (wire format):** padding is carried as `x_padding=<zeros>` inside the `Referer` header (Xray's default placement) — live-validated against a real Xray (3x-ui) server. The server validates the `x_padding` length (default 100–1000) and replies `400` without it. Client and server Xray versions should still match (XHTTP evolves quickly).
+**Session / seq placement (v2)** — where the per-request session id and (packet-up) upload sequence number are carried:
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `session_placement` | string | `path` | `path` \| `query` \| `header` \| `cookie` |
+| `session_key` | string | `X-Session` (header) / `x_session` (query\|cookie) | name carrying the session id when placement ≠ `path`; unused for `path` |
+| `seq_placement` | string | `path` | `path` \| `query` \| `header` \| `cookie`. For `path`, the seq is the **second** appended segment (session id first — order is load-bearing) |
+| `seq_key` | string | `X-Seq` (header) / `x_seq` (query\|cookie) | name carrying the seq when placement ≠ `path`; unused for `path` |
+
+**Uplink-data placement (v2, packet-up)** — where the upload payload goes:
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `uplink_data_placement` | string | `auto` | `body` \| `auto` (== body) \| `header` \| `cookie`. `header`/`cookie` are **only valid in `packet-up`** (else error); they carry the payload as `base64.RawURLEncoding`, chunked into `<key>-<i>` headers / `<key>_<i>` cookies |
+| `uplink_data_key` | string | `X-Data` (header) / `x_data` (cookie) | base name for the chunked header/cookie payload; `""` for body |
+| `uplink_chunk_size` | string | cookie `2048-3072`, header `3000-4000`, else `= sc_max_each_post_bytes` | `"min-max"` range (in base64 chars) of each chunk; min floored to 64 |
+| `uplink_http_method` | string | `POST` | HTTP method for **upload** requests (download is always GET); upper-cased; `GET` allowed only in `packet-up` |
+
+**X-Padding obfuscation (v2)** — only active when `x_padding_obfs_mode` is `true`; otherwise the legacy Referer padding (note below) is used:
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `x_padding_obfs_mode` | bool | `false` | master switch. `false` → legacy Referer `x_padding`. `true` → the configurable `x_padding_*` family below |
+| `x_padding_placement` | string | `queryInHeader` | `cookie` \| `header` \| `query` \| `queryInHeader` |
+| `x_padding_key` | string | `x_padding` | cookie/query param name (unused for `header` placement) |
+| `x_padding_header` | string | `X-Padding` | header name (for `header` / `queryInHeader` placement) |
+| `x_padding_method` | string | `repeat-x` | `repeat-x` (N literal `X` bytes) \| `tokenish` (base62 token whose HPACK-Huffman length is tuned to ~N) |
+
+**Packet-up tuning (v2):**
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `sc_max_each_post_bytes` | string | `"1000000-1000000"` | `"min-max"` range bounding a single upload POST (the split threshold) |
+| `sc_min_posts_interval_ms` | string | `"30-30"` | `"min-max"` anti-burst delay between successive POSTs, in ms |
+
+**Accepted but ignored by the client** (present so an inbound-shaped config or a symmetric link doesn't error — the client never acts on them): `sc_max_concurrent_posts`, `server_max_header_bytes`, `no_sse_header`, `sc_max_buffered_posts`, `sc_stream_up_server_secs`.
+
+> **Note (default wire format):** with `x_padding_obfs_mode` off (the default), padding is carried as `x_padding=<zeros>` inside the `Referer` header (Xray's default placement) — live-validated against a real Xray (3x-ui) server. The server validates the `x_padding` length (default 100–1000) and replies `400` without it. Client and server Xray versions should still match (XHTTP evolves quickly).
 
 ### Example — VLESS + XHTTP + Reality
 
@@ -69,12 +275,12 @@ AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server 
 
 | Key | Type | Meaning |
 |-----|------|---------|
-| `jc` | int | number of junk packets sent before the handshake |
-| `jmin` / `jmax` | int | min / max size of those junk packets |
-| `s1` / `s2` | int | junk prepended to the init / response handshake messages |
-| `s3` / `s4` | int | junk prepended to the cookie-reply / transport messages (AWG 2.x) |
-| `h1` / `h2` / `h3` / `h4` | int \| `"min-max"` string | magic header values overriding WireGuard's four message types. Either a single uint32 (`1234567890`, AWG 1.x) or an inclusive range string (`"43613244-384550127"`, AWG 2.0 ranged headers) — the device picks a random value from the range per message |
-| `i1` … `i5` | string | AWG 2.0 CPS decoy packets, **case-sensitive** tag-format strings, sent in order before the handshake. `I1` typically mimics a real protocol (e.g. a QUIC/STUN header). Tags: `<b 0xHEX>` static bytes, `<c>` counter, `<t>` timestamp, `<r N>` random bytes, `<rc N>` random chars, `<rd N>` random digits |
+| `jc` | int | default `0` (unset). Number of junk packets sent before the handshake |
+| `jmin` / `jmax` | int | default `0`. Min / max size of those junk packets |
+| `s1` / `s2` | int | default `0`. Junk prepended to the handshake **INIT** / **RESPONSE** messages |
+| `s3` / `s4` | int | default `0`. AWG 2.0 junk-size params (companions to `s1`/`s2`). Their overhead is what drives the [lower MTU](#mtu) requirement |
+| `h1` / `h2` / `h3` / `h4` | int \| `"min-max"` string | magic header values overriding WireGuard's four message types. Either a single uint32 (`1234567890`, AWG 1.x) or an inclusive range string (`"43613244-384550127"`, AWG 2.0 ranged headers) — the device picks a random value from the range per message. `0` **or** `""` = unset (counts as the WG default `1`/`2`/`3`/`4`) |
+| `i1` … `i5` | string | default `""`. AWG 2.0 CPS decoy packets, **case-sensitive** tag-format strings, sent in order before the handshake. `i1` typically mimics a real protocol (e.g. a QUIC/STUN header) and is **mutually exclusive with the [`id`/`ip`/`ib`](#masquerade-id--ip--ib-wiresock-style-sugar-over-i1) sugar**. Tags: `<b 0xHEX>` static bytes, `<c>` counter, `<t>` timestamp, `<r N>` random bytes, `<rc N>` random chars, `<rd N>` random digits |
 
 > **Ranged headers (AWG 2.0):** the four `h1`–`h4` ranges (an unset header counts as its WireGuard default — `1`/`2`/`3`/`4`) **must not overlap**, or the device rejects the config with `headers must not overlap`. Set all four together, as awg2 exports do. A plain number `N` is equivalent to the range `"N-N"`; `0` means unset.
 
