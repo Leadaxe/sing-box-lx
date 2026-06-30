@@ -304,6 +304,21 @@ jobs:
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          # Derive the upstream base version for the release notes instead of hardcoding it
+          # (it drifted to alpha.35 across rc.14/15/16 and had to be hand-fixed each time).
+          # Primary source: scan the commit history for the highest alpha.NN named in any
+          # "Merge upstream" subject — robust on a fork without upstream tags fetched. Then
+          # try the nearest reachable upstream tag if tags happen to be present. Last resort:
+          # a generic label so notes never carry a stale hardcoded version.
+          BASE_N="$(git log --grep='Merge upstream' --pretty=%s | grep -oE 'alpha\.[0-9]+' | sed 's/alpha\.//' | sort -n | tail -1)"
+          if [ -n "$BASE_N" ]; then
+            BASE="v1.14.0-alpha.${BASE_N}"
+          else
+            BASE="$(git describe --tags --match 'v1.14.0-alpha.*' --abbrev=0 HEAD 2>/dev/null || true)"
+          fi
+          [ -z "$BASE" ] && BASE="v1.14.x"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "Resolved upstream base: $BASE"
 
       - name: Checksums
         run: (cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS)
@@ -323,7 +338,7 @@ jobs:
             echo "See [docs/lx-changelog.md](https://github.com/Leadaxe/sing-box-lx/blob/lx-1.14/docs/lx-changelog.md)." > changes.md
           fi
           cat > notes.md <<EOF
-          **sing-box-lx ${{ steps.ver.outputs.version }}** — a thin downstream of [sing-box](https://github.com/SagerNet/sing-box) (base **v1.14.0-alpha.35**, branch \`lx-1.14\`).
+          **sing-box-lx ${{ steps.ver.outputs.version }}** — a thin downstream of [sing-box](https://github.com/SagerNet/sing-box) (base **${{ steps.ver.outputs.base }}**, branch \`lx-1.14\`).
 
           ### What's new in this release
           __CHANGES__
