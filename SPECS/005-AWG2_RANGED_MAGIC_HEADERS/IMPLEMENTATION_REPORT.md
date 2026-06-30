@@ -31,7 +31,7 @@
 | `transport/wireguard/device_awg_test.go` | **new** (`with_awg`) | ipc: диапазон, одиночные, plain WG `""`, unset-omit, невалидный header |
 | `lx-test/config/awg2_ranged.json` | **new** | check-фикстура с ranged H1–H4 (фейк-ключи) |
 | `.github/workflows/lx-ci.yml` | wiring | `awg2_ranged.json` в позитивную + негативную проверку |
-| `docs/lx-config.md` | docs | `h1`–`h4`: `int \| "min-max"`, no-overlap, пример, маппинг awg.conf |
+| `docs-lx/lx-config.md` | docs | `h1`–`h4`: `int \| "min-max"`, no-overlap, пример, маппинг awg.conf |
 | `SPECS/README.md` | docs | строка 005 в roadmap |
 
 ## DoD

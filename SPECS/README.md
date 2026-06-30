@@ -36,7 +36,7 @@
 
 ## Конфигурация фич
 
-Пользовательский конфиг XHTTP и AmneziaWG 2.0 (поля + примеры) — **[../docs/lx-config.md](../docs/lx-config.md)**.
+Пользовательский конфиг XHTTP и AmneziaWG 2.0 (поля + примеры) — **[../docs-lx/lx-config.md](../docs-lx/lx-config.md)**.
 
 ## Корень SPECS
 

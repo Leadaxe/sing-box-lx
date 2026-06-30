@@ -44,7 +44,7 @@
 | **Наблюдаемость** (расширения CommandClient) | live-стрим для UI | нативные расширения libbox gRPC за `with_lx_command`: `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `GetPool`, плюс `Connection.detourList` (хвост detour'а отдельным полем, SPEC 017) и `SubscribeDNSQueries` — структурный live-поток DNS (домен, qtype, rcode `-1`=ошибка, CNAME-цепочка, привязка к процессу, `dnsServer`/`dnsServerType`/`outbound`, SPEC 018) | ✅ в rc-серии, потребляется **LxBox**. SPEC 014–018: [`014`](SPECS/014-CLASH_API_TO_COMMANDCLIENT_MIGRATION/SPEC.md) · [`015`](SPECS/015-COMMAND_PROTOCOL_RPC_EXTENSIONS/SPEC.md) · [`017`](SPECS/017-CONNECTION_DETOUR_CHAIN/SPEC.md) · [`018`](SPECS/018-DNS_QUERY_STREAM/SPEC.md) |
 | **round_robin** (балансировка нагрузки) | режим `urltest` | пул-балансировка на `urltest` за `with_lx_command` (для `GetPool`): `mode` `least_test` (дефолт) \| `round_robin`; `balancer{pool (дефолт 3), pool_tolerance (0=держать живые / >0=топ по задержке), sticky_hash}`. Sticky-ключ: пропущен/`[]` → дефолт `["process","domain"]`, `["none"]` → выкл; компоненты `process`/`domain`/`source_ip`/`dest_ip`/`dest_port`. Фиксированные слоты `slot[hash(key)%pool]` (FNV-64a), замена в слоте; `GetPool` отдаёт слоты | ✅ локально равномерно (10/10/10, sticky off); rc.15 починил схлопывание `domain`-ключа (теперь читается `metadata.Domain`, переживающий resolve домен→IP, а не пустой `destination.Fqdn`) — на устройстве равномерность 0.27 → 0.95+. SPEC [`019`](SPECS/019-URLTEST_MODE_STICKY/SPEC.md), конфиг — [docs/.../urltest.md](docs/configuration/outbound/urltest.md) |
 
-Подробные отчёты — в [`SPECS/002-…`](SPECS/002-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/003-…`](SPECS/003-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) и [`SPECS/009-…`](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs/lx-config.md](docs/lx-config.md)**.
+Подробные отчёты — в [`SPECS/002-…`](SPECS/002-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/003-…`](SPECS/003-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) и [`SPECS/009-…`](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs-lx/lx-config.md](docs-lx/lx-config.md)**.
 
 > **Не поддерживается (слой Reality, отложено):** post-quantum Reality (`pqv` / ML-DSA-65) и `spiderX` из Xray. Это Xray-специфичные фичи Reality, которых нет в sing-box, а Reality — upstream-слой TLS, который мы держим нетронутым (это не одна из наших фич). Классический X25519 Reality работает; сервер, который **требует** post-quantum Reality, не подключится. Это ограничение sing-box — правильнее решать в upstream (получим на ребейзе).
 
@@ -85,7 +85,7 @@ with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_nai
 
 ## Конфигурация фич
 
-> Полные таблицы полей, дефолты и `awg-quick`→JSON маппинг — **[docs/lx-config.md](docs/lx-config.md)**. Здесь — кратко.
+> Полные таблицы полей, дефолты и `awg-quick`→JSON маппинг — **[docs-lx/lx-config.md](docs-lx/lx-config.md)**. Здесь — кратко.
 
 ### XHTTP (outbound transport)
 
@@ -140,7 +140,7 @@ QUIC-сессия. Это **единственный профиль, device-пр
 `dns`/`stun`/`sip` реализованы как корректные клиент-инициированные запросы, но режутся как класс
 протокола к WARP-edge (raw DNS/STUN/SIP к дата-центровому IP сам по себе аномален) — сохранены
 для других провайдеров, чей DPI проверяет лишь корректность пакета. См.
-[docs/lx-config.md](docs/lx-config.md) и [примеры SPECS/009](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
+[docs-lx/lx-config.md](docs-lx/lx-config.md) и [примеры SPECS/009](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ---
 
@@ -203,7 +203,7 @@ upstream  https://github.com/SagerNet/sing-box.git
 | AmneziaWG-рантайм | [Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet-база + обфускация (3-way merge) |
 | AmneziaWG upstream | [amnezia-vpn/amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go) · [docs.amnezia.org](https://docs.amnezia.org/documentation/amnezia-wg/) |
 | XHTTP (исток) | [XTLS/Xray-core](https://github.com/XTLS/Xray-core) — `transport/internet/splithttp` |
-| Конфиг фич | [docs/lx-config.md](docs/lx-config.md) |
+| Конфиг фич | [docs-lx/lx-config.md](docs-lx/lx-config.md) |
 | Spec Kit | [SPECS/](SPECS/) — [README](SPECS/README.md) · [CONSTITUTION](SPECS/CONSTITUTION.md) · [IMPLEMENTATION_PROMPT](SPECS/IMPLEMENTATION_PROMPT.md) |
 
 ---

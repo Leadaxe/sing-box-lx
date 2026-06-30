@@ -112,7 +112,7 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 	allowedAddresses := allowedIPSet.Prefixes()
 	// lx:begin awg
 	// AmneziaWG's s3/s4 prepend junk bytes to every transport message, so an AWG
-	// endpoint needs a lower MTU than plain WireGuard (see docs/lx-config.md §2).
+	// endpoint needs a lower MTU than plain WireGuard (see docs-lx/lx-config.md §2).
 	// awgJunk = the per-transport-packet overhead = max(s3, s4).
 	awgJunk := options.AmneziaWG.S3
 	if options.AmneziaWG.S4 > awgJunk {
@@ -140,7 +140,7 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 			options.Logger.Warn(fmt.Sprintf(
 				"amneziawg: mtu %d may be too high for s3/s4 junk (%d bytes); "+
 					"transport packets can exceed a %d-byte path and fail with "+
-					"\"message too long\". Consider mtu <= %d (or 1280). See docs/lx-config.md",
+					"\"message too long\". Consider mtu <= %d (or 1280). See docs-lx/lx-config.md",
 				options.MTU, awgJunk, pathMTU, budget))
 		}
 	}

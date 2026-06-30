@@ -20,7 +20,7 @@
 | `transport/wireguard/device_awg.go` | lx-own | `writeUint("h1"…)` → write magic-spec с валидацией; unset → не эмитить |
 | `transport/wireguard/device_awg_test.go` | **new** (`//go:build with_awg`) | ipc-строки: одиночные, диапазон, plain WG = `""` |
 | `lx-test/config/awg2_ranged.json` | **new** | check-фикстура с ranged H1–H4 (фейк-ключи) |
-| `docs/lx-config.md` | docs | `h1`–`h4`: `int \| "min-max"`, пример, маппинг awg.conf |
+| `docs-lx/lx-config.md` | docs | `h1`–`h4`: `int \| "min-max"`, пример, маппинг awg.conf |
 | `SPECS/README.md` | docs | строка 005 в roadmap |
 
 ## 3. Зона касания upstream (для ребейза)

@@ -18,7 +18,7 @@
 - [x] Лайв/handshake-тест против awg2-сервера с ranged-конфигом (uapi принял строки без IpcError, handshake + трафик прошли); секреты — только в temp-файлах, затёрты
 
 ## Документация и закрытие
-- [x] `docs/lx-config.md`: `h1`–`h4` `int | "min-max"`, no-overlap, пример с диапазоном, маппинг awg.conf
+- [x] `docs-lx/lx-config.md`: `h1`–`h4` `int | "min-max"`, no-overlap, пример с диапазоном, маппинг awg.conf
 - [x] `SPECS/README.md`: строка 005 в roadmap
 - [x] IMPLEMENTATION_REPORT.md, DoD-чеклист, статус → `C` (шапка SPEC.md + Roadmap)
 - [x] Тег `v1.13.13-lx.6` → `lx-release.yml` (desktop + AAR)

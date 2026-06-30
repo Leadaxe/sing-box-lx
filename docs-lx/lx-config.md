@@ -274,7 +274,7 @@ every flow of one source to a single slot.
 > on-device per-domain uniformity from ~0.27 to 0.95+. For a large node list, `pool_tolerance: 0`
 > + a small `pool` + a longer `interval` is the recommended, lowest-overhead setup.
 
-**📖 [Full reference →](configuration/outbound/urltest.md)** — every field, the per-component
+**📖 [Full reference →](../docs/configuration/outbound/urltest.md)** — every field, the per-component
 sticky semantics, the pool fill/maintain rules and tuning tips.
 
 ---

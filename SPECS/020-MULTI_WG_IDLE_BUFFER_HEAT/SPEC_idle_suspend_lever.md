@@ -525,7 +525,7 @@ to keep idle-wake from resurrecting a guard-suspended endpoint. Out of scope her
 
 New (lx-owned):
 - `route/reachability_lx.go` — `ReachableOutbounds`, walk, cache, generation aggregation.
-- spec/changelog entry in `docs/lx-changelog.md` (header `#### v<tag>`).
+- spec/changelog entry in `docs-lx/lx-changelog.md` (header `#### v<tag>`).
 
 Modified (Tier A — light):
 - `option/route.go` — `LXIdleSuspend` field (lx:begin/lx:end).

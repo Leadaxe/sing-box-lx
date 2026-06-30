@@ -7,7 +7,7 @@
 
 Собрать воспроизводимый конвейер сборки/CI/релизов `sing-box-lx`: кросс-платформенные бинари `sing-box` **и Android `libbox.aar`** с клиентским feature-set (полный upstream минус серверные/AI-теги) + lx-фичами (`with_xhttp`/`with_awg`), версия `-lx.N`, и **авто-ребейз на новый upstream-тег**.
 
-> **Процедура выпуска → [docs/lx-release-runbook.md](../../docs/lx-release-runbook.md).**
+> **Процедура выпуска → [docs-lx/lx-release-runbook.md](../../docs-lx/lx-release-runbook.md).**
 > Главное правило: **перед любым тегом проверить дрейф upstream и обычно смержить его себе, и только
 > потом резать релиз/пререлиз.** На ветке `lx-1.14` авто-ребейз на стабильный тег (ниже) заменён
 > ручным `git merge upstream/testing` — пока upstream на `v1.14.*-alpha`, стабильного тега нет, а

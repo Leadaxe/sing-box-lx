@@ -45,7 +45,7 @@
 
 ## Закрытие
 - [x] адверсариальный ревью генераторов (workflow) — проведён, подтверждённые findings учтены
-- [x] `docs/lx-config.md` — секция id/ip/ib (+ссылка на EXAMPLES.md)
+- [x] `docs-lx/lx-config.md` — секция id/ip/ib (+ссылка на EXAMPLES.md)
 - [x] `EXAMPLES.md` — how-to с примерами (прогнаны через `sing-box check`)
 - [x] `IMPLEMENTATION_REPORT.md`
 - [x] Device-результат (LTE/WARP DPI): **только `quic` проходит** (~340 мс); `dns`/`stun` — Timeout

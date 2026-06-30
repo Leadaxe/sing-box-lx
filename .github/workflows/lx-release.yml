@@ -330,7 +330,7 @@ jobs:
 
       - name: Release notes
         run: |
-          # What's-new for THIS tag comes from docs/lx-changelog.md (single source of
+          # What's-new for THIS tag comes from docs-lx/lx-changelog.md (single source of
           # truth, kept per release) — extract the section for this version, between its
           # "#### vX" header and the next "#### ", into a SEPARATE file. It must NOT be
           # interpolated through the heredoc below: changelog prose contains backticks and
@@ -338,9 +338,9 @@ jobs:
           # the file in with sed after the heredoc instead.
           VERSION="${{ steps.ver.outputs.version }}"
           awk -v v="#### v${VERSION}" '
-            $0==v {f=1; next} /^#### / {f=0} f' docs/lx-changelog.md > changes.md
+            $0==v {f=1; next} /^#### / {f=0} f' docs-lx/lx-changelog.md > changes.md
           if [ -z "$(tr -d '[:space:]' < changes.md)" ]; then
-            echo "See [docs/lx-changelog.md](https://github.com/Leadaxe/sing-box-lx/blob/lx-1.14/docs/lx-changelog.md)." > changes.md
+            echo "See [docs-lx/lx-changelog.md](https://github.com/Leadaxe/sing-box-lx/blob/lx-1.14/docs-lx/lx-changelog.md)." > changes.md
           fi
           cat > notes.md <<EOF
           **sing-box-lx ${{ steps.ver.outputs.version }}** — a thin downstream of [sing-box](https://github.com/SagerNet/sing-box) (base **${{ steps.ver.outputs.base }}**, branch \`lx-1.14\`).
@@ -366,7 +366,7 @@ jobs:
           ### Build tags
           Desktop binary: \`$(make -f Makefile.lx -s lx-print-tags)\`
 
-          Config reference: [docs/lx-config.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs/lx-config.md).
+          Config reference: [docs-lx/lx-config.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/lx-config.md).
           EOF
 
           # Splice the changelog section in place of the placeholder. `sed r` inserts the

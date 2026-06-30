@@ -1,6 +1,6 @@
 name: lx-ci
 
-# Fast per-commit gate for sing-box-lx. See docs/lx-config.md and SPECS/004.
+# Fast per-commit gate for sing-box-lx. See docs-lx/lx-config.md and SPECS/004.
 #
 # Trigger policy (keep per-commit cost low — see SPECS/004 §2.2):
 #   * Doc-only commits (md/docs/SPECS/LICENSE) skip CI entirely (paths-ignore).

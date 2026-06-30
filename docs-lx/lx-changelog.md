@@ -5,7 +5,7 @@ icon: material/alert-decagram
 # lx changelog
 
 Changes in the `sing-box-lx` fork (the `lx` features layered on top of upstream
-sing-box). Upstream's own changelog is in [changelog.md](changelog.md); this file
+sing-box). Upstream's own changelog is in [changelog.md](../docs/changelog.md); this file
 tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
@@ -454,7 +454,7 @@ re-verified on real hardware yet — hence the `-rc.1` tag. Promote to a plain
   per-evaluation `ip_version`/`query_type`), native Apple/Windows TLS engines, TLS
   spoof, Hysteria2 BBR/NAT-traversal, and closed-connection history in the
   CommandClient connection tracker (1000 entries / 5 min). See upstream
-  [changelog.md](changelog.md) for the per-alpha breakdown.
+  [changelog.md](../docs/changelog.md) for the per-alpha breakdown.
 * **`with_clash_api` dropped from the Android AAR and the desktop `LX_TAGS`.** LxBox
   is moving to manage the core over the native libbox `CommandClient`
   (group / url-test / select / connections streams), so the Clash REST API is dead

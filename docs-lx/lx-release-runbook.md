@@ -11,7 +11,7 @@
   `wg-1.14-migration` в памяти и [SPECS/004](../SPECS/004-BUILD_CI_RELEASE/)).
   `lx-rebase.yml` из SPECS/004 описывает старый авто-rebase на **стабильные** теги — он неактуален,
   пока стабильного `v1.14.0` нет.
-- Релиз-ноты генерятся автоматически из `#### v<tag-без-v>`-секции [docs/lx-changelog.md](lx-changelog.md)
+- Релиз-ноты генерятся автоматически из `#### v<tag-без-v>`-секции [docs-lx/lx-changelog.md](lx-changelog.md)
   (`lx-release.yml`); поэтому changelog должен быть верным ДО тега.
 
 ---
@@ -23,7 +23,7 @@
 [ ] 2. если upstream впереди — взят/смержен/собран (раздел 2), ИЛИ сознательно отложен с причиной
 [ ] 3. go build ./... и build -tags with_lx_command — зелёные
 [ ] 4. gofmt -l по lx-owned файлам — пусто
-[ ] 5. docs/lx-changelog.md содержит секцию #### v<этот-тег> с верным содержимым
+[ ] 5. docs-lx/lx-changelog.md содержит секцию #### v<этот-тег> с верным содержимым
 [ ] 6. ветка lx-1.14 запушена в origin ДО тега (push branch → push tag)
 ```
 
@@ -85,7 +85,7 @@ make -f Makefile.lx lx-check     # собрать lx-бинарь + check мин
 
 ## 3. Обнови changelog, затем режь тег
 
-1. Допиши секцию в [docs/lx-changelog.md](lx-changelog.md). Заголовок **строго** `#### v<tag-без-v>`
+1. Допиши секцию в [docs-lx/lx-changelog.md](lx-changelog.md). Заголовок **строго** `#### v<tag-без-v>`
    (например `#### v1.14.0-lx.1-rc.11`) — `lx-release.yml` извлекает ровно эту секцию в release notes
    через `awk`. Неверный/отсутствующий заголовок → пустые/чужие ноты автоматически.
 2. Commit ветки → **push ветку в origin ДО тега** (иначе тег окажется впереди ветки — было на rc.1;
