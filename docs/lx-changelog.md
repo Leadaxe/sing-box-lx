@@ -10,6 +10,28 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.17
+
+**Pre-release.** Fixes a build-tag regression that shipped in every desktop/CLI release
+since rc.1: `with_clash_api` was dropped from **all** platforms, not just the Android AAR
+it was meant for. No data-path change; desktop binaries only.
+
+* **Desktop/CLI binaries get the Clash API back.** SPEC 014 dropped `with_clash_api`
+  because LxBox (Android) manages the core over the native libbox `CommandClient` — so on
+  the **AAR** the Clash REST server is dead weight. But the drop landed in the shared
+  `Makefile.lx` `LX_TAGS`, which also feeds every desktop/CLI release build
+  (mac/windows/linux-musl, via `make -s lx-print-tags`). A CLI binary has **no native
+  CommandClient channel** — it is driven by external dashboards (yacd, MetaCubeXD,
+  clash-dashboard) over the Clash REST API — so dropping the tag left desktop users with
+  no way to manage the core: a config with `experimental.clash_api` failed fast. CI stayed
+  green the whole time (`lx-ci.yml` kept `with_clash_api` in its check tags), so the bug
+  was invisible outside the release artifact. **Fix:** `with_clash_api` is restored to the
+  desktop `LX_TAGS`; the AAR tag set (`build_libbox`) still drops it. The two sets now
+  diverge by design — desktop = with Clash API, AAR = without. Verified: the desktop
+  binary builds with `with_clash_api`, `check` accepts an `experimental.clash_api` config,
+  and the Clash REST server comes up live (all endpoints answer instead of the stub's
+  fail-fast).
+
 #### v1.14.0-lx.1-rc.16
 
 **Pre-release.** Full client-side support for the extended Xray/sing-box-extended **XHTTP**

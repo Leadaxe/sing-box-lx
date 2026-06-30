@@ -2,17 +2,25 @@
 # New file (zero edits to upstream Makefile) — see SPECS/CONSTITUTION.md §3.2.
 # Usage: make -f Makefile.lx lx-build
 
-# Canonical lx build-tag set — single source of truth (mirror changes in SPECS/004).
-# = upstream feature set (release/DEFAULT_BUILD_TAGS) minus tags irrelevant to a VPN
-# client — with_tailscale (no tailscale endpoints), with_ccm/with_ocm (Claude Code /
-# OpenAI Codex proxy services), with_acme (server-side TLS cert issuance), with_clash_api
-# (LxBox manages the core over the native libbox CommandClient, so the Clash REST API is
-# dead weight; a config using experimental.clash_api fails fast, no silent fallback) —
-# plus with_purego (CGO-free cross-compile covers with_naive_outbound via cronet
-# prebuilts) and our two downstream features. with_purego/badlinkname need
-# -checklinkname=0 in LX_LDFLAGS, otherwise the linker rejects badtls' go:linkname into
-# crypto/tls. Mirror the Android AAR set in cmd/internal/build_libbox/main.go.
-LX_TAGS ?= with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command
+# Canonical lx build-tag set for the desktop/CLI binaries — single source of truth
+# (mirror changes in SPECS/004). = upstream feature set (release/DEFAULT_BUILD_TAGS)
+# minus tags irrelevant to a VPN client — with_tailscale (no tailscale endpoints),
+# with_ccm/with_ocm (Claude Code / OpenAI Codex proxy services), with_acme (server-side
+# TLS cert issuance) — plus with_purego (CGO-free cross-compile covers
+# with_naive_outbound via cronet prebuilts) and our downstream features.
+#
+# with_clash_api IS kept here: the desktop/CLI binary is driven through the Clash REST
+# API by external dashboards (yacd / MetaCubeXD / clash-dashboard); there is no native
+# CommandClient channel outside the gomobile/libbox binding, so dropping it would leave
+# a CLI user with no way to manage the core (a config using experimental.clash_api would
+# fail fast). It is dropped ONLY from the Android AAR (cmd/internal/build_libbox/main.go),
+# where LxBox manages the core over the native libbox CommandClient and the Clash server
+# is dead weight. So the two tag sets diverge by design — do NOT blindly mirror the AAR
+# set here.
+#
+# with_purego/badlinkname need -checklinkname=0 in LX_LDFLAGS, otherwise the linker
+# rejects badtls' go:linkname into crypto/tls.
+LX_TAGS ?= with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command
 
 # lx build counter over a given upstream base (override in CI/release: make -f Makefile.lx lx-build LX_BUILD=3).
 LX_BUILD ?= 1
