@@ -48,6 +48,12 @@ type Router struct {
 	trackers          []adapter.ConnectionTracker
 	platformInterface adapter.PlatformInterface
 	started           bool
+	// lx:begin idle-suspend
+	// SPEC 020. idleSuspend is the configured threshold (0 = feature off). idleStop
+	// is closed by Close() to stop the idle tick goroutine.
+	idleSuspend time.Duration
+	idleStop    chan struct{}
+	// lx:end idle-suspend
 }
 
 func NewRouter(ctx context.Context, logFactory log.Factory, options option.RouteOptions, dnsOptions option.DNSOptions) *Router {
@@ -68,6 +74,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		leaseFiles:        options.DHCPLeaseFiles,
 		pauseManager:      service.FromContext[pause.Manager](ctx),
 		platformInterface: service.FromContext[adapter.PlatformInterface](ctx),
+		idleSuspend:       time.Duration(options.LXIdleSuspend), // lx: SPEC 020 (0 = off)
 	}
 }
 
@@ -207,6 +214,7 @@ func (r *Router) Start(stage adapter.StartStage) error {
 			r.ruleSetUpdater.Start()
 		}
 		r.started = true
+		r.startIdleSuspend() // lx: SPEC 020 — no-op when idleSuspend == 0
 		return nil
 	case adapter.StartStateStarted:
 		for _, ruleSet := range r.ruleSets {
@@ -220,6 +228,7 @@ func (r *Router) Start(stage adapter.StartStage) error {
 func (r *Router) Close() error {
 	monitor := taskmonitor.New(r.logger, C.StopTimeout)
 	var err error
+	r.stopIdleSuspend() // lx: SPEC 020 — stop the idle tick before tearing down
 	if r.neighborResolver != nil {
 		monitor.Start("close neighbor resolver")
 		err = E.Append(err, r.neighborResolver.Close(), func(closeErr error) error {

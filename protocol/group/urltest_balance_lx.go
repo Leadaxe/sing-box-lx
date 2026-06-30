@@ -374,3 +374,21 @@ func sortCandidatesByDelay(cs []candidate) {
 		}
 	}
 }
+
+// ActiveTags returns the tags this urltest group is CURRENTLY routing through —
+// the whole rotation pool for a round_robin (balanced) group, or the single
+// current node for a legacy least_test group. Used by the SPEC 020 reachability
+// walk: every node a balanced group could dial right now is reachable (and must
+// not be idle-suspended), not just Now(). Returns nil for an empty/cold group.
+func (s *URLTest) ActiveTags() []string {
+	if s.balancer != nil {
+		if tags := s.balancer.poolTags(); len(tags) > 0 {
+			return tags
+		}
+		// Cold start: pool not yet filled — fall back to the single current pick.
+	}
+	if now := s.Now(); now != "" {
+		return []string{now}
+	}
+	return nil
+}

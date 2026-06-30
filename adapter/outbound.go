@@ -67,3 +67,16 @@ type AmneziaWGSuspendable interface {
 }
 
 // lx:end awg
+
+// lx:begin idle-suspend
+// IdleSuspendable is implemented by a WG/AWG endpoint so the router's idle tick
+// (SPEC 020) can suspend it when it is idle and unreachable, without importing
+// protocol/wireguard. SuspendIfIdle brings the device Down (freeing its
+// recv-worker bufsArrs — the dominant GC-scan holder) only on the live→asleep
+// transition; the next dial through the endpoint wakes it lazily.
+type IdleSuspendable interface {
+	Tag() string
+	SuspendIfIdle(reachable bool, threshold time.Duration)
+}
+
+// lx:end idle-suspend
