@@ -308,15 +308,18 @@ jobs:
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
           # Derive the upstream base version for the release notes instead of hardcoding it
           # (it drifted to alpha.35 across rc.14/15/16 and had to be hand-fixed each time).
-          # Primary source: scan the commit history for the highest alpha.NN named in any
-          # "Merge upstream" subject — robust on a fork without upstream tags fetched. Then
-          # try the nearest reachable upstream tag if tags happen to be present. Last resort:
-          # a generic label so notes never carry a stale hardcoded version.
-          BASE_N="$(git log --grep='Merge upstream' --pretty=%s | grep -oE 'alpha\.[0-9]+' | sed 's/alpha\.//' | sort -n | tail -1)"
-          if [ -n "$BASE_N" ]; then
-            BASE="v1.14.0-alpha.${BASE_N}"
-          else
-            BASE="$(git describe --tags --match 'v1.14.0-alpha.*' --abbrev=0 HEAD 2>/dev/null || true)"
+          # Primary source: the nearest reachable upstream alpha tag in HEAD's ancestry
+          # (`git describe`). This reads the commit GRAPH, not commit-message text, so it's
+          # correct even when a merge subject omits the alpha number — e.g. alpha.37 was
+          # merged in a commit titled "Merge upstream/testing (bump version, fix linux ping)"
+          # with no "alpha.37" in it, which the old subject-grep missed (shipped rc.17 notes
+          # as alpha.36). Fallback: scan "Merge upstream" subjects for the highest alpha.NN —
+          # robust on a fork without upstream tags fetched. Last resort: a generic label so
+          # notes never carry a stale hardcoded version.
+          BASE="$(git describe --tags --match 'v1.14.0-alpha.*' --abbrev=0 HEAD 2>/dev/null || true)"
+          if [ -z "$BASE" ]; then
+            BASE_N="$(git log --grep='Merge upstream' --pretty=%s | grep -oE 'alpha\.[0-9]+' | sed 's/alpha\.//' | sort -n | tail -1)"
+            [ -n "$BASE_N" ] && BASE="v1.14.0-alpha.${BASE_N}"
           fi
           [ -z "$BASE" ] && BASE="v1.14.x"
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
