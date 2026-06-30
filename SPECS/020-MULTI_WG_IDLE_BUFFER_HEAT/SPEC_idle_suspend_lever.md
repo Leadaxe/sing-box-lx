@@ -610,11 +610,18 @@ NOT free it. So the shipped mechanism is **Down/Up (deep)**, not light sleep.
 
 idle-suspend via `device.Down()` / `device.Up()`:
 - `route.lx_idle_suspend` (Duration, 0 = off).
-- `ReachableOutbounds` walk (final + rule targets → selector `Now()` / urltest
-  active pool `ActiveTags()` / static detour deps). Fresh walk per tick, no
-  generation cache (graph is tiny, tick is ~XX/2; a cache would need invalidation
-  hooks inside upstream selector/urltest bodies — not worth the rebase cost yet).
+- reachability walk (final + rule targets → selector `Now()` / urltest active pool
+  `ActiveTags()` / static detour deps), **event-driven cached**: recomputed ONLY
+  when the active routing tree changes — selector switch, urltest auto-switch, pool
+  rebuild, reload — via `InvalidateReachability()` (marks dirty). Wiring is the
+  narrow `adapter.ReachabilityInvalidator` registered into ctx (box.go) and pulled
+  by groups through service.FromContext (no route<-group import). Cache published
+  under an RWMutex with the walk run OUTSIDE the lock (it calls into groups that
+  hold their own locks — avoids a lock-order deadlock). Three one-line event-point
+  inserts: selector.go (after `selected.Store`), urltest.go (legacy auto-switch),
+  and a `balancer.onChange` hook fired from `setSlots` (covers all pool rebuilds).
 - Router idle tick, period `max(XX/2, 5s)`, started in PostStart / stopped in Close.
+  Each tick = one cached-map lookup + atomic idle compare per endpoint, NO walk.
 - Endpoint `SuspendIfIdle` (Down on live→asleep CAS) + `resumeOnDial` (stamp + lazy
   Up on next dial). `idleAsleep` kept distinct from `started` so a guard-suspended
   endpoint is never idle-woken.

@@ -93,6 +93,12 @@ func (s *URLTest) Start() error {
 		return err
 	}
 	group.balancer = s.balancer // lx: SPEC 019 v2 — health-check drives the pool through it
+	if s.balancer != nil {
+		// lx: SPEC 020 — a pool rebuild changes the active routing tree; invalidate
+		// the router's reachable cache. ctx captured here has the invalidator.
+		ctx := s.ctx
+		s.balancer.onChange = func() { invalidateReachability(ctx) }
+	}
 	s.group = group
 	return nil
 }
@@ -545,6 +551,7 @@ func (g *URLTestGroup) performUpdateCheck() {
 	}
 	if updated {
 		g.interruptGroup.Interrupt(g.interruptExternalConnections)
+		invalidateReachability(g.ctx) // lx: SPEC 020 — legacy auto-switch changed the active node
 	}
 }
 

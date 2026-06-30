@@ -42,6 +42,11 @@ type balancer struct {
 	access  sync.Mutex // guards slots
 	slots   []slot     // the pool; len == min(poolSize, available nodes), index = fixed slot number
 	counter atomic.Uint64
+
+	// onChange, if set, is called after the pool occupancy changes (setSlots). The
+	// URLTestGroup wires it to invalidate the SPEC 020 reachable cache, since the
+	// active pool just changed. Called WITHOUT the access lock held.
+	onChange func()
 }
 
 // newBalancer builds the balancer from validated options. Returns nil for least_test (and
@@ -140,10 +145,15 @@ func (b *balancer) poolTags() []string {
 // occupancy — which tag sits in which slot — and hands the ordered tag list here.
 func (b *balancer) setSlots(tags []string) {
 	b.access.Lock()
-	defer b.access.Unlock()
 	b.slots = make([]slot, len(tags))
 	for i, tag := range tags {
 		b.slots[i] = slot{tag: tag}
+	}
+	b.access.Unlock()
+	// lx: SPEC 020 — the active pool changed; invalidate the reachable cache.
+	// Called outside the access lock so the callback never nests under it.
+	if b.onChange != nil {
+		b.onChange()
 	}
 }
 

@@ -79,4 +79,16 @@ type IdleSuspendable interface {
 	SuspendIfIdle(reachable bool, threshold time.Duration)
 }
 
+// ReachabilityInvalidator is implemented by the Router. SPEC 020 reachability is
+// recomputed only on events that change the active routing tree — a selector
+// switch, a urltest auto-switch / pool rebuild, or a config reload — not on every
+// idle tick. Those event points pull this out of the context
+// (service.FromContext[adapter.ReachabilityInvalidator]) and mark the cache
+// dirty; the next idle tick recomputes lazily. Kept as its own narrow interface
+// so protocol/group calls it without importing route and without widening the
+// large adapter.Router interface.
+type ReachabilityInvalidator interface {
+	InvalidateReachability()
+}
+
 // lx:end idle-suspend
