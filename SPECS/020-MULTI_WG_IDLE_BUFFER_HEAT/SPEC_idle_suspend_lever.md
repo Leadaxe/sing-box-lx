@@ -598,3 +598,79 @@ required for Tier A.
 - Scope → Tier A light (timersStop) ships first; Tier B teardown designed-for,
   deferred to field data from §12a logs. ✓
 - INFO event logging → ships with Tier A as field instrument. ✓
+
+## 13. IMPLEMENTATION LOG (lx-spec020-idle-suspend branch)
+
+This section is the as-built record. It SUPERSEDES the Tier-A "light sleep"
+framing above where they differ: source-verified measurement (SPEC.md) proved the
+GC/heat holder is the recv-worker `bufsArrs`, and light sleep (`timersStop`) does
+NOT free it. So the shipped mechanism is **Down/Up (deep)**, not light sleep.
+
+### 13.1 What shipped (commit c55cf11e)
+
+idle-suspend via `device.Down()` / `device.Up()`:
+- `route.lx_idle_suspend` (Duration, 0 = off).
+- `ReachableOutbounds` walk (final + rule targets → selector `Now()` / urltest
+  active pool `ActiveTags()` / static detour deps). Fresh walk per tick, no
+  generation cache (graph is tiny, tick is ~XX/2; a cache would need invalidation
+  hooks inside upstream selector/urltest bodies — not worth the rebase cost yet).
+- Router idle tick, period `max(XX/2, 5s)`, started in PostStart / stopped in Close.
+- Endpoint `SuspendIfIdle` (Down on live→asleep CAS) + `resumeOnDial` (stamp + lazy
+  Up on next dial). `idleAsleep` kept distinct from `started` so a guard-suspended
+  endpoint is never idle-woken.
+- INFO log on each state transition only (edge-triggered): `suspend` / `wake`.
+
+Effect: a WG/AWG endpoint that is idle past XX AND unreachable from the active
+routing tree is brought Down → its recv-worker `bufsArrs` is freed → the dominant
+GC-scan holder shrinks. Wake (next dial) re-opens the socket and pays a fresh
+handshake (Down zeroed the crypto session).
+
+### 13.2 Bind-swap / key-zeroing — investigated (the promised comment)
+
+**Can the bind be resized on a LIVE endpoint WITHOUT zeroing keys? YES — via
+`Device.BindUpdate()` (`submodules/wireguard-go/device/device.go:507`).** It only
+closes+reopens the socket and re-spawns recv-workers; it never calls `peer.Stop()`
+/ `ZeroAndFlushAll()`. Key-zeroing lives ONLY in `peer.Stop()`, reached only from
+`downLocked()` (= `Device.Down()`) and peer removal. So a bind swap that keeps keys
+is possible — but ONLY on a still-Up device; once `Down()` has run, keys are
+already gone and `BindUpdate` can't bring them back.
+
+This means the shipped Down path (13.1) cannot have a keys-safe wake — by
+construction. A keys-safe / reduced-bind wake needs a different suspend side.
+
+### 13.3 The three paths (reduced-bind urltest wake) — for the next iteration
+
+Recorded so the decision isn't re-derived. `bufsArrs` is sized from
+`device.BatchSize() = max(bind, tun)` (`device.go:368`); the GRO read path panics
+with batch<128 unless GRO is also disabled (`bind_std.go:72/261/292` — msgsPool is
+fixed 128, the consume loop is unclamped). So "8 buffers, no GRO" — both halves are
+load-bearing.
+
+| | B — Down (SHIPPED) | A — BindUpdate + reduced bind | Hybrid |
+|---|---|---|---|
+| sleeping-node RAM | **0** | ~0.5 MB (8 bufs) | 0.5 MB short / 0 long |
+| wake handshake | yes | **no** (keys live) | no / yes |
+| urltest probe handshake | yes | **no** | no |
+| readiness | **done** | new code | most code |
+| risk (GRO panic, max(bind,tun) trap) | none | real | real |
+
+- **B (Down)** — what shipped. RAM to zero, simplest, safe. Wake pays a handshake
+  (only the idle node, only on wake — rare/cheap). A reduced-bind probe wake on
+  path B saves only the probe's RAM, NOT the handshake (keys already zeroed), so it
+  is low value here.
+- **A (BindUpdate, never Down)** — keep the device Up, swap to an 8-buffer / GRO-off
+  bind via `BindUpdate`. Keys live → wake (and urltest probe) pay NO handshake.
+  RAM not zero (~0.5 MB) and three sharp traps: mutable `BatchSize()` wrapper; must
+  shrink TUN BatchSize too or `max()` clamps back to 128; must open with rxOffload
+  OFF or batch<128 panics.
+- **Hybrid** — two idle thresholds: short idle → reduced bind (keys live), long idle
+  → full Down (RAM 0). Most complete, most code.
+
+### 13.4 Recommendation (ship B, escalate on data)
+
+Ship **B** (done): it hits the measured holder, cuts heat to zero, lowest risk.
+Defer **A/Hybrid** until the §12a INFO logs from a device run show handshake
+flapping on wake actually hurts — then escalate with data, not speculation. The
+reduced-bind urltest wake (the original task-6 ask) only delivers its full value
+(no-handshake probe) on path A/Hybrid; on B it is low-value, so it is deferred with
+a TODO referencing this section.
