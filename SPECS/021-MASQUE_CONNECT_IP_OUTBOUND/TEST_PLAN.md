@@ -97,3 +97,41 @@ Framer/hpack (~250 строк в client_h2.go). Новых внешних зав
 (h3 и h2), device-verified.** Все юнит-тесты зелёные (включая h2 capsule-reassembly через
 границы DATA-фреймов); риск №3 (формат ключей) снят — реальные WARP-ключи парсятся без
 изменений; риск №1 (h2) снят ручным фреймером.
+
+---
+
+## RESULTS — аудит-проход (idle/reconnect/оптимизации), 2026-07-02
+
+Многоагентный аудит (24 подтверждённых находки) → исправления по волнам. Стенд: `idle_timeout: "10s"`.
+
+**Lifecycle device-verified на живом WARP (h3 и h2):**
+
+| Проверка | h3 | h2 |
+|---|---|---|
+| dial (warp=on) | ✅ edge IP, warp=on | ✅ warp=on, http/2 |
+| idle-suspend | ✅ `idle-suspend tunnel after 12.24s` | ✅ `after 12.27s` |
+| reconnect после suspend | ✅ warp=on (новый edge) | ✅ warp=on |
+| no-flap (повторный suspend) | ✅ 2 цикла подряд | ✅ |
+| ошибки в логе (PROTOCOL_ERROR / masque:) | нет | нет |
+
+**Исправленные баги корректности:**
+- **C1 reconnect** (был HIGH): упавший/suspended туннель не пересоздавался (`running` залипал).
+  Переписан на `*session` + generation-guard; `o.sess=nil` при teardown → следующий dial поднимает заново.
+- **A1 blackhole**: битый/пустой inbound datagram (unparseable varint) рвал весь туннель — теперь drop-and-continue.
+- **C2 leak**: `ipConn.Close()` в teardown разблокирует парный насос, залипший в блокирующем read.
+- **A3 ICMP**: снимок заголовка ДО мутации TTL/checksum.
+- **A4/A5/B5 h2**: `maxCapsulePayload` (65535) против peer-controlled `payloadLen` (overflow/OOM);
+  fail-fast `mtu ≤ 16000` на h2; recvCh 64→8; окно 1 GiB → 8 MiB (реальный backpressure).
+
+**Оптимизации idle/ресурсов:**
+- **B1 idle-suspend**: после `idle_timeout` (деф. 5m) сносится netstack + 4-6 горутин + keepalive; поднимается по требованию.
+- **B3/B2 аллокации**: reusable scratch для исходящего datagram (h3 + h2) вместо make-на-пакет
+  (безопасно — quic-go/http2 копируют срез до возврата, писатель — единственная tx-горутина).
+- **B4**: `idle_timeout` / `keep_alive_period` вынесены в конфиг.
+
+**Документация (группа D):** убран фантомный `cwnd` (ломал strict-decode), мёртвый `congestion_control`;
+предупреждение про `network`=транспорт vs `network_list`=L4; актуализированы секции «Файлы»/«Поток данных»/
+«Риски»; добавлен package-doc.
+
+**Верификация:** `go build` (with_quic+with_gvisor+with_wireguard и stub), `go vet`, `gofmt -l`, `go test -race`
+— всё зелёно. Юнит-тесты жизненного цикла (generation-guard, идемпотентный teardown, close-guard) под -race.

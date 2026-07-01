@@ -1,8 +1,10 @@
 # SPEC 021 — MASQUE outbound (CONNECT-IP over HTTP/3 + HTTP/2), профиль Cloudflare WARP
 
 **Статус:** h3 И h2 РАБОТАЮТ на живом Cloudflare WARP (device-verified 2026-07-02, warp=on
-на обоих). Риск №1 снят: h2 сделан на ручном фреймере поверх x/net/http2 (без http-форка).
-См. TEST_PLAN.md.
+на обоих). Пройден аудит-проход (24 находки): исправлены баги корректности (reconnect,
+blackhole на битом пакете, ICMP-снимок, h2-потолки), добавлен idle-suspend + самовосстановление
+туннеля (stateless idle), убраны per-packet аллокации в горячем пути. Все три lifecycle-режима
+(dial / idle-suspend / reconnect) device-verified на h3 и h2. См. TEST_PLAN.md §RESULTS.
 **Ветка:** `lx-spec021-masque`
 **Тег типа:** `masque` (`C.TypeMASQUE`)
 **Build-tag:** `with_quic` + `with_gvisor` (userspace-стек)
@@ -69,39 +71,44 @@
   // --- опционально ---
   "uri": "https://cloudflareaccess.com",   // CONNECT-IP URI-шаблон; дефолт зависит от profile
   "sni": "",                        // дефолт: consumer-masque.cloudflareclient.com (cloudflare)
-  "mtu": 1280,                      // дефолт 1280
+  "mtu": 1280,                      // дефолт 1280 (на h2 макс. 16000)
   "skip_cert_verify": false,        // отключить pinning на public_key (debug)
-
-  // --- congestion (как tuic/hysteria) ---
-  "congestion_control": "",         // "", "cubic", "bbr", ...
-  "cwnd": 0,
+  "idle_timeout": "5m",             // suspend туннеля после простоя; "" = 5m, отрицательное = выкл
+  "keep_alive_period": "30s",       // QUIC keepalive (h3); "" = 30s, отрицательное = выкл
 
   // стандартные:
-  "network_list": ["tcp","udp"],    // NetworkList
+  "network_list": ["tcp","udp"],    // L4-протоколы (НЕ транспорт — это `network`)
   ...DialerOptions
 }
 ```
+
+> ⚠️ **`network` ≠ tcp/udp.** У masque-outbound `network` выбирает **ТРАНСПОРТ** (`h3`/`h2`),
+> а список L4-протоколов — это `network_list`. Это обратно всем остальным outbound'ам,
+> где `network` = `["tcp","udp"]`. Ошибочный `"network": "tcp"` → fail-fast «invalid network».
 
 ### Поля
 
 | Поле | Тип | Дефолт | Профиль | Смысл |
 |---|---|---|---|---|
 | `profile` | string | `cloudflare` | — | набор поведения (см. §Профили) |
-| `network` | string | `h3` | оба | `h3` = QUIC, `h2` = HTTP/2 |
+| `network` | string | `h3` | оба | **транспорт**: `h3` = QUIC, `h2` = HTTP/2 |
 | `private_key` | string(b64) | — | cloudflare (обяз.) | EC private key, DER → `x509.ParseECPrivateKey` |
 | `public_key` | string(b64) | — | cloudflare (обяз.) | endpoint PKIX pubkey, `x509.ParsePKIXPublicKey` |
 | `ip` | string(CIDR) | — | обяз. (хотя бы один из ip/ipv6) | локальный IPv4 туннеля |
 | `ipv6` | string(CIDR) | — | обяз. (хотя бы один) | локальный IPv6 туннеля |
 | `uri` | string | по профилю | оба | CONNECT-IP URI-шаблон |
 | `sni` | string | по профилю | оба | TLS SNI (для WARP != endpoint host) |
-| `mtu` | int | 1280 | оба | MTU userspace-стека |
+| `mtu` | int | 1280 | оба | MTU userspace-стека (h2: ≤ 16000) |
 | `skip_cert_verify` | bool | false | cloudflare | отключить pubkey-pinning |
-| `congestion_control`, `cwnd` | | | h3 | как tuic |
+| `idle_timeout` | duration | `5m` | оба | suspend туннеля после простоя; отриц. = выкл |
+| `keep_alive_period` | duration | `30s` | h3 | QUIC keepalive; отриц. = выкл |
+| `network_list` | list | оба tcp+udp | оба | L4-протоколы через туннель |
 
 **Валидация fail-fast при старте:**
 - `profile == cloudflare`: `private_key`, `public_key` обязательны и парсятся (иначе ошибка конфига).
 - Хотя бы одно из `ip`/`ipv6` задано и парсится в CIDR.
 - `network ∈ {h3, h2}`.
+- `network == h2` → `mtu ≤ 16000` (один IP-пакет = один HTTP/2 DATA-фрейм).
 - `network == h2` + `profile == standard` → пока ошибка «not implemented» (h2 в v1 только для cloudflare,
   т.к. capsule-over-h2 завязан на cf-поведение; RFC-h2 — задел).
 
@@ -124,35 +131,37 @@
 
 ---
 
-## Файлы и точки интеграции
+## Файлы и точки интеграции (как реализовано)
 
 ```
-constant/proxy.go
-  + TypeMASQUE = "masque"                    // рядом с TypeTUIC (стр. ~25) + в displayName switch
+constant/proxy.go        + TypeMASQUE = "masque" (рядом с TypeTUIC) + в displayName switch
+option/masque.go         type MASQUEOutboundOptions (DialerOptions + ServerOptions + поля §Конфиг)
+include/quic.go          masque.RegisterOutbound в registerQUICOutbounds (with_quic) + импорт
+include/quic_stub.go     заглушка ErrQUICNotIncluded (без with_quic)
 
-option/masque.go                             (НОВЫЙ)
-  + type MASQUEOutboundOptions struct { ... } // DialerOptions + ServerOptions + поля выше
+protocol/masque/
+  outbound.go            adapter.Outbound: NewOutbound, ensureSession/teardownSession/idleWatcher,
+                         pumpToTunnel/pumpFromTunnel, DialContext/ListenPacket/Close, resolve, RegisterOutbound
+  outbound_test.go       parsePrefixes, EC-ключи
+  lifecycle_test.go      generation-guard, идемпотентность teardown, close-guard
 
-protocol/masque/                             (НОВЫЙ пакет)
-  outbound.go   — adapter.Outbound: NewOutbound, DialContext, ListenPacket, Close,
-                  run()/насосы, resolve, RegisterOutbound
-  device.go     — тонкая обёртка над transport/wireguard.stackDevice (или прямое исп.)
-
-transport/masque/                            (НОВЫЙ пакет — вкопанный connect-ip-go + клиент)
-  client_h3.go  — ConnectTunnel: http3.Transport{EnableDatagrams} → NewClientConn →
-                  OpenRequestStream → SendRequestHeader(Extended CONNECT) → ReadResponse
-  client_h2.go  — ConnectTunnelH2: http.Transport (h2c) → CONNECT → capsule DATAGRAM в теле
-  connectip.go  — порт connect-ip-go: IpConn (ReadPacket/WritePacket), capsule-парсинг,
-                  TTL/checksum, AdvertiseRoute (h3)
-  profile.go    — cloudflareProfile / standardProfile, PrepareTLSConfig (pinning), GenerateCert
-  const.go      — ConnectSNI, ConnectURI, capsule type constants
-
-include/quic.go
-  + masque.RegisterOutbound(registry) в registerQUICOutbounds()   // под with_quic
-  + import _ protocol/masque
+transport/masque/
+  masque.go              ConnectTunnelH3 + IpConn интерфейс + dialCONNECTIP
+  request.go             buildConnectIPRequest + advertiseDefaultRoute
+  client_h2.go           ручной h2-фреймер: h2RawConn, h2IpConn, sendConnect, readLoop, receiveDatagram
+  profile.go             cloudflare/standard, PrepareTLSConfig (pubkey-pinning), generateClientCert
+  profile_test.go        профиль-матрица, TLS-pinning
+  client_h2_test.go      capsule-reassembly через границы DATA-фреймов
+  connectip/             вкопанный connect-ip-go (client subset) на sagernet/quic-go:
+    connectip.go         Conn (ReadPacket/WritePacket/AdvertiseRoute), горутины readFromStream/writeToStream
+    capsule.go           address/route capsules; iprange.go; checksum.go; icmp.go; *_test.go
 ```
 
-**Фабрика/registry не трогаем** — регистрация идёт через `outbound.Register[MASQUEOutboundOptions]`.
+Отличия от первоначального плана: НЕТ `client_h3.go` (h3 в `masque.go`), НЕТ `device.go`
+(переиспользуем `wireguard.NewDevice(System:false)` напрямую), НЕТ `const.go` (константы в profile.go),
+connectip — подпакет. h2 — ручной Framer (не http.Transport/h2c).
+
+**Фабрика/registry не трогаем** — регистрация через `outbound.Register[MASQUEOutboundOptions]`.
 
 ### adapter.Outbound (что реализуем)
 
@@ -187,36 +196,47 @@ WG-специфика (`SetDevice`, `Events`, wg `bind`) для MASQUE НЕ ну
 
 ---
 
-## Поток данных (h3)
+## Жизненный цикл + поток данных (общее)
+
+Туннель — это `*session` (device + ipConn + closer + ctx/cancel + счётчик активности).
+Живёт лениво и самовосстанавливается:
 
 ```
-NewOutbound: разобрать ключи, prefixes, profile, quicConfig{EnableDatagrams,InitialPacketSize:1242,KeepAlive:30s}
-run() (lazy, sync.Once-паттерн):
-  1. stackDevice = NewStackDevice(prefixes, mtu); stackDevice.Start()
-  2. pc, quicConn = DialQuic(server, tlsConfig(profile), quicConfig)   // через наш dialer
-  3. tr, ipConn = ConnectTunnel(quicConn, uri, profile)                // Extended CONNECT + AdvertiseRoute
-  4. насос TX: for { stackDevice.Read(bufs,sizes) → ipConn.WritePacket(pkt) [→ icmp? → stackDevice.Write] }
-  5. насос RX: for { ipConn.ReadPacket() → stackDevice.Write(pkt) }
-DialContext/ListenPacket: run(); затем stackDevice.DialContext/ListenPacket(dest)
-Close: cancel → ipConn.Close, tr.Close, pc.Close, stackDevice.Close
+NewOutbound: разобрать ключи/prefixes/profile; quicConfig{EnableDatagrams,InitialPacketSize:1242,KeepAlive}
+             idleTimeout (деф. 5m); НИЧЕГО не поднимаем.
+ensureSession(ctx) (под runMu, lazy): если sess==nil →
+  1. device = wireguard.NewDevice(System:false → gVisor stackDevice, prefixes, mtu); device.Start()
+  2. connectH3/connectH2 → (closer, ipConn)
+  3. s = &session{...}; s.markActivity(now); o.sess = s
+  4. go pumpToTunnel(s), go pumpFromTunnel(s), go idleWatcher(s)  (если idleTimeout>0)
+насос TX: for { device.Read → markActivity → ipConn.WritePacket [→ icmp? → device.Write] }
+насос RX: for { ipConn.ReadPacket → markActivity → device.Write }
+DialContext/ListenPacket: s = ensureSession(); резолв домена → s.device.DialContext/ListenPacket
+idleWatcher: тик; если простой ≥ idleTimeout → teardownSession(s)
+teardownSession(s) (sync.Once + generation-guard): cancel; ipConn.Close (разблокирует парный насос);
+  closer.Close; device.Close; если o.sess==s → o.sess=nil (следующий dial пере-поднимет)
+Close: o.closed=true; teardown текущей сессии
 ```
 
-`ConnectTunnel` (h3): `tr.NewClientConn(quicConn)` → `OpenRequestStream` → `SendRequestHeader`
-(`:method CONNECT`, `:protocol cf-connect-ip`, `Capsule-Protocol: ?1`, cf-заголовки) → `ReadResponse`
-(status 2xx) → `connectip.NewProxiedConn(rstr)`; затем `AdvertiseRoute(0.0.0.0/0, ::/0)`.
-При `ignoreExtendedConnect` НЕ падать, если `settings.EnableExtendedConnect == false`.
+**Самовосстановление (C1):** любой выход насоса (обрыв WARP, GOAWAY, битый пакет) → `teardownSession`
+→ `o.sess=nil` → следующий `DialContext` пере-собирает туннель. **Idle-suspend (B1):** после простоя
+туннель сносится целиком (netstack + горутины + keepalive), поднимается заново по требованию.
+**Generation-guard (C1/C2):** teardown устаревшей сессии не трогает новую; `ipConn.Close` разблокирует
+парный насос, залипший в блокирующем read.
 
-## Поток данных (h2)
+`ConnectTunnelH3`: `tr{EnableDatagrams, AdditionalSettings{0x276:1}, DisableCompression}` →
+`NewClientConn(quicConn)` → `OpenRequestStream` → `SendRequestHeader`
+(`:method CONNECT`, `:protocol cf-connect-ip`, `Capsule-Protocol: ?1`, `User-Agent:""`) →
+`ReadResponse` (2xx) → `connectip.NewProxiedConn` → `AdvertiseRoute(0.0.0.0/0, ::/0)`.
+При `ignoreExtendedConnect` НЕ падать, если `settings.EnableExtendedConnect==false`.
+`0x276` = legacy SETTINGS_H3_DATAGRAM_00, которого WARP требует (см. §Риски.4).
 
-`ConnectTunnelH2`: наш http-форк `Transport` c `DialTLSContext` (TCP dial → tls.Client с tlsConfig, ALPN `h2`,
-h2c для запрета fallback на HTTP/1.1) → `MethodConnect` с телом-pipe → capsule DATAGRAM (`type 0` + varint len)
-пишутся в тело запроса, читаются из тела ответа. `IpConn` тот же интерфейс (ReadPacket/WritePacket),
-внутри — `h2DatagramStream` (см. mihomo `client_h2.go`). TTL/checksum-декремент делает клиент (composeDatagram).
-
-**Зависимость h2:** нужен http-форк, поддерживающий `Protocols.SetUnencryptedHTTP2` / `HTTP2Config`
-(mihomo использует `metacubex/http`). ⚠️ **Проверить при имплементации**, умеет ли наш стек (stdlib `net/http`
-или форк) h2c-режим с masked-tls-conn (см. golang/go#79293). Если нет — h2 требует вкапывания http-форка
-ИЛИ ручного h2-framing. Это риск объёма для h2 (см. §Риски).
+`ConnectTunnelH2`: сами дайлим TCP+TLS(ALPN h2), затем **ручной фреймер** на `x/net/http2.Framer`+`hpack`
+(НЕ высокоуровневый Client — он блокирует extended CONNECT из-за отсутствия peer-SETTINGS): preface +
+свои SETTINGS + WINDOW_UPDATE → одна HEADERS-рамка **plain CONNECT** (`:method`+`:authority`+
+`cf-connect-proto:cf-connect-ip`+`capsule-protocol:?1`, БЕЗ `:protocol`) → DATA-фреймы несут capsule
+DATAGRAM (type 0 + varint len). `payloadLen` ограничен `maxCapsulePayload`. TTL/checksum-декремент —
+клиент. Тот же `IpConn` (ReadPacket/WritePacket).
 
 ---
 
@@ -284,17 +304,20 @@ h2c для запрета fallback на HTTP/1.1) → `MethodConnect` с тел�
 
 ---
 
-## Риски / открытые вопросы
+## Риски / открытые вопросы (итог)
 
-1. **h2 требует h2c-режима** с masked tls.Conn — стандартный `net/http` это не умеет чисто
-   (golang/go#79293). Возможные пути: (а) вкопать нужную часть http-форка, (б) ручной h2-framing поверх
-   tls.Conn, (в) отложить h2 в Ф2 и решить по факту. Влияет на объём — уточнить в начале Ф2.
-2. **Экспорт `NewStackDevice`** из `transport/wireguard` — убедиться, что не тянет WG-код в masque-only сборку
-   и не ломает существующие тесты WG-endpoint.
-3. **DER-формат ключей** — согласовать байт-в-байт тест-вектор с Dart до Ф1-интеграции, иначе живой тест
-   упадёт на парсинге.
-4. **Cloudflare non-RFC quirks** могут дрейфовать (WARP меняет протокол) — привязываемся к текущему поведению
-   mihomo Alpha; зафиксировать версию/коммит mihomo как референс в TEST_PLAN.
+1. **h2 extended-CONNECT gate — ✅ СНЯТ.** Оказалось не про h2c, а про то, что WARP не шлёт
+   SETTINGS `ENABLE_CONNECT_PROTOCOL`, и высокоуровневые h2-клиенты (stdlib и `x/net/http2`)
+   блокируют запрос. Решение — ручной фреймер на публичном `x/net/http2.Framer` + `hpack`
+   (обе уже в go.mod). БЕЗ http-форка. Плюс WARP h2 = **plain CONNECT** + `cf-connect-proto`,
+   а НЕ extended CONNECT с `:protocol`. См. TEST_PLAN §RESULTS.
+2. **Экспорт `NewStackDevice` — ✅ НЕ понадобился.** `transport/wireguard.NewDevice(System:false)`
+   уже экспортирован и даёт gVisor `stackDevice`. Ничего не экспортировали, WG-тесты не тронуты.
+3. **DER-формат ключей — ✅ СНЯТ.** Реальные WARP-ключи из ClashWARP-конфига (base64 DER
+   `ParseECPrivateKey`/`ParsePKIXPublicKey`) парсятся без изменений; формат Dart = наш формат.
+4. **Cloudflare non-RFC quirks могут дрейфовать** — открыто. Привязка к поведению mihomo Alpha
+   (референс). Зафиксированные quirks: `cf-connect-ip`, игнор Extended-CONNECT settings, h3-legacy
+   SETTINGS `0x276`, h2 plain-CONNECT + `cf-connect-proto`, pubkey-pinning вместо цепочки.
 
 ## Результаты реализации (что реально легло)
 
