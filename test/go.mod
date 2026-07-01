@@ -11,7 +11,7 @@ require (
 	github.com/docker/go-connections v0.5.0
 	github.com/gofrs/uuid/v5 v5.4.0
 	github.com/sagernet/quic-go v0.59.0-sing-box-mod.4
-	github.com/sagernet/sing v0.8.11-0.20260514110501-905ad103a4df
+	github.com/sagernet/sing v0.8.12-0.20260701111927-87e1e819f10a
 	github.com/sagernet/sing-quic v0.6.2-0.20260525051024-9467ede27fb7
 	github.com/sagernet/sing-shadowsocks v0.2.8
 	github.com/sagernet/sing-shadowsocks2 v0.2.1
@@ -140,10 +140,10 @@ require (
 	github.com/sagernet/gvisor v0.0.0-20250822052253-5558536cf237 // indirect
 	github.com/sagernet/netlink v0.0.0-20240612041022-b9a21c07ac6a // indirect
 	github.com/sagernet/nftables v0.3.0-mod.2 // indirect
-	github.com/sagernet/sing-cloudflared v0.1.1-0.20260620151903-a1d6358fe953 // indirect
+	github.com/sagernet/sing-cloudflared v0.1.1 // indirect
 	github.com/sagernet/sing-mux v0.3.5 // indirect
 	github.com/sagernet/sing-shadowtls v0.2.1 // indirect
-	github.com/sagernet/sing-tun v0.8.12-0.20260620141852-d8bba3691575 // indirect
+	github.com/sagernet/sing-tun v0.8.12-0.20260629021427-b3c6babbd353 // indirect
 	github.com/sagernet/sing-usbip v0.0.0-20260616101517-efb91521eddb // indirect
 	github.com/sagernet/sing-vmess v0.2.8-0.20250909125414-3aed155119a1 // indirect
 	github.com/sagernet/smux v1.5.50-sing-box-mod.1 // indirect

@@ -60,6 +60,9 @@ func registerQUICOutbounds(registry *outbound.Registry) {
 	outbound.Register[option.Hysteria2OutboundOptions](registry, C.TypeHysteria2, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.Hysteria2OutboundOptions) (adapter.Outbound, error) {
 		return nil, C.ErrQUICNotIncluded
 	})
+	outbound.Register[option.MASQUEOutboundOptions](registry, C.TypeMASQUE, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.MASQUEOutboundOptions) (adapter.Outbound, error) {
+		return nil, C.ErrQUICNotIncluded
+	})
 }
 
 func registerQUICTransports(registry *dns.TransportRegistry) {
