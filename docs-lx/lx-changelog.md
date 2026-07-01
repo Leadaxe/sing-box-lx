@@ -45,6 +45,9 @@ release makes that platform scope explicit in the build.
   (option set → error, unset → no-op) plus reachability tests for the production
   nested-group topology.
 
+* CI: pin `gh release create --repo` to this fork — the base-version step adds an
+  `upstream` remote for git-describe, which made `gh` target SagerNet/sing-box (403).
+
 * Upstream: synchronised — `upstream/testing` is 0 commits ahead of this base.
 
 #### v1.14.0-lx.1-rc.18

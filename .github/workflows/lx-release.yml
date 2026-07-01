@@ -394,7 +394,12 @@ jobs:
           case "${{ steps.ver.outputs.tag }}" in
             *-rc.*|*-alpha.*|*-beta.*) EXTRA="--prerelease" ;;
           esac
+          # --repo is REQUIRED: the base-version step adds an `upstream` remote
+          # (SagerNet/sing-box) so git-describe can see the alpha tags, and without
+          # --repo `gh` resolves the target repo from the remotes and picks upstream
+          # → HTTP 403 (the token has no rights there). Pin it to this repo.
           gh release create "${{ steps.ver.outputs.tag }}" dist/* \
+            --repo "${{ github.repository }}" \
             --title "sing-box-lx ${{ steps.ver.outputs.version }}" \
             --notes-file notes.md \
             --target "$GITHUB_SHA" \
