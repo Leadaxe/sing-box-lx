@@ -1,7 +1,8 @@
 # SPEC 021 — MASQUE outbound (CONNECT-IP over HTTP/3 + HTTP/2), профиль Cloudflare WARP
 
-**Статус:** h3 РАБОТАЕТ на живом Cloudflare WARP (device-verified 2026-07-02, warp=on);
-h2 отвергается WARP (400) — риск №1 материализовался, доработка в фазе 2. См. TEST_PLAN.md.
+**Статус:** h3 И h2 РАБОТАЮТ на живом Cloudflare WARP (device-verified 2026-07-02, warp=on
+на обоих). Риск №1 снят: h2 сделан на ручном фреймере поверх x/net/http2 (без http-форка).
+См. TEST_PLAN.md.
 **Ветка:** `lx-spec021-masque`
 **Тег типа:** `masque` (`C.TypeMASQUE`)
 **Build-tag:** `with_quic` + `with_gvisor` (userspace-стек)

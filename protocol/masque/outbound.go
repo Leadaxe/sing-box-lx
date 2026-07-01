@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"io"
 	"net"
-	"net/http"
 	"net/netip"
 	"strings"
 	"sync"
@@ -125,6 +124,10 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
+	if network == "h2" {
+		// PrepareTLSConfig defaults ALPN to h3; the h2 path needs h2.
+		tlsConfig.NextProtos = []string{"h2"}
+	}
 
 	mtu := options.MTU
 	if mtu == 0 {
@@ -228,24 +231,16 @@ func (o *Outbound) connectH3(ctx context.Context) (io.Closer, masque.IpConn, err
 }
 
 func (o *Outbound) connectH2(ctx context.Context) (io.Closer, masque.IpConn, error) {
-	protocols := new(http.Protocols)
-	protocols.SetHTTP2(true)
-	transport := &http.Transport{
-		Protocols: protocols,
-		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			c, err := o.dialer.DialContext(ctx, N.NetworkTCP, o.server)
-			if err != nil {
-				return nil, err
-			}
-			tlsConn := tls.Client(c, o.tlsConfig)
-			if err = tlsConn.HandshakeContext(ctx); err != nil {
-				_ = c.Close()
-				return nil, err
-			}
-			return tlsConn, nil
-		},
+	c, err := o.dialer.DialContext(ctx, N.NetworkTCP, o.server)
+	if err != nil {
+		return nil, nil, E.Cause(err, "dial tcp")
 	}
-	return masque.ConnectTunnelH2(ctx, o.profile, transport, o.uri)
+	tlsConn := tls.Client(c, o.tlsConfig)
+	if err = tlsConn.HandshakeContext(ctx); err != nil {
+		_ = c.Close()
+		return nil, nil, E.Cause(err, "tls handshake")
+	}
+	return masque.ConnectTunnelH2(ctx, o.profile, tlsConn, o.uri)
 }
 
 // pumpToTunnel reads outgoing IP packets from the userspace stack and writes

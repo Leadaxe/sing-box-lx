@@ -59,35 +59,41 @@ http=http/2
   запросах работает; соединения закрываются чисто (`connection upload/download finished`,
   без goroutine-leak в логе).
 
-### ⚠️ h2 (CONNECT-IP over HTTP/2) — НЕ РАБОТАЕТ (WARP отвечает 400)
+### ✅ h2 (CONNECT-IP over HTTP/2) — РАБОТАЕТ
 
 ```
-ERROR connection: open connection ... using outbound/masque[warp]:
-  masque: dial connect-ip over HTTP/2: connect-ip: server responded with 400
+$ curl -s -x socks5h://127.0.0.1:12346 https://www.cloudflare.com/cdn-cgi/trace
+warp=on
+ip=104.28.163.86
+colo=FRA
+http=http/2
 ```
 
-**Причина (диагноз):** stdlib `net/http` для `Method=CONNECT` использует классическую
-tunnel-семантику (CONNECT к `req.Host` как к target-хосту), а WARP h2 CONNECT-IP ждёт
-extended-CONNECT-подобный запрос с особым `:authority` (mihomo шлёт `:0` через
-`metacubex/http` fork + `NewClientConn`/`Reserve`) и заголовком `cf-connect-proto`.
-Наш обычный `client.Do(CONNECT)` формирует authority = `cloudflareaccess.com:443` и
-origin-form target — WARP это отвергает 400.
+- `warp=on` через HTTP/2-туннель; переиспользование туннеля на второй хост работает;
+  ошибок PROTOCOL_ERROR/reset в сессии нет.
 
-Это ровно **риск №1 из SPEC**, который проявился только на живом сервере: stdlib h2
-семантически несовместим с WARP CONNECT-IP. Первичная гипотеза «h2 без http-форка»
-ОПРОВЕРГНУТА живым тестом.
+**Путь к рабочему h2 (две итерации отладки на живом сервере):**
 
-**Варианты фикса (фаза 2):**
-- (а) вкопать нужную часть http-форка (`NewClientConn`/`Reserve` + h2c с masked tls.Conn),
-- (б) ручной h2-framing поверх tls.Conn (SETTINGS/HEADERS/DATA сами),
-- (в) оставить h2 как not-yet-supported, отдавать понятную ошибку при `network: h2`.
+1. Первая попытка — stdlib `http.Client.Do(CONNECT)` → **400**: classic tunnel-CONNECT
+   семантика, не то, что ждёт WARP.
+2. Вторая — extended CONNECT через `x/net/http2.ClientConn.RoundTrip` (с `:protocol`) →
+   **`extended connect not supported by peer`**: WARP не шлёт SETTINGS
+   `ENABLE_CONNECT_PROTOCOL`, и библиотека блокирует запрос превентивно (тот же RFC-обход,
+   что WARP делает на h3). Риск №1 подтверждён на живом сервере.
+3. Финал — **ручной h2-фреймер** на публичном `x/net/http2.Framer` + `hpack` (обе уже в
+   зависимостях): свой preface + SETTINGS + WINDOW_UPDATE, HEADERS, DATA-фреймы для capsule.
+   Это обходит peer-settings gate. И ещё одна поправка после `stream reset: PROTOCOL_ERROR`:
+   WARP h2 — это **plain CONNECT** (`:method` + `:authority`) + заголовок `cf-connect-proto`,
+   а НЕ extended CONNECT с `:protocol`/`:scheme`/`:path`. С plain CONNECT — `warp=on`.
 
-До реализации фикса `network: h2` фактически нерабочий на WARP — не заявлять как готовый.
+**Итог по риску №1:** снят без http-форка и без вкапывания x/net/http2 — хватило публичного
+Framer/hpack (~250 строк в client_h2.go). Новых внешних зависимостей нет.
 
 ---
 
 ## Итог
 
-Главная цель — **подключение к Cloudflare WARP по MASQUE — достигнута на h3.** h2 требует
-доработки транспорта (фаза 2). Все юнит-тесты зелёные; риск №3 (формат ключей) снят —
-реальные WARP-ключи парсятся без изменений.
+**Главная цель — подключение к Cloudflare WARP по MASQUE — достигнута на обоих транспортах
+(h3 и h2), device-verified.** Все юнит-тесты зелёные (включая h2 capsule-reassembly через
+границы DATA-фреймов); риск №3 (формат ключей) снят — реальные WARP-ключи парсятся без
+изменений; риск №1 (h2) снят ручным фреймером.
