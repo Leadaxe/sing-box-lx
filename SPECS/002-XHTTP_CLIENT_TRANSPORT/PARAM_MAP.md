@@ -192,9 +192,13 @@
   метод.
 - **Default:** `POST`. ⚠️ Upper-casing значения — **только** в sing-box-extended option-слое; Xray-core
   `GetNormalizedUplinkHTTPMethod` возвращает значение как есть.
-- **Mode-gate:** `GET` разрешён **только** при `mode=packet-up` (`uplink_http_method can be GET only in
-  packet-up mode`), т.к. stream-up/stream-one нужен запрос с телом, а GET-с-телом сервер трактует как
-  stream-down. Gate — в extended.
+- **Mode-gate (lx: soft-fallback):** `GET` осмыслен **только** при `mode=packet-up`, т.к. stream-up/
+  stream-one нужен запрос с телом, а GET-с-телом сервер трактует как stream-down. Раньше `GET` вне
+  packet-up был **жёсткой ошибкой** (`uplink_http_method can be GET only in packet-up mode`) — но это
+  роняло **весь** конфиг из-за одной кривой ноды подписки (наблюдалось: `initialize outbound[N] … can
+  be GET only in packet-up mode`). Теперь вместо ошибки — **fallback на `POST`** (безопасный дефолт,
+  валиден во всех режимах) + `WARN` в лог; в `packet-up` `GET` сохраняется. Gate — в extended
+  (`normalizeMeta`, `meta.go`). См. `SPEC.md` §поведение и тест `TestUplinkGetFallsBackToPostOutsidePacketUp`.
 - **Сервер:** маршрутизирует по методу, не по равенству настроенному значению: `GET` + непустой seq =
   uplink; любой не-GET = uplink. Явной проверки настроенного метода нет.
 - **Источник:** extended `dialer.go` `OpenStream`/`PostPacket`; `option/v2ray_transport.go`

@@ -58,7 +58,9 @@ session/seq в path; payload в body; метод POST). Расширение —
 **Коррекции верификации, влияющие на реализацию:**
 1. `Access-Control-Allow-Credentials` **не выставляется** нигде (cookie/query placement его не ставят).
 2. Mode-gate'ы (`header`/`cookie` uplink только в packet-up; `GET` метод только в packet-up) живут **только**
-   в extended option-слое — переносим как нашу валидацию.
+   в extended option-слое — переносим как нашу валидацию. **Исключение (lx):** `GET` вне packet-up — НЕ
+   ошибка, а **soft-fallback на `POST` + `WARN`** (чтобы одна кривая нода подписки не роняла весь конфиг);
+   `header`/`cookie` uplink вне packet-up остаётся жёсткой ошибкой (нет безопасного дефолта). См. журнал.
 3. Upper-casing `uplink_http_method` — только в extended option-слое.
 4. Серверный keepalive-padding гейтится `(legacyMarker || obfsAccepted) && scStreamUpServerSecs.To>0` —
    нас (клиент) не касается, но учтено в карте.

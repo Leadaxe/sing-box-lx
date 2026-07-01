@@ -77,7 +77,7 @@ JSON-ключи sing-box — **snake_case**. Источник в URL — camelCa
 | `uplinkDataPlacement`| `uplink_data_placement` | str | `auto` | body\|auto\|header\|cookie |
 | `uplinkDataKey`      | `uplink_data_key`     | str | `X-Data`/`x_data` | |
 | `uplinkChunkSize`    | `uplink_chunk_size`   | str | (зависит от placement) | `"min-max"` |
-| `uplinkHTTPMethod`   | `uplink_http_method`  | str | `POST` | upper-case; `GET` только в packet-up |
+| `uplinkHTTPMethod`   | `uplink_http_method`  | str | `POST` | upper-case; `GET` только в packet-up (вне — auto-fallback на `POST` + warning, не ошибка) |
 
 ### 2.3 X-Padding obfs (расширенные, v2)
 

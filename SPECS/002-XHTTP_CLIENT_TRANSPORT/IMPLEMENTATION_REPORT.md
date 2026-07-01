@@ -17,7 +17,7 @@ adversarial-верификацией каждого факта. Карта вс�
 **Реализованы (12 клиентских + 2 tuning-бонуса):**
 - session/seq **placement** (path/query/header/cookie) + ключи (`session_key`/`seq_key`);
 - uplink-data **placement** (body/auto/header/cookie, chunked base64) + `uplink_data_key` + `uplink_chunk_size`;
-- `uplink_http_method` (upper-case, GET только в packet-up);
+- `uplink_http_method` (upper-case; GET только в packet-up — вне auto-fallback на POST + warning, не ошибка);
 - **X-Padding obfs**: `x_padding_obfs_mode` + placement (cookie/header/query/queryInHeader) +
   `x_padding_key`/`x_padding_header` + method (`repeat-x` и `tokenish` с HPACK-Huffman-тюнингом);
 - packet-up tuning: `sc_max_each_post_bytes` (разбиение), `sc_min_posts_interval_ms` (троттлинг).
