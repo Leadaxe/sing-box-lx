@@ -1,0 +1,22 @@
+File: memfd:jit-zygote-cache
+Type: inuse_objects
+Time: 2026-07-01 09:41:05 MSK
+Showing nodes accounting for 37474, 99.31% of 37733 total
+Dropped 43 nodes (cum <= 188)
+Showing top 15 nodes out of 72
+      flat  flat%   sum%        cum   cum%
+     21845 57.89% 57.89%      21845 57.89%  github.com/sagernet/sing-box/daemon.(*StartedService).WriteMessage
+      6554 17.37% 75.26%       6554 17.37%  github.com/sagernet/sing-box/log.Formatter.Format
+      1821  4.83% 80.09%       1821  4.83%  math/big.nat.make (inline)
+      1726  4.57% 84.66%       1726  4.57%  github.com/sagernet/wireguard-go/device.(*Device).PopulatePools.func3
+      1638  4.34% 89.00%       1638  4.34%  crypto/x509/pkix.(*Name).FillFromRDNSequence
+      1170  3.10% 92.11%       1170  3.10%  time.goFunc
+       769  2.04% 94.14%        769  2.04%  runtime.allocm
+       683  1.81% 95.95%       4142 10.98%  crypto/x509.parseCertificate
+       683  1.81% 97.76%        683  1.81%  github.com/sagernet/wireguard-go/device.(*Device).NewPeer
+       585  1.55% 99.31%        649  1.72%  github.com/sagernet/wireguard-go/device.NewDevice
+         0     0% 99.31%       5669 15.02%  cgoexp_c2844bda853d_proxylibbox_CommandServer_StartOrReloadService
+         0     0% 99.31%       4142 10.98%  crypto/x509.ParseCertificates
+         0     0% 99.31%       1821  4.83%  crypto/x509.parsePublicKey
+         0     0% 99.31%       1334  3.54%  github.com/sagernet/sing-box.(*Box).Start
+         0     0% 99.31%       1332  3.53%  github.com/sagernet/sing-box.(*Box).preStart

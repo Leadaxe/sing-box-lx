@@ -1,0 +1,32 @@
+File: memfd:jit-zygote-cache
+Type: cpu
+Time: 2026-07-01 09:41:06 MSK
+Duration: 10.01s, Total samples = 340ms ( 3.40%)
+Showing nodes accounting for 340ms, 100% of 340ms total
+Showing top 25 nodes out of 123
+      flat  flat%   sum%        cum   cum%
+     120ms 35.29% 35.29%      120ms 35.29%  internal/runtime/syscall.Syscall6
+      50ms 14.71% 50.00%       50ms 14.71%  runtime.futex
+      40ms 11.76% 61.76%       40ms 11.76%  [libc.so]
+      20ms  5.88% 67.65%       20ms  5.88%  runtime.write1
+      10ms  2.94% 70.59%       10ms  2.94%  fmt.(*fmt).fmtSbx
+      10ms  2.94% 73.53%       10ms  2.94%  internal/poll.(*FD).Write
+      10ms  2.94% 76.47%       10ms  2.94%  runtime.(*mLockProfile).store (inline)
+      10ms  2.94% 79.41%       10ms  2.94%  runtime.(*spanSet).pop
+      10ms  2.94% 82.35%       10ms  2.94%  runtime.(*timers).cleanHead
+      10ms  2.94% 85.29%       10ms  2.94%  runtime.exitsyscallfast
+      10ms  2.94% 88.24%       10ms  2.94%  runtime.findObject
+      10ms  2.94% 91.18%       90ms 26.47%  runtime.findRunnable
+      10ms  2.94% 94.12%       10ms  2.94%  runtime.releasep
+      10ms  2.94% 97.06%       10ms  2.94%  runtime.stealWork
+      10ms  2.94%   100%       20ms  5.88%  runtime.wakep
+         0     0%   100%       10ms  2.94%  bytes.(*Buffer).ReadFrom
+         0     0%   100%       10ms  2.94%  fmt.(*fmt).fmtBx (inline)
+         0     0%   100%       10ms  2.94%  fmt.(*pp).doPrintf
+         0     0%   100%       10ms  2.94%  fmt.(*pp).fmtBytes
+         0     0%   100%       10ms  2.94%  fmt.(*pp).printArg
+         0     0%   100%       10ms  2.94%  fmt.Sprintf
+         0     0%   100%       10ms  2.94%  github.com/metacubex/utls.(*Conn).readFromUntil
+         0     0%   100%       10ms  2.94%  github.com/metacubex/utls.(*Conn).readRecord (inline)
+         0     0%   100%       10ms  2.94%  github.com/metacubex/utls.(*Conn).readRecordOrCCS
+         0     0%   100%       10ms  2.94%  github.com/metacubex/utls.(*UConn).Read

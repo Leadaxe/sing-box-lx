@@ -1,0 +1,2472 @@
+{
+  "log": {
+    "level": "warn",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "local",
+        "tag": "local_dns_resolver"
+      },
+      {
+        "type": "udp",
+        "tag": "google_udp",
+        "server_port": 53,
+        "server": "8.8.8.8"
+      },
+      {
+        "type": "udp",
+        "tag": "cloudflare_udp",
+        "server_port": 53,
+        "server": "1.1.1.1"
+      },
+      {
+        "type": "udp",
+        "server": "<lan-ip>",
+        "tag": "dns_home"
+      },
+      {
+        "type": "udp",
+        "tag": "yandex_udp",
+        "server": "77.88.8.8",
+        "server_port": 53
+      }
+    ],
+    "rules": [
+      {
+        "action": "predefined",
+        "answer": [
+          "ntc.party. IN A 130.255.77.28"
+        ],
+        "domain": "ntc.party"
+      },
+      {
+        "rule_set": [
+          "ru-domains",
+          "ru-services"
+        ],
+        "server": "yandex_udp"
+      }
+    ],
+    "final": "cloudflare_udp",
+    "strategy": "prefer_ipv4"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "lxbox",
+      "address": "172.16.0.1/30",
+      "mtu": 1492,
+      "auto_route": true,
+      "strict_route": false,
+      "stack": "system",
+      "exclude_package": [
+        "bypass.whitelist",
+        "com.notcvnt.rknhardering",
+        "io.github.romanvht.byedpi"
+      ]
+    }
+  ],
+  "endpoints": [
+    {
+      "type": "wireguard",
+      "tag": "🔥⛈️ WARP (AWG 1.5)",
+      "mtu": 1280,
+      "address": [
+        "172.16.0.2/32",
+        "2606:4700:110:8cb4:3b52:d5ac:bec6:dbea/128"
+      ],
+      "private_key": "<redacted>",
+      "peers": [
+        {
+          "address": "188.114.97.5",
+          "port": 891,
+          "public_key": "<redacted>",
+          "allowed_ips": [
+            "0.0.0.0/0",
+            "::/0"
+          ]
+        }
+      ],
+      "jc": 4,
+      "jmin": 40,
+      "jmax": 70,
+      "s1": 0,
+      "s2": 0,
+      "h1": 1,
+      "h2": 2,
+      "h3": 3,
+      "h4": 4,
+      "id": "gosuslugi.ru",
+      "ip": "quic",
+      "ib": "chrome"
+    },
+    {
+      "type": "wireguard",
+      "tag": "🏠 home",
+      "mtu": 1220,
+      "address": [
+        "10.99.0.2/32"
+      ],
+      "private_key": "<redacted>",
+      "peers": [
+        {
+          "address": "93.100.173.230",
+          "port": 51820,
+          "public_key": "<redacted>",
+          "allowed_ips": [
+            "0.0.0.0/0",
+            "::/0"
+          ],
+          "persistent_keepalive_interval": 25
+        }
+      ]
+    },
+    {
+      "type": "wireguard",
+      "tag": "🏠 awg2-home",
+      "mtu": 1280,
+      "address": [
+        "10.99.1.2/32"
+      ],
+      "private_key": "<redacted>",
+      "peers": [
+        {
+          "address": "93.100.173.230",
+          "port": 51821,
+          "public_key": "<redacted>",
+          "allowed_ips": [
+            "0.0.0.0/0",
+            "::/0"
+          ],
+          "pre_shared_key": "<redacted>",
+          "persistent_keepalive_interval": 25
+        }
+      ],
+      "jc": 10,
+      "jmin": 50,
+      "jmax": 100,
+      "s1": 20,
+      "s2": 20,
+      "s3": 60,
+      "s4": 60,
+      "h1": 3249068104,
+      "h2": 3201022457,
+      "h3": 2058299335,
+      "h4": 3393249950,
+      "i1": "<b 0x000100002112a442><r 12>",
+      "i2": "<b 0x010100002112a442><r 12>",
+      "i3": "<r 24>"
+    },
+    {
+      "type": "wireguard",
+      "tag": "🏠wg-parnas",
+      "mtu": 1420,
+      "address": [
+        "10.10.10.2/32"
+      ],
+      "private_key": "<redacted>",
+      "peers": [
+        {
+          "address": "212.232.78.237",
+          "port": 51820,
+          "public_key": "<redacted>",
+          "allowed_ips": [
+            "0.0.0.0/0",
+            "::/0"
+          ],
+          "persistent_keepalive_interval": 25
+        }
+      ]
+    },
+    {
+      "type": "wireguard",
+      "tag": "🔥⛈️ WARP (AWG 1.5) 2",
+      "mtu": 1280,
+      "address": [
+        "172.16.0.2/32",
+        "2606:4700:110:8a57:3aa9:def0:14ab:d84c/128"
+      ],
+      "private_key": "<redacted>",
+      "peers": [
+        {
+          "address": "188.114.97.4",
+          "port": 4177,
+          "public_key": "<redacted>",
+          "allowed_ips": [
+            "0.0.0.0/0",
+            "::/0"
+          ]
+        }
+      ],
+      "jc": 4,
+      "jmin": 40,
+      "jmax": 70,
+      "s1": 0,
+      "s2": 0,
+      "h1": 1,
+      "h2": 2,
+      "h3": 3,
+      "h4": 4,
+      "id": "telemost.yandex.ru",
+      "ip": "quic",
+      "ib": "chrome"
+    },
+    {
+      "type": "wireguard",
+      "tag": "🔥⛈️ WARP (AWG 1.5) 3",
+      "mtu": 1280,
+      "address": [
+        "172.16.0.2/32",
+        "2606:4700:110:8a57:3aa9:def0:14ab:d84c/128"
+      ],
+      "private_key": "<redacted>",
+      "peers": [
+        {
+          "address": "188.114.97.1",
+          "port": 1018,
+          "public_key": "<redacted>",
+          "allowed_ips": [
+            "0.0.0.0/0",
+            "::/0"
+          ]
+        }
+      ],
+      "jc": 4,
+      "jmin": 40,
+      "jmax": 70,
+      "s1": 0,
+      "s2": 0,
+      "h1": 1,
+      "h2": 2,
+      "h3": 3,
+      "h4": 4,
+      "id": "www.google.com",
+      "ip": "quic",
+      "ib": "chrome"
+    },
+    {
+      "type": "wireguard",
+      "tag": "🔥☁️ WARP",
+      "mtu": 1280,
+      "address": [
+        "172.16.0.2/32",
+        "2606:4700:110:8a57:3aa9:def0:14ab:d84c/128"
+      ],
+      "private_key": "<redacted>",
+      "peers": [
+        {
+          "address": "188.114.97.1",
+          "port": 1018,
+          "public_key": "<redacted>",
+          "reserved": [
+            38,
+            249,
+            0
+          ],
+          "allowed_ips": [
+            "0.0.0.0/0",
+            "::/0"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "wireguard",
+      "tag": "🔥⛈️ WARP (AWG 1.5) 4",
+      "mtu": 1280,
+      "address": [
+        "172.16.0.2/32",
+        "2606:4700:110:8a57:3aa9:def0:14ab:d84c/128"
+      ],
+      "private_key": "<redacted>",
+      "peers": [
+        {
+          "address": "188.114.96.4",
+          "port": 891,
+          "public_key": "<redacted>",
+          "allowed_ips": [
+            "0.0.0.0/0",
+            "::/0"
+          ]
+        }
+      ],
+      "jc": 4,
+      "jmin": 40,
+      "jmax": 70,
+      "s1": 0,
+      "s2": 0,
+      "h1": 1,
+      "h2": 2,
+      "h3": 3,
+      "h4": 4,
+      "id": "www.microsoft.com",
+      "ip": "quic",
+      "ib": "chrome"
+    },
+    {
+      "type": "wireguard",
+      "tag": "🔥⛈️ WARP (AWG 1.5) 5",
+      "mtu": 1280,
+      "address": [
+        "172.16.0.2/32",
+        "2606:4700:110:8a57:3aa9:def0:14ab:d84c/128"
+      ],
+      "private_key": "<redacted>",
+      "peers": [
+        {
+          "address": "162.159.195.5",
+          "port": 928,
+          "public_key": "<redacted>",
+          "allowed_ips": [
+            "0.0.0.0/0",
+            "::/0"
+          ]
+        }
+      ],
+      "jc": 4,
+      "jmin": 40,
+      "jmax": 70,
+      "s1": 0,
+      "s2": 0,
+      "h1": 1,
+      "h2": 2,
+      "h3": 3,
+      "h4": 4,
+      "id": "ozon.ru",
+      "ip": "quic",
+      "ib": "chrome"
+    },
+    {
+      "type": "wireguard",
+      "tag": "🔥⛈️ WARP (AWG 1.5) 6",
+      "mtu": 1280,
+      "address": [
+        "172.16.0.2/32",
+        "2606:4700:110:8a57:3aa9:def0:14ab:d84c/128"
+      ],
+      "private_key": "<redacted>",
+      "peers": [
+        {
+          "address": "188.114.98.10",
+          "port": 1014,
+          "public_key": "<redacted>",
+          "allowed_ips": [
+            "0.0.0.0/0",
+            "::/0"
+          ]
+        }
+      ],
+      "jc": 4,
+      "jmin": 40,
+      "jmax": 70,
+      "s1": 0,
+      "s2": 0,
+      "h1": 1,
+      "h2": 2,
+      "h3": 3,
+      "h4": 4,
+      "id": "www.wikipedia.org",
+      "ip": "quic",
+      "ib": "chrome"
+    },
+    {
+      "type": "wireguard",
+      "tag": "🔥⛈️ WARP (AWG 1.5) 7",
+      "mtu": 1280,
+      "address": [
+        "172.16.0.2/32",
+        "2606:4700:110:8a57:3aa9:def0:14ab:d84c/128"
+      ],
+      "private_key": "<redacted>",
+      "peers": [
+        {
+          "address": "162.159.195.8",
+          "port": 1387,
+          "public_key": "<redacted>",
+          "allowed_ips": [
+            "0.0.0.0/0",
+            "::/0"
+          ]
+        }
+      ],
+      "jc": 4,
+      "jmin": 40,
+      "jmax": 70,
+      "s1": 0,
+      "s2": 0,
+      "h1": 1,
+      "h2": 2,
+      "h3": 3,
+      "h4": 4,
+      "id": "www.apple.com",
+      "ip": "quic",
+      "ib": "chrome"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct-out"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇪🇺 🚀Авто | Лучший сервер ⚡⚡",
+      "server": "dp-hu-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "2715592069f36fe7"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-0"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-0",
+      "server": "72.9.161.42",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇫🇮⚡Финляндия",
+      "server": "m247-fi-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "b0c58c398abb6842"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇫🇮⚡Финляндия bypass",
+      "server": "m247-fi-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "b0c58c398abb6842"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream",
+      "server": "196.44.122.133",
+      "server_port": 44445,
+      "version": "5",
+      "username": "14a00ead4b2e5",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇫🇷⚡Франция",
+      "server": "gt-fr-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "364994a6f61fc955"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇫🇷⚡Франция bypass",
+      "server": "gt-fr-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "364994a6f61fc955"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-1"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-1",
+      "server": "46.203.227.65",
+      "server_port": 44445,
+      "version": "5",
+      "username": "14a00ead4b2e5",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇩🇪⚡Германия",
+      "server": "dp-de-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "dc8109baf0f607ea"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇩🇪⚡Германия bypass",
+      "server": "dp-de-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "dc8109baf0f607ea"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-2"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-2",
+      "server": "188.215.81.136",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇭🇺⚡Венгрия",
+      "server": "dp-hu-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "2715592069f36fe7"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇭🇺⚡Венгрия bypass",
+      "server": "dp-hu-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "2715592069f36fe7"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-3"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-3",
+      "server": "72.9.161.42",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇵🇱⚡Польша",
+      "server": "dp-pl-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "d2c6d9f6e6e12bfe"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇵🇱⚡Польша bypass",
+      "server": "dp-pl-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "d2c6d9f6e6e12bfe"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-4"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-4",
+      "server": "89.42.85.29",
+      "server_port": 44445,
+      "version": "5",
+      "username": "14a00ead4b2e5",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇪🇸⚡Испания",
+      "server": "dp-es-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "48fccabc158a4c22"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇪🇸⚡Испания bypass",
+      "server": "dp-es-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "48fccabc158a4c22"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-5"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-5",
+      "server": "46.34.58.29",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇬🇧⚡Англия",
+      "server": "gthost-gb-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "ea10cd5686751ec5"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇬🇧⚡Англия bypass",
+      "server": "gthost-gb-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "ea10cd5686751ec5"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-6"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-6",
+      "server": "91.193.252.67",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇨🇭⚡Швейцария-2",
+      "server": "gt-ch-02.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "cf9d145ad8f1ea55"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇨🇭⚡Швейцария bypass",
+      "server": "gt-ch-02.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "cf9d145ad8f1ea55"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-7"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-7",
+      "server": "217.156.112.16",
+      "server_port": 44445,
+      "version": "5",
+      "username": "14a00ead4b2e5",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇫🇮⚡Финляндия-2",
+      "server": "m247-fi-02.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "6ecdb111a4e57f94"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇫🇮⚡Финляндия bypass-1",
+      "server": "m247-fi-02.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "6ecdb111a4e57f94"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-8"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-8",
+      "server": "37.34.94.230",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇮🇹⚡Италия",
+      "server": "dp-it-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "search-tumblr.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "6419bed7fd0a2cff"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇮🇹⚡Италия bypass",
+      "server": "dp-it-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "search-tumblr.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "6419bed7fd0a2cff"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-9"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-9",
+      "server": "78.143.236.216",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇳🇱⚡Нидерланды",
+      "server": "cherry-nll-01.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "6f15101ff2cc4887"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇳🇱⚡Нидерланды bypass",
+      "server": "cherry-nll-01.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "6f15101ff2cc4887"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-10"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-10",
+      "server": "78.143.238.49",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇱🇹⚡Литва",
+      "server": "cherry-lt-01.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "0d960275b7b0f9af"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇱🇹⚡Литва bypass",
+      "server": "cherry-lt-01.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "0d960275b7b0f9af"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-11"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-11",
+      "server": "78.143.236.126",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇨🇭⚡Швейцария",
+      "server": "gt-ch-01.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "d515d6cfdfe60b02"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇨🇭⚡Швейцария bypass-1",
+      "server": "gt-ch-01.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "d515d6cfdfe60b02"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-12"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-12",
+      "server": "141.226.240.66",
+      "server_port": 44445,
+      "version": "5",
+      "username": "14a00ead4b2e5",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇰🇿💳Казахстан",
+      "server": "mg-kz-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "rbc.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "e7d7ac50284d5304"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇰🇿💳Казахстан bypass",
+      "server": "mg-kz-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "rbc.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "e7d7ac50284d5304"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-13"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-13",
+      "server": "84.55.1.169",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇮🇳💳Индия",
+      "server": "ufo-in-01.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "rbc.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "0a3f199712e38f33"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇮🇳💳Индия bypass",
+      "server": "ufo-in-01.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "rbc.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "0a3f199712e38f33"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-14"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-14",
+      "server": "84.55.1.69",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇧🇷💳Бразилия",
+      "server": "m247-br-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "b4f3a05896b60039"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇧🇷💳Бразилия bypass",
+      "server": "m247-br-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "b4f3a05896b60039"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-15"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-15",
+      "server": "37.34.95.20",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇹🇷💳Турция",
+      "server": "dp-tr-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "205748bc0f24a747"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇹🇷💳Турция bypass",
+      "server": "dp-tr-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "205748bc0f24a747"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-16"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-16",
+      "server": "95.135.61.176",
+      "server_port": 44445,
+      "version": "5",
+      "username": "14a00ead4b2e5",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇷🇺💳Россия",
+      "server": "mws-ru-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "rbc.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "1b8e04c90af97d47"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇷🇺💳Россия bypass",
+      "server": "mws-ru-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "rbc.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "1b8e04c90af97d47"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-17"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-17",
+      "server": "84.55.1.102",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇨🇦Канада",
+      "server": "dp-ca-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "da147b40372a5fed"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇨🇦Канада bypass",
+      "server": "dp-ca-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "da147b40372a5fed"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-18"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-18",
+      "server": "178.92.253.164",
+      "server_port": 44445,
+      "version": "5",
+      "username": "14a00ead4b2e5",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇲🇩Молдова",
+      "server": "alex-md-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "rbc.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "9f4263b353817e73"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇲🇩Молдова bypass",
+      "server": "alex-md-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "rbc.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "9f4263b353817e73"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-19"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-19",
+      "server": "46.203.208.170",
+      "server_port": 44445,
+      "version": "5",
+      "username": "14a00ead4b2e5",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇺🇸США",
+      "server": "cherry-us-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "rbc.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "60e104f7126798c4"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇺🇸США bypass",
+      "server": "cherry-us-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "rbc.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "60e104f7126798c4"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-20"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-20",
+      "server": "95.135.61.188",
+      "server_port": 44445,
+      "version": "5",
+      "username": "14a00ead4b2e5",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇯🇵Япония",
+      "server": "ufo-jp-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "rbc.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "83780413c2ad3eaa"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇯🇵Япония bypass",
+      "server": "ufo-jp-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "rbc.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "83780413c2ad3eaa"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-21"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-21",
+      "server": "95.134.166.149",
+      "server_port": 44445,
+      "version": "5",
+      "username": "14a00ead4b2e5",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇭🇰Гонконг",
+      "server": "profit-hk-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "rbc.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "fe31454fcc98d74d"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇭🇰Гонконг bypass",
+      "server": "profit-hk-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "rbc.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "fe31454fcc98d74d"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-22"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-22",
+      "server": "84.55.1.144",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: ⬇️ Обходы белых списков ⬇️",
+      "server": "158.160.171.155",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "ads.x5.ru",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "dc8109baf0f607ea"
+        }
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇭🇺🟠Венгрия (БС-1) 📡",
+      "server": "cherry-lt-01.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "0d960275b7b0f9af"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-0-1"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-0-1",
+      "server": "78.143.236.126",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇭🇺🟠Венгрия (БС-0) 📡",
+      "server": "dp-it-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "search-tumblr.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "6419bed7fd0a2cff"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-0-2"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-0-2",
+      "server": "78.143.236.216",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇩🇪🟠Германия (БС-3) 📡",
+      "server": "m247-fi-02.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "6ecdb111a4e57f94"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-0-3"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-0-3",
+      "server": "37.34.94.230",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇨🇭⚪Швейцария (БС-6) ☁️",
+      "server": "gthost-gb-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "ea10cd5686751ec5"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-0-4"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-0-4",
+      "server": "91.193.252.67",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇳🇱⚪Нидерланды (БС-4) ☁️",
+      "server": "dp-pl-01.live",
+      "server_port": 443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "d2c6d9f6e6e12bfe"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-0-5"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-0-5",
+      "server": "89.42.85.29",
+      "server_port": 44445,
+      "version": "5",
+      "username": "14a00ead4b2e5",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇳🇱⚪Нидерланды (БС-5) ☁️",
+      "server": "m247-fi-02.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "6ecdb111a4e57f94"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-0-6"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-0-6",
+      "server": "37.34.94.230",
+      "server_port": 44445,
+      "version": "5",
+      "username": "vpnliberty",
+      "password": "<redacted>"
+    },
+    {
+      "type": "vless",
+      "tag": "L: 🇫🇷🟠Франция (БС-2) 📡",
+      "server": "gt-ch-02.live",
+      "server_port": 8443,
+      "uuid": "<redacted>",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "storage.yandex.net",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "<redacted>",
+          "short_id": "cf9d145ad8f1ea55"
+        }
+      },
+      "detour": "L: ⚙ ru-upstream-0-7"
+    },
+    {
+      "type": "socks",
+      "tag": "L: ⚙ ru-upstream-0-7",
+      "server": "217.156.112.16",
+      "server_port": 44445,
+      "version": "5",
+      "username": "14a00ead4b2e5",
+      "password": "<redacted>"
+    },
+    {
+      "type": "socks",
+      "tag": "🔁 ByeByeDpi",
+      "server": "127.0.0.1",
+      "server_port": 1081,
+      "version": "5"
+    },
+    {
+      "tag": "vpn-1",
+      "type": "selector",
+      "outbounds": [
+        "L: 🇪🇺 🚀Авто | Лучший сервер ⚡⚡",
+        "L: 🇫🇮⚡Финляндия",
+        "L: 🇫🇮⚡Финляндия bypass",
+        "L: 🇫🇷⚡Франция",
+        "L: 🇫🇷⚡Франция bypass",
+        "L: 🇩🇪⚡Германия",
+        "L: 🇩🇪⚡Германия bypass",
+        "L: 🇭🇺⚡Венгрия",
+        "L: 🇭🇺⚡Венгрия bypass",
+        "L: 🇵🇱⚡Польша",
+        "L: 🇵🇱⚡Польша bypass",
+        "L: 🇪🇸⚡Испания",
+        "L: 🇪🇸⚡Испания bypass",
+        "L: 🇬🇧⚡Англия",
+        "L: 🇬🇧⚡Англия bypass",
+        "L: 🇨🇭⚡Швейцария-2",
+        "L: 🇨🇭⚡Швейцария bypass",
+        "L: 🇫🇮⚡Финляндия-2",
+        "L: 🇫🇮⚡Финляндия bypass-1",
+        "L: 🇮🇹⚡Италия",
+        "L: 🇮🇹⚡Италия bypass",
+        "L: 🇳🇱⚡Нидерланды",
+        "L: 🇳🇱⚡Нидерланды bypass",
+        "L: 🇱🇹⚡Литва",
+        "L: 🇱🇹⚡Литва bypass",
+        "L: 🇨🇭⚡Швейцария",
+        "L: 🇨🇭⚡Швейцария bypass-1",
+        "L: 🇰🇿💳Казахстан",
+        "L: 🇰🇿💳Казахстан bypass",
+        "L: 🇮🇳💳Индия",
+        "L: 🇮🇳💳Индия bypass",
+        "L: 🇧🇷💳Бразилия",
+        "L: 🇧🇷💳Бразилия bypass",
+        "L: 🇹🇷💳Турция",
+        "L: 🇹🇷💳Турция bypass",
+        "L: 🇷🇺💳Россия",
+        "L: 🇷🇺💳Россия bypass",
+        "L: 🇨🇦Канада",
+        "L: 🇨🇦Канада bypass",
+        "L: 🇲🇩Молдова",
+        "L: 🇲🇩Молдова bypass",
+        "L: 🇺🇸США",
+        "L: 🇺🇸США bypass",
+        "L: 🇯🇵Япония",
+        "L: 🇯🇵Япония bypass",
+        "L: 🇭🇰Гонконг",
+        "L: 🇭🇰Гонконг bypass",
+        "L: ⬇️ Обходы белых списков ⬇️",
+        "L: 🇭🇺🟠Венгрия (БС-1) 📡",
+        "L: 🇭🇺🟠Венгрия (БС-0) 📡",
+        "L: 🇩🇪🟠Германия (БС-3) 📡",
+        "L: 🇨🇭⚪Швейцария (БС-6) ☁️",
+        "L: 🇳🇱⚪Нидерланды (БС-4) ☁️",
+        "L: 🇳🇱⚪Нидерланды (БС-5) ☁️",
+        "L: 🇫🇷🟠Франция (БС-2) 📡",
+        "🔥⛈️ WARP (AWG 1.5)",
+        "🔁 ByeByeDpi",
+        "🏠 home",
+        "🏠 awg2-home",
+        "🏠wg-parnas",
+        "🔥⛈️ WARP (AWG 1.5) 2",
+        "🔥⛈️ WARP (AWG 1.5) 3",
+        "🔥☁️ WARP",
+        "🔥⛈️ WARP (AWG 1.5) 4",
+        "🔥⛈️ WARP (AWG 1.5) 5",
+        "🔥⛈️ WARP (AWG 1.5) 6",
+        "🔥⛈️ WARP (AWG 1.5) 7",
+        "direct-out",
+        "block",
+        "vpn-1-auto"
+      ],
+      "interrupt_exist_connections": true
+    },
+    {
+      "tag": "vpn-1-auto",
+      "type": "urltest",
+      "outbounds": [
+        "L: 🇪🇺 🚀Авто | Лучший сервер ⚡⚡",
+        "L: 🇫🇮⚡Финляндия",
+        "L: 🇫🇮⚡Финляндия bypass",
+        "L: 🇫🇷⚡Франция",
+        "L: 🇫🇷⚡Франция bypass",
+        "L: 🇩🇪⚡Германия",
+        "L: 🇩🇪⚡Германия bypass",
+        "L: 🇭🇺⚡Венгрия",
+        "L: 🇭🇺⚡Венгрия bypass",
+        "L: 🇵🇱⚡Польша",
+        "L: 🇵🇱⚡Польша bypass",
+        "L: 🇪🇸⚡Испания",
+        "L: 🇪🇸⚡Испания bypass",
+        "L: 🇬🇧⚡Англия",
+        "L: 🇬🇧⚡Англия bypass",
+        "L: 🇨🇭⚡Швейцария-2",
+        "L: 🇨🇭⚡Швейцария bypass",
+        "L: 🇫🇮⚡Финляндия-2",
+        "L: 🇫🇮⚡Финляндия bypass-1",
+        "L: 🇮🇹⚡Италия",
+        "L: 🇮🇹⚡Италия bypass",
+        "L: 🇳🇱⚡Нидерланды",
+        "L: 🇳🇱⚡Нидерланды bypass",
+        "L: 🇱🇹⚡Литва",
+        "L: 🇱🇹⚡Литва bypass",
+        "L: 🇨🇭⚡Швейцария",
+        "L: 🇨🇭⚡Швейцария bypass-1",
+        "L: 🇰🇿💳Казахстан",
+        "L: 🇰🇿💳Казахстан bypass",
+        "L: 🇮🇳💳Индия",
+        "L: 🇮🇳💳Индия bypass",
+        "L: 🇧🇷💳Бразилия",
+        "L: 🇧🇷💳Бразилия bypass",
+        "L: 🇹🇷💳Турция",
+        "L: 🇹🇷💳Турция bypass",
+        "L: 🇷🇺💳Россия",
+        "L: 🇷🇺💳Россия bypass",
+        "L: 🇨🇦Канада",
+        "L: 🇨🇦Канада bypass",
+        "L: 🇲🇩Молдова",
+        "L: 🇲🇩Молдова bypass",
+        "L: 🇺🇸США",
+        "L: 🇺🇸США bypass",
+        "L: 🇯🇵Япония",
+        "L: 🇯🇵Япония bypass",
+        "L: 🇭🇰Гонконг",
+        "L: 🇭🇰Гонконг bypass",
+        "L: ⬇️ Обходы белых списков ⬇️",
+        "L: 🇭🇺🟠Венгрия (БС-1) 📡",
+        "L: 🇭🇺🟠Венгрия (БС-0) 📡",
+        "L: 🇩🇪🟠Германия (БС-3) 📡",
+        "L: 🇨🇭⚪Швейцария (БС-6) ☁️",
+        "L: 🇳🇱⚪Нидерланды (БС-4) ☁️",
+        "L: 🇳🇱⚪Нидерланды (БС-5) ☁️",
+        "L: 🇫🇷🟠Франция (БС-2) 📡",
+        "🔥⛈️ WARP (AWG 1.5)",
+        "🔁 ByeByeDpi",
+        "🏠 home",
+        "🏠 awg2-home",
+        "🏠wg-parnas",
+        "🔥⛈️ WARP (AWG 1.5) 2",
+        "🔥⛈️ WARP (AWG 1.5) 3",
+        "🔥☁️ WARP",
+        "🔥⛈️ WARP (AWG 1.5) 4",
+        "🔥⛈️ WARP (AWG 1.5) 5",
+        "🔥⛈️ WARP (AWG 1.5) 6",
+        "🔥⛈️ WARP (AWG 1.5) 7"
+      ],
+      "url": "<redacted-url>",
+      "interval": "5m",
+      "tolerance": 50,
+      "idle_timeout": "30m",
+      "interrupt_exist_connections": false,
+      "mode": "round_robin",
+      "balancer": {
+        "pool": 4,
+        "pool_tolerance": 0,
+        "sticky_hash": [
+          "process",
+          "domain"
+        ]
+      }
+    },
+    {
+      "tag": "vpn-3",
+      "type": "selector",
+      "outbounds": [
+        "🔥⛈️ WARP (AWG 1.5)",
+        "🔥⛈️ WARP (AWG 1.5) 2",
+        "🔥⛈️ WARP (AWG 1.5) 3",
+        "🔥☁️ WARP",
+        "🔥⛈️ WARP (AWG 1.5) 4",
+        "🔥⛈️ WARP (AWG 1.5) 5",
+        "🔥⛈️ WARP (AWG 1.5) 6",
+        "🔥⛈️ WARP (AWG 1.5) 7"
+      ],
+      "interrupt_exist_connections": true,
+      "default": "🔥⛈️ WARP (AWG 1.5)"
+    },
+    {
+      "tag": "vpn-2",
+      "type": "selector",
+      "outbounds": [
+        "L: 🇪🇺 🚀Авто | Лучший сервер ⚡⚡",
+        "L: 🇫🇮⚡Финляндия",
+        "L: 🇫🇮⚡Финляндия bypass",
+        "L: 🇫🇷⚡Франция",
+        "L: 🇫🇷⚡Франция bypass",
+        "L: 🇩🇪⚡Германия",
+        "L: 🇩🇪⚡Германия bypass",
+        "L: 🇭🇺⚡Венгрия",
+        "L: 🇭🇺⚡Венгрия bypass",
+        "L: 🇵🇱⚡Польша",
+        "L: 🇵🇱⚡Польша bypass",
+        "L: 🇪🇸⚡Испания",
+        "L: 🇪🇸⚡Испания bypass",
+        "L: 🇬🇧⚡Англия",
+        "L: 🇬🇧⚡Англия bypass",
+        "L: 🇨🇭⚡Швейцария-2",
+        "L: 🇨🇭⚡Швейцария bypass",
+        "L: 🇫🇮⚡Финляндия-2",
+        "L: 🇫🇮⚡Финляндия bypass-1",
+        "L: 🇮🇹⚡Италия",
+        "L: 🇮🇹⚡Италия bypass",
+        "L: 🇳🇱⚡Нидерланды",
+        "L: 🇳🇱⚡Нидерланды bypass",
+        "L: 🇱🇹⚡Литва",
+        "L: 🇱🇹⚡Литва bypass",
+        "L: 🇨🇭⚡Швейцария",
+        "L: 🇨🇭⚡Швейцария bypass-1",
+        "L: 🇰🇿💳Казахстан",
+        "L: 🇰🇿💳Казахстан bypass",
+        "L: 🇮🇳💳Индия",
+        "L: 🇮🇳💳Индия bypass",
+        "L: 🇧🇷💳Бразилия",
+        "L: 🇧🇷💳Бразилия bypass",
+        "L: 🇹🇷💳Турция",
+        "L: 🇹🇷💳Турция bypass",
+        "L: 🇷🇺💳Россия",
+        "L: 🇷🇺💳Россия bypass",
+        "L: 🇨🇦Канада",
+        "L: 🇨🇦Канада bypass",
+        "L: 🇲🇩Молдова",
+        "L: 🇲🇩Молдова bypass",
+        "L: 🇺🇸США",
+        "L: 🇺🇸США bypass",
+        "L: 🇯🇵Япония",
+        "L: 🇯🇵Япония bypass",
+        "L: 🇭🇰Гонконг",
+        "L: 🇭🇰Гонконг bypass",
+        "L: ⬇️ Обходы белых списков ⬇️",
+        "L: 🇭🇺🟠Венгрия (БС-1) 📡",
+        "L: 🇭🇺🟠Венгрия (БС-0) 📡",
+        "L: 🇩🇪🟠Германия (БС-3) 📡",
+        "L: 🇨🇭⚪Швейцария (БС-6) ☁️",
+        "L: 🇳🇱⚪Нидерланды (БС-4) ☁️",
+        "L: 🇳🇱⚪Нидерланды (БС-5) ☁️",
+        "L: 🇫🇷🟠Франция (БС-2) 📡",
+        "🔥⛈️ WARP (AWG 1.5)",
+        "🔁 ByeByeDpi",
+        "🏠 home",
+        "🏠 awg2-home",
+        "🏠wg-parnas",
+        "🔥⛈️ WARP (AWG 1.5) 2",
+        "🔥⛈️ WARP (AWG 1.5) 3",
+        "🔥☁️ WARP",
+        "🔥⛈️ WARP (AWG 1.5) 4",
+        "🔥⛈️ WARP (AWG 1.5) 5",
+        "🔥⛈️ WARP (AWG 1.5) 6",
+        "🔥⛈️ WARP (AWG 1.5) 7"
+      ],
+      "interrupt_exist_connections": true
+    },
+    {
+      "tag": "vpn-4",
+      "type": "selector",
+      "outbounds": [
+        "L: 🇪🇺 🚀Авто | Лучший сервер ⚡⚡",
+        "L: 🇫🇮⚡Финляндия",
+        "L: 🇫🇮⚡Финляндия bypass",
+        "L: 🇫🇷⚡Франция",
+        "L: 🇫🇷⚡Франция bypass",
+        "L: 🇩🇪⚡Германия",
+        "L: 🇩🇪⚡Германия bypass",
+        "L: 🇭🇺⚡Венгрия",
+        "L: 🇭🇺⚡Венгрия bypass",
+        "L: 🇵🇱⚡Польша",
+        "L: 🇵🇱⚡Польша bypass",
+        "L: 🇪🇸⚡Испания",
+        "L: 🇪🇸⚡Испания bypass",
+        "L: 🇬🇧⚡Англия",
+        "L: 🇬🇧⚡Англия bypass",
+        "L: 🇨🇭⚡Швейцария-2",
+        "L: 🇨🇭⚡Швейцария bypass",
+        "L: 🇫🇮⚡Финляндия-2",
+        "L: 🇫🇮⚡Финляндия bypass-1",
+        "L: 🇮🇹⚡Италия",
+        "L: 🇮🇹⚡Италия bypass",
+        "L: 🇳🇱⚡Нидерланды",
+        "L: 🇳🇱⚡Нидерланды bypass",
+        "L: 🇱🇹⚡Литва",
+        "L: 🇱🇹⚡Литва bypass",
+        "L: 🇨🇭⚡Швейцария",
+        "L: 🇨🇭⚡Швейцария bypass-1",
+        "L: 🇰🇿💳Казахстан",
+        "L: 🇰🇿💳Казахстан bypass",
+        "L: 🇮🇳💳Индия",
+        "L: 🇮🇳💳Индия bypass",
+        "L: 🇧🇷💳Бразилия",
+        "L: 🇧🇷💳Бразилия bypass",
+        "L: 🇹🇷💳Турция",
+        "L: 🇹🇷💳Турция bypass",
+        "L: 🇷🇺💳Россия",
+        "L: 🇷🇺💳Россия bypass",
+        "L: 🇨🇦Канада",
+        "L: 🇨🇦Канада bypass",
+        "L: 🇲🇩Молдова",
+        "L: 🇲🇩Молдова bypass",
+        "L: 🇺🇸США",
+        "L: 🇺🇸США bypass",
+        "L: 🇯🇵Япония",
+        "L: 🇯🇵Япония bypass",
+        "L: 🇭🇰Гонконг",
+        "L: 🇭🇰Гонконг bypass",
+        "L: ⬇️ Обходы белых списков ⬇️",
+        "L: 🇭🇺🟠Венгрия (БС-1) 📡",
+        "L: 🇭🇺🟠Венгрия (БС-0) 📡",
+        "L: 🇩🇪🟠Германия (БС-3) 📡",
+        "L: 🇨🇭⚪Швейцария (БС-6) ☁️",
+        "L: 🇳🇱⚪Нидерланды (БС-4) ☁️",
+        "L: 🇳🇱⚪Нидерланды (БС-5) ☁️",
+        "L: 🇫🇷🟠Франция (БС-2) 📡",
+        "🔥⛈️ WARP (AWG 1.5)",
+        "🔁 ByeByeDpi",
+        "🏠 home",
+        "🏠 awg2-home",
+        "🏠wg-parnas",
+        "🔥⛈️ WARP (AWG 1.5) 2",
+        "🔥⛈️ WARP (AWG 1.5) 3",
+        "🔥☁️ WARP",
+        "🔥⛈️ WARP (AWG 1.5) 4",
+        "🔥⛈️ WARP (AWG 1.5) 5",
+        "🔥⛈️ WARP (AWG 1.5) 6",
+        "🔥⛈️ WARP (AWG 1.5) 7"
+      ],
+      "interrupt_exist_connections": true
+    }
+  ],
+  "route": {
+    "find_process": true,
+    "default_domain_resolver": "cloudflare_udp",
+    "rules": [
+      {
+        "action": "resolve",
+        "inbound": [
+          "tun-in"
+        ],
+        "strategy": "prefer_ipv4"
+      },
+      {
+        "action": "sniff",
+        "inbound": [
+          "tun-in"
+        ],
+        "timeout": "1s"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "rule_set": "ads-all",
+        "action": "reject"
+      },
+      {
+        "protocol": [
+          "bittorrent"
+        ],
+        "outbound": "direct-out"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct-out"
+      },
+      {
+        "rule_set": "4pda",
+        "outbound": "vpn-1"
+      },
+      {
+        "rule_set": "RU apps",
+        "outbound": "direct-out"
+      },
+      {
+        "rule_set": [
+          "ru-domains",
+          "ru-services",
+          "geoip-ru"
+        ],
+        "outbound": "direct-out"
+      },
+      {
+        "rule_set": "Warp",
+        "outbound": "vpn-3"
+      },
+      {
+        "rule_set": "unknown-apps",
+        "outbound": "block"
+      }
+    ],
+    "final": "vpn-1",
+    "auto_detect_interface": true,
+    "rule_set": [
+      {
+        "tag": "ads-all",
+        "type": "local",
+        "format": "binary",
+        "path": "/data/user/0/com.leadaxe.lxbox/app_flutter/rule_sets/preset__block-ads__ads-all.srs"
+      },
+      {
+        "type": "inline",
+        "tag": "4pda",
+        "rules": [
+          {
+            "domain_suffix": [
+              "4pda.to"
+            ]
+          }
+        ]
+      },
+      {
+        "type": "inline",
+        "tag": "RU apps",
+        "rules": [
+          {
+            "package_name": [
+              "com.idamob.tinkoff.android",
+              "ru.tinkoff.investing",
+              "ru.tinkoff.mvno",
+              "ru.tinkoff.sme",
+              "ru.bcs.bcsbank",
+              "ru.raiffeisennews",
+              "com.yandex.bank",
+              "ru.nspk.mirpay",
+              "ru.bluecat.mirpaysecurity",
+              "ru.ingos.ingomobile",
+              "ru.fns.lkfl",
+              "ru.gosuslugi.auto",
+              "ru.gosuslugi.goskey",
+              "com.fls.gosuslugispb",
+              "ru.spb.iac.dnevnikspb_new",
+              "ru.sigma.gisgkh",
+              "ru.pesc.ikus",
+              "ru.spb.parking",
+              "ru.vsedomafamily.mobile",
+              "com.octopod.russianpost.client.android",
+              "ru.ozon.app.android",
+              "ru.beru.android",
+              "com.avito.android",
+              "ru.aliexpress.buyer",
+              "ru.vk.store",
+              "ru.sportmaster.app",
+              "ru.sbcs.store",
+              "ru.unitedbutchers.client",
+              "ru.aviasales",
+              "ru.kupibilet",
+              "ru.ostrovok.android",
+              "ru.tutu.tutu_emp",
+              "ru.foodfox.client",
+              "ru.perekrestok.app",
+              "com.flowwow",
+              "com.loyaltyplant.partner.frank",
+              "com.loyaltyplant.partner.ketchupdelivery",
+              "com.tseh85",
+              "com.riselogic.dm.bonacapona",
+              "ru.yandex.taxi",
+              "ru.yandex.metro",
+              "ru.yandex.yandexmaps",
+              "ru.yandex.yandexnavi",
+              "com.yandex.mobile.drive",
+              "ru.taxovichkof.android",
+              "com.wheely.wheely",
+              "com.carshering",
+              "com.punicapp.whoosh",
+              "ru.yandex.mobile.gasstations",
+              "ru.tatneft.gasstations",
+              "com.yandex.mobile.realty",
+              "ru.yandex.mobile.arenda",
+              "ru.cian.main",
+              "ru.kinopoisk",
+              "ru.yandex.music",
+              "ru.litres.android.audio",
+              "ru.explosion.kinoteatr.kinoteatr",
+              "ru.rostel",
+              "com.ertelecom.smarthome",
+              "info.goodline.events",
+              "ru.yandex.telemost",
+              "com.vkontakte.android",
+              "ru.smclinic.app.lk",
+              "com.readyforsky",
+              "com.everylounge",
+              "ru.zhuck.webapp",
+              "com.notcvnt.rknhardering"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "ru-domains",
+        "type": "inline",
+        "rules": [
+          {
+            "domain_suffix": [
+              "ru",
+              "su",
+              "xn--p1ai",
+              "xn--p1acf",
+              "xn--80adxhks",
+              "moscow",
+              "tatar",
+              "xn--d1acj3b",
+              "xn--80asehdb",
+              "xn--80aswg",
+              "xn--c1avg",
+              "xn--j1aef"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "ru-services",
+        "type": "inline",
+        "rules": [
+          {
+            "domain_suffix": [
+              "userapi.com",
+              "avito.st",
+              "yandex.net",
+              "yandex.com",
+              "yastatic.net",
+              "2gis.com",
+              "okko.tv",
+              "premier.one",
+              "lenta.com",
+              "vk.com",
+              "vk-portal.net",
+              "gismeteo.com",
+              "lmru.tech",
+              "mradx.net",
+              "wbstatic.net",
+              "wildberries.by",
+              "trbcdn.net",
+              "sberbank.com"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "geoip-ru",
+        "type": "local",
+        "format": "binary",
+        "path": "/data/user/0/com.leadaxe.lxbox/app_flutter/rule_sets/preset__ru-direct__geoip-ru.srs"
+      },
+      {
+        "type": "inline",
+        "tag": "Warp",
+        "rules": [
+          {
+            "domain_suffix": [
+              "youtube.com",
+              "googlevideo.com",
+              "ytimg.com",
+              "ggpht.com",
+              "googleusercontent.com",
+              "googleapis.com",
+              "google.com"
+            ],
+            "package_name": [
+              "com.google.android.youtube",
+              "com.whatsapp"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "unknown-apps",
+        "type": "inline",
+        "rules": [
+          {
+            "invert": true,
+            "package_name_regex": "^"
+          }
+        ]
+      }
+    ]
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "cache.db"
+    }
+  }
+}

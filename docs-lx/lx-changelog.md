@@ -10,6 +10,43 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.19
+
+**Pre-release.** Gates **idle-suspend (SPEC 020) behind a new build tag
+`with_lx_idle_suspend`** and confirms the memory win **on real Android hardware**.
+Idle-suspend (rc.18) frees the recv-worker `bufsArrs` of idle+unreachable WG/AmneziaWG
+endpoints — but those buffers are only large where `BatchSize=128` (Android/Linux). This
+release makes that platform scope explicit in the build.
+
+* **`with_lx_idle_suspend` — mobile-only build tag.** The idle-suspend tick now compiles
+  only with this tag, which is baked into the **Android/iOS AAR** (`build_libbox`) but
+  **not** the desktop/CLI `LX_TAGS` (`Makefile.lx`). A desktop build has a small
+  `BatchSize`, so the feature would save almost nothing there; to prevent a silent
+  mismatch, a binary built **without** the tag that is handed a config with
+  `route.lx_idle_suspend` now **fails fast at start** — `route.lx_idle_suspend is set but
+  this build lacks idle-suspend support; rebuild with -tags with_lx_idle_suspend
+  (mobile-only feature)` — instead of a silent no-op. The gate is a single function
+  (`startIdleSuspend`), so the dial hot path and the upstream group files are untouched.
+  When the option is unset the tag is a clean no-op either way (byte-for-byte upstream
+  behaviour).
+
+* **On-device Android verification (closes the RESEARCH.md device gap).** Measured on a
+  physical CPH2411 (Android 15, arm64) via the app's pprof passthrough: with 9 WG
+  endpoints (1 reachable + 8 idle/unreachable), suspending the 8 dropped
+  `PopulatePools.func3` (`bufsArrs`) live heap from **223.9 MB → 89.9 MB (−134 MB,
+  −60 %)** and recv-worker goroutines **18 → 2**, matching the `~8.4 MB/worker` model
+  exactly — roughly 10× the desktop RSS delta, on the platform the feature was built for.
+  Suspend/wake/no-flap/kill-switch all confirmed on-device. Full report + raw pprof
+  artifacts in `SPECS/020-MULTI_WG_IDLE_BUFFER_HEAT/ANDROID_RESEARCH/`.
+
+* Docs: `SPEC.md` rewritten as the as-built implementation spec; the original
+  root-cause/measurement doc renamed `SPEC.md → RESEARCH.md`; `lx-config.md` (+ ru)
+  document the new tag and its mobile-only scope. Added unit tests for the no-tag stub
+  (option set → error, unset → no-op) plus reachability tests for the production
+  nested-group topology.
+
+* Upstream: synchronised — `upstream/testing` is 0 commits ahead of this base.
+
 #### v1.14.0-lx.1-rc.18
 
 **Pre-release.** Adds **idle-suspend for WireGuard / AmneziaWG endpoints** (SPEC 020) — on

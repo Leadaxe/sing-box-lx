@@ -1,0 +1,47 @@
+File: memfd:jit-zygote-cache
+Type: inuse_space
+Time: 2026-07-01 09:33:47 MSK
+Showing nodes accounting for 273.79MB, 98.87% of 276.91MB total
+Dropped 32 nodes (cum <= 1.38MB)
+Showing top 40 nodes out of 48
+      flat  flat%   sum%        cum   cum%
+  263.29MB 95.08% 95.08%   263.29MB 95.08%  github.com/sagernet/wireguard-go/device.(*Device).PopulatePools.func3
+    3.46MB  1.25% 96.33%     3.46MB  1.25%  github.com/sagernet/sing/contrab/freelru.NewShardedWithSize[go.shape.struct { Source net/netip.Addr; Destination net/netip.Addr },go.shape.interface { Close error; IsClosed bool; WritePacket error }]
+    1.95MB   0.7% 97.03%     1.95MB   0.7%  github.com/sagernet/sing/common/domain.readByteSlice
+    1.68MB  0.61% 97.64%     1.68MB  0.61%  github.com/sagernet/sing/contrab/freelru.NewShardedWithSize[go.shape.struct { net/netip.ip net/netip.Addr; net/netip.port uint16 },go.shape.*github.com/sagernet/sing/common/udpnat2.natConn]
+    1.50MB  0.54% 98.18%     1.50MB  0.54%  runtime.allocm
+    1.41MB  0.51% 98.69%     1.41MB  0.51%  github.com/sagernet/sing/common/domain.readUint64Slice
+    0.50MB  0.18% 98.87%   174.97MB 63.18%  github.com/sagernet/wireguard-go/device.(*Device).RoutineReceiveIncoming
+         0     0% 98.87%     9.57MB  3.46%  cgoexp_c2844bda853d_proxylibbox_CommandServer_StartOrReloadService
+         0     0% 98.87%     9.57MB  3.46%  github.com/sagernet/sing-box.New
+         0     0% 98.87%     5.14MB  1.86%  github.com/sagernet/sing-box/adapter/endpoint.(*Manager).Create
+         0     0% 98.87%     5.14MB  1.86%  github.com/sagernet/sing-box/adapter/endpoint.(*Registry).Create
+         0     0% 98.87%     5.14MB  1.86%  github.com/sagernet/sing-box/adapter/endpoint.Register[go.shape.dc12e0fb38c3854248368768fb0094d99d822f63b5fe0915f7cd331b69db0a99].func2
+         0     0% 98.87%     4.43MB  1.60%  github.com/sagernet/sing-box/common/srs.Read
+         0     0% 98.87%     4.43MB  1.60%  github.com/sagernet/sing-box/common/srs.readDefaultRule
+         0     0% 98.87%     4.43MB  1.60%  github.com/sagernet/sing-box/common/srs.readRule
+         0     0% 98.87%     9.57MB  3.46%  github.com/sagernet/sing-box/daemon.(*StartedService).StartOrReloadService
+         0     0% 98.87%     9.57MB  3.46%  github.com/sagernet/sing-box/daemon.(*StartedService).newInstance
+         0     0% 98.87%     9.57MB  3.46%  github.com/sagernet/sing-box/experimental/libbox.(*CommandServer).StartOrReloadService
+         0     0% 98.87%     5.14MB  1.86%  github.com/sagernet/sing-box/protocol/wireguard.NewEndpoint
+         0     0% 98.87%     4.43MB  1.60%  github.com/sagernet/sing-box/route.(*Router).Initialize
+         0     0% 98.87%     4.43MB  1.60%  github.com/sagernet/sing-box/route/rule.(*LocalRuleSet).reloadFile
+         0     0% 98.87%     4.43MB  1.60%  github.com/sagernet/sing-box/route/rule.NewLocalRuleSet
+         0     0% 98.87%     4.43MB  1.60%  github.com/sagernet/sing-box/route/rule.NewRuleSet
+         0     0% 98.87%     5.14MB  1.86%  github.com/sagernet/sing-box/transport/wireguard.NewDevice
+         0     0% 98.87%     5.14MB  1.86%  github.com/sagernet/sing-box/transport/wireguard.NewEndpoint
+         0     0% 98.87%     5.14MB  1.86%  github.com/sagernet/sing-box/transport/wireguard.newStackDevice
+         0     0% 98.87%     3.46MB  1.25%  github.com/sagernet/sing-tun.NewDirectRouteMapping
+         0     0% 98.87%     3.46MB  1.25%  github.com/sagernet/sing-tun.NewICMPForwarder (inline)
+         0     0% 98.87%     1.68MB  0.61%  github.com/sagernet/sing-tun.NewUDPForwarder
+         0     0% 98.87%     3.36MB  1.21%  github.com/sagernet/sing/common/domain.ReadMatcher (inline)
+         0     0% 98.87%     3.36MB  1.21%  github.com/sagernet/sing/common/domain.readSuccinctSet
+         0     0% 98.87%     1.68MB  0.61%  github.com/sagernet/sing/common/udpnat2.New
+         0     0% 98.87%     3.46MB  1.25%  github.com/sagernet/sing/contrab/freelru.NewSharded[go.shape.struct { Source net/netip.Addr; Destination net/netip.Addr },go.shape.interface { Close error; IsClosed bool; WritePacket error }]
+         0     0% 98.87%     1.68MB  0.61%  github.com/sagernet/sing/contrab/freelru.NewSharded[go.shape.struct { net/netip.ip net/netip.Addr; net/netip.port uint16 },go.shape.*github.com/sagernet/sing/common/udpnat2.natConn]
+         0     0% 98.87%   263.29MB 95.08%  github.com/sagernet/wireguard-go/device.(*Device).GetMessageBuffer (inline)
+         0     0% 98.87%    88.83MB 32.08%  github.com/sagernet/wireguard-go/device.(*Device).NewOutboundElement
+         0     0% 98.87%    87.76MB 31.69%  github.com/sagernet/wireguard-go/device.(*Device).RoutineReadFromTUN
+         0     0% 98.87%   263.29MB 95.08%  github.com/sagernet/wireguard-go/device.(*WaitPool).Get
+         0     0% 98.87%     9.57MB  3.46%  main.proxylibbox_CommandServer_StartOrReloadService
+         0     0% 98.87%     9.57MB  3.46%  runtime.cgocallback
