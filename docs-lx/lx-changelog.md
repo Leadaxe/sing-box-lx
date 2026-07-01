@@ -10,6 +10,40 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.21
+
+**Pre-release.** New outbound: **MASQUE (CONNECT-IP / RFC 9484)** for Cloudflare WARP
+(SPEC 021). Tunnels whole IP packets over HTTP/3 or HTTP/2 to a WARP endpoint via a
+userspace gVisor stack — device-verified end-to-end (`warp=on`) on both transports.
+No change to any existing feature; MASQUE is a new `type: masque` outbound, gated on the
+already-shipped `with_quic` + `with_gvisor` tags (both in `LX_TAGS`).
+
+* **`type: masque` outbound — CONNECT-IP over h3 and h2.** One outbound with a `profile`
+  field (`cloudflare` default | `standard`) and a `network` transport selector
+  (`h3` QUIC default | `h2` HTTP/2). The Cloudflare profile carries WARP's non-RFC
+  quirks (`cf-connect-ip`, tolerates the missing Extended-CONNECT settings, ECDSA
+  public-key pinning, WARP SNI/URI defaults). Key material (`private_key` / `public_key`
+  / `ip` / `ipv6`) is taken ready from config — device registration stays client-side.
+  Full config reference in [SPECS/021](../SPECS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md).
+
+* **h2 via a manual HTTP/2 framer, no extra dependency.** WARP never advertises
+  `SETTINGS_ENABLE_CONNECT_PROTOCOL`, so the high-level h2 clients refuse the request;
+  the h2 path is driven directly on `golang.org/x/net/http2`'s public `Framer` + `hpack`
+  (already a dependency). `connect-ip-go` is vendored under `transport/masque/connectip`
+  (ported onto `sagernet/quic-go`) rather than pulled as an external module.
+
+* **Stateless when idle + self-healing.** The tunnel is an ephemeral session: after
+  `idle_timeout` (default 5m) of no traffic it is fully torn down — gVisor netstack,
+  pump goroutines and QUIC keepalive all released — and rebuilt lazily on the next dial.
+  A dropped tunnel (WARP idle-timeout, GOAWAY, network change) likewise self-heals on
+  the next dial. Both `idle_timeout` and `keep_alive_period` are configurable.
+
+* **Hardening (post-implementation audit).** A single malformed inbound datagram no
+  longer blackholes the tunnel (drop-and-continue); the paired pump can no longer leak
+  on teardown; the ICMP "packet too big" reply quotes the pre-mutation header; the h2
+  path bounds peer-declared capsule sizes and uses real flow-control backpressure; and
+  the hot path reuses send scratch buffers instead of allocating per packet.
+
 #### v1.14.0-lx.1-rc.20
 
 **Pre-release.** A small XHTTP robustness fix, an upstream sync, and documentation
