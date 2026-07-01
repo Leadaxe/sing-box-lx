@@ -87,6 +87,18 @@ func init() {
 	// per-node delay test and rule-table screen would fail. CONSTITUTION §3.6 pt.6.
 	sharedTags = append(sharedTags, "with_lx_command")
 	// lx:end lx_command
+	// lx:begin idle-suspend
+	// SPEC 020 — idle-suspend of unreachable+idle WG/AWG endpoints (device.Down),
+	// a MOBILE-ONLY power/RAM feature: it frees the recv-worker bufsArrs, which are
+	// ~8 MB each only where BatchSize=128 (Android/Linux). It ships in the AAR so a
+	// LxBox config carrying route.lx_idle_suspend works; without the tag the core
+	// rejects that option at start ("rebuild with -tags with_lx_idle_suspend"), so
+	// the desktop/CLI LX_TAGS (Makefile.lx) deliberately OMIT it. On iOS BatchSize=1
+	// makes bufsArrs tiny, so the tag is neutral there (harmless if the AAR path is
+	// later reused for a Darwin mobile target); it is off unless the config sets the
+	// option anyway. Verified on-device: 8 endpoints suspended → 134 MB freed.
+	sharedTags = append(sharedTags, "with_lx_idle_suspend")
+	// lx:end idle-suspend
 	darwinTags = append(darwinTags, "with_dhcp", "grpcnotrace")
 	// memcTags = append(memcTags, "with_tailscale")
 	// lx:begin no-tailscale

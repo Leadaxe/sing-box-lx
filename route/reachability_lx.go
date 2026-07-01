@@ -1,3 +1,5 @@
+//go:build with_lx_idle_suspend
+
 // lx:begin idle-suspend
 package route
 
@@ -38,15 +40,6 @@ const idleTickDivisor = 2
 // protocol/group.
 type reachableActiveTags interface {
 	ActiveTags() []string
-}
-
-// InvalidateReachability marks the cached reachable set stale so the next idle
-// tick recomputes it. Called (via service.FromContext[adapter.ReachabilityInvalidator])
-// from the three event points that change the active routing tree. Cheap and
-// lock-free; safe to call from any goroutine. Implements
-// adapter.ReachabilityInvalidator.
-func (r *Router) InvalidateReachability() {
-	r.reachDirty.Store(true)
 }
 
 // reachableOutbounds returns the cached reachable set, recomputing the walk only
@@ -152,11 +145,14 @@ func walkReachable(tag string, reachable map[string]bool, resolve func(tag strin
 	}
 }
 
-// startIdleSuspend launches the idle-suspend tick goroutine. No-op when the
-// feature is disabled (idleSuspend == 0) — zero overhead, current behaviour.
-func (r *Router) startIdleSuspend() {
+// startIdleSuspend launches the idle-suspend tick goroutine. No-op (nil error)
+// when the feature is disabled (idleSuspend == 0) — zero overhead. Built only
+// with `with_lx_idle_suspend`; the stub build (idle_suspend_stub_lx.go) returns
+// an explicit error if the option is set without the tag. Signature returns error
+// for symmetry with that stub.
+func (r *Router) startIdleSuspend() error {
 	if r.idleSuspend <= 0 {
-		return
+		return nil
 	}
 	r.idleStop = make(chan struct{})
 	period := r.idleSuspend / idleTickDivisor
@@ -164,6 +160,7 @@ func (r *Router) startIdleSuspend() {
 		period = idleTickFloor
 	}
 	go r.idleSuspendLoop(period)
+	return nil
 }
 
 // stopIdleSuspend stops the idle-suspend tick goroutine, if running.

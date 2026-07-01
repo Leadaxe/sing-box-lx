@@ -61,8 +61,20 @@ recv-памяти ценой ~1 RTT на первый пакет после пр
 
 - Поле: `option.RouteOptions.LXIdleSuspend badoption.Duration`, `json:"lx_idle_suspend,omitempty"`
   (в [`option/route.go`](../../option/route.go), под `lx:begin/lx:end`).
+- **Build-тег `with_lx_idle_suspend` (mobile-only).** Механика тика компилируется
+  только с этим тегом. Он добавляется в **мобильный AAR** (Android/iOS,
+  `cmd/internal/build_libbox`), но НЕ в desktop/CLI `LX_TAGS` (`Makefile.lx`) — на
+  десктопе `BatchSize` мал, `bufsArrs` крошечный, экономить нечего. Собранный БЕЗ
+  тега бинарь, которому дали конфиг с `lx_idle_suspend`, **падает при старте** с
+  явной ошибкой (`rebuild with -tags with_lx_idle_suspend (mobile-only feature)`) —
+  никакого молчаливого no-op. Гейт — одна функция `startIdleSuspend`
+  ([`route/reachability_lx.go`](../../route/reachability_lx.go) под тегом /
+  [`route/idle_suspend_stub_lx.go`](../../route/idle_suspend_stub_lx.go) — заглушка
+  с ошибкой); hot-path дайла (`resumeOnDial`/`stampActivity`) и upstream-файлы групп
+  НЕ расщепляются (без тега `idleAsleep` просто никогда не станет true).
 - **По умолчанию (отсутствует / `"0s"` / `0`): фича выключена** — тик не запускается,
-  нулевой оверхед, поведение как раньше (kill-switch для безопасного отката).
+  нулевой оверхед, поведение как раньше (kill-switch для безопасного отката). Это
+  ортогонально build-тегу: даже в mobile-сборке с тегом фича спит, пока опция не задана.
 - Период тика: `max(порог / idleTickDivisor, idleTickFloor)` =
   `max(XX/2, 5s)`.
 
@@ -254,23 +266,31 @@ batch активной ноды не меняется). Keys-safe путь бе�
 ## 10. Файлы
 
 Новые (lx-owned):
-- [`route/reachability_lx.go`](../../route/reachability_lx.go) — walk, кэш, инвалидация,
-  idle-тик, `suspendIdleEndpoints`.
+- [`route/reachability_lx.go`](../../route/reachability_lx.go) — **`//go:build with_lx_idle_suspend`** —
+  walk, кэш, idle-тик, `suspendIdleEndpoints`, `startIdleSuspend`/`stopIdleSuspend`.
+- [`route/idle_suspend_stub_lx.go`](../../route/idle_suspend_stub_lx.go) —
+  **`//go:build !with_lx_idle_suspend`** — заглушки: `startIdleSuspend()` возвращает
+  ошибку если опция задана, `stopIdleSuspend()` пустой.
+- [`route/reachability_common_lx.go`](../../route/reachability_common_lx.go) — без
+  тега, всегда: только `InvalidateReachability` (нужен интерфейсу групп в любой сборке).
 - [`protocol/group/reachability_lx.go`](../../protocol/group/reachability_lx.go) —
   хук-обёртка `invalidateReachability(ctx)`.
 
 Изменённые:
 - [`option/route.go`](../../option/route.go) — поле `LXIdleSuspend`.
 - [`route/router.go`](../../route/router.go) — состояние idle-тика, поле `endpoint
-  adapter.EndpointManager` (тянется из ctx через `service.FromContext`), старт тика в
-  PostStart / стоп в Close.
+  adapter.EndpointManager` (тянется из ctx через `service.FromContext`), PostStart
+  возвращает `startIdleSuspend()` (ошибку из stub) / стоп в Close.
+- [`cmd/internal/build_libbox/main.go`](../../cmd/internal/build_libbox/main.go) —
+  `with_lx_idle_suspend` в `sharedTags` (mobile AAR), НЕ в desktop `LX_TAGS`.
 - [`adapter/outbound.go`](../../adapter/outbound.go) — узкие интерфейсы
   `IdleSuspendable` (`Tag`, `SuspendIfIdle`) и `ReachabilityInvalidator`.
 - [`protocol/wireguard/endpoint.go`](../../protocol/wireguard/endpoint.go) —
   `lastActivity`, `IdleSince`, `stampActivity`, `idleAsleep`, `resumeMu`,
-  `SuspendIfIdle`, `resumeOnDial`, вставка `resumeOnDial` в начало гейтов дайла.
+  `SuspendIfIdle`, `resumeOnDial`, вставка `resumeOnDial` в начало гейтов дайла
+  (БЕЗ тега — дёшево, без тика `idleAsleep` всегда false → быстрый путь).
 - `protocol/group/selector.go`, `urltest.go`, `urltest_balance_lx.go` — точки
-  инвалидации (по одной вставке).
+  инвалидации (по одной вставке, БЕЗ тега).
 
 ## 11. БАГ, который был найден и исправлен (главное)
 

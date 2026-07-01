@@ -1,14 +1,25 @@
 # sing-box-lx — конфигурация фич форка
 
-`sing-box-lx` — это upstream [sing-box](https://github.com/SagerNet/sing-box) плюс небольшой набор **клиентских** фич (сейчас две), каждая за своим build-тегом:
+`sing-box-lx` — это upstream [sing-box](https://github.com/SagerNet/sing-box) плюс небольшой набор **клиентских** фич, каждая за своим build-тегом:
 
-| Фича | Build-тег | Где живёт в конфиге |
-|------|-----------|---------------------|
-| **XHTTP** транспорт (совместим с Xray) | `with_xhttp` | `transport.type: "xhttp"` на VLESS / VMess / Trojan outbound |
-| **AmneziaWG 2.0** (AWG2) | `with_awg` | доп. поля на `wireguard` **endpoint** |
+| Фича | Build-тег | Где живёт в конфиге | Входит в |
+|------|-----------|---------------------|----------|
+| **XHTTP** транспорт (совместим с Xray) | `with_xhttp` | `transport.type: "xhttp"` на VLESS / VMess / Trojan outbound | desktop + mobile |
+| **AmneziaWG 2.0** (AWG2) | `with_awg` | доп. поля на `wireguard` **endpoint** | desktop + mobile |
+| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `route.lx_idle_suspend` | **только mobile** (AAR) |
 
-Собрать бинарь с обеими: `make -f Makefile.lx lx-build` (выход `sing-box`, версия `…-lx.N`).
+Собрать desktop/CLI бинарь: `make -f Makefile.lx lx-build` (выход `sing-box`, версия `…-lx.N`) — включает `with_xhttp` + `with_awg` (+ `with_lx_command`), но **не** `with_lx_idle_suspend`.
 Без тега фича отсутствует: `xhttp`-транспорт или AWG-поле отклоняется при загрузке с явной ошибкой (без молчаливого отката).
+
+**`with_lx_idle_suspend` — только для mobile** и добавляется лишь в Android/iOS AAR
+(`cmd/internal/build_libbox`), не в desktop `LX_TAGS`. Он гасит простаивающие +
+недостижимые WireGuard/AmneziaWG-эндпоинты, освобождая их recv-буферы (держатель
+GC-нагрева / RAM, ~8 МБ каждый там, где `BatchSize=128` — Android/Linux; замерено на
+устройстве: 8 эндпоинтов усыплены → освобождено 134 МБ). На десктопе `BatchSize` мал,
+экономить почти нечего; чтобы не было молчаливого расхождения, desktop/CLI-бинарь,
+которому дали конфиг с `route.lx_idle_suspend`, **падает при старте** с ошибкой
+`route.lx_idle_suspend is set but this build lacks idle-suspend support; rebuild with
+-tags with_lx_idle_suspend (mobile-only feature)`. См. `SPECS/020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md`.
 
 > ⚠️ Все ключи/UUID ниже — **заглушки**. Никогда не коммитьте реальные приватные ключи / pre-shared-ключи в репозиторий.
 

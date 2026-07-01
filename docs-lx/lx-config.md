@@ -1,14 +1,26 @@
 # sing-box-lx — configuration of the downstream features
 
-`sing-box-lx` is upstream [sing-box](https://github.com/SagerNet/sing-box) plus a small set of **client-side** features (currently two), each gated behind a build tag:
+`sing-box-lx` is upstream [sing-box](https://github.com/SagerNet/sing-box) plus a small set of **client-side** features, each gated behind a build tag:
 
-| Feature | Build tag | Where it lives in config |
-|---------|-----------|--------------------------|
-| **XHTTP** transport (Xray-compatible) | `with_xhttp` | `transport.type: "xhttp"` on a VLESS / VMess / Trojan outbound |
-| **AmneziaWG 2.0** (AWG2) | `with_awg` | extra fields on a `wireguard` **endpoint** |
+| Feature | Build tag | Where it lives in config | Included in |
+|---------|-----------|--------------------------|-------------|
+| **XHTTP** transport (Xray-compatible) | `with_xhttp` | `transport.type: "xhttp"` on a VLESS / VMess / Trojan outbound | desktop + mobile |
+| **AmneziaWG 2.0** (AWG2) | `with_awg` | extra fields on a `wireguard` **endpoint** | desktop + mobile |
+| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `route.lx_idle_suspend` | **mobile only** (AAR) |
 
-Build the binary with both: `make -f Makefile.lx lx-build` (output `sing-box`, version `…-lx.N`).
+Build the desktop/CLI binary: `make -f Makefile.lx lx-build` (output `sing-box`, version `…-lx.N`) — this bundles `with_xhttp` + `with_awg` (+ `with_lx_command`), but **not** `with_lx_idle_suspend`.
 Without a tag the feature is absent: an `xhttp` transport or an AWG field is rejected at load time with an explicit error (no silent downgrade).
+
+**`with_lx_idle_suspend` is mobile-only** and is added only to the Android/iOS AAR
+(`cmd/internal/build_libbox`), not to the desktop `LX_TAGS`. It suspends idle +
+unreachable WireGuard/AmneziaWG endpoints to free their recv-worker buffers (the
+GC-heat / RAM holder, ~8 MB each where `BatchSize=128` — Android/Linux; measured
+on-device: 8 endpoints suspended → 134 MB freed). A desktop build has small
+`BatchSize`, so the feature would save almost nothing there; to avoid a silent
+mismatch, a desktop/CLI binary that is handed a config with `route.lx_idle_suspend`
+**fails fast at start**: `route.lx_idle_suspend is set but this build lacks
+idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
+See `SPECS/020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md`.
 
 > ⚠️ All keys/UUIDs below are **placeholders**. Never commit real private keys / pre-shared keys to a repository.
 

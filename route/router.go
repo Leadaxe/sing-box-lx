@@ -230,8 +230,9 @@ func (r *Router) Start(stage adapter.StartStage) error {
 			r.ruleSetUpdater.Start()
 		}
 		r.started = true
-		r.startIdleSuspend() // lx: SPEC 020 — no-op when idleSuspend == 0
-		return nil
+		// lx: SPEC 020 — start the idle-suspend tick (with_lx_idle_suspend); the
+		// no-tag stub errors here if lx_idle_suspend is set without the build tag.
+		return r.startIdleSuspend()
 	case adapter.StartStateStarted:
 		for _, ruleSet := range r.ruleSets {
 			ruleSet.Cleanup()

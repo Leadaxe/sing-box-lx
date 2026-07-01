@@ -1,3 +1,5 @@
+//go:build with_lx_idle_suspend
+
 // lx:begin idle-suspend
 package route
 
