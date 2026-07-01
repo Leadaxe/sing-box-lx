@@ -44,7 +44,7 @@ func ConnectTunnelH3(ctx context.Context, profile Profile, quicConn *quic.Conn, 
 
 	hconn := tr.NewClientConn(quicConn)
 
-	ipConn, rsp, err := dialCONNECTIP(ctx, profile, hconn, connectURI)
+	ipConn, err := dialCONNECTIP(ctx, profile, hconn, connectURI)
 	if err != nil {
 		_ = tr.Close()
 		if err.Error() == "CRYPTO_ERROR 0x131 (remote): tls: access denied" {
@@ -59,58 +59,47 @@ func ConnectTunnelH3(ctx context.Context, profile Profile, quicConn *quic.Conn, 
 		return nil, nil, err
 	}
 
-	if rsp.StatusCode != 200 {
-		_ = ipConn.Close()
-		_ = tr.Close()
-		return nil, nil, E.New("masque: connect-ip rejected: ", rsp.Status)
-	}
-
 	return tr, ipConn, nil
 }
 
 // dialCONNECTIP sends the Extended CONNECT request and wraps the request stream
 // into a proxied IP connection.
-func dialCONNECTIP(ctx context.Context, profile Profile, conn *http3.ClientConn, connectURI string) (*connectip.Conn, *responseInfo, error) {
+func dialCONNECTIP(ctx context.Context, profile Profile, conn *http3.ClientConn, connectURI string) (*connectip.Conn, error) {
 	u, err := url.Parse(connectURI)
 	if err != nil {
-		return nil, nil, E.Cause(err, "parse connect uri")
+		return nil, E.Cause(err, "parse connect uri")
 	}
 
 	select {
 	case <-ctx.Done():
-		return nil, nil, context.Cause(ctx)
+		return nil, context.Cause(ctx)
 	case <-conn.Context().Done():
-		return nil, nil, context.Cause(conn.Context())
+		return nil, context.Cause(conn.Context())
 	case <-conn.ReceivedSettings():
 	}
 	settings := conn.Settings()
 	if !profile.IgnoreExtendedConnect && !settings.EnableExtendedConnect {
-		return nil, nil, E.New("connect-ip: server didn't enable Extended CONNECT")
+		return nil, E.New("connect-ip: server didn't enable Extended CONNECT")
 	}
 	if !settings.EnableDatagrams {
-		return nil, nil, E.New("connect-ip: server didn't enable datagrams")
+		return nil, E.New("connect-ip: server didn't enable datagrams")
 	}
 
 	rstr, err := conn.OpenRequestStream(ctx)
 	if err != nil {
-		return nil, nil, E.Cause(err, "open request stream")
+		return nil, E.Cause(err, "open request stream")
 	}
 
 	req := buildConnectIPRequest(profile, u)
 	if err = rstr.SendRequestHeader(req); err != nil {
-		return nil, nil, E.Cause(err, "send request header")
+		return nil, E.Cause(err, "send request header")
 	}
 	rsp, err := rstr.ReadResponse()
 	if err != nil {
-		return nil, nil, E.Cause(err, "read response")
+		return nil, E.Cause(err, "read response")
 	}
 	if rsp.StatusCode < 200 || rsp.StatusCode > 299 {
-		return nil, &responseInfo{StatusCode: rsp.StatusCode, Status: rsp.Status}, E.New("connect-ip: server responded with ", rsp.StatusCode)
+		return nil, E.New("connect-ip: server responded with ", rsp.StatusCode)
 	}
-	return connectip.NewProxiedConn(rstr), &responseInfo{StatusCode: rsp.StatusCode, Status: rsp.Status}, nil
-}
-
-type responseInfo struct {
-	StatusCode int
-	Status     string
+	return connectip.NewProxiedConn(rstr), nil
 }

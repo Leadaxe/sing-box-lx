@@ -92,6 +92,13 @@ type Conn struct {
 
 	closeChan chan struct{}
 	closeErr  error
+
+	// sendBuf is a reusable scratch for the outgoing datagram (contextID + IP
+	// packet). WritePacket is only ever called from the single tx pump, and
+	// quic-go copies the slice into its own frame before returning
+	// (connection.go SendDatagram), so one reused buffer is safe and avoids a
+	// per-packet allocation on the hot path. lx: SPEC 021 B3.
+	sendBuf []byte
 }
 
 // NewProxiedConn wraps an already-established CONNECT-IP request stream.
@@ -281,7 +288,13 @@ start:
 	}
 	contextID, n, err := quicvarint.Parse(data)
 	if err != nil {
-		return nil, fmt.Errorf("connect-ip: malformed datagram: %w", err)
+		// A single malformed/empty datagram (unparseable context-ID varint) must
+		// NOT tear down the tunnel — drop it and continue, like the sibling
+		// context-ID!=0 and bad-payload cases. (lx: SPEC 021 A1. Upstream
+		// connect-ip-go returns here with a "// TODO: close connection", but in
+		// this integration the pump has no restart loop, so a return would
+		// blackhole the outbound permanently on one bad packet.)
+		goto start
 	}
 	if contextID != 0 {
 		// We only support proxying of IP payloads (context ID 0).
@@ -354,6 +367,19 @@ func (c *Conn) handleIncomingProxiedPacket(data []byte) error {
 // WritePacket writes an IP packet to the stream. If the packet is too large it
 // returns an ICMP "packet too big" reply the caller should feed back locally.
 func (c *Conn) WritePacket(b []byte) (icmp []byte, err error) {
+	// Snapshot the original header BEFORE composeDatagram mutates b in place
+	// (TTL/hop-limit decrement + checksum rewrite), so a potential ICMP "packet
+	// too big" reply quotes the datagram as the app sent it (RFC 1191/792).
+	// lx: SPEC 021 A3.
+	var origHead []byte
+	if len(b) > 0 {
+		snapLen := len(b)
+		if snapLen > minMTU {
+			snapLen = minMTU
+		}
+		origHead = append(origHead, b[:snapLen]...)
+	}
+
 	data, err := c.composeDatagram(b)
 	if err != nil {
 		return nil, nil
@@ -364,7 +390,7 @@ func (c *Conn) WritePacket(b []byte) (icmp []byte, err error) {
 	if err := c.str.SendDatagram(data); err != nil {
 		var errDTL *quic.DatagramTooLargeError
 		if errors.As(err, &errDTL) {
-			icmpPacket, cerr := composeICMPTooLargePacket(b, minMTU)
+			icmpPacket, cerr := composeICMPTooLargePacket(origHead, minMTU)
 			if cerr != nil {
 				return nil, nil
 			}
@@ -407,9 +433,16 @@ func (c *Conn) composeDatagram(b []byte) ([]byte, error) {
 		}
 		b[7]-- // decrement Hop Limit
 	}
-	data := make([]byte, 0, len(contextIDZero)+len(b))
+	// Reuse the scratch buffer: contextID (0) + IP packet. Safe because quic-go
+	// copies the slice into its own datagram frame before SendDatagram returns.
+	need := len(contextIDZero) + len(b)
+	if cap(c.sendBuf) < need {
+		c.sendBuf = make([]byte, 0, need)
+	}
+	data := c.sendBuf[:0]
 	data = append(data, contextIDZero...)
 	data = append(data, b...)
+	c.sendBuf = data
 	return data, nil
 }
 
