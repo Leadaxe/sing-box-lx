@@ -358,6 +358,27 @@ selector→urltest, весь пул), `TestReachableDualPathDedup` (узел д�
   RSS **39.3→27.0 МБ (−31%)**. `RoutineDecryption` остаётся 64 (крипто-пул переживает
   Down/Up by design). netstack Down не освобождает (Tier B).
 
+### Android device-verification (rc.18, CPH2411) — [ANDROID_RESEARCH](ANDROID_RESEARCH/README.md)
+
+Прогон на **реальном Android** (CPH2411, Android 15, arm64) через приложение LxBox с
+rc.18-ядром. 9 WG-эндпоинтов (1 реальный WARP = достижим/final + 8 синтетических
+недостижимых), `lx_idle_suspend: 30s`. Подтверждено вживую: suspend/wake-by-dial/
+достижимый-final-не-гаснет/no-flap/kill-switch — всё как на десктопе. **Главное — heap
+A/B на той платформе, ради которой фича и делалась** (`BatchSize=128` → `bufsArrs`
+крупные):
+
+| Метрика | До (9 up) | После (8 Down) | Δ |
+|---|---|---|---|
+| `RoutineReceiveIncoming` | **18** | **2** | −16 |
+| `PopulatePools.func3` inuse_space (`bufsArrs`) | **223.93 МБ** | **89.89 МБ** | **−134 МБ (−60%)** |
+| total inuse_space | 232.75 МБ | 99.21 МБ | −133.5 МБ |
+
+134 МБ / 16 воркеров ≈ **8.4 МБ/воркер** — точно совпадает с `~8 МБ`-оценкой для
+`BatchSize=128` из `RESEARCH.md`, и это **~10× десктопной цифры** (там `BatchSize`
+маленький). Держатель нагрева освобождён на устройстве, ровно как предсказывала
+разведка. Артефакты (core-лог, pprof heap `.pb`, goroutine-дампы) — в
+[ANDROID_RESEARCH/artifacts](ANDROID_RESEARCH/artifacts/).
+
 ## 13. Что НЕ сделано (отложено, сознательно)
 
 - **Tier B — снос netstack.** Единственный способ срезать и GC-нагрев от gvisor
@@ -373,6 +394,6 @@ selector→urltest, весь пул), `TestReachableDualPathDedup` (узел д�
   пробуждении реально начнёт мешать. См. [[wg-bindupdate-keys-safe]].
 - **Замер батареи на устройстве.** Эффект на радио/батарею (остановка keepalive-таймеров
   у спящих нод) — обоснованный прогноз по исходникам, не замер; нужен Android
-  batterystats до/после. Аналогично heap A/B на Android (где `bufsArrs` ~8 МБ/воркер,
-  эффект кратно больше десктопных −31% RSS) — единственное более сильное доказательство
-  экономии памяти, не обязательное для поставки.
+  batterystats до/после. (Heap A/B на Android **уже снят** — см. §12
+  «Android device-verification» / [ANDROID_RESEARCH](ANDROID_RESEARCH/README.md):
+  `bufsArrs` 223.93→89.89 МБ; осталась только батарея.)

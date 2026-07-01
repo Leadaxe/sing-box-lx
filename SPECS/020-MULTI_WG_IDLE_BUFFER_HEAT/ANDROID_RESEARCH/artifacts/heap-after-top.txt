@@ -1,0 +1,12 @@
+File: memfd:jit-zygote-cache
+Type: inuse_space
+Time: 2026-07-01 04:02:27 MSK
+Showing nodes accounting for 99.21MB, 100% of 99.21MB total
+      flat  flat%   sum%        cum   cum%
+   89.89MB 90.61% 90.61%    89.89MB 90.61%  github.com/sagernet/wireguard-go/device.(*Device).PopulatePools.func3
+    4.07MB  4.10% 94.71%     4.07MB  4.10%  github.com/sagernet/sing/contrab/freelru.NewShardedWithSize[go.shape.struct { Source net/netip.Addr; Destination net/netip.Addr },go.shape.interface { Close error; IsClosed bool; WritePacket error }]
+    1.50MB  1.51% 96.23%     1.50MB  1.51%  runtime.allocm
+    1.16MB  1.17% 97.40%     1.16MB  1.17%  github.com/sagernet/sing/contrab/freelru.NewShardedWithSize[go.shape.struct { net/netip.ip net/netip.Addr; net/netip.port uint16 },go.shape.*github.com/sagernet/sing/common/udpnat2.natConn]
+    0.58MB  0.58% 97.98%     0.58MB  0.58%  github.com/sagernet/sing-box/common/certificate._Cfunc_GoBytes (inline)
+    0.50MB  0.51% 98.49%     0.50MB  0.51%  bufio.NewWriterSize (inline)
+    0.50MB   0.5% 98.99%     0.50MB   0.5%  crypto/x509.parseCertificate

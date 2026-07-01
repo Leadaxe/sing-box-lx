@@ -1,0 +1,8 @@
++0300 2026-07-01 03:48:53 [36mINFO[0m endpoint/wireguard[wg-2]: lx idle: suspend wg-2 idle=30s
++0300 2026-07-01 03:48:53 [36mINFO[0m endpoint/wireguard[wg-3]: lx idle: suspend wg-3 idle=30s
++0300 2026-07-01 03:48:53 [36mINFO[0m endpoint/wireguard[wg-4]: lx idle: suspend wg-4 idle=30s
++0300 2026-07-01 03:48:53 [36mINFO[0m endpoint/wireguard[wg-5]: lx idle: suspend wg-5 idle=30s
++0300 2026-07-01 03:48:53 [36mINFO[0m endpoint/wireguard[wg-6]: lx idle: suspend wg-6 idle=30s
++0300 2026-07-01 03:48:53 [36mINFO[0m endpoint/wireguard[wg-7]: lx idle: suspend wg-7 idle=30s
++0300 2026-07-01 03:48:53 [36mINFO[0m endpoint/wireguard[wg-8]: lx idle: suspend wg-8 idle=30s
++0300 2026-07-01 03:48:53 [36mINFO[0m endpoint/wireguard[wg-9]: lx idle: suspend wg-9 idle=30s

@@ -1,0 +1,8 @@
+{"ts": "2026-07-01T00:57:03.176507Z", "level": "info", "source": "core", "message": "INFO[0030] endpoint/wireguard[wg-2]: lx idle: suspend wg-2 idle=30s"}
+{"ts": "2026-07-01T00:57:03.182671Z", "level": "info", "source": "core", "message": "INFO[0030] endpoint/wireguard[wg-3]: lx idle: suspend wg-3 idle=30s"}
+{"ts": "2026-07-01T00:57:03.183314Z", "level": "info", "source": "core", "message": "INFO[0030] endpoint/wireguard[wg-4]: lx idle: suspend wg-4 idle=30s"}
+{"ts": "2026-07-01T00:57:03.186354Z", "level": "info", "source": "core", "message": "INFO[0030] endpoint/wireguard[wg-5]: lx idle: suspend wg-5 idle=30s"}
+{"ts": "2026-07-01T00:57:03.194183Z", "level": "info", "source": "core", "message": "INFO[0030] endpoint/wireguard[wg-6]: lx idle: suspend wg-6 idle=30s"}
+{"ts": "2026-07-01T00:57:03.197311Z", "level": "info", "source": "core", "message": "INFO[0030] endpoint/wireguard[wg-7]: lx idle: suspend wg-7 idle=30s"}
+{"ts": "2026-07-01T00:57:03.199661Z", "level": "info", "source": "core", "message": "INFO[0030] endpoint/wireguard[wg-8]: lx idle: suspend wg-8 idle=30s"}
+{"ts": "2026-07-01T00:57:03.211149Z", "level": "info", "source": "core", "message": "INFO[0030] endpoint/wireguard[wg-9]: lx idle: suspend wg-9 idle=30s"}
