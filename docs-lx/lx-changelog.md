@@ -10,6 +10,55 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.18
+
+**Pre-release.** Adds **idle-suspend for WireGuard / AmneziaWG endpoints** (SPEC 020) — on
+Android, many live WG/AWG endpoints pin the CPU because each holds a recv-worker `bufsArrs`
+(`128 × 65535 × 2` per device ≈ 16 MB) that keeps the Go GC scan-bound even with no traffic.
+Idle-suspend brings **idle *and* unreachable** endpoints `Down` to free those buffers, and
+wakes them on the next dial. Opt-in via one route field; off by default (byte-for-byte
+upstream behaviour when unset).
+
+* **`route.lx_idle_suspend` — suspend idle, unreachable WG/AWG endpoints.** Set it to a
+  duration (e.g. `"5m"`); `0`/omitted disables the feature (kill-switch). An endpoint is
+  suspended only when it is **both** idle past the threshold **and** unreachable from the
+  active routing tree — i.e. nothing can currently route to it: not the `final` outbound, not
+  a routing-rule target, not a selector's active pick, not a member of a `urltest` group's
+  current pool, and not detoured-to by any of those. A suspended endpoint's recv-workers exit
+  and its `bufsArrs` are freed; the next dial through it wakes it (`Up`, a fresh handshake —
+  expected, the Down model zeroes the crypto session). Edge-triggered INFO logs
+  `lx idle: suspend <tag>` / `wake <tag> by=dial`.
+
+* **Reachability is resolved by an event-driven walk, not per-tick.** The reachable set is
+  recomputed only when the active routing tree changes — a selector switch, a `urltest`
+  auto-switch / pool rebuild, or a config reload each invalidate a cached set; between events
+  the idle tick does one comparison per endpoint. The walk descends selectors via `Now()`,
+  a `round_robin` pool via its whole active set, and static detours transitively, with a
+  cycle guard.
+
+* **Why suspend and not a smaller receive batch.** SPEC.md's first-cut fix was to shrink
+  `StdNetBind.BatchSize()` (128→8) to make `bufsArrs` smaller. Code recon of the wireguard-go
+  submodule rejected it: GRO receive is enabled on Android and its coalesced-packet split
+  hardcodes `IdealBatchSize`=128 (the message array must hold a 64-datagram expansion), so a
+  smaller batch panics / overflows and GRO can't be dropped (it's needed for download
+  throughput, §010). `Down` is the only lever that frees the buffers whole while leaving the
+  active node's batch — and its GRO — intact.
+
+* **Concurrency & correctness.** The idle goroutine is stopped and joined before endpoints are
+  torn down (no use-after-close race on the device); `SuspendIfIdle` and the dial-path wake are
+  mutually excluded by a per-endpoint mutex (no dial-lands-on-a-suspending-device drop); the
+  legacy `least_test` cold-start auto-switch now invalidates reachability (so a freshly-selected
+  active node is never wrongly suspended); AWG-over-WG guard-suspended endpoints are never
+  idle-woken. Unit tests cover the walk, the idle logic, the event cache, and the
+  endpoint-manager iteration seam.
+
+* **Device-verified (2026-07-01, all 8 test nodes):** suspend fires for idle+unreachable
+  endpoints and never for reachable ones (final / rule target / selector pick / urltest pool);
+  wake-on-dial works; a selector switch dynamically re-suspends the deselected node and wakes
+  the new one; the kill-switch (`0`) runs zero ticks. Resource win measured: recv-worker
+  goroutines 16→0, RSS −31%. See `SPECS/020-MULTI_WG_IDLE_BUFFER_HEAT/TEST_PLAN_idle_suspend.md`
+  §RESULTS.
+
 #### v1.14.0-lx.1-rc.17
 
 **Pre-release.** Fixes a build-tag regression that shipped in every desktop/CLI release
