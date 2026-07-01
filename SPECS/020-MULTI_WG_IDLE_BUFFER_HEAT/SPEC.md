@@ -1,274 +1,688 @@
-# 020 — Множество WG/AWG-узлов греют телефон: eager-устройства держат bufsArrs → scan-bound GC
+> ## ⚠️ Companion document — read [`SPEC.md`](SPEC.md) FIRST
+>
+> This is a **secondary** design doc for feature 020, NOT the authoritative spec.
+> The authoritative [`SPEC.md`](SPEC.md) has **on-device proof** (heap A/B on a
+> real OnePlus): the GC-scan heat holder is the **`bufsArrs` of recv-workers**
+> (`make([]*[65535]byte, BatchSize=128)`, ~180 MB across `RoutineReceiveIncoming`
+> on live WG devices), and its **PRIMARY lever is shrinking `StdNetBind.BatchSize()`**
+> on android (128→8/16, one line in `conn/bind_std.go:322`) — simple, measured,
+> no "activity" detection needed.
+>
+> **Where this doc diverges from SPEC.md (SPEC.md wins — it has measurements):**
+> - This doc's source-reading guessed the GC holder was the *gvisor netstack
+>   pointer graph*. SPEC.md **measured** it: the holder is wireguard-go `bufsArrs`,
+>   not the netstack. Trust SPEC.md.
+> - This doc claimed freeing buffers is pointless ("noscan"). SPEC.md is precise:
+>   the `*[65535]byte` POINTERS in `bufsArrs` (a pointer array) + pointer-dense
+>   `QueueElement`s ARE the scan cost, and their count ∝ number of devices — so
+>   shrinking/freeing them **does** cut the heat. Trust SPEC.md.
+>
+> **What this doc still contributes:** a fully-worked design for SPEC.md's
+> **"lever 3" (Down/suspend inactive devices)** — specifically a *light* variant
+> (stop per-peer timers, keep keypairs/socket live, cheap wake, no handshake) plus
+> the reachability-walk that decides *which* devices are inactive (idle AND
+> unreachable from the active routing tree). SPEC.md flags lever 3 as the most
+> expensive/complex option and prefers lever 1 (`BatchSize`); treat this doc as the
+> detailed fallback design for lever 3 if/when it's needed, NOT a competing primary.
+> Note: light-suspend (timersStop) does NOT free `bufsArrs` — only a real `Down`
+> (BindClose → recv-worker exit, `receive.go:104-110`) or smaller `BatchSize` does.
+> So for the *measured* holder, lever 1 or lever-3-deep (Down), not light-suspend,
+> is what actually helps RAM/GC; light-suspend is the battery/CPU-timer win.
 
-| Поле | Значение |
-|------|----------|
-| Тип | B (bug) — корень ДОКАЗАН на воспроизведении (heap до/после), фикс выбирается |
-| Статус | **O (open)** — держатель доказан профилем на стенде (**confidence high**): 180 МБ = `bufsArrs` recv-воркеров живых WG-устройств. Воркэраунд («убрать лишние WG») воспроизведён: 11 ep → 1 ep даёт 269 МБ → 0. ⚠️ **Изначальный primary-рычаг (меньший `BatchSize()`) ОТВЕРГНУТ разведкой кода — ломает GRO-приём** (массив GRO-разворота захардкожен на `IdealBatchSize`=128; `bind_std.go:269/565`; GRO на android включён). **Реальный рычаг = Down неактивных устройств** (рычаг 3) — освобождает `bufsArrs` целиком, GRO активной ноды цел. Реализован на ветке `lx-spec020-idle-suspend` (device-verification — [TEST_PLAN](TEST_PLAN_idle_suspend.md), pending). |
-| Зона | submodule `wireguard-go` (`device/receive.go`, `conn/bind_std.go` — размер batch/bufsArrs) + ядро `sing-box-lx` (`transport/wireguard/endpoint.go` — выбор bind / lifecycle неактивных) |
-| Связь | [010-WG_ENDPOINT_GRO_SPLIT_BRAIN](../010-WG_ENDPOINT_GRO_SPLIT_BRAIN/SPEC.md) (GRO нужен 65535-буфер — НЕ трогать размер), [007-AWG_OVER_WIREGUARD_DETOUR_GUARD](../007-AWG_OVER_WIREGUARD_DETOUR_GUARD/SPEC.md) (Suspend = точка приглушения, но bufsArrs НЕ освобождает), memory `android-cpu-heat-multi-wg-gc` |
-| Репортер | Iliya, 2026-06-28 (CPH2411 / OnePlus, Adreno 642L, Android) |
+#### SPEC 020 (companion) — Idle WireGuard/AmneziaWG endpoint suspend — design for lever 3
 
----
-
-## Симптом
-
-На Android новое 1.14-ядро (LxBox 2.5.0+) держит все ядра CPU на максимуме и греет
-телефон. VPN внешне работает нормально. Морда закрыта — всё равно греет. Сначала
-казалось типонезависимым (VLESS/Trojan/WG). «Не у всех устройств». Освобождение
-RAM **не помогает**.
-
----
-
-## Корень (ДОКАЗАН экспериментом на воспроизведении, high confidence)
-
-Греет **фоновый сборщик мусора Go**, сканирующий большую pointer-плотную живую кучу.
-Куча — это **`bufsArrs` recv-воркеров живых WG-устройств**.
-
-### CPU (горячий профиль)
-
-`runtime.gcDrain` 65.69%, `runtime.scanobject` 52.65%, `greyobject` 15%, `findObject`
-11%. GC **scan-bound**. **Crypto в профиле НЕТ** (нет chacha/poly/AEAD) — устройство в
-момент снятия НЕ обрабатывало трафик, но GC всё равно жёг ~3.5 ядра, сканируя кучу.
-
-### Держатель — измерен heap inuse_space + goroutines на стенде
-
-`PopulatePools.func3` = **269 МБ (91.7%)** по `inuse_space` (это `messageBuffers`,
-`new([65535]byte)`). НО держит их **`RoutineReceiveIncoming` = 180.79 МБ (61%) cum** —
-буферы висят **на стеках recv-воркеров** (`bufsArrs`), `peek` подтверждает 100% выдачи
-через `sync.Pool.Get` (в руках воркеров, не в пуле, не в каналах).
-
-**Арифметика (сходится точно):**
-- 11 живых wireguard endpoints (`RoutineTUNEventReader`×11).
-- **22 `RoutineReceiveIncoming`, ВСЕ на `StdNetBind` (batch=128)**, 0 на `ClientBind`.
-  (2 на устройство: `makeReceiveIPv4` + `makeReceiveIPv6`.)
-- Каждый держит `bufsArrs = make([]*[65535]byte, maxBatchSize)`, `maxBatchSize =
-  bind.BatchSize() = 128` → **128 × 65535 ≈ 8 МБ**, заполняется СРАЗУ на старте
-  горутины (`receive.go:99-102`), держится весь lifetime сильной ссылкой.
-- **22 × 8 МБ = 176 МБ ≈ 180.79 МБ.** ✅
-
-### A/B на стенде (Debug API `/diag/pprof`) — что доказано
-
-| Состояние | PopulatePools | RoutineReceiveIncoming | устройств | recv |
-|---|---|---|---|---|
-| baseline (11 ep) | 269 МБ | 180 МБ | 11 | 22 |
-| переключить активный узел WARP→home | 269 МБ | 180 МБ | 11 | 22 |
-| **конфиг с 1 endpoint + reload** | **0 МБ** | **0 МБ** | **1** | **2** |
-
-1. **Буферы НЕ засыпают.** Переключение активного узла/группы НЕ освобождает память —
-   неактивные устройства держат `bufsArrs` так же, как активное.
-2. **Память ∝ числу endpoints, не активности.** 11 ep → 1 ep: 269 МБ → 0. Это и есть
-   воркэраунд Ильи, воспроизведённый профилем.
-
-### Почему batch=128 (а НЕ 1)
-
-`endpoint.go:200-202`: bind = `StdNetBind` **тогда и только тогда**, когда
-`e.options.Dialer` реализует `dialer.WireGuardListener`; иначе `ClientBind` (batch=1).
-WARP/AWG-endpoints используют `WireGuardListener`-диалер → `StdNetBind` →
-`BatchSize()=128` на android (`bind_std.go:322`, `linux||android → IdealBatchSize=128`).
-> Прежние версии этого SPEC ошибались в обе стороны: первая — `bufsArrs`=8 МБ, но без
-> доказательства; вторая — «batch=1, держат каналы/sync.Pool» (неверно: на стенде bind
-> = `StdNetBind`, batch=128, держат `bufsArrs`, а НЕ каналы/victim-cache).
-
-### Почему scanobject 52%, хотя `[65535]byte` это noscan
-
-GC не сканирует нутро байтовых буферов. Жгут **указатели**: `*[65535]byte` в `bufsArrs`
-(массив указателей) + pointer-плотные `QueueInbound/OutboundElement`
-(`buffer`/`packet`/`keypair`/`endpoint`/`peer`, `receive.go:28-34`), которые рождаются
-из этих буферов под нагрузкой и живут в пулах/каналах. Число указателей ∝ числу
-устройств, **не** размеру буфера.
-
-### Роль MaxSegmentSize 2200 → 65535 (1.13 → 1.14)
-
-Единственное, что изменилось между 1.13 и 1.14 в этой зоне — `MaxSegmentSize`
-2200→65535 (submodule commit `2e0774f`, ради GRO; `downLocked`/пулы/каналы/batch
-**идентичны** 1.13↔1.14, проверено diff'ом). Это раздуло **байты** держателя ×30
-(`bufsArrs` 22×128×2200 ≈ 6 МБ → ×65535 ≈ 176 МБ). Резидентная куча ×30 → чаще
-GC-циклы → те же указатели сканируются чаще → `scanobject` доминирует. **MaxSegmentSize
-= триггер «появилось в 1.14» (объём), но НЕ корневой держатель** — держатель (eager
-recv-воркеры с полным batch) был и в 1.13, просто дешевле.
+Status: DRAFT (secondary design — see SPEC.md for the authoritative, measured plan).
+Target: lx-1.14
+Motivation memory: [[android-cpu-heat-multi-wg-gc]], [[awg-detour-guard-must-be-at-start]]
+Cost facts in §1/§7.0 are source-verified against the wireguard-go submodule
+(two adversarial passes) — but where they conflict with SPEC.md's on-device
+measurements, SPEC.md is authoritative (see the banner above).
 
 ---
 
-## Ложные следы (исключены)
+## 1. Problem
 
-- **`MaxSegmentSize` 65535 → 2200** — буфер нужен для UDP_GRO (см. §010,
-  upstream-родной фикс в 1.14). Откат задушит download-скорость. Это триггер объёма,
-  не держатель — откатывать неправильно.
-- **Suspend-дренаж device-каналов / sync.Pool victim-cache** — ОТВЕРГНУТ профилем:
-  держит `bufsArrs` recv-воркеров (61% cum), а НЕ каналы (`decryption.c` и пр.) и НЕ
-  victim-cache. Доказано: переключение узла (которое триггерит Suspend) НЕ освобождает
-  память.
-- **lazy `sync.Pool` / меньше `PreallocatedBuffersPerPool`** — не при чём: `bufsArrs`
-  держит буферы СИЛЬНОЙ ссылкой, не через пул/семафор.
-- **oomkiller / FreeOSMemory** — исключён (не активен на Android по умолчанию).
+On Android the core heats up / pins CPU because every live WireGuard/AmneziaWG
+endpoint runs a permanent background engine, and a separate per-endpoint
+**gvisor `stack.Stack`** netstack. With N configured WG/AWG endpoints, all N run
+24/7 **regardless of whether any traffic flows through them**. Two distinct
+costs, established by source-verified investigation (do NOT conflate them):
 
----
+- **Battery / CPU wakeups** — per-peer keepalive + handshake-retransmit timers,
+  and (for AWG) junk-handshake machinery, fire on their own cadence even at idle,
+  waking the radio and burning CPU.
+- **GC scan heat** — the dominant scanner cost is NOT buffers (wireguard-go's
+  `messageBuffers` are pointer-free *noscan* spans, marked O(1); the queue
+  channels are nil-at-idle). It is the per-endpoint **gvisor `stack.Stack`
+  pointer graph** (`transport/wireguard/device_stack.go:40`) — ~5 maps +
+  demuxer + PortManager + IPTables — plus its **GOMAXPROCS TCP-dispatcher
+  goroutines** (`tcp/dispatcher.go:406`) whose stacks are scanned every mark
+  cycle. N live endpoints = N such graphs. This is [[android-cpu-heat-multi-wg-gc]].
 
-## Решение: уменьшить размер `bufsArrs` неактивных устройств
+Today the only way an endpoint stops is:
 
-Держатель = `maxBatchSize × 65535 × 2 recv × N_устройств`. Активный узел нуждается в
-batch=128 ради GRO-throughput; неактивные (принимают ~0 пакетов) — нет. Цель: дать
-неактивным устройствам **малый batch** (напр. 8) → 8×65535×2 ≈ 1 МБ/устройство вместо
-16 МБ.
+1. **Global pause** (`onPauseUpdated`) — `DevicePause` on screen-off; gates ALL
+   endpoints at once via `device.Down()`, not selectively.
+2. **`Close()`** — full teardown on core stop (this DOES release the netstack).
+3. **AWG-detour-guard** — narrow correctness guard, not power saving.
 
-> ⚠️ **«lazy bufsArrs» в наивном виде НЕВОЗМОЖЕН.** `StdNetBind.receiveIP`
-> (`bind_std.go:260-279`) на каждый `recv` берёт `getMessages()` — фиксированный массив
-> `IdealBatchSize=128` `ipv6.Message` — и мапит **каждый** `bufs[i] → msgs[i].Buffers[0]`,
-> затем `ReadBatch(*msgs, 0)` читает в весь массив за один syscall. Нельзя дать `bufs`
-> короче/с дырами. Уменьшать надо **сам batch** (и `bufsArrs`, и `getMessages`
-> согласованно), а не лениво заполнять фиксированный массив.
+There is **no notion of "this endpoint is currently unreachable from the active
+routing tree"**, so no selective per-endpoint idle suspend. A non-selected
+selector member, an out-of-pool urltest node, or an endpoint that is no rule
+target and not final burns power forever.
 
-### Замер throughput ВЫПОЛНЕН на стенде (2026-06-29)
+Critical finding (§7.0): `device.Down()` is NOT cheap (full reconnect + fresh
+handshake on wake) AND does **not** free the netstack graph — so plain `Down()`
+neither resumes cheaply nor cuts the GC heat. The two costs need two mechanisms.
 
-Метод: статический `curl` arm64 в `/data/local/tmp` на устройстве, download через
-тоннель (активный WARP), `--resolve` в обход DNS (DNS от shell не идёт через тоннель),
-`-k` (glibc-curl не находит CA-store на Android). 50 МБ × 5 прогонов.
+## 2. Goal & strategy (incremental, two tiers)
 
-- **Baseline (batch=128): 10.7 МБ/с медиана (≈86 Мбит/с)**, стабильно 9.1–11.2.
-- **CPU под нагрузкой (download активен, 8с):** `Syscall6` **36%**, `scanobject` 6%,
-  crypto ~3% (`aes.encryptBlock` 1.5%). CPU idle (без загрузки): `Syscall6` 33.6%,
-  `scanobject` 3.85%.
+Selectively suspend any WG/AWG endpoint that is BOTH **unreachable** from the
+active routing tree (not final, not a rule target, not the active choice of any
+selector on an active path, not in any active urltest pool, not transitively
+detoured-to by the above) AND **idle** beyond a threshold.
 
-> **Вывод: A/B «batch 128 vs 16» на этом классе канала НЕинформативен — и это
-> результат.** Throughput упирается в **WARP-канал + syscall-overhead (36% CPU)**, НЕ в
-> batch-обработку. GRO/batch экономит syscall'ы и влияет на скорость только на сотнях
-> Мбит/гигабитах; на ~86 Мбит/с канал — узкое место задолго до этого. Значит **уменьшение
-> batch на типичном мобильном/WARP-канале скорость НЕ роняет.**
+Delivered in tiers — **ship the safe one first, escalate later from field data**:
 
-### Кандидаты в рычаги (рекомендация после замера)
+- **Tier A — light sleep (THIS SPEC, ships first).** `timersStop()` on the
+  endpoint's peers: silence keepalive / handshake-retransmit / junk timers.
+  Keypairs, socket, goroutines, and netstack all stay live → **wake is genuinely
+  cheap (no handshake, no rebuild)**, hysteresis not critical. Cuts **battery /
+  CPU wakeups / radio**. Does NOT cut the GC scan heat (netstack untouched) —
+  honest partial win, lowest risk.
+- **Tier B — netstack teardown (FUTURE, gated on field data).** The only tier
+  that frees the dominant scan target: release the gvisor `stack.Stack` (≈
+  `Close` of the wg device) for long-idle + unreachable endpoints. Wake = cold
+  reconnect (rebuild stack + fresh handshake; in-flight flows die). Needs a
+  longer threshold + hysteresis. Designed-for here (the tick is a ladder, Tier B
+  bolts on as a deeper rung), NOT implemented in this SPEC.
 
-> ⚠️ **ОБНОВЛЕНО (разведка кода submodule): рычаг 1 ОТВЕРГНУТ — ломает GRO-приём.**
-> Изначально этот раздел ставил «глобально меньший `BatchSize()`» как PRIMARY. Чтение
-> кода `wireguard-go` это **опровергло**: уменьшить `BatchSize()` **нельзя** без слома
-> GRO. Механика (см. подробный разбор в «Логика фикса» ниже):
-> - GRO на приём на android **ВКЛЮЧЁН** — `UDP_GRO` ставится без android-гейта
->   (`conn/controlfns_linux.go:90-104`; SPEC 010 гейтил под `!android` только GSO на
->   ПЕРЕДАЧУ, а не GRO-приём), так что `rxOffload=true`.
-> - На GRO-пути `receiveIP` (`bind_std.go:267-275`) читает coalesced-пакеты и зовёт
->   `splitCoalescedMessages`, который разворачивает **один** GRO-пакет в **до 64**
->   датаграмм (`udpSegmentMaxDatagrams=64`). `readAt = len(*msgs) − IdealBatchSize/64`
->   (`bind_std.go:269`) **хардкодит `IdealBatchSize`=128**, а массив сообщений должен
->   вмещать развёртку.
-> - Урезать `bufsArrs`/batch до 8 → массив не вмещает 64-датаграммный разворот →
->   `"splitting coalesced packet resulted in overflow"` (`bind_std.go:565`) **или**
->   паника из рассинхрона `bufs`(8) vs `getMessages`(128). GRO задушить нельзя (§010,
->   иначе падает download).
-> **Вывод:** «одна точка `BatchSize()`» технически несостоятельна — конфликтует с GRO,
-> который сам этот SPEC защищает в §010. **Реализуемый рычаг — №3 (Down неактивных):**
-> `BindClose` завершает recv-воркеры и освобождает `bufsArrs` ЦЕЛИКОМ, **не трогая GRO
-> активной ноды** (у неё batch остаётся 128). Это не «самый дорогой запасной», а
-> **единственный жизнеспособный**. Реализован на ветке `lx-spec020-idle-suspend`
-> (см. [SPEC_idle_suspend_lever.md](SPEC_idle_suspend_lever.md) §13).
+The design is layered so Tier B is an additive deeper rung on the same idle tick
+and `started`/`resumeMu` machinery — not a rewrite of Tier A.
 
-1. ~~**[PRIMARY] Глобально меньший batch на android-клиенте** (`StdNetBind.BatchSize()`
-   128→напр. 8–16).~~ **ОТВЕРГНУТ — ломает GRO** (см. врезку выше). Срезал бы `bufsArrs`
-   с 8 МБ до ~0.5–1 МБ на recv-горутину, и на мобильном/WARP-канале throughput не падает
-   — но массив сообщений GRO-приёма обязан вмещать `IdealBatchSize`=128 слотов под
-   разворот coalesced-пакета, поэтому урезать его нельзя без overflow/паники.
-2. **[SECONDARY] Динамический batch: активный=128, неактивный=малый.** ⚠️ Наследует ту же
-   GRO-проблему рычага 1 для idle-ноды: пока на idle-сокете `rxOffload=true`, малый batch
-   её recv-путь сломает. Жизнеспособен ТОЛЬКО если на idle-устройстве ещё и **выключить
-   GRO-приём** (тогда обычный `ReadBatch` без split, любой размер массива ок). Сложнее
-   рычага 3 и без его выигрыша (буферы всё равно держатся), поэтому не выбран.
-3. **[РЕАЛИЗУЕМЫЙ / PRIMARY] Down неактивных устройств** (BindClose завершает
-   `RoutineReceiveIncoming`, defer `receive.go:104-110` освобождает `bufsArrs`). Режет
-   полностью (до 0 на устройство) и **сохраняет GRO активной ноды**. Цена: переключение
-   узла НЕ усыпляет (доказано), а selector держит членов up для urltest health-check →
-   нужен критерий «неактивно И недостижимо из активного дерева роутинга» + обратимость
-   (wake-on-dial). Реализован через reachability-walk на ветке `lx-spec020-idle-suspend`.
-   Раз рычаги 1/2 отпали из-за GRO — это **единственный рабочий путь**, а не дорогой запас.
+Observability (ships WITH Tier A, §12a): INFO logs for every suspend/wake/skip
+event — doubles as the field instrument that tells us whether Tier B is worth
+building, what XX to pick, and whether flapping occurs.
 
----
+Non-goals (this SPEC): Tier B implementation, tailscale suspend, urltest interval
+tuning, freeing wireguard-go buffers (proven noscan — freeing them cuts neither
+scan heat nor meaningfully helps, see §7.0).
 
-## Почему рычаг 1 (меньший `BatchSize()`) НЕ работает — разбор кода
+## 3. Configuration
 
-> Этот раздел раньше назывался «Логика фикса (PRIMARY-рычаг)» и расписывал урезание
-> `BatchSize()` как реализацию. **Разведка кода submodule его опровергла** — оставляю
-> разбор как обоснование, почему рычаг отвергнут (и почему PRIMARY стал рычаг 3, Down).
+```json
+"route": {
+  "lx_idle_suspend": "30s"
+}
+```
 
-**Что предлагалось.** `bufsArrs = make([]*[65535]byte, maxBatchSize)` (`receive.go:89`),
-где `maxBatchSize = bind.BatchSize()`. Для `StdNetBind` на android это **128** → 8 МБ на
-recv-горутину × 22 = 176 МБ. Урезать `BatchSize()` 128→8 в `conn/bind_std.go:322` →
-пропорционально меньше `bufsArrs`. Замер throughput показал, что на мобильном/WARP-канале
-скорость от этого не падает (см. выше). На первый взгляд — «одна строка».
+- Field: `RouteOptions.LXIdleSuspend badoption.Duration` (lx:begin/lx:end), `json:"lx_idle_suspend,omitempty"`.
+  This is **XX_light** (Tier A threshold).
+- Default (absent / `"0s"` / `0`): **feature disabled** (kill-switch — safe rollback).
+- `"30s"`: light-suspend endpoints idle ≥ 30s once unreachable.
+- Tick period: `XX_light/2` (so 15s at default), clamped to a sane floor (e.g. ≥ 5s).
+- Reserved for Tier B (future): `lx_idle_teardown` (XX_deep, must be ≫ XX_light);
+  absent until Tier B ships. Not parsed in this SPEC.
 
-**Почему ломается (GRO-приём).** Урезать `bufsArrs` нельзя в отрыве от массива сообщений
-GRO-разворота, а тот завязан на `IdealBatchSize`=128 жёстко:
+## 3a. Constants
 
-- **GRO на приём на android ВКЛЮЧЁН.** `UDP_GRO` ставится для всех linux/android-ядер
-  ≥5.12 без android-гейта (`conn/controlfns_linux.go:90-104`); android-гейт стоит только
-  на `IP_PKTINFO`/sticky. `features_linux.go:22` → `rxOffload = (getsockopt UDP_GRO == 1)`
-  → на современном android `rxOffload=true`. (SPEC 010 гейтил под `!android` **GSO на
-  передачу**, не GRO-приём — это разные вещи.)
-- **GRO-путь требует полный массив под разворот.** При `rxOffload=true` `receiveIP`
-  (`bind_std.go:267-275`) читает coalesced-пакеты в хвост массива и зовёт
-  `splitCoalescedMessages`, который разворачивает **один** GRO-пакет в **до 64** датаграмм
-  (`udpSegmentMaxDatagrams=64`). Стартовая позиция: `readAt = len(*msgs) −
-  IdealBatchSize/udpSegmentMaxDatagrams` (`bind_std.go:269`) — **`IdealBatchSize`=128
-  захардкожен**, не `s.BatchSize()`. И `getMessages()` (`bind_std.go:72`) аллоцирует
-  `make([]ipv6.Message, IdealBatchSize)` — тоже 128.
-- **Следствие.** Если урезать только `BatchSize()` (`bufsArrs`→8), а `getMessages`/`readAt`
-  остаются на 128 — **рассинхрон** `bufs`(8) vs массив(128) → out-of-bounds паника. Если
-  урезать всё согласованно до 8 — один GRO-пакет на 64 датаграммы **не помещается** в
-  8-слотовый массив → `errors.New("splitting coalesced packet resulted in overflow")`
-  (`bind_std.go:565`). Так что прежнее утверждение «потеря пакетов исключена, массив просто
-  короче» — **неверно для GRO-пути**: массив там не «просто короче», он обязан вмещать
-  `IdealBatchSize` слотов под разворот.
-- GRO задушить, чтобы обойти это, **нельзя** — он нужен для download-throughput (§010,
-  upstream-родной фикс 1.14; без GRO скорость падает).
+Everything Tier A introduces, in one place. ONE user-facing knob; the rest are
+named internal constants (NOT magic literals) living in `route/reachability_lx.go`.
 
-**Вывод.** «Одна точка `BatchSize()`» технически несостоятельна: конфликтует с GRO-приёмом,
-который сам этот SPEC защищает в §010. Рычаг 1 (и наследующий ту же проблему рычаг 2)
-отвергнуты.
+### User-facing (config)
 
-## Логика фикса (PRIMARY = рычаг 3, Down неактивных)
+| Name | Type | Default | Meaning |
+|---|---|---|---|
+| `route.lx_idle_suspend` | `badoption.Duration` | `30s` | **XX_light** — idle threshold. `0`/absent = feature OFF (tick never starts). |
 
-**Суть.** `device.Down()` неактивного устройства закрывает bind → завершает обе
-recv-горутины → их defer (`receive.go:104-110`) **освобождает `bufsArrs` целиком** (до 0
-на устройство). Активная нода остаётся `Up` с полным batch=128 → **GRO цел там, где он
-нужен**. Это единственный путь, срезающий держатель без слома GRO.
+### Internal (named consts, code-only)
 
-**Что нужно (и почему дороже одной строки):** критерий «какие устройства гасить» нетривиален
-— переключение активного узла НЕ усыпляет (доказано A/B), а selector держит членов up для
-urltest health-check. Поэтому гасить можно только устройство, которое **idle И недостижимо
-из активного дерева роутинга** (final / цель правила / активный выбор селектора / член
-активного пула urltest / detour). Плюс обратимость: wake-on-dial (на Up — новый handshake,
-Down зануляет крипто-сессию). Реализация — reachability-walk + event-driven кэш + idle-tick
-на ветке `lx-spec020-idle-suspend`; разбор в [SPEC_idle_suspend_lever.md](SPEC_idle_suspend_lever.md)
-§13 и план живой проверки в [TEST_PLAN_idle_suspend.md](TEST_PLAN_idle_suspend.md).
+| Const | Value | What it governs | Why this value |
+|---|---|---|---|
+| `idleTickDivisor` | `2` | tick period = `XX_light / divisor` | Sampling: to catch an endpoint crossing into "idle for XX" on time, poll about twice per XX window. Detection lag ≤ ~XX/2 instead of ~XX (divisor 1 = late, uneven detection; divisor 4 = 2× more wakeups for no real gain). The tick must be cheap *because* it is a power feature. |
+| `idleTickFloor` | `5 * time.Second` | lower bound on tick period | Guardrail against a tiny configured XX. `period = max(XX/divisor, floor)`. Without it, `lx_idle_suspend:"2s"` → 1 s ticks → the reachability walk + endpoint scan runs ~60×/min, burning the very battery the feature saves. Floor caps poll frequency regardless of how small XX is. |
 
-**Эффект:** N неактивных устройств × ~16 МБ (2 recv × 8 МБ) → 0; GC-нагрев уходит
-пропорционально числу погашенных. `MaxSegmentSize` (65535) и batch активной ноды НЕ
-трогаются → GRO цел.
+Effective tick period: `period = max(XX_light/idleTickDivisor, idleTickFloor)`.
 
----
+| `lx_idle_suspend` (XX) | XX/2 | period = max(XX/2, 5s) | governed by |
+|---|---|---|---|
+| `30s` (default) | 15s | **15s** | divisor |
+| `60s` | 30s | **30s** | divisor |
+| `8s` | 4s | **5s** | floor |
+| `2s` | 1s | **5s** | floor |
+| `0` | — | tick not started | feature off |
 
-## Верификация (стенд доступен — Debug API)
+Values are sensible defaults, not computed optima — divisor could be 3, floor
+10s; revisit if field logs (§12a) show the tick itself is non-trivial. Tunable as
+consts without config surface.
 
-- **Сделано — доказательство корня:** heap `/diag/pprof?profile=heap` при разном числе
-  endpoints: 11 ep → 269 МБ, 4 ep → 104 МБ, 1 ep → 0. Держатель ∝ числу устройств,
-  линейно. `RoutineReceiveIncoming` cum 180 МБ при 11 ep.
-- **Сделано — замер throughput:** baseline batch=128 = 10.7 МБ/с; узкое место = канал/
-  syscall, не batch (CPU-профиль под нагрузкой).
-- **Для фикса (рычаг 3, Down):** прогнать [TEST_PLAN_idle_suspend.md](TEST_PLAN_idle_suspend.md)
-  — снять heap до/после idle-окна: `RoutineReceiveIncoming`/`PopulatePools` inuse_space
-  должен упасть пропорционально числу погашенных устройств (~16 МБ на устройство → 0).
-  Throughput активной ноды не меняется (её batch=128 не трогается). ~~Билд с `BatchSize()`=8~~
-  — отвергнут (ломает GRO, см. «Почему рычаг 1 не работает»).
-- Команды: `adb forward tcp:9269`; `GET /diag/pprof?profile=heap&query=gc=1`;
-  `GET /diag/pprof?profile=profile&query=seconds=8` (CPU); download —
-  `curl -sk --resolve speed.cloudflare.com:443:<ip> .../__down?bytes=52428800`.
+### NOT introduced in Tier A (deliberately)
 
-## Остаточные риски
-1. ~~**Быстрый канал** (был риск рычага 1).~~ Снят: рычаг 1 (меньший batch) отвергнут —
-   ломает GRO. Рычаг 3 (Down) НЕ трогает batch активной ноды, так что throughput-риска на
-   быстром канале у него нет. Зато появляется свой риск — **handshake на wake**: Down
-   зануляет крипто-сессию, первый пакет после пробуждения ждёт нового handshake (латентный
-   всплеск, не потеря; см. TEST_PLAN «No flapping» + min-dwell).
-2. «Неактивность» устройства не тривиальна: переключение узла НЕ усыпляет; selector
-   держит всех членов up для health-check. Рычагу 3 нужен корректный критерий
-   (idle И недостижимо из активного дерева) и обратимость (re-Up на реальный dial). Это и
-   есть основная сложность реализации (reachability-walk) — но раз рычаг 1 отпал по GRO,
-   альтернативы нет.
-3. 2 recv-горутины на устройство (v4+v6) — каждая держит свой `bufsArrs`. `Down` закрывает
-   bind → завершаются обе → освобождаются оба `bufsArrs` (рычаг 3 бьёт обе автоматически).
+- **No `XX_deep` / teardown threshold** — Tier B (reserved `lx_idle_teardown`).
+- **No hysteresis / min-dwell const** — light flap is cheap (timer toggle, no
+  handshake), and XX itself debounces (a dial stamps activity ⇒ no re-suspend for
+  XX after any traffic). Hysteresis is a Tier-B concern (its flap = full reconnect).
+- **No new WG-protocol constants** — light sleep lives ABOVE WG's existing timeouts
+  (`RejectAfterTime=180s`, `KeepaliveTimeout=10s`, `RekeyAfterTime=120s`,
+  `constants.go:16-23`); keypairs stay valid, so those are untouched. Note for
+  Tier B: `DefaultURLTestInterval=3m` (`constant/timeout.go:14`) is the floor any
+  future XX_deep must sit well ABOVE (else every probe forces a reconnect). For
+  Tier A, XX(30s) < probe(3m) is fine — a probe just re-arms timers, no handshake.
+
+## 4. Reachability model
+
+`Router.ReachableOutbounds() map[string]bool` — the set of outbound tags
+reachable from the **active** routing tree. NOT derivable from `ConsumersOf` /
+`dependByTag`: that ledger is the *static* detour graph (a selector lists ALL
+members as dependencies), whereas reachability needs the *current dynamic
+choice*. So `ReachableOutbounds` is an independent walk.
+
+### 4.1 Seeds (entry points into the tree)
+
+- **Final**: `outboundManager.Default()`.
+- **Rules**: every outbound tag referenced by a rule action (`route` / `bypass`)
+  from `router.Rules()`. (Static — changes only on router rebuild.)
+
+### 4.2 Downward walk from each seed
+
+Visit transitively, with per-node type dispatch (cycle-guarded by a visited set):
+
+| Node type            | Reachable children                          |
+|----------------------|---------------------------------------------|
+| selector             | **only** `Now()` (the active choice)        |
+| urltest — pool (019) | **all** tags currently in `Pool()` / `poolTags()` |
+| urltest — legacy     | `selectedOutboundTCP` + `selectedOutboundUDP` |
+| ordinary (vless/…)   | `Dependencies()` (honest detour chain)      |
+
+(Pool tags ARE reachable while in the pool — see §4.3 for why this needs no
+carve-out and how suspend/wake stays homogeneous with user traffic.)
+
+Collect every visited tag into the result map. An endpoint is **reachable** iff
+its tag ∈ map.
+
+### 4.3 urltest semantics — uniform "dial wakes, idle-tick sleeps" model
+
+No special "pool = always reachable" carve-out. A urltest health-check probe
+goes through the node's own `DialContext` (`urltest.URLTest(testCtx, link, p)`,
+urltest.go ~511) — i.e. a probe is just an ordinary dial. So the SAME lazy
+`Up()`-on-dial path that serves user traffic (§7) wakes a suspended node for its
+probe automatically; no urltest-specific wake code.
+
+Consequences:
+
+- A node currently in the pool is probed every `interval`; each probe stamps
+  `lastActivity`, so while `interval < XX` the node never goes idle → never
+  suspended (desired: an actively-checked node stays live).
+- A node evicted from the pool stops being probed; once it ALSO sits idle > XX
+  it becomes a legitimate suspend candidate, suspended by the idle tick.
+- **The health-check does NOT lower the node back down itself.** Lowering is the
+  idle tick's job, by timeout only (§7). Synchronous down-after-probe would (a)
+  drop a real user connection that arrived during the probe and (b) flap the WG
+  handshake every `interval`. So: probe `Up()`s (via dial), probe finishes, node
+  is simply released; the tick re-sleeps it XX s later if still idle+unreachable.
+
+Net: pool membership needs no carve-out in the walk (§4.2 still descends into
+the active pool because those tags are reachable *while in the pool*), but
+suspend/wake is fully homogeneous with user traffic. The `setSlots` generation
+bump (§5.1 #3) still stands — leaving/entering the pool changes the active tree,
+so the cache must invalidate.
+
+## 5. Cache + invalidation (counter / push-ish)
+
+Recomputing the full walk every tick is wasteful (defeats the power goal). Cache
+the walk; recompute only when the active selection actually changed.
+
+### 5.1 Generation counters
+
+Every point that mutates an active choice increments a monotonic
+`atomic.Uint64` generation:
+
+| # | Source                         | Type   | Where the `gen.Add(1)` goes                    |
+|---|--------------------------------|--------|------------------------------------------------|
+| 1 | `Selector.SelectOutbound`      | manual | next to `s.selected.Store(detour)`             |
+| 2 | urltest legacy auto-switch     | auto   | where `selectedOutbound{TCP,UDP}` is reassigned |
+| 3 | pool `setSlots` (SPEC 019)     | auto   | inside `balancer.setSlots` (lx file — free)     |
+| 4 | router rebuild (reload/ruleset)| auto   | a `routerRebuildVersion` bump in Router         |
+
+### 5.2 Aggregate generation
+
+```
+reachabilityGeneration() =
+    routerRebuildVersion
+  + Σ over all groups: group.Generation()
+```
+
+Monotonic by construction → any change strictly increases the aggregate (no
+ABA). For paranoia, hash `(tag,gen)` pairs instead of summing; sum suffices at
+our scale (tens of groups).
+
+### 5.3 Cache read
+
+```
+ReachableOutbounds():
+  cur = reachabilityGeneration()
+  if cache.valid && cache.lastGen == cur: return cache.set   // 99% path, no walk
+  set = walkReachable()
+  cache = {set, lastGen: cur, valid: true}
+  return set
+```
+
+In steady state (no UI taps, stable urltest) the tick is a cheap atomic compare —
+the expensive walk runs only when reachability genuinely changed.
+
+### 5.4 Rebase note
+
+The `gen.Add(1)` in #1/#2 lands in **upstream** files (selector.go, urltest.go) —
+a one-line insert per site, trivially re-applied but a potential merge touchpoint.
+#3/#4 are in lx-owned code (free). Accepted trade-off per decision: counter form
+chosen over pure-pull snapshot-hash. If merge pain appears, #1/#2 can be migrated
+to pure-pull (read `Now()` outside, no upstream insert) without changing the
+public contract.
+
+## 6. Idle tracking
+
+No per-endpoint idle counter exists today. Add one:
+
+- `wireguard.Endpoint.lastActivity atomic.Int64` (unix nanos), stamped on each
+  dial / new connection through the endpoint (`DialContext` / `NewConnection`).
+- `IdleSince() time.Duration` helper.
+- Suspend condition: `now - lastActivity > XX`.
+
+## 7. Suspend / wake
+
+### 7.0 COST REALITY — `Down()/Up()` is NOT cheap (drives the tiered design)
+
+Adversarially verified against the wireguard-go submodule source. A
+`device.Down()→Up()` cycle is a **full reconnect**, not a timer toggle:
+
+`Down()` (`downLocked`) destroys:
+- **All crypto keypairs + handshake state, zeroed** — `peer.Stop()` →
+  `ZeroAndFlushAll()` → `DeleteKeypair` + `handshake.Clear()` (zeroes
+  ephemeral/chainKey/hash, `noise-protocol.go:248`). Real zeroing, not a reset.
+- **UDP socket closed** + detour conn closed (`client_bind.go:146`).
+- **Staged packets discarded** (no retransmit).
+- **2·N+1 goroutines torn down synchronously** (barrier `stopping.Wait()`).
+
+`Up()` therefore pays a **full handshake** on the first packet: fresh Curve25519
+keygen + 2× scalar-mult DH + BLAKE2s KDF/AEAD, **plus on this fork** the entire
+AmneziaWG I1 obf chain + junk-packet CSPRNG fills (`send.go:135-154`). There is
+**no session-resume path** in the Down/Up cycle.
+
+What survives the cycle (`changeState`, not `Close`): the `Device`/`Peer`
+objects, `ClientBind`, the buffer `WaitPool`s, the handshake/encryption/
+decryption worker queues + goroutines, and the port. **Crucially `Down()` frees
+NONE of the per-endpoint buffers that drive GC scan** — so plain `Down()` is
+expensive on wake AND does not address the multi-WG GC heat
+([[android-cpu-heat-multi-wg-gc]]). This is why §7.3 introduces a lighter tier.
+
+Consequences (mandatory, not optional):
+- **XX ≫ urltest probe interval.** If XX is near the probe cadence, every probe
+  drives a full handshake — the opposite of saving work.
+- **Hysteresis / min-dwell is REQUIRED.** `peer.Stop` early-returns if already
+  down, so every borderline up↔down oscillation is a full-price flap.
+  `RekeyTimeout=5s` only rate-limits duplicate initiations; it does NOT protect
+  against suspend/wake thrash. Anti-flap state lives at the suspend layer (§7.4).
+
+### 7.1 Endpoint state (shared by both tiers)
+
+- `lightAsleep atomic.Bool` — Tier A state: timers stopped, everything else live.
+  Distinct from `started` (which Tier B / guard toggle), so a light-asleep
+  endpoint is still `started==true` and dials normally after a cheap re-arm.
+- `resumeMu sync.Mutex` — serialises concurrent dial-wakes and mutually excludes
+  wake vs the idle tick's sleep decision (both tiers).
+- `lastActivity atomic.Int64` (§6). Stamp at PostStart so a never-dialed endpoint
+  has a sane baseline (a zero value would read as ~55y idle → suspend on tick 1).
+- `suspendedByGuard bool` — **Tier-B ONLY, NOT added in Tier A.** Tier A relies on
+  the existing `started==false` (set by the guard's `device.Down`) instead; the
+  `!started.Load()` check in `LightSuspendIfIdle` + the pre-existing `!started`
+  dial gate fully cover the guard case without this flag.
+
+### 7.2 Tier A — light suspend (THIS SPEC)
+
+Light suspend stops the per-peer timer machinery via a new thin wrapper that the
+endpoint exposes down to the wireguard-go device's peers, calling `timersStop()`
+(`submodules/wireguard-go/device/timers.go:218` — stops retransmitHandshake,
+sendKeepalive, newHandshake, zeroKeyMaterial, persistentKeepalive). It does NOT
+touch `started`, the socket, keypairs, goroutines, or the netstack.
+
+> Submodule note: `timersStop`/`timersStart` are unexported on `*Peer`. Tier A
+> needs a small exported shim on the device (`Device.PauseTimers()` /
+> `ResumeTimers()` iterating `peers.keyMap`) — lx-owned addition in the pinned
+> submodule, under `lx:begin/lx:end`. **MUST hold `device.peers.RLock()` around
+> the `keyMap` range** (mirroring `downLocked`, device.go:229-233) — else it races
+> a concurrent peer add/remove (`SetPrivateKey`). The spec's earlier sketch
+> omitted this lock; it is mandatory.
+>
+> Also note: `timersStart()` does NOT itself re-arm timers — it only zeroes
+> handshake/keepalive counters. Re-arming happens lazily on the first data packet
+> (`timersDataSent`/`timersDataReceived`), gated by `timersActive()` =
+> `isRunning && device.isUp()`. In Tier A the device stays Up and `isRunning`
+> true, so the first dial after wake auto-re-arms. `ResumeTimers()` is still
+> correct to call (cheap, safe) but the *re-arm* is the dial's first packet, not
+> the shim. The "no handshake on wake" guarantee holds because `timersStop`
+> `DelSync`'d `zeroKeyMaterial` before it could zero the keypairs.
+
+```go
+// idle tick → light suspend. Cheap, reversible, NO handshake on wake.
+// Silent on non-transition: early-returns and no-op CAS emit nothing (edge-triggered, §12a).
+func (w *Endpoint) LightSuspendIfIdle(reachable bool, threshold time.Duration) {
+    w.resumeMu.Lock()
+    defer w.resumeMu.Unlock()
+    if reachable || w.IdleSince() < threshold { return } // silent skip
+    if !w.started.Load() { return }                      // guard-suspended (Down) → started==false; covers AWG-guard without a flag
+    if w.lightAsleep.CompareAndSwap(false, true) {
+        w.endpoint.PauseTimers() // timersStop on each peer; keypairs/socket/netstack intact
+        w.logger.Info("lx idle: light-suspend ", w.Tag(), " idle=", w.IdleSince())
+    }
+}
+```
+
+Note: Tier A needs **no `suspendedByGuard` flag** (the spec's §7.1 lists it for
+Tier B only). The AWG-detour-guard suspends via `device.Down` ⇒ `started==false`;
+the `!started.Load()` check above means a guard-suspended endpoint is never
+light-touched, and `resumeOnDial` (inserted AFTER the existing `!started` dial
+gate) never resurrects it. So Tier A does not modify `started` or the guard.
+
+Wake (Tier A) is **genuinely cheap** — re-arm timers, no handshake, no bind
+reopen, no rebuild. The zeroKeyMaterial timer was stopped, so keypairs were NOT
+zeroed during sleep (a key correctness point: light sleep must stop
+`zeroKeyMaterial` so the session survives — `timersStop` already does).
+
+### 7.3 Wake — lazy, in the dial gate, BEFORE first write
+
+The existing dial gate (`DialContext` ~329, `ListenPacket`, `PrepareConnection`,
+`NewDirectRoute…`) checks `!started.Load()`. Add a light-wake check alongside it.
+Because Tier A keeps `started==true`, the bare gate would let the dial through on
+a stale (timer-stopped) device; we must re-arm BEFORE the first write:
+
+```go
+// at the top of each dial entry, after the started check:
+w.resumeOnDial()  // cheap; re-arms light sleep if needed, stamps activity
+
+func (w *Endpoint) resumeOnDial() {
+    w.stampActivity() // always, so the tick sees fresh activity
+    if !w.lightAsleep.Load() { return } // fast path: not asleep
+    w.resumeMu.Lock()
+    defer w.resumeMu.Unlock()
+    if w.lightAsleep.CompareAndSwap(true, false) {
+        w.endpoint.ResumeTimers() // timersStart on each peer; synchronous, no network
+        w.logger.Info("lx idle: light-wake ", w.Tag(), " by=dial")
+    }
+}
+```
+
+(A urltest health-check probe reaches the endpoint through `DialContext` too, so
+it wakes via this same path — `by=dial` covers it, no separate `probe` source.
+`devicewake` is the only other source: global screen-on `onPauseUpdated`.)
+
+Ordering guarantee: `resumeOnDial` returns only after `ResumeTimers()`; the
+caller then proceeds to the real dial → first write. Same goroutine, sequential —
+the write cannot precede the re-arm. (`stampActivity` runs first and
+unconditionally, closing the race with the idle tick: a dial immediately before a
+tick makes the endpoint non-idle → no suspend.)
+
+Global `DeviceWake` (screen-on) is unchanged; orthogonal to idle-suspend. For a
+light-asleep endpoint, a global `DeviceWake` is harmless (timers re-arm on next
+dial anyway), but `onPauseUpdated` should also `ResumeTimers()` to be safe.
+
+### 7.4 Anti-flap (Tier A)
+
+Light flap is cheap (timer toggles, no handshake), so strict hysteresis is NOT
+required for Tier A — this is the main safety advantage of shipping light first.
+A minimal guard: the idle threshold itself debounces (a dial stamps activity, so
+re-suspend can't happen for XX after any traffic). The INFO logs (§12a) measure
+real flap rate to inform whether Tier B needs stronger hysteresis.
+
+### 7.5 Tier B — netstack teardown (FUTURE — designed-for, NOT in this SPEC)
+
+The only tier that cuts the GC scan heat (§1), because it is the only one that
+frees the gvisor `stack.Stack` graph + its TCP-dispatcher goroutines. Bolts on
+as a deeper rung of the same idle tick: when `IdleSince() > XX_deep` (≫ XX_light)
+AND still unreachable, escalate from light to teardown.
+
+Mechanism (future): release the wg device + its netstack
+(`stackDevice.Close()` → `stack.Close()` + `CleanupEndpoints()` + `Wait()`,
+`device_stack.go:258`), which is bundled with `wgDevice.Close()`. Wake = cold
+rebuild: `NewGVisorStackWithOptions` (new NIC/addresses/routes/forwarders) +
+rebuild the wg `Device` + fresh handshake per peer; in-flight flows die.
+
+Why it is only designed-for, not built, here:
+- Wake is a true cold reconnect (handshake + AWG obf/junk, §7.0), so it needs a
+  long XX_deep, real hysteresis / min-dwell, and acceptance that suspend kills
+  live flows. That risk profile wants field data first.
+- `device.Down()` (the existing `Suspend()` path) is the WRONG tool for Tier B's
+  goal: it pays the full handshake cost on wake yet does NOT free the netstack
+  (`downLocked` never touches `w.stack`). So Tier B is `Close`+rebuild, not
+  `Down`. (The existing global-pause `Down()` stays as-is for screen-off.)
+
+Tier B reuses `started`/`resumeMu`/`suspendedByGuard` (the guard already uses
+`Down`-style suspend, so the §8 distinction matters for Tier B). The idle tick
+becomes a ladder: `idle>XX_light → light`; `idle>XX_deep → teardown`. Tier A's
+`lightAsleep` and Tier B's `started` are independent, so escalation is monotonic
+(light first, then teardown) and de-escalation on dial restores the deepest level
+needed.
+
+## 8. Interaction with existing AWG-detour-guard
+
+**Tier A and the guard do not collide** — they operate on different state, so no
+`suspendedByGuard` flag is needed in Tier A (it is reserved for Tier B):
+
+- The guard (`SuspendAmneziaWG`) suspends via `device.Down()` ⇒ sets
+  `started==false`. A guard-suspended endpoint therefore:
+  - is never light-touched — `LightSuspendIfIdle` early-returns on `!started`;
+  - is never idle-woken — `resumeOnDial` runs *after* the pre-existing
+    `!started.Load()` dial gate, which already returns "not ready" and short-
+    circuits the dial before `resumeOnDial` executes. So the AWG-over-WG hang the
+    guard prevents ([[awg-detour-guard-must-be-at-start]],
+    [[masquerade-mechanism-i1-only]]) stays prevented.
+- A light-asleep endpoint is still `started==true`, so if the guard later needs to
+  `Down` it, that path works unchanged (light sleep only stopped timers).
+
+`ConsumersOf`/`dependByTag` stays exclusively the guard's static walk; SPEC 020's
+`ReachableOutbounds` is a separate dynamic walk and does not use it.
+
+Tier B note: when teardown lands, it WILL toggle `started`-equivalent state like
+the guard, so Tier B reintroduces a `suspendedByGuard` distinction (per §7.1/§7.5)
+to keep idle-wake from resurrecting a guard-suspended endpoint. Out of scope here.
+
+## 9. Edge cases / risks
+
+- **First-packet RTT, not "wake latency"**: `Up()` is synchronous and non-network
+  (bind up + handshake *initiated*), so resume itself is instant. The first
+  packet after resume pays ~1 RTT while WG completes the handshake — WG stages
+  that packet and flushes on key-ready. This is identical to a cold dial on a
+  never-suspended endpoint or post-network-change reconnect; no warm-up wait, no
+  special handling. Document the one-RTT first-packet cost. The 30s idle gate
+  means it only hits genuinely cold paths.
+- **dial vs idle-tick race (Tier A, the core correctness point)**: `resumeOnDial`
+  (wake) and `LightSuspendIfIdle` (sleep) both decide under `resumeMu`, and the
+  `lightAsleep` CAS makes the transition atomic. Outcomes are total:
+  - dial wins → `stampActivity()` runs first (unconditional), then `ResumeTimers`
+    if it was asleep; the tick then sees `IdleSince() < XX` (fresh stamp) → no
+    suspend. Write proceeds on a re-armed device.
+  - tick wins → `lightAsleep.CAS(false,true)` + `PauseTimers()`; the dial then
+    takes the lock, sees `lightAsleep`, `ResumeTimers()`s. No lost wake — and even
+    a missed re-arm only delays a keepalive, never drops the dial (timers are not
+    on the dial data path; the socket/keypairs stay live in Tier A).
+  Because `resumeOnDial` returns only after `ResumeTimers()`, and `stampActivity`
+  is unconditional and first, the tick can never leave the device timer-stopped
+  across a dial's first write. (Tier A flap is harmless regardless — no handshake.)
+- **urltest pool churn**: entering the pool bumps generation → reachable next
+  tick → not suspended; the per-`interval` probe also stamps activity, so a
+  pool node with `interval < XX` never goes idle. Leaving the pool makes a node a
+  candidate only after it ALSO sits idle XX s. No flap when XX ≫ tick period.
+- **Selector → sub-selector chain**: walk is transitive via `Now()`; only active
+  choices are followed. Correct.
+- **Rule referencing a group**: seed is the group tag; walk descends into its
+  active choice / current pool. Correct.
+- **Guard-suspended endpoint (Tier A)**: `LightSuspendIfIdle` early-returns on
+  `!started` (the guard's `Down` sets `started==false`) — never light-touched; and
+  a light-asleep endpoint is still `started`, so the guard's own `Down` works on it
+  unchanged. No `suspendedByGuard` flag needed in Tier A. No interference.
+- **Disabled (XX=0)**: tick never scheduled; zero overhead; current behaviour.
+
+## 10. Files (anticipated — confirmed at plan stage)
+
+New (lx-owned):
+- `route/reachability_lx.go` — `ReachableOutbounds`, walk, cache, generation aggregation.
+- spec/changelog entry in `docs-lx/lx-changelog.md` (header `#### v<tag>`).
+
+Modified (Tier A — light):
+- `option/route.go` — `LXIdleSuspend` field (lx:begin/lx:end).
+- `route/router.go` — idle tick, reachability cache state, `routerRebuildVersion`,
+  wire `Rules()`/`Default()`; iterate light-suspendable endpoints per tick.
+- `protocol/group/selector.go` — `gen` counter + `Generation()`; bump on `SelectOutbound`. *(upstream touch)*
+- `protocol/group/urltest.go` — `gen` counter + `Generation()`; bump on legacy auto-switch. *(upstream touch)*
+- `protocol/group/urltest_balance_lx.go` — bump generation in `setSlots`. *(lx file)*
+- `adapter/outbound.go` — `Generation()` on OutboundGroup (or a narrow `Generational` interface);
+  narrow `LightSuspendable` interface (`LightSuspendIfIdle`, `Tag`) so the Router tick iterates
+  WG/AWG endpoints without importing the concrete type.
+- `protocol/wireguard/endpoint.go` — `lastActivity`, `IdleSince()`, `stampActivity()`,
+  `lightAsleep`, `resumeMu`, `LightSuspendIfIdle()`, `resumeOnDial()`; add `resumeOnDial()`
+  call at the top of dial gates (`DialContext`/`ListenPacket`/`PrepareConnection`/
+  `NewDirectRoute…`). Tier-A does NOT modify `started` or `SuspendAmneziaWG`.
+- `submodules/wireguard-go/device/device.go` — `Device.PauseTimers()` / `ResumeTimers()`
+  exported shims iterating `peers.keyMap` calling each peer's `timersStop()`/`timersStart()`.
+  *(lx-owned addition in pinned submodule, lx:begin/lx:end — keep minimal)*
+
+Deferred to Tier B (FUTURE, not this SPEC): `started`/`suspendedByGuard` wake path,
+`device.Down`-vs-`Close` escalation, `XX_deep`, netstack teardown/rebuild, stronger
+hysteresis. The §7.5 design reserves the seams.
+
+## 11. Test plan (Tier A)
+
+- Unit: `ReachableOutbounds` over hand-built topologies — selector (only Now),
+  pool (all poolTags), legacy urltest, rule seed, final seed, detour chain,
+  cycle guard.
+- Unit: generation cache returns cached set when gen unchanged; recomputes when a
+  group bumps.
+- Unit: idle math (`IdleSince`), light-suspend predicate boundaries, `lightAsleep`
+  CAS transitions, dial-vs-tick race (resumeOnDial stamps before tick reads).
+- Unit/integration: a light-asleep endpoint dials correctly with NO handshake
+  (assert keypairs survived — zeroKeyMaterial timer was stopped, not fired).
+- **Live `box.New` run** (not direct-unmarshal — [[badjson-empty-slice-collapses-to-nil]]):
+  config decode of `lx_idle_suspend`; a suspend→dial→wake round-trip that does
+  NOT re-handshake (Tier A) and still passes traffic.
+- Device: measure with the INFO logs (§12a) — light-suspend/wake counts, flap rate,
+  and CPU/keepalive-radio drop with N idle WG endpoints. (GC scan heat is expected
+  to persist — that is Tier B; confirm via on-device heap/allocs pprof per
+  [[lxbox-207-pprof-capture]] / [[android-cpu-heat-multi-wg-gc]] before deciding Tier B.)
+
+## 12a. Observability — INFO event log (ships WITH Tier A)
+
+**Edge-triggered only — log STATE TRANSITIONS, never per-tick decisions.** The
+idle tick runs every ~XX/2 over every endpoint; logging what it *considered*
+(reachable / not-idle) would spam INFO. So each log sits INSIDE the successful
+CAS that flips state, firing exactly once per real transition:
+
+- `lx idle: light-suspend <tag> idle=<dur>` — emitted inside `lightAsleep.CAS(false→true)`.
+- `lx idle: light-wake <tag> by=<dial|devicewake>` — emitted inside `lightAsleep.CAS(true→false)`.
+- (Tier B, when built) `lx idle: teardown <tag>` / `lx idle: rebuild <tag> cost=<dur>`.
+
+NO `skip` logs: a tick that re-considers an already-asleep or still-reachable
+endpoint is silent (its CAS no-ops). Both events are rare (only transitions) so
+both stay at INFO — no level tuning needed. A suspend↔wake pair in the log IS the
+flap signal, read directly. From these we get real flap rate, suspend coverage,
+and wake cadence — the inputs for the Tier-B decision and XX tuning. A counter
+snapshot (suspended N / live M) on the command stream is a nice-to-have, not
+required for Tier A.
+
+## 12. Open questions (resolved)
+
+- XX default & form → `route.lx_idle_suspend` Duration, 30s, 0=off. ✓
+- Tick location → Router. ✓
+- Invalidation → generation counter (push-ish). ✓
+- urltest members → suspend only if NOT in current pool. ✓
+- Down/Up cost → NOT cheap (full reconnect + handshake), source-verified. ✓
+- GC heat source → gvisor netstack graph, NOT buffers; `Down()` doesn't free it. ✓
+- Scope → Tier A light (timersStop) ships first; Tier B teardown designed-for,
+  deferred to field data from §12a logs. ✓
+- INFO event logging → ships with Tier A as field instrument. ✓
+
+## 13. IMPLEMENTATION LOG (lx-spec020-idle-suspend branch)
+
+This section is the as-built record. It SUPERSEDES the Tier-A "light sleep"
+framing above where they differ: source-verified measurement (SPEC.md) proved the
+GC/heat holder is the recv-worker `bufsArrs`, and light sleep (`timersStop`) does
+NOT free it. So the shipped mechanism is **Down/Up (deep)**, not light sleep.
+
+> **Live device-verification: [TEST_PLAN_idle_suspend.md](TEST_PLAN_idle_suspend.md).**
+> Build + config + commands + pass criteria for confirming suspend/wake/memory on
+> a real run (uses the user's WARP/AWG + plain-WG nodes). Run this in a fresh chat;
+> report the `grep "lx idle:"` output and pprof before/after back here.
+
+### 13.1 What shipped (commit c55cf11e)
+
+idle-suspend via `device.Down()` / `device.Up()`:
+- `route.lx_idle_suspend` (Duration, 0 = off).
+- reachability walk (final + rule targets → selector `Now()` / urltest active pool
+  `ActiveTags()` / static detour deps), **event-driven cached**: recomputed ONLY
+  when the active routing tree changes — selector switch, urltest auto-switch, pool
+  rebuild, reload — via `InvalidateReachability()` (marks dirty). Wiring is the
+  narrow `adapter.ReachabilityInvalidator` registered into ctx (box.go) and pulled
+  by groups through service.FromContext (no route<-group import). Cache published
+  under an RWMutex with the walk run OUTSIDE the lock (it calls into groups that
+  hold their own locks — avoids a lock-order deadlock). Three one-line event-point
+  inserts: selector.go (after `selected.Store`), urltest.go (legacy auto-switch),
+  and a `balancer.onChange` hook fired from `setSlots` (covers all pool rebuilds).
+- Router idle tick, period `max(XX/2, 5s)`, started in PostStart / stopped in Close.
+  Each tick = one cached-map lookup + atomic idle compare per endpoint, NO walk.
+- Endpoint `SuspendIfIdle` (Down on live→asleep CAS) + `resumeOnDial` (stamp + lazy
+  Up on next dial). `idleAsleep` kept distinct from `started` so a guard-suspended
+  endpoint is never idle-woken.
+- INFO log on each state transition only (edge-triggered): `suspend` / `wake`.
+
+Effect: a WG/AWG endpoint that is idle past XX AND unreachable from the active
+routing tree is brought Down → its recv-worker `bufsArrs` is freed → the dominant
+GC-scan holder shrinks. Wake (next dial) re-opens the socket and pays a fresh
+handshake (Down zeroed the crypto session).
+
+### 13.2 Bind-swap / key-zeroing — investigated (the promised comment)
+
+**Can the bind be resized on a LIVE endpoint WITHOUT zeroing keys? YES — via
+`Device.BindUpdate()` (`submodules/wireguard-go/device/device.go:507`).** It only
+closes+reopens the socket and re-spawns recv-workers; it never calls `peer.Stop()`
+/ `ZeroAndFlushAll()`. Key-zeroing lives ONLY in `peer.Stop()`, reached only from
+`downLocked()` (= `Device.Down()`) and peer removal. So a bind swap that keeps keys
+is possible — but ONLY on a still-Up device; once `Down()` has run, keys are
+already gone and `BindUpdate` can't bring them back.
+
+This means the shipped Down path (13.1) cannot have a keys-safe wake — by
+construction. A keys-safe / reduced-bind wake needs a different suspend side.
+
+### 13.3 The three paths (reduced-bind urltest wake) — for the next iteration
+
+Recorded so the decision isn't re-derived. `bufsArrs` is sized from
+`device.BatchSize() = max(bind, tun)` (`device.go:368`); the GRO read path panics
+with batch<128 unless GRO is also disabled (`bind_std.go:72/261/292` — msgsPool is
+fixed 128, the consume loop is unclamped). So "8 buffers, no GRO" — both halves are
+load-bearing.
+
+| | B — Down (SHIPPED) | A — BindUpdate + reduced bind | Hybrid |
+|---|---|---|---|
+| sleeping-node RAM | **0** | ~0.5 MB (8 bufs) | 0.5 MB short / 0 long |
+| wake handshake | yes | **no** (keys live) | no / yes |
+| urltest probe handshake | yes | **no** | no |
+| readiness | **done** | new code | most code |
+| risk (GRO panic, max(bind,tun) trap) | none | real | real |
+
+- **B (Down)** — what shipped. RAM to zero, simplest, safe. Wake pays a handshake
+  (only the idle node, only on wake — rare/cheap). A reduced-bind probe wake on
+  path B saves only the probe's RAM, NOT the handshake (keys already zeroed), so it
+  is low value here.
+- **A (BindUpdate, never Down)** — keep the device Up, swap to an 8-buffer / GRO-off
+  bind via `BindUpdate`. Keys live → wake (and urltest probe) pay NO handshake.
+  RAM not zero (~0.5 MB) and three sharp traps: mutable `BatchSize()` wrapper; must
+  shrink TUN BatchSize too or `max()` clamps back to 128; must open with rxOffload
+  OFF or batch<128 panics.
+- **Hybrid** — two idle thresholds: short idle → reduced bind (keys live), long idle
+  → full Down (RAM 0). Most complete, most code.
+
+### 13.4 Recommendation (ship B, escalate on data)
+
+Ship **B** (done): it hits the measured holder, cuts heat to zero, lowest risk.
+Defer **A/Hybrid** until the §12a INFO logs from a device run show handshake
+flapping on wake actually hurts — then escalate with data, not speculation. The
+reduced-bind urltest wake (the original task-6 ask) only delivers its full value
+(no-handshake probe) on path A/Hybrid; on B it is low-value, so it is deferred with
+a TODO referencing this section.

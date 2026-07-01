@@ -57,12 +57,15 @@ type Router struct {
 	// event-driven reachable set (recomputed only when reachDirty is set by
 	// InvalidateReachability — selector switch / urltest auto-switch / pool rebuild
 	// / reload); reachMu guards publishing it. reachDirty starts true so the first
-	// tick computes it.
+	// tick computes it. endpoint is the endpoint manager: WG/AWG endpoints live
+	// there (NOT in the outbound manager — outbound.Outbounds() never lists them),
+	// so the idle tick must iterate it to find IdleSuspendable endpoints.
 	idleSuspend time.Duration
 	idleStop    chan struct{}
 	reachMu     sync.RWMutex
 	reachCache  map[string]bool
 	reachDirty  atomic.Bool
+	endpoint    adapter.EndpointManager
 	// lx:end idle-suspend
 }
 
@@ -84,7 +87,8 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		leaseFiles:        options.DHCPLeaseFiles,
 		pauseManager:      service.FromContext[pause.Manager](ctx),
 		platformInterface: service.FromContext[adapter.PlatformInterface](ctx),
-		idleSuspend:       time.Duration(options.LXIdleSuspend), // lx: SPEC 020 (0 = off)
+		idleSuspend:       time.Duration(options.LXIdleSuspend),              // lx: SPEC 020 (0 = off)
+		endpoint:          service.FromContext[adapter.EndpointManager](ctx), // lx: SPEC 020 — idle tick iterates endpoints
 	}
 	router.reachDirty.Store(true) // lx: SPEC 020 — first tick computes the reachable set
 	return router

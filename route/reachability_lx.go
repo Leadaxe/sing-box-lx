@@ -187,12 +187,34 @@ func (r *Router) idleSuspendLoop(period time.Duration) {
 		case <-r.idleStop:
 			return
 		case <-ticker.C:
-			reachable := r.reachableOutbounds()
-			for _, outbound := range r.outbound.Outbounds() {
-				if suspendable, ok := outbound.(adapter.IdleSuspendable); ok {
-					suspendable.SuspendIfIdle(reachable[suspendable.Tag()], r.idleSuspend)
-				}
+			r.suspendIdleEndpoints(r.reachableOutbounds())
+		}
+	}
+}
+
+// suspendIdleEndpoints runs one tick's per-endpoint suspend decision over every
+// IdleSuspendable in the box, given the reachable set.
+//
+// WG/AWG endpoints live in the ENDPOINT manager, not the outbound manager —
+// outbound.Outbounds() never lists them (it returns only m.outbounds; the
+// endpoint fallback exists for Outbound(tag) lookups, not the iteration). So the
+// tick MUST iterate r.endpoint.Endpoints() to reach them. Outbounds() is also
+// scanned for completeness (a future non-endpoint IdleSuspendable, and to keep the
+// contract honest), but with no IdleSuspendable outbounds today it is a no-op.
+func (r *Router) suspendIdleEndpoints(reachable map[string]bool) {
+	suspend := func(suspendable adapter.IdleSuspendable) {
+		suspendable.SuspendIfIdle(reachable[suspendable.Tag()], r.idleSuspend)
+	}
+	if r.endpoint != nil {
+		for _, endpoint := range r.endpoint.Endpoints() {
+			if suspendable, ok := endpoint.(adapter.IdleSuspendable); ok {
+				suspend(suspendable)
 			}
+		}
+	}
+	for _, outbound := range r.outbound.Outbounds() {
+		if suspendable, ok := outbound.(adapter.IdleSuspendable); ok {
+			suspend(suspendable)
 		}
 	}
 }

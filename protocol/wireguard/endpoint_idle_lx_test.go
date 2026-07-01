@@ -103,6 +103,24 @@ func TestSuspendIfIdle_idempotentCAS(t *testing.T) {
 	}
 }
 
+// TestSuspendIfIdle_guardSuspendedNotTouched is the §8 invariant verified live on
+// an AWG-over-WG endpoint (wg-3 in the prod run): a guard-suspended endpoint has
+// started=false WITHOUT idleAsleep. The idle tick must early-return on !started and
+// NOT flip idleAsleep — otherwise a later resumeOnDial would idle-wake it and
+// re-trigger the AWG-over-WG kernel hang the guard exists to prevent.
+func TestSuspendIfIdle_guardSuspendedNotTouched(t *testing.T) {
+	w := newIdleTestEndpoint()
+	w.started.Store(false) // guard-suspend (device.Down at Start), idleAsleep stays false
+	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
+	w.SuspendIfIdle(false, 30*time.Second)
+	if w.idleAsleep.Load() {
+		t.Fatal("a guard-suspended endpoint must NOT be flagged idleAsleep by the tick")
+	}
+	if w.started.Load() {
+		t.Fatal("the tick must not change started for a guard-suspended endpoint")
+	}
+}
+
 func TestResumeOnDial_wakesAndStamps(t *testing.T) {
 	w := newIdleTestEndpoint()
 	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
