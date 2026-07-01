@@ -42,12 +42,16 @@ const (
 )
 
 const (
-	h2StreamID              = 1
-	h2InitialWindowSize     = 1 << 30 // 1 GiB: avoid stalling on a long-lived tunnel
-	h2SettingEnablePush     = 0x2
-	h2SettingInitialWindow  = 0x4
-	h2SettingConnectProto   = 0x8 // ENABLE_CONNECT_PROTOCOL (RFC 8441)
-	h2MaxFrameReadChunkSize = 1 << 20
+	h2StreamID             = 1
+	h2InitialWindowSize    = 8 << 20 // 8 MiB receive window (real flow-control backpressure)
+	h2SettingEnablePush    = 0x2
+	h2SettingInitialWindow = 0x4
+	// maxCapsulePayload bounds a single peer-declared capsule DATAGRAM payload.
+	// payloadLen is a peer-controlled varint (up to 2^62-1); without a ceiling
+	// `int(payloadLen)` can wrap negative on 32-bit and make([]byte, n) can OOM.
+	// A proxied IP packet never exceeds jumbo-frame size; cap generously.
+	// lx: SPEC 021 A4/A5/B5.
+	maxCapsulePayload = 65535
 )
 
 // ConnectTunnelH2 establishes a CONNECT-IP tunnel over an already-handshaked
@@ -62,7 +66,7 @@ func ConnectTunnelH2(ctx context.Context, profile Profile, tlsConn net.Conn, con
 	conn := &h2RawConn{
 		tlsConn: tlsConn,
 		framer:  xhttp2.NewFramer(tlsConn, tlsConn),
-		recvCh:  make(chan []byte, 64),
+		recvCh:  make(chan []byte, 8),
 		errCh:   make(chan error, 1),
 		closed:  make(chan struct{}),
 	}
@@ -302,7 +306,8 @@ func authorityFromURL(u *url.URL) string {
 type h2IpConn struct {
 	str *h2RawConn
 
-	readBuf []byte // leftover bytes spanning DATA frames
+	readBuf  []byte // leftover bytes spanning DATA frames
+	writeBuf []byte // reusable scratch for the outgoing capsule frame (tx pump only)
 
 	mu        sync.Mutex
 	closeChan chan struct{}
@@ -338,6 +343,11 @@ func (c *h2IpConn) receiveDatagram() ([]byte, error) {
 			capsuleType, err1 := quicvarint.Read(vr)
 			payloadLen, err2 := quicvarint.Read(vr)
 			if err1 == nil && err2 == nil {
+				if payloadLen > maxCapsulePayload {
+					// Peer declared an implausibly large capsule — treat as a
+					// protocol violation rather than allocating/wrapping.
+					return nil, E.New("connect-ip: capsule payload too large: ", payloadLen)
+				}
 				headerLen := len(c.readBuf) - r.Len()
 				total := headerLen + int(payloadLen)
 				if len(c.readBuf) >= total {
@@ -370,10 +380,18 @@ func (c *h2IpConn) WritePacket(b []byte) (icmp []byte, err error) {
 	if err != nil || data == nil {
 		return nil, nil
 	}
-	frame := make([]byte, 0, quicvarint.Len(h2DatagramCapsuleType)+quicvarint.Len(uint64(len(data)))+len(data))
+	// Reuse writeBuf: WritePacket is only called from the single tx pump, and
+	// writeData writes the frame to the wire before returning, so the scratch is
+	// free to reuse next call. lx: SPEC 021 B2.
+	need := quicvarint.Len(h2DatagramCapsuleType) + quicvarint.Len(uint64(len(data))) + len(data)
+	if cap(c.writeBuf) < need {
+		c.writeBuf = make([]byte, 0, need)
+	}
+	frame := c.writeBuf[:0]
 	frame = quicvarint.Append(frame, h2DatagramCapsuleType)
 	frame = quicvarint.Append(frame, uint64(len(data)))
 	frame = append(frame, data...)
+	c.writeBuf = frame
 	if err := c.str.writeData(frame); err != nil {
 		select {
 		case <-c.closeChan:
