@@ -158,7 +158,7 @@ batch=128 ради GRO-throughput; неактивные (принимают ~0 �
 > `BindClose` завершает recv-воркеры и освобождает `bufsArrs` ЦЕЛИКОМ, **не трогая GRO
 > активной ноды** (у неё batch остаётся 128). Это не «самый дорогой запасной», а
 > **единственный жизнеспособный**. Реализован на ветке `lx-spec020-idle-suspend`
-> (см. [SPEC_idle_suspend_lever.md](SPEC_idle_suspend_lever.md) §13).
+> (см. [SPEC.md](SPEC.md) §13).
 
 1. ~~**[PRIMARY] Глобально меньший batch на android-клиенте** (`StdNetBind.BatchSize()`
    128→напр. 8–16).~~ **ОТВЕРГНУТ — ломает GRO** (см. врезку выше). Срезал бы `bufsArrs`
@@ -234,7 +234,7 @@ urltest health-check. Поэтому гасить можно только уст
 из активного дерева роутинга** (final / цель правила / активный выбор селектора / член
 активного пула urltest / detour). Плюс обратимость: wake-on-dial (на Up — новый handshake,
 Down зануляет крипто-сессию). Реализация — reachability-walk + event-driven кэш + idle-tick
-на ветке `lx-spec020-idle-suspend`; разбор в [SPEC_idle_suspend_lever.md](SPEC_idle_suspend_lever.md)
+на ветке `lx-spec020-idle-suspend`; разбор в [SPEC.md](SPEC.md)
 §13 и план живой проверки в [TEST_PLAN_idle_suspend.md](TEST_PLAN_idle_suspend.md).
 
 **Эффект:** N неактивных устройств × ~16 МБ (2 recv × 8 МБ) → 0; GC-нагрев уходит
