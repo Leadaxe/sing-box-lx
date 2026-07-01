@@ -10,6 +10,34 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.20
+
+**Pre-release.** A small XHTTP robustness fix, an upstream sync, and documentation
+closing out the SPEC 020 no-GRO experiment. No behaviour change to the shipped
+idle-suspend (rc.19) — `route.lx_idle_suspend` works exactly as before.
+
+* **XHTTP: `uplink_http_method: "GET"` outside packet-up no longer aborts.** When a
+  config sets `GET` as the uplink method but the stream mode is not packet-up (where
+  GET is meaningful), the core now soft-falls-back to POST instead of failing the
+  config load. A misconfigured method degrades gracefully rather than taking the
+  whole instance down.
+
+* **Docs — SPEC 020 no-GRO experiment recorded and REJECTED.** The idea of a global
+  "GRO off + receive batch 8" as a simpler alternative to Down/Up idle-suspend was
+  measured on a real device and rejected for three reasons (SPEC.md §14): the main
+  Android RAM holder is `messageBuffers` (`PreallocatedBuffersPerPool`, ~100 MB),
+  which does **not** depend on the receive batch (the batch-sized `bufsArrs` held
+  only ~14 MB); the env switch never reaches Go's `os.Getenv` on Android; and a
+  hardcoded batch=8 crashed at start (SIGABRT — `device.BatchSize()=max(bind,tun)`
+  clamped back to 128 via the TUN offload). Down/Up (rc.19) stays the only viable
+  mechanism. Report + raw pprof/crash artifacts under
+  `SPECS/020-MULTI_WG_IDLE_BUFFER_HEAT/ANDROID_RESEARCH/nogro-experiment/`; the
+  experiment code was NOT merged (kept only on the now-deleted `-nogro-*` branches,
+  documented for the record).
+
+* **Upstream sync.** Merged `upstream/testing`: "Fix udpnat2 buffer size" (go.mod/go.sum
+  bump) and "release: Fix update apple version script". No lx zones touched.
+
 #### v1.14.0-lx.1-rc.19
 
 **Pre-release.** Gates **idle-suspend (SPEC 020) behind a new build tag
