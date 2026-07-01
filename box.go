@@ -240,6 +240,7 @@ func New(options Options) (*Box, error) {
 	httpClientService := adapter.LifecycleService(httpClientManager)
 	router := route.NewRouter(ctx, logFactory, routeOptions, dnsOptions)
 	service.MustRegister[adapter.Router](ctx, router)
+	service.MustRegister[adapter.ReachabilityInvalidator](ctx, router) // lx: SPEC 020 — event points invalidate the reachable cache
 	err = router.Initialize(routeOptions.Rules, routeOptions.RuleSet)
 	if err != nil {
 		return nil, E.Cause(err, "initialize router")

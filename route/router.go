@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -23,6 +25,7 @@ import (
 )
 
 var _ adapter.Router = (*Router)(nil)
+var _ adapter.ReachabilityInvalidator = (*Router)(nil) // lx: SPEC 020 idle-suspend
 
 type Router struct {
 	ctx               context.Context
@@ -48,10 +51,26 @@ type Router struct {
 	trackers          []adapter.ConnectionTracker
 	platformInterface adapter.PlatformInterface
 	started           bool
+	// lx:begin idle-suspend
+	// SPEC 020. idleSuspend is the configured threshold (0 = feature off). idleStop
+	// is closed by Close() to stop the idle tick goroutine. reachCache holds the
+	// event-driven reachable set (recomputed only when reachDirty is set by
+	// InvalidateReachability — selector switch / urltest auto-switch / pool rebuild
+	// / reload); reachMu guards publishing it. reachDirty starts true so the first
+	// tick computes it. endpoint is the endpoint manager: WG/AWG endpoints live
+	// there (NOT in the outbound manager — outbound.Outbounds() never lists them),
+	// so the idle tick must iterate it to find IdleSuspendable endpoints.
+	idleSuspend time.Duration
+	idleStop    chan struct{}
+	reachMu     sync.RWMutex
+	reachCache  map[string]bool
+	reachDirty  atomic.Bool
+	endpoint    adapter.EndpointManager
+	// lx:end idle-suspend
 }
 
 func NewRouter(ctx context.Context, logFactory log.Factory, options option.RouteOptions, dnsOptions option.DNSOptions) *Router {
-	return &Router{
+	router := &Router{
 		ctx:               ctx,
 		logger:            logFactory.NewLogger("router"),
 		inbound:           service.FromContext[adapter.InboundManager](ctx),
@@ -68,7 +87,11 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		leaseFiles:        options.DHCPLeaseFiles,
 		pauseManager:      service.FromContext[pause.Manager](ctx),
 		platformInterface: service.FromContext[adapter.PlatformInterface](ctx),
+		idleSuspend:       time.Duration(options.LXIdleSuspend),              // lx: SPEC 020 (0 = off)
+		endpoint:          service.FromContext[adapter.EndpointManager](ctx), // lx: SPEC 020 — idle tick iterates endpoints
 	}
+	router.reachDirty.Store(true) // lx: SPEC 020 — first tick computes the reachable set
+	return router
 }
 
 func (r *Router) Initialize(rules []option.Rule, ruleSets []option.RuleSet) error {
@@ -207,6 +230,7 @@ func (r *Router) Start(stage adapter.StartStage) error {
 			r.ruleSetUpdater.Start()
 		}
 		r.started = true
+		r.startIdleSuspend() // lx: SPEC 020 — no-op when idleSuspend == 0
 		return nil
 	case adapter.StartStateStarted:
 		for _, ruleSet := range r.ruleSets {
@@ -220,6 +244,7 @@ func (r *Router) Start(stage adapter.StartStage) error {
 func (r *Router) Close() error {
 	monitor := taskmonitor.New(r.logger, C.StopTimeout)
 	var err error
+	r.stopIdleSuspend() // lx: SPEC 020 — stop the idle tick before tearing down
 	if r.neighborResolver != nil {
 		monitor.Start("close neighbor resolver")
 		err = E.Append(err, r.neighborResolver.Close(), func(closeErr error) error {

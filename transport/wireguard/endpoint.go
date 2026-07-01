@@ -291,9 +291,24 @@ func (e *Endpoint) Close() error {
 // (junk) handshake machinery. Used by the selector guard to neutralise an
 // AmneziaWG endpoint when a group it detours through switches to a WireGuard
 // member. Idempotent — a nil device (never started / already closed) is a no-op.
+//
+// SPEC 020 reuses Suspend for idle-suspend: device.Down() closes the UDP socket,
+// which makes RoutineReceiveIncoming exit and release its bufsArrs (the dominant
+// per-endpoint heap / GC-scan holder, ~8 MB per recv-worker). The trade-off is
+// that Down zeroes the crypto session, so Resume pays a fresh handshake.
 func (e *Endpoint) Suspend() {
 	if e.device != nil {
 		e.device.Down()
+	}
+}
+
+// Resume brings a Suspend'd device back up (device.Up()): re-opens the UDP
+// socket, re-spawns the recv-workers (re-allocating bufsArrs), and initiates a
+// fresh handshake on the next packet. Idempotent and nil-safe. Used by SPEC 020
+// idle-suspend to wake an endpoint lazily on the next dial through it.
+func (e *Endpoint) Resume() {
+	if e.device != nil {
+		e.device.Up()
 	}
 }
 

@@ -1,215 +1,378 @@
-# 020 — Множество WG/AWG-узлов греют телефон: eager-устройства держат bufsArrs → scan-bound GC
+# SPEC 020 — Idle-suspend простаивающих WireGuard/AmneziaWG эндпоинтов
 
-| Поле | Значение |
-|------|----------|
-| Тип | B (bug) — корень ДОКАЗАН на воспроизведении (heap до/после), фикс выбирается |
-| Статус | **O (open)** — держатель доказан профилем на стенде (**confidence high**): 180 МБ = `bufsArrs` recv-воркеров живых WG-устройств. Воркэраунд («убрать лишние WG») воспроизведён: 11 ep → 1 ep даёт 269 МБ → 0. Замер throughput выполнен: на мобильном/WARP-канале batch скорость не лимитирует → primary-рычаг = глобально меньший `BatchSize()`. Код-фикс НЕ реализован. |
-| Зона | submodule `wireguard-go` (`device/receive.go`, `conn/bind_std.go` — размер batch/bufsArrs) + ядро `sing-box-lx` (`transport/wireguard/endpoint.go` — выбор bind / lifecycle неактивных) |
-| Связь | [010-WG_ENDPOINT_GRO_SPLIT_BRAIN](../010-WG_ENDPOINT_GRO_SPLIT_BRAIN/SPEC.md) (GRO нужен 65535-буфер — НЕ трогать размер), [007-AWG_OVER_WIREGUARD_DETOUR_GUARD](../007-AWG_OVER_WIREGUARD_DETOUR_GUARD/SPEC.md) (Suspend = точка приглушения, но bufsArrs НЕ освобождает), memory `android-cpu-heat-multi-wg-gc` |
-| Репортер | Iliya, 2026-06-28 (CPH2411 / OnePlus, Adreno 642L, Android) |
-
----
-
-## Симптом
-
-На Android новое 1.14-ядро (LxBox 2.5.0+) держит все ядра CPU на максимуме и греет
-телефон. VPN внешне работает нормально. Морда закрыта — всё равно греет. Сначала
-казалось типонезависимым (VLESS/Trojan/WG). «Не у всех устройств». Освобождение
-RAM **не помогает**.
+> Авторитетный документ по первопричине нагрева — [`RESEARCH.md`](RESEARCH.md) (heap A/B на
+> реальном устройстве: держатель GC-нагрева — `bufsArrs` recv-воркеров). Этот файл —
+> **as-built запись реализованной фичи `lx_idle_suspend`**: что сделано, как работает,
+> какой баг был найден и исправлен, и чем всё покрыто.
+>
+> Статус: **реализовано, исправлено, проверено вживую и юнит-тестами.**
+> Ветка: `lx-spec020-idle-suspend`. Целевая база: lx-1.14.
+> Связанные памятки: [[android-cpu-heat-multi-wg-gc]], [[awg-detour-guard-must-be-at-start]],
+> [[wg-suspend-cost-and-gc-source]], [[spec020-idle-tick-misses-endpoints]].
 
 ---
 
-## Корень (ДОКАЗАН экспериментом на воспроизведении, high confidence)
+## 1. Проблема
 
-Греет **фоновый сборщик мусора Go**, сканирующий большую pointer-плотную живую кучу.
-Куча — это **`bufsArrs` recv-воркеров живых WG-устройств**.
+На Android ядро греется и пинит CPU, потому что **каждый** живой WireGuard/AmneziaWG
+эндпоинт работает 24/7 независимо от того, идёт ли через него трафик. При N
+сконфигурированных эндпоинтах все N держат:
 
-### CPU (горячий профиль)
+- **recv-воркеры** со своими `bufsArrs` (`make([]*[65535]byte, BatchSize)`) — на
+  Android при `BatchSize=128` это ~8 МБ на воркер, 2 воркера на устройство. Это
+  **главный держатель GC-scan нагрева** (доказано heap A/B в [`RESEARCH.md`](RESEARCH.md)).
+- **per-peer таймеры** (keepalive, handshake-retransmit) + для AWG junk-handshake
+  машинерию — они срабатывают по своему расписанию даже на простое, **будят радио и
+  жгут CPU/батарею**.
+- **gvisor `stack.Stack`** netstack-граф на каждый эндпоинт.
 
-`runtime.gcDrain` 65.69%, `runtime.scanobject` 52.65%, `greyobject` 15%, `findObject`
-11%. GC **scan-bound**. **Crypto в профиле НЕТ** (нет chacha/poly/AEAD) — устройство в
-момент снятия НЕ обрабатывало трафик, но GC всё равно жёг ~3.5 ядра, сканируя кучу.
+До этой фичи единственные способы остановить эндпоинт — глобальная пауза
+(`onPauseUpdated` при выключении экрана, гасит ВСЕ сразу), полный `Close()` (на
+остановке ядра) и AWG-detour-guard (узкая защита корректности). **Не было понятия
+«этот эндпоинт сейчас недостижим из активного маршрута»**, поэтому не было и
+выборочного засыпания простаивающих нод.
 
-### Держатель — измерен heap inuse_space + goroutines на стенде
+## 2. Что реализовано (модель Down/Up)
 
-`PopulatePools.func3` = **269 МБ (91.7%)** по `inuse_space` (это `messageBuffers`,
-`new([65535]byte)`). НО держит их **`RoutineReceiveIncoming` = 180.79 МБ (61%) cum** —
-буферы висят **на стеках recv-воркеров** (`bufsArrs`), `peek` подтверждает 100% выдачи
-через `sync.Pool.Get` (в руках воркеров, не в пуле, не в каналах).
+Фича `lx_idle_suspend` выборочно **гасит** (`device.Down()`) любой WG/AWG эндпоинт,
+который ОДНОВРЕМЕННО:
 
-**Арифметика (сходится точно):**
-- 11 живых wireguard endpoints (`RoutineTUNEventReader`×11).
-- **22 `RoutineReceiveIncoming`, ВСЕ на `StdNetBind` (batch=128)**, 0 на `ClientBind`.
-  (2 на устройство: `makeReceiveIPv4` + `makeReceiveIPv6`.)
-- Каждый держит `bufsArrs = make([]*[65535]byte, maxBatchSize)`, `maxBatchSize =
-  bind.BatchSize() = 128` → **128 × 65535 ≈ 8 МБ**, заполняется СРАЗУ на старте
-  горутины (`receive.go:99-102`), держится весь lifetime сильной ссылкой.
-- **22 × 8 МБ = 176 МБ ≈ 180.79 МБ.** ✅
+1. **недостижим** из активного дерева маршрутизации (не final, не цель правила, не
+   текущий выбор активного селектора, не в активном пуле urltest, не detour-зависимость
+   ничего из перечисленного), И
+2. **простаивает** дольше порога `lx_idle_suspend`.
 
-### A/B на стенде (Debug API `/diag/pprof`) — что доказано
+Механизм — **`device.Down()` / `device.Up()`** (не «лёгкий» timersStop, см. §7). Down
+закрывает UDP-сокет, recv-воркеры выходят, их `bufsArrs` освобождаются (бьём прямо по
+измеренному держателю нагрева из `RESEARCH.md`), per-peer таймеры останавливаются (экономия
+радио/батареи). Пробуждение — лениво, на следующем дайле через эндпоинт.
 
-| Состояние | PopulatePools | RoutineReceiveIncoming | устройств | recv |
-|---|---|---|---|---|
-| baseline (11 ep) | 269 МБ | 180 МБ | 11 | 22 |
-| переключить активный узел WARP→home | 269 МБ | 180 МБ | 11 | 22 |
-| **конфиг с 1 endpoint + reload** | **0 МБ** | **0 МБ** | **1** | **2** |
+Цена: Down зануляет крипто-сессию, поэтому пробуждение платит свежий WG-handshake на
+первом пакете (см. §7 и §9). Это сознательный компромисс: спящая нода держит **ноль**
+recv-памяти ценой ~1 RTT на первый пакет после пробуждения.
 
-1. **Буферы НЕ засыпают.** Переключение активного узла/группы НЕ освобождает память —
-   неактивные устройства держат `bufsArrs` так же, как активное.
-2. **Память ∝ числу endpoints, не активности.** 11 ep → 1 ep: 269 МБ → 0. Это и есть
-   воркэраунд Ильи, воспроизведённый профилем.
+## 3. Конфигурация
 
-### Почему batch=128 (а НЕ 1)
-
-`endpoint.go:200-202`: bind = `StdNetBind` **тогда и только тогда**, когда
-`e.options.Dialer` реализует `dialer.WireGuardListener`; иначе `ClientBind` (batch=1).
-WARP/AWG-endpoints используют `WireGuardListener`-диалер → `StdNetBind` →
-`BatchSize()=128` на android (`bind_std.go:322`, `linux||android → IdealBatchSize=128`).
-> Прежние версии этого SPEC ошибались в обе стороны: первая — `bufsArrs`=8 МБ, но без
-> доказательства; вторая — «batch=1, держат каналы/sync.Pool» (неверно: на стенде bind
-> = `StdNetBind`, batch=128, держат `bufsArrs`, а НЕ каналы/victim-cache).
-
-### Почему scanobject 52%, хотя `[65535]byte` это noscan
-
-GC не сканирует нутро байтовых буферов. Жгут **указатели**: `*[65535]byte` в `bufsArrs`
-(массив указателей) + pointer-плотные `QueueInbound/OutboundElement`
-(`buffer`/`packet`/`keypair`/`endpoint`/`peer`, `receive.go:28-34`), которые рождаются
-из этих буферов под нагрузкой и живут в пулах/каналах. Число указателей ∝ числу
-устройств, **не** размеру буфера.
-
-### Роль MaxSegmentSize 2200 → 65535 (1.13 → 1.14)
-
-Единственное, что изменилось между 1.13 и 1.14 в этой зоне — `MaxSegmentSize`
-2200→65535 (submodule commit `2e0774f`, ради GRO; `downLocked`/пулы/каналы/batch
-**идентичны** 1.13↔1.14, проверено diff'ом). Это раздуло **байты** держателя ×30
-(`bufsArrs` 22×128×2200 ≈ 6 МБ → ×65535 ≈ 176 МБ). Резидентная куча ×30 → чаще
-GC-циклы → те же указатели сканируются чаще → `scanobject` доминирует. **MaxSegmentSize
-= триггер «появилось в 1.14» (объём), но НЕ корневой держатель** — держатель (eager
-recv-воркеры с полным batch) был и в 1.13, просто дешевле.
-
----
-
-## Ложные следы (исключены)
-
-- **`MaxSegmentSize` 65535 → 2200** — буфер нужен для UDP_GRO (см. §010,
-  upstream-родной фикс в 1.14). Откат задушит download-скорость. Это триггер объёма,
-  не держатель — откатывать неправильно.
-- **Suspend-дренаж device-каналов / sync.Pool victim-cache** — ОТВЕРГНУТ профилем:
-  держит `bufsArrs` recv-воркеров (61% cum), а НЕ каналы (`decryption.c` и пр.) и НЕ
-  victim-cache. Доказано: переключение узла (которое триггерит Suspend) НЕ освобождает
-  память.
-- **lazy `sync.Pool` / меньше `PreallocatedBuffersPerPool`** — не при чём: `bufsArrs`
-  держит буферы СИЛЬНОЙ ссылкой, не через пул/семафор.
-- **oomkiller / FreeOSMemory** — исключён (не активен на Android по умолчанию).
-
----
-
-## Решение: уменьшить размер `bufsArrs` неактивных устройств
-
-Держатель = `maxBatchSize × 65535 × 2 recv × N_устройств`. Активный узел нуждается в
-batch=128 ради GRO-throughput; неактивные (принимают ~0 пакетов) — нет. Цель: дать
-неактивным устройствам **малый batch** (напр. 8) → 8×65535×2 ≈ 1 МБ/устройство вместо
-16 МБ.
-
-> ⚠️ **«lazy bufsArrs» в наивном виде НЕВОЗМОЖЕН.** `StdNetBind.receiveIP`
-> (`bind_std.go:260-279`) на каждый `recv` берёт `getMessages()` — фиксированный массив
-> `IdealBatchSize=128` `ipv6.Message` — и мапит **каждый** `bufs[i] → msgs[i].Buffers[0]`,
-> затем `ReadBatch(*msgs, 0)` читает в весь массив за один syscall. Нельзя дать `bufs`
-> короче/с дырами. Уменьшать надо **сам batch** (и `bufsArrs`, и `getMessages`
-> согласованно), а не лениво заполнять фиксированный массив.
-
-### Замер throughput ВЫПОЛНЕН на стенде (2026-06-29)
-
-Метод: статический `curl` arm64 в `/data/local/tmp` на устройстве, download через
-тоннель (активный WARP), `--resolve` в обход DNS (DNS от shell не идёт через тоннель),
-`-k` (glibc-curl не находит CA-store на Android). 50 МБ × 5 прогонов.
-
-- **Baseline (batch=128): 10.7 МБ/с медиана (≈86 Мбит/с)**, стабильно 9.1–11.2.
-- **CPU под нагрузкой (download активен, 8с):** `Syscall6` **36%**, `scanobject` 6%,
-  crypto ~3% (`aes.encryptBlock` 1.5%). CPU idle (без загрузки): `Syscall6` 33.6%,
-  `scanobject` 3.85%.
-
-> **Вывод: A/B «batch 128 vs 16» на этом классе канала НЕинформативен — и это
-> результат.** Throughput упирается в **WARP-канал + syscall-overhead (36% CPU)**, НЕ в
-> batch-обработку. GRO/batch экономит syscall'ы и влияет на скорость только на сотнях
-> Мбит/гигабитах; на ~86 Мбит/с канал — узкое место задолго до этого. Значит **уменьшение
-> batch на типичном мобильном/WARP-канале скорость НЕ роняет.**
-
-### Кандидаты в рычаги (рекомендация после замера)
-
-1. **[PRIMARY] Глобально меньший batch на android-клиенте** (`StdNetBind.BatchSize()`
-   128→напр. 8–16). Одна точка, без динамики и определения «активности». Срежет
-   `bufsArrs` с 8 МБ до ~0.5–1 МБ на recv-горутину → при 11 устройствах 176 МБ → ~11–22
-   МБ. Замер показал: на мобильном/WARP-канале (где и репортят нагрев) throughput **не
-   падает**. ⚠️ На быстром Wi-Fi/гигабите batch может влиять — проверить на быстром
-   канале перед релизом (см. риски).
-2. **[SECONDARY] Динамический batch: активный=128, неактивный=малый.** Если окажется,
-   что активному узлу на быстром канале нужен 128. `maxBatchSize` из `bind.BatchSize()`
-   (`device.go:558`), перечитывается в `BindUpdate` при Down→Up; согласованно уменьшить
-   `StdNetBind.getMessages()`-размер для idle. Сложнее (прокинуть batch в bind + критерий
-   «неактивен»: переключение узла само НЕ усыпляет — доказано). Брать, только если рычаг 1
-   режет скорость на быстром канале.
-3. **[SECONDARY] Down неактивных устройств** (BindClose завершает
-   `RoutineReceiveIncoming`, defer `receive.go:104-110` освобождает `bufsArrs`). Режет
-   полностью (до 0 на устройство), но: переключение узла НЕ усыпляет (доказано), а
-   selector держит членов up для urltest health-check → нужен явный lazy-start /
-   отложенный старт endpoints (не eager). Самый радикальный, самый дорогой по логике.
-
----
-
-## Логика фикса (PRIMARY-рычаг)
-
-**Суть.** `bufsArrs = make([]*[65535]byte, maxBatchSize)` (`receive.go:89`), где
-`maxBatchSize = bind.BatchSize()`. Для `StdNetBind` на android это **128** → 8 МБ на
-recv-горутину × 22 = 176 МБ. Уменьшить `BatchSize()` → пропорционально меньше `bufsArrs`.
-
-**Изменение — одна точка:** `conn/bind_std.go:322`, `StdNetBind.BatchSize()`:
-```go
-// было:  if linux || android { return IdealBatchSize }  // 128
-// стало: if android { return <малая константа: 8 или 16> }
-//        if linux   { return IdealBatchSize }            // 128 не трогаем
+```jsonc
+"route": {
+  "lx_idle_suspend": "30s"   // порог простоя; "0"/отсутствует = фича выключена
+}
 ```
 
-**Что протянется автоматически (без других правок):**
-- `BindUpdate` (`device.go:558`) читает `bind.BatchSize()` → передаёт в
-  `RoutineReceiveIncoming` как `maxBatchSize` → `bufsArrs` становится размером 8, не 128.
-- `getMessages()` в `receiveIP` (`bind_std.go:260`) завязан на `len(bufs)`, который
-  теперь 8 → `ReadBatch` читает в полный 8-массив. **Потеря пакетов исключена** (массив
-  полный, просто короче).
-- Обе recv-горутины (v4 + v6) — через общий `BatchSize()`, бьёт обе.
+- Поле: `option.RouteOptions.LXIdleSuspend badoption.Duration`, `json:"lx_idle_suspend,omitempty"`
+  (в [`option/route.go`](../../option/route.go), под `lx:begin/lx:end`).
+- **По умолчанию (отсутствует / `"0s"` / `0`): фича выключена** — тик не запускается,
+  нулевой оверхед, поведение как раньше (kill-switch для безопасного отката).
+- Период тика: `max(порог / idleTickDivisor, idleTickFloor)` =
+  `max(XX/2, 5s)`.
 
-**Эффект:** 8 МБ → ~0.5 МБ на recv-горутину; 176 МБ → ~11 МБ при 11 устройствах;
-GC-нагрев уходит. `MaxSegmentSize` (65535) НЕ трогается → GRO цел (см. §010).
+| `lx_idle_suspend` | период тика | определяется |
+|---|---|---|
+| `30s` | 15s | делителем |
+| `60s` | 30s | делителем |
+| `8s` | 5s | полом (floor) |
+| `0` | — | тик не запущен (фича off) |
 
-**Единственный риск:** GRO батчит меньше сегментов за syscall → на **гигабитном** канале
-download может просесть. На мобильном/WARP — НЕ просел (замерено). Перед релизом —
-замер на быстром Wi-Fi; если просядет, переключиться на динамический рычаг (активный
-128 / idle 8).
+Константы `idleTickDivisor = 2` и `idleTickFloor = 5s` живут в
+[`route/reachability_lx.go`](../../route/reachability_lx.go) как именованные
+константы (не «магические» литералы).
 
----
+## 4. Модель достижимости (reachability)
 
-## Верификация (стенд доступен — Debug API)
+Эндпоинт **достижим**, если трафик может прямо сейчас на него попасть. Это отдельный
+динамический обход дерева (НЕ статический граф `ConsumersOf`/`dependByTag`, который
+перечисляет ВСЕ члены селектора как зависимости — нам же нужен текущий *активный*
+выбор).
 
-- **Сделано — доказательство корня:** heap `/diag/pprof?profile=heap` при разном числе
-  endpoints: 11 ep → 269 МБ, 4 ep → 104 МБ, 1 ep → 0. Держатель ∝ числу устройств,
-  линейно. `RoutineReceiveIncoming` cum 180 МБ при 11 ep.
-- **Сделано — замер throughput:** baseline batch=128 = 10.7 МБ/с; узкое место = канал/
-  syscall, не batch (CPU-профиль под нагрузкой).
-- **Для фикса (когда дойдём до кода):** билд с `BatchSize()`=8–16, снять heap — держатель
-  `bufsArrs` должен упасть с ~16 МБ до ~1–2 МБ на устройство; повторить замер throughput
-  на мобильном И на быстром канале — подтвердить, что скорость не просела.
-- Команды: `adb forward tcp:9269`; `GET /diag/pprof?profile=heap&query=gc=1`;
-  `GET /diag/pprof?profile=profile&query=seconds=8` (CPU); download —
-  `curl -sk --resolve speed.cloudflare.com:443:<ip> .../__down?bytes=52428800`.
+### 4.1 Сиды (точки входа в дерево)
 
-## Остаточные риски
-1. **Быстрый канал.** Замер сделан на ~86 Мбит/с WARP — там batch не влияет. На Wi-Fi/
-   гигабите малый batch МОЖЕТ срезать throughput (больше syscall'ов). Перед релизом
-   рычага 1 — замерить на быстром канале; если просядет, переключиться на динамический
-   рычаг 2.
-2. «Неактивность» устройства не тривиальна: переключение узла НЕ усыпляет; selector
-   держит всех членов up для health-check. Рычагам 2/3 нужен корректный критерий и
-   обратимость (re-Up на реальный dial / health-probe). Рычаг 1 этого НЕ требует (режет
-   batch у всех одинаково).
-3. 2 recv-горутины на устройство (v4+v6) — каждая держит свой `bufsArrs`. Фикс должен
-   бить обе (рычаг 1 — автоматически, через общий `BatchSize()`).
+- **final**: `outboundManager.Default()`.
+- **Правила**: каждый outbound-тег, на который ссылается действие правила (`route` /
+  `bypass`) из `router.Rules()`. Действия reject/sniff/dns/resolve/hijack-dns не дают
+  сида (никуда не маршрутизируют).
+
+### 4.2 Обход вниз от каждого сида (с защитой от циклов через visited-set)
+
+| Тип узла | Достижимые дети |
+|---|---|
+| selector | **только** `Now()` (текущий выбор), НЕ `All()` |
+| urltest round_robin | **весь** текущий пул — `ActiveTags()` (= `poolTags()`) |
+| urltest legacy (least_test) | `Now()` (текущий выбранный узел) |
+| обычный outbound (vless/http/…) | его `Dependencies()` (честная detour-цепочка) |
+
+Обход транзитивный: selector→urltest→эндпоинты, selector→sub-selector и т.д. Узел,
+посещённый по любому пути, помечается один раз (visited-set = дедуп + защита от циклов).
+
+Реализация: `reachableSet` / `walkReachable` в
+[`route/reachability_lx.go`](../../route/reachability_lx.go) — чистые функции,
+развязанные с `*Router` через `resolve`-замыкание, поэтому юнит-тестируемы со стабами.
+
+### 4.3 Семантика urltest — «дайл будит, idle-тик усыпляет»
+
+Никакого спец-обхода «пул = всегда достижим» не нужно. Health-check probe идёт через
+собственный `DialContext` узла (`urltest.URLTest`), то есть probe — это обычный дайл.
+Поэтому ТОТ ЖЕ ленивый `Up()`-на-дайле, что обслуживает пользовательский трафик (§7),
+будит спящий узел под probe автоматически.
+
+Следствия:
+- Узел **в** пуле probe'ится каждый `interval` → каждый probe штампует активность →
+  пока `interval < XX`, он не простаивает → не усыпляется (живая нода остаётся живой).
+- Узел, **выбывший** из пула, перестаёт probe'иться; как только он ещё и простоит > XX,
+  он становится законным кандидатом на сон и усыпляется idle-тиком.
+- Health-check **сам не гасит** узел обратно — гашение это работа idle-тика по таймауту.
+  probe только `Up()`'ит (через дайл), завершается, и узел просто отпускается; тик
+  усыпит его через XX, если он снова простаивает и недостижим.
+
+## 5. Кэш достижимости и инвалидация (event-driven)
+
+Полный обход на каждый тик — расточительство (бьёт по цели экономии). Поэтому набор
+достижимых кэшируется и пересчитывается **только когда активное дерево реально
+изменилось**.
+
+- `r.reachDirty atomic.Bool` — флаг «грязно». Стартует `true` (первый тик считает).
+- `r.reachCache map[string]bool` под `r.reachMu sync.RWMutex` — опубликованный набор.
+- `InvalidateReachability()` (реализует `adapter.ReachabilityInvalidator`) ставит
+  флаг. Обход НЕ выполняется под локом кэша (он зовёт группы с их собственными локами —
+  иначе риск лок-ордер дедлока); считаем вне лока, публикуем под локом.
+
+Три точки-события дёргают инвалидацию (через `service.FromContext[ReachabilityInvalidator]`,
+так что `protocol/group` не импортирует `route`):
+
+| Точка | Файл |
+|---|---|
+| `Selector.SelectOutbound` (переключение селектора) | `protocol/group/selector.go` |
+| urltest legacy auto-switch | `protocol/group/urltest.go` |
+| перестроение пула `balancer.onChange` ← `setSlots` | `protocol/group/urltest.go` + `urltest_balance_lx.go` |
+| перезагрузка конфига / роутера | через пересоздание Router |
+
+Хук-обёртка `invalidateReachability(ctx)` — в
+[`protocol/group/reachability_lx.go`](../../protocol/group/reachability_lx.go).
+
+Между событиями тик читает кэш и делает по одному сравнению простоя на эндпоинт —
+никакого обхода.
+
+## 6. Учёт простоя и засыпание/пробуждение (сторона эндпоинта)
+
+Состояние и логика — в [`protocol/wireguard/endpoint.go`](../../protocol/wireguard/endpoint.go),
+под `lx:begin/lx:end idle-suspend`:
+
+- `lastActivity atomic.Int64` (unix-nanos) — штампуется в PostStart (базовая отметка,
+  чтобы никогда-не-дайленный эндпоинт не выглядел «простаивающим 55 лет») и на каждом
+  входе в дайл.
+- `IdleSince() time.Duration` — сколько прошло с последнего дайла.
+- `idleAsleep atomic.Bool` — true пока эндпоинт усыплён по простою. **Отличается** от
+  `started`: guard-suspend ставит `started=false` БЕЗ `idleAsleep`, поэтому
+  guard-усыплённый эндпоинт никогда не будится idle-логикой.
+- `resumeMu sync.Mutex` — сериализует решение тика «усыпить» против конкурентного
+  дайла «разбудить».
+
+**`SuspendIfIdle(reachable, threshold)`** — решение тика на эндпоинт:
+```
+если reachable || IdleSince() < threshold: выход (тихо)
+если !started.Load(): выход            // уже down (guard / awg-chain / закрыт)
+если idleAsleep.CAS(false→true):
+    started.Store(false)
+    endpoint.Suspend()                 // device.Down(): recv-воркеры выходят, bufsArrs освобождаются
+    log INFO "lx idle: suspend <tag> idle=<dur>"   // edge-triggered: одна строка на переход
+```
+
+**`resumeOnDial()`** — в начале каждого входа в дайл:
+```
+stampActivity()                        // всегда, закрывает гонку с тиком
+если !idleAsleep: вернуть started      // быстрый путь (бодр / down по не-idle причине → не воскрешать)
+под resumeMu:
+    endpoint.Resume()                  // device.Up(): пере-открыть сокет, пере-поднять recv-воркеры
+    started.Store(true); idleAsleep.Store(false)
+    log INFO "lx idle: wake <tag> by=dial"
+    вернуть true
+```
+
+Логирование **edge-triggered**: строка пишется только внутри успешного CAS-перехода
+состояния. Тик, который перепроверяет уже-спящий или всё ещё достижимый эндпоинт —
+молчит. Пара suspend↔wake в логе и есть сигнал флапа.
+
+## 7. Цена Down/Up (почему именно Down, а не «лёгкий» timersStop)
+
+Source-verified против сабмодуля wireguard-go. `device.Down()→Up()` — это **полный
+реконнект**, не переключение таймера:
+
+`Down()` (`downLocked`): зануляет все крипто-ключи + handshake-состояние
+(`peer.Stop()` → `ZeroAndFlushAll()`), закрывает UDP-сокет (`BindClose` →
+`netc.bind.Close()` + барьер `stopping.Wait()` до выхода recv-воркеров), отбрасывает
+staged-пакеты, синхронно сносит 2·N+1 горутин. recv-воркер может выйти только по
+`net.ErrClosed` — то есть «recv-воркеры → 0» это **детерминированное доказательство**,
+что сокет реально закрыт.
+
+`Up()` платит **полный handshake** на первом пакете (свежий Curve25519 + DH + KDF/AEAD,
+плюс на этом форке вся AWG I1-обфускация + junk). Резюм-пути сессии в цикле Down/Up нет.
+
+Что переживает цикл (это `changeState`, не `Close`): объекты Device/Peer, ClientBind,
+буферные `WaitPool`'ы, очереди шифрования/дешифрования + их воркеры, и порт. **`Down()`
+НЕ освобождает gvisor netstack** (~5.9 МБ/устройство) — это территория «Tier B»
+(не реализовано).
+
+Почему Down, а не light-sleep (timersStop): измерение в `RESEARCH.md` доказало, что
+держатель GC-нагрева — recv-воркерные `bufsArrs`, а light-sleep их НЕ освобождает (он
+экономит только батарею/таймеры). Поэтому реализован Down — он бьёт по **измеренному**
+держателю.
+
+## 8. Взаимодействие с AWG-detour-guard (инвариант)
+
+AWG-detour-guard ([[awg-detour-guard-must-be-at-start]]) гасит через `device.Down()` на
+старте AWG-эндпоинт, чья detour-цепочка достигает WireGuard-узла (AWG-over-WG вешает
+ядро Android). Он ставит `started=false` БЕЗ `idleAsleep`.
+
+idle-suspend это уважает **без отдельного флага**:
+- `SuspendIfIdle` рано выходит на `!started` → guard-усыплённый эндпоинт никогда не
+  трогается idle-тиком (не логирует suspend, он и так down).
+- `resumeOnDial` идёт ПОСЛЕ существующего `!started`-гейта дайла, который уже возвращает
+  «не готов» и обрывает дайл → guard-усыплённый эндпоинт никогда не воскрешается
+  idle-логикой. Тот самый AWG-over-WG hang остаётся предотвращённым.
+
+Проверено вживую (см. §12) и юнит-тестами `TestSuspendIfIdle_guardSuspendedNotTouched`,
+`TestResumeOnDial_guardSuspendedNotWoken`.
+
+## 9. Пользовательский опыт: цена пробуждения
+
+`Up()` синхронный и не-сетевой (поднимает bind + *инициирует* handshake), поэтому сам
+резюм мгновенный. Цену платит **первый пакет** — ждёт ~1 RTT, пока WG доделает
+handshake (WG стейджит пакет и шлёт по готовности ключа). Это идентично холодному дайлу
+на любой не-усыплённый эндпоинт или реконнекту после смены сети — не баг.
+
+Замер (50 дайлов, реальная нода parnas WG, RTT до сервера ~4.8 мс — см. §12):
+- COLD (нода спала → wake+handshake): медиана **~50–57 мс**.
+- WARM (уже живая): медиана **~36 мс**.
+- **Цена пробуждения ≈ +14–21 мс ≈ ~3 RTT** = один WG-handshake.
+
+**Каверза (далёкие серверы):** handshake масштабируется с RTT. На близком сервере это
+незаметные +14 мс; на межконтинентальном (RTT ~150 мс) тот же handshake даст ~+450 мс на
+первый пакет — разовый ощутимый «затык», только латентность (пропускная не страдает,
+batch активной ноды не меняется). Keys-safe путь без handshake (BindUpdate, §13) убрал бы
+и это, но он не реализован — текущая модель Down/Up выбрана ради нулевой памяти спящей
+ноды.
+
+## 10. Файлы
+
+Новые (lx-owned):
+- [`route/reachability_lx.go`](../../route/reachability_lx.go) — walk, кэш, инвалидация,
+  idle-тик, `suspendIdleEndpoints`.
+- [`protocol/group/reachability_lx.go`](../../protocol/group/reachability_lx.go) —
+  хук-обёртка `invalidateReachability(ctx)`.
+
+Изменённые:
+- [`option/route.go`](../../option/route.go) — поле `LXIdleSuspend`.
+- [`route/router.go`](../../route/router.go) — состояние idle-тика, поле `endpoint
+  adapter.EndpointManager` (тянется из ctx через `service.FromContext`), старт тика в
+  PostStart / стоп в Close.
+- [`adapter/outbound.go`](../../adapter/outbound.go) — узкие интерфейсы
+  `IdleSuspendable` (`Tag`, `SuspendIfIdle`) и `ReachabilityInvalidator`.
+- [`protocol/wireguard/endpoint.go`](../../protocol/wireguard/endpoint.go) —
+  `lastActivity`, `IdleSince`, `stampActivity`, `idleAsleep`, `resumeMu`,
+  `SuspendIfIdle`, `resumeOnDial`, вставка `resumeOnDial` в начало гейтов дайла.
+- `protocol/group/selector.go`, `urltest.go`, `urltest_balance_lx.go` — точки
+  инвалидации (по одной вставке).
+
+## 11. БАГ, который был найден и исправлен (главное)
+
+**Симптом.** Первый live-прогон (selector-сценарий, 8 WG/AWG эндпоинтов,
+`lx_idle_suspend: 8s`) дал **0 строк `lx idle:` за 2+ минуты простоя**, где ожидалось 7
+suspend'ов. Бокс стартовал чисто, конфиг декодировался — фича просто была инертной.
+
+**Первопричина (source-verified).** `idleSuspendLoop` перебирал
+`r.outbound.Outbounds()` и type-assert'ил каждый к `adapter.IdleSuspendable`. Но WG/AWG
+**эндпоинты живут в endpoint-менеджере, а не в outbound-менеджере**.
+`outbound.Manager.Outbounds()` возвращает ТОЛЬКО `m.outbounds` — он НЕ включает
+`m.endpoint.Endpoints()`. (Контраст: `Outbound(tag)` специально делает fallback на
+`m.endpoint.Get(tag)` — поэтому *walk* достижимости резолвил теги эндпоинтов нормально,
+что и маскировало щель.) Список, по которому шёл тик, не содержал **ни одного**
+`IdleSuspendable` → `SuspendIfIdle` не вызывался никогда → фича мертва.
+
+**Почему юниты были зелёными.** Две половины тестировались изолированно: walk
+(`reachability_lx_test.go`) и решение на эндпоинт (`endpoint_idle_lx_test.go`, прямой
+вызов `SuspendIfIdle`). Кэш-тест стабил `Outbounds()` → nil. **Ничто не проверяло, что
+петля реально ДОСТАЁТ эндпоинты.** Этот интеграционный шов и был слепым пятном.
+
+**Фикс.** Router получает доступ к endpoint-менеджеру (`endpoint adapter.EndpointManager`,
+тянется из ctx в `NewRouter` через `service.FromContext` — без правок `box.go`, менеджер
+там уже зарегистрирован) и перебирает его в тике. Тело петли вынесено в
+`suspendIdleEndpoints(reachable)`, который сканирует **оба** списка:
+`r.endpoint.Endpoints()` (где IdleSuspendable реально есть) и `r.outbound.Outbounds()`
+(для полноты — будущий не-endpoint IdleSuspendable; сегодня no-op). Nil-guard на
+`r.endpoint` для стаб/без-эндпоинтов случая. Семантика публичного `Outbounds()` не
+тронута.
+
+**Регрессионный тест.** `route/idle_tick_endpoints_lx_test.go` гоняет
+`suspendIdleEndpoints` через стаб endpoint-менеджера и проверяет, что каждый эндпоинт
+посещён один раз с правильным флагом `reachable`. **Падает на до-фиксовом коде**
+(`wg-1=0 wg-2=0` — тик слеп к эндпоинтам), проходит после. Это тот самый шов, что
+пропустил исходный набор.
+
+## 12. Покрытие тестами
+
+### Юнит-тесты (29)
+
+`route/reachability_lx_test.go` — обход:
+`TestReachableFinalSeedOnly`, `TestReachableDetourChain`, `TestReachableSelectorOnlyNow`,
+`TestReachableURLTestWholePool`, `TestReachableSelectorToSubSelector`,
+`TestReachableCycleGuard`, `TestReachableUnknownTag`, `TestReachableEmptySelectorNow`,
+`TestReachableMultipleSeeds`, `TestReachableSelectorToURLTestPool` (вложенная
+selector→urltest, весь пул), `TestReachableDualPathDedup` (узел достижим по двум сидам),
+`TestReachableSelectorMemberIsURLTestNotSelected` (дремлющее вложенное поддерево).
+
+`route/reachability_cache_lx_test.go` — кэш:
+`TestReachCache_recomputesOnlyWhenDirty`, `TestReachCache_resultIsCorrect`,
+`TestReachCache_invalidateIsLockFree`.
+
+`route/idle_tick_endpoints_lx_test.go` — интеграционный шов тика:
+`TestIdleTick_iteratesEndpointManager` (регрессия на баг), `TestIdleTick_scansBothManagers`,
+`TestIdleTick_nilEndpointManagerSafe`.
+
+`protocol/wireguard/endpoint_idle_lx_test.go` — сторона эндпоинта:
+`TestIdleSinceNeverDialed`, `TestIdleSinceAfterStamp`, `TestSuspendIfIdle_reachableNeverSuspends`,
+`TestSuspendIfIdle_notIdleEnough`, `TestSuspendIfIdle_suspendsWhenIdleAndUnreachable`,
+`TestSuspendIfIdle_thresholdBoundary`, `TestSuspendIfIdle_idempotentCAS`,
+`TestSuspendIfIdle_guardSuspendedNotTouched` (инвариант §8),
+`TestResumeOnDial_wakesAndStamps`, `TestResumeOnDial_dialBeforeTickRace`,
+`TestResumeOnDial_guardSuspendedNotWoken`.
+
+Все adversarially проверены: слом walk (`Now()`→`All()`) роняет dedup/dormant-тесты; слом
+тика (только `Outbounds()`) роняет both-managers/iterates-тест.
+
+### Live-проверка (macOS desktop, реальные ноды пользователя — детали в [TEST_PLAN](TEST_PLAN_idle_suspend.md))
+
+Подтверждено вживую:
+- **suspend срабатывает** — недостижимые+простаивающие эндпоинты гаснут (edge-triggered,
+  одна строка на переход), достижимые — никогда.
+- **wake by=dial** — дайл/health-check-probe будит спящий эндпоинт, проходит реальный
+  трафик (HTTP 204); switch селектора → старый выбор уснул, новый проснулся (динамическая
+  инвалидация кэша).
+- **матрица достижимости** — final, rule-target, detour-цепочка, selector `Now`/switch,
+  urltest round_robin пул целиком, legacy `Now`, dual-path дедуп, вложенные группы
+  (selector→urltest→пул на **реальном production-конфиге** пользователя: switch
+  `vpn-1`→`vpn-1-auto` разбудил ровно pool:4 ноды).
+- **AWG-guard** — guard-усыплённая нода не появляется ни в одной `lx idle:` строке.
+- **нет флапа** — пары suspend/wake всегда равны (15/15, 22/22…); +30s простоя без новых
+  строк.
+- **kill-switch** — `lx_idle_suspend: 0s` → ноль `lx idle:` строк.
+- **ресурсы (A/B, 8 нод все усыплены)**: recv-воркеры `RoutineReceiveIncoming` **16→0**,
+  RSS **39.3→27.0 МБ (−31%)**. `RoutineDecryption` остаётся 64 (крипто-пул переживает
+  Down/Up by design). netstack Down не освобождает (Tier B).
+
+## 13. Что НЕ сделано (отложено, сознательно)
+
+- **Tier B — снос netstack.** Единственный способ срезать и GC-нагрев от gvisor
+  `stack.Stack` (~5.9 МБ/устройство) — освободить netstack (`Close`+rebuild, не `Down`).
+  Пробуждение = холодный реконнект (rebuild стека + handshake, in-flight потоки умирают).
+  Нужен длинный отдельный порог + гистерезис; отложено до данных с устройства.
+- **Keys-safe / reduced-bind wake (путь A).** Bind можно урезать на ЖИВОМ устройстве БЕЗ
+  зануления ключей через `Device.BindUpdate()` — даёт пробуждение БЕЗ handshake (убрал бы
+  «далёкий-сервер» затык §9). Но RAM спящей ноды тогда не ноль (~0.5 МБ), плюс три острых
+  ловушки (мутабельный `BatchSize()`, нужно резать и TUN BatchSize, иначе `max()` клампит
+  обратно к 128; открывать с GRO off иначе паника при batch<128). Реализован путь B (Down)
+  — RAM в ноль, проще, безопаснее; путь A эскалируем по данным, если флап handshake'ов на
+  пробуждении реально начнёт мешать. См. [[wg-bindupdate-keys-safe]].
+- **Замер батареи на устройстве.** Эффект на радио/батарею (остановка keepalive-таймеров
+  у спящих нод) — обоснованный прогноз по исходникам, не замер; нужен Android
+  batterystats до/после. Аналогично heap A/B на Android (где `bufsArrs` ~8 МБ/воркер,
+  эффект кратно больше десктопных −31% RSS) — единственное более сильное доказательство
+  экономии памяти, не обязательное для поставки.
