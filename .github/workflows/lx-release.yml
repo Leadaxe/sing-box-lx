@@ -312,10 +312,17 @@ jobs:
           # (`git describe`). This reads the commit GRAPH, not commit-message text, so it's
           # correct even when a merge subject omits the alpha number — e.g. alpha.37 was
           # merged in a commit titled "Merge upstream/testing (bump version, fix linux ping)"
-          # with no "alpha.37" in it, which the old subject-grep missed (shipped rc.17 notes
-          # as alpha.36). Fallback: scan "Merge upstream" subjects for the highest alpha.NN —
-          # robust on a fork without upstream tags fetched. Last resort: a generic label so
-          # notes never carry a stale hardcoded version.
+          # with no "alpha.37" in it, which the subject-grep fallback misses (shipped rc.17/18
+          # notes as alpha.36). Fallback: scan "Merge upstream" subjects for the highest
+          # alpha.NN. Last resort: a generic label so notes never carry a stale hardcoded version.
+          #
+          # NOTE: actions/checkout only fetches THIS repo's tags, not upstream's. The
+          # v1.14.0-alpha.* tags are SagerNet/sing-box tags, so without this fetch `git
+          # describe` finds nothing in CI and silently drops to the weaker subject-grep (which
+          # is why CI kept resolving alpha.36 while a local clone with upstream tags gets 37).
+          # Fetch the upstream alpha tags first so the primary `git describe` path works.
+          git remote add upstream https://github.com/SagerNet/sing-box.git 2>/dev/null || true
+          git fetch --no-tags upstream 'refs/tags/v1.14.0-alpha.*:refs/tags/v1.14.0-alpha.*' 2>/dev/null || true
           BASE="$(git describe --tags --match 'v1.14.0-alpha.*' --abbrev=0 HEAD 2>/dev/null || true)"
           if [ -z "$BASE" ]; then
             BASE_N="$(git log --grep='Merge upstream' --pretty=%s | grep -oE 'alpha\.[0-9]+' | sed 's/alpha\.//' | sort -n | tail -1)"
