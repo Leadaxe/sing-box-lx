@@ -323,3 +323,57 @@ the first packet** — a one-time perceptible stall, paid once per wake, latency
 BindUpdate path (§13.3 path A) would remove even that far-server spike, but it is not the
 shipped Down/Up mechanism. So: "wake is fast" is true on near servers; on far ones it is
 "one sub-second first-packet handshake, then full speed."
+
+---
+
+## RESULTS — Android device run 2026-07-01 (CPH2411, Android 15, rc.18)
+
+This closes the **device-verification gap** flagged in RESEARCH.md §"what is NOT done"
+(the desktop A/B was −31% RSS; the Android heap A/B, where `BatchSize=128` makes each
+`bufsArrs` ~8 MB, was projected but unmeasured). It is now measured.
+
+Setup: LxBox app (2.8.0-dev.2) with the rc.18 AAR (`Libbox.version()` =
+`1.14.0-lx.1-rc.18`, confirmed via the app's Debug API `/device`). Test config pushed
+over the Debug API `PUT /config`: **9 WireGuard endpoints** — `wg-1` = a real WARP-AWG
+node (reachable, `route.final`), `wg-2`..`wg-9` = 8 synthetic plain-WG (valid X25519
+keys, peer at TEST-NET-1 `192.0.2.x` → never handshakes → live recv-workers until
+suspended = exactly the idle case). `lx_idle_suspend: "30s"` (tick 15 s). pprof via the
+app's libbox PProfServer (`/diag/pprof`), core logs via `/logs/core`.
+
+> Gotcha (unrelated to this feature): on rc.18 a DNS server with `detour` to a
+> settings-less `direct` outbound now fails start (`detour to an empty direct outbound
+> makes no sense`). Simplified the test DNS to a plain UDP resolver.
+
+### Reachability + suspend/wake/flap/kill-switch
+
+| Check | Result |
+|---|---|
+| **suspend fires** | `wg-2`..`wg-9` (8 nodes) each logged one `lx idle: suspend wg-N idle=30s`, edge-triggered (all within the same tick). ✅ |
+| **reachable never suspends** | `wg-1` (the `final`, carrying real traffic) never appears in any `lx idle:` line. ✅ |
+| **wake by=dial** | `POST /action/urltest?tag=wg-2` (a dial through the sleeping node) → `lx idle: wake wg-2 by=dial`; recv-workers 2→4. ✅ |
+| **no flapping** | suspend/wake pairs stayed balanced; no churn over the idle hold. ✅ |
+| **kill-switch** | `lx_idle_suspend: "0"` → **zero** `lx idle:` lines over 48 s idle (tick never starts). ✅ |
+
+### Resource A/B — the headline (9 endpoints, final=wg-1, 8 idle+unreachable → suspend)
+
+Clean stop→start (fresh 18 recv-workers), heap+goroutine at T+5 s (all up), then again
+after the 8 suspended (recv-workers 18→2).
+
+| Metric | Before (9 up) | After (8 Down) | Δ |
+|---|---|---|---|
+| `RoutineReceiveIncoming` goroutines | **18** (2/dev × 9) | **2** (wg-1 only) | −16 |
+| total goroutines | 417 | 389 | −32 |
+| **`PopulatePools.func3` inuse_space** (the `bufsArrs` holder) | **223.93 MB** | **89.89 MB** | **−134 MB (−60%)** |
+| total process `inuse_space` (kernel heap) | 232.75 MB | 99.21 MB | −133.5 MB |
+
+`PopulatePools.func3` is the exact `make([]*[65535]byte, BatchSize)` allocation
+identified in RESEARCH.md as the GC-heat / RAM holder. Suspending 8 idle+unreachable
+endpoints freed **134 MB** of live heap. That is 16 freed recv-workers × ~8.4 MB/worker
+(`BatchSize=128`) — matching the model exactly, and **~10× the desktop RSS delta** (where
+`BatchSize` is small). This is the strongest single piece of evidence for the memory win,
+and it now exists.
+
+**Conclusion (Android):** every idle-suspend behavior confirmed on-device on rc.18 —
+suspend, reachability (final stays up), wake-by-dial, no-flap, kill-switch — and the
+headline memory saving is directly measured in `bufsArrs` inuse_space. The
+RESEARCH.md device gap is closed on Android, not just desktop.
