@@ -307,7 +307,6 @@ func TestValidationRejections(t *testing.T) {
 		{"bad seq placement", modePacketUp, metaOptions{SeqPlacement: "nowhere"}},
 		{"bad uplink data placement", modePacketUp, metaOptions{UplinkDataPlacement: "path"}},
 		{"uplink header outside packet-up", modeStreamOne, metaOptions{UplinkDataPlacement: "header"}},
-		{"GET method outside packet-up", modeStreamUp, metaOptions{UplinkHTTPMethod: "GET"}},
 		{"bad padding placement", modePacketUp, metaOptions{XPaddingObfsMode: true, XPaddingPlacement: "path"}},
 		{"bad padding method", modePacketUp, metaOptions{XPaddingMethod: "rot13"}},
 	}
@@ -327,6 +326,29 @@ func TestValidationAccepts(t *testing.T) {
 	}
 	if _, err := normalizeMeta(metaOptions{UplinkHTTPMethod: "get"}, modePacketUp); err != nil {
 		t.Fatalf("GET method in packet-up should be valid: %v", err)
+	}
+}
+
+// GET is only valid in packet-up, but rather than fail the whole config over one
+// subscription node that ships method=GET on a non-packet-up node, normalizeMeta
+// falls back to POST (and warns) so the rest of the config still loads. lx: SPEC 002.
+func TestUplinkGetFallsBackToPostOutsidePacketUp(t *testing.T) {
+	for _, mode := range []string{modeAuto, modeStreamUp, modeStreamOne} {
+		m, err := normalizeMeta(metaOptions{UplinkHTTPMethod: "GET"}, mode)
+		if err != nil {
+			t.Fatalf("mode %s: GET outside packet-up should NOT error (fall back to POST), got: %v", mode, err)
+		}
+		if m.uplinkHTTPMethod != http.MethodPost {
+			t.Fatalf("mode %s: expected fallback to POST, got %q", mode, m.uplinkHTTPMethod)
+		}
+	}
+	// In packet-up GET is honoured (no fallback).
+	m, err := normalizeMeta(metaOptions{UplinkHTTPMethod: "GET"}, modePacketUp)
+	if err != nil {
+		t.Fatalf("GET in packet-up should be valid: %v", err)
+	}
+	if m.uplinkHTTPMethod != http.MethodGet {
+		t.Fatalf("GET in packet-up should be kept, got %q", m.uplinkHTTPMethod)
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sagernet/sing-box/log"
+
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
@@ -103,7 +105,13 @@ func normalizeMeta(opts metaOptions, mode string) (metaConfig, error) {
 	// --- uplink http method ---
 	m.uplinkHTTPMethod = strings.ToUpper(orDefault(opts.UplinkHTTPMethod, http.MethodPost))
 	if m.uplinkHTTPMethod == http.MethodGet && mode != modePacketUp {
-		return m, E.New("v2ray-xhttp: uplink_http_method can be GET only in packet-up mode")
+		// GET can only carry the uplink in packet-up (other modes put the uplink in
+		// the request body, which GET cannot have). A subscription node sometimes
+		// ships method=GET on a non-packet-up node; rather than fail the WHOLE config
+		// over one bad outbound, fall back to POST (the safe default that works in
+		// every mode) and warn, so the rest of the config still loads. lx: SPEC 002.
+		log.StdLogger().Warn("v2ray-xhttp: uplink_http_method=GET is only valid in packet-up mode (mode=", mode, "); falling back to POST")
+		m.uplinkHTTPMethod = http.MethodPost
 	}
 
 	// --- packet-up tuning ranges ---
