@@ -28,6 +28,7 @@ import (
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 )
 
 func RegisterOutbound(registry *outbound.Registry) {
@@ -38,10 +39,11 @@ const defaultMTU uint32 = 1280
 
 type Outbound struct {
 	outbound.Adapter
-	ctx     context.Context
-	logger  logger.ContextLogger
-	dialer  N.Dialer
-	profile masque.Profile
+	ctx       context.Context
+	logger    logger.ContextLogger
+	dialer    N.Dialer
+	dnsRouter adapter.DNSRouter
+	profile   masque.Profile
 
 	server     M.Socksaddr
 	uri        string
@@ -147,6 +149,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		ctx:        ctx,
 		logger:     logger,
 		dialer:     outboundDialer,
+		dnsRouter:  service.FromContext[adapter.DNSRouter](ctx),
 		profile:    profile,
 		server:     options.ServerOptions.Build(),
 		uri:        uri,
@@ -291,6 +294,18 @@ func (o *Outbound) DialContext(ctx context.Context, network string, destination 
 	if err := o.run(ctx); err != nil {
 		return nil, err
 	}
+	// The userspace stack operates at L3 and cannot resolve domains; resolve
+	// here (as the WireGuard endpoint does) and dial the resulting IPs.
+	if destination.IsDomain() {
+		addresses, err := o.lookup(ctx, destination.Fqdn)
+		if err != nil {
+			return nil, err
+		}
+		return N.DialSerial(ctx, o.device, network, destination, addresses)
+	}
+	if !destination.Addr.IsValid() {
+		return nil, E.New("invalid destination: ", destination)
+	}
 	return o.device.DialContext(ctx, network, destination)
 }
 
@@ -298,7 +313,31 @@ func (o *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	if err := o.run(ctx); err != nil {
 		return nil, err
 	}
+	if destination.IsDomain() {
+		addresses, err := o.lookup(ctx, destination.Fqdn)
+		if err != nil {
+			return nil, err
+		}
+		packetConn, destinationAddress, err := N.ListenSerial(ctx, o.device, destination, addresses)
+		if err != nil {
+			return nil, err
+		}
+		if destinationAddress.IsValid() && destination != M.SocksaddrFrom(destinationAddress, destination.Port) {
+			return bufio.NewNATPacketConn(bufio.NewPacketConn(packetConn), M.SocksaddrFrom(destinationAddress, destination.Port), destination), nil
+		}
+		return packetConn, nil
+	}
+	if !destination.Addr.IsValid() {
+		return nil, E.New("invalid destination: ", destination)
+	}
 	return o.device.ListenPacket(ctx, destination)
+}
+
+func (o *Outbound) lookup(ctx context.Context, domain string) ([]netip.Addr, error) {
+	if o.dnsRouter == nil {
+		return nil, E.New("masque: no DNS router available to resolve ", domain)
+	}
+	return o.dnsRouter.Lookup(ctx, domain, adapter.DNSQueryOptions{})
 }
 
 func (o *Outbound) Close() error {
