@@ -9,6 +9,8 @@
 
 Scope: **все платформы** (фича активна там, где заполняется `ProcessInfo.AndroidPackageNames`, т.е. Android). Build-tag: нет — встроена в ядро роутинга.
 
+> **Обновление (2026-07-02, база 1.14.0-alpha.35, аудит SPEC 022 #19):** после миграции базы на 1.14 сам impl (`route/rule/rule_item_package_name_regex.go` + поле `option.RawDefaultRule.PackageNameRegex`) стал **нативным upstream** — бэкпорт-дельта по коду больше не нужна и растворилась в базе. НО LX-тест `route/rule/rule_item_package_name_regex_test.go` **сохраняется намеренно**: upstream своего теста для этого item не поставляет (проверено на базе и на `upstream/testing`), так что это единственное покрытие фичи. Тест изолирован в своём `_test.go`, тестирует стабильный публичный API (`NewPackageNameRegexItem`/`Match`) и ребейз-конфликтов не несёт.
+
 ---
 
 ## 1. Проблема / контекст
