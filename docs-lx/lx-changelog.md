@@ -10,6 +10,37 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.2
+
+**Stable release** (published as "Latest", not a pre-release) — a promotion of
+`v1.14.0-lx.2-rc.1`, **device-verified**. Functionally identical to that rc; no
+runtime change since it (only CI/docs commits — the SPEC 023 toolchain mirror).
+
+The `rc.1` payload is a **correctness/stability pass** over the whole lx delta
+(SPEC 022 deep-audit remediation) — no new features, no config changes. Two
+behavioural fixes headline it:
+
+* **MASQUE (h2): a stalled CONNECT could wedge the outbound forever** — the h2
+  CONNECT-IP handshake ignored the dial context, so a peer that completed TCP+TLS
+  but never returned the CONNECT HEADERS parked the dial with no timeout (and the
+  outbound could then be neither reused nor closed). The handshake is now bounded
+  by the dial ctx.
+* **AmneziaWG: a guard-suspended endpoint could be resurrected by a dial** — the
+  AmneziaWG-over-WireGuard guard (which prevents an Android kernel hang) now clears
+  the SPEC 020 idle flag under the shared lock, so a guard-suspended endpoint stays
+  down.
+
+Plus the full SPEC 022 batch (IPv4 checksum over header options, an XHTTP reader
+data race, DNS query events on fresh cache hits, `GetPool` nested-group delay, the
+AmneziaWG `s4`-only MTU budget, robust MASQUE h3 login-failure matching) and doc /
+comment / dead-code hygiene. Full register:
+[`SPECS/022-LX_DEEP_AUDIT`](../SPECS/022-LX_DEEP_AUDIT/SPEC.md).
+
+Build infrastructure: the musl router builds now restore the Chromium toolchain
+from a durable release-asset mirror before falling back to `snapshot.debian.org`,
+so a Debian-snapshot outage no longer blocks releases
+([`SPECS/023`](../SPECS/023-MUSL_TOOLCHAIN_MIRROR/SPEC.md)).
+
 #### v1.14.0-lx.2-rc.1
 
 **Pre-release.** SPEC 022 deep-audit remediation — a correctness/stability pass
