@@ -111,13 +111,12 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 	}
 	allowedAddresses := allowedIPSet.Prefixes()
 	// lx:begin awg
-	// AmneziaWG's s3/s4 prepend junk bytes to every transport message, so an AWG
-	// endpoint needs a lower MTU than plain WireGuard (see docs-lx/lx-config.md §2).
-	// awgJunk = the per-transport-packet overhead = max(s3, s4).
-	awgJunk := options.AmneziaWG.S3
-	if options.AmneziaWG.S4 > awgJunk {
-		awgJunk = options.AmneziaWG.S4
-	}
+	// AmneziaWG's s4 prepends junk bytes to every transport (data) message, so an
+	// AWG endpoint needs a lower MTU than plain WireGuard (see docs-lx/lx-config.md
+	// §2). s3 pads only cookie-reply messages (device.paddings.cookie), never data
+	// packets, so it is NOT part of the per-transport overhead (SPEC 022 #8).
+	// awgJunk = the per-transport-packet overhead = s4.
+	awgJunk := options.AmneziaWG.S4
 	// lx:end awg
 	if options.MTU == 0 {
 		options.MTU = 1408
@@ -138,7 +137,7 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 		const wgOverhead = 28 + 32 // UDP/IP + WireGuard transport header
 		if budget := pathMTU - wgOverhead - int(awgJunk); int(options.MTU) > budget {
 			options.Logger.Warn(fmt.Sprintf(
-				"amneziawg: mtu %d may be too high for s3/s4 junk (%d bytes); "+
+				"amneziawg: mtu %d may be too high for s4 junk (%d bytes); "+
 					"transport packets can exceed a %d-byte path and fail with "+
 					"\"message too long\". Consider mtu <= %d (or 1280). See docs-lx/lx-config.md",
 				options.MTU, awgJunk, pathMTU, budget))

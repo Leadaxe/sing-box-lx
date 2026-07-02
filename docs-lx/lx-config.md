@@ -112,7 +112,7 @@ you need and read its section below. Each comment shows the **default** and the 
       "type": "wireguard",
       "tag": "awg-out",
       "system": false,
-      "mtu": 1280,                              // lower than plain WG (s3/s4 junk); core defaults 1280 if s3/s4 set
+      "mtu": 1280,                              // lower than plain WG (s4 transport junk); core defaults 1280 if s4 set
       "address": ["10.0.0.2/32"],
       "private_key": "<client-private-key-base64>",
 
@@ -293,7 +293,7 @@ AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server 
 | `jc` | int | default `0` (unset). Number of junk packets sent before the handshake |
 | `jmin` / `jmax` | int | default `0`. Min / max size of those junk packets |
 | `s1` / `s2` | int | default `0`. Junk prepended to the handshake **INIT** / **RESPONSE** messages |
-| `s3` / `s4` | int | default `0`. AWG 2.0 junk-size params (companions to `s1`/`s2`). Their overhead is what drives the [lower MTU](#mtu) requirement |
+| `s3` / `s4` | int | default `0`. AWG 2.0 junk-size params (companions to `s1`/`s2`). `s4`'s per-transport-packet overhead is what drives the [lower MTU](#mtu) requirement; `s3` pads only cookie replies |
 | `h1` / `h2` / `h3` / `h4` | int \| `"min-max"` string | magic header values overriding WireGuard's four message types. Either a single uint32 (`1234567890`, AWG 1.x) or an inclusive range string (`"43613244-384550127"`, AWG 2.0 ranged headers) — the device picks a random value from the range per message. `0` **or** `""` = unset (counts as the WG default `1`/`2`/`3`/`4`) |
 | `i1` … `i5` | string | default `""`. AWG 2.0 CPS decoy packets, **case-sensitive** tag-format strings, sent in order before the handshake. `i1` typically mimics a real protocol (e.g. a QUIC/STUN header) and is **mutually exclusive with the [`id`/`ip`/`ib`](#masquerade-id--ip--ib-wiresock-style-sugar-over-i1) sugar**. Tags: `<b 0xHEX>` static bytes, `<c>` counter, `<t>` timestamp, `<r N>` random bytes, `<rc N>` random chars, `<rd N>` random digits |
 
@@ -404,7 +404,7 @@ errors.
 
 ### MTU
 
-AmneziaWG's `s3`/`s4` prepend junk bytes to **every transport message**, so an AWG endpoint needs a **lower `mtu` than plain WireGuard**. If the obfuscated packet exceeds the path MTU, the OS rejects it and the tunnel completes its handshake but **cannot send data**:
+AmneziaWG's `s4` prepends junk bytes to **every transport (data) message**, so an AWG endpoint needs a **lower `mtu` than plain WireGuard**. (`s3` pads only cookie-reply messages, not data packets, so it does not affect the MTU budget.) If the obfuscated packet exceeds the path MTU, the OS rejects it and the tunnel completes its handshake but **cannot send data**:
 
 ```
 peer(…) - received handshake response
@@ -414,12 +414,12 @@ peer(…) - failed to send data packets: write udp4 …: sendmsg: message too lo
 Budget the overhead against a 1500-byte path:
 
 ```
-mtu ≤ 1500 − 28 (UDP/IP) − 32 (WireGuard) − max(S3, S4) junk bytes
+mtu ≤ 1500 − 28 (UDP/IP) − 32 (WireGuard) − S4 junk bytes
 ```
 
-For `S3 = S4 = 60` that is `mtu ≤ 1380`. **Use `1280`** (the AmneziaWG-recommended client MTU) for headroom on smaller path MTUs (PPPoE, nested tunnels). This is unrelated to the handshake — a too-high `mtu` lets the handshake succeed but silently breaks data transfer.
+For `S4 = 60` that is `mtu ≤ 1380`. **Use `1280`** (the AmneziaWG-recommended client MTU) for headroom on smaller path MTUs (PPPoE, nested tunnels). This is unrelated to the handshake — a too-high `mtu` lets the handshake succeed but silently breaks data transfer.
 
-**What sing-box-lx does for you:** if you omit `mtu` on an endpoint that sets `s3`/`s4`, the core defaults to **`1280`** (instead of the plain-WireGuard `1408`). If you set `mtu` explicitly and it is too high for the junk overhead, the core logs a startup warning — against a conservative **1492**-byte (PPPoE) budget, `mtu ≤ 1492 − 28 − 32 − max(S3, S4)`, so it may flag a value a few bytes below the 1500-byte Ethernet ceiling. The warning is advisory; the tunnel still loads.
+**What sing-box-lx does for you:** if you omit `mtu` on an endpoint that sets `s4`, the core defaults to **`1280`** (instead of the plain-WireGuard `1408`). If you set `mtu` explicitly and it is too high for the junk overhead, the core logs a startup warning — against a conservative **1492**-byte (PPPoE) budget, `mtu ≤ 1492 − 28 − 32 − S4`, so it may flag a value a few bytes below the 1500-byte Ethernet ceiling. The warning is advisory; the tunnel still loads.
 
 Also keep `jmax` **below** the real path MTU: amneziawg-go warns that if a junk packet's size reaches the system MTU it gets IP-fragmented, which the same constrained paths then drop. Junk/signature params (`jc`, `s1`–`s4`, `i1`–`i5`) are client-side configuration only.
 
