@@ -13,6 +13,7 @@ package masque
 import (
 	"context"
 	"net/url"
+	"strings"
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
@@ -47,7 +48,10 @@ func ConnectTunnelH3(ctx context.Context, profile Profile, quicConn *quic.Conn, 
 	ipConn, err := dialCONNECTIP(ctx, profile, hconn, connectURI)
 	if err != nil {
 		_ = tr.Close()
-		if err.Error() == "CRYPTO_ERROR 0x131 (remote): tls: access denied" {
+		// Match the inner TLS alert as a substring, not the whole formatted error:
+		// quic-go wraps it as "CRYPTO_ERROR 0x131 (remote): tls: access denied" and a
+		// version bump can reformat that wrapper without changing the alert (SPEC 022 #22).
+		if strings.Contains(err.Error(), "tls: access denied") {
 			return nil, nil, E.New("masque: login failed — verify the TLS key/cert is enrolled with Cloudflare Access")
 		}
 		return nil, nil, E.Cause(err, "masque: dial connect-ip")
