@@ -262,7 +262,7 @@ func (o *Outbound) ensureSession(ctx context.Context) (*session, error) {
 		closer, ipConn, err = o.connectH3(ctx)
 	}
 	if err != nil {
-		o.logger.DebugContext(ctx, "masque: ", o.network, " tunnel to ", o.server, " failed: ", err)
+		o.logger.WarnContext(ctx, "masque: ", o.network, " tunnel to ", o.server, " failed: ", err)
 		_ = device.Close()
 		return nil, err
 	}
