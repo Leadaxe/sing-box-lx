@@ -6,6 +6,7 @@
 |---------|-----------|--------------------------|-------------|
 | **XHTTP** transport (Xray-compatible) | `with_xhttp` | `transport.type: "xhttp"` on a VLESS / VMess / Trojan outbound | desktop + mobile |
 | **AmneziaWG 2.0** (AWG2) | `with_awg` | extra fields on a `wireguard` **endpoint** | desktop + mobile |
+| **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `route.lx_idle_suspend` | **mobile only** (AAR) |
 
 Build the desktop/CLI binary: `make -f Makefile.lx lx-build` (output `sing-box`, version `…-lx.N`) — this bundles `with_xhttp` + `with_awg` (+ `with_lx_command`), but **not** `with_lx_idle_suspend`.
@@ -436,7 +437,7 @@ scale to large node lists (only the pool is health-checked, not every node). Sel
 happens once per connection; a UDP/QUIC session stays on its node. With `mode` omitted (or
 `least_test`) the outbound behaves exactly like upstream and `balancer` must not be set.
 
-The `GetPool` CommandClient method (see [§4](#4-observability-commandclient-extensions)) is
+The `GetPool` CommandClient method (see [§5](#5-observability-commandclient-extensions)) is
 behind `with_lx_command`; the `mode`/`balancer` config fields themselves are always available.
 
 ### Fields (on a `urltest` outbound)
@@ -499,7 +500,79 @@ sticky semantics, the pool fill/maintain rules and tuning tips.
 
 ---
 
-## 4. Observability (CommandClient extensions)
+## 4. MASQUE outbound — Cloudflare WARP (SPEC 021)
+
+A `masque` outbound tunnels **whole IP packets** over an HTTP/3 or HTTP/2 connection using
+**CONNECT-IP (RFC 9484)**, primarily to connect to **Cloudflare WARP**. (This is CONNECT-IP,
+not CONNECT-UDP/RFC 9298; and unrelated to the AWG `id/ip/ib` *masquerade* sugar in §2 — same
+word, different feature.) The core builds a userspace gVisor stack per tunnel and routes traffic
+through it like a WireGuard endpoint. Gated on `with_quic` + `with_gvisor` (both in the default
+`LX_TAGS`). Key material is taken ready from config — device registration (ECDSA keys, WARP
+enroll) is done by the client, not the core.
+
+> ⚠️ **`network` here means TRANSPORT, not L4.** On a `masque` outbound `network` selects
+> `h3` (QUIC) or `h2` (HTTP/2); the tcp/udp list is `network_list`. This is the opposite of
+> every other outbound — a stray `"network": "tcp"` fails fast with *invalid network*.
+
+### Fields (on a `masque` outbound)
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `profile` | string | `cloudflare` | `cloudflare` (WARP quirks: `cf-connect-ip`, tolerates missing Extended-CONNECT settings, ECDSA public-key pinning, WARP SNI/URI defaults) \| `standard` (strict RFC 9484, for a self-hosted CONNECT-IP server) |
+| `network` | string | `h3` | **transport**: `h3` (CONNECT-IP over QUIC) \| `h2` (CONNECT-IP over HTTP/2, TCP:443). NOT the L4 list |
+| `private_key` | string (base64) | — | client EC private key, DER (`x509.ParseECPrivateKey`). Required for `cloudflare` |
+| `public_key` | string (base64) | — | endpoint PKIX public key, DER (`x509.ParsePKIXPublicKey`, ECDSA). Required for `cloudflare` |
+| `ip` | string (CIDR) | — | local IPv4 inside the tunnel; a bare address → `/32`. At least one of `ip`/`ipv6` required |
+| `ipv6` | string (CIDR) | — | local IPv6 inside the tunnel; a bare address → `/128` |
+| `sni` | string | per profile¹ | TLS ServerName. For WARP it deliberately differs from the endpoint (domain-fronting); the endpoint is authenticated by pinning `public_key`, not by the SNI |
+| `uri` | string | per profile¹ | CONNECT-IP request URI |
+| `mtu` | int | `1280` | userspace-stack MTU. On `h2`, max `16000` (one IP packet = one HTTP/2 DATA frame) |
+| `skip_cert_verify` | bool | `false` | disable public-key pinning (debug only — removes the only auth check) |
+| `idle_timeout` | duration | `5m` | suspend the tunnel after this long with no traffic (frees the gVisor stack, pumps and QUIC keepalive); the next dial rebuilds it. Negative disables suspend |
+| `keep_alive_period` | duration | `30s` | QUIC keepalive (h3). Negative disables |
+| `network_list` | list | tcp+udp | L4 protocols routed through the tunnel |
+
+¹ `cloudflare` defaults: `sni` = `consumer-masque.cloudflareclient.com`, `uri` = `https://cloudflareaccess.com`. `standard` has no defaults (both required).
+
+### Example — WARP over h3 (QUIC)
+
+```jsonc
+{
+  "type": "masque",
+  "tag": "warp",
+  "server": "162.159.198.2",
+  "server_port": 443,
+  "profile": "cloudflare",
+  "network": "h3",
+  "sni": "www.microsoft.com",       // any neutral high-traffic host (domain-fronting)
+  "private_key": "<base64 DER EC private key>",
+  "public_key":  "<base64 DER PKIX public key>",
+  "ip":   "172.16.0.2/32",
+  "ipv6": "2606:4700:110:...::/128",
+  "mtu":  1280
+}
+```
+
+For `h2` (CONNECT-IP over TCP:443), change one field: `"network": "h2"`.
+
+> A top-level `dns` block is required — the userspace stack works at L3 and does not resolve
+> domains itself; the outbound resolves them via the DNS router before dialing.
+
+> **h3 vs h2 — which to use.** `h3` (QUIC) is the default and fastest. But on networks that
+> filter inbound UDP:443, the QUIC handshake hangs and `h3` never comes up — switch that node to
+> `h2` (TCP:443), which is device-verified to work there. Also note the first `h3` dial is slow
+> (cold CONNECT-IP setup: QUIC handshake + Extended CONNECT + route advertise + stack), so a
+> short urltest timeout may mark a fresh h3 node `-1` on the first probe though it works after.
+
+> **Status.** Device-verified end-to-end on real Wi-Fi and LTE — `warp=on`, real traffic on both
+> `h3` and `h2`, idle-suspend + self-healing reconnect confirmed on-device.
+
+**📖 [Full reference →](../SPECS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md)** — complete parameter
+table, profile matrix, key-material format, start-time validation and common footguns.
+
+---
+
+## 5. Observability (CommandClient extensions)
 
 These are **client-API additions, not config** — extra methods on libbox's `CommandClient`
 (the native gRPC management channel), all gated behind `with_lx_command` and consumed by
@@ -536,7 +609,7 @@ make -f Makefile.lx lx-build   # includes with_lx_command (and with_xhttp/with_a
 
 ---
 
-## 5. Validate & build
+## 6. Validate & build
 
 ```sh
 git clone --recurse-submodules <repo>           # with_awg needs the submodule

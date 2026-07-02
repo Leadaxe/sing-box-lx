@@ -6,6 +6,7 @@
 |------|-----------|---------------------|----------|
 | **XHTTP** транспорт (совместим с Xray) | `with_xhttp` | `transport.type: "xhttp"` на VLESS / VMess / Trojan outbound | desktop + mobile |
 | **AmneziaWG 2.0** (AWG2) | `with_awg` | доп. поля на `wireguard` **endpoint** | desktop + mobile |
+| **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `route.lx_idle_suspend` | **только mobile** (AAR) |
 
 Собрать desktop/CLI бинарь: `make -f Makefile.lx lx-build` (выход `sing-box`, версия `…-lx.N`) — включает `with_xhttp` + `with_awg` (+ `with_lx_command`), но **не** `with_lx_idle_suspend`.
@@ -430,7 +431,7 @@ Upstream `urltest` всегда выбирает единственную нод
 происходит один раз на соединение; UDP/QUIC-сессия остаётся на своей ноде. С опущенным `mode` (или
 `least_test`) outbound ведёт себя ровно как upstream, и `balancer` задавать нельзя.
 
-Метод CommandClient `GetPool` (см. [§4](#4-наблюдаемость-расширения-commandclient)) за тегом
+Метод CommandClient `GetPool` (см. [§5](#5-наблюдаемость-расширения-commandclient)) за тегом
 `with_lx_command`; сами поля конфига `mode`/`balancer` доступны всегда.
 
 ### Поля (на `urltest` outbound)
@@ -494,7 +495,80 @@ Upstream `urltest` всегда выбирает единственную нод
 
 ---
 
-## 4. Наблюдаемость (расширения CommandClient)
+## 4. MASQUE outbound — Cloudflare WARP (SPEC 021)
+
+Outbound `masque` туннелирует **целые IP-пакеты** поверх HTTP/3 или HTTP/2 через
+**CONNECT-IP (RFC 9484)**, в первую очередь для подключения к **Cloudflare WARP**. (Это
+CONNECT-IP, а НЕ CONNECT-UDP/RFC 9298; и не путать с AWG-сахаром *masquerade* `id/ip/ib` из §2 —
+одно слово, разные фичи.) Ядро поднимает userspace gVisor-стек на туннель и гонит трафик через
+него, как через WireGuard-endpoint. За тегами `with_quic` + `with_gvisor` (оба в дефолтном
+`LX_TAGS`). Ключевой материал берётся готовым из конфига — регистрацию устройства (ECDSA-ключи,
+WARP enroll) делает клиент, не ядро.
+
+> ⚠️ **`network` здесь = ТРАНСПОРТ, а не L4.** На outbound `masque` поле `network` выбирает
+> `h3` (QUIC) или `h2` (HTTP/2); список tcp/udp — это `network_list`. Это обратно всем остальным
+> outbound — ошибочный `"network": "tcp"` падает с *invalid network*.
+
+### Поля (на outbound `masque`)
+
+| Ключ | Тип | По умолчанию | Смысл |
+|------|-----|--------------|-------|
+| `profile` | string | `cloudflare` | `cloudflare` (квирки WARP: `cf-connect-ip`, терпит отсутствие Extended-CONNECT settings, pinning на ECDSA public key, дефолты SNI/URI WARP) \| `standard` (строгий RFC 9484, для своего CONNECT-IP сервера) |
+| `network` | string | `h3` | **транспорт**: `h3` (CONNECT-IP over QUIC) \| `h2` (CONNECT-IP over HTTP/2, TCP:443). НЕ список L4 |
+| `private_key` | string (base64) | — | client EC private key, DER (`x509.ParseECPrivateKey`). Обязателен для `cloudflare` |
+| `public_key` | string (base64) | — | endpoint PKIX public key, DER (`x509.ParsePKIXPublicKey`, ECDSA). Обязателен для `cloudflare` |
+| `ip` | string (CIDR) | — | локальный IPv4 внутри туннеля; без маски → `/32`. Нужен хотя бы один из `ip`/`ipv6` |
+| `ipv6` | string (CIDR) | — | локальный IPv6 внутри туннеля; без маски → `/128` |
+| `sni` | string | по профилю¹ | TLS ServerName. Для WARP намеренно не совпадает с endpoint (domain-fronting); endpoint аутентифицируется пиннингом `public_key`, а не по SNI |
+| `uri` | string | по профилю¹ | URI запроса CONNECT-IP |
+| `mtu` | int | `1280` | MTU userspace-стека. На `h2` максимум `16000` (один IP-пакет = один HTTP/2 DATA-фрейм) |
+| `skip_cert_verify` | bool | `false` | отключить pinning публичного ключа (только для отладки — снимает единственную проверку) |
+| `idle_timeout` | duration | `5m` | suspend туннеля после простоя (освобождает gVisor-стек, насосы и QUIC keepalive); следующий dial поднимает заново. Отрицательное — выключить |
+| `keep_alive_period` | duration | `30s` | QUIC keepalive (h3). Отрицательное — выключить |
+| `network_list` | list | tcp+udp | L4-протоколы через туннель |
+
+¹ Дефолты `cloudflare`: `sni` = `consumer-masque.cloudflareclient.com`, `uri` = `https://cloudflareaccess.com`. У `standard` дефолтов нет (оба обязательны).
+
+### Пример — WARP по h3 (QUIC)
+
+```jsonc
+{
+  "type": "masque",
+  "tag": "warp",
+  "server": "162.159.198.2",
+  "server_port": 443,
+  "profile": "cloudflare",
+  "network": "h3",
+  "sni": "www.microsoft.com",       // любой нейтральный популярный хост (domain-fronting)
+  "private_key": "<base64 DER EC private key>",
+  "public_key":  "<base64 DER PKIX public key>",
+  "ip":   "172.16.0.2/32",
+  "ipv6": "2606:4700:110:...::/128",
+  "mtu":  1280
+}
+```
+
+Для `h2` (CONNECT-IP over TCP:443) меняется одно поле: `"network": "h2"`.
+
+> Нужен блок `dns` верхнего уровня — userspace-стек работает на L3 и сам домены не резолвит;
+> outbound резолвит их через DNS-роутер перед dial.
+
+> **h3 vs h2 — что выбрать.** `h3` (QUIC) — по умолчанию и быстрее. Но на сетях, где режется
+> входящий UDP:443, QUIC-handshake виснет и `h3` не поднимается — переключите такой узел на
+> `h2` (TCP:443), он device-verified работает там. Учтите также: первый dial `h3` медленный
+> (холодный CONNECT-IP: QUIC-handshake + Extended CONNECT + анонс маршрута + стек), поэтому
+> короткий urltest-таймаут может пометить свежий h3-узел `-1` на первой пробе, хотя дальше он
+> работает.
+
+> **Статус.** Device-verified end-to-end на реальных Wi-Fi и LTE — `warp=on`, реальный трафик на
+> обоих `h3` и `h2`, idle-suspend + самовосстановление подтверждены на устройстве.
+
+**📖 [Полный справочник →](../SPECS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md)** — полная таблица
+параметров, матрица профилей, формат ключевого материала, валидация при старте и частые грабли.
+
+---
+
+## 5. Наблюдаемость (расширения CommandClient)
 
 Это **дополнения клиентского API, а не конфиг** — дополнительные методы на `CommandClient` libbox
 (нативный gRPC-канал управления), все за тегом `with_lx_command`, потребляются LxBox. Они ничего
@@ -529,7 +603,7 @@ make -f Makefile.lx lx-build   # включает with_lx_command (и with_xhttp
 
 ---
 
-## 5. Проверка и сборка
+## 6. Проверка и сборка
 
 ```sh
 git clone --recurse-submodules <repo>           # with_awg требует submodule
