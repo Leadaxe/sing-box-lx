@@ -64,9 +64,10 @@ type Endpoint struct {
 	// SPEC 020 idle-suspend state. lastActivity is the unix-nano timestamp of the
 	// last dial through this endpoint, stamped at PostStart and on every dial entry.
 	// idleAsleep is true while the endpoint is Down due to idle-suspend (distinct
-	// from a guard-suspend, which sets started=false WITHOUT idleAsleep, so a
-	// guard-suspended endpoint is never idle-woken). resumeMu serialises the idle
-	// tick's suspend decision against a concurrent dial's wake.
+	// from a guard-suspend, which sets started=false and clears idleAsleep, so a
+	// guard-suspended endpoint fast-paths out of resumeOnDial and is never
+	// idle-woken). resumeMu serialises the idle tick's suspend decision, a dial's
+	// wake, and the AmneziaWG guard-suspend against one another.
 	lastActivity atomic.Int64
 	idleAsleep   atomic.Bool
 	resumeMu     sync.Mutex
@@ -245,9 +246,19 @@ func (w *Endpoint) IsAmneziaWG() bool {
 // switches to a WireGuard member (AmneziaWG over WireGuard hangs the kernel on
 // Android). Idempotent. Implements adapter.AmneziaWGSuspendable.
 func (w *Endpoint) SuspendAmneziaWG() {
+	// Take resumeMu so this is ordered against resumeOnDial/SuspendIfIdle: without
+	// it, a dial that already passed resumeOnDial's idleAsleep checks could wake
+	// the endpoint back up right after we clear the flag, defeating the guard.
+	w.resumeMu.Lock()
+	defer w.resumeMu.Unlock()
 	if w.started.CompareAndSwap(true, false) {
 		w.logger.Error("amneziawg endpoint suspended: a selector in its detour chain switched to a wireguard-based member — amneziawg over wireguard is not supported")
 	}
+	// Clear any idle-suspend state so resumeOnDial does not resurrect a
+	// guard-suspended endpoint: if it was idle-asleep first, idleAsleep would still
+	// be true and the next dial would wake it (SPEC 022 #2). With idleAsleep=false
+	// resumeOnDial's fast path returns started (now false) and the endpoint stays down.
+	w.idleAsleep.Store(false)
 	w.endpoint.Suspend()
 }
 
