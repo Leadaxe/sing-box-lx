@@ -160,7 +160,15 @@ func (s *URLTest) Pool() []PoolSlot {
 	slots := make([]PoolSlot, len(tags))
 	for i, tag := range tags {
 		var delay uint16
-		if history := s.group.history.LoadURLTestHistory(tag); history != nil {
+		// History is keyed by RealTag(detour) (a nested-group member is tested and
+		// stored under its live leaf, not the group tag); read it the same way, or
+		// the slot's delay is always 0/dead for group members (SPEC 022 #5). Fall
+		// back to the raw slot tag if the outbound can't be resolved.
+		historyTag := tag
+		if node, loaded := s.outbound.Outbound(tag); loaded {
+			historyTag = RealTag(node)
+		}
+		if history := s.group.history.LoadURLTestHistory(historyTag); history != nil {
 			delay = history.Delay
 			if delay == 0 {
 				delay = 1 // live sub-ms node: never report 0 (0 is reserved for dead/untested)
