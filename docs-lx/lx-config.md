@@ -366,9 +366,11 @@ DPI:
   carrying random cover bytes as an opaque unknown EDNS option.
 - **`stun`** — a WebRTC STUN **Binding Request** (magic cookie + USERNAME +
   ICE-CONTROLLING + PRIORITY + SOFTWARE + MESSAGE-INTEGRITY + FINGERPRINT).
-- **`sip`** — a SIP **INVITE request** with an SDP offer (request-line + Via/
-  Max-Forwards/From/To/Call-ID/CSeq/Contact + `m=audio`), using your `id` (or a
-  generated pseudo-host) as the host and pronounceable pseudo user names.
+- **`sip`** — a body-less SIP **INVITE request** (`i1`: request-line + Via/
+  Max-Forwards/To/From/Call-ID/CSeq/Contact + `Content-Type: application/sdp` and
+  `Content-Length: 0`, no SDP body) paired with the matching **`100 Trying`**
+  provisional response of the same dialog (`i2`), using your `id` (or a generated
+  pseudo-host) as the host and pronounceable pseudo user names.
 
 ```jsonc
 {

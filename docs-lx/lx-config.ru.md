@@ -362,9 +362,11 @@ QUIC Initial по RFC 9001, обходящий line-rate DPI:
   случайные cover-байты как непрозрачную неизвестную EDNS-опцию.
 - **`stun`** — WebRTC STUN **Binding Request** (magic cookie + USERNAME + ICE-CONTROLLING +
   PRIORITY + SOFTWARE + MESSAGE-INTEGRITY + FINGERPRINT).
-- **`sip`** — SIP **INVITE-запрос** с SDP-offer'ом (request-line + Via/Max-Forwards/From/To/
-  Call-ID/CSeq/Contact + `m=audio`), используя ваш `id` (или сгенерированный псевдо-host) как
-  host и произносимые псевдо-имена пользователей.
+- **`sip`** — SIP **INVITE-запрос без тела** (`i1`: request-line + Via/Max-Forwards/To/From/
+  Call-ID/CSeq/Contact + `Content-Type: application/sdp` и `Content-Length: 0`, без SDP-тела)
+  в паре с соответствующим провизорным ответом **`100 Trying`** того же диалога (`i2`),
+  используя ваш `id` (или сгенерированный псевдо-host) как host и произносимые псевдо-имена
+  пользователей.
 
 ```jsonc
 {
