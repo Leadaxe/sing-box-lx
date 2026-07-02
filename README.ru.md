@@ -3,7 +3,7 @@
 # sing-box-lx
 
 > **Тонкий downstream-форк [SagerNet/sing-box](https://github.com/SagerNet/sing-box).**
-> Небольшой набор клиентских фич поверх upstream — транспорт **XHTTP**, **AmneziaWG 2.0**, расширения **наблюдаемости** (CommandClient) и балансировка нагрузки **round_robin** — каждая за своим build-tag.
+> Небольшой набор клиентских фич поверх upstream — транспорт **XHTTP**, **AmneziaWG 2.0**, **MASQUE** (CONNECT-IP / Cloudflare WARP), расширения **наблюдаемости** (CommandClient) и балансировка нагрузки **round_robin** — каждая за своим build-tag.
 > Набор может расти, философия — нет: жить ребейзом на каждый upstream-тег, а не отдельной жизнью.
 
 > 📄 README самого upstream sing-box — **[на GitHub](https://github.com/SagerNet/sing-box/blob/main/README.md)** (всегда актуальный).
@@ -43,6 +43,7 @@
 | **Маскировка `id/ip/ib`** | сахар над AWG | WireSock-стиль: декларативная маскировка поверх `I1` — домен (`id`) + протокол (`ip`: `quic`/`dns`/`stun`/`sip`) + браузер (`ib`), ядро строит клиент-инициированную `I1`-приманку: `quic` = out-of-order фрагментированный Initial (i1+i2), `dns`/`stun`/`sip` = query/Binding-Request/INVITE | ✅ **`ip=quic` device-проверен на реальном LTE/WARP DPI** (~330 мс, упрощает Cloudflare WARP); `dns`/`stun`/`sip` собираются и проходят `check`, но режутся как класс протокола к WARP-edge — для других провайдеров |
 | **Наблюдаемость** (расширения CommandClient) | live-стрим для UI | нативные расширения libbox gRPC за `with_lx_command`: `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `GetPool`, плюс `Connection.detourList` (хвост detour'а отдельным полем, SPEC 017) и `SubscribeDNSQueries` — структурный live-поток DNS (домен, qtype, rcode `-1`=ошибка, CNAME-цепочка, привязка к процессу, `dnsServer`/`dnsServerType`/`outbound`, SPEC 018) | ✅ в rc-серии, потребляется **LxBox**. SPEC 014–018: [`014`](SPECS/014-CLASH_API_TO_COMMANDCLIENT_MIGRATION/SPEC.md) · [`015`](SPECS/015-COMMAND_PROTOCOL_RPC_EXTENSIONS/SPEC.md) · [`017`](SPECS/017-CONNECTION_DETOUR_CHAIN/SPEC.md) · [`018`](SPECS/018-DNS_QUERY_STREAM/SPEC.md) |
 | **round_robin** (балансировка нагрузки) | режим `urltest` | пул-балансировка на `urltest` за `with_lx_command` (для `GetPool`): `mode` `least_test` (дефолт) \| `round_robin`; `balancer{pool (дефолт 3), pool_tolerance (0=держать живые / >0=топ по задержке), sticky_hash}`. Sticky-ключ: пропущен/`[]` → дефолт `["process","domain"]`, `["none"]` → выкл; компоненты `process`/`domain`/`source_ip`/`dest_ip`/`dest_port`. Фиксированные слоты `slot[hash(key)%pool]` (FNV-64a), замена в слоте; `GetPool` отдаёт слоты | ✅ локально равномерно (10/10/10, sticky off); rc.15 починил схлопывание `domain`-ключа (теперь читается `metadata.Domain`, переживающий resolve домен→IP, а не пустой `destination.Fqdn`) — на устройстве равномерность 0.27 → 0.95+. SPEC [`019`](SPECS/019-URLTEST_MODE_STICKY/SPEC.md), конфиг — [docs/.../urltest.md](docs/configuration/outbound/urltest.md) |
+| **MASQUE** (`type: masque`) | клиентский outbound | CONNECT-IP (RFC 9484) поверх HTTP/3 **или** HTTP/2 для **Cloudflare WARP** (SPEC 021): туннелирует целые IP-пакеты через userspace gVisor-стек; `profile` (`cloudflare`/`standard`), `network` (`h3`/`h2`), pinning ECDSA public key, idle-suspend + самовосстановление. h2 — ручной фреймер поверх `x/net/http2` (без доп. зависимостей); `connect-ip-go` вкопан | ✅ **device-verified на Wi-Fi и LTE** (`warp=on`, реальный трафик на `h3` и `h2`); на сетях, режущих входящий UDP:443, `h3`-handshake виснет — там `network: h2` (TCP:443) |
 
 Подробные отчёты — в [`SPECS/002-…`](SPECS/002-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/003-…`](SPECS/003-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) и [`SPECS/009-…`](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md)**.
 
@@ -141,6 +142,31 @@ QUIC-сессия. Это **единственный профиль, device-пр
 протокола к WARP-edge (raw DNS/STUN/SIP к дата-центровому IP сам по себе аномален) — сохранены
 для других провайдеров, чей DPI проверяет лишь корректность пакета. См.
 [docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md) и [примеры SPECS/009](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
+
+### MASQUE (outbound — Cloudflare WARP)
+
+Outbound `masque` туннелирует целые IP-пакеты через **CONNECT-IP (RFC 9484)**, HTTP/3 или HTTP/2,
+к **Cloudflare WARP**. Не путать с AWG-сахаром *masquerade* `id/ip/ib` выше — разные фичи, одно слово.
+
+```jsonc
+{
+  "type": "masque",
+  "tag": "warp",
+  "server": "162.159.198.2",
+  "server_port": 443,
+  "profile": "cloudflare",       // cloudflare (WARP) | standard (RFC 9484)
+  "network": "h3",               // ТРАНСПОРТ: h3 (QUIC) | h2 (HTTP/2). НЕ tcp/udp — это network_list
+  "sni": "www.microsoft.com",    // domain-fronting; endpoint аутентифицируется пиннингом public key, не по SNI
+  "private_key": "<base64 DER EC>",
+  "public_key":  "<base64 DER PKIX>",
+  "ip": "172.16.0.2/32", "ipv6": "2606:4700:110:...::/128"
+}
+```
+
+Ключевой материал (`private_key`/`public_key`/`ip`/`ipv6`) берётся готовым из конфига — регистрацию
+устройства в WARP делает клиент. На сетях, режущих входящий UDP:443, `h3`-handshake виснет —
+переключите узел на `network: h2` (TCP:443). Полный справочник —
+[docs-lx/lx-config.ru.md §4](docs-lx/lx-config.ru.md) и [SPECS/021](SPECS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md).
 
 ---
 

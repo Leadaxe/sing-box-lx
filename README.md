@@ -3,7 +3,7 @@
 # sing-box-lx
 
 > **A thin downstream fork of [SagerNet/sing-box](https://github.com/SagerNet/sing-box).**
-> A small set of client-side features on top of upstream — **XHTTP**, **AmneziaWG 2.0**, plus an **observability layer** (CommandClient extensions) and **round_robin load balancing** — each behind its own build tag.
+> A small set of client-side features on top of upstream — **XHTTP**, **AmneziaWG 2.0**, **MASQUE** (CONNECT-IP / Cloudflare WARP), plus an **observability layer** (CommandClient extensions) and **round_robin load balancing** — each behind its own build tag.
 > The set may grow; the philosophy doesn't: live by rebasing onto every upstream tag, not by drifting into a separate life.
 
 > 📄 The upstream sing-box README — **[on GitHub](https://github.com/SagerNet/sing-box/blob/main/README.md)** (always current).
@@ -43,6 +43,7 @@ In the sing-box ecosystem, forks that add XHTTP / AmneziaWG fall into two camps 
 | **Masquerade `id/ip/ib`** | AWG sugar | WireSock-style declarative masquerade over `I1`: name a domain (`id`) + protocol (`ip`: `quic`/`dns`/`stun`/`sip`) + browser (`ib`) and the core builds the client-initiated `I1` decoy for you — `quic` = out-of-order fragmented Initial (i1+i2), `dns`/`stun`/`sip` = query/Binding-Request/INVITE | ✅ **`ip=quic` device-proven against a real LTE/WARP DPI** (~330 ms, eases Cloudflare WARP); `dns`/`stun`/`sip` build & pass `check` but are blocked as a protocol class to the WARP edge — for other providers |
 | **Observability (CommandClient)** | libbox gRPC | Native `CommandClient` extensions (SPEC 014–018, build tag `with_lx_command`): `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `GetPool`, `SubscribeDNSQueries` (structured live DNS stream — domain, qtype, rcode, CNAME chain, process attribution, dnsServer/outbound) + `Connection.detourList` (detour tail as its own field) | ✅ shipped across the rc series and consumed by the Android consumer (LxBox) |
 | **Load balancing (`round_robin`)** | urltest mode | Group-level load balancing on `urltest` (SPEC 019): `mode: round_robin` + `balancer{ pool, pool_tolerance, sticky_hash }`; FNV-64a slot binding with `sticky_hash` components `process\|domain\|source_ip\|dest_ip\|dest_port` (default `["process","domain"]`, `["none"]` = off) — `GetPool` exposes the live slots (behind `with_lx_command`) | ✅ builds, passes `check`; even rotation locally (10/10/10) and **device-verified end to end** on a real multi-node pool — rc.15 fixed the `domain`-key collapse (reads `metadata.Domain`, which survives the router's domain→IP resolve), taking on-device per-domain uniformity from ~0.27 to 0.95+ |
+| **MASQUE** (`type: masque`) | client outbound | CONNECT-IP (RFC 9484) over HTTP/3 **or** HTTP/2 for **Cloudflare WARP** (SPEC 021): tunnels whole IP packets through a userspace gVisor stack; `profile` (`cloudflare`/`standard`), `network` (`h3`/`h2`), ECDSA public-key pinning, idle-suspend + self-healing reconnect. h2 is a hand-rolled framer over `x/net/http2` (no extra dep); `connect-ip-go` vendored | ✅ **device-verified end to end on Wi-Fi and LTE** (`warp=on`, real traffic on both `h3` and `h2`); on networks that filter inbound UDP:443 the `h3` handshake hangs — use `network: h2` (TCP:443) there |
 
 Detailed reports: [`SPECS/002-…`](SPECS/002-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/003-…`](SPECS/003-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) and [`SPECS/009-…`](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Full config reference — **[docs-lx/lx-config.md](docs-lx/lx-config.md)**.
 
@@ -142,6 +143,32 @@ This is the **only profile device-proven against a real LTE/WARP DPI** (~330 ms)
 toward the Cloudflare WARP edge (raw DNS/STUN/SIP to a datacenter IP is itself anomalous) —
 they are kept for other providers whose DPI only checks packet well-formedness. See
 [docs-lx/lx-config.md](docs-lx/lx-config.md) and [SPECS/009 examples](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
+
+### MASQUE (outbound — Cloudflare WARP)
+
+A `masque` outbound tunnels whole IP packets over **CONNECT-IP (RFC 9484)**, HTTP/3 or HTTP/2,
+to **Cloudflare WARP**. Not to be confused with the AWG `id/ip/ib` *masquerade* sugar above —
+different feature, same word.
+
+```jsonc
+{
+  "type": "masque",
+  "tag": "warp",
+  "server": "162.159.198.2",
+  "server_port": 443,
+  "profile": "cloudflare",       // cloudflare (WARP) | standard (RFC 9484)
+  "network": "h3",               // TRANSPORT: h3 (QUIC) | h2 (HTTP/2). NOT tcp/udp — that's network_list
+  "sni": "www.microsoft.com",    // domain-fronting; endpoint auth is public-key pinning, not SNI
+  "private_key": "<base64 DER EC>",
+  "public_key":  "<base64 DER PKIX>",
+  "ip": "172.16.0.2/32", "ipv6": "2606:4700:110:...::/128"
+}
+```
+
+Key material (`private_key`/`public_key`/`ip`/`ipv6`) comes ready from config — the client does
+the WARP device registration. On networks that filter inbound UDP:443 the `h3` handshake hangs;
+switch that node to `network: h2` (TCP:443). Full reference —
+[docs-lx/lx-config.md §4](docs-lx/lx-config.md) and [SPECS/021](SPECS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md).
 
 ---
 
