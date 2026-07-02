@@ -63,7 +63,7 @@ func composeICMPTooLargePacket(b []byte, mtu int) ([]byte, error) {
 		header[9] = 1                                          // Protocol (ICMP)
 		copy(header[12:16], b[16:20])                          // Source IP (swapped)
 		copy(header[16:20], b[12:16])                          // Dest IP (swapped)
-		binary.BigEndian.PutUint16(header[10:12], calculateIPv4Checksum(header))
+		binary.BigEndian.PutUint16(header[10:12], calculateIPv4Checksum(header[:]))
 		return append(header[:], icmpBytes...), nil
 	}
 

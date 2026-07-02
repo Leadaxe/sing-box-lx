@@ -81,8 +81,41 @@ func TestIPv4Checksum(t *testing.T) {
 		0x40, 0x11, 0x00, 0x00, 0xc0, 0xa8, 0x00, 0x01,
 		0xc0, 0xa8, 0x00, 0xc7,
 	}
-	got := calculateIPv4Checksum(header)
+	got := calculateIPv4Checksum(header[:])
 	if got != 0xb861 {
 		t.Fatalf("checksum = %#x, want 0xb861", got)
+	}
+}
+
+// TestIPv4ChecksumWithOptions covers a header carrying an IPv4 option (IHL=6, so
+// 24 bytes): the checksum must fold in the option word, not just the first 20
+// bytes (SPEC 022 #6). Expected value is the ones-complement sum over all 24
+// bytes with the checksum field zeroed.
+func TestIPv4ChecksumWithOptions(t *testing.T) {
+	t.Parallel()
+	header := []byte{
+		0x46, 0x00, 0x00, 0x77, 0x00, 0x00, 0x40, 0x00, // IHL=6 (0x46)
+		0x40, 0x11, 0x00, 0x00, 0xc0, 0xa8, 0x00, 0x01,
+		0xc0, 0xa8, 0x00, 0xc7,
+		0x94, 0x04, 0x00, 0x00, // option: Router Alert (type 0x94, len 4)
+	}
+	// Independent reference sum over the 24 bytes, checksum field (10-11) zeroed.
+	var sum uint32
+	for i := 0; i+1 < len(header); i += 2 {
+		if i == 10 {
+			continue
+		}
+		sum += uint32(header[i])<<8 | uint32(header[i+1])
+	}
+	for sum>>16 > 0 {
+		sum = (sum & 0xffff) + (sum >> 16)
+	}
+	want := ^uint16(sum)
+	if got := calculateIPv4Checksum(header); got != want {
+		t.Fatalf("checksum over IHL=6 header = %#x, want %#x", got, want)
+	}
+	// The 20-byte-only sum would differ, proving the option word is now covered.
+	if want == calculateIPv4Checksum(header[:20]) {
+		t.Fatal("option word did not change the checksum — coverage not exercised")
 	}
 }

@@ -417,12 +417,19 @@ func (c *Conn) composeDatagram(b []byte) ([]byte, error) {
 		if len(b) < ipv4.HeaderLen {
 			return nil, fmt.Errorf("connect-ip: IPv4 packet too short")
 		}
+		// IHL*4 is the real header length; recompute the checksum over it so options
+		// (IHL>5) are covered (SPEC 022 #6). Reject a header length that overruns the
+		// buffer before it can drive an out-of-bounds read.
+		ihl := int(b[0]&0x0f) * 4
+		if ihl < ipv4.HeaderLen || ihl > len(b) {
+			return nil, fmt.Errorf("connect-ip: invalid IPv4 header length: %d", ihl)
+		}
 		ttl := b[8]
 		if ttl <= 1 {
 			return nil, fmt.Errorf("connect-ip: datagram TTL too small: %d", ttl)
 		}
 		b[8]-- // decrement TTL
-		binary.BigEndian.PutUint16(b[10:12], calculateIPv4Checksum(([ipv4.HeaderLen]byte)(b[:ipv4.HeaderLen])))
+		binary.BigEndian.PutUint16(b[10:12], calculateIPv4Checksum(b[:ihl]))
 	case 6:
 		if len(b) < ipv6.HeaderLen {
 			return nil, fmt.Errorf("connect-ip: IPv6 packet too short")
