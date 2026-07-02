@@ -3,7 +3,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature — CI/build инфраструктура) |
-| Статус | N (new) |
+| Статус | C (complete — зеркало заполнено, restore проверен; см. IMPLEMENTATION_REPORT) |
 
 **Файлы:** `.github/workflows/lx-musl-toolchain-mirror.yml` (новый), `.github/workflows/lx-release.yml` (шов restore), `.github/CRONET_GO_VERSION` (существует). Зона касания upstream: **нулевая** — обе workflow целиком lx-owned (в upstream отсутствуют), маркеры `// lx:` не нужны.
 
