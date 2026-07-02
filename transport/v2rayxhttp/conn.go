@@ -138,11 +138,14 @@ func (c *streamConn) setupReader(reader io.ReadCloser, err error) {
 }
 
 func (c *streamConn) Read(b []byte) (int, error) {
-	if c.reader == nil {
-		<-c.created
-		if c.readerErr != nil {
-			return 0, c.readerErr
-		}
+	// Always synchronise on created before touching reader/readerErr: the RoundTrip
+	// goroutine writes them before close(created), so the receive is the happens-
+	// before edge. The old `if c.reader == nil` fast path read reader unsynchronised
+	// (a data race, -race flagged it) for no gain — a receive on an already-closed
+	// channel is effectively free (SPEC 022 #7).
+	<-c.created
+	if c.readerErr != nil {
+		return 0, c.readerErr
 	}
 	return c.reader.Read(b)
 }
