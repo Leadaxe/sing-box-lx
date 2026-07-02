@@ -36,8 +36,9 @@ type V2RayXHTTPOptions struct {
 	// ("min-max", e.g. "100-1000", or a single integer). Empty defaults to
 	// "100-1000".
 	XPaddingBytes string `json:"x_padding_bytes,omitempty"`
-	// NoGRPCHeader, when true, omits the gRPC-style headers Xray adds in some
-	// modes; kept for forward-compatibility with Xray stream settings.
+	// NoGRPCHeader is accepted for forward-compatibility with Xray stream settings
+	// but has no effect: this client emits no gRPC-style headers, so there is
+	// nothing to omit.
 	NoGRPCHeader bool `json:"no_grpc_header,omitempty"`
 
 	// ---- session / seq placement (core) -------------------------------------
@@ -126,6 +127,8 @@ type V2RayXHTTPOptions struct {
 	// the client.
 	ScMaxBufferedPosts int64 `json:"sc_max_buffered_posts,omitempty"`
 	// ScStreamUpServerSecs is server-only ("min-max" keepalive-padding interval on
-	// the stream-up response). Ignored by the client (it discards those bytes).
+	// the stream-up response). The client sets no such interval and does not strip
+	// server-injected keepalive padding from the stream-up download — verify against
+	// the target server if it emits any.
 	ScStreamUpServerSecs string `json:"sc_stream_up_server_secs,omitempty"`
 }

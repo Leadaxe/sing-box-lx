@@ -135,8 +135,8 @@ func (s *StartedService) GetRules(ctx context.Context, empty *emptypb.Empty) (*R
 // the main screen stayed empty (tunnel connected, groups=[]). This unary getter closes
 // that gap without recreating the whole client / tearing down other streams. It reuses
 // the existing s.readGroups() builder (single source, also fixes the len<2 drop) under
-// the same RLock the stream uses. Errors via status.Error (unary read convention, like
-// GetRules — not the Variant-B payload model of URLTestOutbound).
+// the same RLock the stream uses. Errors via status.Error(FailedPrecondition) when not
+// started (as GetOutbounds/GetPool do) — not the Variant-B payload model of URLTestOutbound.
 func (s *StartedService) GetGroups(ctx context.Context, empty *emptypb.Empty) (*Groups, error) {
 	s.serviceAccess.RLock()
 	if s.serviceStatus.Status != ServiceStatus_STARTED {
@@ -182,9 +182,10 @@ func (s *StartedService) GetOutbounds(ctx context.Context, empty *emptypb.Empty)
 	return &list, nil
 }
 
-// poolProvider is any outbound exposing a round_robin rotation pool (SPEC 019 v2). Only
-// urltest groups in round_robin mode implement it; everything else falls through to an
-// empty PoolList — "this group has no pool", not an error.
+// poolProvider is any outbound exposing a rotation pool (SPEC 019 v2). Every urltest
+// group implements it — Pool() is an unconditional method on *group.URLTest — but a
+// least_test group returns nil (no balancer), so a non-round_robin urltest and any
+// non-urltest outbound both fall through to an empty PoolList, not an error.
 type poolProvider interface {
 	Pool() []group.PoolSlot
 }
@@ -208,7 +209,7 @@ func (s *StartedService) GetPool(ctx context.Context, request *GetPoolRequest) (
 	}
 	provider, ok := detour.(poolProvider)
 	if !ok {
-		return &list, nil // not a round_robin group → empty pool
+		return &list, nil // not a urltest group → empty pool
 	}
 	for _, slot := range provider.Pool() {
 		list.Slots = append(list.Slots, &PoolSlot{

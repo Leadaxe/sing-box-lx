@@ -22,13 +22,13 @@ type RouteOptions struct {
 	DefaultFallbackDelay       badoption.Duration                `json:"default_fallback_delay,omitempty"`
 	DefaultHTTPClient          string                            `json:"default_http_client,omitempty"`
 	// lx:begin idle-suspend
-	// LXIdleSuspend is the idle threshold (XX) for SPEC 020 idle WG/AWG endpoint
+	// LXIdleSuspend is the idle threshold for SPEC 020 idle WG/AWG endpoint
 	// suspend. A WG/AWG endpoint that is both unreachable from the active routing
 	// tree and idle longer than this is brought Down (freeing its recv-worker
 	// bufsArrs, cutting the multi-WG GC scan heat); the next dial through it wakes
 	// it. 0 / absent disables the feature entirely (the idle tick never starts).
 	LXIdleSuspend badoption.Duration `json:"lx_idle_suspend,omitempty"`
-	// lx:end
+	// lx:end idle-suspend
 }
 
 type GeoIPOptions struct {

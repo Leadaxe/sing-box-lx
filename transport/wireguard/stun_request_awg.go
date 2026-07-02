@@ -74,7 +74,7 @@ func buildSTUNBindingRequest() ([]byte, error) {
 	if _, err := rand.Read(txn); err != nil {
 		return nil, err
 	}
-	ufrag := make([]byte, 9) // "<4 hex>:<4 hex>" style username
+	ufrag := make([]byte, 8) // 8 source bytes → "<4 hex>:<4 hex>" username (':' is a literal)
 	if _, err := rand.Read(ufrag); err != nil {
 		return nil, err
 	}

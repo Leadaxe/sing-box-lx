@@ -147,9 +147,8 @@ func normalizeMeta(opts metaOptions, mode string) (metaConfig, error) {
 	return m, nil
 }
 
-// metaOptions is the subset of V2RayXHTTPOptions consumed by normalizeMeta. It is a
-// thin local alias so meta.go does not import option (which would create a cycle is
-// not a concern here, but keeping the surface explicit aids testing).
+// metaOptions is the subset of V2RayXHTTPOptions consumed by normalizeMeta. Keeping it
+// as a thin local struct lets normalizeMeta be tested without importing the option package.
 type metaOptions struct {
 	SessionPlacement     string
 	SessionKey           string
@@ -285,9 +284,8 @@ func parseRange(raw, field string) (intRange, error) {
 // segment and seq the SECOND — the order is load-bearing (the server reads path
 // segments positionally). seqStr == "" means "no seq" (stream modes).
 //
-// applyMeta mutates the request URL (path/query) and headers/cookies in place and
-// returns the possibly-updated URL path so callers using a prebuilt path can stay
-// consistent.
+// applyMeta mutates the request URL (path/query) and headers/cookies in place; the
+// final path is written to request.URL.Path.
 func (c *Client) applyMeta(request *http.Request, basePath, sessionID, seqStr string) {
 	m := &c.meta
 	path := basePath

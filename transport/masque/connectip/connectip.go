@@ -312,9 +312,10 @@ func (c *Conn) handleIncomingProxiedPacket(data []byte) error {
 	}
 	var src, dst netip.Addr
 	var ipProto uint8
-	switch v := ipVersion(data); v {
+	version := ipVersion(data)
+	switch version {
 	default:
-		return fmt.Errorf("connect-ip: unknown IP versions: %d", v)
+		return fmt.Errorf("connect-ip: unknown IP versions: %d", version)
 	case 4:
 		if len(data) < ipv4.HeaderLen {
 			return fmt.Errorf("connect-ip: malformed datagram: too short")
@@ -348,11 +349,12 @@ func (c *Conn) handleIncomingProxiedPacket(data []byte) error {
 		isAllowedDst = slices.ContainsFunc(assignedAddresses, func(p netip.Prefix) bool { return p.Contains(dst) })
 	}
 	if !isAllowedDst {
+		isICMP := (version == 4 && ipProto == ipProtoICMP) || (version == 6 && ipProto == ipProtoICMPv6)
 		isAllowedDst = slices.ContainsFunc(localRoutes, func(r IPRoute) bool {
 			if r.StartIP.Compare(dst) > 0 || dst.Compare(r.EndIP) > 0 {
 				return false
 			}
-			if (ipVersion(data) == 4 && ipProto == ipProtoICMP) || (ipVersion(data) == 6 && ipProto == ipProtoICMPv6) {
+			if isICMP {
 				return true
 			}
 			return r.IPProtocol == 0 || r.IPProtocol == ipProto

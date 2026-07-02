@@ -61,7 +61,6 @@ type Client struct {
 	mode         string
 	headers      http.Header
 	paddingRange intRange
-	noGRPCHeader bool
 	// meta holds the normalized placement/key/method selection (session, seq,
 	// uplink-data, X-Padding obfs). Computed once in NewClient.
 	meta metaConfig
@@ -169,7 +168,6 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		mode:           mode,
 		headers:        headers,
 		paddingRange:   paddingRange,
-		noGRPCHeader:   options.NoGRPCHeader,
 		meta:           meta,
 		realityEnabled: tlsConfigIsReality(tlsConfig),
 	}, nil

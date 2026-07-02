@@ -197,11 +197,11 @@ func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, m
 		if response != nil {
 			if isStale && !options.DisableOptimisticCache {
 				c.backgroundRefreshDNS(transport, question, message.Copy(), options, responseChecker)
-				logOptimisticResponse(c.logger, ctx, transport, response)
+				logOptimisticResponse(c.logger, ctx, transport, response) // lx: SPEC 018 (transport arg)
 				response.Id = message.Id
 				return response, nil
 			} else if !isStale {
-				logCachedResponse(c.logger, ctx, transport, response, ttl)
+				logCachedResponse(c.logger, ctx, transport, response, ttl) // lx: SPEC 018 (transport arg)
 				response.Id = message.Id
 				return response, nil
 			}
@@ -259,7 +259,7 @@ func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, m
 			response.SetEdns0(responseEDNSOpt.UDPSize(), responseEDNSOpt.Do())
 		}
 	}
-	logExchangedResponse(c.logger, ctx, transport, response, timeToLive)
+	logExchangedResponse(c.logger, ctx, transport, response, timeToLive) // lx: SPEC 018 (transport arg)
 	return response, nil
 }
 
@@ -391,7 +391,7 @@ func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTranspo
 			return nil, ErrNotCached
 		}
 		c.backgroundRefreshDNS(transport, question, c.prepareExchangeMessage(message.Copy(), options), options, responseChecker)
-		logOptimisticResponse(c.logger, ctx, transport, response)
+		logOptimisticResponse(c.logger, ctx, transport, response) // lx: SPEC 018 (transport arg)
 	} else {
 		// Fresh cache hit on the Lookup path: log/emit as SourceCached, mirroring the
 		// Exchange path (stale→optimistic, fresh→cached). Without this, internal domain
@@ -527,7 +527,7 @@ func (c *Client) backgroundRefreshDNS(transport adapter.DNSTransport, question d
 		}
 		timeToLive := applyResponseOptions(question, response, options)
 		c.storeCache(transport, question, response, timeToLive)
-		logRefreshedResponse(c.logger, ctx, transport, response, timeToLive)
+		logRefreshedResponse(c.logger, ctx, transport, response, timeToLive) // lx: SPEC 018 (transport arg)
 	}()
 }
 

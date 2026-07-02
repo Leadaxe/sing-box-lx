@@ -40,7 +40,9 @@ func composeICMPTooLargePacket(b []byte, mtu int) ([]byte, error) {
 		icmpMessage = &icmp.Message{
 			Type: ipv6.ICMPTypePacketTooBig,
 			Body: &icmp.PacketTooBig{
-				MTU:  mtu,
+				MTU: mtu,
+				// 1232 = minMTU(1280) − IPv6 header(40) − ICMPv6 header(8): the most
+				// quoted data that keeps the ICMPv6 reply within the min IPv6 MTU (RFC 4443).
 				Data: b[:min(len(b), 1232)],
 			},
 		}

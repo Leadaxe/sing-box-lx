@@ -16,7 +16,7 @@ import (
 //
 // Output format (one key per line, leading "\n", no trailing newline):
 //
-//	\njc=<n>\njmin=<n>\njmax=<n>\ns1=<n>\ns2=<n>\nh1=<spec>\nh2=<spec>\nh3=<spec>\nh4=<spec>
+//	\njc=<n>\njmin=<n>\njmax=<n>\ns1=<n>\ns2=<n>\ns3=<n>\ns4=<n>\nh1=<spec>\nh2=<spec>\nh3=<spec>\nh4=<spec>
 //	\ni1=<str>\ni2=<str>...
 //
 // Numeric keys are emitted only when non-zero. The h1..h4 values are magic
