@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/sagernet/quic-go/quicvarint"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -73,6 +74,31 @@ func ConnectTunnelH2(ctx context.Context, profile Profile, tlsConn net.Conn, con
 	conn.hpackBuf = new(bytes.Buffer)
 	conn.hpackEnc = hpack.NewEncoder(conn.hpackBuf)
 
+	// lx: SPEC 021 — bound the synchronous handshake (preface/SETTINGS/CONNECT
+	// read) by ctx. A peer that completes TCP+TLS but never returns the CONNECT
+	// HEADERS would otherwise park this dial in sendConnect's ReadFrame loop
+	// forever, wedging the outbound under o.runMu. A watcher trips tlsConn's
+	// deadline on ctx timeout/cancel so any in-flight Read/Write unblocks.
+	// stopWatch joins the watcher (no SetDeadline can run past it) so the success
+	// path can clear the deadline before the long-lived readLoop starts — readLoop
+	// must outlive the dial ctx, which is typically cancelled once the dial returns.
+	var stopOnce sync.Once
+	handshakeDone := make(chan struct{})
+	watchStopped := make(chan struct{})
+	go func() {
+		defer close(watchStopped)
+		select {
+		case <-ctx.Done():
+			_ = tlsConn.SetDeadline(time.Unix(1, 0)) // in the past: unblocks I/O now
+		case <-handshakeDone:
+		}
+	}()
+	stopWatch := func() {
+		stopOnce.Do(func() { close(handshakeDone) })
+		<-watchStopped
+	}
+	defer stopWatch()
+
 	// Client connection preface + our SETTINGS.
 	if _, err = io.WriteString(tlsConn, xhttp2.ClientPreface); err != nil {
 		_ = tlsConn.Close()
@@ -101,6 +127,12 @@ func ConnectTunnelH2(ctx context.Context, profile Profile, tlsConn net.Conn, con
 		_ = tlsConn.Close()
 		return nil, nil, E.New("connect-ip: server responded with ", status)
 	}
+
+	// Handshake done: retire the ctx watcher and clear any deadline it set, so the
+	// long-lived readLoop reads without a deadline and a later dial-ctx cancel
+	// cannot trip the live tunnel.
+	stopWatch()
+	_ = tlsConn.SetDeadline(time.Time{})
 
 	go conn.readLoop()
 
