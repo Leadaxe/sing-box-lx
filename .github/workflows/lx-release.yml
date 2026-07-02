@@ -205,6 +205,33 @@ jobs:
             ~/cronet-go/naiveproxy/src/out/sysroot-build/
           key: chromium-toolchain-musl-${{ matrix.arch }}-${{ hashFiles('.github/CRONET_GO_VERSION') }}
 
+      # Second source, between actions/cache and snapshot.debian.org: our own
+      # durable mirror (release `musl-toolchain-cache`, produced by
+      # lx-musl-toolchain-mirror.yml). Restores on an actions/cache miss —
+      # including the common ref-scoping miss where a tag build can't see another
+      # tag's cache — so a snapshot.debian.org outage no longer blocks releases.
+      # SPEC 023. If the mirror also misses, the download step below falls back to
+      # snapshot.debian.org exactly as before.
+      - name: Restore musl toolchain from lx mirror
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -xeuo pipefail
+          SRC=~/cronet-go/naiveproxy/src
+          # actions/cache hit already populated the tree — nothing to do.
+          if [ -d "$SRC/out/sysroot-build" ] && [ -d "$SRC/third_party/llvm-build" ]; then
+            echo "actions/cache hit — skipping lx mirror"; exit 0
+          fi
+          CRONET_GO_VERSION="$(cat .github/CRONET_GO_VERSION)"
+          ASSET="toolchain-${{ matrix.arch }}-${CRONET_GO_VERSION}.tar.zst"
+          if gh release download musl-toolchain-cache --repo "$GITHUB_REPOSITORY" \
+               --pattern "$ASSET" --dir /tmp/lxtc 2>/dev/null; then
+            tar --zstd -C "$SRC" -xf "/tmp/lxtc/$ASSET"
+            echo "restored toolchain from lx mirror ($ASSET)"
+          else
+            echo "lx mirror miss ($ASSET) — falling back to snapshot.debian.org"
+          fi
+
       - name: Download Chromium musl toolchain
         run: |
           set -xeuo pipefail

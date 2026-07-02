@@ -1,0 +1,117 @@
+name: lx-musl-toolchain-mirror
+
+# Builds the Chromium musl toolchain (clang + gn + pgo + per-arch Debian sysroot)
+# once and uploads it as a release asset in the `musl-toolchain-cache` release, so
+# lx-release.yml can restore it on an actions/cache miss instead of depending on
+# snapshot.debian.org (which intermittently 503s and blocks releases). See SPEC 023.
+#
+# Run this MANUALLY (workflow_dispatch) whenever .github/CRONET_GO_VERSION changes —
+# the asset name embeds the cronet-go version, so a stale mirror simply misses and
+# the release falls back to snapshot.debian.org until this is re-run.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build_mirror:
+    name: mirror linux-musl/${{ matrix.asset }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64,  asset: linux-amd64 }
+          - { arch: arm64,  asset: linux-arm64 }
+          - { arch: arm,    goarm: "7",        asset: linux-armv7 }
+          - { arch: mipsle, gomips: softfloat, asset: linux-mipsle-softfloat }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      # Same toolchain-fetch sequence as lx-release.yml build_linux_musl, so the
+      # produced tree matches exactly what the release job expects to restore.
+      - name: Clone cronet-go
+        run: |
+          set -xeuo pipefail
+          CRONET_GO_VERSION="$(cat .github/CRONET_GO_VERSION)"
+          git init ~/cronet-go
+          git -C ~/cronet-go remote add origin https://github.com/sagernet/cronet-go.git
+          git -C ~/cronet-go fetch --depth=1 origin "$CRONET_GO_VERSION"
+          git -C ~/cronet-go checkout FETCH_HEAD
+          git -C ~/cronet-go submodule update --init --recursive --depth=1
+
+      - name: Regenerate Debian keyring
+        run: |
+          set -xeuo pipefail
+          rm -f ~/cronet-go/naiveproxy/src/build/linux/sysroot_scripts/keyring.gpg
+          cd ~/cronet-go
+          n=0; max=4; delay=20
+          until GPG_TTY=/dev/null ./naiveproxy/src/build/linux/sysroot_scripts/generate_keyring.sh; do
+            n=$((n+1))
+            if [ "$n" -ge "$max" ]; then
+              echo "keyring regen failed after $max attempts"; exit 1
+            fi
+            echo "keyring regen attempt $n failed; retrying in ${delay}s"
+            sleep "$delay"; delay=$((delay*2))
+          done
+
+      - name: Download Chromium musl toolchain (from snapshot.debian.org)
+        run: |
+          set -xeuo pipefail
+          cd ~/cronet-go
+          # This is the ONE place the mirror producer depends on snapshot.debian.org.
+          # Retry generously; run this workflow when snapshot.debian.org is healthy.
+          n=0; max=8; delay=30
+          until go run ./cmd/build-naive --target=linux/${{ matrix.arch }} --libc=musl download-toolchain; do
+            n=$((n+1))
+            if [ "$n" -ge "$max" ]; then
+              echo "toolchain download failed after $max attempts (snapshot.debian.org may be down — retry later)"; exit 1
+            fi
+            echo "toolchain download attempt $n failed; retrying in ${delay}s"
+            sleep "$delay"; delay=$((delay*2))
+          done
+
+      - name: Pack toolchain
+        id: pack
+        run: |
+          set -xeuo pipefail
+          CRONET_GO_VERSION="$(cat .github/CRONET_GO_VERSION)"
+          ASSET="toolchain-${{ matrix.arch }}-${CRONET_GO_VERSION}.tar.zst"
+          SRC=~/cronet-go/naiveproxy/src
+          # Archive rooted at naiveproxy/src so lx-release.yml restores with a plain
+          # `tar -C <src> -xf`. Only pack dirs that exist (pgo_profiles may be absent).
+          DIRS=""
+          for d in third_party/llvm-build gn/out chrome/build/pgo_profiles out/sysroot-build; do
+            [ -d "$SRC/$d" ] && DIRS="$DIRS $d"
+          done
+          tar --zstd -C "$SRC" -cf "$ASSET" $DIRS
+          ls -lh "$ASSET"
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure mirror release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -xeuo pipefail
+          gh release view musl-toolchain-cache --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create musl-toolchain-cache --repo "$GITHUB_REPOSITORY" \
+              --prerelease --title "musl toolchain cache" \
+              --notes "Prebuilt Chromium musl toolchains for lx-release (SPEC 023). Not a software release — do not use as 'Latest'."
+
+      - name: Upload toolchain asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -xeuo pipefail
+          gh release upload musl-toolchain-cache "${{ steps.pack.outputs.asset }}" \
+            --repo "$GITHUB_REPOSITORY" --clobber
