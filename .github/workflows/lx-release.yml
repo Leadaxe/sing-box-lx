@@ -347,10 +347,10 @@ jobs:
           awk -v v="#### v${VERSION}" '
             $0==v {f=1; next} /^#### / {f=0} f' docs-lx/lx-changelog.md > changes.md
           if [ -z "$(tr -d '[:space:]' < changes.md)" ]; then
-            echo "See [docs-lx/lx-changelog.md](https://github.com/Leadaxe/sing-box-lx/blob/lx-1.14/docs-lx/lx-changelog.md)." > changes.md
+            echo "See [docs-lx/lx-changelog.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/lx-changelog.md)." > changes.md
           fi
           cat > notes.md <<EOF
-          **sing-box-lx ${{ steps.ver.outputs.version }}** — a thin downstream of [sing-box](https://github.com/SagerNet/sing-box) (base **${{ steps.ver.outputs.base }}**, branch \`lx-1.14\`).
+          **sing-box-lx ${{ steps.ver.outputs.version }}** — a thin downstream of [sing-box](https://github.com/SagerNet/sing-box) (base **${{ steps.ver.outputs.base }}**, branch \`lx\`).
 
           ### What's new in this release
           __CHANGES__

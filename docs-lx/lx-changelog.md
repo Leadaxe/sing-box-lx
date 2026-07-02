@@ -10,6 +10,23 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.22
+
+**Pre-release.** MASQUE diagnostics + the lx branch is now the release branch. No
+behaviour change to the tunnel itself vs rc.21 — MASQUE (CONNECT-IP over h3/h2)
+works exactly as before.
+
+* **MASQUE: transport-phase debug logging.** The dial path now logs its phases
+  (`establishing <h3|h2> tunnel to <server> (sni=…)` → `udp socket up, starting QUIC
+  handshake` → `tunnel established` / `tunnel failed: <err>`), so a stuck dial is
+  diagnosable from the core log alone — no goroutine dump needed. This pinpoints
+  whether a hang is the UDP socket or the QUIC handshake: on networks that filter
+  inbound UDP:443, h3 hangs in the handshake (ClientHello left, no ServerHello back)
+  while h2 (CONNECT-IP over TCP:443) works — use `network: "h2"` there.
+
+* **Release branch moved to `lx`.** rc-tags are now cut from the `lx` branch (which
+  carries the full 1.14 line + all SPECs); release notes/links reference `lx`.
+
 #### v1.14.0-lx.1-rc.21
 
 **Pre-release.** New outbound: **MASQUE (CONNECT-IP / RFC 9484)** for Cloudflare WARP
