@@ -10,6 +10,38 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.2-rc.1
+
+**Pre-release.** SPEC 022 deep-audit remediation — a correctness/stability pass
+over the whole lx delta, no new features and no config changes. A full audit of
+the fork's code (10 axes, adversarial verification) surfaced 27 real findings; 24
+are fixed here, 3 skipped by design. Upstream base is unchanged (already carries
+`v1.14.0-alpha.37`). **Not yet device-verified** — staged as a pre-release before
+promotion to a stable `lx.2`; the two behavioural fixes below want a live check.
+
+* **MASQUE (h2): a stalled CONNECT could wedge the outbound forever.** The h2
+  CONNECT-IP handshake ignored the dial context, so a peer that completed TCP+TLS
+  but never returned the CONNECT `:status` HEADERS parked the dial in `ReadFrame`
+  with no timeout — and because establishment is serialized, the outbound could no
+  longer be reused *or* closed. The handshake is now bounded by the dial ctx (a
+  watcher trips the conn deadline on timeout/cancel and is retired before the
+  long-lived read loop starts).
+* **AmneziaWG: a guard-suspended endpoint could be resurrected by a dial.** The
+  AmneziaWG-over-WireGuard guard (which keeps such an endpoint down because that
+  combination hangs the Android kernel) shared state with SPEC 020 idle-suspend;
+  if the endpoint was idle-suspended *before* the guard fired, the next dial woke
+  it back up. `SuspendAmneziaWG` now clears the idle flag under the shared lock, so
+  a guard-suspended endpoint stays down.
+* **Other fixes.** IPv4 checksum recomputed over the full header incl. options
+  (CONNECT-IP TTL path); a data race in the XHTTP stream reader removed; DNS query
+  events now emitted on a fresh cache hit in the Lookup path (SPEC 018 parity);
+  `GetPool` reads a nested-group member's delay under the right history key; the
+  AmneziaWG MTU budget counts only `s4` (transport padding), not `s3` (cookie
+  padding); the MASQUE h3 login-failure hint matches the TLS alert robustly; plus
+  documentation corrections (`ip=sip` decoy shape, `s4`/MTU, `no_grpc_header`) and
+  a batch of comment/dead-code hygiene. Full register in
+  [`SPECS/022-LX_DEEP_AUDIT`](../SPECS/022-LX_DEEP_AUDIT/SPEC.md).
+
 #### v1.14.0-lx.1
 
 **First full release of the 1.14 lx line** (published as "Latest", not a
