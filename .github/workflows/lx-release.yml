@@ -33,7 +33,8 @@ jobs:
         include:
           # Linux lives in the build_linux_musl job (static musl + naive, for
           # routers). See SPECS/006. This job covers the purego/native targets
-          # where libdl is a non-issue.
+          # where libdl is a non-issue — plus targets cronet can't reach at all
+          # (no_naive: pure-Go static, naive/purego dropped).
           - { goos: darwin,  goarch: amd64 }
           - { goos: darwin,  goarch: arm64 }
           - { goos: windows, goarch: amd64, ext: .exe }
@@ -41,6 +42,12 @@ jobs:
           # Windows 7 (32-bit): built with a Win7-patched Go, and without
           # with_naive_outbound (cronet-go has no windows/386 build). See SPECS/004.
           - { goos: windows, goarch: "386", ext: .exe, legacy_win7: true, legacy_name: windows-7 }
+          # Big-endian MIPS routers (OpenWrt mips_24kc, e.g. Atheros AR93xx) — issue #6.
+          # Chromium has no big-endian MIPS toolchain, so the musl/naive path is
+          # impossible here; a pure-Go CGO_ENABLED=0 build is statically linked anyway
+          # (runs on musl), it just drops naive/cronet (with_purego doesn't compile on
+          # mips either — purego has no mips port).
+          - { goos: linux, goarch: mips, gomips: softfloat, no_naive: true }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,11 +90,17 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          GOMIPS: ${{ matrix.gomips }}
         run: |
           TAGS="$(make -f Makefile.lx -s lx-print-tags)"
           if [ "${{ matrix.legacy_win7 }}" = "true" ]; then
             # cronet-go (with_naive_outbound) has no windows/386 build — drop it.
             TAGS="${TAGS/with_naive_outbound,/}"
+          fi
+          if [ "${{ matrix.no_naive }}" = "true" ]; then
+            # No cronet for this target at all: drop naive AND its purego loader.
+            TAGS="${TAGS/with_naive_outbound,/}"
+            TAGS="${TAGS/with_purego,/}"
           fi
           make -f Makefile.lx lx-build \
             LX_TAGS="$TAGS" \
@@ -97,6 +110,9 @@ jobs:
       - name: Package
         run: |
           NAME="sing-box-${{ steps.ver.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ -n "${{ matrix.gomips }}" ]; then
+            NAME="${NAME}-${{ matrix.gomips }}"
+          fi
           if [ -n "${{ matrix.legacy_name }}" ]; then
             NAME="${NAME}-legacy-${{ matrix.legacy_name }}"
           fi
@@ -364,6 +380,8 @@ jobs:
           Drop-in \`sing-box\` for **darwin / windows** × {amd64, arm64}, plus a **Windows 7 (32-bit)** legacy build (\`sing-box-${{ steps.ver.outputs.version }}-windows-386-legacy-windows-7.zip\` — built with a Win7-patched Go; without naive/cronet, which has no windows/386 target).
 
           **Linux — static musl builds for routers** (AsusWRT Merlin, OpenWrt, Keenetic): \`linux-amd64\`, \`linux-arm64\`, \`linux-armv7\`, \`linux-mipsle-softfloat\`. These are statically linked (no \`libdl.so.2\`/glibc dependency) and **keep NaïveProxy** — they run on musl routers where the previous dynamic builds failed with \`libdl.so.2: cannot open shared object file\`. See SPECS/006.
+
+          **Linux — big-endian MIPS** (OpenWrt \`mips_24kc\`, e.g. Atheros AR93xx): \`linux-mips-softfloat\` — pure-Go static build **without NaïveProxy** (Chromium/cronet has no big-endian MIPS toolchain); everything else matches the desktop tag set.
 
           Each archive contains the \`sing-box\` binary (\`sing-box version\` reports \`${{ steps.ver.outputs.version }}\`). Verify downloads against \`SHA256SUMS\`.
 

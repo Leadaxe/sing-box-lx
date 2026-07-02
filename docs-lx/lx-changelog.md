@@ -10,6 +10,18 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.1-rc.23
+
+**Pre-release.**
+
+* **New release asset: `linux-mips-softfloat`** (big-endian MIPS — OpenWrt
+  `mips_24kc`, e.g. Atheros AR93xx) — requested in
+  [#6](https://github.com/Leadaxe/sing-box-lx/issues/6). Pure-Go static build:
+  runs on musl/OpenWrt as-is, but **without NaïveProxy** — Chromium/cronet has
+  no big-endian MIPS toolchain, so `with_naive_outbound`/`with_purego` are
+  dropped for this target only. Everything else (AWG, XHTTP, MASQUE, Clash API,
+  …) matches the desktop tag set.
+
 #### v1.14.0-lx.1-rc.22
 
 **Pre-release.** MASQUE diagnostics + the lx branch is now the release branch. No
