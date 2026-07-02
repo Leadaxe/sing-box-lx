@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 var (
 	_ adapter.OutboundWithPreferredRoutes = (*Endpoint)(nil)
 	_ dialer.PacketDialerWithDestination  = (*Endpoint)(nil)
+	_ adapter.IdleSuspendable             = (*Endpoint)(nil) // lx: SPEC 020 idle-suspend
 )
 
 func RegisterEndpoint(registry *endpoint.Registry) {
@@ -58,6 +60,17 @@ type Endpoint struct {
 	// comes up. PostStart then skips this endpoint too.
 	awgChainBlocked bool
 	// lx:end awg
+	// lx:begin idle-suspend
+	// SPEC 020 idle-suspend state. lastActivity is the unix-nano timestamp of the
+	// last dial through this endpoint, stamped at PostStart and on every dial entry.
+	// idleAsleep is true while the endpoint is Down due to idle-suspend (distinct
+	// from a guard-suspend, which sets started=false WITHOUT idleAsleep, so a
+	// guard-suspended endpoint is never idle-woken). resumeMu serialises the idle
+	// tick's suspend decision against a concurrent dial's wake.
+	lastActivity atomic.Int64
+	idleAsleep   atomic.Bool
+	resumeMu     sync.Mutex
+	// lx:end idle-suspend
 }
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Endpoint, error) {
@@ -180,6 +193,9 @@ func (w *Endpoint) Start(stage adapter.StartStage) error {
 			return err
 		}
 		w.started.Store(true)
+		// lx: SPEC 020 — baseline idle clock so a never-dialed endpoint is "idle
+		// since start" and only suspends after a genuine idle window, not at tick 1.
+		w.stampActivity()
 	}
 	return nil
 }
@@ -237,13 +253,84 @@ func (w *Endpoint) SuspendAmneziaWG() {
 
 // lx:end awg
 
+// lx:begin idle-suspend
+
+// stampActivity records the current time as the last dial through this endpoint.
+func (w *Endpoint) stampActivity() {
+	w.lastActivity.Store(time.Now().UnixNano())
+}
+
+// IdleSince reports how long it has been since the last dial through this
+// endpoint. A never-stamped endpoint (lastActivity == 0) reports a very large
+// duration; PostStart stamps a baseline so this never happens for a live one.
+func (w *Endpoint) IdleSince() time.Duration {
+	last := w.lastActivity.Load()
+	if last == 0 {
+		return time.Duration(1<<63 - 1)
+	}
+	return time.Since(time.Unix(0, last))
+}
+
+// SuspendIfIdle is the idle tick's per-endpoint decision (SPEC 020). It brings
+// the endpoint Down — freeing the recv-worker bufsArrs, the dominant GC-scan
+// holder — when it is unreachable from the active routing tree AND has been idle
+// past the threshold. Silent on every non-transition (edge-triggered logging).
+//
+// It never touches a guard-suspended endpoint: that one already has
+// started==false but idleAsleep==false, and the `!started` guard below short-
+// circuits before the CAS. resumeMu mutually excludes this against resumeOnDial.
+func (w *Endpoint) SuspendIfIdle(reachable bool, threshold time.Duration) {
+	w.resumeMu.Lock()
+	defer w.resumeMu.Unlock()
+	if reachable || w.IdleSince() < threshold {
+		return
+	}
+	if !w.started.Load() {
+		// Already down some other way (guard-suspend, awg-chain-blocked, closed).
+		return
+	}
+	if w.idleAsleep.CompareAndSwap(false, true) {
+		w.started.Store(false)
+		w.endpoint.Suspend() // device.Down(): recv-workers exit, bufsArrs freed
+		w.logger.Info("lx idle: suspend ", w.Tag(), " idle=", w.IdleSince().Truncate(time.Second))
+	}
+}
+
+// resumeOnDial is called at the top of every dial entry. It stamps activity
+// (always, closing the race with the idle tick) and, if the endpoint was
+// idle-suspended, wakes it (device.Up()) before the dial proceeds — so the first
+// write lands on a live device. Wake pays a fresh handshake (Down zeroed the
+// session); that cost is on the first packet, as for any cold WG dial.
+//
+// Returns true if the endpoint is dialable (awake), false if it must stay down
+// (guard-suspend / chain-blocked — not an idle-suspend, so we do not resurrect it).
+func (w *Endpoint) resumeOnDial() bool {
+	w.stampActivity()
+	if !w.idleAsleep.Load() {
+		// Fast path: either fully awake, or down for a non-idle reason we must not wake.
+		return w.started.Load()
+	}
+	w.resumeMu.Lock()
+	defer w.resumeMu.Unlock()
+	if !w.idleAsleep.Load() {
+		return w.started.Load()
+	}
+	w.endpoint.Resume() // device.Up(): re-open socket, re-spawn recv-workers
+	w.started.Store(true)
+	w.idleAsleep.Store(false)
+	w.logger.Info("lx idle: wake ", w.Tag(), " by=dial")
+	return true
+}
+
+// lx:end idle-suspend
+
 func (w *Endpoint) Close() error {
 	w.started.Store(false)
 	return w.endpoint.Close()
 }
 
 func (w *Endpoint) PrepareConnection(network string, source M.Socksaddr, destination M.Socksaddr, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	if !w.started.Load() {
+	if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended
 		return nil, E.New("WireGuard is not ready yet")
 	}
 	var ipVersion uint8
@@ -326,7 +413,7 @@ func (w *Endpoint) DialContext(ctx context.Context, network string, destination 
 	case N.NetworkUDP:
 		w.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	}
-	if !w.started.Load() {
+	if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended
 		return nil, E.New("WireGuard is not ready yet")
 	}
 	if destination.IsDomain() {
@@ -343,7 +430,7 @@ func (w *Endpoint) DialContext(ctx context.Context, network string, destination 
 
 func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
 	w.logger.InfoContext(ctx, "outbound packet connection to ", destination)
-	if !w.started.Load() {
+	if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended
 		return nil, netip.Addr{}, E.New("WireGuard is not ready yet")
 	}
 	if destination.IsDomain() {
@@ -386,7 +473,7 @@ func (w *Endpoint) PreferredAddress(address netip.Addr) bool {
 }
 
 func (w *Endpoint) NewDirectRouteConnection(metadata adapter.InboundContext, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	if !w.started.Load() {
+	if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended
 		return nil, E.New("WireGuard is not ready yet")
 	}
 	return w.endpoint.NewDirectRouteConnection(metadata, routeContext, timeout)

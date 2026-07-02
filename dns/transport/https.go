@@ -120,13 +120,16 @@ func NewHTTPSRaw(
 	serverAddr M.Socksaddr,
 	tlsConfig tls.Config,
 ) *HTTPSTransport {
+	if tlsConfig != nil {
+		dialer = tls.NewDialer(dialer, tlsConfig)
+	}
 	return &HTTPSTransport{
 		TransportAdapter: adapter,
 		logger:           logger,
 		dialer:           dialer,
 		destination:      destination,
 		headers:          headers,
-		transport:        NewHTTPSTransportWrapper(tls.NewDialer(dialer, tlsConfig), serverAddr),
+		transport:        NewHTTPSTransportWrapper(dialer, serverAddr, destination),
 	}
 }
 
@@ -138,10 +141,7 @@ func (t *HTTPSTransport) Start(stage adapter.StartStage) error {
 }
 
 func (t *HTTPSTransport) Close() error {
-	t.transportAccess.Lock()
-	defer t.transportAccess.Unlock()
-	t.transport.CloseIdleConnections()
-	t.transport = t.transport.Clone()
+	t.Reset()
 	return nil
 }
 

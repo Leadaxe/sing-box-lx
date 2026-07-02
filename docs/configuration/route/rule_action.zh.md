@@ -7,6 +7,13 @@ icon: material/new-box
     :material-plus: [bypass](#bypass)  
     :material-alert: [reject](#reject)
 
+!!! quote "sing-box 1.14.0 中的更改"
+
+    :material-plus: [resolve.disable_optimistic_cache](#disable_optimistic_cache)  
+    :material-plus: [resolve.timeout](#timeout)  
+    :material-plus: [tls_spoof](#tls_spoof)  
+    :material-plus: [tls_spoof_method](#tls_spoof_method)
+
 !!! quote "sing-box 1.12.0 中的更改"
 
     :material-plus: [tls_fragment](#tls_fragment)  
@@ -134,7 +141,12 @@ icon: material/new-box
   "fallback_delay": "",
   "udp_disable_domain_unmapping": false,
   "udp_connect": false,
-  "udp_timeout": ""
+  "udp_timeout": "",
+  "tls_fragment": false,
+  "tls_fragment_fallback_delay": "",
+  "tls_record_fragment": false,
+  "tls_spoof": "",
+  "tls_spoof_method": ""
 }
 ```
 
@@ -232,6 +244,26 @@ UDP 连接超时时间。
 
 通过分段 TLS 握手数据包到多个 TLS 记录来绕过防火墙检测。
 
+#### tls_spoof
+
+!!! question "自 sing-box 1.14.0 起"
+
+!!! quote ""
+
+    仅支持 Linux、macOS 和 Windows，需要提升的权限。
+
+在真实 ClientHello 之前注入携带本字段所指定 SNI 的伪造 TLS ClientHello，
+用于欺骗仅放行特定主机名的 SNI 过滤中间盒。
+
+详情与所需权限参阅出站 TLS [`spoof`](/zh/configuration/shared/tls/#spoof)。
+
+#### tls_spoof_method
+
+!!! question "自 sing-box 1.14.0 起"
+
+控制伪造报文被真实服务器拒绝的方式。完整取值表与平台说明参阅出站 TLS
+[`spoof_method`](/zh/configuration/shared/tls/#spoof_method)。
+
 ### sniff
 
 ```json
@@ -268,7 +300,9 @@ UDP 连接超时时间。
   "server": "",
   "strategy": "",
   "disable_cache": false,
+  "disable_optimistic_cache": false,
   "rewrite_ttl": null,
+  "timeout": "",
   "client_subnet": null
 }
 ```
@@ -291,11 +325,25 @@ DNS 解析策略，可用值有：`prefer_ipv4`、`prefer_ipv6`、`ipv4_only`、
 
 在此查询中禁用缓存。
 
+#### disable_optimistic_cache
+
+!!! question "自 sing-box 1.14.0 起"
+
+在此查询中禁用乐观 DNS 缓存。
+
 #### rewrite_ttl
 
 !!! question "自 sing-box 1.12.0 起"
 
 重写 DNS 回应中的 TTL。
+
+#### timeout
+
+!!! question "自 sing-box 1.14.0 起"
+
+覆盖此查询的 DNS 查询超时时间。
+
+将覆盖 `dns.timeout`。
 
 #### client_subnet
 

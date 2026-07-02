@@ -34,7 +34,7 @@ func baseContext(platformInterface PlatformInterface) context.Context {
 	}
 	ctx := context.Background()
 	ctx = filemanager.WithDefault(ctx, sWorkingPath, sTempPath, sUserID, sGroupID)
-	return box.Context(ctx, include.InboundRegistry(), include.OutboundRegistry(), include.EndpointRegistry(), dnsRegistry, include.ServiceRegistry())
+	return box.Context(ctx, include.InboundRegistry(), include.OutboundRegistry(), include.EndpointRegistry(), dnsRegistry, include.ServiceRegistry(), include.CertificateProviderRegistry())
 }
 
 func parseConfig(ctx context.Context, configContent string) (option.Options, error) {
@@ -125,10 +125,6 @@ func (s *platformInterfaceStub) ReadWIFIState() adapter.WIFIState {
 	return adapter.WIFIState{}
 }
 
-func (s *platformInterfaceStub) SystemCertificates() []string {
-	return nil
-}
-
 func (s *platformInterfaceStub) UsePlatformConnectionOwnerFinder() bool {
 	return false
 }
@@ -147,6 +143,46 @@ func (s *platformInterfaceStub) SendNotification(notification *adapter.Notificat
 
 func (s *platformInterfaceStub) MyInterfaceAddress() []netip.Addr {
 	return nil
+}
+
+func (s *platformInterfaceStub) UsePlatformNeighborResolver() bool {
+	return false
+}
+
+func (s *platformInterfaceStub) StartNeighborMonitor(listener adapter.NeighborUpdateListener) error {
+	return os.ErrInvalid
+}
+
+func (s *platformInterfaceStub) CloseNeighborMonitor(listener adapter.NeighborUpdateListener) error {
+	return nil
+}
+
+func (s *platformInterfaceStub) UsePlatformShell() bool {
+	return false
+}
+
+func (s *platformInterfaceStub) CheckPlatformShell() error {
+	return nil
+}
+
+func (s *platformInterfaceStub) OpenShellSession(user *adapter.PlatformUser, command string, env []string, term string, rows int32, cols int32) (adapter.ShellSession, error) {
+	return nil, os.ErrInvalid
+}
+
+func (s *platformInterfaceStub) LookupSFTPServer() (string, error) {
+	return "", os.ErrInvalid
+}
+
+func (s *platformInterfaceStub) ReadSystemSSHHostKey() ([]byte, error) {
+	return nil, os.ErrInvalid
+}
+
+func (s *platformInterfaceStub) TailscaleHostname() string {
+	return ""
+}
+
+func (s *platformInterfaceStub) LookupUser(username string) (*adapter.PlatformUser, error) {
+	return nil, os.ErrInvalid
 }
 
 func (s *platformInterfaceStub) UsePlatformLocalDNSTransport() bool {

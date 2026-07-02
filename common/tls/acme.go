@@ -5,6 +5,7 @@ package tls
 import (
 	"context"
 	"crypto/tls"
+	"slices"
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -38,37 +39,6 @@ func (w *acmeWrapper) Close() error {
 	return nil
 }
 
-type acmeLogWriter struct {
-	logger logger.Logger
-}
-
-func (w *acmeLogWriter) Write(p []byte) (n int, err error) {
-	logLine := strings.ReplaceAll(string(p), "	", ": ")
-	switch {
-	case strings.HasPrefix(logLine, "error: "):
-		w.logger.Error(logLine[7:])
-	case strings.HasPrefix(logLine, "warn: "):
-		w.logger.Warn(logLine[6:])
-	case strings.HasPrefix(logLine, "info: "):
-		w.logger.Info(logLine[6:])
-	case strings.HasPrefix(logLine, "debug: "):
-		w.logger.Debug(logLine[7:])
-	default:
-		w.logger.Debug(logLine)
-	}
-	return len(p), nil
-}
-
-func (w *acmeLogWriter) Sync() error {
-	return nil
-}
-
-func encoderConfig() zapcore.EncoderConfig {
-	config := zap.NewProductionEncoderConfig()
-	config.TimeKey = zapcore.OmitKey
-	return config
-}
-
 func startACME(ctx context.Context, logger logger.Logger, options option.InboundACMEOptions) (*tls.Config, adapter.SimpleLifecycle, error) {
 	var acmeServer string
 	switch options.Provider {
@@ -91,8 +61,8 @@ func startACME(ctx context.Context, logger logger.Logger, options option.Inbound
 		storage = certmagic.Default.Storage
 	}
 	zapLogger := zap.New(zapcore.NewCore(
-		zapcore.NewConsoleEncoder(encoderConfig()),
-		&acmeLogWriter{logger: logger},
+		zapcore.NewConsoleEncoder(ACMEEncoderConfig()),
+		&ACMELogWriter{Logger: logger},
 		zap.DebugLevel,
 	))
 	config := &certmagic.Config{
@@ -100,10 +70,16 @@ func startACME(ctx context.Context, logger logger.Logger, options option.Inbound
 		Storage:           storage,
 		Logger:            zapLogger,
 	}
+	profile := options.Profile
+	if profile == "" && acmeServer == certmagic.LetsEncryptProductionCA && slices.ContainsFunc(options.Domain, certmagic.SubjectIsIP) {
+		profile = "shortlived"
+	}
+
 	acmeConfig := certmagic.ACMEIssuer{
 		CA:                      acmeServer,
 		Email:                   options.Email,
 		Agreed:                  true,
+		Profile:                 profile,
 		DisableHTTPChallenge:    options.DisableHTTPChallenge,
 		DisableTLSALPNChallenge: options.DisableTLSALPNChallenge,
 		AltHTTPPort:             int(options.AlternativeHTTPPort),
@@ -158,7 +134,7 @@ func startACME(ctx context.Context, logger logger.Logger, options option.Inbound
 	} else {
 		tlsConfig = &tls.Config{
 			GetCertificate: config.GetCertificate,
-			NextProtos:     []string{ACMETLS1Protocol},
+			NextProtos:     []string{C.ACMETLS1Protocol},
 		}
 	}
 	return tlsConfig, &acmeWrapper{ctx: ctx, cfg: config, cache: cache, domain: options.Domain}, nil

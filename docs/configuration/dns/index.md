@@ -2,6 +2,12 @@
 icon: material/alert-decagram
 ---
 
+!!! quote "Changes in sing-box 1.14.0"
+
+    :material-delete-clock: [independent_cache](#independent_cache)  
+    :material-plus: [optimistic](#optimistic)  
+    :material-plus: [timeout](#timeout)
+
 !!! quote "Changes in sing-box 1.12.0"
 
     :material-decagram: [servers](#servers)
@@ -25,6 +31,8 @@ icon: material/alert-decagram
     "disable_expire": false,
     "independent_cache": false,
     "cache_capacity": 0,
+    "optimistic": false, // or {}
+    "timeout": "",
     "reverse_mapping": false,
     "client_subnet": "",
     "fakeip": {}
@@ -39,7 +47,7 @@ icon: material/alert-decagram
 |----------|---------------------------------|
 | `server` | List of [DNS Server](./server/) |
 | `rules`  | List of [DNS Rule](./rule/)     |
-| `fakeip` | [FakeIP](./fakeip/)             |
+| `fakeip` | :material-note-remove: [FakeIP](./fakeip/) |
 
 #### final
 
@@ -57,11 +65,19 @@ One of `prefer_ipv4` `prefer_ipv6` `ipv4_only` `ipv6_only`.
 
 Disable dns cache.
 
+Conflict with `optimistic`.
+
 #### disable_expire
 
 Disable dns cache expire.
 
+Conflict with `optimistic`.
+
 #### independent_cache
+
+!!! failure "Deprecated in sing-box 1.14.0"
+
+    `independent_cache` is deprecated and will be removed in sing-box 1.14.0, check [Migration](/migration/#migrate-independent-dns-cache).
 
 Make each DNS server's cache independent for special purposes. If enabled, will slightly degrade performance.
 
@@ -72,6 +88,44 @@ Make each DNS server's cache independent for special purposes. If enabled, will 
 LRU cache capacity.
 
 Value less than 1024 will be ignored.
+
+#### optimistic
+
+!!! question "Since sing-box 1.14.0"
+
+Enable optimistic DNS caching. When a cached DNS entry has expired but is still within the timeout window,
+the stale response is returned immediately while a background refresh is triggered.
+
+Conflict with `disable_cache` and `disable_expire`.
+
+Accepts a boolean or an object. When set to `true`, the default timeout of `3d` is used.
+
+```json
+{
+  "enabled": true,
+  "timeout": "3d"
+}
+```
+
+##### enabled
+
+Enable optimistic DNS caching.
+
+##### timeout
+
+The maximum time an expired cache entry can be served optimistically.
+
+`3d` is used by default.
+
+#### timeout
+
+!!! question "Since sing-box 1.14.0"
+
+Default timeout for each DNS query.
+
+`10s` is used by default.
+
+Can be overridden by `rules.[].timeout` (DNS rule action) or `domain_resolver.timeout`.
 
 #### reverse_mapping
 
@@ -88,4 +142,4 @@ Append a `edns0-subnet` OPT extra record with the specified IP prefix to every q
 
 If value is an IP address instead of prefix, `/32` or `/128` will be appended automatically.
 
-Can be overrides by `servers.[].client_subnet` or `rules.[].client_subnet`.
+Can be overridden by `servers.[].client_subnet` or `rules.[].client_subnet`.

@@ -496,7 +496,6 @@ var (
 		(*SysStatsResponse)(nil),   // 6: experimental.v2rayapi.SysStatsResponse
 	}
 )
-
 var file_experimental_v2rayapi_stats_proto_depIdxs = []int32{
 	1, // 0: experimental.v2rayapi.GetStatsResponse.stat:type_name -> experimental.v2rayapi.Stat
 	1, // 1: experimental.v2rayapi.QueryStatsResponse.stat:type_name -> experimental.v2rayapi.Stat

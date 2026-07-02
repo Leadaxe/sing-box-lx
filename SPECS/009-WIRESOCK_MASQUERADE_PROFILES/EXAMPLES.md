@@ -239,4 +239,4 @@ DNS QNAME, поэтому control-байты и метасимволы отве�
 
 См. также: [SPEC.md](SPEC.md),
 [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md),
-краткая версия — `docs/lx-config.md` (секция «Masquerade id/ip/ib»).
+краткая версия — `docs-lx/lx-config.md` (секция «Masquerade id/ip/ib»).

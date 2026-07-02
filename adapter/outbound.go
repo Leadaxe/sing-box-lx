@@ -67,3 +67,28 @@ type AmneziaWGSuspendable interface {
 }
 
 // lx:end awg
+
+// lx:begin idle-suspend
+// IdleSuspendable is implemented by a WG/AWG endpoint so the router's idle tick
+// (SPEC 020) can suspend it when it is idle and unreachable, without importing
+// protocol/wireguard. SuspendIfIdle brings the device Down (freeing its
+// recv-worker bufsArrs — the dominant GC-scan holder) only on the live→asleep
+// transition; the next dial through the endpoint wakes it lazily.
+type IdleSuspendable interface {
+	Tag() string
+	SuspendIfIdle(reachable bool, threshold time.Duration)
+}
+
+// ReachabilityInvalidator is implemented by the Router. SPEC 020 reachability is
+// recomputed only on events that change the active routing tree — a selector
+// switch, a urltest auto-switch / pool rebuild, or a config reload — not on every
+// idle tick. Those event points pull this out of the context
+// (service.FromContext[adapter.ReachabilityInvalidator]) and mark the cache
+// dirty; the next idle tick recomputes lazily. Kept as its own narrow interface
+// so protocol/group calls it without importing route and without widening the
+// large adapter.Router interface.
+type ReachabilityInvalidator interface {
+	InvalidateReachability()
+}
+
+// lx:end idle-suspend

@@ -14,6 +14,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/tlsfragment"
+	"github.com/sagernet/sing-box/common/tlsspoof"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -24,16 +25,32 @@ import (
 type STDClientConfig struct {
 	ctx                   context.Context
 	config                *tls.Config
+	serverName            string
+	disableSNI            bool
+	verifyServerName      bool
+	handshakeTimeout      time.Duration
 	fragment              bool
 	fragmentFallbackDelay time.Duration
 	recordFragment        bool
+	spoof                 string
+	spoofMethod           tlsspoof.Method
 }
 
 func (c *STDClientConfig) ServerName() string {
-	return c.config.ServerName
+	return c.serverName
 }
 
 func (c *STDClientConfig) SetServerName(serverName string) {
+	c.serverName = serverName
+	if c.disableSNI {
+		c.config.ServerName = ""
+		if c.verifyServerName {
+			c.config.VerifyConnection = verifyConnection(c.config.RootCAs, c.config.Time, serverName)
+		} else {
+			c.config.VerifyConnection = nil
+		}
+		return
+	}
 	c.config.ServerName = serverName
 }
 
@@ -45,25 +62,45 @@ func (c *STDClientConfig) SetNextProtos(nextProto []string) {
 	c.config.NextProtos = nextProto
 }
 
+func (c *STDClientConfig) HandshakeTimeout() time.Duration {
+	return c.handshakeTimeout
+}
+
+func (c *STDClientConfig) SetHandshakeTimeout(timeout time.Duration) {
+	c.handshakeTimeout = timeout
+}
+
 func (c *STDClientConfig) STDConfig() (*STDConfig, error) {
 	return c.config, nil
 }
 
 func (c *STDClientConfig) Client(conn net.Conn) (Conn, error) {
-	if c.recordFragment {
+	if c.fragment || c.recordFragment {
 		conn = tf.NewConn(conn, c.ctx, c.fragment, c.recordFragment, c.fragmentFallbackDelay)
+	}
+	conn, err := applyTLSSpoof(conn, c.spoof, c.spoofMethod)
+	if err != nil {
+		return nil, err
 	}
 	return tls.Client(conn, c.config), nil
 }
 
 func (c *STDClientConfig) Clone() Config {
-	return &STDClientConfig{
+	cloned := &STDClientConfig{
 		ctx:                   c.ctx,
 		config:                c.config.Clone(),
+		serverName:            c.serverName,
+		disableSNI:            c.disableSNI,
+		verifyServerName:      c.verifyServerName,
+		handshakeTimeout:      c.handshakeTimeout,
 		fragment:              c.fragment,
 		fragmentFallbackDelay: c.fragmentFallbackDelay,
 		recordFragment:        c.recordFragment,
+		spoof:                 c.spoof,
+		spoofMethod:           c.spoofMethod,
 	}
+	cloned.SetServerName(cloned.serverName)
+	return cloned
 }
 
 func (c *STDClientConfig) ECHConfigList() []byte {
@@ -75,41 +112,27 @@ func (c *STDClientConfig) SetECHConfigList(EncryptedClientHelloConfigList []byte
 }
 
 func NewSTDClient(ctx context.Context, logger logger.ContextLogger, serverAddress string, options option.OutboundTLSOptions) (Config, error) {
+	return newSTDClient(ctx, logger, serverAddress, options, false)
+}
+
+func newSTDClient(ctx context.Context, logger logger.ContextLogger, serverAddress string, options option.OutboundTLSOptions, allowEmptyServerName bool) (Config, error) {
 	var serverName string
 	if options.ServerName != "" {
 		serverName = options.ServerName
 	} else if serverAddress != "" {
 		serverName = serverAddress
 	}
-	if serverName == "" && !options.Insecure {
-		return nil, E.New("missing server_name or insecure=true")
+	if serverName == "" && !options.Insecure && !allowEmptyServerName {
+		return nil, errMissingServerName
 	}
 
 	var tlsConfig tls.Config
 	tlsConfig.Time = ntp.TimeFuncFromContext(ctx)
 	tlsConfig.RootCAs = adapter.RootPoolFromContext(ctx)
-	if !options.DisableSNI {
-		tlsConfig.ServerName = serverName
-	}
 	if options.Insecure {
 		tlsConfig.InsecureSkipVerify = options.Insecure
 	} else if options.DisableSNI {
 		tlsConfig.InsecureSkipVerify = true
-		tlsConfig.VerifyConnection = func(state tls.ConnectionState) error {
-			verifyOptions := x509.VerifyOptions{
-				Roots:         tlsConfig.RootCAs,
-				DNSName:       serverName,
-				Intermediates: x509.NewCertPool(),
-			}
-			for _, cert := range state.PeerCertificates[1:] {
-				verifyOptions.Intermediates.AddCert(cert)
-			}
-			if tlsConfig.Time != nil {
-				verifyOptions.CurrentTime = tlsConfig.Time()
-			}
-			_, err := state.PeerCertificates[0].Verify(verifyOptions)
-			return err
-		}
 	}
 	if len(options.CertificatePublicKeySHA256) > 0 {
 		if len(options.Certificate) > 0 || options.CertificatePath != "" {
@@ -117,7 +140,7 @@ func NewSTDClient(ctx context.Context, logger logger.ContextLogger, serverAddres
 		}
 		tlsConfig.InsecureSkipVerify = true
 		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-			return verifyPublicKeySHA256(options.CertificatePublicKeySHA256, rawCerts, tlsConfig.Time)
+			return VerifyPublicKeySHA256(options.CertificatePublicKeySHA256, rawCerts)
 		}
 	}
 	if len(options.ALPN) > 0 {
@@ -198,7 +221,30 @@ func NewSTDClient(ctx context.Context, logger logger.ContextLogger, serverAddres
 	} else if len(clientCertificate) > 0 || len(clientKey) > 0 {
 		return nil, E.New("client certificate and client key must be provided together")
 	}
-	var config Config = &STDClientConfig{ctx, &tlsConfig, options.Fragment, time.Duration(options.FragmentFallbackDelay), options.RecordFragment}
+	var handshakeTimeout time.Duration
+	if options.HandshakeTimeout > 0 {
+		handshakeTimeout = options.HandshakeTimeout.Build()
+	} else {
+		handshakeTimeout = C.TCPTimeout
+	}
+	spoof, spoofMethod, err := parseTLSSpoofOptions(serverName, options)
+	if err != nil {
+		return nil, err
+	}
+	var config Config = &STDClientConfig{
+		ctx:                   ctx,
+		config:                &tlsConfig,
+		serverName:            serverName,
+		disableSNI:            options.DisableSNI,
+		verifyServerName:      options.DisableSNI && !options.Insecure,
+		handshakeTimeout:      handshakeTimeout,
+		fragment:              options.Fragment,
+		fragmentFallbackDelay: time.Duration(options.FragmentFallbackDelay),
+		recordFragment:        options.RecordFragment,
+		spoof:                 spoof,
+		spoofMethod:           spoofMethod,
+	}
+	config.SetServerName(serverName)
 	if options.ECH != nil && options.ECH.Enabled {
 		var err error
 		config, err = parseECHClientConfig(ctx, config.(ECHCapableConfig), options)
@@ -220,7 +266,16 @@ func NewSTDClient(ctx context.Context, logger logger.ContextLogger, serverAddres
 	return config, nil
 }
 
-func verifyPublicKeySHA256(knownHashValues [][]byte, rawCerts [][]byte, timeFunc func() time.Time) error {
+func verifyConnection(rootCAs *x509.CertPool, timeFunc func() time.Time, serverName string) func(state tls.ConnectionState) error {
+	return func(state tls.ConnectionState) error {
+		if serverName == "" {
+			return errMissingServerName
+		}
+		return verifySystemTLSPeer(rootCAs, serverName, timeFunc, state.PeerCertificates)
+	}
+}
+
+func VerifyPublicKeySHA256(knownHashValues [][]byte, rawCerts [][]byte) error {
 	leafCertificate, err := x509.ParseCertificate(rawCerts[0])
 	if err != nil {
 		return E.Cause(err, "failed to parse leaf certificate")

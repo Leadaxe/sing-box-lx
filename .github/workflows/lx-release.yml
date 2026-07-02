@@ -16,9 +16,11 @@ on:
 permissions:
   contents: write
 
-# Build tags are owned by Makefile.lx (single source of truth). The desktop build
-# uses its LX_TAGS default; the Android AAR uses build_libbox's own tag set + the
-# lx: features baked into it. `make -f Makefile.lx -s lx-print-tags` prints the set
+# Build tags are owned by Makefile.lx (single source of truth). The desktop/CLI build
+# uses its LX_TAGS default (which KEEPS with_clash_api — CLI binaries are driven by
+# external dashboards over the Clash REST API); the Android AAR uses build_libbox's own
+# tag set (which DROPS with_clash_api — LxBox uses the native CommandClient). The two
+# sets diverge by design. `make -f Makefile.lx -s lx-print-tags` prints the desktop set
 # for the release notes so nothing is duplicated here.
 
 jobs:
@@ -304,18 +306,59 @@ jobs:
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          # Derive the upstream base version for the release notes instead of hardcoding it
+          # (it drifted to alpha.35 across rc.14/15/16 and had to be hand-fixed each time).
+          # Primary source: the nearest reachable upstream alpha tag in HEAD's ancestry
+          # (`git describe`). This reads the commit GRAPH, not commit-message text, so it's
+          # correct even when a merge subject omits the alpha number — e.g. alpha.37 was
+          # merged in a commit titled "Merge upstream/testing (bump version, fix linux ping)"
+          # with no "alpha.37" in it, which the subject-grep fallback misses (shipped rc.17/18
+          # notes as alpha.36). Fallback: scan "Merge upstream" subjects for the highest
+          # alpha.NN. Last resort: a generic label so notes never carry a stale hardcoded version.
+          #
+          # NOTE: actions/checkout only fetches THIS repo's tags, not upstream's. The
+          # v1.14.0-alpha.* tags are SagerNet/sing-box tags, so without this fetch `git
+          # describe` finds nothing in CI and silently drops to the weaker subject-grep (which
+          # is why CI kept resolving alpha.36 while a local clone with upstream tags gets 37).
+          # Fetch the upstream alpha tags first so the primary `git describe` path works.
+          git remote add upstream https://github.com/SagerNet/sing-box.git 2>/dev/null || true
+          git fetch --no-tags upstream 'refs/tags/v1.14.0-alpha.*:refs/tags/v1.14.0-alpha.*' 2>/dev/null || true
+          BASE="$(git describe --tags --match 'v1.14.0-alpha.*' --abbrev=0 HEAD 2>/dev/null || true)"
+          if [ -z "$BASE" ]; then
+            BASE_N="$(git log --grep='Merge upstream' --pretty=%s | grep -oE 'alpha\.[0-9]+' | sed 's/alpha\.//' | sort -n | tail -1)"
+            [ -n "$BASE_N" ] && BASE="v1.14.0-alpha.${BASE_N}"
+          fi
+          [ -z "$BASE" ] && BASE="v1.14.x"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "Resolved upstream base: $BASE"
 
       - name: Checksums
         run: (cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS)
 
       - name: Release notes
         run: |
+          # What's-new for THIS tag comes from docs-lx/lx-changelog.md (single source of
+          # truth, kept per release) — extract the section for this version, between its
+          # "#### vX" header and the next "#### ", into a SEPARATE file. It must NOT be
+          # interpolated through the heredoc below: changelog prose contains backticks and
+          # $(...) that the shell would execute (command injection from doc text). We splice
+          # the file in with sed after the heredoc instead.
+          VERSION="${{ steps.ver.outputs.version }}"
+          awk -v v="#### v${VERSION}" '
+            $0==v {f=1; next} /^#### / {f=0} f' docs-lx/lx-changelog.md > changes.md
+          if [ -z "$(tr -d '[:space:]' < changes.md)" ]; then
+            echo "See [docs-lx/lx-changelog.md](https://github.com/Leadaxe/sing-box-lx/blob/lx-1.14/docs-lx/lx-changelog.md)." > changes.md
+          fi
           cat > notes.md <<EOF
-          **sing-box-lx ${{ steps.ver.outputs.version }}** — a thin downstream of [sing-box](https://github.com/SagerNet/sing-box) (base **v1.13.13**) adding two client-side features.
+          **sing-box-lx ${{ steps.ver.outputs.version }}** — a thin downstream of [sing-box](https://github.com/SagerNet/sing-box) (base **${{ steps.ver.outputs.base }}**, branch \`lx-1.14\`).
 
-          ### Features
-          - **AmneziaWG 2.0** (\`with_awg\`) — live-validated against a real AWG2 server (handshake + keepalive + outbound traffic). Config: a \`wireguard\` endpoint with \`jc/jmin/jmax\`, \`s1\`–\`s4\`, \`h1\`–\`h4\`, \`i1\`–\`i5\`.
-          - **XHTTP** transport (\`with_xhttp\`) — live-validated against a real Xray (3x-ui) server in \`packet-up\`/\`auto\` mode (handshake + DNS + HTTPS + download). Xray-compatible "splithttp"; composes with Reality. (\`stream-one\` has a known framing bug — use \`auto\`.)
+          ### What's new in this release
+          __CHANGES__
+
+          ### Standing features
+          - **AmneziaWG 2.0** (\`with_awg\`) — \`wireguard\` endpoint with \`jc/jmin/jmax\`, \`s1\`–\`s4\`, \`h1\`–\`h4\`, \`i1\`–\`i5\`.
+          - **XHTTP** transport (\`with_xhttp\`) — Xray-compatible "splithttp", composes with Reality (use \`auto\`; \`stream-one\` has a known framing bug).
+          - **CommandClient extensions** (\`with_lx_command\`) — native libbox gRPC parity for the Clash API dropped from the **Android AAR**: URLTestOutbound, GetRules, GetGroups/GetOutbounds, Connection.Detour, SubscribeDNSQueries. (Desktop/CLI binaries keep \`with_clash_api\` for external dashboards.)
 
           ### Binaries
           Drop-in \`sing-box\` for **darwin / windows** × {amd64, arm64}, plus a **Windows 7 (32-bit)** legacy build (\`sing-box-${{ steps.ver.outputs.version }}-windows-386-legacy-windows-7.zip\` — built with a Win7-patched Go; without naive/cronet, which has no windows/386 target).
@@ -330,14 +373,34 @@ jobs:
           ### Build tags
           Desktop binary: \`$(make -f Makefile.lx -s lx-print-tags)\`
 
-          Config reference: [docs/lx-config.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs/lx-config.md).
+          Config reference: [docs-lx/lx-config.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/lx-config.md).
           EOF
+
+          # Splice the changelog section in place of the placeholder. `sed r` inserts the
+          # file verbatim (no shell/sed interpretation of its contents), so backticks and
+          # $(...) in the prose are inert. Then drop the placeholder line itself. Written
+          # via a temp file (not sed -i, whose flag syntax differs BSD vs GNU).
+          sed -e '/__CHANGES__/r changes.md' -e '/__CHANGES__/d' notes.md > notes.final.md
+          mv notes.final.md notes.md
 
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Pre-release tags (-rc.N / -alpha.N / -beta.N) publish as GitHub
+          # pre-releases so an unverified build never becomes "Latest". A plain
+          # vX.Y.Z-lx.N tag (no such suffix) publishes as a normal release.
+          EXTRA=""
+          case "${{ steps.ver.outputs.tag }}" in
+            *-rc.*|*-alpha.*|*-beta.*) EXTRA="--prerelease" ;;
+          esac
+          # --repo is REQUIRED: the base-version step adds an `upstream` remote
+          # (SagerNet/sing-box) so git-describe can see the alpha tags, and without
+          # --repo `gh` resolves the target repo from the remotes and picks upstream
+          # → HTTP 403 (the token has no rights there). Pin it to this repo.
           gh release create "${{ steps.ver.outputs.tag }}" dist/* \
+            --repo "${{ github.repository }}" \
             --title "sing-box-lx ${{ steps.ver.outputs.version }}" \
             --notes-file notes.md \
-            --target "$GITHUB_SHA"
+            --target "$GITHUB_SHA" \
+            $EXTRA

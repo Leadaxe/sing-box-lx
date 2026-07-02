@@ -63,7 +63,16 @@ func init() {
 	sharedFlags = append(sharedFlags, "-ldflags", "-X github.com/sagernet/sing-box/constant.Version="+currentTag+" -X internal/godebug.defaultGODEBUG=multipathtcp=0 -s -w -buildid=  -checklinkname=0")
 	debugFlags = append(debugFlags, "-ldflags", "-X github.com/sagernet/sing-box/constant.Version="+currentTag+" -X internal/godebug.defaultGODEBUG=multipathtcp=0 -checklinkname=0")
 
-	sharedTags = append(sharedTags, "with_gvisor", "with_quic", "with_wireguard", "with_utls", "with_naive_outbound", "with_clash_api", "badlinkname", "tfogo_checklinkname0")
+	// lx: with_usbip (new in 1.14) is intentionally omitted — USB/IP is a server-side
+	// service that contradicts the client-trim philosophy and Android client configs
+	// never reference usbip endpoints (a missing tag only yields a stub-registration
+	// error if a config uses it, which lx configs won't).
+	// lx: with_clash_api is intentionally omitted — LxBox manages the core over the
+	// native libbox CommandClient (group/url-test/select/connections streams), so the
+	// Clash REST API is dead weight on the client. Without the tag a config referencing
+	// experimental.clash_api fails fast with "clash api is not included in this build,
+	// rebuild with -tags with_clash_api" (no silent fallback). lx configs won't.
+	sharedTags = append(sharedTags, "with_gvisor", "with_quic", "with_wireguard", "with_utls", "with_naive_outbound", "badlinkname", "tfogo_checklinkname0")
 	// lx:begin awg,xhttp
 	// Promote the two downstream features into the Android AAR. They flow into both
 	// the main (SDK23) and legacy (SDK21) variants, since legacy derives from
@@ -71,6 +80,25 @@ func init() {
 	// rejects any wireguard-with-AWG or xhttp config at runtime ("support not built").
 	sharedTags = append(sharedTags, "with_xhttp", "with_awg")
 	// lx:end awg,xhttp
+	// lx:begin lx_command
+	// SPEC 014 — bake the libbox command-protocol extensions (URLTestOutbound, GetRules)
+	// into the AAR. Without the tag the generated RPCs are still registered but the
+	// daemon answers codes.Unimplemented (started_service_command_lx_stub.go), so LxBox's
+	// per-node delay test and rule-table screen would fail. CONSTITUTION §3.6 pt.6.
+	sharedTags = append(sharedTags, "with_lx_command")
+	// lx:end lx_command
+	// lx:begin idle-suspend
+	// SPEC 020 — idle-suspend of unreachable+idle WG/AWG endpoints (device.Down),
+	// a MOBILE-ONLY power/RAM feature: it frees the recv-worker bufsArrs, which are
+	// ~8 MB each only where BatchSize=128 (Android/Linux). It ships in the AAR so a
+	// LxBox config carrying route.lx_idle_suspend works; without the tag the core
+	// rejects that option at start ("rebuild with -tags with_lx_idle_suspend"), so
+	// the desktop/CLI LX_TAGS (Makefile.lx) deliberately OMIT it. On iOS BatchSize=1
+	// makes bufsArrs tiny, so the tag is neutral there (harmless if the AAR path is
+	// later reused for a Darwin mobile target); it is off unless the config sets the
+	// option anyway. Verified on-device: 8 endpoints suspended → 134 MB freed.
+	sharedTags = append(sharedTags, "with_lx_idle_suspend")
+	// lx:end idle-suspend
 	darwinTags = append(darwinTags, "with_dhcp", "grpcnotrace")
 	// memcTags = append(memcTags, "with_tailscale")
 	// lx:begin no-tailscale
@@ -217,6 +245,9 @@ func buildApple() {
 		"-target", bindTarget,
 		"-libname=box",
 		"-tags-not-macos=with_low_memory",
+		"-iosversion=15.0",
+		"-macosversion=13.0",
+		"-tvosversion=17.0",
 	}
 	//if !withTailscale {
 	//	args = append(args, "-tags-macos="+strings.Join(memcTags, ","))

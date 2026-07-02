@@ -2,6 +2,246 @@
 icon: material/arrange-bring-forward
 ---
 
+## 1.14.0
+
+### 迁移内联 ACME 到证书提供者
+
+TLS 中的内联 ACME 选项已废弃，且可以被证书提供者替代。
+
+`tls.acme` 的大多数字段都可以原样迁移到 ACME 证书提供者中。
+sing-box 1.14.0 新增字段参阅 [ACME](/zh/configuration/shared/certificate-provider/acme/) 页面。
+
+!!! info "参考"
+
+    [TLS](/zh/configuration/shared/tls/#certificate_provider) /
+    [证书提供者](/zh/configuration/shared/certificate-provider/)
+
+=== ":material-card-remove: 弃用的"
+
+    ```json
+    {
+      "inbounds": [
+        {
+          "type": "trojan",
+          "tls": {
+            "enabled": true,
+            "acme": {
+              "domain": ["example.com"],
+              "email": "admin@example.com"
+            }
+          }
+        }
+      ]
+    }
+    ```
+
+=== ":material-card-multiple: 内联"
+
+    ```json
+    {
+      "inbounds": [
+        {
+          "type": "trojan",
+          "tls": {
+            "enabled": true,
+            "certificate_provider": {
+              "type": "acme",
+              "domain": ["example.com"],
+              "email": "admin@example.com"
+            }
+          }
+        }
+      ]
+    }
+    ```
+
+=== ":material-card-multiple: 共享"
+
+    ```json
+    {
+      "certificate_providers": [
+        {
+          "type": "acme",
+          "tag": "my-cert",
+          "domain": ["example.com"],
+          "email": "admin@example.com"
+        }
+      ],
+      "inbounds": [
+        {
+          "type": "trojan",
+          "tls": {
+            "enabled": true,
+            "certificate_provider": "my-cert"
+          }
+        }
+      ]
+    }
+    ```
+
+### 迁移地址筛选字段到响应匹配
+
+旧版地址筛选字段（不使用 `match_response` 的 `ip_cidr`、`ip_is_private`）已废弃，
+旧版 `rule_set_ip_cidr_accept_empty` DNS 规则项也已废弃。当旧版 DNS 模式被禁用时，
+引用仅包含 `ip_cidr` 项的规则集（例如 GeoIP 规则集）且未设置 `match_response` 的 DNS 规则
+也将在启动时被拒绝。
+
+在 sing-box 1.14.0 中，请使用 [`evaluate`](/zh/configuration/dns/rule_action/#evaluate) 动作
+获取 DNS 响应，然后通过 `match_response` 显式匹配。
+
+!!! info "参考"
+
+    [DNS 规则](/zh/configuration/dns/rule/) /
+    [DNS 规则动作](/zh/configuration/dns/rule_action/#evaluate)
+
+=== ":material-card-remove: 弃用的"
+
+    ```json
+    {
+      "dns": {
+        "rules": [
+          {
+            "rule_set": "geoip-cn",
+            "action": "route",
+            "server": "local"
+          },
+          {
+            "action": "route",
+            "server": "remote"
+          }
+        ]
+      }
+    }
+    ```
+
+=== ":material-card-multiple: 新的"
+
+    ```json
+    {
+      "dns": {
+        "rules": [
+          {
+            "action": "evaluate",
+            "server": "remote"
+          },
+          {
+            "match_response": true,
+            "rule_set": "geoip-cn",
+            "action": "route",
+            "server": "local"
+          },
+          {
+            "action": "route",
+            "server": "remote"
+          }
+        ]
+      }
+    }
+    ```
+
+### 迁移 independent DNS cache
+
+DNS 缓存现在始终按传输名称分离，使 `independent_cache` 不再需要。
+直接移除该字段即可。
+
+!!! info "参考"
+
+    [DNS](/zh/configuration/dns/)
+
+=== ":material-card-remove: 弃用的"
+
+    ```json
+    {
+      "dns": {
+        "independent_cache": true
+      }
+    }
+    ```
+
+=== ":material-card-multiple: 新的"
+
+    ```json
+    {
+      "dns": {}
+    }
+    ```
+
+### 迁移 store_rdrc
+
+`store_rdrc` 已废弃，且可以被 `store_dns` 替代，
+后者将完整的 DNS 缓存持久化到缓存文件中。
+
+!!! info "参考"
+
+    [缓存文件](/zh/configuration/experimental/cache-file/)
+
+=== ":material-card-remove: 弃用的"
+
+    ```json
+    {
+      "experimental": {
+        "cache_file": {
+          "enabled": true,
+          "store_rdrc": true
+        }
+      }
+    }
+    ```
+
+=== ":material-card-multiple: 新的"
+
+    ```json
+    {
+      "experimental": {
+        "cache_file": {
+          "enabled": true,
+          "store_dns": true
+        }
+      }
+    }
+    ```
+
+### DNS 规则中的 ip_version 和 query_type 行为更改
+
+在 sing-box 1.14.0 中，DNS 规则中的
+[`ip_version`](/zh/configuration/dns/rule/#ip_version) 和
+[`query_type`](/zh/configuration/dns/rule/#query_type)，以及被引用规则集中的
+[`query_type`](/zh/configuration/rule-set/headless-rule/#query_type)，
+行为有两项更改。
+
+其一，这些字段现在对每一次 DNS 规则评估都会生效。此前它们仅对来自客户端的 DNS 查询
+（例如来自 DNS 入站或被 `tun` 截获的查询）生效，当 DNS 规则被未指定具体 DNS 服务器的
+内部域名解析匹配时，会被静默忽略。此类内部解析包括：
+
+- 未设置 `server` 的 [`resolve`](/zh/configuration/route/rule_action/#resolve) 路由规则动作。
+- 通过 `direct` 出站路由到域名目标的 ICMP 流量。
+- 作为出站使用的 [WireGuard](/zh/configuration/endpoint/wireguard/) 或
+  [Tailscale](/zh/configuration/endpoint/tailscale/) 端点在解析自身目标地址时。
+- [SOCKS4](/zh/configuration/outbound/socks/) 出站，因为协议本身不支持域名，
+  必须在本地解析目标。
+- [DERP](/zh/configuration/service/derp/) 的 `bootstrap-dns` 端点，以及
+  [`resolved`](/zh/configuration/service/resolved/) 服务在解析主机名或 SRV 目标时。
+
+通过拨号字段中的
+[`domain_resolver`](/zh/configuration/shared/dial/#domain_resolver)、
+路由选项中的 [`default_domain_resolver`](/zh/configuration/route/#default_domain_resolver)，
+或 DNS 规则动作与 `resolve` 路由规则动作上显式的 `server` 指定具体 DNS 服务器的
+解析，不会经过 DNS 规则匹配，不受此次更改影响。
+
+其二，设置了 `ip_version` 或 `query_type` 的 DNS 规则，或引用了包含 `query_type` 的
+规则集的 DNS 规则，在同一 DNS 配置中不再能与旧版地址筛选字段 (DNS 规则)、旧版
+DNS 规则动作 `strategy` 选项，或旧版 `rule_set_ip_cidr_accept_empty` DNS 规则项共存。
+此类配置将在启动时被拒绝。如需将这些字段与基于地址的筛选组合，请通过
+[`evaluate`](/zh/configuration/dns/rule_action/#evaluate) 动作和
+[`match_response`](/zh/configuration/dns/rule/#match_response) 迁移到响应匹配，
+参阅 [迁移地址筛选字段到响应匹配](#迁移地址筛选字段到响应匹配)。
+
+!!! info "参考"
+
+    [DNS 规则](/zh/configuration/dns/rule/) /
+    [Headless 规则](/zh/configuration/rule-set/headless-rule/) /
+    [路由规则动作](/zh/configuration/route/rule_action/#resolve)
+
 ## 1.12.0
 
 ### 迁移到新的 DNS 服务器格式

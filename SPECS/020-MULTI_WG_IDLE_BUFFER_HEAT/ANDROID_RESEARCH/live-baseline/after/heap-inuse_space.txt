@@ -1,0 +1,22 @@
+File: memfd:jit-zygote-cache
+Type: inuse_space
+Time: 2026-07-01 09:41:05 MSK
+Showing nodes accounting for 120.82MB, 95.42% of 126.63MB total
+Dropped 44 nodes (cum <= 0.63MB)
+Showing top 15 nodes out of 71
+      flat  flat%   sum%        cum   cum%
+  107.98MB 85.27% 85.27%   107.98MB 85.27%  github.com/sagernet/wireguard-go/device.(*Device).PopulatePools.func3
+    4.07MB  3.21% 88.49%     4.07MB  3.21%  github.com/sagernet/sing/contrab/freelru.NewShardedWithSize[go.shape.struct { Source net/netip.Addr; Destination net/netip.Addr },go.shape.interface { Close error; IsClosed bool; WritePacket error }]
+    1.95MB  1.54% 90.02%     1.95MB  1.54%  github.com/sagernet/sing/common/domain.readByteSlice
+    1.75MB  1.38% 91.40%     1.75MB  1.38%  github.com/sagernet/sing/contrab/freelru.NewShardedWithSize[go.shape.struct { net/netip.ip net/netip.Addr; net/netip.port uint16 },go.shape.*github.com/sagernet/sing/common/udpnat2.natConn]
+    1.50MB  1.19% 92.59%     1.50MB  1.19%  runtime.allocm
+    1.08MB  0.85% 93.44%     1.08MB  0.85%  github.com/sagernet/sing-box/common/srs.readIPSet
+       1MB  0.79% 94.23%     2.50MB  1.98%  crypto/x509.parseCertificate
+       1MB  0.79% 95.02%        1MB  0.79%  math/big.nat.make (inline)
+    0.50MB   0.4% 95.42%     1.53MB  1.21%  github.com/sagernet/wireguard-go/device.NewDevice
+         0     0% 95.42%    15.65MB 12.36%  cgoexp_c2844bda853d_proxylibbox_CommandServer_StartOrReloadService
+         0     0% 95.42%     2.50MB  1.98%  crypto/x509.ParseCertificates
+         0     0% 95.42%        1MB  0.79%  crypto/x509.parsePublicKey
+         0     0% 95.42%     2.64MB  2.09%  github.com/sagernet/sing-box.(*Box).Start
+         0     0% 95.42%     2.03MB  1.61%  github.com/sagernet/sing-box.(*Box).preStart
+         0     0% 95.42%     2.64MB  2.09%  github.com/sagernet/sing-box.(*Box).start

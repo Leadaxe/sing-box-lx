@@ -1,0 +1,12 @@
+File: memfd:jit-zygote-cache
+Type: inuse_space
+Time: 2026-07-01 04:01:59 MSK
+Showing nodes accounting for 230.67MB, 99.11% of 232.75MB total
+Dropped 35 nodes (cum <= 1.16MB)
+      flat  flat%   sum%        cum   cum%
+  223.93MB 96.21% 96.21%   223.93MB 96.21%  github.com/sagernet/wireguard-go/device.(*Device).PopulatePools.func3
+    4.07MB  1.75% 97.96%     4.07MB  1.75%  github.com/sagernet/sing/contrab/freelru.NewShardedWithSize[go.shape.struct { Source net/netip.Addr; Destination net/netip.Addr },go.shape.interface { Close error; IsClosed bool; WritePacket error }]
+    1.50MB  0.65% 98.61%     1.50MB  0.65%  runtime.allocm
+    1.16MB   0.5% 99.11%     1.16MB   0.5%  github.com/sagernet/sing/contrab/freelru.NewShardedWithSize[go.shape.struct { net/netip.ip net/netip.Addr; net/netip.port uint16 },go.shape.*github.com/sagernet/sing/common/udpnat2.natConn]
+         0     0% 99.11%     6.31MB  2.71%  cgoexp_c2844bda853d_proxylibbox_CommandServer_StartOrReloadService
+         0     0% 99.11%     5.70MB  2.45%  github.com/sagernet/sing-box.New

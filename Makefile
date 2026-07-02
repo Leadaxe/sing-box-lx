@@ -108,29 +108,27 @@ publish_android:
 build_ios:
 	cd ../sing-box-for-apple && \
 	rm -rf build/SFI.xcarchive && \
-	xcodebuild clean -scheme SFI && \
-	xcodebuild archive -scheme SFI -configuration Release -destination 'generic/platform=iOS' -archivePath build/SFI.xcarchive -allowProvisioningUpdates | xcbeautify | grep -A 10 -e "Archive Succeeded" -e "ARCHIVE FAILED" -e "❌"
+	xcodebuild clean -scheme SFI -derivedDataPath build/SFI.dd && \
+	xcodebuild archive -scheme SFI -configuration Release -destination 'generic/platform=iOS' -archivePath build/SFI.xcarchive -derivedDataPath build/SFI.dd -allowProvisioningUpdates | xcbeautify | grep -A 10 -e "Archive Succeeded" -e "ARCHIVE FAILED" -e "❌"
 
 upload_ios_app_store:
 	cd ../sing-box-for-apple && \
 	xcodebuild -exportArchive -archivePath build/SFI.xcarchive -exportOptionsPlist SFI/Upload.plist -allowProvisioningUpdates
 
-export_ios_ipa:
-	cd ../sing-box-for-apple && \
-	xcodebuild -exportArchive -archivePath build/SFI.xcarchive -exportOptionsPlist SFI/Export.plist -allowProvisioningUpdates -exportPath build/SFI && \
-	cp build/SFI/sing-box.ipa dist/SFI.ipa
+build_ios_deb:
+	$(MAKE) -C ../sing-box-for-apple build_ios_deb
 
-upload_ios_ipa:
-	cd dist && \
-	cp SFI.ipa "SFI-${VERSION}.ipa" && \
-	ghr --replace --draft --prerelease "v${VERSION}" "SFI-${VERSION}.ipa"
+upload_ios_deb:
+	ghr --replace --draft --prerelease "v${VERSION}" ../sing-box-for-apple/build/jailbreak/"SFI-${VERSION}-iphoneos-arm64.deb"
 
 release_ios: build_ios upload_ios_app_store
+
+release_ios_deb: build_ios_deb upload_ios_deb
 
 build_macos:
 	cd ../sing-box-for-apple && \
 	rm -rf build/SFM.xcarchive && \
-	xcodebuild archive -scheme SFM -configuration Release -archivePath build/SFM.xcarchive -allowProvisioningUpdates | xcbeautify | grep -A 10 -e "Archive Succeeded" -e "ARCHIVE FAILED" -e "❌"
+	xcodebuild archive -scheme SFM -configuration Release -archivePath build/SFM.xcarchive -derivedDataPath build/SFM.dd -allowProvisioningUpdates | xcbeautify | grep -A 10 -e "Archive Succeeded" -e "ARCHIVE FAILED" -e "❌"
 
 upload_macos_app_store:
 	cd ../sing-box-for-apple && \
@@ -199,7 +197,7 @@ replace_macos_standalone: build_macos_pkg notarize_macos_pkg upload_macos_pkg up
 build_tvos:
 	cd ../sing-box-for-apple && \
 	rm -rf build/SFT.xcarchive && \
-	xcodebuild archive -scheme SFT -configuration Release -archivePath build/SFT.xcarchive -allowProvisioningUpdates | xcbeautify | grep -A 10 -e "Archive Succeeded" -e "ARCHIVE FAILED" -e "❌"
+	xcodebuild archive -scheme SFT -configuration Release -archivePath build/SFT.xcarchive -derivedDataPath build/SFT.dd -allowProvisioningUpdates | xcbeautify | grep -A 10 -e "Archive Succeeded" -e "ARCHIVE FAILED" -e "❌"
 
 upload_tvos_app_store:
 	cd ../sing-box-for-apple && \
@@ -264,8 +262,8 @@ lib_apple_new:
 	$(SING_FFI) generate --config $(LIBBOX_FFI_CONFIG) --platform-type apple
 
 lib_install:
-	go install -v github.com/sagernet/gomobile/cmd/gomobile@v0.1.12
-	go install -v github.com/sagernet/gomobile/cmd/gobind@v0.1.12
+	go install -v github.com/sagernet/gomobile/cmd/gomobile@v0.1.13
+	go install -v github.com/sagernet/gomobile/cmd/gobind@v0.1.13
 
 docs:
 	venv/bin/mkdocs serve

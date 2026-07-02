@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -23,6 +25,7 @@ import (
 )
 
 var _ adapter.Router = (*Router)(nil)
+var _ adapter.ReachabilityInvalidator = (*Router)(nil) // lx: SPEC 020 idle-suspend
 
 type Router struct {
 	ctx               context.Context
@@ -33,20 +36,41 @@ type Router struct {
 	dnsTransport      adapter.DNSTransportManager
 	connection        adapter.ConnectionManager
 	network           adapter.NetworkManager
+	httpClientManager adapter.HTTPClientManager
 	rules             []adapter.Rule
 	needFindProcess   bool
+	needFindNeighbor  bool
+	leaseFiles        []string
 	ruleSets          []adapter.RuleSet
 	ruleSetMap        map[string]adapter.RuleSet
+	ruleSetUpdater    *R.RuleSetUpdater
 	processSearcher   process.Searcher
 	processCache      freelru.Cache[processCacheKey, processCacheEntry]
+	neighborResolver  adapter.NeighborResolver
 	pauseManager      pause.Manager
 	trackers          []adapter.ConnectionTracker
 	platformInterface adapter.PlatformInterface
 	started           bool
+	// lx:begin idle-suspend
+	// SPEC 020. idleSuspend is the configured threshold (0 = feature off). idleStop
+	// is closed by Close() to stop the idle tick goroutine. reachCache holds the
+	// event-driven reachable set (recomputed only when reachDirty is set by
+	// InvalidateReachability — selector switch / urltest auto-switch / pool rebuild
+	// / reload); reachMu guards publishing it. reachDirty starts true so the first
+	// tick computes it. endpoint is the endpoint manager: WG/AWG endpoints live
+	// there (NOT in the outbound manager — outbound.Outbounds() never lists them),
+	// so the idle tick must iterate it to find IdleSuspendable endpoints.
+	idleSuspend time.Duration
+	idleStop    chan struct{}
+	reachMu     sync.RWMutex
+	reachCache  map[string]bool
+	reachDirty  atomic.Bool
+	endpoint    adapter.EndpointManager
+	// lx:end idle-suspend
 }
 
 func NewRouter(ctx context.Context, logFactory log.Factory, options option.RouteOptions, dnsOptions option.DNSOptions) *Router {
-	return &Router{
+	router := &Router{
 		ctx:               ctx,
 		logger:            logFactory.NewLogger("router"),
 		inbound:           service.FromContext[adapter.InboundManager](ctx),
@@ -55,16 +79,27 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		dnsTransport:      service.FromContext[adapter.DNSTransportManager](ctx),
 		connection:        service.FromContext[adapter.ConnectionManager](ctx),
 		network:           service.FromContext[adapter.NetworkManager](ctx),
+		httpClientManager: service.FromContext[adapter.HTTPClientManager](ctx),
 		rules:             make([]adapter.Rule, 0, len(options.Rules)),
 		ruleSetMap:        make(map[string]adapter.RuleSet),
 		needFindProcess:   hasRule(options.Rules, isProcessRule) || hasDNSRule(dnsOptions.Rules, isProcessDNSRule) || options.FindProcess,
+		needFindNeighbor:  hasRule(options.Rules, isNeighborRule) || hasDNSRule(dnsOptions.Rules, isNeighborDNSRule) || hasLocalNeighborDNSServer(dnsOptions.Servers) || options.FindNeighbor,
+		leaseFiles:        options.DHCPLeaseFiles,
 		pauseManager:      service.FromContext[pause.Manager](ctx),
 		platformInterface: service.FromContext[adapter.PlatformInterface](ctx),
+		idleSuspend:       time.Duration(options.LXIdleSuspend),              // lx: SPEC 020 (0 = off)
+		endpoint:          service.FromContext[adapter.EndpointManager](ctx), // lx: SPEC 020 — idle tick iterates endpoints
 	}
+	router.reachDirty.Store(true) // lx: SPEC 020 — first tick computes the reachable set
+	return router
 }
 
 func (r *Router) Initialize(rules []option.Rule, ruleSets []option.RuleSet) error {
 	for i, options := range rules {
+		err := R.ValidateNoNestedRuleActions(options)
+		if err != nil {
+			return E.Cause(err, "parse rule[", i, "]")
+		}
 		rule, err := R.NewRule(r.ctx, r.logger, options, false)
 		if err != nil {
 			return E.Cause(err, "parse rule[", i, "]")
@@ -88,16 +123,46 @@ func (r *Router) Initialize(rules []option.Rule, ruleSets []option.RuleSet) erro
 func (r *Router) Start(stage adapter.StartStage) error {
 	monitor := taskmonitor.New(r.logger, C.StartTimeout)
 	switch stage {
+	case adapter.StartStateInitialize:
+		if r.needFindNeighbor {
+			if r.platformInterface != nil && r.platformInterface.UsePlatformNeighborResolver() {
+				monitor.Start("initialize neighbor resolver")
+				resolver := newPlatformNeighborResolver(r.logger, r.platformInterface)
+				err := resolver.Start()
+				monitor.Finish()
+				if err != nil {
+					r.logger.Error(E.Cause(err, "start neighbor resolver"))
+				} else {
+					r.neighborResolver = resolver
+				}
+			} else {
+				monitor.Start("initialize neighbor resolver")
+				resolver, err := newNeighborResolver(r.logger, r.leaseFiles)
+				monitor.Finish()
+				if err != nil {
+					if err != os.ErrInvalid {
+						r.logger.Error(E.Cause(err, "create neighbor resolver"))
+					}
+				} else {
+					err = resolver.Start()
+					if err != nil {
+						r.logger.Error(E.Cause(err, "start neighbor resolver"))
+					} else {
+						r.neighborResolver = resolver
+					}
+				}
+			}
+		}
 	case adapter.StartStateStart:
-		var cacheContext *adapter.HTTPStartContext
+		var startContext *adapter.HTTPStartContext
 		if len(r.ruleSets) > 0 {
 			monitor.Start("initialize rule-set")
-			cacheContext = adapter.NewHTTPStartContext(r.ctx)
+			startContext = adapter.NewHTTPStartContext()
 			var ruleSetStartGroup task.Group
 			for i, ruleSet := range r.ruleSets {
 				ruleSetInPlace := ruleSet
 				ruleSetStartGroup.Append0(func(ctx context.Context) error {
-					err := ruleSetInPlace.StartContext(ctx, cacheContext)
+					err := ruleSetInPlace.StartContext(ctx, startContext)
 					if err != nil {
 						return E.Cause(err, "initialize rule-set[", i, "]")
 					}
@@ -112,9 +177,10 @@ func (r *Router) Start(stage adapter.StartStage) error {
 				return err
 			}
 		}
-		if cacheContext != nil {
-			cacheContext.Close()
+		if startContext != nil {
+			startContext.Close()
 		}
+		r.ruleSetUpdater = R.NewRuleSetUpdater(r.ctx, r.ruleSets)
 		r.network.Initialize(r.ruleSets)
 		needFindProcess := r.needFindProcess
 		for _, ruleSet := range r.ruleSets {
@@ -160,16 +226,13 @@ func (r *Router) Start(stage adapter.StartStage) error {
 				return E.Cause(err, "initialize rule[", i, "]")
 			}
 		}
-		for _, ruleSet := range r.ruleSets {
-			monitor.Start("post start rule_set[", ruleSet.Name(), "]")
-			err := ruleSet.PostStart()
-			monitor.Finish()
-			if err != nil {
-				return E.Cause(err, "post start rule_set[", ruleSet.Name(), "]")
-			}
+		if r.ruleSetUpdater != nil {
+			r.ruleSetUpdater.Start()
 		}
 		r.started = true
-		return nil
+		// lx: SPEC 020 — start the idle-suspend tick (with_lx_idle_suspend); the
+		// no-tag stub errors here if lx_idle_suspend is set without the build tag.
+		return r.startIdleSuspend()
 	case adapter.StartStateStarted:
 		for _, ruleSet := range r.ruleSets {
 			ruleSet.Cleanup()
@@ -182,10 +245,25 @@ func (r *Router) Start(stage adapter.StartStage) error {
 func (r *Router) Close() error {
 	monitor := taskmonitor.New(r.logger, C.StopTimeout)
 	var err error
+	r.stopIdleSuspend() // lx: SPEC 020 — stop the idle tick before tearing down
+	if r.neighborResolver != nil {
+		monitor.Start("close neighbor resolver")
+		err = E.Append(err, r.neighborResolver.Close(), func(closeErr error) error {
+			return E.Cause(closeErr, "close neighbor resolver")
+		})
+		monitor.Finish()
+	}
 	for i, rule := range r.rules {
 		monitor.Start("close rule[", i, "]")
 		err = E.Append(err, rule.Close(), func(err error) error {
 			return E.Cause(err, "close rule[", i, "]")
+		})
+		monitor.Finish()
+	}
+	if r.ruleSetUpdater != nil {
+		monitor.Start("close rule-set updater")
+		err = E.Append(err, r.ruleSetUpdater.Close(), func(err error) error {
+			return E.Cause(err, "close rule-set updater")
 		})
 		monitor.Finish()
 	}
@@ -223,7 +301,15 @@ func (r *Router) NeedFindProcess() bool {
 	return r.needFindProcess
 }
 
+func (r *Router) NeedFindNeighbor() bool {
+	return r.needFindNeighbor
+}
+
+func (r *Router) NeighborResolver() adapter.NeighborResolver {
+	return r.neighborResolver
+}
+
 func (r *Router) ResetNetwork() {
-	r.network.ResetNetwork()
+	r.httpClientManager.ResetNetwork()
 	r.dns.ResetNetwork()
 }

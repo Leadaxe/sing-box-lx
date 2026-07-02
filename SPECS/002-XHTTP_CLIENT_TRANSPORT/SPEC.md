@@ -1,74 +1,187 @@
-# SPEC: 002 — XHTTP_CLIENT_TRANSPORT
+# SPEC: 002 — XHTTP_CLIENT_TRANSPORT (full)
 
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) |
-| Статус | C (complete) |
+| Статус | A (active) — расширение до полной клиентской поддержки |
+| База | upstream v1.14.0-alpha.* (ветка `lx-1.14`) |
+| Реализация | ветка `lx-1.14-xhttp-full` |
+| История | v1 (минимальный lean-native клиент, Complete) → см. [SPEC_v1.md](SPEC_v1.md) |
 
-Добавить **клиентский XHTTP-транспорт** (совместимость с Xray XHTTP) для VLESS/VMess/Trojan, встроив его через **registry-рефактор** диспетчера v2ray-транспортов, за build-тегом `with_xhttp`.
+Расширить **клиентский XHTTP-транспорт** (`transport/v2rayxhttp`, build-тег `with_xhttp`) до
+**полной клиентской поддержки** расширенных параметров Xray XHTTP / sing-box-extended: настраиваемые
+placement'ы session/seq/uplink-data, ключи, метод upload и полноценный **X-Padding obfs-режим**
+(включая `tokenish`/HPACK). Сохранить байт-в-байт текущее (лайв-проверенное) поведение по умолчанию.
+
+> **Карта параметров** (что каждое поле делает в Xray, клиент/сервер, дефолты, on-wire) вынесена в
+> отдельный документ: **[PARAM_MAP.md](PARAM_MAP.md)** — читать его первым.
 
 ---
 
 ## 1. Проблема / контекст
 
-- Upstream sing-box XHTTP не поддерживает и не планирует ([#3550](https://github.com/SagerNet/sing-box/issues/3550)). Сервера на Xray всё чаще только XHTTP (после депрекации части транспортов в Xray).
-- В sing-box диспетчер v2ray-транспортов — **хардкод-`switch`** по `options.Type` в `transport/v2ray/transport.go`. Добавлять `case` на каждый ребейз — точка постоянных конфликтов.
+- v1 (см. [SPEC_v1.md](SPEC_v1.md)) дал рабочий lean-native клиент с 6 полями (`host`, `path`, `mode`,
+  `headers`, `x_padding_bytes`, `no_grpc_header`) и проверенным коннектом к Xray/3x-ui (packet-up/auto).
+- Xray и форки (sing-box-extended, NekoBox+) ушли далеко вперёд: добавлены настраиваемые **placement'ы**
+  (path/query/header/cookie/body) для session id, seq, payload; **obfs-режим X-Padding** с произвольными
+  ключами/заголовками и алгоритмами (`repeat-x`/`tokenish`); метод upload; tuning packet-up. Сервера,
+  настроенные на эти режимы, нашим v1-клиентом **не обслуживаются**.
+- Цель — закрыть **весь клиентский** surface, оставаясь client-only и не вендоря Xray-внутренности.
 
 ## 2. Цель
 
-VLESS/VMess/Trojan outbound с `transport.type = "xhttp"` поднимают рабочее соединение к XHTTP-серверу Xray, в т.ч. поверх **TLS/Reality**. Без тега `with_xhttp` тип `xhttp` отвергается с понятной ошибкой.
+VLESS/VMess/Trojan outbound с `transport.type=xhttp` поднимает рабочее соединение к XHTTP-серверу Xray
+в **любой** из поддерживаемых сервером клиентских конфигураций placement/obfs, поверх TLS/Reality.
+Дефолты идентичны v1 (нулевая регрессия). Без `with_xhttp` тип `xhttp` отвергается как прежде.
 
-## 3. Требования
+## 3. Аудит (основание спеки)
 
-### 3.1 Registry-рефактор диспетчера (точка касания upstream)
-- Превратить выбор клиентского транспорта в **реестр**: `transport.RegisterClient(type, ClientConstructor)` + `map[string]ClientConstructor`, заполняемый при `init()`.
-- Встроенные транспорты (`http`, `ws`, `quic`, `grpc`, `httpupgrade`) регистрируются как раньше (поведение идентично upstream).
-- `NewClientTransport` ищет конструктор в реестре вместо `switch` (поведение для известных типов — без изменений; для неизвестных — та же ошибка `unknown transport type`).
-- **Серверный** диспетчер (`NewServerTransport`) — **не трогаем** (scope client-only); xhttp-сервер отложен.
+Глубокий аудит исходников **XTLS/Xray-core** (`transport/internet/splithttp/*`, `main`) и
+**shtorm-7/sing-box-extended** (`transport/v2rayxhttp/*`, `option/v2ray_transport.go`, `extended`),
+с adversarial-верификацией каждого факта против исходника. Полные карточки — в [PARAM_MAP.md](PARAM_MAP.md).
 
-### 3.2 Пакет `transport/v2rayxhttp` (новый код)
-- Клиентская реализация XHTTP (референс — [`hiddify/hiddify-sing-box`](https://github.com/hiddify/hiddify-sing-box) `transport/v2rayxhttp`, сверка параметров с Xray-core).
-- Поддержать режимы Xray: `auto`, `packet-up`, `stream-up`, `stream-one`; параметры `path`, `host`, `headers`, и padding-расширения (`x_padding_bytes` и т.п.) — в объёме, нужном для совместимости.
-- Регистрация конструктора через `init()` в файле за `//go:build with_xhttp`.
+**Итог по 16 полям из списка NekoBox+:**
 
-### 3.3 Опции и константа
-- `constant/v2ray.go`: `V2RayTransportTypeXHTTP = "xhttp"` (внутри `// lx:` маркера).
-- `option/v2ray_transport.go`: поле `XHTTPOptions XHTTPOptions` в `_V2RayTransportOptions` + тип `XHTTPOptions` (в новом файле `option/v2ray_xhttp.go`, чтобы минимизировать дифф основного файла; в `_V2RayTransportOptions` — одна `// lx:` строка).
+- **12 клиентских** (реализуем): `sessionPlacement`(+`sessionKey`), `seqPlacement`(+`seqKey`),
+  `uplinkDataPlacement`, `uplinkDataKey`, `uplinkChunkSize`, `uplinkHTTPMethod`, `xPaddingObfsMode`,
+  `xPaddingKey`, `xPaddingHeader`, `xPaddingPlacement`, `xPaddingMethod`.
+- **4 server-only** (НЕ реализуем, accept-but-ignore): `serverMaxHeaderBytes`, `noSSEHeader`,
+  `scMaxBufferedPosts`, `scStreamUpServerSecs`. Ни одно не читается клиентом; клиент даже не инспектирует
+  `Content-Type` ответа.
+- **+2 клиентских tuning-поля** вне списка, которые клиент реально читает в packet-up:
+  `scMaxEachPostBytes`, `scMinPostsIntervalMs` — добавляем для полноты.
 
-### 3.4 TLS/Reality
-- `tlsConfig` прокидывается в конструктор как у прочих транспортов → связка **XHTTP + Reality** работает без доп. кода. (XHTTP + XTLS-Vision несовместимы — ограничение протокола, не наше.)
+**Ключевой факт совместимости:** текущий v1-код = дефолтный Xray (obfs off → x_padding в Referer;
+session/seq в path; payload в body; метод POST). Расширение — это **добавление альтернативных режимов**,
+а не переписывание. Все новые поля имеют дефолты, сохраняющие текущее поведение.
 
-## 4. Критерии приёмки
+**Коррекции верификации, влияющие на реализацию:**
+1. `Access-Control-Allow-Credentials` **не выставляется** нигде (cookie/query placement его не ставят).
+2. Mode-gate'ы (`header`/`cookie` uplink только в packet-up; `GET` метод только в packet-up) живут **только**
+   в extended option-слое — переносим как нашу валидацию. **Исключение (lx):** `GET` вне packet-up — НЕ
+   ошибка, а **soft-fallback на `POST` + `WARN`** (чтобы одна кривая нода подписки не роняла весь конфиг);
+   `header`/`cookie` uplink вне packet-up остаётся жёсткой ошибкой (нет безопасного дефолта). См. журнал.
+3. Upper-casing `uplink_http_method` — только в extended option-слое.
+4. Серверный keepalive-padding гейтится `(legacyMarker || obfsAccepted) && scStreamUpServerSecs.To>0` —
+   нас (клиент) не касается, но учтено в карте.
 
-- `sing-box check -c` принимает VLESS + `transport.type=xhttp` + `tls.reality`.
-- Реальный коннект к XHTTP-серверу Xray (ручная проверка), хотя бы `mode=stream-one` и `packet-up`.
-- Сборка **без** `with_xhttp`: конфиг с `xhttp` → ошибка `unknown transport type: xhttp` (или эквивалент реестра).
-- `go test ./transport/...`, `go vet ./...` зелёные.
-- Ребейз-проверка: при следующем upstream-теге конфликты возможны **только** в `transport/v2ray/transport.go`, `constant/v2ray.go`, `option/v2ray_transport.go`.
+## 4. Требования
 
-## 5. Вне скоупа
+### 4.1 Опции (`option/v2ray_xhttp.go` — новый код, нулевое касание upstream)
 
-- **XHTTP server/inbound** (отдельная будущая задача).
-- Маппинг `vless://…type=xhttp` в самом лаунчере (репозиторий `singbox-launcher`, follow-up к его задаче 023).
-- 100% паритет всех Xray-расширений XHTTP — только то, что нужно для рабочего коннекта.
+Расширить `V2RayXHTTPOptions`, **сохранив** 6 существующих полей. Добавить (JSON snake_case, как в
+sing-box-extended; все `omitempty`):
 
-## 6. Ссылки
+**Placement / keys (core):**
+- `session_placement` (string: `path`|`query`|`header`|`cookie`; default `path`)
+- `session_key` (string; default `X-Session`/`x_session` по placement)
+- `seq_placement` (string: `path`|`query`|`header`|`cookie`; default `path`)
+- `seq_key` (string; default `X-Seq`/`x_seq` по placement)
 
+**Uplink data (obfs/tuning):**
+- `uplink_data_placement` (string: `body`|`auto`|`header`|`cookie`; default `auto`≈body)
+- `uplink_data_key` (string; default `X-Data`/`x_data` по placement)
+- `uplink_chunk_size` (`*badoption.Range[int]`; default зависит от placement)
+- `uplink_http_method` (string; default `POST`; upper-case)
+
+**X-Padding obfs:**
+- `x_padding_obfs_mode` (bool; default false)
+- `x_padding_key` (string; default `x_padding`)
+- `x_padding_header` (string; default `X-Padding`)
+- `x_padding_placement` (string: `cookie`|`header`|`query`|`queryInHeader`; default `queryInHeader`)
+- `x_padding_method` (string: `repeat-x`|`tokenish`; default `repeat-x`)
+
+**Packet-up tuning (бонус):**
+- `sc_max_each_post_bytes` (`*badoption.Range[int]`; default `[1000000,1000000]`)
+- `sc_min_posts_interval_ms` (`*badoption.Range[int]`; default `[30,30]`)
+
+**Server-only (accept-but-ignore — присутствуют в struct, помечены `// server-only, ignored by client`):**
+- `server_max_header_bytes` (int), `no_sse_header` (bool), `sc_max_buffered_posts` (int64),
+  `sc_stream_up_server_secs` (`*badoption.Range[int]`)
+
+Нормализация и валидация (mode-gate'ы, дефолты по placement, upper-case метода, отказ на неизвестных
+значениях с понятными ошибками) — реплицируем семантику extended `checkV2RayXHTTPBaseOptions` +
+`GetNormalized*`.
+
+### 4.2 Транспорт (`transport/v2rayxhttp/*` — новый код)
+
+- **placement-движок:** единая функция `applyMeta(req, sessionID, seqStr)` раскладывающая session id и seq
+  по настроенным placement/key (path/query/header/cookie). Path сохраняет порядок «session первый, seq
+  второй». Заменяет нынешнюю жёсткую path-логику в `requestURL`.
+- **uplink-data:** для packet-up — `body`/`auto` (тело, как сейчас) или header/cookie chunked
+  (`base64.RawURLEncoding`, чанки `<key>-<i>`/`<key>_<i>`, размер по `uplink_chunk_size`).
+- **uplink-метод:** upload-запросы используют `uplink_http_method` (download — всегда GET).
+- **X-Padding движок (`xpadding.go`, новый файл):**
+  - non-obfs (default): как сейчас — `x_padding=<pad>` в query внутри `Referer`.
+  - obfs: `applyXPadding(req)` по `x_padding_placement` (cookie/header/query/queryInHeader) с именами
+    `x_padding_key`/`x_padding_header`.
+  - генератор: `repeat-x` (`strings.Repeat`) и `tokenish` (порт `GenerateTokenishPaddingBase62` на
+    `crypto/rand` + `golang.org/x/net/http2/hpack.HuffmanEncodeLength`, ±2 тюнинг, filler `X`/`Z`, ≤150 итер).
+- **packet-up tuning:** разбиение upload по `sc_max_each_post_bytes`, троттлинг по `sc_min_posts_interval_ms`.
+- Конструктор `NewClient` принимает расширенные опции, нормализует, валидирует, кэширует разобранные
+  placement/method.
+
+### 4.3 Зона касания upstream
+
+Без изменений против v1: ровно `option/v2ray_transport.go` (уже прокидывает весь `XHTTPOptions`),
+`constant/v2ray.go`, `transport/v2ray/transport.go` (registry). Все новые поля и логика — в новых файлах
+(`option/v2ray_xhttp.go`, `transport/v2rayxhttp/*`).
+
+### 4.4 TLS/Reality
+
+Без изменений — `tlsConfig` прокидывается как прежде; XHTTP+Reality работает. (XHTTP+XTLS-Vision
+несовместимы — ограничение протокола.)
+
+## 5. Маппинг в Go (точки реализации)
+
+| Слой | Файл | Изменение |
+|------|------|-----------|
+| Опции | `option/v2ray_xhttp.go` | +20 полей в `V2RayXHTTPOptions`; новый файл нормализации/валидации (можно `option/v2ray_xhttp_normalize.go`) |
+| Placement | `transport/v2rayxhttp/meta.go` (новый) | `applyMeta` + резолверы ключей/дефолтов |
+| Padding | `transport/v2rayxhttp/xpadding.go` (новый) | obfs-движок + `repeat-x`/`tokenish` |
+| Клиент | `transport/v2rayxhttp/client.go` | приём опций, ветвление newRequest на obfs/non-obfs |
+| Conn | `transport/v2rayxhttp/conn.go` | uplink-data placement, packet-up tuning |
+| Тесты | `transport/v2rayxhttp/*_test.go` | юнит-тесты на каждый placement/метод/генератор |
+
+## 6. Критерии приёмки
+
+- `sing-box check -c` принимает VLESS + `transport.type=xhttp` со всеми новыми полями (валидные конфиги
+  под каждый placement/obfs-режим в `lx-test/config/`).
+- **Нулевая регрессия дефолта:** конфиг без новых полей даёт байт-в-байт тот же on-wire запрос, что v1
+  (тест сравнения с золотым образцом Referer/path/body).
+- Юнит-тесты зелёные на каждый:
+  - placement session/seq (path/query/header/cookie) — корректные URL/заголовки/cookie;
+  - uplink-data (body/header/cookie) — корректная сборка base64-чанков;
+  - X-Padding obfs (4 placement × 2 метода) — корректное размещение и длина;
+  - `tokenish` — HPACK-Huffman-длина в [from-2, to+2];
+  - валидация — отказ на невалидных значениях и mode-gate'ах с правильными ошибками.
+- Сборка `-tags with_xhttp` — ок; сборка без тега — `xhttp` отвергается.
+- `go test ./transport/v2rayxhttp/`, `go vet` (lx-теги), `gofmt -l` — зелёные.
+- Ребейз-проверка: зона касания upstream не расширилась против v1.
+- **Лайв (если есть сервер):** коннект к Xray-серверу хотя бы в одном не-дефолтном режиме (например
+  `x_padding_obfs_mode=true` + `x_padding_placement=header`) — иначе помечается как открытый TODO, как в v1.
+
+## 7. План реализации (ветка `lx-1.14-xhttp-full`)
+
+1. Расширить `option/v2ray_xhttp.go` (+ нормализация/валидация). `gofmt`, компиляция.
+2. `transport/v2rayxhttp/meta.go` — placement-движок + резолверы. Юнит-тесты.
+3. `transport/v2rayxhttp/xpadding.go` — obfs + repeat-x/tokenish. Юнит-тесты (включая HPACK-длину).
+4. Прошить в `client.go`/`conn.go`: ветвление obfs/non-obfs, uplink-data placement, метод, tuning.
+5. Конфиги `lx-test/config/xhttp_*.json` под новые режимы; `sing-box check`.
+6. Тест нулевой регрессии дефолта.
+7. `go test` + `go vet` + `gofmt` + сборка с тегом/без. `make -f Makefile.lx lx-build`.
+8. IMPLEMENTATION_REPORT, TASKS, статус папки.
+
+## 8. Вне скоупа
+
+- **XHTTP server/inbound** (отдельная задача) — server-only поля только accept-but-ignore.
+- **xmux** (мультиплексирование соединений) — отдельная оптимизация, не входит в параметры.
+- Маппинг `vless://…type=xhttp` в лаунчере (его репозиторий).
+
+## 9. Ссылки
+
+- [PARAM_MAP.md](PARAM_MAP.md) — детальная карта всех параметров (основной справочник).
+- [SPEC_v1.md](SPEC_v1.md) — исходная минимальная спека (история).
+- Xray-core splithttp: https://github.com/XTLS/Xray-core/tree/main/transport/internet/splithttp
+- sing-box-extended (ветка `extended`): https://github.com/shtorm-7/sing-box-extended
 - [V2Ray Transport — sing-box](https://sing-box.sagernet.org/configuration/shared/v2ray-transport/)
-- [hiddify-sing-box (референс XHTTP)](https://github.com/hiddify/hiddify-sing-box)
-- [XHTTP overview (Habr)](https://habr.com/en/articles/990208/)
-
----
-
-## 7. Разведка порта и выбор подхода (добавлено по ходу)
-
-**Что показал референс `hiddify/hiddify-sing-box` (`transport/v2rayxhttp/client.go`):** XHTTP в hiddify реализован НЕ поверх примитивов sing-box, а через **вендорённое поддерево Xray** под `common/xray/{buf,net,pipe,signal/done,uuid}` + зависимости `quic-go`, `http3`, `golang.org/x/net/http2`, абстракция `DialerClient`/`XmuxClient` и опции `option.V2RayXHTTPOptions{ V2RayXHTTPBaseOptions }`. Целевой интерфейс прост — `adapter.V2RayClientTransport = { DialContext(ctx) (net.Conn, error); Close() error }` — но реализация тянет много транзитивного кода и завязана на старую версию sing-box hiddify.
-
-**Развилка подхода (зафиксировать перед кодом порта):**
-
-- **(A) Faithful-vendor.** Перенести hiddify `common/xray/*` + пакет `v2rayxhttp` как **новые файлы** (namespaced), адаптировать импорты под v1.13.13. Плюс: максимальная совместимость с реальными XHTTP-серверами, проверенный код. Минус: больший footprint (но всё — новые файлы → **нулевая зона касания upstream**, что согласуется с CONSTITUTION). Тащит `quic-go`/`http3` (часть уже в go.mod sing-box).
-- **(B) Lean-native.** Написать компактный XHTTP-клиент на примитивах sing-box (по образцу in-tree `transport/v2rayhttpupgrade`). Плюс: меньше кода, меньше зависимостей. Минус: больше оригинальной работы и риск несовпадения с Xray по краям (`mode=auto`, padding, xmux).
-
-**Рекомендация:** **(A)** — приоритет проекта №2 (корректность/совместимость) важнее объёма, а изоляция в новых файлах сохраняет ребейзопригодность. Footprint велик, но не увеличивает конфликтность ребейза.
-
-**Обязательно для приёмки:** живой XHTTP-сервер (Xray) для end-to-end проверки — синтетического `sing-box check` недостаточно (XHTTP под активной разработкой, версии client↔server должны совпадать).

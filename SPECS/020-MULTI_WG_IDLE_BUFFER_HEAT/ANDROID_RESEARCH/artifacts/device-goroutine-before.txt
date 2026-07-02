@@ -1,0 +1,262 @@
+goroutine profile: total 417
+72 @ 0x723323d2e0 0x72331d2558 0x72331d2114 0x723408e344 0x72332456b4
+#	0x723408e343	github.com/sagernet/wireguard-go/device.(*Device).RoutineDecryption+0x113	github.com/sagernet/wireguard-go@v0.0.3/device/receive.go:252
+
+72 @ 0x723323d2e0 0x72331d2558 0x72331d2114 0x723408e6d4 0x72332456b4
+#	0x723408e6d3	github.com/sagernet/wireguard-go/device.(*Device).RoutineHandshake+0x103	github.com/sagernet/wireguard-go@v0.0.3/device/receive.go:286
+
+72 @ 0x723323d2e0 0x72331d2558 0x72331d2114 0x72340928ac 0x72332456b4
+#	0x72340928ab	github.com/sagernet/wireguard-go/device.(*Device).RoutineEncryption+0x11b	github.com/sagernet/wireguard-go@v0.0.3/device/send.go:537
+
+72 @ 0x723323d2e0 0x723397c6d4 0x723397c6b5 0x723397c7ec 0x7233999728 0x7233999715 0x72332456b4
+#	0x723397c6d3	github.com/sagernet/gvisor/pkg/sync.Gopark+0x73					github.com/sagernet/gvisor@v0.0.0-20250811.0-sing-box-mod.1/pkg/sync/runtime_unsafe.go:34
+#	0x723397c6b4	github.com/sagernet/gvisor/pkg/sleep.(*Sleeper).nextWaker+0x54			github.com/sagernet/gvisor@v0.0.0-20250811.0-sing-box-mod.1/pkg/sleep/sleep_unsafe.go:208
+#	0x723397c7eb	github.com/sagernet/gvisor/pkg/sleep.(*Sleeper).fetch+0x2b			github.com/sagernet/gvisor@v0.0.0-20250811.0-sing-box-mod.1/pkg/sleep/sleep_unsafe.go:255
+#	0x7233999727	github.com/sagernet/gvisor/pkg/sleep.(*Sleeper).Fetch+0x97			github.com/sagernet/gvisor@v0.0.0-20250811.0-sing-box-mod.1/pkg/sleep/sleep_unsafe.go:278
+#	0x7233999714	github.com/sagernet/gvisor/pkg/tcpip/transport/tcp.(*processor).start+0x84	github.com/sagernet/gvisor@v0.0.0-20250811.0-sing-box-mod.1/pkg/tcpip/transport/tcp/dispatcher.go:291
+
+10 @ 0x72332456b4
+
+9 @ 0x723323d2e0 0x72331d2558 0x72331d2114 0x723408f19c 0x72332456b4
+#	0x723408f19b	github.com/sagernet/wireguard-go/device.(*Peer).RoutineSequentialReceiver+0x11b	github.com/sagernet/wireguard-go@v0.0.3/device/receive.go:452
+
+9 @ 0x723323d2e0 0x72331d2558 0x72331d2114 0x7234092d04 0x72332456b4
+#	0x7234092d03	github.com/sagernet/wireguard-go/device.(*Peer).RoutineSequentialSender+0x113	github.com/sagernet/wireguard-go@v0.0.3/device/send.go:580
+
+9 @ 0x723323d2e0 0x72331d2558 0x72331d2114 0x7234094810 0x72332456b4
+#	0x723409480f	github.com/sagernet/wireguard-go/device.(*Device).RoutineTUNEventReader+0x6f	github.com/sagernet/wireguard-go@v0.0.3/device/tun.go:19
+
+9 @ 0x723323d2e0 0x72331ffce0 0x723323c4d0 0x72332b5298 0x72332ba468 0x72332ba455 0x7233392c20 0x72335c22d0 0x72335c95fc 0x72335c95e1 0x7234076560 0x72340760c0 0x723408d658 0x72332456b4
+#	0x723323c4cf	internal/poll.runtime_pollWait+0x9f									runtime/netpoll.go:351
+#	0x72332b5297	internal/poll.(*pollDesc).wait+0x27									internal/poll/fd_poll_runtime.go:84
+#	0x72332ba467	internal/poll.(*pollDesc).waitRead+0x117								internal/poll/fd_poll_runtime.go:89
+#	0x72332ba454	internal/poll.(*FD).RawRead+0x104									internal/poll/fd_unix.go:710
+#	0x7233392c1f	net.(*rawConn).Read+0x2f										net/rawconn.go:44
+#	0x72335c22cf	golang.org/x/net/internal/socket.(*Conn).recvMsg+0xff							golang.org/x/net@v0.50.0/internal/socket/rawconn_msg.go:27
+#	0x72335c95fb	golang.org/x/net/internal/socket.(*Conn).RecvMsg+0x4b							golang.org/x/net@v0.50.0/internal/socket/socket.go:248
+#	0x72335c95e0	golang.org/x/net/ipv4.(*payloadHandler).ReadBatch+0x30							golang.org/x/net@v0.50.0/ipv4/batch.go:87
+#	0x723407655f	github.com/sagernet/wireguard-go/conn.(*StdNetBind).receiveIP+0x21f					github.com/sagernet/wireguard-go@v0.0.3/conn/bind_std.go:279
+#	0x72340760bf	github.com/sagernet/wireguard-go/conn.(*StdNetBind).Open.(*StdNetBind).makeReceiveIPv4.func1+0x6f	github.com/sagernet/wireguard-go@v0.0.3/conn/bind_std.go:310
+#	0x723408d657	github.com/sagernet/wireguard-go/device.(*Device).RoutineReceiveIncoming+0x2d7				github.com/sagernet/wireguard-go@v0.0.3/device/receive.go:113
+
+9 @ 0x723323d2e0 0x72331ffce0 0x723323c4d0 0x72332b5298 0x72332ba468 0x72332ba455 0x7233392c20 0x72335c22d0 0x72335cf9e8 0x72335cf9d1 0x7234076560 0x7234076010 0x723408d658 0x72332456b4
+#	0x723323c4cf	internal/poll.runtime_pollWait+0x9f									runtime/netpoll.go:351
+#	0x72332b5297	internal/poll.(*pollDesc).wait+0x27									internal/poll/fd_poll_runtime.go:84
+#	0x72332ba467	internal/poll.(*pollDesc).waitRead+0x117								internal/poll/fd_poll_runtime.go:89
+#	0x72332ba454	internal/poll.(*FD).RawRead+0x104									internal/poll/fd_unix.go:710
+#	0x7233392c1f	net.(*rawConn).Read+0x2f										net/rawconn.go:44
+#	0x72335c22cf	golang.org/x/net/internal/socket.(*Conn).recvMsg+0xff							golang.org/x/net@v0.50.0/internal/socket/rawconn_msg.go:27
+#	0x72335cf9e7	golang.org/x/net/internal/socket.(*Conn).RecvMsg+0x47							golang.org/x/net@v0.50.0/internal/socket/socket.go:248
+#	0x72335cf9d0	golang.org/x/net/ipv6.(*payloadHandler).ReadBatch+0x30							golang.org/x/net@v0.50.0/ipv6/batch.go:78
+#	0x723407655f	github.com/sagernet/wireguard-go/conn.(*StdNetBind).receiveIP+0x21f					github.com/sagernet/wireguard-go@v0.0.3/conn/bind_std.go:279
+#	0x723407600f	github.com/sagernet/wireguard-go/conn.(*StdNetBind).Open.(*StdNetBind).makeReceiveIPv6.func2+0x6f	github.com/sagernet/wireguard-go@v0.0.3/conn/bind_std.go:316
+#	0x723408d657	github.com/sagernet/wireguard-go/device.(*Device).RoutineReceiveIncoming+0x2d7				github.com/sagernet/wireguard-go@v0.0.3/device/receive.go:113
+
+9 @ 0x723323d2e0 0x723321ac5c 0x723407b848 0x72332456b4
+#	0x723407b847	github.com/sagernet/wireguard-go/ratelimiter.(*Ratelimiter).Init.func1+0x87	github.com/sagernet/wireguard-go@v0.0.3/ratelimiter/ratelimiter.go:68
+
+9 @ 0x723323d2e0 0x723321ac5c 0x72340a1c88 0x72340916b8 0x72332456b4
+#	0x72340a1c87	github.com/sagernet/sing-box/transport/wireguard.(*stackDevice).Read+0x97	github.com/sagernet/sing-box/transport/wireguard/device_stack.go:191
+#	0x72340916b7	github.com/sagernet/wireguard-go/device.(*Device).RoutineReadFromTUN+0x257	github.com/sagernet/wireguard-go@v0.0.3/device/send.go:309
+
+9 @ 0x723323d2e0 0x723321ba04 0x723321b9e5 0x723323ed08 0x723324c7e8 0x723408005c 0x72332456b4
+#	0x723323ed07	sync.runtime_SemacquireWaitGroup+0x37					runtime/sema.go:114
+#	0x723324c7e7	sync.(*WaitGroup).Wait+0xa7						sync/waitgroup.go:206
+#	0x723408005b	github.com/sagernet/wireguard-go/device.newOutboundQueue.func1+0x2b	github.com/sagernet/wireguard-go@v0.0.3/device/channels.go:32
+
+9 @ 0x723323d2e0 0x723321ba04 0x723321b9e5 0x723323ed08 0x723324c7e8 0x723408017c 0x72332456b4
+#	0x723323ed07	sync.runtime_SemacquireWaitGroup+0x37					runtime/sema.go:114
+#	0x723324c7e7	sync.(*WaitGroup).Wait+0xa7						sync/waitgroup.go:206
+#	0x723408017b	github.com/sagernet/wireguard-go/device.newInboundQueue.func1+0x2b	github.com/sagernet/wireguard-go@v0.0.3/device/channels.go:50
+
+9 @ 0x723323d2e0 0x723321ba04 0x723321b9e5 0x723323ed08 0x723324c7e8 0x723408029c 0x72332456b4
+#	0x723323ed07	sync.runtime_SemacquireWaitGroup+0x37					runtime/sema.go:114
+#	0x723324c7e7	sync.(*WaitGroup).Wait+0xa7						sync/waitgroup.go:206
+#	0x723408029b	github.com/sagernet/wireguard-go/device.newHandshakeQueue.func1+0x2b	github.com/sagernet/wireguard-go@v0.0.3/device/channels.go:68
+
+3 @ 0x723323d2e0 0x72331d2558 0x72331d2114 0x72336c0ebc 0x72332456b4
+#	0x72336c0ebb	google.golang.org/grpc/internal/grpcsync.(*CallbackSerializer).run+0xcb	google.golang.org/grpc@v1.79.1/internal/grpcsync/callback_serializer.go:88
+
+2 @ 0x723323d2e0 0x723321ac5c 0x7233e72864 0x72332456b4
+#	0x7233e72863	github.com/sagernet/sing/common/observable.(*Observer[...]).process+0x83	github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/observable/observer.go:35
+
+2 @ 0x723323d2e0 0x723321ac5c 0x7233e732c0 0x72332456b4
+#	0x7233e732bf	github.com/sagernet/sing/common/observable.(*Observer[...]).process+0x7f	github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/observable/observer.go:35
+
+1 @ 0x72331d78a4 0x723323f800 0x723444f78c 0x72332456b4
+#	0x723323f7ff	os/signal.signal_recv+0x2f	runtime/sigqueue.go:152
+#	0x723444f78b	os/signal.loop+0x1b		os/signal/signal_unix.go:23
+
+1 @ 0x72331fc63c 0x723323c0c4 0x7233dac7c4 0x7233dac5f0 0x7233da9d64 0x7233dbed84 0x7233dbf630 0x72334e6ed8 0x72334e8970 0x7233503170 0x72334e52c8 0x72332456b4
+#	0x7233dac7c3	runtime/pprof.writeRuntimeProfile+0xb3	runtime/pprof/pprof.go:788
+#	0x7233dac5ef	runtime/pprof.writeGoroutine+0x4f	runtime/pprof/pprof.go:747
+#	0x7233da9d63	runtime/pprof.(*Profile).WriteTo+0x143	runtime/pprof/pprof.go:371
+#	0x7233dbed83	net/http/pprof.handler.ServeHTTP+0x413	net/http/pprof/pprof.go:272
+#	0x7233dbf62f	net/http/pprof.Index+0xbf		net/http/pprof/pprof.go:389
+#	0x72334e6ed7	net/http.HandlerFunc.ServeHTTP+0x37	net/http/server.go:2322
+#	0x72334e896f	net/http.(*ServeMux).ServeHTTP+0x18f	net/http/server.go:2861
+#	0x723350316f	net/http.serverHandler.ServeHTTP+0xaf	net/http/server.go:3340
+#	0x72334e52c7	net/http.(*conn).serve+0x527		net/http/server.go:2109
+
+1 @ 0x723323d2e0 0x72331ffce0 0x723323c4d0 0x72332b5298 0x72332b64b0 0x72332b64a1 0x72332c10c8 0x72332c10c1 0x7233a652fc 0x7233a5a8ac 0x72332456b4
+#	0x723323c4cf	internal/poll.runtime_pollWait+0x9f			runtime/netpoll.go:351
+#	0x72332b5297	internal/poll.(*pollDesc).wait+0x27			internal/poll/fd_poll_runtime.go:84
+#	0x72332b64af	internal/poll.(*pollDesc).waitRead+0x1df		internal/poll/fd_poll_runtime.go:89
+#	0x72332b64a0	internal/poll.(*FD).Read+0x1d0				internal/poll/fd_unix.go:165
+#	0x72332c10c7	os.(*File).read+0x67					os/file_posix.go:29
+#	0x72332c10c0	os.(*File).Read+0x60					os/file.go:144
+#	0x7233a652fb	github.com/sagernet/sing-tun.(*NativeTun).Read+0x13b	github.com/sagernet/sing-tun@v0.8.12-0.20260629021427-b3c6babbd353/tun_linux.go:366
+#	0x7233a5a8ab	github.com/sagernet/sing-tun.(*System).tunLoop+0x17b	github.com/sagernet/sing-tun@v0.8.12-0.20260629021427-b3c6babbd353/stack_system.go:189
+
+1 @ 0x723323d2e0 0x72331ffce0 0x723323c4d0 0x72332b5298 0x72332b64b0 0x72332b64a1 0x723337dfe8 0x723338eda4 0x72332e9208 0x7233294118 0x7233772158 0x723377212d 0x72337727c0 0x72337cac34 0x72337bef5c 0x72332456b4
+#	0x723323c4cf	internal/poll.runtime_pollWait+0x9f					runtime/netpoll.go:351
+#	0x72332b5297	internal/poll.(*pollDesc).wait+0x27					internal/poll/fd_poll_runtime.go:84
+#	0x72332b64af	internal/poll.(*pollDesc).waitRead+0x1df				internal/poll/fd_poll_runtime.go:89
+#	0x72332b64a0	internal/poll.(*FD).Read+0x1d0						internal/poll/fd_unix.go:165
+#	0x723337dfe7	net.(*netFD).Read+0x27							net/fd_posix.go:68
+#	0x723338eda3	net.(*conn).Read+0x33							net/net.go:196
+#	0x72332e9207	bufio.(*Reader).Read+0x187						bufio/bufio.go:245
+#	0x7233294117	io.ReadAtLeast+0x97							io/io.go:335
+#	0x7233772157	io.ReadFull+0x57							io/io.go:354
+#	0x723377212c	golang.org/x/net/http2.readFrameHeader+0x2c				golang.org/x/net@v0.50.0/http2/frame.go:248
+#	0x72337727bf	golang.org/x/net/http2.(*Framer).ReadFrameHeader+0x5f			golang.org/x/net@v0.50.0/http2/frame.go:511
+#	0x72337cac33	google.golang.org/grpc/internal/transport.(*framer).readFrame+0x43	google.golang.org/grpc@v1.79.1/internal/transport/http_util.go:480
+#	0x72337bef5b	google.golang.org/grpc/internal/transport.(*http2Client).reader+0x14b	google.golang.org/grpc@v1.79.1/internal/transport/http2_client.go:1658
+
+1 @ 0x723323d2e0 0x72331ffce0 0x723323c4d0 0x72332b5298 0x72332b64b0 0x72332b64a1 0x723337dfe8 0x723338eda4 0x72332e9208 0x7233294118 0x7233772158 0x723377212d 0x72337727c0 0x72337cac34 0x72337c3ab8 0x7233836cbc 0x7233836640 0x72332456b4
+#	0x723323c4cf	internal/poll.runtime_pollWait+0x9f						runtime/netpoll.go:351
+#	0x72332b5297	internal/poll.(*pollDesc).wait+0x27						internal/poll/fd_poll_runtime.go:84
+#	0x72332b64af	internal/poll.(*pollDesc).waitRead+0x1df					internal/poll/fd_poll_runtime.go:89
+#	0x72332b64a0	internal/poll.(*FD).Read+0x1d0							internal/poll/fd_unix.go:165
+#	0x723337dfe7	net.(*netFD).Read+0x27								net/fd_posix.go:68
+#	0x723338eda3	net.(*conn).Read+0x33								net/net.go:196
+#	0x72332e9207	bufio.(*Reader).Read+0x187							bufio/bufio.go:245
+#	0x7233294117	io.ReadAtLeast+0x97								io/io.go:335
+#	0x7233772157	io.ReadFull+0x57								io/io.go:354
+#	0x723377212c	golang.org/x/net/http2.readFrameHeader+0x2c					golang.org/x/net@v0.50.0/http2/frame.go:248
+#	0x72337727bf	golang.org/x/net/http2.(*Framer).ReadFrameHeader+0x5f				golang.org/x/net@v0.50.0/http2/frame.go:511
+#	0x72337cac33	google.golang.org/grpc/internal/transport.(*framer).readFrame+0x43		google.golang.org/grpc@v1.79.1/internal/transport/http_util.go:480
+#	0x72337c3ab7	google.golang.org/grpc/internal/transport.(*http2Server).HandleStreams+0xb7	google.golang.org/grpc@v1.79.1/internal/transport/http2_server.go:638
+#	0x7233836cbb	google.golang.org/grpc.(*Server).serveStreams+0x2ab				google.golang.org/grpc@v1.79.1/server.go:1055
+#	0x723383663f	google.golang.org/grpc.(*Server).handleRawConn.func1+0x4f			google.golang.org/grpc@v1.79.1/server.go:989
+
+1 @ 0x723323d2e0 0x72331ffce0 0x723323c4d0 0x72332b5298 0x72332b64b0 0x72332b64a1 0x723337dfe8 0x723338eda4 0x72334e0338 0x72332456b4
+#	0x723323c4cf	internal/poll.runtime_pollWait+0x9f		runtime/netpoll.go:351
+#	0x72332b5297	internal/poll.(*pollDesc).wait+0x27		internal/poll/fd_poll_runtime.go:84
+#	0x72332b64af	internal/poll.(*pollDesc).waitRead+0x1df	internal/poll/fd_poll_runtime.go:89
+#	0x72332b64a0	internal/poll.(*FD).Read+0x1d0			internal/poll/fd_unix.go:165
+#	0x723337dfe7	net.(*netFD).Read+0x27				net/fd_posix.go:68
+#	0x723338eda3	net.(*conn).Read+0x33				net/net.go:196
+#	0x72334e0337	net/http.(*connReader).backgroundRead+0x37	net/http/server.go:702
+
+1 @ 0x723323d2e0 0x72331ffce0 0x723323c4d0 0x72332b5298 0x72332b64b0 0x72332b64a1 0x723337dfe8 0x723338eda4 0x723351a91c 0x7233eb95e0 0x72332456b4
+#	0x723323c4cf	internal/poll.runtime_pollWait+0x9f						runtime/netpoll.go:351
+#	0x72332b5297	internal/poll.(*pollDesc).wait+0x27						internal/poll/fd_poll_runtime.go:84
+#	0x72332b64af	internal/poll.(*pollDesc).waitRead+0x1df					internal/poll/fd_poll_runtime.go:89
+#	0x72332b64a0	internal/poll.(*FD).Read+0x1d0							internal/poll/fd_unix.go:165
+#	0x723337dfe7	net.(*netFD).Read+0x27								net/fd_posix.go:68
+#	0x723338eda3	net.(*conn).Read+0x33								net/net.go:196
+#	0x723351a91b	github.com/sagernet/sing/common/buf.(*Buffer).ReadOnceFrom+0x6b			github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/buf/buffer.go:139
+#	0x7233eb95df	github.com/sagernet/sing-box/dns/transport.(*UDPTransport).recvLoop+0x6f	github.com/sagernet/sing-box/dns/transport/udp.go:230
+
+1 @ 0x723323d2e0 0x72331ffce0 0x723323c4d0 0x72332b5298 0x72332b987c 0x72332b986d 0x723337f7e8 0x7233397c14 0x7233396c6c 0x72334ea2ac 0x72332456b4
+#	0x723323c4cf	internal/poll.runtime_pollWait+0x9f		runtime/netpoll.go:351
+#	0x72332b5297	internal/poll.(*pollDesc).wait+0x27		internal/poll/fd_poll_runtime.go:84
+#	0x72332b987b	internal/poll.(*pollDesc).waitRead+0x21b	internal/poll/fd_poll_runtime.go:89
+#	0x72332b986c	internal/poll.(*FD).Accept+0x20c		internal/poll/fd_unix.go:613
+#	0x723337f7e7	net.(*netFD).accept+0x27			net/fd_unix.go:161
+#	0x7233397c13	net.(*TCPListener).accept+0x23			net/tcpsock_posix.go:159
+#	0x7233396c6b	net.(*TCPListener).Accept+0x2b			net/tcpsock.go:380
+#	0x72334ea2ab	net/http.(*Server).Serve+0x24b			net/http/server.go:3463
+
+1 @ 0x723323d2e0 0x72331ffce0 0x723323c4d0 0x72332b5298 0x72332b987c 0x72332b986d 0x723337f7e8 0x7233397c14 0x7233396c6c 0x7233a5b914 0x72332456b4
+#	0x723323c4cf	internal/poll.runtime_pollWait+0x9f			runtime/netpoll.go:351
+#	0x72332b5297	internal/poll.(*pollDesc).wait+0x27			internal/poll/fd_poll_runtime.go:84
+#	0x72332b987b	internal/poll.(*pollDesc).waitRead+0x21b		internal/poll/fd_poll_runtime.go:89
+#	0x72332b986c	internal/poll.(*FD).Accept+0x20c			internal/poll/fd_unix.go:613
+#	0x723337f7e7	net.(*netFD).accept+0x27				net/fd_unix.go:161
+#	0x7233397c13	net.(*TCPListener).accept+0x23				net/tcpsock_posix.go:159
+#	0x7233396c6b	net.(*TCPListener).Accept+0x2b				net/tcpsock.go:380
+#	0x7233a5b913	github.com/sagernet/sing-tun.(*System).acceptLoop+0x43	github.com/sagernet/sing-tun@v0.8.12-0.20260629021427-b3c6babbd353/stack_system.go:327
+
+1 @ 0x723323d2e0 0x72331ffce0 0x723323c4d0 0x72332b5298 0x72332b987c 0x72332b986d 0x723337f7e8 0x723339dc60 0x723339c6cc 0x7233835bf4 0x72332456b4
+#	0x723323c4cf	internal/poll.runtime_pollWait+0x9f		runtime/netpoll.go:351
+#	0x72332b5297	internal/poll.(*pollDesc).wait+0x27		internal/poll/fd_poll_runtime.go:84
+#	0x72332b987b	internal/poll.(*pollDesc).waitRead+0x21b	internal/poll/fd_poll_runtime.go:89
+#	0x72332b986c	internal/poll.(*FD).Accept+0x20c		internal/poll/fd_unix.go:613
+#	0x723337f7e7	net.(*netFD).accept+0x27			net/fd_unix.go:161
+#	0x723339dc5f	net.(*UnixListener).accept+0x1f			net/unixsock_posix.go:172
+#	0x723339c6cb	net.(*UnixListener).Accept+0x2b			net/unixsock.go:260
+#	0x7233835bf3	google.golang.org/grpc.(*Server).Serve+0x3e3	google.golang.org/grpc@v1.79.1/server.go:917
+
+1 @ 0x723323d2e0 0x72331ffce0 0x723323c4d0 0x72332b5298 0x72332ba468 0x72332ba455 0x7233392c20 0x7233552020 0x7233550b48 0x723354dde4 0x723354d670 0x723354d080 0x7233d709b8 0x72332456b4
+#	0x723323c4cf	internal/poll.runtime_pollWait+0x9f						runtime/netpoll.go:351
+#	0x72332b5297	internal/poll.(*pollDesc).wait+0x27						internal/poll/fd_poll_runtime.go:84
+#	0x72332ba467	internal/poll.(*pollDesc).waitRead+0x117					internal/poll/fd_poll_runtime.go:89
+#	0x72332ba454	internal/poll.(*FD).RawRead+0x104						internal/poll/fd_unix.go:710
+#	0x7233392c1f	net.(*rawConn).Read+0x2f							net/rawconn.go:44
+#	0x723355201f	github.com/sagernet/sing/common/bufio.(*syscallReadWaiter).WaitReadBuffer+0x2f	github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy_direct_posix.go:69
+#	0x7233550b47	github.com/sagernet/sing/common/bufio.copyWaitWithPool+0x77			github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy_direct.go:33
+#	0x723354dde3	github.com/sagernet/sing/common/bufio.copyExtended+0xd3				github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy.go:128
+#	0x723354d66f	github.com/sagernet/sing/common/bufio.CopyWithCounters+0x4ef			github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy.go:99
+#	0x723354d07f	github.com/sagernet/sing/common/bufio.CopyWithIncreateBuffer+0x30f		github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy.go:58
+#	0x7233d709b7	github.com/sagernet/sing-box/route.(*ConnectionManager).connectionCopy+0xa7	github.com/sagernet/sing-box/route/conn.go:274
+
+1 @ 0x723323d2e0 0x723321ac5c 0x7233687dd8 0x72332456b4
+#	0x7233687dd7	github.com/sagernet/sing/common/observable.(*Observer[...]).process+0x87	github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/observable/observer.go:35
+
+1 @ 0x723323d2e0 0x723321ac5c 0x72337ad558 0x72337add4c 0x72337b621c 0x72332456b4
+#	0x72337ad557	google.golang.org/grpc/internal/transport.(*controlBuffer).get+0x137	google.golang.org/grpc@v1.79.1/internal/transport/controlbuf.go:420
+#	0x72337add4b	google.golang.org/grpc/internal/transport.(*loopyWriter).run+0x6b	google.golang.org/grpc@v1.79.1/internal/transport/controlbuf.go:597
+#	0x72337b621b	google.golang.org/grpc/internal/transport.NewHTTP2Client.func6+0xab	google.golang.org/grpc@v1.79.1/internal/transport/http2_client.go:469
+
+1 @ 0x723323d2e0 0x723321ac5c 0x72337ad558 0x72337add4c 0x72337c1598 0x72332456b4
+#	0x72337ad557	google.golang.org/grpc/internal/transport.(*controlBuffer).get+0x137	google.golang.org/grpc@v1.79.1/internal/transport/controlbuf.go:420
+#	0x72337add4b	google.golang.org/grpc/internal/transport.(*loopyWriter).run+0x6b	google.golang.org/grpc@v1.79.1/internal/transport/controlbuf.go:597
+#	0x72337c1597	google.golang.org/grpc/internal/transport.NewServerTransport.func3+0xb7	google.golang.org/grpc@v1.79.1/internal/transport/http2_server.go:342
+
+1 @ 0x723323d2e0 0x723321ac5c 0x72337c792c 0x72332456b4
+#	0x72337c792b	google.golang.org/grpc/internal/transport.(*http2Server).keepalive+0x15b	google.golang.org/grpc@v1.79.1/internal/transport/http2_server.go:1199
+
+1 @ 0x723323d2e0 0x723321ac5c 0x72339cf224 0x72339cf430 0x723354c6fc 0x723354df40 0x723354de00 0x723354d670 0x723354d080 0x7233d709b8 0x72332456b4
+#	0x72339cf223	github.com/sagernet/gvisor/pkg/tcpip/adapters/gonet.commonRead+0x4a3		github.com/sagernet/gvisor@v0.0.0-20250811.0-sing-box-mod.1/pkg/tcpip/adapters/gonet/gonet.go:324
+#	0x72339cf42f	github.com/sagernet/gvisor/pkg/tcpip/adapters/gonet.(*TCPConn).Read+0xef	github.com/sagernet/gvisor@v0.0.0-20250811.0-sing-box-mod.1/pkg/tcpip/adapters/gonet/gonet.go:353
+#	0x723354c6fb	github.com/sagernet/sing/common/bufio.(*ExtendedReaderWrapper).ReadBuffer+0x5b	github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/conn.go:121
+#	0x723354df3f	github.com/sagernet/sing/common/bufio.copyExtendedWithPool+0xaf			github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy.go:191
+#	0x723354ddff	github.com/sagernet/sing/common/bufio.copyExtended+0xef				github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy.go:134
+#	0x723354d66f	github.com/sagernet/sing/common/bufio.CopyWithCounters+0x4ef			github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy.go:99
+#	0x723354d07f	github.com/sagernet/sing/common/bufio.CopyWithIncreateBuffer+0x30f		github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy.go:58
+#	0x7233d709b7	github.com/sagernet/sing-box/route.(*ConnectionManager).connectionCopy+0xa7	github.com/sagernet/sing-box/route/conn.go:274
+
+1 @ 0x723323d2e0 0x723321ac5c 0x72339cf224 0x72339d0e80 0x723354c2ac 0x723351a9fc 0x723354c3bc 0x723354fec8 0x723354fd7c 0x723354f688 0x723354f094 0x7233d71774 0x72332456b4
+#	0x72339cf223	github.com/sagernet/gvisor/pkg/tcpip/adapters/gonet.commonRead+0x4a3			github.com/sagernet/gvisor@v0.0.0-20250811.0-sing-box-mod.1/pkg/tcpip/adapters/gonet/gonet.go:324
+#	0x72339d0e7f	github.com/sagernet/gvisor/pkg/tcpip/adapters/gonet.(*UDPConn).ReadFrom+0x6f		github.com/sagernet/gvisor@v0.0.0-20250811.0-sing-box-mod.1/pkg/tcpip/adapters/gonet/gonet.go:640
+#	0x723354c2ab	github.com/sagernet/sing/common/bufio.(*ExtendedPacketConn).ReadFrom+0x2b		github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/conn.go:92
+#	0x723351a9fb	github.com/sagernet/sing/common/buf.(*Buffer).ReadPacketFrom+0x6b			github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/buf/buffer.go:148
+#	0x723354c3bb	github.com/sagernet/sing/common/bufio.(*ExtendedPacketConn).ReadPacket+0x3b		github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/conn.go:100
+#	0x723354fec7	github.com/sagernet/sing/common/bufio.copyPacketWithPool+0x117				github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy.go:462
+#	0x723354fd7b	github.com/sagernet/sing/common/bufio.copyPacketWithCountersOnce+0x4fb			github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy.go:447
+#	0x723354f687	github.com/sagernet/sing/common/bufio.copyPacketWithCounters+0x107			github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy.go:361
+#	0x723354f093	github.com/sagernet/sing/common/bufio.CopyPacket+0x1d3					github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy.go:281
+#	0x7233d71773	github.com/sagernet/sing-box/route.(*ConnectionManager).packetConnectionCopy+0x53	github.com/sagernet/sing-box/route/conn.go:369
+
+1 @ 0x723323d2e0 0x723321ac5c 0x7233a1d8bc 0x7233551078 0x723354fd44 0x723354f688 0x723354f094 0x7233d71774 0x72332456b4
+#	0x7233a1d8bb	github.com/sagernet/sing/common/udpnat2.(*natConn).WaitReadPacket+0x8b			github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/udpnat2/conn.go:82
+#	0x7233551077	github.com/sagernet/sing/common/bufio.copyPacketWaitWithPool+0x67			github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy_direct.go:108
+#	0x723354fd43	github.com/sagernet/sing/common/bufio.copyPacketWithCountersOnce+0x4c3			github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy.go:440
+#	0x723354f687	github.com/sagernet/sing/common/bufio.copyPacketWithCounters+0x107			github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy.go:361
+#	0x723354f093	github.com/sagernet/sing/common/bufio.CopyPacket+0x1d3					github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/bufio/copy.go:281
+#	0x7233d71773	github.com/sagernet/sing-box/route.(*ConnectionManager).packetConnectionCopy+0x53	github.com/sagernet/sing-box/route/conn.go:369
+
+1 @ 0x723323d2e0 0x723321ac5c 0x7233a61cb0 0x72332456b4
+#	0x7233a61caf	github.com/sagernet/sing-tun.(*TCPNat).loopCheckTimeout+0xaf	github.com/sagernet/sing-tun@v0.8.12-0.20260629021427-b3c6babbd353/stack_system_nat.go:49
+
+1 @ 0x723323d2e0 0x723321ac5c 0x7233ad7cf8 0x72332456b4
+#	0x7233ad7cf7	github.com/sagernet/sing/common/observable.(*Observer[...]).process+0x97	github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/observable/observer.go:35
+
+1 @ 0x723323d2e0 0x723321ac5c 0x7233ce59e0 0x72332456b4
+#	0x7233ce59df	github.com/sagernet/sing/common/observable.(*Observer[...]).process+0x8f	github.com/sagernet/sing@v0.8.12-0.20260625092856-31bbf21d4b12/common/observable/observer.go:35
+
+1 @ 0x723323d2e0 0x723321ac5c 0x7233d80804 0x72332456b4
+#	0x7233d80803	github.com/sagernet/sing-box/route.(*Router).idleSuspendLoop+0xa3	github.com/sagernet/sing-box/route/reachability_lx.go:186
+

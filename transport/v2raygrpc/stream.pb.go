@@ -89,7 +89,6 @@ var (
 		(*Hunk)(nil), // 0: transport.v2raygrpc.Hunk
 	}
 )
-
 var file_transport_v2raygrpc_stream_proto_depIdxs = []int32{
 	0, // 0: transport.v2raygrpc.GunService.Tun:input_type -> transport.v2raygrpc.Hunk
 	0, // 1: transport.v2raygrpc.GunService.Tun:output_type -> transport.v2raygrpc.Hunk

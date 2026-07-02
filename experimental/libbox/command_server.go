@@ -14,18 +14,22 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/daemon"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/service/oomkiller"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/service"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
 type CommandServer struct {
 	*daemon.StartedService
+	managedService    *daemon.ManagedService
 	handler           CommandServerHandler
 	platformInterface PlatformInterface
 	platformWrapper   *platformInterfaceWrapper
@@ -39,7 +43,9 @@ type CommandServerHandler interface {
 	ServiceReload() error
 	GetSystemProxyStatus() (*SystemProxyStatus, error)
 	SetSystemProxyEnabled(enabled bool) error
+	TriggerNativeCrash() error
 	WriteDebugMessage(message string)
+	ConnectSSHAgent() (int32, error)
 }
 
 func NewCommandServer(handler CommandServerHandler, platformInterface PlatformInterface) (*CommandServer, error) {
@@ -57,15 +63,24 @@ func NewCommandServer(handler CommandServerHandler, platformInterface PlatformIn
 	server.StartedService = daemon.NewStartedService(daemon.ServiceOptions{
 		Context: ctx,
 		// Platform:         platformWrapper,
-		Handler:     (*platformHandler)(server),
-		Debug:       sDebug,
-		LogMaxLines: sLogMaxLines,
-		OOMKiller:   memoryLimitEnabled,
+		Handler:           (*platformHandler)(server),
+		Debug:             sDebug,
+		LogMaxLines:       sLogMaxLines,
+		OOMKillerEnabled:  sOOMKillerEnabled,
+		OOMKillerDisabled: sOOMKillerDisabled,
+		OOMMemoryLimit:    uint64(sOOMMemoryLimit),
 		// WorkingDirectory: sWorkingPath,
 		// TempDirectory:    sTempPath,
 		// UserID:           sUserID,
 		// GroupID:          sGroupID,
 		// SystemProxyEnabled: false,
+	})
+	reporter := &oomReporter{startedService: server.StartedService}
+	service.MustRegister[oomkiller.OOMReporter](ctx, reporter)
+	server.managedService = daemon.NewManagedService(daemon.ManagedServiceOptions{
+		Handler:     (*platformHandler)(server),
+		Debug:       sDebug,
+		OOMReporter: reporter,
 	})
 	return server, nil
 }
@@ -151,6 +166,11 @@ func (s *CommandServer) Start() error {
 	}
 	s.grpcServer = grpc.NewServer(serverOptions...)
 	daemon.RegisterStartedServiceServer(s.grpcServer, s.StartedService)
+	daemon.RegisterManagedServiceServer(s.grpcServer, s.managedService)
+	healthServer := health.NewServer()
+	healthServer.SetServingStatus(daemon.StartedService_ServiceDesc.ServiceName, grpc_health_v1.HealthCheckResponse_SERVING)
+	healthServer.SetServingStatus(daemon.ManagedService_ServiceDesc.ServiceName, grpc_health_v1.HealthCheckResponse_SERVING)
+	grpc_health_v1.RegisterHealthServer(s.grpcServer, healthServer)
 	go s.grpcServer.Serve(listener)
 	return nil
 }
@@ -170,11 +190,16 @@ type OverrideOptions struct {
 }
 
 func (s *CommandServer) StartOrReloadService(configContent string, options *OverrideOptions) error {
-	return s.StartedService.StartOrReloadService(configContent, &daemon.OverrideOptions{
+	saveConfigSnapshot(configContent)
+	err := s.StartedService.StartOrReloadService(configContent, &daemon.OverrideOptions{
 		AutoRedirect:   options.AutoRedirect,
 		IncludePackage: iteratorToArray(options.IncludePackage),
 		ExcludePackage: iteratorToArray(options.ExcludePackage),
 	})
+	if err != nil {
+		return E.Cause(err, "start or reload service")
+	}
+	return nil
 }
 
 func (s *CommandServer) CloseService() error {
@@ -235,7 +260,7 @@ func (s *CommandServer) ResetNetwork() {
 	if instance == nil || instance.Box() == nil {
 		return
 	}
-	instance.Box().Router().ResetNetwork()
+	instance.Box().Network().ResetNetwork()
 }
 
 func (s *CommandServer) UpdateWIFIState() {
@@ -259,7 +284,7 @@ func (h *platformHandler) ServiceReload() error {
 func (h *platformHandler) SystemProxyStatus() (*daemon.SystemProxyStatus, error) {
 	status, err := (*CommandServer)(h).handler.GetSystemProxyStatus()
 	if err != nil {
-		return nil, err
+		return nil, E.Cause(err, "get system proxy status")
 	}
 	return &daemon.SystemProxyStatus{
 		Enabled:   status.Enabled,
@@ -271,6 +296,14 @@ func (h *platformHandler) SetSystemProxyEnabled(enabled bool) error {
 	return (*CommandServer)(h).handler.SetSystemProxyEnabled(enabled)
 }
 
+func (h *platformHandler) TriggerNativeCrash() error {
+	return (*CommandServer)(h).handler.TriggerNativeCrash()
+}
+
 func (h *platformHandler) WriteDebugMessage(message string) {
 	(*CommandServer)(h).handler.WriteDebugMessage(message)
+}
+
+func (h *platformHandler) ConnectSSHAgent() (int32, error) {
+	return (*CommandServer)(h).handler.ConnectSSHAgent()
 }

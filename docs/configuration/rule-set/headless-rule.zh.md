@@ -2,6 +2,11 @@
 icon: material/new-box
 ---
 
+!!! quote "sing-box 1.14.0 中的更改"
+
+    :material-plus: [package_name_regex](#package_name_regex)  
+    :material-alert: [query_type](#query_type)
+
 !!! quote "sing-box 1.13.0 中的更改"
 
     :material-plus: [network_interface_address](#network_interface_address)  
@@ -78,6 +83,9 @@ icon: material/new-box
       "package_name": [
         "com.termux"
       ],
+      "package_name_regex": [
+        "^com\\.termux.*"
+      ],
       "network_type": [
         "wifi"
       ],
@@ -124,6 +132,17 @@ icon: material/new-box
     `other fields`
 
 #### query_type
+
+!!! quote "sing-box 1.14.0 中的更改"
+
+    当 DNS 规则引用此规则集时，此字段现在也会在 DNS 规则被未指定具体
+    DNS 服务器的内部域名解析匹配时生效。此前只有来自客户端的 DNS 查询
+    才会评估此字段。完整列表参阅
+    [迁移指南](/zh/migration/#dns-规则中的-ip_version-和-query_type-行为更改)。
+
+    当 DNS 规则引用了包含此字段的规则集时，该 DNS 规则在同一 DNS 配置中
+    不能与旧版地址筛选字段 (DNS 规则)、旧版 DNS 规则动作 `strategy` 选项，
+    或旧版 `rule_set_ip_cidr_accept_empty` DNS 规则项共存。
 
 DNS 查询类型。值可以为整数或者类型名称字符串。
 
@@ -200,6 +219,12 @@ DNS 查询类型。值可以为整数或者类型名称字符串。
 #### package_name
 
 匹配 Android 应用包名。
+
+#### package_name_regex
+
+!!! question "自 sing-box 1.14.0 起"
+
+使用正则表达式匹配 Android 应用包名。
 
 #### network_type
 

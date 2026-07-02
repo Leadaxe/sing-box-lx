@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"net/netip"
+	"time"
 
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -21,39 +22,49 @@ type DNSRouter interface {
 	ClearCache()
 	LookupReverseMapping(ip netip.Addr) (string, bool)
 	ResetNetwork()
+	// lx:begin lx_command
+	// Rules returns the live DNS rule table, mirroring Router.Rules() for route
+	// rules. Added for the SPEC 014 GetRules command RPC (CONSTITUTION §3.6);
+	// upstream exposes no DNS-rule getter. Implemented by dns.Router.
+	Rules() []DNSRule
+	// lx:end lx_command
 }
 
 type DNSClient interface {
 	Start()
-	Exchange(ctx context.Context, transport DNSTransport, message *dns.Msg, options DNSQueryOptions, responseChecker func(responseAddrs []netip.Addr) bool) (*dns.Msg, error)
-	Lookup(ctx context.Context, transport DNSTransport, domain string, options DNSQueryOptions, responseChecker func(responseAddrs []netip.Addr) bool) ([]netip.Addr, error)
+	Exchange(ctx context.Context, transport DNSTransport, message *dns.Msg, options DNSQueryOptions, responseChecker func(response *dns.Msg) bool) (*dns.Msg, error)
+	Lookup(ctx context.Context, transport DNSTransport, domain string, options DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, error)
 	ClearCache()
 }
 
 type DNSQueryOptions struct {
-	Transport      DNSTransport
-	Strategy       C.DomainStrategy
-	LookupStrategy C.DomainStrategy
-	DisableCache   bool
-	RewriteTTL     *uint32
-	ClientSubnet   netip.Prefix
+	Transport              DNSTransport
+	Strategy               C.DomainStrategy
+	LookupStrategy         C.DomainStrategy
+	DisableCache           bool
+	DisableOptimisticCache bool
+	RewriteTTL             *uint32
+	Timeout                time.Duration
+	ClientSubnet           netip.Prefix
 }
 
-func DNSQueryOptionsFrom(ctx context.Context, options *option.DomainResolveOptions) (*DNSQueryOptions, error) {
-	if options == nil {
-		return &DNSQueryOptions{}, nil
+func DNSQueryOptionsFrom(ctx context.Context, options *option.DomainResolveOptions) (DNSQueryOptions, error) {
+	if options == nil || options.Server == "" {
+		return DNSQueryOptions{}, nil
 	}
 	transportManager := service.FromContext[DNSTransportManager](ctx)
 	transport, loaded := transportManager.Transport(options.Server)
 	if !loaded {
-		return nil, E.New("domain resolver not found: " + options.Server)
+		return DNSQueryOptions{}, E.New("domain resolver not found: " + options.Server)
 	}
-	return &DNSQueryOptions{
-		Transport:    transport,
-		Strategy:     C.DomainStrategy(options.Strategy),
-		DisableCache: options.DisableCache,
-		RewriteTTL:   options.RewriteTTL,
-		ClientSubnet: options.ClientSubnet.Build(netip.Prefix{}),
+	return DNSQueryOptions{
+		Transport:              transport,
+		Strategy:               C.DomainStrategy(options.Strategy),
+		DisableCache:           options.DisableCache,
+		DisableOptimisticCache: options.DisableOptimisticCache,
+		RewriteTTL:             options.RewriteTTL,
+		Timeout:                time.Duration(options.Timeout),
+		ClientSubnet:           options.ClientSubnet.Build(netip.Prefix{}),
 	}, nil
 }
 
@@ -63,20 +74,29 @@ type RDRCStore interface {
 	SaveRDRCAsync(transportName string, qName string, qType uint16, logger logger.Logger)
 }
 
+type DNSCacheStore interface {
+	LoadDNSCache(transportName string, qName string, qType uint16) (rawMessage []byte, expireAt time.Time, loaded bool)
+	SaveDNSCache(transportName string, qName string, qType uint16, rawMessage []byte, expireAt time.Time) error
+	SaveDNSCacheAsync(transportName string, qName string, qType uint16, rawMessage []byte, expireAt time.Time, logger logger.Logger)
+	ClearDNSCache() error
+}
+
 type DNSTransport interface {
 	Lifecycle
 	Type() string
 	Tag() string
 	Dependencies() []string
+	// OutboundTag is the detour tag this DNS server is bound to (lx: SPEC 018); "" = default.
+	OutboundTag() string
 	// Reset closes the transport's existing connections so later requests use fresh connections.
 	// Exchanges that are currently using those connections may fail.
 	Reset()
 	Exchange(ctx context.Context, message *dns.Msg) (*dns.Msg, error)
 }
 
-type LegacyDNSTransport interface {
-	LegacyStrategy() C.DomainStrategy
-	LegacyClientSubnet() netip.Prefix
+type DNSTransportWithPreferredDomain interface {
+	DNSTransport
+	PreferredDomain(domain string) bool
 }
 
 type DNSTransportRegistry interface {

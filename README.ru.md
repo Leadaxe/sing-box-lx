@@ -3,7 +3,7 @@
 # sing-box-lx
 
 > **Тонкий downstream-форк [SagerNet/sing-box](https://github.com/SagerNet/sing-box).**
-> Небольшой набор клиентских фич поверх upstream — сейчас **XHTTP** и **AmneziaWG 2.0** — каждая за своим build-tag.
+> Небольшой набор клиентских фич поверх upstream — транспорт **XHTTP**, **AmneziaWG 2.0**, расширения **наблюдаемости** (CommandClient) и балансировка нагрузки **round_robin** — каждая за своим build-tag.
 > Набор может расти, философия — нет: жить ребейзом на каждый upstream-тег, а не отдельной жизнью.
 
 > 📄 README самого upstream sing-box — **[на GitHub](https://github.com/SagerNet/sing-box/blob/main/README.md)** (всегда актуальный).
@@ -21,7 +21,7 @@
 | **SagerNet/sing-box** (upstream) | базовый | — | — |
 | **shtorm-7/sing-box-extended** | десятки (WARP, MASQUE, MTProxy, XHTTP, AWG2, …) | «комбайн», правки повсюду | отдельная ветка, без ребейза на теги |
 | **amnezia-vpn/amnezia-box**, **hoaxisr/amnezia-box** | только AWG | толстый форк, правки in-place | синк по веткам (`dev-next`/`stable-next`) |
-| **➡ sing-box-lx** (этот репозиторий) | **малый набор (сейчас XHTTP + AWG2)** | **тонкий: новые файлы за build-tag, минимум касаний upstream** | **ребейз атомарных `// lx`-коммитов на upstream-теги** |
+| **➡ sing-box-lx** (этот репозиторий) | **малый набор (XHTTP, AWG2, наблюдаемость, round_robin)** | **тонкий: новые файлы за build-tag, минимум касаний upstream** | **ребейз атомарных `// lx`-коммитов на upstream-теги** |
 
 **Чем мы отличаемся:**
 
@@ -41,8 +41,10 @@
 | **XHTTP** | клиентский транспорт | Xray-совместимый «splithttp» (режимы `auto`/`packet-up`/`stream-up`/`stream-one`) поверх Reality/TLS/h2c | ✅ **проверен живым Xray (3x-ui) сервером** (packet-up/auto): handshake + DNS + HTTPS + скачивание. `stream-one` — известный баг framing |
 | **AmneziaWG 2.0** | клиентский endpoint | обфускация WireGuard: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` + **2.0**: `I1–I5` (CPS — кастомные пакеты-приманки) | ✅ собирается, проходит `check`; зависимость **активирована** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet-база + обфускация); **проверено живым AWG2-сервером**: handshake + keepalive + трафик наружу |
 | **Маскировка `id/ip/ib`** | сахар над AWG | WireSock-стиль: декларативная маскировка поверх `I1` — домен (`id`) + протокол (`ip`: `quic`/`dns`/`stun`/`sip`) + браузер (`ib`), ядро строит клиент-инициированную `I1`-приманку: `quic` = out-of-order фрагментированный Initial (i1+i2), `dns`/`stun`/`sip` = query/Binding-Request/INVITE | ✅ **`ip=quic` device-проверен на реальном LTE/WARP DPI** (~330 мс, упрощает Cloudflare WARP); `dns`/`stun`/`sip` собираются и проходят `check`, но режутся как класс протокола к WARP-edge — для других провайдеров |
+| **Наблюдаемость** (расширения CommandClient) | live-стрим для UI | нативные расширения libbox gRPC за `with_lx_command`: `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `GetPool`, плюс `Connection.detourList` (хвост detour'а отдельным полем, SPEC 017) и `SubscribeDNSQueries` — структурный live-поток DNS (домен, qtype, rcode `-1`=ошибка, CNAME-цепочка, привязка к процессу, `dnsServer`/`dnsServerType`/`outbound`, SPEC 018) | ✅ в rc-серии, потребляется **LxBox**. SPEC 014–018: [`014`](SPECS/014-CLASH_API_TO_COMMANDCLIENT_MIGRATION/SPEC.md) · [`015`](SPECS/015-COMMAND_PROTOCOL_RPC_EXTENSIONS/SPEC.md) · [`017`](SPECS/017-CONNECTION_DETOUR_CHAIN/SPEC.md) · [`018`](SPECS/018-DNS_QUERY_STREAM/SPEC.md) |
+| **round_robin** (балансировка нагрузки) | режим `urltest` | пул-балансировка на `urltest` за `with_lx_command` (для `GetPool`): `mode` `least_test` (дефолт) \| `round_robin`; `balancer{pool (дефолт 3), pool_tolerance (0=держать живые / >0=топ по задержке), sticky_hash}`. Sticky-ключ: пропущен/`[]` → дефолт `["process","domain"]`, `["none"]` → выкл; компоненты `process`/`domain`/`source_ip`/`dest_ip`/`dest_port`. Фиксированные слоты `slot[hash(key)%pool]` (FNV-64a), замена в слоте; `GetPool` отдаёт слоты | ✅ локально равномерно (10/10/10, sticky off); rc.15 починил схлопывание `domain`-ключа (теперь читается `metadata.Domain`, переживающий resolve домен→IP, а не пустой `destination.Fqdn`) — на устройстве равномерность 0.27 → 0.95+. SPEC [`019`](SPECS/019-URLTEST_MODE_STICKY/SPEC.md), конфиг — [docs/.../urltest.md](docs/configuration/outbound/urltest.md) |
 
-Подробные отчёты — в [`SPECS/002-…`](SPECS/002-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/003-…`](SPECS/003-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) и [`SPECS/009-…`](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs/lx-config.md](docs/lx-config.md)**.
+Подробные отчёты — в [`SPECS/002-…`](SPECS/002-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/003-…`](SPECS/003-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) и [`SPECS/009-…`](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md)**.
 
 > **Не поддерживается (слой Reality, отложено):** post-quantum Reality (`pqv` / ML-DSA-65) и `spiderX` из Xray. Это Xray-специфичные фичи Reality, которых нет в sing-box, а Reality — upstream-слой TLS, который мы держим нетронутым (это не одна из наших фич). Классический X25519 Reality работает; сервер, который **требует** post-quantum Reality, не подключится. Это ограничение sing-box — правильнее решать в upstream (получим на ребейзе).
 
@@ -83,7 +85,7 @@ with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_nai
 
 ## Конфигурация фич
 
-> Полные таблицы полей, дефолты и `awg-quick`→JSON маппинг — **[docs/lx-config.md](docs/lx-config.md)**. Здесь — кратко.
+> Полные таблицы полей, дефолты и `awg-quick`→JSON маппинг — **[docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md)**. Здесь — кратко.
 
 ### XHTTP (outbound transport)
 
@@ -138,7 +140,7 @@ QUIC-сессия. Это **единственный профиль, device-пр
 `dns`/`stun`/`sip` реализованы как корректные клиент-инициированные запросы, но режутся как класс
 протокола к WARP-edge (raw DNS/STUN/SIP к дата-центровому IP сам по себе аномален) — сохранены
 для других провайдеров, чей DPI проверяет лишь корректность пакета. См.
-[docs/lx-config.md](docs/lx-config.md) и [примеры SPECS/009](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
+[docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md) и [примеры SPECS/009](SPECS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ---
 
@@ -201,7 +203,7 @@ upstream  https://github.com/SagerNet/sing-box.git
 | AmneziaWG-рантайм | [Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet-база + обфускация (3-way merge) |
 | AmneziaWG upstream | [amnezia-vpn/amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go) · [docs.amnezia.org](https://docs.amnezia.org/documentation/amnezia-wg/) |
 | XHTTP (исток) | [XTLS/Xray-core](https://github.com/XTLS/Xray-core) — `transport/internet/splithttp` |
-| Конфиг фич | [docs/lx-config.md](docs/lx-config.md) |
+| Конфиг фич | [docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md) |
 | Spec Kit | [SPECS/](SPECS/) — [README](SPECS/README.md) · [CONSTITUTION](SPECS/CONSTITUTION.md) · [IMPLEMENTATION_PROMPT](SPECS/IMPLEMENTATION_PROMPT.md) |
 
 ---

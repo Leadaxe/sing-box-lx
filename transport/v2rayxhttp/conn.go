@@ -25,12 +25,13 @@ import (
 // body carries non-VLESS bytes and the VLESS layer fails with "unknown version".
 func (c *Client) dialStreamOne(ctx context.Context, sessionID string) (net.Conn, error) {
 	_ = sessionID // intentionally unused: stream-one sends no sessionId on the wire
-	u, err := c.requestURL()
+	pipeReader, pipeWriter := io.Pipe()
+	// stream-one carries a body, so it uses the configured upload method (default
+	// POST); the empty sessionID keeps the request on the bare path.
+	request, err := c.newRequest(ctx, c.meta.uplinkHTTPMethod, "", "", pipeReader)
 	if err != nil {
 		return nil, err
 	}
-	pipeReader, pipeWriter := io.Pipe()
-	request := c.newRequest(ctx, http.MethodPost, u, pipeReader)
 
 	conn := newStreamConn(pipeWriter, c.serverAddr)
 	go func() {
@@ -52,17 +53,11 @@ func (c *Client) dialStreamOne(ctx context.Context, sessionID string) (net.Conn,
 // dialStreamUp opens a streamed POST for the upload direction and a separate GET
 // whose response body is the download direction.
 func (c *Client) dialStreamUp(ctx context.Context, sessionID string) (net.Conn, error) {
-	downURL, err := c.requestURL(sessionID)
+	// Download: GET response body (no seq — stream mode).
+	downReq, err := c.newRequest(ctx, http.MethodGet, sessionID, "", nil)
 	if err != nil {
 		return nil, err
 	}
-	upURL, err := c.requestURL(sessionID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Download: GET response body.
-	downReq := c.newRequest(ctx, http.MethodGet, downURL, nil)
 	downResp, err := c.transport.RoundTrip(downReq)
 	if err != nil {
 		return nil, E.Cause(err, "open download")
@@ -72,9 +67,13 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string) (net.Conn, 
 		return nil, E.New("v2ray-xhttp: unexpected download status: ", downResp.Status)
 	}
 
-	// Upload: streamed POST request body.
+	// Upload: streamed body request using the configured upload method.
 	pipeReader, pipeWriter := io.Pipe()
-	upReq := c.newRequest(ctx, http.MethodPost, upURL, pipeReader)
+	upReq, err := c.newRequest(ctx, c.meta.uplinkHTTPMethod, sessionID, "", pipeReader)
+	if err != nil {
+		downResp.Body.Close()
+		return nil, err
+	}
 	conn := newSplitConn(downResp.Body, pipeWriter, c.serverAddr)
 	go func() {
 		upResp, err := c.transport.RoundTrip(upReq)
@@ -90,11 +89,11 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string) (net.Conn, 
 // dialPacketUp opens a GET download stream and sends uploads as sequential POST
 // packets, one HTTP request per Write.
 func (c *Client) dialPacketUp(ctx context.Context, sessionID string) (net.Conn, error) {
-	downURL, err := c.requestURL(sessionID)
+	// Download stream: GET with the session id but no seq (downlink).
+	downReq, err := c.newRequest(ctx, http.MethodGet, sessionID, "", nil)
 	if err != nil {
 		return nil, err
 	}
-	downReq := c.newRequest(ctx, http.MethodGet, downURL, nil)
 	downResp, err := c.transport.RoundTrip(downReq)
 	if err != nil {
 		return nil, E.Cause(err, "open download")
@@ -223,6 +222,7 @@ type packetConn struct {
 	serverAddr M.Socksaddr
 	access     sync.Mutex
 	seq        uint64
+	lastPost   time.Time
 	closed     bool
 }
 
@@ -230,36 +230,89 @@ func (c *packetConn) Read(b []byte) (int, error) {
 	return c.reader.Read(b)
 }
 
+// Write delivers a write as one or more sequential upload POSTs. A write larger
+// than sc_max_each_post_bytes is split into multiple sequenced packets; successive
+// posts are throttled by sc_min_posts_interval_ms (anti-burst). Each packet carries
+// the payload per uplink_data_placement.
 func (c *packetConn) Write(b []byte) (int, error) {
+	maxEach := c.client.meta.scMaxEachPostBytes.rand()
+	if maxEach <= 0 {
+		maxEach = len(b)
+	}
+	written := 0
+	for written < len(b) {
+		end := written + maxEach
+		if end > len(b) {
+			end = len(b)
+		}
+		if err := c.sendPacket(b[written:end]); err != nil {
+			return written, err
+		}
+		written = end
+	}
+	return written, nil
+}
+
+// sendPacket posts a single sequenced upload chunk.
+func (c *packetConn) sendPacket(b []byte) error {
 	c.access.Lock()
 	if c.closed {
 		c.access.Unlock()
-		return 0, net.ErrClosed
+		return net.ErrClosed
 	}
 	seq := c.seq
 	c.seq++
+	// Throttle: enforce the minimum inter-post interval since the last post.
+	wait := c.nextPostDelay()
 	c.access.Unlock()
 
-	u, err := c.client.requestURL(c.sessionID, strconv.FormatUint(seq, 10))
-	if err != nil {
-		return 0, err
+	if wait > 0 {
+		timer := time.NewTimer(wait)
+		select {
+		case <-c.ctx.Done():
+			timer.Stop()
+			return c.ctx.Err()
+		case <-timer.C:
+		}
 	}
+
 	payload := make([]byte, len(b))
 	copy(payload, b)
-	request := c.client.newRequest(c.ctx, http.MethodPost, u, &byteReader{data: payload})
-	request.Header.Set("Content-Type", "application/octet-stream")
-	request.ContentLength = int64(len(payload))
+	request, err := c.client.newRequest(c.ctx, c.client.meta.uplinkHTTPMethod, c.sessionID, strconv.FormatUint(seq, 10), nil)
+	if err != nil {
+		return err
+	}
+	c.client.applyUplinkData(request, payload)
 
 	response, err := c.client.transport.RoundTrip(request)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	if response.StatusCode != http.StatusOK {
 		response.Body.Close()
-		return 0, E.New("v2ray-xhttp: unexpected upload status: ", response.Status)
+		return E.New("v2ray-xhttp: unexpected upload status: ", response.Status)
 	}
 	drainAndClose(response.Body)
-	return len(b), nil
+	return nil
+}
+
+// nextPostDelay returns how long to wait before the next post to honor
+// sc_min_posts_interval_ms, updating lastPost to the projected post time. Caller
+// must hold c.access.
+func (c *packetConn) nextPostDelay() time.Duration {
+	interval := time.Duration(c.client.meta.scMinPostsIntervalMs.rand()) * time.Millisecond
+	now := timeNow()
+	if c.lastPost.IsZero() || interval <= 0 {
+		c.lastPost = now
+		return 0
+	}
+	earliest := c.lastPost.Add(interval)
+	if earliest.After(now) {
+		c.lastPost = earliest
+		return earliest.Sub(now)
+	}
+	c.lastPost = now
+	return 0
 }
 
 func (c *packetConn) Close() error {

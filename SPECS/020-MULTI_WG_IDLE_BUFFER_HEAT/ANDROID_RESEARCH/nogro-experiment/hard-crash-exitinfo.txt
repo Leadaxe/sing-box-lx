@@ -1,0 +1,14 @@
+LX_WG_NO_GRO hard-build (lx-1.14-nogro-hard) — crash on tunnel start, 2026-07-01
+CPH2411, APK 2.8.1-dev.5 (vc 2979), core .so SHA 70fcdb06..., lxBatchSize()≡8 hardcoded.
+
+logcat (level=E), at tunnel start:
+07-01 17:29:49.698  F libc  : Fatal signal 6 (SIGABRT), code -6 (SI_TKILL) in tid 20798 (m.leadaxe.lxbox), pid 20767
+07-01 17:29:50.413  F DEBUG : signal 6 (SIGABRT), code -6 (SI_TKILL), fault addr --------
+07-01 17:29:50.413  F DEBUG : #00 pc 0000000000c2bcc8  .../lib/arm64/libbox.so
+
+ApplicationExitInfo:
+  reason=CRASH_NATIVE  description="crash"  status=6 (SIGABRT)  signal=SIGABRT  code=SI_TKILL
+  thread="DefaultDispatch"  process=com.leadaxe.lxbox
+
+Go panic text: NOT captured (Go writes abort past logcat/stderr on this device — known, see probe_stderr_dead_coloros).
+addr2line 0xc2bcc8 → unresolved (stripped Go binary).

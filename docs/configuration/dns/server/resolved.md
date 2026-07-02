@@ -43,29 +43,58 @@ If not enabled, `NXDOMAIN` will be returned for requests that do not match searc
 
 === "Split DNS only"
 
-    ```json
-    {
-      "dns": {
-        "servers": [
-          {
-            "type": "local",
-            "tag": "local"
-          },
-          {
-            "type": "resolved",
-            "tag": "resolved",
-            "service": "resolved"
+    === ":material-card-multiple: sing-box 1.14.0"
+
+        ```json
+        {
+          "dns": {
+            "servers": [
+              {
+                "type": "local",
+                "tag": "local"
+              },
+              {
+                "type": "resolved",
+                "tag": "resolved",
+                "service": "resolved"
+              }
+            ],
+            "rules": [
+              {
+                "preferred_by": "resolved",
+                "action": "route",
+                "server": "resolved"
+              }
+            ]
           }
-        ],
-        "rules": [
-          {
-            "ip_accept_any": true,
-            "server": "resolved"
+        }
+        ```
+
+    === ":material-card-remove: sing-box < 1.14.0"
+
+        ```json
+        {
+          "dns": {
+            "servers": [
+              {
+                "type": "local",
+                "tag": "local"
+              },
+              {
+                "type": "resolved",
+                "tag": "resolved",
+                "service": "resolved"
+              }
+            ],
+            "rules": [
+              {
+                "ip_accept_any": true,
+                "server": "resolved"
+              }
+            ]
           }
-        ]
-      }
-    }
-    ```
+        }
+        ```
 
 === "Use as global DNS"
 

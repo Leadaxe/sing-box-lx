@@ -1,13 +1,30 @@
 package libbox
 
 import (
+	"context"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sagernet/sing-box/daemon"
 	M "github.com/sagernet/sing/common/metadata"
 )
+
+type streamSession struct {
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closeOnce sync.Once
+	closeDone chan struct{}
+}
+
+func (s *streamSession) Close() error {
+	s.closeOnce.Do(func() {
+		s.cancel()
+	})
+	<-s.closeDone
+	return nil
+}
 
 type StatusMessage struct {
 	Memory           int64
@@ -95,12 +112,20 @@ type ConnectionEventIterator interface {
 	HasNext() bool
 }
 
+// Connections is the client-side accumulator for the CommandConnections stream. A single
+// *Connections may be driven by one subscriber's goroutine while another goroutine reads it
+// (Iterator/SortBy from the UI) — so every method touching the shared state below takes
+// access. lx: SPEC 016 — without it, two concurrent CommandConnections subscribers race
+// connectionMap (write at ApplyEvents vs range) → Go's "concurrent map iteration and map
+// write" fatal error, an unrecoverable process abort. This is the UI/command channel, not
+// the data plane, so an uncontended Lock (~20ns) is free; correctness over micro-cost.
 type Connections struct {
-	connectionMap map[string]*Connection
-	input         []Connection
-	filtered      []Connection
-	filterState   int32
-	filterApplied bool
+	access           sync.Mutex
+	connectionMap    map[string]*Connection
+	input            []Connection
+	filtered         []Connection
+	filterStateValue int32 // lx: SPEC 016 — renamed from filterState to free that name for the private method
+	filterApplied    bool
 }
 
 func NewConnections() *Connections {
@@ -113,6 +138,8 @@ func (c *Connections) ApplyEvents(events *ConnectionEvents) {
 	if events == nil {
 		return
 	}
+	c.access.Lock()
+	defer c.access.Unlock()
 	if events.Reset {
 		c.connectionMap = make(map[string]*Connection)
 	}
@@ -154,7 +181,7 @@ func (c *Connections) ApplyEvents(events *ConnectionEvents) {
 		c.input = append(c.input, *conn)
 	}
 	if c.filterApplied {
-		c.FilterState(c.filterState)
+		c.filterState(c.filterStateValue) // lx: SPEC 016 — private, lock already held by ApplyEvents
 	} else {
 		c.filtered = c.filtered[:0]
 		c.filtered = append(c.filtered, c.input...)
@@ -172,9 +199,18 @@ func (c *Connections) evictClosedConnections(nowMilliseconds int64) {
 	}
 }
 
+// FilterState is the exported entry (gomobile binding) — it takes the lock. ApplyEvents
+// calls the private filterState directly because it already holds the lock; sync.Mutex is
+// not reentrant, so calling the exported method from there would deadlock. lx: SPEC 016.
 func (c *Connections) FilterState(state int32) {
+	c.access.Lock()
+	defer c.access.Unlock()
+	c.filterState(state)
+}
+
+func (c *Connections) filterState(state int32) {
 	c.filterApplied = true
-	c.filterState = state
+	c.filterStateValue = state
 	c.filtered = c.filtered[:0]
 	switch state {
 	case ConnectionStateAll:
@@ -195,6 +231,8 @@ func (c *Connections) FilterState(state int32) {
 }
 
 func (c *Connections) SortByDate() {
+	c.access.Lock()
+	defer c.access.Unlock()
 	slices.SortStableFunc(c.filtered, func(x, y Connection) int {
 		if x.CreatedAt < y.CreatedAt {
 			return 1
@@ -207,6 +245,8 @@ func (c *Connections) SortByDate() {
 }
 
 func (c *Connections) SortByTraffic() {
+	c.access.Lock()
+	defer c.access.Unlock()
 	slices.SortStableFunc(c.filtered, func(x, y Connection) int {
 		xTraffic := x.Uplink + x.Downlink
 		yTraffic := y.Uplink + y.Downlink
@@ -221,6 +261,8 @@ func (c *Connections) SortByTraffic() {
 }
 
 func (c *Connections) SortByTrafficTotal() {
+	c.access.Lock()
+	defer c.access.Unlock()
 	slices.SortStableFunc(c.filtered, func(x, y Connection) int {
 		xTraffic := x.UplinkTotal + x.DownlinkTotal
 		yTraffic := y.UplinkTotal + y.DownlinkTotal
@@ -234,8 +276,14 @@ func (c *Connections) SortByTrafficTotal() {
 	})
 }
 
+// Iterator hands a snapshot to the gomobile caller. The caller walks the iterator OUTSIDE
+// this Go call (the binding crosses the language boundary per Next()), by which time the
+// lock is released — so it must iterate a COPY, not the live c.filtered that a concurrent
+// ApplyEvents/SortBy may be rewriting. lx: SPEC 016.
 func (c *Connections) Iterator() ConnectionIterator {
-	return newPtrIterator(c.filtered)
+	c.access.Lock()
+	defer c.access.Unlock()
+	return newPtrIterator(append([]Connection(nil), c.filtered...))
 }
 
 type ProcessInfo struct {
@@ -272,11 +320,19 @@ type Connection struct {
 	Outbound      string
 	OutboundType  string
 	chainList     []string
+	detourList    []string // lx: SPEC 017 — transport detour tail of the final outbound
 	ProcessInfo   *ProcessInfo
 }
 
 func (c *Connection) Chain() StringIterator {
 	return newIterator(c.chainList)
+}
+
+// Detour returns the transport detour tail of the final outbound (SPEC 017) — the part
+// Chain omits by design. Order: final outbound → outward; empty when the outbound has no
+// detour. Full physical path from the node = Chain().first ⊕ Detour().
+func (c *Connection) Detour() StringIterator {
+	return newIterator(c.detourList)
 }
 
 func (c *Connection) DisplayDestination() string {
@@ -339,6 +395,22 @@ func outboundGroupIteratorFromGRPC(groups *daemon.Groups) OutboundGroupIterator 
 	return newIterator(libboxGroups)
 }
 
+func outboundGroupItemListFromGRPC(list *daemon.OutboundList) OutboundGroupItemIterator {
+	if list == nil || len(list.Outbounds) == 0 {
+		return newIterator([]*OutboundGroupItem{})
+	}
+	var items []*OutboundGroupItem
+	for _, ob := range list.Outbounds {
+		items = append(items, &OutboundGroupItem{
+			Tag:          ob.Tag,
+			Type:         ob.Type,
+			URLTestTime:  ob.UrlTestTime,
+			URLTestDelay: ob.UrlTestDelay,
+		})
+	}
+	return newIterator(items)
+}
+
 func connectionFromGRPC(conn *daemon.Connection) Connection {
 	var processInfo *ProcessInfo
 	if conn.ProcessInfo != nil {
@@ -372,6 +444,7 @@ func connectionFromGRPC(conn *daemon.Connection) Connection {
 		Outbound:      conn.Outbound,
 		OutboundType:  conn.OutboundType,
 		chainList:     conn.ChainList,
+		detourList:    conn.DetourList, // lx: SPEC 017
 		ProcessInfo:   processInfo,
 	}
 }

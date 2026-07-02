@@ -1,0 +1,70 @@
+{
+  "log": {
+    "level": "warn"
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 2080
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "xhttp-obfs-out",
+      "server": "127.0.0.1",
+      "server_port": 443,
+      "uuid": "b831381d-6324-4d53-ad4f-8cda48b30811",
+      "flow": "",
+      "tls": {
+        "enabled": true,
+        "server_name": "www.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0",
+          "short_id": "0123456789abcdef"
+        }
+      },
+      "transport": {
+        "type": "xhttp",
+        "host": "www.example.com",
+        "path": "/xhttp",
+        "mode": "packet-up",
+        "x_padding_bytes": "100-1000",
+        "x_padding_obfs_mode": true,
+        "x_padding_placement": "header",
+        "x_padding_header": "X-Padding",
+        "x_padding_key": "x_padding",
+        "x_padding_method": "tokenish",
+        "session_placement": "header",
+        "session_key": "X-Session",
+        "seq_placement": "query",
+        "seq_key": "x_seq",
+        "uplink_data_placement": "header",
+        "uplink_data_key": "X-Data",
+        "uplink_chunk_size": "3000-4000",
+        "uplink_http_method": "POST",
+        "sc_max_each_post_bytes": "1000000-1000000",
+        "sc_min_posts_interval_ms": "30-30",
+        "sc_max_concurrent_posts": 100,
+        "server_max_header_bytes": 8192,
+        "no_sse_header": false,
+        "sc_max_buffered_posts": 30,
+        "sc_stream_up_server_secs": "20-80",
+        "headers": {
+          "User-Agent": "Mozilla/5.0"
+        }
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ]
+}

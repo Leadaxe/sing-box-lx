@@ -2,6 +2,12 @@
 icon: material/alert-decagram
 ---
 
+!!! quote "Changes in sing-box 1.14.0"
+
+    :material-plus: [bbr_profile](#bbr_profile)  
+    :material-plus: [realm](#realm)  
+    :material-alert: [obfs](#obfstype)
+
 !!! quote "Changes in sing-box 1.11.0"
 
     :material-alert: [masquerade](#masquerade)  
@@ -30,8 +36,20 @@ icon: material/alert-decagram
   ],
   "ignore_client_bandwidth": false,
   "tls": {},
+
+  ... // QUIC Fields
+
   "masquerade": "", // or {}
-  "brutal_debug": false
+  "bbr_profile": "",
+  "brutal_debug": false,
+  "realm": {
+    "server_url": "https://realm.example.com",
+    "token": "",
+    "realm_id": "",
+    "stun_servers": [],
+    "stun_domain_resolver": "", // or {}
+    "http_client": {}
+  }
 }
 ```
 
@@ -58,13 +76,29 @@ Conflict with `ignore_client_bandwidth`.
 
 #### obfs.type
 
-QUIC traffic obfuscator type, only available with `salamander`.
+QUIC traffic obfuscator type, one of `salamander` `gecko`.
 
 Disabled if empty.
 
 #### obfs.password
 
 QUIC traffic obfuscator password.
+
+#### obfs.min_packet_size
+
+!!! question "Since sing-box 1.14.0"
+
+Minimum on-wire packet size in bytes. Gecko only.
+
+`512` is used by default.
+
+#### obfs.max_packet_size
+
+!!! question "Since sing-box 1.14.0"
+
+Maximum on-wire packet size in bytes. Gecko only.
+
+`1200` is used by default.
 
 #### users
 
@@ -89,6 +123,10 @@ Deny clients to use the BBR CC.
 ==Required==
 
 TLS configuration, see [TLS](/configuration/shared/tls/#inbound).
+
+### QUIC Fields
+
+See [QUIC Fields](/configuration/shared/quic/) for details.
 
 #### masquerade
 
@@ -141,6 +179,66 @@ Fixed response headers.
 
 Fixed response content.
 
+#### bbr_profile
+
+!!! question "Since sing-box 1.14.0"
+
+BBR congestion control algorithm profile, one of `conservative` `standard` `aggressive`.
+
+`standard` is used by default.
+
 #### brutal_debug
 
 Enable debug information logging for Hysteria Brutal CC.
+
+#### realm
+
+!!! question "Since sing-box 1.14.0"
+
+Register this inbound to a Hysteria Realm rendezvous service to enable NAT traversal.
+
+The inbound discovers its public addresses via STUN, registers them on the realm, and uses UDP hole-punching to accept incoming clients without a publicly reachable listen address.
+
+See [Hysteria Realm](/configuration/service/hysteria-realm/) for the rendezvous service.
+
+#### realm.server_url
+
+==Required==
+
+Realm rendezvous service URL.
+
+#### realm.token
+
+Bearer token for the realm. Must match one of `users[].token` configured on the realm.
+
+#### realm.realm_id
+
+==Required==
+
+Slot identifier on the realm.
+
+1–64 characters, must match `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`.
+
+Outbounds must use the same `realm_id` to find this server.
+
+#### realm.stun_servers
+
+==Required==
+
+List of STUN servers (`host` or `host:port`) used to discover public addresses.
+
+#### realm.stun_domain_resolver
+
+Set domain resolver to use for resolving STUN server domain names.
+
+This option uses the same format as the [route DNS rule action](/configuration/dns/rule_action/#route) without the `action` field.
+
+Setting this option directly to a string is equivalent to setting `server` of this options.
+
+If empty, the default domain resolver is used.
+
+#### realm.http_client
+
+HTTP client used to talk to the realm.
+
+See [HTTP Client](/configuration/shared/http-client/) for details.

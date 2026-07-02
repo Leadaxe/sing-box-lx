@@ -1,0 +1,30 @@
+File: memfd:jit-zygote-cache
+Type: inuse_objects
+Time: 2026-07-01 09:33:47 MSK
+Showing nodes accounting for 26990, 99.53% of 27118 total
+Dropped 56 nodes (cum <= 135)
+      flat  flat%   sum%        cum   cum%
+     21845 80.56% 80.56%      21845 80.56%  github.com/sagernet/sing-box/daemon.(*StartedService).WriteMessage
+      4212 15.53% 96.09%       4212 15.53%  github.com/sagernet/wireguard-go/device.(*Device).PopulatePools.func3
+       769  2.84% 98.92%        769  2.84%  runtime.allocm
+       164   0.6% 99.53%       2955 10.90%  github.com/sagernet/wireguard-go/device.(*Device).RoutineReceiveIncoming
+         0     0% 99.53%      21845 80.56%  github.com/sagernet/sing-box/dns.(*Router).Exchange
+         0     0% 99.53%      21845 80.56%  github.com/sagernet/sing-box/log.(*observableLogger).DebugContext
+         0     0% 99.53%      21845 80.56%  github.com/sagernet/sing-box/log.(*observableLogger).Log
+         0     0% 99.53%      21845 80.56%  github.com/sagernet/sing-box/route.ExchangeDNSPacket
+         0     0% 99.53%      21845 80.56%  github.com/sagernet/sing-box/route.exchangeDNSPacket
+         0     0% 99.53%       4212 15.53%  github.com/sagernet/wireguard-go/device.(*Device).GetMessageBuffer (inline)
+         0     0% 99.53%       1421  5.24%  github.com/sagernet/wireguard-go/device.(*Device).NewOutboundElement
+         0     0% 99.53%       1404  5.18%  github.com/sagernet/wireguard-go/device.(*Device).RoutineReadFromTUN
+         0     0% 99.53%       4212 15.53%  github.com/sagernet/wireguard-go/device.(*WaitPool).Get
+         0     0% 99.53%        513  1.89%  runtime.mcall
+         0     0% 99.53%        256  0.94%  runtime.mstart
+         0     0% 99.53%        256  0.94%  runtime.mstart0
+         0     0% 99.53%        256  0.94%  runtime.mstart1
+         0     0% 99.53%        769  2.84%  runtime.newm
+         0     0% 99.53%        513  1.89%  runtime.park_m
+         0     0% 99.53%        769  2.84%  runtime.resetspinning
+         0     0% 99.53%        769  2.84%  runtime.schedule
+         0     0% 99.53%        769  2.84%  runtime.startm
+         0     0% 99.53%        769  2.84%  runtime.wakep
+         0     0% 99.53%       4245 15.65%  sync.(*Pool).Get

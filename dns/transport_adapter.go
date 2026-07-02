@@ -1,21 +1,18 @@
 package dns
 
 import (
-	"net/netip"
-
-	"github.com/sagernet/sing-box/adapter"
-	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 )
-
-var _ adapter.LegacyDNSTransport = (*TransportAdapter)(nil)
 
 type TransportAdapter struct {
 	transportType string
 	transportTag  string
 	dependencies  []string
-	strategy      C.DomainStrategy
-	clientSubnet  netip.Prefix
+	// lx: SPEC 018 — the outbound (detour) tag this DNS server is statically bound to, from
+	// its DialerOptions.Detour. A DNS rule picks the server; the channel the server uses is
+	// fixed here at config time. Empty = default outbound. The server-side stream resolves a
+	// selector tag to the live node via Now(); this stores only the raw tag (zero hot-path cost).
+	outboundTag string
 }
 
 func NewTransportAdapter(transportType string, transportTag string, dependencies []string) TransportAdapter {
@@ -35,8 +32,7 @@ func NewTransportAdapterWithLocalOptions(transportType string, transportTag stri
 		transportType: transportType,
 		transportTag:  transportTag,
 		dependencies:  dependencies,
-		strategy:      C.DomainStrategy(localOptions.LegacyStrategy),
-		clientSubnet:  localOptions.LegacyClientSubnet,
+		outboundTag:   localOptions.Detour, // lx: SPEC 018
 	}
 }
 
@@ -45,15 +41,11 @@ func NewTransportAdapterWithRemoteOptions(transportType string, transportTag str
 	if remoteOptions.DomainResolver != nil && remoteOptions.DomainResolver.Server != "" {
 		dependencies = append(dependencies, remoteOptions.DomainResolver.Server)
 	}
-	if remoteOptions.LegacyAddressResolver != "" {
-		dependencies = append(dependencies, remoteOptions.LegacyAddressResolver)
-	}
 	return TransportAdapter{
 		transportType: transportType,
 		transportTag:  transportTag,
 		dependencies:  dependencies,
-		strategy:      C.DomainStrategy(remoteOptions.LegacyStrategy),
-		clientSubnet:  remoteOptions.LegacyClientSubnet,
+		outboundTag:   remoteOptions.Detour, // lx: SPEC 018
 	}
 }
 
@@ -69,10 +61,8 @@ func (a *TransportAdapter) Dependencies() []string {
 	return a.dependencies
 }
 
-func (a *TransportAdapter) LegacyStrategy() C.DomainStrategy {
-	return a.strategy
-}
-
-func (a *TransportAdapter) LegacyClientSubnet() netip.Prefix {
-	return a.clientSubnet
+// OutboundTag is the detour tag this DNS server is bound to (lx: SPEC 018); "" = default
+// outbound. May be a selector tag — the caller resolves Now() if it needs the live node.
+func (a *TransportAdapter) OutboundTag() string {
+	return a.outboundTag
 }

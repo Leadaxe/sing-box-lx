@@ -27,7 +27,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -61,9 +60,11 @@ type Client struct {
 	path         string
 	mode         string
 	headers      http.Header
-	paddingMin   int
-	paddingMax   int
+	paddingRange intRange
 	noGRPCHeader bool
+	// meta holds the normalized placement/key/method selection (session, seq,
+	// uplink-data, X-Padding obfs). Computed once in NewClient.
+	meta metaConfig
 	// realityEnabled records whether the TLS config is a Reality client config.
 	// It drives mode=auto resolution (Reality → stream-one, like Xray).
 	realityEnabled bool
@@ -84,7 +85,28 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		return nil, E.New("v2ray-xhttp: unknown mode: ", mode)
 	}
 
-	paddingMin, paddingMax, err := parsePaddingRange(options.XPaddingBytes)
+	paddingRange, err := parseRangeOr(options.XPaddingBytes, "x_padding_bytes", intRange{100, 1000})
+	if err != nil {
+		return nil, err
+	}
+
+	meta, err := normalizeMeta(metaOptions{
+		SessionPlacement:     options.SessionPlacement,
+		SessionKey:           options.SessionKey,
+		SeqPlacement:         options.SeqPlacement,
+		SeqKey:               options.SeqKey,
+		UplinkDataPlacement:  options.UplinkDataPlacement,
+		UplinkDataKey:        options.UplinkDataKey,
+		UplinkChunkSize:      options.UplinkChunkSize,
+		UplinkHTTPMethod:     options.UplinkHTTPMethod,
+		XPaddingObfsMode:     options.XPaddingObfsMode,
+		XPaddingKey:          options.XPaddingKey,
+		XPaddingHeader:       options.XPaddingHeader,
+		XPaddingPlacement:    options.XPaddingPlacement,
+		XPaddingMethod:       options.XPaddingMethod,
+		ScMaxEachPostBytes:   options.ScMaxEachPostBytes,
+		ScMinPostsIntervalMs: options.ScMinPostsIntervalMs,
+	}, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -146,9 +168,9 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		path:           path,
 		mode:           mode,
 		headers:        headers,
-		paddingMin:     paddingMin,
-		paddingMax:     paddingMax,
+		paddingRange:   paddingRange,
 		noGRPCHeader:   options.NoGRPCHeader,
+		meta:           meta,
 		realityEnabled: tlsConfigIsReality(tlsConfig),
 	}, nil
 }
@@ -183,31 +205,16 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// requestURL builds the full URL for the given path suffix elements appended to
-// the configured base path, e.g. "<path>/<sessionId>" or
-// "<path>/<sessionId>/<seq>".
-func (c *Client) requestURL(elem ...string) (*url.URL, error) {
+// baseURL builds a fresh request URL targeting the normalized base path. The
+// placement engine (applyMeta) appends session/seq path segments and query params
+// as configured; applyXPadding attaches the padding. The base path is set via
+// sHTTP.URLSetPath so percent-encoding matches the rest of sing-box.
+func (c *Client) baseURL() (*url.URL, error) {
 	u := &url.URL{
 		Scheme: c.scheme,
 		Host:   c.serverAddr.String(),
 	}
-	// stream-one targets the bare normalized path with no trailing segment (and
-	// no sessionId): Xray's splithttp server routes a request to the bidirectional
-	// stream-one handler only when sessionId is empty, so the URL must be exactly
-	// "<path>" — not "<path>/" (a trailing slash would be parsed as an empty
-	// sessionId segment by some server-side path matchers). strings.Join of an
-	// empty slice yields "", which would otherwise produce "<path>/".
-	if len(elem) == 0 {
-		if err := sHTTP.URLSetPath(u, c.path); err != nil {
-			return nil, E.Cause(err, "parse path")
-		}
-		if !strings.HasPrefix(u.Path, "/") {
-			u.Path = "/" + u.Path
-		}
-		return u, nil
-	}
-	fullPath := c.path + "/" + strings.Join(elem, "/")
-	if err := sHTTP.URLSetPath(u, fullPath); err != nil {
+	if err := sHTTP.URLSetPath(u, c.path); err != nil {
 		return nil, E.Cause(err, "parse path")
 	}
 	if !strings.HasPrefix(u.Path, "/") {
@@ -216,9 +223,17 @@ func (c *Client) requestURL(elem ...string) (*url.URL, error) {
 	return u, nil
 }
 
-// newRequest constructs an XHTTP request with the shared headers, host and a
-// fresh random X-Padding value applied.
-func (c *Client) newRequest(ctx context.Context, method string, u *url.URL, body interface{ Read([]byte) (int, error) }) *http.Request {
+// newRequest constructs an XHTTP request: it builds the base URL, lets the
+// placement engine position the sessionID and (packet-up) seqStr, then attaches
+// X-Padding. An empty sessionID emits no session metadata (stream-one targets the
+// bare path with no sessionId, which is how the server routes the bidirectional
+// branch). An empty seqStr emits no seq (stream modes).
+func (c *Client) newRequest(ctx context.Context, method, sessionID, seqStr string, body interface{ Read([]byte) (int, error) }) (*http.Request, error) {
+	u, err := c.baseURL()
+	if err != nil {
+		return nil, err
+	}
+	basePath := u.Path
 	request := &http.Request{
 		Method: method,
 		URL:    u,
@@ -228,32 +243,12 @@ func (c *Client) newRequest(ctx context.Context, method string, u *url.URL, body
 	if request.Header == nil {
 		request.Header = make(http.Header)
 	}
-	// Padding placement matches Xray's default (XPaddingObfsMode off): the value is
-	// carried as a query param "x_padding=<value>" inside the Referer header
-	// (PlacementQueryInHeader, key "x_padding"). The server validates the x_padding
-	// length against its xPaddingBytes range (default 100-1000) and replies 400 if it
-	// is missing or out of range — so it must live in the Referer, not a standalone
-	// X-Padding header. Verified live against an Xray (3x-ui) XHTTP server.
-	referer := &url.URL{Scheme: c.scheme, Host: c.host, Path: u.Path}
-	rq := referer.Query()
-	rq.Set("x_padding", c.padding())
-	referer.RawQuery = rq.Encode()
-	request.Header.Set("Referer", referer.String())
+	c.applyMeta(request, basePath, sessionID, seqStr)
+	c.applyXPadding(request)
 	if body != nil {
 		request.Body = readCloser{body}
 	}
-	return request.WithContext(ctx)
-}
-
-func (c *Client) padding() string {
-	n := c.paddingMin
-	if c.paddingMax > c.paddingMin {
-		n += rand.Intn(c.paddingMax - c.paddingMin + 1)
-	}
-	if n <= 0 {
-		return ""
-	}
-	return strings.Repeat("0", n)
+	return request.WithContext(ctx), nil
 }
 
 // newSessionID returns a random session id formatted as a dashed UUID string
@@ -272,33 +267,6 @@ func newSessionID() string {
 		h[i*2+1] = hexdigits[v&0x0f]
 	}
 	return string(h[0:8]) + "-" + string(h[8:12]) + "-" + string(h[12:16]) + "-" + string(h[16:20]) + "-" + string(h[20:32])
-}
-
-func parsePaddingRange(raw string) (int, int, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 100, 1000, nil
-	}
-	if !strings.Contains(raw, "-") {
-		v, err := strconv.Atoi(raw)
-		if err != nil {
-			return 0, 0, E.Cause(err, "parse x_padding_bytes")
-		}
-		return v, v, nil
-	}
-	parts := strings.SplitN(raw, "-", 2)
-	minV, err := strconv.Atoi(strings.TrimSpace(parts[0]))
-	if err != nil {
-		return 0, 0, E.Cause(err, "parse x_padding_bytes min")
-	}
-	maxV, err := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if err != nil {
-		return 0, 0, E.Cause(err, "parse x_padding_bytes max")
-	}
-	if maxV < minV {
-		minV, maxV = maxV, minV
-	}
-	return minV, maxV, nil
 }
 
 // readCloser adapts a plain reader to io.ReadCloser for use as a request body

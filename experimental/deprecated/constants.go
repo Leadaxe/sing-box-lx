@@ -57,24 +57,6 @@ func (n Note) MessageWithLink() string {
 	}
 }
 
-var OptionLegacyDNSTransport = Note{
-	Name:              "legacy-dns-transport",
-	Description:       "legacy DNS servers",
-	DeprecatedVersion: "1.12.0",
-	ScheduledVersion:  "1.14.0",
-	EnvName:           "LEGACY_DNS_SERVERS",
-	MigrationLink:     "https://sing-box.sagernet.org/migration/#migrate-to-new-dns-server-formats",
-}
-
-var OptionLegacyDNSFakeIPOptions = Note{
-	Name:              "legacy-dns-fakeip-options",
-	Description:       "legacy DNS fakeip options",
-	DeprecatedVersion: "1.12.0",
-	ScheduledVersion:  "1.14.0",
-	EnvName:           "LEGACY_DNS_FAKEIP_OPTIONS",
-	MigrationLink:     "https://sing-box.sagernet.org/migration/#migrate-to-new-dns-server-formats",
-}
-
 var OptionOutboundDNSRuleItem = Note{
 	Name:              "outbound-dns-rule-item",
 	Description:       "outbound DNS rule item",
@@ -102,10 +84,86 @@ var OptionLegacyDomainStrategyOptions = Note{
 	MigrationLink:     "https://sing-box.sagernet.org/migration/#migrate-domain-strategy-options",
 }
 
+var OptionInlineACME = Note{
+	Name:              "inline-acme-options",
+	Description:       "inline ACME options in TLS",
+	DeprecatedVersion: "1.14.0",
+	ScheduledVersion:  "1.16.0",
+	EnvName:           "INLINE_ACME_OPTIONS",
+	MigrationLink:     "https://sing-box.sagernet.org/migration/#migrate-inline-acme-to-certificate-provider",
+}
+
+var OptionLegacyRuleSetDownloadDetour = Note{
+	Name:              "legacy-rule-set-download-detour",
+	Description:       "legacy `download_detour` remote rule-set option",
+	DeprecatedVersion: "1.14.0",
+	ScheduledVersion:  "1.16.0",
+	EnvName:           "LEGACY_RULE_SET_DOWNLOAD_DETOUR",
+}
+
+var OptionRuleSetIPCIDRAcceptEmpty = Note{
+	Name:              "dns-rule-rule-set-ip-cidr-accept-empty",
+	Description:       "Legacy `rule_set_ip_cidr_accept_empty` DNS rule item",
+	DeprecatedVersion: "1.14.0",
+	ScheduledVersion:  "1.16.0",
+	EnvName:           "DNS_RULE_RULE_SET_IP_CIDR_ACCEPT_EMPTY",
+	MigrationLink:     "https://sing-box.sagernet.org/migration/#migrate-address-filter-fields-to-response-matching",
+}
+
+var OptionLegacyDNSAddressFilter = Note{
+	Name:              "legacy-dns-address-filter",
+	Description:       "Legacy Address Filter Fields in DNS rules",
+	DeprecatedVersion: "1.14.0",
+	ScheduledVersion:  "1.16.0",
+	EnvName:           "LEGACY_DNS_ADDRESS_FILTER",
+	MigrationLink:     "https://sing-box.sagernet.org/migration/#migrate-address-filter-fields-to-response-matching",
+}
+
+var OptionLegacyDNSRuleStrategy = Note{
+	Name:              "legacy-dns-rule-strategy",
+	Description:       "Legacy `strategy` DNS rule action option",
+	DeprecatedVersion: "1.14.0",
+	ScheduledVersion:  "1.16.0",
+	EnvName:           "LEGACY_DNS_RULE_STRATEGY",
+	MigrationLink:     "https://sing-box.sagernet.org/migration/#migrate-dns-rule-action-strategy-to-rule-items",
+}
+
+var OptionIndependentDNSCache = Note{
+	Name:              "independent-dns-cache",
+	Description:       "`independent_cache` DNS option",
+	DeprecatedVersion: "1.14.0",
+	ScheduledVersion:  "1.16.0",
+	EnvName:           "INDEPENDENT_DNS_CACHE",
+	MigrationLink:     "https://sing-box.sagernet.org/migration/#migrate-independent-dns-cache",
+}
+
+var OptionStoreRDRC = Note{
+	Name:              "store-rdrc",
+	Description:       "`store_rdrc` cache file option",
+	DeprecatedVersion: "1.14.0",
+	ScheduledVersion:  "1.16.0",
+	EnvName:           "STORE_RDRC",
+	MigrationLink:     "https://sing-box.sagernet.org/migration/#migrate-store-rdrc",
+}
+
+var OptionImplicitDefaultHTTPClient = Note{
+	Name:              "implicit-default-http-client",
+	Description:       "implicit default HTTP client using default outbound for remote rule-sets",
+	DeprecatedVersion: "1.14.0",
+	ScheduledVersion:  "1.16.0",
+	EnvName:           "IMPLICIT_DEFAULT_HTTP_CLIENT",
+}
+
 var Options = []Note{
-	OptionLegacyDNSTransport,
-	OptionLegacyDNSFakeIPOptions,
 	OptionOutboundDNSRuleItem,
 	OptionMissingDomainResolver,
 	OptionLegacyDomainStrategyOptions,
+	OptionInlineACME,
+	OptionLegacyRuleSetDownloadDetour,
+	OptionRuleSetIPCIDRAcceptEmpty,
+	OptionLegacyDNSAddressFilter,
+	OptionLegacyDNSRuleStrategy,
+	OptionIndependentDNSCache,
+	OptionStoreRDRC,
+	OptionImplicitDefaultHTTPClient,
 }

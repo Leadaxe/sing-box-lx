@@ -1,0 +1,58 @@
+File: memfd:jit-zygote-cache
+Type: cpu
+Time: 2026-07-01 09:34:07 MSK
+Duration: 10.14s, Total samples = 26.33s (259.64%)
+Showing nodes accounting for 23.71s, 90.05% of 26.33s total
+Dropped 300 nodes (cum <= 0.13s)
+Showing top 50 nodes out of 100
+      flat  flat%   sum%        cum   cum%
+     5.32s 20.21% 20.21%     14.76s 56.06%  runtime.scanobject
+     2.96s 11.24% 31.45%      3.92s 14.89%  runtime.findObject
+     1.49s  5.66% 37.11%      3.75s 14.24%  runtime.greyobject
+     1.27s  4.82% 41.93%      1.27s  4.82%  runtime.(*mspan).base (inline)
+        1s  3.80% 45.73%      1.26s  4.79%  runtime.typePointers.next
+     0.76s  2.89% 48.61%      0.76s  2.89%  runtime.futex
+     0.62s  2.35% 50.97%      0.62s  2.35%  internal/runtime/atomic.(*Uint32).CompareAndSwap (inline)
+     0.54s  2.05% 53.02%      0.57s  2.16%  runtime.spanOf (inline)
+     0.51s  1.94% 54.96%      0.51s  1.94%  [libc.so]
+     0.50s  1.90% 56.86%      1.65s  6.27%  runtime.(*sweepLocked).sweep
+     0.50s  1.90% 58.75%      1.29s  4.90%  runtime.scanblock
+     0.48s  1.82% 60.58%      0.48s  1.82%  runtime.(*mspan).heapBitsSmallForAddr
+     0.46s  1.75% 62.32%     19.20s 72.92%  runtime.gcDrain
+     0.45s  1.71% 64.03%      0.82s  3.11%  runtime.(*activeSweep).end
+     0.45s  1.71% 65.74%      0.45s  1.71%  runtime.(*gcBitsArena).tryAlloc (inline)
+     0.45s  1.71% 67.45%      0.45s  1.71%  runtime.typePointers.nextFast (inline)
+     0.44s  1.67% 69.12%      0.44s  1.67%  runtime.markBits.setMarked (inline)
+     0.40s  1.52% 70.64%      0.40s  1.52%  internal/runtime/atomic.(*Uint64).CompareAndSwap (inline)
+     0.38s  1.44% 72.09%      1.27s  4.82%  runtime.(*spanSet).pop
+     0.35s  1.33% 73.41%      0.35s  1.33%  internal/runtime/atomic.(*Uint32).Add (inline)
+     0.30s  1.14% 74.55%      0.30s  1.14%  runtime.nanotime
+     0.27s  1.03% 75.58%      0.67s  2.54%  runtime.(*unwinder).resolveInternal
+     0.26s  0.99% 76.57%      0.26s  0.99%  runtime.(*mspan).divideByElemSize (inline)
+     0.26s  0.99% 77.55%      0.73s  2.77%  runtime.pcvalue
+     0.26s  0.99% 78.54%      0.27s  1.03%  runtime.step
+     0.24s  0.91% 79.45%      0.25s  0.95%  runtime.(*sweepLocker).tryAcquire
+     0.22s  0.84% 80.29%      4.56s 17.32%  runtime.sweepone
+     0.21s   0.8% 81.09%      0.35s  1.33%  runtime.(*atomicHeadTailIndex).incTail
+     0.21s   0.8% 81.88%      0.21s   0.8%  runtime.getGCMask (inline)
+     0.20s  0.76% 82.64%      0.20s  0.76%  internal/runtime/atomic.(*Uint64).Add (inline)
+     0.20s  0.76% 83.40%      0.20s  0.76%  runtime.markBits.isMarked (inline)
+     0.19s  0.72% 84.12%      0.76s  2.89%  runtime.(*mspan).typePointersOfUnchecked
+     0.16s  0.61% 84.73%      0.16s  0.61%  internal/runtime/atomic.(*Int64).Add (inline)
+     0.15s  0.57% 85.30%      0.15s  0.57%  internal/runtime/syscall.Syscall6
+     0.15s  0.57% 85.87%      0.56s  2.13%  runtime.(*stkframe).getStackMap
+     0.14s  0.53% 86.40%      0.14s  0.53%  runtime.pageIndexOf (inline)
+     0.13s  0.49% 86.90%      0.16s  0.61%  runtime.unlock2
+     0.12s  0.46% 87.35%      0.15s  0.57%  runtime.(*lfstack).push
+     0.10s  0.38% 87.73%      0.15s  0.57%  runtime.lock2
+     0.09s  0.34% 88.07%      3.60s 13.67%  runtime.markroot
+     0.08s   0.3% 88.38%      1.49s  5.66%  runtime.scanframeworker
+     0.07s  0.27% 88.64%      0.23s  0.87%  runtime.(*unwinder).initAt
+     0.07s  0.27% 88.91%      0.24s  0.91%  runtime.markrootSpans
+     0.06s  0.23% 89.14%      0.50s  1.90%  runtime.(*spanSet).push
+     0.06s  0.23% 89.37%      0.20s  0.76%  runtime.getempty
+     0.05s  0.19% 89.56%      0.15s  0.57%  runtime.(*mSpanStateBox).get (inline)
+     0.04s  0.15% 89.71%      0.16s  0.61%  runtime.funcInfo.entry (inline)
+     0.04s  0.15% 89.86%      0.49s  1.86%  runtime.newMarkBits
+     0.03s  0.11% 89.97%      1.38s  5.24%  runtime.(*mheap).nextSpanForSweep
+     0.02s 0.076% 90.05%      2.84s 10.79%  runtime.markroot.func1

@@ -2,6 +2,255 @@
 icon: material/arrange-bring-forward
 ---
 
+## 1.14.0
+
+### Migrate inline ACME to certificate provider
+
+Inline ACME options in TLS are deprecated and can be replaced by certificate providers.
+
+Most `tls.acme` fields can be moved into the ACME certificate provider unchanged.
+See [ACME](/configuration/shared/certificate-provider/acme/) for fields newly added in sing-box 1.14.0.
+
+!!! info "References"
+
+    [TLS](/configuration/shared/tls/#certificate_provider) /
+    [Certificate Provider](/configuration/shared/certificate-provider/)
+
+=== ":material-card-remove: Deprecated"
+
+    ```json
+    {
+      "inbounds": [
+        {
+          "type": "trojan",
+          "tls": {
+            "enabled": true,
+            "acme": {
+              "domain": ["example.com"],
+              "email": "admin@example.com"
+            }
+          }
+        }
+      ]
+    }
+    ```
+
+=== ":material-card-multiple: Inline"
+
+    ```json
+    {
+      "inbounds": [
+        {
+          "type": "trojan",
+          "tls": {
+            "enabled": true,
+            "certificate_provider": {
+              "type": "acme",
+              "domain": ["example.com"],
+              "email": "admin@example.com"
+            }
+          }
+        }
+      ]
+    }
+    ```
+
+=== ":material-card-multiple: Shared"
+
+    ```json
+    {
+      "certificate_providers": [
+        {
+          "type": "acme",
+          "tag": "my-cert",
+          "domain": ["example.com"],
+          "email": "admin@example.com"
+        }
+      ],
+      "inbounds": [
+        {
+          "type": "trojan",
+          "tls": {
+            "enabled": true,
+            "certificate_provider": "my-cert"
+          }
+        }
+      ]
+    }
+    ```
+
+### Migrate address filter fields to response matching
+
+Legacy Address Filter Fields (`ip_cidr`, `ip_is_private` without `match_response`) in DNS rules are deprecated,
+along with the Legacy `rule_set_ip_cidr_accept_empty` DNS rule item. A DNS rule that references a rule-set
+containing only `ip_cidr` items (for example, a GeoIP rule-set) without `match_response` is also rejected
+at startup when legacy DNS mode is disabled.
+
+In sing-box 1.14.0, use the [`evaluate`](/configuration/dns/rule_action/#evaluate) action
+to fetch a DNS response, then match against it explicitly with `match_response`.
+
+!!! info "References"
+
+    [DNS Rule](/configuration/dns/rule/) /
+    [DNS Rule Action](/configuration/dns/rule_action/#evaluate)
+
+=== ":material-card-remove: Deprecated"
+
+    ```json
+    {
+      "dns": {
+        "rules": [
+          {
+            "rule_set": "geoip-cn",
+            "action": "route",
+            "server": "local"
+          },
+          {
+            "action": "route",
+            "server": "remote"
+          }
+        ]
+      }
+    }
+    ```
+
+=== ":material-card-multiple: New"
+
+    ```json
+    {
+      "dns": {
+        "rules": [
+          {
+            "action": "evaluate",
+            "server": "remote"
+          },
+          {
+            "match_response": true,
+            "rule_set": "geoip-cn",
+            "action": "route",
+            "server": "local"
+          },
+          {
+            "action": "route",
+            "server": "remote"
+          }
+        ]
+      }
+    }
+    ```
+
+### Migrate independent DNS cache
+
+The DNS cache now always keys by transport name, making `independent_cache` unnecessary.
+Simply remove the field.
+
+!!! info "References"
+
+    [DNS](/configuration/dns/)
+
+=== ":material-card-remove: Deprecated"
+
+    ```json
+    {
+      "dns": {
+        "independent_cache": true
+      }
+    }
+    ```
+
+=== ":material-card-multiple: New"
+
+    ```json
+    {
+      "dns": {}
+    }
+    ```
+
+### Migrate store_rdrc
+
+`store_rdrc` is deprecated and can be replaced by `store_dns`,
+which persists the full DNS cache to the cache file.
+
+!!! info "References"
+
+    [Cache File](/configuration/experimental/cache-file/)
+
+=== ":material-card-remove: Deprecated"
+
+    ```json
+    {
+      "experimental": {
+        "cache_file": {
+          "enabled": true,
+          "store_rdrc": true
+        }
+      }
+    }
+    ```
+
+=== ":material-card-multiple: New"
+
+    ```json
+    {
+      "experimental": {
+        "cache_file": {
+          "enabled": true,
+          "store_dns": true
+        }
+      }
+    }
+    ```
+
+### ip_version and query_type behavior changes in DNS rules
+
+In sing-box 1.14.0, the behavior of
+[`ip_version`](/configuration/dns/rule/#ip_version) and
+[`query_type`](/configuration/dns/rule/#query_type) in DNS rules, together with
+[`query_type`](/configuration/rule-set/headless-rule/#query_type) in referenced
+rule-sets, changes in two ways.
+
+First, these fields now take effect on every DNS rule evaluation. In earlier
+versions they were evaluated only for DNS queries received from a client
+(for example, from a DNS inbound or intercepted by `tun`), and were silently
+ignored when a DNS rule was matched from an internal domain resolution that
+did not target a specific DNS server. Such internal resolutions include:
+
+- The [`resolve`](/configuration/route/rule_action/#resolve) route rule
+  action without a `server` set.
+- ICMP traffic routed to a domain destination through a `direct` outbound.
+- A [WireGuard](/configuration/endpoint/wireguard/) or
+  [Tailscale](/configuration/endpoint/tailscale/) endpoint used as an
+  outbound, when resolving its own destination address.
+- A [SOCKS4](/configuration/outbound/socks/) outbound, which must resolve
+  the destination locally because the protocol has no in-protocol domain
+  support.
+- The [DERP](/configuration/service/derp/) `bootstrap-dns` endpoint and the
+  [`resolved`](/configuration/service/resolved/) service (when resolving a
+  hostname or an SRV target).
+
+Resolutions that target a specific DNS server — via
+[`domain_resolver`](/configuration/shared/dial/#domain_resolver) on a dial
+field, [`default_domain_resolver`](/configuration/route/#default_domain_resolver)
+in route options, or an explicit `server` on a DNS rule action or the
+`resolve` route rule action — do not go through DNS rule matching and are
+unaffected.
+
+Second, setting `ip_version` or `query_type` in a DNS rule, or referencing a
+rule-set containing `query_type`, is no longer compatible in the same DNS
+configuration with Legacy Address Filter Fields in DNS rules, the Legacy
+`strategy` DNS rule action option, or the Legacy `rule_set_ip_cidr_accept_empty`
+DNS rule item. Such a configuration will be rejected at startup. To combine
+these fields with address-based filtering, migrate to response matching via
+the [`evaluate`](/configuration/dns/rule_action/#evaluate) action and
+[`match_response`](/configuration/dns/rule/#match_response), see
+[Migrate address filter fields to response matching](#migrate-address-filter-fields-to-response-matching).
+
+!!! info "References"
+
+    [DNS Rule](/configuration/dns/rule/) /
+    [Headless Rule](/configuration/rule-set/headless-rule/) /
+    [Route Rule Action](/configuration/route/rule_action/#resolve)
+
 ## 1.12.0
 
 ### Migrate to new DNS server formats

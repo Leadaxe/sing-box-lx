@@ -2,6 +2,12 @@
 icon: material/new-box
 ---
 
+!!! quote "sing-box 1.14.0 中的更改"
+
+    :material-plus: [source_mac_address](#source_mac_address)  
+    :material-plus: [source_hostname](#source_hostname)  
+    :material-plus: [package_name_regex](#package_name_regex)
+
 !!! quote "sing-box 1.13.0 中的更改"
 
     :material-plus: [interface_address](#interface_address)  
@@ -122,6 +128,9 @@ icon: material/new-box
         "package_name": [
           "com.termux"
         ],
+        "package_name_regex": [
+          "^com\\.termux.*"
+        ],
         "user": [
           "sekai"
         ],
@@ -156,6 +165,12 @@ icon: material/new-box
         "preferred_by": [
           "tailscale",
           "wireguard"
+        ],
+        "source_mac_address": [
+          "00:11:22:33:44:55"
+        ],
+        "source_hostname": [
+          "my-device"
         ],
         "rule_set": [
           "geoip-cn",
@@ -341,6 +356,12 @@ icon: material/new-box
 
 匹配 Android 应用包名。
 
+#### package_name_regex
+
+!!! question "自 sing-box 1.14.0 起"
+
+使用正则表达式匹配 Android 应用包名。
+
 #### user
 
 !!! quote ""
@@ -446,6 +467,26 @@ icon: material/new-box
 |-------------|--------------------------------|
 | `tailscale` | 匹配 MagicDNS 域名和对端的 allowed IPs |
 | `wireguard` | 匹配对端的 allowed IPs              |
+
+#### source_mac_address
+
+!!! question "自 sing-box 1.14.0 起"
+
+!!! quote ""
+
+    仅支持 Linux、macOS，或在 Android 和 macOS 图形客户端中支持。参阅 [邻居解析](/configuration/shared/neighbor/) 了解设置方法。
+
+匹配源设备 MAC 地址。
+
+#### source_hostname
+
+!!! question "自 sing-box 1.14.0 起"
+
+!!! quote ""
+
+    仅支持 Linux、macOS，或在 Android 和 macOS 图形客户端中支持。参阅 [邻居解析](/configuration/shared/neighbor/) 了解设置方法。
+
+匹配源设备从 DHCP 租约获取的主机名。
 
 #### rule_set
 

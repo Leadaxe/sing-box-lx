@@ -1,6 +1,6 @@
 name: lx-ci
 
-# Fast per-commit gate for sing-box-lx. See docs/lx-config.md and SPECS/004.
+# Fast per-commit gate for sing-box-lx. See docs-lx/lx-config.md and SPECS/004.
 #
 # Trigger policy (keep per-commit cost low — see SPECS/004 §2.2):
 #   * Doc-only commits (md/docs/SPECS/LICENSE) skip CI entirely (paths-ignore).
@@ -51,14 +51,16 @@ jobs:
 
       - name: go vet (lx packages, full tags)
         run: |
-          go vet -tags "${BASE_TAGS},with_xhttp,with_awg" \
+          go vet -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command" \
             ./option/ ./constant/ ./transport/v2ray/ ./transport/v2rayxhttp/ \
-            ./protocol/wireguard/ ./transport/wireguard/
+            ./protocol/wireguard/ ./transport/wireguard/ \
+            ./daemon/ ./experimental/libbox/
 
       - name: gofmt (lx-owned files only)
         run: |
           # Only our downstream files — never the whole upstream tree.
-          files=$(git ls-files '*.go' | grep -E 'v2rayxhttp|_xhttp|_awg' || true)
+          # Generated *.pb.go are excluded (machine output, not hand-edited).
+          files=$(git ls-files '*.go' | grep -E 'v2rayxhttp|_xhttp|_awg|_lx\.go|_command_lx' | grep -v '\.pb\.go' || true)
           echo "checking:"; echo "$files"
           if [ -n "$files" ]; then
             bad=$(gofmt -l $files)
@@ -79,8 +81,8 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version-file: go.mod, check-latest: true }
 
-      - name: Build (full lx — with_xhttp,with_awg)
-        run: make -f Makefile.lx lx-build LX_TAGS="${BASE_TAGS},with_xhttp,with_awg"
+      - name: Build (full lx — with_xhttp,with_awg,with_lx_command)
+        run: make -f Makefile.lx lx-build LX_TAGS="${BASE_TAGS},with_xhttp,with_awg,with_lx_command"
 
       - name: Version
         run: ./sing-box version
@@ -107,6 +109,30 @@ jobs:
             echo "FAIL: a feature config was accepted without its build tag"; exit 1
           fi
           echo "OK: xhttp/awg configs correctly rejected without their tags"
+
+      # SPEC 014 §3.6 pt.7 — prove both libbox command-protocol builds compile.
+      # The handler is gated by with_lx_command (real) / its absence (stub →
+      # codes.Unimplemented). Compile both daemon variants; the with-tag build must
+      # NOT carry the stub's "rebuild with -tags with_lx_command" string, the tagless
+      # build must. This is the cheap usbip-style proof that the seam toggles.
+      - name: lx_command — both builds compile (with + without the tag)
+        run: |
+          set -euo pipefail
+          go build -tags "${BASE_TAGS},with_lx_command" ./daemon/ ./experimental/libbox/
+          go build -tags "${BASE_TAGS}"                  ./daemon/ ./experimental/libbox/
+          echo "OK: daemon + libbox compile with and without with_lx_command"
+
+      - name: lx_command — stub string present in baseline, absent with the tag
+        run: |
+          set -euo pipefail
+          marker="rebuild with -tags with_lx_command"
+          if ! strings -a sing-box-baseline | grep -qF "$marker"; then
+            echo "FAIL: tagless baseline is missing the Unimplemented stub marker"; exit 1
+          fi
+          if strings -a sing-box | grep -qF "$marker"; then
+            echo "FAIL: full lx build still carries the Unimplemented stub marker"; exit 1
+          fi
+          echo "OK: with_lx_command toggles the handler (stub only in baseline)"
 
   # ---- Heavy (manual workflow_dispatch only — never on push) ----------------
   # Cross-platform: prove the merged AWG fork + XHTTP compile everywhere.

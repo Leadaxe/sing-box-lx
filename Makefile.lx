@@ -2,14 +2,25 @@
 # New file (zero edits to upstream Makefile) — see SPECS/CONSTITUTION.md §3.2.
 # Usage: make -f Makefile.lx lx-build
 
-# Canonical lx build-tag set — single source of truth (mirror changes in SPECS/004).
-# = upstream feature set (release/DEFAULT_BUILD_TAGS) minus tags irrelevant to a VPN
-# client — with_tailscale (no tailscale endpoints), with_ccm/with_ocm (Claude Code /
-# OpenAI Codex proxy services), with_acme (server-side TLS cert issuance) — plus
-# with_purego (CGO-free cross-compile covers with_naive_outbound via cronet prebuilts)
-# and our two downstream features. with_purego/badlinkname need -checklinkname=0 in
-# LX_LDFLAGS, otherwise the linker rejects badtls' go:linkname into crypto/tls.
-LX_TAGS ?= with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg
+# Canonical lx build-tag set for the desktop/CLI binaries — single source of truth
+# (mirror changes in SPECS/004). = upstream feature set (release/DEFAULT_BUILD_TAGS)
+# minus tags irrelevant to a VPN client — with_tailscale (no tailscale endpoints),
+# with_ccm/with_ocm (Claude Code / OpenAI Codex proxy services), with_acme (server-side
+# TLS cert issuance) — plus with_purego (CGO-free cross-compile covers
+# with_naive_outbound via cronet prebuilts) and our downstream features.
+#
+# with_clash_api IS kept here: the desktop/CLI binary is driven through the Clash REST
+# API by external dashboards (yacd / MetaCubeXD / clash-dashboard); there is no native
+# CommandClient channel outside the gomobile/libbox binding, so dropping it would leave
+# a CLI user with no way to manage the core (a config using experimental.clash_api would
+# fail fast). It is dropped ONLY from the Android AAR (cmd/internal/build_libbox/main.go),
+# where LxBox manages the core over the native libbox CommandClient and the Clash server
+# is dead weight. So the two tag sets diverge by design — do NOT blindly mirror the AAR
+# set here.
+#
+# with_purego/badlinkname need -checklinkname=0 in LX_LDFLAGS, otherwise the linker
+# rejects badtls' go:linkname into crypto/tls.
+LX_TAGS ?= with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command
 
 # lx build counter over a given upstream base (override in CI/release: make -f Makefile.lx lx-build LX_BUILD=3).
 LX_BUILD ?= 1
@@ -24,7 +35,28 @@ LX_VERSION ?= $(UPSTREAM_VERSION)-lx.$(LX_BUILD)
 LX_LDFLAGS = -X 'github.com/sagernet/sing-box/constant.Version=$(LX_VERSION)' -checklinkname=0 -s -w -buildid=
 LX_OUTPUT  ?= sing-box
 
-.PHONY: lx-build lx-version lx-print-tags lx-check
+# Pinned proto toolchain (SPEC 014 §3.5). Upstream `make proto` installs the codegen
+# plugins at @latest, so .pb.go cannot be reproduced byte-for-byte across a rebase. We
+# pin both plugins to versions matching go.mod (protobuf v1.36.11) and a gRPC codegen
+# release compatible with the generated SupportPackageIsVersion9. `protoc` itself is an
+# external dependency (install via your package manager, e.g. `brew install protobuf`);
+# the generator at cmd/internal/protogen drives it and strips its version banner, so the
+# protoc build number does not leak into the output. gofumpt normalises imports to match
+# the committed style. Regenerate, never hand-edit, the .pb.go / _grpc.pb.go files.
+LX_PROTOC_GEN_GO_VERSION      ?= v1.36.11
+LX_PROTOC_GEN_GO_GRPC_VERSION ?= v1.5.1
+
+.PHONY: lx-build lx-version lx-print-tags lx-check lx-proto-install lx-proto
+lx-proto-install: ## Install the pinned protoc-gen-go / protoc-gen-go-grpc plugins.
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@$(LX_PROTOC_GEN_GO_VERSION)
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(LX_PROTOC_GEN_GO_GRPC_VERSION)
+	go install mvdan.cc/gofumpt@latest
+
+lx-proto: lx-proto-install ## Regenerate *.pb.go reproducibly from the merged .proto (needs system protoc on PATH).
+	@command -v protoc >/dev/null 2>&1 || { echo "protoc not found on PATH — install it (e.g. brew install protobuf)"; exit 1; }
+	go run ./cmd/internal/protogen
+	gofumpt -w .
+
 lx-build: ## Build the drop-in `sing-box` binary with lx features.
 	CGO_ENABLED=0 go build -v -trimpath -tags "$(LX_TAGS)" -ldflags "$(LX_LDFLAGS)" -o "$(LX_OUTPUT)" ./cmd/sing-box
 
