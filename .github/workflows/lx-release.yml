@@ -183,7 +183,17 @@ jobs:
           set -xeuo pipefail
           rm -f ~/cronet-go/naiveproxy/src/build/linux/sysroot_scripts/keyring.gpg
           cd ~/cronet-go
-          GPG_TTY=/dev/null ./naiveproxy/src/build/linux/sysroot_scripts/generate_keyring.sh
+          # generate_keyring.sh fetches Debian archive keys from keyservers,
+          # which can also be flaky — retry with backoff. (lx CI)
+          n=0; max=4; delay=20
+          until GPG_TTY=/dev/null ./naiveproxy/src/build/linux/sysroot_scripts/generate_keyring.sh; do
+            n=$((n+1))
+            if [ "$n" -ge "$max" ]; then
+              echo "keyring regen failed after $max attempts"; exit 1
+            fi
+            echo "keyring regen attempt $n failed; retrying in ${delay}s"
+            sleep "$delay"; delay=$((delay*2))
+          done
 
       - name: Cache Chromium toolchain
         uses: actions/cache@v4
@@ -199,7 +209,20 @@ jobs:
         run: |
           set -xeuo pipefail
           cd ~/cronet-go
-          go run ./cmd/build-naive --target=linux/${{ matrix.arch }} --libc=musl download-toolchain
+          # The toolchain download pulls sysroot .deb packages from
+          # snapshot.debian.org, which intermittently 503s ("No healthy
+          # backends"). get-clang.sh already retries internally but back-to-back,
+          # so a whole outage window fails all attempts. Retry the step with a
+          # growing backoff to ride out a transient mirror outage. (lx CI)
+          n=0; max=5; delay=30
+          until go run ./cmd/build-naive --target=linux/${{ matrix.arch }} --libc=musl download-toolchain; do
+            n=$((n+1))
+            if [ "$n" -ge "$max" ]; then
+              echo "toolchain download failed after $max attempts"; exit 1
+            fi
+            echo "toolchain download attempt $n failed; retrying in ${delay}s (snapshot.debian.org may be flaky)"
+            sleep "$delay"; delay=$((delay*2))
+          done
 
       - name: Set Chromium toolchain environment
         run: |
