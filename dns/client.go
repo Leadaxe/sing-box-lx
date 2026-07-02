@@ -382,7 +382,7 @@ func (c *Client) lookupToExchange(ctx context.Context, transport adapter.DNSTran
 
 func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTransport, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, error) {
 	question := message.Question[0]
-	response, _, isStale := c.loadResponse(question, transport)
+	response, ttl, isStale := c.loadResponse(question, transport)
 	if response == nil {
 		return nil, ErrNotCached
 	}
@@ -392,6 +392,11 @@ func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTranspo
 		}
 		c.backgroundRefreshDNS(transport, question, c.prepareExchangeMessage(message.Copy(), options), options, responseChecker)
 		logOptimisticResponse(c.logger, ctx, transport, response)
+	} else {
+		// Fresh cache hit on the Lookup path: log/emit as SourceCached, mirroring the
+		// Exchange path (stale→optimistic, fresh→cached). Without this, internal domain
+		// resolution served from a fresh cache emits no DnsQueryEvent (SPEC 022 #3).
+		logCachedResponse(c.logger, ctx, transport, response, ttl)
 	}
 	if response.Rcode != dns.RcodeSuccess {
 		return nil, RcodeError(response.Rcode)
