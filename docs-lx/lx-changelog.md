@@ -24,7 +24,7 @@ already-shipped `with_quic` + `with_gvisor` tags (both in `LX_TAGS`).
   quirks (`cf-connect-ip`, tolerates the missing Extended-CONNECT settings, ECDSA
   public-key pinning, WARP SNI/URI defaults). Key material (`private_key` / `public_key`
   / `ip` / `ipv6`) is taken ready from config — device registration stays client-side.
-  Full config reference in [SPECS/021](../SPECS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md).
+  Full config reference in [SPECS/021/CONFIG.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md).
 
 * **h2 via a manual HTTP/2 framer, no extra dependency.** WARP never advertises
   `SETTINGS_ENABLE_CONNECT_PROTOCOL`, so the high-level h2 clients refuse the request;
