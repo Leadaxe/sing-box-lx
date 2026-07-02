@@ -250,6 +250,9 @@ func (o *Outbound) ensureSession(ctx context.Context) (*session, error) {
 		return nil, E.Cause(err, "start userspace stack")
 	}
 
+	// Transport-phase logging: the dial failure mode (UDP left the device vs. no
+	// reply came back) is otherwise invisible without a goroutine dump. lx: SPEC 021.
+	o.logger.DebugContext(ctx, "masque: establishing ", o.network, " tunnel to ", o.server, " (sni=", o.tlsConfig.ServerName, ")")
 	var closer io.Closer
 	var ipConn masque.IpConn
 	switch o.network {
@@ -259,9 +262,11 @@ func (o *Outbound) ensureSession(ctx context.Context) (*session, error) {
 		closer, ipConn, err = o.connectH3(ctx)
 	}
 	if err != nil {
+		o.logger.DebugContext(ctx, "masque: ", o.network, " tunnel to ", o.server, " failed: ", err)
 		_ = device.Close()
 		return nil, err
 	}
+	o.logger.InfoContext(ctx, "masque: ", o.network, " tunnel established to ", o.server)
 
 	sessCtx, cancel := context.WithCancel(o.ctx)
 	s := &session{
@@ -340,6 +345,10 @@ func (o *Outbound) connectH3(ctx context.Context) (io.Closer, masque.IpConn, err
 	if err != nil {
 		return nil, nil, E.Cause(err, "dial udp")
 	}
+	// UDP socket is up; the QUIC handshake is the next (and most commonly stuck)
+	// step — a hang here means our ClientHello left but no ServerHello came back
+	// (e.g. inbound UDP:443 filtered), distinct from the socket failing above.
+	o.logger.DebugContext(ctx, "masque: udp socket to ", o.server, " up, starting QUIC handshake")
 	quicConn, err := quic.DialEarly(ctx, bufio.NewUnbindPacketConn(udpConn), udpConn.RemoteAddr(), o.tlsConfig, o.quicConfig)
 	if err != nil {
 		_ = udpConn.Close()
