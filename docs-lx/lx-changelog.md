@@ -10,9 +10,15 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
-#### v1.14.0-lx.1-rc.23
+#### v1.14.0-lx.1
 
-**Pre-release.**
+**First full release of the 1.14 lx line** (published as "Latest", not a
+pre-release) — a promotion of the `rc.1`–`rc.22` series. Functionally identical
+to rc.22 plus the new MIPS asset below; carries the whole rc-line feature set:
+MASQUE CONNECT-IP outbound (Cloudflare WARP), AmneziaWG 2.0, XHTTP, native
+CommandClient extensions, `urltest` round_robin + sticky, WG idle suspend, and
+the static musl router builds. Upstream base is still `v1.14.0-alpha.*` —
+pinned at the merge noted in the release notes header.
 
 * **New release asset: `linux-mips-softfloat`** (big-endian MIPS — OpenWrt
   `mips_24kc`, e.g. Atheros AR93xx) — requested in
