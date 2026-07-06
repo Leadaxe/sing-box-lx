@@ -51,16 +51,19 @@ jobs:
 
       - name: go vet (lx packages, full tags)
         run: |
-          # -unsafeptr=false: upstream's TriggerDebugCrash/TriggerGoPanic
-          # (daemon/managed_service.go, experimental/libbox/debug.go — came in with
-          # the 1.14 merge) crash Go ON PURPOSE via *(*int)(unsafe.Pointer(uintptr(0)))=0,
-          # which trips vet's unsafeptr check. Those are upstream files we don't edit
-          # (CONSTITUTION §zero-diff), and no lx-owned file uses unsafe at all, so
-          # disabling this one analyzer costs nothing on our own code.
-          go vet -unsafeptr=false \
+          # Two passes so -unsafeptr=false is scoped to the offenders only:
+          # upstream's TriggerDebugCrash/TriggerGoPanic (daemon/managed_service.go,
+          # experimental/libbox/debug.go — came in with the 1.14 merge) crash Go ON
+          # PURPOSE via *(*int)(unsafe.Pointer(uintptr(0)))=0, which trips vet's
+          # unsafeptr check. Those are upstream files we don't edit (CONSTITUTION
+          # §zero-diff), so only those two packages drop the analyzer; every other
+          # lx package keeps the full set.
+          go vet \
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command" \
             ./option/ ./constant/ ./transport/v2ray/ ./transport/v2rayxhttp/ \
-            ./protocol/wireguard/ ./transport/wireguard/ \
+            ./protocol/wireguard/ ./transport/wireguard/
+          go vet -unsafeptr=false \
+            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command" \
             ./daemon/ ./experimental/libbox/
 
       - name: gofmt (lx-owned files only)
