@@ -10,6 +10,36 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.3-rc.2
+
+**Pre-release** — merges upstream `testing` (14 commits, incl. L3-forwarding,
+snell, bridge outbound) and re-grafts AmneziaWG onto the wireguard-go bump that
+came with it. Carries the `rc.1` DNS-multiplex payload forward unchanged. Ships a
+new `libbox.aar`.
+
+* **AmneziaWG re-grafted onto wireguard-go v0.0.5.** Upstream bumped
+  `sagernet/wireguard-go` v0.0.3 → v0.0.5 for L3-forwarding (batched
+  `InputPackets`, a size-based outbound buffer pool, Darwin batch UDP I/O). The
+  AWG 2.0 obfuscation graft was rebased onto that base (submodule
+  `e5feca7` → `1adc4c7`): 15 of 16 grafted files applied clean, only `send.go`
+  conflicted on a single backpressure line. The `MessageEncapsulatingTransportSize
+  = 0` invariant is preserved, so upstream's rewritten `InputPacket`/`InputPackets`
+  and buffer pool compose with the obfuscation hooks without a manual re-weave.
+  No config or behaviour change for AWG endpoints.
+* **SPEC 020 idle-suspend re-homed onto the new L3-forwarding endpoint API.**
+  Upstream replaced the direct-route endpoint interface
+  (`PrepareConnection`/`NewDirectRouteConnection`) with a flow API
+  (`PreMatchFlow`/`PortAddresses`/`PortMTU`/`AttachReturn`/`DetachReturn`/`JudgeFlow`).
+  The idle-suspend wake guard (`resumeOnDial`) moved to `WritePackets` — the single
+  point every L3-forwarded packet (including established flows that bypass
+  `DialContext`) transits — so a suspended WG/AWG endpoint still wakes lazily on
+  first traffic. `Down`/`Up`/`BindUpdate` are unchanged on v0.0.5; the mechanism is
+  otherwise untouched.
+* **Docs (SPEC 003, SPEC 020) rewritten to current-state methodology.** Both
+  SPEC.md files now describe the current architecture top-down; the chronology
+  (graft-base evolution, the idle-tick bug, the rejected GRO experiment, the
+  v0.0.3→v0.0.5 delta) moved to per-spec `HISTORY.md`.
+
 #### v1.14.0-lx.3-rc.1
 
 **Pre-release** — DNS-query stream (SPEC 018) re-architected onto the command

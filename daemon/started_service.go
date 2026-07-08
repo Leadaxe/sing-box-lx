@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"runtime"
+	runtimeDebug "runtime/debug"
 	"sync"
 	"time"
 
@@ -190,6 +191,7 @@ func (s *StartedService) StartOrReloadService(profileContent string, options *Ov
 		s.updateStatus(ServiceStatus_STOPPING)
 		s.serviceAccess.Unlock()
 		_ = oldInstance.Close()
+		runtimeDebug.FreeOSMemory()
 		s.serviceAccess.Lock()
 	}
 	s.updateStatus(ServiceStatus_STARTING)
@@ -216,7 +218,7 @@ func (s *StartedService) StartOrReloadService(profileContent string, options *Ov
 	s.startedAt = time.Now()
 	s.updateStatus(ServiceStatus_STARTED)
 	s.serviceAccess.Unlock()
-	runtime.GC()
+	runtimeDebug.FreeOSMemory()
 	return nil
 }
 
@@ -247,7 +249,7 @@ func (s *StartedService) CloseService() error {
 	s.startedAt = time.Time{}
 	s.updateStatus(ServiceStatus_IDLE)
 	s.serviceAccess.Unlock()
-	runtime.GC()
+	runtimeDebug.FreeOSMemory()
 	return nil
 }
 
@@ -991,8 +993,13 @@ func (s *StartedService) CloseAllConnections(ctx context.Context, empty *emptypb
 	s.serviceAccess.RLock()
 	nowService := s.instance
 	s.serviceAccess.RUnlock()
-	if nowService != nil && nowService.connectionManager != nil {
-		nowService.connectionManager.CloseAll()
+	if nowService != nil {
+		if nowService.connectionManager != nil {
+			nowService.connectionManager.CloseAll()
+		}
+		if nowService.trafficManager != nil {
+			nowService.trafficManager.CloseAllConnections()
+		}
 	}
 	return &emptypb.Empty{}, nil
 }

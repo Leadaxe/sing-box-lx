@@ -23,13 +23,14 @@ type Outbound interface {
 
 type OutboundWithPreferredRoutes interface {
 	Outbound
-	PreferredDomain(domain string) bool
-	PreferredAddress(address netip.Addr) bool
+	PreferredDomain(metadata *InboundContext, domain string) bool
+	PreferredAddress(metadata *InboundContext, address netip.Addr) bool
 }
 
-type DirectRouteOutbound interface {
+type FlowOutbound interface {
 	Outbound
-	NewDirectRouteConnection(metadata InboundContext, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error)
+	tun.Port
+	PreMatchFlow(network string, destination netip.Addr) PreMatchAction
 }
 
 type OutboundRegistry interface {

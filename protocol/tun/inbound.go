@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -16,7 +17,6 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-box/route/rule"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -99,7 +99,6 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 
 	platformInterface := service.FromContext[adapter.PlatformInterface](ctx)
 	tunMTU := options.MTU
-	enableGSO := C.IsLinux && options.Stack == "gvisor" && platformInterface == nil && tunMTU > 0 && tunMTU < 49152
 	if tunMTU == 0 {
 		if platformInterface != nil && platformInterface.UnderNetworkExtension() {
 			// In Network Extension, when MTU exceeds 4064 (4096-UTUN_IF_HEADROOM_SIZE), the performance of tun will drop significantly, which may be a system bug.
@@ -110,6 +109,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		} else {
 			tunMTU = 65535
 		}
+	}
+	var enableGSO bool
+	if C.IsLinux && platformInterface == nil {
+		enableGSO = (options.Stack == "gvisor" && tunMTU < 49152)
 	}
 	var udpTimeout time.Duration
 	if options.UDPTimeout != 0 {
@@ -178,7 +181,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		excludeMACAddress = append(excludeMACAddress, mac)
 	}
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
-	multiPendingPackets := C.IsDarwin && ((options.Stack == "gvisor" && tunMTU < 32768) || (options.Stack != "gvisor" && options.MTU <= 9000))
+	multiPendingPackets := C.IsDarwin && ((options.Stack == "gvisor" && tunMTU < 32768) || (options.Stack != "gvisor" && tunMTU <= 9000))
 	inbound := &Inbound{
 		tag:            tag,
 		ctx:            ctx,
@@ -320,6 +323,31 @@ func (t *Inbound) Start(stage adapter.StartStage) error {
 			t.dnsHijackAddress = append(inet4DNSAddress, inet6DNSAddress...)
 		}
 	case adapter.StartStateStart:
+		if t.platformInterface == nil &&
+			((C.IsLinux && !t.tunOptions.GSO) || (C.IsDarwin && !t.tunOptions.EXP_MultiPendingPackets)) {
+			outboundManager := service.FromContext[adapter.OutboundManager](t.ctx)
+			endpointManager := service.FromContext[adapter.EndpointManager](t.ctx)
+			for _, outbound := range outboundManager.Outbounds() {
+				if _, isFlowOutbound := outbound.(adapter.FlowOutbound); isFlowOutbound {
+					if C.IsLinux {
+						t.tunOptions.GSO = true
+					} else {
+						t.tunOptions.EXP_MultiPendingPackets = true
+					}
+					break
+				}
+			}
+			for _, endpoint := range endpointManager.Endpoints() {
+				if _, isFlowOutbound := endpoint.(adapter.FlowOutbound); isFlowOutbound {
+					if C.IsLinux {
+						t.tunOptions.GSO = true
+					} else {
+						t.tunOptions.EXP_MultiPendingPackets = true
+					}
+					break
+				}
+			}
+		}
 		if C.IsAndroid && t.platformInterface == nil {
 			t.tunOptions.BuildAndroidRules(t.networkManager.PackageManager())
 		}
@@ -460,34 +488,11 @@ func (t *Inbound) Close() error {
 	)
 }
 
-func (t *Inbound) PrepareConnection(network string, source M.Socksaddr, destination M.Socksaddr, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	var ipVersion uint8
-	if !destination.IsIPv6() {
-		ipVersion = 4
-	} else {
-		ipVersion = 6
+func (t *Inbound) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+	if slices.Contains(t.dnsHijackAddress, destination.Addr()) {
+		return tun.FlowVerdict{Action: tun.ActionAccept}
 	}
-	routeDestination, err := t.router.PreMatch(adapter.InboundContext{
-		Inbound:     t.tag,
-		InboundType: C.TypeTun,
-		IPVersion:   ipVersion,
-		Network:     network,
-		Source:      source,
-		Destination: destination,
-	}, routeContext, timeout, false)
-	if err != nil {
-		switch {
-		case rule.IsBypassed(err):
-			err = nil
-		case rule.IsRejected(err):
-			t.logger.Trace("reject ", network, " connection from ", source.AddrString(), " to ", destination.AddrString())
-		default:
-			if network == N.NetworkICMP {
-				t.logger.Warn(E.Cause(err, "link ", network, " connection from ", source.AddrString(), " to ", destination.AddrString()))
-			}
-		}
-	}
-	return routeDestination, err
+	return adapter.JudgeFlow(t.router, t.tag, C.TypeTun, network, source, destination, firstPacket)
 }
 
 func (t *Inbound) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
@@ -497,10 +502,8 @@ func (t *Inbound) NewConnectionEx(ctx context.Context, conn net.Conn, source M.S
 	metadata.InboundType = C.TypeTun
 	metadata.Source = source
 	metadata.Destination = destination
-	for _, dnsHijackAddress := range t.dnsHijackAddress {
-		if destination.Addr == dnsHijackAddress {
-			metadata.Protocol = C.ProtocolDNS
-		}
+	if slices.Contains(t.dnsHijackAddress, destination.Addr) {
+		metadata.Protocol = C.ProtocolDNS
 	}
 	if metadata.Protocol == C.ProtocolDNS {
 		t.logger.InfoContext(ctx, "inbound DNS connection from ", metadata.Source)
@@ -534,34 +537,8 @@ func (t *Inbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, 
 
 type autoRedirectHandler Inbound
 
-func (t *autoRedirectHandler) PrepareConnection(network string, source M.Socksaddr, destination M.Socksaddr, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	var ipVersion uint8
-	if !destination.IsIPv6() {
-		ipVersion = 4
-	} else {
-		ipVersion = 6
-	}
-	routeDestination, err := t.router.PreMatch(adapter.InboundContext{
-		Inbound:     t.tag,
-		InboundType: C.TypeTun,
-		IPVersion:   ipVersion,
-		Network:     network,
-		Source:      source,
-		Destination: destination,
-	}, routeContext, timeout, true)
-	if err != nil {
-		switch {
-		case rule.IsBypassed(err):
-			t.logger.Trace("bypass ", network, " connection from ", source.AddrString(), " to ", destination.AddrString())
-		case rule.IsRejected(err):
-			t.logger.Trace("reject ", network, " connection from ", source.AddrString(), " to ", destination.AddrString())
-		default:
-			if network == N.NetworkICMP {
-				t.logger.Warn(E.Cause(err, "link ", network, " connection from ", source.AddrString(), " to ", destination.AddrString()))
-			}
-		}
-	}
-	return routeDestination, err
+func (t *autoRedirectHandler) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+	return (*Inbound)(t).JudgeFlow(network, source, destination, firstPacket)
 }
 
 func (t *autoRedirectHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {

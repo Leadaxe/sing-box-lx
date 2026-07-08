@@ -2,9 +2,53 @@
 icon: material/alert-decagram
 ---
 
-#### 1.14.0-alpha.37
+#### 1.14.0-alpha.40
 
+* Add bridge outbound **1**
 * Fixes and improvements
+
+**1**:
+
+The new `bridge` outbound is the L3 counterpart of `direct`: it forwards L3
+traffic (TCP, UDP and ICMP) from a TUN or other L3 endpoints directly out of a
+network interface, without going through L3 to L4 translation. It requires
+privileges and is supported on Linux, macOS, rooted Android, and jailbroken iOS.
+
+See [Bridge](/configuration/outbound/bridge/).
+
+#### 1.14.0-alpha.39
+
+* Add L3 forwarding support **1**
+* Fixes and improvements
+
+**1**:
+
+Building on the ICMP proxy support introduced in sing-box 1.13.0, TCP and UDP
+traffic from L3 inbounds (TUN, WireGuard, and Tailscale) can now be forwarded
+directly to WireGuard and Tailscale endpoints at L3, without going through
+L3 to L4 translation.
+
+See [Pre-match](/configuration/shared/pre-match/).
+
+#### 1.14.0-alpha.38
+
+* Add Snell protocol support **1**
+* Fixes and improvements
+
+**1**:
+
+Surge believes that being closed-source and not proliferated can keep
+[Snell](https://kb.nssurge.com/surge-knowledge-base/release-notes/snell)
+covert, but this is already impossible in 2026; considering that Snell still
+has advantages that other random-traffic protocols do not possess, such as
+multiplexing support with complete TCP semantics and traffic-characteristic
+diversity, we [implemented it in Go](https://github.com/SagerNet/sing-snell)
+instead of reinventing the wheel, with all features except the v5 QUIC proxy,
+behavior as consistent with the official implementation as possible, and
+performance at least on par with it.
+
+See [Snell Inbound](/configuration/inbound/snell/) and
+[Snell Outbound](/configuration/outbound/snell/).
 
 #### 1.13.14
 
