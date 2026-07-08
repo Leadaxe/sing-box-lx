@@ -10,6 +10,24 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.3-rc.1
+
+**Pre-release** — DNS-query stream (SPEC 018) re-architected onto the command
+multiplex. Ships a new `libbox.aar`; the LxBox client must migrate (task §261).
+
+* **DNS stream is now a multiplexed command, uniform with connections** — the §180
+  structured DNS-query stream (`SubscribeDNSQueries`) moved from a standalone
+  client subscription to a first-class member of the CommandClient multiplex, laid
+  out identically to `CommandConnections`: `addCommand(CommandDNS)`, a
+  `handleDNSStream` on the shared client context, and `WriteDNSQuery` on
+  `CommandClientHandler`. The stream now auto-reconnects with the profiler client
+  and dies with it — no per-stream subscription, no bespoke reconnect. This fixes
+  the field bug where the DNS stream went silent after the app was backgrounded
+  (Doze) and never recovered, while TCP/UDP kept flowing. The core emission layer
+  (`common/dnstrack`, `HasSubscribers` gate, event shape) is unchanged; only the
+  client transport moved. Removes the standalone `SubscribeDNSQueries` client
+  method, `DnsQuerySubscription` and `DnsQueryHandler`. Server/proto untouched.
+
 #### v1.14.0-lx.2
 
 **Stable release** (published as "Latest", not a pre-release) — a promotion of
