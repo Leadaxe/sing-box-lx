@@ -1,56 +1,98 @@
-# SPEC: 003 — AWG2_CLIENT_ENDPOINT
+# SPEC 003 — AmneziaWG 2.0 клиентский endpoint
 
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) |
-| Статус | C (complete) |
+| Статус | C (complete) — функционален, проверен живым AWG2-сервером |
+| Тег сборки | `with_awg` (обфускация) поверх `with_gvisor` (стек) |
 
-Добавить **клиентский AmneziaWG 2.0 endpoint** поверх существующего WireGuard-endpoint sing-box, используя `amneziawg-go` (как submodule + patches), за build-тегом `with_awg`.
+Клиентский **AmneziaWG 2.0** endpoint: обычный WireGuard-endpoint sing-box плюс обфускация DPI (junk-пакеты, магические заголовки, размерный padding, CPS-пакеты `I1–I5`). Без тега `with_awg` — обычный WireGuard upstream; AWG-поля в конфиге дают явную ошибку «не собрано».
 
 ---
 
-## 1. Проблема / контекст
+## Что это
 
-- AmneziaWG обходит DPI обфускацией: junk-пакеты (`Jc`/`Jmin`/`Jmax`), магические значения размеров/типов (`S1`/`S2`, `H1`–`H4`), а в **2.0** — CPS-пакеты `I1`–`I5` (первый — снимок реального протокола, напр. QUIC Initial) и диапазонные заголовки. См. [AmneziaWG 2.0](https://docs.amnezia.org/documentation/instructions/new-amneziawg-selfhosted/).
-- Upstream sing-box AmneziaWG не принимает ([#4045](https://github.com/SagerNet/sing-box/issues/4045), closed not-planned).
-- В sing-box WireGuard — это **endpoint** (`protocol/wireguard/endpoint.go`, девайс через `transport/wireguard`, зависимость `github.com/sagernet/wireguard-go`).
+AmneziaWG обходит DPI, маскируя WireGuard-трафик:
+- **Junk** (`Jc`/`Jmin`/`Jmax`) — `Jc` случайных пакетов размером `rand(Jmin..Jmax)` перед handshake initiation.
+- **Магические заголовки** (`H1–H4`) — подменяют 4-байтный тип сообщения (init/response/cookie/transport); в AWG 2.0 — диапазоны `"N-M"`, из которых значение генерируется на лету.
+- **Размерный padding** (`S1/S2` — на handshake, `S3/S4` — на **каждый** transport-пакет).
+- **CPS-пакеты** (`I1–I5`) — снимки реального протокола (напр. QUIC Initial, STUN), которые уходят вперемешку с handshake, имитируя посторонний трафик. `I1` — центральный (см. [SPEC 009](../009-WIRESOCK_MASQUERADE_PROFILES/SPEC.md) — декларативные masquerade-профили `ip=quic/sip/dns`, которые генерируют `I1`).
 
-## 2. Цель
+Upstream sing-box AWG не принимает ([#4045](https://github.com/SagerNet/sing-box/issues/4045), closed not-planned) — реализовано в форке.
 
-WireGuard-endpoint с заданными AWG-параметрами (`jc`, `jmin`, `jmax`, `s1`, `s2`, `h1`–`h4`, `i1`–`i5`) поднимает рабочее соединение к серверу **AmneziaWG 2.0**. Без тега `with_awg` бинарь = обычный WireGuard upstream.
+## Архитектура (два слоя)
 
-## 3. Требования
+Обфускация живёт **в вендоренном wireguard-go** (submodule), а sing-box только пробрасывает параметры. Это ключевое разделение: контракт `transport/wireguard` ↔ device остаётся sagernet'овским, обфускация — аддитивна.
 
-### 3.1 Зависимость amneziawg-go (касание `go.mod`)
-- Подключить [`amnezia-vpn/amneziawg-go`](https://github.com/amnezia-vpn/amneziawg-go) как **git submodule** (`submodules/amneziawg-go`) + каталог `patches/` (паттерн [`hoaxisr/amnezia-box`](https://github.com/hoaxisr/amnezia-box)).
-- `go.mod`: `// lx:` `replace github.com/sagernet/wireguard-go => ./submodules/amneziawg-go` (или pin на форк-модуль). Зафиксировать **конкретный коммит** сабмодуля.
-- Замена активна всегда на уровне модуля, но **AWG-поведение** включается только кодом под `with_awg` (см. 3.3); без тега девайс конфигурируется как обычный WG.
+### Слой 1 — вендоренный wireguard-go (`submodules/wireguard-go`)
 
-### 3.2 Опции (касание option)
-- Расширить `option.WireGuardEndpointOptions` полями AWG: `Jc, Jmin, Jmax, S1, S2, H1, H2, H3, H4` (числа) и `I1, I2, I3, I4, I5` (строки, **регистр важен** — uppercase в .conf, во внутренней модели — как есть).
-- Поля — в новом файле `option/wireguard_awg.go` со встраиванием/хелпером; в основной struct — минимальные `// lx:` строки (или встроенная под-структура `AmneziaWG`).
-- Без `with_awg`: поля либо игнорируются, либо дают понятную ошибку «awg support not built» (выбрать и задокументировать; предпочтительно — явная ошибка, чтобы не было тихой деградации обфускации).
+Форк `Leadaxe/wireguard-go-awg2-lx` = **3-way graft** обфускации AmneziaWG 2.0 поверх `sagernet/wireguard-go`. Подключён как git submodule + `// lx` `replace github.com/sagernet/wireguard-go => ./submodules/wireguard-go` в `go.mod`; pin на конкретный graft-коммит.
 
-### 3.3 Девайс (касание transport/wireguard + protocol/wireguard)
-- При `with_awg` конфигурация девайса передаёт AWG-параметры в `amneziawg-go` (формат строки конфига: `jc=`, `jmin=`, `jmax=`, `s1=`, `s2=`, `h1=`…`h4=`, `i1=`…`i5=`).
-- Регистрация endpoint остаётся `C.TypeWireGuard` (AWG — это WG + доп. поля, отдельный тип не вводим — минимальный дифф). Проводка — вариант `include/wireguard.go` под тегом или новый `include/awg.go`.
-- Сохранить фиксы резолва (DialContext/ListenPacket для доменов/FakeIP), если они нужны (референс hoaxisr) — но **только** если без них AWG-endpoint не работает с доменными `server`.
+**Что граф добавляет** (16 файлов в `device/`):
+- **10 net-new**: `magic-header.go` (генератор `H1–H4` из спеки `"N"`/`"N-M"`) + `obf*.go` (CPS-цепочки `I1–I5`, junk-байты, timestamp/datasize кодеки).
+- **6 modified**: `device.go` (AWG-state: `junk`, `headers`, `paddings`, `ipackets [5]*obfChain`), `send.go` (junk + CPS + padding в handshake/transport-путях), `receive.go` (детект magic-header на входе), `cookie.go`/`noise-protocol.go`/`uapi.go` (типы сообщений через генератор, парсинг AWG-ключей в IpcSet).
 
-## 4. Критерии приёмки
+**Ключевой инвариант — `MessageEncapsulatingTransportSize = 0`** ([device/noise-protocol.go](../../submodules/wireguard-go/device/noise-protocol.go)). Upstream держит 8-байтный headroom перед transport-заголовком (для `conn.Bind.Send()`-префикса). Граф его **обнуляет**: AWG-обфускация формирует префикс сама (junk/CPS уходят отдельными буферами через `SendBuffers`, а не через encapsulating-space). При `= 0` upstream-выражения вида `buffer[MessageEncapsulatingTransportSize+MessageTransportHeaderSize:]` схлопываются к графовому виду `buffer[MessageTransportHeaderSize:]` — поэтому большинство upstream-функций компонуются с графом **без ручного weave**. Это несущий инвариант re-graft (§ ниже).
 
-- `sing-box check -c` принимает wireguard-endpoint c полями `jc/h1/i1…` под `with_awg`.
-- Реальный коннект к серверу AmneziaWG 2.0 (ручная проверка), с непустыми `Jc` и хотя бы одним `I1`.
-- Сборка **без** `with_awg`: обычный WG работает как upstream; AWG-поля → явная ошибка «не собрано».
-- `go vet ./...`, тесты затронутых пакетов — зелёные.
-- Ребейз-проверка: конфликты возможны только в `go.mod`/`go.sum`, `option/*wireguard*`, `protocol/wireguard/endpoint.go`, `transport/wireguard/*`.
+**Что граф НЕ трогает:** `conn/`, `tun/` — чисто sagernet (берутся из upstream verbatim). Обфускация замкнута в `device/`.
 
-## 5. Вне скоупа
+### Слой 2 — sing-box (проброс параметров, всё `// lx`)
 
-- **AWG inbound/server** (отдельная задача).
-- Парсинг `awg-quick`/`.conf` — это забота лаунчера/UI.
-- AmneziaWG 1.x как отдельный режим — 2.0 обратно совместима по базовым полям; спец-режим 1.x не вводим.
+- **`option/wireguard_awg.go`** — `AmneziaWGOptions`: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` (тип `MagicHeader` — строка `"N"` или диапазон `"N-M"`, JSON-совместим с прежним uint32), `I1–I5` (string, регистр сохраняется). Promoted-встроены в `WireGuardEndpointOptions`.
+- **`transport/wireguard/device_awg.go`** (`//go:build with_awg`) — `awgIpcLines()` рендерит IpcSet-ключи `jc=/jmin=/jmax=/s1..s4=/h1..h4=/i1..i5=`, дописываемые к WireGuard-конфигу устройства. `device_stub_awg.go` (`//go:build !with_awg`) даёт явную ошибку при заданных AWG-полях.
+- **`transport/wireguard/endpoint.go`** — MTU-политика для AWG (см. ниже).
+- **`validateJunk`** — отвергает `jmin > jmax` до старта: `amneziawg-go` считает `rand(0..jmax-jmin)+jmin`, и `jmax < jmin` даёт `rand.Int` с аргументом `≤ 0` → **паника ядра**. Гардим только этот crash-кейс.
 
-## 6. Ссылки
+Регистрация endpoint остаётся `C.TypeWireGuard` (AWG = WG + доп. поля, отдельный тип не вводим).
+
+## MTU-политика (следствие S3/S4)
+
+`S3`/`S4` дописывают junk к **каждому** transport-сообщению → обфусцированный data-пакет перерастает path MTU физического интерфейса (1500, DF) → ядро спамит `sendmsg: message too long` (**EMSGSIZE**), handshake проходит, а трафик — нет.
+
+Бюджет: `mtu ≤ pathMTU − 28 (UDP/IP) − 32 (WireGuard) − max(S3, S4)`.
+
+Логика в [transport/wireguard/endpoint.go](../../transport/wireguard/endpoint.go) (gated `max(s3,s4) > 0`, plain WG нетронут):
+- **auto-default**: при незаданном `mtu` на AWG-эндпоинте — рекомендованный **1280** вместо upstream-дефолта 1408.
+- **warn**: при явном `mtu` выше бюджета — предупреждение (`pathMTU = 1492`, консервативно под PPPoE). Для `s3=s4=60` → `mtu ≤ 1372`.
+
+Держать `Jmax` ниже системного MTU (иначе junk-пакет фрагментируется и теряется на узких путях). Подробности: `docs-lx/lx-config.md` §2 (MTU).
+
+## Процедура re-graft (при бампе upstream wireguard-go)
+
+Когда upstream `sagernet/wireguard-go` двигает версию, граф переносится на новую базу. **Не merge, а controlled 3-way apply** граф-diff'а:
+
+1. **База**: submodule → новый sagernet-коммит.
+2. **Apply graft**: `git diff <старая-база> <старый-graft> | git apply --3way`. По практике 15/16 файлов ложатся чисто; конфликтует обычно только `send.go` (плотный upstream-путь).
+3. **Разрешить конфликты вручную**, порядок по риску: `cookie`→`device`→`noise-protocol`→`uapi`→`receive`→**`send.go`** (высший — junk/padding-хуки в hot-path).
+4. **Сверить несущие инварианты**: `MessageEncapsulatingTransportSize = 0`; графовый `RoutineEncryption` (заголовок в начале буфера, без финального encapsulating re-slice); AWG-state поля в `device.go`.
+5. **Проверки**: сборка `device/conn/tun` на linux/android/windows/**darwin** (darwin особо — там upstream добавляет платформенный batch-send), затем полный `sing-box` с LX_TAGS, `go test ./transport/wireguard/ ./protocol/wireguard/`, **device-verify** живого AWG-туннеля (junk/handshake/трафик).
+
+История конкретных re-graft'ов (какие базы, что менял upstream) — в [HISTORY.md](HISTORY.md).
+
+## Критерии готовности
+
+- `sing-box check -c` принимает wireguard-endpoint c `jc/h1/i1…` под `with_awg`.
+- Реальный коннект к AmneziaWG 2.0 (device-verify): `sending handshake initiation` → `received handshake response` → keepalive → трафик через сервер, с непустыми `Jc` и хотя бы одним `I1`.
+- Сборка **без** `with_awg`: обычный WG как upstream; AWG-поля → явная ошибка.
+- `gofmt -l` чист на граф-файлах; `go vet`, тесты `transport/wireguard` + `protocol/wireguard` — зелёные.
+
+## Изоляция и merge-зона
+
+- **sing-box-lx**: `go.mod` (replace + pin), `option/wireguard_awg.go` + `// lx`-поля в основной struct, `transport/wireguard/device_awg*.go`, MTU-блок в `transport/wireguard/endpoint.go`, проброс в `protocol/wireguard/endpoint.go` — всё `// lx`.
+- **submodule wireguard-go**: ребейзится отдельно (см. процедуру re-graft), не входит в merge-зону основного репо кроме pin в `go.mod`.
+
+## Смежные фичи
+
+- [SPEC 009](../009-WIRESOCK_MASQUERADE_PROFILES/SPEC.md) — декларативные masquerade-профили (`ip=quic/sip/dns`), генерирующие `I1`/`I2`.
+- [SPEC 020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) — idle-suspend WG/AWG-устройств (Down/Up); опирается на стабильный device-API той же вендоренной базы.
+
+## Вне скоупа
+
+- AWG inbound/server — форк client-focused.
+- Парсинг `awg-quick`/`.conf` — забота лаунчера/UI.
+- AmneziaWG 1.x как отдельный режим (2.0 обратно совместима по базовым полям).
+
+## Ссылки
 
 - [AmneziaWG 2.0 — Amnezia Docs](https://docs.amnezia.org/documentation/instructions/new-amneziawg-selfhosted/)
 - [amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go) · [hoaxisr/amnezia-box (референс интеграции)](https://github.com/hoaxisr/amnezia-box)
