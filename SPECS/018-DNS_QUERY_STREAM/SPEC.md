@@ -1,284 +1,178 @@
-# SPEC 018 — DNS query stream: `SubscribeDNSQueries` (structured, live)
+# SPEC 018 — DNS query stream (structured, live, via command-мультиплекс)
 
-**Тип:** lx-фича (новый command-RPC, наблюдаемость DNS)
-**Статус:** Open → реализуется на ветке `lx-1.14`
-**Приоритет:** Medium (профайлер LxBox: атрибуция DNS-запросов к приложению в реальном
-времени)
-**Файлы ядра:** `common/dnstrack/*` (новый), `dns/client.go`, `dns/client_log.go`,
-`daemon/started_service.proto`, `daemon/started_service_command_lx.go`,
-`experimental/libbox/*`
-**Связано:** SPEC 014 (Clash→CommandClient), SPEC 015 (RPC extensions), SPEC 017
-(Connection.Detour), SPEC 016 (connections map race — тот же `observable` слой)
+**Тип:** lx-фича (наблюдаемость DNS через command-мультиплекс)
+**Статус:** v2 — перенос DNS-стрима в command-мультиплекс (реализуется на `lx-1.14`)
+**Приоритет:** Medium (профайлер LxBox: атрибуция DNS-запросов к приложению в реальном времени)
+**Файлы ядра:** `common/dnstrack/*`, `dns/client.go`, `dns/client_log.go`,
+`daemon/started_service.proto`, `daemon/started_service_command_lx.go`, `experimental/libbox/*`
+**Связано:** SPEC 014 (Clash→CommandClient), SPEC 015 (RPC extensions), SPEC 017 (Connection.Detour), SPEC 016 (observable слой)
+**История смены архитектуры:** [HISTORY.md](HISTORY.md) (v1 standalone-подписка → v2 мультиплекс; баг, отвергнутые пути)
 
-## Задача
+---
 
-LxBox показывает TCP/UDP из connections-стрима (структурные `CcConnection` с
-`getProcessInfo()`, `rule`, `chains` — атрибуция к приложению приходит из ядра готовой).
-DNS-запросы же приходится брать из **текстового лога** (`_handleDnsLine` парсит строки
-`dns: exchanged …`), а package'а там нет — приходится сшивать по conn_id с TCP-стримом.
-Лог — «обглоданный канал». Нужен **структурный live-поток DNS-запросов** с атрибуцией к
-процессу, симметричный connections-стриму.
+## Что это
 
-## Корень: hijack-нутый DNS минует tracker
+Структурный live-поток DNS-резолвов с атрибуцией к процессу, симметричный
+connections-стриму. Каждый резолв (успех и провал) даёт событие с доменом, qtype, rcode,
+ttl, источником (cache/сеть), процессом-владельцем, DNS-сервером и, опционально,
+CNAME-цепочкой. Заменяет текстовый парсинг core-лога, где атрибуции к приложению нет.
 
-DNS-запросы приложений на Android-VPN перехватываются правилом `hijack-dns`. В
-`route/route.go:88-157` hijack уходит в `hijackDNSStream`/`hijackDNSPacket`
-(`route/dns.go:23,38`) **до** строки 157, где обычное соединение становится
-`tracker.RoutedConnection(...)`. Значит:
+**Транспорт: DNS — обычный член command-мультиплекса, устроен идентично
+`CommandConnections`.** Клиент подписывается через `addCommand(CommandDNS)`; стрим живёт на
+общем `c.ctx` `CommandClient` и авто-восстанавливается вместе со всеми стримами профайлера
+при реконнекте (`Connect()` перезапускает `dispatchCommands` по `options.commands`).
+Поднимается и опускается вместе с профайлер-клиентом — не отдельная сущность, не вечная
+горутина, независимого `Close()` нет (on-demand управляется на стороне клиента через
+refcount профайлера).
 
-- В connections-стрим (trafficcontrol) hijack-нутый DNS **не попадает** — его там нет.
-- Фильтр `metadata.OutboundType != C.TypeDNS` (`experimental/clashapi/connections.go:35`)
-  режет не это, а редкий DNS-as-outbound.
-- v2ray Stats DNS не считает; Clash API даёт только `/dns/flush`.
-- **Единственный существующий выход DNS-запросов наружу — текстовый лог**
-  (`dns/client_log.go`), потому LxBox его и парсит. Это не лень, а отсутствие
-  структурной альтернативы.
+## Архитектура
 
-## Данные в точке лога уже на руках
+Два независимых слоя: **источник событий в ядре** (эмиссия) и **транспорт наружу**
+(мультиплекс). Границу держать чётко — источник не знает про транспорт.
 
-Все пять лог-функций (`logExchanged/Cached/Optimistic/Refreshed/Rejected Response`,
-`dns/client_log.go`) вызываются из `dns/client.go` (`:199,203,257,389,520`) с `ctx` и
-`response *dns.Msg`. В этой точке доступно без новых параметров:
-
-| Поле | Источник | Стоимость |
-|---|---|---|
-| `domain` | `response.Question[0]` | уже извлекается |
-| `qtype` | `response.Question[0].Qtype` | в руке |
-| `rcode` | `response.Rcode` | уже логируется |
-| `ttl` | параметр функции | уже логируется |
-| `source` | какая из 5 функций (cached/exchanged/optimistic/refreshed/rejected) | имя функции |
-| `processInfo` | `adapter.ContextFrom(ctx).ProcessInfo` | один вызов |
-| `answers[]` | `response.Answer` | уже итерируется; опционально |
-
-`ctx` — тот же, что течёт от `dns/router.go` (`adapter.ContextFrom`/`ExtendContext` на
-`:289,427,548,661,791`), где `metadata.ProcessInfo` уже заполнен (это подтверждается тем,
-что DNS-правила матчат `package_name_regex`, `route/rule/rule_dns.go:257` — package
-известен к моменту резолва). Значит атрибуция к приложению **доступна**, просто не
-выводится структурно.
-
-`source` — недооценённое поле: бесплатно (имя функции) и для профайлера ценно (кэш vs
-сеть — прямой сигнал эффективности DNS).
-
-## Решение: пакет `dnstrack` поверх существующего `observable`
-
-> **ФИНАЛЬНЫЙ КОНТРАКТ — раздел «Согласованная форма» ниже.** Этот раздел и proto-эскизы в
-> нём ИЛЛЮСТРАТИВНЫ (ранний черновик с `Empty`-входом и без `failed`/`answers`). При
-> расхождении — главенствует «Согласованная форма»: RPC принимает
-> `SubscribeDNSQueriesRequest{includeAnswers}`, событие несёт `failed`/`error`/`answers`,
-> `rcode=-1` на провале. Реализация уже следует финалу.
-
-`SubscribeConnections` доставляет live-поток через `common/observable.Subscriber[T]`
-(generic pub/sub, `common/trafficcontrol/manager.go:47-91`). Тот же слой переиспользуется
-для DNS — не нужен новый транспорт.
+### Слой 1 — источник событий (`common/dnstrack`)
 
 ```
-common/dnstrack (новый, зеркало trafficcontrol/manager.go):
-  Manager{ eventSubscriber *observable.Subscriber[DnsQueryEvent] }
+common/dnstrack/manager.go:
+  Manager{ eventSubscriber *observable.Subscriber[QueryEvent] }   // зеркало trafficcontrol
   NewManager() → Subscriber(256) + Observer(64)
-  SubscribeEvents() / UnSubscribeEvents()
-  Emit(DnsQueryEvent{...})
+  SubscribeEvents() / UnSubscribeEvents() / Emit(QueryEvent)
+  HasSubscribers() bool                                            // atomic счётчик подписок
 
-dns/client_log.go (точка эмита, рядом с каждым log*Response):
-  manager.Emit(DnsQueryEvent{domain, qtype, rcode, ttl, source, processInfo})
-    ← processInfo := adapter.ContextFrom(ctx).ProcessInfo
+box.go:  service.MustRegisterPtr(ctx, dnstrack.NewManager())       // читается PtrFromContext
 
-command server (daemon/started_service_command_lx.go):
-  SubscribeDNSQueries(stream)  ← копия SubscribeConnections-доставки
-
-proto:
-  rpc SubscribeDNSQueries(Empty) returns (stream DnsQueryEvent)
-  message DnsQueryEvent { domain, qtype, rcode, ttl, source, ProcessInfo, [answers] }
-
-libbox:
-  handleDNSQueriesStream + DnsQuery struct  ← копия handleConnectionsStream
-
-LxBox:
-  подписка на DNS-стрим → выкинуть _handleDnsLine текстовый парсинг
+dns/client_log.go:  emitQueryEvent / emitFailedQuery
+  manager := service.PtrFromContext[dnstrack.Manager](ctx)
+  if manager == nil || !manager.HasSubscribers() { return }        // гейт ПЕРЕД построением
+  manager.Emit(QueryEvent{ domain, qtype, rcode, ttl, source, processInfo, answers, … })
 ```
 
-Профайлер потребляет DNS в реальном времени → именно **stream** (`SubscribeDNSQueries`),
-а не pull-снапшот. Снапшот `GetDNSQueries` можно добавить позже как re-read при потере
-стрима (как `GetGroups` рядом с `SubscribeGroups` в SPEC 015) — НЕ в этом SPEC.
+**`HasSubscribers`-гейт обязателен.** Без открытого профайлера DNS-горячий путь не строит
+ни событие, ни `answers`, ни теги — нулевая стоимость в обычном режиме. Гейт стоит в обеих
+эмит-функциях (успех и провал) — они за ОДНИМ условием, поэтому «нет подписчика» глушит и
+успех, и провал согласованно.
 
-### Точки правки
+**Эмит-точки** (`dns/client.go` `Exchange`): успех — из `log*Response` (`client_log.go`),
+провал — из `emitFailedQuery` перед `return nil, err` (timeout/loopback/rejected-cached/
+SERVFAIL). ProcessInfo берётся из `adapter.ContextFrom(ctx).ProcessInfo`.
 
-1. **`common/dnstrack/manager.go`** (новый) — `Manager` с `observable.Subscriber[DnsQueryEvent]`,
-   `SubscribeEvents/UnSubscribeEvents/Emit`, `Start/Close` (lifecycle), зеркало
-   trafficcontrol. `DnsQueryEvent` struct.
-2. **`box.go`** — создать и зарегистрировать `dnstrack.Manager` (как trafficManager),
-   гейт `needObservable` (DNS-наблюдаемость нужна тому же платформенному клиенту).
-3. **`dns/client_log.go`** / **`dns/client.go`** — в каждой `log*Response` (или рядом)
-   достать `adapter.ContextFrom(ctx).ProcessInfo` и `manager.Emit(...)`. Manager берётся
-   из ctx (`service.FromContext`), как logger.
-4. **`daemon/started_service.proto`** — `rpc SubscribeDNSQueries` + `message DnsQueryEvent`
-   (additive); реген pb.go ручным минимальным дифом (как SPEC 017 field 23).
-5. **`daemon/started_service_command_lx.go`** — серверный стрим, зеркало
-   `SubscribeConnections` (тикер не нужен — DNS-события событийные, эмитятся по факту).
-6. **`experimental/libbox/`** — `handleDNSQueriesStream` + `DnsQuery` struct +
-   subscription handle (зеркало connections).
-Всё за тегом `with_lx_command` там, где пересекает command-поверхность (как SPEC 014/015).
+> **ProcessInfo на fast-path.** Hijack-нутый DNS (большинство UDP DNS на VPN) уходит в
+> `hijackDNSStream`/`hijackDNSPacket` (`route/dns.go`) ДО `matchRule`, где заполняется
+> `metadata.ProcessInfo`. Поэтому `r.searchProcessInfo(ctx, &metadata)` ОБЯЗАН вызываться
+> ПЕРЕД обоими fast-path hijack-вызовами (идемпотентен, кэширован по `{network,source,
+> destination}`), иначе событие доходит до эмита с `ProcessInfo==nil`.
 
-### Объём поля
+### Слой 2 — транспорт (command-мультиплекс)
 
-`domain`, `qtype`, `rcode`, `ttl`, `source`, `processInfo` (цель), `failed` + `error`
-(провалы, пункт 1). `answers[]` присутствует в proto с v1, по умолчанию off за флагом
-подписки (переменный размер; нужен для CNAME-сшивки пункт 2 и будущей DNS↔TCP
-IP-атрибуции — без proto-bump позже).
+Серверный gRPC-стрим и proto — те же, что у любого `Subscribe*`. Клиент вызывает их из
+мультиплекса, а не отдельным методом.
 
-**`answers[]` = ВЕСЬ `response.Answer` в исходном порядке — CNAME-hops И финальные
-A/AAAA, НЕ отфильтрованные до конечных IP.** Каждый элемент `{name, type, rdata, ttl}`.
-Профайлеру для `cnameChain` нужны промежуточные CNAME-записи (`api.x.ru → cdn.y.ru →
-IP`), а не только результат — реализатор НЕ должен «помогать», оставляя только A/AAAA,
-иначе цепочку не собрать и флаг бесполезен. Проверено: `response.Answer` несёт смешанные
-RR (`dns.CNAME`/`dns.A`/`dns.AAAA`, `dns/client.go:608-647`), ядро их не фильтрует —
-отдавать как есть.
+```
+proto (daemon/started_service.proto):
+  rpc SubscribeDNSQueries(SubscribeDNSQueriesRequest) returns (stream DnsQueryEvent) {}
 
-### Канал
+server (daemon/started_service_command_lx.go, за with_lx_command):
+  SubscribeDNSQueries: manager := PtrFromContext[dnstrack.Manager]; SubscribeEvents;
+    defer UnSubscribeEvents; select-loop { event → server.Send }
 
-DNS-события событийные (эмит на каждый резолв), не тиковые. На активном устройстве DNS
-реже, чем traffic-апдейты connections, и каждое событие — короткая структура. Слой
-`observable` с буфером 256 (как connections) гасит всплески; переполнение дропает
-старейшие (профайлер — наблюдатель, не аудит). Отдельного канала/тикера не требует.
+libbox client (experimental/libbox/):
+  command.go:            CommandDNS  (следующая в iota, как CommandConnections)
+  command_client.go:     case CommandDNS: go c.handleDNSStream()   // в общем ряду dispatchCommands
+                         CommandClientOptions.DNSIncludeAnswers     // поле, как StatusInterval
+                         CommandClientHandler.WriteDNSQuery(*DnsQuery)   // рядом с WriteConnectionEvents
+  handleDNSStream():     калька handleConnectionsStream — client.SubscribeDNSQueries(c.ctx, req),
+                         for { Recv → WriteDNSQuery | err → Disconnected }
 
-### Связь с SPEC 016
+LxBox (BoxCommandClient.kt):
+  connectProfilerClient(): options.addCommand(CommandDNS); options.setDNSIncludeAnswers(true)
+  ProfilerHandler.writeDNSQuery(query): маппинг → dnsQueriesEmitter (как writeConnectionEvents)
+```
 
-`observable.Subscriber` — тот же слой, где SPEC 016 нашёл map-гонку. Серверная сторона
-(`Subscriber.Emit`) безопасна; клиентская аккумуляция событий — забота клиента, вне этого
-SPEC.
+**Ключевое отличие от connections — ноль.** DNS-стрим устроен на всех уровнях так же:
+константа в общем iota, `case` в общем switch, метод в общем handler-интерфейсе, поле опций
+как `StatusInterval`. Реконнект бесплатный (общий `c.ctx` + `dispatchCommands`); отдельного
+`OnError`-пути нет — обрыв идёт через `Disconnected()`.
 
-## Согласованная форма (контракт, финал)
-
-Решено по фидбэку — реализация следует этому буквально.
+## Контракт события
 
 **`dnstrack.QueryEvent` (Go):**
 ```go
 type QueryEvent struct {
-    Domain      string
-    QueryType   uint16
-    Rcode       int32                     // dns.Rcode; -1 когда ответа нет (timeout)
-    TTL         uint32
-    Source      Source                    // exchanged/cached/optimistic/refreshed/rejected/failed
-    Failed      bool                      // true на timeout/loopback/rejected-cached/SERVFAIL-reject
-    Error       string                    // причина: "timeout"/"loopback"/"rejected"/…; "" на успехе
-    ProcessInfo *adapter.ConnectionOwner
-    Answers     []Answer                  // ВЕСЬ response.Answer; nil если includeAnswers=false
-    // rc.10: какой DNS-сервер резолвил + канал, к которому он привязан
-    DNSServer     string                  // transport.Tag()
-    DNSServerType string                  // transport.Type(): udp/tls/https/quic
-    Outbound      []string                // detour-тег DNS-сервера; пусто на cached/optimistic
+    Domain        string
+    QueryType     uint16
+    Rcode         int32                     // dns.Rcode; -1 когда ответа нет (timeout)
+    TTL           uint32
+    Source        Source                    // exchanged/cached/optimistic/refreshed/rejected/failed
+    Failed        bool                      // true на timeout/loopback/rejected-cached/SERVFAIL-reject
+    Error         string                    // "timeout"/"loopback"/"rejected"/…; "" на успехе
+    ProcessInfo   *adapter.ConnectionOwner
+    Answers       []Answer                  // ВЕСЬ response.Answer; nil если includeAnswers=false
+    DNSServer     string                    // transport.Tag()
+    DNSServerType string                    // transport.Type(): udp/tls/https/quic
+    Outbound      []string                  // detour-тег DNS-сервера; пусто на cached/optimistic
 }
 type Answer struct { Name string; Type uint16; RData string; TTL uint32 }
 ```
 
-**DNS-сервер + outbound (rc.10).** DNS-правило выбирает СЕРВЕР (transport, по `action.Server`
-в `dns/router.go:matchDNS`), не outbound. Канал, через который DNS физически уходит, — это
-detour самого transport'а, жёстко связанный с сервером в конфиге (`DialerOptions.Detour`).
-- `DNSServer`/`DNSServerType` = `transport.Tag()`/`Type()` — `transport` это параметр
-  `Exchange`, доступен на ВСЕХ путях эмита (успех+провал), проброшен в `log*`/`emitFailedQuery`.
-- `Outbound` = detour-тег transport'а, собранный ОДИН раз при создании транспорта
-  (`TransportAdapter.outboundTag` из `DialerOptions.Detour`, геттер `OutboundTag()` на
-  интерфейсе `DNSTransport`). Ядро кладёт СТАТИЧЕСКИЙ тег (ноль стоимости на горячем пути);
-  СЕРВЕР при отдаче разворачивает селектор в активный узел через `Now()`
-  (`resolveOutboundChain`, как `Connection.Detour` SPEC 017) — только для подписчиков, не на
-  DNS-резолве. Пусто на `cached`/`optimistic` (запрос не уходил).
-
-**Subscriber-гейт (rc.10).** `dnstrack.Manager` считает активные подписки (atomic);
-`HasSubscribers()` проверяется в `emitQueryEvent`/`emitFailedQuery` ПЕРЕД построением события.
-Без открытого профайлера DNS-горячий путь не строит ни событие, ни `answers`, ни тег —
-нулевая стоимость в обычном режиме (раньше событие строилось всегда, даже без слушателя).
-
-**`Source`:** добавляется `SourceFailed = "failed"` (провал отличим по `source`, не только
-по флагу).
-
-**Решения по развилкам:**
-- **Q1 — `Rcode = -1` при `response == nil`** (timeout): sentinel «нет ответа», явно
-  отличается от `0`=NOERROR. При `response != nil` — реальный `response.Rcode`.
-  *Клиентское примечание:* proto-тип `int32` (signed varint) — `-1` едет как отдельное
-  значение, на проводе физически отличное от `65535` (verified). На Kotlin/Dart маппить
-  `rcode == -1` → «нет ответа» ДО любого `.toUInt()`, иначе `-1` станет `4294967295`. Это
-  забота клиента; ядро отдаёт чистый signed `-1`.
-- **Q2 — `SourceFailed`** на всех провальных путях (плюс `Failed=true`).
-- **Q3 — флаг `includeAnswers`** в запросе подписки: `answers[]` едут ТОЛЬКО когда клиент
-  запросил (иначе пустой трафик). Меняет RPC-вход с `Empty` на `SubscribeDNSQueriesRequest`.
-
-**proto:**
+**proto (additive):**
 ```proto
 rpc SubscribeDNSQueries(SubscribeDNSQueriesRequest) returns (stream DnsQueryEvent) {}
 message SubscribeDNSQueriesRequest { bool includeAnswers = 1; }
 message DnsQueryEvent {
   string domain = 1; uint32 queryType = 2; int32 rcode = 3; uint32 ttl = 4;
   string source = 5; ProcessInfo processInfo = 6;
-  bool failed = 7; string error = 8;            // пункт 1
-  repeated DnsAnswer answers = 9;               // пункт 2, только при includeAnswers
+  bool failed = 7; string error = 8;
+  repeated DnsAnswer answers = 9;               // только при includeAnswers
+  string dnsServer = 10; string dnsServerType = 11; repeated string outbound = 12;
 }
 message DnsAnswer { string name = 1; uint32 type = 2; string rdata = 3; uint32 ttl = 4; }
 ```
 
-**Эмит-точки в `dns/client.go` Exchange:**
-- `:213` loopback → `Failed`, `Error="loopback"`, `Rcode=-1`, поля из `question`.
-- `:219` rejected-cached → `Failed`, `Error="rejected (cached)"`, `Rcode=-1`, из `question`.
-- `:224` transport error → `Failed`, `Error=err.Error()` (timeout/сеть), `Rcode=-1`, из `question`.
-- `:239` SERVFAIL/checker reject → `Failed`, `Error="rejected"`, `Rcode=response.Rcode`, из `response`.
-- успех (`client_log.go` logExchanged/cached/optimistic/refreshed) — `Failed=false`,
-  `Source` по вербу, `Rcode=response.Rcode`.
+**Семантика полей:**
 
-## Фидбэк по корректности канала (по коду)
+- **`Rcode = -1` при `response == nil`** (timeout): sentinel «нет ответа», отличается от
+  `0`=NOERROR. proto `int32` (signed varint) — `-1` на проводе физически ≠ `65535`. Клиент
+  маппит `rcode == -1` → «нет ответа» ДО `.toUInt()`, иначе `-1` станет `4294967295`.
+- **`Source` + `Failed`.** `SourceFailed="failed"` на всех провальных путях (плюс
+  `Failed=true`). Успех — `exchanged`/`cached`/`optimistic`/`refreshed` (кэш vs сеть —
+  сигнал эффективности DNS).
+- **`Answers[]` — ВЕСЬ `response.Answer` в исходном порядке** (CNAME-hops И финальные
+  A/AAAA, НЕ отфильтрованные до IP). Профайлеру для `cnameChain` нужны промежуточные CNAME.
+  Едет только при `includeAnswers=true` (переменный размер — иначе пустой трафик).
+- **`DNSServer`/`DNSServerType`** = `transport.Tag()`/`Type()`, доступны на всех путях
+  (успех+провал). **`Outbound`** = detour-тег транспорта (`OutboundTag()` из
+  `DialerOptions.Detour`); ядро кладёт статический тег, СЕРВЕР разворачивает селектор в
+  активный узел через `Now()` при отдаче (как `Connection.Detour` SPEC 017). Пусто на
+  `cached`/`optimistic` (запрос не уходил).
 
-Скоуп — только свойства самого канала ядра. Что делает с ним LxBox (держит ли текстовый
-парсинг, как дедуплицирует) — вне этого SPEC.
+## Изоляция и merge-зона
 
-### Пункт 1 — провалы DNS ОБЯЗАНЫ эмитить событие (подтверждён по коду)
-
-`dns/client.go`: на ошибке транспорта (timeout/сеть) путь —
-`c.exchangeToTransport(...)` → `return nil, err` (`:222-224`), `response == nil`, **ни
-одна `log*Response` не вызывается**. SERVFAIL-через-rejected (`:239`), loopback (`:213`),
-rejected-cached (`:219`) — тоже до успешного лога. Эмит, висящий на лог-функциях,
-**пропускает все сбои** → канал неполон. Провалы — главный диагностический сигнал.
-
-**Решение:** `DnsQueryEvent` получает `bool failed` + `string error`; эмит добавляется на
-путях провала в `Exchange` (перед `return nil, err` на `:213/:219/:224/:239`). При
-`response != nil` — `rcode` несёт код; при `response == nil` — `failed=true` + `error`,
-поля запроса из `message.Question[0]`, `processInfo` из ctx.
-
-### Пункт 2 — CNAME-цепочка через `answers[]` (без query-id)
-
-Стабильного per-query id в `InboundContext` нет (`message.Id` — переиспользуемый 16-бит
-transaction ID, негоден). Но и не нужен: CNAME-цепочка одного ответа целиком в
-`response.Answer` одного `*dns.Msg`, который на руках в точке эмита. `answers[]` отдаёт её
-в одном событии — сшивка по conn_id не требуется. **Отдавать ВЕСЬ `response.Answer`
-(CNAME-hops + финальные A/AAAA), не только конечные IP** — иначе `cnameChain` не собрать
-(см. «Объём поля»). (Связка split A/AAAA как РАЗНЫХ событий — возможное будущее additive
-`query_id`, не сейчас.)
-
-### Пункт 3 — ProcessInfo (ИСПРАВЛЕНО в rc.9 — прежнее утверждение было неверным)
-
-**Прежний анализ был НЕПОЛНЫМ и устройство это вскрыло (§180-2: 0/119 attributed).** Верно,
-что все `log*Response` получают один ctx (это про путь ВНУТРИ `Exchange`). Ошибка: я не
-проверил, что в этот ctx вообще положили `ProcessInfo` ДО входа в резолвер. На
-Android-VPN не положили.
-
-Механизм (по коду): DNS на TUN+DNS-proto хайджекается на FAST-PATH —
-`route/route.go:91-94` (stream) и `:226-228` (packet) — которые делают `return` ДО
-`matchRule`. А `searchProcessInfo` (заполняющий `metadata.ProcessInfo`) живёт ВНУТРИ
-`matchRule` (`route/route.go:416`). Значит fast-path-хайджекнутый DNS (это БОЛЬШИНСТВО DNS
-на VPN, особенно UDP) доходит до эмита с `ProcessInfo == nil`. Атрибутированы лишь редкие
-запросы, прошедшие `matchRule`; `found package name` в логе — часто от TCP-коннекта того же
-app, не от DNS-запроса. Детерминированно (два code-path), не гонка.
-
-**Фикс (rc.9):** вызвать `r.searchProcessInfo(ctx, &metadata)` ПЕРЕД обоими fast-path
-hijack-вызовами. Идемпотентен (ранний выход на `ProcessInfo != nil`) и кэширован
-(`findProcessInfoCached` по `{network,source,destination}`), так что цена — один lookup на
-flow. `Source`/`Destination` валидны на TUN к этой точке; `OriginDestination` может быть
-пуст, но `searchProcessInfo` фолбэчит на `Destination` (IP DNS-сервера).
+- **Ядро / сервер / proto — за `with_lx_command`**, как SPEC 014/015. `common/dnstrack` —
+  новый пакет. `.pb.go` — регенерируемый артефакт (см. §3.3 CONSTITUTION).
+- **Апстрим-контакт (3 точки, осознанная цена за однообразность)** — все в
+  `experimental/libbox/`, помечены `// lx:begin dns` / `// lx:end dns`:
+  1. `command.go` — `CommandDNS` следующей в iota-блоке;
+  2. `command_client.go` `dispatchCommands` — `case CommandDNS: go c.handleDNSStream()`;
+  3. `command_client.go` `CommandClientHandler` — метод `WriteDNSQuery(*DnsQuery)`;
+  плюс поле `DNSIncludeAnswers` в `CommandClientOptions` (холодная зона).
+- `handleDNSStream`, `DnsQuery`/`DnsAnswer`, `dnsQueryFromGRPC` — в lx-owned
+  `command_client_command_lx.go` (0 merge-риска).
+- Merge-конфликт при ре-графе — только когда апстрим сам добавляет команду (редко);
+  резолвится тривиально (наши строки съезжают ниже апстримовских, разные hunks).
 
 ## Критерии готовности
 
-- Каждый успешный резолв (exchanged/cached/optimistic/refreshed) эмитит `DnsQueryEvent`
-  с `domain` + `processInfo`.
-- **Провалы (timeout/SERVFAIL/rejected/loopback) тоже эмитят** с `failed=true` и/или
-  ненулевым `rcode` + `error` (пункт 1 — полнота канала).
-- `qtype/rcode/ttl/source` заполнены; `answers[]` в proto за флагом (пункт 2).
-- ProcessInfo непуст на cached/optimistic путях, не только exchanged — протестировать
-  cache-hit отдельно (пункт 3).
-- Старый core без `with_lx_command` → `codes.Unimplemented`; proto additive;
-  `go build ./...` зелёная; gofmt чист.
+- Каждый резолв (успех: exchanged/cached/optimistic/refreshed; провал: timeout/SERVFAIL/
+  rejected/loopback) эмитит событие с `domain` + `processInfo`; провалы — `failed=true`
+  и/или ненулевой rcode + error.
+- `qtype/rcode/ttl/source/dnsServer` заполнены; `answers[]` за флагом `includeAnswers`.
+- ProcessInfo непуст на cached/optimistic путях, не только exchanged (тест cache-hit
+  отдельно — покрывает fast-path searchProcessInfo-фикс).
+- DNS-стрим — член мультиплекса: `addCommand(CommandDNS)` поднимает его вместе с
+  connections; при обрыве/фоне/Doze авто-восстанавливается через `Connect()` БЕЗ отдельного
+  reconnect-кода на клиенте; гаснет вместе с профайлер-клиентом.
+- Старое ядро без `with_lx_command` → `codes.Unimplemented`; proto additive; `go build ./...`
+  зелёная; `gofmt -l` чист на lx-файлах.
+- **Device-verify:** §180-поток оживает после ухода в фон и возврата, БЕЗ Kotlin
+  reconnect-хука (доказывает, что мультиплекс-реконнект переподнял DNS); события идут с
+  атрибуцией (`processInfo`, `answers[]` CNAME, `outbound`, `rcode`).
