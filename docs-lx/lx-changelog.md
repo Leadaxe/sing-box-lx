@@ -10,6 +10,34 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.3
+
+**Stable release** (published as "Latest", not a pre-release) — a promotion of
+`v1.14.0-lx.3-rc.2`, **device-verified**. Functionally identical to that rc; no
+runtime change since it.
+
+This release carries two payloads accumulated across the rc line:
+
+* **DNS-query stream re-architected onto the command multiplex** (from `rc.1`) —
+  the §180 structured DNS stream (`SubscribeDNSQueries`) moved from a standalone
+  client subscription to a first-class member of the CommandClient multiplex,
+  laid out identically to `CommandConnections`. It now auto-reconnects with the
+  profiler client and dies with it, fixing the field bug where the DNS stream went
+  silent after the app was backgrounded (Doze) and never recovered while TCP/UDP
+  kept flowing. Requires the matching LxBox client migration (task §261).
+* **AmneziaWG re-grafted onto wireguard-go v0.0.5 + upstream merge** (from `rc.2`) —
+  merges upstream `testing` (L3-forwarding, snell, bridge outbound) and rebases the
+  AWG 2.0 obfuscation graft onto the wireguard-go bump it carried. SPEC 020
+  idle-suspend was re-homed onto the new L3-forwarding endpoint API (the
+  `resumeOnDial` wake guard moved to `WritePackets`, the single point every
+  L3-forwarded packet transits). No config or behaviour change for AWG endpoints.
+  The new `PlatformInterface` bridge methods (`usePlatformBridge`/`createBridge`)
+  are stubbed off on the client — the Android VPN uses its single VpnService TUN,
+  not a platform bridge.
+
+Both `libbox.aar` and `libbox-legacy.aar` are shipped; the LxBox client builds
+against this AAR (the bridge-interface stubs land with it).
+
 #### v1.14.0-lx.3-rc.2
 
 **Pre-release** — merges upstream `testing` (14 commits, incl. L3-forwarding,
