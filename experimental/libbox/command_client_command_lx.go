@@ -54,70 +54,32 @@ type DnsAnswerIterator interface {
 	HasNext() bool
 }
 
-// DnsQueryHandler receives DNS-query events. OnQuery fires per resolution; OnError on a
-// stream failure (the subscription is then done).
-type DnsQueryHandler interface {
-	OnQuery(query *DnsQuery)
-	OnError(message string)
-}
+// handleDNSStream multiplexes the SPEC 018 DNS-query stream into the CommandClient exactly
+// like handleConnectionsStream: it runs on the shared c.ctx (which Connect() recreates on
+// reconnect), so the DNS stream auto-recovers with every other profiler stream and dies with
+// the client — no standalone subscription, no per-stream Close(), no bespoke reconnect. A
+// recv error routes through Disconnected() (the common path that drives the client's
+// reconnect), not a DNS-specific OnError. includeAnswers comes from options, like
+// StatusInterval. Dispatched from dispatchCommands on CommandDNS.
+func (c *CommandClient) handleDNSStream() {
+	client, ctx := c.getStreamContext()
 
-// DnsQuerySubscription is the live handle; Close() stops the stream (mirrors the other
-// libbox stream sessions).
-type DnsQuerySubscription struct {
-	streamSession
-}
-
-// SubscribeDNSQueries opens the structured DNS-query stream (SPEC 018). includeAnswers asks
-// the core to attach the full answer set per event (heavier; off for plain attribution).
-// On a core built without with_lx_command the call returns codes.Unimplemented, surfaced
-// here as an error — the caller keeps whatever fallback it had.
-func (c *CommandClient) SubscribeDNSQueries(includeAnswers bool, handler DnsQueryHandler) (*DnsQuerySubscription, error) {
-	client, parentCtx, err := c.getClientForCall()
-	if err != nil {
-		return nil, E.Cause(err, "subscribe dns queries")
-	}
-
-	streamCtx, cancel := context.WithCancel(parentCtx)
-	subscription := &DnsQuerySubscription{
-		streamSession: streamSession{
-			ctx:       streamCtx,
-			cancel:    cancel,
-			closeDone: make(chan struct{}),
-		},
-	}
-
-	stream, err := client.SubscribeDNSQueries(streamCtx, &daemon.SubscribeDNSQueriesRequest{
-		IncludeAnswers: includeAnswers,
+	stream, err := client.SubscribeDNSQueries(ctx, &daemon.SubscribeDNSQueriesRequest{
+		IncludeAnswers: c.options.DNSIncludeAnswers,
 	})
 	if err != nil {
-		cancel()
-		if c.standalone {
-			c.closeConnection()
-		}
-		return nil, E.Cause(err, "subscribe dns queries")
+		c.handler.Disconnected(E.Cause(err, "subscribe dns queries").Error())
+		return
 	}
 
-	standalone := c.standalone
-	go func() {
-		defer func() {
-			close(subscription.closeDone)
-			if standalone {
-				c.closeConnection()
-			}
-		}()
-		for {
-			event, recvErr := stream.Recv()
-			if recvErr != nil {
-				if subscription.ctx.Err() != nil {
-					return
-				}
-				handler.OnError(E.Cause(recvErr, "dns query stream recv").Error())
-				return
-			}
-			handler.OnQuery(dnsQueryFromGRPC(event))
+	for {
+		event, err := stream.Recv()
+		if err != nil {
+			c.handler.Disconnected(E.Cause(err, "dns query stream recv").Error())
+			return
 		}
-	}()
-	return subscription, nil
+		c.handler.WriteDNSQuery(dnsQueryFromGRPC(event))
+	}
 }
 
 func dnsQueryFromGRPC(event *daemon.DnsQueryEvent) *DnsQuery {
