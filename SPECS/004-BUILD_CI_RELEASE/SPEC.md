@@ -52,19 +52,19 @@
 | Таргет | naive | Библиотека в архиве |
 |--------|-------|---------------------|
 | windows amd64/arm64 | ✅ purego | **`libcronet.dll` рядом с `sing-box.exe`** (шаг «Extract libcronet.dll») |
-| darwin amd64/arm64 | ⚠️ тег включён, нефункционален | нет — dylib для purego-лоадера **не существует в природе**: lib-модули `cronet-go/lib/darwin_*` несут только статическую `libcronet.a` (CGO-путь), upstream-ный `extract-lib` явно отказывает darwin. Release notes фиксируют ограничение |
+| darwin amd64/arm64 | ✅ статика (CGO) | не нужна — job `build_darwin` на `macos-latest`, `CGO_ENABLED=1`, теги **без** `with_purego` → `libcronet.a` вшита (upstream `build_darwin` parity; amd64 кросс-собирается CGO на том же arm64-раннере). Purego-вариант для darwin невозможен: dylib **не существует в природе** — lib-модули `cronet-go/lib/darwin_*` несут только статическую `libcronet.a`, upstream-ный `extract-lib` явно отказывает darwin |
 | windows-386 win7 / linux-mips | ❌ тег снят | не нужна |
 | linux musl ×4 (SPEC 006) | ✅ статика | не нужна — `with_musl`, `libcronet.a` вшита |
 
 - **Механизм извлечения — из lib-модуля, запиненного в go.mod**, а не upstream-ный `build-naive extract-lib`: `go mod download -json github.com/sagernet/cronet-go/lib/windows_<arch>@$(go list -m -f '{{.Version}}' …)` → `cp libcronet.dll`. Даёт ровно ту пару «purego-биндинги ↔ библиотека», которую резолвит go.mod, с верификацией go.sum, без клона cronet-go. (`extract-lib` резолвит *latest* коммит ветки `go` cronet-go — version-skew против биндингов — и требует клон + `GOSUMDB=off`; от `.github/CRONET_GO_VERSION` наш механизм не зависит, дрейф этого файла безвреден.)
 - Тот же контракт в on-demand `lx-build.yml` job `binary` (linux/amd64 glibc purego): артефакт несёт `libcronet.so` рядом с бинарём.
-- Функциональный naive на macOS возможен только отдельной job'ой на `macos-latest` с `CGO_ENABLED=1` и тегами **без** `with_purego` (статическая линковка, аналог upstream `build_darwin`; amd64 кросс-собирается с arm64-хоста) — решение не принято, вне текущего скоупа.
+- Verify-шаг `build_darwin` гоняет `sing-box check` с naive-конфигом на раннере (arm64 нативно, amd64 через Rosetta) — это ровно та точка (`box.New` → конструктор naive-outbound), где purego-сборка без библиотеки падала.
 
 ## 3. Критерии приёмки
 
 - CI зелёный: на push/PR — дешёвые `lint` + `build-check`; полная матрица (`cross` ×6 с полным `LX_TAGS` + `android` AAR) — вручную на `workflow_dispatch`. Doc-only коммиты CI не триггерят; релиз-тег собирает всё через `lx-release.yml`.
 - Артефакты собираются, бинарь называется `sing-box`, `version` → `-lx.N`.
-- **Windows-архивы (amd64/arm64) содержат `libcronet.dll` рядом с `sing-box.exe`**; конфиг с `naive`-outbound на распакованном архиве стартует без «cronet: library not found». Darwin-архивы dll/dylib не содержат by design (см. §2.4). On-demand артефакт `lx-build.yml`/`binary` несёт `libcronet.so`.
+- **Windows-архивы (amd64/arm64) содержат `libcronet.dll` рядом с `sing-box.exe`**; конфиг с `naive`-outbound на распакованном архиве стартует без «cronet: library not found». **Darwin-бинари несут naive статикой** (CGO, ничего рядом класть не нужно) — verify-шаг джобы гоняет naive-`check` на раннере. On-demand артефакт `lx-build.yml`/`binary` несёт `libcronet.so`.
 - **libbox AAR собирается в CI (job `android`) и публикуется в Release**; `Libbox.version()` → `-lx.N`; конфиг с AWG2/XHTTP не падает с «support not built».
 - Авто-ребейз workflow отрабатывает на `workflow_dispatch` (демо на текущем теге → «уже актуально» или PR).
 

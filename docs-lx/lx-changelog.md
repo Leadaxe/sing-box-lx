@@ -10,12 +10,23 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
-#### v1.14.0-lx.4-rc.1
+#### v1.14.0-lx.4
 
-**Pre-release** — fixes NaïveProxy on the Windows desktop binaries (the release
-archives were missing `libcronet.dll`) and merges upstream `testing` (incl. a
-naive slow-open fix and a cronet-go bump).
+**NaïveProxy release** — it was broken on **both** desktop platforms and is now
+fixed on both: Windows archives were missing `libcronet.dll`, and the darwin
+binaries could never load cronet at all. Also merges upstream `testing`
+(incl. a naive slow-open fix and a cronet-go bump).
 
+* **darwin now builds with CGO on a macOS runner — NaïveProxy works there for
+  the first time.** The darwin binaries were cross-compiled from ubuntu with
+  `with_purego`, which loads `libcronet.dylib` at runtime — but cronet-go
+  publishes **no macOS dylib at all** (its darwin lib modules carry only a
+  static `libcronet.a`), so the tag was on and the outbound was dead. Darwin
+  moved to its own `macos-latest` job with `CGO_ENABLED=1` and the tag set
+  minus `with_purego` — upstream `build_darwin` parity — so `libcronet.a` is
+  linked statically and there is nothing to install next to the binary. The
+  job's verify step runs a `naive` config through `sing-box check` on the
+  runner (arm64 natively, amd64 under Rosetta).
 * **Windows archives now ship `libcronet.dll` next to `sing-box.exe`.** The
   desktop build uses `with_purego`: cronet is not baked into the binary — the
   loader dlopens `libcronet.dll` from the exe's directory at startup. The
@@ -27,22 +38,22 @@ naive slow-open fix and a cronet-go bump).
   which resolves the latest `go`-branch commit and can skew ahead of the purego
   bindings) and packed into the zip. Keep it next to `sing-box.exe`.
   Contract recorded in SPECS/004 (§2.4 per-target table + HISTORY.md).
-* **darwin: naive remains non-functional in the desktop binaries** — cronet-go
-  publishes no macOS dylib for the purego loader (its darwin lib modules carry
-  only a static `libcronet.a` for the CGO path). Making it work needs a separate
-  `macos-latest` CGO job without `with_purego` (upstream `build_darwin` parity);
-  release notes now state the limitation explicitly.
 * **Upstream `testing` merged** (real delta since the last integration; upstream
   force-pushed testing, so most of the 180 incoming commits were re-delivered
   content we already carried): netns/unshare support, windivert driver
   lifecycle hardening, `boxdd` platform daemon, OOM report, **naive slow-open
   fix**, hysteria2 realm `ip_version`/`port_mapping`, cronet-go bump
   (`CRONET_GO_VERSION` 98d539ce → 617d38f4) and dep bumps (sing-tun, sing-quic,
-  sing-snell, tailscale, nftables). All lx seams re-anchored (SPEC 014/015
-  command extensions, SPEC 017 detour chain, SPEC 018 DNS stream, SPEC 020
-  idle-suspend, AWG plumbing); upstream's `with_usbip` AAR-tag addition not
-  taken (client focus). Full builds, gofmt, `lx-check` and targeted lx-zone
-  tests green; **not device-verified** — hence rc.
+  sing-snell, tailscale, nftables), plus `boxdd` data protection (upstream's own
+  desktop daemon — not part of what this fork ships). All lx seams re-anchored
+  (SPEC 014/015 command extensions, SPEC 017 detour chain, SPEC 018 DNS stream,
+  SPEC 020 idle-suspend, AWG plumbing); upstream's `with_usbip` AAR-tag addition
+  not taken (client focus). The AmneziaWG graft needed no re-graft — upstream did
+  not move the `wireguard-go` pin.
+
+No runtime change to the AAR payload: this release is about how the desktop
+binaries are built and packaged. Both `libbox.aar` and `libbox-legacy.aar` are
+rebuilt from the merged base.
 
 #### v1.14.0-lx.3
 
