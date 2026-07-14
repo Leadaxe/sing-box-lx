@@ -127,10 +127,20 @@ jobs:
         run: git tag -f "build-binary"
       - name: Build (Makefile.lx lx-build)
         run: make -f Makefile.lx lx-build LX_OUTPUT=sing-box
+      # purego builds dlopen libcronet.so from the binary's directory — ship it
+      # alongside, extracted from the lib module pinned in go.mod (same fix as
+      # the windows dll in lx-release.yml).
+      - name: Extract libcronet.so
+        run: |
+          set -xeuo pipefail
+          LIB_MOD="github.com/sagernet/cronet-go/lib/linux_amd64"
+          LIB_DIR="$(go mod download -json "${LIB_MOD}@$(go list -m -f '{{.Version}}' "$LIB_MOD")" | jq -r .Dir)"
+          install -m 644 "$LIB_DIR/libcronet.so" libcronet.so
       - name: Package
         run: |
           mkdir -p dist
           cp sing-box dist/sing-box-linux-amd64
+          cp libcronet.so dist/
       - uses: actions/upload-artifact@v4
         with:
           name: binary-linux-amd64-${{ inputs.branch }}

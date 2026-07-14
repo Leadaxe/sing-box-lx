@@ -107,6 +107,24 @@ jobs:
             LX_VERSION="${{ steps.ver.outputs.version }}" \
             LX_OUTPUT="sing-box${{ matrix.ext }}"
 
+      # Windows purego builds dlopen libcronet.dll from the exe's directory —
+      # without it in the archive a naive-outbound config fails at startup with
+      # "cronet: library not found" (upstream build.yml ships the dll via
+      # `build-naive extract-lib`; the step was lost when the workflow was
+      # ported). Extract it from the lib module PINNED in go.mod instead of
+      # extract-lib, which resolves the LATEST go-branch commit (version skew
+      # vs the purego bindings) and needs a cronet-go clone + GOSUMDB=off.
+      # darwin gets no library on purpose: cronet-go publishes no darwin dylib
+      # (its lib modules carry only a static libcronet.a for the CGO path), so
+      # naive is non-functional in the darwin purego binaries.
+      - name: Extract libcronet.dll
+        if: matrix.goos == 'windows' && ! matrix.legacy_win7
+        run: |
+          set -xeuo pipefail
+          LIB_MOD="github.com/sagernet/cronet-go/lib/windows_${{ matrix.goarch }}"
+          LIB_DIR="$(go mod download -json "${LIB_MOD}@$(go list -m -f '{{.Version}}' "$LIB_MOD")" | jq -r .Dir)"
+          install -m 644 "$LIB_DIR/libcronet.dll" libcronet.dll
+
       - name: Package
         run: |
           NAME="sing-box-${{ steps.ver.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}"
@@ -118,6 +136,9 @@ jobs:
           fi
           mkdir -p "stage/$NAME" dist
           cp "sing-box${{ matrix.ext }}" "stage/$NAME/"
+          if [ -f libcronet.dll ]; then
+            cp libcronet.dll "stage/$NAME/"
+          fi
           cp LICENSE LICENSING.md README.md "stage/$NAME/" 2>/dev/null || true
           if [ "${{ matrix.goos }}" = "windows" ]; then
             (cd stage && zip -qr "../dist/$NAME.zip" "$NAME")
@@ -428,6 +449,8 @@ jobs:
 
           ### Binaries
           Drop-in \`sing-box\` for **darwin / windows** × {amd64, arm64}, plus a **Windows 7 (32-bit)** legacy build (\`sing-box-${{ steps.ver.outputs.version }}-windows-386-legacy-windows-7.zip\` — built with a Win7-patched Go; without naive/cronet, which has no windows/386 target).
+
+          Windows archives include \`libcronet.dll\` — keep it next to \`sing-box.exe\`, the \`naive\` outbound loads it from there. The darwin binaries ship without NaïveProxy support (cronet-go publishes no macOS dylib for the purego loader).
 
           **Linux — static musl builds for routers** (AsusWRT Merlin, OpenWrt, Keenetic): \`linux-amd64\`, \`linux-arm64\`, \`linux-armv7\`, \`linux-mipsle-softfloat\`. These are statically linked (no \`libdl.so.2\`/glibc dependency) and **keep NaïveProxy** — they run on musl routers where the previous dynamic builds failed with \`libdl.so.2: cannot open shared object file\`. See SPECS/006.
 

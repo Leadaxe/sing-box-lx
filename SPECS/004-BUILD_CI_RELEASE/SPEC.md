@@ -23,7 +23,7 @@
 
 ### 2.1 Сборка
 - **Desktop-бинарь `sing-box`** (drop-in для лаунчера): цель `make -f Makefile.lx lx-build`, output `sing-box`.
-- **Набор `LX_TAGS`** — upstream feature-set (`release/DEFAULT_BUILD_TAGS`) **минус нерелевантные клиенту**: `with_tailscale` (нет tailscale-endpoint'ов), `with_ccm`/`with_ocm` (прокси Claude Code / OpenAI Codex — серверные AI-сервисы), `with_acme` (серверный выпуск TLS-сертов). Итог = `gvisor/quic/dhcp/wireguard/utls/clash_api/naive_outbound + badlinkname/tfogo_checklinkname0` **+ `with_purego`** (CGO-free кросс-сборка `with_naive_outbound` через prebuilt cronet) **+ `with_xhttp,with_awg`**. `Makefile.lx` — единственный источник истины (`make -f Makefile.lx lx-print-tags`).
+- **Набор `LX_TAGS`** — upstream feature-set (`release/DEFAULT_BUILD_TAGS`) **минус нерелевантные клиенту**: `with_tailscale` (нет tailscale-endpoint'ов), `with_ccm`/`with_ocm` (прокси Claude Code / OpenAI Codex — серверные AI-сервисы), `with_acme` (серверный выпуск TLS-сертов). Итог = `gvisor/quic/dhcp/wireguard/utls/clash_api/naive_outbound + badlinkname/tfogo_checklinkname0` **+ `with_purego`** (CGO-free кросс-сборка `with_naive_outbound` через prebuilt cronet; библиотека грузится в рантайме → архив обязан её нести, см. §2.4) **+ `with_xhttp,with_awg`**. `Makefile.lx` — единственный источник истины (`make -f Makefile.lx lx-print-tags`).
 - **`LX_LDFLAGS` обязан содержать `-checklinkname=0`** — иначе `badlinkname`/`tfogo_checklinkname0` ломают линк (`common/badtls` использует `go:linkname` в `crypto/tls`, который Go 1.24 блокирует). Зеркалит upstream `build_libbox`.
 - **Android `libbox.aar`**: `make lib_install && make lib_android` (gomobile, NDK r28 + OpenJDK 17). `with_xhttp`/`with_awg` зашиты в `cmd/internal/build_libbox` (lx:-блок) → попадают в `libbox.aar` (SDK 23) и `libbox-legacy.aar` (SDK 21). Набор тегов AAR = upstream mobile-set **минус `with_tailscale`** (как desktop — самая тяжёлая либа в APK; правка обёрнута `// lx:no-tailscale`) + наши две фичи (NDK/CGO-сборка, `with_purego` не нужен).
 - Версия `vX.Y.Z-lx.N` через ldflags (из 001); для AAR — через `git describe` внутри `build_libbox`.
@@ -47,10 +47,24 @@
 - Тег `vX.Y.Z-lx.N` → артефакты: desktop-архивы (`sing-box` × 6 платформ) **+ `libbox-<ver>.aar` и `libbox-legacy-<ver>.aar`**, общий `SHA256SUMS`.
 - Release notes: upstream-база + состояние фич (`with_xhttp`/`with_awg`) + полный `LX_TAGS` desktop-бинаря (через `lx-print-tags`) + строка про AAR.
 
+**Поставка libcronet (NaïveProxy / `with_purego`).** Purego-бинарь не содержит cronet: лоадер cronet-go ищет `libcronet.dll`/`.so`/`.dylib` в **каталоге исполняемого файла** (затем PATH / `LD_LIBRARY_PATH` / системные пути), а `cronet.NaiveClient` дёргает `checkLibrary()` при создании outbound'а — без библиотеки конфиг с `naive` падает **на старте** («cronet: library not found»). Отсюда контракт упаковки по таргетам:
+
+| Таргет | naive | Библиотека в архиве |
+|--------|-------|---------------------|
+| windows amd64/arm64 | ✅ purego | **`libcronet.dll` рядом с `sing-box.exe`** (шаг «Extract libcronet.dll») |
+| darwin amd64/arm64 | ⚠️ тег включён, нефункционален | нет — dylib для purego-лоадера **не существует в природе**: lib-модули `cronet-go/lib/darwin_*` несут только статическую `libcronet.a` (CGO-путь), upstream-ный `extract-lib` явно отказывает darwin. Release notes фиксируют ограничение |
+| windows-386 win7 / linux-mips | ❌ тег снят | не нужна |
+| linux musl ×4 (SPEC 006) | ✅ статика | не нужна — `with_musl`, `libcronet.a` вшита |
+
+- **Механизм извлечения — из lib-модуля, запиненного в go.mod**, а не upstream-ный `build-naive extract-lib`: `go mod download -json github.com/sagernet/cronet-go/lib/windows_<arch>@$(go list -m -f '{{.Version}}' …)` → `cp libcronet.dll`. Даёт ровно ту пару «purego-биндинги ↔ библиотека», которую резолвит go.mod, с верификацией go.sum, без клона cronet-go. (`extract-lib` резолвит *latest* коммит ветки `go` cronet-go — version-skew против биндингов — и требует клон + `GOSUMDB=off`; от `.github/CRONET_GO_VERSION` наш механизм не зависит, дрейф этого файла безвреден.)
+- Тот же контракт в on-demand `lx-build.yml` job `binary` (linux/amd64 glibc purego): артефакт несёт `libcronet.so` рядом с бинарём.
+- Функциональный naive на macOS возможен только отдельной job'ой на `macos-latest` с `CGO_ENABLED=1` и тегами **без** `with_purego` (статическая линковка, аналог upstream `build_darwin`; amd64 кросс-собирается с arm64-хоста) — решение не принято, вне текущего скоупа.
+
 ## 3. Критерии приёмки
 
 - CI зелёный: на push/PR — дешёвые `lint` + `build-check`; полная матрица (`cross` ×6 с полным `LX_TAGS` + `android` AAR) — вручную на `workflow_dispatch`. Doc-only коммиты CI не триггерят; релиз-тег собирает всё через `lx-release.yml`.
 - Артефакты собираются, бинарь называется `sing-box`, `version` → `-lx.N`.
+- **Windows-архивы (amd64/arm64) содержат `libcronet.dll` рядом с `sing-box.exe`**; конфиг с `naive`-outbound на распакованном архиве стартует без «cronet: library not found». Darwin-архивы dll/dylib не содержат by design (см. §2.4). On-demand артефакт `lx-build.yml`/`binary` несёт `libcronet.so`.
 - **libbox AAR собирается в CI (job `android`) и публикуется в Release**; `Libbox.version()` → `-lx.N`; конфиг с AWG2/XHTTP не падает с «support not built».
 - Авто-ребейз workflow отрабатывает на `workflow_dispatch` (демо на текущем теге → «уже актуально» или PR).
 
