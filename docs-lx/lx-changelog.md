@@ -10,6 +10,40 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.4-rc.1
+
+**Pre-release** — fixes NaïveProxy on the Windows desktop binaries (the release
+archives were missing `libcronet.dll`) and merges upstream `testing` (incl. a
+naive slow-open fix and a cronet-go bump).
+
+* **Windows archives now ship `libcronet.dll` next to `sing-box.exe`.** The
+  desktop build uses `with_purego`: cronet is not baked into the binary — the
+  loader dlopens `libcronet.dll` from the exe's directory at startup. The
+  upstream "Extract libcronet.dll" packaging step was lost when the release
+  workflow was ported, so **every previously released windows zip lacked the
+  dll** and any config with a `naive` outbound failed at startup with
+  `cronet: library not found`. The dll is now extracted from the cronet-go lib
+  module pinned in `go.mod` (go.sum-verified — not upstream's `extract-lib`,
+  which resolves the latest `go`-branch commit and can skew ahead of the purego
+  bindings) and packed into the zip. Keep it next to `sing-box.exe`.
+  Contract recorded in SPECS/004 (§2.4 per-target table + HISTORY.md).
+* **darwin: naive remains non-functional in the desktop binaries** — cronet-go
+  publishes no macOS dylib for the purego loader (its darwin lib modules carry
+  only a static `libcronet.a` for the CGO path). Making it work needs a separate
+  `macos-latest` CGO job without `with_purego` (upstream `build_darwin` parity);
+  release notes now state the limitation explicitly.
+* **Upstream `testing` merged** (real delta since the last integration; upstream
+  force-pushed testing, so most of the 180 incoming commits were re-delivered
+  content we already carried): netns/unshare support, windivert driver
+  lifecycle hardening, `boxdd` platform daemon, OOM report, **naive slow-open
+  fix**, hysteria2 realm `ip_version`/`port_mapping`, cronet-go bump
+  (`CRONET_GO_VERSION` 98d539ce → 617d38f4) and dep bumps (sing-tun, sing-quic,
+  sing-snell, tailscale, nftables). All lx seams re-anchored (SPEC 014/015
+  command extensions, SPEC 017 detour chain, SPEC 018 DNS stream, SPEC 020
+  idle-suspend, AWG plumbing); upstream's `with_usbip` AAR-tag addition not
+  taken (client focus). Full builds, gofmt, `lx-check` and targeted lx-zone
+  tests green; **not device-verified** — hence rc.
+
 #### v1.14.0-lx.3
 
 **Stable release** (published as "Latest", not a pre-release) — a promotion of
