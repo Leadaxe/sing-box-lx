@@ -2,6 +2,75 @@
 icon: material/alert-decagram
 ---
 
+#### 1.14.0-alpha.44
+
+* Introducing our [new Windows client application](/clients/desktop/) **1**
+* Fixes and improvements
+
+**1**:
+
+The new [Windows client](/clients/desktop/) provides an experience equal to
+other standard sing-box graphical clients, is available for Windows 10+
+(x64 / x86 / arm64), and is distributed as an installer from
+[GitHub Releases](https://github.com/SagerNet/sing-box/releases)
+(`SFW-<version>-<architecture>.exe`).
+
+#### 1.14.0-alpha.43
+
+* Add network namespace support **1**
+* Fixes and improvements
+
+**1**:
+
+The new [`network_namespaces`](/configuration/network-namespace/) option defines
+Linux network namespaces for inbounds and outbounds, referenced by tag from the
+new tun [`netns`](/configuration/inbound/tun/#netns) field and the existing
+[Listen](/configuration/shared/listen/#netns) and
+[Dial](/configuration/shared/dial/#netns) `netns` fields.
+
+The [`unshare`](/configuration/network-namespace/unshare/) type creates the
+namespace at startup without requiring root privileges: a rootless sing-box can
+provide a tun (including `auto_route` and `auto_redirect`) inside a namespace,
+which can be entered with `nsenter`.
+
+#### 1.14.0-alpha.42
+
+* Fixes and improvements
+
+#### 1.14.0-alpha.41
+
+* Add windows bridge **1**
+* Add `preferred_by` support for bridge **2**
+* Add hysteria2 realm IP version restriction **3**
+* Add hysteria2 realm port mapping **4**
+* Fixes and improvements
+
+**1**:
+
+The [`bridge`](/configuration/outbound/bridge/) outbound is now supported on
+Windows, implemented via WinDivert and requiring Administrator privileges.
+
+**2**:
+
+The [`bridge`](/configuration/outbound/bridge/) outbound now works with the
+[`preferred_by`](/configuration/route/rule/#preferred_by) route rule item.
+It is recommended to use `preferred_by` as a gate in the `route` rule: it only
+matches in [pre-match](/configuration/shared/pre-match/) and excludes local
+addresses that cannot be routed.
+
+**3**:
+
+The new [`realm.ip_version`](/configuration/outbound/hysteria2/#realmip_version)
+inbound and outbound field restricts realm connections (STUN, hole punching,
+and the resulting QUIC path) to a single IP version.
+
+**4**:
+
+The new [`realm.port_mapping`](/configuration/outbound/hysteria2/#realmport_mapping)
+inbound and outbound field maintains a UDP port mapping on the local gateway
+via UPnP or NAT-PMP, improving hole-punching reliability behind gateways that
+support it.
+
 #### 1.14.0-alpha.40
 
 * Add bridge outbound **1**

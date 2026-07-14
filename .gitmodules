@@ -4,6 +4,9 @@
 [submodule "clients/android"]
 	path = clients/android
 	url = https://github.com/SagerNet/sing-box-for-android.git
+[submodule "clients/desktop"]
+	path = clients/desktop
+	url = https://github.com/SagerNet/sing-box-for-desktop.git
 [submodule "submodules/wireguard-go"]
 	path = submodules/wireguard-go
 	url = https://github.com/Leadaxe/wireguard-go-awg2-lx

@@ -16,6 +16,7 @@ on:
           - All
           - Binary
           - Android
+          - Windows
           - Apple
           - app-store
           - iOS
@@ -793,6 +794,90 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
           SERVICE_ACCOUNT_CREDENTIALS: ${{ secrets.SERVICE_ACCOUNT_CREDENTIALS }}
+  build_windows_client:
+    name: Build Windows client
+    if: (github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Windows') && github.ref != 'refs/heads/oldstable'
+    runs-on: windows-latest
+    needs:
+      - calculate_version
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+          submodules: 'recursive'
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ~1.25.11
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: clients/desktop/package.json
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: |
+            clients/desktop/pnpm-lock.yaml
+            clients/desktop/dashboard/pnpm-lock.yaml
+      - name: Set tag
+        run: |-
+          git ls-remote --exit-code --tags origin v${{ needs.calculate_version.outputs.version }}
+          if ($LASTEXITCODE -ne 0) {
+            "PUBLISHED=false" >> $env:GITHUB_ENV
+          }
+          git tag v${{ needs.calculate_version.outputs.version }} -f
+      - name: Checkout main branch
+        if: github.ref == 'refs/heads/testing'
+        run: |-
+          git -C clients/desktop checkout main
+      - name: Checkout submodule recursive
+        run: |-
+          git -C clients/desktop submodule update --init --recursive
+      - name: Update version
+        if: github.event_name == 'workflow_dispatch'
+        run: |-
+          go run -v ./cmd/internal/update_desktop_version --ci
+      - name: Update nightly version
+        if: github.event_name != 'workflow_dispatch'
+        run: |-
+          go run -v ./cmd/internal/update_desktop_version --ci --nightly
+      - name: Setup signing
+        run: |-
+          $certificatePath = Join-Path $env:RUNNER_TEMP "windows-signing.p12"
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATES_P12))
+          @{
+            windows = @{
+              certificateFile = $certificatePath
+              certificatePassword = $env:WINDOWS_P12_PASSWORD
+            }
+          } | ConvertTo-Json -Depth 3 | Set-Content -Encoding utf8NoBOM clients/desktop/signing.local.json
+        env:
+          WINDOWS_CERTIFICATES_P12: ${{ secrets.WINDOWS_CERTIFICATES_P12 }}
+          WINDOWS_P12_PASSWORD: ${{ secrets.WINDOWS_P12_PASSWORD }}
+      - name: Install dependencies
+        run: |-
+          pnpm -C clients/desktop install
+      - name: Build
+        run: |-
+          pnpm -C clients/desktop package:win
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare upload
+        run: |-
+          $artifacts = @(Get-ChildItem clients/desktop/release/SFW-*.exe -File)
+          if ($artifacts.Count -ne 3) {
+            throw "expected 3 Windows installers, found $($artifacts.Count)"
+          }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item $artifacts.FullName dist
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-windows-client
+          path: 'dist'
   build_apple:
     name: Build Apple clients
     runs-on: macos-26
@@ -977,7 +1062,7 @@ jobs:
           path: 'dist'
   upload:
     name: Upload builds
-    if: "!failure() && github.event_name == 'workflow_dispatch' && (inputs.build == 'All' || inputs.build == 'Binary' || inputs.build == 'Android' || inputs.build == 'Apple' || inputs.build == 'macOS-standalone')"
+    if: "!failure() && github.event_name == 'workflow_dispatch' && (inputs.build == 'All' || inputs.build == 'Binary' || inputs.build == 'Android' || inputs.build == 'Windows' || inputs.build == 'Apple' || inputs.build == 'macOS-standalone')"
     runs-on: ubuntu-latest
     needs:
       - calculate_version
@@ -985,6 +1070,7 @@ jobs:
       - build_darwin
       - build_windows
       - build_android
+      - build_windows_client
       - build_apple
     steps:
       - name: Checkout

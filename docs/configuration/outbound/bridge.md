@@ -8,7 +8,7 @@ icon: material/new-box
 
 !!! quote ""
 
-    Requires privileges. Supported on Linux, macOS, rooted Android, and jailbroken iOS.
+    Requires privileges. Supported on Linux, macOS, Windows, rooted Android, and jailbroken iOS.
 
     For graphical clients: on macOS, only available in the standalone version and requires the
     Root Helper; on Android, requires root permission; on iOS, requires jailbreak.
@@ -20,6 +20,11 @@ or other L3 endpoints via the `route` action in
 
 Traffic to local addresses of the machine (loopback, or addresses assigned to its
 network interfaces) will be rejected.
+
+It is recommended to use [`preferred_by`](/configuration/route/rule/#preferred_by)
+as a gate in the `route` rule: it only matches in
+[pre-match](/configuration/shared/pre-match/) and excludes local addresses that
+cannot be routed.
 
 ### Structure
 

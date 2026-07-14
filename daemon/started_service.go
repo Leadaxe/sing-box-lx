@@ -110,6 +110,14 @@ func NewStartedService(options ServiceOptions) *StartedService {
 	return s
 }
 
+func (s *StartedService) SetOOMKillerOptions(enabled bool, killerDisabled bool, memoryLimit uint64) {
+	s.serviceAccess.Lock()
+	defer s.serviceAccess.Unlock()
+	s.oomKillerEnabled = enabled
+	s.oomKillerDisabled = killerDisabled
+	s.oomMemoryLimit = memoryLimit
+}
+
 func (s *StartedService) GetVersion(ctx context.Context, empty *emptypb.Empty) (*Version, error) {
 	return &Version{
 		Version:    C.Version,
@@ -432,13 +440,19 @@ func (s *StartedService) SubscribeGroups(empty *emptypb.Empty, server grpc.Serve
 		return err
 	}
 	defer s.urlTestObserver.UnSubscribe(subscription)
+	statusSubscription, statusDone, err := s.serviceStatusObserver.Subscribe()
+	if err != nil {
+		return err
+	}
+	defer s.serviceStatusObserver.UnSubscribe(statusSubscription)
 	for {
 		s.serviceAccess.RLock()
-		if s.serviceStatus.Status != ServiceStatus_STARTED {
-			s.serviceAccess.RUnlock()
-			return os.ErrInvalid
+		var groups *Groups
+		if s.serviceStatus.Status == ServiceStatus_STARTED {
+			groups = s.readGroups()
+		} else {
+			groups = &Groups{}
 		}
-		groups := s.readGroups()
 		s.serviceAccess.RUnlock()
 		err = server.Send(groups)
 		if err != nil {
@@ -446,11 +460,14 @@ func (s *StartedService) SubscribeGroups(empty *emptypb.Empty, server grpc.Serve
 		}
 		select {
 		case <-subscription:
+		case <-statusSubscription:
 		case <-s.ctx.Done():
 			return s.ctx.Err()
 		case <-server.Context().Done():
 			return server.Context().Err()
 		case <-done:
+			return nil
+		case <-statusDone:
 			return nil
 		}
 	}
@@ -533,18 +550,24 @@ func (s *StartedService) SubscribeClashMode(empty *emptypb.Empty, server grpc.Se
 		return err
 	}
 	defer s.clashModeObserver.UnSubscribe(subscription)
+	statusSubscription, statusDone, err := s.serviceStatusObserver.Subscribe()
+	if err != nil {
+		return err
+	}
+	defer s.serviceStatusObserver.UnSubscribe(statusSubscription)
 	for {
 		s.serviceAccess.RLock()
-		if s.serviceStatus.Status != ServiceStatus_STARTED {
-			s.serviceAccess.RUnlock()
-			return os.ErrInvalid
+		var message *ClashMode
+		if s.serviceStatus.Status == ServiceStatus_STARTED {
+			clashServer := s.instance.clashServer
+			if clashServer == nil {
+				s.serviceAccess.RUnlock()
+				return status.Error(codes.NotFound, "clash mode not available")
+			}
+			message = &ClashMode{Mode: clashServer.Mode()}
+		} else {
+			message = &ClashMode{}
 		}
-		clashServer := s.instance.clashServer
-		if clashServer == nil {
-			s.serviceAccess.RUnlock()
-			return status.Error(codes.NotFound, "clash mode not available")
-		}
-		message := &ClashMode{Mode: clashServer.Mode()}
 		s.serviceAccess.RUnlock()
 		err = server.Send(message)
 		if err != nil {
@@ -552,11 +575,14 @@ func (s *StartedService) SubscribeClashMode(empty *emptypb.Empty, server grpc.Se
 		}
 		select {
 		case <-subscription:
+		case <-statusSubscription:
 		case <-s.ctx.Done():
 			return s.ctx.Err()
 		case <-server.Context().Done():
 			return server.Context().Err()
 		case <-done:
+			return nil
+		case <-statusDone:
 			return nil
 		}
 	}
@@ -657,14 +683,11 @@ func (s *StartedService) SelectOutbound(ctx context.Context, request *SelectOutb
 
 func (s *StartedService) SetGroupExpand(ctx context.Context, request *SetGroupExpandRequest) (*emptypb.Empty, error) {
 	s.serviceAccess.RLock()
-	switch s.serviceStatus.Status {
-	case ServiceStatus_STARTING, ServiceStatus_STARTED:
-	default:
-		s.serviceAccess.RUnlock()
+	defer s.serviceAccess.RUnlock()
+	if s.serviceStatus.Status != ServiceStatus_STARTED {
 		return nil, os.ErrInvalid
 	}
 	boxService := s.instance
-	s.serviceAccess.RUnlock()
 	if boxService.cacheFile != nil {
 		err := boxService.cacheFile.StoreGroupExpand(request.GroupTag, request.IsExpand)
 		if err != nil {
@@ -1047,37 +1070,41 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
 		return err
 	}
 	defer s.urlTestObserver.UnSubscribe(subscription)
+	statusSubscription, statusDone, err := s.serviceStatusObserver.Subscribe()
+	if err != nil {
+		return err
+	}
+	defer s.serviceStatusObserver.UnSubscribe(statusSubscription)
 	for {
 		s.serviceAccess.RLock()
-		if s.serviceStatus.Status != ServiceStatus_STARTED {
-			s.serviceAccess.RUnlock()
-			return os.ErrInvalid
-		}
 		boxService := s.instance
+		started := s.serviceStatus.Status == ServiceStatus_STARTED
 		s.serviceAccess.RUnlock()
-		historyStorage := boxService.urlTestHistoryStorage
 		var list OutboundList
-		for _, ob := range boxService.outboundManager.Outbounds() {
-			item := &GroupItem{
-				Tag:  ob.Tag(),
-				Type: ob.Type(),
+		if started {
+			historyStorage := boxService.urlTestHistoryStorage
+			for _, ob := range boxService.outboundManager.Outbounds() {
+				item := &GroupItem{
+					Tag:  ob.Tag(),
+					Type: ob.Type(),
+				}
+				if history := historyStorage.LoadURLTestHistory(adapter.OutboundTag(ob)); history != nil {
+					item.UrlTestTime = history.Time.Unix()
+					item.UrlTestDelay = int32(history.Delay)
+				}
+				list.Outbounds = append(list.Outbounds, item)
 			}
-			if history := historyStorage.LoadURLTestHistory(adapter.OutboundTag(ob)); history != nil {
-				item.UrlTestTime = history.Time.Unix()
-				item.UrlTestDelay = int32(history.Delay)
+			for _, ep := range boxService.endpointManager.Endpoints() {
+				item := &GroupItem{
+					Tag:  ep.Tag(),
+					Type: ep.Type(),
+				}
+				if history := historyStorage.LoadURLTestHistory(adapter.OutboundTag(ep)); history != nil {
+					item.UrlTestTime = history.Time.Unix()
+					item.UrlTestDelay = int32(history.Delay)
+				}
+				list.Outbounds = append(list.Outbounds, item)
 			}
-			list.Outbounds = append(list.Outbounds, item)
-		}
-		for _, ep := range boxService.endpointManager.Endpoints() {
-			item := &GroupItem{
-				Tag:  ep.Tag(),
-				Type: ep.Type(),
-			}
-			if history := historyStorage.LoadURLTestHistory(adapter.OutboundTag(ep)); history != nil {
-				item.UrlTestTime = history.Time.Unix()
-				item.UrlTestDelay = int32(history.Delay)
-			}
-			list.Outbounds = append(list.Outbounds, item)
 		}
 		err = server.Send(&list)
 		if err != nil {
@@ -1085,11 +1112,14 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
 		}
 		select {
 		case <-subscription:
+		case <-statusSubscription:
 		case <-s.ctx.Done():
 			return s.ctx.Err()
 		case <-server.Context().Done():
 			return server.Context().Err()
 		case <-done:
+			return nil
+		case <-statusDone:
 			return nil
 		}
 	}
@@ -1116,6 +1146,60 @@ func resolveTailscaleEndpoint(instance *Instance, tag string) (adapter.Endpoint,
 		return nil, status.Error(codes.InvalidArgument, "endpoint is not Tailscale: "+tag)
 	}
 	return endpoint, nil
+}
+
+func NewNetworkQualityTestProgress(progress networkquality.Progress) *NetworkQualityTestProgress {
+	return &NetworkQualityTestProgress{
+		Phase:                    int32(progress.Phase),
+		DownloadCapacity:         progress.DownloadCapacity,
+		UploadCapacity:           progress.UploadCapacity,
+		DownloadRPM:              progress.DownloadRPM,
+		UploadRPM:                progress.UploadRPM,
+		IdleLatencyMs:            progress.IdleLatencyMs,
+		ElapsedMs:                progress.ElapsedMs,
+		DownloadCapacityAccuracy: int32(progress.DownloadCapacityAccuracy),
+		UploadCapacityAccuracy:   int32(progress.UploadCapacityAccuracy),
+		DownloadRPMAccuracy:      int32(progress.DownloadRPMAccuracy),
+		UploadRPMAccuracy:        int32(progress.UploadRPMAccuracy),
+	}
+}
+
+func NewNetworkQualityTestResult(result *networkquality.Result) *NetworkQualityTestProgress {
+	return &NetworkQualityTestProgress{
+		Phase:                    int32(networkquality.PhaseDone),
+		DownloadCapacity:         result.DownloadCapacity,
+		UploadCapacity:           result.UploadCapacity,
+		DownloadRPM:              result.DownloadRPM,
+		UploadRPM:                result.UploadRPM,
+		IdleLatencyMs:            result.IdleLatencyMs,
+		IsFinal:                  true,
+		DownloadCapacityAccuracy: int32(result.DownloadCapacityAccuracy),
+		UploadCapacityAccuracy:   int32(result.UploadCapacityAccuracy),
+		DownloadRPMAccuracy:      int32(result.DownloadRPMAccuracy),
+		UploadRPMAccuracy:        int32(result.UploadRPMAccuracy),
+	}
+}
+
+func NewSTUNTestProgress(progress stun.Progress) *STUNTestProgress {
+	return &STUNTestProgress{
+		Phase:        int32(progress.Phase),
+		ExternalAddr: progress.ExternalAddr,
+		LatencyMs:    progress.LatencyMs,
+		NatMapping:   int32(progress.NATMapping),
+		NatFiltering: int32(progress.NATFiltering),
+	}
+}
+
+func NewSTUNTestResult(result *stun.Result) *STUNTestProgress {
+	return &STUNTestProgress{
+		Phase:            int32(stun.PhaseDone),
+		ExternalAddr:     result.ExternalAddr,
+		LatencyMs:        result.LatencyMs,
+		NatMapping:       int32(result.NATMapping),
+		NatFiltering:     int32(result.NATFiltering),
+		IsFinal:          true,
+		NatTypeSupported: result.NATTypeSupported,
+	}
 }
 
 func (s *StartedService) StartNetworkQualityTest(
@@ -1152,19 +1236,7 @@ func (s *StartedService) StartNetworkQualityTest(
 		MaxRuntime:           time.Duration(request.MaxRuntimeSeconds) * time.Second,
 		Context:              server.Context(),
 		OnProgress: func(p networkquality.Progress) {
-			_ = server.Send(&NetworkQualityTestProgress{
-				Phase:                    int32(p.Phase),
-				DownloadCapacity:         p.DownloadCapacity,
-				UploadCapacity:           p.UploadCapacity,
-				DownloadRPM:              p.DownloadRPM,
-				UploadRPM:                p.UploadRPM,
-				IdleLatencyMs:            p.IdleLatencyMs,
-				ElapsedMs:                p.ElapsedMs,
-				DownloadCapacityAccuracy: int32(p.DownloadCapacityAccuracy),
-				UploadCapacityAccuracy:   int32(p.UploadCapacityAccuracy),
-				DownloadRPMAccuracy:      int32(p.DownloadRPMAccuracy),
-				UploadRPMAccuracy:        int32(p.UploadRPMAccuracy),
-			})
+			_ = server.Send(NewNetworkQualityTestProgress(p))
 		},
 	})
 	if nqErr != nil {
@@ -1173,19 +1245,7 @@ func (s *StartedService) StartNetworkQualityTest(
 			Error:   nqErr.Error(),
 		})
 	}
-	return server.Send(&NetworkQualityTestProgress{
-		Phase:                    int32(networkquality.PhaseDone),
-		DownloadCapacity:         result.DownloadCapacity,
-		UploadCapacity:           result.UploadCapacity,
-		DownloadRPM:              result.DownloadRPM,
-		UploadRPM:                result.UploadRPM,
-		IdleLatencyMs:            result.IdleLatencyMs,
-		IsFinal:                  true,
-		DownloadCapacityAccuracy: int32(result.DownloadCapacityAccuracy),
-		UploadCapacityAccuracy:   int32(result.UploadCapacityAccuracy),
-		DownloadRPMAccuracy:      int32(result.DownloadRPMAccuracy),
-		UploadRPMAccuracy:        int32(result.UploadRPMAccuracy),
-	})
+	return server.Send(NewNetworkQualityTestResult(result))
 }
 
 func (s *StartedService) StartSTUNTest(
@@ -1212,13 +1272,7 @@ func (s *StartedService) StartSTUNTest(
 		Dialer:  resolvedDialer,
 		Context: server.Context(),
 		OnProgress: func(p stun.Progress) {
-			_ = server.Send(&STUNTestProgress{
-				Phase:        int32(p.Phase),
-				ExternalAddr: p.ExternalAddr,
-				LatencyMs:    p.LatencyMs,
-				NatMapping:   int32(p.NATMapping),
-				NatFiltering: int32(p.NATFiltering),
-			})
+			_ = server.Send(NewSTUNTestProgress(p))
 		},
 	})
 	if stunErr != nil {
@@ -1227,15 +1281,7 @@ func (s *StartedService) StartSTUNTest(
 			Error:   stunErr.Error(),
 		})
 	}
-	return server.Send(&STUNTestProgress{
-		Phase:            int32(stun.PhaseDone),
-		ExternalAddr:     result.ExternalAddr,
-		LatencyMs:        result.LatencyMs,
-		NatMapping:       int32(result.NATMapping),
-		NatFiltering:     int32(result.NATFiltering),
-		IsFinal:          true,
-		NatTypeSupported: result.NATTypeSupported,
-	})
+	return server.Send(NewSTUNTestResult(result))
 }
 
 func (s *StartedService) SubscribeTailscaleStatus(

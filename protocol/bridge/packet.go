@@ -1,5 +1,6 @@
 //go:build linux || darwin || (windows && (amd64 || 386))
 
+//nolint:unused
 package bridge
 
 import (
@@ -13,7 +14,7 @@ import (
 )
 
 const (
-	bridgeTunMTU         = 1500
+	bridgeTunMTU         = 0xffff
 	maxPacketLength      = 0xffff
 	bridgeMaxInstances   = 254
 	bridgeWriteBatchSize = 32
