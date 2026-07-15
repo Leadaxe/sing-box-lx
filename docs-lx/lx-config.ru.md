@@ -22,6 +22,12 @@ GC-нагрева / RAM, ~8 МБ каждый там, где `BatchSize=128` —
 `route.lx_idle_suspend is set but this build lacks idle-suspend support; rebuild with
 -tags with_lx_idle_suspend (mobile-only feature)`. См. `SPECS/020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md`.
 
+Смежные ключи (ревизия 2026-07-15): `route.lx_idle_suspend_reachable` — опциональное
+второе, более длинное окно простоя, после которого гасятся и *достижимые* эндпоинты
+(члены пула, выбранный узел, final); `urltest.passive_check` — пропуск health-проб,
+пока свежий успешный TCP-дайл доказывает живость узла. Полная энергомодель,
+таймлайны и рекомендованный мобильный конфиг — в **[lx-energy.ru.md](lx-energy.ru.md)**.
+
 > ⚠️ Все ключи/UUID ниже — **заглушки**. Никогда не коммитьте реальные приватные ключи / pre-shared-ключи в репозиторий.
 
 > 🌐 English version: **[lx-config.md](lx-config.md)**.

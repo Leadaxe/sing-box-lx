@@ -118,6 +118,97 @@ stampActivity()                          // всегда, закрывает г�
 
 Логирование **edge-triggered** — строка только внутри успешного CAS. Пара suspend↔wake в логе = сигнал флапа.
 
+## Полная модель работы — состояния, гейты, таймлайны
+
+> Развёрнутый гайд с рецептами конфигурации (RU/EN) — [docs-lx/lx-energy.ru.md](../../docs-lx/lx-energy.ru.md) / [lx-energy.md](../../docs-lx/lx-energy.md). Здесь — каноническая модель для разработчика ядра.
+
+### Состояния эндпоинта
+
+У WG/AWG-эндпоинта два флага (`started`, `idleAsleep`) и четыре достижимых состояния:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    AWAKE: AWAKE (started=true, idleAsleep=false) — device Up, воркеры живы
+    IDLE_ASLEEP: IDLE-ASLEEP (started=false, idleAsleep=true) — device Down по простою
+    GUARD_DOWN: GUARD-DOWN (started=false, idleAsleep=false) — AWG-guard / awg-chain-blocked
+    CLOSED: CLOSED (started=false, idleAsleep=false)
+
+    [*] --> AWAKE: PostStart (stampActivity)
+    AWAKE --> IDLE_ASLEEP: тик - SuspendIfIdle (все гейты пройдены)
+    IDLE_ASLEEP --> AWAKE: дайл - resumeOnDial (device.Up, +1 RTT handshake)
+    AWAKE --> GUARD_DOWN: SuspendAmneziaWG (guard, чистит idleAsleep)
+    IDLE_ASLEEP --> GUARD_DOWN: SuspendAmneziaWG
+    GUARD_DOWN --> [*]: только Close (guard one-way, by design)
+    AWAKE --> CLOSED: Close (под resumeMu)
+    IDLE_ASLEEP --> CLOSED: Close
+```
+
+Инварианты переходов:
+- **IDLE-ASLEEP → AWAKE** делает ТОЛЬКО настоящий дайл. Pause/wake экрана и смена сети видят транспортный флаг `suspended` и эндпоинт не поднимают; guard-состояние не воскрешается ничем.
+- **GUARD-DOWN терминально** до Close — `resumeOnDial` возвращает `started` (false) на быстрый путь, тик выходит на `!started`.
+- Все переходы, трогающие device (`Suspend`/`Resume`/`Close`), сериализованы `resumeMu`.
+
+### Решение тика — цепочка гейтов `SuspendIfIdle`
+
+```mermaid
+flowchart TD
+    T[тик: каждые max её порога/2, 5s\npause-aware] --> R{"reachable[tag]?\n(кэш достижимости)"}
+    R -- нет --> W1[окно = lx_idle_suspend]
+    R -- да --> RT{lx_idle_suspend_reachable > 0?}
+    RT -- нет --> OUT1([выход: достижимый не гасится])
+    RT -- да --> W2[окно = lx_idle_suspend_reachable]
+    W1 --> LM{listen_port-эндпоинт?}
+    W2 --> LM
+    LM -- да --> OUT2([выход: некому будить])
+    LM -- нет --> IDLE{"IdleSince() >= окна?\n(часы = последний дайл)"}
+    IDLE -- нет --> OUT3([выход: рано])
+    IDLE -- да --> ST{started?}
+    ST -- нет --> OUT4([выход: уже down - guard/closed])
+    ST -- да --> TCP{"ActiveTCPFlows() > 0?\n(gVisor CurrentEstablished)"}
+    TCP -- да --> OUT5([выход: живые TCP-потоки])
+    TCP -- нет --> DELTA{"delta rx+tx >= 4096 Б\nс прошлого решения?"}
+    DELTA -- да --> STAMP[stampActivity - сброс часов] --> OUT6([выход: живой UDP/QUIC-трафик])
+    DELTA -- нет --> CAS["idleAsleep.CAS(false→true)\nstarted=false\ndevice.Down()"]
+    CAS --> LOG[лог: lx idle suspend]
+```
+
+Пояснения к гейтам:
+- Порядок дёшево→дорого: map-lookup и атомики до `IpcGet`/stats. Гейты 5–6 (TCP/delta) выполняются только для реальных кандидатов на suspend — вне hot-path.
+- **TCP-гейт без stamp'а**: закрылся последний поток — эндпоинт снова кандидат уже на следующем тике.
+- **Порог 4096 Б** отделяет живой поток от keepalive/rekey-шума (32 Б/интервал + ~240 Б/~2 мин): пир с `persistent_keepalive` ЗАСЫПАЕТ (глушение его таймеров — цель фичи), молчащий QUIC-поток — согласованная жертва.
+
+### Ночной таймлайн (канонический сценарий)
+
+Конфиг: round_robin pool=3, `interval=15m`, `idle_timeout=30m`, `lx_idle_suspend=30s`, `lx_idle_suspend_reachable=30m`.
+
+```
+T=0        последний пользовательский дайл (Touch обновил lastActive группы)
+T=0..30m   ХВОСТ ПРОБ: тикер группы жив (Since(lastActive) <= idle_timeout),
+           пробы в T=15m, T=30m дайлят членов пула -> их IdleSince сбрасывается
+T~45m      тик loopCheck: Since(lastActive)=45m > 30m -> ТИКЕР ГАСНЕТ (проб больше нет)
+T~60m      IdleSince членов пула (от последней пробы T=30m) > reachable(30m)
+           -> тик гасит все 3 узла: воркеры выходят, таймеры молчат, радио спит
+...ночь... полная тишина: ни проб, ни keepalive, ни recv-воркеров
+УТРО       первый дайл: pick -> слот -> resumeOnDial будит ОДИН узел (+1 RTT);
+           Touch заводит тикер; loopCheck делает НЕМЕДЛЕННЫЙ дотест (lastActive стар)
+           -> пул/выбор обновлены свежими замерами за секунды
+```
+
+Гарантия отсутствия гонки «проба будит засыпающего»: пробы молкнут в `T = idle_timeout`, сон достижимых наступает не раньше `T = последняя проба + reachable`; при `reachable >= idle_timeout` будильника к моменту сна физически не существует. Жёсткая валидация — только `reachable >= lx_idle_suspend`; `>= idle_timeout` — рекомендация конфигу (нарушение = 1–2 цикла флапа в хвосте, не поломка).
+
+### Кто кого будит и глушит — сводная матрица
+
+| Событие | Спящий (idle) эндпоинт | Guard-down AWG | Тикер проб группы |
+|---|---|---|---|
+| Дайл трафика через эндпоинт | **будит** (`resumeOnDial`) | не будит («not ready») | `Touch` заводит/держит |
+| Проба urltest (это дайл) | **будит** — потому пробы гейтятся | не будит | — |
+| Screen on / смена сети (pause-wake) | не будит (флаг `suspended`) | не будит | pause-registered: возобновляется |
+| `idle_timeout` группы | — | — | **гасит насовсем** (до Touch) |
+| Группа недостижима (гейт SPEC 020) | — | — | циклы **пропускаются** (тикер жив) |
+| `passive_check`: выбранный жив | — | — | циклы **пропускаются** |
+| Ручной тест (force) | будит всех, кого пробует | не будит | — |
+
 ## Механизм Down/Up
 
 `device.Down()→Up()` — **полный реконнект**, не переключение таймера (source-verified против сабмодуля).
