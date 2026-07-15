@@ -24,9 +24,10 @@ This is the main document on **why the fork saves battery on Android and how to 
 └───────────────┬─────────────────────────────────────────────────┘
                 │ gate-chain decision (§4)
 ┌───────────────▼─────────────────────────────────────────────────┐
-│ LAYER 3 · THE ENDPOINT (device Down/Up)                         │
+│ LAYER 3 · THE ENDPOINT (Down/Up + Close/Rebuild)                │
 │ Down: workers exit, buffers freed, timers silent                │
-│ Up (dial-only): +1 handshake RTT on the first packet            │
+│ Close (slept past lx_idle_teardown): the netstack goes too      │
+│ Wake is dial-only: +1 RTT / rebuild ~0.5-1 s                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -79,9 +80,22 @@ Every tick, for every endpoint, cheapest-first:
 6. **Counter delta**: rx+tx grew by **≥ 4096 bytes** since the previous decision → live UDP/QUIC traffic → refresh the clock, don't suspend. A threshold rather than a bare "changed" check on purpose: WG keepalive (32 B/interval) and rekeys (~240 B/~2 min) move the counters forever — a `persistent_keepalive` peer must still be able to sleep (silencing its timers is half the win). A fully silent QUIC flow (rare pings below the threshold) will be suspended — an accepted trade-off; QUIC migrates/re-establishes.
 7. All quiet → `device.Down()`, log `lx idle: suspend <tag>`.
 
-## 5. Down, Up, and the wake cost
+## 5. Down, Close, and the wake cost
 
-`Down()` is a freeze, not a Close: the UDP socket closes (recv-workers exit and release their buffers — the main RAM/GC win), session keys are zeroed, and **all** peer timers stop (keepalive, retransmit, the whole AWG junk machinery). Objects and the port survive the cycle.
+`Down()` (levels 1–2) is a freeze, not a Close: the UDP socket closes (recv-workers exit and release their buffers — the main RAM/GC win), session keys are zeroed, and **all** peer timers stop (keepalive, retransmit, the whole AWG junk machinery). Objects and the port survive the cycle.
+
+`Close()` (level 3, `lx_idle_teardown`) is a teardown: the netstack, the Device/Peer objects, the queues and every device goroutine are gone; only the config remains in memory. Waking rebuilds from scratch (**~0.5–1 s** on the first dial instead of +1 RTT).
+
+**What each level actually buys** (measured on-device, CPH2411 — not an estimate):
+
+| Level | Frees | Measured |
+|---|---|---|
+| 1–2 (`Down`) | recv-workers + their buffers (~8 MB/worker, 2 per device), timers | **−134 MB** with 8 endpoints suspended (`bufsArrs` 223.93→89.89 MB) |
+| 3 (`Close`) | netstack + Device objects + every device goroutine | ~5.9 MB/node; with 3 nodes the heap barely moved (36.7→36.3 MB) |
+
+The modest level-3 delta is not the feature's fault: **63% of the heap (23.4 MB) is held by the global `sing/common/buf` pool** (`GetOutboundBuffer → buf.Get`) — process-wide, surviving both `Down` and `Close` **by design**, and never returning memory to the OS. Against a pool that size, three netstacks are noise.
+
+Tuning takeaway: **level 1 delivers the bulk of the RAM win**; level 3 pays off with **many** nodes (dozens), not three — there it reclaims another ~6 MB per sleeper. Do not expect miracles from it on a small config; its second value is fewer live objects under the `SetMemoryLimit` ceiling, i.e. less GC pressure for the nodes actually in use.
 
 Waking has **exactly one path**: a real dial through the endpoint (`DialContext`/`ListenPacket`/L3 forwarding). It re-opens the socket and workers; the first packet waits for a fresh handshake — **+1 RTT** (14–21 ms on a nearby server, up to ~450 ms intercontinental). Throughput is unaffected.
 
