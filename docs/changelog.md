@@ -2,6 +2,22 @@
 icon: material/alert-decagram
 ---
 
+#### 1.14.0-alpha.45
+
+* Improve the Windows client application **1**
+* Fixes and improvements
+
+**1**:
+
+The [Windows client](/clients/desktop/) now includes an updater, adds support
+for Windows native sharing of sing-box profile and JSON files, and fixes the
+Tailscale SSH terminal. The
+[Tailscale SSH server](/configuration/endpoint/tailscale/#ssh_server) can now
+open sessions for any local user in the graphical client, while the command
+line client remains limited to the user sing-box runs as. Additionally,
+configurations that use privileges unrelated to networking are now rejected by
+default; an insecure mode is available to allow them.
+
 #### 1.14.0-alpha.44
 
 * Introducing our [new Windows client application](/clients/desktop/) **1**
