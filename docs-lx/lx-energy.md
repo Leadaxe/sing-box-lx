@@ -81,6 +81,8 @@ Every tick, for every endpoint, cheapest-first:
 
 Waking has **exactly one path**: a real dial through the endpoint (`DialContext`/`ListenPacket`/L3 forwarding). It re-opens the socket and workers; the first packet waits for a fresh handshake — **+1 RTT** (14–21 ms on a nearby server, up to ~450 ms intercontinental). Throughput is unaffected.
 
+> **Why the +1 RTT is here to stay.** The theoretical alternative — waking with the crypto session intact (`BindUpdate` leaves the keys alone) — is **rejected**: a WireGuard session lives 120 s and is invalid past 180 s while we sleep for minutes, so the handshake happens anyway; and on mobile a network change (Wi-Fi↔LTE) during sleep makes the endpoint the server knows stale, turning the "saving" into a timeout instead of an honest handshake on CGNAT paths. Full reasoning: SPEC 020 §"ОТВЕРГНУТО: путь A".
+
 Wake nuances (frequently asked):
 - **The attempt itself wakes, not its success.** The wake happens at dial entry, before anything is sent; if the connection then fails (target unreachable), the tunnel is already awake and will fall asleep again after its window. "Any app" = any app whose traffic is routed into this tunnel; apps going direct/through another channel don't wake it.
 - **An open TCP socket keeps the tunnel awake entirely** (the established-flows gate, §4.5) — so the "app writes into a socket while the tunnel already sleeps" case does not exist for TCP. A silent UDP/QUIC session may fall asleep; QUIC then re-establishes with a fresh dial — which is exactly what wakes the tunnel.
