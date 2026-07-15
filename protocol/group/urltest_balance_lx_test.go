@@ -62,6 +62,40 @@ func TestBalancerLeastTestIsNil(t *testing.T) {
 	}
 }
 
+// warnLegacyTolerance: the startup hint fires only while the config still relies on the
+// legacy `tolerance` knob — setting balancer.pool_tolerance silences it (issue #7).
+func TestWarnLegacyTolerance(t *testing.T) {
+	rr := func(bo *option.URLTestBalancerOptions, tolerance uint16) (b *balancer, opts option.URLTestOutboundOptions) {
+		t.Helper()
+		opts = option.URLTestOutboundOptions{Mode: C.URLTestModeRoundRobin, Balancer: bo}
+		opts.Tolerance = tolerance
+		var err error
+		b, err = newBalancer(opts)
+		if err != nil {
+			t.Fatalf("newBalancer: %v", err)
+		}
+		return
+	}
+	// tolerance set, pool_tolerance absent → warn (user still thinks tolerance works).
+	if b, opts := rr(nil, 50); !warnLegacyTolerance(b, opts) {
+		t.Fatal("tolerance without pool_tolerance must warn")
+	}
+	// the issue #7 case: pool_tolerance set → the config adopted the round_robin knob, no warn.
+	if b, opts := rr(&option.URLTestBalancerOptions{PoolTolerance: 150}, 50); warnLegacyTolerance(b, opts) {
+		t.Fatal("pool_tolerance set: warning is noise, must not fire")
+	}
+	// no legacy tolerance at all → nothing to warn about.
+	if b, opts := rr(&option.URLTestBalancerOptions{PoolTolerance: 150}, 0); warnLegacyTolerance(b, opts) {
+		t.Fatal("no tolerance: must not warn")
+	}
+	// least_test (nil balancer): tolerance is honoured there, never warn.
+	leastOpts := option.URLTestOutboundOptions{Mode: C.URLTestModeLeastTest}
+	leastOpts.Tolerance = 50
+	if warnLegacyTolerance(nil, leastOpts) {
+		t.Fatal("least_test honours tolerance, must not warn")
+	}
+}
+
 func TestBalancerUnknownModeRejected(t *testing.T) {
 	if _, err := newBalancer(option.URLTestOutboundOptions{Mode: "bogus"}); err == nil {
 		t.Fatal("unknown mode must error")

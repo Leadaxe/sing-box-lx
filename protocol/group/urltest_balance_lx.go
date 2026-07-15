@@ -49,6 +49,17 @@ type balancer struct {
 	onChange func()
 }
 
+// warnLegacyTolerance reports whether the legacy urltest `tolerance` option deserves a
+// startup warning: round_robin ignores it, but the hint is only useful while the config
+// has NOT adopted the round_robin knob — once balancer.pool_tolerance is set, the user
+// already knows the replacement and repeating the warning on every start is noise
+// (issue #7). pool_tolerance is a uint16, so an explicit 0 is indistinguishable from
+// absent and still warns — an explicit 0 means first-live-fill, where tolerance-like
+// ranking genuinely does not happen.
+func warnLegacyTolerance(b *balancer, options option.URLTestOutboundOptions) bool {
+	return b != nil && options.Tolerance != 0 && b.poolTolerance == 0
+}
+
 // newBalancer builds the balancer from validated options. Returns nil for least_test (and
 // empty mode), so callers branch cheaply on a nil balancer.
 func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {

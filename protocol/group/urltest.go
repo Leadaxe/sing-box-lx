@@ -53,7 +53,7 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err != nil {
 		return nil, err
 	}
-	if balancer != nil && options.Tolerance != 0 {
+	if warnLegacyTolerance(balancer, options) {
 		logger.Warn("urltest: tolerance is ignored in round_robin mode; use balancer.pool_tolerance")
 	}
 	if balancer == nil && options.Balancer != nil {
