@@ -445,7 +445,7 @@ Upstream `urltest` всегда выбирает единственную нод
 | Ключ | Тип | По умолчанию | Значение |
 |------|-----|--------------|----------|
 | `mode` | string | `least_test` | `least_test` (поведение upstream) \| `round_robin` (ротация по пулу). `least_connection` отклоняется (round_robin статистически равномерен) |
-| `balancer` | object | — | параметры round_robin; **допустим только с `mode: round_robin`** (иначе ошибка). Upstream-поле `tolerance` в round_robin игнорируется (пишется предупреждение) — используйте `pool_tolerance` |
+| `balancer` | object | — | параметры round_robin; **допустим только с `mode: round_robin`** (иначе ошибка). Upstream-поле `tolerance` в round_robin игнорируется — используйте `pool_tolerance` (предупреждение при старте подсказывает это, пока `pool_tolerance` не задан) |
 
 #### Поля `balancer`
 

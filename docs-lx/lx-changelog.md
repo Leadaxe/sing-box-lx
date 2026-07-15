@@ -10,6 +10,25 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.6
+
+Small maintenance release: one reported log-noise fix, plus an upstream merge.
+
+* **`urltest`: the legacy-`tolerance` warning no longer fires once
+  `balancer.pool_tolerance` is set** ([#7](https://github.com/Leadaxe/sing-box-lx/issues/7)).
+  The `round_robin` startup hint — *"tolerance is ignored in round_robin mode;
+  use balancer.pool_tolerance"* — was unconditional: it appeared on every start
+  even for configs that already carry `pool_tolerance`, i.e. exactly where the
+  hint carries no information. It now fires only while `pool_tolerance` is unset
+  (there the user plausibly still expects `tolerance` semantics). An explicit
+  `pool_tolerance: 0` is indistinguishable from an absent one (numeric field) and
+  keeps warning — deliberate: `0` means first-live-fill, where the delay ranking
+  `tolerance` would imply genuinely does not happen. Behaviour of `round_robin`
+  itself is unchanged; this is log noise only.
+* **Upstream `testing` merged** — docs/changelog, tailscale doc touch-ups, a Farsi
+  locale fix, and `boxdd` insecure-mode/locale churn (upstream's own desktop
+  daemon, not shipped by this fork). No lx seam touched.
+
 #### v1.14.0-lx.5
 
 **Energy revision (stable)** — a multi-agent audit of the idle-suspend ×

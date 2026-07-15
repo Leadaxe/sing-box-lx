@@ -452,7 +452,7 @@ behind `with_lx_command`; the `mode`/`balancer` config fields themselves are alw
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `mode` | string | `least_test` | `least_test` (upstream behaviour) \| `round_robin` (rotate over the pool). `least_connection` is rejected (round_robin is statistically even) |
-| `balancer` | object | — | round_robin parameters; **only valid with `mode: round_robin`** (error otherwise). The upstream `tolerance` field is ignored in round_robin (a warning is logged) — use `pool_tolerance` |
+| `balancer` | object | — | round_robin parameters; **only valid with `mode: round_robin`** (error otherwise). The upstream `tolerance` field is ignored in round_robin — use `pool_tolerance` instead (a startup warning points this out while `pool_tolerance` is unset) |
 
 #### `balancer` fields
 
