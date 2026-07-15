@@ -439,3 +439,40 @@ teardown→rebuild на ЖИВОМ gVisor-стеке, идемпотентный
 6. **Резолв при rebuild.** Нода с доменным peer'ом: снос → смена сети → дайл →
    rebuild резолвит домен заново и поднимается (или чисто фейлит с логом, а
    следующий дайл повторяет).
+
+**§L3 RESULT (2026-07-15, CPH2411, ядро v1.14.0-lx.7-rc.2, LxBox 2.15.6-dev.4,
+конфиг: 3 WG/AWG-эндпоинта, дефолты 30s/5m/teardown=5m):** полный цикл
+подтверждён владельцем и приборно.
+
+Лог (тайминги совпали с моделью до секунды — порог + период тика 15с):
+```
+INFO[0075] lx idle: suspend  🏠 home / awg2-home / WARP(AWG 1.5)  idle=43s
+INFO[0270] lx idle: teardown 🏠 home / awg2-home / WARP(AWG 1.5)  slept=5m19s
+INFO[0585] outbound connection to ya.ru:443
+INFO[0585] lx idle: rebuild  🏠 home  by=dial          ← rebuild ВНУТРИ дайла
+INFO[0592] lx idle: rebuild  WARP (AWG 1.5) by=dial    ← AWG с junk тоже
+```
+
+Профиль горутин (`/diag/pprof?profile=goroutine`) — объективное доказательство
+всех трёх стадий:
+
+| Device-горутины | до suspend | после suspend | после teardown | после rebuild |
+|---|---|---|---|---|
+| `RoutineReceiveIncoming` (recv-воркеры) | есть | **0** | 0 | **2 (вернулись)** |
+| Decryption/Encryption/Handshake/ReadFromTUN/TUNEventReader | есть | есть | **0** | **все вернулись** |
+
+Живость после пересборки: URL-тест сквозь новый netstack — `🏠 home` 161 мс,
+`awg2-home` 211 мс, `WARP (AWG 1.5)` 252 мс.
+
+⚠️ **Поправка к ожиданиям по RAM (важно).** Heap до/после teardown:
+36.7 → 36.3 МБ — дельты практически нет. Причина не в фиче: 63% кучи (23.4 МБ)
+держит `GetOutboundBuffer → buf.Get` — **глобальный пул `sing/common/buf`**
+(`submodules/wireguard-go/device/pools.go:113`), общий на процесс; он переживает
+и `Down`, и `Close` **by design** и системе память не возвращает. При 3 нодах
+netstack'и малы на его фоне. Основной выигрыш даёт уровень 1 (recv-буферы,
+измеренные −134 МБ при 8 нодах), teardown добирает netstack — заметно при
+многих нодах. Настоящий следующий рычаг по RAM — `PreallocatedBuffersPerPool`,
+а не уровни сна.
+
+НЕ прогнано: screen off/on поверх снесённой ноды, резолв домена при rebuild со
+сменой сети, повторяемость цикла N раз.

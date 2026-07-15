@@ -10,6 +10,27 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.7
+
+**Idle-suspend level 3, promoted to stable.** Same code as `v1.14.0-lx.7-rc.2`,
+device-verified on Android (CPH2411, 3 WG/AWG endpoints): the full cycle
+`suspend (idle=43s) → teardown (slept=5m19s) → rebuild (by=dial)` ran exactly on
+model, including an AmneziaWG endpoint with junk obfuscation. The goroutine
+profile confirms each stage — every Device goroutine gone after the teardown,
+all back (recv-workers included) after the rebuild — and the node serves traffic
+through the fresh netstack (161–252 ms). Details: SPEC 020 `TEST_PLAN §L3
+RESULT`; what the levels are and how to tune them: [lx-energy.md](lx-energy.md)
+([RU](lx-energy.ru.md)).
+
+* **Expectation check on RAM (measured, worth knowing).** Level 3 frees exactly
+  what it owns — netstack, Device objects, goroutines. But the *global*
+  `sing/common/buf` pool (`GetOutboundBuffer → buf.Get`) is process-wide and
+  survives `Close` by design; on the test config it held 63% of the heap
+  (23.4 MB), so tearing down 3 sleeping nodes barely moved the total
+  (36.7 → 36.3 MB). The bulk of the RAM win still comes from **level 1**
+  (recv-buffers: −134 MB with 8 nodes measured earlier); level 3 reclaims the
+  netstack (~5.9 MB/node) and pays off with *many* nodes, not three.
+
 #### v1.14.0-lx.7-rc.2
 
 **Self-review of rc.1's level 3** — a line-by-line re-read of the teardown
