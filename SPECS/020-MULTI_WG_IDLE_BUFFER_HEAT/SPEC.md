@@ -297,6 +297,7 @@ AWG-detour-guard ([awg-detour-guard-must-be-at-start]) гасит `device.Down()
 - **Live desktop** (реальные ноды): suspend недостижимых, wake by dial/probe, switch селектора (старый уснул, новый проснулся), матрица достижимости на production-конфиге, guard-инвариант, no-flap, kill-switch. Ресурсы A/B (8 нод усыплены): recv-воркеры 16→0, RSS −31%.
 - **Android device** (CPH2411, Android 15): heap A/B на целевой платформе — `bufsArrs` (`PopulatePools.func3`) **223.93→89.89 МБ (−60%, −134 МБ)**, recv-воркеры 18→2. ~8.4 МБ/воркер, совпадает с оценкой `BatchSize=128` из RESEARCH.md. Артефакты — [ANDROID_RESEARCH](ANDROID_RESEARCH/README.md).
 - **Device-verified (2026-07-15, CPH2411, LxBox v2.15.4 + ядро rc.2)**: владелец подтвердил вживую работу прежнего поведения и ревизии (suspend/wake/probe-семантика, `lx_idle_suspend_reachable` на дефолте клиента 5m, passive_check). Промоут rc.2 → стабильный v1.14.0-lx.5.
+- **Уровень 3 (`lx_idle_teardown`, v1.14.0-lx.7-rc.1)** — юнит-тесты: окно от засыпания (не от дайла), 0=выкл, awake/guard не сносятся, guard чистит teardown-состояние, шов тика (оба решения + порог), дефолт-резолвер порога; transport: РЕАЛЬНЫЙ цикл teardown→rebuild на живом gVisor-стеке (+ повторный цикл), PortAddresses на снесённом (кэш, без nil-паники), перенос L3 return-path через rebuild, откат частичного rebuild, идемпотентный Close, ошибка дайла вместо паники. ⚠️ НЕ device-verified — live-план §L3 в TEST_PLAN.
 
 Детали прогонов — [TEST_PLAN](TEST_PLAN_idle_suspend.md).
 
@@ -331,15 +332,15 @@ AWG-detour-guard ([awg-detour-guard-must-be-at-start]) гасит `device.Down()
 Решение о сносе принимается в том же тике и под тем же `resumeMu`, после всех гейтов suspend'а:
 
 ```
-если !idleAsleep: выход                    // сносим только УЖЕ спящих
+если lx_idle_teardown <= 0: выход
+если !idleAsleep || torndown: выход        // сносим только УЖЕ спящих, один раз
 если SleepSince() < lx_idle_teardown: выход
-// повторная проверка живости — на случай дайла между решениями:
-если ActiveTCPFlows() > 0: выход           // (у снесённой ноды их нет по определению,
-                                           //  но проверка защищает от гонки rebuild'а)
 если torndown.CAS(false→true):
     endpoint.Teardown()                    // Close: netstack освобождён
     log INFO "lx idle: teardown <tag> slept=<...>"
 ```
+
+Отдельный live-traffic-гейт здесь **не нужен** (и его нет в коде): узел с живыми потоками не проходит TCP/delta-гейты suspend'а и потому не бывает `idleAsleep`; проснуться, не сняв `idleAsleep` под `resumeMu`, невозможно — значит `idleAsleep=true` в момент решения уже гарантирует отсутствие трафика.
 
 - **`torndown` — отдельный флаг**, не переиспользует `idleAsleep`: снесённая нода остаётся `idleAsleep=true` (она всё ещё «спит по простою»), но требует rebuild вместо `Up()`. Три состояния сна различимы: AWAKE / IDLE-ASLEEP / IDLE-TORNDOWN.
 - **Guard-суспенд неприкосновенен.** `!started` гейт стоит раньше (см. §SuspendIfIdle), поэтому guard-опущенный AWG не сносится — иначе rebuild на дайле воскресил бы AWG-over-WG.
@@ -362,7 +363,7 @@ AWG-detour-guard ([awg-detour-guard-must-be-at-start]) гасит `device.Down()
     иначе если idleAsleep: ... (существующий Resume-путь)
 ```
 
-Rebuild синхронный и держит `resumeMu` — параллельные дайлы ждут один rebuild, а не запускают N. Ошибка rebuild (например, резолв peer-домена не удался) → лог + `false` («WireGuard is not ready yet»), флаги НЕ сбрасываются: следующий дайл попробует снова.
+Rebuild синхронный и держит `resumeMu` — параллельные дайлы ждут один rebuild, а не запускают N. Ошибка любого шага (rebuild/Start/PostStart, например резолв peer-домена) → лог + **откат `Teardown()`** обратно в чисто-снесённое состояние + `false` («WireGuard is not ready yet»); флаги не сбрасываются, следующий дайл повторяет с нуля. Откат обязателен: у tun-девайса events-канал с буфером 1 (одно `EventUp` уже отправлено) — повторный `Start` поверх полусобранного девайса завис бы на этом канале под `resumeMu`, повесив все дайлы. Транспорт дополнительно: `PortAddresses()` отдаёт кэш (L3-слой может спросить у снесённого — nil-паника недопустима), а `Rebuild()` переносит привязанный L3 return-path в новый wrapper (sing-tun про наш цикл не знает и второй раз не attach'ится).
 
 ## Отложено (сознательно)
 

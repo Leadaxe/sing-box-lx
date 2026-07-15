@@ -452,19 +452,26 @@ func (w *Endpoint) resumeOnDial() bool {
 	// device + netstack) and both Start stages, not just device.Up(). Concurrent
 	// dials serialise on resumeMu, so only the first one rebuilds.
 	if w.torndown.Load() {
+		// Any failure below rolls back to a CLEAN torn-down state via Teardown()
+		// (idempotent). Leaving a half-rebuilt endpoint would be worse than the
+		// error itself: the tun device's events channel holds one buffered EventUp,
+		// so re-running Start over a device that already sent it would block
+		// forever on that channel — under resumeMu, hanging every dial.
+		rebuildFailed := func(stage string, err error) bool {
+			w.logger.Error("lx idle: rebuild ", w.Tag(), " ", stage, " failed: ", err)
+			w.endpoint.Teardown()
+			return false // flags untouched — the next dial retries from scratch
+		}
 		if err := w.endpoint.Rebuild(); err != nil {
-			w.logger.Error("lx idle: rebuild ", w.Tag(), " failed: ", err)
-			return false // flags untouched — the next dial retries
+			return rebuildFailed("device", err)
 		}
 		// Stage 1 wires the bind/device, stage 2 resolves peer domains and brings
 		// the device up. Both are what a cold start runs.
 		if err := w.endpoint.Start(false); err != nil {
-			w.logger.Error("lx idle: rebuild ", w.Tag(), " start failed: ", err)
-			return false
+			return rebuildFailed("start", err)
 		}
 		if err := w.endpoint.Start(true); err != nil {
-			w.logger.Error("lx idle: rebuild ", w.Tag(), " post-start failed: ", err)
-			return false
+			return rebuildFailed("post-start", err)
 		}
 		w.torndown.Store(false)
 		w.started.Store(true)

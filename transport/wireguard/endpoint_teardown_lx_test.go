@@ -82,6 +82,60 @@ func TestTeardownRebuildCycle(t *testing.T) {
 	}
 }
 
+// TestPortAddressesSurviveTeardown: the L3 layer may ask for port addresses at
+// any moment, including while the endpoint is torn down — served from the cache,
+// never from the (possibly nil) tun device.
+func TestPortAddressesSurviveTeardown(t *testing.T) {
+	e := newTeardownTestEndpoint(t)
+	t.Cleanup(func() { _ = e.Close() })
+	v4Before, _ := e.PortAddresses()
+	if !v4Before.IsValid() {
+		t.Fatal("precondition: live endpoint must report a v4 port address")
+	}
+	e.Teardown()
+	v4After, _ := e.PortAddresses() // must not panic
+	if v4After != v4Before {
+		t.Fatalf("torn-down endpoint must keep reporting its addresses: %v != %v", v4After, v4Before)
+	}
+}
+
+// TestRebuildKeepsAttachedReturnPath: sing-tun attaches its L3 return path once;
+// it knows nothing about our teardown/rebuild cycle, so the fresh wrapper must
+// inherit the attachment or the L3 downlink silently breaks after a rebuild.
+func TestRebuildKeepsAttachedReturnPath(t *testing.T) {
+	e := newTeardownTestEndpoint(t)
+	t.Cleanup(func() { _ = e.Close() })
+	attached := &returnPathState{headroom: 4}
+	e.returnDevice.state.Store(attached)
+
+	e.Teardown()
+	if err := e.Rebuild(); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.returnDevice.state.Load(); got != attached {
+		t.Fatal("rebuild must carry the attached return path over to the new wrapper")
+	}
+}
+
+// TestTeardownAfterPartialRebuild: the failure path of a rebuild rolls back via
+// Teardown over a half-rebuilt endpoint (tun device recreated, wg device never
+// started) — that must be clean and leave the endpoint properly torn down.
+func TestTeardownAfterPartialRebuild(t *testing.T) {
+	e := newTeardownTestEndpoint(t)
+	t.Cleanup(func() { _ = e.Close() })
+	e.Teardown()
+	if err := e.Rebuild(); err != nil { // half-rebuilt: no Start ran
+		t.Fatal(err)
+	}
+	e.Teardown() // the rollback the protocol layer performs on a Start failure
+	if !e.TornDown() {
+		t.Fatal("rollback must land back in the clean torn-down state")
+	}
+	if err := e.Rebuild(); err != nil { // and the retry works from scratch
+		t.Fatal(err)
+	}
+}
+
 // TestRebuildWithoutTeardownIsNoop: Rebuild on a live endpoint must not swap a
 // working device out from under active traffic.
 func TestRebuildWithoutTeardownIsNoop(t *testing.T) {

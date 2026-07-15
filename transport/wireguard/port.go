@@ -11,7 +11,11 @@ import (
 )
 
 func (e *Endpoint) PortAddresses() (netip.Addr, netip.Addr) {
-	return e.tunDevice.Inet4Address(), e.tunDevice.Inet6Address()
+	// lx: SPEC 020 level 3 — served from the cached copy, not the tun device: the
+	// L3 layer (sing-tun preferred routes) may ask at any moment, including while
+	// the endpoint is torn down (tunDevice == nil). The addresses are static
+	// config anyway (options.Address), cached at construction and on rebuild.
+	return e.inet4Address, e.inet6Address
 }
 
 func (e *Endpoint) PortMTU() uint32 {

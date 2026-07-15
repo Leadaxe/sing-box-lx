@@ -25,7 +25,10 @@ See `SPECS/020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md`.
 
 Related keys (2026-07-15 revision): `route.lx_idle_suspend_reachable` — optional
 second, longer idle window after which even *reachable* endpoints (pool members,
-the selected node, final) suspend; `urltest.passive_check` — skip health probes
+the selected node, final) suspend; `route.lx_idle_teardown` — the third level:
+how long an endpoint may *sleep* before a full teardown (Close, the gVisor
+netstack goes too; wake = rebuild ~0.5–1 s; defaults to the reachable window);
+`urltest.passive_check` — skip health probes
 while a recent successful TCP dial proves the node alive. The full energy model,
 timelines and the recommended mobile configuration live in
 **[lx-energy.md](lx-energy.md)**.

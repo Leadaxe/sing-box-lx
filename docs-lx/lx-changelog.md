@@ -10,6 +10,31 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.7-rc.2
+
+**Self-review of rc.1's level 3** — a line-by-line re-read of the teardown
+implementation found three defects, all in paths a device test would hit:
+
+* **Crash: `PortAddresses()` on a torn-down endpoint** — the L3 layer
+  (sing-tun preferred routes) may ask for port addresses at any moment; they
+  are now served from a cached copy instead of the released tun device
+  (nil-dereference before).
+* **Silent L3 downlink break after a rebuild** — the attached sing-tun return
+  path lived in the device wrapper that `Rebuild()` recreated; it is now
+  carried over (sing-tun knows nothing about our teardown cycle and never
+  re-attaches).
+* **Dial hang after a failed rebuild** — a half-rebuilt endpoint (fresh tun
+  device, `Start` failed, e.g. peer-domain resolution offline) would block the
+  retry forever on the device's one-slot event channel, under the wake mutex —
+  hanging every dial through the node. A failed rebuild now rolls back to the
+  clean torn-down state via an idempotent `Teardown()`, so the next dial
+  retries from scratch.
+
+Spec synced to as-built (the teardown gate needs no live-traffic re-check —
+`idleAsleep` already guarantees it; documented why), docs gained the level-3
+column (lx-energy RU/EN, lx-config). New tests pin all three fixes, including
+the partial-rebuild rollback.
+
 #### v1.14.0-lx.7-rc.1
 
 **Idle-suspend level 3: sleeping endpoints are now released completely.**

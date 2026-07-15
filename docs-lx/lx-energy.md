@@ -49,15 +49,19 @@ The set is cached and recomputed **only on events** (selector switch, urltest au
 ```jsonc
 "route": {
   "lx_idle_suspend": "30s",            // threshold for UNREACHABLE endpoints (feature switch)
-  "lx_idle_suspend_reachable": "30m"   // optional: threshold for REACHABLE endpoints
+  "lx_idle_suspend_reachable": "5m",   // optional: threshold for REACHABLE endpoints
+  "lx_idle_teardown": "5m"             // optional: how long to SLEEP before full teardown;
+                                       //   defaults to lx_idle_suspend_reachable, "0" = off
 }
 ```
 
-| | Unreachable endpoint | Reachable endpoint |
-|---|---|---|
-| Who | not selected, not pooled, not in any rule | pool member, selected node, final, DNS detour |
-| Idle window | `lx_idle_suspend` (short, 30s) | `lx_idle_suspend_reachable` (long, 30m); `0`/absent — never suspends |
-| Rationale | traffic cannot land on it — sleep immediately | traffic may arrive any moment; suspend only after long silence, paying +1 RTT on wake |
+| | Unreachable endpoint | Reachable endpoint | Any SLEEPING endpoint |
+|---|---|---|---|
+| Threshold | `lx_idle_suspend` (30s idle) | `lx_idle_suspend_reachable` (5m idle); `0`/absent — never | `lx_idle_teardown` (5m of **sleep**, counted from falling asleep) |
+| What happens | `Down()` — freeze | `Down()` — freeze | **`Close()`** — full teardown: the gVisor netstack (~6 MB/node) goes too |
+| Wake | dial, +1 RTT | dial, +1 RTT | dial, **rebuild ~0.5–1 s** on the first request |
+
+The third level is "deep sleep": a freeze (`Down`) releases recv-buffers and timers but the netstack survives; a node that has slept through one more window is torn down entirely — nothing but its config remains. The window counts **from the moment of falling asleep** (not from the last dial), so it does not depend on which threshold put the node to sleep. Live connections are untouched by construction: a node with flows simply never falls asleep (§4), and only sleepers are torn down.
 
 Validation: the reachable threshold requires `lx_idle_suspend` and must be `>=` it. Recommendation: `>=` the `idle_timeout` of your urltest groups (explained in §7).
 

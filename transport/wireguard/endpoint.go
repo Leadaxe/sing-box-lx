@@ -49,8 +49,12 @@ type Endpoint struct {
 	suspended atomic.Bool
 	// lx: SPEC 020 level 3 — the recipe for rebuilding the tun device after a
 	// Teardown released it (Device/netstack objects are one-shot: their Close
-	// closes channels and runs under a sync.Once).
+	// closes channels and runs under a sync.Once). inet4/inet6 are the port
+	// addresses cached from the device so PortAddresses() never has to touch a
+	// possibly-nil tunDevice.
 	deviceOptions DeviceOptions
+	inet4Address  netip.Addr
+	inet6Address  netip.Addr
 }
 
 func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
@@ -182,6 +186,8 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 		// lx: SPEC 020 teardown — keep the recipe so a torn-down endpoint can be
 		// rebuilt in place (the tun device and its netstack are one-shot objects).
 		deviceOptions: deviceOptions,
+		inet4Address:  tunDevice.Inet4Address(),
+		inet6Address:  tunDevice.Inet6Address(),
 	}, nil
 }
 
@@ -222,7 +228,16 @@ func (e *Endpoint) Rebuild() error {
 		return E.Cause(err, "rebuild WireGuard device")
 	}
 	e.tunDevice = tunDevice
-	e.returnDevice = &returnDeviceWrapper{Device: tunDevice}
+	// Carry the attached L3 return path over to the fresh wrapper: sing-tun
+	// attached it once (AttachReturn) and will not re-attach after a rebuild it
+	// knows nothing about — dropping it would silently break the L3 downlink.
+	returnDevice := &returnDeviceWrapper{Device: tunDevice}
+	if previous := e.returnDevice.state.Load(); previous != nil {
+		returnDevice.state.Store(previous)
+	}
+	e.returnDevice = returnDevice
+	e.inet4Address = tunDevice.Inet4Address()
+	e.inet6Address = tunDevice.Inet6Address()
 	e.suspended.Store(false)
 	return nil
 }
