@@ -47,6 +47,10 @@ type Endpoint struct {
 	// guard-suspended AWG endpoint, restart its handshake into the very
 	// WireGuard chain the guard blocks.
 	suspended atomic.Bool
+	// lx: SPEC 020 level 3 — the recipe for rebuilding the tun device after a
+	// Teardown released it (Device/netstack objects are one-shot: their Close
+	// closes channels and runs under a sync.Once).
+	deviceOptions DeviceOptions
 }
 
 func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
@@ -175,8 +179,60 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 		allowedAddress: allowedAddresses,
 		tunDevice:      tunDevice,
 		returnDevice:   &returnDeviceWrapper{Device: tunDevice},
+		// lx: SPEC 020 teardown — keep the recipe so a torn-down endpoint can be
+		// rebuilt in place (the tun device and its netstack are one-shot objects).
+		deviceOptions: deviceOptions,
 	}, nil
 }
+
+// lx:begin idle-suspend
+// Teardown releases EVERYTHING this endpoint holds — the wireguard device AND
+// the tun device with its gVisor netstack (~5.9 MB) — while keeping the recipe
+// (options/peers/ipcConf) so Rebuild can bring it back. SPEC 020 level 3: the
+// tick calls it for an endpoint that has been asleep past lx_idle_teardown.
+// Idempotent; the endpoint stays flagged suspended (only a dial rebuilds it).
+func (e *Endpoint) Teardown() {
+	e.suspended.Store(true)
+	if e.device != nil {
+		e.device.Down()
+		e.device.Close()
+		e.device = nil
+	}
+	if e.tunDevice != nil {
+		e.tunDevice.Close()
+		e.tunDevice = nil
+	}
+	e.allowedIPs = nil
+	if e.pauseCallback != nil {
+		e.pause.UnregisterCallback(e.pauseCallback)
+		e.pauseCallback = nil
+	}
+}
+
+// Rebuild recreates the tun device (and its netstack) after a Teardown, leaving
+// the caller to run Start again. Peers keep whatever endpoints were resolved
+// before the teardown, so a rebuild does not re-resolve unless a peer is
+// domain-based and was never resolved. lx: SPEC 020 level 3.
+func (e *Endpoint) Rebuild() error {
+	if e.tunDevice != nil {
+		return nil // never torn down (or already rebuilt)
+	}
+	tunDevice, err := NewDevice(e.deviceOptions)
+	if err != nil {
+		return E.Cause(err, "rebuild WireGuard device")
+	}
+	e.tunDevice = tunDevice
+	e.returnDevice = &returnDeviceWrapper{Device: tunDevice}
+	e.suspended.Store(false)
+	return nil
+}
+
+// TornDown reports whether the tun device is currently released (level 3).
+func (e *Endpoint) TornDown() bool {
+	return e.tunDevice == nil
+}
+
+// lx:end idle-suspend
 
 func (e *Endpoint) Start(resolve bool) error {
 	if common.Any(e.peers, func(peer peerConfig) bool {
@@ -263,12 +319,20 @@ func (e *Endpoint) DialContext(ctx context.Context, network string, destination 
 	if !destination.Addr.IsValid() {
 		return nil, E.Cause(os.ErrInvalid, "invalid non-IP destination")
 	}
+	// lx: SPEC 020 level 3 — a torn-down endpoint has no tun device; the protocol
+	// layer rebuilds before dialing, so reaching here means a caller bypassed it.
+	if e.tunDevice == nil {
+		return nil, E.New("WireGuard endpoint is torn down")
+	}
 	return e.tunDevice.DialContext(ctx, network, destination)
 }
 
 func (e *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	if !destination.Addr.IsValid() {
 		return nil, E.Cause(os.ErrInvalid, "invalid non-IP destination")
+	}
+	if e.tunDevice == nil { // lx: SPEC 020 level 3
+		return nil, E.New("WireGuard endpoint is torn down")
 	}
 	return e.tunDevice.ListenPacket(ctx, destination)
 }
@@ -282,6 +346,14 @@ func (e *Endpoint) Close() error {
 		e.device.Down()
 		e.device.Close()
 		e.device = nil
+	}
+	// lx: SPEC 020 level 3 — Teardown may already have released the tun device
+	// (nil = torn down, nothing to close). Closing it here too keeps a
+	// teardown/rebuild cycle leak-free: Rebuild installs a fresh tun device and
+	// the old one is gone by then.
+	if e.tunDevice != nil {
+		e.tunDevice.Close()
+		e.tunDevice = nil
 	}
 	return nil
 }
@@ -367,6 +439,12 @@ func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
 }
 
 func (e *Endpoint) onPauseUpdated(event int) {
+	// lx: SPEC 020 level 3 — a torn-down endpoint has no device at all; the
+	// callback is unregistered by Teardown, but a pause event already in flight
+	// must not nil-deref.
+	if e.device == nil {
+		return
+	}
 	switch event {
 	case pause.EventDevicePaused, pause.EventNetworkPause:
 		e.device.Down()

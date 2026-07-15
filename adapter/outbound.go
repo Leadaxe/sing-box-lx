@@ -81,6 +81,10 @@ type IdleSuspendable interface {
 	// for UNREACHABLE endpoints; reachableThreshold (0 = disabled) is the longer
 	// window after which even a reachable endpoint suspends (lx_idle_suspend_reachable).
 	SuspendIfIdle(reachable bool, threshold time.Duration, reachableThreshold time.Duration)
+	// TeardownIfSlept applies the level-3 decision: an endpoint asleep longer than
+	// threshold is released completely (device closed, netstack freed) and rebuilt
+	// on the next dial. 0 = disabled. lx_idle_teardown (SPEC 020).
+	TeardownIfSlept(threshold time.Duration)
 }
 
 // ReachabilityInvalidator is implemented by the Router. SPEC 020 reachability is

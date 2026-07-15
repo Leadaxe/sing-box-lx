@@ -131,17 +131,21 @@ stateDiagram-v2
     direction LR
     AWAKE: AWAKE (started=true, idleAsleep=false) — device Up, воркеры живы
     IDLE_ASLEEP: IDLE-ASLEEP (started=false, idleAsleep=true) — device Down по простою
+    IDLE_TORNDOWN: IDLE-TORNDOWN (idleAsleep=true, torndown=true) — device Closed, netstack освобождён
     GUARD_DOWN: GUARD-DOWN (started=false, idleAsleep=false) — AWG-guard / awg-chain-blocked
     CLOSED: CLOSED (started=false, idleAsleep=false)
 
     [*] --> AWAKE: PostStart (stampActivity)
     AWAKE --> IDLE_ASLEEP: тик - SuspendIfIdle (все гейты пройдены)
+    IDLE_ASLEEP --> IDLE_TORNDOWN: тик - спит дольше lx_idle_teardown (Close)
     IDLE_ASLEEP --> AWAKE: дайл - resumeOnDial (device.Up, +1 RTT handshake)
+    IDLE_TORNDOWN --> AWAKE: дайл - rebuild (новый Endpoint + Start, ~0.5-1 с)
     AWAKE --> GUARD_DOWN: SuspendAmneziaWG (guard, чистит idleAsleep)
     IDLE_ASLEEP --> GUARD_DOWN: SuspendAmneziaWG
     GUARD_DOWN --> [*]: только Close (guard one-way, by design)
     AWAKE --> CLOSED: Close (под resumeMu)
     IDLE_ASLEEP --> CLOSED: Close
+    IDLE_TORNDOWN --> CLOSED: Close (идемпотентен, device уже nil)
 ```
 
 Инварианты переходов:
@@ -233,11 +237,14 @@ Idle-suspend опирается на стабильный device-API вендо�
 ```jsonc
 "route": {
   "lx_idle_suspend": "30s",             // порог простоя НЕдостижимых; "0"/отсутствует = фича выключена
-  "lx_idle_suspend_reachable": "30m"    // опционально: порог простоя ДОСТИЖИМЫХ; "0"/отсутствует = достижимые не усыпляются
+  "lx_idle_suspend_reachable": "5m",    // опционально: порог простоя ДОСТИЖИМЫХ; "0"/отсутствует = достижимые не усыпляются
+  "lx_idle_teardown": "5m"              // опционально: сколько СПАТЬ до полного сноса (Close);
+                                        //   дефолт = lx_idle_suspend_reachable; "0" = сноса нет
 }
 ```
 
 - Поля `option.RouteOptions.LXIdleSuspend` / `LXIdleSuspendReachable badoption.Duration` в [`option/route.go`](../../option/route.go) (`lx:begin/lx:end`).
+- **`lx_idle_teardown`** — третий уровень (снос netstack), см. §«Третий уровень». Отсчёт от засыпания; дефолт = `lx_idle_suspend_reachable`; требует включённого `lx_idle_suspend`.
 - **`lx_idle_suspend_reachable`** — ответ на «пул round_robin жив 24/7 при нулевом трафике»: достижимый эндпоинт (член пула, выбранный узел, final), простоявший дольше этого окна, тоже гасится и лениво будится следующим дайлом (~1 handshake RTT на первый пакет — потому окно ДОЛЖНО быть заметно больше основного порога: цена wake платится на каждом «холодном» заходе). Валидация: требует `lx_idle_suspend`; должен быть `>= lx_idle_suspend`; **рекомендация** — `>= idle_timeout` всех urltest-групп над эндпоинтами (пробы уже заглохли к моменту сна, иначе probe-флап; с `passive_check` у группы, SPEC 019, требование мягче — пробы при живом трафике и так не ходят). Live-traffic-гейты защищают живые соединения через достижимый эндпоинт от гашения.
 - **Build-тег `with_lx_idle_suspend` (mobile-only).** Тик компилируется только с тегом; добавлен в mobile AAR ([`cmd/internal/build_libbox`](../../cmd/internal/build_libbox/main.go)), НЕ в desktop `LX_TAGS` (на десктопе `BatchSize` мал, экономить нечего). Бинарь без тега, получивший конфиг с `lx_idle_suspend`, **падает при старте** с явной ошибкой (`rebuild with -tags with_lx_idle_suspend`) — никакого молчаливого no-op. Гейт — `startIdleSuspend` ([`route/reachability_lx.go`](../../route/reachability_lx.go) / stub [`route/idle_suspend_stub_lx.go`](../../route/idle_suspend_stub_lx.go)). Hot-path дайла (`resumeOnDial`) НЕ расщепляется (без тега `idleAsleep` никогда не true).
 - **По умолчанию (отсутствует/`0`) — выключено** (kill-switch): тик не запускается, нулевой оверхед. Ортогонально build-тегу.
@@ -293,9 +300,72 @@ AWG-detour-guard ([awg-detour-guard-must-be-at-start]) гасит `device.Down()
 
 Детали прогонов — [TEST_PLAN](TEST_PLAN_idle_suspend.md).
 
+## Третий уровень — `lx_idle_teardown` (снос netstack, Tier B)
+
+`Down()` — заморозка: recv-воркеры и их буферы освобождены, таймеры молчат, но **gvisor `stack.Stack` (~5.9 МБ/устройство) остаётся жить** вместе с объектами Device/Peer. Третий порог добивает и его.
+
+### Отсчёт и дефолт
+
+`lx_idle_teardown` отсчитывается **от момента засыпания** (перехода в IDLE-ASLEEP), а НЕ от последнего дайла — так порог не зависит от того, каким из двух окон нода уснула, и остаётся честным «сколько она уже спит». Дефолт = `lx_idle_suspend_reachable` (а если тот не задан — фича выключена; `0`/отсутствие = выключено везде).
+
+Пример на клиентских дефолтах (`30s` / `5m` / teardown по умолчанию `5m`): недостижимая нода засыпает через 30 с простоя, ещё через 5 мин сна — сносится. Достижимая: 5 мин простоя → сон → +5 мин → снос.
+
+### Что происходит при сносе
+
+`Teardown` = `device.Down()` (если ещё не) + `device.Close()` + освобождение объекта: `stack.Close()` + `Abort()` cleanup-эндпоинтов + `stack.Wait()`. Уходит netstack, Device, Peer'ы, bind, очереди шифрования — на спящую-снесённую ноду не остаётся **ничего**, кроме конфига в памяти.
+
+**Объект одноразовый.** `stackDevice.Close` использует `closeOnce` и закрывает каналы `done`/`events` ([device_stack.go](../../transport/wireguard/device_stack.go)) — повторный `Start` на нём невозможен. Поэтому пробуждение = **rebuild**: создать новый `wireguard.Endpoint` из сохранённых `EndpointOptions` и пройти обе стадии `Start` (включая резолв peer-домена). Отсюда требование: `protocol/wireguard.Endpoint` **хранит свои `wireguard.EndpointOptions`** (сегодня они живут только внутри `NewEndpoint`).
+
+### Цена и почему она принята
+
+| | Down (уровни 1–2) | Teardown (уровень 3) |
+|---|---|---|
+| Освобождается | recv-воркеры + буферы, таймеры | **всё**, включая netstack (~5.9 МБ/нода) |
+| Пробуждение | `Up()` + handshake ≈ **+1 RTT** | rebuild device+netstack + резолв + handshake ≈ **0.5–1 с** |
+| In-flight соединения | приостановлены (гейты не дают уснуть при живом трафике) | **рвутся** (но гейты те же — при живом трафике сноса не будет) |
+
+Решение владельца (2026-07-15): 0.5–1 с на первый запрос после ≥5 мин сна пользователь не замечает; порванное соединение приложение поднимет заново; фича mobile-only, десктопа/роутера не касается. Выигрыш — не только RAM, но и **отдаление от потолка `SetMemoryLimit`** (§271): чем меньше живой кучи держат неиспользуемые ноды, тем реже GC-циклы у активных.
+
+### Гейты и инварианты (те же, что у suspend, плюс два)
+
+Решение о сносе принимается в том же тике и под тем же `resumeMu`, после всех гейтов suspend'а:
+
+```
+если !idleAsleep: выход                    // сносим только УЖЕ спящих
+если SleepSince() < lx_idle_teardown: выход
+// повторная проверка живости — на случай дайла между решениями:
+если ActiveTCPFlows() > 0: выход           // (у снесённой ноды их нет по определению,
+                                           //  но проверка защищает от гонки rebuild'а)
+если torndown.CAS(false→true):
+    endpoint.Teardown()                    // Close: netstack освобождён
+    log INFO "lx idle: teardown <tag> slept=<...>"
+```
+
+- **`torndown` — отдельный флаг**, не переиспользует `idleAsleep`: снесённая нода остаётся `idleAsleep=true` (она всё ещё «спит по простою»), но требует rebuild вместо `Up()`. Три состояния сна различимы: AWAKE / IDLE-ASLEEP / IDLE-TORNDOWN.
+- **Guard-суспенд неприкосновенен.** `!started` гейт стоит раньше (см. §SuspendIfIdle), поэтому guard-опущенный AWG не сносится — иначе rebuild на дайле воскресил бы AWG-over-WG.
+- **listen-mode не сносится** — как и не усыпляется (нет пути пробуждения).
+- **pause-wake не воскрешает**: транспортный флаг `suspended` остаётся выставленным, а device вообще nil — `onPauseUpdated` не должен на нём падать (nil-guard обязателен).
+- **`Close()` эндпоинта** (teardown box'а) поверх уже снесённой ноды — идемпотентен (device уже nil).
+
+### Пробуждение (rebuild-on-dial)
+
+`resumeOnDial` получает третью ветку ПЕРЕД обычным `Resume()`:
+
+```
+под resumeMu:
+    если torndown:
+        endpoint = wireguard.NewEndpoint(сохранённые options)   // новый объект
+        endpoint.Start(false); endpoint.Start(true)             // резолв + поднятие
+        torndown=false; idleAsleep=false; started=true
+        log INFO "lx idle: rebuild <tag> by=dial"
+        вернуть true
+    иначе если idleAsleep: ... (существующий Resume-путь)
+```
+
+Rebuild синхронный и держит `resumeMu` — параллельные дайлы ждут один rebuild, а не запускают N. Ошибка rebuild (например, резолв peer-домена не удался) → лог + `false` («WireGuard is not ready yet»), флаги НЕ сбрасываются: следующий дайл попробует снова.
+
 ## Отложено (сознательно)
 
-- **Tier B — снос netstack.** Единственный способ срезать GC-нагрев от gvisor `stack.Stack` (~5.9 МБ/устройство) — `Close`+rebuild (не `Down`). Пробуждение = холодный реконнект (rebuild + handshake, in-flight потоки умирают). Нужен длинный отдельный порог + гистерезис.
 - **Замер батареи на устройстве.** Эффект на радио/батарею (остановка keepalive-таймеров) — прогноз по исходникам, не замер; нужен Android batterystats до/после. Heap A/B на Android уже снят.
 
 ## ОТВЕРГНУТО: путь A (keys-safe / reduced-bind wake)

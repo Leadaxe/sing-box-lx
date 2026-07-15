@@ -225,6 +225,89 @@ func TestSuspendIfIdle_transferDeltaGate(t *testing.T) {
 	}
 }
 
+// --- SPEC 020 level 3: lx_idle_teardown -------------------------------------
+
+// TestTeardownIfSlept_onlyAfterSleepWindow: the teardown clock counts from the
+// moment of falling asleep, not from the last dial — an endpoint that just went
+// to sleep is never torn down in the same tick, and only crosses the line once
+// it has SLEPT past the window.
+func TestTeardownIfSlept_onlyAfterSleepWindow(t *testing.T) {
+	w := newIdleTestEndpoint()
+	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
+	w.SuspendIfIdle(false, 30*time.Second, 0)
+	if !w.idleAsleep.Load() {
+		t.Fatal("precondition: must be asleep")
+	}
+	// Just fell asleep (slept ~0) → teardown must not fire, however idle it was.
+	w.TeardownIfSlept(5 * time.Minute)
+	if w.torndown.Load() {
+		t.Fatal("an endpoint that just fell asleep must not be torn down")
+	}
+	// Backdate the sleep clock past the window → tears down.
+	w.sleepSince.Store(time.Now().Add(-6 * time.Minute).UnixNano())
+	w.TeardownIfSlept(5 * time.Minute)
+	if !w.torndown.Load() {
+		t.Fatal("an endpoint asleep past lx_idle_teardown must be torn down")
+	}
+	if !w.idleAsleep.Load() {
+		t.Fatal("a torn-down endpoint is still idle-asleep (it is a deeper sleep, not a new state)")
+	}
+}
+
+// TestTeardownIfSlept_disabledAndAwake: 0 = off; an awake endpoint is never torn
+// down regardless of its dial clock.
+func TestTeardownIfSlept_disabledAndAwake(t *testing.T) {
+	w := newIdleTestEndpoint()
+	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
+	w.SuspendIfIdle(false, 30*time.Second, 0)
+	w.sleepSince.Store(time.Now().Add(-time.Hour).UnixNano())
+	w.TeardownIfSlept(0)
+	if w.torndown.Load() {
+		t.Fatal("threshold 0 disables teardown")
+	}
+
+	awake := newIdleTestEndpoint()
+	awake.sleepSince.Store(time.Now().Add(-time.Hour).UnixNano()) // stale clock, but not asleep
+	awake.TeardownIfSlept(time.Minute)
+	if awake.torndown.Load() {
+		t.Fatal("an awake endpoint must never be torn down")
+	}
+}
+
+// TestTeardownIfSlept_guardSuspendedNotTornDown pins the SPEC 007 invariant at
+// level 3: a guard-suspended endpoint has idleAsleep=false, so the teardown pass
+// must skip it (a torn-down guard endpoint could be rebuilt by a dial).
+func TestTeardownIfSlept_guardSuspendedNotTornDown(t *testing.T) {
+	w := newIdleTestEndpoint()
+	w.started.Store(false) // guard-suspend: started=false WITHOUT idleAsleep
+	w.sleepSince.Store(time.Now().Add(-time.Hour).UnixNano())
+	w.TeardownIfSlept(time.Minute)
+	if w.torndown.Load() {
+		t.Fatal("a guard-suspended endpoint must not be torn down by the idle tick")
+	}
+}
+
+// TestSuspendAmneziaWG_clearsTeardownState: if the guard takes over an already
+// torn-down endpoint, it must clear torndown too — otherwise resumeOnDial's
+// rebuild branch would resurrect exactly what the guard is holding down.
+func TestSuspendAmneziaWG_clearsTeardownState(t *testing.T) {
+	w := newIdleTestEndpoint()
+	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
+	w.SuspendIfIdle(false, 30*time.Second, 0)
+	w.sleepSince.Store(time.Now().Add(-time.Hour).UnixNano())
+	w.TeardownIfSlept(time.Minute)
+	if !w.torndown.Load() {
+		t.Fatal("precondition: must be torn down")
+	}
+	w.SuspendAmneziaWG()
+	if w.torndown.Load() || w.idleAsleep.Load() {
+		t.Fatal("the guard must clear both idle flags so no dial can rebuild the endpoint")
+	}
+	if ok := w.resumeOnDial(); ok {
+		t.Fatal("a dial must not resurrect a guard-owned endpoint")
+	}
+}
+
 func TestResumeOnDial_guardSuspendedNotWoken(t *testing.T) {
 	// A guard-suspended endpoint has started=false but idleAsleep=false.
 	// resumeOnDial must NOT wake it (returns started, i.e. false).

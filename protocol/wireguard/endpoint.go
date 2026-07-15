@@ -74,6 +74,15 @@ type Endpoint struct {
 	// any time). It has no dial path to wake it, so idle-suspend must skip it —
 	// suspending would silently drop remote peers with no recovery.
 	listenMode bool
+	// torndown is true while the endpoint is at SPEC 020 level 3: asleep AND its
+	// device + gVisor netstack released. It coexists with idleAsleep (a torn-down
+	// endpoint is still "asleep by idle"); the difference is the wake path —
+	// rebuild instead of Up. sleepSince is the unix-nano moment it fell asleep,
+	// the clock lx_idle_teardown counts from (NOT the dial clock: the teardown
+	// window is "how long it has been sleeping", independent of which threshold
+	// put it to sleep). Both guarded by resumeMu.
+	torndown   atomic.Bool
+	sleepSince atomic.Int64
 	// lastTransferSum is the device rx+tx total seen by the previous suspend
 	// decision. Established flows never re-enter the dial path (traffic goes
 	// app→conn→netstack→device), so the dial-based activity clock alone would
@@ -285,7 +294,12 @@ func (w *Endpoint) SuspendAmneziaWG() {
 	// guard-suspended endpoint: if it was idle-asleep first, idleAsleep would still
 	// be true and the next dial would wake it (SPEC 022 #2). With idleAsleep=false
 	// resumeOnDial's fast path returns started (now false) and the endpoint stays down.
+	// lx: SPEC 020 level 3 — torndown is cleared for the same reason (a torn-down
+	// endpoint must not be rebuilt by a dial once the guard owns it); the device is
+	// already released in that case, so Suspend below is a no-op.
 	w.idleAsleep.Store(false)
+	w.torndown.Store(false)
+	w.sleepSince.Store(0)
 	w.endpoint.Suspend()
 }
 
@@ -370,8 +384,48 @@ func (w *Endpoint) SuspendIfIdle(reachable bool, threshold time.Duration, reacha
 	}
 	if w.idleAsleep.CompareAndSwap(false, true) {
 		w.started.Store(false)
-		w.endpoint.Suspend() // device.Down(): recv-workers exit, bufsArrs freed
+		w.sleepSince.Store(time.Now().UnixNano()) // lx: SPEC 020 — teardown clock starts here
+		w.endpoint.Suspend()                      // device.Down(): recv-workers exit, bufsArrs freed
 		w.logger.Info("lx idle: suspend ", w.Tag(), " idle=", w.IdleSince().Truncate(time.Second))
+	}
+}
+
+// SleepSince reports how long the endpoint has been idle-asleep, or 0 when it is
+// not asleep. lx: SPEC 020 level 3 — the clock lx_idle_teardown counts from.
+func (w *Endpoint) SleepSince() time.Duration {
+	since := w.sleepSince.Load()
+	if since == 0 || !w.idleAsleep.Load() {
+		return 0
+	}
+	return time.Since(time.Unix(0, since))
+}
+
+// TeardownIfSlept is the idle tick's level-3 decision (SPEC 020): an endpoint
+// that has been ASLEEP longer than threshold is torn down completely — device
+// Closed, gVisor netstack (~5.9 MB) freed — leaving only its config. The next
+// dial rebuilds it (~0.5-1 s) instead of the ~1 RTT a merely-suspended endpoint
+// pays; that trade is the whole point of the level.
+//
+// Only ever touches an endpoint that is already idle-asleep, so every guard that
+// gated the suspend (reachability, live flows, listen-mode, AWG guard) has
+// already been honoured: a guard-suspended endpoint has idleAsleep=false and is
+// skipped here, and a woken endpoint clears idleAsleep under the same mutex.
+func (w *Endpoint) TeardownIfSlept(threshold time.Duration) {
+	if threshold <= 0 {
+		return
+	}
+	w.resumeMu.Lock()
+	defer w.resumeMu.Unlock()
+	if !w.idleAsleep.Load() || w.torndown.Load() {
+		return
+	}
+	if w.SleepSince() < threshold {
+		return
+	}
+	if w.torndown.CompareAndSwap(false, true) {
+		slept := w.SleepSince().Truncate(time.Second)
+		w.endpoint.Teardown() // device.Close(): netstack, peers, queues all freed
+		w.logger.Info("lx idle: teardown ", w.Tag(), " slept=", slept)
 	}
 }
 
@@ -394,9 +448,35 @@ func (w *Endpoint) resumeOnDial() bool {
 	if !w.idleAsleep.Load() {
 		return w.started.Load()
 	}
+	// lx: SPEC 020 level 3 — a torn-down endpoint needs a full rebuild (new tun
+	// device + netstack) and both Start stages, not just device.Up(). Concurrent
+	// dials serialise on resumeMu, so only the first one rebuilds.
+	if w.torndown.Load() {
+		if err := w.endpoint.Rebuild(); err != nil {
+			w.logger.Error("lx idle: rebuild ", w.Tag(), " failed: ", err)
+			return false // flags untouched — the next dial retries
+		}
+		// Stage 1 wires the bind/device, stage 2 resolves peer domains and brings
+		// the device up. Both are what a cold start runs.
+		if err := w.endpoint.Start(false); err != nil {
+			w.logger.Error("lx idle: rebuild ", w.Tag(), " start failed: ", err)
+			return false
+		}
+		if err := w.endpoint.Start(true); err != nil {
+			w.logger.Error("lx idle: rebuild ", w.Tag(), " post-start failed: ", err)
+			return false
+		}
+		w.torndown.Store(false)
+		w.started.Store(true)
+		w.idleAsleep.Store(false)
+		w.sleepSince.Store(0)
+		w.logger.Info("lx idle: rebuild ", w.Tag(), " by=dial")
+		return true
+	}
 	w.endpoint.Resume() // device.Up(): re-open socket, re-spawn recv-workers
 	w.started.Store(true)
 	w.idleAsleep.Store(false)
+	w.sleepSince.Store(0)
 	w.logger.Info("lx idle: wake ", w.Tag(), " by=dial")
 	return true
 }
@@ -412,6 +492,7 @@ func (w *Endpoint) Close() error {
 	w.resumeMu.Lock()
 	w.started.Store(false)
 	w.idleAsleep.Store(false)
+	w.torndown.Store(false) // lx: SPEC 020 level 3 — Close is idempotent over a torn-down endpoint
 	w.resumeMu.Unlock()
 	return w.endpoint.Close()
 }

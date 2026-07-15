@@ -173,6 +173,9 @@ func (r *Router) startIdleSuspend() error {
 		if r.idleSuspendReachable > 0 {
 			return E.New("route.lx_idle_suspend_reachable requires route.lx_idle_suspend to be set")
 		}
+		if r.idleTeardown > 0 {
+			return E.New("route.lx_idle_teardown requires route.lx_idle_suspend to be set")
+		}
 		return nil
 	}
 	if r.idleSuspendReachable > 0 && r.idleSuspendReachable < r.idleSuspend {
@@ -245,6 +248,11 @@ func (r *Router) OutboundReachable(tag string) bool {
 func (r *Router) suspendIdleEndpoints(reachable map[string]bool) {
 	suspend := func(suspendable adapter.IdleSuspendable) {
 		suspendable.SuspendIfIdle(reachable[suspendable.Tag()], r.idleSuspend, r.idleSuspendReachable)
+		// lx: SPEC 020 level 3 — same tick, after the suspend decision: an endpoint
+		// that has now been asleep past the teardown window is released entirely.
+		// Ordering matters — an endpoint that just fell asleep has slept ~0s, so it
+		// is never torn down in the same tick it was suspended.
+		suspendable.TeardownIfSlept(r.idleTeardown)
 	}
 	if r.endpoint != nil {
 		for _, endpoint := range r.endpoint.Endpoints() {

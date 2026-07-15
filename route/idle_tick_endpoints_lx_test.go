@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common/json/badoption"
 )
 
 // stubSuspendable is a fake WG/AWG endpoint: it implements adapter.IdleSuspendable
@@ -15,15 +17,25 @@ import (
 // with the right reachable flag.
 type stubSuspendable struct {
 	adapter.Endpoint
-	tag      string
-	calls    int
-	lastSeen bool // last `reachable` value SuspendIfIdle was called with
+	tag           string
+	calls         int
+	lastSeen      bool // last `reachable` value SuspendIfIdle was called with
+	teardownCalls int
+	lastTeardown  time.Duration // last threshold TeardownIfSlept was called with
 }
 
 func (e *stubSuspendable) Tag() string { return e.tag }
 func (e *stubSuspendable) SuspendIfIdle(reachable bool, _ time.Duration, _ time.Duration) {
 	e.calls++
 	e.lastSeen = reachable
+}
+
+// lx: SPEC 020 level 3 — part of the IdleSuspendable contract; the tick reaches
+// endpoints via a type assertion, so a stub missing this method is invisible to
+// it (which is exactly what these tests guard).
+func (e *stubSuspendable) TeardownIfSlept(threshold time.Duration) {
+	e.teardownCalls++
+	e.lastTeardown = threshold
 }
 
 // endpointManagerStub is a minimal adapter.EndpointManager exposing a fixed set of
@@ -96,6 +108,7 @@ func (o *suspendableOutbound) SuspendIfIdle(reachable bool, _ time.Duration, _ t
 	o.calls++
 	o.lastSeen = reachable
 }
+func (o *suspendableOutbound) TeardownIfSlept(_ time.Duration) {}
 
 // outboundManagerWith lists IdleSuspendables in the outbound manager.
 type outboundManagerWith struct {
@@ -126,6 +139,50 @@ func TestIdleTick_scansBothManagers(t *testing.T) {
 	}
 	if !ob.lastSeen {
 		t.Fatalf("ob-susp reachable → reachable=true expected")
+	}
+}
+
+// TestIdleTick_passesTeardownThreshold pins the level-3 seam: every tick must
+// hand the endpoint BOTH decisions — suspend and teardown — with the configured
+// windows. Without this, an interface change silently drops teardown from the
+// tick (the type assertion just stops matching).
+func TestIdleTick_passesTeardownThreshold(t *testing.T) {
+	wg1 := &stubSuspendable{tag: "wg-1"}
+	r := &Router{
+		outbound:     &emptyOutboundManager{},
+		endpoint:     &endpointManagerStub{endpoints: []adapter.Endpoint{wg1}},
+		idleSuspend:  30 * time.Second,
+		idleTeardown: 5 * time.Minute,
+	}
+	r.suspendIdleEndpoints(map[string]bool{})
+
+	if wg1.calls != 1 || wg1.teardownCalls != 1 {
+		t.Fatalf("each tick must run both decisions once, got suspend=%d teardown=%d",
+			wg1.calls, wg1.teardownCalls)
+	}
+	if wg1.lastTeardown != 5*time.Minute {
+		t.Fatalf("teardown must receive the configured window, got %v", wg1.lastTeardown)
+	}
+}
+
+// TestIdleTeardownOf_defaultsToReachableWindow: an omitted lx_idle_teardown
+// inherits lx_idle_suspend_reachable; an explicit value wins.
+func TestIdleTeardownOf_defaultsToReachableWindow(t *testing.T) {
+	inherited := idleTeardownOf(option.RouteOptions{
+		LXIdleSuspendReachable: badoption.Duration(5 * time.Minute),
+	})
+	if inherited != 5*time.Minute {
+		t.Fatalf("omitted teardown must default to the reachable window, got %v", inherited)
+	}
+	explicit := idleTeardownOf(option.RouteOptions{
+		LXIdleSuspendReachable: badoption.Duration(5 * time.Minute),
+		LXIdleTeardown:         badoption.Duration(time.Hour),
+	})
+	if explicit != time.Hour {
+		t.Fatalf("explicit teardown must win, got %v", explicit)
+	}
+	if off := idleTeardownOf(option.RouteOptions{}); off != 0 {
+		t.Fatalf("no windows configured → teardown off, got %v", off)
 	}
 }
 

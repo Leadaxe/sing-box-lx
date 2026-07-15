@@ -38,6 +38,16 @@ type RouteOptions struct {
 	// health-check probes have already gone quiet before the endpoint sleeps.
 	// 0 / absent keeps the default semantics (reachable endpoints never suspend).
 	LXIdleSuspendReachable badoption.Duration `json:"lx_idle_suspend_reachable,omitempty"`
+	// LXIdleTeardown is the third level: how long an ALREADY-SLEEPING endpoint
+	// (suspended by either threshold above) may stay asleep before it is torn
+	// down completely — device Closed, gVisor netstack freed (~5.9 MB/endpoint),
+	// nothing left but its config. Counted FROM the moment it fell asleep, not
+	// from the last dial. The next dial rebuilds it from scratch (~0.5-1 s:
+	// new device + netstack + peer resolve + handshake) instead of the ~1 RTT a
+	// suspended endpoint pays. Absent → defaults to lx_idle_suspend_reachable;
+	// "0" disables teardown (endpoints stay merely suspended). Requires
+	// lx_idle_suspend.
+	LXIdleTeardown badoption.Duration `json:"lx_idle_teardown,omitempty"`
 	// lx:end idle-suspend
 }
 
