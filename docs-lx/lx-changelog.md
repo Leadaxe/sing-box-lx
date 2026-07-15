@@ -49,6 +49,8 @@ fixed, plus two new opt-in knobs. The full model is documented in
   SPEC 020); unit-tested with `-race` across tag combinations. ⚠️ Pre-release:
   the new behaviour is **not yet device-verified** — live plan in SPEC 020
   `TEST_PLAN §NEW`.
+* Merges upstream `testing` (start-lifecycle fix, boxdd insecure mode /
+  reworked data protection, tailscale Windows SSH sessions).
 
 #### v1.14.0-lx.4
 
