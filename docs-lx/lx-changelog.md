@@ -10,6 +10,44 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.7-rc.1
+
+**Idle-suspend level 3: sleeping endpoints are now released completely.**
+`Down()` (levels 1–2) frees the recv-workers and silences the timers, but the
+gVisor netstack (~5.9 MB per endpoint) stays alive. The new third window tears
+that down too — a node that has been *asleep* long enough is closed outright and
+rebuilt on the next dial. Model and timelines: [lx-energy.md](lx-energy.md)
+([RU](lx-energy.ru.md)); mechanism: SPEC 020 §"Третий уровень".
+
+* **New `route.lx_idle_teardown`** — how long an already-sleeping endpoint may
+  stay asleep before it is torn down: device closed, netstack/peers/queues
+  freed, only its config left in memory. Counted **from the moment it fell
+  asleep** (not from the last dial), so the window does not depend on which
+  threshold put it to sleep. Absent → defaults to `lx_idle_suspend_reachable`;
+  `0` disables teardown; requires `lx_idle_suspend` (start error otherwise, like
+  the reachable window).
+* **Wake = rebuild.** The device and its netstack are one-shot objects (their
+  Close runs under a `sync.Once` and closes channels), so waking a torn-down
+  endpoint recreates them from the stored recipe and re-runs both Start stages —
+  roughly 0.5–1 s on the first dial, versus the ~1 RTT a merely-suspended
+  endpoint pays. Concurrent dials serialise on one rebuild; a failed rebuild
+  (e.g. peer-domain resolution) leaves the state untouched so the next dial
+  retries.
+* **Invariants preserved.** A guard-suspended AmneziaWG endpoint is never torn
+  down and never rebuilt by a dial (the AWG-over-WG guard now clears the
+  teardown flag too, SPEC 007); pause/wake over a torn-down endpoint is a no-op
+  rather than a nil-deref; `Close` is idempotent over any sleep depth; a dial
+  reaching the transport with no device fails cleanly instead of panicking; the
+  transport's `Close` now also releases the tun device (a teardown/rebuild cycle
+  used to leak it).
+* Why it pays: beyond the RAM, fewer live objects mean more headroom under
+  `SetMemoryLimit` — i.e. less GC pressure for the endpoints that are actually
+  in use.
+
+⚠️ Pre-release: level 3 is unit-tested (including a real teardown→rebuild cycle
+over a live gVisor stack) but **not yet device-verified** — live plan in SPEC 020
+`TEST_PLAN §L3`. Levels 1–2 are unchanged and were device-verified in lx.5.
+
 #### v1.14.0-lx.6
 
 Small maintenance release: one reported log-noise fix, plus an upstream merge.
