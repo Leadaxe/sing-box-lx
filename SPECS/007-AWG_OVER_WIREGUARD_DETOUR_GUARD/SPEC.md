@@ -169,8 +169,9 @@ WG-цепь — в обход всех guard'ов.
   (`awg_selector_guard_test.go`), pause-wake гейт
   (`transport/wireguard/endpoint_suspend_lx_test.go`).
 - `go build ./...` без тегов — ок; сборка с `with_awg` — ок; `gofmt -l` пусто.
-- ⚠️ Новое покрытие (Start-через-Now, urltest-guard, pause-гейт) юнит-тестировано,
-  но НЕ field-verified на устройстве.
+- Новое покрытие (Start-через-Now, urltest-guard, pause-гейт) юнит-тестировано;
+  общий live-прогон ревизии подтверждён на устройстве 2026-07-15 (CPH2411,
+  LxBox v2.15.4) в составе энергоревизии v1.14.0-lx.5.
 
 ## 5. Вне скоупа
 

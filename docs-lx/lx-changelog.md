@@ -10,12 +10,15 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
-#### v1.14.0-lx.4-rc.2
+#### v1.14.0-lx.5
 
-**Energy revision** — a multi-agent audit of the idle-suspend × urltest
-combination (26 adversarially verified findings) with every confirmed defect
-fixed, plus two new opt-in knobs. The full model is documented in
-[docs-lx/lx-energy.md](lx-energy.md) ([RU](lx-energy.ru.md)).
+**Energy revision (stable)** — a multi-agent audit of the idle-suspend ×
+urltest combination (26 adversarially verified findings) with every confirmed
+defect fixed, plus two new opt-in knobs. The full model is documented in
+[docs-lx/lx-energy.md](lx-energy.md) ([RU](lx-energy.ru.md)). Same code as
+pre-release `v1.14.0-lx.4-rc.2`, promoted to stable after on-device
+verification (CPH2411, LxBox v2.15.4: prior behaviour and the new
+suspend/wake/probe semantics confirmed working live).
 
 * **Fixed: screen-off/on (or a network change) permanently resurrected every
   suspended WG/AWG tunnel** — pause-wake now skips devices the idle/guard state
@@ -46,9 +49,8 @@ fixed, plus two new opt-in knobs. The full model is documented in
   overflow; `pool_tolerance` validated ≤ 15000 ms; manual URLTest of a
   balancer group is force again; Touch/Close and tick-shutdown races.
 * Specs 007/019/020 synced (incl. a full state-machine model with diagrams in
-  SPEC 020); unit-tested with `-race` across tag combinations. ⚠️ Pre-release:
-  the new behaviour is **not yet device-verified** — live plan in SPEC 020
-  `TEST_PLAN §NEW`.
+  SPEC 020); unit-tested with `-race` across tag combinations and
+  device-verified via LxBox v2.15.4.
 * Merges upstream `testing` (start-lifecycle fix, boxdd insecure mode /
   reworked data protection, tailscale Windows SSH sessions).
 
