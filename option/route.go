@@ -28,6 +28,16 @@ type RouteOptions struct {
 	// bufsArrs, cutting the multi-WG GC scan heat); the next dial through it wakes
 	// it. 0 / absent disables the feature entirely (the idle tick never starts).
 	LXIdleSuspend badoption.Duration `json:"lx_idle_suspend,omitempty"`
+	// LXIdleSuspendReachable is the OPTIONAL second, longer idle threshold for
+	// endpoints that ARE reachable from the active routing tree (a urltest pool
+	// member, the selected node, final). Such an endpoint is kept live by default
+	// (reachable = never suspended); with this set, it too is brought Down after
+	// this idle window and woken lazily by the next dial (first dial pays ~1
+	// handshake RTT). Must be >= lx_idle_suspend and requires it to be set.
+	// Recommended >= the urltest idle_timeout of any group above the endpoint, so
+	// health-check probes have already gone quiet before the endpoint sleeps.
+	// 0 / absent keeps the default semantics (reachable endpoints never suspend).
+	LXIdleSuspendReachable badoption.Duration `json:"lx_idle_suspend_reachable,omitempty"`
 	// lx:end idle-suspend
 }
 

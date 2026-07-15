@@ -8,6 +8,8 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	R "github.com/sagernet/sing-box/route/rule"
+	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/service/pause"
 )
 
 // idleTickFloor is the minimum idle-tick period: however small the configured
@@ -68,7 +70,8 @@ func (r *Router) reachableOutbounds() map[string]bool {
 	return fresh
 }
 
-// computeReachable runs the actual walk from the seeds (final + rule targets).
+// computeReachable runs the actual walk from the seeds (final + rule targets +
+// DNS-server detours).
 func (r *Router) computeReachable() map[string]bool {
 	var seeds []string
 	if def := r.outbound.Default(); def != nil {
@@ -76,6 +79,17 @@ func (r *Router) computeReachable() map[string]bool {
 	}
 	for _, rule := range r.rules {
 		seeds = append(seeds, ruleOutboundTags(rule)...)
+	}
+	// A DNS-server detour is dialable at any moment (every resolution goes
+	// through it), so it is "traffic can currently reach it" by definition. Not
+	// seeding it made a DNS-only WG endpoint flap Down/Up around every quiet gap,
+	// adding a wake handshake to the first resolution of each browsing session.
+	if r.dnsTransport != nil {
+		for _, transport := range r.dnsTransport.Transports() {
+			if tag := transport.OutboundTag(); tag != "" {
+				seeds = append(seeds, tag)
+			}
+		}
 	}
 	return reachableSet(seeds, r.outbound.Outbound)
 }
@@ -150,21 +164,42 @@ func walkReachable(tag string, reachable map[string]bool, resolve func(tag strin
 // with `with_lx_idle_suspend`; the stub build (idle_suspend_stub_lx.go) returns
 // an explicit error if the option is set without the tag. Signature returns error
 // for symmetry with that stub.
+//
+// The ticker is registered with the pause.Manager (like the urltest ticker): a
+// paused device (screen off / no network) already has every WG device Down'd by
+// the pause callbacks, so ticking through the pause is pure waste.
 func (r *Router) startIdleSuspend() error {
 	if r.idleSuspend <= 0 {
+		if r.idleSuspendReachable > 0 {
+			return E.New("route.lx_idle_suspend_reachable requires route.lx_idle_suspend to be set")
+		}
 		return nil
+	}
+	if r.idleSuspendReachable > 0 && r.idleSuspendReachable < r.idleSuspend {
+		return E.New("route.lx_idle_suspend_reachable must be >= route.lx_idle_suspend")
 	}
 	r.idleStop = make(chan struct{})
 	period := r.idleSuspend / idleTickDivisor
 	if period < idleTickFloor {
 		period = idleTickFloor
 	}
-	go r.idleSuspendLoop(period)
+	ticker := time.NewTicker(period)
+	if r.pauseManager != nil {
+		r.idlePauseCallback = pause.RegisterTicker(r.pauseManager, ticker, period, nil)
+	}
+	// The stop channel is passed by value: stopIdleSuspend closes and nils the
+	// FIELD, and re-reading the field from the loop would race (a nil channel
+	// blocks forever, leaking the goroutine and the ticker).
+	go r.idleSuspendLoop(ticker, r.idleStop)
 	return nil
 }
 
 // stopIdleSuspend stops the idle-suspend tick goroutine, if running.
 func (r *Router) stopIdleSuspend() {
+	if r.idlePauseCallback != nil {
+		r.pauseManager.UnregisterCallback(r.idlePauseCallback)
+		r.idlePauseCallback = nil
+	}
 	if r.idleStop != nil {
 		close(r.idleStop)
 		r.idleStop = nil
@@ -176,17 +211,26 @@ func (r *Router) stopIdleSuspend() {
 // asks each WG/AWG endpoint to suspend itself if it is unreachable AND idle past
 // the threshold. Per endpoint this is a single map lookup + an atomic idle
 // comparison; the endpoint owns the suspend/CAS/log decision.
-func (r *Router) idleSuspendLoop(period time.Duration) {
-	ticker := time.NewTicker(period)
+func (r *Router) idleSuspendLoop(ticker *time.Ticker, stop <-chan struct{}) {
 	defer ticker.Stop()
 	for {
 		select {
-		case <-r.idleStop:
+		case <-stop:
 			return
 		case <-ticker.C:
 			r.suspendIdleEndpoints(r.reachableOutbounds())
 		}
 	}
+}
+
+// OutboundReachable implements adapter.ReachabilityReporter: whether traffic can
+// currently reach the outbound with this tag. With the feature off (no tick, no
+// suspends) it reports true so callers (the urltest probe gate) never gate.
+func (r *Router) OutboundReachable(tag string) bool {
+	if r.idleSuspend <= 0 {
+		return true
+	}
+	return r.reachableOutbounds()[tag]
 }
 
 // suspendIdleEndpoints runs one tick's per-endpoint suspend decision over every
@@ -200,7 +244,7 @@ func (r *Router) idleSuspendLoop(period time.Duration) {
 // contract honest), but with no IdleSuspendable outbounds today it is a no-op.
 func (r *Router) suspendIdleEndpoints(reachable map[string]bool) {
 	suspend := func(suspendable adapter.IdleSuspendable) {
-		suspendable.SuspendIfIdle(reachable[suspendable.Tag()], r.idleSuspend)
+		suspendable.SuspendIfIdle(reachable[suspendable.Tag()], r.idleSuspend, r.idleSuspendReachable)
 	}
 	if r.endpoint != nil {
 		for _, endpoint := range r.endpoint.Endpoints() {

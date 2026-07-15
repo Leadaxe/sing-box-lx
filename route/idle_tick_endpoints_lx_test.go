@@ -21,7 +21,7 @@ type stubSuspendable struct {
 }
 
 func (e *stubSuspendable) Tag() string { return e.tag }
-func (e *stubSuspendable) SuspendIfIdle(reachable bool, _ time.Duration) {
+func (e *stubSuspendable) SuspendIfIdle(reachable bool, _ time.Duration, _ time.Duration) {
 	e.calls++
 	e.lastSeen = reachable
 }
@@ -92,7 +92,7 @@ type suspendableOutbound struct {
 }
 
 func (o *suspendableOutbound) Tag() string { return o.tag }
-func (o *suspendableOutbound) SuspendIfIdle(reachable bool, _ time.Duration) {
+func (o *suspendableOutbound) SuspendIfIdle(reachable bool, _ time.Duration, _ time.Duration) {
 	o.calls++
 	o.lastSeen = reachable
 }
@@ -126,6 +126,77 @@ func TestIdleTick_scansBothManagers(t *testing.T) {
 	}
 	if !ob.lastSeen {
 		t.Fatalf("ob-susp reachable → reachable=true expected")
+	}
+}
+
+// --- DNS-server detour seeding -------------------------------------------------
+
+type stubDNSTransport struct {
+	adapter.DNSTransport
+	outboundTag string
+}
+
+func (s *stubDNSTransport) OutboundTag() string { return s.outboundTag }
+
+type stubDNSTransportManager struct {
+	adapter.DNSTransportManager
+	transports []adapter.DNSTransport
+}
+
+func (m *stubDNSTransportManager) Transports() []adapter.DNSTransport { return m.transports }
+
+type resolvingOutboundManager struct {
+	adapter.OutboundManager
+	byTag map[string]adapter.Outbound
+}
+
+func (m *resolvingOutboundManager) Default() adapter.Outbound { return nil }
+func (m *resolvingOutboundManager) Outbound(tag string) (adapter.Outbound, bool) {
+	ob, ok := m.byTag[tag]
+	return ob, ok
+}
+
+// TestComputeReachable_seedsDNSDetours: a WG endpoint used only as a DNS-server
+// detour is dialable on every resolution — it must be seeded reachable, or it
+// would flap Down/Up around every quiet gap (handshake on the first DNS query
+// of each browsing session).
+func TestComputeReachable_seedsDNSDetours(t *testing.T) {
+	r := &Router{
+		outbound: &resolvingOutboundManager{byTag: map[string]adapter.Outbound{}},
+		dnsTransport: &stubDNSTransportManager{transports: []adapter.DNSTransport{
+			&stubDNSTransport{outboundTag: "wg-dns"},
+			&stubDNSTransport{outboundTag: ""}, // default-bound server contributes no seed
+		}},
+		idleSuspend: 30 * time.Second,
+	}
+	reachable := r.computeReachable()
+	if !reachable["wg-dns"] {
+		t.Fatal("a DNS-server detour must be seeded reachable")
+	}
+}
+
+// TestOutboundReachable_featureOffAlwaysTrue: with idle-suspend off there are no
+// suspends, so probe gating must never engage — everything reports reachable.
+func TestOutboundReachable_featureOffAlwaysTrue(t *testing.T) {
+	r := &Router{} // idleSuspend == 0
+	if !r.OutboundReachable("anything") {
+		t.Fatal("feature off → OutboundReachable must be true for any tag")
+	}
+}
+
+// TestOutboundReachable_readsCache: with the feature on, the reporter answers
+// from the same cached reachable set the tick uses.
+func TestOutboundReachable_readsCache(t *testing.T) {
+	r := &Router{idleSuspend: 30 * time.Second}
+	r.reachMu.Lock()
+	r.reachCache = map[string]bool{"in-tree": true}
+	r.reachMu.Unlock()
+	r.reachDirty.Store(false)
+	if !r.OutboundReachable("in-tree") {
+		t.Fatal("cached-reachable tag must report true")
+	}
+	if r.OutboundReachable("orphan") {
+		t.Fatal("tag absent from the reachable set must report false")
 	}
 }
 

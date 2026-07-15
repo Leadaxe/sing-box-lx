@@ -44,7 +44,7 @@ func TestSuspendIfIdle_reachableNeverSuspends(t *testing.T) {
 	w := newIdleTestEndpoint()
 	// Make it look very idle, but reachable=true must veto suspension.
 	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
-	w.SuspendIfIdle(true, 30*time.Second)
+	w.SuspendIfIdle(true, 30*time.Second, 0)
 	if w.idleAsleep.Load() {
 		t.Fatal("a reachable endpoint must not be suspended")
 	}
@@ -56,7 +56,7 @@ func TestSuspendIfIdle_reachableNeverSuspends(t *testing.T) {
 func TestSuspendIfIdle_notIdleEnough(t *testing.T) {
 	w := newIdleTestEndpoint()
 	w.stampActivity() // just dialed → not idle
-	w.SuspendIfIdle(false, 30*time.Second)
+	w.SuspendIfIdle(false, 30*time.Second, 0)
 	if w.idleAsleep.Load() {
 		t.Fatal("a freshly-active endpoint must not be suspended")
 	}
@@ -65,7 +65,7 @@ func TestSuspendIfIdle_notIdleEnough(t *testing.T) {
 func TestSuspendIfIdle_suspendsWhenIdleAndUnreachable(t *testing.T) {
 	w := newIdleTestEndpoint()
 	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
-	w.SuspendIfIdle(false, 30*time.Second)
+	w.SuspendIfIdle(false, 30*time.Second, 0)
 	if !w.idleAsleep.Load() {
 		t.Fatal("an idle + unreachable endpoint must be suspended")
 	}
@@ -78,12 +78,12 @@ func TestSuspendIfIdle_thresholdBoundary(t *testing.T) {
 	w := newIdleTestEndpoint()
 	// Exactly at threshold is NOT past it (IdleSince() < threshold is false only when strictly greater).
 	w.lastActivity.Store(time.Now().Add(-29 * time.Second).UnixNano())
-	w.SuspendIfIdle(false, 30*time.Second)
+	w.SuspendIfIdle(false, 30*time.Second, 0)
 	if w.idleAsleep.Load() {
 		t.Fatal("just under threshold must not suspend")
 	}
 	w.lastActivity.Store(time.Now().Add(-31 * time.Second).UnixNano())
-	w.SuspendIfIdle(false, 30*time.Second)
+	w.SuspendIfIdle(false, 30*time.Second, 0)
 	if !w.idleAsleep.Load() {
 		t.Fatal("past threshold must suspend")
 	}
@@ -92,12 +92,12 @@ func TestSuspendIfIdle_thresholdBoundary(t *testing.T) {
 func TestSuspendIfIdle_idempotentCAS(t *testing.T) {
 	w := newIdleTestEndpoint()
 	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
-	w.SuspendIfIdle(false, 30*time.Second)
+	w.SuspendIfIdle(false, 30*time.Second, 0)
 	if !w.idleAsleep.Load() {
 		t.Fatal("first call must suspend")
 	}
 	// Second call is a no-op (already asleep) — must not panic, state unchanged.
-	w.SuspendIfIdle(false, 30*time.Second)
+	w.SuspendIfIdle(false, 30*time.Second, 0)
 	if !w.idleAsleep.Load() || w.started.Load() {
 		t.Fatal("double-suspend must leave state asleep/not-started")
 	}
@@ -112,7 +112,7 @@ func TestSuspendIfIdle_guardSuspendedNotTouched(t *testing.T) {
 	w := newIdleTestEndpoint()
 	w.started.Store(false) // guard-suspend (device.Down at Start), idleAsleep stays false
 	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
-	w.SuspendIfIdle(false, 30*time.Second)
+	w.SuspendIfIdle(false, 30*time.Second, 0)
 	if w.idleAsleep.Load() {
 		t.Fatal("a guard-suspended endpoint must NOT be flagged idleAsleep by the tick")
 	}
@@ -124,7 +124,7 @@ func TestSuspendIfIdle_guardSuspendedNotTouched(t *testing.T) {
 func TestResumeOnDial_wakesAndStamps(t *testing.T) {
 	w := newIdleTestEndpoint()
 	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
-	w.SuspendIfIdle(false, 30*time.Second) // now asleep
+	w.SuspendIfIdle(false, 30*time.Second, 0) // now asleep
 	if !w.idleAsleep.Load() {
 		t.Fatal("precondition: must be asleep")
 	}
@@ -146,9 +146,82 @@ func TestResumeOnDial_dialBeforeTickRace(t *testing.T) {
 	w := newIdleTestEndpoint()
 	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
 	w.resumeOnDial() // stamps now; endpoint was awake, so just a stamp
-	w.SuspendIfIdle(false, 30*time.Second)
+	w.SuspendIfIdle(false, 30*time.Second, 0)
 	if w.idleAsleep.Load() {
 		t.Fatal("a dial right before the tick must keep the endpoint awake (fresh stamp)")
+	}
+}
+
+// TestSuspendIfIdle_reachableThreshold pins the lx_idle_suspend_reachable
+// semantics: reachable + long-idle suspends ONLY when the second threshold is
+// set and exceeded.
+func TestSuspendIfIdle_reachableThreshold(t *testing.T) {
+	w := newIdleTestEndpoint()
+	w.lastActivity.Store(time.Now().Add(-10 * time.Minute).UnixNano())
+	// Reachable, threshold disabled (0): never suspends however idle.
+	w.SuspendIfIdle(true, 30*time.Second, 0)
+	if w.idleAsleep.Load() {
+		t.Fatal("reachable endpoint must not suspend with reachableThreshold=0")
+	}
+	// Reachable, idle < reachableThreshold: stays up.
+	w.SuspendIfIdle(true, 30*time.Second, time.Hour)
+	if w.idleAsleep.Load() {
+		t.Fatal("reachable endpoint under the reachable threshold must stay up")
+	}
+	// Reachable, idle > reachableThreshold: suspends.
+	w.SuspendIfIdle(true, 30*time.Second, 5*time.Minute)
+	if !w.idleAsleep.Load() {
+		t.Fatal("reachable endpoint past lx_idle_suspend_reachable must suspend")
+	}
+	if w.started.Load() {
+		t.Fatal("started must be false after reachable-idle suspend")
+	}
+	// And a dial wakes it like any idle-suspended endpoint.
+	if !w.resumeOnDial() {
+		t.Fatal("dial must wake a reachable-idle-suspended endpoint")
+	}
+}
+
+// TestSuspendIfIdle_listenModeNeverSuspends: a listen_port endpoint has no dial
+// path to wake it — the tick must never touch it.
+func TestSuspendIfIdle_listenModeNeverSuspends(t *testing.T) {
+	w := newIdleTestEndpoint()
+	w.listenMode = true
+	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
+	w.SuspendIfIdle(false, 30*time.Second, 0)
+	if w.idleAsleep.Load() || !w.started.Load() {
+		t.Fatal("a listen-mode endpoint must never be idle-suspended")
+	}
+}
+
+// TestSuspendIfIdle_transferDeltaGate: a byte delta >= the threshold since the
+// last decision (real non-TCP traffic on established flows) must refresh the
+// activity clock instead of suspending mid-transfer; a sub-threshold delta
+// (keepalive/rekey noise — or silence) must NOT block the suspend, or a
+// persistent_keepalive peer would never sleep.
+func TestSuspendIfIdle_transferDeltaGate(t *testing.T) {
+	w := newIdleTestEndpoint()
+	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
+	// The nil-device transport reports TransferTotals()==0; seed a non-zero
+	// last-seen sum so the uint64 delta (0 - 12345 wraps huge) clears the
+	// threshold — the "real traffic volume" branch.
+	w.lastTransferSum = 12345
+	w.SuspendIfIdle(false, 30*time.Second, 0)
+	if w.idleAsleep.Load() {
+		t.Fatal("an above-threshold transfer delta must veto the suspend")
+	}
+	if w.IdleSince() > time.Second {
+		t.Fatal("an above-threshold transfer delta must refresh the activity clock")
+	}
+	if w.lastTransferSum != 0 {
+		t.Fatal("the observed sum must be recorded for the next decision")
+	}
+	// Delta below the threshold now (0 → 0, i.e. keepalive-scale noise) and idle
+	// again → suspends as before.
+	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
+	w.SuspendIfIdle(false, 30*time.Second, 0)
+	if !w.idleAsleep.Load() {
+		t.Fatal("sub-threshold counter noise must not keep the endpoint awake")
 	}
 }
 

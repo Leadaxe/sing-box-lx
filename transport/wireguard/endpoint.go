@@ -9,7 +9,9 @@ import (
 	"net/netip"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/sagernet/sing-box/common/dialer"
@@ -37,6 +39,14 @@ type Endpoint struct {
 	allowedIPs     *device.AllowedIPs
 	pause          pause.Manager
 	pauseCallback  *list.Element[pause.Callback]
+	// lx: SPEC 020/007 — true while the protocol layer holds this device down
+	// (idle-suspend or AWG guard). onPauseUpdated must not Up() a suspended
+	// device: a screen-off/on or network pause/wake cycle would otherwise
+	// resurrect it behind the protocol state machine's back (started=false,
+	// idleAsleep unchanged), making it unsuspendable until restart — and for a
+	// guard-suspended AWG endpoint, restart its handshake into the very
+	// WireGuard chain the guard blocks.
+	suspended atomic.Bool
 }
 
 func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
@@ -287,6 +297,7 @@ func (e *Endpoint) Close() error {
 // per-endpoint heap / GC-scan holder, ~8 MB per recv-worker). The trade-off is
 // that Down zeroes the crypto session, so Resume pays a fresh handshake.
 func (e *Endpoint) Suspend() {
+	e.suspended.Store(true)
 	if e.device != nil {
 		e.device.Down()
 	}
@@ -297,9 +308,53 @@ func (e *Endpoint) Suspend() {
 // fresh handshake on the next packet. Idempotent and nil-safe. Used by SPEC 020
 // idle-suspend to wake an endpoint lazily on the next dial through it.
 func (e *Endpoint) Resume() {
+	e.suspended.Store(false)
 	if e.device != nil {
 		e.device.Up()
 	}
+}
+
+// ActiveTCPFlows reports the number of ESTABLISHED TCP connections inside the
+// device's gVisor stack (0 for the system-interface device, which has no
+// stack). lx: SPEC 020 — precise, keepalive-immune "live flows" gate for the
+// idle tick.
+func (e *Endpoint) ActiveTCPFlows() uint64 {
+	if counter, ok := e.tunDevice.(interface{ CurrentEstablished() uint64 }); ok {
+		return counter.CurrentEstablished()
+	}
+	return 0
+}
+
+// TransferTotals reports the sum of rx+tx bytes across all peers, read from the
+// device's IPC state. The SPEC 020 idle tick compares it between ticks to detect
+// traffic on established flows, which never re-enters the protocol dial path.
+// NOTE: WireGuard keepalive and rekey traffic moves these counters too — the
+// caller must apply a byte threshold, not a bare "changed" check, or a
+// persistent_keepalive peer would never be considered idle. Only called for
+// suspend candidates (unreachable + dial-idle), so the IpcGet string round-trip
+// is off the hot path. Returns 0 for a nil device.
+func (e *Endpoint) TransferTotals() uint64 {
+	dev := e.device
+	if dev == nil {
+		return 0
+	}
+	ipc, err := dev.IpcGet()
+	if err != nil {
+		return 0
+	}
+	var total uint64
+	for _, line := range strings.Split(ipc, "\n") {
+		if value, ok := strings.CutPrefix(line, "rx_bytes="); ok {
+			if n, err := strconv.ParseUint(value, 10, 64); err == nil {
+				total += n
+			}
+		} else if value, ok := strings.CutPrefix(line, "tx_bytes="); ok {
+			if n, err := strconv.ParseUint(value, 10, 64); err == nil {
+				total += n
+			}
+		}
+	}
+	return total
 }
 
 // lx:end awg
@@ -316,6 +371,12 @@ func (e *Endpoint) onPauseUpdated(event int) {
 	case pause.EventDevicePaused, pause.EventNetworkPause:
 		e.device.Down()
 	case pause.EventDeviceWake, pause.EventNetworkWake:
+		// lx: SPEC 020/007 — a suspended device (idle-suspend or AWG guard) stays
+		// down through pause/wake cycles; the owning state machine wakes it
+		// (resumeOnDial) or keeps it down (guard) on its own terms.
+		if e.suspended.Load() {
+			return
+		}
 		e.device.Up()
 	}
 }

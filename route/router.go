@@ -18,6 +18,7 @@ import (
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/task"
+	"github.com/sagernet/sing/common/x/list"
 	"github.com/sagernet/sing/contrab/freelru"
 	"github.com/sagernet/sing/contrab/maphash"
 	"github.com/sagernet/sing/service"
@@ -60,35 +61,38 @@ type Router struct {
 	// tick computes it. endpoint is the endpoint manager: WG/AWG endpoints live
 	// there (NOT in the outbound manager — outbound.Outbounds() never lists them),
 	// so the idle tick must iterate it to find IdleSuspendable endpoints.
-	idleSuspend time.Duration
-	idleStop    chan struct{}
-	reachMu     sync.RWMutex
-	reachCache  map[string]bool
-	reachDirty  atomic.Bool
-	endpoint    adapter.EndpointManager
+	idleSuspend          time.Duration
+	idleSuspendReachable time.Duration
+	idleStop             chan struct{}
+	idlePauseCallback    *list.Element[pause.Callback]
+	reachMu              sync.RWMutex
+	reachCache           map[string]bool
+	reachDirty           atomic.Bool
+	endpoint             adapter.EndpointManager
 	// lx:end idle-suspend
 }
 
 func NewRouter(ctx context.Context, logFactory log.Factory, options option.RouteOptions, dnsOptions option.DNSOptions) *Router {
 	router := &Router{
-		ctx:               ctx,
-		logger:            logFactory.NewLogger("router"),
-		inbound:           service.FromContext[adapter.InboundManager](ctx),
-		outbound:          service.FromContext[adapter.OutboundManager](ctx),
-		dns:               service.FromContext[adapter.DNSRouter](ctx),
-		dnsTransport:      service.FromContext[adapter.DNSTransportManager](ctx),
-		connection:        service.FromContext[adapter.ConnectionManager](ctx),
-		network:           service.FromContext[adapter.NetworkManager](ctx),
-		httpClientManager: service.FromContext[adapter.HTTPClientManager](ctx),
-		rules:             make([]adapter.Rule, 0, len(options.Rules)),
-		ruleSetMap:        make(map[string]adapter.RuleSet),
-		needFindProcess:   hasRule(options.Rules, isProcessRule) || hasDNSRule(dnsOptions.Rules, isProcessDNSRule) || options.FindProcess,
-		needFindNeighbor:  hasRule(options.Rules, isNeighborRule) || hasDNSRule(dnsOptions.Rules, isNeighborDNSRule) || hasLocalNeighborDNSServer(dnsOptions.Servers) || options.FindNeighbor,
-		leaseFiles:        options.DHCPLeaseFiles,
-		pauseManager:      service.FromContext[pause.Manager](ctx),
-		platformInterface: service.FromContext[adapter.PlatformInterface](ctx),
-		idleSuspend:       time.Duration(options.LXIdleSuspend),              // lx: SPEC 020 (0 = off)
-		endpoint:          service.FromContext[adapter.EndpointManager](ctx), // lx: SPEC 020 — idle tick iterates endpoints
+		ctx:                  ctx,
+		logger:               logFactory.NewLogger("router"),
+		inbound:              service.FromContext[adapter.InboundManager](ctx),
+		outbound:             service.FromContext[adapter.OutboundManager](ctx),
+		dns:                  service.FromContext[adapter.DNSRouter](ctx),
+		dnsTransport:         service.FromContext[adapter.DNSTransportManager](ctx),
+		connection:           service.FromContext[adapter.ConnectionManager](ctx),
+		network:              service.FromContext[adapter.NetworkManager](ctx),
+		httpClientManager:    service.FromContext[adapter.HTTPClientManager](ctx),
+		rules:                make([]adapter.Rule, 0, len(options.Rules)),
+		ruleSetMap:           make(map[string]adapter.RuleSet),
+		needFindProcess:      hasRule(options.Rules, isProcessRule) || hasDNSRule(dnsOptions.Rules, isProcessDNSRule) || options.FindProcess,
+		needFindNeighbor:     hasRule(options.Rules, isNeighborRule) || hasDNSRule(dnsOptions.Rules, isNeighborDNSRule) || hasLocalNeighborDNSServer(dnsOptions.Servers) || options.FindNeighbor,
+		leaseFiles:           options.DHCPLeaseFiles,
+		pauseManager:         service.FromContext[pause.Manager](ctx),
+		platformInterface:    service.FromContext[adapter.PlatformInterface](ctx),
+		idleSuspend:          time.Duration(options.LXIdleSuspend),              // lx: SPEC 020 (0 = off)
+		idleSuspendReachable: time.Duration(options.LXIdleSuspendReachable),     // lx: SPEC 020 (0 = reachable never suspends)
+		endpoint:             service.FromContext[adapter.EndpointManager](ctx), // lx: SPEC 020 — idle tick iterates endpoints
 	}
 	router.reachDirty.Store(true) // lx: SPEC 020 — first tick computes the reachable set
 	return router

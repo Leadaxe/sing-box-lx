@@ -19,7 +19,7 @@ import (
 // resumeOnDial) stays dormant: idleAsleep is never set, so resumeOnDial always
 // takes its fast path and the hot dial path is unaffected.
 func (r *Router) startIdleSuspend() error {
-	if r.idleSuspend > 0 {
+	if r.idleSuspend > 0 || r.idleSuspendReachable > 0 {
 		return E.New("route.lx_idle_suspend is set but this build lacks idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)")
 	}
 	return nil
@@ -27,5 +27,10 @@ func (r *Router) startIdleSuspend() error {
 
 // stopIdleSuspend is a no-op without the tag (no tick goroutine was ever started).
 func (r *Router) stopIdleSuspend() {}
+
+// OutboundReachable implements adapter.ReachabilityReporter. Without the tag no
+// endpoint is ever idle-suspended, so probe gating must never engage: everything
+// reports reachable.
+func (r *Router) OutboundReachable(tag string) bool { return true }
 
 // lx:end idle-suspend

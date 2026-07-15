@@ -165,6 +165,15 @@ func (w *stackDevice) Inet6Address() netip.Addr {
 func (w *stackDevice) SetDevice(device *device.Device) {
 }
 
+// CurrentEstablished reports the number of TCP connections currently in the
+// ESTABLISHED state inside this device's gVisor stack. lx: SPEC 020 — the idle
+// tick uses it as the precise "live flows" signal: established flows move data
+// without ever re-entering the dial path, and unlike the device rx/tx counters
+// this gauge is immune to WireGuard keepalive/rekey noise.
+func (w *stackDevice) CurrentEstablished() uint64 {
+	return w.stack.Stats().TCP.CurrentEstablished.Value()
+}
+
 func (w *stackDevice) Start() error {
 	w.events <- wgTun.EventUp
 	return nil

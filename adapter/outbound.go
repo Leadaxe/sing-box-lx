@@ -77,7 +77,10 @@ type AmneziaWGSuspendable interface {
 // transition; the next dial through the endpoint wakes it lazily.
 type IdleSuspendable interface {
 	Tag() string
-	SuspendIfIdle(reachable bool, threshold time.Duration)
+	// SuspendIfIdle applies one idle-tick decision. threshold is the idle window
+	// for UNREACHABLE endpoints; reachableThreshold (0 = disabled) is the longer
+	// window after which even a reachable endpoint suspends (lx_idle_suspend_reachable).
+	SuspendIfIdle(reachable bool, threshold time.Duration, reachableThreshold time.Duration)
 }
 
 // ReachabilityInvalidator is implemented by the Router. SPEC 020 reachability is
@@ -90,6 +93,16 @@ type IdleSuspendable interface {
 // large adapter.Router interface.
 type ReachabilityInvalidator interface {
 	InvalidateReachability()
+}
+
+// ReachabilityReporter is implemented by the Router. A urltest group consults it
+// (service.FromContext) before a scheduled health-check: while the group itself
+// is unreachable from the active routing tree, probing its members only wakes
+// idle-suspended endpoints for nothing (the 30-minute probe tail after a
+// selector switches away). Returns true when idle-suspend is off or the build
+// lacks the tag — probing is then never gated.
+type ReachabilityReporter interface {
+	OutboundReachable(tag string) bool
 }
 
 // lx:end idle-suspend
