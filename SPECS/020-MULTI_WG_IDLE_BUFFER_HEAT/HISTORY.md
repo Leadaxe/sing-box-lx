@@ -51,3 +51,41 @@
 - rc.18 — Android device-verification (CPH2411): heap A/B подтвердил `bufsArrs` −60% на целевой платформе.
 - rc.19 — промоут Down/Up-модели.
 - Стабильный `v1.14.0-lx.1` срезан как non-prerelease 2026-07-02 (rc-линия rc.1–22 закрыта промоутом). См. [[wg-1.14-migration-is-submodule-rebase]].
+
+## Ревизия 2026-07-15 — аудит связки с urltest/balancer (SPEC 019)
+
+Multi-agent аудит энергопотребления Android (34 находки → 26 после дедупа, каждая
+адверсариально верифицирована двумя линзами) нашёл в СВЯЗКЕ idle-suspend + urltest
+шесть реальных дефектов и одну дизайн-дыру. Все закрыты в этой ревизии:
+
+1. **P1 pause-wake воскрешение.** `onPauseUpdated` безусловным `device.Up()` на
+   `DeviceWake`/`NetworkWake` поднимал suspended-устройства; протокольные флаги
+   рассинхронизировались навсегда (`SuspendIfIdle` выходил на `!started`,
+   недостижимый эндпоинт не получает дайлов) — один screen-off/on цикл отменял всю
+   экономию до рестарта. Для guard-suspended AWG — re-handshake в WG-цепь мимо
+   guard'а. Фикс: `suspended`-флаг транспорта, wake пропускает (SPEC §pause).
+2. **P2 blackhole established-соединений.** Активность считалась только по дайлам;
+   эндпоинт с живой закачкой, выпавший из активного дерева, гасился mid-transfer.
+   Фикс: transfer-гейт по `TransferTotals()` (IpcGet, только для кандидатов).
+3. **P2 lost-update первого выбора.** `performUpdateCheck` не инвалидировал кэш на
+   nil→first переходе — кэш от cold-start fallback зависал до следующего switch.
+4. **P2 30-минутный probe-хвост.** После ухода селектора группа пробовала членов до
+   `idle_timeout`, будя усыплённых. Фикс: probe-гейт по `ReachabilityReporter`.
+5. **P3 lifecycle.** Гонка close-then-nil стоп-канала тика (утечка горутины+тикера);
+   тик против `Endpoint.Close` (box закрывает endpoints раньше router) — `Close`
+   теперь под `resumeMu`; тик стал pause-registered.
+6. **P3 края.** listen-mode эндпоинт (нет пути пробуждения) исключён из suspend;
+   DNS-lookup перед wake (неудачный резолв не платит handshake); DNS-detour'ы
+   добавлены в сиды walk (DNS-only-WG флапал вокруг каждой паузы).
+7. **Дизайн: вечно живой пул.** Члены round_robin-пула достижимы → не усыплялись
+   даже при часах нулевого трафика (пробы к тому времени глушит idle_timeout, а
+   3 живых WG-устройства остаются 24/7). Добавлен opt-in `lx_idle_suspend_reachable`
+   (длинное окно для достижимых; transfer-гейт защищает живые потоки).
+
+Параллельно закрыты дыры guard-покрытия SPEC 007 (Start через Now/ActiveTags,
+urltest-guard, pause-гейт) и края SPEC 019 (32-bit counter, uint16 tolerance,
+manual force, Touch/Close race) — см. ревизии в их SPEC.md.
+
+⚠️ Новое поведение юнит-тестировано и собрано во всех вариантах тегов, но НЕ
+device-verified: pause-wake гейт, transfer-гейт, reachable-порог, probe-гейт,
+DNS-сиды. Прогнать live-план перед следующим релизом.
