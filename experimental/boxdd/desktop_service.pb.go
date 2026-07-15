@@ -6,6 +6,7 @@ import (
 	unsafe "unsafe"
 
 	daemon "github.com/sagernet/sing-box/daemon"
+
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
@@ -1423,28 +1424,28 @@ func (x *OOMReportFile) GetIsProfile() bool {
 	return false
 }
 
-type DataProtectionInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
-	Key           []byte                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+type SecuritySettings struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Available           bool                   `protobuf:"varint,1,opt,name=available,proto3" json:"available,omitempty"`
+	InsecureModeEnabled bool                   `protobuf:"varint,2,opt,name=insecure_mode_enabled,json=insecureModeEnabled,proto3" json:"insecure_mode_enabled,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
-func (x *DataProtectionInfo) Reset() {
-	*x = DataProtectionInfo{}
+func (x *SecuritySettings) Reset() {
+	*x = SecuritySettings{}
 	mi := &file_experimental_boxdd_desktop_service_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *DataProtectionInfo) String() string {
+func (x *SecuritySettings) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DataProtectionInfo) ProtoMessage() {}
+func (*SecuritySettings) ProtoMessage() {}
 
-func (x *DataProtectionInfo) ProtoReflect() protoreflect.Message {
+func (x *SecuritySettings) ProtoReflect() protoreflect.Message {
 	mi := &file_experimental_boxdd_desktop_service_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1456,46 +1457,46 @@ func (x *DataProtectionInfo) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DataProtectionInfo.ProtoReflect.Descriptor instead.
-func (*DataProtectionInfo) Descriptor() ([]byte, []int) {
+// Deprecated: Use SecuritySettings.ProtoReflect.Descriptor instead.
+func (*SecuritySettings) Descriptor() ([]byte, []int) {
 	return file_experimental_boxdd_desktop_service_proto_rawDescGZIP(), []int{23}
 }
 
-func (x *DataProtectionInfo) GetEnabled() bool {
+func (x *SecuritySettings) GetAvailable() bool {
 	if x != nil {
-		return x.Enabled
+		return x.Available
 	}
 	return false
 }
 
-func (x *DataProtectionInfo) GetKey() []byte {
+func (x *SecuritySettings) GetInsecureModeEnabled() bool {
 	if x != nil {
-		return x.Key
+		return x.InsecureModeEnabled
 	}
-	return nil
+	return false
 }
 
-type SetDataProtectionRequest struct {
+type SetInsecureModeEnabledRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SetDataProtectionRequest) Reset() {
-	*x = SetDataProtectionRequest{}
+func (x *SetInsecureModeEnabledRequest) Reset() {
+	*x = SetInsecureModeEnabledRequest{}
 	mi := &file_experimental_boxdd_desktop_service_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SetDataProtectionRequest) String() string {
+func (x *SetInsecureModeEnabledRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SetDataProtectionRequest) ProtoMessage() {}
+func (*SetInsecureModeEnabledRequest) ProtoMessage() {}
 
-func (x *SetDataProtectionRequest) ProtoReflect() protoreflect.Message {
+func (x *SetInsecureModeEnabledRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_experimental_boxdd_desktop_service_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1507,12 +1508,12 @@ func (x *SetDataProtectionRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SetDataProtectionRequest.ProtoReflect.Descriptor instead.
-func (*SetDataProtectionRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use SetInsecureModeEnabledRequest.ProtoReflect.Descriptor instead.
+func (*SetInsecureModeEnabledRequest) Descriptor() ([]byte, []int) {
 	return file_experimental_boxdd_desktop_service_proto_rawDescGZIP(), []int{24}
 }
 
-func (x *SetDataProtectionRequest) GetEnabled() bool {
+func (x *SetInsecureModeEnabledRequest) GetEnabled() bool {
 	if x != nil {
 		return x.Enabled
 	}
@@ -1701,11 +1702,11 @@ const file_experimental_boxdd_desktop_service_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\fR\acontent\x12\x1d\n" +
 	"\n" +
-	"is_profile\x18\x03 \x01(\bR\tisProfile\"@\n" +
-	"\x12DataProtectionInfo\x12\x18\n" +
-	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x10\n" +
-	"\x03key\x18\x02 \x01(\fR\x03key\"4\n" +
-	"\x18SetDataProtectionRequest\x12\x18\n" +
+	"is_profile\x18\x03 \x01(\bR\tisProfile\"d\n" +
+	"\x10SecuritySettings\x12\x1c\n" +
+	"\tavailable\x18\x01 \x01(\bR\tavailable\x122\n" +
+	"\x15insecure_mode_enabled\x18\x02 \x01(\bR\x13insecureModeEnabled\"9\n" +
+	"\x1dSetInsecureModeEnabledRequest\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\"=\n" +
 	"\x14InstallUpdateRequest\x12%\n" +
 	"\x0einstaller_path\x18\x01 \x01(\tR\rinstallerPath\"M\n" +
@@ -1720,7 +1721,7 @@ const file_experimental_boxdd_desktop_service_proto_rawDesc = "" +
 	"!INSTALL_UPDATE_RESULT_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dINSTALL_UPDATE_RESULT_STARTED\x10\x01\x12)\n" +
 	"%INSTALL_UPDATE_RESULT_SIGNER_MISMATCH\x10\x02\x12#\n" +
-	"\x1fINSTALL_UPDATE_RESULT_NOT_NEWER\x10\x032\xbf\f\n" +
+	"\x1fINSTALL_UPDATE_RESULT_NOT_NEWER\x10\x032\xc4\f\n" +
 	"\x0eDesktopService\x12>\n" +
 	"\rGetDaemonInfo\x12\x16.google.protobuf.Empty\x1a\x13.desktop.DaemonInfo\"\x00\x12@\n" +
 	"\fClaimService\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\"\x00\x12C\n" +
@@ -1741,8 +1742,8 @@ const file_experimental_boxdd_desktop_service_proto_rawDesc = "" +
 	"\x0fDeleteOOMReport\x12\x19.desktop.OOMReportRequest\x1a\x16.google.protobuf.Empty\"\x00\x12G\n" +
 	"\x13DeleteAllOOMReports\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\"\x00\x12P\n" +
 	"\rInstallUpdate\x12\x1d.desktop.InstallUpdateRequest\x1a\x1e.desktop.InstallUpdateResponse\"\x00\x12J\n" +
-	"\x11GetDataProtection\x12\x16.google.protobuf.Empty\x1a\x1b.desktop.DataProtectionInfo\"\x00\x12U\n" +
-	"\x11SetDataProtection\x12!.desktop.SetDataProtectionRequest\x1a\x1b.desktop.DataProtectionInfo\"\x002\xbd\x04\n" +
+	"\x13GetSecuritySettings\x12\x16.google.protobuf.Empty\x1a\x19.desktop.SecuritySettings\"\x00\x12Z\n" +
+	"\x16SetInsecureModeEnabled\x12&.desktop.SetInsecureModeEnabledRequest\x1a\x16.google.protobuf.Empty\"\x002\xbd\x04\n" +
 	"\x12ApplicationService\x12?\n" +
 	"\vCheckConfig\x12\x16.desktop.ConfigContent\x1a\x16.google.protobuf.Empty\"\x00\x12@\n" +
 	"\fFormatConfig\x12\x16.desktop.ConfigContent\x1a\x16.desktop.ConfigContent\"\x00\x12@\n" +
@@ -1794,8 +1795,8 @@ var (
 		(*OOMReportExportRequest)(nil),              // 23: desktop.OOMReportExportRequest
 		(*OOMReportContent)(nil),                    // 24: desktop.OOMReportContent
 		(*OOMReportFile)(nil),                       // 25: desktop.OOMReportFile
-		(*DataProtectionInfo)(nil),                  // 26: desktop.DataProtectionInfo
-		(*SetDataProtectionRequest)(nil),            // 27: desktop.SetDataProtectionRequest
+		(*SecuritySettings)(nil),                    // 26: desktop.SecuritySettings
+		(*SetInsecureModeEnabledRequest)(nil),       // 27: desktop.SetInsecureModeEnabledRequest
 		(*InstallUpdateRequest)(nil),                // 28: desktop.InstallUpdateRequest
 		(*InstallUpdateResponse)(nil),               // 29: desktop.InstallUpdateResponse
 		(*emptypb.Empty)(nil),                       // 30: google.protobuf.Empty
@@ -1832,8 +1833,8 @@ var file_experimental_boxdd_desktop_service_proto_depIdxs = []int32{
 	22, // 24: desktop.DesktopService.DeleteOOMReport:input_type -> desktop.OOMReportRequest
 	30, // 25: desktop.DesktopService.DeleteAllOOMReports:input_type -> google.protobuf.Empty
 	28, // 26: desktop.DesktopService.InstallUpdate:input_type -> desktop.InstallUpdateRequest
-	30, // 27: desktop.DesktopService.GetDataProtection:input_type -> google.protobuf.Empty
-	27, // 28: desktop.DesktopService.SetDataProtection:input_type -> desktop.SetDataProtectionRequest
+	30, // 27: desktop.DesktopService.GetSecuritySettings:input_type -> google.protobuf.Empty
+	27, // 28: desktop.DesktopService.SetInsecureModeEnabled:input_type -> desktop.SetInsecureModeEnabledRequest
 	9,  // 29: desktop.ApplicationService.CheckConfig:input_type -> desktop.ConfigContent
 	9,  // 30: desktop.ApplicationService.FormatConfig:input_type -> desktop.ConfigContent
 	10, // 31: desktop.ApplicationService.EncodeProfile:input_type -> desktop.ProfileContent
@@ -1860,8 +1861,8 @@ var file_experimental_boxdd_desktop_service_proto_depIdxs = []int32{
 	30, // 52: desktop.DesktopService.DeleteOOMReport:output_type -> google.protobuf.Empty
 	30, // 53: desktop.DesktopService.DeleteAllOOMReports:output_type -> google.protobuf.Empty
 	29, // 54: desktop.DesktopService.InstallUpdate:output_type -> desktop.InstallUpdateResponse
-	26, // 55: desktop.DesktopService.GetDataProtection:output_type -> desktop.DataProtectionInfo
-	26, // 56: desktop.DesktopService.SetDataProtection:output_type -> desktop.DataProtectionInfo
+	26, // 55: desktop.DesktopService.GetSecuritySettings:output_type -> desktop.SecuritySettings
+	30, // 56: desktop.DesktopService.SetInsecureModeEnabled:output_type -> google.protobuf.Empty
 	30, // 57: desktop.ApplicationService.CheckConfig:output_type -> google.protobuf.Empty
 	9,  // 58: desktop.ApplicationService.FormatConfig:output_type -> desktop.ConfigContent
 	11, // 59: desktop.ApplicationService.EncodeProfile:output_type -> desktop.ProfileData

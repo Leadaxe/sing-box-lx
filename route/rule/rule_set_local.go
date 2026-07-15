@@ -2,7 +2,6 @@ package rule
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -100,7 +99,7 @@ func (s *LocalRuleSet) reloadFile(path string) error {
 	var ruleSet option.PlainRuleSetCompat
 	switch s.fileFormat {
 	case C.RuleSetFormatSource, "":
-		content, err := os.ReadFile(path)
+		content, err := filemanager.ReadFile(s.ctx, path)
 		if err != nil {
 			return err
 		}
@@ -110,10 +109,11 @@ func (s *LocalRuleSet) reloadFile(path string) error {
 		}
 
 	case C.RuleSetFormatBinary:
-		setFile, err := os.Open(path)
+		setFile, err := filemanager.Open(s.ctx, path)
 		if err != nil {
 			return err
 		}
+		defer setFile.Close()
 		ruleSet, err = srs.Read(setFile, false)
 		if err != nil {
 			return err
