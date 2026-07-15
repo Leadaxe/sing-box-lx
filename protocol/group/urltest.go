@@ -44,6 +44,7 @@ type URLTest struct {
 	group                        *URLTestGroup
 	interruptExternalConnections bool
 	balancer                     *balancer // lx: SPEC 019 — nil for least_test (default)
+	passiveCheck                 bool      // lx: SPEC 019 — skip probes for passively-confirmed nodes
 }
 
 func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.URLTestOutboundOptions) (adapter.Outbound, error) {
@@ -58,6 +59,11 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if balancer == nil && options.Balancer != nil {
 		return nil, E.New("urltest: balancer is only valid with mode: round_robin")
 	}
+	if options.PassiveCheck && balancer != nil && balancer.poolTolerance > 0 {
+		// pool_tolerance > 0 ranks ALL nodes by fresh delay every cycle — passive
+		// liveness cannot substitute for a measurement there.
+		logger.Warn("urltest: passive_check has no effect with balancer.pool_tolerance > 0 (that mode must measure every node)")
+	}
 	outbound := &URLTest{
 		Adapter:                      outbound.NewAdapter(C.TypeURLTest, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.Outbounds),
 		ctx:                          ctx,
@@ -71,6 +77,7 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 		idleTimeout:                  time.Duration(options.IdleTimeout),
 		interruptExternalConnections: options.InterruptExistConnections,
 		balancer:                     balancer,
+		passiveCheck:                 options.PassiveCheck,
 	}
 	if len(outbound.tags) == 0 {
 		return nil, E.New("missing tags")
@@ -92,11 +99,21 @@ func (s *URLTest) Start() error {
 		return err
 	}
 	group.balancer = s.balancer // lx: SPEC 019 v2 — health-check drives the pool through it
+	group.groupTag = s.Tag()    // lx: SPEC 020/007 — probe gating + AWG guard need the group's own tag
+	group.passiveCheck = s.passiveCheck
 	if s.balancer != nil {
 		// lx: SPEC 020 — a pool rebuild changes the active routing tree; invalidate
-		// the router's reachable cache. ctx captured here has the invalidator.
+		// the router's reachable cache. lx: SPEC 007 — and if the new pool contains
+		// a WireGuard-based member, AWG consumers of this group must go down before
+		// pick() can route them into it. ctx captured here has the invalidator.
 		ctx := s.ctx
-		s.balancer.onChange = func() { invalidateReachability(ctx) }
+		outboundManager := s.outbound
+		groupTag := s.Tag()
+		balancer := s.balancer
+		s.balancer.onChange = func() {
+			invalidateReachability(ctx)
+			suspendAmneziaWGConsumersOnPool(outboundManager, groupTag, balancer.poolTags())
+		}
 	}
 	s.group = group
 	return nil
@@ -232,6 +249,11 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 	}
 	conn, err := outbound.DialContext(ctx, network, destination)
 	if err == nil {
+		// lx: SPEC 019 passive_check — a successful TCP dial proves two-way
+		// liveness of the node (the handshake traversed the whole chain).
+		if s.passiveCheck && N.NetworkName(network) == N.NetworkTCP {
+			s.group.markPassiveAlive(outbound.Tag())
+		}
 		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
@@ -304,6 +326,14 @@ type URLTestGroup struct {
 	lastActive                   common.TypedValue[time.Time]
 	lastSelected                 common.TypedValue[string] // lx: SPEC 019 — Now() in balanced modes
 	balancer                     *balancer                 // lx: SPEC 019 v2 — round_robin pool; nil for least_test
+	groupTag                     string                    // lx: SPEC 020/007 — set by URLTest.Start (probe gating, AWG guard)
+	reachability                 adapter.ReachabilityReporter
+	// lx: SPEC 019 passive_check — tag → unix-nano of the last successful TCP
+	// dial through that node. A fresh entry (< interval) is proof of two-way
+	// liveness (the TCP handshake traversed the whole chain), letting the
+	// health-check skip probing that node.
+	passiveCheck bool
+	passiveOK    sync.Map
 }
 
 func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManager, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, tolerance uint16, idleTimeout time.Duration, interruptExternalConnections bool) (*URLTestGroup, error) {
@@ -337,6 +367,7 @@ func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManage
 		pause:                        service.FromContext[pause.Manager](ctx),
 		interruptGroup:               interrupt.NewGroup(),
 		interruptExternalConnections: interruptExternalConnections,
+		reachability:                 service.FromContext[adapter.ReachabilityReporter](ctx), // lx: SPEC 020 — probe gating
 	}, nil
 }
 
@@ -352,11 +383,13 @@ func (g *URLTestGroup) PostStart() {
 }
 
 func (g *URLTestGroup) Touch() {
+	g.access.Lock()
+	defer g.access.Unlock()
+	// lx: started is read/cleared under the lock (Close sets it false), so a dial
+	// racing Close can no longer resurrect the ticker on a stopped group.
 	if !g.started {
 		return
 	}
-	g.access.Lock()
-	defer g.access.Unlock()
 	if g.ticker != nil {
 		g.lastActive.Store(time.Now())
 		return
@@ -370,6 +403,7 @@ func (g *URLTestGroup) Touch() {
 func (g *URLTestGroup) Close() error {
 	g.access.Lock()
 	defer g.access.Unlock()
+	g.started = false // lx: block Touch from restarting the ticker after Close
 	if g.ticker == nil {
 		return nil
 	}
@@ -447,8 +481,46 @@ func (g *URLTestGroup) loopCheck(ticker *time.Ticker, closeChan <-chan struct{})
 			g.access.Unlock()
 			return
 		}
+		// lx: SPEC 020 — while the group itself is unreachable from the active
+		// routing tree (a selector switched away), probing would only wake
+		// idle-suspended members for nothing: skip the cycle. idle_timeout above
+		// still retires the ticker, and the next Touch (traffic returned) or the
+		// group becoming reachable again resumes probing.
+		if g.reachability != nil && g.groupTag != "" && !g.reachability.OutboundReachable(g.groupTag) {
+			continue
+		}
 		g.CheckOutbounds(false)
 	}
+}
+
+// selectedPassivelyConfirmed reports whether the least_test selection is
+// passively proven alive: the TCP-selected node has a fresh passive signal, and
+// the UDP selection (which gets no passive signal — ListenPacket has no
+// handshake to confirm) is either absent or the very same node.
+func (g *URLTestGroup) selectedPassivelyConfirmed() bool {
+	if g.selectedOutboundTCP == nil || !g.passiveFresh(g.selectedOutboundTCP.Tag()) {
+		return false
+	}
+	return g.selectedOutboundUDP == nil || g.selectedOutboundUDP == g.selectedOutboundTCP
+}
+
+// markPassiveAlive records a successful TCP dial through the node as passive
+// proof of liveness. lx: SPEC 019 passive_check.
+func (g *URLTestGroup) markPassiveAlive(tag string) {
+	g.passiveOK.Store(tag, time.Now().UnixNano())
+}
+
+// passiveFresh reports whether the node has passive proof of liveness younger
+// than the probe interval — recent enough to stand in for a URL probe.
+func (g *URLTestGroup) passiveFresh(tag string) bool {
+	if !g.passiveCheck {
+		return false
+	}
+	value, ok := g.passiveOK.Load(tag)
+	if !ok {
+		return false
+	}
+	return time.Since(time.Unix(0, value.(int64))) < g.interval
 }
 
 func (g *URLTestGroup) CheckOutbounds(force bool) {
@@ -456,7 +528,10 @@ func (g *URLTestGroup) CheckOutbounds(force bool) {
 }
 
 func (g *URLTestGroup) URLTest(ctx context.Context) (map[string]uint16, error) {
-	return g.urlTest(ctx, false)
+	// lx: SPEC 019 v2 — a MANUAL test of a round_robin group must test everything
+	// and rebuild the pool from fresh results (the lazy pool-bounded check is for
+	// the interval ticker only). least_test keeps the upstream non-force semantics.
+	return g.urlTest(ctx, g.balancer != nil)
 }
 
 func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint16, error) {
@@ -469,6 +544,15 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 	// nodes than needed (unless force, e.g. a manual URLTest, which always tests everything).
 	if g.balancer != nil && !force {
 		return g.balancePool(ctx), nil
+	}
+	// lx: SPEC 019 passive_check (least_test) — while the currently selected node
+	// is passively confirmed alive (fresh successful TCP dial through it), skip
+	// the whole periodic re-test cycle: nothing is broken, so don't wake N-1
+	// suspended members with probes just to refresh delay numbers. A manual test
+	// (force) always runs. Cost: history goes stale until the passive signal
+	// lapses; the selection stays pinned to a working node — fewer switches.
+	if g.passiveCheck && !force && g.selectedPassivelyConfirmed() {
+		return result, nil
 	}
 	result = g.testNodes(ctx, g.outbounds, force)
 	if g.balancer != nil {
@@ -529,9 +613,16 @@ func (g *URLTestGroup) testNodes(ctx context.Context, outbounds []adapter.Outbou
 
 func (g *URLTestGroup) performUpdateCheck() {
 	var updated bool
+	var changed bool // lx: SPEC 020 — ANY selection change (incl. nil→first) re-shapes the active tree
 	if outbound, exists := g.Select(N.NetworkTCP); outbound != nil && (g.selectedOutboundTCP == nil || (exists && outbound != g.selectedOutboundTCP)) {
 		if g.selectedOutboundTCP != nil {
 			updated = true
+		}
+		if outbound != g.selectedOutboundTCP {
+			changed = true
+			// lx: SPEC 007 — the auto-switch may point the group at a WireGuard-based
+			// member; AWG consumers of this group must go down BEFORE the switch commits.
+			suspendAmneziaWGConsumersOnWireGuardSwitch(g.outbound, g.groupTag, outbound)
 		}
 		g.selectedOutboundTCP = outbound
 	}
@@ -539,11 +630,21 @@ func (g *URLTestGroup) performUpdateCheck() {
 		if g.selectedOutboundUDP != nil {
 			updated = true
 		}
+		if outbound != g.selectedOutboundUDP {
+			changed = true
+			suspendAmneziaWGConsumersOnWireGuardSwitch(g.outbound, g.groupTag, outbound) // lx: SPEC 007
+		}
 		g.selectedOutboundUDP = outbound
 	}
 	if updated {
 		g.interruptGroup.Interrupt(g.interruptExternalConnections)
-		invalidateReachability(g.ctx) // lx: SPEC 020 — legacy auto-switch changed the active node
+	}
+	if changed {
+		// lx: SPEC 020 — invalidate on the FIRST selection too: the nil→first
+		// transition changes the active node just as much as a later switch, and a
+		// cache computed from the cold-start fallback would otherwise stay stale
+		// (wrong node held live / real node suspended) until the next auto-switch.
+		invalidateReachability(g.ctx)
 	}
 }
 
@@ -583,10 +684,27 @@ func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int) map[s
 			inPool[tag] = true
 		}
 	}
-	// 1. Re-test current pool members; collect which slots went dead.
-	poolNodes := g.outboundsByTags(current)
+	// 1. Re-test current pool members — except those passively confirmed alive
+	// (lx: SPEC 019 passive_check — a fresh successful TCP dial through the slot
+	// proves two-way liveness, no probe needed; with the option off passiveFresh
+	// is always false). Collect which slots went dead.
+	poolNodes := make([]adapter.Outbound, 0, len(current))
+	passiveLive := make(map[string]bool, len(current))
+	for _, node := range g.outboundsByTags(current) {
+		if g.passiveFresh(node.Tag()) {
+			passiveLive[node.Tag()] = true
+			continue
+		}
+		poolNodes = append(poolNodes, node)
+	}
 	result := g.testNodes(ctx, poolNodes, true)
-	liveTag := func(tag string) bool { _, ok := result[tag]; return ok }
+	liveTag := func(tag string) bool {
+		if passiveLive[tag] {
+			return true
+		}
+		_, ok := result[tag]
+		return ok
+	}
 
 	// 2. Build the next occupancy IN PLACE: a live member keeps its exact slot index; a dead or
 	// empty slot becomes "" (a hole to be refilled). Never compact — shifting a living node

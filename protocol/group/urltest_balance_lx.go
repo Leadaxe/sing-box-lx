@@ -99,6 +99,13 @@ func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {
 	}
 	var poolTolerance uint16
 	if bo != nil {
+		// Fail fast on meaningless hysteresis: alive delays cap at ~15000 ms
+		// (TCP probe timeout), so a larger tolerance can never evict anyone —
+		// that intent is first-live mode (pool_tolerance: 0). Values in the
+		// 50536..65535 band also used to overflow the uint16 eviction compare.
+		if bo.PoolTolerance > 15000 {
+			return nil, E.New("urltest balancer.pool_tolerance is in milliseconds and must be <= 15000 (alive delays cap at the 15s probe timeout); use 0 for first-live mode")
+		}
 		poolTolerance = bo.PoolTolerance
 	}
 	return &balancer{poolSize: pool, poolTolerance: poolTolerance, stickyHash: stickyHash}, nil
@@ -119,8 +126,10 @@ func (b *balancer) pick(ctx context.Context, destination M.Socksaddr, fallback a
 		idx := int(hashKey(b.stickyKey(ctx, destination)) % uint64(n))
 		tag = b.slots[idx].tag
 	} else {
-		// plain round-robin over the fixed slots.
-		idx := int(b.counter.Add(1)-1) % n
+		// plain round-robin over the fixed slots. Reduce in uint64 BEFORE narrowing:
+		// int(counter) on a 32-bit platform goes negative past 2^31 and a signed %
+		// would produce a negative index (slice panic).
+		idx := int((b.counter.Add(1) - 1) % uint64(n))
 		tag = b.slots[idx].tag
 	}
 	b.access.Unlock()
@@ -352,7 +361,9 @@ func planTolerantPool(current []string, results map[string]candidate, size int, 
 				continue
 			}
 			// Replace if the slot is dead, or the candidate beats it by > tolerance.
-			if !occAlive || (occAlive && c.delay+tolerance < occDelay) {
+			// Compare in uint32: c.delay+tolerance wraps uint16 for a large configured
+			// pool_tolerance and would invert the hysteresis into aggressive churn.
+			if !occAlive || (occAlive && uint32(c.delay)+uint32(tolerance) < uint32(occDelay)) {
 				next[i] = c.tag
 				inPool[c.tag] = true
 				break

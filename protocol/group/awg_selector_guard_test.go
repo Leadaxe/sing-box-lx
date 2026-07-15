@@ -101,6 +101,28 @@ func TestSuspendAmneziaWGConsumers(t *testing.T) {
 	}
 }
 
+// A round_robin pool rebuild whose new pool contains a WireGuard-based member
+// must suspend AWG consumers of the group; a WG-free pool must not.
+func TestSuspendAmneziaWGConsumersOnPool(t *testing.T) {
+	wg := &fakeOutbound{tag: "wg", outboundTyp: C.TypeWireGuard}
+	vless1 := &fakeOutbound{tag: "v1", outboundTyp: C.TypeVLESS}
+	vless2 := &fakeOutbound{tag: "v2", outboundTyp: C.TypeVLESS}
+	awg := &fakeAWG{fakeOutbound: fakeOutbound{tag: "awg", outboundTyp: C.TypeWireGuard, detour: "balanced"}, awg: true}
+	mgr := &fakeManager{
+		byTag:     map[string]adapter.Outbound{"wg": wg, "v1": vless1, "v2": vless2, "awg": awg},
+		consumers: map[string][]string{"balanced": {"awg"}},
+	}
+
+	suspendAmneziaWGConsumersOnPool(mgr, "balanced", []string{"v1", "v2"})
+	if awg.suspended {
+		t.Fatal("a WG-free pool must not suspend AWG consumers")
+	}
+	suspendAmneziaWGConsumersOnPool(mgr, "balanced", []string{"v1", "wg", "v2"})
+	if !awg.suspended {
+		t.Fatal("a pool containing a WireGuard member must suspend AWG consumers of the group")
+	}
+}
+
 // A switch to a non-wireguard member must suspend nothing.
 func TestSuspendSkippedForNonWireGuardSwitch(t *testing.T) {
 	awg := &fakeAWG{fakeOutbound: fakeOutbound{tag: "awg", outboundTyp: C.TypeWireGuard, detour: "sel"}, awg: true}

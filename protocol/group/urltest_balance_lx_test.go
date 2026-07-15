@@ -148,6 +148,22 @@ func TestBalancerZeroPoolIsDefault(t *testing.T) {
 	}
 }
 
+func TestBalancerPoolToleranceUpperBound(t *testing.T) {
+	_, err := newBalancer(option.URLTestOutboundOptions{
+		Mode:     C.URLTestModeRoundRobin,
+		Balancer: &option.URLTestBalancerOptions{PoolTolerance: 15001},
+	})
+	if err == nil {
+		t.Fatal("pool_tolerance above 15000 ms must be rejected at start")
+	}
+	if _, err := newBalancer(option.URLTestOutboundOptions{
+		Mode:     C.URLTestModeRoundRobin,
+		Balancer: &option.URLTestBalancerOptions{PoolTolerance: 15000},
+	}); err != nil {
+		t.Fatalf("pool_tolerance at the bound must be accepted, got %v", err)
+	}
+}
+
 func TestBalancerUnknownStickyComponentRejected(t *testing.T) {
 	_, err := newBalancer(option.URLTestOutboundOptions{
 		Mode:     C.URLTestModeRoundRobin,

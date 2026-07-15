@@ -68,6 +68,30 @@ func chainReachesWireGuard(outboundManager adapter.OutboundManager, outbound ada
 	return false
 }
 
+// suspendAmneziaWGConsumersOnPool is the round_robin twin of the switch guard:
+// called after a urltest pool rebuild with the new slot tags. If ANY pool member
+// is — or chains down to — a WireGuard-based endpoint, every AmneziaWG endpoint
+// detouring through this group is suspended: pick() may route the AWG handshake
+// into that member on any next connection.
+func suspendAmneziaWGConsumersOnPool(outboundManager adapter.OutboundManager, groupTag string, poolTags []string) {
+	if outboundManager == nil || groupTag == "" {
+		return
+	}
+	for _, tag := range poolTags {
+		if tag == "" {
+			continue
+		}
+		member, loaded := outboundManager.Outbound(tag)
+		if !loaded {
+			continue
+		}
+		if chainReachesWireGuard(outboundManager, member, make(map[string]bool)) {
+			suspendAmneziaWGConsumers(outboundManager, groupTag, make(map[string]bool))
+			return
+		}
+	}
+}
+
 // suspendAmneziaWGConsumers walks UP from tag via the reverse-dependency ledger
 // (ConsumersOf) and suspends every AmneziaWG endpoint that detours through it,
 // directly or transitively (e.g. AWG -> vless -> group). visited guards cycles.

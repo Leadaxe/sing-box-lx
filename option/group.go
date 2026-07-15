@@ -18,6 +18,16 @@ type URLTestOutboundOptions struct {
 	// lx: SPEC 019 v2 — load-balancing.
 	Mode     string                  `json:"mode,omitempty"` // least_test (default) | round_robin
 	Balancer *URLTestBalancerOptions `json:"balancer,omitempty"`
+	// PassiveCheck (lx: SPEC 019): treat a recent successful TCP dial through a
+	// node as proof of liveness (the SYN/SYN-ACK round-trip traversed the whole
+	// chain) and skip URL-probing it while the proof is fresh (< interval).
+	// least_test: the periodic re-test cycle is skipped entirely while the
+	// currently selected node is passively confirmed. round_robin
+	// (pool_tolerance == 0): passively confirmed slots are treated as live
+	// without a probe. Saves probe traffic and radio wakeups on active groups;
+	// the cost is staler delay numbers in the UI. Default false (upstream
+	// probing behaviour).
+	PassiveCheck bool `json:"passive_check,omitempty"`
 }
 
 // URLTestBalancerOptions configures round_robin: a fixed-size pool of live nodes, lazily
