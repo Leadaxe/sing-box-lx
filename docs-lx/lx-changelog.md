@@ -10,6 +10,46 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.4-rc.2
+
+**Energy revision** — a multi-agent audit of the idle-suspend × urltest
+combination (26 adversarially verified findings) with every confirmed defect
+fixed, plus two new opt-in knobs. The full model is documented in
+[docs-lx/lx-energy.md](lx-energy.md) ([RU](lx-energy.ru.md)).
+
+* **Fixed: screen-off/on (or a network change) permanently resurrected every
+  suspended WG/AWG tunnel** — pause-wake now skips devices the idle/guard state
+  machine holds down; waking stays dial-only.
+* **Fixed: AWG-over-WG guard holes** — a cache-restored WireGuard selection
+  slipped past the guard on app restart (Android kernel hang), and urltest
+  groups (auto-switch, round_robin pool) had no guard at all. The Start walk
+  now resolves groups through their current choice; both urltest paths guard
+  before committing.
+* **Fixed: idle-suspend could cut live connections** — an endpoint carrying an
+  established download but evicted from the active route was downed
+  mid-transfer. The tick now consults the device's established-TCP gauge
+  (keepalive-immune) and a ≥4 KiB transfer delta before suspending; peers with
+  `persistent_keepalive` still fall asleep.
+* **Fixed: the 30-minute probe tail** — after a selector switched away, the
+  abandoned group kept probing (and waking) its members until `idle_timeout`;
+  probe cycles are now skipped while the group is unreachable.
+* **New: `route.lx_idle_suspend_reachable`** — a second, longer idle window
+  after which even *reachable* endpoints (pool members, the selected node,
+  final, DNS detours) suspend; they wake lazily on the next dial (+1 RTT).
+* **New: `urltest.passive_check`** — a recent successful TCP dial through a
+  node counts as proof of liveness; while fresh, least_test skips whole probe
+  cycles and the round_robin first-live path skips confirmed slots.
+* Smaller fixes: first auto-selection now invalidates the reachability cache;
+  DNS-server detours are seeded reachable (no Down/Up flap around quiet gaps);
+  `listen_port` endpoints are never suspended; DNS resolves before wake;
+  32-bit rotation-counter overflow (index panic) and uint16 `pool_tolerance`
+  overflow; `pool_tolerance` validated ≤ 15000 ms; manual URLTest of a
+  balancer group is force again; Touch/Close and tick-shutdown races.
+* Specs 007/019/020 synced (incl. a full state-machine model with diagrams in
+  SPEC 020); unit-tested with `-race` across tag combinations. ⚠️ Pre-release:
+  the new behaviour is **not yet device-verified** — live plan in SPEC 020
+  `TEST_PLAN §NEW`.
+
 #### v1.14.0-lx.4
 
 **NaïveProxy release** — it was broken on **both** desktop platforms and is now

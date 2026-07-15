@@ -81,11 +81,15 @@ Every tick, for every endpoint, cheapest-first:
 
 Waking has **exactly one path**: a real dial through the endpoint (`DialContext`/`ListenPacket`/L3 forwarding). It re-opens the socket and workers; the first packet waits for a fresh handshake — **+1 RTT** (14–21 ms on a nearby server, up to ~450 ms intercontinental). Throughput is unaffected.
 
+Wake nuances (frequently asked):
+- **The attempt itself wakes, not its success.** The wake happens at dial entry, before anything is sent; if the connection then fails (target unreachable), the tunnel is already awake and will fall asleep again after its window. "Any app" = any app whose traffic is routed into this tunnel; apps going direct/through another channel don't wake it.
+- **An open TCP socket keeps the tunnel awake entirely** (the established-flows gate, §4.5) — so the "app writes into a socket while the tunnel already sleeps" case does not exist for TCP. A silent UDP/QUIC session may fall asleep; QUIC then re-establishes with a fresh dial — which is exactly what wakes the tunnel.
+
 What does **not** wake an endpoint:
 - screen-on / network change (pause-wake): the transport remembers a `suspended` flag and skips such devices — otherwise one screen cycle would resurrect everything and desync the bookkeeping until restart;
 - a guard-suspended AWG endpoint (see SPEC 007) is resurrected by nothing short of a core restart — that is the AWG-over-WG kernel-hang protection.
 
-For domain destinations, DNS resolution happens **before** the wake — a failed lookup does not pay a handshake.
+For domain destinations, DNS resolution happens **before** the wake — a failed lookup does not pay a handshake. **This is safe — a sleeping tunnel cannot "take DNS down"**: resolution never depends on the sleeping tunnel blindly. Ordinary DNS doesn't touch it at all (a failed lookup would mean DNS is broken regardless of the tunnel's state), and a DNS server detoured *through* this very tunnel sends its query as a separate dial to the server's IP — and that dial **wakes the tunnel itself**. The "asleep, therefore can't resolve" deadlock is impossible by construction.
 
 ## 6. urltest: probes, and how they were taught to stay quiet
 
@@ -158,6 +162,7 @@ Threshold coordination rules:
 | `interval <= idle_timeout` | core (upstream), start error | — |
 | `lx_idle_suspend_reachable >= lx_idle_suspend` | core (lx), start error | — |
 | `lx_idle_suspend_reachable >= idle_timeout` of groups | recommendation | 1–2 probe flaps in the falling-asleep tail |
+| a low reachable value (e.g. `5m`) | allowed | fast sleep during pauses; the cost is the same 1–2 extra handshakes during the first ~half hour of silence (until probes retire) plus +1 RTT on the first connection after every ≥5m pause |
 | `interval` > MASQUE idle (5m) for groups with MASQUE nodes | recommendation | probes keep the MASQUE tunnel from sleeping |
 | `pool_tolerance <= 15000` | core (lx), start error | — |
 
