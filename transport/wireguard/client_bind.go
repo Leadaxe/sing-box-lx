@@ -50,6 +50,21 @@ func NewClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, i
 	}
 }
 
+// hasReserved reports whether any Cloudflare "reserved" value is configured
+// (WARP). When none is set the bind must leave bytes 1-3 untouched, so a plain
+// WireGuard / AmneziaWG endpoint keeps its magic header intact.
+func (c *ClientBind) hasReserved() bool {
+	if c.reserved != [3]uint8{} {
+		return true
+	}
+	for _, reserved := range c.reservedForEndpoint {
+		if reserved != [3]uint8{} {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *ClientBind) connect() (*wireConn, error) {
 	serverConn := c.conn
 	if serverConn != nil {
@@ -134,7 +149,12 @@ func (c *ClientBind) receive(packets [][]byte, sizes []int, eps []conn.Endpoint)
 		return
 	}
 	sizes[0] = n
-	if n > 3 {
+	// lx: only strip the Cloudflare "reserved" bytes when a reserved value is
+	// actually configured (WARP). AmneziaWG writes a full uint32 magic header
+	// into bytes 0-3; unconditionally clearing 1-3 (as upstream ClientBind did)
+	// destroys ranged h1-h4 headers, so the AWG endpoint drops every packet.
+	// StdNetBind (the no-detour path) never clears on receive either.
+	if n > 3 && c.hasReserved() {
 		b := packets[0]
 		clear(b[1:4])
 	}
@@ -179,7 +199,13 @@ func (c *ClientBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
 			if !loaded {
 				reserved = c.reserved
 			}
-			copy(buf[1:4], reserved[:])
+			// lx: only stamp the reserved bytes when non-zero (WARP). For a
+			// plain WG / AmneziaWG endpoint reserved is [0,0,0]; overwriting
+			// bytes 1-3 would zero the upper bytes of an AWG magic header and
+			// break the tunnel. See the matching guard in receive().
+			if reserved != [3]uint8{} {
+				copy(buf[1:4], reserved[:])
+			}
 		}
 		_, err = udpConn.WriteToUDPAddrPort(buf, destination)
 		if err != nil {
