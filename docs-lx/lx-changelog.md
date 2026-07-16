@@ -10,6 +10,21 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.9
+
+**Fix: the WARP reserved-byte clear destroyed AmneziaWG magic headers.** Bytes
+1-3 of every received datagram (the Cloudflare WARP "reserved" field) were
+zeroed unconditionally in every bind. AmneziaWG reads its magic header as
+`Uint32(packet[padding:])`, so with a small `s1`/`s2`/`s4` padding (0-3) the
+magic sits in bytes 1-3 and the clear collapses it out of the ranged `h1`-`h4`
+window — the packet, handshake included, is dropped and the endpoint never comes
+up. Plain WireGuard (types 1-4, bytes 1-3 already zero) and AWG with padding ≥ 4
+are unaffected, which is why it went unnoticed. All five receive-side clears
+(`bind_std` receiveIP, `msgx_darwin` ×2, `bind_windows` ×2) plus the detour
+`ClientBind` receive now zero bytes 1-3 only when a WARP reserved value is
+actually configured. WARP behaviour is unchanged. Red/green tests bring up a
+device pair with zero padding over both bind paths and assert delivery. (SPEC 026.)
+
 #### v1.14.0-lx.8
 
 Promoted to stable. Same code as `v1.14.0-lx.8-rc.1`, device-verified on
