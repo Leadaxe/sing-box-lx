@@ -51,7 +51,10 @@
 
 ## 5. Вне скоупа
 
-- Vendored `submodules/wireguard-go` — **не трогать**, он уже умеет диапазоны.
+- Vendored `submodules/wireguard-go` — диапазоны уже поддержаны. Один overflow-баг
+  в `magicHeader.Generate` (полный диапазон `0-4294967295` → `uint32`-wrap →
+  `rand.Int(0)` паника) исправлен в [SPEC 025](../025-AWG_TRANSPORT_PADDING_OVERRUN/SPEC.md);
+  прочее в форке по-прежнему не трогаем.
 - Перепин `app/android/libbox.version` в лаунчере — задача на стороне LxBox.
 - Диапазоны для S1–S4/Jc — в формате AWG 2.0 их нет (только H1–H4).
 

@@ -85,6 +85,7 @@ Upstream sing-box AWG не принимает ([#4045](https://github.com/SagerN
 
 - [SPEC 009](../009-WIRESOCK_MASQUERADE_PROFILES/SPEC.md) — декларативные masquerade-профили (`ip=quic/sip/dns`), генерирующие `I1`/`I2`.
 - [SPEC 020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) — idle-suspend WG/AWG-устройств (Down/Up); опирается на стабильный device-API той же вендоренной базы.
+- [SPEC 025](../025-AWG_TRANSPORT_PADDING_OVERRUN/SPEC.md) — класс рантайм-крашей графта (transport-padding overrun + rx-дубль + config-value guards); device-verified фиксы в `submodules/wireguard-go`.
 
 ## Вне скоупа
 

@@ -95,8 +95,11 @@ for i := 0; i < jc; i++ {
 ## 5. Вне скоупа
 
 - Правка самого `submodules/wireguard-go` (добавить проверку в uapi/убрать
-  панику) — наш guard в `awgIpcLines` ловит раньше, форк не трогаем (его правка —
-  отдельный осознанный шаг, CONSTITUTION §4 про сабмодуль).
+  панику) — наш guard в `awgIpcLines` ловит раньше на уровне конфига. Форк тем не
+  менее получил **второй слой** (defensive swap `jmin`/`jmax` в
+  `SendHandshakeInitiation`) в [SPEC 025](../025-AWG_TRANSPORT_PADDING_OVERRUN/SPEC.md):
+  он закрывает сырой UAPI-путь мимо `awgIpcLines`. Это отдельный осознанный шаг по
+  сабмодулю (CONSTITUTION §4), не отменяющий config-level fail-fast здесь.
 - Валидация s1–s4 / h1–h4 / i1–i5 (h-поля уже валидируются `MagicHeader.Spec()`).
 - MTU/размерные предупреждения — уже есть в `wireguard.NewEndpoint`.
 
