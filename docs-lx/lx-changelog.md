@@ -10,6 +10,13 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.8
+
+Promoted to stable. Same code as `v1.14.0-lx.8-rc.1`, device-verified on
+Android (CPH2411): the AmneziaWG endpoint that crashed on every data packet
+(`s4=60`) now carries traffic under load, and the AWG download counter no
+longer double-counts. No code change from rc.1.
+
 #### v1.14.0-lx.8-rc.1
 
 **Fix: AmneziaWG transport padding (`s4`) crashed the whole process.** Any
