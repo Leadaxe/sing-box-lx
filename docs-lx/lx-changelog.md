@@ -10,6 +10,37 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.8-rc.1
+
+**Fix: AmneziaWG transport padding (`s4`) crashed the whole process.** Any
+AWG endpoint with `s4 > 0` aborted with `SIGABRT` on its first data packet —
+device-verified (CPH2411, AWG endpoint with `s4=60`): `panic: runtime error:
+index out of range [123] with length 76` in `RoutineSequentialSender`. The
+injection paths (`InputPacket`/`InputPackets`) sized the outbound buffer with
+no headroom for the random prefix that `s4` prepends in-buffer, so the
+right-shift ran off the end. The alloc sites now reserve `paddings.transport`,
+the manual byte loop is an overlap-safe `copy`, and a defensive grow drops
+packets that cannot fit a single WG message instead of overrunning. A
+red/green device-level test reproduces the exact crash and pins the fix.
+
+Four further defects in the AWG graft, same "config value crashes a
+send/receive goroutine" class, fixed alongside:
+
+* **RX byte accounting doubled** — the re-graft pasted the `rxBytes` / timers
+  block twice on the receive hot path, so every AWG download byte was counted
+  twice (and `keepKeyFreshReceiving` fired twice per batch). Deduplicated.
+* **Swapped `jmin`/`jmax` panicked the first handshake** — UAPI validates the
+  junk fields only individually; an inverted pair fed a non-positive bound to
+  `rand.Int`. Bounds are swapped when inverted.
+* **Out-of-range `i1`–`i5` obfuscator lengths** — a negative length panicked
+  on a slice bound, a huge one OOMed the handshake `make`. Lengths are bounded
+  to `[0, MaxMessageSize]`.
+* **Full-range magic header wrapped to a zero bound** — `end-start+1` computed
+  in `uint32` wrapped to 0 for a `0-4294967295` range, panicking `rand.Int`;
+  widened to `int64` before the arithmetic.
+
+Plain WireGuard (`s4=0`) was never affected — the broken branch does not run.
+
 #### v1.14.0-lx.7
 
 **Idle-suspend level 3, promoted to stable.** Same code as `v1.14.0-lx.7-rc.2`,
