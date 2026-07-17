@@ -25,6 +25,11 @@ are unaffected, which is why it went unnoticed. All five receive-side clears
 actually configured. WARP behaviour is unchanged. Red/green tests bring up a
 device pair with zero padding over both bind paths and assert delivery. (SPEC 026.)
 
+Also fixes a data race in `ClientBind.connect()`: the lock-free fast-path read
+of the cached connection raced the locked write (the send and receive goroutines
+call it concurrently at tunnel start). The field is now an `atomic.Pointer`; the
+double-checked-locking logic is unchanged. `go test -race` is clean.
+
 #### v1.14.0-lx.8
 
 Promoted to stable. Same code as `v1.14.0-lx.8-rc.1`, device-verified on

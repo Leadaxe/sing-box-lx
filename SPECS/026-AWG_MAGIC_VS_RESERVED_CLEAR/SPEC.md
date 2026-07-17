@@ -105,8 +105,10 @@ Reserved-байты трогаются только в WARP-режиме (reserv
 ## 5. Вне скоупа
 
 - Гонка `c.conn` в `ClientBind.connect()` (fast-path чтение без `connAccess`) —
-  пре-существующий латентный баг кэширования соединения, всплывает под `-race`,
-  к reserved отношения не имеет. Отдельная задача.
+  пре-существующий upstream-баг кэширования соединения, всплыл под `-race` на
+  e2e-тесте этого фикса. К reserved отношения не имеет, но **исправлен заодно**
+  (тот же файл, тот же релиз `lx.9`): поле `conn` стало `atomic.Pointer[wireConn]`,
+  логика double-checked-locking не тронута. `go test -race` чист.
 - Per-source-endpoint гейт на receive: сейчас `hasReserved()` глобальный (любой
   reserved в бинде). Смешанный WARP+AWG в одном бинде нереалистичен (AWG —
   device-global поле, reserved — per-peer; режимы взаимоисключающие), поэтому
