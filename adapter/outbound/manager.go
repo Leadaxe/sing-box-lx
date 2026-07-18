@@ -208,21 +208,6 @@ func (m *Manager) Outbound(tag string) (adapter.Outbound, bool) {
 	return m.endpoint.Get(tag)
 }
 
-// lx:begin awg
-// ConsumersOf returns a copy of the tags that detour through tag (reverse of
-// Dependencies()), built from the dependByTag ledger populated at Create time.
-func (m *Manager) ConsumersOf(tag string) []string {
-	m.access.RLock()
-	defer m.access.RUnlock()
-	consumers := m.dependByTag[tag]
-	if len(consumers) == 0 {
-		return nil
-	}
-	return append([]string(nil), consumers...)
-}
-
-// lx:end awg
-
 func (m *Manager) Default() adapter.Outbound {
 	m.access.RLock()
 	defer m.access.RUnlock()

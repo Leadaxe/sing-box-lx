@@ -39,13 +39,11 @@ type Endpoint struct {
 	allowedIPs     *device.AllowedIPs
 	pause          pause.Manager
 	pauseCallback  *list.Element[pause.Callback]
-	// lx: SPEC 020/007 — true while the protocol layer holds this device down
-	// (idle-suspend or AWG guard). onPauseUpdated must not Up() a suspended
-	// device: a screen-off/on or network pause/wake cycle would otherwise
-	// resurrect it behind the protocol state machine's back (started=false,
-	// idleAsleep unchanged), making it unsuspendable until restart — and for a
-	// guard-suspended AWG endpoint, restart its handshake into the very
-	// WireGuard chain the guard blocks.
+	// lx: SPEC 020 — true while the protocol layer holds this device down for
+	// idle-suspend. onPauseUpdated must not Up() a suspended device: a
+	// screen-off/on or network pause/wake cycle would otherwise resurrect it
+	// behind the protocol state machine's back (started=false, idleAsleep
+	// unchanged), making it unsuspendable until restart.
 	suspended atomic.Bool
 	// lx: SPEC 020 level 3 — the recipe for rebuilding the tun device after a
 	// Teardown released it (Device/netstack objects are one-shot: their Close
@@ -155,7 +153,8 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 				"amneziawg: mtu %d may be too high for s4 junk (%d bytes); "+
 					"transport packets can exceed a %d-byte path and fail with "+
 					"\"message too long\". Consider mtu <= %d (or 1280). See docs-lx/lx-config.md",
-				options.MTU, awgJunk, pathMTU, budget))
+				options.MTU, awgJunk, pathMTU, budget,
+			))
 		}
 	}
 	// lx:end awg

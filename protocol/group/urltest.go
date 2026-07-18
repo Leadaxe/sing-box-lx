@@ -99,20 +99,14 @@ func (s *URLTest) Start() error {
 		return err
 	}
 	group.balancer = s.balancer // lx: SPEC 019 v2 — health-check drives the pool through it
-	group.groupTag = s.Tag()    // lx: SPEC 020/007 — probe gating + AWG guard need the group's own tag
+	group.groupTag = s.Tag()    // lx: SPEC 020 — probe gating needs the group's own tag
 	group.passiveCheck = s.passiveCheck
 	if s.balancer != nil {
 		// lx: SPEC 020 — a pool rebuild changes the active routing tree; invalidate
-		// the router's reachable cache. lx: SPEC 007 — and if the new pool contains
-		// a WireGuard-based member, AWG consumers of this group must go down before
-		// pick() can route them into it. ctx captured here has the invalidator.
+		// the router's reachable cache. ctx captured here has the invalidator.
 		ctx := s.ctx
-		outboundManager := s.outbound
-		groupTag := s.Tag()
-		balancer := s.balancer
 		s.balancer.onChange = func() {
 			invalidateReachability(ctx)
-			suspendAmneziaWGConsumersOnPool(outboundManager, groupTag, balancer.poolTags())
 		}
 	}
 	s.group = group
@@ -326,7 +320,7 @@ type URLTestGroup struct {
 	lastActive                   common.TypedValue[time.Time]
 	lastSelected                 common.TypedValue[string] // lx: SPEC 019 — Now() in balanced modes
 	balancer                     *balancer                 // lx: SPEC 019 v2 — round_robin pool; nil for least_test
-	groupTag                     string                    // lx: SPEC 020/007 — set by URLTest.Start (probe gating, AWG guard)
+	groupTag                     string                    // lx: SPEC 020 — set by URLTest.Start (probe gating)
 	reachability                 adapter.ReachabilityReporter
 	// lx: SPEC 019 passive_check — tag → unix-nano of the last successful TCP
 	// dial through that node. A fresh entry (< interval) is proof of two-way
@@ -620,9 +614,6 @@ func (g *URLTestGroup) performUpdateCheck() {
 		}
 		if outbound != g.selectedOutboundTCP {
 			changed = true
-			// lx: SPEC 007 — the auto-switch may point the group at a WireGuard-based
-			// member; AWG consumers of this group must go down BEFORE the switch commits.
-			suspendAmneziaWGConsumersOnWireGuardSwitch(g.outbound, g.groupTag, outbound)
 		}
 		g.selectedOutboundTCP = outbound
 	}
@@ -632,7 +623,6 @@ func (g *URLTestGroup) performUpdateCheck() {
 		}
 		if outbound != g.selectedOutboundUDP {
 			changed = true
-			suspendAmneziaWGConsumersOnWireGuardSwitch(g.outbound, g.groupTag, outbound) // lx: SPEC 007
 		}
 		g.selectedOutboundUDP = outbound
 	}

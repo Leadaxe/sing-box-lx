@@ -10,6 +10,28 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.11
+
+**Removed the AmneziaWG-over-WireGuard guard (SPEC 007).** The guard refused to
+start an AmneziaWG endpoint whose `detour` chain reached a WireGuard-based
+endpoint, because that combination used to hang the kernel on Android. That root
+cause is gone on the current graft: the re-graft of AmneziaWG 2.0 onto
+`sagernet/wireguard-go` v0.0.5 (lx.8), the transport-padding overrun fix (SPEC
+025), and the reserved-clear gate that repaired the detour path (SPEC 026, lx.9)
+together let AmneziaWG-over-WireGuard come up and carry traffic. Verified
+end-to-end on a two-process loopback stand (upper AWG endpoint with `jc/s4` +
+ranged `h1..h4` detouring through a plain WireGuard endpoint; handshake,
+keepalive and HTTP-over-socks all flow). Both guards are deleted — the static
+Start-guard (`protocol/wireguard`) and the runtime selector/urltest guard
+(`protocol/group/awg_selector_guard.go`), along with the `OutboundManager.ConsumersOf`
+and `AmneziaWGSuspendable` adapter hooks and every guard test. SPEC 020
+idle-suspend is untouched: it shares the transport `Suspend`/`Resume` and the
+`suspended` flag, and the "a deliberately-stopped endpoint is never resurrected
+by a dial" invariant still holds (its tests were reworded from `guardSuspended`
+to `stopped`). An Android field-test is still owed — the historical hang was an
+Android-only symptom the mac stand cannot fully reproduce. The matching app-side
+gate in LxBox (§130) is removed in step.
+
 #### v1.14.0-lx.10
 
 **Merge: upstream `testing` (tun udpnat, endpoint-listen refactor, OpenVPN /

@@ -128,16 +128,6 @@ func (s *Selector) SelectOutbound(tag string) bool {
 	if s.selected.Load() == detour {
 		return true
 	}
-	// lx:begin awg
-	// Suspend AmneziaWG consumers BEFORE switching: if the new member is (or chains
-	// to) a WireGuard endpoint, any AmneziaWG endpoint that detours through this
-	// group would tunnel AWG inside WireGuard and hang the kernel on Android. Doing
-	// this before s.selected.Swap closes the race — by the time the group points at
-	// the WireGuard member, those consumers are already down (started=false), so a
-	// concurrent reconnect fails with "not ready" instead of sending a junk
-	// handshake into WireGuard.
-	suspendAmneziaWGConsumersOnWireGuardSwitch(s.outbound, s.Tag(), detour)
-	// lx:end awg
 	s.selected.Store(detour)
 	invalidateReachability(s.ctx) // lx: SPEC 020 — active selection changed
 	if s.Tag() != "" {

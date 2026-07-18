@@ -3,7 +3,44 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) |
-| Статус | C (complete) |
+| Статус | C (complete) — guard **снят** (см. баннер ниже) |
+
+> ## ⛔️ Guard снят (2026-07-18) — первопричина ушла на новом графте
+> **Оба guard'а (Start-guard + selector-guard) удалены из ядра.** На текущей
+> базе (v1.14.0-lx.10: re-graft AWG 2.0 на `sagernet/wireguard-go` v0.0.5 +
+> SPEC 025 transport-padding fix + SPEC 026 reserved-clear gate) связка
+> **AmneziaWG-over-WireGuard больше не вешает ядро** — она поднимается и несёт
+> трафик.
+>
+> **Как проверено (mac-стенд, 2026-07-18):** два процесса sing-box CLI на
+> loopback. Верхний AWG-endpoint (`jc=4, s4=12`, ranged `h1..h4`) с `detour` на
+> нижний плоский WireGuard; серверная сторона — WG-сервер + AWG-сервер за
+> route-правилом (`override_address`). Handshake верхнего AWG через нижний WG
+> проходит, keepalive идут в обе стороны, HTTP через socks (обе оболочки
+> насквозь) отвечает `200/301`. Guard на время эксперимента обходился временным
+> env-гейтом, затем удалён насовсем.
+>
+> **Почему раньше висло, а теперь нет:** диагноз ниже (блокирующий `SendBuffers`
+> под `net.RLock()`) ставился на старой базе `v1.13.13` и статикой **не
+> доказывался** — задача была про guard, не про лечение. На новом графте
+> детур-путь AWG чинил именно SPEC 026 (lx.9): reserved-clear в `ClientBind`
+> раньше затирал AWG-magic, из-за чего AWG через **любой** detour не поднимался.
+>
+> **Осталось:** field-тест на Android (старое зависание было
+> Android-специфичным симптомом — `Libbox.newService` не возвращал управление;
+> mac-стенд это не покрывает на 100%). App-side §130-гейт LxBox снят синхронно.
+>
+> **Что удалено из ядра:** Start-guard (`protocol/wireguard/endpoint.go`:
+> `awgDetourChainReachesWireGuard`, поля `awgActive/detour/awgChainBlocked`,
+> `IsAmneziaWG`/`SuspendAmneziaWG`), selector-guard
+> (`protocol/group/awg_selector_guard.go` целиком + хуки в `selector.go`/
+> `urltest.go`), adapter-маркеры (`OutboundManager.ConsumersOf`,
+> `AmneziaWGSuspendable`) и все guard-тесты. SPEC 020 idle-suspend (общий
+> `Suspend/Resume` и `suspended`-флаг) **сохранён** — инвариант «остановленный
+> endpoint не воскрешать по dial» жив, тесты переименованы `guardSuspended` →
+> `stopped`.
+>
+> Текст ниже — исторический (описывает удалённый guard и старую диагностику).
 
 Отклонять (по образцу ядрового запрета «empty direct detour») конфигурацию, где
 AmneziaWG-endpoint (источник с AWG-полями) имеет `detour` на **любой

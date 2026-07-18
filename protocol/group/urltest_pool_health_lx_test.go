@@ -24,6 +24,18 @@ import (
 	"github.com/sagernet/sing/service"
 )
 
+// fakeManager resolves tags from a fixed map; just enough for URLTestGroup to
+// look up its members in these tests.
+type fakeManager struct {
+	adapter.OutboundManager
+	byTag map[string]adapter.Outbound
+}
+
+func (m *fakeManager) Outbound(tag string) (adapter.Outbound, bool) {
+	ob, ok := m.byTag[tag]
+	return ob, ok
+}
+
 // testDialNode is an adapter.Outbound whose DialContext either connects to a
 // local HTTP server (alive) or fails (dead). Just enough for testNodes/Select.
 type testDialNode struct {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 	"net/netip"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,28 +44,14 @@ type Endpoint struct {
 	localAddresses []netip.Prefix
 	endpoint       *wireguard.Endpoint
 	started        atomic.Bool
-	// lx:begin awg
-	// awgActive marks this endpoint as running AmneziaWG (AmneziaWGOptions.IsSet());
-	// detour is its configured upstream tag. Start uses them to refuse to bring up
-	// an AmneziaWG-over-WireGuard chain, which hangs the kernel on Android — see
-	// awgDetourChainReachesWireGuard. The ledger lives here (not just in the dialer
-	// guard) because the hang happens synchronously in Start, before any dial.
-	awgActive bool
-	detour    string
-	// awgChainBlocked is set by Start when the AmneziaWG-over-WireGuard guard
-	// fires: the device is left unstarted (started stays false) so no junk
-	// handshake runs and the kernel cannot hang, while the rest of the instance
-	// comes up. PostStart then skips this endpoint too.
-	awgChainBlocked bool
-	// lx:end awg
 	// lx:begin idle-suspend
 	// SPEC 020 idle-suspend state. lastActivity is the unix-nano timestamp of the
 	// last dial through this endpoint, stamped at PostStart and on every dial entry.
 	// idleAsleep is true while the endpoint is Down due to idle-suspend (distinct
-	// from a guard-suspend, which sets started=false and clears idleAsleep, so a
-	// guard-suspended endpoint fast-paths out of resumeOnDial and is never
-	// idle-woken). resumeMu serialises the idle tick's suspend decision, a dial's
-	// wake, and the AmneziaWG guard-suspend against one another.
+	// from a deliberately-stopped endpoint, which has started=false and
+	// idleAsleep=false, so it fast-paths out of resumeOnDial and is never
+	// idle-woken). resumeMu serialises the idle tick's suspend decision against a
+	// dial's wake.
 	lastActivity atomic.Int64
 	idleAsleep   atomic.Bool
 	resumeMu     sync.Mutex
@@ -100,11 +85,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		dnsRouter:      service.FromContext[adapter.DNSRouter](ctx),
 		logger:         logger,
 		localAddresses: options.Address,
-		// lx:begin awg
-		awgActive: options.AmneziaWGOptions.IsSet(),
-		detour:    options.Detour,
-		// lx:end awg
-		listenMode: options.ListenPort != 0, // lx: SPEC 020 — no dial path, never idle-suspend
+		listenMode:     options.ListenPort != 0, // lx: SPEC 020 — no dial path, never idle-suspend
 	}
 	if options.Detour != "" && options.ListenPort != 0 {
 		return nil, E.New("`listen_port` is conflict with `detour`")
@@ -200,35 +181,6 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 }
 
 func (w *Endpoint) Start(stage adapter.StartStage) error {
-	// lx:begin awg
-	// Refuse to bring up an AmneziaWG endpoint whose detour chain reaches a
-	// WireGuard-based endpoint: encapsulating AWG (junk handshake) inside a
-	// WireGuard tunnel hangs the kernel on Android. The hang happens here, in the
-	// synchronous Start path (peer-domain resolution over the detour, then the
-	// device's junk handshake) — before any dial — so it must be caught at Start.
-	//
-	// Behaviour is "variant B": do NOT return an error (that would abort the whole
-	// instance start). Instead log, skip device startup, and leave started=false
-	// so the rest of the config comes up and every dial through this endpoint
-	// fails cleanly with "WireGuard is not ready yet". A selector/urltest in the
-	// middle is resolved through its CURRENT choice (outbounds start before
-	// endpoints, so a selector has already applied its cached/default selection —
-	// the restart-with-persisted-WG-selection case). Later switches are covered
-	// by the runtime guard in protocol/group (selector switch, urltest
-	// auto-switch, pool rebuild).
-	if stage == adapter.StartStateStart && w.awgActive && w.detour != "" {
-		if outboundManager := service.FromContext[adapter.OutboundManager](w.ctx); outboundManager != nil {
-			if blockedBy := awgDetourChainReachesWireGuard(outboundManager, w.detour, make(map[string]bool)); blockedBy != "" {
-				w.awgChainBlocked = true
-				w.logger.Error("amneziawg endpoint will not start: its detour chain reaches wireguard-based endpoint ", strconv.Quote(blockedBy), " — amneziawg over wireguard is not supported. Use a non-wireguard detour (e.g. vless).")
-				return nil
-			}
-		}
-	}
-	if w.awgChainBlocked {
-		return nil
-	}
-	// lx:end awg
 	switch stage {
 	case adapter.StartStateStart:
 		return w.endpoint.Start(false)
@@ -244,89 +196,6 @@ func (w *Endpoint) Start(stage adapter.StartStage) error {
 	}
 	return nil
 }
-
-// lx:begin awg
-// awgDetourChainReachesWireGuard walks the transitive detour chain starting at
-// tag and returns the tag of the first WireGuard-based outbound it reaches
-// (type "wireguard", covering plain WireGuard and AmneziaWG), or "" if none.
-// It follows each outbound's detour dependency. A selector/urltest group is
-// resolved through its CURRENT choice — ActiveTags() (whole round_robin pool)
-// when available, else Now() — which is valid here because outbounds start
-// before endpoints, so a selector has already restored its cached/default
-// selection by the time this runs (the app-restart case that previously slipped
-// past the guard). Later runtime switches are covered by the guard calls in
-// protocol/group. visited guards against cyclic detour configs. All outbounds
-// are registered before any Start, so every tag in the chain is resolvable here
-// even though some may not have started yet.
-func awgDetourChainReachesWireGuard(outboundManager adapter.OutboundManager, tag string, visited map[string]bool) string {
-	if tag == "" || visited[tag] {
-		return ""
-	}
-	visited[tag] = true
-	outbound, loaded := outboundManager.Outbound(tag)
-	if !loaded {
-		return ""
-	}
-	if outbound.Type() == C.TypeWireGuard {
-		return tag
-	}
-	if group, isGroup := outbound.(adapter.OutboundGroup); isGroup {
-		// Resolve the group through what it would dial RIGHT NOW: the whole
-		// current pool for round_robin urltest, the single current choice
-		// otherwise. Descending All() instead would permanently block an AWG
-		// endpoint over a mixed group whose live pick is safe.
-		if active, ok := outbound.(interface{ ActiveTags() []string }); ok {
-			for _, memberTag := range active.ActiveTags() {
-				if blockedBy := awgDetourChainReachesWireGuard(outboundManager, memberTag, visited); blockedBy != "" {
-					return blockedBy
-				}
-			}
-			return ""
-		}
-		return awgDetourChainReachesWireGuard(outboundManager, group.Now(), visited)
-	}
-	for _, dependency := range outbound.Dependencies() {
-		if blockedBy := awgDetourChainReachesWireGuard(outboundManager, dependency, visited); blockedBy != "" {
-			return blockedBy
-		}
-	}
-	return ""
-}
-
-// IsAmneziaWG reports whether this endpoint runs AmneziaWG. Implements
-// adapter.AmneziaWGSuspendable.
-func (w *Endpoint) IsAmneziaWG() bool {
-	return w.awgActive
-}
-
-// SuspendAmneziaWG brings the device down and marks the endpoint not-ready, so a
-// junk handshake is never sent and every dial fails with "WireGuard is not ready
-// yet". Called by the selector guard when a group this endpoint detours through
-// switches to a WireGuard member (AmneziaWG over WireGuard hangs the kernel on
-// Android). Idempotent. Implements adapter.AmneziaWGSuspendable.
-func (w *Endpoint) SuspendAmneziaWG() {
-	// Take resumeMu so this is ordered against resumeOnDial/SuspendIfIdle: without
-	// it, a dial that already passed resumeOnDial's idleAsleep checks could wake
-	// the endpoint back up right after we clear the flag, defeating the guard.
-	w.resumeMu.Lock()
-	defer w.resumeMu.Unlock()
-	if w.started.CompareAndSwap(true, false) {
-		w.logger.Error("amneziawg endpoint suspended: a selector in its detour chain switched to a wireguard-based member — amneziawg over wireguard is not supported")
-	}
-	// Clear any idle-suspend state so resumeOnDial does not resurrect a
-	// guard-suspended endpoint: if it was idle-asleep first, idleAsleep would still
-	// be true and the next dial would wake it (SPEC 022 #2). With idleAsleep=false
-	// resumeOnDial's fast path returns started (now false) and the endpoint stays down.
-	// lx: SPEC 020 level 3 — torndown is cleared for the same reason (a torn-down
-	// endpoint must not be rebuilt by a dial once the guard owns it); the device is
-	// already released in that case, so Suspend below is a no-op.
-	w.idleAsleep.Store(false)
-	w.torndown.Store(false)
-	w.sleepSince.Store(0)
-	w.endpoint.Suspend()
-}
-
-// lx:end awg
 
 // lx:begin idle-suspend
 
@@ -357,8 +226,8 @@ func (w *Endpoint) IdleSince() time.Duration {
 // holder — when it is unreachable from the active routing tree AND has been idle
 // past the threshold. Silent on every non-transition (edge-triggered logging).
 //
-// It never touches a guard-suspended endpoint: that one already has
-// started==false but idleAsleep==false, and the `!started` guard below short-
+// It never touches a deliberately-stopped endpoint: that one already has
+// started==false but idleAsleep==false, and the `!started` check below short-
 // circuits before the CAS. resumeMu mutually excludes this against resumeOnDial.
 func (w *Endpoint) SuspendIfIdle(reachable bool, threshold time.Duration, reachableThreshold time.Duration) {
 	w.resumeMu.Lock()
@@ -380,7 +249,7 @@ func (w *Endpoint) SuspendIfIdle(reachable bool, threshold time.Duration, reacha
 		return
 	}
 	if !w.started.Load() {
-		// Already down some other way (guard-suspend, awg-chain-blocked, closed).
+		// Already down some other way (deliberately stopped, closed).
 		return
 	}
 	// Established flows never re-enter the dial path (app→conn→netstack→device),
@@ -429,10 +298,10 @@ func (w *Endpoint) SleepSince() time.Duration {
 // dial rebuilds it (~0.5-1 s) instead of the ~1 RTT a merely-suspended endpoint
 // pays; that trade is the whole point of the level.
 //
-// Only ever touches an endpoint that is already idle-asleep, so every guard that
-// gated the suspend (reachability, live flows, listen-mode, AWG guard) has
-// already been honoured: a guard-suspended endpoint has idleAsleep=false and is
-// skipped here, and a woken endpoint clears idleAsleep under the same mutex.
+// Only ever touches an endpoint that is already idle-asleep, so every gate that
+// blocked the suspend (reachability, live flows, listen-mode) has already been
+// honoured: a deliberately-stopped endpoint has idleAsleep=false and is skipped
+// here, and a woken endpoint clears idleAsleep under the same mutex.
 func (w *Endpoint) TeardownIfSlept(threshold time.Duration) {
 	if threshold <= 0 {
 		return
@@ -459,7 +328,7 @@ func (w *Endpoint) TeardownIfSlept(threshold time.Duration) {
 // session); that cost is on the first packet, as for any cold WG dial.
 //
 // Returns true if the endpoint is dialable (awake), false if it must stay down
-// (guard-suspend / chain-blocked — not an idle-suspend, so we do not resurrect it).
+// (deliberately stopped / closed — not an idle-suspend, so we do not resurrect it).
 func (w *Endpoint) resumeOnDial() bool {
 	w.stampActivity()
 	if !w.idleAsleep.Load() {

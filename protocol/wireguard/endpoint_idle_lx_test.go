@@ -105,19 +105,20 @@ func TestSuspendIfIdle_idempotentCAS(t *testing.T) {
 
 // TestSuspendIfIdle_guardSuspendedNotTouched is the §8 invariant verified live on
 // an AWG-over-WG endpoint (wg-3 in the prod run): a guard-suspended endpoint has
-// started=false WITHOUT idleAsleep. The idle tick must early-return on !started and
-// NOT flip idleAsleep — otherwise a later resumeOnDial would idle-wake it and
-// re-trigger the AWG-over-WG kernel hang the guard exists to prevent.
-func TestSuspendIfIdle_guardSuspendedNotTouched(t *testing.T) {
+// started=false WITHOUT idleAsleep (a deliberately-stopped endpoint: Close, or a
+// start that never completed). The idle tick must early-return on !started and NOT
+// flip idleAsleep — otherwise a later resumeOnDial would idle-wake a device that
+// was intentionally down.
+func TestSuspendIfIdle_stoppedNotTouched(t *testing.T) {
 	w := newIdleTestEndpoint()
-	w.started.Store(false) // guard-suspend (device.Down at Start), idleAsleep stays false
+	w.started.Store(false) // stopped, idleAsleep stays false
 	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
 	w.SuspendIfIdle(false, 30*time.Second, 0)
 	if w.idleAsleep.Load() {
-		t.Fatal("a guard-suspended endpoint must NOT be flagged idleAsleep by the tick")
+		t.Fatal("a stopped endpoint must NOT be flagged idleAsleep by the tick")
 	}
 	if w.started.Load() {
-		t.Fatal("the tick must not change started for a guard-suspended endpoint")
+		t.Fatal("the tick must not change started for a stopped endpoint")
 	}
 }
 
@@ -275,50 +276,29 @@ func TestTeardownIfSlept_disabledAndAwake(t *testing.T) {
 }
 
 // TestTeardownIfSlept_guardSuspendedNotTornDown pins the SPEC 007 invariant at
-// level 3: a guard-suspended endpoint has idleAsleep=false, so the teardown pass
-// must skip it (a torn-down guard endpoint could be rebuilt by a dial).
-func TestTeardownIfSlept_guardSuspendedNotTornDown(t *testing.T) {
+// level 3: a deliberately-stopped endpoint has idleAsleep=false, so the teardown
+// pass must skip it (only an idle-asleep endpoint is a teardown candidate).
+func TestTeardownIfSlept_stoppedNotTornDown(t *testing.T) {
 	w := newIdleTestEndpoint()
-	w.started.Store(false) // guard-suspend: started=false WITHOUT idleAsleep
+	w.started.Store(false) // stopped: started=false WITHOUT idleAsleep
 	w.sleepSince.Store(time.Now().Add(-time.Hour).UnixNano())
 	w.TeardownIfSlept(time.Minute)
 	if w.torndown.Load() {
-		t.Fatal("a guard-suspended endpoint must not be torn down by the idle tick")
+		t.Fatal("a stopped endpoint must not be torn down by the idle tick")
 	}
 }
 
-// TestSuspendAmneziaWG_clearsTeardownState: if the guard takes over an already
-// torn-down endpoint, it must clear torndown too — otherwise resumeOnDial's
-// rebuild branch would resurrect exactly what the guard is holding down.
-func TestSuspendAmneziaWG_clearsTeardownState(t *testing.T) {
+func TestResumeOnDial_stoppedNotWoken(t *testing.T) {
+	// A deliberately-stopped endpoint (Close / failed start) has started=false but
+	// idleAsleep=false. resumeOnDial must NOT wake it (returns started, i.e. false).
 	w := newIdleTestEndpoint()
-	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
-	w.SuspendIfIdle(false, 30*time.Second, 0)
-	w.sleepSince.Store(time.Now().Add(-time.Hour).UnixNano())
-	w.TeardownIfSlept(time.Minute)
-	if !w.torndown.Load() {
-		t.Fatal("precondition: must be torn down")
-	}
-	w.SuspendAmneziaWG()
-	if w.torndown.Load() || w.idleAsleep.Load() {
-		t.Fatal("the guard must clear both idle flags so no dial can rebuild the endpoint")
-	}
-	if ok := w.resumeOnDial(); ok {
-		t.Fatal("a dial must not resurrect a guard-owned endpoint")
-	}
-}
-
-func TestResumeOnDial_guardSuspendedNotWoken(t *testing.T) {
-	// A guard-suspended endpoint has started=false but idleAsleep=false.
-	// resumeOnDial must NOT wake it (returns started, i.e. false).
-	w := newIdleTestEndpoint()
-	w.started.Store(false) // simulate guard/awg-chain suspend (not idle)
+	w.started.Store(false) // stopped, not idle-suspended
 	ok := w.resumeOnDial()
 	if ok {
-		t.Fatal("resumeOnDial must not resurrect a guard-suspended (non-idle) endpoint")
+		t.Fatal("resumeOnDial must not resurrect a stopped (non-idle) endpoint")
 	}
 	if w.idleAsleep.Load() {
-		t.Fatal("guard-suspended endpoint must not be flagged idleAsleep")
+		t.Fatal("stopped endpoint must not be flagged idleAsleep")
 	}
 }
 
