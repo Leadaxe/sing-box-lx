@@ -1,5 +1,8 @@
 # TASKS — 007-B-AWG_OVER_WIREGUARD_DETOUR_GUARD
 
+> ⛔️ **ИСТОРИЧЕСКИЙ ДОКУМЕНТ.** Guard **удалён из ядра 2026-07-18** (см.
+> [SPEC.md](SPEC.md)). Чек-лист ниже относится к реализации, которой больше нет.
+
 ## Итерация 1 — ленивый dialer-guard (lx.8) — ОТКАЧЕНА
 - [x] guard в `common/dialer/detour.go` `init()` + проброс через `dialer.Options`
 - [x] **Удалено** (не сработало на устройстве; `common/dialer/{detour,dialer}.go` → upstream)

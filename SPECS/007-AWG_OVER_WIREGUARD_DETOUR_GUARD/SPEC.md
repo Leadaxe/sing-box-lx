@@ -2,228 +2,215 @@
 
 | Поле | Значение |
 |------|----------|
-| Тип | B (bug) |
-| Статус | C (complete) — guard **снят** (см. баннер ниже) |
+| Тип | B (bug) → guard снят |
+| Статус | C (complete). Guard **удалён 2026-07-18** — первопричина ушла на новом графте. Ниже: чем был, почему снят, что удалено, что осталось. |
 
-> ## ⛔️ Guard снят (2026-07-18) — первопричина ушла на новом графте
-> **Оба guard'а (Start-guard + selector-guard) удалены из ядра.** На текущей
-> базе (v1.14.0-lx.10: re-graft AWG 2.0 на `sagernet/wireguard-go` v0.0.5 +
-> SPEC 025 transport-padding fix + SPEC 026 reserved-clear gate) связка
-> **AmneziaWG-over-WireGuard больше не вешает ядро** — она поднимается и несёт
-> трафик.
->
-> **Как проверено (mac-стенд, 2026-07-18):** два процесса sing-box CLI на
-> loopback. Верхний AWG-endpoint (`jc=4, s4=12`, ranged `h1..h4`) с `detour` на
-> нижний плоский WireGuard; серверная сторона — WG-сервер + AWG-сервер за
-> route-правилом (`override_address`). Handshake верхнего AWG через нижний WG
-> проходит, keepalive идут в обе стороны, HTTP через socks (обе оболочки
-> насквозь) отвечает `200/301`. Guard на время эксперимента обходился временным
-> env-гейтом, затем удалён насовсем.
->
-> **Почему раньше висло, а теперь нет:** диагноз ниже (блокирующий `SendBuffers`
-> под `net.RLock()`) ставился на старой базе `v1.13.13` и статикой **не
-> доказывался** — задача была про guard, не про лечение. На новом графте
-> детур-путь AWG чинил именно SPEC 026 (lx.9): reserved-clear в `ClientBind`
-> раньше затирал AWG-magic, из-за чего AWG через **любой** detour не поднимался.
->
-> **Осталось:** field-тест на Android (старое зависание было
-> Android-специфичным симптомом — `Libbox.newService` не возвращал управление;
-> mac-стенд это не покрывает на 100%). App-side §130-гейт LxBox снят синхронно.
->
-> **Что удалено из ядра:** Start-guard (`protocol/wireguard/endpoint.go`:
-> `awgDetourChainReachesWireGuard`, поля `awgActive/detour/awgChainBlocked`,
-> `IsAmneziaWG`/`SuspendAmneziaWG`), selector-guard
-> (`protocol/group/awg_selector_guard.go` целиком + хуки в `selector.go`/
-> `urltest.go`), adapter-маркеры (`OutboundManager.ConsumersOf`,
-> `AmneziaWGSuspendable`) и все guard-тесты. SPEC 020 idle-suspend (общий
-> `Suspend/Resume` и `suspended`-флаг) **сохранён** — инвариант «остановленный
-> endpoint не воскрешать по dial» жив, тесты переименованы `guardSuspended` →
-> `stopped`.
->
-> Текст ниже — исторический (описывает удалённый guard и старую диагностику).
+## 0. TL;DR
 
-Отклонять (по образцу ядрового запрета «empty direct detour») конфигурацию, где
-AmneziaWG-endpoint (источник с AWG-полями) имеет `detour` на **любой
-WireGuard-based** endpoint — плоский WireGuard **или** AmneziaWG. По пакетам это
-AWG-трафик, инкапсулированный внутри WireGuard-туннеля; на Android такая связка
-**вешает ядро**. `detour` AWG-ноды на не-WireGuard outbound (VLESS, Trojan,
-direct, …) — рабочий сценарий и остаётся разрешённым.
+Эта задача поставила **guard** против связки «AmneziaWG-нода с `detour` на
+WireGuard-туннель»: на старой базе (`v1.13.13`) такая конфигурация **вешала
+ядро на Android**. Guard не поднимал такой узел (вариант B: ядро живёт, узел не
+встаёт, ошибка в лог).
 
-Баг в фиче [003 AWG2_CLIENT_ENDPOINT](../003-AWG2_CLIENT_ENDPOINT) **нашей**
-дельты (AWG-проводка + merged-форк wireguard-go), не upstream → в скоупе по
-CONSTITUTION §3.1.
+**2026-07-18 guard удалён из ядра целиком.** На текущей базе
+(`v1.14.0-lx.10`) связка AmneziaWG-over-WireGuard **больше не вешает ядро** —
+поднимается и несёт трафик (проверено e2e). Первопричину вылечили смежные
+задачи (см. §2). Осталось — **Android field-тест** (историческое зависание было
+Android-специфичным).
 
 ---
 
-## 1. Проблема / контекст
+## 1. Чем был guard (историческая проблема)
 
-Матрица из тестов на устройстве (автор):
+### 1.1 Симптом
 
-| Источник (`detour`-ит) | Цель | Результат |
+Матрица из тестов автора на устройстве (база `v1.13.13`):
+
+| Источник (`detour`-ит) | Цель | Результат (тогда) |
 |---|---|---|
-| **AWG** | **WG** (плоский WireGuard) | ❌ беда (ядро виснет / handshake не уходит) |
-| **AWG** | **AWG** | ❌ беда |
+| **AWG** | **WG** (плоский WireGuard) | ❌ ядро виснет / handshake не уходит |
+| **AWG** | **AWG** | ❌ то же |
 | **AWG** | **VLESS** | ✅ работает |
 | **WG** (без AWG-полей) | AWG | ✅ работает |
 
-Вывод: триггер — **источник AWG + цель = любой WireGuard-туннель**, а не «два junk-слоя».
-По пакетам — AWG внутри WG. По конфигу — «у ноды AWG прописан `detour` на WG/AWG».
+Триггер — **источник AWG + цель = любой WireGuard-туннель** (AWG внутри WG по
+пакетам). По конфигу — «у ноды AWG прописан `detour` на WG/AWG».
 
-Механика (статический разбор `submodules/wireguard-go`):
-`SendHandshakeInitiation` (device/send.go) синхронно генерирует junk и зовёт
-`SendBuffers` → `bind.Send()` **без таймаута на запись**, удерживая
-`device.net.RLock()`. Когда AWG-трафик заворачивается в WireGuard-устройство,
-запись блокируется на нижнем туннеле; на Android (нет watchdog) это проявляется
-как зависание. Точную первопричину статикой **не доказали** — для guard это и не
-нужно: цель — **быстро отклонять** заведомо опасную связку, пока (отдельной
-задачей) не вылечена сама блокировка в wireguard-go.
+### 1.2 Предполагавшаяся механика (статикой не доказана)
 
-## 2. Цель
+Разбор `submodules/wireguard-go`: `SendHandshakeInitiation` (device/send.go)
+синхронно генерирует junk и зовёт `SendBuffers` → `bind.Send()` **без таймаута
+на запись**, удерживая `device.net.RLock()`. Когда AWG-трафик заворачивается в
+WireGuard-устройство, запись блокируется на нижнем туннеле; на Android (нет
+watchdog) — зависание. **Первопричину статикой не доказывали** — задача была про
+guard, не про лечение.
 
-AWG-нода с `detour` на WireGuard-based цель **не поднимает соединение**.
-Поведение — **вариант B** (согласовано с автором и
-[LxBox §128](https://github.com/Leadaxe/LxBox/blob/develop/docs/spec/tasks/128-force-direct-out-detour.md)):
-ядро стартует, остальные узлы работают, эта нода не встаёт, ошибка в логе. **Не
-крашимся.**
+Баг в фиче [003 AWG2_CLIENT_ENDPOINT](../003-AWG2_CLIENT_ENDPOINT) **нашей**
+дельты (AWG-проводка + merged-форк wireguard-go), не upstream → был в скоупе по
+CONSTITUTION §3.1.
 
-> **Ревизия 2026-06-16 (см. IMPLEMENTATION_REPORT):** реализация прошла итерации.
->
-> 1. **lx.8 — ленивый guard в `DetourDialer.init()`** (на первом dial). Field-тест
->    показал: **не срабатывает** — AWG→WG виснет синхронно в `Endpoint.Start`
->    (резолв peer-домена через detour + junk-handshake), **до** первого dial.
->    **Удалён** (непроверяем в UI, `sync.Once`-кэш не ловит смену селектора).
-> 2. **lx.9 — Start-guard в `protocol/wireguard.Endpoint.Start`** (статический обход
->    транзитивной detour-цепи; device не поднимается). **Field-verified на Android.**
-> 3. **selector-guard в `protocol/group` (`SelectOutbound`)** — закрывает случай
->    «селектор по середине», который Start-guard статически пропускает: при
->    переключении селектора на член, ведущий к WireGuard, **до** коммита выбора
->    гасятся (suspend → `device.Down`, `started=false`) все AmneziaWG-потребители,
->    что detour-ят на эту группу (транзитивно вверх через `ConsumersOf`).
->
-> **Итог: два дополняющих guard'а — Start-guard (статический, прямая цепь) +
-> selector-guard (рантайм, переключение селектора).** Оба дают вариант B и не
-> крашатся. Гашение selector-guard'ом — **до** переключения, поэтому AWG-потребитель
-> опущен раньше, чем группа укажет на WG → гонки нет.
->
-> **Ревизия 2026-07-15 (аудит связки SPEC 019/020):** найдены и закрыты три дыры
-> покрытия: (1) Start-guard останавливался на группе, а «lazy DetourDialer guard»,
-> на который ссылались комментарии, был удалён ещё в lx.8 → восстановленный из
-> cache-file WG-выбор селектора проходил мимо обоих guard'ов (kernel hang на
-> рестарте приложения); теперь Start-guard разрешает группы через текущий выбор.
-> (2) urltest (auto-switch и round_robin-пул) не имел guard'а вовсе → добавлен
-> §3.3(c). (3) `onPauseUpdated` безусловным `device.Up()` воскрешал guard-опущенный
-> AWG на screen-on/смене сети → добавлен §3.3(d).
+### 1.3 Что guard делал (вариант B)
 
-## 3. Требования
+Ядро стартует, прочие узлы работают, AWG-over-WG узел не встаёт, ошибка в лог.
+**Не крашились.** Реализация прошла три итерации (полностью — в
+[IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md), кратко — в §5 ниже):
 
-### 3.1 Критерий «источник»
-- Источник-триггер — AWG-endpoint: `option.AmneziaWGOptions.IsSet()` (любое
-  AWG-поле). Плоский WG источником-триггером **не** является (WG→AWG разрешён).
+1. **lx.8 — ленивый guard в `DetourDialer.init()`** (на первом dial). Не
+   сработал: зависание синхронно в `Endpoint.Start`, до первого dial. **Откачен.**
+2. **lx.9 — Start-guard в `protocol/wireguard.Endpoint.Start`** — статический
+   транзитивный обход detour-цепи; device не поднимался. Field-verified на Android.
+3. **selector-guard в `protocol/group`** — для случая «селектор/urltest по
+   середине» (рантайм-цель, статикой не видна): при переключении группы на
+   WireGuard-член гасил AWG-потребителей **до** коммита выбора.
 
-### 3.2 Критерий «цель»
-- Цель-триггер — **любой WireGuard-based outbound**: `Type() == C.TypeWireGuard`
-  (один тип `"wireguard"` покрывает и плоский WG, и AWG — AWG отличается лишь
-  набором полей, тип тот же). Решение автора: детектировать **по типу**.
-- Цепочка обходится **транзитивно** по `detour` (через `OutboundManager.Outbound`
-  + `Dependencies()`): AWG→X→…→WG ловится на любой глубине. Защита от циклов — set
-  посещённых тегов.
-- Группа (selector/urltest) в цепи разрешается через её **текущий выбор**:
-  `ActiveTags()` (весь пул round_robin), иначе `Now()`. Это валидно на Start —
-  outbound-стадия выполняется раньше endpoint-стадии (`box.go preStart`/`start`),
-  поэтому селектор уже восстановил выбор из cache-file (сценарий «выбрали
-  WG-член → рестарт приложения» ловится статически). Спуск по `All()` запрещён —
-  он навечно блокировал бы AWG над смешанной группой, чей живой выбор безопасен.
-  Смены выбора ПОСЛЕ старта ловит рантайм-guard (§3.3). Не-WireGuard цели
-  (VLESS и т.д.) — **не** триггер.
+Итого перед удалением стояли **два дополняющих guard'а** + pause-wake-гейт, не
+воскрешающий погашенный узел.
 
-### 3.3 Где ловить — Start-guard + рантайм-guard'ы групп
+---
 
-**(a) Start-guard** — `protocol/wireguard.Endpoint.Start` (стадия `StartStateStart`),
-**до** `w.endpoint.Start()`. Зависание происходит синхронно в `Start` (резолв
-peer-домена через detour + junk-handshake), до первого dial — ленивый guard туда не
-успевает (доказано на lx.8). Источник — `Endpoint.awgActive`
-(`AmneziaWGOptions.IsSet()`); цель — `awgDetourChainReachesWireGuard(...)`
-(транзитивный обход detour; группы разрешаются через текущий выбор, §3.2).
-Поведение — **вариант B**: device не поднимается, `started=false`, `return nil`
-(НЕ error — иначе abort инстанса), ошибка в лог. Все outbound'ы зарегистрированы
-до любого `Start`.
+## 2. Почему guard снят (2026-07-18)
 
-**(b) selector-guard** — `protocol/group.Selector.SelectOutbound`, **до** коммита
-выбора (`s.selected.Store`). Если новый член ведёт к WireGuard
-(`chainReachesWireGuard`: сам тип / detour вниз / вложенные группы), идём **вверх**
-по `OutboundManager.ConsumersOf` (reverse-deps, транзитивно: AWG→vless→group) и для
-каждого потребителя с `IsAmneziaWG()` зовём `SuspendAmneziaWG()` (`device.Down`,
-`started=false`). Гашение **до** `Store` → к моменту переключения AWG уже опущен,
-его reconnect вернёт «not ready» → junk в WG не уйдёт (**гонки нет**). Лог — при
-реальном гашении (`CompareAndSwap(true,false)`), без спама на повторных переключениях.
+### 2.1 Первопричина ушла на новом графте
 
-**(c) urltest-guard** — те же условия и механизм, что (b), на обеих точках смены
-активного выбора urltest-группы:
-- **legacy auto-switch** — `URLTestGroup.performUpdateCheck`: при смене
-  `selectedOutbound{TCP,UDP}` (включая первый выбор) новый узел проверяется
-  `chainReachesWireGuard` **до** коммита; совпадение гасит AWG-потребителей группы.
-- **round_robin pool rebuild** — `balancer.onChange` (после `setSlots`):
-  `suspendAmneziaWGConsumersOnPool` — если **любой** член нового пула ведёт к
-  WireGuard, AWG-потребители группы гасятся (pick может направить их в него на
-  любом следующем соединении).
+С момента постановки задачи ядро сменило базу и вылечило детур-путь AWG тремя
+смежными задачами:
 
-**(d) pause-wake не воскрешает guard.** Транспортный `Endpoint` держит флаг
-`suspended` (ставится `Suspend()`, снимается `Resume()`); `onPauseUpdated` на
-`DeviceWake`/`NetworkWake` **не** поднимает suspended-устройство. Без этого
-screen-off/on или смена сети делали `device.Up()` guard-опущенному AWG: Down
-занулил сессию, `Up` (с keepalive-пиром) инициировал бы свежий junk-handshake в
-WG-цепь — в обход всех guard'ов.
+- **lx.8 — re-graft AmneziaWG 2.0 на `sagernet/wireguard-go` v0.0.5** (новый
+  фундамент вместо `v1.13.13`, на котором ставился диагноз §1.2).
+- **[SPEC 025](../025-AWG_TRANSPORT_PADDING_OVERRUN) — s4 transport-padding
+  overrun** (краш `send.go` на каждом data-пакете при `s4>0`).
+- **[SPEC 026](../026-AWG_MAGIC_VS_RESERVED_CLEAR) — reserved-clear gate
+  (lx.9)** — ключевое для detour: `ClientBind` (bind detour-пути) безусловно
+  затирал байты 1-3, разрушая ranged AWG-magic → AWG через **любой** `detour` не
+  поднимался вовсе. После гейта `hasReserved()` детур-путь AWG ожил.
 
-### 3.4 Изоляция (CONSTITUTION §3.2–3.3)
-- Start-guard — `// lx:` блоки в `protocol/wireguard/endpoint.go` +
-  `transport/wireguard/endpoint.go` (`Suspend()`); тест `awg_start_guard_test.go`.
-- selector-guard — новый файл `protocol/group/awg_selector_guard.go` + один вызов в
-  `selector.go`; маркер `adapter.AmneziaWGSuspendable` и `OutboundManager.ConsumersOf`
-  в `adapter/outbound.go` + `adapter/outbound/manager.go` (`// lx:`); тест
-  `awg_selector_guard_test.go`.
-- `common/dialer/{detour,dialer}.go` ревизией 2026-06-16 **возвращены к upstream**.
-- Поведение **без** `with_awg` не меняется: AWG-конфиг отвергается раньше; для
-  плоского WG `awgActive=false`/`IsAmneziaWG()==false` → guard'ы no-op.
+Старый диагноз (§1.2) на новой базе не перепроверялся и статикой никогда не
+доказывался. На практике связка теперь поднимается.
 
-## 4. Критерии приёмки
+### 2.2 Как проверено (mac-стенд, 2026-07-18)
 
-- AWG `detour`→WG и AWG `detour`→AWG: узел не поднимается, ошибка в лог; ядро и
-  прочие узлы живут (вариант B). ✅ field-verified на Android lx.9.
-- AWG `detour`→VLESS и WG `detour`→AWG: проходит.
-- AWG→X→…→WG (транзитивно по detour): ловится Start-guard'ом; циклы не виснут.
-- AWG `detour`→селектор с **восстановленным из кэша** WG-выбором: ловится
-  Start-guard'ом на рестарте (обход через `Now()`); безопасный текущий выбор при
-  WG-члене в `All()` — НЕ блокируется.
-- Переключение селектора на WG-член при AWG-потребителе: AWG suspend **до** выбора;
-  не-AWG потребители не трогаются; переключение на не-WG ничего не гасит.
-- urltest: auto-switch на WG-член и pool rebuild с WG-членом гасят AWG-потребителей
-  группы; WG-free пул — нет.
-- `DeviceWake`/`NetworkWake` не поднимают suspended-устройство (idle- или
-  guard-suspend); `Resume()` (дайл) снимает флаг.
-- Юнит-тесты зелёные: `awgDetourChainReachesWireGuard` (+ группа через
-  Now/ActiveTags: `awg_chain_group_lx_test.go`), `chainReachesWireGuard` /
-  `suspendAmneziaWGConsumers` / `suspendAmneziaWGConsumersOnPool`
-  (`awg_selector_guard_test.go`), pause-wake гейт
-  (`transport/wireguard/endpoint_suspend_lx_test.go`).
-- `go build ./...` без тегов — ок; сборка с `with_awg` — ок; `gofmt -l` пусто.
-- Новое покрытие (Start-через-Now, urltest-guard, pause-гейт) юнит-тестировано;
-  общий live-прогон ревизии подтверждён на устройстве 2026-07-15 (CPH2411,
-  LxBox v2.15.4) в составе энергоревизии v1.14.0-lx.5.
+Два процесса `sing-box` CLI на loopback:
 
-## 5. Вне скоупа
+- **клиент**: верхний AWG-endpoint (`jc=4, jmin=8, jmax=80, s4=12`, ranged
+  `h1..h4`) с `detour` на нижний **плоский WireGuard**;
+- **сервер**: WG-сервер (принимает нижний туннель) + AWG-сервер за
+  route-правилом с `override_address`/`override_port` (заворачивает inner-трафик
+  верхнего туннеля во второй endpoint).
 
-- **Гонка selector-guard:** закрыта порядком (гасим до `Store`). Остаётся
-  теоретический случай, если потребитель переподключается строго между нашим
-  suspend и его собственным dial в том же тике — практически невозможен, т.к. suspend
-  синхронен и до коммита выбора.
-- **Лечение первопричины** (таймауты/неблокирующая отправка junk в
-  `submodules/wireguard-go`) — отдельная будущая задача.
-- Цепочки через route-rule action, а не `detour` — вне скоупа.
+Результат: handshake верхнего AWG **через** нижний WG проходит, keepalive идут в
+обе стороны, HTTP через socks (сквозь обе оболочки) отвечает `200/301`. Старт
+ядра не виснет (~1 c), graceful shutdown чистый. Guard на время эксперимента
+обходился временным env-гейтом, затем удалён насовсем.
 
-## 6. Ссылки
+**Диагностические грабли стенда** (не ядра, полезны на будущее):
+
+- `allowed_ips` верхнего туннеля должен покрывать целевые адреса теста
+  (`0.0.0.0/0`); суженный дал ложный след «данные не ходят» —
+  `RoutineReadFromTUN` молча дропает по `allowedips.Lookup == nil`.
+- `s4` клиента и сервера должны **совпадать**: приёмник парсит transport строго
+  по своему `paddings.transport`; при живом handshake (s1/s2 нулевые) асимметрия
+  s4 глушит данные в обе стороны.
+
+### 2.3 Что осталось (owed)
+
+**Android field-тест.** Историческое зависание было Android-специфичным
+симптомом (`Libbox.newService` не возвращал управление; в logcat последняя
+строка `defaultNetwork`, затем тишина). Mac-стенд это на 100% не покрывает —
+нужна сборка ядра с снятым guard'ом → AAR → APK → прогон связки AWG→WG на
+устройстве (CPH2411). App-side гейт §130 в LxBox снят синхронно (см. §4).
+
+---
+
+## 3. Что удалено из ядра
+
+| Слой | Удалено |
+|---|---|
+| **Start-guard** — `protocol/wireguard/endpoint.go` | функция `awgDetourChainReachesWireGuard`; поля `awgActive` / `detour` / `awgChainBlocked` и их инициализация; методы `IsAmneziaWG` / `SuspendAmneziaWG`; guard-блок в `Endpoint.Start`; импорт `strconv` |
+| **selector-guard** — `protocol/group/` | файл `awg_selector_guard.go` целиком (`chainReachesWireGuard`, `suspendAmneziaWGConsumers*`); вызов в `selector.go` (`SelectOutbound`); два вызова в `urltest.go` (`performUpdateCheck` auto-switch + `balancer.onChange` pool) |
+| **adapter-маркеры** — `adapter/` | метод `OutboundManager.ConsumersOf` (интерфейс + реализация `Manager`); интерфейс `AmneziaWGSuspendable` |
+| **тесты** | `protocol/wireguard/awg_start_guard_test.go`, `protocol/wireguard/awg_chain_group_lx_test.go`, `protocol/group/awg_selector_guard_test.go`, тест `TestSuspendAmneziaWG_clearsTeardownState` |
+
+Коммит: `5fa3a0a1` (ветка `lx-1.14`), lx-changelog `v1.14.0-lx.11`.
+
+## 3.1 Что сохранено и почему
+
+- **Транспортный `Suspend()` / `Resume()` + флаг `suspended`**
+  (`transport/wireguard/endpoint.go`) — их держит **[SPEC 020](../020-MULTI_WG_IDLE_BUFFER_HEAT)
+  idle-suspend**, а не только снятый guard. Комментарии, ссылавшиеся на AWG-guard,
+  переписаны на idle-only.
+- **`onPauseUpdated`-гейт** (`suspended`-устройство не поднимается на
+  `DeviceWake`/`NetworkWake`) — тоже SPEC 020: без него pause/wake воскрешал бы
+  idle-опущенный узел. Сохранён.
+- **`groupTag`** в urltest — нужен SPEC 020 (probe gating), не только guard'у.
+  Сохранён; из его комментария убрана ссылка на AWG-guard.
+- **`dependByTag`-леджер** в `adapter/outbound/manager.go` — upstream-механизм
+  (есть и в `dns/transport_manager.go`); guard читал его через `ConsumersOf`.
+  Леджер сохранён, снят только `ConsumersOf`.
+- **Инвариант idle-suspend «остановленный endpoint не воскрешать по dial»** —
+  жив и важен независимо от guard'а (Close / неудавшийся Start дают
+  `started=false && idleAsleep=false`). Три теста, проверявшие его, сохранены,
+  переименованы `guardSuspended*` → `stopped*`.
+
+---
+
+## 4. Синхронный снос гейта в LxBox (app-side §130)
+
+Пока стоял ядровой guard, LxBox прятал WireGuard-цели из пикера detour для
+AWG-узлов (§130), чтобы юзер не собрал заведомо мёртвую связку. Гейт снят одним
+коммитом с этим (LxBox `b1ffc66`, ветка `develop`):
+
+- `node_settings_screen.dart` — фильтр `excludeWireguard`, сброс сохранённого
+  detour, `_detourTargetIsWireguard` / `_logResetDetour`, инфо-нотка;
+- `detour_target_picker.dart` — параметр `excludeWireguard` и два фильтра;
+- `build_config.dart` — advisory `_warnAwgDetourViaWgChannels` (его причина
+  отпала) и структуры, что строились только под него;
+- словарный ключ ru.json + advisory-тест.
+
+`_isAwg` в app **оставлен** — он ещё нужен для подписи схемы «AmneziaWG
+(wireguard)».
+
+---
+
+## 5. История реализации guard'а (для контекста)
+
+> Ниже — как guard эволюционировал, пока стоял. Полностью — в
+> [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md). Актуально только как
+> объяснение, что именно снято §3.
+
+- **lx.8 — ленивый dialer-guard** (`DetourDialer.init()`, на первом dial):
+  копировал ядровой запрет «empty direct detour». Field-тест: **не сработал** —
+  AWG→WG виснет синхронно в `Endpoint.Start` (резолв peer-домена через detour +
+  junk-handshake), **до** первого dial. Откачен, `common/dialer/*` возвращены к
+  upstream.
+- **lx.9 — Start-guard** (`Endpoint.Start`, стадия `StartStateStart`): статический
+  транзитивный обход detour-цепи через `OutboundManager` + `Dependencies()`;
+  группа разрешалась через текущий выбор (`ActiveTags()`/`Now()`, не `All()`).
+  При достижении `Type()==wireguard` — device не поднимался (`return nil`,
+  вариант B). Field-verified на Android.
+- **selector-guard** (`SelectOutbound`, **до** `s.selected.Store`): при
+  переключении группы на WireGuard-член шёл **вверх** по `ConsumersOf`
+  (reverse-deps) и гасил AWG-потребителей (`SuspendAmneziaWG` → `device.Down`).
+  Гашение до коммита закрывало гонку.
+- **Ревизия 2026-07-15** (аудит SPEC 019/020) закрыла три дыры покрытия:
+  Start-guard через текущий выбор группы (рестарт с восстановленным WG-выбором),
+  urltest-guard (auto-switch + pool rebuild), pause-wake-гейт. Все три механизма
+  сняты вместе с guard'ом; **pause-wake-гейт сохранён** как часть SPEC 020 (§3.1).
+
+---
+
+## 6. Вне скоупа
+
+- **Лечение первопричины** в `submodules/wireguard-go` (таймауты/неблокирующая
+  отправка junk) — если Android field-тест выявит остаточную блокировку, это
+  отдельная задача. По e2e-стенду отдельного лечения пока не потребовалось.
+- Цепочки AWG-over-WireGuard через route-rule action, а не `detour`.
+
+## 7. Ссылки
 
 - Фича [003 AWG2_CLIENT_ENDPOINT](../003-AWG2_CLIENT_ENDPOINT)
-- LxBox §128 — образец поведения «вариант B» (ленивая detour-ошибка, ядро живёт):
-  `Leadaxe/LxBox/docs/spec/tasks/128-force-direct-out-detour.md`
-- `submodules/wireguard-go/device/send.go` (junk-генерация в SendHandshakeInitiation)
-- Образец detour-проверки: `common/dialer/detour.go` (empty-direct, upstream `fb622ccb`)
+- Смежные фиксы: [SPEC 025](../025-AWG_TRANSPORT_PADDING_OVERRUN),
+  [SPEC 026](../026-AWG_MAGIC_VS_RESERVED_CLEAR)
+- Общая машинерия, сохранённая при сносе: [SPEC 020](../020-MULTI_WG_IDLE_BUFFER_HEAT)
+- Коммиты сноса: ядро `5fa3a0a1` (`lx-1.14`), LxBox `b1ffc66` (`develop`)
+- `submodules/wireguard-go/device/send.go` — junk в `SendHandshakeInitiation`
+  (историческая механика §1.2)
