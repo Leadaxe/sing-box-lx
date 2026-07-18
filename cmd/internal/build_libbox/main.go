@@ -99,6 +99,11 @@ func init() {
 	// option anyway. Verified on-device: 8 endpoints suspended → 134 MB freed.
 	sharedTags = append(sharedTags, "with_lx_idle_suspend")
 	// lx:end idle-suspend
+	// lx: with_openvpn / with_openconnect (new in this upstream drift) are
+	// intentionally omitted — both are endpoint/server-capable transports outside
+	// the client-focused fork's scope; LxBox configs never reference them. A
+	// missing tag only yields a stub-registration error if a config uses one,
+	// which lx configs won't. Same rationale as with_usbip / with_clash_api above.
 	darwinTags = append(darwinTags, "with_dhcp", "grpcnotrace")
 	// memcTags = append(memcTags, "with_tailscale")
 	// lx:begin no-tailscale

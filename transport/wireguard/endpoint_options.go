@@ -7,6 +7,7 @@ import (
 
 	"github.com/sagernet/sing-box/option" // lx: awg — option.AmneziaWGOptions
 	"github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing/common/control"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -19,16 +20,22 @@ type EndpointOptions struct {
 	Handler      tun.Handler
 	UDPTimeout   time.Duration
 	ICMPTimeout  time.Duration
-	Dialer       N.Dialer
-	CreateDialer func(interfaceName string) N.Dialer
-	Name         string
-	MTU          uint32
-	Address      []netip.Prefix
-	PrivateKey   string
-	ListenPort   uint16
-	ResolvePeer  func(domain string) (netip.Addr, error)
-	Peers        []PeerOptions
-	Workers      int
+	UDPMapping   tun.NATMapping
+	UDPFiltering tun.NATFiltering
+	UDPNATMax    uint32
+
+	InterfaceFinder control.InterfaceFinder
+	EgressPool      *tun.UDPEgressPool
+	Dialer          N.Dialer
+	CreateDialer    func(interfaceName string) N.Dialer
+	Name            string
+	MTU             uint32
+	Address         []netip.Prefix
+	PrivateKey      string
+	ListenPort      uint16
+	ResolvePeer     func(domain string) (netip.Addr, error)
+	Peers           []PeerOptions
+	Workers         int
 	// lx:begin awg
 	// AmneziaWG 2.0 obfuscation parameters, carried from the endpoint options.
 	// Consumed only under the `with_awg` build tag (see device_awg.go); with the

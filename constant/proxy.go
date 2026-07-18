@@ -27,6 +27,9 @@ const (
 	TypeTUIC               = "tuic"
 	TypeHysteria2          = "hysteria2"
 	TypeMASQUE             = "masque"
+	TypeOpenConnect        = "openconnect"
+	TypeOpenVPNClient      = "openvpn-client"
+	TypeOpenVPNServer      = "openvpn-server"
 	TypeTailscale          = "tailscale"
 	TypeCloudflared        = "cloudflared"
 	TypeDERP               = "derp"
@@ -125,6 +128,12 @@ func ProxyDisplayName(proxyType string) string {
 		return "MASQUE"
 	case TypeAnyTLS:
 		return "AnyTLS"
+	case TypeOpenConnect:
+		return "OpenConnect"
+	case TypeOpenVPNClient:
+		return "OpenVPN Client"
+	case TypeOpenVPNServer:
+		return "OpenVPN Server"
 	case TypeTailscale:
 		return "Tailscale"
 	case TypeCloudflared:

@@ -2,6 +2,49 @@
 icon: material/alert-decagram
 ---
 
+#### 1.14.0-alpha.47
+
+* Add OpenVPN client and server support **1**
+* Add OpenConnect client support **2**
+* Fixes and improvements
+
+**1**:
+
+The new [OpenVPN Client](/configuration/endpoint/openvpn-client/) and
+[OpenVPN Server](/configuration/endpoint/openvpn-server/) endpoints are
+compatible with standard OpenVPN clients and servers. Interactive client
+authentication is available through the sing-box graphical clients and
+[Dashboard](https://github.com/SagerNet/sing-box-dashboard).
+
+**2**:
+
+The new [OpenConnect Client](/configuration/endpoint/openconnect/) endpoint
+supports Cisco AnyConnect, GlobalProtect, Fortinet, F5, Pulse Connect Secure,
+and Juniper Network Connect VPN servers. Interactive authentication is
+available through the sing-box graphical clients and
+[Dashboard](https://github.com/SagerNet/sing-box-dashboard).
+
+#### 1.14.0-alpha.46
+
+* Add multiple tags support to rule-sets **1**
+* Add new UDP NAT options **2**
+* Fixes and improvements
+
+**1**:
+
+The rule-set [`tag`](/configuration/rule-set/#tag) field now accepts a list of
+tags to define multiple rule-sets sharing other options at once, with the
+`{tag}` placeholder in `path` or `url` replaced by each tag.
+
+**2**:
+
+The new [UDP NAT](/configuration/shared/udp-nat/) fields
+[`udp_mapping`](/configuration/shared/udp-nat/#udp_mapping),
+[`udp_filtering`](/configuration/shared/udp-nat/#udp_filtering) and
+[`udp_nat_max`](/configuration/shared/udp-nat/#udp_nat_max) configure the NAT
+mapping and filtering behaviors and the maximum number of UDP NAT sessions for
+TUN and TProxy inbounds and the WireGuard endpoint.
+
 #### 1.14.0-alpha.45
 
 * Improve the Windows client application **1**

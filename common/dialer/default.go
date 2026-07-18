@@ -24,7 +24,7 @@ import (
 
 var (
 	_ ParallelInterfaceDialer = (*DefaultDialer)(nil)
-	_ WireGuardListener       = (*DefaultDialer)(nil)
+	_ UDPListener             = (*DefaultDialer)(nil)
 )
 
 type DefaultDialer struct {
@@ -381,8 +381,13 @@ func (d *DefaultDialer) ListenSerialInterfacePacket(ctx context.Context, destina
 	return d.trackPacketConn(packetConn, nil)
 }
 
-func (d *DefaultDialer) WireGuardControl() control.Func {
-	return d.udpListener.Control
+func (d *DefaultDialer) UDPListenerControl() (control.Func, bool) {
+	egressEnabled := d.autoDetectBindFunc != nil && d.netns == ""
+	listenerControl := d.udpListener.Control
+	if egressEnabled && d.networkManager.AutoRedirectOutputMark() != 0 {
+		listenerControl = control.Append(listenerControl, control.UnbindFromInterface())
+	}
+	return listenerControl, egressEnabled
 }
 
 func (d *DefaultDialer) trackConn(conn net.Conn, err error) (net.Conn, error) {

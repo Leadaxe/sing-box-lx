@@ -46,7 +46,7 @@ type Router struct {
 	ruleSetMap        map[string]adapter.RuleSet
 	ruleSetUpdater    *R.RuleSetUpdater
 	processSearcher   process.Searcher
-	processCache      freelru.Cache[processCacheKey, processCacheEntry]
+	processCache      *freelru.Cache[processCacheKey, processCacheEntry]
 	neighborResolver  adapter.NeighborResolver
 	pauseManager      pause.Manager
 	trackers          []adapter.ConnectionTracker
@@ -129,15 +129,17 @@ func (r *Router) Initialize(rules []option.Rule, ruleSets []option.RuleSet) erro
 		r.rules = append(r.rules, rule)
 	}
 	for i, options := range ruleSets {
-		if _, exists := r.ruleSetMap[options.Tag]; exists {
-			return E.New("duplicate rule-set tag: ", options.Tag)
+		for _, tag := range options.Tag {
+			if _, exists := r.ruleSetMap[tag]; exists {
+				return E.New("duplicate rule-set tag: ", tag)
+			}
+			ruleSet, err := R.NewRuleSet(r.ctx, r.logger, tag, options)
+			if err != nil {
+				return E.Cause(err, "parse rule-set[", i, "]")
+			}
+			r.ruleSets = append(r.ruleSets, ruleSet)
+			r.ruleSetMap[tag] = ruleSet
 		}
-		ruleSet, err := R.NewRuleSet(r.ctx, r.logger, options)
-		if err != nil {
-			return E.Cause(err, "parse rule-set[", i, "]")
-		}
-		r.ruleSets = append(r.ruleSets, ruleSet)
-		r.ruleSetMap[options.Tag] = ruleSet
 	}
 	return nil
 }
@@ -235,7 +237,7 @@ func (r *Router) Start(stage adapter.StartStage) error {
 			}
 		}
 		if r.processSearcher != nil {
-			processCache := common.Must1(freelru.NewSharded[processCacheKey, processCacheEntry](256, maphash.NewHasher[processCacheKey]().Hash32))
+			processCache := common.Must1(freelru.New[processCacheKey, processCacheEntry](256, maphash.NewHasher[processCacheKey]().Hash32, true))
 			processCache.SetLifetime(200 * time.Millisecond)
 			r.processCache = processCache
 		}
