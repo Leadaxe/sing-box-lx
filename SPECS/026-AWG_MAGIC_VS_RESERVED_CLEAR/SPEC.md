@@ -78,8 +78,14 @@ Reserved-байты трогаются только в WARP-режиме (reserv
 - Send-стороны уже условны (штамп reserved под `loaded` / ненулевой) — не трогать.
 
 ### 3.2 Все receive-clear
-Пять мест в форке + одно в ядре, все под `hasReserved()`:
+Шесть мест в форке + одно в ядре, все под `hasReserved()`:
 - `submodules/wireguard-go/conn/bind_std.go` `receiveIP` (linux/android batch);
+- `submodules/wireguard-go/conn/bind_std.go` egress-приём (ветка
+  `egressProvider != nil` в receive-fn из `Open`) — путь egress-anchoring из
+  upstream endpoint-listen рефактора; upstream штампует reserved там безусловно,
+  гейт `hasReserved()` наложен при re-graft на базу `6f5e8b1947ae`. Для
+  WARP-over-egress гейт всё равно срабатывает (bind заводится на `isUDPListener`
+  пути, где `SetReservedForEndpoint` вызывается для каждого peer);
 - `conn/msgx_darwin.go` `receiveSingle` + `makeReceiveMsgX` (darwin msgx —
   активный путь на darwin, `supportsMsgX=true`);
 - `conn/bind_windows.go` `receiveIPv4` + `receiveIPv6`;

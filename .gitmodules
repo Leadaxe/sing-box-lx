@@ -10,4 +10,4 @@
 [submodule "submodules/wireguard-go"]
 	path = submodules/wireguard-go
 	url = https://github.com/Leadaxe/wireguard-go-awg2-lx
-	branch = lx
+	branch = lx-awg2-v005

@@ -10,6 +10,28 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.10
+
+**Merge: upstream `testing` (tun udpnat, endpoint-listen refactor, OpenVPN /
+OpenConnect).** Pulled 15 upstream commits. The load-bearing part is an upstream
+WireGuard endpoint refactor: the dialer interface was generalised
+(`WireGuardListener` → `UDPListener`, now returning an egress flag), a UDP-NAT
+config surface was added (`udp_mapping` / `udp_filtering` / `udp_nat_max`), and an
+egress-anchoring path (`EgressPool` / `SetEgressProvider`) was introduced. Our AWG
+`NewClientBind` path and SPEC 020 idle-teardown guards are preserved; the new
+UDP-NAT fields flow through the SPEC 020 rebuild recipe. OpenVPN and OpenConnect
+land as new upstream transports but are **not** enabled in the fork's tag set
+(endpoint/server-capable, out of the client-focused scope — same stance as
+`with_usbip` / `with_clash_api` on the AAR).
+
+**Re-graft: wireguard-go egress-provider API onto the AWG2 base.** Upstream's
+`StdNetBind` gained `SetEgressProvider`, so the fork's submodule (one revision
+behind) failed to build. Applied the upstream delta and extended SPEC 026: the new
+egress receive path re-introduced an unconditional reserved-byte clear, now gated
+behind `hasReserved()` like the other five sites — so a small-padding AmneziaWG
+magic survives when no WARP reserved value is set, while WARP-over-egress still
+clears (its bind sets a reserved value). (SPEC 026 §3.2 registry: 5 → 6 sites.)
+
 #### v1.14.0-lx.9
 
 **Fix: the WARP reserved-byte clear destroyed AmneziaWG magic headers.** Bytes
