@@ -20,7 +20,9 @@ require (
 	github.com/spyzhov/ajson v0.9.4
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/goleak v1.3.0
+	golang.org/x/crypto v0.48.0
 	golang.org/x/net v0.50.0
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
@@ -191,7 +193,6 @@ require (
 	go.uber.org/zap/exp v0.3.0 // indirect
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
-	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/exp v0.0.0-20251219203646-944ab1f22d93 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
@@ -205,9 +206,14 @@ require (
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	google.golang.org/grpc v1.79.1 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/v3 v3.5.1 // indirect
 	lukechampine.com/blake3 v1.3.0 // indirect
 	zombiezen.com/go/capnproto2 v2.18.2+incompatible // indirect
 )
+
+// lx: SPEC 028 — the AWG-capable wireguard-go graft lives in the parent repo's
+// submodule; the parent's replace does not propagate to this module, so
+// without this line tests resolve upstream wireguard-go and AWG configs fail
+// with "invalid UAPI device key: jc".
+replace github.com/sagernet/wireguard-go => ../submodules/wireguard-go

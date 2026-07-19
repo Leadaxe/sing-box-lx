@@ -78,6 +78,13 @@ type Endpoint struct {
 }
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Endpoint, error) {
+	// lx: SPEC 028 — allow OS-level fragmentation of the outer UDP socket by
+	// default (parity with direct/hysteria2/tuic). Without this the dialer sets
+	// DF (IP_MTU_DISCOVER=IP_PMTUDISC_DO / IP_DONTFRAG), and an outer datagram
+	// that exceeds the path MTU — routine when this endpoint is a detour for a
+	// nested WG/AWG/MASQUE tunnel, or with AWG s4 transport junk — is silently
+	// dropped instead of fragmented. `udp_fragment: false` restores DF.
+	options.UDPFragmentDefault = true
 	ep := &Endpoint{
 		Adapter:        endpoint.NewAdapterWithDialerOptions(C.TypeWireGuard, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions),
 		ctx:            ctx,
@@ -140,7 +147,8 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		Dialer:          outboundDialer,
 		CreateDialer: func(interfaceName string) N.Dialer {
 			return common.Must1(dialer.NewDefault(ctx, option.DialerOptions{
-				BindInterface: interfaceName,
+				BindInterface:      interfaceName,
+				UDPFragmentDefault: true, // lx: SPEC 028
 			}))
 		},
 		Name:       options.Name,

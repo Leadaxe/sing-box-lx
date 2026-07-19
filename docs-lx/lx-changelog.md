@@ -10,6 +10,28 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.12-rc.1
+
+**Nested tunnels through `detour` now work — stop forcing DF on the outer UDP
+socket (SPEC 028).** A `wireguard`/AmneziaWG endpoint or a `masque` outbound
+opens its real (bottom-of-chain) UDP socket through `common/dialer`, which by
+default disables IP fragmentation (`IP_MTU_DISCOVER=IP_PMTUDISC_DO` on
+Linux/Android, `IP_DONTFRAG` on macOS). For a nested tunnel the outer datagram
+is routinely oversize — encapsulation adds WireGuard's ~32 bytes plus AWG's
+per-packet `s4` junk on top of an already full-size inner packet — so with DF
+forced the OS silently drops it (`sendmsg: message too long`) instead of
+fragmenting, and the inner tunnel never comes up or comes up and cannot carry
+data. This is why `masque`/`wireguard`/AWG chained through `detour` failed on
+device while direct nodes over the same detour worked. The endpoint and the
+MASQUE outbound now default to `UDPFragmentDefault=true` (the same opt-out
+direct/hysteria2/tuic already use), so the OS fragments an oversize outer
+datagram and the far end reassembles it. An explicit `"udp_fragment": false` on
+the node restores DF; other protocols and listener inbounds are unchanged.
+Covered by a socket-flag unit test (both bind paths, both directions of the
+explicit override) and an end-to-end AmneziaWG-over-AmneziaWG-through-detour
+stand exercising both the fits and the IP-fragmenting (same-MTU) regime with
+TCP/UDP ping-pong and large-data in both directions.
+
 #### v1.14.0-lx.11
 
 **Removed the AmneziaWG-over-WireGuard guard (SPEC 007).** The guard refused to

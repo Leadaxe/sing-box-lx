@@ -173,6 +173,12 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, E.New("masque: mtu ", mtu, " too large for h2 (max ", maxH2MTU, ")")
 	}
 
+	// lx: SPEC 028 — QUIC parity with hysteria2/tuic: leave the outer UDP
+	// socket free to fragment instead of forcing DF. Matters when this outbound
+	// is itself the bottom leg of a nested-tunnel chain (WG/AWG over MASQUE) or
+	// when the physical path MTU is below the QUIC packet size ceiling (1452).
+	// `udp_fragment: false` restores DF.
+	options.UDPFragmentDefault = true
 	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
 	if err != nil {
 		return nil, err
