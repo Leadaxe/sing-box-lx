@@ -10,7 +10,29 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
-#### v1.14.0-lx.12-rc.1
+#### v1.14.0-lx.13
+
+**Fixed a WireGuard/AmneziaWG endpoint dying permanently when its `detour`
+provider is declared later in the config (SPEC 029).** An endpoint with
+`detour: X` resolved that detour eagerly inside its own constructor — a
+UDP-egress-anchor type-assertion (SPEC 020) walks the dialer's `Upstream()`
+chain, and the detour dialer's `Upstream()` resolves the detour on the spot.
+Endpoints are constructed in config-array order and only registered at the end
+of their own construction, so an endpoint whose detour pointed at a provider
+declared *after* it resolved that provider before it existed, and the dialer
+cached "outbound detour not found" forever — the tunnel then never sent a single
+packet (repeating `connect to server: outbound detour not found: X` in the log).
+Reordering the config so the provider came first masked it by luck. The core
+already starts nodes in dependency order (a node isn't started until every tag
+in its `detour` chain has started), but the resolution was leaking out of that
+barrier into the construction phase. The fix stops resolving the detour at
+construction (the egress-anchor probe is skipped when a detour is set — it never
+applies through a detour anyway) and instead resolves it in `Start`, after the
+dependency topo-sort has brought the provider up. Config array order no longer
+matters; a genuinely missing detour now fails loudly at startup instead of being
+silently cached. Covered by an end-to-end stand that declares the consumer
+before the provider and asserts traffic flows (red without the fix, green with
+it); the SPEC 020 idle-suspend and SPEC 028 nested-tunnel stands still pass.
 
 **Nested tunnels through `detour` now work — stop forcing DF on the outer UDP
 socket (SPEC 028).** A `wireguard`/AmneziaWG endpoint or a `masque` outbound

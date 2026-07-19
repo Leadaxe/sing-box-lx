@@ -43,6 +43,10 @@ type Endpoint struct {
 	logger         logger.ContextLogger
 	localAddresses []netip.Prefix
 	endpoint       *wireguard.Endpoint
+	// lx: SPEC 029 — the outbound dialer, retained so Start can force its detour
+	// to resolve after the dependency topo-sort has started the detour provider
+	// (see the StartStateStart case in Start).
+	outboundDialer N.Dialer
 	started        atomic.Bool
 	// lx:begin idle-suspend
 	// SPEC 020 idle-suspend state. lastActivity is the unix-nano timestamp of the
@@ -108,6 +112,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
+	ep.outboundDialer = outboundDialer
 	var udpTimeout time.Duration
 	if options.UDPTimeout != 0 {
 		udpTimeout = time.Duration(options.UDPTimeout)
@@ -116,20 +121,35 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
 	var egressPool *tun.UDPEgressPool
-	udpListener, isUDPListener := common.Cast[dialer.UDPListener](outboundDialer)
-	if isUDPListener {
-		anchorControl, egressEnabled := udpListener.UDPListenerControl()
-		if egressEnabled {
-			egressPool = tun.NewUDPEgressPool(tun.UDPEgressPoolOptions{
-				Logger:           logger,
-				Control:          anchorControl,
-				InterfaceFinder:  networkManager.InterfaceFinder(),
-				InterfaceMonitor: networkManager.InterfaceMonitor(),
-				ExcludeInterface: options.Name,
-				IsExempt: func() bool {
-					return networkManager.AutoRedirectOutputMark() != 0
-				},
-			})
+	// lx: SPEC 029 — only probe for the UDP egress anchor on the direct
+	// (no-detour) path. The egress pool binds this endpoint's own OS socket to
+	// the auto-detected interface (SPEC 020); it is meaningless through a detour,
+	// where packets leave via another outbound and there is no anchor socket.
+	// Crucially, common.Cast walks the dialer's Upstream() chain, and
+	// DetourDialer.Upstream() eagerly resolves the detour (fires its sync.Once).
+	// Doing that here — inside NewEndpoint, i.e. mid Create-loop before the whole
+	// node graph exists — permanently caches "detour not found" when the detour
+	// provider is declared later in the config. The detour is instead resolved in
+	// Start, after the dependency topo-sort has brought the provider up (see
+	// resolveDetour). Guarding on Detour=="" removes the premature resolve without
+	// losing egress-pool behaviour (a detour dialer is never a UDPListener anyway,
+	// and the transport layer re-derives the bind at Start).
+	if options.Detour == "" {
+		udpListener, isUDPListener := common.Cast[dialer.UDPListener](outboundDialer)
+		if isUDPListener {
+			anchorControl, egressEnabled := udpListener.UDPListenerControl()
+			if egressEnabled {
+				egressPool = tun.NewUDPEgressPool(tun.UDPEgressPoolOptions{
+					Logger:           logger,
+					Control:          anchorControl,
+					InterfaceFinder:  networkManager.InterfaceFinder(),
+					InterfaceMonitor: networkManager.InterfaceMonitor(),
+					ExcludeInterface: options.Name,
+					IsExempt: func() bool {
+						return networkManager.AutoRedirectOutputMark() != 0
+					},
+				})
+			}
 		}
 	}
 	wgEndpoint, err := wireguard.NewEndpoint(wireguard.EndpointOptions{
@@ -191,7 +211,19 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 func (w *Endpoint) Start(stage adapter.StartStage) error {
 	switch stage {
 	case adapter.StartStateStart:
-		return w.endpoint.Start(false)
+		if err := w.endpoint.Start(false); err != nil {
+			return err
+		}
+		// lx: SPEC 029 — resolve the detour now, not lazily at first dial. The
+		// outbound manager's dependency topo-sort guarantees the detour provider
+		// (declared as this endpoint's Dependency) has already started at this
+		// stage, regardless of config array order — so the resolve sees the full
+		// graph and a genuine miss fails loudly here instead of being silently
+		// cached as "detour not found" forever by the dialer's sync.Once. A
+		// no-detour endpoint is a cheap no-op (InitializeDetour returns nil for a
+		// non-DetourDialer). Durable across SPEC 020 suspend/resume: the dialer is
+		// built once and its resolution is memoised.
+		return dialer.InitializeDetour(w.outboundDialer)
 	case adapter.StartStatePostStart:
 		err := w.endpoint.Start(true)
 		if err != nil {
