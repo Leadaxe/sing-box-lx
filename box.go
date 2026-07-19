@@ -627,6 +627,17 @@ func (s *Box) Close() error {
 	default:
 		close(s.done)
 	}
+	// lx: SPEC 030 — fast shutdown. Stop the idle/urltest tick and close every
+	// WG/AWG UDP socket BEFORE the endpoint manager runs its close pass. Without
+	// this, endpoints are torn down while the tick is still issuing wakes: each
+	// Endpoint.Close blocks on resumeMu behind an in-flight ping-wake doing a
+	// full device rebuild + handshake (~0.5–5s each), summed serially over N
+	// endpoints — the 10s+ Android stop hang. Quiescing here removes that
+	// contention and unblocks every receive worker's ReadFrom up front, so the
+	// close pass is bounded by teardown, not by wakes.
+	if s.router != nil {
+		s.router.QuiesceForShutdown()
+	}
 	var err error
 	if s.debugHTTPServer != nil {
 		err = E.Append(err, s.debugHTTPServer.Close(), func(err error) error {

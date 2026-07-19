@@ -6,11 +6,10 @@ import (
 	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/taskmonitor"
-	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/task"
 )
 
 var _ adapter.EndpointManager = (*Manager)(nil)
@@ -66,19 +65,32 @@ func (m *Manager) Close() error {
 	m.started = false
 	endpoints := m.endpoints
 	m.endpoints = nil
-	monitor := taskmonitor.New(m.logger, C.StopTimeout)
-	var err error
-	for _, endpoint := range endpoints {
-		name := "endpoint/" + endpoint.Type() + "[" + endpoint.Tag() + "]"
-		done := adapter.LogElapsed(m.logger, "close ", name)
-		monitor.Start("close ", name)
-		err = E.Append(err, endpoint.Close(), func(err error) error {
-			return E.Cause(err, "close ", name)
-		})
-		monitor.Finish()
-		done()
+	// lx: SPEC 030 — close endpoints concurrently instead of one at a time. With
+	// the sockets already closed by box.Close's pre-pass (router DevicePause),
+	// each device teardown is fast; running them in parallel turns the serial sum
+	// over N endpoints into a bounded max. Concurrency is capped so N large
+	// gVisor netstack teardowns don't spike memory. Run (no FastFail) joins every
+	// close before returning — we never abandon a teardown, so there is no
+	// use-after-free of a netstack a receive worker still holds.
+	if len(endpoints) == 0 {
+		return nil
 	}
-	return nil
+	group := task.Group{}
+	group.Concurrency(8)
+	for _, endpoint := range endpoints {
+		endpoint := endpoint
+		name := "endpoint/" + endpoint.Type() + "[" + endpoint.Tag() + "]"
+		group.Append(name, func(ctx context.Context) error {
+			done := adapter.LogElapsed(m.logger, "close ", name)
+			closeErr := endpoint.Close()
+			done()
+			if closeErr != nil {
+				return E.Cause(closeErr, "close ", name)
+			}
+			return nil
+		})
+	}
+	return group.Run(context.Background())
 }
 
 func (m *Manager) Endpoints() []adapter.Endpoint {

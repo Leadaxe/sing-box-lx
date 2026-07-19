@@ -79,6 +79,10 @@ type Endpoint struct {
 	// the clock instead. Guarded by resumeMu (only the tick reads/writes it).
 	lastTransferSum uint64
 	// lx:end idle-suspend
+	// closing is set at the top of Close (before resumeMu) so an in-flight
+	// resumeOnDial wake aborts instead of starting a fresh device rebuild that
+	// Close would then have to wait out. SPEC 030 fast shutdown.
+	closing atomic.Bool
 }
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Endpoint, error) {
@@ -371,12 +375,21 @@ func (w *Endpoint) TeardownIfSlept(threshold time.Duration) {
 // (deliberately stopped / closed — not an idle-suspend, so we do not resurrect it).
 func (w *Endpoint) resumeOnDial() bool {
 	w.stampActivity()
+	// lx: SPEC 030 — a close is pending: do not resurrect. Refusing here (and
+	// again under the lock) keeps Close from blocking on a fresh rebuild we would
+	// only tear straight back down.
+	if w.closing.Load() {
+		return false
+	}
 	if !w.idleAsleep.Load() {
 		// Fast path: either fully awake, or down for a non-idle reason we must not wake.
 		return w.started.Load()
 	}
 	w.resumeMu.Lock()
 	defer w.resumeMu.Unlock()
+	if w.closing.Load() {
+		return false
+	}
 	if !w.idleAsleep.Load() {
 		return w.started.Load()
 	}
@@ -423,6 +436,11 @@ func (w *Endpoint) resumeOnDial() bool {
 // lx:end idle-suspend
 
 func (w *Endpoint) Close() error {
+	// lx: SPEC 030 — signal a pending close BEFORE contending for resumeMu, so an
+	// in-flight resumeOnDial wake sees it and aborts (returns not-dialable)
+	// instead of starting a full device rebuild + handshake that this Close would
+	// then block on. SPEC 030 fast shutdown.
+	w.closing.Store(true)
 	// lx: SPEC 020 — box.Close tears endpoints down BEFORE the router stops the
 	// idle tick. Take resumeMu so an in-flight tick decision (possibly inside
 	// device.Down()) finishes first, and clear both flags under it so any later

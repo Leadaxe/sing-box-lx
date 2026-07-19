@@ -10,6 +10,27 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.14
+
+**Stopping the tunnel no longer hangs 10+ seconds with many WireGuard endpoints
+(SPEC 030).** On Android, stopping an instance with ~30 WG/AmneziaWG endpoints —
+especially just after a health-check ping woke them from idle-suspend — could
+hang for ten seconds or more. The cause was an ordering interaction:
+`box.Close()` tore endpoints down while the idle/urltest tick was still issuing
+wakes, so each endpoint's close blocked waiting for an in-flight ping-wake to
+finish a full device rebuild and handshake (up to several seconds each), and
+those waits added up serially across every endpoint. The fix quiesces the tick
+and closes every WireGuard UDP socket up front (so the per-endpoint teardown no
+longer blocks on a socket read), makes an in-flight wake abort the moment its
+endpoint starts closing, and closes endpoints concurrently instead of one at a
+time. No teardown step is skipped — sessions are still closed cleanly, keys
+zeroed, sockets and the userspace netstack released — only the pointless waiting
+is removed, so there is no risk of the crash a hard "drop everything" would
+cause. Stop now completes in a fraction of a second. Covered by unit tests for
+the close-abort gate (red without the fix, green with it) and a smoke stand that
+times the concurrent close of many live endpoints; the SPEC 020 idle-suspend and
+SPEC 028/029 detour stands still pass.
+
 #### v1.14.0-lx.13
 
 **Fixed a WireGuard/AmneziaWG endpoint dying permanently when its `detour`
