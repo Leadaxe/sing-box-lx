@@ -124,27 +124,27 @@ type ManagedServiceServer interface {
 type UnimplementedManagedServiceServer struct{}
 
 func (UnimplementedManagedServiceServer) StopService(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method StopService not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method StopService not implemented")
 }
 
 func (UnimplementedManagedServiceServer) ReloadService(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method ReloadService not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method ReloadService not implemented")
 }
 
 func (UnimplementedManagedServiceServer) GetSystemProxyStatus(context.Context, *emptypb.Empty) (*SystemProxyStatus, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetSystemProxyStatus not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method GetSystemProxyStatus not implemented")
 }
 
 func (UnimplementedManagedServiceServer) SetSystemProxyEnabled(context.Context, *SetSystemProxyEnabledRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method SetSystemProxyEnabled not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method SetSystemProxyEnabled not implemented")
 }
 
 func (UnimplementedManagedServiceServer) TriggerDebugCrash(context.Context, *DebugCrashRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method TriggerDebugCrash not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method TriggerDebugCrash not implemented")
 }
 
 func (UnimplementedManagedServiceServer) TriggerOOMReport(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method TriggerOOMReport not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method TriggerOOMReport not implemented")
 }
 func (UnimplementedManagedServiceServer) mustEmbedUnimplementedManagedServiceServer() {}
 func (UnimplementedManagedServiceServer) testEmbeddedByValue()                        {}
@@ -157,7 +157,7 @@ type UnsafeManagedServiceServer interface {
 }
 
 func RegisterManagedServiceServer(s grpc.ServiceRegistrar, srv ManagedServiceServer) {
-	// If the following call panics, it indicates UnimplementedManagedServiceServer was
+	// If the following call pancis, it indicates UnimplementedManagedServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.

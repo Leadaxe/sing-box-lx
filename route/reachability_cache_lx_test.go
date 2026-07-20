@@ -22,6 +22,7 @@ func (m *countingManager) Default() adapter.Outbound {
 	m.defaultCalls++
 	return &stubOutbound{tag: "final"}
 }
+
 func (m *countingManager) Outbound(tag string) (adapter.Outbound, bool) {
 	return &stubOutbound{tag: tag}, true
 }

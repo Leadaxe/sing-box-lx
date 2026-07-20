@@ -25,8 +25,10 @@ import (
 	"github.com/sagernet/sing/service/pause"
 )
 
-var _ adapter.Router = (*Router)(nil)
-var _ adapter.ReachabilityInvalidator = (*Router)(nil) // lx: SPEC 020 idle-suspend
+var (
+	_ adapter.Router                  = (*Router)(nil)
+	_ adapter.ReachabilityInvalidator = (*Router)(nil) // lx: SPEC 020 idle-suspend
+)
 
 type Router struct {
 	ctx               context.Context
@@ -336,4 +338,10 @@ func (r *Router) NeighborResolver() adapter.NeighborResolver {
 func (r *Router) ResetNetwork() {
 	r.httpClientManager.ResetNetwork()
 	r.dns.ResetNetwork()
+	if r.processCache != nil {
+		r.processCache.Purge()
+	}
+	if r.processSearcher != nil {
+		r.processSearcher.ResetCache()
+	}
 }

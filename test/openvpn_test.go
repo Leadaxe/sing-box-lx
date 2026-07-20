@@ -275,7 +275,8 @@ func TestOpenVPNDockerMSSFix(t *testing.T) {
 }
 
 func TestOpenVPNDockerCompressionNegotiation(t *testing.T) {
-	environment := startOpenVPNDockerOfficialServer(t, "compression-server",
+	environment := startOpenVPNDockerOfficialServer(
+		t, "compression-server",
 		"allow-compression no",
 		"compress stub",
 		"push \"compress stub\"",
@@ -843,7 +844,8 @@ func writeOpenVPNDockerServerConfig(t *testing.T, workspace string, openVPNPort 
 		"explicit-exit-notify 1",
 	}
 	configLines = append(configLines, serverDirectives...)
-	configLines = append(configLines,
+	configLines = append(
+		configLines,
 		"log /config/openvpn.log",
 		"",
 	)

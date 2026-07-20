@@ -32,6 +32,7 @@ import (
 var (
 	_ adapter.OutboundWithPreferredRoutes = (*ClientEndpoint)(nil)
 	_ adapter.FlowOutbound                = (*ClientEndpoint)(nil)
+	_ adapter.InterfaceUpdateListener     = (*ClientEndpoint)(nil)
 	_ dialer.PacketDialerWithDestination  = (*ClientEndpoint)(nil)
 	_ tun.Port                            = (*ClientEndpoint)(nil)
 )
@@ -425,7 +426,10 @@ func (c *ClientEndpoint) readLoop() {
 		err = c.device.WriteInboundBuffers(packetBuffers)
 		buf.ReleaseMulti(packetBuffers)
 		if err != nil {
-			c.logger.Error(E.Cause(err, "write OpenVPN packet to device"))
+			err = E.Cause(err, "write packet to device")
+			c.logger.Error(err)
+			c.setTerminalError(err)
+			return
 		}
 	}
 }
@@ -450,6 +454,10 @@ func (c *ClientEndpoint) Close() error {
 	return err
 }
 
+func (c *ClientEndpoint) InterfaceUpdated() {
+	c.client.RestartSession()
+}
+
 func (c *ClientEndpoint) PreMatchFlow(network string, destination netip.Addr) adapter.PreMatchAction {
 	return adapter.PreMatchFlow
 }
@@ -472,6 +480,10 @@ func (c *ClientEndpoint) DetachReturn(returnPath tun.Return) error {
 
 func (c *ClientEndpoint) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
 	return judgeOpenVPNFlow(c.router, c.Tag(), c.Type(), c.state.Load().localAddresses, network, source, destination, firstPacket)
+}
+
+func (c *ClientEndpoint) NewDNSPacket(payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {
+	c.newDNSPacket(log.ContextWithNewID(c.ctx), c, payload, source, destination, writer)
 }
 
 func (c *ClientEndpoint) ready() bool {

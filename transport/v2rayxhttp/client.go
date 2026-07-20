@@ -286,7 +286,8 @@ func (r readCloser) Close() error               { return nil }
 func drainAndClose(body interface {
 	Read([]byte) (int, error)
 	Close() error
-}) {
+},
+) {
 	buffer := buf.Get(buf.BufferSize)
 	for {
 		if _, err := body.Read(buffer); err != nil {

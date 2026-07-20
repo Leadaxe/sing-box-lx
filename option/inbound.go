@@ -132,7 +132,7 @@ func (b *UDPNATBehavior) UnmarshalJSON(data []byte) error {
 type UDPTimeoutCompat badoption.Duration
 
 func (c UDPTimeoutCompat) MarshalJSON() ([]byte, error) {
-	return json.Marshal((time.Duration)(c).String())
+	return json.Marshal(time.Duration(c).String())
 }
 
 func (c *UDPTimeoutCompat) UnmarshalJSON(data []byte) error {

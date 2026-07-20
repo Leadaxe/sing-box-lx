@@ -2,6 +2,24 @@
 icon: material/alert-decagram
 ---
 
+#### 1.14.0-alpha.48
+
+* Add SSO support for AnyConnect **1**
+* Add Linux support for the [desktop client application](/clients/desktop/) **2**
+* Fixes and improvements
+
+**1**:
+
+The [OpenConnect Client](/configuration/endpoint/openconnect/) endpoint now
+supports SSO (single sign-on) authentication for Cisco AnyConnect servers,
+available through the sing-box graphical clients.
+
+**2**:
+
+The [sing-box for Desktop](/clients/desktop/) client is now available for Linux
+(x64 / arm64 / armv7l) from
+[GitHub Releases](https://github.com/SagerNet/sing-box/releases).
+
 #### 1.14.0-alpha.47
 
 * Add OpenVPN client and server support **1**

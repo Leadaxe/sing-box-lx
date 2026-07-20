@@ -34,6 +34,7 @@ import (
 var (
 	_ adapter.OutboundWithPreferredRoutes = (*Endpoint)(nil)
 	_ adapter.FlowOutbound                = (*Endpoint)(nil)
+	_ adapter.InterfaceUpdateListener     = (*Endpoint)(nil)
 	_ dialer.PacketDialerWithDestination  = (*Endpoint)(nil)
 	_ tun.Port                            = (*Endpoint)(nil)
 )
@@ -364,7 +365,10 @@ func (e *Endpoint) readLoop() {
 		err = e.device.WriteInboundBuffers(packetBuffers)
 		buf.ReleaseMulti(packetBuffers)
 		if err != nil {
-			e.logger.Error(E.Cause(err, "write OpenConnect packet to device"))
+			err = E.Cause(err, "write packet to device")
+			e.logger.Error(err)
+			e.setTerminalError(err)
+			return
 		}
 	}
 }
@@ -393,6 +397,10 @@ func (e *Endpoint) Close() error {
 	return err
 }
 
+func (e *Endpoint) InterfaceUpdated() {
+	e.client.RestartSession()
+}
+
 func (e *Endpoint) PreMatchFlow(network string, destination netip.Addr) adapter.PreMatchAction {
 	return adapter.PreMatchFlow
 }
@@ -415,6 +423,10 @@ func (e *Endpoint) DetachReturn(returnPath tun.Return) error {
 
 func (e *Endpoint) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
 	return judgeOpenConnectFlow(e.router, e.Tag(), e.Type(), e.state.Load().localAddresses, network, source, destination, firstPacket)
+}
+
+func (e *Endpoint) NewDNSPacket(payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {
+	e.newDNSPacket(log.ContextWithNewID(e.loopContext), e, payload, source, destination, writer)
 }
 
 func (e *Endpoint) ready() bool {

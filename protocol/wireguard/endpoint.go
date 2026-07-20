@@ -27,6 +27,7 @@ import (
 
 var (
 	_ adapter.OutboundWithPreferredRoutes = (*Endpoint)(nil)
+	_ adapter.InterfaceUpdateListener     = (*Endpoint)(nil)
 	_ dialer.PacketDialerWithDestination  = (*Endpoint)(nil)
 	_ adapter.IdleSuspendable             = (*Endpoint)(nil) // lx: SPEC 020 idle-suspend
 )
@@ -124,38 +125,6 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		udpTimeout = C.UDPTimeout
 	}
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
-	var egressPool *tun.UDPEgressPool
-	// lx: SPEC 029 — only probe for the UDP egress anchor on the direct
-	// (no-detour) path. The egress pool binds this endpoint's own OS socket to
-	// the auto-detected interface (SPEC 020); it is meaningless through a detour,
-	// where packets leave via another outbound and there is no anchor socket.
-	// Crucially, common.Cast walks the dialer's Upstream() chain, and
-	// DetourDialer.Upstream() eagerly resolves the detour (fires its sync.Once).
-	// Doing that here — inside NewEndpoint, i.e. mid Create-loop before the whole
-	// node graph exists — permanently caches "detour not found" when the detour
-	// provider is declared later in the config. The detour is instead resolved in
-	// Start, after the dependency topo-sort has brought the provider up (see
-	// resolveDetour). Guarding on Detour=="" removes the premature resolve without
-	// losing egress-pool behaviour (a detour dialer is never a UDPListener anyway,
-	// and the transport layer re-derives the bind at Start).
-	if options.Detour == "" {
-		udpListener, isUDPListener := common.Cast[dialer.UDPListener](outboundDialer)
-		if isUDPListener {
-			anchorControl, egressEnabled := udpListener.UDPListenerControl()
-			if egressEnabled {
-				egressPool = tun.NewUDPEgressPool(tun.UDPEgressPoolOptions{
-					Logger:           logger,
-					Control:          anchorControl,
-					InterfaceFinder:  networkManager.InterfaceFinder(),
-					InterfaceMonitor: networkManager.InterfaceMonitor(),
-					ExcludeInterface: options.Name,
-					IsExempt: func() bool {
-						return networkManager.AutoRedirectOutputMark() != 0
-					},
-				})
-			}
-		}
-	}
 	wgEndpoint, err := wireguard.NewEndpoint(wireguard.EndpointOptions{
 		Context:         ctx,
 		Logger:          logger,
@@ -167,8 +136,16 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		UDPFiltering:    tun.NATFiltering(options.UDPFiltering),
 		UDPNATMax:       options.UDPNATMax,
 		InterfaceFinder: networkManager.InterfaceFinder(),
-		EgressPool:      egressPool,
-		Dialer:          outboundDialer,
+		EgressPoolOptions: tun.UDPEgressPoolOptions{
+			Logger:           logger,
+			InterfaceFinder:  networkManager.InterfaceFinder(),
+			InterfaceMonitor: networkManager.InterfaceMonitor(),
+			ExcludeInterface: options.Name,
+			IsExempt: func() bool {
+				return networkManager.AutoRedirectOutputMark() != 0
+			},
+		},
+		Dialer: outboundDialer,
 		CreateDialer: func(interfaceName string) N.Dialer {
 			return common.Must1(dialer.NewDefault(ctx, option.DialerOptions{
 				BindInterface:      interfaceName,
@@ -454,6 +431,16 @@ func (w *Endpoint) Close() error {
 	return w.endpoint.Close()
 }
 
+func (w *Endpoint) InterfaceUpdated() {
+	if !w.started.Load() {
+		return
+	}
+	err := w.endpoint.BindUpdate()
+	if err != nil {
+		w.logger.Error(E.Cause(err, "update bind"))
+	}
+}
+
 func (w *Endpoint) PreMatchFlow(network string, destination netip.Addr) adapter.PreMatchAction {
 	return adapter.PreMatchFlow
 }
@@ -481,6 +468,19 @@ func (w *Endpoint) JudgeFlow(network uint8, source netip.AddrPort, destination n
 		}
 	}
 	return adapter.JudgeFlow(w.router, w.Tag(), w.Type(), network, source, destination, firstPacket)
+}
+
+func (w *Endpoint) NewDNSPacket(payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {
+	ctx := log.ContextWithNewID(w.ctx)
+	var metadata adapter.InboundContext
+	metadata.Inbound = w.Tag()
+	metadata.InboundType = w.Type()
+	metadata.Network = N.NetworkUDP
+	metadata.Source = source
+	metadata.Destination = destination
+	metadata.Protocol = C.ProtocolDNS
+	w.logger.InfoContext(ctx, "inbound DNS packet from ", source)
+	w.router.HijackDNSPacket(ctx, payload, writer, metadata)
 }
 
 func (w *Endpoint) WritePackets(packets [][]byte) error {

@@ -433,7 +433,8 @@ func (s *ServerEndpoint) readLoop() {
 		err = s.device.WriteInboundBuffers(packetBuffers)
 		buf.ReleaseMulti(packetBuffers)
 		if err != nil {
-			s.logger.Error(E.Cause(err, "write OpenVPN packet to device"))
+			s.logger.Error(E.Cause(err, "write packet to device"))
+			return
 		}
 	}
 }
@@ -481,6 +482,10 @@ func (s *ServerEndpoint) DetachReturn(returnPath tun.Return) error {
 
 func (s *ServerEndpoint) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
 	return judgeOpenVPNFlow(s.router, s.Tag(), s.Type(), s.localAddresses, network, source, destination, firstPacket)
+}
+
+func (s *ServerEndpoint) NewDNSPacket(payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {
+	s.newDNSPacket(log.ContextWithNewID(s.ctx), s, payload, source, destination, writer)
 }
 
 func (s *ServerEndpoint) WritePackets(packets [][]byte) error {

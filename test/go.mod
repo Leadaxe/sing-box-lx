@@ -16,7 +16,7 @@ require (
 	github.com/sagernet/sing-quic v0.6.4-0.20260709034545-e23afe1172dc
 	github.com/sagernet/sing-shadowsocks v0.2.8
 	github.com/sagernet/sing-shadowsocks2 v0.2.1
-	github.com/sagernet/sing-tun v0.8.12-0.20260717024008-39eed1f6361d
+	github.com/sagernet/sing-tun v0.8.12-0.20260719050255-7e7bd198288c
 	github.com/spyzhov/ajson v0.9.4
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/goleak v1.3.0
@@ -155,8 +155,8 @@ require (
 	github.com/sagernet/nftables v0.3.0-mod.4 // indirect
 	github.com/sagernet/sing-cloudflared v0.1.3-0.20260706062323-d9787e794aa3 // indirect
 	github.com/sagernet/sing-mux v0.3.5 // indirect
-	github.com/sagernet/sing-openconnect v0.0.0-20260717081856-cf2c71a71aba // indirect
-	github.com/sagernet/sing-openvpn v0.0.0-20260718013246-3cd8a7b83247 // indirect
+	github.com/sagernet/sing-openconnect v0.0.0-20260718163953-a1c7815e4f04 // indirect
+	github.com/sagernet/sing-openvpn v0.0.0-20260718163953-26ecbeb6352c // indirect
 	github.com/sagernet/sing-shadowtls v0.2.1 // indirect
 	github.com/sagernet/sing-snell v0.0.0-20260710094516-a4e97ee24beb // indirect
 	github.com/sagernet/sing-usbip v0.0.0-20260616101517-efb91521eddb // indirect

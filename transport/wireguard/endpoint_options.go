@@ -24,18 +24,18 @@ type EndpointOptions struct {
 	UDPFiltering tun.NATFiltering
 	UDPNATMax    uint32
 
-	InterfaceFinder control.InterfaceFinder
-	EgressPool      *tun.UDPEgressPool
-	Dialer          N.Dialer
-	CreateDialer    func(interfaceName string) N.Dialer
-	Name            string
-	MTU             uint32
-	Address         []netip.Prefix
-	PrivateKey      string
-	ListenPort      uint16
-	ResolvePeer     func(domain string) (netip.Addr, error)
-	Peers           []PeerOptions
-	Workers         int
+	InterfaceFinder   control.InterfaceFinder
+	EgressPoolOptions tun.UDPEgressPoolOptions
+	Dialer            N.Dialer
+	CreateDialer      func(interfaceName string) N.Dialer
+	Name              string
+	MTU               uint32
+	Address           []netip.Prefix
+	PrivateKey        string
+	ListenPort        uint16
+	ResolvePeer       func(domain string) (netip.Addr, error)
+	Peers             []PeerOptions
+	Workers           int
 	// lx:begin awg
 	// AmneziaWG 2.0 obfuscation parameters, carried from the endpoint options.
 	// Consumed only under the `with_awg` build tag (see device_awg.go); with the

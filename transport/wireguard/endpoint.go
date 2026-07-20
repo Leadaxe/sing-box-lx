@@ -15,6 +15,7 @@ import (
 	"unsafe"
 
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
@@ -37,6 +38,7 @@ type Endpoint struct {
 	returnDevice   *returnDeviceWrapper
 	device         *device.Device
 	allowedIPs     *device.AllowedIPs
+	egressPool     *tun.UDPEgressPool
 	pause          pause.Manager
 	pauseCallback  *list.Element[pause.Callback]
 	// lx: SPEC 020 — true while the protocol layer holds this device down for
@@ -275,13 +277,16 @@ func (e *Endpoint) Start(resolve bool) error {
 	var bind conn.Bind
 	udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 	if isUDPListener {
-		listenerControl, _ := udpListener.UDPListenerControl()
+		listenerControl, egressEnabled := udpListener.UDPListenerControl()
 		standardBind := conn.NewStdNetBind(listenerControl).(*conn.StdNetBind)
 		if e.options.ListenPort == 0 && len(e.peers) == 1 && e.peers[0].endpoint.IsValid() {
 			standardBind.SetSinglePeerMode()
 		}
-		if e.options.EgressPool != nil {
-			standardBind.SetEgressProvider(e.options.EgressPool)
+		if egressEnabled {
+			egressPoolOptions := e.options.EgressPoolOptions
+			egressPoolOptions.Control = listenerControl
+			e.egressPool = tun.NewUDPEgressPool(egressPoolOptions)
+			standardBind.SetEgressProvider(e.egressPool)
 		}
 		bind = standardBind
 	} else {
@@ -364,8 +369,9 @@ func (e *Endpoint) Close() error {
 		e.pause.UnregisterCallback(e.pauseCallback)
 		e.pauseCallback = nil
 	}
-	if e.options.EgressPool != nil {
-		e.options.EgressPool.Close()
+	if e.egressPool != nil {
+		e.egressPool.Close()
+		e.egressPool = nil
 	}
 	if e.device != nil {
 		e.device.Down()
@@ -463,6 +469,13 @@ func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
 		return nil
 	}
 	return e.allowedIPs.Lookup(address.AsSlice())
+}
+
+func (e *Endpoint) BindUpdate() error {
+	if e.device == nil {
+		return nil
+	}
+	return e.device.BindUpdate()
 }
 
 func (e *Endpoint) onPauseUpdated(event int) {

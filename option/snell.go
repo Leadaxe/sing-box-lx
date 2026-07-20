@@ -48,7 +48,7 @@ func (o SnellInboundOptions) MarshalJSON() ([]byte, error) {
 	default:
 		return nil, E.New("snell: unsupported version: ", o.Version)
 	}
-	return badjson.MarshallObjects((_SnellInboundOptions)(o), versionOptions)
+	return badjson.MarshallObjects(_SnellInboundOptions(o), versionOptions)
 }
 
 type _SnellOutboundOptions struct {
@@ -96,7 +96,7 @@ func (o SnellOutboundOptions) MarshalJSON() ([]byte, error) {
 	default:
 		return nil, E.New("snell: unsupported version: ", o.Version)
 	}
-	return badjson.MarshallObjects((_SnellOutboundOptions)(o), versionOptions)
+	return badjson.MarshallObjects(_SnellOutboundOptions(o), versionOptions)
 }
 
 type SnellObfsServerOptions struct {

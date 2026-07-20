@@ -803,7 +803,8 @@ func (s *Server) serveBuiltinSFTP(ctx context.Context, session gliderssh.Session
 
 func (s *Server) buildEnvironment(session gliderssh.Session, connInfo *sshConnInfo, localUser *adapter.PlatformUser) []string {
 	var env []string
-	env = append(env,
+	env = append(
+		env,
 		"USER="+localUser.Username,
 		"HOME="+localUser.HomeDir,
 		"SHELL="+localUser.Shell,
@@ -818,7 +819,8 @@ func (s *Server) buildEnvironment(session gliderssh.Session, connInfo *sshConnIn
 	if remoteAddr != nil && localAddr != nil {
 		remoteHost, remotePort, _ := net.SplitHostPort(remoteAddr.String())
 		localHost, localPort, _ := net.SplitHostPort(localAddr.String())
-		env = append(env,
+		env = append(
+			env,
 			"SSH_CLIENT="+remoteHost+" "+remotePort+" "+localPort,
 			"SSH_CONNECTION="+remoteHost+" "+remotePort+" "+localHost+" "+localPort,
 		)

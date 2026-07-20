@@ -134,6 +134,19 @@ func (t *DBusResolvedResolver) Close() error {
 	return closeErr
 }
 
+func (t *DBusResolvedResolver) Reset() {
+	serverSet := t.savedServerSet.Load()
+	if serverSet == nil {
+		return
+	}
+	for _, server := range serverSet.servers {
+		server.primaryTransport.Reset()
+		if server.fallbackTransport != nil {
+			server.fallbackTransport.Reset()
+		}
+	}
+}
+
 func (t *DBusResolvedResolver) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
 	serverSet := t.savedServerSet.Load()
 	if serverSet == nil {
@@ -157,6 +170,51 @@ func (t *DBusResolvedResolver) Exchange(ctx context.Context, message *mDNS.Msg) 
 		return nil, err
 	}
 	return t.exchangeServerSet(ctx, message, refreshedServerSet)
+}
+
+func (t *DBusResolvedResolver) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
+	serverSet := t.savedServerSet.Load()
+	if serverSet == nil {
+		go func() {
+			callback(t.Exchange(ctx, message))
+		}()
+		return
+	}
+	t.exchangeServerSetAsync(ctx, message, serverSet, func(response *mDNS.Msg, err error) {
+		if err == nil {
+			callback(response, nil)
+			return
+		}
+		go func() {
+			t.updateStatus()
+			refreshedServerSet := t.savedServerSet.Load()
+			if refreshedServerSet == nil || refreshedServerSet == serverSet {
+				callback(nil, err)
+				return
+			}
+			t.exchangeServerSetAsync(ctx, message, refreshedServerSet, callback)
+		}()
+	})
+}
+
+func (t *DBusResolvedResolver) exchangeServerSetAsync(ctx context.Context, message *mDNS.Msg, serverSet *resolvedServerSet, callback func(response *mDNS.Msg, err error)) {
+	if len(serverSet.servers) == 0 {
+		callback(nil, E.New("link has no DNS servers configured"))
+		return
+	}
+	serverExchangers := make([]dnsTransport.AsyncExchanger, 0, len(serverSet.servers))
+	for _, server := range serverSet.servers {
+		serverExchangers = append(serverExchangers, func(exchangeCtx context.Context, exchangeCallback func(response *mDNS.Msg, err error)) {
+			server.primaryTransport.ExchangeAsync(exchangeCtx, message, func(response *mDNS.Msg, exchangeErr error) {
+				if exchangeErr != nil && server.fallbackTransport != nil {
+					server.fallbackTransport.ExchangeAsync(exchangeCtx, message, exchangeCallback)
+					return
+				}
+				exchangeCallback(response, exchangeErr)
+			})
+		})
+	}
+	dnsTransport.ExchangeSequential(ctx, serverExchangers, nil, callback)
 }
 
 func (t *DBusResolvedResolver) loopUpdateStatus() {
