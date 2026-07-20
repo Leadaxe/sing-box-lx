@@ -10,6 +10,30 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.15-rc.1
+
+**XHTTP no longer breaks behind a reverse proxy when the session id is carried
+off-path (SPEC 002).** A VLESS + XHTTP config routed through nginx/CDN with
+`mode: packet-up`, a trailing-slash `path` (e.g. `/upload/`) and the session id
+placed in a header (`session_placement: header`) failed to connect with
+`unexpected download status: 301 Moved Permanently`, while the same config
+worked in v2rayNG. The client was unconditionally stripping the path's trailing
+slash for every mode. That is only needed for stream-one's bare path; when the
+session id is not placed in the path, the base path reaches the wire verbatim,
+so `/upload/` became `/upload` — and an nginx `location /upload/ {}` answers a
+301 redirect to the bare path, which the download request (a raw HTTP/2
+round-trip that does not follow redirects) surfaces as a dial error. Default
+configs (session id in the path) were unaffected. The fix keeps the configured
+path as-is and trims the trailing slash only on stream-one's bare-path request,
+so reverse-proxy routing matches for every other mode. Covered by a new
+url_test case; details in
+[SPEC 002 §9](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/002-XHTTP_CLIENT_TRANSPORT/SPEC.md).
+
+This build also merges upstream `testing` (13 commits: async DNS refactor, a
+WireGuard detour fix that converges with our SPEC 029, the OpenConnect
+auth-challenge rework, and assorted fixes). The lx observability, detour and
+urltest layers were reconciled on top and verified against their test suites.
+
 #### v1.14.0-lx.14
 
 **Stopping the tunnel no longer hangs 10+ seconds with many WireGuard endpoints
