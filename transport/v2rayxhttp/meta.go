@@ -290,9 +290,15 @@ func (c *Client) applyMeta(request *http.Request, basePath, sessionID, seqStr st
 	m := &c.meta
 	path := basePath
 
-	// session id — an empty sessionID (stream-one) emits nothing: the bare path
-	// routes the server's bidirectional branch.
-	if sessionID != "" {
+	// session id — an empty sessionID (stream-one) emits nothing and the request
+	// targets the BARE path: Xray's splithttp server keys the bidirectional
+	// stream-one branch on an exact bare path, so any trailing slash is trimmed
+	// here (and only here). Every other mode keeps the configured path verbatim,
+	// including a trailing slash, so proxy routing (e.g. nginx `location /x/ {}`)
+	// matches without a 301 (lx: SPEC 002).
+	if sessionID == "" {
+		path = trimBarePathSlash(path)
+	} else {
 		switch m.sessionPlacement {
 		case placementPath:
 			path = appendPathSegment(path, sessionID)
@@ -367,6 +373,18 @@ func chunkEncoded(payload []byte, size intRange) []string {
 
 // timeNow is a small indirection over time.Now to keep the throttle logic testable.
 func timeNow() time.Time { return time.Now() }
+
+// trimBarePathSlash strips trailing slashes for the stream-one bare-path case,
+// while never collapsing the root path to "" (a root-only path stays "/"). Used
+// only when no sessionId is appended, so it cannot affect proxy routing for the
+// other modes, which keep the configured path verbatim.
+func trimBarePathSlash(path string) string {
+	trimmed := strings.TrimRight(path, "/")
+	if trimmed == "" {
+		return "/"
+	}
+	return trimmed
+}
 
 // appendPathSegment joins a "/"-separated segment onto a path, inserting exactly one
 // separator. Mirrors Xray's appendToPath.

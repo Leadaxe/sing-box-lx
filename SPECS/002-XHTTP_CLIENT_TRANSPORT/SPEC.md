@@ -108,6 +108,11 @@ sing-box-extended; все `omitempty`):
 - **placement-движок:** единая функция `applyMeta(req, sessionID, seqStr)` раскладывающая session id и seq
   по настроенным placement/key (path/query/header/cookie). Path сохраняет порядок «session первый, seq
   второй». Заменяет нынешнюю жёсткую path-логику в `requestURL`.
+- **нормализация path (trailing slash):** `NewClient` хранит `path` **как в конфиге**, гарантируя лишь
+  ведущий `/`; хвостовой слэш **значим и сохраняется** на проводе для всех режимов, кроме stream-one.
+  Единственная точка, где слэш срезается, — bare-path ветка `applyMeta` (пустой `sessionID`, stream-one):
+  Xray-сервер роутит двунаправленную stream-one ветку по **точному голому пути**, поэтому там путь
+  тримится (`trimBarePathSlash`, корень `/` не схлопывается в пустой). См. §9 (первопричина 301).
 - **uplink-data:** для packet-up — `body`/`auto` (тело, как сейчас) или header/cookie chunked
   (`base64.RawURLEncoding`, чанки `<key>-<i>`/`<key>_<i>`, размер по `uplink_chunk_size`).
 - **uplink-метод:** upload-запросы используют `uplink_http_method` (download — всегда GET).
@@ -178,7 +183,53 @@ sing-box-extended; все `omitempty`):
 - **xmux** (мультиплексирование соединений) — отдельная оптимизация, не входит в параметры.
 - Маппинг `vless://…type=xhttp` в лаунчере (его репозиторий).
 
-## 9. Ссылки
+## 9. Bugfix: хвостовой слэш пути ломал packet-up через reverse-proxy (301)
+
+**Симптом (жалоба, 2026-07):** VLESS + XHTTP через CDN/nginx, `mode: packet-up`,
+`session_placement: header`, `path: "/upload/"` — коннект падал сразу с
+`v2ray-xhttp: unexpected download status: 301 Moved Permanently`. Тот же конфиг в
+v2rayNG (ядро Xray) работал. На сервере nginx `location /upload/ { proxy_pass … 3x-ui }`.
+
+**Первопричина.** `NewClient` **безусловно** срезал хвостовой слэш пути
+(`path = strings.TrimRight(path, "/")` в `client.go`) для **всех** режимов сразу.
+Это решало узкую задачу stream-one (голый путь без слэша — контракт Xray), но
+уродовало значимый слэш там, где он нужен для роутинга на прокси. Проявлялось
+только в связке двух условий:
+
+1. `session_placement` ≠ `path` (header/query/cookie) — session id **не** дописывается
+   сегментом в путь, поэтому базовый путь уходит на провод как есть.
+2. path задан со слэшем (`/upload/`), но `TrimRight` превратил его в `/upload`.
+
+Итог: download-GET уходил на `GET /upload` (без слэша). nginx с `location /upload/`
+отвечает `301 → /upload/`. Download-канал ходит через голый `http2.Transport.RoundTrip`,
+который **не следует редиректам** (redirect-following живёт в `net/http.Client`, его
+здесь нет) → 301 долетает в `conn.go` как `StatusCode != 200` → ошибка dial.
+При `session_placement: path` баг незаметен: путь становится `/upload/<sessionId>`
+(под-путь, `appendPathSegment` сам нормализует слэши) и под `location /upload/` не
+редиректится — поэтому дефолтные конфиги Xray/3x-ui не задеты.
+
+**Фикс.** Убрать глобальный `TrimRight` из `NewClient` — путь хранится как в конфиге
+(гарантируется лишь ведущий `/`). Обрезка слэша перенесена **локально** в bare-path
+ветку `applyMeta` (`sessionID == ""`, только stream-one) через `trimBarePathSlash`,
+который не схлопывает корень `/` в пустую строку. Результат по режимам:
+
+- packet-up / stream-up + `session_placement: header|query|cookie` → путь `/upload/`
+  сохраняется → nginx проксирует без 301 (кейс жалобы **чинится без воркэраунда**);
+- любой режим + `session_placement: path` → `appendPathSegment("/upload/", sid)` =
+  `/upload/sid` (как раньше, `appendPathSegment` терпим к обоим вариантам слэша);
+- stream-one (пустой sessionId) → путь тримится до `/upload` → контракт Xray
+  bare-path соблюдён, регрессии в [011](../011-XHTTP_STREAM_ONE_DOWNLINK/SPEC.md) нет.
+
+**Тесты.** `TestTrailingSlashPreservedOffPath` (`url_test.go`) фиксирует: session-в-header
++ `/upload/` сохраняет слэш на download и upload, а stream-one тримит до голого пути;
+старый `TestRequestURLPaths` (stream-one bare path) остаётся зелёным. `sing-box check`
+на конфиге из жалобы принимается.
+
+> **Синтетика.** Правка проверена юнит-тестами (`req.URL.Path`, что уходит в `RoundTrip`)
+> и `check`. Лайв на реальной nginx-прокси-ноде перед 3x-ui **не прогонялся** (нет
+> такого стенда) — открытый TODO, как и в v1/011; при доступе к ноде прогнать.
+
+## 10. Ссылки
 
 - [PARAM_MAP.md](PARAM_MAP.md) — детальная карта всех параметров (основной справочник).
 - [SPEC_v1.md](SPEC_v1.md) — исходная минимальная спека (история).

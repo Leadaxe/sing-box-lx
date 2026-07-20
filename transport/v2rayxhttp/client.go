@@ -146,11 +146,17 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		host = serverAddr.String()
 	}
 
+	// Keep the configured path verbatim (only guarantee a leading slash). A
+	// trailing slash is load-bearing: reverse proxies (e.g. nginx `location
+	// /upload/ {}`) 301-redirect a bare "/upload" to "/upload/", and our download
+	// RoundTrip does not follow redirects, so the 301 surfaces as a dial error.
+	// The one place the slash must go is stream-one's bare path (empty sessionId),
+	// where the Xray server keys the bidirectional branch on an exact bare path —
+	// that trim happens locally in applyMeta, not globally here (lx: SPEC 002).
 	path := options.Path
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	path = strings.TrimRight(path, "/")
 
 	headers := make(http.Header)
 	for key, value := range options.Headers {
