@@ -10,7 +10,7 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
-#### v1.14.0-lx.15-rc.1
+#### v1.14.0-lx.15
 
 **XHTTP no longer breaks behind a reverse proxy when the session id is carried
 off-path (SPEC 002).** A VLESS + XHTTP config routed through nginx/CDN with
