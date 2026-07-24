@@ -48,6 +48,14 @@ jobs:
           # (runs on musl), it just drops naive/cronet (with_purego doesn't compile on
           # mips either — purego has no mips port).
           - { goos: linux, goarch: mips, gomips: softfloat, no_naive: true }
+          # Lightweight little-endian MIPS: same pure-Go CGO_ENABLED=0 no_naive path
+          # as big-endian mips above, but for the common little-endian routers. The
+          # full-featured linux-mipsle-softfloat (build_linux_musl) statically links
+          # cronet/Chromium for NaïveProxy and is ~17 MB larger; this drops naive so
+          # routers that don't need it get a smaller binary that is also demand-paged
+          # (lower RAM than a UPX'd binary, which decompresses fully-resident on start).
+          # The -nonaive suffix keeps it distinct from the naive-carrying asset.
+          - { goos: linux, goarch: mipsle, gomips: softfloat, no_naive: true, name_suffix: nonaive }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -127,6 +135,9 @@ jobs:
           NAME="sing-box-${{ steps.ver.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}"
           if [ -n "${{ matrix.gomips }}" ]; then
             NAME="${NAME}-${{ matrix.gomips }}"
+          fi
+          if [ -n "${{ matrix.name_suffix }}" ]; then
+            NAME="${NAME}-${{ matrix.name_suffix }}"
           fi
           if [ -n "${{ matrix.legacy_name }}" ]; then
             NAME="${NAME}-legacy-${{ matrix.legacy_name }}"
@@ -530,6 +541,8 @@ jobs:
           **Linux — static musl builds for routers** (AsusWRT Merlin, OpenWrt, Keenetic): \`linux-amd64\`, \`linux-arm64\`, \`linux-armv7\`, \`linux-mipsle-softfloat\`. These are statically linked (no \`libdl.so.2\`/glibc dependency) and **keep NaïveProxy** — they run on musl routers where the previous dynamic builds failed with \`libdl.so.2: cannot open shared object file\`. See SPECS/006.
 
           **Linux — big-endian MIPS** (OpenWrt \`mips_24kc\`, e.g. Atheros AR93xx): \`linux-mips-softfloat\` — pure-Go static build **without NaïveProxy** (Chromium/cronet has no big-endian MIPS toolchain); everything else matches the desktop tag set.
+
+          **Linux — lightweight little-endian MIPS** (routers that don't need NaïveProxy): \`linux-mipsle-softfloat-nonaive\` — a pure-Go static build for little-endian MIPS routers, **without NaïveProxy**. About **17 MB smaller** than \`linux-mipsle-softfloat\` (no static cronet/Chromium) and demand-paged rather than fully resident, so it's lighter on both flash and RAM. Use the full \`linux-mipsle-softfloat\` if you do need the \`naive\` outbound.
 
           Each archive contains the \`sing-box\` binary (\`sing-box version\` reports \`${{ steps.ver.outputs.version }}\`). Verify downloads against \`SHA256SUMS\`.
 
