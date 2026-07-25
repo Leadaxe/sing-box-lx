@@ -3,9 +3,9 @@ package option
 import "github.com/sagernet/sing/common/json/badoption"
 
 // V2RayXHTTPOptions configures the XHTTP (Xray "splithttp"/"xhttp") client
-// transport. It is a sing-box-lx downstream addition; see SPECS/002. JSON keys
+// transport. It is a sing-box-lx downstream addition; see SPECS/TASKS/002. JSON keys
 // are snake_case to match Xray's stream settings, sing-box-extended and the rest
-// of sing-box. See SPECS/002-XHTTP_CLIENT_TRANSPORT/PARAM_MAP.md for the precise
+// of sing-box. See SPECS/TASKS/002-XHTTP_CLIENT_TRANSPORT/PARAM_MAP.md for the precise
 // per-field semantics audited against Xray-core and sing-box-extended.
 //
 // Modes (Xray-compatible):
@@ -112,7 +112,7 @@ type V2RayXHTTPOptions struct {
 	// and sing-box-extended) that once capped concurrent upload POSTs. Current
 	// Xray serializes to one POST body in flight at a time (matching our
 	// sequential packet-up upload), so this field is accepted for config/link
-	// symmetry but IGNORED. See SPECS/002 PARAM_MAP.md.
+	// symmetry but IGNORED. See SPECS/TASKS/002 PARAM_MAP.md.
 	ScMaxConcurrentPosts int `json:"sc_max_concurrent_posts,omitempty"`
 
 	// ---- server-only (accepted for config symmetry, IGNORED by the client) --

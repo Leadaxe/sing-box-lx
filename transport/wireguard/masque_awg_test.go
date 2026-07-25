@@ -19,7 +19,7 @@ import (
 // newObfChain semantics (static <b> bytes verbatim, <r>/<rc>/<rd> filled with
 // the right-shaped random bytes) so the structural assertions below run against
 // the actual on-wire layout. The cross-check that the *real* engine accepts the
-// same spec lives in the submodule (see SPECS/009 DoD / IMPLEMENTATION_REPORT);
+// same spec lives in the submodule (see SPECS/TASKS/009 DoD / IMPLEMENTATION_REPORT);
 // here we test the byte structure we emit.
 func obfuscateCPS(t *testing.T, spec string) []byte {
 	t.Helper()

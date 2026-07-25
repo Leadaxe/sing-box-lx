@@ -20,7 +20,7 @@ GC-нагрева / RAM, ~8 МБ каждый там, где `BatchSize=128` —
 экономить почти нечего; чтобы не было молчаливого расхождения, desktop/CLI-бинарь,
 которому дали конфиг с `route.lx_idle_suspend`, **падает при старте** с ошибкой
 `route.lx_idle_suspend is set but this build lacks idle-suspend support; rebuild with
--tags with_lx_idle_suspend (mobile-only feature)`. См. `SPECS/020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md`.
+-tags with_lx_idle_suspend (mobile-only feature)`. См. [фичу ENERGY](../SPECS/FEATURES/ENERGY/FEATURE.md).
 
 Смежные ключи (ревизия 2026-07-15): `route.lx_idle_suspend_reachable` — опциональное
 второе, более длинное окно простоя, после которого гасятся и *достижимые* эндпоинты
@@ -401,7 +401,7 @@ QUIC Initial по RFC 9001, обходящий line-rate DPI:
 >   даёт приманку без hostname независимо от `id`.
 > - Мотивирующий сценарий — облегчение подключений к **Cloudflare WARP**.
 
-**📖 [Подробные примеры →](../SPECS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md)** —
+**📖 [Подробные примеры →](../SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md)** —
 полные конфиги по каждому профилю (вкл. Cloudflare WARP), сгенерированный CPS для каждого,
 руководство «какой профиль выбрать» и таблица траблшутинга с точными ошибками валидации.
 
@@ -430,7 +430,7 @@ mtu ≤ 1500 − 28 (UDP/IP) − 32 (WireGuard) − S4 junk-байт
 
 Маппинг файла `awg.conf` / awg-quick 1:1: `[Interface] PrivateKey/Address/Jc/Jmin/Jmax/S1–S4/H1–H4/I1–I5` → корень endpoint'а; `[Peer] PublicKey/PresharedKey/Endpoint/AllowedIPs/PersistentKeepalive` → `peers[0]` (`Endpoint host:port` → `address`+`port`). Строка `H1 = N` маппится в JSON-число `N`, диапазонная строка `H1 = N-M` (awg2-экспорт) — в JSON-строку `"N-M"` дословно. Если `awg.conf` опускает `MTU` или ставит WireGuard-дефолт `1420`, понизьте его для AWG2 (см. [MTU](#mtu) выше).
 
-Рантайм обеспечивается `Leadaxe/wireguard-go` (sagernet/wireguard-go + обфускация AmneziaWG, подключён через submodule `submodules/wireguard-go`) — см. SPECS/003.
+Рантайм обеспечивается `Leadaxe/wireguard-go` (sagernet/wireguard-go + обфускация AmneziaWG, подключён через submodule `submodules/wireguard-go`) — см. [фичу AWG2](../SPECS/FEATURES/AWG2/FEATURE.md).
 
 ---
 
@@ -574,7 +574,7 @@ WARP enroll) делает клиент, не ядро.
 > **Статус.** Device-verified end-to-end на реальных Wi-Fi и LTE — `warp=on`, реальный трафик на
 > обоих `h3` и `h2`, idle-suspend + самовосстановление подтверждены на устройстве.
 
-**📖 [Полный справочник →](../SPECS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md)** — полная таблица
+**📖 [Полный справочник →](../SPECS/TASKS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md)** — полная таблица
 параметров, матрица профилей, формат ключевого материала, валидация при старте и частые грабли.
 
 ---

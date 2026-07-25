@@ -203,7 +203,7 @@ require (
 // InputPacket, conn reserved/control) and neutralizes the 8-byte encapsulating
 // headroom (MessageEncapsulatingTransportSize=0) so obfuscation composes cleanly.
 // Local-path replace for iteration; switch to a pinned Leadaxe/wireguard-go commit
-// for CI/release once validated against a live AWG2 server. See SPECS/003.
+// for CI/release once validated against a live AWG2 server. See SPECS/TASKS/003.
 replace github.com/sagernet/wireguard-go => ./submodules/wireguard-go
 
 // lx:end awg

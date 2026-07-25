@@ -3,7 +3,7 @@
 # Usage: make -f Makefile.lx lx-build
 
 # Canonical lx build-tag set for the desktop/CLI binaries — single source of truth
-# (mirror changes in SPECS/004). = upstream feature set (release/DEFAULT_BUILD_TAGS)
+# (mirror changes in SPECS/TASKS/004). = upstream feature set (release/DEFAULT_BUILD_TAGS)
 # minus tags irrelevant to a VPN client — with_tailscale (no tailscale endpoints),
 # with_ccm/with_ocm (Claude Code / OpenAI Codex proxy services), with_acme (server-side
 # TLS cert issuance) — plus with_purego (CGO-free cross-compile covers

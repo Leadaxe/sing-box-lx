@@ -7,7 +7,7 @@ package v2ray
 // registry so downstream transports (e.g. XHTTP) register themselves via init()
 // behind a build tag, keeping the recurring diff to upstream files near zero.
 // The built-in transports below reproduce upstream's switch behavior exactly,
-// including the QUIC TLS-required check. See SPECS/002.
+// including the QUIC TLS-required check. See SPECS/TASKS/002.
 
 import (
 	"context"

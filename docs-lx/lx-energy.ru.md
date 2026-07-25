@@ -2,7 +2,7 @@
 
 > 🌐 English version: **[lx-energy.md](lx-energy.md)**.
 >
-> Спецификации механизма: [SPEC 020](../SPECS/020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) (idle-suspend), [SPEC 019](../SPECS/019-URLTEST_MODE_STICKY/SPEC.md) (round_robin/пул/passive_check), [SPEC 007](../SPECS/007-AWG_OVER_WIREGUARD_DETOUR_GUARD/SPEC.md) (AWG-guard). Конфиг-ключи всех lx-фич: [lx-config.ru.md](lx-config.ru.md).
+> Фичи: [ENERGY](../SPECS/FEATURES/ENERGY/FEATURE.md) (idle-suspend), [URLTEST_BALANCE](../SPECS/FEATURES/URLTEST_BALANCE/FEATURE.md) (round_robin/пул/passive_check), [AWG2](../SPECS/FEATURES/AWG2/FEATURE.md). Конфиг-ключи всех lx-фич: [lx-config.ru.md](lx-config.ru.md).
 
 Это главный документ о том, **почему форк экономит батарею на Android и как этим управлять**. Апстримный sing-box держит каждый WireGuard/AmneziaWG-эндпоинт живым 24/7 независимо от трафика: recv-воркеры с буферами (~8 МБ на воркера при мобильном `BatchSize=128` — главный источник GC-нагрева, замерено −134 МБ на устройстве при 8 усыплённых нодах), таймеры keepalive/handshake, которые будят радио. Форк добавляет выборочное **засыпание** простаивающих эндпоинтов и учит health-check **не мешать им спать**. Ниже — вся модель по шагам.
 

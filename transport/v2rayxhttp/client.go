@@ -2,7 +2,7 @@
 // (a.k.a. "splithttp") v2ray transport for sing-box-lx. It is a lean-native
 // implementation written on sing-box/sing primitives and the in-tree
 // v2rayhttp HTTP/2 conn helpers, rather than vendoring Xray internals.
-// See SPECS/002-XHTTP_CLIENT_TRANSPORT.
+// See SPECS/TASKS/002-XHTTP_CLIENT_TRANSPORT.
 //
 // Wire protocol (mirrors Xray-core transport/internet/splithttp):
 //

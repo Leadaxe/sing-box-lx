@@ -2,7 +2,7 @@
 
 > 🌐 Русская версия: **[lx-energy.ru.md](lx-energy.ru.md)**.
 >
-> Mechanism specs: [SPEC 020](../SPECS/020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) (idle-suspend), [SPEC 019](../SPECS/019-URLTEST_MODE_STICKY/SPEC.md) (round_robin/pool/passive_check), [SPEC 007](../SPECS/007-AWG_OVER_WIREGUARD_DETOUR_GUARD/SPEC.md) (AWG guard). Config keys of all lx features: [lx-config.md](lx-config.md).
+> Features: [ENERGY](../SPECS/FEATURES/ENERGY/FEATURE.md) (idle-suspend), [URLTEST_BALANCE](../SPECS/FEATURES/URLTEST_BALANCE/FEATURE.md) (round_robin/pool/passive_check), [AWG2](../SPECS/FEATURES/AWG2/FEATURE.md). Config keys of all lx features: [lx-config.md](lx-config.md).
 
 This is the main document on **why the fork saves battery on Android and how to control it**. Upstream sing-box keeps every WireGuard/AmneziaWG endpoint alive 24/7 regardless of traffic: recv-workers with their buffers (~8 MB per worker at the mobile `BatchSize=128` — the dominant GC-heat source; measured on-device: 8 endpoints suspended freed 134 MB), plus keepalive/handshake timers that wake the radio. The fork adds selective **suspension** of idle endpoints and teaches the health-check machinery **not to keep them awake**. The full model, step by step, follows.
 

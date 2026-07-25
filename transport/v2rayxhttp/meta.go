@@ -73,7 +73,7 @@ type metaConfig struct {
 
 // normalizeMeta validates the placement/obfs option set against the selected mode
 // and resolves all defaults, mirroring sing-box-extended checkV2RayXHTTPBaseOptions
-// + GetNormalized*. See SPECS/002 PARAM_MAP.md for the per-field rules.
+// + GetNormalized*. See SPECS/TASKS/002 PARAM_MAP.md for the per-field rules.
 func normalizeMeta(opts metaOptions, mode string) (metaConfig, error) {
 	var m metaConfig
 

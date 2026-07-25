@@ -1,0 +1,52 @@
+diff --git a/conn/bind_std.go b/conn/bind_std.go
+index 6bf5978..f39cf9d 100644
+--- a/conn/bind_std.go
++++ b/conn/bind_std.go
+@@ -11,6 +11,7 @@ import (
+ 	"fmt"
+ 	"net"
+ 	"net/netip"
++	"os"
+ 	"runtime"
+ 	"strconv"
+ 	"sync"
+@@ -171,6 +172,17 @@ func listenNet(externalControl control.Func, network string, port int) (*net.UDP
+ // it's at least non-nil.
+ var errEADDRINUSE error = errors.New("")
+ 
++// groProbeDispatch reports which receive path the dispatcher takes (LX-GRO-PROBE,
++// 010). "split" = the linux coalesced-message path (splitCoalescedMessages);
++// "single" = one ReadMsgUDP per recv (no GRO parsing). On android this must read
++// "single" — the split-brain the spec describes. Temporary; remove after step 0.
++func groProbeDispatch() string {
++	if runtime.GOOS == "linux" {
++		return "split"
++	}
++	return "single"
++}
++
+ func (s *StdNetBind) Open(uport uint16) ([]ReceiveFunc, uint16, error) {
+ 	s.mu.Lock()
+ 	defer s.mu.Unlock()
+@@ -209,6 +221,11 @@ again:
+ 	var fns []ReceiveFunc
+ 	if v4conn != nil {
+ 		s.ipv4TxOffload, s.ipv4RxOffload = supportsUDPOffload(v4conn)
++		// LX-GRO-PROBE (010): temporary diagnostic — confirm whether the android
++		// kernel actually reports rxOffload. Remove after measurement. See
++		// SPECS/TASKS/010-B-C-WG_ENDPOINT_GRO_SPLIT_BRAIN/SPEC.md (step 0).
++		fmt.Fprintf(os.Stderr, "LX-GRO-PROBE v4: GOOS=%s txOffload=%v rxOffload=%v dispatch=%s\n",
++			runtime.GOOS, s.ipv4TxOffload, s.ipv4RxOffload, groProbeDispatch())
+ 		if runtime.GOOS == "linux" {
+ 			v4pc = ipv4.NewPacketConn(v4conn)
+ 			s.ipv4PC = v4pc
+@@ -218,6 +235,9 @@ again:
+ 	}
+ 	if v6conn != nil {
+ 		s.ipv6TxOffload, s.ipv6RxOffload = supportsUDPOffload(v6conn)
++		// LX-GRO-PROBE (010): see comment above.
++		fmt.Fprintf(os.Stderr, "LX-GRO-PROBE v6: GOOS=%s txOffload=%v rxOffload=%v dispatch=%s\n",
++			runtime.GOOS, s.ipv6TxOffload, s.ipv6RxOffload, groProbeDispatch())
+ 		if runtime.GOOS == "linux" {
+ 			v6pc = ipv6.NewPacketConn(v6conn)
+ 			s.ipv6PC = v6pc

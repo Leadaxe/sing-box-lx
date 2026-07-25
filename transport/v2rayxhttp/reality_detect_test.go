@@ -7,7 +7,7 @@ import "testing"
 // detector sees: types named RealityClientConfig / KTLSClientConfig, and a kTLS
 // wrapper that embeds an inner Config — mirroring common/tls. If common/tls ever
 // renames RealityClientConfig, this test stays green but the live path breaks;
-// that is the documented fragility (SPECS/011 PLAN §3.4-A) — keep the names in sync.
+// that is the documented fragility (SPECS/TASKS/011 PLAN §3.4-A) — keep the names in sync.
 
 // RealityClientConfig is a stand-in whose Name() equals the real one.
 type RealityClientConfig struct{}

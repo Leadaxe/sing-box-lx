@@ -1,8 +1,8 @@
 name: lx-ci
 
-# Fast per-commit gate for sing-box-lx. See docs-lx/lx-config.md and SPECS/004.
+# Fast per-commit gate for sing-box-lx. See docs-lx/lx-config.md and SPECS/TASKS/004.
 #
-# Trigger policy (keep per-commit cost low — see SPECS/004 §2.2):
+# Trigger policy (keep per-commit cost low — see SPECS/TASKS/004 §2.2):
 #   * Doc-only commits (md/docs/SPECS/LICENSE) skip CI entirely (paths-ignore).
 #   * push / pull_request → only the cheap jobs:
 #       - `lint`        : go vet (lx packages) + gofmt on lx-owned files
@@ -215,7 +215,7 @@ jobs:
   # Router musl builds: prove the static-musl + naive pipeline compiles and links
   # statically (no libdl.so.2) for the router arches. Build + verify only, no
   # publish — the release is lx-release.yml's build_linux_musl. Keep the toolchain
-  # steps here in sync with that job. See SPECS/006.
+  # steps here in sync with that job. See SPECS/TASKS/006.
   linux_musl:
     if: github.event_name == 'workflow_dispatch'
     name: linux-musl ${{ matrix.asset }}

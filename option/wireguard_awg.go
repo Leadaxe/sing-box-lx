@@ -132,7 +132,7 @@ func normalizeMagicHeader(spec string) (MagicHeader, error) {
 //     hand-writing an I1 CPS string, the user names a masquerade domain (Id),
 //     protocol (Ip: quic|dns|stun|sip) and browser (Ib), and the device layer
 //     (transport/wireguard/masque_awg.go) generates the I1 CPS string for them.
-//     They are mutually exclusive with an explicit I1. See SPECS/009-*.
+//     They are mutually exclusive with an explicit I1. See SPECS/TASKS/009-*.
 type AmneziaWGOptions struct {
 	Jc   uint32      `json:"jc,omitempty"`
 	Jmin uint32      `json:"jmin,omitempty"`

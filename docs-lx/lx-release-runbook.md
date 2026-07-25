@@ -8,8 +8,8 @@
 - `upstream` = `https://github.com/SagerNet/sing-box.git`; отслеживаем ветку **`upstream/testing`**.
 - Наша рабочая ветка — **`lx-1.14`**; интеграция upstream идёт **ручным `git merge upstream/testing`**
   (НЕ rebase: пока upstream на `v1.14.*-alpha`, rc-линия `vX-lx.1-rc.N` — это формат поставки; см.
-  `wg-1.14-migration` в памяти и [SPECS/004](../SPECS/004-BUILD_CI_RELEASE/)).
-  `lx-rebase.yml` из SPECS/004 описывает старый авто-rebase на **стабильные** теги — он неактуален,
+  `wg-1.14-migration` в памяти и [BUILD_CI_CD](../SPECS/FEATURES/BUILD_CI_CD/FEATURE.md)).
+  `lx-rebase.yml` из [BUILD_CI_CD](../SPECS/FEATURES/BUILD_CI_CD/FEATURE.md) описывает старый авто-rebase на **стабильные** теги — он неактуален,
   пока стабильного `v1.14.0` нет.
 - Релиз-ноты генерятся автоматически из `#### v<tag-без-v>`-секции [docs-lx/lx-changelog.md](lx-changelog.md)
   (`lx-release.yml`); поэтому changelog должен быть верным ДО тега.

@@ -1,7 +1,7 @@
 name: lx-rebase
 
 # Auto-rebase the lx feature commits onto the newest STABLE upstream sing-box tag.
-# See SPECS/004 §2.3. Outcomes:
+# See SPECS/TASKS/004 §2.3. Outcomes:
 #   * already based on the newest stable tag → no-op (logs "up to date").
 #   * clean rebase that still builds + `sing-box check` passes → push lx-rebase/<tag> + open a PR.
 #   * rebase conflict OR build/check fails → open an issue listing the // lx seams to fix.

@@ -21,7 +21,7 @@ import (
 // behaviour that silently skips text between tags — so a test never asserts a
 // property the real engine does not enforce. The real-engine acceptance check is
 // a separate, transient submodule test documented in the IMPLEMENTATION_REPORT;
-// see SPECS/009 DoD.
+// see SPECS/TASKS/009 DoD.
 //
 // chars52 / digits10 match obf_randchars.go / obf_randdigits.go.
 const (

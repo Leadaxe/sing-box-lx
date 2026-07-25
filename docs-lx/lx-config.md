@@ -21,7 +21,7 @@ on-device: 8 endpoints suspended → 134 MB freed). A desktop build has small
 mismatch, a desktop/CLI binary that is handed a config with `route.lx_idle_suspend`
 **fails fast at start**: `route.lx_idle_suspend is set but this build lacks
 idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
-See `SPECS/020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md`.
+See the [ENERGY feature](../SPECS/FEATURES/ENERGY/FEATURE.md).
 
 Related keys (2026-07-15 revision): `route.lx_idle_suspend_reachable` — optional
 second, longer idle window after which even *reachable* endpoints (pool members,
@@ -407,7 +407,7 @@ DPI:
 >   `ip=stun` produces a hostname-less decoy regardless of `id`.
 > - The motivating use case is easing connections to **Cloudflare WARP**.
 
-**📖 [Detailed examples →](../SPECS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md)** —
+**📖 [Detailed examples →](../SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md)** —
 full per-profile configs (incl. a Cloudflare WARP one), the generated CPS for each,
 a "which profile to pick" guide and a troubleshooting table of the exact validation
 errors.
@@ -437,7 +437,7 @@ Also keep `jmax` **below** the real path MTU: amneziawg-go warns that if a junk 
 
 Map an `awg.conf` / awg-quick file 1:1: `[Interface] PrivateKey/Address/Jc/Jmin/Jmax/S1–S4/H1–H4/I1–I5` → endpoint root; `[Peer] PublicKey/PresharedKey/Endpoint/AllowedIPs/PersistentKeepalive` → `peers[0]` (`Endpoint host:port` → `address`+`port`). An `H1 = N` line maps to JSON number `N`, a ranged `H1 = N-M` line (awg2 export) maps to JSON string `"N-M"` verbatim. If the `awg.conf` omits `MTU` or sets the WireGuard-default `1420`, lower it for AWG2 (see [MTU](#mtu) above).
 
-The runtime is backed by `Leadaxe/wireguard-go` (sagernet/wireguard-go + AmneziaWG obfuscation, wired via the `submodules/wireguard-go` submodule) — see SPECS/003.
+The runtime is backed by `Leadaxe/wireguard-go` (sagernet/wireguard-go + AmneziaWG obfuscation, wired via the `submodules/wireguard-go` submodule) — see the [AWG2 feature](../SPECS/FEATURES/AWG2/FEATURE.md).
 
 ---
 
@@ -579,7 +579,7 @@ For `h2` (CONNECT-IP over TCP:443), change one field: `"network": "h2"`.
 > **Status.** Device-verified end-to-end on real Wi-Fi and LTE — `warp=on`, real traffic on both
 > `h3` and `h2`, idle-suspend + self-healing reconnect confirmed on-device.
 
-**📖 [Full reference →](../SPECS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md)** — complete parameter
+**📖 [Full reference →](../SPECS/TASKS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md)** — complete parameter
 table, profile matrix, key-material format, start-time validation and common footguns.
 
 ---

@@ -2,7 +2,7 @@ name: lx-release
 
 # Cross-builds the drop-in `sing-box` binary for all platforms and publishes a
 # GitHub Release with archives + checksums. Triggered by pushing a tag like
-# v1.13.13-lx.1, or manually via workflow_dispatch. See SPECS/004.
+# v1.13.13-lx.1, or manually via workflow_dispatch. See SPECS/TASKS/004.
 
 on:
   push:
@@ -32,7 +32,7 @@ jobs:
       matrix:
         include:
           # Linux lives in build_linux_musl (static musl + naive, for routers,
-          # SPECS/006); darwin lives in build_darwin (macos runner, CGO static
+          # SPECS/TASKS/006); darwin lives in build_darwin (macos runner, CGO static
           # naive — upstream build_darwin parity, cronet-go has no darwin dylib
           # for purego). This job covers the windows purego targets — plus
           # targets cronet can't reach at all (no_naive: pure-Go static,
@@ -40,7 +40,7 @@ jobs:
           - { goos: windows, goarch: amd64, ext: .exe }
           - { goos: windows, goarch: arm64, ext: .exe }
           # Windows 7 (32-bit): built with a Win7-patched Go, and without
-          # with_naive_outbound (cronet-go has no windows/386 build). See SPECS/004.
+          # with_naive_outbound (cronet-go has no windows/386 build). See SPECS/TASKS/004.
           - { goos: windows, goarch: "386", ext: .exe, legacy_win7: true, legacy_name: windows-7 }
           # Big-endian MIPS routers (OpenWrt mips_24kc, e.g. Atheros AR93xx) — issue #6.
           # Chromium has no big-endian MIPS toolchain, so the musl/naive path is
@@ -156,7 +156,7 @@ jobs:
   # with CGO_ENABLED=1 and the tag set MINUS with_purego links libcronet.a
   # statically — naive works with nothing to place next to the binary.
   # amd64 is a CGO cross-compile on the same arm64 runner (clang -arch), as
-  # upstream does. See SPECS/004 §2.4.
+  # upstream does. See SPECS/TASKS/004 §2.4.
   build_darwin:
     name: build darwin/${{ matrix.arch }} (cgo naive)
     runs-on: macos-latest
@@ -233,7 +233,7 @@ jobs:
   # musl. Here we mirror upstream build.yml: clone cronet-go, fetch the Chromium
   # musl toolchain via its cmd/build-naive, and build CGO_ENABLED=1 with
   # `with_musl` — libcronet.a is linked statically and naive is preserved.
-  # See SPECS/006.
+  # See SPECS/TASKS/006.
   build_linux_musl:
     name: build linux-musl/${{ matrix.asset }}
     runs-on: ubuntu-latest
@@ -527,7 +527,7 @@ jobs:
 
           Windows archives include \`libcronet.dll\` — keep it next to \`sing-box.exe\`, the \`naive\` outbound loads it from there. The darwin binaries are built with CGO on a macOS runner: \`libcronet.a\` is linked statically, so NaïveProxy works with nothing extra to install (tag set drops \`with_purego\` there).
 
-          **Linux — static musl builds for routers** (AsusWRT Merlin, OpenWrt, Keenetic): \`linux-amd64\`, \`linux-arm64\`, \`linux-armv7\`, \`linux-mipsle-softfloat\`. These are statically linked (no \`libdl.so.2\`/glibc dependency) and **keep NaïveProxy** — they run on musl routers where the previous dynamic builds failed with \`libdl.so.2: cannot open shared object file\`. See SPECS/006.
+          **Linux — static musl builds for routers** (AsusWRT Merlin, OpenWrt, Keenetic): \`linux-amd64\`, \`linux-arm64\`, \`linux-armv7\`, \`linux-mipsle-softfloat\`. These are statically linked (no \`libdl.so.2\`/glibc dependency) and **keep NaïveProxy** — they run on musl routers where the previous dynamic builds failed with \`libdl.so.2: cannot open shared object file\`. See SPECS/TASKS/006.
 
           **Linux — big-endian MIPS** (OpenWrt \`mips_24kc\`, e.g. Atheros AR93xx): \`linux-mips-softfloat\` — pure-Go static build **without NaïveProxy** (Chromium/cronet has no big-endian MIPS toolchain); everything else matches the desktop tag set.
 
