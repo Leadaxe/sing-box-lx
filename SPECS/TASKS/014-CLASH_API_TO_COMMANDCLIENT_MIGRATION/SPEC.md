@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — смена канала управления ядром (client-side) |
-| Статус | A (accepted) — `with_clash_api` drop из AAR в `v1.14.0-lx.1-rc.1`; box.go-фикс в `rc.3`; десктоп-регрессия исправлена в `rc.17` (§3.4) |
+| Статус | C (complete) — `with_clash_api` drop из AAR в `v1.14.0-lx.1-rc.1`; box.go-фикс в `rc.3`; десктоп-регрессия исправлена в `rc.17` (§3.4) |
 
 **Переезд управления ядром с Clash API на нативный libbox CommandClient — на Android.** LxBox перестаёт использовать Clash REST API и переходит на нативный gRPC-канал `StartedService` (поверх unix-сокета). Из **AAR-сборки** убирается `with_clash_api` — отпадает HTTP-сервер Clash и связанный attack surface. **Десктоп/CLI сохраняют `with_clash_api`** (внешние дашборды ходят по Clash REST API; нативного CommandClient-канала у CLI нет) — см. §3.4.
 

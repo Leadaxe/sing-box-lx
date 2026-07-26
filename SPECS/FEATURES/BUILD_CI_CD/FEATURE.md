@@ -56,10 +56,11 @@ with_xhttp, with_awg, with_lx_command
 
 | Workflow | Что делает |
 |----------|------------|
-| `lx-ci.yml` | Дешёвый гейт на каждый push: lint + build-check. Doc-only коммиты пропускаются (`paths-ignore` включает `SPECS/**`) |
+| `lx-ci.yml` | Дешёвый гейт на каждый push в `lx` и любую ветку `lx-*` (включая релизную линию и экспериментальные): lint + build-check. Doc-only коммиты пропускаются (`paths-ignore` включает `SPECS/**`) |
+| `lx-build.yml` | Артефакты по требованию, в том числе Apple xcframework |
 | `lx-release.yml` | Релиз по тегу: cross ×6 + musl ×4 + AAR |
 | `lx-musl-toolchain-mirror.yml` | Producer: заливает Chromium musl-тулчейн в release-ассет |
-| `lx-rebase.yml` | Авто-ребейз на стабильные теги апстрима (исключает alpha/beta/rc) |
+| `lx-rebase.yml` | Авто-ребейз на стабильные теги апстрима (исключает alpha/beta/rc). ⚠️ На 1.14-линии фактически спит: синк идёт ручным merge до появления стабильного `v1.14.0` |
 
 **Зеркало тулчейна** — не удобство, а необходимость: `snapshot.debian.org`
 периодически отдаёт 503 и блокирует релиз, а `actions/cache` промахивается
@@ -69,7 +70,7 @@ with_xhttp, with_awg, with_lx_command
 
 ### Релиз
 
-⚠️ **`docs/lx-changelog.md` — источник release notes.** Пайплайн извлекает
+⚠️ **`docs-lx/lx-changelog.md` — источник release notes.** Пайплайн извлекает
 секцию `#### v<версия>` из changelog в описание GitHub-релиза. Заголовок должен
 быть ровно `#### v<tag-without-v>`; неверная или отсутствующая секция даёт
 неверные или пустые notes **автоматически**. Notes руками не пишутся.

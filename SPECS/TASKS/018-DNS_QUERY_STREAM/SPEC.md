@@ -3,7 +3,7 @@
 **Фича:** [OBSERVABILITY](../../FEATURES/OBSERVABILITY/FEATURE.md)
 
 **Тип:** lx-фича (наблюдаемость DNS через command-мультиплекс)
-**Статус:** v2 — перенос DNS-стрима в command-мультиплекс (реализуется на `lx-1.14`)
+**Статус:** C (complete) — v2 (DNS-стрим в command-мультиплексе) реализован и отгружен
 **Приоритет:** Medium (профайлер LxBox: атрибуция DNS-запросов к приложению в реальном времени)
 **Файлы ядра:** `common/dnstrack/*`, `dns/client.go`, `dns/client_log.go`,
 `daemon/started_service.proto`, `daemon/started_service_command_lx.go`, `experimental/libbox/*`

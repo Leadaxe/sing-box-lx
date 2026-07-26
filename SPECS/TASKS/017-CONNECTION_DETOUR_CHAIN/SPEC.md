@@ -3,7 +3,7 @@
 **Фича:** [OBSERVABILITY](../../FEATURES/OBSERVABILITY/FEATURE.md)
 
 **Тип:** lx-фича (расширение connection-метаданных)
-**Статус:** Open → реализуется на ветке `lx-1.14`
+**Статус:** C (complete) — реализовано и отгружено
 **Приоритет:** Medium (UI: показать реальный физический путь пакета)
 **Файлы ядра:** `common/trafficcontrol/tracker.go`, `daemon/started_service.go`,
 `daemon/started_service.proto`, `experimental/libbox/command_types.go`

@@ -115,8 +115,8 @@ DNS-запросы — и управлять им. Штатный канал д�
 
 | Задача | Роль | Статус |
 |--------|------|--------|
-| [014 — CLASH_API_TO_COMMANDCLIENT_MIGRATION](../../TASKS/014-CLASH_API_TO_COMMANDCLIENT_MIGRATION/SPEC.md) | Смена канала управления; разделение наборов сборки | A |
-| [015 — COMMAND_PROTOCOL_RPC_EXTENSIONS](../../TASKS/015-COMMAND_PROTOCOL_RPC_EXTENSIONS/SPEC.md) | Вызовы: замер узла, правила, группы, узлы | M |
+| [014 — CLASH_API_TO_COMMANDCLIENT_MIGRATION](../../TASKS/014-CLASH_API_TO_COMMANDCLIENT_MIGRATION/SPEC.md) | Смена канала управления; разделение наборов сборки | C |
+| [015 — COMMAND_PROTOCOL_RPC_EXTENSIONS](../../TASKS/015-COMMAND_PROTOCOL_RPC_EXTENSIONS/SPEC.md) | Вызовы: замер узла, правила, группы, узлы | C |
 | [016 — CONNECTIONS_MAP_MUTEX](../../TASKS/016-CONNECTIONS_MAP_MUTEX/SPEC.md) | Устойчивость учёта соединений при параллельном доступе | C |
 | [017 — CONNECTION_DETOUR_CHAIN](../../TASKS/017-CONNECTION_DETOUR_CHAIN/SPEC.md) | Хвост проксирования отдельным полем | C |
 | [018 — DNS_QUERY_STREAM](../../TASKS/018-DNS_QUERY_STREAM/SPEC.md) | Поток DNS-запросов с атрибуцией | C |

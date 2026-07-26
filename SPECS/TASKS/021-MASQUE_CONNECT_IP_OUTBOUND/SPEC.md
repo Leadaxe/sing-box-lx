@@ -330,7 +330,7 @@ DATAGRAM (type 0 + varint len). `payloadLen` ограничен `maxCapsulePaylo
   client (серверная сторона + RFC-strict Dial). Компилируется без build-тегов.
 - `transport/masque/` — `profile.go` (cloudflare/standard + PrepareTLSConfig pinning + генерация client
   cert), `masque.go` (ConnectTunnelH3 + IpConn), `request.go` (Extended CONNECT + advertiseDefaultRoute),
-  `client_h2.go` (capsule DATAGRAM поверх stdlib net/http CONNECT-pipe).
+  `client_h2.go` (capsule DATAGRAM поверх ручного HTTP/2 на `x/net/http2` Framer + hpack).
 - `protocol/masque/outbound.go` — adapter.Outbound: lazy run(), два насоса, DialContext/ListenPacket/Close.
 - `option/masque.go`, `constant/proxy.go` (TypeMASQUE + displayName), `include/quic.go` (+quic_stub.go).
 
@@ -338,16 +338,17 @@ DATAGRAM (type 0 + varint len). `payloadLen` ограничен `maxCapsulePaylo
 - **Экспорт `NewStackDevice` НЕ понадобился.** `transport/wireguard.NewDevice(DeviceOptions{Address,MTU})`
   уже экспортирован и при `System:false` даёт gVisor `stackDevice` с Read/Write (raw IP) + DialContext/
   ListenPacket + Start/Close. `SetDevice` — no-op для stackDevice, WG-device не нужен. Риск №2 снят.
-- **h2 БЕЗ http-форка.** Риск №1 снят: stdlib Go 1.25 `net/http` (Protocols.SetHTTP2 + DialTLSContext)
-  тянет обычный CONNECT со стриминговым телом-pipe; capsule DATAGRAM (type 0) framing ручной поверх
-  `quicvarint`. Не используем `NewClientConn`/`Reserve` (это была причина форка у mihomo). НОВЫХ внешних
-  зависимостей нет; `golang.org/x/net` (icmp/ipv4/ipv6) и `x/exp` уже в go.mod.
+- **h2 БЕЗ http-форка.** Риск №1 снят, но не тем способом, что планировался: Extended CONNECT
+  (`:protocol`) не выражается ни через stdlib `net/http`, ни через `x/net/http2` `Transport`, поэтому
+  HTTP/2-соединение ведётся вручную — публичный `Framer` + `hpack` из `x/net/http2`; capsule DATAGRAM
+  (type 0) framing поверх `quicvarint`. НОВЫХ внешних зависимостей нет; `golang.org/x/net`
+  (icmp/ipv4/ipv6/http2) и `x/exp` уже в go.mod.
 - Без gvisor `NewDevice(System:false)` вернёт `ErrGVisorNotIncluded` при первом дайле (graceful, не паника).
 
 Проверки: `go build` (with_quic+with_gvisor+with_wireguard и stub-путь без quic), `go vet`, `gofmt -l`
 чисто. Юнит-тесты зелёные: profile-матрица, TLS-pinning, EC-ключи round-trip, capsule round-trip
 (route/address), IPv4-checksum (вектор 0xb861), parsePrefixes, decode `type:masque` через include-registry.
-**НЕ проверено на живом WARP** — нужен реальный ключевой материал из Dart-регистрации (риск №3, §Тест-план).
+Живой WARP подтверждён на устройстве (оба транспорта, h3 и h2) — см. шапку и [TEST_PLAN.md](TEST_PLAN.md) §RESULTS.
 
 ## Референс
 

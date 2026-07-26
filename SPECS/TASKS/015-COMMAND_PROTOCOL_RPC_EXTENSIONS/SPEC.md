@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — расширения libbox command-протокола (CONSTITUTION §3.6) |
-| Статус | M (mixed) — `URLTestOutbound` + `GetRules` в `v1.14.0-lx.1-rc.2`; `GetGroups`/`GetOutbounds` + фикс `len<2` в `v1.14.0-lx.1-rc.4`; `URLTestOutbound` cancel-fix (ctx-bind, §3.6) — в коде, ждёт релиз-тега. Слой 2 (масс-отмена) разблокирован на клиенте без правок биндинга (отдельный ping-client + `Disconnect()`); LxBox-фидбэк закрыт |
+| Статус | C (complete) — все вызовы отгружены: `URLTestOutbound` + `GetRules` в `v1.14.0-lx.1-rc.2`; `GetGroups`/`GetOutbounds` + фикс `len<2` в `v1.14.0-lx.1-rc.4`; `URLTestOutbound` cancel-fix (ctx-bind, §3.6) — в релизах с `v1.14.0-lx.1`. Слой 2 (масс-отмена) разблокирован на клиенте без правок биндинга (отдельный ping-client + `Disconnect()`); LxBox-фидбэк закрыт |
 
 **Единый дом всех доработок нативного libbox CommandClient** (gRPC `StartedService`), доведших его до минимума, на котором UI LxBox реально работает после переезда с Clash API (см. [SPEC 014](../014-CLASH_API_TO_COMMANDCLIENT_MIGRATION/SPEC.md) — сам переезд).
 
