@@ -189,3 +189,13 @@ type MDNSDNSServerOptions struct {
 	LocalDNSServerOptions
 	Interface badoption.Listable[string] `json:"interface,omitempty"`
 }
+
+// lx:begin dns-group
+type GroupDNSServerOptions struct {
+	Servers  badoption.Listable[string] `json:"servers"`
+	Mode     string                     `json:"mode,omitempty"`
+	Interval badoption.Duration         `json:"interval,omitempty"`
+	DownTime badoption.Duration         `json:"down_time,omitempty"`
+}
+
+// lx:end dns-group

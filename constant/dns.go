@@ -28,6 +28,9 @@ const (
 	DNSTypeDHCP      = "dhcp"
 	DNSTypeMDNS      = "mdns"
 	DNSTypeTailscale = "tailscale"
+	// lx:begin dns-group
+	DNSTypeGroup = "group"
+	// lx:end dns-group
 )
 
 const (
