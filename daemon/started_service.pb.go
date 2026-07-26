@@ -6365,12 +6365,15 @@ type DnsQueryEvent struct {
 	Outbound      []string `protobuf:"bytes,12,rep,name=outbound,proto3" json:"outbound,omitempty"`
 	// SPEC 035 — group probe trace. dnsGroupPath is the group nesting INSIDE-OUT
 	// (empty = the query did not go through a group); attempts is the probe
-	// chronology snapshotted at answer time (race stragglers that resolved later
-	// are absent by design — the full picture is GetDNSGroups); racer marks the
-	// query that triggered a race fan-out.
+	// chronology snapshotted at answer time (fan stragglers that resolved later
+	// are absent by design — the full picture is GetDNSGroups); fanned marks a
+	// query that involved a fan-out (rescue / election / parallel); survival
+	// marks an answer obtained via the least dirty server when no member was
+	// clean (degradation would otherwise be invisible in the stream).
 	DnsGroupPath  []string           `protobuf:"bytes,13,rep,name=dnsGroupPath,proto3" json:"dnsGroupPath,omitempty"`
 	Attempts      []*DnsGroupAttempt `protobuf:"bytes,14,rep,name=attempts,proto3" json:"attempts,omitempty"`
-	Racer         bool               `protobuf:"varint,15,opt,name=racer,proto3" json:"racer,omitempty"`
+	Fanned        bool               `protobuf:"varint,15,opt,name=fanned,proto3" json:"fanned,omitempty"`
+	Survival      bool               `protobuf:"varint,16,opt,name=survival,proto3" json:"survival,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6503,9 +6506,16 @@ func (x *DnsQueryEvent) GetAttempts() []*DnsGroupAttempt {
 	return nil
 }
 
-func (x *DnsQueryEvent) GetRacer() bool {
+func (x *DnsQueryEvent) GetFanned() bool {
 	if x != nil {
-		return x.Racer
+		return x.Fanned
+	}
+	return false
+}
+
+func (x *DnsQueryEvent) GetSurvival() bool {
+	if x != nil {
+		return x.Survival
 	}
 	return false
 }
@@ -6801,21 +6811,25 @@ func (x *PoolList) GetSlots() []*PoolSlot {
 	return nil
 }
 
-// SPEC 035 — point-in-time health snapshot of every DNS group in the config
-// (groups are few; the UI draws them all, so there is no per-tag request).
-// downRemainingMs: ms until the member re-enters rotation; 0 = up.
-// lastRttMs: last successful probe; 0 = never measured.
-// raceAgeMs: ms since the last race; -1 = no race has happened yet.
+// SPEC 035 v3 — point-in-time record snapshot of every DNS group in the
+// config (groups are few; the UI draws them all, so there is no per-tag
+// request). clean = zero live errors; lastErrorAgeMs: age of the newest live
+// error, -1 = none; liveWins: live win records (fastest mode);
+// current = the group's sticky target; lastRttMs: last successful probe,
+// 0 = never measured. The UI derives "when does it clear" from the ages and
+// the error_ttl/win_ttl it knows from the config.
 type DnsGroupMember struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	Tag                 string                 `protobuf:"bytes,1,opt,name=tag,proto3" json:"tag,omitempty"`
-	ServerType          string                 `protobuf:"bytes,2,opt,name=serverType,proto3" json:"serverType,omitempty"`
-	Up                  bool                   `protobuf:"varint,3,opt,name=up,proto3" json:"up,omitempty"`
-	DownRemainingMs     int64                  `protobuf:"varint,4,opt,name=downRemainingMs,proto3" json:"downRemainingMs,omitempty"`
-	ConsecutiveFailures uint32                 `protobuf:"varint,5,opt,name=consecutiveFailures,proto3" json:"consecutiveFailures,omitempty"`
-	LastRttMs           uint32                 `protobuf:"varint,6,opt,name=lastRttMs,proto3" json:"lastRttMs,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Tag            string                 `protobuf:"bytes,1,opt,name=tag,proto3" json:"tag,omitempty"`
+	ServerType     string                 `protobuf:"bytes,2,opt,name=serverType,proto3" json:"serverType,omitempty"`
+	Clean          bool                   `protobuf:"varint,3,opt,name=clean,proto3" json:"clean,omitempty"`
+	LiveErrors     uint32                 `protobuf:"varint,4,opt,name=liveErrors,proto3" json:"liveErrors,omitempty"`
+	LastErrorAgeMs int64                  `protobuf:"varint,5,opt,name=lastErrorAgeMs,proto3" json:"lastErrorAgeMs,omitempty"`
+	LiveWins       uint32                 `protobuf:"varint,6,opt,name=liveWins,proto3" json:"liveWins,omitempty"`
+	Current        bool                   `protobuf:"varint,7,opt,name=current,proto3" json:"current,omitempty"`
+	LastRttMs      uint32                 `protobuf:"varint,8,opt,name=lastRttMs,proto3" json:"lastRttMs,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *DnsGroupMember) Reset() {
@@ -6862,25 +6876,39 @@ func (x *DnsGroupMember) GetServerType() string {
 	return ""
 }
 
-func (x *DnsGroupMember) GetUp() bool {
+func (x *DnsGroupMember) GetClean() bool {
 	if x != nil {
-		return x.Up
+		return x.Clean
 	}
 	return false
 }
 
-func (x *DnsGroupMember) GetDownRemainingMs() int64 {
+func (x *DnsGroupMember) GetLiveErrors() uint32 {
 	if x != nil {
-		return x.DownRemainingMs
+		return x.LiveErrors
 	}
 	return 0
 }
 
-func (x *DnsGroupMember) GetConsecutiveFailures() uint32 {
+func (x *DnsGroupMember) GetLastErrorAgeMs() int64 {
 	if x != nil {
-		return x.ConsecutiveFailures
+		return x.LastErrorAgeMs
 	}
 	return 0
+}
+
+func (x *DnsGroupMember) GetLiveWins() uint32 {
+	if x != nil {
+		return x.LiveWins
+	}
+	return 0
+}
+
+func (x *DnsGroupMember) GetCurrent() bool {
+	if x != nil {
+		return x.Current
+	}
+	return false
 }
 
 func (x *DnsGroupMember) GetLastRttMs() uint32 {
@@ -6894,9 +6922,7 @@ type DnsGroupState struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Tag           string                 `protobuf:"bytes,1,opt,name=tag,proto3" json:"tag,omitempty"`
 	Mode          string                 `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"`
-	Winner        string                 `protobuf:"bytes,3,opt,name=winner,proto3" json:"winner,omitempty"`
-	Ranking       []string               `protobuf:"bytes,4,rep,name=ranking,proto3" json:"ranking,omitempty"`
-	RaceAgeMs     int64                  `protobuf:"varint,5,opt,name=raceAgeMs,proto3" json:"raceAgeMs,omitempty"`
+	Current       string                 `protobuf:"bytes,3,opt,name=current,proto3" json:"current,omitempty"`
 	Members       []*DnsGroupMember      `protobuf:"bytes,6,rep,name=members,proto3" json:"members,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -6946,25 +6972,11 @@ func (x *DnsGroupState) GetMode() string {
 	return ""
 }
 
-func (x *DnsGroupState) GetWinner() string {
+func (x *DnsGroupState) GetCurrent() string {
 	if x != nil {
-		return x.Winner
+		return x.Current
 	}
 	return ""
-}
-
-func (x *DnsGroupState) GetRanking() []string {
-	if x != nil {
-		return x.Ranking
-	}
-	return nil
-}
-
-func (x *DnsGroupState) GetRaceAgeMs() int64 {
-	if x != nil {
-		return x.RaceAgeMs
-	}
-	return 0
 }
 
 func (x *DnsGroupState) GetMembers() []*DnsGroupMember {
@@ -7563,7 +7575,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\bRuleList\x12\"\n" +
 	"\x05rules\x18\x01 \x03(\v2\f.daemon.RuleR\x05rules\"D\n" +
 	"\x1aSubscribeDNSQueriesRequest\x12&\n" +
-	"\x0eincludeAnswers\x18\x01 \x01(\bR\x0eincludeAnswers\"\xe6\x03\n" +
+	"\x0eincludeAnswers\x18\x01 \x01(\bR\x0eincludeAnswers\"\x84\x04\n" +
 	"\rDnsQueryEvent\x12\x16\n" +
 	"\x06domain\x18\x01 \x01(\tR\x06domain\x12\x1c\n" +
 	"\tqueryType\x18\x02 \x01(\rR\tqueryType\x12\x14\n" +
@@ -7579,8 +7591,9 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\rdnsServerType\x18\v \x01(\tR\rdnsServerType\x12\x1a\n" +
 	"\boutbound\x18\f \x03(\tR\boutbound\x12\"\n" +
 	"\fdnsGroupPath\x18\r \x03(\tR\fdnsGroupPath\x123\n" +
-	"\battempts\x18\x0e \x03(\v2\x17.daemon.DnsGroupAttemptR\battempts\x12\x14\n" +
-	"\x05racer\x18\x0f \x01(\bR\x05racer\"y\n" +
+	"\battempts\x18\x0e \x03(\v2\x17.daemon.DnsGroupAttemptR\battempts\x12\x16\n" +
+	"\x06fanned\x18\x0f \x01(\bR\x06fanned\x12\x1a\n" +
+	"\bsurvival\x18\x10 \x01(\bR\bsurvival\"y\n" +
 	"\x0fDnsGroupAttempt\x12\x16\n" +
 	"\x06server\x18\x01 \x01(\tR\x06server\x12\x1e\n" +
 	"\n" +
@@ -7600,22 +7613,24 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x03tag\x18\x02 \x01(\tR\x03tag\x12\x14\n" +
 	"\x05delay\x18\x03 \x01(\rR\x05delay\"2\n" +
 	"\bPoolList\x12&\n" +
-	"\x05slots\x18\x01 \x03(\v2\x10.daemon.PoolSlotR\x05slots\"\xcc\x01\n" +
+	"\x05slots\x18\x01 \x03(\v2\x10.daemon.PoolSlotR\x05slots\"\xf4\x01\n" +
 	"\x0eDnsGroupMember\x12\x10\n" +
 	"\x03tag\x18\x01 \x01(\tR\x03tag\x12\x1e\n" +
 	"\n" +
 	"serverType\x18\x02 \x01(\tR\n" +
-	"serverType\x12\x0e\n" +
-	"\x02up\x18\x03 \x01(\bR\x02up\x12(\n" +
-	"\x0fdownRemainingMs\x18\x04 \x01(\x03R\x0fdownRemainingMs\x120\n" +
-	"\x13consecutiveFailures\x18\x05 \x01(\rR\x13consecutiveFailures\x12\x1c\n" +
-	"\tlastRttMs\x18\x06 \x01(\rR\tlastRttMs\"\xb7\x01\n" +
+	"serverType\x12\x14\n" +
+	"\x05clean\x18\x03 \x01(\bR\x05clean\x12\x1e\n" +
+	"\n" +
+	"liveErrors\x18\x04 \x01(\rR\n" +
+	"liveErrors\x12&\n" +
+	"\x0elastErrorAgeMs\x18\x05 \x01(\x03R\x0elastErrorAgeMs\x12\x1a\n" +
+	"\bliveWins\x18\x06 \x01(\rR\bliveWins\x12\x18\n" +
+	"\acurrent\x18\a \x01(\bR\acurrent\x12\x1c\n" +
+	"\tlastRttMs\x18\b \x01(\rR\tlastRttMs\"\x81\x01\n" +
 	"\rDnsGroupState\x12\x10\n" +
 	"\x03tag\x18\x01 \x01(\tR\x03tag\x12\x12\n" +
-	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x16\n" +
-	"\x06winner\x18\x03 \x01(\tR\x06winner\x12\x18\n" +
-	"\aranking\x18\x04 \x03(\tR\aranking\x12\x1c\n" +
-	"\traceAgeMs\x18\x05 \x01(\x03R\traceAgeMs\x120\n" +
+	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x18\n" +
+	"\acurrent\x18\x03 \x01(\tR\acurrent\x120\n" +
 	"\amembers\x18\x06 \x03(\v2\x16.daemon.DnsGroupMemberR\amembers\"=\n" +
 	"\fDnsGroupList\x12-\n" +
 	"\x06groups\x18\x01 \x03(\v2\x15.daemon.DnsGroupStateR\x06groups*U\n" +
