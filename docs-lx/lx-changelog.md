@@ -10,6 +10,58 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.16-rc.2
+
+**⚠️ BREAKING (vs rc.1 only): the DNS group config contract is replaced.**
+`mode: failover|race` and the `interval`/`down_time` fields from rc.1 are
+GONE and such configs now **fail to load** with an explicit error. The group
+was redesigned around a TTL record model before any consumer shipped — no
+compatibility bridge is kept.
+
+**DNS group v2 — TTL record model (SPEC 033/035, feature
+[DNS_GROUP](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/DNS_GROUP/FEATURE.md)).**
+Servers carry no states; two expiring record tables drive everything: an
+**error** record (`error_ttl`, default 2m — written by any failed exchange,
+erases the server's live wins) and a **win** record (`win_ttl`, default 5m —
+only the first success of a fan-out; any success erases the server's live
+errors). *Clean* = zero live errors; a network change amnesties both tables.
+
+```json
+{ "type": "group", "tag": "public",
+  "servers": ["google", "cloudflare", "quad9"],
+  "mode": "stable", "error_ttl": "2m", "win_ttl": "5m" }
+```
+
+- `mode: stable` (default) — stickiness before randomness: stay on the
+  current server while it is clean, re-elect a random clean one only when it
+  is not. Server order is NOT meaningful; there is no return-to-primary.
+- `mode: fastest` — the clean server with the most live wins; when nobody
+  has one, the query becomes an election fan-out to all clean members
+  (single-flight — a burst never multiplies fans). Re-election rhythm is
+  `win_ttl` expiry. No timers, no synthetic probes.
+- `mode: parallel` — every query fans to all clean members (N× traffic by
+  design; no wins recorded).
+- Unified flow: the single target gets HALF the remaining request budget —
+  the rescue fan is guaranteed the rest, so a blackholed server can no
+  longer eat the whole deadline. With **no clean member** every mode makes
+  exactly one attempt via the least dirty server and never fans (anti-storm
+  on a dead network).
+- Observability: events now carry `fanned` and `survival` flags on top of
+  the probe trace; `GetDNSGroups` returns the live records per member
+  (clean, live errors + age, live wins, current, last rtt). The rc.1 trace
+  field `racer` and the v2 state fields (winner/ranking/…) are replaced —
+  they never shipped to a consumer.
+- The implementation survived a 24-agent adversarial review; all six
+  confirmed defects (nil fan result, leaky Reset amnesty, election-window
+  target trashing, and more) are fixed with regression tests.
+
+Also in this build: the `lx_idle_teardown` explicit-`"0"` kill switch is now
+distinguishable from an absent key (SPEC 020), docs were reconciled with the
+code (AWG2 masquerade `id`/`ib`/`sip`, XHTTP GET fallback, DNS stream rcode
+semantics), and upstream **v1.14.0-beta.2** is merged — upstream left alpha
+(platform options restored, TLS/acme fixes, JSON schema, client-subnet DNS
+cache, rule-level race/speculative evaluate actions).
+
 #### v1.14.0-lx.16-rc.1
 
 **New DNS server type `group`: DNS resolution no longer dies with one failed
