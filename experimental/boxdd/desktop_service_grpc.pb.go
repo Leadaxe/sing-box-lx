@@ -1059,11 +1059,7 @@ func (UnimplementedApplicationServiceServer) FormatConfig(context.Context, *Conf
 }
 
 func (UnimplementedApplicationServiceServer) GenerateConfigSchema(context.Context, *emptypb.Empty) (*ConfigContent, error) {
-	return nil, status.Error(codes.Unimplemented, "method GenerateConfigSchema not implemented")
-}
-
-func (UnimplementedApplicationServiceServer) GenerateConfigSchema(context.Context, *emptypb.Empty) (*ConfigContent, error) {
-	return nil, status.Error(codes.Unimplemented, "method GenerateConfigSchema not implemented")
+	return nil, status.Errorf(codes.Unimplemented, "method GenerateConfigSchema not implemented")
 }
 
 func (UnimplementedApplicationServiceServer) EncodeProfile(context.Context, *ProfileContent) (*ProfileData, error) {
