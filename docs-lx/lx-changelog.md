@@ -10,6 +10,33 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.16-rc.3
+
+**New RPC `GetRunningConfig`: the core now answers "what is actually
+running" (SPEC 037, feature
+[OBSERVABILITY](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/OBSERVABILITY/FEATURE.md)).**
+Until now the core kept no config after start — `GetOutbounds` returns only
+tag/type/delay, so after a profile edit without restart the client had no
+source of truth for node details. The new unary RPC returns the canonical
+JSON of the options the running box was actually built from:
+
+- **Post-override snapshot** — includes what the service layer injected at
+  start (tun `auto_redirect`/package lists, the OOM-killer service), i.e.
+  exactly what went into the box, not the profile text the client sent.
+- Captured **once at service start** (same encoder as config formatting);
+  serving the RPC is a plain string handoff — zero per-request work, zero
+  cost when never called.
+- **Per-node JSON is derived client-side** by extracting the tag from this
+  document — "View details" / "Copy JSON" need no per-tag RPC.
+- The document is a **re-marshal**, not the original bytes (field order,
+  omitempty, `[] → null`): compare with the stored profile semantically,
+  not as a textual diff.
+- Behind `with_lx_command` as usual; a tag-less build captures nothing and
+  answers `Unimplemented`. Not-started → `FailedPrecondition`; started but
+  no snapshot (the attached-service path) → `Unavailable`.
+
+No other changes vs rc.2; upstream `testing` had no new commits at cut time.
+
 #### v1.14.0-lx.16-rc.2
 
 **⚠️ BREAKING (vs rc.1 only): the DNS group config contract is replaced.**
