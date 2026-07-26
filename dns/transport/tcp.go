@@ -70,6 +70,8 @@ func NewTCPRaw(adapter dns.TransportAdapter, dialer N.Dialer, serverAddr M.Socks
 		readNext: func(conn net.Conn) (*mDNS.Msg, error) {
 			return ReadMessage(conn)
 		},
+		retryReadError: true,
+		probeReuse:     true,
 	})
 	return t
 }

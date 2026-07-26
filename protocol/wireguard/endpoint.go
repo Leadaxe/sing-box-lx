@@ -148,8 +148,10 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		Dialer: outboundDialer,
 		CreateDialer: func(interfaceName string) N.Dialer {
 			return common.Must1(dialer.NewDefault(ctx, option.DialerOptions{
-				BindInterface:      interfaceName,
-				UDPFragmentDefault: true, // lx: SPEC 028
+				AbstractDialerOptions: option.AbstractDialerOptions{
+					BindInterface:      interfaceName,
+					UDPFragmentDefault: true, // lx: SPEC 028
+				},
 			}))
 		},
 		Name:       options.Name,

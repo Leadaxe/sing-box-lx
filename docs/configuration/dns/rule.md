@@ -242,7 +242,7 @@ icon: material/alert-decagram
     (`source_port` || `source_port_range`) &&  
     `other fields`
 
-    Additionally, each branch inside an included rule-set can be considered merged into the outer rule, while different branches keep OR semantics.
+    When a rule-set contains only a single default rule without `invert`, its fields are considered merged into the outer rule per the logic above; otherwise, it is matched as an `other field`; different rule-sets always keep OR semantics.
 
 #### inbound
 
@@ -507,13 +507,14 @@ Match source device hostname from DHCP leases.
 
 Match specified DNS servers' preferred domains.
 
-| Type        | Match                                                                        |
-|-------------|------------------------------------------------------------------------------|
-| `hosts`     | Match predefined entries and entries in hosts files                          |
-| `local`     | Match hosts entries, neighbor-resolved hosts, and mDNS local domains         |
-| `mdns`      | Match mDNS local domains (`*.local.` and IPv4/IPv6 link-local reverse zones) |
-| `tailscale` | Match MagicDNS hosts and DNS route suffixes                                  |
-| `resolved`  | Match split DNS and search domains from systemd-resolved links               |
+| Type          | Match                                                                        |
+|---------------|------------------------------------------------------------------------------|
+| `hosts`       | Match predefined entries and entries in hosts files                          |
+| `local`       | Match hosts entries, neighbor-resolved hosts, and mDNS local domains         |
+| `mdns`        | Match mDNS local domains (`*.local.` and IPv4/IPv6 link-local reverse zones) |
+| `tailscale`   | Match MagicDNS hosts and DNS route suffixes                                  |
+| `openconnect` | Match split DNS and search domains pushed by the VPN server                  |
+| `resolved`    | Match split DNS and search domains from systemd-resolved links               |
 
 #### wifi_ssid
 
@@ -561,7 +562,11 @@ Enable response-based matching. When enabled, this rule matches against the eval
 (set by a preceding [`evaluate`](/configuration/dns/rule_action/#evaluate) action)
 instead of only matching the original query.
 
-The evaluated response can also be returned directly by a later [`respond`](/configuration/dns/rule_action/#respond) action.
+`true` or the `tag` of an `evaluate` action: `true` matches against the response of the latest
+`evaluate` action without `tag`; a tag matches against the response of the `evaluate` action with the tag.
+
+The evaluated response can also be returned directly by a later [`respond`](/configuration/dns/rule_action/#respond) action;
+in a rule with a `match_response` tag, `respond` returns the tagged response.
 
 Required for Response Match Fields (`response_rcode`, `response_answer`, `response_ns`, `response_extra`).
 Also required for `ip_cidr`, `ip_is_private`, and `ip_accept_any` when used with `evaluate` or Response Match Fields.

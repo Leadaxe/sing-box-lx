@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"reflect"
 	"time"
 
 	"github.com/sagernet/sing-box/common/networkquality"
 	"github.com/sagernet/sing-box/common/stun"
 	"github.com/sagernet/sing-box/daemon"
 	"github.com/sagernet/sing-box/experimental/libbox"
+	"github.com/sagernet/sing-box/include"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/schema"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -23,7 +27,7 @@ type applicationService struct {
 }
 
 func (s *applicationService) CheckConfig(ctx context.Context, request *ConfigContent) (*emptypb.Empty, error) {
-	err := s.startedService.CheckConfig(request.Content)
+	err := s.startedService.CheckConfig(ctx, request.Content)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -31,11 +35,19 @@ func (s *applicationService) CheckConfig(ctx context.Context, request *ConfigCon
 }
 
 func (s *applicationService) FormatConfig(ctx context.Context, request *ConfigContent) (*ConfigContent, error) {
-	content, err := s.startedService.FormatConfig(request.Content)
+	content, err := s.startedService.FormatConfig(ctx, request.Content)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	return &ConfigContent{Content: content}, nil
+}
+
+func (s *applicationService) GenerateConfigSchema(ctx context.Context, request *emptypb.Empty) (*ConfigContent, error) {
+	content, err := schema.Generate(include.Context(context.Background()), reflect.TypeFor[option.Options]())
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &ConfigContent{Content: string(content)}, nil
 }
 
 func (s *applicationService) EncodeProfile(ctx context.Context, request *ProfileContent) (*ProfileData, error) {

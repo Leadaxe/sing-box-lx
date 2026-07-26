@@ -240,9 +240,9 @@ icon: material/alert-decagram
     (`port` || `port_range`) &&  
     (`source_geoip` || `source_ip_cidr` || `source_ip_is_private`) &&  
     (`source_port` || `source_port_range`) &&  
-    `other fields`
+    `其他字段`
 
-    另外，引用规则集中的每个分支都可视为与外层规则合并，不同分支之间仍保持 OR 语义。
+    当规则集仅包含一条默认规则且非 invert 时，其中字段视为按以上规则与外层规则合并；否则，作为一条 `其他字段` 匹配；不同规则集之间始终保持 or。
 
 #### inbound
 
@@ -499,13 +499,14 @@ Available values: `wifi`, `cellular`, `ethernet` and `other`.
 
 匹配指定 DNS 服务器的首选域名。
 
-| 类型          | 匹配                                                          |
-|-------------|-------------------------------------------------------------|
-| `hosts`     | 匹配预定义条目和 hosts 文件中的条目                                       |
-| `local`     | 匹配 hosts 中的条目、邻居解析得到的主机名以及 mDNS 本地域名                         |
-| `mdns`      | 匹配 mDNS 本地域名（`*.local.` 以及 IPv4/IPv6 链路本地反向区域）              |
-| `tailscale` | 匹配 MagicDNS 主机和 DNS 路由后缀                                    |
-| `resolved`  | 匹配 systemd-resolved 链路中的分流域名和搜索域                            |
+| 类型            | 匹配                                                          |
+|---------------|-------------------------------------------------------------|
+| `hosts`       | 匹配预定义条目和 hosts 文件中的条目                                       |
+| `local`       | 匹配 hosts 中的条目、邻居解析得到的主机名以及 mDNS 本地域名                         |
+| `mdns`        | 匹配 mDNS 本地域名（`*.local.` 以及 IPv4/IPv6 链路本地反向区域）              |
+| `tailscale`   | 匹配 MagicDNS 主机和 DNS 路由后缀                                    |
+| `openconnect` | 匹配 VPN 服务器推送的分流 DNS 和搜索域                                  |
+| `resolved`    | 匹配 systemd-resolved 链路中的分流域名和搜索域                            |
 
 #### wifi_ssid
 
@@ -551,7 +552,9 @@ Available values: `wifi`, `cellular`, `ethernet` and `other`.
 
 启用响应匹配。启用后，此规则将匹配已评估的响应（由前序 [`evaluate`](/zh/configuration/dns/rule_action/#evaluate) 动作设置），而不仅是匹配原始查询。
 
-该已评估的响应也可以被后续的 [`respond`](/zh/configuration/dns/rule_action/#respond) 动作直接返回。
+可以为 `true` 或 `evaluate` 动作的 `tag`：`true` 匹配最近一条无 `tag` 的 `evaluate` 动作的响应；标签则匹配对应 `evaluate` 动作的响应。
+
+该已评估的响应也可以被后续的 [`respond`](/zh/configuration/dns/rule_action/#respond) 动作直接返回；在带 `match_response` 标签的规则中，`respond` 返回该标签的响应。
 
 响应匹配字段（`response_rcode`、`response_answer`、`response_ns`、`response_extra`）需要此选项。
 当与 `evaluate` 或响应匹配字段一起使用时，`ip_cidr`、`ip_is_private` 和 `ip_accept_any` 也需要此选项。

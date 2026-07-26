@@ -140,6 +140,8 @@ func DNSTransportRegistry() *dns.TransportRegistry {
 	registerQUICTransports(registry)
 	registerDHCPTransport(registry)
 	registerTailscaleTransport(registry)
+	registerOpenConnectDNSTransport(registry)
+	registerOpenVPNDNSTransport(registry)
 
 	return registry
 }

@@ -188,7 +188,7 @@ func (s *StartedService) waitForStarted(ctx context.Context) error {
 	}
 }
 
-func (s *StartedService) StartOrReloadService(profileContent string, options *OverrideOptions) error {
+func (s *StartedService) StartOrReloadService(ctx context.Context, profileContent string, options *OverrideOptions) error {
 	s.serviceAccess.Lock()
 	switch s.serviceStatus.Status {
 	case ServiceStatus_IDLE, ServiceStatus_STARTED, ServiceStatus_STARTING, ServiceStatus_FATAL:
@@ -207,7 +207,7 @@ func (s *StartedService) StartOrReloadService(profileContent string, options *Ov
 	}
 	s.updateStatus(ServiceStatus_STARTING)
 	s.resetLogs()
-	instance, err := s.newInstance(profileContent, options)
+	instance, err := s.newInstance(ctx, profileContent, options)
 	if err != nil {
 		return s.updateStatusError(err)
 	}
@@ -613,21 +613,17 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
 	}
 	boxService := s.instance
 	s.serviceAccess.RUnlock()
-	groupTag := request.OutboundTag
-	abstractOutboundGroup, isLoaded := boxService.outboundManager.Outbound(groupTag)
+	outboundTag := request.OutboundTag
+	outbound, isLoaded := boxService.outboundManager.Outbound(outboundTag)
 	if !isLoaded {
-		return nil, status.Error(codes.NotFound, "outbound group not found: "+groupTag)
+		return nil, status.Error(codes.NotFound, "outbound not found: "+outboundTag)
 	}
-	outboundGroup, isOutboundGroup := abstractOutboundGroup.(adapter.OutboundGroup)
-	if !isOutboundGroup {
-		return nil, status.Error(codes.InvalidArgument, "outbound is not a group: "+groupTag)
-	}
-	urlTest, isURLTest := abstractOutboundGroup.(*group.URLTest)
+	historyStorage := boxService.urlTestHistoryStorage
+	urlTest, isURLTest := outbound.(*group.URLTest)
+	outboundGroup, isOutboundGroup := outbound.(adapter.OutboundGroup)
 	if isURLTest {
 		go urlTest.CheckOutbounds()
-	} else {
-		historyStorage := boxService.urlTestHistoryStorage
-
+	} else if isOutboundGroup {
 		outbounds := common.Filter(common.Map(outboundGroup.All(), func(it string) adapter.Outbound {
 			itOutbound, _ := boxService.outboundManager.Outbound(it)
 			return itOutbound
@@ -641,13 +637,13 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
 		b, _ := batch.New(boxService.ctx, batch.WithConcurrencyNum[any](10))
 		for _, detour := range outbounds {
 			outboundToTest := detour
-			outboundTag := outboundToTest.Tag()
-			b.Go(outboundTag, func() (any, error) {
+			itemTag := outboundToTest.Tag()
+			b.Go(itemTag, func() (any, error) {
 				t, err := urltest.URLTest(boxService.ctx, "", outboundToTest)
 				if err != nil {
-					historyStorage.DeleteURLTestHistory(outboundTag)
+					historyStorage.DeleteURLTestHistory(itemTag)
 				} else {
-					historyStorage.StoreURLTestHistory(outboundTag, &adapter.URLTestHistory{
+					historyStorage.StoreURLTestHistory(itemTag, &adapter.URLTestHistory{
 						Time:  time.Now(),
 						Delay: t,
 					})
@@ -655,6 +651,18 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
 				return nil, nil
 			})
 		}
+	} else {
+		go func() {
+			t, err := urltest.URLTest(boxService.ctx, "", outbound)
+			if err != nil {
+				historyStorage.DeleteURLTestHistory(outboundTag)
+			} else {
+				historyStorage.StoreURLTestHistory(outboundTag, &adapter.URLTestHistory{
+					Time:  time.Now(),
+					Delay: t,
+				})
+			}
+		}()
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -1042,10 +1050,11 @@ func (s *StartedService) GetDeprecatedWarnings(ctx context.Context, empty *empty
 		return &DeprecatedWarnings{}, nil
 	}
 	notes := manager.Get()
+	selectedLocale := locale.FromContext(ctx)
 	return &DeprecatedWarnings{
 		Warnings: common.Map(notes, func(it deprecated.Note) *DeprecatedWarning {
 			return &DeprecatedWarning{
-				Message:           it.Message(),
+				Message:           it.MessageForLocale(selectedLocale),
 				Impending:         it.Impending(),
 				MigrationLink:     it.MigrationLink,
 				Description:       it.Description,
@@ -1653,10 +1662,13 @@ func openConnectEndpointStatusToProto(tag string, endpointStatus adapter.OpenCon
 		}
 		if endpointStatus.AuthChallenge.Browser != nil {
 			challenge.Challenge = &OpenConnectAuthChallenge_Browser{Browser: &OpenConnectBrowserRequest{
-				Url:         endpointStatus.AuthChallenge.Browser.URL,
-				FinalURL:    endpointStatus.AuthChallenge.Browser.FinalURL,
-				CookieNames: endpointStatus.AuthChallenge.Browser.CookieNames,
-				HeaderNames: endpointStatus.AuthChallenge.Browser.HeaderNames,
+				Url:                 endpointStatus.AuthChallenge.Browser.URL,
+				FinalURL:            endpointStatus.AuthChallenge.Browser.FinalURL,
+				CookieNames:         endpointStatus.AuthChallenge.Browser.CookieNames,
+				EarlyCookieNames:    endpointStatus.AuthChallenge.Browser.EarlyCookieNames,
+				HeaderNames:         endpointStatus.AuthChallenge.Browser.HeaderNames,
+				CallbackURLPrefixes: endpointStatus.AuthChallenge.Browser.CallbackURLPrefixes,
+				CacheID:             endpointStatus.AuthChallenge.Browser.CacheID,
 			}}
 		}
 		result.AuthChallenge = challenge
