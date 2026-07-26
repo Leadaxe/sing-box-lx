@@ -1,15 +1,17 @@
 # SPEC 031 — Сверка паритета AWG и параметр AdvancedSecurity
 
+**Фича:** [AWG2](../../FEATURES/AWG2/FEATURE.md)
+
 | Поле | Значение |
 |------|----------|
 | Тип | Q (question/исследование) → F (feature) для §5 |
 | Статус | N (new) |
 | Подмодуль | `submodules/wireguard-go` (HEAD `7d15f33`, база sagernet + LX-прививка AWG) |
-| Связанные | [[SPECS/003-AWG2_CLIENT_ENDPOINT]] · [[SPECS/005-AWG2_RANGED_MAGIC_HEADERS]] · [[SPECS/008-AWG_JUNK_PARAM_VALIDATION]] · [[SPECS/009-WIRESOCK_MASQUERADE_PROFILES]] · [[SPECS/026-AWG_MAGIC_VS_RESERVED_CLEAR]] |
+| Связанные | [[SPECS/TASKS/003-AWG2_CLIENT_ENDPOINT]] · [[SPECS/TASKS/005-AWG2_RANGED_MAGIC_HEADERS]] · [[SPECS/TASKS/008-AWG_JUNK_PARAM_VALIDATION]] · [[SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES]] · [[SPECS/TASKS/026-AWG_MAGIC_VS_RESERVED_CLEAR]] |
 
-> **Имя папки сохранено** (`031-AWG2_TIMED_JUNK_J_ITIME`) как стабильный якорь по
-> правилу README. Исходное содержание (фича «timed junk J1–J3/Itime») **отозвано**:
-> таких параметров в AmneziaWG не существует — см. §3 и HISTORY.md.
+> **Папка переименована** из `031-AWG2_TIMED_JUNK_J_ITIME` (номер `031` — прежний
+> якорь). Исходное содержание — фича «timed junk J1–J3/Itime» — **отозвано**: таких
+> параметров в AmneziaWG не существует, см. §3 и [HISTORY.md](HISTORY.md).
 
 ## 1. Вопрос
 
@@ -86,7 +88,7 @@
   (`device.c:562`): `if (!wg->advanced_security) return 0;` — вся проверка
   junk-параметров (`jc>=0`, `jmax<MESSAGE_MAX_SIZE`, `jmax>=jmin`, `S1`-переполнение)
   выполняется **только** при включённом флаге. Это ровно та валидация, что у нас
-  реализована в [[SPECS/008-AWG_JUNK_PARAM_VALIDATION]] — но у нас безусловная.
+  реализована в [[SPECS/TASKS/008-AWG_JUNK_PARAM_VALIDATION]] — но у нас безусловная.
 - **Peer-level роль — состояние согласования, не тумблер.** `noise.c:601-633`:
   `advanced_security = wg->advanced_security && …`, далее `peer->advanced_security = …`
   — значение **устанавливается по ходу хендшейка** и уходит в
@@ -135,7 +137,7 @@
 
 - **Нужен ли `AdvancedSecurity` практически?** Требуется живая проверка против
   сервера на официальном AWG: отличается ли поведение, когда клиент флаг не
-  передаёт. Без этого фича — паритет ради паритета (ср. [[SPECS/024-RUNTIME_LOOP_GUARD]],
+  передаёт. Без этого фича — паритет ради паритета (ср. [[SPECS/TASKS/024-RUNTIME_LOOP_GUARD]],
   отложенную до воспроизводимого кейса).
 - **Есть ли в выпущенных версиях `amneziawg-go` аналог флага?** В UAPI ветки
   `master` его нет; сверить по тегам/релизам, а не по `master`.

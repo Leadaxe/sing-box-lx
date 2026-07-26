@@ -142,10 +142,16 @@ padding и заголовки читаются из одного и того ж�
 
 ## Границы
 
-- **Не покрыто: `j1`, `j2`, `j3`, `itime`** — таймированный junk (периодическая
-  отправка приманок в установившемся туннеле). С сервером, где этот уровень
-  обязателен, клиент не сойдётся по хендшейку. Задача
-  [031](../../TASKS/031-AWG2_TIMED_JUNK_J_ITIME/SPEC.md).
+- **Паритет по обфускации — полный: 16 из 16 параметров.** Сверено с
+  `amneziawg-tools` (`config.c` — набор `.conf`) и с netlink-контрактом ядерного
+  модуля: `Jc/Jmin/Jmax`, `S1`–`S4`, `H1`–`H4`, `I1`–`I5`, CPS-теги 1:1. К серверу
+  на официальном AmneziaWG клиент подключается. Сверка —
+  [031](../../TASKS/031-AWG_PARITY_AUDIT_ADVANCED_SECURITY/SPEC.md).
+- **Не покрыто: `AdvancedSecurity`** (boolean) — единственный параметр официальных
+  реализаций, которого у нас нет. По коду ядерного модуля гейтит валидацию
+  junk-параметров и учёт состояния пира, **не** send-путь, поэтому блокером
+  совместимости не выглядит (гипотеза, живьём не проверена) —
+  [031](../../TASKS/031-AWG_PARITY_AUDIT_ADVANCED_SECURITY/SPEC.md) §5.
 - **Masquerade работает только через приманки-слоты** (`i1`, плюс `i2` у профиля
   `sip`). Механизмы на основе `s1`–`s4` для этой задачи непригодны против
   целевого сценария (WARP).
@@ -161,7 +167,7 @@ padding и заголовки читаются из одного и того ж�
 | [008 — AWG_JUNK_PARAM_VALIDATION](../../TASKS/008-AWG_JUNK_PARAM_VALIDATION/SPEC.md) | Fail-fast на `jmin > jmax` | C |
 | [025 — AWG_TRANSPORT_PADDING_OVERRUN](../../TASKS/025-AWG_TRANSPORT_PADDING_OVERRUN/SPEC.md) | Класс крашей от значений padding | C |
 | [026 — AWG_MAGIC_VS_RESERVED_CLEAR](../../TASKS/026-AWG_MAGIC_VS_RESERVED_CLEAR/SPEC.md) | Сохранность magic при малом padding | C |
-| [031 — AWG2_TIMED_JUNK_J_ITIME](../../TASKS/031-AWG2_TIMED_JUNK_J_ITIME/SPEC.md) | `j1`–`j3` + `itime` — до полного набора | **N** |
+| [031 — AWG_PARITY_AUDIT_ADVANCED_SECURITY](../../TASKS/031-AWG_PARITY_AUDIT_ADVANCED_SECURITY/SPEC.md) | Сверка паритета AWG (16/16) + зазор `AdvancedSecurity` | **N** |
 | [007 — AWG_OVER_WIREGUARD_DETOUR_GUARD](../../TASKS/007-AWG_OVER_WIREGUARD_DETOUR_GUARD/SPEC.md) | Guard AWG-over-WG — снят, причина устранена | C |
 
 Примеры конфигурации — [docs-lx/lx-config.md](../../../docs-lx/lx-config.md)
