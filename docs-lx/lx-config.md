@@ -634,7 +634,12 @@ nothing to fail over.
 
 **Observability:** the DNS query stream (`SubscribeDNSQueries`, §6) reports
 the member that **actually answered**; cache hits and total-failure events
-keep the group's own tag (nothing answered — that *is* the state).
+keep the group's own tag (nothing answered — that *is* the state). Each event
+also carries the probe trace (SPEC 036): the group path inside-out, the probe
+chronology with outcome (`answered`/`timeout`/`network_error`/`servfail`) and
+rtt, and a racer flag. The `GetDNSGroups` CommandClient call returns the live
+group state — mode, race winner/ranking/age, per-member up/down with cooldown
+remainder, consecutive failures and last rtt (`with_lx_command` builds).
 
 > **Name leak warning.** On failover the query goes to the *next* member; in
 > race mode every raced query goes to **all** members at once. Do not mix
