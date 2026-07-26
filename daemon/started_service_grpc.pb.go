@@ -55,6 +55,7 @@ const (
 	StartedService_GetOutbounds_FullMethodName                   = "/daemon.StartedService/GetOutbounds"
 	StartedService_SubscribeDNSQueries_FullMethodName            = "/daemon.StartedService/SubscribeDNSQueries"
 	StartedService_GetPool_FullMethodName                        = "/daemon.StartedService/GetPool"
+	StartedService_GetDNSGroups_FullMethodName                   = "/daemon.StartedService/GetDNSGroups"
 )
 
 // StartedServiceClient is the client API for StartedService service.
@@ -101,6 +102,7 @@ type StartedServiceClient interface {
 	GetOutbounds(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*OutboundList, error)
 	SubscribeDNSQueries(ctx context.Context, in *SubscribeDNSQueriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DnsQueryEvent], error)
 	GetPool(ctx context.Context, in *GetPoolRequest, opts ...grpc.CallOption) (*PoolList, error)
+	GetDNSGroups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*DnsGroupList, error)
 }
 
 type startedServiceClient struct {
@@ -652,6 +654,16 @@ func (c *startedServiceClient) GetPool(ctx context.Context, in *GetPoolRequest, 
 	return out, nil
 }
 
+func (c *startedServiceClient) GetDNSGroups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*DnsGroupList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DnsGroupList)
+	err := c.cc.Invoke(ctx, StartedService_GetDNSGroups_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StartedServiceServer is the server API for StartedService service.
 // All implementations must embed UnimplementedStartedServiceServer
 // for forward compatibility.
@@ -696,6 +708,7 @@ type StartedServiceServer interface {
 	GetOutbounds(context.Context, *emptypb.Empty) (*OutboundList, error)
 	SubscribeDNSQueries(*SubscribeDNSQueriesRequest, grpc.ServerStreamingServer[DnsQueryEvent]) error
 	GetPool(context.Context, *GetPoolRequest) (*PoolList, error)
+	GetDNSGroups(context.Context, *emptypb.Empty) (*DnsGroupList, error)
 	mustEmbedUnimplementedStartedServiceServer()
 }
 
@@ -864,6 +877,10 @@ func (UnimplementedStartedServiceServer) SubscribeDNSQueries(*SubscribeDNSQuerie
 
 func (UnimplementedStartedServiceServer) GetPool(context.Context, *GetPoolRequest) (*PoolList, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetPool not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetDNSGroups(context.Context, *emptypb.Empty) (*DnsGroupList, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetDNSGroups not implemented")
 }
 func (UnimplementedStartedServiceServer) mustEmbedUnimplementedStartedServiceServer() {}
 func (UnimplementedStartedServiceServer) testEmbeddedByValue()                        {}
@@ -1479,6 +1496,24 @@ func _StartedService_GetPool_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StartedService_GetDNSGroups_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetDNSGroups(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetDNSGroups_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetDNSGroups(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StartedService_ServiceDesc is the grpc.ServiceDesc for StartedService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1577,6 +1612,10 @@ var StartedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetPool",
 			Handler:    _StartedService_GetPool_Handler,
+		},
+		{
+			MethodName: "GetDNSGroups",
+			Handler:    _StartedService_GetDNSGroups_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
