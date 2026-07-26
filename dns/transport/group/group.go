@@ -57,6 +57,8 @@ type Transport struct {
 	access   sync.Mutex
 	members  []*member
 	lastFail map[string]time.Time
+
+	race raceState // SPEC 034; unused in failover mode
 }
 
 func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, options option.GroupDNSServerOptions) (adapter.DNSTransport, error) {
@@ -77,10 +79,7 @@ func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, opt
 	switch mode {
 	case "":
 		mode = ModeFailover
-	case ModeFailover:
-	case ModeRace:
-		// SPEC 034 replaces this error with the race implementation.
-		return nil, E.New("group[", tag, "]: mode race is not implemented yet")
+	case ModeFailover, ModeRace:
 	default:
 		return nil, E.New("group[", tag, "]: unknown mode: ", mode, " (expected ", ModeFailover, " or ", ModeRace, ")")
 	}
@@ -105,6 +104,7 @@ func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, opt
 		interval:         interval,
 		downTime:         downTime,
 		lastFail:         make(map[string]time.Time),
+		race:             raceState{firstDone: make(chan struct{})},
 	}, nil
 }
 
@@ -143,9 +143,13 @@ func (t *Transport) Reset() {
 	t.access.Lock()
 	defer t.access.Unlock()
 	t.lastFail = make(map[string]time.Time)
+	t.race.reset()
 }
 
 func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+	if t.mode == ModeRace {
+		return t.exchangeRace(ctx, message)
+	}
 	return t.exchangeFailover(ctx, message)
 }
 
@@ -160,28 +164,7 @@ func (t *Transport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callba
 // is down, exactly one attempt goes to the member whose failure is the
 // oldest — a miss refreshes its mark, so consecutive queries rotate.
 func (t *Transport) exchangeFailover(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
-	candidates := t.aliveMembers()
-	if len(candidates) == 0 {
-		return t.exchangeLastResort(ctx, message)
-	}
-	var (
-		lastResponse *mDNS.Msg
-		lastErr      error
-	)
-	for _, current := range candidates {
-		response, err := current.transport.Exchange(ctx, message)
-		if !isFailure(response, err) {
-			t.clearFailure(current.tag)
-			return response, err
-		}
-		t.markFailure(current.tag)
-		t.logFailure(ctx, current.tag, response, err)
-		lastResponse, lastErr = response, err
-		if ctx.Err() != nil {
-			break
-		}
-	}
-	return lastResponse, lastErr
+	return t.exchangeOrdered(ctx, message, t.aliveMembers())
 }
 
 // exchangeLastResort handles the all-down case: one attempt via the member
@@ -222,9 +205,13 @@ func (t *Transport) logFailure(ctx context.Context, tag string, response *mDNS.M
 }
 
 func (t *Transport) aliveMembers() []*member {
-	now := time.Now()
 	t.access.Lock()
 	defer t.access.Unlock()
+	return t.aliveMembersLocked()
+}
+
+func (t *Transport) aliveMembersLocked() []*member {
+	now := time.Now()
 	var alive []*member
 	for _, current := range t.members {
 		if failedAt, down := t.lastFail[current.tag]; !down || now.Sub(failedAt) >= t.downTime {
