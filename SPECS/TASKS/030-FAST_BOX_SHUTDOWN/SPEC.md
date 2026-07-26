@@ -1,6 +1,6 @@
 # SPEC: 030 — FAST_BOX_SHUTDOWN
 
-**Фича:** [HOTFIXES](../../FEATURES/HOTFIXES/FEATURE.md)
+**Фича:** [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

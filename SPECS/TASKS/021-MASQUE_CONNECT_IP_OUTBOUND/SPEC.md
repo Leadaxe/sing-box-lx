@@ -1,6 +1,6 @@
 # SPEC 021 — MASQUE outbound (CONNECT-IP over HTTP/3 + HTTP/2), профиль Cloudflare WARP
 
-**Фича:** [MASQUE_WARP](../../FEATURES/MASQUE_WARP/FEATURE.md)
+**Фича:** [MASQUE_WARP](../../FEATURES/009-MASQUE_WARP/FEATURE.md)
 
 **Статус:** h3 И h2 РАБОТАЮТ на живом Cloudflare WARP (device-verified 2026-07-02, warp=on
 на обоих). Пройден аудит-проход (24 находки): исправлены баги корректности (reconnect,

@@ -1,6 +1,6 @@
 # SPEC: 009 — WIRESOCK_MASQUERADE_PROFILES
 
-**Фича:** [AWG2](../../FEATURES/AWG2/FEATURE.md)
+**Фича:** [AWG2](../../FEATURES/003-AWG2/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

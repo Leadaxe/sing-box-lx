@@ -1,6 +1,6 @@
 # SPEC: 002 — XHTTP_CLIENT_TRANSPORT (full)
 
-**Фича:** [XHTTP](../../FEATURES/XHTTP/FEATURE.md)
+**Фича:** [XHTTP](../../FEATURES/002-XHTTP/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

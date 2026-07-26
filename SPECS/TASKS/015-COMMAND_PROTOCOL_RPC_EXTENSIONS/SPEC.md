@@ -1,6 +1,6 @@
 # SPEC: 015 — COMMAND_PROTOCOL_RPC_EXTENSIONS
 
-**Фича:** [OBSERVABILITY](../../FEATURES/OBSERVABILITY/FEATURE.md)
+**Фича:** [OBSERVABILITY](../../FEATURES/006-OBSERVABILITY/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

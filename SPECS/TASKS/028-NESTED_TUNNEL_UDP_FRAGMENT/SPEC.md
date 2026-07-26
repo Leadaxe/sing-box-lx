@@ -1,6 +1,6 @@
 # SPEC: 028 — NESTED_TUNNEL_UDP_FRAGMENT
 
-**Фича:** [HOTFIXES](../../FEATURES/HOTFIXES/FEATURE.md)
+**Фича:** [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

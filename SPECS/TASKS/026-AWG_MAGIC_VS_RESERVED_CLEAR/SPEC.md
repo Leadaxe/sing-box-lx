@@ -1,6 +1,6 @@
 # SPEC: 026 — AWG_MAGIC_VS_RESERVED_CLEAR
 
-**Фича:** [AWG2](../../FEATURES/AWG2/FEATURE.md)
+**Фича:** [AWG2](../../FEATURES/003-AWG2/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

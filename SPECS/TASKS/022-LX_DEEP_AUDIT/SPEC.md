@@ -1,6 +1,6 @@
 # SPEC 022 — Глубокий аудит LX-дельты форка
 
-**Фича:** [AUDITS](../../FEATURES/AUDITS/FEATURE.md)
+**Фича:** [AUDITS](../../FEATURES/010-AUDITS/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

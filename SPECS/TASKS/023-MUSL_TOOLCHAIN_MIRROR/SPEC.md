@@ -1,6 +1,6 @@
 # SPEC 023 — Durable-зеркало Chromium musl-тулчейна для релиз-сборок
 
-**Фича:** [BUILD_CI_CD](../../FEATURES/BUILD_CI_CD/FEATURE.md)
+**Фича:** [BUILD_CI_CD](../../FEATURES/001-BUILD_CI_CD/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

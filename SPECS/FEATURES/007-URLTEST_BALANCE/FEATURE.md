@@ -1,4 +1,4 @@
-# FEATURE: URLTEST_BALANCE — балансировка нагрузки в urltest
+# FEATURE 007 — URLTEST_BALANCE — балансировка нагрузки в urltest
 
 | Поле | Значение |
 |------|----------|
@@ -60,7 +60,7 @@
 
 - **Выбор узла** для каждого соединения.
 - **Состояние пула** — занятые слоты и их узлы, доступно клиенту
-  через [OBSERVABILITY](../OBSERVABILITY/FEATURE.md).
+  через [OBSERVABILITY](../006-OBSERVABILITY/FEATURE.md).
 
 ## Data flow
 

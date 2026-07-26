@@ -142,7 +142,7 @@ This is the **only profile device-proven against a real LTE/WARP DPI** (~330 ms)
 `sip` are implemented as correct client-initiated requests but are blocked as a protocol class
 toward the Cloudflare WARP edge (raw DNS/STUN/SIP to a datacenter IP is itself anomalous) —
 they are kept for other providers whose DPI only checks packet well-formedness. See
-[docs-lx/lx-config.md](docs-lx/lx-config.md) and [AWG2 feature](SPECS/FEATURES/AWG2/FEATURE.md) · [examples](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
+[docs-lx/lx-config.md](docs-lx/lx-config.md) and [AWG2 feature](SPECS/FEATURES/003-AWG2/FEATURE.md) · [examples](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ### MASQUE (outbound — Cloudflare WARP)
 
@@ -168,7 +168,7 @@ different feature, same word.
 Key material (`private_key`/`public_key`/`ip`/`ipv6`) comes ready from config — the client does
 the WARP device registration. On networks that filter inbound UDP:443 the `h3` handshake hangs;
 switch that node to `network: h2` (TCP:443). Full reference —
-[docs-lx/lx-config.md §4](docs-lx/lx-config.md) and [MASQUE_WARP feature](SPECS/FEATURES/MASQUE_WARP/FEATURE.md) · [full parameters](SPECS/TASKS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md).
+[docs-lx/lx-config.md §4](docs-lx/lx-config.md) and [MASQUE_WARP feature](SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md) · [full parameters](SPECS/TASKS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md).
 
 ---
 

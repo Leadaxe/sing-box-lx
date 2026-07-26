@@ -1,6 +1,6 @@
 # 010 — WG-endpoint без `detour` режет download на Android (GRO split-brain)
 
-**Фича:** [HOTFIXES](../../FEATURES/HOTFIXES/FEATURE.md) · [UPSTREAM_SYNC](../../FEATURES/UPSTREAM_SYNC/FEATURE.md)
+**Фича:** [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md) · [UPSTREAM_SYNC](../../FEATURES/005-UPSTREAM_SYNC/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

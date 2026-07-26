@@ -1,6 +1,6 @@
 # SPEC: 005 — AWG2_RANGED_MAGIC_HEADERS
 
-**Фича:** [AWG2](../../FEATURES/AWG2/FEATURE.md)
+**Фича:** [AWG2](../../FEATURES/003-AWG2/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

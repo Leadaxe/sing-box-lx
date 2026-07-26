@@ -13,24 +13,24 @@
 
 | Фича | Что даёт | Build-tag | Задачи |
 |------|----------|-----------|--------|
-| [AWG2](AWG2/FEATURE.md) | AmneziaWG 2.0: обфусцированный WG-endpoint, 16 из 20 параметров + masquerade `id`/`ip`/`ib` | `with_awg` | 003 · 005 · 008 · 009 · 025 · 026 · 031 · 007 |
-| [XHTTP](XHTTP/FEATURE.md) | XHTTP-транспорт против Xray: `packet-up` / `stream-one` / `auto`, obfs | `with_xhttp` | 002 · 011 |
-| [URLTEST_BALANCE](URLTEST_BALANCE/FEATURE.md) | `round_robin` в `urltest`: пул, ленивый health-check, sticky-слоты | `with_lx_command` | 019 |
-| [OBSERVABILITY](OBSERVABILITY/FEATURE.md) | Расширения libbox gRPC для UI: RPC, `detourList`, DNS-стрим | `with_lx_command` | 014 · 015 · 016 · 017 · 018 · 035 |
-| [MASQUE_WARP](MASQUE_WARP/FEATURE.md) | MASQUE CONNECT-IP outbound (RFC 9484), профиль Cloudflare WARP | — | 021 |
-| [ENERGY](ENERGY/FEATURE.md) | Idle-suspend простаивающих WG/AWG: батарея, нагрев, RSS −31 % | `with_lx_idle_suspend` | 020 |
-| [VLESS_ENCRYPTION](VLESS_ENCRYPTION/FEATURE.md) | 🆕 PQ-слой `mlkem768x25519plus` внутри VLESS — спроектировано | — | 032 |
-| [DNS_GROUP](DNS_GROUP/FEATURE.md) | Группа DNS-серверов: `stable` / `fastest` / `parallel` на TTL-модели, трасса и состояние в наблюдаемости | — | 033 · 035 |
+| [002-XHTTP](002-XHTTP/FEATURE.md) | XHTTP-транспорт против Xray: `packet-up` / `stream-one` / `auto`, obfs | `with_xhttp` | 002 · 011 |
+| [003-AWG2](003-AWG2/FEATURE.md) | AmneziaWG 2.0: обфусцированный WG-endpoint, 16 из 20 параметров + masquerade `id`/`ip`/`ib` | `with_awg` | 003 · 005 · 008 · 009 · 025 · 026 · 031 · 007 |
+| [006-OBSERVABILITY](006-OBSERVABILITY/FEATURE.md) | Расширения libbox gRPC для UI: RPC, `detourList`, DNS-стрим | `with_lx_command` | 014 · 015 · 016 · 017 · 018 · 035 · 037 |
+| [007-URLTEST_BALANCE](007-URLTEST_BALANCE/FEATURE.md) | `round_robin` в `urltest`: пул, ленивый health-check, sticky-слоты | `with_lx_command` | 019 |
+| [008-ENERGY](008-ENERGY/FEATURE.md) | Idle-suspend простаивающих WG/AWG: батарея, нагрев, RSS −31 % | `with_lx_idle_suspend` | 020 |
+| [009-MASQUE_WARP](009-MASQUE_WARP/FEATURE.md) | MASQUE CONNECT-IP outbound (RFC 9484), профиль Cloudflare WARP | — | 021 |
+| [012-VLESS_ENCRYPTION](012-VLESS_ENCRYPTION/FEATURE.md) | 🆕 PQ-слой `mlkem768x25519plus` внутри VLESS — спроектировано | — | 032 |
+| [013-DNS_GROUP](013-DNS_GROUP/FEATURE.md) | Группа DNS-серверов: `stable` / `fastest` / `parallel` на TTL-модели, трасса и состояние в наблюдаемости | — | 033 · 035 |
 
 ## Процессные
 
 | Фича | Что даёт | Задачи |
 |------|----------|--------|
-| [HOTFIXES](HOTFIXES/FEATURE.md) | Что мы чиним за апстримом; у каждого патча — условие снятия | 010 · 028 · 029 · 030 · 012 |
-| [UPSTREAM_SYNC](UPSTREAM_SYNC/FEATURE.md) | Watchlist дельты: **DROP / REWORK / HOLD / CONSTRAINT**, ритуал мержа | 013 |
-| [BUILD_CI_CD](BUILD_CI_CD/FEATURE.md) | Сборка, теги, musl-таргеты, пайплайны, релиз, зеркало тулчейна | 001 · 004 · 006 · 023 |
-| [AUDITS](AUDITS/FEATURE.md) | Сплошная проверка своей дельты с адверсариальной верификацией находок | 022 |
-| [RESEARCH](RESEARCH/FEATURE.md) | Исследования и проработка решений; отрицательный результат тоже результат | 027 · 024 · 012 |
+| [001-BUILD_CI_CD](001-BUILD_CI_CD/FEATURE.md) | Сборка, теги, musl-таргеты, пайплайны, релиз, зеркало тулчейна | 001 · 004 · 006 · 023 |
+| [004-HOTFIXES](004-HOTFIXES/FEATURE.md) | Что мы чиним за апстримом; у каждого патча — условие снятия | 010 · 028 · 029 · 030 · 012 |
+| [005-UPSTREAM_SYNC](005-UPSTREAM_SYNC/FEATURE.md) | Watchlist дельты: **DROP / REWORK / HOLD / CONSTRAINT**, ритуал мержа | 013 |
+| [010-AUDITS](010-AUDITS/FEATURE.md) | Сплошная проверка своей дельты с адверсариальной верификацией находок | 022 |
+| [011-RESEARCH](011-RESEARCH/FEATURE.md) | Исследования и проработка решений; отрицательный результат тоже результат | 027 · 024 · 012 |
 
 ## Шаблон продуктовой фичи
 
@@ -57,14 +57,19 @@
 
 ## Соглашения
 
+- **Папка фичи — `NNN-NAME`**, как и у задач. `NNN` — сквозной номер,
+  **стабильный якорь**: он присвоен по хронологии появления фичи в форке
+  (по её первой задаче) и после присвоения не меняется никогда — даже если
+  фича переезжает между «продуктовыми» и «процессными». Новая фича получает
+  следующий свободный номер, а не вставляется в середину.
 - **Одна фича — один `FEATURE.md`** с актуальным состоянием сверху,
   по тому же правилу, что и `SPEC.md` (см. [../README.md](../README.md)).
   Хронология — в задачах, не здесь.
 - **Задача может числиться в двух фичах**, если у неё две роли: 010 —
   и хотфикс, и запись watchlist; 012 — и хотфикс, и расследование.
-- **Ссылаться лучше на фичу, а не на задачу.** Фича переживает переномерацию
-  и рефакторинг; ссылка на задачу уместна, когда нужен конкретный разбор
-  внутри фичи.
+- **Ссылаться лучше на фичу, а не на задачу.** Фича переживает рефакторинг
+  и передел задач под ней; ссылка на задачу уместна, когда нужен конкретный
+  разбор внутри фичи.
 - **Не всякая задача принадлежит фиче.** 013 — апстрим-функциональность,
   от которой у нас остался только тест; она числится в `UPSTREAM_SYNC`
   как запись watchlist, а не как продуктовая фича.

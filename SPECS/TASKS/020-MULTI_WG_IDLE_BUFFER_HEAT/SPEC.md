@@ -1,6 +1,6 @@
 # SPEC 020 — Idle-suspend простаивающих WireGuard/AmneziaWG эндпоинтов
 
-**Фича:** [ENERGY](../../FEATURES/ENERGY/FEATURE.md)
+**Фича:** [ENERGY](../../FEATURES/008-ENERGY/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

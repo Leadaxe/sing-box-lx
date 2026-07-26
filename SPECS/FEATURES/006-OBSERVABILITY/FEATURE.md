@@ -1,4 +1,4 @@
-# FEATURE: OBSERVABILITY — канал управления и наблюдения для UI
+# FEATURE 006 — OBSERVABILITY — канал управления и наблюдения для UI
 
 | Поле | Значение |
 |------|----------|
@@ -36,8 +36,8 @@ DNS-запросы — и управлять им. Штатный канал д�
 | `URLTestOutbound` | Замер задержки **конкретного узла** (не всей группы), отменяемый |
 | `GetGroups` · `GetOutbounds` | Группы и узлы для экранов выбора |
 | `GetRules` | Правила маршрутизации |
-| `GetPool` | Занятые слоты пула — см. [URLTEST_BALANCE](../URLTEST_BALANCE/FEATURE.md) |
-| `GetDNSGroups` | Состояние DNS-групп: режим, победитель, рейтинг, down-участники — см. [DNS_GROUP](../DNS_GROUP/FEATURE.md) |
+| `GetPool` | Занятые слоты пула — см. [URLTEST_BALANCE](../007-URLTEST_BALANCE/FEATURE.md) |
+| `GetDNSGroups` | Состояние DNS-групп: режим, победитель, рейтинг, down-участники — см. [DNS_GROUP](../013-DNS_GROUP/FEATURE.md) |
 | `GetRunningConfig` | Канонический JSON конфига, из которого реально построено работающее ядро (post-override снапшот старта). Источник правды при рассинхроне профиль↔ядро; JSON отдельного узла приложение вырезает из него по тегу |
 | `SubscribeDNSQueries` | Подписка на поток DNS-запросов |
 
@@ -58,7 +58,7 @@ DNS-запросы — и управлять им. Штатный канал д�
 | Процесс-инициатор | Кто спросил |
 | Сервер и его тип | Куда ушёл запрос; для группы — **фактически ответивший участник** (лист при вложенности), кеш-попадание и полный сбой несут тег группы |
 | Узел | Через что ушёл; **пустое значение = напрямую** |
-| Путь групп | Изнутри наружу; **пусто = запрос шёл мимо группы** — см. [DNS_GROUP](../DNS_GROUP/FEATURE.md) |
+| Путь групп | Изнутри наружу; **пусто = запрос шёл мимо группы** — см. [DNS_GROUP](../013-DNS_GROUP/FEATURE.md) |
 | Хронология проб | Опрошенные участники группы по порядку: исход (`answered`/`timeout`/`network_error`/`servfail`) и rtt; снимок на момент записи — опоздавшие ответы гонки не входят |
 | Признак гонщика | Этот запрос запустил гонку группы |
 
@@ -121,7 +121,7 @@ DNS-запросы — и управлять им. Штатный канал д�
 | [016 — CONNECTIONS_MAP_MUTEX](../../TASKS/016-CONNECTIONS_MAP_MUTEX/SPEC.md) | Устойчивость учёта соединений при параллельном доступе | C |
 | [017 — CONNECTION_DETOUR_CHAIN](../../TASKS/017-CONNECTION_DETOUR_CHAIN/SPEC.md) | Хвост проксирования отдельным полем | C |
 | [018 — DNS_QUERY_STREAM](../../TASKS/018-DNS_QUERY_STREAM/SPEC.md) | Поток DNS-запросов с атрибуцией | C |
-| [035 — DNS_GROUP_OBSERVABILITY](../../TASKS/035-DNS_GROUP_OBSERVABILITY/SPEC.md) | Трасса проб группы в потоке + `GetDNSGroups` (двойная роль с [DNS_GROUP](../DNS_GROUP/FEATURE.md)) | C |
+| [035 — DNS_GROUP_OBSERVABILITY](../../TASKS/035-DNS_GROUP_OBSERVABILITY/SPEC.md) | Трасса проб группы в потоке + `GetDNSGroups` (двойная роль с [DNS_GROUP](../013-DNS_GROUP/FEATURE.md)) | C |
 
 ## Особенности сопровождения
 

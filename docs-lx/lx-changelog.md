@@ -14,7 +14,7 @@ as GitHub **pre-releases** and never become "Latest".
 
 **New RPC `GetRunningConfig`: the core now answers "what is actually
 running" (SPEC 037, feature
-[OBSERVABILITY](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/OBSERVABILITY/FEATURE.md)).**
+[OBSERVABILITY](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md)).**
 Until now the core kept no config after start — `GetOutbounds` returns only
 tag/type/delay, so after a profile edit without restart the client had no
 source of truth for node details. The new unary RPC returns the canonical
@@ -46,7 +46,7 @@ was redesigned around a TTL record model before any consumer shipped — no
 compatibility bridge is kept.
 
 **DNS group v2 — TTL record model (SPEC 033/035, feature
-[DNS_GROUP](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/DNS_GROUP/FEATURE.md)).**
+[DNS_GROUP](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/013-DNS_GROUP/FEATURE.md)).**
 Servers carry no states; two expiring record tables drive everything: an
 **error** record (`error_ttl`, default 2m — written by any failed exchange,
 erases the server's live wins) and a **win** record (`win_ttl`, default 5m —
@@ -93,7 +93,7 @@ cache, rule-level race/speculative evaluate actions).
 
 **New DNS server type `group`: DNS resolution no longer dies with one failed
 server (SPEC 033/034/035, feature
-[DNS_GROUP](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/DNS_GROUP/FEATURE.md)).**
+[DNS_GROUP](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/013-DNS_GROUP/FEATURE.md)).**
 Previously `dns.final` was a *default*, not a fallback, and a rule routing to
 a server returned its transport directly — any network error, timeout or
 SERVFAIL failed the query outright even with healthy servers in the config.
@@ -615,12 +615,12 @@ Plus the full SPEC 022 batch (IPv4 checksum over header options, an XHTTP reader
 data race, DNS query events on fresh cache hits, `GetPool` nested-group delay, the
 AmneziaWG `s4`-only MTU budget, robust MASQUE h3 login-failure matching) and doc /
 comment / dead-code hygiene. Full register:
-[`SPECS/022-LX_DEEP_AUDIT`](../SPECS/022-LX_DEEP_AUDIT/SPEC.md).
+[`SPECS/TASKS/022-LX_DEEP_AUDIT`](../SPECS/TASKS/022-LX_DEEP_AUDIT/SPEC.md).
 
 Build infrastructure: the musl router builds now restore the Chromium toolchain
 from a durable release-asset mirror before falling back to `snapshot.debian.org`,
 so a Debian-snapshot outage no longer blocks releases
-([`SPECS/023`](../SPECS/023-MUSL_TOOLCHAIN_MIRROR/SPEC.md)).
+([`SPECS/TASKS/023`](../SPECS/TASKS/023-MUSL_TOOLCHAIN_MIRROR/SPEC.md)).
 
 #### v1.14.0-lx.2-rc.1
 
@@ -652,7 +652,7 @@ promotion to a stable `lx.2`; the two behavioural fixes below want a live check.
   padding); the MASQUE h3 login-failure hint matches the TLS alert robustly; plus
   documentation corrections (`ip=sip` decoy shape, `s4`/MTU, `no_grpc_header`) and
   a batch of comment/dead-code hygiene. Full register in
-  [`SPECS/022-LX_DEEP_AUDIT`](../SPECS/022-LX_DEEP_AUDIT/SPEC.md).
+  [`SPECS/TASKS/022-LX_DEEP_AUDIT`](../SPECS/TASKS/022-LX_DEEP_AUDIT/SPEC.md).
 
 #### v1.14.0-lx.1
 

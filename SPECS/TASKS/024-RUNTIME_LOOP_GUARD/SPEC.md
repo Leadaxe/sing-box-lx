@@ -1,6 +1,6 @@
 # SPEC 024 — Guard от runtime-колец в detour/selector-цепочках
 
-**Фича:** [RESEARCH](../../FEATURES/RESEARCH/FEATURE.md)
+**Фича:** [RESEARCH](../../FEATURES/011-RESEARCH/FEATURE.md)
 
 > **Design record, не задание на реализацию.** Ядро sing-box-lx по этой спеке
 > **не трогаем**. Документ фиксирует: (1) как ядро реально ведёт себя при кольце в

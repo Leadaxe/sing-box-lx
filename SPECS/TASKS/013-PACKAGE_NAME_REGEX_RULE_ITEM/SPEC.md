@@ -1,6 +1,6 @@
 # SPEC: 013 — PACKAGE_NAME_REGEX_RULE_ITEM
 
-**Фича:** [UPSTREAM_SYNC](../../FEATURES/UPSTREAM_SYNC/FEATURE.md)
+**Фича:** [UPSTREAM_SYNC](../../FEATURES/005-UPSTREAM_SYNC/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

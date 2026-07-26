@@ -1,6 +1,6 @@
 # SPEC 019 — URLTest round_robin: пул, ленивый health-check, sticky-слоты
 
-**Фича:** [URLTEST_BALANCE](../../FEATURES/URLTEST_BALANCE/FEATURE.md)
+**Фича:** [URLTEST_BALANCE](../../FEATURES/007-URLTEST_BALANCE/FEATURE.md)
 
 **Тип:** lx-фича (балансировка нагрузки на `urltest`)
 **Статус:** реализовано; device-verified 2026-07-15 (CPH2411, LxBox v2.15.4 + ядро v1.14.0-lx.5): ревизия связки со SPEC 020 (журнал пп.18–19, вкл. passive_check) подтверждена вживую вместе с прежним поведением.

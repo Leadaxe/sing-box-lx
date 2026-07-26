@@ -1,6 +1,6 @@
 # SPEC 037 — GetRunningConfig: канонический снапшот работающего конфига
 
-**Фича:** [OBSERVABILITY](../../FEATURES/OBSERVABILITY/FEATURE.md)
+**Фича:** [OBSERVABILITY](../../FEATURES/006-OBSERVABILITY/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

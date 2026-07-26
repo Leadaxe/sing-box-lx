@@ -1,4 +1,4 @@
-# FEATURE: BUILD_CI_CD — сборка, пайплайны, релиз
+# FEATURE 001 — BUILD_CI_CD — сборка, пайплайны, релиз
 
 | Поле | Значение |
 |------|----------|
@@ -30,7 +30,7 @@ with_xhttp, with_awg, with_lx_command
 
 ⚠️ **Два набора тегов расходятся намеренно.** `with_clash_api` остаётся
 в desktop/CLI (внешние дашборды ходят по Clash REST) и убирается **только
-из AAR** — см. [OBSERVABILITY](../OBSERVABILITY/FEATURE.md).
+из AAR** — см. [OBSERVABILITY](../006-OBSERVABILITY/FEATURE.md).
 
 ⚠️ `with_purego` и `badlinkname` требуют `-checklinkname=0` в `LX_LDFLAGS`,
 иначе линковка падает.
@@ -95,6 +95,6 @@ Push через `gh auth token` во встроенном URL — обычный
 - **`gofmt -l` перед коммитом** по lx-файлам: линтер CI это проверяет,
   а `go vet` — нет (однажды уехало красным в релиз).
 - **Проверять дрейф апстрима до тега**, а не после —
-  см. [UPSTREAM_SYNC](../UPSTREAM_SYNC/FEATURE.md).
+  см. [UPSTREAM_SYNC](../005-UPSTREAM_SYNC/FEATURE.md).
 - **Релиз ядра — задача этого репозитория.** LxBox потребляет через
   `libbox.version` и собственных релизов ядра не выпускает.

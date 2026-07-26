@@ -1,6 +1,6 @@
 # SPEC 018 — DNS query stream (structured, live, via command-мультиплекс)
 
-**Фича:** [OBSERVABILITY](../../FEATURES/OBSERVABILITY/FEATURE.md)
+**Фича:** [OBSERVABILITY](../../FEATURES/006-OBSERVABILITY/FEATURE.md)
 
 **Тип:** lx-фича (наблюдаемость DNS через command-мультиплекс)
 **Статус:** C (complete) — v2 (DNS-стрим в command-мультиплексе) реализован и отгружен

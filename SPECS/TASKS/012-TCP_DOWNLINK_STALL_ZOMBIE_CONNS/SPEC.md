@@ -1,6 +1,6 @@
 # 012 — TCP download застревает в ядре: зомби-соединения ↑517 ↓0 (WhatsApp/Telegram «висят»)
 
-**Фича:** [HOTFIXES](../../FEATURES/HOTFIXES/FEATURE.md) · [RESEARCH](../../FEATURES/RESEARCH/FEATURE.md)
+**Фича:** [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md) · [RESEARCH](../../FEATURES/011-RESEARCH/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

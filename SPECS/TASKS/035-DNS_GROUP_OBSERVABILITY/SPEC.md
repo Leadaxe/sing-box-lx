@@ -1,6 +1,6 @@
 # SPEC 035 — DNS-группа: наблюдаемость (атрибуция, трасса, state-RPC, лог)
 
-**Фича:** [DNS_GROUP](../../FEATURES/DNS_GROUP/FEATURE.md) · смежная [OBSERVABILITY](../../FEATURES/OBSERVABILITY/FEATURE.md)
+**Фича:** [DNS_GROUP](../../FEATURES/013-DNS_GROUP/FEATURE.md) · смежная [OBSERVABILITY](../../FEATURES/006-OBSERVABILITY/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

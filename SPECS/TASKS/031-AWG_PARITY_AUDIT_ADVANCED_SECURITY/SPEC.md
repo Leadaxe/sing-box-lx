@@ -1,6 +1,6 @@
 # SPEC 031 — Сверка паритета AWG и параметр AdvancedSecurity
 
-**Фича:** [AWG2](../../FEATURES/AWG2/FEATURE.md)
+**Фича:** [AWG2](../../FEATURES/003-AWG2/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

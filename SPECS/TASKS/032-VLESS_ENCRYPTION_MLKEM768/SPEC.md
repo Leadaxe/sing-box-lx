@@ -1,6 +1,6 @@
 # SPEC 032 — VLESS Encryption (`mlkem768x25519plus`), клиент
 
-**Фича:** [VLESS_ENCRYPTION](../../FEATURES/VLESS_ENCRYPTION/FEATURE.md)
+**Фича:** [VLESS_ENCRYPTION](../../FEATURES/012-VLESS_ENCRYPTION/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

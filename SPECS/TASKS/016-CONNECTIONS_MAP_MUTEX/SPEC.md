@@ -1,6 +1,6 @@
 # SPEC 016 — Connections: гонка map (нет мьютекса в ApplyEvents/Filter/Iterator)
 
-**Фича:** [OBSERVABILITY](../../FEATURES/OBSERVABILITY/FEATURE.md)
+**Фича:** [OBSERVABILITY](../../FEATURES/006-OBSERVABILITY/FEATURE.md)
 
 **Тип:** долг ядра (bug, data race → fatal)
 **Статус:** Fixed — `sync.Mutex` добавлен в `Connections`, race-тест зелёный под `-race`.

@@ -1,6 +1,6 @@
 # SPEC: 008 — AWG_JUNK_PARAM_VALIDATION
 
-**Фича:** [AWG2](../../FEATURES/AWG2/FEATURE.md)
+**Фича:** [AWG2](../../FEATURES/003-AWG2/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

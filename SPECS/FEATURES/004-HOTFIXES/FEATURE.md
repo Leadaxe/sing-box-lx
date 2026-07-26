@@ -1,4 +1,4 @@
-# FEATURE: HOTFIXES — что мы чиним за апстримом
+# FEATURE 004 — HOTFIXES — что мы чиним за апстримом
 
 | Поле | Значение |
 |------|----------|
@@ -17,7 +17,7 @@
 или тихо расходиться с новой логикой.
 
 Поэтому каждая запись несёт **условие снятия**. Реестр того, что уже снято
-и за чем следить, — [UPSTREAM_SYNC](../UPSTREAM_SYNC/FEATURE.md).
+и за чем следить, — [UPSTREAM_SYNC](../005-UPSTREAM_SYNC/FEATURE.md).
 
 ## Реестр
 
@@ -37,7 +37,7 @@ linux-only, из-за чего Android получал склеенные пак�
 сделал то же самое (`24ea133 «conn: harmonize GOOS checks…»`), наш патч
 удалён. Но остался **след**: GRO на Android теперь полностью рабочий и
 требует большого `MaxSegmentSize` как топлива — см. запись CONSTRAINT
-в [UPSTREAM_SYNC](../UPSTREAM_SYNC/FEATURE.md).
+в [UPSTREAM_SYNC](../005-UPSTREAM_SYNC/FEATURE.md).
 
 **028 — DF во вложенных туннелях.** Нижний UDP-сокет открывается через
 `common/dialer`, который по умолчанию ставит DF. При вложении внешняя

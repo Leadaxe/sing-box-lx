@@ -1,6 +1,6 @@
 # SPEC 017 — Connection: detour-хвост outbound'а отдельным полем `detourList`
 
-**Фича:** [OBSERVABILITY](../../FEATURES/OBSERVABILITY/FEATURE.md)
+**Фича:** [OBSERVABILITY](../../FEATURES/006-OBSERVABILITY/FEATURE.md)
 
 **Тип:** lx-фича (расширение connection-метаданных)
 **Статус:** C (complete) — реализовано и отгружено

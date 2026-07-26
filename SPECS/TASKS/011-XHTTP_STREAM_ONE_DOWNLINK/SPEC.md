@@ -1,6 +1,6 @@
 # SPEC: 011 — XHTTP_STREAM_ONE_DOWNLINK
 
-**Фича:** [XHTTP](../../FEATURES/XHTTP/FEATURE.md)
+**Фича:** [XHTTP](../../FEATURES/002-XHTTP/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

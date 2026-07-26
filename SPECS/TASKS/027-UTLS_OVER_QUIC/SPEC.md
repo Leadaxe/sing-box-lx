@@ -1,6 +1,6 @@
 # SPEC: 027 — UTLS_OVER_QUIC
 
-**Фича:** [RESEARCH](../../FEATURES/RESEARCH/FEATURE.md)
+**Фича:** [RESEARCH](../../FEATURES/011-RESEARCH/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

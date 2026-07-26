@@ -1,4 +1,4 @@
-# FEATURE: UPSTREAM_SYNC — синхронизация с апстримом
+# FEATURE 005 — UPSTREAM_SYNC — синхронизация с апстримом
 
 | Поле | Значение |
 |------|----------|
@@ -34,7 +34,7 @@
 
 | Наше | Что держим | Триггер (за чем следить) | Исход | Действие |
 |---|---|---|---|---|
-| [010](../../TASKS/010-WG_ENDPOINT_GRO_SPLIT_BRAIN/SPEC.md) | — (патч снят) | `conn/bind_std.go` receive-гейты; `device/queueconstants_android.go` | **CONSTRAINT** | **Не откатывать `MaxSegmentSize` 65535 → 2200**: GRO на Android теперь родной и требует большого буфера. Память от multi-WG лечить числом устройств ([ENERGY](../ENERGY/FEATURE.md)), не размером буфера |
+| [010](../../TASKS/010-WG_ENDPOINT_GRO_SPLIT_BRAIN/SPEC.md) | — (патч снят) | `conn/bind_std.go` receive-гейты; `device/queueconstants_android.go` | **CONSTRAINT** | **Не откатывать `MaxSegmentSize` 65535 → 2200**: GRO на Android теперь родной и требует большого буфера. Память от multi-WG лечить числом устройств ([ENERGY](../008-ENERGY/FEATURE.md)), не размером буфера |
 | [013](../../TASKS/013-PACKAGE_NAME_REGEX_RULE_ITEM/SPEC.md) | Только тест | `NewPackageNameRegexItem` / `Match` | **DROP** + тест | Impl растворился в базе 1.14 (стал нативным upstream). Тест держим намеренно: апстрим своего не поставляет, это единственное покрытие |
 | [029](../../TASKS/029-ENDPOINT_DETOUR_START_ORDER/SPEC.md) | Фикс порядка старта | `startOutbounds`, `DetourDialer.Upstream()` | **HOLD** | Если апстрим унесёт резолв detour под топосорт-барьер → DROP |
 | [028](../../TASKS/028-NESTED_TUNNEL_UDP_FRAGMENT/SPEC.md) | `UDPFragmentDefault` у endpoint/masque | `common/dialer` DF-умолчания | **HOLD** | Если апстрим сам пометит туннельные outbound'ы → DROP |
@@ -71,7 +71,7 @@
 - **Наполнение реестра — от известного.** Watchlist собран из того, что уже
   зафиксировано в спеках. Полная инвентаризация дельты (314 файлов против
   `upstream/testing`) не проводилась — это отдельная работа масштаба
-  аудита ([AUDITS](../AUDITS/FEATURE.md)).
+  аудита ([AUDITS](../010-AUDITS/FEATURE.md)).
 - **Инвариант сильнее ревью.** Где можно, страж семантики — дешёвый тест
   (как в 013), а не «посмотреть глазами при мерже».
 - **Полная миграция версии — не рядовой мерж.** Переход 1.13 → 1.14 стоил

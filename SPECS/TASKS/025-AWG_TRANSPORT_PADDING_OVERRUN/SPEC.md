@@ -1,6 +1,6 @@
 # SPEC: 025 — AWG_TRANSPORT_PADDING_OVERRUN
 
-**Фича:** [AWG2](../../FEATURES/AWG2/FEATURE.md)
+**Фича:** [AWG2](../../FEATURES/003-AWG2/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

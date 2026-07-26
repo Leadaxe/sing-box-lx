@@ -1,6 +1,6 @@
 # SPEC: 029 — ENDPOINT_DETOUR_START_ORDER
 
-**Фича:** [HOTFIXES](../../FEATURES/HOTFIXES/FEATURE.md)
+**Фича:** [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

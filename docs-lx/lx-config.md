@@ -22,7 +22,7 @@ on-device: 8 endpoints suspended → 134 MB freed). A desktop build has small
 mismatch, a desktop/CLI binary that is handed a config with `route.lx_idle_suspend`
 **fails fast at start**: `route.lx_idle_suspend is set but this build lacks
 idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
-See the [ENERGY feature](../SPECS/FEATURES/ENERGY/FEATURE.md).
+See the [ENERGY feature](../SPECS/FEATURES/008-ENERGY/FEATURE.md).
 
 Related keys (2026-07-15 revision): `route.lx_idle_suspend_reachable` — optional
 second, longer idle window after which even *reachable* endpoints (pool members,
@@ -439,7 +439,7 @@ Also keep `jmax` **below** the real path MTU: amneziawg-go warns that if a junk 
 
 Map an `awg.conf` / awg-quick file 1:1: `[Interface] PrivateKey/Address/Jc/Jmin/Jmax/S1–S4/H1–H4/I1–I5` → endpoint root; `[Peer] PublicKey/PresharedKey/Endpoint/AllowedIPs/PersistentKeepalive` → `peers[0]` (`Endpoint host:port` → `address`+`port`). An `H1 = N` line maps to JSON number `N`, a ranged `H1 = N-M` line (awg2 export) maps to JSON string `"N-M"` verbatim. If the `awg.conf` omits `MTU` or sets the WireGuard-default `1420`, lower it for AWG2 (see [MTU](#mtu) above).
 
-The runtime is backed by `Leadaxe/wireguard-go` (sagernet/wireguard-go + AmneziaWG obfuscation, wired via the `submodules/wireguard-go` submodule) — see the [AWG2 feature](../SPECS/FEATURES/AWG2/FEATURE.md).
+The runtime is backed by `Leadaxe/wireguard-go` (sagernet/wireguard-go + AmneziaWG obfuscation, wired via the `submodules/wireguard-go` submodule) — see the [AWG2 feature](../SPECS/FEATURES/003-AWG2/FEATURE.md).
 
 ---
 

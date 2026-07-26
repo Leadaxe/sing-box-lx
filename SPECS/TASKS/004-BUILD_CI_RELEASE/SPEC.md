@@ -1,6 +1,6 @@
 # SPEC: 004 — BUILD_CI_RELEASE
 
-**Фича:** [BUILD_CI_CD](../../FEATURES/BUILD_CI_CD/FEATURE.md)
+**Фича:** [BUILD_CI_CD](../../FEATURES/001-BUILD_CI_CD/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|
