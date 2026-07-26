@@ -54,6 +54,7 @@ service StartedService {
   rpc SubscribeDNSQueries(SubscribeDNSQueriesRequest) returns (stream DnsQueryEvent) {}
   rpc GetPool(GetPoolRequest) returns (PoolList) {}
   rpc GetDNSGroups(google.protobuf.Empty) returns (DnsGroupList) {}
+  rpc GetRunningConfig(google.protobuf.Empty) returns (RunningConfig) {}
 
   // lx:end lx_command
 }
@@ -801,6 +802,15 @@ message DnsGroupState {
 }
 message DnsGroupList {
   repeated DnsGroupState groups = 1;
+}
+
+// SPEC 037 — the canonical serialization of the options the running box was actually
+// built from: post-override (tun AutoRedirect/packages, injected OOM-killer service),
+// re-marshaled from the parsed struct. NOT byte-identical to the profile text the client
+// sent (field order, omitempty, [] -> null normalization) — compare semantically, not
+// textually. Serialized once at service start; this is a cheap string handoff.
+message RunningConfig {
+  string content = 1;
 }
 
 // lx:end lx_command

@@ -33,6 +33,7 @@ type Instance struct {
 	outboundManager       adapter.OutboundManager
 	endpointManager       adapter.EndpointManager
 	logFactory            log.Factory
+	runningConfig         string // lx: SPEC 037 — canonical snapshot of the started options, "" when not captured
 }
 
 func (s *StartedService) CheckConfig(ctx context.Context, configContent string) error {
@@ -118,6 +119,7 @@ func (s *StartedService) newInstance(ctx context.Context, profileContent string,
 		ctx:                   ctx,
 		cancel:                cancel,
 		urlTestHistoryStorage: urlTestHistoryStorage,
+		runningConfig:         captureRunningConfig(options), // lx: SPEC 037
 	}
 	boxInstance, err := box.New(box.Options{
 		Context:           ctx,

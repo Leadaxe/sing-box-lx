@@ -255,6 +255,24 @@ func (c *CommandClient) GetOutbounds() (OutboundGroupItemIterator, error) {
 	})
 }
 
+// GetRunningConfig returns the canonical JSON of the config the running box was actually
+// built from (SPEC 037): the post-override options snapshot captured at service start.
+// This is the source of truth for "what is running" — after a profile edit without
+// restart, the client compares/extracts against THIS, not its own profile text. The
+// document is a re-marshal (field order, omitempty, [] -> null normalization), so any
+// diff against the stored profile must be semantic, not textual. Per-node JSON ("View
+// details" / "Copy JSON") is derived client-side by extracting the tag from this
+// document — there is deliberately no per-tag RPC.
+func (c *CommandClient) GetRunningConfig() (string, error) {
+	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (string, error) {
+		response, err := client.GetRunningConfig(ctx, &emptypb.Empty{})
+		if err != nil {
+			return "", E.Cause(err, "get running config")
+		}
+		return response.Content, nil
+	})
+}
+
 // Rule is the libbox view of one routing rule. Type/Payload/Action mirror the Clash
 // /rules JSON; IsDNS distinguishes route rules (false) from DNS rules (true).
 type Rule struct {

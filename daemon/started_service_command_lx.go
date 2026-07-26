@@ -280,6 +280,28 @@ func (s *StartedService) GetDNSGroups(ctx context.Context, empty *emptypb.Empty)
 	return &list, nil
 }
 
+// GetRunningConfig returns the canonical serialization of the options the running box
+// was actually built from (SPEC 037) — the post-override struct captured once in
+// newInstance, NOT the profile text the client sent: tun AutoRedirect/packages and the
+// injected OOM-killer service are included, field order / omitempty / [] -> null follow
+// the re-marshal. This is the single source of truth for "what is running" — the client
+// derives per-node JSON ("View details" / "Copy JSON") by extracting the tag from this
+// document instead of a per-tag RPC. Unavailable (not FailedPrecondition) distinguishes
+// "started but no snapshot" — the attached-service path (service/api) never captures one.
+func (s *StartedService) GetRunningConfig(ctx context.Context, empty *emptypb.Empty) (*RunningConfig, error) {
+	s.serviceAccess.RLock()
+	if s.serviceStatus.Status != ServiceStatus_STARTED {
+		s.serviceAccess.RUnlock()
+		return nil, status.Error(codes.FailedPrecondition, "service is not started")
+	}
+	content := s.instance.runningConfig
+	s.serviceAccess.RUnlock()
+	if content == "" {
+		return nil, status.Error(codes.Unavailable, "running config was not captured for this service")
+	}
+	return &RunningConfig{Content: content}, nil
+}
+
 // clampRttMs converts a measured rtt to ms, clamping sub-millisecond
 // measurements to 1 so that 0 unambiguously means "never measured"
 // (precedent: GetPool clamps live-node delay 0->1).

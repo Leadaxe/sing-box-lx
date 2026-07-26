@@ -56,6 +56,7 @@ const (
 	StartedService_SubscribeDNSQueries_FullMethodName            = "/daemon.StartedService/SubscribeDNSQueries"
 	StartedService_GetPool_FullMethodName                        = "/daemon.StartedService/GetPool"
 	StartedService_GetDNSGroups_FullMethodName                   = "/daemon.StartedService/GetDNSGroups"
+	StartedService_GetRunningConfig_FullMethodName               = "/daemon.StartedService/GetRunningConfig"
 )
 
 // StartedServiceClient is the client API for StartedService service.
@@ -103,6 +104,7 @@ type StartedServiceClient interface {
 	SubscribeDNSQueries(ctx context.Context, in *SubscribeDNSQueriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DnsQueryEvent], error)
 	GetPool(ctx context.Context, in *GetPoolRequest, opts ...grpc.CallOption) (*PoolList, error)
 	GetDNSGroups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*DnsGroupList, error)
+	GetRunningConfig(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RunningConfig, error)
 }
 
 type startedServiceClient struct {
@@ -664,6 +666,16 @@ func (c *startedServiceClient) GetDNSGroups(ctx context.Context, in *emptypb.Emp
 	return out, nil
 }
 
+func (c *startedServiceClient) GetRunningConfig(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RunningConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RunningConfig)
+	err := c.cc.Invoke(ctx, StartedService_GetRunningConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StartedServiceServer is the server API for StartedService service.
 // All implementations must embed UnimplementedStartedServiceServer
 // for forward compatibility.
@@ -709,6 +721,7 @@ type StartedServiceServer interface {
 	SubscribeDNSQueries(*SubscribeDNSQueriesRequest, grpc.ServerStreamingServer[DnsQueryEvent]) error
 	GetPool(context.Context, *GetPoolRequest) (*PoolList, error)
 	GetDNSGroups(context.Context, *emptypb.Empty) (*DnsGroupList, error)
+	GetRunningConfig(context.Context, *emptypb.Empty) (*RunningConfig, error)
 	mustEmbedUnimplementedStartedServiceServer()
 }
 
@@ -881,6 +894,10 @@ func (UnimplementedStartedServiceServer) GetPool(context.Context, *GetPoolReques
 
 func (UnimplementedStartedServiceServer) GetDNSGroups(context.Context, *emptypb.Empty) (*DnsGroupList, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetDNSGroups not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetRunningConfig(context.Context, *emptypb.Empty) (*RunningConfig, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetRunningConfig not implemented")
 }
 func (UnimplementedStartedServiceServer) mustEmbedUnimplementedStartedServiceServer() {}
 func (UnimplementedStartedServiceServer) testEmbeddedByValue()                        {}
@@ -1514,6 +1531,24 @@ func _StartedService_GetDNSGroups_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StartedService_GetRunningConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetRunningConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetRunningConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetRunningConfig(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StartedService_ServiceDesc is the grpc.ServiceDesc for StartedService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1616,6 +1651,10 @@ var StartedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetDNSGroups",
 			Handler:    _StartedService_GetDNSGroups_Handler,
+		},
+		{
+			MethodName: "GetRunningConfig",
+			Handler:    _StartedService_GetRunningConfig_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

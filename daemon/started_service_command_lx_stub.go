@@ -43,3 +43,7 @@ func (s *StartedService) GetPool(ctx context.Context, request *GetPoolRequest) (
 func (s *StartedService) GetDNSGroups(ctx context.Context, empty *emptypb.Empty) (*DnsGroupList, error) {
 	return nil, status.Error(codes.Unimplemented, "GetDNSGroups is not included in this build, rebuild with -tags with_lx_command")
 }
+
+func (s *StartedService) GetRunningConfig(ctx context.Context, empty *emptypb.Empty) (*RunningConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "GetRunningConfig is not included in this build, rebuild with -tags with_lx_command")
+}
