@@ -113,10 +113,24 @@ func (t *Transport) runRace(ctx context.Context, message *mDNS.Msg, racers []*me
 
 	select {
 	case result := <-winnerCh:
+		if result.tag != "" {
+			if winner := t.memberByTag(result.tag); winner != nil {
+				t.recordEffective(ctx, winner)
+			}
+		}
 		return result.response, result.err
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+func (t *Transport) memberByTag(tag string) *member {
+	for _, current := range t.members {
+		if current.tag == tag {
+			return current
+		}
+	}
+	return nil
 }
 
 // collectRace consumes every member result: the first success becomes the
@@ -207,6 +221,7 @@ func (t *Transport) exchangeOrdered(ctx context.Context, message *mDNS.Msg, cand
 		response, err := current.transport.Exchange(ctx, message)
 		if !isFailure(response, err) {
 			t.clearFailure(current.tag)
+			t.recordEffective(ctx, current)
 			return response, err
 		}
 		t.markFailure(current.tag)

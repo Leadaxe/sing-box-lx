@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/dnstrack"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/log"
@@ -178,7 +179,14 @@ func (t *Transport) exchangeLastResort(ctx context.Context, message *mDNS.Msg) (
 		return response, err
 	}
 	t.clearFailure(current.tag)
+	t.recordEffective(ctx, current)
 	return response, err
+}
+
+// recordEffective attributes the answer to the member that produced it for
+// the DNS query stream (SPEC 035). No-op without the client-level holder.
+func (t *Transport) recordEffective(ctx context.Context, current *member) {
+	dnstrack.SetEffectiveServer(ctx, current.tag, current.transport.Type(), current.transport.OutboundTag())
 }
 
 // isFailure classifies a member result per the feature contract: transport
