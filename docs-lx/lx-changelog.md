@@ -10,6 +10,49 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.16-rc.1
+
+**New DNS server type `group`: DNS resolution no longer dies with one failed
+server (SPEC 033/034/035, feature
+[DNS_GROUP](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/DNS_GROUP/FEATURE.md)).**
+Previously `dns.final` was a *default*, not a fallback, and a rule routing to
+a server returned its transport directly — any network error, timeout or
+SERVFAIL failed the query outright even with healthy servers in the config.
+A `group` puts several servers behind one tag with a selection strategy:
+
+```json
+{ "type": "group", "tag": "public",
+  "servers": ["google", "cloudflare"],
+  "mode": "failover", "down_time": "30s" }
+```
+
+- `mode: failover` (default) walks `servers` in order; a transport error,
+  timeout or SERVFAIL marks the member down for `down_time` (subsequent
+  queries skip it), NXDOMAIN and empty answers are valid responses. With
+  every member down, each query makes exactly one attempt via the member
+  whose failure is the oldest.
+- `mode: race` picks the fastest member by racing a **real** query: the
+  first query after the previous race aged past `interval` (default 3m)
+  fans out to all live members, the first success answers the query and
+  becomes the pinned winner; arrival order forms the fallback ranking.
+  No timers, no synthetic probe traffic — idle costs nothing (ENERGY
+  invariant), and only the winner's answer is cached.
+- A group is a first-class server: accepted in `final`, in rules and inside
+  other groups (cycles are rejected at load, not at runtime). `fakeip` and
+  `hosts` members are rejected — local sources cannot fail over.
+- The DNS query stream (`SubscribeDNSQueries`) now attributes each answer to
+  the member that actually produced it; cache hits and total-failure events
+  keep the group tag. The protocol schema is unchanged — existing clients
+  are compatible as-is.
+
+This build also merges upstream `testing` (31 commits), including rule-level
+`race`/`speculative` evaluate actions, client-subnet-aware DNS cache, a TCP
+DNS retry fix, search-domain expansion fix, JSON schema support and the
+openconnect/openvpn DNS server types. Upstream's `race` orchestrates queries
+*within one resolution* and holds no state between queries; the lx `group` is
+a composite *server* with health memory (`down_time`, pinned winner) — the
+mechanisms live on different layers and compose.
+
 #### v1.14.0-lx.15
 
 **XHTTP no longer breaks behind a reverse proxy when the session id is carried
