@@ -3,6 +3,11 @@ name: lx-ci
 # Fast per-commit gate for sing-box-lx. See docs-lx/lx-config.md and SPECS/TASKS/004.
 #
 # Trigger policy (keep per-commit cost low — see SPECS/TASKS/004 §2.2):
+#   * Branches: `lx` plus the `lx-*` pattern. Release work happens on the version
+#     line (`lx-1.14`), NOT on `lx` — pinning the trigger to `lx` alone silently
+#     left ten release tags (lx.8…lx.16-rc.1) ungated. The pattern also covers
+#     experimental `lx-*` branches, which is the point: they are where unproven
+#     code lives. Doc-only commits are skipped anyway (paths-ignore below).
 #   * Doc-only commits (md/docs/SPECS/LICENSE) skip CI entirely (paths-ignore).
 #   * push / pull_request → only the cheap jobs:
 #       - `lint`        : go vet (lx packages) + gofmt on lx-owned files
@@ -17,10 +22,10 @@ name: lx-ci
 
 on:
   push:
-    branches: [lx]
+    branches: [lx, 'lx-*']
     paths-ignore: [ '**.md', 'docs/**', 'SPECS/**', 'LICENSE', '.gitignore' ]
   pull_request:
-    branches: [lx]
+    branches: [lx, 'lx-*']
     paths-ignore: [ '**.md', 'docs/**', 'SPECS/**', 'LICENSE', '.gitignore' ]
   workflow_dispatch:
 
