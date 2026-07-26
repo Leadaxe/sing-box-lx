@@ -9,6 +9,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badoption"
 )
 
@@ -165,6 +166,11 @@ func TestIdleTick_passesTeardownThreshold(t *testing.T) {
 	}
 }
 
+func teardownPtr(d time.Duration) *badoption.Duration {
+	value := badoption.Duration(d)
+	return &value
+}
+
 // TestIdleTeardownOf_defaultsToReachableWindow: an omitted lx_idle_teardown
 // inherits lx_idle_suspend_reachable; an explicit value wins.
 func TestIdleTeardownOf_defaultsToReachableWindow(t *testing.T) {
@@ -176,13 +182,59 @@ func TestIdleTeardownOf_defaultsToReachableWindow(t *testing.T) {
 	}
 	explicit := idleTeardownOf(option.RouteOptions{
 		LXIdleSuspendReachable: badoption.Duration(5 * time.Minute),
-		LXIdleTeardown:         badoption.Duration(time.Hour),
+		LXIdleTeardown:         teardownPtr(time.Hour),
 	})
 	if explicit != time.Hour {
 		t.Fatalf("explicit teardown must win, got %v", explicit)
 	}
 	if off := idleTeardownOf(option.RouteOptions{}); off != 0 {
 		t.Fatalf("no windows configured → teardown off, got %v", off)
+	}
+}
+
+// TestIdleTeardownOf_explicitZeroDisables pins the documented kill switch: an
+// explicit lx_idle_teardown of "0" means "never tear down", and must NOT inherit
+// the reachable window the way an omitted option does. Endpoints then stay
+// merely suspended, so the next dial pays ~1 handshake RTT instead of a full
+// device+netstack rebuild.
+func TestIdleTeardownOf_explicitZeroDisables(t *testing.T) {
+	disabled := idleTeardownOf(option.RouteOptions{
+		LXIdleSuspend:          badoption.Duration(30 * time.Second),
+		LXIdleSuspendReachable: badoption.Duration(5 * time.Minute),
+		LXIdleTeardown:         teardownPtr(0),
+	})
+	if disabled != 0 {
+		t.Fatalf(`explicit "0" must disable teardown, got %v`, disabled)
+	}
+}
+
+// TestIdleTeardownOf_zeroSurvivesConfigRoundTrip guards the option shape itself:
+// the kill switch is only real if "0" survives JSON decoding as a present value.
+// A non-pointer duration collapses it into the same zero as an absent field,
+// which is exactly how the switch was lost before.
+func TestIdleTeardownOf_zeroSurvivesConfigRoundTrip(t *testing.T) {
+	var options option.RouteOptions
+	err := json.Unmarshal([]byte(`{"lx_idle_suspend":"30s","lx_idle_suspend_reachable":"5m","lx_idle_teardown":"0"}`), &options)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if options.LXIdleTeardown == nil {
+		t.Fatal(`an explicit "0" must decode as present, not as an absent option`)
+	}
+	if got := idleTeardownOf(options); got != 0 {
+		t.Fatalf(`decoded "0" must disable teardown, got %v`, got)
+	}
+
+	var absent option.RouteOptions
+	err = json.Unmarshal([]byte(`{"lx_idle_suspend":"30s","lx_idle_suspend_reachable":"5m"}`), &absent)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if absent.LXIdleTeardown != nil {
+		t.Fatal("an omitted option must decode as absent")
+	}
+	if got := idleTeardownOf(absent); got != 5*time.Minute {
+		t.Fatalf("omitted teardown must inherit the reachable window, got %v", got)
 	}
 }
 
@@ -238,6 +290,25 @@ func TestOutboundReachable_featureOffAlwaysTrue(t *testing.T) {
 	r := &Router{} // idleSuspend == 0
 	if !r.OutboundReachable("anything") {
 		t.Fatal("feature off → OutboundReachable must be true for any tag")
+	}
+}
+
+// TestStartIdleSuspend_teardownRequiresSuspend pins the prerequisite for the
+// teardown kill switch: lx_idle_teardown means nothing without lx_idle_suspend,
+// and an explicit "0" must be rejected just like any other value — its resolved
+// window is zero, so only the "option was present" flag can catch it.
+func TestStartIdleSuspend_teardownRequiresSuspend(t *testing.T) {
+	explicitZero := &Router{idleTeardown: 0, idleTeardownSet: true}
+	if err := explicitZero.startIdleSuspend(); err == nil {
+		t.Fatal(`an explicit lx_idle_teardown "0" without lx_idle_suspend must fail loudly`)
+	}
+	window := &Router{idleTeardown: 5 * time.Minute, idleTeardownSet: true}
+	if err := window.startIdleSuspend(); err == nil {
+		t.Fatal("lx_idle_teardown without lx_idle_suspend must fail loudly")
+	}
+	absent := &Router{}
+	if err := absent.startIdleSuspend(); err != nil {
+		t.Fatalf("no idle options at all → clean no-op, got %v", err)
 	}
 }
 

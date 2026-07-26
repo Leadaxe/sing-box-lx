@@ -17,6 +17,18 @@ func TestStartIdleSuspend_stubErrorsWhenOptionSet(t *testing.T) {
 	}
 }
 
+// TestStartIdleSuspend_stubErrorsOnExplicitTeardownZero: an explicit
+// lx_idle_teardown of "0" (the teardown kill switch) resolves to a zero window,
+// so the stub must key off "the option was present", not off its magnitude —
+// otherwise a config carrying the switch would silently no-op in a build without
+// the tag, which is exactly the silence this stub exists to prevent.
+func TestStartIdleSuspend_stubErrorsOnExplicitTeardownZero(t *testing.T) {
+	r := &Router{idleTeardown: 0, idleTeardownSet: true}
+	if err := r.startIdleSuspend(); err == nil {
+		t.Fatal(`expected an error when an explicit lx_idle_teardown "0" is set in a build without with_lx_idle_suspend`)
+	}
+}
+
 // TestStartIdleSuspend_stubNoopWhenUnset: without the option, the stub is a clean
 // no-op (no error) — desktop builds with no lx_idle_suspend are unaffected.
 func TestStartIdleSuspend_stubNoopWhenUnset(t *testing.T) {

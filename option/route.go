@@ -47,7 +47,11 @@ type RouteOptions struct {
 	// suspended endpoint pays. Absent → defaults to lx_idle_suspend_reachable;
 	// "0" disables teardown (endpoints stay merely suspended). Requires
 	// lx_idle_suspend.
-	LXIdleTeardown badoption.Duration `json:"lx_idle_teardown,omitempty"`
+	//
+	// Pointer so that an explicit "0" (disable) is distinguishable from absent
+	// (inherit the reachable window) — a plain badoption.Duration collapses both
+	// to the same zero.
+	LXIdleTeardown *badoption.Duration `json:"lx_idle_teardown,omitempty"`
 	// lx:end idle-suspend
 }
 

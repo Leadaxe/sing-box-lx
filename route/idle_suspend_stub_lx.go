@@ -19,7 +19,7 @@ import (
 // resumeOnDial) stays dormant: idleAsleep is never set, so resumeOnDial always
 // takes its fast path and the hot dial path is unaffected.
 func (r *Router) startIdleSuspend() error {
-	if r.idleSuspend > 0 || r.idleSuspendReachable > 0 || r.idleTeardown > 0 {
+	if r.idleSuspend > 0 || r.idleSuspendReachable > 0 || r.idleTeardownSet {
 		return E.New("route.lx_idle_suspend is set but this build lacks idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)")
 	}
 	return nil

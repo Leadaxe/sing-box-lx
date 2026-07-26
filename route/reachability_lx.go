@@ -173,7 +173,7 @@ func (r *Router) startIdleSuspend() error {
 		if r.idleSuspendReachable > 0 {
 			return E.New("route.lx_idle_suspend_reachable requires route.lx_idle_suspend to be set")
 		}
-		if r.idleTeardown > 0 {
+		if r.idleTeardownSet {
 			return E.New("route.lx_idle_teardown requires route.lx_idle_suspend to be set")
 		}
 		return nil

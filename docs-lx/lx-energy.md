@@ -58,7 +58,7 @@ The set is cached and recomputed **only on events** (selector switch, urltest au
 
 | | Unreachable endpoint | Reachable endpoint | Any SLEEPING endpoint |
 |---|---|---|---|
-| Threshold | `lx_idle_suspend` (30s idle) | `lx_idle_suspend_reachable` (5m idle); `0`/absent — never | `lx_idle_teardown` (5m of **sleep**, counted from falling asleep) |
+| Threshold | `lx_idle_suspend` (30s idle) | `lx_idle_suspend_reachable` (5m idle); `0`/absent — never | `lx_idle_teardown` (5m of **sleep**, counted from falling asleep); an explicit `0` never tears down, an absent key inherits the reachable window |
 | What happens | `Down()` — freeze | `Down()` — freeze | **`Close()`** — full teardown: the gVisor netstack (~6 MB/node) goes too |
 | Wake | dial, +1 RTT | dial, +1 RTT | dial, **rebuild ~0.5–1 s** on the first request |
 
