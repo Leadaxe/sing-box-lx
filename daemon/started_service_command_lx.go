@@ -268,7 +268,7 @@ func (s *StartedService) GetDNSGroups(ctx context.Context, empty *emptypb.Empty)
 				LastErrorAgeMs: -1,
 				LiveWins:       uint32(memberSnapshot.LiveWins),
 				Current:        memberSnapshot.Current,
-				LastRttMs:      uint32(memberSnapshot.LastRTT.Milliseconds()),
+				LastRttMs:      clampRttMs(memberSnapshot.LastRTT),
 			}
 			if memberSnapshot.HasError {
 				memberProto.LastErrorAgeMs = memberSnapshot.LastErrorAge.Milliseconds()
@@ -278,6 +278,19 @@ func (s *StartedService) GetDNSGroups(ctx context.Context, empty *emptypb.Empty)
 		list.Groups = append(list.Groups, groupProto)
 	}
 	return &list, nil
+}
+
+// clampRttMs converts a measured rtt to ms, clamping sub-millisecond
+// measurements to 1 so that 0 unambiguously means "never measured"
+// (precedent: GetPool clamps live-node delay 0->1).
+func clampRttMs(rtt time.Duration) uint32 {
+	if rtt <= 0 {
+		return 0
+	}
+	if ms := rtt.Milliseconds(); ms > 0 {
+		return uint32(ms)
+	}
+	return 1
 }
 
 // SubscribeDNSQueries streams structured, process-attributed DNS resolutions (SPEC 018).

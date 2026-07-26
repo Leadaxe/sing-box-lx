@@ -121,7 +121,7 @@ func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, opt
 		logger.Warn("group[", tag, "]: win_ttl is only used in fastest mode, ignoring")
 		winTTL = 0
 	}
-	if winTTL == 0 {
+	if winTTL <= 0 {
 		winTTL = DefaultWinTTL
 	}
 	errorTTL := time.Duration(options.ErrorTTL)
@@ -231,10 +231,14 @@ func (t *Transport) liveWinsLocked(tag string, now time.Time) []time.Time {
 
 // noteError records a failed exchange: an error record is written and the
 // server's live wins are erased (a win must not outlive a failure — that is
-// the flap-back trap of win_ttl > error_ttl).
-func (t *Transport) noteError(tag string) {
+// the flap-back trap of win_ttl > error_ttl). gen-guarded: a probe started
+// before Reset must not poison the amnestied tables.
+func (t *Transport) noteError(tag string, gen int) {
 	t.access.Lock()
 	defer t.access.Unlock()
+	if t.gen != gen {
+		return
+	}
 	record := t.recordLocked(tag)
 	record.errors = appendCapped(record.errors, time.Now())
 	record.wins = nil
@@ -243,9 +247,14 @@ func (t *Transport) noteError(tag string) {
 // noteSuccess records a successful exchange: the server's live errors are
 // erased. This is NOT a win — erasing errors returns the server to the clean
 // set but gives it no advantage inside it (no self-reinforcement).
-func (t *Transport) noteSuccess(tag string, rtt time.Duration) {
+// gen-guarded like noteError: a stale success must not erase legitimate
+// post-Reset errors.
+func (t *Transport) noteSuccess(tag string, rtt time.Duration, gen int) {
 	t.access.Lock()
 	defer t.access.Unlock()
+	if t.gen != gen {
+		return
+	}
 	record := t.recordLocked(tag)
 	record.errors = nil
 	if rtt > 0 {
@@ -282,11 +291,12 @@ func (t *Transport) setCurrent(tag string, gen int) (previous string, changed bo
 
 // selection is the routing decision for one query.
 type selection struct {
-	target   *member   // single-exchange target (nil when fan is set)
-	fan      []*member // fan participants (parallel / fastest election)
-	election bool      // this query holds the fastest election flag
-	survival bool      // no clean members: one attempt, no fan
-	gen      int
+	target      *member   // single-exchange target (nil when fan is set)
+	fan         []*member // fan participants (parallel / fastest election)
+	election    bool      // this query holds the fastest election flag
+	survival    bool      // no clean members: one attempt, no fan
+	provisional bool      // election-window concurrent: must NOT re-elect current
+	gen         int
 }
 
 func (t *Transport) selectTarget() selection {
@@ -319,7 +329,7 @@ func (t *Transport) selectTarget() selection {
 			t.election = true
 			return selection{fan: append([]*member(nil), clean...), election: true, gen: t.gen}
 		}
-		return selection{target: clean[rand.IntN(len(clean))], gen: t.gen}
+		return selection{target: clean[rand.IntN(len(clean))], provisional: true, gen: t.gen}
 	default: // ModeStable
 		return selection{target: t.stickyPickLocked(clean), gen: t.gen}
 	}
@@ -396,7 +406,7 @@ func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg,
 		return t.fan(ctx, message, sel.fan, sel.gen, sel.election)
 	}
 	if sel.survival {
-		return t.exchangeSurvival(ctx, message, sel.target)
+		return t.exchangeSurvival(ctx, message, sel)
 	}
 	return t.exchangeSingle(ctx, message, sel)
 }
@@ -412,20 +422,25 @@ func (t *Transport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callba
 // is guaranteed to the rescue fan (otherwise a blackholed target eats the
 // whole budget and the fan starts dead).
 func (t *Transport) exchangeSingle(ctx context.Context, message *mDNS.Msg, sel selection) (*mDNS.Msg, error) {
-	if previous, changed := t.setCurrent(sel.target.tag, sel.gen); changed {
-		t.logCurrentChange(ctx, previous, sel.target.tag)
+	// An election-window concurrent serves the query but must not trash the
+	// sticky target (nor spam the info log): current changes only via the
+	// sticky pick or the fan winner.
+	if !sel.provisional {
+		if previous, changed := t.setCurrent(sel.target.tag, sel.gen); changed {
+			t.logCurrentChange(ctx, previous, sel.target.tag)
+		}
 	}
 	targetCtx, cancel := context.WithTimeout(ctx, t.targetBudget(ctx))
 	response, err, rtt := t.timedExchange(targetCtx, sel.target, message)
 	cancel()
 	t.traceAttempt(ctx, sel.target, response, err, rtt)
 	if !isFailure(response, err) {
-		t.noteSuccess(sel.target.tag, rtt)
+		t.noteSuccess(sel.target.tag, rtt, sel.gen)
 		t.recordEffective(ctx, sel.target)
 		return response, err
 	}
 	// The target's sub-deadline was honest — its failure is always recorded.
-	t.noteError(sel.target.tag)
+	t.noteError(sel.target.tag, sel.gen)
 	t.logProbeFailure(ctx, sel.target.tag, response, err)
 
 	rescuers := t.cleanExcept(sel.target.tag)
@@ -439,17 +454,18 @@ func (t *Transport) exchangeSingle(ctx context.Context, message *mDNS.Msg, sel s
 // dirty server, never a fan (anti-storm: one attempt is the whole price of
 // the query on a dead network). The attempt gets the FULL remaining budget:
 // there is no fan to reserve for.
-func (t *Transport) exchangeSurvival(ctx context.Context, message *mDNS.Msg, target *member) (*mDNS.Msg, error) {
+func (t *Transport) exchangeSurvival(ctx context.Context, message *mDNS.Msg, sel selection) (*mDNS.Msg, error) {
+	target := sel.target
 	dnstrack.MarkSurvival(ctx)
 	t.logger.WarnContext(ctx, "group[", t.Tag(), "]: no clean servers, survival attempt via ", target.tag)
 	response, err, rtt := t.timedExchange(ctx, target, message)
 	t.traceAttempt(ctx, target, response, err, rtt)
 	if !isFailure(response, err) {
-		t.noteSuccess(target.tag, rtt) // erases its errors → back to clean, stickiness holds it
+		t.noteSuccess(target.tag, rtt, sel.gen) // erases its errors → back to clean, stickiness holds it
 		t.recordEffective(ctx, target)
 		return response, err
 	}
-	t.noteError(target.tag)
+	t.noteError(target.tag, sel.gen)
 	t.logProbeFailure(ctx, target.tag, response, err)
 	return response, err
 }

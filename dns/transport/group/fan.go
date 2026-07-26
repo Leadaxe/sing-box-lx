@@ -52,6 +52,14 @@ func (t *Transport) fan(ctx context.Context, message *mDNS.Msg, participants []*
 		if result.member != nil {
 			t.recordEffective(ctx, result.member)
 		}
+		if result.response == nil && result.err == nil {
+			// Degenerate guard: a fan must never yield (nil, nil) — the
+			// client dereferences the response on a nil error.
+			if cause := ctx.Err(); cause != nil {
+				return nil, cause
+			}
+			return nil, E.New("group[", t.Tag(), "]: fan yielded no result")
+		}
 		return result.response, result.err
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -79,7 +87,7 @@ func (t *Transport) collectFan(ctx context.Context, count int, results chan fanR
 				continue
 			}
 			t.traceAttempt(ctx, result.member, result.response, result.err, result.rtt)
-			t.noteError(result.member.tag)
+			t.noteError(result.member.tag, gen)
 			t.logProbeFailure(ctx, result.member.tag, result.response, result.err)
 			if result.err != nil {
 				errs = append(errs, E.Cause(result.err, result.member.tag))
@@ -91,7 +99,13 @@ func (t *Transport) collectFan(ctx context.Context, count int, results chan fanR
 		t.traceAttempt(ctx, result.member, result.response, result.err, result.rtt)
 		// A success always erases the server's live errors — late answers
 		// included (their answer is discarded, their health signal is not).
-		t.noteSuccess(result.member.tag, result.rtt)
+		t.noteSuccess(result.member.tag, result.rtt, gen)
+		// A success observed after the request context ended belongs to a
+		// FAILED query: it heals the server but must not mint a win, must
+		// not re-elect the current and must not pretend to answer.
+		if ctx.Err() != nil {
+			continue
+		}
 		if !delivered {
 			delivered = true
 			if t.mode == ModeFastest {
@@ -112,6 +126,17 @@ func (t *Transport) collectFan(ctx context.Context, count int, results chan fanR
 		t.access.Unlock()
 	}
 	if !delivered {
-		winnerCh <- fanResult{err: E.Errors(errs...)}
+		failure := E.Errors(errs...)
+		if failure == nil {
+			// Every failure was abandoned (guard above): the fan died with
+			// the request context. E.Errors() of nothing is nil — never let
+			// a fan resolve to (nil, nil).
+			if cause := ctx.Err(); cause != nil {
+				failure = E.Cause(cause, "group[", t.Tag(), "]: all fan probes abandoned")
+			} else {
+				failure = E.New("group[", t.Tag(), "]: fan yielded no result")
+			}
+		}
+		winnerCh <- fanResult{err: failure}
 	}
 }

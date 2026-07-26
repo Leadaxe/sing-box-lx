@@ -273,3 +273,151 @@ func TestFanLateSuccessHealsButDoesNotAnswer(t *testing.T) {
 	waitFanSettled(t, group)
 	require.Equal(t, "quick", group.GroupState().Current)
 }
+
+// --- review regression tests (SPEC 033 v2 audit) -----------------------------
+
+func TestResetMidFanDoesNotPoisonFreshTables(t *testing.T) {
+	release := make(chan struct{})
+	gatedFail := func(tag string) *fakeMember {
+		return newFakeMember(tag, func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+			select {
+			case <-release:
+				return nil, E.New("late failure")
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		})
+	}
+	first := gatedFail("a")
+	second := gatedFail("b")
+	group := newTestGroup(t, ModeParallel, time.Hour, 0, first, second)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = group.Exchange(context.Background(), testQuery())
+	}()
+	time.Sleep(20 * time.Millisecond) // fan in flight
+	group.Reset()                     // network-change amnesty
+	close(release)                    // members now fail with a LIVE ctx
+	<-done
+	waitFanSettled(t, group)
+
+	// The stale fan's failures must be dropped by the gen guard: the
+	// amnestied tables stay clean.
+	require.True(t, memberClean(group, "a"), "stale fan failure must not poison amnestied tables")
+	require.True(t, memberClean(group, "b"), "stale fan failure must not poison amnestied tables")
+}
+
+func TestResetMidSingleExchangeDoesNotPoison(t *testing.T) {
+	release := make(chan struct{})
+	target := newFakeMember("a", func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+		select {
+		case <-release:
+			return nil, E.New("late failure")
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+	spare := answering("b")
+	group := newTestGroup(t, ModeStable, time.Hour, 0, target)
+	group.members = append(group.members, &member{tag: "b", transport: spare})
+	group.access.Lock()
+	group.current = "a"
+	group.access.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = group.Exchange(context.Background(), testQuery())
+	}()
+	time.Sleep(20 * time.Millisecond)
+	group.Reset()
+	close(release)
+	<-done
+	waitFanSettled(t, group)
+
+	require.True(t, memberClean(group, "a"), "stale single-exchange failure must not poison amnestied tables")
+}
+
+func TestCollectFanNeverYieldsNilNil(t *testing.T) {
+	// All fan failures abandoned (dead ctx): the guard skips every error
+	// record, errs stays empty — the fan must still resolve to a NON-nil
+	// error, never (nil, nil).
+	hole1 := blackhole("h1")
+	hole2 := blackhole("h2")
+	group := newTestGroup(t, ModeParallel, time.Hour, 0, hole1, hole2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // context dead before the fan even starts
+	response, err := group.fan(ctx, testQuery(), []*member{
+		{tag: "h1", transport: hole1},
+		{tag: "h2", transport: hole2},
+	}, 0, false)
+	require.Error(t, err, "a fan must never resolve to (nil, nil)")
+	require.Nil(t, response)
+	waitFanSettled(t, group)
+	require.True(t, memberClean(group, "h1"))
+	require.True(t, memberClean(group, "h2"))
+}
+
+func TestNegativeWinTTLNormalized(t *testing.T) {
+	group := newTestGroup(t, ModeFastest, time.Hour, -time.Second, answering("a"))
+	require.Equal(t, DefaultWinTTL, group.winTTL, "negative win_ttl must fall back to the default")
+}
+
+func TestElectionConcurrentDoesNotTrashCurrent(t *testing.T) {
+	release := make(chan struct{})
+	gated := func(tag string) *fakeMember {
+		return newFakeMember(tag, func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+			select {
+			case <-release:
+				return okResponse(message), nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		})
+	}
+	first := gated("a")
+	second := gated("b")
+	group := newTestGroup(t, ModeFastest, time.Hour, time.Hour, first, second)
+
+	const burst = 6
+	var wg sync.WaitGroup
+	for i := 0; i < burst; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = group.Exchange(context.Background(), testQuery())
+		}()
+	}
+	time.Sleep(30 * time.Millisecond)
+	// While the election is gated, concurrents serve via random clean
+	// members — current must remain UNSET (only the fan winner elects it).
+	group.access.Lock()
+	currentDuringElection := group.current
+	group.access.Unlock()
+	require.Empty(t, currentDuringElection, "election-window concurrents must not elect current")
+
+	close(release)
+	wg.Wait()
+	waitFanSettled(t, group)
+	require.NotEmpty(t, group.GroupState().Current, "the fan winner must elect current")
+}
+
+func TestPostDeathFanSuccessMintsNoWin(t *testing.T) {
+	slow := delayed("slow", 60*time.Millisecond)
+	group := newTestGroup(t, ModeFastest, time.Hour, time.Hour, slow)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	_, err := group.fan(ctx, testQuery(), []*member{{tag: "slow", transport: slow}}, 0, false)
+	require.Error(t, err) // ctx dies before the answer
+
+	// The success lands after the context ended: it belongs to a failed
+	// query — no win, no current.
+	time.Sleep(60 * time.Millisecond)
+	state := group.GroupState()
+	require.Equal(t, 0, memberOf(state, "slow").LiveWins, "post-death success must not mint a win")
+	require.Empty(t, state.Current)
+}

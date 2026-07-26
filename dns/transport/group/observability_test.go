@@ -114,9 +114,9 @@ func TestTraceSurvivalSuccessAttributed(t *testing.T) {
 	group := newTestGroup(t, ModeStable, time.Hour, 0, dead)
 	group.members = append(group.members, &member{tag: "alive", transport: alive})
 	// Poison both so survival kicks in, with `alive` carrying the OLDER error.
-	group.noteError("alive")
+	group.noteError("alive", 0)
 	time.Sleep(2 * time.Millisecond)
-	group.noteError("dead")
+	group.noteError("dead", 0)
 
 	ctx := dnstrack.WithQueryTrace(context.Background())
 	response, err := group.Exchange(ctx, testQuery())
