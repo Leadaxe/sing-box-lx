@@ -53,6 +53,7 @@ service StartedService {
   rpc GetOutbounds(google.protobuf.Empty) returns (OutboundList) {}
   rpc SubscribeDNSQueries(SubscribeDNSQueriesRequest) returns (stream DnsQueryEvent) {}
   rpc GetPool(GetPoolRequest) returns (PoolList) {}
+  rpc GetDNSGroups(google.protobuf.Empty) returns (DnsGroupList) {}
 
   // lx:end lx_command
 }
@@ -731,6 +732,23 @@ message DnsQueryEvent {
   string dnsServer = 10;
   string dnsServerType = 11;
   repeated string outbound = 12;
+  // SPEC 036 — group probe trace. dnsGroupPath is the group nesting INSIDE-OUT
+  // (empty = the query did not go through a group); attempts is the probe
+  // chronology snapshotted at answer time (race stragglers that resolved later
+  // are absent by design — the full picture is GetDNSGroups); racer marks the
+  // query that triggered a race fan-out.
+  repeated string dnsGroupPath = 13;
+  repeated DnsGroupAttempt attempts = 14;
+  bool racer = 15;
+}
+// One resolved member probe of a DNS group (SPEC 036). outcome vocabulary:
+// answered | timeout | network_error | servfail ("answered" includes NXDOMAIN
+// and empty answers — they are valid responses, not failures).
+message DnsGroupAttempt {
+  string server = 1;
+  string serverType = 2;
+  string outcome = 3;
+  uint32 rttMs = 4;
 }
 message DnsAnswer {
   string name = 1;
@@ -753,6 +771,31 @@ message PoolSlot {
 }
 message PoolList {
   repeated PoolSlot slots = 1;
+}
+
+// SPEC 036 — point-in-time health snapshot of every DNS group in the config
+// (groups are few; the UI draws them all, so there is no per-tag request).
+// downRemainingMs: ms until the member re-enters rotation; 0 = up.
+// lastRttMs: last successful probe; 0 = never measured.
+// raceAgeMs: ms since the last race; -1 = no race has happened yet.
+message DnsGroupMember {
+  string tag = 1;
+  string serverType = 2;
+  bool up = 3;
+  int64 downRemainingMs = 4;
+  uint32 consecutiveFailures = 5;
+  uint32 lastRttMs = 6;
+}
+message DnsGroupState {
+  string tag = 1;
+  string mode = 2;
+  string winner = 3;
+  repeated string ranking = 4;
+  int64 raceAgeMs = 5;
+  repeated DnsGroupMember members = 6;
+}
+message DnsGroupList {
+  repeated DnsGroupState groups = 1;
 }
 
 // lx:end lx_command
