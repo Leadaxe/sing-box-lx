@@ -366,10 +366,10 @@ DPI:
   frames**: the first frame on the wire starts mid-ClientHello (offset≠0), so a
   line-rate DPI that grabs the first frame and assumes offset 0 parses garbage and
   fails open, while a real QUIC server reorders the frames normally. The layout is
-  randomized per call (no fixed cross-user signature), and `ip=quic` fills **both `i1`
-  and `i2`** with two independent Initials so the flow reads as a developing QUIC
-  session. This is the device-proven DPI bypass (a plain QUIC short header was
-  empirically blocked).
+  randomized per call (no fixed cross-user signature). `ip=quic` emits **one**
+  fragmented Initial, in `i1` — `i2` is filled only by `ip=sip`, which needs two
+  messages of one dialog. This is the device-proven DPI bypass (a plain QUIC short
+  header was empirically blocked).
 - **`dns`** — a client DNS **query** (QR=0, QTYPE HTTPS) whose QNAME is your `id`,
   carrying random cover bytes as an opaque unknown EDNS option.
 - **`stun`** — a WebRTC STUN **Binding Request** (magic cookie + USERNAME +
@@ -399,10 +399,11 @@ DPI:
 >   packet of the flow look like a legitimate QUIC start). The `id` **is** placed on
 >   the wire as the ClientHello SNI (a DPI that publicly decrypts the Initial can read
 >   it), so pick a **plausible, allowed** domain — never a VPN/Cloudflare marker.
-> - The DPI bypass rests on **CRYPTO-frame fragmentation, not on a TLS/JA3
->   fingerprint** — we do not imitate a specific browser fingerprint. `ib` is accepted
->   for WireSock config compatibility and validated, but currently does not change the
->   generated ClientHello.
+> - The DPI bypass rests primarily on **CRYPTO-frame fragmentation**, not on the TLS
+>   fingerprint. `ib` does select one, though: `chrome` and `firefox` emit a genuine
+>   browser ClientHello (real JA3/JA4) in builds with TLS-mimicry support, while `curl`
+>   and an absent `ib` use the generic ClientHello. Without that build support the
+>   browser profiles fall back to the generic one.
 > - `id` is carried on the wire for `quic` (SNI), `dns` (QNAME) and `sip` (host); only
 >   `ip=stun` produces a hostname-less decoy regardless of `id`.
 > - The motivating use case is easing connections to **Cloudflare WARP**.
