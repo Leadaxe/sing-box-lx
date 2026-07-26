@@ -734,12 +734,15 @@ message DnsQueryEvent {
   repeated string outbound = 12;
   // SPEC 035 — group probe trace. dnsGroupPath is the group nesting INSIDE-OUT
   // (empty = the query did not go through a group); attempts is the probe
-  // chronology snapshotted at answer time (race stragglers that resolved later
-  // are absent by design — the full picture is GetDNSGroups); racer marks the
-  // query that triggered a race fan-out.
+  // chronology snapshotted at answer time (fan stragglers that resolved later
+  // are absent by design — the full picture is GetDNSGroups); fanned marks a
+  // query that involved a fan-out (rescue / election / parallel); survival
+  // marks an answer obtained via the least dirty server when no member was
+  // clean (degradation would otherwise be invisible in the stream).
   repeated string dnsGroupPath = 13;
   repeated DnsGroupAttempt attempts = 14;
-  bool racer = 15;
+  bool fanned = 15;
+  bool survival = 16;
 }
 // One resolved member probe of a DNS group (SPEC 035). outcome vocabulary:
 // answered | timeout | network_error | servfail ("answered" includes NXDOMAIN
@@ -773,25 +776,27 @@ message PoolList {
   repeated PoolSlot slots = 1;
 }
 
-// SPEC 035 — point-in-time health snapshot of every DNS group in the config
-// (groups are few; the UI draws them all, so there is no per-tag request).
-// downRemainingMs: ms until the member re-enters rotation; 0 = up.
-// lastRttMs: last successful probe; 0 = never measured.
-// raceAgeMs: ms since the last race; -1 = no race has happened yet.
+// SPEC 035 v3 — point-in-time record snapshot of every DNS group in the
+// config (groups are few; the UI draws them all, so there is no per-tag
+// request). clean = zero live errors; lastErrorAgeMs: age of the newest live
+// error, -1 = none; liveWins: live win records (fastest mode);
+// current = the group's sticky target; lastRttMs: last successful probe,
+// 0 = never measured. The UI derives "when does it clear" from the ages and
+// the error_ttl/win_ttl it knows from the config.
 message DnsGroupMember {
   string tag = 1;
   string serverType = 2;
-  bool up = 3;
-  int64 downRemainingMs = 4;
-  uint32 consecutiveFailures = 5;
-  uint32 lastRttMs = 6;
+  bool clean = 3;
+  uint32 liveErrors = 4;
+  int64 lastErrorAgeMs = 5;
+  uint32 liveWins = 6;
+  bool current = 7;
+  uint32 lastRttMs = 8;
 }
 message DnsGroupState {
   string tag = 1;
   string mode = 2;
-  string winner = 3;
-  repeated string ranking = 4;
-  int64 raceAgeMs = 5;
+  string current = 3;
   repeated DnsGroupMember members = 6;
 }
 message DnsGroupList {
