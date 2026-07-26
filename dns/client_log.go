@@ -48,16 +48,22 @@ func emitQueryEvent(ctx context.Context, transport adapter.DNSTransport, respons
 				event.Outbound = []string{tag}
 			}
 		}
-		// SPEC 035: a composite transport (group) records the member that actually
-		// answered; prefer it — the group tag alone makes per-member diagnostics
-		// impossible. Cache hits never set the holder, so they keep the group tag
-		// (the answer came from the group's cache, not from a member).
-		if memberTag, memberType, memberOutbound, isSet := dnstrack.EffectiveServerFromContext(ctx); isSet {
-			event.DNSServer = memberTag
-			event.DNSServerType = memberType
-			if (source == dnstrack.SourceExchanged || source == dnstrack.SourceRefreshed) && memberOutbound != "" {
-				event.Outbound = []string{memberOutbound}
+		// SPEC 035/036: a composite transport (group) records the member that
+		// actually answered plus the probe trace; prefer the member — the group
+		// tag alone makes per-member diagnostics impossible. Cache hits never
+		// touch the trace, so they keep the group tag (the answer came from the
+		// group's cache, not from a member) and an empty trace.
+		if trace, hasTrace := dnstrack.SnapshotTrace(ctx); hasTrace {
+			if trace.EffectiveTag != "" {
+				event.DNSServer = trace.EffectiveTag
+				event.DNSServerType = trace.EffectiveType
+				if (source == dnstrack.SourceExchanged || source == dnstrack.SourceRefreshed) && trace.EffectiveOutbound != "" {
+					event.Outbound = []string{trace.EffectiveOutbound}
+				}
 			}
+			event.GroupPath = trace.GroupPath
+			event.Attempts = trace.Attempts
+			event.Racer = trace.Racer
 		}
 	}
 	manager.Emit(event)
@@ -90,15 +96,21 @@ func emitFailedQuery(ctx context.Context, transport adapter.DNSTransport, questi
 		if tag := transport.OutboundTag(); tag != "" {
 			event.Outbound = []string{tag}
 		}
-		// SPEC 035: on a group SERVFAIL-reject the holder names the member that
-		// produced the rejected answer; a total group failure leaves it unset and
-		// the group tag stands (no member answered — that IS the state).
-		if memberTag, memberType, memberOutbound, isSet := dnstrack.EffectiveServerFromContext(ctx); isSet {
-			event.DNSServer = memberTag
-			event.DNSServerType = memberType
-			if memberOutbound != "" {
-				event.Outbound = []string{memberOutbound}
+		// SPEC 035/036: on a group SERVFAIL-reject the trace names the member that
+		// produced the rejected answer; a total group failure leaves effective
+		// unset and the group tag stands (no member answered — that IS the
+		// state), while the trace still shows the probes that were made.
+		if trace, hasTrace := dnstrack.SnapshotTrace(ctx); hasTrace {
+			if trace.EffectiveTag != "" {
+				event.DNSServer = trace.EffectiveTag
+				event.DNSServerType = trace.EffectiveType
+				if trace.EffectiveOutbound != "" {
+					event.Outbound = []string{trace.EffectiveOutbound}
+				}
 			}
+			event.GroupPath = trace.GroupPath
+			event.Attempts = trace.Attempts
+			event.Racer = trace.Racer
 		}
 	}
 	manager.Emit(event)

@@ -2,9 +2,11 @@ package group
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/common/dnstrack"
 	C "github.com/sagernet/sing-box/constant"
 	E "github.com/sagernet/sing/common/exceptions"
 
@@ -36,9 +38,10 @@ func (s *raceState) reset() {
 }
 
 type raceResult struct {
-	tag      string
+	member   *member
 	response *mDNS.Msg
 	err      error
+	rtt      time.Duration
 }
 
 // exchangeRace serves one query in race mode. The first query after the
@@ -70,7 +73,7 @@ func (t *Transport) exchangeRace(ctx context.Context, message *mDNS.Msg) (*mDNS.
 	t.access.Unlock()
 
 	if shouldRace {
-		return t.runRace(ctx, message, racers, gen)
+		return t.runRace(ctx, message, racers, gen, winner)
 	}
 
 	// Before the first race settles there is no winner yet — wait for it
@@ -91,7 +94,8 @@ func (t *Transport) exchangeRace(ctx context.Context, message *mDNS.Msg) (*mDNS.
 }
 
 // runRace fans the query out and answers with the first success.
-func (t *Transport) runRace(ctx context.Context, message *mDNS.Msg, racers []*member, gen int) (*mDNS.Msg, error) {
+func (t *Transport) runRace(ctx context.Context, message *mDNS.Msg, racers []*member, gen int, previousWinner string) (*mDNS.Msg, error) {
+	dnstrack.MarkRacer(ctx) // SPEC 036 — this query triggered the fan-out
 	results := make(chan raceResult, len(racers))
 	for _, racer := range racers {
 		go func(current *member) {
@@ -103,20 +107,19 @@ func (t *Transport) runRace(ctx context.Context, message *mDNS.Msg, racers []*me
 			// request context no longer applies here.
 			memberCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), C.DNSTimeout)
 			defer cancel()
+			started := time.Now()
 			response, err := current.transport.Exchange(memberCtx, message.Copy())
-			results <- raceResult{tag: current.tag, response: response, err: err}
+			results <- raceResult{member: current, response: response, err: err, rtt: time.Since(started)}
 		}(racer)
 	}
 
 	winnerCh := make(chan raceResult, 1)
-	go t.collectRace(ctx, racers, results, winnerCh, gen)
+	go t.collectRace(ctx, racers, results, winnerCh, gen, previousWinner)
 
 	select {
 	case result := <-winnerCh:
-		if result.tag != "" {
-			if winner := t.memberByTag(result.tag); winner != nil {
-				t.recordEffective(ctx, winner)
-			}
+		if result.member != nil {
+			t.recordEffective(ctx, result.member)
 		}
 		return result.response, result.err
 	case <-ctx.Done():
@@ -124,47 +127,44 @@ func (t *Transport) runRace(ctx context.Context, message *mDNS.Msg, racers []*me
 	}
 }
 
-func (t *Transport) memberByTag(tag string) *member {
-	for _, current := range t.members {
-		if current.tag == tag {
-			return current
-		}
-	}
-	return nil
-}
-
 // collectRace consumes every member result: the first success becomes the
 // winner (delivered to the racer immediately), later successes extend the
 // ranking, failures get down marks. It always runs to the last member and
-// then releases the race flag.
-func (t *Transport) collectRace(ctx context.Context, racers []*member, results chan raceResult, winnerCh chan raceResult, gen int) {
+// then releases the race flag. Attempts recorded after the racer's event was
+// emitted are harmlessly lost — the event is a snapshot at answer time
+// (SPEC 036); the completed picture lives in GroupState.
+func (t *Transport) collectRace(ctx context.Context, racers []*member, results chan raceResult, winnerCh chan raceResult, gen int, previousWinner string) {
 	var (
 		errs      []error
 		delivered bool
+		order     []string
+		failed    []string
 	)
 	for range racers {
 		result := <-results
-		if isFailure(result.response, result.err) {
-			t.markFailure(result.tag)
-			t.logFailure(ctx, result.tag, result.response, result.err)
+		if t.finishProbe(ctx, result.member, result.response, result.err, result.rtt) {
+			failed = append(failed, result.member.tag)
 			if result.err != nil {
 				errs = append(errs, result.err)
 			} else {
-				errs = append(errs, E.New(result.tag, ": SERVFAIL"))
+				errs = append(errs, E.New(result.member.tag, ": SERVFAIL"))
 			}
 			continue
 		}
-		t.clearFailure(result.tag)
+		order = append(order, result.member.tag)
 		t.access.Lock()
 		if t.race.gen == gen {
 			if t.race.winner == "" {
-				t.race.winner = result.tag
+				t.race.winner = result.member.tag
 			}
-			t.race.ranking = append(t.race.ranking, result.tag)
+			t.race.ranking = append(t.race.ranking, result.member.tag)
 		}
 		t.access.Unlock()
 		if !delivered {
 			delivered = true
+			if previousWinner != "" && previousWinner != result.member.tag {
+				t.logger.DebugContext(ctx, "group[", t.Tag(), "]: winner changed ", previousWinner, " -> ", result.member.tag)
+			}
 			winnerCh <- result
 			t.signalFirstDone()
 		}
@@ -176,6 +176,18 @@ func (t *Transport) collectRace(ctx context.Context, racers []*member, results c
 		winnerCh <- raceResult{err: E.Errors(errs...)}
 		t.signalFirstDone()
 	}
+	t.logRaceResult(ctx, order, failed)
+}
+
+func (t *Transport) logRaceResult(ctx context.Context, order []string, failed []string) {
+	summary := "group[" + t.Tag() + "]: race finished"
+	if len(order) > 0 {
+		summary += ", order [" + strings.Join(order, " ") + "]"
+	}
+	if len(failed) > 0 {
+		summary += ", failed [" + strings.Join(failed, " ") + "]"
+	}
+	t.logger.DebugContext(ctx, summary)
 }
 
 func (t *Transport) signalFirstDone() {
@@ -218,14 +230,11 @@ func (t *Transport) exchangeOrdered(ctx context.Context, message *mDNS.Msg, cand
 		lastErr      error
 	)
 	for _, current := range candidates {
-		response, err := current.transport.Exchange(ctx, message)
+		response, err := t.probeMember(ctx, current, message)
 		if !isFailure(response, err) {
-			t.clearFailure(current.tag)
 			t.recordEffective(ctx, current)
 			return response, err
 		}
-		t.markFailure(current.tag)
-		t.logFailure(ctx, current.tag, response, err)
 		lastResponse, lastErr = response, err
 		if ctx.Err() != nil {
 			break

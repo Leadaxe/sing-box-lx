@@ -1,4 +1,4 @@
-// Package group implements the lx `group` DNS server type (SPEC 033/034):
+// Package group implements the lx `group` DNS server type (SPEC 033/034/036):
 // several member servers behind one tag with a selection strategy. Failover
 // walks the member list in order, skipping servers inside their down_time
 // window; race (race.go) periodically fans a real query out to all members
@@ -7,11 +7,18 @@
 // The group sits UNDER the DNS cache (cache keys carry the group tag), so
 // whatever the group returns is cached once for the whole group; member
 // responses that the group discards never reach the cache.
+//
+// Observability (SPEC 035/036): every resolved probe is recorded into the
+// per-request query trace (common/dnstrack) — the answering member
+// (write-once, so nested groups attribute the leaf), the group path, the
+// probe chronology with outcome and rtt. GroupState() exposes the health
+// snapshot for the GetDNSGroups RPC.
 package group
 
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 	"time"
 
@@ -46,6 +53,14 @@ type member struct {
 	transport adapter.DNSTransport
 }
 
+// memberState is the per-member health memory (SPEC 033/036). Guarded by
+// Transport.access. lastFail zero = the member is up.
+type memberState struct {
+	lastFail    time.Time
+	consecFails int
+	lastRTT     time.Duration // last successful probe; 0 = never measured
+}
+
 type Transport struct {
 	dns.TransportAdapter
 	ctx        context.Context
@@ -55,9 +70,9 @@ type Transport struct {
 	interval   time.Duration
 	downTime   time.Duration
 
-	access   sync.Mutex
-	members  []*member
-	lastFail map[string]time.Time
+	access  sync.Mutex
+	members []*member
+	state   map[string]*memberState
 
 	race raceState // SPEC 034; unused in failover mode
 }
@@ -104,7 +119,7 @@ func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, opt
 		mode:             mode,
 		interval:         interval,
 		downTime:         downTime,
-		lastFail:         make(map[string]time.Time),
+		state:            make(map[string]*memberState),
 		race:             raceState{firstDone: make(chan struct{})},
 	}, nil
 }
@@ -137,17 +152,19 @@ func (t *Transport) Close() error {
 	return nil
 }
 
-// Reset drops health state: down marks and (in race mode) the winner and
-// ranking. A network change invalidates both. Members are reset by the
-// manager's own loop; the group must not fan Reset out.
+// Reset drops health state: down marks, per-member counters and (in race
+// mode) the winner and ranking. A network change invalidates all of it.
+// Members are reset by the manager's own loop; the group must not fan Reset
+// out.
 func (t *Transport) Reset() {
 	t.access.Lock()
 	defer t.access.Unlock()
-	t.lastFail = make(map[string]time.Time)
+	t.state = make(map[string]*memberState)
 	t.race.reset()
 }
 
 func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+	dnstrack.PushGroup(ctx, t.Tag()) // SPEC 036 — prepend: final order is inside-out
 	if t.mode == ModeRace {
 		return t.exchangeRace(ctx, message)
 	}
@@ -172,19 +189,50 @@ func (t *Transport) exchangeFailover(ctx context.Context, message *mDNS.Msg) (*m
 // with the oldest failure mark.
 func (t *Transport) exchangeLastResort(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
 	current := t.oldestFailedMember()
-	response, err := current.transport.Exchange(ctx, message)
+	t.logger.WarnContext(ctx, "group[", t.Tag(), "]: all servers down, last-resort attempt via ", current.tag)
+	response, err := t.probeMember(ctx, current, message)
 	if isFailure(response, err) {
-		t.markFailure(current.tag)
-		t.logFailure(ctx, current.tag, response, err)
 		return response, err
 	}
-	t.clearFailure(current.tag)
 	t.recordEffective(ctx, current)
 	return response, err
 }
 
+// probeMember performs one member exchange and settles its bookkeeping.
+func (t *Transport) probeMember(ctx context.Context, current *member, message *mDNS.Msg) (*mDNS.Msg, error) {
+	started := time.Now()
+	response, err := current.transport.Exchange(ctx, message)
+	t.finishProbe(ctx, current, response, err, time.Since(started))
+	return response, err
+}
+
+// finishProbe updates health state and the query trace for one resolved
+// probe. Shared by the sequential walks and the race collector. Returns
+// whether the probe was a failure.
+func (t *Transport) finishProbe(ctx context.Context, current *member, response *mDNS.Msg, err error, rtt time.Duration) bool {
+	failure := isFailure(response, err)
+	if failure {
+		t.markFailure(current.tag)
+		t.logFailure(ctx, current.tag, response, err)
+	} else {
+		t.recordSuccess(current.tag, rtt)
+	}
+	// Leaves only: an inner group's own members already tell its story —
+	// a `group`-typed attempt would duplicate their time under one row.
+	if current.transport.Type() != C.DNSTypeGroup {
+		dnstrack.RecordAttempt(ctx, dnstrack.Attempt{
+			Server:     current.tag,
+			ServerType: current.transport.Type(),
+			Outcome:    outcomeOf(response, err),
+			RTTMs:      uint32(rtt.Milliseconds()),
+		})
+	}
+	return failure
+}
+
 // recordEffective attributes the answer to the member that produced it for
-// the DNS query stream (SPEC 035). No-op without the client-level holder.
+// the DNS query stream (SPEC 035). Write-once inside the holder, so with
+// nesting the innermost leaf wins. No-op without the client-level holder.
 func (t *Transport) recordEffective(ctx context.Context, current *member) {
 	dnstrack.SetEffectiveServer(ctx, current.tag, current.transport.Type(), current.transport.OutboundTag())
 }
@@ -205,6 +253,25 @@ func isFailure(response *mDNS.Msg, err error) bool {
 	return response != nil && response.Rcode == mDNS.RcodeServerFailure
 }
 
+// outcomeOf maps a probe result onto the wire vocabulary of the query trace
+// (SPEC 036): answered | timeout | network_error | servfail.
+func outcomeOf(response *mDNS.Msg, err error) string {
+	if !isFailure(response, err) {
+		return dnstrack.AttemptAnswered
+	}
+	if err != nil {
+		var rcode dns.RcodeError
+		if errors.As(err, &rcode) && rcode == dns.RcodeServerFailure {
+			return dnstrack.AttemptServfail
+		}
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+			return dnstrack.AttemptTimeout
+		}
+		return dnstrack.AttemptNetworkError
+	}
+	return dnstrack.AttemptServfail
+}
+
 func (t *Transport) logFailure(ctx context.Context, tag string, response *mDNS.Msg, err error) {
 	if err == nil {
 		err = dns.RcodeError(response.Rcode)
@@ -222,7 +289,7 @@ func (t *Transport) aliveMembersLocked() []*member {
 	now := time.Now()
 	var alive []*member
 	for _, current := range t.members {
-		if failedAt, down := t.lastFail[current.tag]; !down || now.Sub(failedAt) >= t.downTime {
+		if state := t.state[current.tag]; state == nil || state.lastFail.IsZero() || now.Sub(state.lastFail) >= t.downTime {
 			alive = append(alive, current)
 		}
 	}
@@ -233,23 +300,104 @@ func (t *Transport) oldestFailedMember() *member {
 	t.access.Lock()
 	defer t.access.Unlock()
 	oldest := t.members[0]
-	oldestAt := t.lastFail[oldest.tag]
+	oldestAt := t.failedAtLocked(oldest.tag)
 	for _, current := range t.members[1:] {
-		if failedAt := t.lastFail[current.tag]; failedAt.Before(oldestAt) {
+		if failedAt := t.failedAtLocked(current.tag); failedAt.Before(oldestAt) {
 			oldest, oldestAt = current, failedAt
 		}
 	}
 	return oldest
 }
 
+func (t *Transport) failedAtLocked(tag string) time.Time {
+	if state := t.state[tag]; state != nil {
+		return state.lastFail
+	}
+	return time.Time{}
+}
+
+func (t *Transport) stateOfLocked(tag string) *memberState {
+	state := t.state[tag]
+	if state == nil {
+		state = &memberState{}
+		t.state[tag] = state
+	}
+	return state
+}
+
 func (t *Transport) markFailure(tag string) {
 	t.access.Lock()
 	defer t.access.Unlock()
-	t.lastFail[tag] = time.Now()
+	state := t.stateOfLocked(tag)
+	state.lastFail = time.Now()
+	state.consecFails++
 }
 
-func (t *Transport) clearFailure(tag string) {
+func (t *Transport) recordSuccess(tag string, rtt time.Duration) {
 	t.access.Lock()
 	defer t.access.Unlock()
-	delete(t.lastFail, tag)
+	state := t.stateOfLocked(tag)
+	state.lastFail = time.Time{}
+	state.consecFails = 0
+	state.lastRTT = rtt
+}
+
+// --- GetDNSGroups state snapshot (SPEC 036) ---------------------------------
+
+// MemberState is the health snapshot of one member for the state RPC.
+type MemberState struct {
+	Tag                 string
+	ServerType          string
+	Up                  bool
+	DownRemaining       time.Duration // 0 when up
+	ConsecutiveFailures int
+	LastRTT             time.Duration // 0 = never measured
+}
+
+// State is the group snapshot for the GetDNSGroups RPC.
+type State struct {
+	Tag      string
+	Mode     string
+	Winner   string // race only; "" before the first race
+	Ranking  []string
+	HasRaced bool
+	RaceAge  time.Duration // valid when HasRaced
+	Members  []MemberState
+}
+
+// GroupState returns a point-in-time health snapshot. The daemon handler
+// discovers groups by asserting this method on the manager's transports.
+func (t *Transport) GroupState() State {
+	now := time.Now()
+	t.access.Lock()
+	defer t.access.Unlock()
+	snapshot := State{
+		Tag:      t.Tag(),
+		Mode:     t.mode,
+		Winner:   t.race.winner,
+		Ranking:  append([]string(nil), t.race.ranking...),
+		HasRaced: !t.race.lastRace.IsZero(),
+	}
+	if snapshot.HasRaced {
+		snapshot.RaceAge = now.Sub(t.race.lastRace)
+	}
+	for _, current := range t.members {
+		memberSnapshot := MemberState{
+			Tag:        current.tag,
+			ServerType: current.transport.Type(),
+			Up:         true,
+		}
+		if state := t.state[current.tag]; state != nil {
+			memberSnapshot.ConsecutiveFailures = state.consecFails
+			memberSnapshot.LastRTT = state.lastRTT
+			if !state.lastFail.IsZero() {
+				if remaining := t.downTime - now.Sub(state.lastFail); remaining > 0 {
+					memberSnapshot.Up = false
+					memberSnapshot.DownRemaining = remaining
+				}
+			}
+		}
+		snapshot.Members = append(snapshot.Members, memberSnapshot)
+	}
+	return snapshot
 }

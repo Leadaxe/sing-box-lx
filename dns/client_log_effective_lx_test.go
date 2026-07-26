@@ -75,14 +75,22 @@ func TestEmitPrefersEffectiveServer_LX(t *testing.T) {
 	defer cleanup()
 
 	groupTransport := &staticTransport{NewTransportAdapter(C.DNSTypeGroup, "grp", nil)}
-	ctx = dnstrack.WithEffectiveServer(ctx)
+	ctx = dnstrack.WithQueryTrace(ctx)
+	dnstrack.PushGroup(ctx, "grp")
 	dnstrack.SetEffectiveServer(ctx, "cloudflare", C.DNSTypeUDP, "proxy-out")
+	dnstrack.RecordAttempt(ctx, dnstrack.Attempt{Server: "google", ServerType: C.DNSTypeUDP, Outcome: dnstrack.AttemptTimeout, RTTMs: 5000})
+	dnstrack.RecordAttempt(ctx, dnstrack.Attempt{Server: "cloudflare", ServerType: C.DNSTypeUDP, Outcome: dnstrack.AttemptAnswered, RTTMs: 12})
+	dnstrack.MarkRacer(ctx)
 
 	emitQueryEvent(ctx, groupTransport, testResponse(), dnstrack.SourceExchanged, 60)
 	event := <-events
 	require.Equal(t, "cloudflare", event.DNSServer)
 	require.Equal(t, C.DNSTypeUDP, event.DNSServerType)
 	require.Equal(t, []string{"proxy-out"}, event.Outbound)
+	require.Equal(t, []string{"grp"}, event.GroupPath)
+	require.Len(t, event.Attempts, 2)
+	require.Equal(t, dnstrack.AttemptTimeout, event.Attempts[0].Outcome)
+	require.True(t, event.Racer)
 }
 
 func TestEmitKeepsGroupTagWhenHolderEmpty_LX(t *testing.T) {
@@ -90,13 +98,16 @@ func TestEmitKeepsGroupTagWhenHolderEmpty_LX(t *testing.T) {
 	defer cleanup()
 
 	groupTransport := &staticTransport{NewTransportAdapter(C.DNSTypeGroup, "grp", nil)}
-	ctx = dnstrack.WithEffectiveServer(ctx) // holder present but never set (cache hit)
+	ctx = dnstrack.WithQueryTrace(ctx) // holder present but never touched (cache hit)
 
 	emitQueryEvent(ctx, groupTransport, testResponse(), dnstrack.SourceCached, 60)
 	event := <-events
 	require.Equal(t, "grp", event.DNSServer)
 	require.Equal(t, C.DNSTypeGroup, event.DNSServerType)
 	require.Empty(t, event.Outbound)
+	require.Empty(t, event.GroupPath)
+	require.Empty(t, event.Attempts)
+	require.False(t, event.Racer)
 }
 
 func TestEmitFailedKeepsGroupTagOnTotalFailure_LX(t *testing.T) {
@@ -104,12 +115,16 @@ func TestEmitFailedKeepsGroupTagOnTotalFailure_LX(t *testing.T) {
 	defer cleanup()
 
 	groupTransport := &staticTransport{NewTransportAdapter(C.DNSTypeGroup, "grp", nil)}
-	ctx = dnstrack.WithEffectiveServer(ctx)
+	ctx = dnstrack.WithQueryTrace(ctx)
+	dnstrack.PushGroup(ctx, "grp")
+	dnstrack.RecordAttempt(ctx, dnstrack.Attempt{Server: "google", ServerType: C.DNSTypeUDP, Outcome: dnstrack.AttemptTimeout, RTTMs: 10000})
 
 	emitFailedQuery(ctx, groupTransport, mDNS.Question{Name: "example.org.", Qtype: mDNS.TypeA}, dnstrack.RcodeNoAnswer, "all members down")
 	event := <-events
 	require.True(t, event.Failed)
-	require.Equal(t, "grp", event.DNSServer)
+	require.Equal(t, "grp", event.DNSServer) // effective unset — the group tag stands
+	require.Equal(t, []string{"grp"}, event.GroupPath)
+	require.Len(t, event.Attempts, 1) // the single last-resort probe
 }
 
 func TestEmitDirectTransportUnchanged_LX(t *testing.T) {
