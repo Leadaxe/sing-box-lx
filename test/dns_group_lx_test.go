@@ -28,7 +28,7 @@ func TestDNSGroupBoxStart_LX(t *testing.T) {
 	options := parseOptionsLX(t, `{
 		"dns": {
 			"servers": [
-				{"type": "group", "tag": "grp", "servers": ["a", "b"], "down_time": "1s"},
+				{"type": "group", "tag": "grp", "servers": ["a", "b"], "error_ttl": "1s"},
 				{"type": "udp", "tag": "a", "server": "127.0.0.1", "server_port": 19653},
 				{"type": "udp", "tag": "b", "server": "127.0.0.1", "server_port": 19654}
 			],
@@ -81,4 +81,34 @@ func TestDNSGroupCycleRejected_LX(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "circular server dependency")
 	instance.Close()
+}
+
+func TestDNSGroupV1ConfigRejected_LX(t *testing.T) {
+	// rc.1 configs (mode failover/race, interval/down_time) must break
+	// LOUDLY: the v2 redesign keeps no compatibility (no consumers).
+	_, err := json.UnmarshalExtendedContext[option.Options](globalCtx, []byte(`{
+		"dns": {"servers": [
+			{"type": "group", "tag": "grp", "servers": ["a"], "mode": "failover"}
+		]},
+		"outbounds": [{"type": "direct"}]
+	}`))
+	if err == nil {
+		options := parseOptionsLX(t, `{
+			"dns": {"servers": [
+				{"type": "group", "tag": "grp", "servers": ["a"], "mode": "failover"}
+			]},
+			"outbounds": [{"type": "direct"}]
+		}`)
+		_, err = box.New(box.Options{Context: globalCtx, Options: options})
+	}
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unknown mode")
+
+	_, err = json.UnmarshalExtendedContext[option.Options](globalCtx, []byte(`{
+		"dns": {"servers": [
+			{"type": "group", "tag": "grp", "servers": ["a"], "down_time": "30s"}
+		]},
+		"outbounds": [{"type": "direct"}]
+	}`))
+	require.Error(t, err, "down_time is a dead v1 field and must be rejected as unknown")
 }

@@ -229,11 +229,11 @@ type dnsGroupStateProvider interface {
 	GroupState() dnsgroup.State
 }
 
-// GetDNSGroups returns a point-in-time health snapshot of every DNS group in the
-// running config (SPEC 035): mode, race winner/ranking/age, and per-member health
-// (up/down, cooldown remainder, consecutive failures, last rtt). Groups are few and
-// the UI draws them all, so there is no per-tag request. No groups (or no DNS
-// transport manager) yields an empty list, not an error.
+// GetDNSGroups returns a point-in-time record snapshot of every DNS group in the
+// running config (SPEC 035 v3): mode, sticky target, and per-member records
+// (clean, live errors with the age of the newest, live wins, last rtt). Groups
+// are few and the UI draws them all, so there is no per-tag request. No groups
+// (or no DNS transport manager) yields an empty list, not an error.
 func (s *StartedService) GetDNSGroups(ctx context.Context, empty *emptypb.Empty) (*DnsGroupList, error) {
 	s.serviceAccess.RLock()
 	if s.serviceStatus.Status != ServiceStatus_STARTED {
@@ -255,24 +255,25 @@ func (s *StartedService) GetDNSGroups(ctx context.Context, empty *emptypb.Empty)
 		}
 		snapshot := provider.GroupState()
 		groupProto := &DnsGroupState{
-			Tag:       snapshot.Tag,
-			Mode:      snapshot.Mode,
-			Winner:    snapshot.Winner,
-			Ranking:   snapshot.Ranking,
-			RaceAgeMs: -1,
-		}
-		if snapshot.HasRaced {
-			groupProto.RaceAgeMs = snapshot.RaceAge.Milliseconds()
+			Tag:     snapshot.Tag,
+			Mode:    snapshot.Mode,
+			Current: snapshot.Current,
 		}
 		for _, memberSnapshot := range snapshot.Members {
-			groupProto.Members = append(groupProto.Members, &DnsGroupMember{
-				Tag:                 memberSnapshot.Tag,
-				ServerType:          memberSnapshot.ServerType,
-				Up:                  memberSnapshot.Up,
-				DownRemainingMs:     memberSnapshot.DownRemaining.Milliseconds(),
-				ConsecutiveFailures: uint32(memberSnapshot.ConsecutiveFailures),
-				LastRttMs:           uint32(memberSnapshot.LastRTT.Milliseconds()),
-			})
+			memberProto := &DnsGroupMember{
+				Tag:            memberSnapshot.Tag,
+				ServerType:     memberSnapshot.ServerType,
+				Clean:          memberSnapshot.Clean,
+				LiveErrors:     uint32(memberSnapshot.LiveErrors),
+				LastErrorAgeMs: -1,
+				LiveWins:       uint32(memberSnapshot.LiveWins),
+				Current:        memberSnapshot.Current,
+				LastRttMs:      uint32(memberSnapshot.LastRTT.Milliseconds()),
+			}
+			if memberSnapshot.HasError {
+				memberProto.LastErrorAgeMs = memberSnapshot.LastErrorAge.Milliseconds()
+			}
+			groupProto.Members = append(groupProto.Members, memberProto)
 		}
 		list.Groups = append(list.Groups, groupProto)
 	}
@@ -341,7 +342,8 @@ func dnsQueryEventToProto(event dnstrack.QueryEvent, includeAnswers bool, outbou
 		DnsServerType: event.DNSServerType,
 		Outbound:      resolveOutboundChain(event.Outbound, outboundManager),
 		DnsGroupPath:  event.GroupPath,
-		Racer:         event.Racer,
+		Fanned:        event.Fanned,
+		Survival:      event.Survival,
 	}
 	for _, attempt := range event.Attempts { // SPEC 035 — probe trace, vocabulary passed through verbatim
 		proto.Attempts = append(proto.Attempts, &DnsGroupAttempt{

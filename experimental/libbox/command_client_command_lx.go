@@ -23,7 +23,8 @@ type DnsQuery struct {
 	Error         string
 	DNSServer     string // which DNS server (transport) resolved this (SPEC 018); for a group — the answering member (SPEC 035)
 	DNSServerType string // udp / tls / https / quic
-	Racer         bool   // this query triggered a race fan-out of a group (SPEC 035)
+	Fanned        bool   // the query involved a group fan-out: rescue / election / parallel (SPEC 035)
+	Survival      bool   // answered via the least dirty server — no clean members (SPEC 035)
 	ProcessInfo   *ProcessInfo
 	answers       []*DnsAnswer
 	outbound      []string
@@ -124,7 +125,8 @@ func dnsQueryFromGRPC(event *daemon.DnsQueryEvent) *DnsQuery {
 		Error:         event.Error,
 		DNSServer:     event.DnsServer,
 		DNSServerType: event.DnsServerType,
-		Racer:         event.Racer,
+		Fanned:        event.Fanned,
+		Survival:      event.Survival,
 		outbound:      event.Outbound,
 		groupPath:     event.DnsGroupPath,
 	}
@@ -305,16 +307,20 @@ func (c *CommandClient) GetPool(groupTag string) (PoolSlotIterator, error) {
 	})
 }
 
-// DnsGroupMember is the libbox view of one DNS-group member's health (SPEC 035).
-// DownRemainingMs is how long until the member re-enters rotation (0 = up);
-// LastRTTMs is the last successful probe (0 = never measured).
+// DnsGroupMember is the libbox view of one DNS-group member's records
+// (SPEC 035 v3). Clean = zero live errors; LastErrorAgeMs is the age of the
+// newest live error (-1 = none); LiveWins are live win records (fastest);
+// Current marks the group's sticky target; LastRTTMs is the last successful
+// probe (0 = never measured).
 type DnsGroupMember struct {
-	Tag                 string
-	ServerType          string
-	Up                  bool
-	DownRemainingMs     int64
-	ConsecutiveFailures int32
-	LastRTTMs           int32
+	Tag            string
+	ServerType     string
+	Clean          bool
+	LiveErrors     int32
+	LastErrorAgeMs int64
+	LiveWins       int32
+	Current        bool
+	LastRTTMs      int32
 }
 
 type DnsGroupMemberIterator interface {
@@ -322,24 +328,17 @@ type DnsGroupMemberIterator interface {
 	HasNext() bool
 }
 
-// DnsGroup is the libbox view of one DNS group's state (SPEC 035). Winner/Ranking are
-// race-mode fields ("" / empty before the first race — a valid state, not an error);
-// RaceAgeMs is the age of the last race in ms, -1 when no race has happened yet.
+// DnsGroup is the libbox view of one DNS group's state (SPEC 035 v3).
+// Current is the sticky target ("" = not chosen yet / parallel — a valid
+// state, not an error).
 type DnsGroup struct {
-	Tag       string
-	Mode      string // "failover" | "race"
-	Winner    string
-	RaceAgeMs int64
-	ranking   []string
-	members   []*DnsGroupMember
+	Tag     string
+	Mode    string // "stable" | "fastest" | "parallel"
+	Current string
+	members []*DnsGroupMember
 }
 
-// Ranking returns the arrival order of the last race's successful answers.
-func (g *DnsGroup) Ranking() StringIterator {
-	return newIterator(g.ranking)
-}
-
-// Members returns the per-member health snapshot in config order.
+// Members returns the per-member record snapshot in config order.
 func (g *DnsGroup) Members() DnsGroupMemberIterator {
 	return newIterator(g.members)
 }
@@ -360,20 +359,20 @@ func (c *CommandClient) GetDNSGroups() (DnsGroupIterator, error) {
 		groups := make([]*DnsGroup, 0, len(list.Groups))
 		for _, groupState := range list.Groups {
 			groupView := &DnsGroup{
-				Tag:       groupState.Tag,
-				Mode:      groupState.Mode,
-				Winner:    groupState.Winner,
-				RaceAgeMs: groupState.RaceAgeMs,
-				ranking:   groupState.Ranking,
+				Tag:     groupState.Tag,
+				Mode:    groupState.Mode,
+				Current: groupState.Current,
 			}
 			for _, memberState := range groupState.Members {
 				groupView.members = append(groupView.members, &DnsGroupMember{
-					Tag:                 memberState.Tag,
-					ServerType:          memberState.ServerType,
-					Up:                  memberState.Up,
-					DownRemainingMs:     memberState.DownRemainingMs,
-					ConsecutiveFailures: int32(memberState.ConsecutiveFailures),
-					LastRTTMs:           int32(memberState.LastRttMs),
+					Tag:            memberState.Tag,
+					ServerType:     memberState.ServerType,
+					Clean:          memberState.Clean,
+					LiveErrors:     int32(memberState.LiveErrors),
+					LastErrorAgeMs: memberState.LastErrorAgeMs,
+					LiveWins:       int32(memberState.LiveWins),
+					Current:        memberState.Current,
+					LastRTTMs:      int32(memberState.LastRttMs),
 				})
 			}
 			groups = append(groups, groupView)

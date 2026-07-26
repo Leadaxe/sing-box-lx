@@ -1,4 +1,4 @@
-// lx: SPEC 035 — live trace coverage: a race through a real box against real
+// lx: SPEC 035 — live trace coverage: a fastest election through a real box against real
 // (loopback) DNS servers. The racer's emitted event is a snapshot at answer
 // time: the slow straggler must NOT be in it, while the state RPC picture
 // (ranking) completes in the background.
@@ -71,7 +71,7 @@ func TestDNSGroupRaceTraceLive_LX(t *testing.T) {
 			"servers": [
 				{"type": "udp", "tag": "fast", "server": "127.0.0.1", "server_port": `+strconv.Itoa(int(fastPort))+`},
 				{"type": "udp", "tag": "slow", "server": "127.0.0.1", "server_port": `+strconv.Itoa(int(slowPort))+`},
-				{"type": "group", "tag": "grp", "servers": ["fast", "slow"], "mode": "race", "interval": "1h"}
+				{"type": "group", "tag": "grp", "servers": ["fast", "slow"], "mode": "fastest", "win_ttl": "1h"}
 			],
 			"final": "grp"
 		},
@@ -114,7 +114,8 @@ func TestDNSGroupRaceTraceLive_LX(t *testing.T) {
 	}
 
 	require.Equal(t, "trace-live.example", event.Domain)
-	require.True(t, event.Racer, "the first query through a race group must be the racer")
+	require.True(t, event.Fanned, "the first query through a fastest group must be the election fan")
+	require.False(t, event.Survival)
 	require.Equal(t, "fast", event.DNSServer, "attribution must name the answering member")
 	require.Equal(t, []string{"grp"}, event.GroupPath)
 	for _, attempt := range event.Attempts {
