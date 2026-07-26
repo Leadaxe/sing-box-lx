@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) |
-| Статус | O (open) |
+| Статус | C (complete) |
 | Ветка | `lx-1.14` (атомарные коммиты по зонам, пререлиз следом) |
 | Связанные | [[SPECS/TASKS/034-DNS_GROUP_RACE]] · [[SPECS/TASKS/035-DNS_GROUP_OBSERVABILITY]] |
 

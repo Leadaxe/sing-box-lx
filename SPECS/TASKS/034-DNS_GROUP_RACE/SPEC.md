@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) |
-| Статус | O (open) |
+| Статус | C (complete) |
 | Ветка | `lx-1.14` |
 | Связанные | [[SPECS/TASKS/033-DNS_GROUP_SERVER]] · [[SPECS/TASKS/035-DNS_GROUP_OBSERVABILITY]] |
 

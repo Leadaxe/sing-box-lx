@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) |
-| Статус | O (open) |
+| Статус | C (complete) |
 | Ветка | `lx-1.14` |
 | Связанные | [[SPECS/TASKS/018-DNS_QUERY_STREAM]] · [[SPECS/TASKS/033-DNS_GROUP_SERVER]] · [[SPECS/TASKS/034-DNS_GROUP_RACE]] |
 

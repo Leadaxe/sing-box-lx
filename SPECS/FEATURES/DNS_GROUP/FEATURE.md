@@ -4,7 +4,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | — (для выдачи состояния группы в UI нужен `with_lx_command`) |
-| Состояние | 🆕 **Спроектировано, не реализовано** |
+| Состояние | ✅ Реализовано, проверено тестами (юниты + живой `box.New`; полевой проверки не было) |
 
 ## Назначение
 
@@ -182,9 +182,9 @@ Build-tag не вводится. Новый тип сервера аддитив
 
 | Задача | Роль | Статус |
 |--------|------|--------|
-| [033 — DNS_GROUP_SERVER](../../TASKS/033-DNS_GROUP_SERVER/SPEC.md) | Тип `group`, режим `failover`, `down_time`, валидации | O |
-| [034 — DNS_GROUP_RACE](../../TASKS/034-DNS_GROUP_RACE/SPEC.md) | Режим `race`: ленивая гонка, победитель, рейтинг | O |
-| [035 — DNS_GROUP_OBSERVABILITY](../../TASKS/035-DNS_GROUP_OBSERVABILITY/SPEC.md) | Фактический сервер в потоке DNS-запросов | O |
+| [033 — DNS_GROUP_SERVER](../../TASKS/033-DNS_GROUP_SERVER/SPEC.md) | Тип `group`, режим `failover`, `down_time`, валидации | C |
+| [034 — DNS_GROUP_RACE](../../TASKS/034-DNS_GROUP_RACE/SPEC.md) | Режим `race`: ленивая гонка, победитель, рейтинг | C |
+| [035 — DNS_GROUP_OBSERVABILITY](../../TASKS/035-DNS_GROUP_OBSERVABILITY/SPEC.md) | Фактический сервер в потоке DNS-запросов | C |
 
 ## Особенности сопровождения
 
