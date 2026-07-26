@@ -16,11 +16,11 @@
 | [AWG2](AWG2/FEATURE.md) | AmneziaWG 2.0: обфусцированный WG-endpoint, 16 из 20 параметров + masquerade `id`/`ip`/`ib` | `with_awg` | 003 · 005 · 008 · 009 · 025 · 026 · 031 · 007 |
 | [XHTTP](XHTTP/FEATURE.md) | XHTTP-транспорт против Xray: `packet-up` / `stream-one` / `auto`, obfs | `with_xhttp` | 002 · 011 |
 | [URLTEST_BALANCE](URLTEST_BALANCE/FEATURE.md) | `round_robin` в `urltest`: пул, ленивый health-check, sticky-слоты | `with_lx_command` | 019 |
-| [OBSERVABILITY](OBSERVABILITY/FEATURE.md) | Расширения libbox gRPC для UI: RPC, `detourList`, DNS-стрим | `with_lx_command` | 014 · 015 · 016 · 017 · 018 · 036 |
+| [OBSERVABILITY](OBSERVABILITY/FEATURE.md) | Расширения libbox gRPC для UI: RPC, `detourList`, DNS-стрим | `with_lx_command` | 014 · 015 · 016 · 017 · 018 · 035 |
 | [MASQUE_WARP](MASQUE_WARP/FEATURE.md) | MASQUE CONNECT-IP outbound (RFC 9484), профиль Cloudflare WARP | — | 021 |
 | [ENERGY](ENERGY/FEATURE.md) | Idle-suspend простаивающих WG/AWG: батарея, нагрев, RSS −31 % | `with_lx_idle_suspend` | 020 |
 | [VLESS_ENCRYPTION](VLESS_ENCRYPTION/FEATURE.md) | 🆕 PQ-слой `mlkem768x25519plus` внутри VLESS — спроектировано | — | 032 |
-| [DNS_GROUP](DNS_GROUP/FEATURE.md) | Группа DNS-серверов: `failover` / `race`, `down_time`, трасса и состояние в наблюдаемости | — | 033 · 034 · 035 · 036 |
+| [DNS_GROUP](DNS_GROUP/FEATURE.md) | Группа DNS-серверов: `failover` / `race`, `down_time`, трасса и состояние в наблюдаемости | — | 033 · 034 · 035 |
 
 ## Процессные
 

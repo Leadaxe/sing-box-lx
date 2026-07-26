@@ -120,7 +120,7 @@ DNS-запросы — и управлять им. Штатный канал д�
 | [016 — CONNECTIONS_MAP_MUTEX](../../TASKS/016-CONNECTIONS_MAP_MUTEX/SPEC.md) | Устойчивость учёта соединений при параллельном доступе | C |
 | [017 — CONNECTION_DETOUR_CHAIN](../../TASKS/017-CONNECTION_DETOUR_CHAIN/SPEC.md) | Хвост проксирования отдельным полем | C |
 | [018 — DNS_QUERY_STREAM](../../TASKS/018-DNS_QUERY_STREAM/SPEC.md) | Поток DNS-запросов с атрибуцией | C |
-| [036 — DNS_GROUP_TRACE](../../TASKS/036-DNS_GROUP_TRACE/SPEC.md) | Трасса проб группы в потоке + `GetDNSGroups` (двойная роль с [DNS_GROUP](../DNS_GROUP/FEATURE.md)) | C |
+| [035 — DNS_GROUP_OBSERVABILITY](../../TASKS/035-DNS_GROUP_OBSERVABILITY/SPEC.md) | Трасса проб группы в потоке + `GetDNSGroups` (двойная роль с [DNS_GROUP](../DNS_GROUP/FEATURE.md)) | C |
 
 ## Особенности сопровождения
 

@@ -1,38 +1,55 @@
-# IMPLEMENTATION_REPORT 035 — фактический сервер в DNS-потоке
+# IMPLEMENTATION_REPORT 035 — наблюдаемость DNS-группы
 
 ## Файлы
 
 | Зона | Файлы |
 |------|-------|
-| Новый lx-код | `common/dnstrack/effective_server.go` (ctx-холдер), правки `dns/client_log.go` (чтение холдера в `emitQueryEvent`/`emitFailedQuery`), `dns/transport/group/{group,race}.go` (`recordEffective` на успехе), тесты `dns/client_log_effective_lx_test.go`, `dns/transport/group/observability_test.go` |
-| `// lx:` upstream | `dns/client.go` — 3 строки в `beginExchange`: холдер кладётся в operation-ctx только для транспортов типа `group` (ноль затрат на остальных) |
+| lx-код | `common/dnstrack/query_trace.go` (+поля `QueryEvent` в `manager.go`), `dns/client_log.go`, `dns/transport/group/{group,race}.go`, `daemon/started_service_command_lx.go` (`GetDNSGroups`, маппинг трассы), `daemon/started_service_command_lx_stub.go`, `experimental/libbox/command_client_command_lx.go` |
+| Upstream-шов | `daemon/started_service.proto` — всё внутри существующей `lx:begin lx_command`-зоны; `dns/client.go` — 3-строчная маркированная зона (холдер только для типа `group` и только при подписке) |
+| Регенерация | `started_service{,_grpc}.pb.go` через `make -f Makefile.lx lx-proto` (pinned); шум gofumpt по сабмодулю/чужим файлам откачен |
+| Тесты | `dns/transport/group/observability_test.go` (трасса+state), `dns/client_log_effective_lx_test.go` (emit-уровень), `daemon/started_service_dnsgroup_stub_lx_test.go` (`!with_lx_command` → Unimplemented), `test/dns_group_trace_lx_test.go` (живой) |
 
-`.proto`/`.pb.go` не тронуты — семантика полей `dnsServer`/`dnsServerType`
-та же, честнее источник значения; LxBox совместим без изменений.
+## Контракт для LxBox (готов к внедрению)
 
-## Семантика (сверено со SPEC)
+- Атрибуция: `dnsServer`/`dnsServerType` = фактически ответивший участник
+  (лист при вложенности); кеш-попадание и полный сбой — тег группы.
+- Поток: `DnsQueryEvent` 13–15 (`dnsGroupPath` изнутри наружу, `attempts`
+  со словарём `answered|timeout|network_error|servfail` + `rttMs`, `racer`);
+  клиентские геттеры `DnsQuery.GroupPath()/Attempts()/Racer`.
+- Снимок: `CommandClient.GetDNSGroups() DnsGroupIterator` →
+  `DnsGroup{Tag, Mode, Winner, RaceAgeMs(-1 = гонки не было), Ranking(),
+  Members()}`, `DnsGroupMember{Tag, ServerType, Up, DownRemainingMs,
+  ConsecutiveFailures, LastRTTMs}`.
+- Совместимость двусторонняя: поля аддитивны, старый клиент их игнорирует,
+  пустые значения = валидное состояние.
 
-- Обмен через группу → тег/тип фактически ответившего участника; его
-  `outbound` подставляется в событие (у группы своего нет).
-- Кеш-попадания и полный сбой группы → тег группы (холдер пуст — валидное
-  состояние).
-- Прямые транспорты — поведение прежнее (холдер не создаётся).
+## Ключевые решения
+
+- Write-once `effective` починил атрибуцию вложенных групп (лист, не тег
+  внутренней группы) — закреплено юнитом; подробности смены архитектуры
+  против первой редакции — [HISTORY.md](HISTORY.md).
+- `group_path` строится prepend'ом на входе группы — порядок «изнутри
+  наружу» без разворота на эмите.
+- В `attempts` — только листовые пробы (участник-группа не пишется).
+- Эмит читает снимок под мьютексом; опоздавшие ответы гонки дописываются
+  в холдер и штатно теряются — их место в `GetDNSGroups` (живой тест
+  подтверждает на реальном ядре с медленным loopback-DNS).
+- Холдер аллоцируется только при активной подписке.
+- Лог решений: down-пометка/итог гонки/смена победителя — debug;
+  полное исчерпание — warn.
 
 ## DoD
 
-- Юниты: failover-участник, race-победитель (и межгоночные запросы),
-  полный сбой → unset, no-op без холдера; emit-уровень: подмена значения,
-  сохранение тега группы для кеша/сбоя, прямой транспорт.
-- `go test -race ./dns/... ./common/dnstrack/`, vet, gofmt — чисто;
-  `git status` пуст по `.proto`/`.pb.go`.
+- `go test -race` — dnstrack, dns/..., daemon, group: зелёные; живой
+  `box.New`-тест (PlatformLogWriter включает observable-режим ядра —
+  как в мобильном клиенте).
+- Сборки: `go build ./...` и `-tags with_lx_command ./...` — обе зелёные;
+  stub отвечает `Unimplemented`.
+- gofmt чист; vet — только два «possible misuse of unsafe.Pointer»
+  в upstream-наследии (`daemon/managed_service.go`, `libbox/debug.go`),
+  существовали до задачи.
 
-## Грабля, пойманная в ходе работы
+## Вне скоупа
 
-`observable.Observer` при `UnSubscribe` закрывает done-канал, а не канал
-подписки — `for range subscription` не завершается никогда. В тестовой
-обвязке нужен select по обоим каналам (см. `newEmitTestContext`).
-
-## Вне скоупа (отложено)
-
-RPC состояния группы (победитель/рейтинг/down-список) — до конкретного
-запроса LxBox (§3.1(а1)); при появлении — отдельная задача по §3.6.
+Полевой device-verify (runbook требует перед промоутом rc→final);
+push-подписка на состояние групп (пока pull-RPC — UI опрашивает).

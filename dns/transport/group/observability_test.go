@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// SPEC 035/036: the group must record the answering member (write-once — the
+// SPEC 035: the group must record the answering member (write-once — the
 // leaf wins under nesting), the group path (inside-out), and the probe
 // chronology into the client-provided trace holder; without a holder it all
 // must be a no-op.

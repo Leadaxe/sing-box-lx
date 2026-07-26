@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// lx: SPEC 036 — without with_lx_command the GetDNSGroups RPC must answer
+// lx: SPEC 035 — without with_lx_command the GetDNSGroups RPC must answer
 // Unimplemented (behavioural equivalence with upstream), not panic or hang.
 func TestGetDNSGroupsStub_LX(t *testing.T) {
 	service := &StartedService{}

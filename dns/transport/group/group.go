@@ -1,4 +1,4 @@
-// Package group implements the lx `group` DNS server type (SPEC 033/034/036):
+// Package group implements the lx `group` DNS server type (SPEC 033/034/035):
 // several member servers behind one tag with a selection strategy. Failover
 // walks the member list in order, skipping servers inside their down_time
 // window; race (race.go) periodically fans a real query out to all members
@@ -8,7 +8,7 @@
 // whatever the group returns is cached once for the whole group; member
 // responses that the group discards never reach the cache.
 //
-// Observability (SPEC 035/036): every resolved probe is recorded into the
+// Observability (SPEC 035): every resolved probe is recorded into the
 // per-request query trace (common/dnstrack) — the answering member
 // (write-once, so nested groups attribute the leaf), the group path, the
 // probe chronology with outcome and rtt. GroupState() exposes the health
@@ -164,7 +164,7 @@ func (t *Transport) Reset() {
 }
 
 func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
-	dnstrack.PushGroup(ctx, t.Tag()) // SPEC 036 — prepend: final order is inside-out
+	dnstrack.PushGroup(ctx, t.Tag()) // SPEC 035 — prepend: final order is inside-out
 	if t.mode == ModeRace {
 		return t.exchangeRace(ctx, message)
 	}
@@ -254,7 +254,7 @@ func isFailure(response *mDNS.Msg, err error) bool {
 }
 
 // outcomeOf maps a probe result onto the wire vocabulary of the query trace
-// (SPEC 036): answered | timeout | network_error | servfail.
+// (SPEC 035): answered | timeout | network_error | servfail.
 func outcomeOf(response *mDNS.Msg, err error) string {
 	if !isFailure(response, err) {
 		return dnstrack.AttemptAnswered
@@ -342,7 +342,7 @@ func (t *Transport) recordSuccess(tag string, rtt time.Duration) {
 	state.lastRTT = rtt
 }
 
-// --- GetDNSGroups state snapshot (SPEC 036) ---------------------------------
+// --- GetDNSGroups state snapshot (SPEC 035) ---------------------------------
 
 // MemberState is the health snapshot of one member for the state RPC.
 type MemberState struct {

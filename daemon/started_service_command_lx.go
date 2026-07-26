@@ -222,7 +222,7 @@ func (s *StartedService) GetPool(ctx context.Context, request *GetPoolRequest) (
 	return &list, nil
 }
 
-// dnsGroupStateProvider is the DNS-group transport's health snapshot hook (SPEC 036).
+// dnsGroupStateProvider is the DNS-group transport's health snapshot hook (SPEC 035).
 // Discovered by type-assertion over the transport manager's list — mirrors poolProvider:
 // any transport not implementing it (every non-group type) is silently skipped.
 type dnsGroupStateProvider interface {
@@ -230,7 +230,7 @@ type dnsGroupStateProvider interface {
 }
 
 // GetDNSGroups returns a point-in-time health snapshot of every DNS group in the
-// running config (SPEC 036): mode, race winner/ranking/age, and per-member health
+// running config (SPEC 035): mode, race winner/ranking/age, and per-member health
 // (up/down, cooldown remainder, consecutive failures, last rtt). Groups are few and
 // the UI draws them all, so there is no per-tag request. No groups (or no DNS
 // transport manager) yields an empty list, not an error.
@@ -343,7 +343,7 @@ func dnsQueryEventToProto(event dnstrack.QueryEvent, includeAnswers bool, outbou
 		DnsGroupPath:  event.GroupPath,
 		Racer:         event.Racer,
 	}
-	for _, attempt := range event.Attempts { // SPEC 036 — probe trace, vocabulary passed through verbatim
+	for _, attempt := range event.Attempts { // SPEC 035 — probe trace, vocabulary passed through verbatim
 		proto.Attempts = append(proto.Attempts, &DnsGroupAttempt{
 			Server:     attempt.Server,
 			ServerType: attempt.ServerType,

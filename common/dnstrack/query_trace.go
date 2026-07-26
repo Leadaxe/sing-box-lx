@@ -8,7 +8,7 @@ import (
 )
 
 // QueryTrace is the per-request mutable trace of a query that travels through
-// composite DNS transports (the lx `group` type, SPEC 035/036). The client
+// composite DNS transports (the lx `group` type, SPEC 035). The client
 // inserts the holder into the operation context before calling the transport;
 // groups fill it as they probe members; the emit sites read a snapshot under
 // the mutex. The holder must live in a context ANCESTOR of the transport call:
@@ -25,7 +25,7 @@ type QueryTrace struct {
 	// effective* identify the member that ACTUALLY answered. Write-once: the
 	// innermost group answers first and its leaf member must win — with
 	// last-write-wins an outer group would overwrite the leaf with the inner
-	// group's own tag (the SPEC 036 nested-attribution fix).
+	// group's own tag (the SPEC 035 nested-attribution fix).
 	effectiveTag      string
 	effectiveType     string
 	effectiveOutbound string

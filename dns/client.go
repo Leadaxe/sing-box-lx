@@ -274,7 +274,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 		return nil, nil, exchangeDone, E.New("DNS query loopback in transport[", contextTransport, "]")
 	}
 	operation.ctx = contextWithTransportTag(ctx, transport.Tag())
-	if transport.Type() == C.DNSTypeGroup { // lx: SPEC 035/036 — the group fills in the answering member + probe trace for stream attribution
+	if transport.Type() == C.DNSTypeGroup { // lx: SPEC 035 — the group fills in the answering member + probe trace for stream attribution
 		operation.ctx = dnstrack.WithQueryTraceIfTracking(operation.ctx)
 	}
 	if !disableCache && responseChecker != nil && c.rdrc != nil {

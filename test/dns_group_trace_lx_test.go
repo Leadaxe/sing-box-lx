@@ -1,4 +1,4 @@
-// lx: SPEC 036 — live trace coverage: a race through a real box against real
+// lx: SPEC 035 — live trace coverage: a race through a real box against real
 // (loopback) DNS servers. The racer's emitted event is a snapshot at answer
 // time: the slow straggler must NOT be in it, while the state RPC picture
 // (ranking) completes in the background.

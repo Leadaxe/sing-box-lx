@@ -95,7 +95,7 @@ func (t *Transport) exchangeRace(ctx context.Context, message *mDNS.Msg) (*mDNS.
 
 // runRace fans the query out and answers with the first success.
 func (t *Transport) runRace(ctx context.Context, message *mDNS.Msg, racers []*member, gen int, previousWinner string) (*mDNS.Msg, error) {
-	dnstrack.MarkRacer(ctx) // SPEC 036 — this query triggered the fan-out
+	dnstrack.MarkRacer(ctx) // SPEC 035 — this query triggered the fan-out
 	results := make(chan raceResult, len(racers))
 	for _, racer := range racers {
 		go func(current *member) {
@@ -132,7 +132,7 @@ func (t *Transport) runRace(ctx context.Context, message *mDNS.Msg, racers []*me
 // ranking, failures get down marks. It always runs to the last member and
 // then releases the race flag. Attempts recorded after the racer's event was
 // emitted are harmlessly lost — the event is a snapshot at answer time
-// (SPEC 036); the completed picture lives in GroupState.
+// (SPEC 035); the completed picture lives in GroupState.
 func (t *Transport) collectRace(ctx context.Context, racers []*member, results chan raceResult, winnerCh chan raceResult, gen int, previousWinner string) {
 	var (
 		errs      []error

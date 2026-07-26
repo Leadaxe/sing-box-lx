@@ -48,7 +48,7 @@ func emitQueryEvent(ctx context.Context, transport adapter.DNSTransport, respons
 				event.Outbound = []string{tag}
 			}
 		}
-		// SPEC 035/036: a composite transport (group) records the member that
+		// SPEC 035: a composite transport (group) records the member that
 		// actually answered plus the probe trace; prefer the member — the group
 		// tag alone makes per-member diagnostics impossible. Cache hits never
 		// touch the trace, so they keep the group tag (the answer came from the
@@ -96,7 +96,7 @@ func emitFailedQuery(ctx context.Context, transport adapter.DNSTransport, questi
 		if tag := transport.OutboundTag(); tag != "" {
 			event.Outbound = []string{tag}
 		}
-		// SPEC 035/036: on a group SERVFAIL-reject the trace names the member that
+		// SPEC 035: on a group SERVFAIL-reject the trace names the member that
 		// produced the rejected answer; a total group failure leaves effective
 		// unset and the group tag stands (no member answered — that IS the
 		// state), while the trace still shows the probes that were made.

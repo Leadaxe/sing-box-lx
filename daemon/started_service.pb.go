@@ -6363,7 +6363,7 @@ type DnsQueryEvent struct {
 	DnsServer     string   `protobuf:"bytes,10,opt,name=dnsServer,proto3" json:"dnsServer,omitempty"`
 	DnsServerType string   `protobuf:"bytes,11,opt,name=dnsServerType,proto3" json:"dnsServerType,omitempty"`
 	Outbound      []string `protobuf:"bytes,12,rep,name=outbound,proto3" json:"outbound,omitempty"`
-	// SPEC 036 — group probe trace. dnsGroupPath is the group nesting INSIDE-OUT
+	// SPEC 035 — group probe trace. dnsGroupPath is the group nesting INSIDE-OUT
 	// (empty = the query did not go through a group); attempts is the probe
 	// chronology snapshotted at answer time (race stragglers that resolved later
 	// are absent by design — the full picture is GetDNSGroups); racer marks the
@@ -6510,7 +6510,7 @@ func (x *DnsQueryEvent) GetRacer() bool {
 	return false
 }
 
-// One resolved member probe of a DNS group (SPEC 036). outcome vocabulary:
+// One resolved member probe of a DNS group (SPEC 035). outcome vocabulary:
 // answered | timeout | network_error | servfail ("answered" includes NXDOMAIN
 // and empty answers — they are valid responses, not failures).
 type DnsGroupAttempt struct {
@@ -6801,7 +6801,7 @@ func (x *PoolList) GetSlots() []*PoolSlot {
 	return nil
 }
 
-// SPEC 036 — point-in-time health snapshot of every DNS group in the config
+// SPEC 035 — point-in-time health snapshot of every DNS group in the config
 // (groups are few; the UI draws them all, so there is no per-tag request).
 // downRemainingMs: ms until the member re-enters rotation; 0 = up.
 // lastRttMs: last successful probe; 0 = never measured.

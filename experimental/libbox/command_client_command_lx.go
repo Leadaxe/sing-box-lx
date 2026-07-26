@@ -23,7 +23,7 @@ type DnsQuery struct {
 	Error         string
 	DNSServer     string // which DNS server (transport) resolved this (SPEC 018); for a group — the answering member (SPEC 035)
 	DNSServerType string // udp / tls / https / quic
-	Racer         bool   // this query triggered a race fan-out of a group (SPEC 036)
+	Racer         bool   // this query triggered a race fan-out of a group (SPEC 035)
 	ProcessInfo   *ProcessInfo
 	answers       []*DnsAnswer
 	outbound      []string
@@ -43,7 +43,7 @@ func (q *DnsQuery) Outbound() StringIterator {
 	return newIterator(q.outbound)
 }
 
-// GroupPath returns the DNS-group nesting the query went through, inside-out (SPEC 036).
+// GroupPath returns the DNS-group nesting the query went through, inside-out (SPEC 035).
 // Empty = the query did not go through a group (or was served from the group's cache).
 func (q *DnsQuery) GroupPath() StringIterator {
 	return newIterator(q.groupPath)
@@ -51,12 +51,12 @@ func (q *DnsQuery) GroupPath() StringIterator {
 
 // Attempts returns the probe chronology of the query through its group(s), snapshotted at
 // answer time — race stragglers that resolved later are absent by design; the completed
-// picture is GetDNSGroups. Empty for non-group queries and cache hits. SPEC 036.
+// picture is GetDNSGroups. Empty for non-group queries and cache hits. SPEC 035.
 func (q *DnsQuery) Attempts() DnsGroupAttemptIterator {
 	return newIterator(q.attempts)
 }
 
-// DnsGroupAttempt is one resolved member probe of a DNS group (SPEC 036). Outcome is one
+// DnsGroupAttempt is one resolved member probe of a DNS group (SPEC 035). Outcome is one
 // of: "answered" (valid response, NXDOMAIN/empty included), "timeout", "network_error",
 // "servfail". RTTMs is the probe duration in milliseconds.
 type DnsGroupAttempt struct {
@@ -305,7 +305,7 @@ func (c *CommandClient) GetPool(groupTag string) (PoolSlotIterator, error) {
 	})
 }
 
-// DnsGroupMember is the libbox view of one DNS-group member's health (SPEC 036).
+// DnsGroupMember is the libbox view of one DNS-group member's health (SPEC 035).
 // DownRemainingMs is how long until the member re-enters rotation (0 = up);
 // LastRTTMs is the last successful probe (0 = never measured).
 type DnsGroupMember struct {
@@ -322,7 +322,7 @@ type DnsGroupMemberIterator interface {
 	HasNext() bool
 }
 
-// DnsGroup is the libbox view of one DNS group's state (SPEC 036). Winner/Ranking are
+// DnsGroup is the libbox view of one DNS group's state (SPEC 035). Winner/Ranking are
 // race-mode fields ("" / empty before the first race — a valid state, not an error);
 // RaceAgeMs is the age of the last race in ms, -1 when no race has happened yet.
 type DnsGroup struct {
@@ -350,7 +350,7 @@ type DnsGroupIterator interface {
 }
 
 // GetDNSGroups returns a point-in-time health snapshot of every DNS group in the running
-// config (SPEC 036). No groups in the config yields an empty iterator, not an error.
+// config (SPEC 035). No groups in the config yields an empty iterator, not an error.
 func (c *CommandClient) GetDNSGroups() (DnsGroupIterator, error) {
 	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (DnsGroupIterator, error) {
 		list, err := client.GetDNSGroups(ctx, &emptypb.Empty{})

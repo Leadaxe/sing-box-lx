@@ -4,7 +4,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | — (для выдачи состояния группы в UI нужен `with_lx_command`) |
-| Состояние | ✅ Реализовано (033–036; юниты + живой `box.New`; полевой проверки не было) |
+| Состояние | ✅ Реализовано (033–035; юниты + живой `box.New`; полевой проверки не было) |
 
 ## Назначение
 
@@ -197,8 +197,7 @@ Build-tag не вводится. Новый тип сервера аддитив
 |--------|------|--------|
 | [033 — DNS_GROUP_SERVER](../../TASKS/033-DNS_GROUP_SERVER/SPEC.md) | Тип `group`, режим `failover`, `down_time`, валидации | C |
 | [034 — DNS_GROUP_RACE](../../TASKS/034-DNS_GROUP_RACE/SPEC.md) | Режим `race`: ленивая гонка, победитель, рейтинг | C |
-| [035 — DNS_GROUP_OBSERVABILITY](../../TASKS/035-DNS_GROUP_OBSERVABILITY/SPEC.md) | Фактический сервер в потоке DNS-запросов | C |
-| [036 — DNS_GROUP_TRACE](../../TASKS/036-DNS_GROUP_TRACE/SPEC.md) | Трасса проб в потоке, state-RPC `GetDNSGroups`, лог решений | C |
+| [035 — DNS_GROUP_OBSERVABILITY](../../TASKS/035-DNS_GROUP_OBSERVABILITY/SPEC.md) | Наблюдаемость целиком: атрибуция, трасса проб, `GetDNSGroups`, лог решений | C |
 
 ## Особенности сопровождения
 

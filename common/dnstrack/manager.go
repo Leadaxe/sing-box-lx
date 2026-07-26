@@ -72,7 +72,7 @@ type QueryEvent struct {
 	DNSServer     string
 	DNSServerType string
 	Outbound      []string
-	// SPEC 036 — group probe trace. GroupPath is the group nesting inside-out
+	// SPEC 035 — group probe trace. GroupPath is the group nesting inside-out
 	// (empty = the query did not go through a group); Attempts is the probe
 	// chronology snapshotted at emit time (race stragglers resolved later are
 	// absent by design); Racer marks the query that triggered a race fan-out.
