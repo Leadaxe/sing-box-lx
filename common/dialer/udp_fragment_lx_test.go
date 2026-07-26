@@ -72,7 +72,7 @@ func TestUDPFragmentDFByDefault_LX(t *testing.T) {
 // set) → DF clear on both paths, so oversize outer datagrams fragment instead
 // of vanishing.
 func TestUDPFragmentDefaultClearsDF_LX(t *testing.T) {
-	options := option.DialerOptions{UDPFragmentDefault: true}
+	options := option.DialerOptions{AbstractDialerOptions: option.AbstractDialerOptions{UDPFragmentDefault: true}}
 	if udpSocketDFSet(t, dialUDPForDF(t, options)) {
 		t.Fatal("UDPFragmentDefault=true must leave DF clear on dialed UDP sockets")
 	}
@@ -85,12 +85,12 @@ func TestUDPFragmentDefaultClearsDF_LX(t *testing.T) {
 // directions.
 func TestUDPFragmentExplicitOverride_LX(t *testing.T) {
 	fragmentOff := false
-	options := option.DialerOptions{UDPFragment: &fragmentOff, UDPFragmentDefault: true}
+	options := option.DialerOptions{AbstractDialerOptions: option.AbstractDialerOptions{UDPFragment: &fragmentOff, UDPFragmentDefault: true}}
 	if !udpSocketDFSet(t, dialUDPForDF(t, options)) {
 		t.Fatal("udp_fragment=false must set DF even when the protocol default allows fragmentation")
 	}
 	fragmentOn := true
-	options = option.DialerOptions{UDPFragment: &fragmentOn}
+	options = option.DialerOptions{AbstractDialerOptions: option.AbstractDialerOptions{UDPFragment: &fragmentOn}}
 	if udpSocketDFSet(t, dialUDPForDF(t, options)) {
 		t.Fatal("udp_fragment=true must leave DF clear even without a protocol default")
 	}
