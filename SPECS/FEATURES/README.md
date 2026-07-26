@@ -20,7 +20,7 @@
 | [MASQUE_WARP](MASQUE_WARP/FEATURE.md) | MASQUE CONNECT-IP outbound (RFC 9484), профиль Cloudflare WARP | — | 021 |
 | [ENERGY](ENERGY/FEATURE.md) | Idle-suspend простаивающих WG/AWG: батарея, нагрев, RSS −31 % | `with_lx_idle_suspend` | 020 |
 | [VLESS_ENCRYPTION](VLESS_ENCRYPTION/FEATURE.md) | 🆕 PQ-слой `mlkem768x25519plus` внутри VLESS — спроектировано | — | 032 |
-| [DNS_GROUP](DNS_GROUP/FEATURE.md) | Группа DNS-серверов: `failover` / `race`, `down_time`, трасса и состояние в наблюдаемости | — | 033 · 034 · 035 |
+| [DNS_GROUP](DNS_GROUP/FEATURE.md) | Группа DNS-серверов: `stable` / `fastest` / `parallel` на TTL-модели, трасса и состояние в наблюдаемости | — | 033 · 035 |
 
 ## Процессные
 

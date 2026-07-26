@@ -1,12 +1,12 @@
-# TASKS 033
+# TASKS 033 (v2)
 
-- [x] Пакет `dns/transport/group`: адаптер, конструктор, валидации конфига
-- [x] Start: резолв участников, проверка типов, ошибка на неизвестный тег
-- [x] Failover-Exchange: классификатор сбоя, down_time, ротация при полном исчерпании
-- [x] Юнит-тесты (см. критерии приёмки SPEC §5)
-- [x] Интеграционный тест цикла через TransportManager
-- [x] Живой box.New тест `servers: []`
-- [x] Маркированные швы: constant/dns.go, option/dns.go, include/registry.go
-- [x] DoD: build ± теги, vet, gofmt, `sing-box check` с группой в final и правиле
-- [x] Коммиты по зонам (новый пакет / lx-швы)
-- [x] IMPLEMENTATION_REPORT.md, статус C, Roadmap
+- [ ] Конфиг: mode stable|fastest|parallel, error_ttl, win_ttl; interval/down_time удалены
+- [ ] Записи TTL: ленивые срезы, успех↔ошибки / ошибка↔победы, Reset-амнистия
+- [ ] Выбор цели: stable (липкость→случайность), fastest (победы→выборы), parallel, выживание
+- [ ] Единый поток: под-дедлайн цели ½ остатка, веер по чистым, guard ошибок, победы/опоздавшие
+- [ ] Single-flight выборов (CAS + gen)
+- [ ] Лог решений (debug/info/warn)
+- [ ] Юниты §4 SPEC (-race)
+- [ ] Живые box-тесты: v2-конфиги, негативные на v1-поля
+- [ ] DoD: build ± теги, vet, gofmt, check ×3 режима
+- [ ] IMPLEMENTATION_REPORT.md, статус C, Roadmap
