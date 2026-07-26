@@ -10,6 +10,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dnstrack"
 	"github.com/sagernet/sing-box/common/urltest"
+	dnsgroup "github.com/sagernet/sing-box/dns/transport/group"
 	"github.com/sagernet/sing-box/protocol/group"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
@@ -221,6 +222,63 @@ func (s *StartedService) GetPool(ctx context.Context, request *GetPoolRequest) (
 	return &list, nil
 }
 
+// dnsGroupStateProvider is the DNS-group transport's health snapshot hook (SPEC 036).
+// Discovered by type-assertion over the transport manager's list — mirrors poolProvider:
+// any transport not implementing it (every non-group type) is silently skipped.
+type dnsGroupStateProvider interface {
+	GroupState() dnsgroup.State
+}
+
+// GetDNSGroups returns a point-in-time health snapshot of every DNS group in the
+// running config (SPEC 036): mode, race winner/ranking/age, and per-member health
+// (up/down, cooldown remainder, consecutive failures, last rtt). Groups are few and
+// the UI draws them all, so there is no per-tag request. No groups (or no DNS
+// transport manager) yields an empty list, not an error.
+func (s *StartedService) GetDNSGroups(ctx context.Context, empty *emptypb.Empty) (*DnsGroupList, error) {
+	s.serviceAccess.RLock()
+	if s.serviceStatus.Status != ServiceStatus_STARTED {
+		s.serviceAccess.RUnlock()
+		return nil, status.Error(codes.FailedPrecondition, "service is not started")
+	}
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	var list DnsGroupList
+	transportManager := service.FromContext[adapter.DNSTransportManager](boxService.ctx)
+	if transportManager == nil {
+		return &list, nil
+	}
+	for _, transport := range transportManager.Transports() {
+		provider, isGroup := transport.(dnsGroupStateProvider)
+		if !isGroup {
+			continue
+		}
+		snapshot := provider.GroupState()
+		groupProto := &DnsGroupState{
+			Tag:       snapshot.Tag,
+			Mode:      snapshot.Mode,
+			Winner:    snapshot.Winner,
+			Ranking:   snapshot.Ranking,
+			RaceAgeMs: -1,
+		}
+		if snapshot.HasRaced {
+			groupProto.RaceAgeMs = snapshot.RaceAge.Milliseconds()
+		}
+		for _, memberSnapshot := range snapshot.Members {
+			groupProto.Members = append(groupProto.Members, &DnsGroupMember{
+				Tag:                 memberSnapshot.Tag,
+				ServerType:          memberSnapshot.ServerType,
+				Up:                  memberSnapshot.Up,
+				DownRemainingMs:     memberSnapshot.DownRemaining.Milliseconds(),
+				ConsecutiveFailures: uint32(memberSnapshot.ConsecutiveFailures),
+				LastRttMs:           uint32(memberSnapshot.LastRTT.Milliseconds()),
+			})
+		}
+		list.Groups = append(list.Groups, groupProto)
+	}
+	return &list, nil
+}
+
 // SubscribeDNSQueries streams structured, process-attributed DNS resolutions (SPEC 018).
 // Unlike SubscribeConnections it is event-driven, not ticked: each resolution in the core
 // emits one QueryEvent (dns/client_log.go), forwarded here as it arrives. The dnstrack
@@ -282,6 +340,16 @@ func dnsQueryEventToProto(event dnstrack.QueryEvent, includeAnswers bool, outbou
 		DnsServer:     event.DNSServer,
 		DnsServerType: event.DNSServerType,
 		Outbound:      resolveOutboundChain(event.Outbound, outboundManager),
+		DnsGroupPath:  event.GroupPath,
+		Racer:         event.Racer,
+	}
+	for _, attempt := range event.Attempts { // SPEC 036 — probe trace, vocabulary passed through verbatim
+		proto.Attempts = append(proto.Attempts, &DnsGroupAttempt{
+			Server:     attempt.Server,
+			ServerType: attempt.ServerType,
+			Outcome:    attempt.Outcome,
+			RttMs:      attempt.RTTMs,
+		})
 	}
 	if event.ProcessInfo != nil {
 		proto.ProcessInfo = &ProcessInfo{

@@ -21,11 +21,14 @@ type DnsQuery struct {
 	Source        string
 	Failed        bool
 	Error         string
-	DNSServer     string // which DNS server (transport) resolved this (SPEC 018)
+	DNSServer     string // which DNS server (transport) resolved this (SPEC 018); for a group — the answering member (SPEC 035)
 	DNSServerType string // udp / tls / https / quic
+	Racer         bool   // this query triggered a race fan-out of a group (SPEC 036)
 	ProcessInfo   *ProcessInfo
 	answers       []*DnsAnswer
 	outbound      []string
+	groupPath     []string
+	attempts      []*DnsGroupAttempt
 }
 
 // Answers returns the resolution's resource records (CNAME chain + final addresses) in
@@ -38,6 +41,34 @@ func (q *DnsQuery) Answers() DnsAnswerIterator {
 // selector expanded to its live node. Empty on cached/optimistic (the query never left).
 func (q *DnsQuery) Outbound() StringIterator {
 	return newIterator(q.outbound)
+}
+
+// GroupPath returns the DNS-group nesting the query went through, inside-out (SPEC 036).
+// Empty = the query did not go through a group (or was served from the group's cache).
+func (q *DnsQuery) GroupPath() StringIterator {
+	return newIterator(q.groupPath)
+}
+
+// Attempts returns the probe chronology of the query through its group(s), snapshotted at
+// answer time — race stragglers that resolved later are absent by design; the completed
+// picture is GetDNSGroups. Empty for non-group queries and cache hits. SPEC 036.
+func (q *DnsQuery) Attempts() DnsGroupAttemptIterator {
+	return newIterator(q.attempts)
+}
+
+// DnsGroupAttempt is one resolved member probe of a DNS group (SPEC 036). Outcome is one
+// of: "answered" (valid response, NXDOMAIN/empty included), "timeout", "network_error",
+// "servfail". RTTMs is the probe duration in milliseconds.
+type DnsGroupAttempt struct {
+	Server     string
+	ServerType string
+	Outcome    string
+	RTTMs      int32
+}
+
+type DnsGroupAttemptIterator interface {
+	Next() *DnsGroupAttempt
+	HasNext() bool
 }
 
 // DnsAnswer is one resource record. Type is dns.Type; RData is the textual record (CNAME
@@ -93,7 +124,17 @@ func dnsQueryFromGRPC(event *daemon.DnsQueryEvent) *DnsQuery {
 		Error:         event.Error,
 		DNSServer:     event.DnsServer,
 		DNSServerType: event.DnsServerType,
+		Racer:         event.Racer,
 		outbound:      event.Outbound,
+		groupPath:     event.DnsGroupPath,
+	}
+	for _, attempt := range event.Attempts {
+		query.attempts = append(query.attempts, &DnsGroupAttempt{
+			Server:     attempt.Server,
+			ServerType: attempt.ServerType,
+			Outcome:    attempt.Outcome,
+			RTTMs:      int32(attempt.RttMs),
+		})
 	}
 	if event.ProcessInfo != nil {
 		query.ProcessInfo = &ProcessInfo{
@@ -261,5 +302,82 @@ func (c *CommandClient) GetPool(groupTag string) (PoolSlotIterator, error) {
 			})
 		}
 		return newIterator(slots), nil
+	})
+}
+
+// DnsGroupMember is the libbox view of one DNS-group member's health (SPEC 036).
+// DownRemainingMs is how long until the member re-enters rotation (0 = up);
+// LastRTTMs is the last successful probe (0 = never measured).
+type DnsGroupMember struct {
+	Tag                 string
+	ServerType          string
+	Up                  bool
+	DownRemainingMs     int64
+	ConsecutiveFailures int32
+	LastRTTMs           int32
+}
+
+type DnsGroupMemberIterator interface {
+	Next() *DnsGroupMember
+	HasNext() bool
+}
+
+// DnsGroup is the libbox view of one DNS group's state (SPEC 036). Winner/Ranking are
+// race-mode fields ("" / empty before the first race — a valid state, not an error);
+// RaceAgeMs is the age of the last race in ms, -1 when no race has happened yet.
+type DnsGroup struct {
+	Tag       string
+	Mode      string // "failover" | "race"
+	Winner    string
+	RaceAgeMs int64
+	ranking   []string
+	members   []*DnsGroupMember
+}
+
+// Ranking returns the arrival order of the last race's successful answers.
+func (g *DnsGroup) Ranking() StringIterator {
+	return newIterator(g.ranking)
+}
+
+// Members returns the per-member health snapshot in config order.
+func (g *DnsGroup) Members() DnsGroupMemberIterator {
+	return newIterator(g.members)
+}
+
+type DnsGroupIterator interface {
+	Next() *DnsGroup
+	HasNext() bool
+}
+
+// GetDNSGroups returns a point-in-time health snapshot of every DNS group in the running
+// config (SPEC 036). No groups in the config yields an empty iterator, not an error.
+func (c *CommandClient) GetDNSGroups() (DnsGroupIterator, error) {
+	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (DnsGroupIterator, error) {
+		list, err := client.GetDNSGroups(ctx, &emptypb.Empty{})
+		if err != nil {
+			return nil, E.Cause(err, "get dns groups")
+		}
+		groups := make([]*DnsGroup, 0, len(list.Groups))
+		for _, groupState := range list.Groups {
+			groupView := &DnsGroup{
+				Tag:       groupState.Tag,
+				Mode:      groupState.Mode,
+				Winner:    groupState.Winner,
+				RaceAgeMs: groupState.RaceAgeMs,
+				ranking:   groupState.Ranking,
+			}
+			for _, memberState := range groupState.Members {
+				groupView.members = append(groupView.members, &DnsGroupMember{
+					Tag:                 memberState.Tag,
+					ServerType:          memberState.ServerType,
+					Up:                  memberState.Up,
+					DownRemainingMs:     memberState.DownRemainingMs,
+					ConsecutiveFailures: int32(memberState.ConsecutiveFailures),
+					LastRTTMs:           int32(memberState.LastRttMs),
+				})
+			}
+			groups = append(groups, groupView)
+		}
+		return newIterator(groups), nil
 	})
 }
