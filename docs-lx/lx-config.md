@@ -8,6 +8,7 @@
 | **AmneziaWG 2.0** (AWG2) | `with_awg` | extra fields on a `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `route.lx_idle_suspend` | **mobile only** (AAR) |
+| **DNS server group** (SPEC 033–035) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 
 Build the desktop/CLI binary: `make -f Makefile.lx lx-build` (output `sing-box`, version `…-lx.N`) — this bundles `with_xhttp` + `with_awg` (+ `with_lx_command`), but **not** `with_lx_idle_suspend`.
 Without a tag the feature is absent: an `xhttp` transport or an AWG field is rejected at load time with an explicit error (no silent downgrade).
@@ -450,7 +451,7 @@ scale to large node lists (only the pool is health-checked, not every node). Sel
 happens once per connection; a UDP/QUIC session stays on its node. With `mode` omitted (or
 `least_test`) the outbound behaves exactly like upstream and `balancer` must not be set.
 
-The `GetPool` CommandClient method (see [§5](#5-observability-commandclient-extensions)) is
+The `GetPool` CommandClient method (see [§6](#6-observability-commandclient-extensions)) is
 behind `with_lx_command`; the `mode`/`balancer` config fields themselves are always available.
 
 ### Fields (on a `urltest` outbound)
@@ -585,7 +586,79 @@ table, profile matrix, key-material format, start-time validation and common foo
 
 ---
 
-## 5. Observability (CommandClient extensions)
+## 5. DNS server group (SPEC 033–035)
+
+Several DNS servers behind one tag with a selection strategy. Solves the
+"one dead DNS server kills resolution" problem: upstream's `dns.final` is a
+*default*, not a fallback, and a rule routing to a server fails the query
+outright on any network error, timeout or SERVFAIL. No build tag — the type
+is always available; a config without a `group` server behaves exactly like
+upstream.
+
+### Fields (a `dns.servers[]` entry)
+
+```jsonc
+{
+  "type": "group",                  // selector — must be "group"
+  "tag": "public",
+  "servers": ["google", "cloudflare"], // REQUIRED, ≥1 tags of other DNS servers.
+                                       //   Order matters in failover mode.
+  "mode": "failover",               // failover (default) | race
+  "interval": "3m",                 // race only: min age of the previous race before
+                                    //   the next query triggers a new one.
+                                    //   Ignored in failover (a warning is logged)
+  "down_time": "30s"                // default 30s: how long a failed member is skipped
+}
+```
+
+**What counts as a failure:** a transport error, a timeout, or `SERVFAIL`.
+`NXDOMAIN` and empty answers are **valid responses** — retrying them against
+another resolver would turn resolution into a lottery. One failure marks the
+member down for `down_time`; when **all** members are down, each query makes
+exactly one attempt via the member whose failure is the oldest (natural
+rotation, bounded latency).
+
+**`mode: race`** picks the fastest member by racing a **real** query: the
+first query after the previous race aged past `interval` fans out to every
+live member; the first success answers that query and its member becomes the
+pinned winner. Arrival order of the remaining answers forms the fallback
+ranking (used if the winner fails between races). There are no timers and no
+synthetic probe traffic: no queries → no races (plays nice with
+[idle-suspend](lx-energy.md)). Only the winner's answer is cached.
+
+**A group is a first-class server**: its tag is accepted in `dns.final`, in
+DNS rules, and inside another group's `servers`. Reference cycles are
+rejected at load (`circular server dependency`), not discovered at runtime.
+`fakeip` and `hosts` members are rejected — they are local sources, there is
+nothing to fail over.
+
+**Observability:** the DNS query stream (`SubscribeDNSQueries`, §6) reports
+the member that **actually answered**; cache hits and total-failure events
+keep the group's own tag (nothing answered — that *is* the state).
+
+> **Name leak warning.** On failover the query goes to the *next* member; in
+> race mode every raced query goes to **all** members at once. Do not mix
+> internal and public resolvers in one group — an internal name would leak to
+> the public one.
+
+### Example — resilient public DNS as the default
+
+```jsonc
+{
+  "dns": {
+    "servers": [
+      { "type": "udp", "tag": "google",     "server": "8.8.8.8" },
+      { "type": "udp", "tag": "cloudflare", "server": "1.1.1.1" },
+      { "type": "group", "tag": "public",
+        "servers": ["google", "cloudflare"],
+        "mode": "race", "interval": "3m", "down_time": "30s" }
+    ],
+    "final": "public"
+  }
+}
+```
+
+## 6. Observability (CommandClient extensions)
 
 These are **client-API additions, not config** — extra methods on libbox's `CommandClient`
 (the native gRPC management channel), all gated behind `with_lx_command` and consumed by
@@ -622,7 +695,7 @@ make -f Makefile.lx lx-build   # includes with_lx_command (and with_xhttp/with_a
 
 ---
 
-## 6. Validate & build
+## 7. Validate & build
 
 ```sh
 git clone --recurse-submodules <repo>           # with_awg needs the submodule
