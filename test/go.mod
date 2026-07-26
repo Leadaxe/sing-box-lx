@@ -10,6 +10,7 @@ require (
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/gofrs/uuid/v5 v5.4.0
+	github.com/miekg/dns v1.1.72
 	github.com/opencontainers/image-spec v1.1.0
 	github.com/sagernet/quic-go v0.59.0-sing-box-mod.4
 	github.com/sagernet/sing v0.8.12-0.20260721063414-596db5dd6ef4
@@ -101,7 +102,6 @@ require (
 	github.com/mdlayher/socket v0.5.1 // indirect
 	github.com/metacubex/utls v1.8.7 // indirect
 	github.com/mholt/acmez/v3 v3.1.6 // indirect
-	github.com/miekg/dns v1.1.72 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/term v0.5.0 // indirect
