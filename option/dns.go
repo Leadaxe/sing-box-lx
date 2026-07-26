@@ -227,8 +227,8 @@ type MDNSDNSServerOptions struct {
 type GroupDNSServerOptions struct {
 	Servers  badoption.Listable[string] `json:"servers"`
 	Mode     string                     `json:"mode,omitempty"`
-	Interval badoption.Duration         `json:"interval,omitempty"`
-	DownTime badoption.Duration         `json:"down_time,omitempty"`
+	ErrorTTL badoption.Duration         `json:"error_ttl,omitempty"`
+	WinTTL   badoption.Duration         `json:"win_ttl,omitempty"`
 }
 
 // lx:end dns-group

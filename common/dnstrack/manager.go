@@ -75,10 +75,13 @@ type QueryEvent struct {
 	// SPEC 035 — group probe trace. GroupPath is the group nesting inside-out
 	// (empty = the query did not go through a group); Attempts is the probe
 	// chronology snapshotted at emit time (race stragglers resolved later are
-	// absent by design); Racer marks the query that triggered a race fan-out.
+	// absent by design); Fanned marks a query that involved a fan-out
+	// (rescue / election / parallel); Survival marks an answer obtained via
+	// the least dirty server when no member was clean.
 	GroupPath []string
 	Attempts  []Attempt
-	Racer     bool
+	Fanned    bool
+	Survival  bool
 }
 
 var _ adapter.LifecycleService = (*Manager)(nil)

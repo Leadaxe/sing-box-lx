@@ -80,7 +80,8 @@ func TestEmitPrefersEffectiveServer_LX(t *testing.T) {
 	dnstrack.SetEffectiveServer(ctx, "cloudflare", C.DNSTypeUDP, "proxy-out")
 	dnstrack.RecordAttempt(ctx, dnstrack.Attempt{Server: "google", ServerType: C.DNSTypeUDP, Outcome: dnstrack.AttemptTimeout, RTTMs: 5000})
 	dnstrack.RecordAttempt(ctx, dnstrack.Attempt{Server: "cloudflare", ServerType: C.DNSTypeUDP, Outcome: dnstrack.AttemptAnswered, RTTMs: 12})
-	dnstrack.MarkRacer(ctx)
+	dnstrack.MarkFanned(ctx)
+	dnstrack.MarkSurvival(ctx)
 
 	emitQueryEvent(ctx, groupTransport, testResponse(), dnstrack.SourceExchanged, 60)
 	event := <-events
@@ -90,7 +91,8 @@ func TestEmitPrefersEffectiveServer_LX(t *testing.T) {
 	require.Equal(t, []string{"grp"}, event.GroupPath)
 	require.Len(t, event.Attempts, 2)
 	require.Equal(t, dnstrack.AttemptTimeout, event.Attempts[0].Outcome)
-	require.True(t, event.Racer)
+	require.True(t, event.Fanned)
+	require.True(t, event.Survival)
 }
 
 func TestEmitKeepsGroupTagWhenHolderEmpty_LX(t *testing.T) {
@@ -107,7 +109,8 @@ func TestEmitKeepsGroupTagWhenHolderEmpty_LX(t *testing.T) {
 	require.Empty(t, event.Outbound)
 	require.Empty(t, event.GroupPath)
 	require.Empty(t, event.Attempts)
-	require.False(t, event.Racer)
+	require.False(t, event.Fanned)
+	require.False(t, event.Survival)
 }
 
 func TestEmitFailedKeepsGroupTagOnTotalFailure_LX(t *testing.T) {

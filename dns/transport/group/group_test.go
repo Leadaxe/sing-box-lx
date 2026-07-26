@@ -79,16 +79,41 @@ func failing(tag string) *fakeMember {
 	})
 }
 
-func newTestGroup(t *testing.T, downTime time.Duration, members ...*fakeMember) *Transport {
+// delayed answers successfully after d (or fails with the context's error).
+func delayed(tag string, d time.Duration) *fakeMember {
+	return newFakeMember(tag, func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+		select {
+		case <-time.After(d):
+			return okResponse(message), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+}
+
+// blackhole never answers — it dies only with the context.
+func blackhole(tag string) *fakeMember {
+	return newFakeMember(tag, func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+}
+
+func newTestGroup(t *testing.T, mode string, errorTTL time.Duration, winTTL time.Duration, members ...*fakeMember) *Transport {
 	t.Helper()
 	tags := make([]string, 0, len(members))
 	for _, m := range members {
 		tags = append(tags, m.Tag())
 	}
-	rawTransport, err := NewTransport(context.Background(), testLogger(), "grp", option.GroupDNSServerOptions{
+	options := option.GroupDNSServerOptions{
 		Servers:  tags,
-		DownTime: badoption.Duration(downTime),
-	})
+		Mode:     mode,
+		ErrorTTL: badoption.Duration(errorTTL),
+	}
+	if mode == ModeFastest {
+		options.WinTTL = badoption.Duration(winTTL)
+	}
+	rawTransport, err := NewTransport(context.Background(), testLogger(), "grp", options)
 	require.NoError(t, err)
 	groupTransport := rawTransport.(*Transport)
 	for _, m := range members {
@@ -97,176 +122,263 @@ func newTestGroup(t *testing.T, downTime time.Duration, members ...*fakeMember) 
 	return groupTransport
 }
 
-func TestFailoverOrderFirstSuccessStops(t *testing.T) {
+// totalCalls sums exchanges across members.
+func totalCalls(members ...*fakeMember) int32 {
+	var total int32
+	for _, m := range members {
+		total += m.calls.Load()
+	}
+	return total
+}
+
+// --- stable ------------------------------------------------------------------
+
+func TestStableStickyOnHealthyNetwork(t *testing.T) {
 	first := answering("a")
 	second := answering("b")
-	group := newTestGroup(t, time.Minute, first, second)
-	response, err := group.Exchange(context.Background(), testQuery())
-	require.NoError(t, err)
-	require.Equal(t, mDNS.RcodeSuccess, response.Rcode)
-	require.Equal(t, int32(1), first.calls.Load())
-	require.Equal(t, int32(0), second.calls.Load())
+	group := newTestGroup(t, ModeStable, time.Hour, 0, first, second)
+
+	for i := 0; i < 10; i++ {
+		_, err := group.Exchange(context.Background(), testQuery())
+		require.NoError(t, err)
+	}
+	// Sticky: after the first random election every query goes to the same
+	// member; the other is never touched.
+	require.Equal(t, int32(10), totalCalls(first, second))
+	require.True(t, first.calls.Load() == 10 || second.calls.Load() == 10,
+		"stable must stick to one member, got a=%d b=%d", first.calls.Load(), second.calls.Load())
 }
 
-func TestFailoverOnTransportError(t *testing.T) {
-	first := failing("a")
-	second := answering("b")
-	group := newTestGroup(t, time.Minute, first, second)
-	response, err := group.Exchange(context.Background(), testQuery())
-	require.NoError(t, err)
-	require.Equal(t, mDNS.RcodeSuccess, response.Rcode)
-	require.Equal(t, int32(1), first.calls.Load())
-	require.Equal(t, int32(1), second.calls.Load())
-}
-
-func TestFailoverOnServfailResponse(t *testing.T) {
+func TestStableRescueFanReelects(t *testing.T) {
+	dying := atomic.Bool{}
 	first := newFakeMember("a", func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
-		return rcodeResponse(message, mDNS.RcodeServerFailure), nil
+		if dying.Load() {
+			return nil, E.New("gone")
+		}
+		return okResponse(message), nil
 	})
 	second := answering("b")
-	group := newTestGroup(t, time.Minute, first, second)
-	response, err := group.Exchange(context.Background(), testQuery())
-	require.NoError(t, err)
-	require.Equal(t, mDNS.RcodeSuccess, response.Rcode)
-	require.Equal(t, int32(1), second.calls.Load())
-}
+	group := newTestGroup(t, ModeStable, time.Hour, 0, first)
+	group.members = append(group.members, &member{tag: "b", transport: second})
 
-func TestFailoverOnServfailRcodeError(t *testing.T) {
-	first := newFakeMember("a", func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
-		return nil, dns.RcodeServerFailure
-	})
-	second := answering("b")
-	group := newTestGroup(t, time.Minute, first, second)
-	response, err := group.Exchange(context.Background(), testQuery())
-	require.NoError(t, err)
-	require.Equal(t, mDNS.RcodeSuccess, response.Rcode)
-	require.Equal(t, int32(1), second.calls.Load())
-}
+	// Establish a as current (only listed member injected first guarantees
+	// the initial election can pick either; force by direct state).
+	group.access.Lock()
+	group.current = "a"
+	group.access.Unlock()
 
-func TestNXDomainIsNotFailure(t *testing.T) {
-	first := newFakeMember("a", func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
-		return rcodeResponse(message, mDNS.RcodeNameError), nil
-	})
-	second := answering("b")
-	group := newTestGroup(t, time.Minute, first, second)
-	response, err := group.Exchange(context.Background(), testQuery())
-	require.NoError(t, err)
-	require.Equal(t, mDNS.RcodeNameError, response.Rcode)
-	require.Equal(t, int32(0), second.calls.Load())
-}
-
-func TestNXDomainRcodeErrorIsNotFailure(t *testing.T) {
-	first := newFakeMember("a", func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
-		return nil, dns.RcodeNameError
-	})
-	second := answering("b")
-	group := newTestGroup(t, time.Minute, first, second)
-	_, err := group.Exchange(context.Background(), testQuery())
-	require.ErrorIs(t, err, dns.RcodeNameError)
-	require.Equal(t, int32(0), second.calls.Load())
-}
-
-func TestEmptyResponseIsNotFailure(t *testing.T) {
-	first := newFakeMember("a", func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
-		return okResponse(message), nil // NOERROR, no answers
-	})
-	second := answering("b")
-	group := newTestGroup(t, time.Minute, first, second)
-	response, err := group.Exchange(context.Background(), testQuery())
-	require.NoError(t, err)
-	require.Empty(t, response.Answer)
-	require.Equal(t, int32(0), second.calls.Load())
-}
-
-func TestDownTimeSkipsAndExpires(t *testing.T) {
-	first := failing("a")
-	second := answering("b")
-	group := newTestGroup(t, 80*time.Millisecond, first, second)
-
-	// First query: a fails, marked down, b answers.
 	_, err := group.Exchange(context.Background(), testQuery())
 	require.NoError(t, err)
 	require.Equal(t, int32(1), first.calls.Load())
 
-	// Within down_time: a is skipped entirely.
-	_, err = group.Exchange(context.Background(), testQuery())
+	// a dies: the query pays a's failure, the rescue fan answers via b,
+	// b becomes current.
+	dying.Store(true)
+	response, err := group.Exchange(context.Background(), testQuery())
 	require.NoError(t, err)
-	require.Equal(t, int32(1), first.calls.Load())
-	require.Equal(t, int32(2), second.calls.Load())
+	require.Equal(t, mDNS.RcodeSuccess, response.Rcode)
+	state := group.GroupState()
+	require.Equal(t, "b", state.Current)
 
-	// After expiry: a is polled again.
-	time.Sleep(100 * time.Millisecond)
-	_, err = group.Exchange(context.Background(), testQuery())
-	require.NoError(t, err)
-	require.Equal(t, int32(2), first.calls.Load())
+	// Subsequent queries go to b only (a is dirty).
+	aCalls := first.calls.Load()
+	for i := 0; i < 3; i++ {
+		_, err = group.Exchange(context.Background(), testQuery())
+		require.NoError(t, err)
+	}
+	require.Equal(t, aCalls, first.calls.Load())
 }
 
-func TestAllDownSingleAttemptRotates(t *testing.T) {
+func TestStableNoReturnToRecovered(t *testing.T) {
+	dying := atomic.Bool{}
+	first := newFakeMember("a", func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+		if dying.Load() {
+			return nil, E.New("gone")
+		}
+		return okResponse(message), nil
+	})
+	second := answering("b")
+	group := newTestGroup(t, ModeStable, 60*time.Millisecond, 0, first)
+	group.members = append(group.members, &member{tag: "b", transport: second})
+	group.access.Lock()
+	group.current = "a"
+	group.access.Unlock()
+
+	dying.Store(true)
+	_, err := group.Exchange(context.Background(), testQuery())
+	require.NoError(t, err) // rescued via b
+	dying.Store(false)
+
+	// a's error expires — a is clean again, but stickiness holds b:
+	// there is no return-to-primary semantics.
+	time.Sleep(80 * time.Millisecond)
+	aCalls := first.calls.Load()
+	for i := 0; i < 5; i++ {
+		_, err = group.Exchange(context.Background(), testQuery())
+		require.NoError(t, err)
+	}
+	require.Equal(t, aCalls, first.calls.Load())
+	require.Equal(t, "b", group.GroupState().Current)
+}
+
+func TestNoCleanAfterFailureMeansNoFan(t *testing.T) {
 	first := failing("a")
 	second := failing("b")
-	group := newTestGroup(t, time.Hour, first, second)
+	group := newTestGroup(t, ModeStable, time.Hour, 0, first, second)
 
-	// Both go down.
+	// First query: target fails, the other is clean → rescue fan (1+1 calls),
+	// which also fails.
 	_, err := group.Exchange(context.Background(), testQuery())
 	require.Error(t, err)
-	require.Equal(t, int32(1), first.calls.Load())
-	require.Equal(t, int32(1), second.calls.Load())
+	require.Equal(t, int32(2), totalCalls(first, second))
 
-	// All down: exactly ONE attempt per query, oldest mark first.
-	// a failed before b, so a is retried first; its mark refreshes,
-	// so the next query goes to b.
+	// Now everybody is dirty: survival — exactly ONE attempt, no fan.
 	_, err = group.Exchange(context.Background(), testQuery())
 	require.Error(t, err)
-	require.Equal(t, int32(2), first.calls.Load())
-	require.Equal(t, int32(1), second.calls.Load())
-
-	_, err = group.Exchange(context.Background(), testQuery())
-	require.Error(t, err)
-	require.Equal(t, int32(2), first.calls.Load())
-	require.Equal(t, int32(2), second.calls.Load())
+	require.Equal(t, int32(3), totalCalls(first, second))
 }
 
-func TestAllDownRecoveryClearsMark(t *testing.T) {
+// --- survival ----------------------------------------------------------------
+
+func TestSurvivalRotatesByOldestError(t *testing.T) {
 	first := failing("a")
+	second := failing("b")
+	group := newTestGroup(t, ModeStable, time.Hour, 0, first, second)
+
+	_, _ = group.Exchange(context.Background(), testQuery()) // poisons target + rescue
+	base := totalCalls(first, second)
+
+	// All dirty. Each query: one attempt via the member with the OLDEST
+	// last error — alternation emerges because every attempt refreshes
+	// the mark.
+	var sequence []int32
+	for i := 0; i < 4; i++ {
+		_, err := group.Exchange(context.Background(), testQuery())
+		require.Error(t, err)
+		sequence = append(sequence, totalCalls(first, second))
+	}
+	require.Equal(t, base+4, sequence[3]) // one attempt per query
+	require.GreaterOrEqual(t, first.calls.Load(), int32(2))
+	require.GreaterOrEqual(t, second.calls.Load(), int32(2))
+}
+
+func TestSurvivalSuccessRestoresService(t *testing.T) {
 	recovered := atomic.Bool{}
-	second := newFakeMember("b", func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+	first := newFakeMember("a", func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
 		if recovered.Load() {
 			return okResponse(message), nil
 		}
 		return nil, E.New("down")
 	})
-	group := newTestGroup(t, time.Hour, first, second)
+	second := failing("b")
+	group := newTestGroup(t, ModeStable, time.Hour, 0, first, second)
 
+	_, _ = group.Exchange(context.Background(), testQuery())
 	_, err := group.Exchange(context.Background(), testQuery())
-	require.Error(t, err)
+	require.Error(t, err) // full outage
 
 	recovered.Store(true)
-	// Oldest is a (failed first); it still fails and rotates. Next query
-	// reaches b, which recovered — success must clear its down mark.
-	_, err = group.Exchange(context.Background(), testQuery())
-	require.Error(t, err)
+	// Survival attempts rotate; within two queries one lands on a,
+	// SUCCEEDS, and a's errors are erased — service restored.
+	var response *mDNS.Msg
+	for i := 0; i < 2 && response == nil; i++ {
+		if resp, err := group.Exchange(context.Background(), testQuery()); err == nil {
+			response = resp
+		}
+	}
+	require.NotNil(t, response, "survival must find the recovered server within the rotation")
+
+	// a is clean now: the next queries are NORMAL single exchanges to it.
+	state := group.GroupState()
+	var aState MemberState
+	for _, memberState := range state.Members {
+		if memberState.Tag == "a" {
+			aState = memberState
+		}
+	}
+	require.True(t, aState.Clean)
+	bCalls := second.calls.Load()
+	for i := 0; i < 3; i++ {
+		_, err := group.Exchange(context.Background(), testQuery())
+		require.NoError(t, err)
+	}
+	require.Equal(t, bCalls, second.calls.Load()) // b (dirty) untouched
+}
+
+// --- records -----------------------------------------------------------------
+
+func TestErrorTTLExpiryReturnsToCleanSet(t *testing.T) {
+	flaky := atomic.Bool{}
+	first := newFakeMember("a", func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+		if flaky.Load() {
+			return nil, E.New("blip")
+		}
+		return okResponse(message), nil
+	})
+	second := answering("b")
+	group := newTestGroup(t, ModeStable, 60*time.Millisecond, 0, first)
+	group.members = append(group.members, &member{tag: "b", transport: second})
+	group.access.Lock()
+	group.current = "a"
+	group.access.Unlock()
+
+	flaky.Store(true)
+	_, err := group.Exchange(context.Background(), testQuery())
+	require.NoError(t, err) // rescued by b
+	flaky.Store(false)
+
+	require.False(t, memberClean(group, "a"))
+	time.Sleep(80 * time.Millisecond)
+	require.True(t, memberClean(group, "a"), "error must expire by error_ttl")
+}
+
+func memberClean(group *Transport, tag string) bool {
+	for _, memberState := range group.GroupState().Members {
+		if memberState.Tag == tag {
+			return memberState.Clean
+		}
+	}
+	return false
+}
+
+func TestServfailIsFailureNxdomainIsAnswer(t *testing.T) {
+	servfail := newFakeMember("sf", func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+		return rcodeResponse(message, mDNS.RcodeServerFailure), nil
+	})
+	nx := newFakeMember("nx", func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+		return rcodeResponse(message, mDNS.RcodeNameError), nil
+	})
+	group := newTestGroup(t, ModeStable, time.Hour, 0, servfail)
+	group.members = append(group.members, &member{tag: "nx", transport: nx})
+	group.access.Lock()
+	group.current = "sf"
+	group.access.Unlock()
+
+	// SERVFAIL target → error record → rescue fan → NXDOMAIN is a valid
+	// answer and wins the fan.
 	response, err := group.Exchange(context.Background(), testQuery())
 	require.NoError(t, err)
-	require.Equal(t, mDNS.RcodeSuccess, response.Rcode)
-	// b is alive again: served directly, no last-resort path.
-	response, err = group.Exchange(context.Background(), testQuery())
-	require.NoError(t, err)
-	require.NotNil(t, response)
+	require.Equal(t, mDNS.RcodeNameError, response.Rcode)
+	require.False(t, memberClean(group, "sf"))
+	require.True(t, memberClean(group, "nx"))
 }
 
-func TestResetClearsDownState(t *testing.T) {
+func TestResetAmnesty(t *testing.T) {
 	first := failing("a")
 	second := answering("b")
-	group := newTestGroup(t, time.Hour, first, second)
-	_, err := group.Exchange(context.Background(), testQuery())
-	require.NoError(t, err)
-	require.Equal(t, int32(1), first.calls.Load())
+	group := newTestGroup(t, ModeStable, time.Hour, 0, first, second)
+	group.access.Lock()
+	group.current = "a"
+	group.access.Unlock()
+	_, _ = group.Exchange(context.Background(), testQuery())
+	require.False(t, memberClean(group, "a"))
 
 	group.Reset()
-	_, err = group.Exchange(context.Background(), testQuery())
-	require.NoError(t, err)
-	require.Equal(t, int32(2), first.calls.Load())
+	require.True(t, memberClean(group, "a"))
+	require.Empty(t, group.GroupState().Current)
 }
+
+// --- validation --------------------------------------------------------------
 
 func TestConstructorValidation(t *testing.T) {
 	logger := testLogger()
@@ -284,36 +396,38 @@ func TestConstructorValidation(t *testing.T) {
 	_, err = NewTransport(ctx, logger, "g", option.GroupDNSServerOptions{Servers: []string{"g"}})
 	require.ErrorContains(t, err, "cannot contain itself")
 
-	_, err = NewTransport(ctx, logger, "g", option.GroupDNSServerOptions{Servers: []string{"a"}, Mode: "bogus"})
-	require.ErrorContains(t, err, "unknown mode")
+	// v1 modes are gone — rc.1 configs break loudly, not silently.
+	for _, dead := range []string{"failover", "race", "round_robin", "bogus"} {
+		_, err = NewTransport(ctx, logger, "g", option.GroupDNSServerOptions{Servers: []string{"a"}, Mode: dead})
+		require.ErrorContains(t, err, "unknown mode", "mode %q must be rejected", dead)
+	}
 
-	// interval outside race mode: warning, not an error.
+	// win_ttl outside fastest: warning, not an error.
 	_, err = NewTransport(ctx, logger, "g", option.GroupDNSServerOptions{
-		Servers:  []string{"a"},
-		Interval: badoption.Duration(time.Minute),
+		Servers: []string{"a"},
+		Mode:    ModeStable,
+		WinTTL:  badoption.Duration(time.Minute),
 	})
 	require.NoError(t, err)
 }
+
+// --- manager integration -----------------------------------------------------
 
 type fakeTransportOptions struct{}
 
 func registerFakeType(registry *dns.TransportRegistry, transportType string, adapterType string) {
 	dns.RegisterTransport[fakeTransportOptions](registry, transportType,
 		func(ctx context.Context, logger log.ContextLogger, tag string, options fakeTransportOptions) (adapter.DNSTransport, error) {
-			return newFakeMemberWithType(adapterType, tag), nil
+			return &fakeMember{
+				TransportAdapter: dns.NewTransportAdapter(adapterType, tag, nil),
+				exchange: func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+					return okResponse(message), nil
+				},
+			}, nil
 		})
 }
 
-func newFakeMemberWithType(adapterType string, tag string) *fakeMember {
-	return &fakeMember{
-		TransportAdapter: dns.NewTransportAdapter(adapterType, tag, nil),
-		exchange: func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
-			return okResponse(message), nil
-		},
-	}
-}
-
-func newTestManager(t *testing.T, defaultTag string) (*dns.TransportManager, *dns.TransportRegistry, context.Context) {
+func newTestManager(t *testing.T, defaultTag string) (*dns.TransportManager, context.Context) {
 	t.Helper()
 	registry := dns.NewTransportRegistry()
 	RegisterTransport(registry)
@@ -321,11 +435,11 @@ func newTestManager(t *testing.T, defaultTag string) (*dns.TransportManager, *dn
 	registerFakeType(registry, "fakehosts", C.DNSTypeHosts)
 	manager := dns.NewTransportManager(testLogger(), registry, nil, defaultTag)
 	ctx := service.ContextWith[adapter.DNSTransportManager](context.Background(), manager)
-	return manager, registry, ctx
+	return manager, ctx
 }
 
 func TestManagerRejectsGroupCycle(t *testing.T) {
-	manager, _, ctx := newTestManager(t, "g1")
+	manager, ctx := newTestManager(t, "g1")
 	logger := testLogger()
 	require.NoError(t, manager.Create(ctx, logger, "g1", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"g2"}}))
 	require.NoError(t, manager.Create(ctx, logger, "g2", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"g1"}}))
@@ -335,7 +449,7 @@ func TestManagerRejectsGroupCycle(t *testing.T) {
 }
 
 func TestManagerRejectsMissingMember(t *testing.T) {
-	manager, _, ctx := newTestManager(t, "g1")
+	manager, ctx := newTestManager(t, "g1")
 	require.NoError(t, manager.Create(ctx, testLogger(), "g1", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"missing"}}))
 	err := manager.Start(adapter.StartStateStart)
 	require.Error(t, err)
@@ -343,7 +457,7 @@ func TestManagerRejectsMissingMember(t *testing.T) {
 }
 
 func TestManagerRejectsLocalSourceMember(t *testing.T) {
-	manager, _, ctx := newTestManager(t, "g1")
+	manager, ctx := newTestManager(t, "g1")
 	logger := testLogger()
 	require.NoError(t, manager.Create(ctx, logger, "h", "fakehosts", &fakeTransportOptions{}))
 	require.NoError(t, manager.Create(ctx, logger, "g1", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"h"}}))
@@ -353,7 +467,7 @@ func TestManagerRejectsLocalSourceMember(t *testing.T) {
 }
 
 func TestManagerStartsGroupAndNestedGroup(t *testing.T) {
-	manager, _, ctx := newTestManager(t, "outer")
+	manager, ctx := newTestManager(t, "outer")
 	logger := testLogger()
 	require.NoError(t, manager.Create(ctx, logger, "u1", "fakeudp", &fakeTransportOptions{}))
 	require.NoError(t, manager.Create(ctx, logger, "u2", "fakeudp", &fakeTransportOptions{}))

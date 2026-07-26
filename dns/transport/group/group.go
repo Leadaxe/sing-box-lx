@@ -1,23 +1,33 @@
-// Package group implements the lx `group` DNS server type (SPEC 033/034/035):
-// several member servers behind one tag with a selection strategy. Failover
-// walks the member list in order, skipping servers inside their down_time
-// window; race (race.go) periodically fans a real query out to all members
-// and pins the fastest responder until the next race.
+// Package group implements the lx `group` DNS server type (SPEC 033 v2):
+// several member servers behind one tag with a selection strategy built on a
+// TTL record model. Servers have NO states (no down/backoff); there are two
+// tables of expiring records instead:
 //
-// The group sits UNDER the DNS cache (cache keys carry the group tag), so
-// whatever the group returns is cached once for the whole group; member
-// responses that the group discards never reach the cache.
+//   - an ERROR record (error_ttl) is written by any failed exchange and
+//     erases the server's live wins;
+//   - a WIN record (win_ttl, fastest only) is written ONLY by the first
+//     successful answer of a fan-out (competitive — otherwise the current
+//     server would self-reinforce), and any successful exchange erases the
+//     server's live errors (which is NOT a win — no self-reinforcement).
 //
-// Observability (SPEC 035): every resolved probe is recorded into the
-// per-request query trace (common/dnstrack) — the answering member
-// (write-once, so nested groups attribute the leaf), the group path, the
-// probe chronology with outcome and rtt. GroupState() exposes the health
-// snapshot for the GetDNSGroups RPC.
+// CLEAN = zero live errors. Modes select a target among the clean; with no
+// clean member every query makes exactly ONE attempt via the least dirty
+// server and never fans (anti-storm on a dead network — "survival mode").
+// A network change (Reset) amnesties both tables.
+//
+// The group sits UNDER the DNS cache (cache keys carry the group tag):
+// only the answer the group returns is cached; fan answers it discards
+// never reach the cache.
+//
+// Observability (SPEC 035): probes are recorded into the per-request query
+// trace (write-once effective, group path, attempts, fanned/survival flags);
+// GroupState() exposes the record snapshot for GetDNSGroups.
 package group
 
 import (
 	"context"
 	"errors"
+	"math/rand/v2"
 	"os"
 	"sync"
 	"time"
@@ -35,11 +45,17 @@ import (
 )
 
 const (
-	ModeFailover = "failover"
-	ModeRace     = "race"
+	ModeStable   = "stable"
+	ModeFastest  = "fastest"
+	ModeParallel = "parallel"
 
-	DefaultDownTime = 30 * time.Second
-	DefaultInterval = 3 * time.Minute
+	DefaultErrorTTL = 2 * time.Minute
+	DefaultWinTTL   = 5 * time.Minute
+
+	// maxRecords caps each record slice: counts above it are
+	// indistinguishable for selection, and the cap bounds memory on a dead
+	// network where errors accumulate with every query.
+	maxRecords = 64
 )
 
 func RegisterTransport(registry *dns.TransportRegistry) {
@@ -53,12 +69,12 @@ type member struct {
 	transport adapter.DNSTransport
 }
 
-// memberState is the per-member health memory (SPEC 033/036). Guarded by
-// Transport.access. lastFail zero = the member is up.
-type memberState struct {
-	lastFail    time.Time
-	consecFails int
-	lastRTT     time.Duration // last successful probe; 0 = never measured
+// memberRecord is the per-member TTL record pair. Guarded by
+// Transport.access; slices are pruned lazily on read.
+type memberRecord struct {
+	errors  []time.Time
+	wins    []time.Time
+	lastRTT time.Duration // last successful probe; 0 = never measured
 }
 
 type Transport struct {
@@ -67,14 +83,15 @@ type Transport struct {
 	logger     log.ContextLogger
 	serverTags []string
 	mode       string
-	interval   time.Duration
-	downTime   time.Duration
+	errorTTL   time.Duration
+	winTTL     time.Duration
 
-	access  sync.Mutex
-	members []*member
-	state   map[string]*memberState
-
-	race raceState // SPEC 034; unused in failover mode
+	access   sync.Mutex
+	members  []*member
+	records  map[string]*memberRecord
+	current  string // sticky target (stable/fastest); "" = not chosen yet
+	election bool   // fastest: an election fan is in flight (single-flight)
+	gen      int    // bumped by Reset; a finishing fan from an older gen drops state writes
 }
 
 func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, options option.GroupDNSServerOptions) (adapter.DNSTransport, error) {
@@ -94,22 +111,22 @@ func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, opt
 	mode := options.Mode
 	switch mode {
 	case "":
-		mode = ModeFailover
-	case ModeFailover, ModeRace:
+		mode = ModeStable
+	case ModeStable, ModeFastest, ModeParallel:
 	default:
-		return nil, E.New("group[", tag, "]: unknown mode: ", mode, " (expected ", ModeFailover, " or ", ModeRace, ")")
+		return nil, E.New("group[", tag, "]: unknown mode: ", mode, " (expected ", ModeStable, ", ", ModeFastest, " or ", ModeParallel, ")")
 	}
-	interval := time.Duration(options.Interval)
-	if mode == ModeFailover && interval != 0 {
-		logger.Warn("group[", tag, "]: interval is only used in race mode, ignoring")
-		interval = 0
+	winTTL := time.Duration(options.WinTTL)
+	if mode != ModeFastest && winTTL != 0 {
+		logger.Warn("group[", tag, "]: win_ttl is only used in fastest mode, ignoring")
+		winTTL = 0
 	}
-	if interval == 0 {
-		interval = DefaultInterval
+	if winTTL == 0 {
+		winTTL = DefaultWinTTL
 	}
-	downTime := time.Duration(options.DownTime)
-	if downTime <= 0 {
-		downTime = DefaultDownTime
+	errorTTL := time.Duration(options.ErrorTTL)
+	if errorTTL <= 0 {
+		errorTTL = DefaultErrorTTL
 	}
 	return &Transport{
 		TransportAdapter: dns.NewTransportAdapter(C.DNSTypeGroup, tag, options.Servers),
@@ -117,10 +134,9 @@ func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, opt
 		logger:           logger,
 		serverTags:       options.Servers,
 		mode:             mode,
-		interval:         interval,
-		downTime:         downTime,
-		state:            make(map[string]*memberState),
-		race:             raceState{firstDone: make(chan struct{})},
+		errorTTL:         errorTTL,
+		winTTL:           winTTL,
+		records:          make(map[string]*memberRecord),
 	}, nil
 }
 
@@ -152,23 +168,237 @@ func (t *Transport) Close() error {
 	return nil
 }
 
-// Reset drops health state: down marks, per-member counters and (in race
-// mode) the winner and ranking. A network change invalidates all of it.
-// Members are reset by the manager's own loop; the group must not fan Reset
-// out.
+// Reset is the network-change amnesty: both record tables, the sticky
+// target and the election generation drop. Members are reset by the
+// manager's own loop; the group must not fan Reset out.
 func (t *Transport) Reset() {
 	t.access.Lock()
 	defer t.access.Unlock()
-	t.state = make(map[string]*memberState)
-	t.race.reset()
+	t.records = make(map[string]*memberRecord)
+	t.current = ""
+	t.gen++
+	// `election` is left as-is: an in-flight fan still owns the flag and
+	// clears it on completion; its state writes are dropped by the gen check.
 }
 
-func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
-	dnstrack.PushGroup(ctx, t.Tag()) // SPEC 035 — prepend: final order is inside-out
-	if t.mode == ModeRace {
-		return t.exchangeRace(ctx, message)
+// --- record operations (all under access) -----------------------------------
+
+func (t *Transport) recordLocked(tag string) *memberRecord {
+	record := t.records[tag]
+	if record == nil {
+		record = &memberRecord{}
+		t.records[tag] = record
 	}
-	return t.exchangeFailover(ctx, message)
+	return record
+}
+
+func pruneTimes(times []time.Time, ttl time.Duration, now time.Time) []time.Time {
+	firstLive := len(times)
+	for i, at := range times {
+		if now.Sub(at) < ttl {
+			firstLive = i
+			break
+		}
+	}
+	return times[firstLive:]
+}
+
+func appendCapped(times []time.Time, at time.Time) []time.Time {
+	times = append(times, at)
+	if len(times) > maxRecords {
+		times = times[len(times)-maxRecords:]
+	}
+	return times
+}
+
+func (t *Transport) liveErrorsLocked(tag string, now time.Time) []time.Time {
+	record := t.records[tag]
+	if record == nil {
+		return nil
+	}
+	record.errors = pruneTimes(record.errors, t.errorTTL, now)
+	return record.errors
+}
+
+func (t *Transport) liveWinsLocked(tag string, now time.Time) []time.Time {
+	record := t.records[tag]
+	if record == nil {
+		return nil
+	}
+	record.wins = pruneTimes(record.wins, t.winTTL, now)
+	return record.wins
+}
+
+// noteError records a failed exchange: an error record is written and the
+// server's live wins are erased (a win must not outlive a failure — that is
+// the flap-back trap of win_ttl > error_ttl).
+func (t *Transport) noteError(tag string) {
+	t.access.Lock()
+	defer t.access.Unlock()
+	record := t.recordLocked(tag)
+	record.errors = appendCapped(record.errors, time.Now())
+	record.wins = nil
+}
+
+// noteSuccess records a successful exchange: the server's live errors are
+// erased. This is NOT a win — erasing errors returns the server to the clean
+// set but gives it no advantage inside it (no self-reinforcement).
+func (t *Transport) noteSuccess(tag string, rtt time.Duration) {
+	t.access.Lock()
+	defer t.access.Unlock()
+	record := t.recordLocked(tag)
+	record.errors = nil
+	if rtt > 0 {
+		record.lastRTT = rtt
+	}
+}
+
+// noteWin records a competitive win (first success of a fan). fastest only —
+// no other mode reads wins.
+func (t *Transport) noteWin(tag string, gen int) {
+	t.access.Lock()
+	defer t.access.Unlock()
+	if t.gen != gen {
+		return
+	}
+	record := t.recordLocked(tag)
+	record.wins = appendCapped(record.wins, time.Now())
+}
+
+// setCurrent updates the sticky target; reports the previous value when it
+// actually changed (for the info log).
+func (t *Transport) setCurrent(tag string, gen int) (previous string, changed bool) {
+	t.access.Lock()
+	defer t.access.Unlock()
+	if t.gen != gen || t.current == tag {
+		return "", false
+	}
+	previous = t.current
+	t.current = tag
+	return previous, true
+}
+
+// --- target selection --------------------------------------------------------
+
+// selection is the routing decision for one query.
+type selection struct {
+	target   *member   // single-exchange target (nil when fan is set)
+	fan      []*member // fan participants (parallel / fastest election)
+	election bool      // this query holds the fastest election flag
+	survival bool      // no clean members: one attempt, no fan
+	gen      int
+}
+
+func (t *Transport) selectTarget() selection {
+	now := time.Now()
+	t.access.Lock()
+	defer t.access.Unlock()
+
+	var clean []*member
+	for _, current := range t.members {
+		if len(t.liveErrorsLocked(current.tag, now)) == 0 {
+			clean = append(clean, current)
+		}
+	}
+
+	if len(clean) == 0 {
+		return selection{target: t.leastDirtyLocked(now), survival: true, gen: t.gen}
+	}
+
+	switch t.mode {
+	case ModeParallel:
+		return selection{fan: append([]*member(nil), clean...), gen: t.gen}
+	case ModeFastest:
+		best, maxWins := t.fastestCandidatesLocked(clean, now)
+		if maxWins > 0 {
+			return selection{target: t.stickyPickLocked(best), gen: t.gen}
+		}
+		// Nobody has a live win — election time. Single-flight: exactly one
+		// query fans; concurrents of the window go to a random clean member.
+		if !t.election {
+			t.election = true
+			return selection{fan: append([]*member(nil), clean...), election: true, gen: t.gen}
+		}
+		return selection{target: clean[rand.IntN(len(clean))], gen: t.gen}
+	default: // ModeStable
+		return selection{target: t.stickyPickLocked(clean), gen: t.gen}
+	}
+}
+
+// stickyPickLocked implements «липкость прежде случайности»: keep the
+// current target while it belongs to the candidate set; re-elect a random
+// candidate otherwise.
+func (t *Transport) stickyPickLocked(candidates []*member) *member {
+	if t.current != "" {
+		for _, candidate := range candidates {
+			if candidate.tag == t.current {
+				return candidate
+			}
+		}
+	}
+	return candidates[rand.IntN(len(candidates))]
+}
+
+// fastestCandidatesLocked returns the clean members carrying the maximum
+// number of live wins, and that maximum.
+func (t *Transport) fastestCandidatesLocked(clean []*member, now time.Time) ([]*member, int) {
+	maxWins := 0
+	var best []*member
+	for _, candidate := range clean {
+		wins := len(t.liveWinsLocked(candidate.tag, now))
+		switch {
+		case wins > maxWins:
+			maxWins = wins
+			best = best[:0]
+			best = append(best, candidate)
+		case wins == maxWins:
+			best = append(best, candidate)
+		}
+	}
+	return best, maxWins
+}
+
+// leastDirtyLocked picks the survival target: fewest live errors, tie broken
+// by the OLDEST last error, full tie — randomly.
+func (t *Transport) leastDirtyLocked(now time.Time) *member {
+	var (
+		best      []*member
+		bestCount = -1
+		bestLast  time.Time
+	)
+	for _, candidate := range t.members {
+		errs := t.liveErrorsLocked(candidate.tag, now)
+		count := len(errs)
+		var last time.Time
+		if count > 0 {
+			last = errs[count-1]
+		}
+		switch {
+		case bestCount == -1 || count < bestCount || (count == bestCount && last.Before(bestLast)):
+			best = best[:0]
+			best = append(best, candidate)
+			bestCount = count
+			bestLast = last
+		case count == bestCount && last.Equal(bestLast):
+			best = append(best, candidate)
+		}
+	}
+	return best[rand.IntN(len(best))]
+}
+
+// --- exchange ----------------------------------------------------------------
+
+func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+	dnstrack.PushGroup(ctx, t.Tag()) // prepend: final order is inside-out
+	sel := t.selectTarget()
+
+	if sel.fan != nil {
+		return t.fan(ctx, message, sel.fan, sel.gen, sel.election)
+	}
+	if sel.survival {
+		return t.exchangeSurvival(ctx, message, sel.target)
+	}
+	return t.exchangeSingle(ctx, message, sel)
 }
 
 func (t *Transport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
@@ -177,69 +407,113 @@ func (t *Transport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callba
 	}()
 }
 
-// exchangeFailover walks members in list order, skipping the ones inside
-// their down_time window. One failure marks a member down; when every member
-// is down, exactly one attempt goes to the member whose failure is the
-// oldest — a miss refreshes its mark, so consecutive queries rotate.
-func (t *Transport) exchangeFailover(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
-	return t.exchangeOrdered(ctx, message, t.aliveMembers())
-}
-
-// exchangeLastResort handles the all-down case: one attempt via the member
-// with the oldest failure mark.
-func (t *Transport) exchangeLastResort(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
-	current := t.oldestFailedMember()
-	t.logger.WarnContext(ctx, "group[", t.Tag(), "]: all servers down, last-resort attempt via ", current.tag)
-	response, err := t.probeMember(ctx, current, message)
-	if isFailure(response, err) {
+// exchangeSingle is the normal path: one exchange with the sticky/best
+// target under a sub-deadline of HALF the remaining budget — the other half
+// is guaranteed to the rescue fan (otherwise a blackholed target eats the
+// whole budget and the fan starts dead).
+func (t *Transport) exchangeSingle(ctx context.Context, message *mDNS.Msg, sel selection) (*mDNS.Msg, error) {
+	if previous, changed := t.setCurrent(sel.target.tag, sel.gen); changed {
+		t.logCurrentChange(ctx, previous, sel.target.tag)
+	}
+	targetCtx, cancel := context.WithTimeout(ctx, t.targetBudget(ctx))
+	response, err, rtt := t.timedExchange(targetCtx, sel.target, message)
+	cancel()
+	t.traceAttempt(ctx, sel.target, response, err, rtt)
+	if !isFailure(response, err) {
+		t.noteSuccess(sel.target.tag, rtt)
+		t.recordEffective(ctx, sel.target)
 		return response, err
 	}
-	t.recordEffective(ctx, current)
+	// The target's sub-deadline was honest — its failure is always recorded.
+	t.noteError(sel.target.tag)
+	t.logProbeFailure(ctx, sel.target.tag, response, err)
+
+	rescuers := t.cleanExcept(sel.target.tag)
+	if len(rescuers) == 0 {
+		return response, err
+	}
+	return t.fan(ctx, message, rescuers, sel.gen, false)
+}
+
+// exchangeSurvival: no clean members — exactly one attempt via the least
+// dirty server, never a fan (anti-storm: one attempt is the whole price of
+// the query on a dead network). The attempt gets the FULL remaining budget:
+// there is no fan to reserve for.
+func (t *Transport) exchangeSurvival(ctx context.Context, message *mDNS.Msg, target *member) (*mDNS.Msg, error) {
+	dnstrack.MarkSurvival(ctx)
+	t.logger.WarnContext(ctx, "group[", t.Tag(), "]: no clean servers, survival attempt via ", target.tag)
+	response, err, rtt := t.timedExchange(ctx, target, message)
+	t.traceAttempt(ctx, target, response, err, rtt)
+	if !isFailure(response, err) {
+		t.noteSuccess(target.tag, rtt) // erases its errors → back to clean, stickiness holds it
+		t.recordEffective(ctx, target)
+		return response, err
+	}
+	t.noteError(target.tag)
+	t.logProbeFailure(ctx, target.tag, response, err)
 	return response, err
 }
 
-// probeMember performs one member exchange and settles its bookkeeping.
-func (t *Transport) probeMember(ctx context.Context, current *member, message *mDNS.Msg) (*mDNS.Msg, error) {
+// targetBudget is half of the remaining request budget (fallback: half of
+// the client default when the context carries no deadline).
+func (t *Transport) targetBudget(ctx context.Context) time.Duration {
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 {
+			return remaining / 2
+		}
+	}
+	return C.DNSTimeout / 2
+}
+
+func (t *Transport) timedExchange(ctx context.Context, current *member, message *mDNS.Msg) (*mDNS.Msg, error, time.Duration) {
 	started := time.Now()
 	response, err := current.transport.Exchange(ctx, message)
-	t.finishProbe(ctx, current, response, err, time.Since(started))
-	return response, err
+	return response, err, time.Since(started)
 }
 
-// finishProbe updates health state and the query trace for one resolved
-// probe. Shared by the sequential walks and the race collector. Returns
-// whether the probe was a failure.
-func (t *Transport) finishProbe(ctx context.Context, current *member, response *mDNS.Msg, err error, rtt time.Duration) bool {
-	failure := isFailure(response, err)
-	if failure {
-		t.markFailure(current.tag)
-		t.logFailure(ctx, current.tag, response, err)
-	} else {
-		t.recordSuccess(current.tag, rtt)
+// cleanExcept returns the clean members minus the given tag.
+func (t *Transport) cleanExcept(exceptTag string) []*member {
+	now := time.Now()
+	t.access.Lock()
+	defer t.access.Unlock()
+	var clean []*member
+	for _, current := range t.members {
+		if current.tag == exceptTag {
+			continue
+		}
+		if len(t.liveErrorsLocked(current.tag, now)) == 0 {
+			clean = append(clean, current)
+		}
 	}
-	// Leaves only: an inner group's own members already tell its story —
-	// a `group`-typed attempt would duplicate their time under one row.
-	if current.transport.Type() != C.DNSTypeGroup {
-		dnstrack.RecordAttempt(ctx, dnstrack.Attempt{
-			Server:     current.tag,
-			ServerType: current.transport.Type(),
-			Outcome:    outcomeOf(response, err),
-			RTTMs:      uint32(rtt.Milliseconds()),
-		})
-	}
-	return failure
+	return clean
 }
+
+// --- classification / trace / log -------------------------------------------
 
 // recordEffective attributes the answer to the member that produced it for
-// the DNS query stream (SPEC 035). Write-once inside the holder, so with
-// nesting the innermost leaf wins. No-op without the client-level holder.
+// the DNS query stream. Write-once inside the holder, so with nesting the
+// innermost leaf wins. No-op without the client-level holder.
 func (t *Transport) recordEffective(ctx context.Context, current *member) {
 	dnstrack.SetEffectiveServer(ctx, current.tag, current.transport.Type(), current.transport.OutboundTag())
 }
 
+// traceAttempt records one resolved probe into the query trace. Leaves only:
+// an inner group's own members already tell its story.
+func (t *Transport) traceAttempt(ctx context.Context, current *member, response *mDNS.Msg, err error, rtt time.Duration) {
+	if current.transport.Type() == C.DNSTypeGroup {
+		return
+	}
+	dnstrack.RecordAttempt(ctx, dnstrack.Attempt{
+		Server:     current.tag,
+		ServerType: current.transport.Type(),
+		Outcome:    outcomeOf(response, err),
+		RTTMs:      uint32(rtt.Milliseconds()),
+	})
+}
+
 // isFailure classifies a member result per the feature contract: transport
-// errors, timeouts and SERVFAIL fail over; NXDOMAIN and empty responses are
-// valid answers. Members surface rcodes both as *mDNS.Msg and as
+// errors, timeouts and SERVFAIL are failures; NXDOMAIN and empty responses
+// are valid answers. Members surface rcodes both as *mDNS.Msg and as
 // dns.RcodeError (the client converts the error form above the group), so
 // both representations are checked.
 func isFailure(response *mDNS.Msg, err error) bool {
@@ -253,8 +527,8 @@ func isFailure(response *mDNS.Msg, err error) bool {
 	return response != nil && response.Rcode == mDNS.RcodeServerFailure
 }
 
-// outcomeOf maps a probe result onto the wire vocabulary of the query trace
-// (SPEC 035): answered | timeout | network_error | servfail.
+// outcomeOf maps a probe result onto the wire vocabulary of the query trace:
+// answered | timeout | network_error | servfail.
 func outcomeOf(response *mDNS.Msg, err error) string {
 	if !isFailure(response, err) {
 		return dnstrack.AttemptAnswered
@@ -272,130 +546,71 @@ func outcomeOf(response *mDNS.Msg, err error) string {
 	return dnstrack.AttemptServfail
 }
 
-func (t *Transport) logFailure(ctx context.Context, tag string, response *mDNS.Msg, err error) {
+func (t *Transport) logProbeFailure(ctx context.Context, tag string, response *mDNS.Msg, err error) {
 	if err == nil {
 		err = dns.RcodeError(response.Rcode)
 	}
-	t.logger.DebugContext(ctx, "group[", t.Tag(), "]: server ", tag, " down for ", t.downTime.String(), ": ", err)
+	t.logger.DebugContext(ctx, "group[", t.Tag(), "]: server ", tag, " error recorded (ttl ", t.errorTTL.String(), "): ", err)
 }
 
-func (t *Transport) aliveMembers() []*member {
-	t.access.Lock()
-	defer t.access.Unlock()
-	return t.aliveMembersLocked()
-}
-
-func (t *Transport) aliveMembersLocked() []*member {
-	now := time.Now()
-	var alive []*member
-	for _, current := range t.members {
-		if state := t.state[current.tag]; state == nil || state.lastFail.IsZero() || now.Sub(state.lastFail) >= t.downTime {
-			alive = append(alive, current)
-		}
+func (t *Transport) logCurrentChange(ctx context.Context, previous string, next string) {
+	if previous == "" {
+		t.logger.InfoContext(ctx, "group[", t.Tag(), "]: current server: ", next)
+		return
 	}
-	return alive
+	t.logger.InfoContext(ctx, "group[", t.Tag(), "]: current server changed ", previous, " -> ", next)
 }
 
-func (t *Transport) oldestFailedMember() *member {
-	t.access.Lock()
-	defer t.access.Unlock()
-	oldest := t.members[0]
-	oldestAt := t.failedAtLocked(oldest.tag)
-	for _, current := range t.members[1:] {
-		if failedAt := t.failedAtLocked(current.tag); failedAt.Before(oldestAt) {
-			oldest, oldestAt = current, failedAt
-		}
-	}
-	return oldest
-}
-
-func (t *Transport) failedAtLocked(tag string) time.Time {
-	if state := t.state[tag]; state != nil {
-		return state.lastFail
-	}
-	return time.Time{}
-}
-
-func (t *Transport) stateOfLocked(tag string) *memberState {
-	state := t.state[tag]
-	if state == nil {
-		state = &memberState{}
-		t.state[tag] = state
-	}
-	return state
-}
-
-func (t *Transport) markFailure(tag string) {
-	t.access.Lock()
-	defer t.access.Unlock()
-	state := t.stateOfLocked(tag)
-	state.lastFail = time.Now()
-	state.consecFails++
-}
-
-func (t *Transport) recordSuccess(tag string, rtt time.Duration) {
-	t.access.Lock()
-	defer t.access.Unlock()
-	state := t.stateOfLocked(tag)
-	state.lastFail = time.Time{}
-	state.consecFails = 0
-	state.lastRTT = rtt
-}
-
-// --- GetDNSGroups state snapshot (SPEC 035) ---------------------------------
+// --- GetDNSGroups state snapshot ---------------------------------------------
 
 // MemberState is the health snapshot of one member for the state RPC.
 type MemberState struct {
-	Tag                 string
-	ServerType          string
-	Up                  bool
-	DownRemaining       time.Duration // 0 when up
-	ConsecutiveFailures int
-	LastRTT             time.Duration // 0 = never measured
+	Tag          string
+	ServerType   string
+	Clean        bool
+	LiveErrors   int
+	LastErrorAge time.Duration // valid when HasError
+	HasError     bool
+	LiveWins     int
+	Current      bool
+	LastRTT      time.Duration // 0 = never measured
 }
 
 // State is the group snapshot for the GetDNSGroups RPC.
 type State struct {
-	Tag      string
-	Mode     string
-	Winner   string // race only; "" before the first race
-	Ranking  []string
-	HasRaced bool
-	RaceAge  time.Duration // valid when HasRaced
-	Members  []MemberState
+	Tag     string
+	Mode    string
+	Current string // "" = not chosen yet / parallel
+	Members []MemberState
 }
 
-// GroupState returns a point-in-time health snapshot. The daemon handler
+// GroupState returns a point-in-time record snapshot. The daemon handler
 // discovers groups by asserting this method on the manager's transports.
 func (t *Transport) GroupState() State {
 	now := time.Now()
 	t.access.Lock()
 	defer t.access.Unlock()
 	snapshot := State{
-		Tag:      t.Tag(),
-		Mode:     t.mode,
-		Winner:   t.race.winner,
-		Ranking:  append([]string(nil), t.race.ranking...),
-		HasRaced: !t.race.lastRace.IsZero(),
-	}
-	if snapshot.HasRaced {
-		snapshot.RaceAge = now.Sub(t.race.lastRace)
+		Tag:     t.Tag(),
+		Mode:    t.mode,
+		Current: t.current,
 	}
 	for _, current := range t.members {
+		errs := t.liveErrorsLocked(current.tag, now)
 		memberSnapshot := MemberState{
 			Tag:        current.tag,
 			ServerType: current.transport.Type(),
-			Up:         true,
+			Clean:      len(errs) == 0,
+			LiveErrors: len(errs),
+			LiveWins:   len(t.liveWinsLocked(current.tag, now)),
+			Current:    current.tag == t.current,
 		}
-		if state := t.state[current.tag]; state != nil {
-			memberSnapshot.ConsecutiveFailures = state.consecFails
-			memberSnapshot.LastRTT = state.lastRTT
-			if !state.lastFail.IsZero() {
-				if remaining := t.downTime - now.Sub(state.lastFail); remaining > 0 {
-					memberSnapshot.Up = false
-					memberSnapshot.DownRemaining = remaining
-				}
-			}
+		if len(errs) > 0 {
+			memberSnapshot.HasError = true
+			memberSnapshot.LastErrorAge = now.Sub(errs[len(errs)-1])
+		}
+		if record := t.records[current.tag]; record != nil {
+			memberSnapshot.LastRTT = record.lastRTT
 		}
 		snapshot.Members = append(snapshot.Members, memberSnapshot)
 	}

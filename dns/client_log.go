@@ -63,7 +63,8 @@ func emitQueryEvent(ctx context.Context, transport adapter.DNSTransport, respons
 			}
 			event.GroupPath = trace.GroupPath
 			event.Attempts = trace.Attempts
-			event.Racer = trace.Racer
+			event.Fanned = trace.Fanned
+			event.Survival = trace.Survival
 		}
 	}
 	manager.Emit(event)
@@ -110,7 +111,8 @@ func emitFailedQuery(ctx context.Context, transport adapter.DNSTransport, questi
 			}
 			event.GroupPath = trace.GroupPath
 			event.Attempts = trace.Attempts
-			event.Racer = trace.Racer
+			event.Fanned = trace.Fanned
+			event.Survival = trace.Survival
 		}
 	}
 	manager.Emit(event)

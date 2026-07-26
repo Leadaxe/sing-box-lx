@@ -32,7 +32,8 @@ type QueryTrace struct {
 
 	groupPath []string  // inside-out; built by prepending on group entry
 	attempts  []Attempt // chronology of member probes, appended as they resolve
-	racer     bool      // this query triggered a race fan-out
+	fanned    bool      // the query involved a fan-out (rescue / election / parallel)
+	survival  bool      // no clean members: the answer came via the least dirty server
 }
 
 // Attempt is one resolved member probe.
@@ -59,7 +60,8 @@ type TraceSnapshot struct {
 	EffectiveOutbound string
 	GroupPath         []string
 	Attempts          []Attempt
-	Racer             bool
+	Fanned            bool
+	Survival          bool
 }
 
 type queryTraceKey struct{}
@@ -117,7 +119,7 @@ func PushGroup(ctx context.Context, tag string) {
 }
 
 // RecordAttempt appends one resolved probe. Safe from background goroutines
-// (a race collector keeps recording after the racer already returned).
+// (a fan collector keeps recording after the answer already left).
 func RecordAttempt(ctx context.Context, attempt Attempt) {
 	trace := traceFrom(ctx)
 	if trace == nil {
@@ -128,14 +130,28 @@ func RecordAttempt(ctx context.Context, attempt Attempt) {
 	trace.access.Unlock()
 }
 
-// MarkRacer flags the query that triggered a race fan-out.
-func MarkRacer(ctx context.Context) {
+// MarkFanned flags a query that involved a fan-out (rescue after a failed
+// target, a fastest election or a parallel-mode query).
+func MarkFanned(ctx context.Context) {
 	trace := traceFrom(ctx)
 	if trace == nil {
 		return
 	}
 	trace.access.Lock()
-	trace.racer = true
+	trace.fanned = true
+	trace.access.Unlock()
+}
+
+// MarkSurvival flags a query answered in survival mode (no clean members —
+// one attempt via the least dirty server). Without it the degradation is
+// invisible in the stream.
+func MarkSurvival(ctx context.Context) {
+	trace := traceFrom(ctx)
+	if trace == nil {
+		return
+	}
+	trace.access.Lock()
+	trace.survival = true
 	trace.access.Unlock()
 }
 
@@ -156,6 +172,7 @@ func SnapshotTrace(ctx context.Context) (TraceSnapshot, bool) {
 		EffectiveOutbound: trace.effectiveOutbound,
 		GroupPath:         append([]string(nil), trace.groupPath...),
 		Attempts:          append([]Attempt(nil), trace.attempts...),
-		Racer:             trace.racer,
+		Fanned:            trace.fanned,
+		Survival:          trace.survival,
 	}, true
 }
