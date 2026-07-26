@@ -8,7 +8,7 @@
 | **AmneziaWG 2.0** (AWG2) | `with_awg` | extra fields on a `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `route.lx_idle_suspend` | **mobile only** (AAR) |
-| **DNS server group** (SPEC 033–035) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
+| **DNS server group** (SPEC 033/035) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 
 Build the desktop/CLI binary: `make -f Makefile.lx lx-build` (output `sing-box`, version `…-lx.N`) — this bundles `with_xhttp` + `with_awg` (+ `with_lx_command`), but **not** `with_lx_idle_suspend`.
 Without a tag the feature is absent: an `xhttp` transport or an AWG field is rejected at load time with an explicit error (no silent downgrade).
@@ -586,7 +586,7 @@ table, profile matrix, key-material format, start-time validation and common foo
 
 ---
 
-## 5. DNS server group (SPEC 033–035)
+## 5. DNS server group (SPEC 033/035)
 
 Several DNS servers behind one tag with a selection strategy. Solves the
 "one dead DNS server kills resolution" problem: upstream's `dns.final` is a
@@ -595,56 +595,63 @@ outright on any network error, timeout or SERVFAIL. No build tag — the type
 is always available; a config without a `group` server behaves exactly like
 upstream.
 
+Servers carry **no states** (no down/backoff). There are two TTL'd record
+tables instead: an **error** record (any failed exchange; erases the
+server's live wins) and a **win** record (only the first success of a
+fan-out; any success erases the server's live errors). **Clean** = zero
+live errors. A network change amnesties both tables.
+
 ### Fields (a `dns.servers[]` entry)
 
 ```jsonc
 {
   "type": "group",                  // selector — must be "group"
   "tag": "public",
-  "servers": ["google", "cloudflare"], // REQUIRED, ≥1 tags of other DNS servers.
-                                       //   Order matters in failover mode.
-  "mode": "failover",               // failover (default) | race
-  "interval": "3m",                 // race only: min age of the previous race before
-                                    //   the next query triggers a new one.
-                                    //   Ignored in failover (a warning is logged)
-  "down_time": "30s"                // default 30s: how long a failed member is skipped
+  "servers": ["google", "cloudflare", "quad9"], // REQUIRED, ≥1 tags.
+                                    //   Order is NOT meaningful in any mode
+  "mode": "stable",                 // stable (default) | fastest | parallel
+  "error_ttl": "2m",                // default 2m: how long an error record lives
+  "win_ttl": "5m"                   // default 5m: how long a win record lives.
+                                    //   fastest only; ignored elsewhere (warning)
 }
 ```
 
-**What counts as a failure:** a transport error, a timeout, or `SERVFAIL`.
-`NXDOMAIN` and empty answers are **valid responses** — retrying them against
-another resolver would turn resolution into a lottery. One failure marks the
-member down for `down_time`; when **all** members are down, each query makes
-exactly one attempt via the member whose failure is the oldest (natural
-rotation, bounded latency).
+**Failure** = transport error, timeout, or `SERVFAIL`. `NXDOMAIN` and empty
+answers are **valid responses** (and competitive wins when first in a fan).
 
-**`mode: race`** picks the fastest member by racing a **real** query: the
-first query after the previous race aged past `interval` fans out to every
-live member; the first success answers that query and its member becomes the
-pinned winner. Arrival order of the remaining answers forms the fallback
-ranking (used if the winner fails between races). There are no timers and no
-synthetic probe traffic: no queries → no races (plays nice with
-[idle-suspend](lx-energy.md)). Only the winner's answer is cached.
+**Modes** (target chosen among the clean; with **no clean member** every
+mode makes exactly ONE attempt via the least dirty server and never fans —
+the anti-storm "survival" rule):
 
-**A group is a first-class server**: its tag is accepted in `dns.final`, in
-DNS rules, and inside another group's `servers`. Reference cycles are
-rejected at load (`circular server dependency`), not discovered at runtime.
-`fakeip` and `hosts` members are rejected — they are local sources, there is
-nothing to fail over.
+- `stable` — stickiness before randomness: stay on the current server while
+  it is clean; re-elect a random clean one only when it is not. No
+  return-to-primary: a recovered ex-target just rejoins the pool.
+- `fastest` — the clean server with the most live wins; when nobody has a
+  live win, the query becomes an **election fan** to all clean members
+  (single-flight: one election at a time, concurrent queries go to a random
+  clean member). Re-election rhythm = `win_ttl` expiry.
+- `parallel` — every query fans to all clean members; no wins recorded;
+  N× traffic by definition.
 
-**Observability:** the DNS query stream (`SubscribeDNSQueries`, §6) reports
-the member that **actually answered**; cache hits and total-failure events
-keep the group's own tag (nothing answered — that *is* the state). Each event
-also carries the probe trace (SPEC 035): the group path inside-out, the probe
-chronology with outcome (`answered`/`timeout`/`network_error`/`servfail`) and
-rtt, and a racer flag. The `GetDNSGroups` CommandClient call returns the live
-group state — mode, race winner/ranking/age, per-member up/down with cooldown
-remainder, consecutive failures and last rtt (`with_lx_command` builds).
+**Unified flow:** the single target gets a sub-deadline of HALF the
+remaining request budget — the rescue fan is guaranteed the rest. On target
+failure the query fans to the remaining clean members; the first success
+answers (and becomes the sticky target), stragglers are discarded (never
+cached, but their success still heals their server's error records). A fan
+failure observed after the request context ended is an artifact, recorded
+nowhere.
 
-> **Name leak warning.** On failover the query goes to the *next* member; in
-> race mode every raced query goes to **all** members at once. Do not mix
-> internal and public resolvers in one group — an internal name would leak to
-> the public one.
+**Observability:** the DNS query stream reports the member that actually
+answered (cache hits and total failures keep the group tag), the probe
+trace (group path inside-out, attempts with outcome
+`answered`/`timeout`/`network_error`/`servfail` and rtt), and the `fanned`
+/ `survival` flags. `GetDNSGroups` (§6, `with_lx_command`) returns the live
+records: per member — clean, live errors (count + age of newest), live
+wins, last rtt, current flag.
+
+> **Name leak warning.** Any mode fans the query name to all clean members
+> on a failure; `parallel` does it on every query. Do not mix internal and
+> public resolvers in one group.
 
 ### Example — resilient public DNS as the default
 
@@ -656,12 +663,15 @@ remainder, consecutive failures and last rtt (`with_lx_command` builds).
       { "type": "udp", "tag": "cloudflare", "server": "1.1.1.1" },
       { "type": "group", "tag": "public",
         "servers": ["google", "cloudflare"],
-        "mode": "race", "interval": "3m", "down_time": "30s" }
+        "mode": "fastest", "error_ttl": "2m", "win_ttl": "5m" }
     ],
     "final": "public"
   }
 }
 ```
+
+> ⚠️ The v1 contract (`mode: failover|race`, `interval`, `down_time`,
+> shipped in `v1.14.0-lx.16-rc.1`) is GONE: such configs fail to load.
 
 ## 6. Observability (CommandClient extensions)
 
