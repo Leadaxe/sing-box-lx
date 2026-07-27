@@ -255,6 +255,22 @@ func (c *CommandClient) GetOutbounds() (OutboundGroupItemIterator, error) {
 	})
 }
 
+// RunningConfig wraps the running-config document for gomobile. The wrapper is not
+// cosmetic: a method returning a bare string binds to a cgo frame whose result slot is an
+// nstring (a struct carrying a pointer), and cgo marks that frame __packed__, so the C
+// local is only 4-byte aligned on arm64 while the Go side writes the pointer-bearing slot
+// through a write barrier that requires 8. That combination kills the process in
+// bulkBarrierPreWrite. Returning a Go object (a refnum across the bridge) keeps the frame
+// pointer-free — the same shape Rule/PoolSlot already use.
+type RunningConfig struct {
+	content string
+}
+
+// Content returns the canonical JSON document.
+func (c *RunningConfig) Content() string {
+	return c.content
+}
+
 // GetRunningConfig returns the canonical JSON of the config the running box was actually
 // built from (SPEC 037): the post-override options snapshot captured at service start.
 // This is the source of truth for "what is running" — after a profile edit without
@@ -263,13 +279,13 @@ func (c *CommandClient) GetOutbounds() (OutboundGroupItemIterator, error) {
 // diff against the stored profile must be semantic, not textual. Per-node JSON ("View
 // details" / "Copy JSON") is derived client-side by extracting the tag from this
 // document — there is deliberately no per-tag RPC.
-func (c *CommandClient) GetRunningConfig() (string, error) {
-	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (string, error) {
+func (c *CommandClient) GetRunningConfig() (*RunningConfig, error) {
+	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*RunningConfig, error) {
 		response, err := client.GetRunningConfig(ctx, &emptypb.Empty{})
 		if err != nil {
-			return "", E.Cause(err, "get running config")
+			return nil, E.Cause(err, "get running config")
 		}
-		return response.Content, nil
+		return &RunningConfig{content: response.Content}, nil
 	})
 }
 
