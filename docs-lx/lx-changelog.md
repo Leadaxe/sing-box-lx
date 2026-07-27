@@ -10,6 +10,43 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.17-rc.2
+
+Adds one fix on top of `rc.1`, which stays as described below.
+
+**Report archives grew without bound — 427 MB of them on one device (SPEC 039,
+feature
+[HOTFIXES](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/004-HOTFIXES/FEATURE.md)).**
+Every OOM and crash report goes into a fresh directory under `files/oom_reports`
+/ `files/crash_reports`, and nothing ever deleted the old ones — upstream leaves
+that to the client, which only cleans up what it has exported. A single report
+is heavy (two pprof profiles plus a config copy, ~750 KB), so a recurring fault
+quietly eats the disk. Found on device: **575 directories / 427 MB accumulated
+over 19 days**, peaking at 94 reports in one day, none of them ever removed.
+
+The archive is now trimmed before each new report is written, on both the OOM
+and the crash path:
+
+- **32 directories** and **64 MB**, whichever bites first. The count limit is
+  what usually holds (32 × ~750 KB ≈ 24 MB); the byte budget covers a handful of
+  unusually fat reports.
+- Trimming targets `cap-1`, so the archive holds exactly the cap once the
+  incoming report lands, rather than overshooting by one every time.
+- Oldest go first, ordered by **modification time, not by name** — collision
+  suffixes (`-1`…`-1000`) break lexicographic order, since `…-05-2` sorts after
+  `…-05-10`, and a name sort would delete the wrong reports.
+- Best-effort by design: this runs while the process is already dying, so any
+  failure is skipped rather than propagated. Losing one report beats losing the
+  report that mattered. Loose files sharing the directory are neither deleted nor
+  counted against the budget.
+
+Report format, naming and export are unchanged — only deletion of old reports is
+new. Note this does **not** reclaim what has already piled up: rotation runs when
+the next report is written, so an archive that grew before this build shrinks on
+the next OOM or crash, not at upgrade time.
+
+Upstream `testing` had no new commits at cut time.
+
 #### v1.14.0-lx.17-rc.1
 
 Single fix, and it is a hard one: on Android, calling `GetRunningConfig`
