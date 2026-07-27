@@ -10,10 +10,11 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
-#### v1.14.0-lx.17
+#### v1.14.0-lx.17-rc.1
 
 Single fix, and it is a hard one: on Android, calling `GetRunningConfig`
-killed the core outright.
+killed the core outright. Cut as a release candidate because the fix changes
+the libbox API and wants a device check from the client before promotion.
 
 **`GetRunningConfig` crashed the core on android/arm64 (SPEC 038, feature
 [OBSERVABILITY](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md)).**
