@@ -87,6 +87,9 @@ func (r *oomReporter) WriteReport(memoryUsage uint64) error {
 		return err
 	}
 	chownReport(reportsDir)
+	// lx:begin report-rotation
+	pruneReports(reportsDir, maxReportCount, maxReportBytes)
+	// lx:end
 
 	destPath, err := nextAvailableReportPath(reportsDir, time.Now().UTC())
 	if err != nil {

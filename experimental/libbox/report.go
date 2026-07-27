@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"time"
 
@@ -78,6 +79,93 @@ func chownReport(path string) {
 		os.Chown(path, sUserID, sGroupID)
 	}
 }
+
+// lx:begin report-rotation
+//
+// Report archives are capped so a recurring fault cannot fill the device. Both limits
+// apply; whichever bites first wins. An OOM report carries two pprof profiles and a config
+// copy (~750 KB each), so the count limit is what usually holds, while the byte budget
+// covers the case of a few unusually fat reports.
+const (
+	maxReportCount = 32
+	maxReportBytes = 64 * 1024 * 1024
+)
+
+// pruneReports deletes the oldest report directories until the archive fits the limits
+// above. Best-effort: it is housekeeping on the crash/OOM path, so any failure is skipped
+// rather than propagated — losing a report is better than losing the report that matters.
+//
+// Ordering is by modification time, NOT by name: collision suffixes (-1..-1000 from
+// nextAvailableReportPath) break lexicographic order, since "…-05-2" sorts after
+// "…-05-10". Entries whose mtime cannot be read are treated as oldest and go first.
+func pruneReports(reportsDir string, keepCount int, keepBytes int64) {
+	entries, err := os.ReadDir(reportsDir)
+	if err != nil {
+		return
+	}
+	type report struct {
+		path     string
+		modTime  time.Time
+		size     int64
+		hasStamp bool
+	}
+	reports := make([]report, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(reportsDir, entry.Name())
+		item := report{path: path}
+		if info, infoErr := entry.Info(); infoErr == nil {
+			item.modTime = info.ModTime()
+			item.hasStamp = true
+		}
+		item.size = reportDirSize(path)
+		reports = append(reports, item)
+	}
+	sort.SliceStable(reports, func(i, j int) bool {
+		if reports[i].hasStamp != reports[j].hasStamp {
+			return !reports[i].hasStamp
+		}
+		return reports[i].modTime.Before(reports[j].modTime)
+	})
+
+	var totalBytes int64
+	for _, item := range reports {
+		totalBytes += item.size
+	}
+	// Leave room for the report about to be written: prune down to keepCount-1 so the
+	// archive holds keepCount once it lands, instead of overshooting by one every time.
+	for index, item := range reports {
+		remaining := len(reports) - index
+		if remaining < keepCount && totalBytes <= keepBytes {
+			break
+		}
+		if os.RemoveAll(item.path) != nil {
+			continue
+		}
+		totalBytes -= item.size
+	}
+}
+
+func reportDirSize(path string) int64 {
+	var total int64
+	filepath.WalkDir(path, func(_ string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if info, infoErr := entry.Info(); infoErr == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
+}
+
+// lx:end
 
 func nextAvailableReportPath(reportsDir string, timestamp time.Time) (string, error) {
 	destName := timestamp.Format("2006-01-02T15-04-05")

@@ -37,6 +37,9 @@ func archiveCrashReport(path string, crashReportsDir string) {
 	}
 
 	initReportDir(crashReportsDir)
+	// lx:begin report-rotation
+	pruneReports(crashReportsDir, maxReportCount, maxReportBytes)
+	// lx:end
 	destPath, err := nextAvailableReportPath(crashReportsDir, crashTime)
 	if err != nil {
 		return
