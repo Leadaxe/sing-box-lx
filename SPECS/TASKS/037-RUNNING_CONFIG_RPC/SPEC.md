@@ -5,9 +5,9 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — расширение libbox command-протокола (CONSTITUTION §3.6) |
-| Статус | C (complete) — код + тесты + сборки; в релизный тег ещё не входит |
-| Ветка | `lx-1.14` |
-| Связанные | [[SPECS/TASKS/015-COMMAND_PROTOCOL_RPC_EXTENSIONS]] (инфраструктура §3.6, образец handler'ов) · [[SPECS/TASKS/014-CLASH_API_TO_COMMANDCLIENT_MIGRATION]] |
+| Статус | C (complete) — код + тесты + сборки; отгружено в `v1.14.0-lx.16` |
+| Ветка | `lx` |
+| Связанные | [[SPECS/TASKS/015-COMMAND_PROTOCOL_RPC_EXTENSIONS]] (инфраструктура §3.6, образец handler'ов) · [[SPECS/TASKS/014-CLASH_API_TO_COMMANDCLIENT_MIGRATION]] · [[SPECS/TASKS/038-GOMOBILE_STRING_RETURN_FRAME_KILL]] (форма возврата libbox) |
 
 ## 1. Проблема
 
@@ -51,6 +51,20 @@ message RunningConfig {
 | Сервис не STARTED | `FailedPrecondition` |
 | STARTED, но снапшот не захвачен (attached-путь `service/api`, либо сбой marshal) | `Unavailable` |
 | Без `with_lx_command` | `Unimplemented` (stub-двойник) |
+
+### Форма в libbox (контракт с клиентом)
+
+```go
+func (c *CommandClient) GetRunningConfig() (*RunningConfig, error)
+func (c *RunningConfig) Content() string
+```
+
+Документ отдаётся **объектом с геттером, а не строкой**. Это требование
+биндинга, а не стилистика: метод gomobile, возвращающий голый `string`
+(равно как и `[]byte`), кладёт в cgo-фрейм структуру с указателем и
+роняет процесс на android/arm64 — разбор в
+[[SPECS/TASKS/038-GOMOBILE_STRING_RETURN_FRAME_KILL]]. Возврат объекта
+(refnum через мост) — та же форма, что у `Rule`/`PoolSlot`/итераторов.
 
 ## 3. Механизм
 

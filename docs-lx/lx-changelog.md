@@ -10,6 +10,59 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.17
+
+Single fix, and it is a hard one: on Android, calling `GetRunningConfig`
+killed the core outright.
+
+**`GetRunningConfig` crashed the core on android/arm64 (SPEC 038, feature
+[OBSERVABILITY](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md)).**
+Every call ended in `fatal error: bulkBarrierPreWrite: unaligned arguments`
+— a runtime `throw`, not a recoverable panic, so the process died and the
+tunnel dropped. The RPC shipped in `rc.3` and in stable `v1.14.0-lx.16`,
+which means the feature was unusable on Android in both.
+
+The cause is the **return type**, not the RPC logic. `GetRunningConfig` was
+the only exported `CommandClient` method returning a bare `(string, error)`:
+
+- gomobile encodes a Go string as the C struct `nstring{void *chars; jsize
+  len}` — a value **carrying a pointer**.
+- cgo builds the callback's combined argument/result frame and marks it
+  `__attribute__((__packed__))`, which drops the struct's alignment
+  requirement to 1, so the C local lands 4-byte aligned on arm64.
+- The generated Go wrapper assigns that pointer-bearing result slot, which
+  compiles to a GC write barrier — and the barrier requires 8-byte
+  alignment. 4 ≠ 8, so the runtime throws.
+
+Every other method returns a refnum, an iterator or a scalar, none of which
+puts a pointer in the frame — hence no barrier and no crash. Strings in
+*struct fields* (`Rule.Type`, `PoolSlot.Tag`) are equally safe: those cross
+as objects with getters.
+
+**API change (breaking for clients):**
+
+```go
+// before — killed the process on Android
+func (c *CommandClient) GetRunningConfig() (string, error)
+
+// now
+func (c *CommandClient) GetRunningConfig() (*RunningConfig, error)
+func (c *RunningConfig) Content() string
+```
+
+Callers read the document via `.Content()`. The wire protocol, the proto
+definition and the whole `daemon/` side are unchanged — the defect lived
+purely in the libbox binding.
+
+Note for anyone hitting this elsewhere: returning `[]byte` does **not** fix
+it. That binds to `nbyteslice{void *ptr; jsize len}` — the same
+pointer-in-a-packed-frame shape, the same crash. Only returning an object
+removes the pointer from the frame. A reflection test now guards the entire
+`CommandClient` surface against both return shapes, since any future method
+with one would reintroduce the same kill.
+
+Upstream `testing` had no new commits at cut time.
+
 #### v1.14.0-lx.16
 
 First stable tag of the `lx.16` line — a promotion of `rc.1`–`rc.3` with no
