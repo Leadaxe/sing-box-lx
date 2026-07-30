@@ -1804,6 +1804,7 @@ var (
 		(*daemon.STUNTestProgress)(nil),             // 32: daemon.STUNTestProgress
 	}
 )
+
 var file_experimental_boxdd_desktop_service_proto_depIdxs = []int32{
 	0,  // 0: desktop.DaemonInfo.ownership:type_name -> desktop.DaemonOwnership
 	8,  // 1: desktop.StartServiceRequest.options:type_name -> desktop.StartOptions

@@ -250,6 +250,7 @@ var (
 		(*emptypb.Empty)(nil),                // 4: google.protobuf.Empty
 	}
 )
+
 var file_daemon_managed_service_proto_depIdxs = []int32{
 	0, // 0: daemon.DebugCrashRequest.type:type_name -> daemon.DebugCrashRequest.Type
 	4, // 1: daemon.ManagedService.StopService:input_type -> google.protobuf.Empty

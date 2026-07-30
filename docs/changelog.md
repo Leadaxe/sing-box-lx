@@ -2,6 +2,10 @@
 icon: material/alert-decagram
 ---
 
+#### 1.14.0-beta.3
+
+* Fixes and improvements
+
 #### 1.14.0-beta.2
 
 * Add [JSON Schema](/configuration/schema/) support **1**
@@ -290,6 +294,10 @@ performance at least on par with it.
 
 See [Snell Inbound](/configuration/inbound/snell/) and
 [Snell Outbound](/configuration/outbound/snell/).
+
+#### 1.13.15
+
+* Fixes and improvements
 
 #### 1.13.14
 

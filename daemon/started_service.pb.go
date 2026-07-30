@@ -7875,6 +7875,7 @@ var (
 		(*emptypb.Empty)(nil),                     // 103: google.protobuf.Empty
 	}
 )
+
 var file_daemon_started_service_proto_depIdxs = []int32{
 	4,   // 0: daemon.ServiceStatus.status:type_name -> daemon.ServiceStatus.Type
 	101, // 1: daemon.Log.messages:type_name -> daemon.Log.Message

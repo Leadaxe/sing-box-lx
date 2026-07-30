@@ -81,8 +81,7 @@ func build() error {
 	if cgoEnabled {
 		cgoEnabledValue = "1"
 	}
-	command.Env = append(
-		os.Environ(),
+	command.Env = append(os.Environ(),
 		"CGO_ENABLED="+cgoEnabledValue,
 		"GOOS="+operatingSystem,
 		"GOARCH="+architecture,

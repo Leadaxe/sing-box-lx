@@ -220,8 +220,7 @@ func (t *adaptiveTimer) poll() {
 func (t *adaptiveTimer) nextState(sample memorySample) pressureState {
 	switch t.policyMode {
 	case policyModeMemoryLimit, policyModeNetworkExtension:
-		return nextPressureState(
-			t.state,
+		return nextPressureState(t.state,
 			sample.usage >= t.limitThresholds.trigger,
 			sample.usage >= t.limitThresholds.armed,
 			sample.usage >= t.limitThresholds.resume,
@@ -231,8 +230,7 @@ func (t *adaptiveTimer) nextState(sample memorySample) pressureState {
 			return pressureStateNormal
 		}
 		thresholds := t.availableThresholds(sample)
-		return nextPressureState(
-			t.state,
+		return nextPressureState(t.state,
 			sample.available <= thresholds.trigger,
 			sample.available <= thresholds.armed,
 			sample.available <= thresholds.resume,
