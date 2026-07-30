@@ -45,7 +45,29 @@ new. Note this does **not** reclaim what has already piled up: rotation runs whe
 the next report is written, so an archive that grew before this build shrinks on
 the next OOM or crash, not at upgrade time.
 
-Upstream `testing` had no new commits at cut time.
+**240 upstream commits merged** — drift accumulated since the `beta.2` base and
+is now closed (upstream has not tagged a release past `beta.2` yet, so the
+reported base stays `v1.14.0-beta.2`). Notable for this fork: URLTest now *requires* a history
+storage in the context instead of silently creating one, DNS gained
+namespace/parallel `evaluate` support and client-subnet-aware caching,
+`rule_set` matching semantics were simplified, JSON schema generation landed, and
+a TUN dispatcher deadlock plus a local-DNS block on cancelled queries were fixed.
+New upstream protocols (snell, usbip, openvpn, openconnect) are present in the
+tree but stay out of the AAR tag set, as before.
+
+Most of the 56 merge conflicts were textual, not semantic: our branch already
+carried the upstream code from earlier merges, and upstream force-pushes
+`testing`, so the same commits reappeared under new hashes against a stale
+merge base. Two were real and are fixed here — a dropped `time` import that
+broke the whole tree, and a duplicated DNS log function that upstream added
+independently of ours. Fork-specific behaviour was re-verified against the merge
+rather than assumed: idle-suspend still iterates endpoints, the detour tail still
+reaches the client, WireGuard addresses still come from the cache rather than a
+possibly-torn-down device, and the AAR tag set is unchanged.
+
+One config-schema addition rides along: the `servers` field of a `group` DNS
+server is now declared as a DNS-server reference, so upstream's new JSON schema
+cross-links it instead of emitting a plain string list.
 
 #### v1.14.0-lx.17-rc.1
 

@@ -4,7 +4,7 @@
 |------|----------|
 | Тип | Процессная фича (постоянная работа форка) |
 | Апстрим | [SagerNet/sing-box](https://github.com/SagerNet/sing-box), ветка `testing` |
-| Наша ветка | `lx-1.14` (релизная), `lx` — ff-follower |
+| Наша ветка | `lx` (релизная; `lx-1.14` — архивный якорь миграции) |
 | Состояние | Живой watchlist |
 
 Форк живёт поверх чужой базы, и база движется. Эта фича — про то, чтобы
@@ -40,7 +40,8 @@
 | [028](../../TASKS/028-NESTED_TUNNEL_UDP_FRAGMENT/SPEC.md) | `UDPFragmentDefault` у endpoint/masque | `common/dialer` DF-умолчания | **HOLD** | Если апстрим сам пометит туннельные outbound'ы → DROP |
 | [030](../../TASKS/030-FAST_BOX_SHUTDOWN/SPEC.md) | `QuiesceForShutdown` | `box.Close`, `Endpoint.Close`, `resumeMu` | **HOLD** | Апстрим введёт свой quiesce-этап → REWORK (не DROP: наш параллельный close останется полезен) |
 | [020](../../TASKS/020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) | idle-suspend | Сигнатуры `Endpoint`, `outbound.Manager`, `EndpointManager` | **HOLD** | Смена интерфейсов = ребейз-риск; тик обходит `Endpoints()`, регресс-тест стережёт щель |
-| [019](../../TASKS/019-URLTEST_MODE_STICKY/SPEC.md) | Пул и sticky в urltest | `protocol/group/urltest.go`, `metadata.Domain` | **HOLD** | Апстрим переписывает urltest → REWORK |
+| [019](../../TASKS/019-URLTEST_MODE_STICKY/SPEC.md) | Пул и sticky в urltest | `protocol/group/urltest.go`, `metadata.Domain`, `NewURLTestGroup` | **HOLD** | Мерж 2026-07-30 апстрим urltest трогал (`history` → `*urltest.HistoryStorage`, `InterfaceUpdated`), но НЕ дошёл до выбора узла — наш пул/sticky накладываются как есть. Полноценный REWORK всё ещё впереди |
+| [014](../../TASKS/014-CLASH_API_TO_COMMANDCLIENT_MIGRATION/SPEC.md) · [019](../../TASKS/019-URLTEST_MODE_STICKY/SPEC.md) | — (правило) | `NewURLTestGroup`, `box.go` регистрация `urltest.HistoryStorage` | **CONSTRAINT** | Апстрим сделал history-хранилище **обязательным**: нет в ctx → группа падает с `missing URL test history storage` (раньше молча создавалась). Нас это не ломает — `box.go:182` безусловно кладёт хранилище в ctx, если его там нет, независимо от `with_clash_api`; **проверено вживую**: конфиг с `round_robin`-группой проходит `check` на AAR-наборе тегов без `with_clash_api`. Правило на будущее: **не убирать эту регистрацию из `box.go`** и не полагаться на ClashServer как её источник — в AAR его нет |
 | [014](../../TASKS/014-CLASH_API_TO_COMMANDCLIENT_MIGRATION/SPEC.md) | Два набора build-тегов | `release/DEFAULT_BUILD_TAGS` | **CONSTRAINT** | `with_clash_api` выключается **только в AAR**; desktop/CLI обязан его сохранять (внешние дашборды) |
 | [025](../../TASKS/025-AWG_TRANSPORT_PADDING_OVERRUN/SPEC.md) · [026](../../TASKS/026-AWG_MAGIC_VS_RESERVED_CLEAR/SPEC.md) | Фиксы в submodule | Тег `wireguard-go` (сейчас `v0.0.4-8-g7d15f33`) | **HOLD** | Снятие происходит бампом submodule, не мержем ядра — проверять отдельно |
 
@@ -48,8 +49,16 @@
 
 1. **Проверить дрейф** апстрима перед любым релизным тегом — и обычно
    смержить до сборки, а не после.
-2. ⚠️ **`upstream/testing` force-push'ится.** Счётчик `git rev-list` врёт;
-   честная дельта считается как diff от `<merge>^2`.
+2. ⚠️ **`upstream/testing` force-push'ится.** Счётчик `git rev-list` врёт — но
+   и `<merge>^2` тоже: после переписывания истории второй родитель указывает на
+   мёртвую ветку. Честный признак «дрейфа нет» — `merge-base == tip
+   upstream/testing`. Если merge-base уехала, сверяй **по темам коммитов**
+   (`git log --format=%s`), а не по хешам: после force-push у уже влитых
+   коммитов другие хеши, и git показывает их как новые. Сработавший приём:
+   `comm -23 <(темы upstream) <(темы наши)` — что осталось, то и есть реально
+   новое. Так на мерже 2026-07-30 из «210 коммитов впереди» реально новыми
+   оказались 5; их взяли `cherry-pick`, а не вторым мержем (второй мерж заново
+   поднял бы 49 уже разрешённых конфликтов).
 3. Пройти watchlist: по каждому триггеру проверить, не сменился ли исход.
 4. Собрать, `gofmt -l` по lx-файлам, `lx-check` — и только затем тег.
 5. Submodule `wireguard-go`: после `make lx-proto` он может остаться `-dirty`
