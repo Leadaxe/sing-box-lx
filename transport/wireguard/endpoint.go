@@ -383,10 +383,12 @@ func (e *Endpoint) Close() error {
 	// (nil = torn down, nothing to close). Closing it here too keeps a
 	// teardown/rebuild cycle leak-free: Rebuild installs a fresh tun device and
 	// the old one is gone by then. Guards against the nil-panic upstream's bare
-	// `return e.tunDevice.Close()` would hit on our teardown path.
+	// `return e.tunDevice.Close()` would hit on our teardown path. The error is
+	// propagated as upstream does — only the nil check is ours.
 	if e.tunDevice != nil {
-		e.tunDevice.Close()
+		err := e.tunDevice.Close()
 		e.tunDevice = nil
+		return err
 	}
 	return nil
 }

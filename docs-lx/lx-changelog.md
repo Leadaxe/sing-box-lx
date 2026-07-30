@@ -10,6 +10,19 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.17-rc.3
+
+One-line fix on top of `rc.2`, which stays as described below.
+
+**`Endpoint.Close()` reports tun-device close failures again.** Our teardown
+support (SPEC 020) wrapped the final `tunDevice.Close()` in a nil check — the
+device may already be gone when a torn-down endpoint is closed — but discarded
+its error and returned `nil`, where upstream returns it. A device that failed to
+close therefore looked like a clean shutdown in the logs. The nil guard stays;
+only the error is propagated now, matching upstream. The endpoint manager already
+wraps and logs this error, so the sole visible change is that a real failure is
+no longer silent.
+
 #### v1.14.0-lx.17-rc.2
 
 Adds one fix on top of `rc.1`, which stays as described below.
