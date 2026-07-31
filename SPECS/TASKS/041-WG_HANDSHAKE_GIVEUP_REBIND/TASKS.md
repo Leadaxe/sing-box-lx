@@ -8,5 +8,5 @@
 - [x] тесты: `go test ./device/` (submodule) зелёный; `go test -tags with_gvisor,with_awg ./transport/wireguard/ ./protocol/wireguard/` зелёные
 - [x] `gofmt -l` чист, `go vet` зелёный, полная сборка с lx-тегами зелёная
 - [x] доки: Roadmap (SPECS/README) + реестр HOTFIXES (FEATURE.md, запись 041 с условием снятия)
-- [ ] UPHOLD-проход, статус C
+- [x] UPHOLD-проход (свежий судья, 5/5, предано 0, check-uphold OK), статус C
 - [ ] field-подтверждение на стенде жалобы (остаток, вне закрытия synthetic-грейда)
