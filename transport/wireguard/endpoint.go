@@ -322,6 +322,11 @@ func (e *Endpoint) Start(resolve bool) error {
 		},
 	}
 	wgDevice := device.NewDevice(e.options.Context, e.returnDevice, bind, logger, e.options.Workers)
+	// lx: SPEC 041 — passive self-heal: on handshake give-up the device rebinds
+	// its socket (fresh ephemeral port unless the user pinned listen_port) and
+	// re-initiates, so a dead NAT/DPI flow entry cannot hold the endpoint in
+	// ERR until a manual reconnect.
+	wgDevice.SetGiveUpRebind(true, e.options.ListenPort == 0)
 	e.tunDevice.SetDevice(wgDevice)
 	var ipcConf strings.Builder
 	ipcConf.WriteString(e.ipcConf)
