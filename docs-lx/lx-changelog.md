@@ -12,7 +12,28 @@ as GitHub **pre-releases** and never become "Latest".
 
 #### v1.14.0-lx.17-rc.4
 
-Adds one fix on top of `rc.3`, which stays as described below.
+Adds two fixes on top of `rc.3`, which stays as described below.
+
+**WG/AWG endpoints heal themselves after device sleep instead of staying in ERR
+until a manual reconnect (SPEC 041, feature
+[HOTFIXES](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/004-HOTFIXES/FEATURE.md)).**
+While the phone sleeps, the per-flow state of the tunnel's UDP 5-tuple dies on
+the path (the NAT mapping expires and/or a DPI flow entry goes stale). Upstream
+wireguard-go then retries handshakes into that same dead socket forever — same
+source port, same dead 5-tuple — which is exactly what the field dumps showed:
+receive workers alive for half an hour, socket never reopened, zero replies.
+Reconnecting "fixed" it purely by opening a new socket with a fresh ephemeral
+port. The device now does that by itself: when a peer's handshake retry cycle
+exhausts (~90 s of unanswered initiations — the existing give-up event, which
+only fires under traffic demand), the bind is reopened once with a fresh
+ephemeral port and a new handshake is kicked immediately. For masquerade
+profiles the `i1` decoy rides out with the first initiation of the new 5-tuple,
+re-opening the flow on the DPI. Debounced to one rebind per give-up cycle; an
+explicitly pinned `listen_port` is preserved (self-heal via port change is then
+unavailable, by design); both bind paths (plain and `detour`) heal through the
+same mechanism. Zero cost while healthy, asleep or closed: no timers, no
+goroutines, no traffic — on a down device the rebind degrades to a no-op, so it
+never fights idle-suspend (SPEC 020).
 
 **System-stack TCP no longer dies forever when its listener is killed out from
 under the core (SPEC 040, feature
