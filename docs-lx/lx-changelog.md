@@ -10,6 +10,33 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.17-rc.4
+
+Adds one fix on top of `rc.3`, which stays as described below.
+
+**System-stack TCP no longer dies forever when its listener is killed out from
+under the core (SPEC 040, feature
+[HOTFIXES](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/004-HOTFIXES/FEATURE.md)).**
+With `stack: "system"` every new TCP connection from the TUN is NAT-rewritten
+onto a local forwarder listener. Its accept loop treated *any* `Accept` error as
+terminal and silently returned — so when something else in the shared Android
+process closed the listener's fd (a stray close on a reused descriptor number —
+the LxBox §047 "browser dead, QUIC alive" failure), the stack kept running and
+kept rewriting every new SYN onto a dead port. The OS answered each one with an
+instant RST: every app got `ECONNREFUSED` in ~16 ms until the VPN was restarted,
+while UDP, QUIC and DNS worked fine. Reproduced on device: ~1 in 8–36 fast VPN
+restarts, worse on a "dirty" process — which is why it had floated uncaught for
+months.
+
+sing-tun is now a fork submodule (`submodules/sing-tun`, pinned at the exact
+upstream revision from go.mod) with a single-file patch: an unexpected `Accept`
+error is logged with the errno (which names the killer path), the listener is
+recreated on the same address, the forwarder port is republished atomically, and
+the loop keeps serving. A deliberate `System.Close()` stays silent as before.
+If the rebind itself fails, the loop logs an error and gives up — no worse than
+upstream. A recovery counter is kept as telemetry: if it ever ticks, the
+fd-closing trigger on the client side is still alive.
+
 #### v1.14.0-lx.17-rc.3
 
 One-line fix on top of `rc.2`, which stays as described below.

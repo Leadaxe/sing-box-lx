@@ -11,3 +11,7 @@
 	path = submodules/wireguard-go
 	url = https://github.com/Leadaxe/wireguard-go-awg2-lx
 	branch = lx-awg2-v005
+[submodule "submodules/sing-tun"]
+	path = submodules/sing-tun
+	url = https://github.com/Leadaxe/sing-tun-lx
+	branch = lx

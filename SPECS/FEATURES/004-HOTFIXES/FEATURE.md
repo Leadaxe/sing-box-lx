@@ -29,6 +29,7 @@
 | [030](../../TASKS/030-FAST_BOX_SHUTDOWN/SPEC.md) | `box.Close()` виснет 10 с+ при ~30 узлах | `box.go`, `route/reachability_common_lx.go` | Апстрим введёт свой quiesce-этап при остановке | держим |
 | [012](../../TASKS/012-TCP_DOWNLINK_STALL_ZOMBIE_CONNS/SPEC.md) | ↑517 ↓0, приложения «висят» | — (кода нет) | — | закрыт: не воспроизводится |
 | [039](../../TASKS/039-REPORT_ARCHIVE_ROTATION/SPEC.md) | Архивы отчётов растут без предела — 427 МБ / 575 папок за 19 дней | `experimental/libbox/report.go` + вызов в OOM- и crash-путях | Апстрим введёт свою ротацию архивов отчётов | держим |
+| [040](../../TASKS/040-SINGTUN_ACCEPTLOOP_SELFHEAL/SPEC.md) | acceptLoop system-стека молча умирает от чужого close fd → весь новый TCP получает мгновенный RST до рестарта VPN (LxBox §047: «браузер мёртв, QUIC жив») | форк `submodules/sing-tun` (`stack_system.go`: warn с errno + relisten + счётчик) | Апстрим сделает acceptLoop устойчивым (или заменит механику system-стека) | держим |
 | [041](../../TASKS/041-WG_HANDSHAKE_GIVEUP_REBIND/SPEC.md) | WG/AWG-узлы после сна устройства навсегда в ERR (мёртвый 5-tuple), лечит только реконнект | форк `submodules/wireguard-go` (`device/`: rebind по give-up) + 1 строка `transport/wireguard/endpoint.go` | Апстрим введёт своё пересоздание bind по провалу цикла рукопожатий (следить за give-up веткой `device/timers.go` при бампах submodule) | держим |
 
 ## Разбор записей
