@@ -2,13 +2,13 @@
 
 **Фича:** [OBSERVABILITY](../../FEATURES/006-OBSERVABILITY/FEATURE.md)
 
-**Тип:** lx-фича (расширение connection-метаданных)
-**Статус:** C (complete) — реализовано и отгружено
-**Приоритет:** Medium (UI: показать реальный физический путь пакета)
-**Файлы ядра:** `common/trafficcontrol/tracker.go`, `daemon/started_service.go`,
-`daemon/started_service.proto`, `experimental/libbox/command_types.go`
-**Связано:** SPEC 014 (Clash→CommandClient), SPEC 015 (RPC extensions), SPEC 016
-(connections map race)
+| Поле | Значение |
+|------|----------|
+| Тип | F (feature) — расширение connection-метаданных |
+| Статус | C (complete) — реализовано и отгружено |
+| Приоритет | Medium — UI: показать реальный физический путь пакета |
+| Файлы ядра | `common/trafficcontrol/tracker.go`, `daemon/started_service.go`, `daemon/started_service.proto`, `experimental/libbox/command_types.go` |
+| Связанные | [[SPECS/TASKS/014-CLASH_API_TO_COMMANDCLIENT_MIGRATION]] · [[SPECS/TASKS/015-COMMAND_PROTOCOL_RPC_EXTENSIONS]] · [[SPECS/TASKS/016-CONNECTIONS_MAP_MUTEX]] |
 
 ## Задача
 

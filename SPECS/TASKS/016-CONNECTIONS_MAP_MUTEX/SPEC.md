@@ -2,15 +2,17 @@
 
 **Фича:** [OBSERVABILITY](../../FEATURES/006-OBSERVABILITY/FEATURE.md)
 
-**Тип:** долг ядра (bug, data race → fatal)
-**Статус:** Fixed — `sync.Mutex` добавлен в `Connections`, race-тест зелёный под `-race`.
-Клиентский обход LxBox §170 (per-client аккумуляторы) остаётся как штатная схема для
+| Поле | Значение |
+|------|----------|
+| Тип | B (bug) — долг ядра: data race → fatal |
+| Статус | C (complete) — `sync.Mutex` добавлен в `Connections`, race-тест зелёный под `-race` |
+| Приоритет | High — приводил к `fatal error` и abort всего процесса при ≥2 подписчиках `CommandConnections` |
+| Файл | `experimental/libbox/command_types.go` |
+| Связанные | [[SPECS/TASKS/014-CLASH_API_TO_COMMANDCLIENT_MIGRATION]] · [[SPECS/TASKS/015-COMMAND_PROTOCOL_RPC_EXTENSIONS]] |
+
+Клиентский обход LxBox §170 (per-client аккумуляторы) остаётся штатной схемой для
 потребителей разной скорости/фильтра; мьютекс — страховка корректности класса и защита
-от 3-го потребителя, не повод откатывать клиентскую схему.
-**Приоритет:** High (приводил к `fatal error` → abort всего процесса при ≥2
-подписчиках `CommandConnections`)
-**Файл:** `experimental/libbox/command_types.go`
-**Связано:** SPEC 014 (Clash→CommandClient), SPEC 015 (RPC extensions)
+от третьего потребителя, не повод откатывать клиентскую схему.
 
 ## Реализация (Fixed)
 

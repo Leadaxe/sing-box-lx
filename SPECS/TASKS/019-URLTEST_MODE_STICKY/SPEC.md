@@ -2,12 +2,14 @@
 
 **Фича:** [URLTEST_BALANCE](../../FEATURES/007-URLTEST_BALANCE/FEATURE.md)
 
-**Тип:** lx-фича (балансировка нагрузки на `urltest`)
-**Статус:** реализовано; device-verified 2026-07-15 (CPH2411, LxBox v2.15.4 + ядро v1.14.0-lx.5): ревизия связки со SPEC 020 (журнал пп.18–19, вкл. passive_check) подтверждена вживую вместе с прежним поведением.
-**История:** v1 (round_robin по всем живым, rc.11–12) переработан в текущий пул-дизайн (v2,
-rc.13). Прежний v1-SPEC и его TEST_REPORT — в истории git (этот файл их заменяет).
-**Связано:** `Now()` cold-start (rc.12), upstream #4110, SPEC 014/015 (GetPool RPC), SPEC 016/017.
-**Файлы:** `option/group.go`, `protocol/group/urltest.go`, `protocol/group/urltest_balance_lx.go`, `constant/proxy.go`, daemon proto/handler, libbox GetPool.
+| Поле | Значение |
+|------|----------|
+| Тип | F (feature) — балансировка нагрузки на `urltest` |
+| Статус | C (complete) — device-verified 2026-07-15 (CPH2411, LxBox v2.15.4 + ядро `v1.14.0-lx.5`): ревизия связки со SPEC 020 (журнал пп. 18–19, вкл. `passive_check`) подтверждена вживую вместе с прежним поведением |
+| Приоритет | Medium |
+| Файлы | `option/group.go`, `protocol/group/urltest.go`, `protocol/group/urltest_balance_lx.go`, `constant/proxy.go`, daemon proto/handler, libbox `GetPool` |
+| История | v1 (round_robin по всем живым, rc.11–12) переработан в пул-дизайн (v2, rc.13). Прежний v1-SPEC и его TEST_REPORT — в истории git, этот файл их заменяет |
+| Связанные | [[SPECS/TASKS/014-CLASH_API_TO_COMMANDCLIENT_MIGRATION]] · [[SPECS/TASKS/015-COMMAND_PROTOCOL_RPC_EXTENSIONS]] · [[SPECS/TASKS/016-CONNECTIONS_MAP_MUTEX]] · [[SPECS/TASKS/017-CONNECTION_DETOUR_CHAIN]] · [[SPECS/TASKS/020-MULTI_WG_IDLE_BUFFER_HEAT]] · `Now()` cold-start (rc.12), upstream #4110 |
 
 ---
 

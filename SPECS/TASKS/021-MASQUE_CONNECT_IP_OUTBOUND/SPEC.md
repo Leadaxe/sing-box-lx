@@ -2,14 +2,17 @@
 
 **Фича:** [MASQUE_WARP](../../FEATURES/009-MASQUE_WARP/FEATURE.md)
 
-**Статус:** h3 И h2 РАБОТАЮТ на живом Cloudflare WARP (device-verified 2026-07-02, warp=on
-на обоих). Пройден аудит-проход (24 находки): исправлены баги корректности (reconnect,
-blackhole на битом пакете, ICMP-снимок, h2-потолки), добавлен idle-suspend + самовосстановление
-туннеля (stateless idle), убраны per-packet аллокации в горячем пути. Все три lifecycle-режима
-(dial / idle-suspend / reconnect) device-verified на h3 и h2. См. TEST_PLAN.md §RESULTS.
-**Ветка:** `lx-spec021-masque`
-**Тег типа:** `masque` (`C.TypeMASQUE`)
-**Build-tag:** `with_quic` + `with_gvisor` (userspace-стек)
+| Поле | Значение |
+|------|----------|
+| Тип | F (feature) — клиентский outbound CONNECT-IP |
+| Статус | C (complete) — h3 **и** h2 работают на живом Cloudflare WARP (device-verified 2026-07-02, `warp=on` на обоих); все три lifecycle-режима (dial / idle-suspend / reconnect) device-verified на обоих транспортах, см. [TEST_PLAN.md](TEST_PLAN.md) §RESULTS |
+| Ветка | `lx-spec021-masque` |
+| Тег типа | `masque` (`C.TypeMASQUE`) |
+| Build-tag | `with_quic` + `with_gvisor` (userspace-стек) |
+
+Пройден аудит-проход (24 находки): исправлены баги корректности (reconnect, blackhole
+на битом пакете, ICMP-снимок, h2-потолки), добавлен idle-suspend с самовосстановлением
+туннеля (stateless idle), убраны per-packet аллокации в горячем пути.
 
 ---
 

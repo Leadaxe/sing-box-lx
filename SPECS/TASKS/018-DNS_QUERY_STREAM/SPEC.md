@@ -2,13 +2,14 @@
 
 **Фича:** [OBSERVABILITY](../../FEATURES/006-OBSERVABILITY/FEATURE.md)
 
-**Тип:** lx-фича (наблюдаемость DNS через command-мультиплекс)
-**Статус:** C (complete) — v2 (DNS-стрим в command-мультиплексе) реализован и отгружен
-**Приоритет:** Medium (профайлер LxBox: атрибуция DNS-запросов к приложению в реальном времени)
-**Файлы ядра:** `common/dnstrack/*`, `dns/client.go`, `dns/client_log.go`,
-`daemon/started_service.proto`, `daemon/started_service_command_lx.go`, `experimental/libbox/*`
-**Связано:** SPEC 014 (Clash→CommandClient), SPEC 015 (RPC extensions), SPEC 017 (Connection.Detour), SPEC 016 (observable слой)
-**История смены архитектуры:** [HISTORY.md](HISTORY.md) (v1 standalone-подписка → v2 мультиплекс; баг, отвергнутые пути)
+| Поле | Значение |
+|------|----------|
+| Тип | F (feature) — наблюдаемость DNS через command-мультиплекс |
+| Статус | C (complete) — v2 (DNS-стрим в command-мультиплексе) реализован и отгружен |
+| Приоритет | Medium — профайлер LxBox: атрибуция DNS-запросов к приложению в реальном времени |
+| Файлы ядра | `common/dnstrack/*`, `dns/client.go`, `dns/client_log.go`, `daemon/started_service.proto`, `daemon/started_service_command_lx.go`, `experimental/libbox/*` |
+| История | [HISTORY.md](HISTORY.md) — v1 standalone-подписка → v2 мультиплекс; баг, отвергнутые пути |
+| Связанные | [[SPECS/TASKS/014-CLASH_API_TO_COMMANDCLIENT_MIGRATION]] · [[SPECS/TASKS/015-COMMAND_PROTOCOL_RPC_EXTENSIONS]] · [[SPECS/TASKS/016-CONNECTIONS_MAP_MUTEX]] · [[SPECS/TASKS/017-CONNECTION_DETOUR_CHAIN]] |
 
 ---
 
