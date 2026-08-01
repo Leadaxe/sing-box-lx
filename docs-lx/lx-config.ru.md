@@ -76,6 +76,7 @@ AmneziaWG 2.0 endpoint, masquerade-сахар `id`/`ip`/`ib` и `round_robin`-б
         "path": "/xhttp",                       // по умолчанию: "" (корень). Session id / seq дописываются сегментами пути
         "headers": { "X-Foo": "bar" },          // по умолчанию: нет. Доп. заголовки на каждый запрос
         "x_padding_bytes": "100-1000",          // по умолчанию: "100-1000". "min-max" или одно число — длина паддинга
+        "no_grpc_header": false,                // по умолчанию: false. Не слать Content-Type: application/grpc в stream-one/stream-up
 
         // ── размещение session / seq (v2) ──
         "session_placement": "path",            // по умолчанию: path. path | query | header | cookie
@@ -215,11 +216,12 @@ XHTTP (Xray «splithttp»/«xhttp») — это v2ray-транспорт, тун
 | Ключ | Тип | По умолчанию | Значение |
 |------|-----|--------------|----------|
 | `type` | string | — | должно быть `"xhttp"` |
-| `mode` | string | `auto` | `auto` \| `packet-up` \| `stream-up` \| `stream-one`. **`auto` → `stream-one` на Reality-TLS, иначе `packet-up`** (оба лайв-проверены). У `stream-one` был баг framing'а downlink, исправлен в задаче 011 и лайв-подтверждён на Reality-нодах; выбирайте явно, только если знаете, что серверу так нужно. |
+| `mode` | string | `auto` | `auto` \| `packet-up` \| `stream-up` \| `stream-one`. **`auto` → `stream-one` на Reality-TLS, иначе `packet-up`** — то же правило, что у Xray. Оставляйте `auto`, если сервер не требует иного; выбирайте явно, только когда знаете, чего ждёт сервер. |
 | `host` | string | TLS SNI / сервер | переопределяет HTTP-заголовок `Host` |
 | `path` | string | `""` (корень) | префикс пути запроса; session id (и, для `packet-up`, sequence-номер upload) дописываются сегментами пути, когда их placement = `path` |
 | `headers` | object | — | доп. заголовки на каждый XHTTP-запрос |
 | `x_padding_bytes` | string | `"100-1000"` | включающий **диапазон** длины значения паддинга (`"min-max"` или одно число). Управляет и длиной legacy `x_padding` в Referer, и длиной паддинга в obfs-режиме |
+| `no_grpc_header` | bool | `false` | не отправлять заголовок `Content-Type: application/grpc`, который по умолчанию несут запросы с телом (`stream-one`, `stream-up`) — аналог `NoGRPCHeader` у Xray. Включать только если сервер отвергает gRPC-тип контента |
 
 **Размещение session / seq (v2)** — где несутся session id и (packet-up) sequence-номер upload:
 
@@ -256,7 +258,7 @@ XHTTP (Xray «splithttp»/«xhttp») — это v2ray-транспорт, тун
 | `sc_max_each_post_bytes` | string | `"1000000-1000000"` | `"min-max"` диапазон одного upload-POST (порог дробления) |
 | `sc_min_posts_interval_ms` | string | `"30-30"` | `"min-max"` анти-burst задержка между POST, в мс |
 
-**Принимаются, но игнорируются клиентом** (присутствуют, чтобы конфиг в форме inbound или симметричная ссылка не падали — клиент на них не реагирует): `sc_max_concurrent_posts`, `server_max_header_bytes`, `no_sse_header`, `sc_max_buffered_posts`, `sc_stream_up_server_secs`, `no_grpc_header` (клиент не эмитит gRPC-стиль заголовки, опускать нечего).
+**Принимаются, но игнорируются клиентом** (присутствуют, чтобы конфиг в форме inbound или симметричная ссылка не падали — клиент на них не реагирует): `sc_max_concurrent_posts`, `server_max_header_bytes`, `no_sse_header`, `sc_max_buffered_posts`, `sc_stream_up_server_secs`.
 
 > **Примечание (дефолтный формат на проводе):** при выключенном `x_padding_obfs_mode` (по умолчанию) паддинг несётся как `x_padding=<нули>` внутри заголовка `Referer` (дефолтное размещение Xray) — лайв-проверено против реального Xray (3x-ui). Сервер валидирует длину `x_padding` (по умолчанию 100–1000) и без неё отвечает `400`. Версии Xray клиента и сервера всё же должны совпадать (XHTTP быстро эволюционирует).
 

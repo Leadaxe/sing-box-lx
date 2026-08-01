@@ -78,6 +78,7 @@ you need and read its section below. Each comment shows the **default** and the 
         "path": "/xhttp",                       // default: "" (root). Session id / seq appended as path segments
         "headers": { "X-Foo": "bar" },          // default: none. Extra headers on every request
         "x_padding_bytes": "100-1000",          // default: "100-1000". "min-max" or single int — padding length
+        "no_grpc_header": false,                // default: false. Omit Content-Type: application/grpc on stream-one/stream-up
 
         // ── session / seq placement (v2) ──
         "session_placement": "path",            // default: path. path | query | header | cookie
@@ -217,11 +218,12 @@ live-verified v1 client**, so existing configs are unaffected — the v2 fields 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `type` | string | — | must be `"xhttp"` |
-| `mode` | string | `auto` | `auto` \| `packet-up` \| `stream-up` \| `stream-one`. **`auto` resolves to `stream-one` on a Reality TLS, else `packet-up`** (both live-validated). `stream-one` had a downlink-framing bug, fixed in task 011 and live-verified on Reality nodes; select it explicitly only if you know the server needs it. |
+| `mode` | string | `auto` | `auto` \| `packet-up` \| `stream-up` \| `stream-one`. **`auto` resolves to `stream-one` on a Reality TLS, else `packet-up`** — the same rule Xray applies. Leave it at `auto` unless the server documents otherwise; set it explicitly only if you know what the server expects. |
 | `host` | string | TLS SNI / server | overrides the HTTP `Host` header |
 | `path` | string | `""` (root) | request path prefix; the session id (and, for `packet-up`, the upload sequence number) are appended as path segments when their placement is `path` |
 | `headers` | object | — | extra request headers sent on every XHTTP request |
 | `x_padding_bytes` | string | `"100-1000"` | inclusive byte-length **range** of the padding value (`"min-max"` or a single int). Drives both the legacy Referer `x_padding` length and the obfs-mode padding length |
+| `no_grpc_header` | bool | `false` | omit the `Content-Type: application/grpc` header that streamed-body requests (`stream-one`, `stream-up`) carry by default, mirroring Xray's `NoGRPCHeader`. Leave off unless the server rejects the gRPC content type |
 
 **Session / seq placement (v2)** — where the per-request session id and (packet-up) upload sequence number are carried:
 
@@ -258,7 +260,7 @@ live-verified v1 client**, so existing configs are unaffected — the v2 fields 
 | `sc_max_each_post_bytes` | string | `"1000000-1000000"` | `"min-max"` range bounding a single upload POST (the split threshold) |
 | `sc_min_posts_interval_ms` | string | `"30-30"` | `"min-max"` anti-burst delay between successive POSTs, in ms |
 
-**Accepted but ignored by the client** (present so an inbound-shaped config or a symmetric link doesn't error — the client never acts on them): `sc_max_concurrent_posts`, `server_max_header_bytes`, `no_sse_header`, `sc_max_buffered_posts`, `sc_stream_up_server_secs`, `no_grpc_header` (the client emits no gRPC-style headers, so there is nothing to omit).
+**Accepted but ignored by the client** (present so an inbound-shaped config or a symmetric link doesn't error — the client never acts on them): `sc_max_concurrent_posts`, `server_max_header_bytes`, `no_sse_header`, `sc_max_buffered_posts`, `sc_stream_up_server_secs`.
 
 > **Note (default wire format):** with `x_padding_obfs_mode` off (the default), padding is carried as `x_padding=<zeros>` inside the `Referer` header (Xray's default placement) — live-validated against a real Xray (3x-ui) server. The server validates the `x_padding` length (default 100–1000) and replies `400` without it. Client and server Xray versions should still match (XHTTP evolves quickly).
 

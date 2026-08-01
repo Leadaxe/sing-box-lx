@@ -10,6 +10,47 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.17-rc.6
+
+Fixes XHTTP `mode: auto` on REALITY servers — the shape most subscriptions ship.
+On top of `rc.5`, which stays as described below.
+
+**XHTTP `stream-one` no longer sends a path the server refuses to route (SPEC
+043, feature
+[XHTTP](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/002-XHTTP/FEATURE.md)).**
+An XHTTP server normalizes its own path to end in `/` whenever the session id or
+sequence number is carried in the path — which is the default — and then serves
+only requests whose path starts with that prefix. Our `stream-one` trimmed the
+trailing slash, so a node configured as `/api/v1/feed` was dialed at exactly
+that, while the server was matching against `/api/v1/feed/`. No prefix match, a
+`404`, and the dial hung until the URL-test timeout with nothing logged: no
+error, no status, just silence. Every XHTTP node in a subscription looked dead.
+
+`packet-up` was unaffected throughout, because its path continues into
+`/<sessionId>` and therefore does carry the slash — which is what made the bug
+look like broken mode resolution. It never was: `auto` resolves to `stream-one`
+under REALITY exactly as Xray and other sing-box forks do, and that resolution
+was correct all along. It simply led into the one broken branch.
+
+The trim dates back to SPEC 011, where dropping the session id out of the
+`stream-one` path also dropped the slash. Only the session id belongs gone — an
+empty session id is precisely how the server selects the bidirectional branch —
+whereas the slash is part of the normalized path. Both properties now hold at
+once. Paths whose session id lives in a header, query or cookie are untouched
+and still reach the wire exactly as configured, trailing slash included.
+
+Confirmed on the wire against a prefix-checking HTTP/2 server: `REJECT 404:
+"/api/v1/feed" lacks prefix "/api/v1/feed/"` before, `ACCEPT: "/api/v1/feed/"`
+after. Two unit tests had been asserting the broken shape and were corrected.
+
+**Streamed-body XHTTP requests carry `Content-Type: application/grpc` (SPEC
+042).** Xray sets this header on every request that carries a body — `stream-one`
+and `stream-up` — and we never did. The `no_grpc_header` option, previously
+accepted as a documented no-op, now genuinely suppresses it, matching Xray's
+`NoGRPCHeader`. This restores parity with the Xray wire contract; on its own it
+did not resolve the dead-nodes report above, and is shipped as a correctness fix
+rather than as that cure.
+
 #### v1.14.0-lx.17-rc.5
 
 Upstream sync on top of `rc.4`, which stays as described below. No `lx` changes
