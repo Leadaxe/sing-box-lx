@@ -382,6 +382,50 @@ func TestUplinkChunkSizeDefaults(t *testing.T) {
 	}
 }
 
+// --- streamed-body gRPC content type ------------------------------------------
+
+// Xray's FillStreamRequest sets "Content-Type: application/grpc" on requests that
+// carry a body (stream-one, stream-up). Reverse proxies in front of an XHTTP
+// server key unbuffered response streaming on it — without it a stream-one dial
+// hangs until timeout (live-verified 2026-08-01).
+func TestGRPCHeaderOnStreamedBody(t *testing.T) {
+	const grpcContentType = "application/grpc"
+
+	newReq := func(body *strings.Reader) *http.Request {
+		request, err := http.NewRequest(http.MethodPost, "https://example.com/feed", body)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		return request
+	}
+
+	// Body present, opt-out off → header set.
+	client := &Client{}
+	request := newReq(strings.NewReader("payload"))
+	client.applyGRPCHeader(request)
+	if got := request.Header.Get("Content-Type"); got != grpcContentType {
+		t.Fatalf("Content-Type = %q, want %q", got, grpcContentType)
+	}
+
+	// no_grpc_header → nothing set (Xray's NoGRPCHeader).
+	optedOut := &Client{noGRPCHeader: true}
+	request = newReq(strings.NewReader("payload"))
+	optedOut.applyGRPCHeader(request)
+	if got := request.Header.Get("Content-Type"); got != "" {
+		t.Fatalf("no_grpc_header: Content-Type = %q, want empty", got)
+	}
+
+	// Bodyless request (packet-up download GET) → nothing set.
+	request, err := http.NewRequest(http.MethodGet, "https://example.com/feed", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	client.applyGRPCHeader(request)
+	if got := request.Header.Get("Content-Type"); got != "" {
+		t.Fatalf("bodyless: Content-Type = %q, want empty", got)
+	}
+}
+
 // itoa is a tiny local helper to avoid importing strconv in the test for one use.
 func itoa(i int) string {
 	if i == 0 {

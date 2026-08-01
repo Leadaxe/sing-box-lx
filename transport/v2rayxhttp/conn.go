@@ -14,6 +14,19 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 )
 
+// applyGRPCHeader sets the streamed-body Content-Type that Xray sends on
+// stream-one/stream-up requests (FillStreamRequest in
+// transport/internet/splithttp/config.go). Reverse proxies and CDNs in front of
+// an XHTTP server key response streaming on a gRPC content type; without it the
+// download side is buffered and the dial hangs until timeout. Opt out with
+// no_grpc_header, matching Xray's NoGRPCHeader.
+func (c *Client) applyGRPCHeader(request *http.Request) {
+	if c.noGRPCHeader || request.Body == nil {
+		return
+	}
+	request.Header.Set("Content-Type", "application/grpc")
+}
+
 // dialStreamOne opens a single bidirectional HTTP/2 stream: the request body is
 // the upload direction, the response body is the download direction. With Reality
 // it is also what "auto" resolves to (matching Xray).
@@ -32,6 +45,7 @@ func (c *Client) dialStreamOne(ctx context.Context, sessionID string) (net.Conn,
 	if err != nil {
 		return nil, err
 	}
+	c.applyGRPCHeader(request)
 
 	conn := newStreamConn(pipeWriter, c.serverAddr)
 	go func() {
@@ -74,6 +88,7 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string) (net.Conn, 
 		downResp.Body.Close()
 		return nil, err
 	}
+	c.applyGRPCHeader(upReq)
 	conn := newSplitConn(downResp.Body, pipeWriter, c.serverAddr)
 	go func() {
 		upResp, err := c.transport.RoundTrip(upReq)

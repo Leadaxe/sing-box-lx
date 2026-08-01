@@ -36,9 +36,12 @@ type V2RayXHTTPOptions struct {
 	// ("min-max", e.g. "100-1000", or a single integer). Empty defaults to
 	// "100-1000".
 	XPaddingBytes string `json:"x_padding_bytes,omitempty"`
-	// NoGRPCHeader is accepted for forward-compatibility with Xray stream settings
-	// but has no effect: this client emits no gRPC-style headers, so there is
-	// nothing to omit.
+	// NoGRPCHeader omits the "Content-Type: application/grpc" request header that
+	// the streamed-body modes (stream-one, stream-up) set by default, mirroring
+	// Xray's FillStreamRequest (transport/internet/splithttp/config.go). The
+	// header is load-bearing in front of reverse proxies/CDNs, which key
+	// response streaming (no buffering) on a gRPC content type — without it a
+	// stream-one dial can hang until timeout.
 	NoGRPCHeader bool `json:"no_grpc_header,omitempty"`
 
 	// ---- session / seq placement (core) -------------------------------------

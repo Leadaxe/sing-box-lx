@@ -67,6 +67,9 @@ type Client struct {
 	// realityEnabled records whether the TLS config is a Reality client config.
 	// It drives mode=auto resolution (Reality → stream-one, like Xray).
 	realityEnabled bool
+	// noGRPCHeader suppresses the default "Content-Type: application/grpc" on
+	// streamed-body requests (stream-one, stream-up). See option.NoGRPCHeader.
+	noGRPCHeader bool
 }
 
 // NewClient builds an XHTTP client transport. The tlsConfig (possibly Reality)
@@ -176,6 +179,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		paddingRange:   paddingRange,
 		meta:           meta,
 		realityEnabled: tlsConfigIsReality(tlsConfig),
+		noGRPCHeader:   options.NoGRPCHeader,
 	}, nil
 }
 
