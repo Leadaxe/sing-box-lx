@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) |
-| Статус | C (complete) — реализовано; остаток: полевая проверка |
+| Статус | C (complete) — реализовано и **девайс-верифицировано** |
 | Ветка | `lx` |
 | Build-tag | без нового (ядро VLESS собирается всегда) |
 | Связанные | [[SPECS/TASKS/002-XHTTP_CLIENT_TRANSPORT]] · [[SPECS/TASKS/008-AWG_JUNK_PARAM_VALIDATION]] · [[SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES]] |
