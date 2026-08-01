@@ -10,6 +10,48 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.18
+
+Adds the VLESS `encryption` layer on top of `lx.17`, which stays as described
+below.
+
+**VLESS nodes using `encryption: mlkem768x25519plus…` now connect (SPEC 032,
+feature
+[VLESS_ENCRYPTION](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md)).**
+This is a post-quantum handshake that lives inside VLESS, beneath the transport
+and independent of TLS — not to be confused with REALITY's key exchange. The
+field did not exist in our schema at all, so such configs were rejected by the
+decoder and the nodes were simply unreachable. Where the layer is absent or set
+to `none`, behaviour is unchanged.
+
+The failure mode gave nothing away: the transport came up normally — a
+WebSocket upgrade completed with `101`, a gRPC server answered its SETTINGS
+frame — and then the peer tore the connection down with not one line in the
+core log. What settled it was reading the *other* client's stored
+configuration, where the same servers appear twice: once plain, once carrying
+`mlkem768x25519plus.native.0rtt` with an ML-KEM-768 key. The dead ones here
+were exactly the latter.
+
+Rather than implementing the handshake from scratch, the client half is ported
+from the sing-box fork at `starifly/sing-box`, which carries the same GPL-3.0
+license and the same upstream base as this tree. Provenance is recorded in the
+file headers. The server half (`decryption`) is deliberately not included —
+this fork is client-focused. No new external dependencies.
+
+Verified on device against the subscription that prompted it: nodes that had
+all been dead came back at **6/8 over WebSocket and 4/4 over gRPC**, with no
+other transport group moving — so the gain is attributable to the layer itself
+rather than to anything incidental. The nodes still not answering in those
+groups are placeholders in the subscription rather than servers: three entries
+address `0.0.0.0` and serve as section headings in the node list, and two carry
+a truncated 43-character key where a working node carries 1579. Against the
+subscription's real nodes the layer works everywhere it applies.
+
+Note for client authors: supporting this end to end takes both halves. The
+field arrives inside a subscription as `settings.vnext[0].users[0].encryption`
+but belongs on the sing-box outbound as a flat `encryption` field beside
+`uuid`; a config builder that drops it leaves the core with nothing to act on.
+
 #### v1.14.0-lx.17
 
 First stable tag of the `lx.17` line — a promotion of `rc.1`–`rc.5` plus the
