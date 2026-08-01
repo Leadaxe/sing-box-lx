@@ -10,6 +10,40 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.19-rc.1
+
+**WG/AWG self-heal v2: the post-wake ERR window shrinks from ~90 s to
+seconds (SPEC 041 v2,
+[SPEC.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/041-WG_HANDSHAKE_GIVEUP_REBIND/SPEC.md)).**
+The v1 give-up rebind (lx.17-rc.4) proved itself in the field — sockets do get
+recreated — but the cure only arrives ~90 s after the first traffic demand,
+while users measure ping within the first half-minute after waking the device
+and read every node as dead. Two new triggers of the same rebind, sharing one
+debounce window:
+
+- **Early rebind.** Inside the existing handshake retry cycle: once ≥3
+  initiations went unanswered *and* the session is provably dead (no live
+  keypair, or the last handshake is older than 180 s), the socket is rebound
+  at ~15 s instead of ~90 s. A live session with transient packet loss keeps
+  byte-for-byte upstream behaviour.
+- **Wake nudge.** New libbox method `CommandServer.RebindStaleEndpoints()`
+  (a mirror of `ResetNetwork`): the consumer calls it when the device wakes
+  (LxBox: `USER_PRESENT`), and every WG/AWG endpoint with a provably dead
+  session rebinds and re-initiates immediately — no traffic demand needed,
+  the ERR window collapses to one handshake RTT. Healthy, sleeping
+  (idle-suspended) and stopped endpoints are strict no-ops; the call never
+  blocks the gomobile thread.
+
+No config surface is added; a pinned `listen_port` is still preserved. The
+mechanism lives in the `wireguard-go` fork submodule
+(`device/lx_giveup_rebind.go`). Verified synthetically (red/green stands,
+races under `-race`, adversarial uphold 6/6); the field run of the nudge
+waits for the LxBox `USER_PRESENT` receiver.
+
+Upstream note: `upstream/testing` was force-pushed again after our 2026-08-01
+merge; the honest subject-level comparison shows zero genuinely new commits,
+so this rc carries no upstream delta.
+
 #### v1.14.0-lx.18
 
 Adds the VLESS `encryption` layer on top of `lx.17`, which stays as described
