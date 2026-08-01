@@ -7,8 +7,9 @@
 | **XHTTP** transport (Xray-compatible) | `with_xhttp` | `transport.type: "xhttp"` on a VLESS / VMess / Trojan outbound | desktop + mobile |
 | **AmneziaWG 2.0** (AWG2) | `with_awg` | extra fields on a `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
-| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `route.lx_idle_suspend` | **mobile only** (AAR) |
+| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `route.lx_idle_suspend` (+ `lx_idle_suspend_reachable`, `lx_idle_teardown`) | **mobile only** (AAR) |
 | **DNS server group** (SPEC 033/035) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
+| **VLESS `encryption`** (SPEC 032) | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
 
 Build the desktop/CLI binary: `make -f Makefile.lx lx-build` (output `sing-box`, version `…-lx.N`) — this bundles `with_xhttp` + `with_awg` (+ `with_lx_command`), but **not** `with_lx_idle_suspend`.
 Without a tag the feature is absent: an `xhttp` transport or an AWG field is rejected at load time with an explicit error (no silent downgrade).
@@ -42,9 +43,11 @@ timelines and the recommended mobile configuration live in
 
 ## 0. Every field at a glance (exhaustive example)
 
-One config carrying **every** field sing-box-lx adds on top of upstream — XHTTP transport,
-AmneziaWG 2.0 endpoint, the `id`/`ip`/`ib` masquerade sugar, and the `urltest` `round_robin`
-balancer. This is a **kitchen-sink reference**, not a recommended config: many fields are
+One config carrying every field of the **outbound-side** features — XHTTP transport,
+AmneziaWG 2.0 endpoint, the `id`/`ip`/`ib` masquerade sugar, VLESS `encryption`, and the
+`urltest` `round_robin` balancer (MASQUE, the DNS group and the `route.lx_idle_*` keys have
+their own examples in [§4](#4-masque-outbound--cloudflare-warp-spec-021), [§5](#5-dns-server-group-spec-033035)
+and [lx-energy.md](lx-energy.md)). This is a **kitchen-sink reference**, not a recommended config: many fields are
 mutually exclusive (e.g. the `id`/`ip`/`ib` sugar vs. a hand-written `i1`) or are server-only
 and ignored by the client — those are flagged inline. For a working setup, copy only the block
 you need and read its section below. Each comment shows the **default** and the **allowed values**.
@@ -62,6 +65,8 @@ you need and read its section below. Each comment shows the **default** and the 
       "server": "example.com",
       "server_port": 443,
       "uuid": "00000000-0000-0000-0000-000000000000",
+      "encryption": "",                         // default: "" (off). VLESS post-quantum layer (§6):
+                                                //   "mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>….<key>"
       "tls": {
         "enabled": true,
         "server_name": "example.com",
@@ -184,6 +189,8 @@ you need and read its section below. Each comment shows the **default** and the 
       "outbounds": ["xhttp-out", "proxy-b", "proxy-c", "proxy-d", "proxy-e"],
       "url": "https://www.gstatic.com/generate_204",
       "interval": "15m",
+      "passive_check": false,                   // default: false. Recent successful TCP dial counts
+                                                //   as proof of life while fresh (< interval) — probes stay quiet
       "mode": "round_robin",                    // default: least_test. least_test | round_robin
       "balancer": {                             // only valid with mode: round_robin
         "pool": 3,                              // default: 3. 0/omitted → 3; effective = min(pool, #outbounds)
@@ -197,8 +204,8 @@ you need and read its section below. Each comment shows the **default** and the 
 }
 ```
 
-> **Field count:** 26 XHTTP + 21 AmneziaWG (incl. `id`/`ip`/`ib`) + 5 `urltest` (`mode` +
-> `balancer{pool,pool_tolerance,sticky_hash}`). Mutually-exclusive / ignored fields are
+> **Field count:** 26 XHTTP + 21 AmneziaWG (incl. `id`/`ip`/`ib`) + 1 VLESS (`encryption`) +
+> 6 `urltest` (`mode`, `passive_check` + `balancer{pool,pool_tolerance,sticky_hash}`). Mutually-exclusive / ignored fields are
 > labelled inline above; the sections below give the per-field semantics, gotchas and live
 > verification status.
 
@@ -453,7 +460,7 @@ scale to large node lists (only the pool is health-checked, not every node). Sel
 happens once per connection; a UDP/QUIC session stays on its node. With `mode` omitted (or
 `least_test`) the outbound behaves exactly like upstream and `balancer` must not be set.
 
-The `GetPool` CommandClient method (see [§6](#6-observability-commandclient-extensions)) is
+The `GetPool` CommandClient method (see [§7](#7-observability-commandclient-extensions)) is
 behind `with_lx_command`; the `mode`/`balancer` config fields themselves are always available.
 
 ### Fields (on a `urltest` outbound)
@@ -461,6 +468,7 @@ behind `with_lx_command`; the `mode`/`balancer` config fields themselves are alw
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `mode` | string | `least_test` | `least_test` (upstream behaviour) \| `round_robin` (rotate over the pool). `least_connection` is rejected (round_robin is statistically even) |
+| `passive_check` | bool | `false` | a recent successful TCP dial counts as proof of life while fresh (< `interval`): `least_test` skips whole re-test cycles while the selected node is passively confirmed; `round_robin` (only with `pool_tolerance: 0`) treats confirmed slots as live without probing. Cost: staler delay numbers in the UI. See [lx-energy.md](lx-energy.md) |
 | `balancer` | object | — | round_robin parameters; **only valid with `mode: round_robin`** (error otherwise). The upstream `tolerance` field is ignored in round_robin — use `pool_tolerance` instead (a startup warning points this out while `pool_tolerance` is unset) |
 
 #### `balancer` fields
@@ -647,7 +655,7 @@ nowhere.
 answered (cache hits and total failures keep the group tag), the probe
 trace (group path inside-out, attempts with outcome
 `answered`/`timeout`/`network_error`/`servfail` and rtt), and the `fanned`
-/ `survival` flags. `GetDNSGroups` (§6, `with_lx_command`) returns the live
+/ `survival` flags. `GetDNSGroups` (§7, `with_lx_command`) returns the live
 records: per member — clean, live errors (count + age of newest), live
 wins, last rtt, current flag.
 
@@ -675,7 +683,62 @@ wins, last rtt, current flag.
 > ⚠️ The v1 contract (`mode: failover|race`, `interval`, `down_time`,
 > shipped in `v1.14.0-lx.16-rc.1`) is GONE: such configs fail to load.
 
-## 6. Observability (CommandClient extensions)
+## 6. VLESS `encryption` — post-quantum layer (SPEC 032)
+
+A flat `encryption` field on a `vless` outbound enables the `mlkem768x25519plus`
+handshake **inside** VLESS — above the transport/TLS, below the VLESS client, and
+independent of REALITY's key exchange (different layer, do not confuse them).
+Servers that mandate it (Xray `decryption` configured) silently drop plain VLESS:
+the transport comes up (WS `101`, gRPC SETTINGS answered) and the peer then tears
+the connection down without a line in the core log — that is the symptom this
+field cures. Client half only; the server half is deliberately not ported
+(client-focused fork). Always built, no build tag.
+
+### Field (on a `vless` outbound)
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `encryption` | string | `""` | `""`/`"none"` = layer off (upstream behavior, byte for byte). Otherwise a spec string, validated at `check`/start with segment-precise errors |
+
+Spec-string grammar (dot-separated):
+
+```
+mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>[.<padding>…].<key>[.<key>…]
+```
+
+- **appearance** — how the layer looks on the wire: `native` (AEAD headers shaped
+  like TLSv1.3), `xorpub` (XOR-ed by public key), `random`.
+- **rtt** — `0rtt` or `1rtt`.
+- **padding** — optional short blocks like `100-111-1111` (a segment shorter than
+  20 chars before the first key is read as padding).
+- **key** — base64url of an X25519 (32-byte) or ML-KEM-768 (1184-byte) public
+  key; several keys may be listed. A working ML-KEM-768 key is ~1579 chars — a
+  much shorter one is a truncated key, not a different format.
+
+### Example
+
+```jsonc
+{
+  "type": "vless",
+  "tag": "pq-node",
+  "server": "example.com",
+  "server_port": 443,
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "encryption": "mlkem768x25519plus.native.0rtt.<base64url ML-KEM-768 key>",
+  "transport": { "type": "ws", "path": "/ws" }
+}
+```
+
+> **Status.** Shipped in `v1.14.0-lx.18`, **device-verified** on the subscription
+> that prompted it: +10 previously dead nodes (6/8 WS, 4/4 gRPC), no other
+> transport group moved. The `native.0rtt` form is the field-proven one;
+> `1rtt`+padding and `xorpub`/`random` parse and build but have not met a live
+> server yet. In a subscription the value arrives as
+> `settings.vnext[0].users[0].encryption` — on the sing-box outbound it is a flat
+> `encryption` field beside `uuid`; a config builder that drops it leaves the
+> core with nothing to act on.
+
+## 7. Observability (CommandClient extensions)
 
 These are **client-API additions, not config** — extra methods on libbox's `CommandClient`
 (the native gRPC management channel), all gated behind `with_lx_command` and consumed by
@@ -694,6 +757,12 @@ The added `CommandClient` methods:
   because standalone outbounds are not in any group).
 - **`GetPool(groupTag)`** — read a `urltest` group's current round_robin rotation pool, slot
   by slot (SPEC 019; see [§3](#3-round_robin-load-balancing-spec-019)).
+- **`GetDNSGroups()`** — the live state of every DNS `group` server (SPEC 035; see
+  [§5](#5-dns-server-group-spec-033035)): per member `clean` / `liveErrors` /
+  `lastErrorAgeMs` / `liveWins` / `current`.
+- **`GetRunningConfig()`** — the canonical JSON options the running box was actually built
+  from, post-override (SPEC 037). Returned as an object with a `Content()` accessor — a bare
+  `string` return would crash gomobile on android/arm64 (SPEC 038).
 - **`SubscribeDNSQueries(includeAnswers, handler)`** — a structured live DNS-query stream
   (SPEC 018): per query the `domain`, `qtype`, `rcode` (**`-1` = lookup failure**, a
   first-class state), the CNAME chain / answers (when `includeAnswers`), process attribution,
@@ -712,7 +781,7 @@ make -f Makefile.lx lx-build   # includes with_lx_command (and with_xhttp/with_a
 
 ---
 
-## 7. Validate & build
+## 8. Validate & build
 
 ```sh
 git clone --recurse-submodules <repo>           # with_awg needs the submodule

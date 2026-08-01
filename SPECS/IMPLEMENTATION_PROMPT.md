@@ -17,7 +17,10 @@
 1. **Сборка без тегов** = поведение upstream:
    `go build ./...` — ок, фичи отсутствуют.
 2. **Сборка с тегами** включает фичи:
-   `go build -tags "with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,with_xhttp,with_awg" ./cmd/sing-box`
+   `make -f Makefile.lx lx-build` — единственный источник истины по набору тегов
+   (`make -f Makefile.lx lx-print-tags`) и обязательному `-checklinkname=0` в ldflags.
+   ⚠️ Полный набор (с `badlinkname`) линкуется только на **go1.24.x** (см. `go.mod`);
+   на go1.25-хосте проверять сборку набором тегов минус `badlinkname`/`with_naive_outbound`.
 3. `go vet ./...` и `go test ./...` зелёные (для затронутых пакетов как минимум).
 4. `./sing-box check -c <тест-конфиг>` принимает конфиг с новой фичей (xhttp-транспорт / awg-endpoint).
 5. Все правки upstream-файлов обёрнуты `// lx:begin <feat>` / `// lx:end <feat>` и лежат в отдельных коммитах.
@@ -29,8 +32,8 @@
 ## 3. Git-дисциплина
 
 ### 3.1 Ветки
-- `lx` — рабочая ветка, всегда ребейзится поверх тега upstream.
-- Фичевые ветки от `lx`: `lx/xhttp`, `lx/awg` — вливаются в `lx` через rebase (linear history).
+- `lx` — рабочая и релизная ветка (default). Синхронизация с upstream — ручной **merge** `upstream/testing` (см. §3.3); `lx` никогда не форс-пушится.
+- Фичевые ветки от `lx`: `lx-specNNN-<кратко>` (примеры из истории: `lx-spec020-idle-suspend`, `lx-spec022-audit-fixes`, `lx-xhttp-streamone`) — вливаются в `lx` обычным способом.
 
 ### 3.2 Коммиты
 - Формат: `lx(<feat>): <что>` — напр. `lx(xhttp): add v2rayxhttp client package`, `lx(awg): extend wireguard endpoint with junk/header opts`.
@@ -41,25 +44,27 @@
   3. `go.mod`/`go.sum`/submodule;
   4. build-tag проводка (`include/*`), CI.
 
-### 3.3 Ритуал ребейза на новый тег upstream
+### 3.3 Ритуал синка с upstream и релиза
+Полный актуальный ритуал — **[docs-lx/lx-release-runbook.md](../docs-lx/lx-release-runbook.md)**. Скелет:
 ```sh
-git fetch upstream --tags
+git fetch upstream
+git merge-base lx upstream/testing   # дрейфа нет, если == tip upstream/testing
 git checkout lx
-git rebase <new-tag>          # напр. v1.13.14
-# конфликты ожидаемы ТОЛЬКО в // lx: зонах upstream-файлов и go.mod
-# разрешить, сверяясь с маркерами; пересобрать с тегами; прогнать DoD
-git push --force-with-lease origin lx
-git tag <new-tag>-lx.1 && git push origin <new-tag>-lx.1
+git merge upstream/testing           # ручной merge; НЕ rebase, НЕ force-push
+# конфликты ожидаемы ТОЛЬКО в // lx: зонах upstream-файлов, go.mod и гитлинках сабмодулей
+# пересобрать (make -f Makefile.lx lx-build), gofmt lx-файлов, lx-check; прогнать DoD
+git push origin lx                   # ветку ДО тега
+git tag v<X.Y.Z>-lx.<N> && git push origin v<X.Y.Z>-lx.<N>   # тег из СУПЕРПРОЕКТА, не из каталога сабмодуля
 ```
-Если ребейз дал конфликт вне `// lx:` зоны — значит изоляция нарушена, это дефект дельты, а не upstream.
+Если merge дал конфликт вне `// lx:` зоны — значит изоляция нарушена, это дефект дельты, а не upstream. Секция `#### v<X.Y.Z>-lx.<N>` в `docs-lx/lx-changelog.md` должна существовать **до** пуша тега — из неё `lx-release.yml` собирает релиз-ноты.
 
 ---
 
 ## 4. Консоль и осторожность
 
 - Не запускать интерактивные git-флаги (`-i`).
-- `--force-with-lease`, не `--force`.
-- Сабмодуль AWG обновлять осознанно (фиксировать конкретный коммит amneziawg-go).
+- Ветку `lx` не форс-пушить; `--force-with-lease` — только на фичевых ветках.
+- **Оба форк-сабмодуля** (`submodules/wireguard-go` = Leadaxe/wireguard-go-awg2-lx, `submodules/sing-tun` = Leadaxe/sing-tun-lx) обновлять осознанно: фиксировать конкретный коммит, встречные upstream-бампы гитлинков на мерже не принимать вслепую. Коммит сабмодуля пушить **до** суперпроекта (иначе CI падает «not our ref»).
 
 ---
 

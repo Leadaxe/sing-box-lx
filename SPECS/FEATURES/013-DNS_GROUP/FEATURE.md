@@ -195,8 +195,9 @@ Build-tag не вводится: новый тип сервера аддитив
 | [033 — DNS_GROUP_SERVER](../../TASKS/033-DNS_GROUP_SERVER/SPEC.md) | Тип `group`, TTL-модель, режимы `stable`/`fastest`/`parallel`, веер | C |
 | [035 — DNS_GROUP_OBSERVABILITY](../../TASKS/035-DNS_GROUP_OBSERVABILITY/SPEC.md) | Наблюдаемость: атрибуция, трасса, `GetDNSGroups`, лог | C |
 
-История v1 (режимы `failover`/`race`, `down_time`/`interval`, отдельная
-задача 034) — в HISTORY.md соответствующих задач.
+История v1 (режимы `failover`/`race`, `down_time`/`interval`, отдельные
+задачи 034 и 036 — обе слиты по §3.2: 034 → 033, 036 → 035, номера
+свободны) — в HISTORY.md соответствующих задач.
 
 ## Особенности сопровождения
 

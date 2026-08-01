@@ -15,9 +15,9 @@
   (обе указывали на один коммит на `v1.14.0-lx.16`) и оставлена в origin только как якорь.
   Новую работу и релизы вести на `lx`.
 - **Prerelease определяется суффиксом тега**, а не веткой: `lx-release.yml` вешает `--prerelease`
-  на `-rc.N` / `-alpha.N` / `-beta.N`. Тег без суффикса (`v1.14.0-lx.16`) публикуется как stable
-  «Latest». Старое ограничение «пока upstream в alpha — только rc-линия» снято: upstream перешёл
-  на beta, форк снова режет стабильные теги.
+  на `-rc.N` / `-alpha.N` / `-beta.N`. Тег без суффикса (напр. `v1.14.0-lx.18` — текущий stable)
+  публикуется как «Latest». Старое ограничение «пока upstream в alpha — только rc-линия» снято:
+  upstream перешёл на beta, форк снова режет стабильные теги.
 - Релиз-ноты генерятся автоматически из `#### v<tag-без-v>`-секции [docs-lx/lx-changelog.md](lx-changelog.md)
   (`lx-release.yml`); поэтому changelog должен быть верным ДО тега.
 
@@ -28,7 +28,8 @@
 ```
 [ ] 1. upstream-дрейф проверен (раздел 1)
 [ ] 2. если upstream впереди — взят/смержен/собран (раздел 2), ИЛИ сознательно отложен с причиной
-[ ] 3. go build ./... и build -tags with_lx_command — зелёные
+[ ] 3. go build ./... и build -tags with_lx_command — зелёные; полный набор — make -f Makefile.lx lx-build
+       (⚠️ линкуется только на go1.24.x — badlinkname; релизный CI берёт go из go.mod, локальный go1.25 разойдётся)
 [ ] 4. gofmt -l по lx-owned файлам — пусто
 [ ] 5. docs-lx/lx-changelog.md содержит секцию #### v<этот-тег> с верным содержимым
        (проверить ИМЕННО тем же awk, что в CI — см. раздел 3)
@@ -77,8 +78,8 @@ comm -23 <(git log --format=%s $(git merge-base lx upstream/testing)..upstream/t
   разбор) — тогда зафиксируй это в changelog-записи релиза, чтобы было видно, что дрейф известен.
 
 Почему «обычно брать»: чем дольше копится дрейф, тем дороже и рискованнее слияние (конфликты в
-`.pb.go`, submodule wireguard-go, изменения интерфейсов adapter/*). Маленькие частые merge'и
-дешевле одного большого перед релизом.
+`.pb.go`, форк-сабмодули wireguard-go и sing-tun, изменения интерфейсов adapter/*). Маленькие
+частые merge'и дешевле одного большого перед релизом.
 
 ## 2. Возьми изменения upstream себе (merge, затем сборка) — и ТОЛЬКО потом релиз
 
@@ -92,8 +93,10 @@ git merge upstream/testing            # ручной merge, НЕ rebase
 - `daemon/*.pb.go` / `*.proto` — наши поля аддитивны (`detourList=23`, DnsQueryEvent 1..12). Если
   upstream регенерил дескрипторы, перегенери через `make -f Makefile.lx lx-proto` и заново наложи
   lx-поля, либо вручную: см. `lx-commandclient-extensions` в памяти (pinned protoc-toolchain).
-- `submodules/wireguard-go` — это наш форк-сабмодуль; upstream-bump не принимать вслепую,
-  см. `wg-1.14-migration`.
+- `submodules/wireguard-go` и `submodules/sing-tun` — наши форк-сабмодули; upstream-bump
+  (в т.ч. коммит вида «Update sing-tun» с бампом версии в `go.mod`) не принимать вслепую —
+  он молча откатит наши патчи (обфускация AWG, SPEC 040 self-heal acceptLoop, SPEC 041 rebind);
+  см. `wg-1.14-migration` и синк 2026-08-01 в changelog.
 - `cmd/internal/build_libbox/main.go` — единственная правка upstream-файла в CI-зоне, по `// lx`-маркеру.
 - `box.go`, `dns/client*.go`, `route/route.go`, `common/trafficcontrol/tracker.go` — несут lx-наблюдаемость
   поверх upstream-логики; при конфликте сохранить upstream-поведение резолва/роутинга, наши emit/Detour —

@@ -13,13 +13,13 @@
 
 | Фича | Что даёт | Build-tag | Задачи |
 |------|----------|-----------|--------|
-| [002-XHTTP](002-XHTTP/FEATURE.md) | XHTTP-транспорт против Xray: `packet-up` / `stream-one` / `auto`, obfs | `with_xhttp` | 002 · 011 |
+| [002-XHTTP](002-XHTTP/FEATURE.md) | XHTTP-транспорт против Xray: `packet-up` / `stream-one` / `auto`, obfs | `with_xhttp` | 002 · 011 · 042 · 043 |
 | [003-AWG2](003-AWG2/FEATURE.md) | AmneziaWG 2.0: обфусцированный WG-endpoint, 16 из 20 параметров + masquerade `id`/`ip`/`ib` | `with_awg` | 003 · 005 · 008 · 009 · 025 · 026 · 031 · 007 |
-| [006-OBSERVABILITY](006-OBSERVABILITY/FEATURE.md) | Расширения libbox gRPC для UI: RPC, `detourList`, DNS-стрим | `with_lx_command` | 014 · 015 · 016 · 017 · 018 · 035 · 037 |
+| [006-OBSERVABILITY](006-OBSERVABILITY/FEATURE.md) | Расширения libbox gRPC для UI: RPC, `detourList`, DNS-стрим | `with_lx_command` | 014 · 015 · 016 · 017 · 018 · 035 · 037 · 038 |
 | [007-URLTEST_BALANCE](007-URLTEST_BALANCE/FEATURE.md) | `round_robin` в `urltest`: пул, ленивый health-check, sticky-слоты | `with_lx_command` | 019 |
 | [008-ENERGY](008-ENERGY/FEATURE.md) | Idle-suspend простаивающих WG/AWG: батарея, нагрев, RSS −31 % | `with_lx_idle_suspend` | 020 |
 | [009-MASQUE_WARP](009-MASQUE_WARP/FEATURE.md) | MASQUE CONNECT-IP outbound (RFC 9484), профиль Cloudflare WARP | — | 021 |
-| [012-VLESS_ENCRYPTION](012-VLESS_ENCRYPTION/FEATURE.md) | 🆕 PQ-слой `mlkem768x25519plus` внутри VLESS — спроектировано | — | 032 |
+| [012-VLESS_ENCRYPTION](012-VLESS_ENCRYPTION/FEATURE.md) | ✅ PQ-слой `mlkem768x25519plus` внутри VLESS — отгружено (`v1.14.0-lx.18`), девайс-верифицировано | — | 032 |
 | [013-DNS_GROUP](013-DNS_GROUP/FEATURE.md) | Группа DNS-серверов: `stable` / `fastest` / `parallel` на TTL-модели, трасса и состояние в наблюдаемости | — | 033 · 035 |
 
 ## Процессные
@@ -27,10 +27,10 @@
 | Фича | Что даёт | Задачи |
 |------|----------|--------|
 | [001-BUILD_CI_CD](001-BUILD_CI_CD/FEATURE.md) | Сборка, теги, musl-таргеты, пайплайны, релиз, зеркало тулчейна | 001 · 004 · 006 · 023 |
-| [004-HOTFIXES](004-HOTFIXES/FEATURE.md) | Что мы чиним за апстримом; у каждого патча — условие снятия | 010 · 028 · 029 · 030 · 012 |
-| [005-UPSTREAM_SYNC](005-UPSTREAM_SYNC/FEATURE.md) | Watchlist дельты: **DROP / REWORK / HOLD / CONSTRAINT**, ритуал мержа | 013 |
+| [004-HOTFIXES](004-HOTFIXES/FEATURE.md) | Что мы чиним за апстримом; у каждого патча — условие снятия | 010 · 012 · 028 · 029 · 030 · 039 · 040 · 041 |
+| [005-UPSTREAM_SYNC](005-UPSTREAM_SYNC/FEATURE.md) | Watchlist дельты: **DROP / REWORK / HOLD / CONSTRAINT**, ритуал мержа | 013 · 010 |
 | [010-AUDITS](010-AUDITS/FEATURE.md) | Сплошная проверка своей дельты с адверсариальной верификацией находок | 022 |
-| [011-RESEARCH](011-RESEARCH/FEATURE.md) | Исследования и проработка решений; отрицательный результат тоже результат | 027 · 024 · 012 |
+| [011-RESEARCH](011-RESEARCH/FEATURE.md) | Исследования и проработка решений; отрицательный результат тоже результат | 012 · 024 · 027 |
 
 ## Шаблон продуктовой фичи
 

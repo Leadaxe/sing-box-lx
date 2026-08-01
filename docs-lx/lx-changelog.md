@@ -1733,3 +1733,9 @@ re-verified on real hardware yet — hence the `-rc.1` tag. Promote to a plain
 * AmneziaWG masquerade `id`/`ip`/`ib` (009): declarative WireSock-style sugar over
   `I1` for quic/dns/stun/sip. Live-verified (tunnel + traffic). First release of the
   feature; `ip=quic` later reworked in lx.12.
+
+---
+
+Older releases of the `1.13.13` line (`v1.13.13-lx.1` … `v1.13.13-lx.10`; the
+`-lx.2` tag was never cut) predate this changelog and are not documented here —
+see the git history and `SPECS/TASKS/` reports of that period.

@@ -7,8 +7,9 @@
 | **XHTTP** транспорт (совместим с Xray) | `with_xhttp` | `transport.type: "xhttp"` на VLESS / VMess / Trojan outbound | desktop + mobile |
 | **AmneziaWG 2.0** (AWG2) | `with_awg` | доп. поля на `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
-| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `route.lx_idle_suspend` | **только mobile** (AAR) |
+| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `route.lx_idle_suspend` (+ `lx_idle_suspend_reachable`, `lx_idle_teardown`) | **только mobile** (AAR) |
 | **Группа DNS-серверов** (SPEC 033/035) | — (всегда в сборке) | `dns.servers[].type: "group"` | desktop + mobile |
+| **VLESS `encryption`** (SPEC 032) | — (всегда в сборке) | `encryption` на `vless`-outbound | desktop + mobile |
 
 Собрать desktop/CLI бинарь: `make -f Makefile.lx lx-build` (выход `sing-box`, версия `…-lx.N`) — включает `with_xhttp` + `with_awg` (+ `with_lx_command`), но **не** `with_lx_idle_suspend`.
 Без тега фича отсутствует: `xhttp`-транспорт или AWG-поле отклоняется при загрузке с явной ошибкой (без молчаливого отката).
@@ -40,8 +41,10 @@ netstack; пробуждение = rebuild ~0.5–1 с; дефолт = reachable
 
 ## 0. Все поля разом (исчерпывающий пример)
 
-Один конфиг, несущий **все** поля, которые sing-box-lx добавляет поверх upstream — XHTTP-транспорт,
-AmneziaWG 2.0 endpoint, masquerade-сахар `id`/`ip`/`ib` и `round_robin`-балансировщик `urltest`.
+Один конфиг, несущий все поля **outbound-фич** — XHTTP-транспорт, AmneziaWG 2.0 endpoint,
+masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-балансировщик `urltest`
+(у MASQUE, DNS-группы и ключей `route.lx_idle_*` — свои примеры в [§4](#4-masque-outbound--cloudflare-warp-spec-021),
+[§5](#5-группа-dns-серверов-spec-033035) и [lx-energy.ru.md](lx-energy.ru.md)).
 Это **справочник «всё сразу»**, а не рекомендуемый конфиг: многие поля взаимоисключающи
 (например, сахар `id`/`ip`/`ib` против написанного вручную `i1`) либо серверные и игнорируются
 клиентом — такие помечены прямо в комментариях. Для рабочей настройки скопируйте только нужный
@@ -60,6 +63,8 @@ AmneziaWG 2.0 endpoint, masquerade-сахар `id`/`ip`/`ib` и `round_robin`-б
       "server": "example.com",
       "server_port": 443,
       "uuid": "00000000-0000-0000-0000-000000000000",
+      "encryption": "",                         // по умолчанию: "" (выкл). PQ-слой VLESS (§6):
+                                                //   "mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>….<ключ>"
       "tls": {
         "enabled": true,
         "server_name": "example.com",
@@ -182,6 +187,8 @@ AmneziaWG 2.0 endpoint, masquerade-сахар `id`/`ip`/`ib` и `round_robin`-б
       "outbounds": ["xhttp-out", "proxy-b", "proxy-c", "proxy-d", "proxy-e"],
       "url": "https://www.gstatic.com/generate_204",
       "interval": "15m",
+      "passive_check": false,                   // по умолчанию: false. Свежий успешный TCP-дайл
+                                                //   считается доказательством живости (< interval) — пробы молчат
       "mode": "round_robin",                    // по умолчанию: least_test. least_test | round_robin
       "balancer": {                             // допустим только с mode: round_robin
         "pool": 3,                              // по умолчанию: 3. 0/отсутствие → 3; эффективный = min(pool, #outbounds)
@@ -195,8 +202,8 @@ AmneziaWG 2.0 endpoint, masquerade-сахар `id`/`ip`/`ib` и `round_robin`-б
 }
 ```
 
-> **Счёт полей:** 26 XHTTP + 21 AmneziaWG (вкл. `id`/`ip`/`ib`) + 5 `urltest` (`mode` +
-> `balancer{pool,pool_tolerance,sticky_hash}`). Взаимоисключающие / игнорируемые поля помечены
+> **Счёт полей:** 26 XHTTP + 21 AmneziaWG (вкл. `id`/`ip`/`ib`) + 1 VLESS (`encryption`) +
+> 6 `urltest` (`mode`, `passive_check` + `balancer{pool,pool_tolerance,sticky_hash}`). Взаимоисключающие / игнорируемые поля помечены
 > в комментариях выше; разделы ниже дают семантику каждого поля, подводные камни и статус
 > живой проверки.
 
@@ -446,7 +453,7 @@ Upstream `urltest` всегда выбирает единственную нод
 происходит один раз на соединение; UDP/QUIC-сессия остаётся на своей ноде. С опущенным `mode` (или
 `least_test`) outbound ведёт себя ровно как upstream, и `balancer` задавать нельзя.
 
-Метод CommandClient `GetPool` (см. [§6](#6-наблюдаемость-расширения-commandclient)) за тегом
+Метод CommandClient `GetPool` (см. [§7](#7-наблюдаемость-расширения-commandclient)) за тегом
 `with_lx_command`; сами поля конфига `mode`/`balancer` доступны всегда.
 
 ### Поля (на `urltest` outbound)
@@ -454,6 +461,7 @@ Upstream `urltest` всегда выбирает единственную нод
 | Ключ | Тип | По умолчанию | Значение |
 |------|-----|--------------|----------|
 | `mode` | string | `least_test` | `least_test` (поведение upstream) \| `round_robin` (ротация по пулу). `least_connection` отклоняется (round_robin статистически равномерен) |
+| `passive_check` | bool | `false` | свежий успешный TCP-дайл считается доказательством живости, пока свеж (< `interval`): `least_test` пропускает целые циклы перетеста, пока выбранный узел пассивно подтверждён; `round_robin` (только при `pool_tolerance: 0`) считает подтверждённые слоты живыми без проб. Цена: более лежалые числа задержек в UI. См. [lx-energy.ru.md](lx-energy.ru.md) |
 | `balancer` | object | — | параметры round_robin; **допустим только с `mode: round_robin`** (иначе ошибка). Upstream-поле `tolerance` в round_robin игнорируется — используйте `pool_tolerance` (предупреждение при старте подсказывает это, пока `pool_tolerance` не задан) |
 
 #### Поля `balancer`
@@ -639,7 +647,7 @@ WARP enroll) делает клиент, не ядро.
 **Наблюдаемость:** поток DNS-запросов несёт фактически ответившего
 участника (кеш-попадания и полный сбой — тег группы), трассу проб (путь
 групп изнутри наружу, исходы `answered`/`timeout`/`network_error`/`servfail`
-и rtt) и флаги `fanned` / `survival`. `GetDNSGroups` (§6, `with_lx_command`)
+и rtt) и флаги `fanned` / `survival`. `GetDNSGroups` (§7, `with_lx_command`)
 отдаёт живые записи: по участнику — чистота, живые ошибки (счёт + возраст
 последней), живые победы, последний rtt, флаг текущего.
 
@@ -667,7 +675,60 @@ WARP enroll) делает клиент, не ядро.
 > ⚠️ Контракт v1 (`mode: failover|race`, `interval`, `down_time`,
 > отгружался в `v1.14.0-lx.16-rc.1`) УДАЛЁН: такие конфиги не загружаются.
 
-## 6. Наблюдаемость (расширения CommandClient)
+## 6. VLESS `encryption` — пост-квантовый слой (SPEC 032)
+
+Плоское поле `encryption` на `vless`-outbound включает `mlkem768x25519plus`-рукопожатие
+**внутри** VLESS — над транспортом/TLS, под VLESS-клиентом и независимо от key exchange
+REALITY (другой слой, не путать). Серверы, которые его требуют (в Xray настроен
+`decryption`), молча рвут обычный VLESS: транспорт поднимается (WS `101`, gRPC отвечает
+на SETTINGS), после чего пир закрывает соединение без единой строки в логе ядра — именно
+этот симптом поле и лечит. Только клиентская половина; серверная намеренно не
+портирована (клиентский форк). Всегда в сборке, build-тега нет.
+
+### Поле (на `vless`-outbound)
+
+| Ключ | Тип | По умолчанию | Значение |
+|------|-----|--------------|----------|
+| `encryption` | string | `""` | `""`/`"none"` = слой выключен (поведение upstream байт-в-байт). Иначе — spec-строка, валидируется на `check`/старте с ошибками, называющими конкретный сегмент |
+
+Грамматика spec-строки (сегменты через точку):
+
+```
+mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>[.<padding>…].<ключ>[.<ключ>…]
+```
+
+- **appearance** — как слой выглядит на проводе: `native` (AEAD-заголовки в форме
+  TLSv1.3), `xorpub` (XOR по публичному ключу), `random`.
+- **rtt** — `0rtt` или `1rtt`.
+- **padding** — опциональные короткие блоки вида `100-111-1111` (сегмент короче
+  20 символов до первого ключа читается как padding).
+- **ключ** — base64url публичного ключа X25519 (32 байта) или ML-KEM-768
+  (1184 байта); ключей может быть несколько. Рабочий ключ ML-KEM-768 — ~1579
+  символов; заметно более короткий — обрезанный ключ, а не другой формат.
+
+### Пример
+
+```jsonc
+{
+  "type": "vless",
+  "tag": "pq-node",
+  "server": "example.com",
+  "server_port": 443,
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "encryption": "mlkem768x25519plus.native.0rtt.<base64url ключ ML-KEM-768>",
+  "transport": { "type": "ws", "path": "/ws" }
+}
+```
+
+> **Статус.** Отгружено в `v1.14.0-lx.18`, **девайс-верифицировано** на подписке,
+> из-за которой фича появилась: +10 прежде мёртвых нод (6/8 WS, 4/4 gRPC), остальные
+> группы транспортов не сдвинулись. Полевая форма — `native.0rtt`; `1rtt`+padding и
+> `xorpub`/`random` парсятся и собираются, но живого сервера ещё не встречали.
+> В подписке значение приходит как `settings.vnext[0].users[0].encryption` — на
+> sing-box-outbound это плоское поле `encryption` рядом с `uuid`; билдер конфига,
+> который его теряет, оставляет ядро ни с чем.
+
+## 7. Наблюдаемость (расширения CommandClient)
 
 Это **дополнения клиентского API, а не конфиг** — дополнительные методы на `CommandClient` libbox
 (нативный gRPC-канал управления), все за тегом `with_lx_command`, потребляются LxBox. Они ничего
@@ -684,6 +745,12 @@ WARP enroll) делает клиент, не ядро.
   отдельно стоящие outbounds не входят ни в одну группу).
 - **`GetPool(groupTag)`** — прочитать текущий пул ротации round_robin группы `urltest`, слот за
   слотом (SPEC 019; см. [§3](#3-балансировка-нагрузки-round_robin-spec-019)).
+- **`GetDNSGroups()`** — live-состояние каждого DNS-сервера `group` (SPEC 035; см.
+  [§5](#5-группа-dns-серверов-spec-033035)): по каждому члену `clean` / `liveErrors` /
+  `lastErrorAgeMs` / `liveWins` / `current`.
+- **`GetRunningConfig()`** — канонический JSON options, из которых реально построен
+  работающий box, post-override (SPEC 037). Возвращается объектом с аксессором `Content()` —
+  голый `string`-возврат ронял бы gomobile на android/arm64 (SPEC 038).
 - **`SubscribeDNSQueries(includeAnswers, handler)`** — структурный live-поток DNS-запросов
   (SPEC 018): по каждому запросу `domain`, `qtype`, `rcode` (**`-1` = ошибка резолва**,
   полноправное состояние), CNAME-цепочка / ответы (при `includeAnswers`), привязка к процессу и
@@ -702,7 +769,7 @@ make -f Makefile.lx lx-build   # включает with_lx_command (и with_xhttp
 
 ---
 
-## 7. Проверка и сборка
+## 8. Проверка и сборка
 
 ```sh
 git clone --recurse-submodules <repo>           # with_awg требует submodule

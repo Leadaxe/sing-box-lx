@@ -54,8 +54,9 @@
 - Правки upstream-файлов выносятся в **отдельные атомарные коммиты** (см. IMPLEMENTATION_PROMPT). Один коммит = одна логическая правка одной зоны.
 
 ### 3.4 Синхронизация
-- **Только rebase, никогда merge.** Ветка `lx` всегда ребейзится поверх тега upstream (`v1.13.13`, затем следующий стабильный).
+- **Ручной merge `upstream/testing`, не rebase.** Ветка `lx` — рабочая и релизная, никогда не форс-пушится; дрейф проверяется по merge-base (`upstream/testing` сам форс-пушится, счётчики `rev-list` врут). Полный ритуал — [docs-lx/lx-release-runbook.md](../docs-lx/lx-release-runbook.md).
 - `origin` = `Leadaxe/sing-box-lx`, `upstream` = `SagerNet/sing-box`. Теги тянем из `upstream`.
+- **Форк-сабмодули — часть дельты.** `submodules/wireguard-go` ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx)) и `submodules/sing-tun` (Leadaxe/sing-tun-lx) подключены `replace`-директивами в `go.mod`; встречный upstream-бамп этих зависимостей на мерже не принимается вслепую — он молча откатил бы наши патчи (обфускация AWG, self-heal acceptLoop).
 
 ### 3.5 Дистрибуция
 - **Desktop — бинарь `sing-box`** (drop-in для лаунчера `singbox-launcher`, который ищет `LookPath("sing-box")` → `bin/sing-box`).
@@ -78,17 +79,17 @@
 
 ---
 
-## 4. Архитектурные ориентиры (факты upstream v1.13.13)
+## 4. Архитектурные ориентиры (факты upstream-линии 1.14)
 
 - **v2ray-транспорты** диспатчатся `switch` по `options.Type` в `transport/v2ray/transport.go` (`NewClientTransport`/`NewServerTransport`). Константы — `constant/v2ray.go`. Опции — `option/v2ray_transport.go` (`_V2RayTransportOptions`). VLESS/VMess/Trojan ходят через общий транспорт — пер-протокольных правок не требуется.
-- **WireGuard** — это **endpoint**: `protocol/wireguard/endpoint.go`, регистрация `endpoint.Register[option.WireGuardEndpointOptions](registry, C.TypeWireGuard, NewEndpoint)`, проводка в `include/wireguard.go` (+ `wireguard_stub.go`). Девайс — через `transport/wireguard`, зависимость `github.com/sagernet/wireguard-go` в `go.mod`.
+- **WireGuard** — это **endpoint**: `protocol/wireguard/endpoint.go`, регистрация `endpoint.Register[option.WireGuardEndpointOptions](registry, C.TypeWireGuard, NewEndpoint)`, проводка в `include/wireguard.go` (+ `wireguard_stub.go`). Девайс — через `transport/wireguard`; зависимость `github.com/sagernet/wireguard-go` в `go.mod` заменена (`replace`) на форк-сабмодуль `submodules/wireguard-go`.
 - **libbox command-протокол** — gRPC-сервис `StartedService` в `daemon/started_service.proto` (+ регенерируемые `*.pb.go`/`*_grpc.pb.go`), клиент `experimental/libbox/command_client.go`. Опциональные RPC гейтятся build-tag'ом по парному паттерну `daemon/started_service_usbip{,_stub}.go` (реальные handler'ы / `codes.Unimplemented`-заглушка). Это образец для §3.6.
 
 ---
 
 ## 5. Референсы (только как образец, код не тянуть «как есть»)
 
-- **AWG2** — [`hoaxisr/amnezia-box`](https://github.com/hoaxisr/amnezia-box) (submodule + `patches/amneziawg-go`, тег `with_awg`).
+- **AWG2** — [`hoaxisr/amnezia-box`](https://github.com/hoaxisr/amnezia-box) (submodule + `patches/amneziawg-go`, тег `with_awg`) — референс-образец; сегодня фактическая схема своя: форк-сабмодуль `submodules/wireguard-go` = [Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) (sagernet-база + обфускация).
 - **XHTTP** — [`hiddify/hiddify-sing-box`](https://github.com/hiddify/hiddify-sing-box), пакет `transport/v2rayxhttp`.
 - **Спецификация XHTTP** — Xray-core (актуальная версия параметров `mode`/`path`/`host`/`extra`).
 - **Clash API как функциональный эталон** для расширений §3.6 — `experimental/clashapi/` (`proxies.go` per-node delay, `rules.go` таблица правил): что именно пробрасываем в CommandClient. Код не тянуть — повторяем семантику через нативный канал.

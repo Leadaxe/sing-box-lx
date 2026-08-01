@@ -4,7 +4,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | `with_awg` |
-| Состояние | ✅ Работает против живого AWG2-сервера; 16 из 20 параметров |
+| Состояние | ✅ Работает против живого AWG2-сервера; полный клиентский паритет — все 16 параметров обфускации, которые принимают официальные реализации (ещё 4 «advanced»-ключа в протоколе не существуют, см. задачу 031) |
 
 ## Назначение
 
@@ -164,11 +164,11 @@ padding и заголовки читаются из одного и того ж�
 |--------|------|--------|
 | [003 — AWG2_CLIENT_ENDPOINT](../../TASKS/003-AWG2_CLIENT_ENDPOINT/SPEC.md) | Базовый endpoint: `s1`–`s4`, `h1`–`h4`, `i1`–`i5` | C |
 | [005 — AWG2_RANGED_MAGIC_HEADERS](../../TASKS/005-AWG2_RANGED_MAGIC_HEADERS/SPEC.md) | Диапазонная форма `"min-max"` для `h1`–`h4` | C |
-| [009 — WIRESOCK_MASQUERADE_PROFILES](../../TASKS/009-WIRESOCK_MASQUERADE_PROFILES/SPEC.md) | Masquerade `id`/`ip`/`ib`, профили quic/dns/stun/sip | C |
 | [008 — AWG_JUNK_PARAM_VALIDATION](../../TASKS/008-AWG_JUNK_PARAM_VALIDATION/SPEC.md) | Fail-fast на `jmin > jmax` | C |
+| [009 — WIRESOCK_MASQUERADE_PROFILES](../../TASKS/009-WIRESOCK_MASQUERADE_PROFILES/SPEC.md) | Masquerade `id`/`ip`/`ib`, профили quic/dns/stun/sip | C |
 | [025 — AWG_TRANSPORT_PADDING_OVERRUN](../../TASKS/025-AWG_TRANSPORT_PADDING_OVERRUN/SPEC.md) | Класс крашей от значений padding | C |
 | [026 — AWG_MAGIC_VS_RESERVED_CLEAR](../../TASKS/026-AWG_MAGIC_VS_RESERVED_CLEAR/SPEC.md) | Сохранность magic при малом padding | C |
-| [031 — AWG_PARITY_AUDIT_ADVANCED_SECURITY](../../TASKS/031-AWG_PARITY_AUDIT_ADVANCED_SECURITY/SPEC.md) | Сверка паритета AWG (16/16) + зазор `AdvancedSecurity` | **N** |
+| [031 — AWG_PARITY_AUDIT_ADVANCED_SECURITY](../../TASKS/031-AWG_PARITY_AUDIT_ADVANCED_SECURITY/SPEC.md) | Сверка паритета AWG (полный, 16/16); `AdvancedSecurity` — серверное поле, не зазор | C |
 | [007 — AWG_OVER_WIREGUARD_DETOUR_GUARD](../../TASKS/007-AWG_OVER_WIREGUARD_DETOUR_GUARD/SPEC.md) | Guard AWG-over-WG — снят, причина устранена | C |
 
 Примеры конфигурации — [docs-lx/lx-config.md](../../../docs-lx/lx-config.md)
