@@ -71,6 +71,35 @@ v1.14.0-lx.17-rc.3, LxBox 2.18.2-dev.13, 2026-07-31):
 listener при bind в Go) на репро-серии. Warn-лог этого патча (errno) — ядровая
 половина той же инструментировки. Задача — в репо LxBox.
 
+### Живой прогон патча на устройстве (2026-08-01, ядро rc.4)
+
+Два срабатывания самолечения, оба **следом за `reload`** (`[vpn] reload → ok=true`
+в app-логе за ~1 с до warn'а):
+
+```
+00:02:20 WARN inbound/tun[tun-in]: system stack: tcp4 listener (port 42813)
+         accept failed: accept tcp4 172.16.0.1:42813: accept4: invalid argument
+         — recreating listener
+00:02:20 WARN inbound/tun[tun-in]: system stack: tcp4 listener recreated
+         (port 42813 → 37443, recoveries: 1)
+```
+
+После восстановления listener слушает новый порт, TCP-проба зелёная,
+пользователь сбоя не замечает. Первое срабатывание — 23:51:42 (`42557 → 38293`).
+
+**Два вывода, меняющие картину триггера:**
+
+1. **errno = `EINVAL` (`accept4: invalid argument`)**, а НЕ `EBADF`/`ENOTSOCK`.
+   Это опровергает исходную версию «чужой close по переиспользованному номеру»:
+   при ней дескриптор был бы закрыт или занят не-сокетом. `EINVAL` от `accept4`
+   означает, что **fd жив и остаётся сокетом, но перестал быть слушающим** —
+   типичный источник такого состояния — `shutdown()` на listening-сокете.
+   Поиск в LxBox сужается: искать не лишний `close`, а `shutdown`/потерю
+   listen-состояния в reload-пути (`startOrReloadService`).
+2. **Триггер — `reload`, подтверждён** (оба случая). Но убивает **не каждый**
+   reload: 10 подряд дали одно срабатывание (`recoveries: 1`) — нужна
+   дополнительная совпадающая по времени операция, отсюда «плавающесть» §047.
+
 ## What to build
 
 Форк sing-tun сабмодулем (`submodules/sing-tun` на upstream-ревизии
@@ -100,20 +129,21 @@ listener при bind в Go) на репро-серии. Warn-лог этого �
 
 ## Acceptance criteria
 
-- [ ] red/green: тест в форке sing-tun — поднять минимальный System-стек,
+- [x] red/green: тест в форке sing-tun — поднять минимальный System-стек,
       закрыть listener «из-под» стека (минуя `System.Close`), новое
       TCP-соединение через стек: на upstream-ревизии `2d9b8aed5fe2` красный
       (refused навсегда), с патчем — зелёный (восстановление, соединение
       проходит);
-- [ ] штатный останов: `System.Close()` не порождает warn/error-логов
-      восстановления (регрессия);
-- [ ] neighbours untouched: дифф форка против upstream `2d9b8aed5fe2` —
+- [x] штатный останов: `System.Close()` не порождает warn/error-логов
+      восстановления (регрессия — `TestSystemAcceptLoopQuietOnClose`);
+- [x] neighbours untouched: дифф форка против upstream `2d9b8aed5fe2` —
       только файлы патча; ядро собирается с `replace` без иных изменений;
-- [ ] verification grade: **device** (pending: требует сборки AAR и
-      установки LxBox) — серия быстрых `reconnect` ≥100 итераций: TCP-проба
-      зелёная на каждой итерации ЛИБО в логах ядра warn «accept loop died …
-      recreated» и TCP-проба зелёная сразу после; fingerprint: OnePlus
-      CPH2411 / Android 15;
+- [x] verification grade: **device** — подтверждено 2026-08-01 на ядре rc.4
+      (OnePlus CPH2411 / Android 15 / LxBox 2.18.2-dev.13): **два живых
+      срабатывания** самолечения по реальному триггеру (`reload`), оба с
+      восстановлением listener'а и зелёной TCP-пробой сразу после —
+      `42557 → 38293` и `42813 → 37443` (см. фактуру в Why); плюс серии
+      быстрых `reconnect` 120/120 и 30/30 без единой красной пробы;
 - [ ] запись в реестре HOTFIXES (FEATURE 004) с условием снятия: апстрим
       делает acceptLoop устойчивым (или заменяет механику system-стека).
 
