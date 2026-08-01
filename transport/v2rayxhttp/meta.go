@@ -290,14 +290,15 @@ func (c *Client) applyMeta(request *http.Request, basePath, sessionID, seqStr st
 	m := &c.meta
 	path := basePath
 
-	// session id — an empty sessionID (stream-one) emits nothing and the request
-	// targets the BARE path: Xray's splithttp server keys the bidirectional
-	// stream-one branch on an exact bare path, so any trailing slash is trimmed
-	// here (and only here). Every other mode keeps the configured path verbatim,
-	// including a trailing slash, so proxy routing (e.g. nginx `location /x/ {}`)
-	// matches without a 301 (lx: SPEC 002).
+	// session id — an empty sessionID (stream-one) emits no session metadata, but
+	// the path still carries the trailing slash that path-placement implies.
+	// Xray/NekoBox normalize the CONFIGURED path to end in "/" whenever session or
+	// seq live in the path (GetNormalizedPath), and the server prefix-matches every
+	// request against that normalized path. Trimming the slash here made stream-one
+	// request "<path>" against a server expecting "<path>/" — no prefix match, 404,
+	// and the dial hung until timeout (lx: SPEC 043, wire-reproduced).
 	if sessionID == "" {
-		path = trimBarePathSlash(path)
+		path = barePathForStreamOne(path, m)
 	} else {
 		switch m.sessionPlacement {
 		case placementPath:
@@ -378,12 +379,23 @@ func timeNow() time.Time { return time.Now() }
 // while never collapsing the root path to "" (a root-only path stays "/"). Used
 // only when no sessionId is appended, so it cannot affect proxy routing for the
 // other modes, which keep the configured path verbatim.
-func trimBarePathSlash(path string) string {
-	trimmed := strings.TrimRight(path, "/")
-	if trimmed == "" {
+// barePathForStreamOne returns the path a stream-one request targets. stream-one
+// sends no sessionId, but the trailing slash is still load-bearing: Xray and
+// NekoBox normalize the configured path to end in "/" when session or seq are
+// placed in the path, and the server prefix-matches requests against it. So the
+// slash is appended under exactly the same condition, and left alone otherwise
+// (non-path placements keep the configured path verbatim).
+func barePathForStreamOne(path string, m *metaConfig) string {
+	if path == "" {
 		return "/"
 	}
-	return trimmed
+	if m.sessionPlacement != placementPath && m.seqPlacement != placementPath {
+		return path
+	}
+	if !strings.HasSuffix(path, "/") {
+		return path + "/"
+	}
+	return path
 }
 
 // appendPathSegment joins a "/"-separated segment onto a path, inserting exactly one
