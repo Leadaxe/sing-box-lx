@@ -10,10 +10,14 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
-#### v1.14.0-lx.17-rc.6
+#### v1.14.0-lx.17
 
-Fixes XHTTP `mode: auto` on REALITY servers — the shape most subscriptions ship.
-On top of `rc.5`, which stays as described below.
+First stable tag of the `lx.17` line — a promotion of `rc.1`–`rc.5` plus the
+XHTTP fixes below, which never shipped in an rc. The rc sections stay as
+written; this entry describes what is new on top of `rc.5`.
+
+The headline is XHTTP `mode: auto` on REALITY servers — the shape most
+subscriptions ship, and until now the one that did not work.
 
 **XHTTP `stream-one` no longer sends a path the server refuses to route (SPEC
 043, feature
@@ -41,7 +45,8 @@ and still reach the wire exactly as configured, trailing slash included.
 
 Confirmed on the wire against a prefix-checking HTTP/2 server: `REJECT 404:
 "/api/v1/feed" lacks prefix "/api/v1/feed/"` before, `ACCEPT: "/api/v1/feed/"`
-after. Two unit tests had been asserting the broken shape and were corrected.
+after — then verified on device against the live subscription that reported the
+problem. Two unit tests had been asserting the broken shape and were corrected.
 
 **Streamed-body XHTTP requests carry `Content-Type: application/grpc` (SPEC
 042).** Xray sets this header on every request that carries a body — `stream-one`
@@ -50,6 +55,16 @@ accepted as a documented no-op, now genuinely suppresses it, matching Xray's
 `NoGRPCHeader`. This restores parity with the Xray wire contract; on its own it
 did not resolve the dead-nodes report above, and is shipped as a correctness fix
 rather than as that cure.
+
+**Also in this line, from `rc.1`–`rc.5`** (each described in its own section
+below): `GetRunningConfig` no longer crashes the core on android/arm64 and
+returns the config the running box was actually built from (SPEC 037/038);
+report archives are pruned instead of growing without bound — 427 MB had
+accumulated on one device (SPEC 039); `Endpoint.Close()` reports tun-device
+close failures again; WG/AWG endpoints heal themselves after device sleep
+instead of sitting in ERR until a manual reconnect (SPEC 041); system-stack TCP
+survives having its listener closed underneath the core (SPEC 040); and roughly
+245 upstream commits were merged across the line.
 
 #### v1.14.0-lx.17-rc.5
 
