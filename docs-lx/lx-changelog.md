@@ -10,6 +10,25 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.17-rc.5
+
+Upstream sync on top of `rc.4`, which stays as described below. No `lx` changes
+of our own — the fork's delta is untouched.
+
+Five upstream fixes were picked up (`SagerNet/sing-box` `testing`, up to
+`d2438c2`): a DNS race where a completed rule was blocked by an earlier armed
+one, a routing loop to the exact TUN address on darwin, TLS fragment ACK waiting
+on Windows without TCP estats, system-device DNS configuration for WireGuard
+interfaces, and a naiveproxy bump to `v150.0.7871.63-1`.
+
+The apparent gap was much larger — 215 commits — but `upstream/testing` is
+force-pushed, so already-merged work reappears under fresh hashes. Comparing by
+commit subject rather than hash showed only six genuinely new commits, five of
+which cherry-picked cleanly. The sixth, an `Update sing-tun` bump, was
+deliberately **skipped**: it points at a revision older than the one our
+`sing-tun` fork is based on, so taking it would have rolled the TCP self-heal
+work backwards.
+
 #### v1.14.0-lx.17-rc.4
 
 Adds two fixes on top of `rc.3`, which stays as described below.
