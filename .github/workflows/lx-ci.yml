@@ -49,9 +49,9 @@ jobs:
     name: lint (vet + gofmt)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { submodules: recursive, fetch-depth: 0 }
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod, check-latest: true }
 
       - name: go vet (lx packages, full tags)
@@ -89,11 +89,11 @@ jobs:
     name: build-check (native build + check + negative)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive     # with_awg needs submodules/wireguard-go
           fetch-depth: 0            # tags for the -lx version (git describe)
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod, check-latest: true }
 
       - name: Build (full lx — with_xhttp,with_awg,with_lx_command)
@@ -162,9 +162,9 @@ jobs:
         goos: [linux, darwin, windows]
         goarch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { submodules: recursive, fetch-depth: 0 }
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod, check-latest: true }
       - name: Cross-build (full lx)
         env:
@@ -175,7 +175,7 @@ jobs:
             LX_TAGS="${BASE_TAGS},with_xhttp,with_awg" \
             LX_OUTPUT="sing-box-${{ matrix.goos }}-${{ matrix.goarch }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: sing-box-${{ matrix.goos }}-${{ matrix.goarch }}
           path: sing-box-${{ matrix.goos }}-${{ matrix.goarch }}*
@@ -190,9 +190,9 @@ jobs:
     name: android libbox.aar
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { submodules: recursive, fetch-depth: 0 }
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod, check-latest: true }
       - name: Setup Android NDK
         id: setup-ndk
@@ -208,7 +208,7 @@ jobs:
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: libbox-aar
           path: |
@@ -234,9 +234,9 @@ jobs:
           - { arch: arm,    goarm: "7",        asset: linux-armv7 }
           - { arch: mipsle, gomips: softfloat, asset: linux-mipsle-softfloat }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with: { submodules: recursive, fetch-depth: 0 }
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with: { go-version-file: go.mod, check-latest: true }
 
       - name: Clone cronet-go
@@ -257,7 +257,7 @@ jobs:
           GPG_TTY=/dev/null ./naiveproxy/src/build/linux/sysroot_scripts/generate_keyring.sh
 
       - name: Cache Chromium toolchain
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/cronet-go/naiveproxy/src/third_party/llvm-build/
@@ -303,7 +303,7 @@ jobs:
           fi
           echo "OK: statically linked, no libdl.so.2"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: sing-box-${{ matrix.asset }}
           path: sing-box-${{ matrix.asset }}

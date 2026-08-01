@@ -49,12 +49,12 @@ jobs:
           # mips either — purego has no mips port).
           - { goos: linux, goarch: mips, gomips: softfloat, no_naive: true }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         if: ${{ ! matrix.legacy_win7 }}
         with:
           go-version-file: go.mod
@@ -65,7 +65,7 @@ jobs:
       - name: Cache Win7 Go toolchain
         if: matrix.legacy_win7
         id: cache-go-win7
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/go/go_win7
           key: go_win7_${{ hashFiles('.github/setup_go_for_windows7.sh') }}
@@ -143,7 +143,7 @@ jobs:
             tar -C stage -czf "dist/$NAME.tar.gz" "$NAME"
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
@@ -167,12 +167,12 @@ jobs:
           - { arch: amd64 }
           - { arch: arm64 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           check-latest: true
@@ -221,7 +221,7 @@ jobs:
           cp LICENSE LICENSING.md README.md "stage/$NAME/" 2>/dev/null || true
           tar -C stage -czf "dist/$NAME.tar.gz" "$NAME"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: dist-darwin-${{ matrix.arch }}
           path: dist/*.tar.gz
@@ -246,12 +246,12 @@ jobs:
           - { arch: arm,    goarm: "7",        asset: linux-armv7 }
           - { arch: mipsle, gomips: softfloat, asset: linux-mipsle-softfloat }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           check-latest: true
@@ -292,7 +292,7 @@ jobs:
           done
 
       - name: Cache Chromium toolchain
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/cronet-go/naiveproxy/src/third_party/llvm-build/
@@ -389,7 +389,7 @@ jobs:
           cp LICENSE LICENSING.md README.md "stage/$NAME/" 2>/dev/null || true
           tar -C stage -czf "dist/$NAME.tar.gz" "$NAME"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: dist-${{ matrix.asset }}
           path: dist/*.tar.gz
@@ -399,12 +399,12 @@ jobs:
     name: build android (libbox.aar)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           check-latest: true
@@ -442,7 +442,7 @@ jobs:
           cp libbox.aar "dist/libbox-$V.aar"
           cp libbox-legacy.aar "dist/libbox-legacy-$V.aar"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: dist-android
           path: dist/*
@@ -453,11 +453,11 @@ jobs:
     needs: [build, build_darwin, build_linux_musl, build_android]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: dist
           merge-multiple: true

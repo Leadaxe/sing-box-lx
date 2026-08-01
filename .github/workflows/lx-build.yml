@@ -38,12 +38,12 @@ jobs:
     if: ${{ inputs.target == 'android-aar' || inputs.target == 'all' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.branch }}
           submodules: recursive
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           check-latest: true
@@ -69,7 +69,7 @@ jobs:
           mkdir -p dist
           cp libbox.aar dist/
           cp libbox-legacy.aar dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: android-aar-${{ inputs.branch }}
           path: dist/*
@@ -81,12 +81,12 @@ jobs:
     if: ${{ inputs.target == 'apple-xcframework' || inputs.target == 'all' }}
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.branch }}
           submodules: recursive
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           check-latest: true
@@ -102,7 +102,7 @@ jobs:
           mkdir -p dist
           # xcframework is a directory bundle — zip it for the artifact.
           ditto -c -k --sequesterRsrc --keepParent Libbox.xcframework dist/Libbox.xcframework.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: apple-xcframework-${{ inputs.branch }}
           path: dist/*
@@ -114,12 +114,12 @@ jobs:
     if: ${{ inputs.target == 'binary' || inputs.target == 'all' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.branch }}
           submodules: recursive
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           check-latest: true
@@ -141,7 +141,7 @@ jobs:
           mkdir -p dist
           cp sing-box dist/sing-box-linux-amd64
           cp libcronet.so dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: binary-linux-amd64-${{ inputs.branch }}
           path: dist/*
@@ -155,12 +155,12 @@ jobs:
     if: ${{ inputs.target == 'linux-musl' || inputs.target == 'all' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.branch }}
           submodules: recursive
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           check-latest: true
@@ -195,7 +195,7 @@ jobs:
         run: |
           mkdir -p dist
           cp sing-box-musl-amd64 dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: linux-musl-amd64-${{ inputs.branch }}
           path: dist/*
