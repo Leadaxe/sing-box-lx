@@ -115,24 +115,27 @@ keypair **либо** последний успешный handshake старше 
 
 ## Критерии приёмки
 
-- [ ] red/green (досрочный триггер): стенд v1 (blackhole первого сокета) +
-      состаренный `lastHandshakeNano` → восстановление ≤ ~20 с; на v1-базе
-      тот же тест лечится только к ~90 с
-- [ ] юнит: свежая сессия (handshake < `RejectAfterTime`, keypair жив) →
-      досрочный rebind НЕ срабатывает, retry-ветка байт-в-байт апстримная
-- [ ] юнит: общий дебаунс — досрочный rebind гасит штатный give-up-rebind
-      той же серии; следующая серия лечится (окно скользящее, не латч —
-      образец `TestJudgeSecondWindowRebinds`)
-- [ ] юнит (нудж): стухший endpoint → rebind + немедленная инициация;
-      здоровый → no-op; idle-asleep (SPEC 020) → no-op и не разбужен;
-      пинованный `listen_port` сохранён
-- [ ] гонки: нудж против `Close()`/suspend под `-race` — по образцу
-      judge-тестов v1 (`TestJudgeRebindRacesClose`/`RacesSuspend`)
-- [ ] нудж не блокирует вызывающего (метод возвращается до завершения работы)
-- [ ] libbox: метод экспортирован в AAR (gomobile); сборка, где метод не
-      вызывается, поведенчески эквивалентна сборке без него
-- [ ] соседи не тронуты: существующие тесты submodule и v1-тесты зелёные
-- [ ] `gofmt -l` чист по lx-файлам, `go vet` зелёный, сборка ядра зелёная
+- [x] red/green (досрочный триггер): стенд v1 (blackhole первого сокета) →
+      `TestEarlyRebindSelfHeal` RED на v1-базе (timeout 20 с), GREEN с фиксом
+- [x] юнит: свежая сессия (handshake < `RejectAfterTime`, keypair жив) →
+      досрочный rebind НЕ срабатывает (`TestEarlyRebindFreshSessionNoop`,
+      `TestEarlyRebindNeedsMinAttempts`)
+- [x] юнит: общий дебаунс — досрочный/нудж rebind гасит штатный
+      give-up-rebind той же серии; следующая серия лечится (окно скользящее,
+      не латч — `TestSharedDebounceAcrossTriggers`)
+- [x] юнит (нудж): стухший endpoint → rebind + немедленная инициация
+      (`TestNudgeRebindsStaleSession`, `TestNudgeExpiredHandshakeIsStale`);
+      здоровый → no-op; idle-asleep (SPEC 020) → no-op и не разбужен
+      (`TestRebindStale_asleepNotWoken`); пинованный `listen_port` сохранён
+- [x] гонки: нудж против `Close()`/suspend под `-race`
+      (`TestNudgeRacesClose`/`TestNudgeRacesSuspend`, 25 итераций)
+- [x] нудж не блокирует вызывающего (обход endpoint'ов в горутине,
+      rebind — в горутине девайса)
+- [x] libbox: прямой gomobile-метод на `CommandServer` (экспорт в AAR
+      механически, как `ResetNetwork`; AAR-сборка — в CI релиза); сборка,
+      где метод не вызывается, поведенчески эквивалентна by construction
+- [x] соседи не тронуты: существующие тесты submodule и v1-тесты зелёные
+- [x] `gofmt -l` чист по lx-файлам, `go vet` зелёный, сборка ядра зелёная
 - [ ] verification grade: **synthetic** (стенд в тестах); **device/field** —
       остаток: нудж с реального BoxService на стенде жалобы (CPH2411, сон →
       разблокировка → пинг в первые секунды зелёный)

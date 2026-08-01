@@ -485,6 +485,17 @@ func (e *Endpoint) BindUpdate() error {
 	return e.device.BindUpdate()
 }
 
+// lx: SPEC 041 v2 — wake-nudge passthrough: rebind the device's socket now if
+// its session is provably dead (see device.RebindIfSessionStale). Nil-safe
+// over a torn-down endpoint (SPEC 020 level 3 releases the device).
+func (e *Endpoint) RebindIfSessionStale() bool {
+	wgDevice := e.device
+	if wgDevice == nil {
+		return false
+	}
+	return wgDevice.RebindIfSessionStale()
+}
+
 func (e *Endpoint) onPauseUpdated(event int) {
 	// lx: SPEC 020 level 3 — a torn-down endpoint has no device at all; the
 	// callback is unregistered by Teardown, but a pause event already in flight

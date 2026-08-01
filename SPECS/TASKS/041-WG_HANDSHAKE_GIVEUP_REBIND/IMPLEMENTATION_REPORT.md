@@ -2,49 +2,67 @@
 
 ## Что сделано
 
-Пассивный self-heal WG/AWG-endpoint'а по событию give-up цикла рукопожатий.
-Весь механизм — в форке `wireguard-go` (submodule, local-path replace);
-ядро конфигурирует его одной строкой.
+Пассивный self-heal WG/AWG-endpoint'а: пересоздание UDP-сокета с новым
+ephemeral-портом и немедленной повторной инициацией, с тремя триггерами
+(give-up ~90 с / досрочный ~15 с по стале-предикату / wake-нудж из libbox)
+над общим действием и общим дебаунсом. Весь механизм — в форке `wireguard-go`
+(submodule, local-path replace); ядро конфигурирует его одной строкой и
+пробрасывает нудж через libbox.
 
 | Файл | Изменение |
 |---|---|
-| `submodules/wireguard-go/device/device.go` | поле `giveUpRebind{enabled,freshPort,last}` (enabled=true по умолчанию, ставится в `NewDevice`); `SetGiveUpRebind(enabled, freshPort)`; `handleHandshakeGiveUp(peer)` — дебаунс CAS-ом по `last` (окно `RekeyAttemptTime`), в горутине: сброс `net.port=0` при `freshPort`, `BindUpdate()`, лог, немедленный `SendHandshakeInitiation(false)` |
-| `submodules/wireguard-go/device/timers.go` | +1 вызов `peer.device.handleHandshakeGiveUp(peer)` в give-up ветке `expiredRetransmitHandshake` |
-| `transport/wireguard/endpoint.go` | `wgDevice.SetGiveUpRebind(true, e.options.ListenPort == 0)` после `NewDevice` |
-| `submodules/wireguard-go/device/lx_giveup_selfheal_test.go` | новый: harness `gateBind` (blackhole первой генерации сокета, учёт Open/портов) + red/green e2e `TestHandshakeGiveUpSelfHeal`; **не использует новый API** — компилируется на базе |
-| `submodules/wireguard-go/device/lx_giveup_rebind_test.go` | новый: юниты fresh port / pinned port / debounce / disabled=апстрим-паритет |
+| `submodules/wireguard-go/device/lx_giveup_rebind.go` | **весь механизм** (v2 вынес из device.go): `SetGiveUpRebind`; `handleHandshakeGiveUp` → `selfHealRebind("giveup")`; `maybeEarlyGiveUpRebind` (порог `earlyGiveUpMinAttempts=3` + предикат) → `selfHealRebind("early")`; `sessionProvablyDead` (нет keypair ∨ handshake старше `RejectAfterTime`); публичный `RebindIfSessionStale()` (гейты enabled+isUp, обход пиров, `selfHealRebind("nudge", stale...)`); `selfHealRebind(trigger, peers...)` — дебаунс CAS-ом по `last` (окно `RekeyAttemptTime`, общее на все триггеры), в горутине: сброс `net.port=0` при `freshPort`, `BindUpdate()`, лог с меткой триггера, немедленный `SendHandshakeInitiation(false)` каждому переданному пиру |
+| `submodules/wireguard-go/device/device.go` | поле `giveUpRebind{enabled,freshPort,last}` + дефолт `enabled=true` в `NewDevice` (методы v1 переехали в lx-файл — меньше строк в апстрим-файле) |
+| `submodules/wireguard-go/device/timers.go` | give-up ветка: `handleHandshakeGiveUp` (v1); retry-ветка: lx-блок `maybeEarlyGiveUpRebind` (v2) |
+| `transport/wireguard/endpoint.go` | v1: `SetGiveUpRebind(true, e.options.ListenPort == 0)` после `NewDevice`; v2: метод-проброс `RebindIfSessionStale()` (nil-safe при teardown) |
+| `adapter/endpoint_rebind_lx.go` | **новый**: интерфейс `StaleRebindable` (нудж без импорта protocol/wireguard) |
+| `protocol/wireguard/endpoint_rebind_lx.go` | **новый**: `RebindStale()` — гейты сна под `resumeMu` (`closing`/`!started` отсекают idle-asleep, torn-down, остановленный, закрытый) |
+| `experimental/libbox/command_server_rebind_lx.go` | **новый**: `CommandServer.RebindStaleEndpoints()` — зеркало `ResetNetwork`, прямой gomobile-метод без `.proto`; обход endpoint'ов в одной горутине на вызов |
+| тесты | `lx_giveup_selfheal_test.go` + `lx_giveup_rebind_test.go` (v1); `lx_early_rebind_test.go` (v2 red/green, без нового API — компилируется на v1-базе); `lx_stale_rebind_test.go` (v2 юниты + гонки); `protocol/wireguard/endpoint_rebind_lx_test.go` (гейты сна нуджа) |
 
 Гарантии SPEC закрыты так:
 
-- **Пассивность** — новых таймеров/горутин в здоровом состоянии нет; вся
-  логика висит на существующем таймерном событии give-up (только под спросом
-  трафика). Горутина создаётся лишь в момент срабатывания.
-- **Сон (SPEC 020)** — у спящего девайса таймеры остановлены, событие
-  недостижимо; на down/closed девайсе `BindUpdate` не реоткрывает сокет
-  (state machine девайса), rebind вырождается в no-op. Отдельного гейта
-  не потребовалось.
+- **Пассивность** — новых таймеров/горутин в здоровом состоянии нет; триггеры
+  1–2 висят на существующих таймерных событиях (только под спросом трафика),
+  нудж событийный и оплачивается вызывающим; горутина создаётся лишь в момент
+  срабатывания.
+- **Сон (SPEC 020)** — у спящего девайса таймеры остановлены (триггеры 1–2
+  недостижимы); нудж отсекает спящих на protocol-слое (`!started` под
+  `resumeMu`) и на девайсе (`isUp`); на down/closed девайсе `BindUpdate` не
+  реоткрывает сокет — гонка вырождается в no-op.
 - **Оба bind-пути** — общий `device.BindUpdate()`: `StdNetBind` реоткрывает
   сокет (`Open(0)` → новый ephemeral-порт), `ClientBind` закрывает `wireConn`,
   и следующий `connect()` диалит свежий detour-сокет.
-- **Пиновый `listen_port`** — ядро передаёт `freshPort=false`, порт сохраняется.
+- **Пиновый `listen_port`** — ядро передаёт `freshPort=false`, порт сохраняется
+  (проверено и для give-up, и для нуджа).
+- **Дребезг** — один rebind на девайс за окно 90 с, общий на все триггеры;
+  скользящее окно, не латч.
+- **Наблюдаемость** — строка лога `rebound socket for self-heal
+  (trigger=giveup|early|nudge, fresh port=...)`.
+- **Конфиг не расширяется** — единственная новая поверхность — метод libbox;
+  невызванный метод поведения не меняет (гейты и дебаунс те же).
 
 ## Приёмка (результаты)
 
 | Критерий | Результат |
 |---|---|
-| red/green e2e | **RED** на базе `d892107` submodule (fix отстэшен): `TestHandshakeGiveUpSelfHeal` — timeout 20 с. **GREEN** с фиксом: PASS 0.00 с |
-| fresh port | PASS: второй `Open` с портом 0 |
-| pinned port | PASS: второй `Open` с прежним портом |
-| немедленное рукопожатие | закрыто e2e (recovery без ожидания следующего спроса; кик после rebind) |
-| дебаунс | PASS: второй give-up в окне — реоткрытий не прибавилось |
-| соседи | `SetGiveUpRebind(false)` = апстрим-поведение (PASS); полный `go test ./device/` submodule зелёный; `go test -tags with_gvisor,with_awg ./transport/wireguard/ ./protocol/wireguard/` зелёные |
-| гигиена | `gofmt -l` чист (device/, transport/wireguard/), `go vet` зелёный, полная сборка `-tags with_gvisor,with_awg,with_lx_command,with_lx_idle_suspend ./...` зелёная (go1.25.5 darwin) |
-| verification grade | **synthetic**: loopback-пара девайсов, blackhole первой генерации сокета. **Остаток — field**: стенд жалобы (Android, WARP AWG, сон устройства) |
+| red/green досрочного триггера | **RED** на v1-базе (f007282, до правок): `TestEarlyRebindSelfHeal` — timeout 20 с. **GREEN** с фиксом (в общем прогоне ~1.6 с) |
+| fresh-сессия = апстрим-паритет | PASS: `TestEarlyRebindFreshSessionNoop` (живой keypair + свежий handshake, порог пройден — rebind не сработал); `TestEarlyRebindNeedsMinAttempts` (мёртвая сессия, попыток < 3 — не сработал) |
+| общий дебаунс, скользящее окно | PASS: `TestSharedDebounceAcrossTriggers` — нудж гасит give-up той же серии; состаренное окно лечится снова |
+| нудж: стухший → rebind + инициация | PASS: `TestNudgeRebindsStaleSession` (туннель поднимается e2e без спроса трафика), `TestNudgeExpiredHandshakeIsStale` |
+| нудж: здоровый / down / pinned | PASS: `TestNudgeHealthySessionNoop`, `TestNudgeDownDeviceNoop`, `TestNudgePinnedPortPreserved` |
+| нудж: сон не тронут (protocol-слой) | PASS: `TestRebindStale_asleepNotWoken` / `_stoppedNoop` / `_closingNoop` / `_nilDeviceSafe` |
+| гонки | PASS под `-race`: `TestNudgeRacesClose` (25 итераций), `TestNudgeRacesSuspend` (25 итераций Down/Up, девайс консистентен) |
+| нудж не блокирует вызывающего | by construction: `RebindStaleEndpoints` уходит в горутину до обхода; тяжёлая часть rebind — в горутине девайса (`selfHealRebind`) |
+| соседи | полный `go test ./device/` submodule зелёный; v1-тесты зелёные |
+| гигиена | см. TASKS.md (полная сборка с lx-тегами, gofmt, vet) |
+| verification grade | **synthetic**; **field-остаток** — нудж с реального BoxService на стенде жалобы (CPH2411) |
 
 ## Остаток
 
-- Field-подтверждение на устройстве из жалобы (дождаться следующего цикла
-  сна: узлы должны выйти из ERR сами в пределах ~90 с + рукопожатие после
-  появления спроса; в логе ядра — `rebound socket after handshake give-up`).
+- LxBox-таска wake-nudge: `USER_PRESENT`-ресивер → `RebindStaleEndpoints()`
+  (репо LxBox, после выката AAR с этим методом).
+- Field-подтверждение: сон → разблокировка → пинг в первые секунды зелёный;
+  в логе ядра — `rebound socket for self-heal (trigger=nudge ...)`.
 - В релизный тег не входит (указание владельца: релиз не резать). Changelog
   заполняется при подготовке релиза по [[lx-changelog-before-release-tag]].
