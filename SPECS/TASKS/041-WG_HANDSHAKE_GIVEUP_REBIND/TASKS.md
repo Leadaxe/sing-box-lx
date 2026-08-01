@@ -25,6 +25,6 @@
 - [x] тесты: полный `go test ./device/` (submodule) + `go test -tags with_gvisor,with_awg ./transport/wireguard/ ./protocol/wireguard/ -race` зелёные
 - [x] `gofmt -l` чист по lx-файлам, `go vet` зелёный (warning в `debug.go` — апстримный, был до правок), полная сборка `-tags with_gvisor,with_awg,with_lx_command,with_lx_idle_suspend ./...` зелёная (go1.25.5 darwin)
 - [x] доки: SPEC чекбоксы, PLAN v2, IMPLEMENTATION_REPORT v2; changelog-долг на релиз
-- [ ] UPHOLD-проход v2 (свежий судья)
-- [ ] коммит ядра + submodule (push сабмодуля ДО суперпроекта)
+- [x] UPHOLD-проход v2 (свежий судья, 6/6 с уликой, предано 0, 6 кандидатов опровергнуты, check-uphold OK), статус C
+- [x] коммит ядра + submodule (768398e12 + 1255464; push сабмодуля ДО суперпроекта)
 - [ ] field-подтверждение нуджа на стенде жалобы (CPH2411: сон → разблокировка → пинг в первые секунды зелёный) — остаток, вне закрытия synthetic-грейда

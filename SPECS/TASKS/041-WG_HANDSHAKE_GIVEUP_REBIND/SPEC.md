@@ -6,9 +6,9 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — пробел поведения апстрим-`wireguard-go`, бьёт по нашим пользователям |
-| Статус | O (open) — v1 (rebind по give-up) в rc.4, synthetic-verified + живые BindUpdate в полевом дампе 01.08; v2-остаток (досрочный rebind + wake-нудж) не реализован |
+| Статус | C (closed, synthetic) — v1 (rebind по give-up) в rc.4, живые BindUpdate в полевом дампе 01.08; v2 (досрочный rebind + wake-нудж) реализован 02.08, uphold 6/6; полевой остаток — нудж со стенда жалобы (ждёт AAR + LxBox-ресивер) |
 | Ветка | `lx` (по указанию владельца — без отдельной ветки, релиз не режем) |
-| Base | v1: 311eb0f9f (rc.4); v2: HEAD `lx` на момент реализации |
+| Base | v1: 311eb0f9f (rc.4); v2: f7a7d1a2d (коммит 768398e12 + submodule f007282..1255464) |
 | Связанные | [[SPECS/TASKS/020-MULTI_WG_IDLE_BUFFER_HEAT]] (гейт сна), [[SPECS/TASKS/026-AWG_MAGIC_VS_RESERVED_CLEAR]] (оба bind-пути), [[SPECS/TASKS/007-AWG_OVER_WIREGUARD_DETOUR_GUARD]] (исходный анализ ClientBind); потребитель нуджа — LxBox-таска wake-nudge (USER_PRESENT-ресивер → `RebindStaleEndpoints()`, оформляется в репо LxBox) |
 
 ## Проблема
@@ -136,9 +136,9 @@ keypair **либо** последний успешный handshake старше 
       где метод не вызывается, поведенчески эквивалентна by construction
 - [x] соседи не тронуты: существующие тесты submodule и v1-тесты зелёные
 - [x] `gofmt -l` чист по lx-файлам, `go vet` зелёный, сборка ядра зелёная
-- [ ] verification grade: **synthetic** (стенд в тестах); **device/field** —
-      остаток: нудж с реального BoxService на стенде жалобы (CPH2411, сон →
-      разблокировка → пинг в первые секунды зелёный)
+- [x] verification grade: **synthetic** (стенд в тестах) — достигнут;
+      **device/field** — остаток: нудж с реального BoxService на стенде
+      жалобы (CPH2411, сон → разблокировка → пинг в первые секунды зелёный)
 
 ## Вне скоупа
 

@@ -2,103 +2,94 @@
 
 | Field | Value |
 |---|---|
-| Judge | fresh uphold judge (consumer's representative), 2026-07-31 |
-| Diff | file: /private/tmp/claude-501/-Users-macbook-projects-sing-box-lx/7baf7b9a-68eb-42e5-b017-401b6dbb650f/scratchpad/041-combined.diff (sing-box-lx `9645d5476` + submodule `d892107..f007282`) |
+| Judge | Fable 5 (fresh judge, uphold pass), 2026-08-02 |
+| Diff | file: /private/tmp/claude-501/-Users-macbook-projects-sing-box-lx/63e102f5-1808-4157-b76a-da9c411add00/scratchpad/041v2-combined.diff (commit 768398e12 + submodule f007282..1255464) |
 | Touches | P5, P1 |
-| Promises judged | 5, P5 |
+| Promises judged | 6, P6 |
 
 ## Кандидаты-предательства
 
-1. **P5 — дебаунс съедает ПЕРВОЕ самолечение.** Механизм: `handleHandshakeGiveUp` сравнивает `now - last < RekeyAttemptTime`, а поле `last atomic.Int64` при создании девайса равно нулю. Если бы `last` инициализировался временем старта (или сравнение было бы «прошло ли 90 с с момента старта»), то узел, у которого 5-tuple умер в первые 90 секунд жизни девайса, молча не вылечился бы вовсе — ровно тот сценарий, ради которого фича существует. Конкретный отказ: пользователь будит устройство, профиль стартует, первый же цикл give-up гасится дебаунсом, узел навсегда в ERR.
-   fate: ОПРОВЕРГНУТО — evidence: `last` действительно стартует с нуля, и `now-0` — огромное число, поэтому первый rebind проходит. Проверено прямым прогоном на дереве фикса: `TestJudgeFirstGiveUpNotDebounced` — `expected last=0 at construction` не сработал, и далее `first give-up healed: opens=2` (`--- PASS: TestJudgeFirstGiveUpNotDebounced (0.04s)`). Первое give-up-событие лечится немедленно.
-
-2. **P5 — самолечение одноразовое (латч).** Механизм: `last` монотонно растёт при каждом rebind, и если бы CAS/сравнение было построено как «один rebind на девайс», то узел, переживший второй сон устройства через час, уже не восстановился бы — обещание «чинит себя сам» держалось бы ровно один раз за сессию, а пользователю снова понадобился бы реконнект.
-   fate: ОПРОВЕРГНУТО — evidence: дебаунс — скользящее окно `RekeyAttemptTime` (90 с), а не латч. Прогон `TestJudgeSecondWindowRebinds` (состарил `last` на 91 с, как это сделали бы настенные часы) дал `second window healed: opens=3` (`--- PASS`). Второй сон лечится так же, как первый.
-
-3. **P5 — rebind, гоняясь с idle-suspend (SPEC 020) / Close, оставляет девайс «поднятым, но с закрытым сокетом».** Механизм самый опасный: `handleHandshakeGiveUp` уносит тяжёлую часть в `go func()` и зовёт `device.BindUpdate()` **в обход** `device.state.Lock()`, который держат все остальные вызывающие (`upLocked` — device.go:217, и `changeState` — device.go:184). А `BindUpdate` сначала безусловно закрывает сокет (`closeBindLocked`), и только потом проверяет `if !device.isUp() { return nil }`. Конкретный отказ: `Resume()`/`Up()` завершился, сокет открыт, состояние up — и тут просыпается отложенная горутина, которая закрывает сокет и, увидев неудачно прочитанное состояние, не открывает новый; узел остаётся живым по состоянию, но глухим — самолечение превращается в порчу.
-   fate: ОПРОВЕРГНУТО — evidence: проверено обоими порядками на дереве фикса. (а) rebind после `Down()`+`Up()`: `TestJudgeRebindLeavesSocketClosed` → `opens before=2 after=3 ports=[0 1 1] net.port=1 bind!=nil=true isUp=true` (`--- PASS`) — при состоянии up `BindUpdate` переоткрывает сокет и сохраняет пинованный порт. (б) rebind, попавший в окно suspend: `TestJudgeRebindRacesSuspend` → `after suspend-race: opens=2 ports=[0 1] net.port=1 bind=true isUp=true` (`--- PASS`) — последующий `Up()` восстанавливает сокет, порт не потерян. Гонка вырождается в no-op ровно так, как обещано.
-
-4. **P5 — rebind на закрытом девайсе паникует или течёт.** Механизм: `isClosed()` проверяется до входа в горутину, а `Close()` может случиться внутри окна; `closeBindLocked` ждёт `netc.stopping.Wait()`, что даёт потенциальный дедлок или use-after-close.
-   fate: ОПРОВЕРГНУТО — evidence: 25 гонок «give-up против Close» под `-race`: `TestJudgeRebindRacesClose` → `no panic / no deadlock across 25 close races` (`--- PASS: TestJudgeRebindRacesClose (1.00s)`), гонок детектор не нашёл.
-
-5. **P5 — «красный» тест на самом деле не красный** (тест написан так, что проходит и на базе, то есть ничего не доказывает).
-   fate: ОПРОВЕРГНУТО — evidence: материализовал базовое дерево `d892107` в скретчпаде и положил туда тот же файл теста: на базе `TestHandshakeGiveUpSelfHeal` даёт `timed out waiting for packet on peer tun` / `--- FAIL: TestHandshakeGiveUpSelfHeal (20.02s)`, на фиксе — `--- PASS: TestHandshakeGiveUpSelfHeal (0.02s)`. Red/green подлинный.
-
-6. **P4 — новая горутина ломает быструю остановку.** Механизм: rebind-горутина держит `device.net` и ждёт `stopping.Wait()`; если она стартовала перед `box.Close()`, каждый `Endpoint.Close()` мог бы снова блокироваться, воскрешая 10-секундное зависание, которое чинила запись 030.
-   fate: ОПРОВЕРГНУТО — evidence: диффом не затронуты ни `box.go`, ни `route/reachability_common_lx.go` — `git show 9645d5476 -- box.go route/reachability_common_lx.go | wc -l` → `0`; quiesce-этап на месте (`box.go:639: s.router.QuiesceForShutdown()`). Плюс гонка с Close по кандидату 4 не зависает.
+1. **P5 — нудж будит idle-спящие узлы** (прямо названная мутация). Сценарий: устройство просыпается, LxBox шлёт `RebindStaleEndpoints()`, спящий по SPEC 020 узел — а его сессия после долгого сна стухшая *по определению* — проходит стале-предикат, ребайндится и просыпается; энергомодель SPEC 020 разрушена.
+   fate: ОПРОВЕРГНУТО — evidence: два независимых гейта. Протокольный: `RebindStale()` выходит на `!w.started.Load()` под `resumeMu` (protocol/wireguard/endpoint_rebind_lx.go:317), а idle-suspend ставит именно `started.Store(false)` (endpoint.go:300-302, внутри `SuspendIfIdle`); девайсный: `RebindIfSessionStale` выходит на `!device.isUp()` (device/lx_giveup_rebind.go:658). Тесты `TestRebindStale_asleepNotWoken` (protocol) и `TestNudgeDownDeviceNoop` (device) — PASS: `ok github.com/sagernet/sing-box/protocol/wireguard 27.614s`, `--- PASS: TestNudgeDownDeviceNoop (0.01s)`.
+2. **P5 — рефакторинг v1→общий `selfHealRebind` регрессит give-up-ветку**. Сценарий: `handleHandshakeGiveUp` переписан из device.go в lx_giveup_rebind.go; ошибка в переносе (дебаунс, freshPort, пин порта) — и страховочный ~90 с триггер, единственный полевой-проверенный, ломается.
+   fate: ОПРОВЕРГНУТО — evidence: все v1-тесты на новой базе зелёные: `--- PASS: TestHandshakeGiveUpSelfHeal (0.05s)`, `--- PASS: TestGiveUpRebindDebounce (0.45s)`, `--- PASS: TestGiveUpRebindPinnedPortPreserved (0.23s)`, `--- PASS: TestGiveUpRebindFreshPort (0.12s)`, `--- PASS: TestGiveUpRebindDisabled (0.32s)`; give-up-ветка timers.go по-прежнему зовёт `handleHandshakeGiveUp` (device/timers.go:105).
+3. **P5 — досрочный триггер срабатывает на живой сессии с транзиентными потерями**. Сценарий: мобильная сеть теряет 3 инициации подряд при живом keypair; досрочный rebind меняет ephemeral-порт под здоровым туннелем — самолечение само становится источником флапа.
+   fate: ОПРОВЕРГНУТО — evidence: предикат требует «нет keypair ИЛИ handshake старше RejectAfterTime (180 с)» (device/lx_giveup_rebind.go:642-647, поле `lastHandshakeNano` обновляется в timers.go:199); `--- PASS: TestEarlyRebindFreshSessionNoop (0.35s)` — свежая сессия за порогом попыток не ребайндится.
+4. **P5/P4 — горутина нуджа гоняется с Close/suspend**. Сценарий: `RebindStaleEndpoints` запускает обход в горутине; box закрывается параллельно → use-after-free/паника, либо удержание `resumeMu` растягивает остановку (удар по P4).
+   fate: ОПРОВЕРГНУТО — evidence: `w.closing` проверяется до и после захвата `resumeMu`, критическая секция — только флаги и nil-safe passthrough (BindUpdate уходит в отдельную горутину девайса, гейтится `isClosed`/`isUp`); прогнал сам: `go test -race ./device/ -run 'NudgeRaces' → ok github.com/sagernet/wireguard-go/device 59.844s` (TestNudgeRacesClose + TestNudgeRacesSuspend, по 25 итераций).
+5. **P1 — новая патч-поверхность (нудж) без условия снятия**. Сценарий: v2 добавил третий механизм (libbox wake-API), а строка реестра 041 несёт условие только для give-up — нудж становится долгом без срока.
+   fate: ОПРОВЕРГНУТО — evidence: строка реестра 041 (FEATURE.md:86) несёт оба условия: «Триггеры give-up/досрочный: апстрим введёт своё пересоздание bind… (следить за give-up веткой `device/timers.go` при бампах submodule). Нудж: апстрим даст собственный wake-API».
+6. **P5 — паника `peers[0]` в `selfHealRebind` при пустом списке**. Сценарий: нудж зовёт shared-действие без пиров → index out of range в горутине → крах ядра.
+   fate: ОПРОВЕРГНУТО — evidence: нудж выходит на `len(stale) == 0` до вызова (lx_giveup_rebind.go:669-671), giveup/early всегда передают ровно одного peer; все Nudge-тесты PASS.
 
 ## Леджер
 
 ### P1. У каждого держащегося фикса есть условие снятия.
 
-**Рассуждение:** свидетель — «при бампе submodule или мерже апстрима по строке реестра видно, что именно проверить и когда фикс снять». Задача добавляет в реестр новую запись 041 со статусом «держим», то есть ровно тот случай, против которого направлена мутация («новая запись “держим” без условия снятия»). Проверяю саму добавленную строку. Маркеров `PROMISE F004-P1` в репозитории нет (`grep -rn "PROMISE F0"` по всему дереву не дал ни одного попадания) — конвенция маркеров в этом проекте не применяется, поэтому locus установлен напрямую по строке реестра. Условие снятия у 041 не просто присутствует, но и операционно: названа конкретная ветка кода для наблюдения при бампах submodule — это сильнее пассивной формулировки «апстрим однажды сам» у 028/030.
+**Рассуждение:** Свидетель — по строке реестра при бампе submodule видно, что проверить и когда снять. Диф расширил патч-поверхность 041 (v2: досрочный триггер + нудж через libbox), значит строка реестра обязана покрыть новые поверхности. В копии брифа и в живом FEATURE.md строка 041 обновлена: колонка «Где патч» перечисляет все четыре слоя (submodule `device/`, transport-маркер, `protocol/wireguard/`, `experimental/libbox/`), колонка «Условие снятия» несёт раздельные условия для give-up/досрочного (с указанием, за какой веткой следить при бампах) и для нуджа (апстримный wake-API). Мутация «новая запись “держим” без условия снятия» не произошла. Маркеров `PROMISE F004-P1` в коде нет вообще (grep по репо и сабмодулю пуст) — для процессной фичи locus живёт в самом реестре, но отсутствие маркеров стоит зафиксировать как долг разметки всей фичи 004.
 
-```
-locus:    SPECS/FEATURES/004-HOTFIXES/FEATURE.md:88 (строка реестра 041, колонка «Условие снятия»)
-killer:   Добавить запись со статусом «держим» и прочерком/пустотой в колонке «Условие снятия». В диффе этого нет: добавленная строка несёт заполненное условие вместе с указателем, за чем следить.
-evidence: `git show 9645d5476 -- SPECS/FEATURES/004-HOTFIXES/FEATURE.md | grep "^+"` → строка реестра 041 с условием «Апстрим введёт своё пересоздание bind по провалу цикла рукопожатий (следить за give-up веткой `device/timers.go` при бампах submodule)»
+locus:    SPECS/FEATURES/004-HOTFIXES/FEATURE.md:86 (строка реестра 041)
+killer:   расширить патч на libbox/нудж, оставив в условии снятия только give-up — новая поверхность осталась бы долгом без срока; в дифе условие расширено вместе с патчем
+evidence: FEATURE.md:86: «Триггеры give-up/досрочный: апстрим введёт своё пересоздание bind по провалу цикла рукопожатий (следить за give-up веткой `device/timers.go` при бампах submodule). Нудж: апстрим даст собственный wake-API | держим»
 grade:    static
-link:     Единственная новая запись реестра, созданная этой задачей, несёт непустое условие снятия с явным местом наблюдения — то самое, что обещает P1, и прямая противоположность мутации.
+link:     строка реестра называет и что проверять при бампе, и отдельное условие для каждой из трёх поверхностей v2 — ровно то, что обещание требует от записи «держим»
 verdict:  ДЕРЖИТСЯ
-```
 
 ### P2. Вложенные туннели через `detour` несут трафик.
 
-**Рассуждение:** свидетели — AWG-over-AWG через `detour` качает данные; явный `"udp_fragment": false` возвращает DF. Мутация — нижнее плечо туннельного outbound снова форсит DF по умолчанию. Обещание живёт в установке `UDPFragmentDefault=true`. Диффом эти файлы не затронуты вовсе: изменены только `submodules/wireguard-go` (указатель + `device/`) и пять строк в `transport/wireguard/endpoint.go`. Косвенного влияния тоже нет: `UDPFragmentDefault` — опция диалера, определяющая флаг DF при открытии нижнего UDP-сокета, а rebind переоткрывает bind через тот же `device.net.bind.Open` с тем же самым диалером, то есть свежий сокет наследует ту же политику фрагментации, что и исходный. Порт меняется, флаг DF — нет.
+**Рассуждение:** Свидетели — AWG-over-AWG качает, явный `udp_fragment: false` возвращает DF. Диф добавляет только новые lx-файлы и 11 строк passthrough в transport/wireguard/endpoint.go; loci фикса 028 — `protocol/masque/outbound.go` и нижнее плечо в `protocol/wireguard/endpoint.go` — дифом не задеты. Косвенного влияния нет: rebind переоткрывает bind через существующий `BindUpdate`, диалер и его `UDPFragmentDefault` не трогаются. Маркер `PROMISE F004-P2` отсутствует (маркеров нет во всей фиче); locus подтверждён по SPEC-комментариям.
 
-```
-locus:    protocol/wireguard/endpoint.go:96 и protocol/wireguard/endpoint.go:153 (`UDPFragmentDefault: true, // lx: SPEC 028`), protocol/masque/outbound.go:181
-killer:   Убрать `UDPFragmentDefault = true` (или заменить на false) в endpoint/masque. Этих файлов дифф не касается.
-evidence: `git show 9645d5476 --stat -- protocol/masque/outbound.go protocol/wireguard/endpoint.go` → пусто. Установки на месте: `grep -n "UDPFragmentDefault" protocol/wireguard/endpoint.go protocol/masque/outbound.go` → `protocol/masque/outbound.go:181: options.UDPFragmentDefault = true`, `protocol/wireguard/endpoint.go:96: options.UDPFragmentDefault = true`, `protocol/wireguard/endpoint.go:153: UDPFragmentDefault: true, // lx: SPEC 028`.
+locus:    protocol/wireguard/endpoint.go:96,153 (`options.UDPFragmentDefault = true`, `// lx: SPEC 028`), protocol/masque/outbound.go:181
+killer:   убрать `UDPFragmentDefault=true` с нижнего плеча — DF вернулся бы по умолчанию; дифа в этих файлах нет
+evidence: `git diff f7a7d1a2d..768398e12 -- submodules/sing-tun box.go route/ protocol/masque/ protocol/wireguard/endpoint.go | wc -l` → `0`; grep подтверждает `endpoint.go:96: options.UDPFragmentDefault = true`, `outbound.go:181: options.UDPFragmentDefault = true`
 grade:    static
-link:     Дифф доказуемо не касается файлов, несущих обещание, а установки DF по-прежнему присутствуют в коде — мутация не внесена ни прямо, ни через общий путь rebind.
+link:     нулевой диф по обоим loci плюс живое присутствие фикса в коде доказывают, что обещание не задето
 verdict:  НЕ ЗАТРОНУТО
-```
 
 ### P3. Опечатка в `detour` видна на старте.
 
-**Рассуждение:** свидетель — конфиг с опечаткой в теге отвергается на старте; мутация — возврат ленивого резолва с кэшированием промаха. Обещание держит ранний резолв detour в `protocol/wireguard/endpoint.go`. Дифф этот файл не трогает (изменён однофамилец `transport/wireguard/endpoint.go` — другой пакет). Проверил и косвенное влияние: единственная правка в `transport/wireguard/endpoint.go` — вызов `wgDevice.SetGiveUpRebind` в `Start()` **после** `device.NewDevice`, то есть уже после фазы резолва (резолв идёт выше, в блоке `resolve` на строках ~270-276). Ни порядка инициализации, ни fail-fast-поведения старта она не меняет: это чистый сеттер двух атомиков без возврата ошибки.
+**Рассуждение:** Свидетель — конфиг с опечаткой в теге отвергается на старте. Locus фикса 029 (ранний резолв detour в `Start` вместо ленивого) живёт в `protocol/wireguard/endpoint.go` — файле, которого диф не касается (новый `endpoint_rebind_lx.go` — отдельный файл того же пакета, в старт-путь не вмешивается). Мутация «возврат ленивого резолва с кэшированием промаха» не произошла. Маркер `PROMISE F004-P3` отсутствует; locus подтверждён по комментарию `lx: SPEC 029`.
 
-```
-locus:    protocol/wireguard/endpoint.go (ранний резолв detour с fail-fast на старте; запись 029 реестра — FEATURE.md:83)
-killer:   Вернуть ленивый резолв провайдера при первом дайле с кэшированием промаха. В диффе нет: файл не изменён, а добавленная в `transport/wireguard/endpoint.go` строка стоит после резолва и не влияет на его момент.
-evidence: `git show 9645d5476 --stat -- protocol/wireguard/endpoint.go` → пусто. Единственная кодовая вставка в соседнем файле: `transport/wireguard/endpoint.go:329: wgDevice.SetGiveUpRebind(true, e.options.ListenPort == 0)`, стоящая сразу за `wgDevice := device.NewDevice(...)`, тогда как резолв эндпоинтов расположен выше по функции (строки ~264-276).
+locus:    protocol/wireguard/endpoint.go:200-206 («lx: SPEC 029 — resolve the detour now, not lazily at first dial»)
+killer:   убрать ранний резолв из Start — промах снова кэшировался бы навсегда c симптомом «нода мёртвая, в логах пусто»; диф файла не трогает
+evidence: `git diff f7a7d1a2d..768398e12 -- … protocol/wireguard/endpoint.go | wc -l` → `0`; grep: `endpoint.go:200: // lx: SPEC 029 — resolve the detour now, not lazily at first dial`
 grade:    static
-link:     Файл-носитель обещания не изменён, а единственная правка в соседнем файле выполняется позже фазы резолва и не может вернуть ленивость — поведение старта при опечатке неизменно.
+link:     нулевой диф по файлу-локусу и живой ранний резолв в коде — обещание не задето
 verdict:  НЕ ЗАТРОНУТО
-```
 
 ### P4. Остановка туннеля завершается быстро.
 
-**Рассуждение:** свидетель — профиль с ~20-30 пропингованными нодами останавливается без 10-секундного зависания; мутация — снятие quiesce-этапа или гейта in-flight wake. Файлы-носители (`box.go`, `route/reachability_common_lx.go`) диффом не затронуты. Но здесь untouched недостаточно проверить статически: задача вводит **новую горутину**, которая берёт `device.net` и внутри `BindUpdate`→`closeBindLocked` ждёт `netc.stopping.Wait()`. Это ровно тот класс блокировок, из-за которого 030 и возникла, поэтому проверил косвенное влияние прогоном. Гонка «give-up против Close» 25 раз под детектором гонок не дала ни зависания, ни паники. Плюс сам механизм устроен так, что на закрытом девайсе он выходит раньше горутины (`if device.isClosed() { return }`), а на опущенном `BindUpdate` не переоткрывает сокет.
+**Рассуждение:** Свидетель — профиль с ~20-30 нодами останавливается без 10-секундного зависания; мутация — снятие quiesce-этапа или гейта in-flight wake. Loci (box.go, route/reachability_common_lx.go) дифом не задеты (нулевой диф). Косвенное влияние проверено отдельно, потому что нудж вводит новую горутину, берущую `resumeMu` — тот самый мьютекс, на котором в исходном баге висел Close: критическая секция `RebindStale` — проверки флагов и nil-safe passthrough, тяжёлый `BindUpdate` уходит в горутину девайса и гейтится `isClosed`/`isUp`, так что Close ждёт микросекунды, не device-rebuild. Гонка нудж/Close прогнана под -race — зелёная.
 
-```
-locus:    box.go:639 (`s.router.QuiesceForShutdown()`) и route/reachability_common_lx.go (гейт in-flight wake)
-killer:   Убрать вызов `QuiesceForShutdown` из `box.Close` или снять гейт in-flight wake. Ни того, ни другого файла дифф не касается; quiesce-вызов на месте.
-evidence: `git show 9645d5476 -- box.go route/reachability_common_lx.go | wc -l` → `0`; `grep -rn "quiesce\|Quiesce" box.go` → `box.go:639: s.router.QuiesceForShutdown()`. Косвенное влияние новой горутины проверено: `go test ./device/ -run TestJudgeRebindRacesClose -race` → `no panic / no deadlock across 25 close races`, `--- PASS: TestJudgeRebindRacesClose (1.00s)`.
+locus:    box.go + route/reachability_common_lx.go (quiesce-этап SPEC 030)
+killer:   заблокировать Close на `resumeMu`, пока нудж держит его через BindUpdate — вернуло бы суммирующиеся секунды; в дифе BindUpdate вынесен из-под `resumeMu` в горутину девайса
+evidence: `git diff f7a7d1a2d..768398e12 -- … box.go route/ … | wc -l` → `0`; `go test -race ./device/ -run 'NudgeRaces'` → `ok github.com/sagernet/wireguard-go/device 59.844s`
 grade:    synthetic
-link:     Носители обещания не изменены и quiesce-этап на месте, а единственный правдоподобный канал косвенной порчи — новая горутина, блокирующая закрытие — опровергнут прогоном гонок с Close без зависаний.
+link:     нулевой диф по loci плюс race-зелёная гонка нуджа с Close показывают, что новый код не удлиняет остановку
 verdict:  НЕ ЗАТРОНУТО
-```
 
-### P5. WG/AWG-узел с умершим путём чинит себя сам.
+### P5. WG/AWG-узел с умершим путём чинит себя сам — и быстро.
 
-**Рассуждение:** обещание разложено на четыре проверяемые части, и задача его создаёт, так что каждую проверяю отдельно.
-(1) *Восстановление после give-up без реконнекта.* Первый свидетель — «узел с мёртвым первым сокетом восстанавливается после give-up сам». Он воплощён буквально: тест моделирует мёртвый 5-tuple биндом, чьё первое поколение сокета молча глотает отправки. Red/green подлинный — я материализовал базовое дерево `d892107` в скретчпаде и прогнал на нём тот же файл теста: база падает по таймауту, фикс проходит.
-(2) *Нулевая цена в здоровом/спящем состоянии.* Ни таймеров, ни горутин в покое: триггер — существующая ветка give-up в `expiredRetransmitHandshake`, а вся работа заводится только при её срабатывании; фоновых опросов (второй половины мутации) в диффе нет. У спящего узла путь недостижим, потому что все таймеры гейтятся `timersActive()`, где `peer.device.isUp()` (device/timers.go:79), а SPEC 020 усыпляет именно через `device.Down()`.
-(3) *Пинованный `listen_port` не меняется.* Ядро передаёт `freshPort` как `e.options.ListenPort == 0`, и в пинованном режиме порт сохраняется — это ровно защита от мутации «rebind без смены порта при непинованном listen_port», взятая с обеих сторон: при непинованном порт запрашивается нулевой (свежий эфемерный), при пинованном — сохраняется.
-(4) *Второй give-up в окне не даёт второго пересоздания* — второй свидетель, покрыт дебаунсом, причём я убедился, что дебаунс не вырождается ни в проглатывание первого лечения, ни в одноразовый латч (кандидаты 1 и 2).
-Отмечу для спеки: живого подтверждения на устройстве (реальный сон телефона, реальный NAT/DPI) в этом проходе нет — весь grade синтетический, ровно как «особенности сопровождения» и предупреждают про 028/029/030. Механизм доказан, полевые условия — нет; но обещание сформулировано через свидетелей, которые все воспроизведены. Маркер `PROMISE F004-P5` отсутствует, хотя места-носители помечены содержательными комментариями `lx: SPEC 041` — конвенция маркеров в проекте не используется, locus установлен по ним.
+**Рассуждение:** Задача владеет обещанием; диф — это его v2. Прогоняю свидетелей. (1) «узел с мёртвым первым сокетом восстанавливается после give-up сам» — v1-механизм пережил рефакторинг: `TestHandshakeGiveUpSelfHeal` PASS, give-up-ветка timers.go зовёт `handleHandshakeGiveUp` → общий `selfHealRebind`. (2) «второй give-up в окне не даёт второго пересоздания» — `TestGiveUpRebindDebounce` PASS, плюс v2-усиление: окно теперь общее на все три триггера (`TestSharedDebounceAcrossTriggers` PASS — give-up внутри окна после нуджа подавлен, следующая серия лечится снова). (3) «после пробуждения пинг зелёный в первые секунды, а не на второй минуте» — ровно полевой остаток, который v2 закрывает: досрочный триггер (`TestEarlyRebindSelfHeal` PASS, red/green против v1-базы по замыслу теста — сам RED-прогон на f007282 я не повторял, но тест намеренно не использует пост-фиксного API) и нудж (`TestNudgeRebindsStaleSession` PASS — трафик после нуджа ходит end-to-end без спроса). Все три мутации проверены: rebind без смены порта — `TestGiveUpRebindFreshPort`/`TestNudgePinnedPortPreserved` PASS, `SetGiveUpRebind(true, e.options.ListenPort == 0)` (transport/wireguard/endpoint.go:329); фоновых таймеров/опроса нет — триггеры 1-2 живут в существующем retry-цикле, триггер 3 оплачен вызывающим (grep по lx_giveup_rebind.go: ни `time.Ticker`, ни `time.AfterFunc`); нудж не будит спящих — кандидат 1, опровергнут двумя гейтами и двумя тестами. Нулевая цена в здоровом состоянии: `TestNudgeHealthySessionNoop` PASS, `TestEarlyRebindFreshSessionNoop` PASS. `enabled` по умолчанию true (device.go:329). Оговорка: улика синтетическая — сама фича честно фиксирует «041 закрыта на синтетике и в релизный тег ещё не входит», полевой прогон на стенде жалобы — заявленный остаток задачи, не дефект дифа. Маркеров `PROMISE F004-P5` нет; loci подтверждены по `lx: SPEC 041`-комментариям.
 
-```
-locus:    submodules/wireguard-go device/device.go:603 (`handleHandshakeGiveUp`), точка вызова device/timers.go:106 (`peer.device.handleHandshakeGiveUp(peer)`), включение transport/wireguard/endpoint.go:329 (`wgDevice.SetGiveUpRebind(true, e.options.ListenPort == 0)`)
-killer:   Заменить триггер фоновым опросом вместо события give-up, либо звать `SetGiveUpRebind(true, true)` безусловно (свежий порт вопреки пинованному `listen_port`), либо убрать дебаунс. Ни одного из трёх в диффе нет: триггер — единственная строка в существующей ветке give-up, `freshPort` вычисляется из `ListenPort == 0`, дебаунс на CAS присутствует.
-evidence: Red/green: на базе `d892107` (материализована в скретчпаде + тот же файл теста) `go test ./device/ -run TestHandshakeGiveUpSelfHeal` → `lx_giveup_selfheal_test.go:171: timed out waiting for packet on peer tun` / `--- FAIL: TestHandshakeGiveUpSelfHeal (20.02s)`; на фиксе `f007282` под `-race` → `--- PASS: TestHandshakeGiveUpSelfHeal (0.02s)`. Остальные свидетели, тот же прогон: `--- PASS: TestGiveUpRebindFreshPort`, `--- PASS: TestGiveUpRebindPinnedPortPreserved`, `--- PASS: TestGiveUpRebindDebounce`, `--- PASS: TestGiveUpRebindDisabled`, итог `ok github.com/sagernet/wireguard-go/device 2.826s`. Полный пакет без регрессий: `go test ./device/ -count=1` → `ok github.com/sagernet/wireguard-go/device 1.542s`. Гейт спящего состояния: `device/timers.go:79: return peer.isRunning.Load() && peer.device != nil && peer.device.isUp()`.
+locus:    submodules/wireguard-go/device/lx_giveup_rebind.go:1-143 (три триггера + предикат + общий дебаунс); device/timers.go:105,113 (вызовы); protocol/wireguard/endpoint_rebind_lx.go:311-321 (гейты сна); transport/wireguard/endpoint.go:406-412 (passthrough); experimental/libbox/command_server_rebind_lx.go:269-285 (нудж)
+killer:   ослабить стале-предикат (убрать проверку RejectAfterTime) или снять гейт `!started` в RebindStale — досрочный rebind бил бы по живым сессиям, а нудж будил бы спящих; оба гейта в дифе на месте и покрыты тестами
+evidence: `go test ./device/ -run 'EarlyRebind|Nudge|SharedDebounce|GiveUp|StaleRebind'` → 15/15 PASS, `ok …/device 26.989s`; `go test -race ./device/ -run 'NudgeRaces'` → ok; `go test ./protocol/wireguard/ -run 'RebindStale'` → `ok github.com/sagernet/sing-box/protocol/wireguard 27.614s`
 grade:    synthetic
-link:     Оба названных фичей свидетеля воспроизведены прогоном (мёртвый первый сокет лечится сам — и только на фиксе; второй give-up в окне второго пересоздания не даёт), пинованный порт сохраняется, а триггером служит существующее событие give-up, а не фоновый опрос — то есть обе половины мутации отсутствуют.
+link:     каждый свидетель обещания и каждая названная мутация закрыты проходящим тестом на реальной паре устройств harness'а, включая гонки под -race
 verdict:  ДЕРЖИТСЯ
-```
+
+### P6. Смерть acceptLoop system-стека не фатальна.
+
+**Рассуждение:** Locus — форк `submodules/sing-tun` (`stack_system.go`). Диф бампит только гитлинк `submodules/wireguard-go` (f007282→1255464); гитлинк sing-tun не фигурирует ни в списке файлов коммита, ни в дифе — встречного отката фикса 040 нет. Косвенных путей от wireguard-rebind к acceptLoop system-стека не существует (разные стеки, разные сабмодули). Мутация «тихий выход из acceptLoop без relisten» не произошла. Маркер `PROMISE F004-P6` отсутствует (общий долг разметки фичи).
+
+locus:    форк submodules/sing-tun, stack_system.go (warn с errno + relisten + счётчик)
+killer:   встречный бамп гитлинка sing-tun на upstream-версию — фикс молча откатился бы; в дифе гитлинк sing-tun не тронут
+evidence: `git show --stat 768398e12` — в списке файлов из сабмодулей только `submodules/wireguard-go | 2 +-`; `git diff f7a7d1a2d..768398e12 -- submodules/sing-tun … | wc -l` → `0`
+grade:    static
+link:     диф физически не достигает репозитория-носителя фикса, значит девайс-верифицированное поведение 040 не могло измениться
+verdict:  НЕ ЗАТРОНУТО
 
 ## Completion call
 
-Обещаний всего: 5. Держится с уликой: 2. Предано: 0. Не затронуто (с уликой): 3. Отложено: 0.
+Обещаний всего: 6. Держится с уликой: 2. Предано: 0. Не затронуто (с уликой): 4. Отложено: 0.
