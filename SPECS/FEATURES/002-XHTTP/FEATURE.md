@@ -157,7 +157,7 @@
 
 | Задача | Роль | Статус |
 |--------|------|--------|
-| [002 — XHTTP_CLIENT_TRANSPORT](../../TASKS/002-XHTTP_CLIENT_TRANSPORT/SPEC.md) | Транспорт целиком: режимы, размещения, паддинг, темп | **A** |
+| [002 — XHTTP_CLIENT_TRANSPORT](../../TASKS/002-XHTTP_CLIENT_TRANSPORT/SPEC.md) | Транспорт целиком: режимы, размещения, паддинг, темп | C |
 | [011 — XHTTP_STREAM_ONE_DOWNLINK](../../TASKS/011-XHTTP_STREAM_ONE_DOWNLINK/SPEC.md) | Маршрутизация `stream-one` и выбор режима при REALITY | C |
 | [042 — XHTTP_STREAM_GRPC_CONTENT_TYPE](../../TASKS/042-XHTTP_STREAM_GRPC_CONTENT_TYPE/SPEC.md) | Тип контента на потоковых запросах | C |
 | [043 — XHTTP_STREAM_ONE_PATH_PREFIX](../../TASKS/043-XHTTP_STREAM_ONE_PATH_PREFIX/SPEC.md) | Завершающий слэш пути в `stream-one` | C |
