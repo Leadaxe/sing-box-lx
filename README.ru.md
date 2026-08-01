@@ -3,7 +3,7 @@
 # sing-box-lx
 
 > **Тонкий downstream-форк [SagerNet/sing-box](https://github.com/SagerNet/sing-box).**
-> Небольшой набор клиентских фич поверх upstream — транспорт **XHTTP**, **AmneziaWG 2.0**, **MASQUE** (CONNECT-IP / Cloudflare WARP), расширения **наблюдаемости** (CommandClient) и балансировка нагрузки **round_robin** — каждая за своим build-tag.
+> Небольшой набор клиентских фич поверх upstream — транспорт **XHTTP**, **AmneziaWG**, **MASQUE** (CONNECT-IP / Cloudflare WARP), расширения **наблюдаемости** (CommandClient) и балансировка нагрузки **round_robin** — каждая за своим build-tag.
 > Набор может расти, философия — нет: жить ребейзом на каждый upstream-тег, а не отдельной жизнью.
 
 > 📄 README самого upstream sing-box — **[на GitHub](https://github.com/SagerNet/sing-box/blob/main/README.md)** (всегда актуальный).
@@ -39,7 +39,7 @@
 | # | Фича | Что это | Статус |
 |---|------|---------|--------|
 | **XHTTP** | клиентский транспорт | Xray-совместимый «splithttp» (режимы `auto`/`packet-up`/`stream-up`/`stream-one`) поверх Reality/TLS/h2c | ✅ **проверен живым Xray (3x-ui) сервером** (packet-up/auto): handshake + DNS + HTTPS + скачивание. `stream-one` — известный баг framing |
-| **AmneziaWG 2.0** | клиентский endpoint | обфускация WireGuard: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` + **2.0**: `I1–I5` (CPS — кастомные пакеты-приманки) | ✅ собирается, проходит `check`; зависимость **активирована** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet-база + обфускация); **проверено живым AWG2-сервером**: handshake + keepalive + трафик наружу |
+| **AmneziaWG** | клиентский endpoint | полный набор обфускации: мусорные пакеты `Jc/Jmin/Jmax`, мусорные заголовки `S1–S4`, магические заголовки `H1–H4` (числом или диапазоном), управляемые последовательности пакетов `I1–I5`, плюс WireSock-стиль `Id/Ip/Ib` — декларативный сахар над `I1` | ✅ собирается, проходит `check`; зависимость **активирована** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet-база + обфускация); **проверено живым AWG-сервером**: handshake + keepalive + трафик наружу. Паритет сверен с `amneziawg-tools` и netlink-контрактом ядерного модуля — реализованы все параметры обфускации, которые принимают официальные реализации ([SPEC 031](SPECS/TASKS/031-AWG_PARITY_AUDIT_ADVANCED_SECURITY/SPEC.md)) |
 | **Маскировка `id/ip/ib`** | сахар над AWG | WireSock-стиль: декларативная маскировка поверх `I1` — домен (`id`) + протокол (`ip`: `quic`/`dns`/`stun`/`sip`) + браузер (`ib`), ядро строит клиент-инициированную `I1`-приманку: `quic` = out-of-order фрагментированный Initial (i1+i2), `dns`/`stun`/`sip` = query/Binding-Request/INVITE | ✅ **`ip=quic` device-проверен на реальном LTE/WARP DPI** (~330 мс, упрощает Cloudflare WARP); `dns`/`stun`/`sip` собираются и проходят `check`, но режутся как класс протокола к WARP-edge — для других провайдеров |
 | **Наблюдаемость** (расширения CommandClient) | live-стрим для UI | нативные расширения libbox gRPC за `with_lx_command`: `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `GetPool`, плюс `Connection.detourList` (хвост detour'а отдельным полем, SPEC 017) и `SubscribeDNSQueries` — структурный live-поток DNS (домен, qtype, rcode `-1`=ошибка, CNAME-цепочка, привязка к процессу, `dnsServer`/`dnsServerType`/`outbound`, SPEC 018) | ✅ в rc-серии, потребляется **LxBox**. Фича — [OBSERVABILITY](SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md) |
 | **round_robin** (балансировка нагрузки) | режим `urltest` | пул-балансировка на `urltest` за `with_lx_command` (для `GetPool`): `mode` `least_test` (дефолт) \| `round_robin`; `balancer{pool (дефолт 3), pool_tolerance (0=держать живые / >0=топ по задержке), sticky_hash}`. Sticky-ключ: пропущен/`[]` → дефолт `["process","domain"]`, `["none"]` → выкл; компоненты `process`/`domain`/`source_ip`/`dest_ip`/`dest_port`. Фиксированные слоты `slot[hash(key)%pool]` (FNV-64a), замена в слоте; `GetPool` отдаёт слоты | ✅ локально равномерно (10/10/10, sticky off); rc.15 починил схлопывание `domain`-ключа (теперь читается `metadata.Domain`, переживающий resolve домен→IP, а не пустой `destination.Fqdn`) — на устройстве равномерность 0.27 → 0.95+. Фича — [URLTEST_BALANCE](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md), конфиг — [docs/.../urltest.md](docs/configuration/outbound/urltest.md) |
@@ -99,7 +99,7 @@ with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_nai
 }
 ```
 
-### AmneziaWG 2.0 (endpoint)
+### AmneziaWG (endpoint)
 
 Поля AWG промотированы прямо в `WireGuardEndpointOptions`:
 
@@ -109,8 +109,8 @@ with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_nai
   // … стандартные поля wireguard (private_key, address, peers, …) …
   "jc": 10, "jmin": 50, "jmax": 100,
   "s1": 20, "s2": 20, "s3": 60, "s4": 60,
-  "h1": 1, "h2": 2, "h3": 3, "h4": 4,
-  "i1": "<b 0x...><r 12>", "i2": "", "i3": "", "i4": "", "i5": ""   // 2.0 CPS
+  "h1": 1, "h2": 2, "h3": "1000-2000", "h4": 4,   // число или диапазон "N-M"
+  "i1": "<b 0x...><r 12>", "i2": "", "i3": "", "i4": "", "i5": ""   // CPS
 }
 ```
 

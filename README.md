@@ -3,7 +3,7 @@
 # sing-box-lx
 
 > **A thin downstream fork of [SagerNet/sing-box](https://github.com/SagerNet/sing-box).**
-> A small set of client-side features on top of upstream — **XHTTP**, **AmneziaWG 2.0**, **MASQUE** (CONNECT-IP / Cloudflare WARP), plus an **observability layer** (CommandClient extensions) and **round_robin load balancing** — each behind its own build tag.
+> A small set of client-side features on top of upstream — **XHTTP**, **AmneziaWG**, **MASQUE** (CONNECT-IP / Cloudflare WARP), plus an **observability layer** (CommandClient extensions) and **round_robin load balancing** — each behind its own build tag.
 > The set may grow; the philosophy doesn't: live by rebasing onto every upstream tag, not by drifting into a separate life.
 
 > 📄 The upstream sing-box README — **[on GitHub](https://github.com/SagerNet/sing-box/blob/main/README.md)** (always current).
@@ -39,7 +39,7 @@ In the sing-box ecosystem, forks that add XHTTP / AmneziaWG fall into two camps 
 | # | Feature | What it is | Status |
 |---|---------|------------|--------|
 | **XHTTP** | client transport | Xray-compatible "splithttp" (modes `auto`/`packet-up`/`stream-up`/`stream-one`) over Reality/TLS/h2c | ✅ **live-validated** against a real Xray (3x-ui) server (packet-up/auto): handshake + DNS + HTTPS + download. `stream-one` has a known framing bug |
-| **AmneziaWG 2.0** | client endpoint | WireGuard obfuscation: `Jc/Jmin/Jmax`, `S1–S4`, `H1–H4` + **2.0**: `I1–I5` (CPS — decoy packets) | ✅ builds, passes `check`; dependency **activated** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet base + obfuscation); **validated against a real AWG2 server**: handshake + keepalive + outbound traffic |
+| **AmneziaWG** | client endpoint | Full obfuscation set: junk packets `Jc/Jmin/Jmax`, junk headers `S1–S4`, magic headers `H1–H4` (single or ranged), controlled packet sequences `I1–I5`, plus WireSock-style `Id/Ip/Ib` masquerade sugar over `I1` | ✅ builds, passes `check`; dependency **activated** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet base + obfuscation); **validated against a real AWG server**: handshake + keepalive + outbound traffic. Parity audited against `amneziawg-tools` and the kernel module's netlink contract — every obfuscation parameter the official implementations accept is implemented ([SPEC 031](SPECS/TASKS/031-AWG_PARITY_AUDIT_ADVANCED_SECURITY/SPEC.md)) |
 | **Masquerade `id/ip/ib`** | AWG sugar | WireSock-style declarative masquerade over `I1`: name a domain (`id`) + protocol (`ip`: `quic`/`dns`/`stun`/`sip`) + browser (`ib`) and the core builds the client-initiated `I1` decoy for you — `quic` = out-of-order fragmented Initial (i1+i2), `dns`/`stun`/`sip` = query/Binding-Request/INVITE | ✅ **`ip=quic` device-proven against a real LTE/WARP DPI** (~330 ms, eases Cloudflare WARP); `dns`/`stun`/`sip` build & pass `check` but are blocked as a protocol class to the WARP edge — for other providers |
 | **Observability (CommandClient)** | libbox gRPC | Native `CommandClient` extensions (SPEC 014–018, build tag `with_lx_command`): `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `GetPool`, `SubscribeDNSQueries` (structured live DNS stream — domain, qtype, rcode, CNAME chain, process attribution, dnsServer/outbound) + `Connection.detourList` (detour tail as its own field) | ✅ shipped across the rc series and consumed by the Android consumer (LxBox) |
 | **Load balancing (`round_robin`)** | urltest mode | Group-level load balancing on `urltest` (SPEC 019): `mode: round_robin` + `balancer{ pool, pool_tolerance, sticky_hash }`; FNV-64a slot binding with `sticky_hash` components `process\|domain\|source_ip\|dest_ip\|dest_port` (default `["process","domain"]`, `["none"]` = off) — `GetPool` exposes the live slots (behind `with_lx_command`) | ✅ builds, passes `check`; even rotation locally (10/10/10) and **device-verified end to end** on a real multi-node pool — rc.15 fixed the `domain`-key collapse (reads `metadata.Domain`, which survives the router's domain→IP resolve), taking on-device per-domain uniformity from ~0.27 to 0.95+ |
@@ -99,7 +99,7 @@ Validate configs:
 }
 ```
 
-### AmneziaWG 2.0 (endpoint)
+### AmneziaWG (endpoint)
 
 AWG fields are promoted directly onto `WireGuardEndpointOptions`:
 
@@ -109,8 +109,8 @@ AWG fields are promoted directly onto `WireGuardEndpointOptions`:
   // … standard wireguard fields (private_key, address, peers, …) …
   "jc": 10, "jmin": 50, "jmax": 100,
   "s1": 20, "s2": 20, "s3": 60, "s4": 60,
-  "h1": 1, "h2": 2, "h3": 3, "h4": 4,
-  "i1": "<b 0x...><r 12>", "i2": "", "i3": "", "i4": "", "i5": ""   // 2.0 CPS
+  "h1": 1, "h2": 2, "h3": "1000-2000", "h4": 4,   // single value or "N-M" range
+  "i1": "<b 0x...><r 12>", "i2": "", "i3": "", "i4": "", "i5": ""   // CPS
 }
 ```
 
