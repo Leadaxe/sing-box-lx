@@ -15,6 +15,30 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.20-rc.1
+
+**Every build job now pins the Go 1.25.x toolchain (SPEC 044,
+[SPEC.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/044-ANDROID_AAR_GO124_QUIC_DEAD/SPEC.md)).**
+No code change on top of `lx.19` — this is a build-environment release.
+Desktop, musl and lint jobs used to take the toolchain from `go.mod`
+(`go 1.24.7`), which is the language floor upstream keeps for parity, not a
+toolchain choice: upstream itself pins **1.25.x** in every release job of its
+own `build.yml` (1.25.12; `^1.25.3`/`^1.25.4` for darwin/windows). So the fork
+was the only party shipping go1.24 binaries — the same toolchain that made
+the AAR's quic-go outbounds hang on vendor Android kernels (`lx.19-rc.2`), and
+one where `badtls` compiles as a stub because upstream re-gated it on
+`go1.25 && badlinkname`.
+
+- `lx-release.yml`, `lx-build.yml`, `lx-ci.yml`: all `go-version-file: go.mod`
+  replaced with `go-version: '1.25.x'` (12 jobs total). `go.mod` keeps
+  `go 1.24.x` for upstream parity.
+- The AAR pin drops from `1.26.x` to the same `1.25.x` — one toolchain line
+  across the whole CI, and the line upstream actually ships. The SPEC 044
+  defect threshold is ">= 1.25"; both 1.25.5 and 1.26.5 are device-verified.
+- The Windows 7 job is untouched: it builds its own MetaCubeX-patched
+  toolchain from `release-branch.go1.25`.
+- Desktop binaries therefore gain active `badtls` for the first time.
+
 #### v1.14.0-lx.19
 
 Promotion of the `rc.1`–`rc.3` line with no code changes on top of `rc.3`;
