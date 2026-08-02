@@ -48,7 +48,7 @@ jobs:
       # lx-release.yml build_android for the full story).
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.x'
+          go-version: '1.25.x'
           check-latest: true
       - name: Setup Android NDK
         id: setup-ndk
@@ -91,7 +91,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: '1.25.x' # upstream-parity toolchain: upstream pins 1.25.x in every release job; go.mod's 1.24 is the language floor, not a toolchain (and makes badtls a stub). SPEC 044.
           check-latest: true
       - name: Ensure a describe-able tag
         run: git tag -f "build-apple"
@@ -124,7 +124,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: '1.25.x' # upstream-parity toolchain: upstream pins 1.25.x in every release job; go.mod's 1.24 is the language floor, not a toolchain (and makes badtls a stub). SPEC 044.
           check-latest: true
       - name: Ensure a describe-able tag
         run: git tag -f "build-binary"
@@ -165,7 +165,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: '1.25.x' # upstream-parity toolchain: upstream pins 1.25.x in every release job; go.mod's 1.24 is the language floor, not a toolchain (and makes badtls a stub). SPEC 044.
           check-latest: true
       - name: Clone cronet-go (musl toolchain provider)
         run: |

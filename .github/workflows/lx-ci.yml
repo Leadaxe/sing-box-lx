@@ -52,7 +52,7 @@ jobs:
       - uses: actions/checkout@v5
         with: { submodules: recursive, fetch-depth: 0 }
       - uses: actions/setup-go@v6
-        with: { go-version-file: go.mod, check-latest: true }
+        with: { go-version: '1.25.x', check-latest: true } # upstream-parity toolchain, not go.mod's 1.24 floor (SPEC 044)
 
       - name: go vet (lx packages, full tags)
         run: |
@@ -94,7 +94,7 @@ jobs:
           submodules: recursive     # with_awg needs submodules/wireguard-go
           fetch-depth: 0            # tags for the -lx version (git describe)
       - uses: actions/setup-go@v6
-        with: { go-version-file: go.mod, check-latest: true }
+        with: { go-version: '1.25.x', check-latest: true } # upstream-parity toolchain, not go.mod's 1.24 floor (SPEC 044)
 
       - name: Build (full lx — with_xhttp,with_awg,with_lx_command)
         run: make -f Makefile.lx lx-build LX_TAGS="${BASE_TAGS},with_xhttp,with_awg,with_lx_command"
@@ -165,7 +165,7 @@ jobs:
       - uses: actions/checkout@v5
         with: { submodules: recursive, fetch-depth: 0 }
       - uses: actions/setup-go@v6
-        with: { go-version-file: go.mod, check-latest: true }
+        with: { go-version: '1.25.x', check-latest: true } # upstream-parity toolchain, not go.mod's 1.24 floor (SPEC 044)
       - name: Cross-build (full lx)
         env:
           GOOS: ${{ matrix.goos }}
@@ -196,7 +196,7 @@ jobs:
       # kills all quic-go outbounds on some vendor Android kernels (see
       # lx-release.yml build_android for the full story).
       - uses: actions/setup-go@v6
-        with: { go-version: '1.26.x', check-latest: true }
+        with: { go-version: '1.25.x', check-latest: true }
       - name: Setup Android NDK
         id: setup-ndk
         uses: nttld/setup-ndk@v1
@@ -240,7 +240,7 @@ jobs:
       - uses: actions/checkout@v5
         with: { submodules: recursive, fetch-depth: 0 }
       - uses: actions/setup-go@v6
-        with: { go-version-file: go.mod, check-latest: true }
+        with: { go-version: '1.25.x', check-latest: true } # upstream-parity toolchain, not go.mod's 1.24 floor (SPEC 044)
 
       - name: Clone cronet-go
         run: |
