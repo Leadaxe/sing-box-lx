@@ -404,9 +404,17 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      # SPEC 044: the AAR MUST be built with Go >= 1.25. A go1.24-built libbox
+      # kills every quic-go outbound (hysteria2/tuic/masque-h3) on some vendor
+      # Android kernels inside the VPN process — "context deadline exceeded"
+      # on each dial while TCP and wireguard-go UDP work (device-verified on
+      # OnePlus Nord CE 2 / MTK / Android 15; the same source built with
+      # go1.25.5 works on the same device, GSO/ECN knobs ruled out). go.mod
+      # still says `go 1.24.x` (upstream parity), so go-version-file would
+      # silently downgrade the toolchain here — pin the minor explicitly.
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: '1.25.x'
           check-latest: true
 
       - name: Setup Android NDK

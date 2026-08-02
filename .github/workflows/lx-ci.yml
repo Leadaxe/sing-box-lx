@@ -192,8 +192,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with: { submodules: recursive, fetch-depth: 0 }
+      # SPEC 044: AAR must be built with Go >= 1.25 — a go1.24-built libbox
+      # kills all quic-go outbounds on some vendor Android kernels (see
+      # lx-release.yml build_android for the full story).
       - uses: actions/setup-go@v6
-        with: { go-version-file: go.mod, check-latest: true }
+        with: { go-version: '1.25.x', check-latest: true }
       - name: Setup Android NDK
         id: setup-ndk
         uses: nttld/setup-ndk@v1

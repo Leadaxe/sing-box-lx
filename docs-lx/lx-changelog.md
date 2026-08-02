@@ -10,6 +10,30 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.19-rc.2
+
+**Android AAR: quic-go outbounds (hysteria2 / tuic / masque-h3) dead on
+vendor kernels when the AAR is built with Go 1.24 (SPEC 044,
+[SPEC.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/044-ANDROID_AAR_GO124_QUIC_DEAD/SPEC.md)).**
+Field report (4pda): hysteria2 nodes never connect in LxBox while the same
+server works in other clients on the same phone and provider. Root cause is
+the AAR build toolchain, not fork code: a libbox built with Go 1.24.x (what
+`go-version-file: go.mod` gave CI) makes every quic-go dial inside the VPN
+process hang to `context deadline exceeded` on some vendor Android kernels
+(device-verified on OnePlus Nord CE 2 / MTK / Android 15), while TCP
+protocols and wireguard-go UDP keep working and generic-kernel emulators
+never reproduce. The same source built with Go 1.25.x works on the same
+device. GSO/ECN offload paths were explicitly ruled out on-device via the
+new knobs below.
+
+- All three AAR jobs (`lx-release.yml`, `lx-build.yml`, `lx-ci.yml`) now pin
+  `go-version: '1.25.x'` explicitly; `go.mod` stays at upstream's `go 1.24.x`.
+- New static libbox exports `SetQuicGSODisabled(bool)` /
+  `SetQuicECNDisabled(bool)` (`quic_env_knobs_lx.go`) — runtime toggles of
+  quic-go's own env escape hatches, applied on the next reconnect. Consumed
+  by the LxBox Debug API (`POST /action/quic-knobs`, LxBox §341) for field
+  diagnostics of offload-class failures.
+
 #### v1.14.0-lx.19-rc.1
 
 **WG/AWG self-heal v2: the post-wake ERR window shrinks from ~90 s to
