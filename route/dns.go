@@ -41,6 +41,18 @@ func (r *Router) hijackDNSPacket(ctx context.Context, conn N.PacketConn, packetB
 	return nil
 }
 
+// lx:begin dns-hijack-async
+// SPEC 046. HijackDNSPacket is called synchronously from the stack packet
+// loop (sing-tun ForwardDispatcher / gvisor dispatchLoop), but ExchangeAsync
+// blocks the caller up to the DNS timeout while the transport dial is in
+// flight (ConnPool.acquireShared waits for the shared dial). With a DNS
+// server routed through a dead detour every unique query froze the packet
+// loop for the full timeout, stalling ALL forwarding. Run the exchange on
+// its own goroutine; the semaphore caps concurrency, and over-limit queries
+// are dropped (UDP — the client retries).
+// lx:end dns-hijack-async
+const dnsHijackConcurrencyLimit = 256 // lx: SPEC 046
+
 func (r *Router) HijackDNSPacket(ctx context.Context, payload []byte, writer N.PacketWriter, metadata adapter.InboundContext) {
 	var message mDNS.Msg
 	err := message.Unpack(payload)
@@ -50,14 +62,23 @@ func (r *Router) HijackDNSPacket(ctx context.Context, payload []byte, writer N.P
 	}
 	destination := metadata.Destination
 	metadata.Destination = M.Socksaddr{}
-	r.dns.ExchangeAsync(adapter.WithContext(ctx, &metadata), &message, adapter.DNSQueryOptions{}, func(response *mDNS.Msg, exchangeErr error) {
-		if exchangeErr == nil {
-			exchangeErr = r.writeDNSPacketResponse(&message, response, writer, destination)
-		}
-		if exchangeErr != nil && !R.IsRejected(exchangeErr) && !E.IsClosedOrCanceled(exchangeErr) {
-			r.logger.ErrorContext(ctx, E.Cause(exchangeErr, "process DNS packet"))
-		}
-	})
+	// lx:begin dns-hijack-async
+	if !r.dnsHijackSem.TryAcquire(1) {
+		r.logger.DebugContext(ctx, "process DNS packet: hijack overloaded, dropping query")
+		return
+	}
+	go func() {
+		defer r.dnsHijackSem.Release(1)
+		// lx:end dns-hijack-async
+		r.dns.ExchangeAsync(adapter.WithContext(ctx, &metadata), &message, adapter.DNSQueryOptions{}, func(response *mDNS.Msg, exchangeErr error) {
+			if exchangeErr == nil {
+				exchangeErr = r.writeDNSPacketResponse(&message, response, writer, destination)
+			}
+			if exchangeErr != nil && !R.IsRejected(exchangeErr) && !E.IsClosedOrCanceled(exchangeErr) {
+				r.logger.ErrorContext(ctx, E.Cause(exchangeErr, "process DNS packet"))
+			}
+		})
+	}() // lx: SPEC 046
 }
 
 func (r *Router) writeDNSPacketResponse(message *mDNS.Msg, response *mDNS.Msg, writer N.PacketWriter, destination M.Socksaddr) error {

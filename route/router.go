@@ -23,6 +23,8 @@ import (
 	"github.com/sagernet/sing/contrab/maphash"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/pause"
+
+	"golang.org/x/sync/semaphore" // lx: SPEC 046 dns-hijack-async
 )
 
 var (
@@ -79,6 +81,12 @@ type Router struct {
 	reachDirty           atomic.Bool
 	endpoint             adapter.EndpointManager
 	// lx:end idle-suspend
+	// lx:begin dns-hijack-async
+	// SPEC 046. Bounds concurrent hijacked-DNS exchanges: HijackDNSPacket runs
+	// them off the stack packet loop, and the semaphore caps the goroutines the
+	// loop can spawn while a transport dial hangs (dead detour).
+	dnsHijackSem *semaphore.Weighted
+	// lx:end dns-hijack-async
 }
 
 func NewRouter(ctx context.Context, logFactory log.Factory, options option.RouteOptions, dnsOptions option.DNSOptions) *Router {
@@ -104,6 +112,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		idleTeardown:         idleTeardownOf(options),                           // lx: SPEC 020 level 3 (default = reachable window, explicit "0" = off)
 		idleTeardownSet:      options.LXIdleTeardown != nil,                     // lx: SPEC 020 — "0" is a value, not an absence
 		endpoint:             service.FromContext[adapter.EndpointManager](ctx), // lx: SPEC 020 — idle tick iterates endpoints
+		dnsHijackSem:         semaphore.NewWeighted(dnsHijackConcurrencyLimit),  // lx: SPEC 046
 	}
 	router.reachDirty.Store(true) // lx: SPEC 020 — first tick computes the reachable set
 	return router
