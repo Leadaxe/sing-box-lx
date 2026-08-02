@@ -6,5 +6,5 @@
 - [x] 4. `go build ./...` + `go test ./...`
 - [x] 5. AAR-сборка (CI run 30760597706), эмуляторное репро: 6 мин долбёжки мёртвого ru-пути → ICMP 120/120 ok, DNS живых путей 117/120 (3 фейла — пул netd, до ядра не дошли), ядро отвечает 30–50ms. На старом ядре тот же сценарий — полная смерть ICMP+DNS волнами
 - [ ] 6. Device-верификация CPH2411 (конфиг инцидента)
-- [ ] 7. Строка в реестр `SPECS/FEATURES/004-HOTFIXES/FEATURE.md`
+- [x] 7. Строка в реестр `SPECS/FEATURES/004-HOTFIXES/FEATURE.md`
 - [ ] 8. IMPLEMENTATION_REPORT.md, релиз rc
