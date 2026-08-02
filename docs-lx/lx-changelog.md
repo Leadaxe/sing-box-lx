@@ -27,7 +27,8 @@ device. GSO/ECN offload paths were explicitly ruled out on-device via the
 new knobs below.
 
 - All three AAR jobs (`lx-release.yml`, `lx-build.yml`, `lx-ci.yml`) now pin
-  `go-version: '1.25.x'` explicitly; `go.mod` stays at upstream's `go 1.24.x`.
+  `go-version: '1.26.x'` explicitly (defect threshold is >= 1.25; both 1.25.5
+  and 1.26.5 device-verified); `go.mod` stays at upstream's `go 1.24.x`.
 - New static libbox exports `SetQuicGSODisabled(bool)` /
   `SetQuicECNDisabled(bool)` (`quic_env_knobs_lx.go`) — runtime toggles of
   quic-go's own env escape hatches, applied on the next reconnect. Consumed

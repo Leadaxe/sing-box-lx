@@ -196,7 +196,7 @@ jobs:
       # kills all quic-go outbounds on some vendor Android kernels (see
       # lx-release.yml build_android for the full story).
       - uses: actions/setup-go@v6
-        with: { go-version: '1.25.x', check-latest: true }
+        with: { go-version: '1.26.x', check-latest: true }
       - name: Setup Android NDK
         id: setup-ndk
         uses: nttld/setup-ndk@v1

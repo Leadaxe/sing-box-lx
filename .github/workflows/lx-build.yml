@@ -48,7 +48,7 @@ jobs:
       # lx-release.yml build_android for the full story).
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.x'
+          go-version: '1.26.x'
           check-latest: true
       - name: Setup Android NDK
         id: setup-ndk
