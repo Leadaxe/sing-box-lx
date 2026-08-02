@@ -15,6 +15,34 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.19
+
+Promotion of the `rc.1`–`rc.3` line with no code changes on top of `rc.3`;
+the only commits between `rc.3` and this tag are the release-notes pipeline
+rework (`3987cb949`: release body now comes from `docs-lx/releases/v<version>.md`
+in the LxBox bilingual format, with the changelog section as pre-release
+fallback) and the notes documents themselves. What the line ships:
+
+- **WG/AWG self-heal v2** (SPEC 041 v2, rc.1): early rebind at ~15 s for
+  provably dead sessions inside the handshake retry cycle, plus the
+  `CommandServer.RebindStaleEndpoints()` wake nudge for consumers — the
+  post-wake ERR window collapses from ~90 s to one handshake RTT.
+- **Android AAR Go toolchain pin** (SPEC 044, rc.2): AAR jobs pin
+  `go-version: '1.26.x'` — a Go 1.24 libbox kills every quic-go outbound
+  (hysteria2/tuic/masque-h3) on some vendor Android kernels. Plus static
+  libbox exports `SetQuicGSODisabled`/`SetQuicECNDisabled` for field
+  diagnostics (LxBox Debug API `/action/quic-knobs`).
+- **Trojan/VLESS `tls.enabled: false` nil-dialer crash fix** (SPEC 045,
+  rc.3): upstream regression from the ECH-retry commit; the TLS dialer is
+  now built only when a TLS config actually exists.
+
+Upstream note: `upstream/testing` tags `v1.14.0-beta.3`/`v1.14.0-beta.4`
+(2026-07-29/31) predate our 2026-08-01 merge and their content is already in;
+the tags are not ancestors only because upstream force-pushed the branch
+afterwards. Subject-level comparison at tag time shows zero genuinely new
+commits, so the base stays **v1.14.0-beta.2** (the newest upstream tag in our
+ancestry).
+
 #### v1.14.0-lx.19-rc.3
 
 **Trojan/VLESS node with `"tls": {"enabled": false}` crashed the whole core
