@@ -64,7 +64,14 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		if err != nil {
 			return nil, err
 		}
-		outbound.tlsDialer = tls.NewDialer(outboundDialer, outbound.tlsConfig)
+		// lx:begin tls-disabled-dialer
+		// NewClientWithOptions returns (nil, nil) for `"tls": {"enabled": false}`;
+		// an unconditional NewDialer here wraps that nil config and SIGSEGVs on the
+		// first handshake (SPEC 045). Same guard as vmess.
+		if outbound.tlsConfig != nil {
+			outbound.tlsDialer = tls.NewDialer(outboundDialer, outbound.tlsConfig)
+		}
+		// lx:end tls-disabled-dialer
 	}
 	if options.Transport != nil {
 		outbound.transport, err = v2ray.NewClientTransport(ctx, outbound.dialer, outbound.serverAddr, common.PtrValueOrDefault(options.Transport), outbound.tlsConfig)
