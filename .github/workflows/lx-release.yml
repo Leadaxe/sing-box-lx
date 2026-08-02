@@ -509,31 +509,45 @@ jobs:
 
       - name: Release notes
         run: |
-          # What's-new for THIS tag comes from docs-lx/lx-changelog.md (single source of
-          # truth, kept per release) — extract the section for this version, between its
-          # "#### vX" header and the next "#### ", into a SEPARATE file. It must NOT be
-          # interpolated through the heredoc below: changelog prose contains backticks and
-          # $(...) that the shell would execute (command injection from doc text). We splice
-          # the file in with sed after the heredoc instead.
+          # What's-new for THIS tag comes from one of two sources, in order of preference:
+          #   1. docs-lx/releases/v<version>.md — hand-written bilingual notes in the
+          #      LxBox release format (TL;DR paragraphs EN+RU, then EN/RU <details> blocks
+          #      with 🆕/🔧/🐛/🧰 sections; see docs-lx/releases/TEMPLATE.md). Expected for
+          #      every stable tag; optional for pre-releases.
+          #   2. Fallback: the "#### v<version>" section of docs-lx/lx-changelog.md — the
+          #      terse engineering log, good enough for rc/alpha/beta pre-releases.
+          # Either source must NOT be interpolated through the heredoc below: prose contains
+          # backticks and $(...) that the shell would execute (command injection from doc
+          # text). We splice the file in with sed after the heredoc instead.
           VERSION="${{ steps.ver.outputs.version }}"
-          awk -v v="#### v${VERSION}" '
-            $0==v {f=1; next} /^#### / {f=0} f' docs-lx/lx-changelog.md > changes.md
-          if [ -z "$(tr -d '[:space:]' < changes.md)" ]; then
-            echo "See [docs-lx/lx-changelog.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/lx-changelog.md)." > changes.md
+          TAG="${{ steps.ver.outputs.tag }}"
+          if [ -s "docs-lx/releases/v${VERSION}.md" ]; then
+            cp "docs-lx/releases/v${VERSION}.md" changes.md
+          else
+            case "$TAG" in
+              *-rc.*|*-alpha.*|*-beta.*) : ;;
+              *) echo "::warning::stable tag without docs-lx/releases/v${VERSION}.md — release page falls back to the raw changelog section" ;;
+            esac
+            awk -v v="#### v${VERSION}" '
+              $0==v {f=1; next} /^#### / {f=0} f' docs-lx/lx-changelog.md > section.md
+            if [ -z "$(tr -d '[:space:]' < section.md)" ]; then
+              echo "See [docs-lx/lx-changelog.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/lx-changelog.md)." > section.md
+            fi
+            { echo "### What's new in this release"; echo; cat section.md; } > changes.md
           fi
           cat > notes.md <<EOF
-          **sing-box-lx ${{ steps.ver.outputs.version }}** — a thin downstream of [sing-box](https://github.com/SagerNet/sing-box) (base **${{ steps.ver.outputs.base }}**, branch \`lx\`).
+          **sing-box-lx ${VERSION}** — a thin downstream of [sing-box](https://github.com/SagerNet/sing-box) (base **${{ steps.ver.outputs.base }}**, branch \`lx\`).
 
-          ### What's new in this release
           __CHANGES__
 
-          ### Standing features
-          - **AmneziaWG 2.0** (\`with_awg\`) — \`wireguard\` endpoint with \`jc/jmin/jmax\`, \`s1\`–\`s4\`, \`h1\`–\`h4\`, \`i1\`–\`i5\`.
-          - **XHTTP** transport (\`with_xhttp\`) — Xray-compatible "splithttp", composes with Reality (use \`auto\`; \`stream-one\` has a known framing bug).
-          - **CommandClient extensions** (\`with_lx_command\`) — native libbox gRPC parity for the Clash API dropped from the **Android AAR**: URLTestOutbound, GetRules, GetGroups/GetOutbounds, Connection.Detour, SubscribeDNSQueries. (Desktop/CLI binaries keep \`with_clash_api\` for external dashboards.)
+          ---
 
-          ### Binaries
-          Drop-in \`sing-box\` for **darwin / windows** × {amd64, arm64}, plus a **Windows 7 (32-bit)** legacy build (\`sing-box-${{ steps.ver.outputs.version }}-windows-386-legacy-windows-7.zip\` — built with a Win7-patched Go; without naive/cronet, which has no windows/386 target).
+          Config reference: [docs-lx/lx-config.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/lx-config.md) · verify downloads against \`SHA256SUMS\` · \`sing-box version\` reports \`${VERSION}\`.
+
+          <details>
+          <summary><b>📦 Binaries / Сборки</b></summary>
+
+          Drop-in \`sing-box\` for **darwin / windows** × {amd64, arm64}, plus a **Windows 7 (32-bit)** legacy build (\`sing-box-${VERSION}-windows-386-legacy-windows-7.zip\` — built with a Win7-patched Go; without naive/cronet, which has no windows/386 target).
 
           Windows archives include \`libcronet.dll\` — keep it next to \`sing-box.exe\`, the \`naive\` outbound loads it from there. The darwin binaries are built with CGO on a macOS runner: \`libcronet.a\` is linked statically, so NaïveProxy works with nothing extra to install (tag set drops \`with_purego\` there).
 
@@ -541,18 +555,37 @@ jobs:
 
           **Linux — big-endian MIPS** (OpenWrt \`mips_24kc\`, e.g. Atheros AR93xx): \`linux-mips-softfloat\` — pure-Go static build **without NaïveProxy** (Chromium/cronet has no big-endian MIPS toolchain); everything else matches the desktop tag set.
 
-          Each archive contains the \`sing-box\` binary (\`sing-box version\` reports \`${{ steps.ver.outputs.version }}\`). Verify downloads against \`SHA256SUMS\`.
+          </details>
 
-          ### Android
-          \`libbox-${{ steps.ver.outputs.version }}.aar\` (+ \`libbox-legacy-…\` for SDK 21) — gomobile build of \`experimental/libbox\` with \`with_xhttp\`+\`with_awg\` enabled, for embedding in an Android app. \`Libbox.version()\` reports the lx version.
+          <details>
+          <summary><b>🤖 Android AAR</b></summary>
 
-          ### Build tags
-          Desktop binary: \`$(make -f Makefile.lx -s lx-print-tags)\`
+          \`libbox-${VERSION}.aar\` (+ \`libbox-legacy-…\` for SDK 21) — gomobile build of \`experimental/libbox\` with \`with_xhttp\`+\`with_awg\` enabled, for embedding in an Android app. \`Libbox.version()\` reports the lx version.
 
-          Config reference: [docs-lx/lx-config.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/lx-config.md).
+          </details>
+
+          <details>
+          <summary><b>🏷️ Standing lx features &amp; build tags / Постоянные фичи форка</b></summary>
+
+          - **AmneziaWG 2.0** (\`with_awg\`) — \`wireguard\` endpoint with \`jc/jmin/jmax\`, \`s1\`–\`s4\`, \`h1\`–\`h4\`, \`i1\`–\`i5\`.
+          - **XHTTP** transport (\`with_xhttp\`) — Xray-compatible "splithttp", composes with Reality (use \`auto\`; \`stream-one\` has a known framing bug).
+          - **CommandClient extensions** (\`with_lx_command\`) — native libbox gRPC parity for the Clash API dropped from the **Android AAR**: URLTestOutbound, GetRules, GetGroups/GetOutbounds, Connection.Detour, SubscribeDNSQueries. (Desktop/CLI binaries keep \`with_clash_api\` for external dashboards.)
+
+          Desktop binary build tags: \`$(make -f Makefile.lx -s lx-print-tags)\`
+
+          </details>
           EOF
 
-          # Splice the changelog section in place of the placeholder. `sed r` inserts the
+          # Previous-release footer (LxBox-style). Tag list is already complete here:
+          # checkout runs with fetch-depth 0, and the upstream tag fetch above cannot add
+          # v*-lx* tags (upstream has none).
+          PREV="$(git tag -l 'v*-lx*' --sort=-creatordate | awk -v t="$TAG" '$0==t {f=1; next} f {print; exit}')"
+          if [ -n "$PREV" ]; then
+            printf '\n---\n\nPrevious release / Предыдущий релиз: [%s](https://github.com/%s/releases/tag/%s)\n' \
+              "$PREV" "${{ github.repository }}" "$PREV" >> notes.md
+          fi
+
+          # Splice the what's-new content in place of the placeholder. `sed r` inserts the
           # file verbatim (no shell/sed interpretation of its contents), so backticks and
           # $(...) in the prose are inert. Then drop the placeholder line itself. Written
           # via a temp file (not sed -i, whose flag syntax differs BSD vs GNU).

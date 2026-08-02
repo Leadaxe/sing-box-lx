@@ -10,6 +10,11 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+This file is the **engineering log** (SPEC links, implementation detail, one section
+per tag). The user-facing release page body comes from `docs-lx/releases/v<version>.md`
+when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
+required for stable tags); this changelog section is the fallback used for pre-releases.
+
 #### v1.14.0-lx.19-rc.3
 
 **Trojan/VLESS node with `"tls": {"enabled": false}` crashed the whole core

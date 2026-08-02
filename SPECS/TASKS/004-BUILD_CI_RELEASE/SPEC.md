@@ -47,7 +47,9 @@
 
 ### 2.4 Релизы
 - Тег `vX.Y.Z-lx.N` → артефакты: desktop-архивы (`sing-box` × 6 платформ) **+ `libbox-<ver>.aar` и `libbox-legacy-<ver>.aar`**, общий `SHA256SUMS`.
-- Release notes: upstream-база + состояние фич (`with_xhttp`/`with_awg`) + полный `LX_TAGS` desktop-бинаря (через `lx-print-tags`) + строка про AAR.
+- Release notes собираются в `lx-release.yml` из шапки (версия + upstream-база через `git describe`), контентного блока и служебного хвоста:
+  - контент: `docs-lx/releases/v<version>.md` — рукописные билингвальные ноты в формате LxBox (TL;DR EN+RU, `<details>`-блоки 🇬🇧/🇷🇺 с секциями 🆕/🔧/🐛/🧰; шаблон `docs-lx/releases/TEMPLATE.md`), **обязателен для stable-тега** (иначе `::warning::`); фолбэк для пререлизов — `#### v<version>`-секция `docs-lx/lx-changelog.md`. Оба источника сплайсятся `sed r` (не через heredoc — инъекция из текста доков);
+  - хвост: свёрнутые `<details>` — «📦 Binaries» (платформенные заметки), «🤖 Android AAR», «🏷️ Standing features & build tags» (полный `LX_TAGS` через `lx-print-tags`) — и футер «Previous release» (предыдущий `v*-lx*`-тег по `creatordate`).
 
 **Поставка libcronet (NaïveProxy / `with_purego`).** Purego-бинарь не содержит cronet: лоадер cronet-go ищет `libcronet.dll`/`.so`/`.dylib` в **каталоге исполняемого файла** (затем PATH / `LD_LIBRARY_PATH` / системные пути), а `cronet.NaiveClient` дёргает `checkLibrary()` при создании outbound'а — без библиотеки конфиг с `naive` падает **на старте** («cronet: library not found»). Отсюда контракт упаковки по таргетам:
 
