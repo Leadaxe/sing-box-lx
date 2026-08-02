@@ -15,6 +15,41 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.20-rc.2
+
+**Hijacked DNS exchanges no longer run on the stack packet loop (SPEC 046,
+[SPEC.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/046-DNS_HIJACK_PACKET_LOOP_STALL/SPEC.md)).**
+A DNS server with `detour` to an outbound whose selected node is silently
+dropped by the network stalled **all** tunnel forwarding — other DNS servers,
+ICMP and new connections of every protocol — not just its own queries. Field
+incident: CPH2411 / Android 15 / LxBox 2.19.2, forwarding alive 12–60 s after
+each reload, then dead in waves of ~4–5 minutes; core logs stayed clean
+(incoming `inbound DNS packet from …`, no matching `dns: exchanged`).
+
+- Root: both tun stacks call `Router.HijackDNSPacket` **synchronously** from
+  the packet loop (`sing-tun` `ForwardDispatcher` / gvisor dispatch), and
+  `Client.ExchangeAsync` — despite the name — blocks the caller inside
+  `ConnPool.acquireShared` until the transport dial completes or the DNS
+  timeout (10 s) fires. Every *unique* question therefore froze the loop for
+  the full timeout; only exact duplicates dedupe via singleflight. Live
+  goroutine dump caught `fdbased.dispatchLoop` itself parked in
+  `acquireShared`.
+- `route/dns.go`: the exchange moves to its own goroutine, gated by
+  `dnsHijackSem` (`semaphore.NewWeighted(256)`, new field in `route/router.go`).
+  Over the limit the query is dropped with a debug line — UDP clients retry —
+  so a hijack storm cannot grow goroutines without bound.
+- Fix sits at the shared entry point, so every caller benefits (tun system,
+  tun gvisor, wireguard/openvpn/openconnect/tailscale endpoints).
+- `route/dns_hijack_async_lx_test.go`: behaviour guards that a hung exchange
+  does not block the caller and that over-limit queries drop instead of
+  waiting.
+- Emulator verification (AVD, gvisor, synthetic dead detour to `192.0.2.1:443`
+  plus a stream of unique `.ru` queries): 6 minutes of hammering the dead path
+  → ICMP 120/120, DNS over live paths 117/120 (3 misses are netd-side pool,
+  never reached the core), core answers in 30–50 ms. The same scenario on the
+  previous core kills ICMP and DNS in waves. Device verification on the
+  incident config is still pending.
+
 #### v1.14.0-lx.20-rc.1
 
 **Every build job now pins the Go 1.25.x toolchain (SPEC 044,
