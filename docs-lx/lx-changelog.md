@@ -10,6 +10,29 @@ tracks only the fork. Versions are tagged `vX.Y.Z-lx.N`; releases are built by
 `lx-release.yml`. Tags carrying an `-rc.N` / `-alpha.N` / `-beta.N` suffix publish
 as GitHub **pre-releases** and never become "Latest".
 
+#### v1.14.0-lx.19-rc.3
+
+**Trojan/VLESS node with `"tls": {"enabled": false}` crashed the whole core
+process with a nil-pointer panic on the first dial, including URL tests
+(SPEC 045,
+[SPEC.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/045-TLS_DISABLED_NIL_DIALER_CRASH/SPEC.md)).**
+Field report (4pda, crash bundle from device): a plain-trojan node from a
+public subscription (`tls.enabled: false` — a legal config that passes
+`check`) took down the VPN the moment a URL test reached it. Upstream
+regression from the ECH-retry commit (`1f0308054`): the TLS dialer is built
+whenever a `tls` block is present, but the config constructor returns a nil
+config for `enabled: false` by contract — so the dialer wraps nil and
+SIGSEGVs in `ClientHandshake`. The panic fires only when the TCP connect
+succeeds, so such a node can sit dormant in a subscription for months (DPI
+drops its TCP) and fire the first time the path becomes passable. Still
+unfixed in upstream `testing` at the time of this release.
+
+- `protocol/trojan` and `protocol/vless` now create the TLS dialer only when
+  the TLS config was actually built (same guard upstream itself uses in
+  vmess); disabled TLS means a plain-TCP dial, as before the regression.
+- Red/green regression tests in both packages; registered in the HOTFIXES
+  ledger with a removal condition (drop when upstream adds the nil guard).
+
 #### v1.14.0-lx.19-rc.2
 
 **Android AAR: quic-go outbounds (hysteria2 / tuic / masque-h3) dead on
