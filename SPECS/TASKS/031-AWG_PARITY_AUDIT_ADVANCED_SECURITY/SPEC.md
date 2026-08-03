@@ -7,7 +7,7 @@
 | Тип | Q (question/исследование) |
 | Статус | **C** (complete) — реализовывать нечего, см. §5 |
 | Подмодуль | `submodules/wireguard-go` (HEAD `d892107`, база sagernet + LX-прививка AWG) |
-| Связанные | [[SPECS/TASKS/003-AWG2_CLIENT_ENDPOINT]] · [[SPECS/TASKS/005-AWG2_RANGED_MAGIC_HEADERS]] · [[SPECS/TASKS/008-AWG_JUNK_PARAM_VALIDATION]] · [[SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES]] · [[SPECS/TASKS/026-AWG_MAGIC_VS_RESERVED_CLEAR]] |
+| Связанные | [[SPECS/TASKS/003-AWG2_CLIENT_ENDPOINT]] · [[SPECS/TASKS/005-AWG2_RANGED_MAGIC_HEADERS]] · [[SPECS/TASKS/008-AWG_JUNK_PARAM_VALIDATION]] · [[SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES]] · [[SPECS/TASKS/021-MASQUE_CONNECT_IP_OUTBOUND]] · [[SPECS/TASKS/025-AWG_TRANSPORT_PADDING_OVERRUN]] · [[SPECS/TASKS/026-AWG_MAGIC_VS_RESERVED_CLEAR]] |
 
 > **Папка переименована** из `031-AWG2_TIMED_JUNK_J_ITIME` (номер `031` — прежний
 > якорь). Исходное содержание — фича «timed junk J1–J3/Itime» — **отозвано**: таких
@@ -70,6 +70,43 @@
 Часть этих ключей (`rekey_after_time`, `keepalive_timeout`,
 `max_handshake_attempts`) — вообще локальные тайминги WireGuard, вынесенные в
 настройку: они не согласуются с пиром и на совместимость не влияют.
+
+### 3.1 `content_padding_addition` и `header_protection_key` — разбор по существу
+
+Два ключа из списка выше периодически всплывают как «фичи AWG 3.0, которых у нас
+нет», поэтому разбираются отдельно и по существу — сверх формального довода
+«их нет в `amneziawg-tools` и в ядерном модуле».
+
+**Оба симметричны, оба требуют сервер с той же настройкой.** `content_padding_addition`
+меняет длину payload до `Seal`, `header_protection_key` XOR-ит (ChaCha20)
+`header[0:16]` transport-пакета, закрывая type + receiver index + counter. Приёмник,
+который их не знает, не разберёт пакет. Следствия:
+
+- **На WARP неприменимы в принципе** — там сервер Cloudflare, обычный plain
+  WireGuard ([[SPECS/TASKS/021-MASQUE_CONNECT_IP_OUTBOUND]]);
+- **на официальных AWG-серверах тоже** — выпущенные реализации этих ключей не знают
+  (см. выше). Работали бы только в паре «наш клиент + наш сервер на ветке `master`»,
+  а серверная сторона вне scope форка (§5.3).
+
+**Отдельно про `content_padding_addition`: он не закрывает решётку по 16 на
+bulk-трафике** — и это верно уже для нашего базового выравнивания, безотносительно
+добавки. `calculatePaddingSize` (`device/send.go:607`) клампится по MTU:
+
+```go
+paddedSize := ((lastUnit + PaddingMultiple - 1) & ^(PaddingMultiple - 1))
+if paddedSize > mtu { paddedSize = mtu }
+return paddedSize - lastUnit
+```
+
+На full-MTU пакете `lastUnit == mtu`, `paddedSize` клампится до `mtu`, добавка = 0.
+То есть на bulk-трафике, где пакеты и так упираются в MTU, дополнять нечем:
+параметр вырождается в ноль и закрывал бы решётку только на мелких пакетах.
+**Даже при портировании это не полное решение** — что снимает и последний
+практический аргумент «за».
+
+**Вывод: портировать нечего и не к чему подключаться.** Если когда-нибудь появится
+наш собственный сервер на ветке `master` — это будет парная фича «сервер+клиент под
+нашим контролем» по §3.1 конституции, а не закрытие зазора в паритете с AWG.
 
 ## 4. Практический ответ про совместимость
 
@@ -152,6 +189,13 @@ peer->advanced_security = advanced_security;          // noise.c:633
 - ~~Расхождение get-пути (`i1..i5` не отдаются нашим UAPI)~~ — **закрыто, расхождения
   не было**: параметры отдаются циклом `i%d=`, подтверждено живым round-trip-тестом
   (см. §2). Ложная находка от грепа по литералам `sendf("i1=`.
+- ~~«Всё, что может официальный AWG-сервер, мы можем?»~~ — **да, по клиентской части**:
+  16/16 обфускации (§2), 17-й `AdvancedSecurity` — серверный и на send-путь не влияет
+  (§5). Не умеем мы только *быть* AWG-сервером (различать входящих AWG-клиентов,
+  рассылать уведомления о неизвестных пирах) — это вне scope форка.
+- ~~`content_padding_addition` / `header_protection_key` из v3.0.0 — портировать?~~ —
+  **нет**, §3.1: оба симметричны (мертвы и на WARP, и на выпущенных AWG-серверах), а
+  padding вдобавок вырождается в ноль на bulk-трафике из-за клампа по MTU.
 
 ## 8. Источники
 
