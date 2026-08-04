@@ -107,10 +107,22 @@ git merge upstream/testing            # ручной merge, НЕ rebase
 - `daemon/*.pb.go` / `*.proto` — наши поля аддитивны (`detourList=23`, DnsQueryEvent 1..12). Если
   upstream регенерил дескрипторы, перегенери через `make -f Makefile.lx lx-proto` и заново наложи
   lx-поля, либо вручную: см. `lx-commandclient-extensions` в памяти (pinned protoc-toolchain).
-- `submodules/wireguard-go` и `submodules/sing-tun` — наши форк-сабмодули; upstream-bump
-  (в т.ч. коммит вида «Update sing-tun» с бампом версии в `go.mod`) не принимать вслепую —
-  он молча откатит наши патчи (обфускация AWG, SPEC 040 self-heal acceptLoop, SPEC 041 rebind);
-  см. `wg-1.14-migration` и синк 2026-08-01 в changelog.
+- `submodules/wireguard-go`, `submodules/sing-tun` и `submodules/gvisor` — наши форк-сабмодули;
+  upstream-bump (в т.ч. коммит вида «Update sing-tun» или бамп `sagernet/gvisor` в `go.mod`)
+  не принимать вслепую — он молча уводит `replace` с форка и откатывает наши патчи
+  (обфускация AWG, SPEC 040 self-heal acceptLoop, SPEC 041 rebind, SPEC 048 nil-guard
+  в gvisor `handleConnecting`); см. `wg-1.14-migration` и синк 2026-08-01 в changelog.
+  Откат бесшумный: всё собирается, тесты пакета зелёные, а баг возвращается в поле —
+  поэтому после мержа, тронувшего `go.mod`, сверять `go list -m` по всем трём:
+
+  ```bash
+  go list -m github.com/sagernet/wireguard-go github.com/sagernet/sing-tun github.com/sagernet/gvisor
+  # каждый должен резолвиться в => ./submodules/<name>
+  ```
+
+  `submodules/gvisor` ведётся **снапшотом пина без истории** (полная история апстрима —
+  1.45 ГБ на каждый CI-клон): новый пин вливается новым снапшот-коммитом, патч
+  накладывается поверх, red/green-тест едет вместе с ним. Подробности — SPEC 048 §6.
 - `cmd/internal/build_libbox/main.go` — единственная правка upstream-файла в CI-зоне, по `// lx`-маркеру.
 - `box.go`, `dns/client*.go`, `route/route.go`, `common/trafficcontrol/tracker.go` — несут lx-наблюдаемость
   поверх upstream-логики; при конфликте сохранить upstream-поведение резолва/роутинга, наши emit/Detour —

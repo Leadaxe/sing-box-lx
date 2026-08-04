@@ -15,6 +15,104 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.20-rc.3
+
+Two nil-pointer crashes that took down the whole process, both reported from
+the field on 2026-08-03 and both proven by device crash bundles from
+`1.14.0-lx.19-rc.3`.
+
+**A network change during tunnel startup crashed the process (SPEC 047,
+[SPEC.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/047-EARLY_RPC_NIL_ROUTER_CRASH/SPEC.md)).**
+`CommandServer` gated early RPCs on `instance.Box() != nil`, but `Box` stops
+being nil the moment it is *created*: `s.instance = instance` is assigned
+before `instance.Start()`, while `NetworkManager`'s `router`/`endpoint`/
+`inbound`/`outbound` are only set at `StartStateInitialize`. The gate is
+therefore passed for the whole duration of `Box.Start()`, with the fields
+still nil.
+
+- `ResetNetwork` landing in that window died on `r.router.ResetNetwork()`
+  (SIGSEGV `addr=0x50`). The shooter is the routine auto-`resetNetwork()` on
+  a WiFi↔LTE switch: LxBox §087 registers the network monitor *before*
+  `startOrReloadService`, so a network change coinciding with tunnel start
+  hits the window exactly. Both sides of the race are visible in one bundle —
+  goroutine 17 held the start inside a bbolt transaction on `cache.db`.
+- Two layers of defence. `daemon/started_service_ready_lx.go` exports
+  `Ready()` (status `ServiceStatus_STARTED` — the predicate upstream already
+  keeps package-private for `URLTest`/`SelectOutbound`), and the four
+  weakly-gated methods in `experimental/libbox/command_server.go` now use it.
+  `route/network.go` additionally bails out early when the fields are nil,
+  before `connectionManager.CloseAll()` — three other callers (windows power
+  event, clashapi, oomkiller) have no gate of their own.
+- All four methods were checked; exactly one was provably vulnerable
+  (`ResetNetwork`). `NeedWIFIState`/`UpdateWIFIState`/`NeedFindProcess` are
+  nil-safe and were brought to the same gate as a single invariant, not as a
+  fix. No build tag: a crash fix must hold in every build.
+- `route/early_rpc_guard_lx_test.go`, `daemon/started_service_ready_lx_test.go`:
+  red/green plus a concurrent `Ready()` read under `-race`.
+
+**A TCP connection to an unreachable node crashed the process (SPEC 048,
+[SPEC.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/048-GVISOR_HANDSHAKE_NIL_CRASH/SPEC.md)).**
+A connection that never reached established killed the core instead of
+failing with a timeout. In gvisor, `performHandshake`'s failure branch zeroes
+`ep.h` and releases `ep.mu` *before* calling `ep.Close()`; the endpoint state
+only changes later, inside `closeLocked`. In that window the endpoint is still
+`SynSent`/`SynRecv`, so `connecting()` is true.
+
+- A segment arriving there wakes the dispatcher into `handleConnecting`, whose
+  gate checks the state but not `h` — so `ep.h.processSegments()` runs on a
+  nil handshake and panics with a nil receiver at `connect.go:534`. The two
+  conditions used to coincide; they stopped once zeroing `h` moved ahead of
+  `Close()`.
+- Fix: a nil-guard on `ep.h` at the top of `handleConnecting`, closing all
+  five dereferences at once (`processSegments`, `listenEP` in the error
+  branch, and both inside `deliverAccepted`, reachable only from here). The
+  guard releases the mutex the same way the state gate does — otherwise the
+  panic would become a deadlock against the closing side parked on `LockUser`.
+- Requires a **third fork submodule**: gvisor is pulled as a plain module.
+  `submodules/gvisor` → [Leadaxe/gvisor-lx](https://github.com/Leadaxe/gvisor-lx),
+  a **snapshot of the pin without history** — upstream carries 1.45 GB of it
+  and every CI job clones this, while the delta is 12 lines of guard plus 45
+  of test. Working tree 7.3 MB, `.git` 4.1 MB. Module path is preserved, or
+  the `replace` would not apply.
+- Reproduced by running, not only by reading the bundle: the test drives an
+  endpoint into the exact window (`SynRecv` with `h == nil`) and calls
+  `handleConnecting` with no stubbing — the resulting stack matches the device
+  bundle line for line. The test lives in the fork next to the guard, so a
+  guard lost while rebasing onto a new pin turns the test red instead of going
+  silent.
+- Trigger in the field: TCP that never reaches established (silent node, RST,
+  timeout) while SYN retransmits keep arriving — subscriptions with dead
+  nodes, URL tests, reconnects after a network change. Our lazy-mode sing-tun
+  widens the window by driving `CreateEndpoint` from the sniffer.
+
+Both bugs are upstream's and both are alive on `upstream/testing` (checked
+line by line at `115dbec2c`); the fork only widens the windows. Registry rows
+and removal conditions are in
+[HOTFIXES](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/004-HOTFIXES/FEATURE.md)
+(P8, P9). Field verification of both is still pending — neither class is
+reproducible on an emulator.
+
+**The Go toolchain version is now pinned in one readable file (SPEC 049,
+[SPEC.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/049-GO_TOOLCHAIN_PIN_FILE/SPEC.md)).**
+`go.version` in the repository root holds `go1.25.12` — tag-shaped like
+`golang/go`, so it serves both a `git checkout` in a toolchain clone and
+`actions/setup-go` once the `go` prefix is stripped.
+
+- Packagers building the AAR from source (F-Droid,
+  [fdroiddata!44731](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/44731))
+  had nothing to read: `go.mod` says `1.24.7`, the language floor, and that is
+  exactly the toolchain SPEC 044 device-verified as killing every quic-go
+  outbound on some vendor Android kernels.
+- 15 `setup-go` steps across the five `lx-*` workflows now read the file. Two
+  of them — `lx-rebase` and `lx-musl-toolchain-mirror` — were resolving
+  `go-version-file: go.mod`, i.e. building on 1.24.7; for the musl mirror that
+  also meant a toolchain different from the release job that restores its
+  output. `check-latest` is dropped where an exact patch is pinned.
+- `go.mod` is untouched, and so are the upstream workflows and
+  `setup_go_for_windows7.sh` — the latter pins the same 1.25.12 upstream-side
+  and cannot follow a shared pin anyway, its MetaCubeX patches existing only
+  for `release-branch.go1.25`.
+
 #### v1.14.0-lx.20-rc.2
 
 **Hijacked DNS exchanges no longer run on the stack packet loop (SPEC 046,
