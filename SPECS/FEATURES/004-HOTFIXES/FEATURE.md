@@ -76,6 +76,14 @@
   red/green юниты обоих пакетов. Мутация: создание TLS-dialer без проверки,
   что TLS-конфиг реально построен.
 
+- **P8. RPC, пришедший до готовности сервиса, — no-op, а не краш.** Команда
+  управления ядром (сброс сети на смену интерфейса, опрос WiFi-состояния),
+  доставленная в окно между созданием box и завершением его старта, тихо
+  игнорируется; процесс не падает. Свидетель: тот случай, когда смена
+  WiFi↔LTE ровно в момент запуска туннеля не роняет приложение; red/green
+  юнит на `ResetNetwork` без пройденной стадии инициализации. Мутация: гейт
+  ранних RPC по наличию объекта (`Box() != nil`) вместо статуса готовности.
+
 **Не-обещания:** снятые и закрытые записи (010 — снят апстримом; 012 —
 не воспроизводится) гарантий не несут. Отправка issue апстриму не обещана —
 условия снятия пассивные, проверяются нами на мержах.
@@ -94,6 +102,7 @@
 | [041](../../TASKS/041-WG_HANDSHAKE_GIVEUP_REBIND/SPEC.md) | WG/AWG-узлы после сна устройства навсегда в ERR (мёртвый 5-tuple), лечит только реконнект; v2 — лечение за ~90 с юзер читает как «протухли» | форк `submodules/wireguard-go` (`device/`: rebind по give-up + досрочный по стале-предикату) + маркер-блок `transport/wireguard/endpoint.go` + lx-файлы `protocol/wireguard/`, `experimental/libbox/` (нудж `RebindStaleEndpoints`) | Триггеры give-up/досрочный: апстрим введёт своё пересоздание bind по провалу цикла рукопожатий (следить за give-up веткой `device/timers.go` при бампах submodule). Нудж: апстрим даст собственный wake-API | держим |
 | [045](../../TASKS/045-TLS_DISABLED_NIL_DIALER_CRASH/SPEC.md) | Trojan/VLESS-нода с `"tls": {"enabled": false}` роняет весь процесс nil-паникой на первом дозвоне (вкл. URL-тест) | `protocol/trojan/outbound.go`, `protocol/vless/outbound.go` (`// lx: tls-disabled-dialer`) | Апстрим добавит nil-гейт при создании TLS-dialer (как у vmess) или сменит контракт `NewClientWithOptions`; проверять оба файла на мерже | держим |
 | [046](../../TASKS/046-DNS_HIJACK_PACKET_LOOP_STALL/SPEC.md) | DNS-сервер с `detour` на мёртвый outbound останавливает ВЕСЬ форвардинг: hijack-DNS ставится синхронно из пакетного цикла стека, а постановка висит в `ConnPool.acquireShared` до DNS-таймаута на каждый уникальный запрос | `route/dns.go`, `route/router.go` (`// lx: dns-hijack-async`, semaphore 256 + go-wrap) | Апстрим сделает постановку exchange неблокирующей (следить за `Client.ExchangeAsync` / `ConnPool` при мержах) | держим |
+| [047](../../TASKS/047-EARLY_RPC_NIL_ROUTER_CRASH/SPEC.md) | `ResetNetwork` по command-протоколу (смена WiFi↔LTE на старте туннеля) роняет весь процесс nil-паникой: гейт проверяет `Box() != nil`, а `Box` публикуется до `Start()` — поля `NetworkManager` ещё не присвоены | `route/network.go` (`// lx:begin early-rpc-guard`), `experimental/libbox/command_server.go` (4 гейта на `Ready()`), новый `daemon/started_service_ready_lx.go` | Апстрим введёт гейт готовности на ранних command-RPC либо перестанет публиковать `s.instance` до завершения `Start()`; проверять оба файла на мерже | держим |
 
 ## Разбор записей
 
