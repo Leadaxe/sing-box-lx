@@ -33,10 +33,15 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      # Toolchain pin lives in go.version (SPEC 049) — same source of truth as
+      # lx-release.yml build_linux_musl, so the mirrored tree matches the job
+      # that restores it. go.mod's 1.24 is the language floor (SPEC 044).
+      - name: Go toolchain pin
+        id: go_pin
+        run: echo "version=$(tr -d '[:space:]' < go.version | sed 's/^go//')" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
-          check-latest: true
+          go-version: ${{ steps.go_pin.outputs.version }}
 
       # Same toolchain-fetch sequence as lx-release.yml build_linux_musl, so the
       # produced tree matches exactly what the release job expects to restore.

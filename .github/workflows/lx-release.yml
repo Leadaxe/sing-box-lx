@@ -54,11 +54,16 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      # Toolchain pin lives in go.version (SPEC 049) — go.mod's 1.24 is the
+      # language floor, not a toolchain (and makes badtls a stub). SPEC 044.
+      # The win7 matrix leg builds its own patched toolchain below instead.
+      - name: Go toolchain pin
+        id: go_pin
+        run: echo "version=$(tr -d '[:space:]' < go.version | sed 's/^go//')" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v6
         if: ${{ ! matrix.legacy_win7 }}
         with:
-          go-version: '1.25.x' # upstream-parity toolchain: upstream pins 1.25.x in every release job; go.mod's 1.24 is the language floor, not a toolchain (and makes badtls a stub). SPEC 044.
-          check-latest: true
+          go-version: ${{ steps.go_pin.outputs.version }}
 
       # Win7 needs a Go toolchain that still targets Windows 7: setup_go_for_windows7.sh
       # fetches stock Go and applies MetaCubeX/go patches reverting the Win7 removals.
@@ -172,10 +177,14 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      # Toolchain pin lives in go.version (SPEC 049) — go.mod's 1.24 is the
+      # language floor, not a toolchain (and makes badtls a stub). SPEC 044.
+      - name: Go toolchain pin
+        id: go_pin
+        run: echo "version=$(tr -d '[:space:]' < go.version | sed 's/^go//')" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.x' # upstream-parity toolchain: upstream pins 1.25.x in every release job; go.mod's 1.24 is the language floor, not a toolchain (and makes badtls a stub). SPEC 044.
-          check-latest: true
+          go-version: ${{ steps.go_pin.outputs.version }}
 
       - name: Resolve version
         id: ver
@@ -251,10 +260,14 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      # Toolchain pin lives in go.version (SPEC 049) — go.mod's 1.24 is the
+      # language floor, not a toolchain (and makes badtls a stub). SPEC 044.
+      - name: Go toolchain pin
+        id: go_pin
+        run: echo "version=$(tr -d '[:space:]' < go.version | sed 's/^go//')" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.x' # upstream-parity toolchain: upstream pins 1.25.x in every release job; go.mod's 1.24 is the language floor, not a toolchain (and makes badtls a stub). SPEC 044.
-          check-latest: true
+          go-version: ${{ steps.go_pin.outputs.version }}
 
       - name: Resolve version
         id: ver
@@ -411,11 +424,14 @@ jobs:
       # OnePlus Nord CE 2 / MTK / Android 15; the same source built with
       # go1.25.5 works on the same device, GSO/ECN knobs ruled out). go.mod
       # still says `go 1.24.x` (upstream parity), so go-version-file would
-      # silently downgrade the toolchain here — pin the minor explicitly.
+      # silently downgrade the toolchain here — the pin lives in go.version
+      # (SPEC 049), which F-Droid also reads to build the AAR from source.
+      - name: Go toolchain pin
+        id: go_pin
+        run: echo "version=$(tr -d '[:space:]' < go.version | sed 's/^go//')" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.x'
-          check-latest: true
+          go-version: ${{ steps.go_pin.outputs.version }}
 
       - name: Setup Android NDK
         id: setup-ndk

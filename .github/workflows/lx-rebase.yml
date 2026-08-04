@@ -40,8 +40,13 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
+      # Toolchain pin lives in go.version (SPEC 049): go.mod's `go` directive is
+      # the language floor (1.24), and building on it is the SPEC 044 regression.
+      - name: Go toolchain pin
+        id: go_pin
+        run: echo "version=$(tr -d '[:space:]' < go.version | sed 's/^go//')" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v6
-        with: { go-version-file: go.mod, check-latest: true }
+        with: { go-version: '${{ steps.go_pin.outputs.version }}' }
 
       - name: Configure git + upstream
         run: |

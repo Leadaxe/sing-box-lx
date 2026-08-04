@@ -46,10 +46,12 @@ jobs:
       # SPEC 044: AAR must be built with Go >= 1.25 — a go1.24-built libbox
       # kills all quic-go outbounds on some vendor Android kernels (see
       # lx-release.yml build_android for the full story).
+      - name: Go toolchain pin
+        id: go_pin
+        run: echo "version=$(tr -d '[:space:]' < go.version | sed 's/^go//')" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.x'
-          check-latest: true
+          go-version: ${{ steps.go_pin.outputs.version }}
       - name: Setup Android NDK
         id: setup-ndk
         uses: nttld/setup-ndk@v1
@@ -89,10 +91,14 @@ jobs:
           ref: ${{ inputs.branch }}
           submodules: recursive
           fetch-depth: 0
+      # Toolchain pin lives in go.version (SPEC 049) — go.mod's 1.24 is the
+      # language floor, not a toolchain (and makes badtls a stub). SPEC 044.
+      - name: Go toolchain pin
+        id: go_pin
+        run: echo "version=$(tr -d '[:space:]' < go.version | sed 's/^go//')" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.x' # upstream-parity toolchain: upstream pins 1.25.x in every release job; go.mod's 1.24 is the language floor, not a toolchain (and makes badtls a stub). SPEC 044.
-          check-latest: true
+          go-version: ${{ steps.go_pin.outputs.version }}
       - name: Ensure a describe-able tag
         run: git tag -f "build-apple"
       - name: Build (make lib_apple)
@@ -122,10 +128,14 @@ jobs:
           ref: ${{ inputs.branch }}
           submodules: recursive
           fetch-depth: 0
+      # Toolchain pin lives in go.version (SPEC 049) — go.mod's 1.24 is the
+      # language floor, not a toolchain (and makes badtls a stub). SPEC 044.
+      - name: Go toolchain pin
+        id: go_pin
+        run: echo "version=$(tr -d '[:space:]' < go.version | sed 's/^go//')" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.x' # upstream-parity toolchain: upstream pins 1.25.x in every release job; go.mod's 1.24 is the language floor, not a toolchain (and makes badtls a stub). SPEC 044.
-          check-latest: true
+          go-version: ${{ steps.go_pin.outputs.version }}
       - name: Ensure a describe-able tag
         run: git tag -f "build-binary"
       - name: Build (Makefile.lx lx-build)
@@ -163,10 +173,14 @@ jobs:
           ref: ${{ inputs.branch }}
           submodules: recursive
           fetch-depth: 0
+      # Toolchain pin lives in go.version (SPEC 049) — go.mod's 1.24 is the
+      # language floor, not a toolchain (and makes badtls a stub). SPEC 044.
+      - name: Go toolchain pin
+        id: go_pin
+        run: echo "version=$(tr -d '[:space:]' < go.version | sed 's/^go//')" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.25.x' # upstream-parity toolchain: upstream pins 1.25.x in every release job; go.mod's 1.24 is the language floor, not a toolchain (and makes badtls a stub). SPEC 044.
-          check-latest: true
+          go-version: ${{ steps.go_pin.outputs.version }}
       - name: Clone cronet-go (musl toolchain provider)
         run: |
           CRONET_REF="$(cat .github/CRONET_GO_VERSION 2>/dev/null || echo main)"
