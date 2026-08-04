@@ -15,3 +15,7 @@
 	path = submodules/sing-tun
 	url = https://github.com/Leadaxe/sing-tun-lx
 	branch = lx
+[submodule "submodules/gvisor"]
+	path = submodules/gvisor
+	url = https://github.com/Leadaxe/gvisor-lx
+	branch = lx
