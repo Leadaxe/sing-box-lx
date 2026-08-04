@@ -457,6 +457,14 @@ func (r *NetworkManager) UpdateWIFIState() {
 }
 
 func (r *NetworkManager) ResetNetwork() {
+	// lx:begin early-rpc-guard
+	// Поля ниже присваиваются на StartStateInitialize; ранний RPC (смена
+	// интерфейса на старте туннеля) приходит до этой стадии — SPECS/TASKS/047.
+	if r.router == nil || r.endpoint == nil || r.inbound == nil || r.outbound == nil {
+		return
+	}
+	// lx:end early-rpc-guard
+
 	if r.connectionManager != nil {
 		r.connectionManager.CloseAll()
 	}
