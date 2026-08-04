@@ -275,12 +275,43 @@ upstream-бамп зависимости на мерже уводит `replace` 
 молча не стартует. Проверка: `git rev-parse <tag>^{}` совпадает с HEAD
 суперпроекта.
 
-**`.gitmodules` не должен нести токен.** Голый HTTPS к GitHub в этой среде
-рвётся (`Recv failure`), поэтому клон сабмодуля делается с inline-токеном —
-но `git submodule add` записывает использованный URL в `.gitmodules`, а этот
-файл коммитится и уезжает в публичный репозиторий. После добавления URL
-переписывается на чистый (`git config -f .gitmodules … .url https://github.com/…`)
-и `.gitmodules` перестейживается: `submodule add` успевает застейджить грязную
-версию раньше правки. Токен остаётся только в `.git/config`, который не
-коммитится. Проверка перед коммитом: `git diff --cached .gitmodules` не
-содержит `x-access-token`.
+### 6.3 Токен не вшивается в URL сабмодуля
+
+Голый HTTPS к GitHub в этой среде периодически рвётся (`Recv failure:
+Connection reset by peer`), и напрашивается обход — подставить токен прямо в
+URL (`https://x-access-token:$(gh auth token)@github.com/...`). **Так делать
+не нужно:** один такой вызов оставляет живой токен плейнтекстом в трёх местах
+сразу, и два из них неочевидны.
+
+| Файл | Как попадает |
+|---|---|
+| `.gitmodules` | `git submodule add` пишет туда использованный URL — **а файл коммитится** и уезжает в публичный репозиторий |
+| `.git/config` | запись о сабмодуле в суперпроекте |
+| `.git/modules/submodules/<name>/config` | git копирует URL во вложенный конфиг сабмодуля |
+
+Первый — прямая утечка секрета в историю. Второй и третий не версионируются, но
+токен остаётся на диске в открытом виде и подставляется в каждый fetch/push.
+Третий особенно легко пропустить: сабмодули лежат на уровень глубже, чем
+`.git/modules/*/config`, поэтому скан по этому шаблону их не видит.
+
+**Правильно** — настроить доступ один раз, вне URL: credential helper
+(`gh auth setup-git`) или SSH-remote. Тогда `git submodule add` получает
+чистый `https://github.com/...`, и вычищать потом нечего.
+
+Если inline-токен всё же был использован, вычистить **все три** места:
+
+```bash
+git config -f .gitmodules submodule.submodules/<name>.url https://github.com/<owner>/<repo>
+git add .gitmodules   # submodule add успевает застейджить грязную версию раньше правки
+git config submodule.submodules/<name>.url https://github.com/<owner>/<repo>.git
+git -C submodules/<name> remote set-url origin https://github.com/<owner>/<repo>.git
+```
+
+Проверка (шаблон покрывает оба уровня `modules`):
+
+```bash
+grep -n "x-access-token\|gho_\|ghp_" .git/config .git/modules/*/config .git/modules/submodules/*/config
+```
+
+Засветившийся токен считается скомпрометированным и отзывается на стороне
+GitHub — чистка файлов этого не заменяет.
