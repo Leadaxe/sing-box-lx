@@ -84,6 +84,15 @@
   юнит на `ResetNetwork` без пройденной стадии инициализации. Мутация: гейт
   ранних RPC по наличию объекта (`Box() != nil`) вместо статуса готовности.
 
+- **P9. Неудачный TCP-дозвон не роняет процесс.** Соединение, не дошедшее до
+  established (узел молчит, RST, таймаут), отваливается по таймауту как
+  обычная ошибка — оно не может убить ядро вместе с туннелем, сколько бы
+  ретрансмитов SYN ни пришло следом. Свидетель: тот случай, когда поток
+  коннектов на «чёрную дыру» при включённом сниффинге переживается без
+  паники; red/green юнит в форке gvisor на endpoint с занулённым handshake
+  в состоянии `connecting`. Мутация: разыменование `ep.h` в
+  `handleConnecting` под гейтом, проверяющим только состояние endpoint'а.
+
 **Не-обещания:** снятые и закрытые записи (010 — снят апстримом; 012 —
 не воспроизводится) гарантий не несут. Отправка issue апстриму не обещана —
 условия снятия пассивные, проверяются нами на мержах.
@@ -102,6 +111,7 @@
 | [041](../../TASKS/041-WG_HANDSHAKE_GIVEUP_REBIND/SPEC.md) | WG/AWG-узлы после сна устройства навсегда в ERR (мёртвый 5-tuple), лечит только реконнект; v2 — лечение за ~90 с юзер читает как «протухли» | форк `submodules/wireguard-go` (`device/`: rebind по give-up + досрочный по стале-предикату) + маркер-блок `transport/wireguard/endpoint.go` + lx-файлы `protocol/wireguard/`, `experimental/libbox/` (нудж `RebindStaleEndpoints`) | Триггеры give-up/досрочный: апстрим введёт своё пересоздание bind по провалу цикла рукопожатий (следить за give-up веткой `device/timers.go` при бампах submodule). Нудж: апстрим даст собственный wake-API | держим |
 | [045](../../TASKS/045-TLS_DISABLED_NIL_DIALER_CRASH/SPEC.md) | Trojan/VLESS-нода с `"tls": {"enabled": false}` роняет весь процесс nil-паникой на первом дозвоне (вкл. URL-тест) | `protocol/trojan/outbound.go`, `protocol/vless/outbound.go` (`// lx: tls-disabled-dialer`) | Апстрим добавит nil-гейт при создании TLS-dialer (как у vmess) или сменит контракт `NewClientWithOptions`; проверять оба файла на мерже | держим |
 | [046](../../TASKS/046-DNS_HIJACK_PACKET_LOOP_STALL/SPEC.md) | DNS-сервер с `detour` на мёртвый outbound останавливает ВЕСЬ форвардинг: hijack-DNS ставится синхронно из пакетного цикла стека, а постановка висит в `ConnPool.acquireShared` до DNS-таймаута на каждый уникальный запрос | `route/dns.go`, `route/router.go` (`// lx: dns-hijack-async`, semaphore 256 + go-wrap) | Апстрим сделает постановку exchange неблокирующей (следить за `Client.ExchangeAsync` / `ConnPool` при мержах) | держим |
+| [048](../../TASKS/048-GVISOR_HANDSHAKE_NIL_CRASH/SPEC.md) | TCP, не дошедший до established (узел молчит/RST/таймаут), роняет весь процесс nil-паникой: `performHandshake` зануляет `ep.h` и отпускает мьютекс до `Close()`, а гейт `handleConnecting` проверяет состояние, но не `h` | форк-сабмодуль `submodules/gvisor` ([Leadaxe/gvisor-lx](https://github.com/Leadaxe/gvisor-lx), `// lx:begin handshake-nil-guard`) | Апстрим добавит nil-guard в `handleConnecting` либо занулит `h` под тем же удержанием мьютекса, что и смена состояния; проверять при каждом бампе `sagernet/gvisor` — встречный бамп на мерже уводит `replace` и молча снимает патч | держим |
 | [047](../../TASKS/047-EARLY_RPC_NIL_ROUTER_CRASH/SPEC.md) | `ResetNetwork` по command-протоколу (смена WiFi↔LTE на старте туннеля) роняет весь процесс nil-паникой: гейт проверяет `Box() != nil`, а `Box` публикуется до `Start()` — поля `NetworkManager` ещё не присвоены | `route/network.go` (`// lx:begin early-rpc-guard`), `experimental/libbox/command_server.go` (4 гейта на `Ready()`), новый `daemon/started_service_ready_lx.go` | Апстрим введёт гейт готовности на ранних command-RPC либо перестанет публиковать `s.instance` до завершения `Start()`; проверять оба файла на мерже | держим |
 | [048](../../TASKS/048-GVISOR_HANDSHAKE_NIL_CRASH/SPEC.md) | TCP-соединение, не дошедшее до established (молчащий узел, RST), роняет весь процесс nil-паникой в gvisor: `performHandshake` зануляет `ep.h` и отпускает мьютекс до `Close()`, а гейт `handleConnecting` проверяет состояние, но не `h` | форк-сабмодуль `submodules/gvisor` (`pkg/tcpip/transport/tcp/dispatcher.go`: ранний nil-guard) | Апстрим добавит nil-guard в `handleConnecting` либо закроет окно в `performHandshake` (зануление `h` под тем же удержанием мьютекса, что и перевод состояния); адресат — SagerNet/gvisor | **не реализован** — баг и фикс подтверждены red/green, ждёт форка |
 
