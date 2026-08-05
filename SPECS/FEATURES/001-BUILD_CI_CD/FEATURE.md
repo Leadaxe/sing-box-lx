@@ -35,10 +35,26 @@ with_xhttp, with_awg, with_lx_command
 ⚠️ `with_purego` и `badlinkname` требуют `-checklinkname=0` в `LX_LDFLAGS`,
 иначе линковка падает.
 
-⚠️ **`badlinkname` требует Go 1.24.x.** На Go 1.25 полная сборка не линкуется
-(в `crypto/tls` исчезла функция, на которую опирается linkname) — это
-не дефект нашего кода. Проверять мержи на Go 1.25 можно набором тегов
-**минус** `badlinkname` и `naive`.
+### Версия Go
+
+⚠️ **Версия тулчейна — в `go.version` в корне** (`go1.25.12`), это единственный
+источник правды: её читают все шаги `setup-go` в `lx-*.yml`
+(см. [049](../../TASKS/049-GO_TOOLCHAIN_PIN_FILE/SPEC.md)). Снаружи её же
+читает F-Droid, собирая AAR из исходников.
+
+⚠️ **Не брать версию из `go.mod`** — там `1.24.7`, языковой floor, а не тулчейн.
+Сборка AAR на Go 1.24 убивает все quic-go-аутбаунды на вендорских
+Android-ядрах — см. [044](../../TASKS/044-ANDROID_AAR_GO124_QUIC_DEAD/SPEC.md).
+
+⚠️ **`setup_go_for_windows7.sh` живёт своей жизнью.** Это upstream-файл (версию
+в нём бампает upstream), а патчи MetaCubeX существуют только для ветки
+`release-branch.go1.25` — следовать общему пину он не может. Сейчас значения
+совпадают; **при бампе `go.version` сверять `VERSION=` в скрипте вручную.**
+
+ℹ️ Полный lx-набор тегов собирается на **go1.25**. Прежнее ограничение
+«`badlinkname` требует Go 1.24.x» снято: после upstream-перегейта `badtls`
+на `go1.25 && badlinkname` линковка проходит (на go1.24 `badtls` теперь
+заглушка, а AAR на go1.24 запрещён вовсе).
 
 ### Таргеты
 
@@ -70,10 +86,15 @@ with_xhttp, with_awg, with_lx_command
 
 ### Релиз
 
-⚠️ **`docs-lx/lx-changelog.md` — источник release notes.** Пайплайн извлекает
-секцию `#### v<версия>` из changelog в описание GitHub-релиза. Заголовок должен
-быть ровно `#### v<tag-without-v>`; неверная или отсутствующая секция даёт
-неверные или пустые notes **автоматически**. Notes руками не пишутся.
+⚠️ **Источник release notes — `docs-lx/releases/v<версия>.md`**, если файл есть:
+билингвальный текст в формате LxBox (шаблон — `docs-lx/releases/TEMPLATE.md`),
+**обязателен для stable-тегов**. Фолбэк для пререлизов —
+секция `#### v<tag-without-v>` из `docs-lx/lx-changelog.md`; заголовок должен
+быть ровно такой, иначе notes выйдут пустыми **автоматически**.
+
+⚠️ **Каркас нот генерируется по коммитам — сверять полноту перед тегом.**
+На `v1.14.0-lx.20-rc.3` файл собрался до появления SPEC 049, и раздел про неё
+пришлось дописывать руками.
 
 ⚠️ **Ветку пушить раньше тега** (иначе релиз выйдет с тегом впереди ветки).
 Push через `gh auth token` во встроенном URL — обычный `git push origin`
@@ -87,6 +108,7 @@ Push через `gh auth token` во встроенном URL — обычный
 | [004 — BUILD_CI_RELEASE](../../TASKS/004-BUILD_CI_RELEASE/SPEC.md) | Теги, дешёвый CI, релизный пайплайн, поставка libcronet, авто-ребейз | C |
 | [006 — LINUX_MUSL_STATIC_ROUTER_BUILDS](../../TASKS/006-LINUX_MUSL_STATIC_ROUTER_BUILDS/SPEC.md) | Статические musl-сборки под роутеры (4 арки) | C |
 | [023 — MUSL_TOOLCHAIN_MIRROR](../../TASKS/023-MUSL_TOOLCHAIN_MIRROR/SPEC.md) | Durable-зеркало Chromium musl-тулчейна | C |
+| [049 — GO_TOOLCHAIN_PIN_FILE](../../TASKS/049-GO_TOOLCHAIN_PIN_FILE/SPEC.md) | `go.version` — единый источник версии Go-тулчейна для CI и F-Droid | C |
 
 Полный runbook релиза — [docs-lx/lx-release-runbook.md](../../../docs-lx/lx-release-runbook.md).
 
