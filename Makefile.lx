@@ -20,7 +20,13 @@
 #
 # with_purego/badlinkname need -checklinkname=0 in LX_LDFLAGS, otherwise the linker
 # rejects badtls' go:linkname into crypto/tls.
-LX_TAGS ?= with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command
+#
+# with_openvpn / with_openconnect are IN (owner decision, 2026-08-05): both arrived with
+# the 235-commit upstream merge (SPEC 051) and are wanted as client protocols. Each tag
+# gates one package that carries client AND server in the same build tag — upstream does
+# not split them — so enabling the client necessarily ships the server side too. Both
+# register as endpoint + DNS transport (include/openvpn.go, include/openconnect.go).
+LX_TAGS ?= with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command,with_openvpn,with_openconnect
 
 # lx build counter over a given upstream base (override in CI/release: make -f Makefile.lx lx-build LX_BUILD=3).
 LX_BUILD ?= 1

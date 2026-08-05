@@ -99,11 +99,18 @@ func init() {
 	// option anyway. Verified on-device: 8 endpoints suspended → 134 MB freed.
 	sharedTags = append(sharedTags, "with_lx_idle_suspend")
 	// lx:end idle-suspend
-	// lx: with_openvpn / with_openconnect (new in this upstream drift) are
-	// intentionally omitted — both are endpoint/server-capable transports outside
-	// the client-focused fork's scope; LxBox configs never reference them. A
-	// missing tag only yields a stub-registration error if a config uses one,
-	// which lx configs won't. Same rationale as with_usbip / with_clash_api above.
+	// lx:begin openvpn
+	// OpenVPN / OpenConnect as client protocols (owner decision, 2026-08-05). Both
+	// arrived with the 235-commit upstream merge (SPEC 051). Each tag gates one
+	// package holding client AND server behind the same build tag — upstream does
+	// not split them — so shipping the client ships the server side as well; that
+	// is accepted here rather than carrying a downstream split. They register as
+	// endpoint + DNS transport, so a config referencing them now resolves instead
+	// of failing with "not included in this build". Kept in sync with the
+	// desktop/CLI set in Makefile.lx — unlike with_clash_api, this pair does NOT
+	// diverge between the two builds.
+	sharedTags = append(sharedTags, "with_openvpn", "with_openconnect")
+	// lx:end openvpn
 	darwinTags = append(darwinTags, "with_dhcp", "grpcnotrace")
 	// memcTags = append(memcTags, "with_tailscale")
 	// lx:begin no-tailscale
