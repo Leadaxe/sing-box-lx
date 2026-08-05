@@ -88,6 +88,30 @@ transport-padding SPEC 025); `go build ./...`, `go test ./...` без тегов
 `lx-check`, оба шага `vet` из CI и тесты 050/WireGuard/route под полным
 lx-набором — зелёные. Сабмодуль запушен до суперпроекта.
 
+**Дополнительно в rc.5 (после первичного мержа).**
+
+- **OpenVPN / OpenConnect включены** во все сборки — `LX_TAGS` (desktop/CLI),
+  `sharedTags` в `build_libbox` (AAR), `BASE_TAGS` в `lx-ci`. В отличие от
+  `with_clash_api` эта пара между сборками не расходится. Клиент и сервер
+  неразделимы: апстрим держит их за одним build-тегом на пакет, так что
+  включение клиента поставляет и серверную часть. Типы на проводе —
+  `openvpn-client`, `openvpn-server`, `openconnect`; регистрируются как endpoint
+  + DNS transport.
+- **gvisor `20250811` → `20260727`** — новый снапшот форк-сабмодуля под пин,
+  которого требует `go.mod` после мержа (upstream `d620bbbf2`). Прежний снапшот
+  брался 2026-08-04 ровно с версии апстрима на тот момент, разрыв возник с его
+  бампом сутки спустя. За год у апстрима ~14 000 строк в 292 файлах; для нас
+  значимы `tcp/connect.go` (PMTU-discovery + начальный RTT/RTO: задержка ACK
+  внутри стека завышала стартовый таймаут на несколько RTT), `tcp/snd.go`,
+  `tcp/rcv.go`, `stack/conntrack.go`, `stack/packet_buffer.go`. **Баг SPEC 048
+  апстрим не исправил** — проверено по коду новой версии, guard перенесён
+  вместе с тестом, red/green подтверждён.
+- **sing-tun** — cherry-pick апстримового `da24aca "Update gvisor to
+  20260727.0"`. Понадобился, потому что новый gvisor удалил
+  `stack.CapabilityDisconnectOk`, которую использовал `fdbased_darwin`: без
+  этого `lx-build` падал. Конфликтов нет, SPEC 040 (self-heal acceptLoop) цел.
+
+
 #### v1.14.0-lx.20-rc.4
 
 A URL test that reached a half-alive node hung forever and **survived a full

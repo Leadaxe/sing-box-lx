@@ -56,7 +56,8 @@ jobs:
         id: setup-ndk
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: r28
+          # lx: пин точной ревизии (r28c = 28.2.13676358), не плавающий r28.
+          ndk-version: r28c
       - name: Setup OpenJDK 17
         run: sudo apt-get update && sudo apt-get install -y openjdk-17-jdk-headless
       - name: Ensure a describe-able tag
