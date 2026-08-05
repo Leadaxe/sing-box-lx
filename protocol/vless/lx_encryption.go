@@ -6,9 +6,11 @@ package vless
 // the parser.
 
 import (
+	"context"
 	"encoding/base64"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -18,9 +20,21 @@ import (
 // conn, returning it unchanged when the layer is not configured. It sits above
 // the transport/TLS and below the vless client, which stays unaware of it.
 // A failed handshake closes the conn: the caller only propagates the error.
-func (h *vlessDialer) wrapEncryption(conn net.Conn) (net.Conn, error) {
+//
+// lx: 050 — Handshake takes a bare net.Conn (the wire format is fixed by SPEC
+// 032 and upstream Xray, so it grows no context parameter) and internally writes
+// fragmented padding with sleeps in between. On a half-alive node those writes
+// block forever, which is how URL tests turned into goroutines that outlived the
+// box. The dial deadline is therefore applied to the conn for the duration of
+// the handshake and cleared afterwards, so the caller's context governs it.
+func (h *vlessDialer) wrapEncryption(ctx context.Context, conn net.Conn) (net.Conn, error) {
 	if h.encryption == nil {
 		return conn, nil
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err == nil {
+			defer conn.SetDeadline(time.Time{})
+		}
 	}
 	encryptedConn, err := h.encryption.Handshake(conn)
 	if err != nil {

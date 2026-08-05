@@ -312,6 +312,7 @@ func (s *URLTest) NewPacketConnection(ctx context.Context, conn N.PacketConn, me
 
 type URLTestGroup struct {
 	ctx                          context.Context
+	cancel                       context.CancelFunc // lx: 050 — Close cancels an in-flight run
 	outbound                     adapter.OutboundManager
 	pause                        pause.Manager
 	pauseCallback                *list.Element[pause.Callback]
@@ -361,8 +362,14 @@ func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManage
 	if history == nil {
 		return nil, E.New("missing URL test history storage")
 	}
+	// lx: 050 — own the group's context so Close can cancel a run that is already
+	// in flight. Without it a test blocked on a half-alive node kept its goroutine
+	// and the whole outbound slice alive across box shutdown, piling up one
+	// generation of zombies per restart.
+	ctx, cancel := context.WithCancel(ctx)
 	return &URLTestGroup{
 		ctx:                          ctx,
+		cancel:                       cancel,
 		outbound:                     outboundManager,
 		logger:                       logger,
 		outbounds:                    outbounds,
@@ -412,6 +419,12 @@ func (g *URLTestGroup) Close() error {
 	g.access.Lock()
 	defer g.access.Unlock()
 	g.started = false // lx: block Touch from restarting the ticker after Close
+	// lx: 050 — cancel before the ticker early-return: a run started by PostStart
+	// can be in flight with no ticker armed, and that is exactly the run that used
+	// to survive shutdown.
+	if g.cancel != nil {
+		g.cancel()
+	}
 	if g.ticker == nil {
 		return nil
 	}
@@ -577,7 +590,11 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 // and the round_robin force path.
 func (g *URLTestGroup) testNodes(ctx context.Context, outbounds []adapter.Outbound, force bool) map[string]uint16 {
 	result := make(map[string]uint16)
-	b, _ := batch.New(ctx, batch.WithConcurrencyNum[any](10))
+	// lx: 050 — keep the per-node test context on the batch context: it descends
+	// from the caller's ctx (and so from g.ctx, which Close cancels), while the
+	// tasks used to hang it off g.ctx directly and ignore both the batch's own
+	// cancellation and any deadline the caller passed in.
+	b, batchCtx := batch.New(ctx, batch.WithConcurrencyNum[any](10))
 	checked := make(map[string]bool)
 	var resultAccess sync.Mutex
 	for _, detour := range outbounds {
@@ -596,7 +613,7 @@ func (g *URLTestGroup) testNodes(ctx context.Context, outbounds []adapter.Outbou
 			continue
 		}
 		b.Go(realTag, func() (any, error) {
-			testCtx, cancel := context.WithTimeout(g.ctx, C.TCPTimeout)
+			testCtx, cancel := context.WithTimeout(batchCtx, C.TCPTimeout)
 			defer cancel()
 			t, err := urltest.URLTest(testCtx, g.link, p)
 			if err != nil {
