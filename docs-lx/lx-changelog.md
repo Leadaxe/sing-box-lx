@@ -15,6 +15,73 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.20-rc.4
+
+A URL test that reached a half-alive node hung forever and **survived a full
+core restart**, piling up one generation of zombie goroutines per Stop → Start
+(SPEC 050,
+[SPEC.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md)).
+
+Field dump (Android arm64, `1.14.0-lx.17-rc.3`), taken 40 s after a clean
+Stop → Start: two `URLTestGroup.testNodes` runs blocked on `batch.Wait()`, aged
+**100 and 43 minutes**, each holding 2806 outbounds from a subscription that was
+no longer loaded (592 in the live config). Six goroutines on one stack —
+`io.(*pipe).write` ← `v2rayxhttp.(*streamConn).Write` ←
+`vless/encryption.(*ClientInstance).Handshake` ← `urltest.URLTest` — plus five
+OOM snapshots at 396–428 MB. The group had stopped publishing delays ("the ping
+is lost"); only a config rebuild cleared it.
+
+Three defects, lethal only in combination:
+
+- **No deadlines on XHTTP conns.** `streamConn`/`splitConn` returned
+  `os.ErrInvalid` from every `Set*Deadline`, while a `Write` goes into an
+  `io.Pipe` nobody reads until `RoundTrip` (running in a separate goroutine)
+  raises the stream. On a node that accepts TCP but never reads the body, that
+  write blocks with nothing able to interrupt it.
+- **Cancellation never reached the handshake.** `encryption.Handshake` takes a
+  bare `net.Conn` (wire format fixed by SPEC 032) and is invoked *after* the
+  conn exists, so the dial context governs only the dial. This is why a single
+  `URLTestOutbound` hung despite its per-call context carrying a correct
+  timeout (SPEC 015 §3.6).
+- **`Close()` did not cancel the run.** It stopped the ticker and closed
+  `g.close`, which only `loopCheck` reads; the run inside
+  `CheckOutbounds` → `testNodes` knew nothing about it.
+
+Note that level 3 cannot be fixed alone: `batch.Wait()` is a plain `wg.Wait()`
+(`sing@v0.8.12.../common/batch/batch.go:76`) and ignores context entirely, so
+only the deadlines and the dial watcher can wake a blocked task. That
+dependency dictated the whole fix order.
+
+- `transport/v2rayxhttp/conn.go` — real deadlines
+  (`// lx:begin 050 deadline-support`) plus a dial-context watcher in
+  `dialStreamOne` that exits on `created`, so it can never tear down a live
+  stream. The pipe is broken from the **read** half on purpose: `io.Pipe` hands
+  a writer only `ErrClosedPipe` for an error set via
+  `PipeWriter.CloseWithError`, which would lose `os.ErrDeadlineExceeded`.
+  `dialStreamUp` deliberately gets no watcher — its upload `RoundTrip` lives as
+  long as the connection does.
+- `protocol/vless/lx_encryption.go` — `wrapEncryption(ctx, conn)` bounds the
+  handshake with the dial deadline, **write side only**. An XHTTP read deadline
+  is one-shot (it closes the late-bound download body and clearing cannot
+  reopen it), so arming both directions would hand back a conn whose download
+  side is already dead whenever the handshake overran the deadline but still
+  succeeded. Two call sites in the upstream-owned `outbound.go`.
+- `protocol/group/urltest.go` — owned child context; `Close()` cancels it
+  **before** the `ticker == nil` early return, since the `PostStart` run has no
+  ticker armed and is exactly the one that used to survive. `testCtx` now
+  descends from the batch context instead of `g.ctx`.
+
+`NeedAdditionalReadDeadline` stays `true` on both conns: the read deadline here
+is one-shot and does not restore the conn for a later read, which is what
+`deadline.NewConn` provides — claiming otherwise would be a lie to consumers.
+
+Verification: `lx-test/zombie` drives a real `box.New`/`Start`/`Close` against a
+listener that accepts TCP and stays silent — with the fix reverted it reports
+"2 test goroutine(s) survived box.Close", with the fix zero. A/B against 33
+live XHTTP nodes taken from a working device config (17 `auto`+REALITY, 16
+`packet-up`) showed no regression: 22/33 reachable with the fix versus 20/33
+without, medians 151 ms and 154 ms.
+
 #### v1.14.0-lx.20-rc.3
 
 Two nil-pointer crashes that took down the whole process, both reported from
