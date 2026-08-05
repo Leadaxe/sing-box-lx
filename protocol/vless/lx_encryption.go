@@ -27,13 +27,21 @@ import (
 // block forever, which is how URL tests turned into goroutines that outlived the
 // box. The dial deadline is therefore applied to the conn for the duration of
 // the handshake and cleared afterwards, so the caller's context governs it.
+//
+// WRITE side only, deliberately. The hang this guards against is a blocked Write
+// into an upload body nobody reads, so a read deadline buys nothing here — and it
+// would cost correctness: an XHTTP read deadline is one-shot (it closes the
+// late-bound download body, and clearing it cannot reopen that), so a handshake
+// that overran the dial deadline but still succeeded would hand back a conn whose
+// download side is already dead. SetDeadline covers both directions, hence the
+// narrower call.
 func (h *vlessDialer) wrapEncryption(ctx context.Context, conn net.Conn) (net.Conn, error) {
 	if h.encryption == nil {
 		return conn, nil
 	}
 	if deadline, ok := ctx.Deadline(); ok {
-		if err := conn.SetDeadline(deadline); err == nil {
-			defer conn.SetDeadline(time.Time{})
+		if err := conn.SetWriteDeadline(deadline); err == nil {
+			defer conn.SetWriteDeadline(time.Time{})
 		}
 	}
 	encryptedConn, err := h.encryption.Handshake(conn)
