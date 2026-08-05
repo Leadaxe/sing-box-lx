@@ -208,9 +208,14 @@ func (c *Conn) Routes(ctx context.Context) ([]IPRoute, error) {
 
 func (c *Conn) readFromStream() error {
 	defer c.str.Close()
-	r := quicvarint.NewReader(c.str)
+	// lx: quic-go v0.61 replaced the stateless http3.ParseCapsule(r) with a
+	// stateful CapsuleParser: the parser is created once and Next() advances it,
+	// returning a CapsuleReader valid only until the following Next(). Our
+	// parse*Capsule helpers take a quicvarint.Reader, which CapsuleReader
+	// satisfies, so only the loop head changes.
+	parser := http3.NewCapsuleParser(c.str)
 	for {
-		t, cr, err := http3.ParseCapsule(r)
+		t, cr, err := parser.Next()
 		if err != nil {
 			return err
 		}

@@ -10805,6 +10805,9 @@
             },
             "min_idle_session": {
               "type": "integer"
+            },
+            "client_metadata": {
+              "type": "string"
             }
           },
           "required": [
@@ -11607,6 +11610,9 @@
               ]
             },
             "brutal_debug": {
+              "type": "boolean"
+            },
+            "disable_chrome_parrot": {
               "type": "boolean"
             },
             "realm": {

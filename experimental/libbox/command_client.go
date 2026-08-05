@@ -1188,9 +1188,7 @@ func (c *CommandClient) StartTailscaleSSHSession(opts *TailscaleSSHOptions, hand
 		closeDone: make(chan struct{}),
 	}
 
-	session.wg.Add(1)
-	go func() {
-		defer session.wg.Done()
+	session.wg.Go(func() {
 		for {
 			select {
 			case <-streamCtx.Done():
@@ -1218,11 +1216,9 @@ func (c *CommandClient) StartTailscaleSSHSession(opts *TailscaleSSHOptions, hand
 				}
 			}
 		}
-	}()
+	})
 
-	session.wg.Add(1)
-	go func() {
-		defer session.wg.Done()
+	session.wg.Go(func() {
 		for {
 			msg, recvErr := stream.Recv()
 			if recvErr == io.EOF {
@@ -1249,7 +1245,7 @@ func (c *CommandClient) StartTailscaleSSHSession(opts *TailscaleSSHOptions, hand
 				handler.OnError(payload.Error.Message)
 			}
 		}
-	}()
+	})
 
 	standalone := c.standalone
 	go func() {

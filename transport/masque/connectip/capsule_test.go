@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/sagernet/quic-go/http3"
-	"github.com/sagernet/quic-go/quicvarint"
 )
 
 func TestRouteAdvertisementRoundTrip(t *testing.T) {
@@ -21,8 +20,8 @@ func TestRouteAdvertisementRoundTrip(t *testing.T) {
 
 	encoded := orig.append(nil)
 
-	r := quicvarint.NewReader(bytes.NewReader(encoded))
-	typ, body, err := http3.ParseCapsule(r)
+	// lx: quic-go v0.61 replaced ParseCapsule with the stateful CapsuleParser.
+	typ, body, err := http3.NewCapsuleParser(bytes.NewReader(encoded)).Next()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,8 +49,8 @@ func TestAddressAssignRoundTrip(t *testing.T) {
 	}}
 	encoded := orig.append(nil)
 
-	r := quicvarint.NewReader(bytes.NewReader(encoded))
-	typ, body, err := http3.ParseCapsule(r)
+	// lx: quic-go v0.61 replaced ParseCapsule with the stateful CapsuleParser.
+	typ, body, err := http3.NewCapsuleParser(bytes.NewReader(encoded)).Next()
 	if err != nil {
 		t.Fatal(err)
 	}

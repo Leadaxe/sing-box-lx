@@ -475,7 +475,15 @@ func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
 	if e.allowedIPs == nil {
 		return nil
 	}
+	// lx:begin awg-lookup (SPEC 051)
+	// Upstream calls allowedIPs.LookupFromPacket(src, dst, ipPkt), added to
+	// wireguard-go after the revision our AWG2 fork is grafted onto. With a nil
+	// src/packet and no peerByIPPacketFunc hook installed — exactly how upstream
+	// calls it here — that function reduces to a destination-address lookup, which
+	// is what our fork's Lookup(ip []byte) already does. Revisit when the fork is
+	// re-grafted onto a base that carries LookupFromPacket.
 	return e.allowedIPs.Lookup(address.AsSlice())
+	// lx:end awg-lookup
 }
 
 func (e *Endpoint) BindUpdate() error {
