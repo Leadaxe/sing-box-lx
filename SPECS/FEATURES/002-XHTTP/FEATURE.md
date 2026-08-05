@@ -161,6 +161,7 @@
 | [011 — XHTTP_STREAM_ONE_DOWNLINK](../../TASKS/011-XHTTP_STREAM_ONE_DOWNLINK/SPEC.md) | Маршрутизация `stream-one` и выбор режима при REALITY | C |
 | [042 — XHTTP_STREAM_GRPC_CONTENT_TYPE](../../TASKS/042-XHTTP_STREAM_GRPC_CONTENT_TYPE/SPEC.md) | Тип контента на потоковых запросах | C |
 | [043 — XHTTP_STREAM_ONE_PATH_PREFIX](../../TASKS/043-XHTTP_STREAM_ONE_PATH_PREFIX/SPEC.md) | Завершающий слэш пути в `stream-one` | C |
+| [050 — URLTEST_ZOMBIE_RUN_SURVIVES_RESTART](../../TASKS/050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md) | Дедлайны потоковых conn'ов и отмена диала по ctx (ведётся в [HOTFIXES](../004-HOTFIXES/FEATURE.md)) | N |
 
 Соответствие параметров Xray — `PARAM_MAP.md` в задаче 002;
 разбор ссылок — там же `URL_PARSING.md`.

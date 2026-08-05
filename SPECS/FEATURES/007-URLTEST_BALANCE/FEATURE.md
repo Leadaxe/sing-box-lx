@@ -112,6 +112,7 @@
 | Задача | Роль | Статус |
 |--------|------|--------|
 | [019 — URLTEST_MODE_STICKY](../../TASKS/019-URLTEST_MODE_STICKY/SPEC.md) | Фича целиком: режимы, пул, закрепление, выдача состояния | C |
+| [050 — URLTEST_ZOMBIE_RUN_SURVIVES_RESTART](../../TASKS/050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md) | Отменяемость прогона: `Close()` группы гасит идущий тест (ведётся в [HOTFIXES](../004-HOTFIXES/FEATURE.md); алгоритм выбора узлов не меняется) | N |
 
 Разбор отвергнутых схем распределения — в журнале [SPEC.md](../../TASKS/019-URLTEST_MODE_STICKY/SPEC.md) задачи.
 Конфиг — [docs/configuration/outbound/urltest.md](../../../docs/configuration/outbound/urltest.md).

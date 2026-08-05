@@ -94,6 +94,7 @@ mlkem768x25519plus.<вид>.<0rtt|1rtt>[.<паддинг>][.<задержка>].
 | Задача | Роль | Статус |
 |--------|------|--------|
 | [032 — VLESS_ENCRYPTION_MLKEM768](../../TASKS/032-VLESS_ENCRYPTION_MLKEM768/SPEC.md) | Фича целиком: поле, разбор строки, согласование | C |
+| [050 — URLTEST_ZOMBIE_RUN_SURVIVES_RESTART](../../TASKS/050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md) | Отменяемость хендшейка снаружи: дедлайн conn'а вокруг `Handshake` (ведётся в [HOTFIXES](../004-HOTFIXES/FEATURE.md); провод не меняется) | N |
 
 ## Особенности сопровождения
 
