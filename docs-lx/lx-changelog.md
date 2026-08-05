@@ -15,6 +15,54 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.20-rc.6
+
+**Исправляет rc.5, который падал на старте.** Полевой tombstone с CPH2411:
+SIGABRT в `libbox.so`, стек — `endpoint.go:312 → e.tunDevice.Start() →
+stackDevice.Start() → udpForwarder.Start() → f.udpNat.Start()`, nil по
+смещению `0x78` (поле `classAccess` структуры `UDPNat`). Падение плавающее:
+через раз запускалось нормально.
+
+**Корень — не сам баг, а способ, которым я закрывал дрейф в rc.5.** Из 14
+недостающих коммитов `wireguard-go` были взяты 3 — по признаку «на эти
+символы ругается компилятор» (`undefined: device.PeerLookupFunc`). Пропущены
+оказались, в частности:
+
+- `15b912c device: fix TOCTOU race during session state update (#77)`
+- `2ad9837 device: refactor container locking for lock-order clarity`
+- `010dd5c device: fix some lock ordering violations, add a test for a deadlock we hit`
+
+То есть ровно исправления гонок и порядка блокировок — они не дают ошибок
+компиляции, поэтому выборочный cherry-pick их и не подхватил. Получилось
+состояние, которого у апстрима никогда не существовало: `go build`, `go test`
+и `lx-check` зелёные, а на устройстве — плавающая паника при старте.
+
+**Исправление.** Форк перепривит на ПОЛНУЮ апстримовую ленту, наши патчи
+лежат сверху, а не наоборот:
+
+- `wireguard-go` — база `f39689a` (ровно то, что требует `go.mod`), все 14
+  апстримовых коммитов на месте; поверх 7 наших: AWG2-обфускация,
+  transport padding (SPEC 025), reserved-vs-magic (SPEC 026),
+  egress-provider, IpcGet-паритет, rebind по give-up (SPEC 041). Три прежних
+  cherry-pick'а выброшены — их API теперь в базе.
+- `sing-tun` — наш SPEC 040 (self-heal acceptLoop) лёг поверх апстримового
+  `da24aca`, а не наоборот.
+
+**Инспекция кода перепрививки.** Апстрим вынес тела циклов приёма и отправки
+в `processInboundContainer`/`processOutboundContainer` и ввёл
+`MessageEncapsulatingTransportSize` — резерв под префикс для
+`conn.Bind.Send()`. Наш AWG-паддинг занимает ровно это место, поэтому
+константа занулена в `noise-protocol.go` (`// lx:` комментарий там же), а
+headroom учтён в `allocLength` обеих функций подготовки пакета. Конфликт в
+`receive.go` оказался чисто структурным — в нашей стороне блока не было ни
+одной AWG-строки, взята апстримовая версия.
+
+**Процессный вывод, записанный в раннбук (раздел 1).** Проверять сабмодуль
+надо не «есть ли у апстрима новые коммиты», а машинно: **содержит ли наша
+ветка ровно тот коммит, который требует `go.mod`**. И брать ленту целиком —
+выборочный cherry-pick по ошибкам компилятора пропускает именно то, что
+чинит гонки.
+
 #### v1.14.0-lx.20-rc.5
 
 Синхронизация с апстримом: **235 коммитов** `upstream/testing` влиты
