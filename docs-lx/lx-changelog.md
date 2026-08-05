@@ -15,6 +15,79 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.20-rc.5
+
+Синхронизация с апстримом: **235 коммитов** `upstream/testing` влиты
+(merge-base `c9e81856e` → tip `d1e283be4`), дрейфа больше нет. Своих изменений
+поверх `rc.4` нет — весь релиз про приведённую базу (SPEC 051,
+[SPEC.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/051-UPSTREAM_MERGE_235/SPEC.md)).
+
+**Что приехало из апстрима.** 97 исправлений, 54 добавления, 21 обновление
+зависимостей. Клиентски значимое:
+
+- `Fix TUN dispatcher deadlock` — через бамп `sing-tun`;
+- `dns: Fix completed race rule blocked by earlier armed rule` — гонка в
+  DNS-роутере (+85 строк регрессионного теста у апстрима);
+- `Fix DNS route suffix matching`, `Fix TCP DNS retry`, `dns: Add namespace and
+  parallel support for evaluate`;
+- `wg: Fix input packets peer lookup`, `wg: Fix InputPackets exceeding device
+  batch size`, `Fix wg detour`, `wireguard: Fix system device configures DNS for
+  interface`;
+- `Fix inconsistent URLTest results` — учёт мультиплекса при замерах
+  (`OutboundWithMultiplex`); нашей задачи 050 не касается, `URLTestGroup.Close()`
+  у апстрима по-прежнему не отменяет идущий прогон;
+- `Add hysteria2 chrome parrot support`, `Add initial_path option to remote
+  rule-sets`, `Add multiple tags support to rule-sets`.
+
+Крупные апстримовые новинки в сборку форка **не входят** по клиентскому профилю:
+`openvpn`/`openconnect`, `snell`, USB/IP, bridge-outbound, L3-forwarding, DERP,
+desktop/Windows-сборки. Их build-теги в AAR не добавляются (`build_libbox`,
+блок `lx:begin no-tailscale` и соседние комментарии).
+
+**Разрешение мержа.** 65 конфликтных файлов. `*.pb.go` регенерированы через
+`make -f Makefile.lx lx-proto`, а не слиты руками; 27 файлов без наших коммитов
+(проверено по авторству, не по маркерам) взяты апстримовыми целиком; остальные
+разобраны поштучно с сохранением SPEC 017/018/019/020/028/046/050.
+
+**Три поломки сделало АВТОслияние, а не конфликты** — git молча склеил обе
+стороны:
+
+- `adapter/outbound.go` — потерялся импорт `time`, нужный нашему
+  `IdleSuspendable` (SPEC 020);
+- `dns/client_log.go` — `logRefreshedResponse` задвоился (наша версия с
+  `transport` + апстримовая);
+- `transport/wireguard/endpoint.go` — после нашего nil-guard остался апстримовый
+  `return e.tunDevice.Close()` ⇒ nil-паника в `TestPortAddressesSurviveTeardown`.
+
+Вывод записан в спеку: список конфликтных файлов — **не** список зон риска,
+проверять надо сборкой и тестами под всеми тегами.
+
+**Блокер AAR и как он снят.** Мерж поднял `tailscale` 1.92 → 1.102, а тот
+требует из `wireguard-go` API, которого не было в базе нашего AWG2-форка:
+`PeerLookupFunc`, `NewPeerConfig`, `SetPeerLookupFunc`, `PeerSessionState`,
+`AllowedIPs.LookupFromPacket`. Цепочка —
+`libbox/native_shell_session.go` → `protocol/tailscale/tailssh` →
+`wgengine/wgcfg` → `wireguard-go/device`; тегами не обходится, так как `tailssh`
+гейтится по `with_gvisor`. Ядро при этом собиралось, ломался только AAR.
+
+Закрыто **тремя cherry-pick'ами** в форк-сабмодуль
+(`Leadaxe/wireguard-go-awg2-lx`, `1255464` → `ce20e73`): `e924a91`, `f69b247`,
+`7c3a736`. Полный re-graft не понадобился. Конфликты во всех трёх — одной
+природы (невзятый `70b09a6` переименовал `AllowedIPs.mutex` → `mu` и
+`IPv4`/`IPv6` → `ipv4`/`ipv6`): взята их логика с нашими именами полей.
+В `device/timers.go` сохранены оба вызова — апстримовый
+`noteSessionHandshakeStopped()` идёт **перед** нашим `handleHandshakeGiveUp()`
+(SPEC 041), чтобы потребитель видел «handshake stopped» до пересоздания сокета.
+Семантика нейтральна: `lookupFunc` ставится только tailscale-движком, при
+nil-хуке поведение прежнее. Здесь же снят временный shim `lx:begin awg-lookup`.
+
+**Проверено:** все 94 файла с lx-маркерами сохранили свои блоки, 55 lx-only
+файлов на месте, патчи HOTFIXES 028/029/030/039/045/046/047/050 найдены
+поимённо; AWG-обфускация цела (8 тестов, включая reserved-vs-magic SPEC 026 и
+transport-padding SPEC 025); `go build ./...`, `go test ./...` без тегов,
+`lx-check`, оба шага `vet` из CI и тесты 050/WireGuard/route под полным
+lx-набором — зелёные. Сабмодуль запушен до суперпроекта.
+
 #### v1.14.0-lx.20-rc.4
 
 A URL test that reached a half-alive node hung forever and **survived a full
