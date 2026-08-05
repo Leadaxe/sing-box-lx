@@ -125,3 +125,45 @@ boxdd 7, release 6, daemon 4, wg/wireguard 3, windivert 2.
   наборе тегов, тесты 050 + WireGuard под lx-тегами — зелёные. Сабмодули не
   сдвинуты.
 - **R4** ⏳ device-прогон — остаток до релизного тега.
+
+## ⛔ Блокер: tailscale 1.102 требует API, которого нет в базе AWG2-форка
+
+CI после мержа красный (`lx-ci` run 30998205737, шаги lint и build-check):
+
+```
+tailscale@v1.102.1/wgengine/wgcfg/device.go:28: undefined: device.PeerLookupFunc
+tailscale@v1.102.1/wgengine/wgcfg/device.go:29: undefined: device.NewPeerConfig
+```
+
+**Цепочка** (воспроизведена локально, не по догадке):
+`experimental/libbox/native_shell_session.go` → `protocol/tailscale/tailssh` →
+`tailscale/wgengine/wgcfg` → `wireguard-go/device.PeerLookupFunc`.
+
+**Почему до мержа собиралось:** старый пин `tailscale v1.92.4` этих символов не
+требовал — проверено грепом по обеим версиям модуля. Мерж поднял его до
+`v1.102.1-sing-box-1.14-mod.1`.
+
+**Почему нельзя обойти тегами:** `protocol/tailscale/*` и `tailssh` гейтятся по
+`with_gvisor` (апстримовый дизайн, был и до мержа), а `with_gvisor` мы включаем
+всегда. `with_tailscale` тут не помогает — `include/tailscale.go` под ним, но
+`native_shell_session.go` тянет `tailssh` напрямую, минуя реестр.
+
+**Почему нельзя обойти адаптацией, как `LookupFromPacket`:** тот вызов был в
+НАШЕМ файле (`transport/wireguard/endpoint.go`) — одна строка под
+`lx:begin awg-lookup`. Здесь символы требует чужой модуль в своём коде; наш
+`replace` на форк-сабмодуль перекрывает апстримовый wireguard-go для всей сборки.
+
+**Что нужно:** перенести на базу форка апстримовый коммит wireguard-go
+`f69b247 device: further add, revise API for on-demand configuration of peers`
+(5 файлов, ~220 строк: `allowedips.go`, `device.go`, `peer.go`, `receive.go`,
+`send.go`). Пробный `cherry-pick -n` дал конфликты в трёх файлах
+(`allowedips.go`, `device.go`, `peer.go`) — это горячий путь WireGuard, поверх
+которого лежит наша AWG2-обфускация, поэтому разрешать его без AWG-стенда
+нельзя. Пробный прогон откачен, сабмодуль чист.
+
+⚠️ Fast-forward форка на `sagernet/dev` **невозможен**: там ноль наших
+lx-коммитов, обновление снесло бы всю AWG2-обфускацию и SPEC 041.
+
+**Статус мержа:** ядро (`go build ./...`, `go test ./...`, `lx-check`) собирается
+и проходит — блокер бьёт только по пути `libbox` → `tailssh`, то есть **по
+AAR-сборке**. Релизный тег поверх мержа резать нельзя, пока это не закрыто.
