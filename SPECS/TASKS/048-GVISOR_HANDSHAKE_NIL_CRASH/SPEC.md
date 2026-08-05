@@ -217,8 +217,12 @@ tcp.handleConnecting(0xc0000b9c08)         ← endpoint не nil
 - Lazy-режим sing-tun и порядок сниффинга не меняем — они лишь расширяют окно,
   а не создают баг. Отключение lazy окно сузит, но не закроет.
 - Issue апстриму не обещан — политика фичи 004 (пассивные условия снятия).
-  Адресат, если решим отправить, — **SagerNet/gvisor**: `go.mod` тянет
-  `github.com/sagernet/gvisor`, то есть их форк, а не `google/gvisor`.
+  Адресат — **google/gvisor**, а не SagerNet. `go.mod` тянет
+  `github.com/sagernet/gvisor`, но это чистый ре-пакеджинг: `rename-module.sh`
+  переименовывает `gvisor.dev/gvisor`, `remove-unused.sh` вырезает лишнее,
+  правок кода нет (копирайт в файлах — `The gVisor Authors`, Apache 2.0).
+  Гонка проверена прямо в `google/gvisor@master`: `dispatcher.go:148-155` и
+  `accept.go:320-326` — обе стороны на месте, построчно как у нас.
   Условие снятия: апстрим добавляет nil-guard в `handleConnecting` либо
   закрывает окно на стороне `performHandshake` (зануление `h` под тем же
   удержанием мьютекса, что и перевод состояния).
