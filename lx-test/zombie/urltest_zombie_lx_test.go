@@ -1,3 +1,5 @@
+//go:build with_xhttp
+
 // lx: SPECS/TASKS/050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART
 //
 // End-to-end guard for the field symptom: a URL test that reached a half-alive
