@@ -1,3 +1,5 @@
+//go:build with_gvisor
+
 // lx:begin idle-suspend
 
 package wireguard
@@ -32,10 +34,12 @@ func newTeardownTestEndpoint(t *testing.T) *Endpoint {
 		}},
 	})
 	if err != nil {
-		// No Skip: a silent skip once hid this whole file from the suite. The
-		// stack device needs `with_gvisor` (see NewDevice) — build the package
-		// with it, as the AAR/CI do, or this is a real failure.
-		t.Fatalf("endpoint construction failed (build with -tags with_gvisor): %v", err)
+		// No Skip inside the test: a silent skip once hid this whole file from
+		// the suite. The stack device needs `with_gvisor` (see NewDevice), so
+		// the requirement lives in this file's build tag instead — every real
+		// test run (CI test.yml, Makefile, AAR) carries that tag, and here a
+		// construction failure is a real failure.
+		t.Fatalf("endpoint construction failed: %v", err)
 	}
 	return e
 }
