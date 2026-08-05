@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — плановая синхронизация с апстримом |
-| Статус | O (open) — мерж выполнен (`f56680e0d`), дрейфа больше нет (merge-base == tip `upstream/testing`), сборка и тесты зелёные. Остаток: device-прогон (R4) |
+| Статус | O (open) — мерж выполнен (`f56680e0d`), дрейфа нет; блокер tailscale/wireguard-go снят (`577fe8789`), AAR собирается. Остаток: device-прогон (R4) |
 | Ветка | `lx` |
 | Base | `43c3d89f1` (v1.14.0-lx.20-rc.4) |
 | Страховка | ветка `backup-pre-merge-235` на `d1c2f3e21` |
@@ -126,7 +126,7 @@ boxdd 7, release 6, daemon 4, wg/wireguard 3, windivert 2.
   сдвинуты.
 - **R4** ⏳ device-прогон — остаток до релизного тега.
 
-## ⛔ Блокер: tailscale 1.102 требует API, которого нет в базе AWG2-форка
+## ✅ Блокер снят (`577fe8789`): tailscale 1.102 требовал API, которого не было в базе AWG2-форка
 
 CI после мержа красный (`lx-ci` run 30998205737, шаги lint и build-check):
 
@@ -164,6 +164,46 @@ tailscale@v1.102.1/wgengine/wgcfg/device.go:29: undefined: device.NewPeerConfig
 ⚠️ Fast-forward форка на `sagernet/dev` **невозможен**: там ноль наших
 lx-коммитов, обновление снесло бы всю AWG2-обфускацию и SPEC 041.
 
-**Статус мержа:** ядро (`go build ./...`, `go test ./...`, `lx-check`) собирается
-и проходит — блокер бьёт только по пути `libbox` → `tailssh`, то есть **по
-AAR-сборке**. Релизный тег поверх мержа резать нельзя, пока это не закрыто.
+**Статус мержа:** ядро (`go build ./...`, `go test ./...`, `lx-check`) собиралось
+и проходило — блокер бил только по пути `libbox` → `tailssh`, то есть по
+AAR-сборке.
+
+### Как закрыт
+
+В форк-сабмодуль (`Leadaxe/wireguard-go-awg2-lx`, ветка `lx-awg2-v005`,
+`1255464` → `ce20e73`) перенесены три апстримовых коммита:
+
+| Коммит | Что даёт |
+|---|---|
+| `e924a91` | базовый API on-demand-конфигурации пиров |
+| `f69b247` | `PeerLookupFunc`, `NewPeerConfig`, `SetPeerLookupFunc`, `AllowedIPs.LookupFromPacket` |
+| `7c3a736` | `PeerSessionState`, `SetSessionStateFunc` |
+
+Полный re-graft **не понадобился** — хватило трёх cherry-pick'ов.
+
+**Конфликты во всех трёх — одной природы:** невзятый нами коммит `70b09a6`
+переименовал `AllowedIPs.mutex` → `mu` и `IPv4`/`IPv6` → `ipv4`/`ipv6`. Взята их
+логика целиком (`insertLocked`, `lookupLocked`, `setPeerPrefixes`,
+`peerByIPPacketFunc`), имена полей оставлены **наши**: тянуть переименование
+через всю AWG-дельту дорого и без выигрыша.
+
+**Единственное содержательное место — `device/timers.go`**, ветка окончательного
+провала цикла рукопожатий: там живёт наш SPEC 041 (rebind по give-up).
+Сохранены оба вызова, апстримовый `noteSessionHandshakeStopped()` идёт **перед**
+нашим `handleHandshakeGiveUp()` — потребитель должен увидеть «handshake stopped»
+до пересоздания сокета, а не после.
+
+**Семантика для нас нейтральна:** `lookupFunc` ставится только через
+`SetPeerLookupFunc`, который зовёт исключительно tailscale-движок (у нас не
+активен). При nil-хуке `LookupPeer` и `LookupFromPacket` ведут себя ровно как
+раньше.
+
+Здесь же снят временный shim `lx:begin awg-lookup` в
+`transport/wireguard/endpoint.go` — вызов вернулся к апстримовой форме, дельта
+форка уменьшилась.
+
+**Проверено:** AWG-обфускация цела (8 тестов, включая reserved-vs-magic SPEC 026
+и transport-padding SPEC 025), `go test ./device/` в сабмодуле зелёный; в ядре —
+`libbox` собирается, оба шага `vet` из CI проходят, `go test ./...` без тегов и
+тесты 050/WireGuard/route под полным lx-набором зелёные. Сабмодуль запушен **до**
+суперпроекта (иначе гитлинк уехал бы на несуществующий коммит).
