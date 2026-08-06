@@ -404,7 +404,17 @@ func (w *Endpoint) resumeOnDial() bool {
 		w.logger.Info("lx idle: rebuild ", w.Tag(), " by=dial")
 		return true
 	}
-	w.endpoint.Resume() // device.Up(): re-open socket, re-spawn recv-workers
+	// A failed Up() leaves wireguard-go in deviceStateDown with the bind closed
+	// and every peer stopped. Keeping the idle-asleep flags in that case is what
+	// makes the next dial retry the wake: clearing them would mark the endpoint
+	// live over a down device, and nothing would ever call Up() again — the fast
+	// path above returns started, InterfaceUpdated's BindUpdate is a close-only
+	// no-op while down, and the handshake timers that drive the SPEC 041 self-heal
+	// are stopped along with the peers.
+	if err := w.endpoint.Resume(); err != nil {
+		w.logger.Error("lx idle: wake ", w.Tag(), " failed: ", err)
+		return false
+	}
 	w.started.Store(true)
 	w.idleAsleep.Store(false)
 	w.sleepSince.Store(0)

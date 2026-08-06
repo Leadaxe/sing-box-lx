@@ -109,10 +109,14 @@ lastTransferSum += delta
 stampActivity()                          // всегда, закрывает гонку с тиком
 если !idleAsleep: вернуть started        // быстрый путь
 под resumeMu:
-    endpoint.Resume()                    // device.Up()
+    если endpoint.Resume() вернул ошибку: // device.Up() не поднял bind
+        log ERROR "lx idle: wake <tag> failed"
+        вернуть false                     // флаги НЕ трогаем → следующий дайл повторит
     started.Store(true); idleAsleep.Store(false)
     log INFO "lx idle: wake <tag> by=dial"; вернуть true
 ```
+
+**Ошибка `Resume()` обязана оставлять флаги сна нетронутыми.** `device.Up()` первым шагом делает `BindUpdate`, поэтому падает всегда, когда UDP-сокет не открывается (смена сети в момент пробуждения, protect-колбэк отказал в fd). wireguard-go при этом откатывается в `deviceStateDown` — устройство лежит, bind закрыт, пиры остановлены. Если бы слой выше выставил `started=true`, эндпоинт остался бы помечен живым над мёртвым устройством **навсегда**: быстрый путь возвращает `started` и `Up()` больше не зовётся, `BindUpdate` из `InterfaceUpdated` на down-устройстве только закрывает сокет, а хендшейк-таймеры, на которых держится самолечение SPEC 041, остановлены вместе с пирами. Весь трафик через такой эндпоинт молча уходит в никуда, дайлы висят до таймаута gVisor (~127 с), лечится только рестартом. Сохранение `idleAsleep=true` превращает это в обычный retry: следующий дайл снова пробует `Up()`, и как только bind поднимется — эндпоинт оживает сам. Ветка `torndown` рядом устроена так же (см. §13.4).
 
 Для domain-назначений `DialContext`/`ListenPacket` сначала резолвят через `dnsRouter` и только потом зовут `resumeOnDial` — неудачный DNS-lookup не платит Up+handshake зря (DNS-detour через сам эндпоинт безопасен: он re-enter'ит `DialContext` уже с IP и будит его сам).
 
@@ -141,6 +145,7 @@ stateDiagram-v2
     AWAKE --> IDLE_ASLEEP: тик - SuspendIfIdle (все гейты пройдены)
     IDLE_ASLEEP --> IDLE_TORNDOWN: тик - спит дольше lx_idle_teardown (Close)
     IDLE_ASLEEP --> AWAKE: дайл - resumeOnDial (device.Up, +1 RTT handshake)
+    IDLE_ASLEEP --> IDLE_ASLEEP: дайл - device.Up упал (bind) - флаги held, дайл не проходит
     IDLE_TORNDOWN --> AWAKE: дайл - rebuild (новый Endpoint + Start, ~0.5-1 с)
     AWAKE --> GUARD_DOWN: SuspendAmneziaWG (guard, чистит idleAsleep)
     IDLE_ASLEEP --> GUARD_DOWN: SuspendAmneziaWG
@@ -152,6 +157,7 @@ stateDiagram-v2
 
 Инварианты переходов:
 - **IDLE-ASLEEP → AWAKE** делает ТОЛЬКО настоящий дайл. Pause/wake экрана и смена сети видят транспортный флаг `suspended` и эндпоинт не поднимают; guard-состояние не воскрешается ничем.
+- **Переход в AWAKE совершается только при УСПЕШНОМ `device.Up()`.** Упавший `Up()` (bind не открылся) оставляет эндпоинт в IDLE-ASLEEP, а дайл получает «недоступен»; повторяет следующий дайл. Пометить эндпоинт живым над устройством в `deviceStateDown` — необратимо: назад его не вернёт ни один механизм (ни `InterfaceUpdated`, ни самолечение SPEC 041), только рестарт.
 - **GUARD-DOWN терминально** до Close — `resumeOnDial` возвращает `started` (false) на быстрый путь, тик выходит на `!started`.
 - Все переходы, трогающие device (`Suspend`/`Resume`/`Close`), сериализованы `resumeMu`.
 
@@ -375,6 +381,8 @@ AWG-detour-guard ([awg-detour-guard-must-be-at-start]) гасит `device.Down()
         вернуть true
     иначе если idleAsleep: ... (существующий Resume-путь)
 ```
+
+Обе ветки обращаются с ошибкой одинаково: логируют, возвращают `false` и **не трогают флаги**, оставляя эндпоинт в том состоянии сна, из которого он не смог выйти. Разница только в откате — torndown-ветке нужен явный `Teardown()` (см. ниже), Resume-ветке нет: провалившийся `Up()` wireguard-go сам откатывает в `deviceStateDown`.
 
 Rebuild синхронный и держит `resumeMu` — параллельные дайлы ждут один rebuild, а не запускают N. Ошибка любого шага (rebuild/Start/PostStart, например резолв peer-домена) → лог + **откат `Teardown()`** обратно в чисто-снесённое состояние + `false` («WireGuard is not ready yet»); флаги не сбрасываются, следующий дайл повторяет с нуля. Откат обязателен: у tun-девайса events-канал с буфером 1 (одно `EventUp` уже отправлено) — повторный `Start` поверх полусобранного девайса завис бы на этом канале под `resumeMu`, повесив все дайлы. Транспорт дополнительно: `PortAddresses()` отдаёт кэш (L3-слой может спросить у снесённого — nil-паника недопустима), а `Rebuild()` переносит привязанный L3 return-path в новый wrapper (sing-tun про наш цикл не знает и второй раз не attach'ится).
 

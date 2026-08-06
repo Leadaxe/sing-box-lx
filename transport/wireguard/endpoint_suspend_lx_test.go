@@ -22,7 +22,9 @@ func TestOnPauseUpdated_wakeSkipsSuspendedDevice(t *testing.T) {
 		t.Fatal("wake events must not clear the suspended state")
 	}
 	// Resume (the dial-wake path) clears the flag again.
-	e.Resume()
+	if err := e.Resume(); err != nil {
+		t.Fatalf("Resume on a nil device must be a no-op, got %v", err)
+	}
 	if e.suspended.Load() {
 		t.Fatal("Resume must clear the suspended state")
 	}

@@ -288,7 +288,10 @@ the reachability model specifies.
 - `route/idle_tick_endpoints_lx_test.go`: `TestIdleTick_scansBothManagers` (tick
   visits both endpoint + outbound managers).
 - `protocol/wireguard/endpoint_idle_lx_test.go`:
-  `TestSuspendIfIdle_guardSuspendedNotTouched` (§8 AWG-guard invariant).
+  `TestSuspendIfIdle_guardSuspendedNotTouched` (§8 AWG-guard invariant),
+  `TestResumeOnDial_wakeFailureKeepsAsleep` (a failed `device.Up()` keeps the
+  endpoint asleep and not-dialable, every later dial retries the wake, and the
+  endpoint wakes for real once the bind recovers — the zombie-wake regression).
 
 All adversarially checked: breaking the selector walk (`Now()`→`All()`) fails the new
 dedup/dormant-subtree tests; the both-managers test fails on the pre-fix

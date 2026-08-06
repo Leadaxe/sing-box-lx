@@ -8,6 +8,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/endpoint"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/transport/wireguard"
+	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -138,6 +139,50 @@ func TestResumeOnDial_wakesAndStamps(t *testing.T) {
 	}
 	if w.IdleSince() > time.Second {
 		t.Fatal("resumeOnDial must stamp activity (idle ~0 after)")
+	}
+}
+
+// TestResumeOnDial_wakeFailureKeepsAsleep pins the zombie-wake fix: when
+// device.Up() fails (bind cannot be re-opened — a network transition racing the
+// wake), wireguard-go leaves the device in deviceStateDown. resumeOnDial must
+// report not-dialable and keep the idle-asleep flags, so the NEXT dial retries
+// the wake. Clearing them would mark the endpoint live over a down device and
+// nothing would ever call Up() again: the fast path returns started, the
+// BindUpdate behind InterfaceUpdated is close-only while down, and the handshake
+// timers driving the SPEC 041 self-heal are stopped along with the peers.
+func TestResumeOnDial_wakeFailureKeepsAsleep(t *testing.T) {
+	w := newIdleTestEndpoint()
+	var wakeAttempts int
+	w.endpoint.SetResumeErrHookForTest(func() error {
+		wakeAttempts++
+		return E.New("bind: operation not permitted")
+	})
+	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
+	w.SuspendIfIdle(false, 30*time.Second, 0)
+	if !w.idleAsleep.Load() {
+		t.Fatal("precondition: must be asleep")
+	}
+	if w.resumeOnDial() {
+		t.Fatal("a failed wake must report the endpoint as not dialable")
+	}
+	if !w.idleAsleep.Load() || w.started.Load() {
+		t.Fatal("a failed wake must leave the endpoint asleep and not started")
+	}
+	// The retry is the whole point: a second dial must attempt Up() again rather
+	// than fast-path out over a device that is still down.
+	if w.resumeOnDial() {
+		t.Fatal("the retry must also report not dialable while Up keeps failing")
+	}
+	if wakeAttempts != 2 {
+		t.Fatalf("every dial must retry the wake, got %d attempts", wakeAttempts)
+	}
+	// Once the bind recovers, the very next dial wakes for real.
+	w.endpoint.SetResumeErrHookForTest(nil)
+	if !w.resumeOnDial() {
+		t.Fatal("a dial after the bind recovers must wake the endpoint")
+	}
+	if w.idleAsleep.Load() || !w.started.Load() {
+		t.Fatal("after a successful wake: idleAsleep=false, started=true")
 	}
 }
 

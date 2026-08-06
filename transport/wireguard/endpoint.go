@@ -55,6 +55,14 @@ type Endpoint struct {
 	deviceOptions DeviceOptions
 	inet4Address  netip.Addr
 	inet6Address  netip.Addr
+	// lx: SPEC 020 — test seam standing in for a device.Up() failure, which needs
+	// a real bind to reproduce. Nil in production.
+	resumeErrHook func() error
+}
+
+// SetResumeErrHookForTest injects a Resume failure. Test-only.
+func (e *Endpoint) SetResumeErrHookForTest(hook func() error) {
+	e.resumeErrHook = hook
 }
 
 func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
@@ -405,11 +413,22 @@ func (e *Endpoint) Suspend() {
 // socket, re-spawns the recv-workers (re-allocating bufsArrs), and initiates a
 // fresh handshake on the next packet. Idempotent and nil-safe. Used by SPEC 020
 // idle-suspend to wake an endpoint lazily on the next dial through it.
-func (e *Endpoint) Resume() {
+//
+// The error is returned, not swallowed: device.Up() runs BindUpdate as its first
+// step, so it fails whenever the UDP socket cannot be re-opened (a network
+// transition racing the wake, a protect callback refusing the fd). wireguard-go
+// then falls back to deviceStateDown, and a caller that assumed success would
+// leave the endpoint marked live over a device that is down — silently
+// black-holing every packet routed through it, with no path back up.
+func (e *Endpoint) Resume() error {
 	e.suspended.Store(false)
-	if e.device != nil {
-		e.device.Up()
+	if e.resumeErrHook != nil { // tests only: stand in for a device.Up() failure
+		return e.resumeErrHook()
 	}
+	if e.device != nil {
+		return e.device.Up()
+	}
+	return nil
 }
 
 // ActiveTCPFlows reports the number of ESTABLISHED TCP connections inside the
