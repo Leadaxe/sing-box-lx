@@ -209,10 +209,7 @@ func (e *Endpoint) Teardown() {
 		e.device.Close()
 		e.device = nil
 	}
-	if e.tunDevice != nil {
-		e.tunDevice.Close()
-		e.tunDevice = nil
-	}
+	e.closeTunDevice()
 	e.allowedIPs = nil
 	if e.pauseCallback != nil {
 		e.pause.UnregisterCallback(e.pauseCallback)
@@ -384,18 +381,7 @@ func (e *Endpoint) Close() error {
 		e.device = nil
 		return nil
 	}
-	// lx: SPEC 020 level 3 — Teardown may already have released the tun device
-	// (nil = torn down, nothing to close). Closing it here too keeps a
-	// teardown/rebuild cycle leak-free: Rebuild installs a fresh tun device and
-	// the old one is gone by then. Guards against the nil-panic upstream's bare
-	// `return e.tunDevice.Close()` would hit on our teardown path. The error is
-	// propagated as upstream does — only the nil check is ours.
-	if e.tunDevice != nil {
-		err := e.tunDevice.Close()
-		e.tunDevice = nil
-		return err
-	}
-	return nil
+	return e.closeTunDevice() // lx: SPEC 020 level 3 — see endpoint_close_lx.go
 }
 
 // lx:begin awg
