@@ -206,7 +206,6 @@ func logRefreshedResponse(logger logger.ContextLogger, ctx context.Context, tran
 	emitQueryEvent(ctx, transport, response, dnstrack.SourceRefreshed, ttl) // lx: SPEC 018
 }
 
-
 func logRejectedResponse(logger logger.ContextLogger, ctx context.Context, response *dns.Msg) {
 	if logger == nil || len(response.Question) == 0 {
 		return

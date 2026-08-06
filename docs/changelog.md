@@ -2,6 +2,10 @@
 icon: material/alert-decagram
 ---
 
+#### 1.14.0-beta.8
+
+* Fixes and improvements
+
 #### 1.14.0-beta.7
 
 * Add Hysteria2 Chrome QUIC fingerprint parroting **1**
