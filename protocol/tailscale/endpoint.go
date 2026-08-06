@@ -772,7 +772,12 @@ func (t *Endpoint) DialContext(ctx context.Context, network string, destination 
 	}
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
-		tcpConn, err := gonet.DialTCPWithBind(ctx, t.stack, localAddr, remoteAddr, networkProtocol)
+		// lx: SPEC 052 — bound the connect phase (~127s of gVisor SYN backoff
+		// otherwise); one-shot, dies with this dial, never reaches the returned
+		// conn. Rationale: transport/wireguard/connect_deadline_lx.go.
+		connectCtx, cancel := context.WithTimeout(ctx, C.TCPTimeout)
+		defer cancel()
+		tcpConn, err := gonet.DialTCPWithBind(connectCtx, t.stack, localAddr, remoteAddr, networkProtocol)
 		if err != nil {
 			return nil, err
 		}

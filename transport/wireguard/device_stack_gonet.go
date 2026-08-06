@@ -20,6 +20,12 @@ import (
 )
 
 func DialTCPWithBind(ctx context.Context, s *stack.Stack, localAddr, remoteAddr tcpip.FullAddress, network tcpip.NetworkProtocolNumber) (*gonet.TCPConn, error) {
+	// lx: SPEC 052 — bound the connect phase (~127s of gVisor SYN backoff
+	// otherwise); one-shot, dies with this function via defer, never reaches the
+	// returned conn. See connect_deadline_lx.go.
+	ctx, cancel := connectContextLx(ctx)
+	defer cancel()
+
 	// Create TCP endpoint, then connect.
 	var wq waiter.Queue
 	ep, err := s.NewEndpoint(tcp.ProtocolNumber, network, &wq)
