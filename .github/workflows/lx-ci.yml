@@ -97,7 +97,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive     # with_awg needs submodules/wireguard-go
-          fetch-depth: 0            # tags for the -lx version (git describe)
+          fetch-depth: 0            # full history (version comes from upstream.version, not tags)
       - name: Go toolchain pin
         id: go_pin
         run: echo "version=$(tr -d '[:space:]' < go.version | sed 's/^go//')" >> "$GITHUB_OUTPUT"
