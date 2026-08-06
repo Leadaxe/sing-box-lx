@@ -31,8 +31,17 @@ LX_TAGS ?= with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_a
 # lx build counter over a given upstream base (override in CI/release: make -f Makefile.lx lx-build LX_BUILD=3).
 LX_BUILD ?= 1
 
-# Upstream base version from the nearest stable tag, excluding our own -lx tags (e.g. 1.13.13).
-UPSTREAM_VERSION := $(shell git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*lx*' 2>/dev/null | sed 's/^v//')
+# Upstream base version we are grafted onto (e.g. 1.14.0). Bump this file when re-grafting
+# onto a new upstream line — same pin-in-a-file model as go.version (SPEC 049).
+#
+# NOT `git describe`: it derived the base from the nearest non-lx tag among HEAD's ancestors,
+# which broke plain `make -f Makefile.lx lx-build` for anyone building from a fresh clone.
+# `git clone` fetches only THIS repo's tags, so upstream tags missing from the fork made
+# describe fall back to a years-old base (a user on 1.14.0 got 1.13.11-lx.1). Even with the
+# full tag set it returned the pre-release tip (1.14.0-beta.8), yielding 1.14.0-beta.8-lx.N.
+# Release CI never hit either bug: it passes LX_VERSION= from the tag name, so the `?=` below
+# never evaluates. See .github/workflows/lx-release.yml (version step).
+UPSTREAM_VERSION := $(shell tr -d '[:space:]' < upstream.version)
 LX_VERSION ?= $(UPSTREAM_VERSION)-lx.$(LX_BUILD)
 
 # Stamp the version via ldflags only — constant/version.go stays untouched (zero upstream diff).
