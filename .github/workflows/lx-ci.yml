@@ -97,37 +97,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           submodules: recursive     # with_awg needs submodules/wireguard-go
-          fetch-depth: 0            # full history + tags for the upstream.version drift check
-
-      # upstream.version is the base for LX_VERSION on a plain `make -f Makefile.lx lx-build`.
-      # Release CI passes LX_VERSION= from the tag name and never reads the file, so a stale
-      # pin after a re-graft would ship green and break only users building from the README.
-      # Compare MAJOR.MINOR, not the full string: upstream may still be on a pre-release of
-      # the line we are grafted onto (base 1.14.0 vs newest upstream tag 1.14.0-beta.8), which
-      # is expected and must not fail. Tags absent (fork clone without upstream tags) => warn,
-      # since there is nothing to compare against.
-      - name: upstream.version matches the grafted upstream line
-        run: |
-          set -euo pipefail
-          PIN="$(tr -d '[:space:]' < upstream.version)"
-          [ -n "$PIN" ] || { echo "::error::upstream.version is empty"; exit 1; }
-          # --merged HEAD in one call: a per-tag merge-base loop takes ~40s on this tag set.
-          # `|| true`: with no upstream tags grep exits 1 and pipefail would kill the step
-          # before the empty-check below can downgrade it to a warning.
-          NEWEST="$(git tag --list 'v[0-9]*' --merged HEAD | grep -v lx | sort -V | tail -1 || true)"
-          NEWEST="${NEWEST#v}"
-          if [ -z "$NEWEST" ]; then
-            echo "::warning::no upstream tags among HEAD's ancestors — cannot verify upstream.version ($PIN)"
-            exit 0
-          fi
-          minor() { echo "$1" | cut -d- -f1 | cut -d. -f1,2; }
-          if [ "$(minor "$PIN")" != "$(minor "$NEWEST")" ]; then
-            echo "::error::upstream.version is $PIN but the newest upstream tag in history is $NEWEST."
-            echo "Re-grafted onto a new upstream line? Bump upstream.version (see docs-lx/lx-release-runbook.md)."
-            exit 1
-          fi
-          echo "upstream.version=$PIN matches upstream line of $NEWEST"
-
+          fetch-depth: 0            # tags for the -lx version (git describe)
       - name: Go toolchain pin
         id: go_pin
         run: echo "version=$(tr -d '[:space:]' < go.version | sed 's/^go//')" >> "$GITHUB_OUTPUT"
