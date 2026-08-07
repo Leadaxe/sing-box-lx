@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	E "github.com/sagernet/sing/common/exceptions"
@@ -14,61 +15,121 @@ import (
 
 const launchdLabel = "com.leadaxe.sing-box-lxd"
 
-func launchdPlistPath() string {
-	return filepath.Join("/Library/LaunchDaemons", launchdLabel+".plist")
+// serviceScope captures where a launchd job lives. The system scope is a
+// LaunchDaemon (root, starts before login, machine-wide) — needed for a
+// headless server that owns TUN. The user scope is a LaunchAgent (the logged-in
+// user, starts at login, no sudo) — the desktop UX, like ordinary .app helpers.
+type serviceScope struct {
+	user     bool
+	plist    string // absolute plist path
+	logPath  string
+	bootTgt  string // launchctl domain target: "system" or "gui/<uid>"
+	needRoot bool
 }
 
-// InstallService writes a LaunchDaemon plist whose ProgramArguments are the
-// current daemon invocation (args, minus the --service flag) and bootstraps it
-// into launchd. Requires root. The daemon's own run-state memory handles "as
-// it was" across reboots; launchd only keeps the process alive (KeepAlive).
+func systemScope() serviceScope {
+	return serviceScope{
+		user:     false,
+		plist:    filepath.Join("/Library/LaunchDaemons", launchdLabel+".plist"),
+		logPath:  "/Library/Application Support/sing-box-lxd/lxd.log",
+		bootTgt:  "system",
+		needRoot: true,
+	}
+}
+
+func userScope() serviceScope {
+	home, _ := os.UserHomeDir()
+	return serviceScope{
+		user:     true,
+		plist:    filepath.Join(home, "Library/LaunchAgents", launchdLabel+".plist"),
+		logPath:  filepath.Join(home, "Library/Application Support/sing-box-lxd/lxd.log"),
+		bootTgt:  "gui/" + strconv.Itoa(os.Getuid()),
+		needRoot: false,
+	}
+}
+
+// InstallService registers the daemon as a system LaunchDaemon (root).
 func InstallService(daemonArgs []string) error {
+	return installScope(systemScope(), daemonArgs)
+}
+
+// InstallUserService registers the daemon as a per-user LaunchAgent (no sudo).
+func InstallUserService(daemonArgs []string) error {
+	return installScope(userScope(), daemonArgs)
+}
+
+func installScope(scope serviceScope, daemonArgs []string) error {
+	if scope.needRoot && os.Getuid() != 0 {
+		return E.New("--service=install needs root (run with sudo); for a per-user agent without sudo use --service=install-user")
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return E.Cause(err, "locate own binary")
 	}
-	logPath := "/Library/Application Support/sing-box-lxd/lxd.log"
-	programArgs := append([]string{executable}, daemonArgs...)
-	plist := buildPlist(launchdLabel, programArgs, logPath)
-	if err = os.WriteFile(launchdPlistPath(), []byte(plist), 0o644); err != nil {
-		return E.Cause(err, "write plist (need root?)")
+	// Create the log/support directory so launchd's StandardOutPath is writable
+	// from the first start — the operator no longer needs a separate mkdir.
+	if err = os.MkdirAll(filepath.Dir(scope.logPath), 0o755); err != nil {
+		return E.Cause(err, "create support directory")
 	}
-	// bootout an old instance if present, then bootstrap fresh.
-	_ = exec.Command("launchctl", "bootout", "system/"+launchdLabel).Run()
-	out, err := exec.Command("launchctl", "bootstrap", "system", launchdPlistPath()).CombinedOutput()
+	if err = os.MkdirAll(filepath.Dir(scope.plist), 0o755); err != nil {
+		return E.Cause(err, "create launchd directory")
+	}
+	programArgs := append([]string{executable}, daemonArgs...)
+	plist := buildPlist(launchdLabel, programArgs, scope.logPath)
+	if err = os.WriteFile(scope.plist, []byte(plist), 0o644); err != nil {
+		return E.Cause(err, "write plist")
+	}
+	_ = exec.Command("launchctl", "bootout", scope.bootTgt+"/"+launchdLabel).Run()
+	out, err := exec.Command("launchctl", "bootstrap", scope.bootTgt, scope.plist).CombinedOutput()
 	if err != nil {
 		return E.Cause(E.New(strings.TrimSpace(string(out))), "launchctl bootstrap")
 	}
-	fmt.Println("lxd: installed LaunchDaemon", launchdLabel)
-	fmt.Println("lxd: plist", launchdPlistPath())
-	fmt.Println("lxd: logs ", logPath)
+	kind := "LaunchDaemon (system)"
+	if scope.user {
+		kind = "LaunchAgent (user)"
+	}
+	fmt.Println("lxd: installed", kind, launchdLabel)
+	fmt.Println("lxd: plist", scope.plist)
+	fmt.Println("lxd: logs ", scope.logPath)
 	return nil
 }
 
-// PrintService renders the LaunchDaemon plist that InstallService would write,
-// without touching the system — a dry run to inspect before installing.
+// PrintService renders the plist InstallService would write, without touching
+// the system — a dry run to inspect before installing.
 func PrintService(daemonArgs []string) error {
+	scope := systemScope()
 	executable, err := os.Executable()
 	if err != nil {
 		return E.Cause(err, "locate own binary")
 	}
-	logPath := "/Library/Application Support/sing-box-lxd/lxd.log"
 	programArgs := append([]string{executable}, daemonArgs...)
-	fmt.Print(buildPlist(launchdLabel, programArgs, logPath))
-	fmt.Fprintln(os.Stderr, "\n# would install to", launchdPlistPath())
-	fmt.Fprintln(os.Stderr, "# then: sudo launchctl bootstrap system", launchdPlistPath())
+	fmt.Print(buildPlist(launchdLabel, programArgs, scope.logPath))
+	fmt.Fprintln(os.Stderr, "\n# would install to", scope.plist)
+	fmt.Fprintln(os.Stderr, "# then: launchctl bootstrap", scope.bootTgt, scope.plist)
 	return nil
 }
 
+// UninstallService removes whichever scope is present (tries user first — no
+// sudo — then system).
 func UninstallService() error {
-	out, err := exec.Command("launchctl", "bootout", "system/"+launchdLabel).CombinedOutput()
-	if err != nil && !strings.Contains(string(out), "No such process") {
-		return E.Cause(E.New(strings.TrimSpace(string(out))), "launchctl bootout")
+	removedAny := false
+	for _, scope := range []serviceScope{userScope(), systemScope()} {
+		if _, statErr := os.Stat(scope.plist); statErr != nil {
+			continue
+		}
+		out, err := exec.Command("launchctl", "bootout", scope.bootTgt+"/"+launchdLabel).CombinedOutput()
+		if err != nil && !strings.Contains(string(out), "No such process") {
+			return E.Cause(E.New(strings.TrimSpace(string(out))), "launchctl bootout")
+		}
+		if err := os.Remove(scope.plist); err != nil && !os.IsNotExist(err) {
+			return E.Cause(err, "remove plist")
+		}
+		fmt.Println("lxd: uninstalled", scope.plist)
+		removedAny = true
 	}
-	if err := os.Remove(launchdPlistPath()); err != nil && !os.IsNotExist(err) {
-		return E.Cause(err, "remove plist")
+	if !removedAny {
+		fmt.Println("lxd: no installed service found")
 	}
-	fmt.Println("lxd: uninstalled LaunchDaemon", launchdLabel)
 	return nil
 }
 

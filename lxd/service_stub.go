@@ -11,6 +11,10 @@ func InstallService(daemonArgs []string) error {
 	return E.New("lxd: service install is not implemented on this platform yet (macOS only)")
 }
 
+func InstallUserService(daemonArgs []string) error {
+	return E.New("lxd: service install-user is not implemented on this platform yet (macOS only)")
+}
+
 func UninstallService() error {
 	return E.New("lxd: service uninstall is not implemented on this platform yet (macOS only)")
 }
