@@ -15,6 +15,63 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.23
+
+**Ядро больше не падает на старте с доменным узлом в detour-цепи WireGuard.**
+([SPEC 033](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/033-DNS_GROUP_SERVER/SPEC.md))
+
+`box.preStart` поднимает endpoints (вместе с outbounds) раньше DNS-транспортов.
+Ранний дайл WG-bind через detour-цепь с доменным узлом уходил резолвиться в ещё
+не стартовавшую группу `dns_group`: `members` пуст, survival-ветка выбирала
+`best[rand.IntN(0)]` — паника на нулевом аргументе, ядро не поднималось вовсе.
+Гейт в `selectTarget`: пустой `members` = группа не стартована → типизированная
+ошибка «not started», вызывающий ретраится сам, когда транспорты поднимутся.
+Полевой краш LxBox на 1.14.0-lx.22 (android/arm64).
+
+Окно не гонка: при таком конфиге оно открыто на каждом старте, а медленный старт
+`fakeip` (bbolt-батч) растягивает его до гарантии. Апстримные транспорты
+(`udp`/`tls`/`https`) ранний запрос переживают — паниковала только группа,
+поэтому правка локальная. ⚠️ Кольца вида «DNS-сервер → `detour` на узел → его
+домен резолвится через тот же сервер» ядро по-прежнему не валидирует: детекторы
+циклов работают внутри графа DNS-серверов и внутри графа outbounds по
+отдельности, а такое кольцо динамическое — селектор переключился на узел с
+IP-адресом, и кольца нет. Это зона приложения
+([SPEC 024](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/024-CONFIG_LOOP_GUARD/SPEC.md)).
+
+**RPC `GetRules` роняло ядро в attached-режиме.**
+([FEATURE 006](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md))
+
+При запуске с `services: [{"type": "api"}]` ядро строит `Instance` через
+`attachInstance` — прицепляется к уже поднятому box снаружи, и поля `instance`
+(`*box.Box`) у него нет: его заполняет только владеющий `newInstance`. `GetRules`
+ходил за таблицей правил через `instance.Router()` и получал nil-деref в
+`box.go:697` — первый же вызов RPC убивал процесс. Роутер и так лежит в сервисном
+контексте (`box.go` регистрирует `adapter.Router`; тем же приёмом его берёт
+`clashapi`), поэтому он резолвится в поле `Instance.router` в обоих конструкторах,
+а `GetRules` читает поле. Нулевой роутер деградирует в `codes.Unavailable` — та же
+дисциплина, что у `GetRunningConfig`. Остальные lx-RPC этого паттерна не имели:
+они берут `ctx` и менеджеры, которые `attachInstance` заполняет.
+
+**Сабкоманда `sing-box lxd run` — скелет headless-демона.**
+([SPEC 055](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/055-LXD_DAEMON_SKELETON/SPEC.md),
+[FEATURE 014](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md))
+
+Первая задача фичи 014: ядро живёт in-process за долгоживущим управляющим
+каналом — модель апстримного десктопного демона (`experimental/boxdd`), но
+headless и в форме сабкоманды существующего бинаря (один артефакт, extractor
+лаунчера не трогается, version skew невозможен).
+
+`sing-box lxd run -c config.json --listen 127.0.0.1:9091 --secret …` под тегом
+`with_lx_command`; без тега сабкоманды нет, пакет — пустой стаб. Порядок внутри:
+чтение конфига → `daemon.NewStartedService` (владеющий режим, тот же кодопуть,
+что libbox/boxdd) → `daemon.NewServer` (gRPC, Bearer-интерцепторы, health,
+reflection) → listener → и только потом `StartOrReloadService`. Несущее свойство
+архитектуры: **канал переживает reload и битый конфиг** — провал старта или
+reload'а логируется, демон остаётся слушать в FATAL. SIGHUP перечитывает файл и
+подменяет инстанс под живым сервером; SIGINT/SIGTERM — `CloseService` →
+`grpcServer.Stop` → `Close`. Ни одной правки в апстримных файлах: сабкоманда
+самонавешивается через `init()`.
+
 #### v1.14.0-lx.22
 
 **Группа `urltest` больше не сидит на мёртвом узле до следующего прогона.**
