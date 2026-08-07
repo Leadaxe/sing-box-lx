@@ -21,7 +21,7 @@
 | [009-MASQUE_WARP](009-MASQUE_WARP/FEATURE.md) | MASQUE CONNECT-IP outbound (RFC 9484), профиль Cloudflare WARP | — | 021 |
 | [012-VLESS_ENCRYPTION](012-VLESS_ENCRYPTION/FEATURE.md) | ✅ PQ-слой `mlkem768x25519plus` внутри VLESS — отгружено (`v1.14.0-lx.18`), девайс-верифицировано | — | 032 |
 | [013-DNS_GROUP](013-DNS_GROUP/FEATURE.md) | Группа DNS-серверов: `stable` / `fastest` / `parallel` на TTL-модели, трасса и состояние в наблюдаемости | — | 033 · 035 |
-| [014-LXD_DAEMON](014-LXD_DAEMON/FEATURE.md) | Headless-демон `sing-box lxd run`: ядро in-process за reload-surviving каналом (gRPC + admin-REST на одном порту), apply с валидацией и автооткатом на last-good | `with_lx_command` | 055 · 056 |
+| [014-LXD_DAEMON](014-LXD_DAEMON/FEATURE.md) | Headless-демон `sing-box lxd`: ядро in-process за reload-surviving каналом (gRPC + admin-REST на одном порту), apply с автооткатом на last-good, mTLS с регистрацией клиентов, системная служба | `with_lx_command` | 055 · 056 · 057 |
 
 ## Процессные
 

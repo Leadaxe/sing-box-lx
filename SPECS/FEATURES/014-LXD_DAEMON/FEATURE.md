@@ -101,6 +101,7 @@ SRS-хранилище, reverse-proxy внутреннего Clash API, уста
 |---|---|
 | [055-LXD_DAEMON_SKELETON](../../TASKS/055-LXD_DAEMON_SKELETON/SPEC.md) | Скелет: сабкоманда, демон, канал поверх подмен инстанса, SIGHUP-reload, FATAL-живучесть; демо на macOS |
 | [056-LXD_APPLY_ROLLBACK](../../TASKS/056-LXD_APPLY_ROLLBACK/SPEC.md) | Admin-плоскость MVP: REST на том же порту, apply с валидацией-до-убийства (сабпроцесс), last-good, автооткат, старт без конфига (IDLE), рестарт из last-good; демо на macOS |
+| [057-LXD_MTLS_SERVICE](../../TASKS/057-LXD_MTLS_SERVICE/SPEC.md) | mTLS-канал (демон сам себе CA, приглашение `адрес#отпечаток#код`, одноразовый код), `client add/list/remove`, start/stop жизни ядра, память was_running, `--config-force`/`--run`/`--secret-file`, `--service=install` (macOS LaunchDaemon); сквозное mTLS-демо на macOS |
 
 ## 8. Особенности сопровождения
 
