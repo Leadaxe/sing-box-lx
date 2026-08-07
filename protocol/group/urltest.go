@@ -241,15 +241,12 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 		}
 	} else {
 		switch N.NetworkName(network) {
-		case N.NetworkTCP:
-			outbound = s.group.selectedOutboundTCP
-		case N.NetworkUDP:
-			outbound = s.group.selectedOutboundUDP
+		case N.NetworkTCP, N.NetworkUDP:
+			// lx: SPEC 054 — penalty-aware pick: аварийный режим обходит кеш
+			// selectedOutbound*; обычный — апстримная семантика (кеш, иначе Select).
+			outbound = s.group.pickForDial(N.NetworkName(network))
 		default:
 			return nil, E.Extend(N.ErrUnknownNetwork, network)
-		}
-		if outbound == nil {
-			outbound, _ = s.group.Select(network)
 		}
 	}
 	if outbound == nil {
@@ -262,6 +259,9 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 		if s.passiveCheck && N.NetworkName(network) == N.NetworkTCP {
 			s.group.markPassiveAlive(outbound.Tag())
 		}
+		if s.balancer == nil {
+			s.group.penaltyReset(RealTag(outbound)) // lx: SPEC 054 — успех = доказательство жизни
+		}
 		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
@@ -270,6 +270,12 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 	// changes pool membership. least_test keeps the upstream behaviour (drop the history).
 	if s.balancer == nil {
 		s.group.history.DeleteURLTestHistory(outbound.Tag())
+		// lx: SPEC 054 — «путь мёртв» → штраф + один fallback-дайл; успех
+		// переносит выбор группы на fallback (без Interrupt).
+		if fbConn, fallback, ok := s.group.penaltyFailoverDial(ctx, N.NetworkName(network), destination, outbound, err); ok {
+			s.logger.InfoContext(ctx, "lx penalty: failover to ", fallback.Tag())
+			return s.group.interruptGroup.NewConn(fbConn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+		}
 	}
 	return nil, err
 }
@@ -280,10 +286,9 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 	if s.balancer != nil {
 		outbound = s.selectBalanced(ctx, N.NetworkUDP, destination)
 	} else {
-		outbound = s.group.selectedOutboundUDP
-		if outbound == nil {
-			outbound, _ = s.group.Select(N.NetworkUDP)
-		}
+		// lx: SPEC 054 — общий penalty-aware выбор (штрафы копит только TCP,
+		// UDP ими пользуется).
+		outbound = s.group.pickForDial(N.NetworkUDP)
 	}
 	if outbound == nil {
 		return nil, E.New("missing supported outbound")
@@ -343,6 +348,13 @@ type URLTestGroup struct {
 	// health-check skip probing that node.
 	passiveCheck bool
 	passiveOK    sync.Map
+	// lx: SPEC 054 — penalty failover (least_test): tag → счётчик отказов «путь
+	// мёртв»; сброс только доказательством жизни (успешный дайл / ответ на пробу).
+	// forcedRetestRunning + lastForcedRetest — уровень-триггер аварийного
+	// force-прогона с дельта-лимитом от КОНЦА прошлого прогона.
+	penalties           sync.Map
+	forcedRetestRunning atomic.Bool
+	lastForcedRetest    common.TypedValue[time.Time]
 }
 
 func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManager, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, tolerance uint16, idleTimeout time.Duration, interruptExternalConnections bool) (*URLTestGroup, error) {
@@ -572,7 +584,10 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 	// suspended members with probes just to refresh delay numbers. A manual test
 	// (force) always runs. Cost: history goes stale until the passive signal
 	// lapses; the selection stays pinned to a working node — fewer switches.
-	if g.passiveCheck && !force && g.selectedPassivelyConfirmed() {
+	// lx: SPEC 054 — в аварийном режиме passive-skip отключён: рабочий запасной
+	// пассивно подтверждается, циклы пропускались бы, и оштрафованный бывший
+	// лучший никогда не получил бы пробу, которая сбрасывает его штрафы.
+	if g.passiveCheck && !force && !g.penaltyEmergency(N.NetworkTCP) && g.selectedPassivelyConfirmed() {
 		return result, nil
 	}
 	result = g.testNodes(ctx, g.outbounds, force)
@@ -621,6 +636,7 @@ func (g *URLTestGroup) testNodes(ctx context.Context, outbounds []adapter.Outbou
 				g.history.DeleteURLTestHistory(realTag)
 			} else {
 				g.logger.Debug("outbound ", tag, " available: ", t, "ms")
+				g.penaltyReset(realTag) // lx: SPEC 054 — ответ на пробу = доказательство жизни
 				g.history.StoreURLTestHistory(realTag, &adapter.URLTestHistory{
 					Time:  time.Now(),
 					Delay: t,
@@ -639,7 +655,8 @@ func (g *URLTestGroup) testNodes(ctx context.Context, outbounds []adapter.Outbou
 func (g *URLTestGroup) performUpdateCheck() {
 	var updated bool
 	var changed bool // lx: SPEC 020 — ANY selection change (incl. nil→first) re-shapes the active tree
-	if outbound, exists := g.Select(N.NetworkTCP); outbound != nil && (g.selectedOutboundTCP == nil || (exists && outbound != g.selectedOutboundTCP)) {
+	// lx: SPEC 054 — переизбор с учётом штрафов (в аварийном режиме — штрафы ↑, задержка ↑).
+	if outbound, exists := g.selectPenaltyAware(N.NetworkTCP); outbound != nil && (g.selectedOutboundTCP == nil || (exists && outbound != g.selectedOutboundTCP)) {
 		if g.selectedOutboundTCP != nil {
 			updated = true
 		}
@@ -648,7 +665,7 @@ func (g *URLTestGroup) performUpdateCheck() {
 		}
 		g.selectedOutboundTCP = outbound
 	}
-	if outbound, exists := g.Select(N.NetworkUDP); outbound != nil && (g.selectedOutboundUDP == nil || (exists && outbound != g.selectedOutboundUDP)) {
+	if outbound, exists := g.selectPenaltyAware(N.NetworkUDP); outbound != nil && (g.selectedOutboundUDP == nil || (exists && outbound != g.selectedOutboundUDP)) {
 		if g.selectedOutboundUDP != nil {
 			updated = true
 		}
