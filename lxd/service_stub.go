@@ -15,6 +15,10 @@ func InstallUserService(daemonArgs []string) error {
 	return E.New("lxd: service install-user is not implemented on this platform yet (macOS only)")
 }
 
+func DefaultServiceStateDir(user bool) string {
+	return "lxd-state"
+}
+
 func UninstallService() error {
 	return E.New("lxd: service uninstall is not implemented on this platform yet (macOS only)")
 }

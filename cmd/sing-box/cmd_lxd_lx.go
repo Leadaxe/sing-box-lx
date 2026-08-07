@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/lxd"
@@ -12,6 +13,16 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+// absPathOr resolves a path to absolute against the current working directory,
+// falling back to the input on error. Service args must be absolute because a
+// launchd/systemd unit runs with cwd "/".
+func absPathOr(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
+}
 
 var (
 	lxdListen      string
@@ -153,27 +164,34 @@ func lxdMain(cmd *cobra.Command) error {
 func runServiceAction(cmd *cobra.Command) error {
 	switch lxdService {
 	case "install":
-		return lxd.InstallService(daemonArgsForService(cmd))
+		return lxd.InstallService(daemonArgsForService(cmd, false))
 	case "install-user":
-		return lxd.InstallUserService(daemonArgsForService(cmd))
+		return lxd.InstallUserService(daemonArgsForService(cmd, true))
 	case "uninstall":
 		return lxd.UninstallService()
 	case "print":
-		return lxd.PrintService(daemonArgsForService(cmd))
+		return lxd.PrintService(daemonArgsForService(cmd, false))
 	default:
 		return E.New("--service must be install, install-user, uninstall, or print")
 	}
 }
 
 // daemonArgsForService reconstructs the daemon invocation without --service,
-// so the installed unit runs the same command the operator tested.
-func daemonArgsForService(cmd *cobra.Command) []string {
+// so the installed unit runs the same command the operator tested. Every path
+// is made absolute: a launchd service starts with cwd "/", so a relative
+// --state-dir / --config-force / -c would resolve against the filesystem root
+// and the daemon would crash-loop (observed on the first real system install).
+func daemonArgsForService(cmd *cobra.Command, userScope bool) []string {
 	args := []string{"lxd", "--listen", lxdListen}
-	if lxdStateDir != "" {
-		args = append(args, "--state-dir", lxdStateDir)
+	// --state-dir is mandatory in a service: default it to the platform's
+	// support directory (absolute) rather than the cwd-relative "lxd-state".
+	stateDir := lxdStateDir
+	if !cmd.Flags().Changed("state-dir") {
+		stateDir = lxd.DefaultServiceStateDir(userScope)
 	}
+	args = append(args, "--state-dir", absPathOr(stateDir))
 	if lxdConfigForce != "" {
-		args = append(args, "--config-force", lxdConfigForce)
+		args = append(args, "--config-force", absPathOr(lxdConfigForce))
 	}
 	if lxdRun {
 		args = append(args, "--run")
@@ -182,10 +200,10 @@ func daemonArgsForService(cmd *cobra.Command) []string {
 		args = append(args, "--tls")
 	}
 	if lxdSecretFile != "" {
-		args = append(args, "--secret-file", lxdSecretFile)
+		args = append(args, "--secret-file", absPathOr(lxdSecretFile))
 	}
 	if cmd.Root().PersistentFlags().Changed("config") && len(configPaths) == 1 {
-		args = append(args, "-c", configPaths[0])
+		args = append(args, "-c", absPathOr(configPaths[0]))
 	}
 	return args
 }

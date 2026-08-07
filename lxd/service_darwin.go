@@ -48,6 +48,16 @@ func userScope() serviceScope {
 	}
 }
 
+// DefaultServiceStateDir returns the absolute state directory a service should
+// use — beside the log, never cwd-relative (a launchd unit runs with cwd "/").
+func DefaultServiceStateDir(user bool) string {
+	scope := systemScope()
+	if user {
+		scope = userScope()
+	}
+	return filepath.Join(filepath.Dir(scope.logPath), "state")
+}
+
 // InstallService registers the daemon as a system LaunchDaemon (root).
 func InstallService(daemonArgs []string) error {
 	return installScope(systemScope(), daemonArgs)
