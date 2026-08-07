@@ -23,24 +23,44 @@ data-plane лежит.
 
 | Ручка | Тип / дефолт | Значение |
 |---|---|---|
-| `lxd run` | сабкоманда | запуск демона |
-| `-c <файл>` | путь, **необязателен** | seed-конфиг; без него демон стартует пустым (IDLE) и ждёт первый apply; каталоги `-C` не поддерживаются |
+| `lxd` | сабкоманда (голая) | запуск демона |
+| `-c <файл>` | путь, **необязателен** | seed-конфиг: используется, только когда нет last-good; без него демон стартует пустым (IDLE); каталоги `-C` не поддерживаются |
+| `--config-force <файл>` | путь | **всегда** бутиться с этого файла, поверх last-good; после успешного старта он становится last-good |
+| `--run` | флаг | форсит подъём ядра независимо от памяти run-состояния |
 | `--listen` | `host:port`, дефолт `127.0.0.1:9091` | адрес управляющего канала (обе плоскости) |
-| `--secret` | строка, дефолт пусто | Bearer-секрет обеих плоскостей; **пусто = аутентификация выключена** (только для loopback) |
-| `--state-dir` | путь, дефолт `lxd-state` | каталог состояния: last-good, кандидат, pending-маркер |
-| build-tag | `with_lx_command` | без тега сабкоманда отсутствует |
+| `--tls` | флаг | включить mTLS с регистрацией клиентов; без него — h2c (loopback-only) |
+| `--secret` | строка, дефолт пусто | Bearer обеих плоскостей; **пусто = аутентификация выключена**; виден в `ps` |
+| `--secret-file` | путь | читать Bearer из файла `0600` (предпочтительно перед `--secret`) |
+| `--state-dir` | путь, дефолт `lxd-state` (сервис — абсолютный `<support>/state`) | каталог состояния: last-good, кандидат, pending, was_running, серверная пара, доверенные клиенты |
+| `--service` | `install` \| `install-user` \| `uninstall` \| `print` | установка службой (см. ниже) |
+| `--purge` | флаг | с `--service=uninstall` — снести и state-каталог |
+| `client add [--name] / list / remove <тег>` | подкоманды | регистрация/просмотр/отзыв доверенных клиентов у живого демона |
+| build-tag | `with_lx_command` | без тега сабкоманды нет |
 
 **Admin-плоскость (REST, тот же порт, что gRPC):** `POST /admin/apply`
-(тело = конфиг, 200/422/500+`rolled_back`), `POST /admin/rollback`
-(на last-good, 404 если его нет), `GET /admin/config` (активный конфиг),
-`GET /admin/status` (`status: idle|started|fatal`, sha активного и last-good,
-`last_error`, `interrupted_apply`).
+(тело = конфиг, 200 / 422 невалидный / 500 сбой или провал старта +`rolled_back`),
+`POST /admin/rollback` (на last-good, 404 если нет), `POST /admin/start` и
+`POST /admin/stop` (жизнь ядра отдельно от конфига), `GET /admin/config`
+(активный конфиг), `GET /admin/status` (`status: idle|started|fatal`, sha
+активного и last-good, `last_error`, `interrupted_apply`), `POST /admin/enroll`
+(регистрация клиента по одноразовому коду — единственный маршрут до доверия).
+
+**mTLS (`--tls`):** демон сам себе CA — на первом старте самоподписывает
+серверную пару (стабильный отпечаток в state-dir); при нуле клиентов печатает
+приглашение `адрес#отпечаток#код`. Клиент пинит сервер по отпечатку,
+регистрируется одноразовым кодом (сгорает после одного клиента, без TTL —
+не подобрать); клиентский пин требуется на **обеих** плоскостях.
+
+**Служба (`--service`):** `install` — системный LaunchDaemon (root, для сервера,
+TUN, до логина); `install-user` — пользовательский LaunchAgent (без sudo,
+десктоп-UX); оба переносят текущую командную строку (минус `--service`) в plist,
+абсолютизируя пути, и сами создают каталоги; `print` — сухой прогон plist;
+`uninstall` (+`--purge`) — снять службу (и опц. state). macOS реализовано,
+Linux/Windows — заглушки.
 
 Дорожная карта ручек (не реализовано): confirm/dead-man, история версий
-(content-addressed), mTLS канала с регистрацией клиентов (`client add` — дизайн обсуждается,
-финал зафиксирует спека соответствующей задачи),
-SRS-хранилище, reverse-proxy внутреннего Clash API, установка системной
-службой (`service install`, systemd `LoadCredential=`), scoped-токены.
+(content-addressed), SRS-хранилище, reverse-proxy внутреннего Clash API,
+Linux/Windows-служба (systemd `LoadCredential=`), scoped-токены.
 
 ## 3. Входы / Выходы
 
@@ -101,7 +121,7 @@ SRS-хранилище, reverse-proxy внутреннего Clash API, уста
 |---|---|
 | [055-LXD_DAEMON_SKELETON](../../TASKS/055-LXD_DAEMON_SKELETON/SPEC.md) | Скелет: сабкоманда, демон, канал поверх подмен инстанса, SIGHUP-reload, FATAL-живучесть; демо на macOS |
 | [056-LXD_APPLY_ROLLBACK](../../TASKS/056-LXD_APPLY_ROLLBACK/SPEC.md) | Admin-плоскость MVP: REST на том же порту, apply с валидацией-до-убийства (сабпроцесс), last-good, автооткат, старт без конфига (IDLE), рестарт из last-good; демо на macOS |
-| [057-LXD_MTLS_SERVICE](../../TASKS/057-LXD_MTLS_SERVICE/SPEC.md) | mTLS-канал (демон сам себе CA, приглашение `адрес#отпечаток#код`, одноразовый код), `client add/list/remove`, start/stop жизни ядра, память was_running, `--config-force`/`--run`/`--secret-file`, `--service=install` (macOS LaunchDaemon); сквозное mTLS-демо на macOS |
+| [057-LXD_MTLS_SERVICE](../../TASKS/057-LXD_MTLS_SERVICE/SPEC.md) | mTLS-канал (демон сам себе CA, приглашение `адрес#отпечаток#код`, одноразовый код), `client add/list/remove`, start/stop жизни ядра, память was_running, `--config-force`/`--run`/`--secret-file`; служба `--service=install` (system LaunchDaemon) / `install-user` (LaunchAgent без sudo) / `uninstall [--purge]`, пути абсолютизируются, каталоги создаются сами; device-verified на macOS (обе роли службы, крэш-цикл на cwd-relative пути пойман и починен) |
 
 ## 8. Особенности сопровождения
 

@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — mTLS-канал с регистрацией клиентов, системная служба, start/stop, память run-состояния |
-| Статус | C (complete) — в дереве, юниты зелёные, сквозное mTLS-демо на macOS; регистрация LaunchDaemon требует sudo (за владельцем) |
+| Статус | C (complete) — в дереве, юниты зелёные, device-verified на macOS: mTLS-enrollment, обе роли службы (user без sudo + system под sudo), крэш-цикл на cwd-relative пути пойман и починен |
 | Ветка | `lx` |
 | Base | `02357244a` (SPEC 055) + дифф SPEC 056 |
 | Связанные | [SPEC 055](../055-LXD_DAEMON_SKELETON/SPEC.md), [SPEC 056](../056-LXD_APPLY_ROLLBACK/SPEC.md), [FEATURE 014](../../FEATURES/014-LXD_DAEMON/FEATURE.md) |
@@ -50,10 +50,19 @@
 **Секрет.** `--secret-file` (0600) / env поверх argv-флага `--secret`
 (виден в ps); сравнение constant-time. Bearer — второй фактор поверх пина.
 
-**Служба.** `--service=install|uninstall|print`. install: командная строка
-демона (минус `--service`) уезжает в LaunchDaemon-plist (macOS, `RunAtLoad`+
-`KeepAlive` = launchd-аналог `Restart=always`); print — сухой прогон plist без
-записи. Linux/Windows — заглушки (сегодня цель macOS).
+**Служба.** `--service=install|install-user|uninstall|print`. `install` —
+системный LaunchDaemon (root, для сервера: TUN, до логина, `/Library/…`);
+`install-user` — пользовательский LaunchAgent (без sudo, десктоп-UX как у
+обычных .app, `~/Library/…`, `gui/<uid>`). Обе роли переносят командную строку
+демона (минус `--service`) в plist (`RunAtLoad`+`KeepAlive` = launchd-аналог
+`Restart=always`), **абсолютизируя все пути** (state-dir/config-force/`-c`) — иначе
+launchd-юнит с cwd `/` крэш-циклит на относительном `--state-dir`; дефолтный
+state-dir службы = `<support>/state` (абсолютный). install сам создаёт каталоги
+лога/состояния. `print` — сухой прогон plist. `uninstall` снимает любой найденный
+scope (сначала user, потом system) и по умолчанию **оставляет** state (клиенты/
+last-good/ключи — чтобы переустановка сохранила enrollment), печатая подсказку
+про `--purge`; `--purge` сносит support-каталог. Non-interactive (без Y/N) —
+uninstall идёт из скриптов/сервиса без TTY. Linux/Windows — заглушки.
 
 ## Verification
 
@@ -68,8 +77,15 @@
   run-состояния (stop→рестарт idle; `--run`→started); приглашение не печатается
   при наличии клиента; `client list/add/remove` через живой демон;
   `--service=print` даёт корректный plist (командная строка → ProgramArguments).
-- Регистрация LaunchDaemon (`--service=install` + launchctl bootstrap) требует
-  sudo/TTY — выполняется владельцем; логика проверена через `--service=print`.
+- **Служба device-verified на macOS (обе роли):** `install-user` без sudo →
+  launchd `state = running`, `runs = 1`, `never exited`, порт слушается,
+  приглашение в логе; `KeepAlive` перезапустил после `kill -9` (новый pid);
+  `uninstall` без `--purge` оставил state + подсказку, с `--purge` снёс каталог.
+  Системный `install` (sudo, владельцем): первый прогон **поймал крэш-цикл**
+  (`runs=5`, `last exit code=1`, `mkdir lxd-state: read-only file system` —
+  относительный state-dir резолвился в `/`); после фикса абсолютных путей —
+  `state = running`, `runs = 1`, `never exited`, pid от root, порт 19093 LISTEN,
+  приглашение в логе, `uninstall --purge` снял plist и вычистил каталог.
 
 ## Из ревью 056 (внесено в этот же код)
 
