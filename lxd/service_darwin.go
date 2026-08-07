@@ -120,8 +120,11 @@ func PrintService(daemonArgs []string) error {
 }
 
 // UninstallService removes whichever scope is present (tries user first — no
-// sudo — then system).
-func UninstallService() error {
+// sudo — then system). State (trusted clients, last-good, keys) is KEPT unless
+// purge is set, so a reinstall preserves enrollment; a non-interactive hint
+// points at --purge rather than prompting (this runs from scripts/services with
+// no TTY to answer a Y/N).
+func UninstallService(purge bool) error {
 	removedAny := false
 	for _, scope := range []serviceScope{userScope(), systemScope()} {
 		if _, statErr := os.Stat(scope.plist); statErr != nil {
@@ -136,6 +139,17 @@ func UninstallService() error {
 		}
 		fmt.Println("lxd: uninstalled", scope.plist)
 		removedAny = true
+
+		supportDir := filepath.Dir(scope.logPath)
+		if purge {
+			if err := os.RemoveAll(supportDir); err != nil {
+				return E.Cause(err, "purge state directory")
+			}
+			fmt.Println("lxd: purged state at", supportDir)
+		} else if _, statErr := os.Stat(supportDir); statErr == nil {
+			fmt.Println("lxd: kept state at", supportDir, "(clients, last-good, keys)")
+			fmt.Println("lxd:   to remove it too, add --purge")
+		}
 	}
 	if !removedAny {
 		fmt.Println("lxd: no installed service found")

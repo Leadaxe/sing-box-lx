@@ -33,6 +33,7 @@ var (
 	lxdRun         bool
 	lxdTLS         bool
 	lxdService     string
+	lxdPurge       bool
 	lxdClientName  string
 )
 
@@ -99,6 +100,7 @@ func init() {
 	commandLxd.Flags().StringVar(&lxdConfigForce, "config-force", "", "always boot from this config file, overriding recorded last-good")
 	commandLxd.Flags().BoolVar(&lxdRun, "run", false, "force the core up regardless of recorded run-state")
 	commandLxd.Flags().StringVar(&lxdService, "service", "", "install (system LaunchDaemon, root) | install-user (per-user LaunchAgent, no sudo) | uninstall | print")
+	commandLxd.Flags().BoolVar(&lxdPurge, "purge", false, "with --service=uninstall: also delete the state directory (clients, last-good, keys)")
 
 	commandLxd.AddCommand(commandLxdClient)
 	commandLxdClientAdd.Flags().StringVar(&lxdClientName, "name", "", "human label for the client")
@@ -168,7 +170,7 @@ func runServiceAction(cmd *cobra.Command) error {
 	case "install-user":
 		return lxd.InstallUserService(daemonArgsForService(cmd, true))
 	case "uninstall":
-		return lxd.UninstallService()
+		return lxd.UninstallService(lxdPurge)
 	case "print":
 		return lxd.PrintService(daemonArgsForService(cmd, false))
 	default:
