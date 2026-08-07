@@ -1,0 +1,93 @@
+# SPEC: 056 — LXD_APPLY_ROLLBACK
+
+**Фича:** [LXD_DAEMON](../../FEATURES/014-LXD_DAEMON/FEATURE.md)
+
+| Поле | Значение |
+|------|----------|
+| Тип | F (feature) — admin-плоскость MVP демона `lxd`: apply с валидацией, last-good, автооткат |
+| Статус | C (complete) — в дереве, юниты зелёные, сквозное демо на macOS живьём |
+| Ветка | `lx` |
+| Base | `02357244a` (SPEC 055 — скелет) |
+| Связанные | [SPEC 055](../055-LXD_DAEMON_SKELETON/SPEC.md) (скелет), [FEATURE 014](../../FEATURES/014-LXD_DAEMON/FEATURE.md) (дорожная карта), решение владельца: admin-транспорт = REST (совместимость лаунчера: stdlib-клиент, win7 Go 1.20) |
+
+**Touches:** пакет `lxd/` (перестройка demona + новые файлы admin/store/apply),
+[cmd/sing-box/cmd_lxd_lx.go](../../../cmd/sing-box/cmd_lxd_lx.go) (флаг
+`--state-dir`, `-c` становится необязательным). Апстримные файлы — не трогаются.
+
+## Why
+
+Скелет 055 умеет применять конфиг только SIGHUP'ом с диска и наследует голую
+семантику ядра: старый инстанс убивается до разбора нового, провал = FATAL без
+отката. Лаунчеру нужен программный вход: подать конфиг строкой, узнать вердикт,
+и главное — **не потерять хост** при плохом конфиге. Плюс замечание владельца:
+демон должен подниматься вообще без конфига — голый control-plane, ядро
+оживает первым apply (модель десктопного демона апстрима).
+
+## Design
+
+**Один порт — две плоскости.** Вместо голого gRPC-сервера listener обслуживает
+HTTP-мультиплексор (паттерн апстримного api-сервиса): запросы
+`Content-Type: application/grpc` (h2c) уходят в gRPC `daemon.StartedService`,
+остальные — в admin-REST. Лаунчер ходит stdlib-клиентом, инструменты — grpcurl,
+на один и тот же адрес.
+
+**Admin-REST** (аутентификация: `Authorization: Bearer <secret>`,
+constant-time сравнение; пустой секрет = без auth, только для loopback):
+
+| Эндпоинт | Семантика |
+|---|---|
+| `POST /admin/apply` | тело = конфиг (JSON/JSONC); пайплайн ниже; 200 применён / 422 не прошёл валидацию / 500 провал старта (+`rolled_back`) |
+| `POST /admin/rollback` | немедленно применить last-good (без ревалидации); 404 если last-good нет |
+| `GET /admin/config` | активный (реально применённый) конфиг |
+| `GET /admin/status` | `{status, active_sha256, last_good_sha256, last_error, interrupted_apply}` |
+
+**Пайплайн apply** (сериализуется мьютексом; SIGHUP — тот же вход):
+
+```
+stage: candidate в state-каталог (атомарно)
+   ▼
+validate: сабпроцесс `<самого себя> check -c candidate` (таймаут 10с)
+   │        ← крэш-изоляция: паника валидации не убивает демон
+   ├─ FAIL → 422, работающий инстанс НЕ ТРОНУТ   ← «проверь до убийства»
+   ▼
+pending-маркер на диск → StartOrReloadService(кандидат)
+   ├─ OK  → last-good := кандидат (атомарно), маркер снят, 200
+   ▼
+   FAIL (bind/tun — то, что check не ловит)
+   → автооткат: StartOrReloadService(last-good), маркер снят,
+     500 {rolled_back: true|false, error}
+```
+
+**Источник конфига на старте** (по убыванию): last-good из state-каталога →
+`-c`-файл, если флаг дан явно (успешный старт записывает его как первый
+last-good) → ничего: демон слушает в IDLE, ждёт первый apply. SIGHUP без
+`-c` — no-op с логом.
+
+**Crash-инвариант:** pending-маркер ставится до применения; демон, увидевший
+его на старте, сообщает `interrupted_apply` в статусе и грузит **last-good**
+(кандидат не загружается никогда).
+
+**State-каталог** (`--state-dir`, дефолт `lxd-state`): `last_good.json`,
+`candidate.json`, `pending`; записи атомарные (tmp+fsync+rename).
+
+Вне скоупа (дорожная карта фичи): confirm/dead-man, история версий
+(content-addressed), SRS-store, TLS, health-пробы глубже «Start прошёл».
+
+## Verification
+
+- Юниты (зелёные): пайплайн на фейковом reloader'е (валидация-фейл не трогает
+  инстанс и снимает pending; провал старта откатывает, last-good не переписан,
+  статус started + причина в last_error; провал без last-good = fatal; успех
+  переписывает last-good), store (атомарность tmp-файлов, pending-жизненный
+  цикл), admin (401 без bearer, 400 на пустое тело).
+- Сборка с тегом и без (стаб), gofmt чистый.
+- Живое демо (macOS, сборка `1.14.0-lx.22-lxd2-demo`, порт 19091, обе
+  плоскости): старт БЕЗ `-c` → `status: idle`, 401 без токена, gRPC
+  `GetVersion` на том же порту; `POST /admin/apply` (JSONC с комментариями)
+  поднял ядро → `GetPool` отдал слоты; битый конфиг → **422**, пул не
+  моргнул; конфиг с портом самого демона → валидация прошла, `Start` упал
+  bind'ом → **500 `rolled_back: true`**, статус `started` + причина в
+  `last_error`, пул жив на last-good; один gRPC-стрим статусов увидел всю
+  историю (`idle→STARTING→STARTED→STOPPING→STARTING→FATAL{bind}→STARTING→
+  STARTED`) без переподключения; рестарт демона без `-c` сам поднялся из
+  last-good; SIGTERM — чистое завершение.
