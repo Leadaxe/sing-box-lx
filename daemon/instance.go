@@ -32,6 +32,7 @@ type Instance struct {
 	urlTestHistoryStorage *urltest.HistoryStorage
 	outboundManager       adapter.OutboundManager
 	endpointManager       adapter.EndpointManager
+	router                adapter.Router // lx: resolved from the context, so the attached-service path has it too (instance is nil there)
 	logFactory            log.Factory
 	runningConfig         string // lx: SPEC 037 — canonical snapshot of the started options, "" when not captured
 }
@@ -138,6 +139,7 @@ func (s *StartedService) newInstance(ctx context.Context, profileContent string,
 	i.cacheFile = service.FromContext[adapter.CacheFile](ctx)
 	i.outboundManager = service.FromContext[adapter.OutboundManager](ctx)
 	i.endpointManager = service.FromContext[adapter.EndpointManager](ctx)
+	i.router = service.FromContext[adapter.Router](ctx)
 	i.logFactory = boxInstance.LogFactory()
 	log.SetStdLogger(boxInstance.LogFactory().Logger())
 	return i, nil
@@ -154,6 +156,7 @@ func attachInstance(ctx context.Context) *Instance {
 		urlTestHistoryStorage: service.PtrFromContext[urltest.HistoryStorage](ctx),
 		outboundManager:       service.FromContext[adapter.OutboundManager](ctx),
 		endpointManager:       service.FromContext[adapter.EndpointManager](ctx),
+		router:                service.FromContext[adapter.Router](ctx),
 		logFactory:            service.FromContext[log.Factory](ctx),
 	}
 }

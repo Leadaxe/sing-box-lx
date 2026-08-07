@@ -97,6 +97,12 @@ func (s *StartedService) URLTestOutbound(ctx context.Context, request *URLTestOu
 // distinguished by isDNS. Rules are static for the lifetime of a config, so this is a
 // unary snapshot (no stream). Route fields match the Clash /rules shape; DNS rules go
 // further than Clash, which does not expose them at all.
+//
+// The router is read from instance.router — resolved from the service context by both
+// constructors — and never through instance.instance.Router(): the attached-service path
+// (services: [{type: "api"}]) leaves the *box.Box nil, so that call panicked instead of
+// answering. A nil router degrades to Unavailable, the same discipline GetRunningConfig
+// follows for its missing snapshot.
 func (s *StartedService) GetRules(ctx context.Context, empty *emptypb.Empty) (*RuleList, error) {
 	s.serviceAccess.RLock()
 	if s.serviceStatus.Status != ServiceStatus_STARTED {
@@ -106,7 +112,11 @@ func (s *StartedService) GetRules(ctx context.Context, empty *emptypb.Empty) (*R
 	boxService := s.instance
 	s.serviceAccess.RUnlock()
 
-	routeRules := boxService.instance.Router().Rules()
+	router := boxService.router
+	if router == nil {
+		return nil, status.Error(codes.Unavailable, "router is not available for this service")
+	}
+	routeRules := router.Rules()
 	rules := make([]*Rule, 0, len(routeRules))
 	for _, rule := range routeRules {
 		rules = append(rules, &Rule{
