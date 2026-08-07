@@ -299,10 +299,22 @@ type selection struct {
 	gen         int
 }
 
-func (t *Transport) selectTarget() selection {
+func (t *Transport) selectTarget() (selection, error) {
 	now := time.Now()
 	t.access.Lock()
 	defer t.access.Unlock()
+
+	// An Exchange may legally arrive before Start(StartStateStart) has filled
+	// members: box.preStart starts endpoints (together with outbounds) before
+	// DNS transports, and an early dial from that phase — e.g. a WG bind
+	// connecting through a detour chain with a domain node — resolves through
+	// this group while it is still empty. Empty members ⇔ not started
+	// (NewTransport rejects an empty server list, Start fails on any missing
+	// member), so answer with an error the caller can retry instead of
+	// panicking in the pickers below.
+	if len(t.members) == 0 {
+		return selection{}, E.New("group[", t.Tag(), "]: not started")
+	}
 
 	var clean []*member
 	for _, current := range t.members {
@@ -312,32 +324,33 @@ func (t *Transport) selectTarget() selection {
 	}
 
 	if len(clean) == 0 {
-		return selection{target: t.leastDirtyLocked(now), survival: true, gen: t.gen}
+		return selection{target: t.leastDirtyLocked(now), survival: true, gen: t.gen}, nil
 	}
 
 	switch t.mode {
 	case ModeParallel:
-		return selection{fan: append([]*member(nil), clean...), gen: t.gen}
+		return selection{fan: append([]*member(nil), clean...), gen: t.gen}, nil
 	case ModeFastest:
 		best, maxWins := t.fastestCandidatesLocked(clean, now)
 		if maxWins > 0 {
-			return selection{target: t.stickyPickLocked(best), gen: t.gen}
+			return selection{target: t.stickyPickLocked(best), gen: t.gen}, nil
 		}
 		// Nobody has a live win — election time. Single-flight: exactly one
 		// query fans; concurrents of the window go to a random clean member.
 		if !t.election {
 			t.election = true
-			return selection{fan: append([]*member(nil), clean...), election: true, gen: t.gen}
+			return selection{fan: append([]*member(nil), clean...), election: true, gen: t.gen}, nil
 		}
-		return selection{target: clean[rand.IntN(len(clean))], provisional: true, gen: t.gen}
+		return selection{target: clean[rand.IntN(len(clean))], provisional: true, gen: t.gen}, nil
 	default: // ModeStable
-		return selection{target: t.stickyPickLocked(clean), gen: t.gen}
+		return selection{target: t.stickyPickLocked(clean), gen: t.gen}, nil
 	}
 }
 
 // stickyPickLocked implements «липкость прежде случайности»: keep the
 // current target while it belongs to the candidate set; re-elect a random
-// candidate otherwise.
+// candidate otherwise. candidates must be non-empty (selectTarget gates the
+// empty-members case before any picker runs).
 func (t *Transport) stickyPickLocked(candidates []*member) *member {
 	if t.current != "" {
 		for _, candidate := range candidates {
@@ -369,7 +382,8 @@ func (t *Transport) fastestCandidatesLocked(clean []*member, now time.Time) ([]*
 }
 
 // leastDirtyLocked picks the survival target: fewest live errors, tie broken
-// by the OLDEST last error, full tie — randomly.
+// by the OLDEST last error, full tie — randomly. members must be non-empty
+// (selectTarget gates the empty-members case before any picker runs).
 func (t *Transport) leastDirtyLocked(now time.Time) *member {
 	var (
 		best      []*member
@@ -400,7 +414,10 @@ func (t *Transport) leastDirtyLocked(now time.Time) *member {
 
 func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
 	dnstrack.PushGroup(ctx, t.Tag()) // prepend: final order is inside-out
-	sel := t.selectTarget()
+	sel, err := t.selectTarget()
+	if err != nil {
+		return nil, err
+	}
 
 	if sel.fan != nil {
 		return t.fan(ctx, message, sel.fan, sel.gen, sel.election)

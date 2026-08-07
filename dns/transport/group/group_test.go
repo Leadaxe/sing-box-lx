@@ -380,6 +380,26 @@ func TestResetAmnesty(t *testing.T) {
 
 // --- validation --------------------------------------------------------------
 
+// Regression for the v1.14.0-lx.22 startup crash: box.preStart starts
+// endpoints before DNS transports, so an early dial (WG bind → detour chain
+// with a domain node) can reach the group while members is still empty.
+// That must be an error, not a panic in the pickers ("invalid argument to IntN").
+func TestExchangeBeforeStartReturnsError(t *testing.T) {
+	for _, mode := range []string{ModeStable, ModeFastest, ModeParallel} {
+		t.Run(mode, func(t *testing.T) {
+			rawTransport, err := NewTransport(context.Background(), testLogger(), "grp", option.GroupDNSServerOptions{
+				Servers: []string{"a", "b"},
+				Mode:    mode,
+			})
+			require.NoError(t, err)
+			group := rawTransport.(*Transport)
+			response, err := group.Exchange(context.Background(), testQuery())
+			require.Nil(t, response)
+			require.ErrorContains(t, err, "not started")
+		})
+	}
+}
+
 func TestConstructorValidation(t *testing.T) {
 	logger := testLogger()
 	ctx := context.Background()
