@@ -31,6 +31,12 @@ skew невозможен). Скелет фиксирует несущее св�
 `sing-box lxd run -c config.json --listen 127.0.0.1:9091 --secret …`
 (тег `with_lx_command`; без тега сабкоманды нет, пакет — пустой стаб).
 
+> ⚠️ **Синтаксис этой задачи устарел** (историческая фиксация). Актуально:
+> демон — голая команда `sing-box lxd`, а connection-флагов нет вовсе —
+> настройки живут в `<state-dir>/daemon.json`. См.
+> [SPEC 057](../057-LXD_MTLS_SERVICE/SPEC.md) и руководство
+> [docs-lx/lxd-daemon.md](../../../docs-lx/lxd-daemon.md).
+
 Порядок внутри: чтение конфига → `daemon.NewStartedService` (владеющий режим,
 тот же кодопуть, что libbox/boxdd — НЕ attached) → `daemon.NewServer` (gRPC,
 Bearer-интерцепторы, health, reflection) → listener → **и только потом**

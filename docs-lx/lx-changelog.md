@@ -15,6 +15,66 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.24-rc.1
+
+**Демон `lxd` дорос до устанавливаемой службы: apply/rollback, mTLS, свой
+ротируемый лог, установка на macOS и рецепт для Linux.**
+([SPEC 056](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/056-LXD_APPLY_ROLLBACK/SPEC.md),
+[SPEC 057](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/057-LXD_MTLS_SERVICE/SPEC.md),
+[FEATURE 014](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md),
+руководство оператора — [docs-lx/lxd-daemon.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/lxd-daemon.md))
+
+Продолжение скелета из lx.23. ⚠️ **Синтаксис изменился:** `lxd run` →
+голое `lxd`, а connection-флагов (`--listen`/`--tls`/`--secret`/`--secret-file`)
+больше нет вовсе — настройки демона живут в `<state-dir>/daemon.json` (0600), и
+вопрос «кто побеждает, файл или флаг» невозможен по построению. Без файла
+dev-запуск получает фиксированные дефолты (plain h2c на `127.0.0.1:9091`, без
+секрета); файл неявно не создаётся.
+
+**Админ-плоскость с гарантиями (056).** `POST /admin/apply` валидирует кандидата
+собственным `sing-box check`, при провале старта откатывается на last-good;
+`rollback`/`start`/`stop`/`config`/`status`, память run-состояния и прерванного
+apply через рестарты. Инфраструктурный сбой валидатора больше не выдаётся за
+вердикт по конфигу: отмена родительского запроса — 500, а не 422 («ваш конфиг
+битый» нельзя говорить, когда ничего не проверено); свой таймаут в 10 s —
+вердикт. Очередь за `applyAccess` после teardown отвечает «daemon is shutting
+down» вместо того, чтобы трогать уже снесённый сервис.
+
+**mTLS и роли (057).** Демон сам себе CA; клиент регистрируется одноразовым
+инвайтом `адрес#отпечаток#код` и дальше опознаётся по сертификату — **сертификат
+это полный мандат**, Bearer поверх не требуется (клиенты секрета не знают, и
+требование обоих запирало бы каждый лаунчер). Bearer — операторский мандат
+**loopback-only** маршрутов `client add/list/remove`: минт кода это выдача
+доверия, из сети он недоступен в принципе. Новый `GET /admin/info` отдаёт
+паспорт демона (версия, state_dir, listen, отпечаток, pid, uptime, log_path) —
+клиент не хардкодит пути.
+
+**Свой лог вместо вечного append.** Под службой (stdout не терминал) демон
+перехватывает stdout/stderr на `<support>/lxd.log` — туда попадает всё, включая
+лог ядра и паники рантайма — и ротирует по возрасту/размеру. Дефолты «≈сутки
+истории»: 24 ч, 1 бэкап, 20 МБ страховочный потолок; ключи `log_max_size_mb` /
+`log_max_backups` / `log_max_age_hours` в daemon.json. Повод конкретный:
+launchd `StandardOutPath` не ротируется — наблюдался рост до 39 МБ за ~1.5 суток
+на info-логах ядра, а `newsyslog` не умеет пути с пробелами и не покрывает
+user-scope. В терминале лог остаётся на экране.
+
+**Служба.** macOS — `--service=install` (системный LaunchDaemon) и
+`install-user` (LaunchAgent без sudo) ставят по-настоящему: сами материализуют
+daemon.json (скан свободного порта с 19091, генерация секрета, mTLS), пишут
+plist, бутстрапят и печатают сводку с одноразовым инвайтом. **Linux — только
+печать рецепта** (принцип: всё, что меняет диск, делает оператор): детект init
+по `/proc/1/comm` с фолбэками, печать ссылки на нужный раздел руководства,
+готовых к вставке `daemon.json`, unit'а systemd или init-скрипта procd и команд
+включения; секрет на экран не попадает — в рецепте стоит подстановка
+`$(head -c 32 /dev/urandom | xxd -p -c 64)`, значение рождается на хосте.
+`uninstall --purge` там тоже печатает `rm -rf`, а не выполняет. Вместо режима
+`--service=print` — флаг `--dry-run`, работающий и с install, и с uninstall.
+Windows — по-прежнему заглушка.
+
+CI получил отдельный шаг `go test -race` для `./lxd/` и `./cmd/sing-box/`:
+пакет существует только под `with_lx_command`, без явного шага его сьюта была
+«[no test files]» и молча гнила.
+
 #### v1.14.0-lx.23
 
 **Ядро больше не падает на старте с доменным узлом в detour-цепи WireGuard.**
