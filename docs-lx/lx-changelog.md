@@ -75,6 +75,27 @@ CI получил отдельный шаг `go test -race` для `./lxd/` и `
 пакет существует только под `with_lx_command`, без явного шага его сьюта была
 «[no test files]» и молча гнила.
 
+**Upstream-синк 2026-08-11.** Ветка снова на вершине `upstream/testing`
+(`4902660f8`, changelog-свод 1.14.0). `upstream/testing` был force-push'нут
+после нашего мержа 2026-08-07: формально «235 коммитов дрейфа», реально новых —
+19, взяты cherry-pick'ом (runbook §2). Заметное: DNS-кеши локального транспорта
+партиционируются по сигнатуре интерфейса (смена сети больше не отдаёт чужой
+кеш); WireGuard-хендшейк резолвит **все** адреса домен-пира и гонит их
+наперегонки (`SetEndpointResolver`, fan-out); `daemon`-подписки эндпоинтов
+переживают перезапуск сервиса (`followInstance`); hijacked-DNS получил
+process info; фиксы reset network, FakeIP async-save, Android process finder,
+unbounded-аллокаций на злом SRS (sing v0.9.0-beta.2, typed varbin) и OOM-стаба.
+Форк-сабмодули перебазированы ДО ядра (runbook §1): sing-tun → `d67734281390`
+(SPEC 040 сверху), wireguard-go → `c6c8a831ef70` (AWG2 + SPEC 041 сверху;
+разрешение `SendHandshakeInitiation` = AWG-паддинг/junk + апстримный fan-out);
+gvisor без дрейфа. Пины go.mod выровнены с upstream tip (sing v0.9.0-beta.2,
+quic-go mod.4, sing-quic beta.2, openconnect 20260810, cronet-go 20260807 —
+⚠️ musl-producer запустить вручную при следующем релизе, SPEC 023). Апстримовый
+бамп Go до 1.26.5 в CI-скриптах взят, **кроме** `setup_go_for_windows7.sh` —
+win7-джоба `lx-release.yml` остаётся на патченном go1.25.12 до девайс-прогона
+AAR (SPEC 044/049). После пере-база сабмодулей обязателен живой прогон на
+устройстве (runbook §1.4): туннель, DNS, URL-тест, WG/AWG — несколько раз.
+
 #### v1.14.0-lx.23
 
 **Ядро больше не падает на старте с доменным узлом в detour-цепи WireGuard.**
