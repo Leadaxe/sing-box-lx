@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	E "github.com/sagernet/sing/common/exceptions"
 )
@@ -80,18 +81,25 @@ func (s *store) SaveLastGood(content string) error {
 
 // SetWasRunning records whether the core should be up, so a daemon restart
 // (crash, reboot) can restore the last operator-intended state instead of a
-// fixed default — the boxdd "was running" model.
+// fixed default — the boxdd "was running" model. "stopped" is written, not
+// expressed by deleting the file: an absent file means fresh state where no
+// intent was ever recorded, and bootstrap must be able to tell the two apart
+// (a fresh install with an explicit seed boots; an operator's stop sticks).
 func (s *store) SetWasRunning(running bool) error {
 	if running {
 		return s.writeAtomic(s.runStatePath(), []byte("1"))
 	}
-	os.Remove(s.runStatePath())
-	return nil
+	return s.writeAtomic(s.runStatePath(), []byte("0"))
 }
 
-func (s *store) WasRunning() bool {
-	_, exists, _ := readOptional(s.runStatePath())
-	return exists
+// WasRunning returns the recorded run intent. recorded=false means fresh
+// state: no intent was ever written (or the state dir predates run-state).
+func (s *store) WasRunning() (running bool, recorded bool) {
+	content, exists, _ := readOptional(s.runStatePath())
+	if !exists {
+		return false, false
+	}
+	return strings.TrimSpace(content) == "1", true
 }
 
 func (s *store) clientsPath() string { return filepath.Join(s.dir, "clients.json") }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -31,15 +32,37 @@ type validateFunc func(ctx context.Context, configPath string) error
 
 const validateTimeout = 10 * time.Second
 
+// infraError marks a validation failure that is NOT a verdict on the config —
+// the validator could not run (binary missing, exec failed, request aborted).
+// Apply maps it to applyError (HTTP 500), never 422: a 422 tells the launcher
+// "your config is broken", which must not be said when nothing was checked.
+type infraError struct{ inner error }
+
+func (e infraError) Error() string { return e.inner.Error() }
+func (e infraError) Unwrap() error { return e.inner }
+
 func execSelfCheck(ctx context.Context, configPath string) error {
 	executable, err := os.Executable()
 	if err != nil {
-		return E.Cause(err, "locate own binary")
+		return infraError{E.Cause(err, "locate own binary")}
 	}
-	ctx, cancel := context.WithTimeout(ctx, validateTimeout)
+	checkCtx, cancel := context.WithTimeout(ctx, validateTimeout)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, executable, "check", "--disable-color", "-c", configPath).CombinedOutput()
+	output, err := exec.CommandContext(checkCtx, executable, "check", "--disable-color", "-c", configPath).CombinedOutput()
 	if err != nil {
+		// The parent request being canceled aborts the check mid-flight; that
+		// says nothing about the config. Our own deadline firing does: a check
+		// that cannot finish in validateTimeout is a config verdict.
+		if ctx.Err() != nil {
+			return infraError{E.Cause(ctx.Err(), "validation aborted")}
+		}
+		if checkCtx.Err() != nil {
+			return E.New("validation timed out after ", validateTimeout.String())
+		}
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			return infraError{E.Cause(err, "run validator")}
+		}
 		message := strings.TrimSpace(string(output))
 		if message == "" {
 			message = err.Error()
@@ -65,7 +88,6 @@ type applyResult struct {
 }
 
 type controller struct {
-	ctx      context.Context
 	service  reloader
 	store    *store
 	validate validateFunc
@@ -75,7 +97,17 @@ type controller struct {
 	serverFingerprint string
 	advertiseAddr     string
 
+	// Immutable identity facts served by GET /admin/info (set once in Run,
+	// before the listener starts): clients discover the daemon's home and
+	// version instead of hard-coding paths on their side.
+	infoStateDir string
+	infoTLS      bool
+	startedAt    time.Time
+
 	applyAccess sync.Mutex
+	// closed is set (under applyAccess) by the daemon teardown: admin requests
+	// that were queued behind the mutex must not touch the service afterwards.
+	closed bool
 
 	stateAccess      sync.Mutex
 	activeContent    string
@@ -121,6 +153,9 @@ func (c *controller) setFatal(err error) {
 func (c *controller) Apply(ctx context.Context, content string) applyResult {
 	c.applyAccess.Lock()
 	defer c.applyAccess.Unlock()
+	if c.closed {
+		return applyResult{Outcome: applyError, Err: E.New("daemon is shutting down")}
+	}
 
 	candidatePath, err := c.store.StageCandidate(content)
 	if err != nil {
@@ -128,6 +163,10 @@ func (c *controller) Apply(ctx context.Context, content string) applyResult {
 		return applyResult{Outcome: applyError, Err: E.Cause(err, "stage candidate")}
 	}
 	if err = c.validate(ctx, candidatePath); err != nil {
+		var infra infraError
+		if errors.As(err, &infra) {
+			return applyResult{Outcome: applyError, Err: err}
+		}
 		return applyResult{Outcome: applyRejected, Err: err}
 	}
 	if err = c.store.SetPending(contentSHA(content)); err != nil {
@@ -147,7 +186,12 @@ func (c *controller) Apply(ctx context.Context, content string) applyResult {
 	}
 
 	applyErr := err
-	lastGood, loaded, _ := c.store.LoadLastGood()
+	lastGood, loaded, loadErr := c.store.LoadLastGood()
+	if loadErr != nil {
+		// Per the store contract an IO failure is not "no file" — but at this
+		// point there is no instance either way; keep the cause visible.
+		applyErr = E.Cause(applyErr, "read last-good for rollback: "+loadErr.Error())
+	}
 	if !loaded || lastGood == content {
 		// Nothing distinct to roll back to (no last-good, or it is the very
 		// config that just failed): no running instance remains.
@@ -158,6 +202,9 @@ func (c *controller) Apply(ctx context.Context, content string) applyResult {
 		c.setFatal(rollbackErr)
 		return applyResult{Outcome: applyFailed, Err: E.Cause(applyErr, "rollback also failed: "+rollbackErr.Error())}
 	}
+	// The rollback left the core running: record the intent so a daemon
+	// restart brings it back even if this was the very first apply.
+	_ = c.store.SetWasRunning(true)
 	c.setActive(lastGood, applyErr.Error())
 	return applyResult{Outcome: applyFailed, RolledBack: true, Err: applyErr}
 }
@@ -167,7 +214,15 @@ func (c *controller) Apply(ctx context.Context, content string) applyResult {
 func (c *controller) Rollback(ctx context.Context) (applyResult, bool) {
 	c.applyAccess.Lock()
 	defer c.applyAccess.Unlock()
-	lastGood, loaded, _ := c.store.LoadLastGood()
+	if c.closed {
+		return applyResult{Outcome: applyError, Err: E.New("daemon is shutting down")}, true
+	}
+	lastGood, loaded, loadErr := c.store.LoadLastGood()
+	if loadErr != nil {
+		// An unreadable last-good is an infrastructure failure, not "nothing
+		// recorded" — a 404 would mislead the launcher into a full re-apply.
+		return applyResult{Outcome: applyError, Err: E.Cause(loadErr, "read last-good")}, true
+	}
 	if !loaded {
 		return applyResult{}, false
 	}
@@ -194,6 +249,9 @@ func (c *controller) Start(ctx context.Context) (applyResult, bool) {
 func (c *controller) Stop() error {
 	c.applyAccess.Lock()
 	defer c.applyAccess.Unlock()
+	if c.closed {
+		return E.New("daemon is shutting down")
+	}
 	_ = c.store.SetWasRunning(false)
 	if err := c.service.CloseService(); err != nil {
 		return err
