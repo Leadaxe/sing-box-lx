@@ -15,6 +15,49 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.25-rc.2
+
+**XHTTP packet-up/stream-up больше не залипает на дайле — узел за CDN
+поднимается.** ([SPEC 002](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/002-XHTTP_CLIENT_TRANSPORT/SPEC.md))
+
+Xray отдаёт stream-down только после того, как сессия получила первый
+uplink-пакет: до этого ему нечего слать вниз. Наш дайл поступал зеркально
+наоборот — ждал ответ на download-GET, прежде чем отдать conn наверх и
+позволить записать первый uplink. Ни одна сторона не двигалась. Обратный прокси
+перед Xray добивал зависший запрос своим upstream-таймаутом, поэтому наружу
+это выглядело как **`504 Gateway Timeout`**, а в LxBox — как узел с пингом
+`-1`, который «в v2rayN и NekoBox+ работает».
+
+Воспроизведено на проводе по пути VK-CDN → nginx → Xray. Эталонный клиент
+([sing-box-extended](https://github.com/shtorm-7/sing-box-extended), ядро
+NekoBox+) на том же конфиге живёт: его `OpenStream` возвращается сразу после
+установки соединения (`httptrace` `GotConn`), а ответ разбирает асинхронно.
+Сверка конфигов узла (наш `/config/running` против бинарного профиля
+NekoBox+) показала совпадение всех полей транспорта — расходилось только
+поведение дайла, `xmux` в отказе не участвовал.
+
+`dialPacketUp` и `dialStreamUp` теперь отдают conn немедленно, а RoundTrip на
+download уходит в горутину и позднее связывает reader (или ошибку). Отсюда —
+поздняя привязка reader в `packetConn` и `splitConn`: `Read` синхронизируется
+по `created`, `Close` не трогает несвязанный body, а read-дедлайн в
+`packetConn` становится настоящим (был `os.ErrInvalid`) — при несвязанном
+reader закрывать нечего, и только он способен освободить залипший `Read`.
+Регрессионный тест поднимает h2c-сервер с тем же контрактом (stream-down
+придерживается до первого uplink) и падает по старому коду в обоих режимах.
+
+Полевая проверка на устройстве обязательна до промоута: узел за VK-CDN
+(packet-up, session в header, seq в query) — туннель, URL-тест, реальный
+трафик.
+
+**Демон больше не жжёт ядро CPU при открытом лаунчере.**
+
+Лаунчер передавал `Interval:1000`, имея в виду миллисекунды; сервер читал
+значение как `time.Duration` (наносекунды) и заводил тикер на 1мкс —
+`SubscribeConnections` строил снапшоты соединений на предельной частоте
+(`top`: 0.5% ↔ 107%). Оба `Subscribe*`-стрима клампят интервал снизу до 200мс;
+положительное значение ниже пола дополнительно оставляет warn в логе демона,
+поэтому юнит-баг клиента виден сразу, а не через профилирование.
+
 #### v1.14.0-lx.25-rc.1
 
 **HTTP-пробник узла: `GetURLViaOutbound`** (SPEC 058, фича
