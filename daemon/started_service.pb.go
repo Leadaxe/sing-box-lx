@@ -6184,6 +6184,229 @@ func (x *URLTestOutboundResponse) GetError() string {
 	return ""
 }
 
+// SPEC 058 — diagnostic HTTP probe through a single node. Unlike URLTestOutbound
+// (which reports only a delay) this returns the response body, so the client can
+// answer "which exit IP / geo / warp state does THIS node give me".
+type HttpHeaderPair struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HttpHeaderPair) Reset() {
+	*x = HttpHeaderPair{}
+	mi := &file_daemon_started_service_proto_msgTypes[83]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HttpHeaderPair) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HttpHeaderPair) ProtoMessage() {}
+
+func (x *HttpHeaderPair) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_started_service_proto_msgTypes[83]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HttpHeaderPair.ProtoReflect.Descriptor instead.
+func (*HttpHeaderPair) Descriptor() ([]byte, []int) {
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{83}
+}
+
+func (x *HttpHeaderPair) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *HttpHeaderPair) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+type GetURLViaOutboundRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OutboundTag   string                 `protobuf:"bytes,1,opt,name=outboundTag,proto3" json:"outboundTag,omitempty"`
+	Link          string                 `protobuf:"bytes,2,opt,name=link,proto3" json:"link,omitempty"`
+	Timeout       uint32                 `protobuf:"varint,3,opt,name=timeout,proto3" json:"timeout,omitempty"`
+	MaxBytes      uint32                 `protobuf:"varint,4,opt,name=maxBytes,proto3" json:"maxBytes,omitempty"`
+	Headers       []*HttpHeaderPair      `protobuf:"bytes,5,rep,name=headers,proto3" json:"headers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetURLViaOutboundRequest) Reset() {
+	*x = GetURLViaOutboundRequest{}
+	mi := &file_daemon_started_service_proto_msgTypes[84]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetURLViaOutboundRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetURLViaOutboundRequest) ProtoMessage() {}
+
+func (x *GetURLViaOutboundRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_started_service_proto_msgTypes[84]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetURLViaOutboundRequest.ProtoReflect.Descriptor instead.
+func (*GetURLViaOutboundRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{84}
+}
+
+func (x *GetURLViaOutboundRequest) GetOutboundTag() string {
+	if x != nil {
+		return x.OutboundTag
+	}
+	return ""
+}
+
+func (x *GetURLViaOutboundRequest) GetLink() string {
+	if x != nil {
+		return x.Link
+	}
+	return ""
+}
+
+func (x *GetURLViaOutboundRequest) GetTimeout() uint32 {
+	if x != nil {
+		return x.Timeout
+	}
+	return 0
+}
+
+func (x *GetURLViaOutboundRequest) GetMaxBytes() uint32 {
+	if x != nil {
+		return x.MaxBytes
+	}
+	return 0
+}
+
+func (x *GetURLViaOutboundRequest) GetHeaders() []*HttpHeaderPair {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+type GetURLViaOutboundResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	HttpStatus    uint32                 `protobuf:"varint,1,opt,name=httpStatus,proto3" json:"httpStatus,omitempty"`
+	Body          []byte                 `protobuf:"bytes,2,opt,name=body,proto3" json:"body,omitempty"` // bytes, not string: an arbitrary endpoint is not guaranteed valid UTF-8
+	Truncated     bool                   `protobuf:"varint,3,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	ContentType   string                 `protobuf:"bytes,4,opt,name=contentType,proto3" json:"contentType,omitempty"`
+	RemoteAddr    string                 `protobuf:"bytes,5,opt,name=remoteAddr,proto3" json:"remoteAddr,omitempty"`
+	ElapsedMs     uint32                 `protobuf:"varint,6,opt,name=elapsedMs,proto3" json:"elapsedMs,omitempty"`
+	Error         string                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetURLViaOutboundResponse) Reset() {
+	*x = GetURLViaOutboundResponse{}
+	mi := &file_daemon_started_service_proto_msgTypes[85]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetURLViaOutboundResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetURLViaOutboundResponse) ProtoMessage() {}
+
+func (x *GetURLViaOutboundResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_started_service_proto_msgTypes[85]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetURLViaOutboundResponse.ProtoReflect.Descriptor instead.
+func (*GetURLViaOutboundResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{85}
+}
+
+func (x *GetURLViaOutboundResponse) GetHttpStatus() uint32 {
+	if x != nil {
+		return x.HttpStatus
+	}
+	return 0
+}
+
+func (x *GetURLViaOutboundResponse) GetBody() []byte {
+	if x != nil {
+		return x.Body
+	}
+	return nil
+}
+
+func (x *GetURLViaOutboundResponse) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
+}
+
+func (x *GetURLViaOutboundResponse) GetContentType() string {
+	if x != nil {
+		return x.ContentType
+	}
+	return ""
+}
+
+func (x *GetURLViaOutboundResponse) GetRemoteAddr() string {
+	if x != nil {
+		return x.RemoteAddr
+	}
+	return ""
+}
+
+func (x *GetURLViaOutboundResponse) GetElapsedMs() uint32 {
+	if x != nil {
+		return x.ElapsedMs
+	}
+	return 0
+}
+
+func (x *GetURLViaOutboundResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 type Rule struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
@@ -6196,7 +6419,7 @@ type Rule struct {
 
 func (x *Rule) Reset() {
 	*x = Rule{}
-	mi := &file_daemon_started_service_proto_msgTypes[83]
+	mi := &file_daemon_started_service_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6208,7 +6431,7 @@ func (x *Rule) String() string {
 func (*Rule) ProtoMessage() {}
 
 func (x *Rule) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[83]
+	mi := &file_daemon_started_service_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6221,7 +6444,7 @@ func (x *Rule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Rule.ProtoReflect.Descriptor instead.
 func (*Rule) Descriptor() ([]byte, []int) {
-	return file_daemon_started_service_proto_rawDescGZIP(), []int{83}
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{86}
 }
 
 func (x *Rule) GetType() string {
@@ -6261,7 +6484,7 @@ type RuleList struct {
 
 func (x *RuleList) Reset() {
 	*x = RuleList{}
-	mi := &file_daemon_started_service_proto_msgTypes[84]
+	mi := &file_daemon_started_service_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6273,7 +6496,7 @@ func (x *RuleList) String() string {
 func (*RuleList) ProtoMessage() {}
 
 func (x *RuleList) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[84]
+	mi := &file_daemon_started_service_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6286,7 +6509,7 @@ func (x *RuleList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuleList.ProtoReflect.Descriptor instead.
 func (*RuleList) Descriptor() ([]byte, []int) {
-	return file_daemon_started_service_proto_rawDescGZIP(), []int{84}
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *RuleList) GetRules() []*Rule {
@@ -6311,7 +6534,7 @@ type SubscribeDNSQueriesRequest struct {
 
 func (x *SubscribeDNSQueriesRequest) Reset() {
 	*x = SubscribeDNSQueriesRequest{}
-	mi := &file_daemon_started_service_proto_msgTypes[85]
+	mi := &file_daemon_started_service_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6323,7 +6546,7 @@ func (x *SubscribeDNSQueriesRequest) String() string {
 func (*SubscribeDNSQueriesRequest) ProtoMessage() {}
 
 func (x *SubscribeDNSQueriesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[85]
+	mi := &file_daemon_started_service_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6336,7 +6559,7 @@ func (x *SubscribeDNSQueriesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeDNSQueriesRequest.ProtoReflect.Descriptor instead.
 func (*SubscribeDNSQueriesRequest) Descriptor() ([]byte, []int) {
-	return file_daemon_started_service_proto_rawDescGZIP(), []int{85}
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{88}
 }
 
 func (x *SubscribeDNSQueriesRequest) GetIncludeAnswers() bool {
@@ -6380,7 +6603,7 @@ type DnsQueryEvent struct {
 
 func (x *DnsQueryEvent) Reset() {
 	*x = DnsQueryEvent{}
-	mi := &file_daemon_started_service_proto_msgTypes[86]
+	mi := &file_daemon_started_service_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6392,7 +6615,7 @@ func (x *DnsQueryEvent) String() string {
 func (*DnsQueryEvent) ProtoMessage() {}
 
 func (x *DnsQueryEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[86]
+	mi := &file_daemon_started_service_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6405,7 +6628,7 @@ func (x *DnsQueryEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DnsQueryEvent.ProtoReflect.Descriptor instead.
 func (*DnsQueryEvent) Descriptor() ([]byte, []int) {
-	return file_daemon_started_service_proto_rawDescGZIP(), []int{86}
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{89}
 }
 
 func (x *DnsQueryEvent) GetDomain() string {
@@ -6535,7 +6758,7 @@ type DnsGroupAttempt struct {
 
 func (x *DnsGroupAttempt) Reset() {
 	*x = DnsGroupAttempt{}
-	mi := &file_daemon_started_service_proto_msgTypes[87]
+	mi := &file_daemon_started_service_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6547,7 +6770,7 @@ func (x *DnsGroupAttempt) String() string {
 func (*DnsGroupAttempt) ProtoMessage() {}
 
 func (x *DnsGroupAttempt) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[87]
+	mi := &file_daemon_started_service_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6560,7 +6783,7 @@ func (x *DnsGroupAttempt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DnsGroupAttempt.ProtoReflect.Descriptor instead.
 func (*DnsGroupAttempt) Descriptor() ([]byte, []int) {
-	return file_daemon_started_service_proto_rawDescGZIP(), []int{87}
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{90}
 }
 
 func (x *DnsGroupAttempt) GetServer() string {
@@ -6603,7 +6826,7 @@ type DnsAnswer struct {
 
 func (x *DnsAnswer) Reset() {
 	*x = DnsAnswer{}
-	mi := &file_daemon_started_service_proto_msgTypes[88]
+	mi := &file_daemon_started_service_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6615,7 +6838,7 @@ func (x *DnsAnswer) String() string {
 func (*DnsAnswer) ProtoMessage() {}
 
 func (x *DnsAnswer) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[88]
+	mi := &file_daemon_started_service_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6628,7 +6851,7 @@ func (x *DnsAnswer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DnsAnswer.ProtoReflect.Descriptor instead.
 func (*DnsAnswer) Descriptor() ([]byte, []int) {
-	return file_daemon_started_service_proto_rawDescGZIP(), []int{88}
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{91}
 }
 
 func (x *DnsAnswer) GetName() string {
@@ -6672,7 +6895,7 @@ type GetPoolRequest struct {
 
 func (x *GetPoolRequest) Reset() {
 	*x = GetPoolRequest{}
-	mi := &file_daemon_started_service_proto_msgTypes[89]
+	mi := &file_daemon_started_service_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6684,7 +6907,7 @@ func (x *GetPoolRequest) String() string {
 func (*GetPoolRequest) ProtoMessage() {}
 
 func (x *GetPoolRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[89]
+	mi := &file_daemon_started_service_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6697,7 +6920,7 @@ func (x *GetPoolRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPoolRequest.ProtoReflect.Descriptor instead.
 func (*GetPoolRequest) Descriptor() ([]byte, []int) {
-	return file_daemon_started_service_proto_rawDescGZIP(), []int{89}
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{92}
 }
 
 func (x *GetPoolRequest) GetGroupTag() string {
@@ -6718,7 +6941,7 @@ type PoolSlot struct {
 
 func (x *PoolSlot) Reset() {
 	*x = PoolSlot{}
-	mi := &file_daemon_started_service_proto_msgTypes[90]
+	mi := &file_daemon_started_service_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6730,7 +6953,7 @@ func (x *PoolSlot) String() string {
 func (*PoolSlot) ProtoMessage() {}
 
 func (x *PoolSlot) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[90]
+	mi := &file_daemon_started_service_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6743,7 +6966,7 @@ func (x *PoolSlot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PoolSlot.ProtoReflect.Descriptor instead.
 func (*PoolSlot) Descriptor() ([]byte, []int) {
-	return file_daemon_started_service_proto_rawDescGZIP(), []int{90}
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{93}
 }
 
 func (x *PoolSlot) GetSlot() uint32 {
@@ -6776,7 +6999,7 @@ type PoolList struct {
 
 func (x *PoolList) Reset() {
 	*x = PoolList{}
-	mi := &file_daemon_started_service_proto_msgTypes[91]
+	mi := &file_daemon_started_service_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6788,7 +7011,7 @@ func (x *PoolList) String() string {
 func (*PoolList) ProtoMessage() {}
 
 func (x *PoolList) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[91]
+	mi := &file_daemon_started_service_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6801,7 +7024,7 @@ func (x *PoolList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PoolList.ProtoReflect.Descriptor instead.
 func (*PoolList) Descriptor() ([]byte, []int) {
-	return file_daemon_started_service_proto_rawDescGZIP(), []int{91}
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{94}
 }
 
 func (x *PoolList) GetSlots() []*PoolSlot {
@@ -6834,7 +7057,7 @@ type DnsGroupMember struct {
 
 func (x *DnsGroupMember) Reset() {
 	*x = DnsGroupMember{}
-	mi := &file_daemon_started_service_proto_msgTypes[92]
+	mi := &file_daemon_started_service_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6846,7 +7069,7 @@ func (x *DnsGroupMember) String() string {
 func (*DnsGroupMember) ProtoMessage() {}
 
 func (x *DnsGroupMember) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[92]
+	mi := &file_daemon_started_service_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6859,7 +7082,7 @@ func (x *DnsGroupMember) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DnsGroupMember.ProtoReflect.Descriptor instead.
 func (*DnsGroupMember) Descriptor() ([]byte, []int) {
-	return file_daemon_started_service_proto_rawDescGZIP(), []int{92}
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{95}
 }
 
 func (x *DnsGroupMember) GetTag() string {
@@ -6930,7 +7153,7 @@ type DnsGroupState struct {
 
 func (x *DnsGroupState) Reset() {
 	*x = DnsGroupState{}
-	mi := &file_daemon_started_service_proto_msgTypes[93]
+	mi := &file_daemon_started_service_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6942,7 +7165,7 @@ func (x *DnsGroupState) String() string {
 func (*DnsGroupState) ProtoMessage() {}
 
 func (x *DnsGroupState) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[93]
+	mi := &file_daemon_started_service_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6955,7 +7178,7 @@ func (x *DnsGroupState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DnsGroupState.ProtoReflect.Descriptor instead.
 func (*DnsGroupState) Descriptor() ([]byte, []int) {
-	return file_daemon_started_service_proto_rawDescGZIP(), []int{93}
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{96}
 }
 
 func (x *DnsGroupState) GetTag() string {
@@ -6995,7 +7218,7 @@ type DnsGroupList struct {
 
 func (x *DnsGroupList) Reset() {
 	*x = DnsGroupList{}
-	mi := &file_daemon_started_service_proto_msgTypes[94]
+	mi := &file_daemon_started_service_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7007,7 +7230,7 @@ func (x *DnsGroupList) String() string {
 func (*DnsGroupList) ProtoMessage() {}
 
 func (x *DnsGroupList) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[94]
+	mi := &file_daemon_started_service_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7020,7 +7243,7 @@ func (x *DnsGroupList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DnsGroupList.ProtoReflect.Descriptor instead.
 func (*DnsGroupList) Descriptor() ([]byte, []int) {
-	return file_daemon_started_service_proto_rawDescGZIP(), []int{94}
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{97}
 }
 
 func (x *DnsGroupList) GetGroups() []*DnsGroupState {
@@ -7044,7 +7267,7 @@ type RunningConfig struct {
 
 func (x *RunningConfig) Reset() {
 	*x = RunningConfig{}
-	mi := &file_daemon_started_service_proto_msgTypes[95]
+	mi := &file_daemon_started_service_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7056,7 +7279,7 @@ func (x *RunningConfig) String() string {
 func (*RunningConfig) ProtoMessage() {}
 
 func (x *RunningConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[95]
+	mi := &file_daemon_started_service_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7069,7 +7292,7 @@ func (x *RunningConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunningConfig.ProtoReflect.Descriptor instead.
 func (*RunningConfig) Descriptor() ([]byte, []int) {
-	return file_daemon_started_service_proto_rawDescGZIP(), []int{95}
+	return file_daemon_started_service_proto_rawDescGZIP(), []int{98}
 }
 
 func (x *RunningConfig) GetContent() string {
@@ -7089,7 +7312,7 @@ type Log_Message struct {
 
 func (x *Log_Message) Reset() {
 	*x = Log_Message{}
-	mi := &file_daemon_started_service_proto_msgTypes[96]
+	mi := &file_daemon_started_service_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7101,7 +7324,7 @@ func (x *Log_Message) String() string {
 func (*Log_Message) ProtoMessage() {}
 
 func (x *Log_Message) ProtoReflect() protoreflect.Message {
-	mi := &file_daemon_started_service_proto_msgTypes[96]
+	mi := &file_daemon_started_service_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7615,7 +7838,28 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\atimeout\x18\x03 \x01(\rR\atimeout\"E\n" +
 	"\x17URLTestOutboundResponse\x12\x14\n" +
 	"\x05delay\x18\x01 \x01(\rR\x05delay\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"b\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"8\n" +
+	"\x0eHttpHeaderPair\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"\xb8\x01\n" +
+	"\x18GetURLViaOutboundRequest\x12 \n" +
+	"\voutboundTag\x18\x01 \x01(\tR\voutboundTag\x12\x12\n" +
+	"\x04link\x18\x02 \x01(\tR\x04link\x12\x18\n" +
+	"\atimeout\x18\x03 \x01(\rR\atimeout\x12\x1a\n" +
+	"\bmaxBytes\x18\x04 \x01(\rR\bmaxBytes\x120\n" +
+	"\aheaders\x18\x05 \x03(\v2\x16.daemon.HttpHeaderPairR\aheaders\"\xe3\x01\n" +
+	"\x19GetURLViaOutboundResponse\x12\x1e\n" +
+	"\n" +
+	"httpStatus\x18\x01 \x01(\rR\n" +
+	"httpStatus\x12\x12\n" +
+	"\x04body\x18\x02 \x01(\fR\x04body\x12\x1c\n" +
+	"\ttruncated\x18\x03 \x01(\bR\ttruncated\x12 \n" +
+	"\vcontentType\x18\x04 \x01(\tR\vcontentType\x12\x1e\n" +
+	"\n" +
+	"remoteAddr\x18\x05 \x01(\tR\n" +
+	"remoteAddr\x12\x1c\n" +
+	"\telapsedMs\x18\x06 \x01(\rR\telapsedMs\x12\x14\n" +
+	"\x05error\x18\a \x01(\tR\x05error\"b\n" +
 	"\x04Rule\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x18\n" +
 	"\apayload\x18\x02 \x01(\tR\apayload\x12\x16\n" +
@@ -7707,7 +7951,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x17USB_BACKEND_LINUX_SYSFS\x10\x01\x12\x17\n" +
 	"\x13USB_BACKEND_DYNAMIC\x10\x02\x12\x1c\n" +
 	"\x18USB_BACKEND_DARWIN_IOKIT\x10\x03\x12\x1f\n" +
-	"\x1bUSB_BACKEND_WINDOWS_VBOXUSB\x10\x042\x97\x19\n" +
+	"\x1bUSB_BACKEND_WINDOWS_VBOXUSB\x10\x042\xf3\x19\n" +
 	"\x0eStartedService\x127\n" +
 	"\n" +
 	"GetVersion\x12\x16.google.protobuf.Empty\x1a\x0f.daemon.Version\"\x00\x12K\n" +
@@ -7751,7 +7995,8 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\x13SubscribeDNSQueries\x12\".daemon.SubscribeDNSQueriesRequest\x1a\x15.daemon.DnsQueryEvent\"\x000\x01\x125\n" +
 	"\aGetPool\x12\x16.daemon.GetPoolRequest\x1a\x10.daemon.PoolList\"\x00\x12>\n" +
 	"\fGetDNSGroups\x12\x16.google.protobuf.Empty\x1a\x14.daemon.DnsGroupList\"\x00\x12C\n" +
-	"\x10GetRunningConfig\x12\x16.google.protobuf.Empty\x1a\x15.daemon.RunningConfig\"\x00B%Z#github.com/sagernet/sing-box/daemonb\x06proto3"
+	"\x10GetRunningConfig\x12\x16.google.protobuf.Empty\x1a\x15.daemon.RunningConfig\"\x00\x12Z\n" +
+	"\x11GetURLViaOutbound\x12 .daemon.GetURLViaOutboundRequest\x1a!.daemon.GetURLViaOutboundResponse\"\x00B%Z#github.com/sagernet/sing-box/daemonb\x06proto3"
 
 var (
 	file_daemon_started_service_proto_rawDescOnce sync.Once
@@ -7767,7 +8012,7 @@ func file_daemon_started_service_proto_rawDescGZIP() []byte {
 
 var (
 	file_daemon_started_service_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-	file_daemon_started_service_proto_msgTypes  = make([]protoimpl.MessageInfo, 98)
+	file_daemon_started_service_proto_msgTypes  = make([]protoimpl.MessageInfo, 101)
 	file_daemon_started_service_proto_goTypes   = []any{
 		LogLevel(0),                               // 0: daemon.LogLevel
 		ConnectionEventType(0),                    // 1: daemon.ConnectionEventType
@@ -7857,28 +8102,31 @@ var (
 		(*OpenVPNChallengeCancel)(nil),            // 85: daemon.OpenVPNChallengeCancel
 		(*URLTestOutboundRequest)(nil),            // 86: daemon.URLTestOutboundRequest
 		(*URLTestOutboundResponse)(nil),           // 87: daemon.URLTestOutboundResponse
-		(*Rule)(nil),                              // 88: daemon.Rule
-		(*RuleList)(nil),                          // 89: daemon.RuleList
-		(*SubscribeDNSQueriesRequest)(nil),        // 90: daemon.SubscribeDNSQueriesRequest
-		(*DnsQueryEvent)(nil),                     // 91: daemon.DnsQueryEvent
-		(*DnsGroupAttempt)(nil),                   // 92: daemon.DnsGroupAttempt
-		(*DnsAnswer)(nil),                         // 93: daemon.DnsAnswer
-		(*GetPoolRequest)(nil),                    // 94: daemon.GetPoolRequest
-		(*PoolSlot)(nil),                          // 95: daemon.PoolSlot
-		(*PoolList)(nil),                          // 96: daemon.PoolList
-		(*DnsGroupMember)(nil),                    // 97: daemon.DnsGroupMember
-		(*DnsGroupState)(nil),                     // 98: daemon.DnsGroupState
-		(*DnsGroupList)(nil),                      // 99: daemon.DnsGroupList
-		(*RunningConfig)(nil),                     // 100: daemon.RunningConfig
-		(*Log_Message)(nil),                       // 101: daemon.Log.Message
-		nil,                                       // 102: daemon.OpenConnectAuthFormResponse.ValuesEntry
-		(*emptypb.Empty)(nil),                     // 103: google.protobuf.Empty
+		(*HttpHeaderPair)(nil),                    // 88: daemon.HttpHeaderPair
+		(*GetURLViaOutboundRequest)(nil),          // 89: daemon.GetURLViaOutboundRequest
+		(*GetURLViaOutboundResponse)(nil),         // 90: daemon.GetURLViaOutboundResponse
+		(*Rule)(nil),                              // 91: daemon.Rule
+		(*RuleList)(nil),                          // 92: daemon.RuleList
+		(*SubscribeDNSQueriesRequest)(nil),        // 93: daemon.SubscribeDNSQueriesRequest
+		(*DnsQueryEvent)(nil),                     // 94: daemon.DnsQueryEvent
+		(*DnsGroupAttempt)(nil),                   // 95: daemon.DnsGroupAttempt
+		(*DnsAnswer)(nil),                         // 96: daemon.DnsAnswer
+		(*GetPoolRequest)(nil),                    // 97: daemon.GetPoolRequest
+		(*PoolSlot)(nil),                          // 98: daemon.PoolSlot
+		(*PoolList)(nil),                          // 99: daemon.PoolList
+		(*DnsGroupMember)(nil),                    // 100: daemon.DnsGroupMember
+		(*DnsGroupState)(nil),                     // 101: daemon.DnsGroupState
+		(*DnsGroupList)(nil),                      // 102: daemon.DnsGroupList
+		(*RunningConfig)(nil),                     // 103: daemon.RunningConfig
+		(*Log_Message)(nil),                       // 104: daemon.Log.Message
+		nil,                                       // 105: daemon.OpenConnectAuthFormResponse.ValuesEntry
+		(*emptypb.Empty)(nil),                     // 106: google.protobuf.Empty
 	}
 )
 
 var file_daemon_started_service_proto_depIdxs = []int32{
 	4,   // 0: daemon.ServiceStatus.status:type_name -> daemon.ServiceStatus.Type
-	101, // 1: daemon.Log.messages:type_name -> daemon.Log.Message
+	104, // 1: daemon.Log.messages:type_name -> daemon.Log.Message
 	0,   // 2: daemon.DefaultLogLevel.level:type_name -> daemon.LogLevel
 	12,  // 3: daemon.Groups.group:type_name -> daemon.Group
 	13,  // 4: daemon.Group.items:type_name -> daemon.GroupItem
@@ -7924,7 +8172,7 @@ var file_daemon_started_service_proto_depIdxs = []int32{
 	73,  // 44: daemon.OpenConnectAuthChallenge.browser:type_name -> daemon.OpenConnectBrowserRequest
 	71,  // 45: daemon.OpenConnectAuthForm.fields:type_name -> daemon.OpenConnectAuthFormField
 	72,  // 46: daemon.OpenConnectAuthFormField.options:type_name -> daemon.OpenConnectAuthFormChoice
-	102, // 47: daemon.OpenConnectAuthFormResponse.values:type_name -> daemon.OpenConnectAuthFormResponse.ValuesEntry
+	105, // 47: daemon.OpenConnectAuthFormResponse.values:type_name -> daemon.OpenConnectAuthFormResponse.ValuesEntry
 	74,  // 48: daemon.OpenConnectBrowserResult.cookies:type_name -> daemon.OpenConnectBrowserCookie
 	75,  // 49: daemon.OpenConnectBrowserResult.headers:type_name -> daemon.OpenConnectBrowserHeader
 	76,  // 50: daemon.OpenConnectAuthResponseSubmission.form:type_name -> daemon.OpenConnectAuthFormResponse
@@ -7932,103 +8180,106 @@ var file_daemon_started_service_proto_depIdxs = []int32{
 	81,  // 52: daemon.OpenVPNStatusUpdate.endpoints:type_name -> daemon.OpenVPNEndpointStatus
 	83,  // 53: daemon.OpenVPNEndpointStatus.challenge:type_name -> daemon.OpenVPNChallenge
 	82,  // 54: daemon.OpenVPNEndpointStatus.tunnelInfo:type_name -> daemon.OpenVPNTunnelInfo
-	88,  // 55: daemon.RuleList.rules:type_name -> daemon.Rule
-	23,  // 56: daemon.DnsQueryEvent.processInfo:type_name -> daemon.ProcessInfo
-	93,  // 57: daemon.DnsQueryEvent.answers:type_name -> daemon.DnsAnswer
-	92,  // 58: daemon.DnsQueryEvent.attempts:type_name -> daemon.DnsGroupAttempt
-	95,  // 59: daemon.PoolList.slots:type_name -> daemon.PoolSlot
-	97,  // 60: daemon.DnsGroupState.members:type_name -> daemon.DnsGroupMember
-	98,  // 61: daemon.DnsGroupList.groups:type_name -> daemon.DnsGroupState
-	0,   // 62: daemon.Log.Message.level:type_name -> daemon.LogLevel
-	103, // 63: daemon.StartedService.GetVersion:input_type -> google.protobuf.Empty
-	103, // 64: daemon.StartedService.SubscribeServiceStatus:input_type -> google.protobuf.Empty
-	103, // 65: daemon.StartedService.SubscribeLog:input_type -> google.protobuf.Empty
-	103, // 66: daemon.StartedService.GetDefaultLogLevel:input_type -> google.protobuf.Empty
-	103, // 67: daemon.StartedService.ClearLogs:input_type -> google.protobuf.Empty
-	7,   // 68: daemon.StartedService.SubscribeStatus:input_type -> daemon.SubscribeStatusRequest
-	103, // 69: daemon.StartedService.SubscribeGroups:input_type -> google.protobuf.Empty
-	103, // 70: daemon.StartedService.GetClashModeStatus:input_type -> google.protobuf.Empty
-	103, // 71: daemon.StartedService.SubscribeClashMode:input_type -> google.protobuf.Empty
-	17,  // 72: daemon.StartedService.SetClashMode:input_type -> daemon.ClashMode
-	14,  // 73: daemon.StartedService.URLTest:input_type -> daemon.URLTestRequest
-	15,  // 74: daemon.StartedService.SelectOutbound:input_type -> daemon.SelectOutboundRequest
-	16,  // 75: daemon.StartedService.SetGroupExpand:input_type -> daemon.SetGroupExpandRequest
-	19,  // 76: daemon.StartedService.SubscribeConnections:input_type -> daemon.SubscribeConnectionsRequest
-	24,  // 77: daemon.StartedService.CloseConnection:input_type -> daemon.CloseConnectionRequest
-	103, // 78: daemon.StartedService.CloseAllConnections:input_type -> google.protobuf.Empty
-	103, // 79: daemon.StartedService.GetDeprecatedWarnings:input_type -> google.protobuf.Empty
-	103, // 80: daemon.StartedService.GetStartedAt:input_type -> google.protobuf.Empty
-	103, // 81: daemon.StartedService.SubscribeOutbounds:input_type -> google.protobuf.Empty
-	29,  // 82: daemon.StartedService.StartNetworkQualityTest:input_type -> daemon.NetworkQualityTestRequest
-	31,  // 83: daemon.StartedService.StartSTUNTest:input_type -> daemon.STUNTestRequest
-	103, // 84: daemon.StartedService.SubscribeTailscaleStatus:input_type -> google.protobuf.Empty
-	37,  // 85: daemon.StartedService.StartTailscalePing:input_type -> daemon.TailscalePingRequest
-	39,  // 86: daemon.StartedService.SetTailscaleExitNode:input_type -> daemon.SetTailscaleExitNodeRequest
-	40,  // 87: daemon.StartedService.TailscaleLogout:input_type -> daemon.TailscaleLogoutRequest
-	41,  // 88: daemon.StartedService.StartTailscaleSSHSession:input_type -> daemon.TailscaleSSHClientMessage
-	51,  // 89: daemon.StartedService.ProvideUSBDevices:input_type -> daemon.USBProviderMessage
-	103, // 90: daemon.StartedService.SubscribeUSBIPServerStatus:input_type -> google.protobuf.Empty
-	103, // 91: daemon.StartedService.SubscribeOpenConnectStatus:input_type -> google.protobuf.Empty
-	78,  // 92: daemon.StartedService.SubmitOpenConnectAuthResponse:input_type -> daemon.OpenConnectAuthResponseSubmission
-	79,  // 93: daemon.StartedService.CancelOpenConnectAuthChallenge:input_type -> daemon.OpenConnectAuthChallengeCancel
-	103, // 94: daemon.StartedService.SubscribeOpenVPNStatus:input_type -> google.protobuf.Empty
-	84,  // 95: daemon.StartedService.SubmitOpenVPNChallengeResponse:input_type -> daemon.OpenVPNChallengeSubmission
-	85,  // 96: daemon.StartedService.CancelOpenVPNChallenge:input_type -> daemon.OpenVPNChallengeCancel
-	86,  // 97: daemon.StartedService.URLTestOutbound:input_type -> daemon.URLTestOutboundRequest
-	103, // 98: daemon.StartedService.GetRules:input_type -> google.protobuf.Empty
-	103, // 99: daemon.StartedService.GetGroups:input_type -> google.protobuf.Empty
-	103, // 100: daemon.StartedService.GetOutbounds:input_type -> google.protobuf.Empty
-	90,  // 101: daemon.StartedService.SubscribeDNSQueries:input_type -> daemon.SubscribeDNSQueriesRequest
-	94,  // 102: daemon.StartedService.GetPool:input_type -> daemon.GetPoolRequest
-	103, // 103: daemon.StartedService.GetDNSGroups:input_type -> google.protobuf.Empty
-	103, // 104: daemon.StartedService.GetRunningConfig:input_type -> google.protobuf.Empty
-	5,   // 105: daemon.StartedService.GetVersion:output_type -> daemon.Version
-	6,   // 106: daemon.StartedService.SubscribeServiceStatus:output_type -> daemon.ServiceStatus
-	8,   // 107: daemon.StartedService.SubscribeLog:output_type -> daemon.Log
-	9,   // 108: daemon.StartedService.GetDefaultLogLevel:output_type -> daemon.DefaultLogLevel
-	103, // 109: daemon.StartedService.ClearLogs:output_type -> google.protobuf.Empty
-	10,  // 110: daemon.StartedService.SubscribeStatus:output_type -> daemon.Status
-	11,  // 111: daemon.StartedService.SubscribeGroups:output_type -> daemon.Groups
-	18,  // 112: daemon.StartedService.GetClashModeStatus:output_type -> daemon.ClashModeStatus
-	17,  // 113: daemon.StartedService.SubscribeClashMode:output_type -> daemon.ClashMode
-	103, // 114: daemon.StartedService.SetClashMode:output_type -> google.protobuf.Empty
-	103, // 115: daemon.StartedService.URLTest:output_type -> google.protobuf.Empty
-	103, // 116: daemon.StartedService.SelectOutbound:output_type -> google.protobuf.Empty
-	103, // 117: daemon.StartedService.SetGroupExpand:output_type -> google.protobuf.Empty
-	21,  // 118: daemon.StartedService.SubscribeConnections:output_type -> daemon.ConnectionEvents
-	103, // 119: daemon.StartedService.CloseConnection:output_type -> google.protobuf.Empty
-	103, // 120: daemon.StartedService.CloseAllConnections:output_type -> google.protobuf.Empty
-	25,  // 121: daemon.StartedService.GetDeprecatedWarnings:output_type -> daemon.DeprecatedWarnings
-	27,  // 122: daemon.StartedService.GetStartedAt:output_type -> daemon.StartedAt
-	28,  // 123: daemon.StartedService.SubscribeOutbounds:output_type -> daemon.OutboundList
-	30,  // 124: daemon.StartedService.StartNetworkQualityTest:output_type -> daemon.NetworkQualityTestProgress
-	32,  // 125: daemon.StartedService.StartSTUNTest:output_type -> daemon.STUNTestProgress
-	33,  // 126: daemon.StartedService.SubscribeTailscaleStatus:output_type -> daemon.TailscaleStatusUpdate
-	38,  // 127: daemon.StartedService.StartTailscalePing:output_type -> daemon.TailscalePingResponse
-	103, // 128: daemon.StartedService.SetTailscaleExitNode:output_type -> google.protobuf.Empty
-	103, // 129: daemon.StartedService.TailscaleLogout:output_type -> google.protobuf.Empty
-	45,  // 130: daemon.StartedService.StartTailscaleSSHSession:output_type -> daemon.TailscaleSSHServerMessage
-	52,  // 131: daemon.StartedService.ProvideUSBDevices:output_type -> daemon.USBServerMessage
-	63,  // 132: daemon.StartedService.SubscribeUSBIPServerStatus:output_type -> daemon.USBIPServerStatusUpdate
-	66,  // 133: daemon.StartedService.SubscribeOpenConnectStatus:output_type -> daemon.OpenConnectStatusUpdate
-	103, // 134: daemon.StartedService.SubmitOpenConnectAuthResponse:output_type -> google.protobuf.Empty
-	103, // 135: daemon.StartedService.CancelOpenConnectAuthChallenge:output_type -> google.protobuf.Empty
-	80,  // 136: daemon.StartedService.SubscribeOpenVPNStatus:output_type -> daemon.OpenVPNStatusUpdate
-	103, // 137: daemon.StartedService.SubmitOpenVPNChallengeResponse:output_type -> google.protobuf.Empty
-	103, // 138: daemon.StartedService.CancelOpenVPNChallenge:output_type -> google.protobuf.Empty
-	87,  // 139: daemon.StartedService.URLTestOutbound:output_type -> daemon.URLTestOutboundResponse
-	89,  // 140: daemon.StartedService.GetRules:output_type -> daemon.RuleList
-	11,  // 141: daemon.StartedService.GetGroups:output_type -> daemon.Groups
-	28,  // 142: daemon.StartedService.GetOutbounds:output_type -> daemon.OutboundList
-	91,  // 143: daemon.StartedService.SubscribeDNSQueries:output_type -> daemon.DnsQueryEvent
-	96,  // 144: daemon.StartedService.GetPool:output_type -> daemon.PoolList
-	99,  // 145: daemon.StartedService.GetDNSGroups:output_type -> daemon.DnsGroupList
-	100, // 146: daemon.StartedService.GetRunningConfig:output_type -> daemon.RunningConfig
-	105, // [105:147] is the sub-list for method output_type
-	63,  // [63:105] is the sub-list for method input_type
-	63,  // [63:63] is the sub-list for extension type_name
-	63,  // [63:63] is the sub-list for extension extendee
-	0,   // [0:63] is the sub-list for field type_name
+	88,  // 55: daemon.GetURLViaOutboundRequest.headers:type_name -> daemon.HttpHeaderPair
+	91,  // 56: daemon.RuleList.rules:type_name -> daemon.Rule
+	23,  // 57: daemon.DnsQueryEvent.processInfo:type_name -> daemon.ProcessInfo
+	96,  // 58: daemon.DnsQueryEvent.answers:type_name -> daemon.DnsAnswer
+	95,  // 59: daemon.DnsQueryEvent.attempts:type_name -> daemon.DnsGroupAttempt
+	98,  // 60: daemon.PoolList.slots:type_name -> daemon.PoolSlot
+	100, // 61: daemon.DnsGroupState.members:type_name -> daemon.DnsGroupMember
+	101, // 62: daemon.DnsGroupList.groups:type_name -> daemon.DnsGroupState
+	0,   // 63: daemon.Log.Message.level:type_name -> daemon.LogLevel
+	106, // 64: daemon.StartedService.GetVersion:input_type -> google.protobuf.Empty
+	106, // 65: daemon.StartedService.SubscribeServiceStatus:input_type -> google.protobuf.Empty
+	106, // 66: daemon.StartedService.SubscribeLog:input_type -> google.protobuf.Empty
+	106, // 67: daemon.StartedService.GetDefaultLogLevel:input_type -> google.protobuf.Empty
+	106, // 68: daemon.StartedService.ClearLogs:input_type -> google.protobuf.Empty
+	7,   // 69: daemon.StartedService.SubscribeStatus:input_type -> daemon.SubscribeStatusRequest
+	106, // 70: daemon.StartedService.SubscribeGroups:input_type -> google.protobuf.Empty
+	106, // 71: daemon.StartedService.GetClashModeStatus:input_type -> google.protobuf.Empty
+	106, // 72: daemon.StartedService.SubscribeClashMode:input_type -> google.protobuf.Empty
+	17,  // 73: daemon.StartedService.SetClashMode:input_type -> daemon.ClashMode
+	14,  // 74: daemon.StartedService.URLTest:input_type -> daemon.URLTestRequest
+	15,  // 75: daemon.StartedService.SelectOutbound:input_type -> daemon.SelectOutboundRequest
+	16,  // 76: daemon.StartedService.SetGroupExpand:input_type -> daemon.SetGroupExpandRequest
+	19,  // 77: daemon.StartedService.SubscribeConnections:input_type -> daemon.SubscribeConnectionsRequest
+	24,  // 78: daemon.StartedService.CloseConnection:input_type -> daemon.CloseConnectionRequest
+	106, // 79: daemon.StartedService.CloseAllConnections:input_type -> google.protobuf.Empty
+	106, // 80: daemon.StartedService.GetDeprecatedWarnings:input_type -> google.protobuf.Empty
+	106, // 81: daemon.StartedService.GetStartedAt:input_type -> google.protobuf.Empty
+	106, // 82: daemon.StartedService.SubscribeOutbounds:input_type -> google.protobuf.Empty
+	29,  // 83: daemon.StartedService.StartNetworkQualityTest:input_type -> daemon.NetworkQualityTestRequest
+	31,  // 84: daemon.StartedService.StartSTUNTest:input_type -> daemon.STUNTestRequest
+	106, // 85: daemon.StartedService.SubscribeTailscaleStatus:input_type -> google.protobuf.Empty
+	37,  // 86: daemon.StartedService.StartTailscalePing:input_type -> daemon.TailscalePingRequest
+	39,  // 87: daemon.StartedService.SetTailscaleExitNode:input_type -> daemon.SetTailscaleExitNodeRequest
+	40,  // 88: daemon.StartedService.TailscaleLogout:input_type -> daemon.TailscaleLogoutRequest
+	41,  // 89: daemon.StartedService.StartTailscaleSSHSession:input_type -> daemon.TailscaleSSHClientMessage
+	51,  // 90: daemon.StartedService.ProvideUSBDevices:input_type -> daemon.USBProviderMessage
+	106, // 91: daemon.StartedService.SubscribeUSBIPServerStatus:input_type -> google.protobuf.Empty
+	106, // 92: daemon.StartedService.SubscribeOpenConnectStatus:input_type -> google.protobuf.Empty
+	78,  // 93: daemon.StartedService.SubmitOpenConnectAuthResponse:input_type -> daemon.OpenConnectAuthResponseSubmission
+	79,  // 94: daemon.StartedService.CancelOpenConnectAuthChallenge:input_type -> daemon.OpenConnectAuthChallengeCancel
+	106, // 95: daemon.StartedService.SubscribeOpenVPNStatus:input_type -> google.protobuf.Empty
+	84,  // 96: daemon.StartedService.SubmitOpenVPNChallengeResponse:input_type -> daemon.OpenVPNChallengeSubmission
+	85,  // 97: daemon.StartedService.CancelOpenVPNChallenge:input_type -> daemon.OpenVPNChallengeCancel
+	86,  // 98: daemon.StartedService.URLTestOutbound:input_type -> daemon.URLTestOutboundRequest
+	106, // 99: daemon.StartedService.GetRules:input_type -> google.protobuf.Empty
+	106, // 100: daemon.StartedService.GetGroups:input_type -> google.protobuf.Empty
+	106, // 101: daemon.StartedService.GetOutbounds:input_type -> google.protobuf.Empty
+	93,  // 102: daemon.StartedService.SubscribeDNSQueries:input_type -> daemon.SubscribeDNSQueriesRequest
+	97,  // 103: daemon.StartedService.GetPool:input_type -> daemon.GetPoolRequest
+	106, // 104: daemon.StartedService.GetDNSGroups:input_type -> google.protobuf.Empty
+	106, // 105: daemon.StartedService.GetRunningConfig:input_type -> google.protobuf.Empty
+	89,  // 106: daemon.StartedService.GetURLViaOutbound:input_type -> daemon.GetURLViaOutboundRequest
+	5,   // 107: daemon.StartedService.GetVersion:output_type -> daemon.Version
+	6,   // 108: daemon.StartedService.SubscribeServiceStatus:output_type -> daemon.ServiceStatus
+	8,   // 109: daemon.StartedService.SubscribeLog:output_type -> daemon.Log
+	9,   // 110: daemon.StartedService.GetDefaultLogLevel:output_type -> daemon.DefaultLogLevel
+	106, // 111: daemon.StartedService.ClearLogs:output_type -> google.protobuf.Empty
+	10,  // 112: daemon.StartedService.SubscribeStatus:output_type -> daemon.Status
+	11,  // 113: daemon.StartedService.SubscribeGroups:output_type -> daemon.Groups
+	18,  // 114: daemon.StartedService.GetClashModeStatus:output_type -> daemon.ClashModeStatus
+	17,  // 115: daemon.StartedService.SubscribeClashMode:output_type -> daemon.ClashMode
+	106, // 116: daemon.StartedService.SetClashMode:output_type -> google.protobuf.Empty
+	106, // 117: daemon.StartedService.URLTest:output_type -> google.protobuf.Empty
+	106, // 118: daemon.StartedService.SelectOutbound:output_type -> google.protobuf.Empty
+	106, // 119: daemon.StartedService.SetGroupExpand:output_type -> google.protobuf.Empty
+	21,  // 120: daemon.StartedService.SubscribeConnections:output_type -> daemon.ConnectionEvents
+	106, // 121: daemon.StartedService.CloseConnection:output_type -> google.protobuf.Empty
+	106, // 122: daemon.StartedService.CloseAllConnections:output_type -> google.protobuf.Empty
+	25,  // 123: daemon.StartedService.GetDeprecatedWarnings:output_type -> daemon.DeprecatedWarnings
+	27,  // 124: daemon.StartedService.GetStartedAt:output_type -> daemon.StartedAt
+	28,  // 125: daemon.StartedService.SubscribeOutbounds:output_type -> daemon.OutboundList
+	30,  // 126: daemon.StartedService.StartNetworkQualityTest:output_type -> daemon.NetworkQualityTestProgress
+	32,  // 127: daemon.StartedService.StartSTUNTest:output_type -> daemon.STUNTestProgress
+	33,  // 128: daemon.StartedService.SubscribeTailscaleStatus:output_type -> daemon.TailscaleStatusUpdate
+	38,  // 129: daemon.StartedService.StartTailscalePing:output_type -> daemon.TailscalePingResponse
+	106, // 130: daemon.StartedService.SetTailscaleExitNode:output_type -> google.protobuf.Empty
+	106, // 131: daemon.StartedService.TailscaleLogout:output_type -> google.protobuf.Empty
+	45,  // 132: daemon.StartedService.StartTailscaleSSHSession:output_type -> daemon.TailscaleSSHServerMessage
+	52,  // 133: daemon.StartedService.ProvideUSBDevices:output_type -> daemon.USBServerMessage
+	63,  // 134: daemon.StartedService.SubscribeUSBIPServerStatus:output_type -> daemon.USBIPServerStatusUpdate
+	66,  // 135: daemon.StartedService.SubscribeOpenConnectStatus:output_type -> daemon.OpenConnectStatusUpdate
+	106, // 136: daemon.StartedService.SubmitOpenConnectAuthResponse:output_type -> google.protobuf.Empty
+	106, // 137: daemon.StartedService.CancelOpenConnectAuthChallenge:output_type -> google.protobuf.Empty
+	80,  // 138: daemon.StartedService.SubscribeOpenVPNStatus:output_type -> daemon.OpenVPNStatusUpdate
+	106, // 139: daemon.StartedService.SubmitOpenVPNChallengeResponse:output_type -> google.protobuf.Empty
+	106, // 140: daemon.StartedService.CancelOpenVPNChallenge:output_type -> google.protobuf.Empty
+	87,  // 141: daemon.StartedService.URLTestOutbound:output_type -> daemon.URLTestOutboundResponse
+	92,  // 142: daemon.StartedService.GetRules:output_type -> daemon.RuleList
+	11,  // 143: daemon.StartedService.GetGroups:output_type -> daemon.Groups
+	28,  // 144: daemon.StartedService.GetOutbounds:output_type -> daemon.OutboundList
+	94,  // 145: daemon.StartedService.SubscribeDNSQueries:output_type -> daemon.DnsQueryEvent
+	99,  // 146: daemon.StartedService.GetPool:output_type -> daemon.PoolList
+	102, // 147: daemon.StartedService.GetDNSGroups:output_type -> daemon.DnsGroupList
+	103, // 148: daemon.StartedService.GetRunningConfig:output_type -> daemon.RunningConfig
+	90,  // 149: daemon.StartedService.GetURLViaOutbound:output_type -> daemon.GetURLViaOutboundResponse
+	107, // [107:150] is the sub-list for method output_type
+	64,  // [64:107] is the sub-list for method input_type
+	64,  // [64:64] is the sub-list for extension type_name
+	64,  // [64:64] is the sub-list for extension extendee
+	0,   // [0:64] is the sub-list for field type_name
 }
 
 func init() { file_daemon_started_service_proto_init() }
@@ -8073,7 +8324,7 @@ func file_daemon_started_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_daemon_started_service_proto_rawDesc), len(file_daemon_started_service_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   98,
+			NumMessages:   101,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

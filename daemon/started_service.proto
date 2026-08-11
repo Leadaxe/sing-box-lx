@@ -55,6 +55,7 @@ service StartedService {
   rpc GetPool(GetPoolRequest) returns (PoolList) {}
   rpc GetDNSGroups(google.protobuf.Empty) returns (DnsGroupList) {}
   rpc GetRunningConfig(google.protobuf.Empty) returns (RunningConfig) {}
+  rpc GetURLViaOutbound(GetURLViaOutboundRequest) returns (GetURLViaOutboundResponse) {}
 
   // lx:end lx_command
 }
@@ -697,6 +698,30 @@ message URLTestOutboundRequest {
 message URLTestOutboundResponse {
   uint32 delay = 1;
   string error = 2;
+}
+
+// SPEC 058 — diagnostic HTTP probe through a single node. Unlike URLTestOutbound
+// (which reports only a delay) this returns the response body, so the client can
+// answer "which exit IP / geo / warp state does THIS node give me".
+message HttpHeaderPair {
+  string key = 1;
+  string value = 2;
+}
+message GetURLViaOutboundRequest {
+  string outboundTag = 1;
+  string link = 2;
+  uint32 timeout = 3;
+  uint32 maxBytes = 4;
+  repeated HttpHeaderPair headers = 5;
+}
+message GetURLViaOutboundResponse {
+  uint32 httpStatus = 1;
+  bytes body = 2; // bytes, not string: an arbitrary endpoint is not guaranteed valid UTF-8
+  bool truncated = 3;
+  string contentType = 4;
+  string remoteAddr = 5;
+  uint32 elapsedMs = 6;
+  string error = 7;
 }
 
 message Rule {

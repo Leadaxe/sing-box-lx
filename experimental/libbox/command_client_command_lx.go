@@ -289,6 +289,126 @@ func (c *CommandClient) GetRunningConfig() (*RunningConfig, error) {
 	})
 }
 
+// HTTPHeaders builds the optional request headers for GetURLViaOutbound. It exists
+// because gomobile binds neither maps nor slices of pairs: the bridge carries only
+// objects and []byte. A nil *HTTPHeaders is a legal argument meaning "no headers" —
+// that is how an optional parameter is expressed across a binding that has neither
+// overloads nor variadics.
+type HTTPHeaders struct {
+	pairs []*daemon.HttpHeaderPair
+}
+
+func NewHTTPHeaders() *HTTPHeaders {
+	return new(HTTPHeaders)
+}
+
+// Add appends one header. Repeated keys are sent as given — no deduplication.
+// A "Host" key is honoured by the core, which moves it to the request's Host field.
+func (h *HTTPHeaders) Add(key string, value string) {
+	h.pairs = append(h.pairs, &daemon.HttpHeaderPair{Key: key, Value: value})
+}
+
+// GetURLResult carries the outcome of a diagnostic fetch through one node (SPEC 058).
+// Like RunningConfig this is an object rather than a bare string return: a gomobile
+// method returning a string writes a pointer-bearing slot into a __packed__ cgo frame
+// and kills the process on android/arm64 (SPEC 038).
+//
+// Status is the HTTP status of the final response — a non-2xx is a RESULT, not a
+// failure: 403 or 500 is exactly the kind of answer this probe exists to surface.
+// A failed exchange (unknown tag, dial error, timeout) arrives as a Go error instead,
+// and never as a GetURLResult.
+type GetURLResult struct {
+	status      int32
+	content     string
+	truncated   bool
+	contentType string
+	remoteAddr  string
+	elapsedMs   int32
+}
+
+// Status returns the HTTP status code of the final response (after redirects).
+func (r *GetURLResult) Status() int32 {
+	return r.status
+}
+
+// Content returns the response body, clamped to the requested limit. The probe targets
+// textual diagnostic endpoints; a binary body survives this conversion only lossily.
+func (r *GetURLResult) Content() string {
+	return r.content
+}
+
+// Truncated reports whether the body was longer than the limit and got cut.
+func (r *GetURLResult) Truncated() bool {
+	return r.truncated
+}
+
+// ContentType returns the response Content-Type as sent by the server.
+func (r *GetURLResult) ContentType() string {
+	return r.contentType
+}
+
+// RemoteAddr returns the address the connection actually reached from inside the tunnel —
+// where the target resolved to through THIS node. It is not the node's exit IP; that one
+// is carried by the body (e.g. the ip= line of cdn-cgi/trace).
+func (r *GetURLResult) RemoteAddr() string {
+	return r.remoteAddr
+}
+
+// ElapsedMs returns the duration of the whole exchange including the body read. It is
+// not a latency measurement and is deliberately absent from the node's urltest history.
+func (r *GetURLResult) ElapsedMs() int32 {
+	return r.elapsedMs
+}
+
+// GetURLViaOutbound performs a diagnostic HTTP GET through a single node — an outbound OR
+// an endpoint (WG/AWG/Tailscale) — and returns the response body (SPEC 058). This answers
+// the class of question URLTestOutbound cannot: not "is this node alive" but "what does
+// the world look like through it" — exit IP, geo, warp state (1.1.1.1/cdn-cgi/trace,
+// api.ip2location.io). The node is addressed by tag, so probing does not disturb the
+// active selector: no switching a live group just to inspect one of its members.
+//
+// timeout is in milliseconds (0 = bounded only by the call). maxBytes clamps the body
+// (0 = 256 KiB default; the core caps it at 1 MiB regardless). headers may be nil.
+//
+// The body is returned raw — parsing the format of an external service is the caller's
+// job, so a change on Cloudflare's or ip2location's side never becomes a core bug.
+//
+// This is a per-node probe, NOT an answer to "where am I coming from right now": the
+// live route (rules, sniffing, group selection) is only exercised by an ordinary request
+// from the device with the tunnel up. It also sends real traffic through the node and
+// wakes sleeping WG endpoints, so it belongs behind an explicit user action, never behind
+// a background sweep of the node list.
+func (c *CommandClient) GetURLViaOutbound(outboundTag string, link string, timeout int32, maxBytes int32, headers *HTTPHeaders) (*GetURLResult, error) {
+	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*GetURLResult, error) {
+		request := &daemon.GetURLViaOutboundRequest{
+			OutboundTag: outboundTag,
+			Link:        link,
+			Timeout:     uint32(timeout),
+			MaxBytes:    uint32(maxBytes),
+		}
+		if headers != nil {
+			request.Headers = headers.pairs
+		}
+		response, err := client.GetURLViaOutbound(ctx, request)
+		if err != nil {
+			return nil, E.Cause(err, "get url via outbound")
+		}
+		// Variant B: the application-level failure lives in the payload; surface it as a
+		// Go error here so the caller has one thing to check, mirroring URLTestOutbound.
+		if response.Error != "" {
+			return nil, E.New(response.Error)
+		}
+		return &GetURLResult{
+			status:      int32(response.HttpStatus),
+			content:     string(response.Body),
+			truncated:   response.Truncated,
+			contentType: response.ContentType,
+			remoteAddr:  response.RemoteAddr,
+			elapsedMs:   int32(response.ElapsedMs),
+		}, nil
+	})
+}
+
 // Rule is the libbox view of one routing rule. Type/Payload/Action mirror the Clash
 // /rules JSON; IsDNS distinguishes route rules (false) from DNS rules (true).
 type Rule struct {

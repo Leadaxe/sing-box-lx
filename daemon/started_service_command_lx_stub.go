@@ -47,3 +47,7 @@ func (s *StartedService) GetDNSGroups(ctx context.Context, empty *emptypb.Empty)
 func (s *StartedService) GetRunningConfig(ctx context.Context, empty *emptypb.Empty) (*RunningConfig, error) {
 	return nil, status.Error(codes.Unimplemented, "GetRunningConfig is not included in this build, rebuild with -tags with_lx_command")
 }
+
+func (s *StartedService) GetURLViaOutbound(ctx context.Context, request *GetURLViaOutboundRequest) (*GetURLViaOutboundResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "GetURLViaOutbound is not included in this build, rebuild with -tags with_lx_command")
+}

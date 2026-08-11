@@ -4,14 +4,25 @@ package daemon
 
 import (
 	"context"
+	"crypto/tls"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptrace"
 	"os"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/certificate"
 	"github.com/sagernet/sing-box/common/dnstrack"
 	"github.com/sagernet/sing-box/common/urltest"
+	C "github.com/sagernet/sing-box/constant"
 	dnsgroup "github.com/sagernet/sing-box/dns/transport/group"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/group"
+	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/logger"
+	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 
@@ -91,6 +102,143 @@ func (s *StartedService) URLTestOutbound(ctx context.Context, request *URLTestOu
 		Delay: delay,
 	})
 	return &URLTestOutboundResponse{Delay: uint32(delay)}, nil
+}
+
+// Body limits for GetURLViaOutbound (SPEC 058). The clamp lives in the core, not the
+// caller: a diagnostic probe must not be able to pull an unbounded response into the
+// memory of a gomobile process.
+const (
+	getURLDefaultMaxBytes = 256 * 1024
+	getURLMaxBytesCeiling = 1024 * 1024
+)
+
+// GetURLViaOutbound performs a diagnostic HTTP GET through a single node — an outbound OR
+// an endpoint (WG/AWG/Tailscale) — and returns the response body (SPEC 058). It answers the
+// class of question URLTestOutbound cannot: not "is this node alive" but "what does the
+// world look like through it" — exit IP, geo, warp state (api.ip2location.io,
+// 1.1.1.1/cdn-cgi/trace). Synchronous and unary; cancellation is by dropping the call.
+//
+// Deliberate differences from URLTestOutbound, its neighbour and donor:
+//
+//   - The urltest history is NOT touched. elapsedMs covers the whole exchange including
+//     body read over a caller-chosen URL, so writing it into urlTestHistoryStorage would
+//     corrupt the delay figures the UI shows for that node.
+//   - A non-2xx status is a RESULT, not an error: a 403 from Cloudflare is exactly the
+//     kind of answer this probe exists to surface. error is reserved for an exchange that
+//     never happened (unknown tag, dial/TLS failure, timeout).
+//
+// GET only, by design (SPEC 058 §5): an arbitrary-method HTTP client reachable through
+// every tunnel of the user is a much larger surface than diagnostics needs.
+func (s *StartedService) GetURLViaOutbound(ctx context.Context, request *GetURLViaOutboundRequest) (*GetURLViaOutboundResponse, error) {
+	s.serviceAccess.RLock()
+	if s.serviceStatus.Status != ServiceStatus_STARTED {
+		s.serviceAccess.RUnlock()
+		return nil, os.ErrInvalid
+	}
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	// Resolve in BOTH managers, exactly as URLTestOutbound does: adapter.Endpoint embeds
+	// adapter.Outbound, so a WG/AWG node yields an N.Dialer just like a plain outbound.
+	tag := request.OutboundTag
+	var detour N.Dialer
+	if outbound, isLoaded := boxService.outboundManager.Outbound(tag); isLoaded {
+		detour = outbound
+	} else if endpoint, isLoaded := boxService.endpointManager.Get(tag); isLoaded {
+		detour = endpoint
+	} else {
+		return &GetURLViaOutboundResponse{Error: "outbound or endpoint not found: " + tag}, nil
+	}
+
+	// Same cancellation model as URLTestOutbound: parented to the per-call ctx so a client
+	// dropping the call aborts the fetch at its dial, without touching other streams.
+	fetchCtx := ctx
+	if request.Timeout > 0 {
+		var cancel context.CancelFunc
+		fetchCtx, cancel = context.WithTimeout(ctx, time.Duration(request.Timeout)*time.Millisecond)
+		defer cancel()
+	}
+
+	maxBytes := int64(request.MaxBytes)
+	if maxBytes <= 0 {
+		maxBytes = getURLDefaultMaxBytes
+	} else if maxBytes > getURLMaxBytesCeiling {
+		maxBytes = getURLMaxBytesCeiling
+	}
+
+	httpRequest, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, request.Link, nil)
+	if err != nil {
+		return &GetURLViaOutboundResponse{Error: err.Error()}, nil
+	}
+	for _, header := range request.Headers {
+		// Host is a dedicated field in net/http; setting it through Header is ignored.
+		if http.CanonicalHeaderKey(header.Key) == "Host" {
+			httpRequest.Host = header.Value
+			continue
+		}
+		httpRequest.Header.Set(header.Key, header.Value)
+	}
+
+	// remoteAddr is captured from the connection actually established inside the tunnel —
+	// this is where the target resolved to through THIS node, not the node's own exit IP
+	// (that one is carried by the body).
+	var remoteAddr string
+	httpRequest = httpRequest.WithContext(httptrace.WithClientTrace(httpRequest.Context(), &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) {
+			if info.Conn != nil {
+				remoteAddr = info.Conn.RemoteAddr().String()
+			}
+		},
+	}))
+
+	transport := &http.Transport{
+		ForceAttemptHTTP2:   true,
+		TLSHandshakeTimeout: C.TCPTimeout,
+		DisableKeepAlives:   true, // a probe must not keep a socket (or a WG tunnel) alive afterwards
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return detour.DialContext(ctx, network, M.ParseSocksaddr(addr))
+		},
+	}
+	// The system x509 pool is empty inside a mobile process, so HTTPS needs the same
+	// certificate store libbox's own HTTP client uses — without it every https:// probe
+	// would fail verification on Android regardless of the node.
+	if C.IsAndroid {
+		store, err := certificate.NewStore(boxService.ctx, logger.NOP(), option.CertificateOptions{})
+		if err != nil {
+			return &GetURLViaOutboundResponse{Error: E.Cause(err, "initialize certificate store").Error()}, nil
+		}
+		defer store.Close()
+		transport.TLSClientConfig = &tls.Config{RootCAs: store.Pool()}
+	}
+	defer transport.CloseIdleConnections()
+
+	started := time.Now()
+	httpResponse, err := (&http.Client{Transport: transport}).Do(httpRequest)
+	if err != nil {
+		return &GetURLViaOutboundResponse{Error: err.Error()}, nil
+	}
+	defer httpResponse.Body.Close()
+
+	// Read one byte past the limit: that extra byte is what distinguishes "body ended
+	// exactly at the limit" from "body was cut", so truncation is never silent.
+	body, err := io.ReadAll(io.LimitReader(httpResponse.Body, maxBytes+1))
+	if err != nil {
+		return &GetURLViaOutboundResponse{Error: err.Error()}, nil
+	}
+	var truncated bool
+	if int64(len(body)) > maxBytes {
+		body = body[:maxBytes]
+		truncated = true
+	}
+
+	return &GetURLViaOutboundResponse{
+		HttpStatus:  uint32(httpResponse.StatusCode),
+		Body:        body,
+		Truncated:   truncated,
+		ContentType: httpResponse.Header.Get("Content-Type"),
+		RemoteAddr:  remoteAddr,
+		ElapsedMs:   uint32(time.Since(started).Milliseconds()),
+	}, nil
 }
 
 // GetRules returns a snapshot of the routing rule table — route rules and DNS rules,
