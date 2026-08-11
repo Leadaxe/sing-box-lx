@@ -119,10 +119,7 @@ func lxdMain(cmd *cobra.Command) error {
 		return runServiceAction(cmd)
 	}
 
-	// Exactly one source of truth for the DAEMON's connection settings:
-	// daemon.json when present, fixed dev defaults when absent. There are no
-	// connection flags at all, so "which side wins" cannot even be asked.
-	listen, useTLS, secret, err := daemonConnection(lxdStateDir)
+	fileConfig, installed, err := daemonConnection(lxdStateDir)
 	if err != nil {
 		return err
 	}
@@ -142,36 +139,42 @@ func lxdMain(cmd *cobra.Command) error {
 		seed = configPaths[0]
 	}
 
-	return lxd.Run(globalCtx, lxd.Options{
+	daemonOptions := lxd.Options{
 		ConfigPath:  seed,
 		ConfigForce: lxdConfigForce,
 		Run:         lxdRun,
-		Listen:      listen,
-		Secret:      secret,
-		TLS:         useTLS,
+		Listen:      fileConfig.Listen,
+		Secret:      fileConfig.Secret,
+		TLS:         fileConfig.TLS,
 		StateDir:    lxdStateDir,
-	})
+	}
+	// The rotated log file exists only for an installed daemon (daemon.json
+	// present): a fileless dev run keeps its terminal, and Run additionally
+	// skips the redirect when stdout is a TTY even here.
+	if installed {
+		daemonOptions.LogFile = lxd.DefaultLogPath(lxdStateDir)
+		daemonOptions.LogMaxSizeMB = fileConfig.LogMaxSizeMB
+		daemonOptions.LogMaxBackups = fileConfig.LogMaxBackups
+		daemonOptions.LogMaxAgeHours = fileConfig.LogMaxAgeHours
+	}
+	return lxd.Run(globalCtx, daemonOptions)
 }
 
-// daemonConnection resolves the DAEMON's listen/tls/secret with exactly one
-// source of truth: daemon.json when present, fixed dev defaults when absent
-// (plain h2c on 127.0.0.1:9091, no secret). The file is never created
+// daemonConnection resolves the DAEMON's settings with exactly one source of
+// truth: daemon.json when present (installed=true), fixed dev defaults when
+// absent (plain h2c on 127.0.0.1:9091, no secret). The file is never created
 // implicitly — only --service=install or the operator's editor write it.
 // Boot parameters (-c seed, --config-force, --run) are not connection
 // settings and stay flag-only.
-func daemonConnection(stateDir string) (listen string, useTLS bool, secret string, err error) {
-	fileConfig, found, err := lxd.LoadDaemonConfig(stateDir)
+func daemonConnection(stateDir string) (config lxd.DaemonConfig, installed bool, err error) {
+	config, installed, err = lxd.LoadDaemonConfig(stateDir)
 	if err != nil {
-		return "", false, "", err
+		return lxd.DaemonConfig{}, false, err
 	}
-	if !found {
-		return devDefaultListen, false, "", nil
+	if config.Listen == "" {
+		config.Listen = devDefaultListen
 	}
-	listen = fileConfig.Listen
-	if listen == "" {
-		listen = devDefaultListen
-	}
-	return listen, fileConfig.TLS, fileConfig.Secret, nil
+	return config, installed, nil
 }
 
 // clientConnection resolves the connection for the `client` subcommands.

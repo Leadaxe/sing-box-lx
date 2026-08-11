@@ -27,12 +27,9 @@ data-plane лежит.
 | `-c <файл>` | путь, **необязателен** | seed-конфиг: используется, только когда нет last-good; без него демон стартует пустым (IDLE); каталоги `-C` не поддерживаются |
 | `--config-force <файл>` | путь | **всегда** бутиться с этого файла, поверх last-good; после успешного старта он становится last-good |
 | `--run` | флаг | форсит подъём ядра независимо от памяти run-состояния; без него: записанная память (`was_running`) обязательна к исполнению, а **свежий state с конфигом = запуск** (явный `-c` на чистом хосте бутится сам; лежать остаётся только после явного `stop`) |
-| `--listen` | `host:port`, дефолт `127.0.0.1:9091` | адрес управляющего канала (обе плоскости) |
-| `--tls` | флаг | включить mTLS с регистрацией клиентов; без него — h2c (loopback-only) |
-| `--secret` | строка, дефолт пусто | Bearer обеих плоскостей; **пусто = аутентификация выключена**; виден в `ps`; в службу не переносится — install с ним отказывает |
-| `--secret-file` | путь | читать Bearer из файла `0600` (предпочтительно перед `--secret`) |
-| env `SING_BOX_LXD_SECRET` | строка | Bearer из окружения (systemd `LoadCredential=`, CI); приоритет: `--secret-file` → env → `--secret` |
-| `--state-dir` | путь, дефолт `lxd-state` (сервис — абсолютный `<support>/state`) | каталог состояния: last-good, кандидат, pending, was_running, серверная пара, доверенные клиенты |
+| `<state-dir>/daemon.json` | файл `0600`, **не флаги** | единственный источник connection-настроек демона: `listen` (дефолт `127.0.0.1:9091`), `tls` (mTLS с регистрацией клиентов; без него h2c loopback-only), `secret` (Bearer операторских маршрутов и единственный гейт plain-h2c; пусто = выключен); connection-флагов у команды НЕТ по построению; файла нет = dev-дефолты, создаёт его только `--service=install` или редактор оператора |
+| `log_max_size_mb` / `log_max_backups` / `log_max_age_hours` | ключи daemon.json, дефолт `20` / `1` / `24` | лимиты ротации лога демона («≈сутки истории»: ротация по возрасту раз в 24 ч, текущий + 1 бэкап; размер — страховка); 0/отсутствие = дефолт, «безлимита» нет |
+| `--state-dir` | путь, дефолт `lxd-state` (сервис — абсолютный `<support>/state`) | каталог состояния: daemon.json, last-good, кандидат, pending, was_running, серверная пара, доверенные клиенты |
 | `--service` | `install` \| `install-user` \| `uninstall` \| `print` | установка службой (см. ниже) |
 | `--purge` | флаг | с `--service=uninstall` — снести и state-каталог |
 | `client add [--name] / list / remove <тег>` | подкоманды | регистрация/просмотр/отзыв доверенных клиентов у живого демона; операторские маршруты **loopback-only** (минт кода = выдача доверия, из сети недоступен) |
@@ -78,6 +75,10 @@ Linux/Windows-служба (systemd `LoadCredential=`), scoped-токены.
 **Выходы:** работающий data-plane согласно конфигу; поток статусов
 (STARTED/STOPPING/STARTING/FATAL с текстом ошибки) — один стрим видит все
 переходы без переподключения; логи ядра в кольцевом буфере канала и на stderr.
+Под службой (stdout — не терминал) демон сам владеет `<support>/lxd.log`:
+dup2 stdout/stderr на файл (туда попадает всё, включая паники) и ротация по
+возрасту/размеру с лимитами из daemon.json; в терминале лог остаётся на
+экране. darwin/linux; Windows — заглушка (как и служба).
 
 ## 4. Data flow
 
@@ -129,7 +130,7 @@ Linux/Windows-служба (systemd `LoadCredential=`), scoped-токены.
 |---|---|
 | [055-LXD_DAEMON_SKELETON](../../TASKS/055-LXD_DAEMON_SKELETON/SPEC.md) | Скелет: сабкоманда, демон, канал поверх подмен инстанса, SIGHUP-reload, FATAL-живучесть; демо на macOS |
 | [056-LXD_APPLY_ROLLBACK](../../TASKS/056-LXD_APPLY_ROLLBACK/SPEC.md) | Admin-плоскость MVP: REST на том же порту, apply с валидацией-до-убийства (сабпроцесс), last-good, автооткат, старт без конфига (IDLE), рестарт из last-good; демо на macOS |
-| [057-LXD_MTLS_SERVICE](../../TASKS/057-LXD_MTLS_SERVICE/SPEC.md) | mTLS-канал (демон сам себе CA, приглашение `адрес#отпечаток#код`, одноразовый код), `client add/list/remove`, start/stop жизни ядра, память was_running, `--config-force`/`--run`/`--secret-file`; служба `--service=install` (system LaunchDaemon) / `install-user` (LaunchAgent без sudo) / `uninstall [--purge]`, пути абсолютизируются, каталоги создаются сами; device-verified на macOS (обе роли службы, крэш-цикл на cwd-relative пути пойман и починен) |
+| [057-LXD_MTLS_SERVICE](../../TASKS/057-LXD_MTLS_SERVICE/SPEC.md) | mTLS-канал (демон сам себе CA, приглашение `адрес#отпечаток#код`, одноразовый код), `client add/list/remove`, start/stop жизни ядра, память was_running, `--config-force`/`--run`, daemon.json как единственный источник connection-настроек + ротация лога; служба `--service=install` (system LaunchDaemon) / `install-user` (LaunchAgent без sudo) / `uninstall [--purge]`, пути абсолютизируются, каталоги создаются сами; device-verified на macOS (обе роли службы, крэш-цикл на cwd-relative пути пойман и починен) |
 
 ## 8. Особенности сопровождения
 

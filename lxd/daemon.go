@@ -46,6 +46,14 @@ type Options struct {
 	// h2c (loopback-only, dev).
 	TLS      bool
 	StateDir string
+	// LogFile, when set, is the daemon-owned rotated log: Run re-points the
+	// process's stdout/stderr at it (unless stdout is a terminal — dev runs
+	// keep their screen). Empty = leave stdio alone. The Log* limits mirror
+	// daemon.json (zero = default).
+	LogFile        string
+	LogMaxSizeMB   int
+	LogMaxBackups  int
+	LogMaxAgeHours int
 }
 
 const (
@@ -59,6 +67,19 @@ const (
 // absent config must leave the daemon reachable, because the control channel
 // is needed exactly when the data plane is down.
 func Run(ctx context.Context, options Options) error {
+	// Log ownership first, before anything logs: under a service manager
+	// (stdout is not a terminal) the daemon takes the log file over from
+	// launchd's plain append redirect and rotates it; in a terminal the log
+	// stays on the operator's screen.
+	if options.LogFile != "" && logRotationSupported && !stdoutIsTerminal() {
+		rotator := newLogRotator(options.LogFile, options.LogMaxSizeMB, options.LogMaxBackups, options.LogMaxAgeHours)
+		if err := rotator.Start(); err != nil {
+			log.Warn(E.Cause(err, "lxd: log rotation disabled"))
+		} else {
+			defer rotator.Stop()
+		}
+	}
+
 	stateStore, err := newStore(options.StateDir)
 	if err != nil {
 		return err

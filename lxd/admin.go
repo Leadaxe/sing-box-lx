@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -293,7 +292,7 @@ func (c *controller) handleConfig(writer http.ResponseWriter, request *http.Requ
 // (cache_file), because it is the one directory the daemon owns.
 func (c *controller) handleInfo(writer http.ResponseWriter, request *http.Request) {
 	logPath := ""
-	if candidate := filepath.Join(filepath.Dir(c.infoStateDir), "lxd.log"); candidate != "" {
+	if candidate := DefaultLogPath(c.infoStateDir); candidate != "" {
 		if _, err := os.Stat(candidate); err == nil {
 			logPath = candidate
 		}

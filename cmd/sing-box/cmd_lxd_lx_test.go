@@ -192,20 +192,20 @@ func TestDaemonConnectionFileOrDevDefaults(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	listen, useTLS, secret, err := daemonConnection(dir)
+	config, installed, err := daemonConnection(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if listen != "127.0.0.1:28080" || !useTLS || secret != "from-file" {
-		t.Fatalf("daemon.json must own the settings, got %q %v %q", listen, useTLS, secret)
+	if !installed || config.Listen != "127.0.0.1:28080" || !config.TLS || config.Secret != "from-file" {
+		t.Fatalf("daemon.json must own the settings, got %v %+v", installed, config)
 	}
 
-	listen, useTLS, secret, err = daemonConnection(t.TempDir())
+	config, installed, err = daemonConnection(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if listen != devDefaultListen || useTLS || secret != "" {
-		t.Fatalf("no file must mean plain dev defaults, got %q %v %q", listen, useTLS, secret)
+	if installed || config.Listen != devDefaultListen || config.TLS || config.Secret != "" {
+		t.Fatalf("no file must mean plain dev defaults, got %v %+v", installed, config)
 	}
 }
 
