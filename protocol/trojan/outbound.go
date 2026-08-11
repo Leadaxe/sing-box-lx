@@ -60,6 +60,8 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			Options:       common.PtrValueOrDefault(options.TLS),
 			KTLSCompatible: common.PtrValueOrDefault(options.Transport).Type == "" &&
 				!common.PtrValueOrDefault(options.Multiplex).Enabled,
+			// lx: SPEC 060 — see the vless outbound.
+			DialedThroughDetour: tls.DialedThroughDetour(options.DialerOptions),
 		})
 		if err != nil {
 			return nil, err

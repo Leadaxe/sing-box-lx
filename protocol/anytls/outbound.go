@@ -60,7 +60,14 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, E.New("tcp_fast_open is not supported with anytls outbound")
 	}
 
-	tlsConfig, err := tls.NewClient(ctx, logger, options.Server, common.PtrValueOrDefault(options.TLS))
+	tlsConfig, err := tls.NewClientWithOptions(tls.ClientOptions{
+		Context:       ctx,
+		Logger:        logger,
+		ServerAddress: options.Server,
+		Options:       common.PtrValueOrDefault(options.TLS),
+		// lx: SPEC 060 — see the vless outbound.
+		DialedThroughDetour: tls.DialedThroughDetour(options.DialerOptions),
+	})
 	if err != nil {
 		return nil, err
 	}
