@@ -71,7 +71,7 @@ jobs:
           go vet \
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command" \
             ./option/ ./constant/ ./transport/v2ray/ ./transport/v2rayxhttp/ \
-            ./protocol/wireguard/ ./transport/wireguard/
+            ./protocol/wireguard/ ./transport/wireguard/ ./lxd/
           go vet -unsafeptr=false \
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command" \
             ./daemon/ ./experimental/libbox/
@@ -80,7 +80,7 @@ jobs:
         run: |
           # Only our downstream files — never the whole upstream tree.
           # Generated *.pb.go are excluded (machine output, not hand-edited).
-          files=$(git ls-files '*.go' | grep -E 'v2rayxhttp|_xhttp|_awg|_lx\.go|_command_lx' | grep -v '\.pb\.go' || true)
+          files=$(git ls-files '*.go' | grep -E 'v2rayxhttp|_xhttp|_awg|_lx(_test)?\.go|_command_lx|^lxd/' | grep -v '\.pb\.go' || true)
           echo "checking:"; echo "$files"
           if [ -n "$files" ]; then
             bad=$(gofmt -l $files)
@@ -89,6 +89,20 @@ jobs:
             fi
           fi
           echo "OK: lx files are gofmt-clean"
+
+      # The lxd daemon package only exists behind with_lx_command — without an
+      # explicit test step its suite is "[no test files]" everywhere and rots
+      # silently (review 055-057 finding). -race keeps the two-mutex controller
+      # honest. cmd/sing-box rides along for the service-args regression tests.
+      # -checklinkname=0 mirrors LX_LDFLAGS: badlinkname/with_purego need it, and
+      # unlike the plain build the test linker enforces it (badtls fails to link
+      # without it on go1.25).
+      - name: go test (lxd daemon + cli, race)
+        run: |
+          go test -race -count=1 \
+            -ldflags "-checklinkname=0" \
+            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command" \
+            ./lxd/ ./cmd/sing-box/
 
   build-check:
     name: build-check (native build + check + negative)
