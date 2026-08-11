@@ -37,6 +37,22 @@ type MASQUEOutboundOptions struct {
 	// SkipCertVerify disables public-key pinning (debug only).
 	SkipCertVerify bool `json:"skip_cert_verify,omitempty"`
 
+	// ClientHello fragmentation on the h2 transport. Names and semantics match
+	// OutboundTLSOptions so masque does not invent its own dialect.
+	//
+	// Why masque needs its own copy: the h2 path builds its TLS client through
+	// the shared common/tls layer, but masque has no `tls` block of its own —
+	// its TLS is fully derived from `profile` + the pinned key material.
+	//
+	// These matter under `detour`: the leg forwards our ClientHello from its own
+	// address, and if the PMTU beyond it is smaller than the ClientHello the
+	// packet is silently dropped (no ICMP gets back), surfacing as a ~15s
+	// "tls handshake: EOF". Splitting the first record gets it through.
+	// See SPEC 021 §TLS-слой; auto-enabling under detour is SPEC 060.
+	Fragment              bool               `json:"fragment,omitempty"`
+	FragmentFallbackDelay badoption.Duration `json:"fragment_fallback_delay,omitempty"`
+	RecordFragment        bool               `json:"record_fragment,omitempty"`
+
 	// IdleTimeout suspends the tunnel after this long with no traffic (freeing
 	// the userspace stack, pumps and QUIC keepalive); the next dial rebuilds it.
 	// Empty = default (5m). A negative value disables idle-suspend.

@@ -10,7 +10,7 @@ package masque
 import (
 	"context"
 	"crypto/ecdsa"
-	"crypto/tls"
+	stdtls "crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"io"
@@ -25,6 +25,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -62,13 +63,16 @@ type Outbound struct {
 	profile     masque.Profile
 	idleTimeout time.Duration
 
-	server     M.Socksaddr
-	uri        string
-	network    string // "h3" | "h2"
-	mtu        uint32
-	prefixes   []netip.Prefix
-	tlsConfig  *tls.Config
-	quicConfig *quic.Config
+	server    M.Socksaddr
+	uri       string
+	network   string // "h3" | "h2"
+	mtu       uint32
+	prefixes  []netip.Prefix
+	tlsConfig *stdtls.Config
+	// h2TLSClient is the shared-layer TLS client used by the h2 transport; nil on
+	// h3, which hands tlsConfig to quic-go directly. lx: SPEC 021 Ф4.
+	h2TLSClient tls.Config
+	quicConfig  *quic.Config
 
 	// Tunnel lifecycle. The current live tunnel is a *session; it is nil
 	// whenever no tunnel is up (before the first dial, after an idle-suspend, or
@@ -162,6 +166,27 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		tlsConfig.NextProtos = []string{"h2"}
 	}
 
+	// lx: SPEC 021 Ф4 — the h2 path runs its TLS through the shared common/tls
+	// client instead of a bare crypto/tls.Client, so masque stops being the one
+	// outbound that misses everything that layer provides (ClientHello
+	// fragmentation above all — see SPEC 021 §TLS-слой).
+	//
+	// The pinning stays masque-specific: cloudflare authenticates the endpoint by
+	// its ECDSA public key, not by a chain, and common/tls has no notion of that.
+	// It is layered on top via VerifyConnection on the returned STDConfig, so the
+	// shared layer needs no masque-shaped hole in it.
+	//
+	// h3 is deliberately untouched: quic.DialEarly wants a *crypto/tls.Config and
+	// QUIC does not carry TLS over TCP at all, so neither the wrapper nor the
+	// fragmentation applies there.
+	var h2TLSClient tls.Config
+	if network == "h2" {
+		h2TLSClient, err = buildH2TLSClient(ctx, logger, options, sni, tlsConfig)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	mtu := options.MTU
 	if mtu == 0 {
 		mtu = defaultMTU
@@ -225,8 +250,67 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		mtu:         mtu,
 		prefixes:    prefixes,
 		tlsConfig:   tlsConfig,
+		h2TLSClient: h2TLSClient,
 		quicConfig:  quicConfig,
 	}, nil
+}
+
+// buildH2TLSClient wires the h2 TLS handshake through the shared common/tls
+// client, carrying over everything PrepareTLSConfig decided (ALPN, SNI, the
+// client certificate, and the pinning verifier) and adding what only the shared
+// layer can give — ClientHello fragmentation.
+//
+// masque has no `tls` block in its config: its TLS is derived from `profile`
+// plus the key material, so the OutboundTLSOptions handed to the shared layer is
+// synthesised here rather than taken from the user.
+//
+// lx: SPEC 021 Ф4.
+func buildH2TLSClient(
+	ctx context.Context,
+	logger log.ContextLogger,
+	options option.MASQUEOutboundOptions,
+	serverName string,
+	prepared *stdtls.Config,
+) (tls.Config, error) {
+	tlsOptions := option.OutboundTLSOptions{
+		Enabled:               true,
+		ServerName:            serverName,
+		ALPN:                  prepared.NextProtos,
+		Fragment:              options.Fragment,
+		FragmentFallbackDelay: options.FragmentFallbackDelay,
+		RecordFragment:        options.RecordFragment,
+		// Chain verification is never what authenticates a WARP endpoint: the SNI
+		// deliberately does not match it. Pinning (or an explicit opt-out) is
+		// re-attached below, on the concrete *tls.Config.
+		Insecure: true,
+	}
+	client, err := tls.NewClientWithOptions(tls.ClientOptions{
+		Context:       ctx,
+		Logger:        logger,
+		ServerAddress: serverName,
+		Options:       tlsOptions,
+		// An empty server_name is legitimate here: some endpoints only present
+		// their real certificate when the ClientHello carries no SNI at all.
+		AllowEmptyServerName: true,
+		// lx: SPEC 060 — masque over a detour is exactly the case that surfaced
+		// the PMTU black hole; fragment the ClientHello by default there.
+		DialedThroughDetour: tls.DialedThroughDetour(options.DialerOptions),
+	})
+	if err != nil {
+		return nil, err
+	}
+	stdConfig, err := client.STDConfig()
+	if err != nil {
+		return nil, E.Cause(err, "masque: h2 requires a standard TLS engine")
+	}
+	// Re-attach the masque-specific parts. PrepareTLSConfig already resolved
+	// whether pinning applies (profile) and whether it was waived
+	// (skip_cert_verify); mirroring its result keeps a single source of truth.
+	stdConfig.Certificates = prepared.Certificates
+	stdConfig.InsecureSkipVerify = prepared.InsecureSkipVerify
+	stdConfig.VerifyConnection = prepared.VerifyConnection
+	stdConfig.ServerName = prepared.ServerName
+	return client, nil
 }
 
 // ensureSession returns a live tunnel session, building one lazily if none is
@@ -373,8 +457,11 @@ func (o *Outbound) connectH2(ctx context.Context) (io.Closer, masque.IpConn, err
 	if err != nil {
 		return nil, nil, E.Cause(err, "dial tcp")
 	}
-	tlsConn := tls.Client(c, o.tlsConfig)
-	if err = tlsConn.HandshakeContext(ctx); err != nil {
+	// lx: SPEC 021 Ф4 — handshake through the shared TLS client, so the h2 path
+	// gets ClientHello fragmentation (and the rest of common/tls) instead of a
+	// bare crypto/tls.Client. Pinning rides along inside h2TLSClient.
+	tlsConn, err := tls.ClientHandshake(ctx, c, o.h2TLSClient)
+	if err != nil {
 		_ = c.Close()
 		return nil, nil, E.Cause(err, "tls handshake")
 	}

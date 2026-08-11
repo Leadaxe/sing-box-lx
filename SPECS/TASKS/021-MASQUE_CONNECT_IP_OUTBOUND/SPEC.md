@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — клиентский outbound CONNECT-IP |
-| Статус | C (complete) — h3 **и** h2 работают на живом Cloudflare WARP (device-verified 2026-07-02, `warp=on` на обоих); все три lifecycle-режима (dial / idle-suspend / reconnect) device-verified на обоих транспортах, см. [TEST_PLAN.md](TEST_PLAN.md) §RESULTS |
+| Статус | C (complete) — h3/h2 работают на живом Cloudflare WARP (device-verified 2026-07-02, `warp=on` на обоих); все три lifecycle-режима device-verified. **Ф4 сделана 2026-08-12** (h2-TLS на общий `common/tls` + `fragment`/`record_fragment`), проверена на живом WARP через сломанное detour-плечо — см. [TEST_PLAN.md](TEST_PLAN.md) §Ф4. Авто-включение фрагментации при detour — [SPEC 060](../060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) |
 | Ветка | `lx-spec021-masque` |
 | Тег типа | `masque` (`C.TypeMASQUE`) |
 | Build-tag | `with_quic` + `with_gvisor` (userspace-стек) |
@@ -81,6 +81,11 @@
   "idle_timeout": "5m",             // suspend туннеля после простоя; "" = 5m, отрицательное = выкл
   "keep_alive_period": "30s",       // QUIC keepalive (h3); "" = 30s, отрицательное = выкл
 
+  // --- фрагментация ClientHello (h2; см. §TLS-слой) ---
+  "record_fragment": false,          // резать TLS-запись ClientHello (лечит PMTU-дыру под detour)
+  "fragment": false,                 // packet-split по границам SNI (медленнее record_fragment)
+  "fragment_fallback_delay": ""      // пауза между кусками, когда ACK-сигнал недоступен
+
   // стандартные:
   "network_list": ["tcp","udp"],    // L4-протоколы (НЕ транспорт — это `network`)
   ...DialerOptions
@@ -108,6 +113,13 @@
 | `idle_timeout` | duration | `5m` | оба | suspend туннеля после простоя; отриц. = выкл |
 | `keep_alive_period` | duration | `30s` | h3 | QUIC keepalive; отриц. = выкл |
 | `network_list` | list | оба tcp+udp | оба | L4-протоколы через туннель |
+| `record_fragment` | bool | false | h2 | резать TLS-запись ClientHello — лечит PMTU-дыру под detour (§TLS-слой) |
+| `fragment` | bool | false | h2 | packet-split по границам SNI (нужен ACK-wait; медленнее) |
+| `fragment_fallback_delay` | duration | `C.TLSFragmentFallbackDelay` | h2 | пауза между кусками, когда ACK-сигнал недоступен (случай detour) |
+
+> Имена и семантика — как в `OutboundTLSOptions` (общий TLS-слой), чтобы masque не заводил
+> собственный диалект. Дефолт `false`; автоматическое включение под `detour` — предмет
+> [SPEC 060](../060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md), общий для всех TLS-outbound'ов.
 
 **Валидация fail-fast при старте:**
 - `profile == cloudflare`: `private_key`, `public_key` обязательны и парсятся (иначе ошибка конфига).
@@ -136,6 +148,59 @@
 
 ---
 
+## TLS-слой (h2) и фрагментация ClientHello
+
+### Почему отдельный раздел
+
+MASQUE — **единственный** протокол форка, который ведёт TLS мимо `common/tls`: в
+[`connectH2`](../../../protocol/masque/outbound.go) стоит голый `crypto/tls.Client`, потому что
+профилю `cloudflare` нужен pinning по ECDSA-ключу endpoint'а, которого в общем слое нет.
+Побочный эффект: masque не получает НИЧЕГО из общего TLS-слоя — в том числе
+`fragment` / `record_fragment` (`common/tls/std_client.go` применяет их через `tf.NewConn`).
+
+Это не косметика: без фрагментации связка `masque(h2) + detour` не поднимается на части
+VLESS-узлов (см. §PMTU black hole).
+
+### PMTU black hole под detour (корневая причина)
+
+Когда masque идёт через `detour`, нижнее плечо (VLESS/trojan/…) пересылает наш ClientHello
+**от своего имени**. Если PMTU на участке «detour-сервер → MASQUE-endpoint» ниже размера
+ClientHello, а ICMP `Fragmentation Needed` до нас не доходит — пакет теряется молча.
+Наружу это выглядит как `tls handshake: EOF` через 12–17 с; причина по сообщению не
+восстанавливается.
+
+Измерено на живом WARP-endpoint через реальные VLESS-узлы:
+
+| ClientHello | FI / SE узлы | GB / FR узлы |
+|---|---|---|
+| 1488 B | OK | OK |
+| 1502 B и выше | **висит → EOF** | OK |
+
+Порог ≈1490 B — свойство **пути за чужим сервером**, не протокола и не SNI. Длина `sni`
+влияет лишь потому, что сдвигает размер ClientHello через порог.
+
+**Ограничители, которые сюда НЕ достают** (проверено):
+- `mtu` masque-outbound — режет IP-пакеты **внутри** уже поднятого туннеля; ClientHello
+  происходит ДО существования туннеля.
+- `tun.mtu` — ограничивает вход из TUN; ClientHello рождается в outbound после роутинга и
+  через TUN не проходит.
+- route-action `tls_fragment` — применяется в `route/conn.go` к соединениям, идущим через
+  маршрутизатор; внутренний dial masque→detour туда не попадает.
+
+Единственный работающий рычаг на нашей стороне — фрагментация первой TLS-записи.
+
+### Что нужно (и чего НЕ нужно) фрагментировать
+
+Фрагментация нужна **только на хендшейке**. После него masque не создаёт записей выше порога
+by design: `h2IpConn.WritePacket` вызывается tx-насосом по ОДНОМУ IP-пакету (каждый ≤ `mtu`,
+дефолт 1280) → один `WriteData` → одна TLS-запись ≈1300 B. Подтверждено сквозной загрузкой
+5 МБ через `masque + detour` (5000 пакетов, ни одного застревания).
+
+Поэтому поведение `tf.NewConn` — резать только первую запись с SNI — ровно то, что требуется;
+постоянного налога на трафик нет.
+
+---
+
 ## Файлы и точки интеграции (как реализовано)
 
 ```
@@ -146,9 +211,12 @@ include/quic_stub.go     заглушка ErrQUICNotIncluded (без with_quic)
 
 protocol/masque/
   outbound.go            adapter.Outbound: NewOutbound, ensureSession/teardownSession/idleWatcher,
-                         pumpToTunnel/pumpFromTunnel, DialContext/ListenPacket/Close, resolve, RegisterOutbound
+                         pumpToTunnel/pumpFromTunnel, DialContext/ListenPacket/Close, resolve, RegisterOutbound,
+                         buildH2TLSClient (Ф4: h2-TLS через common/tls + перенос pinning)
   outbound_test.go       parsePrefixes, EC-ключи
   lifecycle_test.go      generation-guard, идемпотентность teardown, close-guard
+  h2_tls_client_lx_test.go  Ф4: pinning переживает общий слой, отвергает чужой ключ,
+                         skip_cert_verify снимает pinning, пустой SNI допустим
 
 transport/masque/
   masque.go              ConnectTunnelH3 + IpConn интерфейс + dialCONNECTIP
@@ -295,6 +363,19 @@ DATAGRAM (type 0 + varint len). `payloadLen` ограничен `maxCapsulePaylo
   регистрация. Цель: живое TCP+UDP через WARP по QUIC. ← основная ценность.
 - **Ф2 (h2):** client_h2 + capsule-over-h2 (+ решение по http-форку). Цель: WARP там, где режут QUIC.
 - **Ф3 (standard/RFC, задел):** `connect-ip`/строгий Extended CONNECT/обычный TLS. НЕ вылизываем в v1.
+- **Ф4 (TLS-слой h2 на общий `common/tls`) — ✅ СДЕЛАНА 2026-08-12.** `connectH2` ходит через
+  `tls.ClientHandshake` вместо голого `crypto/tls.Client`; клиент собирается в
+  `buildH2TLSClient` (`protocol/masque/outbound.go`). Pinning остался masque-специфичным —
+  переносится на `STDConfig()` поверх собранного клиента, общий слой не тронут. h3 не задет
+  (`quic.DialEarly` требует `*crypto/tls.Config`). Появились поля `fragment`,
+  `record_fragment`, `fragment_fallback_delay`.
+
+> **Авто-включение фрагментации при `detour` — НЕ здесь.** Проблема (PMTU black hole, §TLS-слой)
+> общая для всех TLS-over-TCP outbound'ов, а не masque-специфичная: `VLESS detour VLESS` падает
+> так же. У остальных протоколов механизм уже есть (`fragment`/`record_fragment` в
+> `OutboundTLSOptions`) — вопрос только в дефолте, и менять его надо единообразно, в общем слое.
+> Вынесено в [SPEC 060](../060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md).
+> Задача 021 закрывает лишь то, что masque **вообще не имел** этих полей.
 
 ---
 
@@ -323,6 +404,14 @@ DATAGRAM (type 0 + varint len). `payloadLen` ограничен `maxCapsulePaylo
 4. **Cloudflare non-RFC quirks могут дрейфовать** — открыто. Привязка к поведению mihomo Alpha
    (референс). Зафиксированные quirks: `cf-connect-ip`, игнор Extended-CONNECT settings, h3-legacy
    SETTINGS `0x276`, h2 plain-CONNECT + `cf-connect-proto`, pubkey-pinning вместо цепочки.
+5. **h3 под detour PMTU-дырой не задет** — h3 через detour отработал 4/4 на узле, где h2 висел:
+   QUIC сам держит `InitialPacketSize` 1242 и делает PLPMTUD. Фрагментация — h2-only.
+6. **Сломанное нижнее плечо бьёт не только по masque** — открыто. Связка `VLESS detour VLESS`
+   через тот же узел тоже падает (`EOF` на хендшейке верхнего REALITY). Замер не доведён —
+   у VLESS нет своего `mtu`, поэтому вопрос «хватает ли фрагментации только на хендшейке»
+   для него открыт. **Не в зоне SPEC 021**: если подтвердится, это отдельная задача про
+   TLS-фрагментацию у остальных outbound'ов (у них `fragment`/`record_fragment` уже есть в
+   `OutboundTLSOptions` — вопрос лишь в дефолте под detour).
 
 ## Результаты реализации (что реально легло)
 

@@ -135,3 +135,76 @@ Framer/hpack (~250 строк в client_h2.go). Новых внешних зав
 
 **Верификация:** `go build` (with_quic+with_gvisor+with_wireguard и stub), `go vet`, `gofmt -l`, `go test -race`
 — всё зелёно. Юнит-тесты жизненного цикла (generation-guard, идемпотентный teardown, close-guard) под -race.
+
+---
+
+## Ф4 — TLS-слой h2 на общий `common/tls` (план + baseline)
+
+> Baseline ниже снят до реализации и служит также точкой отсчёта для
+> [SPEC 060](../060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) (авто-фрагментация при detour).
+
+### Baseline (снят 2026-08-12, до реализации)
+
+Стенд: локальный `sing-box run` с раздельными mixed-инбаундами (по одному на плечо),
+нижние плечи с `bind_interface: en0` в обход боевого TUN. Endpoint — реальный WARP
+`162.159.199.118:8443`, `network: h2`, `sni: www.google.com` (конфиг из LxBox-генератора).
+
+| плечо | результат |
+|---|---|
+| VLESS сам по себе | ✅ `ip=66.234.150.226` |
+| masque h2 напрямую (en0) | ✅ `warp=on` |
+| masque h2 **через detour(VLESS-FI)** | ❌ `tls handshake: EOF` за 17 с |
+| masque h3 через detour | ✅ `warp=on`, 4/4 |
+
+Порог по размеру ClientHello через сломанное плечо: 1488 B — OK, 1502 B и выше — виснет.
+На узлах GB/FR те же размеры проходят. Голым `curl`/Go-клиентом воспроизводится без ядра
+⇒ причина вне sing-box (PMTU black hole за detour-сервером).
+
+Фрагментация штатным `tf.NewConn` через то же сломанное плечо:
+
+| режим | результат |
+|---|---|
+| без фрагментации | ❌ FAIL, 12 с |
+| `fragment` (packet-split) | ✅ OK, 0.6 с |
+| `record_fragment` | ✅ **OK, 0.1 с** |
+| оба | ✅ OK, 0.6 с |
+
+Post-handshake: сквозная загрузка 5 МБ через `masque + detour` (здоровое GB-плечо) —
+`http=200`, 1.0 с. Записи туннеля ≈1300 B (по одному IP-пакету на `WriteData`),
+порога не достигают ⇒ фрагментация нужна только на хендшейке.
+
+### Что проверить ПОСЛЕ реализации Ф4
+
+1. **Регресс прямого пути**: masque h2 и h3 БЕЗ detour — `warp=on`, как в baseline.
+2. **Фрагментация доступна и работает**: masque h2 + `detour` на заведомо сломанный узел
+   (FI/SE) с `record_fragment: true` — туннель поднимается, `warp=on`, хендшейк < 1 с.
+   Без флага — по-прежнему падает (это ожидаемо до SPEC 060).
+3. **Pinning не сломан**: подмена `public_key` → внятная ошибка pinning, а не успешный
+   коннект; `skip_cert_verify: true` по-прежнему отключает pinning.
+4. **Наследство общего слоя**: `sni` пустой/непустой, `skip_cert_verify`;
+   h3-путь не задет (он на своём `quic-go` TLS).
+5. **Сквозной трафик**: 5 МБ через detour-туннель, сравнить со строкой baseline.
+6. **`go test -race`** по `protocol/masque` + `transport/masque`, `gofmt -l`, `go vet`.
+
+> Замеры на живых узлах воспроизводимы только при наличии сломанного плеча: PMTU-дыра —
+> свойство конкретного хостера. На момент baseline ломались FI/SE, работали GB/FR.
+
+### RESULTS — Ф4 (2026-08-12)
+
+Живой Cloudflare WARP `162.159.199.118:8443`, `network: h2`, `sni: www.google.com`.
+Нижнее плечо — VLESS-узел FI с подтверждённой PMTU-дырой (порог ≈1490 B).
+
+| сценарий | было (baseline) | стало |
+|---|---|---|
+| h2 напрямую (регресс) | ✅ `warp=on` | ✅ `warp=on`, 0.4 с |
+| h2 + detour, без флагов | ❌ EOF 17 с | ❌ FAIL 15.2 с — **ожидаемо**: дефолт не меняли (SPEC 060) |
+| h2 + detour + `record_fragment` | — (поля не было) | ✅ **`warp=on`, 0.3 с** |
+| 5 МБ через detour + `record_fragment` | — | ✅ `http=200`, 0.97 с (= здоровое плечо) |
+| pinning на подменённый `public_key` | — | ✅ `masque: remote endpoint has a different public key than pinned` |
+
+Ключевое: перевод на общий TLS-слой **не ослабил pinning** — проверено и юнит-тестом
+(`h2_tls_client_lx_test.go`), и живым коннектом с валидным, но чужим P-256 ключом.
+
+Сборка/статика: `make -f Makefile.lx lx-build`, сборка без `with_quic` (stub-путь),
+`go vet`, `gofmt -l` — чисто. `go test -race` по `protocol/masque`, `transport/masque`,
+`transport/masque/connectip`, `option` — зелено.
