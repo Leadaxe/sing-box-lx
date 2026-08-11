@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sagernet/sing-box/log"
@@ -173,8 +174,8 @@ func daemonConnection(stateDir string) (config lxd.DaemonConfig, installed bool,
 	if err != nil {
 		return lxd.DaemonConfig{}, false, err
 	}
-	if config.Listen == "" {
-		config.Listen = devDefaultListen
+	if config.Listen.IsZero() {
+		config.Listen = lxd.ListenAddress(devDefaultListen)
 	}
 	return config, installed, nil
 }
@@ -191,7 +192,9 @@ func clientConnection(stateDir string) (listen string, useTLS bool, secret strin
 	if !found {
 		return "", false, "", E.New("no daemon.json in ", stateDir, " — no installed daemon to talk to (pass --state-dir of the daemon's home)")
 	}
-	listen = fileConfig.Listen
+	// A client dials ONE address; with several configured the first is the
+	// operator's own preference (ListenConfig.Advertise).
+	listen = fileConfig.Listen.Advertise()
 	if listen == "" {
 		listen = devDefaultListen
 	}
@@ -301,11 +304,12 @@ func prepareServiceConfig(stateDir string, userScope bool) (lxd.DaemonConfig, er
 	if err != nil {
 		return lxd.DaemonConfig{}, err
 	}
-	if config.Listen == "" {
-		config.Listen, err = firstFreeLoopbackAddr(serviceScanPortStart, serviceScanPortTries)
-		if err != nil {
-			return lxd.DaemonConfig{}, err
+	if config.Listen.IsZero() {
+		address, addressErr := firstFreeLoopbackAddr(serviceScanPortStart, serviceScanPortTries)
+		if addressErr != nil {
+			return lxd.DaemonConfig{}, addressErr
 		}
+		config.Listen = lxd.ListenAddress(address)
 	}
 	config.TLS = true
 	if config.Secret == "" {
@@ -332,12 +336,12 @@ func printServiceSummary(config lxd.DaemonConfig, stateDir string, userScope boo
 		restartTarget = fmt.Sprintf("gui/%d/com.leadaxe.sing-box-lxd", os.Getuid())
 		restartPrefix = ""
 	}
-	fmt.Println("lxd: control channel:", config.Listen)
+	fmt.Println("lxd: control channel:", strings.Join(config.Listen.Addresses(), ", "))
 	fmt.Println("lxd: admin secret:   ", config.Secret)
 	fmt.Println("lxd: settings file:  ", filepath.Join(stateDir, "daemon.json"))
 	fmt.Println("lxd: restart command:", restartPrefix+"launchctl kickstart -k "+restartTarget)
 
-	client := lxd.NewLocalClient(config.Listen, config.Secret, config.TLS)
+	client := lxd.NewLocalClient(config.Listen.Advertise(), config.Secret, config.TLS)
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		invite, err := client.MintClientCode("")

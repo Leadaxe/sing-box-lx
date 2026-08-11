@@ -135,12 +135,13 @@ func TestPrepareServiceConfigDecidesEverything(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(first.Listen, "127.0.0.1:") {
-		t.Fatalf("install must pick a loopback address, got %q", first.Listen)
+	firstListen := first.Listen.Advertise()
+	if !strings.HasPrefix(firstListen, "127.0.0.1:") {
+		t.Fatalf("install must pick a loopback address, got %q", firstListen)
 	}
-	port, err := strconv.Atoi(strings.TrimPrefix(first.Listen, "127.0.0.1:"))
+	port, err := strconv.Atoi(strings.TrimPrefix(firstListen, "127.0.0.1:"))
 	if err != nil || port < serviceScanPortStart || port >= serviceScanPortStart+serviceScanPortTries {
-		t.Fatalf("port must come from the %d+ scan range, got %q", serviceScanPortStart, first.Listen)
+		t.Fatalf("port must come from the %d+ scan range, got %q", serviceScanPortStart, firstListen)
 	}
 	if !first.TLS {
 		t.Fatal("a service must always be mTLS")
@@ -155,7 +156,7 @@ func TestPrepareServiceConfigDecidesEverything(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Listen != first.Listen || second.Secret != first.Secret {
+	if second.Listen.Advertise() != first.Listen.Advertise() || second.Secret != first.Secret {
 		t.Fatalf("reinstall must keep address and secret: %+v vs %+v", second, first)
 	}
 }
@@ -188,7 +189,7 @@ func TestFirstFreeLoopbackAddrSkipsTaken(t *testing.T) {
 func TestDaemonConnectionFileOrDevDefaults(t *testing.T) {
 	dir := t.TempDir()
 	if err := lxd.SaveDaemonConfig(dir, lxd.DaemonConfig{
-		Listen: "127.0.0.1:28080", TLS: true, Secret: "from-file",
+		Listen: lxd.ListenAddress("127.0.0.1:28080"), TLS: true, Secret: "from-file",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +197,7 @@ func TestDaemonConnectionFileOrDevDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !installed || config.Listen != "127.0.0.1:28080" || !config.TLS || config.Secret != "from-file" {
+	if !installed || config.Listen.Advertise() != "127.0.0.1:28080" || !config.TLS || config.Secret != "from-file" {
 		t.Fatalf("daemon.json must own the settings, got %v %+v", installed, config)
 	}
 
@@ -204,7 +205,7 @@ func TestDaemonConnectionFileOrDevDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if installed || config.Listen != devDefaultListen || config.TLS || config.Secret != "" {
+	if installed || config.Listen.Advertise() != devDefaultListen || config.TLS || config.Secret != "" {
 		t.Fatalf("no file must mean plain dev defaults, got %v %+v", installed, config)
 	}
 }
@@ -214,7 +215,7 @@ func TestDaemonConnectionFileOrDevDefaults(t *testing.T) {
 func TestClientConnectionRequiresFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := lxd.SaveDaemonConfig(dir, lxd.DaemonConfig{
-		Listen: "127.0.0.1:28080", TLS: true, Secret: "s",
+		Listen: lxd.ListenAddress("127.0.0.1:28080"), TLS: true, Secret: "s",
 	}); err != nil {
 		t.Fatal(err)
 	}

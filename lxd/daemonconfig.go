@@ -3,11 +3,15 @@
 package lxd
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	E "github.com/sagernet/sing/common/exceptions"
 )
@@ -24,8 +28,9 @@ import (
 // command has no connection flags at all, so "which side wins" cannot be
 // asked. Absent file = fixed dev defaults.
 type DaemonConfig struct {
-	// Listen is the control channel address (host:port).
-	Listen string `json:"listen,omitempty"`
+	// Listen is the control channel address: one "host:port" string, or an
+	// object with several addresses sharing one port (see ListenConfig).
+	Listen ListenConfig `json:"listen,omitempty"`
 	// TLS enables the mTLS control plane with client enrollment.
 	TLS bool `json:"tls,omitempty"`
 	// Secret is the Bearer secret for the operator routes (and the only gate
@@ -38,6 +43,158 @@ type DaemonConfig struct {
 	LogMaxSizeMB   int `json:"log_max_size_mb,omitempty"`
 	LogMaxBackups  int `json:"log_max_backups,omitempty"`
 	LogMaxAgeHours int `json:"log_max_age_hours,omitempty"`
+}
+
+// ListenConfig is the control channel's bind spec. Two JSON forms, one
+// meaning — a list of "host:port" addresses to serve the same two planes on:
+//
+//	"listen": "127.0.0.1:19091"
+//	"listen": {"address": ["192.168.10.1", "127.0.0.1"], "port": 19091}
+//
+// The string form is the original one and stays exact — daemon.json files
+// written before this existed keep working, and a single address needs no
+// object. The object form exists because one address is genuinely not enough:
+// a daemon reachable from a LAN interface AND from loopback cannot be
+// expressed as one bind, and 0.0.0.0 is not the answer — it also exposes every
+// other interface the host happens to have.
+//
+// Addresses are bind targets, not filters: each becomes its own listener on a
+// shared http.Server. There is deliberately no netmask syntax ("192.168.10.1/32")
+// — a mask cannot be honoured (the kernel binds one address, never a range),
+// so accepting one would only let the file claim something the daemon does not
+// do. Restricting WHO may connect is the firewall's job, not this field's.
+type ListenConfig struct {
+	// Address holds one or more bind hosts. In the string form it is the whole
+	// "host:port" (Port stays zero); in the object form the hosts are bare and
+	// share Port.
+	Address []string `json:"address,omitempty"`
+	// Port is the shared port of the object form, unset in the string form.
+	Port uint16 `json:"port,omitempty"`
+}
+
+// listenConfigObject mirrors ListenConfig for JSON without inheriting its
+// custom marshalling — decoding the object form into ListenConfig itself would
+// recurse through UnmarshalJSON forever.
+type listenConfigObject struct {
+	Address []string `json:"address,omitempty"`
+	Port    uint16   `json:"port,omitempty"`
+}
+
+// UnmarshalJSON accepts the string and the object form. Both are validated
+// here rather than at bind time: a daemon.json that cannot produce a single
+// address must fail while the operator is looking at the error, not later as a
+// daemon listening nowhere.
+func (l *ListenConfig) UnmarshalJSON(content []byte) error {
+	var single string
+	if err := json.Unmarshal(content, &single); err == nil {
+		if single == "" {
+			return E.New("listen: empty address")
+		}
+		*l = ListenConfig{Address: []string{single}}
+		return l.validate()
+	}
+	var object listenConfigObject
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&object); err != nil {
+		return E.Cause(err, "listen: expected \"host:port\" or {\"address\": [...], \"port\": N}")
+	}
+	*l = ListenConfig{Address: object.Address, Port: object.Port}
+	return l.validate()
+}
+
+// MarshalJSON writes back the form the value came in as: a lone "host:port"
+// stays a string, so install/rewrite paths do not silently convert existing
+// single-address files into the object form.
+func (l ListenConfig) MarshalJSON() ([]byte, error) {
+	if l.Port == 0 && len(l.Address) == 1 {
+		return json.Marshal(l.Address[0])
+	}
+	return json.Marshal(listenConfigObject{Address: l.Address, Port: l.Port})
+}
+
+func (l *ListenConfig) validate() error {
+	if len(l.Address) == 0 {
+		return E.New("listen: no address")
+	}
+	seen := make(map[string]bool, len(l.Address))
+	for _, address := range l.Address {
+		if address == "" {
+			return E.New("listen: empty address")
+		}
+		// A mask is the one wrong-shaped input worth naming explicitly: it
+		// looks plausible and would otherwise fail as an opaque bind error.
+		if strings.Contains(address, "/") {
+			return E.New("listen: ", address, ": netmasks are not supported — give the bare address to bind")
+		}
+		resolved, err := l.addressOf(address)
+		if err != nil {
+			return err
+		}
+		if seen[resolved] {
+			return E.New("listen: duplicate address ", resolved)
+		}
+		seen[resolved] = true
+	}
+	return nil
+}
+
+// addressOf renders one entry as the "host:port" net.Listen takes: with Port
+// set the entry is a bare host, without it the entry already carries its port.
+func (l ListenConfig) addressOf(address string) (string, error) {
+	if l.Port != 0 {
+		if _, _, err := net.SplitHostPort(address); err == nil {
+			return "", E.New("listen: ", address, " already carries a port, but \"port\" is set too")
+		}
+		return net.JoinHostPort(address, strconv.Itoa(int(l.Port))), nil
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", E.Cause(err, "listen: ", address, ": expected \"host:port\" (or set \"port\" and list bare addresses)")
+	}
+	if port == "" {
+		return "", E.New("listen: ", address, ": empty port")
+	}
+	return net.JoinHostPort(host, port), nil
+}
+
+// Addresses returns every "host:port" to bind, in file order.
+func (l ListenConfig) Addresses() []string {
+	addresses := make([]string, 0, len(l.Address))
+	for _, address := range l.Address {
+		resolved, err := l.addressOf(address)
+		if err != nil {
+			// Unreachable for a validated value; keeping the raw entry makes
+			// the eventual bind error name what the file actually said.
+			resolved = address
+		}
+		addresses = append(addresses, resolved)
+	}
+	return addresses
+}
+
+// Advertise returns the address clients are pointed at — enrollment invites,
+// the local client, install's summary. It is the FIRST configured address:
+// with several binds the file's order is the operator's own preference, and
+// the daemon has no better ground to pick from (a loopback bind is not
+// reachable for a remote launcher, a LAN bind is not for a local tool).
+func (l ListenConfig) Advertise() string {
+	addresses := l.Addresses()
+	if len(addresses) == 0 {
+		return ""
+	}
+	return addresses[0]
+}
+
+// IsZero reports the absent field, so callers can fall back to their defaults.
+func (l ListenConfig) IsZero() bool {
+	return len(l.Address) == 0
+}
+
+// ListenAddress builds the single-address form used by dev defaults, the
+// install-time port scan, and tests.
+func ListenAddress(address string) ListenConfig {
+	return ListenConfig{Address: []string{address}}
 }
 
 const daemonConfigFile = "daemon.json"

@@ -39,8 +39,10 @@ type Options struct {
 	// recorded last-good; after a successful start it becomes the last-good.
 	ConfigForce string
 	// Run forces the core up regardless of the recorded run-state.
-	Run    bool
-	Listen string
+	Run bool
+	// Listen is the control channel bind spec: one or more addresses serving
+	// the same two planes.
+	Listen ListenConfig
 	Secret string
 	// TLS enables the mTLS control plane. When false the daemon serves plain
 	// h2c (loopback-only, dev).
@@ -100,7 +102,7 @@ func Run(ctx context.Context, options Options) error {
 		infoTLS:      options.TLS,
 		startedAt:    time.Now(),
 	}
-	control.advertiseAddr = options.Listen
+	control.advertiseAddr = options.Listen.Advertise()
 
 	var serverIdentity *identity
 	if options.TLS {
@@ -151,15 +153,31 @@ func Run(ctx context.Context, options Options) error {
 		}), &http2.Server{IdleTimeout: idleTimeout}),
 	}
 
-	listener, err := net.Listen("tcp", options.Listen)
-	if err != nil {
+	// Every configured address must come up: a partial bind is a daemon that
+	// looks healthy while being unreachable exactly where the operator asked
+	// for it — the launcher then fails to connect with no hint why. Listeners
+	// already open are closed before returning, so the ports are free for the
+	// retry after the operator fixes the file.
+	var listeners []net.Listener
+	for _, address := range options.Listen.Addresses() {
+		listener, listenErr := net.Listen("tcp", address)
+		if listenErr != nil {
+			for _, opened := range listeners {
+				_ = opened.Close()
+			}
+			startedService.Close()
+			return E.Cause(listenErr, "listen control channel at ", address)
+		}
+		if options.TLS {
+			listener = tls.NewListener(listener, tlsConfig(serverIdentity))
+		}
+		listeners = append(listeners, listener)
+		log.Info("lxd: control channel listening at ", listener.Addr())
+	}
+	if len(listeners) == 0 {
 		startedService.Close()
-		return E.Cause(err, "listen control channel")
+		return E.New("listen control channel: no address configured")
 	}
-	if options.TLS {
-		listener = tls.NewListener(listener, tlsConfig(serverIdentity))
-	}
-	log.Info("lxd: control channel listening at ", listener.Addr())
 
 	// Signals are registered before bootstrap: the first core start can be
 	// slow (TUN, binds), and a SIGTERM arriving during it must lead to a clean
@@ -172,20 +190,31 @@ func Run(ctx context.Context, options Options) error {
 	// applyAccess is taken BEFORE the listener starts serving, so the first
 	// REST apply cannot race bootstrap.
 	control.applyAccess.Lock()
-	serveErr := make(chan error, 1)
-	go func() {
-		serveErr <- httpServer.Serve(listener)
-	}()
+	// Buffered per listener: teardown closes them all and every Serve returns
+	// ErrServerClosed, so an unbuffered send would leak the goroutines that
+	// lose the race to the one value the select below reads.
+	serveErr := make(chan error, len(listeners))
+	for _, listener := range listeners {
+		go func(listener net.Listener) {
+			serveErr <- httpServer.Serve(listener)
+		}(listener)
+	}
 	bootstrap(ctx, control, stateStore, options)
 	control.applyAccess.Unlock()
 
 	if options.TLS {
-		maybePrintInvite(control, serverIdentity, options.Listen)
+		maybePrintInvite(control, serverIdentity, options.Listen.Advertise())
 	}
 
 	for {
 		select {
 		case err = <-serveErr:
+			// One listener dying takes the daemon down, exactly as a single
+			// one always did: the remaining addresses are not a fallback the
+			// operator asked for, and a daemon silently serving on a subset of
+			// its configured addresses is the failure mode the all-or-nothing
+			// bind above exists to prevent.
+			//
 			// Same teardown discipline as the signal path: serialize with any
 			// in-flight apply so a half-done pipeline cannot record a config
 			// that never reached STARTED.

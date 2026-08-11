@@ -20,7 +20,7 @@ func TestRunBadListen(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- Run(context.Background(), Options{
-			Listen:   "256.0.0.1:99999",
+			Listen:   ListenAddress("256.0.0.1:99999"),
 			StateDir: t.TempDir(),
 		})
 	}()

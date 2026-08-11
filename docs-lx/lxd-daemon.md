@@ -71,7 +71,7 @@ or by the operator's editor).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `listen` | `127.0.0.1:9091` | channel address (both planes); use a LAN address to reach the daemon from another machine |
+| `listen` | `127.0.0.1:9091` | channel address (both planes); a `"host:port"` string, or `{"address": [...], "port": N}` to bind several addresses — see below |
 | `tls` | `false` | mTLS with client enrollment; `false` = plain h2c, loopback/dev only |
 | `secret` | empty | Bearer secret for the operator routes; the only gate when `tls: false` (empty = no authentication) |
 | `log_max_size_mb` | `20` | log rotation: safety size ceiling |
@@ -81,6 +81,38 @@ or by the operator's editor).
 The rotation defaults give "about a day of history"; 0/absent key = default,
 and there is deliberately no "unlimited" setting. Changing any setting is a
 file edit + service restart, never a reinstall.
+
+### 3.1. listen: one address or several
+
+`listen` takes two forms with one meaning — the addresses the control channel
+binds. Both planes (gRPC and admin REST) are served identically on every one.
+
+```jsonc
+"listen": "127.0.0.1:19091"                                  // one address
+"listen": {"address": ["192.168.10.1", "127.0.0.1"], "port": 19091}  // several
+```
+
+The second form exists because one address is often genuinely not enough: a
+daemon reachable from a LAN interface **and** from loopback cannot be expressed
+as a single bind. `0.0.0.0` is not the answer — it also exposes every other
+interface the host happens to have, including ones you never meant to serve on.
+
+Rules worth knowing:
+
+- **All or nothing.** If any configured address fails to bind (typo, or an
+  interface that is not up yet), the daemon exits with an error naming it. A
+  daemon half-listening — healthy-looking but unreachable exactly where you
+  asked for it — is the failure this prevents. On a host where the address
+  appears late (a bridge or tunnel configured after boot), order the service
+  after that interface.
+- **The first address is the advertised one.** Enrollment invites, the local
+  client, and the install summary all point at the first entry, so put the
+  address launchers should dial first.
+- **No netmasks.** `192.168.10.1/32` is rejected: the kernel binds one address,
+  never a range, so a mask could only make the file claim something the daemon
+  does not do. Restricting *who* may connect is the firewall's job.
+- The string form is unchanged and keeps working — existing `daemon.json` files
+  need no edit, and a single address is written back as a string.
 
 ## 4. Command-line keys
 
@@ -199,9 +231,10 @@ chmod 600 /var/lib/sing-box-lxd/state/daemon.json
 ```
 
 To manage the daemon from another machine set `listen` to a LAN address (e.g.
-`192.168.10.1:19091`); mTLS is mandatory, and do not open the port outward in
-the firewall without need. Operator commands (`client add`) still run only on
-the host itself.
+`192.168.10.1:19091`), or keep loopback alongside it with the object form
+(`{"address": ["192.168.10.1", "127.0.0.1"], "port": 19091}`) — see 3.1. mTLS is
+mandatory, and do not open the port outward in the firewall without need.
+Operator commands (`client add`) still run only on the host itself.
 
 ### 8.2. systemd (a regular server/desktop)
 

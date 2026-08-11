@@ -5,6 +5,7 @@ package lxd
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,7 @@ func TestDaemonConfigRoundTrip(t *testing.T) {
 		t.Fatalf("absent daemon.json: found=%v err=%v, want false nil", found, err)
 	}
 
-	saved := DaemonConfig{Listen: "127.0.0.1:19091", TLS: true, Secret: "s3cret"}
+	saved := DaemonConfig{Listen: ListenAddress("127.0.0.1:19091"), TLS: true, Secret: "s3cret"}
 	if err := SaveDaemonConfig(dir, saved); err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +26,7 @@ func TestDaemonConfigRoundTrip(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("load after save: found=%v err=%v", found, err)
 	}
-	if loaded != saved {
+	if !reflect.DeepEqual(loaded, saved) {
 		t.Fatalf("round-trip mismatch: %+v != %+v", loaded, saved)
 	}
 
@@ -50,7 +51,7 @@ func TestDaemonConfigRoundTrip(t *testing.T) {
 
 func TestSaveDaemonConfigCreatesStateDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "state")
-	if err := SaveDaemonConfig(dir, DaemonConfig{Listen: "127.0.0.1:1"}); err != nil {
+	if err := SaveDaemonConfig(dir, DaemonConfig{Listen: ListenAddress("127.0.0.1:1")}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(daemonConfigPath(dir)); err != nil {
