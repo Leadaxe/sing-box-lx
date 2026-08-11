@@ -78,7 +78,9 @@ func installScope(scope serviceScope, daemonArgs []string) error {
 	}
 	// Create the log/support directory so launchd's StandardOutPath is writable
 	// from the first start — the operator no longer needs a separate mkdir.
-	if err = os.MkdirAll(filepath.Dir(scope.logPath), 0o755); err != nil {
+	// 0700: the directory holds the state dir (server key, trusted clients,
+	// last-good with credentials) and the log — none of it is for other users.
+	if err = os.MkdirAll(filepath.Dir(scope.logPath), 0o700); err != nil {
 		return E.Cause(err, "create support directory")
 	}
 	if err = os.MkdirAll(filepath.Dir(scope.plist), 0o755); err != nil {
@@ -129,6 +131,9 @@ func UninstallService(purge bool) error {
 	for _, scope := range []serviceScope{userScope(), systemScope()} {
 		if _, statErr := os.Stat(scope.plist); statErr != nil {
 			continue
+		}
+		if scope.needRoot && os.Getuid() != 0 {
+			return E.New("a system LaunchDaemon is installed at ", scope.plist, " — uninstalling it needs root (rerun with sudo)")
 		}
 		out, err := exec.Command("launchctl", "bootout", scope.bootTgt+"/"+launchdLabel).CombinedOutput()
 		if err != nil && !strings.Contains(string(out), "No such process") {
