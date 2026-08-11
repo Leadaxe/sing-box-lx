@@ -1,169 +1,175 @@
-# Демон lxd: что это и как настроить
+# The lxd daemon: what it is and how to set it up
 
-Практическое руководство оператора: что такое `sing-box lxd`, зачем он нужен, как
-ставится на macOS и какие есть подходы на Linux. Актуальное состояние функций —
-[FEATURE 014-LXD_DAEMON](../SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md); детали
-решений — SPECS/TASKS [055](../SPECS/TASKS/055-LXD_DAEMON_SKELETON/SPEC.md),
+Operator's guide: what `sing-box lxd` is, why it exists, how it is installed on
+macOS, and the setup approaches on Linux. Русская версия —
+[lxd-daemon-ru.md](lxd-daemon-ru.md). Current feature state lives in
+[FEATURE 014-LXD_DAEMON](../SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md); design
+details — SPECS/TASKS [055](../SPECS/TASKS/055-LXD_DAEMON_SKELETON/SPEC.md),
 [056](../SPECS/TASKS/056-LXD_APPLY_ROLLBACK/SPEC.md),
 [057](../SPECS/TASKS/057-LXD_MTLS_SERVICE/SPEC.md).
 
 ---
 
-## 1. Что это и зачем
+## 1. What it is and why
 
-`sing-box lxd` — **демон, который хостит ядро sing-box внутри себя** и выставляет
-долгоживущий канал управления. Ключевое отличие от `sing-box run`:
+`sing-box lxd` is a **daemon that hosts the sing-box core in-process** and
+exposes a long-lived control channel. What sets it apart from `sing-box run`:
 
-- **Канал переживает reload.** У `run` смена конфига = рестарт процесса: клиент
-  (лаунчер) теряет соединение, стримы статусов и наблюдаемости рвутся. У lxd
-  слушающий порт принадлежит демону, а не box-инстансу: apply подменяет ядро
-  «под» живым сервером, клиент видит переходы STARTED/STOPPING/… одним стримом
-  без переподключения.
-- **Демон доступен именно тогда, когда данные не ходят.** Канал управления
-  поднимается ДО ядра: битый или отсутствующий конфиг оставляет демон на связи —
-  чинить конфиг можно по тому же каналу, который нужен как раз при лежащем
-  data-plane.
-- **Конфиг с гарантиями.** `POST /admin/apply` валидирует кандидата
-  (`sing-box check` собственным бинарником), при провале старта откатывается на
-  последний рабочий конфиг (**last-good**), помнит прерванный apply и
-  run-намерение (`was_running`) через рестарты и ребуты.
-- **Удалённое управление с доверием.** mTLS: демон — сам себе CA, клиенты
-  регистрируются одноразовым инвайтом и дальше опознаются по сертификату.
+- **The channel survives reloads.** With `run`, a config change means a process
+  restart: the client (launcher) loses its connection, status and observability
+  streams break. With lxd the listening port belongs to the daemon, not to the
+  box instance: apply swaps the core *under* a live server, and the client sees
+  the STARTED/STOPPING/… transitions on one uninterrupted stream.
+- **The daemon is reachable exactly when the data plane is down.** The control
+  channel comes up BEFORE the core: a broken or missing config leaves the
+  daemon online — you fix the config over the very channel you need most when
+  traffic is not flowing.
+- **Config changes with guarantees.** `POST /admin/apply` validates the
+  candidate (`sing-box check` with the daemon's own binary), rolls back to the
+  last config known to work (**last-good**) when a start fails, and remembers
+  an interrupted apply and the run intent (`was_running`) across restarts and
+  reboots.
+- **Remote management with real trust.** mTLS: the daemon is its own CA,
+  clients enroll with a one-time invite and are recognized by their certificate
+  from then on.
 
-Типовые роли: локальный движок для лаунчера на том же маке (канал переживает
-reload'ы) и **удалённый узел** — например, ядро на роутере/сервере, которым
-лаунчер управляет по сети.
+Typical roles: a local engine for the launcher on the same Mac (the channel
+survives reloads), and a **remote node** — e.g. the core on a router or server
+managed by the launcher over the network.
 
-Один порт несёт две плоскости:
+One port carries two planes:
 
-| Плоскость | Протокол | Что даёт |
+| Plane | Protocol | What it provides |
 |---|---|---|
-| наблюдаемость | gRPC `daemon.StartedService` | статусы, логи, группы/urltest, DNS-поток, соединения — общий протокол с Android-линейкой |
-| администрирование | REST `/admin/*` | apply / rollback / start / stop / config / status / info, enrollment клиентов |
+| observability | gRPC `daemon.StartedService` | statuses, logs, groups/urltest, DNS stream, connections — the protocol shared with the Android line |
+| administration | REST `/admin/*` | apply / rollback / start / stop / config / status / info, client enrollment |
 
-## 2. Быстрый старт (dev, без установки)
+## 2. Quick start (dev, no installation)
 
 ```bash
 sing-box lxd --state-dir lxd-state -c config.json
 ```
 
-Без `daemon.json` действуют **dev-дефолты**: plain h2c на `127.0.0.1:9091`, без
-секрета, без mTLS и без реестра клиентов. Лог — на экран. `-c` — необязательный
-seed: используется только пока нет last-good; без него демон стартует пустым
-(IDLE) и ждёт первый apply.
+Without a `daemon.json` the **dev defaults** apply: plain h2c on
+`127.0.0.1:9091`, no secret, no mTLS, no client registry. The log stays on the
+screen. `-c` is an optional seed: it is only used while there is no last-good;
+without it the daemon starts empty (IDLE) and waits for the first apply.
 
-Проверка:
+Check:
 
 ```bash
 curl -s http://127.0.0.1:9091/admin/status
 ```
 
-## 3. daemon.json — настройки демона
+## 3. daemon.json — the daemon's settings
 
-Живёт в `<state-dir>/daemon.json` (0600). **Единственный** источник
-connection-настроек: у команды нет флагов `--listen/--tls/--secret` по
-построению — вопрос «файл или флаг» не существует. Нет файла → dev-дефолты;
-файл никогда не создаётся неявно (его пишет `--service=install` на macOS или
-редактор оператора).
+Lives in `<state-dir>/daemon.json` (0600). The **only** source of connection
+settings: the command has no `--listen/--tls/--secret` flags by construction —
+the "file or flag" question cannot even be asked. No file → dev defaults; the
+file is never created implicitly (it is written by `--service=install` on macOS
+or by the operator's editor).
 
-| Ключ | Дефолт | Значение |
+| Key | Default | Meaning |
 |---|---|---|
-| `listen` | `127.0.0.1:9091` | адрес канала (обе плоскости); для доступа с другой машины — LAN-адрес |
-| `tls` | `false` | mTLS с регистрацией клиентов; `false` = plain h2c, только loopback/dev |
-| `secret` | пусто | Bearer операторских маршрутов; единственный гейт при `tls: false` (пусто = аутентификации нет) |
-| `log_max_size_mb` | `20` | ротация лога: страховочный потолок размера |
-| `log_max_backups` | `1` | сколько старых поколений (`lxd.log.1…N`) хранить |
-| `log_max_age_hours` | `24` | ротация по возрасту файла |
+| `listen` | `127.0.0.1:9091` | channel address (both planes); use a LAN address to reach the daemon from another machine |
+| `tls` | `false` | mTLS with client enrollment; `false` = plain h2c, loopback/dev only |
+| `secret` | empty | Bearer secret for the operator routes; the only gate when `tls: false` (empty = no authentication) |
+| `log_max_size_mb` | `20` | log rotation: safety size ceiling |
+| `log_max_backups` | `1` | how many rotated generations (`lxd.log.1…N`) to keep |
+| `log_max_age_hours` | `24` | rotation by file age |
 
-Дефолты ротации дают «≈сутки истории»; 0/отсутствие ключа = дефолт,
-«безлимита» нет намеренно. Смена любых настроек = правка файла + рестарт службы,
-не переустановка.
+The rotation defaults give "about a day of history"; 0/absent key = default,
+and there is deliberately no "unlimited" setting. Changing any setting is a
+file edit + service restart, never a reinstall.
 
-## 4. Ключи командной строки
+## 4. Command-line keys
 
-| Ключ | Значение |
+| Key | Meaning |
 |---|---|
-| `--state-dir <dir>` | дом демона: daemon.json, last-good, run-state, реестр клиентов, ключи (дефолт `lxd-state`) |
-| `-c <файл>` | seed-конфиг (строго один файл; каталоги `-C` не поддерживаются) |
-| `--config-force <файл>` | всегда бутиться с этого файла, поверх last-good |
-| `--run` | поднять ядро независимо от записанного run-состояния |
-| `--service install\|install-user\|uninstall\|print` | установка службой (см. разделы ОС) |
-| `--purge` | с `uninstall` — снести и state-каталог |
-| `client add [--name <метка>]` | сминтить одноразовый инвайт для нового клиента |
-| `client list` / `client remove <имя-или-отпечаток>` | просмотр / отзыв доверенных клиентов |
+| `--state-dir <dir>` | the daemon's home: daemon.json, last-good, run-state, client registry, keys (default `lxd-state`) |
+| `-c <file>` | seed config (exactly one file; `-C` directories are not supported) |
+| `--config-force <file>` | always boot from this file, overriding last-good |
+| `--run` | bring the core up regardless of the recorded run state |
+| `--service install\|install-user\|uninstall\|print` | service installation (see the OS sections) |
+| `--purge` | with `uninstall` — also delete the state directory |
+| `client add [--name <label>]` | mint a one-time invite for a new client |
+| `client list` / `client remove <name-or-fingerprint>` | list / revoke trusted clients |
 
-Сабкоманда существует только в сборках с тегом `with_lx_command`.
+The subcommand exists only in builds with the `with_lx_command` tag.
 
-## 5. Безопасность: кто чем аутентифицируется
+## 5. Security: who authenticates with what
 
-- **Клиент (лаунчер)** — доверенным сертификатом, полученным при enrollment.
-  Сертификат — полный мандат обеих плоскостей; Bearer клиенту не нужен и секрета
-  он не знает.
-- **Оператор (человек с шеллом на хосте)** — Bearer-секретом из daemon.json на
-  **loopback-only** маршрутах (`client add/list/remove`). Минт инвайта = выдача
-  доверия, поэтому из сети эти маршруты недоступны в принципе.
-- **Enrollment** — единственный маршрут до доверия: одноразовый код
-  (`адрес#отпечаток-сервера#код`), сгорает на первом использовании; клиент пинит
-  сервер по отпечатку.
-- При `tls: false` (dev) весь гейт — Bearer; без секрета аутентификации нет —
-  поэтому plain-режим только на loopback.
+- **A client (the launcher)** — with the trusted certificate obtained at
+  enrollment. The certificate is the full credential for both planes; a client
+  needs no Bearer and never learns the secret.
+- **The operator (a human with a shell on the host)** — with the Bearer secret
+  from daemon.json on the **loopback-only** routes (`client add/list/remove`).
+  Minting an invite grants trust, so these routes are unreachable from the
+  network by design.
+- **Enrollment** is the only road to trust: a one-time code
+  (`address#server-fingerprint#code`) that burns on first use; the client pins
+  the server by its fingerprint.
+- With `tls: false` (dev) the Bearer is the only gate; with no secret there is
+  no authentication at all — which is why plain mode is loopback-only.
 
-## 6. Логи
+## 6. Logs
 
-Под службой (stdout — не терминал) демон **сам владеет** файлом
-`<support>/lxd.log`: перехватывает stdout/stderr процесса (в файл попадает всё,
-включая лог ядра и паники) и ротирует по возрасту/размеру с лимитами из
-daemon.json. При ручном запуске в терминале лог остаётся на экране, файл не
-трогается. Путь к логу и state-dir клиент узнаёт из `GET /admin/info` — ничего
-хардкодить не нужно. Реализовано на macOS и Linux; на Windows — нет (как и
-служба).
+Under a service manager (stdout is not a terminal) the daemon **owns** the
+`<support>/lxd.log` file: it captures the process's stdout/stderr (everything
+lands in the file, including the core's log and runtime panics) and rotates it
+by age and size with the daemon.json limits. When run by hand in a terminal the
+log stays on the screen and no file is touched. Clients discover the log path
+and state dir from `GET /admin/info` — nothing needs to be hard-coded.
+Implemented on macOS and Linux; not on Windows (neither is the service).
 
-## 7. macOS — автоматическая установка
+## 7. macOS — automatic installation
 
-Единственная платформа с полным `--service`. Две области:
+The only platform with a full `--service`. Two scopes:
 
 ```bash
-sudo sing-box lxd --service=install    # системный LaunchDaemon: root, старт до логина, TUN
-sing-box lxd --service=install-user    # LaunchAgent: без sudo, старт при логине, десктоп-UX
+sudo sing-box lxd --service=install    # system LaunchDaemon: root, starts before login, TUN
+sing-box lxd --service=install-user    # LaunchAgent: no sudo, starts at login, desktop UX
 ```
 
-Install делает всё сам:
+Install does everything itself:
 
-1. создаёт `…/Application Support/sing-box-lxd/` (0700) и `state/` внутри;
-2. **материализует daemon.json**: существующий адрес сохраняется (реинсталл не
-   двигает канал из-под сопряжённых клиентов), иначе первый свободный
-   loopback-порт от 19091; `tls` — всегда; секрет — существующий или генерируется;
-3. пишет plist (`com.leadaxe.sing-box-lxd`) и бутстрапит службу; plist вырожден
-   до `sing-box lxd --state-dir <dir>` — все настройки в daemon.json;
-4. печатает сводку: адрес канала, админ-секрет, путь daemon.json, команду
-   рестарта — и **одноразовый инвайт** для сопряжения лаунчера.
+1. creates `…/Application Support/sing-box-lxd/` (0700) with `state/` inside;
+2. **materializes daemon.json**: an existing address is kept (a reinstall never
+   moves the channel out from under enrolled clients), otherwise the first free
+   loopback port from 19091 up; `tls` — always; the secret — kept or generated;
+3. writes the plist (`com.leadaxe.sing-box-lxd`) and bootstraps the service;
+   the plist degenerates to `sing-box lxd --state-dir <dir>` — every setting
+   lives in daemon.json;
+4. prints the summary: channel address, admin secret, daemon.json path, the
+   restart command — and a **one-time invite** to pair the launcher.
 
-Пути: system — `/Library/Application Support/sing-box-lxd/`, user —
-`~/Library/Application Support/sing-box-lxd/`. Лог — `lxd.log` рядом со `state/`.
+Paths: system — `/Library/Application Support/sing-box-lxd/`, user —
+`~/Library/Application Support/sing-box-lxd/`. The log is `lxd.log` beside
+`state/`.
 
-Прочее:
+Other actions:
 
 ```bash
-sing-box lxd --service=print              # сухой прогон: показать plist, ничего не трогая
-sing-box lxd --service=uninstall          # снять службу; state сохраняется
-sing-box lxd --service=uninstall --purge  # снять службу и снести state (клиенты, ключи, last-good)
-sudo sing-box lxd client add --name mac-book   # новый инвайт на живом демоне (state-dir найдётся сам)
+sing-box lxd --service=print              # dry run: show the plist, touch nothing
+sing-box lxd --service=uninstall          # remove the service; state is kept
+sing-box lxd --service=uninstall --purge  # remove the service AND the state (clients, keys, last-good)
+sudo sing-box lxd client add --name mac-book   # a fresh invite on a live daemon (state-dir is found automatically)
 ```
 
-## 8. Linux — подходы к настройке
+## 8. Linux — setup approaches
 
-`--service` на Linux пока **заглушка** — автоматической установки нет
-(обсуждается режим «инструкций»: детект init-системы и печать готового
-unit/init-скрипта; см. «Отложено» в
-[SPEC 057](../SPECS/TASKS/057-LXD_MTLS_SERVICE/SPEC.md)). Сам демон на Linux
-полноценен: mTLS, apply/rollback, ротация лога — всё работает; кросс-сборка
-`GOOS=linux GOARCH=arm64` (статический бинарник, musl-совместим) проверена.
-Установка — три файла руками.
+`--service` on Linux is still a **stub** — there is no automatic installation
+(an "instructions mode" is under discussion: detect the init system and print a
+ready-made unit/init script; see "Deferred" in
+[SPEC 057](../SPECS/TASKS/057-LXD_MTLS_SERVICE/SPEC.md)). The daemon itself is
+fully functional on Linux: mTLS, apply/rollback, log rotation all work; the
+`GOOS=linux GOARCH=arm64` cross-build (static binary, musl-compatible) is
+verified. Installation is three files by hand.
 
-### 8.1. Общая часть (любой init)
+### 8.1. Common part (any init)
 
 ```bash
-mkdir -p /var/lib/sing-box-lxd/state        # OpenWrt: /etc/sing-box-lxd/state — см. 8.3
+mkdir -p /var/lib/sing-box-lxd/state        # OpenWrt: /etc/sing-box-lxd/state — see 8.3
 cat > /var/lib/sing-box-lxd/state/daemon.json <<EOF
 {
   "listen": "127.0.0.1:19091",
@@ -175,12 +181,12 @@ chmod 700 /var/lib/sing-box-lxd /var/lib/sing-box-lxd/state
 chmod 600 /var/lib/sing-box-lxd/state/daemon.json
 ```
 
-Для управления с другой машины `listen` — LAN-адрес (например
-`192.168.10.1:19091`); mTLS обязателен, наружу порт не открывать файрволом без
-необходимости. Операторские команды (`client add`) всё равно выполняются только
-на самом хосте.
+To manage the daemon from another machine set `listen` to a LAN address (e.g.
+`192.168.10.1:19091`); mTLS is mandatory, and do not open the port outward in
+the firewall without need. Operator commands (`client add`) still run only on
+the host itself.
 
-### 8.2. systemd (обычный сервер/десктоп)
+### 8.2. systemd (a regular server/desktop)
 
 `/etc/systemd/system/sing-box-lxd.service`:
 
@@ -204,20 +210,20 @@ systemctl daemon-reload
 systemctl enable --now sing-box-lxd
 ```
 
-stdout под systemd — не терминал, поэтому демон сам заберёт лог в
-`/var/lib/sing-box-lxd/lxd.log` и будет ротировать; journald получит только
-ранний вывод до перехвата.
+Under systemd stdout is not a terminal, so the daemon takes the log over into
+`/var/lib/sing-box-lxd/lxd.log` and rotates it; journald only receives the
+early output produced before the takeover.
 
-### 8.3. OpenWrt / procd (роутеры)
+### 8.3. OpenWrt / procd (routers)
 
-Особенности платформы:
+Platform specifics:
 
-- `/var` — tmpfs, умирает на ребуте → state-каталог держать в персистентном
-  месте: `/etc/sing-box-lxd/state` (overlay) или extroot (`/root/…`).
-- На роутерах **без extroot** лог рядом со state будет писаться в NAND-overlay —
-  износ; с extroot проблемы нет. Дефолтные лимиты ротации (20 МБ × 2 файла)
-  ограничивают ущерб, но лучше extroot.
-- Бинарник (~50 МБ) — только на extroot, во встроенную flash он не влезет.
+- `/var` is tmpfs and dies on reboot → keep the state directory somewhere
+  persistent: `/etc/sing-box-lxd/state` (overlay) or extroot (`/root/…`).
+- On routers **without extroot** a log beside the state dir writes into the
+  NAND overlay — flash wear; with extroot there is no issue. The default
+  rotation limits (20 MB × 2 files) bound the damage, but extroot is better.
+- The binary (~50 MB) goes on extroot only — it will not fit the built-in flash.
 
 `/etc/init.d/sing-box-lxd`:
 
@@ -242,37 +248,39 @@ chmod +x /etc/init.d/sing-box-lxd
 /etc/init.d/sing-box-lxd start
 ```
 
-`sysupgrade -b` не забирает ни init-скрипт, ни state, ни бинарник — дописать
-пути в `/etc/sysupgrade.conf`, иначе прошивка-апгрейд снесёт установку.
+`sysupgrade -b` picks up neither the init script, nor the state, nor the
+binary — add the paths to `/etc/sysupgrade.conf`, or a firmware upgrade will
+wipe the installation.
 
-### 8.4. Чего на Linux пока нет
+### 8.4. What Linux does not have yet
 
-- `--service=install/uninstall/print` — заглушки (планируется режим инструкций);
-- автопоиска state-dir установленной службы для `client …` — передавать
-  `--state-dir` явно;
-- self-update — обновление бинарника это «доставить файл + рестарт службы».
+- `--service=install/uninstall/print` — stubs (an instructions mode is planned);
+- auto-discovery of an installed service's state-dir for `client …` — pass
+  `--state-dir` explicitly;
+- self-update — updating the binary means "deliver the file + restart the
+  service".
 
-## 9. Сопряжение клиента (одинаково на всех ОС)
+## 9. Pairing a client (the same on every OS)
 
-1. На хосте демона: `sing-box lxd client add --name <метка>` (на macOS с
-   системной службой — под sudo). Печатается одноразовый инвайт
-   `адрес#отпечаток#код`.
-2. Инвайт вставляется в лаунчер: тот пинит сервер по отпечатку, регистрируется
-   кодом (`POST /admin/enroll`), получает доверие по своему сертификату. Код
-   сгорает.
-3. Проверка/отзыв: `client list`, `client remove <имя-или-отпечаток>`.
+1. On the daemon's host: `sing-box lxd client add --name <label>` (with sudo on
+   macOS when the service is system-scope). It prints a one-time invite
+   `address#fingerprint#code`.
+2. Paste the invite into the launcher: it pins the server by the fingerprint,
+   registers with the code (`POST /admin/enroll`), and is trusted by its
+   certificate from then on. The code burns.
+3. Inspect/revoke: `client list`, `client remove <name-or-fingerprint>`.
 
-## 10. Админ-REST (справочно)
+## 10. Admin REST (reference)
 
-| Маршрут | Что делает |
+| Route | What it does |
 |---|---|
-| `POST /admin/apply` | тело = конфиг; 200 применён / 422 невалиден / 500 сбой (+`rolled_back`) |
-| `POST /admin/rollback` | откат на last-good (404 — нечего) |
-| `POST /admin/start` · `POST /admin/stop` | жизнь ядра отдельно от конфига (stop запоминается) |
-| `GET /admin/config` | активный конфиг |
-| `GET /admin/status` | `idle\|started\|fatal`, sha активного/last-good, `last_error`, `interrupted_apply` |
-| `GET /admin/info` | паспорт: версия, state_dir, listen, tls, отпечаток, pid, uptime, log_path |
-| `POST /admin/enroll` | регистрация клиента по одноразовому коду |
+| `POST /admin/apply` | body = config; 200 applied / 422 invalid / 500 failure (+`rolled_back`) |
+| `POST /admin/rollback` | roll back to last-good (404 — nothing recorded) |
+| `POST /admin/start` · `POST /admin/stop` | core lifecycle apart from the config (stop is remembered) |
+| `GET /admin/config` | the active config |
+| `GET /admin/status` | `idle\|started\|fatal`, active/last-good sha, `last_error`, `interrupted_apply` |
+| `GET /admin/info` | identity card: version, state_dir, listen, tls, fingerprint, pid, uptime, log_path |
+| `POST /admin/enroll` | client registration with a one-time code |
 
-SIGHUP демону = перечитать файл конфига (`--config-force`/`-c`) и применить через
-тот же apply-пайплайн с валидацией и откатом.
+SIGHUP to the daemon = re-read the config file (`--config-force`/`-c`) and
+apply it through the same validated, rollback-protected apply pipeline.
