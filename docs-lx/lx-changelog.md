@@ -15,6 +15,47 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.24
+
+**Промоут линии lx.23 → lx.24-rc.2 в stable.** Свод: демон `lxd` как
+устанавливаемая служба с админ-плоскостью и mTLS, два краш-фикса ядра,
+upstream-синк 2026-08-11 и переезд сборки на go1.26.5. Инженерные детали — в
+секциях ниже (`v1.14.0-lx.24-rc.1`, `v1.14.0-lx.24-rc.2`, `v1.14.0-lx.23`);
+пользовательские ноты —
+[docs-lx/releases/v1.14.0-lx.24.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/releases/v1.14.0-lx.24.md).
+
+⚠️ **Тег `v1.14.0-lx.23` не срезался** — его содержимое (SPEC 033, SPEC 055,
+FEATURE 006) уехало в поле впервые именно здесь, поэтому нумерация релизов
+идёт `lx.22 → lx.24`, а секция `#### v1.14.0-lx.23` осталась в этом логе как
+инженерная запись без соответствующего тега.
+
+Состав:
+
+- **Фича 014 целиком** (SPEC 055 + 056 + 057): `sing-box lxd` — headless-демон
+  за управляющим каналом, переживающим reload и битый конфиг; `POST /admin/apply`
+  с валидацией через собственный `sing-box check` и откатом на last-good;
+  `rollback`/`start`/`stop`/`config`/`status`/`info`; mTLS-регистрация клиентов
+  одноразовым инвайтом (сертификат = полный мандат, Bearer — операторский
+  loopback-only мандат `client add/list/remove`); собственный ротируемый
+  `lxd.log`; установка службы на macOS (`install` / `install-user`) и печать
+  рецепта на Linux. Настройки — только `<state-dir>/daemon.json`,
+  connection-флагов нет.
+- **Краш-фиксы ядра:** пустой `members` у `dns_group` больше не паникует на
+  `rand.IntN(0)` при раннем дайле WG-bind через detour-цепь с доменным узлом
+  (SPEC 033, полевой краш lx.22 на android/arm64); `GetRules` в attached-режиме
+  берёт роутер из сервисного контекста вместо nil-`*box.Box` (FEATURE 006).
+- **Upstream-синк 2026-08-11** (`4902660f8`, свод 1.14.0) с перебазированными
+  форк-сабмодулями и **go1.26.5** как единым сборочным тулчейном (SPEC 044).
+
+Дрейф upstream на момент среза тега проверен по merge-base (runbook §2):
+единственный расходящийся subject `Fix oomkiller service stub build` (`9fa673d10`)
+уже поглощён более поздней апстримовой лентой — наш `service_stub.go` несёт и
+`network adapter.NetworkManager` из этого фикса, и более новую сигнатуру
+`newAdaptiveTimer(..., s.writeOOMReport)`; cherry-pick конфликтует откатом назад,
+поэтому не берётся. Форк-сабмодули (`wireguard-go` `c6c8a831ef70`, `sing-tun`
+`d67734281390`, `gvisor`-снапшот) содержат пины `go.mod`, все три `replace`
+резолвятся на `./submodules/*`. rc.2 device-verified владельцем.
+
 #### v1.14.0-lx.24-rc.1
 
 **Демон `lxd` дорос до устанавливаемой службы: apply/rollback, mTLS, свой
