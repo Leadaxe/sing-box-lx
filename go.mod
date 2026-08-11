@@ -213,7 +213,7 @@ replace github.com/sagernet/wireguard-go => ./submodules/wireguard-go
 // lx:end awg
 
 // lx:begin singtun-selfheal (SPECS/TASKS/040)
-// Fork of sing-tun pinned at upstream 2d9b8aed5fe2 (the exact go.mod revision)
+// Fork of sing-tun pinned at upstream d67734281390 (the exact go.mod revision)
 // with a single-file patch: system-stack acceptLoop self-heal — on an unexpected
 // Accept error the listener is logged (errno names the killer) and recreated
 // instead of the loop silently dying forever (every new TCP → instant RST until
@@ -223,7 +223,7 @@ replace github.com/sagernet/sing-tun => ./submodules/sing-tun
 // lx:end singtun-selfheal
 
 // lx:begin gvisor-handshake-guard (SPECS/TASKS/048)
-// Snapshot fork of sagernet/gvisor at the pinned v0.0.0-20250811.0-sing-box-mod.1
+// Snapshot fork of sagernet/gvisor at the pinned v0.0.0-20260727.0-sing-box-mod.1
 // with a single-file patch: nil-guard on ep.h in handleConnecting. performHandshake
 // zeroes ep.h and releases ep.mu before ep.Close() changes the state, so a segment
 // arriving in that window reaches ep.h.processSegments() on a nil handshake and
