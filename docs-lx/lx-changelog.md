@@ -15,6 +15,54 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.25-rc.3
+
+**Цепочки «через detour» перестали молча не подниматься.** ([SPEC 060](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md),
+[SPEC 021](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/021-MASQUE_CONNECT_IP_OUTBOUND/SPEC.md))
+
+Клиенты прячут свои VLESS-серверы за WARP и собирают `MASQUE detour VLESS`.
+На части узлов такая связка не работала вообще: висела ~15 секунд и падала с
+`tls handshake: EOF`, по которому причину не восстановить.
+
+Причина не в ядре и не в SNI. Нижнее плечо пересылает наш ClientHello **от
+своего имени**, и если PMTU за этим плечом меньше размера ClientHello —
+пакет теряется молча: ICMP «fragmentation needed» до клиента не доходит.
+Замер на живых узлах даёт чистый порог по размеру: 1488 B проходит, 1502 B
+исчезает, и порог принадлежит пути за плечом, а не протоколу — на других
+узлах те же самые байты идут насквозь. Воспроизводится голым `curl` без
+sing-box. Бьёт не только по MASQUE: `VLESS detour VLESS` через тот же узел
+падает так же.
+
+Лечится фрагментацией первой TLS-записи — механизм в ядре уже был
+(`fragment` / `record_fragment`), не хватало умолчания: пользователь не
+обязан знать про чужую дыру и помнить, где ставить флаг. Теперь
+`record_fragment` включается сам, когда outbound диалит через `detour`.
+Точка одна — `NewClientWithOptions`, до выбора движка, поэтому STD, uTLS и
+REALITY получают одинаковый дефолт. Явный выбор пользователя всегда сильнее;
+`fragment: true` не апгрейдится добавлением record-split. Цена ограничена
+хендшейком: переписывается только первая запись, установившийся поток не
+трогается. Прямой путь (без `detour`) не затронут.
+
+Отдельно MASQUE перестал быть единственным outbound'ом мимо `common/tls`:
+на h2 он вёл TLS голым `crypto/tls.Client` ради pinning'а по ECDSA-ключу
+endpoint'а — и вместе с этим не получал ничего из общего слоя. Теперь h2
+ходит через общий клиент, pinning переносится поверх него и проверен как
+юнит-тестом, так и живым коннектом с подменённым `public_key`. h3 не тронут:
+QUIC не несёт TLS поверх TCP.
+
+Проверено на живых узлах подписки: матрица 19 узлов × 2 направления
+(`MASQUE-over-VLESS` и `VLESS-over-MASQUE`) — **38/38** по связности и
+**38/38** по сквозным 5 МБ, без единого обрыва. Узлы, на которых связка не
+поднималась вообще, работают в обе стороны.
+
+**XMUX — переиспользование HTTP-соединений в XHTTP.** ([SPEC 059](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/059-XHTTP_XMUX/SPEC.md))
+
+Секция `xmux` приходит в конфигах из подписок и до сих пор молча
+отбрасывалась — поля не было в опциях. Теперь клиент держит пул
+HTTP-соединений и ротирует их по правилам Xray: делает то, что задумал
+владелец сервера, и не платит полный TCP+TLS(+REALITY) хендшейк на каждый
+поток. Дефолты применяются и без секции.
+
 #### v1.14.0-lx.25-rc.2
 
 **XHTTP packet-up/stream-up больше не залипает на дайле — узел за CDN
