@@ -35,8 +35,10 @@ skew невозможен). Скелет фиксирует несущее св�
 тот же кодопуть, что libbox/boxdd — НЕ attached) → `daemon.NewServer` (gRPC,
 Bearer-интерцепторы, health, reflection) → listener → **и только потом**
 `StartOrReloadService(конфиг строкой)`. Провал старта или reload'а логируется,
-демон остаётся слушать в FATAL. SIGHUP: перечитать файл → `StartOrReloadService`
-(подмена инстанса под живым сервером). SIGINT/SIGTERM: `CloseService` →
+демон остаётся слушать в FATAL. SIGHUP: перечитать файл → применить (со времён
+056 — через общий пайплайн apply: битый файл отбивается валидацией, инстанс не
+трогается; в 055-скелете это был голый `StartOrReloadService` с FATAL). Подмена
+инстанса всегда идёт под живым сервером. SIGINT/SIGTERM: `CloseService` →
 `grpcServer.Stop` → `Close`.
 
 Сознательно вне скоупа (дорожная карта фичи): валидация до убийства старого
@@ -46,10 +48,14 @@ Bearer-интерцепторы, health, reflection) → listener → **и то�
 
 - `go build` с тегом и без (стаб) — обе стороны зелёные; `gofmt -l` пусто;
   `go test ./lxd/` — ok.
-- Сквозное демо (macOS, darwin/amd64, сборка `1.14.0-lx.22-lxd-demo`):
+- Сквозное демо (macOS, darwin/amd64, сборка `1.14.0-lx.22-lxd-demo`,
+  поведение 055-скелета — до пайплайна 056, см. Design):
   `GetVersion`/`GetPool` отвечают; **один** `SubscribeServiceStatus`-стрим без
   переподключения увидел полный цикл: `STARTED → (SIGHUP, +нода) STOPPING →
   STARTING → STARTED → (SIGHUP, битый конфиг) FATAL{"unknown outbound type"}
   → (SIGHUP, починенный) STARTING → STARTED`; в FATAL-состоянии канал отвечал
   `GetVersion`; `GetPool` после reload'ов отражал новый состав пула (2→3→1
-  слота); SIGTERM завершил процесс чисто.
+  слота); SIGTERM завершил процесс чисто. После 056 битый SIGHUP-конфиг даёт
+  не FATAL, а reject валидацией (инстанс живёт) — несущее свойство «канал
+  переживает reload и битый конфиг» закреплено юнитом
+  `TestControlPlaneSurvivesBrokenApply` на реальном ядре.
