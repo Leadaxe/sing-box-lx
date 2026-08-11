@@ -97,30 +97,39 @@ func watchDialContext(ctx context.Context, done <-chan struct{}, onCancel func(e
 
 // dialStreamUp opens a streamed POST for the upload direction and a separate GET
 // whose response body is the download direction.
+//
+// Like packet-up, the download response is awaited asynchronously: an Xray
+// server holds the stream-down response until the paired stream-up request has
+// delivered bytes, so blocking on it here deadlocks the dial and the fronting
+// proxy answers 504. See the note on dialPacketUp. lx: SPEC 002.
 func (c *Client) dialStreamUp(ctx context.Context, sessionID string) (net.Conn, error) {
 	// Download: GET response body (no seq — stream mode).
 	downReq, err := c.newRequest(ctx, http.MethodGet, sessionID, "", nil)
 	if err != nil {
 		return nil, err
 	}
-	downResp, err := c.transport.RoundTrip(downReq)
-	if err != nil {
-		return nil, E.Cause(err, "open download")
-	}
-	if downResp.StatusCode != http.StatusOK {
-		downResp.Body.Close()
-		return nil, E.New("v2ray-xhttp: unexpected download status: ", downResp.Status)
-	}
 
 	// Upload: streamed body request using the configured upload method.
 	pipeReader, pipeWriter := io.Pipe()
 	upReq, err := c.newRequest(ctx, c.meta.uplinkHTTPMethod, sessionID, "", pipeReader)
 	if err != nil {
-		downResp.Body.Close()
 		return nil, err
 	}
 	c.applyGRPCHeader(upReq)
-	conn := newSplitConn(downResp.Body, pipeReader, pipeWriter, c.serverAddr)
+	conn := newSplitConn(pipeReader, pipeWriter, c.serverAddr)
+	go func() {
+		downResp, err := c.transport.RoundTrip(downReq)
+		if err != nil {
+			conn.setupReader(nil, E.Cause(err, "open download"))
+			return
+		}
+		if downResp.StatusCode != http.StatusOK {
+			downResp.Body.Close()
+			conn.setupReader(nil, E.New("v2ray-xhttp: unexpected download status: ", downResp.Status))
+			return
+		}
+		conn.setupReader(downResp.Body, nil)
+	}()
 	go func() {
 		upResp, err := c.transport.RoundTrip(upReq)
 		if err != nil {
@@ -134,27 +143,39 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string) (net.Conn, 
 
 // dialPacketUp opens a GET download stream and sends uploads as sequential POST
 // packets, one HTTP request per Write.
+//
+// The download RoundTrip runs in a goroutine and the conn is handed up
+// immediately, WITHOUT waiting for the response headers. Waiting for them
+// deadlocks against an Xray server: it only has downlink bytes to send once the
+// session has received an uplink packet, so it withholds the response until the
+// first upload arrives — while we withheld the first upload until the response
+// arrived. Neither side moves and the reverse proxy in front (nginx/CDN) kills
+// the request, surfacing as "504 Gateway Timeout" after its upstream timeout.
+// Wire-reproduced against a VK-CDN → nginx → Xray path, where the reference
+// client (sing-box-extended) works: its OpenStream likewise returns as soon as
+// the connection is established (httptrace GotConn) and processes the response
+// asynchronously. lx: SPEC 002.
 func (c *Client) dialPacketUp(ctx context.Context, sessionID string) (net.Conn, error) {
 	// Download stream: GET with the session id but no seq (downlink).
 	downReq, err := c.newRequest(ctx, http.MethodGet, sessionID, "", nil)
 	if err != nil {
 		return nil, err
 	}
-	downResp, err := c.transport.RoundTrip(downReq)
-	if err != nil {
-		return nil, E.Cause(err, "open download")
-	}
-	if downResp.StatusCode != http.StatusOK {
-		downResp.Body.Close()
-		return nil, E.New("v2ray-xhttp: unexpected download status: ", downResp.Status)
-	}
-	return &packetConn{
-		ctx:        ctx,
-		client:     c,
-		sessionID:  sessionID,
-		reader:     downResp.Body,
-		serverAddr: c.serverAddr,
-	}, nil
+	conn := newPacketConn(ctx, c, sessionID, c.serverAddr)
+	go func() {
+		downResp, err := c.transport.RoundTrip(downReq)
+		if err != nil {
+			conn.setupReader(nil, E.Cause(err, "open download"))
+			return
+		}
+		if downResp.StatusCode != http.StatusOK {
+			downResp.Body.Close()
+			conn.setupReader(nil, E.New("v2ray-xhttp: unexpected download status: ", downResp.Status))
+			return
+		}
+		conn.setupReader(downResp.Body, nil)
+	}()
+	return conn, nil
 }
 
 // lx:begin 050 deadline-support (SPECS/TASKS/050)
@@ -384,35 +405,60 @@ func (c *streamConn) NeedAdditionalReadDeadline() bool { return true }
 // the caller in a goroutine.
 type splitConn struct {
 	reader     io.ReadCloser
+	created    chan struct{}
+	readerErr  error
 	writer     *io.PipeWriter
 	serverAddr M.Socksaddr
 	closeOnce  sync.Once
-	// lx: 050 — same unkillable-Write exposure as streamConn; the reader here is
-	// bound up front, so an expired read deadline just closes it.
+	// lx: 050 — same unkillable-Write exposure as streamConn. The reader is
+	// late-bound (see dialStreamUp), so an expired read deadline must handle
+	// both the bound and the not-yet-bound case.
 	writeDeadline writeDeadline
 	readDeadline  *readDeadline
 }
 
-func newSplitConn(reader io.ReadCloser, uploadReader *io.PipeReader, writer *io.PipeWriter, serverAddr M.Socksaddr) *splitConn {
+func newSplitConn(uploadReader *io.PipeReader, writer *io.PipeWriter, serverAddr M.Socksaddr) *splitConn {
 	conn := &splitConn{
-		reader:     reader,
+		created:    make(chan struct{}),
 		writer:     writer,
 		serverAddr: serverAddr,
 	}
 	conn.writeDeadline.reader = uploadReader
 	conn.readDeadline = newReadDeadline(func() {
-		if conn.reader != nil {
-			conn.reader.Close()
+		select {
+		case <-conn.created:
+			if conn.reader != nil {
+				conn.reader.Close()
+			}
+		default:
 		}
 	})
 	return conn
+}
+
+// setupReader binds the download body (or its error) and releases blocked Reads.
+func (c *splitConn) setupReader(reader io.ReadCloser, err error) {
+	c.reader = reader
+	c.readerErr = err
+	close(c.created)
 }
 
 func (c *splitConn) uploadFailed(err error) {
 	c.writer.CloseWithError(err)
 }
 
-func (c *splitConn) Read(b []byte) (int, error)  { return c.reader.Read(b) }
+func (c *splitConn) Read(b []byte) (int, error) {
+	// Late-bound reader: synchronise on created, exactly as streamConn.Read does.
+	select {
+	case <-c.created:
+	case <-c.readDeadline.dead:
+		return 0, os.ErrDeadlineExceeded
+	}
+	if c.readerErr != nil {
+		return 0, c.readerErr
+	}
+	return c.reader.Read(b)
+}
 func (c *splitConn) Write(b []byte) (int, error) { return c.writer.Write(b) }
 
 func (c *splitConn) Close() error {
@@ -421,7 +467,15 @@ func (c *splitConn) Close() error {
 		c.writeDeadline.stop()
 		c.readDeadline.stop()
 		c.writer.Close()
-		c.reader.Close()
+		// The reader may not be bound yet (see dialStreamUp); the pending
+		// RoundTrip is torn down via the dial context instead.
+		select {
+		case <-c.created:
+			if c.reader != nil {
+				c.reader.Close()
+			}
+		default:
+		}
 	})
 	return nil
 }
@@ -445,19 +499,69 @@ func (c *splitConn) NeedAdditionalReadDeadline() bool { return true }
 
 // packetConn implements packet-up: download is a GET response body, each Write
 // is delivered as a sequential POST to "<path>/<sessionId>/<seq>".
+//
+// The reader is late-bound: dialPacketUp hands the conn up before the download
+// response exists (see the deadlock note there), so Read waits on `created`
+// until the RoundTrip goroutine binds either a body or an error.
 type packetConn struct {
 	ctx        context.Context
 	client     *Client
 	sessionID  string
 	reader     io.ReadCloser
+	created    chan struct{}
+	readerErr  error
 	serverAddr M.Socksaddr
 	access     sync.Mutex
 	seq        uint64
 	lastPost   time.Time
 	closed     bool
+	closeOnce  sync.Once
+	// lx: 050 — a late-bound reader makes a read deadline mandatory: until the
+	// response arrives there is no reader to close, so a stalled Read could only
+	// be released here.
+	readDeadline *readDeadline
+}
+
+func newPacketConn(ctx context.Context, client *Client, sessionID string, serverAddr M.Socksaddr) *packetConn {
+	conn := &packetConn{
+		ctx:        ctx,
+		client:     client,
+		sessionID:  sessionID,
+		created:    make(chan struct{}),
+		serverAddr: serverAddr,
+	}
+	conn.readDeadline = newReadDeadline(func() {
+		select {
+		case <-conn.created:
+			if conn.reader != nil {
+				conn.reader.Close()
+			}
+		default:
+		}
+	})
+	return conn
+}
+
+// setupReader binds the download body (or the error that replaces it) and
+// releases readers blocked in Read. Mirrors streamConn.setupReader.
+func (c *packetConn) setupReader(reader io.ReadCloser, err error) {
+	c.reader = reader
+	c.readerErr = err
+	close(c.created)
 }
 
 func (c *packetConn) Read(b []byte) (int, error) {
+	// Synchronise on created before touching reader/readerErr — the RoundTrip
+	// goroutine writes them before close(created), which is the happens-before
+	// edge (same contract as streamConn.Read).
+	select {
+	case <-c.created:
+	case <-c.readDeadline.dead:
+		return 0, os.ErrDeadlineExceeded
+	}
+	if c.readerErr != nil {
+		return 0, c.readerErr
+	}
 	return c.reader.Read(b)
 }
 
@@ -550,15 +654,37 @@ func (c *packetConn) Close() error {
 	c.access.Lock()
 	c.closed = true
 	c.access.Unlock()
-	return c.reader.Close()
+	// The reader is late-bound: a conn closed before the download response
+	// arrived has nothing to close, and the pending RoundTrip is torn down by
+	// the dial context instead. Guard with closeOnce so a second Close cannot
+	// double-close the body.
+	var err error
+	c.closeOnce.Do(func() {
+		c.readDeadline.stop()
+		select {
+		case <-c.created:
+			if c.reader != nil {
+				err = c.reader.Close()
+			}
+		default:
+		}
+	})
+	return err
 }
 
-func (c *packetConn) LocalAddr() net.Addr                { return M.Socksaddr{} }
-func (c *packetConn) RemoteAddr() net.Addr               { return c.serverAddr }
-func (c *packetConn) SetDeadline(t time.Time) error      { return os.ErrInvalid }
-func (c *packetConn) SetReadDeadline(t time.Time) error  { return os.ErrInvalid }
+func (c *packetConn) LocalAddr() net.Addr  { return M.Socksaddr{} }
+func (c *packetConn) RemoteAddr() net.Addr { return c.serverAddr }
+
+// lx: 050 — read deadlines are real now that the reader is late-bound (an
+// unbound reader could otherwise stall Read forever). Writes are individual
+// HTTP requests bounded by the dial context, so a write deadline has nothing to
+// arm against and stays unsupported, as before.
+func (c *packetConn) SetDeadline(t time.Time) error      { return c.readDeadline.set(t) }
+func (c *packetConn) SetReadDeadline(t time.Time) error  { return c.readDeadline.set(t) }
 func (c *packetConn) SetWriteDeadline(t time.Time) error { return os.ErrInvalid }
-func (c *packetConn) NeedAdditionalReadDeadline() bool   { return true }
+
+// NeedAdditionalReadDeadline: the read deadline is one-shot, as in streamConn.
+func (c *packetConn) NeedAdditionalReadDeadline() bool { return true }
 
 // byteReader is a one-shot reader over a byte slice used as a fixed-length
 // request body for packet-up uploads.
