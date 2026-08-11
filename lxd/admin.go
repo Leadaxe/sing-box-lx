@@ -6,8 +6,15 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
+
+	C "github.com/sagernet/sing-box/constant"
 )
 
 const applyBodyLimit = 32 << 20
@@ -24,9 +31,10 @@ func (c *controller) adminHandler(secret string) http.Handler {
 	mux.HandleFunc("POST /admin/stop", c.handleStop)
 	mux.HandleFunc("GET /admin/config", c.handleConfig)
 	mux.HandleFunc("GET /admin/status", c.handleStatus)
+	mux.HandleFunc("GET /admin/info", c.handleInfo)
 	// Operator routes serve the `client` CLI over loopback: they need the
 	// Bearer secret but NOT a client cert (the operator on the host has none).
-	// Registered on the secret-gated but cert-exempt path below.
+	// Registered on the loopback-only, secret-gated, cert-exempt path below.
 	operator := http.NewServeMux()
 	if c.clients != nil {
 		operator.HandleFunc("GET /admin/clients", c.handleClients)
@@ -36,9 +44,13 @@ func (c *controller) adminHandler(secret string) http.Handler {
 
 	var handler http.Handler = mux
 
-	// mTLS pin: every route except enroll requires a trusted client cert. The
-	// TLS layer only requests the cert (so enroll works pre-trust); trust is
-	// enforced here, per request, against the pinned registry.
+	// mTLS pin: every route except enroll and the operator paths requires a
+	// trusted client cert. The TLS layer only requests the cert (so enroll
+	// works pre-trust); trust is enforced here, per request, against the
+	// pinned registry. A trusted certificate is the client's FULL credential:
+	// no Bearer on top (SPEC 057 revision — the secret is the daemon-owned
+	// operator credential and clients never learn it, so requiring both would
+	// lock every launcher out).
 	if c.clients != nil {
 		pinned := handler
 		handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -49,43 +61,23 @@ func (c *controller) adminHandler(secret string) http.Handler {
 			}
 			pinned.ServeHTTP(writer, request)
 		})
-	}
-
-	// Bearer secret: a second factor layered over the pin (or the only factor
-	// when TLS is off). Constant-time — unlike the upstream gRPC interceptor.
-	if secret != "" {
-		expected := []byte("Bearer " + secret)
-		secretGated := handler
-		handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			provided := []byte(request.Header.Get("Authorization"))
-			if len(provided) != len(expected) || subtle.ConstantTimeCompare(provided, expected) != 1 {
-				writeJSON(writer, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
-				return
-			}
-			secretGated.ServeHTTP(writer, request)
-		})
+	} else {
+		// Plain h2c (dev): the Bearer secret is the only gate, as before.
+		// Constant-time — unlike the upstream gRPC interceptor.
+		handler = withBearer(secret, handler)
 	}
 
 	if c.clients == nil {
 		return handler
 	}
 
-	// Operator routes get the secret gate but skip the cert pin.
-	var operatorHandler http.Handler = operator
-	if secret != "" {
-		expected := []byte("Bearer " + secret)
-		gated := operatorHandler
-		operatorHandler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			provided := []byte(request.Header.Get("Authorization"))
-			if len(provided) != len(expected) || subtle.ConstantTimeCompare(provided, expected) != 1 {
-				writeJSON(writer, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
-				return
-			}
-			gated.ServeHTTP(writer, request)
-		})
-	}
+	// Operator routes skip the cert pin, so they MUST stay unreachable from the
+	// network: minting an enrollment code is trust-granting, and a cert-exempt,
+	// remotely reachable mint would void the whole mTLS model (enroll must stay
+	// the only route to trust). Loopback + secret is the operator contract.
+	operatorHandler := requireLoopback(withBearer(secret, operator))
 
-	// Root demux: enroll (code-guarded), operator routes (secret only),
+	// Root demux: enroll (code-guarded), operator routes (loopback + secret),
 	// everything else (pin + secret).
 	root := http.NewServeMux()
 	root.HandleFunc("POST /admin/enroll", c.handleEnroll)
@@ -94,6 +86,41 @@ func (c *controller) adminHandler(secret string) http.Handler {
 	root.Handle("/admin/client-remove", operatorHandler)
 	root.Handle("/", handler)
 	return root
+}
+
+// withBearer wraps next behind a constant-time Bearer check; an empty secret
+// disables the gate (loopback/dev mode by design — see FEATURE 014 §2).
+func withBearer(secret string, next http.Handler) http.Handler {
+	if secret == "" {
+		return next
+	}
+	expected := []byte("Bearer " + secret)
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		provided := []byte(request.Header.Get("Authorization"))
+		if len(provided) != len(expected) || subtle.ConstantTimeCompare(provided, expected) != 1 {
+			writeJSON(writer, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			return
+		}
+		next.ServeHTTP(writer, request)
+	})
+}
+
+// requireLoopback rejects requests whose peer is not a loopback address.
+// RemoteAddr is set by the server from the socket, not from headers, so it
+// cannot be spoofed by a remote client.
+func requireLoopback(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		host, _, err := net.SplitHostPort(request.RemoteAddr)
+		if err != nil {
+			host = request.RemoteAddr
+		}
+		addr, err := netip.ParseAddr(host)
+		if err != nil || !addr.IsLoopback() {
+			writeJSON(writer, http.StatusForbidden, map[string]any{"error": "operator routes are loopback-only"})
+			return
+		}
+		next.ServeHTTP(writer, request)
+	})
 }
 
 func writeJSON(writer http.ResponseWriter, status int, payload any) {
@@ -196,9 +223,15 @@ func (c *controller) handleClients(writer http.ResponseWriter, request *http.Req
 	writeJSON(writer, http.StatusOK, map[string]any{"clients": c.clients.list()})
 }
 
-// handleClientCode mints a one-time enrollment invite for `client add`.
+// handleClientCode mints a one-time enrollment invite for `client add`. The
+// optional name is the operator's label for the future client: it is recorded
+// with the code and wins over whatever name the enrolling client suggests.
 func (c *controller) handleClientCode(writer http.ResponseWriter, request *http.Request) {
-	code, err := c.clients.mintCode()
+	var body struct {
+		Name string `json:"name"`
+	}
+	_ = json.NewDecoder(io.LimitReader(request.Body, 1<<16)).Decode(&body)
+	code, err := c.clients.mintCode(body.Name)
 	if err != nil {
 		writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -251,6 +284,30 @@ func (c *controller) handleConfig(writer http.ResponseWriter, request *http.Requ
 	}
 	writer.Header().Set("Content-Type", "application/json")
 	_, _ = writer.Write([]byte(content))
+}
+
+// handleInfo serves the daemon's identity card: version, home directory,
+// listen address, TLS mode, server fingerprint, uptime. Clients (the launcher)
+// use it instead of hard-coding the daemon's paths on their side — e.g. the
+// state_dir is where a client should point config paths the core WRITES
+// (cache_file), because it is the one directory the daemon owns.
+func (c *controller) handleInfo(writer http.ResponseWriter, request *http.Request) {
+	logPath := ""
+	if candidate := filepath.Join(filepath.Dir(c.infoStateDir), "lxd.log"); candidate != "" {
+		if _, err := os.Stat(candidate); err == nil {
+			logPath = candidate
+		}
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"version":        C.Version,
+		"state_dir":      c.infoStateDir,
+		"listen":         c.advertiseAddr,
+		"tls":            c.infoTLS,
+		"fingerprint":    c.serverFingerprint,
+		"pid":            os.Getpid(),
+		"uptime_seconds": int(time.Since(c.startedAt).Seconds()),
+		"log_path":       logPath,
+	})
 }
 
 func (c *controller) handleStatus(writer http.ResponseWriter, request *http.Request) {

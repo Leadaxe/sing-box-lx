@@ -12,6 +12,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
+	"io/fs"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -81,7 +83,10 @@ func generateIdentity(commonName string, timeNow time.Time) (*identity, error) {
 
 // loadOrCreateServerIdentity reads the server identity from the state dir, or
 // creates and persists it on first boot. The fingerprint is stable across
-// restarts — the property the invite string relies on.
+// restarts — the property the invite string relies on — so a new identity is
+// generated ONLY when the cert is genuinely absent: a transient IO failure
+// must fail the boot, not silently mint a new fingerprint and void every pin
+// the launchers hold.
 func loadOrCreateServerIdentity(dir string, timeNow time.Time) (*identity, error) {
 	certPath := filepath.Join(dir, "server_cert.pem")
 	keyPath := filepath.Join(dir, "server_key.pem")
@@ -92,6 +97,14 @@ func loadOrCreateServerIdentity(dir string, timeNow time.Time) (*identity, error
 			return nil, E.Cause(keyErr, "read server key")
 		}
 		return identityFromPEM(certPEM, keyPEM)
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return nil, E.Cause(err, "read server cert")
+	}
+	if _, keyErr := os.Stat(keyPath); keyErr == nil {
+		// A key without its cert is a half-broken identity; regenerating would
+		// change the fingerprint behind the operator's back.
+		return nil, E.New("server key exists but server cert is missing — restore ", certPath, " or delete ", keyPath, " to mint a new identity")
 	}
 	created, err := generateIdentity("sing-box-lxd", timeNow)
 	if err != nil {

@@ -5,9 +5,7 @@ package lxd
 import (
 	"crypto/rand"
 	"crypto/subtle"
-	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"math/big"
 	"strings"
@@ -33,8 +31,11 @@ type clientRegistry struct {
 	store  *store
 	access sync.Mutex
 
-	clients    []trustedClient
-	activeCode string
+	clients []trustedClient
+	// activeCode is the single live enrollment code; activeCodeName is the
+	// operator's label minted with it (wins over the enrollee's own name).
+	activeCode     string
+	activeCodeName string
 }
 
 const enrollCodeGroups = 3
@@ -64,14 +65,16 @@ func (r *clientRegistry) list() []trustedClient {
 }
 
 // mintCode generates and stores a fresh one-time enrollment code, replacing
-// any previous unused one (only one code is active at a time).
-func (r *clientRegistry) mintCode() (string, error) {
+// any previous unused one (only one code is active at a time). name is the
+// operator's label for the client that will redeem the code (may be empty).
+func (r *clientRegistry) mintCode(name string) (string, error) {
 	code, err := generateCode()
 	if err != nil {
 		return "", err
 	}
 	r.access.Lock()
 	r.activeCode = code
+	r.activeCodeName = name
 	r.access.Unlock()
 	return code, nil
 }
@@ -87,6 +90,11 @@ func (r *clientRegistry) enroll(code, name string, clientCertDER []byte) (truste
 	if subtle.ConstantTimeCompare([]byte(code), []byte(r.activeCode)) != 1 {
 		return trustedClient{}, E.New("invalid enrollment code")
 	}
+	// The operator's label from `client add --name` wins over the name the
+	// enrolling client suggests for itself.
+	if r.activeCodeName != "" {
+		name = r.activeCodeName
+	}
 	client := trustedClient{
 		Name:        name,
 		Fingerprint: fingerprintOf(clientCertDER),
@@ -98,6 +106,7 @@ func (r *clientRegistry) enroll(code, name string, clientCertDER []byte) (truste
 	}
 	r.clients = next
 	r.activeCode = "" // burn
+	r.activeCodeName = ""
 	return client, nil
 }
 
@@ -123,10 +132,10 @@ func (r *clientRegistry) remove(nameOrFingerprint string) (bool, error) {
 	return true, nil
 }
 
-// verifyPeerCertificate is the tls.Config hook: a handshaking client is
-// accepted only if its leaf certificate fingerprint is pinned. Enrollment
-// itself runs over a server-authenticated (not yet client-authed) connection,
-// so this gate is applied to the admin/gRPC planes, not to the enroll call.
+// isTrusted reports whether a leaf certificate fingerprint is pinned. It is
+// enforced per request on the admin/gRPC planes (not at the TLS handshake):
+// enrollment must run over a server-authenticated but not yet client-trusted
+// connection, so the handshake merely requests the cert.
 func (r *clientRegistry) isTrusted(fingerprint string) bool {
 	r.access.Lock()
 	defer r.access.Unlock()
@@ -146,7 +155,8 @@ func nowStamp() string {
 }
 
 // generateCode makes a code like K7QM-XXNP-2RTD from an unambiguous alphabet
-// (no 0/O/1/I). ~15 bits per group; brute force over the network is hopeless.
+// (no 0/O/1/I). 5 bits per char, 20 per group, 60 total; brute force over the
+// network is hopeless.
 func generateCode() (string, error) {
 	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 	groups := make([]string, enrollCodeGroups)
@@ -164,17 +174,6 @@ func generateCode() (string, error) {
 	return strings.Join(groups, "-"), nil
 }
 
-// clientVerifier builds the tls.Config VerifyConnection hook that pins peers.
-func (r *clientRegistry) verifyConnection(state tls.ConnectionState) error {
-	if len(state.PeerCertificates) == 0 {
-		return E.New("client certificate required")
-	}
-	if !r.isTrusted(fingerprintOf(state.PeerCertificates[0].Raw)) {
-		return E.New("client certificate not trusted")
-	}
-	return nil
-}
-
 func decodeCertPEM(certPEM []byte) ([]byte, error) {
 	block, _ := pem.Decode(certPEM)
 	if block == nil || block.Type != "CERTIFICATE" {
@@ -184,8 +183,4 @@ func decodeCertPEM(certPEM []byte) ([]byte, error) {
 		return nil, E.Cause(err, "parse client certificate")
 	}
 	return block.Bytes, nil
-}
-
-func (r *clientRegistry) clientsJSON() ([]byte, error) {
-	return json.MarshalIndent(r.list(), "", "  ")
 }

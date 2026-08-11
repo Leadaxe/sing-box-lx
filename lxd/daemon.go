@@ -13,10 +13,12 @@ package lxd
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -65,12 +67,19 @@ func Run(ctx context.Context, options Options) error {
 		Context:     ctx,
 		LogMaxLines: logMaxLines,
 	})
-	control := &controller{
-		ctx:      ctx,
-		service:  startedService,
-		store:    stateStore,
-		validate: execSelfCheck,
+	absStateDir := options.StateDir
+	if abs, absErr := filepath.Abs(options.StateDir); absErr == nil {
+		absStateDir = abs
 	}
+	control := &controller{
+		service:      startedService,
+		store:        stateStore,
+		validate:     execSelfCheck,
+		infoStateDir: absStateDir,
+		infoTLS:      options.TLS,
+		startedAt:    time.Now(),
+	}
+	control.advertiseAddr = options.Listen
 
 	var serverIdentity *identity
 	if options.TLS {
@@ -85,10 +94,19 @@ func Run(ctx context.Context, options Options) error {
 			return err
 		}
 		control.serverFingerprint = serverIdentity.fingerprint
-		control.advertiseAddr = options.Listen
 	}
 
-	grpcServer := daemon.NewServer(startedService, options.Secret)
+	// gRPC plane auth: under mTLS the h2c wrapper below already pins every
+	// gRPC request to a trusted client certificate, so the Bearer interceptor
+	// adds nothing but a second credential the launcher would have to know —
+	// the certificate IS the client's identity (SPEC 057 revision: the secret
+	// is an operator credential, not a client one). Plain h2c (dev) keeps the
+	// secret as its only gate, as before.
+	grpcSecret := options.Secret
+	if options.TLS {
+		grpcSecret = ""
+	}
+	grpcServer := daemon.NewServer(startedService, grpcSecret)
 	adminHandler := control.adminHandler(options.Secret)
 	httpServer := &http.Server{
 		ReadHeaderTimeout: readHeaderTimeout,
@@ -118,16 +136,25 @@ func Run(ctx context.Context, options Options) error {
 		return E.Cause(err, "listen control channel")
 	}
 	if options.TLS {
-		listener = tls.NewListener(listener, tlsConfig(serverIdentity, control.clients))
+		listener = tls.NewListener(listener, tlsConfig(serverIdentity))
 	}
 	log.Info("lxd: control channel listening at ", listener.Addr())
+
+	// Signals are registered before bootstrap: the first core start can be
+	// slow (TUN, binds), and a SIGTERM arriving during it must lead to a clean
+	// teardown, not the runtime default kill. Buffer > 1 so a SIGTERM arriving
+	// during a long SIGHUP apply is not lost.
+	osSignals := make(chan os.Signal, 4)
+	signal.Notify(osSignals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(osSignals)
+
+	// applyAccess is taken BEFORE the listener starts serving, so the first
+	// REST apply cannot race bootstrap.
+	control.applyAccess.Lock()
 	serveErr := make(chan error, 1)
 	go func() {
 		serveErr <- httpServer.Serve(listener)
 	}()
-
-	// bootstrap runs under applyAccess so it cannot race the first REST apply.
-	control.applyAccess.Lock()
 	bootstrap(ctx, control, stateStore, options)
 	control.applyAccess.Unlock()
 
@@ -135,14 +162,16 @@ func Run(ctx context.Context, options Options) error {
 		maybePrintInvite(control, serverIdentity, options.Listen)
 	}
 
-	// Buffer > 1 so a SIGTERM arriving during a long SIGHUP apply is not lost.
-	osSignals := make(chan os.Signal, 4)
-	signal.Notify(osSignals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer signal.Stop(osSignals)
 	for {
 		select {
 		case err = <-serveErr:
+			// Same teardown discipline as the signal path: serialize with any
+			// in-flight apply so a half-done pipeline cannot record a config
+			// that never reached STARTED.
+			control.applyAccess.Lock()
+			control.closed = true
 			shutdown(startedService, httpServer, grpcServer)
+			control.applyAccess.Unlock()
 			return E.Cause(err, "control channel")
 		case osSignal := <-osSignals:
 			if osSignal == syscall.SIGHUP {
@@ -150,8 +179,10 @@ func Run(ctx context.Context, options Options) error {
 				continue
 			}
 			log.Info("lxd: ", osSignal.String(), ", shutting down")
-			// Serialize teardown with any in-flight apply.
+			// Serialize teardown with any in-flight apply; closed keeps
+			// queued admin requests from resurrecting the core afterwards.
 			control.applyAccess.Lock()
+			control.closed = true
 			shutdown(startedService, httpServer, grpcServer)
 			control.applyAccess.Unlock()
 			return nil
@@ -188,9 +219,15 @@ func bootstrap(ctx context.Context, control *controller, stateStore *store, opti
 		log.Info("lxd: no config to boot from — idle, waiting for the first apply")
 		return
 	}
-	shouldRun := options.Run || stateStore.WasRunning()
+	// Run intent: --run forces; a recorded intent ("1"/"0" on disk) is obeyed;
+	// fresh state with a config to boot from defaults to running — this keeps
+	// the SPEC 056 contract (`lxd -c seed.json` starts the core on first run)
+	// and boots 056-era state dirs that predate the run-state file. Only an
+	// explicit /admin/stop records "stopped".
+	wasRunning, recorded := stateStore.WasRunning()
+	shouldRun := options.Run || wasRunning || !recorded
 	if !shouldRun {
-		log.Info("lxd: config loaded from ", source, " but run-state is stopped — core not started")
+		log.Info("lxd: config loaded from ", source, " but the recorded run-state is stopped — core not started (use --run or POST /admin/start)")
 		return
 	}
 	if err := control.service.StartOrReloadService(ctx, bootConfig, nil); err != nil {
@@ -266,17 +303,33 @@ func reloadFromFile(ctx context.Context, control *controller, options Options) {
 // maybePrintInvite prints a one-time enrollment invite on a fresh install
 // (no clients yet): address#server-fingerprint#code. The launcher pins the
 // server by the fingerprint and registers with the code.
+//
+// The code is a trust-granting secret with no TTL, so it must never end up in
+// a persistent log: a service's stdout/stderr land in a log file any local
+// user may read, and a code lying there indefinitely lets them enroll their
+// own client. The full invite is printed only when stdout is a terminal (the
+// operator's screen); under a service manager only a hint is logged — the
+// operator mints a fresh invite on demand with `lxd client add`.
 func maybePrintInvite(control *controller, serverIdentity *identity, listen string) {
 	if control.clients.count() > 0 {
 		return
 	}
-	code, err := control.clients.mintCode()
+	if !stdoutIsTerminal() {
+		log.Info("lxd: no clients registered — run `sing-box lxd client add` on this host to mint an enrollment invite")
+		return
+	}
+	code, err := control.clients.mintCode("")
 	if err != nil {
 		log.Error(E.Cause(err, "lxd: mint enrollment code"))
 		return
 	}
-	log.Info("lxd: no clients registered — copy this invite into the launcher:")
-	log.Info("     ", listen, "#", serverIdentity.fingerprint, "#", code)
+	fmt.Println("lxd: no clients registered — copy this invite into the launcher:")
+	fmt.Println("     " + listen + "#" + serverIdentity.fingerprint + "#" + code)
+}
+
+func stdoutIsTerminal() bool {
+	info, err := os.Stdout.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 func shortSHA(sha string) string {
@@ -286,16 +339,18 @@ func shortSHA(sha string) string {
 	return sha
 }
 
-// tlsConfig requires client certs and pins them against the trusted registry.
-// Enrollment (POST /admin/enroll) runs over the same TLS but must be reachable
-// before the client is trusted, so client-cert verification is request-time,
-// not handshake-time: we ask for the cert but verify trust only for non-enroll
-// routes (the admin handler gates that). Here we accept any presented client
-// cert at the TLS layer and let the pin be enforced per-route.
-func tlsConfig(serverIdentity *identity, clients *clientRegistry) *tls.Config {
+// tlsConfig serves the daemon's self-signed identity. Client-cert verification
+// is request-time, not handshake-time: enrollment (POST /admin/enroll) runs
+// over the same TLS but must be reachable before the client is trusted, so the
+// handshake merely requests the cert and the pin is enforced per route.
+// NextProtos must advertise h2: the gRPC plane is HTTP/2-only, and without
+// ALPN the connection degrades to HTTP/1.1, cutting gRPC off entirely
+// (net/http wires HTTP/2 into Serve() only via ALPN negotiation).
+func tlsConfig(serverIdentity *identity) *tls.Config {
 	return &tls.Config{
 		Certificates: []tls.Certificate{serverIdentity.tlsCert},
 		ClientAuth:   tls.RequestClientCert,
 		MinVersion:   tls.VersionTLS12,
+		NextProtos:   []string{"h2", "http/1.1"},
 	}
 }
