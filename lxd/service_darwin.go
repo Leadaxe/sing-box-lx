@@ -15,6 +15,12 @@ import (
 
 const launchdLabel = "com.leadaxe.sing-box-lxd"
 
+// ServiceInstallIsAdvisory is false here: on darwin --service really installs
+// and starts the job, so the caller materializes daemon.json first and mints a
+// pairing invite afterwards. On linux the installer only prints a recipe, so
+// the caller must skip both (see service_linux.go).
+const ServiceInstallIsAdvisory = false
+
 // serviceScope captures where a launchd job lives. The system scope is a
 // LaunchDaemon (root, starts before login, machine-wide) — needed for a
 // headless server that owns TUN. The user scope is a LaunchAgent (the logged-in

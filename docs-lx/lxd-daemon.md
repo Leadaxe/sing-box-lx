@@ -158,13 +158,28 @@ sudo sing-box lxd client add --name mac-book   # a fresh invite on a live daemon
 
 ## 8. Linux — setup approaches
 
-`--service` on Linux is still a **stub** — there is no automatic installation
-(an "instructions mode" is under discussion: detect the init system and print a
-ready-made unit/init script; see "Deferred" in
-[SPEC 057](../SPECS/TASKS/057-LXD_MTLS_SERVICE/SPEC.md)). The daemon itself is
-fully functional on Linux: mTLS, apply/rollback, log rotation all work; the
-`GOOS=linux GOARCH=arm64` cross-build (static binary, musl-compatible) is
-verified. Installation is three files by hand.
+**Principle: on Linux `--service` ONLY PRINTS.** Everything that touches the
+disk — the unit/init script, `daemon.json`, deleting state — is run by the
+operator. Why: launchd is one vendor with one API, while Linux is a zoo
+(systemd hosts, OpenWrt/procd routers, containers with neither), and a wrong
+guess that mutates `/etc` is worse than an exact printout. Read-only also has
+no half-states: a recipe that is never partially applied cannot leave the host
+stranded between two configurations.
+
+So `--service=install` detects the init system and prints a ready-to-paste
+recipe — the daemon home, `daemon.json`, the unit/init script, the enabling
+commands and the pairing step — with a link to the matching section here.
+`--service=uninstall` prints the removal steps the same way; `--purge` prints
+the `rm -rf` command instead of running it. `--service=print` is identical to
+install, because install never installs.
+
+The daemon itself is fully functional on Linux: mTLS, apply/rollback and log
+rotation all work; the `GOOS=linux GOARCH=arm64` cross-build (static binary,
+musl-compatible) is verified. The secret is never printed on screen: the recipe
+generates it in place with `$(head -c 32 /dev/urandom | xxd -p -c 64)`, so it
+exists only inside `daemon.json` on the host.
+
+The sections below are what that recipe prints, if you prefer to do it by hand.
 
 ### 8.1. Common part (any init)
 
@@ -252,12 +267,11 @@ chmod +x /etc/init.d/sing-box-lxd
 binary — add the paths to `/etc/sysupgrade.conf`, or a firmware upgrade will
 wipe the installation.
 
-### 8.4. What Linux does not have yet
+### 8.4. What Linux does not have
 
-- `--service=install/uninstall/print` — stubs (an instructions mode is planned);
-- auto-discovery of an installed service's state-dir for `client …` — pass
-  `--state-dir` explicitly;
-- self-update — updating the binary means "deliver the file + restart the
+- Automatic installation — by principle, not by omission (see above): the
+  recipe is printed, the operator runs it.
+- Self-update — updating the binary means "deliver the file + restart the
   service".
 
 ## 9. Pairing a client (the same on every OS)

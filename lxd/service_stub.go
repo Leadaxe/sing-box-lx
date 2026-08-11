@@ -1,12 +1,16 @@
-//go:build with_lx_command && !darwin
+//go:build with_lx_command && !darwin && !linux
 
 package lxd
 
 import E "github.com/sagernet/sing/common/exceptions"
 
-// Linux (systemd) and Windows (SCM) service installation are stubs for now:
-// today's target is macOS. The daemon itself runs on every platform; only the
-// `--service=install` helper is unimplemented here.
+// Windows (SCM) service installation is a stub: darwin installs for real,
+// linux prints a recipe (service_linux.go). The daemon itself runs on every
+// platform; only the `--service` helper is unimplemented here.
+// ServiceInstallIsAdvisory: nothing installs here at all, so the caller must
+// not prepare daemon.json or try to pair a client either.
+const ServiceInstallIsAdvisory = true
+
 func InstallService(daemonArgs []string) error {
 	return E.New("lxd: service install is not implemented on this platform yet (macOS only)")
 }

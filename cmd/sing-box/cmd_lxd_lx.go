@@ -204,12 +204,22 @@ func clientConnection(stateDir string) (listen string, useTLS bool, secret strin
 func runServiceAction(cmd *cobra.Command) error {
 	switch lxdService {
 	case "install", "install-user":
+		userScope := lxdService == "install-user"
+		stateDir := serviceStateDir(cmd, userScope)
+		// Where the installer only prints a recipe (linux), preparing
+		// daemon.json and minting an invite would both be wrong: the recipe
+		// tells the operator to create the file, and there is no running
+		// daemon to pair with yet.
+		if lxd.ServiceInstallIsAdvisory {
+			if userScope {
+				return lxd.InstallUserService(daemonArgsForService(cmd, stateDir))
+			}
+			return lxd.InstallService(daemonArgsForService(cmd, stateDir))
+		}
 		// Connection settings are owned by daemon.json, which install itself
 		// materializes (free-port scan, generated secret). The connection
 		// flags no longer exist on this command at all, so cobra rejects them
 		// at parse time ("unknown flag") — nothing to re-check here.
-		userScope := lxdService == "install-user"
-		stateDir := serviceStateDir(cmd, userScope)
 		config, err := prepareServiceConfig(stateDir, userScope)
 		if err != nil {
 			return err

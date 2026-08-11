@@ -58,8 +58,14 @@ data-plane лежит.
 TUN, до логина); `install-user` — пользовательский LaunchAgent (без sudo,
 десктоп-UX); оба переносят текущую командную строку (минус `--service`) в plist,
 абсолютизируя пути, и сами создают каталоги; `print` — сухой прогон plist;
-`uninstall` (+`--purge`) — снять службу (и опц. state). macOS реализовано,
-Linux/Windows — заглушки.
+`uninstall` (+`--purge`) — снять службу (и опц. state). **macOS** — установка
+по-настоящему. **Linux — только печать рецепта** (принцип: всё, что меняет
+диск, делает оператор): детект init (`/proc/1/comm`, фолбэки
+`/etc/openwrt_release` и `/run/systemd/system`), печать ссылки на нужный
+раздел руководства, дома демона + `daemon.json` (секрет генерится подстановкой
+`$(head -c 32 /dev/urandom …)` — на экран не попадает), unit/init-скрипта,
+команд включения и шага сопряжения; `uninstall --purge` печатает `rm -rf`, а не
+выполняет. Windows — заглушка.
 
 Дорожная карта ручек (не реализовано): confirm/dead-man, история версий
 (content-addressed), SRS-хранилище, reverse-proxy внутреннего Clash API,
