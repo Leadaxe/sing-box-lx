@@ -36,7 +36,7 @@ func (c *Client) applyGRPCHeader(request *http.Request) {
 // sessionId. Sending "<path>/<sessionId>" instead routes the server into the
 // stream-down branch, which never pairs with a stream-up POST, so the response
 // body carries non-VLESS bytes and the VLESS layer fails with "unknown version".
-func (c *Client) dialStreamOne(ctx context.Context, sessionID string) (net.Conn, error) {
+func (c *Client) dialStreamOne(ctx context.Context, sessionID string, xmuxClient *xmuxClient) (net.Conn, error) {
 	_ = sessionID // intentionally unused: stream-one sends no sessionId on the wire
 	pipeReader, pipeWriter := io.Pipe()
 	// stream-one carries a body, so it uses the configured upload method (default
@@ -47,7 +47,7 @@ func (c *Client) dialStreamOne(ctx context.Context, sessionID string) (net.Conn,
 	}
 	c.applyGRPCHeader(request)
 
-	conn := newStreamConn(pipeReader, pipeWriter, c.serverAddr)
+	conn := newStreamConn(pipeReader, pipeWriter, c.serverAddr, newXmuxRelease(xmuxClient))
 	// lx: 050 — the conn is handed up before RoundTrip has raised the stream, so
 	// anything written meanwhile (the VLESS/encryption handshake) blocks on an
 	// unread pipe. Until the stream is up, cancelling the dial context must free
@@ -60,7 +60,7 @@ func (c *Client) dialStreamOne(ctx context.Context, sessionID string) (net.Conn,
 	})
 	go func() {
 		defer stopGuard()
-		response, err := c.transport.RoundTrip(request)
+		response, err := xmuxClient.roundTrip(request)
 		if err != nil {
 			conn.setupReader(nil, err)
 			return
@@ -102,7 +102,7 @@ func watchDialContext(ctx context.Context, done <-chan struct{}, onCancel func(e
 // server holds the stream-down response until the paired stream-up request has
 // delivered bytes, so blocking on it here deadlocks the dial and the fronting
 // proxy answers 504. See the note on dialPacketUp. lx: SPEC 002.
-func (c *Client) dialStreamUp(ctx context.Context, sessionID string) (net.Conn, error) {
+func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient *xmuxClient) (net.Conn, error) {
 	// Download: GET response body (no seq — stream mode).
 	downReq, err := c.newRequest(ctx, http.MethodGet, sessionID, "", nil)
 	if err != nil {
@@ -116,9 +116,9 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string) (net.Conn, 
 		return nil, err
 	}
 	c.applyGRPCHeader(upReq)
-	conn := newSplitConn(pipeReader, pipeWriter, c.serverAddr)
+	conn := newSplitConn(pipeReader, pipeWriter, c.serverAddr, newXmuxRelease(xmuxClient))
 	go func() {
-		downResp, err := c.transport.RoundTrip(downReq)
+		downResp, err := xmuxClient.roundTrip(downReq)
 		if err != nil {
 			conn.setupReader(nil, E.Cause(err, "open download"))
 			return
@@ -131,7 +131,7 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string) (net.Conn, 
 		conn.setupReader(downResp.Body, nil)
 	}()
 	go func() {
-		upResp, err := c.transport.RoundTrip(upReq)
+		upResp, err := xmuxClient.roundTrip(upReq)
 		if err != nil {
 			conn.uploadFailed(err)
 			return
@@ -155,15 +155,15 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string) (net.Conn, 
 // client (sing-box-extended) works: its OpenStream likewise returns as soon as
 // the connection is established (httptrace GotConn) and processes the response
 // asynchronously. lx: SPEC 002.
-func (c *Client) dialPacketUp(ctx context.Context, sessionID string) (net.Conn, error) {
+func (c *Client) dialPacketUp(ctx context.Context, sessionID string, xmuxClient *xmuxClient) (net.Conn, error) {
 	// Download stream: GET with the session id but no seq (downlink).
 	downReq, err := c.newRequest(ctx, http.MethodGet, sessionID, "", nil)
 	if err != nil {
 		return nil, err
 	}
-	conn := newPacketConn(ctx, c, sessionID, c.serverAddr)
+	conn := newPacketConn(ctx, c, sessionID, c.serverAddr, newXmuxRelease(xmuxClient))
 	go func() {
-		downResp, err := c.transport.RoundTrip(downReq)
+		downResp, err := xmuxClient.roundTrip(downReq)
 		if err != nil {
 			conn.setupReader(nil, E.Cause(err, "open download"))
 			return
@@ -299,6 +299,8 @@ func (d *readDeadline) stop() {
 // side is a late-bound response body (download). It mirrors the late-binding
 // pattern of v2rayhttp.HTTP2Conn but is self-contained here.
 type streamConn struct {
+	// xmux releases this stream's pooled connection when the conn closes.
+	xmux       *xmuxRelease
 	writer     *io.PipeWriter
 	reader     io.ReadCloser
 	created    chan struct{}
@@ -310,8 +312,9 @@ type streamConn struct {
 	readDeadline  *readDeadline
 }
 
-func newStreamConn(reader *io.PipeReader, writer *io.PipeWriter, serverAddr M.Socksaddr) *streamConn {
+func newStreamConn(reader *io.PipeReader, writer *io.PipeWriter, serverAddr M.Socksaddr, xmux *xmuxRelease) *streamConn {
 	conn := &streamConn{
+		xmux:       xmux,
 		writer:     writer,
 		created:    make(chan struct{}),
 		serverAddr: serverAddr,
@@ -374,6 +377,8 @@ func (c *streamConn) Close() error {
 			}
 		default:
 		}
+		// lx: 059 — release the pooled connection last, once nothing reads it.
+		c.xmux.release()
 	})
 	return nil
 }
@@ -404,6 +409,8 @@ func (c *streamConn) NeedAdditionalReadDeadline() bool { return true }
 // mode). The download body is ready immediately; the upload POST is driven by
 // the caller in a goroutine.
 type splitConn struct {
+	// xmux releases this stream's pooled connection when the conn closes.
+	xmux       *xmuxRelease
 	reader     io.ReadCloser
 	created    chan struct{}
 	readerErr  error
@@ -417,7 +424,7 @@ type splitConn struct {
 	readDeadline  *readDeadline
 }
 
-func newSplitConn(uploadReader *io.PipeReader, writer *io.PipeWriter, serverAddr M.Socksaddr) *splitConn {
+func newSplitConn(uploadReader *io.PipeReader, writer *io.PipeWriter, serverAddr M.Socksaddr, xmux *xmuxRelease) *splitConn {
 	conn := &splitConn{
 		created:    make(chan struct{}),
 		writer:     writer,
@@ -476,6 +483,8 @@ func (c *splitConn) Close() error {
 			}
 		default:
 		}
+		// lx: 059 — release the pooled connection last, once nothing reads it.
+		c.xmux.release()
 	})
 	return nil
 }
@@ -504,8 +513,11 @@ func (c *splitConn) NeedAdditionalReadDeadline() bool { return true }
 // response exists (see the deadlock note there), so Read waits on `created`
 // until the RoundTrip goroutine binds either a body or an error.
 type packetConn struct {
-	ctx        context.Context
-	client     *Client
+	ctx    context.Context
+	client *Client
+	// xmux is the pooled connection carrying every upload POST of this stream;
+	// released when the conn closes.
+	xmux       *xmuxRelease
 	sessionID  string
 	reader     io.ReadCloser
 	created    chan struct{}
@@ -522,10 +534,11 @@ type packetConn struct {
 	readDeadline *readDeadline
 }
 
-func newPacketConn(ctx context.Context, client *Client, sessionID string, serverAddr M.Socksaddr) *packetConn {
+func newPacketConn(ctx context.Context, client *Client, sessionID string, serverAddr M.Socksaddr, xmux *xmuxRelease) *packetConn {
 	conn := &packetConn{
 		ctx:        ctx,
 		client:     client,
+		xmux:       xmux,
 		sessionID:  sessionID,
 		created:    make(chan struct{}),
 		serverAddr: serverAddr,
@@ -619,7 +632,11 @@ func (c *packetConn) sendPacket(b []byte) error {
 	}
 	c.client.applyUplinkData(request, payload)
 
-	response, err := c.client.transport.RoundTrip(request)
+	// lx: 059 — every upload POST rides this stream's pooled connection and counts
+	// against its h_max_request_times. packet-up issues one request per Write, so
+	// counting streams instead of requests here would let the connection outlive
+	// the limit the server was told about.
+	response, err := c.xmux.roundTrip(request)
 	if err != nil {
 		return err
 	}
@@ -668,6 +685,9 @@ func (c *packetConn) Close() error {
 			}
 		default:
 		}
+		// lx: 059 — release the pooled connection last, once nothing reads it and
+		// no further upload POST can be issued (c.closed is already set above).
+		c.xmux.release()
 	})
 	return err
 }

@@ -92,12 +92,12 @@ func h2cClient(t *testing.T, addr, mode string) *Client {
 	return &Client{
 		ctx:        context.Background(),
 		serverAddr: M.ParseSocksaddr(addr),
-		transport: &http2.Transport{
+		xmux: singleTransportXmux(&http2.Transport{
 			AllowHTTP: true,
 			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.STDConfig) (net.Conn, error) {
 				return (&net.Dialer{}).DialContext(ctx, network, addr)
 			},
-		},
+		}),
 		scheme:       "http",
 		host:         addr,
 		path:         "/upload/",

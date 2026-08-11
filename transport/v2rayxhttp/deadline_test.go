@@ -64,7 +64,7 @@ func hangingClient(t *testing.T) (*Client, *hangingTransport) {
 		path:       "/xhttp",
 		mode:       modeStreamOne,
 		meta:       meta,
-		transport:  transport,
+		xmux:       singleTransportXmux(transport),
 	}
 	return client, transport
 }
@@ -92,7 +92,7 @@ func TestStreamOneWriteDeadlineUnblocksWrite(t *testing.T) {
 	client, transport := hangingClient(t)
 	defer transport.Close()
 
-	conn, err := client.dialStreamOne(context.Background(), "")
+	conn, err := client.dialStreamOne(context.Background(), "", client.xmux.get())
 	if err != nil {
 		t.Fatalf("dialStreamOne: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestStreamOneDialCancelUnblocksWrite(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	conn, err := client.dialStreamOne(ctx, "")
+	conn, err := client.dialStreamOne(ctx, "", client.xmux.get())
 	if err != nil {
 		t.Fatalf("dialStreamOne: %v", err)
 	}
@@ -184,11 +184,11 @@ func TestStreamOneCancelAfterStreamUpKeepsConnAlive(t *testing.T) {
 		path:       "/xhttp",
 		mode:       modeStreamOne,
 		meta:       meta,
-		transport:  &liveTransport{body: bodyReader},
+		xmux:       singleTransportXmux(&liveTransport{body: bodyReader}),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	conn, err := client.dialStreamOne(ctx, "")
+	conn, err := client.dialStreamOne(ctx, "", client.xmux.get())
 	if err != nil {
 		t.Fatalf("dialStreamOne: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestStreamOneCancelAfterStreamUpKeepsConnAlive(t *testing.T) {
 // dial context is done, and that must not disturb a working connection.
 func TestStreamOneDeadlineDoesNotBreakLiveConn(t *testing.T) {
 	pipeReader, pipeWriter := io.Pipe()
-	conn := newStreamConn(pipeReader, pipeWriter, M.ParseSocksaddr("example.com:443"))
+	conn := newStreamConn(pipeReader, pipeWriter, M.ParseSocksaddr("example.com:443"), nil)
 	if err := conn.SetWriteDeadline(time.Time{}); err != nil {
 		t.Fatalf("clearing the write deadline must be accepted: %v", err)
 	}

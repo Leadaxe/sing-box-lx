@@ -23,6 +23,7 @@ package v2rayxhttp
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"net"
 	"net/http"
@@ -31,12 +32,14 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/buf"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	sHTTP "github.com/sagernet/sing/protocol/http"
+	"github.com/sagernet/sing/service"
 
 	"golang.org/x/net/http2"
 )
@@ -51,10 +54,12 @@ const (
 var _ adapter.V2RayClientTransport = (*Client)(nil)
 
 type Client struct {
-	ctx          context.Context
-	dialer       N.Dialer
-	serverAddr   M.Socksaddr
-	transport    http.RoundTripper
+	ctx        context.Context
+	dialer     N.Dialer
+	serverAddr M.Socksaddr
+	// xmux owns the pool of HTTP connections; every dial takes one from it and
+	// releases it when the conn closes (SPECS/TASKS/059).
+	xmux         *xmuxManager
 	scheme       string
 	host         string
 	path         string
@@ -113,19 +118,30 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		return nil, err
 	}
 
+	xmuxConfig, err := normalizeXmux(options.Xmux)
+	if err != nil {
+		return nil, err
+	}
+
+	// newTransport builds one pooled HTTP connection. XMUX holds several of these
+	// and decides which one carries a given stream; each has its own dialer, so
+	// separate transports mean separate TCP+TLS connections (SPECS/TASKS/059).
 	var (
-		transport http.RoundTripper
-		scheme    string
+		scheme       string
+		newTransport func() *http2.Transport
 	)
 	if tlsConfig == nil {
 		scheme = "http"
 		// Plaintext h2c: speak HTTP/2 over a cleartext TCP conn so the same
 		// streaming request/response body machinery works without TLS.
-		transport = &http2.Transport{
-			AllowHTTP: true,
-			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.STDConfig) (net.Conn, error) {
-				return dialer.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr(addr))
-			},
+		newTransport = func() *http2.Transport {
+			return &http2.Transport{
+				AllowHTTP:       true,
+				ReadIdleTimeout: xmuxConfig.keepAlivePeriod,
+				DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.STDConfig) (net.Conn, error) {
+					return dialer.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr(addr))
+				},
+			}
 		}
 	} else {
 		scheme = "https"
@@ -133,10 +149,13 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 			tlsConfig.SetNextProtos([]string{http2.NextProtoTLS})
 		}
 		tlsDialer := tls.NewDialer(dialer, tlsConfig)
-		transport = &http2.Transport{
-			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.STDConfig) (net.Conn, error) {
-				return tlsDialer.DialTLSContext(ctx, M.ParseSocksaddr(addr))
-			},
+		newTransport = func() *http2.Transport {
+			return &http2.Transport{
+				ReadIdleTimeout: xmuxConfig.keepAlivePeriod,
+				DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.STDConfig) (net.Conn, error) {
+					return tlsDialer.DialTLSContext(ctx, M.ParseSocksaddr(addr))
+				},
+			}
 		}
 	}
 
@@ -166,11 +185,25 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		headers[key] = value
 	}
 
+	xmux := newXmuxManager(xmuxConfig, func() xmuxConn {
+		return &http2XmuxConn{transport: newTransport()}
+	})
+	// The pool's transitions (a connection opened, a connection retired and why)
+	// are what is worth observing about XMUX — the pool size itself follows from
+	// the config. Debug level, so it costs nothing unless someone is looking.
+	// See SPECS/TASKS/059 §8.2.
+	if logFactory := service.FromContext[log.Factory](ctx); logFactory != nil {
+		xmuxLogger := logFactory.NewLogger("xhttp")
+		xmux.onEvent = func(format string, args ...any) {
+			xmuxLogger.Debug(fmt.Sprintf(format, args...))
+		}
+	}
+
 	return &Client{
 		ctx:            ctx,
 		dialer:         dialer,
 		serverAddr:     serverAddr,
-		transport:      transport,
+		xmux:           xmux,
 		scheme:         scheme,
 		host:           host,
 		path:           path,
@@ -185,6 +218,20 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	sessionID := newSessionID()
+	// One pooled connection carries this whole dial: both halves of a split mode
+	// and every upload POST of packet-up. It is released once, when the conn
+	// closes — see releaseOnce in conn.go.
+	xmuxClient := c.xmux.get()
+	xmuxClient.addOpenUsage(1)
+	conn, err := c.dialMode(ctx, sessionID, xmuxClient)
+	if err != nil {
+		xmuxClient.addOpenUsage(-1)
+		return nil, err
+	}
+	return conn, nil
+}
+
+func (c *Client) dialMode(ctx context.Context, sessionID string, xmuxClient *xmuxClient) (net.Conn, error) {
 	switch c.mode {
 	case modeAuto:
 		// Match Xray's auto resolution (transport/internet/splithttp/dialer.go):
@@ -192,24 +239,22 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		// mode, live-validated against Xray 3x-ui). Xray also picks stream-up when
 		// downloadSettings is present, but we don't support asymmetric transport.
 		if c.realityEnabled {
-			return c.dialStreamOne(ctx, sessionID)
+			return c.dialStreamOne(ctx, sessionID, xmuxClient)
 		}
-		return c.dialPacketUp(ctx, sessionID)
+		return c.dialPacketUp(ctx, sessionID, xmuxClient)
 	case modePacketUp:
-		return c.dialPacketUp(ctx, sessionID)
+		return c.dialPacketUp(ctx, sessionID, xmuxClient)
 	case modeStreamUp:
-		return c.dialStreamUp(ctx, sessionID)
+		return c.dialStreamUp(ctx, sessionID, xmuxClient)
 	case modeStreamOne:
-		return c.dialStreamOne(ctx, sessionID)
+		return c.dialStreamOne(ctx, sessionID, xmuxClient)
 	default:
 		return nil, E.New("v2ray-xhttp: unknown mode: ", c.mode)
 	}
 }
 
 func (c *Client) Close() error {
-	if transport, ok := c.transport.(*http2.Transport); ok {
-		transport.CloseIdleConnections()
-	}
+	c.xmux.Close()
 	return nil
 }
 

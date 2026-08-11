@@ -372,8 +372,9 @@ func chunkEncoded(payload []byte, size intRange) []string {
 	return chunks
 }
 
-// timeNow is a small indirection over time.Now to keep the throttle logic testable.
-func timeNow() time.Time { return time.Now() }
+// timeNow is a small indirection over time.Now to keep the throttle logic and
+// the XMUX age-based eviction (SPECS/TASKS/059) testable without sleeping.
+var timeNow = time.Now
 
 // trimBarePathSlash strips trailing slashes for the stream-one bare-path case,
 // while never collapsing the root path to "" (a root-only path stays "/"). Used

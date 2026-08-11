@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — клиентский транспорт (CONSTITUTION §3.6) |
-| Статус | D (draft) — дизайн; код не начат |
+| Статус | I (implemented) — код + тесты + сборка; ждёт полевой проверки на живом Xray-сервере (§7.8) |
 | Ветка | `lx` |
 | Связанные | [[SPECS/TASKS/002-XHTTP_CLIENT_TRANSPORT]] (базовый транспорт, `PARAM_MAP.md` — построчная сверка полей) · [[SPECS/TASKS/050-URLTEST_CANCELLABLE]] (дедлайны XHTTP-conn, `Close()` рвёт пайп) |
 
@@ -70,8 +70,13 @@ type V2RayXHTTPXmuxOptions struct {
     CMaxReuseTimes   string `json:"c_max_reuse_times,omitempty"`  // "min-max"
     HMaxRequestTimes string `json:"h_max_request_times,omitempty"`// "min-max"
     HMaxReusableSecs string `json:"h_max_reusable_secs,omitempty"`// "min-max"
+    HKeepAlivePeriod int64  `json:"h_keep_alive_period,omitempty"`// секунды, НЕ range
 }
 ```
+
+⚠️ `h_keep_alive_period` — единственное не-range поле (в референсе тоже
+`int64` без `GetNormalized*`-геттера). Задаёт `ReadIdleTimeout` HTTP/2-транспорта:
+`0` → дефолт (Chrome-подобный), отрицательное → keep-alive выключен.
 
 **Форма диапазонов — строка `"min-max"`**, как у всех прочих range-полей
 нашего XHTTP (`x_padding_bytes`, `sc_*`); см.
@@ -107,7 +112,9 @@ type V2RayXHTTPXmuxOptions struct {
 `max_connections` и `max_concurrency` **взаимоисключающие**: если оба
 заданы с ненулевым верхом — ошибка конфигурации (текст референса:
 `max_connections cannot be specified together with max_concurrency`).
-Проверка — в `normalizeMeta`, вместе с остальными XHTTP-полями.
+Проверка — в `normalizeXmux` (`transport/v2rayxhttp/xmux.go`), вызывается из
+`NewClient` рядом с `normalizeMeta`. Проверено на живом ядре:
+`sing-box check` отвергает такой конфиг с этим текстом.
 
 ## 4. Механизм
 
@@ -134,9 +141,10 @@ client-only (см. §6).
 4. иначе среди пула отбираются те, у кого `openUsage < max_concurrency`
    (при `max_concurrency == 0` — все);
 5. если таких нет → новое соединение;
-6. иначе — **криптослучайный** выбор одного из кандидатов
-   (`crypto/rand`, как в референсе — не `math/rand`), декремент
-   `leftUsage`.
+6. иначе — случайный выбор одного из кандидатов, декремент `leftUsage`.
+   ⚠️ Реализовано через наш `randIntn` (`math/rand`), а не `crypto/rand`
+   референса: выбор соединения из пула не является секретом, а пакет уже
+   использует `math/rand` для session-id и паддинга — держим один источник.
 
 **Точки интеграции в нашем клиенте**
 ([transport/v2rayxhttp/client.go](../../../transport/v2rayxhttp/client.go)):
@@ -182,8 +190,13 @@ client-only (см. §6).
   скачивания со своим `xmux`) **вне объёма**: у нас нет `Download`-опций
   в `V2RayXHTTPOptions`. Второй менеджер (`xmuxManager2`) не нужен.
   Если `download` появится — расширять отдельной задачей.
-- **`h_keep_alive_period`** — в текущих Xray-core и extended отсутствует
-  (проверено: в `XmuxConfig` пять полей). Не вводим.
+- **`h_keep_alive_period`** — в референсе **есть**
+  (`option/v2ray_transport.go:500`, `int64`, секунды; без `GetNormalized*`-геттера,
+  читается напрямую в `createHTTPClient`). Задаёт `http2.Transport.ReadIdleTimeout`
+  (h2) или `quic.Config.KeepAlivePeriod` (h3); `0` → дефолт «как у Chrome»,
+  отрицательное → выключить. **Вводим** — это часть почерка соединения, ради
+  которого задача и делается. h3 у нас нет (см. ниже), поэтому применяется
+  только к h2.
 
 ## 7. Критерии приёмки
 

@@ -36,6 +36,11 @@ type V2RayXHTTPOptions struct {
 	// ("min-max", e.g. "100-1000", or a single integer). Empty defaults to
 	// "100-1000".
 	XPaddingBytes string `json:"x_padding_bytes,omitempty"`
+	// Xmux configures HTTP connection reuse (Xray "XMUX"). A nil value still
+	// enables XMUX with Xray-compatible defaults — matching Xray-core and
+	// sing-box-extended, where the pool is always on. See SPECS/TASKS/059.
+	Xmux *V2RayXHTTPXmuxOptions `json:"xmux,omitempty"`
+
 	// NoGRPCHeader omits the "Content-Type: application/grpc" request header that
 	// the streamed-body modes (stream-one, stream-up) set by default, mirroring
 	// Xray's FillStreamRequest (transport/internet/splithttp/config.go). The
@@ -134,4 +139,42 @@ type V2RayXHTTPOptions struct {
 	// server-injected keepalive padding from the stream-up download — verify against
 	// the target server if it emits any.
 	ScStreamUpServerSecs string `json:"sc_stream_up_server_secs,omitempty"`
+}
+
+// V2RayXHTTPXmuxOptions configures XHTTP connection reuse ("XMUX"): how many
+// HTTP connections the client keeps, how many streams share one, and when a
+// connection is rotated out of the pool. Mirrors Xray's XmuxConfig
+// (transport/internet/splithttp/config.go) and sing-box-extended's
+// V2RayXHTTPXmuxOptions. See SPECS/TASKS/059-XHTTP_XMUX.
+//
+// The range fields take the "min-max" string form used by the rest of our XHTTP
+// options (e.g. "600-900"), a single integer ("4" == "4-4"), or — for configs
+// authored against Xray/sing-box-extended — a two-element JSON array ([600,900]).
+// Each range is rolled ONCE, not per request: the manager rolls max_concurrency
+// and max_connections at construction, and every connection rolls its own reuse
+// limits when it is created.
+type V2RayXHTTPXmuxOptions struct {
+	// MaxConcurrency bounds how many streams may share a single HTTP connection.
+	// Empty defaults to "1-1" (one stream per connection, like Xray). Mutually
+	// exclusive with MaxConnections.
+	MaxConcurrency XmuxRange `json:"max_concurrency,omitempty"`
+	// MaxConnections bounds how many connections the pool holds; while the pool
+	// is below this count a new connection is always opened. Empty means
+	// unlimited. Mutually exclusive with MaxConcurrency.
+	MaxConnections XmuxRange `json:"max_connections,omitempty"`
+	// CMaxReuseTimes is how many times a connection may be handed out for a new
+	// stream before it is retired. Empty means unlimited.
+	CMaxReuseTimes XmuxRange `json:"c_max_reuse_times,omitempty"`
+	// HMaxRequestTimes is how many HTTP requests may traverse a connection before
+	// it is retired. Empty defaults to "600-900". Note this counts requests, not
+	// streams: in packet-up one stream issues many upload POSTs.
+	HMaxRequestTimes XmuxRange `json:"h_max_request_times,omitempty"`
+	// HMaxReusableSecs is how long a connection stays reusable, in seconds. Empty
+	// defaults to "1800-3000".
+	HMaxReusableSecs XmuxRange `json:"h_max_reusable_secs,omitempty"`
+	// HKeepAlivePeriod is the HTTP/2 keep-alive ping period in seconds (the
+	// transport's ReadIdleTimeout). Zero selects the default; a negative value
+	// disables keep-alive pings. Unlike the fields above this is a plain integer,
+	// matching the reference.
+	HKeepAlivePeriod int64 `json:"h_keep_alive_period,omitempty"`
 }
