@@ -96,7 +96,9 @@ support-каталога не трогается). Non-interactive (без Y/N) 
   enrollment code» (сгорел); apply/stop по mTLS, канал жив после stop; память
   run-состояния (stop→рестарт idle; `--run`→started); приглашение не печатается
   при наличии клиента; `client list/add/remove` через живой демон;
-  `--service=print` даёт корректный plist (командная строка → ProgramArguments).
+  сухой прогон даёт корректный plist (командная строка → ProgramArguments; на
+  момент прогона он вызывался как `--service=print`, ныне
+  `--service=install --dry-run`).
 - **Служба device-verified на macOS (обе роли):** `install-user` без sudo →
   launchd `state = running`, `runs = 1`, `never exited`, порт слушается,
   приглашение в логе; `KeepAlive` перезапустил после `kill -9` (новый pid);

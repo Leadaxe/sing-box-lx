@@ -88,8 +88,9 @@ connection-настроек: у команды нет флагов `--listen/--t
 | `-c <файл>` | seed-конфиг (строго один файл; каталоги `-C` не поддерживаются) |
 | `--config-force <файл>` | всегда бутиться с этого файла, поверх last-good |
 | `--run` | поднять ядро независимо от записанного run-состояния |
-| `--service install\|install-user\|uninstall\|print` | установка службой (см. разделы ОС) |
+| `--service install\|install-user\|uninstall` | установка службой (см. разделы ОС) |
 | `--purge` | с `uninstall` — снести и state-каталог |
+| `--dry-run` | с `--service` — показать, что было бы сделано, ничего не меняя |
 | `client add [--name <метка>]` | сминтить одноразовый инвайт для нового клиента |
 | `client list` / `client remove <имя-или-отпечаток>` | просмотр / отзыв доверенных клиентов |
 
@@ -145,9 +146,10 @@ Install делает всё сам:
 Прочее:
 
 ```bash
-sing-box lxd --service=print              # сухой прогон: показать plist, ничего не трогая
+sing-box lxd --service=install --dry-run  # показать plist и что произойдёт, ничего не трогая
 sing-box lxd --service=uninstall          # снять службу; state сохраняется
 sing-box lxd --service=uninstall --purge  # снять службу и снести state (клиенты, ключи, last-good)
+sing-box lxd --service=uninstall --dry-run --purge   # показать, что было бы удалено
 sudo sing-box lxd client add --name mac-book   # новый инвайт на живом демоне (state-dir найдётся сам)
 ```
 
@@ -165,8 +167,8 @@ systemd, роутеры на OpenWrt/procd, контейнеры без того
 вставке рецепт — дом демона, `daemon.json`, unit/init-скрипт, команды включения
 и шаг сопряжения — со ссылкой на соответствующий раздел этого документа.
 `--service=uninstall` так же печатает шаги снятия; `--purge` печатает команду
-`rm -rf`, а не выполняет её. `--service=print` идентичен install — потому что
-install ничего не устанавливает.
+`rm -rf`, а не выполняет её. `--dry-run` принимается и ничего не меняет — на
+Linux любое действие и так лишь печать.
 
 Сам демон на Linux полноценен: mTLS, apply/rollback, ротация лога — всё
 работает; кросс-сборка `GOOS=linux GOARCH=arm64` (статический бинарник,

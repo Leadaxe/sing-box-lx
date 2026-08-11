@@ -11,11 +11,11 @@ import E "github.com/sagernet/sing/common/exceptions"
 // not prepare daemon.json or try to pair a client either.
 const ServiceInstallIsAdvisory = true
 
-func InstallService(daemonArgs []string) error {
+func InstallService(daemonArgs []string, dryRun bool) error {
 	return E.New("lxd: service install is not implemented on this platform yet (macOS only)")
 }
 
-func InstallUserService(daemonArgs []string) error {
+func InstallUserService(daemonArgs []string, dryRun bool) error {
 	return E.New("lxd: service install-user is not implemented on this platform yet (macOS only)")
 }
 
@@ -23,10 +23,6 @@ func DefaultServiceStateDir(user bool) string {
 	return "lxd-state"
 }
 
-func UninstallService(purge bool) error {
+func UninstallService(purge bool, dryRun bool) error {
 	return E.New("lxd: service uninstall is not implemented on this platform yet (macOS only)")
-}
-
-func PrintService(daemonArgs []string) error {
-	return E.New("lxd: service print is not implemented on this platform yet (macOS only)")
 }

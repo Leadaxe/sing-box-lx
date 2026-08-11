@@ -27,6 +27,56 @@ func nextTagAfterKey(t *testing.T, plist, key string) string {
 	return strings.TrimSpace(rest[:end])
 }
 
+// capture runs fn with stdout redirected to a pipe and returns what it wrote.
+func capture(t *testing.T, fn func() error) string {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stdout
+	os.Stdout = writer
+	runErr := fn()
+	os.Stdout = original
+	_ = writer.Close()
+	buf := make([]byte, 1<<16)
+	n, _ := reader.Read(buf)
+	_ = reader.Close()
+	if runErr != nil {
+		t.Fatalf("dry run returned an error: %v", runErr)
+	}
+	return string(buf[:n])
+}
+
+// TestDryRunInstallTouchesNothing: --dry-run must be safe to run anywhere,
+// including without root — it reports the plan and writes nothing. The user
+// scope is used because its paths are the ones a test can legitimately check.
+func TestDryRunInstallTouchesNothing(t *testing.T) {
+	scope := userScope()
+	_, plistExistedBefore := os.Stat(scope.plist)
+
+	out := capture(t, func() error {
+		return InstallUserService([]string{"lxd", "--state-dir", "/tmp/lxd-dry-run"}, true)
+	})
+
+	if !strings.Contains(out, "dry run") || !strings.Contains(out, "nothing was installed") {
+		t.Fatalf("dry run must say it changed nothing; got:\n%s", out)
+	}
+	if !strings.Contains(out, "<key>ProgramArguments</key>") {
+		t.Fatalf("dry run must show the plist; got:\n%s", out)
+	}
+	if !strings.Contains(out, "--state-dir") || !strings.Contains(out, "/tmp/lxd-dry-run") {
+		t.Fatalf("dry run plist must carry the daemon args; got:\n%s", out)
+	}
+	// The plist must be exactly as absent (or as present) as it was before.
+	if _, plistExistsNow := os.Stat(scope.plist); (plistExistsNow == nil) != (plistExistedBefore == nil) {
+		t.Fatal("dry run must not create or remove the plist")
+	}
+	if _, err := os.Stat("/tmp/lxd-dry-run"); !os.IsNotExist(err) {
+		t.Fatal("dry run must not create the state dir")
+	}
+}
+
 func TestBuildPlist(t *testing.T) {
 	programArgs := []string{"/usr/local/bin/sing-box", "lxd", "--listen", "127.0.0.1:9090"}
 	logPath := "/Library/Application Support/sing-box-lxd/lxd.log"

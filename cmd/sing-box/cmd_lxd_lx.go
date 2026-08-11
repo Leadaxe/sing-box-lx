@@ -32,6 +32,7 @@ var (
 	lxdRun         bool
 	lxdService     string
 	lxdPurge       bool
+	lxdDryRun      bool
 	lxdClientName  string
 )
 
@@ -101,8 +102,9 @@ func init() {
 	commandLxd.PersistentFlags().StringVar(&lxdStateDir, "state-dir", "lxd-state", "daemon home: daemon.json, last-good config, run-state, client trust, keys")
 	commandLxd.Flags().StringVar(&lxdConfigForce, "config-force", "", "always boot from this config file, overriding recorded last-good")
 	commandLxd.Flags().BoolVar(&lxdRun, "run", false, "force the core up regardless of recorded run-state")
-	commandLxd.Flags().StringVar(&lxdService, "service", "", "install (system LaunchDaemon, root) | install-user (per-user LaunchAgent, no sudo) | uninstall | print")
+	commandLxd.Flags().StringVar(&lxdService, "service", "", "install (system LaunchDaemon, root) | install-user (per-user LaunchAgent, no sudo) | uninstall")
 	commandLxd.Flags().BoolVar(&lxdPurge, "purge", false, "with --service=uninstall: also delete the state directory (clients, last-good, keys)")
+	commandLxd.Flags().BoolVar(&lxdDryRun, "dry-run", false, "with --service: show what would be done, change nothing")
 
 	commandLxd.AddCommand(commandLxdClient)
 	commandLxdClientAdd.Flags().StringVar(&lxdClientName, "name", "", "human label for the client")
@@ -201,20 +203,24 @@ func clientConnection(stateDir string) (listen string, useTLS bool, secret strin
 // daemon's own settings file) and the unit's command line degenerates to
 // `lxd --state-dir <dir>` — changing settings later is a file edit + restart,
 // not a reinstall, and the secret never leaves the daemon's home.
+//
+// --dry-run makes any action show what it would do and change nothing. On
+// linux every action is already advisory, so the flag is a no-op there by
+// construction — the same output either way.
 func runServiceAction(cmd *cobra.Command) error {
 	switch lxdService {
 	case "install", "install-user":
 		userScope := lxdService == "install-user"
 		stateDir := serviceStateDir(cmd, userScope)
-		// Where the installer only prints a recipe (linux), preparing
-		// daemon.json and minting an invite would both be wrong: the recipe
-		// tells the operator to create the file, and there is no running
-		// daemon to pair with yet.
-		if lxd.ServiceInstallIsAdvisory {
+		// Two ways to end up printing instead of installing: the platform's
+		// installer is advisory (linux), or the operator asked for a dry run.
+		// Neither may prepare daemon.json or mint an invite — nothing was
+		// installed, so there is no daemon to pair with.
+		if lxd.ServiceInstallIsAdvisory || lxdDryRun {
 			if userScope {
-				return lxd.InstallUserService(daemonArgsForService(cmd, stateDir))
+				return lxd.InstallUserService(daemonArgsForService(cmd, stateDir), lxdDryRun)
 			}
-			return lxd.InstallService(daemonArgsForService(cmd, stateDir))
+			return lxd.InstallService(daemonArgsForService(cmd, stateDir), lxdDryRun)
 		}
 		// Connection settings are owned by daemon.json, which install itself
 		// materializes (free-port scan, generated secret). The connection
@@ -225,9 +231,9 @@ func runServiceAction(cmd *cobra.Command) error {
 			return err
 		}
 		if userScope {
-			err = lxd.InstallUserService(daemonArgsForService(cmd, stateDir))
+			err = lxd.InstallUserService(daemonArgsForService(cmd, stateDir), false)
 		} else {
-			err = lxd.InstallService(daemonArgsForService(cmd, stateDir))
+			err = lxd.InstallService(daemonArgsForService(cmd, stateDir), false)
 		}
 		if err != nil {
 			return err
@@ -235,11 +241,9 @@ func runServiceAction(cmd *cobra.Command) error {
 		printServiceSummary(config, stateDir, userScope)
 		return nil
 	case "uninstall":
-		return lxd.UninstallService(lxdPurge)
-	case "print":
-		return lxd.PrintService(daemonArgsForService(cmd, serviceStateDir(cmd, false)))
+		return lxd.UninstallService(lxdPurge, lxdDryRun)
 	default:
-		return E.New("--service must be install, install-user, uninstall, or print")
+		return E.New("--service must be install, install-user, or uninstall")
 	}
 }
 

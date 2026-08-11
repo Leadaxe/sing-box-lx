@@ -94,18 +94,14 @@ func DefaultServiceStateDir(user bool) string {
 	return filepath.Join("/var/lib", serviceName, "state")
 }
 
-func InstallService(daemonArgs []string) error {
+// dryRun is accepted and ignored on purpose: every action here is already a
+// printout, so "show what you would do" and "do it" coincide by construction.
+func InstallService(daemonArgs []string, dryRun bool) error {
 	return printRecipe(false, daemonArgs)
 }
 
-func InstallUserService(daemonArgs []string) error {
+func InstallUserService(daemonArgs []string, dryRun bool) error {
 	return printRecipe(true, daemonArgs)
-}
-
-// PrintService is the same output as install: on linux install never installs,
-// so the dry run and the real thing coincide by construction.
-func PrintService(daemonArgs []string) error {
-	return printRecipe(false, daemonArgs)
 }
 
 func printRecipe(user bool, daemonArgs []string) error {
@@ -193,7 +189,7 @@ func printRecipe(user bool, daemonArgs []string) error {
 // --purge, which prints the rm command instead of running it: the state
 // directory holds the client registry and the server key, and deleting it is
 // the operator's call to make with their own hands.
-func UninstallService(purge bool) error {
+func UninstallService(purge bool, dryRun bool) error {
 	detected := detectInit()
 	stateDir := DefaultServiceStateDir(false)
 	supportDir := filepath.Dir(stateDir)

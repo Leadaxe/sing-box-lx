@@ -90,8 +90,9 @@ file edit + service restart, never a reinstall.
 | `-c <file>` | seed config (exactly one file; `-C` directories are not supported) |
 | `--config-force <file>` | always boot from this file, overriding last-good |
 | `--run` | bring the core up regardless of the recorded run state |
-| `--service install\|install-user\|uninstall\|print` | service installation (see the OS sections) |
+| `--service install\|install-user\|uninstall` | service installation (see the OS sections) |
 | `--purge` | with `uninstall` — also delete the state directory |
+| `--dry-run` | with `--service` — show what would be done, change nothing |
 | `client add [--name <label>]` | mint a one-time invite for a new client |
 | `client list` / `client remove <name-or-fingerprint>` | list / revoke trusted clients |
 
@@ -150,9 +151,10 @@ Paths: system — `/Library/Application Support/sing-box-lxd/`, user —
 Other actions:
 
 ```bash
-sing-box lxd --service=print              # dry run: show the plist, touch nothing
+sing-box lxd --service=install --dry-run  # show the plist and what would happen, touch nothing
 sing-box lxd --service=uninstall          # remove the service; state is kept
 sing-box lxd --service=uninstall --purge  # remove the service AND the state (clients, keys, last-good)
+sing-box lxd --service=uninstall --dry-run --purge   # show what would be removed
 sudo sing-box lxd client add --name mac-book   # a fresh invite on a live daemon (state-dir is found automatically)
 ```
 
@@ -170,8 +172,8 @@ So `--service=install` detects the init system and prints a ready-to-paste
 recipe — the daemon home, `daemon.json`, the unit/init script, the enabling
 commands and the pairing step — with a link to the matching section here.
 `--service=uninstall` prints the removal steps the same way; `--purge` prints
-the `rm -rf` command instead of running it. `--service=print` is identical to
-install, because install never installs.
+the `rm -rf` command instead of running it. `--dry-run` is accepted and
+changes nothing here — on Linux every action is already a printout.
 
 The daemon itself is fully functional on Linux: mTLS, apply/rollback and log
 rotation all work; the `GOOS=linux GOARCH=arm64` cross-build (static binary,

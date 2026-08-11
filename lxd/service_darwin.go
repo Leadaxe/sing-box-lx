@@ -65,13 +65,44 @@ func DefaultServiceStateDir(user bool) string {
 }
 
 // InstallService registers the daemon as a system LaunchDaemon (root).
-func InstallService(daemonArgs []string) error {
+// dryRun prints the plist and the launchctl commands instead, touching
+// nothing — the operator's look before the leap.
+func InstallService(daemonArgs []string, dryRun bool) error {
+	if dryRun {
+		return printPlan(systemScope(), daemonArgs)
+	}
 	return installScope(systemScope(), daemonArgs)
 }
 
 // InstallUserService registers the daemon as a per-user LaunchAgent (no sudo).
-func InstallUserService(daemonArgs []string) error {
+func InstallUserService(daemonArgs []string, dryRun bool) error {
+	if dryRun {
+		return printPlan(userScope(), daemonArgs)
+	}
 	return installScope(userScope(), daemonArgs)
+}
+
+// printPlan renders what installScope would write and run. It reads no state
+// and mutates nothing, so it is safe without root.
+func printPlan(scope serviceScope, daemonArgs []string) error {
+	executable, err := os.Executable()
+	if err != nil {
+		return E.Cause(err, "locate own binary")
+	}
+	kind := "LaunchDaemon (system)"
+	if scope.user {
+		kind = "LaunchAgent (user)"
+	}
+	fmt.Println("lxd: dry run — nothing was installed.")
+	fmt.Println("lxd: would install", kind, launchdLabel)
+	fmt.Println("lxd: would write  ", scope.plist)
+	fmt.Println("lxd: would create ", filepath.Dir(scope.logPath), "(0700) with state/ and lxd.log inside")
+	fmt.Println("lxd: would prepare", filepath.Join(DefaultServiceStateDir(scope.user), daemonConfigFile),
+		"(free loopback port from 19091, mTLS, generated secret; an existing file keeps its address and secret)")
+	fmt.Println("lxd: would run    launchctl bootstrap", scope.bootTgt, scope.plist)
+	fmt.Println()
+	fmt.Print(buildPlist(launchdLabel, append([]string{executable}, daemonArgs...), scope.logPath))
+	return nil
 }
 
 func installScope(scope serviceScope, daemonArgs []string) error {
@@ -112,30 +143,28 @@ func installScope(scope serviceScope, daemonArgs []string) error {
 	return nil
 }
 
-// PrintService renders the plist InstallService would write, without touching
-// the system — a dry run to inspect before installing.
-func PrintService(daemonArgs []string) error {
-	scope := systemScope()
-	executable, err := os.Executable()
-	if err != nil {
-		return E.Cause(err, "locate own binary")
-	}
-	programArgs := append([]string{executable}, daemonArgs...)
-	fmt.Print(buildPlist(launchdLabel, programArgs, scope.logPath))
-	fmt.Fprintln(os.Stderr, "\n# would install to", scope.plist)
-	fmt.Fprintln(os.Stderr, "# then: launchctl bootstrap", scope.bootTgt, scope.plist)
-	return nil
-}
-
 // UninstallService removes whichever scope is present (tries user first — no
 // sudo — then system). State (trusted clients, last-good, keys) is KEPT unless
 // purge is set, so a reinstall preserves enrollment; a non-interactive hint
 // points at --purge rather than prompting (this runs from scripts/services with
-// no TTY to answer a Y/N).
-func UninstallService(purge bool) error {
+// no TTY to answer a Y/N). dryRun reports what would be removed and stops
+// short of removing it.
+func UninstallService(purge bool, dryRun bool) error {
 	removedAny := false
 	for _, scope := range []serviceScope{userScope(), systemScope()} {
 		if _, statErr := os.Stat(scope.plist); statErr != nil {
+			continue
+		}
+		if dryRun {
+			fmt.Println("lxd: dry run — nothing was removed.")
+			fmt.Println("lxd: would boot out", scope.bootTgt+"/"+launchdLabel, "and delete", scope.plist)
+			supportDir := filepath.Dir(scope.logPath)
+			if purge {
+				fmt.Println("lxd: would delete state at", supportDir, "(--purge)")
+			} else if _, statErr := os.Stat(supportDir); statErr == nil {
+				fmt.Println("lxd: would keep state at", supportDir, "(clients, last-good, keys)")
+			}
+			removedAny = true
 			continue
 		}
 		if scope.needRoot && os.Getuid() != 0 {
