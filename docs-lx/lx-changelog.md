@@ -17,6 +17,26 @@ required for stable tags); this changelog section is the fallback used for pre-r
 
 #### v1.14.0-lx.25-rc.5
 
+### ⚠️ `masque`: поле выбора HTTP-версии переименовано — `transport` → `vhttp`
+
+([SPEC 062](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/062-MASQUE_CONFIG_SCHEMA_MIGRATION/SPEC.md))
+
+**Касается только тех, кто успел перейти на `transport` из rc.4.** Поле прожило
+один пререлиз и убрано без алиаса:
+
+| в rc.4 | в rc.5 |
+|---|---|
+| `transport: "h3"` / `"h2"` | `vhttp: "h3"` / `"h2"` |
+
+Причина: у vless/trojan/vmess `transport` — это ключ V2Ray-транспорта, и он
+**объект** (`{"type":"ws"}`), а не строка. Одно имя с двумя разными смыслами и
+типами — ровно та путаница, которую SPEC 062 и убирает.
+
+Старое `network: "h3"` / `"h2"` работает как прежде — оно deprecated до
+`v1.14.0-lx.30`, как и было объявлено в rc.4. Таблица миграции остальных полей
+(`sni`, `skip_cert_verify`, `fragment*` → блок `tls`) — в секции rc.4 ниже, она
+не изменилась.
+
 ### Режим urltest-группы виден клиенту — новое поле `Group.mode`
 
 ([SPEC 019](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/019-URLTEST_MODE_STICKY/SPEC.md))
