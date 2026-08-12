@@ -15,6 +15,42 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.25-rc.6
+
+### 🆕 `lxd`: доставка файловых ресурсов конфига через admin-REST
+
+([SPEC 063](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/063-LXD_RESOURCE_STORE/SPEC.md))
+
+Демон `sing-box lxd` умел принимать только тело конфига (`POST /admin/apply`).
+Но конфиг сплошь и рядом ссылается на внешние файлы — скомпилированные rule-set
+`.srs` (`type: local`, `format: binary`), geo-базы, — и класть их было некуда:
+только мимо демона (scp/rsync прямо в `state_dir`). Теперь у admin-плоскости
+есть вторая полезная нагрузка — REST-CRUD над ресурсами:
+
+| Эндпоинт | Семантика |
+|---|---|
+| `GET /admin/resources` | список `[{name, sha256, size, path}]` |
+| `PUT /admin/resources/{name}` | залить/перезаписать; тело = сырые байты |
+| `GET /admin/resources/{name}` | метадата по имени (хеш для diff) |
+| `GET /admin/resources/{name}/content` | скачать байты |
+| `DELETE /admin/resources/{name}` | удалить |
+
+Адресация по имени (стабильный путь для конфига), `sha256` в каждом ответе —
+версия, по которой клиент дифает локально и льёт только изменённое. `path`
+абсолютный, равен `<info.state_dir>/resources/<name>` (совпадает с
+`GET /admin/info` → `state_dir`), — копируется в конфиг как `type: local, path:`
+без сборки пути на клиенте.
+
+Клиентский цикл: `GET /admin/resources` → сравнил хеши → `PUT` изменённого →
+`POST /admin/apply` с конфигом, где `path` ссылается на ресурс.
+
+**Гуард целостности:** `PUT`/`DELETE` для имени, на которое ссылается активный
+или last-good конфиг, отбиваются `409` — иначе перезапись/удаление сделали бы
+rollback ядра дырявым (текст конфига откатился бы, а `.srs` под именем уже
+другой). Сначала `apply` конфига без ссылки, потом трогать файл. Запись атомарна
+(tmp + fsync + rename), имена санитизируются (обход каталога → `400`). Стор,
+маршруты и гуард целиком под сборочным тегом `with_lx_command`.
+
 #### v1.14.0-lx.25-rc.5
 
 ### ⚠️ `masque`: поле выбора HTTP-версии переименовано — `transport` → `vhttp`

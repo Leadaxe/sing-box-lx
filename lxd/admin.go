@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,6 +32,17 @@ func (c *controller) adminHandler(secret string) http.Handler {
 	mux.HandleFunc("GET /admin/config", c.handleConfig)
 	mux.HandleFunc("GET /admin/status", c.handleStatus)
 	mux.HandleFunc("GET /admin/info", c.handleInfo)
+	// Resource plane (SPEC 063): the second admin payload beside the config —
+	// files the config REFERS to (.srs rule-sets, geo bases). Client-facing, so
+	// registered on the pinned mux, NOT the operator loopback path. Registered
+	// only when a resource store is wired.
+	if c.resources != nil {
+		mux.HandleFunc("GET /admin/resources", c.handleResourceList)
+		mux.HandleFunc("PUT /admin/resources/{name}", c.handleResourcePut)
+		mux.HandleFunc("GET /admin/resources/{name}", c.handleResourceStat)
+		mux.HandleFunc("GET /admin/resources/{name}/content", c.handleResourceContent)
+		mux.HandleFunc("DELETE /admin/resources/{name}", c.handleResourceDelete)
+	}
 	// Operator routes serve the `client` CLI over loopback: they need the
 	// Bearer secret but NOT a client cert (the operator on the host has none).
 	// Registered on the loopback-only, secret-gated, cert-exempt path below.
@@ -307,6 +319,142 @@ func (c *controller) handleInfo(writer http.ResponseWriter, request *http.Reques
 		"uptime_seconds": int(time.Since(c.startedAt).Seconds()),
 		"log_path":       logPath,
 	})
+}
+
+const resourceBodyLimit = 64 << 20 // .srs / geo bases run larger than a config
+
+// withPath stamps the absolute path onto a metadata view: the store knows only
+// the base name, the controller owns <state_dir>/resources. Absolute by owner
+// decision (SPEC 063), matching /admin/info.state_dir, so the client copies it
+// straight into a config's `type: local, path:`.
+func (c *controller) withPath(meta resourceMeta) resourceMeta {
+	meta.Path = filepath.Join(c.infoResourcesDir, meta.Name)
+	return meta
+}
+
+func (c *controller) handleResourceList(writer http.ResponseWriter, request *http.Request) {
+	metas, err := c.resources.List()
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	stamped := make([]resourceMeta, 0, len(metas))
+	for _, meta := range metas {
+		stamped = append(stamped, c.withPath(meta))
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"resources": stamped})
+}
+
+func (c *controller) handleResourcePut(writer http.ResponseWriter, request *http.Request) {
+	name := request.PathValue("name")
+	// Reference guard (B2) and the write itself are serialized under applyAccess
+	// with apply: an apply that adds a reference cannot slip between the check
+	// and the overwrite.
+	c.applyAccess.Lock()
+	defer c.applyAccess.Unlock()
+	if c.closed {
+		writeJSON(writer, http.StatusServiceUnavailable, map[string]any{"error": "daemon is shutting down"})
+		return
+	}
+	referenced, err := c.resourceReferenced(name)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if referenced {
+		writeJSON(writer, http.StatusConflict, map[string]any{
+			"error": "resource is referenced by the active or last-good config; apply a config without that reference first",
+		})
+		return
+	}
+	content, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, resourceBodyLimit))
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	sha, size, err := c.resources.Put(name, content)
+	if err != nil {
+		// A bad name is the client's fault (400); anything else is disk (500).
+		if isBadResourceName(err) {
+			writeJSON(writer, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(writer, http.StatusOK, c.withPath(resourceMeta{Name: name, SHA256: sha, Size: size}))
+}
+
+func (c *controller) handleResourceStat(writer http.ResponseWriter, request *http.Request) {
+	name := request.PathValue("name")
+	meta, found, err := c.resources.Stat(name)
+	if err != nil {
+		if isBadResourceName(err) {
+			writeJSON(writer, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if !found {
+		writeJSON(writer, http.StatusNotFound, map[string]any{"error": "no such resource"})
+		return
+	}
+	writeJSON(writer, http.StatusOK, c.withPath(meta))
+}
+
+func (c *controller) handleResourceContent(writer http.ResponseWriter, request *http.Request) {
+	name := request.PathValue("name")
+	content, found, err := c.resources.Read(name)
+	if err != nil {
+		if isBadResourceName(err) {
+			writeJSON(writer, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if !found {
+		writeJSON(writer, http.StatusNotFound, map[string]any{"error": "no such resource"})
+		return
+	}
+	writer.Header().Set("Content-Type", "application/octet-stream")
+	_, _ = writer.Write(content)
+}
+
+func (c *controller) handleResourceDelete(writer http.ResponseWriter, request *http.Request) {
+	name := request.PathValue("name")
+	c.applyAccess.Lock()
+	defer c.applyAccess.Unlock()
+	if c.closed {
+		writeJSON(writer, http.StatusServiceUnavailable, map[string]any{"error": "daemon is shutting down"})
+		return
+	}
+	referenced, err := c.resourceReferenced(name)
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if referenced {
+		writeJSON(writer, http.StatusConflict, map[string]any{
+			"error": "resource is referenced by the active or last-good config; apply a config without that reference first",
+		})
+		return
+	}
+	found, err := c.resources.Delete(name)
+	if err != nil {
+		if isBadResourceName(err) {
+			writeJSON(writer, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if !found {
+		writeJSON(writer, http.StatusNotFound, map[string]any{"error": "no such resource"})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"removed": true})
 }
 
 func (c *controller) handleStatus(writer http.ResponseWriter, request *http.Request) {

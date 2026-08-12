@@ -86,6 +86,11 @@ func Run(ctx context.Context, options Options) error {
 	if err != nil {
 		return err
 	}
+	resourcesDir := filepath.Join(options.StateDir, "resources")
+	resourceStore, err := newResourceStore(resourcesDir)
+	if err != nil {
+		return err
+	}
 	startedService := daemon.NewStartedService(daemon.ServiceOptions{
 		Context:     ctx,
 		LogMaxLines: logMaxLines,
@@ -95,12 +100,14 @@ func Run(ctx context.Context, options Options) error {
 		absStateDir = abs
 	}
 	control := &controller{
-		service:      startedService,
-		store:        stateStore,
-		validate:     execSelfCheck,
-		infoStateDir: absStateDir,
-		infoTLS:      options.TLS,
-		startedAt:    time.Now(),
+		service:          startedService,
+		store:            stateStore,
+		resources:        resourceStore,
+		validate:         execSelfCheck,
+		infoStateDir:     absStateDir,
+		infoResourcesDir: filepath.Join(absStateDir, "resources"),
+		infoTLS:          options.TLS,
+		startedAt:        time.Now(),
 	}
 	control.advertiseAddr = options.Listen.Advertise()
 

@@ -88,10 +88,11 @@ type applyResult struct {
 }
 
 type controller struct {
-	service  reloader
-	store    *store
-	validate validateFunc
-	clients  *clientRegistry // nil when TLS/mTLS is disabled
+	service   reloader
+	store     *store
+	resources *resourceStore // nil until SPEC 063 wiring; guards handle absence
+	validate  validateFunc
+	clients   *clientRegistry // nil when TLS/mTLS is disabled
 	// serverFingerprint and advertiseAddr build enrollment invites; set only
 	// when TLS is enabled.
 	serverFingerprint string
@@ -101,8 +102,13 @@ type controller struct {
 	// before the listener starts): clients discover the daemon's home and
 	// version instead of hard-coding paths on their side.
 	infoStateDir string
-	infoTLS      bool
-	startedAt    time.Time
+	// infoResourcesDir is the absolute <state_dir>/resources — the base the
+	// resource REST plane reports in `path`, so a client copies it verbatim
+	// into a config's `type: local, path:` (SPEC 063; absolute by owner
+	// decision, matching /admin/info.state_dir).
+	infoResourcesDir string
+	infoTLS          bool
+	startedAt        time.Time
 
 	applyAccess sync.Mutex
 	// closed is set (under applyAccess) by the daemon teardown: admin requests
@@ -207,6 +213,40 @@ func (c *controller) Apply(ctx context.Context, content string) applyResult {
 	_ = c.store.SetWasRunning(true)
 	c.setActive(lastGood, applyErr.Error())
 	return applyResult{Outcome: applyFailed, RolledBack: true, Err: applyErr}
+}
+
+// resourceReferenced reports whether a config that must not lose the resource
+// `name` currently references it — the active (running) config or the persisted
+// last-good. It gates PUT/DELETE (SPEC 063 guard B2): a named resource is
+// mutable, so overwriting or deleting one a live-or-recoverable config points at
+// would make a config rollback partial (text reverts, bytes do not).
+//
+// Called under applyAccess so it cannot race an apply that adds a reference:
+// either the apply's new activeContent is already visible here, or this check
+// completed and the apply queues behind us.
+//
+// The test is a conservative substring match on `/resources/<name>`: it can
+// false-positive (the token appearing in a comment or unrelated string) and
+// answer "referenced" for a free name, which only ever costs an over-eager 409
+// — never a silently broken rollback, the failure that actually matters.
+func (c *controller) resourceReferenced(name string) (bool, error) {
+	token := "/resources/" + name
+	c.stateAccess.Lock()
+	active := c.activeContent
+	c.stateAccess.Unlock()
+	if strings.Contains(active, token) {
+		return true, nil
+	}
+	lastGood, loaded, err := c.store.LoadLastGood()
+	if err != nil {
+		// An unreadable last-good must not be treated as "not referenced": that
+		// could green-light a delete that a recoverable config depends on.
+		return false, E.Cause(err, "read last-good for reference check")
+	}
+	if loaded && strings.Contains(lastGood, token) {
+		return true, nil
+	}
+	return false, nil
 }
 
 // Rollback re-applies last-good directly, skipping validation: it is the
