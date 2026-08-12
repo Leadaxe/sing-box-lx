@@ -95,6 +95,10 @@
 > ⚠️ **`network` ≠ tcp/udp.** У masque-outbound `network` выбирает **ТРАНСПОРТ** (`h3`/`h2`),
 > а список L4-протоколов — это `network_list`. Это обратно всем остальным outbound'ам,
 > где `network` = `["tcp","udp"]`. Ошибочный `"network": "tcp"` → fail-fast «invalid network».
+>
+> Приведение к стандарту (вложенный `tls: {…}`, `transport` вместо `network`, алиасы на
+> старые имена) — [SPEC 062](../062-MASQUE_CONFIG_SCHEMA_MIGRATION/SPEC.md). Схема здесь
+> описывает **текущее** состояние.
 
 ### Поля
 
