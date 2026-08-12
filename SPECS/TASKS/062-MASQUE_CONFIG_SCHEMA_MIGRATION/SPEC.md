@@ -149,6 +149,110 @@ Upstream-файлов — три, все по содержимому уже на
 4. **badjson и вложенный блок** — «поле отсутствует» vs «пустой объект» проверять живым
    `box.New`, а не чтением структуры (прецедент: badjson схлопывает пустые значения).
 
-## 8. Тест-план
+## 8. План реализации
+
+Порядок шагов важен: схема → разрешение → предупреждения → проводка. После каждого шага
+дерево должно собираться и проходить тесты.
+
+### Шаг 1. Схема (`option/masque.go`)
+
+```go
+type MASQUEOutboundOptions struct {
+    DialerOptions
+    ServerOptions
+    OutboundTLSOptionsContainer   // ← новое: даёт `tls: {…}`
+
+    Profile   string `json:"profile,omitempty"`
+    Transport string `json:"transport,omitempty"` // ← новое: "h3" | "h2"
+
+    // Deprecated: use `transport`. Removed in v1.14.0-lx.30.
+    Network string `json:"network,omitempty"`
+    // Deprecated: use `tls.server_name`. Removed in v1.14.0-lx.30.
+    SNI string `json:"sni,omitempty"`
+    // Deprecated: use `tls.insecure`. Removed in v1.14.0-lx.30.
+    SkipCertVerify bool `json:"skip_cert_verify,omitempty"`
+    // Deprecated: use `tls.fragment`. Removed in v1.14.0-lx.30.
+    Fragment bool `json:"fragment,omitempty"`
+    // …то же для FragmentFallbackDelay, RecordFragment
+    …
+}
+```
+
+Комментарий `// Deprecated:` — не косметика: его показывают IDE и `staticcheck`, поэтому
+формулировка обязана называть замену и версию снятия.
+
+Конфликта имён нет: плоские `fragment`/`record_fragment` и одноимённые поля внутри `tls`
+живут на разных уровнях JSON (проверено по составу `OutboundTLSOptions`).
+
+### Шаг 2. Разрешение (`protocol/masque/outbound.go`, начало `NewOutbound`)
+
+Отдельная функция, не размазывать по телу:
+
+```go
+// resolveLegacyOptions folds the deprecated flat fields into the standard
+// shapes, reporting each one it had to use. lx: SPEC 062.
+func resolveLegacyOptions(ctx context.Context, options *option.MASQUEOutboundOptions) error
+```
+
+Для каждой пары действует §2. Конкретно:
+
+| новое | старое | конфликт = fail-fast, если |
+|---|---|---|
+| `Transport` | `Network` | оба заданы и различаются |
+| `TLS.ServerName` | `SNI` | оба заданы и различаются |
+| `TLS.Insecure` | `SkipCertVerify` | оба заданы и различаются |
+| `TLS.Fragment` | `Fragment` | оба заданы и различаются |
+| `TLS.FragmentFallbackDelay` | `FragmentFallbackDelay` | оба заданы и различаются |
+| `TLS.RecordFragment` | `RecordFragment` | оба заданы и различаются |
+
+⚠️ **Ловушка с `bool`.** У `SkipCertVerify`/`Fragment`/`RecordFragment` «не задано» и
+«задано `false`» неразличимы (прецедент: [SPEC 060](../060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) §3.3).
+Поэтому для них:
+- конфликтом считается только `старое == true && новое == false`;
+- `старое == true` → включаем и репортим;
+- `старое == false` → молчим, даже если поле явно написано в конфиге (отличить нельзя).
+
+Так «явный `false`» не будет ошибочно объявлен конфликтом, а `true` не потеряется.
+
+### Шаг 3. Предупреждения (§1.3)
+
+Проверять **после** разрешения, по итоговому `options.TLS`:
+
+- `TLS.ALPN != nil` → warning, поле игнорируется (ALPN задаёт транспорт);
+- `TLS.ECH`/`TLS.Reality`/`TLS.KernelTx`/`TLS.KernelRx` заданы → warning, игнор;
+- транспорт `h3` и (`TLS.Fragment` или `TLS.RecordFragment`) → warning: на QUIC резать
+  нечего.
+
+Это `logger.Warn`, не ошибки: конфиг остаётся валидным, поведение предсказуемым.
+
+### Шаг 4. Проводка
+
+- `sni := …` в `NewOutbound` читает `options.TLS.ServerName` (после разрешения);
+- `PrepareTLSConfig(..., insecure)` получает `options.TLS.Insecure`;
+- `buildH2TLSClient` перестаёт конструировать `OutboundTLSOptions` вручную и принимает
+  пользовательский `*options.TLS`, доклеивая поверх только masque-специфику (pinning,
+  клиентский сертификат, ALPN по транспорту) — как сейчас, но поверх пользовательских
+  значений, а не поверх пустышки;
+- `network` в теле кода переименовать в `transport` для читаемости (внутренняя
+  переменная, на конфиг не влияет).
+
+### Шаг 5. `deprecated.Note`
+
+`experimental/deprecated/constants.go` — по образцу §3. Вызов —
+`deprecated.Report(ctx, deprecated.OptionMASQUELegacyFields)` из `resolveLegacyOptions`;
+менеджер берётся из контекста и при его отсутствии это тихий no-op
+(`experimental/deprecated/manager.go:13`), так что в тестах вызов безопасен.
+
+Репортить **один раз на outbound**, а не на каждое legacy-поле: иначе узел с четырьмя
+старыми полями даст четыре одинаковых строки.
+
+### Шаг 6. Побочная возможность (бесплатно)
+
+Вложенный блок приносит `tls.disable_sni` — штатный способ сказать «слать ClientHello
+без SNI». Сейчас такого способа нет вовсе: пустой `sni` подменяется дефолтом профиля.
+Отдельно реализовывать не надо, но **проверить в тест-плане** (см. TEST_PLAN §новая схема),
+поскольку на части путей endpoint отвечает только без SNI (SPEC 021 §Молчащий endpoint).
+
+## 9. Тест-план
 
 См. [TEST_PLAN.md](TEST_PLAN.md).
