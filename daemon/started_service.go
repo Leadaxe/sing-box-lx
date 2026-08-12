@@ -548,6 +548,14 @@ func (s *StartedService) readGroups() *Groups {
 		g.Type = iGroup.Type()
 		_, g.Selectable = iGroup.(*group.Selector)
 		g.Selected = iGroup.Now()
+		// lx:begin lx_command
+		// Mode tells a balanced urltest group from a least_test one. Type-asserted rather
+		// than switched on *group.URLTest, mirroring poolProvider: a non-urltest group
+		// simply leaves the field empty. SPEC 019 v2.
+		if provider, isModal := iGroup.(interface{ Mode() string }); isModal {
+			g.Mode = provider.Mode()
+		}
+		// lx:end lx_command
 		if boxService.cacheFile != nil {
 			if isExpand, loaded := boxService.cacheFile.LoadGroupExpand(g.Tag); loaded {
 				g.IsExpand = isExpand

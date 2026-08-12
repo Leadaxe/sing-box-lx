@@ -683,13 +683,21 @@ func (x *Groups) GetGroup() []*Group {
 }
 
 type Group struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Tag           string                 `protobuf:"bytes,1,opt,name=tag,proto3" json:"tag,omitempty"`
-	Type          string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
-	Selectable    bool                   `protobuf:"varint,3,opt,name=selectable,proto3" json:"selectable,omitempty"`
-	Selected      string                 `protobuf:"bytes,4,opt,name=selected,proto3" json:"selected,omitempty"`
-	IsExpand      bool                   `protobuf:"varint,5,opt,name=isExpand,proto3" json:"isExpand,omitempty"`
-	Items         []*GroupItem           `protobuf:"bytes,6,rep,name=items,proto3" json:"items,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Tag        string                 `protobuf:"bytes,1,opt,name=tag,proto3" json:"tag,omitempty"`
+	Type       string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
+	Selectable bool                   `protobuf:"varint,3,opt,name=selectable,proto3" json:"selectable,omitempty"`
+	// The group's current node. For a selector and for urltest mode: least_test this is
+	// THE selected node. For urltest mode: round_robin there is no single current node —
+	// the field carries the last node the balancer happened to pick, so treat it as a hint
+	// and read the full rotation state via GetPool. lx: SPEC 019 v2.
+	Selected string       `protobuf:"bytes,4,opt,name=selected,proto3" json:"selected,omitempty"`
+	IsExpand bool         `protobuf:"varint,5,opt,name=isExpand,proto3" json:"isExpand,omitempty"`
+	Items    []*GroupItem `protobuf:"bytes,6,rep,name=items,proto3" json:"items,omitempty"`
+	// urltest mode: "least_test" | "round_robin". Empty for every non-urltest group
+	// (selector), so it doubles as "is this group balanced at all" without probing GetPool
+	// — which is gated behind the with_lx_command build tag. lx: SPEC 019 v2.
+	Mode          string `protobuf:"bytes,7,opt,name=mode,proto3" json:"mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -764,6 +772,13 @@ func (x *Group) GetItems() []*GroupItem {
 		return x.Items
 	}
 	return nil
+}
+
+func (x *Group) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
 }
 
 type GroupItem struct {
@@ -7396,7 +7411,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\vuplinkTotal\x18\b \x01(\x03R\vuplinkTotal\x12$\n" +
 	"\rdownlinkTotal\x18\t \x01(\x03R\rdownlinkTotal\"-\n" +
 	"\x06Groups\x12#\n" +
-	"\x05group\x18\x01 \x03(\v2\r.daemon.GroupR\x05group\"\xae\x01\n" +
+	"\x05group\x18\x01 \x03(\v2\r.daemon.GroupR\x05group\"\xc2\x01\n" +
 	"\x05Group\x12\x10\n" +
 	"\x03tag\x18\x01 \x01(\tR\x03tag\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x1e\n" +
@@ -7405,7 +7420,8 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"selectable\x12\x1a\n" +
 	"\bselected\x18\x04 \x01(\tR\bselected\x12\x1a\n" +
 	"\bisExpand\x18\x05 \x01(\bR\bisExpand\x12'\n" +
-	"\x05items\x18\x06 \x03(\v2\x11.daemon.GroupItemR\x05items\"w\n" +
+	"\x05items\x18\x06 \x03(\v2\x11.daemon.GroupItemR\x05items\x12\x12\n" +
+	"\x04mode\x18\a \x01(\tR\x04mode\"w\n" +
 	"\tGroupItem\x12\x10\n" +
 	"\x03tag\x18\x01 \x01(\tR\x03tag\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12 \n" +

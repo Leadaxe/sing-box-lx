@@ -124,9 +124,22 @@ message Group {
   string tag = 1;
   string type = 2;
   bool selectable = 3;
+  // The group's current node. For a selector and for urltest mode: least_test this is
+  // THE selected node. For urltest mode: round_robin there is no single current node —
+  // the field carries the last node the balancer happened to pick, so treat it as a hint
+  // and read the full rotation state via GetPool. lx: SPEC 019 v2.
   string selected = 4;
   bool isExpand = 5;
   repeated GroupItem items = 6;
+
+  // lx:begin lx_command
+
+  // urltest mode: "least_test" | "round_robin". Empty for every non-urltest group
+  // (selector), so it doubles as "is this group balanced at all" without probing GetPool
+  // — which is gated behind the with_lx_command build tag. lx: SPEC 019 v2.
+  string mode = 7;
+
+  // lx:end lx_command
 }
 
 message GroupItem {

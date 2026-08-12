@@ -192,6 +192,18 @@ func (s *URLTest) Pool() []PoolSlot {
 	return slots
 }
 
+// Mode reports the group's selection mode, derived from the same balancer != nil
+// discriminator Now() and Pool() branch on — the validated option string is not kept after
+// newBalancer() resolved it (an empty mode: means least_test). Exposed to clients via the
+// Group.mode field so they can tell a balanced group from a least_test one without probing
+// GetPool, which is gated behind with_lx_command. lx: SPEC 019 v2.
+func (s *URLTest) Mode() string {
+	if s.balancer != nil {
+		return C.URLTestModeRoundRobin
+	}
+	return C.URLTestModeLeastTest
+}
+
 func (s *URLTest) URLTest(ctx context.Context) (map[string]uint16, error) {
 	return s.group.URLTest(ctx)
 }

@@ -526,3 +526,26 @@ func TestPlanFirstLivePoolGrowsKeepingExisting(t *testing.T) {
 		}
 	}
 }
+
+// Mode() is what the Group.mode gRPC field carries. It must agree with the balancer
+// discriminator Now()/Pool() already branch on, for every spelling of the option —
+// including the empty default. SPEC 019 v2.
+func TestURLTestModeReporting(t *testing.T) {
+	for _, tc := range []struct {
+		option string
+		want   string
+	}{
+		{"", C.URLTestModeLeastTest},
+		{C.URLTestModeLeastTest, C.URLTestModeLeastTest},
+		{C.URLTestModeRoundRobin, C.URLTestModeRoundRobin},
+	} {
+		b, err := newBalancer(option.URLTestOutboundOptions{Mode: tc.option})
+		if err != nil {
+			t.Fatalf("mode %q: %v", tc.option, err)
+		}
+		s := &URLTest{balancer: b}
+		if got := s.Mode(); got != tc.want {
+			t.Fatalf("mode %q: Mode() = %q, want %q", tc.option, got, tc.want)
+		}
+	}
+}
