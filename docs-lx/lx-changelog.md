@@ -17,45 +17,64 @@ required for stable tags); this changelog section is the fallback used for pre-r
 
 #### v1.14.0-lx.25-rc.4
 
-**Конфиг masque — к общему стандарту sing-box, старые имена продолжают
-работать.** ([SPEC 062](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/062-MASQUE_CONFIG_SCHEMA_MIGRATION/SPEC.md))
+### ⚠️ Схема конфига `masque` изменилась — старые поля объявлены устаревшими
 
-Masque был единственным аутбаундом со своим диалектом: TLS настраивался
-плоскими `sni` / `skip_cert_verify` / `fragment*` вместо общего блока `tls`, а
-транспорт лежал в `network` — поле, которое у всех остальных значит список
-tcp/udp. Из-за этого настройки нельзя было перенести между протоколами, а мы
-каждый раз забывали прокинуть в masque то, что общий слой уже умеет.
+([SPEC 062](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/062-MASQUE_CONFIG_SCHEMA_MIGRATION/SPEC.md))
 
-Теперь у masque стандартный `"tls": {…}` — тот же контейнер, что у vless и
-прочих — и `transport` для выбора h3/h2. Старые имена остаются алиасами и
-сообщают о депрекации **один раз на аутбаунд**, а не на каждое поле; снятие
-запланировано на `v1.14.0-lx.30`. Расхождение между старым и новым значением
-одного и того же параметра — ошибка с именами обоих полей, чтобы
-проигнорированное поле не осталось незамеченным.
+**Действий прямо сейчас не требуется: старые конфиги работают без изменений.**
+Каждый аутбаунд со старыми полями выводит одно предупреждение в лог.
+**Поддержка старых имён будет снята в `v1.14.0-lx.30`** — до этого момента
+конфиги нужно перевести на новую схему.
 
-Вложенный блок бесплатно приносит `tls.disable_sni` — ClientHello вообще без
-SNI. Раньше выразить это было нечем: пустой `sni` подменялся дефолтом профиля.
-На неприменимые поля (`tls.alpn`, `ech`, `reality`, `kernel_*`, а также
-фрагментация под h3) теперь предупреждение с объяснением, а не тишина.
+| устарело | заменить на |
+|---|---|
+| `network: "h3"` / `"h2"` | `transport: "h3"` / `"h2"` |
+| `sni: "…"` | `tls.server_name: "…"` |
+| `skip_cert_verify: true` | `tls.insecure: true` |
+| `fragment: true` | `tls.fragment: true` |
+| `record_fragment: true` | `tls.record_fragment: true` |
+| `fragment_fallback_delay: "…"` | `tls.fragment_fallback_delay: "…"` |
 
-**Дефолтный SNI больше не имя эндпоинта.**
+Остальные поля (`server`, `server_port`, `profile`, `private_key`,
+`public_key`, `ip`, `ipv6`, `uri`, `mtu`, `idle_timeout`,
+`keep_alive_period`, `network_list`) **не менялись**.
+
+```jsonc
+// было
+{ "type": "masque", "network": "h2", "sni": "example.com", "record_fragment": true }
+
+// стало
+{ "type": "masque", "transport": "h2",
+  "tls": { "server_name": "example.com", "record_fragment": true } }
+```
+
+Одно и то же, заданное старым и новым именем с разными значениями — ошибка
+запуска с указанием обоих полей. Одинаковые значения конфликтом не считаются.
+
+**Добавлено:** `tls.disable_sni` — ClientHello без SNI (пустой `sni` этого не
+давал, он подменялся дефолтом профиля).
+
+**Предупреждение вместо молчания** на неподдерживаемых полях: `tls.alpn`,
+`tls.ech`, `tls.reality`, `tls.kernel_*`, фрагментация при `transport: h3`.
+
+### Изменился дефолтный SNI у masque
+
 ([SPEC 021](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/021-MASQUE_CONNECT_IP_OUTBOUND/SPEC.md))
 
-`consumer-masque.cloudflareclient.com` — ровно то имя, по которому MASQUE
-опознаётся на проводе. Cloudflare его не проверяет (эндпоинт
-аутентифицируется пиннингом ECDSA-ключа), так что отправлять его не требуется
-ничем, кроме привычки. Замерено с двух независимых российских каналов:
-с этим именем h3 к эндпоинту молча умирает, с нейтральным — поднимается.
-Дефолт профиля теперь `www.cloudflare.com`; заданный в конфиге `sni`
-по-прежнему сильнее.
+Было `consumer-masque.cloudflareclient.com`, стало `www.cloudflare.com`.
+Затрагивает конфиги **без** явного `sni` / `tls.server_name`; заданное в
+конфиге значение по-прежнему приоритетнее.
 
-**Внятная ошибка, когда эндпоинт молчит на CONNECT-IP.**
+Причина: с прежним именем h3-туннель к эндпоинту не поднимается на российских
+каналах (замерено на двух независимых). Cloudflare это имя не проверяет —
+эндпоинт аутентифицируется пиннингом ECDSA-ключа.
 
-Раньше это выглядело как `dial connect-ip: read response: http3: parsing frame
-failed: timeout: no recent network activity` — читается как ошибка разбора
-фрейма, хотя на деле пир не ответил вовсе. Теперь `masque: CONNECT-IP timed
-out`, исходная причина сохраняется в цепочке. Idle-таймаут ловится по типу
-(`errors.As`), а не по подстроке.
+### Диагностика
+
+`masque: CONNECT-IP timed out` вместо `dial connect-ip: read response: http3:
+parsing frame failed: timeout: no recent network activity`, когда эндпоинт
+принял QUIC, но не ответил на CONNECT-IP. Исходная причина сохраняется в
+цепочке ошибок.
 
 #### v1.14.0-lx.25-rc.3
 
