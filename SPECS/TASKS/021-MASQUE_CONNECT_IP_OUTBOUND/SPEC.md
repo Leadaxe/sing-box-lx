@@ -201,6 +201,64 @@ by design: `h2IpConn.WritePacket` вызывается tx-насосом по О
 
 ---
 
+## Молчащий endpoint на h3 (диагностика)
+
+### Что наблюдается
+
+На части путей endpoint принимает QUIC, mTLS и SETTINGS, но на CONNECT-IP **не отвечает
+ничего**: 30 с тишины, затем idle-таймаут. Тот же endpoint с того же адреса по **h2 при
+этом работает** (`warp=on`).
+
+Измерено 2026-08-12 на канале с внешним IP российского провайдера:
+
+| проверка | результат |
+|---|---|
+| сырой UDP ко всем 4 MASQUE-IP × 4 порта | **16/16 отвечают** |
+| masque h3, все 7 портов `ports_h3` × 4 IP | **0/11**, всегда `read response: timeout` |
+| masque **h2** к тем же адресам | ✅ `colo=HEL, warp=on` |
+| тот же код и ключи через VPN | ✅ `warp=on` |
+
+Исключены замерами: сеть/NAT/роутер (UDP доходит в обе стороны, `0 packets dropped by
+kernel` в дампе), MTU и размер датаграмм (1200–1472 без разницы), SNI, свежая регистрация
+устройства (новая ECDSA-личность ведёт себя идентично старой), выбор IP/порта.
+Единственная различающая переменная — **исходящий адрес**; причина на стороне Cloudflare
+и изнутри клиента не выясняется.
+
+**В ядре чинить нечего** — реализация отрабатывает корректно. Практический обходной путь
+для пользователя: `network: h2` (работает и напрямую, и под detour) либо detour для h3.
+
+### Почему сообщение отдельное
+
+Дефолтная обёртка выдавала
+
+```
+masque: dial connect-ip: read response: http3: parsing frame failed: timeout: no recent network activity
+```
+
+— это читается как ошибка разбора фрейма, хотя фактическая находка в том, что **пир
+промолчал**. Поэтому idle-таймаут на этом шаге репортится своим текстом:
+
+```
+masque: h3 tunnel to <endpoint> failed: masque: CONNECT-IP timed out: read response: http3: parsing frame failed: timeout: no recent network activity
+```
+
+Решения (owner, 2026-08-12):
+- текст — `masque: CONNECT-IP timed out`, **без** пояснения в скобках (то, что QUIC уже
+  поднялся, следует из самого факта, что дошли до CONNECT-IP: иначе падение было бы
+  `dial quic: …`) и **без** подсказки про `network: h2` (ядру не место советовать конфиг —
+  это уровень LxBox);
+- исходная причина сохраняется через `E.Cause`;
+- ловится `errors.As` по `*quic.IdleTimeoutError`, **не подстрокой**. Соседний
+  `tls: access denied` матчится строкой вынужденно (TLS-алерт, типа нет — SPEC 022 #22);
+  здесь тип есть и экспортирован, и он доживает до места через обе обёртки
+  (`http3` c `%w` + `E.Cause`) — проверено тестом.
+
+⚠️ `IdleTimeoutError` — это **любой** idle-таймаут соединения, не только «пир молчит на
+CONNECT-IP». Формулировка это выдерживает: соединение действительно истекло по простою на
+шаге CONNECT-IP.
+
+---
+
 ## Файлы и точки интеграции (как реализовано)
 
 ```
@@ -220,6 +278,8 @@ protocol/masque/
 
 transport/masque/
   masque.go              ConnectTunnelH3 + IpConn интерфейс + dialCONNECTIP
+                         (+ разбор idle-таймаута → «CONNECT-IP timed out», см. §Молчащий endpoint)
+  idle_timeout_lx_test.go  errors.As сквозь http3+E.Cause; причина не теряется; чужая ошибка не перехвачена
   request.go             buildConnectIPRequest + advertiseDefaultRoute
   client_h2.go           ручной h2-фреймер: h2RawConn, h2IpConn, sendConnect, readLoop, receiveDatagram
   profile.go             cloudflare/standard, PrepareTLSConfig (pubkey-pinning), generateClientCert

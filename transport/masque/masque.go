@@ -12,6 +12,7 @@ package masque
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strings"
 
@@ -53,6 +54,17 @@ func ConnectTunnelH3(ctx context.Context, profile Profile, quicConn *quic.Conn, 
 		// version bump can reformat that wrapper without changing the alert (SPEC 022 #22).
 		if strings.Contains(err.Error(), "tls: access denied") {
 			return nil, nil, E.New("masque: login failed — verify the TLS key/cert is enrolled with Cloudflare Access")
+		}
+		// An idle timeout here means the endpoint took the QUIC connection (we
+		// could not have reached CONNECT-IP otherwise) and then answered
+		// nothing at all — seen on paths where the same endpoint serves h2 from
+		// the same address. The default wrapping buries that behind
+		// "dial connect-ip: read response: http3: parsing frame failed", which
+		// reads like a framing bug rather than a silent peer. Unlike the TLS
+		// alert above this one is a real type, so match it as one. lx.
+		var idleErr *quic.IdleTimeoutError
+		if errors.As(err, &idleErr) {
+			return nil, nil, E.Cause(err, "masque: CONNECT-IP timed out")
 		}
 		return nil, nil, E.Cause(err, "masque: dial connect-ip")
 	}
