@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — схема конфига + миграция |
-| Статус | D (draft) — скоуп утверждён владельцем 2026-08-12, реализации нет |
+| Статус | C (complete) — сделано 2026-08-12; обе схемы проверены на живом WARP, старые конфиги работают с одним предупреждением |
 | Зона | схема `option/masque.go` и её разрешение; поведение туннеля не трогаем |
 | Build-tag | — (в ядре) |
 | Смежные | [SPEC 021](../021-MASQUE_CONNECT_IP_OUTBOUND/SPEC.md) — сам outbound; [SPEC 060](../060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) — авто-фрагментация |
@@ -93,15 +93,37 @@ masque: `network` is deprecated, use `transport` instead
 ```go
 var OptionMASQUELegacyFields = Note{
     Name:              "masque-legacy-fields",
-    Description:       "legacy masque options (network, sni, skip_cert_verify, fragment*)",
+    Description:       "legacy masque options (…), replaced by `transport` and the standard `tls` block (planned for removal in v1.14.0-lx.30)",
     DeprecatedVersion: "1.14.0-lx.26",
-    ScheduledVersion:  "1.14.0-lx.30",
+    // ScheduledVersion намеренно пуст — см. ниже.
     EnvName:           "MASQUE_LEGACY_FIELDS",
 }
 ```
 
-`ScheduledVersion` — версия, в которой алиасы перестают работать; она же момент, когда
-`network` можно переназначить на L4-список (§1.2).
+### ⚠️ `ScheduledVersion` не заполняем: он ломает lx-нумерацию
+
+Обнаружено при реализации, **на живом конфиге** — юнит-тесты этого не ловят (в них
+`C.Version = "unknown"`, и проверка выключается).
+
+`Note.Impending()` считает срочность по **минорной** версии:
+`Parse(ScheduledVersion).Minor - Parse(C.Version).Minor <= 1`. Для пары
+`1.14.0-lx.26` → `1.14.0-lx.30` разница минорных версий равна **0**, то есть «снятие
+вот-вот». В этом режиме `stderrManager` превращает предупреждение в **фатальную ошибку**
+с требованием выставить `ENABLE_DEPRECATED_MASQUE_LEGACY_FIELDS` — то есть ломает ровно те
+конфиги, ради совместимости которых депрекация и затевалась.
+
+Апстримовая схема исходит из того, что снятие приходится на следующий minor; lx-линия
+нумерует релизы **внутри** одного minor, поэтому механизм неприменим как есть. Любая
+lx-цель (`1.14.0-lx.NN`, да и `1.15.0`) даёт тот же эффект — «безопасны» только `1.16.0+`,
+что уже неправда по смыслу.
+
+Решение: `ScheduledVersion` оставить пустым, целевую версию назвать в `Description`.
+Дополнительно поправлен `MessageWithLink()` — при пустом поле он выдавал оборванное
+«will be removed in sing-box .», теперь говорит «in a future version» (одна ветка,
+поведение остальных Note не меняется).
+
+Момент, когда `network` можно переназначить на L4-список (§1.2), определяется этой спекой,
+а не полем в коде.
 
 ⚠️ **Окно короткое.** Темп релизов форка — 8 стабильных тегов за две недели
 (`lx.16`…`lx.24`, 2026-07-27…08-11), то есть lx.26 → lx.30 это порядка недели-полутора.
@@ -132,11 +154,37 @@ var OptionMASQUELegacyFields = Note{
 | файл | что |
 |---|---|
 | `option/masque.go` | +`OutboundTLSOptionsContainer`, +`Transport`, пометки Deprecated на legacy |
-| `protocol/masque/outbound.go` | разрешение старое/новое, warning'и, проброс `tls` в `buildH2TLSClient` |
-| `experimental/deprecated/constants.go` | +`Note` |
+| `protocol/masque/legacy_options_lx.go` | **новый** — `resolveLegacyOptions`, `warnUnsupportedTLSOptions` |
+| `protocol/masque/outbound.go` | вызов разрешения, `disable_sni`, чтение `options.TLS`, проброс блока в `buildH2TLSClient` |
+| `experimental/deprecated/constants.go` | +`Note` (+ в реестр `Options`) и правка `MessageWithLink()` при пустом `ScheduledVersion` |
 
-Upstream-файлов — три, все по содержимому уже наши (masque целиком lx-owned).
-`transport/masque/*` не трогаем.
+Тесты (lx-owned): `protocol/masque/legacy_options_lx_test.go`.
+
+Из upstream-файлов затронут только `experimental/deprecated/constants.go` — одна ветка в
+`MessageWithLink()`; остальное по содержимому наше (masque целиком lx-owned).
+`transport/masque/*` не трогали.
+
+## 10. Результаты (2026-08-12)
+
+Живой WARP, обе схемы на одном конфиге:
+
+| узел | схема | результат |
+|---|---|---|
+| h3 | `network` + `sni` (legacy) | ✅ `warp=on` |
+| h3 | `transport` + `tls.server_name` | ✅ `warp=on` |
+
+- deprecation-строк на конфиг с legacy-полями — **ровно одна** (не по одной на поле);
+- конфликт `network: h3` + `transport: h2` → fail-fast с именами обоих полей;
+- `tls.alpn` → warning «ignored — ALPN follows `transport`», узел работает;
+- `sing-box check` принимает обе схемы.
+
+h2 в этом прогоне падал (`x509: algorithm unimplemented`) — **не регрессия**: собрана
+контрольная сборка из `v1.14.0-lx.25-rc.3`, она падает идентично. Причина внешняя: на
+подставленный SNI Cloudflare отдаёт настоящий RSA-сертификат этого сайта, а профиль
+пиннит ECDSA-ключ эндпоинта (то же наблюдалось в SPEC 021).
+
+Статика: `make -f Makefile.lx lx-build`, `go vet`, `gofmt -l` — чисто;
+`go test -race` по `protocol/masque`, `transport/masque/...`, `option`, `common/tls` — зелено.
 
 ## 7. Риски
 

@@ -48,15 +48,24 @@ func (n Note) MessageForLocale(selectedLocale *locale.Locale) string {
 }
 
 func (n Note) MessageWithLink() string {
+	// lx: a note may deliberately carry no ScheduledVersion — Impending() reads
+	// it as a MINOR version, so an lx-line target inside the current minor would
+	// flip the warning into a hard failure (see OptionMASQUELegacyFields). Say
+	// "a future version" rather than emitting "removed in sing-box ." with a
+	// hole where the version should be.
+	removedIn := "a future version"
+	if n.ScheduledVersion != "" {
+		removedIn = "sing-box " + n.ScheduledVersion
+	}
 	if n.MigrationLink != "" {
 		return F.ToString(
 			n.Description, " is deprecated in sing-box ", n.DeprecatedVersion,
-			" and will be removed in sing-box ", n.ScheduledVersion, ", checkout documentation for migration: ", n.MigrationLink,
+			" and will be removed in ", removedIn, ", checkout documentation for migration: ", n.MigrationLink,
 		)
 	} else {
 		return F.ToString(
 			n.Description, " is deprecated in sing-box ", n.DeprecatedVersion,
-			" and will be removed in sing-box ", n.ScheduledVersion, ".",
+			" and will be removed in ", removedIn, ".",
 		)
 	}
 }
@@ -158,7 +167,27 @@ var OptionImplicitDefaultHTTPClient = Note{
 	EnvName:           "IMPLICIT_DEFAULT_HTTP_CLIENT",
 }
 
+// lx: SPEC 062 — masque predates the shared config conventions: its transport
+// lived in `network` (which means tcp/udp everywhere else) and its TLS settings
+// were flat fields instead of the standard `tls` block. Both shapes still work,
+// and using either reports this once per outbound.
+// ⚠️ ScheduledVersion is deliberately left empty even though the removal target
+// is known (v1.14.0-lx.30, see SPEC 062). Impending() compares MINOR versions,
+// so any lx tag scheduled inside 1.14 reads as "removal is imminent" and the
+// stderr manager turns the warning into a fatal error demanding
+// ENABLE_DEPRECATED_MASQUE_LEGACY_FIELDS — which would break exactly the
+// configs this deprecation is meant to keep working. Upstream's scheme assumes
+// removals land a minor apart; the lx line numbers releases within one minor.
+// The removal date lives in SPEC 062 instead.
+var OptionMASQUELegacyFields = Note{
+	Name:              "masque-legacy-fields",
+	Description:       "legacy masque options (network, sni, skip_cert_verify, fragment*), replaced by `transport` and the standard `tls` block (planned for removal in v1.14.0-lx.30)",
+	DeprecatedVersion: "1.14.0-lx.26",
+	EnvName:           "MASQUE_LEGACY_FIELDS",
+}
+
 var Options = []Note{
+	OptionMASQUELegacyFields,
 	OptionOutboundDNSRuleItem,
 	OptionMissingDomainResolver,
 	OptionLegacyDomainStrategyOptions,

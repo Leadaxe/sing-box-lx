@@ -5,17 +5,33 @@ import "github.com/sagernet/sing/common/json/badoption"
 // MASQUEOutboundOptions configures a MASQUE (CONNECT-IP / RFC 9484) outbound,
 // primarily for Cloudflare WARP. See SPEC 021.
 //
-// NOTE on `network`: unlike every other outbound (where `network` selects the
-// L4 protocol tcp/udp), here `network` selects the TRANSPORT (h3/h2) and the L4
-// allow-list is `network_list`. Setting `"network": "tcp"` fails fast.
+// The transport (h3/h2) is `transport`; the tcp/udp allow-list is
+// `network_list`, as in every other outbound. TLS goes in the standard `tls`
+// block.
+//
+// Legacy shapes still work until v1.14.0-lx.30 and report a deprecation:
+// `network` for the transport (it meant the opposite of everyone else's
+// `network`), and flat `sni` / `skip_cert_verify` / `fragment*` for their `tls`
+// counterparts. See SPEC 062.
 type MASQUEOutboundOptions struct {
 	DialerOptions
 	ServerOptions
+	// lx: SPEC 062 — the standard `tls: {…}` block, same container every other
+	// TLS outbound uses. The flat sni/skip_cert_verify/fragment* fields below
+	// are kept as aliases for it until v1.14.0-lx.30.
+	OutboundTLSOptionsContainer
 
 	// Profile selects behaviour: "cloudflare" (default) or "standard" (RFC 9484).
 	Profile string `json:"profile,omitempty"`
-	// Network selects the TRANSPORT: "h3" (QUIC, default) or "h2" (HTTP/2).
-	// This is NOT the tcp/udp L4 list — that is NetworkList below.
+	// Transport selects h3 (QUIC, default) or h2 (HTTP/2). The tcp/udp allow-list
+	// is NetworkList, as everywhere else. lx: SPEC 062.
+	Transport string `json:"transport,omitempty"`
+
+	// Deprecated: use `transport`. Removed in v1.14.0-lx.30.
+	//
+	// This field means the TRANSPORT (h3/h2), not the tcp/udp list — the
+	// opposite of `network` in every other outbound. That inversion is why it
+	// is being retired; `network` is expected to take its usual meaning later.
 	Network string `json:"network,omitempty"`
 
 	// Key material (required for the cloudflare profile). Base64-encoded DER:
@@ -30,28 +46,27 @@ type MASQUEOutboundOptions struct {
 
 	// URI is the CONNECT-IP request URI template. Defaults per profile.
 	URI string `json:"uri,omitempty"`
-	// SNI overrides the TLS server name. Defaults per profile.
-	SNI string `json:"sni,omitempty"`
 	// MTU of the userspace stack. Defaults to 1280.
 	MTU uint32 `json:"mtu,omitempty"`
-	// SkipCertVerify disables public-key pinning (debug only).
-	SkipCertVerify bool `json:"skip_cert_verify,omitempty"`
 
-	// ClientHello fragmentation on the h2 transport. Names and semantics match
-	// OutboundTLSOptions so masque does not invent its own dialect.
+	// The fields below moved into the `tls` block. Each is still honoured, and
+	// using one reports a deprecation once per outbound. Removed in
+	// v1.14.0-lx.30. lx: SPEC 062.
 	//
-	// Why masque needs its own copy: the h2 path builds its TLS client through
-	// the shared common/tls layer, but masque has no `tls` block of its own —
-	// its TLS is fully derived from `profile` + the pinned key material.
-	//
-	// These matter under `detour`: the leg forwards our ClientHello from its own
-	// address, and if the PMTU beyond it is smaller than the ClientHello the
-	// packet is silently dropped (no ICMP gets back), surfacing as a ~15s
-	// "tls handshake: EOF". Splitting the first record gets it through.
-	// See SPEC 021 §TLS-слой; auto-enabling under detour is SPEC 060.
-	Fragment              bool               `json:"fragment,omitempty"`
+	// Note on the bool ones: an unset field and an explicit `false` are
+	// indistinguishable here, so only a legacy `true` can be carried over — see
+	// resolveLegacyOptions.
+
+	// Deprecated: use `tls.server_name`. Removed in v1.14.0-lx.30.
+	SNI string `json:"sni,omitempty"`
+	// Deprecated: use `tls.insecure`. Removed in v1.14.0-lx.30.
+	SkipCertVerify bool `json:"skip_cert_verify,omitempty"`
+	// Deprecated: use `tls.fragment`. Removed in v1.14.0-lx.30.
+	Fragment bool `json:"fragment,omitempty"`
+	// Deprecated: use `tls.fragment_fallback_delay`. Removed in v1.14.0-lx.30.
 	FragmentFallbackDelay badoption.Duration `json:"fragment_fallback_delay,omitempty"`
-	RecordFragment        bool               `json:"record_fragment,omitempty"`
+	// Deprecated: use `tls.record_fragment`. Removed in v1.14.0-lx.30.
+	RecordFragment bool `json:"record_fragment,omitempty"`
 
 	// IdleTimeout suspends the tunnel after this long with no traffic (freeing
 	// the userspace stack, pumps and QUIC keepalive); the next dial rebuilds it.

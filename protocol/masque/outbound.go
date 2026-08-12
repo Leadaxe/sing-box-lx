@@ -31,6 +31,7 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/transport/masque"
 	"github.com/sagernet/sing-box/transport/wireguard"
+	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
@@ -105,16 +106,23 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, err
 	}
 
-	network := options.Network
+	// lx: SPEC 062 — fold the deprecated flat fields onto `transport` and `tls`
+	// before anything reads them, so the rest of this function sees one shape.
+	if err = resolveLegacyOptions(ctx, &options); err != nil {
+		return nil, err
+	}
+
+	network := options.Transport
 	if network == "" {
 		network = "h3"
 	}
 	if network != "h3" && network != "h2" {
-		return nil, E.New("masque: invalid network: ", network, " (expected h3 or h2)")
+		return nil, E.New("masque: invalid transport: ", network, " (expected h3 or h2)")
 	}
 	if network == "h2" && options.Profile == "standard" {
-		return nil, E.New("masque: network h2 is not implemented for the standard profile")
+		return nil, E.New("masque: transport h2 is not implemented for the standard profile")
 	}
+	warnUnsupportedTLSOptions(ctx, logger, network, options.TLS)
 
 	prefixes, err := parsePrefixes(options.IP, options.IPv6)
 	if err != nil {
@@ -149,15 +157,23 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, E.New("masque: uri is required for the standard profile")
 	}
 
-	sni := options.SNI
-	if sni == "" {
-		sni = profile.DefaultSNI
-	}
-	if sni == "" {
-		sni = options.Server
+	// lx: SPEC 062 — `tls.disable_sni` sends no SNI at all, which an empty
+	// `server_name` cannot express (it falls back to the profile default). Some
+	// endpoints only present their real certificate to a ClientHello without
+	// one, so this needs to stay reachable.
+	sni := options.TLS.ServerName
+	if options.TLS.DisableSNI {
+		sni = ""
+	} else {
+		if sni == "" {
+			sni = profile.DefaultSNI
+		}
+		if sni == "" {
+			sni = options.Server
+		}
 	}
 
-	tlsConfig, err := masque.PrepareTLSConfig(profile, privKey, pubKey, sni, options.SkipCertVerify)
+	tlsConfig, err := masque.PrepareTLSConfig(profile, privKey, pubKey, sni, options.TLS.Insecure)
 	if err != nil {
 		return nil, err
 	}
@@ -272,18 +288,18 @@ func buildH2TLSClient(
 	serverName string,
 	prepared *stdtls.Config,
 ) (tls.Config, error) {
-	tlsOptions := option.OutboundTLSOptions{
-		Enabled:               true,
-		ServerName:            serverName,
-		ALPN:                  prepared.NextProtos,
-		Fragment:              options.Fragment,
-		FragmentFallbackDelay: options.FragmentFallbackDelay,
-		RecordFragment:        options.RecordFragment,
-		// Chain verification is never what authenticates a WARP endpoint: the SNI
-		// deliberately does not match it. Pinning (or an explicit opt-out) is
-		// re-attached below, on the concrete *tls.Config.
-		Insecure: true,
-	}
+	// Start from what the user configured (SPEC 062: `tls` is theirs now), then
+	// impose the parts masque decides itself.
+	tlsOptions := common.PtrValueOrDefault(options.TLS)
+	tlsOptions.Enabled = true
+	tlsOptions.ServerName = serverName
+	// ALPN follows the transport, never the config — warnUnsupportedTLSOptions
+	// already told the user their value is ignored.
+	tlsOptions.ALPN = prepared.NextProtos
+	// Chain verification is never what authenticates a WARP endpoint: the SNI
+	// deliberately does not match it. Pinning (or an explicit opt-out) is
+	// re-attached below, on the concrete *tls.Config.
+	tlsOptions.Insecure = true
 	client, err := tls.NewClientWithOptions(tls.ClientOptions{
 		Context:       ctx,
 		Logger:        logger,
