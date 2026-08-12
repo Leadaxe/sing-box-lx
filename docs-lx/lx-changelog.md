@@ -15,6 +15,48 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.25-rc.4
+
+**Конфиг masque — к общему стандарту sing-box, старые имена продолжают
+работать.** ([SPEC 062](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/062-MASQUE_CONFIG_SCHEMA_MIGRATION/SPEC.md))
+
+Masque был единственным аутбаундом со своим диалектом: TLS настраивался
+плоскими `sni` / `skip_cert_verify` / `fragment*` вместо общего блока `tls`, а
+транспорт лежал в `network` — поле, которое у всех остальных значит список
+tcp/udp. Из-за этого настройки нельзя было перенести между протоколами, а мы
+каждый раз забывали прокинуть в masque то, что общий слой уже умеет.
+
+Теперь у masque стандартный `"tls": {…}` — тот же контейнер, что у vless и
+прочих — и `transport` для выбора h3/h2. Старые имена остаются алиасами и
+сообщают о депрекации **один раз на аутбаунд**, а не на каждое поле; снятие
+запланировано на `v1.14.0-lx.30`. Расхождение между старым и новым значением
+одного и того же параметра — ошибка с именами обоих полей, чтобы
+проигнорированное поле не осталось незамеченным.
+
+Вложенный блок бесплатно приносит `tls.disable_sni` — ClientHello вообще без
+SNI. Раньше выразить это было нечем: пустой `sni` подменялся дефолтом профиля.
+На неприменимые поля (`tls.alpn`, `ech`, `reality`, `kernel_*`, а также
+фрагментация под h3) теперь предупреждение с объяснением, а не тишина.
+
+**Дефолтный SNI больше не имя эндпоинта.**
+([SPEC 021](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/021-MASQUE_CONNECT_IP_OUTBOUND/SPEC.md))
+
+`consumer-masque.cloudflareclient.com` — ровно то имя, по которому MASQUE
+опознаётся на проводе. Cloudflare его не проверяет (эндпоинт
+аутентифицируется пиннингом ECDSA-ключа), так что отправлять его не требуется
+ничем, кроме привычки. Замерено с двух независимых российских каналов:
+с этим именем h3 к эндпоинту молча умирает, с нейтральным — поднимается.
+Дефолт профиля теперь `www.cloudflare.com`; заданный в конфиге `sni`
+по-прежнему сильнее.
+
+**Внятная ошибка, когда эндпоинт молчит на CONNECT-IP.**
+
+Раньше это выглядело как `dial connect-ip: read response: http3: parsing frame
+failed: timeout: no recent network activity` — читается как ошибка разбора
+фрейма, хотя на деле пир не ответил вовсе. Теперь `masque: CONNECT-IP timed
+out`, исходная причина сохраняется в цепочке. Idle-таймаут ловится по типу
+(`errors.As`), а не по подстроке.
+
 #### v1.14.0-lx.25-rc.3
 
 **Цепочки «через detour» перестали молча не подниматься.** ([SPEC 060](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md),
