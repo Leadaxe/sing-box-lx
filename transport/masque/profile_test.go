@@ -19,8 +19,13 @@ func TestParseProfile(t *testing.T) {
 	if cf.RequestProtocol != "cf-connect-ip" || !cf.IgnoreExtendedConnect || !cf.PinPublicKey {
 		t.Fatalf("empty should default to cloudflare, got %+v", cf)
 	}
-	if cf.DefaultSNI != CloudflareConnectSNI || cf.DefaultURI != CloudflareConnectURI {
+	if cf.DefaultSNI != CloudflareDefaultSNI || cf.DefaultURI != CloudflareConnectURI {
 		t.Fatalf("cloudflare defaults wrong: %+v", cf)
+	}
+	// lx: the endpoint's own name must never be what we send by default — that
+	// is the one name censors match on (SPEC 021).
+	if cf.DefaultSNI == CloudflareConnectSNI {
+		t.Fatal("default SNI must not be the endpoint's own name")
 	}
 
 	std, err := ParseProfile("standard")

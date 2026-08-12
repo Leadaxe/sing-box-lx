@@ -15,10 +15,22 @@ import (
 
 // Cloudflare WARP MASQUE defaults.
 const (
-	// CloudflareConnectSNI is the SNI Cloudflare's consumer MASQUE endpoint
-	// expects. It intentionally does not match the endpoint IP/host — the
-	// endpoint is authenticated by pinning its public key instead.
+	// CloudflareConnectSNI is the endpoint's own name. Kept for reference: the
+	// endpoint is authenticated by pinning its public key, never by this name,
+	// so nothing requires sending it.
+	//
+	// lx: it is deliberately NOT the default. Sending it is what censors look
+	// for — measured 2026-08-12 from two unrelated Russian uplinks (home ISP and
+	// a mobile carrier), h3 to the same endpoint dies with a silent CONNECT-IP
+	// timeout under this name while yandex.ru, www.google.com, www.apple.com,
+	// cdn.jsdelivr.net, rutube.ru and www.cloudflare.com all connect. The
+	// endpoint serves the tunnel regardless of the name presented. See SPEC 021.
 	CloudflareConnectSNI = "consumer-masque.cloudflareclient.com"
+	// CloudflareDefaultSNI is what we actually send when the config sets no
+	// `sni`. Any neutral name works; this one is a plain Cloudflare property, so
+	// the traffic looks like ordinary CDN traffic and needs no third-party
+	// domain. Override per node with `sni` (LxBox rotates a pool).
+	CloudflareDefaultSNI = "www.cloudflare.com"
 	// CloudflareConnectURI is the default CONNECT-IP request URI for WARP.
 	CloudflareConnectURI = "https://cloudflareaccess.com"
 )
@@ -51,7 +63,7 @@ func ProfileCloudflare() Profile {
 		RequestProtocol:       "cf-connect-ip",
 		IgnoreExtendedConnect: true,
 		H2ConnectProto:        "cf-connect-ip",
-		DefaultSNI:            CloudflareConnectSNI,
+		DefaultSNI:            CloudflareDefaultSNI,
 		DefaultURI:            CloudflareConnectURI,
 		PinPublicKey:          true,
 	}
