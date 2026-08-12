@@ -15,6 +15,35 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.25-rc.5
+
+### Режим urltest-группы виден клиенту — новое поле `Group.mode`
+
+([SPEC 019](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/019-URLTEST_MODE_STICKY/SPEC.md))
+
+Клиент не мог отличить сбалансированную группу от обычной: `type` у обоих
+режимов — `"urltest"`. Единственным признаком был побочный эффект `GetPool`
+(пустой список слотов = не `round_robin`), а этот RPC живёт за сборочным тегом
+`with_lx_command` — в сборке без него режим не определялся никак.
+
+Теперь `Group` несёт поле `mode`:
+
+| значение | что означает |
+|---|---|
+| `least_test` | обычный urltest — есть один выбранный узел, его отдаёт `selected` |
+| `round_robin` | балансировка по пулу — полное состояние даёт `GetPool` |
+| пусто | не urltest-группа (например `selector`) |
+
+Поле приходит и в `GetGroups`, и в `SubscribeGroups`, **в любой сборке** —
+в отличие от `GetPool`.
+
+**Уточнена семантика `selected`** (поведение не менялось, только описание): в
+режиме `round_robin` это не «текущий узел», а тег последнего фактически
+выбранного — след предыдущего соединения, а не состояние группы. Следующий
+дозвон уйдёт в другой слот. Источник правды для `round_robin` — `GetPool`.
+
+Изменение аддитивное: старые клиенты нового поля просто не видят.
+
 #### v1.14.0-lx.25-rc.4
 
 ### ⚠️ Схема конфига `masque` изменилась — старые поля объявлены устаревшими

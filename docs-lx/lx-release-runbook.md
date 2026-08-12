@@ -5,9 +5,13 @@
 
 Контекст репозитория:
 
-- `upstream` = `https://github.com/SagerNet/sing-box.git`; отслеживаем ветку **`upstream/testing`**.
+- `upstream` = `https://github.com/SagerNet/sing-box.git`; отслеживаем ветку **`upstream/stable`**.
+  **Дрейф меряем ТОЛЬКО против `upstream/stable`.** `upstream/testing` — линия разработки
+  апстрима, она постоянно уходит вперёд на сотни коммитов (Go-бампы, незрелые рефакторинги);
+  мерить дрейф по ней бессмысленно — она НИКОГДА не покажет ноль, и красный гейт по testing
+  заблокирует релиз навсегда. Ноль по `upstream/stable` = дрейфа нет, тег резать можно.
 - Наша рабочая ветка — **`lx`** (она же default на GitHub); интеграция upstream идёт **ручным
-  `git merge upstream/testing`** (НЕ rebase; см. `wg-1.14-migration` в памяти и
+  `git merge upstream/stable`** (НЕ rebase; см. `wg-1.14-migration` в памяти и
   [BUILD_CI_CD](../SPECS/FEATURES/001-BUILD_CI_CD/FEATURE.md)).
   `lx-rebase.yml` из [BUILD_CI_CD](../SPECS/FEATURES/001-BUILD_CI_CD/FEATURE.md) описывает старый
   авто-rebase на стабильные upstream-теги; он никогда не форс-пушит `lx` — только открывает PR/issue.
@@ -143,20 +147,25 @@ URL-тест меряет, WG/AWG-узлы живы, и всё это — нес
 
 ## 2. Проверь, не ушёл ли upstream вперёд (ОБЯЗАТЕЛЬНО перед каждым релизом)
 
+**Линия отсчёта — `upstream/stable`, и только она.** По `upstream/testing` дрейф не мерят:
+это ветка разработки апстрима, она уходит вперёд на сотни коммитов и нулём не станет никогда
+(на 2026-08-12: stable — ahead=0, testing — ahead=229 от той же merge-base). Гейт по testing
+даёт вечно-красный результат и блокирует релиз на ровном месте.
+
 ```bash
 git fetch upstream --tags
-# ЧЕСТНАЯ проверка: если merge-base == tip upstream/testing, дрейфа нет
-git merge-base lx upstream/testing
-git rev-parse upstream/testing
+# ЧЕСТНАЯ проверка: если merge-base == tip upstream/stable, дрейфа нет
+git merge-base lx upstream/stable
+git rev-parse upstream/stable
 # что именно приехало (пусто = ничего):
-git --no-pager log --oneline $(git merge-base lx upstream/testing)..upstream/testing
+git --no-pager log --oneline $(git merge-base lx upstream/stable)..upstream/stable
 # не появился ли новый upstream-тег новее нашей базы:
 git tag -l 'v1.14.0*' --sort=-creatordate | grep -iv lx | head
 ```
 
-⚠️ **Не мерить дрейф от `<наш-merge-коммит>^2`.** Ветка `upstream/testing` регулярно
-**force-push'ится**, поэтому второй родитель нашего merge-коммита указывает на переписанную
-историю, и `git log/diff <merge>^2..upstream/testing` показывает мусор — в том числе НАШУ
+⚠️ **Не мерить дрейф от `<наш-merge-коммит>^2`.** Апстримовые ветки регулярно
+**force-push'атся**, поэтому второй родитель нашего merge-коммита указывает на переписанную
+историю, и `git log/diff <merge>^2..upstream/stable` показывает мусор — в том числе НАШУ
 дельту в обратную сторону («upstream удалил `option/platform.go`»), которой на деле нет.
 Так на релизе `v1.14.0-lx.16` (2026-07-26) картина выглядела как «8 новых коммитов upstream»,
 хотя все 8 уже были влиты и merge-base совпадал с tip. Единственный надёжный сигнал — merge-base;
@@ -167,7 +176,7 @@ git tag -l 'v1.14.0*' --sort=-creatordate | grep -iv lx | head
 а не по хешам:
 
 ```bash
-comm -23 <(git log --format=%s $(git merge-base lx upstream/testing)..upstream/testing | sort) \
+comm -23 <(git log --format=%s $(git merge-base lx upstream/stable)..upstream/stable | sort) \
          <(git log --format=%s -260 lx | sort)
 ```
 
@@ -188,7 +197,7 @@ comm -23 <(git log --format=%s $(git merge-base lx upstream/testing)..upstream/t
 
 ```bash
 git checkout lx
-git merge upstream/testing            # ручной merge, НЕ rebase
+git merge upstream/stable             # ручной merge, НЕ rebase
 ```
 
 При конфликтах — зоны, которые трогаем чаще всего (держать lx-семантику, принимать upstream-логику):
