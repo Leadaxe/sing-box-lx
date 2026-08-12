@@ -123,7 +123,7 @@ func TestProcdRecipeContents(t *testing.T) {
 		"USE_PROCD=1",                          // рецепт именно procd
 		"procd_set_param respawn",              // служба переживает падение
 		"/etc/init.d/sing-box-lxd enable",      // команды включения
-		"$(head -c 32 /dev/urandom",            // секрет генерится на месте
+		"$(openssl rand -hex 32)",              // секрет генерится на месте — openssl, busybox без xxd
 		"client add --name my-launcher",        // шаг сопряжения
 		"/etc/sysupgrade.conf",                 // прошивка не съест установку
 	} {
@@ -133,6 +133,11 @@ func TestProcdRecipeContents(t *testing.T) {
 	}
 	if strings.Contains(out, "systemctl") {
 		t.Fatalf("procd recipe must not mention systemctl:\n%s", out)
+	}
+	// busybox has no xxd: the xxd form would expand to an empty secret. Must
+	// not appear in the procd recipe.
+	if strings.Contains(out, "xxd") {
+		t.Fatalf("procd recipe must not use xxd (absent in busybox):\n%s", out)
 	}
 	// The pairing step drops --state-dir when it is the platform default the
 	// `client` subcommands find anyway.
@@ -164,6 +169,7 @@ func TestSystemdRecipeContents(t *testing.T) {
 		"/etc/systemd/system/sing-box-lxd.service",
 		"Restart=always",
 		"systemctl enable --now sing-box-lxd",
+		"$(head -c 32 /dev/urandom | xxd -p -c 64)", // xxd-форма уместна на systemd-хостах
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("systemd recipe must mention %q; got:\n%s", want, out)

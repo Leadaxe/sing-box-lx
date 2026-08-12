@@ -2,11 +2,7 @@
 
 Operator's guide: what `sing-box lxd` is, why it exists, how it is installed on
 macOS, and the setup approaches on Linux. Русская версия —
-[lxd-daemon-ru.md](lxd-daemon-ru.md). Current feature state lives in
-[FEATURE 014-LXD_DAEMON](../SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md); design
-details — SPECS/TASKS [055](../SPECS/TASKS/055-LXD_DAEMON_SKELETON/SPEC.md),
-[056](../SPECS/TASKS/056-LXD_APPLY_ROLLBACK/SPEC.md),
-[057](../SPECS/TASKS/057-LXD_MTLS_SERVICE/SPEC.md).
+[lxd-daemon-ru.md](lxd-daemon-ru.md).
 
 ---
 
@@ -230,6 +226,13 @@ chmod 700 /var/lib/sing-box-lxd /var/lib/sing-box-lxd/state
 chmod 600 /var/lib/sing-box-lxd/state/daemon.json
 ```
 
+> ⚠️ **OpenWrt/busybox has no `xxd`** — the substitution above yields an **empty**
+> secret with no error, and `"secret": ""` under `tls: true` means an
+> unauthenticated control channel. There, mint it with `$(openssl rand -hex 32)`
+> (openssl is almost always present on OpenWrt) and **verify what was written**
+> (`grep secret daemon.json`) rather than trusting the command's exit. The
+> `--service=install` recipe already prints the right generator per init.
+
 To manage the daemon from another machine set `listen` to a LAN address (e.g.
 `192.168.10.1:19091`), or keep loopback alongside it with the object form
 (`{"address": ["192.168.10.1", "127.0.0.1"], "port": 19091}`) — see 3.1. mTLS is
@@ -273,7 +276,20 @@ Platform specifics:
 - On routers **without extroot** a log beside the state dir writes into the
   NAND overlay — flash wear; with extroot there is no issue. The default
   rotation limits (20 MB × 2 files) bound the damage, but extroot is better.
-- The binary (~50 MB) goes on extroot only — it will not fit the built-in flash.
+
+**Uploading the binary.** OpenWrt often ships no sftp-server, so `scp`/`rsync`
+fail. Stream it over ssh instead (download and unpack the archive on your
+workstation, not the router — it may lack the room for the tar):
+
+```bash
+ssh root@HOST 'cat > /root/sing-box' < sing-box            # the unpacked binary
+ssh root@HOST 'chmod +x /root/sing-box && /root/sing-box version'
+```
+
+Use a **static** build (`GOOS=linux`, musl-compatible) and confirm it before
+running: `file sing-box` must say `statically linked` for the right arch — a
+glibc-dynamic binary will not start on a musl router. Check the `version` output
+for the `with_lx_command` tag — without it there is no `lxd`, no `client`.
 
 `/etc/init.d/sing-box-lxd`:
 
@@ -302,6 +318,9 @@ chmod +x /etc/init.d/sing-box-lxd
 binary — add the paths to `/etc/sysupgrade.conf`, or a firmware upgrade will
 wipe the installation.
 
+To build a separate VPN Wi-Fi over the daemon (Wi-Fi → bridge → tun → fail-closed
+firewall) — [openwrt-vpn-ssid.md](openwrt-vpn-ssid.md).
+
 ### 8.4. What Linux does not have
 
 - Automatic installation — by principle, not by omission (see above): the
@@ -318,6 +337,25 @@ wipe the installation.
    registers with the code (`POST /admin/enroll`), and is trusted by its
    certificate from then on. The code burns.
 3. Inspect/revoke: `client list`, `client remove <name-or-fingerprint>`.
+
+**Pairing gotchas over the network** (proven on a router — three failed tries):
+
+- **Operator commands (`client add/list/remove`) run on loopback only.** Over
+  the network the daemon answers `403 operator routes are loopback-only`:
+  minting an invite is granting trust, so that route is closed outward. If
+  `listen` points at a **single** LAN address, loopback is not listened on at
+  all and the command runs from nowhere. Fix: the object form of listen with
+  both addresses (`{"address": ["192.168.10.1", "127.0.0.1"], "port": 19091}`,
+  see 3.1); you do not need `0.0.0.0` just for this, and it is unsafe.
+- **The code lives in the process memory, not the state dir.** Any daemon
+  restart between `client add` and entering the code kills enrollment: the
+  client gets `enroll: no active enrollment code`. Strict order: set listen →
+  restart the service → **mint the code** → enter it in the launcher → and only
+  then change anything else.
+- **The invite's address comes from `listen`.** When listen is loopback or the
+  object form, replace the address in the launcher with a reachable one
+  (`192.168.10.1:19091`); leave fingerprint and code as-is. On success the trust
+  lands in `clients.json` and survives a daemon restart and a host reboot.
 
 ## 10. Admin REST (reference)
 
