@@ -57,7 +57,7 @@ required for stable tags); this changelog section is the fallback used for pre-r
 
 | устарело | заменить на |
 |---|---|
-| `network: "h3"` / `"h2"` | `transport: "h3"` / `"h2"` |
+| `network: "h3"` / `"h2"` | `vhttp: "h3"` / `"h2"` |
 | `sni: "…"` | `tls.server_name: "…"` |
 | `skip_cert_verify: true` | `tls.insecure: true` |
 | `fragment: true` | `tls.fragment: true` |
@@ -73,7 +73,7 @@ required for stable tags); this changelog section is the fallback used for pre-r
 { "type": "masque", "network": "h2", "sni": "example.com", "record_fragment": true }
 
 // стало
-{ "type": "masque", "transport": "h2",
+{ "type": "masque", "vhttp": "h2",
   "tls": { "server_name": "example.com", "record_fragment": true } }
 ```
 
@@ -84,7 +84,7 @@ required for stable tags); this changelog section is the fallback used for pre-r
 давал, он подменялся дефолтом профиля).
 
 **Предупреждение вместо молчания** на неподдерживаемых полях: `tls.alpn`,
-`tls.ech`, `tls.reality`, `tls.kernel_*`, фрагментация при `transport: h3`.
+`tls.ech`, `tls.reality`, `tls.kernel_*`, фрагментация при `vhttp: h3`.
 
 ### Изменился дефолтный SNI у masque
 

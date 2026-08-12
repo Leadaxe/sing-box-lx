@@ -1,10 +1,10 @@
-// lx: SPEC 062 — masque predates the shared config conventions. Its transport
-// lived in `network` (which selects tcp/udp in every other outbound) and its
+// lx: SPEC 062 — masque predates the shared config conventions. Its HTTP
+// version lived in `network` (which selects tcp/udp in every other outbound) and its
 // TLS settings were flat fields instead of the standard `tls` block.
 //
 // Both shapes keep working until v1.14.0-lx.30: this file folds the legacy ones
 // into the standard shapes before anything else looks at the options, so the
-// rest of the outbound only ever sees `Transport` and `TLS`.
+// rest of the outbound only ever sees `VHTTP` and `TLS`.
 package masque
 
 import (
@@ -29,12 +29,12 @@ func resolveLegacyOptions(ctx context.Context, options *option.MASQUEOutboundOpt
 
 	//nolint:staticcheck // reading the deprecated field is this function's job
 	if legacy := options.Network; legacy != "" {
-		if options.Transport != "" && options.Transport != legacy {
-			return E.New("masque: `transport` is ", options.Transport,
+		if options.VHTTP != "" && options.VHTTP != legacy {
+			return E.New("masque: `vhttp` is ", options.VHTTP,
 				" but deprecated `network` is ", legacy, " — remove `network`")
 		}
-		if options.Transport == "" {
-			options.Transport = legacy
+		if options.VHTTP == "" {
+			options.VHTTP = legacy
 		}
 		usedLegacy = true
 	}
@@ -109,9 +109,9 @@ func warnUnsupportedTLSOptions(ctx context.Context, logger interface {
 		return
 	}
 	if len(tlsOptions.ALPN) > 0 {
-		// ALPN follows from the transport (h3 → "h3", h2 → "h2"); an override
+		// ALPN follows from the HTTP version (h3 → "h3", h2 → "h2"); an override
 		// would break the very negotiation that picks the tunnel protocol.
-		logger.WarnContext(ctx, "masque: `tls.alpn` is ignored — ALPN follows `transport`")
+		logger.WarnContext(ctx, "masque: `tls.alpn` is ignored — ALPN follows `vhttp`")
 	}
 	if tlsOptions.ECH != nil && tlsOptions.ECH.Enabled {
 		logger.WarnContext(ctx, "masque: `tls.ech` is ignored — not supported for masque")
@@ -125,6 +125,6 @@ func warnUnsupportedTLSOptions(ctx context.Context, logger interface {
 	if transport == "h3" && (tlsOptions.Fragment || tlsOptions.RecordFragment) {
 		// h3 carries TLS inside QUIC, not over TCP: there is no TLS record
 		// stream to split. See SPEC 060.
-		logger.WarnContext(ctx, "masque: fragmentation is ignored on `transport: h3` — QUIC carries no TLS records over TCP")
+		logger.WarnContext(ctx, "masque: fragmentation is ignored on `vhttp: h3` — QUIC carries no TLS records over TCP")
 	}
 }

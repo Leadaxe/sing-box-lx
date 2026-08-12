@@ -106,21 +106,21 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, err
 	}
 
-	// lx: SPEC 062 — fold the deprecated flat fields onto `transport` and `tls`
+	// lx: SPEC 062 — fold the deprecated flat fields onto `vhttp` and `tls`
 	// before anything reads them, so the rest of this function sees one shape.
 	if err = resolveLegacyOptions(ctx, &options); err != nil {
 		return nil, err
 	}
 
-	network := options.Transport
+	network := options.VHTTP
 	if network == "" {
 		network = "h3"
 	}
 	if network != "h3" && network != "h2" {
-		return nil, E.New("masque: invalid transport: ", network, " (expected h3 or h2)")
+		return nil, E.New("masque: invalid vhttp: ", network, " (expected h3 or h2)")
 	}
 	if network == "h2" && options.Profile == "standard" {
-		return nil, E.New("masque: transport h2 is not implemented for the standard profile")
+		return nil, E.New("masque: vhttp h2 is not implemented for the standard profile")
 	}
 	warnUnsupportedTLSOptions(ctx, logger, network, options.TLS)
 

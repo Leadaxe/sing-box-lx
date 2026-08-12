@@ -1,4 +1,4 @@
-// lx: SPEC 062 — folding the deprecated flat options onto `transport` + `tls`.
+// lx: SPEC 062 — folding the deprecated flat options onto `vhttp` + `tls`.
 //
 // Decoding is covered where the registry lives; these tests exercise the
 // reconciliation itself, including the asymmetry forced by bool fields that
@@ -14,29 +14,29 @@ import (
 	"github.com/sagernet/sing/common/json/badoption"
 )
 
-func TestResolveLegacyTransport(t *testing.T) {
+func TestResolveLegacyVHTTP(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name      string
-		network   string
-		transport string
-		want      string
-		wantErr   bool
+		name    string
+		network string
+		vhttp   string
+		want    string
+		wantErr bool
 	}{
 		{name: "legacy only", network: "h2", want: "h2"},
-		{name: "new only", transport: "h2", want: "h2"},
-		{name: "both agree", network: "h2", transport: "h2", want: "h2"},
-		{name: "both disagree", network: "h3", transport: "h2", wantErr: true},
+		{name: "new only", vhttp: "h2", want: "h2"},
+		{name: "both agree", network: "h2", vhttp: "h2", want: "h2"},
+		{name: "both disagree", network: "h3", vhttp: "h2", wantErr: true},
 		{name: "neither", want: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			opts := &option.MASQUEOutboundOptions{Transport: tc.transport}
+			opts := &option.MASQUEOutboundOptions{VHTTP: tc.vhttp}
 			//nolint:staticcheck
 			opts.Network = tc.network
 			err := resolveLegacyOptions(context.Background(), opts)
 			if tc.wantErr {
 				if err == nil {
-					t.Fatal("conflicting transport must be rejected")
+					t.Fatal("conflicting HTTP version must be rejected")
 				}
 				if !strings.Contains(err.Error(), "network") {
 					t.Errorf("error should name the offending field, got %q", err)
@@ -46,8 +46,8 @@ func TestResolveLegacyTransport(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if opts.Transport != tc.want {
-				t.Errorf("transport = %q, want %q", opts.Transport, tc.want)
+			if opts.VHTTP != tc.want {
+				t.Errorf("vhttp = %q, want %q", opts.VHTTP, tc.want)
 			}
 		})
 	}
@@ -160,14 +160,14 @@ func TestResolveLegacyAllocatesTLS(t *testing.T) {
 // must not be told it is deprecated.
 func TestResolveLegacyNoReportWithoutLegacy(t *testing.T) {
 	t.Parallel()
-	opts := &option.MASQUEOutboundOptions{Transport: "h2"}
+	opts := &option.MASQUEOutboundOptions{VHTTP: "h2"}
 	opts.TLS = &option.OutboundTLSOptions{ServerName: "new.example"}
 	// No deprecation manager in this context, so Report is a no-op either way;
 	// what matters is that resolution succeeds and changes nothing.
 	if err := resolveLegacyOptions(context.Background(), opts); err != nil {
 		t.Fatal(err)
 	}
-	if opts.Transport != "h2" || opts.TLS.ServerName != "new.example" {
+	if opts.VHTTP != "h2" || opts.TLS.ServerName != "new.example" {
 		t.Errorf("new-shape config must pass through untouched: %+v", opts)
 	}
 }

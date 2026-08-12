@@ -5,12 +5,12 @@ import "github.com/sagernet/sing/common/json/badoption"
 // MASQUEOutboundOptions configures a MASQUE (CONNECT-IP / RFC 9484) outbound,
 // primarily for Cloudflare WARP. See SPEC 021.
 //
-// The transport (h3/h2) is `transport`; the tcp/udp allow-list is
-// `network_list`, as in every other outbound. TLS goes in the standard `tls`
-// block.
+// The HTTP version carrying the tunnel (h3/h2) is `vhttp`; the tcp/udp
+// allow-list is `network_list`, as in every other outbound. TLS goes in the
+// standard `tls` block.
 //
 // Legacy shapes still work until v1.14.0-lx.30 and report a deprecation:
-// `network` for the transport (it meant the opposite of everyone else's
+// `network` for the HTTP version (it meant the opposite of everyone else's
 // `network`), and flat `sni` / `skip_cert_verify` / `fragment*` for their `tls`
 // counterparts. See SPEC 062.
 type MASQUEOutboundOptions struct {
@@ -23,13 +23,17 @@ type MASQUEOutboundOptions struct {
 
 	// Profile selects behaviour: "cloudflare" (default) or "standard" (RFC 9484).
 	Profile string `json:"profile,omitempty"`
-	// Transport selects h3 (QUIC, default) or h2 (HTTP/2). The tcp/udp allow-list
-	// is NetworkList, as everywhere else. lx: SPEC 062.
-	Transport string `json:"transport,omitempty"`
-
-	// Deprecated: use `transport`. Removed in v1.14.0-lx.30.
+	// VHTTP selects the HTTP version carrying CONNECT-IP: "h3" (QUIC, default)
+	// or "h2". The tcp/udp allow-list is NetworkList, as everywhere else.
 	//
-	// This field means the TRANSPORT (h3/h2), not the tcp/udp list — the
+	// Not named `transport`: that key is an object (V2RayTransportOptions) on
+	// vless/trojan/vmess, and reusing it for a string here would repeat exactly
+	// the confusion this migration removes. lx: SPEC 062.
+	VHTTP string `json:"vhttp,omitempty"`
+
+	// Deprecated: use `vhttp`. Removed in v1.14.0-lx.30.
+	//
+	// This field means the HTTP version (h3/h2), not the tcp/udp list — the
 	// opposite of `network` in every other outbound. That inversion is why it
 	// is being retired; `network` is expected to take its usual meaning later.
 	Network string `json:"network,omitempty"`

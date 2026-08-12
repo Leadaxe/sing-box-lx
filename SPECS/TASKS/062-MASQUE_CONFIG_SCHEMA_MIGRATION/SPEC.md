@@ -1,4 +1,4 @@
-# SPEC 062 — конфиг masque к стандарту sing-box (вложенный `tls`, `transport`), с алиасами
+# SPEC 062 — конфиг masque к стандарту sing-box (вложенный `tls`, `vhttp`), с алиасами
 
 **Фича:** [MASQUE_WARP](../../FEATURES/009-MASQUE_WARP/FEATURE.md)
 
@@ -14,7 +14,7 @@
 
 Masque — единственный outbound со своим диалектом конфига: плоские `sni` /
 `skip_cert_verify` / `fragment*` вместо общего блока `tls: {…}`, и `network` в
-значении «транспорт h3/h2» вместо стандартного «список tcp/udp».
+значении «версия HTTP h3/h2» вместо стандартного «список tcp/udp».
 
 Приводим к общей конвенции **аддитивно**: новые имена работают, старые продолжают
 работать через алиасы с deprecation-предупреждением. Ничего не ломается сразу;
@@ -47,12 +47,12 @@ Masque — единственный outbound со своим диалектом 
 `OutboundTLSOptions` уже разбирается штатно — сейчас мы лишь конструируем его
 вручную из трёх полей вместо того, чтобы принять от пользователя.
 
-### 1.2 Транспорт
+### 1.2 Версия HTTP (h3/h2)
 
 | поле | сейчас | делаем |
 |---|---|---|
-| `network` (`"h3"`/`"h2"`, `string`) | транспорт | **не трогаем тип**; deprecated в пользу `transport` |
-| `transport` (`"h3"`/`"h2"`) | — | **новое**, предпочтительное |
+| `network` (`"h3"`/`"h2"`, `string`) | версия HTTP | **не трогаем тип**; deprecated в пользу `vhttp` |
+| `vhttp` (`"h3"`/`"h2"`) | — | **новое**, предпочтительное |
 | `network_list` (`["tcp","udp"]`) | L4-список | **не трогаем** |
 
 **Тип `network` НЕ меняется** (решение владельца 2026-08-12). Переезд L4-списка из
@@ -64,14 +64,14 @@ Masque — единственный outbound со своим диалектом 
 владельца — иначе читается как «функциональность убрали»:
 
 ```
-masque: `network` is deprecated, use `transport` instead
+masque: `network` is deprecated, use `vhttp` instead
 (`network` will later mean the tcp/udp list, as in other outbounds)
 ```
 
 ### 1.3 Предупреждения на неприменимое
 
-- **`tls.alpn`** — warning + игнор. ALPN выводится из транспорта (`h3` → `["h3"]`,
-  `h2` → `["h2"]`); заданный вручную ломает согласование транспорта с endpoint'ом.
+- **`tls.alpn`** — warning + игнор. ALPN выводится из версии HTTP (`h3` → `["h3"]`,
+  `h2` → `["h2"]`); заданный вручную ломает согласование с endpoint'ом.
 - **`tls.ech`, `tls.kernel_tx`, `tls.kernel_rx`, `tls.reality`** — warning + игнор,
   для masque неприменимы.
 - **`fragment` / `record_fragment` на h3** — warning: там нет TLS-over-TCP, резать
@@ -93,7 +93,7 @@ masque: `network` is deprecated, use `transport` instead
 ```go
 var OptionMASQUELegacyFields = Note{
     Name:              "masque-legacy-fields",
-    Description:       "legacy masque options (…), replaced by `transport` and the standard `tls` block (planned for removal in v1.14.0-lx.30)",
+    Description:       "legacy masque options (…), replaced by `vhttp` and the standard `tls` block (planned for removal in v1.14.0-lx.30)",
     DeprecatedVersion: "1.14.0-lx.26",
     // ScheduledVersion намеренно пуст — см. ниже.
     EnvName:           "MASQUE_LEGACY_FIELDS",
@@ -133,10 +133,12 @@ lx-цель (`1.14.0-lx.NN`, да и `1.15.0`) даёт тот же эффект
 
 ## 4. Решения (owner, 2026-08-12)
 
-1. **Имя нового поля транспорта — `transport`.** Освобождает `network` под стандартный
-   смысл; альтернатива «не трогать вовсе» отклонена — тогда `network`/`network_list`
-   остаются вывернутыми навсегда.
-2. **`ScheduledVersion` = `1.14.0-lx.30`.**
+1. **Имя нового поля — `vhttp`** (значения `"h3"`/`"h2"`). Освобождает `network` под
+   стандартный смысл. `transport` **отвергнут**: у vless/trojan/vmess это ключ
+   V2Ray-транспорта и он **объект** (`{"type":"ws"}`), а не строка — переиспользовать
+   его для h3/h2 значило бы воспроизвести ровно ту путаницу, которую снимает эта задача.
+   `mode`/`version` заняты в форке в другом смысле (группы urltest; `HTTPClientOptions`).
+2. **Срок снятия — `v1.14.0-lx.30`** (в коде поле `ScheduledVersion` пустое, см. §3).
 3. **`tls.utls` для masque пока НЕ даём.** Это единственная реальная маскировка
    ClientHello (в отличие от `cipher_suites`, который на TLS 1.3 почти ничего не решает),
    но на h3 uTLS работает иначе, чем на h2, и требует отдельной проверки. Отдельная
@@ -153,7 +155,7 @@ lx-цель (`1.14.0-lx.NN`, да и `1.15.0`) даёт тот же эффект
 
 | файл | что |
 |---|---|
-| `option/masque.go` | +`OutboundTLSOptionsContainer`, +`Transport`, пометки Deprecated на legacy |
+| `option/masque.go` | +`OutboundTLSOptionsContainer`, +`VHTTP`, пометки Deprecated на legacy |
 | `protocol/masque/legacy_options_lx.go` | **новый** — `resolveLegacyOptions`, `warnUnsupportedTLSOptions` |
 | `protocol/masque/outbound.go` | вызов разрешения, `disable_sni`, чтение `options.TLS`, проброс блока в `buildH2TLSClient` |
 | `experimental/deprecated/constants.go` | +`Note` (+ в реестр `Options`) и правка `MessageWithLink()` при пустом `ScheduledVersion` |
@@ -171,11 +173,11 @@ lx-цель (`1.14.0-lx.NN`, да и `1.15.0`) даёт тот же эффект
 | узел | схема | результат |
 |---|---|---|
 | h3 | `network` + `sni` (legacy) | ✅ `warp=on` |
-| h3 | `transport` + `tls.server_name` | ✅ `warp=on` |
+| h3 | `vhttp` + `tls.server_name` | ✅ `warp=on` |
 
 - deprecation-строк на конфиг с legacy-полями — **ровно одна** (не по одной на поле);
-- конфликт `network: h3` + `transport: h2` → fail-fast с именами обоих полей;
-- `tls.alpn` → warning «ignored — ALPN follows `transport`», узел работает;
+- конфликт `network: h3` + `vhttp: h2` → fail-fast с именами обоих полей;
+- `tls.alpn` → warning «ignored — ALPN follows `vhttp`», узел работает;
 - `sing-box check` принимает обе схемы.
 
 h2 в этом прогоне падал (`x509: algorithm unimplemented`) — **не регрессия**: собрана
@@ -211,9 +213,9 @@ type MASQUEOutboundOptions struct {
     OutboundTLSOptionsContainer   // ← новое: даёт `tls: {…}`
 
     Profile   string `json:"profile,omitempty"`
-    Transport string `json:"transport,omitempty"` // ← новое: "h3" | "h2"
+    VHTTP string `json:"vhttp,omitempty"` // ← новое: "h3" | "h2"
 
-    // Deprecated: use `transport`. Removed in v1.14.0-lx.30.
+    // Deprecated: use `vhttp`. Removed in v1.14.0-lx.30.
     Network string `json:"network,omitempty"`
     // Deprecated: use `tls.server_name`. Removed in v1.14.0-lx.30.
     SNI string `json:"sni,omitempty"`
@@ -281,7 +283,7 @@ func resolveLegacyOptions(ctx context.Context, options *option.MASQUEOutboundOpt
   пользовательский `*options.TLS`, доклеивая поверх только masque-специфику (pinning,
   клиентский сертификат, ALPN по транспорту) — как сейчас, но поверх пользовательских
   значений, а не поверх пустышки;
-- `network` в теле кода переименовать в `transport` для читаемости (внутренняя
+- `network` в теле кода переименовать в `vhttp` для читаемости (внутренняя
   переменная, на конфиг не влияет).
 
 ### Шаг 5. `deprecated.Note`

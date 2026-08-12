@@ -167,8 +167,8 @@ var OptionImplicitDefaultHTTPClient = Note{
 	EnvName:           "IMPLICIT_DEFAULT_HTTP_CLIENT",
 }
 
-// lx: SPEC 062 — masque predates the shared config conventions: its transport
-// lived in `network` (which means tcp/udp everywhere else) and its TLS settings
+// lx: SPEC 062 — masque predates the shared config conventions: its HTTP
+// version lived in `network` (which means tcp/udp everywhere else) and its TLS settings
 // were flat fields instead of the standard `tls` block. Both shapes still work,
 // and using either reports this once per outbound.
 // ⚠️ ScheduledVersion is deliberately left empty even though the removal target
@@ -181,7 +181,7 @@ var OptionImplicitDefaultHTTPClient = Note{
 // The removal date lives in SPEC 062 instead.
 var OptionMASQUELegacyFields = Note{
 	Name:              "masque-legacy-fields",
-	Description:       "legacy masque options (network, sni, skip_cert_verify, fragment*), replaced by `transport` and the standard `tls` block (planned for removal in v1.14.0-lx.30)",
+	Description:       "legacy masque options (network, sni, skip_cert_verify, fragment*), replaced by `vhttp` and the standard `tls` block (planned for removal in v1.14.0-lx.30)",
 	DeprecatedVersion: "1.14.0-lx.26",
 	EnvName:           "MASQUE_LEGACY_FIELDS",
 }
