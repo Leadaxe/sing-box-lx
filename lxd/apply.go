@@ -121,6 +121,10 @@ type controller struct {
 	// the routes are registered only when it is set.
 	clientInfo *clientInfo
 
+	// host is the host telemetry cache (SPEC 068), holding the previous CPU
+	// and interface samples that percentages and rates are derived from.
+	host *hostCache
+
 	applyAccess sync.Mutex
 	// closed is set (under applyAccess) by the daemon teardown: admin requests
 	// that were queued behind the mutex must not touch the service afterwards.

@@ -126,6 +126,7 @@ func Run(ctx context.Context, options Options) error {
 		startedAt:        time.Now(),
 		memory:           newMemoryCache(),
 		clientInfo:       newClientInfo(labels, options.DHCPLeaseFiles),
+		host:             newHostCache(absStateDir),
 	}
 	control.advertiseAddr = options.Listen.Advertise()
 

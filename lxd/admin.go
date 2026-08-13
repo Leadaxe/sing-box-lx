@@ -66,6 +66,13 @@ func (c *controller) adminHandler(secret string) http.Handler {
 		mux.HandleFunc("PUT /admin/clients-info/labels/{key}", c.handleClientLabelPut)
 		mux.HandleFunc("DELETE /admin/clients-info/labels/{key}", c.handleClientLabelDelete)
 	}
+	// Host telemetry (SPEC 068): the machine the daemon runs ON, as opposed to
+	// /admin/memory, which describes the process. Same plane, same pin — an
+	// operator diagnosing "the router is slow" needs this remotely.
+	if c.host != nil {
+		mux.HandleFunc("GET /admin/host", c.handleHost)
+		mux.HandleFunc("GET /admin/host/interfaces", c.handleHostInterfaces)
+	}
 	// Operator routes serve the `client` CLI over loopback: they need the
 	// Bearer secret but NOT a client cert (the operator on the host has none).
 	// Registered on the loopback-only, secret-gated, cert-exempt path below.
@@ -577,6 +584,17 @@ func (c *controller) handleClientLabelDelete(writer http.ResponseWriter, request
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"removed": true})
+}
+
+// handleHost serves the host's own telemetry (SPEC 068) — CPU, memory,
+// thermals, disks, descriptors. Like the rest of this plane it answers whether
+// or not a core is up: it describes the machine, not the instance.
+func (c *controller) handleHost(writer http.ResponseWriter, request *http.Request) {
+	writeJSON(writer, http.StatusOK, c.host.Host())
+}
+
+func (c *controller) handleHostInterfaces(writer http.ResponseWriter, request *http.Request) {
+	writeJSON(writer, http.StatusOK, c.host.Interfaces())
 }
 
 func (c *controller) handleStatus(writer http.ResponseWriter, request *http.Request) {

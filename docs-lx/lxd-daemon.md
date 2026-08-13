@@ -392,6 +392,8 @@ firewall) — [openwrt-vpn-ssid.md](openwrt-vpn-ssid.md).
 | `POST /admin/pprof/block?rate=N` · `POST /admin/pprof/mutex?fraction=N` | turn the two lock profiles on/off (`0` = off); not persisted, gone after a restart |
 | `GET /admin/clients-info` | IP → device directory: `name`, `mac`, `ssid`, `iface`, `port`, `source` for every client the host knows about; answers with no core up |
 | `PUT`/`DELETE /admin/clients-info/labels/{key}` | operator's own name for a client; key is an IP or a MAC (400 otherwise) |
+| `GET /admin/host` | the MACHINE the daemon runs on: CPU (per-core), memory, thermal zones, disks, file descriptors — as opposed to `/admin/memory`, which is the process |
+| `GET /admin/host/interfaces` | every network interface with raw counters and derived rates |
 
 SIGHUP to the daemon = re-read the config file (`--config-force`/`-c`) and
 apply it through the same validated, rollback-protected apply pipeline.
@@ -461,6 +463,44 @@ Leases are looked for in the usual places, overridable in `daemon.json`:
 ```json
 {"dhcp_lease_files": ["/etc/custom/leases"]}
 ```
+
+## 10b. Host telemetry
+
+`/admin/memory` describes the daemon **process**. When the router itself starts
+struggling that is not enough — `GET /admin/host` describes the **machine**:
+
+```bash
+curl -s .../admin/host
+curl -s .../admin/host/interfaces
+```
+
+What it answers:
+
+| Section | Tells you |
+|---|---|
+| `cpu` | `usage_percent` plus `per_core_percent` — one pinned core among three idle is a diagnosis the average hides. `load_1/5/15` come free from the kernel |
+| `memory` | `used_percent` is computed from `available_bytes`, not `free_bytes`: a router keeps most of its RAM in page cache, and a free-based figure screams "full" with 120 MB actually free |
+| `thermal` | every sensor as `zones[]`, plus `max_celsius` for a single indicator. `null` when the machine has no sensors |
+| `disk` | `mounts[]` with `read_only` and `holds_state_dir`. `max_used_percent` **ignores read-only filesystems** — OpenWrt's squashfs root is permanently 100% full, and an always-red indicator is one nobody reads |
+| `fd` | the daemon's open descriptors and limit, plus the system's. Hitting either stops new connections with a symptom that looks like nothing at all |
+
+**Percentages need two samples.** `usage_percent` is a delta between two reads
+of `/proc/stat`, so the first request after startup reports `null` with
+`interval_seconds: 0` — a zero would read as "idle", which is a different
+statement. `interval_seconds` tells you the window each percentage describes:
+12.4% over five seconds and over an hour mean different things.
+
+**Counters and rates both.** Interfaces report raw `rx_bytes` alongside
+`rx_bytes_per_second`: a counter survives restarts and gaps, a rate is
+convenient but lies across them. Graph the counter, read the rate.
+
+Every interface is listed, `lo` and down ones included — "wan went down" is
+exactly what you want to see. Filtering is the UI's job.
+
+**Off Linux the shape stays the same and unavailable fields are `null`** — on
+macOS that means no thermals (they need CGO) and no CPU percentages (Mach API),
+while memory, disks, descriptors and load averages all work. A client checks
+for `null` rather than branching on `os`.
 
 ## 11. Diagnosing a misbehaving daemon
 

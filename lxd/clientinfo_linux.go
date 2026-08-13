@@ -4,23 +4,14 @@ package lxd
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"io"
 	"net"
 	"net/netip"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
-	"time"
 )
-
-// providerTimeout bounds every external process a provider spawns. The owner
-// measured ubus on a live router: ten runs finished inside busybox's timer
-// resolution, so this is a hang guard, not a budget. Same discipline as
-// execSelfCheck in apply.go — the only other exec in this package.
-const providerTimeout = 2 * time.Second
 
 // defaultLeaseFiles mirrors the core's list (route/neighbor_resolver_linux.go),
 // OpenWrt's path first. Duplicated rather than exported from route/ because
@@ -34,24 +25,6 @@ func defaultLeaseFiles() []string {
 		"/var/lib/kea/kea-leases4.csv",
 		"/var/lib/kea/kea-leases6.csv",
 	}
-}
-
-// runProvider executes a helper binary, returning ok=false when the binary is
-// absent, fails, or times out. A missing tool is a STATE, not an error: the
-// same single branch on the client covers "not this platform" and "not on this
-// host", exactly like currentRSS() returning rssUnsupported.
-func runProvider(name string, args ...string) (string, bool) {
-	binary, err := exec.LookPath(name)
-	if err != nil {
-		return "", false
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), providerTimeout)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, binary, args...).Output()
-	if err != nil {
-		return "", false
-	}
-	return string(output), true
 }
 
 // enrichARP reads /proc/net/arp — a file, not a process, the same class of
