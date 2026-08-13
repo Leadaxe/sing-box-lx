@@ -15,6 +15,47 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.25-rc.7
+
+### 🐞 `selector`: `interrupt_exist_connections` не разрывал соединения
+
+([SPEC 064](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/064-SELECTOR_INTERRUPT_DEAD_ON_INBOUND/SPEC.md))
+
+Переключение узла внутри группы `selector` не рвало активные соединения:
+трафик продолжал идти через прежний узел до собственного таймаута, и помогал
+только Stop/Start ядра. Опция `interrupt_exist_connections: true` при этом была
+выставлена — то есть настройка была верной, а эффекта не давала.
+
+Корень — в том, кого `Selector.NewConnection` передавал в `ConnectionManager`
+как диалер:
+
+```go
+s.connection.NewConnection(ctx, selected, conn, metadata, onClose)  // было
+s.connection.NewConnection(ctx, s, conn, metadata, onClose)         // стало
+```
+
+`ConnectionManager` вызывает `DialContext` у переданного объекта. С `selected`
+диал шёл сразу у конечного узла, **минуя `Selector.DialContext`** — а это
+единственное место, где сокет регистрируется в `interruptGroup`. Список
+оставался пустым, и `SelectOutbound` дёргал `Interrupt()` по пустоте.
+
+Адресат трафика от правки не меняется: `Selector.DialContext` сам диалит через
+выбранный узел, просто по пути кладёт сокет в свою группу. Симметрично
+починен UDP-путь.
+
+Дефект **апстримный** и ровесник самой фичи (`c320be75a`, 2023-09-15, вошёл в
+v1.10.0); присутствует в актуальном `upstream/stable`. У `urltest` его нет —
+там передаётся `s`, поэтому автопереключение узла соединения рвало исправно.
+Этим и объясняется, почему баг так долго жил незамеченным: самый ходовой тип
+группы вёл себя корректно, а клиенты компенсировали разрыв на своём уровне.
+
+Ветка `ConnectionHandler` намеренно не тронута — в неё попадают только
+вложенные группы и `protocol/dns`, чей `DialContext` возвращает `os.ErrInvalid`.
+
+Регресс закреплён тестом на живом `Selector` с настоящим
+`route.ConnectionManager`: до фикса переключение оставляло сокет живым, после —
+разрывает.
+
 #### v1.14.0-lx.25-rc.6
 
 ### 🆕 `lxd`: доставка файловых ресурсов конфига через admin-REST
