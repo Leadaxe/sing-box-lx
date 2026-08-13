@@ -15,6 +15,38 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+#### v1.14.0-lx.25-rc.8
+
+### 🔧 `selector`: разрыв соединений теперь работает и во вложенных группах
+
+([SPEC 064](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/064-SELECTOR_INTERRUPT_DEAD_ON_INBOUND/SPEC.md))
+
+Доработка фикса из rc.7. Тот вариант чинил разрыв только там, где селектор
+диалит узел сам, — а если выбранный член группы обрабатывает соединение
+целиком (вложенный `selector`/`urltest`, `dns`-аутбаунд), соединение уходило
+ему напрямую и в список на разрыв не попадало.
+
+Регистрация переехала на входящее соединение и делается **до** развилки:
+
+```go
+conn = s.interruptGroup.NewConn(conn, true)             // TCP
+conn = s.interruptGroup.NewSingPacketConn(conn, true)   // UDP
+```
+
+Рвётся входящая сторона — копирующий цикл валится и закрывает исходящий
+сокет, соединение умирает целиком. Теперь покрыты обе ветки. Заодно ветка
+обычных узлов вернулась к апстримной форме — меньше расхождение с upstream
+на мержах.
+
+Подход взят из апстримного [PR #4285](https://github.com/SagerNet/sing-box/pull/4285);
+в `common/interrupt` портирован `SingPacketConn` для UDP-пути. Сам баг в
+апстриме заведён дважды —
+[#4281](https://github.com/SagerNet/sing-box/issues/4281) (с полным разбором
+корня) и [#2625](https://github.com/SagerNet/sing-box/issues/2625).
+
+Ветка вложенных групп закреплена отдельным тестом: на варианте из rc.7 он
+падает, на текущем проходит.
+
 #### v1.14.0-lx.25-rc.7
 
 ### 🐞 `selector`: `interrupt_exist_connections` не разрывал соединения
