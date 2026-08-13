@@ -100,7 +100,10 @@ func Run(ctx context.Context, options Options) error {
 		absStateDir = abs
 	}
 	control := &controller{
-		service:          startedService,
+		// serviceStats wraps the same startedService: the stats endpoint needs
+		// the traffic counters, which the narrow reloader interface does not
+		// expose (SPEC 065). Wrapping keeps reloader unit-testable as-is.
+		service:          observableService{StartedService: startedService},
 		store:            stateStore,
 		resources:        resourceStore,
 		validate:         execSelfCheck,
@@ -108,6 +111,7 @@ func Run(ctx context.Context, options Options) error {
 		infoResourcesDir: filepath.Join(absStateDir, "resources"),
 		infoTLS:          options.TLS,
 		startedAt:        time.Now(),
+		memory:           newMemoryCache(),
 	}
 	control.advertiseAddr = options.Listen.Advertise()
 

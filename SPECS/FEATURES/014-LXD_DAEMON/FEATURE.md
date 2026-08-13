@@ -48,6 +48,29 @@ data-plane лежит.
 активного и last-good, `last_error`, `interrupted_apply`), `POST /admin/enroll`
 (регистрация клиента по одноразовому коду — единственный маршрут до доверия).
 
+**Плоскость наблюдаемости (SPEC 065, тот же порт и тот же пин):** `GET
+/admin/memory` (heap/stack/sys/goroutines/GC + **два** RSS: `rss_current_bytes`
+и `rss_peak_bytes` — пик отдельно, потому что он не убывает и прячет утечку;
+числа сырые, в байтах, единица в имени поля; кеш 200 мс, `ReadMemStats` — это
+stop-the-world), `GET /admin/stats` (uptime **ядра**, `uplink_total`/
+`downlink_total`, активные соединения; **без ядра все поля `null` и статус
+200** — ручка описывает демон и обязана отвечать в `idle`/`fatal`), `GET
+/admin/logs?tail=N` (хвост `lxd.log` — единственный канал к логу **демона**:
+gRPC `SubscribeLog` несёт логи ядра, а строки `lxd:`, ошибки бутстрапа и паники
+идут в файл; дочитывает `lxd.log.1` после ротации), `GET /admin/pprof` (список
+со счётчиками; `block`/`mutex` показывают `enabled:false` и подсказку),
+`GET /admin/pprof/{name}` (whitelist из шести снимков — `heap`, `allocs`,
+`goroutine`, `threadcreate`, `block`, `mutex`; `debug=2` у `goroutine` = дамп
+стеков; неизвестное имя = 404 JSON, **не** индекс-страница pprof; `/symbol` и
+`/cmdline` не переносятся), `GET /admin/pprof/profile|trace?seconds=N`
+(запись за интервал: дефолт 30 с, потолок 120 — упирается в `IdleTimeout`
+сервера; параллельный запрос = 409), `POST /admin/pprof/block?rate=N` и
+`POST /admin/pprof/mutex?fraction=N` (включение/выключение; состояние живёт
+только в памяти процесса и не переживает рестарт). Отдельного debug-порта нет
+по построению: `experimental.debug.listen` ядра поднимает второй **никак не
+аутентифицированный** порт, а эти маршруты идут за клиентским сертификатом —
+тем же, что уже разрешает `apply`, то есть строго большую привилегию.
+
 **mTLS (`--tls`):** демон сам себе CA — на первом старте самоподписывает
 серверную пару (стабильный отпечаток в state-dir; IO-ошибка чтения пары =
 отказ старта, а не тихая перегенерация отпечатка); при нуле клиентов печатает
@@ -74,8 +97,10 @@ TUN, до логина); `install-user` — пользовательский Lau
 выполняет. Windows — заглушка.
 
 Дорожная карта ручек (не реализовано): confirm/dead-man, история версий
-(content-addressed), SRS-хранилище, reverse-proxy внутреннего Clash API,
-Linux/Windows-служба (systemd `LoadCredential=`), scoped-токены.
+(content-addressed), reverse-proxy внутреннего Clash API, Linux/Windows-служба
+(systemd `LoadCredential=`), scoped-токены. Слияние лога демона в gRPC-поток
+`SubscribeLog` (сейчас две ленты: ядро — по gRPC, демон — через
+`GET /admin/logs`).
 
 ## 3. Входы / Выходы
 
@@ -132,9 +157,13 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
 - Не супервизор самого себя: смерть процесса лечит systemd/launchd/SCM.
 - Не менеджер парка ядер: один демон — одно ядро.
 - Android/gomobile не затрагивает (другая точка входа).
-- Откат, mTLS и admin-плоскость реализованы (056/057); впереди по дорожной
-  карте — confirm/dead-man, история версий, SRS-хранилище, reverse-proxy
-  Clash API, Linux/Windows-служба, scoped-токены.
+- Откат, mTLS, admin-плоскость, хранилище ресурсов и плоскость наблюдаемости
+  реализованы (056/057/063/065); впереди по дорожной карте — confirm/dead-man,
+  история версий, reverse-proxy Clash API, Linux/Windows-служба, scoped-токены.
+- Плоскость наблюдаемости профилирует **процесс демона целиком**: ядро живёт
+  внутри того же процесса, и разделить «память ядра» и «память демона» она не
+  может — у Go нет per-subsystem учёта. На вопрос «какой outbound течёт»
+  отвечает heap-профиль с именами функций, а не числа `/admin/memory`.
 
 ## 7. Задачи фичи
 
@@ -143,6 +172,8 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
 | [055-LXD_DAEMON_SKELETON](../../TASKS/055-LXD_DAEMON_SKELETON/SPEC.md) | Скелет: сабкоманда, демон, канал поверх подмен инстанса, SIGHUP-reload, FATAL-живучесть; демо на macOS |
 | [056-LXD_APPLY_ROLLBACK](../../TASKS/056-LXD_APPLY_ROLLBACK/SPEC.md) | Admin-плоскость MVP: REST на том же порту, apply с валидацией-до-убийства (сабпроцесс), last-good, автооткат, старт без конфига (IDLE), рестарт из last-good; демо на macOS |
 | [057-LXD_MTLS_SERVICE](../../TASKS/057-LXD_MTLS_SERVICE/SPEC.md) | mTLS-канал (демон сам себе CA, приглашение `адрес#отпечаток#код`, одноразовый код), `client add/list/remove`, start/stop жизни ядра, память was_running, `--config-force`/`--run`, daemon.json как единственный источник connection-настроек + ротация лога; служба `--service=install` (system LaunchDaemon) / `install-user` (LaunchAgent без sudo) / `uninstall [--purge]`, пути абсолютизируются, каталоги создаются сами; device-verified на macOS (обе роли службы, крэш-цикл на cwd-relative пути пойман и починен) |
+| [063-LXD_RESOURCE_STORE](../../TASKS/063-LXD_RESOURCE_STORE/SPEC.md) | Вторая полезная нагрузка admin-плоскости: REST-CRUD над файловыми ресурсами (`.srs`, geo-базы), адресация по имени + sha256 для дифа, гуард ссылок (409 на занятое имя), санитизация имён; демо на macOS |
+| [065-LXD_OBSERVABILITY_PLANE](../../TASKS/065-LXD_OBSERVABILITY_PLANE/SPEC.md) | Диагностика демона: `/admin/memory` (два RSS — текущий и пик, кеш 200 мс), `/admin/stats` (uptime ядра, трафик, соединения; без ядра `null`, а не 503), `/admin/logs` (хвост `lxd.log` — лог **демона**, которого нет в gRPC-потоке), `/admin/pprof/*` (шесть снимков по whitelist, CPU/trace с потолком и 409, вкл/выкл block/mutex) — за тем же mTLS-пином, без отдельного debug-порта; живой прогон на macOS |
 
 ## 8. Особенности сопровождения
 

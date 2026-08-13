@@ -110,6 +110,13 @@ type controller struct {
 	infoTLS          bool
 	startedAt        time.Time
 
+	// Observability plane (SPEC 065). memory is nil-safe only through
+	// newController; profiles holds the mutable pprof state (in-flight
+	// recording, block/mutex rates) and is deliberately per-daemon, never
+	// persisted.
+	memory   *memoryCache
+	profiles profilePlane
+
 	applyAccess sync.Mutex
 	// closed is set (under applyAccess) by the daemon teardown: admin requests
 	// that were queued behind the mutex must not touch the service afterwards.

@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +44,15 @@ func (c *controller) adminHandler(secret string) http.Handler {
 		mux.HandleFunc("GET /admin/resources/{name}/content", c.handleResourceContent)
 		mux.HandleFunc("DELETE /admin/resources/{name}", c.handleResourceDelete)
 	}
+	// Observability plane (SPEC 065): the daemon's own diagnostics — memory,
+	// core traffic, its log, and pprof. Client-facing like the resource plane,
+	// NOT operator loopback: the whole point is reaching them REMOTELY, from
+	// the launcher, when a server misbehaves. An operator sitting on the host
+	// already has kill -QUIT and a local profiler.
+	mux.HandleFunc("GET /admin/memory", c.handleMemory)
+	mux.HandleFunc("GET /admin/stats", c.handleStats)
+	mux.HandleFunc("GET /admin/logs", c.handleLogs)
+	c.pprofHandler(mux)
 	// Operator routes serve the `client` CLI over loopback: they need the
 	// Bearer secret but NOT a client cert (the operator on the host has none).
 	// Registered on the loopback-only, secret-gated, cert-exempt path below.
@@ -455,6 +465,55 @@ func (c *controller) handleResourceDelete(writer http.ResponseWriter, request *h
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"removed": true})
+}
+
+func (c *controller) handleMemory(writer http.ResponseWriter, request *http.Request) {
+	writeJSON(writer, http.StatusOK, c.memory.Snapshot())
+}
+
+// handleStats reports the CORE's counters. Uptime here is the core's, not the
+// daemon's — the daemon's own is already in GET /admin/info.
+//
+// With no core up every field is null and the status stays 200: the endpoint
+// describes the daemon, and "there is no core" is exactly the answer a client
+// polls it for. A 503 would make it useless in the one state where the daemon
+// is the only thing left to ask.
+func (c *controller) handleStats(writer http.ResponseWriter, request *http.Request) {
+	var snapshot statsSnapshot
+	if source, ok := c.service.(statsSource); ok {
+		if uptime, uplink, downlink, connections, live := source.CoreStats(); live {
+			seconds := int64(uptime.Seconds())
+			snapshot = statsSnapshot{
+				CoreUptimeSeconds: &seconds,
+				UplinkTotal:       &uplink,
+				DownlinkTotal:     &downlink,
+				Connections:       &connections,
+			}
+		}
+	}
+	writeJSON(writer, http.StatusOK, snapshot)
+}
+
+// handleLogs serves the tail of the daemon's own log file — the one channel
+// the gRPC log stream cannot carry (see logtail.go).
+func (c *controller) handleLogs(writer http.ResponseWriter, request *http.Request) {
+	path := DefaultLogPath(c.infoStateDir)
+	requested, _ := strconv.Atoi(request.URL.Query().Get("tail"))
+	content, found, err := tailLog(path, clampTailLines(requested))
+	if err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if !found {
+		// Absent is a legitimate state, not a fault: in a terminal the daemon
+		// leaves the log on the operator's screen and writes no file at all.
+		writeJSON(writer, http.StatusNotFound, map[string]any{
+			"error": "no log file at " + path + " (the daemon logs to the terminal when not run as a service)",
+		})
+		return
+	}
+	writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = writer.Write([]byte(content))
 }
 
 func (c *controller) handleStatus(writer http.ResponseWriter, request *http.Request) {

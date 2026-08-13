@@ -151,6 +151,19 @@ log stays on the screen and no file is touched. Clients discover the log path
 and state dir from `GET /admin/info` — nothing needs to be hard-coded.
 Implemented on macOS and Linux; not on Windows (neither is the service).
 
+**Two log channels, and they carry different things.** The gRPC `SubscribeLog`
+stream carries the **core's** log — what the running instance emits. The
+daemon's own lines (`lxd: …`, bootstrap errors, runtime panics) go to
+stdout/stderr, i.e. into `lxd.log`. That difference matters precisely when
+things break: with no core up there is nothing to stream, and the reason sits
+in the file. `GET /admin/logs?tail=N` serves its tail over the network, so a
+remote client does not need shell access to the host:
+
+```bash
+curl -s --cert client.pem --key client.key -k \
+  "https://server:9091/admin/logs?tail=500"
+```
+
 ## 7. macOS — automatic installation
 
 The only platform with a full `--service`. Two scopes:
@@ -368,6 +381,76 @@ firewall) — [openwrt-vpn-ssid.md](openwrt-vpn-ssid.md).
 | `GET /admin/status` | `idle\|started\|fatal`, active/last-good sha, `last_error`, `interrupted_apply` |
 | `GET /admin/info` | identity card: version, state_dir, listen, tls, fingerprint, pid, uptime, log_path |
 | `POST /admin/enroll` | client registration with a one-time code |
+| `GET /admin/resources` · `PUT`/`GET`/`DELETE /admin/resources/{name}` | the files a config REFERS to (`.srs`, geo bases): list with sha256, upload, fetch, remove; 409 while the active or last-good config references the name |
+| `GET /admin/memory` | process memory: heap/stack/sys, goroutines, GC, and **two** RSS numbers — `rss_current_bytes` and `rss_peak_bytes` (raw bytes; the peak never decreases, so it is reported apart from the current size) |
+| `GET /admin/stats` | the **core's** uptime, `uplink_total`/`downlink_total`, active connections — all `null` (status still 200) when no core is up |
+| `GET /admin/logs?tail=N` | tail of `lxd.log` — the DAEMON's own log, which the gRPC log stream does not carry (that one carries the core's) |
+| `GET /admin/pprof` | profiles with counts; `block`/`mutex` report `enabled:false` until a rate is set |
+| `GET /admin/pprof/{name}` | `heap`, `allocs`, `goroutine`, `threadcreate`, `block`, `mutex` — served instantly from what the runtime already collects; `?debug=2` on `goroutine` is a stack dump |
+| `GET /admin/pprof/profile?seconds=N` | CPU profile — this one RECORDS for N seconds (default 30, max 120); a second concurrent request gets 409 |
+| `GET /admin/pprof/trace?seconds=N` | runtime trace, same recording rules |
+| `POST /admin/pprof/block?rate=N` · `POST /admin/pprof/mutex?fraction=N` | turn the two lock profiles on/off (`0` = off); not persisted, gone after a restart |
 
 SIGHUP to the daemon = re-read the config file (`--config-force`/`-c`) and
 apply it through the same validated, rollback-protected apply pipeline.
+
+## 11. Diagnosing a misbehaving daemon
+
+Everything below rides the normal control port behind the normal client
+certificate — there is no second, unauthenticated debug port to open. (The
+core's own `experimental.debug.listen` does open one, with no authentication
+whatsoever; do not use it on a server reachable from the network.)
+
+**Is anything wrong at all** — cheap enough to poll on a schedule:
+
+```bash
+curl -s .../admin/memory   # goroutines and heap over time tell you about leaks
+curl -s .../admin/stats    # core uptime, traffic totals, live connections
+```
+
+A steadily climbing `goroutines` or `heap_inuse_bytes` is the signature of a
+leak. Watch `rss_current_bytes` rather than `rss_peak_bytes`: the peak is a
+high-water mark and never comes back down.
+
+**The daemon is wedged** — the fastest answer, and it is instant:
+
+```bash
+curl -s ".../admin/pprof/goroutine?debug=2" > stacks.txt
+```
+
+Every goroutine with its stack, exactly like a panic dump: whatever is stuck is
+visible in it.
+
+**The daemon is eating CPU** — this one records, so it takes as long as you ask:
+
+```bash
+curl -s ".../admin/pprof/profile?seconds=30" > cpu.pb.gz
+go tool pprof -top sing-box cpu.pb.gz
+```
+
+**Memory is growing** — fetch a heap profile twice, an hour apart, and compare:
+
+```bash
+curl -s .../admin/pprof/heap > heap-1.pb.gz
+# … later …
+curl -s .../admin/pprof/heap > heap-2.pb.gz
+go tool pprof -base heap-1.pb.gz sing-box heap-2.pb.gz
+```
+
+Note that `heap`, `allocs`, `goroutine` and `threadcreate` are **snapshots**:
+the runtime keeps them continuously, so a GET returns in milliseconds and
+already covers the whole life of the process. Nothing has to be switched on in
+advance, and there is no background cost to leaving these routes available.
+
+**Suspected lock contention** — the one case that must be enabled first, since
+its accounting is not free:
+
+```bash
+curl -s -X POST ".../admin/pprof/mutex?fraction=100"
+# … let it run under load …
+curl -s .../admin/pprof/mutex > mutex.pb.gz
+curl -s -X POST ".../admin/pprof/mutex?fraction=0"     # turn it back off
+```
+
+Use the binary that is actually running as the pprof argument — symbolization
+happens on your machine, which is why the daemon does not serve `/symbol`.
