@@ -56,6 +56,9 @@ type Options struct {
 	LogMaxSizeMB   int
 	LogMaxBackups  int
 	LogMaxAgeHours int
+	// DHCPLeaseFiles overrides the client directory's lease paths (SPEC 066);
+	// empty = the platform defaults.
+	DHCPLeaseFiles []string
 }
 
 const (
@@ -91,6 +94,16 @@ func Run(ctx context.Context, options Options) error {
 	if err != nil {
 		return err
 	}
+	// Operator labels for the client directory (SPEC 066). A corrupt labels
+	// file must NOT keep the daemon down — the whole design principle here is
+	// that the control channel comes up even when the payload is broken. The
+	// failure is logged loudly and the daemon runs with no labels; a later
+	// PUT rewrites the file cleanly.
+	labels, err := newLabelStore(stateStore)
+	if err != nil {
+		log.Warn(E.Cause(err, "lxd: client labels disabled"))
+		labels = emptyLabelStore(stateStore)
+	}
 	startedService := daemon.NewStartedService(daemon.ServiceOptions{
 		Context:     ctx,
 		LogMaxLines: logMaxLines,
@@ -112,6 +125,7 @@ func Run(ctx context.Context, options Options) error {
 		infoTLS:          options.TLS,
 		startedAt:        time.Now(),
 		memory:           newMemoryCache(),
+		clientInfo:       newClientInfo(labels, options.DHCPLeaseFiles),
 	}
 	control.advertiseAddr = options.Listen.Advertise()
 

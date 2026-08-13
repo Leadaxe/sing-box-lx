@@ -117,6 +117,10 @@ type controller struct {
 	memory   *memoryCache
 	profiles profilePlane
 
+	// clientInfo is the IP → device directory (SPEC 066); nil until wired, and
+	// the routes are registered only when it is set.
+	clientInfo *clientInfo
+
 	applyAccess sync.Mutex
 	// closed is set (under applyAccess) by the daemon teardown: admin requests
 	// that were queued behind the mutex must not touch the service afterwards.

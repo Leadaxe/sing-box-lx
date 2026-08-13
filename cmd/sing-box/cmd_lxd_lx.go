@@ -150,6 +150,10 @@ func lxdMain(cmd *cobra.Command) error {
 		Secret:      fileConfig.Secret,
 		TLS:         fileConfig.TLS,
 		StateDir:    lxdStateDir,
+		// Unlike the log settings below, this is not gated on `installed`: the
+		// client directory serves a dev run too, and an absent list just means
+		// the platform defaults.
+		DHCPLeaseFiles: fileConfig.DHCPLeaseFiles,
 	}
 	// The rotated log file exists only for an installed daemon (daemon.json
 	// present): a fileless dev run keeps its terminal, and Run additionally

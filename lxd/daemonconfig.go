@@ -43,6 +43,12 @@ type DaemonConfig struct {
 	LogMaxSizeMB   int `json:"log_max_size_mb,omitempty"`
 	LogMaxBackups  int `json:"log_max_backups,omitempty"`
 	LogMaxAgeHours int `json:"log_max_age_hours,omitempty"`
+
+	// DHCPLeaseFiles overrides where the client directory (SPEC 066) looks for
+	// DHCP leases. Absent = the distro conventions in defaultLeaseFiles(),
+	// OpenWrt's /tmp/dhcp.leases first. Only needed for a server that keeps its
+	// leases somewhere unusual.
+	DHCPLeaseFiles []string `json:"dhcp_lease_files,omitempty"`
 }
 
 // ListenConfig is the control channel's bind spec. Two JSON forms, one

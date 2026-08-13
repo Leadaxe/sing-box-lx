@@ -390,9 +390,77 @@ firewall) — [openwrt-vpn-ssid.md](openwrt-vpn-ssid.md).
 | `GET /admin/pprof/profile?seconds=N` | CPU profile — this one RECORDS for N seconds (default 30, max 120); a second concurrent request gets 409 |
 | `GET /admin/pprof/trace?seconds=N` | runtime trace, same recording rules |
 | `POST /admin/pprof/block?rate=N` · `POST /admin/pprof/mutex?fraction=N` | turn the two lock profiles on/off (`0` = off); not persisted, gone after a restart |
+| `GET /admin/clients-info` | IP → device directory: `name`, `mac`, `ssid`, `iface`, `port`, `source` for every client the host knows about; answers with no core up |
+| `PUT`/`DELETE /admin/clients-info/labels/{key}` | operator's own name for a client; key is an IP or a MAC (400 otherwise) |
 
 SIGHUP to the daemon = re-read the config file (`--config-force`/`-c`) and
 apply it through the same validated, rollback-protected apply pipeline.
+
+## 10a. Naming the devices on the LAN
+
+A connection inspector showing `192.168.20.238:50558` is readable for one
+device and useless for fifteen. `GET /admin/clients-info` is the lookup table
+that turns those addresses into devices — a **directory, not a per-connection
+field**: names change on a scale of hours, so a client fetches the map once a
+minute and joins it against connection source addresses itself. The connection
+stream is untouched.
+
+```bash
+curl -s .../admin/clients-info
+```
+
+```json
+{
+  "clients": {
+    "192.168.20.238": {"name": "iPhone-Vasya", "mac": "be:ab:bd:ec:70:40",
+                       "ssid": "LexVPN2G", "iface": "phy0-ap1", "port": "",
+                       "source": "lease+arp+wireless"},
+    "192.168.20.51":  {"name": "NAS", "mac": "dc:a6:32:de:ad:be", "ssid": "",
+                       "iface": "br-lan", "port": "lan2",
+                       "source": "lease+arp+bridge"}
+  },
+  "sources": ["lease", "arp", "bridge", "wireless"],
+  "updated_unix": 1755087234
+}
+```
+
+Five providers fill the map, later ones refining earlier ones:
+
+| Provider | Fills | From |
+|---|---|---|
+| `lease` | `name`, `mac` | DHCP leases (`/tmp/dhcp.leases` and the usual distro paths) |
+| `arp` | `mac`, `iface` | `/proc/net/arp` — also covers clients with a static IP, which no lease knows |
+| `bridge` | `port` | `bridge fdb show` — which socket a wired client is plugged into |
+| `wireless` | `ssid`, `iface` | `ubus call hostapd.*` on OpenWrt; refines `br-lan` to the actual AP |
+| `label` | `name` | your own labels, final |
+
+`source` is part of every entry on purpose: when a device loses its name, the
+question is always which provider went quiet — `"source": "label"` alone says
+the DHCP lease expired. An **empty field is a state, not an error**: a wired
+client has no `ssid`, and off Linux the last three providers report nothing at
+all (the endpoint still answers, with leases and labels).
+
+`processInfo` cannot do this job: it looks a process up in the LOCAL socket
+table, and a LAN client's connection was opened by a different host entirely.
+
+Labels are yours and survive restarts (`<state_dir>/client-labels.json`):
+
+```bash
+curl -X PUT -d '{"name":"Living room TV"}' .../admin/clients-info/labels/192.168.20.77
+curl -X PUT -d '{"name":"Work laptop"}'   .../admin/clients-info/labels/be:ab:bd:ec:70:40
+curl -X DELETE .../admin/clients-info/labels/192.168.20.77
+```
+
+A MAC label follows the device across addresses — but modern phones randomize
+their MAC per network and change it on reconnect, so for those an **IP label
+plus a DHCP reservation is the stabler pairing**.
+
+The map is cached for 60 seconds; a label write takes effect immediately.
+Leases are looked for in the usual places, overridable in `daemon.json`:
+
+```json
+{"dhcp_lease_files": ["/etc/custom/leases"]}
+```
 
 ## 11. Diagnosing a misbehaving daemon
 

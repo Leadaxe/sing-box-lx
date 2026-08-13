@@ -20,6 +20,10 @@ import (
 
 const applyBodyLimit = 32 << 20
 
+// labelBodyLimit caps a client-label write. The body is one short name; the
+// limit exists so a stray large POST cannot be buffered.
+const labelBodyLimit = 4 << 10
+
 // adminHandler is the launcher-facing REST plane. It shares the listener with
 // the gRPC plane and must work with a plain stdlib HTTP client (the launcher's
 // win7 build cannot carry grpc-go). Bearer comparison is constant-time —
@@ -53,6 +57,15 @@ func (c *controller) adminHandler(secret string) http.Handler {
 	mux.HandleFunc("GET /admin/stats", c.handleStats)
 	mux.HandleFunc("GET /admin/logs", c.handleLogs)
 	c.pprofHandler(mux)
+	// Client identity directory (SPEC 066): IP → device, so the connection
+	// inspector can label traffic with a device name instead of a bare address.
+	// Client-facing for the same reason as the rest of this plane — the answer
+	// is needed by the launcher UI, remotely. Registered only when wired.
+	if c.clientInfo != nil {
+		mux.HandleFunc("GET /admin/clients-info", c.handleClientsInfo)
+		mux.HandleFunc("PUT /admin/clients-info/labels/{key}", c.handleClientLabelPut)
+		mux.HandleFunc("DELETE /admin/clients-info/labels/{key}", c.handleClientLabelDelete)
+	}
 	// Operator routes serve the `client` CLI over loopback: they need the
 	// Bearer secret but NOT a client cert (the operator on the host has none).
 	// Registered on the loopback-only, secret-gated, cert-exempt path below.
@@ -514,6 +527,56 @@ func (c *controller) handleLogs(writer http.ResponseWriter, request *http.Reques
 	}
 	writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = writer.Write([]byte(content))
+}
+
+// handleClientsInfo serves the IP → device directory (SPEC 066). It answers
+// whether or not a core is up: the map is built from the host's own DHCP,
+// neighbor and hostapd tables, not from the instance.
+func (c *controller) handleClientsInfo(writer http.ResponseWriter, request *http.Request) {
+	writeJSON(writer, http.StatusOK, c.clientInfo.Snapshot())
+}
+
+// handleClientLabelPut records the operator's name for a client. The key is an
+// IP or a MAC; a MAC label follows the device across addresses, an IP label is
+// stabler for phones that randomize their MAC.
+func (c *controller) handleClientLabelPut(writer http.ResponseWriter, request *http.Request) {
+	key, ok := normalizeLabelKey(request.PathValue("key"))
+	if !ok {
+		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": "label key must be an IP address or a MAC address"})
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(writer, request.Body, labelBodyLimit)).Decode(&body); err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		// Clearing a label is DELETE; an empty name here is a malformed write,
+		// not an implicit delete, so the client's intent is never guessed.
+		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": "name must not be empty; use DELETE to clear a label"})
+		return
+	}
+	if err := c.clientInfo.SetLabel(key, name); err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"key": key, "name": name})
+}
+
+func (c *controller) handleClientLabelDelete(writer http.ResponseWriter, request *http.Request) {
+	key, ok := normalizeLabelKey(request.PathValue("key"))
+	if !ok {
+		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": "label key must be an IP address or a MAC address"})
+		return
+	}
+	if err := c.clientInfo.DeleteLabel(key); err != nil {
+		writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"removed": true})
 }
 
 func (c *controller) handleStatus(writer http.ResponseWriter, request *http.Request) {
