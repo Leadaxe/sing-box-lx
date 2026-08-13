@@ -164,25 +164,28 @@ func (s *Selector) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 
 func (s *Selector) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	ctx = interrupt.ContextWithIsExternalConnection(ctx)
+	// lx: SPEC 064 — register the inbound conn, since the outbound socket never
+	// passes through Selector.DialContext on this path (the dialer handed to
+	// ConnectionManager is `selected`, not `s`). Wrapping before the branch also
+	// covers nested groups and handler outbounds. Approach from upstream PR #4285.
+	conn = s.interruptGroup.NewConn(conn, true)
 	selected := s.selected.Load()
 	if outboundHandler, isHandler := selected.(adapter.ConnectionHandler); isHandler {
 		outboundHandler.NewConnection(ctx, conn, metadata, onClose)
 	} else {
-		// lx: SPEC 064 — dial through the selector itself, so the socket lands in
-		// interruptGroup (selector.go DialContext). Passing `selected` here bypasses
-		// registration and leaves interrupt_exist_connections dead for inbound traffic.
-		s.connection.NewConnection(ctx, s, conn, metadata, onClose)
+		s.connection.NewConnection(ctx, selected, conn, metadata, onClose)
 	}
 }
 
 func (s *Selector) NewPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	ctx = interrupt.ContextWithIsExternalConnection(ctx)
+	// lx: SPEC 064 — see NewConnection; same registration gap on the UDP path.
+	conn = s.interruptGroup.NewSingPacketConn(conn, true)
 	selected := s.selected.Load()
 	if outboundHandler, isHandler := selected.(adapter.PacketConnectionHandler); isHandler {
 		outboundHandler.NewPacketConnection(ctx, conn, metadata, onClose)
 	} else {
-		// lx: SPEC 064 — see NewConnection; same registration gap on the UDP path.
-		s.connection.NewPacketConnection(ctx, s, conn, metadata, onClose)
+		s.connection.NewPacketConnection(ctx, selected, conn, metadata, onClose)
 	}
 }
 

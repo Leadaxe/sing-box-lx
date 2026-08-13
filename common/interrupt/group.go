@@ -5,6 +5,7 @@ import (
 	"net"
 	"sync"
 
+	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/x/list"
 )
 
@@ -34,6 +35,15 @@ func (g *Group) NewPacketConn(conn net.PacketConn, isExternal bool) net.PacketCo
 	defer g.access.Unlock()
 	item := g.connections.PushBack(&groupConnItem{conn, isExternal})
 	return &PacketConn{PacketConn: conn, group: g, element: item}
+}
+
+// lx: SPEC 064 — N.PacketConn variant, needed to register the inbound packet
+// conn in Selector.NewPacketConnection (ported from upstream PR #4285).
+func (g *Group) NewSingPacketConn(conn N.PacketConn, isExternal bool) N.PacketConn {
+	g.access.Lock()
+	defer g.access.Unlock()
+	item := g.connections.PushBack(&groupConnItem{conn, isExternal})
+	return &SingPacketConn{PacketConn: conn, group: g, element: item}
 }
 
 func (g *Group) Interrupt(interruptExternalConnections bool) {

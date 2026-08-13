@@ -180,6 +180,74 @@ func TestLxSelectorInterruptViaNewConnection(t *testing.T) {
 	}
 }
 
+// handlerNode — узел-ConnectionHandler: сам принимает соединение и держит его,
+// как это делают вложенные группы и protocol/dns. В selected-ветке A такой узел
+// получает conn напрямую, минуя ConnectionManager.
+type handlerNode struct {
+	probeNode
+	held atomic.Pointer[net.Conn]
+}
+
+func (n *handlerNode) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+	n.held.Store(&conn)
+}
+
+// Путь 3 — selected сам ConnectionHandler (вложенная группа / dns).
+// v1-фикс (selected → s) эту ветку не покрывал; обёртка входящего — покрывает.
+func TestLxSelectorInterruptHandlerBranch(t *testing.T) {
+	nodeA := &handlerNode{probeNode: probeNode{tag: "node-a"}}
+	nodeB := &probeNode{tag: "node-b"}
+
+	mgr := &stubOutboundManager{byTag: map[string]adapter.Outbound{
+		"node-a": nodeA,
+		"node-b": nodeB,
+	}}
+
+	ctx := context.Background()
+	ctx = service.ContextWith[adapter.OutboundManager](ctx, mgr)
+	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(logger.NOP()))
+
+	sel := &Selector{
+		Adapter:                      outbound.NewAdapter(C.TypeSelector, "sel", nil, []string{"node-a", "node-b"}),
+		ctx:                          ctx,
+		outbound:                     mgr,
+		connection:                   service.FromContext[adapter.ConnectionManager](ctx),
+		logger:                       logger.NOP(),
+		tags:                         []string{"node-a", "node-b"},
+		defaultTag:                   "node-a",
+		outbounds:                    map[string]adapter.Outbound{"node-a": nodeA, "node-b": nodeB},
+		interruptGroup:               interrupt.NewGroup(),
+		interruptExternalConnections: true,
+	}
+	if err := sel.Start(); err != nil {
+		t.Fatalf("Selector.Start: %v", err)
+	}
+
+	inboundClient, inboundServer := net.Pipe()
+	defer inboundClient.Close()
+
+	metadata := adapter.InboundContext{
+		Network:     N.NetworkTCP,
+		Destination: M.ParseSocksaddr("example.com:80"),
+	}
+	sel.NewConnection(context.Background(), inboundServer, metadata, func(it error) {})
+
+	if nodeA.held.Load() == nil {
+		t.Fatal("handler-узел не получил соединение — окружение нерабочее")
+	}
+
+	if !sel.SelectOutbound("node-b") {
+		t.Fatal("SelectOutbound вернул false")
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	if alive := connAlive(t, inboundClient); alive {
+		t.Error("ВЕТКА HANDLER-selected: соединение пережило переключение — interrupt НЕ сработал")
+	} else {
+		t.Log("ВЕТКА HANDLER-selected: соединение порвано, interrupt работает")
+	}
+}
+
 // connAlive проверяет, жив ли конец пайпа: на закрытом write вернёт ошибку.
 func connAlive(t *testing.T, c net.Conn) bool {
 	t.Helper()
