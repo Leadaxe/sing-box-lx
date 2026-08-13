@@ -3,7 +3,7 @@
 # sing-box-lx
 
 > **Тонкий downstream-форк [SagerNet/sing-box](https://github.com/SagerNet/sing-box).**
-> Небольшой набор клиентских фич поверх upstream — транспорт **XHTTP**, **AmneziaWG**, **MASQUE** (CONNECT-IP / Cloudflare WARP), пост-квантовый слой **VLESS `encryption`**, **DNS-группа серверов**, расширения **наблюдаемости** (CommandClient), балансировка нагрузки **round_robin** и **энергосбережение idle-suspend** — изолированы в lx-файлах, большинство за своим build-tag.
+> Небольшой набор клиентских фич поверх upstream — транспорт **XHTTP**, **AmneziaWG**, **MASQUE** (CONNECT-IP / Cloudflare WARP), пост-квантовый слой **VLESS `encryption`**, **DNS-группа серверов**, расширения **наблюдаемости** (CommandClient), балансировка нагрузки **round_robin**, **энергосбережение idle-suspend** и headless-демон **`lxd`** — изолированы в lx-файлах, большинство за своим build-tag.
 > Набор может расти, философия — нет: жить ребейзом на каждый upstream-тег, а не отдельной жизнью.
 
 > 📄 README самого upstream sing-box — **[на GitHub](https://github.com/SagerNet/sing-box/blob/main/README.md)** (всегда актуальный).
@@ -38,15 +38,17 @@
 
 | # | Фича | Что это | Статус |
 |---|------|---------|--------|
-| **XHTTP** | клиентский транспорт | Xray-совместимый «splithttp» (режимы `auto`/`packet-up`/`stream-up`/`stream-one`) поверх Reality/TLS/h2c | ✅ **проверен живыми Xray-серверами**: packet-up/auto (handshake + DNS + HTTPS + скачивание), а `stream-one` (путь `auto`+REALITY) **девайс-верифицирован** с `v1.14.0-lx.17` — SPECs [042](SPECS/TASKS/042-XHTTP_STREAM_GRPC_CONTENT_TYPE/SPEC.md)/[043](SPECS/TASKS/043-XHTTP_STREAM_ONE_PATH_PREFIX/SPEC.md) закрыли паритет gRPC Content-Type и 404 из-за срезанного слэша, вешавший режим |
+| **XHTTP** | клиентский транспорт | Xray-совместимый «splithttp» (режимы `auto`/`packet-up`/`stream-up`/`stream-one`) поверх Reality/TLS/h2c, с переиспользованием соединений `xmux` (SPEC 059) | ✅ **проверен живыми Xray-серверами**: packet-up/auto (handshake + DNS + HTTPS + скачивание), а `stream-one` (путь `auto`+REALITY) **девайс-верифицирован** с `v1.14.0-lx.17` — SPECs [042](SPECS/TASKS/042-XHTTP_STREAM_GRPC_CONTENT_TYPE/SPEC.md)/[043](SPECS/TASKS/043-XHTTP_STREAM_ONE_PATH_PREFIX/SPEC.md) закрыли паритет gRPC Content-Type и 404 из-за срезанного слэша, вешавший режим. `xmux` возвращает совместимость с Xray-серверами, чьи конфиги несут секцию `xmux` (раньше молча игнорировалась), и экономит полный хендшейк TCP+TLS на каждый поток |
 | **AmneziaWG** | клиентский endpoint | полный набор обфускации: мусорные пакеты `Jc/Jmin/Jmax`, мусорные заголовки `S1–S4`, магические заголовки `H1–H4` (числом или диапазоном), управляемые последовательности пакетов `I1–I5`, плюс WireSock-стиль `Id/Ip/Ib` — декларативный сахар над `I1` | ✅ собирается, проходит `check`; зависимость **активирована** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet-база + обфускация); **проверено живым AWG-сервером**: handshake + keepalive + трафик наружу. Паритет сверен с `amneziawg-tools` и netlink-контрактом ядерного модуля — реализованы все параметры обфускации, которые принимают официальные реализации ([SPEC 031](SPECS/TASKS/031-AWG_PARITY_AUDIT_ADVANCED_SECURITY/SPEC.md)) |
 | **Маскировка `id/ip/ib`** | сахар над AWG | WireSock-стиль: декларативная маскировка поверх `I1` — домен (`id`) + протокол (`ip`: `quic`/`dns`/`stun`/`sip`) + браузер (`ib`), ядро строит клиент-инициированную `I1`-приманку: `quic` = out-of-order фрагментированный Initial (i1+i2), `dns`/`stun`/`sip` = query/Binding-Request/INVITE | ✅ **`ip=quic` device-проверен на реальном LTE/WARP DPI** (~330 мс, упрощает Cloudflare WARP); `dns`/`stun`/`sip` собираются и проходят `check`, но режутся как класс протокола к WARP-edge — для других провайдеров |
 | **Наблюдаемость** (расширения CommandClient) | live-стрим для UI | нативные расширения libbox gRPC за `with_lx_command` (SPEC 014–018, 035, 037): `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `GetPool`, `GetDNSGroups`, `GetRunningConfig` (канонический JSON, из которого реально построен работающий box), плюс `Connection.detourList` (хвост detour'а отдельным полем, SPEC 017) и `SubscribeDNSQueries` — структурный live-поток DNS (домен, qtype, rcode `-1`=ошибка, CNAME-цепочка, привязка к процессу, `dnsServer`/`dnsServerType`/`outbound`, SPEC 018) | ✅ в стабильных тегах, потребляется Android-клиентом **LxBox**. Фича — [OBSERVABILITY](SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md) |
 | **round_robin** (балансировка нагрузки) | режим `urltest` | пул-балансировка на `urltest` за `with_lx_command` (для `GetPool`): `mode` `least_test` (дефолт) \| `round_robin`; `balancer{pool (дефолт 3), pool_tolerance (0=держать живые / >0=топ по задержке), sticky_hash}`. Sticky-ключ: пропущен/`[]` → дефолт `["process","domain"]`, `["none"]` → выкл; компоненты `process`/`domain`/`source_ip`/`dest_ip`/`dest_port`. Фиксированные слоты `slot[hash(key)%pool]` (FNV-64a), замена в слоте; `GetPool` отдаёт слоты | ✅ локально равномерно (10/10/10, sticky off); **device-verified end-to-end** на реальном мульти-нодовом пуле; rc.15 починил схлопывание `domain`-ключа (теперь читается `metadata.Domain`, переживающий resolve домен→IP, а не пустой `destination.Fqdn`) — на устройстве равномерность 0.27 → 0.95+. Фича — [URLTEST_BALANCE](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md), конфиг — [docs/.../urltest.md](docs/configuration/outbound/urltest.md) |
-| **MASQUE** (`type: masque`) | клиентский outbound | CONNECT-IP (RFC 9484) поверх HTTP/3 **или** HTTP/2 для **Cloudflare WARP** (SPEC 021): туннелирует целые IP-пакеты через userspace gVisor-стек; `profile` (`cloudflare`/`standard`), `network` (`h3`/`h2`), pinning ECDSA public key, idle-suspend + самовосстановление. h2 — ручной фреймер поверх `x/net/http2` (без доп. зависимостей); `connect-ip-go` вкопан | ✅ **device-verified на Wi-Fi и LTE** (`warp=on`, реальный трафик на `h3` и `h2`); на сетях, режущих входящий UDP:443, `h3`-handshake виснет — там `network: h2` (TCP:443) |
+| **MASQUE** (`type: masque`) | клиентский outbound | CONNECT-IP (RFC 9484) поверх HTTP/3 **или** HTTP/2 для **Cloudflare WARP** (SPEC 021): туннелирует целые IP-пакеты через userspace gVisor-стек; `profile` (`cloudflare`/`standard`), `vhttp` (`h3`/`h2`), стандартный блок `tls`, pinning ECDSA public key, idle-suspend + самовосстановление. h2 — ручной фреймер поверх `x/net/http2` (без доп. зависимостей), TLS через общий `common/tls`; `connect-ip-go` вкопан | ✅ **device-verified на Wi-Fi и LTE** (`warp=on`, реальный трафик на `h3` и `h2`); на сетях, режущих входящий UDP:443, `h3`-handshake виснет — там `vhttp: "h2"` (TCP:443). ⚠️ Форма конфига сменилась в SPEC 062: `network`→`vhttp`, плоские `sni`/`skip_cert_verify`/`fragment*` → блок `tls` (старая форма живёт с deprecation до `v1.14.0-lx.30`) |
 | **VLESS `encryption`** | поле outbound | пост-квантовый слой `mlkem768x25519plus` ВНУТРИ VLESS (SPEC 032) — под транспортом, независим от TLS/REALITY; spec-строка `mlkem768x25519plus.<native\|xorpub\|random>.<0rtt\|1rtt>….<key>`, `""`/`"none"` = выкл; только клиентская половина (порт из `starifly/sing-box` — тот же GPL-3.0 и та же upstream-база) | ✅ отгружено в `v1.14.0-lx.18`, **девайс-верифицировано**: +10 прежде мёртвых нод подписки (6/8 WS, 4/4 gRPC), остальные группы транспортов не сдвинулись. Фича — [VLESS_ENCRYPTION](SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) |
 | **DNS-группа серверов** | тип DNS-сервера | DNS-сервер `type: group` (SPEC 033/035): режимы `stable`/`fastest`/`parallel` как грани одной TTL-модели (раздельные TTL ошибки/победы, веер с гарантированным бюджетом, `survival`-видимость деградации); live-состояние через `GetDNSGroups` (за `with_lx_command`) | ✅ код + тесты + DoD, отгружено; адверсариальная ревизия (24 агента) чистая. Полевая проверка на устройстве — впереди. Фича — [DNS_GROUP](SPECS/FEATURES/013-DNS_GROUP/FEATURE.md) |
 | **Idle-suspend (энергия)** | route-опции | три уровня сна простаивающих WG/AWG-узлов — `route.lx_idle_suspend` / `lx_idle_suspend_reachable` / `lx_idle_teardown` (SPEC 020) плюс `urltest.passive_check` (SPEC 019): батарея, нагрев и RAM на мульти-нодовых мобильных профилях; тег `with_lx_idle_suspend` (зашит в Android AAR) | ✅ **девайс-верифицировано** (SPEC 020): recv-воркеры 16→0, RSS −31 %; гайд — [docs-lx/lx-energy.ru.md](docs-lx/lx-energy.ru.md). Фича — [ENERGY](SPECS/FEATURES/008-ENERGY/FEATURE.md) |
+| **Демон `lxd`** | headless-подкоманда | `sing-box lxd` держит ядро **внутри процесса, за управляющим каналом, который переживает любую смену конфига** (SPEC 055–057): gRPC + admin-REST на одном порту, `apply` с валидацией в сабпроцессе и автооткатом на last-good, mTLS (демон сам себе CA, клиенты регистрируются одноразовым кодом), установка службой, хранилище файловых ресурсов (`.srs`, geo), телеметрия хоста (CPU по ядрам, память, температура, диски, интерфейсы) и справочник «IP → устройство»; build-tag `with_lxd` | ✅ device-verified на macOS (enrollment, обе роли службы, откат). Руководство — [docs-lx/lxd-daemon.ru.md](docs-lx/lxd-daemon.ru.md); gRPC-справочник — [lxd-grpc-api.md](docs-lx/lxd-grpc-api.md). Фича — [LXD_DAEMON](SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md) |
+| **Реакция на отказы дайлов** | поведение `urltest` | группа `least_test` теперь реагирует на **боевые** отказы дайлов, а не только на результаты проб (SPEC 054): ошибка «путь мёртв» даёт узлу штраф и один fallback-дайл через лучшего кандидата; в аварийном режиме ранжирование идёт штрафы → задержка; штраф снимается только доказательством жизни | ✅ отгружено, потребитель 15-секундного netstack-дедлайна (SPEC 052). Фича — [URLTEST_BALANCE](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) |
 
 Подробные отчёты — в [`SPECS/TASKS/002-…`](SPECS/TASKS/002-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/TASKS/003-…`](SPECS/TASKS/003-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) и [`SPECS/TASKS/009-…`](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md)**.
 
@@ -69,10 +71,14 @@ make -f Makefile.lx lx-build
 Под капотом — стандартный `go build` с набором тегов (единственный источник истины — `make -f Makefile.lx lx-print-tags`):
 
 ```
-with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command
+with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command,with_lxd,with_openvpn,with_openconnect
 ```
 
-Это клиентский feature-set upstream **минус** серверные/нерелевантные теги — `with_acme` (серверный выпуск сертов), `with_tailscale`, `with_ccm`/`with_ocm` (AI-прокси) — **плюс** `with_purego` (CGO-free кросс-сборка, чтобы `with_naive_outbound`/cronet собирался при `CGO=0` на любом desktop-таргете, кроме Windows 7 / 32-бит legacy-сборки, где naive выкинут — у `cronet-go` нет windows/386) и наши фичи `with_xhttp` / `with_awg` / `with_lx_command`. Всё остальное — ровно как upstream.
+Это клиентский feature-set upstream **минус** серверные/нерелевантные теги — `with_acme` (серверный выпуск сертов), `with_tailscale`, `with_ccm`/`with_ocm` (AI-прокси) — **плюс** `with_purego` (CGO-free кросс-сборка, чтобы `with_naive_outbound`/cronet собирался при `CGO=0` на любом desktop-таргете, кроме Windows 7 / 32-бит legacy-сборки, где naive выкинут — у `cronet-go` нет windows/386), апстримные `with_openvpn` / `with_openconnect` и наши фичи `with_xhttp` / `with_awg` / `with_lx_command` / `with_lxd`. Всё остальное — ровно как upstream.
+
+Наши два тега независимы по замыслу (SPEC 067): **`with_lx_command`** несёт расширения командного протокола libbox (`URLTestOutbound`, `GetRules`, `GetGroups`, … — ими живёт LxBox), **`with_lxd`** — пакет `lxd/` и подкоманду демона. Legacy-сборка Windows 7 идёт **без** `with_lxd` (там нет ни службы Windows, ни ротации лога, так что подкоманда существовала бы без того, что делает её демоном), сохраняя RPC. В Android-AAR демона не было и раньше: gomobile собирает `experimental/libbox`, который `lxd/` не импортирует.
+
+Версия Go-тулчейна пиновится файлом **`go.version`** (SPEC 049) — его читает каждый шаг `setup-go` во всех `lx-*.yml`. Это намеренно **не** `go-version-file: go.mod`: тот даёт 1.24.x, а он убивает все quic-go-аутбаунды в Android-AAR (SPEC 044). Апстрим-версия, на которой стоит форк, — в **`upstream.version`**, бампается руками при re-graft.
 
 Проверка конфигов:
 
@@ -159,8 +165,10 @@ Outbound `masque` туннелирует целые IP-пакеты через *
   "server": "162.159.198.2",
   "server_port": 443,
   "profile": "cloudflare",       // cloudflare (WARP) | standard (RFC 9484)
-  "network": "h3",               // ТРАНСПОРТ: h3 (QUIC) | h2 (HTTP/2). НЕ tcp/udp — это network_list
-  "sni": "www.microsoft.com",    // domain-fronting; endpoint аутентифицируется пиннингом public key, не по SNI
+  "vhttp": "h3",                 // версия HTTP: h3 (QUIC) | h2 (HTTP/2). tcp/udp — это network_list
+  "tls": {
+    "server_name": "www.microsoft.com"   // domain-fronting; аутентификация — пиннинг public key, не SNI
+  },
   "private_key": "<base64 DER EC>",
   "public_key":  "<base64 DER PKIX>",
   "ip": "172.16.0.2/32", "ipv6": "2606:4700:110:...::/128"
@@ -169,7 +177,16 @@ Outbound `masque` туннелирует целые IP-пакеты через *
 
 Ключевой материал (`private_key`/`public_key`/`ip`/`ipv6`) берётся готовым из конфига — регистрацию
 устройства в WARP делает клиент. На сетях, режущих входящий UDP:443, `h3`-handshake виснет —
-переключите узел на `network: h2` (TCP:443). Полный справочник —
+переключите узел на `vhttp: "h2"` (TCP:443).
+
+> **Форма конфига сменилась в SPEC 062.** Версия HTTP — это `vhttp` (раньше было `network`,
+> которое везде означает обратное), а настройки TLS живут в стандартном блоке `tls`
+> (`sni` → `tls.server_name`, `skip_cert_verify` → `tls.insecure`, …). Старые поля ещё работают
+> и печатают deprecation до **v1.14.0-lx.30** — таблица миграции в
+> [docs-lx/lx-config.ru.md §4](docs-lx/lx-config.ru.md). SNI по умолчанию — `www.cloudflare.com`,
+> а не имя эндпоинта: именно имя MASQUE-эндпоинта в ClientHello и режет DPI.
+
+Полный справочник —
 [docs-lx/lx-config.ru.md §4](docs-lx/lx-config.ru.md) и [фича MASQUE_WARP](SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md) · [полная таблица](SPECS/TASKS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md).
 
 ### VLESS `encryption` (пост-квантовый слой)
@@ -196,6 +213,40 @@ DNS-сервер `type: group` оборачивает несколько upstrea
 веер с гарантированным бюджетом). Состояние отдаётся в UI через `GetDNSGroups`
 (за `with_lx_command`). См. [docs-lx/lx-config.ru.md §5](docs-lx/lx-config.ru.md)
 и [фичу DNS_GROUP](SPECS/FEATURES/013-DNS_GROUP/FEATURE.md).
+
+---
+
+## Демон `lxd`
+
+`sing-box lxd` (build-tag `with_lxd`) держит ядро **внутри процесса**, за управляющим каналом,
+который принадлежит демону, а не box-инстансу, — поэтому канал переживает любую смену конфига
+и доступен ровно тогда, когда data-plane лежит:
+
+```bash
+sing-box lxd --state-dir ./lxd-state -c config.json
+```
+
+- **Reload без потери канала.** `POST /admin/apply` кладёт кандидата на диск, валидирует его
+  **сабпроцессом** (крэш не утащит демон), подменяет инстанс и делает его *last-good* только
+  после успешного старта. Провал старта откатывается автоматически; прерванный apply
+  запоминается и не бутится никогда.
+- **Один порт — две плоскости.** `application/grpc` уходит в тот же `daemon.StartedService`,
+  которым живёт Android-линия; всё остальное — admin-REST (обычный stdlib-клиент, дружелюбен
+  к Windows 7).
+- **mTLS с регистрацией.** Демон сам себе CA и печатает приглашение `адрес#отпечаток#код`:
+  клиент пинит сервер, регистрируется одноразовым кодом и дальше опознаётся по сертификату.
+  Доверием управляют `client add / list / remove`, только с loopback.
+- **Наблюдаемость без второго порта** — `/admin/memory`, `/admin/stats`, `/admin/logs`,
+  `/admin/pprof/*`, плюс телеметрия **хоста** (`/admin/host`: CPU по ядрам, память считается
+  от *available*, а не от *free*, термозоны, диски, дескрипторы; `/admin/host/interfaces`)
+  и справочник **«IP → устройство»** для сетевого инспектора (`/admin/clients-info`).
+- **Установка службой** на macOS (`--service=install` / `install-user`); на Linux демон печатает
+  рецепт, а диск не трогает — это принцип, а не пробел (systemd и OpenWrt/procd).
+
+📖 Руководство оператора — **[docs-lx/lxd-daemon.ru.md](docs-lx/lxd-daemon.ru.md)**
+([EN](docs-lx/lxd-daemon.md)); gRPC-плоскость наблюдения для клиентов —
+[docs-lx/lxd-grpc-api.md](docs-lx/lxd-grpc-api.md); разбор под OpenWrt (VPN на отдельном SSID) —
+[docs-lx/openwrt-vpn-ssid.ru.md](docs-lx/openwrt-vpn-ssid.ru.md).
 
 ---
 
@@ -236,8 +287,12 @@ upstream  https://github.com/SagerNet/sing-box.git
 | `transport/v2rayxhttp/` | XHTTP-клиент (новый пакет) |
 | `transport/wireguard/device_awg.go` | AWG IpcSet-параметры (за `with_awg`) |
 | `submodules/wireguard-go` | submodule: merged-форк AmneziaWG-рантайма ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx)) |
-| `option/v2ray_xhttp.go`, `option/wireguard_awg.go` | опции фич |
+| `option/v2ray_xhttp.go`, `option/wireguard_awg.go`, `option/masque.go` | опции фич |
 | `include/v2rayxhttp.go` | регистрация транспорта за build-tag |
+| `submodules/gvisor` | submodule: пин-снапшот gVisor с нашим nil-guard'ом хендшейка ([Leadaxe/gvisor-lx](https://github.com/Leadaxe/gvisor-lx)) |
+| `submodules/sing-tun` | submodule: форк sing-tun с самолечением acceptLoop ([Leadaxe/sing-tun-lx](https://github.com/Leadaxe/sing-tun-lx)) |
+| `lxd/` | демон `lxd`: admin-REST, mTLS, установка службой, телеметрия хоста (за `with_lxd`) |
+| `go.version` / `upstream.version` | пин Go-тулчейна (его читает каждый `setup-go` в CI) / апстрим-версия, на которой стоит форк |
 
 Поиск всех правок upstream-файлов: `grep -rn "// lx"`.
 
@@ -261,6 +316,9 @@ upstream  https://github.com/SagerNet/sing-box.git
 | Конфиг фич | [docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md) |
 | Changelog форка | [docs-lx/lx-changelog.md](docs-lx/lx-changelog.md) — источник, из которого `lx-release.yml` берёт релиз-ноты |
 | Гайд по энергии | [docs-lx/lx-energy.ru.md](docs-lx/lx-energy.ru.md) — уровни idle-suspend, passive_check, настройка |
+| Руководство по `lxd` | [docs-lx/lxd-daemon.ru.md](docs-lx/lxd-daemon.ru.md) ([EN](docs-lx/lxd-daemon.md)) — установка, daemon.json, mTLS, admin REST |
+| gRPC-плоскость `lxd` | [docs-lx/lxd-grpc-api.md](docs-lx/lxd-grpc-api.md) — API наблюдаемости, которым говорят клиенты |
+| Разбор под OpenWrt | [docs-lx/openwrt-vpn-ssid.ru.md](docs-lx/openwrt-vpn-ssid.ru.md) ([EN](docs-lx/openwrt-vpn-ssid.md)) — VPN на отдельном SSID |
 | Референс-ядра | [docs-lx/lx-reference-cores.md](docs-lx/lx-reference-cores.md) — куда смотреть за ответом по wire-протоколам |
 | Релизный runbook | [docs-lx/lx-release-runbook.md](docs-lx/lx-release-runbook.md) — ритуал merge upstream + тегирования |
 | Spec Kit | [SPECS/](SPECS/) — [README](SPECS/README.md) · [CONSTITUTION](SPECS/CONSTITUTION.md) · [IMPLEMENTATION_PROMPT](SPECS/IMPLEMENTATION_PROMPT.md) |

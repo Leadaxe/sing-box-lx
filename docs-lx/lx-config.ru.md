@@ -1,5 +1,7 @@
 # sing-box-lx — конфигурация фич форка
 
+> 🌐 English version: **[lx-config.md](lx-config.md)**.
+
 `sing-box-lx` — это upstream [sing-box](https://github.com/SagerNet/sing-box) плюс небольшой набор **клиентских** фич, каждая за своим build-тегом:
 
 | Фича | Build-тег | Где живёт в конфиге | Входит в |
@@ -10,7 +12,7 @@
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `route.lx_idle_suspend` (+ `lx_idle_suspend_reachable`, `lx_idle_teardown`) | **только mobile** (AAR) |
 | **Группа DNS-серверов** (SPEC 033/035) | — (всегда в сборке) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (всегда в сборке) | `encryption` на `vless`-outbound | desktop + mobile |
-| **Демон `lxd`** (SPEC 055–057, 063–068) | `with_lxd` | не ключ конфига — подкоманда `sing-box lxd` + `<state-dir>/daemon.json`; см. [lxd-daemon-ru.md](lxd-daemon-ru.md) | desktop / сервер (**не** Win7, **не** AAR) |
+| **Демон `lxd`** (SPEC 055–057, 063–068) | `with_lxd` | не ключ конфига — подкоманда `sing-box lxd` + `<state-dir>/daemon.json`; см. [lxd-daemon.ru.md](lxd-daemon.ru.md) | desktop / сервер (**не** Win7, **не** AAR) |
 
 Собрать desktop/CLI бинарь: `make -f Makefile.lx lx-build` (выход `sing-box`, версия `…-lx.N`) — включает `with_xhttp` + `with_awg` (+ `with_lx_command`, `with_lxd`), но **не** `with_lx_idle_suspend`.
 Без тега фича отсутствует: `xhttp`-транспорт или AWG-поле отклоняется при загрузке с явной ошибкой (без молчаливого отката).
@@ -265,6 +267,29 @@ XHTTP (Xray «splithttp»/«xhttp») — это v2ray-транспорт, тун
 |------|-----|--------------|----------|
 | `sc_max_each_post_bytes` | string | `"1000000-1000000"` | `"min-max"` диапазон одного upload-POST (порог дробления) |
 | `sc_min_posts_interval_ms` | string | `"30-30"` | `"min-max"` анти-burst задержка между POST, в мс |
+
+**Переиспользование соединений — `xmux` (SPEC 059):**
+
+Без пула каждый XHTTP-поток платит полный хендшейк TCP + TLS (+ REALITY). `xmux` переиспользует
+HTTP-соединения — и, не менее важно, именно этого ждут Xray-серверы: секция `xmux`, приходящая
+из подписки, раньше молча игнорировалась, и клиент вёл себя не так, как задумал автор сервера.
+
+| Ключ | Тип | По умолчанию | Значение |
+|------|-----|--------------|----------|
+| `xmux.max_concurrency` | диапазон | `1-1` | сколько потоков делят одно HTTP-соединение. Взаимоисключается с `max_connections` |
+| `xmux.max_connections` | диапазон | без лимита | сколько соединений держит пул; пока пул ниже этого числа, новое соединение открывается всегда. Взаимоисключается с `max_concurrency` |
+| `xmux.c_max_reuse_times` | диапазон | без лимита | сколько раз соединение может быть выдано под новый поток до вывода из пула |
+| `xmux.h_max_request_times` | диапазон | `600-900` | сколько **HTTP-запросов** может пройти через соединение до вывода из пула. Считаются запросы, а не потоки — в `packet-up` один поток шлёт много upload-POST |
+| `xmux.h_max_reusable_secs` | диапазон | `1800-3000` | сколько секунд соединение остаётся пригодным к переиспользованию |
+| `xmux.h_keep_alive_period` | int (секунды) | `0` = дефолт | период HTTP/2 keep-alive пингов. Отрицательное — выключить. Здесь обычное число, не диапазон — как в референсе |
+
+Диапазоны принимаются в нашей строковой форме `"min-max"` (`"600-900"`), одним числом
+(`4` == `4-4`) или двухэлементным массивом (`[600, 900]`) — для конфигов, написанных под
+Xray / sing-box-extended. **Каждый диапазон разыгрывается один раз, а не на запрос**:
+`max_concurrency` и `max_connections` — при создании менеджера, лимиты переиспользования —
+при создании каждого соединения. Дефолты действуют и без секции `xmux` вовсе. Соединение,
+упершееся в лимит, выводится из пула, но **не рвётся, пока на нём живут потоки** — закрытие
+откладывается до последнего. Только клиент: серверная половина и секция `download` — вне объёма.
 
 **Принимаются, но игнорируются клиентом** (присутствуют, чтобы конфиг в форме inbound или симметричная ссылка не падали — клиент на них не реагирует): `sc_max_concurrent_posts`, `server_max_header_bytes`, `no_sse_header`, `sc_max_buffered_posts`, `sc_stream_up_server_secs`.
 
@@ -529,29 +554,52 @@ CONNECT-IP, а НЕ CONNECT-UDP/RFC 9298; и не путать с AWG-сахар
 `LX_TAGS`). Ключевой материал берётся готовым из конфига — регистрацию устройства (ECDSA-ключи,
 WARP enroll) делает клиент, не ядро.
 
-> ⚠️ **`network` здесь = ТРАНСПОРТ, а не L4.** На outbound `masque` поле `network` выбирает
-> `h3` (QUIC) или `h2` (HTTP/2); список tcp/udp — это `network_list`. Это обратно всем остальным
-> outbound — ошибочный `"network": "tcp"` падает с *invalid network*.
+> ⚠️ **Версия HTTP задаётся полем `vhttp`, а не `network`** (SPEC 062). В старых конфигах
+> `h3`/`h2` жили в `network` — обратно тому, что `network` значит на всех остальных outbound.
+> Старая форма ещё принимается и печатает deprecation; таблица миграции ниже.
 
 ### Поля (на outbound `masque`)
 
 | Ключ | Тип | По умолчанию | Смысл |
 |------|-----|--------------|-------|
 | `profile` | string | `cloudflare` | `cloudflare` (квирки WARP: `cf-connect-ip`, терпит отсутствие Extended-CONNECT settings, pinning на ECDSA public key, дефолты SNI/URI WARP) \| `standard` (строгий RFC 9484, для своего CONNECT-IP сервера) |
-| `network` | string | `h3` | **транспорт**: `h3` (CONNECT-IP over QUIC) \| `h2` (CONNECT-IP over HTTP/2, TCP:443). НЕ список L4 |
+| `vhttp` | string | `h3` | **версия HTTP, несущая CONNECT-IP**: `h3` (QUIC) \| `h2` (HTTP/2, TCP:443). Список tcp/udp — это `network_list`, как везде |
 | `private_key` | string (base64) | — | client EC private key, DER (`x509.ParseECPrivateKey`). Обязателен для `cloudflare` |
 | `public_key` | string (base64) | — | endpoint PKIX public key, DER (`x509.ParsePKIXPublicKey`, ECDSA). Обязателен для `cloudflare` |
 | `ip` | string (CIDR) | — | локальный IPv4 внутри туннеля; без маски → `/32`. Нужен хотя бы один из `ip`/`ipv6` |
 | `ipv6` | string (CIDR) | — | локальный IPv6 внутри туннеля; без маски → `/128` |
-| `sni` | string | по профилю¹ | TLS ServerName. Для WARP намеренно не совпадает с endpoint (domain-fronting); endpoint аутентифицируется пиннингом `public_key`, а не по SNI |
+| `tls` | object | — | **стандартный** блок TLS outbound'а — `server_name`, `insecure`, `disable_sni`, `fragment`, `record_fragment`, `fragment_fallback_delay`, … Тот же контейнер, что у всех TLS-outbound |
 | `uri` | string | по профилю¹ | URI запроса CONNECT-IP |
 | `mtu` | int | `1280` | MTU userspace-стека. На `h2` максимум `16000` (один IP-пакет = один HTTP/2 DATA-фрейм) |
-| `skip_cert_verify` | bool | `false` | отключить pinning публичного ключа (только для отладки — снимает единственную проверку) |
 | `idle_timeout` | duration | `5m` | suspend туннеля после простоя (освобождает gVisor-стек, насосы и QUIC keepalive); следующий dial поднимает заново. Отрицательное — выключить |
 | `keep_alive_period` | duration | `30s` | QUIC keepalive (h3). Отрицательное — выключить |
 | `network_list` | list | tcp+udp | L4-протоколы через туннель |
 
-¹ Дефолты `cloudflare`: `sni` = `consumer-masque.cloudflareclient.com`, `uri` = `https://cloudflareaccess.com`. У `standard` дефолтов нет (оба обязательны).
+¹ Дефолты `cloudflare`: `tls.server_name` = `www.cloudflare.com`, `uri` = `https://cloudflareaccess.com`. У `standard` дефолтов нет (оба обязательны).
+
+> **SNI по умолчанию — `www.cloudflare.com`, а не имя эндпоинта.** Имя MASQUE-эндпоинта
+> в ClientHello — ровно то, по чему его режет DPI; нейтральный популярный хост — нет.
+> Эндпоинт аутентифицируется пиннингом `public_key`, поэтому SNI волен отличаться.
+> `tls.disable_sni: true` не шлёт SNI вовсе — часть эндпоинтов отдаёт настоящий сертификат
+> только на ClientHello без него.
+
+### Миграция со старой формы (до SPEC 062)
+
+Обе формы принимаются до **v1.14.0-lx.30**; использование legacy-поля печатает одну строку
+deprecation на outbound. Если legacy-поле **противоречит** своей замене — это жёсткая ошибка,
+а не молчаливый выбор одного из двух.
+
+| Legacy (deprecated) | Актуальное |
+|---|---|
+| `network: "h3"` / `"h2"` | `vhttp: "h3"` / `"h2"` |
+| `sni` | `tls.server_name` |
+| `skip_cert_verify: true` | `tls.insecure: true` |
+| `fragment: true` | `tls.fragment: true` |
+| `fragment_fallback_delay` | `tls.fragment_fallback_delay` |
+| `record_fragment: true` | `tls.record_fragment: true` |
+
+> Legacy-булевы неотличимы «не задано» от явного `false`, поэтому переносится только
+> legacy-`true` — чтобы что-то выключить, пиши форму `tls`.
 
 ### Пример — WARP по h3 (QUIC)
 
@@ -562,8 +610,10 @@ WARP enroll) делает клиент, не ядро.
   "server": "162.159.198.2",
   "server_port": 443,
   "profile": "cloudflare",
-  "network": "h3",
-  "sni": "www.microsoft.com",       // любой нейтральный популярный хост (domain-fronting)
+  "vhttp": "h3",
+  "tls": {
+    "server_name": "www.microsoft.com"   // любой нейтральный популярный хост (domain-fronting)
+  },
   "private_key": "<base64 DER EC private key>",
   "public_key":  "<base64 DER PKIX public key>",
   "ip":   "172.16.0.2/32",
@@ -572,7 +622,11 @@ WARP enroll) делает клиент, не ядро.
 }
 ```
 
-Для `h2` (CONNECT-IP over TCP:443) меняется одно поле: `"network": "h2"`.
+Для `h2` (CONNECT-IP over TCP:443) меняется одно поле: `"vhttp": "h2"`. Путь `h2` гонит свой
+TLS через общий слой `common/tls`, поэтому получает фрагментацию ClientHello наравне с любым
+другим TLS-outbound — включая автоматическую под `detour`
+([§8](#8-автоматическая-фрагментация-clienthello-под-detour-spec-060)). `h3` этим не затронут:
+QUIC не несёт TLS поверх TCP вовсе.
 
 > Нужен блок `dns` верхнего уровня — userspace-стек работает на L3 и сам домены не резолвит;
 > outbound резолвит их через DNS-роутер перед dial.
@@ -770,7 +824,35 @@ make -f Makefile.lx lx-build   # включает with_lx_command (и with_xhttp
 
 ---
 
-## 8. Проверка и сборка
+## 8. Автоматическая фрагментация ClientHello под `detour` (SPEC 060)
+
+**Это не ключ конфига, а изменённый дефолт.** Когда TLS-over-TCP outbound (VLESS, trojan,
+vmess, anytls, shadowtls, http, masque `h2`, …) диалит **через `detour`**, `record_fragment`
+теперь по умолчанию **включён**.
+
+Почему: нижнее плечо пересылает наш ClientHello от своего имени, а PMTU за тем сервером может
+быть ниже размера ClientHello. ICMP *Fragmentation Needed* до нас не доходит — пакет просто
+исчезает, и снаружи это выглядит как `tls handshake: EOF` через 12–17 с. Воспроизводится голым
+`curl`, то есть причина в пути, а не в sing-box, — но обойти её можно только фрагментацией
+первой TLS-записи. Замер через сломанное плечо: без фрагментации ❌ отказ за 12 с;
+`fragment` ✅ 0.6 с; `record_fragment` ✅ **0.1 с**.
+
+Правила:
+
+- **Явное значение в конфиге всегда сильнее.** `fragment: true` не апгрейдится до
+  record-split — если выбран packet-split, это остаётся твоим выбором.
+- **Фрагментируется только хендшейк**, никогда не трафик после него. Постоянного налога нет.
+- **`h3`/QUIC не затронут** — там нет TLS поверх TCP, а quic-go и так держит Initial ниже
+  порога (masque `h3` через detour: 4/4 ОК).
+- Вложенные цепочки покрыты автоматически: у каждого звена свой `detour`.
+
+> ⚠️ **Известное ограничение:** явный `"record_fragment": false` неотличим от «не задано»,
+> поэтому под `detour` авто всё равно включится. Чтобы диалить через detour другим режимом,
+> ставь `"fragment": true`; способа «под detour вообще без фрагментации» сейчас нет.
+
+---
+
+## 9. Проверка и сборка
 
 ```sh
 git clone --recurse-submodules <repo>           # with_awg требует submodule
