@@ -14,9 +14,14 @@ import (
 // files is dearer than one ReadMemStats.
 //
 // 500 ms is an owner decision: it lets a UI poll at 2 Hz and get a fresh
-// snapshot every time. The cost is real — four /proc sweeps a second on a
-// router instead of one every two seconds — so if the daemon ever shows up as
-// a CPU consumer on a small box, this constant is the first place to look.
+// snapshot every time. That is four /proc sweeps a second on a router instead
+// of one every two seconds, and it was measured on a live MT7981 at 2 Hz: no
+// effect on CPU at all. Reading /proc copies a couple of kilobytes out of
+// kernel structures with no IO; the dearest reader is readMounts, which
+// statfs()es each mount, and a router has three or four.
+//
+// Should this ever go lower, measure again — and suspect the mount walk before
+// the /proc files.
 //
 // Note what the TTL does NOT change: percentages and rates are still deltas
 // between two actual samples, and IntervalSeconds reports that window. A
