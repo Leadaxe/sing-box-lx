@@ -101,6 +101,12 @@ jobs:
           if [ "${{ matrix.legacy_win7 }}" = "true" ]; then
             # cronet-go (with_naive_outbound) has no windows/386 build — drop it.
             TAGS="${TAGS/with_naive_outbound,/}"
+            # No daemon on the legacy build (owner decision): the Windows service
+            # installer is not implemented and neither is log rotation, so the
+            # subcommand would exist without the pieces that make it a daemon.
+            # with_lx_command STAYS — LxBox's URLTestOutbound/GetRules ride that
+            # tag and are unrelated to lxd/ (they live in daemon/, libbox/).
+            TAGS="${TAGS/with_lxd,/}"
           fi
           if [ "${{ matrix.no_naive }}" = "true" ]; then
             # No cronet for this target at all: drop naive AND its purego loader.

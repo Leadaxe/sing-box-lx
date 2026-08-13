@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — вторая полезная нагрузка admin-плоскости: REST-CRUD над файловыми ресурсами (`.srs` rule-set, geo-базы), на которые ссылается конфиг |
-| Статус | C (complete) — в дереве, юниты зелёные (`go test -tags with_lx_command ./lxd/`), бинарник `make -f Makefile.lx lx-build` собран, сквозное демо на macOS проведено живьём (реальный `.srs` → PUT → apply `type:local` → 409-гуард → освобождение → delete → санитизация) |
+| Статус | C (complete) — в дереве, юниты зелёные (`go test -tags with_lxd ./lxd/`), бинарник `make -f Makefile.lx lx-build` собран, сквозное демо на macOS проведено живьём (реальный `.srs` → PUT → apply `type:local` → 409-гуард → освобождение → delete → санитизация) |
 | Ветка | `lx` |
 | Base | `25f82921a` |
 | Связанные | [SPEC 056](../056-LXD_APPLY_ROLLBACK/SPEC.md) (apply/rollback/store), [SPEC 057](../057-LXD_MTLS_SERVICE/SPEC.md) (mTLS-пин, операторские routes), [FEATURE 014](../../FEATURES/014-LXD_DAEMON/FEATURE.md) |

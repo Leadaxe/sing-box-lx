@@ -131,12 +131,12 @@ package-private функции + build-теги, **без интерфейса**
 платформу). То есть буквально как `currentRSS()` / `peakRSS()` из SPEC 065:
 
 ```go
-// clientinfo_linux.go   //go:build with_lx_command && linux
+// clientinfo_linux.go   //go:build with_lxd && linux
 func enrichARP(clients map[string]*clientEntry) bool
 func enrichBridge(clients map[string]*clientEntry) bool
 func enrichWireless(clients map[string]*clientEntry) bool
 
-// clientinfo_stub.go    //go:build with_lx_command && !linux
+// clientinfo_stub.go    //go:build with_lxd && !linux
 func enrichARP(_ map[string]*clientEntry) bool      { return false }
 func enrichBridge(_ map[string]*clientEntry) bool   { return false }
 func enrichWireless(_ map[string]*clientEntry) bool { return false }
@@ -335,6 +335,6 @@ dnsmasq/odhcpd.
   loopback-only пути — как вся плоскость наблюдаемости.
 - [x] Ядро не поднято (`idle`/`fatal`) → ручка продолжает отвечать: она не
   зависит от инстанса вовсе.
-- [x] Сборка без тега `with_lx_command` и на не-Linux (стабы `enrichARP`,
+- [x] Сборка без тега `with_lxd` и на не-Linux (стабы `enrichARP`,
   `enrichBridge`, `enrichWireless`) не ломается; `gofmt` чист; юниты зелёные.
 - [x] Полевая проверка на живом OpenWrt-роутере с реальными Wi-Fi-клиентами.

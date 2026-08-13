@@ -1,4 +1,4 @@
-//go:build with_lx_command
+//go:build with_lxd
 
 // Package lxd hosts the sing-box core in-process behind a long-lived control
 // listener. The listener belongs to the daemon process, not to the box

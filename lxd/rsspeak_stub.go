@@ -1,4 +1,4 @@
-//go:build with_lx_command && !(linux || darwin)
+//go:build with_lxd && !(linux || darwin)
 
 package lxd
 

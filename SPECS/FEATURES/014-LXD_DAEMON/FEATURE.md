@@ -38,7 +38,7 @@ data-plane лежит.
 | `--purge` | флаг | с `--service=uninstall` — снести и state-каталог |
 | `--dry-run` | флаг | с `--service` — показать, что было бы сделано, не меняя ничего (на linux любое действие и так печать) |
 | `client add [--name] / list / remove <тег>` | подкоманды | регистрация/просмотр/отзыв доверенных клиентов у живого демона; операторские маршруты **loopback-only** (минт кода = выдача доверия, из сети недоступен) |
-| build-tag | `with_lx_command` | без тега сабкоманды нет |
+| build-tag | `with_lxd` | без тега сабкоманды нет |
 
 **Admin-плоскость (REST, тот же порт, что gRPC):** `POST /admin/apply`
 (тело = конфиг, 200 / 422 невалидный / 500 сбой или провал старта +`rolled_back`),
@@ -173,6 +173,7 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
 | [056-LXD_APPLY_ROLLBACK](../../TASKS/056-LXD_APPLY_ROLLBACK/SPEC.md) | Admin-плоскость MVP: REST на том же порту, apply с валидацией-до-убийства (сабпроцесс), last-good, автооткат, старт без конфига (IDLE), рестарт из last-good; демо на macOS |
 | [057-LXD_MTLS_SERVICE](../../TASKS/057-LXD_MTLS_SERVICE/SPEC.md) | mTLS-канал (демон сам себе CA, приглашение `адрес#отпечаток#код`, одноразовый код), `client add/list/remove`, start/stop жизни ядра, память was_running, `--config-force`/`--run`, daemon.json как единственный источник connection-настроек + ротация лога; служба `--service=install` (system LaunchDaemon) / `install-user` (LaunchAgent без sudo) / `uninstall [--purge]`, пути абсолютизируются, каталоги создаются сами; device-verified на macOS (обе роли службы, крэш-цикл на cwd-relative пути пойман и починен) |
 | [063-LXD_RESOURCE_STORE](../../TASKS/063-LXD_RESOURCE_STORE/SPEC.md) | Вторая полезная нагрузка admin-плоскости: REST-CRUD над файловыми ресурсами (`.srs`, geo-базы), адресация по имени + sha256 для дифа, гуард ссылок (409 на занятое имя), санитизация имён; демо на macOS |
+| [067-LXD_BUILD_TAG_SPLIT](../../TASKS/067-LXD_BUILD_TAG_SPLIT/SPEC.md) | Демон переехал на собственный build-tag `with_lxd`; `with_lx_command` остался за RPC SPEC 015 (`URLTestOutbound`, `GetRules`, `GetGroups` — их использует LxBox). Позволяет собрать сборку без демона, но с командными расширениями: так теперь собирается legacy-Win7. Логика не менялась — только теги и комментарии |
 | [066-LXD_CLIENT_IDENTITY](../../TASKS/066-LXD_CLIENT_IDENTITY/SPEC.md) | Справочник IP → устройство для сетевого инспектора: `GET /admin/clients-info` отдаёт `name`/`mac`/`ssid`/`iface`/`port`/`source` по каждому клиенту, метки оператора через `PUT`/`DELETE` (ключ = IP или MAC). Пять провайдеров с приоритетом по порядку вызова (`lease` → `arp` → `bridge` → `wireless` → `label`), платформенные через build-теги, ядро не трогается; кеш 60 с; живой прогон на macOS |
 | [065-LXD_OBSERVABILITY_PLANE](../../TASKS/065-LXD_OBSERVABILITY_PLANE/SPEC.md) | Диагностика демона: `/admin/memory` (два RSS — текущий и пик, кеш 200 мс), `/admin/stats` (uptime ядра, трафик, соединения; без ядра `null`, а не 503), `/admin/logs` (хвост `lxd.log` — лог **демона**, которого нет в gRPC-потоке), `/admin/pprof/*` (шесть снимков по whitelist, CPU/trace с потолком и 409, вкл/выкл block/mutex) — за тем же mTLS-пином, без отдельного debug-порта; живой прогон на macOS |
 
@@ -187,5 +188,9 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
   поверх, в admin-плоскости.
 - Сабкоманда регистрируется собственным файлом через `init()` — правок в
   апстримных файлах нет; при мержах апстрима конфликтов не даёт.
-- В релизных сборках тег `with_lx_command` уже включён; без тега пакет
-  собирается пустым (стаб) — обе стороны проверяются CI.
+- В релизных сборках тег `with_lxd` уже включён; без тега пакет собирается
+  пустым (стаб) — обе стороны проверяются CI. Тег **отдельный** от
+  `with_lx_command` (тот гейтит RPC SPEC 015 — `URLTestOutbound`, `GetRules`,
+  `GetGroups`, которыми живёт LxBox): снятие `with_lxd` убирает демон и
+  оставляет RPC рабочими. Так собирается legacy-Win7, где служба Windows не
+  реализована (SPEC 067).

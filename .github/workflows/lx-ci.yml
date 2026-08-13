@@ -69,11 +69,11 @@ jobs:
           # §zero-diff), so only those two packages drop the analyzer; every other
           # lx package keeps the full set.
           go vet \
-            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command" \
+            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd" \
             ./option/ ./constant/ ./transport/v2ray/ ./transport/v2rayxhttp/ \
             ./protocol/wireguard/ ./transport/wireguard/ ./lxd/
           go vet -unsafeptr=false \
-            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command" \
+            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd" \
             ./daemon/ ./experimental/libbox/
 
       - name: gofmt (lx-owned files only)
@@ -90,7 +90,7 @@ jobs:
           fi
           echo "OK: lx files are gofmt-clean"
 
-      # The lxd daemon package only exists behind with_lx_command — without an
+      # The lxd daemon package only exists behind with_lxd — without an
       # explicit test step its suite is "[no test files]" everywhere and rots
       # silently (review 055-057 finding). -race keeps the two-mutex controller
       # honest. cmd/sing-box rides along for the service-args regression tests.
@@ -101,7 +101,7 @@ jobs:
         run: |
           go test -race -count=1 \
             -ldflags "-checklinkname=0" \
-            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command" \
+            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd" \
             ./lxd/ ./cmd/sing-box/
 
   build-check:
@@ -118,8 +118,8 @@ jobs:
       - uses: actions/setup-go@v6
         with: { go-version: '${{ steps.go_pin.outputs.version }}' }
 
-      - name: Build (full lx — with_xhttp,with_awg,with_lx_command)
-        run: make -f Makefile.lx lx-build LX_TAGS="${BASE_TAGS},with_xhttp,with_awg,with_lx_command"
+      - name: Build (full lx — with_xhttp,with_awg,with_lx_command,with_lxd)
+        run: make -f Makefile.lx lx-build LX_TAGS="${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd"
 
       - name: Version
         run: ./sing-box version

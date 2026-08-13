@@ -1,4 +1,4 @@
-//go:build with_lx_command
+//go:build with_lxd
 
 package lxd
 

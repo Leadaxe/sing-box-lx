@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — третья полезная нагрузка admin-плоскости: диагностика самого демона (лог, метрики, профили) |
-| Статус | C (complete) — в дереве, юниты зелёные (`go test -tags with_lx_command ./lxd/ ./daemon/`), бинарник `make -f Makefile.lx lx-build` собран, живой прогон на macOS проведён: все девять маршрутов, `go tool pprof` открывает и heap, и CPU-профиль с символизацией |
+| Статус | C (complete) — в дереве, юниты зелёные (`go test -tags with_lxd ./lxd/ ./daemon/`), бинарник `make -f Makefile.lx lx-build` собран, живой прогон на macOS проведён: все девять маршрутов, `go tool pprof` открывает и heap, и CPU-профиль с символизацией |
 | Ветка | `lx` |
 | Base | `0fca919b5` |
 | Связанные | [SPEC 056](../056-LXD_APPLY_ROLLBACK/SPEC.md) (admin-плоскость), [SPEC 057](../057-LXD_MTLS_SERVICE/SPEC.md) (mTLS-пин), [SPEC 063](../063-LXD_RESOURCE_STORE/SPEC.md) (паттерн регистрации маршрутов), [FEATURE 014](../../FEATURES/014-LXD_DAEMON/FEATURE.md) |
@@ -354,7 +354,7 @@ X-Content-Type-Options: nosniff
   на операторском loopback-only пути — доверенный клиент достаёт их с
   не-loopback адреса. (`TestObservabilityRoutesArePinned`,
   `TestObservabilityRoutesReachableRemotely`)
-- [x] Юниты зелёные: `go test -tags with_lx_command ./lxd/ ./daemon/`; сборка
+- [x] Юниты зелёные: `go test -tags with_lxd ./lxd/ ./daemon/`; сборка
   без тега (`go build ./lxd/`) не ломается; `gofmt` чист.
 - [x] Сборка `make -f Makefile.lx lx-build`; живой прогон на macOS проведён.
 - [ ] Полевая проверка под настоящей службой (`--service=install`) с ротацией

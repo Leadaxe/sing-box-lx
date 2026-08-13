@@ -124,7 +124,7 @@ Rules worth knowing:
 | `client add [--name <label>]` | mint a one-time invite for a new client |
 | `client list` / `client remove <name-or-fingerprint>` | list / revoke trusted clients |
 
-The subcommand exists only in builds with the `with_lx_command` tag.
+The subcommand exists only in builds with the `with_lxd` tag.
 
 ## 5. Security: who authenticates with what
 
@@ -302,7 +302,7 @@ ssh root@HOST 'chmod +x /root/sing-box && /root/sing-box version'
 Use a **static** build (`GOOS=linux`, musl-compatible) and confirm it before
 running: `file sing-box` must say `statically linked` for the right arch — a
 glibc-dynamic binary will not start on a musl router. Check the `version` output
-for the `with_lx_command` tag — without it there is no `lxd`, no `client`.
+for the `with_lxd` tag — without it there is no `lxd`, no `client`.
 
 `/etc/init.d/sing-box-lxd`:
 
