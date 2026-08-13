@@ -288,7 +288,7 @@ VLESS, …) ставится заменой `outbounds`/`route` **одним app
 Заливка — по каналу демона, а не правкой файла на диске:
 
 ```bash
-curl -sk -X POST https://ДЕМОН:ПОРТ/admin/apply --cert … --key … -d @config.json
+curl -sk -X POST https://DAEMON:PORT/admin/apply --cert … --key … -d @config.json
 ```
 
 (аутентификация — как в демон-гайде §5/§9; локально с роутера — по loopback).

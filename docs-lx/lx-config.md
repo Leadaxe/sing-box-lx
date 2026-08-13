@@ -40,8 +40,6 @@ timelines and the recommended mobile configuration live in
 
 > ⚠️ All keys/UUIDs below are **placeholders**. Never commit real private keys / pre-shared keys to a repository.
 
-> 🌐 Русская версия: **[lx-config.ru.md](lx-config.ru.md)**.
-
 ---
 
 ## 0. Every field at a glance (exhaustive example)
