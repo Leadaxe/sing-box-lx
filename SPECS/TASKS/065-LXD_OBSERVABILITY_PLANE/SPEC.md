@@ -312,9 +312,14 @@ X-Content-Type-Options: nosniff
   (`TestMemoryEndpointReportsRawBytes`, `TestMemoryCacheThrottles`,
   `TestMemoryCacheNilSafe`; живьём — все десять полей на работающем демоне)
 - [x] `rss_current_bytes` на linux читается из `/proc/self/statm`; на
-  darwin/windows = `-1`. `rss_peak_bytes` ≥ `rss_current_bytes` там, где оба
-  реальны. (`TestMemoryRSSFieldsHonest`; **живьём на macOS**: `rss_current_bytes:
-  -1`, `rss_peak_bytes: 30511104` — расхождение по платформе подтверждено)
+  darwin/windows = `-1`; оба числа описывают один процесс.
+  (`TestMemoryRSSFieldsHonest`; **живьём на macOS**: `rss_current_bytes: -1`,
+  `rss_peak_bytes: 30511104` — расхождение по платформе подтверждено)
+  ⚠️ Инвариант «peak ≥ current» **неверен**: числа берутся из разных источников
+  неатомарно (`ru_maxrss` обновляется лениво, `/proc/self/statm` мгновенный), и
+  на растущем процессе current обгоняет peak на несколько страниц. Первая
+  версия теста это утверждала и упала в CI на linux (`peak 121065472 <
+  current 121446400`); на macOS не ловилось, потому что там current = `-1`.
 - [x] `GET /admin/stats` при живом ядре → трафик ненулевой после прогона;
   `core_uptime_seconds` растёт. (`TestStatsWithLiveCore`; **живьём**: после
   запроса через mixed-inbound `uplink_total: 74`, `downlink_total: 874`)
