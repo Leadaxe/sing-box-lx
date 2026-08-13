@@ -54,7 +54,7 @@ func unameRelease() string {
 	if syscall.Uname(&buffer) != nil {
 		return ""
 	}
-	return int8ToString(buffer.Release[:])
+	return utsString(buffer.Release[:])
 }
 
 func firstNonEmptyFile(paths ...string) string {
@@ -416,7 +416,13 @@ func parseProcNetDev(source interface{ Read([]byte) (int, error) }) []rawInterfa
 	return interfaces
 }
 
-func int8ToString(values []int8) string {
+// utsString trims a NUL-terminated fixed-size uname field to a Go string.
+//
+// Generic over the element type on purpose: syscall.Utsname's arrays are
+// []int8 on arm64 and amd64 but []uint8 on 32-bit arm, so a signature naming
+// either one compiles on some Linux targets and not others. That asymmetry
+// broke the linux-armv7 release build.
+func utsString[T ~int8 | ~uint8](values []T) string {
 	buffer := make([]byte, 0, len(values))
 	for _, value := range values {
 		if value == 0 {

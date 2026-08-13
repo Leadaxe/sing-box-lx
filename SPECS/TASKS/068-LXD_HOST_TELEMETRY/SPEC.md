@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — телеметрия **хоста**, на котором крутится демон: CPU, память, температура, диски, дескрипторы и сетевые интерфейсы |
-| Статус | C (complete) — в дереве, юниты зелёные под `-race` (включая Linux-парсеры на подставном `/proc`), живой прогон на macOS: обе ручки, дельты, кеш. Полевая проверка на OpenWrt открыта |
+| Статус | C (complete) — **DEVICE-VERIFIED**: полевой прогон на живом OpenWrt-роутере (MT7981) подтверждён владельцем 2026-08-13. Юниты зелёные под `-race` (включая Linux-парсеры на подставном `/proc`), живой прогон на macOS |
 | Ветка | `lx` |
 | Base | `b291fd5fc` |
 | Связанные | [SPEC 065](../065-LXD_OBSERVABILITY_PLANE/SPEC.md) (плоскость наблюдаемости — тот же mux, тот же пин, тот же паттерн кеша; `/admin/memory` про **процесс**, эта спека про **хост**), [SPEC 066](../066-LXD_CLIENT_IDENTITY/SPEC.md) (тот же приём платформенных провайдеров и «пустое поле = состояние»), [SPEC 067](../067-LXD_BUILD_TAG_SPLIT/SPEC.md) (тег `with_lxd`), [FEATURE 014](../../FEATURES/014-LXD_DAEMON/FEATURE.md) |
@@ -301,6 +301,14 @@ func readInterfaces() []rawInterface
 переехал в общий файл и пополнился darwin-именами (`devfs`, `ctlfs`,
 `fdesc`).
 
+**`syscall.Utsname` разной знаковости на ARM.** `Release` — это `[]int8` на
+arm64 и amd64, но `[]uint8` на 32-битном arm. Хелпер с сигнатурой под один из
+типов компилируется на части Linux-целей и падает на остальных: релизная
+сборка `linux-armv7` слегла именно на этом, пройдя при этом на arm64. Хелпер
+сделан дженериком `[T ~int8 | ~uint8]`. Урок общий: у `syscall`-структур
+типы полей зависят от архитектуры, и одной кросс-сборки под arm64 мало —
+проверять надо всю релизную матрицу.
+
 **`runProvider` переехал из `clientinfo_linux.go` в общий
 `hostinfo_exec.go`.** Он понадобился darwin-читателю памяти (`vm_stat`), а
 второй копии быть не должно — дисциплина запуска внешних процессов (LookPath,
@@ -323,10 +331,10 @@ func readInterfaces() []rawInterface
 
 ## Acceptance
 
-- [ ] `GET /admin/host` на живом OpenWrt возвращает непустые `cpu`, `memory`,
+- [x] `GET /admin/host` на живом OpenWrt возвращает непустые `cpu`, `memory`,
   `disk`, `fd`; `model` совпадает с `cat /tmp/sysinfo/model`, `uptime_seconds`
   — с первым числом `/proc/uptime`.
-- [ ] `per_core_percent` длиной ровно `cores`; при нагрузке на одно ядро
+- [x] `per_core_percent` длиной ровно `cores`; при нагрузке на одно ядро
   (`while :; do :; done`) в массиве видно одно высокое значение, а не ровное
   среднее.
 - [x] Первый запрос после старта демона: `usage_percent: null`,
@@ -334,18 +342,18 @@ func readInterfaces() []rawInterface
 - [x] `memory.used_percent` считается от `available_bytes`; при заполненном
   page cache процент **не** скачет к 100 (проверяется на подставном
   `/proc/meminfo` с большим `Cached`).
-- [ ] `thermal.zones` совпадает с `for z in /sys/class/thermal/thermal_zone*/;
+- [x] `thermal.zones` совпадает с `for z in /sys/class/thermal/thermal_zone*/;
   do cat $z/type $z/temp; done`; `max_celsius` = максимум по массиву.
   Термозон нет → `thermal: null` (не пустой массив).
-- [ ] `disk.mounts` не содержит псевдо-ФС (`proc`, `sysfs`, `cgroup`,
+- [x] `disk.mounts` не содержит псевдо-ФС (`proc`, `sysfs`, `cgroup`,
   `devtmpfs`, `debugfs`); `holds_state_dir: true` стоит ровно на одной записи
   и совпадает с разделом из `df <state-dir>`.
-- [ ] `max_used_percent` игнорирует read-only ФС: на OpenWrt со `squashfs` в
+- [x] `max_used_percent` игнорирует read-only ФС: на OpenWrt со `squashfs` в
   корне (100%) сводка показывает максимум по записываемым, а флаг `read_only`
   у корня выставлен.
-- [ ] `fd.open` растёт при открытии соединений и возвращается назад;
+- [x] `fd.open` растёт при открытии соединений и возвращается назад;
   `fd.limit` совпадает с `ulimit -n` процесса.
-- [ ] `GET /admin/host/interfaces` перечисляет **все** интерфейсы, включая
+- [x] `GET /admin/host/interfaces` перечисляет **все** интерфейсы, включая
   `lo` и down; счётчики совпадают с `/proc/net/dev`.
 - [x] Скорости: при заведомой нагрузке `rx_bytes_per_second` ненулевой и
   правдоподобен; на простаивающем интерфейсе — ноль, а не мусор.
