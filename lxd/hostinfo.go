@@ -11,9 +11,18 @@ import (
 // hostInfoTTL throttles the /proc (or sysctl) reads behind GET /admin/host.
 // Shorter than the client directory's 60 s because these numbers change
 // constantly, longer than /admin/memory's 200 ms because reading a dozen
-// files is dearer than one ReadMemStats — and a client polling for a graph
-// asks often.
-const hostInfoTTL = 2 * time.Second
+// files is dearer than one ReadMemStats.
+//
+// 500 ms is an owner decision: it lets a UI poll at 2 Hz and get a fresh
+// snapshot every time. The cost is real — four /proc sweeps a second on a
+// router instead of one every two seconds — so if the daemon ever shows up as
+// a CPU consumer on a small box, this constant is the first place to look.
+//
+// Note what the TTL does NOT change: percentages and rates are still deltas
+// between two actual samples, and IntervalSeconds reports that window. A
+// shorter window means a noisier number, not a more accurate one — a client
+// after a smooth graph should average, not poll harder.
+const hostInfoTTL = 500 * time.Millisecond
 
 // hostSnapshot is GET /admin/host: the machine the daemon runs ON, as opposed
 // to /admin/memory (SPEC 065), which describes the daemon process itself.

@@ -490,6 +490,12 @@ of `/proc/stat`, so the first request after startup reports `null` with
 statement. `interval_seconds` tells you the window each percentage describes:
 12.4% over five seconds and over an hour mean different things.
 
+**Cached for 500 ms.** You can poll these up to twice a second and get a fresh
+answer every time; polling harder just returns the same snapshot with the same
+`updated_unix`. Remember that percentages are deltas between two samples: a
+shorter window makes the number **noisier**, not more accurate, so average on
+the client rather than polling faster.
+
 **Counters and rates both.** Interfaces report raw `rx_bytes` alongside
 `rx_bytes_per_second`: a counter survives restarts and gaps, a rate is
 convenient but lies across them. Graph the counter, read the rate.
