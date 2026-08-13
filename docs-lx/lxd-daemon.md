@@ -1,8 +1,9 @@
 # The lxd daemon: what it is and how to set it up
 
+> 🌐 Русская версия: **[lxd-daemon.ru.md](lxd-daemon.ru.md)**.
+
 Operator's guide: what `sing-box lxd` is, why it exists, how it is installed on
-macOS, and the setup approaches on Linux. Русская версия —
-[lxd-daemon-ru.md](lxd-daemon-ru.md).
+macOS, and the setup approaches on Linux.
 
 ---
 
@@ -394,6 +395,14 @@ firewall) — [openwrt-vpn-ssid.md](openwrt-vpn-ssid.md).
 | `PUT`/`DELETE /admin/clients-info/labels/{key}` | operator's own name for a client; key is an IP or a MAC (400 otherwise) |
 | `GET /admin/host` | the MACHINE the daemon runs on: CPU (per-core), memory, thermal zones, disks, file descriptors — as opposed to `/admin/memory`, which is the process |
 | `GET /admin/host/interfaces` | every network interface with raw counters and derived rates |
+
+**Operator routes** — `GET /admin/clients`, `POST /admin/client-code`,
+`POST /admin/client-remove`. These are the wire behind the `client list / add /
+remove` subcommands and are deliberately **not** part of the remote surface:
+they are served on loopback only, require the Bearer secret, and — uniquely —
+do **not** require a client certificate, because the operator standing on the
+host has none. Minting an invite code is handing out trust, so it must not be
+reachable from the network.
 
 SIGHUP to the daemon = re-read the config file (`--config-force`/`-c`) and
 apply it through the same validated, rollback-protected apply pipeline.

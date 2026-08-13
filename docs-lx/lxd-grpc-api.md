@@ -1,5 +1,7 @@
 # lxd gRPC API — observability for client tooling
 
+> 🌐 Русская версия: **[lxd-grpc-api.ru.md](lxd-grpc-api.ru.md)**.
+
 How a client (the launcher, a profiler, any diagnostic tool) reads live state out
 of a `sing-box lxd` daemon over gRPC.
 
@@ -11,6 +13,10 @@ for.
 
 For connecting to the daemon (mTLS, client certificates, admin REST) see
 [lxd-daemon.md](lxd-daemon.md).
+
+> ⚠️ **The proto file lives in `daemon/`, not in `lxd/`.** The daemon serves the
+> same `StartedService` the Android line speaks, which is why anything added for
+> mobile observability reaches a server for free, and vice versa.
 
 ## Scope
 
@@ -24,9 +30,9 @@ Tailscale, OpenVPN, OpenConnect and USB-IP RPCs — dozens of them, none related
 observing traffic. They exist, they are out of scope here; read the proto.
 
 REST endpoints for profiling the **daemon process itself** (memory, pprof, its own
-log) are a separate plane on the admin port — see
-[SPEC 065](../SPECS/TASKS/065-LXD_OBSERVABILITY_PLANE/SPEC.md). Not implemented at
-the time of writing.
+log) are a separate plane on the admin port — `/admin/memory`, `/admin/stats`,
+`/admin/logs`, `/admin/pprof/*`, plus host telemetry in `/admin/host`. They are
+documented in [lxd-daemon.md](lxd-daemon.md) (SPEC 065, 068).
 
 ## Build-tag gating
 
@@ -49,8 +55,8 @@ Everything else in this document — `SubscribeConnections`, `SubscribeStatus`,
 
 **`interval` is nanoseconds.** Every `Subscribe*Request.interval` is a
 `time.Duration` count, following the sing-box/libbox convention. Values below the
-200 ms floor are clamped and logged as a warning
-([daemon/started_service.go:427](../daemon/started_service.go)).
+200 ms floor are clamped and logged as a warning (`minSubscribeInterval` /
+`clampSubscribeInterval` in [daemon/started_service.go](../daemon/started_service.go)).
 
 > This is not hypothetical. The launcher once sent `1000`, meaning milliseconds;
 > the server read 1 µs and the ticker burned a full CPU core. Fixed in

@@ -15,6 +15,19 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
+> **Language.** Unlike the rest of `docs-lx/`, this file has no `.ru.md` twin, and its
+> entries are written in Russian. Two reasons: `lx-release.yml` extracts a section from
+> **this exact path** as the pre-release body, so a split would need the CI contract
+> changed, and translating years of history would rewrite the record of what was said at
+> the time. User-facing notes are bilingual where it counts — in
+> [`releases/`](releases/), which is what a reader of a release page actually sees.
+>
+> **Язык.** В отличие от остального `docs-lx/`, у этого файла нет пары `.ru.md`,
+> а записи ведутся по-русски: `lx-release.yml` берёт секцию **именно отсюда** в тело
+> пререлиза, а перевод многолетней истории переписал бы запись о том, что говорилось
+> тогда. Пользовательские ноты билингвальны там, где это важно, — в
+> [`releases/`](releases/).
+
 #### v1.14.0-lx.26
 
 ### 🔧 `lxd`: демон отделён от командных RPC — новый build-tag `with_lxd`

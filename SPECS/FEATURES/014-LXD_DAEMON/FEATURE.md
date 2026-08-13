@@ -7,7 +7,7 @@ gRPC-канал принадлежит процессу — и потому пе
 
 📖 Практика установки и настройки — руководство оператора:
 [docs-lx/lxd-daemon.md](../../../docs-lx/lxd-daemon.md)
-([RU](../../../docs-lx/lxd-daemon-ru.md)).
+([RU](../../../docs-lx/lxd-daemon.ru.md)).
 
 ## 1. Назначение
 

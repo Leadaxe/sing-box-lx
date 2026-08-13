@@ -2,129 +2,134 @@
 icon: material/compass-outline
 ---
 
-# Куда смотреть за ответом
+# Where to look for the answer
 
-Форк живёт в чужой экосистеме: протоколы задаёт Xray, а рядом существуют
-клиенты, которые уже решили ту же задачу. Когда узел работает в другом
-приложении и не работает у нас, ответ почти всегда лежит в чужом
-исходнике — быстрее найти его там, чем выводить из первых принципов.
+> 🌐 Русская версия: **[lx-reference-cores.ru.md](lx-reference-cores.ru.md)**.
 
-Эта страница — карта: какие проекты чем полезны, где у каждого лежит
-интересующее нас, и как проверять их **актуальную** версию, а не копию,
-скачанную полгода назад.
+The fork lives inside someone else's ecosystem: Xray defines the protocols, and
+next door there are clients that already solved the same problem. When a node
+works in another app and not in ours, the answer is almost always in someone
+else's source — finding it there is faster than deriving it from first
+principles.
 
-!!! warning "Не держите клоны рядом с деревом"
-    Копия протухает молча, и сверка с устаревшим кодом хуже, чем её
-    отсутствие: вывод выглядит обоснованным, но опирается на то, чего
-    в проекте уже нет. Клонируйте на время разбора и удаляйте после.
+This page is a map: which projects are useful for what, where each one keeps the
+part we care about, and how to check their **current** version rather than a
+copy downloaded six months ago.
 
-## Эталоны протокола
+!!! warning "Don't keep clones next to the tree"
+    A copy goes stale silently, and comparing against outdated code is worse
+    than not comparing at all: the conclusion looks well-founded while resting
+    on something the project no longer contains. Clone for the investigation,
+    delete afterwards.
 
-### Xray-core — нормативный источник
+## Protocol references
+
+### Xray-core — the normative source
 
 <https://github.com/XTLS/Xray-core>
 
-Контракт XHTTP, VLESS, REALITY задаёт он. Если наше поведение расходится
-с Xray, правы, как правило, они.
+It defines the contract for XHTTP, VLESS and REALITY. When our behaviour
+disagrees with Xray, they are usually right.
 
-| Что | Где |
-|-----|-----|
-| XHTTP (`splithttp`) — режимы, паддинг, нормализация пути | `transport/internet/splithttp/` |
-| Клиентская сторона: выбор режима, формирование запроса | `.../dialer.go`, `.../client.go` |
-| Серверная маршрутизация — чем объясняются наши отказы | `.../hub.go` |
-| Общие поля и их нормализация | `.../config.go` |
-| VLESS-шифрование (`encryption`) | `proxy/vless/encryption/` |
+| What | Where |
+|------|-------|
+| XHTTP (`splithttp`) — modes, padding, path normalization | `transport/internet/splithttp/` |
+| Client side: mode selection, request shaping | `.../dialer.go`, `.../client.go` |
+| Server-side routing — what explains the rejections we get | `.../hub.go` |
+| Shared fields and their normalization | `.../config.go` |
+| VLESS encryption (`encryption`) | `proxy/vless/encryption/` |
 
-Проверять по релизному тегу, а не по `main`: формат менялся после мержа
-(например, паддинг переехал в `probability-from-to` в `v25.8.31`).
+Check against a release tag, not `main`: the format has changed after merges
+(padding, for one, moved to `probability-from-to` in `v25.8.31`).
 
-### Project X — документация полей
+### Project X — field documentation
 
 <https://xtls.github.io/config/> · [VLESS outbound](https://xtls.github.io/en/config/outbounds/vless.html)
 
-Пользовательский контракт: какие значения допустимы, что означает каждый
-сегмент spec-строки. Полезно, когда исходник отвечает «как», а нужно «что».
+The user-facing contract: which values are allowed, what each segment of a spec
+string means. Useful when the source answers "how" and you need "what".
 
-## Клиенты на нашей же базе
+## Clients built on our own base
 
-Они интересны тем, что написаны на sing-box: код переносится почти
-дословно, а лицензия совпадает (GPL-3.0, тот же upstream) — заимствование
-законно и не требует перелицензирования.
+These matter because they are written on sing-box: the code ports almost
+verbatim, and the licence matches (GPL-3.0, same upstream) — borrowing is legal
+and needs no relicensing.
 
-### starifly/sing-box — ядро NekoBox+
+### starifly/sing-box — the NekoBox+ core
 
 <https://github.com/starifly/sing-box>
 
-Самый ценный сосед: реализует то, чего нет у нас, в наших же терминах.
-Отсюда взят слой `mlkem768x25519plus` (SPEC 032).
+The most valuable neighbour: it implements what we lack, in our own terms. The
+`mlkem768x25519plus` layer (SPEC 032) came from here.
 
-**Как узнать нужный коммит.** Он пинится в приложении, не в самом ядре:
+**Finding the right commit.** It is pinned by the app, not by the core itself:
 
 ```bash
 git clone --depth 1 https://github.com/starifly/NekoBoxForAndroid
 cat NekoBoxForAndroid/buildScript/lib/core/get_source_env.sh
-# COMMIT_SING_BOX="…"  ← клонировать ядро на этом коммите
+# COMMIT_SING_BOX="…"  ← clone the core at this commit
 ```
 
-| Что | Где |
-|-----|-----|
-| VLESS `encryption` (клиент и сервер) | `protocol/vless/encryption/` |
-| Разбор spec-строки, врезка в дозвон | `protocol/vless/outbound.go` |
-| XHTTP с XMUX (у нас его нет) | `transport/v2rayxhttp/` |
+| What | Where |
+|------|-------|
+| VLESS `encryption` (client and server) | `protocol/vless/encryption/` |
+| Spec-string parsing, the seam into dialing | `protocol/vless/outbound.go` |
+| XHTTP with XMUX — a second reference for ours (SPEC 059) | `transport/v2rayxhttp/` |
 
 ### shtorm-7/sing-box-extended
 
 <https://github.com/shtorm-7/sing-box-extended>
 
-Второй независимый взгляд на те же транспорты. Полезен как перекрёстная
-проверка: если storm7 и NekoBox делают одинаково, а мы иначе — расхождение
-почти наверняка наше.
+A second independent take on the same transports. Useful as a cross-check: when
+shtorm-7 and NekoBox do the same thing and we do another, the divergence is
+almost certainly ours.
 
-### mihomo — сверка формата
+### mihomo — format cross-check
 
 <https://wiki.metacubex.one/en/config/proxies/vless/>
 
-Другая кодовая база, поэтому код не переносится, но документация
-подтверждает формат независимо от Xray.
+A different codebase, so no code ports across, but its documentation confirms
+the format independently of Xray.
 
-## Конфигурация чужого клиента на устройстве
+## Another client's configuration on the device
 
-Самый короткий путь, когда узел живёт в другом приложении и молчит у нас:
-посмотреть **его конфигурацию**, а не сравнивать поведение ядер. Дважды
-за один разбор это давало ответ за минуту там, где рассуждения по коду
-стоили часов.
+The shortest path when a node lives in a different app and stays silent in ours:
+look at **its configuration** rather than comparing core behaviour. Twice in one
+investigation this gave the answer in a minute where reasoning through code cost
+hours.
 
-NekoBox+ хранит узлы в SQLite, доступно под root:
+NekoBox+ keeps its nodes in SQLite, readable under root:
 
 ```bash
-adb shell "ps -A -o NAME | grep nb4a"        # пакет: com.nb4a.plus
+adb shell "ps -A -o NAME | grep nb4a"        # package: com.nb4a.plus
 adb shell "su -c 'cat /data/data/com.nb4a.plus/databases/sager_net.db'" > sager.db
 ```
 
-Таблица `proxy_entities`: поля `*Bean` несут конфигурацию узла, `ping` и
-`status` — результат последней проверки, **`error` — причину отказа его
-собственными словами**. Последнее особенно ценно: чужой клиент уже
-продиагностировал то, на что наш лог молчит.
+Table `proxy_entities`: the `*Bean` fields carry the node configuration, `ping`
+and `status` hold the last check, and **`error` holds the reason for failure in
+that client's own words**. The last one is the valuable part: another client has
+already diagnosed what our log stays quiet about.
 
-!!! danger "Это выгрузка чужих учётных данных"
-    В дампе лежат реальные ключи, пароли и адреса серверов. Удалять
-    сразу после разбора.
+!!! danger "This is a dump of someone's credentials"
+    It contains real keys, passwords and server addresses. Delete it right after
+    the investigation.
 
-## Как этим пользоваться
+## How to use all this
 
-1. **Сначала снять факт, потом рассуждать.** Провод, конфигурация, дамп —
-   всё это дешевле одной итерации сборки. Симптом «висит без ошибки»
-   особенно обманчив: он одинаково выглядит и при нашем баге, и при
-   отсутствующей фиче, и при мёртвом сервере.
-2. **Чужой клиент на том же устройстве — контрольный замер.** Поднимает
-   узел он, а не мы → дело в нас. Молчат оба → дело вне ядра. Замеры
-   с ноутбука под посторонним VPN недостоверны, мерить только там же,
-   где воспроизводится.
-3. **Сверять по релизному тегу**, а не по ветке разработки.
-4. **Заимствуя код — проверять лицензию и отмечать происхождение**
-   в заголовке файла (см. `protocol/vless/encryption/`).
+1. **Capture the fact first, reason second.** The wire, the configuration, a
+   dump — each is cheaper than one build iteration. The "hangs with no error"
+   symptom is especially deceptive: it looks identical for a bug of ours, a
+   missing feature, and a dead server.
+2. **Another client on the same device is the control measurement.** It brings
+   the node up and we don't → the problem is ours. Both stay silent → the
+   problem is outside the core. Measurements from a laptop behind an unrelated
+   VPN prove nothing; measure only where the symptom reproduces.
+3. **Compare against a release tag**, not a development branch.
+4. **When borrowing code, check the licence and record the origin** in the file
+   header (see `protocol/vless/encryption/`).
 
-Разборы, где это сработало: [SPEC 043](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/043-XHTTP_STREAM_ONE_PATH_PREFIX/SPEC.md)
-(нормализация пути найдена сверкой с обоими соседями),
+Investigations where this paid off: [SPEC 043](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/043-XHTTP_STREAM_ONE_PATH_PREFIX/SPEC.md)
+(path normalization found by comparing against both neighbours),
 [SPEC 032](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/032-VLESS_ENCRYPTION_MLKEM768/SPEC.md)
-(причина найдена в дампе чужой базы, решение — порт оттуда же).
+(the cause found in another client's database dump, the fix ported from the same
+place).

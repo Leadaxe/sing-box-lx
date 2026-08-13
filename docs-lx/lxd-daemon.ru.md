@@ -1,8 +1,9 @@
 # Демон lxd: что это и как настроить
 
+> 🌐 English version: **[lxd-daemon.md](lxd-daemon.md)**.
+
 Практическое руководство оператора: что такое `sing-box lxd`, зачем он нужен, как
-ставится на macOS и какие есть подходы на Linux. English version —
-[lxd-daemon.md](lxd-daemon.md).
+ставится на macOS и какие есть подходы на Linux.
 
 ---
 
@@ -326,7 +327,7 @@ chmod +x /etc/init.d/sing-box-lxd
 пути в `/etc/sysupgrade.conf`, иначе прошивка-апгрейд снесёт установку.
 
 Как поднять поверх демона отдельный VPN-Wi-Fi (Wi-Fi → мост → tun → firewall с
-fail-closed) — [openwrt-vpn-ssid-ru.md](openwrt-vpn-ssid-ru.md).
+fail-closed) — [openwrt-vpn-ssid.ru.md](openwrt-vpn-ssid.ru.md).
 
 ### 8.4. Чего на Linux нет
 
@@ -387,6 +388,13 @@ fail-closed) — [openwrt-vpn-ssid-ru.md](openwrt-vpn-ssid-ru.md).
 | `PUT`/`DELETE /admin/clients-info/labels/{ключ}` | собственное имя клиента от оператора; ключ — IP или MAC (иначе 400) |
 | `GET /admin/host` | **машина**, на которой крутится демон: CPU (по ядрам), память, термозоны, диски, дескрипторы — в отличие от `/admin/memory`, который про процесс |
 | `GET /admin/host/interfaces` | все сетевые интерфейсы с сырыми счётчиками и посчитанными скоростями |
+
+**Операторские маршруты** — `GET /admin/clients`, `POST /admin/client-code`,
+`POST /admin/client-remove`. Это провод под подкомандами `client list / add /
+remove`, и в удалённую поверхность они намеренно **не** входят: слушают только
+loopback, требуют Bearer-секрет и — единственные — **не** требуют клиентского
+сертификата, потому что у оператора на самом хосте его нет. Выпуск кода-приглашения
+равен выдаче доверия, поэтому из сети он недостижим.
 
 SIGHUP демону = перечитать файл конфига (`--config-force`/`-c`) и применить через
 тот же apply-пайплайн с валидацией и откатом.

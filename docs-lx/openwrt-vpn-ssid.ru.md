@@ -1,10 +1,12 @@
 # VPN-SSID поверх lxd-демона на OpenWrt
 
+> 🌐 English version: **[openwrt-vpn-ssid.md](openwrt-vpn-ssid.md)**.
+
 Как построить отдельный Wi-Fi, весь трафик которого идёт через ядро sing-box,
 не трогая основную домашнюю сеть. Расширяет
-[lxd-daemon-ru.md](lxd-daemon-ru.md): демон-гайд ставит и настраивает сам
+[lxd-daemon.ru.md](lxd-daemon.ru.md): демон-гайд ставит и настраивает сам
 `sing-box lxd`, здесь — сетевая обвязка вокруг него (Wi-Fi → мост → tun →
-firewall). English version — [openwrt-vpn-ssid.md](openwrt-vpn-ssid.md).
+firewall).
 
 > Это прикладной рецепт для OpenWrt/fw4, а **не** свойство форка. Все адреса,
 > имена и SSID ниже — **плейсхолдеры**: подставьте свои. Проверено на OpenWrt
@@ -29,7 +31,7 @@ firewall). English version — [openwrt-vpn-ssid.md](openwrt-vpn-ssid.md).
 на первом же шаге.
 
 **Демон уже поставлен и работает.** Установка, служба procd и заливка бинарника —
-в демон-гайде [§8.3](lxd-daemon-ru.md). Здесь предполагается живой `sing-box lxd`
+в демон-гайде [§8.3](lxd-daemon.ru.md). Здесь предполагается живой `sing-box lxd`
 на роутере.
 
 **Базовая сеть жива: WAN поднят, есть интернет.** Без него не пройдут ни

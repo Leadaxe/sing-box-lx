@@ -1,10 +1,12 @@
 # A VPN SSID over the lxd daemon on OpenWrt
 
+> 🌐 Русская версия: **[openwrt-vpn-ssid.ru.md](openwrt-vpn-ssid.ru.md)**.
+
 How to build a separate Wi-Fi whose whole traffic goes through the sing-box core
 without touching the main home network. This extends
 [lxd-daemon.md](lxd-daemon.md): the daemon guide installs and configures
 `sing-box lxd` itself; here is the network plumbing around it (Wi-Fi → bridge →
-tun → firewall). Русская версия — [openwrt-vpn-ssid-ru.md](openwrt-vpn-ssid-ru.md).
+tun → firewall).
 
 > This is an applied recipe for OpenWrt/fw4, **not** a fork feature. Every
 > address, name and SSID below is a **placeholder** — substitute your own.
