@@ -387,6 +387,15 @@ func TestHostReportsMachineReadableOSFamily(t *testing.T) {
 	if family == "" {
 		t.Fatal("os_family must never be empty")
 	}
+	// os_id_like marshals as [] even when the platform reports nothing, so a
+	// client checking membership needs no null branch.
+	like, present := payload["os_id_like"]
+	if !present {
+		t.Fatalf("os_id_like must always be present, payload: %v", payload)
+	}
+	if like == nil {
+		t.Fatal("os_id_like must be an empty array, not null")
+	}
 }
 
 func TestHostRoutesPinnedToTrustedClients(t *testing.T) {

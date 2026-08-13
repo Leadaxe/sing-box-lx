@@ -22,6 +22,10 @@ func readStaticInfo() staticInfo {
 		Model:  sysctlString("hw.model"),
 		Kernel: sysctlString("kern.osrelease"),
 		OS:     darwinOSName(),
+		// A constant rather than null: there is no /etc/os-release here, but
+		// the platform IS known, and a filled field spares every client a
+		// separate branch. OSLike stays empty — macOS is like nothing else.
+		OSID: "macos",
 	}
 }
 

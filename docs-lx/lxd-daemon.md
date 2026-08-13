@@ -497,10 +497,20 @@ convenient but lies across them. Graph the counter, read the rate.
 Every interface is listed, `lo` and down ones included — "wan went down" is
 exactly what you want to see. Filtering is the UI's job.
 
-**Read the platform from `os_family`** (`linux`/`darwin`/`windows`), not from
-the `os` string, which is human-facing and formatted by the distribution.
-`os_family` is what tells "this platform never has that field" apart from "the
-source went quiet".
+**Read the platform from the machine-readable fields**, not from the `os`
+string, which is human-facing and formatted by the distribution:
+
+| Field | Example | Answers |
+|---|---|---|
+| `os_family` | `linux` | is there a `/proc` (kernel, syscalls) |
+| `os_id` | `openwrt` | is there a `ubus` (distribution) |
+| `os_id_like` | `["lede","openwrt"]` | a fork of something known? |
+
+The distinction is not academic: a RouteRich router calls itself `RouteRich`
+but reports `ID="openwrt"` in `/etc/os-release`, so matching the human string
+would fail to recognise the platform. `os_id_like` covers forks that do invent
+their own `ID` and name their base only there. Off Linux `os_id` is a constant
+(`macos`, `windows`) and `os_id_like` is an empty array, not `null`.
 
 **Off Linux the shape stays the same and unavailable fields are `null`** — on
 macOS that means no thermals (they need CGO) and no CPU percentages (Mach API),

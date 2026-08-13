@@ -164,3 +164,78 @@ func TestParseProcNetDevSkipsShortRows(t *testing.T) {
 		t.Fatalf("a truncated row must be skipped, got %+v", interfaces)
 	}
 }
+
+func TestParseOSReleaseOnAnOpenWrtFork(t *testing.T) {
+	// Captured verbatim from the owner's RouteRich router (MT7981). The point
+	// of the case: NAME says "RouteRich" but ID says "openwrt" — a client
+	// matching on the human string would fail to recognise the platform,
+	// while ID and ID_LIKE identify it correctly.
+	content := strings.Join([]string{
+		`NAME="RouteRich"`,
+		`VERSION="24.10.5"`,
+		`ID="openwrt"`,
+		`ID_LIKE="lede openwrt"`,
+		`PRETTY_NAME="RouteRich 24.10.5"`,
+		`VERSION_ID="24.10.5"`,
+		`OPENWRT_BOARD="mediatek/filogic"`,
+		`OPENWRT_RELEASE="RouteRich 24.10.5 r29087-d9c5716d1d RR-3.9.0"`,
+	}, "\n")
+
+	name, id, idLike := parseOSRelease(content)
+	if name != "RouteRich 24.10.5" {
+		t.Fatalf("name must come from PRETTY_NAME, got %q", name)
+	}
+	if id != "openwrt" {
+		t.Fatalf("a fork still reports its base id, got %q", id)
+	}
+	if len(idLike) != 2 || idLike[0] != "lede" || idLike[1] != "openwrt" {
+		t.Fatalf("ID_LIKE must be split on spaces, got %v", idLike)
+	}
+}
+
+func TestParseOSReleaseFallsBackToOpenWrtFile(t *testing.T) {
+	// /etc/openwrt_release has no ID at all — only a description. Also from
+	// the owner's router: note the build revision and vendor suffix, which is
+	// why os-release's PRETTY_NAME is preferred when both exist.
+	content := strings.Join([]string{
+		"DISTRIB_ID='RouteRich'",
+		"DISTRIB_RELEASE='24.10.5'",
+		"DISTRIB_DESCRIPTION='RouteRich 24.10.5 r29087-d9c5716d1d RR-3.9.0'",
+		"DISTRIB_TAINTS=''",
+	}, "\n")
+
+	name, id, idLike := parseOSRelease(content)
+	if name != "RouteRich 24.10.5 r29087-d9c5716d1d RR-3.9.0" {
+		t.Fatalf("DISTRIB_DESCRIPTION must be the fallback name, got %q", name)
+	}
+	if id != "" || len(idLike) != 0 {
+		t.Fatalf("this file carries no machine-readable id, got %q %v", id, idLike)
+	}
+	// An empty value must not be mistaken for a present one.
+	if strings.Contains(name, "TAINTS") {
+		t.Fatal("empty values must be skipped")
+	}
+}
+
+func TestParseOSReleaseStandardDistro(t *testing.T) {
+	content := strings.Join([]string{
+		`PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"`,
+		`NAME="Debian GNU/Linux"`,
+		`ID=debian`, // unquoted is legal
+		`VERSION_ID="12"`,
+	}, "\n")
+	name, id, idLike := parseOSRelease(content)
+	if name != "Debian GNU/Linux 12 (bookworm)" || id != "debian" {
+		t.Fatalf("parsed wrong: %q %q", name, id)
+	}
+	if idLike != nil {
+		t.Fatalf("no ID_LIKE means no list, got %v", idLike)
+	}
+}
+
+func TestParseOSReleaseIgnoresJunk(t *testing.T) {
+	name, id, _ := parseOSRelease("garbage\n\n=novalue\nKEY_WITHOUT_EQUALS\n")
+	if name != "" || id != "" {
+		t.Fatalf("junk must yield nothing, got %q %q", name, id)
+	}
+}

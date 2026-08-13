@@ -14,7 +14,11 @@ import "runtime"
 
 func numCPU() int { return runtime.NumCPU() }
 
-func readStaticInfo() staticInfo { return staticInfo{Arch: runtime.GOARCH} }
+func readStaticInfo() staticInfo {
+	// GOOS is the only thing knowable without a platform reader; on Windows it
+	// doubles as the distribution id, since there are no distributions.
+	return staticInfo{Arch: runtime.GOARCH, OSID: runtime.GOOS}
+}
 
 func readUptimeSeconds() int64 { return 0 }
 

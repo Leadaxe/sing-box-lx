@@ -29,11 +29,22 @@ type hostSnapshot struct {
 	// ("OpenWrt 23.05.5", "macOS 15.3") and differs per distro, so a client
 	// deciding what a null field MEANS — this platform cannot measure it, or
 	// the sensor is absent — must branch on this one, never parse that one.
-	OSFamily      string `json:"os_family"`
-	OS            string `json:"os"`
-	Kernel        string `json:"kernel"`
-	Arch          string `json:"arch"`
-	UptimeSeconds int64  `json:"uptime_seconds"`
+	OSFamily string `json:"os_family"`
+	// OSID is the distribution's machine-readable id — os-release's ID, e.g.
+	// "openwrt", "debian", "macos". Distinct from OSFamily, which is the
+	// kernel/syscall surface: "does /proc exist" and "does ubus exist" are
+	// different questions. Forks answer this honestly — RouteRich reports
+	// NAME="RouteRich" but ID="openwrt".
+	OSID string `json:"os_id"`
+	// OSIDLike lists the distributions this one is compatible with
+	// (os-release's ID_LIKE, split on spaces). A fork that does invent its own
+	// ID still names its base here, so a client asking "is this
+	// OpenWrt-shaped, does it have ubus" checks both fields.
+	OSIDLike      []string `json:"os_id_like"`
+	OS            string   `json:"os"`
+	Kernel        string   `json:"kernel"`
+	Arch          string   `json:"arch"`
+	UptimeSeconds int64    `json:"uptime_seconds"`
 
 	CPU     cpuInfo      `json:"cpu"`
 	Memory  memoryInfo   `json:"memory"`
@@ -210,6 +221,8 @@ type hostCache struct {
 type staticInfo struct {
 	Model  string
 	OS     string
+	OSID   string
+	OSLike []string
 	Kernel string
 	Arch   string
 }
@@ -298,7 +311,11 @@ func (h *hostCache) buildHostLocked() hostSnapshot {
 		// Filled here rather than in each platform reader: it is the same
 		// build constant everywhere, and three copies would be three places
 		// to get it wrong.
-		OSFamily:      runtime.GOOS,
+		OSFamily: runtime.GOOS,
+		OSID:     static.OSID,
+		// [] rather than null: a client checking membership must not have to
+		// special-case the absence of the list.
+		OSIDLike:      append([]string{}, static.OSLike...),
 		OS:            static.OS,
 		Kernel:        static.Kernel,
 		Arch:          static.Arch,

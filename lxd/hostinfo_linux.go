@@ -23,30 +23,60 @@ func readStaticInfo() staticInfo {
 		"/proc/device-tree/model",
 	)
 	info.Kernel = unameRelease()
-	info.OS = readOSName()
+	info.OS, info.OSID, info.OSLike = readOSRelease()
 	return info
 }
 
-// readOSName prefers OpenWrt's own release file, whose PRETTY_NAME is the
-// distribution a router operator recognises.
-func readOSName() string {
-	for _, path := range []string{"/etc/openwrt_release", "/etc/os-release"} {
-		content, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		for _, line := range strings.Split(string(content), "\n") {
-			for _, key := range []string{"DISTRIB_DESCRIPTION=", "PRETTY_NAME="} {
-				if strings.HasPrefix(line, key) {
-					value := strings.Trim(strings.TrimPrefix(line, key), "\"' ")
-					if value != "" {
-						return value
-					}
-				}
-			}
+// readOSRelease fills the distribution fields from /etc/os-release, the
+// systemd-era standard that OpenWrt also ships.
+//
+// os-release comes FIRST and openwrt_release is only a fallback, because the
+// standard file carries machine-readable keys (ID, ID_LIKE) that the OpenWrt
+// one does not, and its PRETTY_NAME is cleaner: on a RouteRich router
+// PRETTY_NAME is "RouteRich 24.10.5" while DISTRIB_DESCRIPTION is
+// "RouteRich 24.10.5 r29087-d9c5716d1d RR-3.9.0" — build revision and vendor
+// suffix included.
+func readOSRelease() (name string, id string, idLike []string) {
+	if content, err := os.ReadFile("/etc/os-release"); err == nil {
+		name, id, idLike = parseOSRelease(string(content))
+	}
+	if name == "" {
+		// Older or trimmed images may ship only OpenWrt's own file. It has no
+		// ID at all, so a distribution known only through this path gets a
+		// name and nothing else — better than nothing, and honest.
+		if content, err := os.ReadFile("/etc/openwrt_release"); err == nil {
+			name, _, _ = parseOSRelease(string(content))
 		}
 	}
-	return ""
+	return name, id, idLike
+}
+
+// parseOSRelease reads the KEY=value shape shared by /etc/os-release and
+// /etc/openwrt_release. Split out so it can be tested on captured content.
+func parseOSRelease(content string) (name string, id string, idLike []string) {
+	for _, line := range strings.Split(content, "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
+		if !found {
+			continue
+		}
+		value = strings.Trim(value, "\"' ")
+		if value == "" {
+			continue
+		}
+		switch key {
+		case "PRETTY_NAME", "DISTRIB_DESCRIPTION":
+			if name == "" {
+				name = value
+			}
+		case "ID":
+			id = value
+		case "ID_LIKE":
+			// The standard says space-separated; a slice spares every client
+			// the same split.
+			idLike = strings.Fields(value)
+		}
+	}
+	return name, id, idLike
 }
 
 func unameRelease() string {
