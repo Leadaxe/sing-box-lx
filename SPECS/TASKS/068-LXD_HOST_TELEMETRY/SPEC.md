@@ -12,7 +12,11 @@
 
 **Touches:** только пакет `lxd/` — новые файлы `hostinfo.go` (форма ответа,
 кеш, дельты), `hostinfo_linux.go`, `hostinfo_darwin.go`, `hostinfo_stub.go`
-(платформенные читатели) и маршруты в [lxd/admin.go](../../../lxd/admin.go).
+(платформенные читатели), `hostinfo_net.go` и `hostinfo_exec.go` (общее для
+`linux || darwin`: «паспорт» интерфейса, запуск внешних процессов, список
+псевдо-ФС) и маршруты в [lxd/admin.go](../../../lxd/admin.go). Из
+`clientinfo_linux.go` в `hostinfo_exec.go` переехал `runProvider` — он
+понадобился обеим платформам.
 **Ядро не правится.** Внешних зависимостей не добавляется: на darwin
 счётчики интерфейсов читаются через `golang.org/x/net/route`, который уже в
 `go.mod` (тянется транзитом через `http2`, которым демон и так пользуется).
@@ -181,13 +185,29 @@ build-теги, **без интерфейса**.
 // hostinfo_linux.go   //go:build with_lxd && linux
 // hostinfo_darwin.go  //go:build with_lxd && darwin
 // hostinfo_stub.go    //go:build with_lxd && !linux && !darwin
-func readCPU() (*cpuInfo, bool)
-func readMemory() (*memoryInfo, bool)
-func readThermal() *thermalInfo      // nil = датчиков нет
+func numCPU() int
+func readStaticInfo() staticInfo                     // модель, ОС, ядро, арх
+func readUptimeSeconds() int64
+func readLoadAverage() (*float64, *float64, *float64)
+func readCPUTicks() ([]cpuTicks, bool)               // [0] = агрегат, дальше ядра
+func readMemory() memoryInfo
+func readThermal() *thermalInfo                      // nil = датчиков нет
 func readMounts() []mountInfo
-func readFDLimits() fdInfo
-func readInterfaces() []interfaceInfo
+func markStateDirMount(mounts []mountInfo, stateDir string)
+func readFD() fdInfo
+func readInterfaces() []rawInterface
 ```
+
+Читатели возвращают **сырьё**, а не готовый ответ: проценты и скорости
+считает общая часть, потому что для них нужен предыдущий замер, а он живёт в
+кеше. `readCPUTicks` отдаёт тики (`(ticks, ok)`, где `ok=false` = источника на
+платформе нет), `readInterfaces` — счётчики; преобразование в `cpuInfo` и
+`interfaceInfo` платформы не касается.
+
+Три файла делят два общих: `hostinfo.go` (форма, кеш, дельты) и
+`hostinfo_net.go` + `hostinfo_exec.go` под `linux || darwin` — «паспорт»
+интерфейса через `net.Interfaces()`, запуск внешних процессов и список
+псевдо-ФС одинаковы на обеих платформах, дублировать их незачем.
 
 Источники по платформам:
 
@@ -260,6 +280,31 @@ func readInterfaces() []interfaceInfo
 Край: если совпадения нет (bind-mount, экзотическая ФС, гонка при чтении),
 `holds_state_dir` не появляется ни на одной записи, а `state_dir_path`
 остаётся единственным указателем. Это лучше, чем выдумывать запись.
+
+### Что выяснилось при реализации
+
+Четыре вещи, которых не было в исходном дизайне и которые нашлись только на
+живом прогоне — записаны, чтобы следующий читатель не «чинил» их обратно.
+
+**`struct loadavg` на darwin — 24 байта, не 32.** Три `fixpt_t` (по 4 байта)
+плюс паддинг до выравнивания `long`, который лежит на смещении **16**.
+Первая реализация читала масштаб с 24 и молча отдавала `null` во всех трёх
+полях. Смещения сверены `offsetof`-пробником по SDK-заголовкам этой машины.
+
+**`/dev/fd` на darwin не читается через `os.ReadDir`.** Нужен
+`os.Open` + `Readdirnames`; `ReadDir` возвращал пустой результат, и `fd.open`
+был `null` при живом источнике. Открытие каталога само занимает дескриптор —
+он вычитается.
+
+**Псевдо-ФС нужно фильтровать и на macOS.** `devfs` попадал в `mounts[]` с
+`used_percent: 100` и утаскивал за собой `max_used_percent`. Список псевдо-ФС
+переехал в общий файл и пополнился darwin-именами (`devfs`, `ctlfs`,
+`fdesc`).
+
+**`runProvider` переехал из `clientinfo_linux.go` в общий
+`hostinfo_exec.go`.** Он понадобился darwin-читателю памяти (`vm_stat`), а
+второй копии быть не должно — дисциплина запуска внешних процессов (LookPath,
+таймаут, «нет бинаря = состояние, не ошибка») у всех провайдеров одна.
 
 ## Out of scope
 
