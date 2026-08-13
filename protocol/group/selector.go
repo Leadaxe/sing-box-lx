@@ -168,7 +168,10 @@ func (s *Selector) NewConnection(ctx context.Context, conn net.Conn, metadata ad
 	if outboundHandler, isHandler := selected.(adapter.ConnectionHandler); isHandler {
 		outboundHandler.NewConnection(ctx, conn, metadata, onClose)
 	} else {
-		s.connection.NewConnection(ctx, selected, conn, metadata, onClose)
+		// lx: SPEC 064 — dial through the selector itself, so the socket lands in
+		// interruptGroup (selector.go DialContext). Passing `selected` here bypasses
+		// registration and leaves interrupt_exist_connections dead for inbound traffic.
+		s.connection.NewConnection(ctx, s, conn, metadata, onClose)
 	}
 }
 
@@ -178,7 +181,8 @@ func (s *Selector) NewPacketConnection(ctx context.Context, conn N.PacketConn, m
 	if outboundHandler, isHandler := selected.(adapter.PacketConnectionHandler); isHandler {
 		outboundHandler.NewPacketConnection(ctx, conn, metadata, onClose)
 	} else {
-		s.connection.NewPacketConnection(ctx, selected, conn, metadata, onClose)
+		// lx: SPEC 064 — see NewConnection; same registration gap on the UDP path.
+		s.connection.NewPacketConnection(ctx, s, conn, metadata, onClose)
 	}
 }
 
