@@ -10,8 +10,9 @@
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `route.lx_idle_suspend` (+ `lx_idle_suspend_reachable`, `lx_idle_teardown`) | **mobile only** (AAR) |
 | **DNS server group** (SPEC 033/035) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
+| **`lxd` daemon** (SPEC 055–057, 063–068) | `with_lxd` | not a config key — the `sing-box lxd` subcommand + `<state-dir>/daemon.json`; see [lxd-daemon.md](lxd-daemon.md) | desktop / server (**not** Win7, **not** AAR) |
 
-Build the desktop/CLI binary: `make -f Makefile.lx lx-build` (output `sing-box`, version `…-lx.N`) — this bundles `with_xhttp` + `with_awg` (+ `with_lx_command`), but **not** `with_lx_idle_suspend`.
+Build the desktop/CLI binary: `make -f Makefile.lx lx-build` (output `sing-box`, version `…-lx.N`) — this bundles `with_xhttp` + `with_awg` (+ `with_lx_command`, `with_lxd`), but **not** `with_lx_idle_suspend`.
 Without a tag the feature is absent: an `xhttp` transport or an AWG field is rejected at load time with an explicit error (no silent downgrade).
 
 **`with_lx_idle_suspend` is mobile-only** and is added only to the Android/iOS AAR
@@ -266,6 +267,30 @@ live-verified v1 client**, so existing configs are unaffected — the v2 fields 
 |-----|------|---------|---------|
 | `sc_max_each_post_bytes` | string | `"1000000-1000000"` | `"min-max"` range bounding a single upload POST (the split threshold) |
 | `sc_min_posts_interval_ms` | string | `"30-30"` | `"min-max"` anti-burst delay between successive POSTs, in ms |
+
+**Connection reuse — `xmux` (SPEC 059):**
+
+Without a pool every XHTTP stream pays a full TCP + TLS (+ REALITY) handshake. `xmux` reuses
+HTTP connections, and — just as important — it is what Xray servers expect: an `xmux` section
+arriving from a subscription used to be ignored silently, so the client behaved differently from
+what the server author intended.
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `xmux.max_concurrency` | range | `1-1` | how many streams may share one HTTP connection. Mutually exclusive with `max_connections` |
+| `xmux.max_connections` | range | unlimited | how many connections the pool holds; below this count a new connection is always opened. Mutually exclusive with `max_concurrency` |
+| `xmux.c_max_reuse_times` | range | unlimited | how many times a connection may be handed out for a new stream before it retires |
+| `xmux.h_max_request_times` | range | `600-900` | how many **HTTP requests** may traverse a connection before it retires. Counts requests, not streams — in `packet-up` one stream issues many upload POSTs |
+| `xmux.h_max_reusable_secs` | range | `1800-3000` | how long a connection stays reusable, in seconds |
+| `xmux.h_keep_alive_period` | int (seconds) | `0` = default | HTTP/2 keep-alive ping period. Negative disables pings. A plain integer, not a range — matching the reference implementation |
+
+Ranges take our `"min-max"` string form (`"600-900"`), a single integer (`4` == `4-4`), or a
+two-element array (`[600, 900]`) for configs authored against Xray / sing-box-extended. **Each
+range is rolled once, not per request**: `max_concurrency` and `max_connections` at construction,
+the reuse limits when each connection is created. Defaults apply even with no `xmux` section at
+all. A connection at its limit is retired but **not torn down while streams still use it** —
+closing is deferred until the last one finishes. Client-only: the server half and the `download`
+section are out of scope.
 
 **Accepted but ignored by the client** (present so an inbound-shaped config or a symmetric link doesn't error — the client never acts on them): `sc_max_concurrent_posts`, `server_max_header_bytes`, `no_sse_header`, `sc_max_buffered_posts`, `sc_stream_up_server_secs`.
 
@@ -534,29 +559,52 @@ through it like a WireGuard endpoint. Gated on `with_quic` + `with_gvisor` (both
 `LX_TAGS`). Key material is taken ready from config — device registration (ECDSA keys, WARP
 enroll) is done by the client, not the core.
 
-> ⚠️ **`network` here means TRANSPORT, not L4.** On a `masque` outbound `network` selects
-> `h3` (QUIC) or `h2` (HTTP/2); the tcp/udp list is `network_list`. This is the opposite of
-> every other outbound — a stray `"network": "tcp"` fails fast with *invalid network*.
+> ⚠️ **The HTTP version is `vhttp`, not `network`** (SPEC 062). Older configs used `network`
+> for `h3`/`h2` — the opposite of what `network` means on every other outbound. The old shape
+> still works and reports a deprecation; see the migration table below.
 
 ### Fields (on a `masque` outbound)
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `profile` | string | `cloudflare` | `cloudflare` (WARP quirks: `cf-connect-ip`, tolerates missing Extended-CONNECT settings, ECDSA public-key pinning, WARP SNI/URI defaults) \| `standard` (strict RFC 9484, for a self-hosted CONNECT-IP server) |
-| `network` | string | `h3` | **transport**: `h3` (CONNECT-IP over QUIC) \| `h2` (CONNECT-IP over HTTP/2, TCP:443). NOT the L4 list |
+| `vhttp` | string | `h3` | **HTTP version carrying CONNECT-IP**: `h3` (QUIC) \| `h2` (HTTP/2, TCP:443). The tcp/udp list is `network_list`, as everywhere else |
 | `private_key` | string (base64) | — | client EC private key, DER (`x509.ParseECPrivateKey`). Required for `cloudflare` |
 | `public_key` | string (base64) | — | endpoint PKIX public key, DER (`x509.ParsePKIXPublicKey`, ECDSA). Required for `cloudflare` |
 | `ip` | string (CIDR) | — | local IPv4 inside the tunnel; a bare address → `/32`. At least one of `ip`/`ipv6` required |
 | `ipv6` | string (CIDR) | — | local IPv6 inside the tunnel; a bare address → `/128` |
-| `sni` | string | per profile¹ | TLS ServerName. For WARP it deliberately differs from the endpoint (domain-fronting); the endpoint is authenticated by pinning `public_key`, not by the SNI |
+| `tls` | object | — | the **standard** outbound TLS block — `server_name`, `insecure`, `disable_sni`, `fragment`, `record_fragment`, `fragment_fallback_delay`, … Same container every other TLS outbound uses |
 | `uri` | string | per profile¹ | CONNECT-IP request URI |
 | `mtu` | int | `1280` | userspace-stack MTU. On `h2`, max `16000` (one IP packet = one HTTP/2 DATA frame) |
-| `skip_cert_verify` | bool | `false` | disable public-key pinning (debug only — removes the only auth check) |
 | `idle_timeout` | duration | `5m` | suspend the tunnel after this long with no traffic (frees the gVisor stack, pumps and QUIC keepalive); the next dial rebuilds it. Negative disables suspend |
 | `keep_alive_period` | duration | `30s` | QUIC keepalive (h3). Negative disables |
 | `network_list` | list | tcp+udp | L4 protocols routed through the tunnel |
 
-¹ `cloudflare` defaults: `sni` = `consumer-masque.cloudflareclient.com`, `uri` = `https://cloudflareaccess.com`. `standard` has no defaults (both required).
+¹ `cloudflare` defaults: `tls.server_name` = `www.cloudflare.com`, `uri` = `https://cloudflareaccess.com`. `standard` has no defaults (both required).
+
+> **The default SNI is `www.cloudflare.com`, not the endpoint hostname.** Naming the MASQUE
+> endpoint in the ClientHello is exactly what a DPI filters on; a neutral high-traffic host is
+> not. The endpoint is authenticated by pinning `public_key`, so the SNI is free to differ.
+> `tls.disable_sni: true` sends none at all — some endpoints only present their real certificate
+> to a ClientHello without one.
+
+### Migrating from the pre-SPEC-062 shape
+
+Both shapes are accepted until **v1.14.0-lx.30**; using a legacy field logs one deprecation line
+per outbound. A legacy field that *disagrees* with its replacement is a hard error rather than a
+silent pick.
+
+| Legacy (deprecated) | Current |
+|---|---|
+| `network: "h3"` / `"h2"` | `vhttp: "h3"` / `"h2"` |
+| `sni` | `tls.server_name` |
+| `skip_cert_verify: true` | `tls.insecure: true` |
+| `fragment: true` | `tls.fragment: true` |
+| `fragment_fallback_delay` | `tls.fragment_fallback_delay` |
+| `record_fragment: true` | `tls.record_fragment: true` |
+
+> The legacy booleans cannot tell "absent" from an explicit `false`, so only a legacy `true`
+> carries over — write the `tls` form if you need to turn something off.
 
 ### Example — WARP over h3 (QUIC)
 
@@ -567,8 +615,10 @@ enroll) is done by the client, not the core.
   "server": "162.159.198.2",
   "server_port": 443,
   "profile": "cloudflare",
-  "network": "h3",
-  "sni": "www.microsoft.com",       // any neutral high-traffic host (domain-fronting)
+  "vhttp": "h3",
+  "tls": {
+    "server_name": "www.microsoft.com"   // any neutral high-traffic host (domain-fronting)
+  },
   "private_key": "<base64 DER EC private key>",
   "public_key":  "<base64 DER PKIX public key>",
   "ip":   "172.16.0.2/32",
@@ -577,7 +627,11 @@ enroll) is done by the client, not the core.
 }
 ```
 
-For `h2` (CONNECT-IP over TCP:443), change one field: `"network": "h2"`.
+For `h2` (CONNECT-IP over TCP:443), change one field: `"vhttp": "h2"`. The `h2` path runs its
+TLS through the shared `common/tls` layer, so it gets ClientHello fragmentation like any other
+TLS outbound — including the automatic one under `detour`
+([§8](#8-automatic-clienthello-fragmentation-under-detour-spec-060)). `h3` is untouched by that:
+QUIC does not carry TLS over TCP at all.
 
 > A top-level `dns` block is required — the userspace stack works at L3 and does not resolve
 > domains itself; the outbound resolves them via the DNS router before dialing.
@@ -781,7 +835,35 @@ make -f Makefile.lx lx-build   # includes with_lx_command (and with_xhttp/with_a
 
 ---
 
-## 8. Validate & build
+## 8. Automatic ClientHello fragmentation under `detour` (SPEC 060)
+
+**Not a config key — a changed default.** When a TLS-over-TCP outbound (VLESS, trojan, vmess,
+anytls, shadowtls, http, masque `h2`, …) dials **through `detour`**, `record_fragment` now
+defaults to **on**.
+
+Why: the lower leg forwards our ClientHello under its own name, and the path MTU beyond that
+server can be lower than the ClientHello. The ICMP *Fragmentation Needed* never reaches us, so
+the packet simply vanishes and the connection dies as `tls handshake: EOF` after 12–17 s. It
+reproduces with a bare `curl`, so it is a property of the path, not of sing-box — but only
+fragmenting the first TLS record works around it. Measured through a broken leg: no
+fragmentation ❌ fail in 12 s; `fragment` ✅ 0.6 s; `record_fragment` ✅ **0.1 s**.
+
+Rules:
+
+- **An explicit config value always wins.** `"fragment": true` is not upgraded to record-split —
+  choosing packet-split stays your choice.
+- **Only the handshake is fragmented**, never the traffic after it. There is no ongoing cost.
+- **`h3`/QUIC is untouched** — no TLS over TCP there, and quic-go keeps its Initial below the
+  threshold anyway (masque `h3` through detour: 4/4 OK).
+- Nested chains are covered automatically: every link carries its own `detour`.
+
+> ⚠️ **Known limit:** an explicit `"record_fragment": false` is indistinguishable from "unset",
+> so auto still turns it on under `detour`. To dial through a detour with a different mode, set
+> `"fragment": true`; there is currently no way to ask for no fragmentation at all there.
+
+---
+
+## 9. Validate & build
 
 ```sh
 git clone --recurse-submodules <repo>           # with_awg needs the submodule

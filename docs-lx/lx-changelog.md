@@ -15,7 +15,7 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
-#### v1.14.0-lx.26-rc.1
+#### v1.14.0-lx.26
 
 ### 🔧 `lxd`: демон отделён от командных RPC — новый build-tag `with_lxd`
 
