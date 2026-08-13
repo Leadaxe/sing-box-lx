@@ -15,7 +15,32 @@ per tag). The user-facing release page body comes from `docs-lx/releases/v<versi
 when that file exists (bilingual, LxBox format — see `docs-lx/releases/TEMPLATE.md`;
 required for stable tags); this changelog section is the fallback used for pre-releases.
 
-#### Не выпущено
+#### v1.14.0-lx.26-rc.1
+
+### 🔧 `lxd`: демон отделён от командных RPC — новый build-tag `with_lxd`
+
+([SPEC 067](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/067-LXD_BUILD_TAG_SPLIT/SPEC.md))
+
+Один тег `with_lx_command` гейтил две несвязанные вещи: расширения командного
+протокола libbox (`URLTestOutbound`, `GetRules`, `GetGroups` — ими живёт
+LxBox) и весь пакет `lxd/` с подкомандой демона. Собрать одно без другого
+было нельзя.
+
+Теперь тега два и они независимы:
+
+* **`with_lx_command`** — RPC в `daemon/` и `experimental/libbox/`; десктоп,
+  Win7, AAR;
+* **`with_lxd`** — пакет `lxd/` и подкоманда `sing-box lxd`.
+
+**Legacy-сборка Windows 7 теперь идёт без демона**: служба Windows там не
+реализована и ротация лога тоже, так что подкоманда существовала бы без того,
+что делает её демоном. `with_lx_command` при этом остаётся — снять его значило
+бы увести RPC в стаб и молча сломать в LxBox тест задержки по узлам и экран
+правил. Ради 0.3 МБ из 46.
+
+AAR не затронут: `gomobile` собирает `experimental/libbox`, который `lxd/` не
+импортирует — демона там не было и раньше. Правки только в строках
+`//go:build`, `LX_TAGS` и наборах тегов CI/релиза; логика не менялась.
 
 ### 🆕 `lxd`: телеметрия хоста — CPU, память, температура, диски, интерфейсы
 
@@ -76,6 +101,11 @@ Mach API, поэтому там `null`. Клиент проверяет `null`, 
 длиннее, чем у `/admin/memory` (чтение дюжины файлов дороже одного
 `ReadMemStats`). Ручки за тем же mTLS-пином и отвечают независимо от того,
 поднято ли ядро. Ядро не правится.
+
+⚠️ **Проверено на macOS, полевой прогон на роутере не сделан.** Юниты
+покрывают арифметику дельт и Linux-парсеры на подставном `/proc`, но реальные
+термозоны, `/proc/stat` на четырёх ядрах и `squashfs`-корень OpenWrt в поле
+ещё не смотрели — потому и пререлиз.
 
 #### v1.14.0-lx.25-rc.10
 
