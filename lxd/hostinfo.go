@@ -3,6 +3,7 @@
 package lxd
 
 import (
+	"runtime"
 	"sync"
 	"time"
 )
@@ -22,7 +23,13 @@ const hostInfoTTL = 2 * time.Second
 // owner's rule for this endpoint is "take what we can get, report the rest as
 // absent".
 type hostSnapshot struct {
-	Model         string `json:"model"`
+	Model string `json:"model"`
+	// OSFamily is the machine-readable platform: "linux", "darwin",
+	// "windows". OS below is the human string the distribution reports
+	// ("OpenWrt 23.05.5", "macOS 15.3") and differs per distro, so a client
+	// deciding what a null field MEANS — this platform cannot measure it, or
+	// the sensor is absent — must branch on this one, never parse that one.
+	OSFamily      string `json:"os_family"`
 	OS            string `json:"os"`
 	Kernel        string `json:"kernel"`
 	Arch          string `json:"arch"`
@@ -287,7 +294,11 @@ func (h *hostCache) Interfaces() interfaceSnapshot {
 func (h *hostCache) buildHostLocked() hostSnapshot {
 	static := h.readStatic()
 	snapshot := hostSnapshot{
-		Model:         static.Model,
+		Model: static.Model,
+		// Filled here rather than in each platform reader: it is the same
+		// build constant everywhere, and three copies would be three places
+		// to get it wrong.
+		OSFamily:      runtime.GOOS,
 		OS:            static.OS,
 		Kernel:        static.Kernel,
 		Arch:          static.Arch,

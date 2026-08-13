@@ -13,6 +13,7 @@ import (
 	"crypto/x509"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -362,6 +363,29 @@ func TestHostNullFieldsArePresentNotOmitted(t *testing.T) {
 		if _, present := cpu[field]; !present {
 			t.Fatalf("cpu.%s must be present even when null, payload: %v", cpu, field)
 		}
+	}
+}
+
+func TestHostReportsMachineReadableOSFamily(t *testing.T) {
+	// `os` is whatever the distribution calls itself ("OpenWrt 23.05.5",
+	// "macOS 15.3") and is for humans. A client deciding whether a null field
+	// means "this platform cannot measure it" needs a value it can compare,
+	// not one it has to parse.
+	now := time.Unix(1786620000, 0)
+	control := newTestController(t, &fakeReloader{}, nil)
+	control.host = fixedHostCache(&now)
+	server := httptest.NewServer(control.adminHandler(""))
+	defer server.Close()
+
+	_, payload := adminRequest(t, http.MethodGet, server.URL+"/admin/host", "")
+	family, _ := payload["os_family"].(string)
+	if family != runtime.GOOS {
+		t.Fatalf("os_family must be the build's GOOS (%q), got %q", runtime.GOOS, family)
+	}
+	// It comes from the runtime, not from a platform reader, so a stubbed
+	// reader returning nothing must not blank it.
+	if family == "" {
+		t.Fatal("os_family must never be empty")
 	}
 }
 

@@ -497,6 +497,11 @@ convenient but lies across them. Graph the counter, read the rate.
 Every interface is listed, `lo` and down ones included — "wan went down" is
 exactly what you want to see. Filtering is the UI's job.
 
+**Read the platform from `os_family`** (`linux`/`darwin`/`windows`), not from
+the `os` string, which is human-facing and formatted by the distribution.
+`os_family` is what tells "this platform never has that field" apart from "the
+source went quiet".
+
 **Off Linux the shape stays the same and unavailable fields are `null`** — on
 macOS that means no thermals (they need CGO) and no CPU percentages (Mach API),
 while memory, disks, descriptors and load averages all work. A client checks
