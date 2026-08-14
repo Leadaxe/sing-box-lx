@@ -87,7 +87,23 @@ The code is one-time and burns after the first attempt — if pairing fails, min
 
 ### 2. Upload the production config
 
-From the launcher. The tun inbound must carry the values from the summary:
+From the launcher, via the Config Wizard.
+
+The **Target** tab:
+
+- **Config target** — `Remote machine`;
+- **Target OS** — `linux`, **Target architecture** — the router's (aarch64 → `arm64`);
+- tick **Gateway mode (share to LAN)**;
+- **LAN interfaces (include_interface)** — ⚠️ don't forget to enter the bridge from the summary (`br-lxdvpn`).
+
+The **Settings** tab, TUN block:
+
+- **Enable TUN** — on;
+- **TUN interface name** — the name from the summary (`lxd-tun0`): the wizard itself warns the core default cannot be relied on — on a router the firewall and routes are bound to that name;
+- **TUN interface addresses** — the address from the summary (`172.16.0.1/30`): the `sbtun_tcp` firewall rule is bound to it;
+- **TUN strict route** — off; **TUN stack** — `system`; the MTU — the suggested one is fine.
+
+The resulting tun inbound must carry the values from the summary:
 
 ```json
 {

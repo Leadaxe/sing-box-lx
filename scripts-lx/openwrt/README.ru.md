@@ -87,7 +87,23 @@ include_interface: br-lxdvpn          ← в UI лаунчера поле "LAN i
 
 ### 2. Залить боевой конфиг
 
-Из лаунчера. В tun-inbound должны быть значения из сводки:
+Из лаунчера, через Config Wizard.
+
+Вкладка **Target**:
+
+- **Config target** — `Remote machine`;
+- **Target OS** — `linux`, **Target architecture** — архитектура роутера (aarch64 → `arm64`);
+- галка **Gateway mode (share to LAN)** — включить;
+- **LAN interfaces (include_interface)** — ⚠️ не забыть вписать мост из сводки (`br-lxdvpn`).
+
+Вкладка **Settings**, блок TUN:
+
+- **Enable TUN** — включить;
+- **TUN interface name** — имя из сводки (`lxd-tun0`): мастер сам предупреждает, что на дефолт ядра полагаться нельзя — на роутере к имени привязаны firewall и маршруты;
+- **TUN interface addresses** — адрес из сводки (`172.16.0.1/30`): к нему привязано firewall-правило `sbtun_tcp`;
+- **TUN strict route** — выключен; **TUN stack** — `system`; MTU — можно оставить предложенный.
+
+В итоге tun-inbound должен нести значения из сводки:
 
 ```json
 {
