@@ -205,21 +205,12 @@ ssh root@РОУТЕР 'sysupgrade -r /tmp/bk.tar.gz && reboot'
 ### Снести всё установленное
 
 ```bash
-/etc/init.d/sing-box-lxd stop && /etc/init.d/sing-box-lxd disable
-rm -rf /etc/init.d/sing-box-lxd /etc/sing-box-lxd /usr/bin/sing-box /root/lxd-setup-summary.txt
-sed -i '\#sing-box#d' /etc/sysupgrade.conf
-ifdown lxdvpn
-uci -q delete wireless.lxdvpn_5g; uci -q delete wireless.lxdvpn_2g
-uci -q delete network.lxdvpn; uci -q delete network.lxdvpndev
-uci -q delete dhcp.lxdvpn
-uci -q delete firewall.lxdvpn; uci -q delete firewall.sbtun
-uci -q delete firewall.lxdvpn2tun; uci -q delete firewall.sbtun_tcp
-uci -q delete firewall.lxd_admin_wan
-uci commit && /etc/init.d/network reload && fw4 reload && /etc/init.d/dnsmasq restart
-wifi reload >/tmp/w.log 2>&1 </dev/null &
+wget -O /tmp/lxd-uninstall.sh https://raw.githubusercontent.com/Leadaxe/sing-box-lx/lx/scripts-lx/openwrt/lxd-openwrt-uninstall.sh && sh /tmp/lxd-uninstall.sh
 ```
 
-Имена секций производятся от моста: `br-lxdvpn` → `lxdvpn`; `ifdown` до удаления секций и `network reload` после — обязательны, иначе netifd не узнает об удалении и мост-сирота останется висеть (а повторная установка упрётся в «интерфейс уже существует»). Основная сеть не затрагивается.
+Скрипт [lxd-openwrt-uninstall.sh](lxd-openwrt-uninstall.sh) сам находит имя сегмента (по forwarding в зону `sbtun`), гасит и удаляет службу, state и uci-секции, перезагружает network/firewall/dnsmasq и в конце перезапускает радио. Терпит полуустановленное состояние — годится и как уборка после установки, оборванной на любом шаге. Флаг `--yes` — без вопросов (запуск без tty). Основная сеть не затрагивается.
+
+Важный порядок внутри (если снимаете руками): `ifdown` **до** удаления uci-секций и `/etc/init.d/network reload` **после** — иначе netifd не узнает об удалении, останется мост-сирота, а повторная установка упрётся в «интерфейс уже существует».
 
 ---
 
