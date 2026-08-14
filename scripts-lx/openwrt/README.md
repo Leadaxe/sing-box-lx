@@ -83,6 +83,8 @@ The launcher is **[singbox-launcher](https://github.com/Leadaxe/singbox-launcher
 
 The code is one-time and burns after the first attempt — if pairing fails, mint a fresh invite (`sing-box lxd client add`, recipe below) and paste the new line.
 
+![The Add remote machine dialog](img/launcher-add-remote.png)
+
 ⚠️ **Do not restart the daemon before the code is entered.** The code lives in process memory; a restart yields `enroll: no active enrollment code` and the invite has to be minted again.
 
 ### 2. Upload the production config
@@ -96,12 +98,16 @@ The **Target** tab:
 - tick **Gateway mode (share to LAN)**;
 - **LAN interfaces (include_interface)** — ⚠️ don't forget to enter the bridge from the summary (`br-lxdvpn`).
 
+![Config Wizard, the Target tab](img/wizard-target.png)
+
 The **Settings** tab, TUN block:
 
 - **Enable TUN** — on;
 - **TUN interface name** — the name from the summary (`lxd-tun0`): the wizard itself warns the core default cannot be relied on — on a router the firewall and routes are bound to that name;
 - **TUN interface addresses** — the address from the summary (`172.16.0.1/30`): the `sbtun_tcp` firewall rule is bound to it;
 - **TUN strict route** — off; **TUN stack** — `system`; the MTU — the suggested one is fine.
+
+![Config Wizard, the Settings tab — TUN block](img/wizard-settings-tun.png)
 
 The resulting tun inbound must carry the values from the summary:
 
