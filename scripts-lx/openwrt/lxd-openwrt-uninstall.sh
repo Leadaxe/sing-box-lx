@@ -1,22 +1,22 @@
 #!/bin/sh
-# lxd-openwrt-uninstall.sh — полный откат установки lxd-openwrt-setup.sh.
-# Снимает VPN-SSID сегмент и демон sing-box-lx; основную сеть не трогает.
-# Терпит полуустановленное состояние: годится и после установки, оборванной
-# на любом шаге, — каждый шаг самодостаточен и молча пропускает отсутствующее.
+# lxd-openwrt-uninstall.sh — full rollback of a lxd-openwrt-setup.sh install.
+# Removes the VPN-SSID segment and the sing-box-lx daemon; the main network is
+# untouched. Tolerates a half-installed state: works after an install broken
+# at any step — every step is self-contained and silently skips what's absent.
 #
-# Два режима:
-#   снос (по умолчанию) — удалить службу, state, uci-секции сегмента;
-#   --restore           — то же + восстановить конфиги из pre-lxd бэкапа,
-#                         который установщик снял в /root/backup-pre-lxd-*.tar.gz,
-#                         и перезагрузить роутер («как было до установки»).
+# Two modes:
+#   teardown (default) — remove the service, state, and the segment's uci sections;
+#   --restore          — same, plus restore the configs from the pre-lxd backup
+#                        the installer took into /root/backup-pre-lxd-*.tar.gz,
+#                        and reboot the router ("as before the install").
 #
-# Запуск на роутере:
+# Run on the router:
 #   wget -O /tmp/lxd-uninstall.sh https://raw.githubusercontent.com/Leadaxe/sing-box-lx/lx/scripts-lx/openwrt/lxd-openwrt-uninstall.sh
-#   sh /tmp/lxd-uninstall.sh              # спросит подтверждение
-#   sh /tmp/lxd-uninstall.sh --yes        # без вопросов (нет tty / автоматизация)
-#   sh /tmp/lxd-uninstall.sh --restore    # откат на pre-lxd бэкап + reboot
+#   sh /tmp/lxd-uninstall.sh              # asks for confirmation
+#   sh /tmp/lxd-uninstall.sh --yes        # no questions (no tty / automation)
+#   sh /tmp/lxd-uninstall.sh --restore    # roll back to the pre-lxd backup + reboot
 
-set -u   # НЕ -e: откат обязан дойти до конца по любым обломкам
+set -u   # NOT -e: the rollback must reach the end over any debris
 
 VERSION="1.1"
 STATE_ROOT="/etc/sing-box-lxd"
@@ -28,29 +28,29 @@ ZTUN="sbtun"
 say()  { printf '%s\n' "$*"; }
 warn() { printf '!! %s\n' "$*" >&2; }
 
-[ "$(id -u)" = 0 ] || { warn "нужен root"; exit 1; }
+[ "$(id -u)" = 0 ] || { warn "must run as root"; exit 1; }
 
 YES=0; RESTORE=0
 for _arg in "$@"; do
     case "$_arg" in
         --yes)     YES=1 ;;
         --restore) RESTORE=1 ;;
-        *) warn "неизвестный аргумент: $_arg (есть --yes и --restore)"; exit 1 ;;
+        *) warn "unknown argument: $_arg (there are --yes and --restore)"; exit 1 ;;
     esac
 done
 
 BK=$(ls /root/backup-pre-lxd-*.tar.gz 2>/dev/null | head -1)
 
-# ── имя сегмента ────────────────────────────────────────────────────────────
-# Надёжный след установки — forwarding в зону туннеля: секция ${NET}2tun с
-# dest='sbtun'. Если firewall не успел записаться (оборванная установка),
-# fallback — дефолт установщика, при живом tty его можно поправить.
+# ── the segment name ────────────────────────────────────────────────────────
+# The reliable trace of an install is the forwarding into the tunnel zone: the
+# ${NET}2tun section with dest='sbtun'. If the firewall never got written (a
+# broken install), fall back to the installer's default, adjustable on a live tty.
 NET=$(uci show firewall 2>/dev/null \
       | sed -n "s/^firewall\.\([A-Za-z0-9_]*\)2tun\.dest='$ZTUN'\$/\1/p" | head -1)
 if [ -z "$NET" ]; then
     NET="lxdvpn"
     if [ "$YES" = 0 ] && ( : </dev/tty ) 2>/dev/null; then
-        printf 'uci-имя сегмента [%s]: ' "$NET" >&2
+        printf 'segment uci name [%s]: ' "$NET" >&2
         read -r _a </dev/tty || _a=""
         [ -n "$_a" ] && NET="$_a"
     fi
@@ -58,31 +58,31 @@ fi
 BR=$(uci -q get "network.${NET}dev.name")
 [ -n "$BR" ] || BR="br-$NET"
 
-# ── что будем делать ────────────────────────────────────────────────────────
+# ── what we are about to do ─────────────────────────────────────────────────
 if [ "$RESTORE" = 1 ] && [ -z "$BK" ]; then
-    warn "pre-lxd бэкап не найден (/root/backup-pre-lxd-*.tar.gz) — делаю обычный снос"
+    warn "no pre-lxd backup found (/root/backup-pre-lxd-*.tar.gz) — doing a plain teardown"
     RESTORE=0
 fi
 if [ "$RESTORE" = 0 ] && [ "$YES" = 0 ] && [ -n "$BK" ]; then
-    printf 'Найден pre-lxd бэкап: %s\nВосстановить из него конфиги и перезагрузить (полный откат)? [y/N]: ' "$BK" >&2
+    printf 'Found a pre-lxd backup: %s\nRestore the configs from it and reboot (full rollback)? [y/N]: ' "$BK" >&2
     read -r _a </dev/tty 2>/dev/null || _a=""
     case "$_a" in [yYдД]*) RESTORE=1 ;; esac
 fi
 
 if [ "$RESTORE" = 1 ]; then
-    say "режим: восстановление из $BK + reboot"
+    say "mode: restore from $BK + reboot"
 else
-    say "режим: снос (uci-секции \"$NET\", мост $BR, служба $INIT, state $STATE_ROOT)"
+    say "mode: teardown (uci sections \"$NET\", bridge $BR, service $INIT, state $STATE_ROOT)"
 fi
 if [ "$YES" = 0 ]; then
-    printf 'Продолжить? [y/N]: ' >&2
+    printf 'Proceed? [y/N]: ' >&2
     read -r _a </dev/tty 2>/dev/null || _a=""
-    case "$_a" in [yYдД]*) : ;; *) say "отменено"; exit 0 ;; esac
+    case "$_a" in [yYдД]*) : ;; *) say "cancelled"; exit 0 ;; esac
 fi
 
-# ── служба, файлы, персистентность (нужно в обоих режимах: restore не
-# удаляет файлы, появившиеся после снятия бэкапа, и не возвращает дефолтный
-# sysupgrade.conf — неизменённые файлы в бэкап не попадают) ─────────────────
+# ── service, files, persistence (needed in both modes: restore does not
+# remove files that appeared after the backup was taken, nor bring back a
+# default sysupgrade.conf — unchanged files never make it into a backup) ────
 [ -x "$INIT" ] && { "$INIT" stop >/dev/null 2>&1; "$INIT" disable >/dev/null 2>&1; }
 rm -f "$INIT" "$SUMMARY"
 rm -rf "$STATE_ROOT"
@@ -91,27 +91,28 @@ rm -rf "$STATE_ROOT"
 if [ -x "$BIN" ]; then
     DELBIN=1
     if [ "$RESTORE" = 0 ] && [ "$YES" = 0 ]; then
-        printf 'Удалить бинарь %s (при переустановке скачается заново, ~21 МБ)? [Y/n]: ' "$BIN" >&2
+        printf 'Remove the binary %s (a reinstall downloads it again, ~21 MB)? [Y/n]: ' "$BIN" >&2
         read -r _a </dev/tty 2>/dev/null || _a=""
         case "$_a" in [nNнН]*) DELBIN=0 ;; esac
     fi
     [ "$DELBIN" = 1 ] && rm -f "$BIN"
 fi
 
-# ── режим restore: конфиги вернёт бэкап, uci-снос не нужен ──────────────────
+# ── restore mode: the backup brings the configs back, no uci teardown needed ─
 if [ "$RESTORE" = 1 ]; then
     if ! tar -tzf "$BK" >/dev/null 2>&1; then
-        warn "архив $BK битый — restore отменён, продолжаю обычным сносом"
+        warn "archive $BK is corrupt — restore cancelled, continuing with a plain teardown"
     else
-        say "восстанавливаю конфиги и перезагружаюсь (SSH-сессия оборвётся, роутер вернётся через ~2 минуты)"
-        # отвязка от терминала: reboot рвёт SSH, цепочка не должна умереть с ним
+        say "restoring the configs and rebooting (the SSH session will drop, the router is back in ~2 minutes)"
+        # detach from the terminal: the reboot kills SSH and the chain must not die with it
         ( sysupgrade -r "$BK" && sleep 2 && reboot ) >/dev/null 2>&1 </dev/null &
         exit 0
     fi
 fi
 
-# ── снос: сеть. ifdown ДО удаления секций — netifd разбирает интерфейс, пока
-# ещё знает о нём; удаление конфига без этого оставляет мост-сироту ─────────
+# ── teardown: the network. ifdown BEFORE deleting the sections — netifd tears
+# the interface down while it still knows about it; deleting the config
+# without this leaves an orphan bridge behind (state desync) ────────────────
 ifdown "$NET" >/dev/null 2>&1
 
 for s in "wireless.${NET}_5g" "wireless.${NET}_2g" \
@@ -124,17 +125,17 @@ uci commit
 
 /etc/init.d/network reload >/dev/null 2>&1
 fw4 reload >/dev/null 2>&1
-/etc/init.d/dnsmasq restart >/dev/null 2>&1   # ⚠ роняет DNS всего LAN на ~секунду
+/etc/init.d/dnsmasq restart >/dev/null 2>&1   # ⚠ drops DNS for the whole LAN for ~a second
 
 sleep 2
 if ip link show "$BR" >/dev/null 2>&1; then
-    # конфига больше нет — netifd мост не держит, добить сироту безопасно
-    warn "мост $BR ещё виден — удаляю вручную"
+    # the config is gone — netifd no longer owns the bridge, finishing the orphan is safe
+    warn "bridge $BR still visible — removing by hand"
     ip link del "$BR" 2>/dev/null
 fi
 
-say "готово: сегмент снят, основная сеть не тронута."
-[ -n "$BK" ] && say "pre-lxd бэкап оставлен на месте: $BK"
-say "Осталось перезапустить радио — Wi-Fi моргнёт ~10 секунд (SSH по Wi-Fi порвёт)."
+say "done: the segment is removed, the main network untouched."
+[ -n "$BK" ] && say "the pre-lxd backup stays in place: $BK"
+say "One thing left: restarting the radio — Wi-Fi blinks for ~10 seconds (drops Wi-Fi SSH)."
 wifi reload >/tmp/lxd-wifi-reload.log 2>&1 </dev/null &
 exit 0

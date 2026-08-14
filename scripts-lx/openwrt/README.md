@@ -1,84 +1,86 @@
-# VPN-SSID на OpenWrt — установщик
+# VPN-SSID on OpenWrt — installer
 
-> Ручная сборка того же сегмента по шагам, с объяснением каждого решения:
+> 🌐 Русская версия: **[README.ru.md](README.ru.md)**.
+
+> Manual build of the same segment, step by step, with every decision explained:
 > **[docs-lx/openwrt-vpn-ssid.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/openwrt-vpn-ssid.md)**
-> ([по-русски](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/openwrt-vpn-ssid.ru.md)).
-> Демон, `daemon.json`, сопряжение, телеметрия:
-> [docs-lx/lxd-daemon.ru.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/lxd-daemon.ru.md).
-> Здесь — автоматический установщик и рецепты эксплуатации.
+> ([in Russian](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/openwrt-vpn-ssid.ru.md)).
+> The daemon, `daemon.json`, pairing, telemetry:
+> [docs-lx/lxd-daemon.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/lxd-daemon.md).
+> This page — the automated installer and operations recipes.
 
-Отдельный Wi-Fi, весь трафик которого идёт через ядро sing-box-lx прямо на роутере. Основная сеть роутера при этом не зависит от ядра ни в какой форме — ошибка в конфиге не может отрезать SSH/LAN.
+A separate Wi-Fi network whose entire traffic goes through the sing-box-lx core right on the router. The main network does not depend on the core in any way — a broken config cannot cut off SSH/LAN.
 
 ```
-SSID → мост → tun (auto_route + include_interface) → ядро sing-box → upstream
+SSID → bridge → tun (auto_route + include_interface) → sing-box core → upstream
 ```
 
-Проверено на RouteRich AX3000 (форк OpenWrt 24.10, mediatek/filogic, aarch64), работает в бою.
+Built and verified on a RouteRich AX3000 (OpenWrt 24.10 fork, mediatek/filogic, aarch64), running in production.
 
-## Требования
+## Requirements
 
-- OpenWrt 22.03+ с fw4/nftables (форки с `ID="openwrt"` в `/etc/os-release` подходят) и dnsmasq;
-- ~80 МБ свободного места (бинарь ~50 МБ; на маленьком overlay нужен extroot);
-- архитектура из релизов форка: aarch64, x86_64, armv7l, mips, mipsel.
+- OpenWrt 22.03+ with fw4/nftables (forks that keep `ID="openwrt"` in `/etc/os-release` qualify) and dnsmasq;
+- ~80 MB free space (the binary is ~50 MB; small overlays need extroot);
+- an architecture the fork releases cover: aarch64, x86_64, armv7l, mips, mipsel.
 
-## Установка
+## Install
 
-**Бэкап делается сам.** Первым делом установщик снимает полный бэкап роутера в `/root/backup-pre-lxd-<дата>.tar.gz` — один раз, до любых изменений; повторные запуски чистую копию не затирают. Из этого файла [скрипт сноса](#снести-всё-установленное) умеет откатить роутер целиком (`--restore`). Копию стоит утащить и на компьютер — на случай, если роутер станет недоступен (sftp на роутере нет, поэтому потоком):
+**The backup takes care of itself.** The first thing the installer does is take a full router backup into `/root/backup-pre-lxd-<date>.tar.gz` — once, before any changes; re-runs never overwrite the clean copy. The [teardown script](#remove-everything) can roll the router back from this file entirely (`--restore`). Still worth pulling a copy to your computer in case the router becomes unreachable (no sftp on the router, so stream it):
 
 ```bash
-ssh root@РОУТЕР 'cat /root/backup-pre-lxd-*.tar.gz' > backup-pre-lxd.tar.gz
+ssh root@ROUTER 'cat /root/backup-pre-lxd-*.tar.gz' > backup-pre-lxd.tar.gz
 ```
 
-**Установка.** Зайти на роутер (`ssh root@РОУТЕР`) и выполнить:
+**Install.** SSH into the router (`ssh root@ROUTER`) and run:
 
 ```bash
 wget -O /tmp/lxd-setup.sh https://raw.githubusercontent.com/Leadaxe/sing-box-lx/lx/scripts-lx/openwrt/lxd-openwrt-setup.sh && sh /tmp/lxd-setup.sh
 ```
 
-Если busybox-wget ругается на SSL: `opkg install ca-bundle libustream-mbedtls` и повторить.
+If busybox-wget complains about SSL: `opkg install ca-bundle libustream-mbedtls` and retry.
 
-Запасной вариант — если у роутера нет прямого доступа к GitHub, доставить файл с компьютера и запустить через `ssh -t` (скрипт интерактивный, ему нужен терминал — пайп в `sh -` без pty он распознаёт и отказывается работать):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Leadaxe/sing-box-lx/lx/scripts-lx/openwrt/lxd-openwrt-setup.sh | ssh root@РОУТЕР 'cat > /tmp/lxd-setup.sh'
-```
+Fallback — when the router has no direct GitHub access, deliver the file from your computer and run it via `ssh -t` (the script is interactive and needs a terminal — it detects a pty-less `sh -` pipe and refuses to run):
 
 ```bash
-ssh -t root@РОУТЕР 'sh /tmp/lxd-setup.sh'
+curl -fsSL https://raw.githubusercontent.com/Leadaxe/sing-box-lx/lx/scripts-lx/openwrt/lxd-openwrt-setup.sh | ssh root@ROUTER 'cat > /tmp/lxd-setup.sh'
 ```
 
-(из локальной копии репозитория первая команда — `ssh root@РОУТЕР 'cat > /tmp/lxd-setup.sh' < lxd-openwrt-setup.sh`)
+```bash
+ssh -t root@ROUTER 'sh /tmp/lxd-setup.sh'
+```
 
-Семь вопросов: пароль Wi-Fi (подставляет найденный в существующих сетях), SSID для 5 ГГц, нужна ли сеть на 2.4 ГГц, имя и адрес tun-интерфейса, имя моста, нужен ли доступ к управлению снаружи. Остальное скрипт делает сам: качает бинарь со сверкой sha256, поднимает мост, DHCP, firewall, службу под procd, выпускает invite.
+(from a local repo checkout the first command is `ssh root@ROUTER 'cat > /tmp/lxd-setup.sh' < lxd-openwrt-setup.sh`)
 
-Радио поднимается **последним шагом, по нажатию Enter** — чтобы обрыв Wi-Fi не убил скрипт до того, как он выведет invite.
+Seven questions: the Wi-Fi password (prefills the one found in existing networks), the 5 GHz SSID, whether to add a 2.4 GHz network, the tun interface name and address, the bridge name, and whether to expose management to the outside. Everything else the script does itself: downloads the binary with an sha256 check, brings up the bridge, DHCP, firewall, a procd service, and mints an invite.
 
-Итог печатается и сохраняется в `/root/lxd-setup-summary.txt` (chmod 600 — там код сопряжения и пароль Wi-Fi):
+The radio comes up **as the last step, on Enter** — so a Wi-Fi drop cannot kill the script before it prints the invite.
+
+The summary is printed and saved to `/root/lxd-setup-summary.txt` (chmod 600 — it contains the pairing code and the Wi-Fi password):
 
 ```
-Pair invite:       <LAN-адрес-роутера>:19091#<отпечаток-сервера>#<КОД>
+Pair invite:       <router-LAN-address>:19091#<server-fingerprint>#<CODE>
 tun name:          lxd-tun0
 tun address:       172.16.0.1/30
-include_interface: br-lxdvpn          ← в UI лаунчера поле "LAN interfaces"
+include_interface: br-lxdvpn          ← the "LAN interfaces" field in the launcher UI
 ```
 
-После установки ядро крутит каркасный конфиг: сегмент работает, но выходит **напрямую через WAN**. Боевой upstream заливается из лаунчера одним apply — сеть, firewall и Wi-Fi при этом не трогаются.
+After the install the core runs a skeleton config: the segment works but exits **directly via WAN**. The production upstream is uploaded from the launcher in a single apply — network, firewall, and Wi-Fi stay untouched.
 
-Во всех рецептах ниже — имена по умолчанию (`br-lxdvpn`, `lxd-tun0`, служба `sing-box-lxd`). Если при установке задавали свои — подставьте значения из сводки.
+All recipes below use the default names (`br-lxdvpn`, `lxd-tun0`, service `sing-box-lxd`). If you picked your own during the install, substitute the values from the summary.
 
 ---
 
-## Сразу после установки
+## Right after the install
 
-### 1. Сопрячь лаунчер
+### 1. Pair the launcher
 
-Вбить invite из сводки. Адрес в нём уже подставлен рабочий (LAN-адрес роутера), отпечаток и код — как есть; по отпечатку лаунчер пинит TLS-сертификат демона.
+Enter the invite from the summary. The address in it is already the working one (the router's LAN address); the fingerprint and code go in as-is — the launcher pins the daemon's TLS certificate by that fingerprint.
 
-⚠️ **Не перезапускать демон, пока не введён код.** Код живёт в памяти процесса; рестарт даёт `enroll: no active enrollment code`, и invite придётся выпускать заново.
+⚠️ **Do not restart the daemon before the code is entered.** The code lives in process memory; a restart yields `enroll: no active enrollment code` and the invite has to be minted again.
 
-### 2. Залить боевой конфиг
+### 2. Upload the production config
 
-Из лаунчера. В tun-inbound должны быть значения из сводки:
+From the launcher. The tun inbound must carry the values from the summary:
 
 ```json
 {
@@ -91,34 +93,34 @@ include_interface: br-lxdvpn          ← в UI лаунчера поле "LAN i
 }
 ```
 
-`include_interface` — **мост VPN-сегмента**, не `br-lan`. Именно он запирает перехват: `auto_route` сам по себе жадный и увёл бы в туннель весь роутер.
+`include_interface` is the **VPN segment bridge**, not `br-lan`. It is what contains the capture: `auto_route` on its own is greedy and would drag the whole router into the tunnel.
 
-### 3. Проверить, что сегмент ходит
+### 3. Check the segment routes
 
-Подключиться телефоном к новому SSID и открыть любой сайт. Если реального клиента нет — виртуальный, прямо на роутере (см. рецепт ниже).
+Join the new SSID with a phone and open any site. No real client at hand — use a virtual one right on the router (see the recipe below).
 
 ---
 
-## Рецепты
+## Recipes
 
-### Добавить/отозвать клиента
+### Add/revoke a client
 
 ```bash
-sing-box lxd client add --name <имя>
+sing-box lxd client add --name <name>
 sing-box lxd client list
-sing-box lxd client remove <имя>
+sing-box lxd client remove <name>
 ```
 
-`--state-dir` не нужен: `client`-подкоманды сами находят state установленной службы (по `daemon.json` в платформенном дефолте; на OpenWrt это `/etc/sing-box-lxd/state`). Флаг понадобится только при нестандартном пути.
+`--state-dir` is not needed: the `client` subcommands find the installed service's state on their own (via `daemon.json` at the platform default; on OpenWrt that is `/etc/sing-box-lxd/state`). The flag only matters for a non-standard path.
 
-Работает **только с loopback** (`403 operator routes are loopback-only` по сети), поэтому `127.0.0.1` должен слушаться и стоять **первым** в `listen.address` (скрипт так и настраивает). Между `add` и вводом кода демон не перезапускать.
+Works **only over loopback** (`403 operator routes are loopback-only` over the network), so `127.0.0.1` must be listened on and stand **first** in `listen.address` (the script sets it up exactly so). Do not restart the daemon between `add` and entering the code.
 
-### Проверить сегмент без реального клиента
+### Test the segment without a real client
 
-Виртуальный клиент в мосту сегмента — единственный способ проверить всё, включая fail-closed, не трогая живых пользователей:
+A virtual client inside the segment bridge is the only way to test everything, including fail-closed, without touching live users:
 
 ```bash
-opkg install kmod-veth        # в базовой прошивке его нет
+opkg install kmod-veth        # not in the stock firmware
 cat > /tmp/dc.sh <<'EOF'
 #!/bin/sh
 case "$1" in bound) ip addr add $ip/$subnet dev $interface; ip route add default via $router;; esac
@@ -131,50 +133,50 @@ ip netns add t && ip link set v1 netns t
 ip link set v0 master br-lxdvpn && ip link set v0 up
 ip netns exec t ip link set v1 up
 mkdir -p /etc/netns/t && echo "nameserver 8.8.8.8" > /etc/netns/t/resolv.conf
-ip netns exec t udhcpc -i v1 -n -q -f -s /tmp/dc.sh     # получил адрес?
-ip netns exec t wget -qO- http://api.ipify.org           # внешний IP = upstream?
+ip netns exec t udhcpc -i v1 -n -q -f -s /tmp/dc.sh     # got an address?
+ip netns exec t wget -qO- http://api.ipify.org           # external IP = upstream?
 
-# убрать за собой
+# clean up after yourself
 ip netns del t; ip link del v0; rm -rf /etc/netns/t /tmp/dc.sh
 ```
 
-Свой `resolv.conf` для netns обязателен: иначе он наследует `127.0.0.1` роутера, которого внутри netns нет.
+A dedicated `resolv.conf` for the netns is mandatory: otherwise it inherits the router's `127.0.0.1`, which does not exist inside the netns.
 
-### Проверить fail-closed
+### Test fail-closed
 
 ```bash
 /etc/init.d/sing-box-lxd stop
-# из сегмента: ping не идёт, TCP отбит, в WAN НЕ течёт
+# from the segment: ping dead, TCP refused, NOTHING leaks to WAN
 /etc/init.d/sing-box-lxd start
-# ядро поднялось из last_good, клиент снова в сети
+# the core comes back from last_good, the client is online again
 ```
 
-### Убедиться, что основная сеть не затронута
+### Confirm the main network is untouched
 
 ```bash
 ip rule | head -3
-# 9000: from all iif br-lxdvpn goto 9002   ← только сегмент уходит в туннель
-# 9001: from all goto 9010                 ← всё остальное мимо, в main
+# 9000: from all iif br-lxdvpn goto 9002   ← only the segment goes into the tunnel
+# 9001: from all goto 9010                 ← everything else bypasses it, into main
 
-ip route get 8.8.8.8 from <адрес-клиента-в-LAN> iif br-lan    # → через WAN, как раньше
+ip route get 8.8.8.8 from <LAN-client-address> iif br-lan    # → via WAN, as before
 ```
 
-### Кто сейчас в сегменте и через какой SSID
+### Who is in the segment and on which SSID
 
 ```bash
-cat /tmp/dhcp.leases                                   # IP → MAC → имя устройства
+cat /tmp/dhcp.leases                                   # IP → MAC → device name
 for i in $(iw dev | awk '$1=="Interface"{print $2}'); do
   echo "$i ($(iwinfo $i info | grep -o 'ESSID: ".*"'))"
   iw dev $i station dump | grep Station
 done
 ```
 
-Связка идёт по MAC: lease даёт имя, `station dump` — на каком AP, `iwinfo` — какой у AP SSID.
+The join key is the MAC: the lease gives the name, `station dump` — which AP, `iwinfo` — which SSID that AP serves.
 
-### Замерить нагрузку и потолок скорости
+### Measure load and the speed ceiling
 
 ```bash
-TUN=lxd-tun0                  # имя из сводки
+TUN=lxd-tun0                  # name from the summary
 P=$(pgrep -f "^/usr/bin/sing-box lxd" | head -1)
 read _ u1 n1 s1 i1 w1 q1 sq1 _ < /proc/stat; A=$(awk '{print $14+$15}' /proc/$P/stat)
 R1=$(cat /sys/class/net/$TUN/statistics/rx_bytes)
@@ -183,91 +185,92 @@ read _ u2 n2 s2 i2 w2 q2 sq2 _ < /proc/stat; B=$(awk '{print $14+$15}' /proc/$P/
 R2=$(cat /sys/class/net/$TUN/statistics/rx_bytes)
 T=$(( (u2+n2+s2+i2+w2+q2+sq2)-(u1+n1+s1+i1+w1+q1+sq1) ))
 awk -v d=$((B-A)) -v t=$T -v c=$(grep -c ^processor /proc/cpuinfo) \
-    -v r=$((R2-R1)) 'BEGIN{printf "sing-box: %.1f%% ядра при %.1f Мбит/с\n", d*100/t*c, r*8/10/1e6}'
+    -v r=$((R2-R1)) 'BEGIN{printf "sing-box: %.1f%% of a core at %.1f Mbit/s\n", d*100/t*c, r*8/10/1e6}'
 ```
 
-### Служба и логи
+### Service and logs
 
 ```bash
 /etc/init.d/sing-box-lxd status | restart | stop | start
-logread | grep sing-box | tail -20        # системный лог
-tail -f /etc/sing-box-lxd/lxd.log         # собственный лог демона, ротация своя
+logread | grep sing-box | tail -20        # system log
+tail -f /etc/sing-box-lxd/lxd.log         # the daemon's own log, self-rotated
 ```
 
-Apply, rollback и статус ядра — **только из лаунчера**: они за mTLS, `curl` с роутера отвечает `client certificate not trusted`.
+Apply, rollback, and core status — **from the launcher only**: they sit behind mTLS, `curl` from the router answers `client certificate not trusted`.
 
-### Снять и восстановить бэкап
+### Take and restore a backup
 
 ```bash
-# снять (на роутере нет sftp-server, поэтому потоком)
-ssh root@РОУТЕР 'sysupgrade -b /tmp/bk.tar.gz >/dev/null 2>&1; cat /tmp/bk.tar.gz' > backup.tar.gz
-ssh root@РОУТЕР 'rm /tmp/bk.tar.gz'
+# take one (no sftp-server on the router, so stream it)
+ssh root@ROUTER 'sysupgrade -b /tmp/bk.tar.gz >/dev/null 2>&1; cat /tmp/bk.tar.gz' > backup.tar.gz
+ssh root@ROUTER 'rm /tmp/bk.tar.gz'
 
-# восстановить: сверка архива, restore и ребут отвязаны от терминала —
-# ребут рвёт SSH-сессию, и цепочка не должна умереть вместе с ней
-ssh root@РОУТЕР 'cat > /tmp/bk.tar.gz' < backup.tar.gz
-ssh root@РОУТЕР 'tar -tzf /tmp/bk.tar.gz >/dev/null && ( sysupgrade -r /tmp/bk.tar.gz && sleep 2 && reboot ) >/dev/null 2>&1 </dev/null &'
+# restore: the archive check, restore, and reboot are detached from the terminal —
+# the reboot kills the SSH session and the chain must not die with it
+ssh root@ROUTER 'cat > /tmp/bk.tar.gz' < backup.tar.gz
+ssh root@ROUTER 'tar -tzf /tmp/bk.tar.gz >/dev/null && ( sysupgrade -r /tmp/bk.tar.gz && sleep 2 && reboot ) >/dev/null 2>&1 </dev/null &'
 ```
 
-Бинарь и state попадают в бэкап только потому, что скрипт внёс их в `/etc/sysupgrade.conf`.
+The binary and state land in the backup only because the script added them to `/etc/sysupgrade.conf`.
 
-⚠️ Restore при откате на бэкап, снятый **до** установки, — не полная чистка: он не удаляет файлы, появившиеся после снятия бэкапа (бинарь, init-скрипт, state), и не вернёт дефолтный `/etc/sysupgrade.conf` (неизменённые файлы в `sysupgrade -b` не попадают, перезаписывать при restore нечем). Поэтому перед restore прогнать [скрипт сноса](#снести-всё-установленное) — он убирает и файлы, и строки в `sysupgrade.conf`.
+⚠️ Restoring a backup taken **before** the install is not a full cleanup: it does not remove files that appeared after the backup was taken (the binary, the init script, the state) and will not bring back a default `/etc/sysupgrade.conf` (unchanged files never make it into `sysupgrade -b`, so there is nothing to overwrite it with). Run the [teardown script](#remove-everything) before the restore — it removes both the files and the `sysupgrade.conf` lines.
 
-### Снести всё установленное
+### Remove everything
 
 ```bash
 wget -O /tmp/lxd-uninstall.sh https://raw.githubusercontent.com/Leadaxe/sing-box-lx/lx/scripts-lx/openwrt/lxd-openwrt-uninstall.sh && sh /tmp/lxd-uninstall.sh
 ```
 
-Скрипт [lxd-openwrt-uninstall.sh](lxd-openwrt-uninstall.sh) сам находит имя сегмента (по forwarding в зону `sbtun`), гасит и удаляет службу, state и uci-секции, перезагружает network/firewall/dnsmasq и в конце перезапускает радио. Терпит полуустановленное состояние — годится и как уборка после установки, оборванной на любом шаге. Основная сеть не затрагивается.
+The [lxd-openwrt-uninstall.sh](lxd-openwrt-uninstall.sh) script finds the segment name on its own (via the forwarding into the `sbtun` zone), stops and removes the service, state, and uci sections, reloads network/firewall/dnsmasq, and restarts the radio at the end. It tolerates a half-installed state — works as cleanup after an install that broke at any step. The main network is untouched.
 
-Флаги: `--yes` — без вопросов (запуск без tty); `--restore` — вместо uci-сноса восстановить конфиги из pre-lxd бэкапа, снятого установщиком (`/root/backup-pre-lxd-*.tar.gz`), и перезагрузить роутер — состояние «как до установки». Файлы демона и строки в `sysupgrade.conf` вычищаются в обоих режимах (restore сам этого не делает — см. предупреждение в рецепте бэкапа).
+Flags: `--yes` — no questions (no-tty runs); `--restore` — instead of the uci teardown, restore the configs from the pre-lxd backup the installer took (`/root/backup-pre-lxd-*.tar.gz`) and reboot the router — the "as before the install" state. The daemon files and the `sysupgrade.conf` lines are cleaned in both modes (restore does not do that by itself — see the warning in the backup recipe).
 
-Важный порядок внутри (если снимаете руками): `ifdown` **до** удаления uci-секций и `/etc/init.d/network reload` **после** — иначе netifd не узнает об удалении, останется мост-сирота, а повторная установка упрётся в «интерфейс уже существует».
+Section names derive from the bridge: `br-lxdvpn` → `lxdvpn`; when tearing down by hand, `ifdown` **before** deleting the uci sections and `/etc/init.d/network reload` **after** are mandatory — otherwise netifd never learns about the deletion, an orphan bridge stays behind, and a re-install trips over "interface already exists".
 
 ---
 
-## Главная мина: рассинхрон имени и адреса туннеля
+## The main landmine: tunnel name/address drift
 
-Два поля конфига ядра держат firewall-обвязку. Любой залитый конфиг (в том числе из лаунчера) может их сменить — и правила, привязанные к старым значениям, тихо перестанут совпадать. **Ядро при этом выглядит полностью исправным.**
+Two fields of the core config hold up the firewall plumbing. Any uploaded config (including one from the launcher) may change them — and the rules bound to the old values silently stop matching. **The core looks perfectly healthy the whole time.**
 
-| Что в конфиге ядра | Связано с | Симптом рассинхрона |
+| Core config field | Tied to | Drift symptom |
 |---|---|---|
-| `interface_name` | `firewall.sbtun.device` | сегмент вообще без интернета (зона пуста) |
-| `address` | `firewall.sbtun_tcp.dest_ip` | **`connection refused` на TCP при живых ICMP и DNS** |
+| `interface_name` | `firewall.sbtun.device` | segment has no internet at all (empty zone) |
+| `address` | `firewall.sbtun_tcp.dest_ip` | **`connection refused` on TCP while ICMP and DNS work** |
 
-Второй случай коварнее: пинги идут, DNS резолвится, а ни одна страница не открывается.
+The second case is the treacherous one: pings pass, DNS resolves, yet no page opens.
 
 ```bash
-ip addr show lxd-tun0 | grep inet                          # адрес туннеля сейчас
-uci show firewall.sbtun.device firewall.sbtun_tcp.dest_ip  # что в firewall
-nft list ruleset | grep Allow-sbtun-systemstack-tcp        # packets 0 при живом трафике = промах
+ip addr show lxd-tun0 | grep inet                          # tunnel address right now
+uci show firewall.sbtun.device firewall.sbtun_tcp.dest_ip  # what the firewall has
+nft list ruleset | grep Allow-sbtun-systemstack-tcp        # packets 0 under live traffic = miss
 
-uci set firewall.sbtun_tcp.dest_ip='<новый адрес>'
+uci set firewall.sbtun_tcp.dest_ip='<new address>'
 uci commit firewall && fw4 reload
 ```
 
-Избавиться от связки совсем: `"stack": "gvisor"` в конфиге ядра. Тогда sing-box разбирает TCP внутри себя, локальный листенер не появляется и правило `sbtun_tcp` не нужно. Цена — выше нагрузка на CPU.
+To drop the coupling entirely: `"stack": "gvisor"` in the core config. sing-box then parses TCP internally, no local listener appears, and the `sbtun_tcp` rule is unnecessary. The price — higher CPU load.
 
-## Грабли OpenWrt, зашитые в скрипт
+## OpenWrt quirks baked into the script
 
-- **`bridge_empty=1`** обязателен для моста без ethernet-портов (только Wi-Fi-AP, они цепляются динамически при старте hostapd). Без флага netifd мост не поднимет вовсе.
-- **`nohup` в busybox нет.** Фоновый запуск — `cmd >/log 2>&1 </dev/null &`.
-- **`xxd` и `od` в busybox нет** — секрет генерируется через `openssl rand -hex 32` (fallback — `hexdump`).
-- **`ID` из `/etc/os-release`, а не `DISTRIB_ID`.** Форки пишут в `DISTRIB_ID` своё имя (у RouteRich там `RouteRich`), а `ID="openwrt"` сохраняют.
-- **`listen: ["127.0.0.1", "0.0.0.0"]` валит демон** — `bind: address already in use`, ядро не поднимается. `0.0.0.0` идёт один, loopback он покрывает сам.
-- **`/releases/latest` игнорирует pre-release**, а релизы форка выходят как rc — берётся первый из общего списка.
-- **`wifi reload` рвёт SSH-сессию** — поэтому он последним шагом, после того как invite выпущен и сводка сохранена.
-- **Рестарт dnsmasq роняет DNS всего LAN** на секунду — при удалённой работе учитывать.
+- **`bridge_empty=1`** is mandatory for a bridge with no ethernet ports (Wi-Fi APs only, attached dynamically when hostapd starts). Without the flag netifd will not bring the bridge up at all.
+- **busybox has no `nohup`.** Background runs — `cmd >/log 2>&1 </dev/null &`.
+- **busybox has no `xxd` or `od`** — the secret is generated via `openssl rand -hex 32` (fallback — `hexdump`).
+- **`ID` from `/etc/os-release`, not `DISTRIB_ID`.** Forks write their own name into `DISTRIB_ID` (RouteRich puts `RouteRich` there) while keeping `ID="openwrt"`.
+- **`listen: ["127.0.0.1", "0.0.0.0"]` kills the daemon** — `bind: address already in use`, the core never comes up. `0.0.0.0` goes alone; it covers loopback by itself.
+- **`/releases/latest` ignores pre-releases**, and the fork ships releases as rc — so the first entry of the full list is taken.
+- **`wget` on OpenWrt is `uclient-fetch`**: without `-O` it saves a redirected GitHub asset under the name from the **final** URL — the download "succeeds" into a file you did not ask for.
+- **`wifi reload` tears down the SSH session** — which is why it is the last step, after the invite is minted and the summary saved.
+- **A dnsmasq restart drops DNS for the whole LAN** for a second — keep in mind when working remotely.
 
-## Производительность (ориентир)
+## Performance (a reference point)
 
-Замер на RouteRich AX3000 (Cortex-A53, 2 ядра, без аппаратного AES), выход через VLESS+Reality:
+Measured on a RouteRich AX3000 (Cortex-A53, 2 cores, no hardware AES), exiting via VLESS+Reality:
 
-| Нагрузка | Трафик | CPU ядра sing-box |
+| Load | Traffic | sing-box CPU |
 |---|---|---|
-| простой | 0 | ~1% ядра |
-| средняя | 45 Мбит/с | ~33% ядра |
-| **потолок** | **~70 Мбит/с** | **94% ядра** |
+| idle | 0 | ~1% of a core |
+| medium | 45 Mbit/s | ~33% of a core |
+| **ceiling** | **~70 Mbit/s** | **94% of a core** |
 
-Упор — в шифрование на CPU. Основной Wi-Fi при этом получает полную скорость: он идёт мимо ядра, через аппаратный offload.
+The bottleneck is CPU crypto. The main Wi-Fi keeps full speed meanwhile: it bypasses the core entirely via hardware offload.
