@@ -570,12 +570,18 @@ step "Сопряжение"
 
 # Код живёт в памяти процесса, не в state-dir: любой рестарт демона между
 # `client add` и вводом кода в лаунчер убьёт его (enroll: no active enrollment code).
+# Invite демона: адрес#отпечаток-сервера#код (lxd/admin.go, handleClientCode).
+# Адрес внутри — первый listen-адрес (loopback); лаунчеру нужен LAN-адрес,
+# поэтому меняем ТОЛЬКО адресную часть. Хвост не трогать: посередине стоит
+# отпечаток TLS-сертификата, по нему лаунчер пинит сервер — подставить туда
+# что-то своё значит сломать сопряжение ("server fingerprint does not match").
 INVITE=$("$BIN" lxd client add --name launcher --state-dir "$STATE_DIR" 2>&1 | tail -1)
+FP=$(printf '%s' "$INVITE" | awk -F'#' '{print $2}')
 CODE=$(printf '%s' "$INVITE" | awk -F'#' '{print $3}')
-if [ -z "$CODE" ]; then
+if [ -z "$FP" ] || [ -z "$CODE" ]; then
     warn "не удалось выпустить invite (демон не отвечает?): $INVITE"
     warn "после починки выпустить вручную: sing-box lxd client add --name launcher --state-dir $STATE_DIR"
-    CODE="<выпустите-код-вручную>"
+    FP="<отпечаток>"; CODE="<код>"
 fi
 
 # ── Итог ───────────────────────────────────────────────────────────────────
@@ -591,7 +597,7 @@ printf '════════════════════════
 printf '  ГОТОВО\n'
 printf '════════════════════════════════════════════════════════════\n\n'
 
-printf 'Pair invite:     %s:%s#%s#%s\n' "$LAN_IP" "$PORT" "$SECRET" "$CODE"
+printf 'Pair invite:     %s:%s#%s#%s\n' "$LAN_IP" "$PORT" "$FP" "$CODE"
 printf '\n'
 printf '── для конфига ядра ─────────────────────────────────────────\n'
 printf 'tun name:            %s\n' "$TUN_IF"
@@ -613,7 +619,7 @@ printf 'сегмент:         192.168.%s.0/24 (шлюз %s)\n' "$SUBNET" "$GW"
 printf 'управление:      https://%s:%s (TLS+mTLS)\n' "$LAN_IP" "$PORT"
 if [ "$WAN_EXPOSE" = 1 ]; then
     printf 'снаружи:         https://%s:%s — порт открыт в firewall\n' "$WAN_SHOW" "$PORT"
-    printf '                 invite для внешнего клиента: %s:%s#%s#<новый код>\n' "$WAN_SHOW" "$PORT" "$SECRET"
+    printf '                 invite для внешнего клиента: %s:%s#%s#<новый код>\n' "$WAN_SHOW" "$PORT" "$FP"
     printf '                 (новый код: sing-box lxd client add --name <имя> --state-dir %s)\n' "$STATE_DIR"
 else
     printf 'снаружи:         закрыт. Нужен доступ не из дома — ssh-туннель:\n'
