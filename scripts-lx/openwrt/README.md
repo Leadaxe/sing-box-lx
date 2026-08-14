@@ -203,12 +203,15 @@ Apply, rollback и статус ядра — **только из лаунчер�
 ssh root@РОУТЕР 'sysupgrade -b /tmp/bk.tar.gz >/dev/null 2>&1; cat /tmp/bk.tar.gz' > backup.tar.gz
 ssh root@РОУТЕР 'rm /tmp/bk.tar.gz'
 
-# восстановить
+# восстановить: сверка архива, restore и ребут отвязаны от терминала —
+# ребут рвёт SSH-сессию, и цепочка не должна умереть вместе с ней
 ssh root@РОУТЕР 'cat > /tmp/bk.tar.gz' < backup.tar.gz
-ssh root@РОУТЕР 'sysupgrade -r /tmp/bk.tar.gz && reboot'
+ssh root@РОУТЕР 'tar -tzf /tmp/bk.tar.gz >/dev/null && ( sysupgrade -r /tmp/bk.tar.gz && sleep 2 && reboot ) >/dev/null 2>&1 </dev/null &'
 ```
 
 Бинарь и state попадают в бэкап только потому, что скрипт внёс их в `/etc/sysupgrade.conf`.
+
+⚠️ Restore при откате на бэкап, снятый **до** установки, — не полная чистка: он не удаляет файлы, появившиеся после снятия бэкапа (бинарь, init-скрипт, state), и не вернёт дефолтный `/etc/sysupgrade.conf` (неизменённые файлы в `sysupgrade -b` не попадают, перезаписывать при restore нечем). Поэтому перед restore прогнать [скрипт сноса](#снести-всё-установленное) — он убирает и файлы, и строки в `sysupgrade.conf`.
 
 ### Снести всё установленное
 
