@@ -104,6 +104,22 @@ AVAIL_KB=$(df -k /overlay 2>/dev/null | awk 'NR==2{print $4}')
 say "свободно:    $((AVAIL_KB / 1024)) МБ"
 [ "$AVAIL_KB" -lt 80000 ] && warn "меньше 80 МБ свободно — бинарь ~50 МБ может не влезть (нужен extroot)"
 
+# ── Бэкап pre-lxd: до любых изменений, один раз ─────────────────────────────
+# Точка полного отката — скрипт сноса восстанавливается из него (--restore).
+# Создаётся только если его ещё нет: повторный запуск после оборванной
+# установки не должен затереть чистое состояние грязным.
+if ls /root/backup-pre-lxd-*.tar.gz >/dev/null 2>&1; then
+    say "бэкап:       уже есть $(ls /root/backup-pre-lxd-*.tar.gz | head -1) — не трогаю"
+else
+    BK="/root/backup-pre-lxd-$(date +%Y%m%d-%H%M%S).tar.gz"
+    if sysupgrade -b "$BK" >/dev/null 2>&1 && tar -tzf "$BK" >/dev/null 2>&1; then
+        say "бэкап:       $BK ($(du -k "$BK" | awk '{print $1}') КБ)"
+    else
+        rm -f "$BK"
+        warn "sysupgrade -b не отработал — продолжаю БЕЗ точки отката"
+    fi
+fi
+
 # ── 1. Радио ────────────────────────────────────────────────────────────────
 step "Wi-Fi радио"
 
