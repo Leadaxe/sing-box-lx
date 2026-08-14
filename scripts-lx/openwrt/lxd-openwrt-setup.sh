@@ -459,9 +459,18 @@ uci -q delete "dhcp.$NET.dhcp_option" 2>/dev/null || true
 uci add_list "dhcp.$NET.dhcp_option=6,8.8.8.8"
 uci commit dhcp
 
+# reload_config иногда не дёргает netifd на свежесозданную device-секцию —
+# ждём с поллингом и на полпути пробуем явный network reload как fallback.
 reload_config
-sleep 3
-ip link show "$BR" >/dev/null 2>&1 || die "мост $BR не поднялся"
+n=0
+while ! ip link show "$BR" >/dev/null 2>&1; do
+    n=$((n+1))
+    [ "$n" -eq 5 ] && /etc/init.d/network reload >/dev/null 2>&1
+    [ "$n" -ge 15 ] && die "мост $BR не поднялся. Диагностика:
+  uci show network | grep $NET
+  logread | tail -30"
+    sleep 1
+done
 say "мост:        $BR ($GW/24)"
 
 # ⚠ рестарт dnsmasq на секунду роняет DNS всего LAN
