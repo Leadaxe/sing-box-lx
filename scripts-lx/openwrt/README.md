@@ -74,7 +74,14 @@ All recipes below use the default names (`br-lxdvpn`, `lxd-tun0`, service `sing-
 
 ### 1. Pair the launcher
 
-The launcher is **[singbox-launcher](https://github.com/Leadaxe/singbox-launcher)** — download it from that page's releases. In it, open the **Remote** tab, press **Add**, and enter the invite from the summary. The address in it is already the working one (the router's LAN address); the fingerprint and code go in as-is — the launcher pins the daemon's TLS certificate by that fingerprint.
+The launcher is **[singbox-launcher](https://github.com/Leadaxe/singbox-launcher)** — download it from that page's releases. In it: the **Remote** tab → the **+ Add** button → the "Add remote machine" dialog:
+
+- **Name** — anything you like (empty = the address);
+- **Invite** — the full line from the summary (`address#fingerprint#code`). The address in it is already the working one (the router's LAN address); the fingerprint and code go in as-is — the launcher pins the daemon's TLS certificate by that fingerprint;
+- **Platform** — `linux`, **Architecture** — the router's (aarch64 → `arm64`);
+- **Add**.
+
+The code is one-time and burns after the first attempt — if pairing fails, mint a fresh invite (`sing-box lxd client add`, recipe below) and paste the new line.
 
 ⚠️ **Do not restart the daemon before the code is entered.** The code lives in process memory; a restart yields `enroll: no active enrollment code` and the invite has to be minted again.
 
