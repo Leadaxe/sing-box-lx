@@ -23,7 +23,15 @@ SSID → мост → tun (auto_route + include_interface) → ядро sing-box
 
 ## Установка
 
-Зайти на роутер (`ssh root@РОУТЕР`) и выполнить:
+**Шаг 1 — бэкап.** Перед любыми изменениями снять полный бэкап роутера на компьютер (на роутере нет sftp-server, поэтому потоком):
+
+```bash
+ssh root@РОУТЕР 'sysupgrade -b /tmp/bk.tar.gz >/dev/null 2>&1; cat /tmp/bk.tar.gz' > backup.tar.gz && ssh root@РОУТЕР 'rm /tmp/bk.tar.gz'
+```
+
+Это точка отката на самый крайний случай — восстановление описано в [рецептах ниже](#снять-и-восстановить-бэкап); для штатного отката есть [скрипт сноса](#снести-всё-установленное).
+
+**Шаг 2 — установка.** Зайти на роутер (`ssh root@РОУТЕР`) и выполнить:
 
 ```bash
 wget -O /tmp/lxd-setup.sh https://raw.githubusercontent.com/Leadaxe/sing-box-lx/lx/scripts-lx/openwrt/lxd-openwrt-setup.sh && sh /tmp/lxd-setup.sh
