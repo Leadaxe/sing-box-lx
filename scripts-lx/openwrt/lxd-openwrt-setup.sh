@@ -596,7 +596,7 @@ FP=$(printf '%s' "$INVITE" | awk -F'#' '{print $2}')
 CODE=$(printf '%s' "$INVITE" | awk -F'#' '{print $3}')
 if [ -z "$FP" ] || [ -z "$CODE" ]; then
     warn "не удалось выпустить invite (демон не отвечает?): $INVITE"
-    warn "после починки выпустить вручную: sing-box lxd client add --name launcher --state-dir $STATE_DIR"
+    warn "после починки выпустить вручную: sing-box lxd client add --name launcher"
     FP="<отпечаток>"; CODE="<код>"
 fi
 
@@ -636,7 +636,7 @@ printf 'управление:      https://%s:%s (TLS+mTLS)\n' "$LAN_IP" "$PORT"
 if [ "$WAN_EXPOSE" = 1 ]; then
     printf 'снаружи:         https://%s:%s — порт открыт в firewall\n' "$WAN_SHOW" "$PORT"
     printf '                 invite для внешнего клиента: %s:%s#%s#<новый код>\n' "$WAN_SHOW" "$PORT" "$FP"
-    printf '                 (новый код: sing-box lxd client add --name <имя> --state-dir %s)\n' "$STATE_DIR"
+    printf '                 (новый код: sing-box lxd client add --name <имя>)\n'
 else
     printf 'снаружи:         закрыт. Нужен доступ не из дома — ssh-туннель:\n'
     printf '                 ssh -N -L %s:%s:%s root@<роутер>\n' "$PORT" "$LAN_IP" "$PORT"
@@ -651,7 +651,7 @@ printf 'ВАЖНО: не перезапускайте демон, пока не 
 printf 'код сопряжения живёт в памяти процесса и рестарт его убьёт.\n'
 printf '\n'
 printf 'Проверка:  logread | grep sing-box | tail\n'
-printf 'Клиенты:   sing-box lxd client list --state-dir %s\n' "$STATE_DIR"
+printf 'Клиенты:   sing-box lxd client list\n'
 printf 'Эта сводка сохранена: %s\n' "$SUMMARY"
 printf '════════════════════════════════════════════════════════════\n'
 } | tee "$SUMMARY" >&3

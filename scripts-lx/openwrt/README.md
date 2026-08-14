@@ -177,10 +177,12 @@ awk -v d=$((B-A)) -v t=$T -v c=$(grep -c ^processor /proc/cpuinfo) \
 ### Добавить/отозвать клиента
 
 ```bash
-sing-box lxd client add --name <имя> --state-dir /etc/sing-box-lxd/state
-sing-box lxd client list   --state-dir /etc/sing-box-lxd/state
-sing-box lxd client remove <имя> --state-dir /etc/sing-box-lxd/state
+sing-box lxd client add --name <имя>
+sing-box lxd client list
+sing-box lxd client remove <имя>
 ```
+
+`--state-dir` не нужен: `client`-подкоманды сами находят state установленной службы (по `daemon.json` в платформенном дефолте; на OpenWrt это `/etc/sing-box-lxd/state`). Флаг понадобится только при нестандартном пути.
 
 Работает **только с loopback** (`403 operator routes are loopback-only` по сети), поэтому `127.0.0.1` должен слушаться и стоять **первым** в `listen.address` (скрипт так и настраивает). Между `add` и вводом кода демон не перезапускать.
 
