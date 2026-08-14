@@ -459,16 +459,21 @@ uci -q delete "dhcp.$NET.dhcp_option" 2>/dev/null || true
 uci add_list "dhcp.$NET.dhcp_option=6,8.8.8.8"
 uci commit dhcp
 
-# reload_config иногда не дёргает netifd на свежесозданную device-секцию —
-# ждём с поллингом и на полпути пробуем явный network reload как fallback.
+# reload_config иногда не дёргает netifd на свежесозданную device-секцию, а
+# reload — no-op, если netifd считает свой стейт актуальным (даже когда
+# устройство реально отсутствует). Эскалация: reload → ifup → reload → ifup;
+# ifup заставляет netifd пересобрать интерфейс безусловно.
 reload_config
 n=0
 while ! ip link show "$BR" >/dev/null 2>&1; do
     n=$((n+1))
-    [ "$n" -eq 5 ] && /etc/init.d/network reload >/dev/null 2>&1
-    [ "$n" -ge 15 ] && die "мост $BR не поднялся. Диагностика:
+    [ "$n" -eq 3 ] && ifup "$NET" >/dev/null 2>&1
+    [ "$n" -eq 6 ] && /etc/init.d/network reload >/dev/null 2>&1
+    [ "$n" -eq 9 ] && ifup "$NET" >/dev/null 2>&1
+    [ "$n" -ge 20 ] && die "мост $BR не поднялся. Диагностика:
+  ifstatus $NET
   uci show network | grep $NET
-  logread | tail -30"
+  logread | grep -iE 'netifd|bridge' | tail -20"
     sleep 1
 done
 say "мост:        $BR ($GW/24)"
