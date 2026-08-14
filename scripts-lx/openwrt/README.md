@@ -208,17 +208,18 @@ ssh root@РОУТЕР 'sysupgrade -r /tmp/bk.tar.gz && reboot'
 /etc/init.d/sing-box-lxd stop && /etc/init.d/sing-box-lxd disable
 rm -rf /etc/init.d/sing-box-lxd /etc/sing-box-lxd /usr/bin/sing-box /root/lxd-setup-summary.txt
 sed -i '\#sing-box#d' /etc/sysupgrade.conf
+ifdown lxdvpn
 uci -q delete wireless.lxdvpn_5g; uci -q delete wireless.lxdvpn_2g
 uci -q delete network.lxdvpn; uci -q delete network.lxdvpndev
 uci -q delete dhcp.lxdvpn
 uci -q delete firewall.lxdvpn; uci -q delete firewall.sbtun
 uci -q delete firewall.lxdvpn2tun; uci -q delete firewall.sbtun_tcp
 uci -q delete firewall.lxd_admin_wan
-uci commit && fw4 reload && /etc/init.d/dnsmasq restart
+uci commit && /etc/init.d/network reload && fw4 reload && /etc/init.d/dnsmasq restart
 wifi reload >/tmp/w.log 2>&1 </dev/null &
 ```
 
-Имена секций производятся от моста: `br-lxdvpn` → `lxdvpn`. Основная сеть не затрагивается.
+Имена секций производятся от моста: `br-lxdvpn` → `lxdvpn`; `ifdown` до удаления секций и `network reload` после — обязательны, иначе netifd не узнает об удалении и мост-сирота останется висеть (а повторная установка упрётся в «интерфейс уже существует»). Основная сеть не затрагивается.
 
 ---
 
