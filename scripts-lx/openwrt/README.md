@@ -23,9 +23,15 @@ SSID → мост → tun (auto_route + include_interface) → ядро sing-box
 
 ## Установка
 
-Скрипт интерактивный, ему нужен терминал — поэтому всегда в два шага: доставить файл на роутер, затем запустить через `ssh -t` (вариант `ssh host 'sh -' < script` без pty скрипт распознаёт и отказывается работать).
+Зайти на роутер (`ssh root@РОУТЕР`) и выполнить:
 
-**Прямо с GitHub, ничего не клонируя** — с компьютера, роутеру интернет через себя не нужен:
+```bash
+wget -O /tmp/lxd-setup.sh https://raw.githubusercontent.com/Leadaxe/sing-box-lx/lx/scripts-lx/openwrt/lxd-openwrt-setup.sh && sh /tmp/lxd-setup.sh
+```
+
+Если busybox-wget ругается на SSL: `opkg install ca-bundle libustream-mbedtls` и повторить.
+
+Запасной вариант — если у роутера нет прямого доступа к GitHub, доставить файл с компьютера и запустить через `ssh -t` (скрипт интерактивный, ему нужен терминал — пайп в `sh -` без pty он распознаёт и отказывается работать):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Leadaxe/sing-box-lx/lx/scripts-lx/openwrt/lxd-openwrt-setup.sh | ssh root@РОУТЕР 'cat > /tmp/lxd-setup.sh'
@@ -35,22 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/Leadaxe/sing-box-lx/lx/scripts-lx/o
 ssh -t root@РОУТЕР 'sh /tmp/lxd-setup.sh'
 ```
 
-**Из локальной копии репозитория:**
-
-```bash
-ssh root@РОУТЕР 'cat > /tmp/lxd-setup.sh' < lxd-openwrt-setup.sh
-```
-
-```bash
-ssh -t root@РОУТЕР 'sh /tmp/lxd-setup.sh'
-```
-
-**Целиком на роутере** (если busybox-wget ругается на SSL — `opkg install ca-bundle libustream-mbedtls`):
-
-```bash
-wget -O /tmp/lxd-setup.sh https://raw.githubusercontent.com/Leadaxe/sing-box-lx/lx/scripts-lx/openwrt/lxd-openwrt-setup.sh
-sh /tmp/lxd-setup.sh
-```
+(из локальной копии репозитория первая команда — `ssh root@РОУТЕР 'cat > /tmp/lxd-setup.sh' < lxd-openwrt-setup.sh`)
 
 Семь вопросов: пароль Wi-Fi (подставляет найденный в существующих сетях), SSID для 5 ГГц, нужна ли сеть на 2.4 ГГц, имя и адрес tun-интерфейса, имя моста, нужен ли доступ к управлению снаружи. Остальное скрипт делает сам: качает бинарь со сверкой sha256, поднимает мост, DHCP, firewall, службу под procd, выпускает invite.
 
