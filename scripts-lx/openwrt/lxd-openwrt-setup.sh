@@ -258,11 +258,16 @@ if [ "$NEED_DL" = 1 ]; then
 
     cd /tmp
     rm -f "$TARBALL" SHA256SUMS
-    wget -q "$BASE/$TARBALL" || die "не скачался $TARBALL
+    # -O обязателен: GitHub отдаёт ассет через redirect, и busybox-wget без -O
+    # сохраняет файл под именем из КОНЕЧНОГО URL — не под именем ассета.
+    wget -q -O "$TARBALL" "$BASE/$TARBALL" || die "не скачался $TARBALL
   (если ошибка про SSL/TLS: opkg install ca-bundle libustream-mbedtls
    либо скачайте архив на компьютере и залейте бинарь вручную —
    см. §8.3 в docs-lx/lxd-daemon.ru.md)"
-    wget -q "$BASE/SHA256SUMS" || warn "SHA256SUMS не скачался — пропускаю сверку"
+    # при неудаче -O оставляет пустой файл — убрать, иначе сверка ниже
+    # примет его за настоящий SHA256SUMS и завалит установку
+    wget -q -O SHA256SUMS "$BASE/SHA256SUMS" \
+        || { rm -f SHA256SUMS; warn "SHA256SUMS не скачался — пропускаю сверку"; }
 
     if [ -f SHA256SUMS ]; then
         # сверка по точному имени файла: substring-grep мог бы зацепить соседний ассет
