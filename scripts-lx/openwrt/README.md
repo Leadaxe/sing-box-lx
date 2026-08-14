@@ -101,6 +101,18 @@ include_interface: br-lxdvpn          ← в UI лаунчера поле "LAN i
 
 ## Рецепты
 
+### Добавить/отозвать клиента
+
+```bash
+sing-box lxd client add --name <имя>
+sing-box lxd client list
+sing-box lxd client remove <имя>
+```
+
+`--state-dir` не нужен: `client`-подкоманды сами находят state установленной службы (по `daemon.json` в платформенном дефолте; на OpenWrt это `/etc/sing-box-lxd/state`). Флаг понадобится только при нестандартном пути.
+
+Работает **только с loopback** (`403 operator routes are loopback-only` по сети), поэтому `127.0.0.1` должен слушаться и стоять **первым** в `listen.address` (скрипт так и настраивает). Между `add` и вводом кода демон не перезапускать.
+
 ### Проверить сегмент без реального клиента
 
 Виртуальный клиент в мосту сегмента — единственный способ проверить всё, включая fail-closed, не трогая живых пользователей:
@@ -173,18 +185,6 @@ T=$(( (u2+n2+s2+i2+w2+q2+sq2)-(u1+n1+s1+i1+w1+q1+sq1) ))
 awk -v d=$((B-A)) -v t=$T -v c=$(grep -c ^processor /proc/cpuinfo) \
     -v r=$((R2-R1)) 'BEGIN{printf "sing-box: %.1f%% ядра при %.1f Мбит/с\n", d*100/t*c, r*8/10/1e6}'
 ```
-
-### Добавить/отозвать клиента
-
-```bash
-sing-box lxd client add --name <имя>
-sing-box lxd client list
-sing-box lxd client remove <имя>
-```
-
-`--state-dir` не нужен: `client`-подкоманды сами находят state установленной службы (по `daemon.json` в платформенном дефолте; на OpenWrt это `/etc/sing-box-lxd/state`). Флаг понадобится только при нестандартном пути.
-
-Работает **только с loopback** (`403 operator routes are loopback-only` по сети), поэтому `127.0.0.1` должен слушаться и стоять **первым** в `listen.address` (скрипт так и настраивает). Между `add` и вводом кода демон не перезапускать.
 
 ### Служба и логи
 
