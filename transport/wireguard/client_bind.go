@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -20,6 +21,12 @@ import (
 )
 
 var _ conn.Bind = (*ClientBind)(nil)
+
+// clientBindDialTimeout bounds the detour dial in connect() (lx: SPEC 071).
+// C.TCPTimeout (15 s) is the established probe budget (SPEC 052): generous for
+// a slow-but-alive detour chain, finite for a dead one. A var, not a const —
+// tests shrink it to keep the red/green run fast.
+var clientBindDialTimeout = C.TCPTimeout
 
 type ClientBind struct {
 	ctx                 context.Context
@@ -93,9 +100,19 @@ func (c *ClientBind) connect() (*wireConn, error) {
 			return serverConn, nil
 		}
 	}
+	// lx: SPEC 071 — bound the dial. It runs while holding connAccess, and a
+	// detour dial into a half-alive node can block forever (field dump: 54
+	// minutes inside an unread XHTTP upload pipe), starving every Send, the
+	// bind's own Close, and — through the bind-close chain — the process-wide
+	// pause manager. The deadline is only effective because SPEC 050's
+	// watchDialContext arms on this context inside the XHTTP dial and breaks
+	// the pipe from the read half when it fires; a bare io.Pipe.Write sees no
+	// context on its own.
+	dialCtx, dialCancel := context.WithTimeout(c.bindCtx, clientBindDialTimeout)
 	if c.isConnect {
-		udpConn, err := c.dialer.DialContext(c.bindCtx, N.NetworkUDP, M.SocksaddrFromNetIP(c.connectAddr))
+		udpConn, err := c.dialer.DialContext(dialCtx, N.NetworkUDP, M.SocksaddrFromNetIP(c.connectAddr))
 		if err != nil {
+			dialCancel()
 			return nil, err
 		}
 		serverConn = &wireConn{
@@ -103,8 +120,9 @@ func (c *ClientBind) connect() (*wireConn, error) {
 			done:       make(chan struct{}),
 		}
 	} else {
-		udpConn, err := c.dialer.ListenPacket(c.bindCtx, M.Socksaddr{Addr: netip.IPv4Unspecified()})
+		udpConn, err := c.dialer.ListenPacket(dialCtx, M.Socksaddr{Addr: netip.IPv4Unspecified()})
 		if err != nil {
+			dialCancel()
 			return nil, err
 		}
 		serverConn = &wireConn{
@@ -112,6 +130,17 @@ func (c *ClientBind) connect() (*wireConn, error) {
 			done:       make(chan struct{}),
 		}
 	}
+	// lx: SPEC 071 — release the timeout context only when this connection
+	// generation dies, NOT on return: stream-one hands the conn up before the
+	// stream is raised, and the 050 guard stays armed on dialCtx until then —
+	// cancelling here would tear down a healthy connection mid-raise. Letting
+	// the timer run gives the whole raise-the-stream phase the same 15 s
+	// ceiling; once the stream is up the guard has disarmed and the timer
+	// firing is a no-op.
+	go func() {
+		<-serverConn.done
+		dialCancel()
+	}()
 	c.conn.Store(serverConn)
 	return serverConn, nil
 }

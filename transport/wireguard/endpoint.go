@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/sagernet/sing-box/common/dialer"
@@ -39,6 +40,15 @@ type Endpoint struct {
 	egressPool     *tun.UDPEgressPool
 	pause          pause.Manager
 	pauseCallback  *list.Element[pause.Callback]
+	// lx: SPEC 071 — detached pause application. onPauseUpdated must never
+	// block inside the pause manager's lock; events apply asynchronously,
+	// serialized by pauseOpAccess, latest pauseSeq stamp wins. Close/Teardown
+	// bump the stamp under the same mutex so a queued application can never
+	// touch a device that is being shut down. pauseApplyHookForTest replaces
+	// the device side effect in unit tests (seam precedent: resumeErrHook).
+	pauseOpAccess         sync.Mutex
+	pauseSeq              atomic.Uint64
+	pauseApplyHookForTest func(int)
 	// lx: SPEC 020 — true while the protocol layer holds this device down for
 	// idle-suspend. onPauseUpdated must not Up() a suspended device: a
 	// screen-off/on or network pause/wake cycle would otherwise resurrect it
@@ -210,11 +220,16 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 // Idempotent; the endpoint stays flagged suspended (only a dial rebuilds it).
 func (e *Endpoint) Teardown() {
 	e.suspended.Store(true)
+	// lx: SPEC 071 — same shutdown guard as Close: invalidate queued pause
+	// applications and release the device under pauseOpAccess.
+	e.pauseOpAccess.Lock()
+	e.pauseSeq.Add(1)
 	if e.device != nil {
 		e.device.Down()
 		e.device.Close()
 		e.device = nil
 	}
+	e.pauseOpAccess.Unlock()
 	e.closeTunDevice()
 	e.allowedIPs = nil
 	if e.pauseCallback != nil {
@@ -401,6 +416,14 @@ func (e *Endpoint) Close() error {
 		e.egressPool.Close()
 		e.egressPool = nil
 	}
+	// lx: SPEC 071 — shut the device down under pauseOpAccess with the stamp
+	// bumped, so a queued pause application (now asynchronous) can never run
+	// against a device that is being closed. The synchronous callback got this
+	// guarantee implicitly from UnregisterCallback waiting out the in-flight
+	// emit; detaching the work moves the guarantee here.
+	e.pauseOpAccess.Lock()
+	defer e.pauseOpAccess.Unlock()
+	e.pauseSeq.Add(1)
 	if e.device != nil {
 		e.device.Down()
 		e.device.Close()
@@ -520,6 +543,33 @@ func (e *Endpoint) RebindIfSessionStale() bool {
 }
 
 func (e *Endpoint) onPauseUpdated(event int) {
+	// lx: SPEC 071 — the pause manager invokes callbacks while still holding
+	// its own lock (sing service/pause), and Down()/Up() can block on device
+	// mutexes for as long as a bind close takes (field dump: 54 minutes behind
+	// a dead-detour dial). Blocking here therefore freezes pause/wake/network
+	// delivery for the whole process. Detach: apply asynchronously with
+	// latest-event-wins — pauseSeq stamps the event, and only the goroutine
+	// carrying the newest stamp applies under pauseOpAccess, so out-of-order
+	// scheduling cannot park the device in a stale state and a burst of
+	// pause/wake flips coalesces to its final state.
+	seq := e.pauseSeq.Add(1)
+	go func() {
+		e.pauseOpAccess.Lock()
+		defer e.pauseOpAccess.Unlock()
+		if e.pauseSeq.Load() != seq {
+			return // superseded by a newer event (or invalidated by Close/Teardown)
+		}
+		e.applyPauseEvent(event)
+	}()
+}
+
+// applyPauseEvent is the former synchronous body of onPauseUpdated. Runs only
+// under pauseOpAccess (lx: SPEC 071).
+func (e *Endpoint) applyPauseEvent(event int) {
+	if e.pauseApplyHookForTest != nil {
+		e.pauseApplyHookForTest(event)
+		return
+	}
 	// lx: SPEC 020 level 3 — a torn-down endpoint has no device at all; the
 	// callback is unregistered by Teardown, but a pause event already in flight
 	// must not nil-deref.
