@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"runtime/debug"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -62,6 +63,7 @@ type Box struct {
 	httpClientService   adapter.LifecycleService
 	internalService     []adapter.LifecycleService
 	done                chan struct{}
+	closed              atomic.Bool // lx: SPEC 070 — elects the single Close winner
 }
 
 type Options struct {
@@ -621,12 +623,16 @@ func (s *Box) start() error {
 }
 
 func (s *Box) Close() error {
-	select {
-	case <-s.done:
+	// lx: SPEC 070 — Close must be idempotent under CONCURRENT callers, not
+	// just repeated ones: a user stop racing Box.Start's own error-path
+	// s.Close() (routine once a component refuses to start mid-close) could
+	// have both takers pass the old select-then-close(done) pair and panic
+	// with "close of closed channel". CAS elects exactly one closer; done
+	// still closes for any future readers.
+	if !s.closed.CompareAndSwap(false, true) {
 		return os.ErrClosed
-	default:
-		close(s.done)
 	}
+	close(s.done)
 	// lx: SPEC 030 — fast shutdown. Stop the idle/urltest tick and close every
 	// WG/AWG UDP socket BEFORE the endpoint manager runs its close pass. Without
 	// this, endpoints are torn down while the tick is still issuing wakes: each

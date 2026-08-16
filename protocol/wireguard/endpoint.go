@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -188,6 +189,22 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 }
 
 func (w *Endpoint) Start(stage adapter.StartStage) error {
+	// lx: SPEC 070 — serialise Start against Close. The daemon releases its
+	// service lock while instance.Start() runs (so a stop can interrupt a slow
+	// start), which makes Box.Close legal at ANY point during Box.Start. Close
+	// nils the transport tun device (SPEC 020 level 3); an unserialised stage
+	// then dereferences it (field crash: SIGSEGV in transport Start at
+	// SetDevice). resumeMu makes each stage atomic with respect to Close — the
+	// same discipline every runtime transition (resumeOnDial rebuild, suspend,
+	// teardown) already follows — and the closing gate refuses to start a
+	// device the pending Close would immediately tear down again. The stage is
+	// bounded work (peer domain resolution is a deferred callback), so a Close
+	// waiting here is waiting microseconds, not on the network.
+	w.resumeMu.Lock()
+	defer w.resumeMu.Unlock()
+	if w.closing.Load() {
+		return os.ErrClosed
+	}
 	switch stage {
 	case adapter.StartStateStart:
 		if err := w.endpoint.Start(false); err != nil {
