@@ -28,6 +28,36 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### не срезано — ветка `sync/beta15` (при теге переименовать в его секцию)
+
+**Upstream-синк 2026-08-17: ветка догнала `v1.14.0-beta.15`.** Формально
+«240 коммитов дрейфа» от merge-base, реально новых — 13 (сверка по subject,
+runbook §2); взяты cherry-pick'ом, 12 из 13. `077a4a0b5` (DHCP search domain)
+пропущен осознанно: его содержимое полностью поглощено более поздним
+`14cca98e1` — после синка `dns/transport/dhcp/` совпадает с beta.15
+байт-в-байт. Заметное: хвост DNS-партиционирования (`route/network_environment*`
+под darwin/linux/windows + stub — первая половина, партиционирование по
+сигнатуре интерфейса, была взята в lx.24-rc.2); search-domain-фиксы DNS-транспортов
+(`transport.ExchangeNames`); новые DNS-правила `query_client_subnet` /
+`query_dnssec` + опция `remove_client_subnet`; `daemon`: полные initial
+snapshots в status-подписках и троттлинг push'ей групп/аутбаундов;
+Taildrop (+`SubscribeNotifications` RPC); `api` command; Tailscale
+`listen_port`; фикс двойного закрытия fd при неудачном bind netlink-сокета.
+Конфликты только позиционные: lx-блоки в `started_service.proto` соседствуют
+с новым `SubscribeNotifications` — proto смержен, pb.go регенерированы
+`lx-proto` (плагины пинованы, SPEC 014 §3.5); в `go.sum` не взяты строки
+sing-tun / wireguard-go / gvisor — они у нас local-path replace на
+форк-сабмодули, сабмодули дрейфа не имеют (проверено: go.mod-бампы синка их
+не трогают). Пины go.mod: netlink `20260814`, tailscale `mod.3`, sing-usbip
+`20260813`, + runewidth/term/uax29 (новые depы `api` command).
+**`go.version` бампнут go1.26.5 → go1.26.6** вслед за апстримом — патч-бамп,
+политика SPEC 044 про минорку не затронута; при следующем AAR — обычный
+девайс-прогон. Маркер SPEC 053 (minClientVer 26.3.27 в `reality_client.go`)
+сверен — синк tls не трогал. Локально зелёные: полный LX_TAGS-бинарь
+(`lx-build`), тесты daemon/dns/route/option/wireguard/tailscale/dialer под
+LX_TAGS, gofmt чист. Остаточный дифф с beta.15 — только lx-слой
+(в `dns/client.go` дивергенция сжалась 44→6 строк).
+
 #### v1.14.0-lx.27-rc.1
 
 ### 🐛 Windows: WG/AWG-узлы мертвы со старта, если у адаптера снята галка IPv6
