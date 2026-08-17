@@ -28,7 +28,43 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
-#### не срезано — ветка `sync/beta15` (при теге переименовать в его секцию)
+#### v1.14.0-lx.27-rc.2
+
+### 🐛 Стоп во время старта больше не роняет процесс (гонка Start×Close на WG-эндпоинте)
+
+([SPEC 070](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/070-WG_START_CLOSE_RACE_CRASH/SPEC.md))
+
+Полевой краш-дамп (LxBox, ядро lx.27-rc.1, 1755 аутбаундов, 18 WG-эндпоинтов):
+пользователь нажал «стоп», пока тяжёлый профиль ещё стартовал — SIGSEGV в
+`transport/wireguard.(*Endpoint).Start`, в дампе виден второй goroutine,
+закрывающий **тот же** `Box`. Демон сознательно отпускает `serviceAccess` на
+время `instance.Start()` (чтобы стоп мог перебить медленный старт), но ниже
+никто не сериализует `Box.Start` против `Box.Close`; наш SPEC 020
+`closeTunDevice` nil-assign делал окно детерминированно фатальным. Фикс —
+гейт в `protocol/wireguard.Start` + идемпотентность `Box.Close` на
+примитивах SPEC 020/030 (`resumeMu`, `closing`); транспортный слой и
+сабмодули не тронуты. Red/green юниты + race-smoke (darwin `-race`) зелёные;
+стенд `lx-test/startclose`. Полевая валидация — на клиенте жалобы.
+
+### 🐛 Мёртвый detour-узел больше не замораживает сетевую машинерию процесса
+
+([SPEC 071](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/071-WG_BIND_DIAL_PAUSE_DEADLOCK/SPEC.md))
+
+Полевой дамп (LxBox 2.20.7, ядро lx.25-rc.3): 557 goroutine, 12 из них на
+мьютексах до **54 минут**, обработка смены сети мертва, финал — force-stop
+на RSS 497 МБ. Профиль гонит WG через `detour` (VLESS+XHTTP stream-one);
+узел полуживой — TCP принимает, дальше тишина. Кольцо: `ClientBind.connect()`
+диалит detour под `connAccess` на **безлимитном** контексте → заголовок VLESS
+пишется в upload-pipe stream-one, который никто не читает → `io.Pipe.Write`
+навсегда; `Close` не может пробиться (bind-close пути ждут выхода receive-
+goroutine под `device.net.Lock`), а pause-manager `sing` гоняет колбэки под
+своим локом — замерзает весь процесс. Два фикса: bounded dial в
+`client_bind.go` (дедлайн ломает пайп через watchdog SPEC 050) + detached-
+применение pause в `transport/wireguard/endpoint.go`. Зависимость `sing`,
+wireguard-go и демон не тронуты; юниты red/green + `-race` зелёные. Полевая
+валидация — на клиенте жалобы.
+
+### 🔄 Upstream-синк: ветка догнала `v1.14.0-beta.15`
 
 **Upstream-синк 2026-08-17: ветка догнала `v1.14.0-beta.15`.** Формально
 «240 коммитов дрейфа» от merge-base, реально новых — 13 (сверка по subject,
