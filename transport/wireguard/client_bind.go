@@ -100,14 +100,19 @@ func (c *ClientBind) connect() (*wireConn, error) {
 			return serverConn, nil
 		}
 	}
-	// lx: SPEC 071 — bound the dial. It runs while holding connAccess, and a
+	// lx: SPEC 071/072 — bound the dial. It runs while holding connAccess, and a
 	// detour dial into a half-alive node can block forever (field dump: 54
 	// minutes inside an unread XHTTP upload pipe), starving every Send, the
 	// bind's own Close, and — through the bind-close chain — the process-wide
-	// pause manager. The deadline is only effective because SPEC 050's
-	// watchDialContext arms on this context inside the XHTTP dial and breaks
-	// the pipe from the read half when it fires; a bare io.Pipe.Write sees no
-	// context on its own.
+	// pause manager. The deadline reaches a blocked pipe write through SPEC
+	// 050's watchDialContext, which arms on this context inside the XHTTP dial
+	// until the stream is raised (a bare io.Pipe.Write sees no context on its
+	// own); a raise that FAILS breaks the pipe itself (v2rayxhttp fail paths,
+	// SPEC 072). The deadline never reaches past the raise: XHTTP requests ride
+	// a conn-scoped context under the transport lifetime, so this timer firing
+	// after the stream is up does not abort a healthy conn (the lx.27-rc.2
+	// field dump showed the opposite arrangement cycling every detour conn at
+	// 15 s and re-rolling the raise dice until the freeze hit).
 	dialCtx, dialCancel := context.WithTimeout(c.bindCtx, clientBindDialTimeout)
 	if c.isConnect {
 		udpConn, err := c.dialer.DialContext(dialCtx, N.NetworkUDP, M.SocksaddrFromNetIP(c.connectAddr))
@@ -136,7 +141,8 @@ func (c *ClientBind) connect() (*wireConn, error) {
 	// cancelling here would tear down a healthy connection mid-raise. Letting
 	// the timer run gives the whole raise-the-stream phase the same 15 s
 	// ceiling; once the stream is up the guard has disarmed and the timer
-	// firing is a no-op.
+	// firing is a no-op (the stream itself rides the transport-lifetime conn
+	// context, not dialCtx — lx: SPEC 072).
 	go func() {
 		<-serverConn.done
 		dialCancel()

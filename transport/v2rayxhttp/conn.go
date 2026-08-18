@@ -10,9 +10,28 @@ import (
 	"sync"
 	"time"
 
+	C "github.com/sagernet/sing-box/constant"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 )
+
+// packetUpPostTimeout bounds one packet-up upload POST (lx: SPEC 072). Posts
+// ride the conn-scoped context (see dialPacketUp), not the dial context, so
+// without an own bound a wedged pooled connection would block a Write — and
+// the WG send path behind it — forever. One post is one HTTP exchange; the
+// probe budget C.TCPTimeout is the same ceiling the WG bind dial uses.
+// Variable, not const: tests shrink it.
+var packetUpPostTimeout = C.TCPTimeout
+
+// transportContext is the transport-lifetime context conn-scoped request
+// contexts derive from (lx: SPEC 072). NewClient always sets c.ctx; the
+// Background fallback keeps literal-constructed clients (tests) valid.
+func (c *Client) transportContext() context.Context {
+	if c.ctx != nil {
+		return c.ctx
+	}
+	return context.Background()
+}
 
 // applyGRPCHeader sets the streamed-body Content-Type that Xray sends on
 // stream-one/stream-up requests (FillStreamRequest in
@@ -39,15 +58,25 @@ func (c *Client) applyGRPCHeader(request *http.Request) {
 func (c *Client) dialStreamOne(ctx context.Context, sessionID string, xmuxClient *xmuxClient) (net.Conn, error) {
 	_ = sessionID // intentionally unused: stream-one sends no sessionId on the wire
 	pipeReader, pipeWriter := io.Pipe()
+	// lx: SPEC 072 — the request rides a conn-scoped context under the TRANSPORT
+	// lifetime, not the dial context. http2 binds the whole stream to the request
+	// context, and a dial context is allowed to carry a deadline that outlives
+	// the dial (the WG bind dials under C.TCPTimeout since SPEC 071): on the dial
+	// context the deadline would abort the raised stream when it fires, cycling
+	// every healthy detour conn at 15 s. The dial context bounds the raise only,
+	// through the 050 guard below; conn teardown cancels connCtx via Close/fail.
+	connCtx, connCancel := context.WithCancel(c.transportContext())
 	// stream-one carries a body, so it uses the configured upload method (default
 	// POST); the empty sessionID keeps the request on the bare path.
-	request, err := c.newRequest(ctx, c.meta.uplinkHTTPMethod, "", "", pipeReader)
+	request, err := c.newRequest(connCtx, c.meta.uplinkHTTPMethod, "", "", pipeReader)
 	if err != nil {
+		connCancel()
 		return nil, err
 	}
 	c.applyGRPCHeader(request)
 
 	conn := newStreamConn(pipeReader, pipeWriter, c.serverAddr, newXmuxRelease(xmuxClient))
+	conn.cancel = connCancel
 	// lx: 050 — the conn is handed up before RoundTrip has raised the stream, so
 	// anything written meanwhile (the VLESS/encryption handshake) blocks on an
 	// unread pipe. Until the stream is up, cancelling the dial context must free
@@ -57,17 +86,20 @@ func (c *Client) dialStreamOne(ctx context.Context, sessionID string, xmuxClient
 		// Break the pipe from the read half so the blocked Write sees this error
 		// rather than a bare ErrClosedPipe (see writeDeadline).
 		pipeReader.CloseWithError(err)
+		// lx: SPEC 072 — with the request on connCtx the dial context no longer
+		// aborts the pending RoundTrip by itself; do it here.
+		connCancel()
 	})
 	go func() {
 		defer stopGuard()
 		response, err := xmuxClient.roundTrip(request)
 		if err != nil {
-			conn.setupReader(nil, err)
+			conn.fail(err)
 			return
 		}
 		if response.StatusCode != http.StatusOK {
 			response.Body.Close()
-			conn.setupReader(nil, E.New("v2ray-xhttp: unexpected status: ", response.Status))
+			conn.fail(E.New("v2ray-xhttp: unexpected status: ", response.Status))
 			return
 		}
 		conn.setupReader(response.Body, nil)
@@ -103,29 +135,42 @@ func watchDialContext(ctx context.Context, done <-chan struct{}, onCancel func(e
 // delivered bytes, so blocking on it here deadlocks the dial and the fronting
 // proxy answers 504. See the note on dialPacketUp. lx: SPEC 002.
 func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient *xmuxClient) (net.Conn, error) {
+	// lx: SPEC 072 — conn-scoped request context; see dialStreamOne.
+	connCtx, connCancel := context.WithCancel(c.transportContext())
 	// Download: GET response body (no seq — stream mode).
-	downReq, err := c.newRequest(ctx, http.MethodGet, sessionID, "", nil)
+	downReq, err := c.newRequest(connCtx, http.MethodGet, sessionID, "", nil)
 	if err != nil {
+		connCancel()
 		return nil, err
 	}
 
 	// Upload: streamed body request using the configured upload method.
 	pipeReader, pipeWriter := io.Pipe()
-	upReq, err := c.newRequest(ctx, c.meta.uplinkHTTPMethod, sessionID, "", pipeReader)
+	upReq, err := c.newRequest(connCtx, c.meta.uplinkHTTPMethod, sessionID, "", pipeReader)
 	if err != nil {
+		connCancel()
 		return nil, err
 	}
 	c.applyGRPCHeader(upReq)
 	conn := newSplitConn(pipeReader, pipeWriter, c.serverAddr, newXmuxRelease(xmuxClient))
+	conn.cancel = connCancel
+	// lx: SPEC 072 — stream-up used to inherit dial-context teardown through its
+	// requests; with requests on connCtx it needs the same raise guard as
+	// stream-one (SPEC 050 mechanism, stands down once the download is up).
+	stopGuard := watchDialContext(ctx, conn.created, func(err error) {
+		pipeReader.CloseWithError(err)
+		connCancel()
+	})
 	go func() {
+		defer stopGuard()
 		downResp, err := xmuxClient.roundTrip(downReq)
 		if err != nil {
-			conn.setupReader(nil, E.Cause(err, "open download"))
+			conn.fail(E.Cause(err, "open download"))
 			return
 		}
 		if downResp.StatusCode != http.StatusOK {
 			downResp.Body.Close()
-			conn.setupReader(nil, E.New("v2ray-xhttp: unexpected download status: ", downResp.Status))
+			conn.fail(E.New("v2ray-xhttp: unexpected download status: ", downResp.Status))
 			return
 		}
 		conn.setupReader(downResp.Body, nil)
@@ -156,21 +201,31 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient 
 // the connection is established (httptrace GotConn) and processes the response
 // asynchronously. lx: SPEC 002.
 func (c *Client) dialPacketUp(ctx context.Context, sessionID string, xmuxClient *xmuxClient) (net.Conn, error) {
+	// lx: SPEC 072 — conn-scoped request context (see dialStreamOne); the
+	// download GET and every upload POST ride it, and Close/fail cancel it. The
+	// dial context is deliberately NOT watched here: the download response is
+	// allowed to arrive only after the first upload (see the deadlock note
+	// above), so it is no raise precondition; a caller that cancels its dial
+	// abandons the conn and tears everything down via Close.
+	_ = ctx
+	connCtx, connCancel := context.WithCancel(c.transportContext())
 	// Download stream: GET with the session id but no seq (downlink).
-	downReq, err := c.newRequest(ctx, http.MethodGet, sessionID, "", nil)
+	downReq, err := c.newRequest(connCtx, http.MethodGet, sessionID, "", nil)
 	if err != nil {
+		connCancel()
 		return nil, err
 	}
-	conn := newPacketConn(ctx, c, sessionID, c.serverAddr, newXmuxRelease(xmuxClient))
+	conn := newPacketConn(connCtx, c, sessionID, c.serverAddr, newXmuxRelease(xmuxClient))
+	conn.cancel = connCancel
 	go func() {
 		downResp, err := xmuxClient.roundTrip(downReq)
 		if err != nil {
-			conn.setupReader(nil, E.Cause(err, "open download"))
+			conn.fail(E.Cause(err, "open download"))
 			return
 		}
 		if downResp.StatusCode != http.StatusOK {
 			downResp.Body.Close()
-			conn.setupReader(nil, E.New("v2ray-xhttp: unexpected download status: ", downResp.Status))
+			conn.fail(E.New("v2ray-xhttp: unexpected download status: ", downResp.Status))
 			return
 		}
 		conn.setupReader(downResp.Body, nil)
@@ -310,6 +365,9 @@ type streamConn struct {
 	// lx: 050 — deadlines; without them a blocked Write/Read is unkillable.
 	writeDeadline writeDeadline
 	readDeadline  *readDeadline
+	// cancel kills the conn-scoped request context (lx: SPEC 072); set by the
+	// dial, invoked by Close and fail.
+	cancel context.CancelFunc
 }
 
 func newStreamConn(reader *io.PipeReader, writer *io.PipeWriter, serverAddr M.Socksaddr, xmux *xmuxRelease) *streamConn {
@@ -338,6 +396,24 @@ func (c *streamConn) setupReader(reader io.ReadCloser, err error) {
 	c.reader = reader
 	c.readerErr = err
 	close(c.created)
+}
+
+// fail marks the raise failed (lx: SPEC 072): it binds the error for readers
+// AND breaks the upload pipe from the read half, so a Write blocked on (or
+// arriving at) a pipe nobody will ever read surfaces the failure instead of
+// hanging forever. Closing `created` alone is not enough: the 050 guard stands
+// down on it, and the field dump behind SPEC 072 is a VLESS handshake Write
+// that outlived its dial context by 38 minutes exactly that way. The conn
+// context and the pooled connection are released here too, because the
+// error path of a dial has no guaranteed Close: sing-vmess early dials return
+// the conn together with the write error and callers drop it.
+func (c *streamConn) fail(err error) {
+	c.setupReader(nil, err)
+	c.writeDeadline.reader.CloseWithError(err)
+	if c.cancel != nil {
+		c.cancel()
+	}
+	c.xmux.release()
 }
 
 func (c *streamConn) Read(b []byte) (int, error) {
@@ -376,6 +452,11 @@ func (c *streamConn) Close() error {
 				c.reader.Close()
 			}
 		default:
+		}
+		// lx: SPEC 072 — kill the conn-scoped request context so a pending or
+		// live RoundTrip cannot outlive the conn.
+		if c.cancel != nil {
+			c.cancel()
 		}
 		// lx: 059 — release the pooled connection last, once nothing reads it.
 		c.xmux.release()
@@ -422,6 +503,8 @@ type splitConn struct {
 	// both the bound and the not-yet-bound case.
 	writeDeadline writeDeadline
 	readDeadline  *readDeadline
+	// cancel kills the conn-scoped request context (lx: SPEC 072).
+	cancel context.CancelFunc
 }
 
 func newSplitConn(uploadReader *io.PipeReader, writer *io.PipeWriter, serverAddr M.Socksaddr, xmux *xmuxRelease) *splitConn {
@@ -450,8 +533,24 @@ func (c *splitConn) setupReader(reader io.ReadCloser, err error) {
 	close(c.created)
 }
 
+// fail marks the raise failed; see streamConn.fail (lx: SPEC 072). A dead
+// download side kills the conn as a whole — VLESS can never read a response —
+// so the upload pipe is broken too, freeing any writer parked on it.
+func (c *splitConn) fail(err error) {
+	c.setupReader(nil, err)
+	c.writeDeadline.reader.CloseWithError(err)
+	if c.cancel != nil {
+		c.cancel()
+	}
+	c.xmux.release()
+}
+
+// uploadFailed breaks the upload pipe from the READ half, so the blocked
+// writer surfaces the actual upload error — a write-half CloseWithError hands
+// the writer a bare ErrClosedPipe (io.Pipe's writeCloseError prefers rerr and
+// suppresses werr; see the writeDeadline note). lx: SPEC 072.
 func (c *splitConn) uploadFailed(err error) {
-	c.writer.CloseWithError(err)
+	c.writeDeadline.reader.CloseWithError(err)
 }
 
 func (c *splitConn) Read(b []byte) (int, error) {
@@ -474,14 +573,19 @@ func (c *splitConn) Close() error {
 		c.writeDeadline.stop()
 		c.readDeadline.stop()
 		c.writer.Close()
-		// The reader may not be bound yet (see dialStreamUp); the pending
-		// RoundTrip is torn down via the dial context instead.
+		// The reader may not be bound yet (see dialStreamUp); a pending
+		// RoundTrip is torn down by the conn-context cancel below.
 		select {
 		case <-c.created:
 			if c.reader != nil {
 				c.reader.Close()
 			}
 		default:
+		}
+		// lx: SPEC 072 — kill the conn-scoped request context (aborts pending
+		// download/upload RoundTrips).
+		if c.cancel != nil {
+			c.cancel()
 		}
 		// lx: 059 — release the pooled connection last, once nothing reads it.
 		c.xmux.release()
@@ -532,6 +636,9 @@ type packetConn struct {
 	// response arrives there is no reader to close, so a stalled Read could only
 	// be released here.
 	readDeadline *readDeadline
+	// cancel kills the conn-scoped request context (lx: SPEC 072): the pending
+	// download RoundTrip and any in-flight upload POST die with the conn.
+	cancel context.CancelFunc
 }
 
 func newPacketConn(ctx context.Context, client *Client, sessionID string, serverAddr M.Socksaddr, xmux *xmuxRelease) *packetConn {
@@ -561,6 +668,19 @@ func (c *packetConn) setupReader(reader io.ReadCloser, err error) {
 	c.reader = reader
 	c.readerErr = err
 	close(c.created)
+}
+
+// fail marks the download raise failed; see streamConn.fail (lx: SPEC 072).
+// There is no upload pipe to break — posts are individual bounded requests —
+// but cancelling the conn context fails them instantly, so a dead session
+// cannot keep posting into the void, and the pooled connection is released
+// for the dropped-conn error path.
+func (c *packetConn) fail(err error) {
+	c.setupReader(nil, err)
+	if c.cancel != nil {
+		c.cancel()
+	}
+	c.xmux.release()
 }
 
 func (c *packetConn) Read(b []byte) (int, error) {
@@ -626,7 +746,13 @@ func (c *packetConn) sendPacket(b []byte) error {
 
 	payload := make([]byte, len(b))
 	copy(payload, b)
-	request, err := c.client.newRequest(c.ctx, c.client.meta.uplinkHTTPMethod, c.sessionID, strconv.FormatUint(seq, 10), nil)
+	// lx: SPEC 072 — one post is one bounded HTTP exchange: posts ride the
+	// conn-scoped context (they must not die with the dial context), so the
+	// bound has to be their own. Without it a wedged pooled connection blocks
+	// this Write — and the WG send path behind it — indefinitely.
+	postCtx, postCancel := context.WithTimeout(c.ctx, packetUpPostTimeout)
+	defer postCancel()
+	request, err := c.client.newRequest(postCtx, c.client.meta.uplinkHTTPMethod, c.sessionID, strconv.FormatUint(seq, 10), nil)
 	if err != nil {
 		return err
 	}
@@ -672,9 +798,10 @@ func (c *packetConn) Close() error {
 	c.closed = true
 	c.access.Unlock()
 	// The reader is late-bound: a conn closed before the download response
-	// arrived has nothing to close, and the pending RoundTrip is torn down by
-	// the dial context instead. Guard with closeOnce so a second Close cannot
-	// double-close the body.
+	// arrived has nothing to close — the conn-context cancel below aborts the
+	// pending RoundTrip (lx: SPEC 072; it used to lean on the dial context,
+	// which an unbounded dial context never fires). Guard with closeOnce so a
+	// second Close cannot double-close the body.
 	var err error
 	c.closeOnce.Do(func() {
 		c.readDeadline.stop()
@@ -684,6 +811,9 @@ func (c *packetConn) Close() error {
 				err = c.reader.Close()
 			}
 		default:
+		}
+		if c.cancel != nil {
+			c.cancel()
 		}
 		// lx: 059 — release the pooled connection last, once nothing reads it and
 		// no further upload POST can be issued (c.closed is already set above).
@@ -697,8 +827,8 @@ func (c *packetConn) RemoteAddr() net.Addr { return c.serverAddr }
 
 // lx: 050 — read deadlines are real now that the reader is late-bound (an
 // unbound reader could otherwise stall Read forever). Writes are individual
-// HTTP requests bounded by the dial context, so a write deadline has nothing to
-// arm against and stays unsupported, as before.
+// HTTP requests each bounded by packetUpPostTimeout (lx: SPEC 072), so a write
+// deadline has nothing to arm against and stays unsupported, as before.
 func (c *packetConn) SetDeadline(t time.Time) error      { return c.readDeadline.set(t) }
 func (c *packetConn) SetReadDeadline(t time.Time) error  { return c.readDeadline.set(t) }
 func (c *packetConn) SetWriteDeadline(t time.Time) error { return os.ErrInvalid }
