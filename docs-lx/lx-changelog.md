@@ -28,6 +28,51 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.0-lx.27-rc.3
+
+### 🐛 Detour-фриз добит: провал поднятия XHTTP-стрима рвёт upload-пайп, живой стрим больше не умирает по дедлайну дайла
+
+([SPEC 072](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/072-WG_DETOUR_LIFECYCLE_FREEZE/SPEC.md))
+
+Полевой дамп (LxBox 2.20.11, ядро lx.27-rc.2 — **с обоими фиксами rc.2 в
+бинаре**): 38 минут фриза, весь трафик мёртв включая direct, пинг-тест
+приложения проходит (probe — отдельная сессия), лечит только force-stop.
+Цепочка: `ClientBind.connect()` → VLESS-заголовок в upload-пайп stream-one →
+`io.Pipe.Write` навсегда, под `connAccess` **и** `device.net.RLock`
+(`Peer.SendBuffers`) → BindClose → `pauseOpAccess` → `Endpoint.Close` →
+`endpoint.Manager.Close` (reload завис, gomobile-поток занят) → 11 горутин в
+`Manager.Get` — все `DetourDialer.init` процесса. Дедлайн дайла SPEC 071 был
+взведён и не спас — **две дыры**: (1) сторож SPEC 050 снимается по `created`,
+а error-ветки raise (`setupReader(nil, err)`) закрывали `created` при провале
+RoundTrip **не разбивая пайп** — x/net http2 не закрывает `req.Body` при
+отказе до принятия запроса, Write остаётся навечно без сторожа и без
+дедлайна; (2) запросы XHTTP ездили на dial-контексте, и 15-секундный дедлайн,
+истекая, **рвал живой стрим** (http2 привязывает жизнь стрима к ctx запроса)
+— каждый здоровый detour-conn пересоздавался каждые 15 с, заново бросая кости
+на дыру (1) против гниющего XMUX-пула (застрявший дайл дампа — ~4-я генерация
+через минуту после старта). Фикс в форк-нативном `transport/v2rayxhttp`
+(маркер `// lx: SPEC 072`): все error-ветки raise идут через `fail()` —
+разбивает upload-пайп с читающей половины (Write выходит с причиной), гасит
+conn-scoped контекст и возвращает XMUX-слот (early-дайлы sing-vmess роняют
+conn вместе с ошибкой — на `Close` рассчитывать нельзя); `uploadFailed`
+stream-up тоже рвёт с читающей половины (писатель видит причину, а не голый
+`ErrClosedPipe`); запросы всех трёх режимов ездят на `WithCancel(transport
+ctx)` — dial-контекст ограничивает **только** raise через сторож 050
+(stream-up сторож получил впервые), `Close`/`fail` гасят подвисшие RoundTrip'ы
+(раньше pending download packet-up тёк до конца процесса); каждый upload-POST
+packet-up ограничен собственным бюджетом `C.TCPTimeout` (заклинивший пул
+стоит один пост, а не вечный Write в WG-send-пути). Red/green: 8 юнитов
+`raise_failure_test.go` (red-прогон на базе rc.2 зафиксирован в SPEC); сюиты
+`-race` v2rayxhttp / transport/wireguard (with_gvisor) / protocol/wireguard
+зелёные. Полевая валидация — на клиенте дампа.
+
+**Слияние задач:** SPEC 070 и SPEC 071 поглощены задачей
+[072](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/072-WG_DETOUR_LIFECYCLE_FREEZE/SPEC.md)
+— единый владелец семьи полевых отказов жизненного цикла WG-эндпоинта
+(решение владельца, §3.2). Их механизмы живут без изменений под прежними
+маркерами `// lx: SPEC 070` / `// lx: SPEC 071`; каталоги 070/071 —
+указатели, реестр HOTFIXES (P11/P12) переведён на 072.
+
 #### v1.14.0-lx.27-rc.2
 
 ### 🐛 Стоп во время старта больше не роняет процесс (гонка Start×Close на WG-эндпоинте)
