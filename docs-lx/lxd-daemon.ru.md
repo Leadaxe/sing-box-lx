@@ -171,6 +171,12 @@ sudo sing-box lxd --service=install    # системный LaunchDaemon: root, 
 sing-box lxd --service=install-user    # LaunchAgent: без sudo, старт при логине, десктоп-UX
 ```
 
+`install-user` работает от имени залогиненного пользователя и поэтому **не
+может владеть TUN**: создание интерфейса на macOS требует root, так что конфиг
+с inbound'ом `tun` под пользовательской областью упадёт с ошибкой прав. К
+`tls` в daemon.json это отношения не имеет — для TUN ставится системная
+область (`sudo … --service=install`).
+
 Install делает всё сам:
 
 1. создаёт `…/Application Support/sing-box-lxd/` (0700) и `state/` внутри;
@@ -363,6 +369,77 @@ fail-closed) — [openwrt-vpn-ssid.ru.md](openwrt-vpn-ssid.ru.md).
   объектная форма, в лаунчере адрес надо заменить на реально достижимый
   (`192.168.10.1:19091`); отпечаток и код оставить как есть. После успеха
   доверие лежит в `clients.json` и переживает рестарт демона и ребут хоста.
+
+### 9.1 Enrollment на проводе — как написать своего клиента
+
+Лаунчер всё это делает сам; этот раздел — контракт для сторонних клиентов и
+для отладки curl'ом.
+
+Инвайт — три сегмента через `#`: `адрес#отпечаток#код`:
+
+| Сегмент | Смысл |
+|---|---|
+| `адрес` | куда подключаться (`host:port`) |
+| `отпечаток` | SHA-256 от DER серверного сертификата, hex в нижнем регистре — по нему клиент пинит сервер |
+| `код` | одноразовый код (`XXXX-XXXX-XXXX`) — **единственный** сегмент, который идёт в поле `code` |
+
+1. **Сгенерировать клиентскую идентичность.** Подходит любой разбираемый
+   X.509-сертификат: демон пинит его SHA-256-отпечаток и цепочку не проверяет,
+   так что self-signed — норма. Приватный ключ никогда не покидает клиента —
+   модель зеркалит WireGuard-пиров: обмениваются только публичными
+   сертификатами (отпечатками). Собственные идентичности демона — ECDSA P-256
+   на 10 лет:
+
+   ```bash
+   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+     -keyout client_key.pem -out client_cert.pem -days 3650 \
+     -subj "/CN=my-client" -addext "extendedKeyUsage=clientAuth"
+   ```
+
+2. **Подключиться по TLS, пиня сервер.** Серверный сертификат self-signed,
+   поэтому настоящий клиент заменяет проверку цепочки пином: sha256 от DER
+   листового сертификата обязан совпасть с сегментом `отпечаток` из инвайта.
+   curl такой пин выразить не умеет (`--pinnedpubkey` хеширует публичный ключ,
+   а не сертификат), так что для curl-экспериментов — `-k` и сверка отпечатка
+   руками:
+
+   ```bash
+   openssl s_client -connect 127.0.0.1:19091 </dev/null 2>/dev/null \
+     | openssl x509 -outform DER | openssl dgst -sha256
+   ```
+
+3. **`POST /admin/enroll`** — **без** заголовка `Authorization`: код — здесь
+   единственный гард, и это единственный маршрут, достижимый до доверия. Тело —
+   JSON с тремя полями; `cert_pem` — клиентский сертификат из шага 1 (без него
+   или с не-PEM демон отвечает `invalid client certificate PEM`):
+
+   ```bash
+   curl -sk https://127.0.0.1:19091/admin/enroll \
+     -H 'Content-Type: application/json' \
+     -d "$(jq -n --rawfile cert client_cert.pem --arg code XXXX-XXXX-XXXX \
+           '{code: $code, name: "my-client", cert_pem: $cert}')"
+   ```
+
+   Успех — `{"enrolled":true,"name":…,"fingerprint":…}`. Метка из
+   `client add --name` побеждает `name` из запроса. Код сгорает при успехе;
+   активен всегда только один код (новый минт заменяет старый).
+
+4. **Всё после enrollment — mTLS этим сертификатом**: он — полная credential
+   для обеих плоскостей (админ-REST и gRPC), Bearer поверх не нужен:
+
+   ```bash
+   curl -sk --cert client_cert.pem --key client_key.pem \
+     https://127.0.0.1:19091/admin/status
+   ```
+
+Карта ошибок:
+
+| Ответ | Причина |
+|---|---|
+| `invalid client certificate PEM` | нет `cert_pem`, или это не PEM-блок `CERTIFICATE` |
+| `invalid enrollment code` | опечатка, уже сгоревший код, или в `code` вставлен весь инвайт вместо последнего сегмента |
+| `no active enrollment code` | демон рестартовал после `client add` (код живёт в памяти процесса), или код уже погашен |
+| `client certificate not trusted` (любой другой маршрут) | сертификат не проходил enrollment, или state демона снесён |
 
 ## 10. Админ-REST (справочно)
 

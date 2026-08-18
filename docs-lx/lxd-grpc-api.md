@@ -18,6 +18,25 @@ For connecting to the daemon (mTLS, client certificates, admin REST) see
 > same `StartedService` the Android line speaks, which is why anything added for
 > mobile observability reaches a server for free, and vice versa.
 
+## One contract, two transports
+
+This observability surface is **not lxd-specific**. The exact same set of RPCs and
+messages is exposed over two carriers:
+
+| Carrier | Where | Client entry point |
+|---|---|---|
+| **gRPC** (`StartedService`) | the `sing-box lxd` daemon — desktop / server | `daemon/started_service.proto` |
+| **libbox `CommandClient`** | the Android / iOS **AAR** (duplex conn, not gRPC) | `experimental/libbox/command_client_command_lx.go` |
+
+The lx extensions (`SubscribeDNSQueries`, `GetRules`, `GetGroups`, `GetOutbounds`,
+`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `URLTestOutbound`,
+`GetURLViaOutbound`) are implemented **once in the core** and reached through
+either carrier — the field semantics below are identical on both. So a field table
+here describes the Android AAR just as much as a remote lxd machine; only the wire
+framing and the method-call syntax differ. Where a rule is transport-specific it is
+called out (e.g. the gRPC `Unimplemented` code has no libbox equivalent — there the
+missing-tag failure surfaces as a plain error).
+
 ## Scope
 
 `StartedService` is the data plane of the daemon: everything about the **running
@@ -90,6 +109,15 @@ ConnectionEvent  { ConnectionEventType type; string id; Connection connection;
                    int64 uplinkDelta; int64 downlinkDelta; int64 closedAt; }
 ```
 
+| `ConnectionEvent` field | Type | Meaning |
+|---|---|---|
+| `type` | enum | `CONNECTION_EVENT_NEW` (0) \| `CONNECTION_EVENT_UPDATE` (1) \| `CONNECTION_EVENT_CLOSED` (2) |
+| `id` | string | connection UUID — the key you index by, present on every event |
+| `connection` | `Connection` | full object on `NEW`, **always `nil` on `UPDATE`**, may be `nil` on `CLOSED` (see below) |
+| `uplinkDelta` / `downlinkDelta` | int64 | **bytes since the last tick** (not a rate), only on `UPDATE` |
+| `closedAt` | int64 | Unix **milliseconds**, only on `CLOSED` |
+| `ConnectionEvents.reset` | bool | this frame replaces your whole table (see below) |
+
 **The first frame carries `reset = true`** and contains the full current state as
 a batch of `NEW` events: every active connection, plus recently closed ones
 (already carrying `closedAt`). `reset` also arrives mid-stream when the core
@@ -135,24 +163,25 @@ are monotonic across an ID it has seen before.
 
 ### `Connection`
 
-| Field | Meaning |
-|---|---|
-| `id` | UUID; the key for `CloseConnection` and for your own table |
-| `inbound`, `inboundType` | which inbound accepted it |
-| `network`, `ipVersion` | `tcp`/`udp`; 4 or 6 |
-| `source`, `destination` | `host:port`; destination may be an IP or a hostname |
-| `domain` | the **sniffed** domain — empty when sniffing did not fire |
-| `protocol` | sniffed application protocol (`http`, `tls`, `quic`, …) |
-| `user` | inbound auth user, when the inbound has auth |
-| `createdAt`, `closedAt` | Unix **milliseconds**; `closedAt` zero while open |
-| `uplink`, `downlink` | current rate |
-| `uplinkTotal`, `downlinkTotal` | bytes accumulated by this connection |
-| `rule` | the matched rule, rendered — pair with `GetRules` for structure |
-| `outbound`, `outboundType` | the final outbound |
-| `chainList` | the outbound chain, final → outward |
-| `detourList` | **lx**: the final outbound's transport detour tail (SPEC 017) |
-| `processInfo` | `processId`, `userId`, `userName`, `processPath`, `packageNames` |
-| `fromOutbound` | set when the connection originated from an outbound itself |
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | UUID; the key for `CloseConnection` and for your own table |
+| `inbound`, `inboundType` | string | which inbound accepted it |
+| `network` | string | `tcp` / `udp` |
+| `ipVersion` | int32 | 4 or 6 |
+| `source`, `destination` | string | `host:port`; destination may be an IP or a hostname |
+| `domain` | string | the **sniffed** domain — empty when sniffing did not fire |
+| `protocol` | string | sniffed application protocol (`http`, `tls`, `quic`, …) |
+| `user` | string | inbound auth user, when the inbound has auth |
+| `createdAt`, `closedAt` | int64 | Unix **milliseconds**; `closedAt` zero while open |
+| `uplink`, `downlink` | int64 | current rate (bytes/s) |
+| `uplinkTotal`, `downlinkTotal` | int64 | bytes accumulated by this connection |
+| `rule` | string | the matched rule, rendered — pair with `GetRules` for structure |
+| `outbound`, `outboundType` | string | the final outbound |
+| `chainList` | repeated string | the outbound chain, final → outward |
+| `detourList` | repeated string | **lx**: the final outbound's transport detour tail (SPEC 017) |
+| `processInfo` | `ProcessInfo` | `processId` (uint32), `userId` (int32), `userName`, `processPath`, `packageNames` (repeated) |
+| `fromOutbound` | string | set when the connection originated from an outbound itself |
 
 **`chainList` omits the detour by design** — hence `detourList`, which the fork
 adds. Order is final outbound → outward. Empty for outbounds without a detour. A
@@ -177,22 +206,31 @@ the launcher does in `ProtoConnToClash`
 had. This matters specifically for remote machines, where the log file is on
 someone else's filesystem and Clash API `/connections` is not exposed at all.
 
-Set `includeAnswers = true` to receive the response records.
+The request has a single field: `includeAnswers` (bool). Set it `true` to receive
+the response records in `answers`.
 
-| Field | Meaning |
-|---|---|
-| `domain`, `queryType` | the question |
-| `rcode` | response code; **`-1` when there was no response at all** |
-| `ttl` | answer TTL |
-| `source` | resolver verb: `exchanged` / `cached` / `optimistic` / `refreshed` / `failed` |
-| `failed`, `error` | timeout, SERVFAIL, rejected — failures are first-class |
-| `answers` | `DnsAnswer{name, type, rdata, ttl}`, **in wire order** |
-| `dnsServer`, `dnsServerType` | which transport resolved it |
-| `outbound` | the channel that server is bound to |
-| `processInfo` | app attribution — package / uid |
-| `dnsGroupPath` | group nesting, inside-out; empty = no group involved |
-| `attempts` | probe chronology at answer time |
-| `fanned`, `survival` | fan-out happened / answer came from the least-dirty server |
+| Field | Type | Meaning |
+|---|---|---|
+| `domain` | string | the queried name |
+| `queryType` | uint32 | DNS type code of the question (1 = A, 28 = AAAA, 65 = HTTPS, …) |
+| `rcode` | int32 | response code; **`-1` when there was no response at all** |
+| `ttl` | uint32 | answer TTL, seconds |
+| `source` | string | resolver verb: `exchanged` / `cached` / `optimistic` / `refreshed` / `failed` |
+| `failed` | bool | true on timeout / SERVFAIL / rejected — failures are first-class |
+| `error` | string | the failure detail, when `failed` |
+| `answers` | repeated `DnsAnswer` | `{name, type (uint32), rdata, ttl (uint32)}`, **in wire order**; only when `includeAnswers` |
+| `dnsServer` | string | which transport (DNS server tag) resolved it |
+| `dnsServerType` | string | that server's type |
+| `outbound` | repeated string | the channel(s) that server is bound to; **empty on cached/optimistic** |
+| `processInfo` | `ProcessInfo` | app attribution — package / uid |
+| `dnsGroupPath` | repeated string | group nesting, inside-out; empty = no group involved (SPEC 035) |
+| `attempts` | repeated `DnsGroupAttempt` | probe chronology at answer time: `{server, serverType, outcome, rttMs (uint32)}` |
+| `fanned` | bool | a fan-out (rescue / election / parallel) was involved |
+| `survival` | bool | answer came from the least-dirty server when none was clean |
+
+`DnsGroupAttempt.outcome` vocabulary: `answered` \| `timeout` \| `network_error` \|
+`servfail` — where `answered` includes NXDOMAIN and empty answers (valid responses,
+not failures).
 
 **CNAME chains come from `answers`.** They are the response records in wire order,
 CNAME hops followed by the A/AAAA records — walk them to reconstruct the chain.
@@ -226,6 +264,96 @@ full picture.
 
 `Status.trafficAvailable` distinguishes "zero traffic" from "traffic accounting
 not available"; do not render zeros when it is false.
+
+### Message field reference
+
+The response shapes of the supporting RPCs, for completeness.
+
+**`Status`** (`SubscribeStatus`) — the profiler header line:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `memory` | uint64 | resident bytes of the core process |
+| `goroutines` | int32 | live goroutine count |
+| `connectionsIn` / `connectionsOut` | int32 | active inbound / outbound connections |
+| `trafficAvailable` | bool | false = accounting off; **do not render the byte fields as zero** |
+| `uplink` / `downlink` | int64 | current rate, bytes/s |
+| `uplinkTotal` / `downlinkTotal` | int64 | bytes since core start |
+
+**`ServiceStatus`** (`SubscribeServiceStatus`): `status` enum
+`IDLE|STARTING|STARTED|STOPPING|FATAL`, plus `errorMessage` (set on `FATAL`).
+**`Version`** (`GetVersion`): `version` (string), `apiVersion` (int32).
+**`StartedAt`** (`GetStartedAt`): `startedAt` (int64, Unix ms).
+
+**`Group`** / **`GroupItem`** (`GetGroups` / `SubscribeGroups`):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `Group.tag`, `Group.type` | string | group tag and kind (`selector` / `urltest`) |
+| `Group.selectable` | bool | whether `SelectOutbound` applies |
+| `Group.selected` | string | current node — **a hint only for `round_robin`** (read `GetPool`) |
+| `Group.isExpand` | bool | UI expand state |
+| `Group.mode` | string | **lx**: `least_test` / `round_robin`; empty for non-urltest groups (SPEC 019) |
+| `Group.items` | repeated `GroupItem` | member nodes |
+| `GroupItem.tag`, `GroupItem.type` | string | node tag and type |
+| `GroupItem.urlTestTime` | int64 | Unix ms of the last probe |
+| `GroupItem.urlTestDelay` | int32 | last probe delay in **ms**; `0` = dead / not measured |
+
+**`PoolSlot`** (`GetPool` → `PoolList.slots`) — **lx**, SPEC 019:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `slot` | uint32 | fixed slot index in the rotation |
+| `tag` | string | the node currently in that slot |
+| `delay` | uint32 | last test result in ms; **`0` = dead / not measured** (a live node is clamped to ≥ 1 server-side) |
+
+A non-`round_robin` group returns an **empty `slots` list** — "no pool here", not an
+error.
+
+**`DnsGroupState`** / **`DnsGroupMember`** (`GetDNSGroups`) — **lx**, SPEC 035:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `DnsGroupState.tag`, `.mode`, `.current` | string | group tag, mode, sticky target |
+| `DnsGroupMember.tag`, `.serverType` | string | member tag and server type |
+| `DnsGroupMember.clean` | bool | zero live errors |
+| `DnsGroupMember.liveErrors` | uint32 | current live error count |
+| `DnsGroupMember.lastErrorAgeMs` | int64 | age of the newest live error; **`-1` = none** |
+| `DnsGroupMember.liveWins` | uint32 | live win records (fastest mode) |
+| `DnsGroupMember.current` | bool | is this the group's sticky target |
+| `DnsGroupMember.lastRttMs` | uint32 | last successful probe; `0` = never measured |
+
+**`URLTestOutbound`** (**lx**) — request `{outboundTag, link, timeout}`, response
+`{delay (uint32, ms), error}`. `timeout` is in **milliseconds**; `0` = no extra
+deadline (bounded only by the call). On failure `delay` is unset and `error` is
+populated.
+
+**`GetURLViaOutbound`** (**lx**, SPEC 058) — a diagnostic HTTP probe through one
+node that returns the **response body**, answering "which exit IP / geo / warp state
+does *this* node give me":
+
+| Request field | Type | Meaning |
+|---|---|---|
+| `outboundTag` | string | the node to probe through |
+| `link` | string | URL to fetch |
+| `timeout` | uint32 | **ms**; `0` = no extra deadline |
+| `maxBytes` | uint32 | body cap; `0` → **256 KiB** default, hard ceiling **1 MiB** |
+| `headers` | repeated `{key, value}` | extra request headers |
+
+| Response field | Type | Meaning |
+|---|---|---|
+| `httpStatus` | uint32 | HTTP status code |
+| `body` | bytes | response body (**bytes**, not string — an arbitrary endpoint is not valid UTF-8) |
+| `truncated` | bool | body hit `maxBytes` and was cut |
+| `contentType` | string | response `Content-Type` |
+| `remoteAddr` | string | the exit address the request left from |
+| `elapsedMs` | uint32 | round-trip time |
+| `error` | string | set when the fetch never completed (unknown tag, dial/TLS failure, timeout) |
+
+**`RunningConfig`** (`GetRunningConfig`, **lx** SPEC 037): a single `content`
+(string) — the canonical serialization of the options the core actually built from
+(post-override). **Not** byte-identical to the profile text the client sent (field
+order, `omitempty`, `[]`→`null`); compare semantically, not textually.
 
 ## observability-api-lx
 

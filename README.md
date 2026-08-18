@@ -50,7 +50,7 @@ In the sing-box ecosystem, forks that add XHTTP / AmneziaWG fall into two camps 
 | **`lxd` daemon** | headless subcommand | `sing-box lxd` keeps the core **in-process behind a management channel that outlives every config change** (SPEC 055–057): gRPC + admin-REST on one port, `apply` validated in a subprocess with automatic rollback to last-good, mTLS where the daemon is its own CA and clients enrol by one-time code, system service install, `.srs`/geo resource store, host telemetry (CPU per core, memory, thermal, disks, interfaces) and an IP→device directory; build tag `with_lxd` | ✅ device-verified on macOS (enrolment, both service roles, rollback). Guide — [docs-lx/lxd-daemon.md](docs-lx/lxd-daemon.md); gRPC reference — [lxd-grpc-api.md](docs-lx/lxd-grpc-api.md). Feature — [LXD_DAEMON](SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md) |
 | **Failover on dial errors** | urltest behaviour | A `least_test` group now reacts to **live dial failures**, not just probe results (SPEC 054): a dead-path error penalises the node and retries once through the best candidate; ranking degrades to penalties-then-latency; penalties reset only on proof of life | ✅ shipped, consumer of the 15 s netstack deadline (SPEC 052). Feature — [URLTEST_BALANCE](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) |
 
-Detailed reports: [`SPECS/TASKS/002-…`](SPECS/TASKS/002-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/TASKS/003-…`](SPECS/TASKS/003-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) and [`SPECS/TASKS/009-…`](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Full config reference — **[docs-lx/lx-config.md](docs-lx/lx-config.md)**.
+Detailed reports: [`SPECS/TASKS/002-…`](SPECS/TASKS/002-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/TASKS/003-…`](SPECS/TASKS/003-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) and [`SPECS/TASKS/009-…`](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Config overview — **[docs-lx/lx-config.md](docs-lx/lx-config.md)**; full parameter reference — **[docs-lx/lx-protocols-transports.md](docs-lx/lx-protocols-transports.md)**.
 
 > **Not supported (Reality layer, deferred):** post-quantum Reality (`pqv` / ML-DSA-65) and Xray's `spiderX`. These are Xray-specific Reality features absent from sing-box, and Reality is the upstream TLS layer we keep untouched (it is not one of our features). Classic X25519 Reality works; a server that *mandates* post-quantum Reality won't connect. This is a sing-box limitation — best addressed upstream (we'd inherit it on rebase).
 
@@ -151,7 +151,7 @@ This is the **only profile device-proven against a real LTE/WARP DPI** (~330 ms)
 `sip` are implemented as correct client-initiated requests but are blocked as a protocol class
 toward the Cloudflare WARP edge (raw DNS/STUN/SIP to a datacenter IP is itself anomalous) —
 they are kept for other providers whose DPI only checks packet well-formedness. See
-[docs-lx/lx-config.md](docs-lx/lx-config.md) and [AWG2 feature](SPECS/FEATURES/003-AWG2/FEATURE.md) · [examples](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
+[docs-lx/lx-protocols-transports.md §2](docs-lx/lx-protocols-transports.md#2-amneziawg-20-awg2) and [AWG2 feature](SPECS/FEATURES/003-AWG2/FEATURE.md) · [examples](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ### MASQUE (outbound — Cloudflare WARP)
 
@@ -184,11 +184,11 @@ switch that node to `vhttp: "h2"` (TCP:443).
 > which means the opposite everywhere else), and TLS settings live in the standard `tls` block
 > (`sni` → `tls.server_name`, `skip_cert_verify` → `tls.insecure`, …). The old fields still work
 > and report a deprecation until **v1.14.0-lx.30** — migration table in
-> [docs-lx/lx-config.md §4](docs-lx/lx-config.md). The default SNI is `www.cloudflare.com`, not
+> [docs-lx/lx-protocols-transports.md §3.10](docs-lx/lx-protocols-transports.md#310-migrating-from-the-pre-spec-062-shape). The default SNI is `www.cloudflare.com`, not
 > the endpoint hostname: naming the MASQUE endpoint in the ClientHello is what DPI filters on.
 
 Full reference —
-[docs-lx/lx-config.md §4](docs-lx/lx-config.md) and [MASQUE_WARP feature](SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md) · [full parameters](SPECS/TASKS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md).
+[docs-lx/lx-protocols-transports.md §3](docs-lx/lx-protocols-transports.md#3-masque-outbound-connect-ip--warp) and [MASQUE_WARP feature](SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md).
 
 ### VLESS `encryption` (post-quantum layer)
 
@@ -244,7 +244,7 @@ sing-box lxd --state-dir ./lxd-state -c config.json
   the recipe instead of touching the disk (systemd and OpenWrt/procd), by design.
 
 📖 Operator's guide — **[docs-lx/lxd-daemon.md](docs-lx/lxd-daemon.md)** ([RU](docs-lx/lxd-daemon.ru.md));
-gRPC observability plane for clients — [docs-lx/lxd-grpc-api.md](docs-lx/lxd-grpc-api.md);
+observability plane for clients (same contract over the gRPC daemon **and** the Android AAR) — [docs-lx/lxd-grpc-api.md](docs-lx/lxd-grpc-api.md) ([RU](docs-lx/lxd-grpc-api.ru.md));
 an OpenWrt walkthrough (VPN on a dedicated SSID) — [docs-lx/openwrt-vpn-ssid.md](docs-lx/openwrt-vpn-ssid.md).
 
 ---
@@ -312,11 +312,12 @@ The core is built for the desktop launcher **singbox-launcher** (which bundles `
 | AmneziaWG runtime | [Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet base + obfuscation (3-way merge) |
 | AmneziaWG upstream | [amnezia-vpn/amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go) · [docs.amnezia.org](https://docs.amnezia.org/documentation/amnezia-wg/) |
 | XHTTP origin | [XTLS/Xray-core](https://github.com/XTLS/Xray-core) — `transport/internet/splithttp` |
-| Config reference | [docs-lx/lx-config.md](docs-lx/lx-config.md) |
+| Config overview | [docs-lx/lx-config.md](docs-lx/lx-config.md) ([RU](docs-lx/lx-config.ru.md)) — every downstream feature, build tags, short examples |
+| Protocols & transports | [docs-lx/lx-protocols-transports.md](docs-lx/lx-protocols-transports.md) ([RU](docs-lx/lx-protocols-transports.ru.md)) — full parameter reference for XHTTP, AmneziaWG, MASQUE |
 | Fork changelog | [docs-lx/lx-changelog.md](docs-lx/lx-changelog.md) — the source `lx-release.yml` extracts release notes from |
 | Energy guide | [docs-lx/lx-energy.md](docs-lx/lx-energy.md) — idle-suspend levels, passive_check, tuning |
 | `lxd` operator's guide | [docs-lx/lxd-daemon.md](docs-lx/lxd-daemon.md) ([RU](docs-lx/lxd-daemon.ru.md)) — install, daemon.json, mTLS, admin REST |
-| `lxd` gRPC plane | [docs-lx/lxd-grpc-api.md](docs-lx/lxd-grpc-api.md) — the observability API clients speak |
+| Observability API | [docs-lx/lxd-grpc-api.md](docs-lx/lxd-grpc-api.md) ([RU](docs-lx/lxd-grpc-api.ru.md)) — the observability contract clients speak (gRPC daemon + Android AAR) |
 | OpenWrt walkthrough | [docs-lx/openwrt-vpn-ssid.md](docs-lx/openwrt-vpn-ssid.md) ([RU](docs-lx/openwrt-vpn-ssid.ru.md)) — VPN on a dedicated SSID |
 | Reference cores | [docs-lx/lx-reference-cores.md](docs-lx/lx-reference-cores.md) — where to look for wire-protocol answers |
 | Release runbook | [docs-lx/lx-release-runbook.md](docs-lx/lx-release-runbook.md) — upstream merge + tagging ritual |

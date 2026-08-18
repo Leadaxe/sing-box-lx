@@ -214,87 +214,14 @@ you need and read its section below. Each comment shows the **default** and the 
 
 ## 1. XHTTP transport
 
-XHTTP (Xray "splithttp"/"xhttp") is a v2ray transport that tunnels the proxy over plain HTTP/2 requests. It attaches to VLESS / VMess / Trojan via the shared `transport` block and composes with TLS, including **Reality**. (XHTTP is incompatible with XTLS-Vision — that is a protocol limitation, not ours.)
+XHTTP (Xray "splithttp"/"xhttp") is a v2ray transport that tunnels the proxy over plain HTTP/2 requests. It attaches to VLESS / VMess / Trojan via the shared `transport` block and composes with TLS, including **Reality**. (XHTTP is incompatible with XTLS-Vision — that is a protocol limitation, not ours.) The default wire shape is **byte-identical to the live-verified v1 client** — every v2 field (session/seq placement, uplink obfs, the `x_padding_*` family, `xmux` connection reuse) is opt-in.
 
-### Fields (`transport`)
+A minimal `transport` block is just `"type": "xhttp"` (mode `auto`); the [example below](#example--vless--xhttp--reality) adds a Reality node with `stream-one`.
 
-The default wire shape (everything below at its default) is **byte-identical to the
-live-verified v1 client**, so existing configs are unaffected — the v2 fields are all opt-in.
-
-**Core (v1):**
-
-| Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `type` | string | — | must be `"xhttp"` |
-| `mode` | string | `auto` | `auto` \| `packet-up` \| `stream-up` \| `stream-one`. **`auto` resolves to `stream-one` on a Reality TLS, else `packet-up`** — the same rule Xray applies. Leave it at `auto` unless the server documents otherwise; set it explicitly only if you know what the server expects. |
-| `host` | string | TLS SNI / server | overrides the HTTP `Host` header |
-| `path` | string | `""` (root) | request path prefix; the session id (and, for `packet-up`, the upload sequence number) are appended as path segments when their placement is `path` |
-| `headers` | object | — | extra request headers sent on every XHTTP request |
-| `x_padding_bytes` | string | `"100-1000"` | inclusive byte-length **range** of the padding value (`"min-max"` or a single int). Drives both the legacy Referer `x_padding` length and the obfs-mode padding length |
-| `no_grpc_header` | bool | `false` | omit the `Content-Type: application/grpc` header that streamed-body requests (`stream-one`, `stream-up`) carry by default, mirroring Xray's `NoGRPCHeader`. Leave off unless the server rejects the gRPC content type |
-
-**Session / seq placement (v2)** — where the per-request session id and (packet-up) upload sequence number are carried:
-
-| Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `session_placement` | string | `path` | `path` \| `query` \| `header` \| `cookie` |
-| `session_key` | string | `X-Session` (header) / `x_session` (query\|cookie) | name carrying the session id when placement ≠ `path`; unused for `path` |
-| `seq_placement` | string | `path` | `path` \| `query` \| `header` \| `cookie`. For `path`, the seq is the **second** appended segment (session id first — order is load-bearing) |
-| `seq_key` | string | `X-Seq` (header) / `x_seq` (query\|cookie) | name carrying the seq when placement ≠ `path`; unused for `path` |
-
-**Uplink-data placement (v2, packet-up)** — where the upload payload goes:
-
-| Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `uplink_data_placement` | string | `auto` | `body` \| `auto` (== body) \| `header` \| `cookie`. `header`/`cookie` are **only valid in `packet-up`** (else error); they carry the payload as `base64.RawURLEncoding`, chunked into `<key>-<i>` headers / `<key>_<i>` cookies |
-| `uplink_data_key` | string | `X-Data` (header) / `x_data` (cookie) | base name for the chunked header/cookie payload; `""` for body |
-| `uplink_chunk_size` | string | cookie `2048-3072`, header `3000-4000`, else `= sc_max_each_post_bytes` | `"min-max"` range (in base64 chars) of each chunk; min floored to 64 |
-| `uplink_http_method` | string | `POST` | HTTP method for **upload** requests (download is always GET); upper-cased; `GET` allowed only in `packet-up` |
-
-**X-Padding obfuscation (v2)** — only active when `x_padding_obfs_mode` is `true`; otherwise the legacy Referer padding (note below) is used:
-
-| Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `x_padding_obfs_mode` | bool | `false` | master switch. `false` → legacy Referer `x_padding`. `true` → the configurable `x_padding_*` family below |
-| `x_padding_placement` | string | `queryInHeader` | `cookie` \| `header` \| `query` \| `queryInHeader` |
-| `x_padding_key` | string | `x_padding` | cookie/query param name (unused for `header` placement) |
-| `x_padding_header` | string | `X-Padding` | header name (for `header` / `queryInHeader` placement) |
-| `x_padding_method` | string | `repeat-x` | `repeat-x` (N literal `X` bytes) \| `tokenish` (base62 token whose HPACK-Huffman length is tuned to ~N) |
-
-**Packet-up tuning (v2):**
-
-| Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `sc_max_each_post_bytes` | string | `"1000000-1000000"` | `"min-max"` range bounding a single upload POST (the split threshold) |
-| `sc_min_posts_interval_ms` | string | `"30-30"` | `"min-max"` anti-burst delay between successive POSTs, in ms |
-
-**Connection reuse — `xmux` (SPEC 059):**
-
-Without a pool every XHTTP stream pays a full TCP + TLS (+ REALITY) handshake. `xmux` reuses
-HTTP connections, and — just as important — it is what Xray servers expect: an `xmux` section
-arriving from a subscription used to be ignored silently, so the client behaved differently from
-what the server author intended.
-
-| Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `xmux.max_concurrency` | range | `1-1` | how many streams may share one HTTP connection. Mutually exclusive with `max_connections` |
-| `xmux.max_connections` | range | unlimited | how many connections the pool holds; below this count a new connection is always opened. Mutually exclusive with `max_concurrency` |
-| `xmux.c_max_reuse_times` | range | unlimited | how many times a connection may be handed out for a new stream before it retires |
-| `xmux.h_max_request_times` | range | `600-900` | how many **HTTP requests** may traverse a connection before it retires. Counts requests, not streams — in `packet-up` one stream issues many upload POSTs |
-| `xmux.h_max_reusable_secs` | range | `1800-3000` | how long a connection stays reusable, in seconds |
-| `xmux.h_keep_alive_period` | int (seconds) | `0` = default | HTTP/2 keep-alive ping period. Negative disables pings. A plain integer, not a range — matching the reference implementation |
-
-Ranges take our `"min-max"` string form (`"600-900"`), a single integer (`4` == `4-4`), or a
-two-element array (`[600, 900]`) for configs authored against Xray / sing-box-extended. **Each
-range is rolled once, not per request**: `max_concurrency` and `max_connections` at construction,
-the reuse limits when each connection is created. Defaults apply even with no `xmux` section at
-all. A connection at its limit is retired but **not torn down while streams still use it** —
-closing is deferred until the last one finishes. Client-only: the server half and the `download`
-section are out of scope.
-
-**Accepted but ignored by the client** (present so an inbound-shaped config or a symmetric link doesn't error — the client never acts on them): `sc_max_concurrent_posts`, `server_max_header_bytes`, `no_sse_header`, `sc_max_buffered_posts`, `sc_stream_up_server_secs`.
-
-> **Note (default wire format):** with `x_padding_obfs_mode` off (the default), padding is carried as `x_padding=<zeros>` inside the `Referer` header (Xray's default placement) — live-validated against a real Xray (3x-ui) server. The server validates the `x_padding` length (default 100–1000) and replies `400` without it. Client and server Xray versions should still match (XHTTP evolves quickly).
+> **📖 The full field reference — all 26 XHTTP keys, their defaults, the `xmux` pool
+> semantics, range value forms and a troubleshooting table — is in
+> [lx-protocols-transports.md §1](lx-protocols-transports.md#1-xhttp-transport)**
+> ([RU](lx-protocols-transports.ru.md#1-xhttp-транспорт)).
 
 ### Example — VLESS + XHTTP + Reality
 
@@ -327,20 +254,20 @@ section are out of scope.
 
 AWG is WireGuard + DPI-evasion obfuscation. It is configured as a normal sing-box **`wireguard` endpoint** with extra promoted fields. With `with_awg` these are pushed to the device; a config without any AWG field is a plain WireGuard endpoint (byte-identical to upstream behavior).
 
-AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server must run AmneziaWG with **matching** parameters (the I-packets are configuration, not negotiated). For a friendlier way to set the first decoy, see the WireSock-style [`id`/`ip`/`ib`](#masquerade-id--ip--ib-wiresock-style-sugar-over-i1) sugar below, which generates `i1` for you.
+AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server must run AmneziaWG with **matching** parameters (the I-packets are configuration, not negotiated). For a friendlier way to set the first decoy, the WireSock-style `id`/`ip`/`ib` sugar generates `i1` for you — see the [full reference](lx-protocols-transports.md#25-masquerade-sugar-id--ip--ib).
 
-### Fields (on the `wireguard` endpoint, alongside `private_key`/`peers`/…)
+The AWG fields sit at the endpoint **root** (none on a peer), mirroring an `awg-quick`
+`.conf` `[Interface]` section: junk (`jc`/`jmin`/`jmax`), handshake padding (`s1`–`s4`),
+magic headers (`h1`–`h4`, single value or `"min-max"` range), and CPS decoys (`i1`–`i5`).
+An AWG endpoint needs a **lower `mtu`** than plain WireGuard because `s4` pads every data
+packet — the core defaults to `1280` when you set `s4` and omit `mtu`.
 
-| Key | Type | Meaning |
-|-----|------|---------|
-| `jc` | int | default `0` (unset). Number of junk packets sent before the handshake |
-| `jmin` / `jmax` | int | default `0`. Min / max size of those junk packets |
-| `s1` / `s2` | int | default `0`. Junk prepended to the handshake **INIT** / **RESPONSE** messages |
-| `s3` / `s4` | int | default `0`. AWG 2.0 junk-size params (companions to `s1`/`s2`). `s4`'s per-transport-packet overhead is what drives the [lower MTU](#mtu) requirement; `s3` pads only cookie replies |
-| `h1` / `h2` / `h3` / `h4` | int \| `"min-max"` string | magic header values overriding WireGuard's four message types. Either a single uint32 (`1234567890`, AWG 1.x) or an inclusive range string (`"43613244-384550127"`, AWG 2.0 ranged headers) — the device picks a random value from the range per message. `0` **or** `""` = unset (counts as the WG default `1`/`2`/`3`/`4`) |
-| `i1` … `i5` | string | default `""`. AWG 2.0 CPS decoy packets, **case-sensitive** tag-format strings, sent in order before the handshake. `i1` typically mimics a real protocol (e.g. a QUIC/STUN header) and is **mutually exclusive with the [`id`/`ip`/`ib`](#masquerade-id--ip--ib-wiresock-style-sugar-over-i1) sugar**. Tags: `<b 0xHEX>` static bytes, `<c>` counter, `<t>` timestamp, `<r N>` random bytes, `<rc N>` random chars, `<rd N>` random digits |
-
-> **Ranged headers (AWG 2.0):** the four `h1`–`h4` ranges (an unset header counts as its WireGuard default — `1`/`2`/`3`/`4`) **must not overlap**, or the device rejects the config with `headers must not overlap`. Set all four together, as awg2 exports do. A plain number `N` is equivalent to the range `"N-N"`; `0` means unset.
+> **📖 The full field reference — every junk/signature/magic/CPS field with its type
+> and default, the CPS tag format, the `id`/`ip`/`ib` masquerade sugar (four profiles,
+> which to pick, what reaches the wire), the MTU budget math, the `awg.conf` 1:1 mapping
+> and the verbatim validation errors — is in
+> [lx-protocols-transports.md §2](lx-protocols-transports.md#2-amneziawg-20-awg2)**
+> ([RU](lx-protocols-transports.ru.md#2-amneziawg-20-awg2)).
 
 ### Example — AmneziaWG 2.0 endpoint
 
@@ -376,102 +303,10 @@ AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server 
 }
 ```
 
-### Masquerade `id` / `ip` / `ib` (WireSock-style sugar over `i1`)
-
-Hand-writing an `i1` CPS string is fiddly. As a friendlier alternative — the same
-naming [WireSock Secure Connect](https://www.wiresock.net/) uses — you can declare
-a masquerade by **domain / protocol / browser** and the device generates the `i1`
-decoy for you:
-
-| Key | Type | Meaning |
-|-----|------|---------|
-| `id` | string | masquerade **domain** (a host that looks normal for your region, e.g. `www.google.com`). Strict LDH hostname (letters/digits/`-`/`_`, labels ≤63, total ≤253). It is embedded into the decoy for `ip=quic` (as the **ClientHello SNI**), `ip=dns` (as the QNAME) and `ip=sip` (as the host) — only `ip=stun` has nowhere to carry a hostname and ignores it. **Required only for `quic`; for `dns`/`sip` a pseudo name is generated when absent; `stun` ignores it.** Whenever set, it is LDH-validated (invalid/injection-y values are **rejected**) |
-| `ip` | string | masquerade **protocol**: `quic` \| `dns` \| `stun` \| `sip` |
-| `ib` | string | masquerade **browser**: `chrome` \| `firefox` \| `curl`. Only meaningful with `ip=quic`, and even then the effect is **minimal** (see note) |
-
-The decoy is sent before the handshake, exactly like a hand-written `i1`. Each
-profile is a **client-initiated** packet shaped like that protocol (the shapes are
-inspired by the open-source WireSock reference, `amneziawg-proxy/src/transform.rs`,
-but emitted as the client request a peer actually sends first, not a server
-response); `quic` is a purpose-built RFC 9001 QUIC Initial that bypasses line-rate
-DPI:
-
-- **`quic`** — a full **QUIC Initial (RFC 9001)** carrying a realistic browser-shaped
-  ClientHello (with your `id` as the SNI) **split across several out-of-order CRYPTO
-  frames**: the first frame on the wire starts mid-ClientHello (offset≠0), so a
-  line-rate DPI that grabs the first frame and assumes offset 0 parses garbage and
-  fails open, while a real QUIC server reorders the frames normally. The layout is
-  randomized per call (no fixed cross-user signature). `ip=quic` emits **one**
-  fragmented Initial, in `i1` — `i2` is filled only by `ip=sip`, which needs two
-  messages of one dialog. This is the device-proven DPI bypass (a plain QUIC short
-  header was empirically blocked).
-- **`dns`** — a client DNS **query** (QR=0, QTYPE HTTPS) whose QNAME is your `id`,
-  carrying random cover bytes as an opaque unknown EDNS option.
-- **`stun`** — a WebRTC STUN **Binding Request** (magic cookie + USERNAME +
-  ICE-CONTROLLING + PRIORITY + SOFTWARE + MESSAGE-INTEGRITY + FINGERPRINT).
-- **`sip`** — a body-less SIP **INVITE request** (`i1`: request-line + Via/
-  Max-Forwards/To/From/Call-ID/CSeq/Contact + `Content-Type: application/sdp` and
-  `Content-Length: 0`, no SDP body) paired with the matching **`100 Trying`**
-  provisional response of the same dialog (`i2`), using your `id` (or a generated
-  pseudo-host) as the host and pronounceable pseudo user names.
-
-```jsonc
-{
-  "type": "wireguard", "tag": "awg-out", "mtu": 1280,
-  "address": ["10.0.0.2/32"], "private_key": "<client-private-key-base64>",
-  "jc": 4, "jmin": 40, "jmax": 70,
-  "id": "www.google.com", "ip": "quic", "ib": "chrome",
-  "peers": [ { "address": "engage.cloudflareclient.com", "port": 2408,
-    "public_key": "<server-public-key-base64>", "allowed_ips": ["0.0.0.0/0", "::/0"] } ]
-}
-```
-
-> **Notes & limitations.**
-> - `id`/`ip`/`ib` are **mutually exclusive** with an explicit `i1` — set one or the
->   other, not both (a config with both is rejected).
-> - This is a **decoy** sent before the handshake, not a full protocol session — the
->   `quic` Initial never completes a TLS handshake (it only needs to make the first
->   packet of the flow look like a legitimate QUIC start). The `id` **is** placed on
->   the wire as the ClientHello SNI (a DPI that publicly decrypts the Initial can read
->   it), so pick a **plausible, allowed** domain — never a VPN/Cloudflare marker.
-> - The DPI bypass rests primarily on **CRYPTO-frame fragmentation**, not on the TLS
->   fingerprint. `ib` does select one, though: `chrome` and `firefox` emit a genuine
->   browser ClientHello (real JA3/JA4) in builds with TLS-mimicry support, while `curl`
->   and an absent `ib` use the generic ClientHello. Without that build support the
->   browser profiles fall back to the generic one.
-> - `id` is carried on the wire for `quic` (SNI), `dns` (QNAME) and `sip` (host); only
->   `ip=stun` produces a hostname-less decoy regardless of `id`.
-> - The motivating use case is easing connections to **Cloudflare WARP**.
-
-**📖 [Detailed examples →](../SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md)** —
-full per-profile configs (incl. a Cloudflare WARP one), the generated CPS for each,
-a "which profile to pick" guide and a troubleshooting table of the exact validation
-errors.
-
-### MTU
-
-AmneziaWG's `s4` prepends junk bytes to **every transport (data) message**, so an AWG endpoint needs a **lower `mtu` than plain WireGuard**. (`s3` pads only cookie-reply messages, not data packets, so it does not affect the MTU budget.) If the obfuscated packet exceeds the path MTU, the OS rejects it and the tunnel completes its handshake but **cannot send data**:
-
-```
-peer(…) - received handshake response
-peer(…) - failed to send data packets: write udp4 …: sendmsg: message too long
-```
-
-Budget the overhead against a 1500-byte path:
-
-```
-mtu ≤ 1500 − 28 (UDP/IP) − 32 (WireGuard) − S4 junk bytes
-```
-
-For `S4 = 60` that is `mtu ≤ 1380`. **Use `1280`** (the AmneziaWG-recommended client MTU) for headroom on smaller path MTUs (PPPoE, nested tunnels). This is unrelated to the handshake — a too-high `mtu` lets the handshake succeed but silently breaks data transfer.
-
-**What sing-box-lx does for you:** if you omit `mtu` on an endpoint that sets `s4`, the core defaults to **`1280`** (instead of the plain-WireGuard `1408`). If you set `mtu` explicitly and it is too high for the junk overhead, the core logs a startup warning — against a conservative **1492**-byte (PPPoE) budget, `mtu ≤ 1492 − 28 − 32 − S4`, so it may flag a value a few bytes below the 1500-byte Ethernet ceiling. The warning is advisory; the tunnel still loads.
-
-**Outer socket no longer forces DF (SPEC 028).** By default sing-box-lx now lets the OS IP-fragment an oversize outer datagram on a `wireguard` endpoint (and a `masque` outbound) instead of dropping it — the old default set `IP_MTU_DISCOVER=IP_PMTUDISC_DO` (Linux/Android) / `IP_DONTFRAG` (macOS), which is exactly what produced the `sendmsg: message too long` above when an AWG datagram (`mtu + 32 + s4 + 28`) exceeded the path MTU. This is what lets **nested tunnels** work: `masque`/`wireguard`/AWG chained through `detour` in any combination, where the outer datagram is routinely oversize and must fragment. To restore the old behaviour on a specific endpoint, set `"udp_fragment": false` on it. Picking a correct `mtu` (above) still avoids fragmentation entirely and is preferred — fragmentation is the safety net, not the goal.
-
-Also keep `jmax` **below** the real path MTU: amneziawg-go warns that if a junk packet's size reaches the system MTU it gets IP-fragmented, which the same constrained paths then drop. Junk/signature params (`jc`, `s1`–`s4`, `i1`–`i5`) are client-side configuration only.
-
-Map an `awg.conf` / awg-quick file 1:1: `[Interface] PrivateKey/Address/Jc/Jmin/Jmax/S1–S4/H1–H4/I1–I5` → endpoint root; `[Peer] PublicKey/PresharedKey/Endpoint/AllowedIPs/PersistentKeepalive` → `peers[0]` (`Endpoint host:port` → `address`+`port`). An `H1 = N` line maps to JSON number `N`, a ranged `H1 = N-M` line (awg2 export) maps to JSON string `"N-M"` verbatim. If the `awg.conf` omits `MTU` or sets the WireGuard-default `1420`, lower it for AWG2 (see [MTU](#mtu) above).
+The **`id`/`ip`/`ib` masquerade sugar** (four decoy profiles: `quic`/`dns`/`stun`/`sip`),
+the **MTU budget** (why `s4` forces a lower MTU, the `sendmsg: message too long` symptom,
+the auto-`1280` default, `udp_fragment` for nested tunnels), and the **`awg.conf` 1:1
+mapping** are all documented in the full reference — see the 📖 link above.
 
 The runtime is backed by `Leadaxe/wireguard-go` (sagernet/wireguard-go + AmneziaWG obfuscation, wired via the `submodules/wireguard-go` submodule) — see the [AWG2 feature](../SPECS/FEATURES/003-AWG2/FEATURE.md).
 
@@ -563,48 +398,23 @@ enroll) is done by the client, not the core.
 > for `h3`/`h2` — the opposite of what `network` means on every other outbound. The old shape
 > still works and reports a deprecation; see the migration table below.
 
-### Fields (on a `masque` outbound)
+The required fields are `server`/`server_port`, the key pair (`private_key`/`public_key`,
+for the default `cloudflare` profile) and at least one of `ip`/`ipv6` (your local address
+*inside* the tunnel, not the exit IP). Everything else has a default: `profile: cloudflare`,
+`vhttp: h3`, `tls.server_name: www.cloudflare.com`, `mtu: 1280`, `idle_timeout: 5m`,
+`keep_alive_period: 30s`, `network_list: tcp+udp`. TLS goes in the standard outbound `tls`
+block.
 
-| Key | Type | Default | Meaning |
-|-----|------|---------|---------|
-| `profile` | string | `cloudflare` | `cloudflare` (WARP quirks: `cf-connect-ip`, tolerates missing Extended-CONNECT settings, ECDSA public-key pinning, WARP SNI/URI defaults) \| `standard` (strict RFC 9484, for a self-hosted CONNECT-IP server) |
-| `vhttp` | string | `h3` | **HTTP version carrying CONNECT-IP**: `h3` (QUIC) \| `h2` (HTTP/2, TCP:443). The tcp/udp list is `network_list`, as everywhere else |
-| `private_key` | string (base64) | — | client EC private key, DER (`x509.ParseECPrivateKey`). Required for `cloudflare` |
-| `public_key` | string (base64) | — | endpoint PKIX public key, DER (`x509.ParsePKIXPublicKey`, ECDSA). Required for `cloudflare` |
-| `ip` | string (CIDR) | — | local IPv4 inside the tunnel; a bare address → `/32`. At least one of `ip`/`ipv6` required |
-| `ipv6` | string (CIDR) | — | local IPv6 inside the tunnel; a bare address → `/128` |
-| `tls` | object | — | the **standard** outbound TLS block — `server_name`, `insecure`, `disable_sni`, `fragment`, `record_fragment`, `fragment_fallback_delay`, … Same container every other TLS outbound uses |
-| `uri` | string | per profile¹ | CONNECT-IP request URI |
-| `mtu` | int | `1280` | userspace-stack MTU. On `h2`, max `16000` (one IP packet = one HTTP/2 DATA frame) |
-| `idle_timeout` | duration | `5m` | suspend the tunnel after this long with no traffic (frees the gVisor stack, pumps and QUIC keepalive); the next dial rebuilds it. Negative disables suspend |
-| `keep_alive_period` | duration | `30s` | QUIC keepalive (h3). Negative disables |
-| `network_list` | list | tcp+udp | L4 protocols routed through the tunnel |
+> **The default SNI is `www.cloudflare.com`, not the endpoint hostname** — naming the
+> MASQUE endpoint in the ClientHello is exactly what a DPI filters on. The endpoint is
+> authenticated by pinning `public_key`, so the SNI is free to differ.
 
-¹ `cloudflare` defaults: `tls.server_name` = `www.cloudflare.com`, `uri` = `https://cloudflareaccess.com`. `standard` has no defaults (both required).
-
-> **The default SNI is `www.cloudflare.com`, not the endpoint hostname.** Naming the MASQUE
-> endpoint in the ClientHello is exactly what a DPI filters on; a neutral high-traffic host is
-> not. The endpoint is authenticated by pinning `public_key`, so the SNI is free to differ.
-> `tls.disable_sni: true` sends none at all — some endpoints only present their real certificate
-> to a ClientHello without one.
-
-### Migrating from the pre-SPEC-062 shape
-
-Both shapes are accepted until **v1.14.0-lx.30**; using a legacy field logs one deprecation line
-per outbound. A legacy field that *disagrees* with its replacement is a hard error rather than a
-silent pick.
-
-| Legacy (deprecated) | Current |
-|---|---|
-| `network: "h3"` / `"h2"` | `vhttp: "h3"` / `"h2"` |
-| `sni` | `tls.server_name` |
-| `skip_cert_verify: true` | `tls.insecure: true` |
-| `fragment: true` | `tls.fragment: true` |
-| `fragment_fallback_delay` | `tls.fragment_fallback_delay` |
-| `record_fragment: true` | `tls.record_fragment: true` |
-
-> The legacy booleans cannot tell "absent" from an explicit `false`, so only a legacy `true`
-> carries over — write the `tls` form if you need to turn something off.
+> **📖 The full field reference — every field with its type and default, the profile
+> matrix (`cloudflare` vs `standard`), key-material format, `vhttp` h3-vs-h2 guidance,
+> idle-suspend/keepalive behaviour, start-time validation, the pre-SPEC-062 migration
+> table and common footguns — is in
+> [lx-protocols-transports.md §3](lx-protocols-transports.md#3-masque-outbound-connect-ip--warp)**
+> ([RU](lx-protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)).
 
 ### Example — WARP over h3 (QUIC)
 
@@ -645,7 +455,8 @@ QUIC does not carry TLS over TCP at all.
 > **Status.** Device-verified end-to-end on real Wi-Fi and LTE — `warp=on`, real traffic on both
 > `h3` and `h2`, idle-suspend + self-healing reconnect confirmed on-device.
 
-**📖 [Full reference →](../SPECS/TASKS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md)** — complete parameter
+**📖 [Full reference →](lx-protocols-transports.md#3-masque-outbound-connect-ip--warp)**
+([RU](lx-protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)) — complete parameter
 table, profile matrix, key-material format, start-time validation and common footguns.
 
 ---

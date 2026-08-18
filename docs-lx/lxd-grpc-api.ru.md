@@ -18,6 +18,25 @@
 > дорабатывается для мобильной наблюдаемости, достаётся серверу даром,
 > и наоборот.
 
+## Один контракт, два транспорта
+
+Эта плоскость наблюдаемости **не привязана к lxd**. Один и тот же набор RPC и
+сообщений выставлен через два носителя:
+
+| Носитель | Где | Точка входа клиента |
+|---|---|---|
+| **gRPC** (`StartedService`) | демон `sing-box lxd` — десктоп / сервер | `daemon/started_service.proto` |
+| **libbox `CommandClient`** | Android / iOS **AAR** (duplex-соединение, не gRPC) | `experimental/libbox/command_client_command_lx.go` |
+
+lx-расширения (`SubscribeDNSQueries`, `GetRules`, `GetGroups`, `GetOutbounds`,
+`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `URLTestOutbound`,
+`GetURLViaOutbound`) реализованы **один раз в ядре** и доступны через любой из
+носителей — семантика полей ниже идентична для обоих. То есть таблица полей здесь
+описывает Android-AAR ровно так же, как удалённую lxd-машину; различаются лишь
+обрамление на проводе и синтаксис вызова метода. Где правило транспорт-специфично —
+это отмечено (например, gRPC-код `Unimplemented` не имеет эквивалента в libbox — там
+отсутствие тега проявляется обычной ошибкой).
+
 ## Объём
 
 `StartedService` — плоскость данных демона: всё о **работающем ядре** (статус,
@@ -92,6 +111,15 @@ ConnectionEvent  { ConnectionEventType type; string id; Connection connection;
                    int64 uplinkDelta; int64 downlinkDelta; int64 closedAt; }
 ```
 
+| Поле `ConnectionEvent` | Тип | Смысл |
+|---|---|---|
+| `type` | enum | `CONNECTION_EVENT_NEW` (0) \| `CONNECTION_EVENT_UPDATE` (1) \| `CONNECTION_EVENT_CLOSED` (2) |
+| `id` | string | UUID соединения — ключ индексации, есть в каждом событии |
+| `connection` | `Connection` | полный объект на `NEW`, **всегда `nil` на `UPDATE`**, может быть `nil` на `CLOSED` (см. ниже) |
+| `uplinkDelta` / `downlinkDelta` | int64 | **байты с прошлого тика** (не rate), только на `UPDATE` |
+| `closedAt` | int64 | Unix **миллисекунды**, только на `CLOSED` |
+| `ConnectionEvents.reset` | bool | этот кадр заменяет всю твою таблицу (см. ниже) |
+
 **Первый кадр несёт `reset = true`** и содержит всё текущее состояние пачкой
 `NEW`-событий: каждое активное соединение плюс недавно закрытые (уже с
 `closedAt`). `reset` приходит и посреди стрима, когда ядро перезапустилось
@@ -137,24 +165,25 @@ ConnectionEvent  { ConnectionEventType type; string id; Connection connection;
 
 ### `Connection`
 
-| Поле | Смысл |
-|---|---|
-| `id` | UUID; ключ для `CloseConnection` и для твоей собственной таблицы |
-| `inbound`, `inboundType` | какой inbound принял соединение |
-| `network`, `ipVersion` | `tcp`/`udp`; 4 или 6 |
-| `source`, `destination` | `host:port`; назначением может быть и IP, и имя хоста |
-| `domain` | **сниффнутый** домен — пусто, если сниффинг не сработал |
-| `protocol` | сниффнутый прикладной протокол (`http`, `tls`, `quic`, …) |
-| `user` | пользователь inbound-авторизации, если она есть |
-| `createdAt`, `closedAt` | Unix-**миллисекунды**; `closedAt` = 0, пока открыто |
-| `uplink`, `downlink` | текущая скорость |
-| `uplinkTotal`, `downlinkTotal` | байты, накопленные этим соединением |
-| `rule` | сработавшее правило, отрисованное строкой — за структурой в `GetRules` |
-| `outbound`, `outboundType` | итоговый outbound |
-| `chainList` | цепочка outbound'ов, изнутри наружу |
-| `detourList` | **lx**: хвост транспортного detour'а итогового outbound'а (SPEC 017) |
-| `processInfo` | `processId`, `userId`, `userName`, `processPath`, `packageNames` |
-| `fromOutbound` | выставлен, когда соединение породил сам outbound |
+| Поле | Тип | Смысл |
+|---|---|---|
+| `id` | string | UUID; ключ для `CloseConnection` и для твоей собственной таблицы |
+| `inbound`, `inboundType` | string | какой inbound принял соединение |
+| `network` | string | `tcp` / `udp` |
+| `ipVersion` | int32 | 4 или 6 |
+| `source`, `destination` | string | `host:port`; назначением может быть и IP, и имя хоста |
+| `domain` | string | **сниффнутый** домен — пусто, если сниффинг не сработал |
+| `protocol` | string | сниффнутый прикладной протокол (`http`, `tls`, `quic`, …) |
+| `user` | string | пользователь inbound-авторизации, если она есть |
+| `createdAt`, `closedAt` | int64 | Unix-**миллисекунды**; `closedAt` = 0, пока открыто |
+| `uplink`, `downlink` | int64 | текущая скорость (байт/с) |
+| `uplinkTotal`, `downlinkTotal` | int64 | байты, накопленные этим соединением |
+| `rule` | string | сработавшее правило, отрисованное строкой — за структурой в `GetRules` |
+| `outbound`, `outboundType` | string | итоговый outbound |
+| `chainList` | repeated string | цепочка outbound'ов, изнутри наружу |
+| `detourList` | repeated string | **lx**: хвост транспортного detour'а итогового outbound'а (SPEC 017) |
+| `processInfo` | `ProcessInfo` | `processId` (uint32), `userId` (int32), `userName`, `processPath`, `packageNames` (repeated) |
+| `fromOutbound` | string | выставлен, когда соединение породил сам outbound |
 
 **`chainList` не включает detour по замыслу** — отсюда `detourList`, который
 добавляет форк. Порядок: итоговый outbound → наружу. Для outbound'ов без
@@ -179,22 +208,31 @@ detour пусто. Профайлеру, показывающему «весь �
 не было никогда. Для удалённых машин это принципиально: файл лога лежит на чужой
 файловой системе, а Clash API `/connections` наружу вообще не смотрит.
 
-Ставь `includeAnswers = true`, чтобы получать записи ответа.
+У запроса одно поле: `includeAnswers` (bool). Ставь `true`, чтобы получать записи
+ответа в `answers`.
 
-| Поле | Смысл |
-|---|---|
-| `domain`, `queryType` | сам вопрос |
-| `rcode` | код ответа; **`-1`, когда ответа не было вовсе** |
-| `ttl` | TTL ответа |
-| `source` | глагол резолвера: `exchanged` / `cached` / `optimistic` / `refreshed` / `failed` |
-| `failed`, `error` | таймаут, SERVFAIL, отказ — ошибки полноправны |
-| `answers` | `DnsAnswer{name, type, rdata, ttl}`, **в проводном порядке** |
-| `dnsServer`, `dnsServerType` | какой транспорт разрешил запрос |
-| `outbound` | канал, к которому привязан этот сервер |
-| `processInfo` | привязка к приложению — пакет / uid |
-| `dnsGroupPath` | вложенность групп, изнутри наружу; пусто = группа не участвовала |
-| `attempts` | хронология проб на момент ответа |
-| `fanned`, `survival` | был ли веер / ответ пришёл от наименее грязного сервера |
+| Поле | Тип | Смысл |
+|---|---|---|
+| `domain` | string | запрошенное имя |
+| `queryType` | uint32 | код типа DNS-вопроса (1 = A, 28 = AAAA, 65 = HTTPS, …) |
+| `rcode` | int32 | код ответа; **`-1`, когда ответа не было вовсе** |
+| `ttl` | uint32 | TTL ответа, секунды |
+| `source` | string | глагол резолвера: `exchanged` / `cached` / `optimistic` / `refreshed` / `failed` |
+| `failed` | bool | true на таймаут / SERVFAIL / отказ — ошибки полноправны |
+| `error` | string | детали ошибки, когда `failed` |
+| `answers` | repeated `DnsAnswer` | `{name, type (uint32), rdata, ttl (uint32)}`, **в проводном порядке**; только при `includeAnswers` |
+| `dnsServer` | string | какой транспорт (тег DNS-сервера) разрешил запрос |
+| `dnsServerType` | string | тип этого сервера |
+| `outbound` | repeated string | канал(ы), к которому привязан сервер; **пусто на cached/optimistic** |
+| `processInfo` | `ProcessInfo` | привязка к приложению — пакет / uid |
+| `dnsGroupPath` | repeated string | вложенность групп, изнутри наружу; пусто = группа не участвовала (SPEC 035) |
+| `attempts` | repeated `DnsGroupAttempt` | хронология проб на момент ответа: `{server, serverType, outcome, rttMs (uint32)}` |
+| `fanned` | bool | был задействован веер (rescue / election / parallel) |
+| `survival` | bool | ответ пришёл от наименее грязного сервера, когда чистых не было |
+
+Словарь `DnsGroupAttempt.outcome`: `answered` \| `timeout` \| `network_error` \|
+`servfail` — где `answered` включает NXDOMAIN и пустые ответы (это валидные ответы,
+не ошибки).
 
 **CNAME-цепочки берутся из `answers`.** Это записи ответа в проводном порядке:
 сначала CNAME-переходы, затем A/AAAA — пройди их и восстанови цепочку.
@@ -228,6 +266,95 @@ detour пусто. Профайлеру, показывающему «весь �
 
 `Status.trafficAvailable` отличает «нулевой трафик» от «учёт трафика
 недоступен»; когда там `false`, нули рисовать не нужно.
+
+### Справочник полей сообщений
+
+Формы ответов вспомогательных RPC, для полноты.
+
+**`Status`** (`SubscribeStatus`) — шапка профайлера:
+
+| Поле | Тип | Смысл |
+|---|---|---|
+| `memory` | uint64 | резидентная память процесса ядра, байты |
+| `goroutines` | int32 | число живых горутин |
+| `connectionsIn` / `connectionsOut` | int32 | активные in / out соединения |
+| `trafficAvailable` | bool | false = учёт выключен; **не рисуй байтовые поля нулями** |
+| `uplink` / `downlink` | int64 | текущая скорость, байт/с |
+| `uplinkTotal` / `downlinkTotal` | int64 | байты с момента старта ядра |
+
+**`ServiceStatus`** (`SubscribeServiceStatus`): enum `status`
+`IDLE|STARTING|STARTED|STOPPING|FATAL` плюс `errorMessage` (заполнен на `FATAL`).
+**`Version`** (`GetVersion`): `version` (string), `apiVersion` (int32).
+**`StartedAt`** (`GetStartedAt`): `startedAt` (int64, Unix мс).
+
+**`Group`** / **`GroupItem`** (`GetGroups` / `SubscribeGroups`):
+
+| Поле | Тип | Смысл |
+|---|---|---|
+| `Group.tag`, `Group.type` | string | тег группы и её вид (`selector` / `urltest`) |
+| `Group.selectable` | bool | применим ли `SelectOutbound` |
+| `Group.selected` | string | текущий узел — **лишь подсказка для `round_robin`** (читай `GetPool`) |
+| `Group.isExpand` | bool | состояние разворота в UI |
+| `Group.mode` | string | **lx**: `least_test` / `round_robin`; пусто для не-urltest групп (SPEC 019) |
+| `Group.items` | repeated `GroupItem` | узлы-участники |
+| `GroupItem.tag`, `GroupItem.type` | string | тег и тип узла |
+| `GroupItem.urlTestTime` | int64 | Unix мс последней пробы |
+| `GroupItem.urlTestDelay` | int32 | задержка последней пробы в **мс**; `0` = мёртв / не измерен |
+
+**`PoolSlot`** (`GetPool` → `PoolList.slots`) — **lx**, SPEC 019:
+
+| Поле | Тип | Смысл |
+|---|---|---|
+| `slot` | uint32 | фиксированный индекс слота в ротации |
+| `tag` | string | узел, сейчас стоящий в этом слоте |
+| `delay` | uint32 | результат последнего теста в мс; **`0` = мёртв / не измерен** (живой узел клампится к ≥ 1 на сервере) |
+
+Не-`round_robin` группа возвращает **пустой список `slots`** — «пула тут нет», не
+ошибка.
+
+**`DnsGroupState`** / **`DnsGroupMember`** (`GetDNSGroups`) — **lx**, SPEC 035:
+
+| Поле | Тип | Смысл |
+|---|---|---|
+| `DnsGroupState.tag`, `.mode`, `.current` | string | тег группы, режим, sticky-цель |
+| `DnsGroupMember.tag`, `.serverType` | string | тег участника и тип сервера |
+| `DnsGroupMember.clean` | bool | ноль живых ошибок |
+| `DnsGroupMember.liveErrors` | uint32 | текущее число живых ошибок |
+| `DnsGroupMember.lastErrorAgeMs` | int64 | возраст свежайшей живой ошибки; **`-1` = нет** |
+| `DnsGroupMember.liveWins` | uint32 | записи живых побед (режим fastest) |
+| `DnsGroupMember.current` | bool | это ли sticky-цель группы |
+| `DnsGroupMember.lastRttMs` | uint32 | последняя успешная проба; `0` = не измерялась |
+
+**`URLTestOutbound`** (**lx**) — запрос `{outboundTag, link, timeout}`, ответ
+`{delay (uint32, мс), error}`. `timeout` — в **миллисекундах**; `0` = без доп.
+дедлайна (ограничено только вызовом). При неудаче `delay` не задан, `error` заполнен.
+
+**`GetURLViaOutbound`** (**lx**, SPEC 058) — диагностическая HTTP-проба через один
+узел, возвращающая **тело ответа**, отвечает на «какой exit-IP / гео / warp-статус
+даёт *этот* узел»:
+
+| Поле запроса | Тип | Смысл |
+|---|---|---|
+| `outboundTag` | string | узел, через который пробить |
+| `link` | string | URL для запроса |
+| `timeout` | uint32 | **мс**; `0` = без доп. дедлайна |
+| `maxBytes` | uint32 | лимит тела; `0` → дефолт **256 KiB**, жёсткий потолок **1 MiB** |
+| `headers` | repeated `{key, value}` | доп. заголовки запроса |
+
+| Поле ответа | Тип | Смысл |
+|---|---|---|
+| `httpStatus` | uint32 | HTTP-код |
+| `body` | bytes | тело ответа (**bytes**, не string — произвольный endpoint не гарантирует UTF-8) |
+| `truncated` | bool | тело упёрлось в `maxBytes` и обрезано |
+| `contentType` | string | `Content-Type` ответа |
+| `remoteAddr` | string | exit-адрес, с которого ушёл запрос |
+| `elapsedMs` | uint32 | round-trip время |
+| `error` | string | заполнен, когда запрос не завершился (неизвестный тег, dial/TLS-сбой, таймаут) |
+
+**`RunningConfig`** (`GetRunningConfig`, **lx** SPEC 037): единственное `content`
+(string) — каноническая сериализация опций, из которых ядро реально собралось
+(post-override). **Не** байт-в-байт равна тексту профиля, что прислал клиент
+(порядок полей, `omitempty`, `[]`→`null`); сравнивай семантически, не текстово.
 
 ## observability-api-lx
 

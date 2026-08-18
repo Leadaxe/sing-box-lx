@@ -174,6 +174,12 @@ sudo sing-box lxd --service=install    # system LaunchDaemon: root, starts befor
 sing-box lxd --service=install-user    # LaunchAgent: no sudo, starts at login, desktop UX
 ```
 
+`install-user` runs as the logged-in user and therefore **cannot own TUN**:
+creating the interface on macOS needs root, so a config with a `tun` inbound
+fails with a permission error under the user scope. This has nothing to do with
+`tls` in daemon.json — for TUN install the system scope
+(`sudo … --service=install`).
+
 Install does everything itself:
 
 1. creates `…/Application Support/sing-box-lxd/` (0700) with `state/` inside;
@@ -370,6 +376,77 @@ firewall) — [openwrt-vpn-ssid.md](openwrt-vpn-ssid.md).
   object form, replace the address in the launcher with a reachable one
   (`192.168.10.1:19091`); leave fingerprint and code as-is. On success the trust
   lands in `clients.json` and survives a daemon restart and a host reboot.
+
+### 9.1 Enrollment on the wire — building your own client
+
+The launcher performs all of this internally; this section is the contract for
+third-party clients and for debugging with curl.
+
+The invite is three `#`-separated segments — `address#fingerprint#code`:
+
+| Segment | Meaning |
+|---|---|
+| `address` | where to connect (`host:port`) |
+| `fingerprint` | SHA-256 of the server certificate DER, lowercase hex — the client pins the server by it |
+| `code` | the one-time code (`XXXX-XXXX-XXXX`) — the **only** segment that goes into the `code` field |
+
+1. **Generate a client identity.** Any parseable X.509 certificate works: the
+   daemon pins its SHA-256 fingerprint and never validates a chain, so
+   self-signed is the norm. The private key never leaves the client — the model
+   mirrors WireGuard peers: only public certs (fingerprints) are exchanged. The
+   daemon's own identities are ECDSA P-256 valid for 10 years:
+
+   ```bash
+   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+     -keyout client_key.pem -out client_cert.pem -days 3650 \
+     -subj "/CN=my-client" -addext "extendedKeyUsage=clientAuth"
+   ```
+
+2. **Connect over TLS pinning the server.** The server certificate is
+   self-signed, so a real client replaces chain validation with a pin:
+   sha256 of the leaf certificate DER must equal the invite's `fingerprint`
+   segment. curl cannot express this pin (`--pinnedpubkey` hashes the public
+   key, not the certificate), so for curl experiments use `-k` and compare the
+   fingerprint by hand:
+
+   ```bash
+   openssl s_client -connect 127.0.0.1:19091 </dev/null 2>/dev/null \
+     | openssl x509 -outform DER | openssl dgst -sha256
+   ```
+
+3. **`POST /admin/enroll`** — **no** `Authorization` header: the code is the
+   only guard, and this is the single route reachable before trust. The body is
+   JSON with three fields; `cert_pem` is the client certificate generated in
+   step 1 (the daemon answers `invalid client certificate PEM` when it is
+   missing or is not a PEM `CERTIFICATE` block):
+
+   ```bash
+   curl -sk https://127.0.0.1:19091/admin/enroll \
+     -H 'Content-Type: application/json' \
+     -d "$(jq -n --rawfile cert client_cert.pem --arg code XXXX-XXXX-XXXX \
+           '{code: $code, name: "my-client", cert_pem: $cert}')"
+   ```
+
+   Success is `{"enrolled":true,"name":…,"fingerprint":…}`. The label given to
+   `client add --name` wins over the `name` in the request. The code burns on
+   success; only one code is active at a time (a new mint replaces the old).
+
+4. **Everything after enrollment is mTLS with that certificate** — it is the
+   full credential for both planes (admin REST and gRPC), no Bearer on top:
+
+   ```bash
+   curl -sk --cert client_cert.pem --key client_key.pem \
+     https://127.0.0.1:19091/admin/status
+   ```
+
+Error map:
+
+| Answer | Cause |
+|---|---|
+| `invalid client certificate PEM` | `cert_pem` missing, or not a PEM `CERTIFICATE` block |
+| `invalid enrollment code` | typo, an already-burnt code, or the whole invite pasted into `code` instead of the last segment |
+| `no active enrollment code` | the daemon restarted after `client add` (the code lives in process memory), or the code was already redeemed |
+| `client certificate not trusted` (any other route) | the certificate was never enrolled, or the daemon state was purged |
 
 ## 10. Admin REST (reference)
 

@@ -50,7 +50,7 @@
 | **Демон `lxd`** | headless-подкоманда | `sing-box lxd` держит ядро **внутри процесса, за управляющим каналом, который переживает любую смену конфига** (SPEC 055–057): gRPC + admin-REST на одном порту, `apply` с валидацией в сабпроцессе и автооткатом на last-good, mTLS (демон сам себе CA, клиенты регистрируются одноразовым кодом), установка службой, хранилище файловых ресурсов (`.srs`, geo), телеметрия хоста (CPU по ядрам, память, температура, диски, интерфейсы) и справочник «IP → устройство»; build-tag `with_lxd` | ✅ device-verified на macOS (enrollment, обе роли службы, откат). Руководство — [docs-lx/lxd-daemon.ru.md](docs-lx/lxd-daemon.ru.md); gRPC-справочник — [lxd-grpc-api.md](docs-lx/lxd-grpc-api.md). Фича — [LXD_DAEMON](SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md) |
 | **Реакция на отказы дайлов** | поведение `urltest` | группа `least_test` теперь реагирует на **боевые** отказы дайлов, а не только на результаты проб (SPEC 054): ошибка «путь мёртв» даёт узлу штраф и один fallback-дайл через лучшего кандидата; в аварийном режиме ранжирование идёт штрафы → задержка; штраф снимается только доказательством жизни | ✅ отгружено, потребитель 15-секундного netstack-дедлайна (SPEC 052). Фича — [URLTEST_BALANCE](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) |
 
-Подробные отчёты — в [`SPECS/TASKS/002-…`](SPECS/TASKS/002-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/TASKS/003-…`](SPECS/TASKS/003-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) и [`SPECS/TASKS/009-…`](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Полный справочник конфига — **[docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md)**.
+Подробные отчёты — в [`SPECS/TASKS/002-…`](SPECS/TASKS/002-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/TASKS/003-…`](SPECS/TASKS/003-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) и [`SPECS/TASKS/009-…`](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Обзор конфига — **[docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md)**; полный справочник параметров — **[docs-lx/lx-protocols-transports.ru.md](docs-lx/lx-protocols-transports.ru.md)**.
 
 > **Не поддерживается (слой Reality, отложено):** post-quantum Reality (`pqv` / ML-DSA-65) и `spiderX` из Xray. Это Xray-специфичные фичи Reality, которых нет в sing-box, а Reality — upstream-слой TLS, который мы держим нетронутым (это не одна из наших фич). Классический X25519 Reality работает; сервер, который **требует** post-quantum Reality, не подключится. Это ограничение sing-box — правильнее решать в upstream (получим на ребейзе).
 
@@ -151,7 +151,7 @@ QUIC-сессия. Это **единственный профиль, device-пр
 `dns`/`stun`/`sip` реализованы как корректные клиент-инициированные запросы, но режутся как класс
 протокола к WARP-edge (raw DNS/STUN/SIP к дата-центровому IP сам по себе аномален) — сохранены
 для других провайдеров, чей DPI проверяет лишь корректность пакета. См.
-[docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md) и [фича AWG2](SPECS/FEATURES/003-AWG2/FEATURE.md) · [примеры](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
+[docs-lx/lx-protocols-transports.ru.md §2](docs-lx/lx-protocols-transports.ru.md#2-amneziawg-20-awg2) и [фича AWG2](SPECS/FEATURES/003-AWG2/FEATURE.md) · [примеры](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ### MASQUE (outbound — Cloudflare WARP)
 
@@ -183,11 +183,11 @@ Outbound `masque` туннелирует целые IP-пакеты через *
 > которое везде означает обратное), а настройки TLS живут в стандартном блоке `tls`
 > (`sni` → `tls.server_name`, `skip_cert_verify` → `tls.insecure`, …). Старые поля ещё работают
 > и печатают deprecation до **v1.14.0-lx.30** — таблица миграции в
-> [docs-lx/lx-config.ru.md §4](docs-lx/lx-config.ru.md). SNI по умолчанию — `www.cloudflare.com`,
+> [docs-lx/lx-protocols-transports.ru.md §3.10](docs-lx/lx-protocols-transports.ru.md#310-миграция-со-схемы-до-spec-062). SNI по умолчанию — `www.cloudflare.com`,
 > а не имя эндпоинта: именно имя MASQUE-эндпоинта в ClientHello и режет DPI.
 
 Полный справочник —
-[docs-lx/lx-config.ru.md §4](docs-lx/lx-config.ru.md) и [фича MASQUE_WARP](SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md) · [полная таблица](SPECS/TASKS/021-MASQUE_CONNECT_IP_OUTBOUND/CONFIG.md).
+[docs-lx/lx-protocols-transports.ru.md §3](docs-lx/lx-protocols-transports.ru.md#3-masque-outbound-connect-ip--warp) и [фича MASQUE_WARP](SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md).
 
 ### VLESS `encryption` (пост-квантовый слой)
 
@@ -244,8 +244,8 @@ sing-box lxd --state-dir ./lxd-state -c config.json
   рецепт, а диск не трогает — это принцип, а не пробел (systemd и OpenWrt/procd).
 
 📖 Руководство оператора — **[docs-lx/lxd-daemon.ru.md](docs-lx/lxd-daemon.ru.md)**
-([EN](docs-lx/lxd-daemon.md)); gRPC-плоскость наблюдения для клиентов —
-[docs-lx/lxd-grpc-api.md](docs-lx/lxd-grpc-api.md); разбор под OpenWrt (VPN на отдельном SSID) —
+([EN](docs-lx/lxd-daemon.md)); плоскость наблюдения для клиентов (один контракт поверх gRPC-демона **и** Android-AAR) —
+[docs-lx/lxd-grpc-api.ru.md](docs-lx/lxd-grpc-api.ru.md) ([EN](docs-lx/lxd-grpc-api.md)); разбор под OpenWrt (VPN на отдельном SSID) —
 [docs-lx/openwrt-vpn-ssid.ru.md](docs-lx/openwrt-vpn-ssid.ru.md).
 
 ---
@@ -313,11 +313,12 @@ upstream  https://github.com/SagerNet/sing-box.git
 | AmneziaWG-рантайм | [Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet-база + обфускация (3-way merge) |
 | AmneziaWG upstream | [amnezia-vpn/amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go) · [docs.amnezia.org](https://docs.amnezia.org/documentation/amnezia-wg/) |
 | XHTTP (исток) | [XTLS/Xray-core](https://github.com/XTLS/Xray-core) — `transport/internet/splithttp` |
-| Конфиг фич | [docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md) |
+| Обзор конфига | [docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md) ([EN](docs-lx/lx-config.md)) — все downstream-фичи, build-tags, короткие примеры |
+| Протоколы и транспорты | [docs-lx/lx-protocols-transports.ru.md](docs-lx/lx-protocols-transports.ru.md) ([EN](docs-lx/lx-protocols-transports.md)) — полный справочник параметров XHTTP, AmneziaWG, MASQUE |
 | Changelog форка | [docs-lx/lx-changelog.md](docs-lx/lx-changelog.md) — источник, из которого `lx-release.yml` берёт релиз-ноты |
 | Гайд по энергии | [docs-lx/lx-energy.ru.md](docs-lx/lx-energy.ru.md) — уровни idle-suspend, passive_check, настройка |
 | Руководство по `lxd` | [docs-lx/lxd-daemon.ru.md](docs-lx/lxd-daemon.ru.md) ([EN](docs-lx/lxd-daemon.md)) — установка, daemon.json, mTLS, admin REST |
-| gRPC-плоскость `lxd` | [docs-lx/lxd-grpc-api.md](docs-lx/lxd-grpc-api.md) — API наблюдаемости, которым говорят клиенты |
+| API наблюдаемости | [docs-lx/lxd-grpc-api.ru.md](docs-lx/lxd-grpc-api.ru.md) ([EN](docs-lx/lxd-grpc-api.md)) — контракт наблюдаемости, которым говорят клиенты (gRPC-демон + Android-AAR) |
 | Разбор под OpenWrt | [docs-lx/openwrt-vpn-ssid.ru.md](docs-lx/openwrt-vpn-ssid.ru.md) ([EN](docs-lx/openwrt-vpn-ssid.md)) — VPN на отдельном SSID |
 | Референс-ядра | [docs-lx/lx-reference-cores.md](docs-lx/lx-reference-cores.md) — куда смотреть за ответом по wire-протоколам |
 | Релизный runbook | [docs-lx/lx-release-runbook.md](docs-lx/lx-release-runbook.md) — ритуал merge upstream + тегирования |
