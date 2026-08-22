@@ -22,6 +22,11 @@ type Manager struct {
 	stage         adapter.StartStage
 	endpoints     []adapter.Endpoint
 	endpointByTag map[string]adapter.Endpoint
+	// lx:begin chain
+	// SPEC 073: опции созданных endpoint'ов по тегу — фабрика звеньев цепочки
+	// пересоздаёт endpoint из них.
+	optionsByTag map[string]managedOptions
+	// lx:end chain
 }
 
 func NewManager(logger log.ContextLogger, registry adapter.EndpointRegistry) *Manager {
@@ -29,6 +34,7 @@ func NewManager(logger log.ContextLogger, registry adapter.EndpointRegistry) *Ma
 		logger:        logger,
 		registry:      registry,
 		endpointByTag: make(map[string]adapter.Endpoint),
+		optionsByTag:  make(map[string]managedOptions), // lx: chain
 	}
 }
 
@@ -114,6 +120,7 @@ func (m *Manager) Remove(tag string) error {
 		return os.ErrInvalid
 	}
 	delete(m.endpointByTag, tag)
+	delete(m.optionsByTag, tag) // lx: chain
 	index := common.Index(m.endpoints, func(it adapter.Endpoint) bool {
 		return it == endpoint
 	})
@@ -164,5 +171,6 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	}
 	m.endpoints = append(m.endpoints, endpoint)
 	m.endpointByTag[tag] = endpoint
+	m.optionsByTag[tag] = managedOptions{endpointType: outboundType, options: options} // lx: chain
 	return nil
 }

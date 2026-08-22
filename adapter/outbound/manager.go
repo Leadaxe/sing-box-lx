@@ -31,6 +31,13 @@ type Manager struct {
 	dependByTag             map[string][]string
 	defaultOutbound         adapter.Outbound
 	defaultOutboundFallback func() (adapter.Outbound, error)
+	// lx:begin chain
+	// SPEC 073: опции созданных outbound'ов по тегу (фабрика звеньев цепочки
+	// пересоздаёт узел из них) и внутренние outbound'ы (хопы цепочки) — видны
+	// Outbound(tag), не входят в Outbounds(), не стартуются/закрываются здесь.
+	optionsByTag  map[string]managedOptions
+	internalByTag map[string]adapter.Outbound
+	// lx:end chain
 }
 
 func NewManager(logger logger.ContextLogger, registry adapter.OutboundRegistry, endpoint adapter.EndpointManager, defaultTag string) *Manager {
@@ -41,6 +48,10 @@ func NewManager(logger logger.ContextLogger, registry adapter.OutboundRegistry, 
 		defaultTag:    defaultTag,
 		outboundByTag: make(map[string]adapter.Outbound),
 		dependByTag:   make(map[string][]string),
+		// lx:begin chain
+		optionsByTag:  make(map[string]managedOptions),
+		internalByTag: make(map[string]adapter.Outbound),
+		// lx:end chain
 	}
 }
 
@@ -205,6 +216,14 @@ func (m *Manager) Outbound(tag string) (adapter.Outbound, bool) {
 	if found {
 		return outbound, true
 	}
+	// lx:begin chain
+	m.access.RLock()
+	outbound, found = m.internalByTag[tag]
+	m.access.RUnlock()
+	if found {
+		return outbound, true
+	}
+	// lx:end chain
 	return m.endpoint.Get(tag)
 }
 
@@ -222,6 +241,7 @@ func (m *Manager) Remove(tag string) error {
 		return os.ErrInvalid
 	}
 	delete(m.outboundByTag, tag)
+	delete(m.optionsByTag, tag) // lx: chain
 	index := common.Index(m.outbounds, func(it adapter.Outbound) bool {
 		return it == outbound
 	})
@@ -296,6 +316,7 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	}
 	m.outbounds = append(m.outbounds, outbound)
 	m.outboundByTag[tag] = outbound
+	m.optionsByTag[tag] = managedOptions{outboundType: inboundType, options: options} // lx: chain
 	dependencies := outbound.Dependencies()
 	for _, dependency := range dependencies {
 		m.dependByTag[dependency] = append(m.dependByTag[dependency], tag)
