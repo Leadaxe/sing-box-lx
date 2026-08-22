@@ -1,0 +1,41 @@
+{
+  "log": { "level": "info" },
+  "inbounds": [
+    { "type": "mixed", "tag": "mixed", "listen": "127.0.0.1", "listen_port": 2080 }
+  ],
+  "outbounds": [
+    { "type": "direct", "tag": "direct" },
+    {
+      "type": "shadowsocks", "tag": "node-in",
+      "server": "in.example.com", "server_port": 8388,
+      "method": "2022-blake3-aes-128-gcm", "password": "8JCsPssfgS8tiRwiMlhARg=="
+    },
+    {
+      "type": "vless", "tag": "node-mid-a",
+      "server": "mid-a.example.com", "server_port": 443,
+      "uuid": "b831381d-6324-4d53-ad4f-8cda48b30811",
+      "tls": { "enabled": true, "server_name": "mid-a.example.com", "fragment": true }
+    },
+    {
+      "type": "vless", "tag": "node-mid-b",
+      "server": "mid-b.example.com", "server_port": 443,
+      "uuid": "b831381d-6324-4d53-ad4f-8cda48b30811",
+      "tls": { "enabled": true, "server_name": "mid-b.example.com" },
+      "multiplex": { "enabled": true, "padding": true }
+    },
+    { "type": "selector", "tag": "selector-mid", "outbounds": ["node-mid-a", "node-mid-b", "direct"], "interrupt_exist_connections": true },
+    {
+      "type": "trojan", "tag": "node-exit",
+      "server": "exit.example.com", "server_port": 443, "password": "secret",
+      "tls": { "enabled": true, "server_name": "exit.example.com" }
+    },
+    {
+      "type": "chain", "tag": "virtualisation",
+      "outbounds": ["node-in", "selector-mid", "node-exit"],
+      "idle_timeout": "5m",
+      "strip": { "multiplex.padding": false },
+      "rewrite": { "vless": { "tls": { "record_fragment": true } } }
+    }
+  ],
+  "route": { "final": "virtualisation" }
+}
