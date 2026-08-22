@@ -90,6 +90,9 @@ func OutboundRegistry() *outbound.Registry {
 
 	group.RegisterSelector(registry)
 	group.RegisterURLTest(registry)
+	// lx:begin chain
+	registerChainOutbound(registry)
+	// lx:end chain
 
 	socks.RegisterOutbound(registry)
 	http.RegisterOutbound(registry)

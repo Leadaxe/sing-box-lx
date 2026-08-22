@@ -87,6 +87,11 @@ func init() {
 	// per-node delay test and rule-table screen would fail. CONSTITUTION §3.6 pt.6.
 	sharedTags = append(sharedTags, "with_lx_command")
 	// lx:end lx_command
+	// lx:begin chain
+	// SPEC 073: outbound `chain` (виртуальная цепочка групп/узлов) — без тега
+	// `type: chain` отвергается на чтении конфига.
+	sharedTags = append(sharedTags, "with_lx_chain")
+	// lx:end chain
 	// lx:begin idle-suspend
 	// SPEC 020 — idle-suspend of unreachable+idle WG/AWG endpoints (device.Down),
 	// a MOBILE-ONLY power/RAM feature: it frees the recv-worker bufsArrs, which are
