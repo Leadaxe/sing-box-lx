@@ -486,6 +486,19 @@ func (r *NetworkManager) ResetNetwork() {
 			listener.InterfaceUpdated()
 		}
 	}
+	// lx:begin chain
+	// SPEC 073: звенья-endpoint'ы цепочек (вне менеджера) тоже переезжают на
+	// новый интерфейс.
+	for _, outbound := range r.outbound.Outbounds() {
+		if holder, ok := outbound.(adapter.EndpointCloneHolder); ok {
+			for _, endpoint := range holder.CloneEndpoints() {
+				if listener, isListener := endpoint.(adapter.InterfaceUpdateListener); isListener {
+					listener.InterfaceUpdated()
+				}
+			}
+		}
+	}
+	// lx:end chain
 
 	for _, inbound := range r.inbound.Inbounds() {
 		listener, isListener := inbound.(adapter.InterfaceUpdateListener)
