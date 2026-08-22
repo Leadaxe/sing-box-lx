@@ -147,7 +147,14 @@ func (s *Selector) SelectOutbound(tag string) bool {
 }
 
 func (s *Selector) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	conn, err := s.selected.Load().DialContext(ctx, network, destination)
+	// lx:begin chain
+	// SPEC 073: внутри цепочки выбранный узел подменяется его звеном для хопа.
+	selected, err := adapter.ResolveChainLeaf(ctx, s.selected.Load())
+	if err != nil {
+		return nil, err
+	}
+	conn, err := selected.DialContext(ctx, network, destination)
+	// lx:end chain
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +162,13 @@ func (s *Selector) DialContext(ctx context.Context, network string, destination 
 }
 
 func (s *Selector) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	conn, err := s.selected.Load().ListenPacket(ctx, destination)
+	// lx:begin chain
+	selected, err := adapter.ResolveChainLeaf(ctx, s.selected.Load())
+	if err != nil {
+		return nil, err
+	}
+	conn, err := selected.ListenPacket(ctx, destination)
+	// lx:end chain
 	if err != nil {
 		return nil, err
 	}

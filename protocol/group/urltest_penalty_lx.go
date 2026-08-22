@@ -229,7 +229,12 @@ func (g *URLTestGroup) penaltyFailoverDial(ctx context.Context, network string, 
 	if fallback == nil {
 		return nil, nil, false
 	}
-	conn, err := fallback.DialContext(ctx, network, destination)
+	// lx: SPEC 073 — fallback-дайл внутри цепочки тоже идёт в звено, не в оригинал.
+	fallbackDialer, err := adapter.ResolveChainLeaf(ctx, fallback)
+	if err != nil {
+		return nil, nil, false
+	}
+	conn, err := fallbackDialer.DialContext(ctx, network, destination)
 	if err != nil {
 		g.logger.Error("lx penalty: fallback via ", fallback.Tag(), ": ", E.Cause(err, "dial"))
 		// Симметрия с апстримным поведением least_test для отказавшего дайла.

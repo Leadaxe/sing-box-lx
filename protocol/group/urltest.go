@@ -264,7 +264,15 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 	if outbound == nil {
 		return nil, E.New("missing supported outbound")
 	}
+	// lx:begin chain
+	// SPEC 073: внутри цепочки выбранный узел подменяется его звеном для хопа
+	// (звено несёт тег оригинала — история/штрафы/passive-check ниже не меняются).
+	outbound, err := adapter.ResolveChainLeaf(ctx, outbound)
+	if err != nil {
+		return nil, err
+	}
 	conn, err := outbound.DialContext(ctx, network, destination)
+	// lx:end chain
 	if err == nil {
 		// lx: SPEC 019 passive_check — a successful TCP dial proves two-way
 		// liveness of the node (the handshake traversed the whole chain).
@@ -305,7 +313,13 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 	if outbound == nil {
 		return nil, E.New("missing supported outbound")
 	}
+	// lx:begin chain
+	outbound, err := adapter.ResolveChainLeaf(ctx, outbound)
+	if err != nil {
+		return nil, err
+	}
 	conn, err := outbound.ListenPacket(ctx, destination)
+	// lx:end chain
 	if err == nil {
 		return s.group.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
