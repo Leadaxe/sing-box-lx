@@ -1,0 +1,124 @@
+package libbox
+
+import (
+	"context"
+
+	"github.com/sagernet/sing-box/daemon"
+	E "github.com/sagernet/sing/common/exceptions"
+
+	"google.golang.org/protobuf/types/known/emptypb"
+)
+
+// SPEC 073 — libbox view of a `chain` outbound's state. Objects (not bare strings)
+// cross the gomobile bridge — see RunningConfig for why.
+
+// ChainCloneState — the live link instance of a node at a position >= 1.
+// State: starting | active | idle. Ages are milliseconds; -1 = unknown.
+type ChainCloneState struct {
+	State           string
+	ActiveConns     int64
+	LastPickedAgeMs int64
+	CreatedAgeMs    int64
+	MTUConfigured   int32
+	MTUEffective    int32
+	MTUReason       string
+	stripped        []string
+	Rewritten       bool
+	LastError       string
+}
+
+// Stripped — what `strip` removed from this link, as an iterator.
+func (c *ChainCloneState) Stripped() StringIterator {
+	return newIterator(c.stripped)
+}
+
+// ChainPosition — one position of the chain, in packet order (entry first).
+// Now is the node the position resolves to right now; Transparent — a `direct`
+// at position >= 1 that collapses the hop. Clone is nil for position 0, for
+// transparent positions and while no link exists yet.
+type ChainPosition struct {
+	Tag         string
+	IsGroup     bool
+	Now         string
+	Transparent bool
+	Errors      int64
+	Clone       *ChainCloneState
+}
+
+type ChainPositionIterator interface {
+	Next() *ChainPosition
+	HasNext() bool
+}
+
+type ChainState struct {
+	Tag           string
+	Dials         int64
+	Errors        int64
+	ClonesCreated int64
+	ClonesEvicted int64
+	LiveClones    int64
+	positions     []*ChainPosition
+}
+
+func (c *ChainState) Positions() ChainPositionIterator {
+	return newIterator(c.positions)
+}
+
+type ChainStateIterator interface {
+	Next() *ChainState
+	HasNext() bool
+}
+
+// GetChains returns the state of every `chain` outbound in the running config.
+func (c *CommandClient) GetChains() (ChainStateIterator, error) {
+	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (ChainStateIterator, error) {
+		list, err := client.GetChains(ctx, &emptypb.Empty{})
+		if err != nil {
+			return nil, E.Cause(err, "get chains")
+		}
+		return chainListFromGRPC(list), nil
+	})
+}
+
+func chainListFromGRPC(list *daemon.ChainList) ChainStateIterator {
+	if list == nil || len(list.Chains) == 0 {
+		return newIterator([]*ChainState{})
+	}
+	var states []*ChainState
+	for _, chain := range list.Chains {
+		state := &ChainState{
+			Tag:           chain.Tag,
+			Dials:         chain.Dials,
+			Errors:        chain.Errors,
+			ClonesCreated: chain.ClonesCreated,
+			ClonesEvicted: chain.ClonesEvicted,
+			LiveClones:    chain.LiveClones,
+		}
+		for _, position := range chain.Positions {
+			item := &ChainPosition{
+				Tag:         position.Tag,
+				IsGroup:     position.IsGroup,
+				Now:         position.Now,
+				Transparent: position.Transparent,
+				Errors:      position.Errors,
+			}
+			if position.Clone != nil {
+				item.Clone = &ChainCloneState{
+					State:           position.Clone.State,
+					ActiveConns:     position.Clone.ActiveConns,
+					LastPickedAgeMs: position.Clone.LastPickedAgeMs,
+					CreatedAgeMs:    position.Clone.CreatedAgeMs,
+					MTUConfigured:   int32(position.Clone.MtuConfigured),
+					MTUEffective:    int32(position.Clone.MtuEffective),
+					MTUReason:       position.Clone.MtuReason,
+					stripped:        position.Clone.Stripped,
+					Rewritten:       position.Clone.Rewritten,
+					LastError:       position.Clone.LastError,
+				}
+			}
+			state.positions = append(state.positions, item)
+		}
+		states = append(states, state)
+	}
+	return newIterator(states)
+}

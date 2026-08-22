@@ -65,6 +65,7 @@ const (
 	StartedService_GetDNSGroups_FullMethodName                   = "/daemon.StartedService/GetDNSGroups"
 	StartedService_GetRunningConfig_FullMethodName               = "/daemon.StartedService/GetRunningConfig"
 	StartedService_GetURLViaOutbound_FullMethodName              = "/daemon.StartedService/GetURLViaOutbound"
+	StartedService_GetChains_FullMethodName                      = "/daemon.StartedService/GetChains"
 )
 
 // StartedServiceClient is the client API for StartedService service.
@@ -121,6 +122,7 @@ type StartedServiceClient interface {
 	GetDNSGroups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*DnsGroupList, error)
 	GetRunningConfig(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RunningConfig, error)
 	GetURLViaOutbound(ctx context.Context, in *GetURLViaOutboundRequest, opts ...grpc.CallOption) (*GetURLViaOutboundResponse, error)
+	GetChains(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ChainList, error)
 }
 
 type startedServiceClient struct {
@@ -802,6 +804,16 @@ func (c *startedServiceClient) GetURLViaOutbound(ctx context.Context, in *GetURL
 	return out, nil
 }
 
+func (c *startedServiceClient) GetChains(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ChainList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ChainList)
+	err := c.cc.Invoke(ctx, StartedService_GetChains_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StartedServiceServer is the server API for StartedService service.
 // All implementations must embed UnimplementedStartedServiceServer
 // for forward compatibility.
@@ -856,6 +868,7 @@ type StartedServiceServer interface {
 	GetDNSGroups(context.Context, *emptypb.Empty) (*DnsGroupList, error)
 	GetRunningConfig(context.Context, *emptypb.Empty) (*RunningConfig, error)
 	GetURLViaOutbound(context.Context, *GetURLViaOutboundRequest) (*GetURLViaOutboundResponse, error)
+	GetChains(context.Context, *emptypb.Empty) (*ChainList, error)
 	mustEmbedUnimplementedStartedServiceServer()
 }
 
@@ -1064,6 +1077,10 @@ func (UnimplementedStartedServiceServer) GetRunningConfig(context.Context, *empt
 
 func (UnimplementedStartedServiceServer) GetURLViaOutbound(context.Context, *GetURLViaOutboundRequest) (*GetURLViaOutboundResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetURLViaOutbound not implemented")
+}
+
+func (UnimplementedStartedServiceServer) GetChains(context.Context, *emptypb.Empty) (*ChainList, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetChains not implemented")
 }
 func (UnimplementedStartedServiceServer) mustEmbedUnimplementedStartedServiceServer() {}
 func (UnimplementedStartedServiceServer) testEmbeddedByValue()                        {}
@@ -1827,6 +1844,24 @@ func _StartedService_GetURLViaOutbound_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StartedService_GetChains_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).GetChains(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_GetChains_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).GetChains(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StartedService_ServiceDesc is the grpc.ServiceDesc for StartedService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1949,6 +1984,10 @@ var StartedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetURLViaOutbound",
 			Handler:    _StartedService_GetURLViaOutbound_Handler,
+		},
+		{
+			MethodName: "GetChains",
+			Handler:    _StartedService_GetChains_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

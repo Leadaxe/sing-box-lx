@@ -63,6 +63,7 @@ service StartedService {
   rpc GetDNSGroups(google.protobuf.Empty) returns (DnsGroupList) {}
   rpc GetRunningConfig(google.protobuf.Empty) returns (RunningConfig) {}
   rpc GetURLViaOutbound(GetURLViaOutboundRequest) returns (GetURLViaOutboundResponse) {}
+  rpc GetChains(google.protobuf.Empty) returns (ChainList) {}
 
   // lx:end lx_command
 }
@@ -973,6 +974,44 @@ message DnsGroupList {
 // textually. Serialized once at service start; this is a cheap string handoff.
 message RunningConfig {
   string content = 1;
+}
+
+// SPEC 073 — state of every `chain` outbound: per position the resolved node
+// (`now`; `transparent` = direct at position >= 1 collapses the hop) and, for
+// positions >= 1, the live link instance ("clone") of that node: state
+// starting|active|idle, live connections, ages, effective MTU and why,
+// what `strip` removed and whether `rewrite` applied, last dial error.
+message ChainCloneState {
+  string state = 1;
+  int64 activeConns = 2;
+  int64 lastPickedAgeMs = 3;
+  int64 createdAgeMs = 4;
+  uint32 mtuConfigured = 5;
+  uint32 mtuEffective = 6;
+  string mtuReason = 7;
+  repeated string stripped = 8;
+  bool rewritten = 9;
+  string lastError = 10;
+}
+message ChainPosition {
+  string tag = 1;
+  bool isGroup = 2;
+  string now = 3;
+  bool transparent = 4;
+  int64 errors = 5;
+  ChainCloneState clone = 6;
+}
+message ChainState {
+  string tag = 1;
+  repeated ChainPosition positions = 2;
+  int64 dials = 3;
+  int64 errors = 4;
+  int64 clonesCreated = 5;
+  int64 clonesEvicted = 6;
+  int64 liveClones = 7;
+}
+message ChainList {
+  repeated ChainState chains = 1;
 }
 
 // lx:end lx_command
