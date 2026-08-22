@@ -125,6 +125,14 @@ func (m *Manager) newTrackerMetadata(metadata adapter.InboundContext, matchedRul
 	// points at a group is descended via Now() against this same snapshot. seen
 	// guards against detour cycles. Order: final outbound → outward.
 	var detourChain []string
+	// lx:begin chain
+	// SPEC 073: финальный outbound-цепочка отдаёт разрешённый путь сам (по
+	// позициям, вход первым); Dependencies()[0] у неё — вход, а не detour.
+	if pathProvider, isChain := finalOutbound.(adapter.ChainPathProvider); isChain {
+		detourChain = common.Reverse(pathProvider.ChainPath())
+		finalOutbound = nil
+	}
+	// lx:end chain
 	for cur := finalOutbound; cur != nil; {
 		deps := cur.Dependencies()
 		if len(deps) == 0 || seen[deps[0]] {
