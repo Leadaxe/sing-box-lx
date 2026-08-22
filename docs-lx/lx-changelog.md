@@ -30,6 +30,48 @@ required for stable tags); this changelog section is the fallback used for pre-r
 
 #### v1.14.0-lx.27-rc.5
 
+### ✨ Outbound `chain`: виртуальная цепочка хопов из групп и узлов (SPEC 073, FEATURE 015)
+
+Новый тип outbound'а `chain` — многохоповый путь, собираемый в рантайме из того, что
+группы выбрали прямо сейчас:
+
+```json
+{ "type": "chain", "tag": "virtualisation",
+  "outbounds": ["selector-in", "selector-mid", "selector-exit"] }
+```
+
+- **Порядок = порядок пакета**: `[0]` — вход (касается реальной сети, используется как
+  есть, с его dial-полями), последний — выход. Любая позиция — узел, endpoint или группа
+  любой вложенности; длина ≥ 2.
+- **Группы не копируются.** Цепочка зовёт оригинальную группу; хук
+  `adapter.ResolveChainLeaf` в пяти точках дозвона групп (selector ×2, urltest ×2,
+  fallback-дайл SPEC 054) подменяет выбранный узел на его **звено** — рантайм-экземпляр
+  узла с `detour` на внутренний тег предыдущей позиции `<tag>#i`, созданный штатным реестром
+  из копии опций. Звено несёт тег оригинала: история, штрафы, sticky, `interrupt_exist_connections`
+  работают без правок.
+- **Звенья ленивые**, плюс прогрев детерминированных позиций на старте (узлы, селекторы;
+  urltest-позиции — лениво); удаляются по простою `idle_timeout` (дефолт `5m`) только при
+  нуле живых соединений; WG-звенья участвуют в idle-suspend (SPEC 020) и смене сети.
+- **`direct` на позиции ≥ 1 прозрачен** (выключатель хопа из селектора), `block` терминален.
+- **Авто-MTU туннельных звеньев** (WG −60/−80, MASQUE ≈ −90 от ёмкости IP-туннелей ниже,
+  худший случай по группе); над потоковыми/датаграммными прокси MTU не меняется.
+- **`strip_evasion: true`** (дефолт) снимает у звеньев односторонние DPI-приёмы —
+  `tls.fragment` (пакетная; `record_fragment` SPEC 060 не трогается), `multiplex.padding`,
+  `xhttp.padding`; карта `strip` правит каталог (`tls.utls` — по запросу, несовместим с
+  reality); **`rewrite`** — merge-patch по типу узла. Порядок strip → rewrite → MTU, сухой
+  прогон всех патчей на старте.
+- Наблюдаемость: путь в `detourList` (SPEC 017), RPC `GetChains` (`with_lx_command`) и
+  Clash API `/proxies/<tag>` → `chain`, ошибки дозвона с позициями
+  (`chain[tag] #2 (exit) via #1 (mid): …`), URLTest по `<tag>#i` — задержка по слоям,
+  pprof-метки `lx.chain/lx.pos/lx.leaf` на горутинах звеньев.
+- Build-tag `with_lx_chain` (в `LX_TAGS` и AAR). Тронутые upstream-файлы — за маркером
+  `lx:begin chain`: менеджеры outbound/endpoint (память опций, внутренние теги), selector/urltest
+  (хук), tracker (путь), route (звенья в idle-тике и смене сети), clashapi, proto (§3.6).
+- Тесты: юниты на фейковых узлах (три формы, переключение/эвикшн, direct/block, strip/rewrite,
+  MTU-таблица, валидация) + приёмочный стенд `lx-test/chain` на живых shadowsocks-хопах.
+  Дока: `docs-lx/lx-config.md` §9 / `.ru.md` §9.
+
+
 ### 🧰 Upstream-синк сабмодулей: sing-tun догнал `sagernet/main`
 
 Ревизия дрейфа по всем трём форк-сабмодулям. `wireguard-go` и `gvisor` чисты

@@ -30,7 +30,7 @@ messages is exposed over two carriers:
 
 The lx extensions (`SubscribeDNSQueries`, `GetRules`, `GetGroups`, `GetOutbounds`,
 `GetPool`, `GetDNSGroups`, `GetRunningConfig`, `URLTestOutbound`,
-`GetURLViaOutbound`) are implemented **once in the core** and reached through
+`GetURLViaOutbound`, `GetChains`) are implemented **once in the core** and reached through
 either carrier — the field semantics below are identical on both. So a field table
 here describes the Android AAR just as much as a remote lxd machine; only the wire
 framing and the method-call syntax differ. Where a rule is transport-specific it is
@@ -59,7 +59,7 @@ Nine RPCs live inside an `lx:begin lx_command` … `lx:end lx_command` block and
 exist **only when the binary is built with `with_lx_command`**:
 
 `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `SubscribeDNSQueries`,
-`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetURLViaOutbound`.
+`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetURLViaOutbound`, `GetChains`.
 
 Against a binary built without the tag they return `codes.Unimplemented`. The
 generated client stubs still contain the methods — the gate is server-side, so
@@ -260,6 +260,7 @@ full picture.
 | `GetRunningConfig → RunningConfig` | **lx**: the config the core is actually running |
 | `URLTestOutbound → delay` | **lx**: probe a single node |
 | `GetURLViaOutbound → body` | **lx**: probe returning the response body — "which exit IP does *this* node give me" (SPEC 058) |
+| `GetChains → ChainList` | **lx**: state of every `chain` outbound — positions, resolved node, link state/MTU/strip/rewrite, counters (SPEC 073) |
 | `SubscribeLog → stream Log` | the **core's** log, not the daemon's — see SPEC 065 for the latter |
 
 `Status.trafficAvailable` distinguishes "zero traffic" from "traffic accounting
@@ -373,6 +374,7 @@ Nine RPCs behind `with_lx_command`, all absent upstream:
 | `GetRunningConfig` | the config actually in effect | — |
 | `URLTestOutbound` | probe one node, get a delay | 014/015 |
 | `GetURLViaOutbound` | probe one node, get the response body | [058](../SPECS/TASKS/058-GET_URL_VIA_OUTBOUND/SPEC.md) |
+| `GetChains` | state of every `chain` outbound | [073](../SPECS/TASKS/073-CHAIN_OUTBOUND/SPEC.md) |
 
 ### Extended
 

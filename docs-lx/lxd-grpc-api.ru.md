@@ -30,7 +30,7 @@
 
 lx-расширения (`SubscribeDNSQueries`, `GetRules`, `GetGroups`, `GetOutbounds`,
 `GetPool`, `GetDNSGroups`, `GetRunningConfig`, `URLTestOutbound`,
-`GetURLViaOutbound`) реализованы **один раз в ядре** и доступны через любой из
+`GetURLViaOutbound`, `GetChains`) реализованы **один раз в ядре** и доступны через любой из
 носителей — семантика полей ниже идентична для обоих. То есть таблица полей здесь
 описывает Android-AAR ровно так же, как удалённую lxd-машину; различаются лишь
 обрамление на проводе и синтаксис вызова метода. Где правило транспорт-специфично —
@@ -60,7 +60,7 @@ REST-ручки для профилирования **самого процес�
 и существуют **только в сборке с `with_lx_command`**:
 
 `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `SubscribeDNSQueries`,
-`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetURLViaOutbound`.
+`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetURLViaOutbound`, `GetChains`.
 
 Против сборки без тега они возвращают `codes.Unimplemented`. Сгенерированные
 клиентские заглушки методы всё равно содержат — гейт серверный, поэтому это
@@ -262,6 +262,7 @@ detour пусто. Профайлеру, показывающему «весь �
 | `GetRunningConfig → RunningConfig` | **lx**: конфиг, на котором ядро реально работает |
 | `URLTestOutbound → delay` | **lx**: проба одного узла |
 | `GetURLViaOutbound → body` | **lx**: проба с возвратом тела ответа — «какой exit-IP даёт *этот* узел» (SPEC 058) |
+| `GetChains → ChainList` | **lx**: состояние каждого outbound'а `chain` — позиции, разрешённый узел, звено (состояние/MTU/strip/rewrite), счётчики (SPEC 073) |
 | `SubscribeLog → stream Log` | лог **ядра**, не демона — про демонский см. SPEC 065 |
 
 `Status.trafficAvailable` отличает «нулевой трафик» от «учёт трафика
@@ -374,6 +375,7 @@ detour пусто. Профайлеру, показывающему «весь �
 | `GetRunningConfig` | конфиг, реально действующий сейчас | — |
 | `URLTestOutbound` | проба одного узла с возвратом задержки | 014/015 |
 | `GetURLViaOutbound` | проба одного узла с возвратом тела ответа | [058](../SPECS/TASKS/058-GET_URL_VIA_OUTBOUND/SPEC.md) |
+| `GetChains` | состояние каждого outbound'а `chain` | [073](../SPECS/TASKS/073-CHAIN_OUTBOUND/SPEC.md) |
 
 ### Расширено
 

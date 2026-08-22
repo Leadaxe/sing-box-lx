@@ -3,7 +3,7 @@
 # sing-box-lx
 
 > **A thin downstream fork of [SagerNet/sing-box](https://github.com/SagerNet/sing-box).**
-> A small set of client-side features on top of upstream — **XHTTP**, **AmneziaWG**, **MASQUE** (CONNECT-IP / Cloudflare WARP), the post-quantum **VLESS `encryption`** layer, a **DNS server group**, an **observability layer** (CommandClient extensions), **round_robin load balancing**, **idle-suspend energy saving** and the headless **`lxd` daemon** — isolated in lx-owned files, most behind their own build tags.
+> A small set of client-side features on top of upstream — **XHTTP**, **AmneziaWG**, **MASQUE** (CONNECT-IP / Cloudflare WARP), the post-quantum **VLESS `encryption`** layer, a **DNS server group**, an **observability layer** (CommandClient extensions), **round_robin load balancing**, **idle-suspend energy saving**, the headless **`lxd` daemon** and the **`chain` outbound** (a virtual multi-hop path of groups and nodes) — isolated in lx-owned files, most behind their own build tags.
 > The set may grow; the philosophy doesn't: live by rebasing onto every upstream tag, not by drifting into a separate life.
 
 > 📄 The upstream sing-box README — **[on GitHub](https://github.com/SagerNet/sing-box/blob/main/README.md)** (always current).
@@ -21,7 +21,7 @@ In the sing-box ecosystem, forks that add XHTTP / AmneziaWG fall into two camps 
 | **SagerNet/sing-box** (upstream) | baseline | — | — |
 | **shtorm-7/sing-box-extended** | dozens (WARP, MASQUE, MTProxy, XHTTP, AWG2, …) | "kitchen sink", edits everywhere | separate branch, no rebasing onto tags |
 | **amnezia-vpn/amnezia-box**, **hoaxisr/amnezia-box** | AWG only | heavy fork, in-place edits | branch sync (`dev-next`/`stable-next`) |
-| **➡ sing-box-lx** (this repo) | **small set (XHTTP, AWG2, MASQUE, VLESS PQ encryption, DNS group, observability, balancing, energy)** | **thin: new files behind build tags, minimal upstream touch** | **rebase of atomic `// lx` commits onto upstream tags** |
+| **➡ sing-box-lx** (this repo) | **small set (XHTTP, AWG2, MASQUE, VLESS PQ encryption, DNS group, observability, balancing, energy, `chain`)** | **thin: new files behind build tags, minimal upstream touch** | **rebase of atomic `// lx` commits onto upstream tags** |
 
 **How we differ:**
 
@@ -41,13 +41,14 @@ In the sing-box ecosystem, forks that add XHTTP / AmneziaWG fall into two camps 
 | **XHTTP** | client transport | Xray-compatible "splithttp" (modes `auto`/`packet-up`/`stream-up`/`stream-one`) over Reality/TLS/h2c, with `xmux` connection reuse (SPEC 059) | ✅ **live-validated** against real Xray servers: packet-up/auto (handshake + DNS + HTTPS + download), and `stream-one` (the `auto`+REALITY path) **device-verified** since `v1.14.0-lx.17` — SPECs [042](SPECS/TASKS/042-XHTTP_STREAM_GRPC_CONTENT_TYPE/SPEC.md)/[043](SPECS/TASKS/043-XHTTP_STREAM_ONE_PATH_PREFIX/SPEC.md) fixed the gRPC Content-Type parity and the trailing-slash 404 that used to hang it. `xmux` restores parity with Xray servers whose configs carry an `xmux` section (previously ignored silently) and saves a full TCP+TLS handshake per stream |
 | **AmneziaWG** | client endpoint | Full obfuscation set: junk packets `Jc/Jmin/Jmax`, junk headers `S1–S4`, magic headers `H1–H4` (single or ranged), controlled packet sequences `I1–I5`, plus WireSock-style `Id/Ip/Ib` masquerade sugar over `I1` | ✅ builds, passes `check`; dependency **activated** ([Leadaxe/wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) — sagernet base + obfuscation); **validated against a real AWG server**: handshake + keepalive + outbound traffic. Parity audited against `amneziawg-tools` and the kernel module's netlink contract — every obfuscation parameter the official implementations accept is implemented ([SPEC 031](SPECS/TASKS/031-AWG_PARITY_AUDIT_ADVANCED_SECURITY/SPEC.md)) |
 | **Masquerade `id/ip/ib`** | AWG sugar | WireSock-style declarative masquerade over `I1`: name a domain (`id`) + protocol (`ip`: `quic`/`dns`/`stun`/`sip`) + browser (`ib`) and the core builds the client-initiated `I1` decoy for you — `quic` = out-of-order fragmented Initial (i1+i2), `dns`/`stun`/`sip` = query/Binding-Request/INVITE | ✅ **`ip=quic` device-proven against a real LTE/WARP DPI** (~330 ms, eases Cloudflare WARP); `dns`/`stun`/`sip` build & pass `check` but are blocked as a protocol class to the WARP edge — for other providers |
-| **Observability (CommandClient)** | libbox gRPC | Native `CommandClient` extensions (SPEC 014–018, 035, 037; build tag `with_lx_command`): `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `GetPool`, `GetDNSGroups`, `GetRunningConfig` (the canonical JSON the running box was actually built from), `SubscribeDNSQueries` (structured live DNS stream — domain, qtype, rcode `-1`=failure, CNAME chain, process attribution, dnsServer/dnsServerType/outbound) + `Connection.detourList` (detour tail as its own field) | ✅ shipped in stable tags, consumed by the Android consumer (LxBox). Feature — [OBSERVABILITY](SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md) |
+| **Observability (CommandClient)** | libbox gRPC | Native `CommandClient` extensions (SPEC 014–018, 035, 037; build tag `with_lx_command`): `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `GetPool`, `GetDNSGroups`, `GetRunningConfig` (the canonical JSON the running box was actually built from), `GetChains` (state of `chain` outbounds), `SubscribeDNSQueries` (structured live DNS stream — domain, qtype, rcode `-1`=failure, CNAME chain, process attribution, dnsServer/dnsServerType/outbound) + `Connection.detourList` (detour tail as its own field) | ✅ shipped in stable tags, consumed by the Android consumer (LxBox). Feature — [OBSERVABILITY](SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md) |
 | **Load balancing (`round_robin`)** | urltest mode | Group-level load balancing on `urltest` (SPEC 019): `mode: round_robin` + `balancer{ pool, pool_tolerance, sticky_hash }`; FNV-64a slot binding with `sticky_hash` components `process\|domain\|source_ip\|dest_ip\|dest_port` (default `["process","domain"]`, `["none"]` = off) — `GetPool` exposes the live slots (behind `with_lx_command`) | ✅ builds, passes `check`; even rotation locally (10/10/10) and **device-verified end to end** on a real multi-node pool — rc.15 fixed the `domain`-key collapse (reads `metadata.Domain`, which survives the router's domain→IP resolve), taking on-device per-domain uniformity from ~0.27 to 0.95+. Feature — [URLTEST_BALANCE](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) |
 | **MASQUE** (`type: masque`) | client outbound | CONNECT-IP (RFC 9484) over HTTP/3 **or** HTTP/2 for **Cloudflare WARP** (SPEC 021): tunnels whole IP packets through a userspace gVisor stack; `profile` (`cloudflare`/`standard`), `vhttp` (`h3`/`h2`), the standard `tls` block, ECDSA public-key pinning, idle-suspend + self-healing reconnect. h2 is a hand-rolled framer over `x/net/http2` (no extra dep) whose TLS goes through the shared `common/tls`; `connect-ip-go` vendored | ✅ **device-verified end to end on Wi-Fi and LTE** (`warp=on`, real traffic on both `h3` and `h2`); on networks that filter inbound UDP:443 the `h3` handshake hangs — use `vhttp: "h2"` (TCP:443) there. ⚠️ Config shape changed in SPEC 062: `network`→`vhttp`, flat `sni`/`skip_cert_verify`/`fragment*` → the `tls` block (old shape deprecated until `v1.14.0-lx.30`) |
 | **VLESS `encryption`** | outbound field | Post-quantum `mlkem768x25519plus` layer *inside* VLESS (SPEC 032) — beneath the transport, independent of TLS/REALITY; spec string `mlkem768x25519plus.<native\|xorpub\|random>.<0rtt\|1rtt>….<key>`, `""`/`"none"` = off; client half only (ported from `starifly/sing-box`, same GPL-3.0 + upstream base) | ✅ shipped in `v1.14.0-lx.18`, **device-verified**: +10 previously dead subscription nodes (6/8 WS, 4/4 gRPC), no other transport group moved. Feature — [VLESS_ENCRYPTION](SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) |
 | **DNS server group** | DNS server type | `type: group` DNS server (SPEC 033/035): modes `stable`/`fastest`/`parallel` as facets of one TTL model (error/win TTLs, fan-out with a guaranteed budget, `survival` visibility of degradation); live state via `GetDNSGroups` (behind `with_lx_command`) | ✅ code + tests + DoD, shipped; adversarial review (24 agents) clean. Field verification on device pending. Feature — [DNS_GROUP](SPECS/FEATURES/013-DNS_GROUP/FEATURE.md) |
 | **Idle-suspend (energy)** | route options | Three sleep levels for idle WG/AWG endpoints — `route.lx_idle_suspend` / `lx_idle_suspend_reachable` / `lx_idle_teardown` (SPEC 020) plus `urltest.passive_check` (SPEC 019): battery, heat and RAM savings on multi-node mobile profiles; tag `with_lx_idle_suspend` (baked into the Android AAR) | ✅ **device-verified** (SPEC 020): recv-workers 16→0, RSS −31%; guide — [docs-lx/lx-energy.md](docs-lx/lx-energy.md). Feature — [ENERGY](SPECS/FEATURES/008-ENERGY/FEATURE.md) |
 | **`lxd` daemon** | headless subcommand | `sing-box lxd` keeps the core **in-process behind a management channel that outlives every config change** (SPEC 055–057): gRPC + admin-REST on one port, `apply` validated in a subprocess with automatic rollback to last-good, mTLS where the daemon is its own CA and clients enrol by one-time code, system service install, `.srs`/geo resource store, host telemetry (CPU per core, memory, thermal, disks, interfaces) and an IP→device directory; build tag `with_lxd` | ✅ device-verified on macOS (enrolment, both service roles, rollback). Guide — [docs-lx/lxd-daemon.md](docs-lx/lxd-daemon.md); gRPC reference — [lxd-grpc-api.md](docs-lx/lxd-grpc-api.md). Feature — [LXD_DAEMON](SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md) |
+| **`chain` outbound** (`type: chain`) | client outbound | A virtual multi-hop path assembled at runtime from groups and nodes (SPEC 073): positions in packet order, any position a node/endpoint/group; groups are never copied — picked nodes are served by runtime links dialing through the previous position (lazy, warmed up, evicted by `idle_timeout`); `direct` at position ≥ 1 is a transparent off-switch; tunnel links get MTU lowered automatically; `strip` (one-sided DPI tricks off by default) / `rewrite` (merge-patch per type); path in `detourList`, `GetChains` RPC, per-layer latency via URLTest on hop tags; build tag `with_lx_chain` | ✅ code + unit tests + live stand on real shadowsocks hops (`lx-test/chain`); on-device verification of WireGuard links pending. Feature — [CHAIN](SPECS/FEATURES/015-CHAIN/FEATURE.md) |
 | **Failover on dial errors** | urltest behaviour | A `least_test` group now reacts to **live dial failures**, not just probe results (SPEC 054): a dead-path error penalises the node and retries once through the best candidate; ranking degrades to penalties-then-latency; penalties reset only on proof of life | ✅ shipped, consumer of the 15 s netstack deadline (SPEC 052). Feature — [URLTEST_BALANCE](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) |
 
 Detailed reports: [`SPECS/TASKS/002-…`](SPECS/TASKS/002-XHTTP_CLIENT_TRANSPORT/IMPLEMENTATION_REPORT.md), [`SPECS/TASKS/003-…`](SPECS/TASKS/003-AWG2_CLIENT_ENDPOINT/IMPLEMENTATION_REPORT.md) and [`SPECS/TASKS/009-…`](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/IMPLEMENTATION_REPORT.md). Config overview — **[docs-lx/lx-config.md](docs-lx/lx-config.md)**; full parameter reference — **[docs-lx/lx-protocols-transports.md](docs-lx/lx-protocols-transports.md)**.
@@ -71,10 +72,10 @@ make -f Makefile.lx lx-build
 Under the hood it is a plain `go build` with this tag set (`make -f Makefile.lx lx-print-tags` is the single source of truth):
 
 ```
-with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command,with_lxd,with_openvpn,with_openconnect
+with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command,with_lxd,with_openvpn,with_openconnect,with_lx_chain
 ```
 
-That is upstream's client feature-set **minus** the server/irrelevant tags — `with_acme` (server-side cert issuance), `with_tailscale`, `with_ccm`/`with_ocm` (AI-proxy services) — **plus** `with_purego` (CGO-free cross-compile, so `with_naive_outbound`/cronet builds at `CGO=0` on every desktop target except the Windows 7 / 32-bit legacy build, which drops naive — `cronet-go` has no windows/386), upstream's `with_openvpn` / `with_openconnect`, and our features `with_xhttp` / `with_awg` / `with_lx_command` / `with_lxd`. Everything else is exactly upstream.
+That is upstream's client feature-set **minus** the server/irrelevant tags — `with_acme` (server-side cert issuance), `with_tailscale`, `with_ccm`/`with_ocm` (AI-proxy services) — **plus** `with_purego` (CGO-free cross-compile, so `with_naive_outbound`/cronet builds at `CGO=0` on every desktop target except the Windows 7 / 32-bit legacy build, which drops naive — `cronet-go` has no windows/386), upstream's `with_openvpn` / `with_openconnect`, and our features `with_xhttp` / `with_awg` / `with_lx_command` / `with_lxd` / `with_lx_chain`. Everything else is exactly upstream.
 
 Our two tags are independent by design (SPEC 067): **`with_lx_command`** carries the libbox command-protocol extensions (`URLTestOutbound`, `GetRules`, `GetGroups`, … — what LxBox lives on), **`with_lxd`** carries the `lxd/` package and the daemon subcommand. The Windows 7 legacy build ships without `with_lxd` (no Windows service and no log rotation there, so the subcommand would exist without what makes it a daemon) while keeping the RPC. The Android AAR never had the daemon: gomobile builds `experimental/libbox`, which does not import `lxd/`.
 
@@ -89,7 +90,7 @@ Validate configs:
 
 > `lx-test/config/` holds our samples (upstream `test/` is a separate Go module — we don't use it).
 
-**Android (`libbox.aar`).** `make lib_install && make lib_android` builds the gomobile AAR — `libbox.aar` (SDK 23) + `libbox-legacy.aar` (SDK 21) — with `with_xhttp`/`with_awg`/`with_lx_command`/`with_lx_idle_suspend` baked in (and `tailscale`/`clash_api` dropped — external Clash dashboards are a desktop concern), for embedding in an Android consumer app (needs NDK r28 + OpenJDK 17). `Libbox.version()` reports `…-lx.N`.
+**Android (`libbox.aar`).** `make lib_install && make lib_android` builds the gomobile AAR — `libbox.aar` (SDK 23) + `libbox-legacy.aar` (SDK 21) — with `with_xhttp`/`with_awg`/`with_lx_command`/`with_lx_idle_suspend`/`with_lx_chain` baked in (and `tailscale`/`clash_api` dropped — external Clash dashboards are a desktop concern), for embedding in an Android consumer app (needs NDK r28 + OpenJDK 17). `Libbox.version()` reports `…-lx.N`.
 
 ---
 
@@ -217,6 +218,32 @@ and [DNS_GROUP feature](SPECS/FEATURES/013-DNS_GROUP/FEATURE.md).
 
 ---
 
+### `chain` (outbound — virtual multi-hop path)
+
+A multi-hop route assembled at runtime from what the groups pick right now; positions are
+listed **in packet order** (entry first, exit last) and any position may be a node, an
+endpoint or a group of any nesting. Groups are never copied — a node picked at position ≥ 1
+is served by a runtime **link** that dials through the previous position; links are lazy,
+warmed up for deterministic positions, removed after `idle_timeout` with no live
+connections. `direct` at position ≥ 1 is transparent (a runtime off-switch for a hop).
+
+```jsonc
+{
+  "type": "chain",
+  "tag": "virtualisation",
+  "outbounds": ["selector-in", "selector-mid", "selector-exit"],   // entry → exit
+  "idle_timeout": "5m",
+  "strip": { "multiplex.padding": false },        // one-sided DPI tricks are stripped from links by default
+  "rewrite": { "wireguard": { "mtu": 1200 } }      // merge-patch per node type, links only
+}
+```
+
+Tunnel links (WireGuard, MASQUE) get their MTU lowered automatically by the exact overhead
+of IP tunnels below them. Observability: path in `detourList`, `GetChains` RPC / Clash API
+`chain` field, per-layer latency via URLTest on the internal hop tags `<tag>#0`, `<tag>#1`, ….
+See [docs-lx/lx-config.md §9](docs-lx/lx-config.md) and the
+[CHAIN feature](SPECS/FEATURES/015-CHAIN/FEATURE.md).
+
 ## The `lxd` daemon
 
 `sing-box lxd` (build tag `with_lxd`) hosts the core **in-process** behind a control channel
@@ -290,6 +317,7 @@ upstream  https://github.com/SagerNet/sing-box.git
 | `include/v2rayxhttp.go` | transport registration behind a build tag |
 | `submodules/gvisor` | submodule: pinned gVisor snapshot with our handshake nil-guard ([Leadaxe/gvisor-lx](https://github.com/Leadaxe/gvisor-lx)) |
 | `submodules/sing-tun` | submodule: sing-tun fork with the acceptLoop self-heal ([Leadaxe/sing-tun-lx](https://github.com/Leadaxe/sing-tun-lx)) |
+| `protocol/chain/` | `chain` outbound: hops, runtime links, strip/rewrite/MTU (behind `with_lx_chain`) |
 | `lxd/` | the `lxd` daemon: admin-REST, mTLS, service install, host telemetry (behind `with_lxd`) |
 | `go.version` / `upstream.version` | pinned Go toolchain (read by every CI `setup-go`) / the upstream version the fork is based on |
 

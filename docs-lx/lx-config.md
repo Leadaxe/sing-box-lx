@@ -13,6 +13,7 @@
 | **DNS server group** (SPEC 033/035) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
 | **`lxd` daemon** (SPEC 055–057, 063–068) | `with_lxd` | not a config key — the `sing-box lxd` subcommand + `<state-dir>/daemon.json`; see [lxd-daemon.md](lxd-daemon.md) | desktop / server (**not** Win7, **not** AAR) |
+| **`chain` outbound** (SPEC 073) | `with_lx_chain` | `outbounds[].type: "chain"` — a multi-hop path of groups and nodes | desktop + mobile |
 
 Build the desktop/CLI binary: `make -f Makefile.lx lx-build` (output `sing-box`, version `…-lx.N`) — this bundles `with_xhttp` + `with_awg` (+ `with_lx_command`, `with_lxd`), but **not** `with_lx_idle_suspend`.
 Without a tag the feature is absent: an `xhttp` transport or an AWG field is rejected at load time with an explicit error (no silent downgrade).
@@ -633,6 +634,10 @@ The added `CommandClient` methods:
   first-class state), the CNAME chain / answers (when `includeAnswers`), process attribution,
   and `dnsServer` / `dnsServerType` / `outbound` (an empty `outbound` means direct/system —
   a valid state, not a bug).
+- **`GetChains()`** — the state of every `chain` outbound (SPEC 073; see [§9](#9-chain-outbound--a-virtual-multi-hop-path-of-groups-and-nodes-spec-073)):
+  per position the resolved node and, for positions ≥ 1, the link instance (`starting|active|idle`,
+  live connections, effective MTU and why, what `strip` removed, `rewrite` applied, last error),
+  plus dial/error/link counters.
 
 SPEC 017 also enriches the existing connection stream: a tracked `Connection` now carries a
 separate **`detourList`** field — the transport-detour tail of the final outbound, exposed
@@ -674,7 +679,91 @@ Rules:
 
 ---
 
-## 9. Validate & build
+## 9. `chain` outbound — a virtual multi-hop path of groups and nodes (SPEC 073)
+
+Build tag `with_lx_chain` (in the desktop `LX_TAGS` and the AAR). Without it
+`"type": "chain"` is rejected at load time.
+
+```json
+{
+  "type": "chain",
+  "tag": "virtualisation",
+  "outbounds": ["selector-in", "selector-mid", "selector-exit"],
+  "idle_timeout": "5m",
+  "strip_evasion": true,
+  "strip": { "multiplex.padding": false, "tls.utls": true },
+  "rewrite": { "wireguard": { "mtu": 1200 } }
+}
+```
+
+**Order = packet order.** `outbounds[0]` is the first hop from the client (it touches the
+real network and is used as is, dial fields included); the last entry is the node whose
+address the destination sees. This is the *opposite* of how a `detour` chain reads
+(there the node carrying `detour` is the exit). Any position may be a node, an endpoint
+or a group of any nesting — all three shapes behave the same and the length is free (≥ 2):
+
+```
+["selector-in", "selector-mid", "selector-exit"]   // all groups
+["node-in",     "node-mid",     "node-exit"]       // all nodes
+["node-in",     "selector-mid", "node-exit"]       // mixed
+```
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `outbounds` | list of tags, ≥ 2 | required | positions in packet order |
+| `idle_timeout` | duration | `5m` | an idle link instance (see below) with zero live connections is removed after this; `0` = keep until stop |
+| `strip_evasion` | bool | `true` | remove one-sided DPI tricks from links at positions ≥ 1 (catalog below) |
+| `strip` | map key → bool | `{}` | patch over the catalog: `false` keep, `true` strip additionally; unknown key = start error |
+| `rewrite` | map type → JSON object | `{}` | merge-patch (RFC 7396) applied to the config of every link of that type at positions ≥ 1 |
+
+How it works: **groups are never copied** — the chain calls the original group and lets it
+pick with all its logic (manual selection, health check, sticky, penalties,
+`interrupt_exist_connections`). A node picked at position ≥ 1 is served by its **link** —
+a runtime instance of that node that dials its server through the previous position. Links
+are created on first use (plus a warm-up at start for positions whose pick is known: nodes
+and selectors; urltest positions stay lazy) and share the node's tag, so the group's
+history and penalties keep working. A link is removed only when it has **no live
+connections and was not picked for `idle_timeout`**; switching a group does not kill the
+old link while a stream still runs through it. WireGuard links obey idle-suspend like any
+endpoint.
+
+- **`direct` at position ≥ 1 is transparent** — "no hop here"; put `direct` into a selector
+  to switch a position off at runtime. `block` rejects. All-`direct` positions ≥ 1 make the
+  chain equal to position 0.
+- **MTU of tunnel links (WireGuard, MASQUE) is lowered automatically**: `mtu` in the node's
+  config means "as standalone"; the chain subtracts the exact encapsulation overhead of
+  IP tunnels *below* the link (WG inside an IP tunnel −60/−80 by the server address family,
+  MASQUE ≈ −90), taking the worst case over a group's members. Over stream proxies
+  (vless/trojan/ss over TCP, mux) and datagram proxies the MTU is left as configured.
+- **`strip` catalog** (one-sided, the server never sees them): `tls.fragment` (packet-level
+  ClientHello fragmentation + `fragment_fallback_delay`; **`record_fragment` is not
+  touched** — under `detour` it switches on automatically as a path fix, see §8),
+  `multiplex.padding`, `xhttp.padding` (minimal range, obfs mode off). `tls.utls` is
+  available via `"tls.utls": true` (start error on a node that uses `reality`). Server
+  contracts — `flow`, `obfs`, `shadowtls`, `plugin`, `udp_over_tcp`, `ech`, transport
+  paths — are never stripped.
+- Order of transformations for a link: `strip` → `rewrite` → MTU. All patches are dry-run
+  at start against every node reachable at positions ≥ 1 — a `rewrite` with an unknown
+  field fails the start, not the first dial.
+
+> ⚠️ **DPI between hops.** The default strips ClientHello fragmentation at positions ≥ 1
+> because the usual DPI sits between you and the first hop. With a domestic relay as
+> position 0 and the DPI at the border (`["relay", "foreign-node"]`) the fragmentation is
+> needed at position 1 — set `"strip": {"tls.fragment": false}`.
+
+Observability: a connection's `detourList` (§7) shows the resolved path; `GetChains`
+(CommandClient) / Clash API `/proxies/<tag>` → `chain` give the per-position state (picked
+node, link state `starting|active|idle`, live connections, effective MTU and why, what was
+stripped/rewritten, last error) and counters. Dial errors name the position and the hop
+below: `chain[virtualisation] #2 (warp-exit) via #1 (node-m): …`. Per-layer latency:
+URLTest the internal hop tags `<tag>#0`, `<tag>#1`, … — each measures the path up to that
+position. Known limits: a group at position ≥ 1 ranks its nodes by their *direct*
+measurements; a tunnel above a hop without UDP fails at dial time with both positions
+named; nested `chain` is allowed only at position 0.
+
+---
+
+## 10. Validate & build
 
 ```sh
 git clone --recurse-submodules <repo>           # with_awg needs the submodule
