@@ -79,7 +79,7 @@ func (s *countingRuleSet) RegisterCallback(adapter.RuleSetUpdateCallback) *list.
 	return nil
 }
 func (s *countingRuleSet) UnregisterCallback(*list.Element[adapter.RuleSetUpdateCallback]) {}
-func (s *countingRuleSet) Close() error { return nil }
+func (s *countingRuleSet) Close() error                                                    { return nil }
 
 func (s *countingRuleSet) Match(*adapter.InboundContext) bool { return true }
 
