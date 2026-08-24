@@ -90,6 +90,8 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
         "session_key": "",                      // по умолчанию: X-Session (header) / x_session (query|cookie); для path не нужен
         "seq_placement": "path",                // по умолчанию: path. path | query | header | cookie (packet-up)
         "seq_key": "",                          // по умолчанию: X-Seq (header) / x_seq (query|cookie); для path не нужен
+        "session_table": "",                    // по умолчанию: не задан (id = дашед-UUID). Имя алфавита или свой ASCII-набор
+        "session_length": "",                   // по умолчанию: не задан. "min-max" или "n"; задаётся вместе с session_table
 
         // ── размещение uplink-данных (v2, packet-up) ──
         "uplink_data_placement": "auto",        // по умолчанию: auto (== body). body | auto | header | cookie.

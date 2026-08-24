@@ -66,6 +66,19 @@ type V2RayXHTTPOptions struct {
 	// defaults to "X-Seq" (header) or "x_seq" (query/cookie).
 	SeqKey string `json:"seq_key,omitempty"`
 
+	// SessionTable is the alphabet the random session id is drawn from. It is
+	// either a literal ASCII alphabet ("abc123") or the name of a predefined one
+	// (hex, HEX, number, alphabet, Alphabet, ALPHABET, base36, BASE36, Base62).
+	// Empty (or an empty SessionLength) keeps the default dashed-UUID session id.
+	// (Xray proto field is sessionIDTable; we expose session_table to match our
+	// session_placement/session_key naming.)
+	SessionTable string `json:"session_table,omitempty"`
+	// SessionLength is the session id length in characters, as a "min-max" range
+	// or a single integer. Only used together with SessionTable. The floor must be
+	// above 0 and the id space (len(table)^min) must exceed 2^31 so independent
+	// clients do not collide onto one server-side session.
+	SessionLength string `json:"session_length,omitempty"`
+
 	// ---- uplink data (obfs / tuning) ----------------------------------------
 
 	// UplinkDataPlacement selects where the packet-up upload payload is carried:

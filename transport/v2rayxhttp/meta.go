@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/sagernet/sing-box/log"
 
@@ -56,6 +57,12 @@ type metaConfig struct {
 	seqPlacement     string
 	seqKey           string
 
+	// sessionTable is the resolved alphabet random session ids are drawn from, and
+	// sessionLength the resolved length range. Both empty/zero means "dashed UUID"
+	// (the default). They are only ever both set or both unset — see resolveSessionID.
+	sessionTable  string
+	sessionLength intRange
+
 	uplinkDataPlacement string
 	uplinkDataKey       string
 	uplinkChunkSize     intRange // resolved (placement-dependent default already applied)
@@ -75,7 +82,10 @@ type metaConfig struct {
 // and resolves all defaults, mirroring sing-box-extended checkV2RayXHTTPBaseOptions
 // + GetNormalized*. See SPECS/TASKS/002 PARAM_MAP.md for the per-field rules.
 func normalizeMeta(opts metaOptions, mode string) (metaConfig, error) {
-	var m metaConfig
+	var (
+		m   metaConfig
+		err error
+	)
 
 	// --- session placement / key ---
 	m.sessionPlacement = orDefault(opts.SessionPlacement, placementPath)
@@ -90,6 +100,11 @@ func normalizeMeta(opts metaOptions, mode string) (metaConfig, error) {
 		return m, err
 	}
 	m.seqKey = resolveKey(opts.SeqKey, m.seqPlacement, "X-Seq", "x_seq")
+
+	// --- session id alphabet / length ---
+	if m.sessionTable, m.sessionLength, err = resolveSessionID(opts.SessionTable, opts.SessionLength); err != nil {
+		return m, err
+	}
 
 	// --- uplink data placement / key ---
 	m.uplinkDataPlacement = orDefault(opts.UplinkDataPlacement, placementAuto)
@@ -115,7 +130,6 @@ func normalizeMeta(opts metaOptions, mode string) (metaConfig, error) {
 	}
 
 	// --- packet-up tuning ranges ---
-	var err error
 	if m.scMaxEachPostBytes, err = parseRangeOr(opts.ScMaxEachPostBytes, "sc_max_each_post_bytes", intRange{1000000, 1000000}); err != nil {
 		return m, err
 	}
@@ -154,6 +168,8 @@ type metaOptions struct {
 	SessionKey           string
 	SeqPlacement         string
 	SeqKey               string
+	SessionTable         string
+	SessionLength        string
 	UplinkDataPlacement  string
 	UplinkDataKey        string
 	UplinkChunkSize      string
@@ -165,6 +181,78 @@ type metaOptions struct {
 	XPaddingMethod       string
 	ScMaxEachPostBytes   string
 	ScMinPostsIntervalMs string
+}
+
+// predefinedSessionTables are the named alphabets a session_table may reference,
+// byte-for-byte the set Xray ships (splithttp/config.go PredefinedTable). The names
+// are case-sensitive: "hex" and "HEX" are different alphabets.
+var predefinedSessionTables = map[string]string{
+	"ALPHABET": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+	"Alphabet": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+	"BASE36":   "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+	"Base62":   "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+	"HEX":      "0123456789ABCDEF",
+	"alphabet": "abcdefghijklmnopqrstuvwxyz",
+	"base36":   "0123456789abcdefghijklmnopqrstuvwxyz",
+	"hex":      "0123456789abcdef",
+	"number":   "0123456789",
+}
+
+// minSessionIDSpace is the smallest acceptable id space (len(table)^min). Xray
+// requires "more than 2.1 billion" combinations so two independent clients do not
+// draw the same id and get merged into one server-side session.
+const minSessionIDSpace = 1 << 31
+
+// resolveSessionID resolves the session id alphabet and length range. Both fields
+// are needed to take effect: with either empty the client keeps Xray's default
+// dashed-UUID id, which is what an unconfigured Xray peer also produces. A
+// half-configured pair is a config mistake rather than a silent fallback, so it is
+// rejected instead of quietly generating UUIDs the operator did not ask for.
+func resolveSessionID(table, length string) (string, intRange, error) {
+	table = strings.TrimSpace(table)
+	length = strings.TrimSpace(length)
+	if table == "" && length == "" {
+		return "", intRange{}, nil
+	}
+	if table == "" || length == "" {
+		return "", intRange{}, E.New("v2ray-xhttp: session_table and session_length must be set together")
+	}
+	if predefined, ok := predefinedSessionTables[table]; ok {
+		table = predefined
+	}
+	for i := 0; i < len(table); i++ {
+		if table[i] > unicode.MaxASCII {
+			return "", intRange{}, E.New("v2ray-xhttp: session_table must be ASCII")
+		}
+	}
+	r, err := parseRange(length, "session_length")
+	if err != nil {
+		return "", intRange{}, err
+	}
+	if r.min <= 0 {
+		return "", intRange{}, E.New("v2ray-xhttp: session_length floor must be above 0")
+	}
+	if !sessionIDSpaceSufficient(len(table), r.min) {
+		return "", intRange{}, E.New("v2ray-xhttp: session_table/session_length yield fewer than ", minSessionIDSpace,
+			" possible ids (alphabet ", len(table), " chars ^ min length ", r.min, "); widen either to avoid session collisions")
+	}
+	return table, r, nil
+}
+
+// sessionIDSpaceSufficient reports whether size^length >= minSessionIDSpace without
+// overflowing: it multiplies up and stops as soon as the threshold is cleared.
+func sessionIDSpaceSufficient(size, length int) bool {
+	if size <= 1 {
+		return false
+	}
+	space := 1
+	for i := 0; i < length; i++ {
+		space *= size
+		if space >= minSessionIDSpace {
+			return true
+		}
+	}
+	return false
 }
 
 func orDefault(v, def string) string {

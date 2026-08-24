@@ -92,6 +92,8 @@ you need and read its section below. Each comment shows the **default** and the 
         "session_key": "",                      // default: X-Session (header) / x_session (query|cookie); unused for path
         "seq_placement": "path",                // default: path. path | query | header | cookie (packet-up)
         "seq_key": "",                          // default: X-Seq (header) / x_seq (query|cookie); unused for path
+        "session_table": "",                    // default: unset (dashed UUID id). Alphabet name or literal ASCII set
+        "session_length": "",                   // default: unset. "min-max" or "n"; set together with session_table
 
         // ── uplink-data placement (v2, packet-up) ──
         "uplink_data_placement": "auto",        // default: auto (== body). body | auto | header | cookie.

@@ -130,6 +130,29 @@ upload/download streams; the seq orders the upload POSTs.
 | `session_key` | string | `X-Session` (header) / `x_session` (query\|cookie) | name carrying the session id when placement ≠ `path`; unused for `path` |
 | `seq_placement` | string | `path` | `path` \| `query` \| `header` \| `cookie`. For `path`, the seq is the **second** appended segment |
 | `seq_key` | string | `X-Seq` (header) / `x_seq` (query\|cookie) | name carrying the seq when placement ≠ `path`; unused for `path` |
+| `session_table` | string | unset | alphabet the random session id is drawn from: a predefined name or a literal ASCII set. Client-only |
+| `session_length` | string | unset | session id length, `"min-max"` or `"n"`. Only used together with `session_table` |
+
+> **Session id shape (`session_table` / `session_length`).** By default the session
+> id is a dashed UUID (`8f14e45f-ceea-4d31-9d4f-d0b8e5c1a2b7`), which is what an
+> unconfigured Xray peer also sends. These two options replace it with a random
+> string of your choosing — e.g. `"session_table": "Base62"` with
+> `"session_length": "16-32"` yields `k7Qm2XpR9vLdA3wZ`. The point is to drop the
+> recognizable UUID fingerprint from the URL, so pick a shape that matches the
+> service you are imitating.
+>
+> Predefined alphabet names (**case-sensitive**, byte-for-byte Xray's set):
+> `hex`, `HEX`, `number`, `alphabet`, `Alphabet`, `ALPHABET`, `base36`, `BASE36`,
+> `Base62`. Anything else is taken as a literal ASCII alphabet.
+>
+> Both options must be set together — setting one alone is rejected rather than
+> silently falling back to UUIDs. The length floor must be above 0, and the id
+> space (`len(table) ^ min`) must exceed 2^31, so two independent clients do not
+> draw the same id and get merged into one server-side session.
+>
+> **The server is never told.** It treats the session id as an opaque grouping key,
+> so this is a client-only knob: no server change is needed, and an Xray server
+> accepts either form. Xray calls these `sessionIDTable` / `sessionIDLength`.
 
 > **Path segment order is load-bearing.** With both on `path` (the default), the
 > session id is appended **first** and the seq **second** — the server splits on

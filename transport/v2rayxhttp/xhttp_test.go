@@ -309,6 +309,11 @@ func TestValidationRejections(t *testing.T) {
 		{"uplink header outside packet-up", modeStreamOne, metaOptions{UplinkDataPlacement: "header"}},
 		{"bad padding placement", modePacketUp, metaOptions{XPaddingObfsMode: true, XPaddingPlacement: "path"}},
 		{"bad padding method", modePacketUp, metaOptions{XPaddingMethod: "rot13"}},
+		{"session table without length", modePacketUp, metaOptions{SessionTable: "hex"}},
+		{"session length without table", modePacketUp, metaOptions{SessionLength: "16-32"}},
+		{"session length zero floor", modePacketUp, metaOptions{SessionTable: "hex", SessionLength: "0-32"}},
+		{"session id space too small", modePacketUp, metaOptions{SessionTable: "number", SessionLength: "4"}},
+		{"session table not ascii", modePacketUp, metaOptions{SessionTable: "абвгд", SessionLength: "32"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -439,4 +444,70 @@ func itoa(i int) string {
 		i /= 10
 	}
 	return string(b[pos:])
+}
+
+// --- session id generation -----------------------------------------------------
+
+func TestSessionIDDefaultIsUUID(t *testing.T) {
+	c := clientWith(t, modePacketUp, intRange{0, 0}, metaOptions{})
+	id := c.newSessionID()
+	if len(id) != 36 {
+		t.Fatalf("default session id = %q (len %d), want 36-char dashed UUID", id, len(id))
+	}
+	for _, i := range []int{8, 13, 18, 23} {
+		if id[i] != '-' {
+			t.Fatalf("default session id = %q, want dash at %d", id, i)
+		}
+	}
+}
+
+func TestSessionIDTableAndLength(t *testing.T) {
+	t.Run("predefined table, fixed length", func(t *testing.T) {
+		c := clientWith(t, modePacketUp, intRange{0, 0}, metaOptions{SessionTable: "hex", SessionLength: "16"})
+		for i := 0; i < 64; i++ {
+			id := c.newSessionID()
+			if len(id) != 16 {
+				t.Fatalf("id = %q (len %d), want 16", id, len(id))
+			}
+			if strings.Trim(id, "0123456789abcdef") != "" {
+				t.Fatalf("id = %q, want lowercase hex only", id)
+			}
+		}
+	})
+	t.Run("literal table, ranged length", func(t *testing.T) {
+		c := clientWith(t, modePacketUp, intRange{0, 0}, metaOptions{SessionTable: "abcXYZ789", SessionLength: "20-24"})
+		seenLengths := map[int]bool{}
+		for i := 0; i < 256; i++ {
+			id := c.newSessionID()
+			if len(id) < 20 || len(id) > 24 {
+				t.Fatalf("id = %q (len %d), want length in [20,24]", id, len(id))
+			}
+			if strings.Trim(id, "abcXYZ789") != "" {
+				t.Fatalf("id = %q, want configured alphabet only", id)
+			}
+			seenLengths[len(id)] = true
+		}
+		if len(seenLengths) < 2 {
+			t.Fatalf("ranged length never varied across 256 ids: %v", seenLengths)
+		}
+	})
+	t.Run("table name resolves case-sensitively", func(t *testing.T) {
+		// "HEX" is the UPPERCASE alphabet, "hex" the lowercase one.
+		c := clientWith(t, modePacketUp, intRange{0, 0}, metaOptions{SessionTable: "HEX", SessionLength: "32"})
+		id := c.newSessionID()
+		if strings.Trim(id, "0123456789ABCDEF") != "" {
+			t.Fatalf("id = %q, want uppercase hex only", id)
+		}
+	})
+}
+
+// A configured session id must ride the same placement engine as the default one:
+// the generator changes the id's shape, not where it is carried.
+func TestSessionIDTableOnPath(t *testing.T) {
+	c := clientWith(t, modePacketUp, intRange{0, 0}, metaOptions{SessionTable: "hex", SessionLength: "16"})
+	id := c.newSessionID()
+	req := mustRequest(t, c, "POST", id, "0")
+	if want := "/xhttp/" + id + "/0"; req.URL.Path != want {
+		t.Fatalf("path = %q, want %q", req.URL.Path, want)
+	}
 }

@@ -102,6 +102,8 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		SessionKey:           options.SessionKey,
 		SeqPlacement:         options.SeqPlacement,
 		SeqKey:               options.SeqKey,
+		SessionTable:         options.SessionTable,
+		SessionLength:        options.SessionLength,
 		UplinkDataPlacement:  options.UplinkDataPlacement,
 		UplinkDataKey:        options.UplinkDataKey,
 		UplinkChunkSize:      options.UplinkChunkSize,
@@ -217,7 +219,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
-	sessionID := newSessionID()
+	sessionID := c.newSessionID()
 	// One pooled connection carries this whole dial: both halves of a split mode
 	// and every upload POST of packet-up. It is released once, when the conn
 	// closes — see releaseOnce in conn.go.
@@ -304,11 +306,28 @@ func (c *Client) newRequest(ctx context.Context, method, sessionID, seqStr strin
 	return request.WithContext(ctx), nil
 }
 
-// newSessionID returns a random session id formatted as a dashed UUID string
+// newSessionID returns a random session id for one dial. With session_table and
+// session_length configured it draws length.rand() characters from the alphabet,
+// mirroring Xray's GenerateSessionID; otherwise it falls back to the dashed-UUID
+// form. The server treats the id as an opaque grouping key and never needs to know
+// which form was used, so this is a client-only obfuscation knob.
+func (c *Client) newSessionID() string {
+	if c.meta.sessionTable == "" {
+		return newUUIDSessionID()
+	}
+	table := c.meta.sessionTable
+	id := make([]byte, c.meta.sessionLength.rand())
+	for i := range id {
+		id[i] = table[randIntn(len(table))]
+	}
+	return string(id)
+}
+
+// newUUIDSessionID returns a random session id formatted as a dashed UUID string
 // (8-4-4-4-12), matching Xray's sessionId = uuid.New().String() (verified against
-// XTLS/Xray-core transport/internet/splithttp dialer.go). The server treats it as
-// an opaque grouping key; the dashed format keeps it interchangeable with Xray.
-func newSessionID() string {
+// XTLS/Xray-core transport/internet/splithttp dialer.go). This is the default and
+// the form an unconfigured Xray peer also produces.
+func newUUIDSessionID() string {
 	var b [16]byte
 	for i := range b {
 		b[i] = byte(rand.Intn(256))
