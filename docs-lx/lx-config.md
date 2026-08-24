@@ -716,11 +716,19 @@ or a group of any nesting — all three shapes behave the same and the length is
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `outbounds` | list of tags, ≥ 2 | required | positions in packet order |
+| `outbounds` | list of tags, ≥ 2, all distinct | required | positions in packet order; a repeated tag is a start error — see below |
 | `idle_timeout` | duration | `5m` | an idle link instance (see below) with zero live connections is removed after this; `0` = keep until stop |
 | `strip_evasion` | bool | `true` | remove one-sided DPI tricks from links at positions ≥ 1 (catalog below) |
 | `strip` | map key → bool | `{}` | patch over the catalog: `false` keep, `true` strip additionally; unknown key = start error |
 | `rewrite` | map type → JSON object | `{}` | merge-patch (RFC 7396) applied to the config of every link of that type at positions ≥ 1 |
+
+**One node at several positions.** Tags must be distinct: a repeat fails the start with
+`duplicate outbound in chain`, because in a list read as a path it is almost always a typo.
+To place the same node at several positions on purpose — the "sandwich" `WARP → someone
+else's node → WARP`, where the outer layers hide the middle node from your address and the
+destination from the middle node — declare it once per position under different tags; the
+declarations may carry identical credentials. Each position gets its own link with its own
+detour (a link is keyed by position and node), so the two instances are independent.
 
 How it works: **groups are never copied** — the chain calls the original group and lets it
 pick with all its logic (manual selection, health check, sticky, penalties,

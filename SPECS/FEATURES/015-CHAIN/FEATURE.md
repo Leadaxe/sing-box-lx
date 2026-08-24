@@ -49,7 +49,7 @@ a `urltest`.
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `outbounds` | list of tags, ≥ 2 | required | Chain positions **in packet order**: `[0]` is the first hop from the client (it touches the real network), the last one is the node whose address the destination sees. Any position may be a node, an endpoint or a group of any nesting |
+| `outbounds` | list of tags, ≥ 2, **all distinct** | required | Chain positions **in packet order**: `[0]` is the first hop from the client (it touches the real network), the last one is the node whose address the destination sees. Any position may be a node, an endpoint or a group of any nesting. Repeating a tag is a start error — to use one node at several positions, give it a tag per position (see the rules below) |
 | `idle_timeout` | duration | `5m` | How long a runtime link instance may sit unused before it is removed; `0` — keep until stop |
 | `strip_evasion` | bool | `true` | Strip one-sided DPI tricks (catalog below) from links at positions ≥ 1 |
 | `strip` | map key → bool | `{}` | Patch over the catalog: `false` — keep, `true` — strip additionally. An unknown key is a start error |
@@ -149,6 +149,13 @@ GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
 - **Removal by idleness, not by switching.** A link is removed only when it has zero live
   connections **and** was not picked for longer than `idle_timeout`; a live stream through the old
   pick keeps its link. A sleeping tunnel of a link is an ENERGY state, not a removal.
+- **One node at several positions needs one tag per position.** A repeated tag is
+  rejected at start (`duplicate outbound in chain`) — in a list read as a path a repeat is
+  almost always a typo. The deliberate case (a "sandwich" such as `WARP → someone else's
+  node → WARP`, where the outer layers hide the middle one from your address and the
+  destination from the middle one) is expressed by declaring the node twice under different
+  tags; the two declarations may carry identical credentials. Each position then gets its
+  own link with its own detour, because a link is keyed by (position, node).
 - **Fail-fast at start:** an unknown `strip` key; a `rewrite` that does not decode into the config
   of at least one reachable node; `tls.utls: true` on a node with `reality`; a disallowed type at a
   position ≥ 1; a chain tag colliding with user tags; a cycle through groups.
@@ -287,6 +294,13 @@ GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
 - **Удаление по простою, не по переключению.** Звено удаляется только при нуле живых соединений
   **и** отсутствии выбора дольше `idle_timeout`; живой поток через старый выбор держит звено.
   Уснувший туннель звена — состояние ENERGY, не удаление.
+- **Один узел на нескольких позициях — по тегу на позицию.** Повтор тега отвергается на
+  старте (`duplicate outbound in chain`): в списке, который читается как путь, повтор почти
+  всегда описка. Осознанный случай — «сэндвич» вида `WARP → чужой узел → WARP`, где внешние
+  слои прячут середину от вашего адреса, а цель — от середины, — выражается вторым
+  объявлением узла под другим тегом; учётные данные в обоих объявлениях могут совпадать.
+  Каждая позиция получит своё звено со своим detour, потому что звено ключуется парой
+  (позиция, узел).
 - **Fail-fast на старте:** неизвестный ключ `strip`; `rewrite`, который не декодируется в конфиг
   хотя бы одного достижимого узла; `tls.utls: true` при узле с `reality`; недопустимый тип на
   позиции ≥ 1; коллизия тега цепочки с пользовательскими тегами; цикл через группы.
