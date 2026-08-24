@@ -200,8 +200,9 @@ var predefinedSessionTables = map[string]string{
 
 // minSessionIDSpace is the smallest acceptable id space (len(table)^min). Xray
 // requires "more than 2.1 billion" combinations so two independent clients do not
-// draw the same id and get merged into one server-side session.
-const minSessionIDSpace = 1 << 31
+// draw the same id and get merged into one server-side session. It is int64: 2^31
+// does not fit in a 32-bit int, and this builds for 386/armv7/mips too.
+const minSessionIDSpace int64 = 1 << 31
 
 // resolveSessionID resolves the session id alphabet and length range. Both fields
 // are needed to take effect: with either empty the client keeps Xray's default
@@ -240,14 +241,15 @@ func resolveSessionID(table, length string) (string, intRange, error) {
 }
 
 // sessionIDSpaceSufficient reports whether size^length >= minSessionIDSpace without
-// overflowing: it multiplies up and stops as soon as the threshold is cleared.
+// overflowing: it multiplies up in int64 (a 32-bit int cannot even hold the
+// threshold) and stops as soon as the threshold is cleared.
 func sessionIDSpaceSufficient(size, length int) bool {
 	if size <= 1 {
 		return false
 	}
-	space := 1
+	space := int64(1)
 	for i := 0; i < length; i++ {
-		space *= size
+		space *= int64(size)
 		if space >= minSessionIDSpace {
 			return true
 		}
