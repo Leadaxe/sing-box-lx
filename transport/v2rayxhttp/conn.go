@@ -306,34 +306,54 @@ func newReadDeadline(onExpire func()) *readDeadline {
 
 func (d *readDeadline) set(t time.Time) error {
 	d.access.Lock()
-	defer d.access.Unlock()
 	if d.timer != nil {
 		d.timer.Stop()
 		d.timer = nil
 	}
 	if t.IsZero() || d.expired {
+		d.access.Unlock()
 		return nil
 	}
+	var fire bool
 	if delay := time.Until(t); delay <= 0 {
-		d.expireLocked()
+		fire = d.expireLocked()
 	} else {
 		d.timer = time.AfterFunc(delay, d.expire)
+	}
+	d.access.Unlock()
+	// lx: SPEC 074 — onExpire runs OUTSIDE the lock. It closes the HTTP/2 response
+	// body, which can block (h2 waits on its own machinery); holding `access`
+	// across that call deadlocks every other user of this deadline — including
+	// quic-go, which calls SetReadDeadline from Transport.Close on the very path
+	// that is trying to expire. Observed live: a QUIC handshake over an xhttp hop
+	// hung ~20-90 s with three goroutines stacked on this mutex.
+	if fire {
+		d.runOnExpire()
 	}
 	return nil
 }
 
 func (d *readDeadline) expire() {
 	d.access.Lock()
-	defer d.access.Unlock()
-	d.expireLocked()
+	fire := d.expireLocked()
+	d.access.Unlock()
+	if fire {
+		d.runOnExpire()
+	}
 }
 
-func (d *readDeadline) expireLocked() {
+// expireLocked marks the deadline expired and reports whether the caller now owns
+// running onExpire (exactly once). The callback itself must run unlocked.
+func (d *readDeadline) expireLocked() bool {
 	if d.expired {
-		return
+		return false
 	}
 	d.expired = true
 	close(d.dead)
+	return d.onExpire != nil
+}
+
+func (d *readDeadline) runOnExpire() {
 	if d.onExpire != nil {
 		d.onExpire()
 	}
