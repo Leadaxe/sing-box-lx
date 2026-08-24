@@ -131,6 +131,10 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	}, nil
 }
 
+// hopTag — формат "<chain>#<i>". ПУБЛИЧНЫЙ КОНТРАКТ (SPEC 073): клиенты
+// (лаунчер, LxBox) адресуют по этим тегам пробы позиций (urltest через
+// CommandClient). Молчаливой смены формата не будет: любое изменение — только
+// явной правкой SPEC 073 с миграционной заметкой в changelog.
 func (c *Chain) hopTag(index int) string {
 	return c.Tag() + "#" + strconv.Itoa(index)
 }
