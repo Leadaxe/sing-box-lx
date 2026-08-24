@@ -8,6 +8,7 @@ package masque
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -421,5 +422,103 @@ func TestAutoH2FailureWaitsForLateH3(t *testing.T) {
 	}
 	if got := o.effectiveNetwork(); got != "h3" {
 		t.Fatalf("h3 must be remembered, got %q", got)
+	}
+}
+
+// warnRecorder captures Warn lines while discarding the rest of the logger
+// surface. Shared by the resolveVHTTP and pump-death tests.
+type warnRecorder struct {
+	discardLogger
+	mu    sync.Mutex
+	warns []string
+}
+
+func (r *warnRecorder) Warn(args ...any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.warns = append(r.warns, fmt.Sprint(args...))
+}
+
+func (r *warnRecorder) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.warns)
+}
+
+// lx: SPEC 074 v2 — `auto` is the DEFAULT. An empty `vhttp` must resolve to
+// auto mode starting on h3; a fixed-h3 default behind a TCP-only hop was a
+// silent black hole (field case 2026-08-24).
+func TestResolveVHTTPDefaultIsAuto(t *testing.T) {
+	t.Parallel()
+	network, autoMode, err := resolveVHTTP("", "", discardLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !autoMode {
+		t.Fatal("empty vhttp must default to auto mode")
+	}
+	if network != "h3" {
+		t.Fatalf("auto must start its first leg on h3, got %q", network)
+	}
+}
+
+// The default landing on the standard profile is not the user's mistake:
+// degrade to h3 silently. Only an EXPLICIT `auto` earns the warning.
+func TestResolveVHTTPStandardProfileWarnsOnlyWhenExplicit(t *testing.T) {
+	t.Parallel()
+	rec := &warnRecorder{}
+	network, autoMode, err := resolveVHTTP("", "standard", rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if autoMode || network != "h3" {
+		t.Fatalf("default on standard must degrade to plain h3, got %q auto=%v", network, autoMode)
+	}
+	if rec.count() != 0 {
+		t.Fatalf("default degradation must be silent, got %v", rec.warns)
+	}
+
+	network, autoMode, err = resolveVHTTP("auto", "standard", rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if autoMode || network != "h3" {
+		t.Fatalf("explicit auto on standard must degrade to plain h3, got %q auto=%v", network, autoMode)
+	}
+	if rec.count() != 1 {
+		t.Fatalf("explicit auto on standard must warn exactly once, got %v", rec.warns)
+	}
+}
+
+func TestResolveVHTTPExplicitValues(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		vhttp, profile string
+		network        string
+		autoMode       bool
+	}{
+		{"h3", "", "h3", false},
+		{"h2", "", "h2", false},
+		{"auto", "", "h3", true},
+		{"h3", "standard", "h3", false},
+	} {
+		network, autoMode, err := resolveVHTTP(tc.vhttp, tc.profile, discardLogger{})
+		if err != nil {
+			t.Fatalf("%q/%q: %v", tc.vhttp, tc.profile, err)
+		}
+		if network != tc.network || autoMode != tc.autoMode {
+			t.Fatalf("%q/%q: got (%q, %v), want (%q, %v)",
+				tc.vhttp, tc.profile, network, autoMode, tc.network, tc.autoMode)
+		}
+	}
+}
+
+func TestResolveVHTTPRejects(t *testing.T) {
+	t.Parallel()
+	if _, _, err := resolveVHTTP("h1", "", discardLogger{}); err == nil {
+		t.Fatal("invalid vhttp must be rejected")
+	}
+	if _, _, err := resolveVHTTP("h2", "standard", discardLogger{}); err == nil {
+		t.Fatal("h2 on the standard profile must be rejected")
 	}
 }

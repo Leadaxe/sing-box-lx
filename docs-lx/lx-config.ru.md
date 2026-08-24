@@ -409,7 +409,7 @@ WARP enroll) делает клиент, не ядро.
 Обязательные поля — `server`/`server_port`, пара ключей (`private_key`/`public_key`, для
 дефолтного профиля `cloudflare`) и хотя бы один из `ip`/`ipv6` (твой локальный адрес
 *внутри* туннеля, не выходной IP). У всего остального есть дефолт: `profile: cloudflare`,
-`vhttp: h3`, `tls.server_name: www.cloudflare.com`, `mtu: 1280`, `idle_timeout: 5m`,
+`vhttp: auto`, `tls.server_name: www.cloudflare.com`, `mtu: 1280`, `idle_timeout: 5m`,
 `keep_alive_period: 30s`, `network_list: tcp+udp`. TLS — в стандартном блоке `tls`
 outbound'а.
 
@@ -424,7 +424,7 @@ outbound'а.
 > [lx-protocols-transports.ru.md §3](lx-protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)**
 > ([EN](lx-protocols-transports.md#3-masque-outbound-connect-ip--warp)).
 
-### Пример — WARP по h3 (QUIC)
+### Пример — WARP (дефолты: `vhttp: auto`)
 
 ```jsonc
 {
@@ -433,7 +433,6 @@ outbound'а.
   "server": "162.159.198.2",
   "server_port": 443,
   "profile": "cloudflare",
-  "vhttp": "h3",
   "tls": {
     "server_name": "www.microsoft.com"   // любой нейтральный популярный хост (domain-fronting)
   },
@@ -445,11 +444,13 @@ outbound'а.
 }
 ```
 
-`"vhttp": "auto"` сначала пробует h3 и падает на h2, если QUIC-хендшейк не уложился в 3 с;
-победивший режим запоминается до конца работы процесса. Нужен там, где эндпоинт **молча
-игнорирует QUIC** с вашего выходного адреса — ошибки нет, есть зависание; поймано в поле на
-проксированном хопе, где Cloudflare отвечал по TCP:443 и не отвечал по QUIC (SPEC 074). На
-профиле `standard` ноги h2 нет, поэтому `auto` вырождается в h3 с предупреждением.
+`"vhttp": "auto"` — **дефолт** — сначала пробует h3 и падает на h2, если QUIC-хендшейк не
+уложился в 3 с; победивший режим запоминается до конца работы процесса. Отказ, ради которого
+он существует: эндпоинт (или TCP-only-хоп перед ним — HTTP CONNECT в `detour`, звено
+VLESS/Trojan в цепочке) **молча игнорирует QUIC** — ошибки нет, есть зависание; поймано в поле
+на проксированном хопе, где Cloudflare отвечал по TCP:443 и не отвечал по QUIC (SPEC 074). На
+профиле `standard` ноги h2 нет, поэтому дефолт там тихо означает h3 (явный `"vhttp": "auto"`
+на `standard` даёт предупреждение).
 
 Для `h2` (CONNECT-IP over TCP:443) меняется одно поле: `"vhttp": "h2"`. Путь `h2` гонит свой
 TLS через общий слой `common/tls`, поэтому получает фрагментацию ClientHello наравне с любым

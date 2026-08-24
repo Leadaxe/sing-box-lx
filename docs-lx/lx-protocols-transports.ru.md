@@ -71,7 +71,7 @@ make -f Makefile.lx lx-build
   - [3.4 Профили — что переключает `profile`](#34-профили--что-переключает-profile)
   - [3.5 Ключевой материал и форматы значений](#35-ключевой-материал-и-форматы-значений)
   - [3.6 Стратегия SNI](#36-стратегия-sni)
-  - [3.7 `vhttp`: h3 vs h2](#37-vhttp-h3-vs-h2)
+  - [3.7 `vhttp`: auto / h3 / h2](#37-vhttp-auto--h3--h2)
   - [3.8 Idle-suspend и keepalive](#38-idle-suspend-и-keepalive)
   - [3.9 Валидация при старте (fail-fast)](#39-валидация-при-старте-fail-fast)
   - [3.10 Миграция со схемы до SPEC 062](#310-миграция-со-схемы-до-spec-062)
@@ -624,7 +624,7 @@ HTTP/2-соединения через **CONNECT-IP (RFC 9484)**, в перву�
 | `server` | string | ✅ | — | IP/хост WARP endpoint |
 | `server_port` | uint16 | ✅ | — | порт (обычно 443) |
 | `profile` | string | — | `cloudflare` | `cloudflare` \| `standard` (см. [§3.4](#34-профили--что-переключает-profile)) |
-| `vhttp` | string | — | `h3` | **HTTP-версия, несущая CONNECT-IP**: `h3` (QUIC) \| `h2` (HTTP/2, TCP:443). Список tcp/udp — это `network_list`, как везде |
+| `vhttp` | string | — | `auto` | **HTTP-версия, несущая CONNECT-IP**: `auto` (сначала h3, при незавершённом за 3 с QUIC-хендшейке — фолбэк на h2, SPEC 074) \| `h3` (QUIC) \| `h2` (HTTP/2, TCP:443). На `standard` дефолт тихо означает `h3` (h2-ноги там нет). Список tcp/udp — это `network_list`, как везде |
 | `private_key` | string (base64) | ✅¹ | — | клиентский EC private key, DER (`x509.ParseECPrivateKey`) |
 | `public_key` | string (base64) | ✅¹ | — | PKIX public key endpoint, DER (`x509.ParsePKIXPublicKey`, ECDSA) |
 | `ip` | string (CIDR) | ✅² | — | локальный IPv4 внутри туннеля; голый адрес → `/32` |
@@ -708,10 +708,14 @@ endpoint (`consumer-masque.cloudflareclient.com`) намеренно **не** д
 `www.cloudflare.com`, `yandex.ru`, `www.google.com` и другие нейтральные имена все
 коннектятся к тому же endpoint.
 
-## 3.7 `vhttp`: h3 vs h2
+## 3.7 `vhttp`: auto / h3 / h2
 
-`h3` (QUIC) — дефолт и самый быстрый. Но на сетях, фильтрующих входящий UDP:443,
-QUIC-handshake виснет, и `h3` не поднимается — переключи такой узел на `h2` (TCP:443),
+`auto` — дефолт (SPEC 074): сначала пробует `h3` (QUIC) и падает на `h2`, если
+QUIC-хендшейк не завершился за 3 с; победившая нога запоминается до конца процесса.
+Отказ, ради которого он существует, **не даёт ошибки** — endpoint (или TCP-only-хоп
+перед ним: HTTP CONNECT в `detour`, звено VLESS/Trojan в цепочке) молча глотает QUIC,
+и каждый dial просто виснет. Фиксированный `h3` — самый быстрый на заведомо чистом
+пути; на сетях, фильтрующих входящий UDP:443, пришпиль узел к `h2` (TCP:443),
 device-проверено, что там работает.
 
 - На `h2` один IP-пакет = один HTTP/2 DATA frame, так что `mtu` можно поднять до
@@ -723,7 +727,7 @@ device-проверено, что там работает.
   Extended CONNECT + route advertise + стек), так что короткий urltest-таймаут может
   отметить свежий h3-узел `-1` на первой пробе, хотя после он работает.
 
-Чтобы переключить рабочий `h3`-конфиг на `h2`, поменяй одно поле: `"vhttp": "h2"`.
+Чтобы пришпилить конфиг к одной ноге, задай единственное поле: `"vhttp": "h3"` или `"vhttp": "h2"`.
 
 ## 3.8 Idle-suspend и keepalive
 
@@ -747,8 +751,8 @@ device-проверено, что там работает.
   `masque: private_key and public_key are required for the cloudflare profile` /
   `parse private_key` / `parse public_key`;
 - не задано ни `ip`, ни `ipv6` → `masque: at least one of ip/ipv6 is required`;
-- `vhttp` ∉ {`h3`, `h2`} (напр. привычный `"tcp"`) →
-  `masque: invalid vhttp: … (expected h3 or h2)`;
+- `vhttp` ∉ {`h3`, `h2`, `auto`} (напр. привычный `"tcp"`) →
+  `masque: invalid vhttp: … (expected h3, h2 or auto)`;
 - `vhttp=h2` и `mtu > 16000` → `masque: mtu … too large for h2 (max 16000)`;
 - `vhttp=h2` и `profile=standard` →
   `masque: vhttp h2 is not implemented for the standard profile`;

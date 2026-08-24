@@ -402,7 +402,7 @@ enroll) is done by the client, not the core.
 The required fields are `server`/`server_port`, the key pair (`private_key`/`public_key`,
 for the default `cloudflare` profile) and at least one of `ip`/`ipv6` (your local address
 *inside* the tunnel, not the exit IP). Everything else has a default: `profile: cloudflare`,
-`vhttp: h3`, `tls.server_name: www.cloudflare.com`, `mtu: 1280`, `idle_timeout: 5m`,
+`vhttp: auto`, `tls.server_name: www.cloudflare.com`, `mtu: 1280`, `idle_timeout: 5m`,
 `keep_alive_period: 30s`, `network_list: tcp+udp`. TLS goes in the standard outbound `tls`
 block.
 
@@ -417,7 +417,7 @@ block.
 > [lx-protocols-transports.md §3](lx-protocols-transports.md#3-masque-outbound-connect-ip--warp)**
 > ([RU](lx-protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)).
 
-### Example — WARP over h3 (QUIC)
+### Example — WARP (defaults: `vhttp: auto`)
 
 ```jsonc
 {
@@ -426,7 +426,6 @@ block.
   "server": "162.159.198.2",
   "server_port": 443,
   "profile": "cloudflare",
-  "vhttp": "h3",
   "tls": {
     "server_name": "www.microsoft.com"   // any neutral high-traffic host (domain-fronting)
   },
@@ -438,11 +437,13 @@ block.
 }
 ```
 
-`"vhttp": "auto"` tries h3 first and falls back to h2 if the QUIC handshake does not complete
-within 3 s, remembering the winning mode for the rest of the process. Use it when the endpoint
-**silently ignores QUIC** from your exit address — there is no error to see, only a hang; measured
-in the field through a proxied hop where Cloudflare answered TCP:443 but never replied to QUIC
-(SPEC 074). On the `standard` profile there is no h2 leg, so `auto` degrades to h3 with a warning.
+`"vhttp": "auto"` — **the default** — tries h3 first and falls back to h2 if the QUIC handshake
+does not complete within 3 s, remembering the winning mode for the rest of the process. The failure
+mode it exists for is the endpoint (or a TCP-only hop in front of it — an HTTP CONNECT `detour`, a
+VLESS/Trojan link in a chain) **silently ignoring QUIC** — there is no error to see, only a hang;
+measured in the field through a proxied hop where Cloudflare answered TCP:443 but never replied to
+QUIC (SPEC 074). On the `standard` profile there is no h2 leg, so `auto` quietly means h3 there
+(an explicit `"vhttp": "auto"` on `standard` logs a warning).
 
 For `h2` (CONNECT-IP over TCP:443), change one field: `"vhttp": "h2"`. The `h2` path runs its
 TLS through the shared `common/tls` layer, so it gets ClientHello fragmentation like any other

@@ -23,11 +23,13 @@ type MASQUEOutboundOptions struct {
 
 	// Profile selects behaviour: "cloudflare" (default) or "standard" (RFC 9484).
 	Profile string `json:"profile,omitempty"`
-	// VHTTP selects the HTTP version carrying CONNECT-IP: "h3" (QUIC, default),
-	// "h2", or "auto" — try h3 and fall back to h2 when the QUIC handshake does
-	// not complete (lx: SPEC 074; the endpoint may ignore QUIC from this source
-	// address, which looks like a hang rather than an error). The tcp/udp
-	// allow-list is NetworkList, as everywhere else.
+	// VHTTP selects the HTTP version carrying CONNECT-IP: "auto" (default) —
+	// try h3 and fall back to h2 when the QUIC handshake does not complete
+	// (lx: SPEC 074; the endpoint may ignore QUIC from this source address,
+	// which looks like a hang rather than an error) — or a fixed "h3" (QUIC) /
+	// "h2". On the standard profile there is no h2 leg, so the default quietly
+	// means h3 there. The tcp/udp allow-list is NetworkList, as everywhere
+	// else.
 	//
 	// Not named `transport`: that key is an object (V2RayTransportOptions) on
 	// vless/trojan/vmess, and reusing it for a string here would repeat exactly

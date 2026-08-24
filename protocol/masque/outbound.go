@@ -121,6 +121,50 @@ type session struct {
 
 func (s *session) markActivity(now int64) { s.activity.Store(now) }
 
+// lx:begin masque-auto
+// resolveVHTTP maps the config field onto the effective (network, autoMode)
+// pair.
+//
+// SPEC 074 — the default is `auto`, not `h3`: a fixed h3 behind a TCP-only hop
+// (HTTP CONNECT detour, a VLESS/Trojan link in a chain) is a silent black hole
+// — the QUIC handshake has no error to fail on, so every dial just hangs to
+// its deadline. `auto` degrades to the same h3 on a healthy path (one 3 s
+// probe per process) and self-rescues on a filtered one. Field case: chain
+// [WG, VLESS-tcp, MASQUE] hanging stably on the old h3 default (2026-08-24).
+//
+// `auto` races nothing: it tries h3 first and falls back to h2 when the QUIC
+// handshake does not complete in time. The h2 leg is unavailable on the
+// standard profile, so `auto` there is just h3 — with a warning only when the
+// user asked for the fallback explicitly; the default landing on a standard
+// profile is not the user's mistake to be warned about.
+func resolveVHTTP(vhttp, profile string, logger interface{ Warn(args ...any) }) (network string, autoMode bool, err error) {
+	network = vhttp
+	explicit := network != ""
+	if network == "" {
+		network = "auto"
+	}
+	if network != "h3" && network != "h2" && network != "auto" {
+		return "", false, E.New("masque: invalid vhttp: ", network, " (expected h3, h2 or auto)")
+	}
+	autoMode = network == "auto"
+	if autoMode && profile == "standard" {
+		if explicit {
+			logger.Warn("masque: `vhttp: auto` has no h2 fallback on the standard profile — using h3 only")
+		}
+		autoMode = false
+		network = "h3"
+	}
+	if autoMode {
+		network = "h3"
+	}
+	if network == "h2" && profile == "standard" {
+		return "", false, E.New("masque: vhttp h2 is not implemented for the standard profile")
+	}
+	return network, autoMode, nil
+}
+
+// lx:end masque-auto
+
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.MASQUEOutboundOptions) (adapter.Outbound, error) {
 	profile, err := masque.ParseProfile(options.Profile)
 	if err != nil {
@@ -133,30 +177,9 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, err
 	}
 
-	network := options.VHTTP
-	if network == "" {
-		network = "h3"
-	}
-	if network != "h3" && network != "h2" && network != "auto" {
-		return nil, E.New("masque: invalid vhttp: ", network, " (expected h3, h2 or auto)")
-	}
-	// lx:begin masque-auto
-	// SPEC 074 — `auto` races nothing: it tries h3 first and falls back to h2 when
-	// the QUIC handshake does not complete in time. The h2 leg is unavailable on
-	// the standard profile, so `auto` there is just h3 (with a warning, since the
-	// user asked for a fallback that cannot exist).
-	autoMode := network == "auto"
-	if autoMode && options.Profile == "standard" {
-		logger.Warn("masque: `vhttp: auto` has no h2 fallback on the standard profile — using h3 only")
-		autoMode = false
-		network = "h3"
-	}
-	if autoMode {
-		network = "h3"
-	}
-	// lx:end masque-auto
-	if network == "h2" && options.Profile == "standard" {
-		return nil, E.New("masque: vhttp h2 is not implemented for the standard profile")
+	network, autoMode, err := resolveVHTTP(options.VHTTP, options.Profile, logger)
+	if err != nil {
+		return nil, err
 	}
 	if autoMode {
 		// lx: SPEC 074 — in `auto` the h2 leg does carry TLS records over TCP, so
@@ -706,6 +729,10 @@ func (o *Outbound) connectH2(ctx context.Context) (io.Closer, masque.IpConn, err
 // pumpToTunnel reads outgoing IP packets from the userspace stack and writes
 // them into the MASQUE tunnel. On any exit it tears the session down, which
 // unblocks the paired pump and lets the next dial rebuild the tunnel.
+//
+// lx: a pump that dies on its own logs WHY (pumpFatal) — without it the only
+// trace of a dead tunnel was the next "establishing" line, which made the
+// failure layer invisible in field logs (LxBox chain debugging, 2026-08-24).
 func (o *Outbound) pumpToTunnel(s *session) {
 	defer o.teardownSession(s)
 	device := s.device
@@ -718,12 +745,14 @@ func (o *Outbound) pumpToTunnel(s *session) {
 	for s.ctx.Err() == nil {
 		count, err := device.Read(bufs, sizes, 0)
 		if err != nil {
+			o.pumpFatal(s, "read from stack", err)
 			return
 		}
 		s.markActivity(time.Now().UnixNano())
 		for i := 0; i < count; i++ {
 			icmp, werr := s.ipConn.WritePacket(bufs[i][:sizes[i]])
 			if werr != nil {
+				o.pumpFatal(s, "write to tunnel", werr)
 				return
 			}
 			if len(icmp) > 0 {
@@ -740,13 +769,27 @@ func (o *Outbound) pumpFromTunnel(s *session) {
 	for s.ctx.Err() == nil {
 		packet, err := s.ipConn.ReadPacket()
 		if err != nil {
+			o.pumpFatal(s, "read from tunnel", err)
 			return
 		}
 		s.markActivity(time.Now().UnixNano())
 		if _, err = s.device.Write([][]byte{packet}, 0); err != nil {
+			o.pumpFatal(s, "write to stack", err)
 			return
 		}
 	}
+}
+
+// pumpFatal logs the reason a pump is about to die, exactly once per tunnel
+// death: teardownSession cancels s.ctx BEFORE closing ipConn/device, so the
+// pump that hit the original error still sees a live ctx and logs, while the
+// paired pump (and a pump woken by a deliberate teardown — idle-suspend,
+// Close) wakes up under a cancelled ctx and stays silent.
+func (o *Outbound) pumpFatal(s *session, op string, err error) {
+	if s.ctx.Err() != nil {
+		return
+	}
+	o.logger.Warn("masque: tunnel died: ", op, ": ", err)
 }
 
 func (o *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {

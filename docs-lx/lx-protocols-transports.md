@@ -71,7 +71,7 @@ transport (which would defeat the obfuscation). The exact messages:
   - [3.4 Profiles — what `profile` switches](#34-profiles--what-profile-switches)
   - [3.5 Key material & value formats](#35-key-material--value-formats)
   - [3.6 SNI strategy](#36-sni-strategy)
-  - [3.7 `vhttp`: h3 vs h2](#37-vhttp-h3-vs-h2)
+  - [3.7 `vhttp`: auto / h3 / h2](#37-vhttp-auto--h3--h2)
   - [3.8 Idle-suspend & keepalive](#38-idle-suspend--keepalive)
   - [3.9 Start-time validation (fail-fast)](#39-start-time-validation-fail-fast)
   - [3.10 Migrating from the pre-SPEC-062 shape](#310-migrating-from-the-pre-spec-062-shape)
@@ -625,7 +625,7 @@ registration (ECDSA keys, WARP enroll) is done by the client, not the core.
 | `server` | string | ✅ | — | IP/host of the WARP endpoint |
 | `server_port` | uint16 | ✅ | — | port (usually 443) |
 | `profile` | string | — | `cloudflare` | `cloudflare` \| `standard` (see [§3.4](#34-profiles--what-profile-switches)) |
-| `vhttp` | string | — | `h3` | **HTTP version carrying CONNECT-IP**: `h3` (QUIC) \| `h2` (HTTP/2, TCP:443). The tcp/udp list is `network_list`, as everywhere else |
+| `vhttp` | string | — | `auto` | **HTTP version carrying CONNECT-IP**: `auto` (h3 first, h2 fallback when the QUIC handshake does not complete in 3 s — SPEC 074) \| `h3` (QUIC) \| `h2` (HTTP/2, TCP:443). On `standard` the default quietly means `h3` (no h2 leg there). The tcp/udp list is `network_list`, as everywhere else |
 | `private_key` | string (base64) | ✅¹ | — | client EC private key, DER (`x509.ParseECPrivateKey`) |
 | `public_key` | string (base64) | ✅¹ | — | endpoint PKIX public key, DER (`x509.ParsePKIXPublicKey`, ECDSA) |
 | `ip` | string (CIDR) | ✅² | — | local IPv4 inside the tunnel; a bare address → `/32` |
@@ -709,11 +709,15 @@ sending it was measured to trip a silent CONNECT-IP timeout on Russian uplinks,
 while `www.cloudflare.com`, `yandex.ru`, `www.google.com` and other neutral names
 all connect to the same endpoint.
 
-## 3.7 `vhttp`: h3 vs h2
+## 3.7 `vhttp`: auto / h3 / h2
 
-`h3` (QUIC) is the default and fastest. But on networks that filter inbound UDP:443,
-the QUIC handshake hangs and `h3` never comes up — switch that node to `h2`
-(TCP:443), which is device-verified to work there.
+`auto` is the default (SPEC 074): it tries `h3` (QUIC) first and falls back to `h2`
+when the QUIC handshake does not complete within 3 s, remembering the winner for the
+rest of the process. The failure mode it exists for produces **no error** — the
+endpoint (or a TCP-only hop in front of it: an HTTP CONNECT detour, a VLESS/Trojan
+link in a chain) silently swallows QUIC and every dial just hangs. A fixed `h3` is
+the fastest when the path is known-clean; on networks that filter inbound UDP:443
+pin the node to `h2` (TCP:443), which is device-verified to work there.
 
 - On `h2`, one IP packet = one HTTP/2 DATA frame, so `mtu` may go up to **16000**.
 - The `h2` path runs its TLS through the shared `common/tls` layer, so it gets
@@ -724,7 +728,7 @@ the QUIC handshake hangs and `h3` never comes up — switch that node to `h2`
   CONNECT + route advertise + stack), so a short urltest timeout may mark a fresh h3
   node `-1` on the first probe though it works after.
 
-To switch a working `h3` config to `h2`, change one field: `"vhttp": "h2"`.
+To pin a config to one leg, set the single field: `"vhttp": "h3"` or `"vhttp": "h2"`.
 
 ## 3.8 Idle-suspend & keepalive
 
@@ -749,8 +753,8 @@ The config is rejected at load if:
   `masque: private_key and public_key are required for the cloudflare profile` /
   `parse private_key` / `parse public_key`;
 - neither `ip` nor `ipv6` is set → `masque: at least one of ip/ipv6 is required`;
-- `vhttp` ∉ {`h3`, `h2`} (e.g. the habitual `"tcp"`) →
-  `masque: invalid vhttp: … (expected h3 or h2)`;
+- `vhttp` ∉ {`h3`, `h2`, `auto`} (e.g. the habitual `"tcp"`) →
+  `masque: invalid vhttp: … (expected h3, h2 or auto)`;
 - `vhttp=h2` and `mtu > 16000` → `masque: mtu … too large for h2 (max 16000)`;
 - `vhttp=h2` and `profile=standard` →
   `masque: vhttp h2 is not implemented for the standard profile`;
