@@ -333,10 +333,16 @@ var (
 	defaultXmuxHMaxReusableSecs = intRange{1800, 3000}
 )
 
-// normalizeXmux resolves the XMUX option set. A nil section is NOT "disabled" —
-// it selects the defaults above.
+// normalizeXmux resolves the XMUX option set, mirroring Xray's all-or-nothing
+// rule (infra/conf/transport_method.go, `if c.Xmux == (XmuxConfig{})`): the
+// defaults above apply when the section is absent OR entirely empty — Xray's
+// Xmux is a value field, so an empty object and a missing one are the same
+// thing there, and subscription configs routinely ship the full xmux object
+// with empty strings. A section with ANY field set takes every field as
+// written: empty ranges stay zero (= unlimited), because per-field defaults
+// would rotate connections where an Xray client would not.
 func normalizeXmux(options *option.V2RayXHTTPXmuxOptions) (xmuxConfig, error) {
-	if options == nil {
+	if options == nil || *options == (option.V2RayXHTTPXmuxOptions{}) {
 		return xmuxConfig{
 			maxConcurrency:   defaultXmuxMaxConcurrency,
 			hMaxRequestTimes: defaultXmuxHMaxRequestTimes,
@@ -365,11 +371,11 @@ func normalizeXmux(options *option.V2RayXHTTPXmuxOptions) (xmuxConfig, error) {
 	if err != nil {
 		return xmuxConfig{}, err
 	}
-	config.hMaxRequestTimes, err = parseRangeOr(string(options.HMaxRequestTimes), "xmux.h_max_request_times", defaultXmuxHMaxRequestTimes)
+	config.hMaxRequestTimes, err = parseRangeOr(string(options.HMaxRequestTimes), "xmux.h_max_request_times", intRange{})
 	if err != nil {
 		return xmuxConfig{}, err
 	}
-	config.hMaxReusableSecs, err = parseRangeOr(string(options.HMaxReusableSecs), "xmux.h_max_reusable_secs", defaultXmuxHMaxReusableSecs)
+	config.hMaxReusableSecs, err = parseRangeOr(string(options.HMaxReusableSecs), "xmux.h_max_reusable_secs", intRange{})
 	if err != nil {
 		return xmuxConfig{}, err
 	}

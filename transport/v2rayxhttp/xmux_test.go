@@ -331,3 +331,47 @@ func TestNormalizeXmuxExplicit(t *testing.T) {
 		t.Fatalf("h_keep_alive_period = %v, want 30s", config.keepAlivePeriod)
 	}
 }
+
+// An entirely empty xmux section selects the same defaults as an absent one,
+// mirroring Xray's all-or-nothing rule (infra/conf/transport_method.go:
+// `if c.Xmux == (XmuxConfig{})` — Xray's Xmux is a value field, so an empty
+// object and a missing one are indistinguishable there). Subscription configs
+// routinely ship the full xmux object with empty strings (issue #14).
+func TestNormalizeXmuxEmptySectionEqualsAbsent(t *testing.T) {
+	config, err := normalizeXmux(&option.V2RayXHTTPXmuxOptions{})
+	if err != nil {
+		t.Fatalf("normalizeXmux: %v", err)
+	}
+	reference, err := normalizeXmux(nil)
+	if err != nil {
+		t.Fatalf("normalizeXmux(nil): %v", err)
+	}
+	if config != reference {
+		t.Fatalf("empty section = %+v, absent section = %+v", config, reference)
+	}
+}
+
+// A partially-filled section takes its fields as written — unset ranges stay
+// zero (= unlimited), with NO per-field defaults. This is the other half of
+// Xray's all-or-nothing rule: a section with any field set gets no defaults at
+// all, so an Xray client with the same config would not rotate connections
+// where we would.
+func TestNormalizeXmuxPartialSectionGetsNoDefaults(t *testing.T) {
+	config, err := normalizeXmux(&option.V2RayXHTTPXmuxOptions{CMaxReuseTimes: "5"})
+	if err != nil {
+		t.Fatalf("normalizeXmux: %v", err)
+	}
+	if config.cMaxReuseTimes != (intRange{5, 5}) {
+		t.Fatalf("c_max_reuse_times = %v, want 5-5", config.cMaxReuseTimes)
+	}
+	for name, r := range map[string]intRange{
+		"max_concurrency":     config.maxConcurrency,
+		"max_connections":     config.maxConnections,
+		"h_max_request_times": config.hMaxRequestTimes,
+		"h_max_reusable_secs": config.hMaxReusableSecs,
+	} {
+		if r != (intRange{}) {
+			t.Fatalf("%s = %v, want unset (no per-field default in a partial section)", name, r)
+		}
+	}
+}

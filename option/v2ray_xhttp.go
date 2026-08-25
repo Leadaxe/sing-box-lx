@@ -166,10 +166,14 @@ type V2RayXHTTPOptions struct {
 // Each range is rolled ONCE, not per request: the manager rolls max_concurrency
 // and max_connections at construction, and every connection rolls its own reuse
 // limits when it is created.
+//
+// Defaults follow Xray's all-or-nothing rule: a section that is absent OR
+// entirely empty selects max_concurrency "1-1", h_max_request_times "600-900",
+// h_max_reusable_secs "1800-3000"; a section with ANY field set takes every
+// field as written, and unset ranges stay zero (= unlimited).
 type V2RayXHTTPXmuxOptions struct {
 	// MaxConcurrency bounds how many streams may share a single HTTP connection.
-	// Empty defaults to "1-1" (one stream per connection, like Xray). Mutually
-	// exclusive with MaxConnections.
+	// Mutually exclusive with MaxConnections.
 	MaxConcurrency XmuxRange `json:"max_concurrency,omitempty"`
 	// MaxConnections bounds how many connections the pool holds; while the pool
 	// is below this count a new connection is always opened. Empty means
@@ -179,11 +183,10 @@ type V2RayXHTTPXmuxOptions struct {
 	// stream before it is retired. Empty means unlimited.
 	CMaxReuseTimes XmuxRange `json:"c_max_reuse_times,omitempty"`
 	// HMaxRequestTimes is how many HTTP requests may traverse a connection before
-	// it is retired. Empty defaults to "600-900". Note this counts requests, not
-	// streams: in packet-up one stream issues many upload POSTs.
+	// it is retired. Note this counts requests, not streams: in packet-up one
+	// stream issues many upload POSTs.
 	HMaxRequestTimes XmuxRange `json:"h_max_request_times,omitempty"`
-	// HMaxReusableSecs is how long a connection stays reusable, in seconds. Empty
-	// defaults to "1800-3000".
+	// HMaxReusableSecs is how long a connection stays reusable, in seconds.
 	HMaxReusableSecs XmuxRange `json:"h_max_reusable_secs,omitempty"`
 	// HKeepAlivePeriod is the HTTP/2 keep-alive ping period in seconds (the
 	// transport's ReadIdleTimeout). Zero selects the default; a negative value
