@@ -38,6 +38,57 @@ func (s *StartedService) GetChains(ctx context.Context, empty *emptypb.Empty) (*
 	return &list, nil
 }
 
+// SetChainPositionEnabled — SPEC 075: runtime toggle of one chain position.
+// The flag always applies once the chain is found and the index is valid; a
+// failed link warm-up on enable is returned as data (warmupError), not as a
+// status error.
+func (s *StartedService) SetChainPositionEnabled(ctx context.Context, request *SetChainPositionEnabledRequest) (*SetChainPositionEnabledResponse, error) {
+	controller, err := s.chainController(request.ChainTag)
+	if err != nil {
+		return nil, err
+	}
+	warmupError, err := controller.SetPositionEnabled(int(request.Position), request.Enabled)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return &SetChainPositionEnabledResponse{WarmupError: warmupError}, nil
+}
+
+// GetChainCloneConfig — SPEC 075: effective post-transform options JSON of the
+// live link at the position's currently resolved leaf. NotFound when no live
+// link exists (position 0, transparent, evicted, disabled).
+func (s *StartedService) GetChainCloneConfig(ctx context.Context, request *GetChainCloneConfigRequest) (*RunningConfig, error) {
+	controller, err := s.chainController(request.ChainTag)
+	if err != nil {
+		return nil, err
+	}
+	content, err := controller.CloneConfigJSON(int(request.Position))
+	if err != nil {
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	return &RunningConfig{Content: content}, nil
+}
+
+func (s *StartedService) chainController(chainTag string) (adapter.ChainController, error) {
+	s.serviceAccess.RLock()
+	if s.serviceStatus.Status != ServiceStatus_STARTED {
+		s.serviceAccess.RUnlock()
+		return nil, status.Error(codes.FailedPrecondition, "service is not started")
+	}
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	detour, loaded := boxService.outboundManager.Outbound(chainTag)
+	if !loaded {
+		return nil, status.Error(codes.NotFound, "outbound not found: "+chainTag)
+	}
+	controller, isChain := detour.(adapter.ChainController)
+	if !isChain {
+		return nil, status.Error(codes.InvalidArgument, "outbound is not a chain: "+chainTag)
+	}
+	return controller, nil
+}
+
 func chainStateToGRPC(chainStatus adapter.ChainStatus, now time.Time) *ChainState {
 	state := &ChainState{
 		Tag:           chainStatus.Tag,
@@ -53,6 +104,7 @@ func chainStateToGRPC(chainStatus adapter.ChainStatus, now time.Time) *ChainStat
 			IsGroup:     position.IsGroup,
 			Now:         position.Now,
 			Transparent: position.Transparent,
+			Disabled:    position.Disabled,
 			Errors:      position.Errors,
 		}
 		if position.Clone != nil {

@@ -17,6 +17,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/endpoint"
 	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/interrupt"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -203,6 +204,11 @@ func newStand(t *testing.T) *stand {
 	epRegistry := endpoint.NewRegistry()
 	var manager *outbound.Manager
 	outbound.Register[fakeOptions](registry, typeFake, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options fakeOptions) (adapter.Outbound, error) {
+		// SPEC 075: the original node builds fine, only its clone (detour set)
+		// fails — exercises the warm-up error path of the toggle.
+		if options.Name == "fail-on-clone" && options.Detour != "" {
+			return nil, E.New("clone construction failed")
+		}
 		fakes.record(tag, options)
 		return &fakeOutbound{
 			Adapter:  outbound.NewAdapterWithDialerOptions(typeFake, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
@@ -849,4 +855,303 @@ func TestChainUDPPath(t *testing.T) {
 	}
 	conn.Close()
 	assertTrace(t, tr.items, "udp:exit[virt#1]", "udp:mid[virt#0]", "udp:in[]")
+}
+
+// ---- SPEC 075: runtime position toggle --------------------------------------
+
+// fakeDirectDialer replaces the hop-0 direct fallback in tests (the real one
+// needs a DNS transport manager in the context).
+type fakeDirectDialer struct{}
+
+func (fakeDirectDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if t := traceOf(ctx); t != nil {
+		t.add("direct-fallback")
+	}
+	client, server := net.Pipe()
+	go server.Close()
+	return client, nil
+}
+
+func (fakeDirectDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	if t := traceOf(ctx); t != nil {
+		t.add("udp:direct-fallback")
+	}
+	return net.ListenPacket("udp", "127.0.0.1:0")
+}
+
+// fakeDisabledStore — in-memory ChainDisabledStore; embeds a nil CacheFile so
+// it satisfies the service lookup, only the two lx methods are ever called.
+type fakeDisabledStore struct {
+	adapter.CacheFile
+	mu   sync.Mutex
+	data map[string][]string
+}
+
+func newFakeDisabledStore() *fakeDisabledStore {
+	return &fakeDisabledStore{data: make(map[string][]string)}
+}
+
+func (f *fakeDisabledStore) LoadChainDisabled(chainTag string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.data[chainTag])
+}
+
+func (f *fakeDisabledStore) StoreChainDisabled(chainTag string, disabledTags []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.data[chainTag] = slices.Clone(disabledTags)
+	return nil
+}
+
+func (s *stand) toggle(chainTag string, position int, enabled bool) string {
+	s.t.Helper()
+	warmup, err := s.chainOf(chainTag).SetPositionEnabled(position, enabled)
+	if err != nil {
+		s.t.Fatalf("toggle %s[%d]=%v: %v", chainTag, position, enabled, err)
+	}
+	return warmup
+}
+
+func TestChainToggleMiddle(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.fake("mid")
+	s.fake("exit")
+	s.chain("virt", []string{"in", "mid", "exit"})
+	s.mustStart()
+	c := s.chainOf("virt")
+
+	tr, _ := s.dial("virt")
+	assertTrace(t, tr, "exit[virt#1]", "mid[virt#0]", "in[]")
+
+	if warmup := s.toggle("virt", 1, false); warmup != "" {
+		t.Fatalf("disable must not warm up: %s", warmup)
+	}
+	tr, err := s.dial("virt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTrace(t, tr, "exit[virt#1]", "in[]")
+	if path := strings.Join(c.ChainPath(), ","); path != "in,exit" {
+		t.Fatalf("path %s", path)
+	}
+	status := c.ChainStatus()
+	if !status.Positions[1].Disabled || status.Positions[1].Now != "mid" {
+		t.Fatalf("position 1 must be disabled with now intact: %+v", status.Positions[1])
+	}
+	// The retired clone is never force-closed — idle eviction collects it.
+	c.evictIdle(time.Now().Add(c.idleTimeout + time.Second))
+	if s.registry.closed["mid[virt#0]"] != 1 {
+		t.Fatalf("retired clone must be evicted: %v", s.registry.closed)
+	}
+
+	// Re-enable warms the link back up eagerly.
+	if warmup := s.toggle("virt", 1, true); warmup != "" {
+		t.Fatalf("warmup: %s", warmup)
+	}
+	created := 0
+	for _, item := range s.registry.createdList() {
+		if item == "mid@virt#0" {
+			created++
+		}
+	}
+	if created != 2 {
+		t.Fatalf("enable must recreate the link eagerly, created=%d", created)
+	}
+	tr, _ = s.dial("virt")
+	assertTrace(t, tr, "exit[virt#1]", "mid[virt#0]", "in[]")
+
+	// Toggle validation and idempotency.
+	if _, err := c.SetPositionEnabled(-1, false); err == nil {
+		t.Fatal("negative position must error")
+	}
+	if _, err := c.SetPositionEnabled(3, false); err == nil {
+		t.Fatal("out-of-range position must error")
+	}
+	if warmup, err := c.SetPositionEnabled(1, true); err != nil || warmup != "" {
+		t.Fatalf("no-change toggle must be a silent no-op: %q %v", warmup, err)
+	}
+}
+
+func TestChainToggleEntryAndAll(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.fake("mid")
+	s.fake("exit")
+	s.chain("virt", []string{"in", "mid", "exit"})
+	c := s.chainOf("virt")
+	c.directDialer = fakeDirectDialer{}
+	s.mustStart()
+
+	// Disabled entry: hop 0 dials the real network, upper links untouched.
+	s.toggle("virt", 0, false)
+	tr, err := s.dial("virt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTrace(t, tr, "exit[virt#1]", "mid[virt#0]", "direct-fallback")
+
+	// Everything disabled: the chain degenerates into direct.
+	s.toggle("virt", 1, false)
+	s.toggle("virt", 2, false)
+	tr, err = s.dial("virt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTrace(t, tr, "direct-fallback")
+	if path := c.ChainPath(); len(path) != 0 {
+		t.Fatalf("all-disabled chain must have an empty path: %v", path)
+	}
+
+	// UDP goes the same way.
+	ctx, tr2 := withTrace(s.ctx)
+	pconn, err := c.ListenPacket(ctx, M.ParseSocksaddr("1.1.1.1:53"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pconn.Close()
+	assertTrace(t, tr2.items, "udp:direct-fallback")
+
+	// Entry back on while the rest stays off: original entry, no links.
+	s.toggle("virt", 0, true)
+	tr, _ = s.dial("virt")
+	assertTrace(t, tr, "in[]")
+}
+
+func TestChainTogglePersistenceAndPreload(t *testing.T) {
+	s := newStand(t)
+	store := newFakeDisabledStore()
+	store.data["virt"] = []string{"mid", "gone-tag"}
+	s.ctx = service.ContextWith[adapter.CacheFile](s.ctx, store)
+	s.fake("in")
+	s.fake("mid")
+	s.fake("exit")
+	s.chain("virt", []string{"in", "mid", "exit"})
+	s.mustStart()
+	c := s.chainOf("virt")
+
+	// Restored from the store: mid disabled, unknown tag ignored, preload skips
+	// the disabled position.
+	if !c.ChainStatus().Positions[1].Disabled {
+		t.Fatal("disabled set must be restored from the store")
+	}
+	created := s.registry.createdList()
+	if contains(created, "mid@virt#0") {
+		t.Fatalf("preload must skip the disabled position: %v", created)
+	}
+	if !contains(created, "exit@virt#1") {
+		t.Fatalf("preload must still warm enabled positions: %v", created)
+	}
+	tr, _ := s.dial("virt")
+	assertTrace(t, tr, "exit[virt#1]", "in[]")
+
+	// Toggles persist the tag set.
+	s.toggle("virt", 1, true)
+	if got := store.LoadChainDisabled("virt"); len(got) != 0 {
+		t.Fatalf("enable must clear the stored set: %v", got)
+	}
+	s.toggle("virt", 2, false)
+	if got := store.LoadChainDisabled("virt"); len(got) != 1 || got[0] != "exit" {
+		t.Fatalf("disable must store the position tag: %v", got)
+	}
+}
+
+func TestChainToggleInterrupt(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.fake("mid")
+	s.fake("exit")
+	s.chain("virt", []string{"in", "mid", "exit"})
+	s.chain("virt-rip", []string{"in", "mid", "exit"}, func(o *option.ChainOutboundOptions) {
+		o.InterruptExistConnections = true
+	})
+	s.mustStart()
+
+	openUDP := func(chainTag string, external bool) net.PacketConn {
+		ctx := s.ctx
+		if external {
+			ctx = interrupt.ContextWithIsExternalConnection(ctx)
+		}
+		pconn, err := s.chainOf(chainTag).ListenPacket(ctx, M.ParseSocksaddr("1.1.1.1:53"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { pconn.Close() })
+		return pconn
+	}
+	alive := func(pconn net.PacketConn) bool {
+		_, err := pconn.WriteTo([]byte("x"), &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9})
+		return err == nil
+	}
+
+	internal := openUDP("virt", false)
+	external := openUDP("virt", true)
+	s.toggle("virt", 1, false)
+	if alive(internal) {
+		t.Fatal("internal connection must be interrupted on toggle")
+	}
+	if !alive(external) {
+		t.Fatal("external connection must survive without interrupt_exist_connections")
+	}
+
+	externalRip := openUDP("virt-rip", true)
+	s.toggle("virt-rip", 1, false)
+	if alive(externalRip) {
+		t.Fatal("external connection must be ripped with interrupt_exist_connections")
+	}
+}
+
+func TestChainToggleWarmupError(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.fake("mid")
+	s.fake("boom", func(o *fakeOptions) { o.Name = "fail-on-clone" })
+	s.fake("exit")
+	s.selector("sel-mid", "mid", "boom")
+	s.chain("virt", []string{"in", "sel-mid", "exit"})
+	s.mustStart()
+	c := s.chainOf("virt")
+
+	s.toggle("virt", 1, false)
+	s.selectIn("sel-mid", "boom")
+	warmup := s.toggle("virt", 1, true)
+	if warmup == "" {
+		t.Fatal("failed warm-up must be reported")
+	}
+	// The flag HAS been applied regardless of the warm-up failure.
+	if c.ChainStatus().Positions[1].Disabled {
+		t.Fatal("warm-up failure must not roll the toggle back")
+	}
+}
+
+func TestChainCloneConfigJSON(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.fake("mid")
+	s.fake("exit")
+	s.chain("virt", []string{"in", "mid", "exit"})
+	s.mustStart()
+	c := s.chainOf("virt")
+
+	content, err := c.CloneConfigJSON(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"type": "fake"`, `"tag": "mid"`, `"detour": "virt#0"`} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("clone config must contain %s:\n%s", want, content)
+		}
+	}
+	if _, err := c.CloneConfigJSON(0); err == nil {
+		t.Fatal("position 0 has no link")
+	}
+	if _, err := c.CloneConfigJSON(7); err == nil {
+		t.Fatal("out-of-range must error")
+	}
+	// No live link after eviction.
+	c.evictIdle(time.Now().Add(c.idleTimeout + time.Second))
+	if _, err := c.CloneConfigJSON(1); err == nil {
+		t.Fatal("evicted link must not serve a config")
+	}
 }

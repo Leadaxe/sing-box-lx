@@ -22,6 +22,8 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/interrupt"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -41,10 +43,13 @@ func RegisterOutbound(registry *outbound.Registry) {
 }
 
 var (
-	_ adapter.Outbound            = (*Chain)(nil)
-	_ adapter.ChainPathProvider   = (*Chain)(nil)
-	_ adapter.ChainStatusProvider = (*Chain)(nil)
-	_ adapter.EndpointCloneHolder = (*Chain)(nil)
+	_ adapter.Outbound                = (*Chain)(nil)
+	_ adapter.ChainPathProvider       = (*Chain)(nil)
+	_ adapter.ChainStatusProvider     = (*Chain)(nil)
+	_ adapter.ChainController         = (*Chain)(nil)
+	_ adapter.EndpointCloneHolder     = (*Chain)(nil)
+	_ adapter.ConnectionHandler       = (*Chain)(nil)
+	_ adapter.PacketConnectionHandler = (*Chain)(nil)
 )
 
 type Chain struct {
@@ -55,11 +60,22 @@ type Chain struct {
 	logFactory log.Factory
 	outbound   adapter.OutboundManager
 	endpoint   adapter.EndpointManager
+	connection adapter.ConnectionManager
 
 	tags        []string
 	idleTimeout time.Duration
 	strip       stripSet
 	rewrite     map[string]any
+
+	// SPEC 075: runtime position toggle. disabled is per position; a disabled
+	// position >= 1 is a passthrough to the previous hop, a disabled entry
+	// dials the real network via directDialer. Toggles interrupt existing
+	// connections with selector semantics (interruptExternal = the
+	// interrupt_exist_connections option).
+	disabled          []atomic.Bool
+	directDialer      N.Dialer
+	interruptGroup    *interrupt.Group
+	interruptExternal bool
 
 	targets []adapter.Outbound
 	hops    []*hop
@@ -114,20 +130,24 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		idleTimeout = 0
 	}
 	return &Chain{
-		Adapter:     outbound.NewAdapter(C.TypeChain, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.Outbounds),
-		ctx:         ctx,
-		router:      router,
-		logger:      logger,
-		logFactory:  service.FromContext[log.Factory](ctx),
-		outbound:    service.FromContext[adapter.OutboundManager](ctx),
-		endpoint:    service.FromContext[adapter.EndpointManager](ctx),
-		tags:        options.Outbounds,
-		idleTimeout: idleTimeout,
-		strip:       strip,
-		rewrite:     options.Rewrite,
-		clones:      make(map[cloneKey]*clone),
-		inflight:    make(map[cloneKey]*cloneCall),
-		stopCh:      make(chan struct{}),
+		Adapter:           outbound.NewAdapter(C.TypeChain, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.Outbounds),
+		ctx:               ctx,
+		router:            router,
+		logger:            logger,
+		logFactory:        service.FromContext[log.Factory](ctx),
+		outbound:          service.FromContext[adapter.OutboundManager](ctx),
+		endpoint:          service.FromContext[adapter.EndpointManager](ctx),
+		connection:        service.FromContext[adapter.ConnectionManager](ctx),
+		tags:              options.Outbounds,
+		idleTimeout:       idleTimeout,
+		strip:             strip,
+		rewrite:           options.Rewrite,
+		disabled:          make([]atomic.Bool, len(options.Outbounds)),
+		interruptGroup:    interrupt.NewGroup(),
+		interruptExternal: options.InterruptExistConnections,
+		clones:            make(map[cloneKey]*clone),
+		inflight:          make(map[cloneKey]*cloneCall),
+		stopCh:            make(chan struct{}),
 	}, nil
 }
 
@@ -189,6 +209,28 @@ func (c *Chain) Start() error {
 			return E.Cause(err, "register hop ", i)
 		}
 	}
+	// SPEC 075: hop-0 fallback for a disabled entry — a plain direct dialer with
+	// default options (interface binding / routing marks apply, like the
+	// `direct` outbound). Domain resolution needs a DNS transport manager; in a
+	// real box it is always present, bare stands fall back to a non-resolving
+	// default dialer. Tests may pre-set directDialer with a fake.
+	if c.directDialer == nil {
+		var (
+			directDialer N.Dialer
+			err          error
+		)
+		if service.FromContext[adapter.DNSTransportManager](c.ctx) != nil {
+			directDialer, err = dialer.New(c.ctx, option.DialerOptions{}, true)
+		} else {
+			directDialer, err = dialer.NewDefault(c.ctx, option.DialerOptions{})
+		}
+		if err != nil {
+			c.Close()
+			return E.Cause(err, "create direct fallback dialer")
+		}
+		c.directDialer = directDialer
+	}
+	c.loadDisabled()
 	if err := c.preload(); err != nil {
 		c.Close()
 		return err
@@ -204,6 +246,9 @@ func (c *Chain) Start() error {
 // старте нет замеров, Now() случаен). Ошибка прогрева = ошибка старта.
 func (c *Chain) preload() error {
 	for i := 1; i < len(c.tags); i++ {
+		if c.disabled[i].Load() {
+			continue
+		}
 		leaf := deterministicLeaf(c.outbound, c.targets[i])
 		if leaf == nil || !isClonable(leaf) {
 			continue
@@ -356,7 +401,9 @@ func (c *Chain) DialContext(ctx context.Context, network string, destination M.S
 		c.stats.errors.Add(1)
 		return nil, err
 	}
-	return conn, nil
+	// SPEC 075: register the top-level connection so a position toggle can
+	// interrupt it (selector semantics).
+	return c.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 }
 
 func (c *Chain) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
@@ -366,7 +413,21 @@ func (c *Chain) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.
 		c.stats.errors.Add(1)
 		return nil, err
 	}
-	return conn, nil
+	return c.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+}
+
+// NewConnection / NewPacketConnection mark inbound (user) traffic as external
+// for the interrupt group — without the mark every chain connection would be
+// treated as internal and ripped on any toggle regardless of
+// interrupt_exist_connections (SPEC 075, selector model).
+func (c *Chain) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+	ctx = interrupt.ContextWithIsExternalConnection(ctx)
+	c.connection.NewConnection(ctx, c, conn, metadata, onClose)
+}
+
+func (c *Chain) NewPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+	ctx = interrupt.ContextWithIsExternalConnection(ctx)
+	c.connection.NewPacketConnection(ctx, c, conn, metadata, onClose)
 }
 
 // resolvedLeaf — узел, который позиция выберет сейчас (через Now() групп), или
@@ -407,6 +468,10 @@ func (c *Chain) ChainPath() []string {
 	}
 	path := make([]string, 0, len(c.tags))
 	for i := range c.tags {
+		// SPEC 075: a disabled position is not part of the traffic path.
+		if c.disabled[i].Load() {
+			continue
+		}
 		leaf := c.resolvedLeaf(i)
 		if leaf == nil {
 			path = append(path, c.tags[i])
@@ -433,6 +498,122 @@ func (c *Chain) CloneEndpoints() []adapter.Endpoint {
 	return endpoints
 }
 
+// --- SPEC 075: runtime position toggle ---------------------------------------
+
+func (c *Chain) positionDisabled(position int) bool {
+	return c.disabled[position].Load()
+}
+
+func (c *Chain) disabledStore() adapter.ChainDisabledStore {
+	cacheFile := service.FromContext[adapter.CacheFile](c.ctx)
+	if cacheFile == nil {
+		return nil
+	}
+	store, _ := cacheFile.(adapter.ChainDisabledStore)
+	return store
+}
+
+// loadDisabled applies the persisted disabled set (by position tag) before
+// preload. A stored tag no longer present in the chain is ignored.
+func (c *Chain) loadDisabled() {
+	store := c.disabledStore()
+	if store == nil {
+		return
+	}
+	for _, tag := range store.LoadChainDisabled(c.Tag()) {
+		if i := slices.Index(c.tags, tag); i >= 0 {
+			c.disabled[i].Store(true)
+			c.logger.Info("position ", i, " (", tag, ") disabled (restored from cache)")
+		}
+	}
+}
+
+func (c *Chain) persistDisabled() {
+	store := c.disabledStore()
+	if store == nil {
+		return
+	}
+	var disabledTags []string
+	for i := range c.tags {
+		if c.disabled[i].Load() {
+			disabledTags = append(disabledTags, c.tags[i])
+		}
+	}
+	if err := store.StoreChainDisabled(c.Tag(), disabledTags); err != nil {
+		c.logger.Error("store disabled positions: ", err)
+	}
+}
+
+// SetPositionEnabled toggles one position (packet order, 0 = entry). The flag
+// always applies — it expresses user intent; a failed warm-up of the link is
+// returned as data (warmupError), node health stays visible in ChainStatus.
+// Existing connections are interrupted with selector semantics; retired clones
+// are never force-closed — idle eviction collects them once drained.
+func (c *Chain) SetPositionEnabled(position int, enabled bool) (string, error) {
+	if position < 0 || position >= len(c.tags) {
+		return "", E.New("position ", position, " out of range [0, ", len(c.tags)-1, "]")
+	}
+	if c.hops == nil {
+		return "", E.New("chain is not started")
+	}
+	if c.disabled[position].Swap(!enabled) == !enabled {
+		return "", nil
+	}
+	if enabled {
+		c.logger.Info("position ", position, " (", c.tags[position], ") enabled")
+	} else {
+		c.logger.Info("position ", position, " (", c.tags[position], ") disabled")
+	}
+	c.persistDisabled()
+	c.interruptGroup.Interrupt(c.interruptExternal)
+	if enabled {
+		return c.warmupPosition(position), nil
+	}
+	return "", nil
+}
+
+// warmupPosition eagerly creates the link on enable, under the preload rule:
+// only deterministic choices (leaf or selector chain) warm up; a urltest
+// position stays lazy, direct/block have no link.
+func (c *Chain) warmupPosition(position int) string {
+	if position == 0 {
+		return ""
+	}
+	leaf := deterministicLeaf(c.outbound, c.targets[position])
+	if leaf == nil || !isClonable(leaf) {
+		return ""
+	}
+	if _, err := c.cloneFor(position, leaf); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// CloneConfigJSON — the effective post-transform options JSON of the live link
+// at the position's currently resolved leaf (snapshotted at clone creation).
+func (c *Chain) CloneConfigJSON(position int) (string, error) {
+	if position < 0 || position >= len(c.tags) {
+		return "", E.New("position ", position, " out of range [0, ", len(c.tags)-1, "]")
+	}
+	if position == 0 {
+		return "", E.New("position 0 uses the original outbound, no link exists")
+	}
+	if c.targets == nil {
+		return "", E.New("chain is not started")
+	}
+	leaf := c.resolvedLeaf(position)
+	if leaf == nil {
+		return "", E.New("position ", position, " has no resolved node")
+	}
+	c.cloneMu.Lock()
+	cl := c.clones[cloneKey{position: position, leafTag: leaf.Tag()}]
+	c.cloneMu.Unlock()
+	if cl == nil {
+		return "", E.New("no live link for ", leaf.Tag(), " at position ", position)
+	}
+	return cl.configJSON, nil
+}
+
 func (c *Chain) ChainStatus() adapter.ChainStatus {
 	status := adapter.ChainStatus{
 		Tag:           c.Tag(),
@@ -456,7 +637,7 @@ func (c *Chain) ChainStatus() adapter.ChainStatus {
 	}
 	c.cloneMu.Unlock()
 	for i := range c.tags {
-		position := adapter.ChainPositionStatus{Tag: c.tags[i]}
+		position := adapter.ChainPositionStatus{Tag: c.tags[i], Disabled: c.disabled[i].Load()}
 		if c.targets == nil {
 			status.Positions = append(status.Positions, position)
 			continue

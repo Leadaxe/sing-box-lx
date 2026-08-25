@@ -194,6 +194,24 @@ func mapToOptions(ctx context.Context, typeName string, m map[string]any, isEndp
 	return options, nil
 }
 
+// effectiveConfigJSON — SPEC 075: the link's effective config in config-file
+// form ({type, tag, ...options} after strip/rewrite/MTU/detour), snapshotted at
+// clone creation for GetChainCloneConfig. RunningConfig model (SPEC 037): a
+// re-marshal of the parsed struct — compare semantically, not textually.
+func effectiveConfigJSON(ctx context.Context, built *builtOptions, tag string) (string, error) {
+	m, err := optionsToMap(ctx, built.options)
+	if err != nil {
+		return "", err
+	}
+	m["type"] = built.typeName
+	m["tag"] = tag
+	data, err := stdjson.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 // applyStrip — снятие односторонних приёмов в карте опций. Возвращает, что
 // реально снято (для наблюдаемости).
 func applyStrip(m map[string]any, set stripSet) ([]string, error) {

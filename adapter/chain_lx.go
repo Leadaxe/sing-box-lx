@@ -87,6 +87,26 @@ type ChainStatusProvider interface {
 	ChainStatus() ChainStatus
 }
 
+// ChainController — SPEC 075: runtime control surface of a chain outbound.
+// SetPositionEnabled toggles one position (packet order, 0 = entry); the flag
+// always applies — warmupError reports a failed link warm-up as data, not as an
+// error. CloneConfigJSON returns the effective post-transform options JSON of
+// the live link at the position's currently resolved leaf.
+type ChainController interface {
+	SetPositionEnabled(position int, enabled bool) (warmupError string, err error)
+	CloneConfigJSON(position int) (string, error)
+}
+
+// ChainDisabledStore — SPEC 075: cache-file extension persisting the disabled
+// position set per chain tag. Stored as position tags (not indices), so config
+// edits keep the right hops disabled; tags no longer present are ignored on
+// load. Implemented by the cache-file service; discovered via type assertion
+// on adapter.CacheFile so the upstream interface stays untouched.
+type ChainDisabledStore interface {
+	LoadChainDisabled(chainTag string) []string
+	StoreChainDisabled(chainTag string, disabledTags []string) error
+}
+
 type ChainStatus struct {
 	Tag           string                `json:"tag"`
 	Positions     []ChainPositionStatus `json:"positions"`
@@ -102,6 +122,7 @@ type ChainPositionStatus struct {
 	IsGroup     bool              `json:"is_group"`
 	Now         string            `json:"now"`
 	Transparent bool              `json:"transparent"`
+	Disabled    bool              `json:"disabled"` // SPEC 075: runtime toggle
 	Errors      int64             `json:"errors"`
 	Clone       *ChainCloneStatus `json:"clone,omitempty"`
 }

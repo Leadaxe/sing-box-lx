@@ -156,6 +156,135 @@ func TestChainEndToEndShadowsocksHops(t *testing.T) {
 	require.Equal(t, "through-the-chain", get())
 }
 
+// TestChainRuntimeToggleEndToEnd — SPEC 075: runtime enable/disable of chain
+// positions on a live box. Covers what the unit stand cannot: real service
+// wiring (DNS transport manager for the hop-0 direct fallback, the real
+// cache-file as ChainDisabledStore) and real traffic across every toggle
+// combination, including the all-disabled degeneration into direct.
+func TestChainRuntimeToggleEndToEnd(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "through-the-chain")
+	}))
+	defer target.Close()
+
+	inPort, midPort, exitPort, mixedPort := freePort(t), freePort(t), freePort(t), freePort(t)
+	cachePath := t.TempDir() + "/cache.db"
+	options := option.Options{
+		Log: &option.LogOptions{Level: "warning"},
+		Inbounds: []option.Inbound{
+			ssServer("srv-in", inPort),
+			ssServer("srv-mid", midPort),
+			ssServer("srv-exit", exitPort),
+			{Type: C.TypeMixed, Tag: "mixed", Options: &option.HTTPMixedInboundOptions{ListenOptions: listenOn(mixedPort)}},
+		},
+		Outbounds: []option.Outbound{
+			ssClient("in", inPort),
+			ssClient("mid", midPort),
+			ssClient("exit", exitPort),
+			{Type: C.TypeDirect, Tag: "direct"},
+			{Type: C.TypeChain, Tag: "virt", Options: &option.ChainOutboundOptions{Outbounds: []string{"in", "mid", "exit"}}},
+		},
+		Route: &option.RouteOptions{
+			Final: "virt",
+			Rules: []option.Rule{{
+				Type: C.RuleTypeDefault,
+				DefaultOptions: option.DefaultRule{
+					RawDefaultRule: option.RawDefaultRule{Inbound: []string{"srv-in", "srv-mid", "srv-exit"}},
+					RuleAction:     option.RuleAction{Action: C.RuleActionTypeRoute, RouteOptions: option.RouteActionOptions{Outbound: "direct"}},
+				},
+			}},
+		},
+		Experimental: &option.ExperimentalOptions{CacheFile: &option.CacheFileOptions{Enabled: true, Path: cachePath}},
+	}
+	newInstance := func() *box.Box {
+		instance, err := box.New(box.Options{Context: include.Context(context.Background()), Options: options})
+		require.NoError(t, err)
+		require.NoError(t, instance.Start())
+		return instance
+	}
+	instance := newInstance()
+	closed := false
+	defer func() {
+		if !closed {
+			instance.Close()
+		}
+	}()
+
+	proxyURL, _ := url.Parse("socks5://127.0.0.1:" + strconv.Itoa(int(mixedPort)))
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL), DisableKeepAlives: true}, Timeout: 10 * time.Second}
+	get := func() string {
+		resp, err := client.Get(target.URL)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		return string(body)
+	}
+	controllerOf := func(instance *box.Box) (adapter.ChainController, adapter.ChainPathProvider, adapter.ChainStatusProvider) {
+		chainOutbound, loaded := instance.Outbound().Outbound("virt")
+		require.True(t, loaded)
+		return chainOutbound.(adapter.ChainController), chainOutbound.(adapter.ChainPathProvider), chainOutbound.(adapter.ChainStatusProvider)
+	}
+	controller, pathProvider, statusProvider := controllerOf(instance)
+
+	// Baseline: full path carries traffic.
+	require.Equal(t, "through-the-chain", get())
+	require.Equal(t, "in,mid,exit", strings.Join(pathProvider.ChainPath(), ","))
+
+	// Disable the middle: the hop is skipped, traffic still flows.
+	warmup, err := controller.SetPositionEnabled(1, false)
+	require.NoError(t, err)
+	require.Empty(t, warmup)
+	require.Equal(t, "in,exit", strings.Join(pathProvider.ChainPath(), ","))
+	require.True(t, statusProvider.ChainStatus().Positions[1].Disabled)
+	require.Equal(t, "mid", statusProvider.ChainStatus().Positions[1].Now)
+	require.Equal(t, "through-the-chain", get())
+
+	// Disable the entry: hop 0 dials the real network via the direct fallback.
+	_, err = controller.SetPositionEnabled(0, false)
+	require.NoError(t, err)
+	require.Equal(t, "exit", strings.Join(pathProvider.ChainPath(), ","))
+	require.Equal(t, "through-the-chain", get())
+
+	// Everything disabled: the chain degenerates into direct.
+	_, err = controller.SetPositionEnabled(2, false)
+	require.NoError(t, err)
+	require.Empty(t, pathProvider.ChainPath())
+	require.Equal(t, "through-the-chain", get())
+
+	// Everything back on: full path again, links warmed up eagerly.
+	for position := 0; position < 3; position++ {
+		warmup, err = controller.SetPositionEnabled(position, true)
+		require.NoError(t, err)
+		require.Empty(t, warmup)
+	}
+	require.Equal(t, "in,mid,exit", strings.Join(pathProvider.ChainPath(), ","))
+	require.Equal(t, "through-the-chain", get())
+
+	// Effective link config: real transform output with the hop detour.
+	content, err := controller.CloneConfigJSON(2)
+	require.NoError(t, err)
+	require.Contains(t, content, `"type": "shadowsocks"`)
+	require.Contains(t, content, `"tag": "exit"`)
+	require.Contains(t, content, `"detour": "virt#1"`)
+	_, err = controller.CloneConfigJSON(0)
+	require.Error(t, err)
+
+	// Persistence: a disabled position survives a restart via the cache-file.
+	_, err = controller.SetPositionEnabled(1, false)
+	require.NoError(t, err)
+	instance.Close()
+	closed = true
+
+	instance2 := newInstance()
+	defer instance2.Close()
+	_, pathProvider2, statusProvider2 := controllerOf(instance2)
+	require.True(t, statusProvider2.ChainStatus().Positions[1].Disabled)
+	require.Equal(t, "in,exit", strings.Join(pathProvider2.ChainPath(), ","))
+	require.Equal(t, "through-the-chain", get())
+}
+
 // TestChainCheckRejectsWithoutHops — минимум две позиции, ошибка на чтении.
 func TestChainRejectsSinglePosition(t *testing.T) {
 	ctx := include.Context(context.Background())

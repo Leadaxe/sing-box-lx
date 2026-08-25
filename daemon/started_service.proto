@@ -64,6 +64,8 @@ service StartedService {
   rpc GetRunningConfig(google.protobuf.Empty) returns (RunningConfig) {}
   rpc GetURLViaOutbound(GetURLViaOutboundRequest) returns (GetURLViaOutboundResponse) {}
   rpc GetChains(google.protobuf.Empty) returns (ChainList) {}
+  rpc SetChainPositionEnabled(SetChainPositionEnabledRequest) returns (SetChainPositionEnabledResponse) {}
+  rpc GetChainCloneConfig(GetChainCloneConfigRequest) returns (RunningConfig) {}
 
   // lx:end lx_command
 }
@@ -1000,6 +1002,9 @@ message ChainPosition {
   bool transparent = 4;
   int64 errors = 5;
   ChainCloneState clone = 6;
+  // SPEC 075 — runtime toggle: the position is excluded from the path (`now`
+  // stays filled so diagnostics can show WHAT is disabled; clone is nil).
+  bool disabled = 7;
 }
 message ChainState {
   string tag = 1;
@@ -1012,6 +1017,28 @@ message ChainState {
 }
 message ChainList {
   repeated ChainState chains = 1;
+}
+
+// SPEC 075 — runtime enable/disable of one chain position (packet order,
+// 0 = entry). Any combination is valid: all positions disabled degenerates the
+// chain into direct. The flag always applies; a failed link warm-up on enable
+// is DATA (warmupError), not a status error — status errors are reserved for
+// genuine call failures (unknown chain, index out of range, service stopped).
+message SetChainPositionEnabledRequest {
+  string chainTag = 1;
+  int32 position = 2;
+  bool enabled = 3;
+}
+message SetChainPositionEnabledResponse {
+  string warmupError = 1; // "" = ok, or warm-up not applicable (urltest/direct/disable)
+}
+// SPEC 075 — effective post-transform options JSON ({type, tag, ...} after
+// strip/rewrite/MTU/detour) of the live link at the position's currently
+// resolved leaf. Snapshotted at clone creation (RunningConfig model, SPEC 037).
+// NotFound when no live link exists (position 0, transparent, evicted, disabled).
+message GetChainCloneConfigRequest {
+  string chainTag = 1;
+  int32 position = 2;
 }
 
 // lx:end lx_command

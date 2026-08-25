@@ -335,3 +335,4 @@ GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
 | Task / Задача | What it delivers / Что даёт |
 |---------------|-----------------------------|
 | [073](../../TASKS/073-CHAIN_OUTBOUND/SPEC.md) | Outbound `chain`: group positions, runtime links, transparent `direct`, warm-up/idleness, MTU, `strip`/`rewrite`, observability / Outbound `chain`: позиции-группы, рантайм-звенья, прозрачный `direct`, прогрев/простой, MTU, `strip`/`rewrite`, наблюдаемость |
+| [075](../../TASKS/075-CHAIN_POSITION_TOGGLE/SPEC.md) | Runtime enable/disable of any position over gRPC (`SetChainPositionEnabled`), cache-file persistence, selector-style connection interrupt, effective link config (`GetChainCloneConfig`), `disabled` in diagnostics / Runtime вкл/выкл любой позиции по gRPC, персистентность в cache-file, разрыв соединений по селекторной модели, эффективный конфиг звена, `disabled` в диагностике |

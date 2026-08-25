@@ -34,13 +34,16 @@ func (c *ChainCloneState) Stripped() StringIterator {
 
 // ChainPosition — one position of the chain, in packet order (entry first).
 // Now is the node the position resolves to right now; Transparent — a `direct`
-// at position >= 1 that collapses the hop. Clone is nil for position 0, for
-// transparent positions and while no link exists yet.
+// at position >= 1 that collapses the hop; Disabled — the SPEC 075 runtime
+// toggle (Now stays filled so the UI can show WHAT is disabled). Clone is nil
+// for position 0, for transparent and disabled positions and while no link
+// exists yet.
 type ChainPosition struct {
 	Tag         string
 	IsGroup     bool
 	Now         string
 	Transparent bool
+	Disabled    bool
 	Errors      int64
 	Clone       *ChainCloneState
 }
@@ -80,6 +83,49 @@ func (c *CommandClient) GetChains() (ChainStateIterator, error) {
 	})
 }
 
+// ChainToggleResult — SPEC 075. An object (not a bare string) crosses the
+// gomobile bridge — see RunningConfig for why. WarmupError is empty when the
+// link warmed up fine or warm-up was not applicable (urltest position,
+// direct/block leaf, disable); the toggle itself HAS been applied either way.
+type ChainToggleResult struct {
+	WarmupError string
+}
+
+// SetChainPositionEnabled toggles one chain position (packet order, 0 = entry)
+// at runtime (SPEC 075). Any combination is valid — disabling every position
+// degenerates the chain into direct. The disabled set persists in the
+// cache-file and is restored on service start.
+func (c *CommandClient) SetChainPositionEnabled(chainTag string, position int32, enabled bool) (*ChainToggleResult, error) {
+	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*ChainToggleResult, error) {
+		response, err := client.SetChainPositionEnabled(ctx, &daemon.SetChainPositionEnabledRequest{
+			ChainTag: chainTag,
+			Position: position,
+			Enabled:  enabled,
+		})
+		if err != nil {
+			return nil, E.Cause(err, "set chain position enabled")
+		}
+		return &ChainToggleResult{WarmupError: response.WarmupError}, nil
+	})
+}
+
+// GetChainCloneConfig returns the effective post-transform options JSON
+// ({type, tag, ...} after strip/rewrite/MTU/detour) of the live link at the
+// position's currently resolved leaf (SPEC 075). Errors with NotFound when no
+// live link exists (position 0, transparent, evicted, disabled).
+func (c *CommandClient) GetChainCloneConfig(chainTag string, position int32) (*RunningConfig, error) {
+	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*RunningConfig, error) {
+		response, err := client.GetChainCloneConfig(ctx, &daemon.GetChainCloneConfigRequest{
+			ChainTag: chainTag,
+			Position: position,
+		})
+		if err != nil {
+			return nil, E.Cause(err, "get chain clone config")
+		}
+		return &RunningConfig{content: response.Content}, nil
+	})
+}
+
 func chainListFromGRPC(list *daemon.ChainList) ChainStateIterator {
 	if list == nil || len(list.Chains) == 0 {
 		return newIterator([]*ChainState{})
@@ -100,6 +146,7 @@ func chainListFromGRPC(list *daemon.ChainList) ChainStateIterator {
 				IsGroup:     position.IsGroup,
 				Now:         position.Now,
 				Transparent: position.Transparent,
+				Disabled:    position.Disabled,
 				Errors:      position.Errors,
 			}
 			if position.Clone != nil {

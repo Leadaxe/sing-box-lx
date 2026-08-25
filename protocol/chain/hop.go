@@ -40,6 +40,19 @@ func (h *hop) Network() []string      { return h.target.Network() }
 func (h *hop) Dependencies() []string { return []string{h.target.Tag()} }
 
 func (h *hop) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	// SPEC 075: a disabled position is skipped entirely — position >= 1 falls
+	// through to the previous hop, a disabled entry dials the real network.
+	if h.chain.positionDisabled(h.index) {
+		if h.index > 0 {
+			return h.chain.hops[h.index-1].DialContext(ctx, network, destination)
+		}
+		conn, err := h.chain.directDialer.DialContext(ctx, network, destination)
+		if err != nil {
+			h.errors.Add(1)
+			return nil, E.Cause(err, "chain[", h.chain.Tag(), "] #0 (direct fallback)")
+		}
+		return conn, nil
+	}
 	var (
 		conn net.Conn
 		err  error
@@ -66,6 +79,18 @@ func (h *hop) DialContext(ctx context.Context, network string, destination M.Soc
 }
 
 func (h *hop) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	// SPEC 075: see DialContext.
+	if h.chain.positionDisabled(h.index) {
+		if h.index > 0 {
+			return h.chain.hops[h.index-1].ListenPacket(ctx, destination)
+		}
+		conn, err := h.chain.directDialer.ListenPacket(ctx, destination)
+		if err != nil {
+			h.errors.Add(1)
+			return nil, E.Cause(err, "chain[", h.chain.Tag(), "] #0 (direct fallback)")
+		}
+		return conn, nil
+	}
 	var (
 		conn net.PacketConn
 		err  error
@@ -92,6 +117,11 @@ func (h *hop) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.Pa
 // ResolveLeaf — выбранный узел позиции → его звено для этого хопа. direct на
 // позиции ≥ 1 прозрачен (проход в хоп i−1), block терминален (как есть).
 func (h *hop) ResolveLeaf(ctx context.Context, leaf adapter.Outbound) (adapter.Outbound, error) {
+	// SPEC 075: toggle race guard — a dial that entered the group before the
+	// toggle resolves to a passthrough instead of creating a link.
+	if h.index > 0 && h.chain.positionDisabled(h.index) {
+		return &passthrough{hop: h.chain.hops[h.index-1], tag: leaf.Tag()}, nil
+	}
 	if h.index == 0 {
 		return leaf, nil
 	}

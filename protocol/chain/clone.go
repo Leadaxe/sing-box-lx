@@ -29,6 +29,9 @@ type clone struct {
 	position int
 	inner    adapter.Outbound
 	info     cloneInfo
+	// configJSON — SPEC 075: effective post-transform options in config-file
+	// form ({type, tag, ...}), snapshotted at creation for GetChainCloneConfig.
+	configJSON string
 
 	createdAt  time.Time
 	lastPicked atomic.Int64 // unix nanos
@@ -209,6 +212,10 @@ func (c *Chain) createClone(position int, leaf adapter.Outbound) (*clone, error)
 	if err != nil {
 		return nil, err
 	}
+	configJSON, err := effectiveConfigJSON(c.ctx, built, leaf.Tag())
+	if err != nil {
+		return nil, E.Cause(err, "serialize link config")
+	}
 	loggerTag := "chain[" + c.Tag() + "]#" + strconv.Itoa(position) + "/" + leaf.Tag()
 	var cloneLogger log.ContextLogger
 	if c.logFactory != nil {
@@ -251,11 +258,12 @@ func (c *Chain) createClone(position int, leaf adapter.Outbound) (*clone, error)
 		return nil, err
 	}
 	cl := &clone{
-		key:       cloneKey{position: position, leafTag: leaf.Tag()},
-		position:  position,
-		inner:     created,
-		info:      built.info,
-		createdAt: time.Now(),
+		key:        cloneKey{position: position, leafTag: leaf.Tag()},
+		position:   position,
+		inner:      created,
+		info:       built.info,
+		configJSON: configJSON,
+		createdAt:  time.Now(),
 	}
 	cl.touch()
 	return cl, nil

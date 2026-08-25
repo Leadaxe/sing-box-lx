@@ -23,6 +23,10 @@ type ChainOutboundOptions struct {
 	// Rewrite — JSON merge-patch (RFC 7396) поверх опций узла данного типа;
 	// применяется к звеньям (позиции ≥ 1) после strip и до подгонки MTU.
 	Rewrite map[string]any `json:"rewrite,omitempty"`
+	// InterruptExistConnections — SPEC 075: selector semantics for the runtime
+	// position toggle. Internal connections are always interrupted on a toggle;
+	// external (user) connections only when this flag is set.
+	InterruptExistConnections bool `json:"interrupt_exist_connections,omitempty"`
 }
 
 // StripEvasionEnabled — дефолт true.
