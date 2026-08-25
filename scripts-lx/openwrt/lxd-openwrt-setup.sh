@@ -185,26 +185,112 @@ fi
 # ── 4. A free subnet ────────────────────────────────────────────────────────
 step "Segment network"
 
-SUBNET=""
-for n in 20 21 22 30 40 50; do
-    if ! ip -4 addr show 2>/dev/null | grep -q "192\.168\.$n\."; then SUBNET="$n"; break; fi
-done
-if [ -z "$SUBNET" ]; then
-    warn "subnets 192.168.{20,21,22,30,40,50}.0/24 are all taken"
-    SUBNET=$(ask "third octet for the segment network (192.168.X.0/24)" "")
-    case "$SUBNET" in *[!0-9]*|"") die "need a number 0–255" ;; esac
-    [ "$SUBNET" -le 255 ] || die "octet greater than 255"
-    ip -4 addr show 2>/dev/null | grep -q "192\.168\.$SUBNET\." && die "192.168.$SUBNET.0/24 is taken too"
-fi
-GW="192.168.$SUBNET.1"
-say "subnet:      192.168.$SUBNET.0/24, gateway $GW"
+# Occupancy is checked against several sources at once. Interface addresses
+# alone are not enough: behind double NAT the ISP router's network shows up
+# only as a route, and a collision breaks routing silently, after setup.
+net_taken() {   # net_taken <a.b.c> — 0 if the /24 is taken
+    ip -4 addr  show          2>/dev/null | grep -q "inet $1\." && return 0
+    ip -4 route show          2>/dev/null | grep -q "^$1\."     && return 0
+    ip -4 route show table all 2>/dev/null | grep -q "^$1\."    && return 0
+    # the address the ISP handed to WAN: its /24 is taken even without a route
+    [ -n "$WAN_NET" ] && [ "$1" = "$WAN_NET" ] && return 0
+    # A route wider than /24 can cover the candidate whole: with LAN 10.0.0.1/8
+    # the segment 10.0.1.0/24 sits INSIDE br-lan, so traffic would go to the
+    # LAN bypassing the tunnel. The string checks above miss such an overlap.
+    _c1=${1%%.*}; _cr=${1#*.}; _c2=${_cr%%.*}; _c3=${_cr#*.}
+    _cip=$(( _c1 * 16777216 + _c2 * 65536 + _c3 * 256 ))
+    { ip -4 route show 2>/dev/null; ip -4 route show table all 2>/dev/null; } \
+      | sed -n 's|^\([0-9]*\.[0-9]*\.[0-9]*\.[0-9]*\)/\([0-9]*\) .*|\1 \2|p' \
+      | while read -r _rnet _rlen; do
+            [ "$_rlen" -ge 24 ] && continue   # /24 or narrower — caught above
+            [ "$_rlen" -le 0  ] && continue   # default route — not occupancy
+            _r1=${_rnet%%.*}; _rr=${_rnet#*.}; _r2=${_rr%%.*}; _rr=${_rr#*.}
+            _r3=${_rr%%.*};   _r4=${_rr#*.}
+            _rip=$(( _r1 * 16777216 + _r2 * 65536 + _r3 * 256 + _r4 ))
+            _mask=$(( 4294967295 ^ (( 1 << (32 - _rlen) ) - 1) ))
+            [ $(( _cip & _mask )) -eq $(( _rip & _mask )) ] && exit 7
+        done
+    [ "$?" = 7 ] && return 0
+    return 1
+}
 
-# tun p2p subnet: 172.16.x.0/30, first free
+# WAN interface /24 (double NAT: usually 192.168.0/1/2.x from the ISP CPE)
+WAN_NET=""
+_wan_dev=$(uci -q get network.wan.device || true)
+[ -z "$_wan_dev" ] && _wan_dev=$(ip -4 route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
+if [ -n "$_wan_dev" ]; then
+    WAN_NET=$(ip -4 addr show dev "$_wan_dev" 2>/dev/null \
+        | sed -n 's/.*inet \([0-9]*\.[0-9]*\.[0-9]*\)\..*/\1/p' | head -1)
+fi
+
+# The base is the router's own LAN network (its Wi-Fi shares that bridge and
+# has no separate network). Counting up from it keeps things recognisable —
+# "home is .1, the segment is .2" — and busy neighbours (a guest SSID and the
+# like) are skipped by the occupancy check above.
+LAN_BASE=$(uci -q get network.lan.ipaddr | sed -n 's/^\([0-9]*\.[0-9]*\.[0-9]*\)\..*/\1/p')
+
+NET_BASE=""
+if [ -n "$LAN_BASE" ]; then
+    _o1=${LAN_BASE%%.*}; _rest=${LAN_BASE#*.}
+    _o2=${_rest%%.*};    _o3=${_rest#*.}
+    # Increment within the same RFC1918 prefix: 10.0.0 → 10.0.1,
+    # 172.16.5 → 172.16.6, 192.168.1 → 192.168.2. The third octet stops at
+    # 254; past that we fall back to the list instead of leaving the block.
+    _n=$((_o3 + 1))
+    while [ "$_n" -le 254 ]; do
+        if ! net_taken "$_o1.$_o2.$_n"; then NET_BASE="$_o1.$_o2.$_n"; break; fi
+        _n=$((_n + 1))
+    done
+fi
+
+# Fallback list — rare octets that almost nobody ships as a default.
+if [ -z "$NET_BASE" ]; then
+    for n in 20 21 22 30 40 50; do
+        if ! net_taken "192.168.$n"; then NET_BASE="192.168.$n"; break; fi
+    done
+fi
+
+# The pick is never silent: show it and allow a replacement. A mistake here is
+# expensive — the collision only surfaces once the segment is already up.
+if [ -n "$NET_BASE" ]; then
+    say "proposed segment network: $NET_BASE.0/24 (gateway $NET_BASE.1)"
+    [ -n "$LAN_BASE" ] && say "  router LAN network: $LAN_BASE.x"
+    [ -n "$WAN_NET" ]  && say "  network behind WAN: $WAN_NET.x (excluded)"
+    ask_yn_default "Use it?" || NET_BASE=""
+else
+    warn "no free subnet found automatically"
+fi
+
+while [ -z "$NET_BASE" ]; do
+    NET_BASE=$(ask "segment network, first three octets (e.g. 192.168.30)" "")
+    case "$NET_BASE" in
+        [0-9]*.[0-9]*.[0-9]*) ;;
+        *) warn "need the a.b.c form, e.g. 192.168.30"; NET_BASE=""; continue ;;
+    esac
+    case "$NET_BASE" in *[!0-9.]*|*.*.*.*) warn "need the a.b.c form, e.g. 192.168.30"; NET_BASE=""; continue ;; esac
+    _bad=0
+    for _o in $(printf '%s\n' "$NET_BASE" | tr '.' ' '); do
+        [ "$_o" -le 255 ] 2>/dev/null || _bad=1
+    done
+    [ "$_bad" = 1 ] && { warn "octet greater than 255"; NET_BASE=""; continue; }
+    if net_taken "$NET_BASE"; then
+        warn "$NET_BASE.0/24 is already taken"
+        ask_yn "Use it anyway?" || NET_BASE=""
+    fi
+done
+
+GW="$NET_BASE.1"
+say "subnet:      $NET_BASE.0/24, gateway $GW"
+
+# tun p2p subnet: 172.16.x.0/30, first free. Checked with the same
+# net_taken as the segment: the plain grep saw neither routes nor a wider
+# prefix overlap (172.16.0.0/12 on the router covers all four candidates).
 TUN_NET=""
 for n in 16 17 18 19; do
-    if ! ip -4 addr show 2>/dev/null | grep -q "172\.$n\.0\."; then TUN_NET="$n"; break; fi
+    if ! net_taken "172.$n.0"; then TUN_NET="$n"; break; fi
 done
-[ -z "$TUN_NET" ] && TUN_NET=16
+TUN_FALLBACK=0
+[ -z "$TUN_NET" ] && { TUN_NET=16; TUN_FALLBACK=1; }
 
 # The tunnel name and address end up BOTH in the core config AND in the
 # firewall (the sbtun zone is bound to the device by name, the sbtun_tcp rule
@@ -216,12 +302,59 @@ esac
 [ ${#TUN_IF} -le 15 ] || die "interface name longer than 15 characters — the Linux kernel won't accept it"
 ip link show "$TUN_IF" >/dev/null 2>&1 && die "interface $TUN_IF already exists"
 
-TUN_ADDR=$(ask "tunnel address (p2p /30)" "172.$TUN_NET.0.1")
-case "$TUN_ADDR" in
-    [0-9]*.[0-9]*.[0-9]*.[0-9]*) : ;;
-    *) die "the tunnel address must be IPv4: $TUN_ADDR" ;;
-esac
+# The tunnel address is shown too: a collision here surfaces later, not during
+# setup — the sbtun_tcp rule is bound to the address, so TCP from the segment
+# gets refused while ICMP/DNS stay alive. Manual input is fully validated.
+TUN_ADDR=""
+_tun_auto="172.$TUN_NET.0.1"
+say "proposed tunnel address: $_tun_auto/30 (p2p)"
+[ "$TUN_FALLBACK" = 1 ] && warn "all of 172.{16..19}.0.x are taken — so is the proposed address; set your own"
+if ask_yn_default "Use it?"; then
+    TUN_ADDR="$_tun_auto"
+fi
+while [ -z "$TUN_ADDR" ]; do
+    TUN_ADDR=$(ask "tunnel address (p2p /30)" "")
+    case "$TUN_ADDR" in
+        [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
+        *) warn "the tunnel address must be IPv4, e.g. 172.16.0.1"; TUN_ADDR=""; continue ;;
+    esac
+    case "$TUN_ADDR" in *[!0-9.]*) warn "the tunnel address must be IPv4"; TUN_ADDR=""; continue ;; esac
+    _bad=0
+    for _o in $(printf '%s\n' "$TUN_ADDR" | tr '.' ' '); do
+        [ "$_o" -le 255 ] 2>/dev/null || _bad=1
+    done
+    [ "$_bad" = 1 ] && { warn "octet greater than 255"; TUN_ADDR=""; continue; }
+    # a tunnel /30 inside the segment network would make the routes fight
+    _t3=${TUN_ADDR%.*}
+    if [ "$_t3" = "$NET_BASE" ]; then
+        warn "the tunnel address must not sit in the segment network ($NET_BASE.0/24)"
+        TUN_ADDR=""; continue
+    fi
+    if net_taken "$_t3"; then
+        warn "$_t3.0/24 is already taken"
+        ask_yn "Use it anyway?" || TUN_ADDR=""
+    fi
+done
 say "tunnel:      $TUN_IF ($TUN_ADDR/30)"
+
+# DNS for segment clients is handed out via DHCP option 6. The router's own
+# resolver won't do: dnsmasq would answer outside the tunnel and the queries
+# would leak from the home IP. It has to be external — but which one is the
+# owner's call, not the script's.
+SEG_DNS=$(ask "DNS for segment clients" "8.8.8.8")
+case "$SEG_DNS" in
+    [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
+    *) die "DNS must be an IPv4 address: $SEG_DNS" ;;
+esac
+case "$SEG_DNS" in *[!0-9.]*) die "DNS must be an IPv4 address: $SEG_DNS" ;; esac
+for _o in $(printf '%s\n' "$SEG_DNS" | tr '.' ' '); do
+    [ "$_o" -le 255 ] 2>/dev/null || die "octet greater than 255: $SEG_DNS"
+done
+# The router's own address = dnsmasq = resolution outside the tunnel.
+[ "$SEG_DNS" = "$GW" ] && die "the segment gateway is not allowed: resolution would bypass the tunnel"
+if [ -n "$LAN_BASE" ] && [ "${SEG_DNS%.*}" = "$LAN_BASE" ]; then
+    warn "$SEG_DNS is an address in the router LAN; if that is dnsmasq, resolution will bypass the tunnel"
+fi
 
 # The bridge name also goes into the core config — into include_interface (the
 # "LAN interfaces" field in the launcher UI). It is what contains the capture
@@ -477,7 +610,7 @@ uci set "dhcp.$NET.limit=150"
 uci set "dhcp.$NET.leasetime=12h"
 uci set "dhcp.$NET.dhcpv4=server"
 uci -q delete "dhcp.$NET.dhcp_option" 2>/dev/null || true
-uci add_list "dhcp.$NET.dhcp_option=6,8.8.8.8"
+uci add_list "dhcp.$NET.dhcp_option=6,$SEG_DNS"
 uci commit dhcp
 
 # reload_config sometimes fails to nudge netifd about a freshly created device
@@ -501,7 +634,7 @@ say "bridge:      $BR ($GW/24)"
 
 # ⚠ a dnsmasq restart drops DNS for the whole LAN for a second
 /etc/init.d/dnsmasq restart >/dev/null 2>&1
-say "dhcp:        192.168.$SUBNET.100–249, DNS 8.8.8.8"
+say "dhcp:        $NET_BASE.100–249, DNS $SEG_DNS"
 
 # ── 8. Firewall: fail-closed ────────────────────────────────────────────────
 step "Firewall"
@@ -641,7 +774,7 @@ printf '\n'
 [ -n "$SSID_5G" ] && printf 'Wi-Fi 5 GHz:     %s\n' "$SSID_5G"
 [ -n "$SSID_2G" ] && printf 'Wi-Fi 2.4 GHz:   %s\n' "$SSID_2G"
 printf 'Wi-Fi password:  %s\n' "$WIFI_KEY"
-printf 'segment:         192.168.%s.0/24 (gateway %s)\n' "$SUBNET" "$GW"
+printf 'segment:         %s.0/24 (gateway %s)\n' "$NET_BASE" "$GW"
 printf 'management:      https://%s:%s (TLS+mTLS)\n' "$LAN_IP" "$PORT"
 if [ "$WAN_EXPOSE" = 1 ]; then
     printf 'from outside:    https://%s:%s — port open in the firewall\n' "$WAN_SHOW" "$PORT"

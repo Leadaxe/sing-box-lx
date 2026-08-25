@@ -181,27 +181,111 @@ fi
 
 # ── 4. Свободная подсеть ────────────────────────────────────────────────────
 step "Сеть сегмента"
+# Занятость считаем по нескольким источникам сразу. Адресов интерфейсов мало:
+# при double NAT сеть провайдерского роутера видна только маршрутом, а её
+# коллизия с сегментом ломает роутинг уже после установки, молча.
+net_taken() {   # net_taken <a.b.c> — 0, если /24 занята
+    ip -4 addr  show          2>/dev/null | grep -q "inet $1\." && return 0
+    ip -4 route show          2>/dev/null | grep -q "^$1\."     && return 0
+    ip -4 route show table all 2>/dev/null | grep -q "^$1\."    && return 0
+    # адрес, выданный WAN-у провайдером: его /24 занята, даже без маршрута
+    [ -n "$WAN_NET" ] && [ "$1" = "$WAN_NET" ] && return 0
+    # Маршрут шире /24 может накрыть кандидата целиком: при LAN 10.0.0.1/8
+    # сегмент 10.0.1.0/24 лежит ВНУТРИ br-lan, и трафик уйдёт в LAN мимо
+    # туннеля. Строковое сравнение выше такое перекрытие не видит.
+    _c1=${1%%.*}; _cr=${1#*.}; _c2=${_cr%%.*}; _c3=${_cr#*.}
+    _cip=$(( _c1 * 16777216 + _c2 * 65536 + _c3 * 256 ))
+    { ip -4 route show 2>/dev/null; ip -4 route show table all 2>/dev/null; } \
+      | sed -n 's|^\([0-9]*\.[0-9]*\.[0-9]*\.[0-9]*\)/\([0-9]*\) .*|\1 \2|p' \
+      | while read -r _rnet _rlen; do
+            [ "$_rlen" -ge 24 ] && continue   # /24 и уже — поймано строкой выше
+            [ "$_rlen" -le 0  ] && continue   # default (0.0.0.0/0) — не занятость
+            _r1=${_rnet%%.*}; _rr=${_rnet#*.}; _r2=${_rr%%.*}; _rr=${_rr#*.}
+            _r3=${_rr%%.*};   _r4=${_rr#*.}
+            _rip=$(( _r1 * 16777216 + _r2 * 65536 + _r3 * 256 + _r4 ))
+            _mask=$(( 4294967295 ^ (( 1 << (32 - _rlen) ) - 1) ))
+            [ $(( _cip & _mask )) -eq $(( _rip & _mask )) ] && exit 7
+        done
+    [ "$?" = 7 ] && return 0
+    return 1
+}
 
-SUBNET=""
-for n in 20 21 22 30 40 50; do
-    if ! ip -4 addr show 2>/dev/null | grep -q "192\.168\.$n\."; then SUBNET="$n"; break; fi
-done
-if [ -z "$SUBNET" ]; then
-    warn "подсети 192.168.{20,21,22,30,40,50}.0/24 заняты"
-    SUBNET=$(ask "третий октет для сети сегмента (192.168.X.0/24)" "")
-    case "$SUBNET" in *[!0-9]*|"") die "нужен номер 0–255" ;; esac
-    [ "$SUBNET" -le 255 ] || die "октет больше 255"
-    ip -4 addr show 2>/dev/null | grep -q "192\.168\.$SUBNET\." && die "192.168.$SUBNET.0/24 тоже занята"
+# /24 WAN-интерфейса (double NAT: обычно 192.168.0/1/2.x от CPE провайдера)
+WAN_NET=""
+_wan_dev=$(uci -q get network.wan.device || true)
+[ -z "$_wan_dev" ] && _wan_dev=$(ip -4 route show default 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
+if [ -n "$_wan_dev" ]; then
+    WAN_NET=$(ip -4 addr show dev "$_wan_dev" 2>/dev/null \
+        | sed -n 's/.*inet \([0-9]*\.[0-9]*\.[0-9]*\)\..*/\1/p' | head -1)
 fi
-GW="192.168.$SUBNET.1"
-say "подсеть:     192.168.$SUBNET.0/24, шлюз $GW"
 
-# tun p2p-подсеть: 172.16.x.0/30, свободная
+# База — сеть LAN роутера (его Wi-Fi в том же бридже, отдельной сети у него
+# нет). Идём вверх от неё: пользователю понятно "домашняя .1, сегмент .2",
+# а занятые соседи (гостевой SSID и т.п.) отсеются проверкой выше.
+LAN_BASE=$(uci -q get network.lan.ipaddr | sed -n 's/^\([0-9]*\.[0-9]*\.[0-9]*\)\..*/\1/p')
+
+NET_BASE=""
+if [ -n "$LAN_BASE" ]; then
+    _o1=${LAN_BASE%%.*}; _rest=${LAN_BASE#*.}
+    _o2=${_rest%%.*};    _o3=${_rest#*.}
+    # Инкремент в пределах того же префикса RFC1918: 10.0.0 → 10.0.1,
+    # 172.16.5 → 172.16.6, 192.168.1 → 192.168.2. Верхняя граница третьего
+    # октета — 254; выше уходим в запасной список, а не за пределы блока.
+    _n=$((_o3 + 1))
+    while [ "$_n" -le 254 ]; do
+        if ! net_taken "$_o1.$_o2.$_n"; then NET_BASE="$_o1.$_o2.$_n"; break; fi
+        _n=$((_n + 1))
+    done
+fi
+
+# Запасной список — редкие октеты, которые почти никто не занимает дефолтом.
+if [ -z "$NET_BASE" ]; then
+    for n in 20 21 22 30 40 50; do
+        if ! net_taken "192.168.$n"; then NET_BASE="192.168.$n"; break; fi
+    done
+fi
+
+# Автовыбор не молчаливый: показываем и даём заменить. Ошибка здесь стоит
+# дорого — коллизия проявится после установки, когда сегмент уже поднят.
+if [ -n "$NET_BASE" ]; then
+    say "предлагаемая сеть сегмента: $NET_BASE.0/24 (шлюз $NET_BASE.1)"
+    [ -n "$LAN_BASE" ] && say "  сеть LAN роутера: $LAN_BASE.x"
+    [ -n "$WAN_NET" ]  && say "  сеть за WAN:      $WAN_NET.x (исключена)"
+    ask_yn_default "Использовать её?" || NET_BASE=""
+else
+    warn "свободной подсети не нашлось автоматически"
+fi
+
+while [ -z "$NET_BASE" ]; do
+    NET_BASE=$(ask "сеть сегмента, первые три октета (например 192.168.30)" "")
+    case "$NET_BASE" in
+        [0-9]*.[0-9]*.[0-9]*) ;;
+        *) warn "нужен вид a.b.c, например 192.168.30"; NET_BASE=""; continue ;;
+    esac
+    case "$NET_BASE" in *[!0-9.]*|*.*.*.*) warn "нужен вид a.b.c, например 192.168.30"; NET_BASE=""; continue ;; esac
+    _bad=0
+    for _o in $(printf '%s\n' "$NET_BASE" | tr '.' ' '); do
+        [ "$_o" -le 255 ] 2>/dev/null || _bad=1
+    done
+    [ "$_bad" = 1 ] && { warn "октет больше 255"; NET_BASE=""; continue; }
+    if net_taken "$NET_BASE"; then
+        warn "$NET_BASE.0/24 уже занята"
+        ask_yn "Всё равно использовать?" || NET_BASE=""
+    fi
+done
+
+GW="$NET_BASE.1"
+say "подсеть:     $NET_BASE.0/24, шлюз $GW"
+
+# tun p2p-подсеть: 172.16.x.0/30, свободная. Проверяем той же net_taken, что и
+# сегмент: строковый grep не видел ни маршрутов, ни перекрытия широким
+# префиксом (172.16.0.0/12 на роутере накрыл бы все четыре кандидата).
 TUN_NET=""
 for n in 16 17 18 19; do
-    if ! ip -4 addr show 2>/dev/null | grep -q "172\.$n\.0\."; then TUN_NET="$n"; break; fi
+    if ! net_taken "172.$n.0"; then TUN_NET="$n"; break; fi
 done
-[ -z "$TUN_NET" ] && TUN_NET=16
+TUN_FALLBACK=0
+[ -z "$TUN_NET" ] && { TUN_NET=16; TUN_FALLBACK=1; }
 
 # Имя и адрес туннеля попадут И в конфиг ядра, И в firewall (зона sbtun
 # привязана к устройству по имени, правило sbtun_tcp — к адресу).
@@ -213,12 +297,58 @@ esac
 [ ${#TUN_IF} -le 15 ] || die "имя интерфейса длиннее 15 символов — ядро Linux такое не примет"
 ip link show "$TUN_IF" >/dev/null 2>&1 && die "интерфейс $TUN_IF уже существует"
 
-TUN_ADDR=$(ask "адрес туннеля (p2p /30)" "172.$TUN_NET.0.1")
-case "$TUN_ADDR" in
-    [0-9]*.[0-9]*.[0-9]*.[0-9]*) : ;;
-    *) die "адрес туннеля должен быть IPv4: $TUN_ADDR" ;;
-esac
+# Адрес туннеля тоже предъявляем: коллизия здесь проявится не при установке, а
+# позже — правило sbtun_tcp привязано к адресу, и TCP из сегмента отобьётся при
+# живых ICMP/DNS. Автовыбор показываем, ручной ввод валидируем полностью.
+TUN_ADDR=""
+_tun_auto="172.$TUN_NET.0.1"
+say "предлагаемый адрес туннеля: $_tun_auto/30 (p2p)"
+[ "$TUN_FALLBACK" = 1 ] && warn "все 172.{16..19}.0.x заняты — предложенный адрес тоже; задайте свой"
+if ask_yn_default "Использовать его?"; then
+    TUN_ADDR="$_tun_auto"
+fi
+while [ -z "$TUN_ADDR" ]; do
+    TUN_ADDR=$(ask "адрес туннеля (p2p /30)" "")
+    case "$TUN_ADDR" in
+        [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
+        *) warn "адрес туннеля должен быть IPv4, например 172.16.0.1"; TUN_ADDR=""; continue ;;
+    esac
+    case "$TUN_ADDR" in *[!0-9.]*) warn "адрес туннеля должен быть IPv4"; TUN_ADDR=""; continue ;; esac
+    _bad=0
+    for _o in $(printf '%s\n' "$TUN_ADDR" | tr '.' ' '); do
+        [ "$_o" -le 255 ] 2>/dev/null || _bad=1
+    done
+    [ "$_bad" = 1 ] && { warn "октет больше 255"; TUN_ADDR=""; continue; }
+    # /30 туннеля внутри сети сегмента — маршруты передерутся
+    _t3=${TUN_ADDR%.*}
+    if [ "$_t3" = "$NET_BASE" ]; then
+        warn "адрес туннеля не должен лежать в сети сегмента ($NET_BASE.0/24)"
+        TUN_ADDR=""; continue
+    fi
+    if net_taken "$_t3"; then
+        warn "$_t3.0/24 уже занята"
+        ask_yn "Всё равно использовать?" || TUN_ADDR=""
+    fi
+done
 say "туннель:     $TUN_IF ($TUN_ADDR/30)"
+
+# DNS для клиентов сегмента уходит DHCP-опцией 6. Резолвер роутера сюда не
+# годится: dnsmasq ответил бы мимо туннеля, и запросы утекли бы с домашнего IP.
+# Нужен внешний адрес — но какой именно, решает владелец, а не скрипт.
+SEG_DNS=$(ask "DNS для клиентов сегмента" "8.8.8.8")
+case "$SEG_DNS" in
+    [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
+    *) die "DNS должен быть IPv4-адресом: $SEG_DNS" ;;
+esac
+case "$SEG_DNS" in *[!0-9.]*) die "DNS должен быть IPv4-адресом: $SEG_DNS" ;; esac
+for _o in $(printf '%s\n' "$SEG_DNS" | tr '.' ' '); do
+    [ "$_o" -le 255 ] 2>/dev/null || die "октет больше 255: $SEG_DNS"
+done
+# Адрес самого роутера = dnsmasq = резолв мимо туннеля.
+[ "$SEG_DNS" = "$GW" ] && die "нельзя указывать шлюз сегмента: резолв уйдёт мимо туннеля"
+if [ -n "$LAN_BASE" ] && [ "${SEG_DNS%.*}" = "$LAN_BASE" ]; then
+    warn "$SEG_DNS — адрес в LAN роутера; если это dnsmasq, резолв уйдёт мимо туннеля"
+fi
 
 # Имя моста тоже уходит в конфиг ядра — в include_interface (в UI лаунчера это
 # поле "LAN interfaces"). Именно оно запирает перехват в VPN-сегменте: укажешь
@@ -472,7 +602,7 @@ uci set "dhcp.$NET.limit=150"
 uci set "dhcp.$NET.leasetime=12h"
 uci set "dhcp.$NET.dhcpv4=server"
 uci -q delete "dhcp.$NET.dhcp_option" 2>/dev/null || true
-uci add_list "dhcp.$NET.dhcp_option=6,8.8.8.8"
+uci add_list "dhcp.$NET.dhcp_option=6,$SEG_DNS"
 uci commit dhcp
 
 # reload_config иногда не дёргает netifd на свежесозданную device-секцию, а
@@ -496,7 +626,7 @@ say "мост:        $BR ($GW/24)"
 
 # ⚠ рестарт dnsmasq на секунду роняет DNS всего LAN
 /etc/init.d/dnsmasq restart >/dev/null 2>&1
-say "dhcp:        192.168.$SUBNET.100–249, DNS 8.8.8.8"
+say "dhcp:        $NET_BASE.100–249, DNS $SEG_DNS"
 
 # ── 8. Firewall: fail-closed ───────────────────────────────────────────────
 step "Firewall"
@@ -631,7 +761,7 @@ printf '\n'
 [ -n "$SSID_5G" ] && printf 'Wi-Fi 5 ГГц:     %s\n' "$SSID_5G"
 [ -n "$SSID_2G" ] && printf 'Wi-Fi 2.4 ГГц:   %s\n' "$SSID_2G"
 printf 'пароль Wi-Fi:    %s\n' "$WIFI_KEY"
-printf 'сегмент:         192.168.%s.0/24 (шлюз %s)\n' "$SUBNET" "$GW"
+printf 'сегмент:         %s.0/24 (шлюз %s)\n' "$NET_BASE" "$GW"
 printf 'управление:      https://%s:%s (TLS+mTLS)\n' "$LAN_IP" "$PORT"
 if [ "$WAN_EXPOSE" = 1 ]; then
     printf 'снаружи:         https://%s:%s — порт открыт в firewall\n' "$WAN_SHOW" "$PORT"
