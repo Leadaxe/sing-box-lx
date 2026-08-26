@@ -585,13 +585,17 @@ step "Сеть"
 
 # bridge_empty обязателен: у моста нет ethernet-портов, только Wi-Fi-AP,
 # которые цепляются динамически при старте hostapd. Без флага netifd мост не поднимет.
+# uci set <секция>=<тип> создаёт секцию, но по пути печатает "Invalid
+# argument" — секции ещё нет, и uci ругается, хотя работу делает. Гасим stderr и код возврата: шум не должен
+# читаться как сбой, а ненулевой статус — обрывать установку через set -e; результат проверяем
+# ниже по факту (мост поднимается, fw4 перезагружается без ошибок).
 uci -q delete "network.${NET}dev" 2>/dev/null || true
-uci set "network.${NET}dev=device"
+uci set "network.${NET}dev=device" 2>/dev/null || true
 uci set "network.${NET}dev.name=$BR"
 uci set "network.${NET}dev.type=bridge"
 uci set "network.${NET}dev.bridge_empty=1"
 
-uci set "network.$NET=interface"
+uci set "network.$NET=interface" 2>/dev/null || true
 uci set "network.$NET.device=$BR"
 uci set "network.$NET.proto=static"
 uci set "network.$NET.ipaddr=$GW"
@@ -600,7 +604,7 @@ uci set "network.$NET.netmask=255.255.255.0"
 uci commit network
 
 # Опция 6 — внешний DNS, НЕ dnsmasq роутера: иначе резолв уйдёт мимо туннеля
-uci set "dhcp.$NET=dhcp"
+uci set "dhcp.$NET=dhcp" 2>/dev/null || true
 uci set "dhcp.$NET.interface=$NET"
 uci set "dhcp.$NET.start=100"
 uci set "dhcp.$NET.limit=150"
@@ -638,7 +642,7 @@ step "Firewall"
 
 # Единственный путь наружу — в зону туннеля. Forwarding в wan НЕ создаём:
 # упало ядро → сегмент без интернета, но и утечки с домашнего IP нет.
-uci set "firewall.$ZONE=zone"
+uci set "firewall.$ZONE=zone" 2>/dev/null || true
 uci set "firewall.$ZONE.name=$ZONE"
 uci -q delete "firewall.$ZONE.network" 2>/dev/null || true
 uci add_list "firewall.$ZONE.network=$NET"
@@ -646,7 +650,7 @@ uci set "firewall.$ZONE.input=ACCEPT"     # клиентам нужен DHCP и 
 uci set "firewall.$ZONE.output=ACCEPT"
 uci set "firewall.$ZONE.forward=REJECT"
 
-uci set "firewall.$ZTUN=zone"
+uci set "firewall.$ZTUN=zone" 2>/dev/null || true
 uci set "firewall.$ZTUN.name=$ZTUN"
 uci -q delete "firewall.$ZTUN.device" 2>/dev/null || true
 uci add_list "firewall.$ZTUN.device=$TUN_IF"
@@ -654,7 +658,7 @@ uci set "firewall.$ZTUN.input=REJECT"
 uci set "firewall.$ZTUN.output=ACCEPT"
 uci set "firewall.$ZTUN.forward=REJECT"
 
-uci set "firewall.${ZONE}2tun=forwarding"
+uci set "firewall.${ZONE}2tun=forwarding" 2>/dev/null || true
 uci set "firewall.${ZONE}2tun.src=$ZONE"
 uci set "firewall.${ZONE}2tun.dest=$ZTUN"
 
@@ -662,7 +666,7 @@ uci set "firewall.${ZONE}2tun.dest=$ZTUN"
 # Для ядра это входящий пакет → INPUT в зоне sbtun (input=REJECT) → TCP молча
 # дохнет при живых UDP/ICMP. Правило привязано к IP: сменится address у
 # tun-inbound — правило надо править (иначе connection refused).
-uci set "firewall.${ZTUN}_tcp=rule"
+uci set "firewall.${ZTUN}_tcp=rule" 2>/dev/null || true
 uci set "firewall.${ZTUN}_tcp.name=Allow-sbtun-systemstack-tcp"
 uci set "firewall.${ZTUN}_tcp.src=$ZTUN"
 uci set "firewall.${ZTUN}_tcp.dest_ip=$TUN_ADDR"
@@ -671,7 +675,7 @@ uci set "firewall.${ZTUN}_tcp.target=ACCEPT"
 # Порт управления снаружи — только если пользователь явно разрешил.
 # Без этого правила адрес в listen бесполезен: зона wan режет input.
 if [ "$WAN_EXPOSE" = 1 ]; then
-    uci set "firewall.lxd_admin_wan=rule"
+    uci set "firewall.lxd_admin_wan=rule" 2>/dev/null || true
     uci set "firewall.lxd_admin_wan.name=Allow-lxd-admin-wan"
     uci set "firewall.lxd_admin_wan.src=wan"
     uci set "firewall.lxd_admin_wan.proto=tcp"

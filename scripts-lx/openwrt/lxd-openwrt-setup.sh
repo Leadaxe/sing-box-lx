@@ -593,13 +593,18 @@ step "Network"
 # bridge_empty is mandatory for a bridge with no ethernet ports (Wi-Fi APs
 # only, attached dynamically when hostapd starts). Without it netifd will not
 # bring the bridge up at all.
+# uci set <section>=<type> does create the section, but prints "Invalid
+# argument" on the way — the section does not exist yet and uci complains
+# while still doing the job. Silence stderr and the exit status: the noise must not read as a
+# failure, nor a non-zero status abort the install via set -e; the result is verified below by fact (the bridge comes up,
+# fw4 reloads cleanly).
 uci -q delete "network.${NET}dev" 2>/dev/null || true
-uci set "network.${NET}dev=device"
+uci set "network.${NET}dev=device" 2>/dev/null || true
 uci set "network.${NET}dev.name=$BR"
 uci set "network.${NET}dev.type=bridge"
 uci set "network.${NET}dev.bridge_empty=1"
 
-uci set "network.$NET=interface"
+uci set "network.$NET=interface" 2>/dev/null || true
 uci set "network.$NET.device=$BR"
 uci set "network.$NET.proto=static"
 uci set "network.$NET.ipaddr=$GW"
@@ -608,7 +613,7 @@ uci set "network.$NET.netmask=255.255.255.0"
 uci commit network
 
 # Option 6 — an external DNS, NOT the router's dnsmasq: resolution must not bypass the tunnel
-uci set "dhcp.$NET=dhcp"
+uci set "dhcp.$NET=dhcp" 2>/dev/null || true
 uci set "dhcp.$NET.interface=$NET"
 uci set "dhcp.$NET.start=100"
 uci set "dhcp.$NET.limit=150"
@@ -646,7 +651,7 @@ step "Firewall"
 
 # The only way out is into the tunnel zone. NO forwarding to wan: core down →
 # segment offline, but nothing leaks from the home IP either.
-uci set "firewall.$ZONE=zone"
+uci set "firewall.$ZONE=zone" 2>/dev/null || true
 uci set "firewall.$ZONE.name=$ZONE"
 uci -q delete "firewall.$ZONE.network" 2>/dev/null || true
 uci add_list "firewall.$ZONE.network=$NET"
@@ -654,7 +659,7 @@ uci set "firewall.$ZONE.input=ACCEPT"     # clients need DHCP and the gateway
 uci set "firewall.$ZONE.output=ACCEPT"
 uci set "firewall.$ZONE.forward=REJECT"
 
-uci set "firewall.$ZTUN=zone"
+uci set "firewall.$ZTUN=zone" 2>/dev/null || true
 uci set "firewall.$ZTUN.name=$ZTUN"
 uci -q delete "firewall.$ZTUN.device" 2>/dev/null || true
 uci add_list "firewall.$ZTUN.device=$TUN_IF"
@@ -662,7 +667,7 @@ uci set "firewall.$ZTUN.input=REJECT"
 uci set "firewall.$ZTUN.output=ACCEPT"
 uci set "firewall.$ZTUN.forward=REJECT"
 
-uci set "firewall.${ZONE}2tun=forwarding"
+uci set "firewall.${ZONE}2tun=forwarding" 2>/dev/null || true
 uci set "firewall.${ZONE}2tun.src=$ZONE"
 uci set "firewall.${ZONE}2tun.dest=$ZTUN"
 
@@ -670,7 +675,7 @@ uci set "firewall.${ZONE}2tun.dest=$ZTUN"
 # the kernel that is an inbound packet → INPUT in the sbtun zone (input=REJECT)
 # → TCP silently dies while UDP/ICMP live. The rule is bound to the IP: change
 # the tun inbound address — fix the rule (or get connection refused).
-uci set "firewall.${ZTUN}_tcp=rule"
+uci set "firewall.${ZTUN}_tcp=rule" 2>/dev/null || true
 uci set "firewall.${ZTUN}_tcp.name=Allow-sbtun-systemstack-tcp"
 uci set "firewall.${ZTUN}_tcp.src=$ZTUN"
 uci set "firewall.${ZTUN}_tcp.dest_ip=$TUN_ADDR"
@@ -679,7 +684,7 @@ uci set "firewall.${ZTUN}_tcp.target=ACCEPT"
 # The management port from outside — only when the user explicitly allowed it.
 # Without this rule the listen address is useless: the wan zone cuts input.
 if [ "$WAN_EXPOSE" = 1 ]; then
-    uci set "firewall.lxd_admin_wan=rule"
+    uci set "firewall.lxd_admin_wan=rule" 2>/dev/null || true
     uci set "firewall.lxd_admin_wan.name=Allow-lxd-admin-wan"
     uci set "firewall.lxd_admin_wan.src=wan"
     uci set "firewall.lxd_admin_wan.proto=tcp"
