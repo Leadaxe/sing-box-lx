@@ -81,7 +81,7 @@ func TestPacketUpUploadsCountAgainstRequestLimit(t *testing.T) {
 	// Four requests allowed: the download GET plus three upload POSTs.
 	client.xmux.config.hMaxRequestTimes = intRange{4, 4}
 
-	xmuxClient := client.xmux.get()
+	xmuxClient, _ := client.xmux.get()
 	xmuxClient.addOpenUsage(1)
 	conn, err := client.dialPacketUp(context.Background(), "session", xmuxClient)
 	if err != nil {

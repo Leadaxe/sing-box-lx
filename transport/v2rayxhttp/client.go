@@ -222,8 +222,12 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	sessionID := c.newSessionID()
 	// One pooled connection carries this whole dial: both halves of a split mode
 	// and every upload POST of packet-up. It is released once, when the conn
-	// closes — see releaseOnce in conn.go.
-	xmuxClient := c.xmux.get()
+	// closes — see releaseOnce in conn.go. getContext may wait out the breaker's
+	// backoff window before opening a transport (lx: SPEC 076).
+	xmuxClient, err := c.xmux.getContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	xmuxClient.addOpenUsage(1)
 	conn, err := c.dialMode(ctx, sessionID, xmuxClient)
 	if err != nil {

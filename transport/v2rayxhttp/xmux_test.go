@@ -78,9 +78,9 @@ func poolOf(t *testing.T, config xmuxConfig) (*xmuxManager, func() []*fakeXmuxCo
 // the whole feature is a no-op.
 func TestXmuxReusesConnection(t *testing.T) {
 	manager, conns := poolOf(t, xmuxConfig{maxConcurrency: intRange{4, 4}})
-	first := manager.get()
+	first, _ := manager.get()
 	first.addOpenUsage(1)
-	second := manager.get()
+	second, _ := manager.get()
 	if first != second {
 		t.Fatal("second stream opened a new connection while the first had concurrency to spare")
 	}
@@ -93,9 +93,9 @@ func TestXmuxReusesConnection(t *testing.T) {
 // the next stream needs a new connection.
 func TestXmuxConcurrencyLimit(t *testing.T) {
 	manager, conns := poolOf(t, xmuxConfig{maxConcurrency: intRange{1, 1}})
-	first := manager.get()
+	first, _ := manager.get()
 	first.addOpenUsage(1)
-	second := manager.get()
+	second, _ := manager.get()
 	if first == second {
 		t.Fatal("a second stream joined a connection already at max_concurrency=1")
 	}
@@ -125,9 +125,9 @@ func TestXmuxMaxConnections(t *testing.T) {
 func TestXmuxEviction(t *testing.T) {
 	t.Run("closed", func(t *testing.T) {
 		manager, conns := poolOf(t, xmuxConfig{maxConcurrency: intRange{4, 4}})
-		first := manager.get()
+		first, _ := manager.get()
 		conns()[0].kill()
-		if second := manager.get(); first == second {
+		if second, _ := manager.get(); first == second {
 			t.Fatal("a dead connection was handed out again")
 		}
 	})
@@ -137,8 +137,8 @@ func TestXmuxEviction(t *testing.T) {
 			maxConcurrency: intRange{4, 4},
 			cMaxReuseTimes: intRange{1, 1},
 		})
-		first := manager.get()
-		if second := manager.get(); first == second {
+		first, _ := manager.get()
+		if second, _ := manager.get(); first == second {
 			t.Fatal("connection was handed out past c_max_reuse_times")
 		}
 	})
@@ -147,10 +147,10 @@ func TestXmuxEviction(t *testing.T) {
 			maxConcurrency:   intRange{4, 4},
 			hMaxRequestTimes: intRange{2, 2},
 		})
-		first := manager.get()
+		first, _ := manager.get()
 		first.takeRequest()
 		first.takeRequest()
-		if second := manager.get(); first == second {
+		if second, _ := manager.get(); first == second {
 			t.Fatal("connection was handed out past h_max_request_times")
 		}
 	})
@@ -159,10 +159,10 @@ func TestXmuxEviction(t *testing.T) {
 			maxConcurrency:   intRange{4, 4},
 			hMaxReusableSecs: intRange{1, 1},
 		})
-		first := manager.get()
+		first, _ := manager.get()
 		restore := freezeTime(t, time.Now().Add(2*time.Second))
 		defer restore()
-		if second := manager.get(); first == second {
+		if second, _ := manager.get(); first == second {
 			t.Fatal("connection was handed out past h_max_reusable_secs")
 		}
 	})
@@ -173,7 +173,7 @@ func TestXmuxEviction(t *testing.T) {
 // owed to the last stream that leaves.
 func TestXmuxDeferredClose(t *testing.T) {
 	manager, conns := poolOf(t, xmuxConfig{maxConcurrency: intRange{4, 4}})
-	client := manager.get()
+	client, _ := manager.get()
 	client.addOpenUsage(1)
 
 	client.close()
@@ -192,7 +192,7 @@ func TestXmuxDeferredClose(t *testing.T) {
 // would drive openUsage negative and the connection would never be torn down.
 func TestXmuxReleaseIsIdempotent(t *testing.T) {
 	manager, conns := poolOf(t, xmuxConfig{maxConcurrency: intRange{4, 4}})
-	client := manager.get()
+	client, _ := manager.get()
 	client.addOpenUsage(1)
 	release := newXmuxRelease(client)
 
@@ -221,7 +221,7 @@ func TestXmuxReleaseNilIsSafe(t *testing.T) {
 // streams that are still running, for the same reason eviction must not.
 func TestXmuxManagerCloseKeepsLiveStreams(t *testing.T) {
 	manager, conns := poolOf(t, xmuxConfig{maxConcurrency: intRange{4, 4}})
-	client := manager.get()
+	client, _ := manager.get()
 	client.addOpenUsage(1)
 
 	manager.Close()

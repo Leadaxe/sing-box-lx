@@ -3,6 +3,7 @@ package v2rayxhttp
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -441,6 +442,14 @@ func (c *Client) applyUplinkData(request *http.Request, payload []byte) {
 		request.Body = readCloser{&byteReader{data: payload}}
 		request.Header.Set("Content-Type", "application/octet-stream")
 		request.ContentLength = int64(len(payload))
+		// lx: SPEC 076 — the payload is a bounded slice we own, so hand http2 a
+		// replay: with GetBody set the transport silently retries the POST on a
+		// fresh connection after a graceful GOAWAY instead of surfacing "cannot
+		// retry err ... after Request.Body was written" and killing the session
+		// (observed in the issue #14 field logs).
+		request.GetBody = func() (io.ReadCloser, error) {
+			return readCloser{&byteReader{data: payload}}, nil
+		}
 	}
 }
 

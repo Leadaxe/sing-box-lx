@@ -92,7 +92,8 @@ func TestStreamOneWriteDeadlineUnblocksWrite(t *testing.T) {
 	client, transport := hangingClient(t)
 	defer transport.Close()
 
-	conn, err := client.dialStreamOne(context.Background(), "", client.xmux.get())
+	xc, _ := client.xmux.get()
+	conn, err := client.dialStreamOne(context.Background(), "", xc)
 	if err != nil {
 		t.Fatalf("dialStreamOne: %v", err)
 	}
@@ -127,7 +128,8 @@ func TestStreamOneDialCancelUnblocksWrite(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	conn, err := client.dialStreamOne(ctx, "", client.xmux.get())
+	xc, _ := client.xmux.get()
+	conn, err := client.dialStreamOne(ctx, "", xc)
 	if err != nil {
 		t.Fatalf("dialStreamOne: %v", err)
 	}
@@ -188,7 +190,8 @@ func TestStreamOneCancelAfterStreamUpKeepsConnAlive(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	conn, err := client.dialStreamOne(ctx, "", client.xmux.get())
+	xc, _ := client.xmux.get()
+	conn, err := client.dialStreamOne(ctx, "", xc)
 	if err != nil {
 		t.Fatalf("dialStreamOne: %v", err)
 	}

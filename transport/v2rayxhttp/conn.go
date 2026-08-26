@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	C "github.com/sagernet/sing-box/constant"
@@ -370,12 +371,44 @@ func (d *readDeadline) stop() {
 
 // lx:end 050 deadline-support
 
+// lx: SPEC 076 — per-conn breaker bookkeeping shared by the three conn kinds.
+//
+// localClosed marks teardown WE initiated (Close, expired read deadline): our
+// own body-close wakes a blocked Read with an http2 "response body closed"
+// error, and counting that as a remote failure would trip the breaker on
+// perfectly healthy usage. It must be set BEFORE the reader is closed, so the
+// woken Read already observes it.
+type connBreaker struct {
+	xmux        *xmuxRelease
+	localClosed atomic.Bool
+	readOK      atomic.Bool
+}
+
+// noteRead classifies one download-body read result for the pooled
+// connection's breaker: the first successful read is the stream's proof of
+// life (headers alone prove nothing — the field case behind SPEC 076 had
+// 200-raises whose bodies died seconds later), a remote error counts against
+// the connection. io.EOF (clean server finish) and local teardown are neutral.
+func (b *connBreaker) noteRead(err error) {
+	if err == nil {
+		if !b.readOK.Swap(true) {
+			b.xmux.noteSuccess()
+		}
+		return
+	}
+	if err != io.EOF && !b.localClosed.Load() {
+		b.xmux.noteFailure()
+	}
+}
+
 // streamConn is a net.Conn whose write side is the upload pipe and whose read
 // side is a late-bound response body (download). It mirrors the late-binding
 // pattern of v2rayhttp.HTTP2Conn but is self-contained here.
 type streamConn struct {
 	// xmux releases this stream's pooled connection when the conn closes.
-	xmux       *xmuxRelease
+	xmux *xmuxRelease
+	// breaker classifies read results and local teardown (lx: SPEC 076).
+	breaker    connBreaker
 	writer     *io.PipeWriter
 	reader     io.ReadCloser
 	created    chan struct{}
@@ -393,6 +426,7 @@ type streamConn struct {
 func newStreamConn(reader *io.PipeReader, writer *io.PipeWriter, serverAddr M.Socksaddr, xmux *xmuxRelease) *streamConn {
 	conn := &streamConn{
 		xmux:       xmux,
+		breaker:    connBreaker{xmux: xmux},
 		writer:     writer,
 		created:    make(chan struct{}),
 		serverAddr: serverAddr,
@@ -401,6 +435,7 @@ func newStreamConn(reader *io.PipeReader, writer *io.PipeWriter, serverAddr M.So
 	// lx: 050 — an expired read deadline must also close an already-bound reader,
 	// otherwise Read stays blocked inside reader.Read.
 	conn.readDeadline = newReadDeadline(func() {
+		conn.breaker.localClosed.Store(true) // lx: SPEC 076 — our teardown, not a remote failure
 		select {
 		case <-conn.created:
 			if conn.reader != nil {
@@ -453,7 +488,9 @@ func (c *streamConn) Read(b []byte) (int, error) {
 	if c.readerErr != nil {
 		return 0, c.readerErr
 	}
-	return c.reader.Read(b)
+	n, err := c.reader.Read(b)
+	c.breaker.noteRead(err) // lx: SPEC 076
+	return n, err
 }
 
 func (c *streamConn) Write(b []byte) (int, error) {
@@ -462,6 +499,7 @@ func (c *streamConn) Write(b []byte) (int, error) {
 
 func (c *streamConn) Close() error {
 	c.closeOnce.Do(func() {
+		c.breaker.localClosed.Store(true) // lx: SPEC 076 — before closing the reader
 		// lx: 050 — drop armed timers first so neither can fire on a closed conn.
 		c.writeDeadline.stop()
 		c.readDeadline.stop()
@@ -511,7 +549,9 @@ func (c *streamConn) NeedAdditionalReadDeadline() bool { return true }
 // the caller in a goroutine.
 type splitConn struct {
 	// xmux releases this stream's pooled connection when the conn closes.
-	xmux       *xmuxRelease
+	xmux *xmuxRelease
+	// breaker classifies read results and local teardown (lx: SPEC 076).
+	breaker    connBreaker
 	reader     io.ReadCloser
 	created    chan struct{}
 	readerErr  error
@@ -529,12 +569,15 @@ type splitConn struct {
 
 func newSplitConn(uploadReader *io.PipeReader, writer *io.PipeWriter, serverAddr M.Socksaddr, xmux *xmuxRelease) *splitConn {
 	conn := &splitConn{
+		xmux:       xmux,
+		breaker:    connBreaker{xmux: xmux},
 		created:    make(chan struct{}),
 		writer:     writer,
 		serverAddr: serverAddr,
 	}
 	conn.writeDeadline.reader = uploadReader
 	conn.readDeadline = newReadDeadline(func() {
+		conn.breaker.localClosed.Store(true) // lx: SPEC 076 — our teardown, not a remote failure
 		select {
 		case <-conn.created:
 			if conn.reader != nil {
@@ -583,12 +626,15 @@ func (c *splitConn) Read(b []byte) (int, error) {
 	if c.readerErr != nil {
 		return 0, c.readerErr
 	}
-	return c.reader.Read(b)
+	n, err := c.reader.Read(b)
+	c.breaker.noteRead(err) // lx: SPEC 076
+	return n, err
 }
 func (c *splitConn) Write(b []byte) (int, error) { return c.writer.Write(b) }
 
 func (c *splitConn) Close() error {
 	c.closeOnce.Do(func() {
+		c.breaker.localClosed.Store(true) // lx: SPEC 076 — before closing the reader
 		// lx: 050 — drop armed timers before closing, as in streamConn.
 		c.writeDeadline.stop()
 		c.readDeadline.stop()
@@ -641,7 +687,9 @@ type packetConn struct {
 	client *Client
 	// xmux is the pooled connection carrying every upload POST of this stream;
 	// released when the conn closes.
-	xmux       *xmuxRelease
+	xmux *xmuxRelease
+	// breaker classifies read results and local teardown (lx: SPEC 076).
+	breaker    connBreaker
 	sessionID  string
 	reader     io.ReadCloser
 	created    chan struct{}
@@ -666,11 +714,13 @@ func newPacketConn(ctx context.Context, client *Client, sessionID string, server
 		ctx:        ctx,
 		client:     client,
 		xmux:       xmux,
+		breaker:    connBreaker{xmux: xmux},
 		sessionID:  sessionID,
 		created:    make(chan struct{}),
 		serverAddr: serverAddr,
 	}
 	conn.readDeadline = newReadDeadline(func() {
+		conn.breaker.localClosed.Store(true) // lx: SPEC 076 — our teardown, not a remote failure
 		select {
 		case <-conn.created:
 			if conn.reader != nil {
@@ -715,7 +765,9 @@ func (c *packetConn) Read(b []byte) (int, error) {
 	if c.readerErr != nil {
 		return 0, c.readerErr
 	}
-	return c.reader.Read(b)
+	n, err := c.reader.Read(b)
+	c.breaker.noteRead(err) // lx: SPEC 076
+	return n, err
 }
 
 // Write delivers a write as one or more sequential upload POSTs. A write larger
@@ -791,6 +843,9 @@ func (c *packetConn) sendPacket(b []byte) error {
 		return E.New("v2ray-xhttp: unexpected upload status: ", response.Status)
 	}
 	drainAndClose(response.Body)
+	// lx: SPEC 076 — a drained 200 upload POST is genuine data flow: reset the
+	// pooled connection's failure streak and the manager backoff.
+	c.xmux.noteSuccess()
 	return nil
 }
 
@@ -824,6 +879,7 @@ func (c *packetConn) Close() error {
 	// second Close cannot double-close the body.
 	var err error
 	c.closeOnce.Do(func() {
+		c.breaker.localClosed.Store(true) // lx: SPEC 076 — before closing the reader
 		c.readDeadline.stop()
 		select {
 		case <-c.created:

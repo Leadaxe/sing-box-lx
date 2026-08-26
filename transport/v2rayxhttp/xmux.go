@@ -1,6 +1,7 @@
 package v2rayxhttp
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -45,10 +46,18 @@ type xmuxConn interface {
 // is still running through it.
 type xmuxClient struct {
 	conn         xmuxConn
-	openUsage    int   // streams currently alive on this connection
-	leftUsage    int   // handouts left before retirement; -1 = unlimited
-	leftRequests int32 // HTTP requests left before retirement (atomic)
+	manager      *xmuxManager // breaker trips report here; never nil for pooled clients
+	openUsage    int          // streams currently alive on this connection
+	leftUsage    int          // handouts left before retirement; -1 = unlimited
+	leftRequests int32        // HTTP requests left before retirement (atomic)
 	unreusableAt time.Time
+
+	// lx: SPEC 076 — circuit breaker. consecFails counts consecutive stream
+	// failures (failed round trip, non-200 response, remote death of a download
+	// body); any genuine success resets it. At xmuxBreakerThreshold the
+	// connection is marked failing and evicted on the next pool lookup.
+	consecFails atomic.Int32
+	failing     atomic.Bool
 
 	closed bool
 	access sync.Mutex
@@ -116,12 +125,59 @@ func (c *http2XmuxConn) roundTripper() http.RoundTripper {
 	return c.transport
 }
 
+// lx: SPEC 076 — circuit-breaker knobs. Variables, not consts: tests shrink
+// the timings. Field case behind them: a CDN resetting every upload stream
+// span an unthrottled dial→reset→dial loop at channel speed and pinned both
+// cores of an ARM64 router until the core was restarted (issue #14).
+var (
+	// xmuxBreakerThreshold is how many CONSECUTIVE stream failures retire the
+	// pooled connection.
+	xmuxBreakerThreshold = int32(3)
+	// xmuxBackoffInitial/xmuxBackoffCap bound the new-transport backoff window:
+	// each breaker trip doubles the delay, any genuine success resets it.
+	xmuxBackoffInitial = 100 * time.Millisecond
+	xmuxBackoffCap     = 3 * time.Second
+)
+
+// noteFailure records one stream failure. Crossing the threshold marks the
+// connection failing (evicted on the next pool lookup) and arms/extends the
+// manager's new-transport backoff. lx: SPEC 076.
+func (c *xmuxClient) noteFailure() {
+	if c.consecFails.Add(1) != xmuxBreakerThreshold {
+		return
+	}
+	c.failing.Store(true)
+	if c.manager != nil {
+		c.manager.noteBreakerTrip()
+	}
+}
+
+// noteSuccess records genuine data flow (a drained 200 upload POST, a first
+// successful download-body read) — headers alone don't count, the field case
+// had 200-raises whose bodies died seconds later. Resets the failure streak
+// and disarms the manager backoff. lx: SPEC 076.
+func (c *xmuxClient) noteSuccess() {
+	c.consecFails.Store(0)
+	if c.manager != nil {
+		c.manager.resetBackoff()
+	}
+}
+
 // roundTrip issues one HTTP request over this pooled connection, accounting it
 // against h_max_request_times. Every XHTTP request must go through here — a
 // request that bypassed it would let the connection outlive the limit.
+//
+// It also feeds the breaker (lx: SPEC 076): an error or a non-200 status is a
+// stream failure — every XHTTP endpoint expects exactly 200, all call sites
+// treat anything else as fatal for the stream. Success is deliberately NOT
+// noted here: response headers arriving says nothing about the stream living.
 func (c *xmuxClient) roundTrip(request *http.Request) (*http.Response, error) {
 	c.takeRequest()
-	return c.conn.roundTripper().RoundTrip(request)
+	response, err := c.conn.roundTripper().RoundTrip(request)
+	if err != nil || response.StatusCode != http.StatusOK {
+		c.noteFailure()
+	}
+	return response, err
 }
 
 // xmuxRelease returns the pooled connection to the pool exactly once, however
@@ -154,6 +210,23 @@ func (r *xmuxRelease) release() {
 // through it, so uploads are accounted like any other request.
 func (r *xmuxRelease) roundTrip(request *http.Request) (*http.Response, error) {
 	return r.client.roundTrip(request)
+}
+
+// noteSuccess/noteFailure forward stream-health observations from the conns
+// (download-body reads, drained upload POSTs) to the pooled connection's
+// breaker. Nil-safe like release. lx: SPEC 076.
+func (r *xmuxRelease) noteSuccess() {
+	if r == nil || r.client == nil {
+		return
+	}
+	r.client.noteSuccess()
+}
+
+func (r *xmuxRelease) noteFailure() {
+	if r == nil || r.client == nil {
+		return
+	}
+	r.client.noteFailure()
 }
 
 // singleTransportXmux builds a manager permanently bound to one RoundTripper.
@@ -199,6 +272,44 @@ type xmuxManager struct {
 	// pool state is fully determined by the config, so what is worth observing is
 	// the transitions, not the gauge. See SPECS/TASKS/059 §8.2.
 	onEvent func(format string, args ...any)
+
+	// lx: SPEC 076 — new-transport backoff, armed by breaker trips. backoffDelay
+	// doubles per trip within [xmuxBackoffInitial, xmuxBackoffCap]; blockedUntil
+	// is the moment before which get() refuses to OPEN a transport (an existing
+	// pooled connection is still handed out freely). backoffArmed mirrors
+	// "delay != 0" atomically so resetBackoff on every successful read stays a
+	// single atomic load in the healthy case. All under m.access except the gate.
+	backoffDelay time.Duration
+	blockedUntil time.Time
+	backoffArmed atomic.Bool
+}
+
+// noteBreakerTrip doubles the new-transport backoff window. lx: SPEC 076.
+func (m *xmuxManager) noteBreakerTrip() {
+	m.access.Lock()
+	if m.backoffDelay == 0 {
+		m.backoffDelay = xmuxBackoffInitial
+	} else if m.backoffDelay *= 2; m.backoffDelay > xmuxBackoffCap {
+		m.backoffDelay = xmuxBackoffCap
+	}
+	m.blockedUntil = timeNow().Add(m.backoffDelay)
+	m.backoffArmed.Store(true)
+	delay := m.backoffDelay
+	m.access.Unlock()
+	m.logf("xmux: breaker tripped, new-transport backoff %s", delay)
+}
+
+// resetBackoff disarms the backoff window on genuine success. lx: SPEC 076.
+func (m *xmuxManager) resetBackoff() {
+	if !m.backoffArmed.Load() {
+		return
+	}
+	m.access.Lock()
+	m.backoffDelay = 0
+	m.blockedUntil = time.Time{}
+	m.backoffArmed.Store(false)
+	m.access.Unlock()
+	m.logf("xmux: breaker backoff reset")
 }
 
 func newXmuxManager(config xmuxConfig, newConn func() xmuxConn) *xmuxManager {
@@ -236,6 +347,7 @@ func (m *xmuxManager) Close() {
 func (m *xmuxManager) newClientLocked() *xmuxClient {
 	client := &xmuxClient{
 		conn:      m.newConn(),
+		manager:   m,
 		leftUsage: -1,
 	}
 	if x := m.config.cMaxReuseTimes.rand(); x > 0 {
@@ -260,6 +372,10 @@ func (c *xmuxClient) evictCause() string {
 	switch {
 	case c.conn.IsClosed():
 		return "closed"
+	// lx: SPEC 076 — the breaker tripped on this connection: it failed
+	// xmuxBreakerThreshold streams in a row and must not carry new ones.
+	case c.failing.Load():
+		return "failing"
 	case c.leftUsage == 0:
 		return "reuse"
 	case atomic.LoadInt32(&c.leftRequests) <= 0:
@@ -270,10 +386,34 @@ func (c *xmuxClient) evictCause() string {
 	return ""
 }
 
+// getContext returns a connection for a new stream, waiting out the breaker's
+// new-transport backoff window when opening one is required (lx: SPEC 076). A
+// pooled connection is returned without waiting; only the open-a-transport
+// path is throttled, so the dial storm the breaker exists for is damped while
+// healthy reuse stays untouched.
+func (m *xmuxManager) getContext(ctx context.Context) (*xmuxClient, error) {
+	for {
+		client, wait := m.get()
+		if client != nil {
+			return client, nil
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
 // get returns a connection for a new stream, opening one when the pool cannot
-// serve it. The caller MUST pair this with addOpenUsage(-1) exactly once, via
-// the release function returned by Client.acquireXmux.
-func (m *xmuxManager) get() *xmuxClient {
+// serve it — unless the pool is empty inside the breaker's backoff window, in
+// which case it returns (nil, remaining wait) and the caller must wait and
+// retry (lx: SPEC 076; getContext does exactly that). The caller MUST pair a
+// returned client with addOpenUsage(-1) exactly once, via the release function
+// returned by Client.acquireXmux.
+func (m *xmuxManager) get() (*xmuxClient, time.Duration) {
 	m.access.Lock()
 	defer m.access.Unlock()
 
@@ -295,10 +435,20 @@ func (m *xmuxManager) get() *xmuxClient {
 	}
 
 	if len(m.clients) == 0 {
-		return m.newClientLocked()
+		// lx: SPEC 076 — the only backoff-gated branch: an empty pool during the
+		// window means the breaker just retired everything, and opening straight
+		// away is what the dial storm is made of. The non-empty branches below
+		// stay ungated: they only run when a live connection exists, and stalling
+		// healthy dials over trailing errors would be worse than one extra conn.
+		if m.backoffArmed.Load() {
+			if wait := m.blockedUntil.Sub(timeNow()); wait > 0 {
+				return nil, wait
+			}
+		}
+		return m.newClientLocked(), 0
 	}
 	if m.connections > 0 && len(m.clients) < m.connections {
-		return m.newClientLocked()
+		return m.newClientLocked(), 0
 	}
 
 	candidates := m.clients
@@ -311,14 +461,14 @@ func (m *xmuxManager) get() *xmuxClient {
 		}
 	}
 	if len(candidates) == 0 {
-		return m.newClientLocked()
+		return m.newClientLocked(), 0
 	}
 
 	client := candidates[randIntn(len(candidates))]
 	if client.leftUsage > 0 {
 		client.leftUsage--
 	}
-	return client
+	return client, 0
 }
 
 const maxInt32 = int32(^uint32(0) >> 1)
