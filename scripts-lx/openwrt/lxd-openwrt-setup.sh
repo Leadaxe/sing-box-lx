@@ -227,7 +227,9 @@ fi
 # has no separate network). Counting up from it keeps things recognisable —
 # "home is .1, the segment is .2" — and busy neighbours (a guest SSID and the
 # like) are skipped by the occupancy check above.
-LAN_BASE=$(uci -q get network.lan.ipaddr | sed -n 's/^\([0-9]*\.[0-9]*\.[0-9]*\)\..*/\1/p')
+# first address, mask stripped (the field can be a list — see LAN_IP below)
+LAN_BASE=$(uci -q get network.lan.ipaddr | tr ' ' '\n' | head -1 | cut -d/ -f1 \
+    | sed -n 's/^\([0-9]*\.[0-9]*\.[0-9]*\)\..*/\1/p')
 
 NET_BASE=""
 if [ -n "$LAN_BASE" ]; then
@@ -338,6 +340,15 @@ while [ -z "$TUN_ADDR" ]; do
         [ "$_o" -le 255 ] 2>/dev/null || _bad=1
     done
     [ "$_bad" = 1 ] && { warn "octet greater than 255"; TUN_ADDR=""; continue; }
+    # A /30 holds four addresses: .0 network, .1/.2 hosts, .3 broadcast. Only a
+    # last octet of the form 4k+1 or 4k+2 can be a host — otherwise the kernel
+    # will not bring the interface up, and we would find out after the install.
+    _t4=${TUN_ADDR##*.}
+    case $(( _t4 % 4 )) in
+        1|2) ;;
+        *) warn "$TUN_ADDR cannot be a host in a /30: valid ones are .1/.2, .5/.6, .9/.10 and so on"
+           TUN_ADDR=""; continue ;;
+    esac
     # a tunnel /30 inside the segment network would make the routes fight
     _t3=${TUN_ADDR%.*}
     if [ "$_t3" = "$NET_BASE" ]; then
@@ -497,7 +508,13 @@ if [ -z "$SECRET" ]; then
 fi
 [ ${#SECRET} -eq 64 ] || die "the secret came out the wrong length (${#SECRET})"
 
-LAN_IP=$(uci -q get network.lan.ipaddr); [ -z "$LAN_IP" ] && LAN_IP="127.0.0.1"
+# network.lan.ipaddr is NOT necessarily a single bare address: on routers with
+# several LAN addresses it holds a list ("192.168.100.1/24 192.168.1.1"), and a
+# netmask is allowed there. listen.address only accepts a bare address
+# ("netmasks are not supported"), so the whole string would land there and
+# break parsing of daemon.json. Take the first address and strip the mask.
+LAN_IP=$(uci -q get network.lan.ipaddr | tr ' ' '\n' | head -1 | cut -d/ -f1)
+[ -z "$LAN_IP" ] && LAN_IP="127.0.0.1"
 
 # the port may be held by another service (or a previous manual install)
 if netstat -ltn 2>/dev/null | grep -q ":$PORT "; then
