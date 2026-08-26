@@ -290,16 +290,25 @@ TUN_FALLBACK=0
 # Имя и адрес туннеля попадут И в конфиг ядра, И в firewall (зона sbtun
 # привязана к устройству по имени, правило sbtun_tcp — к адресу).
 # Спрашиваем здесь, чтобы обе стороны заведомо совпали.
-TUN_IF=$(ask "имя tun-интерфейса" "lxd-tun0")
-case "$TUN_IF" in
-    *[!A-Za-z0-9_-]*|"") die "недопустимое имя интерфейса: $TUN_IF" ;;
-    # Односимвольный ответ — почти всегда y/n, набранный по инерции после
-    # предыдущего Y/n-вопроса. Формально имя валидно, и такой промах уезжает
-    # в конфиг ядра и в firewall незамеченным.
-    [yYnNдДнН]) die "\"$TUN_IF\" похоже на ответ y/n, а не на имя интерфейса — Enter принимает lxd-tun0" ;;
-esac
-[ ${#TUN_IF} -le 15 ] || die "имя интерфейса длиннее 15 символов — ядро Linux такое не примет"
-ip link show "$TUN_IF" >/dev/null 2>&1 && die "интерфейс $TUN_IF уже существует"
+# Спрашиваем в той же форме, что сеть и адрес: сначала предъявляем значение,
+# потом подтверждение. Односимвольный ответ (y/n по инерции) отбиваем — имя
+# формально валидно и уехало бы и в конфиг ядра, и в firewall незамеченным.
+TUN_IF=""
+say "имя tun-интерфейса: lxd-tun0"
+ask_yn_default "Использовать его?" && TUN_IF="lxd-tun0"
+while [ -z "$TUN_IF" ]; do
+    TUN_IF=$(ask "имя tun-интерфейса" "")
+    case "$TUN_IF" in
+        *[!A-Za-z0-9_-]*|"") warn "недопустимое имя интерфейса: $TUN_IF"; TUN_IF=""; continue ;;
+        [yYnNдДнН]) warn "\"$TUN_IF\" похоже на ответ y/n, а не на имя интерфейса"; TUN_IF=""; continue ;;
+    esac
+    if [ ${#TUN_IF} -gt 15 ]; then
+        warn "имя интерфейса длиннее 15 символов — ядро Linux такое не примет"; TUN_IF=""; continue
+    fi
+    if ip link show "$TUN_IF" >/dev/null 2>&1; then
+        warn "интерфейс $TUN_IF уже существует"; TUN_IF=""; continue
+    fi
+done
 
 # Адрес туннеля тоже предъявляем: коллизия здесь проявится не при установке, а
 # позже — правило sbtun_tcp привязано к адресу, и TCP из сегмента отобьётся при
@@ -357,14 +366,23 @@ fi
 # Имя моста тоже уходит в конфиг ядра — в include_interface (в UI лаунчера это
 # поле "LAN interfaces"). Именно оно запирает перехват в VPN-сегменте: укажешь
 # здесь br-lan — ядро утащит в туннель всю домашнюю сеть.
-BR=$(ask "имя моста VPN-сегмента (пойдёт в include_interface)" "br-lxdvpn")
-case "$BR" in
-    *[!A-Za-z0-9_-]*|"") die "недопустимое имя моста: $BR" ;;
-    br-lan) die "br-lan нельзя: это основная сеть, ядро утащит её в туннель" ;;
-    [yYnNдДнН]) die "\"$BR\" похоже на ответ y/n, а не на имя моста — Enter принимает br-lxdvpn" ;;
-esac
-[ ${#BR} -le 15 ] || die "имя моста длиннее 15 символов — ядро Linux такое не примет"
-ip link show "$BR" >/dev/null 2>&1 && die "интерфейс $BR уже существует"
+BR=""
+say "имя моста VPN-сегмента: br-lxdvpn  (уйдёт в include_interface)"
+ask_yn_default "Использовать его?" && BR="br-lxdvpn"
+while [ -z "$BR" ]; do
+    BR=$(ask "имя моста VPN-сегмента (пойдёт в include_interface)" "")
+    case "$BR" in
+        *[!A-Za-z0-9_-]*|"") warn "недопустимое имя моста: $BR"; BR=""; continue ;;
+        br-lan) warn "br-lan нельзя: это основная сеть, ядро утащит её в туннель"; BR=""; continue ;;
+        [yYnNдДнН]) warn "\"$BR\" похоже на ответ y/n, а не на имя моста"; BR=""; continue ;;
+    esac
+    if [ ${#BR} -gt 15 ]; then
+        warn "имя моста длиннее 15 символов — ядро Linux такое не примет"; BR=""; continue
+    fi
+    if ip link show "$BR" >/dev/null 2>&1; then
+        warn "интерфейс $BR уже существует"; BR=""; continue
+    fi
+done
 
 # UCI-секции именуем от моста, чтобы всё хозяйство сегмента читалось единообразно
 NET=$(printf '%s' "$BR" | sed 's/^br-//; s/[^A-Za-z0-9]//g')
@@ -469,6 +487,38 @@ if netstat -ltn 2>/dev/null | grep -q ":$PORT "; then
     "$INIT" running 2>/dev/null || die "порт $PORT уже занят другим процессом (netstat -ltnp | grep $PORT)"
 fi
 
+# ── Дополнительные адреса прослушивания ────────────────────────────────────
+# Loopback + LAN покрывают домашний доступ, но админят роутер часто через
+# отдельный приватный канал — WG, Tailscale, админ-VLAN. Его адрес в LAN-секции
+# не значится, и управление оттуда было бы недоступно. Предлагаем кандидатов:
+# все IPv4 роутера, кроме loopback, LAN и адреса на WAN-интерфейсе.
+EXTRA_ADDRS=""
+# Кандидаты собираем в переменную (пайп в while увёл бы цикл в субшелл, где
+# и ask_yn читает не тот stdin, и присвоение EXTRA_ADDRS не пережило бы выход).
+_cands=$(ip -4 -o addr show 2>/dev/null \
+    | sed -n 's/^[0-9]*: \([^ ]*\) *inet \([0-9.]*\)\/.*/\1 \2/p')
+_offer=""
+for _pair in $(printf '%s\n' "$_cands" | tr ' ' ':' | tr '\n' ' '); do
+    _dev=${_pair%%:*}; _ip=${_pair##*:}
+    [ -z "$_ip" ] && continue
+    [ "$_ip" = "127.0.0.1" ] && continue
+    [ "$_ip" = "$LAN_IP" ] && continue
+    [ -n "$_wan_dev" ] && [ "$_dev" = "$_wan_dev" ] && continue
+    _offer="$_offer $_dev:$_ip"
+done
+
+if [ -n "$_offer" ]; then
+    say ""
+    say "Кроме loopback и LAN ($LAN_IP), у роутера есть адреса:"
+    for _pair in $_offer; do say "  ${_pair##*:}  (${_pair%%:*})"; done
+    say "Админите роутер через WG или другой приватный канал — добавьте его адрес,"
+    say "иначе управление оттуда будет недоступно."
+    for _pair in $_offer; do
+        _dev=${_pair%%:*}; _ip=${_pair##*:}
+        ask_yn "Слушать также $_ip ($_dev)?" && EXTRA_ADDRS="$EXTRA_ADDRS $_ip"
+    done
+fi
+
 # ── Доступ к управлению снаружи (по умолчанию — нет) ───────────────────────
 WAN_IP=""; WAN_EXPOSE=0
 say ""
@@ -517,6 +567,10 @@ if [ "$WAN_IP" = "0.0.0.0" ]; then
 else
     LISTEN_ADDR="\"127.0.0.1\""
     [ "$LAN_IP" != "127.0.0.1" ] && LISTEN_ADDR="$LISTEN_ADDR, \"$LAN_IP\""
+    # приватные каналы админа (WG и т.п.), выбранные выше
+    for _a in $EXTRA_ADDRS; do
+        LISTEN_ADDR="$LISTEN_ADDR, \"$_a\""
+    done
     [ "$WAN_EXPOSE" = 1 ] && [ "$WAN_IP" != "$LAN_IP" ] && LISTEN_ADDR="$LISTEN_ADDR, \"$WAN_IP\""
 fi
 
@@ -754,6 +808,27 @@ printf '════════════════════════
 printf '  ГОТОВО\n'
 printf '════════════════════════════════════════════════════════════\n\n'
 
+printf '── ваши решения ─────────────────────────────────────────────\n'
+printf '  сеть сегмента:      %s.0/24\n' "$NET_BASE"
+printf '  шлюз сегмента:      %s\n' "$GW"
+printf '  DHCP-пул:           %s.100–249 (lease 12h)\n' "$NET_BASE"
+printf '  DNS для клиентов:   %s\n' "$SEG_DNS"
+printf '  мост сегмента:      %s\n' "$BR"
+printf '  uci-секция:         %s\n' "$NET"
+printf '  tun-интерфейс:      %s\n' "$TUN_IF"
+printf '  адрес туннеля:      %s/30\n' "$TUN_ADDR"
+[ -n "$SSID_5G" ] && printf '  SSID 5 ГГц:         %s\n' "$SSID_5G"
+[ -n "$SSID_2G" ] && printf '  SSID 2.4 ГГц:       %s\n' "$SSID_2G"
+printf '  пароль Wi-Fi:       %s\n' "$WIFI_KEY"
+printf '  порт управления:    %s\n' "$PORT"
+printf '  слушает адреса:     %s\n' "$(printf '%s' "$LISTEN_ADDR" | tr -d '"')"
+if [ "$WAN_EXPOSE" = 1 ]; then
+    printf '  доступ из WAN:      да, порт открыт в firewall\n'
+else
+    printf '  доступ из WAN:      нет (только перечисленные адреса)\n'
+fi
+printf '─────────────────────────────────────────────────────────────\n'
+printf '\n'
 printf 'Pair invite:     %s:%s#%s#%s\n' "$LAN_IP" "$PORT" "$FP" "$CODE"
 printf '\n'
 printf '── для конфига ядра ─────────────────────────────────────────\n'
@@ -769,10 +844,6 @@ printf 'Рассинхрон имени → сегмент без интерне
 printf 'connection refused на TCP при живых ICMP/DNS.\n'
 printf '─────────────────────────────────────────────────────────────\n'
 printf '\n'
-[ -n "$SSID_5G" ] && printf 'Wi-Fi 5 ГГц:     %s\n' "$SSID_5G"
-[ -n "$SSID_2G" ] && printf 'Wi-Fi 2.4 ГГц:   %s\n' "$SSID_2G"
-printf 'пароль Wi-Fi:    %s\n' "$WIFI_KEY"
-printf 'сегмент:         %s.0/24 (шлюз %s)\n' "$NET_BASE" "$GW"
 printf 'управление:      https://%s:%s (TLS+mTLS)\n' "$LAN_IP" "$PORT"
 if [ "$WAN_EXPOSE" = 1 ]; then
     printf 'снаружи:         https://%s:%s — порт открыт в firewall\n' "$WAN_SHOW" "$PORT"

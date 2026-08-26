@@ -295,16 +295,26 @@ TUN_FALLBACK=0
 # The tunnel name and address end up BOTH in the core config AND in the
 # firewall (the sbtun zone is bound to the device by name, the sbtun_tcp rule
 # — to the address). Asking here guarantees the two sides match.
-TUN_IF=$(ask "tun interface name" "lxd-tun0")
-case "$TUN_IF" in
-    *[!A-Za-z0-9_-]*|"") die "invalid interface name: $TUN_IF" ;;
-    # A single-character answer is almost always a y/n typed out of habit after
-    # the previous Y/n question. It is a formally valid name, so such a slip
-    # would travel into the kernel config and the firewall unnoticed.
-    [yYnN]) die "\"$TUN_IF\" looks like a y/n answer, not an interface name — Enter accepts lxd-tun0" ;;
-esac
-[ ${#TUN_IF} -le 15 ] || die "interface name longer than 15 characters — the Linux kernel won't accept it"
-ip link show "$TUN_IF" >/dev/null 2>&1 && die "interface $TUN_IF already exists"
+# Asked in the same shape as the network and the address: show the value
+# first, then confirm. A single-character answer (a y/n typed out of habit) is
+# rejected — it is a formally valid name and would travel into the kernel
+# config and the firewall unnoticed.
+TUN_IF=""
+say "tun interface name: lxd-tun0"
+ask_yn_default "Use it?" && TUN_IF="lxd-tun0"
+while [ -z "$TUN_IF" ]; do
+    TUN_IF=$(ask "tun interface name" "")
+    case "$TUN_IF" in
+        *[!A-Za-z0-9_-]*|"") warn "invalid interface name: $TUN_IF"; TUN_IF=""; continue ;;
+        [yYnN]) warn "\"$TUN_IF\" looks like a y/n answer, not an interface name"; TUN_IF=""; continue ;;
+    esac
+    if [ ${#TUN_IF} -gt 15 ]; then
+        warn "interface name longer than 15 characters — the Linux kernel won't accept it"; TUN_IF=""; continue
+    fi
+    if ip link show "$TUN_IF" >/dev/null 2>&1; then
+        warn "interface $TUN_IF already exists"; TUN_IF=""; continue
+    fi
+done
 
 # The tunnel address is shown too: a collision here surfaces later, not during
 # setup — the sbtun_tcp rule is bound to the address, so TCP from the segment
@@ -364,14 +374,23 @@ fi
 # "LAN interfaces" field in the launcher UI). It is what contains the capture
 # to the VPN segment: put br-lan here and the core drags the whole home
 # network into the tunnel.
-BR=$(ask "VPN segment bridge name (goes into include_interface)" "br-lxdvpn")
-case "$BR" in
-    *[!A-Za-z0-9_-]*|"") die "invalid bridge name: $BR" ;;
-    br-lan) die "br-lan is off-limits: it is the main network, the core would drag it into the tunnel" ;;
-    [yYnN]) die "\"$BR\" looks like a y/n answer, not a bridge name — Enter accepts br-lxdvpn" ;;
-esac
-[ ${#BR} -le 15 ] || die "bridge name longer than 15 characters — the Linux kernel won't accept it"
-ip link show "$BR" >/dev/null 2>&1 && die "interface $BR already exists"
+BR=""
+say "VPN segment bridge name: br-lxdvpn  (goes into include_interface)"
+ask_yn_default "Use it?" && BR="br-lxdvpn"
+while [ -z "$BR" ]; do
+    BR=$(ask "VPN segment bridge name (goes into include_interface)" "")
+    case "$BR" in
+        *[!A-Za-z0-9_-]*|"") warn "invalid bridge name: $BR"; BR=""; continue ;;
+        br-lan) warn "br-lan is off-limits: it is the main network, the core would drag it into the tunnel"; BR=""; continue ;;
+        [yYnN]) warn "\"$BR\" looks like a y/n answer, not a bridge name"; BR=""; continue ;;
+    esac
+    if [ ${#BR} -gt 15 ]; then
+        warn "bridge name longer than 15 characters — the Linux kernel won't accept it"; BR=""; continue
+    fi
+    if ip link show "$BR" >/dev/null 2>&1; then
+        warn "interface $BR already exists"; BR=""; continue
+    fi
+done
 
 # UCI sections are named after the bridge so the whole segment reads uniformly
 NET=$(printf '%s' "$BR" | sed 's/^br-//; s/[^A-Za-z0-9]//g')
@@ -476,6 +495,39 @@ if netstat -ltn 2>/dev/null | grep -q ":$PORT "; then
     "$INIT" running 2>/dev/null || die "port $PORT is already taken by another process (netstat -ltnp | grep $PORT)"
 fi
 
+# ── Extra listen addresses ─────────────────────────────────────────────────
+# Loopback + LAN cover home access, but routers are often administered over a
+# separate private channel — WG, Tailscale, an admin VLAN. Such an address is
+# not in the LAN section, so management from there would be unreachable. Offer
+# the candidates: every router IPv4 except loopback, LAN and the WAN address.
+EXTRA_ADDRS=""
+# Candidates are collected into a variable (piping into while would run the
+# loop in a subshell, where ask_yn reads the wrong stdin and the assignment to
+# EXTRA_ADDRS would not survive the exit).
+_cands=$(ip -4 -o addr show 2>/dev/null \
+    | sed -n 's/^[0-9]*: \([^ ]*\) *inet \([0-9.]*\)\/.*/\1 \2/p')
+_offer=""
+for _pair in $(printf '%s\n' "$_cands" | tr ' ' ':' | tr '\n' ' '); do
+    _dev=${_pair%%:*}; _ip=${_pair##*:}
+    [ -z "$_ip" ] && continue
+    [ "$_ip" = "127.0.0.1" ] && continue
+    [ "$_ip" = "$LAN_IP" ] && continue
+    [ -n "$_wan_dev" ] && [ "$_dev" = "$_wan_dev" ] && continue
+    _offer="$_offer $_dev:$_ip"
+done
+
+if [ -n "$_offer" ]; then
+    say ""
+    say "Besides loopback and LAN ($LAN_IP), the router has these addresses:"
+    for _pair in $_offer; do say "  ${_pair##*:}  (${_pair%%:*})"; done
+    say "If you administer the router over WG or another private channel, add its"
+    say "address — otherwise management from there will be unreachable."
+    for _pair in $_offer; do
+        _dev=${_pair%%:*}; _ip=${_pair##*:}
+        ask_yn "Also listen on $_ip ($_dev)?" && EXTRA_ADDRS="$EXTRA_ADDRS $_ip"
+    done
+fi
+
 # ── Management access from outside (default — no) ───────────────────────────
 WAN_IP=""; WAN_EXPOSE=0
 say ""
@@ -524,6 +576,10 @@ if [ "$WAN_IP" = "0.0.0.0" ]; then
 else
     LISTEN_ADDR="\"127.0.0.1\""
     [ "$LAN_IP" != "127.0.0.1" ] && LISTEN_ADDR="$LISTEN_ADDR, \"$LAN_IP\""
+    # the admin's private channels (WG and the like) picked above
+    for _a in $EXTRA_ADDRS; do
+        LISTEN_ADDR="$LISTEN_ADDR, \"$_a\""
+    done
     [ "$WAN_EXPOSE" = 1 ] && [ "$WAN_IP" != "$LAN_IP" ] && LISTEN_ADDR="$LISTEN_ADDR, \"$WAN_IP\""
 fi
 
@@ -767,6 +823,27 @@ printf '════════════════════════
 printf '  DONE\n'
 printf '════════════════════════════════════════════════════════════\n\n'
 
+printf '── your choices ─────────────────────────────────────────────\n'
+printf '  segment network:    %s.0/24\n' "$NET_BASE"
+printf '  segment gateway:    %s\n' "$GW"
+printf '  DHCP pool:          %s.100–249 (lease 12h)\n' "$NET_BASE"
+printf '  DNS for clients:    %s\n' "$SEG_DNS"
+printf '  segment bridge:     %s\n' "$BR"
+printf '  uci section:        %s\n' "$NET"
+printf '  tun interface:      %s\n' "$TUN_IF"
+printf '  tunnel address:     %s/30\n' "$TUN_ADDR"
+[ -n "$SSID_5G" ] && printf '  SSID 5 GHz:         %s\n' "$SSID_5G"
+[ -n "$SSID_2G" ] && printf '  SSID 2.4 GHz:       %s\n' "$SSID_2G"
+printf '  Wi-Fi password:     %s\n' "$WIFI_KEY"
+printf '  management port:    %s\n' "$PORT"
+printf '  listening on:       %s\n' "$(printf '%s' "$LISTEN_ADDR" | tr -d '"')"
+if [ "$WAN_EXPOSE" = 1 ]; then
+    printf '  access from WAN:    yes, port opened in the firewall\n'
+else
+    printf '  access from WAN:    no (only the addresses listed above)\n'
+fi
+printf '─────────────────────────────────────────────────────────────\n'
+printf '\n'
 printf 'Pair invite:     %s:%s#%s#%s\n' "$LAN_IP" "$PORT" "$FP" "$CODE"
 printf '\n'
 printf '── for the core config ──────────────────────────────────────\n'
@@ -783,10 +860,6 @@ printf 'Name drift → segment offline; address drift → connection\n'
 printf 'refused on TCP while ICMP/DNS work.\n'
 printf '─────────────────────────────────────────────────────────────\n'
 printf '\n'
-[ -n "$SSID_5G" ] && printf 'Wi-Fi 5 GHz:     %s\n' "$SSID_5G"
-[ -n "$SSID_2G" ] && printf 'Wi-Fi 2.4 GHz:   %s\n' "$SSID_2G"
-printf 'Wi-Fi password:  %s\n' "$WIFI_KEY"
-printf 'segment:         %s.0/24 (gateway %s)\n' "$NET_BASE" "$GW"
 printf 'management:      https://%s:%s (TLS+mTLS)\n' "$LAN_IP" "$PORT"
 if [ "$WAN_EXPOSE" = 1 ]; then
     printf 'from outside:    https://%s:%s — port open in the firewall\n' "$WAN_SHOW" "$PORT"
