@@ -298,6 +298,10 @@ TUN_FALLBACK=0
 TUN_IF=$(ask "tun interface name" "lxd-tun0")
 case "$TUN_IF" in
     *[!A-Za-z0-9_-]*|"") die "invalid interface name: $TUN_IF" ;;
+    # A single-character answer is almost always a y/n typed out of habit after
+    # the previous Y/n question. It is a formally valid name, so such a slip
+    # would travel into the kernel config and the firewall unnoticed.
+    [yYnN]) die "\"$TUN_IF\" looks like a y/n answer, not an interface name — Enter accepts lxd-tun0" ;;
 esac
 [ ${#TUN_IF} -le 15 ] || die "interface name longer than 15 characters — the Linux kernel won't accept it"
 ip link show "$TUN_IF" >/dev/null 2>&1 && die "interface $TUN_IF already exists"
@@ -364,6 +368,7 @@ BR=$(ask "VPN segment bridge name (goes into include_interface)" "br-lxdvpn")
 case "$BR" in
     *[!A-Za-z0-9_-]*|"") die "invalid bridge name: $BR" ;;
     br-lan) die "br-lan is off-limits: it is the main network, the core would drag it into the tunnel" ;;
+    [yYnN]) die "\"$BR\" looks like a y/n answer, not a bridge name — Enter accepts br-lxdvpn" ;;
 esac
 [ ${#BR} -le 15 ] || die "bridge name longer than 15 characters — the Linux kernel won't accept it"
 ip link show "$BR" >/dev/null 2>&1 && die "interface $BR already exists"
