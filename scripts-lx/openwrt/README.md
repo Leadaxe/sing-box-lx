@@ -20,7 +20,7 @@ Built and verified on a RouteRich AX3000 (OpenWrt 24.10 fork, mediatek/filogic, 
 ## Requirements
 
 - OpenWrt 22.03+ with fw4/nftables (forks that keep `ID="openwrt"` in `/etc/os-release` qualify) and dnsmasq;
-- ~80 MB free space (the binary is ~50 MB; small overlays need extroot);
+- ~50 MB free space (the binary is ~41 MB; small overlays need extroot);
 - an architecture the fork releases cover: aarch64, x86_64, armv7l, mips, mipsel.
 
 ## Install

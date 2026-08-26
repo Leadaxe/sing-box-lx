@@ -101,11 +101,11 @@ case "$ARCH_RAW" in
 esac
 say "architecture: $ARCH_RAW → $ARCH"
 
-# The binary is ~50 MB: won't fit the NAND overlay of a small router
+# The binary is ~41 MB: won't fit the NAND overlay of a small router
 AVAIL_KB=$(df -k /overlay 2>/dev/null | awk 'NR==2{print $4}')
 [ -z "$AVAIL_KB" ] && AVAIL_KB=$(df -k / | awk 'NR==2{print $4}')
 say "free space:  $((AVAIL_KB / 1024)) MB"
-[ "$AVAIL_KB" -lt 80000 ] && warn "less than 80 MB free — the ~50 MB binary may not fit (extroot needed)"
+[ "$AVAIL_KB" -lt 50000 ] && warn "less than 50 MB free — the ~41 MB binary may not fit (extroot needed)"
 
 # ── pre-lxd backup: before any changes, exactly once ────────────────────────
 # The full-rollback point — the teardown script restores from it (--restore).

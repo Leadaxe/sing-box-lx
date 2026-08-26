@@ -20,7 +20,7 @@ SSID → мост → tun (auto_route + include_interface) → ядро sing-box
 ## Требования
 
 - OpenWrt 22.03+ с fw4/nftables (форки с `ID="openwrt"` в `/etc/os-release` подходят) и dnsmasq;
-- ~80 МБ свободного места (бинарь ~50 МБ; на маленьком overlay нужен extroot);
+- ~50 МБ свободного места (бинарь ~41 МБ; на маленьком overlay нужен extroot);
 - архитектура из релизов форка: aarch64, x86_64, armv7l, mips, mipsel.
 
 ## Установка
