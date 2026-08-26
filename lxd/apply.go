@@ -107,8 +107,12 @@ type controller struct {
 	// into a config's `type: local, path:` (SPEC 063; absolute by owner
 	// decision, matching /admin/info.state_dir).
 	infoResourcesDir string
-	infoTLS          bool
-	startedAt        time.Time
+	// infoLogPath is the ACTUAL rotated-log path the daemon writes (daemon.json
+	// log_file override included). Empty = no log file at all (a dev/terminal
+	// run) — /admin/info then advertises none and /admin/logs answers 404.
+	infoLogPath string
+	infoTLS     bool
+	startedAt   time.Time
 
 	// Observability plane (SPEC 065). memory is nil-safe only through
 	// newController; profiles holds the mutable pprof state (in-flight

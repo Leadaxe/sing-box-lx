@@ -334,9 +334,9 @@ func (c *controller) handleConfig(writer http.ResponseWriter, request *http.Requ
 // (cache_file), because it is the one directory the daemon owns.
 func (c *controller) handleInfo(writer http.ResponseWriter, request *http.Request) {
 	logPath := ""
-	if candidate := DefaultLogPath(c.infoStateDir); candidate != "" {
-		if _, err := os.Stat(candidate); err == nil {
-			logPath = candidate
+	if c.infoLogPath != "" {
+		if _, err := os.Stat(c.infoLogPath); err == nil {
+			logPath = c.infoLogPath
 		}
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
@@ -517,7 +517,13 @@ func (c *controller) handleStats(writer http.ResponseWriter, request *http.Reque
 // handleLogs serves the tail of the daemon's own log file — the one channel
 // the gRPC log stream cannot carry (see logtail.go).
 func (c *controller) handleLogs(writer http.ResponseWriter, request *http.Request) {
-	path := DefaultLogPath(c.infoStateDir)
+	path := c.infoLogPath
+	if path == "" {
+		writeJSON(writer, http.StatusNotFound, map[string]any{
+			"error": "no log file (the daemon logs to the terminal when not run as a service)",
+		})
+		return
+	}
 	requested, _ := strconv.Atoi(request.URL.Query().Get("tail"))
 	content, found, err := tailLog(path, clampTailLines(requested))
 	if err != nil {

@@ -160,6 +160,11 @@ func lxdMain(cmd *cobra.Command) error {
 	// skips the redirect when stdout is a TTY even here.
 	if installed {
 		daemonOptions.LogFile = lxd.DefaultLogPath(lxdStateDir)
+		// daemon.json's log_file overrides the derived path (e.g. tmpfs on an
+		// OpenWrt router). Absolute because a service unit runs with cwd "/".
+		if fileConfig.LogFile != "" {
+			daemonOptions.LogFile = absPathOr(fileConfig.LogFile)
+		}
 		daemonOptions.LogMaxSizeMB = fileConfig.LogMaxSizeMB
 		daemonOptions.LogMaxBackups = fileConfig.LogMaxBackups
 		daemonOptions.LogMaxAgeHours = fileConfig.LogMaxAgeHours

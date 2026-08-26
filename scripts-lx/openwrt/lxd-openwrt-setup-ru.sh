@@ -520,12 +520,14 @@ else
     [ "$WAN_EXPOSE" = 1 ] && [ "$WAN_IP" != "$LAN_IP" ] && LISTEN_ADDR="$LISTEN_ADDR, \"$WAN_IP\""
 fi
 
+# log_file на tmpfs: ротируемый лог демона не должен изнашивать overlay-флеш.
 cat > "$STATE_DIR/daemon.json" <<EOF
 {
   "listen": {
     "address": [$LISTEN_ADDR],
     "port": $PORT
   },
+  "log_file": "/tmp/lxd.log",
   "tls": true,
   "secret": "$SECRET"
 }

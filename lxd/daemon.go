@@ -122,6 +122,7 @@ func Run(ctx context.Context, options Options) error {
 		validate:         execSelfCheck,
 		infoStateDir:     absStateDir,
 		infoResourcesDir: filepath.Join(absStateDir, "resources"),
+		infoLogPath:      options.LogFile,
 		infoTLS:          options.TLS,
 		startedAt:        time.Now(),
 		memory:           newMemoryCache(),

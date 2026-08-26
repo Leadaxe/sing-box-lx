@@ -71,7 +71,8 @@ or by the operator's editor).
 | `listen` | `127.0.0.1:9091` | channel address (both planes); a `"host:port"` string, or `{"address": [...], "port": N}` to bind several addresses — see below |
 | `tls` | `false` | mTLS with client enrollment; `false` = plain h2c, loopback/dev only |
 | `secret` | empty | Bearer secret for the operator routes; the only gate when `tls: false` (empty = no authentication) |
-| `log_max_size_mb` | `20` | log rotation: safety size ceiling |
+| `log_file` | `<parent of state-dir>/lxd.log` | rotated-log path override (absolute; e.g. `/tmp/lxd.log` for tmpfs on a router) — `/admin/info` advertises the actual path |
+| `log_max_size_mb` | `1` | log rotation: safety size ceiling |
 | `log_max_backups` | `1` | how many rotated generations (`lxd.log.1…N`) to keep |
 | `log_max_age_hours` | `24` | rotation by file age |
 
@@ -293,9 +294,10 @@ Platform specifics:
 
 - `/var` is tmpfs and dies on reboot → keep the state directory somewhere
   persistent: `/etc/sing-box-lxd/state` (overlay) or extroot (`/root/…`).
-- On routers **without extroot** a log beside the state dir writes into the
-  NAND overlay — flash wear; with extroot there is no issue. The default
-  rotation limits (20 MB × 2 files) bound the damage, but extroot is better.
+- A log beside the state dir would write into the NAND overlay — flash wear.
+  The installer therefore sets `"log_file": "/tmp/lxd.log"` in daemon.json:
+  the log lives on tmpfs (lost on reboot — for a router that is the right
+  trade), and the rotation limits (1 MB × 2 files) bound the RAM it can take.
 
 **Uploading the binary.** OpenWrt often ships no sftp-server, so `scp`/`rsync`
 fail. Stream it over ssh instead (download and unpack the archive on your

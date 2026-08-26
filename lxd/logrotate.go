@@ -16,16 +16,16 @@ import (
 // a log gone wild in an error loop (a bounded file cannot eat the disk
 // overnight, which is exactly what launchd's plain append redirect would do).
 const (
-	defaultLogMaxSizeMB    = 20
+	defaultLogMaxSizeMB    = 1
 	defaultLogMaxBackups   = 1
 	defaultLogMaxAgeHours  = 24
 	logRotateCheckInterval = time.Minute
 )
 
-// DefaultLogPath returns the daemon's log file for a given state dir: in the
-// support directory beside it (…/sing-box-lxd/lxd.log next to
-// …/sing-box-lxd/state). GET /admin/info advertises the same derivation, so
-// the launcher never hard-codes the path.
+// DefaultLogPath returns the daemon's default log file for a given state dir:
+// in the support directory beside it (…/sing-box-lxd/lxd.log next to
+// …/sing-box-lxd/state). daemon.json's log_file overrides it; GET /admin/info
+// advertises the ACTUAL path either way, so the launcher never hard-codes it.
 func DefaultLogPath(stateDir string) string {
 	abs := stateDir
 	if a, err := filepath.Abs(stateDir); err == nil {

@@ -275,7 +275,7 @@ func TestLogEndpointMissingFileIs404(t *testing.T) {
 	// No file is a legitimate state (terminal runs keep the log on screen),
 	// so it must not read as a daemon fault.
 	control := newTestController(t, &fakeReloader{}, nil)
-	control.infoStateDir = filepath.Join(t.TempDir(), "state")
+	control.infoLogPath = filepath.Join(t.TempDir(), "lxd.log")
 	server := httptest.NewServer(control.adminHandler(""))
 	defer server.Close()
 	status, payload := adminRequest(t, http.MethodGet, server.URL+"/admin/logs", "")
@@ -284,6 +284,21 @@ func TestLogEndpointMissingFileIs404(t *testing.T) {
 	}
 	if text, _ := payload["error"].(string); !strings.Contains(text, "terminal") {
 		t.Fatalf("the 404 must explain why the file is absent, payload: %v", payload)
+	}
+}
+
+func TestLogEndpointNoLogFileConfiguredIs404(t *testing.T) {
+	// A dev/terminal daemon has NO log file at all (infoLogPath empty) — the
+	// endpoint must answer the same honest 404, not derive a phantom path.
+	control := newTestController(t, &fakeReloader{}, nil)
+	server := httptest.NewServer(control.adminHandler(""))
+	defer server.Close()
+	status, payload := adminRequest(t, http.MethodGet, server.URL+"/admin/logs", "")
+	if status != http.StatusNotFound {
+		t.Fatal("expected 404 with no log file configured, got", status)
+	}
+	if text, _ := payload["error"].(string); !strings.Contains(text, "terminal") {
+		t.Fatalf("the 404 must explain why there is no file, payload: %v", payload)
 	}
 }
 

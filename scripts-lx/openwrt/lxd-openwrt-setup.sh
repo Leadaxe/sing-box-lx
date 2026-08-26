@@ -527,12 +527,14 @@ else
     [ "$WAN_EXPOSE" = 1 ] && [ "$WAN_IP" != "$LAN_IP" ] && LISTEN_ADDR="$LISTEN_ADDR, \"$WAN_IP\""
 fi
 
+# log_file on tmpfs: the rotated daemon log must not wear the overlay flash.
 cat > "$STATE_DIR/daemon.json" <<EOF
 {
   "listen": {
     "address": [$LISTEN_ADDR],
     "port": $PORT
   },
+  "log_file": "/tmp/lxd.log",
   "tls": true,
   "secret": "$SECRET"
 }
