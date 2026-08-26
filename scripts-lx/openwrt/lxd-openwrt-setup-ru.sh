@@ -348,20 +348,29 @@ say "туннель:     $TUN_IF ($TUN_ADDR/30)"
 # DNS для клиентов сегмента уходит DHCP-опцией 6. Резолвер роутера сюда не
 # годится: dnsmasq ответил бы мимо туннеля, и запросы утекли бы с домашнего IP.
 # Нужен внешний адрес — но какой именно, решает владелец, а не скрипт.
-SEG_DNS=$(ask "DNS для клиентов сегмента" "8.8.8.8")
-case "$SEG_DNS" in
-    [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
-    *) die "DNS должен быть IPv4-адресом: $SEG_DNS" ;;
-esac
-case "$SEG_DNS" in *[!0-9.]*) die "DNS должен быть IPv4-адресом: $SEG_DNS" ;; esac
-for _o in $(printf '%s\n' "$SEG_DNS" | tr '.' ' '); do
-    [ "$_o" -le 255 ] 2>/dev/null || die "октет больше 255: $SEG_DNS"
+SEG_DNS=""
+say "DNS для клиентов сегмента: 8.8.8.8"
+ask_yn_default "Использовать его?" && SEG_DNS="8.8.8.8"
+while [ -z "$SEG_DNS" ]; do
+    SEG_DNS=$(ask "DNS для клиентов сегмента" "")
+    case "$SEG_DNS" in
+        [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
+        *) warn "DNS должен быть IPv4-адресом: $SEG_DNS"; SEG_DNS=""; continue ;;
+    esac
+    case "$SEG_DNS" in *[!0-9.]*) warn "DNS должен быть IPv4-адресом: $SEG_DNS"; SEG_DNS=""; continue ;; esac
+    _bad=0
+    for _o in $(printf '%s\n' "$SEG_DNS" | tr '.' ' '); do
+        [ "$_o" -le 255 ] 2>/dev/null || _bad=1
+    done
+    [ "$_bad" = 1 ] && { warn "октет больше 255: $SEG_DNS"; SEG_DNS=""; continue; }
+    # Адрес самого роутера = dnsmasq = резолв мимо туннеля.
+    if [ "$SEG_DNS" = "$GW" ]; then
+        warn "нельзя указывать шлюз сегмента: резолв уйдёт мимо туннеля"; SEG_DNS=""; continue
+    fi
+    if [ -n "$LAN_BASE" ] && [ "${SEG_DNS%.*}" = "$LAN_BASE" ]; then
+        warn "$SEG_DNS — адрес в LAN роутера; если это dnsmasq, резолв уйдёт мимо туннеля"
+    fi
 done
-# Адрес самого роутера = dnsmasq = резолв мимо туннеля.
-[ "$SEG_DNS" = "$GW" ] && die "нельзя указывать шлюз сегмента: резолв уйдёт мимо туннеля"
-if [ -n "$LAN_BASE" ] && [ "${SEG_DNS%.*}" = "$LAN_BASE" ]; then
-    warn "$SEG_DNS — адрес в LAN роутера; если это dnsmasq, резолв уйдёт мимо туннеля"
-fi
 
 # Имя моста тоже уходит в конфиг ядра — в include_interface (в UI лаунчера это
 # поле "LAN interfaces"). Именно оно запирает перехват в VPN-сегменте: укажешь

@@ -355,20 +355,29 @@ say "tunnel:      $TUN_IF ($TUN_ADDR/30)"
 # resolver won't do: dnsmasq would answer outside the tunnel and the queries
 # would leak from the home IP. It has to be external — but which one is the
 # owner's call, not the script's.
-SEG_DNS=$(ask "DNS for segment clients" "8.8.8.8")
-case "$SEG_DNS" in
-    [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
-    *) die "DNS must be an IPv4 address: $SEG_DNS" ;;
-esac
-case "$SEG_DNS" in *[!0-9.]*) die "DNS must be an IPv4 address: $SEG_DNS" ;; esac
-for _o in $(printf '%s\n' "$SEG_DNS" | tr '.' ' '); do
-    [ "$_o" -le 255 ] 2>/dev/null || die "octet greater than 255: $SEG_DNS"
+SEG_DNS=""
+say "DNS for segment clients: 8.8.8.8"
+ask_yn_default "Use it?" && SEG_DNS="8.8.8.8"
+while [ -z "$SEG_DNS" ]; do
+    SEG_DNS=$(ask "DNS for segment clients" "")
+    case "$SEG_DNS" in
+        [0-9]*.[0-9]*.[0-9]*.[0-9]*) ;;
+        *) warn "DNS must be an IPv4 address: $SEG_DNS"; SEG_DNS=""; continue ;;
+    esac
+    case "$SEG_DNS" in *[!0-9.]*) warn "DNS must be an IPv4 address: $SEG_DNS"; SEG_DNS=""; continue ;; esac
+    _bad=0
+    for _o in $(printf '%s\n' "$SEG_DNS" | tr '.' ' '); do
+        [ "$_o" -le 255 ] 2>/dev/null || _bad=1
+    done
+    [ "$_bad" = 1 ] && { warn "octet greater than 255: $SEG_DNS"; SEG_DNS=""; continue; }
+    # The router's own address = dnsmasq = resolution outside the tunnel.
+    if [ "$SEG_DNS" = "$GW" ]; then
+        warn "the segment gateway is not allowed: resolution would bypass the tunnel"; SEG_DNS=""; continue
+    fi
+    if [ -n "$LAN_BASE" ] && [ "${SEG_DNS%.*}" = "$LAN_BASE" ]; then
+        warn "$SEG_DNS is an address in the router LAN; if that is dnsmasq, resolution will bypass the tunnel"
+    fi
 done
-# The router's own address = dnsmasq = resolution outside the tunnel.
-[ "$SEG_DNS" = "$GW" ] && die "the segment gateway is not allowed: resolution would bypass the tunnel"
-if [ -n "$LAN_BASE" ] && [ "${SEG_DNS%.*}" = "$LAN_BASE" ]; then
-    warn "$SEG_DNS is an address in the router LAN; if that is dnsmasq, resolution will bypass the tunnel"
-fi
 
 # The bridge name also goes into the core config — into include_interface (the
 # "LAN interfaces" field in the launcher UI). It is what contains the capture
