@@ -599,14 +599,20 @@ fi
 # back to 127.0.0.1 on a non-standard lan section name — never write a dupe.
 if [ "$WAN_IP" = "0.0.0.0" ]; then
     LISTEN_ADDR="\"0.0.0.0\""
+    LISTEN_LIST="0.0.0.0"
 else
     LISTEN_ADDR="\"127.0.0.1\""
-    [ "$LAN_IP" != "127.0.0.1" ] && LISTEN_ADDR="$LISTEN_ADDR, \"$LAN_IP\""
+    LISTEN_LIST="127.0.0.1"
+    [ "$LAN_IP" != "127.0.0.1" ] && LISTEN_ADDR="$LISTEN_ADDR, \"$LAN_IP\"" && LISTEN_LIST="$LISTEN_LIST $LAN_IP"
     # the admin's private channels (WG and the like) picked above
     for _a in $EXTRA_ADDRS; do
         LISTEN_ADDR="$LISTEN_ADDR, \"$_a\""
+        LISTEN_LIST="$LISTEN_LIST $_a"
     done
-    [ "$WAN_EXPOSE" = 1 ] && [ "$WAN_IP" != "$LAN_IP" ] && LISTEN_ADDR="$LISTEN_ADDR, \"$WAN_IP\""
+    if [ "$WAN_EXPOSE" = 1 ] && [ "$WAN_IP" != "$LAN_IP" ]; then
+        LISTEN_ADDR="$LISTEN_ADDR, \"$WAN_IP\""
+        LISTEN_LIST="$LISTEN_LIST $WAN_IP"
+    fi
 fi
 
 # log_file on tmpfs: the rotated daemon log must not wear the overlay flash.
@@ -870,7 +876,22 @@ else
 fi
 printf '─────────────────────────────────────────────────────────────\n'
 printf '\n'
-printf 'Pair invite:     %s:%s#%s#%s\n' "$LAN_IP" "$PORT" "$FP" "$CODE"
+# The fingerprint and the code are shared; only the address differs. Print one
+# line per listen address: a client on the WG side cannot reach the LAN address
+# and vice versa — let the user pick the form they connect from.
+_first=1
+for _a in $LISTEN_LIST; do
+    [ "$_a" = "127.0.0.1" ] && [ "$(printf '%s' "$LISTEN_LIST" | wc -w)" -gt 1 ] && continue
+    if [ "$_first" = 1 ]; then
+        printf 'Pair invite:     %s:%s#%s#%s\n' "$_a" "$PORT" "$FP" "$CODE"
+        _first=0
+    else
+        printf '                 %s:%s#%s#%s\n' "$_a" "$PORT" "$FP" "$CODE"
+    fi
+done
+if [ "$_first" = 1 ]; then
+    printf 'Pair invite:     %s:%s#%s#%s\n' "$LAN_IP" "$PORT" "$FP" "$CODE"
+fi
 printf '\n'
 printf '── for the core config ──────────────────────────────────────\n'
 printf 'tun name:            %s\n' "$TUN_IF"
@@ -886,7 +907,7 @@ printf 'Name drift → segment offline; address drift → connection\n'
 printf 'refused on TCP while ICMP/DNS work.\n'
 printf '─────────────────────────────────────────────────────────────\n'
 printf '\n'
-printf 'management:      https://%s:%s (TLS+mTLS)\n' "$LAN_IP" "$PORT"
+printf 'management:      https://<any address listed above>:%s (TLS+mTLS)\n' "$PORT"
 if [ "$WAN_EXPOSE" = 1 ]; then
     printf 'from outside:    https://%s:%s — port open in the firewall\n' "$WAN_SHOW" "$PORT"
     printf '                 invite for an external client: %s:%s#%s#<new code>\n' "$WAN_SHOW" "$PORT" "$FP"

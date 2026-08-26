@@ -590,14 +590,20 @@ fi
 # lan-секции съезжает в fallback 127.0.0.1 — дубль не пишем.
 if [ "$WAN_IP" = "0.0.0.0" ]; then
     LISTEN_ADDR="\"0.0.0.0\""
+    LISTEN_LIST="0.0.0.0"
 else
     LISTEN_ADDR="\"127.0.0.1\""
-    [ "$LAN_IP" != "127.0.0.1" ] && LISTEN_ADDR="$LISTEN_ADDR, \"$LAN_IP\""
+    LISTEN_LIST="127.0.0.1"
+    [ "$LAN_IP" != "127.0.0.1" ] && LISTEN_ADDR="$LISTEN_ADDR, \"$LAN_IP\"" && LISTEN_LIST="$LISTEN_LIST $LAN_IP"
     # приватные каналы админа (WG и т.п.), выбранные выше
     for _a in $EXTRA_ADDRS; do
         LISTEN_ADDR="$LISTEN_ADDR, \"$_a\""
+        LISTEN_LIST="$LISTEN_LIST $_a"
     done
-    [ "$WAN_EXPOSE" = 1 ] && [ "$WAN_IP" != "$LAN_IP" ] && LISTEN_ADDR="$LISTEN_ADDR, \"$WAN_IP\""
+    if [ "$WAN_EXPOSE" = 1 ] && [ "$WAN_IP" != "$LAN_IP" ]; then
+        LISTEN_ADDR="$LISTEN_ADDR, \"$WAN_IP\""
+        LISTEN_LIST="$LISTEN_LIST $WAN_IP"
+    fi
 fi
 
 # log_file на tmpfs: ротируемый лог демона не должен изнашивать overlay-флеш.
@@ -855,7 +861,22 @@ else
 fi
 printf '─────────────────────────────────────────────────────────────\n'
 printf '\n'
-printf 'Pair invite:     %s:%s#%s#%s\n' "$LAN_IP" "$PORT" "$FP" "$CODE"
+# Отпечаток и код общие; различается только адрес подключения. Печатаем
+# строку на каждый адрес прослушивания: из WG-сети до LAN-адреса не достучаться,
+# и наоборот — пусть человек возьмёт ту форму, из которой подключается.
+_first=1
+for _a in $LISTEN_LIST; do
+    [ "$_a" = "127.0.0.1" ] && [ "$(printf '%s' "$LISTEN_LIST" | wc -w)" -gt 1 ] && continue
+    if [ "$_first" = 1 ]; then
+        printf 'Pair invite:     %s:%s#%s#%s\n' "$_a" "$PORT" "$FP" "$CODE"
+        _first=0
+    else
+        printf '                 %s:%s#%s#%s\n' "$_a" "$PORT" "$FP" "$CODE"
+    fi
+done
+if [ "$_first" = 1 ]; then
+    printf 'Pair invite:     %s:%s#%s#%s\n' "$LAN_IP" "$PORT" "$FP" "$CODE"
+fi
 printf '\n'
 printf '── для конфига ядра ─────────────────────────────────────────\n'
 printf 'tun name:            %s\n' "$TUN_IF"
@@ -870,7 +891,7 @@ printf 'Рассинхрон имени → сегмент без интерне
 printf 'connection refused на TCP при живых ICMP/DNS.\n'
 printf '─────────────────────────────────────────────────────────────\n'
 printf '\n'
-printf 'управление:      https://%s:%s (TLS+mTLS)\n' "$LAN_IP" "$PORT"
+printf 'управление:      https://<любой из адресов выше>:%s (TLS+mTLS)\n' "$PORT"
 if [ "$WAN_EXPOSE" = 1 ]; then
     printf 'снаружи:         https://%s:%s — порт открыт в firewall\n' "$WAN_SHOW" "$PORT"
     printf '                 invite для внешнего клиента: %s:%s#%s#<новый код>\n' "$WAN_SHOW" "$PORT" "$FP"
