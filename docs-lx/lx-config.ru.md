@@ -411,7 +411,7 @@ WARP enroll) делает клиент, не ядро.
 Обязательные поля — `server`/`server_port`, пара ключей (`private_key`/`public_key`, для
 дефолтного профиля `cloudflare`) и хотя бы один из `ip`/`ipv6` (твой локальный адрес
 *внутри* туннеля, не выходной IP). У всего остального есть дефолт: `profile: cloudflare`,
-`vhttp: auto`, `tls.server_name: www.cloudflare.com`, `mtu: 1280`, `idle_timeout: 5m`,
+`vhttp: auto`, `tls.server_name: www.cloudflare.com`, `mtu: 1280`, `idle_timeout` выкл,
 `keep_alive_period: 30s`, `network_list: tcp+udp`. TLS — в стандартном блоке `tls`
 outbound'а.
 

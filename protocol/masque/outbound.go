@@ -34,6 +34,7 @@ import (
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/json/badoption"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -45,10 +46,6 @@ func RegisterOutbound(registry *outbound.Registry) {
 }
 
 const defaultMTU uint32 = 1280
-
-// defaultIdleTimeout is how long a tunnel stays up with no traffic before it is
-// suspended (torn down) to free the userspace stack, pumps and QUIC keepalive.
-const defaultIdleTimeout = 5 * time.Minute
 
 // maxH2MTU caps the userspace MTU on the h2 transport: one IP packet becomes one
 // HTTP/2 DATA frame, which must fit the default SETTINGS_MAX_FRAME_SIZE (16384)
@@ -308,18 +305,17 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 
 	// Idle-suspend window: after this long with no traffic the tunnel + stack +
-	// pumps are torn down and rebuilt on the next dial. Default keeps a modest
-	// window; 0 in config disables suspend (tunnel stays up until Close).
-	idleTimeout := defaultIdleTimeout
-	if options.IdleTimeout > 0 {
-		idleTimeout = time.Duration(options.IdleTimeout)
-	} else if options.IdleTimeout < 0 {
-		idleTimeout = 0 // explicit disable
-	}
+	// pumps are torn down and rebuilt on the next dial. Off by default (absent,
+	// "0" and negative all keep the tunnel up until Close): the owner's call —
+	// the wake-up costs a full QUIC handshake + CONNECT-IP + a fresh gVisor
+	// stack on the first request after any quiet spell, which on routers and
+	// desktops is a worse trade than ~6 MB RSS and one keepalive packet per
+	// 30s. Only a positive value turns suspend on. lx: SPEC 021 B1.
+	idleTimeout := idleWindow(options.IdleTimeout)
 
-	// QUIC keepalive: only needed to survive the server idle-timeout while the
-	// tunnel is up. With idle-suspend on, a short window means we usually tear
-	// down before keepalive matters; keep it configurable, default 30s.
+	// QUIC keepalive: keeps the tunnel alive through the server's idle-timeout
+	// (and the provider's UDP NAT mapping) while it is up. With suspend off by
+	// default this is what holds the tunnel; keep it configurable, default 30s.
 	keepAlive := 30 * time.Second
 	if options.KeepAlivePeriod > 0 {
 		keepAlive = time.Duration(options.KeepAlivePeriod)
@@ -499,9 +495,19 @@ func (o *Outbound) teardownSession(s *session) {
 	})
 }
 
+// idleWindow resolves the configured idle_timeout into the suspend window:
+// positive = suspend after that long with no traffic; absent, "0" and negative
+// = 0 = never suspend (the idle watcher is not started). lx: SPEC 021 B1.
+func idleWindow(configured badoption.Duration) time.Duration {
+	if configured > 0 {
+		return time.Duration(configured)
+	}
+	return 0
+}
+
 // idleWatcher suspends the tunnel after idleTimeout of no traffic, freeing the
-// gVisor netstack, pumps and QUIC keepalive. The next dial rebuilds it. lx:
-// SPEC 021 B1.
+// gVisor netstack, pumps and QUIC keepalive. The next dial rebuilds it. Only
+// started when idle_timeout is positive. lx: SPEC 021 B1.
 func (o *Outbound) idleWatcher(s *session) {
 	// Poll at a fraction of the idle window (bounded) so suspend fires promptly
 	// without a busy tick.

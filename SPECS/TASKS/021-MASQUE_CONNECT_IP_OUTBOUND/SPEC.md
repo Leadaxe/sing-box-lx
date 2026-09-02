@@ -78,7 +78,7 @@
   "sni": "",                        // дефолт: www.cloudflare.com (см. §SNI эндпоинта режется DPI)
   "mtu": 1280,                      // дефолт 1280 (на h2 макс. 16000)
   "skip_cert_verify": false,        // отключить pinning на public_key (debug)
-  "idle_timeout": "5m",             // suspend туннеля после простоя; "" = 5m, отрицательное = выкл
+  "idle_timeout": "5m",             // suspend туннеля после простоя; ""/0/отриц. = выкл (дефолт с lx.31), включает только положительное
   "keep_alive_period": "30s",       // QUIC keepalive (h3); "" = 30s, отрицательное = выкл
 
   // --- фрагментация ClientHello (h2; см. §TLS-слой) ---
@@ -114,7 +114,7 @@
 | `sni` | string | по профилю | оба | TLS SNI (для WARP != endpoint host) |
 | `mtu` | int | 1280 | оба | MTU userspace-стека (h2: ≤ 16000) |
 | `skip_cert_verify` | bool | false | cloudflare | отключить pubkey-pinning |
-| `idle_timeout` | duration | `5m` | оба | suspend туннеля после простоя; отриц. = выкл |
+| `idle_timeout` | duration | выкл | оба | suspend туннеля после простоя; включает только положительное; ""/0/отриц. = выкл (дефолт с lx.31, ранее 5m) |
 | `keep_alive_period` | duration | `30s` | h3 | QUIC keepalive; отриц. = выкл |
 | `network_list` | list | оба tcp+udp | оба | L4-протоколы через туннель |
 | `record_fragment` | bool | false | h2 | резать TLS-запись ClientHello — лечит PMTU-дыру под detour (§TLS-слой) |
@@ -365,7 +365,7 @@ WG-специфика (`SetDevice`, `Events`, wg `bind`) для MASQUE НЕ ну
 
 ```
 NewOutbound: разобрать ключи/prefixes/profile; quicConfig{EnableDatagrams,InitialPacketSize:1242,KeepAlive}
-             idleTimeout (деф. 5m); НИЧЕГО не поднимаем.
+             idleTimeout (деф. 0 = выкл, с lx.31; ранее 5m); НИЧЕГО не поднимаем.
 ensureSession(ctx) (под runMu, lazy): если sess==nil →
   1. device = wireguard.NewDevice(System:false → gVisor stackDevice, prefixes, mtu); device.Start()
   2. connectH3/connectH2 → (closer, ipConn)
@@ -382,7 +382,10 @@ Close: o.closed=true; teardown текущей сессии
 
 **Самовосстановление (C1):** любой выход насоса (обрыв WARP, GOAWAY, битый пакет) → `teardownSession`
 → `o.sess=nil` → следующий `DialContext` пере-собирает туннель. **Idle-suspend (B1):** после простоя
-туннель сносится целиком (netstack + горутины + keepalive), поднимается заново по требованию.
+туннель сносится целиком (netstack + горутины + keepalive), поднимается заново по требованию —
+**только при положительном `idle_timeout`**; по умолчанию (с lx.31) выключен: пробуждение = полный
+QUIC-хендшейк + CONNECT-IP + новый gVisor-стек на первом запросе после тишины, на роутерах/десктопах
+это дороже ~6 МБ RSS и одного keepalive в 30 с. Туннель держит `keep_alive_period`.
 **Generation-guard (C1/C2):** teardown устаревшей сессии не трогает новую; `ipConn.Close` разблокирует
 парный насос, залипший в блокирующем read.
 

@@ -404,7 +404,7 @@ enroll) is done by the client, not the core.
 The required fields are `server`/`server_port`, the key pair (`private_key`/`public_key`,
 for the default `cloudflare` profile) and at least one of `ip`/`ipv6` (your local address
 *inside* the tunnel, not the exit IP). Everything else has a default: `profile: cloudflare`,
-`vhttp: auto`, `tls.server_name: www.cloudflare.com`, `mtu: 1280`, `idle_timeout: 5m`,
+`vhttp: auto`, `tls.server_name: www.cloudflare.com`, `mtu: 1280`, `idle_timeout` off,
 `keep_alive_period: 30s`, `network_list: tcp+udp`. TLS goes in the standard outbound `tls`
 block.
 

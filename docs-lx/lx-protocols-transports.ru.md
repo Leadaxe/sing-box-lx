@@ -654,7 +654,7 @@ HTTP/2-соединения через **CONNECT-IP (RFC 9484)**, в перву�
 | `tls` | object | — | — | **стандартный** outbound-блок TLS — `server_name`, `insecure`, `disable_sni`, `fragment`, `record_fragment`, `fragment_fallback_delay`, … Тот же контейнер, что у любого TLS-outbound |
 | `uri` | string | — | по профилю³ | CONNECT-IP request URI |
 | `mtu` | int | — | `1280` | MTU userspace-стека. На `h2` максимум `16000` (один IP-пакет = один HTTP/2 DATA frame) |
-| `idle_timeout` | duration | — | `5m` | suspend туннеля после простоя (освобождает gVisor-стек, насосы и QUIC keepalive); следующий dial его пересобирает. **Отрицательное отключает suspend** |
+| `idle_timeout` | duration | — | выкл | suspend туннеля после простоя (освобождает gVisor-стек, насосы и QUIC keepalive); следующий dial его пересобирает. **По умолчанию выключен**: отсутствие ключа, `0` и отрицательное держат туннель; включает только положительное значение |
 | `keep_alive_period` | duration | — | `30s` | QUIC keepalive (только h3). **Отрицательное отключает** |
 | `network_list` | list | — | tcp+udp | L4-протоколы, идущие через туннель |
 
@@ -753,15 +753,21 @@ device-проверено, что там работает.
 
 ## 3.8 Idle-suspend и keepalive
 
-- `idle_timeout` (деф `5m`) suspend-ит туннель после такого простоя без трафика,
-  освобождая gVisor-стек, насосы и QUIC keepalive; следующий dial его пересобирает.
-  Отрицательное значение отключает suspend.
+- `idle_timeout` suspend-ит туннель после такого простоя без трафика, освобождая
+  gVisor-стек, насосы и QUIC keepalive; следующий dial его пересобирает.
+  **По умолчанию выключен** (с lx.31): отсутствие ключа, `0` и отрицательное значение
+  держат туннель до закрытия outbound'а; включает только положительное (например
+  `"5m"`). Пробуждение после сна стоит полного QUIC-хендшейка + CONNECT-IP + нового
+  gVisor-стека на первом запросе после тишины — на роутерах и десктопах это хуже, чем
+  ~6 МБ RSS и один keepalive-пакет в 30 с, которые сон экономит. Включай явно на
+  хостах с батареей, где размен обратный.
 - `keep_alive_period` (деф `30s`, только h3) — интервал QUIC keepalive. Отрицательное
   значение отключает.
-- **Взаимодействие:** при коротком `idle_timeout` туннель обычно сносится раньше, чем
-  keepalive становится нужен. **Не** выключай keepalive (`-1s`) вместе с большим
-  `idle_timeout` — сервер может сбросить туннель по своему idle раньше, чем сработает
-  наш suspend.
+- **Взаимодействие:** при выключенном suspend именно keepalive держит туннель сквозь
+  idle-таймаут сервера и UDP NAT-мэппинг провайдера — **не** выключай его (`-1s`),
+  если только `idle_timeout` не настолько короткий, что туннель сносится раньше, чем
+  keepalive становится нужен; иначе сервер сбросит туннель по своему idle, а
+  следующий dial молча заплатит пересборку.
 - Выходной IP **меняется** после idle-suspend/reconnect — WARP anycast раздаёт разный
   edge-адрес на каждое новое подключение. Внутренний `ip`/`ipv6` при этом стабилен.
 
@@ -846,7 +852,7 @@ device-проверено, что там работает.
 ```
 
 (profile=cloudflare, vhttp=h3, `tls.server_name`=`www.cloudflare.com`,
-uri=`https://cloudflareaccess.com`, mtu=1280, idle_timeout=5m, keep_alive_period=30s,
+uri=`https://cloudflareaccess.com`, mtu=1280, idle_timeout=выкл, keep_alive_period=30s,
 network_list=tcp+udp — всё по умолчанию. Не забудь блок `dns` верхнего уровня.)
 
 ## 3.12 Частые грабли

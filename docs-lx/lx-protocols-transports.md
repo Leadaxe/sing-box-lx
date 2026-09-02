@@ -656,7 +656,7 @@ registration (ECDSA keys, WARP enroll) is done by the client, not the core.
 | `tls` | object | — | — | the **standard** outbound TLS block — `server_name`, `insecure`, `disable_sni`, `fragment`, `record_fragment`, `fragment_fallback_delay`, … Same container every other TLS outbound uses |
 | `uri` | string | — | per profile³ | CONNECT-IP request URI |
 | `mtu` | int | — | `1280` | userspace-stack MTU. On `h2`, max `16000` (one IP packet = one HTTP/2 DATA frame) |
-| `idle_timeout` | duration | — | `5m` | suspend the tunnel after this long with no traffic (frees the gVisor stack, pumps and QUIC keepalive); the next dial rebuilds it. **Negative disables suspend** |
+| `idle_timeout` | duration | — | off | suspend the tunnel after this long with no traffic (frees the gVisor stack, pumps and QUIC keepalive); the next dial rebuilds it. **Off by default**: absent, `0` and negative all keep the tunnel up; only a positive value enables suspend |
 | `keep_alive_period` | duration | — | `30s` | QUIC keepalive (h3 only). **Negative disables** |
 | `network_list` | list | — | tcp+udp | L4 protocols routed through the tunnel |
 
@@ -755,15 +755,21 @@ To pin a config to one leg, set the single field: `"vhttp": "h3"` or `"vhttp": "
 
 ## 3.8 Idle-suspend & keepalive
 
-- `idle_timeout` (default `5m`) suspends the tunnel after that long with no traffic,
-  freeing the gVisor stack, the pumps and the QUIC keepalive; the next dial rebuilds
-  it. A negative value disables suspend.
+- `idle_timeout` suspends the tunnel after that long with no traffic, freeing the
+  gVisor stack, the pumps and the QUIC keepalive; the next dial rebuilds it.
+  **Off by default** (since lx.31): absent, `0` and negative all keep the tunnel up
+  until the outbound is closed; only a positive value (e.g. `"5m"`) enables suspend.
+  Waking a suspended tunnel costs a full QUIC handshake + CONNECT-IP + a fresh gVisor
+  stack on the first request after the quiet spell, which on routers and desktops is
+  a worse trade than the ~6 MB RSS and one keepalive packet per 30s it saves. Enable
+  it explicitly on battery-powered hosts where that trade flips.
 - `keep_alive_period` (default `30s`, h3 only) is the QUIC keepalive interval. A
   negative value disables it.
-- **Interaction:** with a short `idle_timeout` the tunnel is usually torn down
-  before keepalive matters. Do **not** disable keepalive (`-1s`) together with a
-  large `idle_timeout` — the server may drop the tunnel on its own idle before our
-  suspend fires.
+- **Interaction:** with suspend off, keepalive is what holds the tunnel through the
+  server's idle-timeout and the provider's UDP NAT mapping — do **not** disable it
+  (`-1s`) unless `idle_timeout` is short enough that the tunnel is torn down before
+  keepalive matters; otherwise the server drops the tunnel on its own idle and the
+  next dial pays a silent rebuild.
 - The exit IP **changes** after idle-suspend/reconnect — WARP anycast hands out a
   different edge address on each new connection. The internal `ip`/`ipv6` stays
   stable.
@@ -850,7 +856,7 @@ Same as above with one field changed:
 ```
 
 (profile=cloudflare, vhttp=h3, `tls.server_name`=`www.cloudflare.com`,
-uri=`https://cloudflareaccess.com`, mtu=1280, idle_timeout=5m,
+uri=`https://cloudflareaccess.com`, mtu=1280, idle_timeout=off,
 keep_alive_period=30s, network_list=tcp+udp — all default. Remember the top-level
 `dns` block.)
 

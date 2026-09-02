@@ -34,7 +34,7 @@
 
   // ── туннель / ресурсы ───────────────────────────────────────────────────
   "mtu": 1280,                    // MTU userspace-стека; деф 1280 (h2: ≤ 16000)
-  "idle_timeout": "5m",           // suspend после простоя; деф 5m; отриц. = выкл
+  "idle_timeout": "5m",           // suspend после простоя; деф выкл (с lx.31); ""/0/отриц. = выкл, включает только положительное
   "keep_alive_period": "30s",     // QUIC keepalive (h3); деф 30s; отриц. = выкл
   "network_list": ["tcp", "udp"], // L4-протоколы через туннель; деф — оба
 
@@ -63,7 +63,7 @@
 }
 ```
 (profile=cloudflare, network=h3, sni=`consumer-masque.cloudflareclient.com`, uri=`https://cloudflareaccess.com`,
-mtu=1280, idle_timeout=5m, keep_alive_period=30s, network_list=tcp+udp — всё по умолчанию.)
+mtu=1280, idle_timeout=выкл, keep_alive_period=30s, network_list=tcp+udp — всё по умолчанию.)
 
 > ⚠️ Нужен блок верхнего уровня `"dns"` (например `{"servers":[{"type":"udp","server":"1.1.1.1"}]}`):
 > userspace-стек работает на L3 и сам домены не резолвит — outbound резолвит их через DNS перед dial.
@@ -90,7 +90,7 @@ mtu=1280, idle_timeout=5m, keep_alive_period=30s, network_list=tcp+udp — вс�
 | `uri` | string | — | по профилю³ | CONNECT-IP URI-шаблон |
 | `skip_cert_verify` | bool | — | `false` | `true` = отключить pubkey-pinning (небезопасно, только отладка) |
 | `mtu` | uint32 | — | `1280` | MTU userspace-стека; на `h2` максимум `16000` |
-| `idle_timeout` | duration | — | `5m` | suspend туннеля после простоя; `""`=5m; **отрицательное = выкл** |
+| `idle_timeout` | duration | — | выкл | suspend туннеля после простоя; **включает только положительное**; `""`/`0`/отрицательное = выкл (дефолт с lx.31, ранее 5m) |
 | `keep_alive_period` | duration | — | `30s` | QUIC keepalive (только h3); `""`=30s; **отрицательное = выкл** |
 | `network_list` | list | — | `["tcp","udp"]` | L4-протоколы, проходящие через туннель |
 
@@ -141,7 +141,8 @@ mtu=1280, idle_timeout=5m, keep_alive_period=30s, network_list=tcp+udp — вс�
 ## Форматы значений
 
 **Duration** (`idle_timeout`, `keep_alive_period`, `connect_timeout`, …):
-строка Go-duration — `"30s"`, `"5m"`, `"1h30m"`. Пустая строка = дефолт. Отрицательная (`"-1s"`) = «выключить».
+строка Go-duration — `"30s"`, `"5m"`, `"1h30m"`. Пустая строка = дефолт. Отрицательная (`"-1s"`) = «выключить»
+(у `idle_timeout` «выключить» и есть дефолт, так что там `""`, `"0s"` и `"-1s"` равнозначны).
 
 **Ключи** (`private_key` / `public_key`):
 base64 от DER. `private_key` = `x509.MarshalECPrivateKey` (SEC1 EC), `public_key` = `x509.MarshalPKIXPublicKey`
@@ -173,6 +174,7 @@ base64 от DER. `private_key` = `x509.MarshalECPrivateKey` (SEC1 EC), `public_k
    на каждое новое подключение. Внутренний `ip`/`ipv6` при этом стабилен.
 4. **`skip_cert_verify: true`** снимает pubkey-pinning целиком — единственную защиту при WARP-маскировке
    SNI. Только для отладки.
-5. **`keep_alive_period` vs `idle_timeout`**: при коротком `idle_timeout` туннель обычно сносится раньше,
-   чем keepalive становится нужен. Не выключай keepalive (`-1s`) при большом `idle_timeout` — иначе сервер
-   может разорвать туннель по своему idle раньше, чем сработает наш suspend.
+5. **`keep_alive_period` vs `idle_timeout`**: suspend по умолчанию выключен, и туннель сквозь idle сервера
+   и NAT-мэппинг провайдера держит именно keepalive — не выключай его (`-1s`), если только `idle_timeout`
+   не настолько короткий, что туннель сносится раньше, чем keepalive становится нужен; иначе сервер
+   разорвёт туннель по своему idle, а следующий dial молча заплатит пересборку.

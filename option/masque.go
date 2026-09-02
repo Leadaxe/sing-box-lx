@@ -79,7 +79,8 @@ type MASQUEOutboundOptions struct {
 
 	// IdleTimeout suspends the tunnel after this long with no traffic (freeing
 	// the userspace stack, pumps and QUIC keepalive); the next dial rebuilds it.
-	// Empty = default (5m). A negative value disables idle-suspend.
+	// Off by default: absent, "0" and negative all keep the tunnel up until
+	// Close. Only a positive value enables idle-suspend.
 	IdleTimeout badoption.Duration `json:"idle_timeout,omitempty"`
 	// KeepAlivePeriod is the QUIC (h3) keepalive interval. Empty = 30s. A
 	// negative value disables keepalive.
