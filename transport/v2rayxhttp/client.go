@@ -229,15 +229,20 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		return nil, err
 	}
 	xmuxClient.addOpenUsage(1)
-	conn, err := c.dialMode(ctx, sessionID, xmuxClient)
+	// lx: SPEC 077 — one release handle for the whole dial. The conn's Close and
+	// fail share it with this error path, so a raise that fails INSIDE the dial
+	// (fail already released the slot before the error surfaced here) cannot
+	// release twice and drive openUsage negative.
+	release := newXmuxRelease(xmuxClient)
+	conn, err := c.dialMode(ctx, sessionID, xmuxClient, release)
 	if err != nil {
-		xmuxClient.addOpenUsage(-1)
+		release.release()
 		return nil, err
 	}
 	return conn, nil
 }
 
-func (c *Client) dialMode(ctx context.Context, sessionID string, xmuxClient *xmuxClient) (net.Conn, error) {
+func (c *Client) dialMode(ctx context.Context, sessionID string, xmuxClient *xmuxClient, release *xmuxRelease) (net.Conn, error) {
 	switch c.mode {
 	case modeAuto:
 		// Match Xray's auto resolution (transport/internet/splithttp/dialer.go):
@@ -245,15 +250,15 @@ func (c *Client) dialMode(ctx context.Context, sessionID string, xmuxClient *xmu
 		// mode, live-validated against Xray 3x-ui). Xray also picks stream-up when
 		// downloadSettings is present, but we don't support asymmetric transport.
 		if c.realityEnabled {
-			return c.dialStreamOne(ctx, sessionID, xmuxClient)
+			return c.dialStreamOne(ctx, sessionID, xmuxClient, release)
 		}
-		return c.dialPacketUp(ctx, sessionID, xmuxClient)
+		return c.dialPacketUp(ctx, sessionID, xmuxClient, release)
 	case modePacketUp:
-		return c.dialPacketUp(ctx, sessionID, xmuxClient)
+		return c.dialPacketUp(ctx, sessionID, xmuxClient, release)
 	case modeStreamUp:
-		return c.dialStreamUp(ctx, sessionID, xmuxClient)
+		return c.dialStreamUp(ctx, sessionID, xmuxClient, release)
 	case modeStreamOne:
-		return c.dialStreamOne(ctx, sessionID, xmuxClient)
+		return c.dialStreamOne(ctx, sessionID, xmuxClient, release)
 	default:
 		return nil, E.New("v2ray-xhttp: unknown mode: ", c.mode)
 	}

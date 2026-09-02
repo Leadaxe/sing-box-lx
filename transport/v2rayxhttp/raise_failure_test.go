@@ -20,13 +20,16 @@ import (
 
 // This file pins the raise-failure contract (lx: SPEC 072): a dial whose HTTP
 // side fails — RoundTrip error, non-200 status, dead pooled connection — must
-// break the upload pipe so a blocked or future Write returns the failure
-// instead of hanging forever. The field dump behind it (2026-08-17, core
-// lx.27-rc.2) shows the pre-fix behaviour: the SPEC 050 dial-context guard
-// stands down when `created` closes, and the error branches of setupReader
-// closed `created` without breaking the pipe — a VLESS handshake Write then
-// blocked for 38 minutes on a pipe nobody would ever read, welding the WG
-// bind, the pause chain and the endpoint manager into a process-wide freeze.
+// surface the failure instead of leaving a Write to hang forever. The field
+// dump behind it (2026-08-17, core lx.27-rc.2) shows the pre-fix behaviour:
+// the SPEC 050 dial-context guard stood down when `created` closed, and the
+// error branches of setupReader closed `created` without breaking the pipe —
+// a VLESS handshake Write then blocked for 38 minutes on a pipe nobody would
+// ever read, welding the WG bind, the pause chain and the endpoint manager
+// into a process-wide freeze. Since SPEC 077 the dial itself waits for the
+// raise, so a raise that fails before the upload body is adopted fails the
+// DIAL with that cause (there is no conn to write to); fail() still breaks
+// the pipe for a raise that fails after the conn was handed up.
 //
 // The second half of the contract is conn lifetime (also SPEC 072): requests
 // ride a conn-scoped context under the transport's lifetime ctx, NOT the dial
@@ -122,57 +125,84 @@ func writeUnderTest(conn net.Conn, payload []byte) <-chan error {
 
 const writeFreeBudget = 3 * time.Second
 
-// TestStreamOneWriteFreedOnRoundTripError: a stream-one dial whose RoundTrip
-// fails must free the handshake Write with that error. Red on the pre-fix
-// base: the guard stands down on `created`, nobody reads the pipe, the Write
-// hangs past any budget.
-func TestStreamOneWriteFreedOnRoundTripError(t *testing.T) {
+// dialUnderTest runs one DialContext in a goroutine and reports its result:
+// since SPEC 077 a streamed dial parks until the raise, and a raise that never
+// happens must be caught by the test's budget, not hang it.
+func dialUnderTest(ctx context.Context, client *Client) <-chan dialResult {
+	result := make(chan dialResult, 1)
+	go func() {
+		conn, err := client.DialContext(ctx)
+		result <- dialResult{conn, err}
+	}()
+	return result
+}
+
+// expectDialFailure waits for the dial to end and asserts that it ended with an
+// error carrying `cause` (an empty cause only demands an error).
+func expectDialFailure(t *testing.T, dial <-chan dialResult, cause string) error {
+	t.Helper()
+	select {
+	case result := <-dial:
+		if result.err == nil {
+			result.conn.Close()
+			t.Fatal("DialContext succeeded on a raise that failed")
+		}
+		if cause != "" && !strings.Contains(result.err.Error(), cause) {
+			t.Fatalf("DialContext error %q does not carry the raise failure %q", result.err, cause)
+		}
+		return result.err
+	case <-time.After(writeFreeBudget):
+		t.Fatal("DialContext still parked after the raise failed")
+	}
+	return nil
+}
+
+// openUsageOf sums the live-stream count over every pooled connection of the
+// client: after a failed dial it must be exactly zero — a slot still held is a
+// leak, a negative count is a double release (the retired connection would
+// then never be torn down).
+func openUsageOf(client *Client) int {
+	client.xmux.access.Lock()
+	defer client.xmux.access.Unlock()
+	var total int
+	for _, pooled := range client.xmux.clients {
+		total += pooled.getOpenUsage()
+	}
+	return total
+}
+
+// TestStreamOneDialFailsOnRoundTripError: a stream-one dial whose RoundTrip
+// fails before adopting the body must fail the DIAL with that error (lx: SPEC
+// 077) — the pre-077 form handed the conn up and freed the handshake Write
+// with the error instead; the pre-072 form hung that Write for 38 minutes.
+func TestStreamOneDialFailsOnRoundTripError(t *testing.T) {
 	t.Parallel()
 	dialErr := errors.New("pooled connection is dead")
 	client := stubClient(t, modeStreamOne, errorRoundTripper{err: dialErr})
-	conn, err := client.DialContext(context.Background())
-	if err != nil {
-		t.Fatalf("DialContext: %v", err)
+	err := expectDialFailure(t, dialUnderTest(context.Background(), client), dialErr.Error())
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("DialContext error %q is a context error, want the raise cause", err)
 	}
-	defer conn.Close()
-
-	select {
-	case err := <-writeUnderTest(conn, []byte("vless request header")):
-		if err == nil {
-			t.Fatal("Write succeeded on a conn whose RoundTrip failed")
-		}
-		if !strings.Contains(err.Error(), dialErr.Error()) {
-			t.Fatalf("Write error %q does not carry the RoundTrip failure %q", err, dialErr)
-		}
-	case <-time.After(writeFreeBudget):
-		t.Fatal("Write still blocked after the raise failed — upload pipe was not broken")
+	if got := openUsageOf(client); got != 0 {
+		t.Fatalf("openUsage = %d after a failed dial, want 0", got)
 	}
 }
 
-// TestStreamOneWriteFreedOnBadStatus: same contract for a non-200 response.
-func TestStreamOneWriteFreedOnBadStatus(t *testing.T) {
+// TestStreamOneDialFailsOnBadStatus: same contract for a non-200 response.
+func TestStreamOneDialFailsOnBadStatus(t *testing.T) {
 	t.Parallel()
 	client := stubClient(t, modeStreamOne, statusRoundTripper{code: http.StatusBadGateway})
-	conn, err := client.DialContext(context.Background())
-	if err != nil {
-		t.Fatalf("DialContext: %v", err)
-	}
-	defer conn.Close()
-
-	select {
-	case err := <-writeUnderTest(conn, []byte("vless request header")):
-		if err == nil {
-			t.Fatal("Write succeeded on a conn whose raise answered 502")
-		}
-	case <-time.After(writeFreeBudget):
-		t.Fatal("Write still blocked after a non-200 raise — upload pipe was not broken")
+	expectDialFailure(t, dialUnderTest(context.Background(), client), http.StatusText(http.StatusBadGateway))
+	if got := openUsageOf(client); got != 0 {
+		t.Fatalf("openUsage = %d after a failed dial, want 0", got)
 	}
 }
 
-// TestStreamUpWriteFreedOnDownloadError: stream-up's download GET failing must
-// break the upload pipe even while the upload POST is still pending — the conn
-// can never carry protocol bytes once the download side is dead.
-func TestStreamUpWriteFreedOnDownloadError(t *testing.T) {
+// TestStreamUpDialFailsOnDownloadError: stream-up's download GET failing must
+// fail the dial even while the upload POST is still pending — the conn can
+// never carry protocol bytes once the download side is dead — and the pending
+// upload RoundTrip must be aborted, not leaked.
+func TestStreamUpDialFailsOnDownloadError(t *testing.T) {
 	t.Parallel()
 	downErr := errors.New("download stream refused")
 	hang := &hangRoundTripper{}
@@ -180,26 +210,17 @@ func TestStreamUpWriteFreedOnDownloadError(t *testing.T) {
 		get:  errorRoundTripper{err: downErr},
 		post: hang,
 	})
-	conn, err := client.DialContext(context.Background())
-	if err != nil {
-		t.Fatalf("DialContext: %v", err)
-	}
-	defer conn.Close()
-
-	select {
-	case err := <-writeUnderTest(conn, []byte("vless request header")):
-		if err == nil {
-			t.Fatal("Write succeeded on a conn whose download raise failed")
-		}
-	case <-time.After(writeFreeBudget):
-		t.Fatal("Write still blocked after the download raise failed — upload pipe was not broken")
+	expectDialFailure(t, dialUnderTest(context.Background(), client), downErr.Error())
+	waitObserved(t, hang, 1, "pending upload RoundTrip not aborted by the failed dial")
+	if got := openUsageOf(client); got != 0 {
+		t.Fatalf("openUsage = %d after a failed dial, want 0", got)
 	}
 }
 
-// TestStreamUpWriteCarriesUploadError: when the upload POST itself fails, the
-// blocked writer must see that error, not a bare io.ErrClosedPipe (the read
-// half is the side that surfaces an error to a pipe writer).
-func TestStreamUpWriteCarriesUploadError(t *testing.T) {
+// TestStreamUpDialFailsOnUploadError: when the upload POST itself fails before
+// its body is adopted, the dial must end with THAT error — not park until the
+// download side notices, and not lose the cause behind a bare ErrClosedPipe.
+func TestStreamUpDialFailsOnUploadError(t *testing.T) {
 	t.Parallel()
 	upErr := errors.New("upload stream refused")
 	hang := &hangRoundTripper{}
@@ -207,22 +228,23 @@ func TestStreamUpWriteCarriesUploadError(t *testing.T) {
 		get:  hang, // download pending: isolates the upload-failure path
 		post: errorRoundTripper{err: upErr},
 	})
-	conn, err := client.DialContext(context.Background())
-	if err != nil {
-		t.Fatalf("DialContext: %v", err)
+	expectDialFailure(t, dialUnderTest(context.Background(), client), upErr.Error())
+	waitObserved(t, hang, 1, "pending download RoundTrip not aborted by the failed dial")
+	if got := openUsageOf(client); got != 0 {
+		t.Fatalf("openUsage = %d after a failed dial, want 0", got)
 	}
-	defer conn.Close()
+}
 
-	select {
-	case err := <-writeUnderTest(conn, []byte("vless request header")):
-		if err == nil {
-			t.Fatal("Write succeeded on a conn whose upload raise failed")
+// waitObserved polls a hangRoundTripper until it has seen `want` context
+// deaths, failing the test with `msg` once the budget is spent.
+func waitObserved(t *testing.T, hang *hangRoundTripper, want int32, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(writeFreeBudget)
+	for hang.observed.Load() < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s (observed %d, want %d)", msg, hang.observed.Load(), want)
 		}
-		if !strings.Contains(err.Error(), upErr.Error()) {
-			t.Fatalf("Write error %q lost the upload failure %q", err, upErr)
-		}
-	case <-time.After(writeFreeBudget):
-		t.Fatal("Write still blocked after the upload raise failed")
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

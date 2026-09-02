@@ -83,7 +83,7 @@ func TestPacketUpUploadsCountAgainstRequestLimit(t *testing.T) {
 
 	xmuxClient, _ := client.xmux.get()
 	xmuxClient.addOpenUsage(1)
-	conn, err := client.dialPacketUp(context.Background(), "session", xmuxClient)
+	conn, err := client.dialPacketUp(context.Background(), "session", xmuxClient, newXmuxRelease(xmuxClient))
 	if err != nil {
 		t.Fatalf("dialPacketUp: %v", err)
 	}

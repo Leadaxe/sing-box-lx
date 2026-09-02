@@ -123,14 +123,18 @@
   `resumeMu`; возврат select-then-close идемпотентности `Box.Close`.
 
 - **P12. Один мёртвый detour-узел не замораживает сетевую машинерию процесса.**
-  Дозвон WG-бинда через detour ограничен по времени (`C.TCPTimeout`, в связке
-  со сторожем dial-контекста SPEC 050 в XHTTP): полумёртвая нода стоит своему
+  Дозвон WG-бинда через detour ограничен по времени (`C.TCPTimeout`; XHTTP-dial
+  сам паркуется, пока HTTP-слой не принял тело запроса — SPEC 077, прежде
+  сторож dial-контекста SPEC 050): полумёртвая нода стоит своему
   эндпоинту ретрай-цикла в 15 с, а не вечного захвата `connAccess` со всей
   очередью за ним (Send, Close, rebind). ПРОВАЛ поднятия стрима (ошибка
-  RoundTrip, не-200, мёртвый pooled-conn XMUX) рвёт upload-пайп сам —
-  заблокированный Write выходит с причиной отказа, а не висит на пайпе,
-  который никто не прочтёт (дыра дампа 2026-08-17: сторож 050 снимается по
-  `created`, а `created` закрывается и при провале). Жизнь стрима не
+  RoundTrip, не-200, мёртвый pooled-conn XMUX) до принятия тела валит сам
+  dial с причиной (SPEC 077), после — рвёт upload-пайп сам: заблокированный
+  Write выходит с причиной отказа, а не висит на пайпе, который никто не
+  прочтёт (дыра дампа 2026-08-17: сторож 050 снимался по `created`, а
+  `created` закрывается и при провале). После возврата из dial dial-контекст
+  на conn не влияет — контракт `net.Dialer`, на который опирается пул
+  DNS-транспорта (SPEC 077). Жизнь стрима не
   привязана к dial-контексту: истёкший дедлайн дайла НЕ убивает живое
   соединение (иначе — реконнект-цикл каждые 15 с), каждый upload-POST
   packet-up ограничен собственным бюджетом, `Close` обрывает подвисшие
@@ -140,15 +144,18 @@
   всплеск событий сходится к последнему (latest-wins), закрытие инвалидирует
   очередь. Свидетель: red/green юнит «дозвон в чёрную дыру возвращается в
   пределах бюджета и отпускает `connAccess`» (red = вечное зависание);
-  red/green юниты raise-провалов и conn-жизни (`raise_failure_test.go`: Write
-  освобождается с причиной; conn переживает дедлайн дайла; пост ограничен;
-  Close рвёт pending RoundTrip); юниты механики диспатча (не блокирует,
+  red/green юниты raise-провалов и conn-жизни (`raise_failure_test.go`: провал
+  raise валит dial с причиной; conn переживает дедлайн дайла; пост ограничен;
+  Close рвёт pending RoundTrip) и dial-контракта (`dial_ctx_contract_test.go`:
+  отмена сразу после возврата не трогает conn; dial ждёт принятия тела;
+  полуживой узел — ошибка из dial в дедлайн; слот пула отдаётся ровно раз); юниты механики диспатча (не блокирует,
   latest-wins, инвалидация штампом закрытия); полевые дампы 2026-08-12 и
   2026-08-17 как эталоны симптома. Мутация: dial под `connAccess` без
   дедлайна; error-ветка raise без разбития пайпа (только `setupReader`);
-  возврат запросов XHTTP на dial-контекст; безлимитный upload-POST; возврат
-  синхронного `Down`/`Up` в pause-колбэк; отмена таймаут-контекста при
-  возврате из connect (убивает соединение в окне сторожа 050).
+  возврат запросов XHTTP на dial-контекст; возврат conn из XHTTP-dial до
+  принятия тела (сторож снаружи dial в любой форме — пул DNS отменяет
+  контекст раньше любого подъёма); безлимитный upload-POST; возврат
+  синхронного `Down`/`Up` в pause-колбэк.
 
 **Не-обещания:** снятые и закрытые записи (010 — снят апстримом; 012 —
 не воспроизводится) гарантий не несут. Отправка issue апстриму не обещана —
@@ -170,7 +177,7 @@
 | [046](../../TASKS/046-DNS_HIJACK_PACKET_LOOP_STALL/SPEC.md) | DNS-сервер с `detour` на мёртвый outbound останавливает ВЕСЬ форвардинг: hijack-DNS ставится синхронно из пакетного цикла стека, а постановка висит в `ConnPool.acquireShared` до DNS-таймаута на каждый уникальный запрос | `route/dns.go`, `route/router.go` (`// lx: dns-hijack-async`, semaphore 256 + go-wrap) | Апстрим сделает постановку exchange неблокирующей (следить за `Client.ExchangeAsync` / `ConnPool` при мержах) | держим |
 | [048](../../TASKS/048-GVISOR_HANDSHAKE_NIL_CRASH/SPEC.md) | TCP, не дошедший до established (узел молчит/RST/таймаут), роняет весь процесс nil-паникой: `performHandshake` зануляет `ep.h` и отпускает мьютекс до `Close()`, а гейт `handleConnecting` проверяет состояние, но не `h` | форк-сабмодуль `submodules/gvisor` ([Leadaxe/gvisor-lx](https://github.com/Leadaxe/gvisor-lx), `// lx:begin handshake-nil-guard`) | Апстрим добавит nil-guard в `handleConnecting` либо занулит `h` под тем же удержанием мьютекса, что и смена состояния; проверять при каждом бампе `sagernet/gvisor` — встречный бамп на мерже уводит `replace` и молча снимает патч | держим |
 | [047](../../TASKS/047-EARLY_RPC_NIL_ROUTER_CRASH/SPEC.md) | `ResetNetwork` по command-протоколу (смена WiFi↔LTE на старте туннеля) роняет весь процесс nil-паникой: гейт проверяет `Box() != nil`, а `Box` публикуется до `Start()` — поля `NetworkManager` ещё не присвоены | `route/network.go` (`// lx:begin early-rpc-guard`), `experimental/libbox/command_server.go` (4 гейта на `Ready()`), новый `daemon/started_service_ready_lx.go` | Апстрим введёт гейт готовности на ранних command-RPC либо перестанет публиковать `s.instance` до завершения `Start()`; проверять оба файла на мерже | держим |
-| [050](../../TASKS/050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md) | URL-тест на полуживом узле `vless + xhttp + encryption` виснет навсегда и **переживает остановку ядра**: у XHTTP-conn нет дедлайнов (`Set*Deadline` → `os.ErrInvalid`), `encryption.Handshake` работает без ctx, а `URLTestGroup.Close()` не отменяет идущий прогон — зомби копятся с каждым перезапуском, держат весь массив outbound'ов (2806 узлов при 396–428 МБ) и группа перестаёт публиковать замеры («утерялся пинг») | `transport/v2rayxhttp/conn.go` (дедлайны + сторож ctx), `protocol/vless/lx_encryption.go` + одна строка `protocol/vless/outbound.go`, `protocol/group/urltest.go` (child-ctx + `cancel` в `Close`) — метка `// lx: 050` | Апстрим даст `net.Conn` с рабочими дедлайнами в потоковых HTTP-транспортах и отменяемый жизненный цикл urltest-прогона (`Close()` гасит идущий тест); проверять `urltest.go` и потребителей `NeedAdditionalReadDeadline` на мержах | держим — фикс в дереве, red/green проверен откатом; остаток: живой узел + device |
+| [050](../../TASKS/050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md) | URL-тест на полуживом узле `vless + xhttp + encryption` виснет навсегда и **переживает остановку ядра**: у XHTTP-conn нет дедлайнов (`Set*Deadline` → `os.ErrInvalid`), `encryption.Handshake` работает без ctx, а `URLTestGroup.Close()` не отменяет идущий прогон — зомби копятся с каждым перезапуском, держат весь массив outbound'ов (2806 узлов при 396–428 МБ) и группа перестаёт публиковать замеры («утерялся пинг») | `transport/v2rayxhttp/conn.go` (дедлайны; сторож ctx снят SPEC 077 — dial паркуется до принятия тела), `protocol/vless/lx_encryption.go` + одна строка `protocol/vless/outbound.go`, `protocol/group/urltest.go` (child-ctx + `cancel` в `Close`) — метка `// lx: 050` | Апстрим даст `net.Conn` с рабочими дедлайнами в потоковых HTTP-транспортах и отменяемый жизненный цикл urltest-прогона (`Close()` гасит идущий тест); проверять `urltest.go` и потребителей `NeedAdditionalReadDeadline` на мержах | держим — фикс в дереве, red/green проверен откатом; остаток: живой узел + device |
 | [052](../../TASKS/052-NETSTACK_CONNECT_DEADLINE/SPEC.md) | TCP-дайлы через gVisor-netstack (WG/AWG+MASQUE, openvpn, openconnect, tailscale) — единственный класс путей дайла без таймаута: на тихой чёрной дыре (Wi-Fi зарезал UDP, мёртвый узел) каждый дайл молча висит ~127с SYN-бэкоффа gVisor (домены — до N×127с), группе не на что реагировать; полевой дамп — 16 дайлов, припаркованных в `DialTCPWithBind` | `transport/wireguard/connect_deadline_lx.go` (логика + обоснование) + 2-строчный шов в `device_stack_gonet.go`; тот же шов inline в `transport/openvpn/device_stack.go`, `transport/openconnect/device_stack.go`, `protocol/tailscale/endpoint.go` (везде маркер `// lx: SPEC 052`): одноразовый connect-дедлайн `C.TCPTimeout` (15s = бюджет проб), умирает с connect через `defer cancel()` | Апстрим ограничит netstack-connect сам (следить за `DialTCPWithBind`/gonet-вызовами при мержах) либо оживит `TCPSynRetriesOption` в gVisor (в текущем пине — мёртвая ручка) | держим — стенд: blackhole `2m7.065s`→`15.050s`, warm/wake не задеты |
 | [053](../../TASKS/053-REALITY_MIN_CLIENT_VER/SPEC.md) | REALITY-узлы на сервере Xray ≥ v26.7.11 **молча** уходят на камуфляжный сайт вместо туннеля: сервер там по умолчанию требует `minClientVer` ≥ 26.3.27, а апстрим объявляет зашитую с 2023 года версию `1.8.1`; отказ не даёт ошибки (проброс на `dest` — намеренно, чтобы пробер не отличил REALITY по форме отказа) | `common/tls/reality_client.go` (`// lx: SPEC 053`) — три байта `SessionId[0..2]` = `26, 3, 27` | Апстрим сам поднимет константу (или начнёт брать её из версии билда); файл апстримный и активно трогается (kTLS/ECH/TLS spoof) — проверять на каждом мерже, встречное изменение молча снимет правку | держим — собрано; остаток: field против живого Xray ≥ v26.7.11 |
 | [060](../../TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) | TLS-outbound (VLESS/trojan/vmess/anytls/shadowtls/http/masque h2) через `detour` молча не поднимается на части нижних плеч: `tls handshake: EOF` через 12–17 с. Нижнее плечо пересылает наш ClientHello от своего имени, PMTU за ним ниже его размера (порог ≈1490 B), ICMP *Fragmentation Needed* до нас не доходит. Причина **вне ядра** — воспроизводится голым `curl`; ни `mtu`, ни `tun.mtu`, ни route-action `tls_fragment` до этой точки не достают | `common/tls/client.go` (`// lx: SPEC 060`) — `record_fragment` включается по умолчанию, когда `DialedThroughDetour`; +1 поле в семи протокольных outbound'ах | Апстрим сам включит фрагментацию под detour либо даст `*bool` для явного отказа; файлы апстримные — проверять на каждом мерже. ⚠️ Явный `record_fragment: false` неотличим от «не задано» — «detour без фрагментации» сейчас не выразить | держим — матрица 38/38 на живых узлах |

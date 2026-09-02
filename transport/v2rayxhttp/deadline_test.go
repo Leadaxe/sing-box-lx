@@ -15,10 +15,14 @@ import (
 // SPECS/TASKS/050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART
 //
 // A half-alive XHTTP node — one that accepts the TCP connection but never reads
-// the request body — used to block a writer forever: the streamed conn hands
-// itself up before RoundTrip has raised the stream, the body is an io.Pipe, and
+// the request body — used to block a writer forever: the streamed conn handed
+// itself up before RoundTrip had raised the stream, the body is an io.Pipe, and
 // nothing on the conn could interrupt a pending Write. These tests pin the two
-// escapes: a write deadline, and cancellation of the dial context.
+// escapes. The write deadline (R1) is unchanged. The dial-context escape (R2)
+// moved INTO the dial with SPEC 077: DialContext no longer returns before the
+// HTTP layer has adopted the upload body, so a dial context cancelled before
+// the raise fails the dial itself — there is no conn, hence no Write to free —
+// and a dial context cancelled after the return has no effect on the conn.
 
 // hangingTransport models the half-alive server: the TCP connection is accepted
 // (RoundTrip is entered) but the response never arrives and the request body is
@@ -49,15 +53,39 @@ func (t *hangingTransport) Close() error {
 	return nil
 }
 
-// hangingClient builds a stream-one client whose transport never reads the body.
-func hangingClient(t *testing.T) (*Client, *hangingTransport) {
+// stallingTransport models a node that raised the stream and then stopped
+// draining it: the request body is adopted (one byte is read, which is what
+// lets the dial return since SPEC 077), after which nothing reads the pipe and
+// no response ever arrives. This is the post-077 shape of the half-alive node
+// for the write deadline: a dead peer behind a live front, or an exhausted h2
+// flow-control window.
+type stallingTransport struct {
+	release chan struct{}
+}
+
+func newStallingTransport() *stallingTransport {
+	return &stallingTransport{release: make(chan struct{})}
+}
+
+func (t *stallingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	go request.Body.Read(make([]byte, 1))
+	<-t.release
+	return nil, errors.New("released")
+}
+
+func (t *stallingTransport) Close() error {
+	close(t.release)
+	return nil
+}
+
+// streamOneClient builds a stream-one client around a caller-supplied transport.
+func streamOneClient(t *testing.T, transport http.RoundTripper) *Client {
 	t.Helper()
 	meta, err := normalizeMeta(metaOptions{}, modeStreamOne)
 	if err != nil {
 		t.Fatalf("normalizeMeta: %v", err)
 	}
-	transport := newHangingTransport()
-	client := &Client{
+	return &Client{
 		scheme:     "https",
 		host:       "example.com",
 		serverAddr: M.ParseSocksaddr("example.com:443"),
@@ -66,7 +94,13 @@ func hangingClient(t *testing.T) (*Client, *hangingTransport) {
 		meta:       meta,
 		xmux:       singleTransportXmux(transport),
 	}
-	return client, transport
+}
+
+// hangingClient builds a stream-one client whose transport never reads the body.
+func hangingClient(t *testing.T) (*Client, *hangingTransport) {
+	t.Helper()
+	transport := newHangingTransport()
+	return streamOneClient(t, transport), transport
 }
 
 // writeResult carries the outcome of a Write issued from a helper goroutine.
@@ -85,21 +119,40 @@ func writeAsync(conn interface{ Write([]byte) (int, error) }) <-chan writeResult
 	return done
 }
 
+// dialResult carries the outcome of a dial issued from a helper goroutine.
+type dialResult struct {
+	conn interface{ Close() error }
+	err  error
+}
+
+// dialStreamOneAsync runs dialStreamOne in a goroutine — since SPEC 077 the
+// dial parks until the raise, so a test that drives the raise itself must not
+// call it inline.
+func dialStreamOneAsync(ctx context.Context, client *Client) (<-chan dialResult, *xmuxClient) {
+	xc, _ := client.xmux.get()
+	xc.addOpenUsage(1)
+	done := make(chan dialResult, 1)
+	go func() {
+		conn, err := client.dialStreamOne(ctx, "", xc, newXmuxRelease(xc))
+		done <- dialResult{conn, err}
+	}()
+	return done, xc
+}
+
 // TestStreamOneWriteDeadlineUnblocksWrite is the core of the bug: without a
-// working SetWriteDeadline a Write into the upload pipe of a half-alive node
-// never returns, and the goroutine holding it outlives the whole box.
+// working SetWriteDeadline a Write into the upload pipe of a node that stopped
+// draining never returns, and the goroutine holding it outlives the whole box.
 func TestStreamOneWriteDeadlineUnblocksWrite(t *testing.T) {
-	client, transport := hangingClient(t)
+	transport := newStallingTransport()
 	defer transport.Close()
+	client := streamOneClient(t, transport)
 
 	xc, _ := client.xmux.get()
-	conn, err := client.dialStreamOne(context.Background(), "", xc)
+	conn, err := client.dialStreamOne(context.Background(), "", xc, newXmuxRelease(xc))
 	if err != nil {
 		t.Fatalf("dialStreamOne: %v", err)
 	}
 	defer conn.Close()
-
-	<-transport.entered
 
 	if err := conn.SetWriteDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
 		t.Fatalf("SetWriteDeadline: %v", err)
@@ -108,7 +161,7 @@ func TestStreamOneWriteDeadlineUnblocksWrite(t *testing.T) {
 	select {
 	case result := <-writeAsync(conn):
 		if result.err == nil {
-			t.Fatal("Write returned without error: the body has no reader, it must not succeed")
+			t.Fatal("Write returned without error: the body is not drained, it must not succeed")
 		}
 		if !errors.Is(result.err, os.ErrDeadlineExceeded) {
 			t.Fatalf("Write error = %v, want os.ErrDeadlineExceeded", result.err)
@@ -118,29 +171,26 @@ func TestStreamOneWriteDeadlineUnblocksWrite(t *testing.T) {
 	}
 }
 
-// TestStreamOneDialCancelUnblocksWrite covers the path that the URL test itself
-// takes: the encryption handshake runs on a bare net.Conn with no context, so
-// cancelling the dial context is what has to free a pending Write.
-func TestStreamOneDialCancelUnblocksWrite(t *testing.T) {
+// TestStreamOneDialCancelBeforeRaiseFailsDial covers the path the URL test
+// takes on a half-alive node: the encryption handshake runs on a bare net.Conn
+// with no context, so the dial context is the only handle the caller has. It
+// must end the dial — with the context's error, the pooled slot returned — and
+// never hand up a conn whose first Write would park on an unread pipe (the
+// pre-077 shape, where the guard freed that Write instead).
+func TestStreamOneDialCancelBeforeRaiseFailsDial(t *testing.T) {
 	client, transport := hangingClient(t)
 	defer transport.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	xc, _ := client.xmux.get()
-	conn, err := client.dialStreamOne(ctx, "", xc)
-	if err != nil {
-		t.Fatalf("dialStreamOne: %v", err)
-	}
-	defer conn.Close()
+	done, xc := dialStreamOneAsync(ctx, client)
 
 	<-transport.entered
 
-	done := writeAsync(conn)
 	select {
 	case result := <-done:
-		t.Fatalf("Write returned before cancellation: n=%d err=%v", result.n, result.err)
+		t.Fatalf("dial returned before the raise: conn=%v err=%v", result.conn, result.err)
 	case <-time.After(50 * time.Millisecond):
 	}
 
@@ -149,10 +199,17 @@ func TestStreamOneDialCancelUnblocksWrite(t *testing.T) {
 	select {
 	case result := <-done:
 		if result.err == nil {
-			t.Fatal("Write succeeded after the dial context was cancelled")
+			result.conn.Close()
+			t.Fatal("dial succeeded after the dial context was cancelled before the raise")
+		}
+		if !errors.Is(result.err, context.Canceled) {
+			t.Fatalf("dial error = %v, want context.Canceled", result.err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("cancelling the dial context did not release the pending Write")
+		t.Fatal("cancelling the dial context did not end the parked dial")
+	}
+	if got := xc.getOpenUsage(); got != 0 {
+		t.Fatalf("openUsage = %d after a failed dial, want 0 (slot not returned)", got)
 	}
 }
 
@@ -167,40 +224,26 @@ func (t *liveTransport) RoundTrip(request *http.Request) (*http.Response, error)
 	return &http.Response{StatusCode: http.StatusOK, Body: t.body}, nil
 }
 
-// TestStreamOneCancelAfterStreamUpKeepsConnAlive is the R4 guard for the dial
-// watcher: cancelling the dial context is routine once the stream is up (the
-// caller's dial is over), and it must not tear the connection down. A watcher
-// that outlived `created` would break every live stream-one connection.
+// TestStreamOneCancelAfterStreamUpKeepsConnAlive is the R4 guard: cancelling
+// the dial context is routine once the dial has returned (net.Dialer callers
+// do it in a defer, the DNS transport pool does it immediately — SPEC 077),
+// and it must not tear the connection down.
 func TestStreamOneCancelAfterStreamUpKeepsConnAlive(t *testing.T) {
 	bodyReader, bodyWriter := io.Pipe()
 	defer bodyWriter.Close()
 
-	meta, err := normalizeMeta(metaOptions{}, modeStreamOne)
-	if err != nil {
-		t.Fatalf("normalizeMeta: %v", err)
-	}
-	client := &Client{
-		scheme:     "https",
-		host:       "example.com",
-		serverAddr: M.ParseSocksaddr("example.com:443"),
-		path:       "/xhttp",
-		mode:       modeStreamOne,
-		meta:       meta,
-		xmux:       singleTransportXmux(&liveTransport{body: bodyReader}),
-	}
+	client := streamOneClient(t, &liveTransport{body: bodyReader})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	xc, _ := client.xmux.get()
-	conn, err := client.dialStreamOne(ctx, "", xc)
+	conn, err := client.dialStreamOne(ctx, "", xc, newXmuxRelease(xc))
 	if err != nil {
 		t.Fatalf("dialStreamOne: %v", err)
 	}
 	defer conn.Close()
 
-	// Wait for the stream to be up, then cancel: this is the normal lifecycle of
-	// a dial context, not an abort.
-	streamConn := conn.(*streamConn)
-	<-streamConn.created
+	// The dial is over: this is the normal lifecycle of a dial context, not an
+	// abort.
 	cancel()
 
 	select {

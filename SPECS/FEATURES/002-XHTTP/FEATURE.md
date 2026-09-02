@@ -191,6 +191,7 @@
 | [050 — URLTEST_ZOMBIE_RUN_SURVIVES_RESTART](../../TASKS/050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md) | Дедлайны потоковых conn'ов и отмена диала по ctx (ведётся в [HOTFIXES](../004-HOTFIXES/FEATURE.md)) | N |
 | [059 — XHTTP_XMUX](../../TASKS/059-XHTTP_XMUX/SPEC.md) | Переиспользование HTTP-соединений (`xmux`): пул, ротация, совместимость с Xray | I |
 | [061 — XHTTP_DIAL_DOWNLOAD_DEADLOCK](../../TASKS/061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md) | Дайл не ждёт download-ответ: дедлок `packet-up`/`stream-up` за обратным прокси | I |
+| [077 — XHTTP_DIAL_CTX_CONTRACT](../../TASKS/077-XHTTP_DIAL_CTX_CONTRACT/SPEC.md) | Dial `stream-one`/`stream-up` возвращает conn только с принятым телом запроса; после возврата dial-контекст на conn не влияет (DNS-пул через XHTTP-detour; сторож 050 снят) | I |
 
 Соответствие параметров Xray — `PARAM_MAP.md` в задаче 002;
 разбор ссылок — там же `URL_PARSING.md`.

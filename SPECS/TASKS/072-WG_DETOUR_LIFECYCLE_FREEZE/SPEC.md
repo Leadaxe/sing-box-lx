@@ -11,7 +11,7 @@ This task is the **single owner of the WG-endpoint lifecycle field-fault family*
 | Status | I (implemented) — all four mechanisms in tree; new cuts unit red/green; `-race` suites green; **pending field validation** on the reporting client |
 | Branch | `lx` |
 | Base | superproject `e50030345` (SPEC 070 + 071 shipped in `v1.14.0-lx.27-rc.2`; cuts 3–4 on top) |
-| Related | [050](../050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md) (the dial-context guard cuts 3–4 build on), [061](../061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md) (async download await this task keeps intact), [059](../059-XHTTP_XMUX/SPEC.md) (pooled connections; `fail` releases the slot), [046](../046-DNS_HIJACK_PACKET_LOOP_STALL/SPEC.md) (same "dead detour freezes unrelated machinery" class), [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md)/[041](../041-WG_HANDSHAKE_GIVEUP_REBIND/SPEC.md) (suspend/rebind visits multiply exposure), [030](../030-FAST_BOX_SHUTDOWN/SPEC.md)/[047](../047-EARLY_RPC_NIL_ROUTER_CRASH/SPEC.md) (adjacent lifecycle windows) |
+| Related | [050](../050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md) (conn deadlines; its dial-context guard, which cuts 3–4 were built on, was retired by [077](../077-XHTTP_DIAL_CTX_CONTRACT/SPEC.md) — the dial now parks until the raise), [061](../061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md) (async download await this task keeps intact), [059](../059-XHTTP_XMUX/SPEC.md) (pooled connections; `fail` releases the slot), [046](../046-DNS_HIJACK_PACKET_LOOP_STALL/SPEC.md) (same "dead detour freezes unrelated machinery" class), [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md)/[041](../041-WG_HANDSHAKE_GIVEUP_REBIND/SPEC.md) (suspend/rebind visits multiply exposure), [030](../030-FAST_BOX_SHUTDOWN/SPEC.md)/[047](../047-EARLY_RPC_NIL_ROUTER_CRASH/SPEC.md) (adjacent lifecycle windows) |
 
 **Touches (code):**
 - `protocol/wireguard/endpoint.go` (`Start` under `resumeMu` + `closing` gate) and `box.go` (`Close` CAS) — `// lx: SPEC 070`, unchanged here;
@@ -122,16 +122,24 @@ fork-native transport package; SPEC 071's bound made one of them hot.
 4. **Conn-scoped request contexts** (`transport/v2rayxhttp/conn.go` —
    `// lx: SPEC 072`): requests ride `WithCancel(transport ctx)`, cancelled
    by `Close`/`fail` — never the dial context. The dial context bounds the
-   RAISE only, through the 050 guard (stream-up now arms the same guard;
-   packet-up deliberately does not — its download response may legitimately
-   arrive only after the first upload, SPEC 061/002, so a cancelled dial
-   tears down via `Close`). The guard's `onCancel` additionally cancels the
-   conn context, so a dial-context abort kills the pending RoundTrip instead
-   of leaking it. Packet-up posts get their own per-exchange bound
-   (`packetUpPostTimeout = C.TCPTimeout`) — posts must not die with the dial
-   context but must not be unbounded either, or a wedged pooled connection
-   blocks the WG send path; `packetConn.Close` cancels the conn context,
-   aborting the pending download RoundTrip it previously leaked.
+   RAISE only, by parking the dial itself: since SPEC 077 `DialContext`
+   returns a stream-one/stream-up conn only once the HTTP layer has adopted
+   the upload body (called Read on the pipe); a raise that fails before that
+   fails the dial with its cause, a dial context that ends before that fails
+   the dial with the context error — pipe broken, conn context cancelled (the
+   pending RoundTrip dies instead of leaking), pooled slot released. After
+   the return the dial context has no effect on the conn (`net.Dialer`
+   contract; the DNS transport pool relies on it — SPEC 077). Packet-up
+   deliberately does not wait — it has no upload pipe, and its download
+   response may legitimately arrive only after the first upload (SPEC
+   061/002), so a cancelled dial tears down via `Close`. Packet-up posts get
+   their own per-exchange bound (`packetUpPostTimeout = C.TCPTimeout`) —
+   posts must not die with the dial context but must not be unbounded either,
+   or a wedged pooled connection blocks the WG send path; `packetConn.Close`
+   cancels the conn context, aborting the pending download RoundTrip it
+   previously leaked. (Until SPEC 077 the raise was bounded from OUTSIDE the
+   dial by the SPEC 050 guard `watchDialContext`, armed on the dial context
+   until `created`; HISTORY.md records why that form was retired.)
 
 Mechanism 4 restores the load-bearing claim of mechanism 2 ("with the dial
 bounded, every wait in the chain is bounded") that hole (C) falsified, and
@@ -159,12 +167,16 @@ names the contract from the WG side.
 
 - **Unit, red/green** (`transport/v2rayxhttp/raise_failure_test.go`; red run
   recorded on the pre-fix base, each failing exactly on its class):
-  - `TestStreamOneWriteFreedOnRoundTripError` / `...OnBadStatus` — red:
-    «Write still blocked after the raise failed — upload pipe was not
-    broken» (the 38-minute field mechanism, distilled).
-  - `TestStreamUpWriteFreedOnDownloadError` — red: same, split mode.
-  - `TestStreamUpWriteCarriesUploadError` — red: «Write error "io: read/write
-    on closed pipe" lost the upload failure».
+  - `TestStreamOneDialFailsOnRoundTripError` / `...OnBadStatus` (recorded
+    in their pre-077 form `...WriteFreedOn...`) — red: «Write still blocked
+    after the raise failed — upload pipe was not broken» (the 38-minute
+    field mechanism, distilled). Since SPEC 077 the same raise failure ends
+    the dial itself with the cause; the tests assert that form.
+  - `TestStreamUpDialFailsOnDownloadError` (pre-077 `...WriteFreedOn...`) —
+    red: same, split mode.
+  - `TestStreamUpDialFailsOnUploadError` (pre-077
+    `TestStreamUpWriteCarriesUploadError`) — red: «Write error "io:
+    read/write on closed pipe" lost the upload failure».
   - `TestStreamOneConnSurvivesDialContextExpiry` — red: «Read after dial
     deadline: context deadline exceeded — dial ctx still bounds the live
     stream» (the 15 s cycle, distilled; live h2c echo server).
