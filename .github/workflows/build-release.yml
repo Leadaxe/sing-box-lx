@@ -62,16 +62,23 @@ jobs:
           set -euo pipefail
           KEEP="with_quic with_utls with_clash_api with_xhttp badlinkname tfogo_checklinkname0"
 
-          # 优先用 make 本身展开 TAGS（可正确处理 := ?= += 及变量引用）
+          # 若检出的 tag 上没有 Makefile.lx，回退使用 lx 分支上的版本
+          if [ ! -f Makefile.lx ]; then
+            echo "::warning::当前 tag 上不存在 Makefile.lx，改用 lx 分支的 Makefile.lx"
+            git show origin/lx:Makefile.lx > Makefile.lx
+          fi
+
+          # 优先用 make 本身展开 TAGS（兼容 := ?= += 及变量引用）
           RAW=$(make -f Makefile.lx --no-print-directory -s \
                 --eval='print-tags: ; @echo $(TAGS)' print-tags 2>/dev/null || true)
 
-          # 回退：用 grep/sed 直接解析 TAGS 定义行
+          # 回退：用 grep/sed 解析 TAGS 定义行（兼容 export/override 前缀）
+          # 注意结尾的 || true：防止 grep 未命中时管道非零退出被 set -e 终止
           if [ -z "${RAW// /}" ]; then
-            RAW=$(grep -E '^[[:space:]]*TAGS[[:space:]]*[:?+]?=' Makefile.lx | head -n1 \
-                  | sed -E 's/^[[:space:]]*TAGS[[:space:]]*[:?+]?=[[:space:]]*//')
+            RAW=$(grep -E '^[[:space:]]*(export[[:space:]]+)?(override[[:space:]]+)?TAGS[[:space:]]*[:?+]?=' Makefile.lx | head -n1 \
+                  | sed -E 's/^[[:space:]]*(export[[:space:]]+)?(override[[:space:]]+)?TAGS[[:space:]]*[:?+]?=[[:space:]]*//' || true)
           fi
-          echo "Makefile.lx 原始 TAGS: $RAW"
+          echo "Makefile.lx 原始 TAGS: '$RAW'"
 
           # 逗号/空格统一为换行后，按保留清单逐一过滤（保持清单顺序）
           TAGS=""
@@ -81,7 +88,8 @@ jobs:
             fi
           done
           if [ -z "$TAGS" ]; then
-            echo "::error::过滤后 TAGS 为空，请检查 Makefile.lx 中的 TAGS 定义"
+            echo "::error::过滤后 TAGS 为空。Makefile.lx 中 TAGS 相关行如下："
+            grep -n 'TAGS' Makefile.lx || true
             exit 1
           fi
           echo "过滤后 TAGS: $TAGS"
@@ -138,7 +146,7 @@ jobs:
             -o sing-box ./cmd/sing-box
           ls -lh sing-box
 
-      - name: 打包普通 tar.gz
+      - name: 打包普通 tar.gz（内部仅含 sing-box 二进制）
         shell: bash
         run: |
           set -euo pipefail
@@ -147,7 +155,7 @@ jobs:
           tar -czf "dist/sing-box-${VERSION}-linux-${{ matrix.arch }}.tar.gz" -C stage sing-box
           rm -f stage/sing-box
 
-      - name: UPX 压缩二进制
+      - name: UPX 压缩二进制并直接输出为发布文件
         if: matrix.upx
         shell: bash
         run: |
