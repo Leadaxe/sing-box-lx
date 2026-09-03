@@ -147,7 +147,7 @@ jobs:
             -o sing-box ./cmd/sing-box
           ls -lh sing-box
 
-      - name: 打包普通 tar.gz（内部仅含 sing-box 二进制）
+      - name: 打包普通 tar.gz
         shell: bash
         run: |
           set -euo pipefail
@@ -156,7 +156,7 @@ jobs:
           tar -czf "dist/sing-box-${VERSION}-linux-${{ matrix.arch }}.tar.gz" -C stage sing-box
           rm -f stage/sing-box
 
-      - name: UPX 压缩二进制并直接输出为发布文件
+      - name: UPX 压缩二进制并输出为 .upx 发布文件
         if: matrix.upx
         shell: bash
         run: |
@@ -164,7 +164,7 @@ jobs:
           upx --best --lzma sing-box
           ls -lh sing-box
           mkdir -p dist
-          cp sing-box "dist/sing-box-${VERSION}-linux-${{ matrix.arch }}-upx"
+          cp sing-box "dist/sing-box-${VERSION}-linux-${{ matrix.arch }}.upx"
 
       - name: 上传构建产物到工件
         uses: actions/upload-artifact@v4
@@ -188,25 +188,18 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: 生成 SHA256SUMS 与 Release 正文
+      - name: 生成 Release 正文
         shell: bash
         working-directory: dist
         run: |
           set -euo pipefail
-          sha256sum sing-box-* | tee SHA256SUMS
-
           {
             echo "sing-box-lx ${{ needs.prepare.outputs.version }} 自动构建。"
             echo ""
             echo "- \`*.tar.gz\`：压缩包内含单个 \`sing-box\` 二进制"
-            echo "- \`*-upx\`：经 UPX (--best --lzma) 压缩的裸二进制，下载后 \`chmod +x\` 即可直接使用"
+            echo "- \`*.upx\`：经 UPX (--best --lzma) 压缩的裸二进制，下载后 \`chmod +x\` 即可直接使用"
             echo ""
             echo "构建标签：\`${{ needs.prepare.outputs.tags }}\`"
-            echo ""
-            echo "## 文件 SHA256"
-            echo '```'
-            cat SHA256SUMS
-            echo '```'
           } > body.md
 
       - name: "发布 Release（tag: ${{ needs.prepare.outputs.version }}）"
@@ -217,5 +210,4 @@ jobs:
           body_path: dist/body.md
           files: |
             dist/*.tar.gz
-            dist/sing-box-*-upx
-            dist/SHA256SUMS
+            dist/*.upx
