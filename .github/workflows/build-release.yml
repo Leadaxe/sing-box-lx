@@ -27,10 +27,13 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       tags: ${{ steps.tags.outputs.tags }}
     steps:
-      - name: 检出仓库（拉取全部 tag）
+      # 注意：go.mod 用 replace 把 gvisor 指向 ./submodules/gvisor，
+      # 必须拉取 submodule，否则编译时报 submodules/gvisor/go.mod 不存在
+      - name: 检出仓库（拉取全部 tag 与 submodule）
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          submodules: recursive
 
       - name: 解析版本号并切换到对应 tag
         id: meta
@@ -54,6 +57,8 @@ jobs:
           echo "本次构建版本: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           git checkout --detach "refs/tags/$VERSION"
+          # checkout 换了 ref 之后，submodule 记录的提交可能随之变化，需要同步
+          git submodule update --init --recursive
 
       - name: 从 Makefile.lx 解析 LX_TAGS 并过滤保留 6 个标签
         id: tags
@@ -112,13 +117,14 @@ jobs:
       VERSION: ${{ needs.prepare.outputs.version }}
       TAGS: ${{ needs.prepare.outputs.tags }}
     steps:
-      - name: 检出 tag ${{ needs.prepare.outputs.version }}
+      - name: 检出 tag ${{ needs.prepare.outputs.version }}（含 submodule）
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare.outputs.version }}
           fetch-depth: 0
+          submodules: recursive
 
-      - name: 安装 Go
+      - name: 安装 Go（版本读取自 go.mod）
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
@@ -141,7 +147,7 @@ jobs:
             -o sing-box ./cmd/sing-box
           ls -lh sing-box
 
-      - name: 打包普通 tar.gz
+      - name: 打包普通 tar.gz（内部仅含 sing-box 二进制）
         shell: bash
         run: |
           set -euo pipefail
