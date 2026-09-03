@@ -1,0 +1,82 @@
+name: Sync upstream release
+
+on:
+  schedule:
+    - cron: "23 1 * * *"   # 每天检查一次(UTC 01:23,东京时间 10:23)
+  workflow_dispatch:          # 支持手动触发
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_REPO: Leadaxe/sing-box-lx
+  SYNC_BRANCH: lx
+
+jobs:
+  sync:
+    name: Sync on new upstream release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get upstream latest release tag
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag=$(gh api "repos/${UPSTREAM_REPO}/releases/latest" --jq .tag_name)
+          echo "Upstream latest release: ${tag}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check if fork already has this tag
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          if gh api "repos/${{ github.repository }}/git/ref/tags/${TAG}" --silent; then
+            echo "Tag ${TAG} already exists in fork, nothing to do."
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "New version ${TAG} detected."
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Checkout fork
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SYNC_BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Merge upstream tag into fork branch
+        if: steps.check.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream --tags
+          git fetch origin "${SYNC_BRANCH}"
+          git checkout -B "${SYNC_BRANCH}" "origin/${SYNC_BRANCH}"
+          git merge --no-edit "${TAG}"
+
+      - name: Push branch and new tag
+        if: steps.check.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          git push origin "${SYNC_BRANCH}"
+          git push origin "refs/tags/${TAG}"
+
+      - name: Mirror the release notes in fork
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          notes=$(gh api "repos/${UPSTREAM_REPO}/releases/tags/${TAG}" --jq .body)
+          gh release create "${TAG}" \
+            --repo "${{ github.repository }}" \
+            --title "${TAG}" \
+            --notes "${notes}"
