@@ -93,7 +93,7 @@ jobs:
           # 逗号/空格统一为换行后，按保留清单逐一过滤（保持清单顺序）
           TAGS=""
           for t in $KEEP; do
-            if printf '%s\n' $RAW | tr ',' '\n' | grep -Fxq "$t"; then
+            if printf '%s' "$RAW" | tr ', ' '\n' | sed '/^$/d' | grep -Fxq "$t"; then
               TAGS="${TAGS:+$TAGS,}$t"
             fi
           done
