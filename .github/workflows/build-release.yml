@@ -26,6 +26,7 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
       tags: ${{ steps.tags.outputs.tags }}
+      upstream: ${{ steps.meta.outputs.upstream }}
     steps:
       # 注意：go.mod 用 replace 把 gvisor 指向 ./submodules/gvisor，
       # 必须拉取 submodule，否则编译时报 submodules/gvisor/go.mod 不存在
@@ -59,6 +60,17 @@ jobs:
           git checkout --detach "refs/tags/$VERSION"
           # checkout 换了 ref 之后，submodule 记录的提交可能随之变化，需要同步
           git submodule update --init --recursive
+
+          # 推导对应的上游版本：优先读 upstream.version（Makefile.lx 的 pin 文件，
+          # 与 LX_VERSION 的构成保持一致），文件不存在则从 tag 名剥掉 -lx.N 后缀
+          if [ -f upstream.version ]; then
+            UPSTREAM_BASE=$(tr -d '[:space:]' < upstream.version)
+          else
+            UPSTREAM_BASE="${VERSION#v}"
+            UPSTREAM_BASE="${UPSTREAM_BASE%%-lx.*}"
+          fi
+          echo "上游基线版本: $UPSTREAM_BASE"
+          echo "upstream=$UPSTREAM_BASE" >> "$GITHUB_OUTPUT"
 
       - name: 从 Makefile.lx 解析 LX_TAGS 并过滤保留 6 个标签
         id: tags
@@ -195,6 +207,8 @@ jobs:
           set -euo pipefail
           {
             echo "sing-box-lx ${{ needs.prepare.outputs.version }} 自动构建。"
+            echo ""
+            echo "基于上游 [SagerNet/sing-box v${{ needs.prepare.outputs.upstream }}](https://github.com/SagerNet/sing-box/releases/tag/v${{ needs.prepare.outputs.upstream }})，上游版本的完整更新说明见对应 Release。"
             echo ""
             echo "- \`*.tar.gz\`：压缩包内含单个 \`sing-box\` 二进制"
             echo "- \`*.upx\`：经 UPX (--best --lzma) 压缩的裸二进制，下载后 \`chmod +x\` 即可直接使用"
