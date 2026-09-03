@@ -199,7 +199,7 @@ jobs:
             echo '```'
           } > body.md
 
-      - name: 发布 Release（tag: ${{ needs.prepare.outputs.version }}）
+      - name: "发布 Release（tag: ${{ needs.prepare.outputs.version }}）"
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare.outputs.version }}
