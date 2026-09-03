@@ -1,0 +1,211 @@
+name: 构建并发布 ShellCrash 内核 (sing-box-lx)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '要构建的版本 tag（如 v1.13.13-lx.3）；留空则自动使用仓库最新 semver tag'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sing-box-lx-release-${{ inputs.version || 'auto-latest' }}
+  cancel-in-progress: false
+
+jobs:
+  # ============================================================
+  # 阶段一：解析版本号与构建标签
+  # ============================================================
+  prepare:
+    name: 解析版本与构建标签
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tags: ${{ steps.tags.outputs.tags }}
+    steps:
+      - name: 检出仓库（拉取全部 tag）
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 解析版本号并切换到对应 tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          INPUT_VERSION='${{ inputs.version }}'
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
+            if ! git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+              echo "::error::指定的 tag $VERSION 在仓库中不存在"
+              exit 1
+            fi
+          else
+            VERSION=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1)
+            if [ -z "$VERSION" ]; then
+              echo "::error::仓库中没有任何 v 开头的 semver tag"
+              exit 1
+            fi
+          fi
+          echo "本次构建版本: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          git checkout --detach "refs/tags/$VERSION"
+
+      - name: 从 Makefile.lx 解析 TAGS 并过滤保留 6 个标签
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEEP="with_quic with_utls with_clash_api with_xhttp badlinkname tfogo_checklinkname0"
+
+          # 优先用 make 本身展开 TAGS（可正确处理 := ?= += 及变量引用）
+          RAW=$(make -f Makefile.lx --no-print-directory -s \
+                --eval='print-tags: ; @echo $(TAGS)' print-tags 2>/dev/null || true)
+
+          # 回退：用 grep/sed 直接解析 TAGS 定义行
+          if [ -z "${RAW// /}" ]; then
+            RAW=$(grep -E '^[[:space:]]*TAGS[[:space:]]*[:?+]?=' Makefile.lx | head -n1 \
+                  | sed -E 's/^[[:space:]]*TAGS[[:space:]]*[:?+]?=[[:space:]]*//')
+          fi
+          echo "Makefile.lx 原始 TAGS: $RAW"
+
+          # 逗号/空格统一为换行后，按保留清单逐一过滤（保持清单顺序）
+          TAGS=""
+          for t in $KEEP; do
+            if printf '%s\n' $RAW | tr ',' '\n' | grep -Fxq "$t"; then
+              TAGS="${TAGS:+$TAGS,}$t"
+            fi
+          done
+          if [ -z "$TAGS" ]; then
+            echo "::error::过滤后 TAGS 为空，请检查 Makefile.lx 中的 TAGS 定义"
+            exit 1
+          fi
+          echo "过滤后 TAGS: $TAGS"
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+
+  # ============================================================
+  # 阶段二：矩阵构建并打包
+  # ============================================================
+  build:
+    name: 构建 linux/${{ matrix.arch }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            goarm: ''
+            arch: amd64
+            upx: false
+          - goos: linux
+            goarch: arm
+            goarm: '7'
+            arch: armv7
+            upx: true
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAGS: ${{ needs.prepare.outputs.tags }}
+    steps:
+      - name: 检出 tag ${{ needs.prepare.outputs.version }}
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.version }}
+          fetch-depth: 0
+
+      - name: 安装 Go（版本读取自 go.mod）
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: 编译 sing-box（GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}）
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          go build -v -trimpath -buildvcs=false -tags "$TAGS" \
+            -ldflags "-s -w -X github.com/sagernet/sing-box/constant.Version=$VERSION" \
+            -o sing-box ./cmd/sing-box
+          ls -lh sing-box
+
+      - name: 打包普通 tar.gz
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p stage dist
+          cp sing-box stage/sing-box
+          tar -czf "dist/sing-box-${VERSION}-linux-${{ matrix.arch }}.tar.gz" -C stage sing-box
+          rm -f stage/sing-box
+
+      - name: UPX 压缩二进制
+        if: matrix.upx
+        shell: bash
+        run: |
+          set -euo pipefail
+          upx --best --lzma sing-box
+          ls -lh sing-box
+          mkdir -p dist
+          cp sing-box "dist/sing-box-${VERSION}-linux-${{ matrix.arch }}-upx"
+
+      - name: 上传构建产物到工件
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  # ============================================================
+  # 阶段三：汇总产物并发布 Release
+  # ============================================================
+  release:
+    name: 创建 GitHub Release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载全部构建工件
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: 生成 SHA256SUMS 与 Release 正文
+        shell: bash
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum sing-box-* | tee SHA256SUMS
+          {
+            echo "sing-box-lx ${{ needs.prepare.outputs.version }} 自动构建。"
+            echo ""
+            echo "- \`*.tar.gz\`：压缩包内含单个 \`sing-box\` 二进制"
+            echo "- \`*-upx\`：经 UPX (--best --lzma) 压缩的裸二进制，下载后 \`chmod +x\` 即可直接使用"
+            echo ""
+            echo "构建标签：\`${{ needs.prepare.outputs.tags }}\`"
+            echo ""
+            echo "## 文件 SHA256"
+            echo '```'
+            cat SHA256SUMS
+            echo '```'
+          } > body.md
+
+      - name: 发布 Release（tag: ${{ needs.prepare.outputs.version }}）
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.version }}
+          name: sing-box-lx ${{ needs.prepare.outputs.version }} for ShellCrash
+          body_path: dist/body.md
+          files: |
+            dist/*.tar.gz
+            dist/sing-box-*-upx
+            dist/SHA256SUMS
