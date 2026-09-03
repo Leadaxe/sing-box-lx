@@ -55,30 +55,23 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           git checkout --detach "refs/tags/$VERSION"
 
-      - name: 从 Makefile.lx 解析 TAGS 并过滤保留 6 个标签
+      - name: 从 Makefile.lx 解析 LX_TAGS 并过滤保留 6 个标签
         id: tags
         shell: bash
         run: |
           set -euo pipefail
           KEEP="with_quic with_utls with_clash_api with_xhttp badlinkname tfogo_checklinkname0"
 
-          # 若检出的 tag 上没有 Makefile.lx，回退使用 lx 分支上的版本
-          if [ ! -f Makefile.lx ]; then
-            echo "::warning::当前 tag 上不存在 Makefile.lx，改用 lx 分支的 Makefile.lx"
-            git show origin/lx:Makefile.lx > Makefile.lx
-          fi
+          # Makefile.lx 的变量名是 LX_TAGS，且自带 lx-print-tags 目标
+          # （其注释明确写明供 CI/release 使用，避免重复维护标签集）
+          RAW=$(make -f Makefile.lx --no-print-directory -s lx-print-tags 2>/dev/null || true)
 
-          # 优先用 make 本身展开 TAGS（兼容 := ?= += 及变量引用）
-          RAW=$(make -f Makefile.lx --no-print-directory -s \
-                --eval='print-tags: ; @echo $(TAGS)' print-tags 2>/dev/null || true)
-
-          # 回退：用 grep/sed 解析 TAGS 定义行（兼容 export/override 前缀）
-          # 注意结尾的 || true：防止 grep 未命中时管道非零退出被 set -e 终止
+          # 回退：用 grep/sed 直接解析 LX_TAGS 定义行
           if [ -z "${RAW// /}" ]; then
-            RAW=$(grep -E '^[[:space:]]*(export[[:space:]]+)?(override[[:space:]]+)?TAGS[[:space:]]*[:?+]?=' Makefile.lx | head -n1 \
-                  | sed -E 's/^[[:space:]]*(export[[:space:]]+)?(override[[:space:]]+)?TAGS[[:space:]]*[:?+]?=[[:space:]]*//' || true)
+            RAW=$(grep -E '^[[:space:]]*LX_TAGS[[:space:]]*[:?+]?=' Makefile.lx | head -n1 \
+              | sed -E 's/^[[:space:]]*LX_TAGS[[:space:]]*[:?+]?=[[:space:]]*//')
           fi
-          echo "Makefile.lx 原始 TAGS: '$RAW'"
+          echo "Makefile.lx 原始 LX_TAGS: $RAW"
 
           # 逗号/空格统一为换行后，按保留清单逐一过滤（保持清单顺序）
           TAGS=""
@@ -88,8 +81,7 @@ jobs:
             fi
           done
           if [ -z "$TAGS" ]; then
-            echo "::error::过滤后 TAGS 为空。Makefile.lx 中 TAGS 相关行如下："
-            grep -n 'TAGS' Makefile.lx || true
+            echo "::error::过滤后 TAGS 为空，请检查 Makefile.lx 中的 LX_TAGS 定义"
             exit 1
           fi
           echo "过滤后 TAGS: $TAGS"
@@ -126,7 +118,7 @@ jobs:
           ref: ${{ needs.prepare.outputs.version }}
           fetch-depth: 0
 
-      - name: 安装 Go（版本读取自 go.mod）
+      - name: 安装 Go
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
@@ -141,12 +133,15 @@ jobs:
           CGO_ENABLED: '0'
         run: |
           set -euo pipefail
+          # Makefile.lx 明确要求：badlinkname/tfogo_checklinkname0 需要 -checklinkname=0，
+          # 否则 Go 1.24+ 的链接器会拒绝 badtls 对 crypto/tls 的 go:linkname。
+          # ${VERSION#v} 去掉 tag 的 v 前缀，与 Makefile.lx 的 LX_VERSION 形式（如 1.13.13-lx.1）一致。
           go build -v -trimpath -buildvcs=false -tags "$TAGS" \
-            -ldflags "-s -w -X github.com/sagernet/sing-box/constant.Version=$VERSION" \
+            -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=${VERSION#v}" \
             -o sing-box ./cmd/sing-box
           ls -lh sing-box
 
-      - name: 打包普通 tar.gz（内部仅含 sing-box 二进制）
+      - name: 打包普通 tar.gz
         shell: bash
         run: |
           set -euo pipefail
@@ -193,6 +188,7 @@ jobs:
         run: |
           set -euo pipefail
           sha256sum sing-box-* | tee SHA256SUMS
+
           {
             echo "sing-box-lx ${{ needs.prepare.outputs.version }} 自动构建。"
             echo ""
