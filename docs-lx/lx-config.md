@@ -171,6 +171,19 @@ you need and read its section below. Each comment shows the **default** and the 
       "ip": "quic",                             // default: "". quic | dns | stun | sip
       "ib": "chrome",                           // default: "". chrome | firefox | curl. Only meaningful with ip=quic
 
+      // ── AmneziaWG 3.x (amnezia-awg2 container, protocol_version 3.x; SPEC 080) ──
+      // header_protection_key is SERVER-SIDE (must equal the server's); with it on,
+      // every s1..s4 must be >= 12 (the padding carries the header-cipher nonce).
+      "header_protection_key": "<base64-32-bytes>", // default: "" (off). `awg genkey` output; masks type/receiver/counter of every packet
+      "content_padding_addition": "10-100",     // default: "" (off). int | "min-max" extra padding inside every data packet
+      "rekey_after_time": "100-120",            // default: "" (WireGuard 120 s). int | "min-max" seconds
+      "rekey_timeout": "3-7",                   // default: "" (WireGuard 5 s)
+      "reject_after_time": "150-180",           // default: "" (WireGuard 180 s)
+      "keepalive_timeout": "5-15",              // default: "" (WireGuard 10 s)
+      "max_handshake_attempts": "15-20",        // default: "" (WireGuard 18)
+      "random_trailers": true,                  // default: false. Random-length tail on every handshake message / inside data packets
+      "disable_cookies": true,                  // default: false. Never send or demand cookie replies
+
       "peers": [
         {
           "address": "server.example.com",
@@ -178,7 +191,7 @@ you need and read its section below. Each comment shows the **default** and the 
           "public_key": "<server-public-key-base64>",
           "pre_shared_key": "<preshared-key-base64>",
           "allowed_ips": ["0.0.0.0/0", "::/0"],
-          "persistent_keepalive_interval": 25
+          "persistent_keepalive_interval": "25-35" // number (WireGuard) or "min-max" seconds (AWG 3.x)
         }
       ]
     },
@@ -208,7 +221,7 @@ you need and read its section below. Each comment shows the **default** and the 
 }
 ```
 
-> **Field count:** 26 XHTTP + 21 AmneziaWG (incl. `id`/`ip`/`ib`) + 1 VLESS (`encryption`) +
+> **Field count:** 26 XHTTP + 30 AmneziaWG (incl. `id`/`ip`/`ib` and the 9 AWG 3.x keys) + 1 VLESS (`encryption`) +
 > 6 `urltest` (`mode`, `passive_check` + `balancer{pool,pool_tolerance,sticky_hash}`). Mutually-exclusive / ignored fields are
 > labelled inline above; the sections below give the per-field semantics, gotchas and live
 > verification status.
@@ -253,11 +266,13 @@ A minimal `transport` block is just `"type": "xhttp"` (mode `auto`); the [exampl
 
 ---
 
-## 2. AmneziaWG 2.0 (AWG2)
+## 2. AmneziaWG 2.0 / 3.x (AWG2, AWG3)
 
 AWG is WireGuard + DPI-evasion obfuscation. It is configured as a normal sing-box **`wireguard` endpoint** with extra promoted fields. With `with_awg` these are pushed to the device; a config without any AWG field is a plain WireGuard endpoint (byte-identical to upstream behavior).
 
 AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server must run AmneziaWG with **matching** parameters (the I-packets are configuration, not negotiated). For a friendlier way to set the first decoy, the WireSock-style `id`/`ip`/`ib` sugar generates `i1` for you — see the [full reference](lx-protocols-transports.md#25-masquerade-sugar-id--ip--ib).
+
+AWG3 (amneziawg-go v3.0/v3.1, Amnezia's `amnezia-awg2` container with `protocol_version` 3.x) adds header protection (`header_protection_key` — server-side, must match), content padding, random trailers, disabled cookies and ranged timing overrides, plus a ranged `persistent_keepalive_interval`. All are endpoint-root fields like the AWG2 ones — [reference §2.10](lx-protocols-transports.md#210-awg-3x-header-protection-padding-trailers-timings).
 
 The AWG fields sit at the endpoint **root** (none on a peer), mirroring an `awg-quick`
 `.conf` `[Interface]` section: junk (`jc`/`jmin`/`jmax`), handshake padding (`s1`–`s4`),
@@ -271,6 +286,27 @@ packet — the core defaults to `1280` when you set `s4` and omit `mtu`.
 > and the verbatim validation errors — is in
 > [lx-protocols-transports.md §2](lx-protocols-transports.md#2-amneziawg-20-awg2)**
 > ([RU](lx-protocols-transports.ru.md#2-amneziawg-20-awg2)).
+
+### Example — AmneziaWG 3.1 endpoint (Amnezia `amnezia-awg2` export)
+
+```jsonc
+{
+  "type": "wireguard", "tag": "awg3-out", "system": false, "mtu": 1376,
+  "address": ["10.8.1.7/32"],
+  "private_key": "<client-private-key-base64>",
+  "jc": 4, "jmin": 10, "jmax": 50,
+  "s1": 55, "s2": 42, "s3": 40, "s4": 12,      // all >= 12 for header protection
+  "h1": 1, "h2": 2, "h3": 3, "h4": 4,
+  "header_protection_key": "<HeaderProtectionKey-base64>",
+  "content_padding_addition": "10-100",
+  "rekey_after_time": "100-120", "rekey_timeout": "3-7", "reject_after_time": "150-180",
+  "keepalive_timeout": "5-15", "max_handshake_attempts": "15-20",
+  "random_trailers": true, "disable_cookies": true,
+  "peers": [ { "address": "77.239.123.44", "port": 30565,
+    "public_key": "<server-public-key-base64>", "pre_shared_key": "<preshared-key-base64>",
+    "allowed_ips": ["0.0.0.0/0", "::/0"], "persistent_keepalive_interval": "25-35" } ]
+}
+```
 
 ### Example — AmneziaWG 2.0 endpoint
 
@@ -780,7 +816,11 @@ named; nested `chain` is allowed only at position 0.
 
 ---
 
-## 10. Validate & build
+## 10. Protocol sniffers for LAN traffic (SPEC 078 / 080)
+
+New protocol names for the `sniffer` list of a `sniff` action and the `protocol` rule matcher: `wireguard`, `openvpn`, `ike`, `tailscale`, `sip` (the last one also sets `domain` from the Request-URI). They recognise VPN tunnels and calls from other devices behind a router by the shape of the first packet, and sit before upstream's uTP sniffer, which used to label plain WireGuard as `bittorrent`. Order, limits (only the first packet of a flow counts — junk and decoys are not seen through) and a router example — **[lx-sniff.md](lx-sniff.md)**.
+
+## 11. Validate & build
 
 ```sh
 git clone --recurse-submodules <repo>           # with_awg needs the submodule

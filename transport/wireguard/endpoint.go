@@ -98,9 +98,15 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 	// lx:end awg
 	var peers []peerConfig
 	for peerIndex, rawPeer := range options.Peers {
+		// lx: awg — the keepalive is a spec string ("N" / "min-max" / "");
+		// the range form is AWG 3.x and tag-gated like the other AWG fields.
+		keepalive, err := awgKeepaliveSpec(rawPeer.PersistentKeepaliveInterval)
+		if err != nil {
+			return nil, E.Cause(err, "persistent_keepalive_interval for peer ", peerIndex)
+		}
 		peer := peerConfig{
 			allowedIPs: rawPeer.AllowedIPs,
-			keepalive:  rawPeer.PersistentKeepaliveInterval,
+			keepalive:  keepalive,
 		}
 		if rawPeer.Endpoint.Addr.IsValid() {
 			peer.endpoint = rawPeer.Endpoint.AddrPort()
@@ -596,7 +602,7 @@ type peerConfig struct {
 	publicKeyHex    string
 	preSharedKeyHex string
 	allowedIPs      []netip.Prefix
-	keepalive       uint16
+	keepalive       string // lx: awg — canonical spec, "" = off
 	reserved        [3]uint8
 }
 
@@ -612,8 +618,8 @@ func (c peerConfig) GenerateIpcLines() string {
 	for _, allowedIP := range c.allowedIPs {
 		ipcLines.WriteString("\nallowed_ip=" + allowedIP.String())
 	}
-	if c.keepalive > 0 {
-		ipcLines.WriteString("\npersistent_keepalive_interval=" + F.ToString(c.keepalive))
+	if c.keepalive != "" {
+		ipcLines.WriteString("\npersistent_keepalive_interval=" + c.keepalive)
 	}
 	return ipcLines.String()
 }

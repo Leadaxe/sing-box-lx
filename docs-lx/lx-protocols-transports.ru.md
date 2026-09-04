@@ -322,12 +322,17 @@ WireGuard endpoint, **байт-в-байт как в апстриме**.
 Рантайм — на `Leadaxe/wireguard-go` (sagernet/wireguard-go + AmneziaWG-обфускация,
 подключён через сабмодуль `submodules/wireguard-go`).
 
-## 2.1 Модель: AWG1 vs AWG2
+## 2.1 Модель: AWG1 vs AWG2 vs AWG3
 
 - **AWG1** = junk/signature/magic-header поля: `jc`, `jmin`, `jmax`, `s1`, `s2`,
   `h1`–`h4` (одиночные значения).
 - **AWG2** = AWG1 **плюс** CPS-пакеты `i1`–`i5`, AWG-2.0 junk-size параметры `s3`/`s4`
   и **диапазонные** magic-заголовки (`"min-max"` форма `h1`–`h4`).
+- **AWG3** (amneziawg-go v3.0 / v3.1, контейнер `amnezia-awg2` с
+  `protocol_version` 3.x) = AWG2 **плюс** защита заголовка
+  (`header_protection_key`), паддинг содержимого (`content_padding_addition`),
+  случайные хвосты, отключённые cookie, диапазонные тайминги и диапазонный
+  `persistent_keepalive_interval` — см. [§2.10](#210-awg-3x-защита-заголовка-паддинг-хвосты-тайминги).
 
 И клиент, и сервер должны крутить AmneziaWG с **совпадающими** параметрами — junk и
 I-пакеты это *конфигурация*, не согласовываются. Задавай их из одного `awg.conf` на
@@ -534,12 +539,18 @@ mtu ≤ 1500 − 28 (UDP/IP) − 32 (WireGuard) − S4 junk-байт
 | `[Interface] Jc / Jmin / Jmax / S1–S4 / I1–I5` | корень endpoint `jc` / `jmin` / `jmax` / `s1`–`s4` / `i1`–`i5` |
 | `[Interface] H1 = N` | корень endpoint `"h1": N` (JSON-**число**) |
 | `[Interface] H1 = N-M` (AWG2-экспорт) | корень endpoint `"h1": "N-M"` (JSON-**строка**, дословно) |
+| `[Interface] HeaderProtectionKey = <base64>` (AWG3) | корень endpoint `"header_protection_key": "<base64>"` (дословно) |
+| `[Interface] ContentPaddingAddition / RekeyAfterTime / RekeyTimeout / RejectAfterTime / KeepaliveTimeout / MaxHandshakeAttempts = N-M` (AWG3) | корень endpoint `content_padding_addition` / `rekey_after_time` / `rekey_timeout` / `reject_after_time` / `keepalive_timeout` / `max_handshake_attempts` — строка `"N-M"` (или число `N`) |
+| `[Interface] RandomTrailers / DisableCookies = on` (AWG3) | корень endpoint `"random_trailers": true` / `"disable_cookies": true` |
 | `[Peer] PublicKey / PresharedKey` | `peers[0].public_key` / `pre_shared_key` |
 | `[Peer] Endpoint host:port` | `peers[0].address` + `peers[0].port` |
-| `[Peer] AllowedIPs / PersistentKeepalive` | `peers[0].allowed_ips` / `persistent_keepalive_interval` |
+| `[Peer] AllowedIPs / PersistentKeepalive` | `peers[0].allowed_ips` / `persistent_keepalive_interval` (`N` или `"N-M"` для AWG3-диапазона) |
 
 Если `awg.conf` опускает `MTU` или ставит WireGuard-дефолт `1420`, понизь его для AWG2
 (см. [§2.6](#26-бюджет-mtu)).
+
+Экспорт `vpn://` приложения Amnezia несёт те же ключи (`awg` → `last_config` →
+`config` — это текст `.conf` выше); `protocol_version: "3.1"` там означает AWG3-сервер.
 
 ## 2.8 Примеры
 
@@ -577,6 +588,48 @@ mtu ≤ 1500 − 28 (UDP/IP) − 32 (WireGuard) − S4 junk-байт
 }
 ```
 
+### AmneziaWG 3.1 endpoint (экспорт `amnezia-awg2`, `protocol_version` 3.1)
+
+Полный набор параметров живого AWG 3.1-сервера, скопированный 1:1 из его `.conf`
+(`H1`–`H4` остаются дефолтами WireGuard — при защите заголовка слово типа всё равно
+замаскировано). Проверено end-to-end против этого сервера (SPEC 080).
+
+```jsonc
+{
+  "type": "wireguard",
+  "tag": "awg3-out",
+  "system": false,
+  "mtu": 1376,
+  "address": ["10.8.1.7/32"],
+  "private_key": "<client-private-key-base64>",
+
+  "jc": 4, "jmin": 10, "jmax": 50,
+  "s1": 55, "s2": 42, "s3": 40, "s4": 12,          // каждый >= 12: в них nonce шифра заголовка
+  "h1": 1, "h2": 2, "h3": 3, "h4": 4,
+
+  "header_protection_key": "<HeaderProtectionKey-base64>",   // серверный: обязан совпасть с сервером
+  "content_padding_addition": "10-100",
+  "rekey_after_time": "100-120",
+  "rekey_timeout": "3-7",
+  "reject_after_time": "150-180",
+  "keepalive_timeout": "5-15",
+  "max_handshake_attempts": "15-20",
+  "random_trailers": true,
+  "disable_cookies": true,
+
+  "peers": [
+    {
+      "address": "77.239.123.44",
+      "port": 30565,
+      "public_key": "<server-public-key-base64>",
+      "pre_shared_key": "<preshared-key-base64>",
+      "allowed_ips": ["0.0.0.0/0", "::/0"],
+      "persistent_keepalive_interval": "25-35"    // AWG3-диапазон; обычное число тоже работает
+    }
+  ]
+}
+```
+
 ### Сахар маскировки (Cloudflare WARP, профиль QUIC)
 
 ```jsonc
@@ -606,11 +659,65 @@ mtu ≤ 1500 − 28 (UDP/IP) − 32 (WireGuard) − S4 junk-байт
 | домен с `\r\n` / `;` / `@` / пробелом | `amneziawg: invalid masquerade domain "...": illegal character (only a-z A-Z 0-9 - _ allowed)` |
 | `ib` не из набора | `amneziawg: unknown masquerade browser "safari"; one of chrome\|firefox\|curl` |
 | `ib` с `ip≠quic` | `amneziawg: ib (browser) is only meaningful with ip=quic, got ip="dns"` |
+| `header_protection_key` при любом из `s1`–`s4` меньше 12 | `amneziawg: s4=8 is too short for header_protection_key: each of s1-s4 must be at least 12 bytes (the padding carries the header cipher nonce)` |
+| `header_protection_key` не base64 / не 32 байта / все нули | `amneziawg: decode header_protection_key (expected base64, as printed by \`awg genkey\`)` / `… must decode to 32 bytes, got N` / `… is all zeros (the device treats that as "off"); omit the field instead` |
+| диапазонное поле с началом > конца или мусор | `invalid range "180-150": range start > end` (ключ называется: `reject_after_time: …`) |
+| диапазонный `persistent_keepalive_interval` в сборке без `with_awg` | `AmneziaWG (awg) support is not included in this build (persistent_keepalive_interval range), rebuild with -tags with_awg` |
 
 Домен проходит **строгую LDH-валидацию** (как SNI у WireSock): метки из
 `a-z A-Z 0-9 - _`, ≤63 байт, без дефиса по краям; всё имя ≤253, без точки в начале;
 одна точка в конце допускается. Это security-граница — домен идёт в текст SIP и в DNS
 QNAME, поэтому control-байты и метасимволы отвергаются (защита от инъекции).
+
+## 2.10 AWG 3.x: защита заголовка, паддинг, хвосты, тайминги
+
+AmneziaWG 3.0 (amneziawg-go v3.0.0, tools v3.0.20260730) и 3.1 (v3.1.2026081x)
+добавили второй слой поверх AWG2-трюков с формой пакетов. Всё это задаётся на корне
+endpoint, как и поля AWG2, и требует `with_awg`. Контейнер Amnezia `amnezia-awg2` с
+`protocol_version: "3.1"` экспортирует ровно этот набор.
+
+**Какая сторона должна совпадать.** AmneziaWG различает *серверные* параметры
+(значение обязано быть одинаковым на обоих концах — при расхождении хендшейка молча не
+будет) и *клиентские* (локальное поведение, серверу безразлично). Серверный здесь
+только `header_protection_key`; остальное клиентское — но всё равно копируй значения
+сервера, они подобраны вместе.
+
+| Ключ | Тип | Дефолт | Сторона | Смысл |
+|------|-----|--------|---------|-------|
+| `header_protection_key` | base64-строка (32 байта, `awg genkey`) | `""` (выкл) | **сервер** | Шифрует низкоэнтропийный заголовок каждого пакета: у handshake-сообщения — всё сообщение, у data-пакета — 16-байтный заголовок (тип, receiver index, счётчик). ChaCha20 с этим ключом и nonce на датаграмму = первые 12 байт случайного паддинга сообщения — поэтому **каждый из `s1`–`s4` должен быть ≥ 12**. При включённой защите magic-значения `h1`–`h4` теряют смысл (слово типа на проводе случайно), и AWG3-экспорты оставляют их `1`–`4`. |
+| `content_padding_addition` | int \| `"min-max"` | `""` (выкл) | клиент | Дополнительные нулевые байты в plaintext **каждого data-пакета** (внутри AEAD, на проводе случайны), выбираются из диапазона на каждый пакет **вместо** выравнивания WireGuard по 16. Ограничены так, чтобы датаграмма не превысила самую большую уже виденную на пути этого пира («UDP-окно», старт 500 Б) — full-MTU пакет добавки не получает. |
+| `random_trailers` | bool | `false` | клиент | Случайный по длине случайный хвост после каждого **handshake**-сообщения (init/response/cookie) и, по тому же правилу UDP-окна, внутри data-пакетов, если не задан `content_padding_addition` — ни у одного вида сообщения нет фиксированного размера. Приёмник принимает handshake-датаграммы *длиннее* ожидаемого и отбрасывает хвост. |
+| `disable_cookies` | bool | `false` | клиент | Никогда не слать cookie reply и пропускать under-load-гейт mac2, который бы его потребовал (у cookie-обмена узнаваемая форма). |
+| `rekey_after_time` | int \| `"min-max"` секунд | `""` (WireGuard 120) | клиент | Когда инициатор начинает свежий хендшейк. Выбирается из диапазона при каждой проверке. |
+| `rekey_timeout` | int \| `"min-max"` секунд | `""` (WireGuard 5) | клиент | Интервал между повторами хендшейка (джиттер по-прежнему добавляется). **Минимум** диапазона — пол между двумя инициациями. |
+| `reject_after_time` | int \| `"min-max"` секунд | `""` (WireGuard 180) | клиент | После этого ключевая пара отвергается. Там, где протокол не должен рано выбрасывать ключи, берётся **максимум** диапазона. |
+| `keepalive_timeout` | int \| `"min-max"` секунд | `""` (WireGuard 10) | клиент | Пассивный keepalive после принятых данных. |
+| `max_handshake_attempts` | int \| `"min-max"` | `""` (WireGuard 18) | клиент | Повторы до отказа от цикла хендшейка (дальше, как и раньше, срабатывает self-heal rebind из SPEC 041). Перевыбирается на каждый цикл. |
+| `peers[].persistent_keepalive_interval` | int \| `"min-max"` секунд | `0` (выкл) | клиент | Число WireGuard или AWG3-диапазон, перевыбираемый при каждом взводе. |
+
+Замечания:
+
+- Nonce защиты заголовка берётся из **паддинга**, поэтому на handshake обычного
+  размера (`s1`=0) ключ применить нельзя вообще — проверка конфига это отвергает
+  ([§2.9](#29-ошибки-валидации-дословно)), устройство тоже.
+- `content_padding_addition` и `random_trailers` растят пакеты: бюджет MTU из
+  [§2.6](#26-бюджет-mtu) не меняется (кламп по UDP-окну держит добавки внутри
+  размеров, которые путь уже проносил), но держи `mtu` на рекомендованном сервером
+  значении (`1376` в экспорте Amnezia).
+- `random_trailers` расширяет классификацию на приёме: любая датаграмма **длиннее**
+  `s1`+148 / `s2`+92 / `s3`+64 *тоже* пробуется как handshake-сообщение по слову типа.
+  С одиночными `h1`–`h4` (дефолт AWG3) это ложное совпадение с вероятностью 2⁻³²; с
+  широкими AWG2-**диапазонами** `h1`–`h4` вероятность становится ширина/2³² на каждый
+  data-пакет, который затем не проходит MAC и отбрасывается. Не сочетай
+  `random_trailers` с широкими диапазонами `h1`–`h4` — свойство референсной
+  реализации, сохранено 1:1 ради совместимости на проводе.
+- Тайминги не обязаны совпадать с сервером, но бессмыслица (например
+  `rekey_after_time` выше `reject_after_time`) заставит туннель дёргаться. Копируй
+  экспорт сервера.
+- Всё это байт-совместимо с amneziawg-go v3.1 (коммит `b5928ef`, 2026-08-28): та же
+  раскладка nonce/keystream, тот же порядок классификации, те же правила
+  паддинга/хвостов. Проверено против живого сервера `protocol_version 3.1` —
+  [SPEC 080](../SPECS/TASKS/080-AWG3_HEADER_PROTECTION_TIMINGS/SPEC.md).
 
 ---
 

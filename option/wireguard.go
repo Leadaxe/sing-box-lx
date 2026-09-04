@@ -31,11 +31,14 @@ type WireGuardEndpointOptions struct {
 }
 
 type WireGuardPeer struct {
-	Address                     string                           `json:"address,omitempty"`
-	Port                        uint16                           `json:"port,omitempty"`
-	PublicKey                   string                           `json:"public_key,omitempty"`
-	PreSharedKey                string                           `json:"pre_shared_key,omitempty"`
-	AllowedIPs                  badoption.Listable[netip.Prefix] `json:"allowed_ips,omitempty"`
-	PersistentKeepaliveInterval uint16                           `json:"persistent_keepalive_interval,omitempty"`
-	Reserved                    []uint8                          `json:"reserved,omitempty"`
+	Address      string                           `json:"address,omitempty"`
+	Port         uint16                           `json:"port,omitempty"`
+	PublicKey    string                           `json:"public_key,omitempty"`
+	PreSharedKey string                           `json:"pre_shared_key,omitempty"`
+	AllowedIPs   badoption.Listable[netip.Prefix] `json:"allowed_ips,omitempty"`
+	// lx: awg — a JSON number (upstream uint16 semantics) or, under AWG 3.x,
+	// an inclusive "min-max" seconds range the device re-picks from at every
+	// keepalive. The range form needs the `with_awg` build tag.
+	PersistentKeepaliveInterval AWGRange `json:"persistent_keepalive_interval,omitempty"`
+	Reserved                    []uint8  `json:"reserved,omitempty"`
 }

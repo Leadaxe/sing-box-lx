@@ -14,7 +14,7 @@
 | Фича | Что даёт | Build-tag | Задачи |
 |------|----------|-----------|--------|
 | [002-XHTTP](002-XHTTP/FEATURE.md) | XHTTP-транспорт против Xray: `packet-up` / `stream-one` / `auto`, obfs, переиспользование соединений `xmux` | `with_xhttp` | 002 · 011 · 042 · 043 · 059 · 061 |
-| [003-AWG2](003-AWG2/FEATURE.md) | AmneziaWG 2.0: обфусцированный WG-endpoint, 16 из 20 параметров + masquerade `id`/`ip`/`ib` | `with_awg` | 003 · 005 · 008 · 009 · 025 · 026 · 031 · 007 |
+| [003-AWG2](003-AWG2/FEATURE.md) | AmneziaWG 2.0 / 3.x: обфусцированный WG-endpoint, полный клиентский паритет с amneziawg-go v3.1 (AWG2 16/16 + 9 ключей AWG3) + masquerade `id`/`ip`/`ib` | `with_awg` | 003 · 005 · 008 · 009 · 025 · 026 · 031 · 007 · 080 |
 | [006-OBSERVABILITY](006-OBSERVABILITY/FEATURE.md) | Расширения libbox gRPC для UI: RPC, `detourList`, DNS-стрим, HTTP-пробник узла | `with_lx_command` | 014 · 015 · 016 · 017 · 018 · 035 · 037 · 038 · 058 |
 | [007-URLTEST_BALANCE](007-URLTEST_BALANCE/FEATURE.md) | `round_robin` в `urltest`: пул, ленивый health-check, sticky-слоты; реакция `least_test` на отказы боевых дайлов | `with_lx_command` (только `GetPool`) | 019 · 054 |
 | [008-ENERGY](008-ENERGY/FEATURE.md) | Idle-suspend простаивающих WG/AWG: батарея, нагрев, RSS −31 % | `with_lx_idle_suspend` | 020 |

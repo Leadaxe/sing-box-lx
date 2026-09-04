@@ -19,3 +19,18 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	}
 	return "", nil
 }
+
+// awgKeepaliveSpec is the no-`with_awg` stub for the per-peer
+// persistent_keepalive_interval: the plain number WireGuard has always
+// accepted passes through, the AWG 3.x "min-max" range is rejected like every
+// other AWG field.
+func awgKeepaliveSpec(keepalive option.AWGRange) (string, error) {
+	spec, err := keepalive.Spec()
+	if err != nil {
+		return "", err
+	}
+	if keepalive.IsRange() {
+		return "", E.New("AmneziaWG (awg) support is not included in this build (persistent_keepalive_interval range), rebuild with -tags with_awg")
+	}
+	return spec, nil
+}

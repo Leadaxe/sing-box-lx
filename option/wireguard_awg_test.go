@@ -61,14 +61,15 @@ func TestMagicHeaderUnmarshalError(t *testing.T) {
 }
 
 // The config decoder (sing contextjson) prefixes errors with the JSON path,
-// so a bad value reports the exact field: `h1: invalid magic header ...`.
+// so a bad value reports the exact field: `h1: invalid range ...` (the
+// message is shared with every AWG "number or range" field since AWG 3.x).
 func TestMagicHeaderErrorNamesField(t *testing.T) {
 	t.Parallel()
 	var options option.AmneziaWGOptions
 	err := json.Unmarshal([]byte(`{"h1": "100-50"}`), &options)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "h1")
-	require.ErrorContains(t, err, "invalid magic header")
+	require.ErrorContains(t, err, "invalid range")
 }
 
 func TestMagicHeaderMarshal(t *testing.T) {

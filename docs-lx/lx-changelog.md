@@ -28,6 +28,26 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### Unreleased (после v1.14.0-lx.31)
+
+- ✨ **AmneziaWG 3.0/3.1** ([SPEC 080](../SPECS/TASKS/080-AWG3_HEADER_PROTECTION_TIMINGS/SPEC.md)).
+  Порт amneziawg-go `v0.2.19 → v3.1.20260828` в прививку `submodules/wireguard-go`:
+  защита заголовка `header_protection_key` (ChaCha20, nonce из паддинга `s1–s4`, поэтому
+  каждый ≥ 12), `content_padding_addition`, `random_trailers`, `disable_cookies`,
+  диапазонные тайминги `rekey_after_time` / `rekey_timeout` / `reject_after_time` /
+  `keepalive_timeout` / `max_handshake_attempts` и диапазонный
+  `persistent_keepalive_interval` пира (`"25-35"`; число работает как раньше). Все
+  поля на корне `wireguard`-endpoint, как и AWG2; экспорт Amnezia `amnezia-awg2`
+  (`protocol_version 3.1`) переносится 1:1. Без `with_awg` новые поля (и диапазонный
+  keepalive) отвергаются, число проходит. `sing-box check` ловит ключ с коротким
+  паддингом и битый ключ с именем поля. Проверено против живого AWG 3.1-сервера:
+  хендшейк с первой попытки, TLS, 1 МБ загрузка, rekey по диапазону. Отличие от
+  референса: первый батч после старта переносится под актуальный `s4`, а не уезжает
+  в старой раскладке. Новый CI-пример `lx-test/config/awg3_full.json`. Доки:
+  `lx-protocols-transports{,.ru}.md` §2.10, `lx-config{,.ru}.md`.
+  Внутри `option`: `MagicHeader` стал алиасом общего `AWGRange`; тип
+  `WireGuardPeer.PersistentKeepaliveInterval` — `AWGRange` (JSON-совместимо).
+
 #### v1.14.0-lx.31
 
 Стабильный релиз. Пользовательские ноты (EN+RU):

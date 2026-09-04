@@ -49,6 +49,6 @@ type PeerOptions struct {
 	PublicKey                   string
 	PreSharedKey                string
 	AllowedIPs                  []netip.Prefix
-	PersistentKeepaliveInterval uint16
+	PersistentKeepaliveInterval option.AWGRange // lx: awg — "N" or "min-max" (AWG 3.x), see option.WireGuardPeer
 	Reserved                    []uint8
 }

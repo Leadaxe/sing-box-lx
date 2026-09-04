@@ -169,6 +169,19 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
       "ip": "quic",                             // по умолчанию: "". quic | dns | stun | sip
       "ib": "chrome",                           // по умолчанию: "". chrome | firefox | curl. Имеет смысл только с ip=quic
 
+      // ── AmneziaWG 3.x (контейнер amnezia-awg2, protocol_version 3.x; SPEC 080) ──
+      // header_protection_key — СЕРВЕРНЫЙ (обязан совпасть с сервером); при нём
+      // каждый s1..s4 должен быть >= 12 (в паддинге лежит nonce шифра заголовка).
+      "header_protection_key": "<base64-32-bytes>", // по умолчанию: "" (выкл). Вывод `awg genkey`; маскирует тип/receiver/счётчик каждого пакета
+      "content_padding_addition": "10-100",     // по умолчанию: "" (выкл). int | "min-max" доп. паддинг внутри каждого data-пакета
+      "rekey_after_time": "100-120",            // по умолчанию: "" (WireGuard 120 с). int | "min-max" секунд
+      "rekey_timeout": "3-7",                   // по умолчанию: "" (WireGuard 5 с)
+      "reject_after_time": "150-180",           // по умолчанию: "" (WireGuard 180 с)
+      "keepalive_timeout": "5-15",              // по умолчанию: "" (WireGuard 10 с)
+      "max_handshake_attempts": "15-20",        // по умолчанию: "" (WireGuard 18)
+      "random_trailers": true,                  // по умолчанию: false. Хвост случайной длины у каждого handshake-сообщения / внутри data-пакетов
+      "disable_cookies": true,                  // по умолчанию: false. Никогда не слать и не требовать cookie reply
+
       "peers": [
         {
           "address": "server.example.com",
@@ -176,7 +189,7 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
           "public_key": "<server-public-key-base64>",
           "pre_shared_key": "<preshared-key-base64>",
           "allowed_ips": ["0.0.0.0/0", "::/0"],
-          "persistent_keepalive_interval": 25
+          "persistent_keepalive_interval": "25-35" // число (WireGuard) или "min-max" секунд (AWG 3.x)
         }
       ]
     },
@@ -206,7 +219,7 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
 }
 ```
 
-> **Счёт полей:** 26 XHTTP + 21 AmneziaWG (вкл. `id`/`ip`/`ib`) + 1 VLESS (`encryption`) +
+> **Счёт полей:** 26 XHTTP + 30 AmneziaWG (вкл. `id`/`ip`/`ib` и 9 ключей AWG 3.x) + 1 VLESS (`encryption`) +
 > 6 `urltest` (`mode`, `passive_check` + `balancer{pool,pool_tolerance,sticky_hash}`). Взаимоисключающие / игнорируемые поля помечены
 > в комментариях выше; разделы ниже дают семантику каждого поля, подводные камни и статус
 > живой проверки.
@@ -258,11 +271,13 @@ session/seq, обфускация uplink, семейство `x_padding_*`, пе
 
 ---
 
-## 2. AmneziaWG 2.0 (AWG2)
+## 2. AmneziaWG 2.0 / 3.x (AWG2, AWG3)
 
 AWG — это WireGuard + обфускация против DPI. Настраивается как обычный sing-box **`wireguard` endpoint** с дополнительными «поднятыми» полями. С `with_awg` они передаются на устройство; конфиг без единого AWG-поля — обычный WireGuard endpoint (поведение байт-в-байт как в upstream).
 
 AWG2 = поля AWG1 **плюс** CPS-пакеты `I1`–`I5`. И клиент, и сервер должны работать на AmneziaWG с **совпадающими** параметрами (I-пакеты — это конфигурация, не согласуются). Более дружелюбный способ задать первую приманку — WireSock-style сахар `id`/`ip`/`ib`, который генерирует `i1` за вас — см. [полный справочник](lx-protocols-transports.ru.md#25-сахар-маскировки-id--ip--ib).
+
+AWG3 (amneziawg-go v3.0/v3.1, контейнер Amnezia `amnezia-awg2` с `protocol_version` 3.x) добавляет защиту заголовка (`header_protection_key` — серверный, обязан совпасть), паддинг содержимого, случайные хвосты, отключённые cookie и диапазонные тайминги, плюс диапазонный `persistent_keepalive_interval`. Все поля на корне endpoint, как и AWG2 — [справочник §2.10](lx-protocols-transports.ru.md#210-awg-3x-защита-заголовка-паддинг-хвосты-тайминги).
 
 AWG-поля сидят в **корне** endpoint (ни одно не на peer), зеркаля секцию `[Interface]`
 из `awg-quick` `.conf`: junk (`jc`/`jmin`/`jmax`), паддинг handshake (`s1`–`s4`),
@@ -277,6 +292,27 @@ WireGuard, потому что `s4` паддит каждый data-пакет �
 > валидации — в
 > [lx-protocols-transports.ru.md §2](lx-protocols-transports.ru.md#2-amneziawg-20-awg2)**
 > ([EN](lx-protocols-transports.md#2-amneziawg-20-awg2)).
+
+### Пример — AmneziaWG 3.1 endpoint (экспорт Amnezia `amnezia-awg2`)
+
+```jsonc
+{
+  "type": "wireguard", "tag": "awg3-out", "system": false, "mtu": 1376,
+  "address": ["10.8.1.7/32"],
+  "private_key": "<client-private-key-base64>",
+  "jc": 4, "jmin": 10, "jmax": 50,
+  "s1": 55, "s2": 42, "s3": 40, "s4": 12,      // все >= 12 для защиты заголовка
+  "h1": 1, "h2": 2, "h3": 3, "h4": 4,
+  "header_protection_key": "<HeaderProtectionKey-base64>",
+  "content_padding_addition": "10-100",
+  "rekey_after_time": "100-120", "rekey_timeout": "3-7", "reject_after_time": "150-180",
+  "keepalive_timeout": "5-15", "max_handshake_attempts": "15-20",
+  "random_trailers": true, "disable_cookies": true,
+  "peers": [ { "address": "77.239.123.44", "port": 30565,
+    "public_key": "<server-public-key-base64>", "pre_shared_key": "<preshared-key-base64>",
+    "allowed_ips": ["0.0.0.0/0", "::/0"], "persistent_keepalive_interval": "25-35" } ]
+}
+```
 
 ### Пример — AmneziaWG 2.0 endpoint
 
@@ -780,7 +816,11 @@ URLTest по внутренним тегам `<tag>#0`, `<tag>#1`, … — ка�
 
 ---
 
-## 10. Проверка и сборка
+## 10. Снифферы протоколов для трафика из LAN (SPEC 078 / 080)
+
+Новые имена протоколов для списка `sniffer` действия `sniff` и матчера `protocol` в правилах: `wireguard`, `openvpn`, `ike`, `tailscale`, `sip` (последний ещё ставит `domain` из Request-URI). Узнают VPN-туннели и звонки других устройств за роутером по форме первого пакета и стоят перед апстримным uTP-сниффером, который помечал plain WireGuard как `bittorrent`. Порядок, ограничения (считается только первый пакет потока — junk и decoy насквозь не видны) и пример для роутера — **[lx-sniff.ru.md](lx-sniff.ru.md)**.
+
+## 11. Проверка и сборка
 
 ```sh
 git clone --recurse-submodules <repo>           # with_awg требует submodule
