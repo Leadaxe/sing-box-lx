@@ -4,10 +4,17 @@
 
 # Canonical lx build-tag set for the desktop/CLI binaries — single source of truth
 # (mirror changes in SPECS/TASKS/004). = upstream feature set (release/DEFAULT_BUILD_TAGS)
-# minus tags irrelevant to a VPN client — with_tailscale (no tailscale endpoints),
-# with_ccm/with_ocm (Claude Code / OpenAI Codex proxy services), with_acme (server-side
-# TLS cert issuance) — plus with_purego (CGO-free cross-compile covers
-# with_naive_outbound via cronet prebuilts) and our downstream features.
+# minus tags irrelevant to a VPN client — with_ccm/with_ocm (Claude Code / OpenAI Codex
+# proxy services), with_acme (server-side TLS cert issuance) — plus with_purego
+# (CGO-free cross-compile covers with_naive_outbound via cronet prebuilts) and our
+# downstream features.
+#
+# with_tailscale is IN for desktop AND router binaries (owner decision, 2026-09-04): the
+# tailscale endpoint + DNS transport + DERP service, pure Go, builds CGO_ENABLED=0 on every
+# release target incl. mips/mipsle softfloat against our wireguard-go/sing-tun/gvisor
+# submodules. Cost is size only (~+13 MB darwin, ~+16 MB mips). It stays OUT of the
+# Android AAR (cmd/internal/build_libbox/main.go, lx:no-tailscale) — LxBox has no
+# tailscale UI and it is the single largest dependency in the APK.
 #
 # with_clash_api IS kept here: the desktop/CLI binary is driven through the Clash REST
 # API by external dashboards (yacd / MetaCubeXD / clash-dashboard); there is no native
@@ -34,7 +41,7 @@
 # with_lxd alone and the subcommand does not exist, while the command extensions
 # still answer. The Android AAR carries with_lx_command and never had the daemon
 # (gomobile builds experimental/libbox, which does not import lxd/).
-LX_TAGS ?= with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command,with_lxd,with_openvpn,with_openconnect,with_lx_chain
+LX_TAGS ?= with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command,with_lxd,with_openvpn,with_openconnect,with_lx_chain,with_tailscale
 
 # lx build counter over a given upstream base (override in CI/release: make -f Makefile.lx lx-build LX_BUILD=3).
 LX_BUILD ?= 1

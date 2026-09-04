@@ -594,6 +594,7 @@ jobs:
           - **AmneziaWG 2.0** (\`with_awg\`) — \`wireguard\` endpoint with \`jc/jmin/jmax\`, \`s1\`–\`s4\`, \`h1\`–\`h4\`, \`i1\`–\`i5\`.
           - **XHTTP** transport (\`with_xhttp\`) — Xray-compatible "splithttp", composes with Reality (use \`auto\`; \`stream-one\` has a known framing bug).
           - **CommandClient extensions** (\`with_lx_command\`) — native libbox gRPC parity for the Clash API dropped from the **Android AAR**: URLTestOutbound, GetRules, GetGroups/GetOutbounds, Connection.Detour, SubscribeDNSQueries. (Desktop/CLI binaries keep \`with_clash_api\` for external dashboards.)
+          - **Tailscale** (\`with_tailscale\`) — upstream \`tailscale\` endpoint, DNS transport and DERP service, in the **desktop and router** binaries; the Android AAR does not carry it.
 
           Desktop binary build tags: \`$(make -f Makefile.lx -s lx-print-tags)\`
 

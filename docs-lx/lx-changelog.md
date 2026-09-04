@@ -28,7 +28,27 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
-#### v1.14.0-lx.31-rc.1
+#### v1.14.0-lx.31
+
+Стабильный релиз. Пользовательские ноты (EN+RU):
+[`docs-lx/releases/v1.14.0-lx.31.md`](releases/v1.14.0-lx.31.md).
+
+**Что вошло:**
+
+- ✨ **`with_tailscale` в desktop- и роутерных бинарях** (решение владельца 2026-09-04,
+  SPEC 004). Апстримные endpoint `tailscale`, DNS-транспорт `tailscale`, certificate
+  provider и сервис `derp` теперь доступны во всех архивах релиза: darwin/windows ×
+  amd64/arm64, Win7-386, linux-amd64/arm64/armv7/mipsle-softfloat (musl) и
+  linux-mips-softfloat. Чистый Go, собирается `CGO_ENABLED=0` против наших сабмодулей
+  wireguard-go/sing-tun/gvisor; проверено сборкой на всех шести целях и живым стартом
+  endpoint'а на darwin (tsnet поднимается, уходит на control-plane в login). Цена — только
+  размер: ~+13 МБ darwin/arm64 (49.8 → 63.2), ~+16 МБ mips softfloat (56.2 → 72.2).
+  Android-AAR тег по-прежнему **не** несёт (`lx:no-tailscale` в `build_libbox`): у LxBox нет
+  UI под tailscale, а это самая тяжёлая зависимость APK. Тег добавлен в `LX_TAGS`
+  (`Makefile.lx`) и `BASE_TAGS` (`lx-ci.yml`); README/SPEC 004 обновлены.
+- 📌 **Дрейф апстрима отложен сознательно:** `upstream/stable` ушёл на 308 коммитов от
+  merge-base (замер 2026-09-04; 301 на момент lx.30). Мерж — отдельная задача класса
+  SPEC 051 (813 файлов, задеты все наши зоны), в этот тег не берётся.
 
 - 🔧 **MASQUE: idle-suspend туннеля по умолчанию выключен** (SPEC 021 B1, решение
   владельца 2026-09-03). Раньше без ключа `idle_timeout` туннель засыпал через 5 минут
