@@ -23,6 +23,11 @@
 |   TCP   |    `ssh`     |      /      | SSH 客户端名称  |
 |   TCP   |    `rdp`     |      /      |     /      |
 |   UDP   |    `ntp`     |      /      |     /      |
+|   UDP   | `wireguard`  |      /      |     /      |
+| TCP/UDP |  `openvpn`   |      /      |     /      |
+|   UDP   |    `ike`     |      /      |     /      |
+|   UDP   | `tailscale`  |      /      |     /      |
+| TCP/UDP |    `sip`     | Request-URI |     /      |
 
 |         QUIC 客户端         |     类型     |
 |:------------------------:|:----------:|

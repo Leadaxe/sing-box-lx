@@ -23,6 +23,11 @@ If enabled in the inbound, the protocol and domain name (if present) of by the c
 |   TCP   |    `ssh`     |      /      | SSH Client Name  |
 |   TCP   |    `rdp`     |      /      |        /         |
 |   UDP   |    `ntp`     |      /      |        /         |
+|   UDP   | `wireguard`  |      /      |        /         |
+| TCP/UDP |  `openvpn`   |      /      |        /         |
+|   UDP   |    `ike`     |      /      |        /         |
+|   UDP   | `tailscale`  |      /      |        /         |
+| TCP/UDP |    `sip`     | Request-URI |        /         |
 
 |       QUIC Client        |    Type    |
 |:------------------------:|:----------:|
