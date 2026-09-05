@@ -28,7 +28,12 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
-#### Unreleased (после v1.14.0-lx.31)
+#### v1.14.0-lx.32
+
+Стабильный релиз. Пользовательские ноты (EN+RU):
+[`docs-lx/releases/v1.14.0-lx.32.md`](releases/v1.14.0-lx.32.md).
+
+**Что вошло:**
 
 - ✨ **AmneziaWG 3.0/3.1** ([SPEC 080](../SPECS/TASKS/080-AWG3_HEADER_PROTECTION_TIMINGS/SPEC.md)).
   Порт amneziawg-go `v0.2.19 → v3.1.20260828` в прививку `submodules/wireguard-go`:
@@ -47,6 +52,17 @@ required for stable tags); this changelog section is the fallback used for pre-r
   `lx-protocols-transports{,.ru}.md` §2.10, `lx-config{,.ru}.md`.
   Внутри `option`: `MagicHeader` стал алиасом общего `AWGRange`; тип
   `WireGuardPeer.PersistentKeepaliveInterval` — `AWGRange` (JSON-совместимо).
+  Сабмодуль `wireguard-go` → `ba01446` (ветка `lx-awg2-v005`). Прогон перед тегом:
+  юниты сабмодуля (в т.ч. `-race` по AWG), option/transport под обоими тегами,
+  loopback-e2e двух экземпляров ядра для plain WG / AWG2 (диапазонные `h1–h4`, `s4=9`) /
+  AWG3 через реальные UDP-сокеты, живой AWG 3.1-сервер. Android-AAR на устройстве
+  не гонялся: протокольный код платформенно-нейтрален, но AWG2-пользователям на
+  Android стоит проверить хендшейк на первом старте.
+- 📌 **Дрейф апстрима отложен сознательно** (как в lx.30/lx.31): `upstream/stable` ушёл на
+  308 коммитов от нашей базы (`b5ebaa1fc`, `v1.14.0`); затронуты все наши зоны
+  (`box.go`, `route/`, `dns/`, wireguard-транспорт, `.pb.go`), мерж — отдельная задача
+  класса SPEC 051 с проверкой сабмодулей до ядра. Релиз несёт только AWG3 поверх
+  прежней базы.
 
 #### v1.14.0-lx.31
 

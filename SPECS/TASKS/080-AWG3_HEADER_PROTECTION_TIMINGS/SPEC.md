@@ -204,6 +204,21 @@ reject.PickOne − keepalive.Lo − rekey.Lo; `keychainExpireTime` = reject.Hi;
 | rekey | повторный хендшейк через 107 с (`rekey_after_time 100-120`; WG-константа дала бы 120), ответ сразу |
 | `www.google.com`, `www.gstatic.com` | таймаут через этот сервер при рабочих остальных HTTPS и 1 МБ-загрузке — недоступность на стороне сервера/хостинга, не ядра |
 
+**Loopback-e2e двух экземпляров ядра (замена «device run» раннбука §1.4 для
+перекроенных путей send/receive), 2026-09-05:** «сервер» = `wireguard`-endpoint с
+`listen_port` и `route.final: direct`, «клиент» = endpoint с `mixed`-inbound и DNS через
+туннель, оба на 127.0.0.1 через реальные UDP-сокеты (`StdNetBind`), бинарь `lx-build`.
+У клиента без `auto_detect_interface` (привязка к en0 не даёт слать на loopback —
+`sendmsg: socket is already connected`).
+
+| Режим | Хендшейк | example.com / 1.1.1.1 / 300 КБ |
+|-------|----------|--------------------------------|
+| plain WireGuard | ✅ | 200 / 200 / 200 |
+| AWG2 (`s1=28 s2=121 s3=25 s4=9`, диапазонные `h1–h4`, `jc=4`, `i1`) | ✅ (junk/i1 на сервере — `unknown type`, штатно) | 200 / 200 / 200 |
+| AWG3 (набор live-экспорта, `keepalive "25-35"`) | ✅ | 200 / 200 / 200 |
+
+Скрипт стенда — `e2e.py` в scratchpad сессии (не в репо: ключи генерируются на лету).
+
 ## 5. Вне скоупа
 
 - **Серверная сторона** (`AdvancedSecurity`, ответ cookie reply как сервер) —
@@ -223,6 +238,11 @@ reject.PickOne − keepalive.Lo − rekey.Lo; `keychainExpireTime` = reject.Hi;
   ложных совпадений на data-пакетах = ширина/2³² (пакет затем не проходит MAC и
   дропается). Свойство референса, сохранено 1:1; в доках предупреждение. AWG3-экспорты
   держат `h1–h4 = 1..4`.
+  Ловушка приёмная, поэтому клиент может закрыть только **downlink** (свой приёмник):
+  проверять кандидата «transport с известным receiver index» до handshake-кандидатов
+  (32-битный индекс из `indexTable` — сигнал того же порядка, что 2⁻³² у одиночного
+  `h`). Uplink классифицирует приёмник сервера на референсе, до него не дотянуться —
+  полная защита только конфигом. Не делалось: у экспортов AWG3 диапазонов нет.
 - **Аллокация `chacha20.Cipher` на каждую датаграмму** в обе стороны при включённом
   ключе — как в референсе; кандидат на оптимизацию, если всплывёт в профиле.
 - **Тайминги не валидируются на смысл** (`rekey_after_time` > `reject_after_time`
@@ -240,6 +260,13 @@ reject.PickOne − keepalive.Lo − rekey.Lo; `keychainExpireTime` = reject.Hi;
   `457d920` (3.0), `1f50ad7` (3.1: trailers/cookies), фиксы `08d68cd` (keepalive с
   паддингом = `packet[0]==0`), `1b86b2a` (cap/len у cookie), `da11c9f` (udpWindow в
   `randomPaddingAddition`), `b5928ef` (under-load при `DisableCookies`).
+- Официальная документация: [docs.amnezia.org → AmneziaWG](https://docs.amnezia.org/documentation/amnezia-wg/)
+  (разделы Header Protection, Content Padding, Random Trailers, Disabling Cookie Reply,
+  Custom Timings — все 9 ключей 3.1; диапазонный `PersistentKeepalive` там не описан) и
+  [README amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go/blob/master/README.md)
+  (разделы `[AWG 3+]`: Header protection, Content padding, Timings, включая
+  `PersistentKeepalive` как `range`; `RandomTrailers`/`DisableCookies` описаны только в
+  коммите `1f50ad7` и парсере tools).
 - amneziawg-tools: `src/config.c` (`key_match("HeaderProtectionKey")` …
   `("DisableCookies")`), `src/ipc-uapi.h` (`header_protection_key=%s` hex,
   `random_trailers=%u`), `src/uapi/linux/linux/wireguard.h` (netlink).

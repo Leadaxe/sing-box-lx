@@ -6,7 +6,7 @@
 
 ## 1. Миссия
 
-`sing-box-lx` — **тонкий downstream** [SagerNet/sing-box](https://github.com/SagerNet/sing-box). Это **upstream + небольшой набор клиентских фич**, которых в upstream нет и не будет. Сейчас их несколько: XHTTP (клиентский v2ray-транспорт, совместимый с Xray XHTTP); AmneziaWG 2.0 (AWG2) — клиентский endpoint поверх WireGuard, с обфускацией (Jc/Jmin/Jmax, S1/S2, H1–H4, I1–I5); и расширения libbox command-протокола (проброс существующих возможностей ядра в наш CommandClient взамен вырезанных upstream-каналов, §3.6).
+`sing-box-lx` — **тонкий downstream** [SagerNet/sing-box](https://github.com/SagerNet/sing-box). Это **upstream + небольшой набор клиентских фич**, которых в upstream нет и не будет. Сейчас их несколько: XHTTP (клиентский v2ray-транспорт, совместимый с Xray XHTTP); AmneziaWG 2.0/3.x (AWG2, AWG3) — клиентский endpoint поверх WireGuard, с обфускацией (Jc/Jmin/Jmax, S1–S4, H1–H4, I1–I5; в 3.x — защита заголовка, паддинг, хвосты, тайминги); и расширения libbox command-протокола (проброс существующих возможностей ядра в наш CommandClient взамен вырезанных upstream-каналов, §3.6).
 
 Набор фич со временем может расти — другие протоколы, новые возможности, — но **философия тонкого форка неизменна**: каждая новая фича обязана целиком укладываться в §2–3, иначе она не принимается. Текущие транспортные фичи **отклонены upstream** ([XHTTP — not planned](https://github.com/SagerNet/sing-box/issues/3550), [AmneziaWG — closed not-planned](https://github.com/SagerNet/sing-box/issues/4045)), поэтому форк постоянный, а «согласованность с upstream» достигается не вливанием в него, а **дешёвым ребейзом на каждый новый тег**.
 

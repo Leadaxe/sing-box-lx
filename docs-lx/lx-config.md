@@ -827,6 +827,7 @@ git clone --recurse-submodules <repo>           # with_awg needs the submodule
 make -f Makefile.lx lx-build                     # builds ./sing-box with both features
 ./sing-box check -c lx-test/config/xhttp_reality.json
 ./sing-box check -c lx-test/config/awg2_basic.json
+./sing-box check -c lx-test/config/awg3_full.json     # AmneziaWG 3.1 field set
 
 # Android (optional): libbox.aar with with_xhttp+with_awg baked in (needs NDK r28 + OpenJDK 17)
 make lib_install && make lib_android             # → libbox.aar (SDK23) + libbox-legacy.aar (SDK21)
