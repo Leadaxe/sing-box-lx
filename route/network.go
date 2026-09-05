@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -64,7 +65,7 @@ type NetworkManager struct {
 	interfaceUpdateRunAccess sync.Mutex
 	powerUpdateAccess        sync.Mutex
 	powerUpdateCancel        context.CancelFunc
-	started                  bool
+	started                  atomic.Bool // lx: written by Start (PostStart) while upstream's background interface-update goroutine (6720a2710) reads it — data race under -race
 }
 
 func NewNetworkManager(ctx context.Context, logger logger.ContextLogger, options option.RouteOptions, dnsOptions option.DNSOptions) (*NetworkManager, error) {
@@ -217,7 +218,7 @@ func (r *NetworkManager) Start(stage adapter.StartStage) error {
 				}
 			}
 		}
-		r.started = true
+		r.started.Store(true)
 	}
 	return nil
 }
@@ -592,7 +593,7 @@ func (r *NetworkManager) updateInterface(ctx context.Context, defaultInterface *
 	if ctx.Err() != nil {
 		return
 	}
-	if !r.started {
+	if !r.started.Load() {
 		return
 	}
 	r.ResetNetwork(ctx)
