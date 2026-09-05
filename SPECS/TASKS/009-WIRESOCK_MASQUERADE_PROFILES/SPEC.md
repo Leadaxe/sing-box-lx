@@ -33,7 +33,7 @@ device не добавляется — генерация целиком в opti
 |------|-----|----------|
 | `Id` | **Domain** | домен для маскировки (массовый легитимный: `www.google.com`, `ozon.ru`…). Идёт на провод как SNI / QNAME / SIP-host |
 | `Ip` | **Protocol** | протокол маскировки: **quic** \| **dns** \| **stun** \| **sip** |
-| `Ib` | **Browser** | `chrome` \| `firefox` \| `curl`. Валидируется; на сгенерированный пакет не влияет (нет JA3-имитации — см. §4) |
+| `Ib` | **Browser** | `chrome` \| `firefox` \| `curl`. Валидируется; только при `ip=quic`. С тегом `with_utls` `chrome`/`firefox` меняют ClientHello на uTLS-профиль браузера (крупнее generic, иная нарезка); `""`/`curl` и сборка без `with_utls` дают device-proven generic CH — см. §4 |
 
 > Нейминг проприетарный WireSock (`i`nterface **d**omain/**p**rotocol/**b**rowser); `ip` —
 > это «protocol», НЕ IP-адрес. Эти ключи понимают только WireSock и это ядро; меняться
