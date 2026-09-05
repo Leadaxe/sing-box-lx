@@ -12,6 +12,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/endpoint"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/iponly"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -49,6 +50,7 @@ type Endpoint struct {
 	// to resolve after the dependency topo-sort has started the detour provider
 	// (see the StartStateStart case in Start).
 	outboundDialer N.Dialer
+	bindAccess     sync.Mutex
 	started        atomic.Bool
 	// lx:begin idle-suspend
 	// SPEC 020 idle-suspend state. lastActivity is the unix-nano timestamp of the
@@ -155,6 +157,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 				},
 			}))
 		},
+		Tag:        tag,
 		Name:       options.Name,
 		MTU:        options.MTU,
 		Address:    options.Address,
@@ -448,16 +451,27 @@ func (w *Endpoint) Close() error {
 	// device.Down()) finishes first, and clear both flags under it so any later
 	// tick short-circuits on !started instead of calling Suspend on a closed
 	// device.
+	w.bindAccess.Lock() // upstream: serialize with updateBind (InterfaceUpdated)
 	w.resumeMu.Lock()
 	w.started.Store(false)
 	w.idleAsleep.Store(false)
 	w.torndown.Store(false) // lx: SPEC 020 level 3 — Close is idempotent over a torn-down endpoint
 	w.resumeMu.Unlock()
+	w.bindAccess.Unlock()
 	return w.endpoint.Close()
 }
 
-func (w *Endpoint) InterfaceUpdated() {
+func (w *Endpoint) InterfaceUpdated(ctx context.Context) {
 	if !w.started.Load() {
+		return
+	}
+	go w.updateBind(ctx)
+}
+
+func (w *Endpoint) updateBind(ctx context.Context) {
+	w.bindAccess.Lock()
+	defer w.bindAccess.Unlock()
+	if ctx.Err() != nil || !w.started.Load() {
 		return
 	}
 	err := w.endpoint.BindUpdate()
@@ -598,7 +612,11 @@ func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination 
 		if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended
 			return nil, netip.Addr{}, E.New("WireGuard is not ready yet")
 		}
-		return N.ListenSerial(ctx, w.endpoint, destination, destinationAddresses)
+		packetConn, destinationAddress, err := N.ListenSerial(ctx, w.endpoint, destination, destinationAddresses)
+		if err != nil {
+			return nil, netip.Addr{}, err
+		}
+		return iponly.NewPacketConn(w.logger, packetConn), destinationAddress, nil
 	}
 	if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended
 		return nil, netip.Addr{}, E.New("WireGuard is not ready yet")
@@ -608,9 +626,9 @@ func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination 
 		return nil, netip.Addr{}, err
 	}
 	if destination.IsIP() {
-		return packetConn, destination.Addr, nil
+		return iponly.NewPacketConn(w.logger, packetConn), destination.Addr, nil
 	}
-	return packetConn, netip.Addr{}, nil
+	return iponly.NewPacketConn(w.logger, packetConn), netip.Addr{}, nil
 }
 
 func (w *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {

@@ -36,7 +36,6 @@ var _ adapter.InterfaceUpdateListener = (*Outbound)(nil)
 
 type Outbound struct {
 	outbound.Adapter
-	ctx               context.Context
 	logger            logger.ContextLogger
 	dialer            N.Dialer
 	serverAddr        M.Socksaddr
@@ -60,7 +59,6 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	outbound := &Outbound{
 		Adapter:           outbound.NewAdapterWithDialerOptions(C.TypeSSH, tag, []string{N.NetworkTCP}, options.DialerOptions),
-		ctx:               ctx,
 		logger:            logger,
 		dialer:            outboundDialer,
 		serverAddr:        options.ServerOptions.Build(),
@@ -128,7 +126,7 @@ func randomVersion() string {
 	return version
 }
 
-func (s *Outbound) connect() (*ssh.Client, error) {
+func (s *Outbound) connect(ctx context.Context) (client *ssh.Client, err error) {
 	if s.client != nil {
 		return s.client, nil
 	}
@@ -140,9 +138,23 @@ func (s *Outbound) connect() (*ssh.Client, error) {
 		return s.client, nil
 	}
 
-	conn, err := s.dialer.DialContext(s.ctx, N.NetworkTCP, s.serverAddr)
+	conn, err := s.dialer.DialContext(ctx, N.NetworkTCP, s.serverAddr)
 	if err != nil {
 		return nil, err
+	}
+	if ctx.Done() != nil {
+		handshakeConn := conn
+		stopContext := context.AfterFunc(ctx, func() {
+			_ = handshakeConn.Close()
+		})
+		defer func() {
+			if !stopContext() {
+				s.client = nil
+				s.clientConn = nil
+				client = nil
+				err = ctx.Err()
+			}
+		}()
 	}
 	config := &ssh.ClientConfig{
 		User:              s.user,
@@ -177,7 +189,7 @@ func (s *Outbound) connect() (*ssh.Client, error) {
 		return nil, E.Cause(err, "connect to ssh server")
 	}
 
-	client := ssh.NewClient(clientConn, chans, reqs)
+	client = ssh.NewClient(clientConn, chans, reqs)
 
 	s.clientConn = conn
 	s.client = client
@@ -194,7 +206,7 @@ func (s *Outbound) connect() (*ssh.Client, error) {
 	return client, nil
 }
 
-func (s *Outbound) InterfaceUpdated() {
+func (s *Outbound) InterfaceUpdated(ctx context.Context) {
 	common.Close(s.clientConn)
 }
 
@@ -203,7 +215,7 @@ func (s *Outbound) Close() error {
 }
 
 func (s *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	client, err := s.connect()
+	client, err := s.connect(ctx)
 	if err != nil {
 		return nil, err
 	}

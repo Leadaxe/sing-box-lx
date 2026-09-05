@@ -1,6 +1,7 @@
 package route
 
 import (
+	"context"
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -31,7 +32,7 @@ func TestResetNetworkBeforeInitializeDoesNotPanic(t *testing.T) {
 	// NewNetworkManager и до Start(StartStateInitialize).
 	nm := &NetworkManager{}
 
-	require.NotPanics(t, nm.ResetNetwork)
+	require.NotPanics(t, func() { nm.ResetNetwork(context.Background()) })
 }
 
 // Гейт должен срабатывать до connectionManager.CloseAll(): полуинициализированный
@@ -42,6 +43,6 @@ func TestResetNetworkBeforeInitializeSkipsConnectionManager(t *testing.T) {
 	connectionManager := &countingConnectionManager{}
 	nm := &NetworkManager{connectionManager: connectionManager}
 
-	require.NotPanics(t, nm.ResetNetwork)
+	require.NotPanics(t, func() { nm.ResetNetwork(context.Background()) })
 	require.Zero(t, connectionManager.closeAllCalls, "CloseAll must not run before initialize")
 }

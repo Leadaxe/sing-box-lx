@@ -217,18 +217,12 @@ Refuse local and remote TCP and Unix-socket forwarding, including SSH agent forw
 
 !!! question "Since sing-box 1.14.0"
 
-The directory where files received from tailnet peers are stored, created with permissions 0700.
+The directory where files received from tailnet peers are stored.
 
 Relative paths are resolved against the working directory, as [state_directory](#state_directory)
 is.
 
 `Taildrop` is used by default.
-
-Sending and receiving files also require the node capability
-`https://tailscale.com/cap/file-sharing`, which the Tailscale admin console grants when file
-sharing is enabled for the tailnet. Peers of another user may send files to this node when the
-tailnet policy file grants them `https://tailscale.com/cap/file-send`, and may be sent files when
-the policy file grants this node `https://tailscale.com/cap/file-sharing-target` for them.
 
 ### Dial Fields
 

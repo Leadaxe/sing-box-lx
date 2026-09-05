@@ -92,7 +92,7 @@ func (s *StartedService) URLTestOutbound(ctx context.Context, request *URLTestOu
 
 	delay, err := urltest.URLTest(testCtx, request.Link, detour)
 
-	realTag := group.RealTag(realTagSource)
+	realTag := group.RealTag(boxService.outboundManager, realTagSource)
 	if err != nil {
 		boxService.urlTestHistoryStorage.DeleteURLTestHistory(realTag)
 		return &URLTestOutboundResponse{Error: err.Error()}, nil
@@ -326,7 +326,7 @@ func (s *StartedService) GetOutbounds(ctx context.Context, empty *emptypb.Empty)
 	var list OutboundList
 	appendItem := func(detour adapter.Outbound) {
 		item := &GroupItem{Tag: detour.Tag(), Type: detour.Type()}
-		if history := historyStorage.LoadURLTestHistory(adapter.OutboundTag(detour)); history != nil {
+		if history := historyStorage.LoadURLTestHistory(group.RealTag(boxService.outboundManager, detour)); history != nil {
 			item.UrlTestTime = history.Time.Unix()
 			item.UrlTestDelay = int32(history.Delay)
 		}

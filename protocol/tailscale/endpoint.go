@@ -26,6 +26,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/endpoint"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/iponly"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/log"
@@ -56,7 +57,6 @@ import (
 	"github.com/sagernet/tailscale/tailcfg"
 	"github.com/sagernet/tailscale/tsnet"
 	"github.com/sagernet/tailscale/types/nettype"
-	"github.com/sagernet/tailscale/util/dnsname"
 	"github.com/sagernet/tailscale/version"
 	"github.com/sagernet/tailscale/wgengine"
 	"github.com/sagernet/tailscale/wgengine/router"
@@ -104,7 +104,7 @@ type Endpoint struct {
 	routeDomains       common.TypedValue[map[string]bool]
 	routeSuffixes      common.TypedValue[[]string]
 	searchDomains      atomic.Bool
-	magicHostsUnrouted atomic.Bool
+	magicHostsUnrouted atomic.Bool // lx
 
 	acceptRoutes               bool
 	exitNode                   string
@@ -742,7 +742,7 @@ func (t *Endpoint) Close() error {
 	return err
 }
 
-func (t *Endpoint) InterfaceUpdated() {
+func (t *Endpoint) InterfaceUpdated(ctx context.Context) {
 	if !t.started.Load() {
 		return
 	}
@@ -865,7 +865,7 @@ func (t *Endpoint) ListenPacketWithDestination(ctx context.Context, destination 
 		for _, address := range destinationAddresses {
 			packetConn, packetErr := t.listenPacketWithAddress(ctx, M.SocksaddrFrom(address, destination.Port))
 			if packetErr == nil {
-				return packetConn, address, nil
+				return iponly.NewPacketConn(t.logger, packetConn), address, nil
 			}
 			errors = append(errors, packetErr)
 		}
@@ -876,9 +876,9 @@ func (t *Endpoint) ListenPacketWithDestination(ctx context.Context, destination 
 		return nil, netip.Addr{}, err
 	}
 	if destination.IsIP() {
-		return packetConn, destination.Addr, nil
+		return iponly.NewPacketConn(t.logger, packetConn), destination.Addr, nil
 	}
-	return packetConn, netip.Addr{}, nil
+	return iponly.NewPacketConn(t.logger, packetConn), netip.Addr{}, nil
 }
 
 func (t *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
@@ -952,13 +952,15 @@ func (t *Endpoint) PreferredDomain(metadata *adapter.InboundContext, domain stri
 	if routeDomains[domain] {
 		return true
 	}
-	if t.magicHostsUnrouted.Load() && t.started.Load() {
-		fqdn, err := dnsname.ToFQDN(domain)
-		if err == nil {
-			_, found := t.server.ExportLocalBackend().ExportMagicDNSHosts().LookupHost(fqdn)
-			if found {
-				return true
-			}
+	if t.started.Load() {
+		magicHosts := t.server.ExportLocalBackend().ExportMagicDNSHosts()
+		if _, found := lookupHosts(nil, magicHosts, domain); found {
+			return true
+		}
+	}
+	for _, suffix := range t.routeSuffixes.Load() {
+		if matchDomainSuffix(domain, suffix) {
+			return true
 		}
 	}
 	for _, suffix := range t.routeSuffixes.Load() {
@@ -1009,12 +1011,11 @@ func (t *Endpoint) onReconfig(cfg *wgcfg.Config, routerCfg *router.Config, dnsCf
 	}
 	routeSuffixes := make([]string, 0, len(dnsCfg.Routes))
 	for fqdn := range dnsCfg.Routes {
-		routeSuffixes = append(routeSuffixes, fqdn.WithoutTrailingDot())
+		routeSuffixes = append(routeSuffixes, strings.ToLower(fqdn.WithoutTrailingDot()))
 	}
 	t.routeDomains.Store(routeDomains)
 	t.routeSuffixes.Store(routeSuffixes)
 	t.searchDomains.Store(len(dnsCfg.SearchDomains) > 0)
-	t.magicHostsUnrouted.Store(dnsCfg.MagicDNSHostsUnrouted)
 
 	if t.onReconfigHook != nil {
 		t.onReconfigHook(cfg, routerCfg, dnsCfg)

@@ -52,42 +52,67 @@ func (r *RuleSetItem) Close() error {
 }
 
 func (r *RuleSetItem) Match(metadata *adapter.InboundContext) bool {
+	snapshot := snapshotRuleMatch(metadata)
 	for _, ruleSet := range r.setList {
-		nestedMetadata := r.nestedMetadata(metadata)
-		if ruleSet.Match(&nestedMetadata) {
+		r.prepareNestedMatch(metadata)
+		if ruleSet.Match(metadata) {
+			snapshot.restore(metadata)
 			return true
 		}
 	}
+	snapshot.restore(metadata)
 	return false
 }
 
 func (r *RuleSetItem) matchWithOuterGroups(metadata *adapter.InboundContext, outerGroups ruleGroupMatch) bool {
 	outerDone := outerGroups.done()
+	var (
+		matched        bool
+		deferredGroups uint8
+	)
+	snapshot := snapshotRuleMatch(metadata)
 	for _, ruleSet := range r.setList {
-		nestedMetadata := r.nestedMetadata(metadata)
+		r.prepareNestedMatch(metadata)
 		if provider, isProvider := ruleSet.(mergeableRuleProvider); isProvider {
 			branch := provider.mergeableRule()
 			if branch != nil {
-				branchGroups, branchMatched := branch.evaluateForMerge(&nestedMetadata)
-				if branchMatched && outerGroups.mergeWith(branchGroups).done() {
-					return true
+				branchGroups, branchMatched := branch.evaluateForMerge(metadata)
+				if branchMatched {
+					merged := outerGroups.mergeWith(branchGroups)
+					if merged.done() {
+						branchDeferredGroups := metadata.DeferredIPCIDRMatchGroups &^ uint8(merged.satisfied)
+						if branchDeferredGroups == 0 {
+							snapshot.restore(metadata)
+							metadata.DeferredIPCIDRMatchGroups &^= uint8(merged.satisfied)
+							return true
+						}
+						matched = true
+						deferredGroups |= branchDeferredGroups
+					}
 				}
 				continue
 			}
 		}
-		if outerDone && ruleSet.Match(&nestedMetadata) {
-			return true
+		if outerDone && ruleSet.Match(metadata) {
+			if metadata.DeferredIPCIDRMatchGroups == 0 {
+				snapshot.restore(metadata)
+				return true
+			}
+			matched = true
+			deferredGroups |= metadata.DeferredIPCIDRMatchGroups
 		}
 	}
-	return false
+	snapshot.restore(metadata)
+	if matched {
+		metadata.DeferredIPCIDRMatchGroups |= deferredGroups
+	}
+	return matched
 }
 
-func (r *RuleSetItem) nestedMetadata(metadata *adapter.InboundContext) adapter.InboundContext {
-	nestedMetadata := *metadata
-	nestedMetadata.ResetRuleMatchCache()
-	nestedMetadata.IPCIDRMatchSource = r.ipCidrMatchSource
-	nestedMetadata.IPCIDRAcceptEmpty = r.ipCidrAcceptEmpty
-	return nestedMetadata
+func (r *RuleSetItem) prepareNestedMatch(metadata *adapter.InboundContext) {
+	metadata.ResetRuleMatchCache()
+	metadata.IPCIDRMatchSource = r.ipCidrMatchSource
+	metadata.IPCIDRAcceptEmpty = r.ipCidrAcceptEmpty
 }
 
 type mergeableRuleProvider interface {
@@ -106,14 +131,27 @@ func mergeableRuleIn(rules []adapter.HeadlessRule) *DefaultHeadlessRule {
 }
 
 func matchAnyHeadlessRule(rules []adapter.HeadlessRule, metadata *adapter.InboundContext) bool {
+	var (
+		matched        bool
+		deferredGroups uint8
+	)
+	snapshot := snapshotRuleMatch(metadata)
 	for _, rule := range rules {
-		nestedMetadata := *metadata
-		nestedMetadata.ResetRuleMatchCache()
-		if rule.Match(&nestedMetadata) {
-			return true
+		metadata.ResetRuleMatchCache()
+		if rule.Match(metadata) {
+			if metadata.DeferredIPCIDRMatchGroups == 0 {
+				snapshot.restore(metadata)
+				return true
+			}
+			matched = true
+			deferredGroups |= metadata.DeferredIPCIDRMatchGroups
 		}
 	}
-	return false
+	snapshot.restore(metadata)
+	if matched {
+		metadata.DeferredIPCIDRMatchGroups |= deferredGroups
+	}
+	return matched
 }
 
 func (r *RuleSetItem) ContainsDestinationIPCIDRRule() bool {

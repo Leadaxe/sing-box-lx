@@ -109,7 +109,7 @@ func (g *URLTestGroup) fastestByDelay(network string) adapter.Outbound {
 		if !supportsNetwork(detour, network) {
 			continue
 		}
-		history := g.history.LoadURLTestHistory(RealTag(detour))
+		history := g.history.LoadURLTestHistory(RealTag(g.outbound, detour))
 		if history == nil {
 			continue
 		}
@@ -124,7 +124,7 @@ func (g *URLTestGroup) fastestByDelay(network string) adapter.Outbound {
 // penaltyEmergency — аварийный режим: лучший-по-скорости набрал ≥ порога.
 func (g *URLTestGroup) penaltyEmergency(network string) bool {
 	fastest := g.fastestByDelay(network)
-	return fastest != nil && g.penaltyOf(RealTag(fastest)) >= penaltyThreshold
+	return fastest != nil && g.penaltyOf(RealTag(g.outbound, fastest)) >= penaltyThreshold
 }
 
 // penaltyBest — двухуровневое ранжирование (штрафы ↑, задержка ↑) среди узлов
@@ -137,7 +137,7 @@ func (g *URLTestGroup) penaltyBest(network string, excludeTag string) adapter.Ou
 		if !supportsNetwork(detour, network) {
 			continue
 		}
-		realTag := RealTag(detour)
+		realTag := RealTag(g.outbound, detour)
 		if realTag == excludeTag {
 			continue
 		}
@@ -223,9 +223,9 @@ func (g *URLTestGroup) penaltyFailoverDial(ctx context.Context, network string, 
 	if g.balancer != nil || !isPathDeadDialError(dialErr) {
 		return nil, nil, false
 	}
-	g.penaltyAdd(RealTag(failed))
+	g.penaltyAdd(RealTag(g.outbound, failed))
 	g.maybeForceRetest()
-	fallback := g.penaltyBest(network, RealTag(failed))
+	fallback := g.penaltyBest(network, RealTag(g.outbound, failed))
 	if fallback == nil {
 		return nil, nil, false
 	}
@@ -238,14 +238,14 @@ func (g *URLTestGroup) penaltyFailoverDial(ctx context.Context, network string, 
 	if err != nil {
 		g.logger.Error("lx penalty: fallback via ", fallback.Tag(), ": ", E.Cause(err, "dial"))
 		// Симметрия с апстримным поведением least_test для отказавшего дайла.
-		g.history.DeleteURLTestHistory(RealTag(fallback))
+		g.history.DeleteURLTestHistory(RealTag(g.outbound, fallback))
 		if isPathDeadDialError(err) {
-			g.penaltyAdd(RealTag(fallback))
+			g.penaltyAdd(RealTag(g.outbound, fallback))
 			g.maybeForceRetest()
 		}
 		return nil, nil, false
 	}
-	g.penaltyReset(RealTag(fallback))
+	g.penaltyReset(RealTag(g.outbound, fallback))
 	if g.passiveCheck && network == N.NetworkTCP {
 		g.markPassiveAlive(fallback.Tag())
 	}
@@ -272,7 +272,7 @@ func (g *URLTestGroup) maybeForceRetest() {
 	}
 	g.logger.Warn("lx penalty: all candidates penalized, forcing a retest")
 	go func() {
-		g.CheckOutbounds(true)
+		g.CheckOutbounds(g.ctx, true)
 		// Отсчёт паузы от последнего ответа проб, не от старта прогона: длинный
 		// прогон по большой мёртвой группе не должен позволять следующему шторму
 		// стартовать впритык к концу этого.
@@ -288,7 +288,7 @@ func (g *URLTestGroup) penaltyTotal(network string) bool {
 		if !supportsNetwork(detour, network) {
 			continue
 		}
-		realTag := RealTag(detour)
+		realTag := RealTag(g.outbound, detour)
 		if g.history.LoadURLTestHistory(realTag) == nil {
 			continue
 		}

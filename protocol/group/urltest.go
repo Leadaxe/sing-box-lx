@@ -2,6 +2,7 @@ package group
 
 import (
 	"context"
+	"maps"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -45,6 +46,7 @@ type URLTest struct {
 	tolerance                    uint16
 	idleTimeout                  time.Duration
 	group                        *URLTestGroup
+	checkAccess                  sync.Mutex
 	interruptExternalConnections bool
 	balancer                     *balancer // lx: SPEC 019 — nil for least_test (default)
 	passiveCheck                 bool      // lx: SPEC 019 — skip probes for passively-confirmed nodes
@@ -173,13 +175,13 @@ func (s *URLTest) Pool() []PoolSlot {
 	slots := make([]PoolSlot, len(tags))
 	for i, tag := range tags {
 		var delay uint16
-		// History is keyed by RealTag(detour) (a nested-group member is tested and
+		// History is keyed by RealTag(manager, detour) (a nested-group member is tested and
 		// stored under its live leaf, not the group tag); read it the same way, or
 		// the slot's delay is always 0/dead for group members (SPEC 022 #5). Fall
 		// back to the raw slot tag if the outbound can't be resolved.
 		historyTag := tag
 		if node, loaded := s.outbound.Outbound(tag); loaded {
-			historyTag = RealTag(node)
+			historyTag = RealTag(s.outbound, node)
 		}
 		if history := s.group.history.LoadURLTestHistory(historyTag); history != nil {
 			delay = history.Delay
@@ -209,7 +211,7 @@ func (s *URLTest) URLTest(ctx context.Context) (map[string]uint16, error) {
 }
 
 func (s *URLTest) CheckOutbounds() {
-	s.group.CheckOutbounds(true)
+	s.group.CheckOutbounds(s.ctx, true)
 }
 
 // selectBalanced picks an outbound per-connection in round_robin mode from the balancer's
@@ -230,7 +232,11 @@ func (s *URLTest) selectBalanced(ctx context.Context, network string, destinatio
 	return selected
 }
 
-func (s *URLTest) InterfaceUpdated() {
+func (s *URLTest) PerformUpdateCheck() {
+	s.group.performUpdateCheck()
+}
+
+func (s *URLTest) InterfaceUpdated(ctx context.Context) {
 	group := s.group
 	if group == nil {
 		return
@@ -238,7 +244,14 @@ func (s *URLTest) InterfaceUpdated() {
 	if group.pause.IsDevicePaused() || group.pause.IsNetworkPaused() {
 		return
 	}
-	go group.CheckOutbounds(true)
+	go func() {
+		s.checkAccess.Lock()
+		defer s.checkAccess.Unlock()
+		if ctx.Err() != nil {
+			return
+		}
+		group.CheckOutbounds(ctx, true)
+	}()
 }
 
 func (s *URLTest) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -280,7 +293,7 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 			s.group.markPassiveAlive(outbound.Tag())
 		}
 		if s.balancer == nil {
-			s.group.penaltyReset(RealTag(outbound)) // lx: SPEC 054 — успех = доказательство жизни
+			s.group.penaltyReset(RealTag(s.outbound, outbound)) // lx: SPEC 054 — успех = доказательство жизни
 		}
 		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
@@ -360,6 +373,7 @@ type URLTestGroup struct {
 	interruptGroup               *interrupt.Group
 	interruptExternalConnections bool
 	access                       sync.Mutex
+	updateAccess                 sync.Mutex
 	ticker                       *time.Ticker
 	close                        chan struct{}
 	started                      bool
@@ -432,7 +446,7 @@ func (g *URLTestGroup) PostStart() {
 	// lx: SPEC 019 v2 — seed the pool so round_robin can route from the first connection,
 	// before the first health-check completes (history-warm nodes first, else config order).
 	g.seedPool()
-	go g.CheckOutbounds(false)
+	go g.CheckOutbounds(g.ctx, false)
 }
 
 func (g *URLTestGroup) Touch() {
@@ -480,14 +494,14 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
 	switch network {
 	case N.NetworkTCP:
 		if g.selectedOutboundTCP != nil {
-			if history := g.history.LoadURLTestHistory(RealTag(g.selectedOutboundTCP)); history != nil {
+			if history := g.history.LoadURLTestHistory(RealTag(g.outbound, g.selectedOutboundTCP)); history != nil {
 				minOutbound = g.selectedOutboundTCP
 				minDelay = history.Delay
 			}
 		}
 	case N.NetworkUDP:
 		if g.selectedOutboundUDP != nil {
-			if history := g.history.LoadURLTestHistory(RealTag(g.selectedOutboundUDP)); history != nil {
+			if history := g.history.LoadURLTestHistory(RealTag(g.outbound, g.selectedOutboundUDP)); history != nil {
 				minOutbound = g.selectedOutboundUDP
 				minDelay = history.Delay
 			}
@@ -497,7 +511,7 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
 		if !common.Contains(detour.Network(), network) {
 			continue
 		}
-		history := g.history.LoadURLTestHistory(RealTag(detour))
+		history := g.history.LoadURLTestHistory(RealTag(g.outbound, detour))
 		if history == nil {
 			continue
 		}
@@ -521,7 +535,7 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
 func (g *URLTestGroup) loopCheck(ticker *time.Ticker, closeChan <-chan struct{}) {
 	if time.Since(g.lastActive.Load()) > g.interval {
 		g.lastActive.Store(time.Now())
-		g.CheckOutbounds(false)
+		g.CheckOutbounds(g.ctx, false)
 	}
 	for {
 		select {
@@ -548,7 +562,7 @@ func (g *URLTestGroup) loopCheck(ticker *time.Ticker, closeChan <-chan struct{})
 		if g.reachability != nil && g.groupTag != "" && !g.reachability.OutboundReachable(g.groupTag) {
 			continue
 		}
-		g.CheckOutbounds(false)
+		g.CheckOutbounds(g.ctx, false)
 	}
 }
 
@@ -582,21 +596,20 @@ func (g *URLTestGroup) passiveFresh(tag string) bool {
 	return time.Since(time.Unix(0, value.(int64))) < g.interval
 }
 
-func (g *URLTestGroup) CheckOutbounds(force bool) {
-	_, _ = g.urlTest(g.ctx, force)
+func (g *URLTestGroup) CheckOutbounds(ctx context.Context, force bool) {
+	_, _ = g.urlTest(ctx, force)
 }
 
 func (g *URLTestGroup) URLTest(ctx context.Context) (map[string]uint16, error) {
-	// lx: SPEC 019 v2 — a MANUAL test of a round_robin group must test everything
-	// and rebuild the pool from fresh results (the lazy pool-bounded check is for
-	// the interval ticker only). least_test keeps the upstream non-force semantics.
-	return g.urlTest(ctx, g.balancer != nil)
+	// A manual test always tests everything (upstream force semantics since
+	// e4a4e8c79); lx: SPEC 019 v2 — for round_robin that also rebuilds the pool
+	// from the fresh results (the lazy pool-bounded check is for the ticker only).
+	return g.urlTest(ctx, true)
 }
 
 func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint16, error) {
-	result := make(map[string]uint16)
 	if g.checking.Swap(true) {
-		return result, nil
+		return make(map[string]uint16), nil
 	}
 	defer g.checking.Store(false)
 	// lx: SPEC 019 v2 — round_robin uses a lazy, pool-bounded health-check that tests no more
@@ -614,9 +627,9 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 	// пассивно подтверждается, циклы пропускались бы, и оштрафованный бывший
 	// лучший никогда не получил бы пробу, которая сбрасывает его штрафы.
 	if g.passiveCheck && !force && !g.penaltyEmergency(N.NetworkTCP) && g.selectedPassivelyConfirmed() {
-		return result, nil
+		return make(map[string]uint16), nil
 	}
-	result = g.testNodes(ctx, g.outbounds, force)
+	result := g.testNodes(ctx, g.outbounds, force)
 	if g.balancer != nil {
 		// force path (manual URLTest tested all nodes): rebuild the pool from fresh results.
 		g.rebuildPool()
@@ -628,57 +641,129 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 
 // testNodes runs the URL test over the given outbounds (skipping fresh history unless force),
 // stores/deletes history, and returns tag->delay for the live ones. lx: shared by least_test
-// and the round_robin force path.
+// and the round_robin pool paths; upstream's nested-group-aware batch (66beaf541) with the
+// SPEC 054 hook: a probe answer is proof of life and resets the node's penalties.
 func (g *URLTestGroup) testNodes(ctx context.Context, outbounds []adapter.Outbound, force bool) map[string]uint16 {
-	result := make(map[string]uint16)
+	return urlTestOutbounds(ctx, g.outbound, g.history, g.logger, outbounds, g.link, g.interval, force, g.penaltyReset)
+}
+
+type urlTestResult struct {
+	delay uint16
+	err   error
+}
+
+type urlTestBatch struct {
+	ctx      context.Context
+	outbound adapter.OutboundManager
+	history  *urltest.HistoryStorage
+	logger   log.Logger
+	batch    *batch.Batch[any]
+	checked  map[string]bool
+	groups   []adapter.OutboundGroup
+	access   sync.Mutex
+	result   map[string]uint16
+	onAlive  func(tag string) // lx: SPEC 054 — called for every leaf that answered the probe
+}
+
+func URLTestOutbounds(ctx context.Context, outboundManager adapter.OutboundManager, history *urltest.HistoryStorage, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, force bool) map[string]uint16 {
+	return urlTestOutbounds(ctx, outboundManager, history, logger, outbounds, link, interval, force, nil)
+}
+
+func urlTestOutbounds(ctx context.Context, outboundManager adapter.OutboundManager, history *urltest.HistoryStorage, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, force bool, onAlive func(tag string)) map[string]uint16 {
 	// lx: 050 — keep the per-node test context on the batch context: it descends
-	// from the caller's ctx (and so from g.ctx, which Close cancels), while the
-	// tasks used to hang it off g.ctx directly and ignore both the batch's own
-	// cancellation and any deadline the caller passed in.
+	// from the caller's ctx (and so from g.ctx, which Close cancels), so both the
+	// batch's own cancellation and any deadline the caller passed in reach the probes.
 	b, batchCtx := batch.New(ctx, batch.WithConcurrencyNum[any](10))
-	checked := make(map[string]bool)
-	var resultAccess sync.Mutex
+	testBatch := &urlTestBatch{
+		ctx:      batchCtx,
+		outbound: outboundManager,
+		history:  history,
+		logger:   logger,
+		batch:    b,
+		checked:  make(map[string]bool),
+		result:   make(map[string]uint16),
+		onAlive:  onAlive,
+	}
+	testBatch.test(outbounds, link, interval, force)
+	b.Wait()
+	for _, outboundGroup := range testBatch.groups {
+		groupHistory := history.LoadURLTestHistory(RealTag(outboundManager, outboundGroup))
+		if groupHistory != nil {
+			testBatch.result[outboundGroup.Tag()] = groupHistory.Delay
+		}
+	}
+	return testBatch.result
+}
+
+func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval time.Duration, force bool) {
 	for _, detour := range outbounds {
 		tag := detour.Tag()
-		realTag := RealTag(detour)
-		if checked[realTag] {
+		if b.checked[tag] {
 			continue
 		}
-		history := g.history.LoadURLTestHistory(realTag)
-		if !force && history != nil && time.Since(history.Time) < g.interval {
-			continue
-		}
-		checked[realTag] = true
-		p, loaded := g.outbound.Outbound(realTag)
-		if !loaded {
-			continue
-		}
-		b.Go(realTag, func() (any, error) {
-			testCtx, cancel := context.WithTimeout(batchCtx, C.TCPTimeout)
-			defer cancel()
-			t, err := urltest.URLTest(testCtx, g.link, p)
-			if err != nil {
-				g.logger.Debug("outbound ", tag, " unavailable: ", err)
-				g.history.DeleteURLTestHistory(realTag)
-			} else {
-				g.logger.Debug("outbound ", tag, " available: ", t, "ms")
-				g.penaltyReset(realTag) // lx: SPEC 054 — ответ на пробу = доказательство жизни
-				g.history.StoreURLTestHistory(realTag, &adapter.URLTestHistory{
-					Time:  time.Now(),
-					Delay: t,
-				})
-				resultAccess.Lock()
-				result[tag] = t
-				resultAccess.Unlock()
+		switch nested := detour.(type) {
+		case *URLTest:
+			b.checked[tag] = true
+			b.groups = append(b.groups, nested)
+			b.batch.Go(tag, func() (any, error) {
+				nestedResult, _ := nested.group.urlTest(b.ctx, force)
+				b.access.Lock()
+				maps.Copy(b.result, nestedResult)
+				b.access.Unlock()
+				return nil, nil
+			})
+		case adapter.OutboundGroup:
+			b.checked[tag] = true
+			b.groups = append(b.groups, nested)
+			b.test(common.FilterNotNil(common.Map(nested.All(), func(it string) adapter.Outbound {
+				member, _ := b.outbound.Outbound(it)
+				return member
+			})), link, interval, force)
+		default:
+			history := b.history.LoadURLTestHistory(tag)
+			if !force && history != nil && time.Since(history.Time) < interval {
+				continue
 			}
-			return nil, nil
-		})
+			b.checked[tag] = true
+			b.batch.Go(tag, func() (any, error) {
+				testCtx, cancel := context.WithTimeout(b.ctx, C.TCPTimeout)
+				defer cancel()
+				testChan := make(chan urlTestResult, 1)
+				go func() {
+					delay, testErr := urltest.URLTest(testCtx, link, detour)
+					testChan <- urlTestResult{delay, testErr}
+				}()
+				var testResult urlTestResult
+				select {
+				case testResult = <-testChan:
+				case <-testCtx.Done():
+					testResult.err = testCtx.Err()
+				}
+				if testResult.err != nil {
+					b.logger.Debug("outbound ", tag, " unavailable: ", testResult.err)
+					b.history.DeleteURLTestHistory(tag)
+				} else {
+					b.logger.Debug("outbound ", tag, " available: ", testResult.delay, "ms")
+					if b.onAlive != nil {
+						b.onAlive(tag) // lx: SPEC 054 — ответ на пробу = доказательство жизни
+					}
+					b.history.StoreURLTestHistory(tag, &adapter.URLTestHistory{
+						Time:  time.Now(),
+						Delay: testResult.delay,
+					})
+					b.access.Lock()
+					b.result[tag] = testResult.delay
+					b.access.Unlock()
+				}
+				return nil, nil
+			})
+		}
 	}
-	b.Wait()
-	return result
 }
 
 func (g *URLTestGroup) performUpdateCheck() {
+	g.updateAccess.Lock()
+	defer g.updateAccess.Unlock()
 	var updated bool
 	var changed bool // lx: SPEC 020 — ANY selection change (incl. nil→first) re-shapes the active tree
 	// lx: SPEC 054 — переизбор с учётом штрафов (в аварийном режиме — штрафы ↑, задержка ↑).
@@ -888,7 +973,7 @@ func (g *URLTestGroup) rebuildPool() {
 	results := make(map[string]candidate, len(g.outbounds))
 	for _, detour := range g.outbounds {
 		tag := detour.Tag()
-		if history := g.history.LoadURLTestHistory(RealTag(detour)); history != nil {
+		if history := g.history.LoadURLTestHistory(RealTag(g.outbound, detour)); history != nil {
 			results[tag] = candidate{tag: tag, delay: history.Delay, alive: true}
 		} else {
 			results[tag] = candidate{tag: tag, alive: false}
@@ -940,7 +1025,7 @@ func (g *URLTestGroup) seedPool() {
 	// Nodes with existing history first (top by delay), then config order to fill.
 	withHistory := make([]candidate, 0, len(g.outbounds))
 	for _, detour := range g.outbounds {
-		if history := g.history.LoadURLTestHistory(RealTag(detour)); history != nil {
+		if history := g.history.LoadURLTestHistory(RealTag(g.outbound, detour)); history != nil {
 			withHistory = append(withHistory, candidate{tag: detour.Tag(), delay: history.Delay, alive: true})
 		}
 	}

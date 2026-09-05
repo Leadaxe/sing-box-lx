@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/experimental/libbox"
 	"github.com/sagernet/sing-box/log"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -60,11 +61,13 @@ func prepareWorkingDirectory() error {
 		WorkingPath:       workingDirectory,
 		TempPath:          workingDirectory,
 		CrashReportSource: "Daemon",
+		AppVersion:        C.Version,
 	})
 	if err != nil {
 		return err
 	}
 	libbox.PromoteOOMDraft()
+	libbox.PromotePowerReportDraft()
 	return nil
 }
 

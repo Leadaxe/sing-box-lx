@@ -70,7 +70,7 @@ func proxyInfo(server *Server, detour adapter.Outbound) *badjson.JSONObject {
 	info.Put("type", clashType)
 	info.Put("name", detour.Tag())
 	info.Put("udp", common.Contains(detour.Network(), N.NetworkUDP))
-	delayHistory := server.urlTestHistory.LoadURLTestHistory(adapter.OutboundTag(detour))
+	delayHistory := server.urlTestHistory.LoadURLTestHistory(group.RealTag(server.outbound, detour))
 	if delayHistory != nil {
 		info.Put("history", []*adapter.URLTestHistory{delayHistory})
 	} else {
@@ -190,6 +190,30 @@ func updateProxy(w http.ResponseWriter, r *http.Request) {
 	render.NoContent(w, r)
 }
 
+func groupContains(outboundManager adapter.OutboundManager, outboundGroup adapter.OutboundGroup, tag string, visited map[string]bool) bool {
+	for _, memberTag := range outboundGroup.All() {
+		if memberTag == tag {
+			return true
+		}
+		member, loaded := outboundManager.Outbound(memberTag)
+		if !loaded {
+			continue
+		}
+		if group.RealTag(outboundManager, member) == tag {
+			return true
+		}
+		memberGroup, isGroup := member.(adapter.OutboundGroup)
+		if !isGroup || visited[memberTag] {
+			continue
+		}
+		visited[memberTag] = true
+		if groupContains(outboundManager, memberGroup, tag, visited) {
+			return true
+		}
+	}
+	return false
+}
+
 func getProxyDelay(server *Server) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
@@ -210,7 +234,7 @@ func getProxyDelay(server *Server) func(w http.ResponseWriter, r *http.Request) 
 
 		delay, err := urltest.URLTest(ctx, url, proxy)
 		defer func() {
-			realTag := group.RealTag(proxy)
+			realTag := group.RealTag(server.outbound, proxy)
 			if err != nil {
 				server.urlTestHistory.DeleteURLTestHistory(realTag)
 			} else {
@@ -218,6 +242,16 @@ func getProxyDelay(server *Server) func(w http.ResponseWriter, r *http.Request) 
 					Time:  time.Now(),
 					Delay: delay,
 				})
+			}
+			for _, detour := range server.outbound.Outbounds() {
+				urlTestGroup, isURLTestGroup := detour.(adapter.URLTestGroup)
+				if !isURLTestGroup {
+					continue
+				}
+				if !groupContains(server.outbound, urlTestGroup, realTag, map[string]bool{detour.Tag(): true}) {
+					continue
+				}
+				urlTestGroup.PerformUpdateCheck()
 			}
 		}()
 

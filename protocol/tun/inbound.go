@@ -375,7 +375,6 @@ func (t *Inbound) Start(stage adapter.StartStage) error {
 			}
 		}
 		if t.platformInterface == nil || C.IsWindows {
-			t.routeAddressSet = common.FlatMap(t.routeRuleSet, adapter.RuleSet.ExtractIPSet)
 			for _, routeRuleSet := range t.routeRuleSet {
 				ipSets := routeRuleSet.ExtractIPSet()
 				if len(ipSets) == 0 {
@@ -506,7 +505,7 @@ func (t *Inbound) updateRouteAddressSet(it adapter.RuleSet) {
 	t.routeExcludeAddressSet = nil
 }
 
-func (t *Inbound) InterfaceUpdated() {
+func (t *Inbound) InterfaceUpdated(ctx context.Context) {
 	tunStack := t.tunStack
 	if tunStack != nil {
 		tunStack.ResetNetwork()

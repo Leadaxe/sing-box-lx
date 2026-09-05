@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/service/powerreport"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -298,6 +299,18 @@ func (e *Endpoint) Start(postStart bool) error {
 			egressPoolOptions.Control = listenerControl
 			e.egressPool = tun.NewUDPEgressPool(egressPoolOptions)
 			standardBind.SetEgressProvider(e.egressPool)
+		}
+		powerManager := service.FromContext[*powerreport.Manager](e.options.Context)
+		if powerManager != nil {
+			recorder := powerManager.Recorder()
+			if recorder != nil {
+				attribution := &powerreport.Attribution{Endpoint: e.options.Tag}
+				standardBind.SetIOActivityFuncs(func(size int) {
+					recorder.Touch(powerreport.DirectionInbound, size, attribution)
+				}, func(size int) {
+					recorder.Touch(powerreport.DirectionOutbound, size, attribution)
+				})
+			}
 		}
 		bind = standardBind
 	} else {

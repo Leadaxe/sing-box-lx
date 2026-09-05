@@ -10,11 +10,13 @@ import (
 	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/daemon"
 	"github.com/sagernet/sing-box/experimental/libbox"
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/service/oomkiller"
+	"github.com/sagernet/sing-box/service/powerreport"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/service"
 
@@ -30,6 +32,8 @@ type Daemon struct {
 	ctx                     context.Context
 	logger                  log.ContextLogger
 	startedService          *daemon.StartedService
+	powerManager            *powerreport.Manager
+	oomRecorder             *oomkiller.Recorder
 	server                  *grpc.Server
 	runtimeWorkingDirectory string
 	lifecycleAccess         sync.Mutex
@@ -60,12 +64,15 @@ func newDaemon() (*Daemon, error) {
 		Context:     ctx,
 		LogMaxLines: 3000,
 	})
-	reporter := libbox.NewOOMReporter(d.startedService)
-	service.MustRegister[oomkiller.OOMReporter](ctx, reporter)
+	d.oomRecorder = oomkiller.NewRecorder(libbox.OOMRecorderOptions(d.startedService))
+	service.MustRegister[*oomkiller.Recorder](ctx, d.oomRecorder)
+	d.oomRecorder.Start()
+	d.powerManager = powerreport.NewManager()
+	service.MustRegister[*powerreport.Manager](ctx, d.powerManager)
 	managedService := daemon.NewManagedService(daemon.ManagedServiceOptions{
 		Handler:     &managedHandler{d},
 		Debug:       debugEnabled,
-		OOMReporter: reporter,
+		OOMRecorder: d.oomRecorder,
 	})
 	authorizer := newAuthorizer(d)
 	serverOptions := []grpc.ServerOption{
@@ -190,11 +197,13 @@ func (d *Daemon) configureWorkingDirectoryLocked(directory string) error {
 		WorkingPath:       directory,
 		TempPath:          directory,
 		CrashReportSource: "Daemon",
+		AppVersion:        C.Version,
 	})
 	if err != nil {
 		return err
 	}
 	libbox.PromoteOOMDraft()
+	libbox.PromotePowerReportDraft()
 	d.runtimeWorkingDirectory = directory
 	return nil
 }
@@ -207,11 +216,20 @@ func (d *Daemon) startServiceLocked(ctx context.Context, ownerUserID string, con
 	}
 	_ = os.WriteFile(filepath.Join(directory, configSnapshotFileName), []byte(configContent), 0o600)
 	libbox.ReloadSetupOptions(&libbox.SetupOptions{
-		OomKillerEnabled:  options.OOMKillerEnabled,
-		OomKillerDisabled: options.OOMKillerDisabled,
-		OomMemoryLimit:    options.OOMMemoryLimit,
+		OomKillerEnabled:   options.OOMKillerEnabled,
+		OomKillerDisabled:  options.OOMKillerDisabled,
+		OomMemoryLimit:     options.OOMMemoryLimit,
+		PowerReportEnabled: options.PowerReportEnabled,
 	})
 	d.startedService.SetOOMKillerOptions(options.OOMKillerEnabled, options.OOMKillerDisabled, uint64(options.OOMMemoryLimit))
+	if options.PowerReportEnabled {
+		err = d.powerManager.Start(libbox.PowerReportOptions(d.startedService))
+		if err != nil {
+			d.logger.Warn("start power report recorder: ", err)
+		}
+	} else {
+		d.powerManager.Close()
+	}
 	if d.platform != nil {
 		d.platform.SetSystemProxyPreference(options.systemProxyEnabled())
 		err = d.platform.ResetPlatformOptions()
@@ -243,6 +261,8 @@ func (d *Daemon) stopServiceLocked(ownerUserID string) error {
 			return err
 		}
 	}
+	d.powerManager.Close()
+	libbox.PromotePowerReportDraft()
 	directory := userWorkingDirectory(ownerUserID)
 	crashReportError := tagUnownedReports(filepath.Join(directory, crashReportsDirectoryName), ownerUserID)
 	if crashReportError != nil {
@@ -251,6 +271,10 @@ func (d *Daemon) stopServiceLocked(ownerUserID string) error {
 	oomReportError := tagUnownedReports(filepath.Join(directory, oomReportsDirectoryName), ownerUserID)
 	if oomReportError != nil {
 		return oomReportError
+	}
+	powerReportError := tagUnownedReports(filepath.Join(directory, powerReportsDirectoryName), ownerUserID)
+	if powerReportError != nil {
+		return powerReportError
 	}
 	options.WasRunning = false
 	return saveStartOptions(ownerUserID, options)
@@ -267,6 +291,7 @@ func (d *Daemon) Close() {
 	}
 	_ = d.startedService.CloseService()
 	d.startedService.Close()
+	_ = d.oomRecorder.Close()
 	if d.platform != nil {
 		_ = d.platform.Close()
 	}

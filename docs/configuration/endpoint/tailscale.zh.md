@@ -216,16 +216,11 @@ UDP NAT 过期时间。
 
 !!! question "自 sing-box 1.14.0 起"
 
-存储从 tailnet 对等节点接收到的文件的目录，以权限 0700 创建。
+存储从 tailnet 对等节点接收到的文件的目录。
 
 相对路径基于工作目录解析，与 [state_directory](#state_directory) 相同。
 
 默认使用 `Taildrop`。
-
-收发文件还要求节点具有 `https://tailscale.com/cap/file-sharing` 能力，该能力由 Tailscale 管理控制台在
-为 tailnet 启用文件共享时授予。当 tailnet 策略文件为其他用户的对等节点授予
-`https://tailscale.com/cap/file-send` 时，它们可以向本节点发送文件；当策略文件为本节点授予针对它们的
-`https://tailscale.com/cap/file-sharing-target` 时，可以向它们发送文件。
 
 ### 拨号字段
 

@@ -22,10 +22,8 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/protocol/group"
 	"github.com/sagernet/sing/common"
-	"github.com/sagernet/sing/common/batch"
 	"github.com/sagernet/sing/common/memory"
 	"github.com/sagernet/sing/common/observable"
-	"github.com/sagernet/sing/common/x/list"
 	"github.com/sagernet/sing/service"
 
 	"github.com/gofrs/uuid/v5"
@@ -49,7 +47,6 @@ type StartedService struct {
 	// platform adapter.PlatformInterface
 	handler           PlatformHandler
 	debug             bool
-	logMaxLines       int
 	oomKillerEnabled  bool
 	oomKillerDisabled bool
 	oomMemoryLimit    uint64
@@ -58,12 +55,15 @@ type StartedService struct {
 	// userID           int
 	// groupID          int
 	// systemProxyEnabled      bool
+	lifecycleAccess         sync.Mutex
 	serviceAccess           sync.RWMutex
+	closed                  bool
+	startInterrupted        bool
 	serviceStatus           *ServiceStatus
 	serviceStatusSubscriber *observable.Subscriber[*ServiceStatus]
 	serviceStatusObserver   *observable.Observer[*ServiceStatus]
 	logAccess               sync.RWMutex
-	logLines                list.List[*log.Entry]
+	logLines                logRing
 	logSubscriber           *observable.Subscriber[*log.Entry]
 	logObserver             *observable.Observer[*log.Entry]
 	instance                *Instance
@@ -98,7 +98,7 @@ func NewStartedService(options ServiceOptions) *StartedService {
 		// platform:                options.Platform,
 		handler:           options.Handler,
 		debug:             options.Debug,
-		logMaxLines:       options.LogMaxLines,
+		logLines:          logRing{maxLines: options.LogMaxLines},
 		oomKillerEnabled:  options.OOMKillerEnabled,
 		oomKillerDisabled: options.OOMKillerDisabled,
 		oomMemoryLimit:    options.OOMMemoryLimit,
@@ -139,7 +139,7 @@ func (s *StartedService) GetVersion(ctx context.Context, empty *emptypb.Empty) (
 
 func (s *StartedService) resetLogs() {
 	s.logAccess.Lock()
-	s.logLines = list.List[*log.Entry]{}
+	s.logLines.reset()
 	s.logAccess.Unlock()
 	s.logSubscriber.Emit(nil)
 }
@@ -150,12 +150,19 @@ func (s *StartedService) updateStatus(newStatus ServiceStatus_Type) {
 	s.serviceStatus = statusObject
 }
 
-func (s *StartedService) updateStatusError(err error) error {
+func (s *StartedService) updateStatusError(err error) {
 	statusObject := &ServiceStatus{Status: ServiceStatus_FATAL, ErrorMessage: err.Error()}
 	s.serviceStatusSubscriber.Emit(statusObject)
 	s.serviceStatus = statusObject
+}
+
+func (s *StartedService) interruptStart() {
+	s.serviceAccess.Lock()
+	if s.serviceStatus.Status == ServiceStatus_STARTING && s.instance != nil {
+		s.startInterrupted = true
+		s.instance.cancel()
+	}
 	s.serviceAccess.Unlock()
-	return err
 }
 
 func (s *StartedService) waitForStarted(ctx context.Context) error {
@@ -240,12 +247,13 @@ func (s *StartedService) followInstance(ctx context.Context, run func(ctx contex
 }
 
 func (s *StartedService) StartOrReloadService(ctx context.Context, profileContent string, options *OverrideOptions) error {
+	s.interruptStart()
+	s.lifecycleAccess.Lock()
+	defer s.lifecycleAccess.Unlock()
 	s.serviceAccess.Lock()
-	switch s.serviceStatus.Status {
-	case ServiceStatus_IDLE, ServiceStatus_STARTED, ServiceStatus_STARTING, ServiceStatus_FATAL:
-	default:
+	if s.closed {
 		s.serviceAccess.Unlock()
-		return os.ErrInvalid
+		return os.ErrClosed
 	}
 	oldInstance := s.instance
 	if oldInstance != nil {
@@ -256,28 +264,41 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 		runtimeDebug.FreeOSMemory()
 		s.serviceAccess.Lock()
 	}
+	s.startInterrupted = false
 	s.updateStatus(ServiceStatus_STARTING)
 	s.resetLogs()
+	s.serviceAccess.Unlock()
 	instance, err := s.newInstance(ctx, profileContent, options)
 	if err != nil {
-		return s.updateStatusError(err)
+		s.serviceAccess.Lock()
+		s.updateStatusError(err)
+		s.serviceAccess.Unlock()
+		return err
 	}
-	s.instance = instance
 	instance.urlTestHistoryStorage.AddUpdateHook(s.urlTestSubscriber)
-	if instance.clashServer != nil {
-		instance.clashServer.AddModeUpdateHook(s.clashModeSubscriber)
+	if instance.clashMode != nil {
+		instance.clashMode.AddUpdateHook(s.clashModeSubscriber)
 	}
+	s.serviceAccess.Lock()
+	s.instance = instance
 	s.serviceAccess.Unlock()
 	err = instance.Start()
 	s.serviceAccess.Lock()
-	if s.serviceStatus.Status != ServiceStatus_STARTING {
+	if s.startInterrupted {
+		s.startInterrupted = false
+		s.instance = nil
 		s.serviceAccess.Unlock()
+		_ = instance.Close()
+		runtimeDebug.FreeOSMemory()
 		return nil
 	}
 	if err != nil {
 		s.instance = nil
+		s.updateStatusError(err)
+		s.serviceAccess.Unlock()
 		_ = instance.Close()
-		return s.updateStatusError(err)
+		runtimeDebug.FreeOSMemory()
+		return err
 	}
 	s.startedAt = time.Now()
 	s.updateStatus(ServiceStatus_STARTED)
@@ -287,6 +308,9 @@ func (s *StartedService) StartOrReloadService(ctx context.Context, profileConten
 }
 
 func (s *StartedService) Close() {
+	s.serviceAccess.Lock()
+	s.closed = true
+	s.serviceAccess.Unlock()
 	s.serviceStatusSubscriber.Close()
 	s.logSubscriber.Close()
 	s.urlTestSubscriber.Close()
@@ -295,19 +319,22 @@ func (s *StartedService) Close() {
 }
 
 func (s *StartedService) CloseService() error {
+	s.interruptStart()
+	s.lifecycleAccess.Lock()
+	defer s.lifecycleAccess.Unlock()
 	s.serviceAccess.Lock()
-	switch s.serviceStatus.Status {
-	case ServiceStatus_STARTING, ServiceStatus_STARTED:
-	default:
+	instance := s.instance
+	if instance == nil && s.serviceStatus.Status != ServiceStatus_STARTING && s.serviceStatus.Status != ServiceStatus_STARTED {
 		s.serviceAccess.Unlock()
 		return nil
 	}
-	s.updateStatus(ServiceStatus_STOPPING)
-	instance := s.instance
 	s.instance = nil
+	s.updateStatus(ServiceStatus_STOPPING)
+	s.serviceAccess.Unlock()
 	if instance != nil {
 		_ = instance.Close()
 	}
+	s.serviceAccess.Lock()
 	s.startedAt = time.Time{}
 	s.updateStatus(ServiceStatus_IDLE)
 	s.serviceAccess.Unlock()
@@ -318,6 +345,7 @@ func (s *StartedService) CloseService() error {
 func (s *StartedService) SetError(err error) {
 	s.serviceAccess.Lock()
 	s.updateStatusError(err)
+	s.serviceAccess.Unlock()
 	s.WriteMessage(log.LevelError, err.Error())
 }
 
@@ -349,12 +377,8 @@ func (s *StartedService) SubscribeServiceStatus(empty *emptypb.Empty, server grp
 }
 
 func (s *StartedService) SubscribeLog(empty *emptypb.Empty, server grpc.ServerStreamingServer[Log]) error {
-	var savedLines []*log.Entry
 	s.logAccess.Lock()
-	savedLines = make([]*log.Entry, 0, s.logLines.Len())
-	for element := s.logLines.Front(); element != nil; element = element.Next() {
-		savedLines = append(savedLines, element.Value)
-	}
+	savedLines := s.logLines.array()
 	subscription, done, err := s.logObserver.Subscribe()
 	s.logAccess.Unlock()
 	if err != nil {
@@ -418,15 +442,12 @@ func (s *StartedService) SubscribeLog(empty *emptypb.Empty, server grpc.ServerSt
 
 func (s *StartedService) GetDefaultLogLevel(ctx context.Context, empty *emptypb.Empty) (*DefaultLogLevel, error) {
 	s.serviceAccess.RLock()
-	switch s.serviceStatus.Status {
-	case ServiceStatus_STARTING, ServiceStatus_STARTED:
-	default:
-		s.serviceAccess.RUnlock()
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+	if boxService == nil {
 		return nil, os.ErrInvalid
 	}
-	logLevel := s.instance.logFactory.Level()
-	s.serviceAccess.RUnlock()
-	return &DefaultLogLevel{Level: LogLevel(logLevel)}, nil
+	return &DefaultLogLevel{Level: LogLevel(boxService.logFactory.Level())}, nil
 }
 
 func (s *StartedService) ClearLogs(ctx context.Context, empty *emptypb.Empty) (*emptypb.Empty, error) {
@@ -611,14 +632,15 @@ func (s *StartedService) readGroups() *Groups {
 			var item GroupItem
 			item.Tag = itemTag
 			item.Type = itemOutbound.Type()
-			if history := historyStorage.LoadURLTestHistory(adapter.OutboundTag(itemOutbound)); history != nil {
+			if history := historyStorage.LoadURLTestHistory(group.RealTag(boxService.outboundManager, itemOutbound)); history != nil {
 				item.UrlTestTime = history.Time.Unix()
 				item.UrlTestDelay = int32(history.Delay)
 			}
 			g.Items = append(g.Items, &item)
 		}
 		// lx:begin lx_command
-		// Upstream dropped groups with < 2 items here (commit 5bc0dfa9 gRPC refactor),
+		// Upstream dropped groups with < 2 items here (commit 5bc0dfa9 gRPC refactor;
+		// since 3439be1bb it skips only empty groups),
 		// which silently hides single-node selectors and empty groups — a regression
 		// vs Clash, whose /proxies returned group.All() unfiltered. readGroups() is the
 		// single source feeding both SubscribeGroups (startup broadcast) and GetGroups,
@@ -635,14 +657,14 @@ func (s *StartedService) GetClashModeStatus(ctx context.Context, empty *emptypb.
 		s.serviceAccess.RUnlock()
 		return nil, os.ErrInvalid
 	}
-	clashServer := s.instance.clashServer
+	clashMode := s.instance.clashMode
 	s.serviceAccess.RUnlock()
-	if clashServer == nil {
+	if clashMode == nil {
 		return nil, status.Error(codes.NotFound, "clash mode not available")
 	}
 	return &ClashModeStatus{
-		ModeList:    clashServer.ModeList(),
-		CurrentMode: clashServer.Mode(),
+		ModeList:    clashMode.ModeList(),
+		CurrentMode: clashMode.Mode(),
 	}, nil
 }
 
@@ -665,12 +687,12 @@ func (s *StartedService) SubscribeClashMode(empty *emptypb.Empty, server grpc.Se
 		s.serviceAccess.RLock()
 		var message *ClashMode
 		if s.serviceStatus.Status == ServiceStatus_STARTED {
-			clashServer := s.instance.clashServer
-			if clashServer == nil {
+			clashMode := s.instance.clashMode
+			if clashMode == nil {
 				s.serviceAccess.RUnlock()
 				return status.Error(codes.NotFound, "clash mode not available")
 			}
-			message = &ClashMode{Mode: clashServer.Mode()}
+			message = &ClashMode{Mode: clashMode.Mode()}
 		} else {
 			message = &ClashMode{}
 		}
@@ -700,12 +722,12 @@ func (s *StartedService) SetClashMode(ctx context.Context, request *ClashMode) (
 		s.serviceAccess.RUnlock()
 		return nil, os.ErrInvalid
 	}
-	clashServer := s.instance.clashServer
+	clashMode := s.instance.clashMode
 	s.serviceAccess.RUnlock()
-	if clashServer == nil {
+	if clashMode == nil {
 		return nil, status.Error(codes.NotFound, "clash mode not available")
 	}
-	clashServer.SetMode(request.Mode)
+	clashMode.SetMode(request.Mode)
 	return &emptypb.Empty{}, nil
 }
 
@@ -728,33 +750,11 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
 	if isURLTest {
 		go urlTest.CheckOutbounds()
 	} else if isOutboundGroup {
-		outbounds := common.Filter(common.Map(outboundGroup.All(), func(it string) adapter.Outbound {
+		outbounds := common.FilterNotNil(common.Map(outboundGroup.All(), func(it string) adapter.Outbound {
 			itOutbound, _ := boxService.outboundManager.Outbound(it)
 			return itOutbound
-		}), func(it adapter.Outbound) bool {
-			if it == nil {
-				return false
-			}
-			_, isGroup := it.(adapter.OutboundGroup)
-			return !isGroup
-		})
-		b, _ := batch.New(boxService.ctx, batch.WithConcurrencyNum[any](10))
-		for _, detour := range outbounds {
-			outboundToTest := detour
-			itemTag := outboundToTest.Tag()
-			b.Go(itemTag, func() (any, error) {
-				t, err := urltest.URLTest(boxService.ctx, "", outboundToTest)
-				if err != nil {
-					historyStorage.DeleteURLTestHistory(itemTag)
-				} else {
-					historyStorage.StoreURLTestHistory(itemTag, &adapter.URLTestHistory{
-						Time:  time.Now(),
-						Delay: t,
-					})
-				}
-				return nil, nil
-			})
-		}
+		}))
+		go group.URLTestOutbounds(boxService.ctx, boxService.outboundManager, historyStorage, boxService.logFactory.Logger(), outbounds, "", 0, true)
 	} else {
 		go func() {
 			t, err := urltest.URLTest(boxService.ctx, "", outbound)
@@ -773,14 +773,11 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
 
 func (s *StartedService) SelectOutbound(ctx context.Context, request *SelectOutboundRequest) (*emptypb.Empty, error) {
 	s.serviceAccess.RLock()
-	switch s.serviceStatus.Status {
-	case ServiceStatus_STARTING, ServiceStatus_STARTED:
-	default:
-		s.serviceAccess.RUnlock()
-		return nil, os.ErrInvalid
-	}
 	boxService := s.instance
 	s.serviceAccess.RUnlock()
+	if boxService == nil {
+		return nil, os.ErrInvalid
+	}
 	outboundGroup, isLoaded := boxService.outboundManager.Outbound(request.GroupTag)
 	if !isLoaded {
 		return nil, status.Error(codes.NotFound, "selector not found: "+request.GroupTag)
@@ -1105,14 +1102,11 @@ func buildConnectionProto(metadata *trafficcontrol.TrackerMetadata) *Connection 
 
 func (s *StartedService) CloseConnection(ctx context.Context, request *CloseConnectionRequest) (*emptypb.Empty, error) {
 	s.serviceAccess.RLock()
-	switch s.serviceStatus.Status {
-	case ServiceStatus_STARTING, ServiceStatus_STARTED:
-	default:
-		s.serviceAccess.RUnlock()
-		return nil, os.ErrInvalid
-	}
 	boxService := s.instance
 	s.serviceAccess.RUnlock()
+	if boxService == nil {
+		return nil, os.ErrInvalid
+	}
 	if boxService.trafficManager == nil {
 		return nil, status.Error(codes.Unimplemented, "connection tracking not available")
 	}
@@ -1201,7 +1195,7 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
 					Tag:  ob.Tag(),
 					Type: ob.Type(),
 				}
-				if history := historyStorage.LoadURLTestHistory(adapter.OutboundTag(ob)); history != nil {
+				if history := historyStorage.LoadURLTestHistory(group.RealTag(boxService.outboundManager, ob)); history != nil {
 					item.UrlTestTime = history.Time.Unix()
 					item.UrlTestDelay = int32(history.Delay)
 				}
@@ -1212,7 +1206,7 @@ func (s *StartedService) SubscribeOutbounds(_ *emptypb.Empty, server grpc.Server
 					Tag:  ep.Tag(),
 					Type: ep.Type(),
 				}
-				if history := historyStorage.LoadURLTestHistory(adapter.OutboundTag(ep)); history != nil {
+				if history := historyStorage.LoadURLTestHistory(group.RealTag(boxService.outboundManager, ep)); history != nil {
 					item.UrlTestTime = history.Time.Unix()
 					item.UrlTestDelay = int32(history.Delay)
 				}
@@ -1670,6 +1664,7 @@ func tailscaleEndpointStatusToProto(tag string, s *adapter.TailscaleEndpointStat
 		WaitingFileCount:   s.WaitingFileCount,
 		ReceivingFileCount: s.ReceivingFileCount,
 		UnreadFileCount:    s.UnreadFileCount,
+		CertDomains:        s.CertDomains,
 	}
 	if s.Self != nil {
 		result.Self = tailscalePeerToProto(s.Self)
@@ -1778,6 +1773,33 @@ func (s *StartedService) TailscaleLogout(ctx context.Context, request *Tailscale
 		return nil, err
 	}
 	return &emptypb.Empty{}, nil
+}
+
+func (s *StartedService) GetTailscaleCertificate(ctx context.Context, request *TailscaleCertificateRequest) (*TailscaleCertificate, error) {
+	err := s.waitForStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.serviceAccess.RLock()
+	boxService := s.instance
+	s.serviceAccess.RUnlock()
+
+	endpoint, err := resolveTailscaleEndpoint(boxService, request.EndpointTag)
+	if err != nil {
+		return nil, err
+	}
+	tsEndpoint, loaded := endpoint.(adapter.TailscaleEndpoint)
+	if !loaded {
+		return nil, status.Error(codes.FailedPrecondition, "endpoint does not support tailscale")
+	}
+	certificatePEM, privateKeyPEM, err := tsEndpoint.GetTailscaleCertificate(ctx, request.Domain, time.Duration(request.MinValiditySeconds)*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	return &TailscaleCertificate{
+		CertificatePEM: certificatePEM,
+		PrivateKeyPEM:  privateKeyPEM,
+	}, nil
 }
 
 func (s *StartedService) SubscribeOpenConnectStatus(
@@ -2090,10 +2112,7 @@ func (s *StartedService) mustEmbedUnimplementedStartedServiceServer() {
 func (s *StartedService) WriteMessage(level log.Level, message string) {
 	item := &log.Entry{Level: level, Message: message}
 	s.logAccess.Lock()
-	s.logLines.PushBack(item)
-	if s.logLines.Len() > s.logMaxLines {
-		s.logLines.Remove(s.logLines.Front())
-	}
+	s.logLines.push(item)
 	s.logAccess.Unlock()
 	s.logSubscriber.Emit(item)
 	if s.debug {
@@ -2104,7 +2123,7 @@ func (s *StartedService) WriteMessage(level log.Level, message string) {
 func (s *StartedService) SavedLog() []*log.Entry {
 	s.logAccess.RLock()
 	defer s.logAccess.RUnlock()
-	return s.logLines.Array()
+	return s.logLines.array()
 }
 
 func (s *StartedService) Instance() *Instance {
