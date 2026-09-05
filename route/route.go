@@ -33,6 +33,16 @@ var defaultPacketSniffers = []sniff.PacketSniffer{
 	sniff.DomainNameQuery,
 	sniff.QUICClientHello,
 	sniff.STUNMessage,
+	// lx:begin sniff-lx
+	// Before UTP: a WireGuard handshake initiation (01 00 00 00 …, 148 B)
+	// satisfies the uTP ST_DATA check and was reported as bittorrent (SPEC 078).
+	// The 079 sniffers sit here too: each has a stricter shape than uTP.
+	sniff.WireGuard,
+	sniff.OpenVPN,
+	sniff.IKE,
+	sniff.TailscaleDisco,
+	sniff.SIP,
+	// lx:end sniff-lx
 	sniff.UTP,
 	sniff.UDPTracker,
 	sniff.DTLSRecord,
@@ -725,6 +735,10 @@ func (r *Router) actionSniff(
 				sniff.BitTorrent,
 				sniff.SSH,
 				sniff.RDP,
+				// lx:begin sniff-lx
+				sniff.SIPStream,
+				sniff.OpenVPNStream,
+				// lx:end sniff-lx
 			}
 		}
 		sniffBuffer := buf.NewPacket()

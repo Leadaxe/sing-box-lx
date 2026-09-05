@@ -540,6 +540,20 @@ func (r *RuleActionSniff) build() error {
 			r.PacketSniffers = append(r.PacketSniffers, sniff.UDPTracker)
 		case C.ProtocolDTLS:
 			r.PacketSniffers = append(r.PacketSniffers, sniff.DTLSRecord)
+		// lx:begin sniff-lx
+		case C.ProtocolWireGuard:
+			r.PacketSniffers = append(r.PacketSniffers, sniff.WireGuard)
+		case C.ProtocolOpenVPN:
+			r.PacketSniffers = append(r.PacketSniffers, sniff.OpenVPN)
+			r.StreamSniffers = append(r.StreamSniffers, sniff.OpenVPNStream)
+		case C.ProtocolIKE:
+			r.PacketSniffers = append(r.PacketSniffers, sniff.IKE)
+		case C.ProtocolTailscale:
+			r.PacketSniffers = append(r.PacketSniffers, sniff.TailscaleDisco)
+		case C.ProtocolSIP:
+			r.PacketSniffers = append(r.PacketSniffers, sniff.SIP)
+			r.StreamSniffers = append(r.StreamSniffers, sniff.SIPStream)
+		// lx:end sniff-lx
 		case C.ProtocolSSH:
 			r.StreamSniffers = append(r.StreamSniffers, sniff.SSH)
 		case C.ProtocolRDP:
