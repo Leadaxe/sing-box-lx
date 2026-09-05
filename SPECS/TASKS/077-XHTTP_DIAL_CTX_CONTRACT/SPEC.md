@@ -36,6 +36,15 @@
   REALITY выбирает именно `stream-one` — то есть дефект бьёт дефолтный
   конфиг, как только `dns.final` становится `udp`/`tcp`/`tls` с detour.
 
+Независимое полевое подтверждение — [LxBox #100](https://github.com/Leadaxe/LxBox/issues/100)
+(подано 2026-09-02, до выхода lx.30): Android `lx.28-rc.1` и macOS `lx.27`,
+`tcp`-DNS `127.0.0.1:5353` с detour на `vless+reality+xhttp mode=auto`;
+83 `dns: exchange` / 0 `dns: exchanged`. Серверный tcpdump на `lo`: Xray
+шлёт запрос в Unbound, сразу FIN, через ~125 мс на готовый ответ отвечает
+RST — это отменённый нами upload-body (EOF → half-close бэкенда) и
+сброшенный h2-стрим (ответу некуда лечь). Смена только клиентского режима
+на `packet-up` чинила DNS. Ответ и регрессионный тест — в §5.
+
 Изоляция на стенде (одно и то же XHTTP-плечо):
 
 | DNS-сервер через XHTTP `stream-one` | Результат |
@@ -235,6 +244,12 @@ Download-ответ при этом **не** ждётся — инвариант
 - `TestStreamDialSlotReleasedOnceOnRaiseFailure` (три провальных dial
   подряд) — red: «DialContext succeeded on a raise that failed»; green:
   `openUsage` ровно 0 (не отрицательный — ловушка double-release).
+- `TestStreamOneShortExchangesAfterDialCancel` (форма LxBox #100, добавлен
+  2026-09-05: DNS-подобный h2c-сервер отвечает 76 байтами через 2 мс после
+  того, как дочитал 60-байтный запрос; 100 dial'ов по одному обмену и один
+  dial на 100 обменов, `cancel(nil)` сразу после возврата) — red на базе
+  `f05fc7063^`: «exchange 0: write: context canceled» в обоих подтестах;
+  green: 100/100.
 - Переписанные: `TestStreamOneDialCancelBeforeRaiseFailsDial`,
   `TestStreamOneDialFailsOnRoundTripError` / `...OnBadStatus`,
   `TestStreamUpDialFailsOnDownloadError` / `...OnUploadError` — зелёные;
