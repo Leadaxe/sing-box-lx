@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) |
-| Статус | **C** (complete) — device-verified против живого AWG 3.1-сервера 2026-09-05 |
+| Статус | **C** (complete) — **DEVICE-VERIFIED** 2026-09-05: живой AWG 3.1-сервер (standalone) и узел в лаунчере владельца (ядро lx.33 под `lxd`, speedtest 35,67 Мбит/с) |
 | Подмодуль | `submodules/wireguard-go` (ветка `lx-awg2-v005`; порт amneziawg-go `v0.2.19 → v3.1.20260828`, HEAD `b5928ef`) |
 | Связанные | [[SPECS/TASKS/003-AWG2_CLIENT_ENDPOINT]] · [[SPECS/TASKS/005-AWG2_RANGED_MAGIC_HEADERS]] · [[SPECS/TASKS/008-AWG_JUNK_PARAM_VALIDATION]] · [[SPECS/TASKS/025-AWG_TRANSPORT_PADDING_OVERRUN]] · [[SPECS/TASKS/026-AWG_MAGIC_VS_RESERVED_CLEAR]] · [[SPECS/TASKS/031-AWG_PARITY_AUDIT_ADVANCED_SECURITY]] · [[SPECS/TASKS/041-WG_HANDSHAKE_GIVEUP_REBIND]] |
 
@@ -218,6 +218,15 @@ reject.PickOne − keepalive.Lo − rekey.Lo; `keychainExpireTime` = reject.Hi;
 | AWG3 (набор live-экспорта, `keepalive "25-35"`) | ✅ | 200 / 200 / 200 |
 
 Скрипт стенда — `e2e.py` в scratchpad сессии (не в репо: ключи генерируются на лету).
+
+**Device-verified в лаунчере владельца, 2026-09-05:** экспорт `vpn://` импортирован в
+singbox-launcher (v1.5.5, ядро `1.14.0-lx.33` под `lxd`), узел `server-17` со всеми полями
+AWG3; speedtest через узел — **35,67 Мбит/с** download (U1 HOST, Франкфурт). Первая попытка
+с экспортным `mtu 1376` дала «хендшейк и keepalive есть, HTTP идёт, HTTPS/крупное нет»:
+роутер `home` в тот момент гнал LAN через MASQUE, path MTU с Mac ≈1390 и фрагменты
+терялись (`ping -b en0 -D -s 1372` → frag needed), датаграммы 1448 байт не проходили.
+С `mtu 1280` (переупакованный `vpn://`) — работает. Не дефект AWG3: бюджет MTU §2.6 доки
+для вложенных туннелей; импорту в лаунчер стоит клампить MTU AWG-узлов к 1280.
 
 ## 5. Вне скоупа
 
