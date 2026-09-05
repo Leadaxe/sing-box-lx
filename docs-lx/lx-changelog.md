@@ -28,8 +28,29 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
-#### Unreleased (после v1.14.0-lx.32)
+#### v1.14.0-lx.33
 
+Стабильный релиз. Пользовательские ноты (EN+RU):
+[`docs-lx/releases/v1.14.0-lx.33.md`](releases/v1.14.0-lx.33.md).
+
+**Что вошло:**
+
+- ✨ **Снифферы VPN/VoIP для LAN-трафика: `wireguard`, `openvpn`, `ike`, `tailscale`,
+  `sip`** ([FEATURE 016-SNIFF](../SPECS/FEATURES/016-SNIFF/FEATURE.md),
+  [SPEC 078](../SPECS/TASKS/078-WIREGUARD_PACKET_SNIFFER/SPEC.md),
+  [SPEC 079](../SPECS/TASKS/079-VPN_VOIP_PACKET_SNIFFERS/SPEC.md)). Форма первого
+  пакета клиента, каждый сниффер — отдельный `common/sniff/*_lx.go`, апстримные
+  снифферы не правятся: wireguard — типы 1/2/3 по точным размерам 148/92/64, тип 4
+  `len>=32 && (len-32)%16==0`, резервные байты свободны (WARP); openvpn —
+  `HARD_RESET_CLIENT_V2/V3` plain/tls-auth/tls-crypt, TCP за 2-байтной длиной; ike —
+  ISAKMP `IKE_SA_INIT` (v2) и Main/Aggressive (v1), non-ESP-маркер на 4500; tailscale —
+  disco по магии `TS💬`; sip — request-line, `domain` из Request-URI (UDP и TCP).
+  Имена работают в `sniffer` sniff-действия и в `protocol` правил. В дефолтные списки
+  включены под маркером `lx:begin sniff-lx` (`route/route.go`, `route/rule/rule_action.go`,
+  `constant/protocol.go`): packet — после `stun` и **до** uTP (апстримный uTP принимал
+  `01 00 …` за ST_DATA, и plain WG с LAN помечался `bittorrent`), stream — после `rdp`.
+  Юниты (+race), перекрёстный тест дефолтного порядка, прогон через direct-inbound
+  бинаря. Дока: `docs-lx/lx-sniff{,.ru}.md`, строки в `docs/configuration/route/sniff{,.zh}.md`.
 - 🐛 **AWG: приём больше не теряет data-пакеты при широких `h1–h4`**
   ([SPEC 081](../SPECS/TASKS/081-AWG_RECEIVE_INDEX_FIRST_CLASSIFICATION/SPEC.md)).
   Референсный порядок классификации (init → response → cookie → transport) присваивал
@@ -40,6 +61,12 @@ required for stable tags); this changelog section is the fallback used for pre-r
   провод не меняется. Uplink (приёмник сервера) — как раньше. Red/green e2e с
   детерминированной коллизией размера (`s1=44`, `s4=0`, `h1=5-4294967295`). Сабмодуль
   `wireguard-go` → `6f0f7a2`.
+- 📌 **Дрейф апстрима отложен сознательно** (как в lx.30–lx.32): `upstream/stable` ушёл на
+  309 коммитов от нашей базы (`b5ebaa1fc`, `v1.14.0`), появились теги `v1.15.0-alpha.1/2`;
+  мерж — отдельная задача класса SPEC 051 (сначала сабмодули, потом ядро). Релиз несёт
+  снифферы и фикс приёма AWG поверх прежней базы. Сабмодули против `go.mod` сверены
+  (wireguard-go `c6c8a83` ⊂ `lx-awg2-v005`, sing-tun `d677342` ⊂ HEAD, gvisor —
+  снапшот 20260727).
 
 #### v1.14.0-lx.32
 
