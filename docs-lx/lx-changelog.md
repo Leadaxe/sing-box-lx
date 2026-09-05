@@ -28,6 +28,19 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### Unreleased (после v1.14.0-lx.32)
+
+- 🐛 **AWG: приём больше не теряет data-пакеты при широких `h1–h4`**
+  ([SPEC 081](../SPECS/TASKS/081-AWG_RECEIVE_INDEX_FIRST_CLASSIFICATION/SPEC.md)).
+  Референсный порядок классификации (init → response → cookie → transport) присваивал
+  data-датаграмму handshake-кандидату по случайному слову типа: ровно `s1+148` байт у
+  AWG2 (≈8 % таких пакетов при диапазонах из экспортов), любой крупнее при
+  `random_trailers` AWG 3.1. Теперь датаграмма с одним из наших живых receiver index за
+  словом типа transport классифицируется как данные первой; промах — прежний порядок,
+  провод не меняется. Uplink (приёмник сервера) — как раньше. Red/green e2e с
+  детерминированной коллизией размера (`s1=44`, `s4=0`, `h1=5-4294967295`). Сабмодуль
+  `wireguard-go` → `6f0f7a2`.
+
 #### v1.14.0-lx.32
 
 Стабильный релиз. Пользовательские ноты (EN+RU):

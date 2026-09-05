@@ -713,9 +713,13 @@ Notes:
   `s1`+148 / `s2`+92 / `s3`+64 is *also* tried as a handshake message by its type word.
   With single-value `h1`–`h4` (the AWG3 default) that is a 2⁻³² false match; with
   wide AWG2 **ranges** for `h1`–`h4` the false-match rate becomes the range width /
-  2³² per data packet, which then fails its MAC and is dropped. Don't combine
-  `random_trailers` with wide `h1`–`h4` ranges — a reference-implementation
-  property, kept 1:1 for wire compatibility.
+  2³² per data packet, which then fails its MAC and is dropped. **Our receiver is
+  immune** (SPEC 081): a datagram carrying one of our live receiver indices behind a
+  transport type word is classified as data before the handshake candidates run, so
+  the downlink never loses packets this way — nor to the narrower AWG2 variant (a data
+  datagram of exactly `s1`+148 bytes). The server's receiver is the reference
+  implementation, so the **uplink** still is: don't combine `random_trailers` with wide
+  `h1`–`h4` ranges.
 - The timing overrides don't need to match the server, but nonsense (e.g.
   `rekey_after_time` above `reject_after_time`) makes the tunnel flap. Copy the
   server's export.

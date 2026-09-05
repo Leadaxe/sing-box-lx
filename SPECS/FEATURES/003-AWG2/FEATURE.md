@@ -159,6 +159,9 @@ padding и заголовки читаются из одного и того ж�
 - **`header_protection_key` требует `s1`–`s4` ≥ 12** — проверяется и при загрузке
   конфига (`sing-box check` называет поле), и на устройстве при `IpcSet`, в том числе
   при частичном обновлении, когда ключ уже стоит, а паддинг сужают.
+- **Data-пакет с нашим живым receiver index никогда не присваивается
+  handshake-кандидатом** на приёме, какой бы ни была ширина `h1`–`h3` и размер
+  датаграммы (SPEC 081). Провод не меняется; uplink зависит от приёмника сервера.
 - **Обфускация AWG 3.x применяется ко всем путям отправки** — TUN-чтение, инжекция
   из gVisor-стека (`InputPacket`), приоритетное сообщение, keepalive; в том числе к
   первому батчу после старта, прочитанному до применения конфига (он переносится под
@@ -199,6 +202,7 @@ padding и заголовки читаются из одного и того ж�
 | [026 — AWG_MAGIC_VS_RESERVED_CLEAR](../../TASKS/026-AWG_MAGIC_VS_RESERVED_CLEAR/SPEC.md) | Сохранность magic при малом padding | C |
 | [031 — AWG_PARITY_AUDIT_ADVANCED_SECURITY](../../TASKS/031-AWG_PARITY_AUDIT_ADVANCED_SECURITY/SPEC.md) | Сверка паритета AWG2 (полный, 16/16); `AdvancedSecurity` — серверное поле, не зазор. §3/§3.1 про «v3-ключи» устарели — см. 080 | C |
 | [080 — AWG3_HEADER_PROTECTION_TIMINGS](../../TASKS/080-AWG3_HEADER_PROTECTION_TIMINGS/SPEC.md) | AWG 3.0/3.1: `header_protection_key`, `content_padding_addition`, `random_trailers`, `disable_cookies`, диапазонные тайминги и keepalive; порт amneziawg-go v3.1 в прививку | C |
+| [081 — AWG_RECEIVE_INDEX_FIRST_CLASSIFICATION](../../TASKS/081-AWG_RECEIVE_INDEX_FIRST_CLASSIFICATION/SPEC.md) | Приём: data-пакет с живым receiver index классифицируется до handshake-кандидатов — downlink не теряет пакеты при широких `h1–h4` (точный размер AWG2, `random_trailers` AWG 3.1) | C |
 | [007 — AWG_OVER_WIREGUARD_DETOUR_GUARD](../../TASKS/007-AWG_OVER_WIREGUARD_DETOUR_GUARD/SPEC.md) | Guard AWG-over-WG — снят, причина устранена | C |
 
 Примеры конфигурации — [docs-lx/lx-config.md](../../../docs-lx/lx-config.md)
