@@ -23,6 +23,7 @@
 | [013-DNS_GROUP](013-DNS_GROUP/FEATURE.md) | Группа DNS-серверов: `stable` / `fastest` / `parallel` на TTL-модели, трасса и состояние в наблюдаемости | — | 033 · 035 |
 | [014-LXD_DAEMON](014-LXD_DAEMON/FEATURE.md) | Headless-демон `sing-box lxd`: ядро in-process за reload-surviving каналом (gRPC + admin-REST на одном порту), apply с автооткатом на last-good, mTLS с регистрацией клиентов, системная служба, хранилище файловых ресурсов, диагностика демона и телеметрия хоста, справочник «IP → устройство» | `with_lxd` | 055 · 056 · 057 · 063 · 065 · 066 · 067 · 068 |
 | [015-CHAIN](015-CHAIN/FEATURE.md) | ✅ Outbound `chain`: виртуальная цепочка хопов из групп и узлов — группы не копируются, звенья рантайм-экземпляры, прозрачный `direct`, авто-MTU, `strip`/`rewrite` | `with_lx_chain` | 073 |
+| [016-SNIFF](016-SNIFF/FEATURE.md) | Снифферы для чужих туннелей и звонков: `wireguard`, `openvpn`, `ike`, `tailscale`, `sip` — по форме первого пакета, апстримные файлы не правим | 078 · 079 |
 
 ## Процессные
 

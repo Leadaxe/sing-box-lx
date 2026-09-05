@@ -344,6 +344,7 @@ The core is built for the desktop launcher **singbox-launcher** (which bundles `
 | Protocols & transports | [docs-lx/lx-protocols-transports.md](docs-lx/lx-protocols-transports.md) ([RU](docs-lx/lx-protocols-transports.ru.md)) — full parameter reference for XHTTP, AmneziaWG, MASQUE |
 | Fork changelog | [docs-lx/lx-changelog.md](docs-lx/lx-changelog.md) — the source `lx-release.yml` extracts release notes from |
 | Energy guide | [docs-lx/lx-energy.md](docs-lx/lx-energy.md) — idle-suspend levels, passive_check, tuning |
+| Sniffers | [docs-lx/lx-sniff.md](docs-lx/lx-sniff.md) ([RU](docs-lx/lx-sniff.ru.md)) — `wireguard` / `openvpn` / `ike` / `tailscale` / `sip` for LAN traffic behind a router, default order, first-packet limits |
 | `lxd` operator's guide | [docs-lx/lxd-daemon.md](docs-lx/lxd-daemon.md) ([RU](docs-lx/lxd-daemon.ru.md)) — install, daemon.json, mTLS, admin REST |
 | Observability API | [docs-lx/lxd-grpc-api.md](docs-lx/lxd-grpc-api.md) ([RU](docs-lx/lxd-grpc-api.ru.md)) — the observability contract clients speak (gRPC daemon + Android AAR) |
 | OpenWrt walkthrough | [docs-lx/openwrt-vpn-ssid.md](docs-lx/openwrt-vpn-ssid.md) ([RU](docs-lx/openwrt-vpn-ssid.ru.md)) — VPN on a dedicated SSID |
