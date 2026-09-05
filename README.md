@@ -152,7 +152,7 @@ This is the **only profile device-proven against a real LTE/WARP DPI** (~330 ms)
 `sip` are implemented as correct client-initiated requests but are blocked as a protocol class
 toward the Cloudflare WARP edge (raw DNS/STUN/SIP to a datacenter IP is itself anomalous) —
 they are kept for other providers whose DPI only checks packet well-formedness. See
-[docs-lx/lx-protocols-transports.md §2](docs-lx/lx-protocols-transports.md#2-amneziawg-20-awg2) and [AWG2 feature](SPECS/FEATURES/003-AWG2/FEATURE.md) · [examples](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
+[docs-lx/lx-protocols-transports.md §2](docs-lx/lx-protocols-transports.md#2-amneziawg-203x-awg2-awg3) and [AWG2 feature](SPECS/FEATURES/003-AWG2/FEATURE.md) · [examples](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ### MASQUE (outbound — Cloudflare WARP)
 

@@ -8,7 +8,7 @@ features of `sing-box-lx`:
 | Feature | Build tag | Where it attaches | Chapter |
 |---------|-----------|-------------------|---------|
 | **XHTTP** transport (Xray "splithttp"/"xhttp") | `with_xhttp` | `transport` block of a VLESS / VMess / Trojan **outbound** | [§1](#1-xhttp-transport) |
-| **AmneziaWG 2.0** (AWG2) obfuscation | `with_awg` | promoted fields on a `wireguard` **endpoint** | [§2](#2-amneziawg-20-awg2) |
+| **AmneziaWG 2.0/3.x** (AWG2, AWG3) obfuscation | `with_awg` | promoted fields on a `wireguard` **endpoint** | [§2](#2-amneziawg-203x-awg2-awg3) |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic` + `with_gvisor` | `outbounds[].type: "masque"` | [§3](#3-masque-outbound-connect-ip--warp) |
 
 For a high-level tour of every downstream feature (idle-suspend, DNS group, VLESS
@@ -54,8 +54,8 @@ transport (which would defeat the obfuscation). The exact messages:
   - [1.9 Range value forms](#19-range-value-forms)
   - [1.10 Examples](#110-examples)
   - [1.11 Troubleshooting](#111-troubleshooting)
-- [§2 AmneziaWG 2.0 (AWG2)](#2-amneziawg-20-awg2)
-  - [2.1 The model: AWG1 vs AWG2](#21-the-model-awg1-vs-awg2)
+- [§2 AmneziaWG 2.0/3.x (AWG2, AWG3)](#2-amneziawg-203x-awg2-awg3)
+  - [2.1 The model: AWG1 vs AWG2 vs AWG3](#21-the-model-awg1-vs-awg2-vs-awg3)
   - [2.2 Junk & signature fields](#22-junk--signature-fields)
   - [2.3 Magic headers `h1`–`h4`](#23-magic-headers-h1h4)
   - [2.4 CPS decoys `i1`–`i5` and the tag format](#24-cps-decoys-i1i5-and-the-tag-format)
@@ -64,6 +64,7 @@ transport (which would defeat the obfuscation). The exact messages:
   - [2.7 Mapping an `awg.conf` 1:1](#27-mapping-an-awgconf-11)
   - [2.8 Examples](#28-examples)
   - [2.9 Validation errors (verbatim)](#29-validation-errors-verbatim)
+  - [2.10 AWG 3.x: header protection, padding, trailers, timings](#210-awg-3x-header-protection-padding-trailers-timings)
 - [§3 MASQUE outbound (CONNECT-IP / WARP)](#3-masque-outbound-connect-ip--warp)
   - [3.1 What it is](#31-what-it-is)
   - [3.2 MASQUE-specific fields](#32-masque-specific-fields)
@@ -314,9 +315,10 @@ An empty value selects the documented default.
 
 ---
 
-# 2. AmneziaWG 2.0 (AWG2)
+# 2. AmneziaWG 2.0/3.x (AWG2, AWG3)
 
-AWG is WireGuard + DPI-evasion obfuscation. It is configured as a normal sing-box
+AWG is WireGuard + DPI-evasion obfuscation: AWG2 reshapes the packets, AWG3 additionally
+encrypts their headers and randomises sizes and timings ([§2.10](#210-awg-3x-header-protection-padding-trailers-timings)). It is configured as a normal sing-box
 **`wireguard` endpoint** with extra promoted fields (all at the endpoint **root**,
 none on a peer — mirroring an `awg-quick` `.conf` `[Interface]` section). With
 `with_awg` these are pushed to the device; a config without any AWG field is a plain

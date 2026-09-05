@@ -271,7 +271,7 @@ session/seq, обфускация uplink, семейство `x_padding_*`, пе
 
 ---
 
-## 2. AmneziaWG 2.0 / 3.x (AWG2, AWG3)
+## 2. AmneziaWG 2.0/3.x (AWG2, AWG3)
 
 AWG — это WireGuard + обфускация против DPI. Настраивается как обычный sing-box **`wireguard` endpoint** с дополнительными «поднятыми» полями. С `with_awg` они передаются на устройство; конфиг без единого AWG-поля — обычный WireGuard endpoint (поведение байт-в-байт как в upstream).
 
@@ -290,8 +290,8 @@ WireGuard, потому что `s4` паддит каждый data-пакет �
 > формат CPS-тегов, сахар маскировки `id`/`ip`/`ib` (четыре профиля, какой выбрать, что
 > попадает на провод), математика бюджета MTU, маппинг `awg.conf` 1:1 и дословные ошибки
 > валидации — в
-> [lx-protocols-transports.ru.md §2](lx-protocols-transports.ru.md#2-amneziawg-20-awg2)**
-> ([EN](lx-protocols-transports.md#2-amneziawg-20-awg2)).
+> [lx-protocols-transports.ru.md §2](lx-protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)**
+> ([EN](lx-protocols-transports.md#2-amneziawg-203x-awg2-awg3)).
 
 ### Пример — AmneziaWG 3.1 endpoint (экспорт Amnezia `amnezia-awg2`)
 

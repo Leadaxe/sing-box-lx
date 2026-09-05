@@ -8,7 +8,7 @@
 | Фича | Build tag | Куда крепится | Глава |
 |------|-----------|---------------|-------|
 | **XHTTP** транспорт (Xray "splithttp"/"xhttp") | `with_xhttp` | блок `transport` у VLESS / VMess / Trojan **outbound** | [§1](#1-xhttp-транспорт) |
-| **AmneziaWG 2.0** (AWG2) обфускация | `with_awg` | промо-поля на `wireguard` **endpoint** | [§2](#2-amneziawg-20-awg2) |
+| **AmneziaWG 2.0/3.x** (AWG2, AWG3) обфускация | `with_awg` | промо-поля на `wireguard` **endpoint** | [§2](#2-amneziawg-203x-awg2-awg3) |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic` + `with_gvisor` | `outbounds[].type: "masque"` | [§3](#3-masque-outbound-connect-ip--warp) |
 
 Обзор всех downstream-фич целиком (idle-suspend, DNS-группа, VLESS `encryption`,
@@ -54,8 +54,8 @@ make -f Makefile.lx lx-build
   - [1.9 Формы записи диапазонов](#19-формы-записи-диапазонов)
   - [1.10 Примеры](#110-примеры)
   - [1.11 Диагностика](#111-диагностика)
-- [§2 AmneziaWG 2.0 (AWG2)](#2-amneziawg-20-awg2)
-  - [2.1 Модель: AWG1 vs AWG2](#21-модель-awg1-vs-awg2)
+- [§2 AmneziaWG 2.0/3.x (AWG2, AWG3)](#2-amneziawg-203x-awg2-awg3)
+  - [2.1 Модель: AWG1 vs AWG2 vs AWG3](#21-модель-awg1-vs-awg2-vs-awg3)
   - [2.2 Junk- и signature-поля](#22-junk--и-signature-поля)
   - [2.3 Magic-заголовки `h1`–`h4`](#23-magic-заголовки-h1h4)
   - [2.4 CPS-декои `i1`–`i5` и формат тегов](#24-cps-декои-i1i5-и-формат-тегов)
@@ -64,6 +64,7 @@ make -f Makefile.lx lx-build
   - [2.7 Маппинг `awg.conf` 1:1](#27-маппинг-awgconf-11)
   - [2.8 Примеры](#28-примеры)
   - [2.9 Ошибки валидации (дословно)](#29-ошибки-валидации-дословно)
+  - [2.10 AWG 3.x: защита заголовка, паддинг, хвосты, тайминги](#210-awg-3x-защита-заголовка-паддинг-хвосты-тайминги)
 - [§3 MASQUE outbound (CONNECT-IP / WARP)](#3-masque-outbound-connect-ip--warp)
   - [3.1 Что это](#31-что-это)
   - [3.2 Поля, специфичные для MASQUE](#32-поля-специфичные-для-masque)
@@ -311,9 +312,11 @@ Referer-паддинг (см. примечание в [§1.10](#110-пример
 
 ---
 
-# 2. AmneziaWG 2.0 (AWG2)
+# 2. AmneziaWG 2.0/3.x (AWG2, AWG3)
 
-AWG — это WireGuard + обфускация для обхода DPI. Настраивается как обычный
+AWG — это WireGuard + обфускация для обхода DPI: AWG2 меняет форму пакетов, AWG3
+дополнительно шифрует их заголовки и рандомизирует размеры и тайминги
+([§2.10](#210-awg-3x-защита-заголовка-паддинг-хвосты-тайминги)). Настраивается как обычный
 sing-box **`wireguard` endpoint** с дополнительными промо-полями (все в **корне**
 endpoint, ни одно не на peer — зеркаля секцию `[Interface]` из `awg-quick` `.conf`).
 С `with_awg` они проталкиваются в device; конфиг без единого AWG-поля — обычный
