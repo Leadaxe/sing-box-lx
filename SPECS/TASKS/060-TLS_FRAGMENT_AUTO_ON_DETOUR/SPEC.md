@@ -81,8 +81,9 @@ ICMP `Fragmentation Needed` до клиента не доходит ⇒ паке
 
 ### Как реализовано
 
-Одна точка на весь форк — `NewClientWithOptions` в `common/tls/client.go`, до диспетчеризации
-по движкам, поэтому STD, uTLS и REALITY получают одинаковый дефолт:
+Дефолт задаётся в одной точке на весь форк — `NewClientWithOptions` в
+`common/tls/client.go`, до диспетчеризации по движкам, поэтому STD, uTLS и
+REALITY получают одинаковые значения флагов:
 
 ```go
 func applyDetourFragmentDefault(options *ClientOptions) {
@@ -91,6 +92,12 @@ func applyDetourFragmentDefault(options *ClientOptions) {
     options.Options.RecordFragment = true
 }
 ```
+
+Флаг сам по себе недостаточен: движок обязан поставить `tlsfragment.Conn`
+**ниже** TLS-клиента. STD и обычный uTLS делают это в своих `Client()`;
+REALITY создаёт `utls.UClient` самостоятельно, поэтому перед ним стоит такой
+же гейт по `fragment || recordFragment`. Иначе оба явных флага и автоматический
+дефолт доходят до `UTLSClientConfig`, но никогда не влияют на байты REALITY.
 
 Признак detour вычисляется единственной функцией `tls.DialedThroughDetour(DialerOptions)` —
 протоколы не проверяют `Detour != ""` сами. Каждый TLS-outbound передаёт результат в
@@ -125,6 +132,8 @@ func applyDetourFragmentDefault(options *ClientOptions) {
 | Файл | Что |
 |---|---|
 | `common/tls/client.go` | `ClientOptions.DialedThroughDetour`, `DialedThroughDetour()`, `applyDetourFragmentDefault()`, вызов в `NewClientWithOptions`, `NewDialerFromClientOptions()` |
+| `common/tls/reality_fragment_lx.go` | гейт `tlsfragment.NewConn`, общий для явных флагов и detour-дефолта |
+| `common/tls/reality_client.go` | один помеченный вызов гейта перед `utls.UClient` |
 | `protocol/vless/outbound.go` | +1 поле в `ClientOptions` |
 | `protocol/trojan/outbound.go` | +1 поле |
 | `protocol/vmess/outbound.go` | `NewClient` → `NewClientWithOptions` (+ поле) |
@@ -133,11 +142,17 @@ func applyDetourFragmentDefault(options *ClientOptions) {
 | `protocol/http/outbound.go` | `NewDialerFromOptions` → `NewDialerFromClientOptions` (+ поле) |
 | `protocol/masque/outbound.go` | +1 поле (h2-путь, поверх SPEC 021 Ф4) |
 
-Итого 8 upstream-файлов, из них 7 — по одной строке-полю. Существующие сигнатуры
-`NewClient`/`NewDialerFromOptions` сохранены (новый вариант добавлен рядом), поэтому чужие
-вызовы не тронуты.
+Итого 9 upstream-файлов, из них 7 — по одной строке-полю.
+`reality_client.go` получает один помеченный вызов непосредственно перед
+`utls.UClient`; сама логика вынесена в lx-owned файл без ребейз-конфликтов.
+Существующие сигнатуры `NewClient`/`NewDialerFromOptions`
+сохранены (новый вариант добавлен рядом), поэтому чужие вызовы не тронуты.
 
-Тесты (lx-owned): `common/tls/detour_fragment_lx_test.go`.
+Тесты (lx-owned): `common/tls/detour_fragment_lx_test.go`,
+`common/tls/reality_fragment_lx_test.go`. Второй снимает фактический
+ClientHello из REALITY-хендшейка и требует больше одной TLS-записи при
+автоматическом `record_fragment`; проверка только значения флага была бы
+ложно-зелёной.
 
 ## 4. Что НЕ в scope
 

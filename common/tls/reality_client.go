@@ -138,6 +138,9 @@ func (e *RealityClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
 	uConfig.InsecureSkipVerify = true
 	uConfig.SessionTicketsDisabled = true
 	uConfig.VerifyPeerCertificate = verifier.VerifyPeerCertificate
+	// lx:begin SPEC 060 — keep REALITY on the same fragmentation path as uTLS.
+	conn = wrapRealityClientHelloFragment(conn, e.uClient)
+	// lx:end SPEC 060
 	uConn := utls.UClient(conn, uConfig, e.uClient.id)
 	verifier.UConn = uConn
 	// lx: SPEC 083 — апстрим здесь вырезал X25519MLKEM768 из supported_groups

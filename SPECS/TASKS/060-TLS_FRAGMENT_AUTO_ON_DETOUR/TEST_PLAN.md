@@ -114,6 +114,11 @@ PMTU-дырой, **без единого флага в конфиге**:
 `record_fragment`; явный `record_fragment` сохраняется; явный `fragment` НЕ апгрейдится;
 `fragment_fallback_delay` не затирается.
 
+`common/tls/reality_fragment_lx_test.go`: detour-дефолт доходит до REALITY-конфига,
+а фактический REALITY ClientHello выходит несколькими TLS-записями. Тест был красным
+при прямом `utls.UClient(conn, ...)` и тем самым закрывает обход
+`tlsfragment.NewConn`, который проверка одних опций не видит.
+
 ### Статика и сборка
 
 `make -f Makefile.lx lx-build`, сборка без `with_quic` (stub-путь), `go vet`, `gofmt -l` —
