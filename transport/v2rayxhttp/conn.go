@@ -417,6 +417,17 @@ func (d *readDeadline) runOnExpire() {
 	}
 }
 
+// isExpired reports whether the deadline has fired; dead is closed only by
+// expireLocked, never by stop, so a stopped deadline reads as not expired.
+func (d *readDeadline) isExpired() bool {
+	select {
+	case <-d.dead:
+		return true
+	default:
+		return false
+	}
+}
+
 func (d *readDeadline) stop() {
 	d.access.Lock()
 	defer d.access.Unlock()
@@ -456,6 +467,27 @@ func (b *connBreaker) noteRead(err error) {
 	if err != io.EOF && !b.localClosed.Load() {
 		b.xmux.noteFailure()
 	}
+}
+
+// outboundErr maps a read error for the caller. lx: SPEC 094 — our own
+// Body.Close() (Close, expired read deadline) wakes a blocked Read with x/net's
+// "http2: response body closed" (or net/http's "read on closed response
+// body"); sing's IsClosedOrCanceled does not know those unexported sentinels,
+// so the relay logged every normal teardown at ERROR. Under the localClosed
+// gate the error becomes net.ErrClosed, or os.ErrDeadlineExceeded when it was
+// the read deadline that closed the body (a timeout must stay a net.Error with
+// Timeout() true for the callers that distinguish it, SPEC 050). io.EOF is
+// left alone even under the gate: a clean server finish racing our Close is
+// still a clean finish. Remote errors (StreamError) never see the gate armed
+// and pass through untouched.
+func (b *connBreaker) outboundErr(err error, deadline *readDeadline) error {
+	if err == nil || err == io.EOF || !b.localClosed.Load() {
+		return err
+	}
+	if deadline != nil && deadline.isExpired() {
+		return os.ErrDeadlineExceeded
+	}
+	return net.ErrClosed
 }
 
 // streamConn is a net.Conn whose write side is the upload pipe and whose read
@@ -549,8 +581,8 @@ func (c *streamConn) Read(b []byte) (int, error) {
 		return 0, c.readerErr
 	}
 	n, err := c.reader.Read(b)
-	c.breaker.noteRead(err)              // lx: SPEC 076
-	return n, badh2.HideStreamError(err) // lx: SPEC 082 — after noteRead: the breaker classifies the raw error
+	c.breaker.noteRead(err)                                                     // lx: SPEC 076
+	return n, c.breaker.outboundErr(badh2.HideStreamError(err), c.readDeadline) // lx: SPEC 082, 094 — after noteRead: the breaker classifies the raw error
 }
 
 func (c *streamConn) Write(b []byte) (int, error) {
@@ -687,8 +719,8 @@ func (c *splitConn) Read(b []byte) (int, error) {
 		return 0, c.readerErr
 	}
 	n, err := c.reader.Read(b)
-	c.breaker.noteRead(err)              // lx: SPEC 076
-	return n, badh2.HideStreamError(err) // lx: SPEC 082 — after noteRead: the breaker classifies the raw error
+	c.breaker.noteRead(err)                                                     // lx: SPEC 076
+	return n, c.breaker.outboundErr(badh2.HideStreamError(err), c.readDeadline) // lx: SPEC 082, 094 — after noteRead: the breaker classifies the raw error
 }
 func (c *splitConn) Write(b []byte) (int, error) { return c.writer.Write(b) }
 
@@ -826,8 +858,8 @@ func (c *packetConn) Read(b []byte) (int, error) {
 		return 0, c.readerErr
 	}
 	n, err := c.reader.Read(b)
-	c.breaker.noteRead(err)              // lx: SPEC 076
-	return n, badh2.HideStreamError(err) // lx: SPEC 082 — after noteRead: the breaker classifies the raw error
+	c.breaker.noteRead(err)                                                     // lx: SPEC 076
+	return n, c.breaker.outboundErr(badh2.HideStreamError(err), c.readDeadline) // lx: SPEC 082, 094 — after noteRead: the breaker classifies the raw error
 }
 
 // Write delivers a write as one or more sequential upload POSTs. A write larger

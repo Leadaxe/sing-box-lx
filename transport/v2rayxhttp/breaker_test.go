@@ -3,11 +3,20 @@ package v2rayxhttp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/sagernet/sing-box/common/badh2"
+	M "github.com/sagernet/sing/common/metadata"
+
+	"golang.org/x/net/http2"
 )
 
 // SPECS/TASKS/076-XHTTP_XMUX_BREAKER
@@ -243,5 +252,132 @@ func TestUplinkBodyGetBody(t *testing.T) {
 		if err != nil || string(replay) != string(payload) {
 			t.Fatalf("GetBody replay %d = %q, %v", i, replay, err)
 		}
+	}
+}
+
+// TestRoundTripLocalCancelIsNeutral: context.Canceled is only ever produced by
+// us (the conn-scoped cancel in Close) or the caller, so a burst of cancelled
+// RoundTrips must neither retire the pooled connection nor arm the backoff.
+// Deadlines and remote errors stay failures. lx: SPEC 094.
+func TestRoundTripLocalCancelIsNeutral(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		err   error
+		calls int32
+		cause string
+	}{
+		{"canceled", context.Canceled, xmuxBreakerThreshold + 1, ""},
+		{"wrapped canceled", fmt.Errorf("x: %w", context.Canceled), xmuxBreakerThreshold + 1, ""},
+		{"deadline", context.DeadlineExceeded, xmuxBreakerThreshold, "failing"},
+		{"connection reset", syscall.ECONNRESET, xmuxBreakerThreshold, "failing"},
+		{"stream error", http2.StreamError{StreamID: 1, Code: http2.ErrCodeInternal}, xmuxBreakerThreshold, "failing"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			errs := make([]error, test.calls)
+			for i := range errs {
+				errs[i] = test.err
+			}
+			manager := singleTransportXmux(&failingRT{errs: errs})
+			client, _ := manager.get()
+			for i := int32(0); i < test.calls; i++ {
+				if _, err := client.roundTrip(testRequest(t)); !errors.Is(err, test.err) {
+					t.Fatalf("roundTrip err = %v, want %v", err, test.err)
+				}
+			}
+			if cause := client.evictCause(); cause != test.cause {
+				t.Fatalf("evictCause = %q, want %q", cause, test.cause)
+			}
+			if armed := manager.backoffArmed.Load(); armed != (test.cause != "") {
+				t.Fatalf("backoff armed = %v, want %v", armed, test.cause != "")
+			}
+		})
+	}
+}
+
+// bodyClosedReader is a download body after our own Body.Close(): every Read
+// returns x/net's unexported "http2: response body closed" sentinel.
+type bodyClosedReader struct {
+	err error
+}
+
+func (r *bodyClosedReader) Read([]byte) (int, error) { return 0, r.err }
+func (r *bodyClosedReader) Close() error             { return nil }
+
+// TestReadAfterLocalCloseIsErrClosed: a read error on a body WE closed leaves
+// the conn as net.ErrClosed, so the relay recognises a normal teardown; the
+// same text without our Close, io.EOF and a remote StreamError pass through as
+// before (SPEC 082 unchanged). lx: SPEC 094.
+func TestReadAfterLocalCloseIsErrClosed(t *testing.T) {
+	serverAddr := M.ParseSocksaddr("example.com:443")
+	kinds := []struct {
+		name string
+		new  func(reader io.ReadCloser) net.Conn
+	}{
+		{"stream", func(reader io.ReadCloser) net.Conn {
+			uploadReader, uploadWriter := io.Pipe()
+			conn := newStreamConn(uploadReader, uploadWriter, serverAddr, nil)
+			conn.setupReader(reader, nil)
+			return conn
+		}},
+		{"split", func(reader io.ReadCloser) net.Conn {
+			uploadReader, uploadWriter := io.Pipe()
+			conn := newSplitConn(uploadReader, uploadWriter, serverAddr, nil)
+			conn.setupReader(reader, nil)
+			return conn
+		}},
+		{"packet", func(reader io.ReadCloser) net.Conn {
+			conn := newPacketConn(context.Background(), &Client{}, "session", serverAddr, nil)
+			conn.setupReader(reader, nil)
+			return conn
+		}},
+	}
+	bodyClosed := errors.New("http2: response body closed")
+	for _, kind := range kinds {
+		t.Run(kind.name, func(t *testing.T) {
+			buffer := make([]byte, 16)
+
+			conn := kind.new(&bodyClosedReader{err: bodyClosed})
+			conn.Close()
+			if _, err := conn.Read(buffer); !errors.Is(err, net.ErrClosed) {
+				t.Fatalf("after Close: Read err = %v, want net.ErrClosed", err)
+			}
+
+			conn = kind.new(&bodyClosedReader{err: bodyClosed})
+			if _, err := conn.Read(buffer); err != bodyClosed {
+				t.Fatalf("without Close: Read err = %v, want %v untouched", err, bodyClosed)
+			}
+			conn.Close()
+
+			conn = kind.new(&bodyClosedReader{err: io.EOF})
+			if _, err := conn.Read(buffer); err != io.EOF {
+				t.Fatalf("without Close: Read err = %v, want io.EOF", err)
+			}
+			conn.Close()
+
+			conn = kind.new(&bodyClosedReader{err: http2.StreamError{StreamID: 3, Code: http2.ErrCodeInternal}})
+			var remote *badh2.RemoteStreamError
+			if _, err := conn.Read(buffer); !errors.As(err, &remote) {
+				t.Fatalf("without Close: Read err = %T %v, want *badh2.RemoteStreamError", err, err)
+			}
+			conn.Close()
+
+			// A clean server finish racing our Close is still a clean finish.
+			conn = kind.new(&bodyClosedReader{err: io.EOF})
+			conn.Close()
+			if _, err := conn.Read(buffer); err != io.EOF {
+				t.Fatalf("after Close: Read err = %v, want io.EOF untouched", err)
+			}
+
+			// The read deadline closes the body too (SPEC 050); the caller must
+			// still see a timeout, not a generic close.
+			conn = kind.new(&bodyClosedReader{err: bodyClosed})
+			if err := conn.SetReadDeadline(time.Now().Add(-time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := conn.Read(buffer); !errors.Is(err, os.ErrDeadlineExceeded) {
+				t.Fatalf("after expired read deadline: Read err = %v, want os.ErrDeadlineExceeded", err)
+			}
+			conn.Close()
+		})
 	}
 }

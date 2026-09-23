@@ -2,6 +2,7 @@ package v2rayxhttp
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -171,10 +172,22 @@ func (c *xmuxClient) noteSuccess() {
 // stream failure — every XHTTP endpoint expects exactly 200, all call sites
 // treat anything else as fatal for the stream. Success is deliberately NOT
 // noted here: response headers arriving says nothing about the stream living.
+//
+// lx: SPEC 094 — context.Canceled is neutral. Request contexts are cancelled
+// only by us (the conn-scoped cancel in Close) or by the caller, so a
+// cancelled RoundTrip says nothing about the pooled connection's health;
+// counting it let a burst of Close calls (interrupt_exist_connections)
+// retire a healthy connection and arm the backoff. context.DeadlineExceeded
+// stays a failure on purpose: headers not arriving in time on a pooled
+// connection is exactly the half-dead peer the breaker exists for.
 func (c *xmuxClient) roundTrip(request *http.Request) (*http.Response, error) {
 	c.takeRequest()
 	response, err := c.conn.roundTripper().RoundTrip(request)
-	if err != nil || response.StatusCode != http.StatusOK {
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			c.noteFailure()
+		}
+	} else if response.StatusCode != http.StatusOK {
 		c.noteFailure()
 	}
 	return response, err
