@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bugfix) — клиентские транспорты (CONSTITUTION §3.6) |
-| Статус | I (implemented) — код + тесты + сборка; коммиты `9d96cef5e` (XHTTP), п.3 — `v2rayhttp`/`v2raygrpclite`; ждёт полевой проверки репортёром issue #14 на `lx.35` |
+| Статус | D (done, device-verified) — код + тесты + сборка; коммиты `9d96cef5e` (XHTTP), п.3 — `v2rayhttp`/`v2raygrpclite`; полевая проверка репортёром issue #14 на `lx.35` — закрыта решением владельца 2026-09-24: релизы более недели в поле без жалоб |
 | Ветка | `lx` |
 | Связанные | [[SPECS/TASKS/076-XHTTP_XMUX_BREAKER]] (предыдущая, неполная реконструкция того же тикета) · [[SPECS/TASKS/077-XHTTP_DIAL_CTX_CONTRACT]] · issue [Leadaxe/sing-box-lx#14](https://github.com/Leadaxe/sing-box-lx/issues/14) |
 

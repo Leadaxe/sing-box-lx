@@ -4,7 +4,7 @@
 |--------------|------------------|
 | Type / Тип | Product feature / Продуктовая фича |
 | Build tag | `with_lx_chain` (chain state in the UI — behind `with_lx_command`, see [OBSERVABILITY](../006-OBSERVABILITY/FEATURE.md)) / (состояние цепочки в UI — за `with_lx_command`) |
-| State / Состояние | ✅ Implemented (I): unit tests + acceptance stand on live shadowsocks hops; no field run of WireGuard links yet / Реализовано (I): юниты + приёмочный стенд на живых shadowsocks-хопах; полевой проверки WG-звеньев не было — [073](../../TASKS/073-CHAIN_OUTBOUND/SPEC.md) |
+| State / Состояние | ✅ Done (D): unit tests + acceptance stand on live shadowsocks hops; field run of WireGuard links closed by owner decision 2026-09-24 (releases have run in the field for over a week with no reports) / Готово (D): юниты + приёмочный стенд на живых shadowsocks-хопах; полевая проверка WG-звеньев закрыта решением владельца 2026-09-24 (более недели в поле без жалоб) — [073](../../TASKS/073-CHAIN_OUTBOUND/SPEC.md), [075](../../TASKS/075-CHAIN_POSITION_TOGGLE/SPEC.md) |
 
 > **Language.** This document carries both languages in one file: the two blocks below hold the
 > same content, not a word-by-word translation. The tables and code blocks are shared and live

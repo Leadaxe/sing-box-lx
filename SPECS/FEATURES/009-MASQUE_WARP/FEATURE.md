@@ -124,6 +124,7 @@ outbound'ов, где исходящая датаграмма помечаетс
 |--------|------|--------|
 | [021 — MASQUE_CONNECT_IP_OUTBOUND](../../TASKS/021-MASQUE_CONNECT_IP_OUTBOUND/SPEC.md) | Outbound целиком: профили, транспорты, туннель | C |
 | [062 — MASQUE_CONFIG_SCHEMA_MIGRATION](../../TASKS/062-MASQUE_CONFIG_SCHEMA_MIGRATION/SPEC.md) | Конфиг к общему стандарту: `vhttp` вместо `network`, штатный блок TLS вместо плоских ключей, старая форма на алиасах с предупреждением | C |
+| [074 — MASQUE_VHTTP_AUTO](../../TASKS/074-MASQUE_VHTTP_AUTO/SPEC.md) | `vhttp: auto` — дефолт: глухой h3 через xhttp-хоп → откат на h2 за секунды (отвязанный fallback по таймеру 3 с, победивший режим запоминается) | D |
 | [091 — CONFIG_VALIDATION_TUIC_MASQUE](../../TASKS/091-CONFIG_VALIDATION_TUIC_MASQUE/SPEC.md) (§2) | `profile: standard` без `uri` — один текст ошибки при любом `vhttp`, с формой CONNECT-IP URI; проверка `uri` стоит раньше `vhttp` | C |
 
 Полная таблица параметров — `CONFIG.md` в задаче 021; таблица соответствия

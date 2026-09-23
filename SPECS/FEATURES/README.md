@@ -13,16 +13,16 @@
 
 | Фича | Что даёт | Build-tag | Задачи |
 |------|----------|-----------|--------|
-| [002-XHTTP](002-XHTTP/FEATURE.md) | XHTTP-транспорт против Xray: `packet-up` / `stream-one` / `auto`, obfs, переиспользование соединений `xmux` | `with_xhttp` | 002 · 011 · 042 · 043 · 059 · 061 |
+| [002-XHTTP](002-XHTTP/FEATURE.md) | XHTTP-транспорт против Xray: `packet-up` / `stream-one` / `auto`, obfs, переиспользование соединений `xmux` | `with_xhttp` | 002 · 011 · 042 · 043 · 059 · 061 · 076 · 077 · 082 |
 | [003-AWG](003-AWG/FEATURE.md) | AmneziaWG 2.0 / 3.x: обфусцированный WG-endpoint, полный клиентский паритет с amneziawg-go v3.1 (AWG2 16/16 + 9 ключей AWG3) + masquerade `id`/`ip`/`ib` | `with_awg` | 003 · 005 · 008 · 009 · 025 · 026 · 031 · 007 · 080 |
 | [006-OBSERVABILITY](006-OBSERVABILITY/FEATURE.md) | Расширения libbox gRPC для UI: RPC, `detourList`, DNS-стрим, HTTP-пробник узла | `with_lx_command` | 014 · 015 · 016 · 017 · 018 · 035 · 037 · 038 · 058 |
 | [007-URLTEST_BALANCE](007-URLTEST_BALANCE/FEATURE.md) | `round_robin` в `urltest`: пул, ленивый health-check, sticky-слоты; реакция `least_test` на отказы боевых дайлов | `with_lx_command` (только `GetPool`) | 019 · 054 |
 | [008-ENERGY](008-ENERGY/FEATURE.md) | Idle-suspend простаивающих WG/AWG: батарея, нагрев, RSS −31 % | `with_lx_idle_suspend` | 020 |
-| [009-MASQUE_WARP](009-MASQUE_WARP/FEATURE.md) | MASQUE CONNECT-IP outbound (RFC 9484), профиль Cloudflare WARP; конфиг по стандарту sing-box (`vhttp` + блок `tls`) | — | 021 · 062 |
+| [009-MASQUE_WARP](009-MASQUE_WARP/FEATURE.md) | MASQUE CONNECT-IP outbound (RFC 9484), профиль Cloudflare WARP; конфиг по стандарту sing-box (`vhttp` + блок `tls`) | — | 021 · 062 · 074 · 091 |
 | [012-VLESS_ENCRYPTION](012-VLESS_ENCRYPTION/FEATURE.md) | ✅ PQ-слой `mlkem768x25519plus` внутри VLESS — отгружено (`v1.14.0-lx.18`), девайс-верифицировано | — | 032 |
 | [013-DNS_GROUP](013-DNS_GROUP/FEATURE.md) | Группа DNS-серверов: `stable` / `fastest` / `parallel` на TTL-модели, трасса и состояние в наблюдаемости | — | 033 · 035 |
 | [014-LXD_DAEMON](014-LXD_DAEMON/FEATURE.md) | Headless-демон `sing-box lxd`: ядро in-process за reload-surviving каналом (gRPC + admin-REST на одном порту), apply с автооткатом на last-good, mTLS с регистрацией клиентов, системная служба, хранилище файловых ресурсов, диагностика демона и телеметрия хоста, справочник «IP → устройство» | `with_lxd` | 055 · 056 · 057 · 063 · 065 · 066 · 067 · 068 |
-| [015-CHAIN](015-CHAIN/FEATURE.md) | ✅ Outbound `chain`: виртуальная цепочка хопов из групп и узлов — группы не копируются, звенья рантайм-экземпляры, прозрачный `direct`, авто-MTU, `strip`/`rewrite` | `with_lx_chain` | 073 |
+| [015-CHAIN](015-CHAIN/FEATURE.md) | ✅ Outbound `chain`: виртуальная цепочка хопов из групп и узлов — группы не копируются, звенья рантайм-экземпляры, прозрачный `direct`, авто-MTU, `strip`/`rewrite` | `with_lx_chain` | 073 · 075 |
 | [016-SNIFF](016-SNIFF/FEATURE.md) | Снифферы для чужих туннелей и звонков: `wireguard`, `openvpn`, `ike`, `tailscale`, `sip` — по форме первого пакета, апстримные файлы не правим | — | 078 · 079 |
 | [017-REALITY](017-REALITY/FEATURE.md) | ✅ Клиент REALITY против актуального Xray: версия клиента, гибридный key share `X25519MLKEM768` на `chrome`/`firefox`/`safari` (форк-сабмодуль utls), по-узловой `tls.reality.key_share` `classical`/`hybrid`, фрагментация ClientHello в REALITY — отгружено (`lx.36` … `v1.14.1-lx.4`), стенд-верифицировано | — (внутри `with_utls`) | 053 · 083 · 086 · 087 · 088 · 089 |
 
@@ -31,7 +31,7 @@
 | Фича | Что даёт | Задачи |
 |------|----------|--------|
 | [001-BUILD_CI_CD](001-BUILD_CI_CD/FEATURE.md) | Сборка, теги, musl-таргеты, пайплайны, релиз, зеркало тулчейна, пин Go в `go.version` | 001 · 004 · 006 · 023 · 049 · 067 |
-| [004-HOTFIXES](004-HOTFIXES/FEATURE.md) | Что мы чиним за апстримом; у каждого патча — условие снятия | 010 · 012 · 028 · 029 · 030 · 039 · 040 · 041 · 045 · 046 · 047 · 048 · 050 · 052 · 053 · 060 · 064 |
+| [004-HOTFIXES](004-HOTFIXES/FEATURE.md) | Что мы чиним за апстримом; у каждого патча — условие снятия | 010 · 012 · 028 · 029 · 030 · 039 · 040 · 041 · 045 · 046 · 047 · 048 · 050 · 052 · 053 · 060 · 064 · 069 · 072 · 083 · 084 · 085 · 086 · 087 · 088 · 089 · 090 · 091 · 092 · 093 |
 | [005-UPSTREAM_SYNC](005-UPSTREAM_SYNC/FEATURE.md) | Watchlist дельты: **DROP / REWORK / HOLD / CONSTRAINT**, ритуал мержа | 013 · 010 · 051 |
 | [010-AUDITS](010-AUDITS/FEATURE.md) | Сплошная проверка своей дельты с адверсариальной верификацией находок | 022 |
 | [011-RESEARCH](011-RESEARCH/FEATURE.md) | Исследования и проработка решений; отрицательный результат тоже результат | 012 · 024 · 027 |

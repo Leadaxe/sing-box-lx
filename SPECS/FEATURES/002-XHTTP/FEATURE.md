@@ -4,7 +4,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | `with_xhttp` |
-| Состояние | ✅ live-validated против Xray; `stream-one`/`auto`+REALITY девайс-верифицированы (`v1.14.0-lx.17`). ⚠️ `packet-up`/`stream-up` за обратным прокси залипали на дайле — устранено задачей [061](../../TASKS/061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md), девайс-верификация открыта |
+| Состояние | ✅ live-validated против Xray; `stream-one`/`auto`+REALITY девайс-верифицированы (`v1.14.0-lx.17`). ⚠️ `packet-up`/`stream-up` за обратным прокси залипали на дайле — устранено задачей [061](../../TASKS/061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md), закрыта решением владельца 2026-09-24 (более недели в поле без жалоб) |
 
 ## Назначение
 
@@ -188,10 +188,12 @@
 | [011 — XHTTP_STREAM_ONE_DOWNLINK](../../TASKS/011-XHTTP_STREAM_ONE_DOWNLINK/SPEC.md) | Маршрутизация `stream-one` и выбор режима при REALITY | C |
 | [042 — XHTTP_STREAM_GRPC_CONTENT_TYPE](../../TASKS/042-XHTTP_STREAM_GRPC_CONTENT_TYPE/SPEC.md) | Тип контента на потоковых запросах | C |
 | [043 — XHTTP_STREAM_ONE_PATH_PREFIX](../../TASKS/043-XHTTP_STREAM_ONE_PATH_PREFIX/SPEC.md) | Завершающий слэш пути в `stream-one` | C |
-| [050 — URLTEST_ZOMBIE_RUN_SURVIVES_RESTART](../../TASKS/050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md) | Дедлайны потоковых conn'ов и отмена диала по ctx (ведётся в [HOTFIXES](../004-HOTFIXES/FEATURE.md)) | N |
-| [059 — XHTTP_XMUX](../../TASKS/059-XHTTP_XMUX/SPEC.md) | Переиспользование HTTP-соединений (`xmux`): пул, ротация, совместимость с Xray | I |
-| [061 — XHTTP_DIAL_DOWNLOAD_DEADLOCK](../../TASKS/061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md) | Дайл не ждёт download-ответ: дедлок `packet-up`/`stream-up` за обратным прокси | I |
-| [077 — XHTTP_DIAL_CTX_CONTRACT](../../TASKS/077-XHTTP_DIAL_CTX_CONTRACT/SPEC.md) | Dial `stream-one`/`stream-up` возвращает conn только с принятым телом запроса; после возврата dial-контекст на conn не влияет (DNS-пул через XHTTP-detour; сторож 050 снят) | I |
+| [050 — URLTEST_ZOMBIE_RUN_SURVIVES_RESTART](../../TASKS/050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md) | Дедлайны потоковых conn'ов и отмена диала по ctx (ведётся в [HOTFIXES](../004-HOTFIXES/FEATURE.md)) | D |
+| [059 — XHTTP_XMUX](../../TASKS/059-XHTTP_XMUX/SPEC.md) | Переиспользование HTTP-соединений (`xmux`): пул, ротация, совместимость с Xray | D |
+| [061 — XHTTP_DIAL_DOWNLOAD_DEADLOCK](../../TASKS/061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md) | Дайл не ждёт download-ответ: дедлок `packet-up`/`stream-up` за обратным прокси | D |
+| [077 — XHTTP_DIAL_CTX_CONTRACT](../../TASKS/077-XHTTP_DIAL_CTX_CONTRACT/SPEC.md) | Dial `stream-one`/`stream-up` возвращает conn только с принятым телом запроса; после возврата dial-контекст на conn не влияет (DNS-пул через XHTTP-detour; сторож 050 снят) | D |
+| [076 — XHTTP_XMUX_BREAKER](../../TASKS/076-XHTTP_XMUX_BREAKER/SPEC.md) | Предохранитель пула `xmux` на шторм переподключений (issue #14): breaker на соединение (3 отказа подряд → вытеснение) + backoff открытия нового транспорта до 3 с | D |
+| [082 — H2_STREAM_ERROR_TYPE_LEAK](../../TASKS/082-H2_STREAM_ERROR_TYPE_LEAK/SPEC.md) | Утечка типа `http2.StreamError` из conn'ов XHTTP / v2rayhttp / gRPC-lite — корень CPU-шторма issue #14 (спин `readLoop` x/net у потребителя conn'а); ошибка скрывается `common/badh2.HideStreamError` | D |
 
 Соответствие параметров Xray — `PARAM_MAP.md` в задаче 002;
 разбор ссылок — там же `URL_PARSING.md`.

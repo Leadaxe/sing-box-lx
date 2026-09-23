@@ -4,7 +4,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | — (снифферы встроены в ядро, файлы `common/sniff/*_lx.go`; маркеры `lx:begin sniff-lx` в трёх апстримных файлах) |
-| Состояние | I — `wireguard` в дереве ([078](../../TASKS/078-WIREGUARD_PACKET_SNIFFER/SPEC.md)); I — `openvpn`/`ike`/`tailscale`/`sip` ([079](../../TASKS/079-VPN_VOIP_PACKET_SNIFFERS/SPEC.md)) |
+| Состояние | D — `wireguard` ([078](../../TASKS/078-WIREGUARD_PACKET_SNIFFER/SPEC.md)); D — `openvpn`/`ike`/`tailscale`/`sip` ([079](../../TASKS/079-VPN_VOIP_PACKET_SNIFFERS/SPEC.md)); полевой прогон на роутере закрыта решением владельца 2026-09-24 (более недели в поле без жалоб) |
 
 ## Зачем
 
@@ -50,8 +50,8 @@ endpoint'ы ядро не сниффит никогда — их сокеты у
 
 | # | Задача | Статус |
 |---|--------|--------|
-| [078](../../TASKS/078-WIREGUARD_PACKET_SNIFFER/SPEC.md) | Сниффер `wireguard` перед uTP; имя в `sniffer`/`protocol` | I |
-| [079](../../TASKS/079-VPN_VOIP_PACKET_SNIFFERS/SPEC.md) | `openvpn` (UDP+TCP), `ike` (IKEv2/IKEv1, 500/4500), `tailscale` (disco), `sip` (UDP+TCP, Domain из Request-URI); общая дока `docs-lx/lx-sniff.md` | I |
+| [078](../../TASKS/078-WIREGUARD_PACKET_SNIFFER/SPEC.md) | Сниффер `wireguard` перед uTP; имя в `sniffer`/`protocol` | D |
+| [079](../../TASKS/079-VPN_VOIP_PACKET_SNIFFERS/SPEC.md) | `openvpn` (UDP+TCP), `ike` (IKEv2/IKEv1, 500/4500), `tailscale` (disco), `sip` (UDP+TCP, Domain из Request-URI); общая дока `docs-lx/lx-sniff.md` | D |
 
 ## Что распознаём
 

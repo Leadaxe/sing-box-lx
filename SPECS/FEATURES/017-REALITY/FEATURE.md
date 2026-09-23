@@ -4,7 +4,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | — (правки внутри `with_utls`, который REALITY требует и в апстриме); четвёртый форк-сабмодуль `submodules/utls` = [Leadaxe/utls-lx](https://github.com/Leadaxe/utls-lx) |
-| Состояние | ✅ **Отгружено, стенд-верифицировано**: гибридный key share на `chrome` (`v1.14.0-lx.36`), `firefox` (`v1.14.1-lx.2`, полевое подтверждение), `safari` (`v1.14.1-lx.3`); `key_share` и фрагментация в REALITY (`v1.14.1-lx.4`, стенд + стражи, полевой прогон впереди). Стенд: Xray v26.9.9 (после отсечки), v26.7.28 и v26.7.11 (до) |
+| Состояние | ✅ **Отгружено, стенд-верифицировано**: гибридный key share на `chrome` (`v1.14.0-lx.36`), `firefox` (`v1.14.1-lx.2`, полевое подтверждение), `safari` (`v1.14.1-lx.3`); `key_share` и фрагментация в REALITY (`v1.14.1-lx.4`, стенд + стражи, полевой прогон репортёра LxBox #142 2026-09-18). Стенд: Xray v26.9.9 (после отсечки), v26.7.28 и v26.7.11 (до) |
 
 ## Назначение
 
@@ -92,8 +92,8 @@ REALITY — TLS-слой, в котором клиент выглядит как
 
 | Задача | Роль | Статус |
 |--------|------|--------|
-| [053 — REALITY_MIN_CLIENT_VER](../../TASKS/053-REALITY_MIN_CLIENT_VER/SPEC.md) | Версия клиента в session id = минимум, который требует Xray v26.7.11+ (`26.3.27`); первая тихая отсечка REALITY | V |
-| [083 — REALITY_MLKEM_KEYSHARE](../../TASKS/083-REALITY_MLKEM_KEYSHARE/SPEC.md) | Апстримный фильтр `X25519MLKEM768` снят; `AuthKey` по ключу, который выбирает сервер; `chrome` проходит Xray ≥ v26.9.8 | V |
+| [053 — REALITY_MIN_CLIENT_VER](../../TASKS/053-REALITY_MIN_CLIENT_VER/SPEC.md) | Версия клиента в session id = минимум, который требует Xray v26.7.11+ (`26.3.27`); первая тихая отсечка REALITY | D |
+| [083 — REALITY_MLKEM_KEYSHARE](../../TASKS/083-REALITY_MLKEM_KEYSHARE/SPEC.md) | Апстримный фильтр `X25519MLKEM768` снят; `AuthKey` по ключу, который выбирает сервер; `chrome` проходит Xray ≥ v26.9.8 | D |
 | [086 — UTLS_FORK_FIREFOX148](../../TASKS/086-UTLS_FORK_FIREFOX148/SPEC.md) | Форк-сабмодуль utls: пресет Firefox 148 + reuse одного X25519-ключа в обеих записях; `firefox` проходит | C |
 | [087 — UTLS_SAFARI_26_3](../../TASKS/087-UTLS_SAFARI_26_3/SPEC.md) | Пресет Safari 26.3 в том же форке; `safari` проходит; решение по `edge`/`ios`/`android`/`360`/`qq` | C |
 | [088 — REALITY_FRAGMENT_BYPASS](../../TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md) | `fragment` / `record_fragment` (и дефолт 060) доходят до REALITY-рукопожатия | D |

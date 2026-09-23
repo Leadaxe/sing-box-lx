@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bugfix) — клиентский транспорт (CONSTITUTION §3.6) |
-| Статус | I (implemented) — код + тесты + сборка; ждёт полевой проверки репортёром issue #14 |
+| Статус | D (done, device-verified) — код + тесты + сборка; полевая проверка репортёром issue #14 — закрыта решением владельца 2026-09-24: релизы более недели в поле без жалоб |
 | Ветка | `lx` |
 | Связанные | [[SPECS/TASKS/059-XHTTP_XMUX]] (пул соединений — точка врезки) · [[SPECS/TASKS/072-WG_DETOUR_LIFECYCLE_FREEZE]] (жизненный цикл conn, `fail()`) · issue [Leadaxe/sing-box-lx#14](https://github.com/Leadaxe/sing-box-lx/issues/14) |
 
