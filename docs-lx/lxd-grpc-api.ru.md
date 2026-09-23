@@ -56,7 +56,7 @@ lx-расширения (`SubscribeDNSQueries`, `GetRules`, `GetGroups`, `GetOut
 `GetPool`, `GetDNSGroups`, `GetRunningConfig`, `URLTestOutbound`,
 `GetURLViaOutbound`, `GetChains`) реализованы **один раз в ядре** и доступны через любой из
 носителей — семантика полей ниже идентична для обоих. То есть таблица полей здесь
-описывает Android-AAR ровно так же, как удалённую lxd-машину; различаются лишь
+описывает Android-AAR так же, как удалённую lxd-машину; различаются лишь
 обрамление на проводе и синтаксис вызова метода. Где правило транспорт-специфично —
 это отмечено (например, gRPC-код `Unimplemented` не имеет эквивалента в libbox — там
 отсутствие тега проявляется обычной ошибкой).
@@ -214,7 +214,7 @@ ConnectionEvent  { ConnectionEventType type; string id; Connection connection;
 detour пусто. Профайлеру, показывающему «весь путь», нужны оба, склеенные.
 
 **`domain` против `destination`.** Клиенту, которому нужно «что это за хост»,
-следует брать `domain`, а при пустом — хостовую часть `destination`. Ровно так
+следует брать `domain`, а при пустом — хостовую часть `destination`. Так
 делает лаунчер в `ProtoConnToClash`
 (`singbox-launcher/internal/traffic/grpc_tracker.go`).
 
@@ -452,7 +452,7 @@ proto-дополнения: апстримные клиенты их игнор�
    каждом переподключении. Лаунчер отслеживает это флагом `live` в `ConnTracker`.
 4. Интервалы слать как `int64(time.Second)`, а не `1000`.
 
-Рабочий клиент ровно такой формы живёт в лаунчере:
+Рабочий клиент такой формы живёт в лаунчере:
 `internal/traffic/grpc_tracker.go` (таблица),
 `core/services/lxd_remote_transport.go` (удалённый стрим и разбор DNS).
 

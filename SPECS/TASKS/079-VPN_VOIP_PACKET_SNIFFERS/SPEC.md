@@ -8,7 +8,7 @@
 | Статус | D (done) — решение владельца 2026-09-05 («OpenVPN, IKEv2/IPsec, Tailscale, SIP — делаем; остальное нет»); код, юниты, `lx-build`, `check`, прогон всех четырёх через бинарь; на роутере не гонялось; в поле с `v1.14.0-lx.33` без жалоб, закрыта владельцем 2026-09-24 |
 | Ветка | `lx` |
 | Base | `3f1e8d710` (v1.14.0-lx.31) + незакоммиченный 078 |
-| Связанные | [078](../078-WIREGUARD_PACKET_SNIFFER/SPEC.md) (образец и порядок), [009](../009-WIRESOCK_MASQUERADE_PROFILES/SPEC.md) (decoy `ip=sip` получит честное имя) |
+| Связанные | [078](../078-WIREGUARD_PACKET_SNIFFER/SPEC.md) (образец и порядок), [009](../009-WIRESOCK_MASQUERADE_PROFILES/SPEC.md) (decoy `ip=sip` получит собственное имя) |
 
 **Touches:** `constant/protocol.go`, `route/route.go` (дефолтные packet- и
 stream-списки), `route/rule/rule_action.go` (имена) — под теми же маркерами

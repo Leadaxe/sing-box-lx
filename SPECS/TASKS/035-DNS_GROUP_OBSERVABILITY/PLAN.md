@@ -27,7 +27,7 @@
 ⚠️ После `lx-proto`: `git checkout -- .` внутри `submodules/wireguard-go`
 (gofumpt пачкает сабмодуль) и откат не-нашего шума регенерации.
 
-## Ключевые решения
+## Решения
 
 - Исход пробы: `DeadlineExceeded` → `timeout`; SERVFAIL (ответом или
   `RcodeError`) → `servfail`; прочие err → `network_error`; успех

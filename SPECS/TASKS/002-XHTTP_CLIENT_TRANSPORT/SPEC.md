@@ -53,7 +53,7 @@ VLESS/VMess/Trojan outbound с `transport.type=xhttp` поднимает раб�
 - **+2 клиентских tuning-поля** вне списка, которые клиент реально читает в packet-up:
   `scMaxEachPostBytes`, `scMinPostsIntervalMs` — добавляем для полноты.
 
-**Ключевой факт совместимости:** текущий v1-код = дефолтный Xray (obfs off → x_padding в Referer;
+**Совместимость:** текущий v1-код = дефолтный Xray (obfs off → x_padding в Referer;
 session/seq в path; payload в body; метод POST). Расширение — это **добавление альтернативных режимов**,
 а не переписывание. Все новые поля имеют дефолты, сохраняющие текущее поведение.
 

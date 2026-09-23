@@ -166,7 +166,7 @@ compare the pin against. The upstream version is not recorded in the tree (`cons
 are incomplete: `origin` carries only old pure-upstream ones (≤ `v1.13.11`), while `v1.13.13` and
 `v1.14.0-beta.*` exist solely in local clones where someone ran `git fetch upstream --tags`. A
 tag-based gate was tried (commit `5c621c089`, reverted in `d7fa017a8`): green locally, red in CI,
-where it honestly reported `1.13.11` — exactly what a user with a clean clone sees. So after a
+where it reported `1.13.11` — exactly what a user with a clean clone sees. So after a
 re-graft, verify this by eye.
 
 ### 1.3 The second class of drift: API absent from the fork's base
@@ -196,7 +196,7 @@ an order of magnitude). A gate on testing is permanently red and blocks releases
 
 ```bash
 git fetch upstream --tags
-# THE honest check: if merge-base == tip of upstream/stable, there is no drift
+# The reliable check: if merge-base == tip of upstream/stable, there is no drift
 git merge-base lx upstream/stable
 git rev-parse upstream/stable
 # what exactly arrived (empty = nothing):

@@ -149,7 +149,7 @@ Clash DNS-правила не отдавал — эталона нет, мы п�
 rpc GetGroups(google.protobuf.Empty) returns (Groups) {}
 // lx:end lx_command
 ```
-Handler (`started_service_command_lx.go`): под `serviceAccess.RLock` проверить `serviceStatus == STARTED` (как `GetRules`; для unary честнее вернуть ошибку сразу, чем `waitForStarted` ждать перехода фазы — клиент узнаёт причину немедленно), затем вызвать `s.readGroups()` и вернуть. Тело — калька подготовки из `SubscribeGroups`, но один `readGroups()` + `return` вместо цикла с `Send`. Ошибка при не-`STARTED` — `status.Error(codes.FailedPrecondition, ...)` (unary read-конвенция, как `GetRules`; НЕ Вариант-B).
+Handler (`started_service_command_lx.go`): под `serviceAccess.RLock` проверить `serviceStatus == STARTED` (как `GetRules`; для unary правильнее вернуть ошибку сразу, чем `waitForStarted` ждать перехода фазы — клиент узнаёт причину немедленно), затем вызвать `s.readGroups()` и вернуть. Тело — калька подготовки из `SubscribeGroups`, но один `readGroups()` + `return` вместо цикла с `Send`. Ошибка при не-`STARTED` — `status.Error(codes.FailedPrecondition, ...)` (unary read-конвенция, как `GetRules`; НЕ Вариант-B).
 
 Клиент: `func (c *CommandClient) GetGroups() (OutboundGroupIterator, error)` — переиспользует тот же итератор и `outboundGroupIteratorFromGRPC`-конвертер, что `SubscribeGroups`.
 

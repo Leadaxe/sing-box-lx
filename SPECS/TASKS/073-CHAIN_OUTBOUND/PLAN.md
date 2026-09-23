@@ -36,7 +36,7 @@
 
 Отдельные атомарные коммиты на каждую зону (IMPLEMENTATION_PROMPT).
 
-## 3. Ключевые решения реализации
+## 3. Решения реализации
 
 - **Звено создаётся без контекстных трюков**: `detour` — штатное поле опций
   (`option.DialerOptionsWrapper.TakeDialerOptions/ReplaceDialerOptions`),

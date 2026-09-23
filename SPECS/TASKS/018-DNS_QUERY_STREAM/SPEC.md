@@ -91,7 +91,7 @@ LxBox (BoxCommandClient.kt):
   ProfilerHandler.writeDNSQuery(query): маппинг → dnsQueriesEmitter (как writeConnectionEvents)
 ```
 
-**Ключевое отличие от connections — ноль.** DNS-стрим устроен на всех уровнях так же:
+**Отличий от connections — ноль.** DNS-стрим устроен на всех уровнях так же:
 константа в общем iota, `case` в общем switch, метод в общем handler-интерфейсе, поле опций
 как `StatusInterval`. Реконнект бесплатный (общий `c.ctx` + `dispatchCommands`); отдельного
 `OnError`-пути нет — обрыв идёт через `Disconnected()`.

@@ -176,7 +176,7 @@ stack at all, which WireGuard handles routinely.
   upstream.** With the predicate in place the asymmetry is harmless to us,
   and we keep zero patches in that submodule.
 - **v6 dial errors on direct-out are not touched.** `dial tcp [2a00:…]:
-  An invalid argument` is an honest "no v6 through this interface" signal
+  An invalid argument` is a genuine "no v6 through this interface" signal
   on this machine; masking it belongs to DNS strategy (`ipv4_only`), not
   to the dialer.
 - **No retry-on-failed-`BindUpdate` hardening** (both `InterfaceUpdated`
@@ -216,7 +216,7 @@ stack at all, which WireGuard handles routinely.
   changes. Until shipped, the client-side workaround is: re-enable the
   IPv6 protocol checkbox on the default adapter (puts it back into the v6
   stack, making `IPV6_UNICAST_IF` valid); with no external v6 on that
-  network, `"strategy": "ipv4_only"` in DNS is the honest configuration
+  network, `"strategy": "ipv4_only"` in DNS is the correct configuration
   either way, and the `fdfe::` TUN address should be reverted.
 
 ## Removal condition (P1)

@@ -81,7 +81,7 @@ module cache — пусто. Ни один конфиг в `common/tls/` не р
 | `UTLSClientConfig` | `unsupported usage for uTLS` (`utls_client.go:82`) | **падает на dial** |
 | `RealityClientConfig` | `unsupported usage for reality` (`reality_client.go:127`) | падает на dial |
 
-То есть **plain-TLS поверх QUIC работает, а uTLS — нет.** `STDConfig()` честно
+То есть **plain-TLS поверх QUIC работает, а uTLS — нет.** `STDConfig()` прямо
 возвращает ошибку, а не заглушку: весь смысл uTLS — подменить ClientHello своим
 (browser-parrot) вместо стандартного, а `http3.Transport` / `quic.DialEarly`
 требуют именно `*crypto/tls.Config`, который такую подмену выразить не может.
@@ -205,7 +205,7 @@ transport-params и Initial-пакетный слой.
    RFC 9001 §8.2 `quic_transport_parameters` на preset-пути (= на любом браузерном
    fingerprint) — авторы отключили его как «not ready yet» (§3).
 
-**Настоящий фикс** (uTLS-over-QUIC «по-честному») = форк ДВУХ чужих модулей
+**Настоящий фикс** (полноценный uTLS-over-QUIC) = форк ДВУХ чужих модулей
 (`quic-go` + `utls`, либо переход на `refraction-networking/uquic`) + работа с
 Initial-пакетным слоем. Материально больше, чем «подменить один конструктор»,
 меняет dependency-story, и его не осилил даже Xray. **Отложено** — не в скоупе
