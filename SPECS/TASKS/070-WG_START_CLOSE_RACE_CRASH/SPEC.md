@@ -1,5 +1,7 @@
 # SPEC: 070 — WG_START_CLOSE_RACE_CRASH → поглощена задачей 072
 
+**Фича:** [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md)
+
 Эта задача слита в [072-WG_DETOUR_LIFECYCLE_FREEZE](../072-WG_DETOUR_LIFECYCLE_FREEZE/SPEC.md) —
 единого владельца семьи полевых отказов жизненного цикла WG-эндпоинта
 (решение владельца 2026-08-18, см. [HISTORY](../072-WG_DETOUR_LIFECYCLE_FREEZE/HISTORY.md)).

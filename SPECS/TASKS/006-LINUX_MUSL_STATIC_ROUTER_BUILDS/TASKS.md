@@ -22,4 +22,4 @@
 - [x] IMPLEMENTATION_REPORT.md, DoD
 - [x] `SPECS/README.md` roadmap-строка → C
 - [x] Ответ в issue #1 (Dr4tez): armv7+arm64 musl-static с naive, имена ассетов; Win7-naive невозможен
-- [ ] Боевой релиз `v1.13.13-lx.7` (ждёт ОК пользователя)
+- [x] Боевой релиз `v1.13.13-lx.7` (ждёт ОК пользователя) — выпущен

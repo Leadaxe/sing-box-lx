@@ -8,7 +8,7 @@ This task is the **single owner of the WG-endpoint lifecycle field-fault family*
 | Field | Value |
 |------|----------|
 | Type | B (bug family) — daemon lifecycle races and unbounded waits around the WG endpoint and its detour transport; three field dumps, one mechanism per dump, each closing part of the family |
-| Status | D (done, device-verified) — all four mechanisms in tree; new cuts unit red/green; `-race` suites green; field validation on the reporting client — closed by owner decision 2026-09-24: releases have run in the field for over a week with no reports |
+| Status | D (done) — all four mechanisms in tree; new cuts unit red/green; `-race` suites green; not run on the reporting client, in the field since `v1.14.0-lx.27-rc.4` with no reports, closed by the owner on 2026-09-24 |
 | Branch | `lx` |
 | Base | superproject `e50030345` (SPEC 070 + 071 shipped in `v1.14.0-lx.27-rc.2`; cuts 3–4 on top) |
 | Related | [050](../050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md) (conn deadlines; its dial-context guard, which cuts 3–4 were built on, was retired by [077](../077-XHTTP_DIAL_CTX_CONTRACT/SPEC.md) — the dial now parks until the raise), [061](../061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md) (async download await this task keeps intact), [059](../059-XHTTP_XMUX/SPEC.md) (pooled connections; `fail` releases the slot), [046](../046-DNS_HIJACK_PACKET_LOOP_STALL/SPEC.md) (same "dead detour freezes unrelated machinery" class), [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md)/[041](../041-WG_HANDSHAKE_GIVEUP_REBIND/SPEC.md) (suspend/rebind visits multiply exposure), [030](../030-FAST_BOX_SHUTDOWN/SPEC.md)/[047](../047-EARLY_RPC_NIL_ROUTER_CRASH/SPEC.md) (adjacent lifecycle windows) |

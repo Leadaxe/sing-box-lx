@@ -17,8 +17,8 @@ unaligned arguments`. Это не паника — это `throw`, туннел�
 в `v1.14.0-lx.16-rc.3` и в stable `v1.14.0-lx.16`.
 
 Фикс: метод возвращает объект `*RunningConfig` с геттером `Content()` вместо строки.
-Отгружен в `v1.14.0-lx.17-rc.1` — rc, а не stable, потому что меняет libbox API
-и ждёт полевой проверки со стороны клиента до промоута.
+Отгружен в `v1.14.0-lx.17-rc.1`, затем в stable-линии; libbox API изменён, клиенты
+(LxBox, лаунчер) на нём живут.
 
 ## 1. Механизм
 
@@ -135,8 +135,8 @@ _cgoexp_..._CommandClient_GetRunningConfig(0x7ac83f7db4)
 - [x] Тест доказанно краснеет на старой сигнатуре (проверено откатом).
 - [x] `go build ./...`, `go build -tags with_lx_command ./...`, `gofmt -l`, тесты
       `experimental/libbox` и `daemon` — зелёные.
-- [ ] Device-verify на android/arm64 после выпуска AAR (обязателен для observability-фич,
-      см. runbook §4).
+- [x] Device-verify на android/arm64 после выпуска AAR (обязателен для observability-фич,
+      см. runbook §4) — отдельно не проводился: LxBox живёт на этом API с `v1.14.0-lx.17`; снят владельцем 2026-09-24
 
 ## 6. Затронутые файлы
 

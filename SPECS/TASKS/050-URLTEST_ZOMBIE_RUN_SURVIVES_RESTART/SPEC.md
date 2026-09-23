@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — неотменяемая блокировка в связке XHTTP-транспорта, VLESS-encryption и urltest-прогона |
-| Статус | D (done, device-verified) — все уровни в дереве, включая отменяемость `encryption`-хендшейка (критерий 2, `guardHandshake`); стенд `lx-test/zombie` зелёный, red/green проверен откатом фикса, `-race` чистый; живой XHTTP-узел и device-верификация по `dumpStacks()` (критерии 3–5) — закрыта решением владельца 2026-09-24: релизы более недели в поле без жалоб |
+| Статус | D (done) — все уровни в дереве, включая отменяемость `encryption`-хендшейка (критерий 2, `guardHandshake`); стенд `lx-test/zombie` зелёный, red/green проверен откатом фикса, `-race` чистый; критерии 3–5 (живой XHTTP-узел, device-верификация по `dumpStacks()`) не гонялись; уровни в поле с `v1.14.0-lx.20-rc.4`, `guardHandshake` — с `v1.14.1-lx.2`, жалоб нет; закрыта владельцем 2026-09-24 |
 | Ветка | `lx` |
 | Base | `137890db7` (v1.14.0-lx.20-rc.3) |
 | Связанные | Полевой дамп LxBox 2026-08-04 (Android arm64, ядро `1.14.0-lx.17-rc.3`, подписка на 2806 узлов); код фичей [002 XHTTP](../../FEATURES/002-XHTTP/FEATURE.md), [007 URLTEST_BALANCE](../../FEATURES/007-URLTEST_BALANCE/FEATURE.md), [012 VLESS_ENCRYPTION](../../FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) |

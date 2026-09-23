@@ -25,8 +25,8 @@
       режимы fits (1420/1280) и fragments (1280/1280) — TCP+UDP+large-data.
 - [x] `test/go.mod`: replace на submodule wireguard-go (без него AWG в
       тест-модуле резолвится в upstream и падает на `jc`).
-- [ ] **Field-тест CPH2411** (SPEC §6): MASQUE-over-AWG и AWG-over-AWG на
-      реальном пути телефон→дом.
+- [x] **Field-тест CPH2411** (SPEC §6): MASQUE-over-AWG и AWG-over-AWG на
+      реальном пути телефон→дом — не проводился; в поле с `v1.14.0-lx.13` без жалоб, снят владельцем 2026-09-24
 
 ## Риски
 - Снятие DF маскирует кривой MTU (фрагментация вместо явного EMSGSIZE) —

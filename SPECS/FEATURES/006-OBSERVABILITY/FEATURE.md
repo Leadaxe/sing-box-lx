@@ -148,7 +148,7 @@ DNS-запросы — и управлять им. Штатный канал д�
 | [035 — DNS_GROUP_OBSERVABILITY](../../TASKS/035-DNS_GROUP_OBSERVABILITY/SPEC.md) | Трасса проб группы в потоке + `GetDNSGroups` (двойная роль с [DNS_GROUP](../013-DNS_GROUP/FEATURE.md)) | C |
 | [037 — RUNNING_CONFIG_RPC](../../TASKS/037-RUNNING_CONFIG_RPC/SPEC.md) | Снапшот работающего конфига как источник правды при рассинхроне профиль↔ядро | C |
 | [038 — GOMOBILE_STRING_RETURN_FRAME_KILL](../../TASKS/038-GOMOBILE_STRING_RETURN_FRAME_KILL/SPEC.md) | Форма возврата снапшота: голая строка через мост убивала ядро на Android | C |
-| [058 — GET_URL_VIA_OUTBOUND](../../TASKS/058-GET_URL_VIA_OUTBOUND/SPEC.md) | HTTP-пробник узла: GET через тег с возвратом тела ответа | C |
+| [058 — GET_URL_VIA_OUTBOUND](../../TASKS/058-GET_URL_VIA_OUTBOUND/SPEC.md) | HTTP-пробник узла: GET через тег с возвратом тела ответа | D |
 
 ## Особенности сопровождения
 

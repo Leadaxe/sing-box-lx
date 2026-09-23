@@ -1,9 +1,11 @@
 # SPEC: 044 — ANDROID_AAR_GO124_QUIC_DEAD
 
+**Фича:** [BUILD_CI_CD](../../FEATURES/001-BUILD_CI_CD/FEATURE.md)
+
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — среда сборки AAR, не код форка |
-| Статус | C (complete) — корень изолирован на железе, фикс девайс-верифицирован; ждёт среза релиза (lx.19-rc.2+) |
+| Статус | C (complete) — корень изолирован на железе, фикс девайс-верифицирован; выпущено в `v1.14.0-lx.19`+ |
 | Жалоба | 4pda, 2026-08-01: «hysteria2 не работает в LxBox v2.19.0», личный сервер жив в v2raytun/v2rayng на том же телефоне/провайдере |
 
 AAR, собранный тулчейном **Go 1.24.x** (как делал CI через `go-version-file: go.mod`), убивает **все quic-go-аутбаунды** (hysteria2, tuic, masque-h3) на части вендорских Android-ядер: каждый dial внутри VPN-процесса виснет до `context deadline exceeded`. Тот же исходник, собранный **Go 1.25.x**, на том же устройстве работает. Фикс — явный пин `go-version: '1.25.x'` во всех трёх AAR-джобах (`lx-release.yml` `build_android`, `lx-build.yml` `android-aar`, `lx-ci.yml` `android`).

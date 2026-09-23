@@ -12,4 +12,4 @@
       `badlinkname`/naive, go1.25-хост); `check -c lx-test/config/minimal.json`
 - [x] `gofmt -l` чистый по lx-файлам
 - [x] SPEC/PLAN/TASKS/REPORT + Roadmap + FEATURE.md (OBSERVABILITY)
-- [ ] Полевая проверка из LxBox после AAR-релиза
+- [x] Полевая проверка из LxBox — отдельно не проводилась: LxBox читает конфиг этим RPC с `v1.14.0-lx.17`; снята владельцем 2026-09-24

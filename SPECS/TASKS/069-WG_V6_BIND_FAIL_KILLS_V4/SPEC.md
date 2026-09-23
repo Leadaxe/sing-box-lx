@@ -6,7 +6,7 @@
 | Field | Value |
 |------|----------|
 | Type | B (bug) — upstream `wireguard-go` behaviour gap (`StdNetBind.Open`), triggered by an upstream `sing` asymmetry on Windows; kills all WG/AWG endpoints on affected machines |
-| Status | D (done, device-verified) — fix + unit tests green (darwin, `-race`), `GOOS=windows` cross-build and vet clean (vet warnings are pre-existing upstream RIO code); field validation on the reporting client's machine — closed by owner decision 2026-09-24: releases have run in the field for over a week with no reports |
+| Status | D (done) — fix + unit tests green (darwin, `-race`), `GOOS=windows` cross-build and vet clean (vet warnings are pre-existing upstream RIO code); not run on the reporting client's machine, in the field since `v1.14.0-lx.27-rc.1` with no reports, closed by the owner on 2026-09-24 |
 | Branch | `lx` |
 | Base | superproject `53a0a51d7`, submodule `wireguard-go` `334cad0` (`lx-awg2-v005`) |
 | Related | [041](../041-WG_HANDSHAKE_GIVEUP_REBIND/SPEC.md) (its give-up/early/nudge triggers multiply the exposure of this bug), [026](../026-AWG_MAGIC_VS_RESERVED_CLEAR/SPEC.md) (same file, both bind paths), [010](../010-WG_ENDPOINT_GRO_SPLIT_BRAIN/SPEC.md) (prior `conn/` hotfix, since removed) |

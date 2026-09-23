@@ -43,9 +43,9 @@
 - [x] Обновить статус в SPEC/FEATURE/Roadmap
 - [x] Дрейф апстрима проверен по merge-base (единственный subject
       `Fix oomkiller service stub build` уже поглощён — не берётся)
-- [ ] Push ветки → тег `v1.14.0-lx.25-rc.1` → проверить `gh run list`
+- [x] Push ветки → тег `v1.14.0-lx.25-rc.1` → проверить `gh run list` — тег выпущен
 
 ## Полевая проверка (после AAR)
 
-- [ ] `https://1.1.1.1/cdn-cgi/trace` через vless-outbound и через WG-endpoint
-- [ ] HTTPS на Android без кастомных корней в конфиге
+- [x] `https://1.1.1.1/cdn-cgi/trace` через vless-outbound и через WG-endpoint — не проверялось, снято владельцем 2026-09-24
+- [x] HTTPS на Android без кастомных корней в конфиге — не проверялось, снято владельцем 2026-09-24

@@ -11,4 +11,4 @@
 - [x] 9. `go test` (+`-race`), `go vet`, `lx-build`, `sing-box check`
 - [x] 10. Прогон через `direct`-inbound бинаря (все четыре, синтетические пакеты; реального сервера нет)
 - [x] 11. Доки: sniff.md/.zh.md; `docs-lx/lx-sniff.md` + `.ru.md`; ссылка из lx-config
-- [x] 12. Changelog (`v1.14.0-lx.33`); статус D в SPEC/фиче/roadmap (решение владельца 2026-09-24)
+- [x] 12. Changelog (`v1.14.0-lx.33`); статус D в SPEC/фиче/roadmap (владелец, 2026-09-24)

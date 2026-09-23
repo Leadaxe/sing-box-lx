@@ -4,7 +4,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | — (снифферы встроены в ядро, файлы `common/sniff/*_lx.go`; маркеры `lx:begin sniff-lx` в трёх апстримных файлах) |
-| Состояние | D — `wireguard` ([078](../../TASKS/078-WIREGUARD_PACKET_SNIFFER/SPEC.md)); D — `openvpn`/`ike`/`tailscale`/`sip` ([079](../../TASKS/079-VPN_VOIP_PACKET_SNIFFERS/SPEC.md)); полевой прогон на роутере закрыта решением владельца 2026-09-24 (более недели в поле без жалоб) |
+| Состояние | D — `wireguard` ([078](../../TASKS/078-WIREGUARD_PACKET_SNIFFER/SPEC.md)); D — `openvpn`/`ike`/`tailscale`/`sip` ([079](../../TASKS/079-VPN_VOIP_PACKET_SNIFFERS/SPEC.md)); на роутере не гонялось, в поле с `v1.14.0-lx.33` без жалоб — закрыто владельцем 2026-09-24 |
 
 ## Зачем
 

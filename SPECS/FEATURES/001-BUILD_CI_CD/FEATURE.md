@@ -108,7 +108,9 @@ Push через `gh auth token` во встроенном URL — обычный
 | [004 — BUILD_CI_RELEASE](../../TASKS/004-BUILD_CI_RELEASE/SPEC.md) | Теги, дешёвый CI, релизный пайплайн, поставка libcronet, авто-ребейз | C |
 | [006 — LINUX_MUSL_STATIC_ROUTER_BUILDS](../../TASKS/006-LINUX_MUSL_STATIC_ROUTER_BUILDS/SPEC.md) | Статические musl-сборки под роутеры (4 арки) | C |
 | [023 — MUSL_TOOLCHAIN_MIRROR](../../TASKS/023-MUSL_TOOLCHAIN_MIRROR/SPEC.md) | Durable-зеркало Chromium musl-тулчейна | C |
+| [044 — ANDROID_AAR_GO124_QUIC_DEAD](../../TASKS/044-ANDROID_AAR_GO124_QUIC_DEAD/SPEC.md) | AAR на go1.24 убивал quic-go-аутбаунды (hysteria2, tuic, masque-h3) на части Android-ядер — явный пин Go ≥ 1.25 в AAR-джобах, go1.24 для AAR запрещён | C |
 | [049 — GO_TOOLCHAIN_PIN_FILE](../../TASKS/049-GO_TOOLCHAIN_PIN_FILE/SPEC.md) | `go.version` — единый источник версии Go-тулчейна для CI и F-Droid | C |
+| [067 — LXD_BUILD_TAG_SPLIT](../../TASKS/067-LXD_BUILD_TAG_SPLIT/SPEC.md) | Разделение build-тегов: демон lxd за собственным `with_lxd`, командные RPC остаются за `with_lx_command` (основная фича — [LXD_DAEMON](../014-LXD_DAEMON/FEATURE.md)) | C |
 
 Полный runbook релиза — [docs-lx/lx-release-runbook.md](../../../docs-lx/lx-release-runbook.md).
 

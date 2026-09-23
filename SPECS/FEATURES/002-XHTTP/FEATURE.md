@@ -4,7 +4,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | `with_xhttp` |
-| Состояние | ✅ live-validated против Xray; `stream-one`/`auto`+REALITY девайс-верифицированы (`v1.14.0-lx.17`). ⚠️ `packet-up`/`stream-up` за обратным прокси залипали на дайле — устранено задачей [061](../../TASKS/061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md), закрыта решением владельца 2026-09-24 (более недели в поле без жалоб) |
+| Состояние | ✅ live-validated против Xray; `stream-one`/`auto`+REALITY девайс-верифицированы (`v1.14.0-lx.17`). ⚠️ `packet-up`/`stream-up` за обратным прокси залипали на дайле — устранено задачей [061](../../TASKS/061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md) — в поле с `v1.14.0-lx.30` без жалоб |
 
 ## Назначение
 

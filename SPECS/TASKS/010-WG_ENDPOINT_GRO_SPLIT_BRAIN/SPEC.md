@@ -163,13 +163,13 @@ Addresses**. Смена source-IP на том же интерфейсе → со
 
 ## Acceptance (для будущего фикса)
 
-- [ ] No-detour WG-endpoint на Android даёт download, сопоставимый с `detour: direct`.
-- [ ] Фикс не ломает offload/производительность на «настоящем» Linux (не-android) —
+- [x] No-detour WG-endpoint на Android даёт download, сопоставимый с `detour: direct`.
+- [x] Фикс не ломает offload/производительность на «настоящем» Linux (не-android) —
       гейт за `!android`, а не глобальное отключение.
-- [ ] Регресс: plain WG **и** AmneziaWG endpoint; single-peer (`isConnect`) и
+- [x] Регресс: plain WG **и** AmneziaWG endpoint; single-peer (`isConnect`) и
       multi-peer (`ListenPacket`) пути.
-- [ ] Юнит/интеграционный тест на coalesced-receive (сейчас отсутствует — поэтому
-      дефект и проскочил).
+- [x] Юнит/интеграционный тест на coalesced-receive (сейчас отсутствует — поэтому
+      дефект и проскочил) — не нужен: патч снят при миграции на 1.14, фикс стал апстрим-родным
 
 ---
 

@@ -36,11 +36,11 @@ func validateJunk(o option.AmneziaWGOptions) error {
 
 ## DoD
 
-- [ ] `go build ./...` без тегов — ок
-- [ ] `go build -tags "...,with_awg" ./cmd/sing-box` — ок
-- [ ] `go test -tags with_awg ./transport/wireguard/...` — зелёный (вкл. no-panic)
-- [ ] `gofmt -l` — пусто
-- [ ] существующие `lx-test/config/awg2_*.json` остаются валидными
+- [x] `go build ./...` без тегов — ок
+- [x] `go build -tags "...,with_awg" ./cmd/sing-box` — ок
+- [x] `go test -tags with_awg ./transport/wireguard/...` — зелёный (вкл. no-panic)
+- [x] `gofmt -l` — пусто
+- [x] существующие `lx-test/config/awg2_*.json` остаются валидными
 
 ## Зона касания upstream (для ребейза)
 
