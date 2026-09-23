@@ -28,6 +28,29 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.1-lx.9
+
+- 🧯 **XHTTP: наш же `Close()` больше не считается сбоем — ни для брейкера xmux, ни для лога**
+  ([SPEC 094](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/094-XHTTP_LOCAL_CLOSE_NOT_FAILURE/SPEC.md),
+  [LxBox#148](https://github.com/Leadaxe/LxBox/issues/148)). Симптом: XHTTP-узлы под urltest в
+  selector'е с `interrupt_exist_connections: true` циклически вытеснялись (`xmux: evicted connection
+  (cause=failing)`), а каждое нормально завершённое соединение писало
+  `connection download closed: http2: response body closed` на ERROR — при том, что WS на том же
+  сервере в логе чист. Два дефекта, оба в `transport/v2rayxhttp`: (1) `xmuxClient.roundTrip` отмечал
+  сбой на любую ошибку, включая `context.Canceled` от conn-scoped `cancel()` нашего `Close()`
+  (SPEC 077); три отмены подряд при смене выбора группы — и здоровое пуловое соединение уходило в
+  `failing` с backoff'ом на новое (SPEC 076). Теперь `errors.Is(err, context.Canceled)` нейтрален:
+  контекст отменяем только мы или вызывающий; `DeadlineExceeded`, `ECONNRESET`, `StreamError`,
+  не-200 — по-прежнему сбои. (2) Наш `Body.Close()` будил заблокированный `Read` sentinel'ом x/net,
+  которого `E.IsClosedOrCanceled` из sing не знает; под гейтом `localClosed` (SPEC 076) `Read` теперь
+  отдаёт `net.ErrClosed`, а если тело закрыл истёкший read-deadline — `os.ErrDeadlineExceeded`;
+  `io.EOF` не подменяется. Правка на границе conn по образцу SPEC 082, `route/conn.go` не тронут,
+  закрывает и `dl=h1`/`dl=h3`. Стражи `TestRoundTripLocalCancelIsNeutral`,
+  `TestReadAfterLocalCloseIsErrClosed` (red-check на обеих правках), пакет под `-race`, стенды
+  `lx-test`. `option/`, провод, дефолты — без изменений. Между lx.4 и lx.8 xhttp не менялся, так что
+  обновление до lx.8 жалобу не закрывало. ⚠️ Живой стенд с переключениями и подтверждение репортёра
+  впереди.
+
 #### v1.14.1-lx.8
 
 - 🔗 **gRPC `service_name` с ведущим `/` = custom path в конвенции Xray**
