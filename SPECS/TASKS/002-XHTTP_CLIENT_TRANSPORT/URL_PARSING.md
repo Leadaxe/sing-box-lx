@@ -118,7 +118,7 @@ JSON-ключи sing-box — **snake_case**. Источник в URL — camelCa
 |--------------|--------|------------|
 | `security=tls`     | `tls.enabled=true` | |
 | `security=reality` | `tls.enabled=true` + `tls.reality.enabled=true` | |
-| `security=none` / отсутствует | без `tls` (plaintext h2c) | редкие plain-XHTTP ноды |
+| `security=none` / отсутствует | без `tls` (HTTP/1.1 без TLS, до SPEC 104 — h2c) | редкие plain-XHTTP ноды |
 | `sni`              | `tls.server_name` | |
 | `fp`               | `tls.utls.fingerprint` (+ `tls.utls.enabled=true`) | `chrome`/`firefox`/… |
 | `alpn`             | `tls.alpn` (split по `,`) | напр. `h2,http/1.1` → `["h2","http/1.1"]`; задаёт версию HTTP (§6) |

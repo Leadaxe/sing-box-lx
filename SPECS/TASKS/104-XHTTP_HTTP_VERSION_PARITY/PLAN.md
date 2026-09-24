@@ -10,7 +10,7 @@
 
 | Файл | Что меняется |
 |------|--------------|
-| `SPECS/FEATURES/002-XHTTP/FEATURE.md` | Новый подраздел «Версия HTTP» в «Контролируемых параметрах»: таблица §5.1 SPEC (входы — `tls.alpn`, REALITY, наличие TLS; новых ключей нет). В «Режимах»: `auto` на HTTP/1.1 и HTTP/3 → `packet-up`. В «Сборке»: HTTP/3 требует `with_quic`, без него конфиг с `alpn: ["h3"]` отвергается. В «Правилах и гарантиях»: отпечаток uTLS на HTTP/3 не применяется (предупреждение), REALITY всегда HTTP/2, без TLS — h2c как раньше, HTTP/3 ходит по UDP через тот же detour. В «Границах»: `downloadSettings`, `quicParams`, ECH на HTTP/3. `h_keep_alive_period` в таблице `xmux`: действует на HTTP/2 и HTTP/3, дефолты по версиям |
+| `SPECS/FEATURES/002-XHTTP/FEATURE.md` | Новый подраздел «Версия HTTP» в «Контролируемых параметрах»: таблица §5.1 SPEC (входы — `tls.alpn`, REALITY, наличие TLS; новых ключей нет). В «Режимах»: `auto` на HTTP/1.1 и HTTP/3 → `packet-up`. В «Сборке»: HTTP/3 требует `with_quic`, без него конфиг с `alpn: ["h3"]` отвергается. В «Правилах и гарантиях»: отпечаток uTLS на HTTP/3 не применяется (предупреждение), REALITY всегда HTTP/2, без TLS — HTTP/1.1 (было h2c), HTTP/3 ходит по UDP через тот же detour. В «Границах»: `downloadSettings`, `quicParams`, ECH на HTTP/3. `h_keep_alive_period` в таблице `xmux`: действует на HTTP/2 и HTTP/3, дефолты по версиям |
 | `docs-lx/lx-protocols-transports.md`, `.ru.md` | §1: новый подраздел «HTTP version» с той же таблицей и предупреждениями; строка в «Troubleshooting» (узел с `alpn: ["h3"]` не поднимается → detour без UDP / UDP режется по пути); пример VLESS + XHTTP + TLS `alpn: ["h3"]`; `h_keep_alive_period` в §1.7 |
 | `SPECS/TASKS/002-XHTTP_CLIENT_TRANSPORT/URL_PARSING.md` | §6: пункт «HTTP/3» переписывается — `alpn=h3` маппится как есть и работает (сборка с `with_quic`); `alpn=http/1.1` даёт HTTP/1.1 |
 | `SPECS/TASKS/002-XHTTP_CLIENT_TRANSPORT/PARAM_MAP.md` | строка `alpn` (из `tlsSettings`/`extra`) → `tls.alpn`, с правилом выбора версии и ссылкой на SPEC 104 |
@@ -77,6 +77,6 @@ go test -tags with_xhttp,with_quic,with_utls -ldflags "-checklinkname=0" ./trans
 ## Риски
 
 - **`ChromeParrot` и проверка сертификата.** quic-go конвертирует std-конфиг в uTLS сам (`utlsConfigFromStd`) и отвергает непереносимые поля. Всё, что проверяет сертификат, должно быть в `VerifyPeerCertificate`/`RootCAs`/`InsecureSkipVerify`; `disable_sni` (`VerifyConnection`) идёт без `ChromeParrot`.
-- **Без TLS остаётся h2c** (SPEC §10 п. 4): провод существующих конфигов не меняется.
+- **Без TLS — HTTP/1.1 вместо h2c** (SPEC §10 п. 4): провод меняется, сервер Xray принимает обе формы; h2c-ветка в `client.go` удаляется.
 - **`http3.Transport` повторяет запрос** один раз при `errConnUnusable`/`H3_REQUEST_REJECTED` (`doRoundTripOpt`); тела-пайпы без `GetBody` повтор не проходят и возвращают ошибку — поведение как у h2 для потоковых тел.
 - **Лимит сокетов.** `max_concurrency: 1` (дефолт `xmux`) на HTTP/3 = отдельный UDP-сокет и QUIC-соединение на поток, как у Xray; на HTTP/1.1 — TCP-соединение на запрос, тоже как у Xray.

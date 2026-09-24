@@ -63,7 +63,7 @@
 
 | Параметр Xray | JSON (наш) | Клиент? | Правило |
 |---------------|------------|:-------:|---------|
-| `tlsSettings.alpn` (в ссылке — `alpn`) | `tls.alpn` | ✅ | один элемент `h3` → HTTP/3 (QUIC/UDP, нужен `with_quic`); один `http/1.1` → HTTP/1.1; иначе HTTP/2; REALITY → всегда HTTP/2; без TLS — h2c (у Xray HTTP/1.1). См. [SPEC 104](../104-XHTTP_HTTP_VERSION_PARITY/SPEC.md) §5.1 |
+| `tlsSettings.alpn` (в ссылке — `alpn`) | `tls.alpn` | ✅ | один элемент `h3` → HTTP/3 (QUIC/UDP, нужен `with_quic`); один `http/1.1` → HTTP/1.1; иначе HTTP/2; REALITY → всегда HTTP/2; без TLS — HTTP/1.1 (раньше h2c). См. [SPEC 104](../104-XHTTP_HTTP_VERSION_PARITY/SPEC.md) §5.1 |
 
 ---
 

@@ -122,7 +122,7 @@ works on every version.
 
 | TLS | Reality | `tls.alpn` | Version | Wire |
 |-----|---------|-----------|---------|------|
-| off | — | — | HTTP/2 cleartext (h2c) | TCP |
+| off | — | — | HTTP/1.1 (h2c before SPEC 104) | TCP |
 | on | on | any | HTTP/2 | TCP + Reality |
 | on | off | empty | HTTP/2 | TCP + TLS, ALPN `h2` |
 | on | off | two or more entries | HTTP/2 | TCP + TLS, ALPN as configured |
@@ -144,8 +144,11 @@ works on every version.
 - **Reality is always HTTP/2.** A `tls.alpn` without `h2` is replaced with
   `["h2"]` (warning), otherwise a Reality server with `alpn: ["h3"]` would not
   come up over TCP.
-- **Without TLS the client stays on h2c.** Xray would pick HTTP/1.1 here; an
-  Xray server accepts both, and existing configs keep their wire shape.
+- **Without TLS the client uses HTTP/1.1, as Xray does (it used h2c before).**
+  An Xray server accepts both forms, so direct cleartext nodes keep working, and
+  nodes behind a reverse proxy or CDN that only speaks HTTP/1.1 on a cleartext
+  port start working. There is no multiplexing: every download stream and every
+  streamed request takes its own TCP connection.
 - Not supported: Xray `downloadSettings`, `finalmask.quicParams` (QUIC runs
   with Xray's defaults, congestion control is Cubic where Xray uses BBR).
 

@@ -47,7 +47,7 @@
 
 | TLS | REALITY | `tls.alpn` | Версия | Как идёт трафик |
 |-----|---------|-----------|--------|-----------------|
-| нет | — | — | HTTP/2 без TLS (h2c) | TCP |
+| нет | — | — | HTTP/1.1 (раньше h2c) | TCP |
 | да | да | любой | HTTP/2 | TCP + REALITY |
 | да | нет | пусто | HTTP/2 | TCP + TLS, ALPN `h2` |
 | да | нет | два и больше элементов | HTTP/2 | TCP + TLS, ALPN как в конфиге |
@@ -194,8 +194,11 @@ upload-POST'ы `packet-up` переиспользуют соединения.
 - **REALITY всегда идёт по HTTP/2.** `tls.alpn` без `h2` в списке заменяется
   на `["h2"]` с предупреждением: иначе узел с `alpn: ["h3"]` по TCP
   не поднимется. У Xray ALPN из конфига до REALITY не доходит вовсе.
-- **Без TLS — h2c, как раньше.** Xray здесь выбрал бы HTTP/1.1; сервер Xray
-  принимает обе формы, и провод существующих конфигов не меняется.
+- **Без TLS — HTTP/1.1, как у Xray (раньше h2c).** Сервер Xray принимает
+  обе формы, поэтому прямые узлы без TLS продолжают работать; узлы за
+  обратным прокси или CDN на незашифрованном порту, который принимает только
+  HTTP/1.1, начинают работать. Мультиплексирования нет: каждый поток
+  даунлинка и каждый потоковый запрос идут отдельным TCP-соединением.
 - **Отпечаток uTLS на HTTP/3 не применяется** — паритет с Xray. Конфиг
   не падает, при загрузке пишется предупреждение; QUIC-рукопожатие идёт
   с профилем Chrome. С `disable_sni` профиль Chrome для узла выключается
@@ -234,7 +237,7 @@ upload-POST'ы `packet-up` переиспользуют соединения.
 | [076 — XHTTP_XMUX_BREAKER](../../TASKS/076-XHTTP_XMUX_BREAKER/SPEC.md) | Предохранитель пула `xmux` на шторм переподключений (issue #14): breaker на соединение (3 отказа подряд → вытеснение) + backoff открытия нового транспорта до 3 с | D |
 | [082 — H2_STREAM_ERROR_TYPE_LEAK](../../TASKS/082-H2_STREAM_ERROR_TYPE_LEAK/SPEC.md) | Утечка типа `http2.StreamError` из conn'ов XHTTP / v2rayhttp / gRPC-lite — корень CPU-шторма issue #14 (спин `readLoop` x/net у потребителя conn'а); ошибка скрывается `common/badh2.HideStreamError` | D |
 | [094 — XHTTP_LOCAL_CLOSE_NOT_FAILURE](../../TASKS/094-XHTTP_LOCAL_CLOSE_NOT_FAILURE/SPEC.md) | Наш же `Close()` не считается сбоем: `context.Canceled` нейтрален для брейкера xmux (вытеснение `failing` и backoff от шторма `interrupt_exist_connections`), закрытое нами тело отдаёт релею `net.ErrClosed`/`os.ErrDeadlineExceeded` вместо `http2: response body closed` на ERROR (LxBox #148; живой A/B 2026-09-24: 13/13/15 ERROR → 0/0/0). За чем следить: `v2rayhttp`/`v2raygrpclite` читают тела теми же путями, тот же симптом в логе возможен и там | I |
-| [104 — XHTTP_HTTP_VERSION_PARITY](../../TASKS/104-XHTTP_HTTP_VERSION_PARITY/SPEC.md) | Выбор версии HTTP по правилам Xray (`decideHTTPVersion`): `tls.alpn` `["h3"]` → HTTP/3 по QUIC (issue #25), `["http/1.1"]` → HTTP/1.1, REALITY → HTTP/2, без TLS — h2c как раньше; отпечаток uTLS на HTTP/3 не применяется | O |
+| [104 — XHTTP_HTTP_VERSION_PARITY](../../TASKS/104-XHTTP_HTTP_VERSION_PARITY/SPEC.md) | Выбор версии HTTP по правилам Xray (`decideHTTPVersion`): `tls.alpn` `["h3"]` → HTTP/3 по QUIC (issue #25), `["http/1.1"]` и без TLS → HTTP/1.1 (раньше h2c), REALITY → HTTP/2; отпечаток uTLS на HTTP/3 не применяется | O |
 
 Соответствие параметров Xray — `PARAM_MAP.md` в задаче 002;
 разбор ссылок — там же `URL_PARSING.md`.

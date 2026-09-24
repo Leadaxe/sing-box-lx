@@ -83,7 +83,7 @@ ALPN в ClientHello Xray берёт из `tlsSettings.alpn`; пустой спи
 7. **`h_keep_alive_period` на HTTP/3** → `quic.Config.KeepAlivePeriod`: `0` → 10 с, `> 0` → значение, `< 0` → `0` (место заложено в SPEC 059 §6). На HTTP/1.1 не действует (у Xray тоже).
 8. **`quic.Config` HTTP/3 — как у Xray при пустом `quicParams`:** `MaxIdleTimeout` 300 с, `KeepAlivePeriod` по п. 7, `MaxIncomingStreams: -1`, `DisablePathMTUDiscovery` вне linux/windows/darwin, `ChromeParrot: true`. `ChromeParrot` в quic-go фиксирует idle timeout (30 с), окна, лимит потоков и размер первого пакета (`config.go:109-124` quic-go) — у Xray так же; значения выставляются для паритета записи, действуют закреплённые. `HandshakeIdleTimeout` — дефолт quic-go (Xray его не задаёт).
 9. **Dial HTTP/3 — через тот же `N.Dialer`** (detour): `dialer.DialContext(ctx, "udp", serverAddr)` + `quic.DialEarlyConn` — форма апстрима `common/httpclient/http3_transport.go:85-98` (с `ChromeParrot` `DialEarlyConn` сам ставит нулевую длину connection ID, quic-go `client.go:131-146`); закрытие UDP-conn по `quicConn.Context()`, как `transport/v2rayquic/client.go:69-82`. Адрес из аргумента `Dial` не используется: dial идёт на `serverAddr` (у Xray — `dest`). Контекст QUIC-соединения отвязан от отмены dial-контекста (quic-go `transport.go:312`, `context.WithoutCancel`); dial-контекст ограничивает только рукопожатие.
-10. **HTTP/1.1 и HTTP/2 dial не меняется:** TCP через `N.Dialer`, TLS через `tls.NewDialer` (uTLS, фрагментация, REALITY работают как сейчас). Без TLS — h2c, как сейчас (отступление от Xray, §10 п. 4).
+10. **HTTP/1.1 и HTTP/2 dial не меняется:** TCP через `N.Dialer`, TLS через `tls.NewDialer` (uTLS, фрагментация, REALITY работают как сейчас). Без TLS — `http1XmuxConn` с `DialContext` на `N.Dialer` вместо h2c (паритет с Xray, §10 п. 4).
 11. **ALPN в ClientHello:** HTTP/1.1 и HTTP/3 — как в конфиге (правило их и выбрало); HTTP/2 при пустом `tls.alpn` — `["h2"]`, как сейчас (отличие от Xray `["h2","http/1.1"]` — §10 п. 2); REALITY — как сейчас, кроме случая, когда `tls.alpn` задан и не содержит `h2`: тогда ALPN заменяется на `["h2"]` с предупреждением (иначе REALITY-узел с `alpn: ["h3"]` по TCP не поднимется, у Xray ALPN из конфига к REALITY не доходит вовсе).
 12. **Классификация ошибок и сокрытие типов — общими для всех версий механизмами** (§7): брейкер SPEC 076/094, `outboundErr` SPEC 094, сокрытие типов SPEC 082 расширяется на типы quic-go/http3.
 13. **`downloadSettings` вне объёма** (§8).
@@ -94,7 +94,7 @@ ALPN в ClientHello Xray берёт из `tlsSettings.alpn`; пустой спи
 
 | TLS | REALITY | `tls.alpn` | Версия | Транспорт | ALPN в ClientHello |
 |-----|---------|-----------|--------|-----------|--------------------|
-| нет | — | — | HTTP/2 (h2c) | TCP, `http2XmuxConn` | — |
+| нет | — | — | HTTP/1.1 | TCP, `http1XmuxConn` | — |
 | да | да | любой | HTTP/2 | TCP+REALITY, `http2XmuxConn` | как сейчас; без `h2` в списке → `["h2"]` + предупреждение |
 | да | нет | пусто | HTTP/2 | TCP+TLS, `http2XmuxConn` | `["h2"]` |
 | да | нет | 2+ элемента | HTTP/2 | TCP+TLS, `http2XmuxConn` | как в конфиге |
@@ -174,12 +174,12 @@ ALPN в ClientHello Xray берёт из `tlsSettings.alpn`; пустой спи
 - `common/httpclient/http3_transport.go` — образец dial; если апстрим вынесет общий HTTP/3-dial в экспортируемую функцию, перейти на неё.
 - Xray `decideHTTPVersion` (`dialer.go:83-100`) и `hub.go:463` — при изменении правил на стороне Xray правится таблица §5.1.
 
-## 10. Отступления от Xray (решено)
+## 10. Решения по расхождениям с Xray
 
 1. **Контроль перегрузки на HTTP/3 — Cubic (дефолт quic-go), не BBR.** На совместимость провода не влияет; BBR — отдельная задача при запросе.
 2. **ALPN HTTP/2 при пустом `tls.alpn` — `["h2"]`, как сейчас.** Сервер выбирает h2 в обоих случаях; REALITY-ветка не трогается.
 3. **Keep-alive HTTP/2 по умолчанию не меняется.** Расхождение с Xray (45 с) и с формулировкой SPEC 059 §3 — вне объёма задачи.
-4. **Без TLS — h2c, как сейчас.** Правило Xray дало бы HTTP/1.1; сервер Xray принимает обе формы (`hub.go:556-564`), а смена провода у существующих конфигов без TLS задачей не оправдана. HTTP/1.1 без TLS задачей не вводится.
+4. **Без TLS — HTTP/1.1, как у Xray (не отступление).** Сервер Xray на TCP принимает и HTTP/1.1, и h2c (`hub.go:556-559`), поэтому прямые конфиги без TLS, ходившие по h2c, продолжают работать. Обратные прокси и CDN на незашифрованном порту обычно принимают только HTTP/1.1 — такие узлы начинают работать. Цена — нет мультиплексирования: каждый поток даунлинка и каждый потоковый запрос идут отдельным TCP-соединением, как у Xray. mihomo без TLS шлёт h2c (`transport/xhttp/client.go:203`) — расходится с Xray; контракт задаёт Xray.
 
 ## 11. Критерии приёмки
 
