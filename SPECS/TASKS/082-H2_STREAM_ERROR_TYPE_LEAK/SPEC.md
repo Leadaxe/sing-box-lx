@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bugfix) — клиентские транспорты (CONSTITUTION §3.6) |
-| Статус | D (done, device-verified) — код + тесты + сборка; коммиты `9d96cef5e` (XHTTP), п.3 — `v2rayhttp`/`v2raygrpclite`; репортёр issue #14 подтвердил на `lx.35` (2026-09-06: readLoop в `runnable` нет, CPU в норме), тикет закрыт 2026-09-08 |
+| Статус | D (done, device-verified) — код + тесты + сборка; коммиты `9d96cef5e` (XHTTP), п.3 — `v2rayhttp`/`v2raygrpclite`; репортёр issue #14 подтвердил на `lx.35` (2026-09-06: readLoop в `runnable` нет, CPU в норме), тикет закрыт 2026-09-08. Апстрим закрыл класс в `sing` v0.9.6 (`baderror.WrapH2`, sing-box `18b031701`, синк [095](../095-UPSTREAM_SYNC_1_14_1_PLUS_34/SPEC.md)): обёртки в `v2rayhttp`/`v2raygrpclite` сняты, файлы равны апстриму; `HideStreamError` в форк-нативном `v2rayxhttp` остаётся |
 | Ветка | `lx` |
 | Связанные | [[SPECS/TASKS/076-XHTTP_XMUX_BREAKER]] (предыдущая, неполная реконструкция того же тикета) · [[SPECS/TASKS/077-XHTTP_DIAL_CTX_CONTRACT]] · issue [Leadaxe/sing-box-lx#14](https://github.com/Leadaxe/sing-box-lx/issues/14) |
 

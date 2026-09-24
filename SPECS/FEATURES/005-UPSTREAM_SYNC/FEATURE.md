@@ -73,6 +73,7 @@
 |--------|------|--------|
 | [013 — PACKAGE_NAME_REGEX_RULE_ITEM](../../TASKS/013-PACKAGE_NAME_REGEX_RULE_ITEM/SPEC.md) | Точечный бэкпорт апстрим-фичи; impl растворился, остался тест | C |
 | [051 — UPSTREAM_MERGE_235](../../TASKS/051-UPSTREAM_MERGE_235/SPEC.md) | Накопленный дрейф 235 коммитов: влит (`f56680e0d`, 65 конфликтных файлов), форк-сабмодули перепривиты на полную апстрим-ленту (`a4da5d10f`, rc.6) | D |
+| [095 — UPSTREAM_SYNC_1_14_1_PLUS_34](../../TASKS/095-UPSTREAM_SYNC_1_14_1_PLUS_34/SPEC.md) | v1.14.1 + 34 коммита `upstream/stable`; re-graft `wireguard-go` на v0.0.7 (`lx-awg2-v007`) и merge пина `sing-tun` 3e03774a; апстрим закрыл SPEC 082 в двух файлах и гонку из 047 | I |
 
 Записи watchlist ссылаются на задачи других фич — это нормально: у задачи
 может быть две роли (что чинили и за чем следить).
