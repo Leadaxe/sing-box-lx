@@ -34,9 +34,11 @@ data-plane лежит.
 | `<state-dir>/daemon.json` | файл `0600`, **не флаги** | единственный источник connection-настроек демона: `listen` (дефолт `127.0.0.1:9091`; строка `"host:port"` либо `{"address": [...], "port": N}` — несколько адресов, обе плоскости на каждом, бинд «всё или ничего», первый адрес рекламируемый; масок нет), `tls` (mTLS с регистрацией клиентов; без него h2c loopback-only), `secret` (Bearer операторских маршрутов и единственный гейт plain-h2c; пусто = выключен); connection-флагов у команды НЕТ по построению; файла нет = dev-дефолты, создаёт его только `--service=install` или редактор оператора |
 | `log_max_size_mb` / `log_max_backups` / `log_max_age_hours` | ключи daemon.json, дефолт `20` / `1` / `24` | лимиты ротации лога демона («≈сутки истории»: ротация по возрасту раз в 24 ч, текущий + 1 бэкап; размер — страховка); 0/отсутствие = дефолт, «безлимита» нет |
 | `--state-dir` | путь, дефолт `lxd-state` (сервис — абсолютный `<support>/state`) | каталог состояния: daemon.json, last-good, кандидат, pending, was_running, серверная пара, доверенные клиенты |
-| `--service` | `install` \| `install-user` \| `uninstall` | установка службой (см. ниже) |
+| `--service` | `install` \| `install-user` \| `copy` \| `uninstall` \| `status` | установка службой, root-owned копия без службы, снятие, отчёт (см. ниже) |
+| `--exec-dir <dir>` | путь, дефолт `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` | с `--service=install\|copy\|uninstall\|status` — каталог root-owned копии бинаря; каждый компонент от `/` обязан принадлежать root и не иметь записи для group/other |
+| `--allow-unsafe-exec` | флаг, отладка | root-служба стартует и с бинаря, который не root-owned копия, — с `WARN` вместо отказа |
 | `--purge` | флаг | с `--service=uninstall` — снести и state-каталог |
-| `--dry-run` | флаг | с `--service` — показать, что было бы сделано, не меняя ничего (на linux любое действие и так печать) |
+| `--dry-run` | флаг | с `--service` (кроме `status`) — показать, что было бы сделано, не меняя ничего (на linux любое действие и так печать) |
 | `client add [--name] / list / remove <тег>` | подкоманды | регистрация/просмотр/отзыв доверенных клиентов у живого демона; операторские маршруты **loopback-only** (минт кода = выдача доверия, из сети недоступен) |
 | build-tag | `with_lxd` | без тега сабкоманды нет |
 
@@ -86,9 +88,26 @@ gRPC `SubscribeLog` несёт логи ядра, а строки `lxd:`, оши
 TUN, до логина); `install-user` — пользовательский LaunchAgent (без sudo,
 десктоп-UX); оба переносят текущую командную строку (минус `--service`) в plist,
 абсолютизируя пути, и сами создают каталоги; `--dry-run` — сухой прогон
-(печатает plist и что произошло бы, ничего не трогая);
+(печатает план и plist, ничего не трогая);
 `uninstall` (+`--purge`) — снять службу (и опц. state). **macOS** — установка
-по-настоящему. **Linux — только печать рецепта** (принцип: всё, что меняет
+по-настоящему.
+
+**Root исполняет только root-owned копию (macOS).** LaunchDaemon запускает не тот
+файл, из которого его поставили, а копию
+`/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box` (`root:wheel 0755`,
+каталог проверяется от `/`, копия встаёт атомарной подменой после сверки sha256) с
+сайдкаром `install.json` рядом (`source`, `sha256`, `version`, `installed_at`,
+`plist_path`, `label`; читается без root). В plist меняется только первый элемент
+`ProgramArguments`. `copy` — та же копия без plist и launchd (для лаунчера, который сам
+запускает ядро от root); последующий `install` привязывает её без повторного
+копирования, повторный `copy` с тем же бинарём ничего не делает. `uninstall` удаляет
+копию только по совпадению sha с её сайдкаром. `status` (без root) печатает plist,
+программу, владельца и режим, хеши, сайдкар и состояние launchd и выходит с кодом
+0 `OK`, 2 `MISMATCH`/`UNSAFE` (нужна переустановка), 3 `NOT INSTALLED`, 4 `COPY ONLY`.
+Ядро под root (`lxd` и `run`) при старте проверяет собственный бинарь: служба с меткой
+launchd (`ppid 1` и `XPC_SERVICE_NAME` = ярлык) на не root-owned бинаре не стартует,
+любой другой запуск под root — `WARN`. `GET /admin/info` отдаёт `executable` и
+`executable_sha256` — клиент сравнивает ядро по хешу, не по пути. **Linux — только печать рецепта** (принцип: всё, что меняет
 диск, делает оператор): детект init (`/proc/1/comm`, фолбэки
 `/etc/openwrt_release` и `/run/systemd/system`), печать ссылки на нужный
 раздел руководства, дома демона + `daemon.json` (секрет генерится подстановкой
@@ -139,6 +158,10 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
   отказ = 422, работающий инстанс не тронут) → подмена инстанса → last-good
   переписывается **только после успешного старта**; провал старта (bind/tun —
   то, что проверка без Start не ловит) вызывает **автооткат** на last-good.
+- **Root исполняет только root-owned файл.** Системная служба (macOS) запускает
+  копию, у которой каждый компонент пути от `/` принадлежит root и закрыт на запись
+  для group/other; служба на ином бинаре не стартует. Копия заменяется только
+  атомарно и только после сверки sha256; снимается только своя (по сайдкару).
 - **Источник конфига на старте**: last-good → seed-файл (`-c`, если дан
   явно; первый успешный старт записывает его как last-good) → пусто (IDLE).
   Кандидат не загружается на старте никогда; прерванный процессной смертью
@@ -177,7 +200,7 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
 | [067-LXD_BUILD_TAG_SPLIT](../../TASKS/067-LXD_BUILD_TAG_SPLIT/SPEC.md) | Демон переехал на собственный build-tag `with_lxd`; `with_lx_command` остался за RPC SPEC 015 (`URLTestOutbound`, `GetRules`, `GetGroups` — их использует LxBox). Позволяет собрать сборку без демона, но с командными расширениями: так теперь собирается legacy-Win7. Логика не менялась — только теги и комментарии |
 | [066-LXD_CLIENT_IDENTITY](../../TASKS/066-LXD_CLIENT_IDENTITY/SPEC.md) | Справочник IP → устройство для сетевого инспектора: `GET /admin/clients-info` отдаёт `name`/`mac`/`ssid`/`iface`/`port`/`source` по каждому клиенту, метки оператора через `PUT`/`DELETE` (ключ = IP или MAC). Пять провайдеров с приоритетом по порядку вызова (`lease` → `arp` → `bridge` → `wireless` → `label`), платформенные через build-теги, ядро не трогается; кеш 60 с; живой прогон на macOS |
 | [065-LXD_OBSERVABILITY_PLANE](../../TASKS/065-LXD_OBSERVABILITY_PLANE/SPEC.md) | Диагностика демона: `/admin/memory` (два RSS — текущий и пик, кеш 200 мс), `/admin/stats` (uptime ядра, трафик, соединения; без ядра `null`, а не 503), `/admin/logs` (хвост `lxd.log` — лог **демона**, которого нет в gRPC-потоке), `/admin/pprof/*` (шесть снимков по whitelist, CPU/trace с потолком и 409, вкл/выкл block/mutex) — за тем же mTLS-пином, без отдельного debug-порта; живой прогон на macOS |
-| [100-LXD_ROOT_OWNED_BINARY](../../TASKS/100-LXD_ROOT_OWNED_BINARY/SPEC.md) | Системная служба исполняет root-owned копию бинаря, а не файл, из которого её поставили (закрыто повышение привилегий через user-writable бинарь в plist): копия в `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/`, сайдкар `install.json`, `--exec-dir`, самопроверка демона под launchd, `--service=status`, uninstall только своей копии, `executable`/`executable_sha256` в `/admin/info` |
+| [100-LXD_ROOT_OWNED_BINARY](../../TASKS/100-LXD_ROOT_OWNED_BINARY/SPEC.md) | Системная служба исполняет root-owned копию бинаря, а не файл, из которого её поставили (закрыто повышение привилегий через user-writable бинарь в plist): копия в `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/`, сайдкар `install.json`, `--exec-dir`, `--service=copy` (копия без службы, для classic TUN лаунчера), `--service=status` с кодами выхода, uninstall только своей копии, самопроверка `lxd`/`run` под root, `executable`/`executable_sha256` в `/admin/info`; табличный тест переходов состояний |
 
 ## 8. Особенности сопровождения
 
