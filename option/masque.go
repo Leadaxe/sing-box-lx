@@ -79,9 +79,11 @@ type MASQUEOutboundOptions struct {
 
 	// IdleTimeout suspends the tunnel after this long with no traffic (freeing
 	// the userspace stack, pumps and QUIC keepalive); the next dial rebuilds it.
-	// Off by default: absent, "0" and negative all keep the tunnel up until
-	// Close. Only a positive value enables idle-suspend.
-	IdleTimeout badoption.Duration `json:"idle_timeout,omitempty"`
+	// Absent inherits lx.masque.idle_timeout (off when that is unset too); an
+	// explicit "0" or a negative value keeps this node's tunnel up until Close
+	// whatever the global default. A pointer so that "0" and absent stay
+	// distinguishable. lx: SPEC 098.
+	IdleTimeout *badoption.Duration `json:"idle_timeout,omitempty"`
 	// KeepAlivePeriod is the QUIC (h3) keepalive interval. Empty = 30s. A
 	// negative value disables keepalive.
 	KeepAlivePeriod badoption.Duration `json:"keep_alive_period,omitempty"`

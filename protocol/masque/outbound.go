@@ -313,13 +313,14 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 
 	// Idle-suspend window: after this long with no traffic the tunnel + stack +
-	// pumps are torn down and rebuilt on the next dial. Off by default (absent,
-	// "0" and negative all keep the tunnel up until Close): the owner's call —
-	// the wake-up costs a full QUIC handshake + CONNECT-IP + a fresh gVisor
-	// stack on the first request after any quiet spell, which on routers and
-	// desktops is a worse trade than ~6 MB RSS and one keepalive packet per
-	// 30s. Only a positive value turns suspend on. lx: SPEC 021 B1.
-	idleTimeout := idleWindow(options.IdleTimeout)
+	// pumps are torn down and rebuilt on the next dial. Off by default: the
+	// owner's call — the wake-up costs a full QUIC handshake + CONNECT-IP + a
+	// fresh gVisor stack on the first request after any quiet spell, which on
+	// routers and desktops is a worse trade than ~6 MB RSS and one keepalive
+	// packet per 30s. The node's own idle_timeout wins, then the global
+	// lx.masque.idle_timeout from the box context. lx: SPEC 021 B1, SPEC 098.
+	idleTimeout := idleWindow(options.IdleTimeout,
+		service.PtrFromContext[option.LXResolved](ctx).MASQUEOrZero().IdleTimeout)
 
 	// QUIC keepalive: keeps the tunnel alive through the server's idle-timeout
 	// (and the provider's UDP NAT mapping) while it is up. With suspend off by
@@ -503,12 +504,20 @@ func (o *Outbound) teardownSession(s *session) {
 	})
 }
 
-// idleWindow resolves the configured idle_timeout into the suspend window:
-// positive = suspend after that long with no traffic; absent, "0" and negative
-// = 0 = never suspend (the idle watcher is not started). lx: SPEC 021 B1.
-func idleWindow(configured badoption.Duration) time.Duration {
-	if configured > 0 {
-		return time.Duration(configured)
+// idleWindow resolves the suspend window: the node's idle_timeout when set
+// (positive = suspend after that long with no traffic; an explicit "0" or a
+// negative value = never, whatever the global default), otherwise the global
+// lx.masque.idle_timeout (0 when unset). 0 means the idle watcher is not
+// started. lx: SPEC 021 B1, SPEC 098.
+func idleWindow(node *badoption.Duration, global time.Duration) time.Duration {
+	if node != nil {
+		if *node > 0 {
+			return time.Duration(*node)
+		}
+		return 0
+	}
+	if global > 0 {
+		return global
 	}
 	return 0
 }
