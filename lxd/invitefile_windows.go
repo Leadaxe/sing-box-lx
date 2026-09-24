@@ -42,7 +42,10 @@ func CreateInviteFile(path string) (*os.File, error) {
 		return nil, E.Cause(err, "create invite file ", path)
 	}
 	final, err := finalPathOfHandle(handle)
-	if err == nil && !samePathFold(final, absolute) {
+	// The final path is in long form; a requested 8.3 short name
+	// (C:\Users\RUNNER~1) is the same path, a junction is not — and
+	// GetLongPathName expands names without resolving reparse points.
+	if err == nil && !samePathFold(final, absolute) && !samePathFold(final, longPathName(absolute)) {
 		err = E.New(path, ": resolves to ", final, " (a junction or link on the path); refusing to write the invite there")
 	}
 	if err != nil {
@@ -67,6 +70,20 @@ func finalPathOfHandle(handle windows.Handle) (string, error) {
 		}
 		buffer = make([]uint16, length+1)
 	}
+}
+
+// longPathName expands 8.3 short components; on failure the path as given.
+func longPathName(path string) string {
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return path
+	}
+	buffer := make([]uint16, windows.MAX_LONG_PATH)
+	length, err := windows.GetLongPathName(name, &buffer[0], uint32(len(buffer)))
+	if err != nil || length == 0 || int(length) >= len(buffer) {
+		return path
+	}
+	return windows.UTF16ToString(buffer[:length])
 }
 
 // stripLongPathPrefix turns \\?\C:\x into C:\x and \\?\UNC\h\s into \\h\s.
