@@ -18,7 +18,10 @@ var _ adapter.StaleRebindable = (*Endpoint)(nil) // lx: SPEC 041 v2 wake nudge
 // and the rebind itself (async, in the device's goroutine) live in the
 // wireguard-go device — a healthy session is a strict no-op here.
 func (w *Endpoint) RebindStale() {
-	if w.closing.Load() {
+	// !started also covers a rebuild waiting on the SPEC 097 build budget under
+	// resumeMu: checked before the lock so the app's wake nudge never stalls
+	// behind that wait.
+	if w.closing.Load() || !w.started.Load() {
 		return
 	}
 	w.resumeMu.Lock()

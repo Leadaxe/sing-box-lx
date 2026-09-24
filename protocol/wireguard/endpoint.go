@@ -292,6 +292,11 @@ func (w *Endpoint) IdleSince() time.Duration {
 // started==false but idleAsleep==false, and the `!started` check below short-
 // circuits before the CAS. resumeMu mutually excludes this against resumeOnDial.
 func (w *Endpoint) SuspendIfIdle(reachable bool, threshold time.Duration, reachableThreshold time.Duration) {
+	if w.building.Load() {
+		// SPEC 097 — a rebuild may be waiting on the build budget under resumeMu;
+		// the endpoint is torn down anyway, so do not stall the tick behind it.
+		return
+	}
 	w.resumeMu.Lock()
 	defer w.resumeMu.Unlock()
 	if w.listenMode {
@@ -366,7 +371,7 @@ func (w *Endpoint) SleepSince() time.Duration {
 // honoured: a deliberately-stopped endpoint has idleAsleep=false and is skipped
 // here, and a woken endpoint clears idleAsleep under the same mutex.
 func (w *Endpoint) TeardownIfSlept(threshold time.Duration) {
-	if threshold <= 0 {
+	if threshold <= 0 || w.building.Load() { // SPEC 097 — see SuspendIfIdle
 		return
 	}
 	w.resumeMu.Lock()
