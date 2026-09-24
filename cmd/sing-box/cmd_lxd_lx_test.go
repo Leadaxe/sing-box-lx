@@ -231,3 +231,12 @@ func TestClientConnectionRequiresFile(t *testing.T) {
 		t.Fatal("client commands without daemon.json must fail loudly")
 	}
 }
+
+// lx: SPEC 100 — the root self-check hooks `sing-box run` by wrapping
+// commandRun.Run. Upstream defines the command through Run today; if it moves
+// to RunE the wrapper is skipped and this test says so, so the hook can follow.
+func TestRunCommandStillUsesRunForSelfCheck_LX(t *testing.T) {
+	if commandRun.Run == nil {
+		t.Fatal("commandRun.Run is nil: upstream moved `run` to RunE, the SPEC 100 self-check hook no longer applies")
+	}
+}

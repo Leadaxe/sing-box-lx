@@ -122,12 +122,16 @@ func init() {
 	// Root running the core outside the lxd service — the launcher's classic
 	// TUN mode elevates `sing-box run` — gets the same executable check,
 	// which outside the launchd job of this label only warns (SPEC 100).
-	upstreamRun := commandRun.Run
-	commandRun.Run = func(cmd *cobra.Command, args []string) {
-		if err := lxd.CheckServiceExecutable(false); err != nil {
-			log.Fatal(err)
+	// Wraps Run only while upstream defines the command through Run; if it
+	// moves to RunE this hook drops out instead of calling nil, and the
+	// guard test in cmd_lxd_lx_test.go flags the move.
+	if upstreamRun := commandRun.Run; upstreamRun != nil {
+		commandRun.Run = func(cmd *cobra.Command, args []string) {
+			if err := lxd.CheckServiceExecutable(false); err != nil {
+				log.Fatal(err)
+			}
+			upstreamRun(cmd, args)
 		}
-		upstreamRun(cmd, args)
 	}
 }
 
