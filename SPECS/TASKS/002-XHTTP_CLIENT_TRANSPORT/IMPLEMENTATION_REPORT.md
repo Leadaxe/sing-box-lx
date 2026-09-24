@@ -89,8 +89,8 @@ session/seq в path; payload в body; метод POST. Тест `TestDefaultLega
    не-дефолтные obfs/placement-комбинации (`x_padding_obfs_mode=true`, header/cookie placement, tokenish)
    требуют сервера, *настроенного* на них; ни одна публичная нода так не настроена. Покрыто unit-тестами +
    `check`, лайв — остаётся TODO.
-2. **HTTP/3 (`alpn=h3`)** — клиент HTTP/2-only; h3-only ноды не обслуживаются (вне SPEC 002, отдельная
-   задача). Задокументировано в [URL_PARSING.md](URL_PARSING.md).
+2. **HTTP/3 (`alpn=h3`)** — закрыто [SPEC 104](../104-XHTTP_HTTP_VERSION_PARITY/SPEC.md): версия HTTP
+   (1.1/2/3) выбирается по `tls.alpn` по правилу Xray.
 3. Зависимость `golang.org/x/net/http2/hpack` для tokenish — уже транзитивно в go.mod (HTTP/2 transport).
 4. xmux/переиспользование соединений — вне скоупа (см. SPEC §8).
 

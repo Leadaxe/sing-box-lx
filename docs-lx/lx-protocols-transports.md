@@ -90,7 +90,8 @@ transport (which would defeat the obfuscation). The exact messages:
 # 1. XHTTP transport
 
 XHTTP (Xray "splithttp"/"xhttp") is a v2ray transport that tunnels the proxy over
-plain HTTP/2 requests. It attaches to **VLESS / VMess / Trojan** through the shared
+plain HTTP requests — HTTP/2 by default, HTTP/1.1 or HTTP/3 when the TLS block
+asks for them ([HTTP version](#http-version)). It attaches to **VLESS / VMess / Trojan** through the shared
 `transport` block and composes with TLS, including **Reality**. (XHTTP is
 incompatible with XTLS-Vision — that is a protocol limitation, not ours.)
 
@@ -112,6 +113,41 @@ unaffected — every v2 field is opt-in.
 
 Leave `mode` at `auto` unless the server documents otherwise; set it explicitly
 only if you know what the server expects.
+
+### HTTP version
+
+There is no separate key: the HTTP version follows from the outbound's `tls`
+block, by the same rule as Xray (`decideHTTPVersion`, SPEC 104). Every mode
+works on every version.
+
+| TLS | Reality | `tls.alpn` | Version | Wire |
+|-----|---------|-----------|---------|------|
+| off | — | — | HTTP/2 cleartext (h2c) | TCP |
+| on | on | any | HTTP/2 | TCP + Reality |
+| on | off | empty | HTTP/2 | TCP + TLS, ALPN `h2` |
+| on | off | two or more entries | HTTP/2 | TCP + TLS, ALPN as configured |
+| on | off | `["http/1.1"]` | HTTP/1.1 | TCP + TLS |
+| on | off | `["h3"]` | HTTP/3 | UDP + QUIC |
+| on | off | any other single entry | HTTP/2 | TCP + TLS, ALPN as configured |
+
+- The entry is compared exactly (`h3`, `http/1.1`).
+- **HTTP/3** needs a build with `with_quic` (all shipped builds have it); without
+  it a config with `alpn: ["h3"]` fails to load. The QUIC handshake uses the
+  Chrome profile; `utls.fingerprint` does not apply over HTTP/3 (a load-time
+  warning, the config still loads — Xray behaves the same). With `disable_sni`
+  the Chrome profile is turned off for that server (warning). ECH is not
+  supported over HTTP/3: the config loads, dials of that server fail.
+  HTTP/3 traffic goes over UDP through the same `detour`.
+- **HTTP/1.1**: long requests (the download GET, a streamed POST) each get their
+  own connection with `Connection: close`; `packet-up` upload POSTs reuse
+  keep-alive connections.
+- **Reality is always HTTP/2.** A `tls.alpn` without `h2` is replaced with
+  `["h2"]` (warning), otherwise a Reality server with `alpn: ["h3"]` would not
+  come up over TCP.
+- **Without TLS the client stays on h2c.** Xray would pick HTTP/1.1 here; an
+  Xray server accepts both, and existing configs keep their wire shape.
+- Not supported: Xray `downloadSettings`, `finalmask.quicParams` (QUIC runs
+  with Xray's defaults, congestion control is Cubic where Xray uses BBR).
 
 ## 1.2 Core fields (v1)
 
@@ -216,7 +252,7 @@ the pool is always on, matching Xray-core and sing-box-extended.
 | `xmux.c_max_reuse_times` | range | unlimited | how many times a connection may be handed out for a new stream before it retires |
 | `xmux.h_max_request_times` | range | `600-900` | how many **HTTP requests** may traverse a connection before it retires. Counts requests, not streams — in `packet-up` one stream issues many upload POSTs |
 | `xmux.h_max_reusable_secs` | range | `1800-3000` | how long a connection stays reusable, in seconds |
-| `xmux.h_keep_alive_period` | int (seconds) | `0` = default | HTTP/2 keep-alive ping period (the transport's `ReadIdleTimeout`). Negative disables pings. A plain integer, **not** a range — matching the reference implementation |
+| `xmux.h_keep_alive_period` | int (seconds) | `0` = default | Keep-alive period. HTTP/2: ping period (the transport's `ReadIdleTimeout`), `0` = no pings. HTTP/3: QUIC keep-alive, `0` = 10 s. No effect on HTTP/1.1. Negative disables keep-alive. A plain integer, **not** a range — matching the reference implementation |
 
 **Each range is rolled once, not per request:** the manager rolls `max_concurrency`
 and `max_connections` at construction; every connection rolls its own reuse limits
@@ -302,6 +338,31 @@ An empty value selects the documented default.
 }
 ```
 
+### HTTP/3 (`alpn: ["h3"]`)
+
+The server listens for XHTTP over QUIC only (Xray `tlsSettings.alpn: ["h3"]`).
+
+```jsonc
+{
+  "type": "vless",
+  "tag": "xhttp-h3",
+  "server": "example.com",
+  "server_port": 443,
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "tls": {
+    "enabled": true,
+    "server_name": "example.com",
+    "alpn": ["h3"],
+    "certificate_public_key_sha256": ["<base64-sha256-of-the-server-key>"]
+  },
+  "transport": {
+    "type": "xhttp",
+    "mode": "stream-up",
+    "path": "/xhttp"
+  }
+}
+```
+
 > **Note (default wire format).** With `x_padding_obfs_mode` off (the default),
 > padding is carried as `x_padding=<zeros>` inside the `Referer` header (Xray's
 > default placement) — live-validated against a real Xray (3x-ui) server. The
@@ -317,6 +378,7 @@ An empty value selects the documented default.
 | Server replies **`404`** | `path` prefix mismatch — a truncated trailing slash was the root cause of a real `stream-one` failure (SPEC 043); confirm the exact `path` the server expects |
 | `stream-one` dial **hangs until timeout**, no error | a proxy/CDN buffered the response because the gRPC content type was absent — leave `no_grpc_header` **off** (SPEC 042). Conversely, if the server rejects the gRPC type, turn it on |
 | Works intermittently, breaks after a while | Xray client/server version skew — XHTTP's wire format changes fast; align versions |
+| Server with `alpn: ["h3"]` does not come up, dial times out or fails with `HTTP/3 needs UDP to the server` | HTTP/3 runs over UDP: the `detour` chain must carry UDP, and the path must not drop QUIC. If the server also listens on TCP, drop `h3` from `tls.alpn` to use HTTP/2 |
 | Upload payload rejected | `uplink_data_placement: header`/`cookie` used outside `packet-up`, or `uplink_http_method: GET` outside `packet-up` — both are load-time errors, so this shows at start, not at runtime |
 
 ---

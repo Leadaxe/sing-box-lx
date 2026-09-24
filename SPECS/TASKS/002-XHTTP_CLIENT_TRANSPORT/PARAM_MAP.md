@@ -56,6 +56,15 @@
 
 Включаем их в реализацию для полноты packet-up (детали в §6 SPEC).
 
+### Версия HTTP: `alpn` из `tlsSettings`
+
+Поле не из `xhttpSettings`, но на XHTTP-клиент влияет: Xray выбирает по нему версию HTTP
+(`decideHTTPVersion`).
+
+| Параметр Xray | JSON (наш) | Клиент? | Правило |
+|---------------|------------|:-------:|---------|
+| `tlsSettings.alpn` (в ссылке — `alpn`) | `tls.alpn` | ✅ | один элемент `h3` → HTTP/3 (QUIC/UDP, нужен `with_quic`); один `http/1.1` → HTTP/1.1; иначе HTTP/2; REALITY → всегда HTTP/2; без TLS — h2c (у Xray HTTP/1.1). См. [SPEC 104](../104-XHTTP_HTTP_VERSION_PARITY/SPEC.md) §5.1 |
+
 ---
 
 ## 1. Текущая база sing-box-lx ↔ дефолт Xray (важно!)
