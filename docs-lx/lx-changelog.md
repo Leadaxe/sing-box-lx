@@ -66,6 +66,7 @@ required for stable tags); this changelog section is the fallback used for pre-r
   `ERROR … failed to send handshake initiation: disabled UDP GSO on …`, хотя пакет ушёл. Теперь один хелпер
   `unwrapGSODisabled` на три пути: Verbose при успешной переотправке, ERROR только с реальной ошибкой повтора.
   Сабмодуль `submodules/wireguard-go` d0568ce; провод не тронут.
+- ℹ️ **Дрейф от `upstream/stable` на срезе: v1.14.2** (7 фикс-коммитов: network reset, resolved, hysteria2 realm STUN и port hopping, отчёт хендшейка hijack-dns, `common/dialer`). Синк отложен в отдельную задачу: пробный мерж конфликтует в `go.mod`/`go.sum` и `service/resolved`. База lx.13 = v1.14.1+34 (SPEC 095).
 
 #### v1.14.1-lx.12
 
