@@ -32,6 +32,15 @@ func TestStartIdleSuspend_stubErrorsOnExplicitTeardownZero(t *testing.T) {
 
 // TestStartIdleSuspend_stubNoopWhenUnset: without the option, the stub is a clean
 // no-op (no error) — desktop builds with no lx.wg.* keys are unaffected.
+// TestSelectionRefs_stub: without the tag there is no build budget to rank
+// victims for (SPEC 097).
+func TestSelectionRefs_stub(t *testing.T) {
+	r := &Router{}
+	if manual, auto := r.SelectionRefs("any"); manual != 0 || auto != 0 {
+		t.Fatalf("stub SelectionRefs: (%d, %d), want (0, 0)", manual, auto)
+	}
+}
+
 func TestStartIdleSuspend_stubNoopWhenUnset(t *testing.T) {
 	r := &Router{} // idleSuspend == 0
 	if err := r.startIdleSuspend(); err != nil {
