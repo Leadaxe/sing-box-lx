@@ -113,6 +113,10 @@ type controller struct {
 	infoLogPath string
 	infoTLS     bool
 	startedAt   time.Time
+	// executable names the running binary and its sha256 (SPEC 100): a
+	// client compares hashes, not paths, to tell whether the daemon runs
+	// the same core as its own — the service executes a root-owned copy.
+	executable *executableIdentity
 
 	// Observability plane (SPEC 065). memory is nil-safe only through
 	// newController; profiles holds the mutable pprof state (in-flight

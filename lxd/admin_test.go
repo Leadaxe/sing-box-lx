@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -535,6 +536,10 @@ func TestAdminInfoEndpoint(t *testing.T) {
 	control.serverFingerprint = "abc123"
 	control.advertiseAddr = "127.0.0.1:29091"
 	control.startedAt = time.Now().Add(-3 * time.Second)
+	control.executable = &executableIdentity{
+		path:   "/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box",
+		sha256: "0f1e",
+	}
 	handler := control.adminHandler("")
 
 	request := httptest.NewRequest(http.MethodGet, "/admin/info", nil)
@@ -559,5 +564,40 @@ func TestAdminInfoEndpoint(t *testing.T) {
 	}
 	if pid, _ := payload["pid"].(float64); int(pid) != os.Getpid() {
 		t.Fatalf("pid = %v, want %d", payload["pid"], os.Getpid())
+	}
+	if payload["executable"] != "/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box" || payload["executable_sha256"] != "0f1e" {
+		t.Fatalf("executable/executable_sha256 = %v/%v", payload["executable"], payload["executable_sha256"])
+	}
+}
+
+// TestAdminInfoExecutableHash: the hash is computed once, in the background,
+// from the file itself; until then (and without a binary) the fields are
+// present and empty rather than missing.
+func TestAdminInfoExecutableHash(t *testing.T) {
+	control := newTestController(t, &fakeReloader{}, nil)
+	status, payload := serveAdmin(t, control.adminHandler(""), httptest.NewRequest(http.MethodGet, "/admin/info", nil))
+	if status != http.StatusOK || payload["executable"] != "" || payload["executable_sha256"] != "" {
+		t.Fatalf("without an identity the fields must be empty strings, got %d %v/%v", status, payload["executable"], payload["executable_sha256"])
+	}
+
+	binary := filepath.Join(t.TempDir(), "sing-box")
+	content := []byte("the running core")
+	if err := os.WriteFile(binary, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	identity := newExecutableIdentity(binary)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		path, sum := identity.snapshot()
+		if sum != "" {
+			if path != binary || sum != shaOf(content) {
+				t.Fatalf("identity %s %s, want %s %s", path, sum, binary, shaOf(content))
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the executable hash never arrived")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

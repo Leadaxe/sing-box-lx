@@ -11,7 +11,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 
+	"github.com/sagernet/sing-box/log"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
@@ -403,4 +405,42 @@ func removeEmptyLabelDir(out io.Writer, dir, label string, dryRun bool) {
 	} else if !os.IsNotExist(err) {
 		fmt.Fprintf(out, "lxd: kept %s: %v\n", dir, err)
 	}
+}
+
+// executableIdentity is the running binary as /admin/info reports it: the
+// resolved path, known at once, and its sha256, hashed once in the
+// background at start — the control channel comes up first, and on a router
+// hashing a 40 MB binary takes seconds (SPEC 100 §2.9). The hash reads ""
+// until it is ready, or for good if the file cannot be read.
+type executableIdentity struct {
+	path   string
+	access sync.Mutex
+	sha256 string
+}
+
+func newExecutableIdentity(path string) *executableIdentity {
+	identity := &executableIdentity{path: path}
+	if path == "" {
+		return identity
+	}
+	go func() {
+		sum, err := sha256File(path, maxExecutableSize)
+		if err != nil {
+			log.Warn(E.Cause(err, "lxd: hash own executable for /admin/info"))
+			return
+		}
+		identity.access.Lock()
+		identity.sha256 = sum
+		identity.access.Unlock()
+	}()
+	return identity
+}
+
+func (identity *executableIdentity) snapshot() (path, sha256 string) {
+	if identity == nil {
+		return "", ""
+	}
+	identity.access.Lock()
+	defer identity.access.Unlock()
+	return identity.path, identity.sha256
 }
