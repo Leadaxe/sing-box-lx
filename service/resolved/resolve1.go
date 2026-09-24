@@ -5,12 +5,10 @@ package resolved
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/netip"
 	"os"
 	"os/user"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -222,7 +220,7 @@ func (t *resolve1Manager) ResolveHostname(sender dbus.Sender, ifIndex int32, hos
 	case syscall.AF_INET6:
 		strategy = C.DomainStrategyIPv6Only
 	}
-	ctx := t.logRequest(sender, "ResolveHostname ", t.interfaceName(ifIndex), " ", hostname, " ", familyToString(family), " ", flags)
+	ctx := t.logRequest(sender, "ResolveHostname", t.interfaceName(ifIndex), hostname, familyToString(family), flags)
 	responseAddresses, lookupErr := t.dnsRouter.Lookup(ctx, hostname, adapter.DNSQueryOptions{
 		LookupStrategy: strategy,
 	})
@@ -253,35 +251,20 @@ func (t *resolve1Manager) ResolveAddress(sender dbus.Sender, ifIndex int32, fami
 		err = wrapError(E.New("invalid address"))
 		return
 	}
-	var nibbles []string
-	for _, v := range slices.Backward(address) {
-		b := v
-		nibbles = append(nibbles, fmt.Sprintf("%x", b&0x0F))
-		nibbles = append(nibbles, fmt.Sprintf("%x", b>>4))
-	}
-	var ptrDomain string
-	if addr.Is4() {
-		ptrDomain = strings.Join(nibbles, ".") + ".in-addr.arpa."
-	} else {
-		ptrDomain = strings.Join(nibbles, ".") + ".ip6.arpa."
-	}
 	request := &mDNS.Msg{
 		MsgHdr: mDNS.MsgHdr{
 			RecursionDesired: true,
 		},
 		Question: []mDNS.Question{
 			{
-				Name:   mDNS.Fqdn(ptrDomain),
+				Name:   common.Must1(mDNS.ReverseAddr(addr.String())),
 				Qtype:  mDNS.TypePTR,
 				Qclass: mDNS.ClassINET,
 			},
 		},
 	}
-	ctx := t.logRequest(sender, "ResolveAddress ", t.interfaceName(ifIndex), familyToString(family), addr, flags)
-	var metadata adapter.InboundContext
-	metadata.InboundType = t.Type()
-	metadata.Inbound = t.Tag()
-	response, lookupErr := t.dnsRouter.Exchange(adapter.WithContext(ctx, &metadata), request, adapter.DNSQueryOptions{})
+	ctx := t.logRequest(sender, "ResolveAddress", t.interfaceName(ifIndex), familyToString(family), addr, flags)
+	response, lookupErr := t.dnsRouter.Exchange(ctx, request, adapter.DNSQueryOptions{})
 	if lookupErr != nil {
 		err = wrapError(lookupErr)
 		return
@@ -316,10 +299,7 @@ func (t *resolve1Manager) ResolveRecord(sender dbus.Sender, ifIndex int32, hostn
 		},
 	}
 	ctx := t.logRequest(sender, "ResolveRecord", t.interfaceName(ifIndex), hostname, mDNS.Class(qClass), mDNS.Type(qType), flags)
-	var metadata adapter.InboundContext
-	metadata.InboundType = t.Type()
-	metadata.Inbound = t.Tag()
-	response, exchangeErr := t.dnsRouter.Exchange(adapter.WithContext(ctx, &metadata), request, adapter.DNSQueryOptions{})
+	response, exchangeErr := t.dnsRouter.Exchange(ctx, request, adapter.DNSQueryOptions{})
 	if exchangeErr != nil {
 		err = wrapError(exchangeErr)
 		return
@@ -358,7 +338,7 @@ func (t *resolve1Manager) ResolveService(sender dbus.Sender, ifIndex int32, host
 		serviceName += "."
 	}
 
-	ctx := t.logRequest(sender, "ResolveService ", t.interfaceName(ifIndex), " ", hostname, " ", sType, " ", domain, " ", familyToString(family), " ", flags)
+	ctx := t.logRequest(sender, "ResolveService", t.interfaceName(ifIndex), hostname, sType, domain, familyToString(family), flags)
 
 	srvRequest := &mDNS.Msg{
 		MsgHdr: mDNS.MsgHdr{
@@ -372,10 +352,7 @@ func (t *resolve1Manager) ResolveService(sender dbus.Sender, ifIndex int32, host
 			},
 		},
 	}
-	var metadata adapter.InboundContext
-	metadata.InboundType = t.Type()
-	metadata.Inbound = t.Tag()
-	srvResponse, exchangeErr := t.dnsRouter.Exchange(adapter.WithContext(ctx, &metadata), srvRequest, adapter.DNSQueryOptions{})
+	srvResponse, exchangeErr := t.dnsRouter.Exchange(ctx, srvRequest, adapter.DNSQueryOptions{})
 	if exchangeErr != nil {
 		err = wrapError(exchangeErr)
 		return
@@ -591,8 +568,12 @@ func (t *resolve1Manager) RevertLink(sender dbus.Sender, ifIndex int32) *dbus.Er
 		return wrapError(err)
 	}
 	delete(t.links, ifIndex)
+	t.defaultRouteSequence = common.Filter(t.defaultRouteSequence, func(it int32) bool { return it != ifIndex })
 	t.log(sender, "RevertLink ", link.iif.Name)
-	return t.postUpdate(link)
+	if t.deleteCallback != nil {
+		t.deleteCallback(link)
+	}
+	return nil
 }
 
 // TODO: implement RegisterService, UnregisterService
