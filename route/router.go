@@ -65,11 +65,12 @@ type Router struct {
 	// tick computes it. endpoint is the endpoint manager: WG/AWG endpoints live
 	// there (NOT in the outbound manager — outbound.Outbounds() never lists them),
 	// so the idle tick must iterate it to find IdleSuspendable endpoints.
-	// idleTeardownSet records that lx_idle_teardown was present in the config,
+	// idleTeardownSet records that lx.wg.idle_teardown was present in the config,
 	// which an explicit "0" (teardown disabled) makes indistinguishable from
 	// absent in the resolved duration alone. Prerequisite checks key off this,
-	// so "0" still requires lx_idle_suspend and still fails loudly in a build
-	// without the tag.
+	// so "0" still requires lx.wg.idle_suspend and still fails loudly in a build
+	// without the tag. All four come from the resolved `lx` block in the context
+	// (SPEC 098).
 	idleSuspend          time.Duration
 	idleSuspendReachable time.Duration
 	idleTeardown         time.Duration
@@ -107,33 +108,16 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		leaseFiles:           options.DHCPLeaseFiles,
 		pauseManager:         service.FromContext[pause.Manager](ctx),
 		platformInterface:    service.FromContext[adapter.PlatformInterface](ctx),
-		idleSuspend:          time.Duration(options.LXIdleSuspend),              // lx: SPEC 020 (0 = off)
-		idleSuspendReachable: time.Duration(options.LXIdleSuspendReachable),     // lx: SPEC 020 (0 = reachable never suspends)
-		idleTeardown:         idleTeardownOf(options),                           // lx: SPEC 020 level 3 (default = reachable window, explicit "0" = off)
-		idleTeardownSet:      options.LXIdleTeardown != nil,                     // lx: SPEC 020 — "0" is a value, not an absence
+		idleSuspend:          lxWG(ctx).IdleSuspend,                             // lx: SPEC 020/098 — lx.wg.idle_suspend (0 = off)
+		idleSuspendReachable: lxWG(ctx).IdleSuspendReachable,                    // lx: SPEC 020/098 (0 = reachable never suspends)
+		idleTeardown:         lxWG(ctx).IdleTeardown,                            // lx: SPEC 020/098 level 3 (default = reachable window, explicit "0" = off)
+		idleTeardownSet:      lxWG(ctx).IdleTeardownSet,                         // lx: SPEC 020/098 — "0" is a value, not an absence
 		endpoint:             service.FromContext[adapter.EndpointManager](ctx), // lx: SPEC 020 — idle tick iterates endpoints
 		dnsHijackSem:         semaphore.NewWeighted(dnsHijackConcurrencyLimit),  // lx: SPEC 046
 	}
 	router.reachDirty.Store(true) // lx: SPEC 020 — first tick computes the reachable set
 	return router
 }
-
-// lx:begin idle-suspend
-// idleTeardownOf resolves the level-3 window (SPEC 020): an explicit
-// lx_idle_teardown wins; absent, it defaults to lx_idle_suspend_reachable (so a
-// config that opted into sleeping reachable endpoints also reclaims their
-// netstack after the same window of sleep). An explicit "0" is the documented
-// kill switch: endpoints stay merely suspended and are never torn down, so the
-// next dial pays ~1 handshake RTT instead of a full rebuild. The option is a
-// pointer precisely so that "0" and absent stay distinguishable.
-func idleTeardownOf(options option.RouteOptions) time.Duration {
-	if options.LXIdleTeardown != nil {
-		return time.Duration(*options.LXIdleTeardown)
-	}
-	return time.Duration(options.LXIdleSuspendReachable)
-}
-
-// lx:end idle-suspend
 
 func (r *Router) Initialize(rules []option.Rule, ruleSets []option.RuleSet) error {
 	for i, options := range rules {
@@ -274,7 +258,7 @@ func (r *Router) Start(stage adapter.StartStage) error {
 		}
 		r.started = true
 		// lx: SPEC 020 — start the idle-suspend tick (with_lx_idle_suspend); the
-		// no-tag stub errors here if lx_idle_suspend is set without the build tag.
+		// no-tag stub errors here if lx.wg.* is set without the build tag.
 		return r.startIdleSuspend()
 	case adapter.StartStateStarted:
 		for _, ruleSet := range r.ruleSets {
