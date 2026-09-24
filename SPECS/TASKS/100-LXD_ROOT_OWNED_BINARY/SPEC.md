@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — повышение привилегий через системную службу SPEC 057 |
-| Статус | I (implemented) — код и тесты в ветке, `go test -race ./lxd/ ./cmd/sing-box/` зелёные на macOS; ручная проверка install/status/uninstall под sudo (§5 п. 8) — за владельцем |
+| Статус | D (done) — выпущено в `v1.14.1-lx.11` (файл по ярлыку) и `v1.14.1-lx.12` (файл `sing-box-lxd`); живой прогон install на Mac владельца 2026-09-24 на сборке dc496c563 (§5 п. 8): копия, сайдкар, plist, ожидание выгрузки старой службы, status `OK`, сопряжение лаунчера сохранено; релизный darwin-arm64 ассет — arm64, adhoc linker-signed. Повтор install/copy-only/uninstall вживую не гонялись, покрыты табличными тестами |
 | Ветка | `spec100-lxd-root-owned-binary` (от `lx`) |
 | База | `4146bc8ce` |
 | Релиз | `v1.14.1-lx.11`; имя файла копии `sing-box-lxd` — `v1.14.1-lx.12` |
@@ -300,3 +300,5 @@ root-owned copy`. launchd пишет его в `lxd.log` (StandardErrorPath) п�
    `ls -l`, `plutil -p`, `shasum -a 256`, `launchctl print`, `--service=status` = `OK`;
    повторный install и copy = пропуск; uninstall удаляет plist, копию и сайдкар; copy →
    status `COPY ONLY` → uninstall. После неё — статус D.
+
+   **Выполнено 2026-09-24** (Mac владельца, arm64, сборка dc496c563 = lx.12, стороной лаунчера): после `sudo rm -rf` файлов lx.11 — `sudo … lxd --service=install`: `/Library/PrivilegedHelperTools` прошёл инвариант (`drwxr-xr-t root:wheel`, `/Library` `drwxr-xr-x root:wheel`); копия `sing-box-lxd` root:wheel 0755, sha источника == копии, xattr только `com.apple.provenance`; сайдкар 0644 с `plist_path`/`label`; support-dir chown root:wheel; в plist сменился только `ProgramArguments[0]`. Гонка §2.4 закрыта: `waiting for the old service to unload (1s…3s)`, bootstrap с первого раза (launchd: `removing service` 14:19:56.114 → `Successfully spawned sing-box-lxd[81941]` 14:19:56.163). Status в конце install: `OK`, program sha == caller, launchd running, pid 81941; `pgrep -x sing-box-lxd` находит без `-f`. Лаунчер (сборка 135, пин lx.8) через ~10 с загрузил 9 прокси с демона lx.12; `daemon.json` и секрет сохранены. BTM без отказов. Не гонялись вживую: повторный install (пропуск по sha), `--service=copy` → `COPY ONLY`, uninstall — покрыты табличными тестами `TestServiceStateTransitions`.
