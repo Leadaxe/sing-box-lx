@@ -28,6 +28,14 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.2-rc.2
+
+Пререлиз линии `v1.14.2-lx.2`; подробности — в секции `v1.14.2-lx.2` ниже.
+
+- ✨ **XHTTP: версия HTTP по `tls.alpn`, как у Xray** — `["h3"]` → HTTP/3 по QUIC (узлы только с h3, [issue #25](https://github.com/Leadaxe/sing-box-lx/issues/25)), `["http/1.1"]` → HTTP/1.1, без TLS → HTTP/1.1 (было h2c), REALITY → HTTP/2, иначе HTTP/2. Отпечаток uTLS на HTTP/3 не применяется (предупреждение в логе), QUIC-рукопожатие — Chrome-подобное. Новых ключей нет. ([SPEC 104](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/104-XHTTP_HTTP_VERSION_PARITY/SPEC.md))
+- 🪟 **lxd: служба Windows (SCM)** — из rc.1 ([SPEC 103](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/103-LXD_WINDOWS_SERVICE/SPEC.md)).
+- База — sing-box `v1.14.2`, дрейфа от `upstream/stable` нет.
+
 #### v1.14.2-lx.2
 
 - 🪟 **lxd: служба Windows (SCM) с защищённой копией ядра**
