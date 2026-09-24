@@ -29,7 +29,6 @@ const (
 	copyFileSDDL     = "O:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;AU)"
 	dataDirSDDL      = "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
 	dataFileSDDL     = "O:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)"
-	dataInheritSDDL  = "O:BAD:"
 	windowsSelfCheck = "run `sing-box lxd --service=install` to reinstall from a protected copy"
 )
 

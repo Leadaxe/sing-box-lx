@@ -18,9 +18,12 @@ import (
 // §2.3 before anything is written into it — daemon.json included: a file
 // with the secret created under a foreign owner would inherit a foreign
 // DACL. Top-down, every node through a handle opened without following
-// links: owner Administrators; the root gets the protected DACL, everything
-// below the parent's inherited entries (explicit protected ones if the
-// inheritance does not hold). A reparse point or a hard-linked file inside
+// links: the root is owned by Administrators with the protected DACL; a
+// node below it out of the norm gets owner Administrators and an explicit
+// protected DACL of its own — never an intermediate empty or inherited-only
+// DACL, which could read as a NULL DACL before inheritance applies. Files the
+// daemon created as SYSTEM with the inherited entries are in the norm and
+// left alone. A reparse point or a hard-linked file inside
 // refuses: changing an ACL through a link changes someone else's object, and
 // the daemon's writes as SYSTEM would follow it. The warnings name who could
 // read an existing daemon.json before (§4.2 p. 6).
@@ -143,26 +146,14 @@ func (walker *dataDirWalker) normalize(path string, isRoot bool) (bool, error) {
 	walker.changed = true
 	if previousOwner != "" {
 		fmt.Fprintf(walker.out, "lxd: took ownership of %s (was %s)\n", path, previousOwner)
-	} else if facts.Owner.SID != sidAdministrators {
+	} else if facts.Owner.SID != sidAdministrators && (isRoot || facts.Owner.SID != sidSystem) {
 		fmt.Fprintf(walker.out, "lxd: took ownership of %s (was %s)\n", path, principalName(facts.Owner))
 	}
-	if isRoot {
-		err = applySecurity(handle, dataDirSDDL, true)
-	} else {
-		err = applySecurity(handle, dataInheritSDDL, false)
-		if err == nil {
-			// The inherited entries are the parent's business; if they did
-			// not arrive, fall back to explicit protected ones.
-			if after, _, readErr := securityOfHandle(handle); readErr != nil || !dataNodeProtected(after, false) {
-				explicit := dataFileSDDL
-				if facts.Directory {
-					explicit = dataDirSDDL
-				}
-				err = applySecurity(handle, explicit, true)
-			}
-		}
+	sddl := dataFileSDDL
+	if facts.Directory {
+		sddl = dataDirSDDL
 	}
-	if err != nil {
+	if err = applySecurity(handle, sddl, true); err != nil {
 		return false, E.Cause(err, "replace the DACL on ", path)
 	}
 	fmt.Fprintln(walker.out, "lxd: replaced DACL on", path)

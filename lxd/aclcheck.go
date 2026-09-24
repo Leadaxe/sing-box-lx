@@ -261,14 +261,18 @@ func foreignReaders(facts securityFacts) []aclPrincipal {
 }
 
 // dataNodeProtected: a node of the data dir is in the norm of SPEC 103 §2.3
-// — owned by Administrators, no ACE for a SID outside the allowlist, and
-// SYSTEM and Administrators both hold full access. The root must also have
-// inheritance cut off; below it, inherited and explicit entries are equal.
+// — no ACE for a SID outside the allowlist, SYSTEM and Administrators both
+// with full access. The root is owned by Administrators with inheritance cut
+// off; below it SYSTEM may own a node too (the daemon creates its files as
+// SYSTEM), and inherited and explicit entries are equal.
 func dataNodeProtected(facts securityFacts, root bool) bool {
-	if facts.ReparsePoint || facts.NullDACL || facts.Owner.SID != sidAdministrators {
+	if facts.ReparsePoint || facts.NullDACL {
 		return false
 	}
-	if root && !facts.Protected {
+	if root && (facts.Owner.SID != sidAdministrators || !facts.Protected) {
+		return false
+	}
+	if !root && facts.Owner.SID != sidAdministrators && facts.Owner.SID != sidSystem {
 		return false
 	}
 	var systemFull, administratorsFull bool

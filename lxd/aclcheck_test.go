@@ -195,6 +195,17 @@ func TestDataNodeProtected(t *testing.T) {
 	if dataNodeProtected(inherited, true) {
 		t.Fatal("the root must cut inheritance off")
 	}
+	// What the daemon creates as SYSTEM is left alone; the root is not.
+	systemOwned := inherited
+	systemOwned.Owner = principalSystem
+	if !dataNodeProtected(systemOwned, false) {
+		t.Fatal("a SYSTEM-owned node below the root is in the norm")
+	}
+	systemRoot := protectedDataDir()
+	systemRoot.Owner = principalSystem
+	if dataNodeProtected(systemRoot, true) {
+		t.Fatal("the root must be owned by Administrators")
+	}
 	for name, facts := range map[string]securityFacts{
 		"a user owns it":       {Owner: principalUser, DACL: inherited.DACL},
 		"users may read it":    withEntry(inherited, allow(principalUsers, accessFileRead, aceInherited)),
