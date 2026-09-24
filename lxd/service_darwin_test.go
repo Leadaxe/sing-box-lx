@@ -4,6 +4,7 @@ package lxd
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -237,7 +238,7 @@ func realTempDir(t *testing.T) string {
 
 func TestBuildPlistRoundTrip(t *testing.T) {
 	programArgs := []string{
-		"/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd",
+		"/Library/PrivilegedHelperTools/sing-box-lxd",
 		"lxd", "--state-dir", "/Library/Application Support/sing-box-lxd/state",
 		"-c", "/tmp/a&b<c>.json",
 	}
@@ -276,9 +277,9 @@ func TestServiceLaunchctlPrint(t *testing.T) {
 		"\ttype = LaunchDaemon\n" +
 		"\tstate = running\n" +
 		"\n" +
-		"\tprogram = /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd\n" +
+		"\tprogram = /Library/PrivilegedHelperTools/sing-box-lxd\n" +
 		"\targuments = {\n" +
-		"\t\t/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd\n" +
+		"\t\t/Library/PrivilegedHelperTools/sing-box-lxd\n" +
 		"\t}\n" +
 		"\tendpoints = {\n" +
 		"\t\t\"com.example\" = {\n" +
@@ -289,7 +290,7 @@ func TestServiceLaunchctlPrint(t *testing.T) {
 		"\tpid = 86234\n" +
 		"}\n"
 	state, pid, program := parseLaunchctlPrint(output)
-	if state != "running" || pid != "86234" || program != "/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd" {
+	if state != "running" || pid != "86234" || program != "/Library/PrivilegedHelperTools/sing-box-lxd" {
 		t.Fatalf("state %q pid %q program %q", state, pid, program)
 	}
 }
@@ -299,7 +300,7 @@ func TestServiceLaunchctlPrint(t *testing.T) {
 func TestDryRunSystemInstallPlansCopy(t *testing.T) {
 	useOwnerLstat(t, rootOwnsEverything)
 	execDir := filepath.Join(realTempDir(t), "lxd-bin")
-	target := filepath.Join(execDir, launchdLabel)
+	target := filepath.Join(execDir, execCopyName)
 	self, err := resolveOwnExecutable()
 	if err != nil {
 		t.Fatal(err)
@@ -315,7 +316,7 @@ func TestDryRunSystemInstallPlansCopy(t *testing.T) {
 		"lxd: would create " + execDir + " (root:wheel 0755)",
 		"lxd: would copy " + self + " -> " + target,
 		"chown root:wheel, chmod 0755, verify sha256, rename into place",
-		"lxd: would write sidecar " + filepath.Join(execDir, launchdLabel+".install.json") + " (root:wheel 0644)",
+		"lxd: would write sidecar " + filepath.Join(execDir, installMarkerName) + " (root:wheel 0644)",
 		"lxd: dry run result: plist ProgramArguments[0] = " + target,
 	} {
 		if !strings.Contains(text, want) {
@@ -416,7 +417,7 @@ func setSource(t *testing.T, env serviceEnv, content string) string {
 func TestServiceStateTransitions(t *testing.T) {
 	env, out, base := testServiceEnv(t)
 	callerSHA := setSource(t, env, "core v1")
-	copyPath := filepath.Join(env.execDir, launchdLabel)
+	copyPath := filepath.Join(env.execDir, execCopyName)
 	exists := func(path string) bool { _, err := os.Lstat(path); return err == nil }
 
 	for _, step := range []struct {
@@ -495,11 +496,11 @@ func TestServiceStatusAnomalies(t *testing.T) {
 	}{
 		{"sidecar without its copy", func(t *testing.T, env serviceEnv, base string) {
 			mustDo(t, env.copyOnly())
-			mustDo(t, os.Remove(filepath.Join(env.execDir, launchdLabel)))
+			mustDo(t, os.Remove(filepath.Join(env.execDir, execCopyName)))
 		}, ServiceMismatch, "is missing but its sidecar remains"},
 		{"copy altered behind the sidecar", func(t *testing.T, env serviceEnv, base string) {
 			mustDo(t, env.installSystem([]string{"lxd"}))
-			mustDo(t, os.WriteFile(filepath.Join(env.execDir, launchdLabel), []byte("tampered"), 0o755))
+			mustDo(t, os.WriteFile(filepath.Join(env.execDir, execCopyName), []byte("tampered"), 0o755))
 		}, ServiceMismatch, "differs from its sidecar"},
 		{"copy bound to a vanished plist", func(t *testing.T, env serviceEnv, base string) {
 			mustDo(t, env.installSystem([]string{"lxd"}))
@@ -509,7 +510,16 @@ func TestServiceStatusAnomalies(t *testing.T) {
 			other := filepath.Join(base, "bundle", "root-owned-sing-box")
 			mustDo(t, os.WriteFile(other, []byte("core v1"), 0o755))
 			mustDo(t, os.WriteFile(env.system.plist, []byte(buildPlist(launchdLabel, []string{other, "lxd"}, env.system.logPath)), 0o644))
+		}, ServiceMismatch, "not an installed copy (sing-box-lxd with its sidecar)"},
+		{"plist runs a file named like the copy, without a sidecar", func(t *testing.T, env serviceEnv, base string) {
+			other := filepath.Join(base, "bundle", execCopyName)
+			mustDo(t, os.WriteFile(other, []byte("core v1"), 0o755))
+			mustDo(t, os.WriteFile(env.system.plist, []byte(buildPlist(launchdLabel, []string{other, "lxd"}, env.system.logPath)), 0o644))
 		}, ServiceMismatch, "no sidecar next to"},
+		{"plist runs the lx.11 file name, sidecar and all", func(t *testing.T, env serviceEnv, base string) {
+			earlier := placeEarlierBuild(t, env, "core v1")
+			mustDo(t, os.WriteFile(env.system.plist, []byte(buildPlist(launchdLabel, []string{earlier, "lxd"}, env.system.logPath)), 0o644))
+		}, ServiceMismatch, "not an installed copy"},
 		{"plist runs the user-writable bundle binary", func(t *testing.T, env serviceEnv, base string) {
 			bundle := filepath.Join(base, "bundle")
 			useOwnerLstat(t, func(path string) (ownerInfo, error) {
@@ -663,7 +673,7 @@ func TestServiceExecDirAndLegacyLayout(t *testing.T) {
 		t.Fatal("the default exec dir must never be created")
 	}
 
-	legacy := filepath.Join(env.execDir, launchdLabel)
+	legacy := filepath.Join(env.execDir, execCopyName)
 	mustDo(t, os.MkdirAll(filepath.Join(legacy, "sing-box"), 0o755))
 	want := "target is a directory (legacy layout); remove it: sudo rm -rf " + legacy
 	for name, action := range map[string]func() error{
@@ -689,5 +699,52 @@ func TestServiceExecDirAndLegacyLayout(t *testing.T) {
 	}
 	if info, statErr := os.Lstat(filepath.Join(legacy, "sing-box")); statErr != nil || !info.IsDir() {
 		t.Fatal("uninstall must not delete the legacy directory")
+	}
+}
+
+// placeEarlierBuild lays down what lx.11 installed: the copy named by the
+// label and its sidecar, bound to the system plist. Returns the copy's path.
+func placeEarlierBuild(t *testing.T, env serviceEnv, content string) string {
+	t.Helper()
+	earlier := filepath.Join(env.execDir, launchdLabel)
+	mustDo(t, os.WriteFile(earlier, []byte(content), 0o755))
+	marker := installMarker{SHA256: shaOf([]byte(content)), Version: "1.14.1-lx.11", PlistPath: env.system.plist, Label: launchdLabel}
+	encoded, err := json.Marshal(marker)
+	mustDo(t, err)
+	mustDo(t, os.WriteFile(filepath.Join(env.execDir, launchdLabel+".install.json"), encoded, 0o644))
+	return earlier
+}
+
+// TestServiceLeavesEarlierBuildFiles: the lx.11 copy (named by the label)
+// and its sidecar are not this core's — copy, install and uninstall work on
+// sing-box-lxd beside them and never read, rewrite or delete them.
+func TestServiceLeavesEarlierBuildFiles(t *testing.T) {
+	env, out, _ := testServiceEnv(t)
+	callerSHA := setSource(t, env, "core v2")
+	earlier := placeEarlierBuild(t, env, "core v1")
+	earlierMarker := earlier + ".install.json"
+	snapshot := func() (string, string) {
+		binary, _ := os.ReadFile(earlier)
+		marker, _ := os.ReadFile(earlierMarker)
+		return string(binary), string(marker)
+	}
+	binaryBefore, markerBefore := snapshot()
+
+	mustDo(t, env.installSystem([]string{"lxd"}))
+	program, _, err := readPlistProgram(env.system.plist)
+	mustDo(t, err)
+	if program != filepath.Join(env.execDir, "sing-box-lxd") {
+		t.Fatalf("the plist must run sing-box-lxd, runs %s", program)
+	}
+	out.Reset()
+	if verdict, statusErr := env.status(callerSHA); statusErr != nil || verdict != ServiceOK {
+		t.Fatalf("status %s %v:\n%s", verdict, statusErr, out.String())
+	}
+	mustDo(t, env.uninstall(false, false, false))
+	if _, statErr := os.Lstat(filepath.Join(env.execDir, "sing-box-lxd")); !os.IsNotExist(statErr) {
+		t.Fatal("uninstall must remove sing-box-lxd")
+	}
+	if binaryAfter, markerAfter := snapshot(); binaryAfter != binaryBefore || markerAfter != markerBefore {
+		t.Fatal("the earlier build's copy and sidecar must stay untouched")
 	}
 }

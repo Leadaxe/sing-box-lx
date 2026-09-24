@@ -18,12 +18,16 @@ import (
 )
 
 const (
-	// execCopyName is the copy's file name inside the exec dir: Apple's
-	// convention for privileged helpers is one flat file named by the label
-	// (SPEC 100 §2.1). The process still shows "sing-box" in its name.
-	execCopyName = launchdLabel
+	// execCopyName is the copy's file name inside the exec dir — one flat
+	// file, as Apple's privileged helpers are (SPEC 100 §2.1). Not the
+	// label: macOS truncates a process's comm to 16 characters, and
+	// "sing-box-lxd" fits whole and contains "sing-box", so pgrep, pkill
+	// and ps -c find the daemon without -f. The fork's binary is sing-box; this
+	// is its derivative. The label stays the service's name (plist, launchd,
+	// XPC_SERVICE_NAME).
+	execCopyName = "sing-box-lxd"
 	// installMarkerName is the sidecar beside the copy (SPEC 100 §2.3).
-	installMarkerName = launchdLabel + ".install.json"
+	installMarkerName = execCopyName + ".install.json"
 	// maxExecutableSize bounds what install copies and hashes; the release
 	// binary is ~70 MB.
 	maxExecutableSize = 512 << 20
@@ -81,7 +85,7 @@ type execCopyResult struct {
 	Skipped bool
 }
 
-// installExecCopy puts source at <dir>/com.leadaxe.sing-box-lxd (SPEC 100
+// installExecCopy puts source at <dir>/sing-box-lxd (SPEC 100
 // §2.3 step 3). The
 // source must be a regular file, not a symlink. An identical target (same
 // file, or same sha256) is kept. Otherwise the bytes go to a temporary file
@@ -319,9 +323,10 @@ func writeInstallMarker(dir string, marker installMarker, chown bool) error {
 	return nil
 }
 
-// legacyLayoutError refuses to put the copy where an earlier pre-release left
-// a directory of the same name (the <label>/sing-box layout). Nothing is
-// removed automatically: the operator deletes it knowingly.
+// legacyLayoutError refuses to put the copy where a directory of the same
+// name stands (an early pre-release installed the copy as a directory with
+// the binary inside). Nothing is removed automatically: the operator deletes
+// it knowingly.
 func legacyLayoutError(target string) error {
 	return E.New("target is a directory (legacy layout); remove it: sudo rm -rf ", target)
 }
@@ -331,7 +336,7 @@ func reportLegacyLayout(out io.Writer, target string) {
 	fmt.Fprintf(out, "lxd: %s is a directory (legacy layout), left in place; remove it: sudo rm -rf %s\n", target, target)
 }
 
-// removeInstalledCopy removes <dir>/com.leadaxe.sing-box-lxd and its sidecar
+// removeInstalledCopy removes <dir>/sing-box-lxd and its sidecar
 // ONLY when the sidecar names this service — its label, and either this
 // plist or no plist at all (a `--service=copy` copy) — and the file's sha256
 // equals the sidecar's (SPEC 100 §2.6); anything else stays, with the reason

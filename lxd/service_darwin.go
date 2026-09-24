@@ -199,7 +199,7 @@ func launchctlUnload(scope serviceScope) error {
 
 // InstallService registers the daemon as a system LaunchDaemon (root) that
 // executes a root-owned copy of this binary in execDir (empty = the
-// canonical /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd). dryRun
+// canonical /Library/PrivilegedHelperTools/sing-box-lxd). dryRun
 // prints the plan instead, touching nothing — the operator's look before the
 // leap.
 func InstallService(daemonArgs []string, execDir string, dryRun bool) error {
@@ -814,6 +814,10 @@ func judgeDaemon(scope serviceScope, program string, facts programFacts, callerS
 		return ServiceMismatch, "the plist runs " + program + ", which does not exist; " + reinstallHint
 	case facts.chainErr != nil:
 		return ServiceUnsafe, "the LaunchDaemon executes a binary that is not a root-owned copy (" + facts.chainErr.Error() + "); " + reinstallHint
+	case filepath.Base(program) != execCopyName:
+		// Only a file named like the copy can be ours; a sidecar lying next
+		// to anything else (an earlier build's file) describes another file.
+		return ServiceMismatch, "the plist runs " + program + ", not an installed copy (" + execCopyName + " with its sidecar); " + reinstallHint
 	case facts.markerErr != nil:
 		return ServiceMismatch, facts.markerErr.Error() + "; " + reinstallHint
 	case !facts.markerFound:

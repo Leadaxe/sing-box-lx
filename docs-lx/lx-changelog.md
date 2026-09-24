@@ -28,6 +28,18 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.1-lx.12
+
+- 🔤 **lxd: файл root-owned копии называется `sing-box-lxd`, а не ярлыком**
+  ([SPEC 100](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/100-LXD_ROOT_OWNED_BINARY/SPEC.md);
+  решение владельца 2026-09-24). Копия — `/Library/PrivilegedHelperTools/sing-box-lxd`, сайдкар —
+  `/Library/PrivilegedHelperTools/sing-box-lxd.install.json`; поля, `--exec-dir`, инвариант, install/copy/status/
+  uninstall/`--keep-copy` и проверка «каталог на месте копии» — как в lx.11. Причина: macOS усекает `comm` до 16
+  символов; `sing-box-lxd` влезает целиком и содержит `sing-box` — `pgrep`/`pkill`/`ps -c` находят демон без `-f`
+  (ярлык обрезался до `com.leadaxe.sing`). Ярлык службы, plist и `XPC_SERVICE_NAME` не меняются.
+  Файл lx.11 `com.leadaxe.sing-box-lxd` и его сайдкар ядро не читает и не трогает; plist, исполняющий такой файл,
+  status даёт `MISMATCH` (2) — «not an installed copy», до переустановки. Миграции нет (установок lx.11 нет).
+
 #### v1.14.1-lx.11
 
 - 🔒 **lxd: системная служба исполняет root-owned копию, а не бинарь из бандла — закрыто повышение

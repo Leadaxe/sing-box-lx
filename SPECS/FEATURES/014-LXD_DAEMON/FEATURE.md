@@ -95,9 +95,10 @@ TUN, до логина); `install-user` — пользовательский Lau
 
 **Root исполняет только root-owned копию (macOS).** LaunchDaemon запускает не тот
 файл, из которого его поставили, а копию
-`/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` (`root:wheel 0755`, плоский
-файл с именем ярлыка по соглашению Apple; путь проверяется от `/`, копия встаёт атомарной
-подменой после сверки sha256) с сайдкаром `com.leadaxe.sing-box-lxd.install.json` рядом (`source`, `sha256`, `version`, `installed_at`,
+`/Library/PrivilegedHelperTools/sing-box-lxd` (`root:wheel 0755`, плоский файл по
+соглашению Apple; имя влезает в 16 символов `comm` и содержит `sing-box` — `pgrep`/`ps -c`
+находят демон без `-f`; ярлык службы остаётся `com.leadaxe.sing-box-lxd`; путь проверяется от `/`, копия встаёт атомарной
+подменой после сверки sha256) с сайдкаром `sing-box-lxd.install.json` рядом (`source`, `sha256`, `version`, `installed_at`,
 `plist_path`, `label`; читается без root). В plist меняется только первый элемент
 `ProgramArguments`. `copy` — та же копия без plist и launchd (для лаунчера, который сам
 запускает ядро от root); последующий `install` привязывает её без повторного
@@ -201,7 +202,7 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
 | [067-LXD_BUILD_TAG_SPLIT](../../TASKS/067-LXD_BUILD_TAG_SPLIT/SPEC.md) | Демон переехал на собственный build-tag `with_lxd`; `with_lx_command` остался за RPC SPEC 015 (`URLTestOutbound`, `GetRules`, `GetGroups` — их использует LxBox). Позволяет собрать сборку без демона, но с командными расширениями: так теперь собирается legacy-Win7. Логика не менялась — только теги и комментарии |
 | [066-LXD_CLIENT_IDENTITY](../../TASKS/066-LXD_CLIENT_IDENTITY/SPEC.md) | Справочник IP → устройство для сетевого инспектора: `GET /admin/clients-info` отдаёт `name`/`mac`/`ssid`/`iface`/`port`/`source` по каждому клиенту, метки оператора через `PUT`/`DELETE` (ключ = IP или MAC). Пять провайдеров с приоритетом по порядку вызова (`lease` → `arp` → `bridge` → `wireless` → `label`), платформенные через build-теги, ядро не трогается; кеш 60 с; живой прогон на macOS |
 | [065-LXD_OBSERVABILITY_PLANE](../../TASKS/065-LXD_OBSERVABILITY_PLANE/SPEC.md) | Диагностика демона: `/admin/memory` (два RSS — текущий и пик, кеш 200 мс), `/admin/stats` (uptime ядра, трафик, соединения; без ядра `null`, а не 503), `/admin/logs` (хвост `lxd.log` — лог **демона**, которого нет в gRPC-потоке), `/admin/pprof/*` (шесть снимков по whitelist, CPU/trace с потолком и 409, вкл/выкл block/mutex) — за тем же mTLS-пином, без отдельного debug-порта; живой прогон на macOS |
-| [100-LXD_ROOT_OWNED_BINARY](../../TASKS/100-LXD_ROOT_OWNED_BINARY/SPEC.md) | Системная служба исполняет root-owned копию бинаря, а не файл, из которого её поставили (закрыто повышение привилегий через user-writable бинарь в plist): копия `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` (плоский файл), сайдкар `com.leadaxe.sing-box-lxd.install.json`, `--exec-dir`, `--service=copy` (копия без службы, для classic TUN лаунчера), `--service=status` с кодами выхода, uninstall только своей копии, самопроверка `lxd`/`run` под root, `executable`/`executable_sha256` в `/admin/info`; табличный тест переходов состояний |
+| [100-LXD_ROOT_OWNED_BINARY](../../TASKS/100-LXD_ROOT_OWNED_BINARY/SPEC.md) | Системная служба исполняет root-owned копию бинаря, а не файл, из которого её поставили (закрыто повышение привилегий через user-writable бинарь в plist): копия `/Library/PrivilegedHelperTools/sing-box-lxd` (плоский файл), сайдкар `sing-box-lxd.install.json`, `--exec-dir`, `--service=copy` (копия без службы, для classic TUN лаунчера), `--service=status` с кодами выхода, uninstall только своей копии, самопроверка `lxd`/`run` под root, `executable`/`executable_sha256` в `/admin/info`; табличный тест переходов состояний |
 
 ## 8. Особенности сопровождения
 

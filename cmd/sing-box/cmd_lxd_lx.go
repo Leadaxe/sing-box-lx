@@ -111,7 +111,7 @@ func init() {
 	commandLxd.Flags().BoolVar(&lxdKeepCopy, "keep-copy", false, "with --service=uninstall: remove the service but keep the root-owned copy and its sidecar for non-service use (--purge still only concerns the state)")
 	commandLxd.Flags().BoolVar(&lxdDryRun, "dry-run", false, "with --service: show what would be done, change nothing")
 	commandLxd.Flags().BoolVar(&lxdAllowUnsafe, "allow-unsafe-exec", false, "debug only: let the root launchd service start from a binary that is not a root-owned copy (logs a WARN instead of refusing)")
-	commandLxd.Flags().StringVar(&lxdExecDir, "exec-dir", "", "with --service=install|copy|uninstall|status: directory for the root-owned binary copy com.leadaxe.sing-box-lxd and its sidecar (default /Library/PrivilegedHelperTools, which must exist; a directory given here is created if missing); every component from / must be root-owned and not group/world-writable")
+	commandLxd.Flags().StringVar(&lxdExecDir, "exec-dir", "", "with --service=install|copy|uninstall|status: directory for the root-owned binary copy sing-box-lxd and its sidecar (default /Library/PrivilegedHelperTools, which must exist; a directory given here is created if missing); every component from / must be root-owned and not group/world-writable")
 
 	commandLxd.AddCommand(commandLxdClient)
 	commandLxdClientAdd.Flags().StringVar(&lxdClientName, "name", "", "human label for the client")

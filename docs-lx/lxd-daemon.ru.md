@@ -143,7 +143,7 @@ connection-настроек: у команды нет флагов `--listen/--t
 | `--config-force <файл>` | всегда бутиться с этого файла, поверх last-good |
 | `--run` | поднять ядро независимо от записанного run-состояния |
 | `--service install\|install-user\|copy\|uninstall\|status` | установка службой, root-owned копия без службы, снятие, отчёт (см. разделы ОС и [7.1](#71-root-owned-копия-бинаря)) |
-| `--exec-dir <dir>` | с `install`/`copy`/`uninstall`/`status` — каталог root-owned копии (дефолт `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd`) |
+| `--exec-dir <dir>` | с `install`/`copy`/`uninstall`/`status` — каталог root-owned копии `sing-box-lxd` и её сайдкара (дефолт `/Library/PrivilegedHelperTools`, должен существовать; заданный здесь создаётся) |
 | `--allow-unsafe-exec` | только для отладки: root-служба стартует и с бинаря, который не root-owned копия (WARN вместо отказа) |
 | `--purge` | с `uninstall` — снести и state-каталог |
 | `--keep-copy` | с `uninstall` — снять службу, root-owned копию оставить для запуска без службы ([7.1](#71-root-owned-копия-бинаря)) |
@@ -207,7 +207,7 @@ sing-box lxd --service=install-user    # LaunchAgent: без sudo, старт п
 Install делает всё сам:
 
 1. системная область: копирует бинарь в
-   `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` с владельцем root,
+   `/Library/PrivilegedHelperTools/sing-box-lxd` с владельцем root,
    и служба исполняет эту копию, а не файл, из которого её поставили
    ([7.1](#71-root-owned-копия-бинаря));
 2. создаёт `…/Application Support/sing-box-lxd/` (0700; системная область — `root:wheel`)
@@ -246,11 +246,14 @@ LaunchDaemon исполняется от root при каждой загрузк
 
 | Что | Путь | Владелец / режим |
 |---|---|---|
-| бинарь | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` | `root:wheel 0755` |
-| сайдкар | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd.install.json` | `root:wheel 0644` |
+| бинарь | `/Library/PrivilegedHelperTools/sing-box-lxd` | `root:wheel 0755` |
+| сайдкар | `/Library/PrivilegedHelperTools/sing-box-lxd.install.json` | `root:wheel 0644` |
 
-Соглашение Apple для привилегированных помощников: плоский файл с именем ярлыка, без
-своего каталога. В `ps` процесс виден как `com.leadaxe.sing-box-lxd`.
+Соглашение Apple для привилегированных помощников: плоский файл, без своего каталога.
+Имя — `sing-box-lxd`, а не ярлык: macOS усекает имя процесса до 16 символов, а
+`sing-box-lxd` влезает целиком и содержит `sing-box`, так что `pgrep sing-box`, `pkill` и
+`ps -c` находят демон без `-f`. Ярлык службы, plist и `XPC_SERVICE_NAME` остаются
+`com.leadaxe.sing-box-lxd`.
 `/Library/PrivilegedHelperTools` поставляется с macOS; install его не создаёт, а его
 отсутствие — ошибка с подсказкой.
 
@@ -265,7 +268,7 @@ LaunchDaemon исполняется от root при каждой загрузк
   `lxd: binary unchanged (sha256 …), copy skipped`.
 - **В plist** меняется только `ProgramArguments[0]`; daemon.json, адрес, секрет и
   сопряжённые клиенты остаются как были.
-- **Сайдкар** `com.leadaxe.sing-box-lxd.install.json` читается без root:
+- **Сайдкар** `sing-box-lxd.install.json` читается без root:
   ```json
   {
     "source": "/Applications/singbox-launcher.app/Contents/MacOS/bin/sing-box",
@@ -282,11 +285,15 @@ LaunchDaemon исполняется от root при каждой загрузк
   нет, он создаётся `root:wheel 0755`. Тот же инвариант распространяется на каждый
   компонент `<dir>` и на сам файл; иначе install отказывает:
   `<путь>: owned by uid N, mode NNNN, must be root-owned and not group/world-writable`.
-- **Остаток раннего пре-релиза.** Те ставили каталог
-  `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/` с `sing-box` внутри. Каталог на
-  месте файла останавливает install и copy:
+- **Каталог на месте файла** останавливает install и copy:
   `target is a directory (legacy layout); remove it: sudo rm -rf <путь>`. Сам он не
   удаляется ничем; status показывает его (выход 2), uninstall оставляет с той же подсказкой.
+- **Файлы прежних сборок — не этого ядра.** `v1.14.1-lx.11` называл копию ярлыком
+  (`/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` и её `.install.json`), ранние
+  пре-релизы оставляли каталог с тем же именем. Текущее ядро их не читает, не переписывает
+  и не удаляет; plist, исполняющий такой файл, виден как `MISMATCH` (выход 2), пока
+  `sudo sing-box lxd --service=install` не переведёт службу на `sing-box-lxd`. Остатки
+  удалить руками: `sudo rm -rf /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd*`.
 
 **Копия без службы.** `sudo sing-box lxd --service=copy` кладёт ту же копию и сайдкар — и
 больше ничего: ни plist, ни launchd. Это для лаунчера, который сам запускает ядро от root
@@ -349,10 +356,11 @@ lxd: refusing to run as a root service from /Applications/…/sing-box (uid 501,
 
 ```bash
 ls -ld / /Library /Library/PrivilegedHelperTools
-ls -l /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd*             # root wheel -rwxr-xr-x бинарь, -rw-r--r-- .install.json
+ls -l /Library/PrivilegedHelperTools/sing-box-lxd*                         # root wheel -rwxr-xr-x бинарь, -rw-r--r-- .install.json
 plutil -p /Library/LaunchDaemons/com.leadaxe.sing-box-lxd.plist            # ProgramArguments[0] = копия
-shasum -a 256 /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd
-cat /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd.install.json   # тот же sha256
+shasum -a 256 /Library/PrivilegedHelperTools/sing-box-lxd
+cat /Library/PrivilegedHelperTools/sing-box-lxd.install.json               # тот же sha256
+pgrep -l sing-box                                                          # демон виден как sing-box-lxd
 launchctl print system/com.leadaxe.sing-box-lxd | grep -E '^[[:space:]](state|pid|program) ='
 sing-box lxd --service=status
 ```

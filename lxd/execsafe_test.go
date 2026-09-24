@@ -69,7 +69,7 @@ func TestInvariantChain(t *testing.T) {
 		"/":                              rootDir(0o755),
 		"/Library":                       rootDir(0o755),
 		"/Library/PrivilegedHelperTools": {mode: os.ModeDir | os.ModeSticky | 0o755},
-		"/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd": rootFile(0o755),
+		"/Library/PrivilegedHelperTools/sing-box-lxd": rootFile(0o755),
 		"/Applications":                       {uid: 0, gid: 80, mode: os.ModeDir | 0o775},
 		"/Applications/launcher.app":          {uid: 501, mode: os.ModeDir | 0o755},
 		"/Applications/launcher.app/sing-box": {uid: 501, mode: 0o755},
@@ -83,12 +83,12 @@ func TestInvariantChain(t *testing.T) {
 		path     string
 		wantPart string // "" = passes
 	}{
-		{"canonical copy", "/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd", ""},
+		{"canonical copy", "/Library/PrivilegedHelperTools/sing-box-lxd", ""},
 		{"root itself", "/", ""},
 		{"group-writable parent is caught first", "/Applications/launcher.app/sing-box", "/Applications: owned by uid 0, mode 0775"},
 		{"root file under a user dir", "/opt/user-dir/root-file", "/opt/user-dir: owned by uid 501"},
 		{"symlink component", "/var/root/sing-box", "/var: is a symbolic link"},
-		{"missing component", "/Library/PrivilegedHelperTools/other/com.leadaxe.sing-box-lxd", "file does not exist"},
+		{"missing component", "/Library/PrivilegedHelperTools/other/sing-box-lxd", "file does not exist"},
 		{"relative path", "Library/sing-box", "not an absolute path"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -160,13 +160,13 @@ func TestInvariantSelfCheck(t *testing.T) {
 		"/":                              rootDir(0o755),
 		"/Library":                       rootDir(0o755),
 		"/Library/PrivilegedHelperTools": {mode: os.ModeDir | os.ModeSticky | 0o755},
-		"/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd": rootFile(0o755),
+		"/Library/PrivilegedHelperTools/sing-box-lxd": rootFile(0o755),
 		"/Applications":                       {gid: 80, mode: os.ModeDir | 0o775},
 		"/Applications/launcher.app":          {uid: 501, mode: os.ModeDir | 0o755},
 		"/Applications/launcher.app/sing-box": {uid: 501, mode: 0o755},
 	}
 	const (
-		safe   = "/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd"
+		safe   = "/Library/PrivilegedHelperTools/sing-box-lxd"
 		unsafe = "/Applications/launcher.app/sing-box"
 	)
 	for _, testCase := range []struct {

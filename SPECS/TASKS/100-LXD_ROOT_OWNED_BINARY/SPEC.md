@@ -8,7 +8,7 @@
 | Статус | I (implemented) — код и тесты в ветке, `go test -race ./lxd/ ./cmd/sing-box/` зелёные на macOS; ручная проверка install/status/uninstall под sudo (§5 п. 8) — за владельцем |
 | Ветка | `spec100-lxd-root-owned-binary` (от `lx`) |
 | База | `4146bc8ce` |
-| Релиз | `v1.14.1-lx.11` |
+| Релиз | `v1.14.1-lx.11`; имя файла копии `sing-box-lxd` — `v1.14.1-lx.12` |
 | Связано | [057](../057-LXD_MTLS_SERVICE/SPEC.md) (служба `--service`), [065](../065-LXD_OBSERVABILITY_PLANE/SPEC.md) (`/admin/info`); лаунчер: SPEC 137 (classic TUN на macOS через `--service=copy`) |
 
 Решение владельца 2026-09-24, нормы согласованы с сессией-владельцем ядра.
@@ -36,13 +36,20 @@
 
 | Что | Путь | Владелец / режим |
 |---|---|---|
-| копия бинаря | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` | `root:wheel 0755` |
-| сайдкар | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd.install.json` | `root:wheel 0644` |
+| копия бинаря | `/Library/PrivilegedHelperTools/sing-box-lxd` | `root:wheel 0755` |
+| сайдкар | `/Library/PrivilegedHelperTools/sing-box-lxd.install.json` | `root:wheel 0644` |
 
-Соглашение Apple для привилегированных помощников: плоский файл с именем ярлыка прямо в
-`/Library/PrivilegedHelperTools`, без своего каталога. Процесс в `ps` называется
-`com.leadaxe.sing-box-lxd` (подстрока `sing-box` в имени есть). Дистрибутивный бинарь
-по-прежнему `sing-box`.
+Соглашение Apple для привилегированных помощников: плоский файл прямо в
+`/Library/PrivilegedHelperTools`, без своего каталога. Имя файла — `sing-box-lxd`, а не
+ярлык: macOS усекает имя процесса (`comm`) до 16 символов, `sing-box-lxd` влезает целиком
+и содержит `sing-box`, так что `pgrep`, `pkill` и `ps -c` находят демон без `-f`; по
+конституции форка бинарь — `sing-box`, это его производная. Ярлык службы, plist и
+`XPC_SERVICE_NAME` остаются `com.leadaxe.sing-box-lxd`.
+
+Файлы, которые ставил `v1.14.1-lx.11` (`/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd`
+и `….install.json` рядом), не принадлежат этому ядру: оно их не читает, не переписывает и не
+удаляет; plist, указывающий на такой файл, status считает не нашей копией (`MISMATCH`, 2),
+переустановка переводит службу на `sing-box-lxd`. Миграции нет: установок lx.11 в поле нет.
 
 `--exec-dir <dir>` — каталог, куда кладутся оба файла с теми же именами; дефолт —
 `/Library/PrivilegedHelperTools`. Инвариант (2.2) проверяется по цепочке от `/` до
@@ -51,7 +58,7 @@
 (недостающие компоненты `root:wheel 0755`).
 
 **Старая раскладка.** Если по пути копии лежит **каталог** (остаток пре-релиза с
-раскладкой `<ярлык>/sing-box`), install и copy отказывают:
+раскладкой «каталог с бинарём внутри»), install и copy отказывают:
 `target is a directory (legacy layout); remove it: sudo rm -rf <путь>` — и ничего не
 удаляют сами; status даёт `MISMATCH` (2) с той же причиной, uninstall и `--keep-copy`
 оставляют каталог с сообщением `… is a directory (legacy layout), left in place; remove
@@ -147,7 +154,7 @@ SPEC 137 лаунчера). Повторный вызов при совпаде�
 (`lxd: copy left in place: sha differs from sidecar …`, `… no sidecar …`,
 `… sidecar … belongs to …`). Произвольный `ProgramArguments[0]` не удаляется никогда.
 Кандидаты — каталог `ProgramArguments[0]` (если файл называется
-`com.leadaxe.sing-box-lxd`) и каталог копии (`--exec-dir` или дефолтный). Сайдкар без
+`sing-box-lxd`) и каталог копии (`--exec-dir` или дефолтный). Сайдкар без
 файла удаляется как устаревший. Сам каталог не удаляется никогда; каталог старой
 раскладки на месте копии остаётся с сообщением (2.1). `--purge` — как раньше, про
 support-каталог. `--dry-run` печатает те же решения со словом `would`.
@@ -225,8 +232,8 @@ root-owned copy`. launchd пишет его в `lxd.log` (StandardErrorPath) п�
 
 ## 3. Интерфейс для лаунчера
 
-- **Пути:** бинарь `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd`, сайдкар
-  `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd.install.json` (JSON 2.3 п. 4,
+- **Пути:** бинарь `/Library/PrivilegedHelperTools/sing-box-lxd`, сайдкар
+  `/Library/PrivilegedHelperTools/sing-box-lxd.install.json` (JSON 2.3 п. 4,
   читается без root); plist `/Library/LaunchDaemons/com.leadaxe.sing-box-lxd.plist`.
   С `--exec-dir <dir>` — те же имена в `<dir>`.
 - **Команды** (из бинаря бандла):
@@ -245,7 +252,7 @@ root-owned copy`. launchd пишет его в `lxd.log` (StandardErrorPath) п�
   бинаря. Путь демона теперь всегда отличается от пути в бандле. Версия копии без
   запуска — поле `version` сайдкара.
 - **Classic TUN (root без launchd):** `sudo sing-box lxd --service=copy`, затем запуск
-  `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd run …` от root.
+  `/Library/PrivilegedHelperTools/sing-box-lxd run …` от root.
   Обновление ядра — снова `--service=copy`.
 - **Ключевые строки:** `lxd: copied <src> -> <dst> (sha256 <hex>, root:wheel 0755)`;
   `lxd: binary unchanged (sha256 <hex>), copy skipped`; `lxd: already up to date <hex>`;
@@ -285,6 +292,7 @@ root-owned copy`. launchd пишет его в `lxd.log` (StandardErrorPath) п�
    причиной; plist ↔ `ProgramArguments` туда-обратно; dry-run install/copy; разбор
    `launchctl print`; дефолтный каталог не создаётся, старая раскладка — отказ и exit 2.
    Выполнено (`TestServiceStateTransitions`, `TestServiceExecDirAndLegacyLayout`,
+   `TestServiceLeavesEarlierBuildFiles`,
    `TestServiceStatusAnomalies`, `TestBuildPlist*`, `TestDryRun*`, `TestServiceLaunchctlPrint`).
 6. `admin_test`: `executable`, `executable_sha256`. Выполнено (`TestAdminInfo*`).
 7. CI: `GOOS=darwin go vet` для `./lxd/ ./cmd/sing-box/` в lint-джобе. Выполнено.

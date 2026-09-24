@@ -144,7 +144,7 @@ Rules worth knowing:
 | `--config-force <file>` | always boot from this file, overriding last-good |
 | `--run` | bring the core up regardless of the recorded run state |
 | `--service install\|install-user\|copy\|uninstall\|status` | service installation, a root-owned copy without a service, removal, a status report (see the OS sections and [7.1](#71-the-root-owned-copy-of-the-binary)) |
-| `--exec-dir <dir>` | with `install`/`copy`/`uninstall`/`status` — directory of the root-owned copy (default `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd`) |
+| `--exec-dir <dir>` | with `install`/`copy`/`uninstall`/`status` — directory of the root-owned copy `sing-box-lxd` and its sidecar (default `/Library/PrivilegedHelperTools`, which must exist; a directory given here is created) |
 | `--allow-unsafe-exec` | debug only: let the root service start from a binary that is not a root-owned copy (WARN instead of a refusal) |
 | `--purge` | with `uninstall` — also delete the state directory |
 | `--keep-copy` | with `uninstall` — remove the service but keep the root-owned copy for non-service use ([7.1](#71-the-root-owned-copy-of-the-binary)) |
@@ -210,7 +210,7 @@ fails with a permission error under the user scope. This has nothing to do with
 Install does everything itself:
 
 1. system scope: copies the binary to
-   `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd`, root-owned, and
+   `/Library/PrivilegedHelperTools/sing-box-lxd`, root-owned, and
    the service runs that copy, not the file you installed from
    ([7.1](#71-the-root-owned-copy-of-the-binary));
 2. creates `…/Application Support/sing-box-lxd/` (0700; system scope — `root:wheel`)
@@ -250,11 +250,14 @@ never runs the file it was installed from; `--service=install` copies it first:
 
 | What | Path | Owner / mode |
 |---|---|---|
-| binary | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` | `root:wheel 0755` |
-| sidecar | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd.install.json` | `root:wheel 0644` |
+| binary | `/Library/PrivilegedHelperTools/sing-box-lxd` | `root:wheel 0755` |
+| sidecar | `/Library/PrivilegedHelperTools/sing-box-lxd.install.json` | `root:wheel 0644` |
 
-Apple's convention for privileged helpers: one flat file named by the label, no
-directory of its own. In `ps` the process shows as `com.leadaxe.sing-box-lxd`.
+Apple's convention for privileged helpers: one flat file, no directory of its own. It is
+named `sing-box-lxd`, not by the label: macOS truncates a process name to 16 characters,
+and `sing-box-lxd` fits whole and contains `sing-box`, so `pgrep sing-box`, `pkill` and
+`ps -c` find the daemon without `-f`. The service label, the plist and
+`XPC_SERVICE_NAME` stay `com.leadaxe.sing-box-lxd`.
 `/Library/PrivilegedHelperTools` ships with macOS; install never creates it, and a
 missing one is an error with the remedy.
 
@@ -269,7 +272,7 @@ missing one is an error with the remedy.
   An identical copy is left alone: `lxd: binary unchanged (sha256 …), copy skipped`.
 - **The plist** changes only in `ProgramArguments[0]`; daemon.json, the address, the
   secret and the enrolled clients stay as they were.
-- **The sidecar** `com.leadaxe.sing-box-lxd.install.json` is readable without root:
+- **The sidecar** `sing-box-lxd.install.json` is readable without root:
   ```json
   {
     "source": "/Applications/singbox-launcher.app/Contents/MacOS/bin/sing-box",
@@ -286,11 +289,16 @@ missing one is an error with the remedy.
   a missing one is created `root:wheel 0755`. The same invariant covers every component
   of `<dir>` and the file itself; otherwise install refuses:
   `<path>: owned by uid N, mode NNNN, must be root-owned and not group/world-writable`.
-- **Leftover of an early pre-release.** Those installed a directory
-  `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/` with `sing-box` inside. A
-  directory where the file belongs stops install and copy:
+- **A directory where the file belongs** stops install and copy:
   `target is a directory (legacy layout); remove it: sudo rm -rf <path>`. Nothing deletes
   it automatically; status reports it (exit 2), uninstall leaves it with the same hint.
+- **Files of earlier builds are not this core's.** `v1.14.1-lx.11` named the copy by the
+  label (`/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` and its
+  `.install.json`); early pre-releases left a directory of that name. The current core
+  never reads, rewrites or deletes them; a plist running such a file shows as `MISMATCH`
+  (exit 2) until `sudo sing-box lxd --service=install` moves the service to
+  `sing-box-lxd`. Remove the leftovers by hand:
+  `sudo rm -rf /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd*`.
 
 **A copy without a service.** `sudo sing-box lxd --service=copy` lays down the same copy
 and sidecar and nothing else — no plist, no launchd. It serves a launcher that runs the
@@ -354,10 +362,11 @@ refusal into a WARN for debugging.
 
 ```bash
 ls -ld / /Library /Library/PrivilegedHelperTools
-ls -l /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd*             # root wheel -rwxr-xr-x the binary, -rw-r--r-- .install.json
+ls -l /Library/PrivilegedHelperTools/sing-box-lxd*                         # root wheel -rwxr-xr-x the binary, -rw-r--r-- .install.json
 plutil -p /Library/LaunchDaemons/com.leadaxe.sing-box-lxd.plist            # ProgramArguments[0] = the copy
-shasum -a 256 /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd
-cat /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd.install.json   # the same sha256
+shasum -a 256 /Library/PrivilegedHelperTools/sing-box-lxd
+cat /Library/PrivilegedHelperTools/sing-box-lxd.install.json               # the same sha256
+pgrep -l sing-box                                                          # the daemon shows as sing-box-lxd
 launchctl print system/com.leadaxe.sing-box-lxd | grep -E '^[[:space:]](state|pid|program) ='
 sing-box lxd --service=status
 ```

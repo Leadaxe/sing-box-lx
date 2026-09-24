@@ -537,7 +537,7 @@ func TestAdminInfoEndpoint(t *testing.T) {
 	control.advertiseAddr = "127.0.0.1:29091"
 	control.startedAt = time.Now().Add(-3 * time.Second)
 	control.executable = &executableIdentity{
-		path:   "/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd",
+		path:   "/Library/PrivilegedHelperTools/sing-box-lxd",
 		sha256: "0f1e",
 	}
 	handler := control.adminHandler("")
@@ -565,7 +565,7 @@ func TestAdminInfoEndpoint(t *testing.T) {
 	if pid, _ := payload["pid"].(float64); int(pid) != os.Getpid() {
 		t.Fatalf("pid = %v, want %d", payload["pid"], os.Getpid())
 	}
-	if payload["executable"] != "/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd" || payload["executable_sha256"] != "0f1e" {
+	if payload["executable"] != "/Library/PrivilegedHelperTools/sing-box-lxd" || payload["executable_sha256"] != "0f1e" {
 		t.Fatalf("executable/executable_sha256 = %v/%v", payload["executable"], payload["executable_sha256"])
 	}
 }
