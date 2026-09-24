@@ -158,6 +158,18 @@ message GroupItem {
   string type = 2;
   int64 urlTestTime = 3;
   int32 urlTestDelay = 4;
+
+  // lx:begin lx_command
+
+  // WG/AWG endpoint state: never_built / building / up / asleep / torn_down /
+  // down; empty for every other outbound. Filled by GetOutbounds only.
+  // lx: SPEC 097.
+  string endpointState = 5;
+  // Seconds since the last dial through the endpoint; 0 for every other
+  // outbound. lx: SPEC 097.
+  int64 idleSinceSeconds = 6;
+
+  // lx:end lx_command
 }
 
 message URLTestRequest {

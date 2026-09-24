@@ -782,13 +782,20 @@ func (x *Group) GetMode() string {
 }
 
 type GroupItem struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Tag           string                 `protobuf:"bytes,1,opt,name=tag,proto3" json:"tag,omitempty"`
-	Type          string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
-	UrlTestTime   int64                  `protobuf:"varint,3,opt,name=urlTestTime,proto3" json:"urlTestTime,omitempty"`
-	UrlTestDelay  int32                  `protobuf:"varint,4,opt,name=urlTestDelay,proto3" json:"urlTestDelay,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Tag          string                 `protobuf:"bytes,1,opt,name=tag,proto3" json:"tag,omitempty"`
+	Type         string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
+	UrlTestTime  int64                  `protobuf:"varint,3,opt,name=urlTestTime,proto3" json:"urlTestTime,omitempty"`
+	UrlTestDelay int32                  `protobuf:"varint,4,opt,name=urlTestDelay,proto3" json:"urlTestDelay,omitempty"`
+	// WG/AWG endpoint state: never_built / building / up / asleep / torn_down /
+	// down; empty for every other outbound. Filled by GetOutbounds only.
+	// lx: SPEC 097.
+	EndpointState string `protobuf:"bytes,5,opt,name=endpointState,proto3" json:"endpointState,omitempty"`
+	// Seconds since the last dial through the endpoint; 0 for every other
+	// outbound. lx: SPEC 097.
+	IdleSinceSeconds int64 `protobuf:"varint,6,opt,name=idleSinceSeconds,proto3" json:"idleSinceSeconds,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *GroupItem) Reset() {
@@ -845,6 +852,20 @@ func (x *GroupItem) GetUrlTestTime() int64 {
 func (x *GroupItem) GetUrlTestDelay() int32 {
 	if x != nil {
 		return x.UrlTestDelay
+	}
+	return 0
+}
+
+func (x *GroupItem) GetEndpointState() string {
+	if x != nil {
+		return x.EndpointState
+	}
+	return ""
+}
+
+func (x *GroupItem) GetIdleSinceSeconds() int64 {
+	if x != nil {
+		return x.IdleSinceSeconds
 	}
 	return 0
 }
@@ -9271,12 +9292,14 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\bselected\x18\x04 \x01(\tR\bselected\x12\x1a\n" +
 	"\bisExpand\x18\x05 \x01(\bR\bisExpand\x12'\n" +
 	"\x05items\x18\x06 \x03(\v2\x11.daemon.GroupItemR\x05items\x12\x12\n" +
-	"\x04mode\x18\a \x01(\tR\x04mode\"w\n" +
+	"\x04mode\x18\a \x01(\tR\x04mode\"\xc9\x01\n" +
 	"\tGroupItem\x12\x10\n" +
 	"\x03tag\x18\x01 \x01(\tR\x03tag\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12 \n" +
 	"\vurlTestTime\x18\x03 \x01(\x03R\vurlTestTime\x12\"\n" +
-	"\furlTestDelay\x18\x04 \x01(\x05R\furlTestDelay\"2\n" +
+	"\furlTestDelay\x18\x04 \x01(\x05R\furlTestDelay\x12$\n" +
+	"\rendpointState\x18\x05 \x01(\tR\rendpointState\x12*\n" +
+	"\x10idleSinceSeconds\x18\x06 \x01(\x03R\x10idleSinceSeconds\"2\n" +
 	"\x0eURLTestRequest\x12 \n" +
 	"\voutboundTag\x18\x01 \x01(\tR\voutboundTag\"U\n" +
 	"\x15SelectOutboundRequest\x12\x1a\n" +
