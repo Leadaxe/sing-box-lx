@@ -336,6 +336,13 @@ func (s *StartedService) GetOutbounds(ctx context.Context, empty *emptypb.Empty)
 			item.UrlTestTime = history.Time.Unix()
 			item.UrlTestDelay = int32(history.Delay)
 		}
+		// SPEC 097: a WG/AWG endpoint reports its build/sleep state — "not
+		// built yet" is a state for the app to show, not a dead node.
+		if reporter, isReporter := detour.(adapter.IdleStateReporter); isReporter {
+			idleState := reporter.IdleState()
+			item.EndpointState = idleState.State
+			item.IdleSinceSeconds = int64(idleState.IdleSince / time.Second)
+		}
 		list.Outbounds = append(list.Outbounds, item)
 	}
 	for _, ob := range boxService.outboundManager.Outbounds() {
