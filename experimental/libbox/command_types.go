@@ -66,6 +66,12 @@ type OutboundGroupItem struct {
 	Type         string
 	URLTestTime  int64
 	URLTestDelay int32
+	// lx:begin lx_command
+	// SPEC 097: WG/AWG endpoint state and seconds since its last dial; empty /
+	// 0 for other outbounds and outside GetOutbounds.
+	EndpointState    string
+	IdleSinceSeconds int64
+	// lx:end lx_command
 }
 
 type OutboundGroupItemIterator interface {
@@ -406,6 +412,10 @@ func outboundGroupItemListFromGRPC(list *daemon.OutboundList) OutboundGroupItemI
 			Type:         ob.Type,
 			URLTestTime:  ob.UrlTestTime,
 			URLTestDelay: ob.UrlTestDelay,
+			// lx:begin lx_command
+			EndpointState:    ob.EndpointState,
+			IdleSinceSeconds: ob.IdleSinceSeconds,
+			// lx:end lx_command
 		})
 	}
 	return newIterator(items)
