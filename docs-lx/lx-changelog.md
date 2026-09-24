@@ -28,6 +28,23 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.1-lx.13
+
+- 🧩 **Корневой блок `lx` конфига**
+  ([SPEC 098](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/098-LX_ROOT_CONFIG_BLOCK/SPEC.md);
+  решение владельца 2026-09-24). Глобальные ручки форка собраны в одном блоке по подсистемам:
+  `lx.wg` — `idle_suspend`, `idle_suspend_reachable`, `idle_teardown` (переехали из `route`, семантика SPEC 020 та же)
+  и новые `lazy_build`, `build_max`, `build_overflow` (разбираются и валидируются, действуют с SPEC 097);
+  `lx.masque.idle_timeout` — глобальное окно простоя для masque-узлов без своего ключа (ключ узла сильнее, явный
+  `"0"` в узле держит туннель поднятым). `idle_timeout` узла masque стал указателем, чтобы `"0"` отличался от
+  отсутствия. Старые `route.lx_idle_suspend` / `_reachable` / `_teardown` — алиасы на один релиз: предупреждение на
+  каждый ключ, разные значения в двух местах — ошибка старта `route.lx_idle_suspend conflicts with
+  lx.wg.idle_suspend`. Алиасы снимаются в релизе после перехода LxBox и лаунчера на `lx`. Ошибки валидации называют
+  полный путь ключа; сборка без `with_lx_idle_suspend` отвергает любой ключ `lx.wg` текстом `lx.wg.* is set but this
+  build lacks idle-suspend support…`. Running-config (SPEC 037) отдаёт блок в канонической форме. Подблок `lx.naive`
+  зарезервирован за SPEC 096 и пока отвергается как неизвестный ключ. `make -f Makefile.lx lx-check` проверяет все
+  `lx-test/config/*.json`, добавлен `lx_block.json`.
+
 #### v1.14.1-lx.12
 
 - 🔤 **lxd: файл root-owned копии называется `sing-box-lxd`, а не ярлыком**

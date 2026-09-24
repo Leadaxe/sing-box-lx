@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | R (refactor) — корневой блок `lx` конфига: все глобальные ручки форка в одном месте, сгруппированные по подсистеме |
-| Статус | N (new) — решение владельца 2026-09-24: «оптом делаем компактизацию, потом реализуем, потом релиз»; порядок: 098 (блок + переезд) → 097 (ключи ленивой сборки WG) → релиз; 096 добавит `naive` после замера; решение владельца 2026-09-24: отложена до релиза после lx.10 (lx.10 = синк 095 + фикс 099) |
+| Статус | I (implemented) — 2026-09-24; не выпущена, войдёт в v1.14.1-lx.13 вместе с 097; порядок: 098 (блок + переезд) → 097 (ленивая сборка WG, потолок, наблюдаемость) → релиз; 096 добавит `naive` после замера. PLAN.md / TASKS.md / IMPLEMENTATION_REPORT.md |
 | Ветка | `lx` |
 | Build-tag | нет для самого блока; ключи `wg.idle_*`, `wg.lazy_build`, `wg.build_max` действуют под `with_lx_idle_suspend` (как сегодня `route.lx_idle_suspend`) |
 | Связано | [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) (семантика ключей сна), [097](../097-LAZY_WG_DEVICE_BUILD/SPEC.md), [096](../096-NAIVE_ENGINE_POOL/SPEC.md), [021](../021-MASQUE_CONNECT_IP_OUTBOUND/SPEC.md) (`idle_timeout` узла masque), [062](../062-MASQUE_CONFIG_SCHEMA_MIGRATION/SPEC.md) (образец миграции с алиасами), [037](../037-RUNNING_CONFIG_RPC/SPEC.md) (running-config отдаёт блок как есть) |
@@ -77,7 +77,7 @@
 ## 4. Реализация (границы для PLAN)
 
 - Новый lx-файл `option/lx.go`: `LXOptions{WG *LXWGOptions; MASQUE *LXMASQUEOptions}` с валидацией; в апстримном `option/options.go` одна строка `LX *LXOptions json:"lx,omitempty"` под маркером; алиасы остаются в `option/route.go` внутри существующего блока `lx:begin idle-suspend` до снятия.
-- Точки чтения: `route/router.go` (три поля idle-suspend) переходят на разрешённые значения `lx.wg`; `protocol/masque.NewOutbound` получает глобальный дефолт из контекста (`service.FromContext[*option.LXOptions]`, регистрируется в `box.New`), а не через сигнатуру.
+- Точки чтения: `route/router.go` (поля idle-suspend) переходят на разрешённые значения `lx.wg`; `protocol/masque.NewOutbound` получает глобальный дефолт из контекста, а не через сигнатуру. В контексте лежит `*option.LXResolved` (`service.ContextWithPtr` в `box.New`, чтение — `service.PtrFromContext[option.LXResolved]`; пара `FromContext[*T]` ключуется по `**T` и молча отдаёт nil).
 - Тесты: парсинг блока, валидация каждого правила, алиасы (оба места, конфликт, совпадение), приоритет masque, гейт сборки; `sing-box check` на всех `lx-test/config/*.json` плюс новый `lx_block.json`; running-config отдаёт канонический блок.
 - Доки: `docs-lx/lx-config.md`/`.ru.md` (раздел «Блок `lx`» + пометка deprecated у старых ключей), `docs-lx/lx-energy.md`/`.ru.md` (пути ключей), changelog; контракт LxBox/лаунчера — по их регламенту, синхронно.
 

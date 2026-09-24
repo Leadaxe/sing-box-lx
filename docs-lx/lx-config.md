@@ -9,7 +9,8 @@
 | **XHTTP** transport (Xray-compatible) | `with_xhttp` | `transport.type: "xhttp"` on a VLESS / VMess / Trojan outbound | desktop + mobile |
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | extra fields on a `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
-| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `route.lx_idle_suspend` (+ `lx_idle_suspend_reachable`, `lx_idle_teardown`) | **mobile only** (AAR) |
+| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`); the old `route.lx_idle_*` are deprecated aliases | **mobile only** (AAR) |
+| **Root `lx` block** (SPEC 098) | — (always parsed) | `lx.wg`, `lx.masque` — the fork's global knobs, [§13](#13-the-lx-root-block-spec-098) | desktop + mobile |
 | **DNS server group** (SPEC 033/035) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
 | **`lxd` daemon** (SPEC 055–057, 063–068) | `with_lxd` | not a config key — the `sing-box lxd` subcommand + `<state-dir>/daemon.json`; see [lxd-daemon.md](lxd-daemon.md) | desktop / server (**not** Win7, **not** AAR) |
@@ -24,14 +25,15 @@ unreachable WireGuard/AmneziaWG endpoints to free their recv-worker buffers (the
 GC-heat / RAM holder, ~8 MB each where `BatchSize=128` — Android/Linux; measured
 on-device: 8 endpoints suspended → 134 MB freed). A desktop build has small
 `BatchSize`, so the feature would save almost nothing there; to avoid a silent
-mismatch, a desktop/CLI binary that is handed a config with `route.lx_idle_suspend`
-**fails fast at start**: `route.lx_idle_suspend is set but this build lacks
+mismatch, a desktop/CLI binary that is handed a config with `lx.wg.idle_suspend`
+(or any other `lx.wg` key) **fails fast at start**: `lx.wg.* is set but this build lacks
 idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
 See the [ENERGY feature](../SPECS/FEATURES/008-ENERGY/FEATURE.md).
 
-Related keys (2026-07-15 revision): `route.lx_idle_suspend_reachable` — optional
+Related keys (2026-07-15 revision; moved to the `lx` block by SPEC 098, the old
+`route.lx_idle_*` names are deprecated aliases for one release): `lx.wg.idle_suspend_reachable` — optional
 second, longer idle window after which even *reachable* endpoints (pool members,
-the selected node, final) suspend; `route.lx_idle_teardown` — the third level:
+the selected node, final) suspend; `lx.wg.idle_teardown` — the third level:
 how long an endpoint may *sleep* before a full teardown (Close, the gVisor
 netstack goes too; wake = rebuild ~0.5–1 s; defaults to the reachable window);
 `urltest.passive_check` — skip health probes
@@ -67,6 +69,7 @@ timelines and the recommended mobile configuration live in
 - [10. `chain` outbound — a virtual multi-hop path of groups and nodes (SPEC 073)](#10-chain-outbound--a-virtual-multi-hop-path-of-groups-and-nodes-spec-073)
 - [11. Protocol sniffers for LAN traffic (SPEC 078 / 080)](#11-protocol-sniffers-for-lan-traffic-spec-078--080)
 - [12. Validate & build](#12-validate--build)
+- [13. The `lx` root block (SPEC 098)](#13-the-lx-root-block-spec-098)
 
 ---
 
@@ -74,15 +77,34 @@ timelines and the recommended mobile configuration live in
 
 One config carrying every field of the **outbound-side** features — XHTTP transport,
 AmneziaWG 2.0 endpoint, the `id`/`ip`/`ib` masquerade sugar, VLESS `encryption`, and the
-`urltest` `round_robin` balancer (MASQUE, the DNS group and the `route.lx_idle_*` keys have
-their own examples in [§4](#4-masque-outbound--cloudflare-warp-spec-021), [§5](#5-dns-server-group-spec-033035)
-and [lx-energy.md](lx-energy.md)). This is a **kitchen-sink reference**, not a recommended config: many fields are
+`urltest` `round_robin` balancer, plus the root `lx` block with every key (MASQUE and the DNS group have
+their own examples in [§4](#4-masque-outbound--cloudflare-warp-spec-021) and [§5](#5-dns-server-group-spec-033035);
+the `lx` block is described in [§13](#13-the-lx-root-block-spec-098), its energy keys in [lx-energy.md](lx-energy.md)). This is a **kitchen-sink reference**, not a recommended config: many fields are
 mutually exclusive (e.g. the `id`/`ip`/`ib` sugar vs. a hand-written `i1`) or are server-only
 and ignored by the client — those are flagged inline. For a working setup, copy only the block
 you need and read its section below. Each comment shows the **default** and the **allowed values**.
 
 ```jsonc
 {
+  // ─────────────────────────────────────────────────────────────────────────
+  // Root `lx` block (§13) — the fork's global knobs, grouped by subsystem.
+  // lx.wg acts only with the with_lx_idle_suspend build tag (mobile AAR);
+  // a desktop binary refuses it at start.
+  // ─────────────────────────────────────────────────────────────────────────
+  "lx": {
+    "wg": {
+      "idle_suspend": "30s",                    // default: off. Endpoint outside the routing tree → Down after this idle
+      "idle_suspend_reachable": "5m",           // default: off. Same for endpoints in the tree; >= idle_suspend, requires it
+      "idle_teardown": "10m",                   // default: = idle_suspend_reachable. Sleep before full teardown; "0" = never
+      "lazy_build": true,                       // default: false. Build the device on first dial (SPEC 097; inert until then)
+      "build_max": 4,                           // default: 0 (no cap). Max devices built at once (SPEC 097; inert until then)
+      "build_overflow": "wait"                  // default: wait. wait | build (SPEC 097; inert until then)
+    },
+    "masque": {
+      "idle_timeout": "5m"                      // default: off. Global idle window for masque nodes without their own key
+    }
+  },
+
   "outbounds": [
     // ─────────────────────────────────────────────────────────────────────────
     // XHTTP transport (§1) — attaches to a VLESS / VMess / Trojan outbound.
@@ -254,7 +276,7 @@ you need and read its section below. Each comment shows the **default** and the 
 ```
 
 > **Field count:** 26 XHTTP + 30 AmneziaWG (incl. `id`/`ip`/`ib` and the 9 AWG 3.x keys) + 1 VLESS (`encryption`) +
-> 6 `urltest` (`mode`, `passive_check` + `balancer{pool,pool_tolerance,sticky_hash}`). Mutually-exclusive / ignored fields are
+> 6 `urltest` (`mode`, `passive_check` + `balancer{pool,pool_tolerance,sticky_hash}`) + 7 `lx` (6 `lx.wg` + `lx.masque.idle_timeout`). Mutually-exclusive / ignored fields are
 > labelled inline above; the sections below give the per-field semantics, gotchas and live
 > verification status.
 
@@ -472,7 +494,8 @@ enroll) is done by the client, not the core.
 The required fields are `server`/`server_port`, the key pair (`private_key`/`public_key`,
 for the default `cloudflare` profile) and at least one of `ip`/`ipv6` (your local address
 *inside* the tunnel, not the exit IP). Everything else has a default: `profile: cloudflare`,
-`vhttp: auto`, `tls.server_name: www.cloudflare.com`, `mtu: 1280`, `idle_timeout` off,
+`vhttp: auto`, `tls.server_name: www.cloudflare.com`, `mtu: 1280`, `idle_timeout` off (or the global
+`lx.masque.idle_timeout`, [§13](#13-the-lx-root-block-spec-098); the node's own key wins, `"0"` included),
 `keep_alive_period: 30s`, `network_list: tcp+udp`. TLS goes in the standard outbound `tls`
 block.
 
@@ -901,9 +924,96 @@ make -f Makefile.lx lx-build                     # builds ./sing-box with both f
 ./sing-box check -c lx-test/config/xhttp_reality.json
 ./sing-box check -c lx-test/config/awg2_basic.json
 ./sing-box check -c lx-test/config/awg3_full.json     # AmneziaWG 3.1 field set
+./sing-box check -c lx-test/config/lx_block.json      # the root lx block, every key
+make -f Makefile.lx lx-check                     # build + check every lx-test/config/*.json
 
 # Android (optional): libbox.aar with with_xhttp+with_awg baked in (needs NDK r28 + OpenJDK 17)
 make lib_install && make lib_android             # → libbox.aar (SDK23) + libbox-legacy.aar (SDK21)
 ```
 
 The CI (`.github/workflows/lx-ci.yml`) builds the feature matrix (`baseline` / `xhttp` / `awg` / `full`), a cross-platform matrix, **and the Android `libbox.aar`** (gomobile), running `check` on the matching sample configs. Pushing a `v*-lx.*` tag runs `lx-release.yml`, which publishes the desktop binaries **and** `libbox-<ver>.aar` / `libbox-legacy-<ver>.aar` as GitHub Release assets. A **Windows 7 (32-bit)** legacy binary (`sing-box-<ver>-windows-386-legacy-windows-7.zip`) is also published — built with a Win7-patched Go and **without `with_naive_outbound`** (`cronet-go` has no windows/386 build; every other feature is unchanged).
+
+## 13. The `lx` root block (SPEC 098)
+
+The fork's global knobs live in one root block, `lx`, grouped by subsystem. Whatever describes a
+single node stays in that node's object, as upstream does: AWG fields on the endpoint, `xhttp` in
+`transport`, a masque node's own `idle_timeout`. Every sub-block and key is optional; an empty `lx`
+is the same as none. A misspelt key is a load error, not a silent default.
+
+```jsonc
+"lx": {
+  "wg": {
+    "idle_suspend": "30s",
+    "idle_suspend_reachable": "5m",
+    "idle_teardown": "10m",
+    "lazy_build": true,
+    "build_max": 4,
+    "build_overflow": "wait"
+  },
+  "masque": {
+    "idle_timeout": "5m"
+  }
+}
+```
+
+### `lx.wg` — WireGuard / AmneziaWG endpoints
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `idle_suspend` | duration | off | Idle threshold for an endpoint outside the active routing tree: past it the device goes Down (sockets closed, receive buffers freed), the next dial wakes it. Absent or `0` turns the mechanism off; the idle tick does not start |
+| `idle_suspend_reachable` | duration | off | Second, longer threshold for endpoints in the tree (urltest pool member, selected node, final); without it they never sleep. Must be ≥ `idle_suspend` and requires it |
+| `idle_teardown` | duration, explicit `"0"` allowed | inherits `idle_suspend_reachable` | How long an already-sleeping endpoint sleeps before its device and netstack are torn down, counted from falling asleep. `"0"` disables teardown. Requires `idle_suspend` |
+| `lazy_build` | bool | `false` | Endpoints start torn down; the device is built on the first dial. Requires `idle_suspend` |
+| `build_max` | integer ≥ 0 | `0` = no cap | At most N devices built at once |
+| `build_overflow` | `wait` \| `build` | `wait` | When all `build_max` devices carry live connections: wait within the dial deadline, or build above the cap with a warning |
+
+The three idle keys keep their SPEC 020 semantics — timelines and the recommended mobile
+configuration are in [lx-energy.md](lx-energy.md). **`lazy_build`, `build_max` and
+`build_overflow` are parsed and validated now and take effect with SPEC 097**; until then they
+change nothing.
+
+Every `lx.wg` key acts only in builds with `with_lx_idle_suspend` (the mobile AAR). A desktop/CLI
+binary refuses them at start — any idle window, an explicit `idle_teardown` (`"0"` included),
+`lazy_build`, a non-zero `build_max` or `build_overflow: "build"`:
+`lx.wg.* is set but this build lacks idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
+`sing-box check` validates the keys but does not start the router, so it accepts them on desktop.
+
+Validation errors name the full key path:
+
+- `lx.wg.idle_suspend_reachable must be >= lx.wg.idle_suspend`
+- `lx.wg.idle_suspend_reachable requires lx.wg.idle_suspend`, and the same for `idle_teardown`, `lazy_build`
+- `lx.wg.<key> must be >= 0` for a negative duration, `lx.wg.build_max must be >= 0`
+- `lx.wg.build_overflow must be "wait" or "build"`
+
+### `lx.masque` — MASQUE outbounds
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `idle_timeout` | duration ≥ 0 | off | Global idle window for every `masque` node without its own `idle_timeout`: after it the session (netstack, pumps, QUIC keepalive) is taken down and the next dial builds it again |
+
+Priority: the node's `idle_timeout` > `lx.masque.idle_timeout` > off. An explicit `"0"` on a node
+keeps that node's tunnel up even when the global value is set. MASQUE already builds its session
+lazily, so there is no cap here.
+
+### Deprecated `route.lx_idle_*`
+
+| Old key | New key |
+|---|---|
+| `route.lx_idle_suspend` | `lx.wg.idle_suspend` |
+| `route.lx_idle_suspend_reachable` | `lx.wg.idle_suspend_reachable` |
+| `route.lx_idle_teardown` | `lx.wg.idle_teardown` |
+
+The old keys are accepted for one release with a warning per key in the start log
+(`route.lx_idle_suspend is deprecated, use lx.wg.idle_suspend`). A key set in both places with
+the same value gets the same warning; with different values the core refuses to start:
+`route.lx_idle_suspend conflicts with lx.wg.idle_suspend`. The aliases go away in the release
+after LxBox and the launcher switch to `lx`. The warnings go to the log of a running core;
+`sing-box check` does not print them.
+
+The running config (`GetRunningConfig`, SPEC 037) returns the block canonical: a config that came
+with `route.lx_idle_*` is shown as `lx.wg.*`, and the old keys are gone from it.
+
+### Reserved: `lx.naive`
+
+`single_engine` and `lazy_start` are reserved for SPEC 096. Until that lands, an `lx.naive`
+sub-block is rejected like any unknown key.

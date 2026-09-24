@@ -9,7 +9,8 @@
 | **XHTTP** транспорт (совместим с Xray) | `with_xhttp` | `transport.type: "xhttp"` на VLESS / VMess / Trojan outbound | desktop + mobile |
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | доп. поля на `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
-| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `route.lx_idle_suspend` (+ `lx_idle_suspend_reachable`, `lx_idle_teardown`) | **только mobile** (AAR) |
+| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`); старые `route.lx_idle_*` — устаревшие алиасы | **только mobile** (AAR) |
+| **Корневой блок `lx`** (SPEC 098) | — (разбирается всегда) | `lx.wg`, `lx.masque` — глобальные ручки форка, [§13](#13-корневой-блок-lx-spec-098) | desktop + mobile |
 | **Группа DNS-серверов** (SPEC 033/035) | — (всегда в сборке) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (всегда в сборке) | `encryption` на `vless`-outbound | desktop + mobile |
 | **Демон `lxd`** (SPEC 055–057, 063–068) | `with_lxd` | не ключ конфига — подкоманда `sing-box lxd` + `<state-dir>/daemon.json`; см. [lxd-daemon.ru.md](lxd-daemon.ru.md) | desktop / сервер (**не** Win7, **не** AAR) |
@@ -24,13 +25,14 @@
 GC-нагрева / RAM, ~8 МБ каждый там, где `BatchSize=128` — Android/Linux; замерено на
 устройстве: 8 эндпоинтов усыплены → освобождено 134 МБ). На десктопе `BatchSize` мал,
 экономить почти нечего; чтобы не было молчаливого расхождения, desktop/CLI-бинарь,
-которому дали конфиг с `route.lx_idle_suspend`, **падает при старте** с ошибкой
-`route.lx_idle_suspend is set but this build lacks idle-suspend support; rebuild with
+которому дали конфиг с `lx.wg.idle_suspend` (или любым другим ключом `lx.wg`), **падает при
+старте** с ошибкой `lx.wg.* is set but this build lacks idle-suspend support; rebuild with
 -tags with_lx_idle_suspend (mobile-only feature)`. См. [фичу ENERGY](../SPECS/FEATURES/008-ENERGY/FEATURE.md).
 
-Смежные ключи (ревизия 2026-07-15): `route.lx_idle_suspend_reachable` — опциональное
+Смежные ключи (ревизия 2026-07-15; SPEC 098 перенесла их в блок `lx`, старые имена
+`route.lx_idle_*` — устаревшие алиасы на один релиз): `lx.wg.idle_suspend_reachable` — опциональное
 второе, более длинное окно простоя, после которого гасятся и *достижимые* эндпоинты
-(члены пула, выбранный узел, final); `route.lx_idle_teardown` — третий уровень:
+(члены пула, выбранный узел, final); `lx.wg.idle_teardown` — третий уровень:
 сколько эндпоинт может *спать* до полного сноса (Close, освобождается и gVisor
 netstack; пробуждение = rebuild ~0.5–1 с; дефолт = reachable-окну);
 `urltest.passive_check` — пропуск health-проб,
@@ -65,6 +67,7 @@ netstack; пробуждение = rebuild ~0.5–1 с; дефолт = reachable
 - [10. Outbound `chain` — виртуальная цепочка хопов из групп и узлов (SPEC 073)](#10-outbound-chain--виртуальная-цепочка-хопов-из-групп-и-узлов-spec-073)
 - [11. Снифферы протоколов для трафика из LAN (SPEC 078 / 080)](#11-снифферы-протоколов-для-трафика-из-lan-spec-078--080)
 - [12. Проверка и сборка](#12-проверка-и-сборка)
+- [13. Корневой блок `lx` (SPEC 098)](#13-корневой-блок-lx-spec-098)
 
 ---
 
@@ -72,8 +75,8 @@ netstack; пробуждение = rebuild ~0.5–1 с; дефолт = reachable
 
 Один конфиг, несущий все поля **outbound-фич** — XHTTP-транспорт, AmneziaWG 2.0 endpoint,
 masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-балансировщик `urltest`
-(у MASQUE, DNS-группы и ключей `route.lx_idle_*` — свои примеры в [§4](#4-masque-outbound--cloudflare-warp-spec-021),
-[§5](#5-группа-dns-серверов-spec-033035) и [lx-energy.ru.md](lx-energy.ru.md)).
+и корневой блок `lx` со всеми ключами (у MASQUE и DNS-группы — свои примеры в [§4](#4-masque-outbound--cloudflare-warp-spec-021)
+и [§5](#5-группа-dns-серверов-spec-033035); блок `lx` описан в [§13](#13-корневой-блок-lx-spec-098), его энергоключи — в [lx-energy.ru.md](lx-energy.ru.md)).
 Это **справочник «всё сразу»**, а не рекомендуемый конфиг: многие поля взаимоисключающи
 (например, сахар `id`/`ip`/`ib` против написанного вручную `i1`) либо серверные и игнорируются
 клиентом — такие помечены прямо в комментариях. Для рабочей настройки скопируйте только нужный
@@ -81,6 +84,25 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
 
 ```jsonc
 {
+  // ─────────────────────────────────────────────────────────────────────────
+  // Корневой блок `lx` (§13) — глобальные ручки форка по подсистемам.
+  // lx.wg действует только с build-тегом with_lx_idle_suspend (мобильный AAR);
+  // десктоп-бинарь отвергает его на старте.
+  // ─────────────────────────────────────────────────────────────────────────
+  "lx": {
+    "wg": {
+      "idle_suspend": "30s",                    // дефолт: выкл. Endpoint вне дерева маршрутизации → Down после простоя
+      "idle_suspend_reachable": "5m",           // дефолт: выкл. То же для endpoint'ов в дереве; >= idle_suspend, требует его
+      "idle_teardown": "10m",                   // дефолт: = idle_suspend_reachable. Сон до полной разборки; "0" = никогда
+      "lazy_build": true,                       // дефолт: false. Сборка устройства при первом дайле (SPEC 097; до неё инертен)
+      "build_max": 4,                           // дефолт: 0 (без потолка). Не больше N собранных устройств (SPEC 097; до неё инертен)
+      "build_overflow": "wait"                  // дефолт: wait. wait | build (SPEC 097; до неё инертен)
+    },
+    "masque": {
+      "idle_timeout": "5m"                      // дефолт: выкл. Глобальное окно простоя masque-узлов без своего ключа
+    }
+  },
+
   "outbounds": [
     // ─────────────────────────────────────────────────────────────────────────
     // XHTTP-транспорт (§1) — крепится к VLESS / VMess / Trojan outbound.
@@ -252,7 +274,7 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
 ```
 
 > **Счёт полей:** 26 XHTTP + 30 AmneziaWG (вкл. `id`/`ip`/`ib` и 9 ключей AWG 3.x) + 1 VLESS (`encryption`) +
-> 6 `urltest` (`mode`, `passive_check` + `balancer{pool,pool_tolerance,sticky_hash}`). Взаимоисключающие / игнорируемые поля помечены
+> 6 `urltest` (`mode`, `passive_check` + `balancer{pool,pool_tolerance,sticky_hash}`) + 7 `lx` (6 `lx.wg` + `lx.masque.idle_timeout`). Взаимоисключающие / игнорируемые поля помечены
 > в комментариях выше; разделы ниже дают семантику каждого поля, подводные камни и статус
 > живой проверки.
 
@@ -478,7 +500,8 @@ WARP enroll) делает клиент, не ядро.
 Обязательные поля — `server`/`server_port`, пара ключей (`private_key`/`public_key`, для
 дефолтного профиля `cloudflare`) и хотя бы один из `ip`/`ipv6` (твой локальный адрес
 *внутри* туннеля, не выходной IP). У всего остального есть дефолт: `profile: cloudflare`,
-`vhttp: auto`, `tls.server_name: www.cloudflare.com`, `mtu: 1280`, `idle_timeout` выкл,
+`vhttp: auto`, `tls.server_name: www.cloudflare.com`, `mtu: 1280`, `idle_timeout` выкл (или глобальный
+`lx.masque.idle_timeout`, [§13](#13-корневой-блок-lx-spec-098); ключ узла сильнее, `"0"` тоже),
 `keep_alive_period: 30s`, `network_list: tcp+udp`. TLS — в стандартном блоке `tls`
 outbound'а.
 
@@ -900,9 +923,95 @@ make -f Makefile.lx lx-build                     # собирает ./sing-box �
 ./sing-box check -c lx-test/config/xhttp_reality.json
 ./sing-box check -c lx-test/config/awg2_basic.json
 ./sing-box check -c lx-test/config/awg3_full.json     # набор полей AmneziaWG 3.1
+./sing-box check -c lx-test/config/lx_block.json      # корневой блок lx, все ключи
+make -f Makefile.lx lx-check                     # сборка + check каждого lx-test/config/*.json
 
 # Android (опционально): libbox.aar с зашитыми with_xhttp+with_awg (нужны NDK r28 + OpenJDK 17)
 make lib_install && make lib_android             # → libbox.aar (SDK23) + libbox-legacy.aar (SDK21)
 ```
 
 CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`baseline` / `xhttp` / `awg` / `full`), кросс-платформенную матрицу **и Android `libbox.aar`** (gomobile), прогоняя `check` на соответствующих примерах конфигов. Push тега `v*-lx.*` запускает `lx-release.yml`, который публикует десктоп-бинари **и** `libbox-<ver>.aar` / `libbox-legacy-<ver>.aar` как ассеты GitHub Release. Также публикуется legacy-бинарь **Windows 7 (32-бит)** (`sing-box-<ver>-windows-386-legacy-windows-7.zip`) — собранный Win7-патченным Go и **без `with_naive_outbound`** (у `cronet-go` нет сборки под windows/386; все остальные фичи без изменений).
+
+## 13. Корневой блок `lx` (SPEC 098)
+
+Глобальные ручки форка живут в одном корневом блоке `lx`, сгруппированные по подсистеме. Всё, что
+описывает конкретный узел, остаётся в его объекте, как в апстриме: поля AWG — в endpoint'е, `xhttp` —
+в `transport`, собственный `idle_timeout` masque-узла — в узле. Все подблоки и ключи опциональны;
+пустой `lx` и отсутствующий равнозначны. Опечатка в имени ключа — ошибка загрузки, не тихий дефолт.
+
+```jsonc
+"lx": {
+  "wg": {
+    "idle_suspend": "30s",
+    "idle_suspend_reachable": "5m",
+    "idle_teardown": "10m",
+    "lazy_build": true,
+    "build_max": 4,
+    "build_overflow": "wait"
+  },
+  "masque": {
+    "idle_timeout": "5m"
+  }
+}
+```
+
+### `lx.wg` — endpoint'ы WireGuard / AmneziaWG
+
+| Ключ | Тип | Дефолт | Значение |
+|---|---|---|---|
+| `idle_suspend` | длительность | выкл | Порог простоя endpoint'а вне активного дерева маршрутизации: после него устройство уводится в Down (сокеты закрыты, приёмные буферы свободны), следующий дайл будит. Отсутствие или `0` выключает механизм, тик не стартует |
+| `idle_suspend_reachable` | длительность | выкл | Второй, более длинный порог для endpoint'ов в дереве (член urltest-пула, выбранный узел, final); без него они не спят. Обязан быть ≥ `idle_suspend`, требует его |
+| `idle_teardown` | длительность, явный `"0"` допустим | наследует `idle_suspend_reachable` | Сколько уже спящий endpoint спит до разборки устройства и netstack'а; считается от засыпания. `"0"` запрещает разборку. Требует `idle_suspend` |
+| `lazy_build` | bool | `false` | Endpoint'ы стартуют разобранными, устройство собирается при первом дайле. Требует `idle_suspend` |
+| `build_max` | целое ≥ 0 | `0` = без потолка | Не больше N собранных устройств одновременно |
+| `build_overflow` | `wait` \| `build` | `wait` | Когда все `build_max` устройств держат живые соединения: ждать в пределах дедлайна дайла или собрать сверх потолка с предупреждением |
+
+Три ключа сна сохраняют семантику SPEC 020 — таймлайны и рекомендованный мобильный конфиг в
+[lx-energy.ru.md](lx-energy.ru.md). **`lazy_build`, `build_max` и `build_overflow` сейчас только
+разбираются и валидируются, действовать начнут с SPEC 097**; до неё они ничего не меняют.
+
+Все ключи `lx.wg` действуют только в сборках с `with_lx_idle_suspend` (мобильный AAR).
+Десктоп/CLI-бинарь отвергает их на старте — любое окно простоя, явный `idle_teardown` (включая `"0"`),
+`lazy_build`, ненулевой `build_max` или `build_overflow: "build"`:
+`lx.wg.* is set but this build lacks idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
+`sing-box check` валидирует ключи, но роутер не стартует, поэтому на десктопе их принимает.
+
+Ошибки валидации называют полный путь ключа:
+
+- `lx.wg.idle_suspend_reachable must be >= lx.wg.idle_suspend`
+- `lx.wg.idle_suspend_reachable requires lx.wg.idle_suspend`, так же для `idle_teardown`, `lazy_build`
+- `lx.wg.<ключ> must be >= 0` для отрицательной длительности, `lx.wg.build_max must be >= 0`
+- `lx.wg.build_overflow must be "wait" or "build"`
+
+### `lx.masque` — MASQUE-outbound'ы
+
+| Ключ | Тип | Дефолт | Значение |
+|---|---|---|---|
+| `idle_timeout` | длительность ≥ 0 | выкл | Глобальное окно простоя для всех `masque`-узлов без своего `idle_timeout`: после него сессия (netstack, насосы, QUIC keepalive) разбирается, следующий дайл собирает её заново |
+
+Приоритет: `idle_timeout` узла > `lx.masque.idle_timeout` > выкл. Явный `"0"` в узле держит его
+туннель поднятым даже при заданном глобальном значении. Сессия MASQUE и так собирается лениво,
+потолка здесь нет.
+
+### Устаревшие `route.lx_idle_*`
+
+| Старый ключ | Новый ключ |
+|---|---|
+| `route.lx_idle_suspend` | `lx.wg.idle_suspend` |
+| `route.lx_idle_suspend_reachable` | `lx.wg.idle_suspend_reachable` |
+| `route.lx_idle_teardown` | `lx.wg.idle_teardown` |
+
+Старые ключи принимаются один релиз, с предупреждением на каждый ключ в логе старта
+(`route.lx_idle_suspend is deprecated, use lx.wg.idle_suspend`). Ключ, заданный в обоих местах с
+одинаковым значением, даёт то же предупреждение; с разными — ядро не стартует:
+`route.lx_idle_suspend conflicts with lx.wg.idle_suspend`. Алиасы снимаются в релизе после
+перехода LxBox и лаунчера на `lx`. Предупреждения пишутся в лог работающего ядра;
+`sing-box check` их не печатает.
+
+Running-config (`GetRunningConfig`, SPEC 037) отдаёт блок в канонической форме: конфиг, пришедший
+с `route.lx_idle_*`, показывается как `lx.wg.*`, старых ключей в нём нет.
+
+### Зарезервировано: `lx.naive`
+
+`single_engine` и `lazy_start` зарезервированы за SPEC 096. До неё подблок `lx.naive` отвергается
+как любой неизвестный ключ.
