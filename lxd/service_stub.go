@@ -1,12 +1,13 @@
-//go:build with_lxd && !darwin && !linux
+//go:build with_lxd && !darwin && !linux && !windows
 
 package lxd
 
 import E "github.com/sagernet/sing/common/exceptions"
 
-// Windows (SCM) service installation is a stub: darwin installs for real,
-// linux prints a recipe (service_linux.go). The daemon itself runs on every
-// platform; only the `--service` helper is unimplemented here.
+// Service installation is a stub on the remaining platforms: darwin installs
+// for real, linux prints a recipe (service_linux.go), Windows installs an SCM
+// service (service_windows.go). The daemon itself runs on every platform;
+// only the `--service` helper is unimplemented here.
 // ServiceInstallIsAdvisory: nothing installs here at all, so the caller must
 // not prepare daemon.json or try to pair a client either.
 const ServiceInstallIsAdvisory = true

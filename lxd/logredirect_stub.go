@@ -1,4 +1,4 @@
-//go:build with_lxd && !darwin && !linux
+//go:build with_lxd && !darwin && !linux && !windows
 
 package lxd
 
@@ -8,10 +8,9 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-// Windows has no dup2, and renaming an open log file fails there anyway —
-// rotation needs a write-through design, not an fd swap. Like the service
-// install, this waits for a Windows service story; the daemon itself runs
-// fine with its output wherever the parent pointed it.
+// The remaining platforms have no redirect (Windows has its own, see
+// logredirect_windows.go); the daemon runs fine with its output wherever
+// the parent pointed it.
 const logRotationSupported = false
 
 func redirectStdIO(file *os.File) error {

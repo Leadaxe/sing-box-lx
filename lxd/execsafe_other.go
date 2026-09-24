@@ -1,4 +1,4 @@
-//go:build with_lxd && !unix
+//go:build with_lxd && !unix && !windows
 
 package lxd
 
