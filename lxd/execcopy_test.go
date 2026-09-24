@@ -27,7 +27,7 @@ func copyFixture(t *testing.T, content []byte) (source, dir string) {
 	if err := os.WriteFile(source, content, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	dir = filepath.Join(root, launchdLabel)
+	dir = filepath.Join(root, "PrivilegedHelperTools")
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestCopyInstallsVerifiedCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := filepath.Join(dir, "sing-box")
+	target := filepath.Join(dir, execCopyName)
 	if result.Target != target || result.Skipped || result.SHA256 != shaOf(content) {
 		t.Fatalf("unexpected result %+v", result)
 	}
@@ -84,14 +84,14 @@ func TestCopyRefusesSymlinkAndNonRegularSource(t *testing.T) {
 	if _, err := installExecCopy(&out, filepath.Dir(source), dir, execCopyOptions{}); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 		t.Fatalf("a directory source must be refused, got %v", err)
 	}
-	if _, err := os.Lstat(filepath.Join(dir, "sing-box")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(dir, execCopyName)); !os.IsNotExist(err) {
 		t.Fatal("a refused source must not produce a copy")
 	}
 }
 
 func TestCopyShaMismatchDiscardsTemp(t *testing.T) {
 	source, dir := copyFixture(t, []byte("new binary"))
-	target := filepath.Join(dir, "sing-box")
+	target := filepath.Join(dir, execCopyName)
 	if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestCopyShaMismatchDiscardsTemp(t *testing.T) {
 func TestCopyUnchangedSkipped(t *testing.T) {
 	content := []byte("same binary")
 	source, dir := copyFixture(t, content)
-	target := filepath.Join(dir, "sing-box")
+	target := filepath.Join(dir, execCopyName)
 	if err := os.WriteFile(target, content, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestCopyUnchangedSkipped(t *testing.T) {
 
 func TestCopySourceIsTargetSkipped(t *testing.T) {
 	_, dir := copyFixture(t, nil)
-	target := filepath.Join(dir, "sing-box")
+	target := filepath.Join(dir, execCopyName)
 	if err := os.WriteFile(target, []byte("installed copy"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestCopySourceIsTargetSkipped(t *testing.T) {
 // pages are rewritten in place.
 func TestCopyReplacesByRename(t *testing.T) {
 	source, dir := copyFixture(t, []byte("version two"))
-	target := filepath.Join(dir, "sing-box")
+	target := filepath.Join(dir, execCopyName)
 	if err := os.WriteFile(target, []byte("version one"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestCopyDryRunWritesNothing(t *testing.T) {
 	if _, err := installExecCopy(&out, source, dir, execCopyOptions{dryRun: true}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "lxd: would copy "+source+" -> "+filepath.Join(dir, "sing-box")) {
+	if !strings.Contains(out.String(), "lxd: would copy "+source+" -> "+filepath.Join(dir, execCopyName)) {
 		t.Fatalf("dry run must print the plan:\n%s", out.String())
 	}
 	entries, _ := os.ReadDir(dir)
@@ -222,12 +222,12 @@ func TestSidecarRoundTrip(t *testing.T) {
 	if err != nil || !found || got != marker {
 		t.Fatalf("round trip: got %+v found=%v err=%v", got, found, err)
 	}
-	info, _ := os.Stat(filepath.Join(dir, "install.json"))
+	info, _ := os.Stat(filepath.Join(dir, installMarkerName))
 	if info.Mode().Perm() != 0o644 {
 		t.Fatalf("sidecar mode = %s, want 0644 (readable without root)", formatMode(info.Mode()))
 	}
 	// The launcher reads these exact keys.
-	raw, _ := os.ReadFile(filepath.Join(dir, "install.json"))
+	raw, _ := os.ReadFile(filepath.Join(dir, installMarkerName))
 	var keys map[string]any
 	if err = json.Unmarshal(raw, &keys); err != nil {
 		t.Fatal(err)
@@ -261,11 +261,11 @@ func TestSidecarUninstallDecisions(t *testing.T) {
 		{"dry run removes nothing", content, &installMarker{SHA256: shaOf(content), PlistPath: plist, Label: launchdLabel}, true, false, true, "lxd: would remove copy "},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), launchdLabel)
+			dir := filepath.Join(t.TempDir(), "PrivilegedHelperTools")
 			if err := os.Mkdir(dir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			target := filepath.Join(dir, "sing-box")
+			target := filepath.Join(dir, execCopyName)
 			if testCase.fileContent != nil {
 				if err := os.WriteFile(target, testCase.fileContent, 0o755); err != nil {
 					t.Fatal(err)
@@ -287,13 +287,12 @@ func TestSidecarUninstallDecisions(t *testing.T) {
 			if removed := os.IsNotExist(statErr); testCase.fileContent != nil && removed != testCase.wantRemoved {
 				t.Fatalf("copy removed = %v, want %v", removed, testCase.wantRemoved)
 			}
-			if _, markerErr := os.Lstat(filepath.Join(dir, "install.json")); (markerErr == nil) != testCase.wantMarker {
+			if _, markerErr := os.Lstat(filepath.Join(dir, installMarkerName)); (markerErr == nil) != testCase.wantMarker {
 				t.Fatalf("sidecar present = %v, want %v", markerErr == nil, testCase.wantMarker)
 			}
-			if testCase.wantRemoved {
-				if _, dirErr := os.Lstat(dir); !os.IsNotExist(dirErr) {
-					t.Fatal("the emptied label directory must be removed")
-				}
+			// The exec dir belongs to macOS (or the operator): never removed.
+			if _, dirErr := os.Lstat(dir); dirErr != nil {
+				t.Fatal("uninstall must not remove the exec dir")
 			}
 		})
 	}
@@ -327,11 +326,11 @@ func TestSidecarKeepCopyDecisions(t *testing.T) {
 		{"sidecar without copy stays", nil, bound, false, true, plist, "lxd: nothing to keep: the copy "},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), launchdLabel)
+			dir := filepath.Join(t.TempDir(), "PrivilegedHelperTools")
 			if err := os.Mkdir(dir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			target := filepath.Join(dir, "sing-box")
+			target := filepath.Join(dir, execCopyName)
 			if testCase.fileContent != nil {
 				if err := os.WriteFile(target, testCase.fileContent, 0o755); err != nil {
 					t.Fatal(err)
@@ -361,4 +360,44 @@ func TestSidecarKeepCopyDecisions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCopyLegacyLayoutDirectory: a directory where the flat copy belongs is
+// what an early pre-release left behind (<label>/sing-box). Install and copy
+// refuse with the remedy; uninstall and --keep-copy leave it alone; nothing
+// ever deletes it on its own.
+func TestCopyLegacyLayoutDirectory(t *testing.T) {
+	source, dir := copyFixture(t, []byte("binary"))
+	legacy := filepath.Join(dir, execCopyName)
+	if err := os.MkdirAll(filepath.Join(legacy, "sing-box"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	for _, dryRun := range []bool{true, false} {
+		_, err := installExecCopy(&out, source, dir, execCopyOptions{dryRun: dryRun})
+		if want := "target is a directory (legacy layout); remove it: sudo rm -rf " + legacy; err == nil || err.Error() != want {
+			t.Fatalf("dryRun=%v: got %v, want %q", dryRun, err, want)
+		}
+	}
+	mustRemain := func() {
+		t.Helper()
+		if info, err := os.Lstat(filepath.Join(legacy, "sing-box")); err != nil || !info.IsDir() {
+			t.Fatal("the legacy directory must stay untouched")
+		}
+	}
+	mustRemain()
+	if err := writeInstallMarker(dir, installMarker{SHA256: "x", Label: launchdLabel}, false); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := removeInstalledCopy(&out, dir, launchdLabel, "/p.plist", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := unbindInstalledCopy(&out, dir, launchdLabel, "/p.plist", false, true, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out.String(), "is a directory (legacy layout), left in place; remove it: sudo rm -rf "+legacy) != 2 {
+		t.Fatalf("uninstall and --keep-copy must name the legacy directory:\n%s", out.String())
+	}
+	mustRemain()
 }

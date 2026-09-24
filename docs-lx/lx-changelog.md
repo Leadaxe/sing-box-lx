@@ -35,12 +35,14 @@ required for stable tags); this changelog section is the fallback used for pre-r
   `--service=install` писал в `ProgramArguments[0]` plist'а LaunchDaemon путь `os.Executable()` — на практике
   бинарь в бандле лаунчера с владельцем-пользователем (и под `/Applications`, который `root:admin 0775`); launchd
   исполнял его от root на каждом старте — любой процесс пользователя, заменивший файл, получал root. Теперь
-  install копирует себя в `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box` (`root:wheel 0755`;
-  каталог проверяется от `/`: каждый компонент — не симлинк, uid 0, без записи group/other; недостающие создаются
-  `root:wheel 0755`): временный файл с уникальным именем, fsync, chown, chmod, сверка sha256 с источником,
+  install копирует себя в `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` (`root:wheel 0755`; плоский файл с
+  именем ярлыка по соглашению Apple, решение владельца 2026-09-24; каталог проверяется от `/`: каждый компонент — не
+  симлинк, uid 0, без записи group/other; дефолтный каталог обязан существовать, `--exec-dir` создаётся `root:wheel
+  0755`; каталог на месте копии — остаток папочной раскладки rc — отказ `target is a directory (legacy layout); remove
+  it: sudo rm -rf <путь>`, сам не удаляется): временный файл с уникальным именем, fsync, chown, chmod, сверка sha256 с источником,
   `rename` (перезапись на месте запрещена — macOS убивает процесс со сменившимися подписанными страницами; xattr
   не копируются, переподписи нет); одинаковый бинарь не копируется (`binary unchanged (sha256 …), copy skipped`).
-  Рядом — сайдкар `install.json` (`source`, `sha256`, `version`, `installed_at`, `plist_path`, `label`; `0644`). В plist
+  Рядом — сайдкар `com.leadaxe.sing-box-lxd.install.json` (`source`, `sha256`, `version`, `installed_at`, `plist_path`, `label`; `0644`). В plist
   меняется только `ProgramArguments[0]`, `daemon.json`/клиенты не трогаются; support-каталог явно `root:wheel`
   (наследовал `admin`). Новое: `--exec-dir` (свой каталог копии под тем же инвариантом); `--service=copy` — копия и
   сайдкар без plist и launchd (для classic TUN лаунчера, SPEC 137 лаунчера; повтор — no-op `already up to date`,

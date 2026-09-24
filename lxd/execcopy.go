@@ -18,11 +18,12 @@ import (
 )
 
 const (
-	// execCopyName keeps the binary's own name inside the exec dir: the fork
-	// ships as `sing-box`; the directory carries the service label.
-	execCopyName = "sing-box"
+	// execCopyName is the copy's file name inside the exec dir: Apple's
+	// convention for privileged helpers is one flat file named by the label
+	// (SPEC 100 §2.1). The process still shows "sing-box" in its name.
+	execCopyName = launchdLabel
 	// installMarkerName is the sidecar beside the copy (SPEC 100 §2.3).
-	installMarkerName = "install.json"
+	installMarkerName = launchdLabel + ".install.json"
 	// maxExecutableSize bounds what install copies and hashes; the release
 	// binary is ~70 MB.
 	maxExecutableSize = 512 << 20
@@ -80,7 +81,8 @@ type execCopyResult struct {
 	Skipped bool
 }
 
-// installExecCopy puts source at <dir>/sing-box (SPEC 100 §2.3 step 3). The
+// installExecCopy puts source at <dir>/com.leadaxe.sing-box-lxd (SPEC 100
+// §2.3 step 3). The
 // source must be a regular file, not a symlink. An identical target (same
 // file, or same sha256) is kept. Otherwise the bytes go to a temporary file
 // in dir (O_EXCL, 0600), are fsynced, handed to root:wheel 0755, verified
@@ -119,7 +121,7 @@ func installExecCopy(out io.Writer, source, dir string, options execCopyOptions)
 	switch {
 	case err == nil:
 		if targetInfo.IsDir() {
-			return result, E.New(target, ": is a directory; refusing to replace it")
+			return result, legacyLayoutError(target)
 		}
 		if os.SameFile(sourceInfo, targetInfo) {
 			result.Skipped = true
@@ -317,12 +319,25 @@ func writeInstallMarker(dir string, marker installMarker, chown bool) error {
 	return nil
 }
 
-// removeInstalledCopy removes <dir>/sing-box and its sidecar ONLY when the
-// sidecar names this service — its label, and either this plist or no plist
-// at all (a `--service=copy` copy) — and the file's sha256 equals the
-// sidecar's (SPEC 100 §2.5); anything else stays, with the reason printed. A sidecar whose copy is already gone is removed as stale; the
-// directory goes too once empty, if it is the label-named one install makes.
-// The returned error is a failed removal, never a decision to keep.
+// legacyLayoutError refuses to put the copy where an earlier pre-release left
+// a directory of the same name (the <label>/sing-box layout). Nothing is
+// removed automatically: the operator deletes it knowingly.
+func legacyLayoutError(target string) error {
+	return E.New("target is a directory (legacy layout); remove it: sudo rm -rf ", target)
+}
+
+// reportLegacyLayout prints why uninstall leaves such a directory alone.
+func reportLegacyLayout(out io.Writer, target string) {
+	fmt.Fprintf(out, "lxd: %s is a directory (legacy layout), left in place; remove it: sudo rm -rf %s\n", target, target)
+}
+
+// removeInstalledCopy removes <dir>/com.leadaxe.sing-box-lxd and its sidecar
+// ONLY when the sidecar names this service — its label, and either this
+// plist or no plist at all (a `--service=copy` copy) — and the file's sha256
+// equals the sidecar's (SPEC 100 §2.6); anything else stays, with the reason
+// printed. A sidecar whose copy is already gone is removed as stale. The
+// directory itself is never removed. The returned error is a failed removal,
+// never a decision to keep.
 func removeInstalledCopy(out io.Writer, dir, label, plistPath string, dryRun bool) error {
 	target := filepath.Join(dir, execCopyName)
 	markerPath := installMarkerPath(dir)
@@ -334,6 +349,10 @@ func removeInstalledCopy(out io.Writer, dir, label, plistPath string, dryRun boo
 	targetInfo, targetErr := os.Lstat(target)
 	if targetErr != nil && !os.IsNotExist(targetErr) {
 		fmt.Fprintf(out, "lxd: copy left in place: %v\n", targetErr)
+		return nil
+	}
+	if targetErr == nil && targetInfo.IsDir() {
+		reportLegacyLayout(out, target)
 		return nil
 	}
 	targetExists := targetErr == nil
@@ -358,7 +377,6 @@ func removeInstalledCopy(out io.Writer, dir, label, plistPath string, dryRun boo
 			}
 			fmt.Fprintf(out, "lxd: removed stale sidecar %s: the copy is already gone\n", markerPath)
 		}
-		removeEmptyLabelDir(out, dir, label, dryRun)
 		return nil
 	}
 	if !targetInfo.Mode().IsRegular() {
@@ -376,7 +394,6 @@ func removeInstalledCopy(out io.Writer, dir, label, plistPath string, dryRun boo
 	}
 	if dryRun {
 		fmt.Fprintf(out, "lxd: would remove copy %s (sha256 %s, matches the sidecar) and sidecar %s\n", target, sum, markerPath)
-		removeEmptyLabelDir(out, dir, label, dryRun)
 		return nil
 	}
 	if err = os.Remove(target); err != nil {
@@ -386,7 +403,6 @@ func removeInstalledCopy(out io.Writer, dir, label, plistPath string, dryRun boo
 		return E.Cause(err, "remove sidecar")
 	}
 	fmt.Fprintf(out, "lxd: removed copy %s (sha256 %s, matches the sidecar) and sidecar %s\n", target, sum, markerPath)
-	removeEmptyLabelDir(out, dir, label, dryRun)
 	return nil
 }
 
@@ -414,6 +430,10 @@ func unbindInstalledCopy(out io.Writer, dir, label, plistPath string, dryRun, ca
 	targetInfo, targetErr := os.Lstat(target)
 	if targetErr != nil && !os.IsNotExist(targetErr) {
 		fmt.Fprintf(out, "lxd: copy left in place: %v\n", targetErr)
+		return nil
+	}
+	if targetErr == nil && targetInfo.IsDir() {
+		reportLegacyLayout(out, target)
 		return nil
 	}
 	if !found {
@@ -463,23 +483,6 @@ func unbindInstalledCopy(out io.Writer, dir, label, plistPath string, dryRun, ca
 	}
 	fmt.Fprintln(out, keepCopyMessage(target))
 	return nil
-}
-
-// removeEmptyLabelDir drops the label-named exec dir install created, once
-// nothing else lives in it. An operator's own --exec-dir is never removed.
-func removeEmptyLabelDir(out io.Writer, dir, label string, dryRun bool) {
-	if filepath.Base(dir) != label {
-		return
-	}
-	if dryRun {
-		fmt.Fprintln(out, "lxd: would remove", dir, "once empty")
-		return
-	}
-	if err := os.Remove(dir); err == nil {
-		fmt.Fprintln(out, "lxd: removed", dir)
-	} else if !os.IsNotExist(err) {
-		fmt.Fprintf(out, "lxd: kept %s: %v\n", dir, err)
-	}
 }
 
 // executableIdentity is the running binary as /admin/info reports it: the

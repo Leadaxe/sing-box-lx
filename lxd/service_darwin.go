@@ -19,9 +19,9 @@ import (
 )
 
 // defaultExecDir holds the system service's root-owned copy of the binary
-// (SPEC 100): Apple's place for privileged helpers, one directory per label,
-// the binary keeping its own name inside.
-const defaultExecDir = "/Library/PrivilegedHelperTools/" + launchdLabel
+// and its sidecar (SPEC 100 §2.1): Apple's place for privileged helpers, one
+// flat file per label. macOS ships the directory; install never creates it.
+const defaultExecDir = "/Library/PrivilegedHelperTools"
 
 // ServiceInstallIsAdvisory is false here: on darwin --service really installs
 // and starts the job, so the caller materializes daemon.json first and mints a
@@ -87,10 +87,13 @@ type serviceEnv struct {
 	out     io.Writer
 	source  string // the running binary, symlinks resolved
 	execDir string
-	root    bool // the system scope may be touched
-	chown   bool // hand what install creates to root:wheel
-	system  serviceScope
-	user    serviceScope
+	// createExecDir: the operator named the exec dir (--exec-dir), so missing
+	// components may be created root:wheel 0755. The default must exist.
+	createExecDir bool
+	root          bool // the system scope may be touched
+	chown         bool // hand what install creates to root:wheel
+	system        serviceScope
+	user          serviceScope
 	// load (re)loads a job from its plist; unload removes it.
 	load   func(scope serviceScope) error
 	unload func(scope serviceScope) error
@@ -101,19 +104,21 @@ func newServiceEnv(execDir string) (serviceEnv, error) {
 	if err != nil {
 		return serviceEnv{}, err
 	}
+	createExecDir := execDir != ""
 	if execDir == "" {
 		execDir = defaultExecDir
 	}
 	return serviceEnv{
-		out:     os.Stdout,
-		source:  source,
-		execDir: execDir,
-		root:    os.Getuid() == 0,
-		chown:   os.Getuid() == 0,
-		system:  systemScope(),
-		user:    userScope(),
-		load:    launchctlLoad,
-		unload:  launchctlUnload,
+		out:           os.Stdout,
+		source:        source,
+		execDir:       execDir,
+		createExecDir: createExecDir,
+		root:          os.Getuid() == 0,
+		chown:         os.Getuid() == 0,
+		system:        systemScope(),
+		user:          userScope(),
+		load:          launchctlLoad,
+		unload:        launchctlUnload,
 	}, nil
 }
 
@@ -203,7 +208,7 @@ func InstallService(daemonArgs []string, execDir string, dryRun bool) error {
 		return err
 	}
 	if dryRun {
-		return printPlan(env.out, env.system, daemonArgs, env.execDir)
+		return printPlan(env.out, env.system, daemonArgs, env.execDir, env.createExecDir)
 	}
 	if !env.root {
 		return E.New("--service=install needs root (run with sudo); for a per-user agent without sudo use --service=install-user")
@@ -216,7 +221,7 @@ func InstallService(daemonArgs []string, execDir string, dryRun bool) error {
 // the file, so there is no privilege to escalate to.
 func InstallUserService(daemonArgs []string, dryRun bool) error {
 	if dryRun {
-		return printPlan(os.Stdout, userScope(), daemonArgs, "")
+		return printPlan(os.Stdout, userScope(), daemonArgs, "", false)
 	}
 	return installUser(os.Stdout, userScope(), daemonArgs)
 }
@@ -277,7 +282,7 @@ func ServiceStatus(execDir string) (ServiceVerdict, error) {
 // printPlan renders what an install would do. It mutates nothing, so it is
 // safe without root; an exec dir that fails the root-owned check is refused
 // here exactly as install would refuse it.
-func printPlan(out io.Writer, scope serviceScope, daemonArgs []string, execDir string) error {
+func printPlan(out io.Writer, scope serviceScope, daemonArgs []string, execDir string, createExecDir bool) error {
 	program, err := os.Executable()
 	if err != nil {
 		return E.Cause(err, "locate own binary")
@@ -286,7 +291,7 @@ func printPlan(out io.Writer, scope serviceScope, daemonArgs []string, execDir s
 	fmt.Fprintln(out, "lxd: would install", scope.name(), launchdLabel)
 	result := "(the agent runs the binary in place)"
 	if !scope.user {
-		copyResult, planErr := planExecCopy(out, execDir)
+		copyResult, planErr := planExecCopy(out, execDir, createExecDir)
 		if planErr != nil {
 			return planErr
 		}
@@ -314,12 +319,16 @@ func printPlan(out io.Writer, scope serviceScope, daemonArgs []string, execDir s
 
 // planExecCopy is the dry-run half shared by install and copy: the exec dir
 // walk and the copy decision, printed; a refusal is printed and returned.
-func planExecCopy(out io.Writer, execDir string) (execCopyResult, error) {
+func planExecCopy(out io.Writer, execDir string, createExecDir bool) (execCopyResult, error) {
 	source, err := resolveOwnExecutable()
 	if err != nil {
 		return execCopyResult{}, err
 	}
-	if err = ensureRootOwnedDir(out, execDir, dirPlan, false); err != nil {
+	action := dirCheck
+	if createExecDir {
+		action = dirPlan
+	}
+	if err = checkExecDir(out, execDir, action, false); err != nil {
 		fmt.Fprintln(out, "lxd: dry run result: would refuse:", err)
 		return execCopyResult{}, err
 	}
@@ -334,7 +343,7 @@ func planExecCopy(out io.Writer, execDir string) (execCopyResult, error) {
 
 func (env serviceEnv) planCopy() error {
 	fmt.Fprintln(env.out, "lxd: dry run — nothing was copied.")
-	result, err := planExecCopy(env.out, env.execDir)
+	result, err := planExecCopy(env.out, env.execDir, env.createExecDir)
 	if err != nil {
 		return err
 	}
@@ -346,14 +355,29 @@ func (env serviceEnv) planCopy() error {
 	return nil
 }
 
+// checkExecDir walks the exec dir from "/" (SPEC 100 §2.3 step 2). The
+// default directory belongs to macOS: missing, it is an error with the
+// remedy, never created here; an --exec-dir may be created (dirCreate/dirPlan).
+func checkExecDir(out io.Writer, execDir string, action dirAction, chown bool) error {
+	err := ensureRootOwnedDir(out, execDir, action, chown)
+	if err != nil && action == dirCheck && os.IsNotExist(err) {
+		return E.Cause(err, "exec dir ", execDir, " does not exist; it is part of macOS — recreate it root:wheel 0755 (sudo mkdir -m 0755 ", execDir, ") or pass --exec-dir")
+	}
+	return err
+}
+
 // placeCopy lays down the root-owned copy (SPEC 100 §2.3): the exec dir is
-// checked (and created) from "/", the binary goes in by a verified rename,
+// checked from "/" (an --exec-dir is created if missing), the binary goes in by a verified rename,
 // then the sidecar by the same temp+rename. plistPath binds the copy to a
 // service ("" for a copy only; a copy refreshed under an installed service
 // keeps its binding). An up-to-date copy with a sidecar already saying the
 // same is a no-op.
 func (env serviceEnv) placeCopy(plistPath string) (execCopyResult, error) {
-	if err := ensureRootOwnedDir(env.out, env.execDir, dirCreate, env.chown); err != nil {
+	action := dirCheck
+	if env.createExecDir {
+		action = dirCreate
+	}
+	if err := checkExecDir(env.out, env.execDir, action, env.chown); err != nil {
 		return execCopyResult{}, err
 	}
 	result, err := installExecCopy(env.out, env.source, env.execDir, execCopyOptions{chown: env.chown})
@@ -657,6 +681,7 @@ func reportLine(out io.Writer, indent, key string, values ...any) {
 // programFacts is what the report learned about one program file.
 type programFacts struct {
 	exists      bool
+	isDir       bool   // a directory where a file belongs: the legacy layout
 	sha         string // "" when absent or unreadable
 	chainErr    error  // the root-owned invariant; nil = passes
 	marker      installMarker
@@ -669,6 +694,7 @@ func reportProgram(out io.Writer, program, callerSHA string, rootRequired bool) 
 	var facts programFacts
 	info, statErr := ownerLstat(program)
 	facts.exists = statErr == nil
+	facts.isDir = statErr == nil && info.mode.IsDir()
 	if statErr != nil {
 		reportLine(out, "  ", "program file", statErr)
 	} else {
@@ -827,6 +853,8 @@ func judgeUserAgent(program string, facts programFacts, callerSHA string) (Servi
 // a half-removed service.
 func judgeCopyOnly(target string, facts programFacts, callerSHA string) (ServiceVerdict, string) {
 	switch {
+	case facts.isDir:
+		return ServiceMismatch, legacyLayoutError(target).Error() + "; then " + recopyHint
 	case !facts.exists:
 		return ServiceMismatch, "the copy " + target + " is missing but its sidecar remains; " + recopyHint
 	case facts.chainErr != nil:

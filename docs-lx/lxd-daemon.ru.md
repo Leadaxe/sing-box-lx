@@ -207,7 +207,7 @@ sing-box lxd --service=install-user    # LaunchAgent: без sudo, старт п
 Install делает всё сам:
 
 1. системная область: копирует бинарь в
-   `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box` с владельцем root,
+   `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` с владельцем root,
    и служба исполняет эту копию, а не файл, из которого её поставили
    ([7.1](#71-root-owned-копия-бинаря));
 2. создаёт `…/Application Support/sing-box-lxd/` (0700; системная область — `root:wheel`)
@@ -246,9 +246,13 @@ LaunchDaemon исполняется от root при каждой загрузк
 
 | Что | Путь | Владелец / режим |
 |---|---|---|
-| каталог | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/` | `root:wheel 0755` |
-| бинарь | `…/com.leadaxe.sing-box-lxd/sing-box` | `root:wheel 0755` |
-| сайдкар | `…/com.leadaxe.sing-box-lxd/install.json` | `root:wheel 0644` |
+| бинарь | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` | `root:wheel 0755` |
+| сайдкар | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd.install.json` | `root:wheel 0644` |
+
+Соглашение Apple для привилегированных помощников: плоский файл с именем ярлыка, без
+своего каталога. В `ps` процесс виден как `com.leadaxe.sing-box-lxd`.
+`/Library/PrivilegedHelperTools` поставляется с macOS; install его не создаёт, а его
+отсутствие — ошибка с подсказкой.
 
 - **Инвариант.** Каждый компонент пути от `/` до бинаря — настоящий каталог или файл
   (не симлинк), принадлежит uid 0 и не имеет записи для group и other. Сам
@@ -261,7 +265,7 @@ LaunchDaemon исполняется от root при каждой загрузк
   `lxd: binary unchanged (sha256 …), copy skipped`.
 - **В plist** меняется только `ProgramArguments[0]`; daemon.json, адрес, секрет и
   сопряжённые клиенты остаются как были.
-- **Сайдкар** `install.json` читается без root:
+- **Сайдкар** `com.leadaxe.sing-box-lxd.install.json` читается без root:
   ```json
   {
     "source": "/Applications/singbox-launcher.app/Contents/MacOS/bin/sing-box",
@@ -274,9 +278,15 @@ LaunchDaemon исполняется от root при каждой загрузк
   ```
   `version` — версия ядра копии, видна без её запуска; `plist_path` пуст у копии без
   службы.
-- **`--exec-dir <dir>`** кладёт копию (по-прежнему `sing-box`) в другой каталог. Тот же
-  инвариант распространяется на каждый компонент `<dir>`; иначе install отказывает:
+- **`--exec-dir <dir>`** кладёт оба файла с теми же именами в другой каталог; если его
+  нет, он создаётся `root:wheel 0755`. Тот же инвариант распространяется на каждый
+  компонент `<dir>` и на сам файл; иначе install отказывает:
   `<путь>: owned by uid N, mode NNNN, must be root-owned and not group/world-writable`.
+- **Остаток раннего пре-релиза.** Те ставили каталог
+  `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/` с `sing-box` внутри. Каталог на
+  месте файла останавливает install и copy:
+  `target is a directory (legacy layout); remove it: sudo rm -rf <путь>`. Сам он не
+  удаляется ничем; status показывает его (выход 2), uninstall оставляет с той же подсказкой.
 
 **Копия без службы.** `sudo sing-box lxd --service=copy` кладёт ту же копию и сайдкар — и
 больше ничего: ни plist, ни launchd. Это для лаунчера, который сам запускает ядро от root
@@ -338,11 +348,11 @@ lxd: refusing to run as a root service from /Applications/…/sing-box (uid 501,
 **Ручная проверка:**
 
 ```bash
-ls -ld / /Library /Library/PrivilegedHelperTools /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd
-ls -l /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/            # root wheel -rwxr-xr-x sing-box, -rw-r--r-- install.json
+ls -ld / /Library /Library/PrivilegedHelperTools
+ls -l /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd*             # root wheel -rwxr-xr-x бинарь, -rw-r--r-- .install.json
 plutil -p /Library/LaunchDaemons/com.leadaxe.sing-box-lxd.plist            # ProgramArguments[0] = копия
-shasum -a 256 /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box
-cat /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/install.json   # тот же sha256
+shasum -a 256 /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd
+cat /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd.install.json   # тот же sha256
 launchctl print system/com.leadaxe.sing-box-lxd | grep -E '^[[:space:]](state|pid|program) ='
 sing-box lxd --service=status
 ```

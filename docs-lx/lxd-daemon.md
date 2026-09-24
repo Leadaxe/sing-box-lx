@@ -210,7 +210,7 @@ fails with a permission error under the user scope. This has nothing to do with
 Install does everything itself:
 
 1. system scope: copies the binary to
-   `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box`, root-owned, and
+   `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd`, root-owned, and
    the service runs that copy, not the file you installed from
    ([7.1](#71-the-root-owned-copy-of-the-binary));
 2. creates `…/Application Support/sing-box-lxd/` (0700; system scope — `root:wheel`)
@@ -250,9 +250,13 @@ never runs the file it was installed from; `--service=install` copies it first:
 
 | What | Path | Owner / mode |
 |---|---|---|
-| directory | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/` | `root:wheel 0755` |
-| binary | `…/com.leadaxe.sing-box-lxd/sing-box` | `root:wheel 0755` |
-| sidecar | `…/com.leadaxe.sing-box-lxd/install.json` | `root:wheel 0644` |
+| binary | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` | `root:wheel 0755` |
+| sidecar | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd.install.json` | `root:wheel 0644` |
+
+Apple's convention for privileged helpers: one flat file named by the label, no
+directory of its own. In `ps` the process shows as `com.leadaxe.sing-box-lxd`.
+`/Library/PrivilegedHelperTools` ships with macOS; install never creates it, and a
+missing one is an error with the remedy.
 
 - **The invariant.** Every path component from `/` down to the binary is a real
   directory or file (not a symlink), owned by uid 0, with no write bit for group or
@@ -265,7 +269,7 @@ never runs the file it was installed from; `--service=install` copies it first:
   An identical copy is left alone: `lxd: binary unchanged (sha256 …), copy skipped`.
 - **The plist** changes only in `ProgramArguments[0]`; daemon.json, the address, the
   secret and the enrolled clients stay as they were.
-- **The sidecar** `install.json` is readable without root:
+- **The sidecar** `com.leadaxe.sing-box-lxd.install.json` is readable without root:
   ```json
   {
     "source": "/Applications/singbox-launcher.app/Contents/MacOS/bin/sing-box",
@@ -278,9 +282,15 @@ never runs the file it was installed from; `--service=install` copies it first:
   ```
   `version` is the copy's core version, readable without running it; `plist_path` is
   empty for a copy without a service.
-- **`--exec-dir <dir>`** puts the copy (still named `sing-box`) into another directory.
-  The same invariant covers every component of `<dir>`; otherwise install refuses:
+- **`--exec-dir <dir>`** puts both files, under the same names, into another directory;
+  a missing one is created `root:wheel 0755`. The same invariant covers every component
+  of `<dir>` and the file itself; otherwise install refuses:
   `<path>: owned by uid N, mode NNNN, must be root-owned and not group/world-writable`.
+- **Leftover of an early pre-release.** Those installed a directory
+  `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/` with `sing-box` inside. A
+  directory where the file belongs stops install and copy:
+  `target is a directory (legacy layout); remove it: sudo rm -rf <path>`. Nothing deletes
+  it automatically; status reports it (exit 2), uninstall leaves it with the same hint.
 
 **A copy without a service.** `sudo sing-box lxd --service=copy` lays down the same copy
 and sidecar and nothing else — no plist, no launchd. It serves a launcher that runs the
@@ -343,11 +353,11 @@ refusal into a WARN for debugging.
 **Checking by hand:**
 
 ```bash
-ls -ld / /Library /Library/PrivilegedHelperTools /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd
-ls -l /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/            # root wheel -rwxr-xr-x sing-box, -rw-r--r-- install.json
+ls -ld / /Library /Library/PrivilegedHelperTools
+ls -l /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd*             # root wheel -rwxr-xr-x the binary, -rw-r--r-- .install.json
 plutil -p /Library/LaunchDaemons/com.leadaxe.sing-box-lxd.plist            # ProgramArguments[0] = the copy
-shasum -a 256 /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box
-cat /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/install.json   # the same sha256
+shasum -a 256 /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd
+cat /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd.install.json   # the same sha256
 launchctl print system/com.leadaxe.sing-box-lxd | grep -E '^[[:space:]](state|pid|program) ='
 sing-box lxd --service=status
 ```

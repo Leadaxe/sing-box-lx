@@ -35,7 +35,7 @@ data-plane лежит.
 | `log_max_size_mb` / `log_max_backups` / `log_max_age_hours` | ключи daemon.json, дефолт `20` / `1` / `24` | лимиты ротации лога демона («≈сутки истории»: ротация по возрасту раз в 24 ч, текущий + 1 бэкап; размер — страховка); 0/отсутствие = дефолт, «безлимита» нет |
 | `--state-dir` | путь, дефолт `lxd-state` (сервис — абсолютный `<support>/state`) | каталог состояния: daemon.json, last-good, кандидат, pending, was_running, серверная пара, доверенные клиенты |
 | `--service` | `install` \| `install-user` \| `copy` \| `uninstall` \| `status` | установка службой, root-owned копия без службы, снятие, отчёт (см. ниже) |
-| `--exec-dir <dir>` | путь, дефолт `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` | с `--service=install\|copy\|uninstall\|status` — каталог root-owned копии бинаря; каждый компонент от `/` обязан принадлежать root и не иметь записи для group/other |
+| `--exec-dir <dir>` | путь, дефолт `/Library/PrivilegedHelperTools` (должен существовать; заданный — создаётся) | с `--service=install\|copy\|uninstall\|status` — каталог root-owned копии бинаря и её сайдкара; каждый компонент от `/` обязан принадлежать root и не иметь записи для group/other |
 | `--allow-unsafe-exec` | флаг, отладка | root-служба стартует и с бинаря, который не root-owned копия, — с `WARN` вместо отказа |
 | `--purge` | флаг | с `--service=uninstall` — снести и state-каталог |
 | `--keep-copy` | флаг | с `--service=uninstall` — снять службу, root-owned копию и сайдкар оставить для запуска без службы (состояние «только копия») |
@@ -95,9 +95,9 @@ TUN, до логина); `install-user` — пользовательский Lau
 
 **Root исполняет только root-owned копию (macOS).** LaunchDaemon запускает не тот
 файл, из которого его поставили, а копию
-`/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box` (`root:wheel 0755`,
-каталог проверяется от `/`, копия встаёт атомарной подменой после сверки sha256) с
-сайдкаром `install.json` рядом (`source`, `sha256`, `version`, `installed_at`,
+`/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` (`root:wheel 0755`, плоский
+файл с именем ярлыка по соглашению Apple; путь проверяется от `/`, копия встаёт атомарной
+подменой после сверки sha256) с сайдкаром `com.leadaxe.sing-box-lxd.install.json` рядом (`source`, `sha256`, `version`, `installed_at`,
 `plist_path`, `label`; читается без root). В plist меняется только первый элемент
 `ProgramArguments`. `copy` — та же копия без plist и launchd (для лаунчера, который сам
 запускает ядро от root); последующий `install` привязывает её без повторного
@@ -201,7 +201,7 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
 | [067-LXD_BUILD_TAG_SPLIT](../../TASKS/067-LXD_BUILD_TAG_SPLIT/SPEC.md) | Демон переехал на собственный build-tag `with_lxd`; `with_lx_command` остался за RPC SPEC 015 (`URLTestOutbound`, `GetRules`, `GetGroups` — их использует LxBox). Позволяет собрать сборку без демона, но с командными расширениями: так теперь собирается legacy-Win7. Логика не менялась — только теги и комментарии |
 | [066-LXD_CLIENT_IDENTITY](../../TASKS/066-LXD_CLIENT_IDENTITY/SPEC.md) | Справочник IP → устройство для сетевого инспектора: `GET /admin/clients-info` отдаёт `name`/`mac`/`ssid`/`iface`/`port`/`source` по каждому клиенту, метки оператора через `PUT`/`DELETE` (ключ = IP или MAC). Пять провайдеров с приоритетом по порядку вызова (`lease` → `arp` → `bridge` → `wireless` → `label`), платформенные через build-теги, ядро не трогается; кеш 60 с; живой прогон на macOS |
 | [065-LXD_OBSERVABILITY_PLANE](../../TASKS/065-LXD_OBSERVABILITY_PLANE/SPEC.md) | Диагностика демона: `/admin/memory` (два RSS — текущий и пик, кеш 200 мс), `/admin/stats` (uptime ядра, трафик, соединения; без ядра `null`, а не 503), `/admin/logs` (хвост `lxd.log` — лог **демона**, которого нет в gRPC-потоке), `/admin/pprof/*` (шесть снимков по whitelist, CPU/trace с потолком и 409, вкл/выкл block/mutex) — за тем же mTLS-пином, без отдельного debug-порта; живой прогон на macOS |
-| [100-LXD_ROOT_OWNED_BINARY](../../TASKS/100-LXD_ROOT_OWNED_BINARY/SPEC.md) | Системная служба исполняет root-owned копию бинаря, а не файл, из которого её поставили (закрыто повышение привилегий через user-writable бинарь в plist): копия в `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/`, сайдкар `install.json`, `--exec-dir`, `--service=copy` (копия без службы, для classic TUN лаунчера), `--service=status` с кодами выхода, uninstall только своей копии, самопроверка `lxd`/`run` под root, `executable`/`executable_sha256` в `/admin/info`; табличный тест переходов состояний |
+| [100-LXD_ROOT_OWNED_BINARY](../../TASKS/100-LXD_ROOT_OWNED_BINARY/SPEC.md) | Системная служба исполняет root-owned копию бинаря, а не файл, из которого её поставили (закрыто повышение привилегий через user-writable бинарь в plist): копия `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` (плоский файл), сайдкар `com.leadaxe.sing-box-lxd.install.json`, `--exec-dir`, `--service=copy` (копия без службы, для classic TUN лаунчера), `--service=status` с кодами выхода, uninstall только своей копии, самопроверка `lxd`/`run` под root, `executable`/`executable_sha256` в `/admin/info`; табличный тест переходов состояний |
 
 ## 8. Особенности сопровождения
 

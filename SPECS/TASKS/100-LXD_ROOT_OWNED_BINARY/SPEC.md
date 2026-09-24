@@ -36,14 +36,26 @@
 
 | Что | Путь | Владелец / режим |
 |---|---|---|
-| каталог копии | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/` | `root:wheel 0755` |
-| копия бинаря | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box` | `root:wheel 0755` |
-| сайдкар | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/install.json` | `root:wheel 0644` |
+| копия бинаря | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` | `root:wheel 0755` |
+| сайдкар | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd.install.json` | `root:wheel 0644` |
 
-`/Library/PrivilegedHelperTools` — соглашение Apple для привилегированных помощников.
-Имя бинаря остаётся `sing-box` (граница форка); ярлык службы — имя каталога.
-`--exec-dir <dir>` заменяет каталог копии целиком (имя файла внутри — всегда `sing-box`).
-Недостающие каталоги создаются `root:wheel 0755`.
+Соглашение Apple для привилегированных помощников: плоский файл с именем ярлыка прямо в
+`/Library/PrivilegedHelperTools`, без своего каталога. Процесс в `ps` называется
+`com.leadaxe.sing-box-lxd` (подстрока `sing-box` в имени есть). Дистрибутивный бинарь
+по-прежнему `sing-box`.
+
+`--exec-dir <dir>` — каталог, куда кладутся оба файла с теми же именами; дефолт —
+`/Library/PrivilegedHelperTools`. Инвариант (2.2) проверяется по цепочке от `/` до
+каталога и на самом файле. Дефолтный каталог принадлежит macOS и не создаётся: его
+отсутствие — ошибка с причиной. Каталог из `--exec-dir` при отсутствии создаётся
+(недостающие компоненты `root:wheel 0755`).
+
+**Старая раскладка.** Если по пути копии лежит **каталог** (остаток пре-релиза с
+раскладкой `<ярлык>/sing-box`), install и copy отказывают:
+`target is a directory (legacy layout); remove it: sudo rm -rf <путь>` — и ничего не
+удаляют сами; status даёт `MISMATCH` (2) с той же причиной, uninstall и `--keep-copy`
+оставляют каталог с сообщением `… is a directory (legacy layout), left in place; remove
+it: sudo rm -rf <путь>`.
 
 ### 2.2 Инвариант root-owned
 
@@ -64,9 +76,10 @@ real file or directory owned by root`). Предикат платформенн�
 
 1. Источник = `filepath.EvalSymlinks(os.Executable())`; он обязан быть обычным файлом
    (`Lstat`, не симлинк) не больше 512 МиБ.
-2. Каталог копии проходится от `/`: существующие компоненты — каталоги, проходящие
-   инвариант; недостающие создаются `root:wheel 0755`. Нарушение — отказ до любых
-   изменений на диске.
+2. Каталог копии проходится от `/`: каждый компонент — каталог, проходящий инвариант.
+   Дефолтный каталог обязан существовать; у `--exec-dir` недостающие компоненты
+   создаются `root:wheel 0755`. Нарушение — отказ до любых изменений на диске. Каталог
+   на месте копии — отказ «legacy layout» (2.1).
 3. Бинарь:
    - источник и есть копия (запуск из неё) — пропуск;
    - копия существует и её sha256 совпадает с источником — пропуск,
@@ -119,7 +132,7 @@ real file or directory owned by root`). Предикат платформенн�
 ### 2.5 `--service=copy` (root)
 
 Только размещение копии (2.3) с `plist_path: ""` — plist не пишется, launchd не
-трогается. Для лаунчера, который сам запускает ядро от root (classic TUN на macOS,
+трогается. Те же пути, `--exec-dir` и проверки, что у install. Для лаунчера, который сам запускает ядро от root (classic TUN на macOS,
 SPEC 137 лаунчера). Повторный вызов при совпадении sha — no-op. Если системная служба
 уже исполняет эту копию, `copy` освежает бинарь и сохраняет привязку `plist_path`.
 Последующий `install` привязывает ту же копию к plist, не копируя повторно.
@@ -133,10 +146,11 @@ SPEC 137 лаунчера). Повторный вызов при совпаде�
 его sha256 равен sha256 из сайдкара. Иначе файл остаётся с сообщением
 (`lxd: copy left in place: sha differs from sidecar …`, `… no sidecar …`,
 `… sidecar … belongs to …`). Произвольный `ProgramArguments[0]` не удаляется никогда.
-Кандидаты — каталог `ProgramArguments[0]` (если файл называется `sing-box`) и каталог
-копии (`--exec-dir` или канонический). Сайдкар без файла удаляется как устаревший.
-Пустой каталог с именем ярлыка удаляется, родитель — никогда. `--purge` — как раньше,
-про support-каталог. `--dry-run` печатает те же решения со словом `would`.
+Кандидаты — каталог `ProgramArguments[0]` (если файл называется
+`com.leadaxe.sing-box-lxd`) и каталог копии (`--exec-dir` или дефолтный). Сайдкар без
+файла удаляется как устаревший. Сам каталог не удаляется никогда; каталог старой
+раскладки на месте копии остаётся с сообщением (2.1). `--purge` — как раньше, про
+support-каталог. `--dry-run` печатает те же решения со словом `would`.
 
 `--keep-copy` снимает plist и launchd, но копию и сайдкар оставляет: сайдкар,
 привязанный к снимаемому plist, при тех же проверках (ярлык, plist, sha файла ==
@@ -211,9 +225,10 @@ root-owned copy`. launchd пишет его в `lxd.log` (StandardErrorPath) п�
 
 ## 3. Интерфейс для лаунчера
 
-- **Пути:** каталог `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/`, бинарь
-  `…/sing-box`, сайдкар `…/install.json` (JSON 2.3 п. 4, читается без root);
-  plist `/Library/LaunchDaemons/com.leadaxe.sing-box-lxd.plist`.
+- **Пути:** бинарь `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd`, сайдкар
+  `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd.install.json` (JSON 2.3 п. 4,
+  читается без root); plist `/Library/LaunchDaemons/com.leadaxe.sing-box-lxd.plist`.
+  С `--exec-dir <dir>` — те же имена в `<dir>`.
 - **Команды** (из бинаря бандла):
 
   | Команда | root | Что делает | Выход |
@@ -230,7 +245,7 @@ root-owned copy`. launchd пишет его в `lxd.log` (StandardErrorPath) п�
   бинаря. Путь демона теперь всегда отличается от пути в бандле. Версия копии без
   запуска — поле `version` сайдкара.
 - **Classic TUN (root без launchd):** `sudo sing-box lxd --service=copy`, затем запуск
-  `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box run …` от root.
+  `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd run …` от root.
   Обновление ядра — снова `--service=copy`.
 - **Ключевые строки:** `lxd: copied <src> -> <dst> (sha256 <hex>, root:wheel 0755)`;
   `lxd: binary unchanged (sha256 <hex>), copy skipped`; `lxd: already up to date <hex>`;
@@ -258,7 +273,8 @@ root-owned copy`. launchd пишет его в `lxd.log` (StandardErrorPath) п�
 2. Копирование во временном каталоге: не обычный файл, симлинк, расхождение sha
    (временный файл удалён, старая копия цела), пропуск unchanged, пропуск «источник =
    копия», замена по `rename` (старый inode читается), dry-run; chown без root
-   пропускается. Выполнено (`TestCopy*`).
+   пропускается; каталог старой раскладки на месте копии — отказ, uninstall его не трогает.
+   Выполнено (`TestCopy*`).
 3. Сайдкар: запись/чтение, ключи JSON, решения uninstall (совпадение, копия без plist →
    удалено; расхождение sha, чужой plist, нет сайдкара → оставлено; сайдкар без файла →
    удалён) и `--keep-copy` (отвязка своей копии; no-op для отвязанной; без root, dry-run,
@@ -267,7 +283,8 @@ root-owned copy`. launchd пишет его в `lxd.log` (StandardErrorPath) п�
 5. darwin: табличный тест переходов none → copy only → installed → (обновление ядра) →
    copy only (`--keep-copy`, повтор — no-op) → installed → none и copy only → none с вердиктом и кодом после каждого шага; аномалии → код 2 с
    причиной; plist ↔ `ProgramArguments` туда-обратно; dry-run install/copy; разбор
-   `launchctl print`. Выполнено (`TestServiceStateTransitions`,
+   `launchctl print`; дефолтный каталог не создаётся, старая раскладка — отказ и exit 2.
+   Выполнено (`TestServiceStateTransitions`, `TestServiceExecDirAndLegacyLayout`,
    `TestServiceStatusAnomalies`, `TestBuildPlist*`, `TestDryRun*`, `TestServiceLaunchctlPrint`).
 6. `admin_test`: `executable`, `executable_sha256`. Выполнено (`TestAdminInfo*`).
 7. CI: `GOOS=darwin go vet` для `./lxd/ ./cmd/sing-box/` в lint-джобе. Выполнено.
