@@ -46,6 +46,30 @@ required for stable tags); this changelog section is the fallback used for pre-r
 
 #### v1.14.2-lx.2
 
+Стабильный релиз линии `v1.14.2-lx.2` — сводит rc.1–rc.3, код = rc.3. Пользовательские ноты (EN+RU):
+[`docs-lx/releases/v1.14.2-lx.2.md`](releases/v1.14.2-lx.2.md). База — sing-box `v1.14.2`, дрейфа от
+`upstream/stable` нет.
+
+**Что вошло:**
+
+- 🪟 **lxd: служба Windows `sing-box-lxd`** — `--service=install|copy|status|uninstall`; служба SCM (`LocalSystem`,
+  автозапуск до входа пользователя, recovery) исполняет защищённую копию `<ProgramFiles>\sing-box-lxd\` (exe +
+  `libcronet.dll`), а не файл, из которого её поставили; данные — `<ProgramData>\sing-box-lxd\state\` и `…\logs\`
+  (`lxd.log`), каталог захватывается до записи секрета. Install со stop → замена копии → configure → start и откатом на
+  прежнюю копию при провале; status с кодами 0 `OK` / 2 `MISMATCH`·`UNSAFE` / 3 / 4 / 5 / 1; сайдкар
+  `sing-box-lxd.install.json` с `files[]` и `warnings[]` (совет сменить секрет, если каталог был доступен чужому SID).
+- 🐛 **Служба Windows на контексте ядра** (rc.3) — в rc.1/rc.2 первый `/admin/apply` под SCM паниковал, клиент видел EOF.
+- 📝 **Паники admin REST и gRPC — в лог демона** со стеком, ответ JSON 500 / `codes.Internal`; на Windows stdlib `log`
+  тоже в `lxd.log`.
+- 🎟 **`--invite-out` / `--invite-name`** у `--service=install` (macOS, Windows) и `client add --invite-out` — инвайт в
+  новый файл, существующий — отказ до изменений; имя по умолчанию `singbox-launcher`.
+- 🏷 **Имя клиента** — после обрезки пробелов пусто или 1–64 печатных символа (`400 client name: …`); enroll по именному
+  инвайту заменяет клиента с тем же именем.
+- ✨ **XHTTP: версия HTTP по `tls.alpn`, как у Xray** — `["h3"]` → HTTP/3 по QUIC, `["http/1.1"]` и без TLS → HTTP/1.1
+  (было h2c), REALITY → HTTP/2, иначе HTTP/2; новых ключей нет.
+
+**Подробности:**
+
 - 🪟 **lxd: служба Windows (SCM) с защищённой копией ядра**
   ([SPEC 103](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/103-LXD_WINDOWS_SERVICE/SPEC.md);
   решение владельца 2026-09-24, пара SPEC 141 лаунчера). На Windows `lxd` собирался, но `--service` был заглушкой,
@@ -62,6 +86,13 @@ required for stable tags); this changelog section is the fallback used for pre-r
     Демон под SCM идёт через `svc.Run`: `START_PENDING` → daemon.json → лог → самопроверка → `Chdir` в state-каталог →
     сразу `RUNNING`; stop/shutdown отменяют `lxd.Run` (новая ветка `ctx.Done()`, общая для всех платформ) со сторожем
     10 с.
+  - Контекст службы (rc.3): тело службы запускает `lxd.Run` на контексте от `globalCtx` с отменой по стопу SCM, как
+    консольный `lxd`; `lxd.Run` без реестра сервисов ядра отказывает сразу (`lxd: context without service registry`).
+    В rc.1/rc.2 контекстом был `context.Background()`: первый `/admin/apply` паниковал (`missing service registry in
+    context`), net/http рвал соединение (клиент — EOF), стек уходил в stderr, которого у службы нет. Паника в admin
+    REST — стек в лог демона и JSON 500, если ответ ещё не начат; в gRPC — recover-интерсепторы (`daemon/server_recover_lx.go`,
+    две строки `// lx:` в `daemon/server.go`), `codes.Internal` и стек в лог; на Windows stdlib `log` (ошибки
+    net/http) тоже пишется в `lxd.log`. ([SPEC 103 §4.4](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/103-LXD_WINDOWS_SERVICE/SPEC.md))
   - Защищённая копия и набор: `<ProgramFiles>\sing-box-lxd\sing-box-lxd.exe` плюс `libcronet.dll`, если она лежит
     рядом с источником (`wintun.dll` встроен в `sing-tun` и в набор не входит). Замена члена набора — временный файл
     → DACL → сверка sha256 → `rename` старого в `.old` → временный на место; одинаковый набор не трогается
@@ -116,9 +147,9 @@ required for stable tags); this changelog section is the fallback used for pre-r
     `go test` пакетов `lxd` и `cmd/sing-box` с полным набором тегов).
   - Поведение macOS, Linux и Android не меняется, кроме перечисленного: флаги `--invite-out`/`--invite-name`, норма
     имени клиента, замена клиента именным enroll, строка INFO самопроверки на macOS. Win7-386 собирается без
-    `with_lxd` — службы там нет. Живой прогон на Windows (install → status `OK` → повторный install → copy →
-    uninstall `--keep-copy` → uninstall, `sc qc`/`sdshow`, `icacls`, ротация, сопряжение лаунчера через
-    `--invite-out`) — за лаунчер-сессией.
+    `with_lxd` — службы там нет. Живой прогон на Windows 10 через лаунчер (rc.1→rc.3): дефект контекста службы
+    найден и закрыт в rc.3, цикл install/status/uninstall и сопряжение лаунчера через `--invite-out` подтверждены
+    владельцем 2026-09-25 (SPEC 103 — D).
 
 - ✨ **XHTTP: версия HTTP по `tls.alpn`, как у Xray — HTTP/1.1, HTTP/2, HTTP/3**
   ([SPEC 104](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/104-XHTTP_HTTP_VERSION_PARITY/SPEC.md),

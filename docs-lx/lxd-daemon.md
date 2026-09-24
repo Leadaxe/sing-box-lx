@@ -542,9 +542,10 @@ the SCM start timeout. A stop or shutdown cancels the daemon and waits for it fo
 past that the process logs a line and exits with code 1. The channel is the same TCP
 loopback + mTLS as elsewhere; no named pipe.
 
-Since `v1.14.2-lx.2-rc.3` the service runs the daemon on the core's context, as the console
-run does (in rc.1/rc.2 the first `/admin/apply` under the SCM panicked, the client saw EOF);
-a panic in an admin REST or gRPC handler goes to `lxd.log` with its stack.
+The service runs the daemon on the core's context, as the console run does; a panic in an
+admin REST or gRPC handler goes to `lxd.log` with its stack. Use `v1.14.2-lx.2` or later: in
+the pre-releases `v1.14.2-lx.2-rc.1`/`rc.2` the first `/admin/apply` under the SCM panicked
+and the client saw EOF.
 
 Windows 7 builds (`windows-386-legacy-windows-7`) ship without `with_lxd`, so there is no
 `lxd` and no service there.
