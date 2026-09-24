@@ -58,6 +58,14 @@ required for stable tags); this changelog section is the fallback used for pre-r
   N+1/N`, `build budget exhausted (N built, none idle)`. `GetOutbounds` отдаёт у WG/AWG-узлов `endpointState`
   (`never_built` / `building` / `up` / `asleep` / `torn_down` / `down`) и `idleSinceSeconds`; libbox
   `OutboundGroupItem` — `EndpointState`, `IdleSinceSeconds`. Замер на эмуляторе — за владельцем.
+- 🔇 **WireGuard/AWG: успешная переотправка хендшейка без UDP GSO больше не ERROR**
+  ([SPEC 101](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/101-WG_HANDSHAKE_GSO_RETRY_LOG_NOISE/SPEC.md);
+  заявка LxBox #95, Proton AWG). Bind форка wireguard-go после отказа ядра от GSO выключает offload, переотправляет
+  батч без него и возвращает `ErrUDPGSODisabled{RetryErr}`, где `RetryErr` — ошибка повтора (nil при успехе).
+  Data-путь её разворачивал, а `SendHandshakeInitiation`/`SendHandshakeResponse` печатали обёртку целиком как
+  `ERROR … failed to send handshake initiation: disabled UDP GSO on …`, хотя пакет ушёл. Теперь один хелпер
+  `unwrapGSODisabled` на три пути: Verbose при успешной переотправке, ERROR только с реальной ошибкой повтора.
+  Сабмодуль `submodules/wireguard-go` d0568ce; провод не тронут.
 
 #### v1.14.1-lx.12
 
