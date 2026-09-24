@@ -7,8 +7,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
+	"github.com/sagernet/sing-box/log"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
@@ -237,4 +239,77 @@ func (v ServiceVerdict) ExitCode() int {
 	default:
 		return 2
 	}
+}
+
+// selfCheckEnv is what the start-up self-check reads from the process; the
+// test fills it from a table.
+type selfCheckEnv struct {
+	euid       int
+	ppid       int
+	xpcService string // launchd sets XPC_SERVICE_NAME to the job's label
+	executable func() (string, error)
+	lstat      func(string) (ownerInfo, error)
+}
+
+// CheckServiceExecutable is the start-up self-check of a core running as
+// root (SPEC 100 §2.8): its own binary, symlinks resolved, must pass the
+// root-owned invariant. Only the launchd job of this label — parent pid 1
+// AND XPC_SERVICE_NAME equal to the label — refuses to start on a
+// violation; a root run anywhere else (sudo from a terminal, nohup, a
+// launcher elevating the core) only warns, as does allowUnsafe. Without
+// root there is nothing to escalate to and nothing is checked.
+func CheckServiceExecutable(allowUnsafe bool) error {
+	warning, err := evaluateSelfCheck(selfCheckEnv{
+		euid:       os.Geteuid(),
+		ppid:       os.Getppid(),
+		xpcService: os.Getenv("XPC_SERVICE_NAME"),
+		executable: resolveOwnExecutable,
+		lstat:      ownerLstat,
+	}, allowUnsafe)
+	if warning != "" {
+		log.Warn(warning)
+	}
+	return err
+}
+
+func evaluateSelfCheck(env selfCheckEnv, allowUnsafe bool) (warning string, err error) {
+	if env.euid != 0 {
+		return "", nil
+	}
+	executable, violation := env.executable()
+	if violation == nil {
+		violation = checkRootOwnedChain(executable, env.lstat)
+	}
+	if violation == nil {
+		if info, statErr := env.lstat(executable); statErr == nil && !info.mode.IsRegular() {
+			violation = E.New(executable, ": not a regular file")
+		}
+	}
+	if violation == nil {
+		return "", nil
+	}
+	subject := describeOwner(executable, env.lstat)
+	const remedy = "run `sing-box lxd --service=install` to reinstall from a root-owned copy"
+	switch {
+	case allowUnsafe:
+		return "lxd: --allow-unsafe-exec: running as root from " + subject + ": " + violation.Error() + " — starting anyway; anyone who can replace that file runs code as root", nil
+	case env.ppid == 1 && env.xpcService == launchdLabel:
+		return "", E.New("lxd: refusing to run as a root service from ", subject, ": ", violation, "; ", remedy)
+	default:
+		return "lxd: running as root from " + subject + ": " + violation.Error() +
+			" — not the launchd service (ppid " + strconv.Itoa(env.ppid) + ", XPC_SERVICE_NAME " + strconv.Quote(env.xpcService) +
+			"), starting anyway; the service would refuse this binary: " + remedy + " (or --service=copy)", nil
+	}
+}
+
+// describeOwner renders "<path> (uid N, mode NNNN)" for a refusal or warning.
+func describeOwner(path string, lstat func(string) (ownerInfo, error)) string {
+	if path == "" {
+		return "an unresolvable executable"
+	}
+	info, err := lstat(path)
+	if err != nil {
+		return path + " (" + err.Error() + ")"
+	}
+	return fmt.Sprintf("%s (uid %d, mode %s)", path, info.uid, formatMode(info.mode))
 }

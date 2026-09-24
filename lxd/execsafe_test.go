@@ -155,3 +155,61 @@ func TestInvariantEnsureDir(t *testing.T) {
 		t.Fatalf("a file must not pass as the exec dir, got %v", err)
 	}
 }
+
+func TestInvariantSelfCheck(t *testing.T) {
+	tree := fakeTree{
+		"/":                              rootDir(0o755),
+		"/Library":                       rootDir(0o755),
+		"/Library/PrivilegedHelperTools": {mode: os.ModeDir | os.ModeSticky | 0o755},
+		"/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd":          rootDir(0o755),
+		"/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box": rootFile(0o755),
+		"/Applications":                       {gid: 80, mode: os.ModeDir | 0o775},
+		"/Applications/launcher.app":          {uid: 501, mode: os.ModeDir | 0o755},
+		"/Applications/launcher.app/sing-box": {uid: 501, mode: 0o755},
+	}
+	const (
+		safe   = "/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box"
+		unsafe = "/Applications/launcher.app/sing-box"
+	)
+	for _, testCase := range []struct {
+		name        string
+		euid, ppid  int
+		xpc         string
+		executable  string
+		allowUnsafe bool
+		wantErr     string // "" = no refusal
+		wantWarn    string // "" = silent
+	}{
+		{"not root: nothing to check", 501, 1, launchdLabel, unsafe, false, "", ""},
+		{"service from the root-owned copy", 0, 1, launchdLabel, safe, false, "", ""},
+		{"service from the bundle is refused", 0, 1, launchdLabel, unsafe, false,
+			"lxd: refusing to run as a root service from /Applications/launcher.app/sing-box (uid 501, mode 0755): /Applications: owned by uid 0, mode 0775, must be root-owned and not group/world-writable; run `sing-box lxd --service=install` to reinstall from a root-owned copy", ""},
+		{"service with --allow-unsafe-exec warns", 0, 1, launchdLabel, unsafe, true, "", "lxd: --allow-unsafe-exec: running as root from /Applications/launcher.app/sing-box (uid 501, mode 0755)"},
+		{"ppid 1 without the launchd label (nohup) warns", 0, 1, "", unsafe, false, "", "not the launchd service (ppid 1, XPC_SERVICE_NAME \"\")"},
+		{"another launchd job warns", 0, 1, "com.example.other", unsafe, false, "", "XPC_SERVICE_NAME \"com.example.other\""},
+		{"sudo from a terminal warns", 0, 4242, "", unsafe, false, "", "not the launchd service (ppid 4242"},
+		{"root outside a service from the copy is silent", 0, 4242, "", safe, false, "", ""},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			warning, err := evaluateSelfCheck(selfCheckEnv{
+				euid:       testCase.euid,
+				ppid:       testCase.ppid,
+				xpcService: testCase.xpc,
+				executable: func() (string, error) { return testCase.executable, nil },
+				lstat:      tree.lstat,
+			}, testCase.allowUnsafe)
+			if testCase.wantErr == "" && err != nil {
+				t.Fatalf("must not refuse, got %v", err)
+			}
+			if testCase.wantErr != "" && (err == nil || err.Error() != testCase.wantErr) {
+				t.Fatalf("refusal %v, want %q", err, testCase.wantErr)
+			}
+			if testCase.wantWarn == "" && warning != "" {
+				t.Fatalf("must be silent, warned %q", warning)
+			}
+			if !strings.Contains(warning, testCase.wantWarn) {
+				t.Fatalf("warning %q, want it to contain %q", warning, testCase.wantWarn)
+			}
+		})
+	}
+}

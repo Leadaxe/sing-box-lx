@@ -35,6 +35,7 @@ var (
 	lxdPurge       bool
 	lxdDryRun      bool
 	lxdExecDir     string
+	lxdAllowUnsafe bool
 	lxdClientName  string
 )
 
@@ -107,6 +108,7 @@ func init() {
 	commandLxd.Flags().StringVar(&lxdService, "service", "", "install (system LaunchDaemon, root) | install-user (per-user LaunchAgent, no sudo) | copy (root-owned copy only, no service; root) | uninstall | status (exit 0 OK, 2 reinstall needed, 3 not installed, 4 copy only)")
 	commandLxd.Flags().BoolVar(&lxdPurge, "purge", false, "with --service=uninstall: also delete the state directory (clients, last-good, keys)")
 	commandLxd.Flags().BoolVar(&lxdDryRun, "dry-run", false, "with --service: show what would be done, change nothing")
+	commandLxd.Flags().BoolVar(&lxdAllowUnsafe, "allow-unsafe-exec", false, "debug only: let the root launchd service start from a binary that is not a root-owned copy (logs a WARN instead of refusing)")
 	commandLxd.Flags().StringVar(&lxdExecDir, "exec-dir", "", "with --service=install|copy|uninstall|status: directory of the root-owned binary copy (default /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd); every component from / must be root-owned and not group/world-writable")
 
 	commandLxd.AddCommand(commandLxdClient)
@@ -116,6 +118,17 @@ func init() {
 	commandLxdClient.AddCommand(commandLxdClientRemove)
 
 	mainCommand.AddCommand(commandLxd)
+
+	// Root running the core outside the lxd service — the launcher's classic
+	// TUN mode elevates `sing-box run` — gets the same executable check,
+	// which outside the launchd job of this label only warns (SPEC 100).
+	upstreamRun := commandRun.Run
+	commandRun.Run = func(cmd *cobra.Command, args []string) {
+		if err := lxd.CheckServiceExecutable(false); err != nil {
+			log.Fatal(err)
+		}
+		upstreamRun(cmd, args)
+	}
 }
 
 func lxdMain(cmd *cobra.Command) error {
@@ -125,6 +138,12 @@ func lxdMain(cmd *cobra.Command) error {
 	}
 	if cmd.Flags().Changed("exec-dir") {
 		return E.New("--exec-dir needs --service=install, copy, uninstall or status")
+	}
+	// A root launchd service must execute a root-owned copy (SPEC 100):
+	// refused here, before anything binds or boots, with the path, owner
+	// and mode in the message that launchd writes to lxd.log.
+	if err := lxd.CheckServiceExecutable(lxdAllowUnsafe); err != nil {
+		return err
 	}
 
 	fileConfig, installed, err := daemonConnection(lxdStateDir)
