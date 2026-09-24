@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — наш дефект в lx-обработчике `GetURLViaOutbound` (SPEC 058) |
-| Статус | I (implemented) — страж red/green в `daemon/started_service_geturl_lx_test.go`, пакет `daemon` под `-race` с `with_lx_command` и без; выходит в `v1.14.1-lx.10`; подтверждение репортёра (§3 п.3) впереди |
+| Статус | I (implemented) — страж red/green в `daemon/started_service_geturl_lx_test.go`, пакет `daemon` под `-race` с `with_lx_command` и без; выпущено в `v1.14.1-lx.10`; подтверждение репортёра (§3 п.3) впереди |
 | Ветка | `lx` |
 | База | `2ca066c8a` |
 | Связано | [058](../058-GET_URL_VIA_OUTBOUND/SPEC.md) (пробник; контракт поля `remoteAddr`), [096](../096-NAIVE_ENGINE_POOL/SPEC.md) (naive; §5 поправлена о darwin) |
