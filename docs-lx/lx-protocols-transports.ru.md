@@ -773,7 +773,7 @@ HTTP/2-соединения через **CONNECT-IP (RFC 9484)**, в перву�
 | `tls` | object | — | — | **стандартный** outbound-блок TLS — `server_name`, `insecure`, `disable_sni`, `fragment`, `record_fragment`, `fragment_fallback_delay`, … Тот же контейнер, что у любого TLS-outbound |
 | `uri` | string | — | по профилю³ | CONNECT-IP request URI |
 | `mtu` | int | — | `1280` | MTU userspace-стека. На `h2` максимум `16000` (один IP-пакет = один HTTP/2 DATA frame) |
-| `idle_timeout` | duration | — | выкл | suspend туннеля после простоя (освобождает gVisor-стек, насосы и QUIC keepalive); следующий dial его пересобирает. **По умолчанию выключен**: отсутствие ключа, `0` и отрицательное держат туннель; включает только положительное значение |
+| `idle_timeout` | duration | — | наследует `lx.masque.idle_timeout`, иначе выкл | suspend туннеля после простоя (освобождает gVisor-стек, насосы и QUIC keepalive); следующий dial его пересобирает. Отсутствие ключа → глобальный `lx.masque.idle_timeout` (SPEC 098, [lx-config.ru.md §13](lx-config.ru.md#13-корневой-блок-lx-spec-098)); явный `0` или отрицательное держат узел поднятым при любом глобальном значении; включает только положительное значение |
 | `keep_alive_period` | duration | — | `30s` | QUIC keepalive (только h3). **Отрицательное отключает** |
 | `network_list` | list | — | tcp+udp | L4-протоколы, идущие через туннель |
 

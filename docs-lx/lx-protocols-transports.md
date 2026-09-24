@@ -776,7 +776,7 @@ registration (ECDSA keys, WARP enroll) is done by the client, not the core.
 | `tls` | object | — | — | the **standard** outbound TLS block — `server_name`, `insecure`, `disable_sni`, `fragment`, `record_fragment`, `fragment_fallback_delay`, … Same container every other TLS outbound uses |
 | `uri` | string | — | per profile³ | CONNECT-IP request URI |
 | `mtu` | int | — | `1280` | userspace-stack MTU. On `h2`, max `16000` (one IP packet = one HTTP/2 DATA frame) |
-| `idle_timeout` | duration | — | off | suspend the tunnel after this long with no traffic (frees the gVisor stack, pumps and QUIC keepalive); the next dial rebuilds it. **Off by default**: absent, `0` and negative all keep the tunnel up; only a positive value enables suspend |
+| `idle_timeout` | duration | — | inherits `lx.masque.idle_timeout`, else off | suspend the tunnel after this long with no traffic (frees the gVisor stack, pumps and QUIC keepalive); the next dial rebuilds it. Absent → the global `lx.masque.idle_timeout` (SPEC 098, [lx-config.md §13](lx-config.md#13-the-lx-root-block-spec-098)); an explicit `0` or a negative value keeps this node up whatever the global default; only a positive value enables suspend |
 | `keep_alive_period` | duration | — | `30s` | QUIC keepalive (h3 only). **Negative disables** |
 | `network_list` | list | — | tcp+udp | L4 protocols routed through the tunnel |
 
