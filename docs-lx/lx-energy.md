@@ -20,6 +20,7 @@ This is the main document on **why the fork saves battery on Android and how to 
 - [8. Recommended mobile configuration](#8-recommended-mobile-configuration)
 - [9. Guarantees (what will NOT break)](#9-guarantees-what-will-not-break)
 - [10. Observability and troubleshooting](#10-observability-and-troubleshooting)
+- [11. Lazy build and the build budget (SPEC 097)](#11-lazy-build-and-the-build-budget-spec-097)
 
 ---
 
@@ -230,3 +231,43 @@ Notes:
 - A node "won't sleep although it should": is it reachable? (selector/pool/rule/DNS detour — §2); does it carry established TCP? bulk UDP?
 - A node "won't wake": see SPEC 007 — is it a guard-downed AWG? (`amneziawg endpoint suspended/will not start` in the log).
 - Probes "run at night": is there traffic through the group (`Touch` keeps the ticker alive)? Remember that background push connections count as traffic too.
+- `lx idle: teardown <tag> by=budget` — the build budget tore the node down to make room for another (§11); `lx idle: build over budget N+1/N <tag>` — a build went over `build_max` because every built node carried live connections (`build_overflow: "build"`); `lx idle: build <tag>: build budget exhausted (N built, none idle)` — the dial gave up waiting for a slot (`build_overflow: "wait"`).
+
+## 11. Lazy build and the build budget (SPEC 097)
+
+Suspend and teardown free what an endpoint holds once it has been idle. A config with a dozen AWG nodes still pays for all of them at start: each device allocates its receive batches (128 × 64 KB per bind on Android, where the 64 KB segments feed GRO) the moment it starts, ≈17.5 MB per node. Two keys keep devices from being built for nothing.
+
+**`lx.wg.lazy_build: true`** — endpoints start at level 3 (§5): the detour is resolved at start as before, but the device and its netstack are not built. The first dial through the node (a user connection or a urltest probe) builds it along the same path a wake after teardown takes, and pays that cost once: the build plus the first handshake. A listen-mode endpoint (`listen_port`) is never lazy — nothing dials it. Requires `lx.wg.idle_suspend`.
+
+**`lx.wg.build_max: N`** — at most N devices are built at once. Laziness alone only postpones the peak: a urltest probe of the whole group builds every node right after start. With a cap, a dial that needs device N+1 first tears down a victim:
+
+1. devices built over the cap (`build_overflow: "build"`) go first;
+2. then the node with the fewest **manual** refs — edges from a selector's current choice, the `final` outbound, a rule target;
+3. then the fewest **auto** refs — a urltest pool, another node's `detour`, a DNS server's `detour`, a chain position;
+4. then the node dialed longest ago.
+
+The order is lexicographic: any number of auto refs loses to one manual ref. A ref is an edge leading straight into the node; nothing is inherited along the tree (selector → urltest → X gives X one auto ref). Sleep is not a key: an asleep node with a ref outlives an awake node without one. Traffic does not rank, it only guards: a node with a dial in flight, an established TCP flow or ≥ 4096 bytes moved since the budget's previous sample of it is never torn down. A node without refs that was built a moment ago is a legal victim — probes cannot wait out a sleep threshold.
+
+When every built node is guarded, `lx.wg.build_overflow` decides:
+
+| Value | Behaviour |
+|---|---|
+| `wait` (default) | the dial waits for a slot until its own deadline, at most 15 s; a released slot, a node falling asleep or a flow ending (checked every second) lets it retry. Past the deadline the dial fails and the node counts as unreachable **for this probe**, not dead |
+| `build` | the device is built over the cap with a warning; the next build tears the over-cap device down first |
+
+Probes under a cap run in waves: a group of K nodes with `build_max: N` is measured N builds at a time, so a probe round takes longer while memory stays bounded. If a wave does not fit into the probe timeout, the tail of the group is reported unavailable for that round.
+
+`build_max` without `lazy_build` is legal: devices are built at start as before, and the cap applies from the first rebuild (a wake after `idle_teardown`). A cap below the number of nodes in simultaneous use makes nodes tear each other down on every switch (each dial pays a build); LxBox sets `build_max` for probe sessions only.
+
+**States.** `GetOutbounds` reports each WG/AWG endpoint's state in `endpointState` (with seconds since its last dial in `idleSinceSeconds`):
+
+| State | Meaning |
+|---|---|
+| `never_built` | lazy endpoint, no dial yet |
+| `building` | a build is in progress (the budget wait included) |
+| `up` | device built and awake |
+| `asleep` | device built, Down (levels 1–2) |
+| `torn_down` | device released (level 3, or evicted by the budget) |
+| `down` | not started yet, or closed |
+
+"Not built" is a state, not an error: the app shows "node not brought up" and does not treat it as a timeout.

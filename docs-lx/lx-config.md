@@ -755,7 +755,10 @@ The added `CommandClient` methods:
 - **`GetGroups()`** — pull a snapshot of the outbound groups (same data the group stream
   pushes).
 - **`GetOutbounds()`** — pull the flat outbound/endpoint list (needed alongside `GetGroups`
-  because standalone outbounds are not in any group).
+  because standalone outbounds are not in any group). A WG/AWG endpoint's item also carries
+  `EndpointState` (`never_built` / `building` / `up` / `asleep` / `torn_down` / `down`) and
+  `IdleSinceSeconds` (since its last dial); both are empty/0 for other outbounds (SPEC 097; see
+  [lx-energy.md §11](lx-energy.md#11-lazy-build-and-the-build-budget-spec-097)).
 - **`GetPool(groupTag)`** — read a `urltest` group's current round_robin rotation pool, slot
   by slot (SPEC 019; see [§3](#3-round_robin-load-balancing-spec-019)).
 - **`GetDNSGroups()`** — the live state of every DNS `group` server (SPEC 035; see
@@ -968,9 +971,17 @@ is the same as none. A misspelt key is a load error, not a silent default.
 | `build_overflow` | `wait` \| `build` | `wait` | When all `build_max` devices carry live connections: wait within the dial deadline, or build above the cap with a warning |
 
 The three idle keys keep their SPEC 020 semantics — timelines and the recommended mobile
-configuration are in [lx-energy.md](lx-energy.md). **`lazy_build`, `build_max` and
-`build_overflow` are parsed and validated now and take effect with SPEC 097**; until then they
-change nothing.
+configuration are in [lx-energy.md](lx-energy.md). `lazy_build`, `build_max` and
+`build_overflow` are SPEC 097 — the victim order and the states are in
+[lx-energy.md §11](lx-energy.md#11-lazy-build-and-the-build-budget-spec-097):
+
+- `lazy_build` does not apply to an endpoint with `listen_port` (nothing dials it).
+- `build_max` without `lazy_build` is legal: devices are built at start as before, and the cap
+  applies from the first rebuild (a wake after `idle_teardown`).
+- The `wait` of `build_overflow` lasts until the dial's own deadline, at most 15 s.
+- A `build_max` below the number of nodes used at the same time makes them tear each other down
+  on every switch, each dial paying a device build. Set it for probe-heavy sessions, not as a
+  general memory knob.
 
 Every `lx.wg` key acts only in builds with `with_lx_idle_suspend` (the mobile AAR). A desktop/CLI
 binary refuses them at start — any idle window, an explicit `idle_teardown` (`"0"` included),

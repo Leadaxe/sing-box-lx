@@ -44,6 +44,20 @@ required for stable tags); this changelog section is the fallback used for pre-r
   build lacks idle-suspend support…`. Running-config (SPEC 037) отдаёт блок в канонической форме. Подблок `lx.naive`
   зарезервирован за SPEC 096 и пока отвергается как неизвестный ключ. `make -f Makefile.lx lx-check` проверяет все
   `lx-test/config/*.json`, добавлен `lx_block.json`.
+- 💤 **WG/AWG-устройство собирается при первом дайле; потолок собранных устройств**
+  ([SPEC 097](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/097-LAZY_WG_DEVICE_BUILD/SPEC.md);
+  профиль LxBox 519: 11 endpoint'ов держали 192 МБ стартовых буферов). Ключи `lx.wg` из SPEC 098 начали действовать
+  (только сборки с `with_lx_idle_suspend`). `lazy_build: true` — endpoint стартует разобранным (уровень 3 SPEC 020),
+  detour резолвится на старте, устройство собирается первым дайлом; узлы с `listen_port` не затрагиваются.
+  `build_max: N` — не больше N собранных устройств: сборка (N+1)-го сначала разбирает жертву — сверх потолка →
+  меньше ручных ссылок (выбор селектора, `final`, цель правила) → меньше авто-ссылок (urltest, detour, цепочка,
+  DNS-detour) → давнее последнее обращение; узел с дайлом в процессе, TCP-потоком или трафиком ≥ 4096 Б с прошлой
+  выборки не разбирается. Жертвы нет — `build_overflow: "wait"` ждёт до дедлайна дайла (не дольше 15 с),
+  `"build"` собирает сверх потолка с предупреждением. `build_max` без `lazy_build` действует с первой пересборки.
+  Лог: `lx idle: lazy <tag> (device not built)`, `lx idle: teardown <tag> by=budget`, `lx idle: build over budget
+  N+1/N`, `build budget exhausted (N built, none idle)`. `GetOutbounds` отдаёт у WG/AWG-узлов `endpointState`
+  (`never_built` / `building` / `up` / `asleep` / `torn_down` / `down`) и `idleSinceSeconds`; libbox
+  `OutboundGroupItem` — `EndpointState`, `IdleSinceSeconds`. Замер на эмуляторе — за владельцем.
 
 #### v1.14.1-lx.12
 
