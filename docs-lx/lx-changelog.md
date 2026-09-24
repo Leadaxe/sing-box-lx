@@ -41,7 +41,14 @@ required for stable tags); this changelog section is the fallback used for pre-r
   апстрим не трогал). Наши швы: SPEC 084 сохранён (апстрим всё ещё закрывает под замком), SPEC 018/035/022
   наложены на новую дедупликацию DNS аддитивно, флаг `started` SPEC 047 снят (причина ушла), nil-гейт
   остался. Конфликтов 6, все разобраны руками; автослитые файлы проверены по счётчику lx-маркеров.
-  ⚠️ Живой прогон после смены сабмодулей (раннбук §1.4) — перед тегом.
+  Живой прогон на эмуляторе (раннбук §1.4, 2026-09-24, три цикла, 8 узлов): регрессий нет; апстримный фикс
+  хендшейка доменных пиров подтверждён (retry 0, переключение 1,1 с против 5,4–5,7 с на lx.9), счётчики
+  SPEC 094 нулевые; libbox API +1 аддитивный метод `hasTunInbound`.
+- 🧯 **Диагностика naive-узла роняла приложение** ([SPEC 099](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/099-GETURL_NAIVE_NIL_REMOTEADDR_PANIC/SPEC.md)).
+  При живом туннеле Диагностика идёт через `GetURLViaOutbound`; обработчик звал `RemoteAddr().String()` на
+  conn'е naive-узла (cronet-go `BidirectionalConn`), у которого адреса нет — nil-интерфейс, паника, конец
+  процесса. Теперь nil-адрес даёт пустое поле `remoteAddr`, статус и тело доезжают. Страж
+  `TestGetURLViaOutbound_NilRemoteAddrIsNotPanic_LX` (red-check пройден). Заявка 4PDA (Huawei P50 Pro, lx.9).
 
 #### v1.14.1-lx.9
 

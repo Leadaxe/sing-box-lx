@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | R (sync) — мерж `upstream/stable` в `lx` по раннбуку, с re-graft двух форк-сабмодулей |
-| Статус | I (implemented) — мерж в дереве, конфликты разобраны, сборка в обоих наборах тегов, vet и тесты как в CI; прогон на устройстве (раннбук §1.4) впереди |
+| Статус | I (implemented) — мерж в дереве, конфликты разобраны, сборка в обоих наборах тегов, vet и тесты как в CI; прогон на эмуляторе по раннбуку §1.4 выполнен 2026-09-24 стороной приложений, регрессий нет (§4) |
 | Ветка | `lx` |
 | База | до: `a7aec0ab3` (v1.14.1-lx.9, merge-base `1ac1a339c` = v1.14.1); после: `upstream/stable` = `fe401b3f2` (v1.14.1 + 34) |
 | Связано | [051](../051-UPSTREAM_MERGE_235/SPEC.md) (прошлый большой синк и его уроки), [082](../082-H2_STREAM_ERROR_TYPE_LEAK/SPEC.md), [047](../047-EARLY_RPC_NIL_ROUTER_CRASH/SPEC.md), [040](../040-SINGTUN_ACCEPTLOOP_SELFHEAL/SPEC.md), [094](../094-XHTTP_LOCAL_CLOSE_NOT_FAILURE/SPEC.md) |
@@ -50,7 +50,7 @@ gvisor и utls не менялись.
 ## 4. Проверка
 
 - `go build ./...` без тегов и с полным `LX_TAGS`; `go vet` lx-пакетов и `go test -race` для `lxd`, `cmd/sing-box`, `dns`, `common/interrupt`, `experimental/libbox`, `route`, `transport/v2rayxhttp`, `transport/v2rayhttp`, `transport/v2raygrpclite`, `common/tls` (страж utls), `transport/wireguard`, `protocol/wireguard`, `protocol/group`, `common/dnstrack`; стенды `lx-test`; `lx-build` + `check`.
-- Раннбук §1.4: после смены сабмодулей обязателен живой прогон (туннель, DNS, URL-тест, WG/AWG-узлы, несколько раз подряд) — до тега, на эмуляторе стороны приложений.
+- Раннбук §1.4: после смены сабмодулей обязателен живой прогон (туннель, DNS, URL-тест, WG/AWG-узлы, несколько раз подряд) — до тега, на эмуляторе стороны приложений. **Выполнено 2026-09-24** (AVD Android 14 arm64, AAR из dry-run `35963586885`, версия в бинаре `lx.10-dryrun`): три цикла по 8 узлам (AWG3.1 и AWG2 с доменными пирами, xhttp REALITY ×2, vless tcp ×2, IP-пир AWG3), `tun0` снимается чисто. Апстримный фикс хендшейка доменных пиров подтверждён: `handshake did not complete after 5 seconds, retrying` у целевых узлов 0 во всех циклах, переключение на доменный пир 1,14 с и urltest 1307 мс против 5,4–5,7 с на lx.8/lx.9. Счётчики SPEC 094 (`response body closed`, `xmux: evicted`, `cause=failing`) — 0 по всем 21 логам. ERROR только стендовые (UDP GSO виртуальной NIC, таймаут Google-push, IPv6 выключен). javap AAR lx.9↔lx.10: одна аддитивная строка `Libbox.hasTunInbound(String)`, удалений нет.
 
 ## 5. За чем следить
 
