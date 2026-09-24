@@ -89,6 +89,15 @@ jobs:
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd" \
             ./lxd/ ./cmd/sing-box/
 
+      # The Windows service half (SPEC 103: service/scm/datadir/svcrun/
+      # logredirect_windows.go, the dllsearch/cronetpin init of the CLI) is
+      # behind `with_lxd && windows`; vet compiles it and its tests here.
+      - name: go vet (lxd + cli, GOOS=windows)
+        run: |
+          GOOS=windows go vet \
+            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd,with_lx_chain" \
+            ./lxd/ ./cmd/sing-box/
+
       - name: gofmt (lx-owned files only)
         run: |
           # Only our downstream files — never the whole upstream tree.
@@ -115,6 +124,39 @@ jobs:
           go test -race -count=1 \
             -ldflags "-checklinkname=0" \
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd" \
+            ./lxd/ ./cmd/sing-box/
+
+  # SPEC 103 §4.2 p. 9: the Windows service code runs its tests on Windows —
+  # the handler, the command line round trip, the file-level half of the
+  # set and every portable test under Windows semantics (no unix modes, no
+  # deleting open files). No live SCM test here: the service is proven by a
+  # run on a real machine.
+  test-windows:
+    name: test-windows (lxd + cli)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Long paths
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@v5
+        with: { submodules: recursive }
+      - name: Go toolchain pin
+        id: go_pin
+        run: echo "version=$(tr -d '[:space:]' < go.version | sed 's/^go//')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v6
+        with: { go-version: '${{ steps.go_pin.outputs.version }}' }
+      - name: go vet (lxd + cli)
+        run: |
+          go vet \
+            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd,with_lx_chain" \
+            ./lxd/ ./cmd/sing-box/
+      - name: go test (lxd + cli)
+        run: |
+          go test -count=1 \
+            -ldflags "-checklinkname=0" \
+            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd,with_lx_chain" \
             ./lxd/ ./cmd/sing-box/
 
   build-check:
