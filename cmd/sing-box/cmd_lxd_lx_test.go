@@ -240,3 +240,23 @@ func TestRunCommandStillUsesRunForSelfCheck_LX(t *testing.T) {
 		t.Fatal("commandRun.Run is nil: upstream moved `run` to RunE, the SPEC 100 self-check hook no longer applies")
 	}
 }
+
+// TestInstallInviteName: --invite-name wins; --invite-out alone names the
+// client after the launcher; neither keeps the old unnamed invite (SPEC 103
+// §2.13).
+func TestInstallInviteName(t *testing.T) {
+	for _, testCase := range []struct {
+		out, name string
+		nameSet   bool
+		want      string
+	}{
+		{"", "", false, ""},
+		{"invite.txt", "", false, defaultInviteName},
+		{"invite.txt", "singbox-launcher-u", true, "singbox-launcher-u"},
+		{"", "ops", true, "ops"},
+	} {
+		if got := installInviteName(testCase.out, testCase.name, testCase.nameSet); got != testCase.want {
+			t.Fatalf("%+v: got %q", testCase, got)
+		}
+	}
+}
