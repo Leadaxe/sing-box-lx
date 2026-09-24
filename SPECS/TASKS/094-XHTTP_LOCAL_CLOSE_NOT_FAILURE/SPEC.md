@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — два дефекта на границе xhttp-conn, оба наши (форк-нативный пакет `transport/v2rayxhttp`) |
-| Статус | I (implemented) — обе правки в дереве, стражи в `breaker_test.go` red/green, пакет под `-race`, vet и тесты как в CI, стенды `lx-test` зелёные, `lx-build` + `check`; живой стенд (§3.4) и полевое подтверждение репортёра (§3.5) впереди |
+| Статус | I (implemented) — обе правки в дереве, стражи в `breaker_test.go` red/green, пакет под `-race`, vet и тесты как в CI, стенды `lx-test` зелёные, `lx-build` + `check`; живой A/B-стенд 2026-09-24 (§3.4): ERROR-строки 13/13/15 → 0/0/0 при тех же соединениях и всех curl 200; полевое подтверждение репортёра (§3.5) впереди |
 | Ветка | `lx` |
 | База | `4ca8e8974` (v1.14.1-lx.8) |
 | Связано | [076](../076-XHTTP_XMUX_BREAKER/SPEC.md) (брейкер, в котором дефект 1), [082](../082-H2_STREAM_ERROR_TYPE_LEAK/SPEC.md) (образец для дефекта 2: h2-специфику не выпускать из conn), [077](../077-XHTTP_DIAL_CTX_CONTRACT/SPEC.md) (conn-scoped контекст запросов), [064](../064-SELECTOR_INTERRUPT_DEAD_ON_INBOUND/SPEC.md) (массовый `Close()` через `interrupt_exist_connections`) |
@@ -62,7 +62,14 @@
 1. `breaker_test.go`: три `roundTrip` с `context.Canceled` подряд не меняют `evictCause()` и не взводят backoff; тот же сценарий с `context.DeadlineExceeded` и с удалённой ошибкой (`ECONNRESET`, `http2.StreamError`) по-прежнему даёт `failing` (red-check: без правки первый тест красный).
 2. Юнит на `Read` каждого из трёх conn'ов: reader, чей `Read` после `Close()` возвращает `errors.New("http2: response body closed")`, наружу даёт `net.ErrClosed`; после истёкшего read-deadline — `os.ErrDeadlineExceeded`; без `Close()` та же ошибка проходит как есть; `io.EOF` (с `Close()` и без) и `StreamError` не подменяются.
 3. `go test -race ./transport/v2rayxhttp/...` и `lx-test` зелёные; `make -f Makefile.lx lx-build`; CI под всеми наборами тегов.
-4. Стенд из разведки (два живых `vless+xhttp+reality` под urltest в selector'е, `interrupt_exist_connections: true`): переключения селектора на живом стриме — ноль строк ERROR `connection download closed` при успешных запросах и ноль `evicted … cause=failing` без реальных сбоев.
+4. Стенд из разведки (два живых `vless+xhttp+reality` под urltest в selector'е, `interrupt_exist_connections: true`): переключения селектора на живом стриме — ноль строк ERROR `connection download closed` при успешных запросах и ноль `evicted … cause=failing` без реальных сбоев. **Выполнено 2026-09-24** (стенд стороны приложений, скрипт и конфиги ядра, шесть прогонов подряд на одних узлах: `auto` и `stream-up` с четырьмя переключениями selector'а на живом 60-МБ download и шестью переключениями с запросами; `flap` — четыре outbound под urltest с `interval: 10s`, `tolerance: 50`, шесть тиков):
+
+   | Прогон | curl | ERROR `response body closed` | `cause=failing` | `opened connection` |
+   |---|---|---|---|---|
+   | lx.8 auto / stream-up / flap | все 200 | 13 / 13 / 15 | 0 / 0 / 0 | 2 / 2 / 4 |
+   | HEAD auto / stream-up / flap | все 200 | 0 / 0 / 0 | 0 / 0 / 0 | 2 / 2 / 4 |
+
+   У ядра с фиксом ноль строк ERROR любого вида; закрытия прерванных потоков ушли на trace. Регрессии нет: те же соединения, все запросы 200, переключения selector'а на живом download приняты. Дефект 1.1 на этих узлах вживую не проявился ни у базы, ни у фикса (`failing` = 0): сервер отвечает быстро, и upload-POST не застаётся `Close()` в полёте; его доказательство остаётся за юнитом `TestRoundTripLocalCancelIsNeutral` (red-check). Логи (маскированные) — в стенде стороны приложений, `issue148/ab_report.md`.
 5. Полевое подтверждение репортёра #148 на ядре с фиксом (через LxBox после бампа пина) — статус D.
 
 ## 4. За чем следить

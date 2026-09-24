@@ -48,8 +48,11 @@ required for stable tags); this changelog section is the fallback used for pre-r
   закрывает и `dl=h1`/`dl=h3`. Стражи `TestRoundTripLocalCancelIsNeutral`,
   `TestReadAfterLocalCloseIsErrClosed` (red-check на обеих правках), пакет под `-race`, стенды
   `lx-test`. `option/`, провод, дефолты — без изменений. Между lx.4 и lx.8 xhttp не менялся, так что
-  обновление до lx.8 жалобу не закрывало. ⚠️ Живой стенд с переключениями и подтверждение репортёра
-  впереди.
+  обновление до lx.8 жалобу не закрывало. Живой A/B 2026-09-24 на двух узлах `vless+xhttp+reality`
+  под urltest в selector'е (auto, stream-up, флап из четырёх outbound; переключения на живом download):
+  lx.8 — 13/13/15 строк ERROR `response body closed`, HEAD — 0/0/0 при тех же соединениях и всех curl
+  200; `cause=failing` — 0 у обоих (на быстрых узлах дефект брейкера вживую не проявляется, его держит
+  юнит). ⚠️ Подтверждение репортёра впереди.
 
 #### v1.14.1-lx.8
 
