@@ -3,6 +3,7 @@ package box
 import (
 	"context"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/service"
@@ -24,5 +25,8 @@ func applyLXOptions(ctx context.Context, options *option.Options, logger log.Log
 	for _, warning := range warnings {
 		logger.Warn(warning)
 	}
-	return service.ContextWithPtr(ctx, resolved), nil
+	ctx = service.ContextWithPtr(ctx, resolved)
+	// lx: SPEC 097 — a fresh build-budget slot per box; the WG endpoints fill
+	// it on first use (see adapter.LXBuildBudgetSlot).
+	return service.ContextWithPtr(ctx, &adapter.LXBuildBudgetSlot{}), nil
 }
