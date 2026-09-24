@@ -82,6 +82,21 @@ type Endpoint struct {
 	// suspend an endpoint mid-transfer; any movement of this counter refreshes
 	// the clock instead. Guarded by resumeMu (only the tick reads/writes it).
 	lastTransferSum uint64
+	// SPEC 097 lazy build. lazy: the device is not built at start but by the
+	// first dial (lx.wg.lazy_build, never for listen-mode). neverBuilt marks a
+	// lazy endpoint whose device has never existed; building is set while a
+	// rebuild (budget wait included) runs under resumeMu. budget is the per-box
+	// build budget, nil when neither lx.wg.lazy_build nor lx.wg.build_max is
+	// set. dialsInFlight counts dial entries (DialContext, ListenPacket,
+	// WritePackets) still running, so a budget eviction never tears a device out
+	// from under a dial that already passed the wake. budgetTransferSum is the
+	// rx+tx total at the budget's previous liveness sample (guarded by resumeMu).
+	lazy              bool
+	neverBuilt        atomic.Bool
+	building          atomic.Bool
+	budget            *BuildBudget
+	dialsInFlight     atomic.Int32
+	budgetTransferSum uint64
 	// lx:end idle-suspend
 	// closing is set at the top of Close (before resumeMu) so an in-flight
 	// resumeOnDial wake aborts instead of starting a fresh device rebuild that
@@ -127,6 +142,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	} else {
 		udpTimeout = C.UDPTimeout
 	}
+	ep.initLazyBuild(ctx, options) // lx: SPEC 097 — lazy build + build budget
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
 	wgEndpoint, err := wireguard.NewEndpoint(wireguard.EndpointOptions{
 		Context:         ctx,
@@ -183,6 +199,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		// is rejected with an explicit "awg support not built" error.
 		AmneziaWG: options.AmneziaWGOptions,
 		// lx:end awg
+		LazyDevice: ep.lazy, // lx: SPEC 097
 	})
 	if err != nil {
 		return nil, err
@@ -208,6 +225,11 @@ func (w *Endpoint) Start(stage adapter.StartStage) error {
 	if w.closing.Load() {
 		return os.ErrClosed
 	}
+	// lx:begin lazy-build
+	if w.lazy {
+		return w.startLazy(stage)
+	}
+	// lx:end lazy-build
 	switch stage {
 	case adapter.StartStateStart:
 		if err := w.endpoint.Start(false); err != nil {
@@ -232,6 +254,7 @@ func (w *Endpoint) Start(stage adapter.StartStage) error {
 		// lx: SPEC 020 — baseline idle clock so a never-dialed endpoint is "idle
 		// since start" and only suspends after a genuine idle window, not at tick 1.
 		w.stampActivity()
+		w.budgetRegister() // lx: SPEC 097 — a device built at start counts against lx.wg.build_max
 	}
 	return nil
 }
@@ -318,6 +341,7 @@ func (w *Endpoint) SuspendIfIdle(reachable bool, threshold time.Duration, reacha
 		w.sleepSince.Store(time.Now().UnixNano()) // lx: SPEC 020 — teardown clock starts here
 		w.endpoint.Suspend()                      // device.Down(): recv-workers exit, bufsArrs freed
 		w.logger.Info("lx idle: suspend ", w.Tag(), " idle=", w.IdleSince().Truncate(time.Second))
+		w.budget.Notify() // SPEC 097 — a sleeper may be the victim a waiting build needs
 	}
 }
 
@@ -357,6 +381,7 @@ func (w *Endpoint) TeardownIfSlept(threshold time.Duration) {
 		slept := w.SleepSince().Truncate(time.Second)
 		w.endpoint.Teardown() // device.Close(): netstack, peers, queues all freed
 		w.logger.Info("lx idle: teardown ", w.Tag(), " slept=", slept)
+		w.budget.Release(w) // SPEC 097 — the slot is free
 	}
 }
 
@@ -368,7 +393,10 @@ func (w *Endpoint) TeardownIfSlept(threshold time.Duration) {
 //
 // Returns true if the endpoint is dialable (awake), false if it must stay down
 // (deliberately stopped / closed — not an idle-suspend, so we do not resurrect it).
-func (w *Endpoint) resumeOnDial() bool {
+//
+// SPEC 097: ctx bounds the build-budget wait of a rebuild. The L3-forward path
+// has no dial context and passes nil; its wait is bounded by buildWaitMax.
+func (w *Endpoint) resumeOnDial(ctx context.Context) bool {
 	w.stampActivity()
 	// lx: SPEC 030 — a close is pending: do not resurrect. Refusing here (and
 	// again under the lock) keeps Close from blocking on a fresh rebuild we would
@@ -392,6 +420,15 @@ func (w *Endpoint) resumeOnDial() bool {
 	// device + netstack) and both Start stages, not just device.Up(). Concurrent
 	// dials serialise on resumeMu, so only the first one rebuilds.
 	if w.torndown.Load() {
+		// SPEC 097 — a rebuild adds a device, so it first takes a slot from the
+		// build budget (possibly tearing down a victim, possibly waiting).
+		// building stays set for the whole wait + rebuild.
+		w.building.Store(true)
+		defer w.building.Store(false)
+		if err := w.budgetAcquire(ctx); err != nil {
+			w.logger.Error("lx idle: build budget: ", err)
+			return false
+		}
 		// Any failure below rolls back to a CLEAN torn-down state via Teardown()
 		// (idempotent). Leaving a half-rebuilt endpoint would be worse than the
 		// error itself: the tun device's events channel holds one buffered EventUp,
@@ -400,7 +437,8 @@ func (w *Endpoint) resumeOnDial() bool {
 		rebuildFailed := func(stage string, err error) bool {
 			w.logger.Error("lx idle: rebuild ", w.Tag(), " ", stage, " failed: ", err)
 			w.endpoint.Teardown()
-			return false // flags untouched — the next dial retries from scratch
+			w.budget.Release(w) // SPEC 097 — give the slot back
+			return false        // flags untouched — the next dial retries from scratch
 		}
 		if err := w.endpoint.Rebuild(); err != nil {
 			return rebuildFailed("device", err)
@@ -417,6 +455,8 @@ func (w *Endpoint) resumeOnDial() bool {
 		w.started.Store(true)
 		w.idleAsleep.Store(false)
 		w.sleepSince.Store(0)
+		w.neverBuilt.Store(false)
+		w.budgetRegister()
 		w.logger.Info("lx idle: rebuild ", w.Tag(), " by=dial")
 		return true
 	}
@@ -446,6 +486,7 @@ func (w *Endpoint) Close() error {
 	// instead of starting a full device rebuild + handshake that this Close would
 	// then block on. SPEC 030 fast shutdown.
 	w.closing.Store(true)
+	w.budget.Notify() // lx: SPEC 097 — a build of ours waiting on the budget sees closing and gives up
 	// lx: SPEC 020 — box.Close tears endpoints down BEFORE the router stops the
 	// idle tick. Take resumeMu so an in-flight tick decision (possibly inside
 	// device.Down()) finishes first, and clear both flags under it so any later
@@ -456,6 +497,7 @@ func (w *Endpoint) Close() error {
 	w.started.Store(false)
 	w.idleAsleep.Store(false)
 	w.torndown.Store(false) // lx: SPEC 020 level 3 — Close is idempotent over a torn-down endpoint
+	w.budget.Release(w)     // lx: SPEC 097
 	w.resumeMu.Unlock()
 	w.bindAccess.Unlock()
 	return w.endpoint.Close()
@@ -523,7 +565,9 @@ func (w *Endpoint) NewDNSPacket(payload []byte, source M.Socksaddr, destination 
 }
 
 func (w *Endpoint) WritePackets(packets [][]byte) error {
-	if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended; L3-forward path (established flows transit here, bypassing DialContext)
+	// lx: SPEC 097 — in flight: the build budget must not evict us mid-write.
+	defer w.leaveDial(w.enterDial())
+	if !w.resumeOnDial(nil) { // lx: SPEC 020 — stamp activity + wake if idle-suspended; L3-forward path (established flows transit here, bypassing DialContext)
 		return E.New("WireGuard is not ready yet")
 	}
 	return w.endpoint.WritePackets(packets)
@@ -574,6 +618,8 @@ func (w *Endpoint) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn,
 }
 
 func (w *Endpoint) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	// lx: SPEC 097 — in flight: the build budget must not evict us mid-dial.
+	defer w.leaveDial(w.enterDial())
 	switch network {
 	case N.NetworkTCP:
 		w.logger.InfoContext(ctx, "outbound connection to ", destination)
@@ -588,20 +634,22 @@ func (w *Endpoint) DialContext(ctx context.Context, network string, destination 
 		if err != nil {
 			return nil, err
 		}
-		if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended
+		if !w.resumeOnDial(ctx) { // lx: SPEC 020 — stamp activity + wake if idle-suspended
 			return nil, E.New("WireGuard is not ready yet")
 		}
 		return N.DialSerial(ctx, w.endpoint, network, destination, destinationAddresses)
 	} else if !destination.Addr.IsValid() {
 		return nil, E.New("invalid destination: ", destination)
 	}
-	if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended
+	if !w.resumeOnDial(ctx) { // lx: SPEC 020 — stamp activity + wake if idle-suspended
 		return nil, E.New("WireGuard is not ready yet")
 	}
 	return w.endpoint.DialContext(ctx, network, destination)
 }
 
 func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
+	// lx: SPEC 097 — in flight: the build budget must not evict us mid-dial.
+	defer w.leaveDial(w.enterDial())
 	w.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	if destination.IsDomain() {
 		// lx: SPEC 020 — resolve before waking (see DialContext).
@@ -609,7 +657,7 @@ func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination 
 		if err != nil {
 			return nil, netip.Addr{}, err
 		}
-		if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended
+		if !w.resumeOnDial(ctx) { // lx: SPEC 020 — stamp activity + wake if idle-suspended
 			return nil, netip.Addr{}, E.New("WireGuard is not ready yet")
 		}
 		packetConn, destinationAddress, err := N.ListenSerial(ctx, w.endpoint, destination, destinationAddresses)
@@ -618,7 +666,7 @@ func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination 
 		}
 		return iponly.NewPacketConn(w.logger, packetConn), destinationAddress, nil
 	}
-	if !w.resumeOnDial() { // lx: SPEC 020 — stamp activity + wake if idle-suspended
+	if !w.resumeOnDial(ctx) { // lx: SPEC 020 — stamp activity + wake if idle-suspended
 		return nil, netip.Addr{}, E.New("WireGuard is not ready yet")
 	}
 	packetConn, err := w.endpoint.ListenPacket(ctx, destination)

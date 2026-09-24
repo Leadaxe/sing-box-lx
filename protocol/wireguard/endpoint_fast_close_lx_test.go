@@ -8,6 +8,7 @@
 package wireguard
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -22,14 +23,14 @@ func TestResumeOnDial_abortsWhenClosing(t *testing.T) {
 	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
 
 	// Sanity: without the closing flag, an idle-asleep endpoint wakes.
-	if !w.resumeOnDial() {
+	if !w.resumeOnDial(context.Background()) {
 		t.Fatal("precondition: idle-asleep endpoint must wake when not closing")
 	}
 
 	// Now mark closing and re-suspend; resumeOnDial must refuse.
 	w.idleAsleep.Store(true)
 	w.closing.Store(true)
-	if w.resumeOnDial() {
+	if w.resumeOnDial(context.Background()) {
 		t.Fatal("resumeOnDial must return false (not dialable) once closing is set")
 	}
 }
@@ -40,7 +41,7 @@ func TestResumeOnDial_closingFastPath(t *testing.T) {
 	w := newIdleTestEndpoint()
 	w.closing.Store(true)
 	// idleAsleep is false → fast path; closing must still force false.
-	if w.resumeOnDial() {
+	if w.resumeOnDial(context.Background()) {
 		t.Fatal("resumeOnDial fast path must return false when closing")
 	}
 }

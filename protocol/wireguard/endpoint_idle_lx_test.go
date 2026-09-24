@@ -2,6 +2,7 @@
 package wireguard
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -130,7 +131,7 @@ func TestResumeOnDial_wakesAndStamps(t *testing.T) {
 	if !w.idleAsleep.Load() {
 		t.Fatal("precondition: must be asleep")
 	}
-	ok := w.resumeOnDial()
+	ok := w.resumeOnDial(context.Background())
 	if !ok {
 		t.Fatal("resumeOnDial on an idle-asleep endpoint must wake and return true")
 	}
@@ -162,7 +163,7 @@ func TestResumeOnDial_wakeFailureKeepsAsleep(t *testing.T) {
 	if !w.idleAsleep.Load() {
 		t.Fatal("precondition: must be asleep")
 	}
-	if w.resumeOnDial() {
+	if w.resumeOnDial(context.Background()) {
 		t.Fatal("a failed wake must report the endpoint as not dialable")
 	}
 	if !w.idleAsleep.Load() || w.started.Load() {
@@ -170,7 +171,7 @@ func TestResumeOnDial_wakeFailureKeepsAsleep(t *testing.T) {
 	}
 	// The retry is the whole point: a second dial must attempt Up() again rather
 	// than fast-path out over a device that is still down.
-	if w.resumeOnDial() {
+	if w.resumeOnDial(context.Background()) {
 		t.Fatal("the retry must also report not dialable while Up keeps failing")
 	}
 	if wakeAttempts != 2 {
@@ -178,7 +179,7 @@ func TestResumeOnDial_wakeFailureKeepsAsleep(t *testing.T) {
 	}
 	// Once the bind recovers, the very next dial wakes for real.
 	w.endpoint.SetResumeErrHookForTest(nil)
-	if !w.resumeOnDial() {
+	if !w.resumeOnDial(context.Background()) {
 		t.Fatal("a dial after the bind recovers must wake the endpoint")
 	}
 	if w.idleAsleep.Load() || !w.started.Load() {
@@ -191,7 +192,7 @@ func TestResumeOnDial_dialBeforeTickRace(t *testing.T) {
 	// SuspendIfIdle sees IdleSince() < threshold and does NOT suspend.
 	w := newIdleTestEndpoint()
 	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
-	w.resumeOnDial() // stamps now; endpoint was awake, so just a stamp
+	w.resumeOnDial(context.Background()) // stamps now; endpoint was awake, so just a stamp
 	w.SuspendIfIdle(false, 30*time.Second, 0)
 	if w.idleAsleep.Load() {
 		t.Fatal("a dial right before the tick must keep the endpoint awake (fresh stamp)")
@@ -223,7 +224,7 @@ func TestSuspendIfIdle_reachableThreshold(t *testing.T) {
 		t.Fatal("started must be false after reachable-idle suspend")
 	}
 	// And a dial wakes it like any idle-suspended endpoint.
-	if !w.resumeOnDial() {
+	if !w.resumeOnDial(context.Background()) {
 		t.Fatal("dial must wake a reachable-idle-suspended endpoint")
 	}
 }
@@ -338,7 +339,7 @@ func TestResumeOnDial_stoppedNotWoken(t *testing.T) {
 	// idleAsleep=false. resumeOnDial must NOT wake it (returns started, i.e. false).
 	w := newIdleTestEndpoint()
 	w.started.Store(false) // stopped, not idle-suspended
-	ok := w.resumeOnDial()
+	ok := w.resumeOnDial(context.Background())
 	if ok {
 		t.Fatal("resumeOnDial must not resurrect a stopped (non-idle) endpoint")
 	}
