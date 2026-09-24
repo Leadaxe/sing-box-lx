@@ -146,6 +146,7 @@ connection-настроек: у команды нет флагов `--listen/--t
 | `--exec-dir <dir>` | с `install`/`copy`/`uninstall`/`status` — каталог root-owned копии (дефолт `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd`) |
 | `--allow-unsafe-exec` | только для отладки: root-служба стартует и с бинаря, который не root-owned копия (WARN вместо отказа) |
 | `--purge` | с `uninstall` — снести и state-каталог |
+| `--keep-copy` | с `uninstall` — снять службу, root-owned копию оставить для запуска без службы ([7.1](#71-root-owned-копия-бинаря)) |
 | `--dry-run` | с `--service` (кроме `status`) — показать, что было бы сделано, ничего не меняя |
 | `client add [--name <метка>]` | сминтить одноразовый инвайт для нового клиента |
 | `client list` / `client remove <имя-или-отпечаток>` | просмотр / отзыв доверенных клиентов |
@@ -307,6 +308,13 @@ sha256 этого бинаря, сайдкар и состояние и pid из
 к какому plist) и sha256 файла по-прежнему равен записанному; иначе файл остаётся, а
 причина печатается (`lxd: copy left in place: …`). Произвольный `ProgramArguments[0]` не
 удаляется никогда.
+
+`sudo sing-box lxd --service=uninstall --keep-copy` снимает plist и job launchd, но копию и
+сайдкар оставляет, а `plist_path` в сайдкаре очищает — состояние «только копия» (status
+`COPY ONLY`, выход 4):
+`lxd: copy kept for non-service use: <путь>; remove with --service=uninstall without --keep-copy`.
+`--purge` по-прежнему только про state. Без установленной службы и с уже отвязанной копией
+ничего не меняет, печатает ту же строку и выходит с 0.
 
 **Самопроверка при старте.** Ядро, запущенное от root (`lxd` или `run`), проверяет
 собственный бинарь инвариантом. Job launchd — родитель pid 1 и

@@ -47,7 +47,8 @@ required for stable tags); this changelog section is the fallback used for pre-r
   последующий install привязывает копию без повторного копирования); `--service=status` без root — plist,
   программа, владелец/режим, инвариант, хеши, сайдкар, `launchctl print`, вердикт с кодом выхода 0 `OK` /
   2 `MISMATCH`·`UNSAFE` / 3 `NOT INSTALLED` / 4 `COPY ONLY` / 1 ошибка; uninstall удаляет копию только при
-  совпадении sha с её сайдкаром (с plist или без), произвольный `ProgramArguments[0]` — никогда. Самопроверка при
+  совпадении sha с её сайдкаром (с plist или без), произвольный `ProgramArguments[0]` — никогда;
+  `uninstall --keep-copy` снимает службу, а копию оставляет с отвязанным сайдкаром (→ `COPY ONLY`). Самопроверка при
   старте `lxd` и `run` под root: служба (`ppid 1` и `XPC_SERVICE_NAME` = ярлык) на не root-owned бинаре не
   стартует, с путём, uid и режимом в `lxd.log`; прочие запуски от root и `--allow-unsafe-exec` — WARN.
   `/admin/info` отдаёт `executable` и `executable_sha256` (хеш в фоне при старте). CI: `GOOS=darwin go vet` для

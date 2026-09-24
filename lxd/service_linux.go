@@ -226,8 +226,12 @@ func printRecipe(user bool, daemonArgs []string) error {
 // --purge, which prints the rm command instead of running it: the state
 // directory holds the client registry and the server key, and deleting it is
 // the operator's call to make with their own hands.
-func UninstallService(purge bool, execDir string, dryRun bool) error {
+func UninstallService(purge bool, keepCopy bool, execDir string, dryRun bool) error {
 	noteExecDirIgnored(execDir)
+	if keepCopy {
+		fmt.Println("lxd: --keep-copy is macOS-only (the root-owned copy); ignored here")
+		fmt.Println()
+	}
 	detected := detectInit()
 	stateDir := DefaultServiceStateDir(false)
 	supportDir := filepath.Dir(stateDir)

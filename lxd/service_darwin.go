@@ -189,14 +189,16 @@ func InstallServiceCopy(execDir string, dryRun bool) error {
 // no TTY to answer a Y/N). dryRun reports what would be removed and stops
 // short of removing it.
 //
-// The root-owned copy goes only on a sidecar match (SPEC 100 §2.5); the
-// plist's ProgramArguments[0] itself is never deleted blindly.
-func UninstallService(purge bool, execDir string, dryRun bool) error {
+// The root-owned copy goes only on a sidecar match (SPEC 100 §2.6); the
+// plist's ProgramArguments[0] itself is never deleted blindly. keepCopy
+// removes the service but leaves the copy and its sidecar, unbound from the
+// plist — the copy-only state.
+func UninstallService(purge bool, keepCopy bool, execDir string, dryRun bool) error {
 	env, err := newServiceEnv(execDir)
 	if err != nil {
 		return err
 	}
-	return env.uninstall(purge, dryRun)
+	return env.uninstall(purge, keepCopy, dryRun)
 }
 
 // ServiceStatus reports the installed service (SPEC 100 §2.6) and changes
@@ -447,7 +449,7 @@ func chownSupportDir(out io.Writer, supportDir string) error {
 	return nil
 }
 
-func (env serviceEnv) uninstall(purge bool, dryRun bool) error {
+func (env serviceEnv) uninstall(purge bool, keepCopy bool, dryRun bool) error {
 	out := env.out
 	removedAny := false
 	var copyDirs []string
@@ -501,8 +503,15 @@ func (env serviceEnv) uninstall(purge bool, dryRun bool) error {
 	}
 
 	// The copy: the plist program's directory and the exec dir, each only on
-	// a sidecar match. A copy only (no plist) goes by the same rule.
+	// a sidecar match. A copy only (no plist) goes by the same rule; with
+	// keepCopy it stays and its sidecar is unbound from the plist instead.
 	for _, dir := range appendUniqueDir(copyDirs, env.execDir) {
+		if keepCopy {
+			if err := unbindInstalledCopy(out, dir, launchdLabel, env.system.plist, dryRun, env.root, env.chown); err != nil {
+				return err
+			}
+			continue
+		}
 		if !dryRun && !env.root {
 			// A user-scope uninstall without sudo: say what stays, touch nothing.
 			if _, found, _ := readInstallMarker(dir); found {

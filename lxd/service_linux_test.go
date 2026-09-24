@@ -105,7 +105,7 @@ func TestRecipeTouchesNothing(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	capture(t, func() error { return UninstallService(true, "", false) })
+	capture(t, func() error { return UninstallService(true, false, "", false) })
 	if _, err := os.Stat(stateDir); err != nil {
 		t.Fatal("uninstall --purge must not delete anything")
 	}

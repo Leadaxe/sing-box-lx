@@ -147,6 +147,7 @@ Rules worth knowing:
 | `--exec-dir <dir>` | with `install`/`copy`/`uninstall`/`status` — directory of the root-owned copy (default `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd`) |
 | `--allow-unsafe-exec` | debug only: let the root service start from a binary that is not a root-owned copy (WARN instead of a refusal) |
 | `--purge` | with `uninstall` — also delete the state directory |
+| `--keep-copy` | with `uninstall` — remove the service but keep the root-owned copy for non-service use ([7.1](#71-the-root-owned-copy-of-the-binary)) |
 | `--dry-run` | with `--service` (except `status`) — show what would be done, change nothing |
 | `client add [--name <label>]` | mint a one-time invite for a new client |
 | `client list` / `client remove <name-or-fingerprint>` | list / revoke trusted clients |
@@ -312,6 +313,13 @@ last line is the verdict:
 service (or to no plist) and the file's sha256 still equals the sidecar's; otherwise the
 file stays and the reason is printed (`lxd: copy left in place: …`). It never deletes an
 arbitrary `ProgramArguments[0]`.
+
+`sudo sing-box lxd --service=uninstall --keep-copy` removes the plist and the launchd job
+but keeps the copy and its sidecar, whose `plist_path` is cleared — the copy-only state
+(status `COPY ONLY`, exit 4):
+`lxd: copy kept for non-service use: <path>; remove with --service=uninstall without --keep-copy`.
+`--purge` still concerns only the state. With no service installed and a copy already
+unbound it changes nothing, prints the same line and exits 0.
 
 **Self-check at start.** A core started as root (`lxd` or `run`) checks its own binary
 against the invariant. The launchd job — parent pid 1 and

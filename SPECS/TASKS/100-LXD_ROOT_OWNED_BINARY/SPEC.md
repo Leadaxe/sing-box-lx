@@ -136,13 +136,21 @@ SPEC 137 лаунчера). Повторный вызов при совпаде�
 Пустой каталог с именем ярлыка удаляется, родитель — никогда. `--purge` — как раньше,
 про support-каталог. `--dry-run` печатает те же решения со словом `would`.
 
+`--keep-copy` снимает plist и launchd, но копию и сайдкар оставляет: сайдкар,
+привязанный к снимаемому plist, при тех же проверках (ярлык, plist, sha файла ==
+сайдкар) переписывается с `plist_path: ""` — состояние copy only, status даёт
+`COPY ONLY` (4). Печатается `lxd: copy kept for non-service use: <путь копии>; remove
+with --service=uninstall without --keep-copy`. `--purge` и здесь только про state.
+Без установленной службы при живой копии без привязки — no-op с тем же сообщением,
+выход 0. Копия, не прошедшая проверки, остаётся как была, с причиной.
+
 ### 2.7 Состояния и `--service=status`
 
 | Состояние | Что на диске | Переходы |
 |---|---|---|
 | none | ни plist, ни копии | `copy` → copy only; `install` → installed |
 | copy only | копия + сайдкар (`plist_path: ""`) | `install` → installed (без повторного копирования); `uninstall` → none (копия и сайдкар) |
-| installed | plist → копия, сайдкар с `plist_path` этого plist | `copy` → installed (бинарь освежён); `uninstall` → none (plist, копия, сайдкар) |
+| installed | plist → копия, сайдкар с `plist_path` этого plist | `copy` → installed (бинарь освежён); `uninstall` → none (plist, копия, сайдкар); `uninstall --keep-copy` → copy only (plist снят, сайдкар отвязан) |
 
 status не требует root и ничего не меняет. Для системной стороны (LaunchDaemon, а без
 него — каталог копии) и для user-агента печатает: путь plist и есть ли он;
@@ -211,6 +219,7 @@ root-owned copy`. launchd пишет его в `lxd.log` (StandardErrorPath) п�
   | `sing-box lxd --service=install` | да | копия + сайдкар + plist + launchd | 0 / 1 |
   | `sing-box lxd --service=status` | нет | отчёт | 0 OK, 2 MISMATCH/UNSAFE, 3 NOT INSTALLED, 4 COPY ONLY, 1 ошибка |
   | `sing-box lxd --service=uninstall [--purge]` | да (для системной области) | снять службу и/или копию по сайдкару | 0 / 1 |
+  | `sing-box lxd --service=uninstall --keep-copy` | да | снять службу, копию оставить для запуска без службы (→ copy only) | 0 / 1 |
 
   Все принимают `--exec-dir <dir>`; `--dry-run` — все, кроме status.
 - **«Та же ли версия ядра у демона»** — сравнение sha256, не путей:
@@ -249,10 +258,11 @@ root-owned copy`. launchd пишет его в `lxd.log` (StandardErrorPath) п�
    пропускается. Выполнено (`TestCopy*`).
 3. Сайдкар: запись/чтение, ключи JSON, решения uninstall (совпадение, копия без plist →
    удалено; расхождение sha, чужой plist, нет сайдкара → оставлено; сайдкар без файла →
-   удалён). Выполнено (`TestSidecar*`).
+   удалён) и `--keep-copy` (отвязка своей копии; no-op для отвязанной; без root, dry-run,
+   расхождение sha, чужой plist, сайдкар без файла — без изменений). Выполнено (`TestSidecar*`).
 4. Самопроверка по контекстам 2.8. Выполнено (`TestInvariantSelfCheck`).
 5. darwin: табличный тест переходов none → copy only → installed → (обновление ядра) →
-   none и copy only → none с вердиктом и кодом после каждого шага; аномалии → код 2 с
+   copy only (`--keep-copy`, повтор — no-op) → installed → none и copy only → none с вердиктом и кодом после каждого шага; аномалии → код 2 с
    причиной; plist ↔ `ProgramArguments` туда-обратно; dry-run install/copy; разбор
    `launchctl print`. Выполнено (`TestServiceStateTransitions`,
    `TestServiceStatusAnomalies`, `TestBuildPlist*`, `TestDryRun*`, `TestServiceLaunchctlPrint`).

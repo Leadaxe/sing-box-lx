@@ -298,3 +298,67 @@ func TestSidecarUninstallDecisions(t *testing.T) {
 		})
 	}
 }
+
+// TestSidecarKeepCopyDecisions: --keep-copy unbinds only our own, intact,
+// plist-bound copy; an already unbound copy is a no-op; everything else is
+// left exactly as it was.
+func TestSidecarKeepCopyDecisions(t *testing.T) {
+	const plist = "/Library/LaunchDaemons/com.leadaxe.sing-box-lxd.plist"
+	content := []byte("installed binary")
+	bound := installMarker{SHA256: shaOf(content), InstalledAt: "2026-09-24T00:00:00Z", PlistPath: plist, Label: launchdLabel}
+	unbound := bound
+	unbound.PlistPath = ""
+	for _, testCase := range []struct {
+		name        string
+		fileContent []byte
+		marker      installMarker
+		dryRun      bool
+		canWrite    bool
+		wantPlist   string // sidecar plist_path afterwards
+		wantOutput  string
+	}{
+		{"bound copy becomes copy only", content, bound, false, true, "", "lxd: copy kept for non-service use: "},
+		{"already copy only is a no-op", content, unbound, false, true, "", "lxd: copy kept for non-service use: "},
+		{"no-op needs no root", content, unbound, false, false, "", "; remove with --service=uninstall without --keep-copy"},
+		{"unbinding without root reports", content, bound, false, false, plist, "needs root"},
+		{"dry run rewrites nothing", content, bound, true, true, plist, "lxd: would keep the copy for non-service use: "},
+		{"sha differs stays bound", []byte("replaced"), bound, false, true, plist, "lxd: copy left in place: sha differs from sidecar"},
+		{"foreign plist stays", content, installMarker{SHA256: shaOf(content), PlistPath: "/other.plist", Label: launchdLabel}, false, true, "/other.plist", "belongs to"},
+		{"sidecar without copy stays", nil, bound, false, true, plist, "lxd: nothing to keep: the copy "},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), launchdLabel)
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(dir, "sing-box")
+			if testCase.fileContent != nil {
+				if err := os.WriteFile(target, testCase.fileContent, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := writeInstallMarker(dir, testCase.marker, false); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			if err := unbindInstalledCopy(&out, dir, launchdLabel, plist, testCase.dryRun, testCase.canWrite, false); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), testCase.wantOutput) {
+				t.Fatalf("missing %q in:\n%s", testCase.wantOutput, out.String())
+			}
+			marker, found, err := readInstallMarker(dir)
+			if err != nil || !found {
+				t.Fatalf("the sidecar must stay: found=%v err=%v", found, err)
+			}
+			if marker.PlistPath != testCase.wantPlist || marker.SHA256 != testCase.marker.SHA256 || marker.InstalledAt != testCase.marker.InstalledAt {
+				t.Fatalf("sidecar %+v, want plist_path %q and the rest unchanged", marker, testCase.wantPlist)
+			}
+			if testCase.fileContent != nil {
+				if kept, _ := os.ReadFile(target); !bytes.Equal(kept, testCase.fileContent) {
+					t.Fatal("--keep-copy must never touch the copy")
+				}
+			}
+		})
+	}
+}

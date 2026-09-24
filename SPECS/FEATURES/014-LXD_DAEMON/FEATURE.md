@@ -38,6 +38,7 @@ data-plane лежит.
 | `--exec-dir <dir>` | путь, дефолт `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd` | с `--service=install\|copy\|uninstall\|status` — каталог root-owned копии бинаря; каждый компонент от `/` обязан принадлежать root и не иметь записи для group/other |
 | `--allow-unsafe-exec` | флаг, отладка | root-служба стартует и с бинаря, который не root-owned копия, — с `WARN` вместо отказа |
 | `--purge` | флаг | с `--service=uninstall` — снести и state-каталог |
+| `--keep-copy` | флаг | с `--service=uninstall` — снять службу, root-owned копию и сайдкар оставить для запуска без службы (состояние «только копия») |
 | `--dry-run` | флаг | с `--service` (кроме `status`) — показать, что было бы сделано, не меняя ничего (на linux любое действие и так печать) |
 | `client add [--name] / list / remove <тег>` | подкоманды | регистрация/просмотр/отзыв доверенных клиентов у живого демона; операторские маршруты **loopback-only** (минт кода = выдача доверия, из сети недоступен) |
 | build-tag | `with_lxd` | без тега сабкоманды нет |

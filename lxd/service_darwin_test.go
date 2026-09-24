@@ -401,7 +401,8 @@ func setSource(t *testing.T, env serviceEnv, content string) string {
 }
 
 // TestServiceStateTransitions walks the state machine of SPEC 100 §2.7:
-// none → copy only → installed → (core update) → none, and copy only → none.
+// none → copy only → installed → (core update) → copy only (--keep-copy) →
+// installed → none, and copy only → none.
 func TestServiceStateTransitions(t *testing.T) {
 	env, out, base := testServiceEnv(t)
 	callerSHA := setSource(t, env, "core v1")
@@ -423,9 +424,12 @@ func TestServiceStateTransitions(t *testing.T) {
 		{"install: copy only → installed, no second copy", func() error { return env.installSystem([]string{"lxd", "--state-dir", "/x"}) }, "", ServiceOK, "copy skipped", true, true},
 		{"core updated, not yet copied", nil, "core v2", ServiceMismatch, "differs from this one", true, true},
 		{"copy under an installed service keeps it bound", env.copyOnly, "", ServiceOK, "lxd: copied ", true, true},
-		{"uninstall: installed → none", func() error { return env.uninstall(false, false) }, "", ServiceNotInstalled, "lxd: removed copy ", false, false},
+		{"uninstall --keep-copy: installed → copy only", func() error { return env.uninstall(false, true, false) }, "", ServiceCopyOnly, "lxd: copy kept for non-service use: " + copyPath + "; remove with --service=uninstall without --keep-copy", false, true},
+		{"uninstall --keep-copy without a service: no-op", func() error { return env.uninstall(false, true, false) }, "", ServiceCopyOnly, "lxd: copy kept for non-service use: " + copyPath, false, true},
+		{"install: copy only → installed again", func() error { return env.installSystem([]string{"lxd"}) }, "", ServiceOK, "copy skipped", true, true},
+		{"uninstall: installed → none", func() error { return env.uninstall(false, false, false) }, "", ServiceNotInstalled, "lxd: removed copy ", false, false},
 		{"copy: none → copy only", env.copyOnly, "", ServiceCopyOnly, "lxd: wrote sidecar", false, true},
-		{"uninstall: copy only → none", func() error { return env.uninstall(false, false) }, "", ServiceNotInstalled, "lxd: removed copy ", false, false},
+		{"uninstall: copy only → none", func() error { return env.uninstall(false, false, false) }, "", ServiceNotInstalled, "lxd: removed copy ", false, false},
 	} {
 		out.Reset()
 		if step.newCore != "" {

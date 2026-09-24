@@ -23,7 +23,7 @@ func DefaultServiceStateDir(user bool) string {
 	return "lxd-state"
 }
 
-func UninstallService(purge bool, execDir string, dryRun bool) error {
+func UninstallService(purge bool, keepCopy bool, execDir string, dryRun bool) error {
 	return E.New("lxd: service uninstall is not implemented on this platform yet (macOS only)")
 }
 

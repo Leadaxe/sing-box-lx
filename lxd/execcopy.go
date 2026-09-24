@@ -390,6 +390,81 @@ func removeInstalledCopy(out io.Writer, dir, label, plistPath string, dryRun boo
 	return nil
 }
 
+// keepCopyMessage is what `--service=uninstall --keep-copy` prints for the
+// copy it leaves behind (SPEC 100 §2.6).
+func keepCopyMessage(target string) string {
+	return "lxd: copy kept for non-service use: " + target + "; remove with --service=uninstall without --keep-copy"
+}
+
+// unbindInstalledCopy is the --keep-copy half of uninstall: the copy and its
+// sidecar stay, and a sidecar bound to plistPath is rewritten with an empty
+// plist_path — the copy-only state. It rebinds nothing it does not own: the
+// same label, plist and sha checks as removeInstalledCopy guard the rewrite,
+// and anything else is left untouched with the reason printed. An already
+// unbound copy is a no-op. canWrite=false (no root) reports instead of
+// rewriting.
+func unbindInstalledCopy(out io.Writer, dir, label, plistPath string, dryRun, canWrite, chown bool) error {
+	target := filepath.Join(dir, execCopyName)
+	markerPath := installMarkerPath(dir)
+	marker, found, err := readInstallMarker(dir)
+	if err != nil {
+		fmt.Fprintf(out, "lxd: copy left in place: %v (%s)\n", err, target)
+		return nil
+	}
+	targetInfo, targetErr := os.Lstat(target)
+	if targetErr != nil && !os.IsNotExist(targetErr) {
+		fmt.Fprintf(out, "lxd: copy left in place: %v\n", targetErr)
+		return nil
+	}
+	if !found {
+		if targetErr == nil {
+			fmt.Fprintf(out, "lxd: copy left in place: %s has no sidecar (%s), so it is not a copy this service installed\n", target, markerPath)
+		} else {
+			fmt.Fprintln(out, "lxd: no installed copy at", target)
+		}
+		return nil
+	}
+	if marker.Label != label || (marker.PlistPath != "" && marker.PlistPath != plistPath) {
+		fmt.Fprintf(out, "lxd: copy left in place: sidecar %s belongs to %s (%s), not %s\n", markerPath, marker.Label, marker.PlistPath, plistPath)
+		return nil
+	}
+	if targetErr != nil {
+		fmt.Fprintf(out, "lxd: nothing to keep: the copy %s is gone; its sidecar %s stays for --service=uninstall\n", target, markerPath)
+		return nil
+	}
+	if !targetInfo.Mode().IsRegular() {
+		fmt.Fprintf(out, "lxd: copy left in place: %s is not a regular file (%s)\n", target, targetInfo.Mode().Type())
+		return nil
+	}
+	sum, err := sha256File(target, maxExecutableSize)
+	if err != nil {
+		fmt.Fprintf(out, "lxd: copy left in place: %v\n", err)
+		return nil
+	}
+	if sum != marker.SHA256 {
+		fmt.Fprintf(out, "lxd: copy left in place: sha differs from sidecar (file %s, sidecar %s): %s\n", sum, marker.SHA256, target)
+		return nil
+	}
+	if marker.PlistPath == "" {
+		fmt.Fprintln(out, keepCopyMessage(target))
+		return nil
+	}
+	switch {
+	case dryRun:
+		fmt.Fprintf(out, "lxd: would keep the copy for non-service use: %s (sidecar unbound from %s)\n", target, marker.PlistPath)
+		return nil
+	case !canWrite:
+		fmt.Fprintf(out, "lxd: the copy %s is still bound to %s — unbinding its sidecar needs root (rerun with sudo)\n", target, marker.PlistPath)
+		return nil
+	}
+	marker.PlistPath = ""
+	if err = writeInstallMarker(dir, marker, chown); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, keepCopyMessage(target))
+	return nil
+}
+
 // removeEmptyLabelDir drops the label-named exec dir install created, once
 // nothing else lives in it. An operator's own --exec-dir is never removed.
 func removeEmptyLabelDir(out io.Writer, dir, label string, dryRun bool) {
