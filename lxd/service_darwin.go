@@ -231,7 +231,7 @@ func printPlan(out io.Writer, scope serviceScope, daemonArgs []string, execDir s
 			return planErr
 		}
 		program = copyResult.Target
-		result = "(root-owned copy, copied)"
+		result = "(root-owned copy, would be copied)"
 		if copyResult.Skipped {
 			result = "(root-owned copy, already up to date)"
 		}
@@ -278,7 +278,7 @@ func (env serviceEnv) planCopy() error {
 	if err != nil {
 		return err
 	}
-	state := "copied"
+	state := "would be copied"
 	if result.Skipped {
 		state = "already up to date"
 	}
@@ -584,7 +584,7 @@ func verdictLine(verdict ServiceVerdict, reason string) string {
 
 // reportLine prints one aligned "key: value" line of the status report.
 func reportLine(out io.Writer, indent, key string, values ...any) {
-	fmt.Fprintf(out, "lxd: %s%-*s %s", indent, 16-len(indent), key+":", fmt.Sprintln(values...))
+	fmt.Fprintf(out, "lxd: %s%-*s %s", indent, 18-len(indent), key+":", fmt.Sprintln(values...))
 }
 
 // programFacts is what the report learned about one program file.

@@ -339,7 +339,7 @@ func removeInstalledCopy(out io.Writer, dir, label, plistPath string, dryRun boo
 	targetExists := targetErr == nil
 	if !found {
 		if targetExists {
-			fmt.Fprintf(out, "lxd: copy left in place: no sidecar at %s (%s)\n", markerPath, target)
+			fmt.Fprintf(out, "lxd: copy left in place: %s has no sidecar (%s), so it is not a copy this service installed\n", target, markerPath)
 		} else {
 			fmt.Fprintln(out, "lxd: no installed copy at", target)
 		}
