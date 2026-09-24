@@ -666,18 +666,6 @@ func (env serviceEnv) reportSystemSide(callerSHA string) (ServiceVerdict, string
 	return verdict, reason, err
 }
 
-func verdictLine(verdict ServiceVerdict, reason string) string {
-	if verdict == ServiceOK || verdict == ServiceCopyOnly || reason == "" {
-		return verdict.String()
-	}
-	return verdict.String() + " — " + reason
-}
-
-// reportLine prints one aligned "key: value" line of the status report.
-func reportLine(out io.Writer, indent, key string, values ...any) {
-	fmt.Fprintf(out, "lxd: %s%-*s %s", indent, 18-len(indent), key+":", fmt.Sprintln(values...))
-}
-
 // programFacts is what the report learned about one program file.
 type programFacts struct {
 	exists      bool

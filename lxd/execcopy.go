@@ -18,16 +18,22 @@ import (
 )
 
 const (
-	// execCopyName is the copy's file name inside the exec dir — one flat
-	// file, as Apple's privileged helpers are (SPEC 100 §2.1). Not the
-	// label: macOS truncates a process's comm to 16 characters, and
-	// "sing-box-lxd" fits whole and contains "sing-box", so pgrep, pkill
-	// and ps -c find the daemon without -f. The fork's binary is sing-box; this
-	// is its derivative. The label stays the service's name (plist, launchd,
-	// XPC_SERVICE_NAME).
-	execCopyName = "sing-box-lxd"
-	// installMarkerName is the sidecar beside the copy (SPEC 100 §2.3).
-	installMarkerName = execCopyName + ".install.json"
+	// execCopyBase is the copy's base name — one flat file, as Apple's
+	// privileged helpers are (SPEC 100 §2.1). Not the label: macOS truncates
+	// a process's comm to 16 characters, and "sing-box-lxd" fits whole and
+	// contains "sing-box", so pgrep, pkill and ps -c find the daemon without
+	// -f. The fork's binary is sing-box; this is its derivative. The label
+	// stays the launchd service's name (plist, launchd, XPC_SERVICE_NAME); on
+	// Windows the base name is also the SCM service name (SPEC 103 §2.1).
+	execCopyBase = "sing-box-lxd"
+	// execCopyName is the copy's file name inside the exec dir: the base
+	// name plus the platform's executable suffix (sing-box-lxd on unix,
+	// sing-box-lxd.exe on Windows).
+	execCopyName = execCopyBase + exeSuffix
+	// installMarkerName is the sidecar beside the copy (SPEC 100 §2.3). Named
+	// after the base, not the file: sing-box-lxd.install.json on every
+	// platform, never sing-box-lxd.exe.install.json.
+	installMarkerName = execCopyBase + ".install.json"
 	// maxExecutableSize bounds what install copies and hashes; the release
 	// binary is ~70 MB.
 	maxExecutableSize = 512 << 20

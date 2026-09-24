@@ -601,3 +601,34 @@ func TestAdminInfoExecutableHash(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// TestAdminClientCodeNameNorm: /admin/client-code takes names of 1-64
+// printable characters, trimmed; empty is no name; anything else is a 400
+// "client name: …" (SPEC 103 §2.13).
+func TestAdminClientCodeNameNorm(t *testing.T) {
+	control := newTestController(t, &fakeReloader{}, nil)
+	control.clients = newTestRegistry(t)
+	handler := control.adminHandler("s3cret")
+	mint := func(name string) (int, map[string]any) {
+		body, _ := json.Marshal(map[string]string{"name": name})
+		request := httptest.NewRequest(http.MethodPost, "/admin/client-code", bytes.NewReader(body))
+		request.RemoteAddr = "127.0.0.1:12345"
+		request.Header.Set("Authorization", "Bearer s3cret")
+		return serveAdmin(t, handler, request)
+	}
+	for _, name := range []string{"", strings.Repeat("n", 64), "  singbox-launcher-u  "} {
+		if status, payload := mint(name); status != http.StatusOK {
+			t.Fatalf("name %q: %d %v", name, status, payload)
+		}
+	}
+	if control.clients.activeCodeName != "singbox-launcher-u" {
+		t.Fatalf("the name must be stored trimmed, got %q", control.clients.activeCodeName)
+	}
+	for _, name := range []string{strings.Repeat("n", 65), "tab\there"} {
+		status, payload := mint(name)
+		message, _ := payload["error"].(string)
+		if status != http.StatusBadRequest || !strings.HasPrefix(message, "client name: ") {
+			t.Fatalf("name %q: want 400 client name, got %d %v", name, status, payload)
+		}
+	}
+}

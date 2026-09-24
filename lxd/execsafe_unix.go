@@ -21,3 +21,9 @@ func lstatOwner(path string) (ownerInfo, error) {
 	}
 	return ownerInfo{uid: stat.Uid, gid: stat.Gid, mode: info.Mode()}, nil
 }
+
+// platformSelfCheckEnv: on unix the service is told apart by launchd's marks
+// alone, for `lxd` and `run` alike (SPEC 100 §2.8), so daemon is not read.
+func platformSelfCheckEnv(daemon bool) selfCheckEnv {
+	return unixSelfCheckEnv(os.Geteuid(), os.Getppid(), os.Getenv("XPC_SERVICE_NAME"), resolveOwnExecutable, ownerLstat)
+}

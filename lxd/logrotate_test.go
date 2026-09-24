@@ -17,6 +17,7 @@ func testRotator(t *testing.T, maxSizeMB, maxBackups, maxAgeHours int) (*logRota
 	rotator := newLogRotator(filepath.Join(t.TempDir(), "lxd.log"), maxSizeMB, maxBackups, maxAgeHours)
 	rotator.redirect = func(*os.File) error { return nil }
 	rotator.now = func() time.Time { return current }
+	rotator.releaseHeld = true
 	return rotator, &current
 }
 
@@ -105,6 +106,9 @@ func TestStaleLogRotatedOnStart(t *testing.T) {
 }
 
 func TestMissingLogRecreated(t *testing.T) {
+	if logRotateByCopy {
+		t.Skip("the held log of the copy strategy cannot be deleted from under the daemon")
+	}
 	rotator, _ := testRotator(t, 20, 1, 24)
 	if err := rotator.Start(); err != nil {
 		t.Fatal(err)
@@ -129,5 +133,59 @@ func TestLogRotatorDefaults(t *testing.T) {
 	}
 	if rotator.maxAge != defaultLogMaxAgeHours*time.Hour {
 		t.Fatalf("maxAge default: %v", rotator.maxAge)
+	}
+}
+
+// TestLogRotateByCopy: the Windows strategy (SPEC 103 §2.12) keeps one
+// descriptor and rotates by copying the content to .1 and truncating the
+// live file; the descriptor stays the same.
+func TestLogRotateByCopy(t *testing.T) {
+	rotator, clock := testRotator(t, 1, 2, 24)
+	rotator.copyTruncate = true
+	if err := rotator.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer rotator.Stop()
+	held := rotator.held
+	if held == nil {
+		t.Fatal("the copy strategy must hold its descriptor")
+	}
+	if _, err := held.WriteString("first life\n"); err != nil {
+		t.Fatal(err)
+	}
+	*clock = clock.Add(25 * time.Hour)
+	rotator.checkOnce()
+	if backup, _ := os.ReadFile(rotator.path + ".1"); string(backup) != "first life\n" {
+		t.Fatalf(".1 must hold the rotated content, got %q", backup)
+	}
+	if info, err := os.Stat(rotator.path); err != nil || info.Size() != 0 {
+		t.Fatalf("the live file must be truncated: %v %v", info, err)
+	}
+	// The writer appends: the next line starts the fresh file.
+	if _, err := held.WriteString("second life\n"); err != nil {
+		t.Fatal(err)
+	}
+	if current, _ := os.ReadFile(rotator.path); string(current) != "second life\n" {
+		t.Fatalf("the held descriptor must keep writing into the live file, got %q", current)
+	}
+	if rotator.held != held {
+		t.Fatal("rotation must not reopen the descriptor")
+	}
+	// Size-based, and the backups shift.
+	mustWriteAppend(t, held, 1<<20)
+	rotator.checkOnce()
+	requireExists(t, rotator.path+".2", true)
+	if backup, _ := os.ReadFile(rotator.path + ".2"); string(backup) != "first life\n" {
+		t.Fatalf(".2 must hold the older backup, got %q", backup)
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(rotator.path), ".*rotate-*")); len(leftovers) > 0 {
+		t.Fatalf("temporary files left: %v", leftovers)
+	}
+}
+
+func mustWriteAppend(t *testing.T, file *os.File, size int) {
+	t.Helper()
+	if _, err := file.Write(make([]byte, size)); err != nil {
+		t.Fatal(err)
 	}
 }

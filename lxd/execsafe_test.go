@@ -1,4 +1,4 @@
-//go:build with_lxd
+//go:build with_lxd && unix
 
 package lxd
 
@@ -180,6 +180,7 @@ func TestInvariantSelfCheck(t *testing.T) {
 	}{
 		{"not root: nothing to check", 501, 1, launchdLabel, unsafe, false, "", ""},
 		{"service from the root-owned copy", 0, 1, launchdLabel, safe, false, "", ""},
+		{"root outside the service from the copy", 0, 4242, "", safe, false, "", ""},
 		{"service from the bundle is refused", 0, 1, launchdLabel, unsafe, false,
 			"lxd: refusing to run as a root service from /Applications/launcher.app/sing-box (uid 501, mode 0755): /Applications: owned by uid 0, mode 0775, must be root-owned and not group/world-writable; run `sing-box lxd --service=install` to reinstall from a root-owned copy", ""},
 		{"service with --allow-unsafe-exec warns", 0, 1, launchdLabel, unsafe, true, "", "lxd: --allow-unsafe-exec: running as root from /Applications/launcher.app/sing-box (uid 501, mode 0755)"},
@@ -189,13 +190,8 @@ func TestInvariantSelfCheck(t *testing.T) {
 		{"root outside a service from the copy is silent", 0, 4242, "", safe, false, "", ""},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			warning, err := evaluateSelfCheck(selfCheckEnv{
-				euid:       testCase.euid,
-				ppid:       testCase.ppid,
-				xpcService: testCase.xpc,
-				executable: func() (string, error) { return testCase.executable, nil },
-				lstat:      tree.lstat,
-			}, testCase.allowUnsafe)
+			info, warning, err := evaluateSelfCheck(unixSelfCheckEnv(testCase.euid, testCase.ppid, testCase.xpc,
+				func() (string, error) { return testCase.executable, nil }, tree.lstat), testCase.allowUnsafe)
 			if testCase.wantErr == "" && err != nil {
 				t.Fatalf("must not refuse, got %v", err)
 			}
@@ -207,6 +203,15 @@ func TestInvariantSelfCheck(t *testing.T) {
 			}
 			if !strings.Contains(warning, testCase.wantWarn) {
 				t.Fatalf("warning %q, want it to contain %q", warning, testCase.wantWarn)
+			}
+			// SPEC 103 §2.11: one INFO line for a passed check, and only in the
+			// launchd service itself.
+			wantInfo := ""
+			if testCase.euid == 0 && testCase.ppid == 1 && testCase.xpc == launchdLabel && testCase.executable == safe {
+				wantInfo = "lxd: self-check ok: root-owned " + safe + ", launchd service " + launchdLabel
+			}
+			if info != wantInfo {
+				t.Fatalf("info %q, want %q", info, wantInfo)
 			}
 		})
 	}

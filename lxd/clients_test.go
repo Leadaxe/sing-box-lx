@@ -280,3 +280,44 @@ func TestDuplicateFingerprintListsTwiceRemovesBoth(t *testing.T) {
 		t.Fatal("fingerprint must no longer be trusted")
 	}
 }
+
+// TestEnrollNamedInviteReplaces: a named invite replaces the client of that
+// name (its certificate is revoked), an unnamed one adds (SPEC 103 §4.2 p. 7).
+func TestEnrollNamedInviteReplaces(t *testing.T) {
+	registry := newTestRegistry(t)
+	enroll := func(mintName, suggested string) trustedClient {
+		t.Helper()
+		code, err := registry.mintCode(mintName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		certDER, err := decodeCertPEM(testClientCertPEM(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		client, err := registry.enroll(code, suggested, certDER)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return client
+	}
+	first := enroll("singbox-launcher", "laptop")
+	enroll("", "phone")
+	enroll("", "phone")
+	second := enroll("singbox-launcher", "laptop")
+	clients := registry.list()
+	if len(clients) != 3 {
+		t.Fatalf("want the replaced launcher and two unnamed phones, got %+v", clients)
+	}
+	if registry.isTrusted(first.Fingerprint) || !registry.isTrusted(second.Fingerprint) {
+		t.Fatal("the replaced client's certificate must be revoked, the new one trusted")
+	}
+	if last := clients[len(clients)-1]; last.Name != "singbox-launcher" || last.Fingerprint != second.Fingerprint {
+		t.Fatalf("the new client takes the name: %+v", last)
+	}
+	// The registry on disk says the same.
+	reloaded, err := newClientRegistry(registry.store)
+	if err != nil || len(reloaded.list()) != 3 {
+		t.Fatalf("persisted registry: %+v %v", reloaded, err)
+	}
+}

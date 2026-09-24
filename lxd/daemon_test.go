@@ -4,6 +4,7 @@ package lxd
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -119,5 +120,44 @@ func TestControlPlaneSurvivesBrokenApply(t *testing.T) {
 	}
 	if status, body := get("/admin/status"); status != http.StatusOK || !strings.Contains(body, `"status":"idle"`) {
 		t.Fatalf("after stop: expected idle status, got %d %s", status, body)
+	}
+}
+
+// TestRunReturnsOnContextCancel: the SCM handler stops the daemon by
+// cancelling its context (SPEC 103 §2.10); Run must tear down and return nil
+// like on SIGTERM.
+func TestRunReturnsOnContextCancel(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	_ = listener.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{Listen: ListenAddress(address), StateDir: t.TempDir()})
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		response, getErr := http.Get("http://" + address + "/admin/status")
+		if getErr == nil {
+			_ = response.Body.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the control channel never came up:", getErr)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err = <-done:
+		if err != nil {
+			t.Fatalf("a cancelled Run must return nil, got %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return on a cancelled context")
 	}
 }

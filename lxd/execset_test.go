@@ -15,9 +15,13 @@ import (
 	"testing"
 )
 
-func sumOf(content string) string {
-	sum := sha256.Sum256([]byte(content))
+func shaOf(content []byte) string {
+	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
+}
+
+func sumOf(content string) string {
+	return shaOf([]byte(content))
 }
 
 // setFixture lays out a launcher bin dir with sing-box and, when library is

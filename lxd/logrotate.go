@@ -4,6 +4,7 @@ package lxd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -51,6 +52,16 @@ type logRotator struct {
 	now      func() time.Time
 	redirect func(*os.File) error
 
+	// copyTruncate is the Windows strategy (SPEC 103 §2.12): one descriptor
+	// for the life of the process, rotated by copying the file aside and
+	// truncating it. A live file cannot be renamed there (writers hold it
+	// without FILE_SHARE_DELETE), and the writers would stay on the old one.
+	copyTruncate bool
+	held         *os.File
+	// releaseHeld closes the held descriptor on Stop — tests only; in the
+	// daemon it is the process's stdout/stderr until exit.
+	releaseHeld bool
+
 	openedAt time.Time
 	stop     chan struct{}
 	done     chan struct{}
@@ -70,14 +81,19 @@ func newLogRotator(path string, maxSizeMB, maxBackups, maxAgeHours int) *logRota
 		maxAgeHours = defaultLogMaxAgeHours
 	}
 	return &logRotator{
-		path:       path,
-		maxSize:    int64(maxSizeMB) << 20,
-		maxBackups: maxBackups,
-		maxAge:     time.Duration(maxAgeHours) * time.Hour,
-		now:        time.Now,
-		redirect:   redirectStdIO,
+		path:         path,
+		maxSize:      int64(maxSizeMB) << 20,
+		maxBackups:   maxBackups,
+		maxAge:       time.Duration(maxAgeHours) * time.Hour,
+		now:          time.Now,
+		redirect:     redirectStdIO,
+		copyTruncate: logRotateByCopy,
 	}
 }
+
+// logRotateByCopy selects the copy-and-truncate strategy; Windows sets it
+// (logredirect_windows.go), every other platform renames.
+var logRotateByCopy bool
 
 // Start rotates a stale leftover, opens and redirects, then begins the
 // background age/size watch.
@@ -89,7 +105,11 @@ func (r *logRotator) Start() error {
 	// back it up so the fresh tail starts clean. (mtime, not birth time —
 	// portable, and for an idle file they agree.)
 	if info, err := os.Stat(r.path); err == nil && info.Size() > 0 && r.now().Sub(info.ModTime()) >= r.maxAge {
-		r.shiftBackups()
+		if r.copyTruncate {
+			r.rotateByCopy()
+		} else {
+			r.shiftBackups()
+		}
 	}
 	if err := r.openAndRedirect(); err != nil {
 		return err
@@ -103,6 +123,10 @@ func (r *logRotator) Start() error {
 func (r *logRotator) Stop() {
 	close(r.stop)
 	<-r.done
+	if r.releaseHeld && r.held != nil {
+		_ = r.held.Close()
+		r.held = nil
+	}
 }
 
 func (r *logRotator) loop() {
@@ -121,16 +145,22 @@ func (r *logRotator) loop() {
 
 // checkOnce rotates when the current file reached the size or age limit, and
 // heals a log file deleted out from under the daemon (re-created on the next
-// tick instead of writing into an unlinked inode forever).
+// tick instead of writing into an unlinked inode forever). The held file of
+// the copy strategy cannot be deleted while the daemon lives.
 func (r *logRotator) checkOnce() {
 	info, err := os.Stat(r.path)
-	if os.IsNotExist(err) {
+	if os.IsNotExist(err) && !r.copyTruncate {
 		_ = r.openAndRedirect()
 		return
 	}
 	rotateBySize := err == nil && info.Size() >= r.maxSize
 	rotateByAge := r.now().Sub(r.openedAt) >= r.maxAge
 	if !rotateBySize && !rotateByAge {
+		return
+	}
+	if r.copyTruncate {
+		r.rotateByCopy()
+		r.openedAt = r.now()
 		return
 	}
 	r.shiftBackups()
@@ -144,17 +174,61 @@ func (r *logRotator) checkOnce() {
 // descriptor is closed afterwards: after dup2 the process's stdout/stderr ARE
 // the file, a private copy would only leak.
 func (r *logRotator) openAndRedirect() error {
+	if r.copyTruncate && r.held != nil {
+		return nil
+	}
 	file, err := os.OpenFile(r.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return E.Cause(err, "open log file")
 	}
 	err = r.redirect(file)
-	_ = file.Close()
+	if r.copyTruncate && err == nil {
+		// The descriptor IS the process's stdout/stderr from now on.
+		r.held = file
+	} else {
+		_ = file.Close()
+	}
 	if err != nil {
 		return E.Cause(err, "redirect stdio to log file")
 	}
 	r.openedAt = r.now()
 	return nil
+}
+
+// rotateByCopy is the rotation of the copy strategy: the content goes to a
+// temporary file, the backups shift, the temporary file becomes .1 and the
+// live file is truncated through a second descriptor. The writer appends,
+// so it continues at the new end. Lines written between the copy and the
+// truncation are lost — the accepted price (SPEC 103 §2.12).
+func (r *logRotator) rotateByCopy() {
+	temp, err := os.CreateTemp(filepath.Dir(r.path), "."+filepath.Base(r.path)+".rotate-*")
+	if err != nil {
+		return
+	}
+	source, err := os.Open(r.path)
+	if err == nil {
+		_, err = io.Copy(temp, source)
+		_ = source.Close()
+	}
+	if closeErr := temp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(temp.Name())
+		return
+	}
+	_ = os.Remove(fmt.Sprintf("%s.%d", r.path, r.maxBackups))
+	for i := r.maxBackups - 1; i >= 1; i-- {
+		_ = os.Rename(fmt.Sprintf("%s.%d", r.path, i), fmt.Sprintf("%s.%d", r.path, i+1))
+	}
+	if err = os.Rename(temp.Name(), r.path+".1"); err != nil {
+		_ = os.Remove(temp.Name())
+		return
+	}
+	if truncating, openErr := os.OpenFile(r.path, os.O_WRONLY, 0); openErr == nil {
+		_ = truncating.Truncate(0)
+		_ = truncating.Close()
+	}
 }
 
 // shiftBackups sends the current file to .1, shifting older backups up and

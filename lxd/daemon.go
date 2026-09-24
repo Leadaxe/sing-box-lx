@@ -56,6 +56,10 @@ type Options struct {
 	LogMaxSizeMB   int
 	LogMaxBackups  int
 	LogMaxAgeHours int
+	// LogTakenOver: the caller already took the log over with TakeOverLog
+	// (the Windows service does it before its self-check, so a refusal
+	// lands in the file); Run leaves stdio alone and only reports LogFile.
+	LogTakenOver bool
 	// DHCPLeaseFiles overrides the client directory's lease paths (SPEC 066);
 	// empty = the platform defaults.
 	DHCPLeaseFiles []string
@@ -72,16 +76,10 @@ const (
 // absent config must leave the daemon reachable, because the control channel
 // is needed exactly when the data plane is down.
 func Run(ctx context.Context, options Options) error {
-	// Log ownership first, before anything logs: under a service manager
-	// (stdout is not a terminal) the daemon takes the log file over from
-	// launchd's plain append redirect and rotates it; in a terminal the log
-	// stays on the operator's screen.
-	if options.LogFile != "" && logRotationSupported && !stdoutIsTerminal() {
-		rotator := newLogRotator(options.LogFile, options.LogMaxSizeMB, options.LogMaxBackups, options.LogMaxAgeHours)
-		if err := rotator.Start(); err != nil {
-			log.Warn(E.Cause(err, "lxd: log rotation disabled"))
-		} else {
-			defer rotator.Stop()
+	// Log ownership first, before anything logs.
+	if !options.LogTakenOver {
+		if release := TakeOverLog(options); release != nil {
+			defer release()
 		}
 	}
 
@@ -268,8 +266,35 @@ func Run(ctx context.Context, options Options) error {
 			shutdown(startedService, httpServer, grpcServer)
 			control.applyAccess.Unlock()
 			return nil
+		case <-ctx.Done():
+			// The owner cancelled: the Windows SCM handler on Stop/Shutdown
+			// (SPEC 103 §2.10). Same teardown as a SIGTERM; on unix nobody
+			// cancels this context, so nothing changes there.
+			log.Info("lxd: stop requested, shutting down")
+			control.applyAccess.Lock()
+			control.closed = true
+			shutdown(startedService, httpServer, grpcServer)
+			control.applyAccess.Unlock()
+			return nil
 		}
 	}
+}
+
+// TakeOverLog makes the daemon own its log file: under a service manager
+// (stdout is not a terminal) the daemon takes the log over from launchd's
+// plain append redirect (or the SCM's missing stdio) and rotates it; in a
+// terminal the log stays on the operator's screen. release stops the
+// rotation; nil when nothing was taken over.
+func TakeOverLog(options Options) (release func()) {
+	if options.LogFile == "" || !logRotationSupported || stdoutIsTerminal() {
+		return nil
+	}
+	rotator := newLogRotator(options.LogFile, options.LogMaxSizeMB, options.LogMaxBackups, options.LogMaxAgeHours)
+	if err := rotator.Start(); err != nil {
+		log.Warn(E.Cause(err, "lxd: log rotation disabled"))
+		return nil
+	}
+	return rotator.Stop
 }
 
 func shutdown(startedService *daemon.StartedService, httpServer *http.Server, grpcServer interface{ Stop() }) {

@@ -90,17 +90,29 @@ func (r *clientRegistry) enroll(code, name string, clientCertDER []byte) (truste
 	if subtle.ConstantTimeCompare([]byte(code), []byte(r.activeCode)) != 1 {
 		return trustedClient{}, E.New("invalid enrollment code")
 	}
-	// The operator's label from `client add --name` wins over the name the
-	// enrolling client suggests for itself.
-	if r.activeCodeName != "" {
-		name = r.activeCodeName
-	}
 	client := trustedClient{
 		Name:        name,
 		Fingerprint: fingerprintOf(clientCertDER),
 		AddedAt:     nowStamp(),
 	}
-	next := append(append([]trustedClient(nil), r.clients...), client)
+	next := make([]trustedClient, 0, len(r.clients)+1)
+	if r.activeCodeName != "" {
+		// The operator's label from `client add --name` wins over the name
+		// the enrolling client suggests for itself, and a named invite
+		// replaces the client of that name: its old certificate is revoked
+		// and the new one takes its place, so a launcher that re-pairs on
+		// every "install or update" does not pile up entries (SPEC 103
+		// §4.2 p. 7). An unnamed invite adds, as before.
+		client.Name = r.activeCodeName
+		for _, existing := range r.clients {
+			if existing.Name != client.Name {
+				next = append(next, existing)
+			}
+		}
+	} else {
+		next = append(next, r.clients...)
+	}
+	next = append(next, client)
 	if err := r.store.SaveClients(next); err != nil {
 		return trustedClient{}, err
 	}

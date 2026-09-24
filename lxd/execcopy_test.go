@@ -1,11 +1,9 @@
-//go:build with_lxd
+//go:build with_lxd && unix
 
 package lxd
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
@@ -13,11 +11,6 @@ import (
 	"strings"
 	"testing"
 )
-
-func shaOf(content []byte) string {
-	sum := sha256.Sum256(content)
-	return hex.EncodeToString(sum[:])
-}
 
 // copyFixture lays out a source binary and an empty exec dir.
 func copyFixture(t *testing.T, content []byte) (source, dir string) {
@@ -400,4 +393,41 @@ func TestCopyLegacyLayoutDirectory(t *testing.T) {
 		t.Fatalf("uninstall and --keep-copy must name the legacy directory:\n%s", out.String())
 	}
 	mustRemain()
+}
+
+// TestSidecarGoldenJSON: the macOS sidecar is the launcher's contract (SPEC
+// 100 §2.3) and stays byte for byte what it was before the Windows set got
+// its own (SPEC 103 §2.5).
+func TestSidecarGoldenJSON(t *testing.T) {
+	dir := t.TempDir()
+	marker := installMarker{
+		Source:      "/Applications/singbox-launcher.app/Contents/MacOS/bin/sing-box",
+		SHA256:      "0f1e",
+		Version:     "1.14.1-lx.12",
+		InstalledAt: "2026-09-24T12:00:00Z",
+		PlistPath:   "/Library/LaunchDaemons/com.leadaxe.sing-box-lxd.plist",
+		Label:       launchdLabel,
+	}
+	if err := writeInstallMarker(dir, marker, false); err != nil {
+		t.Fatal(err)
+	}
+	const golden = `{
+  "source": "/Applications/singbox-launcher.app/Contents/MacOS/bin/sing-box",
+  "sha256": "0f1e",
+  "version": "1.14.1-lx.12",
+  "installed_at": "2026-09-24T12:00:00Z",
+  "plist_path": "/Library/LaunchDaemons/com.leadaxe.sing-box-lxd.plist",
+  "label": "com.leadaxe.sing-box-lxd"
+}
+`
+	raw, err := os.ReadFile(filepath.Join(dir, "sing-box-lxd.install.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != golden {
+		t.Fatalf("the macOS sidecar changed:\n%s\nwant:\n%s", raw, golden)
+	}
+	if execCopyName != "sing-box-lxd" || installMarkerName != "sing-box-lxd.install.json" {
+		t.Fatalf("the macOS names changed: %s %s", execCopyName, installMarkerName)
+	}
 }
