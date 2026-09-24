@@ -168,18 +168,21 @@ func walkReachable(tag string, reachable map[string]bool, resolve func(tag strin
 // The ticker is registered with the pause.Manager (like the urltest ticker): a
 // paused device (screen off / no network) already has every WG device Down'd by
 // the pause callbacks, so ticking through the pause is pure waste.
+//
+// The prerequisite checks repeat option.ResolveLX (SPEC 098), which box.New runs
+// first; they stay as a guard for routers built outside box.New.
 func (r *Router) startIdleSuspend() error {
 	if r.idleSuspend <= 0 {
 		if r.idleSuspendReachable > 0 {
-			return E.New("route.lx_idle_suspend_reachable requires route.lx_idle_suspend to be set")
+			return E.New("lx.wg.idle_suspend_reachable requires lx.wg.idle_suspend")
 		}
 		if r.idleTeardownSet {
-			return E.New("route.lx_idle_teardown requires route.lx_idle_suspend to be set")
+			return E.New("lx.wg.idle_teardown requires lx.wg.idle_suspend")
 		}
 		return nil
 	}
 	if r.idleSuspendReachable > 0 && r.idleSuspendReachable < r.idleSuspend {
-		return E.New("route.lx_idle_suspend_reachable must be >= route.lx_idle_suspend")
+		return E.New("lx.wg.idle_suspend_reachable must be >= lx.wg.idle_suspend")
 	}
 	r.idleStop = make(chan struct{})
 	period := r.idleSuspend / idleTickDivisor
