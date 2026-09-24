@@ -13,8 +13,6 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-const launchdLabel = "com.leadaxe.sing-box-lxd"
-
 // ServiceInstallIsAdvisory is false here: on darwin --service really installs
 // and starts the job, so the caller materializes daemon.json first and mints a
 // pairing invite afterwards. On linux the installer only prints a recipe, so
