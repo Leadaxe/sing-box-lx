@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/sagernet/sing-box/include"
 )
 
 // secondLoopback returns a bindable address DIFFERENT from 127.0.0.1, so the
@@ -77,7 +79,7 @@ func TestRunServesEveryConfiguredAddress(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(context.Background(), Options{
+		done <- Run(include.Context(context.Background()), Options{
 			Listen:   ListenConfig{Address: []string{"127.0.0.1", second}, Port: uint16(port)},
 			StateDir: t.TempDir(),
 		})
@@ -141,7 +143,7 @@ func TestRunFailsWhenOneAddressIsTaken(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(context.Background(), Options{
+		done <- Run(include.Context(context.Background()), Options{
 			Listen:   ListenConfig{Address: []string{"127.0.0.1", second}, Port: uint16(port)},
 			StateDir: t.TempDir(),
 		})

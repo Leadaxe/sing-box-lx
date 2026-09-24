@@ -20,7 +20,7 @@ func TestRunBadListen(t *testing.T) {
 	// leaves it serving (or hanging) instead of failing fast.
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(context.Background(), Options{
+		done <- Run(include.Context(context.Background()), Options{
 			Listen:   ListenAddress("256.0.0.1:99999"),
 			StateDir: t.TempDir(),
 		})
@@ -133,7 +133,7 @@ func TestRunReturnsOnContextCancel(t *testing.T) {
 	}
 	address := listener.Addr().String()
 	_ = listener.Close()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(include.Context(context.Background()))
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {

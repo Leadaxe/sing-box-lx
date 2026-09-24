@@ -232,7 +232,12 @@ func lxdServiceBody(cmd *cobra.Command) (lxd.ServiceBody, error) {
 		if release != nil {
 			defer release()
 		}
-		return lxd.Run(ctx, daemonOptions)
+		// The SCM handler's ctx only carries the stop: the core needs the
+		// service registry of globalCtx, like the console path in lxdMain.
+		runCtx, cancel := context.WithCancel(globalCtx)
+		defer cancel()
+		defer context.AfterFunc(ctx, cancel)()
+		return lxd.Run(runCtx, daemonOptions)
 	}, nil
 }
 

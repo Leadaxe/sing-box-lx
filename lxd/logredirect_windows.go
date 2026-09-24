@@ -4,6 +4,7 @@ package lxd
 
 import (
 	"context"
+	stdlog "log"
 	"os"
 	"time"
 
@@ -23,8 +24,8 @@ func init() {
 // runtime reads them on every write, so panics and fatal errors land there —
 // os.Stdout/os.Stderr become it (the core's logger is created over os.Stderr
 // later, in box.New), and the package logger, made over the original
-// os.Stderr at init, is replaced. Under the SCM the original handles are
-// empty.
+// os.Stderr at init, is replaced, as is the standard log's output (net/http
+// server errors). Under the SCM the original handles are empty.
 func redirectStdIO(file *os.File) error {
 	handle := windows.Handle(file.Fd())
 	if err := windows.SetStdHandle(windows.STD_OUTPUT_HANDLE, handle); err != nil {
@@ -35,6 +36,7 @@ func redirectStdIO(file *os.File) error {
 	}
 	os.Stdout = file
 	os.Stderr = file
+	stdlog.SetOutput(file)
 	factory := log.NewDefaultFactory(context.Background(), log.Formatter{BaseTime: time.Now()}, file, "", nil, false)
 	if err := factory.Start(); err != nil {
 		return err

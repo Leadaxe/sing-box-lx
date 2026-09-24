@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/sagernet/sing-box/daemon"
 	"github.com/sagernet/sing-box/log"
 	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/service"
 
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -81,6 +83,11 @@ func Run(ctx context.Context, options Options) error {
 		if release := TakeOverLog(options); release != nil {
 			defer release()
 		}
+	}
+	// The core needs the service registry the CLI puts into its context
+	// (include.Context); without it the first apply panics inside the core.
+	if service.RegistryFromContext(ctx) == nil {
+		return E.New("lxd: context without service registry")
 	}
 
 	stateStore, err := newStore(options.StateDir)
@@ -179,7 +186,7 @@ func Run(ctx context.Context, options Options) error {
 				grpcServer.ServeHTTP(writer, request)
 				return
 			}
-			adminHandler.ServeHTTP(writer, request)
+			serveAdminRecovered(adminHandler, writer, request)
 		}), &http2.Server{IdleTimeout: idleTimeout}),
 	}
 
@@ -295,6 +302,49 @@ func TakeOverLog(options Options) (release func()) {
 		return nil
 	}
 	return rotator.Stop
+}
+
+// serveAdminRecovered runs the admin plane under a panic guard: net/http
+// recovers a handler panic by closing the connection (the client sees EOF)
+// and prints the stack to stderr, which a service does not have. Here the
+// panic goes to the daemon log and, if nothing was sent yet, answers a JSON
+// 500.
+func serveAdminRecovered(handler http.Handler, writer http.ResponseWriter, request *http.Request) {
+	tracked := &sentTracker{ResponseWriter: writer}
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		if r == http.ErrAbortHandler {
+			panic(r)
+		}
+		log.Error("lxd: panic serving ", request.Method, " ", request.URL.Path, ": ", r, "\n", string(debug.Stack()))
+		if !tracked.sent {
+			writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": fmt.Sprint("internal panic: ", r)})
+		}
+	}()
+	handler.ServeHTTP(tracked, request)
+}
+
+// sentTracker records whether the response header has gone out.
+type sentTracker struct {
+	http.ResponseWriter
+	sent bool
+}
+
+func (w *sentTracker) WriteHeader(statusCode int) {
+	w.sent = true
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *sentTracker) Write(data []byte) (int, error) {
+	w.sent = true
+	return w.ResponseWriter.Write(data)
+}
+
+func (w *sentTracker) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
 }
 
 func shutdown(startedService *daemon.StartedService, httpServer *http.Server, grpcServer interface{ Stop() }) {
