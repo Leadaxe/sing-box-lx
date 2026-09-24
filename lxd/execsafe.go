@@ -110,8 +110,9 @@ const (
 // ensureRootOwnedDir walks dir from "/" (SPEC 100 §2.3 step 2): existing
 // components must be directories passing the invariant; missing ones are
 // created root:wheel 0755, announced, or refused, per action. Nothing is
-// created before every existing component has passed.
-func ensureRootOwnedDir(out io.Writer, dir string, action dirAction) error {
+// created before every existing component has passed. chown is off only
+// where no root is at hand (tests).
+func ensureRootOwnedDir(out io.Writer, dir string, action dirAction, chown bool) error {
 	chain, err := pathChain(dir)
 	if err != nil {
 		return err
@@ -147,8 +148,10 @@ func ensureRootOwnedDir(out io.Writer, dir string, action dirAction) error {
 		}
 		// Explicit owner and mode: BSD semantics hand a new directory its
 		// parent's group, and the umask may have trimmed the mode.
-		if err = os.Chown(component, 0, 0); err != nil {
-			return E.Cause(err, "chown root:wheel ", component)
+		if chown {
+			if err = os.Chown(component, 0, 0); err != nil {
+				return E.Cause(err, "chown root:wheel ", component)
+			}
 		}
 		if err = os.Chmod(component, 0o755); err != nil {
 			return E.Cause(err, "chmod 0755 ", component)
@@ -167,4 +170,71 @@ func ensureRootOwnedDir(out io.Writer, dir string, action dirAction) error {
 	}
 	fmt.Fprintln(out, "lxd: exec dir", dir, "passes the root-owned check (every component from / is root-owned, not group/world-writable)")
 	return nil
+}
+
+// ServiceVerdict is the outcome of `--service=status` (SPEC 100 §2.6),
+// ordered by severity up to ServiceUnsafe.
+type ServiceVerdict int
+
+const (
+	// ServiceOK: the service runs a root-owned copy identical to the caller.
+	ServiceOK ServiceVerdict = iota
+	// ServiceMismatch: the installed binary differs from the caller.
+	ServiceMismatch
+	// ServiceUnsafe: the system plist points at a binary that is not a
+	// root-owned copy.
+	ServiceUnsafe
+	// ServiceNotInstalled: no plist in either scope and no copy.
+	ServiceNotInstalled
+	// ServiceCopyOnly: a root-owned copy identical to the caller, made by
+	// `--service=copy`, with no service plist (SPEC 100 §2.4).
+	ServiceCopyOnly
+)
+
+func (v ServiceVerdict) String() string {
+	switch v {
+	case ServiceOK:
+		return "OK"
+	case ServiceMismatch:
+		return "MISMATCH"
+	case ServiceUnsafe:
+		return "UNSAFE"
+	case ServiceNotInstalled:
+		return "NOT INSTALLED"
+	case ServiceCopyOnly:
+		return "COPY ONLY"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// severity orders the verdicts of present blocks; the report's overall
+// verdict is the most severe one.
+func (v ServiceVerdict) severity() int {
+	switch v {
+	case ServiceOK:
+		return 0
+	case ServiceCopyOnly:
+		return 1
+	case ServiceMismatch:
+		return 2
+	default:
+		return 3
+	}
+}
+
+// ExitCode is what `--service=status` exits with: 0 OK, 2 reinstall needed
+// (MISMATCH, UNSAFE), 3 not installed, 4 copy only. 1 stays with errors,
+// which the command reports on its own.
+func (v ServiceVerdict) ExitCode() int {
+	switch v {
+	case ServiceOK:
+		return 0
+	case ServiceNotInstalled:
+		return 3
+	case ServiceCopyOnly:
+		return 4
+	default:
+		return 2
+	}
 }

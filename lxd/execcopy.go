@@ -316,9 +316,9 @@ func writeInstallMarker(dir string, marker installMarker, chown bool) error {
 }
 
 // removeInstalledCopy removes <dir>/sing-box and its sidecar ONLY when the
-// sidecar names this service (label and plist) and the file's sha256 equals
-// the sidecar's (SPEC 100 §2.4); anything else stays, with the reason
-// printed. A sidecar whose copy is already gone is removed as stale; the
+// sidecar names this service — its label, and either this plist or no plist
+// at all (a `--service=copy` copy) — and the file's sha256 equals the
+// sidecar's (SPEC 100 §2.5); anything else stays, with the reason printed. A sidecar whose copy is already gone is removed as stale; the
 // directory goes too once empty, if it is the label-named one install makes.
 // The returned error is a failed removal, never a decision to keep.
 func removeInstalledCopy(out io.Writer, dir, label, plistPath string, dryRun bool) error {
@@ -343,7 +343,7 @@ func removeInstalledCopy(out io.Writer, dir, label, plistPath string, dryRun boo
 		}
 		return nil
 	}
-	if marker.Label != label || marker.PlistPath != plistPath {
+	if marker.Label != label || (marker.PlistPath != "" && marker.PlistPath != plistPath) {
 		fmt.Fprintf(out, "lxd: copy left in place: sidecar %s belongs to %s (%s), not %s\n", markerPath, marker.Label, marker.PlistPath, plistPath)
 		return nil
 	}

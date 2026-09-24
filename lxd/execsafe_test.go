@@ -120,7 +120,7 @@ func TestInvariantEnsureDir(t *testing.T) {
 
 	// Dry run over a missing leaf: announced, nothing else.
 	var out bytes.Buffer
-	if err := ensureRootOwnedDir(&out, "/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd", dirPlan); err != nil {
+	if err := ensureRootOwnedDir(&out, "/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd", dirPlan, false); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "lxd: would create /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd (root:wheel 0755)") {
@@ -129,7 +129,7 @@ func TestInvariantEnsureDir(t *testing.T) {
 
 	// Existing and good: passes in every mode.
 	out.Reset()
-	if err := ensureRootOwnedDir(&out, "/Library/PrivilegedHelperTools", dirCheck); err != nil {
+	if err := ensureRootOwnedDir(&out, "/Library/PrivilegedHelperTools", dirCheck, false); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "passes the root-owned check") {
@@ -138,7 +138,7 @@ func TestInvariantEnsureDir(t *testing.T) {
 
 	// A user-owned parent refuses BEFORE anything is created or planned.
 	out.Reset()
-	err := ensureRootOwnedDir(&out, "/Users/me/lxd-bin", dirPlan)
+	err := ensureRootOwnedDir(&out, "/Users/me/lxd-bin", dirPlan, false)
 	if err == nil || !strings.Contains(err.Error(), "/Users/me: owned by uid 501, mode 0755, must be root-owned") {
 		t.Fatalf("user-owned parent must be refused, got %v", err)
 	}
@@ -147,11 +147,11 @@ func TestInvariantEnsureDir(t *testing.T) {
 	}
 
 	// dirCheck does not accept a missing directory.
-	if err = ensureRootOwnedDir(&out, "/Library/PrivilegedHelperTools/absent", dirCheck); err == nil {
+	if err = ensureRootOwnedDir(&out, "/Library/PrivilegedHelperTools/absent", dirCheck, false); err == nil {
 		t.Fatal("a missing directory must fail the check")
 	}
 	// A file where a directory is expected.
-	if err = ensureRootOwnedDir(&out, "/Library/file", dirPlan); err == nil || !strings.Contains(err.Error(), "not a directory") {
+	if err = ensureRootOwnedDir(&out, "/Library/file", dirPlan, false); err == nil || !strings.Contains(err.Error(), "not a directory") {
 		t.Fatalf("a file must not pass as the exec dir, got %v", err)
 	}
 }

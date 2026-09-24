@@ -254,6 +254,7 @@ func TestSidecarUninstallDecisions(t *testing.T) {
 	}{
 		{"matching copy is removed", content, &installMarker{SHA256: shaOf(content), PlistPath: plist, Label: launchdLabel}, false, true, false, "lxd: removed copy "},
 		{"sha differs stays", []byte("replaced by someone"), &installMarker{SHA256: shaOf(content), PlistPath: plist, Label: launchdLabel}, false, false, true, "lxd: copy left in place: sha differs from sidecar"},
+		{"copy-only sidecar is removed without a plist", content, &installMarker{SHA256: shaOf(content), Label: launchdLabel}, false, true, false, "lxd: removed copy "},
 		{"foreign plist stays", content, &installMarker{SHA256: shaOf(content), PlistPath: "/Library/LaunchDaemons/other.plist", Label: "other"}, false, false, true, "lxd: copy left in place: sidecar"},
 		{"no sidecar stays", content, nil, false, false, false, "lxd: copy left in place: no sidecar"},
 		{"stale sidecar is removed", nil, &installMarker{SHA256: shaOf(content), PlistPath: plist, Label: launchdLabel}, false, false, false, "lxd: removed stale sidecar"},

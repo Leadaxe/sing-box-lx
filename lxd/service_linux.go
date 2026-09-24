@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	E "github.com/sagernet/sing/common/exceptions"
 )
 
 // PRINCIPLE (linux): --service ONLY PRINTS. Everything that touches the disk —
@@ -109,8 +111,29 @@ func DefaultServiceStateDir(user bool) string {
 
 // dryRun is accepted and ignored on purpose: every action here is already a
 // printout, so "show what you would do" and "do it" coincide by construction.
-func InstallService(daemonArgs []string, dryRun bool) error {
+// execDir is macOS-only (the root-owned binary copy, SPEC 100): on linux the
+// operator picks the binary path the unit runs.
+func InstallService(daemonArgs []string, execDir string, dryRun bool) error {
+	noteExecDirIgnored(execDir)
 	return printRecipe(false, daemonArgs)
+}
+
+// InstallServiceCopy is macOS-only: the root-owned copy lives in
+// /Library/PrivilegedHelperTools; on linux the operator places the binary.
+func InstallServiceCopy(execDir string, dryRun bool) error {
+	return E.New("lxd: --service=copy is macOS-only; on linux install the binary root-owned yourself (e.g. install -o root -g root -m 0755 sing-box /usr/local/bin/)")
+}
+
+func noteExecDirIgnored(execDir string) {
+	if execDir != "" {
+		fmt.Println("lxd: --exec-dir is macOS-only; ignored here — the unit runs the binary path you put into it")
+		fmt.Println()
+	}
+}
+
+// ServiceStatus is macOS-only: here the init system owns the service.
+func ServiceStatus(execDir string) (ServiceVerdict, error) {
+	return ServiceNotInstalled, E.New("lxd: --service=status is macOS-only; on linux ask the init system (systemctl status " + serviceName + ", or " + procdInitPath + " status on OpenWrt)")
 }
 
 func InstallUserService(daemonArgs []string, dryRun bool) error {
@@ -203,7 +226,8 @@ func printRecipe(user bool, daemonArgs []string) error {
 // --purge, which prints the rm command instead of running it: the state
 // directory holds the client registry and the server key, and deleting it is
 // the operator's call to make with their own hands.
-func UninstallService(purge bool, dryRun bool) error {
+func UninstallService(purge bool, execDir string, dryRun bool) error {
+	noteExecDirIgnored(execDir)
 	detected := detectInit()
 	stateDir := DefaultServiceStateDir(false)
 	supportDir := filepath.Dir(stateDir)

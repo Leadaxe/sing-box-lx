@@ -92,7 +92,7 @@ func TestRecipeTouchesNothing(t *testing.T) {
 	fakeInit(t, "procd", true, false)
 	stateDir := filepath.Join(t.TempDir(), "state")
 
-	capture(t, func() error { return InstallService([]string{"lxd", "--state-dir", stateDir}, false) })
+	capture(t, func() error { return InstallService([]string{"lxd", "--state-dir", stateDir}, "", false) })
 	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
 		t.Fatal("install must not create the state dir")
 	}
@@ -105,7 +105,7 @@ func TestRecipeTouchesNothing(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	capture(t, func() error { return UninstallService(true, false) })
+	capture(t, func() error { return UninstallService(true, "", false) })
 	if _, err := os.Stat(stateDir); err != nil {
 		t.Fatal("uninstall --purge must not delete anything")
 	}
@@ -114,7 +114,7 @@ func TestRecipeTouchesNothing(t *testing.T) {
 func TestProcdRecipeContents(t *testing.T) {
 	fakeInit(t, "procd", true, false)
 	out := capture(t, func() error {
-		return InstallService([]string{"lxd", "--state-dir", "/etc/sing-box-lxd/state"}, false)
+		return InstallService([]string{"lxd", "--state-dir", "/etc/sing-box-lxd/state"}, "", false)
 	})
 
 	for _, want := range []string{
@@ -151,7 +151,7 @@ func TestProcdRecipeContents(t *testing.T) {
 func TestPairingStepKeepsCustomStateDir(t *testing.T) {
 	fakeInit(t, "procd", true, false)
 	out := capture(t, func() error {
-		return InstallService([]string{"lxd", "--state-dir", "/srv/custom/state"}, false)
+		return InstallService([]string{"lxd", "--state-dir", "/srv/custom/state"}, "", false)
 	})
 	if !strings.Contains(out, "--state-dir /srv/custom/state client add") {
 		t.Fatalf("custom state dir must stay in the pairing step:\n%s", out)
@@ -161,7 +161,7 @@ func TestPairingStepKeepsCustomStateDir(t *testing.T) {
 func TestSystemdRecipeContents(t *testing.T) {
 	fakeInit(t, "systemd", false, true)
 	out := capture(t, func() error {
-		return InstallService([]string{"lxd", "--state-dir", "/var/lib/sing-box-lxd/state"}, false)
+		return InstallService([]string{"lxd", "--state-dir", "/var/lib/sing-box-lxd/state"}, "", false)
 	})
 
 	for _, want := range []string{
@@ -182,7 +182,7 @@ func TestSystemdRecipeContents(t *testing.T) {
 
 func TestUnknownInitStillHelps(t *testing.T) {
 	fakeInit(t, "", false, false)
-	out := capture(t, func() error { return InstallService([]string{"lxd", "--state-dir", "/srv/lxd/state"}, false) })
+	out := capture(t, func() error { return InstallService([]string{"lxd", "--state-dir", "/srv/lxd/state"}, "", false) })
 	if !strings.Contains(out, "no supported init detected") {
 		t.Fatalf("unknown init must say so; got:\n%s", out)
 	}
@@ -198,8 +198,8 @@ func TestUnknownInitStillHelps(t *testing.T) {
 func TestDryRunChangesNothingHere(t *testing.T) {
 	fakeInit(t, "procd", true, false)
 	args := []string{"lxd", "--state-dir", "/etc/sing-box-lxd/state"}
-	plain := capture(t, func() error { return InstallService(args, false) })
-	dry := capture(t, func() error { return InstallService(args, true) })
+	plain := capture(t, func() error { return InstallService(args, "", false) })
+	dry := capture(t, func() error { return InstallService(args, "", true) })
 	if plain != dry {
 		t.Fatalf("--dry-run must not change the output on linux:\n--- plain ---\n%s\n--- dry ---\n%s", plain, dry)
 	}
