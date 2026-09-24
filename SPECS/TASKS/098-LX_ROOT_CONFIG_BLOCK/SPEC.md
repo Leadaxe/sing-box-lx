@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | R (refactor) — корневой блок `lx` конфига: все глобальные ручки форка в одном месте, сгруппированные по подсистеме |
-| Статус | I (implemented) — 2026-09-24; не выпущена, войдёт в v1.14.1-lx.13 вместе с 097; порядок: 098 (блок + переезд) → 097 (ленивая сборка WG, потолок, наблюдаемость) → релиз; 096 добавит `naive` после замера. PLAN.md / TASKS.md / IMPLEMENTATION_REPORT.md |
+| Статус | I (implemented) — выпущена в v1.14.1-lx.13 (2026-09-24); алиасы `route.lx_idle_*` действуют до релиза после перехода LxBox и лаунчера на `lx.*` (LxBox — при перепине на lx.13); порядок был 098 → 097 → релиз; 096 добавит `naive` после замера. PLAN.md / TASKS.md / IMPLEMENTATION_REPORT.md |
 | Ветка | `lx` |
 | Build-tag | нет для самого блока; ключи `wg.idle_*`, `wg.lazy_build`, `wg.build_max` действуют под `with_lx_idle_suspend` (как сегодня `route.lx_idle_suspend`) |
 | Связано | [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) (семантика ключей сна), [097](../097-LAZY_WG_DEVICE_BUILD/SPEC.md), [096](../096-NAIVE_ENGINE_POOL/SPEC.md), [021](../021-MASQUE_CONNECT_IP_OUTBOUND/SPEC.md) (`idle_timeout` узла masque), [062](../062-MASQUE_CONFIG_SCHEMA_MIGRATION/SPEC.md) (образец миграции с алиасами), [037](../037-RUNNING_CONFIG_RPC/SPEC.md) (running-config отдаёт блок как есть) |
