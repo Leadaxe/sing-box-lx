@@ -77,8 +77,8 @@ func TestServerIdentityCorruptCertFails(t *testing.T) {
 }
 
 func TestServerIdentityUnreadableCertFails(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("chmod 0 does not block reads for root")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("chmod 0 does not block reads for root, nor on Windows")
 	}
 	dir := t.TempDir()
 	original, err := loadOrCreateServerIdentity(dir, time.Now())

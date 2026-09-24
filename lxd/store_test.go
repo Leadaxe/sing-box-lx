@@ -5,6 +5,7 @@ package lxd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -67,8 +68,8 @@ func TestReadOptionalDistinguishesErrorFromAbsence(t *testing.T) {
 
 	// An unreadable file is a real error and must not masquerade as absence
 	// (spec 057: a ReadFile failure is not "no file").
-	if os.Geteuid() == 0 {
-		t.Skip("running as root: permission bits are not enforced")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("permission bits are not enforced (root, or Windows without unix modes)")
 	}
 	locked := filepath.Join(dir, "locked")
 	if err = os.WriteFile(locked, []byte("secret"), 0o000); err != nil {
