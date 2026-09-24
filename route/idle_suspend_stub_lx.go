@@ -37,4 +37,8 @@ func (r *Router) stopIdleSuspend() {}
 // reports reachable.
 func (r *Router) OutboundReachable(tag string) bool { return true }
 
+// SelectionRefs implements adapter.ReachabilityReporter. Without the tag there
+// is no build budget to rank victims for (SPEC 097).
+func (r *Router) SelectionRefs(tag string) (manual int, auto int) { return 0, 0 }
+
 // lx:end idle-suspend

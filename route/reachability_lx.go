@@ -51,28 +51,43 @@ type reachableActiveTags interface {
 // event point that invalidates while holding a group lock. So: compute outside
 // the lock, then publish under it.
 func (r *Router) reachableOutbounds() map[string]bool {
+	reachable, _ := r.reachability()
+	return reachable
+}
+
+// reachability returns the cached walk: the reachable set and, per tag, the
+// incoming edges counted by class (SPEC 097). Both come from the same walk and
+// share the dirty flag.
+func (r *Router) reachability() (map[string]bool, map[string]selectionRefs) {
 	if !r.reachDirty.Load() {
 		r.reachMu.RLock()
-		cached := r.reachCache
+		cached, cachedRefs := r.reachCache, r.reachRefs
 		r.reachMu.RUnlock()
 		if cached != nil {
-			return cached
+			return cached, cachedRefs
 		}
 	}
 	// Dirty (or first call): recompute outside any lock. Clear the flag BEFORE the
 	// walk so a concurrent event during the walk re-dirties us (we recompute next
 	// tick) rather than being lost.
 	r.reachDirty.Store(false)
-	fresh := r.computeReachable()
+	fresh := r.computeReachability()
 	r.reachMu.Lock()
-	r.reachCache = fresh
+	r.reachCache = fresh.reachable
+	r.reachRefs = fresh.refs
 	r.reachMu.Unlock()
-	return fresh
+	return fresh.reachable, fresh.refs
 }
 
 // computeReachable runs the actual walk from the seeds (final + rule targets +
 // DNS-server detours).
 func (r *Router) computeReachable() map[string]bool {
+	return r.computeReachability().reachable
+}
+
+// computeReachability runs the walk from the seeds: final and rule targets are
+// manual roots, DNS-server detours auto ones.
+func (r *Router) computeReachability() reachability {
 	var seeds []string
 	if def := r.outbound.Default(); def != nil {
 		seeds = append(seeds, def.Tag())
@@ -84,14 +99,32 @@ func (r *Router) computeReachable() map[string]bool {
 	// through it), so it is "traffic can currently reach it" by definition. Not
 	// seeding it made a DNS-only WG endpoint flap Down/Up around every quiet gap,
 	// adding a wake handshake to the first resolution of each browsing session.
+	var dnsSeeds []string
 	if r.dnsTransport != nil {
 		for _, transport := range r.dnsTransport.Transports() {
 			if tag := transport.OutboundTag(); tag != "" {
-				seeds = append(seeds, tag)
+				dnsSeeds = append(dnsSeeds, tag)
 			}
 		}
 	}
-	return reachableSet(seeds, r.outbound.Outbound)
+	return walkReachability(seeds, dnsSeeds, r.outbound.Outbound)
+}
+
+// SelectionRefs implements adapter.ReachabilityReporter (SPEC 097): the
+// incoming edges into tag from the cached walk. Computed whether or not the
+// idle tick runs — lx.wg.build_max works without lx.wg.idle_suspend; the event
+// points invalidate the cache either way.
+func (r *Router) SelectionRefs(tag string) (manual int, auto int) {
+	_, refs := r.reachability()
+	counted := refs[tag]
+	return counted.manual, counted.auto
+}
+
+// reachability is the result of one walk: the reachable set and the incoming
+// edge counts per tag.
+type reachability struct {
+	reachable map[string]bool
+	refs      map[string]selectionRefs
 }
 
 // reachableSet is the pure reachability walk, decoupled from *Router so it is
@@ -99,11 +132,24 @@ func (r *Router) computeReachable() map[string]bool {
 // targets); resolve looks a tag up to an outbound (the second return is false
 // for an unknown tag).
 func reachableSet(seeds []string, resolve func(tag string) (adapter.Outbound, bool)) map[string]bool {
-	reachable := make(map[string]bool)
-	for _, seed := range seeds {
-		walkReachable(seed, reachable, resolve)
+	return walkReachability(seeds, nil, resolve).reachable
+}
+
+// walkReachability walks from the manual seeds (final, rule targets) and the
+// auto seeds (DNS-server detours), marking reachable tags and counting every
+// edge that leads into a tag by class.
+func walkReachability(manualSeeds []string, autoSeeds []string, resolve func(tag string) (adapter.Outbound, bool)) reachability {
+	result := reachability{
+		reachable: make(map[string]bool),
+		refs:      make(map[string]selectionRefs),
 	}
-	return reachable
+	for _, seed := range manualSeeds {
+		walkReachable(seed, true, &result, resolve)
+	}
+	for _, seed := range autoSeeds {
+		walkReachable(seed, false, &result, resolve)
+	}
+	return result
 }
 
 // ruleOutboundTags extracts the outbound tag(s) a rule's action routes to. Only
@@ -123,14 +169,31 @@ func ruleOutboundTags(rule adapter.Rule) []string {
 	return nil
 }
 
-// walkReachable marks tag reachable and descends into whatever tag actively
-// routes through right now, transitively. reachable (== the visited set) guards
-// against cycles: a tag already marked is not re-expanded.
-func walkReachable(tag string, reachable map[string]bool, resolve func(tag string) (adapter.Outbound, bool)) {
-	if tag == "" || reachable[tag] {
+// walkReachable counts the edge that led here (manual or auto), marks tag
+// reachable and descends into whatever tag actively routes through right now,
+// transitively. The edge is counted BEFORE the visited check, so every incoming
+// edge counts once; reachable (== the visited set) guards against cycles and
+// keeps each tag's own edges from being expanded twice.
+//
+// Edge classes (SPEC 097): a selector's current choice is manual; a urltest
+// pool member, a static dependency (detour, chain position) and a DNS-server
+// detour are auto. No weight is inherited: selector → urltest → X gives X one
+// auto edge, not a manual one.
+func walkReachable(tag string, manual bool, result *reachability, resolve func(tag string) (adapter.Outbound, bool)) {
+	if tag == "" {
 		return
 	}
-	reachable[tag] = true
+	counted := result.refs[tag]
+	if manual {
+		counted.manual++
+	} else {
+		counted.auto++
+	}
+	result.refs[tag] = counted
+	if result.reachable[tag] {
+		return
+	}
+	result.reachable[tag] = true
 
 	outbound, loaded := resolve(tag)
 	if !loaded {
@@ -141,7 +204,7 @@ func walkReachable(tag string, reachable map[string]bool, resolve func(tag strin
 	// single current node (legacy). Descend into all of them.
 	if active, ok := outbound.(reachableActiveTags); ok {
 		for _, child := range active.ActiveTags() {
-			walkReachable(child, reachable, resolve)
+			walkReachable(child, false, result, resolve)
 		}
 		return
 	}
@@ -149,13 +212,14 @@ func walkReachable(tag string, reachable map[string]bool, resolve func(tag strin
 	// A selector routes through its single current choice only — Now(), NOT All()
 	// (a non-selected member is exactly what we want to be able to suspend).
 	if group, ok := outbound.(adapter.OutboundGroup); ok {
-		walkReachable(group.Now(), reachable, resolve)
+		walkReachable(group.Now(), true, result, resolve)
 		return
 	}
 
-	// An ordinary outbound routes through its static detour dependencies.
+	// An ordinary outbound routes through its static detour dependencies (a
+	// chain outbound lists its positions here).
 	for _, dependency := range outbound.Dependencies() {
-		walkReachable(dependency, reachable, resolve)
+		walkReachable(dependency, false, result, resolve)
 	}
 }
 
