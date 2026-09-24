@@ -104,6 +104,26 @@ required for stable tags); this changelog section is the fallback used for pre-r
     uninstall `--keep-copy` → uninstall, `sc qc`/`sdshow`, `icacls`, ротация, сопряжение лаунчера через
     `--invite-out`) — за лаунчер-сессией.
 
+- ✨ **XHTTP: версия HTTP по `tls.alpn`, как у Xray — HTTP/1.1, HTTP/2, HTTP/3**
+  ([SPEC 104](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/104-XHTTP_HTTP_VERSION_PARITY/SPEC.md),
+  [issue #25](https://github.com/Leadaxe/sing-box-lx/issues/25)). Клиент был HTTP/2-only, и сервер Xray с
+  `tlsSettings.alpn: ["h3"]` (слушает только QUIC) не поднимался. Теперь правило `decideHTTPVersion` Xray:
+  `tls.alpn: ["h3"]` → HTTP/3 по QUIC/UDP через тот же `detour`; `["http/1.1"]` и конфиг без TLS → HTTP/1.1
+  (без TLS раньше был h2c; сервер Xray принимает обе формы); REALITY → всегда HTTP/2, `tls.alpn` без `h2`
+  заменяется на `["h2"]` с предупреждением; иначе HTTP/2 как раньше. Новых ключей нет.
+  - HTTP/3: `quic.Config` как у Xray (`MaxIdleTimeout` 300 с, `KeepAlivePeriod` из `xmux.h_keep_alive_period`,
+    `0` → 10 с, `MaxIncomingStreams: -1`, PMTUD выключен вне linux/windows/darwin, `ChromeParrot`); контроль
+    перегрузки — Cubic (у Xray BBR). `utls.fingerprint` на HTTP/3 не применяется (предупреждение, как у Xray);
+    uTLS-конфиг переводится в `crypto/tls` lx-файлом `common/tls/utls_client_std_lx.go`; `disable_sni` выключает
+    профиль Chrome для узла; ECH — узел грузится, dial отвечает ошибкой. Без `with_quic` конфиг с `["h3"]`
+    отвергается при загрузке.
+  - HTTP/1.1: download-GET и потоковые запросы — каждый по своему соединению с `Connection: close`,
+    upload-POST'ы `packet-up` — keep-alive.
+  - Типы ошибок quic-go/http3 не выходят за conn (аналог SPEC 082): текст сохранён, `Timeout()`/`Temporary()`
+    сняты, ошибки уровня соединения по-прежнему `net.ErrClosed`.
+  - Живой стенд `lx-test/xhttp_h3/run.sh` (Xray 26.9.9 @ `60e2a0c`, h3-only inbound на loopback, конфиг
+    репортёра #25): `packet-up`, `stream-up`, `stream-one` — OK. Апстримных файлов ноль.
+
 #### v1.14.2-lx.1
 
 - ⬆️ **База апстрима: sing-box v1.14.2** ([SPEC 102](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/102-UPSTREAM_SYNC_1_14_2/SPEC.md);

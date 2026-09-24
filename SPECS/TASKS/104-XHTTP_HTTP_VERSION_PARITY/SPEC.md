@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — выбор версии HTTP в клиентском XHTTP-транспорте по правилам Xray: HTTP/1.1, HTTP/2, HTTP/3 |
-| Статус | O (open) — спека; доки, реализация и проверка — по [PLAN.md](PLAN.md) |
+| Статус | I (implemented) — код, тесты пакета и живой стенд h3; прогон на Android — за владельцем ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)) |
 | Ветка | `lx` |
 | Build-tag | `with_xhttp`; ветка HTTP/3 — `with_xhttp && with_quic` |
 | Заявка | [Leadaxe/sing-box-lx#25](https://github.com/Leadaxe/sing-box-lx/issues/25) |
