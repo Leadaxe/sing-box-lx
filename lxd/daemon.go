@@ -112,6 +112,10 @@ func Run(ctx context.Context, options Options) error {
 	if abs, absErr := filepath.Abs(options.StateDir); absErr == nil {
 		absStateDir = abs
 	}
+	ownExecutable, err := resolveOwnExecutable()
+	if err != nil {
+		log.Warn(E.Cause(err, "lxd: /admin/info will not name the executable"))
+	}
 	control := &controller{
 		// serviceStats wraps the same startedService: the stats endpoint needs
 		// the traffic counters, which the narrow reloader interface does not
@@ -125,6 +129,7 @@ func Run(ctx context.Context, options Options) error {
 		infoLogPath:      options.LogFile,
 		infoTLS:          options.TLS,
 		startedAt:        time.Now(),
+		executable:       newExecutableIdentity(ownExecutable),
 		memory:           newMemoryCache(),
 		clientInfo:       newClientInfo(labels, options.DHCPLeaseFiles),
 		host:             newHostCache(absStateDir),

@@ -34,6 +34,8 @@ var (
 	lxdService     string
 	lxdPurge       bool
 	lxdDryRun      bool
+	lxdExecDir     string
+	lxdAllowUnsafe bool
 	lxdClientName  string
 )
 
@@ -103,9 +105,11 @@ func init() {
 	commandLxd.PersistentFlags().StringVar(&lxdStateDir, "state-dir", "lxd-state", "daemon home: daemon.json, last-good config, run-state, client trust, keys")
 	commandLxd.Flags().StringVar(&lxdConfigForce, "config-force", "", "always boot from this config file, overriding recorded last-good")
 	commandLxd.Flags().BoolVar(&lxdRun, "run", false, "force the core up regardless of recorded run-state")
-	commandLxd.Flags().StringVar(&lxdService, "service", "", "install (system LaunchDaemon, root) | install-user (per-user LaunchAgent, no sudo) | uninstall")
+	commandLxd.Flags().StringVar(&lxdService, "service", "", "install (system LaunchDaemon, root) | install-user (per-user LaunchAgent, no sudo) | copy (root-owned copy only, no service; root) | uninstall | status (exit 0 OK, 2 reinstall needed, 3 not installed, 4 copy only)")
 	commandLxd.Flags().BoolVar(&lxdPurge, "purge", false, "with --service=uninstall: also delete the state directory (clients, last-good, keys)")
 	commandLxd.Flags().BoolVar(&lxdDryRun, "dry-run", false, "with --service: show what would be done, change nothing")
+	commandLxd.Flags().BoolVar(&lxdAllowUnsafe, "allow-unsafe-exec", false, "debug only: let the root launchd service start from a binary that is not a root-owned copy (logs a WARN instead of refusing)")
+	commandLxd.Flags().StringVar(&lxdExecDir, "exec-dir", "", "with --service=install|copy|uninstall|status: directory of the root-owned binary copy (default /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd); every component from / must be root-owned and not group/world-writable")
 
 	commandLxd.AddCommand(commandLxdClient)
 	commandLxdClientAdd.Flags().StringVar(&lxdClientName, "name", "", "human label for the client")
@@ -114,12 +118,32 @@ func init() {
 	commandLxdClient.AddCommand(commandLxdClientRemove)
 
 	mainCommand.AddCommand(commandLxd)
+
+	// Root running the core outside the lxd service — the launcher's classic
+	// TUN mode elevates `sing-box run` — gets the same executable check,
+	// which outside the launchd job of this label only warns (SPEC 100).
+	upstreamRun := commandRun.Run
+	commandRun.Run = func(cmd *cobra.Command, args []string) {
+		if err := lxd.CheckServiceExecutable(false); err != nil {
+			log.Fatal(err)
+		}
+		upstreamRun(cmd, args)
+	}
 }
 
 func lxdMain(cmd *cobra.Command) error {
 	// The service branch comes first — it manages launchd, not the daemon.
 	if lxdService != "" {
 		return runServiceAction(cmd)
+	}
+	if cmd.Flags().Changed("exec-dir") {
+		return E.New("--exec-dir needs --service=install, copy, uninstall or status")
+	}
+	// A root launchd service must execute a root-owned copy (SPEC 100):
+	// refused here, before anything binds or boots, with the path, owner
+	// and mode in the message that launchd writes to lxd.log.
+	if err := lxd.CheckServiceExecutable(lxdAllowUnsafe); err != nil {
+		return err
 	}
 
 	fileConfig, installed, err := daemonConnection(lxdStateDir)
@@ -220,6 +244,17 @@ func clientConnection(stateDir string) (listen string, useTLS bool, secret strin
 // linux every action is already advisory, so the flag is a no-op there by
 // construction — the same output either way.
 func runServiceAction(cmd *cobra.Command) error {
+	// --exec-dir places the root-owned copy of the binary (SPEC 100);
+	// absolute, because the plist and the invariant need it so.
+	execDir := ""
+	if cmd.Flags().Changed("exec-dir") {
+		switch lxdService {
+		case "install", "copy", "uninstall", "status":
+		default:
+			return E.New("--exec-dir applies to --service=install, copy, uninstall and status (the root-owned copy) only")
+		}
+		execDir = absPathOr(lxdExecDir)
+	}
 	switch lxdService {
 	case "install", "install-user":
 		userScope := lxdService == "install-user"
@@ -232,7 +267,7 @@ func runServiceAction(cmd *cobra.Command) error {
 			if userScope {
 				return lxd.InstallUserService(daemonArgsForService(cmd, stateDir), lxdDryRun)
 			}
-			return lxd.InstallService(daemonArgsForService(cmd, stateDir), lxdDryRun)
+			return lxd.InstallService(daemonArgsForService(cmd, stateDir), execDir, lxdDryRun)
 		}
 		// Connection settings are owned by daemon.json, which install itself
 		// materializes (free-port scan, generated secret). The connection
@@ -245,17 +280,33 @@ func runServiceAction(cmd *cobra.Command) error {
 		if userScope {
 			err = lxd.InstallUserService(daemonArgsForService(cmd, stateDir), false)
 		} else {
-			err = lxd.InstallService(daemonArgsForService(cmd, stateDir), false)
+			err = lxd.InstallService(daemonArgsForService(cmd, stateDir), execDir, false)
 		}
 		if err != nil {
 			return err
 		}
 		printServiceSummary(config, stateDir, userScope)
 		return nil
+	case "copy":
+		// Only the root-owned copy and its sidecar: no plist, no launchd —
+		// for a launcher that runs the core as root by itself.
+		return lxd.InstallServiceCopy(execDir, lxdDryRun)
 	case "uninstall":
-		return lxd.UninstallService(lxdPurge, lxdDryRun)
+		return lxd.UninstallService(lxdPurge, execDir, lxdDryRun)
+	case "status":
+		// Read-only, no root needed. The exit code is the launcher's
+		// contract: 0 OK, 2 MISMATCH/UNSAFE, 3 NOT INSTALLED, 4 COPY ONLY,
+		// 1 an error.
+		verdict, err := lxd.ServiceStatus(execDir)
+		if err != nil {
+			return err
+		}
+		if code := verdict.ExitCode(); code != 0 {
+			os.Exit(code)
+		}
+		return nil
 	default:
-		return E.New("--service must be install, install-user, or uninstall")
+		return E.New("--service must be install, install-user, copy, uninstall, or status")
 	}
 }
 

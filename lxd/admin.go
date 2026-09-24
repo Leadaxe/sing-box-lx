@@ -328,10 +328,12 @@ func (c *controller) handleConfig(writer http.ResponseWriter, request *http.Requ
 }
 
 // handleInfo serves the daemon's identity card: version, home directory,
-// listen address, TLS mode, server fingerprint, uptime. Clients (the launcher)
-// use it instead of hard-coding the daemon's paths on their side — e.g. the
-// state_dir is where a client should point config paths the core WRITES
-// (cache_file), because it is the one directory the daemon owns.
+// listen address, TLS mode, server fingerprint, uptime, and the running
+// binary with its sha256. Clients (the launcher) use it instead of
+// hard-coding the daemon's paths on their side — e.g. the state_dir is where
+// a client should point config paths the core WRITES (cache_file), because it
+// is the one directory the daemon owns — and compare executable_sha256, not
+// the path, with their own core (SPEC 100).
 func (c *controller) handleInfo(writer http.ResponseWriter, request *http.Request) {
 	logPath := ""
 	if c.infoLogPath != "" {
@@ -339,15 +341,18 @@ func (c *controller) handleInfo(writer http.ResponseWriter, request *http.Reques
 			logPath = c.infoLogPath
 		}
 	}
+	executable, executableSHA := c.executable.snapshot()
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"version":        C.Version,
-		"state_dir":      c.infoStateDir,
-		"listen":         c.advertiseAddr,
-		"tls":            c.infoTLS,
-		"fingerprint":    c.serverFingerprint,
-		"pid":            os.Getpid(),
-		"uptime_seconds": int(time.Since(c.startedAt).Seconds()),
-		"log_path":       logPath,
+		"version":           C.Version,
+		"state_dir":         c.infoStateDir,
+		"listen":            c.advertiseAddr,
+		"tls":               c.infoTLS,
+		"fingerprint":       c.serverFingerprint,
+		"pid":               os.Getpid(),
+		"uptime_seconds":    int(time.Since(c.startedAt).Seconds()),
+		"log_path":          logPath,
+		"executable":        executable,
+		"executable_sha256": executableSHA,
 	})
 }
 

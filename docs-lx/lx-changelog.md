@@ -28,6 +28,37 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.1-lx.11
+
+- 🔒 **lxd: системная служба исполняет root-owned копию, а не бинарь из бандла — закрыто повышение
+  привилегий** ([SPEC 100](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/100-LXD_ROOT_OWNED_BINARY/SPEC.md)).
+  `--service=install` писал в `ProgramArguments[0]` plist'а LaunchDaemon путь `os.Executable()` — на практике
+  бинарь в бандле лаунчера с владельцем-пользователем (и под `/Applications`, который `root:admin 0775`); launchd
+  исполнял его от root на каждом старте — любой процесс пользователя, заменивший файл, получал root. Теперь
+  install копирует себя в `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box` (`root:wheel 0755`;
+  каталог проверяется от `/`: каждый компонент — не симлинк, uid 0, без записи group/other; недостающие создаются
+  `root:wheel 0755`): временный файл с уникальным именем, fsync, chown, chmod, сверка sha256 с источником,
+  `rename` (перезапись на месте запрещена — macOS убивает процесс со сменившимися подписанными страницами; xattr
+  не копируются, переподписи нет); одинаковый бинарь не копируется (`binary unchanged (sha256 …), copy skipped`).
+  Рядом — сайдкар `install.json` (`source`, `sha256`, `version`, `installed_at`, `plist_path`, `label`; `0644`). В plist
+  меняется только `ProgramArguments[0]`, `daemon.json`/клиенты не трогаются; support-каталог явно `root:wheel`
+  (наследовал `admin`). Новое: `--exec-dir` (свой каталог копии под тем же инвариантом); `--service=copy` — копия и
+  сайдкар без plist и launchd (для classic TUN лаунчера, SPEC 137 лаунчера; повтор — no-op `already up to date`,
+  последующий install привязывает копию без повторного копирования); `--service=status` без root — plist,
+  программа, владелец/режим, инвариант, хеши, сайдкар, `launchctl print`, вердикт с кодом выхода 0 `OK` /
+  2 `MISMATCH`·`UNSAFE` / 3 `NOT INSTALLED` / 4 `COPY ONLY` / 1 ошибка; uninstall удаляет копию только при
+  совпадении sha с её сайдкаром (с plist или без), произвольный `ProgramArguments[0]` — никогда. Самопроверка при
+  старте `lxd` и `run` под root: служба (`ppid 1` и `XPC_SERVICE_NAME` = ярлык) на не root-owned бинаре не
+  стартует, с путём, uid и режимом в `lxd.log`; прочие запуски от root и `--allow-unsafe-exec` — WARN.
+  `/admin/info` отдаёт `executable` и `executable_sha256` (хеш в фоне при старте). CI: `GOOS=darwin go vet` для
+  `./lxd/ ./cmd/sing-box/` в lint — darwin-половина демона раньше на push не компилировалась. Тесты: табличные
+  предиката/цепочки/самопроверки/копирования/сайдкара (на Linux без root), табличный тест переходов
+  none → copy only → installed → none и аномалий (darwin, через подменяемое окружение); `go test -race ./lxd/
+  ./cmd/sing-box/` зелёный на macOS. ⚠️ Системная служба, поставленная старым ядром, после обновления бинаря до
+  lx.11 на ближайшем рестарте не стартует до `sudo sing-box lxd --service=install` (daemon.json и клиенты
+  сохраняются). Старый лаунчер (до бампа пина) сравнивает пути и покажет «another core» — косметика. Ручная
+  проверка под sudo — за владельцем.
+
 #### v1.14.1-lx.10
 
 - 🔄 **Синк с `upstream/stable`: v1.14.1 + 34 коммита, re-graft форков `wireguard-go` v0.0.7 и `sing-tun`

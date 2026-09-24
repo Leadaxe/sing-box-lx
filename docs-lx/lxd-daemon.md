@@ -15,6 +15,7 @@ macOS, and the setup approaches on Linux.
 - [5. Security: who authenticates with what](#5-security-who-authenticates-with-what)
 - [6. Logs](#6-logs)
 - [7. macOS — automatic installation](#7-macos--automatic-installation)
+  - [7.1. The root-owned copy of the binary](#71-the-root-owned-copy-of-the-binary)
 - [8. Linux — setup approaches](#8-linux--setup-approaches)
   - [8.1. Common part (any init)](#81-common-part-any-init)
   - [8.2. systemd (a regular server/desktop)](#82-systemd-a-regular-serverdesktop)
@@ -142,9 +143,11 @@ Rules worth knowing:
 | `-c <file>` | seed config (exactly one file; `-C` directories are not supported) |
 | `--config-force <file>` | always boot from this file, overriding last-good |
 | `--run` | bring the core up regardless of the recorded run state |
-| `--service install\|install-user\|uninstall` | service installation (see the OS sections) |
+| `--service install\|install-user\|copy\|uninstall\|status` | service installation, a root-owned copy without a service, removal, a status report (see the OS sections and [7.1](#71-the-root-owned-copy-of-the-binary)) |
+| `--exec-dir <dir>` | with `install`/`copy`/`uninstall`/`status` — directory of the root-owned copy (default `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd`) |
+| `--allow-unsafe-exec` | debug only: let the root service start from a binary that is not a root-owned copy (WARN instead of a refusal) |
 | `--purge` | with `uninstall` — also delete the state directory |
-| `--dry-run` | with `--service` — show what would be done, change nothing |
+| `--dry-run` | with `--service` (except `status`) — show what would be done, change nothing |
 | `client add [--name <label>]` | mint a one-time invite for a new client |
 | `client list` / `client remove <name-or-fingerprint>` | list / revoke trusted clients |
 
@@ -205,15 +208,21 @@ fails with a permission error under the user scope. This has nothing to do with
 
 Install does everything itself:
 
-1. creates `…/Application Support/sing-box-lxd/` (0700) with `state/` inside;
-2. **materializes daemon.json**: an existing address is kept (a reinstall never
+1. system scope: copies the binary to
+   `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box`, root-owned, and
+   the service runs that copy, not the file you installed from
+   ([7.1](#71-the-root-owned-copy-of-the-binary));
+2. creates `…/Application Support/sing-box-lxd/` (0700; system scope — `root:wheel`)
+   with `state/` inside;
+3. **materializes daemon.json**: an existing address is kept (a reinstall never
    moves the channel out from under enrolled clients), otherwise the first free
    loopback port from 19091 up; `tls` — always; the secret — kept or generated;
-3. writes the plist (`com.leadaxe.sing-box-lxd`) and bootstraps the service;
+4. writes the plist (`com.leadaxe.sing-box-lxd`) and bootstraps the service;
    the plist degenerates to `sing-box lxd --state-dir <dir>` — every setting
    lives in daemon.json;
-4. prints the summary: channel address, admin secret, daemon.json path, the
-   restart command — and a **one-time invite** to pair the launcher.
+5. prints the status report ([7.1](#71-the-root-owned-copy-of-the-binary)) and the
+   summary: channel address, admin secret, daemon.json path, the restart command —
+   and a **one-time invite** to pair the launcher.
 
 Paths: system — `/Library/Application Support/sing-box-lxd/`, user —
 `~/Library/Application Support/sing-box-lxd/`. The log is `lxd.log` beside
@@ -222,11 +231,116 @@ Paths: system — `/Library/Application Support/sing-box-lxd/`, user —
 Other actions:
 
 ```bash
-sing-box lxd --service=install --dry-run  # show the plist and what would happen, touch nothing
+sing-box lxd --service=install --dry-run  # show the copy plan, the plist and what would happen, touch nothing
+sing-box lxd --service=status             # what is installed; exit 0/2/3/4 (see 7.1), no root needed
+sudo sing-box lxd --service=copy          # only the root-owned copy, no service (7.1)
 sing-box lxd --service=uninstall          # remove the service; state is kept
 sing-box lxd --service=uninstall --purge  # remove the service AND the state (clients, keys, last-good)
 sing-box lxd --service=uninstall --dry-run --purge   # show what would be removed
 sudo sing-box lxd client add --name mac-book   # a fresh invite on a live daemon (state-dir is found automatically)
+```
+
+### 7.1. The root-owned copy of the binary
+
+A LaunchDaemon runs as root at every boot and every KeepAlive restart. If its plist
+pointed at the binary inside the launcher bundle — a file the logged-in user can
+replace — any process of that user could get code run as root. So the system service
+never runs the file it was installed from; `--service=install` copies it first:
+
+| What | Path | Owner / mode |
+|---|---|---|
+| directory | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/` | `root:wheel 0755` |
+| binary | `…/com.leadaxe.sing-box-lxd/sing-box` | `root:wheel 0755` |
+| sidecar | `…/com.leadaxe.sing-box-lxd/install.json` | `root:wheel 0644` |
+
+- **The invariant.** Every path component from `/` down to the binary is a real
+  directory or file (not a symlink), owned by uid 0, with no write bit for group or
+  other. `/Applications` itself is `root:admin 0775` — that is why a bundle binary fails
+  it.
+- **How the copy lands.** A temporary file with a unique name in the same directory,
+  fsync, `chown root:wheel`, `chmod 0755`, sha256 compared with the source, then
+  `rename` over the old copy. Never rewritten in place (a running daemon keeps the old
+  file, and macOS kills a process whose signed pages change), no xattrs, no re-signing.
+  An identical copy is left alone: `lxd: binary unchanged (sha256 …), copy skipped`.
+- **The plist** changes only in `ProgramArguments[0]`; daemon.json, the address, the
+  secret and the enrolled clients stay as they were.
+- **The sidecar** `install.json` is readable without root:
+  ```json
+  {
+    "source": "/Applications/singbox-launcher.app/Contents/MacOS/bin/sing-box",
+    "sha256": "…",
+    "version": "1.14.1-lx.11",
+    "installed_at": "2026-09-24T12:00:00Z",
+    "plist_path": "/Library/LaunchDaemons/com.leadaxe.sing-box-lxd.plist",
+    "label": "com.leadaxe.sing-box-lxd"
+  }
+  ```
+  `version` is the copy's core version, readable without running it; `plist_path` is
+  empty for a copy without a service.
+- **`--exec-dir <dir>`** puts the copy (still named `sing-box`) into another directory.
+  The same invariant covers every component of `<dir>`; otherwise install refuses:
+  `<path>: owned by uid N, mode NNNN, must be root-owned and not group/world-writable`.
+
+**A copy without a service.** `sudo sing-box lxd --service=copy` lays down the same copy
+and sidecar and nothing else — no plist, no launchd. It serves a launcher that runs the
+core as root by itself (classic TUN mode). Repeating it with the same binary changes
+nothing (`lxd: already up to date <sha256>`); a later `--service=install` binds this copy
+to the plist without copying again. Updating the core means running `--service=copy`
+(and `--service=install`, if the service exists) from the new binary — the core does not
+watch for updates.
+
+**Status** needs no root and changes nothing:
+
+```bash
+sing-box lxd --service=status; echo "exit $?"
+```
+
+For the LaunchDaemon (or, without one, the copy) and for a user agent it prints the
+plist, the program it runs, owner and mode, whether the invariant holds, the program's
+sha256 against this binary's, the sidecar, and `launchctl print`'s state and pid. The
+last line is the verdict:
+
+| Verdict | Meaning | Exit |
+|---|---|---|
+| `OK` | the service runs a root-owned copy of exactly this binary | 0 |
+| `MISMATCH` | reinstall needed: another binary, a missing or foreign sidecar, a copy changed behind its sidecar, a sidecar without its copy | 2 |
+| `UNSAFE` | the program, or a directory above it, fails the invariant | 2 |
+| `NOT INSTALLED` | neither a plist nor a copy | 3 |
+| `COPY ONLY` | a good copy of this binary, no service | 4 |
+
+**Uninstall** removes the copy and its sidecar only when the sidecar belongs to this
+service (or to no plist) and the file's sha256 still equals the sidecar's; otherwise the
+file stays and the reason is printed (`lxd: copy left in place: …`). It never deletes an
+arbitrary `ProgramArguments[0]`.
+
+**Self-check at start.** A core started as root (`lxd` or `run`) checks its own binary
+against the invariant. The launchd job — parent pid 1 and
+`XPC_SERVICE_NAME=com.leadaxe.sing-box-lxd` — refuses to start and says why in
+`lxd.log`:
+
+```
+lxd: refusing to run as a root service from /Applications/…/sing-box (uid 501, mode 0755): /Applications: owned by uid 0, mode 0775, must be root-owned and not group/world-writable; run `sing-box lxd --service=install` to reinstall from a root-owned copy
+```
+
+Any other root run — sudo from a terminal, nohup, a launcher elevating the core — only
+logs a WARN with the same path, owner and mode. `lxd --allow-unsafe-exec` turns the
+refusal into a WARN for debugging.
+
+> ⚠️ **Upgrading a system install made by an older core.** Its plist runs the bundle
+> binary. Once that binary is updated to this version, the next restart of the service
+> refuses to start (above). Reinstall once: `sudo sing-box lxd --service=install` —
+> daemon.json, clients and keys are kept.
+
+**Checking by hand:**
+
+```bash
+ls -ld / /Library /Library/PrivilegedHelperTools /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd
+ls -l /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/            # root wheel -rwxr-xr-x sing-box, -rw-r--r-- install.json
+plutil -p /Library/LaunchDaemons/com.leadaxe.sing-box-lxd.plist            # ProgramArguments[0] = the copy
+shasum -a 256 /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box
+cat /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/install.json   # the same sha256
+launchctl print system/com.leadaxe.sing-box-lxd | grep -E '^[[:space:]](state|pid|program) ='
+sing-box lxd --service=status
 ```
 
 ## 8. Linux — setup approaches
@@ -481,7 +595,7 @@ Error map:
 | `POST /admin/start` · `POST /admin/stop` | core lifecycle apart from the config (stop is remembered) |
 | `GET /admin/config` | the active config |
 | `GET /admin/status` | `idle\|started\|fatal`, active/last-good sha, `last_error`, `interrupted_apply` |
-| `GET /admin/info` | identity card: version, state_dir, listen, tls, fingerprint, pid, uptime, log_path |
+| `GET /admin/info` | identity card: version, state_dir, listen, tls, fingerprint, pid, uptime, log_path, `executable` and `executable_sha256` (the running binary — compare cores by hash, not by path; the hash is computed once at start and reads `""` for the first moments) |
 | `POST /admin/enroll` | client registration with a one-time code |
 | `GET /admin/resources` · `PUT`/`GET`/`DELETE /admin/resources/{name}` | the files a config REFERS to (`.srs`, geo bases): list with sha256, upload, fetch, remove; 409 while the active or last-good config references the name |
 | `GET /admin/memory` | process memory: heap/stack/sys, goroutines, GC, and **two** RSS numbers — `rss_current_bytes` and `rss_peak_bytes` (raw bytes; the peak never decreases, so it is reported apart from the current size) |

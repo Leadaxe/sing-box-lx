@@ -15,6 +15,7 @@
 - [5. Безопасность: кто чем аутентифицируется](#5-безопасность-кто-чем-аутентифицируется)
 - [6. Логи](#6-логи)
 - [7. macOS — автоматическая установка](#7-macos--автоматическая-установка)
+  - [7.1. Root-owned копия бинаря](#71-root-owned-копия-бинаря)
 - [8. Linux — подходы к настройке](#8-linux--подходы-к-настройке)
   - [8.1. Общая часть (любой init)](#81-общая-часть-любой-init)
   - [8.2. systemd (обычный сервер/десктоп)](#82-systemd-обычный-сервердесктоп)
@@ -141,9 +142,11 @@ connection-настроек: у команды нет флагов `--listen/--t
 | `-c <файл>` | seed-конфиг (строго один файл; каталоги `-C` не поддерживаются) |
 | `--config-force <файл>` | всегда бутиться с этого файла, поверх last-good |
 | `--run` | поднять ядро независимо от записанного run-состояния |
-| `--service install\|install-user\|uninstall` | установка службой (см. разделы ОС) |
+| `--service install\|install-user\|copy\|uninstall\|status` | установка службой, root-owned копия без службы, снятие, отчёт (см. разделы ОС и [7.1](#71-root-owned-копия-бинаря)) |
+| `--exec-dir <dir>` | с `install`/`copy`/`uninstall`/`status` — каталог root-owned копии (дефолт `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd`) |
+| `--allow-unsafe-exec` | только для отладки: root-служба стартует и с бинаря, который не root-owned копия (WARN вместо отказа) |
 | `--purge` | с `uninstall` — снести и state-каталог |
-| `--dry-run` | с `--service` — показать, что было бы сделано, ничего не меняя |
+| `--dry-run` | с `--service` (кроме `status`) — показать, что было бы сделано, ничего не меняя |
 | `client add [--name <метка>]` | сминтить одноразовый инвайт для нового клиента |
 | `client list` / `client remove <имя-или-отпечаток>` | просмотр / отзыв доверенных клиентов |
 
@@ -202,14 +205,20 @@ sing-box lxd --service=install-user    # LaunchAgent: без sudo, старт п
 
 Install делает всё сам:
 
-1. создаёт `…/Application Support/sing-box-lxd/` (0700) и `state/` внутри;
-2. **материализует daemon.json**: существующий адрес сохраняется (реинсталл не
+1. системная область: копирует бинарь в
+   `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box` с владельцем root,
+   и служба исполняет эту копию, а не файл, из которого её поставили
+   ([7.1](#71-root-owned-копия-бинаря));
+2. создаёт `…/Application Support/sing-box-lxd/` (0700; системная область — `root:wheel`)
+   и `state/` внутри;
+3. **материализует daemon.json**: существующий адрес сохраняется (реинсталл не
    двигает канал из-под сопряжённых клиентов), иначе первый свободный
    loopback-порт от 19091; `tls` — всегда; секрет — существующий или генерируется;
-3. пишет plist (`com.leadaxe.sing-box-lxd`) и бутстрапит службу; plist вырожден
+4. пишет plist (`com.leadaxe.sing-box-lxd`) и бутстрапит службу; plist вырожден
    до `sing-box lxd --state-dir <dir>` — все настройки в daemon.json;
-4. печатает сводку: адрес канала, админ-секрет, путь daemon.json, команду
-   рестарта — и **одноразовый инвайт** для сопряжения лаунчера.
+5. печатает отчёт status ([7.1](#71-root-owned-копия-бинаря)) и сводку: адрес канала,
+   админ-секрет, путь daemon.json, команду рестарта — и **одноразовый инвайт** для
+   сопряжения лаунчера.
 
 Пути: system — `/Library/Application Support/sing-box-lxd/`, user —
 `~/Library/Application Support/sing-box-lxd/`. Лог — `lxd.log` рядом со `state/`.
@@ -217,11 +226,116 @@ Install делает всё сам:
 Прочее:
 
 ```bash
-sing-box lxd --service=install --dry-run  # показать plist и что произойдёт, ничего не трогая
+sing-box lxd --service=install --dry-run  # показать план копии, plist и что произойдёт, ничего не трогая
+sing-box lxd --service=status             # что установлено; выход 0/2/3/4 (см. 7.1), root не нужен
+sudo sing-box lxd --service=copy          # только root-owned копия, без службы (7.1)
 sing-box lxd --service=uninstall          # снять службу; state сохраняется
 sing-box lxd --service=uninstall --purge  # снять службу и снести state (клиенты, ключи, last-good)
 sing-box lxd --service=uninstall --dry-run --purge   # показать, что было бы удалено
 sudo sing-box lxd client add --name mac-book   # новый инвайт на живом демоне (state-dir найдётся сам)
+```
+
+### 7.1. Root-owned копия бинаря
+
+LaunchDaemon исполняется от root при каждой загрузке и каждом KeepAlive-рестарте. Если
+бы его plist указывал на бинарь в бандле лаунчера — файл, который может заменить
+залогиненный пользователь, — любой процесс этого пользователя получил бы исполнение
+кода от root. Поэтому системная служба никогда не исполняет файл, из которого её
+поставили; `--service=install` сначала копирует его:
+
+| Что | Путь | Владелец / режим |
+|---|---|---|
+| каталог | `/Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/` | `root:wheel 0755` |
+| бинарь | `…/com.leadaxe.sing-box-lxd/sing-box` | `root:wheel 0755` |
+| сайдкар | `…/com.leadaxe.sing-box-lxd/install.json` | `root:wheel 0644` |
+
+- **Инвариант.** Каждый компонент пути от `/` до бинаря — настоящий каталог или файл
+  (не симлинк), принадлежит uid 0 и не имеет записи для group и other. Сам
+  `/Applications` — `root:admin 0775`, поэтому бинарь из бандла инвариант не проходит.
+- **Как встаёт копия.** Временный файл с уникальным именем в том же каталоге, fsync,
+  `chown root:wheel`, `chmod 0755`, сверка sha256 с источником, затем `rename` поверх
+  старой копии. Никогда не переписывается на месте (работающий демон держит старый
+  файл, а macOS убивает процесс, у которого меняются подписанные страницы), без xattr,
+  без переподписи. Одинаковая копия не трогается:
+  `lxd: binary unchanged (sha256 …), copy skipped`.
+- **В plist** меняется только `ProgramArguments[0]`; daemon.json, адрес, секрет и
+  сопряжённые клиенты остаются как были.
+- **Сайдкар** `install.json` читается без root:
+  ```json
+  {
+    "source": "/Applications/singbox-launcher.app/Contents/MacOS/bin/sing-box",
+    "sha256": "…",
+    "version": "1.14.1-lx.11",
+    "installed_at": "2026-09-24T12:00:00Z",
+    "plist_path": "/Library/LaunchDaemons/com.leadaxe.sing-box-lxd.plist",
+    "label": "com.leadaxe.sing-box-lxd"
+  }
+  ```
+  `version` — версия ядра копии, видна без её запуска; `plist_path` пуст у копии без
+  службы.
+- **`--exec-dir <dir>`** кладёт копию (по-прежнему `sing-box`) в другой каталог. Тот же
+  инвариант распространяется на каждый компонент `<dir>`; иначе install отказывает:
+  `<путь>: owned by uid N, mode NNNN, must be root-owned and not group/world-writable`.
+
+**Копия без службы.** `sudo sing-box lxd --service=copy` кладёт ту же копию и сайдкар — и
+больше ничего: ни plist, ни launchd. Это для лаунчера, который сам запускает ядро от root
+(classic TUN). Повтор с тем же бинарём ничего не меняет (`lxd: already up to date <sha256>`);
+последующий `--service=install` привязывает эту копию к plist без повторного копирования.
+Обновление ядра — снова `--service=copy` (и `--service=install`, если служба есть) из
+нового бинаря; ядро само обновлений не отслеживает.
+
+**Status** не требует root и ничего не меняет:
+
+```bash
+sing-box lxd --service=status; echo "exit $?"
+```
+
+Для LaunchDaemon (а без него — для копии) и для user-агента печатает plist, программу,
+которую он исполняет, владельца и режим, проходит ли инвариант, sha256 программы против
+sha256 этого бинаря, сайдкар и состояние и pid из `launchctl print`. Последняя строка —
+вердикт:
+
+| Вердикт | Значение | Выход |
+|---|---|---|
+| `OK` | служба исполняет root-owned копию ровно этого бинаря | 0 |
+| `MISMATCH` | нужна переустановка: другой бинарь, сайдкара нет или он чужой, копию поменяли в обход сайдкара, сайдкар без копии | 2 |
+| `UNSAFE` | программа или каталог над ней не проходит инвариант | 2 |
+| `NOT INSTALLED` | нет ни plist, ни копии | 3 |
+| `COPY ONLY` | исправная копия этого бинаря, службы нет | 4 |
+
+**Uninstall** удаляет копию и сайдкар, только если сайдкар относится к этой службе (или ни
+к какому plist) и sha256 файла по-прежнему равен записанному; иначе файл остаётся, а
+причина печатается (`lxd: copy left in place: …`). Произвольный `ProgramArguments[0]` не
+удаляется никогда.
+
+**Самопроверка при старте.** Ядро, запущенное от root (`lxd` или `run`), проверяет
+собственный бинарь инвариантом. Job launchd — родитель pid 1 и
+`XPC_SERVICE_NAME=com.leadaxe.sing-box-lxd` — отказывается стартовать и пишет причину в
+`lxd.log`:
+
+```
+lxd: refusing to run as a root service from /Applications/…/sing-box (uid 501, mode 0755): /Applications: owned by uid 0, mode 0775, must be root-owned and not group/world-writable; run `sing-box lxd --service=install` to reinstall from a root-owned copy
+```
+
+Любой другой запуск от root — sudo из терминала, nohup, лаунчер, поднимающий ядро с
+правами, — только пишет WARN с тем же путём, владельцем и режимом.
+`lxd --allow-unsafe-exec` превращает отказ в WARN для отладки.
+
+> ⚠️ **Обновление системной установки, сделанной старым ядром.** Её plist исполняет
+> бинарь из бандла. Как только этот бинарь обновится до этой версии, ближайший рестарт
+> службы откажет в старте (см. выше). Один раз переустановить:
+> `sudo sing-box lxd --service=install` — daemon.json, клиенты и ключи сохраняются.
+
+**Ручная проверка:**
+
+```bash
+ls -ld / /Library /Library/PrivilegedHelperTools /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd
+ls -l /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/            # root wheel -rwxr-xr-x sing-box, -rw-r--r-- install.json
+plutil -p /Library/LaunchDaemons/com.leadaxe.sing-box-lxd.plist            # ProgramArguments[0] = копия
+shasum -a 256 /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/sing-box
+cat /Library/PrivilegedHelperTools/com.leadaxe.sing-box-lxd/install.json   # тот же sha256
+launchctl print system/com.leadaxe.sing-box-lxd | grep -E '^[[:space:]](state|pid|program) ='
+sing-box lxd --service=status
 ```
 
 ## 8. Linux — подходы к настройке
@@ -474,7 +588,7 @@ fail-closed) — [openwrt-vpn-ssid.ru.md](openwrt-vpn-ssid.ru.md).
 | `POST /admin/start` · `POST /admin/stop` | жизнь ядра отдельно от конфига (stop запоминается) |
 | `GET /admin/config` | активный конфиг |
 | `GET /admin/status` | `idle\|started\|fatal`, sha активного/last-good, `last_error`, `interrupted_apply` |
-| `GET /admin/info` | паспорт: версия, state_dir, listen, tls, отпечаток, pid, uptime, log_path |
+| `GET /admin/info` | паспорт: версия, state_dir, listen, tls, отпечаток, pid, uptime, log_path, `executable` и `executable_sha256` (работающий бинарь — ядра сравниваются по хешу, не по пути; хеш считается один раз при старте, первые мгновения — `""`) |
 | `POST /admin/enroll` | регистрация клиента по одноразовому коду |
 | `GET /admin/resources` · `PUT`/`GET`/`DELETE /admin/resources/{имя}` | файлы, на которые **ссылается** конфиг (`.srs`, geo-базы): список с sha256, заливка, выгрузка, удаление; 409, пока на имя ссылается активный или last-good конфиг |
 | `GET /admin/memory` | память процесса: heap/stack/sys, горутины, GC и **два** числа RSS — `rss_current_bytes` и `rss_peak_bytes` (сырые байты; пик не убывает, поэтому отдаётся отдельно от текущего) |
