@@ -78,6 +78,17 @@ jobs:
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd" \
             ./daemon/ ./experimental/libbox/
 
+      # The darwin half of the daemon (service_darwin.go — the root-owned
+      # service copy, status, plist handling — hostinfo/logredirect_darwin.go)
+      # is behind `with_lxd && darwin` and never compiled on this runner, while
+      # the tests below run the linux half only. Vet it cross (cgo is off when
+      # cross-compiling, like the purego darwin build). SPEC 100.
+      - name: go vet (lxd + cli, GOOS=darwin)
+        run: |
+          GOOS=darwin go vet \
+            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd" \
+            ./lxd/ ./cmd/sing-box/
+
       - name: gofmt (lx-owned files only)
         run: |
           # Only our downstream files — never the whole upstream tree.
