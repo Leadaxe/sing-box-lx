@@ -33,14 +33,17 @@ data-plane лежит.
 | `--run` | флаг | форсит подъём ядра независимо от памяти run-состояния; без него: записанная память (`was_running`) обязательна к исполнению, а **свежий state с конфигом = запуск** (явный `-c` на чистом хосте бутится сам; лежать остаётся только после явного `stop`) |
 | `<state-dir>/daemon.json` | файл `0600`, **не флаги** | единственный источник connection-настроек демона: `listen` (дефолт `127.0.0.1:9091`; строка `"host:port"` либо `{"address": [...], "port": N}` — несколько адресов, обе плоскости на каждом, бинд «всё или ничего», первый адрес рекламируемый; масок нет), `tls` (mTLS с регистрацией клиентов; без него h2c loopback-only), `secret` (Bearer операторских маршрутов и единственный гейт plain-h2c; пусто = выключен); connection-флагов у команды НЕТ по построению; файла нет = dev-дефолты, создаёт его только `--service=install` или редактор оператора |
 | `log_max_size_mb` / `log_max_backups` / `log_max_age_hours` | ключи daemon.json, дефолт `1` / `1` / `24` | лимиты ротации лога демона («≈сутки истории»: ротация по возрасту раз в 24 ч, текущий + 1 бэкап; размер — страховка); 0/отсутствие = дефолт, «безлимита» нет |
-| `--state-dir` | путь, дефолт `lxd-state` (сервис — абсолютный `<support>/state`) | каталог состояния: daemon.json, last-good, кандидат, pending, was_running, серверная пара, доверенные клиенты |
-| `--service` | `install` \| `install-user` \| `copy` \| `uninstall` \| `status` | установка службой, root-owned копия без службы, снятие, отчёт (см. ниже) |
-| `--exec-dir <dir>` | путь, дефолт `/Library/PrivilegedHelperTools` (должен существовать; заданный — создаётся) | с `--service=install\|copy\|uninstall\|status` — каталог root-owned копии бинаря и её сайдкара; каждый компонент от `/` обязан принадлежать root и не иметь записи для group/other |
-| `--allow-unsafe-exec` | флаг, отладка | root-служба стартует и с бинаря, который не root-owned копия, — с `WARN` вместо отказа |
-| `--purge` | флаг | с `--service=uninstall` — снести и state-каталог |
-| `--keep-copy` | флаг | с `--service=uninstall` — снять службу, root-owned копию и сайдкар оставить для запуска без службы (состояние «только копия») |
+| `--state-dir` | путь, дефолт `lxd-state` (сервис — абсолютный `<support>/state`; Windows — `<ProgramData>\sing-box-lxd\state`) | каталог состояния: daemon.json, last-good, кандидат, pending, was_running, серверная пара, доверенные клиенты |
+| `--service` | `install` \| `install-user` \| `copy` \| `uninstall` \| `status` | установка службой, защищённая копия без службы, снятие, отчёт (см. ниже); на Windows `install`/`copy`/`uninstall` — повышенный токен (elevated), `status` — без прав, `install-user` — отказ |
+| `--exec-dir <dir>` | путь; macOS — дефолт `/Library/PrivilegedHelperTools` (должен существовать; заданный — создаётся); Windows — дефолт `<ProgramFiles>\sing-box-lxd` (создаётся) | с `--service=install\|copy\|uninstall\|status` — каталог защищённой копии и её сайдкара; macOS: каждый компонент от `/` принадлежит root без записи для group/other; Windows: копия `sing-box-lxd.exe` (+ `libcronet.dll`, если лежит рядом с источником), владелец и DACL каждого звена от корня тома — инвариант SPEC 103 §2.2 |
+| `--allow-unsafe-exec` | флаг, отладка | служба (root-job launchd, служба SCM) стартует и с бинаря, который не защищённая копия, — с `WARN` вместо отказа |
+| `--purge` | флаг | с `--service=uninstall` — снести и state-каталог (Windows: весь `<ProgramData>\sing-box-lxd`, state и `logs\`, включая `classic.log` лаунчера) |
+| `--keep-copy` | флаг | с `--service=uninstall` — снять службу, защищённую копию и сайдкар оставить для запуска без службы (состояние «только копия»; на Windows сайдкар получает `service: ""`) |
 | `--dry-run` | флаг | с `--service` (кроме `status`) — показать, что было бы сделано, не меняя ничего (на linux любое действие и так печать) |
-| `client add [--name] / list / remove <тег>` | подкоманды | регистрация/просмотр/отзыв доверенных клиентов у живого демона; операторские маршруты **loopback-only** (минт кода = выдача доверия, из сети недоступен) |
+| `--invite-out <файл>` | путь, с `--service=install` (macOS, Windows; на Linux — отказ) | инвайт сопряжения в новый файл вместо stdout (`адрес#отпечаток#код` и перевод строки; Unix — `O_CREAT\|O_EXCL\|O_NOFOLLOW` `0600`, Windows — `CREATE_NEW` со сверкой итогового пути); существующий файл — отказ до любых изменений; провал минта (ожидание до 15 с) — выход 1, служба остаётся, файл удаляется |
+| `--invite-name <имя>` | строка, с `--service=install`; дефолт `singbox-launcher` при `--invite-out`, иначе пусто | имя клиента, которого сопрягает инвайт install; норма имени — как у `--name` |
+| `client add [--name] / list / remove <тег>` | подкоманды | регистрация/просмотр/отзыв доверенных клиентов у живого демона; операторские маршруты **loopback-only** (минт кода = выдача доверия, из сети недоступен); имя (`--name`, `--invite-name`, поле `name` в `/admin/client-code`) — пусто или 1–64 печатных символа после обрезки пробелов, иначе отказ / `400 client name: …`; именной инвайт при enroll заменяет клиента с тем же именем (старый сертификат отозван), безымянный добавляет |
+| `client add --invite-out <файл>` | путь | инвайт `client add` в новый файл вместо stdout, те же правила создания файла; на всех платформах |
 | build-tag | `with_lxd` | без тега сабкоманды нет |
 
 **Admin-плоскость (REST, тот же порт, что gRPC):** `POST /admin/apply`
@@ -109,16 +112,32 @@ TUN, до логина); `install-user` — пользовательский Lau
 Ядро под root (`lxd` и `run`) при старте проверяет собственный бинарь: служба с меткой
 launchd (`ppid 1` и `XPC_SERVICE_NAME` = ярлык) на не root-owned бинаре не стартует,
 любой другой запуск под root — `WARN`. `GET /admin/info` отдаёт `executable` и
-`executable_sha256` — клиент сравнивает ядро по хешу, не по пути. **Linux — только печать рецепта** (принцип: всё, что меняет
+`executable_sha256` — клиент сравнивает ядро по хешу, не по пути.
+
+**Windows — служба SCM `sing-box-lxd` (SPEC 103).** `LocalSystem`, автозапуск, зависимость
+`Tcpip`, restart ×3 через 5 с (и при остановке с ненулевым кодом), DACL службы
+`D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x2008d;;;AU)`. Служба исполняет защищённую копию
+`<ProgramFiles>\sing-box-lxd\sing-box-lxd.exe` (+ `libcronet.dll`, если была рядом с
+источником) с сайдкаром `sing-box-lxd.install.json` (`source`, `version`, `installed_at`,
+`service`, `files[{name, sha256}]`, `warnings[{code, text}]`); инвариант — владелец и DACL
+каждого звена от корня тома (SYSTEM/Administrators/TrustedInstaller у предков, чужой записи
+нет), без reparse points, фиксированный NTFS. install и copy сначала забирают
+`<ProgramData>\sing-box-lxd` (`state\`, `logs\`) во владение Administrators с защищённым DACL,
+install останавливает службу до замены образа (замена — temp → sha → `rename` старого в
+`.old`), при провале поднимает службу на прежнем образе. `status` без прав, коды 0/2/3/4/5/1;
+argv[0] не каноническая копия — `UNSAFE`. Демон под SCM — `svc.Run`, рабочий каталог =
+state, лог `logs\lxd.log` с ротацией копированием, самопроверка (отказ старта только под
+SCM), `SetDefaultDllDirectories`, закрепление `libcronet.dll` за каталогом exe. Win7-386
+собирается без `with_lxd` — службы нет. **Linux — только печать рецепта** (принцип: всё, что меняет
 диск, делает оператор): детект init (`/proc/1/comm`, фолбэки
 `/etc/openwrt_release` и `/run/systemd/system`), печать ссылки на нужный
 раздел руководства, дома демона + `daemon.json` (секрет генерится подстановкой
 `$(head -c 32 /dev/urandom …)` — на экран не попадает), unit/init-скрипта,
 команд включения и шага сопряжения; `uninstall --purge` печатает `rm -rf`, а не
-выполняет. Windows — заглушка.
+выполняет.
 
 Дорожная карта ручек (не реализовано): confirm/dead-man, история версий
-(content-addressed), reverse-proxy внутреннего Clash API, Linux/Windows-служба
+(content-addressed), reverse-proxy внутреннего Clash API, Linux-служба
 (systemd `LoadCredential=`), scoped-токены. Слияние лога демона в gRPC-поток
 `SubscribeLog` (сейчас две ленты: ядро — по gRPC, демон — через
 `GET /admin/logs`).
@@ -136,7 +155,8 @@ launchd (`ppid 1` и `XPC_SERVICE_NAME` = ярлык) на не root-owned би�
 Под службой (stdout — не терминал) демон сам владеет `<support>/lxd.log`:
 dup2 stdout/stderr на файл (туда попадает всё, включая паники) и ротация по
 возрасту/размеру с лимитами из daemon.json; в терминале лог остаётся на
-экране. darwin/linux; Windows — заглушка (как и служба).
+экране. darwin/linux — dup2 и `rename`; Windows — один дескриптор на всю жизнь процесса
+(`SetStdHandle`) и ротация копированием с усечением (SPEC 103 §2.12).
 
 ## 4. Data flow
 
@@ -162,7 +182,8 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
   то, что проверка без Start не ловит) вызывает **автооткат** на last-good.
 - **Root исполняет только root-owned файл.** Системная служба (macOS) запускает
   копию, у которой каждый компонент пути от `/` принадлежит root и закрыт на запись
-  для group/other; служба на ином бинаре не стартует. Копия заменяется только
+  для group/other; служба на ином бинаре не стартует. На Windows то же по владельцу и
+  DACL (SPEC 103): служба SCM запускает только защищённую копию набора. Копия заменяется только
   атомарно и только после сверки sha256; снимается только своя (по сайдкару).
 - **Источник конфига на старте**: last-good → seed-файл (`-c`, если дан
   явно; первый успешный старт записывает его как last-good) → пусто (IDLE).
@@ -183,8 +204,9 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
 - Не менеджер парка ядер: один демон — одно ядро.
 - Android/gomobile не затрагивает (другая точка входа).
 - Откат, mTLS, admin-плоскость, хранилище ресурсов и плоскость наблюдаемости
-  реализованы (056/057/063/065); впереди по дорожной карте — confirm/dead-man,
-  история версий, reverse-proxy Clash API, Linux/Windows-служба, scoped-токены.
+  реализованы (056/057/063/065); служба macOS и Windows — 057/100/103; впереди по
+  дорожной карте — confirm/dead-man, история версий, reverse-proxy Clash API,
+  Linux-служба, scoped-токены.
 - Плоскость наблюдаемости профилирует **процесс демона целиком**: ядро живёт
   внутри того же процесса, и разделить «память ядра» и «память демона» она не
   может — у Go нет per-subsystem учёта. На вопрос «какой outbound течёт»
@@ -203,7 +225,7 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
 | [066-LXD_CLIENT_IDENTITY](../../TASKS/066-LXD_CLIENT_IDENTITY/SPEC.md) | Справочник IP → устройство для сетевого инспектора: `GET /admin/clients-info` отдаёт `name`/`mac`/`ssid`/`iface`/`port`/`source` по каждому клиенту, метки оператора через `PUT`/`DELETE` (ключ = IP или MAC). Пять провайдеров с приоритетом по порядку вызова (`lease` → `arp` → `bridge` → `wireless` → `label`), платформенные через build-теги, ядро не трогается; кеш 60 с; живой прогон на macOS |
 | [065-LXD_OBSERVABILITY_PLANE](../../TASKS/065-LXD_OBSERVABILITY_PLANE/SPEC.md) | Диагностика демона: `/admin/memory` (два RSS — текущий и пик, кеш 200 мс), `/admin/stats` (uptime ядра, трафик, соединения; без ядра `null`, а не 503), `/admin/logs` (хвост `lxd.log` — лог **демона**, которого нет в gRPC-потоке), `/admin/pprof/*` (шесть снимков по whitelist, CPU/trace с потолком и 409, вкл/выкл block/mutex) — за тем же mTLS-пином, без отдельного debug-порта; живой прогон на macOS |
 | [100-LXD_ROOT_OWNED_BINARY](../../TASKS/100-LXD_ROOT_OWNED_BINARY/SPEC.md) | Системная служба исполняет root-owned копию бинаря, а не файл, из которого её поставили (закрыто повышение привилегий через user-writable бинарь в plist): копия `/Library/PrivilegedHelperTools/sing-box-lxd` (плоский файл), сайдкар `sing-box-lxd.install.json`, `--exec-dir`, `--service=copy` (копия без службы, для classic TUN лаунчера), `--service=status` с кодами выхода, uninstall только своей копии, самопроверка `lxd`/`run` под root, `executable`/`executable_sha256` в `/admin/info`; табличный тест переходов состояний |
-| [103-LXD_WINDOWS_SERVICE](../../TASKS/103-LXD_WINDOWS_SERVICE/SPEC.md) | В реализации (W): служба Windows (SCM `sing-box-lxd`) по модели 100 — защищённая копия в `<ProgramFiles>\sing-box-lxd\` с сайдкаром набора, инвариант по владельцу и DACL, захват `<ProgramData>\sing-box-lxd`, install/copy/uninstall/status, `svc.Run`, лог с ротацией, `--invite-out`/`--invite-name` на всех платформах; пара SPEC 141 лаунчера |
+| [103-LXD_WINDOWS_SERVICE](../../TASKS/103-LXD_WINDOWS_SERVICE/SPEC.md) | Реализовано (I): служба Windows (SCM `sing-box-lxd`, LocalSystem, автозапуск, recovery) по модели 100 — защищённая копия `<ProgramFiles>\sing-box-lxd\` (exe + `libcronet.dll`, сайдкар с `files[]`/`service`/`warnings`), инвариант по владельцу и DACL от корня тома, захват `<ProgramData>\sing-box-lxd` до записи секрета, install (stop → замена образа → configure → start, откат на прежний образ), copy, uninstall по сайдкару, status без прав с кодами 0/2/3/4/5/1; `svc.Run` с рабочим каталогом state, лог `logs\lxd.log` с ротацией копированием, `SetDefaultDllDirectories` и закрепление `libcronet.dll`; `--invite-out`/`--invite-name`, норма имени клиента, именной enroll заменяет запись; джоба CI `test-windows`. Живой прогон на Windows — за лаунчер-сессией; пара SPEC 141 лаунчера |
 
 ## 8. Особенности сопровождения
 
@@ -220,5 +242,5 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
   пустым (стаб) — обе стороны проверяются CI. Тег **отдельный** от
   `with_lx_command` (тот гейтит RPC SPEC 015 — `URLTestOutbound`, `GetRules`,
   `GetGroups`, которыми живёт LxBox): снятие `with_lxd` убирает демон и
-  оставляет RPC рабочими. Так собирается legacy-Win7, где служба Windows не
-  реализована (SPEC 067).
+  оставляет RPC рабочими. Так собирается legacy-Win7: без `with_lxd` там нет ни
+  демона, ни службы Windows (SPEC 067, SPEC 103).

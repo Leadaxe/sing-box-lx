@@ -28,6 +28,82 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.2
+
+- 🪟 **lxd: служба Windows (SCM) с защищённой копией ядра**
+  ([SPEC 103](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/103-LXD_WINDOWS_SERVICE/SPEC.md);
+  решение владельца 2026-09-24, пара SPEC 141 лаунчера). На Windows `lxd` собирался, но `--service` был заглушкой,
+  а лаунчер запускал ядро с правами администратора из `%LOCALAPPDATA%\singbox-launcher\bin` — каталога, куда пишет
+  любой процесс пользователя: подмена `sing-box.exe` или `libcronet.dll` давала код с высокой целостностью (тот же
+  класс дефекта, что SPEC 100 закрыл на macOS). Теперь модель SPEC 100 перенесена на SCM: служба `sing-box-lxd`
+  исполняет защищённую копию, а не файл, из которого её поставили, и поднимает last-good до входа пользователя.
+  Код — только пакет `lxd/`, `cmd/sing-box/cmd_lxd_lx.go` и новые `cmd/sing-box/*_windows_lx.go`; апстримных
+  файлов ноль.
+  - Служба SCM `sing-box-lxd`: `LocalSystem`, автозапуск, зависимость `Tcpip`; `BinaryPathName` собирается
+    `ComposeCommandLine` (путь копии в кавычках + `lxd --state-dir <abs>`); восстановление — три рестарта через 5 с,
+    сброс через 86400 с, рестарт и при остановке с ненулевым кодом; DACL службы
+    `D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x2008d;;;AU)` — Authenticated Users только читают конфигурацию и состояние.
+    Демон под SCM идёт через `svc.Run`: `START_PENDING` → daemon.json → лог → самопроверка → `Chdir` в state-каталог →
+    сразу `RUNNING`; stop/shutdown отменяют `lxd.Run` (новая ветка `ctx.Done()`, общая для всех платформ) со сторожем
+    10 с.
+  - Защищённая копия и набор: `<ProgramFiles>\sing-box-lxd\sing-box-lxd.exe` плюс `libcronet.dll`, если она лежит
+    рядом с источником (`wintun.dll` встроен в `sing-tun` и в набор не входит). Замена члена набора — временный файл
+    → DACL → сверка sha256 → `rename` старого в `.old` → временный на место; одинаковый набор не трогается
+    (`binary set unchanged (…), copy skipped`), остатки `.old`/temp прошлого прогона убираются, незнакомый файл в
+    каталоге копии — отказ с `Remove-Item`. Сайдкар `sing-box-lxd.install.json` — отдельная структура: `source`,
+    `version`, `installed_at`, `service`, `files[{name, sha256}]`, `warnings[{code, text}]`; сайдкар macOS не изменился
+    ни по ключам, ни по значениям (golden-тест).
+  - Инвариант «защищённый путь»: каждое звено от корня тома открывается без следования ссылкам, владелец и DACL
+    читаются с дескриптора; у предков — владелец SYSTEM/Administrators/TrustedInstaller и у чужих SID нет
+    `DELETE`/`WRITE_DAC`/`WRITE_OWNER`/`GENERIC_WRITE`/`GENERIC_ALL`/`FILE_DELETE_CHILD`, у каталога копии и файлов
+    набора — никакой чужой записи; reparse point, NULL DACL, неизвестный тип разрешающей ACE — нарушение; том —
+    фиксированный NTFS. Предикат портируемый, табличный тест идёт на Linux.
+  - Захват `<ProgramData>\sing-box-lxd` до записи секрета: `SeTakeOwnershipPrivilege`/`SeRestorePrivilege`, обход
+    сверху вниз через дескрипторы без следования ссылкам; корень — владелец Administrators и защищённый DACL, узел
+    ниже вне нормы — явный защищённый DACL, файлы демона с владельцем SYSTEM и унаследованными ACE — норма; строки
+    `took ownership of …`, `replaced DACL on …` или `data dir … is protected`; reparse point и жёсткие ссылки — отказ.
+    Секрет и серверная пара не перегенерируются; если чужой SID владел деревом или читал `state\`, install печатает
+    `WARN: … rotate the admin secret …` и кладёт его в `warnings` сайдкара (у install под `runas` консоли нет).
+  - `--service=install` (elevated): каталог данных → daemon.json (+ `log_file` = `<ProgramData>\sing-box-lxd\logs\lxd.log`,
+    если ключа нет) → stop с ожиданием `STOPPED` до 30 с → замена образа → сайдкар → `CreateService`/`UpdateConfig`,
+    recovery, DACL службы → start с ожиданием `RUNNING` → отчёт status (не `OK` — выход 1) → сводка с
+    `Restart-Service sing-box-lxd`. Провал замены или конфигурации после остановки возвращает прежний образ и
+    поднимает службу на нём (`install failed, previous service image restarted`). `--service=copy` — то же без SCM;
+    `--service=uninstall [--keep-copy] [--purge] [--dry-run]` удаляет набор только при совпадении sha каждого файла с
+    сайдкаром, дефолтный каталог копии — если опустел, `--purge` — весь `<ProgramData>\sing-box-lxd`;
+    `--service=install-user` на Windows — отказ.
+  - `--service=status` без прав (SCM открывается с `SC_MANAGER_CONNECT`, служба — только на запрос): блоки
+    `[service]`/`[copy]`/`[data dir]` и вердикт с кодами 0 `OK` / 2 `MISMATCH`·`UNSAFE` / 3 `NOT INSTALLED` /
+    4 `COPY ONLY` / 5 `NOT RUNNING` / 1 ошибка. Отличие от macOS: argv[0] службы не каноническая копия — `UNSAFE`;
+    также `UNSAFE` — путь с пробелом без кавычек и DACL службы, дающий чужому SID смену конфигурации или владельца.
+  - `--invite-out <файл>` / `--invite-name <имя>` у `--service=install` (macOS и Windows; на Linux, где install
+    печатает рецепт, — отказ) и `client add --invite-out <файл>` на всех платформах: инвайт пишется в новый файл
+    (Unix `O_CREAT|O_EXCL|O_NOFOLLOW` 0600, Windows `CREATE_NEW` и сверка `GetFinalPathNameByHandle`), существующий
+    файл — отказ до любых изменений; имя по умолчанию при `--invite-out` — `singbox-launcher`; провал минта с
+    `--invite-out` — выход 1 при установленной службе, файл удаляется. Без флагов поведение macOS прежнее.
+  - Имя клиента (`--name`, `--invite-name`, поле `name` в `/admin/client-code`) нормируется на минте: после обрезки
+    пробелов — пусто или 1–64 печатных символа, иначе отказ CLI и `400 client name: …`.
+  - Enroll по именному инвайту заменяет клиента с тем же именем (старый сертификат отзывается); безымянный инвайт
+    добавляет, как раньше. Так повторное сопряжение лаунчера не копит записи `singbox-launcher`.
+  - Самопроверка при старте: на Windows `lxd` под SCM на незащищённом бинаре не стартует (`refusing to run as a
+    Windows service from …`), повышенный `lxd`/`run` вне SCM и `--allow-unsafe-exec` — WARN, без повышения — не
+    проверяется. Пройденная проверка в контексте службы пишет одну строку INFO — на Windows
+    (`self-check ok: protected …, windows service sing-box-lxd`) и на macOS
+    (`self-check ok: root-owned …, launchd service com.leadaxe.sing-box-lxd`).
+  - Лог на Windows: `logs\lxd.log`, один дескриптор на всю жизнь процесса (`SetStdHandle` на stdout/stderr, подмена
+    `os.Stdout`/`os.Stderr` и стандартного логгера), ротация копированием в `lxd.log.1` с усечением — `rename` живого
+    файла без `FILE_SHARE_DELETE` невозможен; строки между копированием и усечением теряются.
+  - Поиск DLL: `SetDefaultDllDirectories(APPLICATION_DIR | SYSTEM32)` в `init` любой сборки `with_lxd` на Windows (с
+    проверкой процедуры — Windows 7 без KB2533623); если в наборе нет `libcronet.dll`, служба и повышенный `run`
+    закрепляют её загрузку за каталогом exe, и naive-outbound получает ошибку вместо поиска по `PATH` под SYSTEM.
+  - CI: `GOOS=windows go vet ./lxd/ ./cmd/sing-box/` в lint и джоба `test-windows` на `windows-latest` (`go vet` и
+    `go test` пакетов `lxd` и `cmd/sing-box` с полным набором тегов).
+  - Поведение macOS, Linux и Android не меняется, кроме перечисленного: флаги `--invite-out`/`--invite-name`, норма
+    имени клиента, замена клиента именным enroll, строка INFO самопроверки на macOS. Win7-386 собирается без
+    `with_lxd` — службы там нет. Живой прогон на Windows (install → status `OK` → повторный install → copy →
+    uninstall `--keep-copy` → uninstall, `sc qc`/`sdshow`, `icacls`, ротация, сопряжение лаунчера через
+    `--invite-out`) — за лаунчер-сессией.
+
 #### v1.14.2-lx.1
 
 - ⬆️ **База апстрима: sing-box v1.14.2** ([SPEC 102](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/102-UPSTREAM_SYNC_1_14_2/SPEC.md);
