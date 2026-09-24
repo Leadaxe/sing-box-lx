@@ -191,6 +191,10 @@ const (
 	// ServiceCopyOnly: a root-owned copy identical to the caller, made by
 	// `--service=copy`, with no service plist (SPEC 100 §2.4).
 	ServiceCopyOnly
+	// ServiceNotRunning: the plist and the copy are consistent, but launchd
+	// has no running job for the label — the service is installed on disk
+	// and not loaded (a failed bootstrap, a bootout without bootstrap).
+	ServiceNotRunning
 )
 
 func (v ServiceVerdict) String() string {
@@ -205,6 +209,8 @@ func (v ServiceVerdict) String() string {
 		return "NOT INSTALLED"
 	case ServiceCopyOnly:
 		return "COPY ONLY"
+	case ServiceNotRunning:
+		return "NOT RUNNING"
 	default:
 		return "UNKNOWN"
 	}
@@ -218,16 +224,19 @@ func (v ServiceVerdict) severity() int {
 		return 0
 	case ServiceCopyOnly:
 		return 1
-	case ServiceMismatch:
+	case ServiceNotRunning:
 		return 2
-	default:
+	case ServiceMismatch:
 		return 3
+	default:
+		return 4
 	}
 }
 
 // ExitCode is what `--service=status` exits with: 0 OK, 2 reinstall needed
-// (MISMATCH, UNSAFE), 3 not installed, 4 copy only. 1 stays with errors,
-// which the command reports on its own.
+// (MISMATCH, UNSAFE), 3 not installed, 4 copy only, 5 installed but not
+// running in launchd. 1 stays with errors, which the command reports on
+// its own.
 func (v ServiceVerdict) ExitCode() int {
 	switch v {
 	case ServiceOK:
@@ -236,6 +245,8 @@ func (v ServiceVerdict) ExitCode() int {
 		return 3
 	case ServiceCopyOnly:
 		return 4
+	case ServiceNotRunning:
+		return 5
 	default:
 		return 2
 	}

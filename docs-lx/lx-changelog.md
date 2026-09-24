@@ -46,7 +46,11 @@ required for stable tags); this changelog section is the fallback used for pre-r
   сайдкар без plist и launchd (для classic TUN лаунчера, SPEC 137 лаунчера; повтор — no-op `already up to date`,
   последующий install привязывает копию без повторного копирования); `--service=status` без root — plist,
   программа, владелец/режим, инвариант, хеши, сайдкар, `launchctl print`, вердикт с кодом выхода 0 `OK` /
-  2 `MISMATCH`·`UNSAFE` / 3 `NOT INSTALLED` / 4 `COPY ONLY` / 1 ошибка; uninstall удаляет копию только при
+  2 `MISMATCH`·`UNSAFE` / 3 `NOT INSTALLED` / 4 `COPY ONLY` / 5 `NOT RUNNING` (на диске исправно, job launchd не
+  запущен — после живой проверки 2026-09-24, где статус говорил OK при незагруженной службе) / 1 ошибка; install
+  после `bootout` ждёт исчезновения старого job'а (до 10 с, с сообщением) и повторяет `bootstrap` на «already in
+  progress»/EIO — на живой проверке bootstrap сразу после bootout падал, и служба оставалась незагруженной ~3 с
+  выгрузки живого ядра; uninstall удаляет копию только при
   совпадении sha с её сайдкаром (с plist или без), произвольный `ProgramArguments[0]` — никогда;
   `uninstall --keep-copy` снимает службу, а копию оставляет с отвязанным сайдкаром (→ `COPY ONLY`). Самопроверка при
   старте `lxd` и `run` под root: служба (`ppid 1` и `XPC_SERVICE_NAME` = ярлык) на не root-owned бинаре не

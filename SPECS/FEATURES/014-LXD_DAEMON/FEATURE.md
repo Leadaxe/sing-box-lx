@@ -104,7 +104,7 @@ TUN, до логина); `install-user` — пользовательский Lau
 копирования, повторный `copy` с тем же бинарём ничего не делает. `uninstall` удаляет
 копию только по совпадению sha с её сайдкаром. `status` (без root) печатает plist,
 программу, владельца и режим, хеши, сайдкар и состояние launchd и выходит с кодом
-0 `OK`, 2 `MISMATCH`/`UNSAFE` (нужна переустановка), 3 `NOT INSTALLED`, 4 `COPY ONLY`.
+0 `OK`, 2 `MISMATCH`/`UNSAFE` (нужна переустановка), 3 `NOT INSTALLED`, 4 `COPY ONLY`, 5 `NOT RUNNING` (на диске исправно, job не запущен).
 Ядро под root (`lxd` и `run`) при старте проверяет собственный бинарь: служба с меткой
 launchd (`ppid 1` и `XPC_SERVICE_NAME` = ярлык) на не root-owned бинаре не стартует,
 любой другой запуск под root — `WARN`. `GET /admin/info` отдаёт `executable` и

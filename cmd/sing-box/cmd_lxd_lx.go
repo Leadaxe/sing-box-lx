@@ -106,7 +106,7 @@ func init() {
 	commandLxd.PersistentFlags().StringVar(&lxdStateDir, "state-dir", "lxd-state", "daemon home: daemon.json, last-good config, run-state, client trust, keys")
 	commandLxd.Flags().StringVar(&lxdConfigForce, "config-force", "", "always boot from this config file, overriding recorded last-good")
 	commandLxd.Flags().BoolVar(&lxdRun, "run", false, "force the core up regardless of recorded run-state")
-	commandLxd.Flags().StringVar(&lxdService, "service", "", "install (system LaunchDaemon, root) | install-user (per-user LaunchAgent, no sudo) | copy (root-owned copy only, no service; root) | uninstall | status (exit 0 OK, 2 reinstall needed, 3 not installed, 4 copy only)")
+	commandLxd.Flags().StringVar(&lxdService, "service", "", "install (system LaunchDaemon, root) | install-user (per-user LaunchAgent, no sudo) | copy (root-owned copy only, no service; root) | uninstall | status (exit 0 OK, 2 reinstall needed, 3 not installed, 4 copy only, 5 not running)")
 	commandLxd.Flags().BoolVar(&lxdPurge, "purge", false, "with --service=uninstall: also delete the state directory (clients, last-good, keys)")
 	commandLxd.Flags().BoolVar(&lxdKeepCopy, "keep-copy", false, "with --service=uninstall: remove the service but keep the root-owned copy and its sidecar for non-service use (--purge still only concerns the state)")
 	commandLxd.Flags().BoolVar(&lxdDryRun, "dry-run", false, "with --service: show what would be done, change nothing")
@@ -308,7 +308,7 @@ func runServiceAction(cmd *cobra.Command) error {
 	case "status":
 		// Read-only, no root needed. The exit code is the launcher's
 		// contract: 0 OK, 2 MISMATCH/UNSAFE, 3 NOT INSTALLED, 4 COPY ONLY,
-		// 1 an error.
+		// 5 NOT RUNNING, 1 an error.
 		verdict, err := lxd.ServiceStatus(execDir)
 		if err != nil {
 			return err

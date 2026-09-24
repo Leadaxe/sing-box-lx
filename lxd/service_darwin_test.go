@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // nextTagAfterKey returns the first XML tag following the given <key> entry,
@@ -388,7 +389,16 @@ func testServiceEnv(t *testing.T) (serviceEnv, *bytes.Buffer, string) {
 		load:   func(serviceScope) error { return nil },
 		unload: func(serviceScope) error { return nil },
 	}
+	useLaunchdProbe(t, func(serviceScope) (string, bool) { return "running (test), pid 1", true })
 	return env, out, base
+}
+
+// useLaunchdProbe replaces the launchd query for one test.
+func useLaunchdProbe(t *testing.T, probe func(serviceScope) (string, bool)) {
+	t.Helper()
+	previous := probeLaunchd
+	probeLaunchd = probe
+	t.Cleanup(func() { probeLaunchd = previous })
 }
 
 // setSource puts a new core binary into the bundle — a launcher update.
@@ -546,7 +556,7 @@ func TestServiceStatusUserAgent(t *testing.T) {
 		t.Fatalf("verdict %s err %v:\n%s", verdict, err, out.String())
 	}
 	text := squash(out.String())
-	for _, want := range []string{"[user scope, LaunchAgent]", "not required for a per-user agent", "launchd: not loaded"} {
+	for _, want := range []string{"[user scope, LaunchAgent]", "not required for a per-user agent", "launchd: running (test)"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in:\n%s", want, out.String())
 		}
@@ -570,5 +580,66 @@ func TestDryRunCopyPlansOnlyTheCopy(t *testing.T) {
 	}
 	if _, err := os.Lstat(execDir); !os.IsNotExist(err) {
 		t.Fatal("dry run must not create the exec dir")
+	}
+}
+
+// TestServiceStatusNotRunning: a consistent install whose job launchd does
+// not run (a bootstrap that failed, a bootout without bootstrap) is NOT
+// RUNNING, exit 5, with the bootstrap command in the reason — not OK.
+func TestServiceStatusNotRunning(t *testing.T) {
+	env, out, _ := testServiceEnv(t)
+	callerSHA := setSource(t, env, "core v1")
+	mustDo(t, env.installSystem([]string{"lxd"}))
+	useLaunchdProbe(t, func(serviceScope) (string, bool) { return "not loaded (Bad request.)", false })
+	verdict, err := env.status(callerSHA)
+	if err != nil || verdict != ServiceNotRunning {
+		t.Fatalf("verdict %s err %v:\n%s", verdict, err, out.String())
+	}
+	if verdict.ExitCode() != 5 {
+		t.Fatalf("exit code %d, want 5", verdict.ExitCode())
+	}
+	text := squash(out.String())
+	for _, want := range []string{"launchd: not loaded (Bad request.)", "NOT RUNNING", "sudo launchctl bootstrap " + env.system.bootTgt + " " + env.system.plist} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in:\n%s", want, out.String())
+		}
+	}
+	// A running job restores OK on the same disk state.
+	useLaunchdProbe(t, func(serviceScope) (string, bool) { return "running, pid 42", true })
+	out.Reset()
+	if verdict, err = env.status(callerSHA); err != nil || verdict != ServiceOK {
+		t.Fatalf("verdict %s err %v:\n%s", verdict, err, out.String())
+	}
+}
+
+// TestBootstrapRetryable: only the errors of a job still going away are
+// retried; a bad plist is final.
+func TestBootstrapRetryable(t *testing.T) {
+	for text, want := range map[string]bool{
+		"Bootstrap failed: 5: Input/output error":                         true,
+		"Bootstrap failed: 37: Operation already in progress":             true,
+		"Bootstrap failed: 125: Domain does not support specified action": false,
+		"Bootstrap failed: 2: No such file or directory":                  false,
+		"": false,
+	} {
+		if got := bootstrapRetryable(text); got != want {
+			t.Fatalf("%q: retryable %v, want %v", text, got, want)
+		}
+	}
+}
+
+// TestWaitUntilGone: the wait ends as soon as the job is gone, and gives up
+// at the timeout with a false.
+func TestWaitUntilGone(t *testing.T) {
+	calls := 0
+	out := &bytes.Buffer{}
+	if !waitUntilGone(out, func() bool { calls++; return calls >= 3 }, time.Second, time.Millisecond) {
+		t.Fatal("expected the job to be reported gone")
+	}
+	if calls != 3 {
+		t.Fatalf("polled %d times, want 3", calls)
+	}
+	if waitUntilGone(out, func() bool { return false }, 30*time.Millisecond, 5*time.Millisecond) {
+		t.Fatal("expected a timeout")
 	}
 }

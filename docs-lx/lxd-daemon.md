@@ -218,7 +218,7 @@ Install does everything itself:
 3. **materializes daemon.json**: an existing address is kept (a reinstall never
    moves the channel out from under enrolled clients), otherwise the first free
    loopback port from 19091 up; `tls` — always; the secret — kept or generated;
-4. writes the plist (`com.leadaxe.sing-box-lxd`) and bootstraps the service;
+4. writes the plist (`com.leadaxe.sing-box-lxd`) and bootstraps the service — after a bootout it waits for the old job to disappear (up to 10 s, `waiting for the old service to unload (Ns)`) and retries a bootstrap that answers "already in progress", because a live core takes seconds to exit;
    the plist degenerates to `sing-box lxd --state-dir <dir>` — every setting
    lives in daemon.json;
 5. prints the status report ([7.1](#71-the-root-owned-copy-of-the-binary)) and the
@@ -308,6 +308,7 @@ last line is the verdict:
 | `UNSAFE` | the program, or a directory above it, fails the invariant | 2 |
 | `NOT INSTALLED` | neither a plist nor a copy | 3 |
 | `COPY ONLY` | a good copy of this binary, no service | 4 |
+| `NOT RUNNING` | installed and consistent on disk, but launchd has no running job for the label (a failed bootstrap, a bootout without bootstrap); the reason carries the `launchctl bootstrap` command | 5 |
 
 **Uninstall** removes the copy and its sidecar only when the sidecar belongs to this
 service (or to no plist) and the file's sha256 still equals the sidecar's; otherwise the

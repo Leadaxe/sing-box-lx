@@ -117,13 +117,71 @@ func newServiceEnv(execDir string) (serviceEnv, error) {
 	}, nil
 }
 
+// launchctlSettle bounds how long a (re)load waits for launchd: first for
+// the old job to disappear after bootout, then for bootstrap to stop
+// answering "already in progress".
+const launchctlSettle = 10 * time.Second
+
+// launchctlLoad replaces the job: bootout, wait until launchd has really
+// removed it, bootstrap. `launchctl bootout` returns as soon as the request
+// is accepted; the job with a live core takes seconds to exit, and a
+// bootstrap issued meanwhile fails with "Operation already in progress" (37)
+// or "Input/output error" (5) — the service is then not loaded at all.
 func launchctlLoad(scope serviceScope) error {
-	_ = exec.Command("launchctl", "bootout", scope.bootTgt+"/"+launchdLabel).Run()
-	output, err := exec.Command("launchctl", "bootstrap", scope.bootTgt, scope.plist).CombinedOutput()
-	if err != nil {
-		return E.Cause(E.New(strings.TrimSpace(string(output))), "launchctl bootstrap")
+	target := scope.bootTgt + "/" + launchdLabel
+	_ = exec.Command("launchctl", "bootout", target).Run()
+	gone := func() bool { return exec.Command("launchctl", "print", target).Run() != nil }
+	if !waitUntilGone(os.Stdout, gone, launchctlSettle, 250*time.Millisecond) {
+		fmt.Fprintln(os.Stdout, "lxd: the old service is still loaded after", launchctlSettle, "— trying bootstrap anyway")
 	}
-	return nil
+	deadline := time.Now().Add(launchctlSettle)
+	for {
+		output, err := exec.Command("launchctl", "bootstrap", scope.bootTgt, scope.plist).CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		text := strings.TrimSpace(string(output))
+		if text == "" {
+			text = err.Error()
+		}
+		if !bootstrapRetryable(text) || time.Now().After(deadline) {
+			return E.Cause(E.New(text), "launchctl bootstrap")
+		}
+		fmt.Fprintln(os.Stdout, "lxd: launchctl bootstrap:", text, "— retrying while the old service unloads")
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// bootstrapRetryable: the bootstrap errors launchd gives while the previous
+// job of the same label is still going away. Anything else (a bad plist, a
+// missing program, permissions) is final.
+func bootstrapRetryable(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "already in progress") ||
+		strings.Contains(lower, "input/output error") ||
+		strings.Contains(lower, "operation now in progress")
+}
+
+// waitUntilGone polls gone() every interval until it is true or timeout
+// passes, telling the operator each second that it is waiting. Returns
+// whether the job went away.
+func waitUntilGone(out io.Writer, gone func() bool, timeout, interval time.Duration) bool {
+	started := time.Now()
+	lastNotice := 0
+	for {
+		if gone() {
+			return true
+		}
+		waited := time.Since(started)
+		if waited >= timeout {
+			return false
+		}
+		if seconds := int(waited / time.Second); seconds > lastNotice {
+			lastNotice = seconds
+			fmt.Fprintf(out, "lxd: waiting for the old service to unload (%ds)\n", seconds)
+		}
+		time.Sleep(interval)
+	}
 }
 
 func launchctlUnload(scope serviceScope) error {
@@ -682,11 +740,17 @@ func reportScope(out io.Writer, scope serviceScope, callerSHA string) (verdict S
 	}
 	reportLine(out, "  ", "program", program)
 	facts := reportProgram(out, program, callerSHA, !scope.user)
-	reportLine(out, "  ", "launchd", launchdState(scope))
+	state, running := probeLaunchd(scope)
+	reportLine(out, "  ", "launchd", state)
 	if scope.user {
 		verdict, reason = judgeUserAgent(program, facts, callerSHA)
 	} else {
 		verdict, reason = judgeDaemon(scope, program, facts, callerSHA)
+	}
+	// Consistent on disk is not the same as up: a bootstrap that failed (or
+	// a bootout without one) leaves a correct plist and no daemon.
+	if verdict == ServiceOK && !running {
+		verdict, reason = ServiceNotRunning, notRunningReason(scope, state)
 	}
 	reportLine(out, "  ", "verdict", verdictLine(verdict, reason))
 	return verdict, reason, true, nil
@@ -799,20 +863,36 @@ func describeType(mode os.FileMode) string {
 	}
 }
 
-// launchdState summarizes `launchctl print <domain>/<label>` for the report.
-// Its text format is Apple's and has no contract; the verdict never depends
-// on it.
-func launchdState(scope serviceScope) string {
+// probeLaunchd is the launchd query behind the status report; tests point
+// it at a table.
+var probeLaunchd = launchdState
+
+// notRunningReason tells the operator how to bring a consistent, unloaded
+// service up. A reload through install is the same bootout/bootstrap pair.
+func notRunningReason(scope serviceScope, state string) string {
+	sudo := ""
+	if scope.needRoot {
+		sudo = "sudo "
+	}
+	return "the service is installed and consistent but not running in launchd (" + state + "); load it: " +
+		sudo + "launchctl bootstrap " + scope.bootTgt + " " + scope.plist + " (or " + sudo + "sing-box lxd --service=install to reload)"
+}
+
+// launchdState summarizes `launchctl print <domain>/<label>` for the report
+// and says whether the job is running. The text format is Apple's and has no
+// contract; only "state = running" is read for the verdict, the rest is for
+// the operator.
+func launchdState(scope serviceScope) (summary string, running bool) {
 	output, err := exec.Command("launchctl", "print", scope.bootTgt+"/"+launchdLabel).CombinedOutput()
 	if err != nil {
 		firstLine, _, _ := strings.Cut(strings.TrimSpace(string(output)), "\n")
 		if firstLine == "" {
 			firstLine = err.Error()
 		}
-		return "not loaded (" + firstLine + ")"
+		return "not loaded (" + firstLine + ")", false
 	}
 	state, pid, program := parseLaunchctlPrint(string(output))
-	summary := state
+	summary = state
 	if summary == "" {
 		summary = "loaded, state unknown"
 	}
@@ -822,7 +902,7 @@ func launchdState(scope serviceScope) string {
 	if program != "" {
 		summary += ", program " + program
 	}
-	return summary
+	return summary, state == "running"
 }
 
 // parseLaunchctlPrint reads the job's own top-level fields (one tab deep);

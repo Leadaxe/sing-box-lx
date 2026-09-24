@@ -114,6 +114,8 @@ real file or directory owned by root`). Предикат платформенн�
 же пользователя, которому принадлежит бинарь, повышения нет. Отчёт status в конце
 печатается и там.
 
+Перезагрузка job'а: `launchctl bootout` возвращается, как только запрос принят, а job с живым ядром выгружается ещё несколько секунд (на живой проверке 2026-09-24 — около 3 с); `bootstrap` в это окно падает с `Bootstrap failed: 5: Input/output error` (в логе launchd — `37: Operation already in progress`), и служба остаётся незагруженной. Поэтому install после bootout ждёт исчезновения job'а (`launchctl print` → not found, опрос каждые 250 мс, до 10 с, с сообщением `waiting for the old service to unload (Ns)`), затем делает bootstrap и повторяет его до 10 с на ошибках «already in progress» / «Input/output error»; другие ошибки bootstrap финальны.
+
 ### 2.5 `--service=copy` (root)
 
 Только размещение копии (2.3) с `plist_path: ""` — plist не пишется, launchd не
@@ -168,10 +170,11 @@ state, pid, загруженная программа); вердикт блок�
 | `UNSAFE` | исполняемый файл (или каталог на пути к нему) не проходит инвариант | 2 |
 | `NOT INSTALLED` | ни plist, ни копии | 3 |
 | `COPY ONLY` | copy only: копия проходит инвариант, сайдкар без plist, sha файла == сайдкар == вызывающий бинарь | 4 |
+| `NOT RUNNING` | на диске всё как у `OK`, но у launchd нет работающего job'а этого ярлыка (`launchctl print` → not loaded или state ≠ running): bootstrap упал или был только bootout; в причине — команда `launchctl bootstrap <domain> <plist>` (или `--service=install` для перезагрузки) | 5 |
 | ошибка | plist не читается/не разбирается, не читается вызывающий бинарь | 1 |
 
 Общий вердикт — самый тяжёлый из присутствующих блоков
-(`OK` < `COPY ONLY` < `MISMATCH` < `UNSAFE`).
+(`OK` < `COPY ONLY` < `NOT RUNNING` < `MISMATCH` < `UNSAFE`).
 
 ### 2.8 Самопроверка при старте
 
@@ -217,7 +220,7 @@ root-owned copy`. launchd пишет его в `lxd.log` (StandardErrorPath) п�
   |---|---|---|---|
   | `sing-box lxd --service=copy` | да | копия + сайдкар, без службы | 0 / 1 ошибка |
   | `sing-box lxd --service=install` | да | копия + сайдкар + plist + launchd | 0 / 1 |
-  | `sing-box lxd --service=status` | нет | отчёт | 0 OK, 2 MISMATCH/UNSAFE, 3 NOT INSTALLED, 4 COPY ONLY, 1 ошибка |
+  | `sing-box lxd --service=status` | нет | отчёт | 0 OK, 2 MISMATCH/UNSAFE, 3 NOT INSTALLED, 4 COPY ONLY, 5 NOT RUNNING, 1 ошибка |
   | `sing-box lxd --service=uninstall [--purge]` | да (для системной области) | снять службу и/или копию по сайдкару | 0 / 1 |
   | `sing-box lxd --service=uninstall --keep-copy` | да | снять службу, копию оставить для запуска без службы (→ copy only) | 0 / 1 |
 
