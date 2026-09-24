@@ -1,0 +1,38 @@
+{
+  "log": { "level": "info" },
+  "lx": {
+    "wg": {
+      "idle_suspend": "30s",
+      "idle_suspend_reachable": "5m",
+      "idle_teardown": "10m",
+      "lazy_build": true,
+      "build_max": 4,
+      "build_overflow": "wait"
+    },
+    "masque": {
+      "idle_timeout": "5m"
+    }
+  },
+  "inbounds": [
+    { "type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 2080 }
+  ],
+  "outbounds": [
+    { "type": "direct", "tag": "direct" },
+    {
+      "type": "masque", "tag": "masque-global",
+      "server": "127.0.0.1", "server_port": 443,
+      "profile": "standard", "vhttp": "h3",
+      "uri": "https://example.com/.well-known/masque/ip/*/*/",
+      "ip": "172.16.0.2/32"
+    },
+    {
+      "type": "masque", "tag": "masque-always-up",
+      "server": "127.0.0.1", "server_port": 443,
+      "profile": "standard", "vhttp": "h3",
+      "uri": "https://example.com/.well-known/masque/ip/*/*/",
+      "ip": "172.16.0.3/32",
+      "idle_timeout": "0"
+    }
+  ],
+  "route": { "final": "direct" }
+}

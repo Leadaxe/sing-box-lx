@@ -98,5 +98,8 @@ lx-version: ## Print the computed lx version string (e.g. 1.13.13-lx.1).
 lx-print-tags: ## Print the canonical LX_TAGS set (so CI/release don't duplicate it).
 	@echo "$(LX_TAGS)"
 
-lx-check: lx-build ## Validate sample configs with the freshly built binary.
-	./$(LX_OUTPUT) check -c lx-test/config/minimal.json
+lx-check: lx-build ## Validate every sample config in lx-test/config with the freshly built binary.
+	@set -e; for config in lx-test/config/*.json; do \
+		echo "check $$config"; \
+		./$(LX_OUTPUT) check -c "$$config"; \
+	done
