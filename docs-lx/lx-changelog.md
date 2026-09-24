@@ -28,6 +28,22 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.1
+
+- ⬆️ **База апстрима: sing-box v1.14.2** ([SPEC 102](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/102-UPSTREAM_SYNC_1_14_2/SPEC.md);
+  решение владельца 2026-09-24 после lx.13, дрейф 0). Семь апстримных коммитов: сброс сети только по фактической смене
+  интерфейса по умолчанию (`networkResetPending`, диспатч под `interfaceUpdateAccess`), а не на каждом старте, и без purge
+  TCP-NAT (`sing-tun` ddaa4ca25e3b); `service/resolved` — D-Bus-методы резолва не виснут/не падают, `mDNS.ReverseAddr`,
+  `deleteCallback` в `RevertLink`; hysteria2 realm STUN через default domain resolver и port hopping без ухода на другой
+  резолвнутый адрес (`sing-quic` 6a3a24d65b99); hijack-dns отчитывается об успешном хендшейке до обработки;
+  `common/dialer` переписан апстримом (нашей дельты нет); `adapter.DNSQueryOptionsFrom` удалён (не использовался).
+  Ритуал: сабмодуль `sing-tun` слит первым (конфликт `monitor_shared.go` — форма апстрима; дельта форка = только SPEC 040
+  self-heal), затем ядро — четыре конфликта (`go.mod`/`go.sum` с сохранением четырёх `replace`, `service/resolved` ×2 —
+  форма апстрима: наша сторона была testing-формой тех же фиксов из SPEC 095). Швы SPEC 047/073 в `route/network.go`
+  и SPEC 046 в `route/dns.go` целы; `box.go` уже нёс порядок `ConnectionManager` → `NetworkManager`. `upstream.version`
+  → 1.14.2, линия релизов начинается с `v1.14.2-lx.1`. Тулчейн и CI-скрипты апстрим не менял, dry run не требовался.
+  Прогон смены сети на устройстве — при перепине LxBox.
+
 #### v1.14.1-lx.13
 
 - 🧩 **Корневой блок `lx` конфига**
