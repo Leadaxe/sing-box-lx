@@ -190,6 +190,14 @@ func New(options Options) (*Box, error) {
 		return nil, E.Cause(err, "create log factory")
 	}
 	service.MustRegister[log.Factory](ctx, logFactory)
+	// lx:begin lx-block
+	// SPEC 098 — resolve the root `lx` block into the context before the router
+	// and every node are created.
+	ctx, err = applyLXOptions(ctx, &options.Options, logFactory.NewLogger("lx"))
+	if err != nil {
+		return nil, err
+	}
+	// lx:end lx-block
 
 	var internalServices []adapter.LifecycleService
 	routeOptions := common.PtrValueOrDefault(options.Route)
