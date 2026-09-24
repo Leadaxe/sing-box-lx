@@ -15,7 +15,15 @@ import (
 // so the output shape matches what the client already knows from config formatting.
 // Best-effort by design: a marshal failure yields "" (GetRunningConfig then reports
 // Unavailable) rather than failing service start over an observability snapshot.
+//
+// The root `lx` block is shown canonical (SPEC 098): the deprecated
+// route.lx_idle_* aliases are folded into lx.wg.* on this by-value copy —
+// ResolveLX replaces the LX and Route pointers instead of writing through them,
+// so the caller's options, and the alias warnings box.New reports from them,
+// are untouched. A resolve error leaves the snapshot as given; box.New fails on
+// the same error right after.
 func captureRunningConfig(options option.Options) string {
+	_, _, _ = option.ResolveLX(&options)
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)
 	encoder.SetIndent("", "  ")
