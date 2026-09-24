@@ -17,7 +17,7 @@
 | [003-AWG](003-AWG/FEATURE.md) | AmneziaWG 2.0 / 3.x: обфусцированный WG-endpoint, полный клиентский паритет с amneziawg-go v3.1 (AWG2 16/16 + 9 ключей AWG3) + masquerade `id`/`ip`/`ib` | `with_awg` | 003 · 005 · 008 · 009 · 025 · 026 · 031 · 007 · 080 · 081 |
 | [006-OBSERVABILITY](006-OBSERVABILITY/FEATURE.md) | Расширения libbox gRPC для UI: RPC, `detourList`, DNS-стрим, HTTP-пробник узла | `with_lx_command` | 014 · 015 · 016 · 017 · 018 · 035 · 037 · 038 · 058 |
 | [007-URLTEST_BALANCE](007-URLTEST_BALANCE/FEATURE.md) | `round_robin` в `urltest`: пул, ленивый health-check, sticky-слоты; реакция `least_test` на отказы боевых дайлов | `with_lx_command` (только `GetPool`) | 019 · 054 |
-| [008-ENERGY](008-ENERGY/FEATURE.md) | Idle-suspend простаивающих WG/AWG: батарея, нагрев, RSS −31 % | `with_lx_idle_suspend` | 020 · 096 |
+| [008-ENERGY](008-ENERGY/FEATURE.md) | Idle-suspend простаивающих WG/AWG: батарея, нагрев, RSS −31 % | `with_lx_idle_suspend` | 020 · 096 · 097 |
 | [009-MASQUE_WARP](009-MASQUE_WARP/FEATURE.md) | MASQUE CONNECT-IP outbound (RFC 9484), профиль Cloudflare WARP; конфиг по стандарту sing-box (`vhttp` + блок `tls`) | — | 021 · 062 · 074 · 091 |
 | [012-VLESS_ENCRYPTION](012-VLESS_ENCRYPTION/FEATURE.md) | ✅ PQ-слой `mlkem768x25519plus` внутри VLESS — отгружено (`v1.14.0-lx.18`), девайс-верифицировано | — | 032 |
 | [013-DNS_GROUP](013-DNS_GROUP/FEATURE.md) | Группа DNS-серверов: `stable` / `fastest` / `parallel` на TTL-модели, трасса и состояние в наблюдаемости | — | 033 · 035 |
