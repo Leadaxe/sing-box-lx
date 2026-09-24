@@ -28,6 +28,7 @@ type _Options struct {
 	Route                *RouteOptions         `json:"route,omitempty"`
 	Services             []Service             `json:"services,omitempty"`
 	Experimental         *ExperimentalOptions  `json:"experimental,omitempty"`
+	LX                   *LXOptions            `json:"lx,omitempty"` // lx: SPEC 098 — root block of the fork's global knobs, option/lx.go
 }
 
 type Options _Options
