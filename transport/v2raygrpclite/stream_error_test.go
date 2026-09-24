@@ -16,20 +16,23 @@ func (resettingReader) Read([]byte) (int, error) {
 
 // lx: SPEC 082 — issue #14: the HTTP/2 library's StreamError type must not
 // leave the conn, neither from a body read nor from a failed late setup.
+// Since sing v0.9.6 the conn itself is pure upstream: baderror.WrapH2 boxes the
+// error into its own protocolError type (SPEC 095), which is what keeps x/net's
+// readLoop — a direct `err.(StreamError)` assertion — from spinning. The
+// wrapper still exposes Unwrap by design, so this guard checks the concrete
+// type, not errors.As: a regression to a raw StreamError is what it must catch.
 func TestGunConnHidesStreamError(t *testing.T) {
-	var target http2.StreamError
-
-	conn := newLateGunConn(io.Discard)
+	conn := newLateGunConn(io.Discard, func() {})
 	conn.setup(resettingReader{}, nil)
 	_, err := conn.Read(make([]byte, 16))
-	if err == nil || errors.As(err, &target) {
+	if _, raw := err.(http2.StreamError); err == nil || raw {
 		t.Fatalf("body read leaked StreamError: %v", err)
 	}
 
-	late := newLateGunConn(io.Discard)
+	late := newLateGunConn(io.Discard, func() {})
 	late.setup(nil, http2.StreamError{StreamID: 3, Code: http2.ErrCodeInternal})
 	_, err = late.Read(make([]byte, 16))
-	if err == nil || errors.As(err, &target) {
+	if _, raw := err.(http2.StreamError); err == nil || raw {
 		t.Fatalf("late setup leaked StreamError: %v", err)
 	}
 }

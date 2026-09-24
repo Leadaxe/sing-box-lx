@@ -79,15 +79,25 @@ type LinkDomain struct {
 func (t *resolve1Manager) getLink(ifIndex int32) (*TransportLink, *dbus.Error) {
 	link, loaded := t.links[ifIndex]
 	if !loaded {
-		link = &TransportLink{}
-		t.links[ifIndex] = link
 		iif, err := t.network.InterfaceFinder().ByIndex(int(ifIndex))
 		if err != nil {
 			return nil, wrapError(err)
 		}
-		link.iif = iif
+		link = &TransportLink{iif: iif}
+		t.links[ifIndex] = link
 	}
 	return link, nil
+}
+
+func (t *resolve1Manager) interfaceName(ifIndex int32) string {
+	if ifIndex == 0 {
+		return "*"
+	}
+	iif, err := t.network.InterfaceFinder().ByIndex(int(ifIndex))
+	if err != nil {
+		return F.ToString(ifIndex)
+	}
+	return iif.Name
 }
 
 func (t *resolve1Manager) getSenderProcess(sender dbus.Sender) (int32, error) {
@@ -203,12 +213,6 @@ func familyToString(family int32) string {
 }
 
 func (t *resolve1Manager) ResolveHostname(sender dbus.Sender, ifIndex int32, hostname string, family int32, flags uint64) (addresses []Address, canonical string, outflags uint64, err *dbus.Error) {
-	t.linkAccess.Lock()
-	link, err := t.getLink(ifIndex)
-	if err != nil {
-		return
-	}
-	t.linkAccess.Unlock()
 	var strategy C.DomainStrategy
 	switch family {
 	case syscall.AF_UNSPEC:
@@ -218,12 +222,12 @@ func (t *resolve1Manager) ResolveHostname(sender dbus.Sender, ifIndex int32, hos
 	case syscall.AF_INET6:
 		strategy = C.DomainStrategyIPv6Only
 	}
-	ctx := t.logRequest(sender, "ResolveHostname ", link.iif.Name, " ", hostname, " ", familyToString(family), " ", flags)
+	ctx := t.logRequest(sender, "ResolveHostname ", t.interfaceName(ifIndex), " ", hostname, " ", familyToString(family), " ", flags)
 	responseAddresses, lookupErr := t.dnsRouter.Lookup(ctx, hostname, adapter.DNSQueryOptions{
 		LookupStrategy: strategy,
 	})
 	if lookupErr != nil {
-		err = wrapError(err)
+		err = wrapError(lookupErr)
 		return
 	}
 	addresses = common.Map(responseAddresses, func(it netip.Addr) Address {
@@ -244,12 +248,6 @@ func (t *resolve1Manager) ResolveHostname(sender dbus.Sender, ifIndex int32, hos
 }
 
 func (t *resolve1Manager) ResolveAddress(sender dbus.Sender, ifIndex int32, family int32, address []byte, flags uint64) (names []Name, outflags uint64, err *dbus.Error) {
-	t.linkAccess.Lock()
-	link, err := t.getLink(ifIndex)
-	if err != nil {
-		return
-	}
-	t.linkAccess.Unlock()
 	addr, ok := netip.AddrFromSlice(address)
 	if !ok {
 		err = wrapError(E.New("invalid address"))
@@ -279,13 +277,13 @@ func (t *resolve1Manager) ResolveAddress(sender dbus.Sender, ifIndex int32, fami
 			},
 		},
 	}
-	ctx := t.logRequest(sender, "ResolveAddress ", link.iif.Name, familyToString(family), addr, flags)
+	ctx := t.logRequest(sender, "ResolveAddress ", t.interfaceName(ifIndex), familyToString(family), addr, flags)
 	var metadata adapter.InboundContext
 	metadata.InboundType = t.Type()
 	metadata.Inbound = t.Tag()
 	response, lookupErr := t.dnsRouter.Exchange(adapter.WithContext(ctx, &metadata), request, adapter.DNSQueryOptions{})
 	if lookupErr != nil {
-		err = wrapError(err)
+		err = wrapError(lookupErr)
 		return
 	}
 	if response.Rcode != mDNS.RcodeSuccess {
@@ -305,12 +303,6 @@ func (t *resolve1Manager) ResolveAddress(sender dbus.Sender, ifIndex int32, fami
 }
 
 func (t *resolve1Manager) ResolveRecord(sender dbus.Sender, ifIndex int32, hostname string, qClass uint16, qType uint16, flags uint64) (records []ResourceRecord, outflags uint64, err *dbus.Error) {
-	t.linkAccess.Lock()
-	link, err := t.getLink(ifIndex)
-	if err != nil {
-		return
-	}
-	t.linkAccess.Unlock()
 	request := &mDNS.Msg{
 		MsgHdr: mDNS.MsgHdr{
 			RecursionDesired: true,
@@ -323,7 +315,7 @@ func (t *resolve1Manager) ResolveRecord(sender dbus.Sender, ifIndex int32, hostn
 			},
 		},
 	}
-	ctx := t.logRequest(sender, "ResolveRecord", link.iif.Name, hostname, mDNS.Class(qClass), mDNS.Type(qType), flags)
+	ctx := t.logRequest(sender, "ResolveRecord", t.interfaceName(ifIndex), hostname, mDNS.Class(qClass), mDNS.Type(qType), flags)
 	var metadata adapter.InboundContext
 	metadata.InboundType = t.Type()
 	metadata.Inbound = t.Tag()
@@ -353,13 +345,6 @@ func (t *resolve1Manager) ResolveRecord(sender dbus.Sender, ifIndex int32, hostn
 }
 
 func (t *resolve1Manager) ResolveService(sender dbus.Sender, ifIndex int32, hostname string, sType string, domain string, family int32, flags uint64) (srvData []SRVRecord, txtData []TXTRecord, canonicalName string, canonicalType string, canonicalDomain string, outflags uint64, err *dbus.Error) {
-	t.linkAccess.Lock()
-	link, err := t.getLink(ifIndex)
-	if err != nil {
-		return
-	}
-	t.linkAccess.Unlock()
-
 	serviceName := hostname
 	if hostname != "" && !strings.HasSuffix(hostname, ".") {
 		serviceName += "."
@@ -373,7 +358,7 @@ func (t *resolve1Manager) ResolveService(sender dbus.Sender, ifIndex int32, host
 		serviceName += "."
 	}
 
-	ctx := t.logRequest(sender, "ResolveService ", link.iif.Name, " ", hostname, " ", sType, " ", domain, " ", familyToString(family), " ", flags)
+	ctx := t.logRequest(sender, "ResolveService ", t.interfaceName(ifIndex), " ", hostname, " ", sType, " ", domain, " ", familyToString(family), " ", flags)
 
 	srvRequest := &mDNS.Msg{
 		MsgHdr: mDNS.MsgHdr{
