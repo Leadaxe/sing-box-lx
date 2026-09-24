@@ -72,15 +72,18 @@ type Client struct {
 	// realityEnabled records whether the TLS config is a Reality client config.
 	// It drives mode=auto resolution (Reality → stream-one, like Xray).
 	realityEnabled bool
+	// httpVersion is the HTTP version the pool speaks (lx: SPEC 104). On HTTP/1.1
+	// long requests go out with "Connection: close".
+	httpVersion httpVersion
 	// noGRPCHeader suppresses the default "Content-Type: application/grpc" on
 	// streamed-body requests (stream-one, stream-up). See option.NoGRPCHeader.
 	noGRPCHeader bool
 }
 
 // NewClient builds an XHTTP client transport. The tlsConfig (possibly Reality)
-// is consumed exactly like the other v2ray transports: when present it drives
-// an HTTP/2 dialer over the TLS dialer; when absent a plaintext HTTP/2 (h2c)
-// transport is used.
+// selects the HTTP version (lx: SPEC 104): HTTP/2 over the TLS dialer by
+// default, HTTP/1.1 for tls.alpn ["http/1.1"] and for a cleartext server,
+// HTTP/3 over QUIC for tls.alpn ["h3"].
 func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayXHTTPOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
 	mode := options.Mode
 	if mode == "" {
@@ -125,40 +128,67 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		return nil, err
 	}
 
-	// newTransport builds one pooled HTTP connection. XMUX holds several of these
-	// and decides which one carries a given stream; each has its own dialer, so
-	// separate transports mean separate TCP+TLS connections (SPECS/TASKS/059).
-	var (
-		scheme       string
-		newTransport func() *http2.Transport
-	)
-	if tlsConfig == nil {
-		scheme = "http"
-		// Plaintext h2c: speak HTTP/2 over a cleartext TCP conn so the same
-		// streaming request/response body machinery works without TLS.
-		newTransport = func() *http2.Transport {
-			return &http2.Transport{
-				AllowHTTP:       true,
-				ReadIdleTimeout: xmuxConfig.keepAlivePeriod,
-				DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.STDConfig) (net.Conn, error) {
-					return dialer.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr(addr))
-				},
-			}
+	var logger log.ContextLogger
+	if logFactory := service.FromContext[log.Factory](ctx); logFactory != nil {
+		logger = logFactory.NewLogger("xhttp")
+	}
+	warn := func(message string) {
+		if logger != nil {
+			logger.Warn(message)
 		}
-	} else {
+	}
+
+	// lx: SPEC 104 — the HTTP version follows tls.alpn, REALITY and the presence
+	// of TLS, by Xray's decideHTTPVersion. newConn builds one pooled HTTP
+	// connection; XMUX holds several of these and decides which one carries a
+	// given stream (SPECS/TASKS/059).
+	realityEnabled := tlsConfigIsReality(tlsConfig)
+	version := decideHTTPVersion(tlsConfig, realityEnabled)
+	var (
+		scheme  string
+		newConn func() xmuxConn
+	)
+	switch version {
+	case httpVersion3:
 		scheme = "https"
+		newConn, err = newHTTP3Transport(dialer, serverAddr, tlsConfig, xmuxConfig.keepAlivePeriod, warn)
+		if err != nil {
+			return nil, err
+		}
+	case httpVersion11:
+		// Without TLS too: Xray speaks HTTP/1.1 to a cleartext server, and reverse
+		// proxies on a cleartext port usually accept nothing else.
+		var tlsDialer tls.Dialer
+		if tlsConfig == nil {
+			scheme = "http"
+		} else {
+			scheme = "https"
+			tlsDialer = tls.NewDialer(dialer, tlsConfig)
+		}
+		newConn = func() xmuxConn {
+			return &http1XmuxConn{transport: newHTTP1Transport(dialer, tlsDialer)}
+		}
+	default:
+		scheme = "https"
+		if realityEnabled && realityALPNNeedsH2(tlsConfig.NextProtos()) {
+			warn(`xhttp: REALITY uses HTTP/2, tls.alpn replaced with ["h2"]`)
+			tlsConfig.SetNextProtos([]string{http2.NextProtoTLS})
+		}
 		if len(tlsConfig.NextProtos()) == 0 {
 			tlsConfig.SetNextProtos([]string{http2.NextProtoTLS})
 		}
 		tlsDialer := tls.NewDialer(dialer, tlsConfig)
-		newTransport = func() *http2.Transport {
-			return &http2.Transport{
+		newConn = func() xmuxConn {
+			return &http2XmuxConn{transport: &http2.Transport{
 				ReadIdleTimeout: xmuxConfig.keepAlivePeriod,
 				DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.STDConfig) (net.Conn, error) {
 					return tlsDialer.DialTLSContext(ctx, M.ParseSocksaddr(addr))
 				},
-			}
+			}}
 		}
+	}
+	if logger != nil {
+		logger.Debug("xhttp: HTTP version ", version)
 	}
 
 	var host string
@@ -187,17 +217,14 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		headers[key] = value
 	}
 
-	xmux := newXmuxManager(xmuxConfig, func() xmuxConn {
-		return &http2XmuxConn{transport: newTransport()}
-	})
+	xmux := newXmuxManager(xmuxConfig, newConn)
 	// The pool's transitions (a connection opened, a connection retired and why)
 	// are what is worth observing about XMUX — the pool size itself follows from
 	// the config. Debug level, so it costs nothing unless someone is looking.
 	// See SPECS/TASKS/059 §8.2.
-	if logFactory := service.FromContext[log.Factory](ctx); logFactory != nil {
-		xmuxLogger := logFactory.NewLogger("xhttp")
+	if logger != nil {
 		xmux.onEvent = func(format string, args ...any) {
-			xmuxLogger.Debug(fmt.Sprintf(format, args...))
+			logger.Debug(fmt.Sprintf(format, args...))
 		}
 	}
 
@@ -213,7 +240,8 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		headers:        headers,
 		paddingRange:   paddingRange,
 		meta:           meta,
-		realityEnabled: tlsConfigIsReality(tlsConfig),
+		realityEnabled: realityEnabled,
+		httpVersion:    version,
 		noGRPCHeader:   options.NoGRPCHeader,
 	}, nil
 }
@@ -311,6 +339,12 @@ func (c *Client) newRequest(ctx context.Context, method, sessionID, seqStr strin
 	c.applyXPadding(request)
 	if body != nil {
 		request.Body = readCloser{body}
+	}
+	// lx: SPEC 104 — on HTTP/1.1 the long requests (download GET, streamed
+	// bodies; no seq) take their own connection, like Xray's DisableKeepAlives
+	// client; packet-up upload POSTs (with a seq) stay on keep-alive.
+	if c.httpVersion == httpVersion11 && seqStr == "" {
+		request.Close = true
 	}
 	return request.WithContext(ctx), nil
 }

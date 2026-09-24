@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sagernet/sing-box/common/badh2"
 	C "github.com/sagernet/sing-box/constant"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -538,7 +537,7 @@ func newStreamConn(reader *io.PipeReader, writer *io.PipeWriter, serverAddr M.So
 
 func (c *streamConn) setupReader(reader io.ReadCloser, err error) {
 	c.reader = reader
-	c.readerErr = badh2.HideStreamError(err) // lx: SPEC 082
+	c.readerErr = hideTransportError(err) // lx: SPEC 082, 104
 	close(c.created)
 }
 
@@ -581,8 +580,8 @@ func (c *streamConn) Read(b []byte) (int, error) {
 		return 0, c.readerErr
 	}
 	n, err := c.reader.Read(b)
-	c.breaker.noteRead(err)                                                     // lx: SPEC 076
-	return n, c.breaker.outboundErr(badh2.HideStreamError(err), c.readDeadline) // lx: SPEC 082, 094 — after noteRead: the breaker classifies the raw error
+	c.breaker.noteRead(err)                                                  // lx: SPEC 076
+	return n, c.breaker.outboundErr(hideTransportError(err), c.readDeadline) // lx: SPEC 082, 094, 104 — after noteRead: the breaker classifies the raw error
 }
 
 func (c *streamConn) Write(b []byte) (int, error) {
@@ -684,7 +683,7 @@ func newSplitConn(uploadReader *io.PipeReader, writer *io.PipeWriter, serverAddr
 // setupReader binds the download body (or its error) and releases blocked Reads.
 func (c *splitConn) setupReader(reader io.ReadCloser, err error) {
 	c.reader = reader
-	c.readerErr = badh2.HideStreamError(err) // lx: SPEC 082
+	c.readerErr = hideTransportError(err) // lx: SPEC 082, 104
 	close(c.created)
 }
 
@@ -719,8 +718,8 @@ func (c *splitConn) Read(b []byte) (int, error) {
 		return 0, c.readerErr
 	}
 	n, err := c.reader.Read(b)
-	c.breaker.noteRead(err)                                                     // lx: SPEC 076
-	return n, c.breaker.outboundErr(badh2.HideStreamError(err), c.readDeadline) // lx: SPEC 082, 094 — after noteRead: the breaker classifies the raw error
+	c.breaker.noteRead(err)                                                  // lx: SPEC 076
+	return n, c.breaker.outboundErr(hideTransportError(err), c.readDeadline) // lx: SPEC 082, 094, 104 — after noteRead: the breaker classifies the raw error
 }
 func (c *splitConn) Write(b []byte) (int, error) { return c.writer.Write(b) }
 
@@ -828,7 +827,7 @@ func newPacketConn(ctx context.Context, client *Client, sessionID string, server
 // releases readers blocked in Read. Mirrors streamConn.setupReader.
 func (c *packetConn) setupReader(reader io.ReadCloser, err error) {
 	c.reader = reader
-	c.readerErr = badh2.HideStreamError(err) // lx: SPEC 082
+	c.readerErr = hideTransportError(err) // lx: SPEC 082, 104
 	close(c.created)
 }
 
@@ -858,8 +857,8 @@ func (c *packetConn) Read(b []byte) (int, error) {
 		return 0, c.readerErr
 	}
 	n, err := c.reader.Read(b)
-	c.breaker.noteRead(err)                                                     // lx: SPEC 076
-	return n, c.breaker.outboundErr(badh2.HideStreamError(err), c.readDeadline) // lx: SPEC 082, 094 — after noteRead: the breaker classifies the raw error
+	c.breaker.noteRead(err)                                                  // lx: SPEC 076
+	return n, c.breaker.outboundErr(hideTransportError(err), c.readDeadline) // lx: SPEC 082, 094, 104 — after noteRead: the breaker classifies the raw error
 }
 
 // Write delivers a write as one or more sequential upload POSTs. A write larger
