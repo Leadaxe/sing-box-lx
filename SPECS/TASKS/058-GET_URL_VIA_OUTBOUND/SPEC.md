@@ -147,7 +147,7 @@ func (r *GetURLResult) ElapsedMs() int32
 - **Чтение тела**: `io.LimitReader(maxBytes+1)`; прочитано больше лимита →
   усечь до лимита, `truncated = true`. Кламп: `0 → 256 KiB`,
   запрошенное выше потолка `1 MiB` — прижимается к потолку.
-- **`remoteAddr`** — `httptrace.GotConn → conn.RemoteAddr()`.
+- **`remoteAddr`** — `httptrace.GotConn → conn.RemoteAddr()`. Conn без адреса (naive: cronet-go отдаёт nil) → поле пустое, без паники ([SPEC 099](../099-GETURL_NAIVE_NIL_REMOTEADDR_PANIC/SPEC.md)).
 - **История urltest НЕ трогается**: фетч — не замер (время включает тело,
   URL произвольный); писать его в `urlTestHistoryStorage` значило бы
   портить показания задержек в UI. Это осознанное отличие от донора.

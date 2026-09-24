@@ -149,9 +149,13 @@ DNS-запросы — и управлять им. Штатный канал д�
 | [037 — RUNNING_CONFIG_RPC](../../TASKS/037-RUNNING_CONFIG_RPC/SPEC.md) | Снапшот работающего конфига как источник правды при рассинхроне профиль↔ядро | C |
 | [038 — GOMOBILE_STRING_RETURN_FRAME_KILL](../../TASKS/038-GOMOBILE_STRING_RETURN_FRAME_KILL/SPEC.md) | Форма возврата снапшота: голая строка через мост убивала ядро на Android | C |
 | [058 — GET_URL_VIA_OUTBOUND](../../TASKS/058-GET_URL_VIA_OUTBOUND/SPEC.md) | HTTP-пробник узла: GET через тег с возвратом тела ответа | D |
+| [099 — GETURL_NAIVE_NIL_REMOTEADDR_PANIC](../../TASKS/099-GETURL_NAIVE_NIL_REMOTEADDR_PANIC/SPEC.md) | Пробник ронял процесс на naive-узле: conn cronet-go без адреса, `RemoteAddr().String()` на nil | I |
 
 ## Особенности сопровождения
 
+- **Conn узла может не иметь адреса.** `RemoteAddr()` и `LocalAddr()` у conn'а
+  naive-узла (cronet-go) возвращают nil. Потребитель адреса в lx-обработчике
+  проверяет nil до `String()`; иначе падает весь процесс (SPEC 099).
 - **Два набора сборки расходятся намеренно.** Мобильная библиотека
   и десктоп имеют разный состав; правка «для единообразия» ломает
   внешние панели — это уже происходило.

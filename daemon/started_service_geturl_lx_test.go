@@ -27,9 +27,10 @@ import (
 // probeDialer — минимальный N.Dialer поверх net.Dialer. Считает дайлы, чтобы
 // тест мог убедиться: обмен действительно пошёл через переданный узел.
 type probeDialer struct {
-	dials int
-	fail  error
-	block chan struct{} // если не nil — дайл висит до закрытия канала или отмены ctx
+	dials   int
+	fail    error
+	block   chan struct{} // если не nil — дайл висит до закрытия канала или отмены ctx
+	nilAddr bool          // если true — conn отдаёт nil из LocalAddr/RemoteAddr, как conn naive (cronet-go)
 }
 
 func (d *probeDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -44,8 +45,23 @@ func (d *probeDialer) DialContext(ctx context.Context, network string, destinati
 			return nil, ctx.Err()
 		}
 	}
-	return (&net.Dialer{}).DialContext(ctx, network, destination.String())
+	conn, err := (&net.Dialer{}).DialContext(ctx, network, destination.String())
+	if err != nil {
+		return nil, err
+	}
+	if d.nilAddr {
+		return nilAddrConn{conn}, nil
+	}
+	return conn, nil
 }
+
+// nilAddrConn повторяет форму conn'а cronet-go (BidirectionalConn): оба адреса
+// nil. Это не абстрактный случай — ровно так выглядит каждое соединение
+// naive-узла, и `RemoteAddr().String()` без проверки на нём — паника.
+type nilAddrConn struct{ net.Conn }
+
+func (nilAddrConn) LocalAddr() net.Addr  { return nil }
+func (nilAddrConn) RemoteAddr() net.Addr { return nil }
 
 func (d *probeDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	return nil, N.ErrUnknownNetwork
@@ -416,5 +432,43 @@ func TestGetURLViaOutbound_HostHeaderOverridesHost_LX(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the server never saw the request")
+	}
+}
+
+// lx: SPECS/TASKS/099-GETURL_NAIVE_NIL_REMOTEADDR_PANIC — conn naive-узла
+// (cronet-go) возвращает nil из RemoteAddr(); GotConn-трасса пробника звала
+// `.String()` без проверки и роняла процесс. Паника здесь = провал теста, а не
+// падение `go test`, чтобы регрессия читалась как обычный красный.
+func TestGetURLViaOutbound_NilRemoteAddrIsNotPanic_LX(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("GetURLViaOutbound panicked on a conn with nil RemoteAddr: %v", recovered)
+		}
+	}()
+	dialer := &probeDialer{nilAddr: true}
+	service := newProbeService(dialer)
+	response, err := service.GetURLViaOutbound(context.Background(), &GetURLViaOutboundRequest{
+		OutboundTag: "node",
+		Link:        server.URL,
+	})
+	if err != nil {
+		t.Fatalf("transport error: %v", err)
+	}
+	if response.Error != "" {
+		t.Fatalf("payload error: %s", response.Error)
+	}
+	if response.HttpStatus != http.StatusOK || string(response.Body) != "ok" {
+		t.Fatalf("unexpected response: status=%d body=%q", response.HttpStatus, response.Body)
+	}
+	if response.RemoteAddr != "" {
+		t.Fatalf("expected empty RemoteAddr for a conn without an address, got %q", response.RemoteAddr)
+	}
+	if dialer.dials != 1 {
+		t.Fatalf("expected exactly one dial through the node, got %d", dialer.dials)
 	}
 }

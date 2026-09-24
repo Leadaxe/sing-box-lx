@@ -181,12 +181,18 @@ func (s *StartedService) GetURLViaOutbound(ctx context.Context, request *GetURLV
 
 	// remoteAddr is captured from the connection actually established inside the tunnel —
 	// this is where the target resolved to through THIS node, not the node's own exit IP
-	// (that one is carried by the body).
+	// (that one is carried by the body). Not every conn has an address: a naive node
+	// (cronet-go BidirectionalConn) returns nil from RemoteAddr(), and calling String()
+	// on that nil interface took the whole process down (SPEC 099). Nil address = empty
+	// field, the same state the response already has for a probe that never connected.
 	var remoteAddr string
 	httpRequest = httpRequest.WithContext(httptrace.WithClientTrace(httpRequest.Context(), &httptrace.ClientTrace{
 		GotConn: func(info httptrace.GotConnInfo) {
-			if info.Conn != nil {
-				remoteAddr = info.Conn.RemoteAddr().String()
+			if info.Conn == nil {
+				return
+			}
+			if addr := info.Conn.RemoteAddr(); addr != nil {
+				remoteAddr = addr.String()
 			}
 		},
 	}))
