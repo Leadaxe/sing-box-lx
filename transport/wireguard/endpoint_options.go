@@ -43,6 +43,11 @@ type EndpointOptions struct {
 	// tag off, a non-empty value is rejected by device_stub_awg.go.
 	AmneziaWG option.AmneziaWGOptions
 	// lx:end awg
+	// lx:begin lazy-build
+	// LazyDevice skips building the tun device in NewEndpoint: the endpoint is
+	// born torn down and the first Rebuild builds it (SPEC 097).
+	LazyDevice bool
+	// lx:end lazy-build
 }
 
 type PeerOptions struct {

@@ -200,6 +200,11 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 		Address:         options.Address,
 		AllowedAddress:  allowedAddresses,
 	}
+	// lx:begin lazy-build
+	if options.LazyDevice {
+		return newLazyEndpoint(options, peers, ipcConf, allowedAddresses, deviceOptions), nil
+	}
+	// lx:end lazy-build
 	tunDevice, err := NewDevice(deviceOptions)
 	if err != nil {
 		return nil, E.Cause(err, "create WireGuard device")
@@ -253,7 +258,7 @@ func (e *Endpoint) Rebuild() error {
 	if e.tunDevice != nil {
 		return nil // never torn down (or already rebuilt)
 	}
-	tunDevice, err := NewDevice(e.deviceOptions)
+	tunDevice, err := newDeviceFn(e.deviceOptions) // lx: SPEC 097 — counted in tests
 	if err != nil {
 		return E.Cause(err, "rebuild WireGuard device")
 	}
