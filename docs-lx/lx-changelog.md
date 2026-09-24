@@ -28,6 +28,14 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.2-rc.3
+
+Пререлиз линии `v1.14.2-lx.2`; подробности — в секции `v1.14.2-lx.2` ниже.
+
+- 🐛 **lxd: служба Windows падала на первом `/admin/apply`** (rc.1/rc.2) — тело службы получало контекст без реестра сервисов ядра, apply паниковал, клиент видел EOF. Теперь служба запускает демон на контексте ядра, как консольный `lxd`; `lxd.Run` без реестра отказывает сразу (`lxd: context without service registry`); паника в admin REST — JSON 500 и стек в `lxd.log`, в gRPC — `codes.Internal` и стек в лог (две строки `// lx:` в `daemon/server.go`); на Windows stdlib `log` (ошибки net/http) тоже пишется в `lxd.log`. ([SPEC 103 §4.4](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/103-LXD_WINDOWS_SERVICE/SPEC.md))
+- ✨ **XHTTP: версия HTTP по `tls.alpn`** и 🪟 **служба Windows (SCM)** — из rc.2/rc.1.
+- База — sing-box `v1.14.2`, дрейфа от `upstream/stable` нет.
+
 #### v1.14.2-lx.2-rc.2
 
 Пререлиз линии `v1.14.2-lx.2`; подробности — в секции `v1.14.2-lx.2` ниже.
@@ -46,7 +54,7 @@ required for stable tags); this changelog section is the fallback used for pre-r
   класс дефекта, что SPEC 100 закрыл на macOS). Теперь модель SPEC 100 перенесена на SCM: служба `sing-box-lxd`
   исполняет защищённую копию, а не файл, из которого её поставили, и поднимает last-good до входа пользователя.
   Код — только пакет `lxd/`, `cmd/sing-box/cmd_lxd_lx.go` и новые `cmd/sing-box/*_windows_lx.go`; апстримных
-  файлов ноль.
+  файлов ноль (с rc.3 — две строки `// lx:` в `daemon/server.go`, recover-интерсепторы gRPC).
   - Служба SCM `sing-box-lxd`: `LocalSystem`, автозапуск, зависимость `Tcpip`; `BinaryPathName` собирается
     `ComposeCommandLine` (путь копии в кавычках + `lxd --state-dir <abs>`); восстановление — три рестарта через 5 с,
     сброс через 86400 с, рестарт и при остановке с ненулевым кодом; DACL службы
