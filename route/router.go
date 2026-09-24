@@ -79,6 +79,7 @@ type Router struct {
 	idlePauseCallback    *list.Element[pause.Callback]
 	reachMu              sync.RWMutex
 	reachCache           map[string]bool
+	reachRefs            map[string]selectionRefs // SPEC 097 — incoming edges per tag, same walk and dirty flag
 	reachDirty           atomic.Bool
 	endpoint             adapter.EndpointManager
 	// lx:end idle-suspend

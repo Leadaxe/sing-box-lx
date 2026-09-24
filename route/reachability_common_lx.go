@@ -18,6 +18,14 @@ func lxWG(ctx context.Context) option.LXWGResolved {
 	return service.PtrFromContext[option.LXResolved](ctx).WGOrZero()
 }
 
+// selectionRefs counts the edges of the active routing tree leading into one
+// tag, by class (SPEC 097). Lives in the always-compiled file because the
+// Router struct carries the cache.
+type selectionRefs struct {
+	manual int
+	auto   int
+}
+
 // InvalidateReachability marks the cached reachable set stale so the next idle
 // tick recomputes it. Called (via service.FromContext[adapter.ReachabilityInvalidator])
 // from the three event points that change the active routing tree — a selector
