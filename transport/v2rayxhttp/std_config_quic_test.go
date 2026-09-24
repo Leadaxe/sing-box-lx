@@ -109,7 +109,7 @@ func TestSTDConfigForQUICDisableSNI(t *testing.T) {
 	if conn.transport.QUICConfig.ChromeParrot {
 		t.Fatal("ChromeParrot left on with VerifyConnection")
 	}
-	if strings.Join(warnings, "\n") != "xhttp: utls fingerprint is not applied over HTTP/3, the QUIC handshake uses the Chrome profile\nxhttp: disable_sni turns off the Chrome QUIC profile for this server" {
+	if strings.Join(warnings, "\n") != "utls fingerprint is not applied over HTTP/3, the QUIC handshake uses the Chrome profile\ndisable_sni turns off the Chrome QUIC profile for this server" {
 		t.Fatalf("warnings = %q", warnings)
 	}
 }

@@ -107,19 +107,19 @@ func newHTTP3Transport(dialer N.Dialer, serverAddr M.Socksaddr, tlsConfig tls.Co
 		}
 		// One bad subscription node must not fail the whole config: it loads, its
 		// dials fail.
-		warn("xhttp: ECH is not supported over HTTP/3")
+		warn("ECH is not supported over HTTP/3")
 		dialErr = E.New("v2ray-xhttp: ECH is not supported over HTTP/3")
 		stdConfig = &stdTLS.Config{}
 	}
 	if fromUTLS {
-		warn("xhttp: utls fingerprint is not applied over HTTP/3, the QUIC handshake uses the Chrome profile")
+		warn("utls fingerprint is not applied over HTTP/3, the QUIC handshake uses the Chrome profile")
 	}
 	chromeParrot := true
 	if stdConfig.VerifyConnection != nil {
 		// quic-go refuses VerifyConnection with ChromeParrot; certificate
 		// verification outranks the look of the handshake.
 		chromeParrot = false
-		warn("xhttp: disable_sni turns off the Chrome QUIC profile for this server")
+		warn("disable_sni turns off the Chrome QUIC profile for this server")
 	}
 	if len(stdConfig.Certificates) > 0 {
 		// ChromeParrot refuses Certificates (a server-side field for quic-go); a

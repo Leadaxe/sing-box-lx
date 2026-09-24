@@ -132,6 +132,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	if logFactory := service.FromContext[log.Factory](ctx); logFactory != nil {
 		logger = logFactory.NewLogger("xhttp")
 	}
+	// Messages go out under the "xhttp" logger tag: "xhttp: <message>".
 	warn := func(message string) {
 		if logger != nil {
 			logger.Warn(message)
@@ -171,7 +172,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	default:
 		scheme = "https"
 		if realityEnabled && realityALPNNeedsH2(tlsConfig.NextProtos()) {
-			warn(`xhttp: REALITY uses HTTP/2, tls.alpn replaced with ["h2"]`)
+			warn(`REALITY uses HTTP/2, tls.alpn replaced with ["h2"]`)
 			tlsConfig.SetNextProtos([]string{http2.NextProtoTLS})
 		}
 		if len(tlsConfig.NextProtos()) == 0 {
@@ -188,7 +189,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		}
 	}
 	if logger != nil {
-		logger.Debug("xhttp: HTTP version ", version)
+		logger.Debug("HTTP version ", version)
 	}
 
 	var host string
