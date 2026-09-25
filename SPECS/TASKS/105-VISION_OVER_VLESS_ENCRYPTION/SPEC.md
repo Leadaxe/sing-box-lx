@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — зазор нашего слоя шифрования (SPEC 032) с Vision из sing-vmess |
-| Статус | I (implemented) — юнит и страж в `protocol/vless/encryption/lx_vision_test.go` (red-check: ошибка §1), стенд §4 п.4 зелёный |
+| Статус | I (implemented) — юнит и страж в `protocol/vless/encryption/lx_vision_test.go` (red-check: ошибка §1), стенд §4 п.4 зелёный; выпущено в `v1.14.2-lx.3` |
 | Ветка | `lx` |
 | База | `16de9e9ad` (`v1.14.2-lx.2`) |
 | Issue | [#29](https://github.com/Leadaxe/sing-box-lx/issues/29) |

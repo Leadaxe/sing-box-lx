@@ -28,6 +28,22 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.3
+
+Хотфикс поверх `v1.14.2-lx.2`. Пользовательские ноты (EN+RU):
+[`docs-lx/releases/v1.14.2-lx.3.md`](releases/v1.14.2-lx.3.md). База — sing-box `v1.14.2`, дрейфа от
+`upstream/stable` нет, зависимости с lx.2 не менялись.
+
+- 🐛 **VLESS: Vision поверх VLESS-шифрования** — `flow: xtls-rprx-vision` вместе с `encryption` падал с
+  `vision: not a valid supported TLS connection: *encryption.CommonConn`. Новый файл
+  `protocol/vless/encryption/lx_vision.go` добавляет `*CommonConn` в закрытый реестр TLS-conn'ов Vision
+  из sing-vmess (`//go:linkname` на `vless.tlsRegistry`): Vision читает `input`/`rawInput` слоя, прямое
+  копирование идёт в conn под слоем, как `UnwrapRawConn` в Xray. Транспорт любой, XHTTP тоже. Страж-тест
+  ловит переименование реестра при бампе sing-vmess. Стенд: живые узлы `tcp`+REALITY и `xhttp`+REALITY —
+  204 и 20 МБ по HTTPS. ([#29](https://github.com/Leadaxe/sing-box-lx/issues/29),
+  [SPEC 105](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/105-VISION_OVER_VLESS_ENCRYPTION/SPEC.md))
+- 📝 `lx-protocols-transports`: Vision поверх XHTTP работает только вместе с `encryption`.
+
 #### v1.14.2-lx.2-rc.3
 
 Пререлиз линии `v1.14.2-lx.2`; подробности — в секции `v1.14.2-lx.2` ниже.
