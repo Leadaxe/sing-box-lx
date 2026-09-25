@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — ручное включение и выключение WG/AWG-endpoint'а по gRPC |
-| Статус | I (implemented) — юниты `protocol/wireguard` и `daemon` зелёные; не выпущено, живого прогона через лаунчер нет |
+| Статус | I (implemented) — выпущено в `v1.14.2-lx.4`; юниты зелёные, живого прогона через лаунчер нет |
 | Ветка | `lx` |
 | Build-tag | ядро — без тега (методы без вызова ведут себя как апстрим); RPC — `with_lx_command` |
 | Связано | [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) (уровни сна, `resumeOnDial`), [097](../097-LAZY_WG_DEVICE_BUILD/SPEC.md) (`IdleState`, бюджет сборок), [075](../075-CHAIN_POSITION_TOGGLE/SPEC.md) (образец RPC-переключателя) |

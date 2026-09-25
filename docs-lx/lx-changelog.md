@@ -28,7 +28,7 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
-#### v1.14.2-lx.4 (не выпущен)
+#### v1.14.2-lx.4
 
 Поверх `v1.14.2-lx.3`. База — sing-box `v1.14.2`.
 
@@ -42,6 +42,9 @@ required for stable tags); this changelog section is the fallback used for pre-r
   работает и на десктопе. LxBox: `CommandClient.SetEndpointEnabled(tag, enabled)` → `EndpointToggleResult`
   с полем `State`.
   ([SPEC 106](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/106-WG_ENDPOINT_TOGGLE/SPEC.md))
+- 🧰 **OpenWrt-инсталлятор 1.2** — `GOMEMLIMIT` = MemTotal/3 (64..512 МиБ) и `GOGC=50` в init-скрипт procd
+  службы `lxd`; oom-killer ядра реагирует только у `memory_limit`, GC должен держать кучу заранее.
+- 📄 `SECURITY.md` — приватный канал для сообщений об уязвимостях.
 
 #### v1.14.2-lx.3
 
