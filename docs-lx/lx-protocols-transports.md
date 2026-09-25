@@ -92,8 +92,9 @@ transport (which would defeat the obfuscation). The exact messages:
 XHTTP (Xray "splithttp"/"xhttp") is a v2ray transport that tunnels the proxy over
 plain HTTP requests — HTTP/2 by default, HTTP/1.1 or HTTP/3 when the TLS block
 asks for them ([HTTP version](#http-version)). It attaches to **VLESS / VMess / Trojan** through the shared
-`transport` block and composes with TLS, including **Reality**. (XHTTP is
-incompatible with XTLS-Vision — that is a protocol limitation, not ours.)
+`transport` block and composes with TLS, including **Reality**. (XTLS-Vision
+runs over XHTTP only when the VLESS outbound also sets `encryption`: Vision then
+sits on the encryption layer, not on the transport's TLS — same as Xray.)
 
 JSON keys are snake_case to match Xray's stream settings, sing-box-extended and the
 rest of sing-box. **The default wire shape (everything below at its default) is

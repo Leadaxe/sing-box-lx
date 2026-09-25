@@ -92,8 +92,9 @@ make -f Makefile.lx lx-build
 XHTTP (Xray "splithttp"/"xhttp") — v2ray-транспорт, туннелирующий прокси поверх
 обычных HTTP-запросов — по умолчанию HTTP/2, HTTP/1.1 или HTTP/3, когда их
 запрашивает TLS-блок ([версия HTTP](#версия-http)). Крепится к **VLESS / VMess / Trojan** через общий блок
-`transport` и сочетается с TLS, включая **Reality**. (XHTTP несовместим с
-XTLS-Vision — это ограничение протокола, не наше.)
+`transport` и сочетается с TLS, включая **Reality**. (XTLS-Vision поверх
+XHTTP работает только вместе с `encryption` у VLESS-outbound'а: тогда Vision
+опирается на слой шифрования, а не на TLS транспорта, как в Xray.)
 
 JSON-ключи в snake_case — под stream settings Xray, sing-box-extended и остальной
 sing-box. **Дефолтная форма на проводе (всё ниже на дефолтах) байт-в-байт совпадает с

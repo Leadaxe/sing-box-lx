@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — зазор нашего слоя шифрования (SPEC 032) с Vision из sing-vmess |
-| Статус | S (spec) |
+| Статус | I (implemented) — юнит и страж в `protocol/vless/encryption/lx_vision_test.go` (red-check: ошибка §1), стенд §4 п.4 зелёный |
 | Ветка | `lx` |
 | База | `16de9e9ad` (`v1.14.2-lx.2`) |
 | Issue | [#29](https://github.com/Leadaxe/sing-box-lx/issues/29) |
@@ -54,6 +54,8 @@ Upstream-файлы и sing-vmess не меняются, провод и опц�
 2. Страж-тест на имя и тип `tlsRegistry`: при бампе sing-vmess, где реестр переименован или сменил сигнатуру, сборка или тест падает, а не ломается Vision молча.
 3. `go test ./protocol/vless/...`, `go vet`, gofmt, сборка `make -f Makefile.lx lx-build`.
 4. Стенд `config.d/vision-over-vless-encryption/`: порты 20801 и 20802 (Vision + шифрование; tcp и xhttp) отдают 204; 20804–20806 не ломаются; 20803 (без flow) остаётся ❌, сервер требует Vision.
+
+Итог 2026-09-25 (Mac, бинарь `lx-build` с правкой): 20801 и 20802 — 204 по HTTP и HTTPS, три попытки из трёх; загрузка 20 МБ по HTTPS через оба порта проходит (режим прямого копирования после внутреннего TLS 1.3); 20804–20806 — 204; 20803 — ❌. Пункты 1–3 выполнены.
 
 ## 5. За чем следить
 
