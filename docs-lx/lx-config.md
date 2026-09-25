@@ -756,9 +756,11 @@ The added `CommandClient` methods:
   pushes).
 - **`GetOutbounds()`** — pull the flat outbound/endpoint list (needed alongside `GetGroups`
   because standalone outbounds are not in any group). A WG/AWG endpoint's item also carries
-  `EndpointState` (`never_built` / `building` / `up` / `asleep` / `torn_down` / `down`) and
-  `IdleSinceSeconds` (since its last dial); both are empty/0 for other outbounds (SPEC 097; see
-  [lx-energy.md §11](lx-energy.md#11-lazy-build-and-the-build-budget-spec-097)).
+  `EndpointState` (`never_built` / `building` / `up` / `asleep` / `torn_down` / `down` /
+  `disabled`) and `IdleSinceSeconds` (since its last dial); both are empty/0 for other outbounds
+  (SPEC 097; see [lx-energy.md §11](lx-energy.md#11-lazy-build-and-the-build-budget-spec-097)).
+  `disabled` is set by the gRPC `SetEndpointEnabled` (SPEC 106, no `CommandClient` wrapper yet;
+  see [lx-energy.md §12](lx-energy.md#12-manual-onoff-switch-spec-106)).
 - **`GetPool(groupTag)`** — read a `urltest` group's current round_robin rotation pool, slot
   by slot (SPEC 019; see [§3](#3-round_robin-load-balancing-spec-019)).
 - **`GetDNSGroups()`** — the live state of every DNS `group` server (SPEC 035; see

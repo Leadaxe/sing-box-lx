@@ -85,6 +85,11 @@ exist **only when the binary is built with `with_lx_command`**:
 `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `SubscribeDNSQueries`,
 `GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetURLViaOutbound`, `GetChains`.
 
+The same block also carries control RPCs outside this document's scope:
+`SetChainPositionEnabled` and `GetChainCloneConfig` (SPEC 075), `SetEndpointEnabled`
+(manual on/off of a WG/AWG endpoint, SPEC 106; see
+[lx-energy.md §12](lx-energy.md#12-manual-onoff-switch-spec-106)).
+
 Against a binary built without the tag they return `codes.Unimplemented`. The
 generated client stubs still contain the methods — the gate is server-side, so
 this is a runtime failure, not a compile error. A client that depends on the DNS

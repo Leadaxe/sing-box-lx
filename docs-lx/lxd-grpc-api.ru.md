@@ -86,6 +86,11 @@ REST-ручки для профилирования **самого процес�
 `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `SubscribeDNSQueries`,
 `GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetURLViaOutbound`, `GetChains`.
 
+В том же блоке — управляющие RPC вне предмета этого документа: `SetChainPositionEnabled`
+и `GetChainCloneConfig` (SPEC 075), `SetEndpointEnabled` (ручное включение и выключение
+WG/AWG-endpoint'а, SPEC 106; см.
+[lx-energy.ru.md §12](lx-energy.ru.md#12-ручной-переключатель-spec-106)).
+
 Против сборки без тега они возвращают `codes.Unimplemented`. Сгенерированные
 клиентские заглушки методы всё равно содержат — гейт серверный, поэтому это
 ошибка времени выполнения, а не компиляции. Клиенту, зависящему от DNS-плоскости,

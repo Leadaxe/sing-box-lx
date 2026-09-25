@@ -28,6 +28,20 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.4 (не выпущен)
+
+Поверх `v1.14.2-lx.3`. База — sing-box `v1.14.2`.
+
+- ✨ **Ручной переключатель WG/AWG-endpoint'а** — gRPC `SetEndpointEnabled(tag, enabled)` в блоке
+  `lx_command`. Выключение усыпляет узел механизмом SPEC 020 (установленные потоки рвутся) и отвергает
+  дайлы, UDP-listen и L3-форвард ошибкой `WireGuard endpoint is disabled`; включение будит спящий узел
+  сразу, разобранный или несобранный собирает следующий дайл через бюджет. Новое состояние `disabled`
+  в `GroupItem.endpointState` (`GetOutbounds`), ответ RPC несёт состояние после вызова. Коды:
+  `NotFound`, `InvalidArgument` (не WG/AWG), `FailedPrecondition` (ядро не запущено, узел закрывается),
+  `Unavailable` (пробуждение не удалось). Не сохраняется: reload включает все узлы. Ядро без тега,
+  работает и на десктопе; обёртки в libbox `CommandClient` нет.
+  ([SPEC 106](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/106-WG_ENDPOINT_TOGGLE/SPEC.md))
+
 #### v1.14.2-lx.3
 
 Хотфикс поверх `v1.14.2-lx.2`. Пользовательские ноты (EN+RU):

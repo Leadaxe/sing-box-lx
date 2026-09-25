@@ -756,9 +756,11 @@ mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>[.<padding>…].<ключ>[
 - **`GetGroups()`** — снимок outbound-групп (те же данные, что пушит поток групп).
 - **`GetOutbounds()`** — плоский список outbound/endpoint (нужен рядом с `GetGroups`, потому что
   отдельно стоящие outbounds не входят ни в одну группу). Элемент WG/AWG-endpoint'а несёт ещё
-  `EndpointState` (`never_built` / `building` / `up` / `asleep` / `torn_down` / `down`) и
-  `IdleSinceSeconds` (с последнего дайла); у прочих outbound'ов оба пусты/0 (SPEC 097; см.
-  [lx-energy.ru.md §11](lx-energy.ru.md#11-ленивая-сборка-и-бюджет-сборок-spec-097)).
+  `EndpointState` (`never_built` / `building` / `up` / `asleep` / `torn_down` / `down` /
+  `disabled`) и `IdleSinceSeconds` (с последнего дайла); у прочих outbound'ов оба пусты/0
+  (SPEC 097; см. [lx-energy.ru.md §11](lx-energy.ru.md#11-ленивая-сборка-и-бюджет-сборок-spec-097)).
+  `disabled` выставляет gRPC `SetEndpointEnabled` (SPEC 106, обёртки в `CommandClient` пока нет;
+  см. [lx-energy.ru.md §12](lx-energy.ru.md#12-ручной-переключатель-spec-106)).
 - **`GetPool(groupTag)`** — прочитать текущий пул ротации round_robin группы `urltest`, слот за
   слотом (SPEC 019; см. [§3](#3-балансировка-нагрузки-round_robin-spec-019)).
 - **`GetDNSGroups()`** — live-состояние каждого DNS-сервера `group` (SPEC 035; см.

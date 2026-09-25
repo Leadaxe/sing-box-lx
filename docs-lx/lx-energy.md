@@ -21,6 +21,7 @@ This is the main document on **why the fork saves battery on Android and how to 
 - [9. Guarantees (what will NOT break)](#9-guarantees-what-will-not-break)
 - [10. Observability and troubleshooting](#10-observability-and-troubleshooting)
 - [11. Lazy build and the build budget (SPEC 097)](#11-lazy-build-and-the-build-budget-spec-097)
+- [12. Manual on/off switch (SPEC 106)](#12-manual-onoff-switch-spec-106)
 
 ---
 
@@ -269,5 +270,19 @@ Probes under a cap run in waves: a group of K nodes with `build_max: N` is measu
 | `asleep` | device built, Down (levels 1–2) |
 | `torn_down` | device released (level 3, or evicted by the budget) |
 | `down` | not started yet, or closed |
+| `disabled` | switched off by hand (§12), whatever the device level underneath |
 
 "Not built" is a state, not an error: the app shows "node not brought up" and does not treat it as a timeout.
+
+---
+
+## 12. Manual on/off switch (SPEC 106)
+
+The gRPC `SetEndpointEnabled(tag, enabled)` (`with_lx_command`, served by `lxd`) switches a WG/AWG endpoint off and on without a config change. The response carries the endpoint state after the call.
+
+- **Off:** an awake endpoint is suspended the same way the idle tick does it, so established connections through it are cut. Every dial, UDP listen and L3-forwarded packet is refused with `WireGuard endpoint is disabled`; nothing wakes it. The idle tick can still tear it down after `idle_teardown`, and the build budget can evict it.
+- **On:** a suspended endpoint is woken at once (one handshake on the next packet). A torn-down or never-built one stays as it is and is built by the next dial, through the budget. If the wake fails, the call returns `Unavailable`; the endpoint is on but asleep and the next dial retries.
+- **Not persisted:** a reload or `/admin/apply` creates every endpoint switched on.
+- Works without `with_lx_idle_suspend`; on desktop a switched-off endpoint keeps its device, Down, until it is switched on or closed.
+
+Errors: `NotFound` (no endpoint with that tag), `InvalidArgument` (not a WG/AWG endpoint), `FailedPrecondition` (core not started, endpoint closing), `Unimplemented` (build without `with_lx_command`).
