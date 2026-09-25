@@ -759,7 +759,7 @@ mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>[.<padding>…].<ключ>[
   `EndpointState` (`never_built` / `building` / `up` / `asleep` / `torn_down` / `down` /
   `disabled`) и `IdleSinceSeconds` (с последнего дайла); у прочих outbound'ов оба пусты/0
   (SPEC 097; см. [lx-energy.ru.md §11](lx-energy.ru.md#11-ленивая-сборка-и-бюджет-сборок-spec-097)).
-  `disabled` выставляет gRPC `SetEndpointEnabled` (SPEC 106, обёртки в `CommandClient` пока нет;
+  `disabled` выставляет `SetEndpointEnabled` (SPEC 106, ниже;
   см. [lx-energy.ru.md §12](lx-energy.ru.md#12-ручной-переключатель-spec-106)).
 - **`GetPool(groupTag)`** — прочитать текущий пул ротации round_robin группы `urltest`, слот за
   слотом (SPEC 019; см. [§3](#3-балансировка-нагрузки-round_robin-spec-019)).
@@ -778,6 +778,9 @@ mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>[.<padding>…].<ключ>[
   по позициям разрешённый узел и, для позиций ≥ 1, звено (`starting|active|idle`, живые
   соединения, эффективный MTU и причина, что снял `strip`, применён ли `rewrite`, последняя
   ошибка), плюс счётчики дозвонов/ошибок/звеньев.
+- **`SetEndpointEnabled(tag, enabled)`** — выключить или включить WG/AWG-endpoint на ходу
+  (SPEC 106; см. [lx-energy.ru.md §12](lx-energy.ru.md#12-ручной-переключатель-spec-106)). Возвращает
+  объект `EndpointToggleResult`, поле `State` — состояние endpoint'а после вызова.
 
 SPEC 017 также обогащает существующий поток соединений: отслеживаемое `Connection` теперь несёт
 отдельное поле **`detourList`** — хвост transport-detour'а финального outbound, выставленный

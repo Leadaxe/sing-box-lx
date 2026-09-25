@@ -68,12 +68,13 @@ message SetEndpointEnabledResponse {
 | `transport/wireguard/endpoint_suspended_lx.go` | `Suspended()` — для тестов протокольного слоя |
 | `daemon/started_service.proto` + регенерация `*.pb.go` | RPC и два сообщения в блоке `lx_command`; комментарий `GroupItem.endpointState` |
 | `daemon/started_service_endpoint_lx.go` / `_stub.go` | обработчик и близнец `Unimplemented` |
+| `experimental/libbox/command_client_endpoint_lx.go` | `CommandClient.SetEndpointEnabled(tag, enabled)` → `*EndpointToggleResult{State}` для LxBox; без тега, как `command_client_chain_lx.go` |
 
 Апстримные файлы: `protocol/wireguard/endpoint.go` (строки в наших `// lx:` зонах), `daemon/started_service.proto` (блок `lx_command`), регенерируемые `daemon/*.pb.go`. `cmd/internal/build_libbox/main.go` не тронут: `with_lx_command` уже в `sharedTags`.
 
 ## 5. Границы
 
-- Клиентская обёртка в `experimental/libbox` (CommandClient для LxBox) не сделана — RPC доступен по gRPC `lxd`; серверный обработчик общий для обоих носителей.
+- Обработчик общий для `lxd` и libbox. LxBox вызывает `CommandClient.SetEndpointEnabled`; ответ — объект, не голая строка (SPEC 037). Клиентский файл без тега: против сборки без `with_lx_command` метод получает `Unimplemented` от сервера.
 - Без `with_lx_idle_suspend` (десктоп) тика нет: выключенный узел остаётся в Down с собранным устройством, пока его не включат или не закроют.
 - Пробы urltest по выключенному узлу получают ошибку и помечают узел недоступным; selector, выбравший выключенный узел, теряет трафик. Поведение ожидаемое, решает клиент.
 
@@ -87,3 +88,4 @@ message SetEndpointEnabledResponse {
 
 - `protocol/wireguard/endpoint_toggle_lx_test.go`: выключение бодрого (Suspend, `disabled`, отказ дайла/listen/L3 с новой ошибкой, тик не трогает), спящего и разобранного; включение (Resume, `up`); ошибка Resume (узел спит, следующий дайл будит); идемпотентность; `SetEnabled` после `Close`; `TeardownIfSlept` по выключенному; включение разобранного и `never_built` без сборки, сборка следующим дайлом; жертва бюджета.
 - `daemon/started_service_endpoint_lx_test.go`: коды `NotFound`/`InvalidArgument`/`FailedPrecondition`/`Unavailable`, `state` в ответе; `_stub_lx_test.go`: `Unimplemented`.
+- `experimental/libbox/command_client_endpoint_lx_test.go`: запрос и `State` через подменённый `StartedServiceClient`, gRPC-код ошибки доходит до вызывающего; форма `EndpointToggleResult` (только экспортируемые скаляры). Страж SPEC 037 `TestCommandClientNoPointerBearingCValueReturns` покрывает новый метод.

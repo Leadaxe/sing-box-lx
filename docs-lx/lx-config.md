@@ -759,7 +759,7 @@ The added `CommandClient` methods:
   `EndpointState` (`never_built` / `building` / `up` / `asleep` / `torn_down` / `down` /
   `disabled`) and `IdleSinceSeconds` (since its last dial); both are empty/0 for other outbounds
   (SPEC 097; see [lx-energy.md §11](lx-energy.md#11-lazy-build-and-the-build-budget-spec-097)).
-  `disabled` is set by the gRPC `SetEndpointEnabled` (SPEC 106, no `CommandClient` wrapper yet;
+  `disabled` is set by `SetEndpointEnabled` (SPEC 106, below;
   see [lx-energy.md §12](lx-energy.md#12-manual-onoff-switch-spec-106)).
 - **`GetPool(groupTag)`** — read a `urltest` group's current round_robin rotation pool, slot
   by slot (SPEC 019; see [§3](#3-round_robin-load-balancing-spec-019)).
@@ -778,6 +778,9 @@ The added `CommandClient` methods:
   per position the resolved node and, for positions ≥ 1, the link instance (`starting|active|idle`,
   live connections, effective MTU and why, what `strip` removed, `rewrite` applied, last error),
   plus dial/error/link counters.
+- **`SetEndpointEnabled(tag, enabled)`** — switch a WG/AWG endpoint off or on at runtime
+  (SPEC 106; see [lx-energy.md §12](lx-energy.md#12-manual-onoff-switch-spec-106)). Returns an
+  `EndpointToggleResult` object whose `State` is the endpoint state after the call.
 
 SPEC 017 also enriches the existing connection stream: a tracked `Connection` now carries a
 separate **`detourList`** field — the transport-detour tail of the final outbound, exposed

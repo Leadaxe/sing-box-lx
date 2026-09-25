@@ -39,7 +39,8 @@ required for stable tags); this changelog section is the fallback used for pre-r
   в `GroupItem.endpointState` (`GetOutbounds`), ответ RPC несёт состояние после вызова. Коды:
   `NotFound`, `InvalidArgument` (не WG/AWG), `FailedPrecondition` (ядро не запущено, узел закрывается),
   `Unavailable` (пробуждение не удалось). Не сохраняется: reload включает все узлы. Ядро без тега,
-  работает и на десктопе; обёртки в libbox `CommandClient` нет.
+  работает и на десктопе. LxBox: `CommandClient.SetEndpointEnabled(tag, enabled)` → `EndpointToggleResult`
+  с полем `State`.
   ([SPEC 106](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/106-WG_ENDPOINT_TOGGLE/SPEC.md))
 
 #### v1.14.2-lx.3

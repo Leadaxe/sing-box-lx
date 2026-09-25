@@ -278,7 +278,7 @@ Probes under a cap run in waves: a group of K nodes with `build_max: N` is measu
 
 ## 12. Manual on/off switch (SPEC 106)
 
-The gRPC `SetEndpointEnabled(tag, enabled)` (`with_lx_command`, served by `lxd`) switches a WG/AWG endpoint off and on without a config change. The response carries the endpoint state after the call.
+The gRPC `SetEndpointEnabled(tag, enabled)` (`with_lx_command`, served by `lxd`) switches a WG/AWG endpoint off and on without a config change. The response carries the endpoint state after the call. LxBox calls it through libbox `CommandClient.SetEndpointEnabled`, which returns an `EndpointToggleResult` object (`State`).
 
 - **Off:** an awake endpoint is suspended the same way the idle tick does it, so established connections through it are cut. Every dial, UDP listen and L3-forwarded packet is refused with `WireGuard endpoint is disabled`; nothing wakes it. The idle tick can still tear it down after `idle_teardown`, and the build budget can evict it.
 - **On:** a suspended endpoint is woken at once (one handshake on the next packet). A torn-down or never-built one stays as it is and is built by the next dial, through the budget. If the wake fails, the call returns `Unavailable`; the endpoint is on but asleep and the next dial retries.

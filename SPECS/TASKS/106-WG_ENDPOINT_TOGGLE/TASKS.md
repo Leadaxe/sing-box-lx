@@ -9,4 +9,4 @@
 - [x] 5. Сборки и тесты по PLAN этапу 3; gofmt
 - [x] 6. Доки и changelog
 - [ ] 7. Живой прогон через лаунчер (`lxd`): выключение активного узла, отказ дайла, включение, `GetOutbounds`
-- [ ] 8. Обёртка в `experimental/libbox` для LxBox — по заявке
+- [x] 8. Обёртка в `experimental/libbox` для LxBox: `CommandClient.SetEndpointEnabled` → `EndpointToggleResult`, юниты
