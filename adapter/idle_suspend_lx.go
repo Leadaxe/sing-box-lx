@@ -71,7 +71,18 @@ const (
 	EndpointStateAsleep     = "asleep"
 	EndpointStateTornDown   = "torn_down"
 	EndpointStateDown       = "down"
+	// EndpointStateDisabled: switched off by EndpointToggle (SPEC 106); reported
+	// over whatever sleep level the device is at underneath.
+	EndpointStateDisabled = "disabled"
 )
+
+// EndpointToggle is implemented by a WG/AWG endpoint: manual on/off switch
+// (SPEC 106). A disabled endpoint is held down and refuses every dial until it
+// is enabled again; the state is not persisted, a reload starts it enabled.
+type EndpointToggle interface {
+	SetEnabled(enabled bool) error
+	Enabled() bool
+}
 
 // IdleState is a snapshot of a WG/AWG endpoint's SPEC 020/097 state machine.
 // IdleSince is the time since the last dial through the endpoint (0 if never

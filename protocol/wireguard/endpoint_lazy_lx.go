@@ -197,6 +197,8 @@ func (w *Endpoint) IdleState() adapter.IdleState {
 		state = adapter.EndpointStateBuilding
 	case w.closing.Load():
 		state = adapter.EndpointStateDown
+	case w.disabled.Load(): // SPEC 106 — over any sleep level underneath
+		state = adapter.EndpointStateDisabled
 	case w.neverBuilt.Load():
 		state = adapter.EndpointStateNeverBuilt
 	case w.torndown.Load():

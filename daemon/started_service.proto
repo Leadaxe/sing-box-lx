@@ -67,6 +67,7 @@ service StartedService {
   rpc GetChains(google.protobuf.Empty) returns (ChainList) {}
   rpc SetChainPositionEnabled(SetChainPositionEnabledRequest) returns (SetChainPositionEnabledResponse) {}
   rpc GetChainCloneConfig(GetChainCloneConfigRequest) returns (RunningConfig) {}
+  rpc SetEndpointEnabled(SetEndpointEnabledRequest) returns (SetEndpointEnabledResponse) {}
 
   // lx:end lx_command
 }
@@ -162,8 +163,8 @@ message GroupItem {
   // lx:begin lx_command
 
   // WG/AWG endpoint state: never_built / building / up / asleep / torn_down /
-  // down; empty for every other outbound. Filled by GetOutbounds only.
-  // lx: SPEC 097.
+  // down / disabled; empty for every other outbound. Filled by GetOutbounds
+  // only. lx: SPEC 097, disabled — SPEC 106.
   string endpointState = 5;
   // Seconds since the last dial through the endpoint; 0 for every other
   // outbound. lx: SPEC 097.
@@ -1064,6 +1065,18 @@ message SetChainPositionEnabledResponse {
 message GetChainCloneConfigRequest {
   string chainTag = 1;
   int32 position = 2;
+}
+
+// SPEC 106 — manual on/off switch of a WG/AWG endpoint. Disable brings the
+// device down (established flows are cut) and refuses every dial; enable wakes
+// a suspended device, a torn-down or never-built one is built by the next
+// dial. Not persisted: a reload starts every endpoint enabled.
+message SetEndpointEnabledRequest {
+  string tag = 1;
+  bool enabled = 2;
+}
+message SetEndpointEnabledResponse {
+  string state = 1; // GroupItem.endpointState after the call
 }
 
 // lx:end lx_command

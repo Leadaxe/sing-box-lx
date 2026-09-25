@@ -69,6 +69,7 @@ const (
 	StartedService_GetChains_FullMethodName                      = "/daemon.StartedService/GetChains"
 	StartedService_SetChainPositionEnabled_FullMethodName        = "/daemon.StartedService/SetChainPositionEnabled"
 	StartedService_GetChainCloneConfig_FullMethodName            = "/daemon.StartedService/GetChainCloneConfig"
+	StartedService_SetEndpointEnabled_FullMethodName             = "/daemon.StartedService/SetEndpointEnabled"
 )
 
 // StartedServiceClient is the client API for StartedService service.
@@ -129,6 +130,7 @@ type StartedServiceClient interface {
 	GetChains(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ChainList, error)
 	SetChainPositionEnabled(ctx context.Context, in *SetChainPositionEnabledRequest, opts ...grpc.CallOption) (*SetChainPositionEnabledResponse, error)
 	GetChainCloneConfig(ctx context.Context, in *GetChainCloneConfigRequest, opts ...grpc.CallOption) (*RunningConfig, error)
+	SetEndpointEnabled(ctx context.Context, in *SetEndpointEnabledRequest, opts ...grpc.CallOption) (*SetEndpointEnabledResponse, error)
 }
 
 type startedServiceClient struct {
@@ -850,6 +852,16 @@ func (c *startedServiceClient) GetChainCloneConfig(ctx context.Context, in *GetC
 	return out, nil
 }
 
+func (c *startedServiceClient) SetEndpointEnabled(ctx context.Context, in *SetEndpointEnabledRequest, opts ...grpc.CallOption) (*SetEndpointEnabledResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetEndpointEnabledResponse)
+	err := c.cc.Invoke(ctx, StartedService_SetEndpointEnabled_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StartedServiceServer is the server API for StartedService service.
 // All implementations must embed UnimplementedStartedServiceServer
 // for forward compatibility.
@@ -908,6 +920,7 @@ type StartedServiceServer interface {
 	GetChains(context.Context, *emptypb.Empty) (*ChainList, error)
 	SetChainPositionEnabled(context.Context, *SetChainPositionEnabledRequest) (*SetChainPositionEnabledResponse, error)
 	GetChainCloneConfig(context.Context, *GetChainCloneConfigRequest) (*RunningConfig, error)
+	SetEndpointEnabled(context.Context, *SetEndpointEnabledRequest) (*SetEndpointEnabledResponse, error)
 	mustEmbedUnimplementedStartedServiceServer()
 }
 
@@ -1132,6 +1145,10 @@ func (UnimplementedStartedServiceServer) SetChainPositionEnabled(context.Context
 
 func (UnimplementedStartedServiceServer) GetChainCloneConfig(context.Context, *GetChainCloneConfigRequest) (*RunningConfig, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetChainCloneConfig not implemented")
+}
+
+func (UnimplementedStartedServiceServer) SetEndpointEnabled(context.Context, *SetEndpointEnabledRequest) (*SetEndpointEnabledResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetEndpointEnabled not implemented")
 }
 func (UnimplementedStartedServiceServer) mustEmbedUnimplementedStartedServiceServer() {}
 func (UnimplementedStartedServiceServer) testEmbeddedByValue()                        {}
@@ -1967,6 +1984,24 @@ func _StartedService_GetChainCloneConfig_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StartedService_SetEndpointEnabled_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetEndpointEnabledRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StartedServiceServer).SetEndpointEnabled(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StartedService_SetEndpointEnabled_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StartedServiceServer).SetEndpointEnabled(ctx, req.(*SetEndpointEnabledRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StartedService_ServiceDesc is the grpc.ServiceDesc for StartedService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2105,6 +2140,10 @@ var StartedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetChainCloneConfig",
 			Handler:    _StartedService_GetChainCloneConfig_Handler,
+		},
+		{
+			MethodName: "SetEndpointEnabled",
+			Handler:    _StartedService_SetEndpointEnabled_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

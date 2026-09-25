@@ -97,6 +97,9 @@ type Endpoint struct {
 	budget            *BuildBudget
 	dialsInFlight     atomic.Int32
 	budgetTransferSum uint64
+	// SPEC 106 manual switch: while set, the endpoint is held asleep and every
+	// dial is refused. Written under resumeMu, read lock-free on the dial path.
+	disabled atomic.Bool
 	// lx:end idle-suspend
 	// closing is set at the top of Close (before resumeMu) so an in-flight
 	// resumeOnDial wake aborts instead of starting a fresh device rebuild that
@@ -292,6 +295,10 @@ func (w *Endpoint) IdleSince() time.Duration {
 // started==false but idleAsleep==false, and the `!started` check below short-
 // circuits before the CAS. resumeMu mutually excludes this against resumeOnDial.
 func (w *Endpoint) SuspendIfIdle(reachable bool, threshold time.Duration, reachableThreshold time.Duration) {
+	if w.disabled.Load() {
+		// SPEC 106 — already held down by the manual switch.
+		return
+	}
 	if w.building.Load() {
 		// SPEC 097 — a rebuild may be waiting on the build budget under resumeMu;
 		// the endpoint is torn down anyway, so do not stall the tick behind it.
@@ -403,6 +410,10 @@ func (w *Endpoint) TeardownIfSlept(threshold time.Duration) {
 // has no dial context and passes nil; its wait is bounded by buildWaitMax.
 func (w *Endpoint) resumeOnDial(ctx context.Context) bool {
 	w.stampActivity()
+	// lx: SPEC 106 — a disabled endpoint stays down; checked again under the lock.
+	if w.disabled.Load() {
+		return false
+	}
 	// lx: SPEC 030 — a close is pending: do not resurrect. Refusing here (and
 	// again under the lock) keeps Close from blocking on a fresh rebuild we would
 	// only tear straight back down.
@@ -415,7 +426,7 @@ func (w *Endpoint) resumeOnDial(ctx context.Context) bool {
 	}
 	w.resumeMu.Lock()
 	defer w.resumeMu.Unlock()
-	if w.closing.Load() {
+	if w.closing.Load() || w.disabled.Load() {
 		return false
 	}
 	if !w.idleAsleep.Load() {
@@ -573,7 +584,7 @@ func (w *Endpoint) WritePackets(packets [][]byte) error {
 	// lx: SPEC 097 — in flight: the build budget must not evict us mid-write.
 	defer w.leaveDial(w.enterDial())
 	if !w.resumeOnDial(nil) { // lx: SPEC 020 — stamp activity + wake if idle-suspended; L3-forward path (established flows transit here, bypassing DialContext)
-		return E.New("WireGuard is not ready yet")
+		return w.notReadyError() // lx: SPEC 106
 	}
 	return w.endpoint.WritePackets(packets)
 }
@@ -640,14 +651,14 @@ func (w *Endpoint) DialContext(ctx context.Context, network string, destination 
 			return nil, err
 		}
 		if !w.resumeOnDial(ctx) { // lx: SPEC 020 — stamp activity + wake if idle-suspended
-			return nil, E.New("WireGuard is not ready yet")
+			return nil, w.notReadyError() // lx: SPEC 106
 		}
 		return N.DialSerial(ctx, w.endpoint, network, destination, destinationAddresses)
 	} else if !destination.Addr.IsValid() {
 		return nil, E.New("invalid destination: ", destination)
 	}
 	if !w.resumeOnDial(ctx) { // lx: SPEC 020 — stamp activity + wake if idle-suspended
-		return nil, E.New("WireGuard is not ready yet")
+		return nil, w.notReadyError() // lx: SPEC 106
 	}
 	return w.endpoint.DialContext(ctx, network, destination)
 }
@@ -663,7 +674,7 @@ func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination 
 			return nil, netip.Addr{}, err
 		}
 		if !w.resumeOnDial(ctx) { // lx: SPEC 020 — stamp activity + wake if idle-suspended
-			return nil, netip.Addr{}, E.New("WireGuard is not ready yet")
+			return nil, netip.Addr{}, w.notReadyError() // lx: SPEC 106
 		}
 		packetConn, destinationAddress, err := N.ListenSerial(ctx, w.endpoint, destination, destinationAddresses)
 		if err != nil {
@@ -672,7 +683,7 @@ func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination 
 		return iponly.NewPacketConn(w.logger, packetConn), destinationAddress, nil
 	}
 	if !w.resumeOnDial(ctx) { // lx: SPEC 020 — stamp activity + wake if idle-suspended
-		return nil, netip.Addr{}, E.New("WireGuard is not ready yet")
+		return nil, netip.Addr{}, w.notReadyError() // lx: SPEC 106
 	}
 	packetConn, err := w.endpoint.ListenPacket(ctx, destination)
 	if err != nil {
