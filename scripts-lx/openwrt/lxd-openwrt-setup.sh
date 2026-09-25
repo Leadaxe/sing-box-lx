@@ -20,7 +20,7 @@
 
 set -e
 
-VERSION="1.1"
+VERSION="1.2"
 STATE_DIR="/etc/sing-box-lxd/state"
 BIN="/usr/bin/sing-box"
 INIT="/etc/init.d/sing-box-lxd"
@@ -653,6 +653,17 @@ cat > "$STATE_DIR/min.json" <<EOF
 EOF
 "$BIN" check -c "$STATE_DIR/min.json" >/dev/null 2>&1 || die "the skeleton config failed sing-box check"
 
+# Go GC soft limit for the daemon (GOMEMLIMIT): RAM/3, clamped to 64..512 MiB.
+# The oom-killer service in the core only reacts after the process is already
+# near its limit; GOMEMLIMIT makes the GC keep the heap below it in the first
+# place, so a 256 MB router never reaches the kernel OOM-killer.
+MEM_KB=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+GOMEMLIMIT=$(( MEM_KB / 1024 / 3 ))
+[ "$GOMEMLIMIT" -ge 64 ]  || GOMEMLIMIT=64
+[ "$GOMEMLIMIT" -le 512 ] || GOMEMLIMIT=512
+GOMEMLIMIT="${GOMEMLIMIT}MiB"
+say "GOMEMLIMIT:  $GOMEMLIMIT — Go GC soft limit for the daemon: RAM $(( MEM_KB / 1024 )) MB / 3, clamped to 64..512 MiB (edit in $INIT)"
+
 cat > "$INIT" <<EOF
 #!/bin/sh /etc/rc.common
 # sing-box-lx daemon (lxd)
@@ -662,6 +673,10 @@ USE_PROCD=1
 start_service() {
     procd_open_instance
     procd_set_param command $BIN lxd --state-dir $STATE_DIR -c $STATE_DIR/min.json
+    # Go GC soft limit: keeps the heap under the value on a small-RAM router
+    # instead of letting it grow until the kernel OOM-killer hangs the box.
+    # Computed at install time as RAM/3, clamped to 64..512 MiB; edit freely.
+    procd_set_param env GOMEMLIMIT=${GOMEMLIMIT} GOGC=50
     procd_set_param respawn
     procd_set_param stdout 1
     procd_set_param stderr 1
@@ -675,7 +690,7 @@ chmod +x "$INIT"
 for p in "$INIT" "/etc/sing-box-lxd/" "$BIN"; do
     grep -qxF "$p" /etc/sysupgrade.conf 2>/dev/null || echo "$p" >> /etc/sysupgrade.conf
 done
-say "service:     $INIT (procd, autostart)"
+say "service:     $INIT (procd, autostart, GOMEMLIMIT=$GOMEMLIMIT GOGC=50)"
 
 # ── 7. Network: bridge → interface → DHCP ───────────────────────────────────
 step "Network"

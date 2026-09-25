@@ -225,6 +225,10 @@ logread | grep sing-box | tail -20        # system log
 tail -f /etc/sing-box-lxd/lxd.log         # the daemon's own log, self-rotated
 ```
 
+### Memory on a small router
+
+The service runs with `GOMEMLIMIT` (RAM/3, clamped to 64..512 MiB, computed at install) and `GOGC=50`: the Go GC keeps the heap below the limit instead of growing until the kernel OOM-killer hangs the router. Both live in `/etc/init.d/sing-box-lxd` (`procd_set_param env`), edit and `restart`. The core's `oom-killer` service is a second line: it measures the process RSS and only resets connections once RSS is near `memory_limit`, so on a 256 MB router `memory_limit` must sit well below RAM (about 120 MB), not at 260 MB — otherwise it never fires. Confirm memory is the culprit before tuning: `logread | grep -i "out of memory"`.
+
 Apply, rollback, and core status — **from the launcher only**: they sit behind mTLS, `curl` from the router answers `client certificate not trusted`.
 
 ### Take and restore a backup

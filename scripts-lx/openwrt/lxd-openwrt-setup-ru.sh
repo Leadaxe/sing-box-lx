@@ -19,7 +19,7 @@
 
 set -e
 
-VERSION="1.1"
+VERSION="1.2"
 STATE_DIR="/etc/sing-box-lxd/state"
 BIN="/usr/bin/sing-box"
 INIT="/etc/init.d/sing-box-lxd"
@@ -644,6 +644,17 @@ cat > "$STATE_DIR/min.json" <<EOF
 EOF
 "$BIN" check -c "$STATE_DIR/min.json" >/dev/null 2>&1 || die "каркасный конфиг не прошёл sing-box check"
 
+# Мягкий лимит Go GC для демона (GOMEMLIMIT): RAM/3 в границах 64..512 MiB.
+# Сервис oom-killer в ядре реагирует уже когда процесс у лимита; GOMEMLIMIT
+# заставляет GC держать кучу ниже заранее, и роутер на 256 МБ не доходит
+# до ядерного OOM-killer'а.
+MEM_KB=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+GOMEMLIMIT=$(( MEM_KB / 1024 / 3 ))
+[ "$GOMEMLIMIT" -ge 64 ]  || GOMEMLIMIT=64
+[ "$GOMEMLIMIT" -le 512 ] || GOMEMLIMIT=512
+GOMEMLIMIT="${GOMEMLIMIT}MiB"
+say "GOMEMLIMIT:  $GOMEMLIMIT — мягкий лимит Go GC для демона: RAM $(( MEM_KB / 1024 )) МБ / 3 в границах 64..512 MiB (правится в $INIT)"
+
 cat > "$INIT" <<EOF
 #!/bin/sh /etc/rc.common
 # sing-box-lx daemon (lxd)
@@ -653,6 +664,10 @@ USE_PROCD=1
 start_service() {
     procd_open_instance
     procd_set_param command $BIN lxd --state-dir $STATE_DIR -c $STATE_DIR/min.json
+    # Мягкий лимит Go GC: держит кучу под этим значением на роутере с малой
+    # RAM, вместо роста до ядерного OOM-killer'а, который вешает роутер.
+    # Считается при установке как RAM/3 в границах 64..512 MiB; правьте смело.
+    procd_set_param env GOMEMLIMIT=${GOMEMLIMIT} GOGC=50
     procd_set_param respawn
     procd_set_param stdout 1
     procd_set_param stderr 1
@@ -666,7 +681,7 @@ chmod +x "$INIT"
 for p in "$INIT" "/etc/sing-box-lxd/" "$BIN"; do
     grep -qxF "$p" /etc/sysupgrade.conf 2>/dev/null || echo "$p" >> /etc/sysupgrade.conf
 done
-say "служба:      $INIT (procd, autostart)"
+say "служба:      $INIT (procd, autostart, GOMEMLIMIT=$GOMEMLIMIT GOGC=50)"
 
 # ── 7. Сеть: мост → интерфейс → DHCP ───────────────────────────────────────
 step "Сеть"
