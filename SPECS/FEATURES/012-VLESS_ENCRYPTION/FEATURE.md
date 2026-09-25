@@ -96,6 +96,7 @@ mlkem768x25519plus.<вид>.<0rtt|1rtt>[.<паддинг>][.<задержка>].
 |--------|------|--------|
 | [032 — VLESS_ENCRYPTION_MLKEM768](../../TASKS/032-VLESS_ENCRYPTION_MLKEM768/SPEC.md) | Фича целиком: поле, разбор строки, согласование | C |
 | [050 — URLTEST_ZOMBIE_RUN_SURVIVES_RESTART](../../TASKS/050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md) | Отменяемость хендшейка снаружи: дедлайн conn'а вокруг `Handshake` (ведётся в [HOTFIXES](../004-HOTFIXES/FEATURE.md); провод не меняется) | D |
+| [105 — VISION_OVER_VLESS_ENCRYPTION](../../TASKS/105-VISION_OVER_VLESS_ENCRYPTION/SPEC.md) | `flow: xtls-rprx-vision` поверх слоя: запись `CommonConn` в реестр TLS-conn'ов Vision | S |
 
 ## Особенности сопровождения
 
