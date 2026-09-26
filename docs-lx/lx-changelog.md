@@ -28,6 +28,21 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.5
+
+Поверх `v1.14.2-lx.4`. База — sing-box `v1.14.2`.
+
+- 🐛 **`sing-box schema` падал на lx-типах** — генератор JSON-схемы апстрима (1.14) требует, чтобы
+  каждый тип с собственным `UnmarshalJSON` описывал себя через `DescribeSchema`; наши `AWGRange`
+  (`persistent_keepalive_interval`, `h1..h4`, тайминги AWG 3.x), `XmuxRange` (xmux XHTTP) и
+  `rewrite` у `chain` этого не делали, и команда завершалась `FATAL unmapped custom JSON type
+  option.AWGRange`. Теперь все три типа описаны (число или `"N-M"`; строка/число/`[min,max]`;
+  объект «тип → merge-patch», для чего `rewrite` получил именованный тип `ChainRewrite` с тем же
+  underlying `map[string]any`), а `xhttp` добавлен в union транспортов `V2RayTransport`, где список
+  вариантов захардкожен апстримом. Страж-тест `TestSchemaGeneratesWithLXTypes` гоняет генератор
+  под тегами сборки. Заявлено в
+  [issue #30](https://github.com/Leadaxe/sing-box-lx/issues/30).
+
 #### v1.14.2-lx.4
 
 Поверх `v1.14.2-lx.3`. База — sing-box `v1.14.2`.

@@ -89,6 +89,9 @@ func (o V2RayTransportOptions) DescribeSchema(builder schema.Builder) (*schema.N
 			{Value: C.V2RayTransportTypeQUIC, StructType: reflect.TypeFor[V2RayQUICOptions]()},
 			{Value: C.V2RayTransportTypeGRPC, StructType: reflect.TypeFor[V2RayGRPCOptions]()},
 			{Value: C.V2RayTransportTypeHTTPUpgrade, StructType: reflect.TypeFor[V2RayHTTPUpgradeOptions]()},
+			// lx:begin xhttp
+			{Value: C.V2RayTransportTypeXHTTP, StructType: reflect.TypeFor[V2RayXHTTPOptions]()},
+			// lx:end xhttp
 		}, nil)
 	})
 }

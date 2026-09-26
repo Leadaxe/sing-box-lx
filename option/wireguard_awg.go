@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/sagernet/sing-box/schema"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
 )
@@ -68,6 +69,21 @@ func (r AWGRange) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(string(normalized))
 }
+
+// DescribeSchema maps AWGRange to its JSON schema: a uint32 number or a
+// "N" / "N-M" string, mirroring UnmarshalJSON. Without it `sing-box schema`
+// aborts on the first AWGRange field it meets (custom JSON types must
+// describe themselves).
+func (r AWGRange) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("AWGRange", func() (*schema.Node, error) {
+		return schema.AnyOf(
+			schema.UnsignedNode(32),
+			&schema.Node{Type: "string", Pattern: awgRangePattern},
+		), nil
+	})
+}
+
+const awgRangePattern = `^\s*\d+\s*(-\s*\d+\s*)?$`
 
 // Spec re-validates the value and returns the canonical IpcSet spec (""
 // when unset). The device layer calls it so options constructed in code

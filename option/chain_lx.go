@@ -1,6 +1,9 @@
 package option
 
-import "github.com/sagernet/sing/common/json/badoption"
+import (
+	"github.com/sagernet/sing-box/schema"
+	"github.com/sagernet/sing/common/json/badoption"
+)
 
 // ChainOutboundOptions — конфиг outbound'а типа `chain` (lx: SPEC 073 / FEATURE 015).
 //
@@ -22,7 +25,7 @@ type ChainOutboundOptions struct {
 	Strip map[string]bool `json:"strip,omitempty"`
 	// Rewrite — JSON merge-patch (RFC 7396) поверх опций узла данного типа;
 	// применяется к звеньям (позиции ≥ 1) после strip и до подгонки MTU.
-	Rewrite map[string]any `json:"rewrite,omitempty"`
+	Rewrite ChainRewrite `json:"rewrite,omitempty"`
 	// InterruptExistConnections — SPEC 075: selector semantics for the runtime
 	// position toggle. Internal connections are always interrupted on a toggle;
 	// external (user) connections only when this flag is set.
@@ -32,4 +35,15 @@ type ChainOutboundOptions struct {
 // StripEvasionEnabled — дефолт true.
 func (o ChainOutboundOptions) StripEvasionEnabled() bool {
 	return o.StripEvasion == nil || *o.StripEvasion
+}
+
+// ChainRewrite — карта «тип узла → JSON merge-patch» (см. ChainOutboundOptions.Rewrite).
+// Именованный тип нужен генератору `sing-box schema`: значение-патч — произвольный
+// объект, а `map[string]any` он описать не умеет.
+type ChainRewrite map[string]any
+
+func (r ChainRewrite) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("ChainRewrite", func() (*schema.Node, error) {
+		return &schema.Node{Type: "object", AdditionalProperties: schema.LooseObject()}, nil
+	})
 }
