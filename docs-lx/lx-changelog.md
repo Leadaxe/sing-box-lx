@@ -30,7 +30,12 @@ required for stable tags); this changelog section is the fallback used for pre-r
 
 #### v1.14.2-lx.5
 
-Поверх `v1.14.2-lx.4`. База — sing-box `v1.14.2`.
+Хотфикс поверх `v1.14.2-lx.4`. Пользовательские ноты (EN+RU):
+[`docs-lx/releases/v1.14.2-lx.5.md`](releases/v1.14.2-lx.5.md). База — sing-box `v1.14.2`,
+зависимости с lx.4 не менялись. `upstream/stable` на 2026-09-26 ушёл на три коммита после `v1.14.2`
+(`Fix system TUN read loop stopping on write errors`, `Fix local DNS server ignoring systemd-resolved
+global DNS servers`, чистка документации) без нового тега — сознательно не взяты в хотфикс, заберём
+следующим релизом.
 
 - 🐛 **`sing-box schema` падал на lx-типах** — генератор JSON-схемы апстрима (1.14) требует, чтобы
   каждый тип с собственным `UnmarshalJSON` описывал себя через `DescribeSchema`; наши `AWGRange`
