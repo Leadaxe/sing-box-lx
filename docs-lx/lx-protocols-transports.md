@@ -247,12 +247,13 @@ expect: an `xmux` section arriving from a subscription used to be ignored silent
 so the client behaved differently from what the server author intended.
 
 **A `nil`/absent `xmux` section still enables XMUX with Xray-compatible defaults** —
-the pool is always on, matching Xray-core and sing-box-extended.
+the pool is always on, matching Xray-core. The defaults apply only when the section
+is absent or entirely empty; a section with any field set takes every field as written.
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `xmux.max_concurrency` | range | `1-1` | how many streams may share one HTTP connection. **Mutually exclusive** with `max_connections` |
-| `xmux.max_connections` | range | unlimited | how many connections the pool holds; below this count a new connection is always opened. **Mutually exclusive** with `max_concurrency` |
+| `xmux.max_concurrency` | range | unlimited | how many streams may share one HTTP connection. **Mutually exclusive** with `max_connections` |
+| `xmux.max_connections` | range | `3-3` | how many connections the pool holds; below this count a new connection is always opened. **Mutually exclusive** with `max_concurrency` |
 | `xmux.c_max_reuse_times` | range | unlimited | how many times a connection may be handed out for a new stream before it retires |
 | `xmux.h_max_request_times` | range | `600-900` | how many **HTTP requests** may traverse a connection before it retires. Counts requests, not streams — in `packet-up` one stream issues many upload POSTs |
 | `xmux.h_max_reusable_secs` | range | `1800-3000` | how long a connection stays reusable, in seconds |
