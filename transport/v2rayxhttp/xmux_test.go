@@ -277,14 +277,18 @@ func freezeTime(t *testing.T, at time.Time) func() {
 
 // TestNormalizeXmuxDefaults: a config with no xmux section must still get the
 // Xray-compatible defaults — that is what makes a plain config behave like an
-// Xray client (SPEC 059 §3).
+// Xray client (SPEC 059 §3). Since Xray 18e2839 that is a pool of three
+// connections, not one connection per stream (issue #32).
 func TestNormalizeXmuxDefaults(t *testing.T) {
 	config, err := normalizeXmux(nil)
 	if err != nil {
 		t.Fatalf("normalizeXmux(nil): %v", err)
 	}
-	if config.maxConcurrency != (intRange{1, 1}) {
-		t.Fatalf("max_concurrency = %v, want 1-1", config.maxConcurrency)
+	if config.maxConnections != (intRange{3, 3}) {
+		t.Fatalf("max_connections = %v, want 3-3", config.maxConnections)
+	}
+	if config.maxConcurrency != (intRange{}) {
+		t.Fatalf("max_concurrency = %v, want 0 (mutually exclusive with max_connections)", config.maxConcurrency)
 	}
 	if config.hMaxRequestTimes != (intRange{600, 900}) {
 		t.Fatalf("h_max_request_times = %v, want 600-900", config.hMaxRequestTimes)

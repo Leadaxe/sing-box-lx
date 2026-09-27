@@ -37,8 +37,8 @@ type V2RayXHTTPOptions struct {
 	// "100-1000".
 	XPaddingBytes string `json:"x_padding_bytes,omitempty"`
 	// Xmux configures HTTP connection reuse (Xray "XMUX"). A nil value still
-	// enables XMUX with Xray-compatible defaults — matching Xray-core and
-	// sing-box-extended, where the pool is always on. See SPECS/TASKS/059.
+	// enables XMUX with Xray-compatible defaults (see V2RayXHTTPXmuxOptions) —
+	// matching Xray-core, where the pool is always on. See SPECS/TASKS/059.
 	Xmux *V2RayXHTTPXmuxOptions `json:"xmux,omitempty"`
 
 	// NoGRPCHeader omits the "Content-Type: application/grpc" request header that
@@ -168,9 +168,9 @@ type V2RayXHTTPOptions struct {
 // limits when it is created.
 //
 // Defaults follow Xray's all-or-nothing rule: a section that is absent OR
-// entirely empty selects max_concurrency "1-1", h_max_request_times "600-900",
-// h_max_reusable_secs "1800-3000"; a section with ANY field set takes every
-// field as written, and unset ranges stay zero (= unlimited).
+// entirely empty selects max_connections "3-3", h_max_request_times "600-900",
+// h_max_reusable_secs "1800-3000" (Xray-core 18e2839); a section with ANY field
+// set takes every field as written, and unset ranges stay zero (= unlimited).
 type V2RayXHTTPXmuxOptions struct {
 	// MaxConcurrency bounds how many streams may share a single HTTP connection.
 	// Mutually exclusive with MaxConnections.

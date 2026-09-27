@@ -486,12 +486,14 @@ func (m *xmuxManager) get() (*xmuxClient, time.Duration) {
 
 const maxInt32 = int32(^uint32(0) >> 1)
 
-// Defaults mirror sing-box-extended (option/v2ray_transport.go:312-319), which
-// applies them whenever the xmux section is absent. Keeping that behaviour is
-// the point of the task: a config that says nothing about xmux should still
-// produce an Xray-shaped connection pattern.
+// Defaults mirror Xray-core (infra/conf/transport_method.go, commit 18e2839,
+// XTLS/Xray-core#6376): a config that says nothing about xmux should still
+// produce an Xray-shaped connection pattern. Xray bounds the pool at three
+// connections rather than one connection per stream (the former
+// max_concurrency 1 default): a burst of parallel TLS connections to one server
+// is what TSPU cuts, and three is the count reported to pass (issue #32).
 var (
-	defaultXmuxMaxConcurrency   = intRange{1, 1}
+	defaultXmuxMaxConnections   = intRange{3, 3}
 	defaultXmuxHMaxRequestTimes = intRange{600, 900}
 	defaultXmuxHMaxReusableSecs = intRange{1800, 3000}
 )
@@ -507,7 +509,7 @@ var (
 func normalizeXmux(options *option.V2RayXHTTPXmuxOptions) (xmuxConfig, error) {
 	if options == nil || *options == (option.V2RayXHTTPXmuxOptions{}) {
 		return xmuxConfig{
-			maxConcurrency:   defaultXmuxMaxConcurrency,
+			maxConnections:   defaultXmuxMaxConnections,
 			hMaxRequestTimes: defaultXmuxHMaxRequestTimes,
 			hMaxReusableSecs: defaultXmuxHMaxReusableSecs,
 		}, nil
