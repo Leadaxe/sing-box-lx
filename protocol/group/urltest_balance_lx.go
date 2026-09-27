@@ -424,3 +424,21 @@ func (s *URLTest) ActiveTags() []string {
 	}
 	return nil
 }
+
+// poolReferences is what a round_robin group holds in use: every pool slot is
+// dialed, not one selected node, so every slot counts as referenced. Without it
+// upstream's reference manager treats the rest of the pool as unreferenced and
+// closes their idle connections after each use. nil for least_test.
+// lx: SPEC 109.
+func (s *URLTest) poolReferences() []string {
+	if s.balancer == nil {
+		return nil
+	}
+	var references []string
+	for _, tag := range s.balancer.poolTags() {
+		if tag != "" {
+			references = append(references, tag)
+		}
+	}
+	return references
+}

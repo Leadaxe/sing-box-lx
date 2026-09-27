@@ -219,6 +219,7 @@ func (s *URLTest) References() []string {
 	if group.selectedOutboundUDP != nil && group.selectedOutboundUDP != group.selectedOutboundTCP {
 		references = append(references, group.selectedOutboundUDP.Tag())
 	}
+	references = append(references, s.poolReferences()...) // lx: SPEC 109
 	return references
 }
 

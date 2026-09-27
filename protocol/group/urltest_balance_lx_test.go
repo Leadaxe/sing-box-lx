@@ -549,3 +549,17 @@ func TestURLTestModeReporting(t *testing.T) {
 		}
 	}
 }
+
+// lx: SPEC 109 — a round_robin group references its whole pool; least_test adds nothing.
+func TestPoolReferences(t *testing.T) {
+	leastTest := &URLTest{}
+	if references := leastTest.poolReferences(); references != nil {
+		t.Fatalf("least_test must add no pool references, got %v", references)
+	}
+	roundRobin := &URLTest{balancer: &balancer{}}
+	roundRobin.balancer.setSlots([]string{"a", "", "b"})
+	references := roundRobin.poolReferences()
+	if len(references) != 2 || references[0] != "a" || references[1] != "b" {
+		t.Fatalf("want the live pool slots [a b], got %v", references)
+	}
+}
