@@ -53,6 +53,8 @@ const (
 	// A proxied IP packet never exceeds jumbo-frame size; cap generously.
 	// lx: SPEC 021 A4/A5/B5.
 	maxCapsulePayload = 65535
+	// h2CloseGrace bounds the farewell RST_STREAM on Close. lx: SPEC 108.
+	h2CloseGrace = time.Second
 )
 
 // ConnectTunnelH2 establishes a CONNECT-IP tunnel over an already-handshaked
@@ -300,12 +302,21 @@ func (c *h2RawConn) setErr(err error) {
 	}
 }
 
+// Close never waits for a writer. lx: SPEC 108 — writeData holds writeMu across
+// a write that has no deadline, so on a path that stopped draining (peer gone,
+// black hole) a Close that queued behind it sat there until the kernel gave up
+// on the TCP connection — minutes, with the session teardown and
+// Outbound.Close parked behind it. RST_STREAM is a courtesy on a connection
+// that carries a single stream: it goes out only when the writer lock is free,
+// and under a deadline; closing the socket is what releases a stuck writer.
 func (c *h2RawConn) Close() error {
 	c.closeOnce.Do(func() {
 		close(c.closed)
-		c.writeMu.Lock()
-		_ = c.framer.WriteRSTStream(h2StreamID, xhttp2.ErrCodeCancel)
-		c.writeMu.Unlock()
+		_ = c.tlsConn.SetWriteDeadline(time.Now().Add(h2CloseGrace))
+		if c.writeMu.TryLock() {
+			_ = c.framer.WriteRSTStream(h2StreamID, xhttp2.ErrCodeCancel)
+			c.writeMu.Unlock()
+		}
 		_ = c.tlsConn.Close()
 	})
 	return nil

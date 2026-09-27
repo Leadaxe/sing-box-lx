@@ -13,6 +13,7 @@ package masque
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -110,7 +111,7 @@ func dialCONNECTIP(ctx context.Context, profile Profile, conn *http3.ClientConn,
 	if err = rstr.SendRequestHeader(req); err != nil {
 		return nil, E.Cause(err, "send request header")
 	}
-	rsp, err := rstr.ReadResponse()
+	rsp, err := readResponse(ctx, rstr)
 	if err != nil {
 		return nil, E.Cause(err, "read response")
 	}
@@ -118,4 +119,31 @@ func dialCONNECTIP(ctx context.Context, profile Profile, conn *http3.ClientConn,
 		return nil, E.New("connect-ip: server responded with ", rsp.StatusCode)
 	}
 	return connectip.NewProxiedConn(rstr), nil
+}
+
+// responseStream is the part of http3.RequestStream readResponse needs.
+type responseStream interface {
+	ReadResponse() (*http.Response, error)
+	CancelRead(errorCode quic.StreamErrorCode)
+	CancelWrite(errorCode quic.StreamErrorCode)
+}
+
+// readResponse is ReadResponse bound to ctx. lx: SPEC 108 — ReadResponse takes
+// no context, so an endpoint that completes the QUIC handshake, keeps
+// acknowledging keepalives and never answers the CONNECT held the dial for as
+// long as the connection lived: the caller's deadline did not apply, every dial
+// of the node queued behind it, and in `auto` the abandoned h3 leg leaked with
+// its QUIC connection. Cancelling the stream is what unblocks the read.
+func readResponse(ctx context.Context, stream responseStream) (*http.Response, error) {
+	stop := context.AfterFunc(ctx, func() {
+		stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeRequestCanceled))
+		stream.CancelWrite(quic.StreamErrorCode(http3.ErrCodeRequestCanceled))
+	})
+	response, err := stream.ReadResponse()
+	if !stop() {
+		// The stream is cancelled (or about to be) — unusable even if the
+		// response slipped in at the same moment.
+		return nil, context.Cause(ctx)
+	}
+	return response, err
 }

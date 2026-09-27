@@ -572,12 +572,27 @@ func (o *Outbound) connect(ctx context.Context, network string) (io.Closer, masq
 	if o.autoMode {
 		h3Budget = o.autoH3Delay
 	}
+	var (
+		h2Err   error
+		h2Tried bool // the remembered h2 leg already failed in this attempt
+	)
 	if network == "h2" {
 		closer, ipConn, err := connectH2(ctx)
-		if err == nil && o.autoMode {
-			o.rememberNetwork("h2")
+		if err == nil {
+			if o.autoMode {
+				o.rememberNetwork("h2")
+			}
+			return closer, ipConn, "h2", nil
 		}
-		return closer, ipConn, "h2", err
+		if !o.autoMode || ctx.Err() != nil {
+			return nil, nil, "h2", err
+		}
+		// lx: SPEC 108 — the remembered leg is a shortcut, not a verdict: the
+		// network may have changed to one where TCP is closed and UDP is open.
+		// Drop the memory and give h3 its turn instead of failing until restart.
+		o.forgetNetwork()
+		h2Err, h2Tried = err, true
+		o.logger.InfoContext(ctx, "masque: remembered h2 to ", o.server, " did not come up (", err, "); trying h3")
 	}
 	if !o.autoMode {
 		closer, ipConn, err := connectH3(ctx, 0)
@@ -614,8 +629,15 @@ func (o *Outbound) connect(ctx context.Context, network string) (io.Closer, masq
 			}
 		}()
 	}
-	budget := time.NewTimer(o.autoH3Delay)
-	defer budget.Stop()
+	// lx: SPEC 108 — with h2 already failed there is nothing to fall back to, so
+	// the wall-clock timer is off (nil channel) and the leg is waited for until
+	// it answers or the caller gives up; its own handshake budget still applies.
+	var budgetC <-chan time.Time
+	if !h2Tried {
+		budget := time.NewTimer(o.autoH3Delay)
+		defer budget.Stop()
+		budgetC = budget.C
+	}
 	var (
 		h3Err      error
 		h3Returned bool // the leg's single result is already consumed
@@ -633,8 +655,10 @@ func (o *Outbound) connect(ctx context.Context, network string) (io.Closer, masq
 			return nil, nil, "h3", outcome.err
 		}
 		h3Err = outcome.err
-		o.logger.InfoContext(ctx, "masque: h3 to ", o.server, " did not come up (", h3Err, "); falling back to h2")
-	case <-budget.C:
+		if !h2Tried {
+			o.logger.InfoContext(ctx, "masque: h3 to ", o.server, " did not come up (", h3Err, "); falling back to h2")
+		}
+	case <-budgetC:
 		// Leg still running — possibly wedged. Abandon it, do not wait.
 		h3Err = E.New("h3 handshake exceeded ", o.autoH3Delay)
 		o.logger.InfoContext(ctx, "masque: ", h3Err, " to ", o.server, "; falling back to h2 (h3 attempt abandoned)")
@@ -645,11 +669,17 @@ func (o *Outbound) connect(ctx context.Context, network string) (io.Closer, masq
 		return nil, nil, "h3", ctx.Err()
 	}
 
-	h2Closer, h2Conn, h2Err := connectH2(ctx)
-	if h2Err == nil {
-		drainH3()
-		o.rememberNetwork("h2")
-		return h2Closer, h2Conn, "h2", nil
+	if !h2Tried {
+		var (
+			h2Closer io.Closer
+			h2Conn   masque.IpConn
+		)
+		h2Closer, h2Conn, h2Err = connectH2(ctx)
+		if h2Err == nil {
+			drainH3()
+			o.rememberNetwork("h2")
+			return h2Closer, h2Conn, "h2", nil
+		}
 	}
 	// h2 failed. If the h3 leg is still out there it may yet succeed (a slow but
 	// alive path where the budget was simply too tight) — that result is worth
@@ -689,6 +719,11 @@ func (o *Outbound) rememberNetwork(network string) {
 		return
 	}
 	o.autoNetwork.Store(&network)
+}
+
+// forgetNetwork returns `auto` to its default order (h3 first). lx: SPEC 108.
+func (o *Outbound) forgetNetwork() {
+	o.autoNetwork.Store(nil)
 }
 
 // lx:end masque-auto
