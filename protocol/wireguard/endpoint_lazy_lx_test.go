@@ -239,6 +239,9 @@ func TestLazyStateTransitions(t *testing.T) {
 	w.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
 	w.SuspendIfIdle(false, time.Minute, 0)
 	assertState(t, w, adapter.EndpointStateAsleep)
+	// The sleep clock is elapsed time: read it a tick later, or a coarse clock
+	// reports zero and the check below fails on a loaded machine.
+	time.Sleep(time.Millisecond)
 	if idle := w.IdleState(); idle.IdleSince < time.Hour || idle.SleepSince <= 0 {
 		t.Fatalf("asleep: idle clocks not reported: %+v", idle)
 	}
