@@ -28,6 +28,36 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.8
+
+Синк с `upstream/stable` поверх `v1.14.2-lx.7` (SPEC 109). Пользовательские ноты (EN+RU):
+[`docs-lx/releases/v1.14.2-lx.8.md`](releases/v1.14.2-lx.8.md). База — sing-box `v1.14.2` + 15
+коммитов (`a781ae655`), нового тега у апстрима нет; дрейф 0. Модули: `sing` 5f9aad7def20, `sing-mux`
+v0.3.9-0.20260927144857, `sing-quic` 8601a428f4db, `sing-snell` bc5a12ac736f — `require` равен stable.
+Go 1.26.8, cronet, NDK/JDK, `upstream.version` не менялись; форк-сабмодули на прежних пинах
+(`wireguard-go` v0.0.7, `sing-tun` ddaa4ca25e3b, `gvisor`, `utls` v1.8.7). Из-за смены версий
+модулей перед тегом прогнан dry run `lx-release.yml`.
+
+- 📌 **Мерж `741d5ffa1`**: управление простаивающими соединениями (`route.ReferenceManager`,
+  `adapter.IdleConnectionKeeper`, `adapter.Referrer`), power-отчёты, `Fix UDP fragmentation`,
+  `Fix tun GSO check`, `Fix system TUN read loop stopping on write errors`, глобальные серверы
+  systemd-resolved, пауза и пробуждение в libbox (`WakeNow`, `RecordScreenState`,
+  `RecordLockState`). Конфликты: `common/interrupt/group.go`, `dns/transport_adapter.go`,
+  `protocol/group/urltest.go`, `go.sum`. В 19 автослитых файлах с нашей дельтой набор наших строк
+  не изменился.
+- 🔧 **Хотфикс SPEC 084 снят**: апстрим вынес `Close` из-под мьютекса `interrupt.Group` тем же
+  способом (`0ed951aa0`). `group.go` и `conn.go` равны апстримным; `NewSingPacketConn` и
+  `SingPacketConn` (SPEC 064) вынесены в `common/interrupt/sing_packet_conn_lx.go`.
+- 🔧 **`urltest` `round_robin`: весь пул в `References()`** (`bd0b66934`) — апстримный учёт ссылок
+  называл используемым только выбранный узел, остальным узлам пула закрывались бы простаивающие
+  соединения после каждого использования.
+- ⚠️ **SPEC 028 на Linux и Android начал действовать с этого релиза**: `UDPFragmentDefault = true`
+  до `Fix UDP fragmentation` не ставил сокет-опцию, и ядро держало DF само. У `masque` по h3 флаг
+  оставлен, хотя у своих QUIC-протоколов апстрим его убрал. Прогон вложенных туннелей и WARP по h3
+  на устройстве не проводился.
+- 🧰 `TestLazyStateTransitions` читает часы сна на тик позже (`1286271a7`) — падал под нагрузкой.
+- ⚠️ XHTTP с `xmux` новых интерфейсов не реализует: его пул вне учёта ссылок и закрытия на паузе.
+
 #### v1.14.2-lx.7
 
 Хотфикс поверх `v1.14.2-lx.6`. Пользовательские ноты (EN+RU):

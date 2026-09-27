@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | R (sync) — мерж `upstream/stable` (v1.14.2 + 15 коммитов, без нового тега) в `lx` по раннбуку |
-| Статус | I (implemented) — 2026-09-28: мерж `741d5ffa1` в дереве, дрейф 0; сборка без тегов, с `with_lx_command` и с полным `LX_TAGS`+`with_lx_idle_suspend`, тесты затронутых пакетов, стенды `lx-test`, `lx-check` (9 конфигов); не выпущено, на устройстве не прогонялось |
+| Статус | I (implemented) — 2026-09-28: мерж `741d5ffa1` в дереве, дрейф 0; сборка без тегов, с `with_lx_command` и с полным `LX_TAGS`+`with_lx_idle_suspend`, тесты затронутых пакетов, стенды `lx-test`, `lx-check` (9 конфигов); dry run `lx-release.yml` перед тегом; выпуск в v1.14.2-lx.8; на устройстве не прогонялось |
 | Ветка | `lx` |
 | База | до: `4a2eb44ee` (v1.14.2-lx.7, merge-base `af6e64c3b` = v1.14.2); после: `upstream/stable` = `a781ae655` = v1.14.2 + 15 |
 | Связано | [102](../102-UPSTREAM_SYNC_1_14_2/SPEC.md) (предыдущий синк), [084](../084-INTERRUPT_GROUP_ABBA_DEADLOCK/SPEC.md) (снят), [028](../028-NESTED_TUNNEL_UDP_FRAGMENT/SPEC.md) (семантика флага изменилась), [019](../019-URLTEST_MODE_STICKY/SPEC.md) (пул `round_robin`), [064](../064-SELECTOR_INTERRUPT_DEAD_ON_INBOUND/SPEC.md) |
@@ -61,7 +61,8 @@ ddaa4ca25e3b, `gvisor` 20260727.0-sing-box-mod.1, `utls` v1.8.7. Наши вет
    `experimental/libbox`, `common/tls`, `lxd`); стенды `lx-test/{chain,initerr,startclose,zombie}`;
    `make -f Makefile.lx lx-check`; `gofmt -l` пуст.
 5. **§2a**: Go 1.26.8, cronet, `upstream.version` = 1.14.2 совпадают со stable; `.github` и
-   скрипты тулчейна апстрим не менял. `require` равен stable. Dry run не требуется.
+   скрипты тулчейна апстрим не менял. `require` равен stable. Версии четырёх модулей сменились —
+   перед тегом прогнан dry run `lx-release.yml` (раннбук §2b).
 
 ## 4. Адаптация нашей дельты
 
@@ -105,4 +106,4 @@ ddaa4ca25e3b, `gvisor` 20260727.0-sing-box-mod.1, `utls` v1.8.7. Наши вет
 | 4 | Набор строк нашей дельты в автослитых файлах не изменился | ✅ |
 | 5 | Пул `round_robin` в `References()` | ✅ `TestPoolReferences` |
 | 6 | Прогон на устройстве: смена сети, пауза и пробуждение, вложенные туннели, `masque` h3 | не проводился |
-| 7 | Выпуск | не выпущено |
+| 7 | Выпуск | v1.14.2-lx.8 |
