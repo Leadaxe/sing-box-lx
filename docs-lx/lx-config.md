@@ -531,7 +531,8 @@ block.
 ```
 
 `"vhttp": "auto"` — **the default** — tries h3 first and falls back to h2 if the QUIC handshake
-does not complete within 3 s, remembering the winning mode for the rest of the process. The failure
+does not complete within 3 s, remembering the winning mode; if the remembered mode stops coming up, the memory is dropped and the
+other one is tried in the same dial. The failure
 mode it exists for is the endpoint (or a TCP-only hop in front of it — an HTTP CONNECT `detour`, a
 VLESS/Trojan link in a chain) **silently ignoring QUIC** — there is no error to see, only a hang;
 measured in the field through a proxied hop where Cloudflare answered TCP:443 but never replied to

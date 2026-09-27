@@ -29,6 +29,7 @@
 
 | Задача | Вопрос | Ответ | Статус |
 |--------|--------|-------|--------|
+| [107 — MASQUE_UPSTREAM_1_15_COMPARISON](../../TASKS/107-MASQUE_UPSTREAM_1_15_COMPARISON/SPEC.md) | Заменяет ли MASQUE апстрима 1.15 наш outbound | **Нет**: с WARP не работает без трёх швов; как транспорт сильнее нашего. Реестр дефектов обеих сторон, три наших исправлены в 108 | C |
 | [027 — UTLS_OVER_QUIC](../../TASKS/027-UTLS_OVER_QUIC/SPEC.md) | Осуществим ли uTLS-фингерпринт поверх QUIC | Исследование завершено | C |
 | [024 — RUNTIME_LOOP_GUARD](../../TASKS/024-RUNTIME_LOOP_GUARD/SPEC.md) | Защита от колец `detour`/`selector`, собранных в рантайме | **Не в ядре** — защита ушла на UI (LxBox) | DEFERRED |
 | [012 — TCP_DOWNLINK_STALL_ZOMBIE_CONNS](../../TASKS/012-TCP_DOWNLINK_STALL_ZOMBIE_CONNS/SPEC.md) | Почему download застревает (↑517 ↓0) | Зонтик над несколькими причинами; WG-долю закрыл 010, остальное не воспроизводится | C |

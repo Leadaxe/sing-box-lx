@@ -922,8 +922,8 @@ all connect to the same endpoint.
 ## 3.7 `vhttp`: auto / h3 / h2
 
 `auto` is the default (SPEC 074): it tries `h3` (QUIC) first and falls back to `h2`
-when the QUIC handshake does not complete within 3 s, remembering the winner for the
-rest of the process. The failure mode it exists for produces **no error** — the
+when the QUIC handshake does not complete within 3 s, remembering the winner; a remembered
+leg that stops coming up is forgotten and the other one is tried in the same dial. The failure mode it exists for produces **no error** — the
 endpoint (or a TCP-only hop in front of it: an HTTP CONNECT detour, a VLESS/Trojan
 link in a chain) silently swallows QUIC and every dial just hangs. A fixed `h3` is
 the fastest when the path is known-clean; on networks that filter inbound UDP:443
