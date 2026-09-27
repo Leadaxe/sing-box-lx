@@ -130,6 +130,6 @@ Cloudflare принимает отовсюду; замер той же цепо�
 
 Наши же файлы фич: `protocol/masque/outbound.go` (константа, поля, ветка
 конструктора, `connect` с отвязанным fallback; маркер `lx:begin masque-auto`),
-`option/masque.go` (описание + `enum`), новый тест `auto_vhttp_lx_test.go`.
+`option/masque_lx.go` (описание + `enum`), новый тест `auto_vhttp_lx_test.go`.
 Попутный фикс дедлока — `transport/v2rayxhttp/conn.go` (зона SPEC 050, реестр
 находок там).

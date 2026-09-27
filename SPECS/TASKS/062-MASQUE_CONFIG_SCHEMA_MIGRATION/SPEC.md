@@ -6,7 +6,7 @@
 |------|----------|
 | Тип | F (feature) — схема конфига + миграция |
 | Статус | C (complete) — сделано 2026-08-12; обе схемы проверены на живом WARP, старые конфиги работают с одним предупреждением |
-| Зона | схема `option/masque.go` и её разрешение; поведение туннеля не трогаем |
+| Зона | схема `option/masque_lx.go` и её разрешение; поведение туннеля не трогаем |
 | Build-tag | — (в ядре) |
 | Смежные | [SPEC 021](../021-MASQUE_CONNECT_IP_OUTBOUND/SPEC.md) — сам outbound; [SPEC 060](../060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) — авто-фрагментация |
 
@@ -155,7 +155,7 @@ lx-цель (`1.14.0-lx.NN`, да и `1.15.0`) даёт тот же эффект
 
 | файл | что |
 |---|---|
-| `option/masque.go` | +`OutboundTLSOptionsContainer`, +`VHTTP`, пометки Deprecated на legacy |
+| `option/masque_lx.go` | +`OutboundTLSOptionsContainer`, +`VHTTP`, пометки Deprecated на legacy |
 | `protocol/masque/legacy_options_lx.go` | **новый** — `resolveLegacyOptions`, `warnUnsupportedTLSOptions` |
 | `protocol/masque/outbound.go` | вызов разрешения, `disable_sni`, чтение `options.TLS`, проброс блока в `buildH2TLSClient` |
 | `experimental/deprecated/constants.go` | +`Note` (+ в реестр `Options`) и правка `MessageWithLink()` при пустом `ScheduledVersion` |
@@ -204,7 +204,7 @@ h2 в этом прогоне падал (`x509: algorithm unimplemented`) — *
 Порядок шагов важен: схема → разрешение → предупреждения → проводка. После каждого шага
 дерево должно собираться и проходить тесты.
 
-### Шаг 1. Схема (`option/masque.go`)
+### Шаг 1. Схема (`option/masque_lx.go`)
 
 ```go
 type MASQUEOutboundOptions struct {

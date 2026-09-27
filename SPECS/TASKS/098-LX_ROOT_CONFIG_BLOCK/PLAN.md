@@ -8,7 +8,7 @@
 | `option/lx_test.go` | — | парсинг блока; каждое правило валидации; алиасы: только `route`, только `lx`, оба совпадают (предупреждение), оба различаются (ошибка); каноническая форма после резолва; неизвестный ключ/подблок `naive` — ошибка |
 | `option/options.go` | upstream | одна строка `LX *LXOptions \`json:"lx,omitempty"\`` под `// lx: SPEC 098` |
 | `option/route.go` | upstream, блок `lx:begin idle-suspend` | три поля остаются как алиасы; комментарии → «deprecated, see lx.wg.*» |
-| `option/masque.go` | — | `IdleTimeout *badoption.Duration` — явный `"0"` в узле отличим от отсутствия |
+| `option/masque_lx.go` | — | `IdleTimeout *badoption.Duration` — явный `"0"` в узле отличим от отсутствия |
 | `box_lx.go` | — | `applyLXOptions(ctx, *option.Options, log) (ctx, error)`: вызывает `ResolveLX`, пишет предупреждения алиасов в лог, регистрирует `*option.LXResolved` в контексте (`service.ContextWithPtr`) |
 | `box.go` | upstream | одна строка вызова `applyLXOptions` до `route.NewRouter` (endpoint'ы и outbound'ы создаются позже — контекст уже несёт блок) |
 | `route/router.go` | upstream, строки `lx:` | четыре поля idle берутся из `service.FromContext[*option.LXResolved](ctx)` (nil → нули), не из `options.LXIdle*` |

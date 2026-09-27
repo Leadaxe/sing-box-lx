@@ -22,7 +22,7 @@ overview links to: every field, its type, its default, its validation, and the
 exact error text you get when it is wrong.
 
 Everything here is sourced from the option structs (`option/v2ray_xhttp.go`,
-`option/wireguard_awg.go`, `option/masque.go`) and the protocol implementations,
+`option/wireguard_awg.go`, `option/masque_lx.go`) and the protocol implementations,
 not from memory — defaults and error strings are the ones the current core emits.
 
 > ⚠️ Every key / UUID / address below is a **placeholder**. Never commit real

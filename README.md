@@ -269,7 +269,7 @@ Everything downstream is either a new file or a seam marked `// lx`; `grep -rn "
 | `dns/transport/group/`, `common/dnstrack/` | DNS server group and the DNS query trace behind `SubscribeDNSQueries` |
 | `experimental/libbox/`, `daemon/` (`lx:` seams) | `CommandClient` extensions |
 | `lxd/` | the `lxd` daemon |
-| `option/v2ray_xhttp.go`, `option/wireguard_awg.go`, `option/masque.go`, `option/chain_lx.go` | feature options |
+| `option/v2ray_xhttp.go`, `option/wireguard_awg.go`, `option/masque_lx.go`, `option/chain_lx.go` | feature options |
 | `submodules/sing-tun`, `submodules/gvisor` | fork submodules for the TUN stack |
 
 ---

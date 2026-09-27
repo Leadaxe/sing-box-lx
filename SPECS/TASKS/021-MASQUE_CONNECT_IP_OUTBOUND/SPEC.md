@@ -292,7 +292,7 @@ CONNECT-IP». Формулировка это выдерживает: соеди
 
 ```
 constant/proxy.go        + TypeMASQUE = "masque" (рядом с TypeTUIC) + в displayName switch
-option/masque.go         type MASQUEOutboundOptions (DialerOptions + ServerOptions + поля §Конфиг)
+option/masque_lx.go         type MASQUEOutboundOptions (DialerOptions + ServerOptions + поля §Конфиг)
 include/quic.go          masque.RegisterOutbound в registerQUICOutbounds (with_quic) + импорт
 include/quic_stub.go     заглушка ErrQUICNotIncluded (без with_quic)
 
@@ -516,7 +516,7 @@ DATAGRAM (type 0 + varint len). `payloadLen` ограничен `maxCapsulePaylo
   cert), `masque.go` (ConnectTunnelH3 + IpConn), `request.go` (Extended CONNECT + advertiseDefaultRoute),
   `client_h2.go` (capsule DATAGRAM поверх ручного HTTP/2 на `x/net/http2` Framer + hpack).
 - `protocol/masque/outbound.go` — adapter.Outbound: lazy run(), два насоса, DialContext/ListenPacket/Close.
-- `option/masque.go`, `constant/proxy.go` (TypeMASQUE + displayName), `include/quic.go` (+quic_stub.go).
+- `option/masque_lx.go`, `constant/proxy.go` (TypeMASQUE + displayName), `include/quic.go` (+quic_stub.go).
 
 Отклонения от плана спека:
 - **Экспорт `NewStackDevice` НЕ понадобился.** `transport/wireguard.NewDevice(DeviceOptions{Address,MTU})`

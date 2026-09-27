@@ -1,7 +1,7 @@
 # SPEC 021 — MASQUE outbound: справочник конфигурации
 
 Полный шаблон и таблица всех параметров MASQUE-outbound (`type: masque`).
-Сверено с кодом на ветке `lx-spec021-masque` (`option/masque.go`, `protocol/masque/outbound.go`,
+Сверено с кодом на ветке `lx-spec021-masque` (`option/masque_lx.go`, `protocol/masque/outbound.go`,
 `transport/masque/profile.go`). Формат — sing-box JSON (НЕ Clash YAML).
 
 ---

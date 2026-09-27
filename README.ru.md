@@ -270,7 +270,7 @@ upstream/stable  ──merge──►  lx  =  upstream  +  швы // lx  +  lx-�
 | `dns/transport/group/`, `common/dnstrack/` | группа DNS-серверов и трассировка DNS-запросов за `SubscribeDNSQueries` |
 | `experimental/libbox/`, `daemon/` (швы `lx:`) | расширения `CommandClient` |
 | `lxd/` | демон `lxd` |
-| `option/v2ray_xhttp.go`, `option/wireguard_awg.go`, `option/masque.go`, `option/chain_lx.go` | опции фич |
+| `option/v2ray_xhttp.go`, `option/wireguard_awg.go`, `option/masque_lx.go`, `option/chain_lx.go` | опции фич |
 | `submodules/sing-tun`, `submodules/gvisor` | форк-сабмодули для TUN-стека |
 
 ---
