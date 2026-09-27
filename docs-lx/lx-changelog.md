@@ -28,6 +28,39 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.7
+
+Хотфикс поверх `v1.14.2-lx.6`. Пользовательские ноты (EN+RU):
+[`docs-lx/releases/v1.14.2-lx.7.md`](releases/v1.14.2-lx.7.md). База — sing-box `v1.14.2`,
+тулчейн и зависимости с lx.6 не менялись (Go 1.26.8 = stable, сабмодули на месте). `upstream/stable`
+на 2026-09-28 впереди на те же 15 коммитов без нового тега; из-за них `require` расходится со stable
+в четырёх модулях (`sing`, `sing-mux`, `sing-quic`, `sing-snell`). Синк снова отложен: релиз
+несёт только исправления masque, а пробный мерж даёт конфликты в `common/interrupt/group.go`,
+`dns/transport_adapter.go`, `protocol/group/urltest.go` и `go.sum` и меняет поведение
+`Pause`/`Wake` в libbox — это отдельная задача с прогоном на устройстве. Из отложенного для нас
+значимы `Fix UDP fragmentation` (на Linux/Android `UDPFragmentDefault` до него не снимает DF,
+на это опирается SPEC 028) и `Fix interrupt group holding lock while closing connections`
+(совпадает с нашим SPEC 084).
+
+- 🐛 **masque: три ожидания без предела** (SPEC 108, находки исследования SPEC 107).
+  - `vhttp: auto`: ветка запомненного h2 в `connect` (`protocol/masque/outbound.go`) при отказе
+    возвращала ошибку и не трогала память — узел отказывал на каждом dial до рестарта. Теперь
+    отказ не по отмене вызывающим сбрасывает память (`forgetNetwork`) и отдаёт управление общему
+    пути `auto`; h2 в этой попытке повторно не пробуется, настенный таймер фолбэка выключен.
+  - h2: `h2RawConn.Close` (`transport/masque/client_h2.go`) брал `writeMu` до закрытия сокета и
+    вставал за записью без дедлайна. Теперь `SetWriteDeadline` на `h2CloseGrace` (1 с), `TryLock`,
+    `RST_STREAM` только при свободном мьютексе, затем закрытие сокета.
+  - h3: `ReadResponse` в `dialCONNECTIP` (`transport/masque/masque.go`) не принимал контекст.
+    Обёртка `readResponse` на время чтения вешает на контекст `CancelRead`/`CancelWrite` и снимает
+    привязку после ответа.
+  - Тесты: `protocol/masque/auto_h2_recover_lx_test.go` (5), `transport/masque/hang_lx_test.go` (4).
+    На живом WARP не прогонялось.
+- 🧰 **Файлы masque переименованы**: `option/masque.go` → `option/masque_lx.go`,
+  `test/masque_test.go` → `test/masque_lx_test.go`. Апстрим 1.15 кладёт по этим путям свой MASQUE
+  (endpoint'ы `masque-client`/`masque-server`); код не менялся.
+- 📌 **Исследование SPEC 107**: сравнение нашего masque-outbound с MASQUE апстрима 1.15 —
+  совместимость с WARP, реестр дефектов обеих реализаций, варианты перехода на 1.15.
+
 #### v1.14.2-lx.6
 
 Хотфикс поверх `v1.14.2-lx.5`. Пользовательские ноты (EN+RU):
