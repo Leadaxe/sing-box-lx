@@ -30,14 +30,21 @@ type Outbound struct {
 	dialer     N.Dialer
 	client     snellClient
 	serverAddr M.Socksaddr
+	reuse      bool
 }
 
-var _ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+var (
+	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+	_ adapter.IdleConnectionKeeper    = (*Outbound)(nil)
+	_ adapter.OutboundWithMultiplex   = (*Outbound)(nil)
+)
 
 type snellClient interface {
 	snellprotocol.Method
 	DialContext(ctx context.Context, destination M.Socksaddr) (net.Conn, error)
 	Reset()
+	SetKeepIdleConnections(keep bool)
+	CloseIdleConnections()
 	Close() error
 }
 
@@ -92,6 +99,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		dialer:     outboundDialer,
 		client:     client,
 		serverAddr: serverAddr,
+		reuse:      options.Reuse,
 	}
 	return outbound, nil
 }
@@ -141,6 +149,18 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 
 func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 	h.client.Reset()
+}
+
+func (h *Outbound) MultiplexEnabled() bool {
+	return h.reuse
+}
+
+func (h *Outbound) SetKeepIdleConnections(keep bool) {
+	h.client.SetKeepIdleConnections(keep)
+}
+
+func (h *Outbound) CloseIdleConnections() {
+	h.client.CloseIdleConnections()
 }
 
 func (h *Outbound) Close() error {

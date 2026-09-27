@@ -45,6 +45,8 @@ type ProcessAttribution struct {
 type timelineRow struct {
 	From                        string            `json:"from"`
 	To                          string            `json:"to"`
+	MonoMS                      int64             `json:"monoMS"`
+	AwakeMS                     int64             `json:"awakeMS,omitempty"`
 	CPUUserMS                   int64             `json:"cpuUserMS,omitempty"`
 	CPUSystemMS                 int64             `json:"cpuSystemMS,omitempty"`
 	CPUPerformanceMS            int64             `json:"cpuPerformanceMS,omitempty"`
@@ -64,8 +66,30 @@ type timelineRow struct {
 	DNSQueries                  uint64            `json:"dnsQueries,omitempty"`
 	ConnectionsOpened           uint64            `json:"connectionsOpened,omitempty"`
 	InterfacePackets            map[string]uint64 `json:"interfacePackets,omitempty"`
+	InterfaceBytes              map[string]uint64 `json:"interfaceBytes,omitempty"`
+	Traffic                     trafficBreakdown  `json:"traffic,omitempty"`
+	DNSDomains                  map[string]uint64 `json:"dnsDomains,omitempty"`
 	NetworkType                 string            `json:"network,omitempty"`
 	NetworkPathUpdates          uint64            `json:"pathUpdates,omitempty"`
+}
+
+type trafficBreakdown map[TrafficKind]map[string]*trafficDelta
+
+type trafficDelta struct {
+	In    uint64 `json:"in,omitempty"`
+	Out   uint64 `json:"out,omitempty"`
+	Dials uint64 `json:"dials,omitempty"`
+}
+
+type trafficKey struct {
+	kind TrafficKind
+	tag  string
+}
+
+type trafficBytes struct {
+	inBytes  uint64
+	outBytes uint64
+	dials    uint64
 }
 
 type qosBreakdown struct {
@@ -79,20 +103,58 @@ type qosBreakdown struct {
 }
 
 const (
-	eventTypeBreak   = "break"
-	eventTypeNetwork = "network"
-	eventTypePath    = "path"
+	eventTypeBreak        = "break"
+	eventTypeNetwork      = "network"
+	eventTypePath         = "path"
+	eventTypeDevice       = "device"
+	eventTypeDevicePause  = "device-pause"
+	eventTypeDeviceWake   = "device-wake"
+	eventTypeNetworkPause = "network-pause"
+	eventTypeNetworkWake  = "network-wake"
+	eventTypeSleep        = "ne-sleep"
+	eventTypeWake         = "ne-wake"
+	eventTypeScreenOn     = "screen-on"
+	eventTypeScreenOff    = "screen-off"
+	eventTypeDeviceLock   = "device-lock"
+	eventTypeDeviceUnlock = "device-unlock"
+	eventTypeService      = "service"
 )
 
 type eventRecord struct {
-	Type        string       `json:"t"`
-	At          string       `json:"at"`
-	IdleMS      int64        `json:"idleMS,omitempty"`
-	Direction   string       `json:"direction,omitempty"`
-	Size        int          `json:"size,omitempty"`
-	NetworkType string       `json:"network,omitempty"`
-	NetworkPath string       `json:"path,omitempty"`
-	By          *Attribution `json:"by,omitempty"`
+	Type          string       `json:"t"`
+	At            string       `json:"at"`
+	MonoMS        int64        `json:"monoMS"`
+	IdleMS        int64        `json:"idleMS,omitempty"`
+	WallIdleMS    int64        `json:"wallIdleMS,omitempty"`
+	AfterWake     bool         `json:"afterWake,omitempty"`
+	SinceWakeMS   int64        `json:"sinceWakeMS,omitempty"`
+	Direction     string       `json:"direction,omitempty"`
+	Size          int          `json:"size,omitempty"`
+	NetworkType   string       `json:"network,omitempty"`
+	NetworkPath   string       `json:"path,omitempty"`
+	By            *Attribution `json:"by,omitempty"`
+	Device        *deviceState `json:"device,omitempty"`
+	Window        *wakeWindow  `json:"window,omitempty"`
+	LogBaseMonoMS int64        `json:"logBaseMonoMS,omitempty"`
+	Reload        bool         `json:"reload,omitempty"`
+}
+
+type wakeWindow struct {
+	AwakeMS            int64  `json:"awakeMS"`
+	CPUUserMS          int64  `json:"cpuUserMS,omitempty"`
+	CPUSystemMS        int64  `json:"cpuSystemMS,omitempty"`
+	EnergyNanojoules   uint64 `json:"energyNJ,omitempty"`
+	PackageIdleWakeups uint64 `json:"packageIdleWakeups,omitempty"`
+	InterruptWakeups   uint64 `json:"interruptWakeups,omitempty"`
+	DNSQueries         uint64 `json:"dnsQueries,omitempty"`
+	ConnectionsOpened  uint64 `json:"connectionsOpened,omitempty"`
+}
+
+type deviceState struct {
+	PowerSource  string `json:"powerSource,omitempty"`
+	BatteryLevel int    `json:"batteryLevel,omitempty"`
+	LowPowerMode bool   `json:"lowPowerMode,omitempty"`
+	ThermalState string `json:"thermalState,omitempty"`
 }
 
 type systemUsage struct {
@@ -118,4 +180,6 @@ type systemUsage struct {
 type interfaceCounters struct {
 	inPackets  uint32
 	outPackets uint32
+	inBytes    uint32
+	outBytes   uint32
 }

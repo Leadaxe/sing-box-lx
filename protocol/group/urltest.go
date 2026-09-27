@@ -32,6 +32,7 @@ func RegisterURLTest(registry *outbound.Registry) {
 var (
 	_ adapter.OutboundGroup           = (*URLTest)(nil)
 	_ adapter.InterfaceUpdateListener = (*URLTest)(nil)
+	_ adapter.Referrer                = (*URLTest)(nil)
 )
 
 type URLTest struct {
@@ -204,6 +205,21 @@ func (s *URLTest) Mode() string {
 		return C.URLTestModeRoundRobin
 	}
 	return C.URLTestModeLeastTest
+}
+
+func (s *URLTest) References() []string {
+	group := s.group
+	if group == nil {
+		return nil
+	}
+	var references []string
+	if group.selectedOutboundTCP != nil {
+		references = append(references, group.selectedOutboundTCP.Tag())
+	}
+	if group.selectedOutboundUDP != nil && group.selectedOutboundUDP != group.selectedOutboundTCP {
+		references = append(references, group.selectedOutboundUDP.Tag())
+	}
+	return references
 }
 
 func (s *URLTest) URLTest(ctx context.Context) (map[string]uint16, error) {
@@ -767,8 +783,11 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 func (g *URLTestGroup) performUpdateCheck() {
 	g.updateAccess.Lock()
 	defer g.updateAccess.Unlock()
-	var updated bool
-	var changed bool // lx: SPEC 020 — ANY selection change (incl. nil→first) re-shapes the active tree
+	var (
+		updated  bool
+		selected bool
+		changed  bool // lx: SPEC 020 — ANY selection change (incl. nil→first) re-shapes the active tree
+	)
 	// lx: SPEC 054 — переизбор с учётом штрафов (в аварийном режиме — штрафы ↑, задержка ↑).
 	if outbound, exists := g.selectPenaltyAware(N.NetworkTCP); outbound != nil && (g.selectedOutboundTCP == nil || (exists && outbound != g.selectedOutboundTCP)) {
 		if g.selectedOutboundTCP != nil {
@@ -778,6 +797,7 @@ func (g *URLTestGroup) performUpdateCheck() {
 			changed = true
 		}
 		g.selectedOutboundTCP = outbound
+		selected = true
 	}
 	if outbound, exists := g.selectPenaltyAware(N.NetworkUDP); outbound != nil && (g.selectedOutboundUDP == nil || (exists && outbound != g.selectedOutboundUDP)) {
 		if g.selectedOutboundUDP != nil {
@@ -787,6 +807,7 @@ func (g *URLTestGroup) performUpdateCheck() {
 			changed = true
 		}
 		g.selectedOutboundUDP = outbound
+		selected = true
 	}
 	if updated {
 		g.interruptGroup.Interrupt(g.interruptExternalConnections)
@@ -797,6 +818,9 @@ func (g *URLTestGroup) performUpdateCheck() {
 		// cache computed from the cold-start fallback would otherwise stay stale
 		// (wrong node held live / real node suspended) until the next auto-switch.
 		invalidateReachability(g.ctx)
+	}
+	if selected {
+		g.history.NotifyUpdated()
 	}
 }
 

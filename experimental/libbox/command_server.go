@@ -39,7 +39,6 @@ type CommandServer struct {
 	oomRecorder       *oomkiller.Recorder
 	grpcServer        *grpc.Server
 	listener          net.Listener
-	endPauseTimer     *time.Timer
 }
 
 type CommandServerHandler interface {
@@ -193,9 +192,6 @@ func (s *CommandServer) Start() error {
 }
 
 func (s *CommandServer) Close() {
-	if s.endPauseTimer != nil {
-		s.endPauseTimer.Stop()
-	}
 	if s.grpcServer != nil {
 		s.grpcServer.Stop()
 	}
@@ -263,26 +259,32 @@ func (s *CommandServer) NeedFindProcess() bool {
 	return instance.Box().Router().NeedFindProcess()
 }
 
+// iOS wakes the extension for every push and background task, so wake is ignored there and
+// the pause ends on the screen state instead.
 func (s *CommandServer) Pause() {
 	recorder := s.powerManager.Recorder()
 	if recorder != nil {
-		recorder.RecordPlatformEvent("ne-sleep")
+		recorder.RecordDeviceSleep()
 	}
-	instance := s.StartedService.Instance()
-	if instance == nil || instance.PauseManager() == nil {
+	if !(C.IsAndroid || C.IsIos) || C.IsTvOS {
 		return
 	}
-	instance.PauseManager().DevicePause()
-	if C.IsIos {
-		if s.endPauseTimer == nil {
-			s.endPauseTimer = time.AfterFunc(time.Minute, s.endDevicePause)
-		} else {
-			s.endPauseTimer.Reset(time.Minute)
-		}
+	instance := s.StartedService.Instance()
+	if instance == nil || instance.Box() == nil || instance.PauseManager() == nil {
+		return
 	}
+	instance.Box().CloseIdleConnections()
+	instance.PauseManager().DevicePause()
 }
 
-func (s *CommandServer) endDevicePause() {
+func (s *CommandServer) Wake() {
+	recorder := s.powerManager.Recorder()
+	if recorder != nil {
+		recorder.RecordDeviceWake()
+	}
+	if !C.IsAndroid {
+		return
+	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.PauseManager() == nil {
 		return
@@ -290,17 +292,25 @@ func (s *CommandServer) endDevicePause() {
 	instance.PauseManager().DeviceWake()
 }
 
-func (s *CommandServer) Wake() {
-	recorder := s.powerManager.Recorder()
-	if recorder != nil {
-		recorder.RecordPlatformEvent("ne-wake")
-	}
+func (s *CommandServer) WakeNow() {
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.PauseManager() == nil {
 		return
 	}
-	if !C.IsIos {
-		instance.PauseManager().DeviceWake()
+	instance.PauseManager().DeviceWake()
+}
+
+func (s *CommandServer) RecordScreenState(on bool) {
+	recorder := s.powerManager.Recorder()
+	if recorder != nil {
+		recorder.RecordScreenState(on)
+	}
+}
+
+func (s *CommandServer) RecordLockState(locked bool) {
+	recorder := s.powerManager.Recorder()
+	if recorder != nil {
+		recorder.RecordLockState(locked)
 	}
 }
 

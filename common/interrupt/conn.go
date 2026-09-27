@@ -14,7 +14,6 @@ type Conn struct {
 	element *list.Element[*groupConnItem]
 }
 
-// lx: SPEC 084 — detach under the lock, close after it (see Group.Interrupt).
 func (c *Conn) Close() error {
 	c.group.access.Lock()
 	c.group.connections.Remove(c.element)
@@ -44,7 +43,6 @@ func newPacketConn(group *Group, conn net.PacketConn, element *list.Element[*gro
 	return &PacketConn{NetPacketConn: bufio.NewPacketConn(conn), group: group, element: element}
 }
 
-// lx: SPEC 084 — detach under the lock, close after it (see Group.Interrupt).
 func (c *PacketConn) Close() error {
 	c.group.access.Lock()
 	c.group.connections.Remove(c.element)
@@ -62,31 +60,4 @@ func (c *PacketConn) WriterReplaceable() bool {
 
 func (c *PacketConn) Upstream() any {
 	return c.NetPacketConn
-}
-
-// lx: SPEC 064 — wrapper over sing's N.PacketConn (ported from upstream PR #4285).
-type SingPacketConn struct {
-	N.PacketConn
-	group   *Group
-	element *list.Element[*groupConnItem]
-}
-
-// lx: SPEC 084 — detach under the lock, close after it (see Group.Interrupt).
-func (c *SingPacketConn) Close() error {
-	c.group.access.Lock()
-	c.group.connections.Remove(c.element)
-	c.group.access.Unlock()
-	return c.PacketConn.Close()
-}
-
-func (c *SingPacketConn) ReaderReplaceable() bool {
-	return true
-}
-
-func (c *SingPacketConn) WriterReplaceable() bool {
-	return true
-}
-
-func (c *SingPacketConn) Upstream() any {
-	return c.PacketConn
 }

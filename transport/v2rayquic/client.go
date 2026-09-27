@@ -6,6 +6,7 @@ import (
 	"context"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
@@ -19,7 +20,7 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
-var _ adapter.V2RayClientTransport = (*Client)(nil)
+var _ adapter.V2RayMultiplexClientTransport = (*Client)(nil)
 
 type Client struct {
 	ctx        context.Context
@@ -28,8 +29,26 @@ type Client struct {
 	tlsConfig  tls.Config
 	quicConfig *quic.Config
 	connAccess sync.Mutex
-	conn       common.TypedValue[*quic.Conn]
+	conn       common.TypedValue[*clientConnection]
 	rawConn    net.Conn
+	closeIdle  atomic.Bool
+}
+
+type clientConnection struct {
+	*quic.Conn
+	access    sync.Mutex
+	streams   int
+	closeIdle *atomic.Bool
+}
+
+func (c *clientConnection) releaseStream(keepSession bool) {
+	c.access.Lock()
+	c.streams--
+	drained := c.closeIdle.Load() && !keepSession && c.streams == 0
+	c.access.Unlock()
+	if drained {
+		c.CloseWithError(0, "")
+	}
 }
 
 func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayQUICOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
@@ -48,7 +67,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	}, nil
 }
 
-func (c *Client) offer() (*quic.Conn, error) {
+func (c *Client) offer() (*clientConnection, error) {
 	conn := c.conn.Load()
 	if conn != nil && !common.Done(conn.Context()) {
 		return conn, nil
@@ -66,7 +85,7 @@ func (c *Client) offer() (*quic.Conn, error) {
 	return conn, nil
 }
 
-func (c *Client) offerNew() (*quic.Conn, error) {
+func (c *Client) offerNew() (*clientConnection, error) {
 	udpConn, err := c.dialer.DialContext(c.ctx, "udp", c.serverAddr)
 	if err != nil {
 		return nil, err
@@ -82,9 +101,10 @@ func (c *Client) offerNew() (*quic.Conn, error) {
 		<-quicConn.Context().Done()
 		udpConn.Close()
 	}()
-	c.conn.Store(quicConn)
+	conn := &clientConnection{Conn: quicConn, closeIdle: &c.closeIdle}
+	c.conn.Store(conn)
 	c.rawConn = udpConn
-	return quicConn, nil
+	return conn, nil
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
@@ -92,11 +112,40 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	conn.access.Lock()
+	conn.streams++
+	conn.access.Unlock()
 	stream, err := conn.OpenStream()
 	if err != nil {
+		conn.releaseStream(false)
 		return nil, err
 	}
-	return &StreamWrapper{Conn: conn, Stream: stream}, nil
+	keepSession := adapter.KeepSessionFromContext(ctx)
+	return &StreamWrapper{Conn: conn.Conn, Stream: stream, onClose: func() { conn.releaseStream(keepSession) }}, nil
+}
+
+func (c *Client) MultiplexEnabled() bool {
+	return true
+}
+
+func (c *Client) SetKeepIdleConnections(keep bool) {
+	c.closeIdle.Store(!keep)
+	if !keep {
+		c.CloseIdleConnections()
+	}
+}
+
+func (c *Client) CloseIdleConnections() {
+	conn := c.conn.Load()
+	if conn == nil {
+		return
+	}
+	conn.access.Lock()
+	drained := conn.streams == 0
+	conn.access.Unlock()
+	if drained {
+		conn.CloseWithError(0, "")
+	}
 }
 
 func (c *Client) Close() error {
