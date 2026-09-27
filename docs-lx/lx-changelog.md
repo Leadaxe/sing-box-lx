@@ -28,6 +28,25 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.6
+
+Хотфикс поверх `v1.14.2-lx.5`. Пользовательские ноты (EN+RU):
+[`docs-lx/releases/v1.14.2-lx.6.md`](releases/v1.14.2-lx.6.md). База — sing-box `v1.14.2`,
+зависимости с lx.5 не менялись. `upstream/stable` на 2026-09-28 ушёл на 15 коммитов после `v1.14.2`
+без нового тега (управление idle-соединениями, power-отчёты, `Fix UDP fragmentation`, `Fix tun GSO
+check` и три коммита, отложенные в lx.5). Это полноценный синк, а не хотфикс: откладываем до
+следующего релиза.
+
+- 🔧 **XMUX: дефолт `max_connections 3` вместо `max_concurrency 1`** — `normalizeXmux`
+  (`transport/v2rayxhttp/xmux.go`) при отсутствующей или полностью пустой секции `xmux` ставил
+  `max_concurrency 1-1` (эталон sing-box-extended 2.6.4, SPEC 059), то есть TLS-соединение на каждый
+  поток. Xray-core сменил дефолт на `maxConnections 6`, затем на `3` (`18e2839`, XTLS/Xray-core#6376):
+  ТСПУ режет больше трёх соединений к серверу на мобильном интернете. Теперь дефолт —
+  `max_connections 3-3`, `h_max_request_times 600-900`, `h_max_reusable_secs 1800-3000`; правило
+  «всё или ничего» не менялось. Таблицы дефолтов в SPEC 059 §3, FEATURE 002-XHTTP и
+  `lx-protocols-transports` обновлены. Заявлено в
+  [issue #32](https://github.com/Leadaxe/sing-box-lx/issues/32).
+
 #### v1.14.2-lx.5
 
 Хотфикс поверх `v1.14.2-lx.4`. Пользовательские ноты (EN+RU):
