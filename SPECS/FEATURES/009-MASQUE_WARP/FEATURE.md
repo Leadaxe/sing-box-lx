@@ -131,6 +131,7 @@ outbound'ов, где исходящая датаграмма помечаетс
 | [062 — MASQUE_CONFIG_SCHEMA_MIGRATION](../../TASKS/062-MASQUE_CONFIG_SCHEMA_MIGRATION/SPEC.md) | Конфиг к общему стандарту: `vhttp` вместо `network`, штатный блок TLS вместо плоских ключей, старая форма на алиасах с предупреждением | C |
 | [074 — MASQUE_VHTTP_AUTO](../../TASKS/074-MASQUE_VHTTP_AUTO/SPEC.md) | `vhttp: auto` — дефолт: глухой h3 через xhttp-хоп → откат на h2 за секунды (отвязанный fallback по таймеру 3 с, победивший режим запоминается) | D |
 | [098 — LX_ROOT_CONFIG_BLOCK](../../TASKS/098-LX_ROOT_CONFIG_BLOCK/SPEC.md) | `lx.masque.idle_timeout` — глобальный дефолт окна простоя для всех masque-узлов; ключ узла сильнее | I |
+| [110 — MASQUE_ON_UPSTREAM_TRANSPORT](../../TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md) | Проектная запись: перевод на апстримный `masque-client` с тонким слоем под WARP — логика обеих реализаций, швы, конфиги, программа испытаний. Отложено до выхода 1.15 | W |
 | [108 — MASQUE_UNBOUNDED_WAITS](../../TASKS/108-MASQUE_UNBOUNDED_WAITS/SPEC.md) | Три ожидания без предела: запомненный h2 в `auto` не возвращался к h3, закрытие h2-туннеля ждало зависшую запись, ответ на CONNECT-IP по h3 ждали без контекста | I |
 | [107 — MASQUE_UPSTREAM_1_15_COMPARISON](../../TASKS/107-MASQUE_UPSTREAM_1_15_COMPARISON/SPEC.md) | Исследование: MASQUE апстрима 1.15 против нашего — совместимость с WARP, сравнение по осям, реестр дефектов, варианты перехода | C |
 | [091 — CONFIG_VALIDATION_TUIC_MASQUE](../../TASKS/091-CONFIG_VALIDATION_TUIC_MASQUE/SPEC.md) (§2) | `profile: standard` без `uri` — один текст ошибки при любом `vhttp`, с формой CONNECT-IP URI; проверка `uri` стоит раньше `vhttp` | C |
@@ -149,7 +150,8 @@ outbound'ов, где исходящая датаграмма помечаетс
   соединения давало зависание навсегда; это была самая дорогая находка
   аудита ([AUDITS](../010-AUDITS/FEATURE.md)).
 - **Апстрим 1.15 несёт свой MASQUE по тем же путям пакетов.** Типы в конфиге
-  другие, с WARP он из коробки не работает; разбор и варианты перехода —
-  [107](../../TASKS/107-MASQUE_UPSTREAM_1_15_COMPARISON/SPEC.md).
+  другие, с WARP он из коробки не работает; разбор —
+  [107](../../TASKS/107-MASQUE_UPSTREAM_1_15_COMPARISON/SPEC.md), план перевода на его транспорт —
+  [110](../../TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md).
 - **Вложенность требует внимания к размеру пакетов** — см.
   [HOTFIXES](../004-HOTFIXES/FEATURE.md).
