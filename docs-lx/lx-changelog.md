@@ -28,6 +28,28 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.9
+
+Хотфикс Tailscale (SPEC 111) и синк с `upstream/stable` на один коммит `f43d07faf` «Update
+dependencies». Пользовательские ноты (EN+RU): [`docs-lx/releases/v1.14.2-lx.9.md`](releases/v1.14.2-lx.9.md).
+База — sing-box `v1.14.2` + 16 коммитов, нового тега у апстрима нет; дрейф 0. Go 1.26.8, cronet,
+NDK/JDK, `upstream.version` не менялись; форк-сабмодули на прежних пинах. Из-за смены версий
+модулей перед тегом прогнан dry run `lx-release.yml`.
+
+- 🐛 **Tailscale: канал к координатору — Noise поверх HTTPS (443) по умолчанию** (`eb2ad217c`,
+  SPEC 111, реестр HOTFIXES). Клиент tailscale сначала дайлит `controlplane.tailscale.com:80` и
+  делает `Upgrade` на Noise; за DPI, замораживающим поток после смены протокола, сторож долгого
+  опроса (120 с) отменял запрос, а не соединение, и новые запросы уходили в тот же мёртвый сокет —
+  переход на 443 наступал только после закрытия сокета ОС (~15 мин после каждого старта).
+  Воспроизведено на роутере: `Send-Q 5186` на `:80`, `retr 0x0A`. Новый файл
+  `protocol/tailscale/control_https_lx.go` ставит `TS_FORCE_NOISE_443=true`, если переменная не задана
+  явно; апстримные файлы не тронуты. Полевой проверки на роутере до тега не было.
+- 📌 **Мерж `b785b0957`**: `sing` v0.9.6, `sing-cloudflared` v0.1.3, `sing-mux` v0.3.9, `sing-quic`
+  v0.7.1, `sing-tun` v0.9.6 — те же коммиты, что были, теперь под тегами. Новый код только в
+  `sing-openvpn` v0.1.0 и `sing-openconnect` v0.1.0: «Add client suspend and resume», ядро эти
+  методы пока не вызывает. Конфликт — `go.sum`; `replace` на форк-сабмодули не сдвинулся
+  (`go list -m`).
+
 #### v1.14.2-lx.8
 
 Синк с `upstream/stable` поверх `v1.14.2-lx.7` (SPEC 109). Пользовательские ноты (EN+RU):
