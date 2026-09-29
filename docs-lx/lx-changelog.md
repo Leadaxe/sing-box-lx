@@ -28,6 +28,25 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.11
+
+Синк с `upstream/stable` на 4 коммита от 2026-09-29, отложенных в lx.10. Пользовательские ноты
+(EN+RU): [`docs-lx/releases/v1.14.2-lx.11.md`](releases/v1.14.2-lx.11.md). База — sing-box
+`v1.14.2` + 20 коммитов, нового тега у апстрима нет; дрейф 0 (merge-base = `3ff24dbe5`). Go 1.26.8,
+cronet, NDK/JDK, `upstream.version` не менялись; `require` равен `stable`. Из-за смены версий
+модулей перед тегом прогнан dry run `lx-release.yml` (зелёный).
+
+- 📌 **Мерж `886bc48ec`**: `de52a8126` «Fix zero UDP checksum», `b93c30f2a` «Fix protocol input
+  validation», `3ff24dbe5` «Fix connected UDP reads on BSD» (новый `common/dialer/udp_conn.go`),
+  `834f4551d` документация. Конфликт — `go.sum`. В 17 автослитых файлах нашей дельты нет, они
+  равны апстримным.
+- 📌 **Форк-сабмодули сдвинуты до мержа ядра**: `wireguard-go` `64065e6` — мерж sagernet `6731c73`
+  («conn: Fix connected socket receive on darwin», `n == 0` → `ErrRebindRequired`) поверх lx-линии,
+  гейт `hasReserved` в `msgx_darwin.go` сохранён; `sing-tun` `6f56eca` — мерж sagernet
+  `0bdadeb4c934` (`8ab0e83` zero UDP checksum, `0bdadeb` input validation), lx-дельта в
+  `stack_system.go` не изменилась. `replace` на четыре форка на месте (`go list -m`).
+- Проверки на устройстве до тега не было.
+
 #### v1.14.2-lx.10
 
 Хотфикс Tailscale (SPEC 112, issue #33). Пользовательские ноты (EN+RU):
