@@ -44,7 +44,7 @@ ddaa4ca25e3b, `gvisor` 20260727.0-sing-box-mod.1, `utls` v1.8.7. Наши вет
 
    | Файл | Разрешение |
    |---|---|
-   | `common/interrupt/group.go` | форма апстрима; вместе с `conn.go` файл побайтно равен апстримному. `NewSingPacketConn` и `SingPacketConn` (SPEC 064) вынесены в `sing_packet_conn_lx.go` |
+   | `common/interrupt/group.go` | форма апстрима; вместе с `conn.go` файл побайтно равен апстримному. `NewSingPacketConn` и `SingPacketConn` — действующий хотфикс 064 — вынесены в `sing_packet_conn_lx.go` |
    | `dns/transport_adapter.go` | оба поля: `references` апстрима и наш `outboundTag` (SPEC 018) |
    | `protocol/group/urltest.go` | обе стороны: `References` и `NotifyUpdated` апстрима; наши `Pool`, `Mode`, выбор с учётом штрафов (SPEC 054), сброс достижимости (SPEC 020) |
    | `go.sum` | сторона апстрима + `go mod tidy` (ушли 8 строк модулей под `replace`) |
@@ -69,7 +69,8 @@ ddaa4ca25e3b, `gvisor` 20260727.0-sing-box-mod.1, `utls` v1.8.7. Наши вет
 | Что | Почему | Где |
 |---|---|---|
 | Группа `round_robin` отдаёт в `References()` все занятые слоты пула | Апстримный `References()` называет только выбранный узел. В `round_robin` диалится каждый слот, и остальные узлы пула считались бы неиспользуемыми: их простаивающие соединения закрывались бы после каждого использования | `poolReferences` в `urltest_balance_lx.go`, одна строка в `urltest.go` (`bd0b66934`) |
-| Хотфикс 084 снят | Апстрим вынес `Close` из-под мьютекса тем же способом. Наш остаток — `SingPacketConn.Close` в lx-файле | `common/interrupt/` |
+| Хотфикс 084 снят | Апстрим вынес `Close` из-под мьютекса тем же способом; нашего кода от 084 в `group.go` и `conn.go` не осталось | `common/interrupt/` |
+| `SingPacketConn` вынесен в свой файл | Это часть хотфикса 064 (регистрация входящего UDP-соединения в `selector`), он действует и используется в `selector.go`. Перенос поведения не меняет; уходит при переходе на 1.15 | `common/interrupt/sing_packet_conn_lx.go` |
 | `TestLazyStateTransitions` читает часы сна на тик позже | Упал один раз при прогоне под нагрузкой: `SleepSince` — прошедшее время и в момент усыпления бывает нулём. К мержу отношения не имеет | `1286271a7` |
 
 ## 5. За чем следить

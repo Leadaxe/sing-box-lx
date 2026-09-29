@@ -139,7 +139,9 @@ conn = s.interruptGroup.NewSingPacketConn(conn, true)    // UDP (N.PacketConn)
 
 Разрыв входящей стороны валит копирующий цикл `ConnectionManager`, тот закрывает исходящий сокет — соединение умирает целиком. `isExternal=true` честен: входящий трафик — пользовательский по определению, при `interrupt_exist_connections: false` он переживает переключение, как задумано семантикой опции.
 
-Порт: `SingPacketConn` + `NewSingPacketConn` в `common/interrupt` (обёртка над `N.PacketConn` — штатный `NewPacketConn` принимает только `net.PacketConn`).
+Порт: `SingPacketConn` + `NewSingPacketConn` в `common/interrupt/sing_packet_conn_lx.go` (обёртка над `N.PacketConn` — штатный `NewPacketConn` принимает только `net.PacketConn`). `group.go` и `conn.go` пакета — апстримные без нашей дельты.
+
+**Условие снятия.** В линии 1.15 апстрим переделал это место (`850e7a3dd`): `Selector.NewConnection` и `NewPacketConnection` удалены, соединение крепится к группе через `AttachConnection` и `route/flow_tracker.go`. При переходе на 1.15 обёртка и `SingPacketConn` снимаются после проверки вложенных групп на стенде [084](../084-INTERRUPT_GROUP_ABBA_DEADLOCK/SPEC.md).
 
 Подход взят из апстримного [PR #4285](https://github.com/SagerNet/sing-box/pull/4285) (xxspa). Сам PR в апстриме завис: его ветка отстала от `testing`, дифф раздут до +69922/−7087 в 300+ файлах, и месяц висит без реакции. Баг там же заведён дважды — [#4281](https://github.com/SagerNet/sing-box/issues/4281) (полный разбор с тем же корнем и минимальным репро) и [#2625](https://github.com/SagerNet/sing-box/issues/2625) (с 1.11.3). Контрибуция от нас невозможна.
 

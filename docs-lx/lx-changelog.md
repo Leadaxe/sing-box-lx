@@ -87,8 +87,9 @@ Go 1.26.8, cronet, NDK/JDK, `upstream.version` не менялись; форк-�
   `protocol/group/urltest.go`, `go.sum`. В 19 автослитых файлах с нашей дельтой набор наших строк
   не изменился.
 - 🔧 **Хотфикс SPEC 084 снят**: апстрим вынес `Close` из-под мьютекса `interrupt.Group` тем же
-  способом (`0ed951aa0`). `group.go` и `conn.go` равны апстримным; `NewSingPacketConn` и
-  `SingPacketConn` (SPEC 064) вынесены в `common/interrupt/sing_packet_conn_lx.go`.
+  способом (`0ed951aa0`). `group.go` и `conn.go` равны апстримным. `NewSingPacketConn` и
+  `SingPacketConn` — действующий хотфикс SPEC 064, не остаток 084 — вынесены в
+  `common/interrupt/sing_packet_conn_lx.go` без изменения поведения.
 - 🔧 **`urltest` `round_robin`: весь пул в `References()`** (`bd0b66934`) — апстримный учёт ссылок
   называл используемым только выбранный узел, остальным узлам пула закрывались бы простаивающие
   соединения после каждого использования.
