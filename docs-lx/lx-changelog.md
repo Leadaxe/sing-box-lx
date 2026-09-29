@@ -28,6 +28,25 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.10
+
+Хотфикс Tailscale (SPEC 112, issue #33). Пользовательские ноты (EN+RU):
+[`docs-lx/releases/v1.14.2-lx.10.md`](releases/v1.14.2-lx.10.md). База — как в lx.9 (sing-box
+`v1.14.2` + 16 коммитов); Go 1.26.8, cronet, NDK/JDK, `upstream.version` не менялись.
+
+- 🐛 **Tailscale: трафик по прямому пути** (сабмодуль `wireguard-go` `9076fc9`, SPEC 112). Графт AWG
+  обнулил `MessageEncapsulatingTransportSize`; устройство Tailscale собрано из того же форка
+  (глобальный `replace`), а magicsock на прямом UDP-пути отвергает `offset != 8`. Константа
+  возвращена к апстримным 8, запас добавлен в буферы рукопожатия, ответа, cookie, junk и `i1`–`i5`;
+  путь данных уже учитывал его. Байты на проводе у WireGuard/AWG не изменились. Тесты:
+  `device/lx_send_headroom_test.go` (WG, AWG 2.0, AWG 3.x), `protocol/tailscale/send_headroom_lx_test.go`.
+  Проверки на устройстве до тега не было (решение владельца: проверка на пользователях).
+- ⏸️ **Дрейф `upstream/stable` отложен**: 4 коммита от 2026-09-29 (`de52a8126` «Fix zero UDP
+  checksum», `b93c30f2a` «Fix protocol input validation», `3ff24dbe5` «Fix connected UDP reads on
+  BSD», документация) с бампами `wireguard-go` v0.0.8-pre и `sing-tun` v0.9.7-pre. Бампы требуют
+  разбора форк-сабмодулей до мержа ядра (runbook §1); хотфикс выходит без них, мерж — отдельной
+  задачей.
+
 #### v1.14.2-lx.9
 
 Хотфикс Tailscale (SPEC 111) и синк с `upstream/stable` на один коммит `f43d07faf` «Update

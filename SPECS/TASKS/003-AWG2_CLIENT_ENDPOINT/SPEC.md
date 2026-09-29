@@ -34,7 +34,7 @@ Upstream sing-box AWG не принимает ([#4045](https://github.com/SagerN
 - **10 net-new**: `magic-header.go` (генератор `H1–H4` из спеки `"N"`/`"N-M"`) + `obf*.go` (CPS-цепочки `I1–I5`, junk-байты, timestamp/datasize кодеки).
 - **6 modified**: `device.go` (AWG-state: `junk`, `headers`, `paddings`, `ipackets [5]*obfChain`), `send.go` (junk + CPS + padding в handshake/transport-путях), `receive.go` (детект magic-header на входе), `cookie.go`/`noise-protocol.go`/`uapi.go` (типы сообщений через генератор, парсинг AWG-ключей в IpcSet).
 
-**Инвариант — `MessageEncapsulatingTransportSize = 0`** ([device/noise-protocol.go](../../../submodules/wireguard-go/device/noise-protocol.go)). Upstream держит 8-байтный headroom перед transport-заголовком (для `conn.Bind.Send()`-префикса). Граф его **обнуляет**: AWG-обфускация формирует префикс сама (junk/CPS уходят отдельными буферами через `SendBuffers`, а не через encapsulating-space). При `= 0` upstream-выражения вида `buffer[MessageEncapsulatingTransportSize+MessageTransportHeaderSize:]` схлопываются к графовому виду `buffer[MessageTransportHeaderSize:]` — поэтому большинство upstream-функций компонуются с графом **без ручного weave**. Это несущий инвариант re-graft (§ ниже).
+**Инвариант — `MessageEncapsulatingTransportSize = 8`, как в upstream** ([device/noise-protocol.go](../../../submodules/wireguard-go/device/noise-protocol.go)). Это свободный запас перед каждой датаграммой, который `conn.Bind.Send()` получает параметром `offset`. Все буферы, уходящие в `Bind.Send()`, начинаются с запаса: данные и keepalive (раскладка `[запас][паддинг s4][заголовок][содержимое]`), рукопожатие, ответ, cookie, junk и `I1–I5`. `Bind` отрезает запас, на провод он не попадает. Запас нужен Tailscale: magicsock на прямом UDP-пути пишет туда Geneve-заголовок и отвергает `offset ≠ 8`; устройство Tailscale собрано из этого же форка через глобальный `replace`. До [SPEC 112](../112-TAILSCALE_DIRECT_PATH_SEND_HEADROOM/SPEC.md) граф держал константу 0, и Tailscale на прямом пути не передавал трафик (issue #33).
 
 **Что граф НЕ трогает:** `conn/`, `tun/` — чисто sagernet (берутся из upstream verbatim). Обфускация замкнута в `device/`.
 
@@ -66,8 +66,8 @@ Upstream sing-box AWG не принимает ([#4045](https://github.com/SagerN
 1. **База**: submodule → новый sagernet-коммит.
 2. **Apply graft**: `git diff <старая-база> <старый-graft> | git apply --3way`. По практике 15/16 файлов ложатся чисто; конфликтует обычно только `send.go` (плотный upstream-путь).
 3. **Разрешить конфликты вручную**, порядок по риску: `cookie`→`device`→`noise-protocol`→`uapi`→`receive`→**`send.go`** (высший — junk/padding-хуки в hot-path).
-4. **Сверить несущие инварианты**: `MessageEncapsulatingTransportSize = 0`; графовый `RoutineEncryption` (заголовок в начале буфера, без финального encapsulating re-slice); AWG-state поля в `device.go`.
-5. **Проверки**: сборка `device/conn/tun` на linux/android/windows/**darwin** (darwin особо — там upstream добавляет платформенный batch-send), затем полный `sing-box` с LX_TAGS, `go test ./transport/wireguard/ ./protocol/wireguard/`, **device-verify** живого AWG-туннеля (junk/handshake/трафик).
+4. **Сверить несущие инварианты**: `MessageEncapsulatingTransportSize = 8` и запас во всех буферах, уходящих в `Bind.Send()` (тест `device/lx_send_headroom_test.go`); графовый `RoutineEncryption` (заголовок в начале буфера, без финального encapsulating re-slice); AWG-state поля в `device.go`.
+5. **Проверки**: сборка `device/conn/tun` на linux/android/windows/**darwin** (darwin особо — там upstream добавляет платформенный batch-send), затем полный `sing-box` с LX_TAGS, `go test ./transport/wireguard/ ./protocol/wireguard/ ./protocol/tailscale/`, узел Tailscale с прямым путём до пира (TCP к пиру открывается), **device-verify** живого AWG-туннеля (junk/handshake/трафик).
 
 История конкретных re-graft'ов (какие базы, что менял upstream) — в [HISTORY.md](HISTORY.md).
 

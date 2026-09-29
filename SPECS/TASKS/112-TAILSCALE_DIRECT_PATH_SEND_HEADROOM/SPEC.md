@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B — регрессия от нашего графта: AWG-правка wireguard-go ломает Tailscale |
-| Статус | N (new) — причина подтверждена логом с устройства, правки нет |
+| Статус | I (implemented) — вариант A, юниты зелёные; проверки на устройстве (тесты 4–5) не было |
 | Ветка | `lx` |
 | Base | `350f92ae1` (v1.14.2-lx.9) |
 | Связанные | Issue [#33](https://github.com/Leadaxe/sing-box-lx/issues/33); SPEC 003 (инвариант `MessageEncapsulatingTransportSize = 0`); SPEC 051 (перепрививка); полевой разбор 2026-09-29 |
@@ -110,3 +110,28 @@ AWG-параметрами; константа в смещениях замен�
 - SPEC 003: инвариант `MessageEncapsulatingTransportSize = 0` заменить фактическим правилом;
   в процедуру перепрививки добавить проверку узла Tailscale с прямым путём.
 - `docs-lx/lx-changelog.md`, индекс `SPECS/README.md`: строка задачи.
+
+## Реализация
+
+Вариант A. В `submodules/wireguard-go`:
+
+- `device/noise-protocol.go`: `MessageEncapsulatingTransportSize = 8`, строка как в апстриме.
+- `device/send.go`: буферы рукопожатия, ответа, cookie и `i1`–`i5` выделяются с запасом, датаграмма
+  собирается после него; cookie уходит с `offset` = запас (было 0).
+- `device/noise-protocol.go`, `JunkPackets`: junk-буферы с запасом.
+- Путь данных и keepalive (`plaintextOffset`, `outboundLayout`, `RoutineReadFromTUN`,
+  `RoutineEncryption`) уже складывал запас с паддингом, правка не понадобилась.
+
+Проверено по коду: `StdNetBind`, `WinRingBind` и `ClientBind` отрезают `offset` до записи в сокет,
+`reserved` пишется после запаса. `MaxContentSize` уменьшился на 8, как в апстриме; буфер
+`MaxMessageSize` вмещает запас при любом `s4` из uapi на MTU туннеля.
+
+Тесты:
+
+- `device/lx_send_headroom_test.go`: пара устройств (WireGuard, AWG 2.0 с `jc`/`s1`–`s4`/`h`/`i1`/`i3`,
+  AWG 3.x с header protection и паддингом). `Bind`-обёртка проверяет `offset == 8`, затирает запас
+  `0xff`, как magicsock Geneve-заголовком, и пропускает трафик в обе стороны. С константой 0 тест
+  падает.
+- `protocol/tailscale/send_headroom_lx_test.go`: запас равен `packet.GeneveFixedHeaderLength`.
+- Существующие тесты `device`, `transport/wireguard`, `protocol/wireguard` зелёные; сабмодуль
+  собирается под windows/linux/android/ios.
