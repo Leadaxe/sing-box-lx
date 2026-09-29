@@ -205,7 +205,7 @@ padding и заголовки читаются из одного и того ж�
 | [081 — AWG_RECEIVE_INDEX_FIRST_CLASSIFICATION](../../TASKS/081-AWG_RECEIVE_INDEX_FIRST_CLASSIFICATION/SPEC.md) | Приём: data-пакет с живым receiver index классифицируется до handshake-кандидатов — downlink не теряет пакеты при широких `h1–h4` (точный размер AWG2, `random_trailers` AWG 3.1) | C |
 | [007 — AWG_OVER_WIREGUARD_DETOUR_GUARD](../../TASKS/007-AWG_OVER_WIREGUARD_DETOUR_GUARD/SPEC.md) | Guard AWG-over-WG — снят, причина устранена | C |
 | [101 — WG_HANDSHAKE_GSO_RETRY_LOG_NOISE](../../TASKS/101-WG_HANDSHAKE_GSO_RETRY_LOG_NOISE/SPEC.md) | Хендшейк-пути форка wireguard-go: успешная переотправка без UDP GSO — Verbose, не ERROR (LxBox #95) | I |
-| [112 — TAILSCALE_DIRECT_PATH_SEND_HEADROOM](../../TASKS/112-TAILSCALE_DIRECT_PATH_SEND_HEADROOM/SPEC.md) | Запас 8 байт перед датаграммой в `Bind.Send()` возвращён на всех путях отправки: графт обнулял его, и узел Tailscale (тот же форк) не слал трафик по прямому UDP-пути (issue #33) | I |
+| [112 — TAILSCALE_DIRECT_PATH_SEND_HEADROOM](../../TASKS/112-TAILSCALE_DIRECT_PATH_SEND_HEADROOM/SPEC.md) | Запас 8 байт перед датаграммой в `Bind.Send()` возвращён на всех путях отправки: графт обнулял его, и узел Tailscale (тот же форк) не слал трафик по прямому UDP-пути (issue #33) | C |
 
 Примеры конфигурации — [docs-lx/lx-config.md](../../../docs-lx/lx-config.md)
 и `EXAMPLES.md` в задаче 009.
