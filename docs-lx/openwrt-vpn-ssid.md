@@ -66,7 +66,7 @@ go through.
 ping -c1 8.8.8.8 && nslookup openwrt.org        # router's WAN and DNS work
 ```
 
-**There is enough room.** The binary is ~50 MB — it does not fit a router without
+**There is enough room.** The binary is ~70–90 MB (depends on arch) — it does not fit a router without
 extroot; you need extroot/USB (details and why — daemon guide §8.3). Check free
 space where the binary and state go:
 
