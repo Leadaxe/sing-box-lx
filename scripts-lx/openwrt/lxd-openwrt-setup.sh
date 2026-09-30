@@ -456,6 +456,10 @@ if [ "$NEED_DL" = 1 ]; then
 
     cd /tmp
     rm -f "$TARBALL" SHA256SUMS
+    # the archive goes to /tmp, i.e. RAM — make sure it fits there
+    TMP_KB=$(df -k /tmp 2>/dev/null | awk 'NR==2{print $4}')
+    [ -n "$TMP_KB" ] && [ "$TMP_KB" -lt 40000 ] \
+        && warn "only $((TMP_KB / 1024)) MB free in /tmp (RAM) — the ~20–30 MB archive may not fit"
     # -O is mandatory: GitHub serves assets via a redirect, and busybox-wget
     # without -O saves the file under the name from the FINAL URL — not the asset name.
     wget -q -O "$TARBALL" "$BASE/$TARBALL" || die "failed to download $TARBALL
@@ -475,14 +479,28 @@ if [ "$NEED_DL" = 1 ]; then
         say "sha256:      match"
     fi
 
-    tar xzf "$TARBALL" || die "failed to unpack"
-    # exact path: a find across all of /tmp could pick up a stale binary from an older unpack
-    SRC="/tmp/sing-box-$VER-$ARCH/sing-box"
-    [ -f "$SRC" ] || SRC=$(find "/tmp/sing-box-$VER-$ARCH" -name sing-box -type f 2>/dev/null | head -1)
-    [ -n "$SRC" ] && [ -f "$SRC" ] || die "no sing-box binary in the archive"
+    # Unpack straight onto flash, never into /tmp: /tmp is RAM, and the archive
+    # plus a ~70–90 MB unpacked binary there does not fit a 128 MB router.
+    # Only the ~20–30 MB archive ever sits in RAM.
+    LIST=$(tar -tzf "$TARBALL" 2>/dev/null) || die "failed to read the archive"
+    MEMBER="sing-box-$VER-$ARCH/sing-box"
+    printf '%s\n' "$LIST" | grep -qx "$MEMBER" \
+        || MEMBER=$(printf '%s\n' "$LIST" | grep '/sing-box$' | head -1)
+    [ -n "$MEMBER" ] || die "no sing-box binary in the archive"
+    # stop first: the flash taken by a running binary is not freed on unlink
     [ -x "$INIT" ] && "$INIT" stop >/dev/null 2>&1 || true
-    mv "$SRC" "$BIN"; chmod +x "$BIN"
-    rm -rf "/tmp/$TARBALL" /tmp/SHA256SUMS "/tmp/sing-box-$VER-$ARCH"
+    NEW="$BIN.new"
+    if ! tar -xzOf "$TARBALL" "$MEMBER" > "$NEW" 2>/dev/null; then
+        rm -f "$NEW"
+        [ -f "$BIN" ] || die "failed to unpack into $(dirname "$BIN") — out of space? (extroot needed)"
+        # the old and new binary side by side did not fit — replace in place
+        warn "no room for the old and new binary side by side — replacing in place"
+        rm -f "$BIN"
+        tar -xzOf "$TARBALL" "$MEMBER" > "$NEW" 2>/dev/null || { rm -f "$NEW"
+            die "failed to unpack into $(dirname "$BIN") — out of space? (extroot needed; the old binary is already removed)"; }
+    fi
+    rm -f "/tmp/$TARBALL" /tmp/SHA256SUMS
+    chmod +x "$NEW"; mv "$NEW" "$BIN"
 fi
 
 "$BIN" version >/dev/null 2>&1 || die "the binary does not run (wrong architecture?)"

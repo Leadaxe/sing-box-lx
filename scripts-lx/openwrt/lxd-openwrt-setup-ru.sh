@@ -448,6 +448,10 @@ if [ "$NEED_DL" = 1 ]; then
 
     cd /tmp
     rm -f "$TARBALL" SHA256SUMS
+    # архив ложится в /tmp, то есть в RAM — проверить, что он туда влезет
+    TMP_KB=$(df -k /tmp 2>/dev/null | awk 'NR==2{print $4}')
+    [ -n "$TMP_KB" ] && [ "$TMP_KB" -lt 40000 ] \
+        && warn "в /tmp (RAM) свободно лишь $((TMP_KB / 1024)) МБ — архив ~20–30 МБ может не влезть"
     # -O обязателен: GitHub отдаёт ассет через redirect, и busybox-wget без -O
     # сохраняет файл под именем из КОНЕЧНОГО URL — не под именем ассета.
     wget -q -O "$TARBALL" "$BASE/$TARBALL" || die "не скачался $TARBALL
@@ -467,14 +471,28 @@ if [ "$NEED_DL" = 1 ]; then
         say "sha256:      совпал"
     fi
 
-    tar xzf "$TARBALL" || die "не распаковался"
-    # точный путь: find по всему /tmp мог бы подобрать старый бинарь от прежней распаковки
-    SRC="/tmp/sing-box-$VER-$ARCH/sing-box"
-    [ -f "$SRC" ] || SRC=$(find "/tmp/sing-box-$VER-$ARCH" -name sing-box -type f 2>/dev/null | head -1)
-    [ -n "$SRC" ] && [ -f "$SRC" ] || die "в архиве нет бинаря sing-box"
+    # Распаковка сразу на флешку, не в /tmp: /tmp — это RAM, и архив плюс
+    # распакованный бинарь ~70–90 МБ там не помещаются на роутере со 128 МБ.
+    # В RAM лежит только архив ~20–30 МБ.
+    LIST=$(tar -tzf "$TARBALL" 2>/dev/null) || die "не читается архив"
+    MEMBER="sing-box-$VER-$ARCH/sing-box"
+    printf '%s\n' "$LIST" | grep -qx "$MEMBER" \
+        || MEMBER=$(printf '%s\n' "$LIST" | grep '/sing-box$' | head -1)
+    [ -n "$MEMBER" ] || die "в архиве нет бинаря sing-box"
+    # сначала остановить: место на флешке под запущенным бинарём при unlink не освобождается
     [ -x "$INIT" ] && "$INIT" stop >/dev/null 2>&1 || true
-    mv "$SRC" "$BIN"; chmod +x "$BIN"
-    rm -rf "/tmp/$TARBALL" /tmp/SHA256SUMS "/tmp/sing-box-$VER-$ARCH"
+    NEW="$BIN.new"
+    if ! tar -xzOf "$TARBALL" "$MEMBER" > "$NEW" 2>/dev/null; then
+        rm -f "$NEW"
+        [ -f "$BIN" ] || die "не распаковался в $(dirname "$BIN") — нет места? (нужен extroot)"
+        # старый и новый бинарь рядом не влезли — заменяю на месте
+        warn "нет места под старый и новый бинарь одновременно — заменяю на месте"
+        rm -f "$BIN"
+        tar -xzOf "$TARBALL" "$MEMBER" > "$NEW" 2>/dev/null || { rm -f "$NEW"
+            die "не распаковался в $(dirname "$BIN") — нет места? (нужен extroot; старый бинарь уже удалён)"; }
+    fi
+    rm -f "/tmp/$TARBALL" /tmp/SHA256SUMS
+    chmod +x "$NEW"; mv "$NEW" "$BIN"
 fi
 
 "$BIN" version >/dev/null 2>&1 || die "бинарь не запускается (не та архитектура?)"
