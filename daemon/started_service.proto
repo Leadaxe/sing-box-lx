@@ -169,6 +169,10 @@ message GroupItem {
   // Seconds since the last dial through the endpoint; 0 for every other
   // outbound. lx: SPEC 097.
   int64 idleSinceSeconds = 6;
+  // WG/AWG peers in config order; empty for every other outbound and while
+  // the endpoint has no device (see endpointState). Filled by GetOutbounds
+  // only. lx: SPEC 114.
+  repeated PeerStatus peers = 7;
 
   // lx:end lx_command
 }
@@ -1077,6 +1081,20 @@ message SetEndpointEnabledRequest {
 }
 message SetEndpointEnabledResponse {
   string state = 1; // GroupItem.endpointState after the call
+}
+
+// One WireGuard peer of a WG/AWG endpoint. Raw facts, no "connected" verdict:
+// the consumer derives liveness from lastHandshakeUnix. lx: SPEC 114.
+message PeerStatus {
+  // Base64, as public_key in the config — the peer identity.
+  string publicKey = 1;
+  // Current remote ip:port: configured, or learned from the peer's packets
+  // (server side, roaming). Last known address; empty until known.
+  string endpoint = 2;
+  // Unix seconds of the last completed handshake; 0 = none yet.
+  int64 lastHandshakeUnix = 3;
+  int64 rxBytes = 4;
+  int64 txBytes = 5;
 }
 
 // lx:end lx_command
