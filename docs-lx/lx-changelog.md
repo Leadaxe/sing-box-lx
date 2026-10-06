@@ -28,6 +28,15 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.12-rc.1
+
+Пререлиз линии `v1.14.2-lx.12`.
+
+- ✨ **Статус пиров WG/AWG в `GetOutbounds`.** У WG/AWG-узла `GroupItem.peers`: base64-ключ пира, текущий адрес (на сервере — выученный из хендшейка клиента), время последнего хендшейка (`0` — не было), rx/tx. Вердикт «на связи» ядро не выносит, порог выводит приложение; секреты не отдаются, спящий узел не будится. libbox — `OutboundGroupItem.Peers()`, CLI — `sing-box api peers [тег]`. Руководство потребителя — [CONSUMERS.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/114-WG_PEER_STATUS/CONSUMERS.md). ([SPEC 114](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/114-WG_PEER_STATUS/SPEC.md))
+- 📝 SPEC 113 (Tailscale `TS_DEBUG_ALWAYS_USE_DERP` + Rebind, не планируется) — только документация.
+- ⚠️ **Дрейф от `upstream/stable` сознательно отложен:** 4 коммита после мержа lx.11 — `Refactor lifecycle to scoped cleanup` (115 файлов, задевает `box.go`, менеджеры и `protocol/wireguard/endpoint.go`), `Remove unimplemented hot reload from managers`, `Fix usage and cache files overwritten when loading fails`, `Move auto-redirect and bridge index allocation out of constructors`, а с ними бамп `sing-quic` и `sing-cloudflared`. Рефакторинг жизненного цикла нужно разбирать против нашего сна и ленивой сборки WG (SPEC 020/097/106) отдельной задачей синка, чтобы не смешивать его регрессии с новой фичей. Решение владельца 2026-10-07. Go 1.26.8 и cronet совпадают со stable.
+- База — sing-box `v1.14.2`. Проверки на устройстве до тега не было.
+
 #### v1.14.2-lx.11
 
 Синк с `upstream/stable` на 4 коммита от 2026-09-29, отложенных в lx.10. Пользовательские ноты
