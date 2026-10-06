@@ -23,7 +23,7 @@ func TestStartRefusedAfterClose(t *testing.T) {
 		t.Fatalf("Close of a nil-device endpoint must not error: %v", err)
 	}
 	for _, stage := range []adapter.StartStage{adapter.StartStateStart, adapter.StartStatePostStart} {
-		err := w.Start(stage)
+		err := w.Start(stage, testScope())
 		if !errors.Is(err, os.ErrClosed) {
 			t.Fatalf("Start(stage %d) after Close: want os.ErrClosed, got %v", stage, err)
 		}

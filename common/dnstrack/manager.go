@@ -119,7 +119,10 @@ func (m *Manager) Name() string {
 	return "dns query manager"
 }
 
-func (m *Manager) Start(stage adapter.StartStage) error {
+func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateInitialize {
+		scope.Add(m.Close)
+	}
 	return nil
 }
 

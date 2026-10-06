@@ -23,6 +23,10 @@ func testLogger() log.ContextLogger {
 	return log.NewNOPFactory().NewLogger("group-test")
 }
 
+func testScope() *adapter.Scope {
+	return adapter.NewScope(context.Background(), testLogger())
+}
+
 func testQuery() *mDNS.Msg {
 	message := new(mDNS.Msg)
 	message.SetQuestion("example.org.", mDNS.TypeA)
@@ -54,9 +58,9 @@ func newFakeMember(tag string, exchange func(ctx context.Context, message *mDNS.
 	}
 }
 
-func (f *fakeMember) Start(stage adapter.StartStage) error { return nil }
-func (f *fakeMember) Close() error                         { return nil }
-func (f *fakeMember) Reset()                               {}
+func (f *fakeMember) Start(stage adapter.StartStage, _ *adapter.Scope) error { return nil }
+func (f *fakeMember) Close() error                                           { return nil }
+func (f *fakeMember) Reset()                                                 {}
 
 func (f *fakeMember) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
 	f.calls.Add(1)
@@ -453,7 +457,7 @@ func newTestManager(t *testing.T, defaultTag string) (*dns.TransportManager, con
 	RegisterTransport(registry)
 	registerFakeType(registry, "fakeudp", C.DNSTypeUDP)
 	registerFakeType(registry, "fakehosts", C.DNSTypeHosts)
-	manager := dns.NewTransportManager(testLogger(), registry, nil, defaultTag)
+	manager := dns.NewTransportManager(registry, nil, defaultTag)
 	ctx := service.ContextWith[adapter.DNSTransportManager](context.Background(), manager)
 	return manager, ctx
 }
@@ -463,7 +467,7 @@ func TestManagerRejectsGroupCycle(t *testing.T) {
 	logger := testLogger()
 	require.NoError(t, manager.Create(ctx, logger, "g1", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"g2"}}))
 	require.NoError(t, manager.Create(ctx, logger, "g2", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"g1"}}))
-	err := manager.Start(adapter.StartStateStart)
+	err := manager.Start(adapter.StartStateStart, testScope())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "circular server dependency")
 }
@@ -471,7 +475,7 @@ func TestManagerRejectsGroupCycle(t *testing.T) {
 func TestManagerRejectsMissingMember(t *testing.T) {
 	manager, ctx := newTestManager(t, "g1")
 	require.NoError(t, manager.Create(ctx, testLogger(), "g1", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"missing"}}))
-	err := manager.Start(adapter.StartStateStart)
+	err := manager.Start(adapter.StartStateStart, testScope())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not found")
 }
@@ -481,7 +485,7 @@ func TestManagerRejectsLocalSourceMember(t *testing.T) {
 	logger := testLogger()
 	require.NoError(t, manager.Create(ctx, logger, "h", "fakehosts", &fakeTransportOptions{}))
 	require.NoError(t, manager.Create(ctx, logger, "g1", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"h"}}))
-	err := manager.Start(adapter.StartStateStart)
+	err := manager.Start(adapter.StartStateStart, testScope())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "is not allowed in a group")
 }
@@ -493,7 +497,7 @@ func TestManagerStartsGroupAndNestedGroup(t *testing.T) {
 	require.NoError(t, manager.Create(ctx, logger, "u2", "fakeudp", &fakeTransportOptions{}))
 	require.NoError(t, manager.Create(ctx, logger, "inner", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"u1", "u2"}}))
 	require.NoError(t, manager.Create(ctx, logger, "outer", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"inner", "u1"}}))
-	require.NoError(t, manager.Start(adapter.StartStateStart))
+	require.NoError(t, manager.Start(adapter.StartStateStart, testScope()))
 	outer, loaded := manager.Transport("outer")
 	require.True(t, loaded)
 	response, err := outer.Exchange(context.Background(), testQuery())

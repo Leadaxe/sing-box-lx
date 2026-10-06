@@ -159,9 +159,21 @@ func (c *Chain) hopTag(index int) string {
 	return c.Tag() + "#" + strconv.Itoa(index)
 }
 
-// Start: резолв позиций, валидация типов и патчей по всем достижимым узлам,
+// Start — жизненный цикл апстрима (scope, 2026-10): Close регистрируется в
+// scope на Initialize, работа стадии Start — в start().
+func (c *Chain) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	switch stage {
+	case adapter.StartStateInitialize:
+		scope.Add(c.Close)
+	case adapter.StartStateStart:
+		return c.start()
+	}
+	return nil
+}
+
+// start: резолв позиций, валидация типов и патчей по всем достижимым узлам,
 // регистрация хопов, прогрев детерминированных позиций, тикер эвикшна.
-func (c *Chain) Start() error {
+func (c *Chain) start() error {
 	registrar, ok := c.outbound.(adapter.InternalOutboundRegistrar)
 	if !ok {
 		return E.New("outbound manager does not support chain hops")

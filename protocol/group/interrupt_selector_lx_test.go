@@ -25,6 +25,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/interrupt"
 	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/route"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
@@ -105,7 +106,7 @@ func newSelectorUnderTest(t *testing.T, interruptExisting bool) (*Selector, *pro
 		interruptGroup:               interrupt.NewGroup(),
 		interruptExternalConnections: interruptExisting,
 	}
-	if err := sel.Start(); err != nil {
+	if err := sel.Start(adapter.StartStateStart, adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())); err != nil {
 		t.Fatalf("Selector.Start: %v", err)
 	}
 	return sel, nodeA, nodeB
@@ -219,7 +220,7 @@ func TestLxSelectorInterruptHandlerBranch(t *testing.T) {
 		interruptGroup:               interrupt.NewGroup(),
 		interruptExternalConnections: true,
 	}
-	if err := sel.Start(); err != nil {
+	if err := sel.Start(adapter.StartStateStart, adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())); err != nil {
 		t.Fatalf("Selector.Start: %v", err)
 	}
 

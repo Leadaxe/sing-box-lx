@@ -136,7 +136,7 @@ func newLazyTestEndpoint(t *testing.T, tag string, budget *BuildBudget) *Endpoin
 func startLazy(t *testing.T, w *Endpoint) {
 	t.Helper()
 	for _, stage := range []adapter.StartStage{adapter.StartStateStart, adapter.StartStatePostStart} {
-		if err := w.Start(stage); err != nil {
+		if err := w.Start(stage, testScope()); err != nil {
 			t.Fatalf("start stage %d: %v", stage, err)
 		}
 	}
@@ -280,7 +280,7 @@ func TestLazyCloseBeforeFirstDial(t *testing.T) {
 		t.Fatalf("a dial after Close built %d devices", n)
 	}
 	for _, stage := range []adapter.StartStage{adapter.StartStateStart, adapter.StartStatePostStart} {
-		if err := w.Start(stage); err == nil {
+		if err := w.Start(stage, testScope()); err == nil {
 			t.Fatal("Start after Close must refuse")
 		}
 	}

@@ -902,6 +902,15 @@ func (o *Outbound) lookup(ctx context.Context, domain string) ([]netip.Addr, err
 	return o.dnsRouter.Lookup(ctx, domain, adapter.DNSQueryOptions{})
 }
 
+// Start — upstream scope lifecycle (2026-10): the outbound has no start work,
+// it only registers Close.
+func (o *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateInitialize {
+		scope.Add(o.Close)
+	}
+	return nil
+}
+
 func (o *Outbound) Close() error {
 	o.runMu.Lock()
 	if o.closed {

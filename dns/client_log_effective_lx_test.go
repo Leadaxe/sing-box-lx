@@ -22,9 +22,9 @@ type staticTransport struct {
 	TransportAdapter
 }
 
-func (t *staticTransport) Start(stage adapter.StartStage) error { return nil }
-func (t *staticTransport) Close() error                         { return nil }
-func (t *staticTransport) Reset()                               {}
+func (t *staticTransport) Start(stage adapter.StartStage, _ *adapter.Scope) error { return nil }
+func (t *staticTransport) Close() error                                           { return nil }
+func (t *staticTransport) Reset()                                                 {}
 
 func (t *staticTransport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
 	return nil, RcodeServerFailure
