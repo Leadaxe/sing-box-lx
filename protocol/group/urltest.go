@@ -91,43 +91,38 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 	return outbound, nil
 }
 
-func (s *URLTest) Start() error {
-	outbounds := make([]adapter.Outbound, 0, len(s.tags))
-	for i, tag := range s.tags {
-		detour, loaded := s.outbound.Outbound(tag)
-		if !loaded {
-			return E.New("outbound ", i, " not found: ", tag)
+func (s *URLTest) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	switch stage {
+	case adapter.StartStateStart:
+		outbounds := make([]adapter.Outbound, 0, len(s.tags))
+		for i, tag := range s.tags {
+			detour, loaded := s.outbound.Outbound(tag)
+			if !loaded {
+				return E.New("outbound ", i, " not found: ", tag)
+			}
+			outbounds = append(outbounds, detour)
 		}
-		outbounds = append(outbounds, detour)
-	}
-	group, err := NewURLTestGroup(s.ctx, s.outbound, s.logger, outbounds, s.link, s.interval, s.tolerance, s.idleTimeout, s.interruptExternalConnections)
-	if err != nil {
-		return err
-	}
-	group.balancer = s.balancer // lx: SPEC 019 v2 — health-check drives the pool through it
-	group.groupTag = s.Tag()    // lx: SPEC 020 — probe gating needs the group's own tag
-	group.passiveCheck = s.passiveCheck
-	if s.balancer != nil {
-		// lx: SPEC 020 — a pool rebuild changes the active routing tree; invalidate
-		// the router's reachable cache. ctx captured here has the invalidator.
-		ctx := s.ctx
-		s.balancer.onChange = func() {
-			invalidateReachability(ctx)
+		group, err := NewURLTestGroup(s.ctx, s.outbound, s.logger, outbounds, s.link, s.interval, s.tolerance, s.idleTimeout, s.interruptExternalConnections)
+		if err != nil {
+			return err
 		}
+		group.balancer = s.balancer // lx: SPEC 019 v2 — health-check drives the pool through it
+		group.groupTag = s.Tag()    // lx: SPEC 020 — probe gating needs the group's own tag
+		group.passiveCheck = s.passiveCheck
+		if s.balancer != nil {
+			// lx: SPEC 020 — a pool rebuild changes the active routing tree; invalidate
+			// the router's reachable cache. ctx captured here has the invalidator.
+			ctx := s.ctx
+			s.balancer.onChange = func() {
+				invalidateReachability(ctx)
+			}
+		}
+		s.group = group
+	case adapter.StartStateStarted:
+		s.group.PostStart()
+		scope.Add(s.group.Close)
 	}
-	s.group = group
 	return nil
-}
-
-func (s *URLTest) PostStart() error {
-	s.group.PostStart()
-	return nil
-}
-
-func (s *URLTest) Close() error {
-	return common.Close(
-		common.PtrOrNil(s.group),
-	)
 }
 
 func (s *URLTest) Now() string {

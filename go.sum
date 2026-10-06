@@ -595,3 +595,7 @@ software.sslmate.com/src/go-pkcs12 v0.4.0 h1:H2g08FrTvSFKUj+D309j1DPfk5APnIdAQAB
 software.sslmate.com/src/go-pkcs12 v0.4.0/go.mod h1:Qiz0EyvDRJjjxGyUQa2cCNZn/wMyzrRJ/qcDXOQazLI=
 zombiezen.com/go/capnproto2 v2.18.2+incompatible h1:v3BD1zbruvffn7zjJUU5Pn8nZAB11bhZSQC4W+YnnKo=
 zombiezen.com/go/capnproto2 v2.18.2+incompatible/go.mod h1:XO5Pr2SbXgqZwn0m0Ru54QBqpOf4K5AYBO+8LAOBQEQ=
+github.com/sagernet/sing-cloudflared v0.1.4-0.20261002084126-c1255ae368f2 h1:+AfbAXGEV8tezIYHeShzwHm7IMUE5kYGVFLo0ly7W24=
+github.com/sagernet/sing-cloudflared v0.1.4-0.20261002084126-c1255ae368f2/go.mod h1:XEqEDYRCAYLaoPjZ1ifVWJg5iWAJHL2gOAXe/PM28Cg=
+github.com/sagernet/sing-quic v0.7.2-0.20261002084117-75c3ac4fa12b h1:2Jx/URJAPt32MEbLmAR5nzH87tO6NQZLRfRFvFqBWuk=
+github.com/sagernet/sing-quic v0.7.2-0.20261002084117-75c3ac4fa12b/go.mod h1:rJFeVxbEej2iuyeCJ3drKW+p5rOgtLIW3XhZ6ty7Fig=

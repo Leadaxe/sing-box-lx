@@ -38,17 +38,43 @@ type clientConnection struct {
 	*quic.Conn
 	access    sync.Mutex
 	streams   int
+	closed    bool
 	closeIdle *atomic.Bool
+}
+
+func (c *clientConnection) active() bool {
+	c.access.Lock()
+	closed := c.closed
+	c.access.Unlock()
+	return !closed && !common.Done(c.Context())
+}
+
+func (c *clientConnection) acquireStream() bool {
+	c.access.Lock()
+	defer c.access.Unlock()
+	if c.closed {
+		return false
+	}
+	c.streams++
+	return true
 }
 
 func (c *clientConnection) releaseStream(keepSession bool) {
 	c.access.Lock()
 	c.streams--
-	drained := c.closeIdle.Load() && !keepSession && c.streams == 0
+	closed := c.closeIdle.Load() && !keepSession && c.streams == 0 && c.markClosedLocked()
 	c.access.Unlock()
-	if drained {
+	if closed {
 		c.CloseWithError(0, "")
 	}
+}
+
+func (c *clientConnection) markClosedLocked() bool {
+	if c.closed {
+		return false
+	}
+	c.closed = true
+	return true
 }
 
 func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayQUICOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
@@ -69,13 +95,13 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 
 func (c *Client) offer() (*clientConnection, error) {
 	conn := c.conn.Load()
-	if conn != nil && !common.Done(conn.Context()) {
+	if conn != nil && conn.active() {
 		return conn, nil
 	}
 	c.connAccess.Lock()
 	defer c.connAccess.Unlock()
 	conn = c.conn.Load()
-	if conn != nil && !common.Done(conn.Context()) {
+	if conn != nil && conn.active() {
 		return conn, nil
 	}
 	conn, err := c.offerNew()
@@ -108,20 +134,22 @@ func (c *Client) offerNew() (*clientConnection, error) {
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
-	conn, err := c.offer()
-	if err != nil {
-		return nil, err
+	for {
+		conn, err := c.offer()
+		if err != nil {
+			return nil, err
+		}
+		if !conn.acquireStream() {
+			continue
+		}
+		stream, err := conn.OpenStream()
+		if err != nil {
+			conn.releaseStream(false)
+			return nil, err
+		}
+		keepSession := adapter.KeepSessionFromContext(ctx)
+		return &StreamWrapper{Conn: conn.Conn, Stream: stream, onClose: func() { conn.releaseStream(keepSession) }}, nil
 	}
-	conn.access.Lock()
-	conn.streams++
-	conn.access.Unlock()
-	stream, err := conn.OpenStream()
-	if err != nil {
-		conn.releaseStream(false)
-		return nil, err
-	}
-	keepSession := adapter.KeepSessionFromContext(ctx)
-	return &StreamWrapper{Conn: conn.Conn, Stream: stream, onClose: func() { conn.releaseStream(keepSession) }}, nil
 }
 
 func (c *Client) MultiplexEnabled() bool {
@@ -141,9 +169,9 @@ func (c *Client) CloseIdleConnections() {
 		return
 	}
 	conn.access.Lock()
-	drained := conn.streams == 0
+	closed := conn.streams == 0 && conn.markClosedLocked()
 	conn.access.Unlock()
-	if drained {
+	if closed {
 		conn.CloseWithError(0, "")
 	}
 }

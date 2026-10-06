@@ -133,14 +133,11 @@ func randomVersion() string {
 }
 
 func (s *Outbound) connect(ctx context.Context) (client *ssh.Client, err error) {
-	if s.client != nil {
-		return s.client, nil
-	}
-
 	s.clientAccess.Lock()
 	defer s.clientAccess.Unlock()
 
 	if s.client != nil {
+		s.streams++
 		return s.client, nil
 	}
 
@@ -199,14 +196,16 @@ func (s *Outbound) connect(ctx context.Context) (client *ssh.Client, err error) 
 
 	s.clientConn = conn
 	s.client = client
-	s.streams = 0
+	s.streams = 1
 
 	go func() {
 		client.Wait()
 		conn.Close()
 		s.clientAccess.Lock()
-		s.client = nil
-		s.clientConn = nil
+		if s.client == client {
+			s.client = nil
+			s.clientConn = nil
+		}
 		s.clientAccess.Unlock()
 	}()
 
@@ -237,6 +236,8 @@ func (s *Outbound) CloseIdleConnections() {
 		return
 	}
 	clientConn := s.clientConn
+	s.client = nil
+	s.clientConn = nil
 	s.clientAccess.Unlock()
 	common.Close(clientConn)
 }
@@ -253,12 +254,20 @@ func (s *Outbound) releaseStream(client *ssh.Client, keepSession bool) {
 		return
 	}
 	clientConn := s.clientConn
+	s.client = nil
+	s.clientConn = nil
 	s.clientAccess.Unlock()
 	common.Close(clientConn)
 }
 
-func (s *Outbound) Close() error {
-	return common.Close(s.clientConn)
+func (s *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage != adapter.StartStateInitialize {
+		return nil
+	}
+	scope.Add(func() error {
+		return common.Close(s.clientConn)
+	})
+	return nil
 }
 
 func (s *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -266,11 +275,6 @@ func (s *Outbound) DialContext(ctx context.Context, network string, destination 
 	if err != nil {
 		return nil, err
 	}
-	s.clientAccess.Lock()
-	if s.client == client {
-		s.streams++
-	}
-	s.clientAccess.Unlock()
 	conn, err := client.Dial(network, destination.String())
 	if err != nil {
 		s.releaseStream(client, false)

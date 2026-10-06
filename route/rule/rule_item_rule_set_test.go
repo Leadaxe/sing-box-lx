@@ -18,8 +18,7 @@ type ruleSetItemTestRouter struct {
 	ruleSets map[string]adapter.RuleSet
 }
 
-func (r *ruleSetItemTestRouter) Start(adapter.StartStage) error { return nil }
-func (r *ruleSetItemTestRouter) Close() error                   { return nil }
+func (r *ruleSetItemTestRouter) Start(adapter.StartStage, *adapter.Scope) error { return nil }
 func (r *ruleSetItemTestRouter) PreMatch(adapter.InboundContext, []byte) adapter.PreMatchResult {
 	return adapter.PreMatchResult{}
 }
@@ -60,8 +59,6 @@ type countingRuleSet struct {
 func (s *countingRuleSet) Name() string { return s.name }
 
 func (s *countingRuleSet) StartContext(context.Context, *adapter.HTTPStartContext) error { return nil }
-
-func (s *countingRuleSet) PostStart() error { return nil }
 
 func (s *countingRuleSet) Metadata() adapter.RuleSetMetadata { return adapter.RuleSetMetadata{} }
 
