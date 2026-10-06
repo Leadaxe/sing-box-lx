@@ -285,7 +285,7 @@ detour пусто. Профайлеру, показывающему «весь �
 | `GetStartedAt → StartedAt` | время старта ядра, для uptime |
 | `GetRules → RuleList` | **lx**: структурные правила — раскрывает `Connection.rule` |
 | `GetGroups → Groups` / `SubscribeGroups` | **lx** (`GetGroups`) / апстрим (стрим) — состояние групп |
-| `GetOutbounds → OutboundList` | **lx**: теги outbound'ов, чтобы раскрывать элементы цепочки |
+| `GetOutbounds → OutboundList` | **lx**: теги outbound'ов, чтобы раскрывать элементы цепочки; состояние WG/AWG (SPEC 097) и по каждому пиру — последний хендшейк, адрес, трафик (`GroupItem.peers`, SPEC 114) |
 | `GetPool(GetPoolRequest) → PoolList` | **lx**: состояние ротации балансируемой urltest-группы (SPEC 019) |
 | `GetDNSGroups → DnsGroupList` | **lx**: полное состояние DNS-групп |
 | `GetRunningConfig → RunningConfig` | **lx**: конфиг, на котором ядро реально работает |

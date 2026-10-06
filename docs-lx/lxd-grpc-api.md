@@ -283,7 +283,7 @@ full picture.
 | `GetStartedAt → StartedAt` | core start time, for uptime |
 | `GetRules → RuleList` | **lx**: structured rules — resolves `Connection.rule` |
 | `GetGroups → Groups` / `SubscribeGroups` | **lx** (`GetGroups`) / upstream (stream) — group state |
-| `GetOutbounds → OutboundList` | **lx**: outbound tags, to resolve chain entries |
+| `GetOutbounds → OutboundList` | **lx**: outbound tags, to resolve chain entries; WG/AWG state (SPEC 097) and per-peer last handshake, address, transfer (`GroupItem.peers`, SPEC 114) |
 | `GetPool(GetPoolRequest) → PoolList` | **lx**: rotation state of a balanced urltest group (SPEC 019) |
 | `GetDNSGroups → DnsGroupList` | **lx**: full DNS group state |
 | `GetRunningConfig → RunningConfig` | **lx**: the config the core is actually running |
