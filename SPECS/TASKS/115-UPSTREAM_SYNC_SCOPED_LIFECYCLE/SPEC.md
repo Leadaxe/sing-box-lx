@@ -68,6 +68,9 @@
 - `go test` с `LX_TAGS`+`with_lx_idle_suspend`: `.`, `adapter/...`, `route/...`, `dns/...`, `protocol/...`, `transport/...`, `common/...`, `daemon`, `experimental/...`, `lxd/...`, `cmd/sing-box`; `-race` — `.`, `adapter/...`, `route`, `protocol/{wireguard,group,chain}`, `transport/wireguard`, `daemon`, `dns/transport/group`.
 - Стенды `lx-test/{chain,initerr,startclose,zombie}`; `sing-box check` по 9 конфигам `lx-test/config`.
 - Живой прогон: серверный AWG-конфиг (SPEC 114) + клиент, `api peers` показывает хендшейк, оба процесса останавливаются по SIGTERM за 0,03 с.
+- `make -f Makefile.lx lx-check` — релизный бинарь, 9 конфигов.
+- Стенд жизненного цикла на бинаре с `with_lx_idle_suspend` (AWG-сервер на три пира; клиент: три ленивых WG-узла, urltest, selector, `lx.wg` с `idle_suspend 10s`, `idle_teardown 20s`, `build_max 2`): `never_built` → сборка пробой urltest → `asleep` → `torn_down` → пробуждение и пересборка дайлом, переключение selector на несобранный узел, три цикла старт/стоп (0,1–0,33 с). `lx idle`-строки — в ожидаемом порядке, ошибок, кроме §4, нет.
+- `TestGroupStateSnapshotV3` (`dns/transport/group`) однажды упал в полном прогоне. Тест гонкой сравнивает участников с задержкой 1 мс и 8 мс; под нагрузкой процессора падает 10/200 на `lx` до мержа и 7/200 после — нестабильность теста, не регрессия синка.
 
 ## 6. Осталось
 
