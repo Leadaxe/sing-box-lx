@@ -30,11 +30,24 @@ type TailscaleEndpointStatus struct {
 	ReceivingFileCount int32
 	UnreadFileCount    int32
 	userGroups         []*TailscaleUserGroup
+	// lx:begin tailscale-status (SPEC 115)
+	health []string
+	// lx:end tailscale-status
 }
 
 func (s *TailscaleEndpointStatus) UserGroups() TailscaleUserGroupIterator {
 	return newIterator(s.userGroups)
 }
+
+// lx:begin tailscale-status (SPEC 115)
+
+// Health returns the backend's health warnings (no DERP connection, exit node
+// offline, ...); empty when healthy.
+func (s *TailscaleEndpointStatus) Health() StringIterator {
+	return newIterator(s.health)
+}
+
+// lx:end tailscale-status
 
 type TailscaleUserGroupIterator interface {
 	Next() *TailscaleUserGroup
@@ -76,6 +89,17 @@ type TailscalePeer struct {
 	TxBytes         int64
 	KeyExpiry       int64
 	LastSeen        int64
+	// lx:begin tailscale-status (SPEC 115)
+	// Path: "direct" / "peer_relay" / "derp" / "" (never sent to the peer).
+	// Fresh in GetTailscaleStatus; in the stream, the snapshot of the last
+	// event. Endpoint is the direct ip:port, PeerRelay the relay ip:port:vni,
+	// DERPRegionCode the peer's home DERP; LastHandshake Unix seconds, 0 = none.
+	Path           string
+	Endpoint       string
+	PeerRelay      string
+	DERPRegionCode string
+	LastHandshake  int64
+	// lx:end tailscale-status
 }
 
 func (p *TailscalePeer) TailscaleIPs() StringIterator {
@@ -121,6 +145,7 @@ func tailscaleEndpointStatusFromGRPC(status *daemon.TailscaleEndpointStatus) *Ta
 		ReceivingFileCount: status.ReceivingFileCount,
 		UnreadFileCount:    status.UnreadFileCount,
 		userGroups:         userGroups,
+		health:             status.Health, // lx: SPEC 115
 	}
 	if status.Self != nil {
 		result.Self = tailscalePeerFromGRPC(status.Self)
@@ -164,5 +189,12 @@ func tailscalePeerFromGRPC(peer *daemon.TailscalePeer) *TailscalePeer {
 		TxBytes:         peer.TxBytes,
 		KeyExpiry:       peer.KeyExpiry,
 		LastSeen:        peer.LastSeen,
+		// lx:begin tailscale-status (SPEC 115)
+		Path:           tailscalePeerPathFromGRPC(peer.Path),
+		Endpoint:       peer.Endpoint,
+		PeerRelay:      peer.PeerRelay,
+		DERPRegionCode: peer.DerpRegionCode,
+		LastHandshake:  peer.LastHandshake,
+		// lx:end tailscale-status
 	}
 }
