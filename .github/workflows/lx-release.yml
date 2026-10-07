@@ -490,9 +490,118 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # Extra router targets: pure-Go static, same no_naive recipe as the big-endian
+  # MIPS leg in `build` — cronet/Chromium has no toolchain for these, so
+  # naive/purego are dropped.
+  build_linux_extra:
+    name: build linux-extra/${{ matrix.asset }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: "386", asset: linux-386 }
+          - { arch: riscv64, asset: linux-riscv64 }
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      # Toolchain pin lives in go.version (SPEC 049).
+      - name: Go toolchain pin
+        id: go_pin
+        run: echo "version=$(tr -d '[:space:]' < go.version | sed 's/^go//')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ steps.go_pin.outputs.version }}
+
+      - name: Resolve version
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          set -xeuo pipefail
+          TAGS="$(make -f Makefile.lx -s lx-print-tags)"
+          TAGS="${TAGS/with_naive_outbound,/}"
+          TAGS="${TAGS/with_purego,/}"
+          mkdir -p dist
+          go build -v -trimpath -tags "$TAGS" \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${{ steps.ver.outputs.version }}' -checklinkname=0 -s -w -buildid=" \
+            -o dist/sing-box ./cmd/sing-box
+
+      - name: Verify static
+        run: |
+          set -xeuo pipefail
+          file dist/sing-box
+          file dist/sing-box | grep -q "statically linked"
+
+      - name: Package
+        run: |
+          NAME="sing-box-${{ steps.ver.outputs.version }}-${{ matrix.asset }}"
+          mkdir -p "stage/$NAME"
+          cp dist/sing-box "stage/$NAME/"
+          cp LICENSE LICENSING.md README.md "stage/$NAME/" 2>/dev/null || true
+          tar -C stage -czf "dist/$NAME.tar.gz" "$NAME"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dist-${{ matrix.asset }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  # UPX-packed duplicates of every linux archive (`*.upx.tar.gz`, same layout).
+  # UPX is pinned; packed binaries must be verified on real hardware before being
+  # trusted on routers — some Keenetic 4.9 kernels SIGSEGV on certain UPX versions.
+  upx:
+    name: upx linux archives
+    runs-on: ubuntu-latest
+    needs: [build, build_linux_musl, build_linux_extra]
+    env:
+      UPX_VERSION: '5.2.1'
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Install upx
+        run: |
+          set -xeuo pipefail
+          curl -sL "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz" | tar -xJ
+          sudo install -m 755 "upx-${UPX_VERSION}-amd64_linux/upx" /usr/local/bin/upx
+          upx --version | head -1
+
+      - name: Pack
+        run: |
+          set -xeuo pipefail
+          mkdir -p dist-upx
+          for src in dist/sing-box-*-linux-*.tar.gz; do
+            NAME="$(basename "$src" .tar.gz)"
+            rm -rf work && mkdir work
+            tar -C work -xzf "$src"
+            upx -q --best --lzma "work/$NAME/sing-box"
+            tar -C work -czf "dist-upx/$NAME.upx.tar.gz" "$NAME"
+            rm -rf work
+          done
+          ls -la dist-upx
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dist-upx
+          path: dist-upx/*
+          if-no-files-found: error
+
   release:
     name: publish release
-    needs: [build, build_darwin, build_linux_musl, build_android]
+    needs: [build, build_darwin, build_linux_musl, build_android, build_linux_extra, upx]
     # lx: a tag push carries no inputs — always publish there; a manual run publishes
     # unless dry_run. The implicit success() on `needs` still applies.
     if: ${{ github.event_name == 'push' || inputs.dry_run != true }}
@@ -591,6 +700,10 @@ jobs:
           **Linux — static musl builds for routers** (AsusWRT Merlin, OpenWrt, Keenetic): \`linux-amd64\`, \`linux-arm64\`, \`linux-armv7\`, \`linux-mipsle-softfloat\`. These are statically linked (no \`libdl.so.2\`/glibc dependency) and **keep NaïveProxy** — they run on musl routers where the previous dynamic builds failed with \`libdl.so.2: cannot open shared object file\`. See SPECS/TASKS/006.
 
           **Linux — big-endian MIPS** (OpenWrt \`mips_24kc\`, e.g. Atheros AR93xx): \`linux-mips-softfloat\` — pure-Go static build **without NaïveProxy** (Chromium/cronet has no big-endian MIPS toolchain); everything else matches the desktop tag set.
+
+          **Linux — extra router targets**: \`linux-386\` and \`linux-riscv64\` — pure-Go static builds **without NaïveProxy** (same recipe as big-endian MIPS; cronet/Chromium has no toolchain for them).
+
+          **Linux — compressed copies**: \`*.upx.tar.gz\` archives mirror the plain ones with the binary packed by UPX (\`--best --lzma\`, version pinned in the workflow) — ~3-4× smaller download, self-unpacking at start. UPX-packed binaries can fail to start on some older router kernels; if the packed binary does not start on your device, use the plain archive.
 
           </details>
 
