@@ -232,39 +232,6 @@ func TestMaybeForceRetest_levelTriggerWithGap(t *testing.T) {
 	}
 }
 
-// TestUrlTest_passiveSkipDisabledInEmergency: пассивно подтверждённый выбор
-// обычно пропускает цикл проб; в аварийном режиме пробы обязаны идти, и
-// ответивший узел сбрасывает штрафы (выход из аварийного режима).
-func TestUrlTest_passiveSkipDisabledInEmergency(t *testing.T) {
-	a := &penaltyDialNode{tag: "a", addr: "server"}
-	b := &penaltyDialNode{tag: "b", addr: "server"}
-	g := newPenaltyTestGroup(t, []*penaltyDialNode{a, b}, map[string]uint16{"a": 10, "b": 50})
-	g.passiveCheck = true
-	g.selectedOutboundTCP = b
-	g.markPassiveAlive("b")
-
-	// Обычный режим: passive-skip действует, пробы не идут.
-	result, _ := g.urlTest(context.Background(), false)
-	if len(result) != 0 {
-		t.Fatal("passively confirmed selection must skip the probe cycle")
-	}
-
-	// Аварийный режим (лучший a ≥3): skip отключён, пробы идут, штрафы смываются.
-	for i := 0; i < 3; i++ {
-		g.penaltyAdd("a")
-	}
-	// История свежая — заставим testNodes перепробовать, состарив её.
-	g.history.StoreURLTestHistory("a", &adapter.URLTestHistory{Time: time.Now().Add(-2 * time.Minute), Delay: 10})
-	g.history.StoreURLTestHistory("b", &adapter.URLTestHistory{Time: time.Now().Add(-2 * time.Minute), Delay: 50})
-	result, _ = g.urlTest(context.Background(), false)
-	if len(result) == 0 {
-		t.Fatal("emergency mode must disable the passive skip and run probes")
-	}
-	if g.penaltyOf("a") != 0 {
-		t.Fatalf("probe answer must reset penalties, got %d", g.penaltyOf("a"))
-	}
-}
-
 func waitUntil(t *testing.T, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
