@@ -16,13 +16,15 @@ import (
 // --- fastest -----------------------------------------------------------------
 
 func TestFastestColdStartElection(t *testing.T) {
+	release := make(chan struct{})
 	fast := delayed("fast", 2*time.Millisecond)
-	slow := delayed("slow", 40*time.Millisecond)
+	slow := held("slow", release)
 	group := newTestGroup(t, ModeFastest, time.Hour, time.Hour, slow, fast)
 
 	response, err := group.Exchange(context.Background(), testQuery())
 	require.NoError(t, err)
 	require.Equal(t, mDNS.RcodeSuccess, response.Rcode)
+	close(release)
 
 	state := group.GroupState()
 	require.Equal(t, "fast", state.Current)
@@ -132,11 +134,13 @@ func TestFastestWinnerErrorErasesWinsAndReelects(t *testing.T) {
 		}
 		return okResponse(message), nil
 	})
-	backup := delayed("backup", 5*time.Millisecond)
+	release := make(chan struct{})
+	backup := held("backup", release)
 	group := newTestGroup(t, ModeFastest, time.Hour, time.Hour, fast, backup)
 
 	_, err := group.Exchange(context.Background(), testQuery())
 	require.NoError(t, err)
+	close(release) // backup answers only after fast has won the election
 	waitFanSettled(t, group)
 	require.Equal(t, "fast", group.GroupState().Current)
 
@@ -249,8 +253,9 @@ func TestFanLateSuccessHealsButDoesNotAnswer(t *testing.T) {
 		}
 		return okResponse(message), nil
 	})
+	release := make(chan struct{})
 	quick := delayed("quick", 2*time.Millisecond)
-	late := delayed("late", 50*time.Millisecond)
+	late := held("late", release)
 	group := newTestGroup(t, ModeStable, time.Hour, 0, target)
 	group.members = append(group.members,
 		&member{tag: "quick", transport: quick},
@@ -260,13 +265,13 @@ func TestFanLateSuccessHealsButDoesNotAnswer(t *testing.T) {
 	group.access.Unlock()
 
 	dying.Store(true)
-	started := time.Now()
 	response, err := group.Exchange(context.Background(), testQuery())
 	require.NoError(t, err)
 	require.NotNil(t, response)
-	// The answer came from the quick rescuer, without waiting for the late one.
-	require.Less(t, time.Since(started), 40*time.Millisecond)
+	// The answer came from the quick rescuer while the late one is still
+	// held — the query did not wait for it.
 	require.Equal(t, "quick", group.GroupState().Current)
+	close(release)
 
 	// The late success still heals its server (erases errors — nothing to
 	// erase here) and does not change the current.
