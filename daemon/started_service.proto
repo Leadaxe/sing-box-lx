@@ -68,6 +68,10 @@ service StartedService {
   rpc SetChainPositionEnabled(SetChainPositionEnabledRequest) returns (SetChainPositionEnabledResponse) {}
   rpc GetChainCloneConfig(GetChainCloneConfigRequest) returns (RunningConfig) {}
   rpc SetEndpointEnabled(SetEndpointEnabledRequest) returns (SetEndpointEnabledResponse) {}
+  // Per-endpoint status snapshots (SPEC 114, SPEC 115): one unary getter per
+  // endpoint type, so GetOutbounds stays a plain node list.
+  rpc GetWireGuardStatus(WireGuardStatusRequest) returns (WireGuardEndpointStatus) {}
+  rpc GetTailscaleStatus(TailscaleStatusRequest) returns (TailscaleEndpointStatus) {}
 
   // lx:end lx_command
 }
@@ -169,10 +173,9 @@ message GroupItem {
   // Seconds since the last dial through the endpoint; 0 for every other
   // outbound. lx: SPEC 097.
   int64 idleSinceSeconds = 6;
-  // WG/AWG peers in config order; empty for every other outbound and while
-  // the endpoint has no device (see endpointState). Filled by GetOutbounds
-  // only. lx: SPEC 114.
-  repeated PeerStatus peers = 7;
+  // 7 carried WG/AWG peers in rc.1 of SPEC 114; they moved to
+  // GetWireGuardStatus → WireGuardEndpointStatus.peers.
+  reserved 7;
 
   // lx:end lx_command
 }
@@ -345,6 +348,11 @@ message TailscaleEndpointStatus {
   int32 receivingFileCount = 13;
   int32 unreadFileCount = 14;
   repeated string certDomains = 15;
+  // lx:begin lx_command
+  // Health warnings from the Tailscale backend (no DERP connection, exit node
+  // offline, ...); empty when healthy. lx: SPEC 115.
+  repeated string health = 16;
+  // lx:end lx_command
 }
 
 message TailscaleUserGroup {
@@ -373,6 +381,18 @@ message TailscalePeer {
   bool shareeNode = 15;
   int64 lastSeen = 16;
   bool canReceiveFiles = 17;
+  // lx:begin lx_command
+  // Path to the peer as magicsock would send right now (SPEC 115). The verdict
+  // is the core's: endpoint set → DIRECT; else peerRelay set → PEER_RELAY; else
+  // the node has ever sent to the peer → DERP; else NONE. Fresh on every
+  // GetTailscaleStatus; in SubscribeTailscaleStatus it is the snapshot taken at
+  // the last event. Field names match TailscalePingResponse.
+  TailscalePeerPath path = 18;
+  string endpoint = 19;        // ip:port of the direct UDP path; empty otherwise
+  string peerRelay = 20;       // ip:port:vni of the peer relay; empty otherwise
+  string derpRegionCode = 21;  // peer's home DERP region; also set when direct; empty until known
+  int64 lastHandshake = 22;    // Unix seconds of the last WireGuard handshake; 0 = none yet
+  // lx:end lx_command
 }
 
 message TailscalePingRequest {
@@ -1095,6 +1115,37 @@ message PeerStatus {
   int64 lastHandshakeUnix = 3;
   int64 rxBytes = 4;
   int64 txBytes = 5;
+}
+
+// SPEC 114 — status snapshot of one WG/AWG endpoint: device state and peers in
+// one answer, so an empty peer list is explained by endpointState without a
+// second call. Never builds or wakes a device.
+message WireGuardStatusRequest {
+  string tag = 1; // endpoint tag, as in the config
+}
+message WireGuardEndpointStatus {
+  string endpointTag = 1;
+  // never_built / building / up / asleep / torn_down / down / disabled — the
+  // same value as GroupItem.endpointState.
+  string endpointState = 2;
+  // Seconds since the last dial through the endpoint; 0 while active.
+  int64 idleSinceSeconds = 3;
+  // Config order; empty while there is no device (see endpointState).
+  repeated PeerStatus peers = 4;
+}
+
+// SPEC 115 — the same TailscaleEndpointStatus SubscribeTailscaleStatus streams,
+// read on demand with a fresh backend snapshot (peer paths, handshakes, health).
+message TailscaleStatusRequest {
+  string endpointTag = 1;
+}
+
+// SPEC 115 — which path magicsock would use for a peer right now.
+enum TailscalePeerPath {
+  TAILSCALE_PEER_PATH_NONE = 0;       // never sent to the peer; no path chosen
+  TAILSCALE_PEER_PATH_DIRECT = 1;     // direct UDP, see TailscalePeer.endpoint
+  TAILSCALE_PEER_PATH_PEER_RELAY = 2; // via a peer relay, see TailscalePeer.peerRelay
+  TAILSCALE_PEER_PATH_DERP = 3;       // via DERP, see TailscalePeer.derpRegionCode
 }
 
 // lx:end lx_command

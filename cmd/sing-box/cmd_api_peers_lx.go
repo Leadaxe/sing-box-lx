@@ -5,6 +5,7 @@ package main
 import (
 	"time"
 
+	"github.com/sagernet/sing-box/daemon"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
 
@@ -12,7 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// lx: SPEC 114 — per-peer status of WG/AWG endpoints, from GetOutbounds.
+// lx: SPEC 114 — per-peer status of WG/AWG endpoints, from GetWireGuardStatus.
 
 var commandAPIPeers = &cobra.Command{
 	Use:   "peers [endpoint tag]",
@@ -37,39 +38,41 @@ func runAPIPeers(tag string) error {
 		return err
 	}
 	defer clientConn.Close()
-	outbounds, err := client.GetOutbounds(globalCtx, &emptypb.Empty{})
-	if err != nil {
-		return err
+	var tags []string
+	if tag != "" {
+		tags = []string{tag}
+	} else {
+		// Without a tag: every WG/AWG endpoint, found by the state GetOutbounds
+		// reports for them and for nothing else.
+		outbounds, err := client.GetOutbounds(globalCtx, &emptypb.Empty{})
+		if err != nil {
+			return err
+		}
+		for _, item := range outbounds.GetOutbounds() {
+			if item.GetEndpointState() != "" {
+				tags = append(tags, item.GetTag())
+			}
+		}
 	}
 	table := tableWriter{
 		header:       []string{"ENDPOINT", "STATE", "PEER", "ADDRESS", "HANDSHAKE", "RX", "TX"},
 		emptyMessage: "no peers",
 	}
-	var found bool
 	now := time.Now()
-	for _, item := range outbounds.GetOutbounds() {
-		if tag != "" && item.GetTag() != tag {
-			continue
+	for _, endpointTag := range tags {
+		endpoint, err := client.GetWireGuardStatus(globalCtx, &daemon.WireGuardStatusRequest{Tag: endpointTag})
+		if err != nil {
+			return E.Cause(err, endpointTag)
 		}
-		if item.GetEndpointState() == "" {
-			if tag != "" {
-				return E.New("not a WireGuard endpoint: ", tag)
-			}
-			continue
-		}
-		found = true
-		if len(item.GetPeers()) == 0 {
+		if len(endpoint.GetPeers()) == 0 {
 			// No device (never built, torn down, disabled): the state says why.
-			table.addRow(item.GetTag(), item.GetEndpointState(), "-", "", "", "", "")
+			table.addRow(endpoint.GetEndpointTag(), endpoint.GetEndpointState(), "-", "", "", "", "")
 			continue
 		}
-		for _, peer := range item.GetPeers() {
-			table.addRow(item.GetTag(), item.GetEndpointState(), abbreviatePeerKey(peer.GetPublicKey()), peer.GetEndpoint(),
+		for _, peer := range endpoint.GetPeers() {
+			table.addRow(endpoint.GetEndpointTag(), endpoint.GetEndpointState(), abbreviatePeerKey(peer.GetPublicKey()), peer.GetEndpoint(),
 				formatHandshakeAge(now, peer.GetLastHandshakeUnix()), formatTaildropSize(peer.GetRxBytes()), formatTaildropSize(peer.GetTxBytes()))
 		}
-	}
-	if tag != "" && !found {
-		return E.New("endpoint not found: ", tag)
 	}
 	table.flush()
 	return nil

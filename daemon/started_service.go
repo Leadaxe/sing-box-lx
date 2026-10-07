@@ -1673,6 +1673,7 @@ func tailscaleEndpointStatusToProto(tag string, s *adapter.TailscaleEndpointStat
 		ReceivingFileCount: s.ReceivingFileCount,
 		UnreadFileCount:    s.UnreadFileCount,
 		CertDomains:        s.CertDomains,
+		Health:             s.Health, // lx: SPEC 115
 	}
 	if s.Self != nil {
 		result.Self = tailscalePeerToProto(s.Self)
@@ -1702,6 +1703,13 @@ func tailscalePeerToProto(peer *adapter.TailscalePeer) *TailscalePeer {
 		TxBytes:         peer.TxBytes,
 		KeyExpiry:       peer.KeyExpiry,
 		LastSeen:        peer.LastSeen,
+		// lx:begin tailscale-status (SPEC 115)
+		Path:           tailscalePeerPathToProto(peer.Path),
+		Endpoint:       peer.Endpoint,
+		PeerRelay:      peer.PeerRelay,
+		DerpRegionCode: peer.DERPRegionCode,
+		LastHandshake:  peer.LastHandshake,
+		// lx:end tailscale-status
 	}
 }
 

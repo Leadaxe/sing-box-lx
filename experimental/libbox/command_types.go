@@ -71,8 +71,6 @@ type OutboundGroupItem struct {
 	// 0 for other outbounds and outside GetOutbounds.
 	EndpointState    string
 	IdleSinceSeconds int64
-	// SPEC 114: WG/AWG peers, read through Peers().
-	peers []*PeerStatus
 	// lx:end lx_command
 }
 
@@ -417,7 +415,6 @@ func outboundGroupItemListFromGRPC(list *daemon.OutboundList) OutboundGroupItemI
 			// lx:begin lx_command
 			EndpointState:    ob.EndpointState,
 			IdleSinceSeconds: ob.IdleSinceSeconds,
-			peers:            peerStatusesFromGRPC(ob.Peers),
 			// lx:end lx_command
 		})
 	}
