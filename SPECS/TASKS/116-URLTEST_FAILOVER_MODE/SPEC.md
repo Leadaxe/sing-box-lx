@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — третий режим `urltest`: держаться за рабочий узел до его отказа; R (refactor) — удаление `passive_check` |
-| Статус | N (new) — дизайн утверждён владельцем 2026-10-07 |
+| Статус | I (implemented) — дизайн утверждён владельцем 2026-10-07; юнит-тесты `protocol/group` зелёные, на устройстве и через лаунчер не прогонялось ([отчёт](IMPLEMENTATION_REPORT.md)) |
 | Ветка | `lx` |
 | Build-tag | — (ядро `protocol/group`, lx-файл + помеченные швы) |
 | Связано | [019](../019-URLTEST_MODE_STICKY/SPEC.md) (режимы, `passive_check` → [HISTORY](../019-URLTEST_MODE_STICKY/HISTORY.md)), [054](../054-URLTEST_PENALTY_FAILOVER/SPEC.md) (штрафы и fallback-дайл — детектор отказа для failover), [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) (сон узлов: failover будит один узел вместо N) |
