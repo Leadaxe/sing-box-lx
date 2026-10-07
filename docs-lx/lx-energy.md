@@ -2,7 +2,7 @@
 
 > 🌐 Русская версия: **[lx-energy.ru.md](lx-energy.ru.md)**.
 >
-> Features: [ENERGY](../SPECS/FEATURES/008-ENERGY/FEATURE.md) (idle-suspend), [URLTEST_BALANCE](../SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) (round_robin/pool/passive_check), [AWG](../SPECS/FEATURES/003-AWG/FEATURE.md). Config keys of all lx features: [lx-config.md](lx-config.md).
+> Features: [ENERGY](../SPECS/FEATURES/008-ENERGY/FEATURE.md) (idle-suspend), [URLTEST_BALANCE](../SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) (round_robin/pool/failover), [AWG](../SPECS/FEATURES/003-AWG/FEATURE.md). Config keys of all lx features: [lx-config.md](lx-config.md).
 
 This is the main document on **why the fork saves battery on Android and how to control it**. Upstream sing-box keeps every WireGuard/AmneziaWG endpoint alive 24/7 regardless of traffic: recv-workers with their buffers (~8 MB per worker at the mobile `BatchSize=128` — the dominant GC-heat source; measured on-device: 8 endpoints suspended freed 134 MB), plus keepalive/handshake timers that wake the radio. The fork adds selective **suspension** of idle endpoints and teaches the health-check machinery **not to keep them awake**. The full model, step by step, follows.
 
@@ -143,11 +143,13 @@ A health-check probe is an ordinary dial through the node — i.e. it **wakes** 
 |---|---|---|
 | `idle_timeout` (upstream, 30m) | group | no traffic through the group for longer → the probe ticker **stops for good**; the next dial (`Touch`) restarts it and runs an immediate re-test |
 | Reachability gate (lx) | group | group unreachable (selector left) → cycles are **skipped** immediately, without waiting for idle_timeout; the ticker stays alive and self-recovers |
-| `passive_check` (lx, opt-in) | node/cycle | a successful TCP dial through a node proves liveness (the SYN/SYN-ACK traversed the whole chain); while fresh (< interval): least_test skips whole cycles, round_robin skips confirmed slots |
+| `mode: failover` (lx) | mode | only the held node is probed each `interval` (one probe instead of N); other nodes are probed only when the held one fails (full run) or on a manual test |
 | round_robin pool (lx) | mode | only pool members are probed (e.g. 3), not all N nodes; out-of-pool nodes only when refilling holes |
 | Manual test | — | always full (force), never gated |
 
-An important consequence for an active least_test group: **without** `passive_check` it probes every member each `interval`, waking sleepers (upstream semantics — picking the best requires measuring everyone). With `passive_check`, probes simply don't run while traffic itself proves the selection healthy.
+An important consequence for an active least_test group: it probes every member each `interval`, waking sleepers (upstream semantics — picking the best requires measuring everyone). Where that cost matters, pick `mode: failover`: the group holds the working node and probes only it, so the other nodes sleep for as long as the held one answers.
+
+The price of `failover` is declared, not hidden: the group does not look for a faster node while the held one works, and the delays of the other nodes in the UI are as of the last full run. A held node that fails a probe or a "path is dead" dial moves the selection to the fastest live node; a manual test measures everyone and re-selects the fastest. Semantics in detail — see [lx-config.md](lx-config.md#3-round_robin-load-balancing-spec-019).
 
 ## 7. Timelines
 
@@ -194,9 +196,8 @@ Before this revision an abandoned group kept probing (and waking) all members fo
     "outbounds": ["node-1", "…", "node-N"],
     "interval": "15m",          // rarer cycles where they still run
     "idle_timeout": "30m",      // = the reachable threshold (see §7)
-    "passive_check": true,      // traffic itself confirms liveness — probes stay quiet
-    "mode": "round_robin",      // the pool is probed, not all N
-    "balancer": { "pool": 3, "pool_tolerance": 0 }
+    "mode": "failover"          // hold the working node, probe only it (one wake per interval)
+    // load balancing instead: "mode": "round_robin", "balancer": { "pool": 3, "pool_tolerance": 0 }
   }]
 }
 ```

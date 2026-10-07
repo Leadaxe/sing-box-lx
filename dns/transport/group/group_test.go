@@ -95,6 +95,20 @@ func delayed(tag string, d time.Duration) *fakeMember {
 	})
 }
 
+// held answers successfully once release is closed (or fails with the
+// context's error). It orders fan members deterministically: a held member
+// cannot answer before the test releases it, whatever the scheduler does.
+func held(tag string, release <-chan struct{}) *fakeMember {
+	return newFakeMember(tag, func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+		select {
+		case <-release:
+			return okResponse(message), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+}
+
 // blackhole never answers — it dies only with the context.
 func blackhole(tag string) *fakeMember {
 	return newFakeMember(tag, func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {

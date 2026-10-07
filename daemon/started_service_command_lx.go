@@ -351,10 +351,6 @@ func (s *StartedService) GetOutbounds(ctx context.Context, empty *emptypb.Empty)
 			item.EndpointState = idleState.State
 			item.IdleSinceSeconds = int64(idleState.IdleSince / time.Second)
 		}
-		// SPEC 114: per-peer handshake/endpoint/transfer of a WG/AWG endpoint.
-		if reporter, isReporter := detour.(adapter.PeerStatusReporter); isReporter {
-			item.Peers = peerStatusesToGRPC(reporter.PeerStatuses())
-		}
 		list.Outbounds = append(list.Outbounds, item)
 	}
 	for _, ob := range boxService.outboundManager.Outbounds() {
