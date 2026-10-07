@@ -28,6 +28,15 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.12-rc.3
+
+Пререлиз линии `v1.14.2-lx.12`. База — sing-box `v1.14.2` + 26 коммитов (`upstream/stable` `3e21554de`), **дрейф 0** — отложенный в rc.1 и rc.2 синк закрыт.
+
+- 🔧 **Синк `upstream/stable`: жизненный цикл компонентов на `adapter.Scope`.** Апстрим (`Refactor lifecycle to scoped cleanup`, `Remove unimplemented hot reload from managers`) заменил `Start(stage)` + `Close()` на `Start(stage, scope)` с очисткой через `scope.Add`; у менеджеров больше нет `Close`/`Remove`, `LegacyStart` удалён. Наши швы перенесены: параллельное закрытие WG-endpoint'ов (SPEC 030) — через собственный scope на каждый endpoint; наш `Close` WG-endpoint'а (сон, ленивая сборка, ручное выключение — SPEC 020/070/097/106) регистрируется в scope; остановка idle-тика — тоже. `chain` и `masque` переведены на новый интерфейс: со старыми `Start()`/`Close()` апстримные менеджеры их бы молча не запускали и не закрывали; звенья цепочки стартуют и закрываются через свой scope. Остальные коммиты: `Fix usage and cache files overwritten when loading fails`, `Move auto-redirect and bridge index allocation out of constructors`, `tailscale: Fix SSH auth banners never sent`, `tun: Fix inconsistent DNS mode behavior without auto_route`, `Add roothide package to iOS jailbreak release`. ([SPEC 117](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/117-UPSTREAM_SYNC_SCOPED_LIFECYCLE/SPEC.md))
+- 📌 **Форк-сабмодуль `sing-tun` `29219b8`**: мерж sagernet `0e9e4a586ece` («Disable DNS mode by default without auto route») поверх lx-линии, дельта форка (self-heal `acceptLoop`, SPEC 040) не изменилась. Модули: `sing-quic` → `75c3ac4fa12b`, `sing-cloudflared` → `c1255ae368f2`. Go 1.26.8, cronet, JDK = stable; NDK r28c осознанно.
+- ℹ️ Известно, не чинится: при остановке ядра с `services: [{type: api}]` в лог пишется `close service/api[0]: use of closed network connection` — дефект апстрима (двойное закрытие listener'а в `service/api`), воспроизводится на чистом `upstream/stable`, на работу не влияет.
+- Проверено локально: сборка darwin/linux/windows/android-libbox, тесты с полным набором тегов, с `with_lx_idle_suspend` и без тегов, `-race`, стенды `lx-test`, `lx-check`, стенд жизненного цикла WG (ленивая сборка → сон → разборка → пробуждение, три цикла старт/стоп за 0,03–0,05 с). Проверки на устройстве до тега не было.
+
 #### v1.14.2-lx.12-rc.2
 
 Пререлиз линии `v1.14.2-lx.12`. База — sing-box `v1.14.2`.

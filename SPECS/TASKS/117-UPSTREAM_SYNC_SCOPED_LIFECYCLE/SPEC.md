@@ -5,8 +5,8 @@
 | Поле | Значение |
 |------|----------|
 | Тип | R (sync) — мерж `upstream/stable` (v1.14.2 + 26, без нового тега) в `lx`: апстрим перевёл жизненный цикл компонентов на `adapter.Scope`; перепрививка форка `sing-tun` |
-| Статус | I (implemented) — 2026-10-07, ветка `lx-sync-stable-2026-10` в worktree `../sing-box-lx-sync`, в `lx` не влита; сборка (darwin, linux, windows, android libbox) и тесты зелёные, живой прогон на бинаре; на устройстве не прогонялось |
-| Ветка | `lx-sync-stable-2026-10` → `lx` |
+| Статус | I (implemented) — 2026-10-07: влит в `lx`, выпуск в v1.14.2-lx.12-rc.3; сборка (darwin, linux, windows, android libbox), тесты, стенд жизненного цикла зелёные; на устройстве не прогонялось |
+| Ветка | `lx-sync-stable-2026-10` → `lx` (fast-forward) |
 | База | до: `aecb87441` (v1.14.2-lx.12-rc.1, merge-base `4537a1ac0`), затем влит `9a89ddaff` (rc.2); после: `upstream/stable` = `3e21554de` |
 | Связано | [109](../109-UPSTREAM_SYNC_1_14_2_PLUS_15/SPEC.md) (предыдущий синк), [030](../030-FAST_BOX_SHUTDOWN/SPEC.md) (быстрая остановка), [070](../070-WG_START_CLOSE_RACE_CRASH/SPEC.md) (Close во время Start), [073](../073-CHAIN_OUTBOUND/SPEC.md) (chain), [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md)/[097](../097-LAZY_WG_DEVICE_BUILD/SPEC.md)/[106](../106-WG_ENDPOINT_TOGGLE/SPEC.md) (сон и сборка WG) |
 
@@ -84,5 +84,4 @@
 
 ## 6. Осталось
 
-- Запушить коммит форка `sing-tun` `29219b8` в Leadaxe/sing-tun-lx (ветка `lx`) **до** суперпроекта, затем влить ветку синка в `lx` и выпустить rc.3 линии lx.12; в секции changelog rc.3 закрыть строку rc.2 об отложенном дрейфе.
 - Прогон на устройстве по раннбуку §1.4 (старт/стоп ×3, сон и пробуждение WG, смена сети): жизненный цикл — то, что юниты покрывают хуже всего.
