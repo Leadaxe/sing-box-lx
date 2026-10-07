@@ -60,11 +60,23 @@ func warnLegacyTolerance(b *balancer, options option.URLTestOutboundOptions) boo
 	return b != nil && options.Tolerance != 0 && b.poolTolerance == 0
 }
 
+// isFailoverMode reports whether the group runs mode: failover (SPEC 116). Like least_test it
+// has no balancer; the flag selects the hold-until-failure policy in urltest_failover_lx.go.
+func isFailoverMode(options option.URLTestOutboundOptions) bool {
+	return options.Mode == C.URLTestModeFailover
+}
+
+// warnFailoverTolerance reports whether `tolerance` deserves a startup warning in failover
+// mode: there are no speed-driven switches, so the hysteresis never applies.
+func warnFailoverTolerance(failover bool, options option.URLTestOutboundOptions) bool {
+	return failover && options.Tolerance != 0
+}
+
 // newBalancer builds the balancer from validated options. Returns nil for least_test (and
-// empty mode), so callers branch cheaply on a nil balancer.
+// empty mode) and failover, so callers branch cheaply on a nil balancer.
 func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {
 	mode := options.Mode
-	if mode == "" || mode == C.URLTestModeLeastTest {
+	if mode == "" || mode == C.URLTestModeLeastTest || mode == C.URLTestModeFailover {
 		return nil, nil
 	}
 	if mode != C.URLTestModeRoundRobin {

@@ -50,6 +50,7 @@ type URLTest struct {
 	checkAccess                  sync.Mutex
 	interruptExternalConnections bool
 	balancer                     *balancer // lx: SPEC 019 — nil for least_test (default)
+	failover                     bool      // lx: SPEC 116 — mode: failover
 }
 
 func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.URLTestOutboundOptions) (adapter.Outbound, error) {
@@ -64,6 +65,11 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if balancer == nil && options.Balancer != nil {
 		return nil, E.New("urltest: balancer is only valid with mode: round_robin")
 	}
+	// lx: SPEC 116 — failover holds the working node until it fails.
+	failover := isFailoverMode(options)
+	if warnFailoverTolerance(failover, options) {
+		logger.Warn("urltest: tolerance is ignored in failover mode")
+	}
 	outbound := &URLTest{
 		Adapter:                      outbound.NewAdapter(C.TypeURLTest, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.Outbounds),
 		ctx:                          ctx,
@@ -77,6 +83,7 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 		idleTimeout:                  time.Duration(options.IdleTimeout),
 		interruptExternalConnections: options.InterruptExistConnections,
 		balancer:                     balancer,
+		failover:                     failover,
 	}
 	if len(outbound.tags) == 0 {
 		return nil, E.New("missing tags")
@@ -99,6 +106,7 @@ func (s *URLTest) Start() error {
 	}
 	group.balancer = s.balancer // lx: SPEC 019 v2 — health-check drives the pool through it
 	group.groupTag = s.Tag()    // lx: SPEC 020 — probe gating needs the group's own tag
+	group.failover = s.failover // lx: SPEC 116
 	if s.balancer != nil {
 		// lx: SPEC 020 — a pool rebuild changes the active routing tree; invalidate
 		// the router's reachable cache. ctx captured here has the invalidator.
@@ -195,6 +203,9 @@ func (s *URLTest) Pool() []PoolSlot {
 func (s *URLTest) Mode() string {
 	if s.balancer != nil {
 		return C.URLTestModeRoundRobin
+	}
+	if s.failover { // lx: SPEC 116
+		return C.URLTestModeFailover
 	}
 	return C.URLTestModeLeastTest
 }
@@ -385,6 +396,7 @@ type URLTestGroup struct {
 	lastSelected                 common.TypedValue[string] // lx: SPEC 019 — Now() in balanced modes
 	balancer                     *balancer                 // lx: SPEC 019 v2 — round_robin pool; nil for least_test
 	groupTag                     string                    // lx: SPEC 020 — set by URLTest.Start (probe gating)
+	failover                     bool                      // lx: SPEC 116 — set by URLTest.Start
 	reachability                 adapter.ReachabilityReporter
 	// lx: SPEC 054 — penalty failover (least_test): tag → счётчик отказов «путь
 	// мёртв»; сброс только доказательством жизни (успешный дайл / ответ на пробу).
@@ -585,12 +597,16 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 	if g.balancer != nil && !force {
 		return g.balancePool(ctx), nil
 	}
+	// lx: SPEC 116 — failover probes only the held nodes; a failure escalates to a full run.
+	if g.failover && !force {
+		return g.failoverCheck(ctx), nil
+	}
 	result := g.testNodes(ctx, g.outbounds, force)
 	if g.balancer != nil {
 		// force path (manual URLTest tested all nodes): rebuild the pool from fresh results.
 		g.rebuildPool()
 	} else {
-		g.performUpdateCheck()
+		g.performSelectionUpdate(force) // lx: SPEC 116 — a forced full run re-selects in failover
 	}
 	return result, nil
 }
@@ -721,6 +737,12 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 }
 
 func (g *URLTestGroup) performUpdateCheck() {
+	g.performSelectionUpdate(false) // lx: SPEC 116
+}
+
+// performSelectionUpdate is upstream performUpdateCheck with the failover reselect flag:
+// reselect drops the hold and picks the fastest node (SPEC 116); other modes ignore it.
+func (g *URLTestGroup) performSelectionUpdate(reselect bool) {
 	g.updateAccess.Lock()
 	defer g.updateAccess.Unlock()
 	var (
@@ -729,7 +751,8 @@ func (g *URLTestGroup) performUpdateCheck() {
 		changed  bool // lx: SPEC 020 — ANY selection change (incl. nil→first) re-shapes the active tree
 	)
 	// lx: SPEC 054 — переизбор с учётом штрафов (в аварийном режиме — штрафы ↑, задержка ↑).
-	if outbound, exists := g.selectPenaltyAware(N.NetworkTCP); outbound != nil && (g.selectedOutboundTCP == nil || (exists && outbound != g.selectedOutboundTCP)) {
+	// lx: SPEC 116 — failover держит текущий узел (selectForUpdate).
+	if outbound, exists := g.selectForUpdate(N.NetworkTCP, reselect); outbound != nil && (g.selectedOutboundTCP == nil || (exists && outbound != g.selectedOutboundTCP)) {
 		if g.selectedOutboundTCP != nil {
 			updated = true
 		}
@@ -739,7 +762,7 @@ func (g *URLTestGroup) performUpdateCheck() {
 		g.selectedOutboundTCP = outbound
 		selected = true
 	}
-	if outbound, exists := g.selectPenaltyAware(N.NetworkUDP); outbound != nil && (g.selectedOutboundUDP == nil || (exists && outbound != g.selectedOutboundUDP)) {
+	if outbound, exists := g.selectForUpdate(N.NetworkUDP, reselect); outbound != nil && (g.selectedOutboundUDP == nil || (exists && outbound != g.selectedOutboundUDP)) {
 		if g.selectedOutboundUDP != nil {
 			updated = true
 		}

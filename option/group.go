@@ -16,7 +16,7 @@ type URLTestOutboundOptions struct {
 	IdleTimeout               badoption.Duration `json:"idle_timeout,omitempty"`
 	InterruptExistConnections bool               `json:"interrupt_exist_connections,omitempty"`
 	// lx: SPEC 019 v2 — load-balancing.
-	Mode     string                  `json:"mode,omitempty"` // least_test (default) | round_robin
+	Mode     string                  `json:"mode,omitempty"` // least_test (default) | round_robin | failover
 	Balancer *URLTestBalancerOptions `json:"balancer,omitempty"`
 }
 
