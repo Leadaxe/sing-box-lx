@@ -72,7 +72,7 @@ README — [на GitHub](https://github.com/SagerNet/sing-box/blob/main/README.m
 |---|---|---|---|---|
 | **Outbound `chain`** — [015](SPECS/FEATURES/015-CHAIN/FEATURE.md) | `type: chain` | Виртуальный многохоповый путь, собираемый в рантайме из групп и узлов; группы не копируются, хопы — рантайм-ссылки; прозрачный `direct`, автоматический MTU для туннельных звеньев, `strip` / `rewrite` | `with_lx_chain` | живой стенд на реальных хопах; WireGuard-звенья на устройстве впереди |
 | **Группа DNS-серверов** — [013](SPECS/FEATURES/013-DNS_GROUP/FEATURE.md) | `dns.servers[].type: group` | Один DNS-сервер поверх нескольких: `stable` / `fastest` / `parallel` на TTL-модели, веерный запрос с бюджетом, видимость `survival` | — | выпущено; полевой прогон впереди |
-| **Балансировка и отказоустойчивость** — [007](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) | `urltest` с `mode: round_robin`, `balancer{…}`; `least_test` реагирует на живые ошибки дайла | Round-robin-пул с ленивыми health-проверками и sticky-слотами; ошибки мёртвого пути штрафуют узел и повторяют попытку через лучшего кандидата | `with_lx_command` (только `GetPool`) | девайс-верифицирован на реальном многоузловом пуле |
+| **Балансировка и отказоустойчивость** — [007](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) | `urltest` с `mode: round_robin`, `balancer{…}`, `mode: failover`; `least_test` реагирует на живые ошибки дайла | Round-robin-пул с ленивыми health-проверками и sticky-слотами; failover держится за рабочий узел до его отказа; ошибки мёртвого пути штрафуют узел и повторяют попытку через лучшего кандидата | `with_lx_command` (только `GetPool`) | девайс-верифицирован на реальном многоузловом пуле |
 | **Снифферы протоколов** — [016](SPECS/FEATURES/016-SNIFF/FEATURE.md) | имена действий `sniff`: `wireguard`, `openvpn`, `ike`, `tailscale`, `sip` | Распознают VPN-туннели и звонки чужих устройств за роутером по форме первого пакета; стоят перед апстримным uTP-сниффером, который помечал WireGuard как bittorrent | — | выпущено; прогон на роутере впереди |
 
 ### Платформа и эксплуатация
@@ -80,7 +80,7 @@ README — [на GitHub](https://github.com/SagerNet/sing-box/blob/main/README.m
 | Фича | Поверхность конфига | Что даёт | Build-тег | Статус |
 |---|---|---|---|---|
 | **Наблюдаемость** — [006](SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md) | расширения `CommandClient` в libbox | `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetChains`, `SubscribeDNSQueries`, `Connection.detourList` — то, на чём живёт Android-клиент | `with_lx_command` | выпущено, используется LxBox |
-| **Idle-suspend (энергия)** — [008](SPECS/FEATURES/008-ENERGY/FEATURE.md) | `route.lx_idle_suspend` / `lx_idle_suspend_reachable` / `lx_idle_teardown`, `urltest.passive_check` | Три уровня сна для простаивающих WireGuard/AWG-эндпоинтов: батарея, нагрев и RAM на многоузловых мобильных профилях | `with_lx_idle_suspend` (вшит в AAR) | девайс-верифицирован: RSS −31 % |
+| **Idle-suspend (энергия)** — [008](SPECS/FEATURES/008-ENERGY/FEATURE.md) | `route.lx_idle_suspend` / `lx_idle_suspend_reachable` / `lx_idle_teardown`, `urltest` `mode: failover` | Три уровня сна для простаивающих WireGuard/AWG-эндпоинтов: батарея, нагрев и RAM на многоузловых мобильных профилях | `with_lx_idle_suspend` (вшит в AAR) | девайс-верифицирован: RSS −31 % |
 | **Демон `lxd`** — [014](SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md) | подкоманда `sing-box lxd` | Ядро in-process за управляющим каналом, который переживает любую смену конфига: gRPC + admin-REST на одном порту, `apply` с автоматическим откатом, mTLS с энролментом, установка службы, телеметрия хоста | `with_lxd` | девайс-верифицирован на macOS; OpenWrt-скрипты установки проверены в поле |
 
 > **Не поддерживается by design:** серверные половины перечисленного; постквантовые **подписи** REALITY у Xray (`pqv` / ML-DSA-65) и `spiderX` — это другой механизм, не обмен ключами, и в sing-box его нет; отпечатки `edge`, `ios`, `android`, `360`, `qq` против Xray ≥ v26.9.8 (ни один апстримный пресет не несёт гибридного шара, у Xray та же граница; подменять отпечаток — работа приложений).
@@ -199,7 +199,7 @@ make -f Makefile.lx lx-check        # проверка примеров конф
 
 ### Балансировка, энергия, снифферы
 
-Новых типов нет — несколько полей на существующих: `urltest` `mode: round_robin` + `balancer{…}` и `passive_check` ([lx-config.ru.md §3](docs-lx/lx-config.ru.md#3-балансировка-нагрузки-round_robin-spec-019), [EN](docs-lx/lx-config.md#3-round_robin-load-balancing-spec-019)); уровни сна `route.lx_idle_*` ([lx-energy.ru.md](docs-lx/lx-energy.ru.md), [EN](docs-lx/lx-energy.md)); имена протоколов в действии `sniff` и правилах `protocol` ([lx-sniff.ru.md](docs-lx/lx-sniff.ru.md), [EN](docs-lx/lx-sniff.md)).
+Новых типов нет — несколько полей на существующих: `urltest` `mode: round_robin` + `balancer{…}` и `mode: failover` ([lx-config.ru.md §3](docs-lx/lx-config.ru.md#3-балансировка-нагрузки-round_robin-spec-019), [EN](docs-lx/lx-config.md#3-round_robin-load-balancing-spec-019)); уровни сна `route.lx_idle_*` ([lx-energy.ru.md](docs-lx/lx-energy.ru.md), [EN](docs-lx/lx-energy.md)); имена протоколов в действии `sniff` и правилах `protocol` ([lx-sniff.ru.md](docs-lx/lx-sniff.ru.md), [EN](docs-lx/lx-sniff.md)).
 
 ---
 
@@ -282,7 +282,7 @@ upstream/stable  ──merge──►  lx  =  upstream  +  швы // lx  +  lx-�
 | Апстрим | [SagerNet/sing-box](https://github.com/SagerNet/sing-box) · [документация](https://sing-box.sagernet.org/) |
 | Обзор конфигурации | [docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md) ([EN](docs-lx/lx-config.md)) — каждое поле каждой фичи, с примерами |
 | Протоколы и транспорты | [docs-lx/lx-protocols-transports.ru.md](docs-lx/lx-protocols-transports.ru.md) ([EN](docs-lx/lx-protocols-transports.md)) — XHTTP, AmneziaWG, MASQUE в деталях |
-| Руководство по энергии | [docs-lx/lx-energy.ru.md](docs-lx/lx-energy.ru.md) ([EN](docs-lx/lx-energy.md)) — уровни idle-suspend, `passive_check`, тюнинг |
+| Руководство по энергии | [docs-lx/lx-energy.ru.md](docs-lx/lx-energy.ru.md) ([EN](docs-lx/lx-energy.md)) — уровни idle-suspend, `mode: failover`, тюнинг |
 | Снифферы | [docs-lx/lx-sniff.ru.md](docs-lx/lx-sniff.ru.md) ([EN](docs-lx/lx-sniff.md)) |
 | Руководство оператора `lxd` | [docs-lx/lxd-daemon.ru.md](docs-lx/lxd-daemon.ru.md) ([EN](docs-lx/lxd-daemon.md)) |
 | API наблюдаемости | [docs-lx/lxd-grpc-api.ru.md](docs-lx/lxd-grpc-api.ru.md) ([EN](docs-lx/lxd-grpc-api.md)) — контракт, на котором говорят клиенты, и gRPC-демон, и Android-AAR |

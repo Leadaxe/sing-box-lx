@@ -36,8 +36,8 @@ second, longer idle window after which even *reachable* endpoints (pool members,
 the selected node, final) suspend; `lx.wg.idle_teardown` — the third level:
 how long an endpoint may *sleep* before a full teardown (Close, the gVisor
 netstack goes too; wake = rebuild ~0.5–1 s; defaults to the reachable window);
-`urltest.passive_check` — skip health probes
-while a recent successful TCP dial proves the node alive. The full energy model,
+`urltest` `mode: failover` — hold the working node and probe only it (one
+wake per `interval` instead of N). The full energy model,
 timelines and the recommended mobile configuration live in
 **[lx-energy.md](lx-energy.md)**.
 
@@ -260,9 +260,7 @@ you need and read its section below. Each comment shows the **default** and the 
       "outbounds": ["xhttp-out", "proxy-b", "proxy-c", "proxy-d", "proxy-e"],
       "url": "https://www.gstatic.com/generate_204",
       "interval": "15m",
-      "passive_check": false,                   // default: false. Recent successful TCP dial counts
-                                                //   as proof of life while fresh (< interval) — probes stay quiet
-      "mode": "round_robin",                    // default: least_test. least_test | round_robin
+      "mode": "round_robin",                    // default: least_test. least_test | round_robin | failover
       "balancer": {                             // only valid with mode: round_robin
         "pool": 3,                              // default: 3. 0/omitted → 3; effective = min(pool, #outbounds)
         "pool_tolerance": 0,                    // default: 0 (ms). 0 = keep-live-fill; >0 = top-N-by-delay hysteresis
@@ -276,7 +274,7 @@ you need and read its section below. Each comment shows the **default** and the 
 ```
 
 > **Field count:** 26 XHTTP + 30 AmneziaWG (incl. `id`/`ip`/`ib` and the 9 AWG 3.x keys) + 1 VLESS (`encryption`) +
-> 6 `urltest` (`mode`, `passive_check` + `balancer{pool,pool_tolerance,sticky_hash}`) + 7 `lx` (6 `lx.wg` + `lx.masque.idle_timeout`). Mutually-exclusive / ignored fields are
+> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 7 `lx` (6 `lx.wg` + `lx.masque.idle_timeout`). Mutually-exclusive / ignored fields are
 > labelled inline above; the sections below give the per-field semantics, gotchas and live
 > verification status.
 
@@ -407,11 +405,20 @@ The runtime is backed by `Leadaxe/wireguard-go` (sagernet/wireguard-go + Amnezia
 
 ## 3. round_robin load balancing (SPEC 019)
 
-Upstream `urltest` always selects the single lowest-delay node. sing-box-lx adds a
-`round_robin` **mode** that rotates traffic over a fixed-size **pool** of nodes — built to
-scale to large node lists (only the pool is health-checked, not every node). Selection
-happens once per connection; a UDP/QUIC session stays on its node. With `mode` omitted (or
-`least_test`) the outbound behaves exactly like upstream and `balancer` must not be set.
+Upstream `urltest` always selects the single lowest-delay node. sing-box-lx adds two
+**modes** next to it:
+
+| `mode` | Selection | Switches | Probed each `interval` |
+|---|---|---|---|
+| `least_test` (default) | the fastest node | as soon as another one is faster by `tolerance` | every node |
+| `round_robin` | a pool of live nodes | rotation over the pool | pool members (lazily) |
+| `failover` | the fastest node at selection time | **only when the current one fails**; the next one is again the fastest | **only the current node** |
+
+`round_robin` rotates traffic over a fixed-size **pool** of nodes — built to scale to large
+node lists (only the pool is health-checked, not every node). Selection happens once per
+connection; a UDP/QUIC session stays on its node. `failover` holds one node until it fails
+(see below). With `mode` omitted (or `least_test`) the outbound behaves exactly like
+upstream. `balancer` is valid only with `round_robin`.
 
 The `GetPool` CommandClient method (see [§8](#8-observability-commandclient-extensions)) is
 behind `with_lx_command`; the `mode`/`balancer` config fields themselves are always available.
@@ -420,9 +427,19 @@ behind `with_lx_command`; the `mode`/`balancer` config fields themselves are alw
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `mode` | string | `least_test` | `least_test` (upstream behaviour) \| `round_robin` (rotate over the pool). `least_connection` is rejected (round_robin is statistically even) |
-| `passive_check` | bool | `false` | a recent successful TCP dial counts as proof of life while fresh (< `interval`): `least_test` skips whole re-test cycles while the selected node is passively confirmed; `round_robin` (only with `pool_tolerance: 0`) treats confirmed slots as live without probing. Cost: staler delay numbers in the UI. See [lx-energy.md](lx-energy.md) |
+| `mode` | string | `least_test` | `least_test` (upstream behaviour) \| `round_robin` (rotate over the pool) \| `failover` (hold the working node until it fails, SPEC 116). `least_connection` is rejected (round_robin is statistically even) |
 | `balancer` | object | — | round_robin parameters; **only valid with `mode: round_robin`** (error otherwise). The upstream `tolerance` field is ignored in round_robin — use `pool_tolerance` instead (a startup warning points this out while `pool_tolerance` is unset) |
+
+> **`mode: failover` — hold until failure (SPEC 116).** The group picks the
+> fastest node and stays on it while it works, even if another node becomes
+> faster. Each `interval` it probes **only the held node** (one probe instead of
+> N; the other nodes sleep). When the held node fails a probe, or a dial through
+> it fails with a "path is dead" error (SPEC 054 penalty and fallback dial), the
+> group moves to the fastest live node and holds that one. A manual test from
+> the UI/CLI/Clash API measures every node and re-selects the fastest — the only
+> way back to the best node while the held one is alive. `tolerance` is ignored
+> (a startup warning says so); `balancer` is a startup error. Delays of
+> non-selected nodes in the UI are as of the last full run.
 
 #### `balancer` fields
 
