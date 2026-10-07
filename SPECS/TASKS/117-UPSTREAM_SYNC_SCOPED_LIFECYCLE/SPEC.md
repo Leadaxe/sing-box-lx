@@ -4,13 +4,13 @@
 
 | Поле | Значение |
 |------|----------|
-| Тип | R (sync) — мерж `upstream/stable` (v1.14.2 + 23, без нового тега) в `lx`: апстрим перевёл жизненный цикл компонентов на `adapter.Scope` |
+| Тип | R (sync) — мерж `upstream/stable` (v1.14.2 + 26, без нового тега) в `lx`: апстрим перевёл жизненный цикл компонентов на `adapter.Scope`; перепрививка форка `sing-tun` |
 | Статус | I (implemented) — 2026-10-07, ветка `lx-sync-stable-2026-10` в worktree `../sing-box-lx-sync`, в `lx` не влита; сборка (darwin, linux, windows, android libbox) и тесты зелёные, живой прогон на бинаре; на устройстве не прогонялось |
 | Ветка | `lx-sync-stable-2026-10` → `lx` |
-| База | до: `aecb87441` (v1.14.2-lx.12-rc.1, merge-base `4537a1ac0`); после: `upstream/stable` = `b93f56a7a` |
+| База | до: `aecb87441` (v1.14.2-lx.12-rc.1, merge-base `4537a1ac0`), затем влит `9a89ddaff` (rc.2); после: `upstream/stable` = `3e21554de` |
 | Связано | [109](../109-UPSTREAM_SYNC_1_14_2_PLUS_15/SPEC.md) (предыдущий синк), [030](../030-FAST_BOX_SHUTDOWN/SPEC.md) (быстрая остановка), [070](../070-WG_START_CLOSE_RACE_CRASH/SPEC.md) (Close во время Start), [073](../073-CHAIN_OUTBOUND/SPEC.md) (chain), [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md)/[097](../097-LAZY_WG_DEVICE_BUILD/SPEC.md)/[106](../106-WG_ENDPOINT_TOGGLE/SPEC.md) (сон и сборка WG) |
 
-Решение владельца 2026-10-07: rc.1 линии lx.12 срезан без синка (дрейф записан в changelog), синк сразу после тега.
+Решение владельца 2026-10-07: rc.1 линии lx.12 срезан без синка (дрейф записан в changelog), синк сразу после тега. Пока синк шёл в ветке, параллельная сессия срезала rc.2 (SPEC 114 → `GetWireGuardStatus`, 115 Tailscale, 116 failover) — rc.2 влит в ветку синка, затем взяты ещё три коммита апстрима.
 
 ## 1. Что принёс апстрим
 
@@ -22,12 +22,17 @@
 | `16c898a82` Remove unimplemented hot reload from managers | У менеджеров удалены `Remove`, повторный `Create` по тегу — ошибка `duplicate ... tag` |
 | `9593bc106` Fix usage and cache files overwritten when loading fails | `service/{ccm,ocm,ssmapi}` |
 | `b93f56a7a` Move auto-redirect and bridge index allocation out of constructors | `protocol/{bridge,tun}` |
+| `097059908` Add roothide package to iOS jailbreak release | сборка iOS |
+| `8ac2c613d` tailscale: Fix SSH auth banners never sent | `protocol/tailscale` — дельты нет |
+| `3e21554de` tun: Fix inconsistent DNS mode behavior without auto_route | бамп `sing-tun` → `0e9e4a586ece` |
 
-Модули: `sing-quic` → `75c3ac4fa12b`, `sing-cloudflared` → `c1255ae368f2`. Пины форк-сабмодулей в `require` не менялись — работы в сабмодулях нет.
+Модули: `sing-quic` → `75c3ac4fa12b`, `sing-cloudflared` → `c1255ae368f2`, `sing-tun` → `0e9e4a586ece`.
+
+**Сабмодуль `sing-tun`** (раннбук §1, до мержа ядра): от нашего пина `0bdadeb` до `0e9e4a5` в sagernet/sing-tun один коммит «Disable DNS mode by default without auto route» (`tun.go`, `tun_linux.go`, `tun_windows.go`). Влит в форк мерж-коммитом `29219b8` поверх `6f56eca` (та же схема, что lx.11); дельта форка к `0e9e4a5` — по-прежнему только `stack_system.go` и его тест (SPEC 040). `go test ./...` в сабмодуле зелёный. Остальные три форка без изменений.
 
 ## 2. Разрешение
 
-Мерж `upstream/stable` дал 29 конфликтов. Рецепт прошлых синков: файл без нашей дельты (`HEAD:f == be6558602^2:f`, чистая апстримная база прошлого мержа) берётся у апстрима (15 файлов); остальные — `git merge-file` с этой базой. Честных конфликтов осталось 7.
+Мерж четырёх коммитов дал 29 конфликтов. Рецепт прошлых синков: файл без нашей дельты (`HEAD:f == be6558602^2:f`, чистая апстримная база прошлого мержа) берётся у апстрима (15 файлов); остальные — `git merge-file` с этой базой. Честных конфликтов осталось 7.
 
 | Файл | Разрешение |
 |---|---|
@@ -41,6 +46,10 @@
 | `go.sum` | наш + строки двух новых модулей |
 
 **Автослияние.** У 11 файлов, где правили и мы, и апстрим, число строк нашей дельты к апстриму до и после мержа совпало; правок, опирающихся на `Close`/`Start`, среди них нет. Файлы без нашей дельты, которые git слил сам, сверены с `upstream/stable`; `service/ccm/service.go` (задвоенный метод `References`) и `service/usbip/client.go` приведены к апстримным.
+
+**Мерж rc.2** (`8a0eefcb5`): один содержательный конфликт — `protocol/group/urltest.go`, где rc.2 заменил `passiveCheck` на `failover` (SPEC 116) в старой форме `Start()`; взята форма `Start(stage, scope)`, поле — `failover`. Поиск типов на старом жизненном цикле по коду rc.2 новых случаев не дал.
+
+**Мерж трёх коммитов** (`299223f81`): конфликт только в `go.sum` (строк замещённого `sing-tun` у нас нет — `go mod tidy`); `go list -m` — все четыре модуля на `./submodules/*`.
 
 ## 3. lx-код на новом жизненном цикле
 
@@ -71,8 +80,9 @@
 - `make -f Makefile.lx lx-check` — релизный бинарь, 9 конфигов.
 - Стенд жизненного цикла на бинаре с `with_lx_idle_suspend` (AWG-сервер на три пира; клиент: три ленивых WG-узла, urltest, selector, `lx.wg` с `idle_suspend 10s`, `idle_teardown 20s`, `build_max 2`): `never_built` → сборка пробой urltest → `asleep` → `torn_down` → пробуждение и пересборка дайлом, переключение selector на несобранный узел, три цикла старт/стоп (0,1–0,33 с). `lx idle`-строки — в ожидаемом порядке, ошибок, кроме §4, нет.
 - `TestGroupStateSnapshotV3` (`dns/transport/group`) однажды упал в полном прогоне. Тест гонкой сравнивает участников с задержкой 1 мс и 8 мс; под нагрузкой процессора падает 10/200 на `lx` до мержа и 7/200 после — нестабильность теста, не регрессия синка.
+- Повтор после мержа rc.2 и трёх коммитов (`299223f81`): сборка darwin/linux/windows/android-libbox, `go test` с `LX_TAGS`, с `LX_TAGS`+`with_lx_idle_suspend` и без тегов, `-race` (+`protocol/tailscale`), `lx-check`, стенд жизненного цикла (остановки 0,03–0,05 с) — зелёные. Одно падение `TestPostDeathFanSuccessMintsNoWin` (`dns/transport/group`) в полном прогоне: тест ждёт ответ 60-мс участника `time.Sleep(60ms)`; под нагрузкой 200/200 на обоих деревьях — редкая нестабильность того же класса, что `8e501e0fd` закрыл для тестов выбора, к синку не относится.
 
 ## 6. Осталось
 
-- Слить ветку в `lx` и выпустить rc.2 линии lx.12.
+- Запушить коммит форка `sing-tun` `29219b8` в Leadaxe/sing-tun-lx (ветка `lx`) **до** суперпроекта, затем влить ветку синка в `lx` и выпустить rc.3 линии lx.12; в секции changelog rc.3 закрыть строку rc.2 об отложенном дрейфе.
 - Прогон на устройстве по раннбуку §1.4 (старт/стоп ×3, сон и пробуждение WG, смена сети): жизненный цикл — то, что юниты покрывают хуже всего.
