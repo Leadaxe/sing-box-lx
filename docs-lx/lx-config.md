@@ -51,7 +51,7 @@ timelines and the recommended mobile configuration live in
 - [2. AmneziaWG 2.0/3.x (AWG2, AWG3)](#2-amneziawg-203x-awg2-awg3)
   - [Example — AmneziaWG 3.1 endpoint (Amnezia `amnezia-awg2` export)](#example--amneziawg-31-endpoint-amnezia-amnezia-awg2-export)
   - [Example — AmneziaWG 2.0 endpoint](#example--amneziawg-20-endpoint)
-- [3. round_robin load balancing (SPEC 019)](#3-round_robin-load-balancing-spec-019)
+- [3. urltest node selection modes (SPEC 019 / 116)](#3-urltest-node-selection-modes-spec-019--116)
   - [Fields (on a `urltest` outbound)](#fields-on-a-urltest-outbound)
   - [Slot-hash binding](#slot-hash-binding)
   - [Example — urltest with round_robin](#example--urltest-with-round_robin)
@@ -403,7 +403,7 @@ The runtime is backed by `Leadaxe/wireguard-go` (sagernet/wireguard-go + Amnezia
 
 ---
 
-## 3. round_robin load balancing (SPEC 019)
+## 3. urltest node selection modes (SPEC 019 / 116)
 
 Upstream `urltest` always selects the single lowest-delay node. sing-box-lx adds two
 **modes** next to it:
@@ -414,32 +414,31 @@ Upstream `urltest` always selects the single lowest-delay node. sing-box-lx adds
 | `round_robin` | a pool of live nodes | rotation over the pool | pool members (lazily) |
 | `failover` | the fastest node at selection time | **only when the current one fails**; the next one is again the fastest | **only the current node** |
 
-`round_robin` rotates traffic over a fixed-size **pool** of nodes — built to scale to large
-node lists (only the pool is health-checked, not every node). Selection happens once per
-connection; a UDP/QUIC session stays on its node. `failover` holds one node until it fails
-(see below). With `mode` omitted (or `least_test`) the outbound behaves exactly like
-upstream. `balancer` is valid only with `round_robin`.
+The common upstream fields (`url`, `interval`, `idle_timeout`, `interrupt_exist_connections`) are
+unchanged; `mode`/`balancer` need no build tag; the `GetPool` CommandClient method (see
+[§8](#8-observability-commandclient-extensions)) is behind `with_lx_command`.
 
-The `GetPool` CommandClient method (see [§8](#8-observability-commandclient-extensions)) is
-behind `with_lx_command`; the `mode`/`balancer` config fields themselves are always available.
-
-### Fields (on a `urltest` outbound)
+### 3.1 Common fields
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `mode` | string | `least_test` | `least_test` (upstream behaviour) \| `round_robin` (rotate over the pool) \| `failover` (hold the working node until it fails, SPEC 116). `least_connection` is rejected (round_robin is statistically even) |
-| `balancer` | object | — | round_robin parameters; **only valid with `mode: round_robin`** (error otherwise). The upstream `tolerance` field is ignored in round_robin — use `pool_tolerance` instead (a startup warning points this out while `pool_tolerance` is unset) |
+| `balancer` | object | — | round_robin parameters; **only valid with `mode: round_robin`** (startup error otherwise). See [§3.3](#33-round_robin--pool-with-stickiness) |
 
-> **`mode: failover` — hold until failure (SPEC 116).** The group picks the
-> fastest node and stays on it while it works, even if another node becomes
-> faster. Each `interval` it probes **only the held node** (one probe instead of
-> N; the other nodes sleep). When the held node fails a probe, or a dial through
-> it fails with a "path is dead" error (SPEC 054 penalty and fallback dial), the
-> group moves to the fastest live node and holds that one. A manual test from
-> the UI/CLI/Clash API measures every node and re-selects the fastest — the only
-> way back to the best node while the held one is alive. `tolerance` is ignored
-> (a startup warning says so); `balancer` is a startup error. Delays of
-> non-selected nodes in the UI are as of the last full run.
+### 3.2 least_test — fastest node
+
+Upstream behaviour: every `interval` all nodes are probed, and the group switches as soon as
+another node is faster than the current one by more than `tolerance` ms (default `50`). With
+`mode` omitted the outbound behaves the same. The SPEC 054 penalty failover on "path is dead"
+dial errors applies here too ([SPEC 054](../SPECS/TASKS/054-URLTEST_PENALTY_FAILOVER/SPEC.md)).
+
+### 3.3 round_robin — pool with stickiness
+
+`round_robin` rotates traffic over a fixed-size **pool** of nodes — built to scale to large
+node lists (only the pool is health-checked, not every node). Selection happens once per
+connection; a UDP/QUIC session stays on its node. The upstream `tolerance` field is ignored in
+round_robin — use `pool_tolerance` instead (a startup warning points this out while
+`pool_tolerance` is unset).
 
 #### `balancer` fields
 
@@ -455,7 +454,7 @@ behind `with_lx_command`; the `mode`/`balancer` config fields themselves are alw
 > i.e. stickiness **on**). Use the explicit **`["none"]`** sentinel; it is the only element
 > allowed when present (mixing `none` with a real component is an error).
 
-### Slot-hash binding
+#### Slot-hash binding
 
 `sticky_hash` binds a flow to a fixed **slot index** — `slot[hash(key) % pool]` (FNV-64a over
 the concatenated components) — not to a node position. Slots never move and a replacement node
@@ -467,7 +466,7 @@ only literal-IP destinations). For domain-based traffic keep `domain` in the key
 `source_ip`/`dest_ip`/`dest_port` can collapse to `""` for an unresolved destination, sticking
 every flow of one source to a single slot.
 
-### Example — urltest with round_robin
+#### Example — urltest with round_robin
 
 ```jsonc
 {
@@ -491,6 +490,60 @@ every flow of one source to a single slot.
 
 **📖 [Full reference →](../docs/configuration/outbound/urltest.md)** — every field, the per-component
 sticky semantics, the pool fill/maintain rules and tuning tips.
+
+### 3.4 failover — hold until it fails
+
+**Selection.** The group takes the fastest node at the moment of choice, without `tolerance`;
+the order of the `outbounds` list does not matter.
+
+**Hold.** While the node works the group stays on it, even if another one becomes faster. Each
+`interval` probes **only the held node** — one probe instead of N; the other nodes sleep.
+
+**Failure.** Two kinds:
+
+- the held node fails a probe → a full run over every node → the fastest live one;
+- a dial through it fails with a "path is dead" error → SPEC 054 penalty and fallback dial → the
+  selection moves without `Interrupt`.
+
+After the move the new node becomes the held one.
+
+**Manual test.** A group test from the UI, CLI (`sing-box api group urltest <tag>`) or Clash API
+is always `force`: it probes every node and re-selects the fastest. This is the only way back to
+the best node while the held one is alive.
+
+**What does not apply.** `tolerance` is ignored (a startup warning says so); `balancer` is a
+startup error.
+
+Delays of non-held nodes in the UI are as of the last full run.
+
+#### Example — urltest with failover
+
+```jsonc
+{
+  "type": "urltest",
+  "tag": "auto",
+  "outbounds": ["proxy-a", "proxy-b", "proxy-c", "proxy-d", "proxy-e"],
+  "url": "https://www.gstatic.com/generate_204",
+  "interval": "15m",
+  "mode": "failover"
+  // no tolerance: there are no speed-based switches (a non-zero value logs a warning)
+  // no balancer: with failover it is a startup error
+}
+```
+
+When to pick it: mobile profiles and cases where staying on a stable node matters more than an
+always-current fastest one (see [lx-energy.md §6](lx-energy.md#6-urltest-probes-and-how-they-were-taught-to-stay-quiet)).
+
+### 3.5 Choosing a mode
+
+| What matters more | Mode |
+|---|---|
+| fewest switches and one probe per `interval` | `failover` |
+| spreading load over several nodes | `round_robin` |
+| always the fastest node, whatever the probe cost | `least_test` |
+
+On energy: `least_test` wakes every node each `interval`, `round_robin` only the pool (with `pool_tolerance: 0`), `failover`
+one node; details in [lx-energy.md §6](lx-energy.md#6-urltest-probes-and-how-they-were-taught-to-stay-quiet).
 
 ---
 
@@ -780,7 +833,7 @@ The added `CommandClient` methods:
   `disabled` is set by `SetEndpointEnabled` (SPEC 106, below;
   see [lx-energy.md §12](lx-energy.md#12-manual-onoff-switch-spec-106)).
 - **`GetPool(groupTag)`** — read a `urltest` group's current round_robin rotation pool, slot
-  by slot (SPEC 019; see [§3](#3-round_robin-load-balancing-spec-019)).
+  by slot (SPEC 019; see [§3](#3-urltest-node-selection-modes-spec-019--116)).
 - **`GetDNSGroups()`** — the live state of every DNS `group` server (SPEC 035; see
   [§5](#5-dns-server-group-spec-033035)): per member `clean` / `liveErrors` /
   `lastErrorAgeMs` / `liveWins` / `current`.

@@ -199,7 +199,7 @@ make -f Makefile.lx lx-check        # проверка примеров конф
 
 ### Балансировка, энергия, снифферы
 
-Новых типов нет — несколько полей на существующих: `urltest` `mode: round_robin` + `balancer{…}` и `mode: failover` ([lx-config.ru.md §3](docs-lx/lx-config.ru.md#3-балансировка-нагрузки-round_robin-spec-019), [EN](docs-lx/lx-config.md#3-round_robin-load-balancing-spec-019)); уровни сна `route.lx_idle_*` ([lx-energy.ru.md](docs-lx/lx-energy.ru.md), [EN](docs-lx/lx-energy.md)); имена протоколов в действии `sniff` и правилах `protocol` ([lx-sniff.ru.md](docs-lx/lx-sniff.ru.md), [EN](docs-lx/lx-sniff.md)).
+Новых типов нет — несколько полей на существующих: `urltest` `mode: round_robin` + `balancer{…}` и `mode: failover` ([lx-config.ru.md §3](docs-lx/lx-config.ru.md#3-режимы-выбора-узла-в-urltest-spec-019--116), [EN](docs-lx/lx-config.md#3-urltest-node-selection-modes-spec-019--116)); уровни сна `route.lx_idle_*` ([lx-energy.ru.md](docs-lx/lx-energy.ru.md), [EN](docs-lx/lx-energy.md)); имена протоколов в действии `sniff` и правилах `protocol` ([lx-sniff.ru.md](docs-lx/lx-sniff.ru.md), [EN](docs-lx/lx-sniff.md)).
 
 ---
 

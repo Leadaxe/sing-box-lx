@@ -198,7 +198,7 @@ Tunnel links get their MTU lowered automatically; the path shows in `detourList`
 
 ### Balancing, energy, sniffers
 
-No new types — a few fields on existing ones: `urltest` `mode: round_robin` + `balancer{…}` and `mode: failover` ([lx-config.md §3](docs-lx/lx-config.md#3-round_robin-load-balancing-spec-019), [RU](docs-lx/lx-config.ru.md#3-балансировка-нагрузки-round_robin-spec-019)); `route.lx_idle_*` sleep levels ([lx-energy.md](docs-lx/lx-energy.md), [RU](docs-lx/lx-energy.ru.md)); protocol names in the `sniff` action and `protocol` rules ([lx-sniff.md](docs-lx/lx-sniff.md), [RU](docs-lx/lx-sniff.ru.md)).
+No new types — a few fields on existing ones: `urltest` `mode: round_robin` + `balancer{…}` and `mode: failover` ([lx-config.md §3](docs-lx/lx-config.md#3-urltest-node-selection-modes-spec-019--116), [RU](docs-lx/lx-config.ru.md#3-режимы-выбора-узла-в-urltest-spec-019--116)); `route.lx_idle_*` sleep levels ([lx-energy.md](docs-lx/lx-energy.md), [RU](docs-lx/lx-energy.ru.md)); protocol names in the `sniff` action and `protocol` rules ([lx-sniff.md](docs-lx/lx-sniff.md), [RU](docs-lx/lx-sniff.ru.md)).
 
 ---
 
