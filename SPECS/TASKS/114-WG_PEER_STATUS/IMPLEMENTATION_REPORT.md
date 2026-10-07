@@ -1,6 +1,6 @@
 # IMPLEMENTATION_REPORT: 114 — WG_PEER_STATUS
 
-Ветка `lx`, не запушена, не выпущена.
+Ветка `lx`. rc.1 выпущена с пирами в `GetOutbounds`; rc.2 (ниже) переводит их на `GetWireGuardStatus`.
 
 ## Коммиты
 
@@ -11,7 +11,7 @@
 | `11a4339e6` | `GetOutbounds` заполняет `peers`; конверсия в `daemon/started_service_peers_lx.go`; тест |
 | `6e18dfbbe` | libbox: поле `peers` под `lx:`-блоком в `command_types.go`, `PeerStatus`/`PeerStatusIterator`/`Peers()` в новом файле; тест |
 | `d741b90ee` | CLI `sing-box api peers [тег]` |
-| (этот) | SPEC, CONSUMERS, PLAN, TASKS, отчёт; FEATURE 006; Roadmap; `lxd-grpc-api(.ru).md` |
+| `46ed51699` | SPEC, CONSUMERS, PLAN, TASKS, отчёт; FEATURE 006; Roadmap; `lxd-grpc-api(.ru).md` |
 
 ## Файлы
 
@@ -45,3 +45,27 @@
 - Поле `name` у пира (правка апстримного `option/wireguard.go`).
 - Tailscale-пиры, поток `SubscribeOutbounds`.
 - Проверка на устройстве (LxBox, лаунчер) — после выпуска.
+
+---
+
+## rc.2 — переезд на `GetWireGuardStatus(tag)` (2026-10-07)
+
+Решение владельца, мотив и диф контракта — в [HISTORY.md](HISTORY.md).
+
+| Коммит | Что |
+|---|---|
+| `93272b057` | proto: `GetWireGuardStatus`, `WireGuardStatusRequest`, `WireGuardEndpointStatus`; `GroupItem.peers = 7` → `reserved 7`; регенерация; обработчик `daemon/started_service_wireguard_lx.go` + заглушка `_stub.go` + тест; `GetOutbounds` без пиров; libbox `command_types_wireguard_lx.go` (объект ответа) и `OutboundGroupItem` без `peers`; CLI `api peers` через новый RPC. Тем же коммитом заведён `GetTailscaleStatus` (SPEC 115) |
+| `8c5e23f16` | libbox `CommandClient.GetWireGuardStatus(tag)` + тест |
+| (этот) | SPEC, HISTORY, CONSUMERS, PLAN, TASKS, отчёт; FEATURE 006; Roadmap; `lxd-grpc-api(.ru).md`; changelog rc.2 |
+
+Файлы rc.1 `daemon/started_service_peers_lx*.go` и `experimental/libbox/command_types_peers_lx*.go` переименованы в `*_wireguard_lx*.go`.
+
+### Проверки
+
+- `go build ./...` без тегов; `go build` / `go vet` с `LX_TAGS` (`-checklinkname=0`) — ок, только старые `unsafe.Pointer`-предупреждения vet.
+- `go test -race` с `LX_TAGS`: `daemon`, `experimental/libbox`, `cmd/sing-box` — зелёные.
+- Живой стенд (бинарь с `LX_TAGS`, два процесса на loopback, ключи `sing-box generate wg-keypair`): сервер — `wg-server`, `listen_port 51830`, пир без `address`, `services: [{type: api}]`; клиент — `wg-client` с `persistent_keepalive_interval 5`, mixed-inbound, `route.final = wg-client`.
+  - до клиента: `wg-server  up  3sML…CBw4  -  never  0 B  0 B`;
+  - после `curl` через клиент: сервер `127.0.0.1:60666  2s ago  836 B  812 B`, клиент (`api peers wg-client`) `127.0.0.1:51830  2s ago  764 B  900 B`;
+  - после остановки клиента (+6 с): адрес тот же, `9s ago` — последний известный адрес не стирается;
+  - `api outbounds` показывает узлы без пиров; `api peers direct` / `api peers nope` → `NotFound`.

@@ -34,7 +34,9 @@ DNS-запросы — и управлять им. Штатный канал д�
 | Вызов | Что возвращает |
 |-------|----------------|
 | `URLTestOutbound` | Замер задержки **конкретного узла** (не всей группы), отменяемый |
-| `GetGroups` · `GetOutbounds` | Группы и узлы для экранов выбора; у WG/AWG-узла — состояние устройства и по каждому пиру последний хендшейк, адрес, трафик ([114](../../TASKS/114-WG_PEER_STATUS/CONSUMERS.md)) |
+| `GetGroups` · `GetOutbounds` | Группы и узлы для экранов выбора; у WG/AWG-узла — состояние устройства (`endpointState`, `idleSinceSeconds`), пиров здесь нет |
+| `GetWireGuardStatus` | Статус одного WG/AWG-узла по тегу: состояние устройства и по каждому пиру последний хендшейк, адрес, трафик ([114](../../TASKS/114-WG_PEER_STATUS/CONSUMERS.md)) |
+| `GetTailscaleStatus` | Статус одного Tailscale-узла по тегу — тот же снимок, что в потоке, но свежий: путь к каждому пиру (direct / peer relay / DERP), хендшейк, предупреждения бэкенда ([115](../../TASKS/115-TAILSCALE_PEER_PATH_STATUS/CONSUMERS.md)) |
 | `GetRules` | Правила маршрутизации |
 | `GetPool` | Занятые слоты пула — см. [URLTEST_BALANCE](../007-URLTEST_BALANCE/FEATURE.md) |
 | `GetDNSGroups` | Состояние DNS-групп: режим, победитель, рейтинг, down-участники — см. [DNS_GROUP](../013-DNS_GROUP/FEATURE.md) |
@@ -44,14 +46,26 @@ DNS-запросы — и управлять им. Штатный канал д�
 | `GetChains` | Состояние каждого outbound'а `chain`: позиции, разрешённый узел, звено (состояние, соединения, MTU, что снято/переписано), счётчики — см. [CHAIN](../015-CHAIN/FEATURE.md) |
 | `SetEndpointEnabled` | Ручное включение и выключение WG/AWG-узла; в ответе состояние узла после вызова — см. [ENERGY](../008-ENERGY/FEATURE.md) |
 
-### Поля пира WG/AWG (`GetOutbounds`)
+### Поля пира WG/AWG (`GetWireGuardStatus`)
 
 | Поле | Смысл |
 |------|-------|
 | Ключ | Публичный ключ пира — его идентификатор; имён у пиров нет |
 | Адрес | **Последний известный** адрес пира; на сервере выучен из хендшейка. Остаётся после ухода пира — признаком связи не является |
 | Время хендшейка | `0` — не было ни разу. Вердикт «на связи» ядро не выносит: порог выводит приложение |
-| Пустой список | Устройства нет (не собрано, разобрано, собирается) — причина в состоянии узла |
+| Пустой список | Устройства нет (не собрано, разобрано, собирается) — причина в `endpointState` того же ответа |
+
+Принцип: **у каждого типа endpoint'а свой унарный запрос статуса**, `GetOutbounds` остаётся списком узлов (решение владельца 2026-10-07).
+
+### Поля пира Tailscale (`GetTailscaleStatus`, поток)
+
+| Поле | Смысл |
+|------|-------|
+| Путь | Вердикт ядра по выбору magicsock: direct → peer relay → DERP (узел хоть раз слал пиру) → нет. `direct` у idle-пира — нормально: путь выбран, трафика нет |
+| Адрес, relay, DERP-регион | Детали пути; домашний регион отдаётся при любом пути, пуст пока неизвестен |
+| Хендшейк | `0` — не было |
+| Предупреждения (`health`) | Что мешает бэкенду: нет DERP, exit-node offline и т.п.; пусто = здоров |
+| Свежесть | В запросе — на момент вызова; в потоке — на момент последнего события. Смена пути событием не является, тика в потоке нет |
 
 ### Поля соединения
 
@@ -160,7 +174,8 @@ DNS-запросы — и управлять им. Штатный канал д�
 | [038 — GOMOBILE_STRING_RETURN_FRAME_KILL](../../TASKS/038-GOMOBILE_STRING_RETURN_FRAME_KILL/SPEC.md) | Форма возврата снапшота: голая строка через мост убивала ядро на Android | C |
 | [058 — GET_URL_VIA_OUTBOUND](../../TASKS/058-GET_URL_VIA_OUTBOUND/SPEC.md) | HTTP-пробник узла: GET через тег с возвратом тела ответа | D |
 | [099 — GETURL_NAIVE_NIL_REMOTEADDR_PANIC](../../TASKS/099-GETURL_NAIVE_NIL_REMOTEADDR_PANIC/SPEC.md) | Пробник ронял процесс на naive-узле: conn cronet-go без адреса, `RemoteAddr().String()` на nil | I |
-| [114 — WG_PEER_STATUS](../../TASKS/114-WG_PEER_STATUS/SPEC.md) | Статус каждого пира WG/AWG в `GetOutbounds` и CLI `api peers`; сценарии — [CONSUMERS.md](../../TASKS/114-WG_PEER_STATUS/CONSUMERS.md) | I |
+| [114 — WG_PEER_STATUS](../../TASKS/114-WG_PEER_STATUS/SPEC.md) | `GetWireGuardStatus(tag)`: состояние устройства и каждого пира WG/AWG; CLI `api peers`; сценарии — [CONSUMERS.md](../../TASKS/114-WG_PEER_STATUS/CONSUMERS.md) | I |
+| [115 — TAILSCALE_PEER_PATH_STATUS](../../TASKS/115-TAILSCALE_PEER_PATH_STATUS/SPEC.md) | `GetTailscaleStatus(tag)`: путь к каждому пиру Tailscale (direct / peer relay / DERP), хендшейк, `health`; CLI `api tailscale peers`; сценарии — [CONSUMERS.md](../../TASKS/115-TAILSCALE_PEER_PATH_STATUS/CONSUMERS.md) | I |
 
 ## Особенности сопровождения
 

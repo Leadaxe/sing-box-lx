@@ -2,15 +2,17 @@
 
 **Задача:** [SPEC 114](SPEC.md) · **Фича:** [OBSERVABILITY](../../FEATURES/006-OBSERVABILITY/FEATURE.md)
 
-Для кого: LxBox (libbox/gomobile), лаунчер и любой клиент `lxd` (gRPC), оператор сервера (CLI `sing-box api`). Нужна сборка ядра с `with_lx_command`; на сборке без тега вызов `GetOutbounds` отвечает `Unimplemented`.
+Для кого: LxBox (libbox/gomobile), лаунчер и любой клиент `lxd` (gRPC), оператор сервера (CLI `sing-box api`). Нужна сборка ядра с `with_lx_command`; на сборке без тега вызов `GetWireGuardStatus` отвечает `Unimplemented`.
 
 ## 1. Где брать данные
 
 | Канал | Вызов | Что читать |
 |---|---|---|
-| gRPC (`lxd`, `services: [{type: "api"}]`) | `GetOutbounds()` → `OutboundList.outbounds[]` | `GroupItem.endpointState`, `GroupItem.peers[]` |
-| libbox (Android, Apple) | `CommandClient.GetOutbounds()` → `OutboundGroupItemIterator` | `OutboundGroupItem.EndpointState`, `OutboundGroupItem.Peers()` → `PeerStatusIterator` |
+| gRPC (`lxd`, `services: [{type: "api"}]`) | `GetWireGuardStatus(WireGuardStatusRequest{tag})` → `WireGuardEndpointStatus` | `endpointState`, `idleSinceSeconds`, `peers[]` |
+| libbox (Android, Apple) | `CommandClient.GetWireGuardStatus(tag)` → `*WireGuardEndpointStatus` | `EndpointState`, `IdleSinceSeconds`, `Peers()` → `PeerStatusIterator` |
 | CLI | `sing-box api peers [тег]` (`--url` или `BOX_API_URL`, `--secret` или `BOX_API_SECRET`) | таблица `ENDPOINT STATE PEER ADDRESS HANDSHAKE RX TX` |
+
+Список узлов для экрана по-прежнему даёт `GetOutbounds`: у WG/AWG-узла там `endpointState` и `idleSinceSeconds`, пиров там нет. Окно одного узла зовёт `GetWireGuardStatus(tag)` и получает состояние, простой и пиров одним ответом. Ошибки: `NotFound` — тега нет, `InvalidArgument` — не WG/AWG, `FailedPrecondition` — сервис не запущен, `Unimplemented` — ядро без `with_lx_command` или старше lx.12-rc.2 (в этом случае показывайте узел по `endpointState` без пиров).
 
 Поля пира:
 
@@ -21,7 +23,7 @@
 | `lastHandshakeUnix` / `LastHandshakeUnix` | int64 | Unix-секунды последнего хендшейка; `0` — хендшейка не было |
 | `rxBytes`, `txBytes` / `RxBytes`, `TxBytes` | int64 | принятые и отправленные байты устройства, включая служебные |
 
-Только pull: поток `SubscribeOutbounds` поле `peers` не заполняет. Вызов не будит спящий узел и не собирает несобранный.
+Только pull: потоки `SubscribeOutbounds`/`SubscribeGroups` статус пиров не несут. Вызов не будит спящий узел и не собирает несобранный.
 
 ## 2. Как понять, есть ли связь
 
@@ -33,7 +35,7 @@
 
 | Условие | Показывать | Почему |
 |---|---|---|
-| `peers` пуст | по `endpointState`: «не поднят» / «спит» / «выключен» | устройства нет — см. §4 |
+| `peers` пуст | по `endpointState` из того же ответа: «не поднят» / «спит» / «выключен» | устройства нет — см. §3.6 |
 | `lastHandshakeUnix == 0` | «ещё не подключался» | хендшейка не было ни разу с момента сборки устройства |
 | `age ≤ 180 с` | «на связи» | сессия действует |
 | `age > 180 с`, rx растёт | «на связи» | редкий случай гонки опроса и rekey; доверять росту rx |
@@ -111,11 +113,11 @@ wireguard-go пишет в лог `peer(xxxx…yyyy)`: символы 0–3 и 3
 
 ## 4. Частота опроса
 
-Вызов дешёвый, но не бесплатный: дамп UAPI под мьютексом устройства на каждый WG-endpoint. Ориентир — раз в 1–5 с, пока экран с узлами виден, и без опроса в фоне. `GetOutbounds` возвращает все outbound'ы сразу; отдельного вызова на один узел нет.
+Вызов дешёвый, но не бесплатный: дамп UAPI под мьютексом устройства. Ориентир — раз в 1–5 с, пока окно узла открыто, и без опроса в фоне. Вызов адресный — один endpoint на запрос; список всех WG/AWG-узлов берите из `GetOutbounds` по непустому `endpointState`.
 
 ## 5. Чего нет
 
 - Вердикта «подключён» — только сырые данные (§2).
 - Истории: накопление и графики делает потребитель.
-- Статуса пиров Tailscale: для него `sing-box api tailscale peer`.
-- Поля `peers` в потоке `SubscribeOutbounds`.
+- Статуса пиров Tailscale: для него `GetTailscaleStatus` / `sing-box api tailscale peers` (SPEC 115).
+- Пиров в `GetOutbounds` и в потоке `SubscribeOutbounds`: поле `GroupItem.peers` было только в rc.1 и удалено.

@@ -28,6 +28,14 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.2-lx.12-rc.2
+
+Пререлиз линии `v1.14.2-lx.12`. База — sing-box `v1.14.2`.
+
+- ⚠️ **Статус пиров WG/AWG переехал из `GetOutbounds` в `GetWireGuardStatus(tag)`.** Решение владельца: у каждого типа endpoint'а свой унарный запрос статуса, `GetOutbounds` остаётся списком узлов. Поле `GroupItem.peers` из rc.1 удалено (номер 7 зарезервирован); `endpointState`/`idleSinceSeconds` в `GroupItem` остались. Ответ `WireGuardEndpointStatus` несёт `endpointState`, `idleSinceSeconds` и `peers[]` (`PeerStatus` без изменений), так что пустой список объясняется тем же ответом. Ошибки: `NotFound` / `InvalidArgument` / `FailedPrecondition`. libbox — `CommandClient.GetWireGuardStatus(tag).Peers()` вместо `OutboundGroupItem.Peers()`; CLI `sing-box api peers [тег]` ходит в новый RPC. Потребителю rc.1 (лаунчер) нужен переход. ([SPEC 114](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/114-WG_PEER_STATUS/SPEC.md), [HISTORY](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/114-WG_PEER_STATUS/HISTORY.md))
+- ✨ **Путь к пиру Tailscale и `GetTailscaleStatus(endpointTag)`.** У `TailscalePeer` — `path` (direct / peer relay / DERP / none — вердикт ядра по выбору magicsock), `endpoint`, `peerRelay`, `derpRegionCode`, `lastHandshake`; у `TailscaleEndpointStatus` — `health` (предупреждения бэкенда). Унарный `GetTailscaleStatus` отдаёт тот же снимок, что поток `SubscribeTailscaleStatus`, но свежий — для вкладки диагностики узла; поток остаётся событийным, без тика. libbox — `CommandClient.GetTailscaleStatus(tag)`, `TailscalePeer.Path` строкой, `Health()`; CLI `sing-box api tailscale peers`. Руководство потребителя — [CONSUMERS.md](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/115-TAILSCALE_PEER_PATH_STATUS/CONSUMERS.md). ([SPEC 115](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/115-TAILSCALE_PEER_PATH_STATUS/SPEC.md))
+- Проверки на устройстве до тега не было; живой tailnet-прогон — через лаунчер.
+
 #### v1.14.2-lx.12-rc.1
 
 Пререлиз линии `v1.14.2-lx.12`.

@@ -83,7 +83,8 @@ Nine RPCs live inside an `lx:begin lx_command` … `lx:end lx_command` block and
 exist **only when the binary is built with `with_lx_command`**:
 
 `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `SubscribeDNSQueries`,
-`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetURLViaOutbound`, `GetChains`.
+`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetURLViaOutbound`, `GetChains`,
+`GetWireGuardStatus`, `GetTailscaleStatus`.
 
 The same block also carries control RPCs outside this document's scope:
 `SetChainPositionEnabled` and `GetChainCloneConfig` (SPEC 075), `SetEndpointEnabled`
@@ -283,7 +284,9 @@ full picture.
 | `GetStartedAt → StartedAt` | core start time, for uptime |
 | `GetRules → RuleList` | **lx**: structured rules — resolves `Connection.rule` |
 | `GetGroups → Groups` / `SubscribeGroups` | **lx** (`GetGroups`) / upstream (stream) — group state |
-| `GetOutbounds → OutboundList` | **lx**: outbound tags, to resolve chain entries; WG/AWG state (SPEC 097) and per-peer last handshake, address, transfer (`GroupItem.peers`, SPEC 114) |
+| `GetOutbounds → OutboundList` | **lx**: outbound tags, to resolve chain entries; WG/AWG state (`endpointState`, SPEC 097) |
+| `GetWireGuardStatus(tag) → WireGuardEndpointStatus` | **lx**: one WG/AWG endpoint — device state and per-peer last handshake, address, transfer (SPEC 114) |
+| `GetTailscaleStatus(endpointTag) → TailscaleEndpointStatus` | **lx**: one Tailscale endpoint, fresh — per-peer path (direct / peer relay / DERP), handshake, backend health (SPEC 115) |
 | `GetPool(GetPoolRequest) → PoolList` | **lx**: rotation state of a balanced urltest group (SPEC 019) |
 | `GetDNSGroups → DnsGroupList` | **lx**: full DNS group state |
 | `GetRunningConfig → RunningConfig` | **lx**: the config the core is actually running |
@@ -398,6 +401,7 @@ Nine RPCs behind `with_lx_command`, all absent upstream:
 | `SubscribeDNSQueries` | structured DNS stream; failures first-class; replaces log parsing | [018](../SPECS/TASKS/018-DNS_QUERY_STREAM/SPEC.md), 035 |
 | `GetRules` | rule table, to resolve `Connection.rule` | 014/015 |
 | `GetGroups`, `GetOutbounds` | one-shot reads where upstream offers only streams | 014/015 |
+| `GetWireGuardStatus`, `GetTailscaleStatus` | per-endpoint status on demand; `GetOutbounds` stays a plain node list | [114](../SPECS/TASKS/114-WG_PEER_STATUS/SPEC.md), [115](../SPECS/TASKS/115-TAILSCALE_PEER_PATH_STATUS/SPEC.md) |
 | `GetPool` | rotation state of a balanced urltest group | [019](../SPECS/TASKS/019-URLTEST_MODE_STICKY/SPEC.md) |
 | `GetDNSGroups` | DNS group state | 035 |
 | `GetRunningConfig` | the config actually in effect | — |

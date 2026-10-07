@@ -84,7 +84,8 @@ REST-ручки для профилирования **самого процес�
 и существуют **только в сборке с `with_lx_command`**:
 
 `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `SubscribeDNSQueries`,
-`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetURLViaOutbound`, `GetChains`.
+`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetURLViaOutbound`, `GetChains`,
+`GetWireGuardStatus`, `GetTailscaleStatus`.
 
 В том же блоке — управляющие RPC вне предмета этого документа: `SetChainPositionEnabled`
 и `GetChainCloneConfig` (SPEC 075), `SetEndpointEnabled` (ручное включение и выключение
@@ -285,7 +286,9 @@ detour пусто. Профайлеру, показывающему «весь �
 | `GetStartedAt → StartedAt` | время старта ядра, для uptime |
 | `GetRules → RuleList` | **lx**: структурные правила — раскрывает `Connection.rule` |
 | `GetGroups → Groups` / `SubscribeGroups` | **lx** (`GetGroups`) / апстрим (стрим) — состояние групп |
-| `GetOutbounds → OutboundList` | **lx**: теги outbound'ов, чтобы раскрывать элементы цепочки; состояние WG/AWG (SPEC 097) и по каждому пиру — последний хендшейк, адрес, трафик (`GroupItem.peers`, SPEC 114) |
+| `GetOutbounds → OutboundList` | **lx**: теги outbound'ов, чтобы раскрывать элементы цепочки; состояние WG/AWG (`endpointState`, SPEC 097) |
+| `GetWireGuardStatus(tag) → WireGuardEndpointStatus` | **lx**: один WG/AWG-endpoint — состояние устройства и по каждому пиру последний хендшейк, адрес, трафик (SPEC 114) |
+| `GetTailscaleStatus(endpointTag) → TailscaleEndpointStatus` | **lx**: один Tailscale-endpoint, свежий снимок — путь к каждому пиру (direct / peer relay / DERP), хендшейк, предупреждения бэкенда (SPEC 115) |
 | `GetPool(GetPoolRequest) → PoolList` | **lx**: состояние ротации балансируемой urltest-группы (SPEC 019) |
 | `GetDNSGroups → DnsGroupList` | **lx**: полное состояние DNS-групп |
 | `GetRunningConfig → RunningConfig` | **lx**: конфиг, на котором ядро реально работает |
@@ -399,6 +402,7 @@ detour пусто. Профайлеру, показывающему «весь �
 | `SubscribeDNSQueries` | структурный DNS-стрим; ошибки полноправны; заменяет разбор лога | [018](../SPECS/TASKS/018-DNS_QUERY_STREAM/SPEC.md), 035 |
 | `GetRules` | таблица правил, чтобы раскрывать `Connection.rule` | 014/015 |
 | `GetGroups`, `GetOutbounds` | разовое чтение там, где апстрим даёт только стримы | 014/015 |
+| `GetWireGuardStatus`, `GetTailscaleStatus` | статус одного endpoint'а по запросу; `GetOutbounds` остаётся списком узлов | [114](../SPECS/TASKS/114-WG_PEER_STATUS/SPEC.md), [115](../SPECS/TASKS/115-TAILSCALE_PEER_PATH_STATUS/SPEC.md) |
 | `GetPool` | состояние ротации балансируемой urltest-группы | [019](../SPECS/TASKS/019-URLTEST_MODE_STICKY/SPEC.md) |
 | `GetDNSGroups` | состояние DNS-групп | 035 |
 | `GetRunningConfig` | конфиг, реально действующий сейчас | — |
