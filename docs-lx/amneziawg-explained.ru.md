@@ -1,6 +1,6 @@
 # AmneziaWG — как он устроен и как поддержан в sing-box-lx
 
-> 🌐 English version: **[lx-amneziawg-explained.md](lx-amneziawg-explained.md)**.
+> 🌐 English version: **[amneziawg-explained.md](amneziawg-explained.md)**.
 
 AmneziaWG (AWG) — это WireGuard, у которого изменена форма пакетов на
 проводе при полностью сохранённой криптографии. Протокол задаёт проект
@@ -576,7 +576,7 @@ AWG3-ключей не было бы. Вариант с сахаром маск�
 # 8. Позиция апстрима
 
 У SagerNet/sing-box по AmneziaWG **прямой отказ**, того же рода, что по
-XHTTP ([lx-xray-protocols-explained §4.8](lx-xray-protocols-explained.ru.md#48-позиция-апстрима)).
+XHTTP ([xray-protocols-explained §4.8](xray-protocols-explained.ru.md#48-позиция-апстрима)).
 
 - Запрос [SagerNet/sing-box#4045](https://github.com/SagerNet/sing-box/issues/4045)
   (AmneziaWG 2.0, 2026-04-14) закрыт мейнтейнером как `not planned`
@@ -670,7 +670,7 @@ XHTTP ([lx-xray-protocols-explained §4.8](lx-xray-protocols-explained.ru.md#48-
   каждое поле, дефолт, ошибка; §2.6 бюджет MTU, §2.9 ошибки дословно,
   §2.10 AWG3.
 - **[lx-config.ru.md §2](lx-config.ru.md#2-amneziawg-203x-awg2-awg3)** — обзор.
-- **[lx-xray-protocols-explained.ru.md](lx-xray-protocols-explained.ru.md)** —
+- **[xray-protocols-explained.ru.md](xray-protocols-explained.ru.md)** —
   тот же формат для REALITY, Vision, XHTTP и VLESS encryption.
 - Спека фичи: [003-AWG](../SPECS/FEATURES/003-AWG/FEATURE.md); задачи:
   [003](../SPECS/TASKS/003-AWG2_CLIENT_ENDPOINT/SPEC.md) (endpoint AWG2),

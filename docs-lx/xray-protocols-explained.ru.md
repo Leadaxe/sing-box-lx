@@ -1,6 +1,6 @@
 # Протоколы семейства Xray — как они устроены и как поддержаны в sing-box-lx
 
-> 🌐 English version: **[lx-xray-protocols-explained.md](lx-xray-protocols-explained.md)**.
+> 🌐 English version: **[xray-protocols-explained.md](xray-protocols-explained.md)**.
 
 Современный стек VPN-протоколов, устойчивых к посредникам, задаёт Xray:
 REALITY, Vision, XHTTP и постквантовый слой VLESS `encryption`
