@@ -50,6 +50,10 @@ stores and the descriptions. Technically REALITY, Vision, XHTTP and VLESS are
 proxy protocols, and this text calls them that. For those who want the
 details, this section explains the differences.
 
+> 🧭 **TL;DR:** the difference is the level at which traffic is intercepted
+> and what travels inside the tunnel: a VPN carries IP packets, a proxy
+> carries connections.
+
 | | VPN | Proxy |
 |---|---|---|
 | Level | IP packets | connections |
