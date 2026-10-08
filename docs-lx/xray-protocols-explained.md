@@ -43,12 +43,12 @@ Callouts in the text are marked by type:
 - 🧭 TL;DR: the section's conclusion in a few sentences;
 - 📖 normative source.
 
-## For the pedantic: how a proxy differs from a VPN
+## Disclaimer: how a proxy differs from a VPN
 
-Disclaimer. Users find the word VPN easier, and that is the word in the app
-name, the stores and the descriptions. Technically REALITY, Vision, XHTTP and
-VLESS are proxy protocols, and this text calls them that. The difference is
-the level at which traffic is intercepted and what travels inside the tunnel.
+Users find the word VPN easier, and that is the word in the app name, the
+stores and the descriptions. Technically REALITY, Vision, XHTTP and VLESS are
+proxy protocols, and this text calls them that. For those who want the
+details, this section explains the differences.
 
 | | VPN | Proxy |
 |---|---|---|
@@ -83,7 +83,7 @@ What follows from this:
 
 ## Contents
 
-- [For the pedantic: how a proxy differs from a VPN](#for-the-pedantic-how-a-proxy-differs-from-a-vpn)
+- [Disclaimer: how a proxy differs from a VPN](#disclaimer-how-a-proxy-differs-from-a-vpn)
 - [§0 The whole picture: layers and threats](#0-the-whole-picture-layers-and-threats)
 - [§1 Foundation: TLS, ClientHello and the fingerprint](#1-foundation-tls-clienthello-and-the-fingerprint)
   - [1.1 What the ClientHello reveals](#11-what-the-clienthello-reveals)
