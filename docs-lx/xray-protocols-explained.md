@@ -43,8 +43,47 @@ Callouts in the text are marked by type:
 - 🧭 TL;DR: the section's conclusion in a few sentences;
 - 📖 normative source.
 
+## For the pedantic: how a proxy differs from a VPN
+
+In this text REALITY, Vision, XHTTP and VLESS are called proxy protocols, and
+the word VPN refers to the application and its traffic as a whole. The
+difference is not marketing. It is the level at which traffic is intercepted
+and what travels inside the tunnel.
+
+| | VPN | Proxy |
+|---|---|---|
+| Level | IP packets | connections |
+| On the device | a network interface (`tun0`) with an address, routes and MTU | no interface of its own |
+| Inside the tunnel | packets as they are, any protocol, ICMP included | a "connect me to `host:port`" command and a byte stream |
+| Who assembles TCP from packets | the OS on both ends | the sing-box core on the client, with its own stack |
+| Examples | WireGuard, AmneziaWG, OpenVPN, IPsec, MASQUE CONNECT-IP | VLESS, VMess, Trojan, Shadowsocks, SOCKS5, HTTP CONNECT |
+| Typical failures | MTU, routes, fragmentation | SNI, fingerprint, HTTP request shape |
+
+In the app both look the same, because `tun0` comes up either way: otherwise
+Android would not hand over the traffic. After that the paths diverge. For a
+WireGuard node the packets from `tun0` go into the tunnel as they are. For a
+VLESS node the core terminates TCP and UDP on the interface itself (gVisor or
+the system stack), turns every flow into a "connect to this address" command
+and sends it through the proxy. In that case the core does the OS's job of
+assembling connections from packets.
+
+What follows from this:
+
+- a proxy is easier to disguise: the connection rides on ordinary TLS, HTTP
+  or WebSocket and passes through a CDN; an IP tunnel inside HTTP exists too
+  (MASQUE), but it is rare;
+- a VPN is more transparent: everything IP can do works, ICMP and non-standard
+  protocols included; through a proxy `ping` to a remote host does not pass,
+  and UDP works only because VLESS can pack it separately (`packet_encoding`);
+- a proxy costs more CPU: TCP termination in user space; this is why Vision
+  and splice (§3) matter so much;
+- the failures differ: for a VPN it is MTU and routes
+  ([amneziawg-explained §5](amneziawg-explained.md#5-mtu-where-the-bytes-go)),
+  for a proxy it is SNI, fingerprints and request shapes (§1, §4).
+
 ## Contents
 
+- [For the pedantic: how a proxy differs from a VPN](#for-the-pedantic-how-a-proxy-differs-from-a-vpn)
 - [§0 The whole picture: layers and threats](#0-the-whole-picture-layers-and-threats)
 - [§1 Foundation: TLS, ClientHello and the fingerprint](#1-foundation-tls-clienthello-and-the-fingerprint)
   - [1.1 What the ClientHello reveals](#11-what-the-clienthello-reveals)
