@@ -45,10 +45,10 @@ Callouts in the text are marked by type:
 
 ## For the pedantic: how a proxy differs from a VPN
 
-In this text REALITY, Vision, XHTTP and VLESS are called proxy protocols, and
-the word VPN refers to the application and its traffic as a whole. The
-difference is not marketing. It is the level at which traffic is intercepted
-and what travels inside the tunnel.
+Disclaimer. Users find the word VPN easier, and that is the word in the app
+name, the stores and the descriptions. Technically REALITY, Vision, XHTTP and
+VLESS are proxy protocols, and this text calls them that. The difference is
+the level at which traffic is intercepted and what travels inside the tunnel.
 
 | | VPN | Proxy |
 |---|---|---|
