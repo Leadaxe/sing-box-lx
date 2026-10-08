@@ -98,6 +98,8 @@ make -f Makefile.lx lx-build
 
 # 1. XHTTP транспорт
 
+> 🧭 Как XHTTP устроен, почему так и как сделан в форке — [xray-protocols-explained §4](xray-protocols-explained.ru.md#4-xhttp); диагностика по симптому — там же, [§4.6](xray-protocols-explained.ru.md#46-грабли-на-которых-соединение-молчит). Здесь — только поля, дефолты и ошибки.
+
 XHTTP (Xray "splithttp"/"xhttp") — v2ray-транспорт, туннелирующий прокси поверх
 обычных HTTP-запросов — по умолчанию HTTP/2, HTTP/1.1 или HTTP/3, когда их
 запрашивает TLS-блок ([версия HTTP](#версия-http)). Крепится к **VLESS / VMess / Trojan** через общий блок
@@ -389,6 +391,8 @@ Referer-паддинг (см. примечание в [§1.10](#110-пример
 ---
 
 # 2. AmneziaWG 2.0/3.x (AWG2, AWG3)
+
+> 🧭 Как AmneziaWG устроен, бюджет MTU, графт и валидация — [amneziawg-explained](amneziawg-explained.ru.md); типичные отказы — там же, [§10](amneziawg-explained.ru.md#10-типичные-отказы). Здесь — только поля, дефолты и ошибки.
 
 AWG — это WireGuard + обфускация для обхода DPI: AWG2 меняет форму пакетов, AWG3
 дополнительно шифрует их заголовки и рандомизирует размеры и тайминги
@@ -774,6 +778,8 @@ endpoint, как и поля AWG2, и требует `with_awg`. Контейн�
 
 # 3. MASQUE outbound (CONNECT-IP / WARP)
 
+> 🧭 Объясняющий документ `masque-explained` запланирован, пока не написан. Текущее состояние области — спека фичи [009-MASQUE_WARP](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md).
+
 ## 3.1 Что это
 
 `masque` outbound туннелирует **целые IP-пакеты** поверх HTTP/3- или
@@ -1034,6 +1040,8 @@ network_list=tcp+udp — всё по умолчанию. Не забудь бл�
 ---
 
 # 4. gRPC-транспорт
+
+> 🧭 Транспорт апстримный, объясняющего раздела нет; здесь только формы `service_name`, где наше поведение расходится с апстримом.
 
 gRPC-транспорту (`"transport": { "type": "grpc" }`) build-тег не нужен: в наших
 сборках отгружается lite-реализация (`v2raygrpclite`); полная, на `grpc-go`, живёт

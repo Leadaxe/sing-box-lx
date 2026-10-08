@@ -98,6 +98,8 @@ transport (which would defeat the obfuscation). The exact messages:
 
 # 1. XHTTP transport
 
+> 🧭 How XHTTP works, why, and how the fork implements it: [xray-protocols-explained §4](xray-protocols-explained.md#4-xhttp); symptom-based troubleshooting is there too, [§4.6](xray-protocols-explained.md#46-pitfalls-where-the-connection-stays-silent). This chapter holds only fields, defaults and errors.
+
 XHTTP (Xray "splithttp"/"xhttp") is a v2ray transport that tunnels the proxy over
 plain HTTP requests — HTTP/2 by default, HTTP/1.1 or HTTP/3 when the TLS block
 asks for them ([HTTP version](#http-version)). It attaches to **VLESS / VMess / Trojan** through the shared
@@ -394,6 +396,8 @@ the field tables above.
 ---
 
 # 2. AmneziaWG 2.0/3.x (AWG2, AWG3)
+
+> 🧭 How AmneziaWG works, the MTU budget, the graft and validation: [amneziawg-explained](amneziawg-explained.md); typical failures are there too, [§10](amneziawg-explained.md#10-typical-failures). This chapter holds only fields, defaults and errors.
 
 AWG is WireGuard + DPI-evasion obfuscation: AWG2 reshapes the packets, AWG3 additionally
 encrypts their headers and randomises sizes and timings ([§2.10](#210-awg-3x-header-protection-padding-trailers-timings)). It is configured as a normal sing-box
@@ -779,6 +783,8 @@ Notes:
 
 # 3. MASQUE outbound (CONNECT-IP / WARP)
 
+> 🧭 The explanatory document `masque-explained` is planned and not written yet. The current state of the area is the feature spec [009-MASQUE_WARP](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md).
+
 ## 3.1 What it is
 
 A `masque` outbound tunnels **whole IP packets** over an HTTP/3 or HTTP/2 connection
@@ -1042,6 +1048,8 @@ on-device.
 ---
 
 # 4. gRPC transport
+
+> 🧭 An upstream transport with no explanatory section; only the `service_name` forms where our behaviour differs from upstream are listed here.
 
 The gRPC transport (`"transport": { "type": "grpc" }`) needs no build tag — the
 lite implementation (`v2raygrpclite`) is what ships in our builds; the full
