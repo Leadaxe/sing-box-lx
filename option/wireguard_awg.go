@@ -207,9 +207,9 @@ type AmneziaWGOptions struct {
 	I3   string      `json:"i3,omitempty"`
 	I4   string      `json:"i4,omitempty"`
 	I5   string      `json:"i5,omitempty"`
-	Id   string      `json:"id,omitempty"` // masquerade domain; required for ip=quic/dns/sip, optional for stun
+	Id   string      `json:"id,omitempty"` // masquerade domain; required for ip=quic (SNI), optional for dns/sip (pseudo-host when empty), ignored for stun
 	Ip   string      `json:"ip,omitempty"` // masquerade protocol: quic | dns | stun | sip
-	Ib   string      `json:"ib,omitempty"` // masquerade browser: chrome | firefox | curl (limited effect, see masque_awg.go)
+	Ib   string      `json:"ib,omitempty"` // masquerade browser: chrome | chrome-full | firefox | curl (ClientHello fingerprint + Initial layout)
 
 	// AmneziaWG 3.x (SPECS/TASKS/080-*)
 	HeaderProtectionKey    string   `json:"header_protection_key,omitempty"`

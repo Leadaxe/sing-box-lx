@@ -1,6 +1,6 @@
 //go:build with_awg && !with_utls
 
-// Fallback for ib=chrome|firefox when the build lacks the with_utls tag: there
+// Fallback for ib=chrome|chrome-full|firefox when the build lacks the with_utls tag: there
 // is no uTLS to produce a real browser fingerprint, so we degrade gracefully to
 // the generic ClientHello (the same one ib="" uses). The ib hint is still
 // accepted and validated upstream; it simply has no effect without with_utls.
@@ -16,8 +16,8 @@ import (
 // buildBrowserClientHello (no-uTLS build) ignores the browser and returns the
 // generic ClientHello with fresh per-call random + ephemeral x25519, matching
 // what buildInitialPacket would have produced for ib="".
-func buildBrowserClientHello(sni, browser string) ([]byte, error) {
-	_ = browser
+func buildBrowserClientHello(sni, browser string, scid []byte) ([]byte, error) {
+	_, _ = browser, scid
 	var tlsRandom [32]byte
 	if _, err := rand.Read(tlsRandom[:]); err != nil {
 		return nil, err

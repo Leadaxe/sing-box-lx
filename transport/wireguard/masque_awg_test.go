@@ -159,6 +159,12 @@ func TestMasqueBrowserValidation(t *testing.T) {
 	_, err = masqueI1(option.AmneziaWGOptions{Id: "a.com", Ip: "dns", Ib: "chrome"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "only meaningful with ip=quic")
+
+	// All accepted values, case-insensitive.
+	for _, ib := range []string{"chrome", "Chrome-Full", "firefox", "CURL"} {
+		_, err = masqueI1(option.AmneziaWGOptions{Id: "a.com", Ip: "quic", Ib: ib})
+		require.NoError(t, err, "ib=%q", ib)
+	}
 }
 
 // QUIC Initial structural tests (decrypt / frame-walk / reassembly / SNI) live
@@ -201,14 +207,9 @@ func TestMasqueDNSQueryStructure(t *testing.T) {
 	require.Equal(t, uint16(1232), binary.BigEndian.Uint16(pkt[off+3:off+5]), "CLASS udp-size")
 	require.Equal(t, uint32(0), binary.BigEndian.Uint32(pkt[off+5:off+9]), "TTL 0")
 	rdlength := binary.BigEndian.Uint16(pkt[off+9 : off+11])
-	rdataStart := off + 11
-	// RDLENGTH must cover exactly the rest of the datagram (no trailing bytes).
-	require.Equal(t, len(pkt), rdataStart+int(rdlength), "RDLENGTH covers to end")
-
-	// Option: CODE 0xFDE9 + LENGTH covering the cover bytes to the end.
-	require.Equal(t, uint16(0xFDE9), binary.BigEndian.Uint16(pkt[rdataStart:rdataStart+2]), "OPTION-CODE")
-	optLen := binary.BigEndian.Uint16(pkt[rdataStart+2 : rdataStart+4])
-	require.Equal(t, len(pkt), rdataStart+4+int(optLen), "OPTION-LENGTH covers to end")
+	// No EDNS options (a stub resolver's plain OPT) and nothing after the OPT RR.
+	require.Equal(t, uint16(0), rdlength, "RDLENGTH 0: no EDNS options")
+	require.Equal(t, len(pkt), off+11, "datagram ends with the OPT RR")
 }
 
 // --- STUN Binding Success Response (parse back as STUN) ---------------------
@@ -272,26 +273,21 @@ func TestMasqueSTUNRequestUniqueness(t *testing.T) {
 	require.NotEqual(t, a, b, "fresh per-call entropy → different blobs")
 }
 
-// --- SIP call setup: INVITE (i1) + 100 Trying (i2) --------------------------
+// --- SIP call setup: INVITE (i1) ---------------------------------------------
 
-// ip=sip is the opening exchange of a SIP call: i1 = a complete INVITE request
-// (Content-Length: 0, no body), i2 = the matching "100 Trying" provisional
-// response. Each datagram is a WHOLE valid SIP message on its own (UDP has no
-// reassembly), and the two share Via branch / From tag / Call-ID / CSeq so they
-// read as one dialog — that cross-slot agreement is the real test.
+// ip=sip is the first packet of a SIP call: i1 = a complete INVITE request
+// (Content-Length: 0, no body), a WHOLE valid SIP message on its own; i2 stays
+// empty (a 100 Trying is the server's answer, not the client's packet).
 func TestMasqueSIPInviteStructure(t *testing.T) {
 	t.Parallel()
 	const host = "pbx.example.com"
 	i1, i2, err := masqueI1I2(option.AmneziaWGOptions{Id: host, Ip: "sip"})
 	require.NoError(t, err)
 	require.NotEmpty(t, i1, "i1 (INVITE) present")
-	require.NotEmpty(t, i2, "i2 (100 Trying) present")
+	require.Empty(t, i2, "i2 empty: the client does not send the server's 100 Trying")
 	invite := string(obfuscateCPS(t, i1))
-	trying := string(obfuscateCPS(t, i2))
 
 	assertSIPInvite(t, invite, host)
-	assertSIPTrying(t, trying)
-	assertSameSIPDialog(t, invite, trying)
 
 	// Three-host scheme (RFC 3261 §24.2 shape): id is the caller domain (From);
 	// the request-URI/To callee is a DIFFERENT domain; the UA host (Via/Call-ID/
@@ -314,18 +310,15 @@ func TestMasqueSIPInviteStructure(t *testing.T) {
 }
 
 // id is optional for sip: with no id a plausible pseudo-host is generated, so a
-// well-formed INVITE + 100 Trying pair must still be produced.
+// well-formed INVITE must still be produced.
 func TestMasqueSIPInviteNoID(t *testing.T) {
 	t.Parallel()
 	i1, i2, err := masqueI1I2(option.AmneziaWGOptions{Ip: "sip"})
 	require.NoError(t, err, "sip without id must succeed (pseudo-host generated)")
 	require.NotEmpty(t, i1)
-	require.NotEmpty(t, i2)
+	require.Empty(t, i2)
 	invite := string(obfuscateCPS(t, i1))
-	trying := string(obfuscateCPS(t, i2))
 	assertSIPInvite(t, invite, "" /* any host */)
-	assertSIPTrying(t, trying)
-	assertSameSIPDialog(t, invite, trying)
 }
 
 // assertSIPInvite checks the i1 INVITE: request-line, mandatory headers, no body
@@ -356,18 +349,6 @@ func assertSIPInvite(t *testing.T, text, host string) {
 	require.Equal(t, strings.Index(text, "\r\n\r\n")+4, len(text), "nothing follows the header block")
 }
 
-// assertSIPTrying checks the i2 provisional response.
-func assertSIPTrying(t *testing.T, text string) {
-	t.Helper()
-	require.True(t, strings.HasPrefix(text, "SIP/2.0 100 Trying\r\n"), "status line is 100 Trying")
-	assertSIPHeaderBlock(t, text)
-	require.Contains(t, text, "\r\nContent-Length: 0\r\n", "100 Trying has Content-Length: 0")
-	// A provisional response omits the request-only headers.
-	require.NotContains(t, text, "Max-Forwards", "100 Trying must not carry Max-Forwards")
-	require.NotContains(t, text, "Contact:", "100 Trying must not carry Contact")
-	require.True(t, strings.HasSuffix(text, "\r\n\r\n"), "100 Trying ends at the blank line")
-}
-
 // assertSIPHeaderBlock checks the headers shared by INVITE and 100 Trying:
 // Via/To/From/Call-ID/CSeq present and well-framed, To has no tag (initial
 // transaction), every header line has a colon.
@@ -395,23 +376,6 @@ func assertSIPHeaderBlock(t *testing.T, text string) {
 	toLine := text[toIdx+2:]
 	toLine = toLine[:strings.Index(toLine, "\r\n")]
 	require.NotContains(t, toLine, ";tag=", "To must have no tag in the initial transaction")
-}
-
-// assertSameSIPDialog verifies the INVITE (i1) and the 100 Trying (i2) belong to
-// ONE dialog: identical Via branch, From tag, Call-ID and CSeq. This is the core
-// invariant of the call-setup decoy — if these diverge the pair is incoherent.
-func assertSameSIPDialog(t *testing.T, invite, trying string) {
-	t.Helper()
-	for _, field := range []struct{ name, prefix, end string }{
-		{"Via branch", "branch=z9hG4bK", "\r\n"}, // Via ends ...;branch=<hex>\r\n (no trailing param)
-		{"From tag", ";tag=", "\r\n"},
-		{"Call-ID", "\r\nCall-ID: ", "\r\n"},
-		{"CSeq", "\r\nCSeq: ", "\r\n"},
-	} {
-		a := sipField(t, invite, field.prefix, field.end)
-		b := sipField(t, trying, field.prefix, field.end)
-		require.Equal(t, a, b, "%s must match across INVITE and 100 Trying", field.name)
-	}
 }
 
 // sipField extracts the substring after prefix up to the next end delimiter.

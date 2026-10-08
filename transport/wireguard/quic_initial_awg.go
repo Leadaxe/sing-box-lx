@@ -1,31 +1,25 @@
 //go:build with_awg
 
-// QUIC Initial masquerade generator — out-of-order fragmented ClientHello.
+// QUIC Initial masquerade generator — a client's first QUIC packet carrying a
+// TLS ClientHello for the masquerade domain (ip=quic, SPECS/TASKS/009).
 //
-// This SUPERSEDES the earlier 1-RTT short-header decoy (the deleted
-// masqueQUICShortHeaderCPS / quicFirstByte). That decoy was structurally valid
-// QUIC but EMPIRICALLY BLOCKED by a real LTE-operator DPI: every short-header
-// variant timed out, while a full QUIC Initial whose ClientHello is split into
-// several out-of-order CRYPTO frames passed reliably (device-proven A/B, see
-// LxBox docs/spec/tasks/146-warp-quic-initial-fragmented-i1.md §2).
+// The i1 is a standalone decoy (src=nil, sent before the WG handshake — see
+// amneziawg-go send.go); it never completes a TLS handshake, it only has to be
+// a valid QUIC Initial for the DPI and for the WARP endpoint behind it.
 //
-// WHY OUT-OF-ORDER WORKS (mechanism). A real QUIC server reassembles
-// CRYPTO frames by their offset before TLS parsing; a line-rate DPI does not
-// keep a reassembly buffer — it grabs the FIRST CRYPTO frame, assumes it starts
-// at offset 0, and parses TLS from there. When the first wire frame has
-// offset≠0 (the middle of the ClientHello), the DPI parses garbage, the TLS
-// record lengths do not add up, and it fails OPEN (Chrome legitimately
-// fragments large ClientHellos, so fail-closed would break real QUIC). The real
-// WARP server reorders the frames and the handshake would proceed; the DPI does
-// not. The i1 is a standalone decoy (src=nil, sent before the WG handshake — see
-// amneziawg-go send.go); it does not need to complete any TLS handshake, only to
-// make the first packet of the flow look like a legitimate QUIC start to a CDN.
+// What the field runs established (LxBox §146, §617, §618):
+//   - A plain WireGuard start to WARP is dropped; the same flow with a QUIC
+//     Initial in front passes. The Initial itself is the payload.
+//   - The order of CRYPTO frames inside the Initial does not matter (§617:
+//     in-order and shuffled pass alike). The earlier "DPI parses the first
+//     frame and fails open" rationale was refuted and is gone.
+//   - A ClientHello spread over several Initials is dropped on the WARP path
+//     (§618), so every profile here puts the whole ClientHello into ONE Initial,
+//     oversized past the MTU when it has to be (chrome-full).
 //
-// This deliberately reverses the short-header file's old rationale (a decoy
-// "cannot meet" the ≥1200-byte Initial minimum, and a short header "hides
-// better"): the device evidence shows the opposite on real DPI, and a padded
-// ≥1200-byte Initial is exactly what RFC 9000 §14.1 mandates anyway. Do NOT
-// "simplify" this back to a short header.
+// Frame layout follows the browser the ClientHello imitates: Chrome's
+// QuicChaosProtector (splits, PINGs, spread PADDING, shuffle) for ib=chrome and
+// ib=chrome-full, one CRYPTO frame plus PADDING for everything else.
 //
 // Crypto is RFC 9001 §5 Initial encryption. The HKDF-Expand-Label, QUIC v1 salt
 // and AES-128-GCM-with-XORed-nonce AEAD live in quic_crypto_awg.go, mirrored
@@ -74,30 +68,48 @@ func appendQUICVarint(dst []byte, v uint64) []byte {
 }
 
 // ---------------------------------------------------------------------------
-// QUIC Initial geometry (device-proven etalon).
+// QUIC Initial geometry.
 // ---------------------------------------------------------------------------
 
 const (
-	quicInitialTotalLen = 1250 // total datagram size (padded ≥1200, RFC 9000 §14.1)
-	quicInitialLenField = 1232 // varint "length" = pn_len + payload + tag (0x44d0)
-	quicPacketNumberLen = 1    // packet number length in bytes (pn_len=1)
+	quicInitialTotalLen = 1250 // Chrome datagram size (its max packet size; ≥1200 per RFC 9000 §14.1)
+	quicInitialLenField = 1232 // varint "length" = pn_len + payload + tag (0x44d0) at 1250, pn_len 1
+	quicFirefoxTotalLen = 1252 // Firefox (neqo) datagram size: the QUIC packet plus zero fill
+	quicPacketNumberLen = 1    // Chrome packet number length in bytes (pn_len=1)
 	quicAEADTagLen      = 16   // AES-128-GCM authentication tag
 	quicDCIDLen         = 8    // Destination Connection ID length (fresh per call)
+
+	// quicInitialOversizeSlack is the PADDING budget kept when the ClientHello
+	// does not fit the configured datagram size and the Initial grows past it
+	// (chrome-full): chaos protection needs room for its extra CRYPTO frame
+	// headers and PINGs.
+	quicInitialOversizeSlack = 128
 )
 
 // ---------------------------------------------------------------------------
-// CRYPTO fragment plan (wire order). The OUT-OF-ORDER wire layout is the whole
-// DPI bypass: the first emitted CRYPTO frame is offset≠0, the offset-0 frame is
-// emitted near the end, PING/PADDING are interleaved between CRYPTO frames.
+// Initial frame layout, per browser.
 //
-// Invariants (I1–I4), enforced by buildInitialPayload + asserted by tests:
-//   I1. first CRYPTO frame in wire order has offset≠0.
-//   I2. the offset-0 CRYPTO frame is NOT first.
-//   I3. PADDING runs and ≥1 PING between CRYPTO frames.
-//   I4. union of CRYPTO frames by offset = contiguous ClientHello [0..N), no gap.
+// ib=chrome mirrors quiche's QuicChaosProtector (quic_chaos_protector.cc), the
+// only client stack that scrambles its Initial: the ClientHello CRYPTO frame is
+// split 2..10 times at random points, 2..10 PING frames are added, the PADDING
+// budget is spread at random between frames, and the whole frame list is
+// shuffled. Every other stack (Firefox/neqo, curl/ngtcp2, quic-go) sends one
+// CRYPTO frame followed by a PADDING tail, so ib=firefox and the generic
+// ClientHello use that plain layout.
 // ---------------------------------------------------------------------------
 
-// frameKind tags an entry in the wire-order plan.
+// quicGenParams holds the datagram size range for the generator. Chrome sends
+// its Initial at its max packet size (1250), hence min==max by default.
+type quicGenParams struct {
+	totalLenMin int // inclusive lower bound for the datagram size (≥1200)
+	totalLenMax int // inclusive upper bound for the datagram size
+}
+
+func defaultQUICGenParams() quicGenParams {
+	return quicGenParams{totalLenMin: quicInitialTotalLen, totalLenMax: quicInitialTotalLen}
+}
+
+// frameKind tags one frame of the Initial payload.
 type frameKind int
 
 const (
@@ -106,190 +118,214 @@ const (
 	framePadding
 )
 
-// planEntry is one frame in wire order. For frameCrypto, cryptoIdx selects which
-// ClientHello slice (by offset boundary) to emit. For framePadding, padLen is
-// the run length of zero bytes.
-type planEntry struct {
-	kind      frameKind
-	cryptoIdx int  // index into the offset-sorted fragment list
-	padLen    int  // PADDING run length (when padFlex is false)
-	padFlex   bool // PADDING run sized at build time to absorb the remaining slack
+// quicFrame is one frame of the Initial payload in wire order.
+type quicFrame struct {
+	kind   frameKind
+	offset uint64 // CRYPTO: stream offset
+	data   []byte // CRYPTO: payload slice of the ClientHello
+	pad    int    // PADDING: run length in bytes
 }
 
-// quicGenParams are the robustness "knobs" for the QUIC Initial generator. They
-// exist so the obfuscation can be escalated WITHOUT a code change if the target
-// DPI ever stops being fooled by the current 6-fragment / 1250-byte shape —
-// e.g. a DPI that starts keeping a small reassembly buffer is defeated by more
-// fragments and a different per-packet layout. Every combination still satisfies
-// the I1–I4 invariants (enforced by randomizedWirePlan + planFragmentsN).
-//
-// The zero value is NOT valid; use defaultQUICGenParams(). All randomness is
-// per-call (crypto/rand), so two calls with the same params still produce
-// different DCID / TLS random / cut points / wire order — no cross-user
-// signature even at fixed params.
-type quicGenParams struct {
-	fragments   int // number of CRYPTO fragments the ClientHello is cut into (≥2)
-	pings       int // number of PING frames interleaved between CRYPTO frames (≥1)
-	totalLenMin int // inclusive lower bound for the final datagram size (≥1200)
-	totalLenMax int // inclusive upper bound for the final datagram size
-}
-
-// defaultQUICGenParams returns the device-proven baseline: 6 fragments, 2 PINGs,
-// a fixed 1250-byte datagram (totalLenMin==totalLenMax). This reproduces the
-// shape that passed real-DPI testing; only the per-call layout/cutpoints
-// are randomized on top of it.
-func defaultQUICGenParams() quicGenParams {
-	return quicGenParams{
-		fragments:   6,
-		pings:       2,
-		totalLenMin: quicInitialTotalLen,
-		totalLenMax: quicInitialTotalLen,
-	}
-}
-
-// cryptoFragment is one contiguous slice of the ClientHello at a given offset.
+// cryptoFragment is a CRYPTO frame's (offset, data) pair; the test decoder
+// collects these from a decrypted packet.
 type cryptoFragment struct {
 	offset uint64
 	data   []byte
 }
 
-// The device-proven baseline was 6 fragments at offsets
-// [0,236,266,275,283,290] in a fixed wire order with first CRYPTO offset=236.
-// That exact layout is now ONE sample of the randomized space below: per call we
-// pick random cut points (planFragmentsN) and a random out-of-order wire plan
-// (randomizedWirePlan), so no two clients share a fixed fragment signature while
-// the I1–I4 invariants always hold.
+// cryptoFrameOverhead is quiche's GetMinCryptoFrameSize: type byte plus the
+// offset and length varints, excluding the data itself.
+func cryptoFrameOverhead(offset uint64, length int) int {
+	return 1 + varintLen(offset) + varintLen(uint64(length))
+}
 
-// planFragmentsN slices the ClientHello into n contiguous fragments at RANDOM
-// cut points (instead of the fixed etalonCutpoints), keeping the reassembly
-// contiguous and complete (I4). Cut points are n-1 distinct interior offsets in
-// [1, len(ch)-1]; fragment i runs [cut[i], cut[i+1]). Every fragment is
-// non-empty. Returned fragments are in OFFSET order (fragment 0 = offset 0).
-func planFragmentsN(ch []byte, n int) ([]cryptoFragment, error) {
-	if n < 2 {
-		return nil, E.New("amneziawg: need ≥2 CRYPTO fragments")
+// paddingBudget returns how many PADDING bytes remain in a payload of
+// payloadLen after one CRYPTO frame carrying the whole ClientHello.
+func paddingBudget(ch []byte, payloadLen int) (int, error) {
+	budget := payloadLen - cryptoFrameOverhead(0, len(ch)) - len(ch)
+	if budget < 0 {
+		return 0, E.New("amneziawg: QUIC Initial frames overflow the length field (ClientHello too large)")
 	}
-	if len(ch) < n {
-		return nil, E.New("amneziawg: ClientHello too short for the requested fragment count")
+	return budget, nil
+}
+
+// plainInitialFrames is the one-CRYPTO-plus-PADDING layout.
+func plainInitialFrames(ch []byte, payloadLen int) ([]quicFrame, error) {
+	budget, err := paddingBudget(ch, payloadLen)
+	if err != nil {
+		return nil, err
 	}
-	// Choose n-1 distinct interior cut points in [1, len(ch)-1].
-	cutSet := make(map[int]struct{}, n-1)
-	interior := len(ch) - 1 // candidate positions 1..len(ch)-1
-	for len(cutSet) < n-1 {
-		p, err := randInt(interior) // 0..interior-1
+	frames := []quicFrame{{kind: frameCrypto, offset: 0, data: ch}}
+	if budget > 0 {
+		frames = append(frames, quicFrame{kind: framePadding, pad: budget})
+	}
+	return frames, nil
+}
+
+// chaosInitialFrames mirrors QuicChaosProtector::BuildDataPacket step by step:
+// IngestFrames (one CRYPTO + the PADDING budget), SplitCryptoFrame,
+// AddPingFrames, SpreadPadding, ReorderFrames. Constants are quiche's.
+func chaosInitialFrames(ch []byte, payloadLen int) ([]quicFrame, error) {
+	budget, err := paddingBudget(ch, payloadLen)
+	if err != nil {
+		return nil, err
+	}
+	if budget == 0 {
+		// Chrome skips chaos protection without a padding budget to work with.
+		return plainInitialFrames(ch, payloadLen)
+	}
+	frames := []quicFrame{{kind: frameCrypto, offset: 0, data: ch}}
+
+	// SplitCryptoFrame: kMinAddedCryptoFrames=2, kMaxAddedCryptoFrames=10.
+	maxOverhead := cryptoFrameOverhead(uint64(len(ch)), len(ch))
+	added, err := randInt(10 + 1 - 2)
+	if err != nil {
+		return nil, err
+	}
+	added += 2
+	for i := 0; i < added; i++ {
+		if budget < maxOverhead {
+			break
+		}
+		idx, err := randInt(len(frames))
 		if err != nil {
 			return nil, err
 		}
-		cutSet[p+1] = struct{}{} // map to 1..len(ch)-1
-	}
-	cuts := make([]int, 0, n+1)
-	cuts = append(cuts, 0)
-	for p := range cutSet {
-		cuts = append(cuts, p)
-	}
-	cuts = append(cuts, len(ch))
-	sortInts(cuts)
-
-	frags := make([]cryptoFragment, n)
-	for i := 0; i < n; i++ {
-		frags[i] = cryptoFragment{offset: uint64(cuts[i]), data: ch[cuts[i]:cuts[i+1]]}
-	}
-	return frags, nil
-}
-
-// randomizedWirePlan builds a per-call out-of-order wire plan over the given
-// offset-ordered fragments, satisfying the invariants by construction:
-//
-//	I1 — the first CRYPTO frame on the wire has offset≠0;
-//	I2 — the offset-0 fragment is not first;
-//	I3 — `pings` PING frames and PADDING runs are interleaved between CRYPTO
-//	     frames, and exactly one PADDING run is flex (absorbs the slack);
-//	I4 — every fragment appears exactly once (a permutation), so the offsets
-//	     reassemble contiguously (guaranteed by planFragmentsN).
-//
-// The CRYPTO order is a random permutation, repaired so fragment 0 is not first.
-// PING and PADDING entries are then woven into the gaps between CRYPTO frames at
-// random positions, with one PADDING marked flex.
-func randomizedWirePlan(frags []cryptoFragment, pings int) ([]planEntry, error) {
-	n := len(frags)
-	if n < 2 {
-		return nil, E.New("amneziawg: need ≥2 CRYPTO fragments for a wire plan")
-	}
-	if pings < 1 {
-		pings = 1
+		if frames[idx].kind != frameCrypto || len(frames[idx].data) <= 1 {
+			continue
+		}
+		f := frames[idx]
+		oldOverhead := cryptoFrameOverhead(f.offset, len(f.data))
+		firstLen, err := randInt(len(f.data) - 1)
+		if err != nil {
+			return nil, err
+		}
+		firstLen++ // 1..len-1
+		second := quicFrame{kind: frameCrypto, offset: f.offset + uint64(firstLen), data: f.data[firstLen:]}
+		frames[idx].data = f.data[:firstLen]
+		frames = append(frames, second)
+		budget -= cryptoFrameOverhead(second.offset, len(second.data))
+		budget -= cryptoFrameOverhead(frames[idx].offset, len(frames[idx].data))
+		budget += oldOverhead
 	}
 
-	// Random permutation of fragment indices (Fisher–Yates with crypto/rand).
-	order := make([]int, n)
-	for i := range order {
-		order[i] = i
+	// AddPingFrames: kMinAddedPingFrames=2, kMaxAddedPingFrames=10, capped by budget.
+	if budget > 0 {
+		pings, err := randInt(10 + 1 - 2)
+		if err != nil {
+			return nil, err
+		}
+		pings += 2
+		if pings > budget {
+			pings = budget
+		}
+		for i := 0; i < pings; i++ {
+			frames = append(frames, quicFrame{kind: framePing})
+		}
+		budget -= pings
 	}
-	for i := n - 1; i > 0; i-- {
+
+	// SpreadPadding: before each frame, a uniform share of what is left.
+	for i := 0; i < len(frames); i++ {
+		n, err := randInt(budget + 1)
+		if err != nil {
+			return nil, err
+		}
+		if n <= 0 {
+			continue
+		}
+		frames = append(frames[:i], append([]quicFrame{{kind: framePadding, pad: n}}, frames[i:]...)...)
+		i++ // skip over the PADDING frame just inserted
+		budget -= n
+	}
+	if budget > 0 {
+		frames = append(frames, quicFrame{kind: framePadding, pad: budget})
+	}
+
+	// ReorderFrames: Fisher–Yates over the whole list (no ACK frames here).
+	for i := len(frames) - 1; i > 0; i-- {
 		j, err := randInt(i + 1)
 		if err != nil {
 			return nil, err
 		}
-		order[i], order[j] = order[j], order[i]
+		frames[i], frames[j] = frames[j], frames[i]
 	}
-	// I1+I2: ensure the offset-0 fragment (index 0) is not first on the wire.
-	if order[0] == 0 {
-		// swap it with the second slot; n≥2 so this slot exists and is ≠ index 0.
-		order[0], order[1] = order[1], order[0]
-	}
+	return frames, nil
+}
 
-	// Build CRYPTO entries in the permuted order.
-	cryptoEntries := make([]planEntry, n)
-	for i, idx := range order {
-		cryptoEntries[i] = planEntry{kind: frameCrypto, cryptoIdx: idx}
-	}
+// quicProfile is the Initial header shape of one client stack, calibrated on
+// captures: Chrome 133/147 (quiche) and Firefox 149 (neqo).
+type quicProfile struct {
+	chaos    bool // QuicChaosProtector frame layout; otherwise one CRYPTO frame
+	scidLen  int  // Source Connection ID length: Chrome 0, Firefox 3
+	pnLen    int  // packet number length: Chrome 1, Firefox 2
+	totalLen int  // datagram size
+	// trailing: size the QUIC packet to its frames and zero-fill the datagram
+	// after it (neqo); otherwise PADDING frames fill the packet to totalLen.
+	trailing bool
+}
 
-	// Filler entries: `pings` PINGs + a few PADDING runs (one flex). We use
-	// (pings + 2) PADDING runs so there is always padding both before the flex
-	// and around the PINGs; the flex run is randomly placed among them.
-	padRuns := pings + 2
-	flexPick, err := randInt(padRuns)
-	if err != nil {
-		return nil, err
+func quicProfileFor(browser string) quicProfile {
+	switch browser {
+	case masqueBrowserChrome, masqueBrowserChromeFull:
+		return quicProfile{chaos: true, scidLen: 0, pnLen: 1, totalLen: quicInitialTotalLen}
+	case masqueBrowserFirefox:
+		return quicProfile{chaos: false, scidLen: 3, pnLen: 2, totalLen: quicFirefoxTotalLen, trailing: true}
+	default:
+		return quicProfile{chaos: false, scidLen: 0, pnLen: 1, totalLen: quicInitialTotalLen}
 	}
-	fillers := make([]planEntry, 0, pings+padRuns)
-	for i := 0; i < pings; i++ {
-		fillers = append(fillers, planEntry{kind: framePing})
+}
+
+// initialPacketNumber is the first packet number: quiche (Chrome) numbers
+// packets from 1; neqo (Firefox) starts at a random value (788 in the Firefox
+// 149 capture); quic-go and the generic profile from 0.
+func initialPacketNumber(prof quicProfile, browser string) (uint64, error) {
+	switch browser {
+	case masqueBrowserChrome, masqueBrowserChromeFull:
+		return 1, nil
+	case masqueBrowserFirefox:
+		n, err := randInt(1024)
+		return uint64(n), err
+	default:
+		return 0, nil
 	}
-	for i := 0; i < padRuns; i++ {
-		e := planEntry{kind: framePadding}
-		if i == flexPick {
-			e.padFlex = true
-		} else {
-			// small fixed run; the flex run absorbs the bulk to hit targetLen.
-			sz, err := randInt(48)
-			if err != nil {
-				return nil, err
+}
+
+// initialFrames picks the layout for the profile.
+func initialFrames(ch []byte, prof quicProfile, payloadLen int) ([]quicFrame, error) {
+	if prof.chaos {
+		return chaosInitialFrames(ch, payloadLen)
+	}
+	return plainInitialFrames(ch, payloadLen)
+}
+
+// serializeFrames writes the frames in order; the result must be exactly payloadLen.
+func serializeFrames(frames []quicFrame, payloadLen int) ([]byte, error) {
+	out := make([]byte, 0, payloadLen)
+	for _, f := range frames {
+		switch f.kind {
+		case frameCrypto:
+			out = appendCryptoFrame(out, cryptoFragment{offset: f.offset, data: f.data})
+		case framePing:
+			out = append(out, 0x01)
+		case framePadding:
+			for i := 0; i < f.pad; i++ {
+				out = append(out, 0x00)
 			}
-			e.padLen = 8 + sz // 8..55 bytes
 		}
-		fillers = append(fillers, e)
 	}
+	if len(out) != payloadLen {
+		return nil, E.New("amneziawg: QUIC Initial payload did not land on the length field")
+	}
+	return out, nil
+}
 
-	// Weave: place CRYPTO frames in order, inserting fillers at random gaps. We
-	// must keep CRYPTO relative order (it carries I1/I2); fillers go between them.
-	// Build a sequence of n "slots after each CRYPTO" plus one leading slot, and
-	// drop each filler into a random slot — but never before the first CRYPTO
-	// (a leading PADDING/PING is fine for realism, but the FIRST frame must be the
-	// offset≠0 CRYPTO for I1). So filler slots are the n gaps AFTER crypto[0..n-1].
-	plan := make([]planEntry, 0, n+len(fillers))
-	gaps := make([][]planEntry, n) // fillers to emit AFTER cryptoEntries[i]
-	for _, f := range fillers {
-		slot, err := randInt(n) // 0..n-1 → after crypto[slot]
-		if err != nil {
-			return nil, err
-		}
-		gaps[slot] = append(gaps[slot], f)
-	}
-	for i, c := range cryptoEntries {
-		plan = append(plan, c)
-		plan = append(plan, gaps[i]...)
-	}
-	return plan, nil
+// appendCryptoFrame writes a CRYPTO frame: 0x06 ‖ varint(offset) ‖ varint(len) ‖ data.
+func appendCryptoFrame(dst []byte, f cryptoFragment) []byte {
+	dst = append(dst, 0x06)
+	dst = appendQUICVarint(dst, f.offset)
+	dst = appendQUICVarint(dst, uint64(len(f.data)))
+	return append(dst, f.data...)
 }
 
 // randInt returns a uniform random int in [0, n) using crypto/rand. n must be ≥1.
@@ -302,90 +338,6 @@ func randInt(n int) (int, error) {
 		return 0, err
 	}
 	return int(v.Int64()), nil
-}
-
-// sortInts is a tiny ascending insertion sort (slices are ≤ a dozen elements).
-func sortInts(a []int) {
-	for i := 1; i < len(a); i++ {
-		for j := i; j > 0 && a[j-1] > a[j]; j-- {
-			a[j-1], a[j] = a[j], a[j-1]
-		}
-	}
-}
-
-// appendCryptoFrame writes a CRYPTO frame: 0x06 ‖ varint(offset) ‖ varint(len) ‖ data.
-func appendCryptoFrame(dst []byte, f cryptoFragment) []byte {
-	dst = append(dst, 0x06)
-	dst = appendQUICVarint(dst, f.offset)
-	dst = appendQUICVarint(dst, uint64(len(f.data)))
-	return append(dst, f.data...)
-}
-
-// planFixedLen returns the byte length the plan contributes EXCLUDING the single
-// flex PADDING run, plus a bool for whether a flex entry exists. Used to size the
-// flex run so the whole payload lands exactly on targetLen.
-func planFixedLen(frags []cryptoFragment, plan []planEntry) (int, bool, error) {
-	total := 0
-	flex := false
-	for _, e := range plan {
-		switch e.kind {
-		case frameCrypto:
-			if e.cryptoIdx < 0 || e.cryptoIdx >= len(frags) {
-				return 0, false, E.New("amneziawg: bad crypto fragment index in wire plan")
-			}
-			f := frags[e.cryptoIdx]
-			total += 1 + varintLen(f.offset) + varintLen(uint64(len(f.data))) + len(f.data)
-		case framePing:
-			total++
-		case framePadding:
-			if e.padFlex {
-				flex = true
-				continue
-			}
-			total += e.padLen
-		}
-	}
-	return total, flex, nil
-}
-
-// buildInitialPayload emits the frames in wire order per the plan, sizing the
-// flex PADDING run so the payload is exactly targetLen. The plan's order is what
-// produces the out-of-order CRYPTO layout (I1–I3); planFragments guarantees the
-// offsets reassemble contiguously (I4).
-func buildInitialPayload(frags []cryptoFragment, plan []planEntry, targetLen int) ([]byte, error) {
-	fixed, hasFlex, err := planFixedLen(frags, plan)
-	if err != nil {
-		return nil, err
-	}
-	if !hasFlex {
-		return nil, E.New("amneziawg: wire plan has no flex PADDING run to absorb slack")
-	}
-	flexLen := targetLen - fixed
-	if flexLen < 0 {
-		return nil, E.New("amneziawg: QUIC Initial frames overflow the length field (ClientHello too large)")
-	}
-
-	out := make([]byte, 0, targetLen)
-	for _, e := range plan {
-		switch e.kind {
-		case frameCrypto:
-			out = appendCryptoFrame(out, frags[e.cryptoIdx])
-		case framePing:
-			out = append(out, 0x01)
-		case framePadding:
-			n := e.padLen
-			if e.padFlex {
-				n = flexLen
-			}
-			for i := 0; i < n; i++ {
-				out = append(out, 0x00)
-			}
-		}
-	}
-	if len(out) != targetLen {
-		return nil, E.New("amneziawg: QUIC Initial payload did not land on the length field")
-	}
-	return out, nil
 }
 
 // varintLen returns how many bytes appendQUICVarint will emit for v.
@@ -424,10 +376,10 @@ func deriveInitialKeys(dcid []byte) (key, iv, hp []byte) {
 // full wire packet: protected header ‖ ciphertext (incl. 16-byte tag).
 //
 // Header protection per RFC 9001 §5.4: sample the ciphertext at offset 4 from
-// the start of the packet number field (so for pn_len=1, ct[3:19]), AES-ECB it
-// with hp, then XOR the low 4 bits of the first byte with mask[0] and each
-// packet-number byte with mask[1+i].
-func encryptInitial(header, payload, key, iv, hp []byte, pnOffset int, pn uint64) ([]byte, error) {
+// the start of the packet number field, AES-ECB it with hp, then XOR the low 4
+// bits of the first byte with mask[0] and each of the pnLen packet-number bytes
+// with mask[1+i].
+func encryptInitial(header, payload, key, iv, hp []byte, pnOffset, pnLen int, pn uint64) ([]byte, error) {
 	cipher := quicAEADAESGCMTLS13(key, iv)
 	// nonce is 8 bytes (the sequence number); qtls XORs it onto iv internally.
 	nonce := make([]byte, cipher.NonceSize())
@@ -450,17 +402,18 @@ func encryptInitial(header, payload, key, iv, hp []byte, pnOffset int, pn uint64
 	mask := make([]byte, aes.BlockSize)
 	block.Encrypt(mask, packet[sampleOffset:sampleOffset+aes.BlockSize])
 	packet[0] ^= mask[0] & 0x0f // long header: protect low 4 bits of first byte
-	for i := 0; i < quicPacketNumberLen; i++ {
+	for i := 0; i < pnLen; i++ {
 		packet[pnOffset+i] ^= mask[1+i]
 	}
 	return packet, nil
 }
 
 // buildInitialPacket assembles a complete QUIC v1 Initial datagram carrying the
-// fragmented ClientHello for sni, per the given params. Fresh DCID, TLS random,
-// ephemeral x25519 key, random cut points and a random wire order are generated
-// per call, so every invocation yields a unique ciphertext AND a unique
-// fragment layout — no cross-user signature even at fixed params.
+// ClientHello for sni, per the given params and the browser's profile. Fresh
+// DCID/SCID, TLS random, ephemeral x25519 key and (for chrome) a fresh chaos
+// layout are generated per call, so every invocation yields a unique
+// ciphertext and frame layout — the caller is expected to invoke it per
+// handshake (see awgDecoyFunc).
 func buildInitialPacket(sni, browser string, p quicGenParams) ([]byte, error) {
 	dcid := make([]byte, quicDCIDLen)
 	if _, err := rand.Read(dcid); err != nil {
@@ -477,66 +430,86 @@ func buildInitialPacket(sni, browser string, p quicGenParams) ([]byte, error) {
 		return nil, err
 	}
 
-	clientHello, err := buildClientHello(sni, tlsRandom, ecKey.PublicKey().Bytes(), browser)
+	prof := quicProfileFor(browser)
+	scid := make([]byte, prof.scidLen)
+	if _, err := rand.Read(scid); err != nil {
+		return nil, err
+	}
+	clientHello, err := buildClientHello(sni, tlsRandom, ecKey.PublicKey().Bytes(), browser, scid)
 	if err != nil {
 		return nil, err
 	}
 
-	// Random per-call cut points (I4 preserved) and out-of-order wire plan
-	// (I1–I3 preserved by construction).
-	frags, err := planFragmentsN(clientHello, p.fragments)
-	if err != nil {
-		return nil, err
-	}
-	plan, err := randomizedWirePlan(frags, p.pings)
-	if err != nil {
-		return nil, err
-	}
-
-	// Pick the datagram size from the configured range (a knob: varying the size
-	// between packets removes the fixed-1250 tell). pn_len is fixed at 1.
+	// Pick the datagram size: the profile's own, unless the knobs raise it.
 	totalLen, err := pickTotalLen(p)
 	if err != nil {
 		return nil, err
 	}
+	if prof.totalLen > totalLen {
+		totalLen = prof.totalLen
+	}
 
-	// Header length depends on the DCID length and the length-field varint width.
-	// Compute the header size, then the length field = pn_len + payload + tag, and
-	// the payload region = totalLen - headerLen - tag. The length-field varint is
-	// 2 bytes for any value in [64, 16383], which covers all our sizes (≥1200).
-	const headerFixed = 1 + 4 + 1 + 1 + 1 // first + version + dcidLen + scidLen(0) + tokenLen(0)
+	// Header length depends on the connection-ID lengths and the length-field
+	// varint width (2 bytes for any value in [64, 16383], which covers all our
+	// sizes). The length field = pn_len + payload + tag.
+	const headerFixed = 1 + 4 + 1 + 1 + 1 // first + version + dcidLen + scidLen + tokenLen(0)
 	const lenFieldVarintWidth = 2
-	headerLen := headerFixed + quicDCIDLen + lenFieldVarintWidth + quicPacketNumberLen
+	headerLen := headerFixed + quicDCIDLen + prof.scidLen + lenFieldVarintWidth + prof.pnLen
+
+	// A ClientHello that does not fit the picked size (chrome-full with the PQ
+	// key_share) grows the Initial instead of spilling into a second packet: the
+	// whole ClientHello stays in one QUIC packet and the IP layer fragments it.
+	if need := headerLen + cryptoFrameOverhead(0, len(clientHello)) + len(clientHello) + quicInitialOversizeSlack + quicAEADTagLen; need > totalLen {
+		totalLen = need
+	}
 	payloadLen := totalLen - headerLen - quicAEADTagLen
-	lengthField := quicPacketNumberLen + payloadLen + quicAEADTagLen
+	if prof.trailing {
+		// neqo sizes the packet to its frames and zero-fills the datagram after it.
+		payloadLen = cryptoFrameOverhead(0, len(clientHello)) + len(clientHello)
+	}
+	lengthField := prof.pnLen + payloadLen + quicAEADTagLen
 	if lengthField < 1<<6 || lengthField >= 1<<14 {
 		return nil, E.New("amneziawg: QUIC Initial length field outside 2-byte varint range")
 	}
 
-	payload, err := buildInitialPayload(frags, plan, payloadLen)
+	frames, err := initialFrames(clientHello, prof, payloadLen)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := serializeFrames(frames, payloadLen)
 	if err != nil {
 		return nil, err
 	}
 
 	// Unprotected long header: first byte 0xC0|(pn_len-1), version 1, DCID,
-	// SCID len 0, token len 0, length varint, packet number.
+	// SCID, token len 0, length varint, packet number.
+	pn, err := initialPacketNumber(prof, browser)
+	if err != nil {
+		return nil, err
+	}
 	header := make([]byte, 0, headerLen)
-	header = append(header, 0xC0|byte(quicPacketNumberLen-1))
+	header = append(header, 0xC0|byte(prof.pnLen-1))
 	header = binary.BigEndian.AppendUint32(header, quicVersion1)
 	header = append(header, byte(quicDCIDLen))
 	header = append(header, dcid...)
-	header = append(header, 0x00) // SCID length 0
+	header = append(header, byte(prof.scidLen))
+	header = append(header, scid...)
 	header = append(header, 0x00) // token length 0 (varint, single byte)
 	header = appendQUICVarint(header, uint64(lengthField))
 	pnOffset := len(header)
-	for i := 0; i < quicPacketNumberLen; i++ {
-		header = append(header, 0x00) // packet number 0
+	for i := 0; i < prof.pnLen; i++ {
+		header = append(header, byte(pn>>(8*(prof.pnLen-1-i))))
 	}
 
 	key, iv, hp := deriveInitialKeys(dcid)
-	packet, err := encryptInitial(header, payload, key, iv, hp, pnOffset, 0)
+	packet, err := encryptInitial(header, payload, key, iv, hp, pnOffset, prof.pnLen, pn)
 	if err != nil {
 		return nil, err
+	}
+	if prof.trailing {
+		for len(packet) < totalLen {
+			packet = append(packet, 0x00)
+		}
 	}
 	if len(packet) != totalLen {
 		return nil, E.New("amneziawg: QUIC Initial assembled to unexpected size")
@@ -544,12 +517,11 @@ func buildInitialPacket(sni, browser string, p quicGenParams) ([]byte, error) {
 	return packet, nil
 }
 
-// pickTotalLen returns a datagram size in [totalLenMin, totalLenMax], clamped to
-// the RFC 9000 §14.1 minimum (1200). When min==max it is deterministic.
-func pickTotalLen(p quicGenParams) (int, error) {
-	lo, hi := p.totalLenMin, p.totalLenMax
-	if lo < 1200 {
-		lo = 1200
+// pickRange returns a uniform random int in [lo, hi], with lo clamped to floor
+// and hi raised to lo when the range is inverted. When lo==hi it is deterministic.
+func pickRange(lo, hi, floor int) (int, error) {
+	if lo < floor {
+		lo = floor
 	}
 	if hi < lo {
 		hi = lo
@@ -564,8 +536,14 @@ func pickTotalLen(p quicGenParams) (int, error) {
 	return lo + d, nil
 }
 
-// masqueQUICInitialCPS builds the out-of-order fragmented QUIC Initial decoy and
-// emits it as a single static-bytes CPS tag. Uniqueness (fresh DCID + TLS random
+// pickTotalLen returns a datagram size in [totalLenMin, totalLenMax], clamped to
+// the RFC 9000 §14.1 minimum (1200). When min==max it is deterministic.
+func pickTotalLen(p quicGenParams) (int, error) {
+	return pickRange(p.totalLenMin, p.totalLenMax, 1200)
+}
+
+// masqueQUICInitialCPS builds the QUIC Initial decoy and emits it as a single
+// static-bytes CPS tag. Uniqueness (fresh DCID + TLS random
 // + ephemeral key + random layout per call) is baked into the blob at generation
 // time, so no <r> randomness is needed — and could not be used anyway, since the
 // DCID feeds the key derivation that must happen before encryption.
