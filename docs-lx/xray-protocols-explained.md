@@ -273,7 +273,7 @@ path, not in the core.
 > outbound dials through another outbound. A ClientHello under `detour` goes
 > out whole, as it does on a direct connection, and on a leg with a smaller
 > MTU the connection silently fails to come up. The user has to work out
-> alone that the size of the first packet is the problem, and enable
+> on their own that the size of the first packet is the problem, and enable
 > fragmentation by hand on every node that goes through a tunnel.
 > For REALITY nodes in vanilla this does not help even by hand; see below
 > about [SPEC 088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md).
@@ -287,7 +287,7 @@ overview: [lx-config §9](lx-config.md#9-automatic-clienthello-fragmentation-und
   `record_fragment`, the core enables **`record_fragment`**
   (`applyDetourFragmentDefault` in `common/tls/client.go`). This mode was
   chosen on purpose: it cuts by TLS records without pauses, and each record
-  is certainly smaller than any reasonable MTU. Measured through a broken
+  is always smaller than any reasonable MTU. Measured through a broken
   leg: without fragmentation, failure after 12 s; `fragment`, 0.6 s;
   `record_fragment`, 0.1 s.
 - The default is applied **before** a specific engine sees the options, so
@@ -295,7 +295,7 @@ overview: [lx-config §9](lx-config.md#9-automatic-clienthello-fragmentation-und
   For REALITY this started working only with
   [SPEC 088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md). Before it,
   the REALITY client built the uTLS connection on a bare socket, and
-  fragmentation, explicit included, silently had no effect on it. Upstream
+  fragmentation, even an explicit one, silently had no effect on it. Upstream
   sing-box still works this way.
 - **An explicit value in the config always wins.** `fragment: true` is not
   upgraded to `record_fragment`: if packet-level cutting was chosen, it
@@ -699,8 +699,8 @@ The first generations of XTLS (`xtls-rprx-origin`, `direct`, `splice`) solved
 this radically. Once the inner TLS was established, the outer encryption was
 switched off entirely, and the inner records went over the wire as they
 were. The speed was excellent, but the real lengths of the inner records
-became visible from the outside, and in 2022 this scheme became
-distinguishable. RPRX retired it.
+became visible from the outside, and in 2022 DPI learned to tell the
+scheme apart. RPRX retired it.
 
 ## 3.2 How Vision works
 
@@ -772,8 +772,8 @@ sing-box-lx:
 | (xudp is on by default) | `packet_encoding: "xudp"` | [`packet_encoding`](../docs/configuration/outbound/vless.md#packet_encoding); needed for UDP over VLESS, compatible with Vision |
 | `streamSettings.network: "tcp"` | no `transport` block | Vision without `encryption` lives only on bare TCP, §3.3 |
 
-> ⚠️ The compatibility rule for sing-box `multiplex`: with `flow` it must be
-> off. Vision does not survive multiplexing.
+> ⚠️ Compatibility rule for sing-box `multiplex`: with `flow` set, it must
+> be off. Vision does not survive multiplexing.
 
 > 📖 Normative description: [VLESS outbound in the Project X documentation](https://xtls.github.io/config/outbounds/vless.html).
 
@@ -822,13 +822,13 @@ stream-one
 
 | Mode | When | Cost |
 |---|---|---|
-| `packet-up` | Behind a CDN that buffers request bodies and cannot do a streaming uplink. Passes through the most paths | Each chunk is a separate request with headers; higher latency and overhead |
+| `packet-up` | Behind a CDN that buffers request bodies and cannot do a streaming uplink. Gets through the most paths | Each chunk is a separate request with headers; higher latency and overhead |
 | `stream-up` | The middlebox passes streaming bodies | Two long requests per connection |
 | `stream-one` | Directly to the server, usually under REALITY | Needs HTTP/2 and no buffering |
 | `auto` | Default: with REALITY → `stream-one`, otherwise → `packet-up` | n/a |
 
 The server joins the directions by the session identifier (§4.4). What this
-gives beyond passing through middleboxes: the directions can be sent **along
+gives beyond getting through: the directions can be sent **along
 different paths**. In Xray this is done by `downloadSettings`. Our core does
 **not** have this field: the downlink always goes where the uplink goes.
 
@@ -881,7 +881,7 @@ range, and each connection gets its own random limit.
 The reuse limit in our core is counted **in requests, not in streams**.
 In `packet-up` one stream produces dozens of POSTs, and counting by streams
 would underestimate connection wear many times over ([SPEC 059](../SPECS/TASKS/059-XHTTP_XMUX/SPEC.md)). After a series of failures the pool
-opens its circuit (breaker, [SPEC 076](../SPECS/TASKS/076-XHTTP_XMUX_BREAKER/SPEC.md)), so as not to hammer a dead server
+trips its breaker ( [SPEC 076](../SPECS/TASKS/076-XHTTP_XMUX_BREAKER/SPEC.md)), so as not to hammer a dead server
 with hundreds of requests.
 
 ## 4.6 Pitfalls where the connection stays silent
@@ -1026,7 +1026,7 @@ position is read from actions.
   was **deleted** by the maintainer (the API answers `410 This issue was deleted`).
   The fork's [CONSTITUTION](../SPECS/CONSTITUTION.md) and
   [SPEC 002](../SPECS/TASKS/002-XHTTP_CLIENT_TRANSPORT/SPEC_v1.md) refer to it as the refusal.
-- Ready implementations were brought twice, and both were **closed without
+- Ready implementations were submitted twice, and both were **closed without
   review**. [PR #3879](https://github.com/SagerNet/sing-box/pull/3879) (kindestone,
   XHTTP + KCP + mieru, 92 files) was closed two minutes after it was opened,
   on 2026-03-09. [PR #4326](https://github.com/SagerNet/sing-box/pull/4326)
@@ -1111,7 +1111,7 @@ depends neither on TLS nor on REALITY. Such nodes often come with
 `security=none`, because they do not need outer TLS: the encryption is
 already inside.
 
-> 🧭 **Why, if there is TLS.** A middlebox can strip TLS: a CDN terminates
+> 🧭 **Why, when there is TLS already.** A middlebox can strip TLS: a CDN terminates
 > it on its side and sees the payload in the clear. The inner layer passes
 > through the middlebox untouched and reaches the server.
 
@@ -1320,7 +1320,7 @@ Typical stacks, from simple to cautious:
    Against active server probing and TLS-in-TLS. The hybrid key share is
    already in the preset.
 2. **Server IP not directly reachable.** VLESS + XHTTP `packet-up` + TLS through a CDN.
-   Without Vision (not possible), with `xmux`. If the server requires
+   Without Vision (it cannot be used there), with `xmux`. If the server requires
    `encryption`, it is added, and the outer TLS can then be dropped.
 3. **Maximum.** VLESS + `encryption` + Vision + XHTTP + REALITY.
    Post-quantum protection of the payload and of the outer handshake. Vision
@@ -1335,7 +1335,7 @@ Typical stacks, from simple to cautious:
 
 If Xray defines the protocols and the fork is always catching up with it, the
 natural question is: why not take Xray as a whole? The answer is that Xray
-and sing-box are things of different classes.
+and sing-box are different classes of software.
 
 **Xray is a protocol core.** Its strength is VLESS, REALITY, Vision, XHTTP
 and everything described in this document. Around them there is a minimum:
@@ -1358,8 +1358,8 @@ with `VpnService`, the lifecycle and statistics themselves.
   with `VpnService`.
 
 For a client that needs VLESS subscriptions, WireGuard and AmneziaWG, WARP
-and Tailscale at the same time, in one process and one TUN, Xray does not work
-as a base in principle: half of this would have to be written from scratch.
+and Tailscale at the same time, in one process and one TUN, Xray cannot serve as
+the base at all: half of this would have to be written from scratch.
 
 **The delta is asymmetric.** The client halves of the Xray protocols are a
 transport (`transport/v2rayxhttp/`), an encryption layer
@@ -1396,7 +1396,7 @@ submodule. For this document that is `utls-lx` (§1.2).
 | **REALITY: hybrid key share** | Strips `X25519MLKEM768` from the ClientHello (a workaround for old uTLS, [SagerNet/sing-box#4520](https://github.com/SagerNet/sing-box/issues/4520)). Against Xray ≥ v26.9.8 every node ends up on the cover site | Sends what the preset carries; `AuthKey` from the key the server will choose | §2.6, [083](../SPECS/TASKS/083-REALITY_MLKEM_KEYSHARE/SPEC.md) |
 | **REALITY: client version** | An outdated constant; a server with `minClientVer` rejects it | Exactly the required minimum | [053](../SPECS/TASKS/053-REALITY_MIN_CLIENT_VER/SPEC.md) |
 | **REALITY: `key_share`** | No such field | `classical` / `hybrid` per node, for networks that lose a two-segment ClientHello | §1.3, [089](../SPECS/TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md) |
-| **REALITY: fragmentation** | `fragment` / `record_fragment` skip REALITY entirely | Apply to REALITY too; under `detour`, `record_fragment` turns on by itself | §1.4, [088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md), [060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) |
+| **REALITY: fragmentation** | `fragment` / `record_fragment` leave REALITY untouched | Apply to REALITY too; under `detour`, `record_fragment` turns on by itself | §1.4, [088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md), [060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) |
 | **uTLS fingerprints** | `metacubex/utls`: hybrid share only in `chrome` | Fork `utls-lx`: adds `firefox` (Firefox 148) and `safari` (Safari 26.3) with the hybrid | §1.2, [086](../SPECS/TASKS/086-UTLS_FORK_FIREFOX148/SPEC.md), [087](../SPECS/TASKS/087-UTLS_SAFARI_26_3/SPEC.md) |
 | **Vision** | Present (`sing-vmess`), only over TLS/REALITY on bare TCP | The same, plus over VLESS `encryption` on any transport | §3.3, [105](../SPECS/TASKS/105-VISION_OVER_VLESS_ENCRYPTION/SPEC.md) |
 | **VLESS `encryption`** | None; the field is rejected as unknown, and nodes with it are dead across the whole sing-box ecosystem | The client half of `mlkem768x25519plus`: all wire appearances, `0rtt`/`1rtt`, padding | §5, [012](../SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) |

@@ -16,7 +16,7 @@ vanilla sing-box** and from the reference implementation. Fields, defaults
 and error texts are not listed here. For those, see
 [protocols-transports §2](protocols-transports.md#2-amneziawg-203x-awg2-awg3)
 (parameter reference) and [lx-config §2](lx-config.md#2-amneziawg-203x-awg2-awg3)
-(overview). The current state of the area is the feature spec
+(overview). The current state of the area is in the feature spec
 [003-AWG](../SPECS/FEATURES/003-AWG/FEATURE.md).
 
 Audience: a core or client developer who opens
@@ -34,7 +34,7 @@ Callouts in the text are marked by type:
 ## Table of contents
 
 - [§0 The whole picture: three layers on top of WireGuard](#0-the-whole-picture-three-layers-on-top-of-wireguard)
-- [§1 Why WireGuard is recognizable](#1-why-wireguard-is-recognizable)
+- [§1 Why WireGuard is recognisable](#1-why-wireguard-is-recognisable)
 - [§2 AWG 1.x: junk, padding, magic headers](#2-awg-1x-junk-padding-magic-headers)
   - [2.1 Junk packets before the handshake](#21-junk-packets-before-the-handshake)
   - [2.2 Padding S1–S4](#22-padding-s1s4)
@@ -68,7 +68,7 @@ Callouts in the text are marked by type:
 # 0. The whole picture: three layers on top of WireGuard
 
 WireGuard is a fast and simple UDP tunnel with exemplary cryptography. Its
-only weakness against a middlebox is **recognizability**. The protocol was
+only weakness against a middlebox is **recognisability**. The protocol was
 never designed to be covert, and a classifier identifies it by the very
 first packet (§1). AmneziaWG adds obfuscation on top of it in three layers.
 Each layer includes the previous one:
@@ -77,7 +77,7 @@ Each layer includes the previous one:
 |---|---|---|
 | **AWG 1.x** | Junk packets before the handshake, padding before messages, substituted message types | `jc` `jmin` `jmax`, `s1` `s2`, single `h1`–`h4` |
 | **AWG 2.0** | Decoy packets that imitate another protocol; padding of transport packets; message types as ranges | `i1`–`i5`, `s3` `s4`, `h1`–`h4` as `"min-max"`, sugar `id` `ip` `ib` |
-| **AWG 3.x** | Cipher on the header of every packet, content padding, random trailers, randomized timings | `header_protection_key`, `content_padding_addition`, `random_trailers`, `disable_cookies`, ranged timings |
+| **AWG 3.x** | Cipher on the header of every packet, content padding, random trailers, randomised timings | `header_protection_key`, `content_padding_addition`, `random_trailers`, `disable_cookies`, ranged timings |
 
 No layer touches the WireGuard cryptography (Noise IK, Curve25519,
 ChaCha20-Poly1305). AWG does not make the tunnel "stronger". It makes it
@@ -93,26 +93,26 @@ endpoint wireguard ── regular fields: keys, address, mtu, peers
    └── AWG fields at the endpoint root
         │
         ▼
-wireguard-go fork device ── obfuscation on send, removal on receive
+wireguard-go fork device ── obfuscation on send, stripping on receive
         │
         ▼
 UDP → network  (or another outbound via detour)
 ```
 
-> 🧭 **TL;DR:** AWG is WireGuard with no recognizable trait on the wire:
-> no message type, no size, no rhythm. Inside it is the same WireGuard.
+> 🧭 **TL;DR:** AWG is WireGuard with no recognisable trait on the wire:
+> no telltale message type, size or rhythm. Inside it is the same WireGuard.
 > Client and server must agree **byte for byte** on every obfuscation
 > parameter: these are not negotiated, they are configured.
 
 ---
 
-# 1. Why WireGuard is recognizable
+# 1. Why WireGuard is recognisable
 
 A classifier does not need to break the cipher. The shape is enough:
 
 - **The first byte** of every packet is the message type: `1` for handshake
   initiation, `2` for response, `3` for cookie reply, `4` for transport.
-  Three zero bytes follow. Four words for the whole protocol.
+  Three zero bytes follow. Four type words for the whole protocol.
 - **Handshake sizes** are fixed: initiation is 148 bytes, response is 92,
   cookie is 64. A pair of UDP datagrams 148 → 92 to a new address is a
   signature by itself.
@@ -165,8 +165,8 @@ load time.
 Padding and header are read from the same buffer: `s1` shifts the position
 of the magic word in the packet. This gives a whole class of edge cases
 caught in the fork. With small `s1`–`s4` (0–3 bytes) the magic word lands
-on positions that other paths use for service bytes, and it is easy to
-overwrite ([SPEC 026](../SPECS/TASKS/026-AWG_MAGIC_VS_RESERVED_CLEAR/SPEC.md)).
+on positions that other paths use for service bytes, and is easily
+overwritten ([SPEC 026](../SPECS/TASKS/026-AWG_MAGIC_VS_RESERVED_CLEAR/SPEC.md)).
 `s4` shifted the packet right in a buffer allocated without room for
 padding, and the first data packet crashed the process
 ([SPEC 025](../SPECS/TASKS/025-AWG_TRANSPORT_PADDING_OVERRUN/SPEC.md)).
@@ -199,8 +199,8 @@ random. It is **described** by a mini-language string:
 This is how a snapshot of a real protocol goes into `i1`: a STUN Binding
 Request, a QUIC Initial, a DNS query. The first meaningful packet of the
 flow then looks like someone else's legitimate traffic. The strings are
-case-sensitive, and tag order matters. The server does not send them from
-its config: it repeats what came from the client.
+case-sensitive, and tag order matters. Whichever side initiates the
+handshake sends them; both ends keep the same strings in their config.
 
 ## 3.2 Order on the wire
 
@@ -219,9 +219,9 @@ first packet the classifier sees.
 
 ## 3.3 Masquerade sugar id / ip / ib
 
-Writing a QUIC Initial by hand with `<b 0x…>` tags is impractical. And a
-snapshot of one packet is the same for all users, so it becomes a
-signature itself. So the fork, following WireSock Secure Connect, accepts a
+Writing a QUIC Initial by hand with `<b 0x…>` tags is impractical, and a
+snapshot of one packet is the same for every user, so it becomes a
+signature of its own. So the fork, following WireSock Secure Connect, accepts a
 declaration: `ip` is the decoy protocol (`quic`, `dns`, `stun`, `sip`),
 `id` is the domain, `ib` is the client profile (`chrome`, `firefox`,
 `curl`). The fork builds `i1` itself, with a random layout on each start
@@ -248,7 +248,7 @@ classifier expects DNS, STUN and SIP at their usual addresses, and a query
 to a datacenter IP on a non-standard port is suspicious in itself. QUIC to
 any address and port is normal, because that is how HTTP/3 behaves.
 
-Hence the parameter reference recommends, for Cloudflare WARP: `ip=quic`,
+That is why the parameter reference recommends, for Cloudflare WARP: `ip=quic`,
 `id=<popular domain>`, `ib=chrome`. The other profiles remain for
 middleboxes that check only that the shape is correct.
 
@@ -291,20 +291,20 @@ The five WireGuard timings (`rekey_after_time` 120, `rekey_timeout` 5,
 18) and the peer's `persistent_keepalive_interval` are set as ranges and
 re-drawn each time the timer is armed. The rhythm stops being a constant.
 `disable_cookies` removes the cookie exchange under load: it has a
-recognizable shape, and the client does not need it.
+recognisable shape, and the client does not need it.
 
 ## 4.4 What must match the server
 
 AmneziaWG distinguishes **server** parameters (the value is the same on
 both ends, otherwise there is no handshake) from **client** parameters
-(local behavior, the server does not care). In AWG3 only
+(local behaviour, the server does not care). In AWG3 only
 `header_protection_key` is a server parameter. The rest are client
 parameters. Copying them from the server export is still worthwhile: they
 are chosen together, and a meaningless pair such as `rekey_after_time`
 above `reject_after_time` makes the tunnel flap.
 
 > 🧭 **TL;DR:** AWG1 hides sizes and types, AWG2 adds a decoy and ranges,
-> AWG3 encrypts everything that was still readable and randomizes timing.
+> AWG3 encrypts everything that was still readable and randomises timing.
 > A byte-for-byte match with the server is required for `jc`/`jmin`/`jmax`,
 > `s1`–`s4`, `h1`–`h4`, `i1`–`i5` and `header_protection_key`.
 
@@ -349,7 +349,7 @@ headroom for PPPoE, mobile networks and nested tunnels.
   an oversized datagram is IP-fragmented, not dropped. This is what lets
   nested tunnels work: AWG via `detour` over another WG or MASQUE, where
   the outer datagram is routinely oversized. An explicit
-  `"udp_fragment": false` restores the old behavior. A correct `mtu` is
+  `"udp_fragment": false` restores the old behaviour. A correct `mtu` is
   still preferable: fragmentation is a safety net.
 - In a [`chain`](../SPECS/FEATURES/015-CHAIN/FEATURE.md) the MTU of the
   tunnel links is lowered automatically.
@@ -380,7 +380,7 @@ three-way graft: the `amneziawg-go` obfuscation is ported on top of
 `sagernet/wireguard-go`, which sing-box is built on. The whole change is
 confined to `device/`: ten new files (magic header generator, CPS chains,
 junk, codecs) and six modified ones (AWG state in `device.go`, obfuscation
-insertion in `send.go`, removal in `receive.go`, UAPI). `conn/` and `tun/`
+insertion in `send.go`, stripping in `receive.go`, UAPI). `conn/` and `tun/`
 are taken from upstream unchanged.
 
 sing-box only **passes the parameters through**: fields at the endpoint
@@ -452,11 +452,10 @@ injection from the gVisor stack (`InputPacket`), a priority message,
 keepalive. The reference implementation obfuscates the main path. In the
 fork the AWG3 wrapper applies to all of them, including the first batch
 after startup that was read before the config was applied. That batch is
-re-laid out under the current padding instead of leaving in the old
+re-laid out under the current padding instead of going out in the old
 layout.
 
-> 🔀 Differences from the reference amneziawg-go that its client does not
-> have: combination validation at load time (§6.2), classification by
+> 🔀 What the fork has that the reference amneziawg-go client does not: combination validation at load time (§6.2), classification by
 > receiver index (§6.3), obfuscation on all send paths (§6.4), `id`/`ip`/`ib`
 > sugar with a fragmented QUIC Initial (§3.3), MTU default and check (§5).
 > Everything else is byte-for-byte parity: 16 AWG2 parameters and 9 AWG3
@@ -467,9 +466,9 @@ layout.
 # 7. Example: awg.conf and sing-box-lx
 
 An Amnezia export (a `.conf` from the app, or `awg` → `last_config` →
-`config` inside `vpn://`). On the left is an AWG 3.1 server as served by
-the `amnezia-awg2` container with `protocol_version: "3.1"`. On the right is
-the same node for our core. All keys are placeholders.
+`config` inside `vpn://`). First, an AWG 3.1 server as served by the
+`amnezia-awg2` container with `protocol_version: "3.1"`. Then the same node
+for our core. All keys are placeholders.
 
 `awg.conf`:
 
@@ -571,8 +570,8 @@ Key mapping:
 | `[Peer] PersistentKeepalive = N` or `N-M` | `peers[].persistent_keepalive_interval`: a number or `"N-M"` | [`persistent_keepalive_interval`](../docs/configuration/endpoint/wireguard.md#peerspersistent_keepalive_interval) |
 | — | `udp_fragment` | §5, [SPEC 028](../SPECS/TASKS/028-NESTED_TUNNEL_UDP_FRAGMENT/SPEC.md) |
 
-> ⚠️ If `awg.conf` omits `MTU` or sets the WireGuard default 1420, lowering
-> it during the transfer is mandatory (§5). Everything else transfers 1:1
+> ⚠️ If `awg.conf` omits `MTU` or sets the WireGuard default 1420, it has to
+> be lowered when porting the config (§5). Everything else ports 1:1
 > without renaming, except for case: `Jc` → `jc`, `H1` → `h1`.
 
 > 📖 Normative description of the parameters:
@@ -618,14 +617,14 @@ back, so the fork is permanent.
   configuration, not negotiation: everything set on the server must be set
   on the client with the same values. Omit `s4` and the handshake passes,
   data does not.
-- **«MTU as in WireGuard, 1420.»** `s4` eats into it on every packet. With
+- **«The MTU is 1420, as in WireGuard.»** `s4` eats into it on every packet. With
   `s4 = 60` the ceiling is 1380, the recommendation is 1280 (§5).
 - **«`h1`–`h4` hide everything that needs hiding.»** In AWG2 the header
   stays low-entropy: the receiver index and the counter are readable. Only
   `header_protection_key` in AWG3 hides them (§4.1).
 - **«The client needs `AdvancedSecurity`.»** It is a server knob for
   parsing incoming connections. It has no effect on what the client sends.
-- **«The `dns` or `stun` profile is safer than `quic`, the packet is more
+- **«The `dns` or `stun` profile is safer than `quic`: the packet is more
   honest.»** Packet quality does not decide; the destination anomaly does
   (§3.4). On a device only `quic` passed.
 - **«Without `with_awg` the AWG fields are simply ignored.»** No: in such a

@@ -562,8 +562,8 @@ ClientHello ──► сервер REALITY
 
 ## 2.8 Пример: Xray и sing-box-lx
 
-Клиентский outbound VLESS + Vision + REALITY на голом TCP. Слева — как его
-пишут для Xray, справа — тот же узел для нашего ядра.
+Клиентский outbound VLESS + Vision + REALITY на голом TCP. Сначала как его
+пишут для Xray, затем тот же узел для нашего ядра.
 
 Xray (`outbounds[]`):
 
