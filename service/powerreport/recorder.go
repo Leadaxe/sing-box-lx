@@ -642,11 +642,11 @@ func (r *Recorder) sampleLocked(now time.Time) *profileRequest {
 			if !found {
 				continue
 			}
-			packets := uint64(counters.inPackets-previousCounters.inPackets) + uint64(counters.outPackets-previousCounters.outPackets)
+			packets := counters.inPackets - previousCounters.inPackets + counters.outPackets - previousCounters.outPackets
 			if packets > 0 {
 				interfacePackets[name] = packets
 			}
-			bytesDelta := uint64(counters.inBytes-previousCounters.inBytes) + uint64(counters.outBytes-previousCounters.outBytes)
+			bytesDelta := counters.inBytes - previousCounters.inBytes + counters.outBytes - previousCounters.outBytes
 			if bytesDelta > 0 {
 				interfaceBytes[name] = bytesDelta
 			}
@@ -726,11 +726,9 @@ func (r *Recorder) updateDeviceStateLocked(now time.Time) {
 	}
 	r.lastDeviceState = state
 	r.deviceStateValid = true
-	r.events = append(r.events, eventRecord{
-		Type:   eventTypeDevice,
-		At:     now.UTC().Format(time.RFC3339),
-		Device: &state,
-	})
+	event := r.newEvent(eventTypeDevice, now)
+	event.Device = &state
+	r.events = append(r.events, event)
 }
 
 func profileRate(energyNanojoules uint64, cpuMS int64, duration time.Duration) float64 {

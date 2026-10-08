@@ -28,7 +28,10 @@ type clone struct {
 	key      cloneKey
 	position int
 	inner    adapter.Outbound
-	info     cloneInfo
+	// scope owns the inner node's lifecycle: it was started through it and
+	// closing it runs the node's cleanups (upstream lifecycle, 2026-10).
+	scope *adapter.Scope
+	info  cloneInfo
 	// configJSON — SPEC 075: effective post-transform options in config-file
 	// form ({type, tag, ...}), snapshotted at creation for GetChainCloneConfig.
 	configJSON string
@@ -88,7 +91,12 @@ func (c *clone) release() {
 func (c *clone) close() error {
 	var err error
 	c.closeOnce.Do(func() {
-		err = common.Close(c.inner)
+		err = c.scope.Close()
+		// A node without the scope lifecycle was never started through the
+		// scope; close it directly, as before the upstream lifecycle change.
+		if _, isLifecycle := c.inner.(adapter.Lifecycle); !isLifecycle {
+			err = E.Errors(err, common.Close(c.inner))
+		}
 	})
 	return err
 }
@@ -223,7 +231,10 @@ func (c *Chain) createClone(position int, leaf adapter.Outbound) (*clone, error)
 	} else {
 		cloneLogger = c.logger
 	}
-	var created adapter.Outbound
+	var (
+		created    adapter.Outbound
+		cloneScope *adapter.Scope
+	)
 	labels := pprof.Labels("lx.chain", c.Tag(), "lx.pos", strconv.Itoa(position), "lx.leaf", leaf.Tag())
 	pprof.Do(c.ctx, labels, func(ctx context.Context) {
 		if built.isEndpoint {
@@ -245,10 +256,16 @@ func (c *Chain) createClone(position int, leaf adapter.Outbound) (*clone, error)
 			err = E.Cause(err, "create ", built.typeName, " clone")
 			return
 		}
+		cloneScope = adapter.NewScope(ctx, cloneLogger)
+		lifecycle, isLifecycle := created.(adapter.Lifecycle)
+		if !isLifecycle {
+			return
+		}
+		name := built.typeName + "[" + leaf.Tag() + "] clone"
 		for _, stage := range adapter.ListStartStages {
-			err = adapter.LegacyStart(created, stage)
+			err = cloneScope.Start(name, lifecycle, stage)
 			if err != nil {
-				common.Close(created)
+				cloneScope.Close()
 				err = E.Cause(err, stage, " clone")
 				return
 			}
@@ -261,6 +278,7 @@ func (c *Chain) createClone(position int, leaf adapter.Outbound) (*clone, error)
 		key:        cloneKey{position: position, leafTag: leaf.Tag()},
 		position:   position,
 		inner:      created,
+		scope:      cloneScope,
 		info:       built.info,
 		configJSON: configJSON,
 		createdAt:  time.Now(),

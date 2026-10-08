@@ -97,6 +97,5 @@ type DNSTransportManager interface {
 	Transport(tag string) (DNSTransport, bool)
 	Default() DNSTransport
 	FakeIP() FakeIPTransport
-	Remove(tag string) error
 	Create(ctx context.Context, logger log.ContextLogger, tag string, outboundType string, options any) error
 }

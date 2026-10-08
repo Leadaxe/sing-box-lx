@@ -34,23 +34,8 @@ func (t *Endpoint) SubscribeTailscaleStatus(ctx context.Context, fn func(*adapte
 				return
 			case <-updateSignal:
 			}
-			status := localBackend.Status()
-			result := convertTailscaleStatus(status)
-			result.KeyAuth = t.keyAuth
-			canShareFiles, taildropTargets := t.taildropTargets()
-			result.CanShareFiles = canShareFiles
-			result.WaitingFileCount = t.taildrop.waitingFileCount()
-			result.ReceivingFileCount = t.taildrop.receivingFileCount()
-			result.UnreadFileCount = t.taildrop.unreadFileCount()
-			result.CertDomains = t.server.CertDomains()
-			if len(taildropTargets) > 0 {
-				for _, group := range result.UserGroups {
-					for _, peer := range group.Peers {
-						peer.CanReceiveFiles = taildropTargets[peer.StableID]
-					}
-				}
-			}
-			fn(result)
+			// lx: SPEC 115 — one collector for the stream and TailscaleStatus().
+			fn(t.collectTailscaleStatus(localBackend))
 		}
 	}()
 	fileSignal := make(chan struct{}, 1)
@@ -104,6 +89,7 @@ func convertTailscaleStatus(status *ipnstate.Status) *adapter.TailscaleEndpointS
 	result := &adapter.TailscaleEndpointStatus{
 		BackendState: status.BackendState,
 		AuthURL:      status.AuthURL,
+		Health:       status.Health, // lx: SPEC 115
 	}
 	if status.CurrentTailnet != nil {
 		result.NetworkName = status.CurrentTailnet.Name
@@ -181,7 +167,7 @@ func convertTailscalePeer(peer *ipnstate.PeerStatus) *adapter.TailscalePeer {
 	if !peer.LastSeen.IsZero() {
 		lastSeen = peer.LastSeen.Unix()
 	}
-	return &adapter.TailscalePeer{
+	result := &adapter.TailscalePeer{
 		StableID:       string(peer.ID),
 		HostName:       peer.HostName,
 		DNSName:        peer.DNSName,
@@ -200,4 +186,6 @@ func convertTailscalePeer(peer *ipnstate.PeerStatus) *adapter.TailscalePeer {
 		KeyExpiry:      keyExpiry,
 		LastSeen:       lastSeen,
 	}
+	fillTailscalePeerPath(result, peer) // lx: SPEC 115
+	return result
 }

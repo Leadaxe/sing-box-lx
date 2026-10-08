@@ -59,7 +59,7 @@ Only inbound connections are affected by this setting, internal connections will
 
 !!! quote "sing-box-lx"
 
-    An `lx` extension (SPEC 019), not present in upstream sing-box.
+    An `lx` extension (SPEC 019, SPEC 116), not present in upstream sing-box.
 
 Load-balancing mode — how a node is chosen per connection:
 
@@ -68,6 +68,12 @@ Load-balancing mode — how a node is chosen per connection:
 - `round_robin`: rotate over a fixed-size **pool** of nodes (see `balancer`). Selection
   happens once per connection; a UDP/QUIC session stays on one node. Designed to scale to
   large node lists — only the pool is health-checked, not every node.
+- `failover` (SPEC 116): pick the lowest-delay node and **hold it until it fails**, even if
+  another node becomes faster. Each `interval` only the held node is tested. When it fails
+  a test, or a dial through it fails with a "path is dead" error, the group moves to the
+  lowest-delay live node and holds that one. A manual URL test tests every node and
+  re-selects the fastest. `tolerance` is ignored (a startup warning says so); `balancer`
+  must not be set.
 
 `least_connection` was considered and dropped (`round_robin` is statistically even).
 

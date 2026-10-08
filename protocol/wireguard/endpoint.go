@@ -211,7 +211,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	return ep, nil
 }
 
-func (w *Endpoint) Start(stage adapter.StartStage) error {
+func (w *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	// lx: SPEC 070 — serialise Start against Close. The daemon releases its
 	// service lock while instance.Start() runs (so a stop can interrupt a slow
 	// start), which makes Box.Close legal at ANY point during Box.Start. Close
@@ -227,6 +227,12 @@ func (w *Endpoint) Start(stage adapter.StartStage) error {
 	defer w.resumeMu.Unlock()
 	if w.closing.Load() {
 		return os.ErrClosed
+	}
+	// lx: upstream registers device close + started=false here; Close below does
+	// both plus the SPEC 020/030/097/106 bookkeeping. Registered before the lazy
+	// branch so a never-built endpoint is closed as well.
+	if stage == adapter.StartStateInitialize {
+		scope.Add(w.Close)
 	}
 	// lx:begin lazy-build
 	if w.lazy {

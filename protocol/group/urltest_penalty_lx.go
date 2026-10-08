@@ -20,9 +20,9 @@ package group
 //   - Тотальные штрафы (нет кандидата со штрафом < порога) → принудительный
 //     force-прогон проб, не чаще раза в penaltyForcedRetestGap, отсчёт от
 //     ЗАВЕРШЕНИЯ прошлого прогона (последнего ответа), не от старта.
-//   - Пока действует аварийный режим, passive-skip проб отключён (см. urlTest):
-//     иначе рабочий запасной пассивно подтверждается, циклы пропускаются, и
-//     оштрафованный бывший лучший никогда не получает пробу для сброса.
+//   - Режим failover (SPEC 116) пользуется той же машинерией: отказ
+//     удерживаемого узла переносит выбор на лучшего кандидата через
+//     penaltyFailoverDial, аварийный режим и клапан действуют как здесь.
 //
 // Ошибки НЕ этого класса штрафа не дают и fallback не запускают: RST означает
 // «узел донёс, назначение отказало» — через другой узел будет тот же отказ;
@@ -246,9 +246,6 @@ func (g *URLTestGroup) penaltyFailoverDial(ctx context.Context, network string, 
 		return nil, nil, false
 	}
 	g.penaltyReset(RealTag(g.outbound, fallback))
-	if g.passiveCheck && network == N.NetworkTCP {
-		g.markPassiveAlive(fallback.Tag())
-	}
 	g.moveSelection(network, fallback)
 	return conn, fallback, true
 }

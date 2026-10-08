@@ -18,6 +18,7 @@ import (
 	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
 	dnsgroup "github.com/sagernet/sing-box/dns/transport/group"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/group"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -213,7 +214,14 @@ func (s *StartedService) GetURLViaOutbound(ctx context.Context, request *GetURLV
 		if err != nil {
 			return &GetURLViaOutboundResponse{Error: E.Cause(err, "initialize certificate store").Error()}, nil
 		}
-		defer store.Close()
+		// Same pattern as libbox NewHTTPClient: the store fills its pool at
+		// Initialize and releases it through the scope.
+		storeScope := adapter.NewScope(boxService.ctx, log.NewNOPFactory().Logger())
+		defer storeScope.Close()
+		err = store.Start(adapter.StartStateInitialize, storeScope)
+		if err != nil {
+			return &GetURLViaOutboundResponse{Error: E.Cause(err, "initialize certificate store").Error()}, nil
+		}
 		transport.TLSClientConfig = &tls.Config{RootCAs: store.Pool()}
 	}
 	defer transport.CloseIdleConnections()

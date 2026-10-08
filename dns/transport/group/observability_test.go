@@ -70,8 +70,9 @@ func TestTraceRescueFan(t *testing.T) {
 }
 
 func TestTraceElectionFanned(t *testing.T) {
+	release := make(chan struct{})
 	fast := delayed("fast", time.Millisecond)
-	slow := delayed("slow", 30*time.Millisecond)
+	slow := held("slow", release)
 	group := newTestGroup(t, ModeFastest, time.Hour, time.Hour, slow, fast)
 
 	ctx := dnstrack.WithQueryTrace(context.Background())
@@ -87,6 +88,7 @@ func TestTraceElectionFanned(t *testing.T) {
 		require.NotEqual(t, "slow", attempt.Server,
 			"straggler resolved after the answer must not be in the emitted snapshot")
 	}
+	close(release)
 	waitFanSettled(t, group)
 }
 
@@ -176,13 +178,15 @@ func TestTraceNoHolderNoop(t *testing.T) {
 // --- GetDNSGroups snapshot (v3) ---------------------------------------------
 
 func TestGroupStateSnapshotV3(t *testing.T) {
+	release := make(chan struct{})
 	fast := delayed("fast", time.Millisecond)
-	slow := delayed("slow", 8*time.Millisecond)
+	slow := held("slow", release)
 	broken := failing("broken")
 	group := newTestGroup(t, ModeFastest, time.Hour, time.Hour, fast, slow, broken)
 
 	_, err := group.Exchange(context.Background(), testQuery()) // election
 	require.NoError(t, err)
+	close(release) // slow answers only after fast has won
 	waitFanSettled(t, group)
 
 	state := group.GroupState()

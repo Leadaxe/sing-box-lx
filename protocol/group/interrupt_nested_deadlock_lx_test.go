@@ -27,6 +27,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/interrupt"
 	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/route"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
@@ -82,10 +83,10 @@ func newNestedSelectorsUnderTest(t *testing.T) (outer, inner *Selector, nodeA, n
 	mgr.byTag["eu-auto-out"] = inner
 	outer = newSelector("global-auto-out", []string{"eu-auto-out"})
 
-	if err := inner.Start(); err != nil {
+	if err := inner.Start(adapter.StartStateStart, adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())); err != nil {
 		t.Fatalf("inner.Start: %v", err)
 	}
-	if err := outer.Start(); err != nil {
+	if err := outer.Start(adapter.StartStateStart, adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())); err != nil {
 		t.Fatalf("outer.Start: %v", err)
 	}
 	return outer, inner, nodeA, nodeB

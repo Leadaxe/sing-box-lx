@@ -195,6 +195,7 @@ type stand struct {
 	registry *fakeRegistry
 	outbound *outbound.Manager
 	endpoint *endpoint.Manager
+	scope    *adapter.Scope
 }
 
 func newStand(t *testing.T) *stand {
@@ -255,13 +256,13 @@ func newStand(t *testing.T) *stand {
 	ctx = service.ContextWith[adapter.EndpointRegistry](ctx, epRegistry)
 	ctx = service.ContextWith[log.Factory](ctx, logFactory)
 	epManager := endpoint.NewManager(logFactory.NewLogger("endpoint"), epRegistry)
-	manager = outbound.NewManager(logFactory.NewLogger("outbound"), registry, epManager, "")
+	manager = outbound.NewManager(registry, epManager, "")
 	ctx = service.ContextWith[adapter.OutboundManager](ctx, manager)
 	ctx = service.ContextWith[adapter.EndpointManager](ctx, epManager)
 	manager.Initialize(func() (adapter.Outbound, error) {
 		return registry.CreateOutbound(ctx, nil, logFactory.NewLogger("direct"), "direct", C.TypeDirect, &option.DirectOutboundOptions{})
 	})
-	return &stand{t: t, ctx: ctx, registry: fakes, outbound: manager, endpoint: epManager}
+	return &stand{t: t, ctx: ctx, registry: fakes, outbound: manager, endpoint: epManager, scope: adapter.NewScope(ctx, logFactory.Logger())}
 }
 
 func itoa(v int) string {
@@ -297,10 +298,10 @@ func (s *stand) chain(tag string, positions []string, mutate ...func(*option.Cha
 
 func (s *stand) start() error {
 	for _, stage := range adapter.ListStartStages {
-		if err := s.endpoint.Start(stage); err != nil {
+		if err := s.scope.Start("endpoint", s.endpoint, stage); err != nil {
 			return err
 		}
-		if err := s.outbound.Start(stage); err != nil {
+		if err := s.scope.Start("outbound", s.outbound, stage); err != nil {
 			return err
 		}
 	}
@@ -312,7 +313,7 @@ func (s *stand) mustStart() {
 	if err := s.start(); err != nil {
 		s.t.Fatalf("start: %v", err)
 	}
-	s.t.Cleanup(func() { s.outbound.Close() })
+	s.t.Cleanup(func() { s.scope.Close() })
 }
 
 func (s *stand) chainOf(tag string) *Chain {
@@ -791,7 +792,7 @@ func TestChainCloseRemovesHopsAndClones(t *testing.T) {
 	if _, ok := s.outbound.Outbound("virt#0"); !ok {
 		t.Fatal("hop missing")
 	}
-	s.outbound.Close()
+	s.scope.Close()
 	if _, ok := s.outbound.Outbound("virt#0"); ok {
 		t.Fatal("hop must be removed on close")
 	}

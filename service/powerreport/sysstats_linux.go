@@ -89,10 +89,10 @@ func readInterfaceCounters() map[string]interfaceCounters {
 			continue
 		}
 		result[name] = interfaceCounters{
-			inPackets:  uint32(inPackets),
-			outPackets: uint32(outPackets),
-			inBytes:    uint32(inBytes),
-			outBytes:   uint32(outBytes),
+			inPackets:  inPackets,
+			outPackets: outPackets,
+			inBytes:    inBytes,
+			outBytes:   outBytes,
 		}
 	}
 	return result

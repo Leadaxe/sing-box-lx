@@ -55,6 +55,7 @@ const (
 const (
 	URLTestModeLeastTest  = "least_test"  // default — pick lowest-delay node (legacy urltest behaviour)
 	URLTestModeRoundRobin = "round_robin" // rotate over a fixed-size pool of live nodes
+	URLTestModeFailover   = "failover"    // lx: SPEC 116 — hold the working node until it fails
 )
 
 // lx: SPEC 019 — balancer.sticky_hash key components.
