@@ -96,6 +96,7 @@ REALITY — TLS-слой, в котором клиент выглядит как
 | [083 — REALITY_MLKEM_KEYSHARE](../../TASKS/083-REALITY_MLKEM_KEYSHARE/SPEC.md) | Апстримный фильтр `X25519MLKEM768` снят; `AuthKey` по ключу, который выбирает сервер; `chrome` проходит Xray ≥ v26.9.8 | D |
 | [086 — UTLS_FORK_FIREFOX148](../../TASKS/086-UTLS_FORK_FIREFOX148/SPEC.md) | Форк-сабмодуль utls: пресет Firefox 148 + reuse одного X25519-ключа в обеих записях; `firefox` проходит | C |
 | [087 — UTLS_SAFARI_26_3](../../TASKS/087-UTLS_SAFARI_26_3/SPEC.md) | Пресет Safari 26.3 в том же форке; `safari` проходит; решение по `edge`/`ios`/`android`/`360`/`qq` | C |
+| [118 — UTLS_CHROME_155](../../TASKS/118-UTLS_CHROME_155/SPEC.md) | Пресет Chrome 155 в том же форке по явному имени `chrome_155` (ML-DSA в подписях, `trust_anchors`, гибрид перед X25519); `chrome` остаётся Chrome 133 | I |
 | [088 — REALITY_FRAGMENT_BYPASS](../../TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md) | `fragment` / `record_fragment` (и дефолт 060) доходят до REALITY-рукопожатия | D |
 | [089 — REALITY_KEY_SHARE_OPTION](../../TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md) | `tls.reality.key_share`: `classical` / `hybrid` по узлу; противовес 083 для сетей, теряющих длинный ClientHello | D |
 | [090 — REALITY_SHORT_ID_OVERFLOW_PANIC](../../TASKS/090-REALITY_SHORT_ID_OVERFLOW_PANIC/SPEC.md) | `short_id` длиннее 16 hex — ошибка конфигурации `invalid short_id` вместо паники процесса в `hex.Decode`; клиент и сервер | C |
@@ -111,7 +112,7 @@ REALITY — TLS-слой, в котором клиент выглядит как
 ## Особенности сопровождения
 
 - **Сервер REALITY меняет правила приёма без объявления.** Обе тихие отсечки (053, 083) пришли из коммитов в XTLS/REALITY, а не из релиз-нот; симптом всегда один — `reality verification failed`. При новой жалобе такого вида первым делом сверять версию Xray на сервере и свежие коммиты `tls.go` сервера, а не искать у себя.
-- **Форк utls — четвёртый сабмодуль**, с ним живут linkname-экспорты `badtls`/`ktls` и REALITY-сервер апстрима, поэтому переехать на первоисточник refraction нельзя; при каждом бампе metacubex/utls в апстриме ветка форка переезжает на новый тег с теми же тремя cherry-pick (раннбук §1.1). Страж-тест падает, если `replace` съехал на голый metacubex.
+- **Форк utls — четвёртый сабмодуль**, с ним живут linkname-экспорты `badtls`/`ktls` и REALITY-сервер апстрима, поэтому переехать на первоисточник refraction нельзя; при каждом бампе metacubex/utls в апстриме ветка форка переезжает на новый тег с теми же семью коммитами — четыре cherry-pick и три наших для 118 (раннбук §1.1). Страж-тест падает, если `replace` съехал на голый metacubex.
 - **Апстримный фильтр гибрида может вернуться мержем.** Безусловный фильтр в REALITY-клиенте уронит стражи 083/086/087 и `key_share`-дефолта; фильтр допустим только под `classical`.
 - **Порядок шаров в пресете utls** — тихая точка отказа: если библиотека поставит X25519 перед гибридом, сервер отсечёт всех; страж сверяет порядок и кратность для трёх отпечатков.
 - **Приложения держат набор отпечатков синхронно с ядром.** LxBox предупреждает на `edge`/`ios`/`android`/`360`/`qq` и молчит на `chrome`/`firefox`/`safari`; потеря гибрида у любого из трёх в ядре требует сузить набор в LxBox и лаунчере той же поставкой.

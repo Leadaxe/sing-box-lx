@@ -383,6 +383,8 @@ func uTLSClientHelloID(name string) (utls.ClientHelloID, error) {
 		fallthrough
 	case "chrome", "":
 		return utls.HelloChrome_Auto, nil
+	case "chrome_155": // lx: SPEC 118 — opt-in Chrome 155 preset from the utls fork; "chrome" stays 133
+		return utls.HelloChrome_155, nil
 	case "firefox":
 		return utls.HelloFirefox_Auto, nil
 	case "edge":
