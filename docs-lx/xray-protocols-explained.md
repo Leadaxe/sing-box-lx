@@ -80,10 +80,11 @@ What follows from this:
   protocols included; through a proxy `ping` to a remote host does not pass,
   and UDP works only because VLESS can pack it separately (`packet_encoding`);
 - a proxy costs more CPU: TCP termination in user space; this is why Vision
-  and splice (§3) matter so much;
+  and splice ([§3](#3-vision)) matter so much;
 - the failures differ: for a VPN it is MTU and routes
   ([amneziawg-explained §5](amneziawg-explained.md#5-mtu-where-the-bytes-go)),
-  for a proxy it is SNI, fingerprints and request shapes (§1, §4).
+  for a proxy it is SNI, fingerprints and request shapes
+  ([§1](#1-foundation-tls-clienthello-and-the-fingerprint), [§4](#4-xhttp)).
 
 ## Contents
 
