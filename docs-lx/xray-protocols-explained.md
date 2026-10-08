@@ -9,7 +9,7 @@
 > how it works, why, how the fork does it and how it differs from vanilla.
 
 REALITY, Vision, XHTTP and VLESS `encryption` were invented and are
-developed by the Xray project. They are proxy protocols, not VPN: they carry
+developed by the Xray project. They are proxy protocols (not VPN): they carry
 connections, not IP packets. The servers in subscriptions almost always run
 Xray. Vanilla sing-box supports this set incompletely and with a delay: some
 parts are missing entirely, others exist but no longer work against a recent
