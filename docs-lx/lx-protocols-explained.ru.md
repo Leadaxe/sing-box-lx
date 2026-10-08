@@ -45,10 +45,12 @@ Xray-сервера уже не работает. `sing-box-lx` закрывае
   - [2.5 Как клиент проверяет сервер](#25-как-клиент-проверяет-сервер)
   - [2.6 Что в нашем ядре иначе, чем в апстриме](#26-что-в-нашем-ядре-иначе-чем-в-апстриме)
   - [2.7 Типичные отказы](#27-типичные-отказы)
+  - [2.8 Пример: Xray и sing-box-lx](#28-пример-xray-и-sing-box-lx)
 - [§3 Vision](#3-vision)
   - [3.1 Проблема TLS-в-TLS](#31-проблема-tls-в-tls)
   - [3.2 Как работает Vision](#32-как-работает-vision)
   - [3.3 С чем Vision сочетается](#33-с-чем-vision-сочетается)
+  - [3.4 Пример: Xray и sing-box-lx](#34-пример-xray-и-sing-box-lx)
 - [§4 XHTTP](#4-xhttp)
   - [4.1 Зачем нужен ещё один HTTP-транспорт](#41-зачем-нужен-ещё-один-http-транспорт)
   - [4.2 Два направления и три режима](#42-два-направления-и-три-режима)
@@ -56,6 +58,7 @@ Xray-сервера уже не работает. `sing-box-lx` закрывае
   - [4.4 Сессия, нумерация, паддинг](#44-сессия-нумерация-паддинг)
   - [4.5 xmux: пул соединений как у браузера](#45-xmux-пул-соединений-как-у-браузера)
   - [4.6 Грабли, на которых соединение молчит](#46-грабли-на-которых-соединение-молчит)
+  - [4.7 Пример: Xray и sing-box-lx](#47-пример-xray-и-sing-box-lx)
 - [§5 VLESS encryption: постквантовый слой](#5-vless-encryption-постквантовый-слой)
   - [5.1 Угроза: записать сейчас, расшифровать потом](#51-угроза-записать-сейчас-расшифровать-потом)
   - [5.2 Что такое ML-KEM и зачем гибрид](#52-что-такое-ml-kem-и-зачем-гибрид)
@@ -64,6 +67,7 @@ Xray-сервера уже не работает. `sing-box-lx` закрывае
   - [5.5 0-RTT и билеты](#55-0-rtt-и-билеты)
   - [5.6 Вид на проводе и паддинг](#56-вид-на-проводе-и-паддинг)
   - [5.7 Чем это не является](#57-чем-это-не-является)
+  - [5.8 Пример: Xray и sing-box-lx](#58-пример-xray-и-sing-box-lx)
 - [§6 Как слои складываются](#6-как-слои-складываются)
 - [§7 Отличия от ванильного sing-box](#7-отличия-от-ванильного-sing-box)
   - [7.1 Почему база — sing-box, а не Xray](#71-почему-база--sing-box-а-не-xray)
@@ -324,6 +328,85 @@ ClientHello ──► сервер REALITY
 | Рукопожатие висит до таймаута, ошибки нет | Сеть потеряла второй сегмент гибридного ClientHello. Лечится `key_share: classical` (старый сервер) или `record_fragment` / `detour` (новый) |
 | Работает на Wi-Fi, не работает в мобильной сети | Та же потеря сегмента; мобильные сети режут чаще |
 
+## 2.8 Пример: Xray и sing-box-lx
+
+Клиентский outbound VLESS + Vision + REALITY на голом TCP. Слева — как его
+пишут для Xray, справа — тот же узел для нашего ядра.
+
+Xray (`outbounds[]`):
+
+```jsonc
+{
+  "protocol": "vless",
+  "settings": {
+    "vnext": [{
+      "address": "203.0.113.10",
+      "port": 443,
+      "users": [{
+        "id": "00000000-0000-0000-0000-000000000000",
+        "flow": "xtls-rprx-vision",
+        "encryption": "none"
+      }]
+    }]
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "reality",
+    "realitySettings": {
+      "serverName": "www.microsoft.com",
+      "fingerprint": "chrome",
+      "publicKey": "<reality-public-key-base64url>",
+      "shortId": "0123abcd",
+      "spiderX": "/"
+    }
+  }
+}
+```
+
+sing-box-lx (`outbounds[]`):
+
+```jsonc
+{
+  "type": "vless",
+  "tag": "reality-out",
+  "server": "203.0.113.10",
+  "server_port": 443,
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "flow": "xtls-rprx-vision",
+  "tls": {
+    "enabled": true,
+    "server_name": "www.microsoft.com",
+    "utls": { "enabled": true, "fingerprint": "chrome" },
+    "reality": {
+      "enabled": true,
+      "public_key": "<reality-public-key-base64url>",
+      "short_id": "0123abcd",
+      "key_share": ""
+    }
+  }
+}
+```
+
+Соответствие ключей:
+
+| Xray | sing-box-lx | Где описано |
+|---|---|---|
+| `vnext[].address`, `port` | `server`, `server_port` | [vless outbound](../docs/configuration/outbound/vless.md) |
+| `users[].id` | `uuid` | [`uuid`](../docs/configuration/outbound/vless.md#uuid) |
+| `users[].flow` | `flow` | [`flow`](../docs/configuration/outbound/vless.md#flow), §3 |
+| `users[].encryption: "none"` | поле отсутствует | Это legacy-литерал Xray, не постквантовый слой; тот — §5.8 |
+| `security: "reality"` | `tls.enabled: true` + `tls.reality.enabled: true` | [Reality Fields](../docs/configuration/shared/tls.md#reality-fields) |
+| `realitySettings.serverName` | `tls.server_name` | [`server_name`](../docs/configuration/shared/tls.md#server_name) |
+| `realitySettings.fingerprint` | `tls.utls.enabled: true` + `tls.utls.fingerprint` | [`utls`](../docs/configuration/shared/tls.md#utls), §1.2 |
+| `realitySettings.publicKey` | `tls.reality.public_key` | [`public_key`](../docs/configuration/shared/tls.md#public_key) |
+| `realitySettings.shortId` | `tls.reality.short_id` | [`short_id`](../docs/configuration/shared/tls.md#short_id) |
+| `realitySettings.spiderX` | нет | §2.5, §2.6 |
+| `realitySettings.mldsa65Verify` | нет | §2.6 |
+| — | `tls.reality.key_share` | только у нас: [lx-config §7](lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello-spec-089), §1.3 |
+| — | `tls.fragment`, `tls.record_fragment` | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment); авто под `detour` — [lx-config §9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060) |
+
+Нормативное описание полей Xray — [REALITY в документации Project X](https://xtls.github.io/config/transport.html#realityobject).
+
 ---
 
 # 3. Vision
@@ -379,6 +462,41 @@ Vision нужно соединение, которое он умеет расп�
 
 Vision бессмыслен для трафика, который сам не зашифрован: такие соединения
 просто остаются под внешним слоем целиком.
+
+## 3.4 Пример: Xray и sing-box-lx
+
+Vision — одно поле, и оно одинаково называется с обеих сторон. Полный
+outbound с REALITY — в §2.8; здесь только то, что относится к потоку.
+
+Xray:
+
+```jsonc
+"users": [{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "flow": "xtls-rprx-vision"
+}]
+```
+
+sing-box-lx:
+
+```jsonc
+"uuid": "00000000-0000-0000-0000-000000000000",
+"flow": "xtls-rprx-vision",
+"packet_encoding": "xudp"
+```
+
+| Xray | sing-box-lx | Где описано |
+|---|---|---|
+| `users[].flow: "xtls-rprx-vision"` | `flow: "xtls-rprx-vision"` | [`flow`](../docs/configuration/outbound/vless.md#flow) |
+| `users[].flow` пустой или отсутствует | `flow` пустой или отсутствует | обязательное условие для ws / grpc / httpupgrade / xhttp без `encryption`, §3.3 |
+| `xtls-rprx-vision-udp443` | не поддерживается | суффикс Xray, запрещающий UDP на 443; у нас роутится правилами |
+| (xudp включён по умолчанию) | `packet_encoding: "xudp"` | [`packet_encoding`](../docs/configuration/outbound/vless.md#packet_encoding); нужен для UDP через VLESS, с Vision совместим |
+| `streamSettings.network: "tcp"` | блока `transport` нет | Vision без `encryption` живёт только на голом TCP, §3.3 |
+
+Правило совместимости с `multiplex` sing-box: при `flow` он должен быть
+выключен — Vision мультиплексирование не переживает.
+
+Нормативное описание — [VLESS outbound в документации Project X](https://xtls.github.io/config/outbounds/vless.html).
 
 ---
 
@@ -505,6 +623,114 @@ HTTP/3 иногда проходит там, где TCP душат, и наоб�
 - **Локальное закрытие не считается отказом** ([SPEC 094](../SPECS/TASKS/094-XHTTP_LOCAL_CLOSE_NOT_FAILURE/SPEC.md)): когда соединение
   закрывает наш собственный клиент, читатель даунлинка видит
   `context.Canceled`, и ядро не должно считать это падением узла.
+
+## 4.7 Пример: Xray и sing-box-lx
+
+VLESS + XHTTP `packet-up` + TLS через CDN с пулом `xmux`. Вариант с REALITY
+и `stream-one` — в справочнике,
+[lx-protocols-transports §1.10](lx-protocols-transports.ru.md#110-примеры).
+
+Xray:
+
+```jsonc
+{
+  "protocol": "vless",
+  "settings": {
+    "vnext": [{
+      "address": "cdn.example.com",
+      "port": 443,
+      "users": [{ "id": "00000000-0000-0000-0000-000000000000", "encryption": "none" }]
+    }]
+  },
+  "streamSettings": {
+    "network": "xhttp",
+    "security": "tls",
+    "tlsSettings": {
+      "serverName": "cdn.example.com",
+      "fingerprint": "chrome",
+      "alpn": ["h2"]
+    },
+    "xhttpSettings": {
+      "host": "cdn.example.com",
+      "path": "/xhttp",
+      "mode": "packet-up",
+      "extra": {
+        "xPaddingBytes": "100-1000",
+        "scMaxEachPostBytes": 1000000,
+        "scMinPostsIntervalMs": 30,
+        "xmux": {
+          "maxConcurrency": "16-32",
+          "maxConnections": 0,
+          "cMaxReuseTimes": 0,
+          "hMaxRequestTimes": "600-900",
+          "hMaxReusableSecs": "1800-3000",
+          "hKeepAlivePeriod": 0
+        }
+      }
+    }
+  }
+}
+```
+
+sing-box-lx:
+
+```jsonc
+{
+  "type": "vless",
+  "tag": "xhttp-cdn",
+  "server": "cdn.example.com",
+  "server_port": 443,
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "tls": {
+    "enabled": true,
+    "server_name": "cdn.example.com",
+    "alpn": ["h2"],
+    "utls": { "enabled": true, "fingerprint": "chrome" }
+  },
+  "transport": {
+    "type": "xhttp",
+    "mode": "packet-up",
+    "host": "cdn.example.com",
+    "path": "/xhttp",
+    "x_padding_bytes": "100-1000",
+    "sc_max_each_post_bytes": 1000000,
+    "sc_min_posts_interval_ms": 30,
+    "xmux": {
+      "max_concurrency": "16-32",
+      "max_connections": 0,
+      "c_max_reuse_times": 0,
+      "h_max_request_times": "600-900",
+      "h_max_reusable_secs": "1800-3000",
+      "h_keep_alive_period": 0
+    }
+  }
+}
+```
+
+Соответствие ключей. У Xray часть полей лежит во вложенном `extra`, у нас
+всё плоско внутри `transport`; имена переведены в snake_case.
+
+| Xray | sing-box-lx | Где описано |
+|---|---|---|
+| `network: "xhttp"` | `transport.type: "xhttp"` | [transports §1](lx-protocols-transports.ru.md#1-xhttp-транспорт) |
+| `xhttpSettings.mode` | `transport.mode` | [§1.1 Режимы](lx-protocols-transports.ru.md#11-режимы), §4.2 |
+| `xhttpSettings.host`, `path` | `transport.host`, `path` | [§1.2 Основные поля](lx-protocols-transports.ru.md#12-основные-поля-v1) |
+| `xhttpSettings.headers` | `transport.headers` | там же |
+| `extra.xPaddingBytes` | `x_padding_bytes` | [§1.5 X-Padding](lx-protocols-transports.ru.md#15-x-padding-обфускация-v2), §4.4 |
+| `extra.scMaxEachPostBytes`, `scMinPostsIntervalMs` | `sc_max_each_post_bytes`, `sc_min_posts_interval_ms` | [§1.6 Тюнинг packet-up](lx-protocols-transports.ru.md#16-тюнинг-packet-up-v2) |
+| `extra.noGRPCHeader` | `no_grpc_header` | [§1.2](lx-protocols-transports.ru.md#12-основные-поля-v1) |
+| `extra.xmux.*` | `xmux.*` (snake_case) | [§1.7 xmux](lx-protocols-transports.ru.md#17-переиспользование-соединений--xmux), §4.5 |
+| `extra.downloadSettings` | нет | §4.2 |
+| `tlsSettings.alpn` | `tls.alpn` — решает версию HTTP | [Версия HTTP](lx-protocols-transports.ru.md#версия-http), §4.3 |
+| `tlsSettings.serverName`, `fingerprint` | `tls.server_name`, `tls.utls.fingerprint` | как в §2.8 |
+| `security: "reality"` + `realitySettings` | `tls.reality` | как в §2.8; `mode: auto` при этом даёт `stream-one` |
+| диапазоны `"16-32"` | те же строки или число | [§1.9 Формы записи диапазонов](lx-protocols-transports.ru.md#19-формы-записи-диапазонов) |
+
+Серверные поля Xray (`scMaxBufferedPosts`, `scStreamUpServerSecs`,
+`noSSEHeader`) принимаются и игнорируются:
+[§1.8](lx-protocols-transports.ru.md#18-принятые-но-игнорируемые-поля).
+
+Нормативное описание — [XHTTP в документации Project X](https://xtls.github.io/config/transports/xhttp.html).
 
 ---
 
@@ -668,6 +894,65 @@ VLESS. Транспорт поднимается (WS отвечает `101`, gRP
 - **Не замена Vision.** Vision поверх `encryption` работает (§3.3) и нужен
   по той же причине, что и поверх TLS: внутри всё равно чужое
   TLS-рукопожатие.
+
+## 5.8 Пример: Xray и sing-box-lx
+
+VLESS + `encryption` поверх WebSocket без внешнего TLS — типичный узел из
+подписки, у которого `security=none`, потому что шифрование уже внутри.
+
+Xray:
+
+```jsonc
+{
+  "protocol": "vless",
+  "settings": {
+    "vnext": [{
+      "address": "203.0.113.20",
+      "port": 80,
+      "users": [{
+        "id": "00000000-0000-0000-0000-000000000000",
+        "encryption": "mlkem768x25519plus.native.0rtt.<base64url ML-KEM-768 key>"
+      }]
+    }]
+  },
+  "streamSettings": {
+    "network": "ws",
+    "security": "none",
+    "wsSettings": { "path": "/ws" }
+  }
+}
+```
+
+sing-box-lx:
+
+```jsonc
+{
+  "type": "vless",
+  "tag": "pq-ws",
+  "server": "203.0.113.20",
+  "server_port": 80,
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "encryption": "mlkem768x25519plus.native.0rtt.<base64url ML-KEM-768 key>",
+  "transport": { "type": "ws", "path": "/ws" }
+}
+```
+
+| Xray | sing-box-lx | Где описано |
+|---|---|---|
+| `users[].encryption: "mlkem768x25519plus…"` | `encryption` — плоское поле рядом с `uuid` | [lx-config §6](lx-config.ru.md#6-vless-encryption--пост-квантовый-слой-spec-032), §5.4–§5.6 |
+| `users[].encryption: "none"` или пусто | поле отсутствует, пусто или `"none"` | слой выключен, §5.6 |
+| `security: "none"` | блока `tls` нет | внешний TLS не нужен, §5.3 |
+| `security: "tls"` / `"reality"` | `tls` как в §2.8 | два независимых слоя, §5.7 |
+| `users[].flow: "xtls-rprx-vision"` | `flow` | работает поверх `encryption` на любом транспорте, §3.3 |
+| `network: "ws"` + `wsSettings` | `transport.type: "ws"` + `path` | [WebSocket](../docs/configuration/shared/v2ray-transport.md#websocket); любой транспорт, включая `xhttp` (§4.7) |
+| серверный `decryption` | нет | не портирован, §5.3 |
+
+Строка `encryption` переносится **дословно**: сегменты вида, режима,
+паддинга и ключи у обоих ядер одинаковы, перевода имён нет. Билдер
+клиента, который теряет это поле при сборке конфига, оставляет узел
+мёртвым без единой строки в логе.
+
+Нормативное описание — [VLESS outbound в документации Project X](https://xtls.github.io/config/outbounds/vless.html).
 
 ---
 
