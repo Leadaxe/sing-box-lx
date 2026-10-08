@@ -7,11 +7,8 @@
 > [protocols-transports](protocols-transports.ru.md) — каждое поле, тип, дефолт, текст ошибки;
 > [xray-protocols-explained](xray-protocols-explained.ru.md) и [amneziawg-explained](amneziawg-explained.ru.md) —
 > как устроено, почему, как сделано у нас и чем отличается от ванили.
-> Покрытие пока неполное: в справочнике нет главы REALITY / VLESS `encryption`
-> (их поля — [lx-config §6–§7](lx-config.ru.md) и апстримная дока TLS), объясняющего
-> документа по MASQUE нет. Оба запланированы.
 
-Исчерпывающий, по-полевой справочник по трём downstream-фичам протоколов/транспортов
+Исчерпывающий, по-полевой справочник по downstream-фичам протоколов/транспортов
 `sing-box-lx`:
 
 | Фича | Build tag | Куда крепится | Глава |
@@ -19,6 +16,7 @@
 | **XHTTP** транспорт (Xray "splithttp"/"xhttp") | `with_xhttp` | блок `transport` у VLESS / VMess / Trojan **outbound** | [§1](#1-xhttp-транспорт) |
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) обфускация | `with_awg` | промо-поля на `wireguard` **endpoint** | [§2](#2-amneziawg-203x-awg2-awg3) |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic` + `with_gvisor` | `outbounds[].type: "masque"` | [§3](#3-masque-outbound-connect-ip--warp) |
+| **REALITY**-клиент (гибридный key share, `key_share`, фрагментация) и **VLESS `encryption`** | — (REALITY внутри `with_utls`) | блок `tls` у TLS-over-TCP **outbound**; плоское поле `encryption` у `vless` | [§5](#5-reality-и-vless-encryption) |
 
 Плюс [§4](#4-grpc-транспорт) — **gRPC**-транспорт, он апстримный, не наш, и попал
 сюда ради одного места, где у нашего поведения есть downstream-заметки по
@@ -93,6 +91,14 @@ make -f Makefile.lx lx-build
   - [3.12 Частые грабли](#312-частые-грабли)
 - [§4 gRPC-транспорт](#4-grpc-транспорт)
   - [4.1 `service_name`: формы Xray](#41-service_name-формы-xray)
+- [§5 REALITY и VLESS `encryption`](#5-reality-и-vless-encryption)
+  - [5.1 Поля `tls.reality`](#51-поля-tlsreality)
+  - [5.2 Отпечатки и гибридный key share](#52-отпечатки-и-гибридный-key-share)
+  - [5.3 Фрагментация ClientHello](#53-фрагментация-clienthello)
+  - [5.4 Ошибки валидации REALITY (дословно)](#54-ошибки-валидации-reality-дословно)
+  - [5.5 Поле `encryption` у `vless`](#55-поле-encryption-у-vless)
+  - [5.6 Ошибки валидации `encryption` (дословно)](#56-ошибки-валидации-encryption-дословно)
+  - [5.7 Примеры](#57-примеры)
 
 ---
 
@@ -778,7 +784,7 @@ endpoint, как и поля AWG2, и требует `with_awg`. Контейн�
 
 # 3. MASQUE outbound (CONNECT-IP / WARP)
 
-> 🧭 Объясняющий документ `masque-explained` запланирован, пока не написан. Текущее состояние области — спека фичи [009-MASQUE_WARP](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md).
+> 🧭 Устройство MASQUE/WARP и принятые решения — спека фичи [009-MASQUE_WARP](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md). Здесь — только поля, дефолты и ошибки.
 
 ## 3.1 Что это
 
@@ -1091,6 +1097,165 @@ grpc-go. Доступно с `v1.14.1-lx.8`.
 
 ---
 
+# 5. REALITY и VLESS `encryption`
+
+> 🧭 Как REALITY узнаёт своих, что такое гибридный key share, как устроен слой `mlkem768x25519plus` и почему — [xray-protocols-explained §1–§2](xray-protocols-explained.ru.md#1-фундамент-tls-clienthello-и-отпечаток) и [§5](xray-protocols-explained.ru.md#5-vless-encryption-постквантовый-слой); типичные отказы REALITY — там же, [§2.7](xray-protocols-explained.ru.md#27-типичные-отказы). Здесь — только поля, дефолты и ошибки.
+
+Два независимых слоя. REALITY живёт в блоке `tls` любого TLS-over-TCP outbound
+(VLESS, trojan, vmess, XHTTP-транспорт) и требует `with_utls`. `encryption` — плоское
+поле у `vless`-outbound, рядом с `uuid`, без build-тега. Апстримные поля блока `tls`
+(`server_name`, `alpn`, `insecure`, `ech`, …) описаны в
+[апстримной доке TLS](../docs/configuration/shared/tls.md); ниже — только то, что
+форк добавил или изменил.
+
+## 5.1 Поля `tls.reality`
+
+| Ключ | Тип | Дефолт | Смысл |
+|------|-----|--------|-------|
+| `enabled` | bool | `false` | Включить REALITY вместо обычной проверки сертификата ([апстрим](../docs/configuration/shared/tls.md#reality-fields)) |
+| `public_key` | base64url, 32 байта | — | Публичный ключ X25519 сервера (Xray `publicKey`) |
+| `short_id` | hex, до 8 байт | — | Метка клиента (Xray `shortId`) |
+| `key_share` | `""` \| `"hybrid"` \| `"classical"` | `""` | Форма key share в ClientHello (SPEC 089, [§5.2](#52-отпечатки-и-гибридный-key-share)) |
+
+| `key_share` | ClientHello | Работает против |
+|---|---|---|
+| `""` | как несёт отпечаток ([§5.2](#52-отпечатки-и-гибридный-key-share)) | как раньше |
+| `"classical"` | `X25519MLKEM768` вырезан из `key_share` и `supported_groups`; `chrome`: 594 байта вместо 1720, один TCP-сегмент вместо двух | **только Xray < v26.9.8**; новые серверы отвергают молча (`reality verification failed`) |
+| `"hybrid"` | гибрид обязателен; на отпечатке без него — ошибка при рукопожатии с текстом ([§5.4](#54-ошибки-валидации-reality-дословно)) | как `""` |
+
+Автофолбэка между `hybrid` и `classical` нет. Поля Xray `spiderX`, `mldsa65Verify`
+и `realitySettings.password` ядро не принимает.
+
+## 5.2 Отпечатки и гибридный key share
+
+`tls.utls.fingerprint` — апстримный ключ (enum: `chrome`, `chrome_psk`,
+`chrome_psk_shuffle`, `chrome_padding_psk_shuffle`, `chrome_pq`, `chrome_pq_psk`,
+`firefox`, `edge`, `safari`, `360`, `qq`, `ios`, `android`, `random`, `randomized`),
+но под REALITY он решает судьбу узла: Xray ≥ v26.9.8 принимает только ClientHello с
+гибридным шаром `X25519MLKEM768` перед `X25519` (SPEC 083). Ядро отпечаток **не
+подменяет**.
+
+| `fingerprint` | Шар в ClientHello | Xray ≥ v26.9.8 | Откуда пресет |
+|---|---|---|---|
+| `chrome` и `chrome_*` | GREASE, **X25519MLKEM768**, X25519 | ходит | metacubex/utls |
+| `firefox` | **X25519MLKEM768**, X25519 | ходит | форк utls-lx, Firefox 148 (SPEC 086) |
+| `safari` | **X25519MLKEM768**, X25519 | ходит | форк utls-lx, Safari 26.3 (SPEC 087) |
+| `edge`, `ios`, `android`, `360`, `qq` | только X25519 | отвергается | пресетов с гибридом нет |
+| `random` | как у выпавшего | 3 из 5 | — |
+| `randomized` | гибрид монетой | ~½ процессов | — |
+
+`AuthKey` считается по тому ключу, который выберет сервер: чистый X25519, если он
+есть в `key_share`, иначе X25519-часть гибрида. Версия клиента в session id —
+требуемый минимум (SPEC 053).
+
+## 5.3 Фрагментация ClientHello
+
+Апстримные ключи блока `tls`; в форке они действуют и на REALITY (SPEC 088).
+
+| Ключ | Тип | Дефолт | Смысл |
+|------|-----|--------|-------|
+| `fragment` | bool | `false` | Разрез первого пакета по SNI на TCP-сегменты с ожиданием ACK ([апстрим](../docs/configuration/shared/tls.md#fragment)) |
+| `record_fragment` | bool | `false`; **`true` под `detour`** (SPEC 060) | Те же точки разреза, каждая — своя TLS-запись, один пакет ([апстрим](../docs/configuration/shared/tls.md#record_fragment)) |
+| `fragment_fallback_delay` | duration | `500ms` | Пауза, когда время ожидания ACK вычислить нельзя ([апстрим](../docs/configuration/shared/tls.md#fragment_fallback_delay)) |
+
+Правила дефолта под `detour`: явное `fragment: true` или `record_fragment: true`
+сильнее дефолта; фрагментируется только рукопожатие; `h3`/QUIC не затронут; у
+каждого звена `chain` свой `detour`. Явный `"record_fragment": false` неотличим от «не
+задано» — под `detour` дефолт включится всё равно. Обзор — [lx-config §9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060).
+
+## 5.4 Ошибки валидации REALITY (дословно)
+
+| Конфиг | Ошибка |
+|--------|--------|
+| `public_key` не base64url | `decode public_key: …` |
+| `public_key` не 32 байта | `invalid public_key` |
+| `short_id` длиннее 8 байт | `invalid short_id` |
+| `short_id` не hex | `decode short_id: …` |
+| `key_share` не из набора | `unknown reality key_share: X (expected "hybrid" or "classical")` |
+| `key_share: "hybrid"` на отпечатке без гибрида (при рукопожатии) | `reality key_share "hybrid": fingerprint Edge 85 carries no X25519MLKEM768 key share` |
+| сервер отверг клиента (любая причина) | `reality verification failed` — это не ошибка конфига; разбор причин — [xray-protocols-explained §2.7](xray-protocols-explained.ru.md#27-типичные-отказы) |
+
+## 5.5 Поле `encryption` у `vless`
+
+| Ключ | Тип | Дефолт | Смысл |
+|------|-----|--------|-------|
+| `encryption` | string | `""` | `""` / `"none"` — слой выключен, поведение апстрима байт в байт. Иначе — spec-строка, валидируется на `check`/старте (SPEC 032). В Xray — `users[0].encryption`, переносится дословно |
+
+Грамматика (сегменты через точку):
+
+```
+mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>[.<padding>…].<key>[.<key>…]
+```
+
+| Сегмент | Значения | Смысл |
+|---------|----------|-------|
+| метод | `mlkem768x25519plus` | единственный; должен совпасть с сервером |
+| вид | `native` \| `xorpub` \| `random` | как слой выглядит на проводе: записи в форме TLS 1.3 / плюс XOR публичных ключей / полностью случайный поток |
+| rtt | `0rtt` \| `1rtt` | билет сервера с повторным использованием / полное рукопожатие на каждом соединении |
+| padding | блоки `p-min-max`, через точку | сегменты короче 20 символов до первого ключа; чётные блоки — длины (вероятность %, от, до байт), нечётные — паузы (вероятность %, от, до мс); у первого блока `p ≥ 100`, `min`/`max ≥ 35`; сумма максимумов ≤ 65553; только для `1rtt` |
+| key | base64url | публичный ключ сервера: X25519 (32 байта) или ML-KEM-768 (1184 байта, ~1579 символов); один или несколько |
+
+Дефолт паддинга, если блоки не заданы: длины `100-111-1111.50-0-3333`, паузы `75-0-111`.
+Серверная половина (`decryption`) не портирована.
+
+## 5.6 Ошибки валидации `encryption` (дословно)
+
+| Конфиг | Ошибка |
+|--------|--------|
+| пустая строка после обрезки пробелов | `empty encryption string` |
+| меньше четырёх сегментов | `invalid encryption string: expected at least method.appearance.rtt.key, got N segments` |
+| метод не `mlkem768x25519plus` | `unsupported encryption method: X (only mlkem768x25519plus exists)` |
+| вид не из набора | `unknown encryption appearance: X (expected native\|xorpub\|random)` |
+| rtt не из набора | `unknown encryption RTT mode: X (expected 0rtt\|1rtt)` |
+| пустой сегмент (две точки подряд) | `empty segment in encryption string` |
+| ключ не base64url | `invalid encryption key (not base64url): X` |
+| ключ не 32 и не 1184 байта | `invalid encryption key length: N (expected 32 or 1184)` |
+| ни одного ключа | `no encryption keys in encryption string` |
+| блок паддинга не `a-b-c` | `invalid padding lenth/gap parameter: X` (орфография референса) |
+| первый блок паддинга меньше порога | `first padding length must not be smaller than 35` |
+| сумма максимумов паддинга больше порога | `total padding length must not be larger than 65553` |
+
+## 5.7 Примеры
+
+VLESS + Vision + REALITY на голом TCP:
+
+```jsonc
+{
+  "type": "vless",
+  "tag": "reality-out",
+  "server": "203.0.113.10",
+  "server_port": 443,
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "flow": "xtls-rprx-vision",
+  "tls": {
+    "enabled": true,
+    "server_name": "www.microsoft.com",
+    "utls": { "enabled": true, "fingerprint": "chrome" },
+    "reality": { "enabled": true, "public_key": "<reality-public-key-base64url>", "short_id": "0123abcd" }
+  }
+}
+```
+
+VLESS + `encryption` поверх WebSocket без внешнего TLS:
+
+```jsonc
+{
+  "type": "vless",
+  "tag": "pq-ws",
+  "server": "203.0.113.20",
+  "server_port": 80,
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "encryption": "mlkem768x25519plus.native.0rtt.<base64url ML-KEM-768 key>",
+  "transport": { "type": "ws", "path": "/ws" }
+}
+```
+
+Соответствие ключам Xray (`realitySettings.*`, `users[0].encryption`) с пояснениями —
+[xray-protocols-explained §2.8](xray-protocols-explained.ru.md#28-пример-xray-и-sing-box-lx)
+и [§5.8](xray-protocols-explained.ru.md#58-пример-xray-и-sing-box-lx).
+
+---
+
 ## См. также
 
 - **[lx-config.ru.md](lx-config.ru.md)** — обзор downstream-фич, который эти главы
@@ -1103,4 +1268,5 @@ grpc-go. Доступно с `v1.14.1-lx.8`.
   **[amneziawg-explained.ru.md](amneziawg-explained.ru.md)** — то же для AmneziaWG,
   включая бюджет MTU.
 - Feature-спеки: [XHTTP](../SPECS/FEATURES/002-XHTTP/), [AWG](../SPECS/FEATURES/003-AWG/),
-  [MASQUE/WARP](../SPECS/FEATURES/009-MASQUE_WARP/).
+  [MASQUE/WARP](../SPECS/FEATURES/009-MASQUE_WARP/), [REALITY](../SPECS/FEATURES/017-REALITY/),
+  [VLESS_ENCRYPTION](../SPECS/FEATURES/012-VLESS_ENCRYPTION/).

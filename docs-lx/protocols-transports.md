@@ -7,11 +7,8 @@
 > [protocols-transports](protocols-transports.md) — every field, type, default, error text;
 > [xray-protocols-explained](xray-protocols-explained.md) and [amneziawg-explained](amneziawg-explained.md) —
 > how it works, why, how the fork does it and how it differs from vanilla.
-> Coverage is still incomplete: the reference has no REALITY / VLESS `encryption`
-> chapter (their fields are in [lx-config §6–§7](lx-config.md) and the upstream TLS
-> docs), and there is no explanatory document for MASQUE. Both are planned.
 
-Exhaustive, field-by-field reference for the three downstream protocol/transport
+Exhaustive, field-by-field reference for the downstream protocol/transport
 features of `sing-box-lx`:
 
 | Feature | Build tag | Where it attaches | Chapter |
@@ -19,6 +16,7 @@ features of `sing-box-lx`:
 | **XHTTP** transport (Xray "splithttp"/"xhttp") | `with_xhttp` | `transport` block of a VLESS / VMess / Trojan **outbound** | [§1](#1-xhttp-transport) |
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) obfuscation | `with_awg` | promoted fields on a `wireguard` **endpoint** | [§2](#2-amneziawg-203x-awg2-awg3) |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic` + `with_gvisor` | `outbounds[].type: "masque"` | [§3](#3-masque-outbound-connect-ip--warp) |
+| **REALITY** client (hybrid key share, `key_share`, fragmentation) and **VLESS `encryption`** | — (REALITY inside `with_utls`) | `tls` block of a TLS-over-TCP **outbound**; flat `encryption` field on `vless` | [§5](#5-reality-and-vless-encryption) |
 
 Plus [§4](#4-grpc-transport) — the **gRPC** transport, which is upstream's, not
 ours, and appears here only for the one place our behaviour has downstream
@@ -93,6 +91,14 @@ transport (which would defeat the obfuscation). The exact messages:
   - [3.12 Common footguns](#312-common-footguns)
 - [§4 gRPC transport](#4-grpc-transport)
   - [4.1 `service_name`: the Xray forms](#41-service_name-the-xray-forms)
+- [§5 REALITY and VLESS `encryption`](#5-reality-and-vless-encryption)
+  - [5.1 `tls.reality` fields](#51-tlsreality-fields)
+  - [5.2 Fingerprints and the hybrid key share](#52-fingerprints-and-the-hybrid-key-share)
+  - [5.3 ClientHello fragmentation](#53-clienthello-fragmentation)
+  - [5.4 REALITY validation errors (verbatim)](#54-reality-validation-errors-verbatim)
+  - [5.5 The `encryption` field on `vless`](#55-the-encryption-field-on-vless)
+  - [5.6 `encryption` validation errors (verbatim)](#56-encryption-validation-errors-verbatim)
+  - [5.7 Examples](#57-examples)
 
 ---
 
@@ -783,7 +789,7 @@ Notes:
 
 # 3. MASQUE outbound (CONNECT-IP / WARP)
 
-> 🧭 The explanatory document `masque-explained` is planned and not written yet. The current state of the area is the feature spec [009-MASQUE_WARP](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md).
+> 🧭 How MASQUE/WARP is built and the decisions behind it: the feature spec [009-MASQUE_WARP](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md). This chapter holds only fields, defaults and errors.
 
 ## 3.1 What it is
 
@@ -1100,6 +1106,166 @@ source. Available since `v1.14.1-lx.8`.
 
 ---
 
+# 5. REALITY and VLESS `encryption`
+
+> 🧭 How REALITY recognises its clients, what the hybrid key share is, how the `mlkem768x25519plus` layer works and why: [xray-protocols-explained §1–§2](xray-protocols-explained.md#1-foundation-tls-clienthello-and-the-fingerprint) and [§5](xray-protocols-explained.md#5-vless-encryption-the-post-quantum-layer); typical REALITY failures are there too, [§2.7](xray-protocols-explained.md#27-typical-failures). This chapter holds only fields, defaults and errors.
+
+Two independent layers. REALITY lives in the `tls` block of any TLS-over-TCP outbound
+(VLESS, trojan, vmess, the XHTTP transport) and needs `with_utls`. `encryption` is a
+flat field on a `vless` outbound, beside `uuid`, with no build tag. The upstream `tls`
+fields (`server_name`, `alpn`, `insecure`, `ech`, …) are described in the
+[upstream TLS docs](../docs/configuration/shared/tls.md); below is only what the fork
+added or changed.
+
+## 5.1 `tls.reality` fields
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `enabled` | bool | `false` | Use REALITY instead of regular certificate verification ([upstream](../docs/configuration/shared/tls.md#reality-fields)) |
+| `public_key` | base64url, 32 bytes | — | The server's X25519 public key (Xray `publicKey`) |
+| `short_id` | hex, up to 8 bytes | — | Client tag (Xray `shortId`) |
+| `key_share` | `""` \| `"hybrid"` \| `"classical"` | `""` | Key share form in the ClientHello (SPEC 089, [§5.2](#52-fingerprints-and-the-hybrid-key-share)) |
+
+| `key_share` | ClientHello | Works against |
+|---|---|---|
+| `""` | whatever the fingerprint carries ([§5.2](#52-fingerprints-and-the-hybrid-key-share)) | as before |
+| `"classical"` | `X25519MLKEM768` removed from `key_share` and `supported_groups`; `chrome`: 594 bytes instead of 1720, one TCP segment instead of two | **Xray < v26.9.8 only**; newer servers reject silently (`reality verification failed`) |
+| `"hybrid"` | the hybrid is required; on a fingerprint without it the handshake fails with a message ([§5.4](#54-reality-validation-errors-verbatim)) | as `""` |
+
+There is no automatic fallback between `hybrid` and `classical`. The Xray fields
+`spiderX`, `mldsa65Verify` and `realitySettings.password` are not accepted by the core.
+
+## 5.2 Fingerprints and the hybrid key share
+
+`tls.utls.fingerprint` is an upstream key (enum: `chrome`, `chrome_psk`,
+`chrome_psk_shuffle`, `chrome_padding_psk_shuffle`, `chrome_pq`, `chrome_pq_psk`,
+`firefox`, `edge`, `safari`, `360`, `qq`, `ios`, `android`, `random`, `randomized`),
+but under REALITY it decides the node's fate: Xray ≥ v26.9.8 accepts only a ClientHello
+with the `X25519MLKEM768` hybrid share before `X25519` (SPEC 083). The core does **not**
+substitute the fingerprint.
+
+| `fingerprint` | Share in the ClientHello | Xray ≥ v26.9.8 | Preset source |
+|---|---|---|---|
+| `chrome` and `chrome_*` | GREASE, **X25519MLKEM768**, X25519 | passes | metacubex/utls |
+| `firefox` | **X25519MLKEM768**, X25519 | passes | utls-lx fork, Firefox 148 (SPEC 086) |
+| `safari` | **X25519MLKEM768**, X25519 | passes | utls-lx fork, Safari 26.3 (SPEC 087) |
+| `edge`, `ios`, `android`, `360`, `qq` | X25519 only | rejected | no presets with the hybrid exist |
+| `random` | as the drawn preset | 3 of 5 | — |
+| `randomized` | hybrid by coin flip | ~½ of processes | — |
+
+`AuthKey` is computed from the key the server will choose: pure X25519 if present in
+`key_share`, otherwise the X25519 part of the hybrid. The client version in the session
+id is the required minimum (SPEC 053).
+
+## 5.3 ClientHello fragmentation
+
+Upstream `tls` keys; in the fork they also apply to REALITY (SPEC 088).
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `fragment` | bool | `false` | Cut the first packet by SNI into TCP segments, waiting for the ACK ([upstream](../docs/configuration/shared/tls.md#fragment)) |
+| `record_fragment` | bool | `false`; **`true` under `detour`** (SPEC 060) | The same cut points, each its own TLS record, one packet ([upstream](../docs/configuration/shared/tls.md#record_fragment)) |
+| `fragment_fallback_delay` | duration | `500ms` | The pause used when the ACK wait time cannot be computed ([upstream](../docs/configuration/shared/tls.md#fragment_fallback_delay)) |
+
+Rules of the `detour` default: an explicit `fragment: true` or `record_fragment: true`
+beats the default; only the handshake is fragmented; `h3`/QUIC is untouched; every
+`chain` link has its own `detour`. An explicit `"record_fragment": false` cannot be
+told apart from "unset", so under `detour` the default still turns on. Overview:
+[lx-config §9](lx-config.md#9-automatic-clienthello-fragmentation-under-detour-spec-060).
+
+## 5.4 REALITY validation errors (verbatim)
+
+| Config | Error |
+|--------|-------|
+| `public_key` not base64url | `decode public_key: …` |
+| `public_key` not 32 bytes | `invalid public_key` |
+| `short_id` longer than 8 bytes | `invalid short_id` |
+| `short_id` not hex | `decode short_id: …` |
+| `key_share` outside the set | `unknown reality key_share: X (expected "hybrid" or "classical")` |
+| `key_share: "hybrid"` on a fingerprint without the hybrid (at handshake) | `reality key_share "hybrid": fingerprint Edge 85 carries no X25519MLKEM768 key share` |
+| the server rejected the client (any reason) | `reality verification failed` — not a config error; the causes are in [xray-protocols-explained §2.7](xray-protocols-explained.md#27-typical-failures) |
+
+## 5.5 The `encryption` field on `vless`
+
+| Key | Type | Default | Meaning |
+|-----|------|---------|---------|
+| `encryption` | string | `""` | `""` / `"none"`: layer off, upstream behaviour byte for byte. Otherwise a spec string validated at `check`/start (SPEC 032). In Xray this is `users[0].encryption`, carried over verbatim |
+
+Grammar (dot-separated segments):
+
+```
+mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>[.<padding>…].<key>[.<key>…]
+```
+
+| Segment | Values | Meaning |
+|---------|--------|---------|
+| method | `mlkem768x25519plus` | the only one; must match the server |
+| appearance | `native` \| `xorpub` \| `random` | how the layer looks on the wire: records shaped like TLS 1.3 / plus XOR of the public keys / a fully random stream |
+| rtt | `0rtt` \| `1rtt` | a reusable server ticket / a full handshake on every connection |
+| padding | `p-min-max` blocks, dot-separated | segments shorter than 20 characters before the first key; even blocks are lengths (probability %, from, to bytes), odd blocks are gaps (probability %, from, to ms); the first block needs `p ≥ 100` and `min`/`max ≥ 35`; the sum of maxima ≤ 65553; `1rtt` only |
+| key | base64url | the server's public key: X25519 (32 bytes) or ML-KEM-768 (1184 bytes, ~1579 characters); one or several |
+
+Padding default when no blocks are given: lengths `100-111-1111.50-0-3333`, gaps `75-0-111`.
+The server half (`decryption`) is not ported.
+
+## 5.6 `encryption` validation errors (verbatim)
+
+| Config | Error |
+|--------|-------|
+| empty string after trimming | `empty encryption string` |
+| fewer than four segments | `invalid encryption string: expected at least method.appearance.rtt.key, got N segments` |
+| method other than `mlkem768x25519plus` | `unsupported encryption method: X (only mlkem768x25519plus exists)` |
+| appearance outside the set | `unknown encryption appearance: X (expected native\|xorpub\|random)` |
+| rtt outside the set | `unknown encryption RTT mode: X (expected 0rtt\|1rtt)` |
+| empty segment (two dots in a row) | `empty segment in encryption string` |
+| key not base64url | `invalid encryption key (not base64url): X` |
+| key neither 32 nor 1184 bytes | `invalid encryption key length: N (expected 32 or 1184)` |
+| no keys at all | `no encryption keys in encryption string` |
+| padding block not `a-b-c` | `invalid padding lenth/gap parameter: X` (spelling as in the reference implementation) |
+| first padding block below the threshold | `first padding length must not be smaller than 35` |
+| sum of padding maxima above the threshold | `total padding length must not be larger than 65553` |
+
+## 5.7 Examples
+
+VLESS + Vision + REALITY over bare TCP:
+
+```jsonc
+{
+  "type": "vless",
+  "tag": "reality-out",
+  "server": "203.0.113.10",
+  "server_port": 443,
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "flow": "xtls-rprx-vision",
+  "tls": {
+    "enabled": true,
+    "server_name": "www.microsoft.com",
+    "utls": { "enabled": true, "fingerprint": "chrome" },
+    "reality": { "enabled": true, "public_key": "<reality-public-key-base64url>", "short_id": "0123abcd" }
+  }
+}
+```
+
+VLESS + `encryption` over WebSocket without outer TLS:
+
+```jsonc
+{
+  "type": "vless",
+  "tag": "pq-ws",
+  "server": "203.0.113.20",
+  "server_port": 80,
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "encryption": "mlkem768x25519plus.native.0rtt.<base64url ML-KEM-768 key>",
+  "transport": { "type": "ws", "path": "/ws" }
+}
+```
+
+The mapping to the Xray keys (`realitySettings.*`, `users[0].encryption`) with notes:
+[xray-protocols-explained §2.8](xray-protocols-explained.md#28-example-xray-and-sing-box-lx)
+and [§5.8](xray-protocols-explained.md#58-example-xray-and-sing-box-lx).
+
+---
+
 ## See also
 
 - **[lx-config.md](lx-config.md)** — the downstream-features overview these
@@ -1112,4 +1278,5 @@ source. Available since `v1.14.1-lx.8`.
   **[amneziawg-explained.md](amneziawg-explained.md)** — the same for AmneziaWG,
   including the MTU budget.
 - Feature specs: [XHTTP](../SPECS/FEATURES/002-XHTTP/), [AWG](../SPECS/FEATURES/003-AWG/),
-  [MASQUE/WARP](../SPECS/FEATURES/009-MASQUE_WARP/).
+  [MASQUE/WARP](../SPECS/FEATURES/009-MASQUE_WARP/), [REALITY](../SPECS/FEATURES/017-REALITY/),
+  [VLESS_ENCRYPTION](../SPECS/FEATURES/012-VLESS_ENCRYPTION/).

@@ -280,7 +280,7 @@ Everything downstream is either a new file or a seam marked `// lx`; `grep -rn "
 |---|---|
 | Upstream | [SagerNet/sing-box](https://github.com/SagerNet/sing-box) · [docs](https://sing-box.sagernet.org/) |
 | Config overview | [docs-lx/lx-config.md](docs-lx/lx-config.md) ([RU](docs-lx/lx-config.ru.md)) — every field of every feature, with examples |
-| Protocols & transports | [docs-lx/protocols-transports.md](docs-lx/protocols-transports.md) ([RU](docs-lx/protocols-transports.ru.md)) — XHTTP, AmneziaWG, MASQUE in depth |
+| Protocols & transports | [docs-lx/protocols-transports.md](docs-lx/protocols-transports.md) ([RU](docs-lx/protocols-transports.ru.md)) — XHTTP, AmneziaWG, MASQUE, REALITY, VLESS `encryption` in depth |
 | How the Xray protocols work | [docs-lx/xray-protocols-explained.md](docs-lx/xray-protocols-explained.md) ([RU](docs-lx/xray-protocols-explained.ru.md)) — REALITY, Vision, XHTTP, VLESS `encryption`: mechanics, the fork's implementation, differences from vanilla, Xray ↔ sing-box-lx examples |
 | How AmneziaWG works | [docs-lx/amneziawg-explained.md](docs-lx/amneziawg-explained.md) ([RU](docs-lx/amneziawg-explained.ru.md)) — three obfuscation layers, the MTU budget, the graft in the wireguard-go fork, `awg.conf` ↔ endpoint example |
 | Energy guide | [docs-lx/lx-energy.md](docs-lx/lx-energy.md) ([RU](docs-lx/lx-energy.ru.md)) — idle-suspend levels, `mode: failover`, tuning |

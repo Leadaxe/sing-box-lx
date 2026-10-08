@@ -281,7 +281,7 @@ upstream/stable  ──merge──►  lx  =  upstream  +  швы // lx  +  lx-�
 |---|---|
 | Апстрим | [SagerNet/sing-box](https://github.com/SagerNet/sing-box) · [документация](https://sing-box.sagernet.org/) |
 | Обзор конфигурации | [docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md) ([EN](docs-lx/lx-config.md)) — каждое поле каждой фичи, с примерами |
-| Протоколы и транспорты | [docs-lx/protocols-transports.ru.md](docs-lx/protocols-transports.ru.md) ([EN](docs-lx/protocols-transports.md)) — XHTTP, AmneziaWG, MASQUE в деталях |
+| Протоколы и транспорты | [docs-lx/protocols-transports.ru.md](docs-lx/protocols-transports.ru.md) ([EN](docs-lx/protocols-transports.md)) — XHTTP, AmneziaWG, MASQUE, REALITY, VLESS `encryption` в деталях |
 | Как устроены протоколы Xray | [docs-lx/xray-protocols-explained.ru.md](docs-lx/xray-protocols-explained.ru.md) ([EN](docs-lx/xray-protocols-explained.md)) — REALITY, Vision, XHTTP, VLESS `encryption`: логика, реализация в форке, отличия от ванили, примеры Xray ↔ sing-box-lx |
 | Как устроен AmneziaWG | [docs-lx/amneziawg-explained.ru.md](docs-lx/amneziawg-explained.ru.md) ([EN](docs-lx/amneziawg-explained.md)) — три слоя обфускации, бюджет MTU, графт в форке wireguard-go, пример `awg.conf` ↔ endpoint |
 | Руководство по энергии | [docs-lx/lx-energy.ru.md](docs-lx/lx-energy.ru.md) ([EN](docs-lx/lx-energy.md)) — уровни idle-suspend, `mode: failover`, тюнинг |

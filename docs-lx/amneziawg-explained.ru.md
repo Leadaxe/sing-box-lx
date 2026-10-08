@@ -7,9 +7,6 @@
 > [protocols-transports](protocols-transports.ru.md) — каждое поле, тип, дефолт, текст ошибки;
 > [xray-protocols-explained](xray-protocols-explained.ru.md) и [amneziawg-explained](amneziawg-explained.ru.md) —
 > как устроено, почему, как сделано у нас и чем отличается от ванили.
-> Покрытие пока неполное: в справочнике нет главы REALITY / VLESS `encryption`
-> (их поля — [lx-config §6–§7](lx-config.ru.md) и апстримная дока TLS), объясняющего
-> документа по MASQUE нет. Оба запланированы.
 
 AmneziaWG (AWG) — это WireGuard, у которого изменена форма пакетов на
 проводе при полностью сохранённой криптографии. Протокол задаёт проект
