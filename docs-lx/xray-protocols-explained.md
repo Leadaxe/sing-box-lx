@@ -2,6 +2,15 @@
 
 > 🌐 Русская версия: **[xray-protocols-explained.ru.md](xray-protocols-explained.ru.md)**.
 
+> 🧭 **Where to look.** The fork's documentation has three levels, by the reader's question:
+> [lx-config](lx-config.md) — what the fork has and how to enable it;
+> [protocols-transports](protocols-transports.md) — every field, type, default, error text;
+> [xray-protocols-explained](xray-protocols-explained.md) and [amneziawg-explained](amneziawg-explained.md) —
+> how it works, why, how the fork does it and how it differs from vanilla.
+> Coverage is still incomplete: the reference has no REALITY / VLESS `encryption`
+> chapter (their fields are in [lx-config §6–§7](lx-config.md) and the upstream TLS
+> docs), and there is no explanatory document for MASQUE. Both are planned.
+
 The modern stack of VPN protocols resistant to middleboxes is defined by Xray.
 REALITY, Vision, XHTTP and the post-quantum VLESS `encryption` layer
 (`mlkem768x25519plus`) were invented there and are developed there. The
@@ -907,6 +916,17 @@ no data.
 - **A local close is not a failure** ([SPEC 094](../SPECS/TASKS/094-XHTTP_LOCAL_CLOSE_NOT_FAILURE/SPEC.md)): when our own client
   closes the connection, the downlink reader sees `context.Canceled`, and
   the core must not count this as a node failure.
+
+The same table by symptom, moved here from the parameter reference:
+
+| Symptom | Likely cause |
+|---------|--------------|
+| Server replies **`400`** on every request | missing/short `x_padding` — the server enforces the length; check `x_padding_bytes` and that the mode matches the server |
+| Server replies **`404`** | `path` prefix mismatch — a truncated trailing slash was the root cause of a real `stream-one` failure (SPEC 043); confirm the exact `path` the server expects |
+| `stream-one` dial **hangs until timeout**, no error | a proxy/CDN buffered the response because the gRPC content type was absent — leave `no_grpc_header` **off** (SPEC 042). Conversely, if the server rejects the gRPC type, turn it on |
+| Works intermittently, breaks after a while | Xray client/server version skew — XHTTP's wire format changes fast; align versions |
+| Server with `alpn: ["h3"]` does not come up, dial times out or fails with `HTTP/3 needs UDP to the server` | HTTP/3 runs over UDP: the `detour` chain must carry UDP, and the path must not drop QUIC. If the server also listens on TCP, drop `h3` from `tls.alpn` to use HTTP/2 |
+| Upload payload rejected | `uplink_data_placement: header`/`cookie` used outside `packet-up`, or `uplink_http_method: GET` outside `packet-up` — both are load-time errors, so this shows at start, not at runtime |
 
 ## 4.7 Example: Xray and sing-box-lx
 

@@ -142,6 +142,10 @@ outbound'ов, где исходящая датаграмма помечаетс
 Смежное: [028](../../TASKS/028-NESTED_TUNNEL_UDP_FRAGMENT/SPEC.md) — туннель
 не работал внутри другого туннеля, см. [HOTFIXES](../004-HOTFIXES/FEATURE.md).
 
+## Документация
+
+Справочник полей — `docs-lx/protocols-transports.md` / `.ru.md` §3. Объясняющий документ `docs-lx/masque-explained.md` / `.ru.md` (формат — как у `xray-protocols-explained` и `amneziawg-explained`) запланирован, пока не написан.
+
 ## Особенности сопровождения
 
 - **Проверять на реальном WARP.** Профиль завязан на поведение конкретного

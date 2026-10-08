@@ -2,6 +2,15 @@
 
 > 🌐 Русская версия: **[amneziawg-explained.ru.md](amneziawg-explained.ru.md)**.
 
+> 🧭 **Where to look.** The fork's documentation has three levels, by the reader's question:
+> [lx-config](lx-config.md) — what the fork has and how to enable it;
+> [protocols-transports](protocols-transports.md) — every field, type, default, error text;
+> [xray-protocols-explained](xray-protocols-explained.md) and [amneziawg-explained](amneziawg-explained.md) —
+> how it works, why, how the fork does it and how it differs from vanilla.
+> Coverage is still incomplete: the reference has no REALITY / VLESS `encryption`
+> chapter (their fields are in [lx-config §6–§7](lx-config.md) and the upstream TLS
+> docs), and there is no explanatory document for MASQUE. Both are planned.
+
 AmneziaWG (AWG) is WireGuard with a changed packet shape on the wire and
 fully preserved cryptography. The protocol is defined by the Amnezia
 project. The reference implementation is `amneziawg-go`, and the servers

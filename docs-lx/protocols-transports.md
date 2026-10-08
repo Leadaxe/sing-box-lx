@@ -2,6 +2,15 @@
 
 > 🌐 Русская версия: **[protocols-transports.ru.md](protocols-transports.ru.md)**.
 
+> 🧭 **Where to look.** The fork's documentation has three levels, by the reader's question:
+> [lx-config](lx-config.md) — what the fork has and how to enable it;
+> [protocols-transports](protocols-transports.md) — every field, type, default, error text;
+> [xray-protocols-explained](xray-protocols-explained.md) and [amneziawg-explained](amneziawg-explained.md) —
+> how it works, why, how the fork does it and how it differs from vanilla.
+> Coverage is still incomplete: the reference has no REALITY / VLESS `encryption`
+> chapter (their fields are in [lx-config §6–§7](lx-config.md) and the upstream TLS
+> docs), and there is no explanatory document for MASQUE. Both are planned.
+
 Exhaustive, field-by-field reference for the three downstream protocol/transport
 features of `sing-box-lx`:
 
@@ -377,14 +386,10 @@ The server listens for XHTTP over QUIC only (Xray `tlsSettings.alpn: ["h3"]`).
 
 ## 1.11 Troubleshooting
 
-| Symptom | Likely cause |
-|---------|--------------|
-| Server replies **`400`** on every request | missing/short `x_padding` — the server enforces the length; check `x_padding_bytes` and that the mode matches the server |
-| Server replies **`404`** | `path` prefix mismatch — a truncated trailing slash was the root cause of a real `stream-one` failure (SPEC 043); confirm the exact `path` the server expects |
-| `stream-one` dial **hangs until timeout**, no error | a proxy/CDN buffered the response because the gRPC content type was absent — leave `no_grpc_header` **off** (SPEC 042). Conversely, if the server rejects the gRPC type, turn it on |
-| Works intermittently, breaks after a while | Xray client/server version skew — XHTTP's wire format changes fast; align versions |
-| Server with `alpn: ["h3"]` does not come up, dial times out or fails with `HTTP/3 needs UDP to the server` | HTTP/3 runs over UDP: the `detour` chain must carry UDP, and the path must not drop QUIC. If the server also listens on TCP, drop `h3` from `tls.alpn` to use HTTP/2 |
-| Upload payload rejected | `uplink_data_placement: header`/`cookie` used outside `packet-up`, or `uplink_http_method: GET` outside `packet-up` — both are load-time errors, so this shows at start, not at runtime |
+Symptom-based troubleshooting lives in the explanatory document:
+[xray-protocols-explained §4.6 "Pitfalls where the connection stays silent"](xray-protocols-explained.md#46-pitfalls-where-the-connection-stays-silent).
+This reference keeps only load-time error texts: [§1.8](#18-accepted-but-ignored-fields) and
+the field tables above.
 
 ---
 
@@ -402,15 +407,13 @@ obfuscation, wired via the `submodules/wireguard-go` submodule).
 
 ## 2.1 The model: AWG1 vs AWG2 vs AWG3
 
-- **AWG1** = the junk/signature/magic-header fields: `jc`, `jmin`, `jmax`, `s1`,
-  `s2`, `h1`–`h4` (single values).
-- **AWG2** = AWG1 **plus** the CPS packets `i1`–`i5`, the AWG-2.0 junk-size params
-  `s3`/`s4`, and **ranged** magic headers (`"min-max"` form of `h1`–`h4`).
-- **AWG3** (amneziawg-go v3.0 / v3.1, the `amnezia-awg2` container with
-  `protocol_version` 3.x) = AWG2 **plus** header protection
-  (`header_protection_key`), content padding (`content_padding_addition`), random
-  trailers, disabled cookies, ranged timing overrides and a ranged
-  `persistent_keepalive_interval` — see [§2.10](#210-awg-3x-header-protection-padding-trailers-timings).
+| Layer | Keys |
+|-------|------|
+| **AWG1** | `jc`, `jmin`, `jmax`, `s1`, `s2`, `h1`–`h4` as single values |
+| **AWG2** | AWG1 plus `i1`–`i5`, `s3`/`s4`, `h1`–`h4` as `"min-max"` ranges, the `id`/`ip`/`ib` sugar |
+| **AWG3** | AWG2 plus `header_protection_key`, `content_padding_addition`, `random_trailers`, `disable_cookies`, ranged timings and a ranged `persistent_keepalive_interval` ([§2.10](#210-awg-3x-header-protection-padding-trailers-timings)) |
+
+What each layer does to the packets and why: [amneziawg-explained §0–§4](amneziawg-explained.md#0-the-whole-picture-three-layers-on-top-of-wireguard).
 
 Both client and server must run AmneziaWG with **matching** parameters — the junk
 and I-packets are *configuration*, not negotiated. Set them from the same
@@ -516,7 +519,7 @@ peer actually sends first, not a server response):
 
 **Where `id` reaches the wire:**
 
-| `ip` | decoy | `id` visible to a censor? |
+| `ip` | decoy | `id` visible to a middlebox? |
 |------|-------|---------------------------|
 | `quic` | fragmented QUIC Initial, `id` = **SNI** | **yes** — a DPI that decrypts the Initial (keys derive from the DCID) can read it if it reassembles the frames in order |
 | `dns` | EDNS query (QR=0), `id` = **QNAME** | **yes**, in the clear |
@@ -525,33 +528,20 @@ peer actually sends first, not a server response):
 
 **Which profile to pick:**
 
-- **Connecting to WARP under real DPI** → `ip=quic`, `id=<popular domain>`,
-  `ib=chrome`. Fragmented QUIC Initial with `id` as SNI; device-proven against real
-  LTE DPI.
-- **You want the DPI to see an "allowed" domain** → `ip=quic`/`dns`/`sip` with a
-  regional popular `id` (SNI / QNAME / SIP-host).
-- **`stun`** is niche (looks like an ICE connectivity check); carries no domain.
+Which profile to pick, and why only `quic` passed on a device:
+[amneziawg-explained §3.3–§3.4](amneziawg-explained.md#33-masquerade-sugar-id--ip--ib).
 
 ### Notes & limitations
 
 - `id`/`ip`/`ib` are **mutually exclusive** with an explicit `i1` — set one or the
   other (a config with both is rejected).
-- This is a **decoy** sent before the handshake, not a full protocol session — the
-  `quic` Initial never completes a TLS handshake (it only needs to make the first
-  packet of the flow look like a legitimate QUIC start). The `id` **is** placed on
-  the wire as the SNI, so pick a **plausible, allowed** domain — never a
-  VPN/Cloudflare marker.
-- The DPI bypass rests primarily on **CRYPTO-frame fragmentation**, not on the TLS
-  fingerprint. `ib` does select one: `chrome`/`firefox` emit a genuine browser
-  ClientHello (real JA3/JA4) in builds with TLS-mimicry support, while `curl` and an
-  absent `ib` use the generic ClientHello. Without that build support the browser
-  profiles fall back to the generic one.
-- Field status: `ip=quic` is **device-proven against real LTE DPI**. For
-  `dns`/`stun`/`sip`, engine acceptance, structural validity and `sing-box check`
-  are confirmed, but a systematic field A/B against a specific DPI was not run. On a
-  test LTE/WARP DPI, `dns`/`stun` hit a timeout (the DPI cuts DNS/STUN to a
-  data-center IP as a protocol class) — for WARP use `ip=quic`.
-- The motivating use case is easing connections to **Cloudflare WARP**.
+- `ib` selects the decoy's TLS fingerprint: `chrome`/`firefox` emit a genuine browser
+  ClientHello only in builds with TLS-mimicry support; `curl` and an absent `ib` use
+  the generic ClientHello. Without that build support the browser profiles fall back
+  to the generic one.
+- Field status: `ip=quic` is device-proven against real LTE DPI; for
+  `dns`/`stun`/`sip`, engine acceptance, structural validity and `sing-box check` are
+  confirmed, a field A/B was not run.
 
 **📖 [Detailed examples →](../SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md)** —
 full per-profile configs (incl. a Cloudflare WARP one), the generated CPS for each,
@@ -559,51 +549,40 @@ and the exact validation errors.
 
 ## 2.6 MTU budget
 
-AmneziaWG's `s4` prepends junk bytes to **every transport (data) message**, so an
-AWG endpoint needs a **lower `mtu` than plain WireGuard**. (`s3` pads only
-cookie-reply messages, so it does not affect the MTU budget.) If the obfuscated
-packet exceeds the path MTU, the OS rejects it and the tunnel completes its
-handshake but **cannot send data**:
+`s4` prepends junk to **every** transport (data) message, so an AWG endpoint needs a
+lower `mtu` than plain WireGuard (`s3` pads only cookie-reply messages and does not
+affect the budget). A too-high `mtu` does not stop the handshake but breaks data
+transfer:
 
 ```
 peer(…) - received handshake response
 peer(…) - failed to send data packets: write udp4 …: sendmsg: message too long
 ```
 
-Budget the overhead against a 1500-byte path:
+Budget against a 1500-byte path:
 
 ```
 mtu ≤ 1500 − 28 (UDP/IP) − 32 (WireGuard) − S4 junk bytes
 ```
 
-For `S4 = 60` that is `mtu ≤ 1380`. **Use `1280`** (the AmneziaWG-recommended client
-MTU) for headroom on smaller path MTUs (PPPoE, nested tunnels). This is unrelated to
-the handshake — a too-high `mtu` lets the handshake succeed but silently breaks data
-transfer.
+For `S4 = 60` that is `mtu ≤ 1380`; the AmneziaWG-recommended client MTU is **1280**
+(headroom for PPPoE and nested tunnels).
 
-**What sing-box-lx does for you:**
+**What the core does by itself:**
 
-- If you omit `mtu` on an endpoint that sets `s4`, the core defaults to **`1280`**
-  (instead of the plain-WireGuard `1408`).
-- If you set `mtu` explicitly and it is too high for the junk overhead, the core
-  logs a startup warning — against a conservative **1492**-byte (PPPoE) budget,
-  `mtu ≤ 1492 − 28 − 32 − S4`, so it may flag a value a few bytes below the
-  1500-byte Ethernet ceiling. The warning is advisory; the tunnel still loads.
+- `mtu` omitted, `s4` set → default **`1280`** (instead of the plain-WireGuard `1408`).
+- `mtu` set explicitly and over budget → a startup warning, computed against a
+  conservative **1492** (PPPoE): `mtu ≤ 1492 − 28 − 32 − S4`. The tunnel still loads.
+- The outer socket **does not force DF** (SPEC 028): an oversize outer datagram is
+  IP-fragmented, not dropped; this is what lets nested tunnels work
+  (`masque`/`wireguard`/AWG through `detour`). The old behaviour on a specific
+  endpoint: `"udp_fragment": false`. A correct `mtu` is still preferred: fragmentation
+  is the safety net.
+- Keep `jmax` **below** the real path MTU: a junk packet longer than the MTU gets
+  IP-fragmented, and constrained paths drop the fragments.
 
-**Outer socket no longer forces DF (SPEC 028).** By default sing-box-lx now lets the
-OS IP-fragment an oversize outer datagram on a `wireguard` endpoint (and a `masque`
-outbound) instead of dropping it — the old default set
-`IP_MTU_DISCOVER=IP_PMTUDISC_DO` (Linux/Android) / `IP_DONTFRAG` (macOS), which is
-exactly what produced the `sendmsg: message too long` above. This is what lets
-**nested tunnels** work: `masque`/`wireguard`/AWG chained through `detour` in any
-combination, where the outer datagram is routinely oversize and must fragment. To
-restore the old behaviour on a specific endpoint, set `"udp_fragment": false` on it.
-Picking a correct `mtu` (above) still avoids fragmentation entirely and is
-preferred — fragmentation is the safety net, not the goal.
-
-Also keep `jmax` **below** the real path MTU: amneziawg-go warns that if a junk
-packet's size reaches the system MTU it gets IP-fragmented, which the same
-constrained paths then drop.
+Why it is this way and what it looks like to the user:
+[amneziawg-explained §5](amneziawg-explained.md#5-mtu-where-the-bytes-go).
 
 ## 2.7 Mapping an `awg.conf` 1:1
 
@@ -782,17 +761,12 @@ Notes:
   [§2.6](#26-mtu-budget) is unchanged (the UDP-window cap keeps additions inside sizes
   the path already carried), but keep `mtu` at the server-recommended value (`1376` in
   the Amnezia export).
-- `random_trailers` widens the receiver's classification: any datagram **longer** than
-  `s1`+148 / `s2`+92 / `s3`+64 is *also* tried as a handshake message by its type word.
-  With single-value `h1`–`h4` (the AWG3 default) that is a 2⁻³² false match; with
-  wide AWG2 **ranges** for `h1`–`h4` the false-match rate becomes the range width /
-  2³² per data packet, which then fails its MAC and is dropped. **Our receiver is
-  immune** (SPEC 081): a datagram carrying one of our live receiver indices behind a
-  transport type word is classified as data before the handshake candidates run, so
-  the downlink never loses packets this way — nor to the narrower AWG2 variant (a data
-  datagram of exactly `s1`+148 bytes). The server's receiver is the reference
-  implementation, so the **uplink** still is: don't combine `random_trailers` with wide
-  `h1`–`h4` ranges.
+- `random_trailers` widens the receiver's classification: datagrams longer than
+  `s1`+148 / `s2`+92 / `s3`+64 are also tried as a handshake by their type word. Our
+  receiver is immune to the false matches (SPEC 081); the server's receiver is the
+  reference implementation, so **do not combine `random_trailers` with wide
+  `h1`–`h4` ranges**: the uplink would lose packets. Mechanics:
+  [amneziawg-explained §6.3](amneziawg-explained.md#63-receive-packet-classification).
 - The timing overrides don't need to match the server, but nonsense (e.g.
   `rekey_after_time` above `reject_after_time`) makes the tunnel flap. Copy the
   server's export.
