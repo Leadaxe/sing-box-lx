@@ -166,9 +166,9 @@ differ:
 
 | Middlebox | How it acts | Which layer answers |
 |---|---|---|
-| **Passive classifier** (DPI) looks at the shape of the traffic: packet lengths, timing, SNI, the cipher set in the ClientHello, characteristic sequences | Network equipment on the path, in real time | uTLS fingerprint (§1), Vision (§3), XHTTP (§4), padding everywhere |
-| **Active server probing** connects to the server itself and looks at what it answers | Against a list of addresses flagged by the classifier | REALITY (§2) |
-| **Traffic recording for future decryption** by a quantum computer | Anyone with a large disk | VLESS `encryption` (§5), hybrid key share in TLS (§1.3) |
+| **Passive classifier** (DPI) looks at the shape of the traffic: packet lengths, timing, SNI, the cipher set in the ClientHello, characteristic sequences | Network equipment on the path, in real time | uTLS fingerprint ([§1](#1-foundation-tls-clienthello-and-the-fingerprint)), Vision ([§3](#3-vision)), XHTTP ([§4](#4-xhttp)), padding everywhere |
+| **Active server probing** connects to the server itself and looks at what it answers | Against a list of addresses flagged by the classifier | REALITY ([§2](#2-reality)) |
+| **Traffic recording for future decryption** by a quantum computer | Anyone with a large disk | VLESS `encryption` ([§5](#5-vless-encryption-the-post-quantum-layer)), hybrid key share in TLS ([§1.3](#13-hybrid-key-share-and-clienthello-size)) |
 
 > 🧭 **TL;DR:** REALITY and VLESS `encryption` **do not replace each
 > other**. REALITY makes sure the server accepts the connection at all and that
@@ -210,10 +210,10 @@ selects the preset.
 > [017](../SPECS/FEATURES/017-REALITY/FEATURE.md)).
 > A node with a preset without the hybrid share dies on a new Xray server in
 > our core exactly as it does in the Xray client itself, and this is not a
-> core defect (§1.3, §2.6).
+> core defect ([§1.3](#13-hybrid-key-share-and-clienthello-size), [§2.6](#26-what-our-core-does-differently-from-upstream)).
 
 Our uTLS is the fork submodule `Leadaxe/utls-lx` on top of `metacubex/utls`.
-The fork is needed because of §1.3: two of the three presets with a hybrid
+The fork is needed because of [§1.3](#13-hybrid-key-share-and-clienthello-size): two of the three presets with a hybrid
 key share were added by us. It also carries Chrome 155 under the explicit
 name `chrome_155`; `chrome` stays Chrome 133 (SPEC 118).
 
@@ -221,7 +221,7 @@ name `chrome_155`; `chrome` stays Chrome 133 (SPEC 118).
 
 Since 2024 browsers send two entries in `key_share`: the classical X25519 and
 the hybrid **X25519MLKEM768**, where 1184 bytes of an ML-KEM-768 public key
-are appended to the 32 bytes of X25519 (ML-KEM is covered in §5.2). The goal
+are appended to the 32 bytes of X25519 (ML-KEM is covered in [§5.2](#52-what-ml-kem-is-and-why-a-hybrid)). The goal
 is post-quantum protection of the key exchange of TLS itself.
 
 For resistance to middleboxes this has two consequences.
@@ -238,7 +238,7 @@ For resistance to middleboxes this has two consequences.
 > strips the hybrid and returns a single-segment ClientHello. `hybrid`
 > requires the hybrid and fails with a clear error on a preset that lacks it.
 > An empty value keeps what the fingerprint carries. Why this matters for
-> REALITY specifically is in §2.6.
+> REALITY specifically is in [§2.6](#26-what-our-core-does-differently-from-upstream).
 
 ## 1.4 Fragmentation
 
@@ -369,7 +369,7 @@ overview: [lx-config §9](lx-config.md#9-automatic-clienthello-fragmentation-und
 
 Whether fragmentation helps in a network that loses a large first packet
 **without** a tunnel is a property of that network. The second lever there
-is `key_share: classical` (§1.3).
+is `key_share: classical` ([§1.3](#13-hybrid-key-share-and-clienthello-size)).
 
 ## 1.5 Example: Xray and sing-box-lx
 
@@ -458,19 +458,19 @@ Key mapping:
 | Xray | sing-box-lx | Where described |
 |---|---|---|
 | `security: "tls"` + `tlsSettings` | `tls.enabled: true` | [TLS](../docs/configuration/shared/tls.md), [`enabled`](../docs/configuration/shared/tls.md#enabled) |
-| `tlsSettings.serverName` | `tls.server_name` | [`server_name`](../docs/configuration/shared/tls.md#server_name), §1.1 |
+| `tlsSettings.serverName` | `tls.server_name` | [`server_name`](../docs/configuration/shared/tls.md#server_name), [§1.1](#11-what-the-clienthello-reveals) |
 | empty `serverName` | `tls.disable_sni: true` | [`disable_sni`](../docs/configuration/shared/tls.md#disable_sni); an empty `server_name` in our core does **not** remove the SNI, it substitutes the address |
-| `tlsSettings.fingerprint` | `tls.utls.enabled: true` + `tls.utls.fingerprint` | [`utls`](../docs/configuration/shared/tls.md#utls), §1.2; the hybrid key share is carried by `chrome`, `firefox`, `safari` (§1.3) |
-| `tlsSettings.alpn` | `tls.alpn` | [`alpn`](../docs/configuration/shared/tls.md#alpn); for XHTTP it decides the HTTP version (§4.3) |
+| `tlsSettings.fingerprint` | `tls.utls.enabled: true` + `tls.utls.fingerprint` | [`utls`](../docs/configuration/shared/tls.md#utls), [§1.2](#12-fingerprint-and-utls); the hybrid key share is carried by `chrome`, `firefox`, `safari` ([§1.3](#13-hybrid-key-share-and-clienthello-size)) |
+| `tlsSettings.alpn` | `tls.alpn` | [`alpn`](../docs/configuration/shared/tls.md#alpn); for XHTTP it decides the HTTP version ([§4.3](#43-the-http-version-is-derived-not-set)) |
 | `tlsSettings.allowInsecure` | `tls.insecure` | [`insecure`](../docs/configuration/shared/tls.md#insecure) |
 | `tlsSettings.minVersion`, `cipherSuites` | `tls.min_version`, `tls.cipher_suites` | [`min_version`](../docs/configuration/shared/tls.md#min_version), [`cipher_suites`](../docs/configuration/shared/tls.md#cipher_suites); in Xray `cipherSuites` is a colon-separated string, in our core an array |
-| `tlsSettings.echConfigList` | `tls.ech.enabled: true` + `tls.ech.config` | [ECH Fields](../docs/configuration/shared/tls.md#ech-fields); incompatible with REALITY (§6) |
-| `finalmask.tcp[type=fragment]` | `tls.fragment: true` (TCP segments) or `tls.record_fragment: true` (TLS records) | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment), §1.4 |
-| `freedom` + `settings.fragment` + `sockopt.dialerProxy` | the same `tls.fragment` on the node that goes out directly | §1.4; the helper `freedom` does not become a separate outbound |
-| `length`, `delay` / `interval`, `maxSplit` | none | the core finds boundaries by SNI and pauses by ACK (§1.4); there is nothing to carry over except the fact that fragmentation is on |
+| `tlsSettings.echConfigList` | `tls.ech.enabled: true` + `tls.ech.config` | [ECH Fields](../docs/configuration/shared/tls.md#ech-fields); incompatible with REALITY ([§6](#6-how-the-layers-stack)) |
+| `finalmask.tcp[type=fragment]` | `tls.fragment: true` (TCP segments) or `tls.record_fragment: true` (TLS records) | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment), [§1.4](#14-fragmentation) |
+| `freedom` + `settings.fragment` + `sockopt.dialerProxy` | the same `tls.fragment` on the node that goes out directly | [§1.4](#14-fragmentation); the helper `freedom` does not become a separate outbound |
+| `length`, `delay` / `interval`, `maxSplit` | none | the core finds boundaries by SNI and pauses by ACK ([§1.4](#14-fragmentation)); there is nothing to carry over except the fact that fragmentation is on |
 | n/a | `tls.fragment_fallback_delay` | [`fragment_fallback_delay`](../docs/configuration/shared/tls.md#fragment_fallback_delay): the wait time used when the core cannot compute it itself; 500 ms by default |
 | n/a | `record_fragment` turns on by itself under `detour` | [lx-config §9](lx-config.md#9-automatic-clienthello-fragmentation-under-detour-spec-060) |
-| n/a | `tls.reality.key_share` | ours only, §1.3; applies to REALITY, example in §2.8 |
+| n/a | `tls.reality.key_share` | ours only, [§1.3](#13-hybrid-key-share-and-clienthello-size); applies to REALITY, example in [§2.8](#28-example-xray-and-sing-box-lx) |
 
 > 📖 Normative description of the Xray fields: [TLS in the Project X documentation](https://xtls.github.io/config/transport.html#tlsobject).
 
@@ -606,7 +606,7 @@ Feature 017 keeps the client side compatible:
   guard test holds it for all three presets.
 - **The client version** in the session id is exactly the required minimum ([SPEC 053](../SPECS/TASKS/053-REALITY_MIN_CLIENT_VER/SPEC.md)).
   A server with `minClientVer` rejects clients below the threshold.
-- **`key_share: classical | hybrid`** ([SPEC 089](../SPECS/TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md), §1.3) is for networks that
+- **`key_share: classical | hybrid`** ([SPEC 089](../SPECS/TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md), [§1.3](#13-hybrid-key-share-and-clienthello-size)) is for networks that
   lose a two-segment ClientHello. Classical works only with Xray
   < v26.9.8. There is no automatic fallback between the modes: a server
   rejection cannot be told apart from a network loss without a second
@@ -692,16 +692,16 @@ Key mapping:
 |---|---|---|
 | `vnext[].address`, `port` | `server`, `server_port` | [vless outbound](../docs/configuration/outbound/vless.md) |
 | `users[].id` | `uuid` | [`uuid`](../docs/configuration/outbound/vless.md#uuid) |
-| `users[].flow` | `flow` | [`flow`](../docs/configuration/outbound/vless.md#flow), §3 |
-| `users[].encryption: "none"` | field absent | This is a legacy Xray literal, not the post-quantum layer; that one is in §5.8 |
+| `users[].flow` | `flow` | [`flow`](../docs/configuration/outbound/vless.md#flow), [§3](#3-vision) |
+| `users[].encryption: "none"` | field absent | This is a legacy Xray literal, not the post-quantum layer; that one is in [§5.8](#58-example-xray-and-sing-box-lx) |
 | `security: "reality"` | `tls.enabled: true` + `tls.reality.enabled: true` | [Reality Fields](../docs/configuration/shared/tls.md#reality-fields) |
 | `realitySettings.serverName` | `tls.server_name` | [`server_name`](../docs/configuration/shared/tls.md#server_name) |
-| `realitySettings.fingerprint` | `tls.utls.enabled: true` + `tls.utls.fingerprint` | [`utls`](../docs/configuration/shared/tls.md#utls), §1.2 |
+| `realitySettings.fingerprint` | `tls.utls.enabled: true` + `tls.utls.fingerprint` | [`utls`](../docs/configuration/shared/tls.md#utls), [§1.2](#12-fingerprint-and-utls) |
 | `realitySettings.publicKey` | `tls.reality.public_key` | [`public_key`](../docs/configuration/shared/tls.md#public_key) |
 | `realitySettings.shortId` | `tls.reality.short_id` | [`short_id`](../docs/configuration/shared/tls.md#short_id) |
-| `realitySettings.spiderX` | none | §2.5, §2.6 |
-| `realitySettings.mldsa65Verify` | none | §2.6 |
-| n/a | `tls.reality.key_share` | ours only: [lx-config §7](lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello-spec-089), §1.3 |
+| `realitySettings.spiderX` | none | [§2.5](#25-how-the-client-verifies-the-server), [§2.6](#26-what-our-core-does-differently-from-upstream) |
+| `realitySettings.mldsa65Verify` | none | [§2.6](#26-what-our-core-does-differently-from-upstream) |
+| n/a | `tls.reality.key_share` | ours only: [lx-config §7](lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello-spec-089), [§1.3](#13-hybrid-key-share-and-clienthello-size) |
 | n/a | `tls.fragment`, `tls.record_fragment` | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment); automatic under `detour`: [lx-config §9](lx-config.md#9-automatic-clienthello-fragmentation-under-detour-spec-060) |
 
 > 📖 Normative description of the Xray fields: [REALITY in the Project X documentation](https://xtls.github.io/config/transport.html#realityobject).
@@ -766,7 +766,7 @@ code of our own.
    inner TLS 1.3 is established, it stops re-encrypting its records with a
    second layer. The outer connection stays alive, but the data inside it
    goes straight to the lower layer. For this Vision needs access to the
-   "raw" connection under the outer TLS, hence the restrictions in §3.3.
+   "raw" connection under the outer TLS, hence the restrictions in [§3.3](#33-what-vision-combines-with).
 3. **Splice on the server.** The server does the same in the reverse
    direction and on Linux hands the copying over to the OS kernel. Almost no
    CPU is spent.
@@ -795,7 +795,7 @@ connections simply stay entirely under the outer layer.
 ## 3.4 Example: Xray and sing-box-lx
 
 Vision is a single field, and it has the same name on both sides. The full
-outbound with REALITY is in §2.8; here is only what concerns the flow.
+outbound with REALITY is in [§2.8](#28-example-xray-and-sing-box-lx); here is only what concerns the flow.
 
 Xray:
 
@@ -817,10 +817,10 @@ sing-box-lx:
 | Xray | sing-box-lx | Where described |
 |---|---|---|
 | `users[].flow: "xtls-rprx-vision"` | `flow: "xtls-rprx-vision"` | [`flow`](../docs/configuration/outbound/vless.md#flow) |
-| `users[].flow` empty or absent | `flow` empty or absent | mandatory for ws / grpc / httpupgrade / xhttp without `encryption`, §3.3 |
+| `users[].flow` empty or absent | `flow` empty or absent | mandatory for ws / grpc / httpupgrade / xhttp without `encryption`, [§3.3](#33-what-vision-combines-with) |
 | `xtls-rprx-vision-udp443` | not supported | an Xray suffix that forbids UDP on port 443; in our core this is handled by routing rules |
 | (xudp is on by default) | `packet_encoding: "xudp"` | [`packet_encoding`](../docs/configuration/outbound/vless.md#packet_encoding); needed for UDP over VLESS, compatible with Vision |
-| `streamSettings.network: "tcp"` | no `transport` block | Vision without `encryption` lives only on bare TCP, §3.3 |
+| `streamSettings.network: "tcp"` | no `transport` block | Vision without `encryption` lives only on bare TCP, [§3.3](#33-what-vision-combines-with) |
 
 > ⚠️ Compatibility rule for sing-box `multiplex`: with `flow` set, it must
 > be off. Vision does not survive multiplexing.
@@ -877,7 +877,7 @@ stream-one
 | `stream-one` | Directly to the server, usually under REALITY | Needs HTTP/2 and no buffering |
 | `auto` | Default: with REALITY → `stream-one`, otherwise → `packet-up` | n/a |
 
-The server joins the directions by the session identifier (§4.4). What this
+The server joins the directions by the session identifier ([§4.4](#44-session-sequence-numbers-padding)). What this
 gives beyond getting through: the directions can be sent **along
 different paths**. In Xray this is done by `downloadSettings`. Our core does
 **not** have this field: the downlink always goes where the uplink goes.
@@ -1058,17 +1058,17 @@ everything is flat inside `transport`, and names are converted to snake_case.
 | Xray | sing-box-lx | Where described |
 |---|---|---|
 | `network: "xhttp"` | `transport.type: "xhttp"` | [transports §1](protocols-transports.md#1-xhttp-transport) |
-| `xhttpSettings.mode` | `transport.mode` | [§1.1 Modes](protocols-transports.md#11-modes), §4.2 |
+| `xhttpSettings.mode` | `transport.mode` | [§1.1 Modes](protocols-transports.md#11-modes), [§4.2](#42-two-directions-and-three-modes) |
 | `xhttpSettings.host`, `path` | `transport.host`, `path` | [§1.2 Core fields](protocols-transports.md#12-core-fields-v1) |
 | `xhttpSettings.headers` | `transport.headers` | same place |
-| `extra.xPaddingBytes` | `x_padding_bytes` | [§1.5 X-Padding](protocols-transports.md#15-x-padding-obfuscation-v2), §4.4 |
+| `extra.xPaddingBytes` | `x_padding_bytes` | [§1.5 X-Padding](protocols-transports.md#15-x-padding-obfuscation-v2), [§4.4](#44-session-sequence-numbers-padding) |
 | `extra.scMaxEachPostBytes`, `scMinPostsIntervalMs` | `sc_max_each_post_bytes`, `sc_min_posts_interval_ms` | [§1.6 Packet-up tuning](protocols-transports.md#16-packet-up-tuning-v2) |
 | `extra.noGRPCHeader` | `no_grpc_header` | [§1.2](protocols-transports.md#12-core-fields-v1) |
-| `extra.xmux.*` | `xmux.*` (snake_case) | [§1.7 xmux](protocols-transports.md#17-connection-reuse--xmux), §4.5 |
-| `extra.downloadSettings` | none | §4.2 |
-| `tlsSettings.alpn` | `tls.alpn`, decides the HTTP version | [HTTP version](protocols-transports.md#http-version), §4.3 |
-| `tlsSettings.serverName`, `fingerprint` | `tls.server_name`, `tls.utls.fingerprint` | as in §2.8 |
-| `security: "reality"` + `realitySettings` | `tls.reality` | as in §2.8; `mode: auto` then gives `stream-one` |
+| `extra.xmux.*` | `xmux.*` (snake_case) | [§1.7 xmux](protocols-transports.md#17-connection-reuse--xmux), [§4.5](#45-xmux-a-connection-pool-like-a-browsers) |
+| `extra.downloadSettings` | none | [§4.2](#42-two-directions-and-three-modes) |
+| `tlsSettings.alpn` | `tls.alpn`, decides the HTTP version | [HTTP version](protocols-transports.md#http-version), [§4.3](#43-the-http-version-is-derived-not-set) |
+| `tlsSettings.serverName`, `fingerprint` | `tls.server_name`, `tls.utls.fingerprint` | as in [§2.8](#28-example-xray-and-sing-box-lx) |
+| `security: "reality"` + `realitySettings` | `tls.reality` | as in [§2.8](#28-example-xray-and-sing-box-lx); `mode: auto` then gives `stream-one` |
 | ranges `"16-32"` | the same strings or a number | [§1.9 Range value forms](protocols-transports.md#19-range-value-forms) |
 
 Xray server fields (`scMaxBufferedPosts`, `scStreamUpServerSecs`,
@@ -1143,12 +1143,12 @@ In August 2024 NIST approved post-quantum standards:
   key" exchange as in Diffie-Hellman.
 - **ML-DSA** (FIPS 204, formerly Dilithium): lattice-based signatures. It is
   not needed for key exchange. In Xray it signs the REALITY certificate; our
-  core does not implement it (§2.6).
+  core does not implement it ([§2.6](#26-what-our-core-does-differently-from-upstream)).
 
 New algorithms are not fully trusted: their mathematics has not been studied
 for long. So everyone uses a **hybrid**: X25519 and ML-KEM-768 at once, with
 the shared secret derived from both. To open a connection, both have to be
-broken. This is how X25519MLKEM768 in TLS works (§1.3), and this is how
+broken. This is how X25519MLKEM768 in TLS works ([§1.3](#13-hybrid-key-share-and-clienthello-size)), and this is how
 `mlkem768x25519plus` works.
 
 ## 5.3 Where the layer lives
@@ -1184,7 +1184,7 @@ the string parser is `protocol/vless/lx_encryption.go`.
 > VLESS. The transport comes up (WS answers `101`, gRPC sends SETTINGS), and
 > then the peer closes the connection without a single log line. Before [SPEC 032](../SPECS/TASKS/032-VLESS_ENCRYPTION_MLKEM768/SPEC.md) such
 > nodes did not work in any sing-box-based client. The upstream position is
-> the same as for XHTTP (§4.8): the request
+> the same as for XHTTP ([§4.8](#48-upstream-position)): the request
 > [SagerNet/sing-box#4179](https://github.com/SagerNet/sing-box/issues/4179)
 > was deleted, and the question [#3599](https://github.com/SagerNet/sing-box/issues/3599)
 > was closed as `not planned` on 2026-01-04 with the answer "Not supported"
@@ -1246,7 +1246,7 @@ sends a **ticket** (16 bytes) and its lifetime in seconds. The client stores
 the ticket together with `pfsKey`. The next connection within the lifetime
 carries the ticket instead of the PFS exchange, and the server recovers the
 same `pfsKey` from the ticket. Data goes right after the first packet. The
-ticket is reused until it expires, but the NFS step (§5.4, item 1) runs
+ticket is reused until it expires, but the NFS step ([§5.4](#54-handshake-two-keys-one-secret), item 1) runs
 again on every connection, so each connection has its own `unitedKey`.
 Protection against replay of the first packet is on the server side.
 
@@ -1259,7 +1259,7 @@ The second segment of the string sets how the layer looks from the outside:
 
 - `native`: records are formatted as TLS 1.3 `application_data`. Without
   outer TLS the traffic looks like TLS; over TLS, like TLS inside TLS (this
-  is where Vision comes in, §3.3);
+  is where Vision comes in, [§3.3](#33-what-vision-combines-with));
 - `xorpub`: the same, but the relays of the first packet are additionally
   masked with a stream cipher keyed by the server's public key. An X25519
   public key and an ML-KEM ciphertext have a recognisable structure, and
@@ -1286,17 +1286,17 @@ protected when it is not.
   payload. They are enabled together or separately, and neither depends on
   the other.
 - **«I have `chrome` with X25519MLKEM768, so the traffic is already post-quantum.»**
-  The hybrid key share in the ClientHello (§1.3) protects the key of the
+  The hybrid key share in the ClientHello ([§1.3](#13-hybrid-key-share-and-clienthello-size)) protects the key of the
   outer TLS, which a CDN terminates on its side. `encryption` protects the
   key of the inner layer, which reaches the server. The primitive is the
   same, ML-KEM-768, but the keys and layers differ.
 - **«With `encryption`, Vision is not needed.»** It is needed for the same
   reason as over TLS: someone else's TLS handshake still travels inside the
   tunnel, and its shape is visible. Vision over `encryption` works on any
-  transport (§3.3).
+  transport ([§3.3](#33-what-vision-combines-with)).
 - **«`security=none` in a link means the node is unencrypted.»** It only
   means that there is no outer TLS. If the link has `encryption`, the
-  encryption lives inside VLESS (§5.3).
+  encryption lives inside VLESS ([§5.3](#53-where-the-layer-lives)).
 
 ## 5.8 Example: Xray and sing-box-lx
 
@@ -1342,13 +1342,13 @@ sing-box-lx:
 
 | Xray | sing-box-lx | Where described |
 |---|---|---|
-| `users[].encryption: "mlkem768x25519plus…"` | `encryption`, a flat field next to `uuid` | [lx-config §6](lx-config.md#6-vless-encryption--post-quantum-layer-spec-032), §5.4–§5.6 |
-| `users[].encryption: "none"` or empty | field absent, empty or `"none"` | layer off, §5.6 |
-| `security: "none"` | no `tls` block | outer TLS not needed, §5.3 |
-| `security: "tls"` / `"reality"` | `tls` as in §2.8 | two independent layers, §5.7 |
-| `users[].flow: "xtls-rprx-vision"` | `flow` | works over `encryption` on any transport, §3.3 |
-| `network: "ws"` + `wsSettings` | `transport.type: "ws"` + `path` | [WebSocket](../docs/configuration/shared/v2ray-transport.md#websocket); any transport, `xhttp` included (§4.7) |
-| server-side `decryption` | none | not ported, §5.3 |
+| `users[].encryption: "mlkem768x25519plus…"` | `encryption`, a flat field next to `uuid` | [lx-config §6](lx-config.md#6-vless-encryption--post-quantum-layer-spec-032), [§5.4](#54-handshake-two-keys-one-secret)–[§5.6](#56-wire-appearance-and-padding) |
+| `users[].encryption: "none"` or empty | field absent, empty or `"none"` | layer off, [§5.6](#56-wire-appearance-and-padding) |
+| `security: "none"` | no `tls` block | outer TLS not needed, [§5.3](#53-where-the-layer-lives) |
+| `security: "tls"` / `"reality"` | `tls` as in [§2.8](#28-example-xray-and-sing-box-lx) | two independent layers, [§5.7](#57-popular-misconceptions) |
+| `users[].flow: "xtls-rprx-vision"` | `flow` | works over `encryption` on any transport, [§3.3](#33-what-vision-combines-with) |
+| `network: "ws"` + `wsSettings` | `transport.type: "ws"` + `path` | [WebSocket](../docs/configuration/shared/v2ray-transport.md#websocket); any transport, `xhttp` included ([§4.7](#47-example-xray-and-sing-box-lx)) |
+| server-side `decryption` | none | not ported, [§5.3](#53-where-the-layer-lives) |
 
 > ⚠️ The `encryption` string is carried over **verbatim**: the appearance,
 > mode and padding segments and the keys are the same in both cores, and no
@@ -1434,7 +1434,7 @@ source for each protocol is its source code, not its documentation
 
 > 🧭 **The cost of the choice** is plainly visible in this document. The
 > protocols change on the Xray side, and the fork has to catch up with every
-> server tightening (§2.6), otherwise subscription nodes silently die. This
+> server tightening ([§2.6](#26-what-our-core-does-differently-from-upstream)), otherwise subscription nodes silently die. This
 > is ongoing work, not a one-off port.
 
 ## 7.2 How the fork delta is structured
@@ -1445,7 +1445,7 @@ byte for byte. Each `upstream/stable` release is merged within days.
 Hotfixes for upstream bugs have a removal condition (the
 [004-HOTFIXES](../SPECS/FEATURES/004-HOTFIXES/FEATURE.md) registry). Where an
 upstream dependency does not provide what is needed, it is replaced by a fork
-submodule. For this document that is `utls-lx` (§1.2).
+submodule. For this document that is `utls-lx` ([§1.2](#12-fingerprint-and-utls)).
 
 ## 7.3 Summary by protocol
 
@@ -1453,17 +1453,17 @@ submodule. For this document that is `utls-lx` (§1.2).
 
 | What | Vanilla sing-box | sing-box-lx | Where |
 |---|---|---|---|
-| **XHTTP** | No transport: only `ws`, `grpc`, `httpupgrade`, `http`, `quic`. A node with `xhttp` does not load | Native `xhttp` transport behind `with_xhttp`: all modes, HTTP version by the Xray rule, `xmux`, padding, session placement | §4, [002](../SPECS/FEATURES/002-XHTTP/FEATURE.md) |
-| **REALITY: hybrid key share** | Strips `X25519MLKEM768` from the ClientHello (a workaround for old uTLS, [SagerNet/sing-box#4520](https://github.com/SagerNet/sing-box/issues/4520)). Against Xray ≥ v26.9.8 every node ends up on the cover site | Sends what the preset carries; `AuthKey` from the key the server will choose | §2.6, [083](../SPECS/TASKS/083-REALITY_MLKEM_KEYSHARE/SPEC.md) |
+| **XHTTP** | No transport: only `ws`, `grpc`, `httpupgrade`, `http`, `quic`. A node with `xhttp` does not load | Native `xhttp` transport behind `with_xhttp`: all modes, HTTP version by the Xray rule, `xmux`, padding, session placement | [§4](#4-xhttp), [002](../SPECS/FEATURES/002-XHTTP/FEATURE.md) |
+| **REALITY: hybrid key share** | Strips `X25519MLKEM768` from the ClientHello (a workaround for old uTLS, [SagerNet/sing-box#4520](https://github.com/SagerNet/sing-box/issues/4520)). Against Xray ≥ v26.9.8 every node ends up on the cover site | Sends what the preset carries; `AuthKey` from the key the server will choose | [§2.6](#26-what-our-core-does-differently-from-upstream), [083](../SPECS/TASKS/083-REALITY_MLKEM_KEYSHARE/SPEC.md) |
 | **REALITY: client version** | An outdated constant; a server with `minClientVer` rejects it | Exactly the required minimum | [053](../SPECS/TASKS/053-REALITY_MIN_CLIENT_VER/SPEC.md) |
-| **REALITY: `key_share`** | No such field | `classical` / `hybrid` per node, for networks that lose a two-segment ClientHello | §1.3, [089](../SPECS/TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md) |
-| **REALITY: fragmentation** | `fragment` / `record_fragment` leave REALITY untouched | Apply to REALITY too; under `detour`, `record_fragment` turns on by itself | §1.4, [088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md), [060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) |
-| **uTLS fingerprints** | `metacubex/utls`: hybrid share only in `chrome` | Fork `utls-lx`: adds `firefox` (Firefox 148) and `safari` (Safari 26.3) with the hybrid, and the opt-in `chrome_155` (Chrome 155) | §1.2, [086](../SPECS/TASKS/086-UTLS_FORK_FIREFOX148/SPEC.md), [087](../SPECS/TASKS/087-UTLS_SAFARI_26_3/SPEC.md), [118](../SPECS/TASKS/118-UTLS_CHROME_155/SPEC.md) |
-| **Vision** | Present (`sing-vmess`), only over TLS/REALITY on bare TCP | The same, plus over VLESS `encryption` on any transport | §3.3, [105](../SPECS/TASKS/105-VISION_OVER_VLESS_ENCRYPTION/SPEC.md) |
-| **VLESS `encryption`** | None; the field is rejected as unknown, and nodes with it are dead across the whole sing-box ecosystem | The client half of `mlkem768x25519plus`: all wire appearances, `0rtt`/`1rtt`, padding | §5, [012](../SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) |
-| **VLESS `decryption`** (server) | None | None, intentionally: the fork is client-side | §5.3 |
-| **ML-DSA-65 in REALITY**, `spiderX` | None | None, outside the feature | §2.6 |
-| **XHTTP `downloadSettings`** | No transport | No field: the downlink takes the same path as the uplink | §4.2 |
+| **REALITY: `key_share`** | No such field | `classical` / `hybrid` per node, for networks that lose a two-segment ClientHello | [§1.3](#13-hybrid-key-share-and-clienthello-size), [089](../SPECS/TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md) |
+| **REALITY: fragmentation** | `fragment` / `record_fragment` leave REALITY untouched | Apply to REALITY too; under `detour`, `record_fragment` turns on by itself | [§1.4](#14-fragmentation), [088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md), [060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) |
+| **uTLS fingerprints** | `metacubex/utls`: hybrid share only in `chrome` | Fork `utls-lx`: adds `firefox` (Firefox 148) and `safari` (Safari 26.3) with the hybrid, and the opt-in `chrome_155` (Chrome 155) | [§1.2](#12-fingerprint-and-utls), [086](../SPECS/TASKS/086-UTLS_FORK_FIREFOX148/SPEC.md), [087](../SPECS/TASKS/087-UTLS_SAFARI_26_3/SPEC.md), [118](../SPECS/TASKS/118-UTLS_CHROME_155/SPEC.md) |
+| **Vision** | Present (`sing-vmess`), only over TLS/REALITY on bare TCP | The same, plus over VLESS `encryption` on any transport | [§3.3](#33-what-vision-combines-with), [105](../SPECS/TASKS/105-VISION_OVER_VLESS_ENCRYPTION/SPEC.md) |
+| **VLESS `encryption`** | None; the field is rejected as unknown, and nodes with it are dead across the whole sing-box ecosystem | The client half of `mlkem768x25519plus`: all wire appearances, `0rtt`/`1rtt`, padding | [§5](#5-vless-encryption-the-post-quantum-layer), [012](../SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) |
+| **VLESS `decryption`** (server) | None | None, intentionally: the fork is client-side | [§5.3](#53-where-the-layer-lives) |
+| **ML-DSA-65 in REALITY**, `spiderX` | None | None, outside the feature | [§2.6](#26-what-our-core-does-differently-from-upstream) |
+| **XHTTP `downloadSettings`** | No transport | No field: the downlink takes the same path as the uplink | [§4.2](#42-two-directions-and-three-modes) |
 
 > 🔀 **Common denominator:** vanilla sing-box is enough for a REALITY server
 > on old Xray and for WS/gRPC through a CDN. Any subscription with XHTTP, with
@@ -1503,9 +1503,9 @@ submodule. For this document that is `utls-lx` (§1.2).
 
 ## See also
 
-- **[lx-config.md](lx-config.md)**: field overview by feature: §6 VLESS
-  `encryption`, §7 REALITY `key_share`, §9 fragmentation.
-- **[protocols-transports.md](protocols-transports.md)**: §1
+- **[lx-config.md](lx-config.md)**: field overview by feature: [§6](lx-config.md#6-vless-encryption--post-quantum-layer-spec-032) VLESS
+  `encryption`, [§7](lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello-spec-089) REALITY `key_share`, [§9](lx-config.md#9-automatic-clienthello-fragmentation-under-detour-spec-060) fragmentation.
+- **[protocols-transports.md](protocols-transports.md)**: [§1](protocols-transports.md#1-xhttp-transport)
   XHTTP: every field, default and error.
 - Feature specs: [017-REALITY](../SPECS/FEATURES/017-REALITY/FEATURE.md),
   [002-XHTTP](../SPECS/FEATURES/002-XHTTP/FEATURE.md),

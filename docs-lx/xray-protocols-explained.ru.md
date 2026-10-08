@@ -162,9 +162,9 @@ TCP или QUIC → сеть
 
 | Посредник | Как действует | Какой слой отвечает |
 |---|---|---|
-| **Пассивный классификатор** (DPI) смотрит на форму трафика: длины пакетов, ритм, SNI, набор шифров в ClientHello, характерные последовательности | Сетевое оборудование на пути, в реальном времени | отпечаток uTLS (§1), Vision (§3), XHTTP (§4), паддинг везде |
-| **Активная проверка сервера** подключается к серверу сама и смотрит, что тот ответит | По списку адресов, выделенных классификатором | REALITY (§2) |
-| **Запись трафика с расшифровкой в будущем** квантовым компьютером | Кто угодно с большим диском | VLESS `encryption` (§5), гибридный key share в TLS (§1.3) |
+| **Пассивный классификатор** (DPI) смотрит на форму трафика: длины пакетов, ритм, SNI, набор шифров в ClientHello, характерные последовательности | Сетевое оборудование на пути, в реальном времени | отпечаток uTLS ([§1](#1-фундамент-tls-clienthello-и-отпечаток)), Vision ([§3](#3-vision)), XHTTP ([§4](#4-xhttp)), паддинг везде |
+| **Активная проверка сервера** подключается к серверу сама и смотрит, что тот ответит | По списку адресов, выделенных классификатором | REALITY ([§2](#2-reality)) |
+| **Запись трафика с расшифровкой в будущем** квантовым компьютером | Кто угодно с большим диском | VLESS `encryption` ([§5](#5-vless-encryption-постквантовый-слой)), гибридный key share в TLS ([§1.3](#13-гибридный-key-share-и-размер-приветствия)) |
 
 > 🧭 **TL;DR:** REALITY и VLESS `encryption` **не заменяют друг
 > друга**. REALITY отвечает за то, чтобы сервер вообще принял соединение и чтобы
@@ -204,10 +204,10 @@ TLS 1.3 шифрует почти всё, кроме первого сообще
 > ⚠️ Ядро **не подменяет** отпечаток молча ни при каких условиях: что
 > попросили, то и ушло (правило фичи [017](../SPECS/FEATURES/017-REALITY/FEATURE.md)).
 > Узел с пресетом без гибридного шара на новом Xray-сервере умирает у нас
-> так же, как у самого Xray-клиента, и это не дефект ядра (§1.3, §2.6).
+> так же, как у самого Xray-клиента, и это не дефект ядра ([§1.3](#13-гибридный-key-share-и-размер-приветствия), [§2.6](#26-что-в-нашем-ядре-иначе-чем-в-апстриме)).
 
 У нас uTLS — форк-сабмодуль `Leadaxe/utls-lx` поверх `metacubex/utls`. Форк
-нужен из-за §1.3: два из трёх пресетов с гибридным key share принесены нами.
+нужен из-за [§1.3](#13-гибридный-key-share-и-размер-приветствия): два из трёх пресетов с гибридным key share принесены нами.
 Ещё форк несёт Chrome 155 под явным именем `chrome_155`; `chrome` остаётся
 Chrome 133 (SPEC 118).
 
@@ -215,7 +215,7 @@ Chrome 133 (SPEC 118).
 
 С 2024 года браузеры шлют в `key_share` две записи: классическую X25519 и
 гибридную **X25519MLKEM768**, где к 32 байтам X25519 приписано 1184 байта
-публичного ключа ML-KEM-768 (о нём §5.2). Цель — постквантовая защита
+публичного ключа ML-KEM-768 (о нём [§5.2](#52-что-такое-ml-kem-и-зачем-гибрид)). Цель — постквантовая защита
 обмена ключами самого TLS.
 
 Для устойчивости к посредникам это имеет два следствия.
@@ -231,7 +231,7 @@ Chrome 133 (SPEC 118).
 > вырезает гибрид и возвращает односегментное приветствие, `hybrid` требует
 > гибрид и падает с понятной ошибкой на пресете, где его нет, пустое значение
 > оставляет то, что несёт отпечаток. Зачем это нужно именно для REALITY —
-> в §2.6.
+> в [§2.6](#26-что-в-нашем-ядре-иначе-чем-в-апстриме).
 
 ## 1.4 Фрагментация
 
@@ -356,7 +356,7 @@ WireGuard или MASQUE — наш ClientHello уходит **внутри** ч�
 
 Поможет ли фрагментация в сети, которая теряет большой первый пакет
 **без** туннеля, — свойство той сети; второй рычаг там —
-`key_share: classical` (§1.3).
+`key_share: classical` ([§1.3](#13-гибридный-key-share-и-размер-приветствия)).
 
 ## 1.5 Пример: Xray и sing-box-lx
 
@@ -445,19 +445,19 @@ sing-box-lx — один outbound для обеих форм:
 | Xray | sing-box-lx | Где описано |
 |---|---|---|
 | `security: "tls"` + `tlsSettings` | `tls.enabled: true` | [TLS](../docs/configuration/shared/tls.md), [`enabled`](../docs/configuration/shared/tls.md#enabled) |
-| `tlsSettings.serverName` | `tls.server_name` | [`server_name`](../docs/configuration/shared/tls.md#server_name), §1.1 |
+| `tlsSettings.serverName` | `tls.server_name` | [`server_name`](../docs/configuration/shared/tls.md#server_name), [§1.1](#11-что-видно-в-clienthello) |
 | пустой `serverName` | `tls.disable_sni: true` | [`disable_sni`](../docs/configuration/shared/tls.md#disable_sni); пустой `server_name` у нас **не** убирает SNI, а подставляет адрес |
-| `tlsSettings.fingerprint` | `tls.utls.enabled: true` + `tls.utls.fingerprint` | [`utls`](../docs/configuration/shared/tls.md#utls), §1.2; гибридный key share несут `chrome`, `firefox`, `safari` (§1.3) |
-| `tlsSettings.alpn` | `tls.alpn` | [`alpn`](../docs/configuration/shared/tls.md#alpn); для XHTTP решает версию HTTP (§4.3) |
+| `tlsSettings.fingerprint` | `tls.utls.enabled: true` + `tls.utls.fingerprint` | [`utls`](../docs/configuration/shared/tls.md#utls), [§1.2](#12-отпечаток-и-utls); гибридный key share несут `chrome`, `firefox`, `safari` ([§1.3](#13-гибридный-key-share-и-размер-приветствия)) |
+| `tlsSettings.alpn` | `tls.alpn` | [`alpn`](../docs/configuration/shared/tls.md#alpn); для XHTTP решает версию HTTP ([§4.3](#43-версия-http-выводится-а-не-задаётся)) |
 | `tlsSettings.allowInsecure` | `tls.insecure` | [`insecure`](../docs/configuration/shared/tls.md#insecure) |
 | `tlsSettings.minVersion`, `cipherSuites` | `tls.min_version`, `tls.cipher_suites` | [`min_version`](../docs/configuration/shared/tls.md#min_version), [`cipher_suites`](../docs/configuration/shared/tls.md#cipher_suites); у Xray `cipherSuites` — строка через двоеточие, у нас массив |
-| `tlsSettings.echConfigList` | `tls.ech.enabled: true` + `tls.ech.config` | [ECH Fields](../docs/configuration/shared/tls.md#ech-fields); с REALITY несовместимо (§6) |
-| `finalmask.tcp[type=fragment]` | `tls.fragment: true` (TCP-сегменты) или `tls.record_fragment: true` (TLS-записи) | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment), §1.4 |
-| `freedom` + `settings.fragment` + `sockopt.dialerProxy` | то же `tls.fragment` на узле, который ходит наружу напрямую | §1.4; служебный `freedom` отдельным outbound-ом не становится |
-| `length`, `delay` / `interval`, `maxSplit` | нет | границы ядро находит по SNI, паузы — по ACK (§1.4); переносить нечего, переносится только факт включения |
+| `tlsSettings.echConfigList` | `tls.ech.enabled: true` + `tls.ech.config` | [ECH Fields](../docs/configuration/shared/tls.md#ech-fields); с REALITY несовместимо ([§6](#6-как-слои-складываются)) |
+| `finalmask.tcp[type=fragment]` | `tls.fragment: true` (TCP-сегменты) или `tls.record_fragment: true` (TLS-записи) | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment), [§1.4](#14-фрагментация) |
+| `freedom` + `settings.fragment` + `sockopt.dialerProxy` | то же `tls.fragment` на узле, который ходит наружу напрямую | [§1.4](#14-фрагментация); служебный `freedom` отдельным outbound-ом не становится |
+| `length`, `delay` / `interval`, `maxSplit` | нет | границы ядро находит по SNI, паузы — по ACK ([§1.4](#14-фрагментация)); переносить нечего, переносится только факт включения |
 | — | `tls.fragment_fallback_delay` | [`fragment_fallback_delay`](../docs/configuration/shared/tls.md#fragment_fallback_delay): время ожидания, когда ядро не может вычислить его само; по умолчанию 500 мс |
 | — | `record_fragment` сам включается под `detour` | [lx-config §9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060) |
-| — | `tls.reality.key_share` | только у нас, §1.3; относится к REALITY, пример в §2.8 |
+| — | `tls.reality.key_share` | только у нас, [§1.3](#13-гибридный-key-share-и-размер-приветствия); относится к REALITY, пример в [§2.8](#28-пример-xray-и-sing-box-lx) |
 
 > 📖 Нормативное описание полей Xray — [TLS в документации Project X](https://xtls.github.io/config/transport.html#tlsobject).
 
@@ -590,7 +590,7 @@ ClientHello ──► сервер REALITY
   трёх пресетов.
 - **Версия клиента** в session id — ровно требуемый минимум ([SPEC 053](../SPECS/TASKS/053-REALITY_MIN_CLIENT_VER/SPEC.md));
   сервер с `minClientVer` отсекает клиентов ниже порога.
-- **`key_share: classical | hybrid`** ([SPEC 089](../SPECS/TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md), §1.3) — для сетей, которые
+- **`key_share: classical | hybrid`** ([SPEC 089](../SPECS/TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md), [§1.3](#13-гибридный-key-share-и-размер-приветствия)) — для сетей, которые
   теряют двухсегментное приветствие. Классика работает только с Xray
   < v26.9.8; автофолбэка между режимами нет, потому что отказ сервера от
   потери в сети не отличим без второй попытки, а сеть после потери
@@ -675,16 +675,16 @@ sing-box-lx (`outbounds[]`):
 |---|---|---|
 | `vnext[].address`, `port` | `server`, `server_port` | [vless outbound](../docs/configuration/outbound/vless.md) |
 | `users[].id` | `uuid` | [`uuid`](../docs/configuration/outbound/vless.md#uuid) |
-| `users[].flow` | `flow` | [`flow`](../docs/configuration/outbound/vless.md#flow), §3 |
-| `users[].encryption: "none"` | поле отсутствует | Это legacy-литерал Xray, не постквантовый слой; тот — §5.8 |
+| `users[].flow` | `flow` | [`flow`](../docs/configuration/outbound/vless.md#flow), [§3](#3-vision) |
+| `users[].encryption: "none"` | поле отсутствует | Это legacy-литерал Xray, не постквантовый слой; тот — [§5.8](#58-пример-xray-и-sing-box-lx) |
 | `security: "reality"` | `tls.enabled: true` + `tls.reality.enabled: true` | [Reality Fields](../docs/configuration/shared/tls.md#reality-fields) |
 | `realitySettings.serverName` | `tls.server_name` | [`server_name`](../docs/configuration/shared/tls.md#server_name) |
-| `realitySettings.fingerprint` | `tls.utls.enabled: true` + `tls.utls.fingerprint` | [`utls`](../docs/configuration/shared/tls.md#utls), §1.2 |
+| `realitySettings.fingerprint` | `tls.utls.enabled: true` + `tls.utls.fingerprint` | [`utls`](../docs/configuration/shared/tls.md#utls), [§1.2](#12-отпечаток-и-utls) |
 | `realitySettings.publicKey` | `tls.reality.public_key` | [`public_key`](../docs/configuration/shared/tls.md#public_key) |
 | `realitySettings.shortId` | `tls.reality.short_id` | [`short_id`](../docs/configuration/shared/tls.md#short_id) |
-| `realitySettings.spiderX` | нет | §2.5, §2.6 |
-| `realitySettings.mldsa65Verify` | нет | §2.6 |
-| — | `tls.reality.key_share` | только у нас: [lx-config §7](lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello-spec-089), §1.3 |
+| `realitySettings.spiderX` | нет | [§2.5](#25-как-клиент-проверяет-сервер), [§2.6](#26-что-в-нашем-ядре-иначе-чем-в-апстриме) |
+| `realitySettings.mldsa65Verify` | нет | [§2.6](#26-что-в-нашем-ядре-иначе-чем-в-апстриме) |
+| — | `tls.reality.key_share` | только у нас: [lx-config §7](lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello-spec-089), [§1.3](#13-гибридный-key-share-и-размер-приветствия) |
 | — | `tls.fragment`, `tls.record_fragment` | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment); авто под `detour` — [lx-config §9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060) |
 
 > 📖 Нормативное описание полей Xray — [REALITY в документации Project X](https://xtls.github.io/config/transport.html#realityobject).
@@ -746,7 +746,7 @@ Finished. Их длины и ритм характерны, и DPI их узна
    внутренний TLS 1.3 установился, он перестаёт перешифровывать его
    записи вторым слоем. Внешнее соединение продолжает жить, но данные
    внутри него уходят напрямую в нижний слой. Для этого Vision нужен
-   доступ к «сырому» соединению под внешним TLS — отсюда ограничения §3.3.
+   доступ к «сырому» соединению под внешним TLS — отсюда ограничения [§3.3](#33-с-чем-vision-сочетается).
 3. **Splice на сервере.** Сервер делает то же в обратную сторону и на
    Linux отдаёт копирование ядру ОС. Процессор почти не тратится.
 
@@ -773,7 +773,7 @@ Vision бессмыслен для трафика, который сам не з
 ## 3.4 Пример: Xray и sing-box-lx
 
 Vision — одно поле, и оно одинаково называется с обеих сторон. Полный
-outbound с REALITY — в §2.8; здесь только то, что относится к потоку.
+outbound с REALITY — в [§2.8](#28-пример-xray-и-sing-box-lx); здесь только то, что относится к потоку.
 
 Xray:
 
@@ -795,10 +795,10 @@ sing-box-lx:
 | Xray | sing-box-lx | Где описано |
 |---|---|---|
 | `users[].flow: "xtls-rprx-vision"` | `flow: "xtls-rprx-vision"` | [`flow`](../docs/configuration/outbound/vless.md#flow) |
-| `users[].flow` пустой или отсутствует | `flow` пустой или отсутствует | обязательное условие для ws / grpc / httpupgrade / xhttp без `encryption`, §3.3 |
+| `users[].flow` пустой или отсутствует | `flow` пустой или отсутствует | обязательное условие для ws / grpc / httpupgrade / xhttp без `encryption`, [§3.3](#33-с-чем-vision-сочетается) |
 | `xtls-rprx-vision-udp443` | не поддерживается | суффикс Xray, запрещающий UDP на 443; у нас роутится правилами |
 | (xudp включён по умолчанию) | `packet_encoding: "xudp"` | [`packet_encoding`](../docs/configuration/outbound/vless.md#packet_encoding); нужен для UDP через VLESS, с Vision совместим |
-| `streamSettings.network: "tcp"` | блока `transport` нет | Vision без `encryption` живёт только на голом TCP, §3.3 |
+| `streamSettings.network: "tcp"` | блока `transport` нет | Vision без `encryption` живёт только на голом TCP, [§3.3](#33-с-чем-vision-сочетается) |
 
 > ⚠️ Правило совместимости с `multiplex` sing-box: при `flow` он должен быть
 > выключен — Vision мультиплексирование не переживает.
@@ -854,7 +854,7 @@ stream-one
 | `stream-one` | Напрямую на сервер, обычно под REALITY | Нужен HTTP/2 и отсутствие буферизации |
 | `auto` | Дефолт: при REALITY → `stream-one`, иначе → `packet-up` | — |
 
-Сервер склеивает направления по идентификатору сессии (§4.4). Что это
+Сервер склеивает направления по идентификатору сессии ([§4.4](#44-сессия-нумерация-паддинг)). Что это
 даёт сверх проходимости: направления можно пустить **разными путями**
 — в Xray за это отвечает `downloadSettings`. У нас этого поля **нет**:
 даунлинк всегда идёт туда же, куда аплинк.
@@ -1031,17 +1031,17 @@ sing-box-lx:
 | Xray | sing-box-lx | Где описано |
 |---|---|---|
 | `network: "xhttp"` | `transport.type: "xhttp"` | [transports §1](protocols-transports.ru.md#1-xhttp-транспорт) |
-| `xhttpSettings.mode` | `transport.mode` | [§1.1 Режимы](protocols-transports.ru.md#11-режимы), §4.2 |
+| `xhttpSettings.mode` | `transport.mode` | [§1.1 Режимы](protocols-transports.ru.md#11-режимы), [§4.2](#42-два-направления-и-три-режима) |
 | `xhttpSettings.host`, `path` | `transport.host`, `path` | [§1.2 Основные поля](protocols-transports.ru.md#12-основные-поля-v1) |
 | `xhttpSettings.headers` | `transport.headers` | там же |
-| `extra.xPaddingBytes` | `x_padding_bytes` | [§1.5 X-Padding](protocols-transports.ru.md#15-x-padding-обфускация-v2), §4.4 |
+| `extra.xPaddingBytes` | `x_padding_bytes` | [§1.5 X-Padding](protocols-transports.ru.md#15-x-padding-обфускация-v2), [§4.4](#44-сессия-нумерация-паддинг) |
 | `extra.scMaxEachPostBytes`, `scMinPostsIntervalMs` | `sc_max_each_post_bytes`, `sc_min_posts_interval_ms` | [§1.6 Тюнинг packet-up](protocols-transports.ru.md#16-тюнинг-packet-up-v2) |
 | `extra.noGRPCHeader` | `no_grpc_header` | [§1.2](protocols-transports.ru.md#12-основные-поля-v1) |
-| `extra.xmux.*` | `xmux.*` (snake_case) | [§1.7 xmux](protocols-transports.ru.md#17-переиспользование-соединений--xmux), §4.5 |
-| `extra.downloadSettings` | нет | §4.2 |
-| `tlsSettings.alpn` | `tls.alpn` — решает версию HTTP | [Версия HTTP](protocols-transports.ru.md#версия-http), §4.3 |
-| `tlsSettings.serverName`, `fingerprint` | `tls.server_name`, `tls.utls.fingerprint` | как в §2.8 |
-| `security: "reality"` + `realitySettings` | `tls.reality` | как в §2.8; `mode: auto` при этом даёт `stream-one` |
+| `extra.xmux.*` | `xmux.*` (snake_case) | [§1.7 xmux](protocols-transports.ru.md#17-переиспользование-соединений--xmux), [§4.5](#45-xmux-пул-соединений-как-у-браузера) |
+| `extra.downloadSettings` | нет | [§4.2](#42-два-направления-и-три-режима) |
+| `tlsSettings.alpn` | `tls.alpn` — решает версию HTTP | [Версия HTTP](protocols-transports.ru.md#версия-http), [§4.3](#43-версия-http-выводится-а-не-задаётся) |
+| `tlsSettings.serverName`, `fingerprint` | `tls.server_name`, `tls.utls.fingerprint` | как в [§2.8](#28-пример-xray-и-sing-box-lx) |
+| `security: "reality"` + `realitySettings` | `tls.reality` | как в [§2.8](#28-пример-xray-и-sing-box-lx); `mode: auto` при этом даёт `stream-one` |
 | диапазоны `"16-32"` | те же строки или число | [§1.9 Формы записи диапазонов](protocols-transports.ru.md#19-формы-записи-диапазонов) |
 
 Серверные поля Xray (`scMaxBufferedPosts`, `scStreamUpServerSecs`,
@@ -1114,12 +1114,12 @@ ECDSA, Ed25519). Алгоритм Шора на достаточно больш�
   в Диффи-Хеллмане, нет.
 - **ML-DSA** (FIPS 204, бывший Dilithium) — подпись на решётках. Для
   обмена ключами не нужна; в Xray она подписывает сертификат REALITY, у нас
-  не реализована (§2.6).
+  не реализована ([§2.6](#26-что-в-нашем-ядре-иначе-чем-в-апстриме)).
 
 Новым алгоритмам не доверяют полностью: их математику проверяли недолго.
 Поэтому везде используют **гибрид**: X25519 и ML-KEM-768 одновременно,
 общий секрет выводится из обоих. Чтобы вскрыть соединение, нужно сломать
-и то, и другое. Так устроен X25519MLKEM768 в TLS (§1.3), и так устроен
+и то, и другое. Так устроен X25519MLKEM768 в TLS ([§1.3](#13-гибридный-key-share-и-размер-приветствия)), и так устроен
 `mlkem768x25519plus`.
 
 ## 5.3 Где живёт слой
@@ -1155,7 +1155,7 @@ tls: может быть, а может и не быть
 > VLESS. Транспорт поднимается (WS отвечает `101`, gRPC шлёт SETTINGS), после
 > чего пир закрывает соединение без единой строки в логе. До [SPEC 032](../SPECS/TASKS/032-VLESS_ENCRYPTION_MLKEM768/SPEC.md) такие
 > узлы не работали ни в одном клиенте на базе sing-box. Позиция апстрима
-> та же, что по XHTTP (§4.8): запрос
+> та же, что по XHTTP ([§4.8](#48-позиция-апстрима)): запрос
 > [SagerNet/sing-box#4179](https://github.com/SagerNet/sing-box/issues/4179)
 > удалён, вопрос [#3599](https://github.com/SagerNet/sing-box/issues/3599)
 > закрыт как `not planned` 2026-01-04 с ответом «Not supported» от стороннего
@@ -1215,7 +1215,7 @@ tls: может быть, а может и не быть
 запоминает билет вместе с `pfsKey`. Следующее соединение в пределах срока
 несёт билет вместо PFS-обмена, и сервер по билету восстанавливает тот же
 `pfsKey`; данные идут сразу за первым пакетом. Билет переиспользуется, пока
-не истёк срок, но NFS-шаг (§5.4, п. 1) выполняется заново на каждом
+не истёк срок, но NFS-шаг ([§5.4](#54-рукопожатие-два-ключа-один-секрет), п. 1) выполняется заново на каждом
 соединении, поэтому `unitedKey` у каждого соединения свой. Защита от
 повтора первого пакета — на сервере.
 
@@ -1228,7 +1228,7 @@ tls: может быть, а может и не быть
 
 - `native` — записи оформлены как TLS 1.3 `application_data`; без внешнего
   TLS трафик выглядит как TLS, поверх TLS — как TLS внутри TLS (тут Vision,
-  §3.3);
+  [§3.3](#33-с-чем-vision-сочетается));
 - `xorpub` — то же, но relays первого пакета дополнительно замаскированы
   потоковым шифром от публичного ключа сервера: публичный ключ X25519 и
   шифртекст ML-KEM имеют узнаваемую структуру, а после XOR выглядят как
@@ -1253,17 +1253,17 @@ tls: может быть, а может и не быть
   выбор сервером своих; `encryption` защищает нагрузку. Их включают вместе
   или порознь, друг от друга они не зависят.
 - **«У меня `chrome` с X25519MLKEM768, значит трафик уже постквантовый».**
-  Гибридный key share в ClientHello (§1.3) защищает ключ внешнего TLS,
+  Гибридный key share в ClientHello ([§1.3](#13-гибридный-key-share-и-размер-приветствия)) защищает ключ внешнего TLS,
   который CDN терминирует у себя. `encryption` защищает ключ внутреннего
   слоя, который доходит до сервера. Примитив один, ML-KEM-768, ключи и слои
   разные.
 - **«С `encryption` Vision не нужен».** Нужен по той же причине, что и
   поверх TLS: внутри туннеля всё равно едет чужое TLS-рукопожатие, и его
   форму видно. Vision поверх `encryption` работает на любом транспорте
-  (§3.3).
+  ([§3.3](#33-с-чем-vision-сочетается)).
 - **«`security=none` в ссылке означает, что узел не шифрован».** Означает
   только, что внешнего TLS нет. Если в ссылке есть `encryption`, шифрование
-  живёт внутри VLESS (§5.3).
+  живёт внутри VLESS ([§5.3](#53-где-живёт-слой)).
 
 ## 5.8 Пример: Xray и sing-box-lx
 
@@ -1309,13 +1309,13 @@ sing-box-lx:
 
 | Xray | sing-box-lx | Где описано |
 |---|---|---|
-| `users[].encryption: "mlkem768x25519plus…"` | `encryption` — плоское поле рядом с `uuid` | [lx-config §6](lx-config.ru.md#6-vless-encryption--пост-квантовый-слой-spec-032), §5.4–§5.6 |
-| `users[].encryption: "none"` или пусто | поле отсутствует, пусто или `"none"` | слой выключен, §5.6 |
-| `security: "none"` | блока `tls` нет | внешний TLS не нужен, §5.3 |
-| `security: "tls"` / `"reality"` | `tls` как в §2.8 | два независимых слоя, §5.7 |
-| `users[].flow: "xtls-rprx-vision"` | `flow` | работает поверх `encryption` на любом транспорте, §3.3 |
-| `network: "ws"` + `wsSettings` | `transport.type: "ws"` + `path` | [WebSocket](../docs/configuration/shared/v2ray-transport.md#websocket); любой транспорт, включая `xhttp` (§4.7) |
-| серверный `decryption` | нет | не портирован, §5.3 |
+| `users[].encryption: "mlkem768x25519plus…"` | `encryption` — плоское поле рядом с `uuid` | [lx-config §6](lx-config.ru.md#6-vless-encryption--пост-квантовый-слой-spec-032), [§5.4](#54-рукопожатие-два-ключа-один-секрет)–[§5.6](#56-вид-на-проводе-и-паддинг) |
+| `users[].encryption: "none"` или пусто | поле отсутствует, пусто или `"none"` | слой выключен, [§5.6](#56-вид-на-проводе-и-паддинг) |
+| `security: "none"` | блока `tls` нет | внешний TLS не нужен, [§5.3](#53-где-живёт-слой) |
+| `security: "tls"` / `"reality"` | `tls` как в [§2.8](#28-пример-xray-и-sing-box-lx) | два независимых слоя, [§5.7](#57-популярные-заблуждения) |
+| `users[].flow: "xtls-rprx-vision"` | `flow` | работает поверх `encryption` на любом транспорте, [§3.3](#33-с-чем-vision-сочетается) |
+| `network: "ws"` + `wsSettings` | `transport.type: "ws"` + `path` | [WebSocket](../docs/configuration/shared/v2ray-transport.md#websocket); любой транспорт, включая `xhttp` ([§4.7](#47-пример-xray-и-sing-box-lx)) |
+| серверный `decryption` | нет | не портирован, [§5.3](#53-где-живёт-слой) |
 
 > ⚠️ Строка `encryption` переносится **дословно**: сегменты вида, режима,
 > паддинга и ключи у обоих ядер одинаковы, перевода имён нет. Билдер
@@ -1399,7 +1399,7 @@ build-тегами. Обратное — принести в Xray платфор
 исходники, не документация ([lx-reference-cores.ru.md](lx-reference-cores.ru.md)).
 
 > 🧭 **Цена выбора** честно видна в этом документе: протоколы меняются на стороне
-> Xray, и каждое ужесточение сервера (§2.6) форк обязан догнать, иначе узлы
+> Xray, и каждое ужесточение сервера ([§2.6](#26-что-в-нашем-ядре-иначе-чем-в-апстриме)) форк обязан догнать, иначе узлы
 > из подписок умирают молча. Это постоянная работа, а не разовый порт.
 
 ## 7.2 Как устроена дельта форка
@@ -1410,7 +1410,7 @@ build-тегами. Обратное — принести в Xray платфор
 у хотфиксов апстримных багов есть условие снятия (реестр
 [004-HOTFIXES](../SPECS/FEATURES/004-HOTFIXES/FEATURE.md)). Там, где
 апстримная зависимость не даёт нужного, она заменяется форк-сабмодулем —
-для этого документа это `utls-lx` (§1.2).
+для этого документа это `utls-lx` ([§1.2](#12-отпечаток-и-utls)).
 
 ## 7.3 Сводка по протоколам
 
@@ -1418,17 +1418,17 @@ build-тегами. Обратное — принести в Xray платфор
 
 | Что | Ванильный sing-box | sing-box-lx | Где |
 |---|---|---|---|
-| **XHTTP** | Транспорта нет: только `ws`, `grpc`, `httpupgrade`, `http`, `quic`. Узел с `xhttp` не загружается | Нативный транспорт `xhttp` за `with_xhttp`: все режимы, версия HTTP по правилу Xray, `xmux`, паддинг, размещение сессии | §4, [002](../SPECS/FEATURES/002-XHTTP/FEATURE.md) |
-| **REALITY: гибридный key share** | Вырезает `X25519MLKEM768` из приветствия (костыль под старый uTLS, [SagerNet/sing-box#4520](https://github.com/SagerNet/sing-box/issues/4520)). Против Xray ≥ v26.9.8 каждый узел уходит на сайт-прикрытие | Шлёт то, что несёт пресет; `AuthKey` по тому ключу, который выберет сервер | §2.6, [083](../SPECS/TASKS/083-REALITY_MLKEM_KEYSHARE/SPEC.md) |
+| **XHTTP** | Транспорта нет: только `ws`, `grpc`, `httpupgrade`, `http`, `quic`. Узел с `xhttp` не загружается | Нативный транспорт `xhttp` за `with_xhttp`: все режимы, версия HTTP по правилу Xray, `xmux`, паддинг, размещение сессии | [§4](#4-xhttp), [002](../SPECS/FEATURES/002-XHTTP/FEATURE.md) |
+| **REALITY: гибридный key share** | Вырезает `X25519MLKEM768` из приветствия (костыль под старый uTLS, [SagerNet/sing-box#4520](https://github.com/SagerNet/sing-box/issues/4520)). Против Xray ≥ v26.9.8 каждый узел уходит на сайт-прикрытие | Шлёт то, что несёт пресет; `AuthKey` по тому ключу, который выберет сервер | [§2.6](#26-что-в-нашем-ядре-иначе-чем-в-апстриме), [083](../SPECS/TASKS/083-REALITY_MLKEM_KEYSHARE/SPEC.md) |
 | **REALITY: версия клиента** | Устаревшая константа; сервер с `minClientVer` отсекает | Ровно требуемый минимум | [053](../SPECS/TASKS/053-REALITY_MIN_CLIENT_VER/SPEC.md) |
-| **REALITY: `key_share`** | Поля нет | `classical` / `hybrid` по узлу — для сетей, теряющих двухсегментное приветствие | §1.3, [089](../SPECS/TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md) |
-| **REALITY: фрагментация** | `fragment` / `record_fragment` обходят REALITY стороной | Действуют и на REALITY; под `detour` `record_fragment` включается сам | §1.4, [088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md), [060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) |
-| **Отпечатки uTLS** | `metacubex/utls`: гибридный шар только у `chrome` | Форк `utls-lx`: плюс `firefox` (Firefox 148) и `safari` (Safari 26.3) с гибридом и `chrome_155` (Chrome 155) по явному имени | §1.2, [086](../SPECS/TASKS/086-UTLS_FORK_FIREFOX148/SPEC.md), [087](../SPECS/TASKS/087-UTLS_SAFARI_26_3/SPEC.md), [118](../SPECS/TASKS/118-UTLS_CHROME_155/SPEC.md) |
-| **Vision** | Есть (`sing-vmess`), только поверх TLS/REALITY на голом TCP | То же, плюс поверх VLESS `encryption` на любом транспорте | §3.3, [105](../SPECS/TASKS/105-VISION_OVER_VLESS_ENCRYPTION/SPEC.md) |
-| **VLESS `encryption`** | Нет; поле отвергается как неизвестное, узлы с ним мертвы во всей экосистеме sing-box | Клиентская половина `mlkem768x25519plus`: все виды, `0rtt`/`1rtt`, паддинг | §5, [012](../SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) |
-| **VLESS `decryption`** (сервер) | Нет | Нет, намеренно: форк клиентский | §5.3 |
-| **ML-DSA-65 в REALITY**, `spiderX` | Нет | Нет, вне фичи | §2.6 |
-| **XHTTP `downloadSettings`** | Нет транспорта | Нет поля: даунлинк идёт тем же путём, что аплинк | §4.2 |
+| **REALITY: `key_share`** | Поля нет | `classical` / `hybrid` по узлу — для сетей, теряющих двухсегментное приветствие | [§1.3](#13-гибридный-key-share-и-размер-приветствия), [089](../SPECS/TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md) |
+| **REALITY: фрагментация** | `fragment` / `record_fragment` обходят REALITY стороной | Действуют и на REALITY; под `detour` `record_fragment` включается сам | [§1.4](#14-фрагментация), [088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md), [060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) |
+| **Отпечатки uTLS** | `metacubex/utls`: гибридный шар только у `chrome` | Форк `utls-lx`: плюс `firefox` (Firefox 148) и `safari` (Safari 26.3) с гибридом и `chrome_155` (Chrome 155) по явному имени | [§1.2](#12-отпечаток-и-utls), [086](../SPECS/TASKS/086-UTLS_FORK_FIREFOX148/SPEC.md), [087](../SPECS/TASKS/087-UTLS_SAFARI_26_3/SPEC.md), [118](../SPECS/TASKS/118-UTLS_CHROME_155/SPEC.md) |
+| **Vision** | Есть (`sing-vmess`), только поверх TLS/REALITY на голом TCP | То же, плюс поверх VLESS `encryption` на любом транспорте | [§3.3](#33-с-чем-vision-сочетается), [105](../SPECS/TASKS/105-VISION_OVER_VLESS_ENCRYPTION/SPEC.md) |
+| **VLESS `encryption`** | Нет; поле отвергается как неизвестное, узлы с ним мертвы во всей экосистеме sing-box | Клиентская половина `mlkem768x25519plus`: все виды, `0rtt`/`1rtt`, паддинг | [§5](#5-vless-encryption-постквантовый-слой), [012](../SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) |
+| **VLESS `decryption`** (сервер) | Нет | Нет, намеренно: форк клиентский | [§5.3](#53-где-живёт-слой) |
+| **ML-DSA-65 в REALITY**, `spiderX` | Нет | Нет, вне фичи | [§2.6](#26-что-в-нашем-ядре-иначе-чем-в-апстриме) |
+| **XHTTP `downloadSettings`** | Нет транспорта | Нет поля: даунлинк идёт тем же путём, что аплинк | [§4.2](#42-два-направления-и-три-режима) |
 
 > 🔀 **Общий знаменатель:** ванильный sing-box достаточен для REALITY-сервера на
 > старом Xray и для WS/gRPC через CDN. Любая подписка с XHTTP, с
@@ -1468,9 +1468,9 @@ build-тегами. Обратное — принести в Xray платфор
 
 ## См. также
 
-- **[lx-config.ru.md](lx-config.ru.md)** — обзор полей по фичам: §6 VLESS
-  `encryption`, §7 REALITY `key_share`, §9 фрагментация.
-- **[protocols-transports.ru.md](protocols-transports.ru.md)** — §1
+- **[lx-config.ru.md](lx-config.ru.md)** — обзор полей по фичам: [§6](lx-config.ru.md#6-vless-encryption--пост-квантовый-слой-spec-032) VLESS
+  `encryption`, [§7](lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello-spec-089) REALITY `key_share`, [§9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060) фрагментация.
+- **[protocols-transports.ru.md](protocols-transports.ru.md)** — [§1](protocols-transports.ru.md#1-xhttp-транспорт)
   XHTTP: каждое поле, дефолт, ошибка.
 - Спеки фич: [017-REALITY](../SPECS/FEATURES/017-REALITY/FEATURE.md),
   [002-XHTTP](../SPECS/FEATURES/002-XHTTP/FEATURE.md),
