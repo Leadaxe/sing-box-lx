@@ -124,19 +124,23 @@ For `gvisor` the `require` version carries no hash (it is a snapshot) — compar
 against the snapshot date in the submodule's history.
 
 For `utls` the pin is a `metacubex/utls vX.Y.Z` tag (currently `v1.8.7`), also without a hash: the
-fork's `lx` branch must sit **on that tag** and carry exactly three commits ported from refraction on
-top (Firefox 148 + key share reuse, SPEC 086; Safari 26.3, SPEC 087):
+fork's `lx` branch must sit **on that tag** and carry exactly seven commits on top: three
+cherry-picks from refraction (fc716b2 + ddebe39 — Firefox 148 + key share reuse, SPEC 086; aa6edf4 —
+Safari 26.3, SPEC 087), the cherry-pick of refraction 6ebdceb (the Chrome 155 preset, SPEC 118) and
+three of ours around it (ML-DSA signature scheme codepoints only, before it; the dropped ML-DSA
+handshake test and `HelloChrome_Auto` kept at Chrome 133, after it — Chrome 155 is opt-in as
+`chrome_155`):
 
 ```bash
 req=$(grep -oE 'metacubex/utls v[0-9.]+' go.mod | awk '{print $2}')
 git -C submodules/utls fetch metacubex --tags 2>/dev/null
 git -C submodules/utls merge-base --is-ancestor "$req" HEAD && echo "✅ lx sits on $req" || echo "❌ DRIFT: go.mod requires $req"
-git -C submodules/utls log --oneline "$req..HEAD"   # expect exactly 3 lines (cherry-picks of fc716b2, ddebe39, aa6edf4)
+git -C submodules/utls log --oneline "$req..HEAD"   # expect exactly 7 lines (fc716b2, ddebe39, aa6edf4, ML-DSA codepoints, 6ebdceb, dropped ML-DSA test, Auto kept at 133)
 ```
 
 An upstream `metacubex/utls` bump means moving the fork's `lx` branch onto the new tag with the
-same three commits on top (metacubex accepts no external PRs — the sync is ours alone); the
-condition for dropping the fork is in SPEC 086/087.
+same seven commits on top (metacubex accepts no external PRs — the sync is ours alone); the
+condition for dropping the fork is in SPEC 086/087/118.
 
 ### 1.2 Take the whole upstream line, not selected commits
 

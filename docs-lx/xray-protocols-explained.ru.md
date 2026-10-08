@@ -8,13 +8,12 @@
 > [xray-protocols-explained](xray-protocols-explained.ru.md) и [amneziawg-explained](amneziawg-explained.ru.md) —
 > как устроено, почему, как сделано у нас и чем отличается от ванили.
 
-Современный стек VPN-протоколов, устойчивых к посредникам, задаёт Xray:
-REALITY, Vision, XHTTP и постквантовый слой VLESS `encryption`
-(`mlkem768x25519plus`) придуманы и развиваются там, а серверы в подписках —
-это серверы Xray. Ванильный sing-box покрывает этот стек частично и с
-отставанием: чего-то нет вовсе, что-то есть, но против актуального
-Xray-сервера уже не работает. `sing-box-lx` закрывает этот зазор на
-клиентской стороне.
+REALITY, Vision, XHTTP и VLESS `encryption` придумал и развивает проект
+Xray. Это прокси-протоколы, а не VPN: они переносят соединения, а не
+IP-пакеты. Серверы в подписках почти всегда работают на Xray. Ванильный
+sing-box поддерживает этот набор не полностью и с отставанием: чего-то нет
+совсем, что-то есть, но против свежего Xray-сервера уже не работает.
+`sing-box-lx` закрывает этот разрыв на стороне клиента.
 
 Документ отвечает на три вопроса по каждому протоколу: **как он устроен** —
 зачем существует, что делает с байтами на проводе и почему именно так;
@@ -166,6 +165,8 @@ TLS 1.3 шифрует почти всё, кроме первого сообще
 
 У нас uTLS — форк-сабмодуль `Leadaxe/utls-lx` поверх `metacubex/utls`. Форк
 нужен из-за §1.3: два из трёх пресетов с гибридным key share принесены нами.
+Ещё форк несёт Chrome 155 под явным именем `chrome_155`; `chrome` остаётся
+Chrome 133 (SPEC 118).
 
 ## 1.3 Гибридный key share и размер приветствия
 
@@ -1379,7 +1380,7 @@ build-тегами. Обратное — принести в Xray платфор
 | **REALITY: версия клиента** | Устаревшая константа; сервер с `minClientVer` отсекает | Ровно требуемый минимум | [053](../SPECS/TASKS/053-REALITY_MIN_CLIENT_VER/SPEC.md) |
 | **REALITY: `key_share`** | Поля нет | `classical` / `hybrid` по узлу — для сетей, теряющих двухсегментное приветствие | §1.3, [089](../SPECS/TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md) |
 | **REALITY: фрагментация** | `fragment` / `record_fragment` обходят REALITY стороной | Действуют и на REALITY; под `detour` `record_fragment` включается сам | §1.4, [088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md), [060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) |
-| **Отпечатки uTLS** | `metacubex/utls`: гибридный шар только у `chrome` | Форк `utls-lx`: плюс `firefox` (Firefox 148) и `safari` (Safari 26.3) с гибридом | §1.2, [086](../SPECS/TASKS/086-UTLS_FORK_FIREFOX148/SPEC.md), [087](../SPECS/TASKS/087-UTLS_SAFARI_26_3/SPEC.md) |
+| **Отпечатки uTLS** | `metacubex/utls`: гибридный шар только у `chrome` | Форк `utls-lx`: плюс `firefox` (Firefox 148) и `safari` (Safari 26.3) с гибридом и `chrome_155` (Chrome 155) по явному имени | §1.2, [086](../SPECS/TASKS/086-UTLS_FORK_FIREFOX148/SPEC.md), [087](../SPECS/TASKS/087-UTLS_SAFARI_26_3/SPEC.md), [118](../SPECS/TASKS/118-UTLS_CHROME_155/SPEC.md) |
 | **Vision** | Есть (`sing-vmess`), только поверх TLS/REALITY на голом TCP | То же, плюс поверх VLESS `encryption` на любом транспорте | §3.3, [105](../SPECS/TASKS/105-VISION_OVER_VLESS_ENCRYPTION/SPEC.md) |
 | **VLESS `encryption`** | Нет; поле отвергается как неизвестное, узлы с ним мертвы во всей экосистеме sing-box | Клиентская половина `mlkem768x25519plus`: все виды, `0rtt`/`1rtt`, паддинг | §5, [012](../SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) |
 | **VLESS `decryption`** (сервер) | Нет | Нет, намеренно: форк клиентский | §5.3 |

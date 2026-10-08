@@ -122,20 +122,23 @@ done
 с датой снапшота в истории сабмодуля.
 
 Для `utls` пин — тег `metacubex/utls vX.Y.Z` (сейчас `v1.8.7`), тоже без хеша:
-ветка `lx` форка должна стоять **на этом теге** и нести поверх ровно три
-перенесённых коммита refraction (Firefox 148 + reuse key share, SPEC 086; Safari 26.3,
-SPEC 087):
+ветка `lx` форка должна стоять **на этом теге** и нести поверх ровно семь
+коммитов: три cherry-pick из refraction (fc716b2 + ddebe39 — Firefox 148 + reuse key share,
+SPEC 086; aa6edf4 — Safari 26.3, SPEC 087), cherry-pick refraction 6ebdceb (пресет Chrome 155,
+SPEC 118) и три наших вокруг него (перед ним — только кодпоинты подписей ML-DSA; после —
+убранный тест рукопожатия ML-DSA и `HelloChrome_Auto`, оставленный на Chrome 133: Chrome 155
+включается явно именем `chrome_155`):
 
 ```bash
 req=$(grep -oE 'metacubex/utls v[0-9.]+' go.mod | awk '{print $2}')
 git -C submodules/utls fetch metacubex --tags 2>/dev/null
 git -C submodules/utls merge-base --is-ancestor "$req" HEAD && echo "✅ lx стоит на $req" || echo "❌ ДРЕЙФ: go.mod требует $req"
-git -C submodules/utls log --oneline "$req..HEAD"   # ожидаем ровно 3 строки (cherry-pick fc716b2, ddebe39, aa6edf4)
+git -C submodules/utls log --oneline "$req..HEAD"   # ожидаем ровно 7 строк (fc716b2, ddebe39, aa6edf4, кодпоинты ML-DSA, 6ebdceb, убранный тест ML-DSA, Auto = 133)
 ```
 
 Апстримный бамп `metacubex/utls` → ветка `lx` форка переезжает на новый тег с
-теми же тремя коммитами поверх (metacubex внешние PR не принимает — синк только
-своими силами); условие снятия форка — в SPEC 086/087.
+теми же семью коммитами поверх (metacubex внешние PR не принимает — синк только
+своими силами); условие снятия форка — в SPEC 086/087/118.
 
 ### 1.2 Брать ленту ЦЕЛИКОМ, а не выборочные коммиты
 

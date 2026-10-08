@@ -1139,14 +1139,15 @@ There is no automatic fallback between `hybrid` and `classical`. The Xray fields
 
 `tls.utls.fingerprint` is an upstream key (enum: `chrome`, `chrome_psk`,
 `chrome_psk_shuffle`, `chrome_padding_psk_shuffle`, `chrome_pq`, `chrome_pq_psk`,
-`firefox`, `edge`, `safari`, `360`, `qq`, `ios`, `android`, `random`, `randomized`),
-but under REALITY it decides the node's fate: Xray ≥ v26.9.8 accepts only a ClientHello
+`firefox`, `edge`, `safari`, `360`, `qq`, `ios`, `android`, `random`, `randomized`;
+plus our `chrome_155`, SPEC 118), but under REALITY it decides the node's fate: Xray ≥ v26.9.8 accepts only a ClientHello
 with the `X25519MLKEM768` hybrid share before `X25519` (SPEC 083). The core does **not**
 substitute the fingerprint.
 
 | `fingerprint` | Share in the ClientHello | Xray ≥ v26.9.8 | Preset source |
 |---|---|---|---|
-| `chrome` and `chrome_*` | GREASE, **X25519MLKEM768**, X25519 | passes | metacubex/utls |
+| `chrome` and the upstream `chrome_*` | GREASE, **X25519MLKEM768**, X25519 | passes | metacubex/utls, Chrome 133 |
+| `chrome_155` | GREASE, **X25519MLKEM768**, X25519 | passes | utls-lx fork, Chrome 155 (SPEC 118): opt-in, adds ML-DSA signature schemes and `trust_anchors`; `chrome` stays 133 |
 | `firefox` | **X25519MLKEM768**, X25519 | passes | utls-lx fork, Firefox 148 (SPEC 086) |
 | `safari` | **X25519MLKEM768**, X25519 | passes | utls-lx fork, Safari 26.3 (SPEC 087) |
 | `edge`, `ios`, `android`, `360`, `qq` | X25519 only | rejected | no presets with the hybrid exist |

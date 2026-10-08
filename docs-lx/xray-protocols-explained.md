@@ -8,13 +8,12 @@
 > [xray-protocols-explained](xray-protocols-explained.md) and [amneziawg-explained](amneziawg-explained.md) —
 > how it works, why, how the fork does it and how it differs from vanilla.
 
-The modern stack of VPN protocols resistant to middleboxes is defined by Xray.
-REALITY, Vision, XHTTP and the post-quantum VLESS `encryption` layer
-(`mlkem768x25519plus`) were invented there and are developed there. The
-servers in subscriptions are Xray servers. Vanilla sing-box covers this stack
-partially and with a delay: some parts are missing entirely, others exist but
-no longer work against a current Xray server. `sing-box-lx` closes this gap
-on the client side.
+REALITY, Vision, XHTTP and VLESS `encryption` were invented and are
+developed by the Xray project. They are proxy protocols, not VPN: they carry
+connections, not IP packets. The servers in subscriptions almost always run
+Xray. Vanilla sing-box supports this set incompletely and with a delay: some
+parts are missing entirely, others exist but no longer work against a recent
+Xray server. `sing-box-lx` closes this gap on the client side.
 
 For each protocol the document answers three questions. **How it works**:
 why it exists, what it does to the bytes on the wire, and why it does it that
@@ -171,7 +170,8 @@ selects the preset.
 
 Our uTLS is the fork submodule `Leadaxe/utls-lx` on top of `metacubex/utls`.
 The fork is needed because of §1.3: two of the three presets with a hybrid
-key share were added by us.
+key share were added by us. It also carries Chrome 155 under the explicit
+name `chrome_155`; `chrome` stays Chrome 133 (SPEC 118).
 
 ## 1.3 Hybrid key share and ClientHello size
 
@@ -1414,7 +1414,7 @@ submodule. For this document that is `utls-lx` (§1.2).
 | **REALITY: client version** | An outdated constant; a server with `minClientVer` rejects it | Exactly the required minimum | [053](../SPECS/TASKS/053-REALITY_MIN_CLIENT_VER/SPEC.md) |
 | **REALITY: `key_share`** | No such field | `classical` / `hybrid` per node, for networks that lose a two-segment ClientHello | §1.3, [089](../SPECS/TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md) |
 | **REALITY: fragmentation** | `fragment` / `record_fragment` leave REALITY untouched | Apply to REALITY too; under `detour`, `record_fragment` turns on by itself | §1.4, [088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md), [060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) |
-| **uTLS fingerprints** | `metacubex/utls`: hybrid share only in `chrome` | Fork `utls-lx`: adds `firefox` (Firefox 148) and `safari` (Safari 26.3) with the hybrid | §1.2, [086](../SPECS/TASKS/086-UTLS_FORK_FIREFOX148/SPEC.md), [087](../SPECS/TASKS/087-UTLS_SAFARI_26_3/SPEC.md) |
+| **uTLS fingerprints** | `metacubex/utls`: hybrid share only in `chrome` | Fork `utls-lx`: adds `firefox` (Firefox 148) and `safari` (Safari 26.3) with the hybrid, and the opt-in `chrome_155` (Chrome 155) | §1.2, [086](../SPECS/TASKS/086-UTLS_FORK_FIREFOX148/SPEC.md), [087](../SPECS/TASKS/087-UTLS_SAFARI_26_3/SPEC.md), [118](../SPECS/TASKS/118-UTLS_CHROME_155/SPEC.md) |
 | **Vision** | Present (`sing-vmess`), only over TLS/REALITY on bare TCP | The same, plus over VLESS `encryption` on any transport | §3.3, [105](../SPECS/TASKS/105-VISION_OVER_VLESS_ENCRYPTION/SPEC.md) |
 | **VLESS `encryption`** | None; the field is rejected as unknown, and nodes with it are dead across the whole sing-box ecosystem | The client half of `mlkem768x25519plus`: all wire appearances, `0rtt`/`1rtt`, padding | §5, [012](../SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) |
 | **VLESS `decryption`** (server) | None | None, intentionally: the fork is client-side | §5.3 |

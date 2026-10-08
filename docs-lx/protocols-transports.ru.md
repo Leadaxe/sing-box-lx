@@ -1130,14 +1130,15 @@ grpc-go. Доступно с `v1.14.1-lx.8`.
 
 `tls.utls.fingerprint` — апстримный ключ (enum: `chrome`, `chrome_psk`,
 `chrome_psk_shuffle`, `chrome_padding_psk_shuffle`, `chrome_pq`, `chrome_pq_psk`,
-`firefox`, `edge`, `safari`, `360`, `qq`, `ios`, `android`, `random`, `randomized`),
-но под REALITY он решает судьбу узла: Xray ≥ v26.9.8 принимает только ClientHello с
+`firefox`, `edge`, `safari`, `360`, `qq`, `ios`, `android`, `random`, `randomized`;
+плюс наш `chrome_155`, SPEC 118), но под REALITY он решает судьбу узла: Xray ≥ v26.9.8 принимает только ClientHello с
 гибридным шаром `X25519MLKEM768` перед `X25519` (SPEC 083). Ядро отпечаток **не
 подменяет**.
 
 | `fingerprint` | Шар в ClientHello | Xray ≥ v26.9.8 | Откуда пресет |
 |---|---|---|---|
-| `chrome` и `chrome_*` | GREASE, **X25519MLKEM768**, X25519 | ходит | metacubex/utls |
+| `chrome` и апстримные `chrome_*` | GREASE, **X25519MLKEM768**, X25519 | ходит | metacubex/utls, Chrome 133 |
+| `chrome_155` | GREASE, **X25519MLKEM768**, X25519 | ходит | форк utls-lx, Chrome 155 (SPEC 118): только явно, добавляет подписи ML-DSA и `trust_anchors`; `chrome` остаётся 133 |
 | `firefox` | **X25519MLKEM768**, X25519 | ходит | форк utls-lx, Firefox 148 (SPEC 086) |
 | `safari` | **X25519MLKEM768**, X25519 | ходит | форк utls-lx, Safari 26.3 (SPEC 087) |
 | `edge`, `ios`, `android`, `360`, `qq` | только X25519 | отвергается | пресетов с гибридом нет |
