@@ -361,6 +361,11 @@ func (e *Endpoint) Start(postStart bool) error {
 	// re-initiates, so a dead NAT/DPI flow entry cannot hold the endpoint in
 	// ERR until a manual reconnect.
 	wgDevice.SetGiveUpRebind(true, e.options.ListenPort == 0)
+	// lx: SPEC 009 — the ip=quic masquerade decoy is generated per handshake
+	// (fresh DCID/ciphertext each time) instead of a static i1 CPS blob.
+	if decoy := awgDecoyFunc(e.options.AmneziaWG, e.options.Logger); decoy != nil {
+		wgDevice.SetDecoyPacketsFunc(decoy)
+	}
 	e.tunDevice.SetDevice(wgDevice)
 	domainPeers := make(map[device.NoisePublicKey]*peerConfig)
 	for peerIndex, peer := range e.peers {
