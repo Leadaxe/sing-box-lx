@@ -229,16 +229,22 @@ Writing a QUIC Initial by hand with `<b 0x…>` tags is impractical, and a
 snapshot of one packet is the same for every user, so it becomes a
 signature of its own. So the fork, following WireSock Secure Connect, accepts a
 declaration: `ip` is the decoy protocol (`quic`, `dns`, `stun`, `sip`),
-`id` is the domain, `ib` is the client profile (`chrome`, `firefox`,
-`curl`). The fork builds `i1` itself, with a random layout on each start
-([SPEC 009](../SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/SPEC.md)).
+`id` is the domain, `ib` is the client profile (`chrome`, `chrome-full`,
+`firefox`, `curl`). The fork builds `i1` itself — for `quic` afresh on every
+handshake, with a new DCID and layout ([SPEC 009](../SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/SPEC.md)).
 
-The `quic` profile is not just a QUIC Initial. It is an Initial whose
-ClientHello is **split into several CRYPTO frames and sent out of order**:
-the first frame on the wire starts in the middle of the ClientHello. A
-classifier that takes the first frame as the start parses garbage and lets
-the packet through. A real QUIC server would reorder the frames. This is
-the only profile proven against live DPI on a device.
+The `quic` profile is a QUIC Initial carrying a **whole** ClientHello with
+the chosen browser's fingerprint, its frames laid out the way that browser's
+stack does it. `chrome` is Chrome 155 without the post-quantum key share: one
+1250-byte packet, the ClientHello cut into 2–11 CRYPTO frames with PINGs and
+PADDING scattered between them, as Chrome's `QuicChaosProtector` does.
+`chrome-full` is the same Chrome 155 with X25519MLKEM768: a ~1.9 KB
+ClientHello in one Initial above the MTU, which the IP layer splits into two
+fragments. `firefox` and `curl` send one CRYPTO frame plus PADDING. Frame
+order does not matter (field-tested); what matters is that the whole
+ClientHello travels in one QUIC packet — spread over several Initials, as a
+real Chrome with ML-KEM does, it is dropped on the way to WARP. This is the
+only profile proven against live DPI on a device.
 
 > ⚠️ `id` **goes on the wire**: as SNI in QUIC, as QNAME in DNS, as host in
 > SIP. The domain must be plausible and reachable on that network, not a VPN

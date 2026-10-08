@@ -15,7 +15,7 @@
 |------|-----|----------|-------------|
 | `id` | домен | LDH-хост (`www.google.com`, `ozon.ru`, `_dmarc.example.com`) | **обязателен только для `quic`** (SNI); опционален для `dns` (QNAME или псевдо-домен), `sip` (host или псевдо-host) и `stun` (игнорируется) |
 | `ip` | протокол | `quic` \| `dns` \| `stun` \| `sip` | да |
-| `ib` | браузер | `chrome` \| `firefox` \| `curl` | нет (только при `ip=quic`) |
+| `ib` | браузер | `chrome` \| `chrome-full` \| `firefox` \| `curl` | нет (только при `ip=quic`) |
 
 Минимум: `ip` всегда; плюс `id` — для `quic`. Для `dns`/`sip`/`stun` хватает одного `ip`
 (`id` опционален: для `sip` без него генерируется псевдо-host, для `stun` он не идёт в пакет).
@@ -66,14 +66,13 @@ endpoint'а. Подставь свои `private_key` / `peers` / `address`.
 }
 ```
 
-Генерирует **out-of-order фрагментированный QUIC Initial** (RFC 9001): реалистичный
-ClientHello, где `id` (`www.google.com`) — это **SNI**, разбитый на CRYPTO-фреймы,
-которые идут на провод **не по порядку** — первый CRYPTO-фрейм имеет offset≠0, а
-offset-0 фрейм лежит ближе к концу, с интерливом PING/PADDING. Line-rate DPI хватает
-первый фрейм, считает его offset 0, парсит мусор и пропускает (fail-open). `ib`
-валидируется (`chrome|firefox|curl`), но на байты пакета не влияет — bypass держится
-на фрагментации, а не на TLS-fingerprint (JA3 не имитируется). Генератор —
-`quic_initial_awg.go`, `quic_clienthello_awg.go`, `quic_crypto_awg.go`.
+Генерирует **QUIC Initial** (RFC 9001) с целым ClientHello, где `id` (`www.google.com`) —
+это **SNI**. `ib` задаёт отпечаток и раскладку: `chrome` — Chrome 155 без PQ key_share,
+один пакет 1250 байт, ClientHello порезан на 2–11 CRYPTO-фреймов с PING и PADDING
+вразброс, как у `QuicChaosProtector` в Chrome; `chrome-full` — Chrome 155 с
+`X25519MLKEM768`, один Initial ~2 КБ больше MTU (IP-фрагментация); `firefox` / `curl` /
+пусто — один CRYPTO-фрейм плюс PADDING. Генератор — `quic_initial_awg.go`,
+`quic_clienthello_awg.go`, `quic_clienthello_utls_awg.go`, `quic_crypto_awg.go`.
 
 `id` для `quic` **обязателен** (он становится SNI в ClientHello). Минимальный
 вариант — `"id": "<домен>", "ip": "quic"` (плюс опциональный `"ib"`):
@@ -102,10 +101,10 @@ offset-0 фрейм лежит ближе к концу, с интерливом
 }
 ```
 
-Генерирует клиентский DNS **query** (~87 байт): DNS-заголовок (QR=0, RD=1), вопрос с
-QNAME = `www.google.com` и QTYPE HTTPS (тип 65), OPT RR (TYPE 41, UDP-size 1232) и
-случайные cover-байты как opaque-данные неизвестной EDNS-опции `0xFDE9`. Парсится как один
-валидный DNS-запрос. **`id` тут — QNAME, виден цензору.**
+Генерирует клиентский DNS **query** (~43 байта): DNS-заголовок (QR=0, RD=1), вопрос с
+QNAME = `www.google.com` и QTYPE HTTPS (тип 65), OPT RR (TYPE 41, UDP-size 1232) без опций —
+форма запроса stub-резолвера. Парсится как один валидный DNS-запрос без хвоста. **`id` тут —
+QNAME, виден цензору.**
 
 > **Не подтверждён на WARP-DPI.** На тестовом LTE/WARP DPI `ip=dns` — Timeout (как `stun`):
 > DPI режет DNS/STUN к WARP-edge `:2408` как класс протокола (raw DNS живёт на :53, а не на
@@ -150,11 +149,11 @@ QNAME = `www.google.com` и QTYPE HTTPS (тип 65), OPT RR (TYPE 41, UDP-size 1
 }
 ```
 
-Генерирует начало SIP-звонка из **двух пакетов** одного диалога: **i1 — полный INVITE**
+Генерирует первый пакет SIP-звонка: **i1 — полный INVITE**
 (`INVITE sip:<user>@pbx.example.com SIP/2.0`, Via(branch)/To/From(tag)/Call-ID/CSeq:N INVITE/
-Max-Forwards:70/Contact, `Content-Length: 0`, без SDP) и **i2 — `SIP/2.0 100 Trying`** (тот же
-диалог: общий branch/tag/Call-ID/CSeq). Каждый пакет валиден сам по себе (UDP не реассемблируется).
-Имена пользователей — произносимые псевдо-строки (не захардкожены, не RFC-маяк alice/bob).
+Max-Forwards:70/Contact, `Content-Length: 0`, без SDP), одна валидная датаграмма; `i2` пуст
+(`100 Trying` — ответ сервера, клиент его не шлёт). Имена пользователей — произносимые
+псевдо-строки (не захардкожены, не RFC-маяк alice/bob).
 **`id` — host в URI, виден цензору.** `id` для sip **опционален**: без него генерируется
 правдоподобный псевдо-host.
 
@@ -162,17 +161,16 @@ Max-Forwards:70/Contact, `Content-Length: 0`, без SDP) и **i2 — `SIP/2.0 1
 > уходят вместе с junk-пакетами в одном пред-handshake-залпе.
 >
 > **Статус на WARP-DPI: ожидает проверки.** Почему прежде `dns`/`stun`/`sip` упирались в Timeout —
-> точно не установлено. По подсказке `sip` переведён на пару INVITE + 100 Trying (стандартный
-> call-setup) с junk; заработает ли против WARP — проверяется на устройстве. `ip=quic` остаётся
-> подтверждённо рабочим.
+> точно не установлено. `ip=quic` остаётся подтверждённо рабочим.
 
 ---
 
 ## 3. Что выбрать
 
 - **Коннект к WARP под реальным DPI** → `ip=quic`, `id=<популярный домен>`,
-  `ib=chrome`. Фрагментированный QUIC Initial с `id` как SNI; device-proven против
-  реального LTE-DPI.
+  `ib=chrome`. Один QUIC Initial с Chrome-155-ClientHello и `id` как SNI; device-proven
+  против реального LTE-DPI. `ib=chrome-full` — то же с ML-KEM key_share ценой
+  IP-фрагментации (проход на пути частичный, §618 LxBox).
 - **Нужно, чтобы DPI увидел «разрешённый» домен** → `ip=quic`/`ip=dns`/`ip=sip` с
   региональным популярным `id` (SNI / QNAME / SIP-host).
 - **STUN** — нишево (выглядит как ответ STUN-сервера); домен не несёт.
@@ -207,7 +205,7 @@ go build -tags "with_wireguard with_gvisor with_awg" -o ./sing-box ./cmd/sing-bo
 | `ip=sip` без `id` | **не ошибка** — `id` опционален, генерируется псевдо-host |
 | `ip=stun` без `id` | **не ошибка** — `id` опционален, decoy без домена |
 | домен с `\r\n`/`;`/`@`/пробелом | `amneziawg: invalid masquerade domain "...": illegal character (only a-z A-Z 0-9 - _ allowed)` |
-| `ib` не из набора | `amneziawg: unknown masquerade browser "safari"; one of chrome\|firefox\|curl` |
+| `ib` не из набора | `amneziawg: unknown masquerade browser "safari"; one of chrome\|chrome-full\|firefox\|curl` |
 | `ib` с `ip≠quic` | `amneziawg: ib (browser) is only meaningful with ip=quic, got ip="dns"` |
 | без `with_awg` | `AmneziaWG (awg) support is not included in this build, rebuild with -tags with_awg` |
 
@@ -222,13 +220,18 @@ DNS QNAME, поэтому control-байты и метасимволы отве�
 
 - Это **decoy перед handshake**, не полноценная протокол-сессия. Один пакет нужной
   формы, дальше — обычный AWG-трафик.
-- **QUIC раскрывает SNI** (фрагментированный Initial): `id` идёт на провод как
-  SNI в ClientHello. `stun` домен не несёт (см. §1). DPI-обход — за счёт out-of-order
-  фрагментации CRYPTO-фреймов (line-rate DPI парсит первый фрейм как offset 0, видит
-  мусор и пропускает), не за счёт сокрытия SNI.
-- **`ib` валидируется, но на байты пакета не влияет.** JA3/JA4-fingerprint не
-  имитируется: DPI-обход держится на out-of-order фрагментации CRYPTO-фреймов, а не на
-  TLS-fingerprint. `ib` принимается для совместимости синтаксиса с WireSock-конфигами.
+- **`id` должен роутиться туда же, куда WG-endpoint.** Любой домен-роутинг на пути (наше же ядро
+  на роутере со сниффером QUIC, LxBox/лаунчер с правилами по домену) классифицирует UDP-поток по
+  первому пакету — то есть по SNI decoy — и уводит весь 5-tuple вместе с WG-хендшейком на маршрут
+  этого домена. Проверено 09.10.2026: за роутером с правилом «`.ru` через ру-провайдера» decoy с
+  `wartune.mail.ru`/`mail.com`/Amazon ломал туннель к WARP, с `login.microsoftonline.com` —
+  работал, чистый WG — работал. Это свойство маршрутизации, не decoy.
+- **QUIC раскрывает SNI**: `id` идёт на провод как SNI в ClientHello. `stun` домен не
+  несёт (см. §1). Проход держится на самом валидном Initial впереди потока с целым
+  ClientHello, не на сокрытии SNI и не на порядке фреймов (полевые прогоны §617/§618).
+- **`ib` задаёт отпечаток и раскладку** (с тегом `with_utls`): `chrome`/`chrome-full` —
+  Chrome 155 JA3/JA4 и chaos-раскладка фреймов, `firefox` — Firefox 120 и плоская,
+  `curl`/пусто — generic ClientHello и плоская.
 - Байт-в-байт replay именно WireSock-трафика **не** делается: энтропия наша
   (криптослучайная `<r>`, для QUIC — свежие DCID/random/x25519 на вызов), а не
   payload-seeded PRNG (это standalone I1, а не серверный S1–S4 padding).

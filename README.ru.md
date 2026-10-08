@@ -134,7 +134,7 @@ make -f Makefile.lx lx-check        # проверка примеров конф
 }
 ```
 
-`id`/`ip`/`ib` и явный `i1` взаимоисключающи. `ip=quic` шлёт два фрагментированных QUIC Initial вне порядка — это профиль, доказанный против живого DPI; `dns`/`stun`/`sip` — корректные запросы, оставленные для провайдеров, чей DPI проверяет только правильность формы. Справка — [protocols-transports.ru.md §2](docs-lx/protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3) ([EN](docs-lx/protocols-transports.md#2-amneziawg-203x-awg2-awg3)) · [примеры маскировки](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
+`id`/`ip`/`ib` и явный `i1` взаимоисключающи. `ip=quic` шлёт один QUIC Initial с целым браузерным ClientHello (`ib=chrome` — Chrome 155 с хромовской раскладкой фреймов; `ib=chrome-full` — то же с ML-KEM key share в одном Initial больше MTU) — это профиль, доказанный против живого DPI; `dns`/`stun`/`sip` — корректные запросы, оставленные для провайдеров, чей DPI проверяет только правильность формы. Справка — [protocols-transports.ru.md §2](docs-lx/protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3) ([EN](docs-lx/protocols-transports.md#2-amneziawg-203x-awg2-awg3)) · [примеры маскировки](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ### Outbound MASQUE (Cloudflare WARP)
 

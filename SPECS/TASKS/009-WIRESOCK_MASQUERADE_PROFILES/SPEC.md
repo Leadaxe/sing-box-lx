@@ -33,7 +33,7 @@ device не добавляется — генерация целиком в opti
 |------|-----|----------|
 | `Id` | **Domain** | домен для маскировки (массовый легитимный: `www.google.com`, `ozon.ru`…). Идёт на провод как SNI / QNAME / SIP-host |
 | `Ip` | **Protocol** | протокол маскировки: **quic** \| **dns** \| **stun** \| **sip** |
-| `Ib` | **Browser** | `chrome` \| `firefox` \| `curl`. Валидируется; только при `ip=quic`. С тегом `with_utls` `chrome`/`firefox` меняют ClientHello на uTLS-профиль браузера (крупнее generic, иная нарезка); `""`/`curl` и сборка без `with_utls` дают device-proven generic CH — см. §4 |
+| `Ib` | **Browser** | `chrome` \| `chrome-full` \| `firefox` \| `curl`. Валидируется; только при `ip=quic`. Задаёт и TLS-отпечаток ClientHello (uTLS, тег `with_utls`), и раскладку фреймов Initial: `chrome` — Chrome 155 без PQ key_share, один Initial 1250б; `chrome-full` — Chrome 155 с X25519MLKEM768, один Initial ~2КБ (IP-фрагментация); `firefox` — Firefox 120; `""`/`curl` и сборка без `with_utls` — generic CH. См. §3.1, §4 |
 
 > Нейминг проприетарный WireSock (`i`nterface **d**omain/**p**rotocol/**b**rowser); `ip` —
 > это «protocol», НЕ IP-адрес. Эти ключи понимают только WireSock и это ядро; меняться
@@ -62,8 +62,8 @@ S1–S4 padding не используется: он невозможен про�
 
 Все профили — собственные клиент-инициированные генераторы: `quic` — фрагментированный QUIC
 Initial (§3.1), `stun` — WebRTC Binding **Request** (§3.2), `dns` — клиентский DNS query (§3.3),
-`sip` — начало звонка: INVITE (i1) + 100 Trying (i2), два самостоятельных пакета одного диалога
-(§3.2). Структура — стандартный SIP call-setup (RFC 3261 §17). LDH-валидатор домена совпадает с
+`sip` — первый пакет звонка: полный INVITE (i1), §3.2. Структура — стандартный SIP call-setup
+(RFC 3261 §17). LDH-валидатор домена совпадает с
 WireSock-референсом ([`amneziawg-install`](https://github.com/wiresock/amneziawg-install), MIT),
 `quic_handshake.rs::is_valid_sni_hostname`.
 
@@ -75,57 +75,88 @@ WireSock-референсом ([`amneziawg-install`](https://github.com/wiresock
 > **Гипотеза, которую мы сейчас проверяем.** Почему `dns`/`stun`/`sip` упирались в Timeout,
 > точно **не установлено**. Рабочая гипотеза была «DPI режет STUN/DNS/SIP к WARP-edge
 > `162.159.x:2408` как класс протокола» (raw STUN/DNS/SIP к дата-центровому IP аномальны по
-> назначению), но это не доказано. По подсказке `sip` переведён на **multi-packet i1+i2**:
-> i1 = полный INVITE, i2 = полный `100 Trying` того же диалога (стандартный call-setup), оба —
-> самостоятельные валидные SIP-пакеты, и профиль рассчитан на работу с `junk`. Так поток читается
-> как начало реального звонка, а не одиночный опенер. Заработает ли это против WARP —
+> назначению), но это не доказано. `sip` одно время был парой i1 = INVITE, i2 = `100 Trying`;
+> 09.10.2026 вторая половина убрана: `100 Trying` — ответ сервера, клиент его не шлёт, а
+> серверная сторона WireSock (`amneziawg-proxy`) отвечает на INVITE своим `100 Trying` сама.
+> Профиль рассчитан на работу с `junk`. Заработает ли это против WARP —
 > **ожидает device-проверки**; `quic` остаётся подтверждённо рабочим механизмом, `dns`/`stun`
 > реализованы в правильной клиент-инициированной форме и сохранены для проверки/других провайдеров.
 
-### 3.1 QUIC — out-of-order фрагментированный Initial
+### 3.1 QUIC — один Initial с целым ClientHello
 
-`ip=quic` эмитит полный **QUIC Initial (RFC 9001)** с реалистичным браузерным
-ClientHello, где `Id` идёт как **SNI**. ClientHello нарезан на CRYPTO-фреймы, выложенные в
-payload в **перемешанном (out-of-order) порядке**: первый CRYPTO-фрейм на проводе имеет
-`offset≠0`, фрейм с `offset=0` — не первый, между CRYPTO-фреймами вставлены PING и PADDING.
+`ip=quic` эмитит полный **QUIC Initial (RFC 9001)** с ClientHello, где `Id` идёт как **SNI**.
+Весь ClientHello лежит в **одном** Initial; заголовок и раскладка CRYPTO-фреймов повторяют стек
+того браузера, чей отпечаток несёт ClientHello (`Ib`, §4). Эталоны — захваты в
+`transport/wireguard/testdata/` (Chrome 147, Firefox 149; README с происхождением) и захват
+Chrome 133 из LxBox §618:
 
-**Раскладка рандомизируется на каждый вызов** (случайные точки разреза + случайный
-out-of-order порядок), при сохранении инвариантов I1–I4 — так нет фиксированной
-межюзерной сигнатуры. Параметры robustness (`quicGenParams`: число фрагментов, число PING,
-диапазон размера датаграммы) — «ручки» для эскалации обфускации без правки кода, если DPI
-поумнеет (напр. начнёт держать reassembly-буфер → больше фрагментов). По умолчанию —
-device-проверенная база: 6 фрагментов, 2 PING, 1250б.
+| `Ib` | ClientHello | Раскладка фреймов | Заголовок | Датаграмма |
+|---|---|---|---|---|
+| `chrome` | Chrome 155 без PQ key_share (~470б) | **chaos** — как `QuicChaosProtector` в quiche | SCID 0, pn_len 1, pn=1 | 1250б |
+| `chrome-full` | Chrome 155 с X25519MLKEM768 (~1.75КБ) | chaos | то же | ~1.9–2.1КБ, один QUIC-пакет, IP-слой режет на 2 фрагмента |
+| `firefox` | Firefox 148/149 без PQ (~665б) | **плоская** — один CRYPTO, без PADDING внутри | SCID 3 байта, pn_len 2, pn случайный, QUIC-пакет по размеру фреймов + **нули после него** до 1252 (neqo) | 1252б |
+| `""` / `curl` | generic (~294б) | плоская + PADDING внутри (ngtcp2 / quic-go) | SCID 0, pn_len 1, pn=0 | 1250б |
 
-**Почему так.** Настоящий QUIC-сервер реассемблирует CRYPTO-фреймы по offset до TLS-парсинга;
-line-rate DPI reassembly-буфер не держит — берёт первый CRYPTO-фрейм, считает, что он с
-offset 0, и парсит TLS оттуда. При первом фрейме `offset≠0` DPI парсит середину ClientHello
-как начало → длины TLS-записи не сходятся → парс прерывается → DPI пропускает (fail-open:
-настоящий Chrome тоже легитимно фрагментирует большие ClientHello). Сервер фреймы
-переупорядочит, DPI — нет.
+**Decoy генерируется на каждый хендшейк.** Для `ip=quic` `awgIpcLines` не пишет статичный `i1`:
+движок получает генератор (`SetDecoyPacketsFunc`, lx-хук в форке wireguard-go) и перед каждым
+handshake initiation — старт, rekey каждые 120 с, пробуждение, реконнект — зовёт его и шлёт свежий
+Initial с новыми DCID/SCID, TLS random, key_share, раскладкой и шифртекстом. Статичный `<b>`-блоб
+(так было до 09.10.2026) повторял одну и ту же датаграмму байт-в-байт каждые две минуты: хеш-сигнатура
+для DPI, повтор Initial уже открытого соединения для QUIC-aware узла и постоянный DCID как
+идентификатор устройства. Профили `dns`/`stun`/`sip` остаются статичным CPS с `<r>`-энтропией: их
+байты не связаны AEAD, движок рандомизирует их сам. Тем самым `id`/`ip`/`ib` для QUIC — не сахар,
+разворачиваемый один раз в `i1`, а параметры живого генератора.
+
+**Chaos-раскладка** — пошаговая копия `QuicChaosProtector::BuildDataPacket`
+(`quiche/quic/core/quic_chaos_protector.cc`), константы quiche: исходный CRYPTO режется
+2–10 раз в случайной точке случайного фрейма (итого до 11 CRYPTO; первый разрез всегда удаётся, следующие могут попасть на однобайтовый кусок и пропасть, как у Chrome), добавляется 2–10 PING,
+бюджет PADDING размазывается случайными кусками перед фреймами, затем весь список фреймов
+перемешивается Fisher–Yates. Порядок не закреплён ничем: фрейм с `offset=0` бывает и первым, и
+нет, как у живого Chrome. Единственный параметр генератора — диапазон размера датаграммы
+(`quicGenParams`); число фреймов и PING не настраивается, оно хромовское.
+
+**Почему один пакет.** Полевые прогоны LxBox §617/§618 (Мак, LTE): порядок CRYPTO-фреймов
+нагрузки не несёт — in-order и перемешанный Initial проходят одинаково; давится инициация, в
+которой ClientHello размазан по **нескольким** Initial (включая побайтовую копию трёх пакетов
+живого Chrome с ML-KEM). Поэтому `chrome-full` не повторяет трёхпакетный первый бросок Chrome,
+а кладёт тот же ClientHello в один Initial больше MTU: на уровне QUIC это один пакет, на
+проводе — два IP-фрагмента. Цена — зависимость от прохождения IP-фрагментов на пути (§618: F
+проходил частично). Прежнее объяснение «DPI парсит первый фрейм как начало и fail-open'ится»
+опровергнуто §617 и из кода убрано.
 
 `i1` — decoy (src=nil, шлётся перед WG-handshake); реальный TLS-handshake он не завершает,
-его задача — чтобы первый пакет потока выглядел как легитимный старт QUIC-сессии к CDN.
+его задача — валидный первый пакет QUIC-сессии к CDN перед потоком.
 
 Инварианты (проверяются обратным разбором в тестах):
-- **I1.** первый CRYPTO-фрейм в wire-порядке имеет `offset≠0`;
-- **I2.** фрейм с `offset=0` выложен не первым;
-- **I3.** между CRYPTO-фреймами есть PADDING-runs и ≥1 PING;
+- **chaos** (`chrome`, `chrome-full`): 2 ≤ CRYPTO ≤ 11, 2 ≤ PING ≤ 10, PADDING есть, pn=1, SCID
+  пуст; на выборке из 200 пакетов `offset=0` встречается и первым, и не первым;
+- **плоская** (`firefox`, `""`, `curl`): ровно один CRYPTO с `offset=0`, он первый, PING нет;
+  `firefox` — SCID 3, pn_len 2, нули после пакета, PADDING внутри нет; generic — PADDING-хвост
+  внутри, pn=0;
+- **паритет с захватами** (`TestQUICInitialCaptureParity`): оба `.bin` расшифровываются нашим
+  крипто (known-answer), набор расширений и набор transport parameters сгенерированного ClientHello
+  совпадают с захватом (Firefox — и порядок расширений); у `chrome-full` и захватов первый key_share
+  — гибрид;
+- **динамика** (`TestAwgIpcLinesQUICDynamicDecoy`): для `ip=quic` `i1`/`i2` пусты, генератор даёт
+  по одному Initial на вызов с разными DCID и шифртекстом; для `dns` `i1` статичный;
 - **I4.** объединение CRYPTO-фреймов по offset = непрерывный валидный ClientHello `[0..N)`,
   без дыр/перекрытий, SNI на месте.
 
 Крипта — RFC 9001 §5 (HKDF-Extract по DCID → `client in` → `quic key/iv/hp`,
-AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x25519 на каждый
-вызов → разный ciphertext (нет общей сигнатуры между юзерами). Пакет ≈1250б, length-поле
-1232 (padded ≥1200, RFC 9000 §14.1).
+AES-128-GCM, header protection; pn_len 1 или 2 по профилю). Свежие DCID/SCID + TLS random +
+ephemeral x25519 на каждый вызов → разный ciphertext. Пакет 1250б (length-поле 1232) у chrome и
+generic, 1252б у firefox; `chrome-full` растёт под ClientHello (+128б запаса на chaos).
 
 ### 3.2 DNS / STUN / SIP
 
 - **dns** — клиентский DNS **query**. Flags `0x0100` (QR=0, RD=1; byte2 ноль), QDCOUNT=1,
   ARCOUNT=1; QNAME из `Id`, QTYPE **HTTPS** (`0x0041`, RR-type 65 — самый частый запрос
-  современного браузера), QCLASS IN; OPT RR (TYPE `0x0029`, CLASS=1232, TTL=0, DO=0) с одной
-  неизвестной EDNS-опцией код `0xFDE9` (IANA local-use), OPTION-LENGTH покрывает cover-байты →
-  весь датаграм парсится как один DNS query. TXID `<r 2>` и cover `<r 40>` свежие на пакет.
-  Query, а не response: клиент первым шлёт запрос. Генератор — `masqueDNSQueryCPS`.
+  современного браузера), QCLASS IN; OPT RR (TYPE `0x0029`, CLASS=1232, TTL=0, DO=0,
+  **RDLENGTH 0 — без опций**, как у stub-резолвера) → весь датаграм парсится как один DNS query
+  без хвоста. TXID `<r 2>` свежий на пакет. Прежняя неизвестная EDNS-опция `0xFDE9` с 40
+  случайными байтами (наследие серверного S1-хвоста WireSock) убрана 09.10.2026: такого не шлёт ни
+  один резолвер, диссектор это помечает. Query, а не response: клиент первым шлёт запрос.
+  Генератор — `masqueDNSQueryCPS`.
 - **stun** — WebRTC Binding **Request**. type `0x0001`, magic cookie `0x2112A442`, свежий
   txn; атрибуты USERNAME (`0x0006`), ICE-CONTROLLING (`0x802a`), PRIORITY (`0x0024`),
   SOFTWARE (`0x8022` = `libwebrtc`), MESSAGE-INTEGRITY (`0x0008`, HMAC-SHA1), FINGERPRINT
@@ -133,23 +164,19 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
   MESSAGE-INTEGRITY структурно валиден, но по произвольному ICE-ключу (реального пароля у
   decoy нет — on-path DPI HMAC всё равно не проверит). Свежая энтропия на вызов; hostname не
   несёт. Генератор — `stun_request_awg.go`.
-- **sip** — начало SIP-звонка (call setup, RFC 3261 §17) — **два самостоятельных пакета** одного диалога:
-  **i1 = полный INVITE** (request-line + Via(branch=z9hG4bK)/To(без tag)/From(tag)/Call-ID/CSeq:N
-  INVITE/Max-Forwards:70/Contact/Content-Type/`Content-Length: 0`, **без SDP-тела**), **i2 = полный
-  `SIP/2.0 100 Trying`** (статус-строка + те же Via/To/From/Call-ID/CSeq + `Content-Length: 0`).
-  **Почему два целых пакета, а не фрагментация.** i1/i2 уходят как **независимые UDP-датаграммы**
-  (amneziawg-go `send.go`, `src=nil`), а у UDP нет потоковой реассемблеризации — пакетный DPI
-  смотрит каждую датаграмму отдельно. INVITE и 100 Trying валидны **каждый сам по себе**; вместе —
-  каноническое начало вызова (UAC шлёт INVITE → сервер сразу отвечает 100 Trying). Прежняя
-  фрагментация одного INVITE (head→i1, SDP→i2) оставляла каждую датаграмму битой и заменена.
-  **Один диалог.** Via branch / From tag / Call-ID / CSeq **идентичны** в i1 и i2 — поэтому строятся
-  **одним проходом** (`newSIPDialog` → `masqueSIPInviteCPS` + `masqueSIPTryingCPS`) и запекаются в
-  `<b>` обеих половин (не per-packet `<rc>`/`<rd>`, иначе токены разошлись бы между слотами).
-  Имена пользователей (display + local) и (если `Id` пуст) host — произносимые `PseudoGen`-строки,
-  свежие на генерацию; это **не** хардкод RFC-примера `alice@atlanta.com`/`bob@biloxi.com` (он —
-  публичный DPI-маяк). `Id` опционален: задан → host, пуст → `pgHost()`. Явный `i2` рядом с
-  `id/ip/ib` отвергается как конфликт (зеркало гарда `i1`). Генератор — `sip_invite_awg.go`,
-  диспетчер обоих слотов — `masqueI1I2`.
+- **sip** — первый пакет SIP-звонка (call setup, RFC 3261 §17): **i1 = полный INVITE**
+  (request-line + Via(branch=z9hG4bK)/To(без tag)/From(tag)/Call-ID/CSeq:N INVITE/Max-Forwards:70/
+  Contact/Content-Type/`Content-Length: 0`, **без SDP-тела**), одна самостоятельная валидная
+  UDP-датаграмма; `i2` пуст. История форм: фрагментация одного INVITE (head→i1, SDP→i2) оставляла
+  каждую датаграмму битой (UDP не реассемблируется); пара INVITE (i1) + `100 Trying` (i2) клала
+  **серверный ответ в клиентский слот** — UAC никогда не шлёт `100 Trying`, а серверная сторона
+  WireSock отвечает на INVITE своим `100 Trying` (убрано 09.10.2026). Идентификаторы диалога
+  (branch/tag/Call-ID/CSeq) запекаются в `<b>` (`newSIPDialog` → `masqueSIPInviteCPS`), чтобы
+  заголовки одного сообщения согласовались. Имена пользователей (display + local) и (если `Id`
+  пуст) host — произносимые `PseudoGen`-строки, свежие на генерацию; это **не** хардкод
+  RFC-примера `alice@atlanta.com`/`bob@biloxi.com` (он — публичный DPI-маяк). `Id` опционален:
+  задан → host, пуст → `pgHost()`. Явный пользовательский `i2` рядом с `id/ip/ib` проходит как
+  есть. Генератор — `sip_invite_awg.go`.
   **Требует junk** (`jc/jmin/jmax > 0`): профиль рассчитан на отправку вместе с junk-пакетами в
   том же пред-handshake-залпе.
 
@@ -157,24 +184,62 @@ AES-128-GCM, header protection). Свежие DCID + TLS random + ephemeral x255
 
 ## 4. Браузер (`Ib`)
 
-`Ib` валидируется (`chrome|firefox|curl`, только при `ip=quic`) и **управляет JA3/JA4
-ClientHello** (build с `with_utls`):
+`Ib` валидируется (`chrome|chrome-full|firefox|curl`, только при `ip=quic`) и управляет
+**JA3/JA4 ClientHello** (build с `with_utls`) и **раскладкой фреймов** Initial (§3.1):
 
-- **`ib=""` / `ib=curl`** → собственный generic ClientHello (~294б, device-proven; §3.1). uTLS не
-  имеет curl-QUIC-fingerprint, поэтому curl деградирует на generic.
-- **`ib=chrome` / `ib=firefox`** → ClientHello строится через **uTLS** (`github.com/metacubex/utls`,
-  тот же, что у Reality): `UQUICClient` с fingerprint `HelloChrome_120` / `HelloFirefox_120` →
-  настоящий браузерный JA3/JA4 (cipher_suites, supported_groups, порядок extensions, GREASE у
-  Chrome). ALPN форсируется в `h3` (это QUIC, не TCP-TLS). PQ-гибрид key_share
-  (`X25519MLKEM768`, ~1.2КБ) удаляется — он не влез бы в один Initial; следствие: JA3 как у
-  конца-2023 браузера, не у текущего PQ-включённого. CH крупнее (~510–620б), фрагментация
-  адаптируется (planFragmentsN режет любую длину, I1–I4 держатся).
-- Без тега `with_utls` `ib=chrome/firefox` грациозно деградируют на generic CH (stub-файл).
+- **`ib=""` / `ib=curl`** → собственный generic ClientHello (~294б). uTLS не имеет
+  curl-QUIC-fingerprint, поэтому curl деградирует на generic. Плоская раскладка.
+- **`ib=chrome`** → ClientHello через **uTLS** (форк-сабмодуль `submodules/utls`, тот же, что у
+  REALITY): пресет `HelloChrome_155` описывает **TCP**-ClientHello Chrome, а QUIC-ClientHello у
+  браузера другой, поэтому спека перестраивается по захватам Chrome 133 (LxBox §618) и Chrome 147
+  (`testdata/chrome_147_initial.bin`): шифры — только три TLS 1.3 (без GREASE и TLS 1.2); группы
+  `X25519, P-256, P-384` без GREASE; расширения ровно те 11, что шлёт Chrome в QUIC:
+  `server_name`, `supported_groups`, ALPN `h3`, `signature_algorithms` (9 алгоритмов из захвата),
+  `key_share`, `psk_key_exchange_modes`, `supported_versions`, `compress_certificate`, ALPS `h3`,
+  GREASE ECH и **`quic_transport_parameters`** (57) с параметрами Chrome: `initial_rtt` (0x3127,
+  шлётся всегда, значение из правдоподобного диапазона), `max_datagram_frame_size` 65536,
+  `version_information` v1+GREASE, `max_udp_payload_size` 1472, лимиты 6/15 МБ, 100/103 потоков,
+  idle 30 с, пустой `initial_source_connection_id`, GREASE-параметр со случайной длиной 0–15;
+  **порядок параметров перемешивается** на каждый вызов (quiche тасует: у 133 и 147 он разный).
+  Не шлётся, как и у Chrome в QUIC: GREASE-расширения, `trust_anchors` (в 147 его нет),
+  `ec_point_formats`, `status_request`, SCT, `session_ticket`, `extended_master_secret`,
+  `renegotiation_info`; `pre_shared_key`/`early_data`/token — атрибуты повторного визита. Гибрид
+  `X25519MLKEM768` (~1.2КБ) удалён из supported_groups и key_share — ClientHello (~470б)
+  помещается в один Initial 1250б; это отпечаток Chrome 155 с
+  `PostQuantumKeyAgreementEnabled=false`. Chaos-раскладка, SCID пуст, pn_len 1, pn=1.
+- **`ib=chrome-full`** → та же QUIC-спека, гибридный key_share **сохранён** первым в key_share
+  (ClientHello ~1.75КБ), один Initial ~1.9–2.1КБ больше MTU. Отпечаток текущего Chrome;
+  датаграмма не хромовская (Chrome шлёт три по 1250), выбор обоснован в §3.1.
+- **`ib=firefox`** → пресет `HelloFirefox_148`, перестроенный под QUIC по захвату Firefox 149
+  (`testdata/firefox_149_initial.bin`): три шифра TLS 1.3 в порядке NSS; 15 расширений **в
+  порядке захвата** (NSS в QUIC упорядочивает иначе, чем в TCP): `extended_master_secret`,
+  `delegated_credentials`, `record_size_limit`, ALPN `h3`, `status_request`,
+  `signature_algorithms` (11), `renegotiation_info`, `compress_certificate`, `server_name`,
+  `key_share` (X25519, P-256), `supported_versions`, `supported_groups` (X25519, P-256, P-384,
+  P-521 — без FFDHE), `psk_key_exchange_modes`, `quic_transport_parameters`, GREASE ECH; нет
+  `ec_point_formats`, SCT, `session_ticket`. Transport parameters — 13 по захвату в порядке id:
+  idle 30 с, `initial_max_data` 24 МБ, bidi_local 12 МБ, bidi_remote/uni 1 МБ, 100/100 потоков,
+  `max_ack_delay` 20, `active_connection_id_limit` 8, `initial_source_connection_id` = SCID (3
+  байта), `version_information`, `min_ack_delay` (draft, 1000), `max_datagram_frame_size` 65535.
+  PQ-гибрид срезан (один пакет). Заголовок neqo: SCID 3 байта, pn_len 2, pn случайный, нули
+  после пакета до 1252. Плоская раскладка.
+- **GREASE-версия** в `version_information` считается у нас: `(rand & 0xf0f0f0f0) | 0x0a0a0a0a`
+  (хелпер форка utls ставит `| 0x0a0a0a0a` без маски и даёт форму `?a?a?a?a` в 1 случае из 256).
 
-**Назначение `Ib` — задел против будущего JA3/JA4-классифицирующего DPI.** На текущем целевом DPI
-`ip=quic` проходит на фрагментации (fingerprint не проверяется), поэтому дефолт `ib=""` сохраняет
-device-proven generic-путь; uTLS-вариант крупнее и сам по себе на устройстве не верифицирован.
-Код: `quic_clienthello_utls_awg.go` (+ stub `…_utls_stub_awg.go`).
+**Зачем валидный QUIC-ClientHello, если decoy никто не отвечает.** До 09.10.2026 uTLS-путь (с
+18.06.2026) слал TCP-ClientHello внутри Initial: без расширения 57, с TLS 1.2-шифрами и
+TCP-расширениями. На WARP это не проявлялось (Cloudflare decoy молча дропает, §9), но
+серверная сторона WireSock — `amneziawg-proxy/src/quic_handshake.rs` — держит настоящий
+QUIC-сервер на `quinn-proto`+`rustls`: расшифровывает Initial, разбирает ClientHello, подбирает
+сертификат под SNI и **отвечает серверным flight'ом** (Initial + Handshake с сертификатом),
+чтобы наблюдатель видел и ответ сервера. ClientHello без `quic_transport_parameters` `rustls`
+отвергает — вместо сертификата ушёл бы `CONNECTION_CLOSE` с TLS-alert, то есть QUIC-сессия,
+оборванная сервером на первом пакете. Generic ClientHello (`ib=""`) этого дефекта не имел.
+- Без тега `with_utls` `ib=chrome/chrome-full/firefox` деградируют на generic CH (stub-файл);
+  раскладка при этом остаётся по `Ib`.
+
+Код: `quic_clienthello_utls_awg.go` (+ stub `…_utls_stub_awg.go`), раскладка —
+`quic_initial_awg.go`.
 
 ---
 
@@ -188,7 +253,7 @@ device-proven generic-путь; uTLS-вариант крупнее и сам п�
   без edge-hyphen, ≤63, всего ≤253, трейлинг-дот ок). Это security-граница: домен идёт в
   SIP-текст / DNS QNAME / TLS SNI — control-байты (`\r\n\0\t`) и SIP/URI-метасимволы
   (`> ; @ "`) дали бы инъекцию. Совпадает с `is_valid_sni_hostname`.
-- **`Ib` ∈ {chrome,firefox,curl}** и только при `ip=quic`; иначе ошибка.
+- **`Ib` ∈ {chrome,chrome-full,firefox,curl}** (lower) и только при `ip=quic`; иначе ошибка.
 
 ---
 
@@ -200,11 +265,13 @@ device-proven generic-путь; uTLS-вариант крупнее и сам п�
 | `transport/wireguard/masque_awg.go` | lx, `with_awg` | диспетчер `masqueI1` + валидация + DNS query + `cpsBuilder` |
 | `transport/wireguard/quic_initial_awg.go` | lx, `with_awg` | QUIC Initial: varint, рандомизированный frame-план (I1–I4) + `quicGenParams`, сборка RFC 9001 |
 | `transport/wireguard/quic_clienthello_awg.go` | lx, `with_awg` | generic TLS 1.3 ClientHello (SNI=`Id`) + диспетч по `Ib` |
-| `transport/wireguard/quic_clienthello_utls_awg.go` | lx, `with_awg && with_utls` | uTLS браузерный ClientHello (chrome/firefox JA3, §4) |
+| `transport/wireguard/quic_clienthello_utls_awg.go` | lx, `with_awg && with_utls` | uTLS браузерный ClientHello (chrome/chrome-full/firefox JA3, §4) |
+| `transport/wireguard/testdata/` | lx | захваты Chrome 147 / Firefox 149 (BSD-3, из wiresock-boringtun), README |
+| `submodules/wireguard-go/device/{device,send}.go` | форк, `// lx:` | `SetDecoyPacketsFunc` — генератор decoy на каждый handshake initiation |
 | `transport/wireguard/quic_clienthello_utls_stub_awg.go` | lx, `with_awg && !with_utls` | fallback на generic, когда uTLS не собран |
 | `transport/wireguard/quic_crypto_awg.go` | lx, `with_awg` | HKDF / AES-128-GCM / header protection |
 | `transport/wireguard/stun_request_awg.go` | lx, `with_awg` | STUN WebRTC Binding Request (FINGERPRINT + MESSAGE-INTEGRITY) |
-| `transport/wireguard/sip_invite_awg.go` | lx, `with_awg` | начало SIP-звонка: INVITE (i1) + `100 Trying` (i2), один диалог, без SDP |
+| `transport/wireguard/sip_invite_awg.go` | lx, `with_awg` | первый пакет SIP-звонка: полный INVITE (i1), без SDP |
 | `transport/wireguard/pseudo_gen_awg.go` | lx, `with_awg` | произносимые псевдо-имена/host/IP (для SIP) |
 | `transport/wireguard/device_awg.go` | lx, `with_awg` | вызов `masqueI1` в `awgIpcLines` |
 | `transport/wireguard/masque_awg_test.go`, `quic_initial_awg_test.go` | lx, `with_awg` | тесты |
@@ -216,28 +283,29 @@ device-proven generic-путь; uTLS-вариант крупнее и сам п�
 ## 7. Критерии приёмки
 
 - **Структурная валидность каждого профиля** (обратным разбором, не тавтология): QUIC —
-  собственный вывод AEAD-расшифровывается (тег сходится), frame-walk даёт ≥6 CRYPTO + ≥1
-  PING + PADDING, первый CRYPTO `offset≠0` (I1), CRYPTO реассемблируются в валидный
-  ClientHello с SNI=`Id` (I4); DNS — валидный EDNS-OPT **query** (QR=0, QNAME=`Id`, QTYPE
-  HTTPS, опция `0xFDE9`, без хвостов); STUN — Binding **Request** (cookie, атрибуты тайлят сообщение, FINGERPRINT
-  CRC-32 сходится, USERNAME + MESSAGE-INTEGRITY присутствуют); SIP — **два самостоятельных
-  пакета** одного диалога: i1 — валидный INVITE **request** (request-line `INVITE ... SIP/2.0`,
-  Via/Max-Forwards/From/To-без-tag/Call-ID/CSeq/Contact, `Content-Length: 0`, без SDP-тела),
-  i2 — валидный `SIP/2.0 100 Trying` (статус-строка + те же Via/To/From/Call-ID/CSeq,
-  `Content-Length: 0`); branch/tag/Call-ID/CSeq **идентичны** в i1 и i2 (один диалог), имена
-  не захардкожены.
-- **Рандомизация QUIC:** раскладка фрейм-плана и точки разреза свежие на каждый вызов;
-  инварианты I1–I4 держатся на каждом сэмпле (стресс-тест), две генерации → разные offset'ы
-  фрагментов (нет фикс-сигнатуры). Robustness-ручки (`quicGenParams`: 4–12 фрагментов,
-  переменный размер) тоже держат I1–I4.
+  собственный вывод AEAD-расшифровывается (тег сходится), frame-walk даёт 2–11 CRYPTO + ≥2
+  PING + PADDING у chaos-профилей, CRYPTO реассемблируются в валидный
+  ClientHello с SNI=`Id` (I4); DNS — валидный EDNS **query** (QR=0, QNAME=`Id`, QTYPE HTTPS,
+  OPT с RDLENGTH 0, без хвостов); STUN — Binding **Request** (cookie, атрибуты тайлят сообщение,
+  FINGERPRINT CRC-32 сходится, USERNAME + MESSAGE-INTEGRITY присутствуют); SIP — i1 — валидный
+  INVITE **request** (request-line `INVITE ... SIP/2.0`, Via/Max-Forwards/From/To-без-tag/Call-ID/
+  CSeq/Contact, `Content-Length: 0`, без SDP-тела), i2 пуст, имена не захардкожены.
+- **Рандомизация QUIC:** chaos-раскладка свежая на каждый вызов; census (2–11 CRYPTO, 2–10
+  PING, PADDING) и сборка I4 держатся на каждом сэмпле (стресс-тест), две генерации → разные
+  offset'ы фрагментов (нет фикс-сигнатуры); на 200 сэмплах `offset=0` бывает и первым, и нет.
+  Переменный размер датаграммы (`quicGenParams`) держит то же.
 - **Уникальность:** два вызова QUIC с одним SNI → разные DCID/TLS random → разный
   ciphertext; два вызова STUN → разный txn/ufrag/ключ → разный blob.
-- **`Ib` JA3 (build с `with_utls`):** `ib=chrome`/`firefox` → uTLS-ClientHello, расшифровывается,
-  SNI=`Id`, первый CRYPTO offset≠0 (I1), пакет 1250б; chrome содержит GREASE cipher, firefox нет;
-  длины chrome≠firefox≠generic. `ib=""`/`curl` → generic ~294б. Без `with_utls` chrome/firefox
-  деградируют на generic (stub компилируется и тестируется).
-- **Длинный домен:** валидный LDH-домен любой длины (≤253) генерируется без ошибки (payload
-  пинится к length-полю flex-PADDING-run; CH растёт с длиной SNI, инварианты сохраняются).
+- **`Ib` JA3 и раскладка (build с `with_utls`):** `ib=chrome` → три шифра TLS 1.3, 11 расширений
+  QUIC-набора Chrome без GREASE-расширений, TP-набор Chrome (без учёта GREASE-id), key_share
+  X25519, chaos, pn=1, 1250б; `ib=chrome-full` → гибрид первым в key_share, ClientHello и
+  датаграмма > 1250б, chaos; `ib=firefox` → три шифра NSS, 15 расширений в порядке захвата, группы
+  без PQ и FFDHE, TP-набор Firefox, SCID 3 байта = `initial_source_connection_id`, pn_len 2, нули
+  после пакета, 1252б, плоская; `ib=""`/`curl` → generic ~294б, плоская, pn=0. Паритет с
+  захватами `testdata/` (расшифровка нашим крипто, наборы расширений/TP). Без `with_utls`
+  chrome/chrome-full/firefox деградируют на generic (stub компилируется и тестируется).
+- **Длинный домен:** валидный LDH-домен любой длины (≤253) генерируется без ошибки (бюджет
+  PADDING поглощает разницу; CH растёт с длиной SNI, инварианты сохраняются).
 - **CPS принят реальным движком:** прогон через `newObfChain` из `submodules/wireguard-go`.
 - **Валидация:** конфликт с `I1`, неизвестный `Ip`, пустой `Id` для quic,
   control-байт/метасимвол в домене, `Ib` вне набора / не при quic — ошибки; нет паники.
@@ -332,20 +400,26 @@ WireSock архитектурно (без байт-спек и без измер
 
 ---
 
-## 9. QUIC — один Initial (multi-packet рассмотрен и отклонён)
+## 9. QUIC — один Initial (multi-packet рассмотрен и отклонён дважды)
 
-`ip=quic` эмитит **ОДИН** фрагментированный Initial (`i1`; `i2..i5` пусты). Один Initial — это
-ровно то, что реальный клиент шлёт, открывая одну QUIC-сессию; правдоподобие даёт
-браузер-точный ClientHello (`Ib` → uTLS, §4), а не число пакетов.
+`ip=quic` эмитит **ОДИН** Initial (`i1`; `i2..i5` пусты) с целым ClientHello внутри — при любом
+`Ib`, включая `chrome-full`, где ради этого датаграмма растёт за MTU (§3.1).
 
-**Отклонённая альтернатива — два независимых Initial (i1+i2).** Идея «развивающейся сессии» была
-реализована и device-проверена как безопасная для WARP-handshake (туннель встаёт без регресса
-латентности), но **концептуально неверна**: каждый DCID — отдельное QUIC-соединение, поэтому два
-Initial с разными DCID читаются как **два брошенных соединения**, а не одна развивающаяся сессия —
-для DPI с отслеживанием по DCID это *более* аномально, не менее. Настоящее «продолжение» (1-RTT
-short-header с тем же DCID) невозможно: short-header device-blocked (коммит `64ce4a47`), а 1-RTT до
-ответа сервера — невозможное QUIC-состояние. Вывод: один чистый Initial правдоподобнее любого
-двухпакетного варианта. (`masqueQUICSecondInitialCPS` удалён.)
+**Отклонено (1): два независимых Initial с разными DCID (i1+i2).** Реализовано и device-проверено
+как безопасное для WARP-handshake, но концептуально неверно: каждый DCID — отдельное
+QUIC-соединение, два Initial читаются как два брошенных соединения. Настоящее «продолжение»
+(1-RTT short-header с тем же DCID) невозможно: short-header device-blocked (коммит `64ce4a47`),
+а 1-RTT до ответа сервера — невозможное QUIC-состояние. (`masqueQUICSecondInitialCPS` удалён.)
+
+**Отклонено (2): ClientHello, размазанный по нескольким Initial одного DCID, как у Chrome с
+ML-KEM.** Полевой прогон LxBox §618 (Мак, провод, 08.10.2026): все многопакетные формы — два
+Initial по порядку, границы по SNI, ровно 1200б, с token, побайтовая копия трёх пакетов живого
+Chrome 133 — давятся на wartune.mail.ru и большинстве доменов (исключение apteka.ru);
+проходят только формы, где весь ClientHello уехал одним QUIC-пакетом, в том числе один Initial
+больше MTU с IP-фрагментацией. Многопакетная инициация к тому же «отравляет» 5-tuple на
+несколько минут. Разделяющий тест «два пакета, первый несёт целый ClientHello» (D) на момент
+записи не прогнан; формулировка причины (число пакетов или неполный первый Initial) открыта,
+на реализацию не влияет — оба варианта ведут к одному Initial.
 
 > **Замечание про send.go (валидно для sip i1+i2, §3.2).** Decoy-слоты `i1..i5` шлются как
 > независимые UDP-датаграмы ПЕРЕД подлинным `MessageInitiation`: `CreateMessageInitiation` считается
@@ -362,7 +436,7 @@ short-header с тем же DCID) невозможно: short-header device-bloc
 - Серверная сторона / probe-response (client-only) — но см. §8: non-QUIC профили осмысленны
   только со своим сервером-ответчиком (это и есть серверная сторона, вне скоупа 009).
 - Byte-identical имитация конкретного снимка трафика (рандомизация снижает сигнатуру).
-- Многопакетный QUIC (i1+i2) — рассмотрен и отклонён (§9).
+- Многопакетный QUIC (i1+i2 с разными DCID; ClientHello по нескольким Initial) — рассмотрен и отклонён (§9).
 - Поведенческая плоскость (timing / вариативность размеров между подключениями) — отдельное
   направление, если passive-shape станет недостаточно.
 

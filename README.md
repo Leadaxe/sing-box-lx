@@ -133,7 +133,7 @@ One snippet per feature. Field tables, defaults and every option — **[docs-lx/
 }
 ```
 
-`id`/`ip`/`ib` and an explicit `i1` are mutually exclusive. `ip=quic` sends two out-of-order fragmented QUIC Initials and is the profile proven against a live DPI; `dns`/`stun`/`sip` are correct requests kept for providers whose DPI only checks well-formedness. Reference — [protocols-transports.md §2](docs-lx/protocols-transports.md#2-amneziawg-203x-awg2-awg3) ([RU](docs-lx/protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)) · [masquerade examples](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
+`id`/`ip`/`ib` and an explicit `i1` are mutually exclusive. `ip=quic` sends one QUIC Initial carrying a whole browser ClientHello (`ib=chrome` — Chrome 155 with Chrome's own frame layout; `ib=chrome-full` — the same with the ML-KEM key share in one Initial above the MTU) and is the profile proven against a live DPI; `dns`/`stun`/`sip` are correct requests kept for providers whose DPI only checks well-formedness. Reference — [protocols-transports.md §2](docs-lx/protocols-transports.md#2-amneziawg-203x-awg2-awg3) ([RU](docs-lx/protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)) · [masquerade examples](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ### MASQUE outbound (Cloudflare WARP)
 

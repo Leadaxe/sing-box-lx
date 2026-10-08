@@ -500,32 +500,33 @@ decoy for you.
 |-----|------|---------|
 | `id` | string | masquerade **domain** (a host that looks normal for your region, e.g. `www.google.com`). Strict LDH hostname. Embedded into the decoy for `ip=quic` (as the ClientHello **SNI**), `ip=dns` (as the **QNAME**) and `ip=sip` (as the **host**); `ip=stun` has nowhere to carry a hostname and ignores it. **Required only for `quic`**; for `dns`/`sip` a pseudo name is generated when absent; `stun` ignores it. Whenever set, it is LDH-validated (injection-y values are rejected) |
 | `ip` | string | masquerade **protocol**: `quic` \| `dns` \| `stun` \| `sip` |
-| `ib` | string | masquerade **browser**: `chrome` \| `firefox` \| `curl`. Only meaningful with `ip=quic`, and even then the effect is **minimal** (see the notes below) |
+| `ib` | string | masquerade **browser**: `chrome` \| `chrome-full` \| `firefox` \| `curl`. Only with `ip=quic`. Selects the ClientHello TLS fingerprint and the Initial frame layout (see below) |
 
 The decoy is sent before the handshake, exactly like a hand-written `i1`. Each
 profile is a **client-initiated** packet shaped like that protocol (the shapes are
 inspired by the open-source WireSock reference, but emitted as the client request a
 peer actually sends first, not a server response):
 
-- **`quic`** — a purpose-built **QUIC Initial (RFC 9001)** carrying a realistic
-  browser-shaped ClientHello (with your `id` as the SNI) **split across several
-  out-of-order CRYPTO frames**: the first frame on the wire starts mid-ClientHello
-  (offset≠0), so a line-rate DPI that grabs the first frame and assumes offset 0
-  parses garbage and fails open, while a real QUIC server reorders the frames
-  normally. The layout is randomized per call (no fixed cross-user signature).
-  `ip=quic` emits **one** fragmented Initial in `i1` — this is the device-proven DPI
-  bypass (a plain QUIC short header was empirically blocked).
+- **`quic`** — a **QUIC Initial (RFC 9001)** carrying a whole ClientHello (your
+  `id` as the SNI) with the fingerprint of the `ib` browser, its frames laid out as
+  that stack does. `chrome` — Chrome 155 without the PQ key share, 1250 bytes, the
+  ClientHello cut into 2–11 CRYPTO frames with 2–10 PINGs and scattered PADDING
+  (`QuicChaosProtector`); `chrome-full` — Chrome 155 with `X25519MLKEM768`, one
+  ~2 KB Initial above the MTU (two IP fragments); `firefox` and `curl`/empty — one
+  CRYPTO frame plus PADDING. Layout and DCID/random are fresh per call (no cross-user
+  signature). `ip=quic` emits **one** Initial in `i1`: a ClientHello spread over
+  several Initials is dropped on the way to WARP, while frame order inside one packet
+  does not matter (field runs). A plain QUIC short header was blocked.
 - **`dns`** — a client DNS **query** (QR=0, QTYPE HTTPS/type 65) whose QNAME is your
-  `id`, carrying random cover bytes as an opaque unknown EDNS option.
+  `id`, with a plain EDNS OPT record (no options), the shape a stub resolver sends.
 - **`stun`** — a WebRTC/ICE **STUN Binding Request** (magic cookie + USERNAME +
   ICE-CONTROLLING + PRIORITY + SOFTWARE + MESSAGE-INTEGRITY + FINGERPRINT). This is
   a client connectivity-check — the packet an ICE agent legitimately sends first.
 - **`sip`** — a body-less SIP **INVITE request** (`i1`: request-line + Via /
   Max-Forwards / To / From / Call-ID / CSeq / Contact + `Content-Type:
-  application/sdp` and `Content-Length: 0`, no SDP body) paired with the matching
-  **`100 Trying`** provisional response of the same dialog (`i2`), using your `id`
-  (or a generated pseudo-host) as the host and pronounceable pseudo user names.
-  `ip=sip` therefore fills **both** `i1` and `i2`.
+  application/sdp` and `Content-Length: 0`, no SDP body), using your `id` (or a
+  generated pseudo-host) as the host and pronounceable pseudo user names. `i2`
+  stays empty: the `100 Trying` is the server's reply, not a client packet.
 
 **Where `id` reaches the wire:**
 
