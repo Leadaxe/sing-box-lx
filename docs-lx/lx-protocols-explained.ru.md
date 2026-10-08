@@ -37,6 +37,7 @@ Xray-сервера уже не работает. `sing-box-lx` закрывае
   - [1.2 Отпечаток и uTLS](#12-отпечаток-и-utls)
   - [1.3 Гибридный key share и размер приветствия](#13-гибридный-key-share-и-размер-приветствия)
   - [1.4 Фрагментация](#14-фрагментация)
+  - [1.5 Пример: Xray и sing-box-lx](#15-пример-xray-и-sing-box-lx)
 - [§2 REALITY](#2-reality)
   - [2.1 Какую проблему решает](#21-какую-проблему-решает)
   - [2.2 Идея: чужой сайт как прикрытие](#22-идея-чужой-сайт-как-прикрытие)
@@ -180,6 +181,109 @@ TLS 1.3 шифрует почти всё, кроме первого сообще
 обходил REALITY стороной. Под `detour` ядро включает `record_fragment`
 само ([SPEC 060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md)): без этого ClientHello крупнее MTU туннеля терялся молча.
 Явный выбор пользователя побеждает.
+
+## 1.5 Пример: Xray и sing-box-lx
+
+Обычный VLESS + TLS на голом TCP, без REALITY: отпечаток браузера, ALPN и
+фрагментация ClientHello. У Xray фрагментация существует в двух формах,
+и обе сводятся у нас к одному блоку `tls`.
+
+Xray, новая форма (`finalmask`, Xray ≥ 25.x):
+
+```jsonc
+{
+  "protocol": "vless",
+  "settings": {
+    "vnext": [{
+      "address": "example.com",
+      "port": 443,
+      "users": [{ "id": "00000000-0000-0000-0000-000000000000", "encryption": "none" }]
+    }]
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "tls",
+    "tlsSettings": {
+      "serverName": "example.com",
+      "fingerprint": "chrome",
+      "alpn": ["h2", "http/1.1"],
+      "allowInsecure": false
+    },
+    "finalmask": {
+      "tcp": [{
+        "type": "fragment",
+        "settings": { "packets": "tlshello", "length": "20-40", "delay": "3-10", "maxSplit": "3-6" }
+      }]
+    }
+  }
+}
+```
+
+Xray, старая форма (служебный `freedom` с `fragment`, на который узел
+ходит через `sockopt.dialerProxy`):
+
+```jsonc
+[
+  {
+    "tag": "proxy",
+    "protocol": "vless",
+    "settings": { "vnext": [ /* как выше */ ] },
+    "streamSettings": {
+      "network": "tcp",
+      "security": "tls",
+      "tlsSettings": { "serverName": "example.com", "fingerprint": "chrome" },
+      "sockopt": { "dialerProxy": "fragment" }
+    }
+  },
+  {
+    "tag": "fragment",
+    "protocol": "freedom",
+    "settings": { "fragment": { "packets": "tlshello", "length": "100-200", "interval": "10-20" } }
+  }
+]
+```
+
+sing-box-lx — один outbound для обеих форм:
+
+```jsonc
+{
+  "type": "vless",
+  "tag": "tls-out",
+  "server": "example.com",
+  "server_port": 443,
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "tls": {
+    "enabled": true,
+    "server_name": "example.com",
+    "alpn": ["h2", "http/1.1"],
+    "insecure": false,
+    "utls": { "enabled": true, "fingerprint": "chrome" },
+    "fragment": true,
+    "record_fragment": false
+  }
+}
+```
+
+Соответствие ключей:
+
+| Xray | sing-box-lx | Где описано |
+|---|---|---|
+| `security: "tls"` + `tlsSettings` | `tls.enabled: true` | [TLS](../docs/configuration/shared/tls.md), [`enabled`](../docs/configuration/shared/tls.md#enabled) |
+| `tlsSettings.serverName` | `tls.server_name` | [`server_name`](../docs/configuration/shared/tls.md#server_name), §1.1 |
+| пустой `serverName` | `tls.disable_sni: true` | [`disable_sni`](../docs/configuration/shared/tls.md#disable_sni); пустой `server_name` у нас **не** убирает SNI, а подставляет адрес |
+| `tlsSettings.fingerprint` | `tls.utls.enabled: true` + `tls.utls.fingerprint` | [`utls`](../docs/configuration/shared/tls.md#utls), §1.2; гибридный key share несут `chrome`, `firefox`, `safari` (§1.3) |
+| `tlsSettings.alpn` | `tls.alpn` | [`alpn`](../docs/configuration/shared/tls.md#alpn); для XHTTP решает версию HTTP (§4.3) |
+| `tlsSettings.allowInsecure` | `tls.insecure` | [`insecure`](../docs/configuration/shared/tls.md#insecure) |
+| `tlsSettings.minVersion`, `cipherSuites` | `tls.min_version`, `tls.cipher_suites` | [`min_version`](../docs/configuration/shared/tls.md#min_version), [`cipher_suites`](../docs/configuration/shared/tls.md#cipher_suites); у Xray `cipherSuites` — строка через двоеточие, у нас массив |
+| `tlsSettings.echConfigList` | `tls.ech.enabled: true` + `tls.ech.config` | [ECH Fields](../docs/configuration/shared/tls.md#ech-fields); с REALITY несовместимо (§6) |
+| `finalmask.tcp[type=fragment]` | `tls.fragment: true` (TCP-сегменты) или `tls.record_fragment: true` (TLS-записи) | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment), §1.4 |
+| `freedom` + `settings.fragment` + `sockopt.dialerProxy` | то же `tls.fragment` на узле, который ходит наружу напрямую | §1.4; служебный `freedom` отдельным outbound-ом не становится |
+| `length`, `delay` / `interval`, `maxSplit` | нет: ядро режет по своей схеме | параметры нарезки не переносятся |
+| — | `tls.fragment_fallback_delay` | [`fragment_fallback_delay`](../docs/configuration/shared/tls.md#fragment_fallback_delay): время ожидания, когда ядро не может вычислить его само; по умолчанию 500 мс |
+| — | `record_fragment` сам включается под `detour` | [lx-config §9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060) |
+| — | `tls.reality.key_share` | только у нас, §1.3; относится к REALITY, пример в §2.8 |
+
+Нормативное описание полей Xray — [TLS в документации Project X](https://xtls.github.io/config/transport.html#tlsobject).
 
 ---
 
