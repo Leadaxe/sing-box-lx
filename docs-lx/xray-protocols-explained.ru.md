@@ -18,7 +18,7 @@ Xray-сервера уже не работает. `sing-box-lx` закрывае
 всё-таки sing-box, а не сам Xray ([§7.1](#71-почему-база--sing-box-а-не-xray)).
 Поля, дефолты и тексты ошибок здесь не перечисляются — для этого есть
 [lx-config.ru.md](lx-config.ru.md) (обзор по фичам) и
-[lx-protocols-transports.ru.md](lx-protocols-transports.ru.md) (справочник
+[protocols-transports.ru.md](protocols-transports.ru.md) (справочник
 параметров). Текущее состояние каждой области — в спеках фич:
 [017-REALITY](../SPECS/FEATURES/017-REALITY/FEATURE.md),
 [002-XHTTP](../SPECS/FEATURES/002-XHTTP/FEATURE.md),
@@ -885,7 +885,7 @@ HTTP/3 иногда проходит там, где TCP душат, и наоб�
 
 VLESS + XHTTP `packet-up` + TLS через CDN с пулом `xmux`. Вариант с REALITY
 и `stream-one` — в справочнике,
-[lx-protocols-transports §1.10](lx-protocols-transports.ru.md#110-примеры).
+[protocols-transports §1.10](protocols-transports.ru.md#110-примеры).
 
 Xray:
 
@@ -969,23 +969,23 @@ sing-box-lx:
 
 | Xray | sing-box-lx | Где описано |
 |---|---|---|
-| `network: "xhttp"` | `transport.type: "xhttp"` | [transports §1](lx-protocols-transports.ru.md#1-xhttp-транспорт) |
-| `xhttpSettings.mode` | `transport.mode` | [§1.1 Режимы](lx-protocols-transports.ru.md#11-режимы), §4.2 |
-| `xhttpSettings.host`, `path` | `transport.host`, `path` | [§1.2 Основные поля](lx-protocols-transports.ru.md#12-основные-поля-v1) |
+| `network: "xhttp"` | `transport.type: "xhttp"` | [transports §1](protocols-transports.ru.md#1-xhttp-транспорт) |
+| `xhttpSettings.mode` | `transport.mode` | [§1.1 Режимы](protocols-transports.ru.md#11-режимы), §4.2 |
+| `xhttpSettings.host`, `path` | `transport.host`, `path` | [§1.2 Основные поля](protocols-transports.ru.md#12-основные-поля-v1) |
 | `xhttpSettings.headers` | `transport.headers` | там же |
-| `extra.xPaddingBytes` | `x_padding_bytes` | [§1.5 X-Padding](lx-protocols-transports.ru.md#15-x-padding-обфускация-v2), §4.4 |
-| `extra.scMaxEachPostBytes`, `scMinPostsIntervalMs` | `sc_max_each_post_bytes`, `sc_min_posts_interval_ms` | [§1.6 Тюнинг packet-up](lx-protocols-transports.ru.md#16-тюнинг-packet-up-v2) |
-| `extra.noGRPCHeader` | `no_grpc_header` | [§1.2](lx-protocols-transports.ru.md#12-основные-поля-v1) |
-| `extra.xmux.*` | `xmux.*` (snake_case) | [§1.7 xmux](lx-protocols-transports.ru.md#17-переиспользование-соединений--xmux), §4.5 |
+| `extra.xPaddingBytes` | `x_padding_bytes` | [§1.5 X-Padding](protocols-transports.ru.md#15-x-padding-обфускация-v2), §4.4 |
+| `extra.scMaxEachPostBytes`, `scMinPostsIntervalMs` | `sc_max_each_post_bytes`, `sc_min_posts_interval_ms` | [§1.6 Тюнинг packet-up](protocols-transports.ru.md#16-тюнинг-packet-up-v2) |
+| `extra.noGRPCHeader` | `no_grpc_header` | [§1.2](protocols-transports.ru.md#12-основные-поля-v1) |
+| `extra.xmux.*` | `xmux.*` (snake_case) | [§1.7 xmux](protocols-transports.ru.md#17-переиспользование-соединений--xmux), §4.5 |
 | `extra.downloadSettings` | нет | §4.2 |
-| `tlsSettings.alpn` | `tls.alpn` — решает версию HTTP | [Версия HTTP](lx-protocols-transports.ru.md#версия-http), §4.3 |
+| `tlsSettings.alpn` | `tls.alpn` — решает версию HTTP | [Версия HTTP](protocols-transports.ru.md#версия-http), §4.3 |
 | `tlsSettings.serverName`, `fingerprint` | `tls.server_name`, `tls.utls.fingerprint` | как в §2.8 |
 | `security: "reality"` + `realitySettings` | `tls.reality` | как в §2.8; `mode: auto` при этом даёт `stream-one` |
-| диапазоны `"16-32"` | те же строки или число | [§1.9 Формы записи диапазонов](lx-protocols-transports.ru.md#19-формы-записи-диапазонов) |
+| диапазоны `"16-32"` | те же строки или число | [§1.9 Формы записи диапазонов](protocols-transports.ru.md#19-формы-записи-диапазонов) |
 
 Серверные поля Xray (`scMaxBufferedPosts`, `scStreamUpServerSecs`,
 `noSSEHeader`) принимаются и игнорируются:
-[§1.8](lx-protocols-transports.ru.md#18-принятые-но-игнорируемые-поля).
+[§1.8](protocols-transports.ru.md#18-принятые-но-игнорируемые-поля).
 
 > 📖 Нормативное описание — [XHTTP в документации Project X](https://xtls.github.io/config/transports/xhttp.html).
 
@@ -1409,7 +1409,7 @@ build-тегами. Обратное — принести в Xray платфор
 
 - **[lx-config.ru.md](lx-config.ru.md)** — обзор полей по фичам: §6 VLESS
   `encryption`, §7 REALITY `key_share`, §9 фрагментация.
-- **[lx-protocols-transports.ru.md](lx-protocols-transports.ru.md)** — §1
+- **[protocols-transports.ru.md](protocols-transports.ru.md)** — §1
   XHTTP: каждое поле, дефолт, ошибка.
 - Спеки фич: [017-REALITY](../SPECS/FEATURES/017-REALITY/FEATURE.md),
   [002-XHTTP](../SPECS/FEATURES/002-XHTTP/FEATURE.md),

@@ -208,7 +208,7 @@ check` и три коммита, отложенные в lx.5). Это полн�
   ТСПУ режет больше трёх соединений к серверу на мобильном интернете. Теперь дефолт —
   `max_connections 3-3`, `h_max_request_times 600-900`, `h_max_reusable_secs 1800-3000`; правило
   «всё или ничего» не менялось. Таблицы дефолтов в SPEC 059 §3, FEATURE 002-XHTTP и
-  `lx-protocols-transports` обновлены. Заявлено в
+  `protocols-transports` обновлены. Заявлено в
   [issue #32](https://github.com/Leadaxe/sing-box-lx/issues/32).
 
 #### v1.14.2-lx.5
@@ -263,7 +263,7 @@ global DNS servers`, чистка документации) без нового 
   ловит переименование реестра при бампе sing-vmess. Стенд: живые узлы `tcp`+REALITY и `xhttp`+REALITY —
   204 и 20 МБ по HTTPS. ([#29](https://github.com/Leadaxe/sing-box-lx/issues/29),
   [SPEC 105](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/105-VISION_OVER_VLESS_ENCRYPTION/SPEC.md))
-- 📝 `lx-protocols-transports`: Vision поверх XHTTP работает только вместе с `encryption`.
+- 📝 `protocols-transports`: Vision поверх XHTTP работает только вместе с `encryption`.
 
 #### v1.14.2-lx.2-rc.3
 
@@ -578,7 +578,7 @@ global DNS servers`, чистка документации) без нового 
   lite-сервер по-прежнему сравнивает декодированный путь (мягче Xray). Проверка: `:path` клиента
   снят голым h2c-листенером и сверен с тем, что вычисляет Xray; сверка с исходниками Xray и grpc-go
   (`:path` сырой, разрез по последнему `/`). ⚠️ Против живого Xray **не прогонялось** — ждём
-  подтверждения репортёра. Дока: [lx-protocols-transports §4.1](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/lx-protocols-transports.ru.md).
+  подтверждения репортёра. Дока: [protocols-transports §4.1](https://github.com/Leadaxe/sing-box-lx/blob/lx/docs-lx/protocols-transports.ru.md).
 
 #### v1.14.1-lx.7
 
@@ -1183,7 +1183,7 @@ Go-тулчейна. Наших изменений поведения нет —
   хендшейк с первой попытки, TLS, 1 МБ загрузка, rekey по диапазону. Отличие от
   референса: первый батч после старта переносится под актуальный `s4`, а не уезжает
   в старой раскладке. Новый CI-пример `lx-test/config/awg3_full.json`. Доки:
-  `lx-protocols-transports{,.ru}.md` §2.10, `lx-config{,.ru}.md`.
+  `protocols-transports{,.ru}.md` §2.10, `lx-config{,.ru}.md`.
   Внутри `option`: `MagicHeader` стал алиасом общего `AWGRange`; тип
   `WireGuardPeer.PersistentKeepaliveInterval` — `AWGRange` (JSON-совместимо).
   Сабмодуль `wireguard-go` → `ba01446` (ветка `lx-awg2-v005`). Прогон перед тегом:

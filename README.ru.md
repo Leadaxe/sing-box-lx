@@ -113,7 +113,7 @@ make -f Makefile.lx lx-check        # проверка примеров конф
 
 ## Конфигурация — короткий тур
 
-По одному сниппету на фичу. Таблицы полей, дефолты и все опции — **[docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md)** ([EN](docs-lx/lx-config.md)); детали уровня провода для XHTTP, AmneziaWG и MASQUE — **[docs-lx/lx-protocols-transports.ru.md](docs-lx/lx-protocols-transports.ru.md)** ([EN](docs-lx/lx-protocols-transports.md)).
+По одному сниппету на фичу. Таблицы полей, дефолты и все опции — **[docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md)** ([EN](docs-lx/lx-config.md)); детали уровня провода для XHTTP, AmneziaWG и MASQUE — **[docs-lx/protocols-transports.ru.md](docs-lx/protocols-transports.ru.md)** ([EN](docs-lx/protocols-transports.md)).
 
 ### Транспорт XHTTP
 
@@ -134,7 +134,7 @@ make -f Makefile.lx lx-check        # проверка примеров конф
 }
 ```
 
-`id`/`ip`/`ib` и явный `i1` взаимоисключающи. `ip=quic` шлёт два фрагментированных QUIC Initial вне порядка — это профиль, доказанный против живого DPI; `dns`/`stun`/`sip` — корректные запросы, оставленные для провайдеров, чей DPI проверяет только правильность формы. Справка — [lx-protocols-transports.ru.md §2](docs-lx/lx-protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3) ([EN](docs-lx/lx-protocols-transports.md#2-amneziawg-203x-awg2-awg3)) · [примеры маскировки](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
+`id`/`ip`/`ib` и явный `i1` взаимоисключающи. `ip=quic` шлёт два фрагментированных QUIC Initial вне порядка — это профиль, доказанный против живого DPI; `dns`/`stun`/`sip` — корректные запросы, оставленные для провайдеров, чей DPI проверяет только правильность формы. Справка — [protocols-transports.ru.md §2](docs-lx/protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3) ([EN](docs-lx/protocols-transports.md#2-amneziawg-203x-awg2-awg3)) · [примеры маскировки](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ### Outbound MASQUE (Cloudflare WARP)
 
@@ -150,7 +150,7 @@ make -f Makefile.lx lx-check        # проверка примеров конф
 }
 ```
 
-Ключевой материал берётся из регистрации WARP-устройства, которую делает клиент. Не путать с сахаром *маскировки* AWG выше — слово то же, фича другая. Справка — [lx-protocols-transports.ru.md §3](docs-lx/lx-protocols-transports.ru.md#3-masque-outbound-connect-ip--warp) ([EN](docs-lx/lx-protocols-transports.md#3-masque-outbound-connect-ip--warp)).
+Ключевой материал берётся из регистрации WARP-устройства, которую делает клиент. Не путать с сахаром *маскировки* AWG выше — слово то же, фича другая. Справка — [protocols-transports.ru.md §3](docs-lx/protocols-transports.ru.md#3-masque-outbound-connect-ip--warp) ([EN](docs-lx/protocols-transports.md#3-masque-outbound-connect-ip--warp)).
 
 ### REALITY: отпечаток и `key_share`
 
@@ -281,7 +281,9 @@ upstream/stable  ──merge──►  lx  =  upstream  +  швы // lx  +  lx-�
 |---|---|
 | Апстрим | [SagerNet/sing-box](https://github.com/SagerNet/sing-box) · [документация](https://sing-box.sagernet.org/) |
 | Обзор конфигурации | [docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md) ([EN](docs-lx/lx-config.md)) — каждое поле каждой фичи, с примерами |
-| Протоколы и транспорты | [docs-lx/lx-protocols-transports.ru.md](docs-lx/lx-protocols-transports.ru.md) ([EN](docs-lx/lx-protocols-transports.md)) — XHTTP, AmneziaWG, MASQUE в деталях |
+| Протоколы и транспорты | [docs-lx/protocols-transports.ru.md](docs-lx/protocols-transports.ru.md) ([EN](docs-lx/protocols-transports.md)) — XHTTP, AmneziaWG, MASQUE в деталях |
+| Как устроены протоколы Xray | [docs-lx/xray-protocols-explained.ru.md](docs-lx/xray-protocols-explained.ru.md) ([EN](docs-lx/xray-protocols-explained.md)) — REALITY, Vision, XHTTP, VLESS `encryption`: логика, реализация в форке, отличия от ванили, примеры Xray ↔ sing-box-lx |
+| Как устроен AmneziaWG | [docs-lx/amneziawg-explained.ru.md](docs-lx/amneziawg-explained.ru.md) ([EN](docs-lx/amneziawg-explained.md)) — три слоя обфускации, бюджет MTU, графт в форке wireguard-go, пример `awg.conf` ↔ endpoint |
 | Руководство по энергии | [docs-lx/lx-energy.ru.md](docs-lx/lx-energy.ru.md) ([EN](docs-lx/lx-energy.md)) — уровни idle-suspend, `mode: failover`, тюнинг |
 | Снифферы | [docs-lx/lx-sniff.ru.md](docs-lx/lx-sniff.ru.md) ([EN](docs-lx/lx-sniff.md)) |
 | Руководство оператора `lxd` | [docs-lx/lxd-daemon.ru.md](docs-lx/lxd-daemon.ru.md) ([EN](docs-lx/lxd-daemon.md)) |

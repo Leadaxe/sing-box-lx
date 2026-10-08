@@ -88,7 +88,7 @@ route.lx_idle_suspend conflicts with lx.wg.idle_suspend`; `lx.naive` — `unknow
 ## Не сделано / вне скоупа
 
 - П. 9 TASKS: уведомить сессии LxBox и лаунчера о переходе на `lx.*` — за владельцем.
-- `docs-lx/lx-protocols-transports(.ru).md` §3 (таблица полей masque: `idle_timeout` «off by default»)
+- `docs-lx/protocols-transports(.ru).md` §3 (таблица полей masque: `idle_timeout` «off by default»)
   и комментарий в `cmd/internal/build_libbox/main.go` (про `route.lx_idle_suspend`) не в списке файлов
   PLAN и не правились; оба устарели по формулировке.
 - Ключи 097 (`lazy_build`, `build_max`, `build_overflow`) только разбираются и валидируются; читателя

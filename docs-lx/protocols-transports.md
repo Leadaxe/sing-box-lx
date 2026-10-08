@@ -1,6 +1,6 @@
 # Protocols & transports — full parameter reference
 
-> 🌐 Русская версия: **[lx-protocols-transports.ru.md](lx-protocols-transports.ru.md)**.
+> 🌐 Русская версия: **[protocols-transports.ru.md](protocols-transports.ru.md)**.
 
 Exhaustive, field-by-field reference for the three downstream protocol/transport
 features of `sing-box-lx`:
@@ -1125,5 +1125,9 @@ source. Available since `v1.14.1-lx.8`.
   `encryption`, `lxd`, observability).
 - **[lx-energy.md](lx-energy.md)** — the energy model, idle-suspend timelines and the
   recommended mobile configuration (relevant to AWG and MASQUE endpoint suspend).
+- **[xray-protocols-explained.md](xray-protocols-explained.md)** — how XHTTP, REALITY,
+  Vision and VLESS `encryption` work and how the fork supports them;
+  **[amneziawg-explained.md](amneziawg-explained.md)** — the same for AmneziaWG,
+  including the MTU budget.
 - Feature specs: [XHTTP](../SPECS/FEATURES/002-XHTTP/), [AWG](../SPECS/FEATURES/003-AWG/),
   [MASQUE/WARP](../SPECS/FEATURES/009-MASQUE_WARP/).

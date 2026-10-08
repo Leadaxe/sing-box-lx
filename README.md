@@ -112,7 +112,7 @@ make -f Makefile.lx lx-check        # validate the sample configs in lx-test/con
 
 ## Configuration — a quick tour
 
-One snippet per feature. Field tables, defaults and every option — **[docs-lx/lx-config.md](docs-lx/lx-config.md)** ([RU](docs-lx/lx-config.ru.md)); wire-level detail for XHTTP, AmneziaWG and MASQUE — **[docs-lx/lx-protocols-transports.md](docs-lx/lx-protocols-transports.md)** ([RU](docs-lx/lx-protocols-transports.ru.md)).
+One snippet per feature. Field tables, defaults and every option — **[docs-lx/lx-config.md](docs-lx/lx-config.md)** ([RU](docs-lx/lx-config.ru.md)); wire-level detail for XHTTP, AmneziaWG and MASQUE — **[docs-lx/protocols-transports.md](docs-lx/protocols-transports.md)** ([RU](docs-lx/protocols-transports.ru.md)).
 
 ### XHTTP transport
 
@@ -133,7 +133,7 @@ One snippet per feature. Field tables, defaults and every option — **[docs-lx/
 }
 ```
 
-`id`/`ip`/`ib` and an explicit `i1` are mutually exclusive. `ip=quic` sends two out-of-order fragmented QUIC Initials and is the profile proven against a live DPI; `dns`/`stun`/`sip` are correct requests kept for providers whose DPI only checks well-formedness. Reference — [lx-protocols-transports.md §2](docs-lx/lx-protocols-transports.md#2-amneziawg-203x-awg2-awg3) ([RU](docs-lx/lx-protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)) · [masquerade examples](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
+`id`/`ip`/`ib` and an explicit `i1` are mutually exclusive. `ip=quic` sends two out-of-order fragmented QUIC Initials and is the profile proven against a live DPI; `dns`/`stun`/`sip` are correct requests kept for providers whose DPI only checks well-formedness. Reference — [protocols-transports.md §2](docs-lx/protocols-transports.md#2-amneziawg-203x-awg2-awg3) ([RU](docs-lx/protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)) · [masquerade examples](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
 ### MASQUE outbound (Cloudflare WARP)
 
@@ -149,7 +149,7 @@ One snippet per feature. Field tables, defaults and every option — **[docs-lx/
 }
 ```
 
-Key material comes from the WARP device registration done by the client. Not to be confused with the AWG *masquerade* sugar above — same word, different feature. Reference — [lx-protocols-transports.md §3](docs-lx/lx-protocols-transports.md#3-masque-outbound-connect-ip--warp) ([RU](docs-lx/lx-protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)).
+Key material comes from the WARP device registration done by the client. Not to be confused with the AWG *masquerade* sugar above — same word, different feature. Reference — [protocols-transports.md §3](docs-lx/protocols-transports.md#3-masque-outbound-connect-ip--warp) ([RU](docs-lx/protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)).
 
 ### REALITY: fingerprint and `key_share`
 
@@ -280,7 +280,9 @@ Everything downstream is either a new file or a seam marked `// lx`; `grep -rn "
 |---|---|
 | Upstream | [SagerNet/sing-box](https://github.com/SagerNet/sing-box) · [docs](https://sing-box.sagernet.org/) |
 | Config overview | [docs-lx/lx-config.md](docs-lx/lx-config.md) ([RU](docs-lx/lx-config.ru.md)) — every field of every feature, with examples |
-| Protocols & transports | [docs-lx/lx-protocols-transports.md](docs-lx/lx-protocols-transports.md) ([RU](docs-lx/lx-protocols-transports.ru.md)) — XHTTP, AmneziaWG, MASQUE in depth |
+| Protocols & transports | [docs-lx/protocols-transports.md](docs-lx/protocols-transports.md) ([RU](docs-lx/protocols-transports.ru.md)) — XHTTP, AmneziaWG, MASQUE in depth |
+| How the Xray protocols work | [docs-lx/xray-protocols-explained.md](docs-lx/xray-protocols-explained.md) ([RU](docs-lx/xray-protocols-explained.ru.md)) — REALITY, Vision, XHTTP, VLESS `encryption`: mechanics, the fork's implementation, differences from vanilla, Xray ↔ sing-box-lx examples |
+| How AmneziaWG works | [docs-lx/amneziawg-explained.md](docs-lx/amneziawg-explained.md) ([RU](docs-lx/amneziawg-explained.ru.md)) — three obfuscation layers, the MTU budget, the graft in the wireguard-go fork, `awg.conf` ↔ endpoint example |
 | Energy guide | [docs-lx/lx-energy.md](docs-lx/lx-energy.md) ([RU](docs-lx/lx-energy.ru.md)) — idle-suspend levels, `mode: failover`, tuning |
 | Sniffers | [docs-lx/lx-sniff.md](docs-lx/lx-sniff.md) ([RU](docs-lx/lx-sniff.ru.md)) |
 | `lxd` operator's guide | [docs-lx/lxd-daemon.md](docs-lx/lxd-daemon.md) ([RU](docs-lx/lxd-daemon.ru.md)) |

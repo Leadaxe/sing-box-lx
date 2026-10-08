@@ -288,8 +288,8 @@ A minimal `transport` block is just `"type": "xhttp"` (mode `auto`); the [exampl
 
 > **📖 The full field reference — all 26 XHTTP keys, their defaults, the `xmux` pool
 > semantics, range value forms and a troubleshooting table — is in
-> [lx-protocols-transports.md §1](lx-protocols-transports.md#1-xhttp-transport)**
-> ([RU](lx-protocols-transports.ru.md#1-xhttp-транспорт)).
+> [protocols-transports.md §1](protocols-transports.md#1-xhttp-transport)**
+> ([RU](protocols-transports.ru.md#1-xhttp-транспорт)).
 
 ### Example — VLESS + XHTTP + Reality
 
@@ -322,9 +322,9 @@ A minimal `transport` block is just `"type": "xhttp"` (mode `auto`); the [exampl
 
 AWG is WireGuard + DPI-evasion obfuscation. It is configured as a normal sing-box **`wireguard` endpoint** with extra promoted fields. With `with_awg` these are pushed to the device; a config without any AWG field is a plain WireGuard endpoint (byte-identical to upstream behavior).
 
-AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server must run AmneziaWG with **matching** parameters (the I-packets are configuration, not negotiated). For a friendlier way to set the first decoy, the WireSock-style `id`/`ip`/`ib` sugar generates `i1` for you — see the [full reference](lx-protocols-transports.md#25-masquerade-sugar-id--ip--ib).
+AWG2 = AWG1 fields **plus** the CPS packets `I1`–`I5`. Both client and server must run AmneziaWG with **matching** parameters (the I-packets are configuration, not negotiated). For a friendlier way to set the first decoy, the WireSock-style `id`/`ip`/`ib` sugar generates `i1` for you — see the [full reference](protocols-transports.md#25-masquerade-sugar-id--ip--ib).
 
-AWG3 (amneziawg-go v3.0/v3.1, Amnezia's `amnezia-awg2` container with `protocol_version` 3.x) adds header protection (`header_protection_key` — server-side, must match), content padding, random trailers, disabled cookies and ranged timing overrides, plus a ranged `persistent_keepalive_interval`. All are endpoint-root fields like the AWG2 ones — [reference §2.10](lx-protocols-transports.md#210-awg-3x-header-protection-padding-trailers-timings).
+AWG3 (amneziawg-go v3.0/v3.1, Amnezia's `amnezia-awg2` container with `protocol_version` 3.x) adds header protection (`header_protection_key` — server-side, must match), content padding, random trailers, disabled cookies and ranged timing overrides, plus a ranged `persistent_keepalive_interval`. All are endpoint-root fields like the AWG2 ones — [reference §2.10](protocols-transports.md#210-awg-3x-header-protection-padding-trailers-timings).
 
 The AWG fields sit at the endpoint **root** (none on a peer), mirroring an `awg-quick`
 `.conf` `[Interface]` section: junk (`jc`/`jmin`/`jmax`), handshake padding (`s1`–`s4`),
@@ -336,8 +336,8 @@ packet — the core defaults to `1280` when you set `s4` and omit `mtu`.
 > and default, the CPS tag format, the `id`/`ip`/`ib` masquerade sugar (four profiles,
 > which to pick, what reaches the wire), the MTU budget math, the `awg.conf` 1:1 mapping
 > and the verbatim validation errors — is in
-> [lx-protocols-transports.md §2](lx-protocols-transports.md#2-amneziawg-203x-awg2-awg3)**
-> ([RU](lx-protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)).
+> [protocols-transports.md §2](protocols-transports.md#2-amneziawg-203x-awg2-awg3)**
+> ([RU](protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)).
 
 ### Example — AmneziaWG 3.1 endpoint (Amnezia `amnezia-awg2` export)
 
@@ -577,8 +577,8 @@ block.
 > matrix (`cloudflare` vs `standard`), key-material format, `vhttp` h3-vs-h2 guidance,
 > idle-suspend/keepalive behaviour, start-time validation, the pre-SPEC-062 migration
 > table and common footguns — is in
-> [lx-protocols-transports.md §3](lx-protocols-transports.md#3-masque-outbound-connect-ip--warp)**
-> ([RU](lx-protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)).
+> [protocols-transports.md §3](protocols-transports.md#3-masque-outbound-connect-ip--warp)**
+> ([RU](protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)).
 
 ### Example — WARP (defaults: `vhttp: auto`)
 
@@ -635,8 +635,8 @@ QUIC does not carry TLS over TCP at all.
 > **Status.** Device-verified end-to-end on real Wi-Fi and LTE — `warp=on`, real traffic on both
 > `h3` and `h2`, idle-suspend + self-healing reconnect confirmed on-device.
 
-**📖 [Full reference →](lx-protocols-transports.md#3-masque-outbound-connect-ip--warp)**
-([RU](lx-protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)) — complete parameter
+**📖 [Full reference →](protocols-transports.md#3-masque-outbound-connect-ip--warp)**
+([RU](protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)) — complete parameter
 table, profile matrix, key-material format, start-time validation and common footguns.
 
 ---

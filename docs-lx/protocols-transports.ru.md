@@ -1,6 +1,6 @@
 # Протоколы и транспорты — полный справочник параметров
 
-> 🌐 English version: **[lx-protocols-transports.md](lx-protocols-transports.md)**.
+> 🌐 English version: **[protocols-transports.md](protocols-transports.md)**.
 
 Исчерпывающий, по-полевой справочник по трём downstream-фичам протоколов/транспортов
 `sing-box-lx`:
@@ -1116,5 +1116,9 @@ grpc-go. Доступно с `v1.14.1-lx.8`.
   `encryption`, `lxd`, наблюдаемость).
 - **[lx-energy.ru.md](lx-energy.ru.md)** — энергомодель, тайминги idle-suspend и
   рекомендованная мобильная конфигурация (актуально для suspend AWG- и MASQUE-endpoint).
+- **[xray-protocols-explained.ru.md](xray-protocols-explained.ru.md)** — как устроены
+  XHTTP, REALITY, Vision и VLESS `encryption` и как они поддержаны в форке;
+  **[amneziawg-explained.ru.md](amneziawg-explained.ru.md)** — то же для AmneziaWG,
+  включая бюджет MTU.
 - Feature-спеки: [XHTTP](../SPECS/FEATURES/002-XHTTP/), [AWG](../SPECS/FEATURES/003-AWG/),
   [MASQUE/WARP](../SPECS/FEATURES/009-MASQUE_WARP/).

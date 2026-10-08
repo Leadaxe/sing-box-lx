@@ -148,7 +148,7 @@ Build-tag: нет. Scope: клиент (outbound) **и** сервер (inbound, 
 
 ## 4. Документация
 
-- `docs-lx/lx-protocols-transports.md` + `.ru.md`: короткий подраздел «gRPC `service_name`:
+- `docs-lx/protocols-transports.md` + `.ru.md`: короткий подраздел «gRPC `service_name`:
   формы Xray» с таблицей §1.1 (без краевого `/Tun`), пометка, что `with_grpc`-клиент для
   старой формы не экранирует (апстрим).
 - Реестр HOTFIXES: строка [093] — патч в апстримных файлах lite/grpc; условие снятия —

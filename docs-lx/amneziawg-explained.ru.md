@@ -14,7 +14,7 @@ Amnezia: референсная реализация — `amneziawg-go`, сер�
 живёт код и какие решения приняты; **чем это отличается от ванильного
 sing-box** и от референса. Поля, дефолты и тексты ошибок здесь не
 перечисляются — для этого есть
-[lx-protocols-transports §2](lx-protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)
+[protocols-transports §2](protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)
 (справочник параметров) и [lx-config §2](lx-config.ru.md#2-amneziawg-203x-awg2-awg3)
 (обзор). Текущее состояние области — спека фичи
 [003-AWG](../SPECS/FEATURES/003-AWG/FEATURE.md).
@@ -420,7 +420,7 @@ UAPI, как обычные ключи WireGuard. Контракт `transport/wi
   текст SIP и в DNS QNAME — это граница инъекции.
 
 Дословные тексты — в
-[справочнике §2.9](lx-protocols-transports.ru.md#29-ошибки-валидации-дословно).
+[справочнике §2.9](protocols-transports.ru.md#29-ошибки-валидации-дословно).
 
 ## 6.3 Приём: классификация пакетов
 
@@ -537,21 +537,21 @@ sing-box-lx (`endpoints[]`):
 Тот же сервер на AWG 2.0 отличался бы диапазонными `H1`–`H4` вида
 `43613244-384550127` (в JSON — строка, дословно) и непустыми `I1`–`I5`;
 AWG3-ключей не было бы. Вариант с сахаром маскировки для Cloudflare WARP —
-в [справочнике §2.8](lx-protocols-transports.ru.md#28-примеры).
+в [справочнике §2.8](protocols-transports.ru.md#28-примеры).
 
 Соответствие ключей:
 
 | `awg.conf` | sing-box-lx | Где описано |
 |---|---|---|
 | `[Interface] PrivateKey`, `Address` | `private_key`, `address` | [`private_key`](../docs/configuration/endpoint/wireguard.md#private_key), [`address`](../docs/configuration/endpoint/wireguard.md#address) |
-| `[Interface] MTU` | `mtu` | [`mtu`](../docs/configuration/endpoint/wireguard.md#mtu); бюджет — §5, [справочник §2.6](lx-protocols-transports.ru.md#26-бюджет-mtu) |
-| `Jc`, `Jmin`, `Jmax` | `jc`, `jmin`, `jmax` | [§2.2 Junk](lx-protocols-transports.ru.md#22-junk--и-signature-поля), §2.1 |
+| `[Interface] MTU` | `mtu` | [`mtu`](../docs/configuration/endpoint/wireguard.md#mtu); бюджет — §5, [справочник §2.6](protocols-transports.ru.md#26-бюджет-mtu) |
+| `Jc`, `Jmin`, `Jmax` | `jc`, `jmin`, `jmax` | [§2.2 Junk](protocols-transports.ru.md#22-junk--и-signature-поля), §2.1 |
 | `S1`–`S4` | `s1`–`s4` | там же, §2.2 |
-| `H1 = N` | `"h1": N` (число) | [§2.3 Magic](lx-protocols-transports.ru.md#23-magic-заголовки-h1h4), §2.3 |
+| `H1 = N` | `"h1": N` (число) | [§2.3 Magic](protocols-transports.ru.md#23-magic-заголовки-h1h4), §2.3 |
 | `H1 = N-M` (экспорт AWG2) | `"h1": "N-M"` (строка, дословно) | там же |
-| `I1`–`I5` | `i1`–`i5` (дословно, регистр значим) | [§2.4 CPS](lx-protocols-transports.ru.md#24-cps-декои-i1i5-и-формат-тегов), §3.1 |
-| — | `id`, `ip`, `ib` | только у нас: [§2.5 Сахар](lx-protocols-transports.ru.md#25-сахар-маскировки-id--ip--ib), §3.3; примеры по профилям — [009/EXAMPLES](../SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md) |
-| `HeaderProtectionKey` | `header_protection_key` | [§2.10 AWG3](lx-protocols-transports.ru.md#210-awg-3x-защита-заголовка-паддинг-хвосты-тайминги), §4.1 |
+| `I1`–`I5` | `i1`–`i5` (дословно, регистр значим) | [§2.4 CPS](protocols-transports.ru.md#24-cps-декои-i1i5-и-формат-тегов), §3.1 |
+| — | `id`, `ip`, `ib` | только у нас: [§2.5 Сахар](protocols-transports.ru.md#25-сахар-маскировки-id--ip--ib), §3.3; примеры по профилям — [009/EXAMPLES](../SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md) |
+| `HeaderProtectionKey` | `header_protection_key` | [§2.10 AWG3](protocols-transports.ru.md#210-awg-3x-защита-заголовка-паддинг-хвосты-тайминги), §4.1 |
 | `ContentPaddingAddition`, `RandomTrailers`, `DisableCookies` | `content_padding_addition`, `random_trailers`, `disable_cookies` | там же, §4.2–§4.3 |
 | `RekeyAfterTime` … `MaxHandshakeAttempts` | `rekey_after_time` … `max_handshake_attempts` | там же, §4.3 |
 | `AdvancedSecurity` | нет | серверная ручка разбора входящих, клиенту не нужна — [SPEC 031](../SPECS/TASKS/031-AWG_PARITY_AUDIT_ADVANCED_SECURITY/SPEC.md) |
@@ -666,7 +666,7 @@ XHTTP ([xray-protocols-explained §4.8](xray-protocols-explained.ru.md#48-поз
 
 ## См. также
 
-- **[lx-protocols-transports.ru.md §2](lx-protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)** —
+- **[protocols-transports.ru.md §2](protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)** —
   каждое поле, дефолт, ошибка; §2.6 бюджет MTU, §2.9 ошибки дословно,
   §2.10 AWG3.
 - **[lx-config.ru.md §2](lx-config.ru.md#2-amneziawg-203x-awg2-awg3)** — обзор.

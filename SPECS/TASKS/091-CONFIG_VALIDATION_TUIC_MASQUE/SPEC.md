@@ -102,7 +102,7 @@ case "quic":
   при `vhttp` ∈ {`h2`, `h3`, `auto`, `""`} даёт **один и тот же** текст про `uri`;
   `standard` + `uri` + `vhttp: h2` даёт прежнюю ошибку про h2; `cloudflare` без
   `uri` проходит проверку.
-- `docs-lx/lx-config.md` и `.ru.md` §4 MASQUE (плюс список ошибок валидации в `lx-protocols-transports*.md` §3.9): у `uri` на `standard` — одна фраза,
+- `docs-lx/lx-config.md` и `.ru.md` §4 MASQUE (плюс список ошибок валидации в `protocols-transports*.md` §3.9): у `uri` на `standard` — одна фраза,
   что без него outbound не поднимется и какой шаблон ожидается (если такой фразы
   ещё нет; если есть — не дублировать).
 

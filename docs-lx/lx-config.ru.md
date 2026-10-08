@@ -292,8 +292,8 @@ v1-клиентом** — каждое v2-поле (размещение session
 
 > **📖 Полный справочник полей — все 26 ключей XHTTP, их дефолты, семантика пула `xmux`,
 > формы записи диапазонов и таблица диагностики — в
-> [lx-protocols-transports.ru.md §1](lx-protocols-transports.ru.md#1-xhttp-транспорт)**
-> ([EN](lx-protocols-transports.md#1-xhttp-transport)).
+> [protocols-transports.ru.md §1](protocols-transports.ru.md#1-xhttp-транспорт)**
+> ([EN](protocols-transports.md#1-xhttp-transport)).
 
 ### Пример — VLESS + XHTTP + Reality
 
@@ -326,9 +326,9 @@ v1-клиентом** — каждое v2-поле (размещение session
 
 AWG — это WireGuard + обфускация против DPI. Настраивается как обычный sing-box **`wireguard` endpoint** с дополнительными «поднятыми» полями. С `with_awg` они передаются на устройство; конфиг без единого AWG-поля — обычный WireGuard endpoint (поведение байт-в-байт как в upstream).
 
-AWG2 = поля AWG1 **плюс** CPS-пакеты `I1`–`I5`. И клиент, и сервер должны работать на AmneziaWG с **совпадающими** параметрами (I-пакеты — это конфигурация, не согласуются). Более дружелюбный способ задать первую приманку — WireSock-style сахар `id`/`ip`/`ib`, который генерирует `i1` за вас — см. [полный справочник](lx-protocols-transports.ru.md#25-сахар-маскировки-id--ip--ib).
+AWG2 = поля AWG1 **плюс** CPS-пакеты `I1`–`I5`. И клиент, и сервер должны работать на AmneziaWG с **совпадающими** параметрами (I-пакеты — это конфигурация, не согласуются). Более дружелюбный способ задать первую приманку — WireSock-style сахар `id`/`ip`/`ib`, который генерирует `i1` за вас — см. [полный справочник](protocols-transports.ru.md#25-сахар-маскировки-id--ip--ib).
 
-AWG3 (amneziawg-go v3.0/v3.1, контейнер Amnezia `amnezia-awg2` с `protocol_version` 3.x) добавляет защиту заголовка (`header_protection_key` — серверный, обязан совпасть), паддинг содержимого, случайные хвосты, отключённые cookie и диапазонные тайминги, плюс диапазонный `persistent_keepalive_interval`. Все поля на корне endpoint, как и AWG2 — [справочник §2.10](lx-protocols-transports.ru.md#210-awg-3x-защита-заголовка-паддинг-хвосты-тайминги).
+AWG3 (amneziawg-go v3.0/v3.1, контейнер Amnezia `amnezia-awg2` с `protocol_version` 3.x) добавляет защиту заголовка (`header_protection_key` — серверный, обязан совпасть), паддинг содержимого, случайные хвосты, отключённые cookie и диапазонные тайминги, плюс диапазонный `persistent_keepalive_interval`. Все поля на корне endpoint, как и AWG2 — [справочник §2.10](protocols-transports.ru.md#210-awg-3x-защита-заголовка-паддинг-хвосты-тайминги).
 
 AWG-поля сидят в **корне** endpoint (ни одно не на peer), зеркаля секцию `[Interface]`
 из `awg-quick` `.conf`: junk (`jc`/`jmin`/`jmax`), паддинг handshake (`s1`–`s4`),
@@ -341,8 +341,8 @@ WireGuard, потому что `s4` паддит каждый data-пакет �
 > формат CPS-тегов, сахар маскировки `id`/`ip`/`ib` (четыре профиля, какой выбрать, что
 > попадает на провод), математика бюджета MTU, маппинг `awg.conf` 1:1 и дословные ошибки
 > валидации — в
-> [lx-protocols-transports.ru.md §2](lx-protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)**
-> ([EN](lx-protocols-transports.md#2-amneziawg-203x-awg2-awg3)).
+> [protocols-transports.ru.md §2](protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)**
+> ([EN](protocols-transports.md#2-amneziawg-203x-awg2-awg3)).
 
 ### Пример — AmneziaWG 3.1 endpoint (экспорт Amnezia `amnezia-awg2`)
 
@@ -583,8 +583,8 @@ outbound'а.
 > (`cloudflare` vs `standard`), формат ключевого материала, гайд `vhttp` h3-vs-h2,
 > поведение idle-suspend/keepalive, валидация при старте, таблица миграции с до-SPEC-062
 > и частые грабли — в
-> [lx-protocols-transports.ru.md §3](lx-protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)**
-> ([EN](lx-protocols-transports.md#3-masque-outbound-connect-ip--warp)).
+> [protocols-transports.ru.md §3](protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)**
+> ([EN](protocols-transports.md#3-masque-outbound-connect-ip--warp)).
 
 ### Пример — WARP (дефолты: `vhttp: auto`)
 
@@ -643,8 +643,8 @@ QUIC не несёт TLS поверх TCP вовсе.
 > **Статус.** Device-verified end-to-end на реальных Wi-Fi и LTE — `warp=on`, реальный трафик на
 > обоих `h3` и `h2`, idle-suspend + самовосстановление подтверждены на устройстве.
 
-**📖 [Полный справочник →](lx-protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)**
-([EN](lx-protocols-transports.md#3-masque-outbound-connect-ip--warp)) — полная таблица
+**📖 [Полный справочник →](protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)**
+([EN](protocols-transports.md#3-masque-outbound-connect-ip--warp)) — полная таблица
 параметров, матрица профилей, формат ключевого материала, валидация при старте и частые грабли.
 
 ---
