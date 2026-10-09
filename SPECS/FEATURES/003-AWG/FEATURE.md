@@ -69,15 +69,24 @@
 |------|----------|-----------|-------|
 | `ip` | `quic` · `dns` · `stun` · `sip` | при любом из трёх | Под какой протокол маскируется первый пакет |
 | `id` | домен | только для `quic` | Домен в приманке. Для `dns`/`sip` необязателен — без него генерируется псевдо-домен; для `stun` игнорируется |
-| `ib` | `chrome` · `firefox` · `curl` | нет | Профиль клиента; принимается только вместе с `ip=quic` |
+| `ib` | `chrome` · `firefox` · `curl` (`chrome-full` — экспериментальный, не для клиентских UI) | нет | Профиль клиента; принимается только вместе с `ip=quic` |
 
 Вместо ручного составления CPS-строки пользователь называет протокол, домен
 и клиент — приманка собирается за него.
 
-`ib` выбирает **TLS-фингерпринт приманки**: `chrome` и `firefox` дают подлинный
-браузерный отпечаток (JA3/JA4) настоящего браузерного рукопожатия, `curl` и
-отсутствие ключа — общий отпечаток. Браузерные профили требуют сборки
-с поддержкой имитации TLS; без неё они молча деградируют до общего.
+Для `ip=quic` приманка — не статичный блоб, а **живой генератор**: перед каждым
+хендшейком WireGuard (старт, rekey, пробуждение, реконнект) собирается свежий QUIC
+Initial с новыми connection ID, random, key share и раскладкой фреймов. `ib` задаёт
+**QUIC-ClientHello и раскладку браузера**: `chrome` — Chrome 155 без постквантового
+key share, расширения и transport parameters Chrome в QUIC, фреймы разрезаны и
+перемешаны как у Chrome; `firefox` — Firefox 148 по захвату, заголовок и набивка как
+у Firefox; `curl` и отсутствие ключа — общий короткий ClientHello. Все три проходят к
+WARP там, где чистый WireGuard не поднимается (проверено на устройстве в LTE,
+09.10.2026); проход держит целый ClientHello в одном пакете под MTU, а не его
+содержимое. `chrome-full` (ML-KEM, пакет больше MTU) — только для стендов. `dns`/`sip`
+остаются статичными шаблонами и к WARP не проходят — они для серверов, отвечающих на
+такую приманку. Браузерные профили требуют сборки с поддержкой имитации TLS; без неё
+они молча деградируют до общего.
 
 Профиль `sip` — двухпакетный: приманка занимает и `i1` (INVITE), и `i2`
 (ответ того же диалога), поэтому явный `i2` вместе с `ip=sip` отвергается.
@@ -197,7 +206,7 @@ padding и заголовки читаются из одного и того ж�
 | [003 — AWG2_CLIENT_ENDPOINT](../../TASKS/003-AWG2_CLIENT_ENDPOINT/SPEC.md) | Базовый endpoint: `s1`–`s4`, `h1`–`h4`, `i1`–`i5` | C |
 | [005 — AWG2_RANGED_MAGIC_HEADERS](../../TASKS/005-AWG2_RANGED_MAGIC_HEADERS/SPEC.md) | Диапазонная форма `"min-max"` для `h1`–`h4` | C |
 | [008 — AWG_JUNK_PARAM_VALIDATION](../../TASKS/008-AWG_JUNK_PARAM_VALIDATION/SPEC.md) | Fail-fast на `jmin > jmax` | C |
-| [009 — WIRESOCK_MASQUERADE_PROFILES](../../TASKS/009-WIRESOCK_MASQUERADE_PROFILES/SPEC.md) | Masquerade `id`/`ip`/`ib`, профили quic/dns/stun/sip | C |
+| [009 — WIRESOCK_MASQUERADE_PROFILES](../../TASKS/009-WIRESOCK_MASQUERADE_PROFILES/SPEC.md) | Masquerade `id`/`ip`/`ib`: `quic` — свежий браузерный Initial на каждый хендшейк (chrome/firefox/curl device-verified на LTE, lx.13), dns/stun/sip — статичный CPS | C |
 | [025 — AWG_TRANSPORT_PADDING_OVERRUN](../../TASKS/025-AWG_TRANSPORT_PADDING_OVERRUN/SPEC.md) | Класс крашей от значений padding | C |
 | [026 — AWG_MAGIC_VS_RESERVED_CLEAR](../../TASKS/026-AWG_MAGIC_VS_RESERVED_CLEAR/SPEC.md) | Сохранность magic при малом padding | C |
 | [031 — AWG_PARITY_AUDIT_ADVANCED_SECURITY](../../TASKS/031-AWG_PARITY_AUDIT_ADVANCED_SECURITY/SPEC.md) | Сверка паритета AWG2 (полный, 16/16); `AdvancedSecurity` — серверное поле, не зазор. §3/§3.1 про «v3-ключи» устарели — см. 080 | C |
