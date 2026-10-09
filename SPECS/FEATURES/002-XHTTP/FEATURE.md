@@ -26,7 +26,7 @@
 |------|-----|--------|-------|
 | `mode` | `auto` · `packet-up` · `stream-up` · `stream-one` | `auto` | Как разнесены аплинк и даунлинк |
 | `host` | строка | TLS SNI или адрес сервера | Значение заголовка Host |
-| `path` | строка | пусто | Префикс пути запроса |
+| `path` | строка | пусто | Префикс пути запроса; может нести `?query` — он уходит в query запроса как есть |
 | `headers` | карта | пусто | Дополнительные заголовки на каждом запросе |
 
 **Режимы:**
@@ -171,6 +171,13 @@ XTLS/Xray-core#6376), секция хотя бы с одним полем бер
   умолчание) и обслуживает только запросы с таким началом пути. Отсутствие
   слэша даёт «не найдено» и зависание до таймаута, а не ошибку. Пустым
   в `stream-one` должен быть идентификатор сессии, а не слэш.
+- **Query из `path` отправляется как query запроса** — контракт Xray.
+  `path` делится по первому `?`: левая часть — путь (к ней применяются
+  ведущий и завершающий слэш, сегменты сессии и номера пакета), правая —
+  query, как есть. Размещения в query (сессия, номер пакета, паддинг)
+  добавляют свои параметры к нему, а не заменяют; query при этом
+  пересобирается стандартным кодированием, как у Xray. Релеи вроде Cloudflare Worker читают свои
+  параметры (`proxyip` и т. п.) из query; закодированный в путь `?` они не видят.
 - **`auto` при REALITY выбирает `stream-one`** — так поступает Xray,
   и обратный выбор с REALITY-сервером не работает.
 - **Запросы, несущие тело, помечаются как gRPC-поток** — паритет с Xray.
@@ -240,6 +247,7 @@ XTLS/Xray-core#6376), секция хотя бы с одним полем бер
 | [082 — H2_STREAM_ERROR_TYPE_LEAK](../../TASKS/082-H2_STREAM_ERROR_TYPE_LEAK/SPEC.md) | Утечка типа `http2.StreamError` из conn'ов XHTTP / v2rayhttp / gRPC-lite — корень CPU-шторма issue #14 (спин `readLoop` x/net у потребителя conn'а); ошибка скрывается `common/badh2.HideStreamError` | D |
 | [094 — XHTTP_LOCAL_CLOSE_NOT_FAILURE](../../TASKS/094-XHTTP_LOCAL_CLOSE_NOT_FAILURE/SPEC.md) | Наш же `Close()` не считается сбоем: `context.Canceled` нейтрален для брейкера xmux (вытеснение `failing` и backoff от шторма `interrupt_exist_connections`), закрытое нами тело отдаёт релею `net.ErrClosed`/`os.ErrDeadlineExceeded` вместо `http2: response body closed` на ERROR (LxBox #148; живой A/B 2026-09-24: 13/13/15 ERROR → 0/0/0). За чем следить: `v2rayhttp`/`v2raygrpclite` читают тела теми же путями, тот же симптом в логе возможен и там | I |
 | [104 — XHTTP_HTTP_VERSION_PARITY](../../TASKS/104-XHTTP_HTTP_VERSION_PARITY/SPEC.md) | Выбор версии HTTP по правилам Xray (`decideHTTPVersion`): `tls.alpn` `["h3"]` → HTTP/3 по QUIC (issue #25), `["http/1.1"]` и без TLS → HTTP/1.1 (раньше h2c), REALITY → HTTP/2; отпечаток uTLS на HTTP/3 не применяется | I |
+| [119 — XHTTP_PATH_QUERY](../../TASKS/119-XHTTP_PATH_QUERY/SPEC.md) | `?query` в `path` уходит в query запроса, а не кодируется в путь — паритет с Xray; Cloudflare-релей не получал `proxyip` (issue #36) | I |
 
 Соответствие параметров Xray — `PARAM_MAP.md` в задаче 002;
 разбор ссылок — там же `URL_PARSING.md`.
