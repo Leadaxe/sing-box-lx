@@ -608,7 +608,9 @@ block.
 ```
 
 `"vhttp": "auto"` — **the default** — tries h3 first and falls back to h2 if the QUIC handshake
-does not complete within 3 s, remembering the winning mode; if the remembered mode stops coming up, the memory is dropped and the
+does not complete within 3 s. An h3 win is remembered; an h2 win only for a window that climbs a ladder
+(1 s → 10 s → 30 s → 5 min → 10 min, one rung per further h2 win; an h3 win drops it back), after
+which h3 is tried first again (SPEC 121); if the remembered mode stops coming up, the memory is dropped and the
 other one is tried in the same dial. The failure
 mode it exists for is the endpoint (or a TCP-only hop in front of it — an HTTP CONNECT `detour`, a
 VLESS/Trojan link in a chain) **silently ignoring QUIC** — there is no error to see, only a hang;
