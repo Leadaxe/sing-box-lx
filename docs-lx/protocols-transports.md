@@ -500,7 +500,7 @@ decoy for you.
 |-----|------|---------|
 | `id` | string | masquerade **domain** (a host that looks normal for your region, e.g. `www.google.com`). Strict LDH hostname. Embedded into the decoy for `ip=quic` (as the ClientHello **SNI**), `ip=dns` (as the **QNAME**) and `ip=sip` (as the **host**); `ip=stun` has nowhere to carry a hostname and ignores it. **Required only for `quic`**; for `dns`/`sip` a pseudo name is generated when absent; `stun` ignores it. Whenever set, it is LDH-validated (injection-y values are rejected) |
 | `ip` | string | masquerade **protocol**: `quic` \| `dns` \| `stun` \| `sip` |
-| `ib` | string | masquerade **browser**: `chrome` \| `chrome-full` \| `firefox` \| `curl`. Only with `ip=quic`. Selects the ClientHello TLS fingerprint and the Initial frame layout (see below) |
+| `ib` | string | masquerade **browser**: `chrome` \| `firefox` \| `curl` (`chrome-full` is experimental, not for client UIs). Only with `ip=quic`. Selects the ClientHello TLS fingerprint and the Initial frame layout (see below) |
 
 The decoy is sent before the handshake, exactly like a hand-written `i1`. Each
 profile is a **client-initiated** packet shaped like that protocol (the shapes are

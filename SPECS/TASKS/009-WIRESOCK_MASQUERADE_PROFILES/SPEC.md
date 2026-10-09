@@ -33,7 +33,7 @@ device не добавляется — генерация целиком в opti
 |------|-----|----------|
 | `Id` | **Domain** | домен для маскировки (массовый легитимный: `www.google.com`, `ozon.ru`…). Идёт на провод как SNI / QNAME / SIP-host |
 | `Ip` | **Protocol** | протокол маскировки: **quic** \| **dns** \| **stun** \| **sip** |
-| `Ib` | **Browser** | `chrome` \| `chrome-full` \| `firefox` \| `curl`. Валидируется; только при `ip=quic`. Задаёт и TLS-отпечаток ClientHello (uTLS, тег `with_utls`), и раскладку фреймов Initial: `chrome` — Chrome 155 без PQ key_share, один Initial 1250б; `chrome-full` — Chrome 155 с X25519MLKEM768, один Initial ~2КБ (IP-фрагментация); `firefox` — Firefox 148 по захвату 149, заголовок neqo; `""`/`curl` и сборка без `with_utls` — generic CH. См. §3.1, §4 |
+| `Ib` | **Browser** | `chrome` \| `chrome-full` \| `firefox` \| `curl`. Валидируется; только при `ip=quic`. Задаёт и TLS-отпечаток ClientHello (uTLS, тег `with_utls`), и раскладку фреймов Initial: `chrome` — Chrome 155 без PQ key_share, один Initial 1250б; `chrome-full` — **экспериментальный**, в клиентах не реализуется: Chrome 155 с X25519MLKEM768, один Initial ~2КБ (IP-фрагментация, на LTE не проходит); `firefox` — Firefox 148 по захвату 149, заголовок neqo; `""`/`curl` и сборка без `with_utls` — generic CH. См. §3.1, §4 |
 
 > Нейминг проприетарный WireSock (`i`nterface **d**omain/**p**rotocol/**b**rowser); `ip` —
 > это «protocol», НЕ IP-адрес. Эти ключи понимают только WireSock и это ядро; меняться
@@ -93,7 +93,7 @@ Chrome 133 из LxBox §618:
 | `Ib` | ClientHello | Раскладка фреймов | Заголовок | Датаграмма |
 |---|---|---|---|---|
 | `chrome` | Chrome 155 без PQ key_share (~470б) | **chaos** — как `QuicChaosProtector` в quiche | SCID 0, pn_len 1, pn=1 | 1250б |
-| `chrome-full` | Chrome 155 с X25519MLKEM768 (~1.75КБ) | chaos | то же | ~1.9–2.1КБ, один QUIC-пакет, IP-слой режет на 2 фрагмента |
+| `chrome-full` (**экспериментальный**) | Chrome 155 с X25519MLKEM768 (~1.75КБ) | chaos | то же | ~1.9–2.1КБ, один QUIC-пакет, IP-слой режет на 2 фрагмента |
 | `firefox` | Firefox 148/149 без PQ (~665б) | **плоская** — один CRYPTO, без PADDING внутри | SCID 3 байта, pn_len 2, pn случайный, QUIC-пакет по размеру фреймов + **нули после него** до 1252 (neqo) | 1252б |
 | `""` / `curl` | generic (~294б) | плоская + PADDING внутри (ngtcp2 / quic-go) | SCID 0, pn_len 1, pn=0 | 1250б |
 
@@ -220,10 +220,12 @@ generic, 1252б у firefox; `chrome-full` растёт под ClientHello (+128�
   `X25519MLKEM768` (~1.2КБ) удалён из supported_groups и key_share — ClientHello (~470б)
   помещается в один Initial 1250б; это отпечаток Chrome 155 с
   `PostQuantumKeyAgreementEnabled=false`. Chaos-раскладка, SCID пуст, pn_len 1, pn=1.
-- **`ib=chrome-full`** → та же QUIC-спека, гибридный key_share **сохранён** первым в key_share
-  (ClientHello ~1.75КБ), один Initial ~1.9–2.1КБ больше MTU. Отпечаток текущего Chrome;
-  датаграмма не хромовская (Chrome шлёт три по 1250), выбор обоснован в §3.1. **На LTE не
-  проходит** (09.10.2026, §3.1): профиль только для путей, доносящих IP-фрагменты.
+- **`ib=chrome-full`** — **экспериментальный режим, решение владельца 09.10.2026: в клиентах
+  (LxBox, лаунчер, пресеты) не реализуется и в UI не выносится**; остаётся в ядре для стендов.
+  Та же QUIC-спека, гибридный key_share **сохранён** первым в key_share (ClientHello ~1.75КБ),
+  один Initial ~1.9–2.1КБ больше MTU. Отпечаток текущего Chrome; датаграмма не хромовская
+  (Chrome шлёт три по 1250), выбор обоснован в §3.1. **На LTE не проходит** (09.10.2026, §3.1):
+  IP-фрагменты до WARP не доходят; против WireSock-сервера на quinn (>1480 байт) не проверялся.
 - **`ib=firefox`** → пресет `HelloFirefox_148`, перестроенный под QUIC по захвату Firefox 149
   (`testdata/firefox_149_initial.bin`): три шифра TLS 1.3 в порядке NSS; 15 расширений **в
   порядке захвата** (NSS в QUIC упорядочивает иначе, чем в TCP): `extended_master_secret`,

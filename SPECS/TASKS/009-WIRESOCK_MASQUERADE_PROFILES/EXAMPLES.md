@@ -15,7 +15,7 @@
 |------|-----|----------|-------------|
 | `id` | домен | LDH-хост (`www.google.com`, `ozon.ru`, `_dmarc.example.com`) | **обязателен только для `quic`** (SNI); опционален для `dns` (QNAME или псевдо-домен), `sip` (host или псевдо-host) и `stun` (игнорируется) |
 | `ip` | протокол | `quic` \| `dns` \| `stun` \| `sip` | да |
-| `ib` | браузер | `chrome` \| `chrome-full` \| `firefox` \| `curl` | нет (только при `ip=quic`) |
+| `ib` | браузер | `chrome` \| `firefox` \| `curl`; `chrome-full` — экспериментальный, не для клиентов | нет (только при `ip=quic`) |
 
 Минимум: `ip` всегда; плюс `id` — для `quic`. Для `dns`/`sip`/`stun` хватает одного `ip`
 (`id` опционален: для `sip` без него генерируется псевдо-host, для `stun` он не идёт в пакет).
@@ -169,8 +169,8 @@ Max-Forwards:70/Contact, `Content-Length: 0`, без SDP), одна валидн
 
 - **Коннект к WARP под реальным DPI** → `ip=quic`, `id=<популярный домен>`,
   `ib=chrome`. Один QUIC Initial с Chrome-155-ClientHello и `id` как SNI; device-verified
-  против реального LTE-DPI (09.10.2026, rc.1-форма). `ib=chrome-full` — то же с ML-KEM
-  key_share ценой IP-фрагментации: на LTE не проходит, только для путей, доносящих фрагменты.
+  против реального LTE-DPI (09.10.2026, rc.1-форма). `ib=chrome-full` — **экспериментальный**, в клиентах не реализуется: то же с ML-KEM key_share
+  ценой IP-фрагментации; на LTE не проходит.
 - **Нужно, чтобы DPI увидел «разрешённый» домен** → `ip=quic`/`ip=dns`/`ip=sip` с
   региональным популярным `id` (SNI / QNAME / SIP-host).
 - **STUN** — нишево (выглядит как ответ STUN-сервера); домен не несёт.
