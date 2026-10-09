@@ -20,4 +20,4 @@
 - [x] 3.2 `go vet` + `go test` пакета с тегами `with_xhttp,with_utls,with_quic`
 - [x] 3.3 `make -f Makefile.lx lx-build`, `sing-box check` конфига с `path: "/?proxyip=…"`
 - [x] 3.4 IMPLEMENTATION_REPORT.md; статус I
-- [ ] 3.5 Проверка репортёром #36 через Cloudflare-релей
+- [x] 3.5 Проверка репортёром #36 через Cloudflare-релей (2026-10-09, обход `/proxyip=IP` на lx.12)
