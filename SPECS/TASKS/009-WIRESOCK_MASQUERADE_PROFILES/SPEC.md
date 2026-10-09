@@ -33,7 +33,7 @@ device не добавляется — генерация целиком в opti
 |------|-----|----------|
 | `Id` | **Domain** | домен для маскировки (массовый легитимный: `www.google.com`, `ozon.ru`…). Идёт на провод как SNI / QNAME / SIP-host |
 | `Ip` | **Protocol** | протокол маскировки: **quic** \| **dns** \| **stun** \| **sip** |
-| `Ib` | **Browser** | `chrome` \| `chrome-full` \| `firefox` \| `curl`. Валидируется; только при `ip=quic`. Задаёт и TLS-отпечаток ClientHello (uTLS, тег `with_utls`), и раскладку фреймов Initial: `chrome` — Chrome 155 без PQ key_share, один Initial 1250б; `chrome-full` — Chrome 155 с X25519MLKEM768, один Initial ~2КБ (IP-фрагментация); `firefox` — Firefox 120; `""`/`curl` и сборка без `with_utls` — generic CH. См. §3.1, §4 |
+| `Ib` | **Browser** | `chrome` \| `chrome-full` \| `firefox` \| `curl`. Валидируется; только при `ip=quic`. Задаёт и TLS-отпечаток ClientHello (uTLS, тег `with_utls`), и раскладку фреймов Initial: `chrome` — Chrome 155 без PQ key_share, один Initial 1250б; `chrome-full` — Chrome 155 с X25519MLKEM768, один Initial ~2КБ (IP-фрагментация); `firefox` — Firefox 148 по захвату 149, заголовок neqo; `""`/`curl` и сборка без `with_utls` — generic CH. См. §3.1, §4 |
 
 > Нейминг проприетарный WireSock (`i`nterface **d**omain/**p**rotocol/**b**rowser); `ip` —
 > это «protocol», НЕ IP-адрес. Эти ключи понимают только WireSock и это ядро; меняться

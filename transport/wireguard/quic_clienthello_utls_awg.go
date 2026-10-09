@@ -11,17 +11,19 @@
 // TCP-TLS ClientHello.
 //
 // chrome: Chrome 155 with the post-quantum hybrid key_share (X25519MLKEM768)
-// stripped. The hybrid share is ~1.2 KB; without it the ClientHello is ~650–720
+// stripped. The hybrid share is ~1.2 KB; without it the ClientHello is ~470
 // bytes and fits one 1250-byte Initial. This is what Chrome 155 sends with
 // PostQuantumKeyAgreementEnabled=false.
 //
-// chrome-full: Chrome 155 as shipped, hybrid share kept (~1.9 KB ClientHello).
+// chrome-full: Chrome 155 as shipped, hybrid share kept (~1.75 KB ClientHello).
 // It does not fit a 1250-byte Initial; a real Chrome spreads it over three
 // Initials, but a multi-packet start is dropped on the WARP path (LxBox §618),
 // so the generator emits ONE oversized Initial (~2 KB) that the IP layer
 // fragments. Trade-off: the fingerprint is current Chrome, the datagram is not.
 //
-// firefox: Firefox 120 (pre-PQ), one CRYPTO frame plus PADDING like neqo.
+// firefox: HelloFirefox_148 reshaped on the Firefox 149 capture, PQ stripped,
+// one CRYPTO frame; the neqo header (3-byte SCID, pn_len 2, zero fill after the
+// packet) is applied by quic_initial_awg.go.
 package wireguard
 
 import (
