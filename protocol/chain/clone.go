@@ -113,6 +113,12 @@ func (c *clone) status() *adapter.ChainCloneStatus {
 		Stripped:      c.info.stripped,
 		Rewritten:     c.info.rewritten,
 	}
+	// SPEC 120: a QUIC link carries its initial_packet_size in the reason
+	// text; the proto has no dedicated field and mtu_configured/effective
+	// stay 0 so that they keep meaning mtu.
+	if c.info.packetSizeReason != "" {
+		status.MTUReason = "initial_packet_size " + strconv.Itoa(int(c.info.packetSizeEffective)) + ": " + c.info.packetSizeReason
+	}
 	if status.ActiveConns > 0 {
 		status.State = "active"
 	}

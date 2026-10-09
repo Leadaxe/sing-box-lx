@@ -331,9 +331,12 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	} else if options.KeepAlivePeriod < 0 {
 		keepAlive = 0
 	}
+	// lx: SPEC 120 §2.6 — derived from the tunnel MTU (see
+	// outer_packet_size_lx.go), not the usque constant 1242 that left a ~6 RTT
+	// window after tunnel-up in which full-size inner packets were dropped.
 	quicConfig := &quic.Config{
 		EnableDatagrams:   true,
-		InitialPacketSize: 1242,
+		InitialPacketSize: outerInitialPacketSize(mtu),
 		KeepAlivePeriod:   keepAlive,
 	}
 
