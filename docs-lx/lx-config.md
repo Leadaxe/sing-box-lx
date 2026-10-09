@@ -16,7 +16,7 @@
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | extra fields on a `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`); the old `route.lx_idle_*` are deprecated aliases | **mobile only** (AAR) |
-| **Root `lx` block** (SPEC 098) | — (always parsed) | `lx.wg`, `lx.masque` — the fork's global knobs, [§13](#13-the-lx-root-block-spec-098) | desktop + mobile |
+| **Root `lx` block** (SPEC 098) | — (always parsed) | `lx.wg`, `lx.masque`, `lx.mtu_align` — the fork's global knobs, [§13](#13-the-lx-root-block-spec-098) | desktop + mobile |
 | **DNS server group** (SPEC 033/035) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
 | **`lxd` daemon** (SPEC 055–057, 063–068) | `with_lxd` | not a config key — the `sing-box lxd` subcommand + `<state-dir>/daemon.json`; see [lxd-daemon.md](lxd-daemon.md) | desktop / server (**not** Win7, **not** AAR) |
@@ -108,7 +108,8 @@ you need and read its section below. Each comment shows the **default** and the 
     },
     "masque": {
       "idle_timeout": "5m"                      // default: off. Global idle window for masque nodes without their own key
-    }
+    },
+    "mtu_align": "clamp"                        // default: clamp. off | fill | clamp, or an object {"mode", "except": [tags]} (§13)
   },
 
   "outbounds": [
@@ -280,7 +281,7 @@ you need and read its section below. Each comment shows the **default** and the 
 ```
 
 > **Field count:** 26 XHTTP + 30 AmneziaWG (incl. `id`/`ip`/`ib` and the 9 AWG 3.x keys) + 1 VLESS (`encryption`) +
-> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 7 `lx` (6 `lx.wg` + `lx.masque.idle_timeout`). Mutually-exclusive / ignored fields are
+> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 8 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.mtu_align`). Mutually-exclusive / ignored fields are
 > labelled inline above; the sections below give the per-field semantics, gotchas and live
 > verification status.
 
@@ -632,6 +633,16 @@ QUIC does not carry TLS over TCP at all.
 > A top-level `dns` block is required — the userspace stack works at L3 and does not resolve
 > domains itself; the outbound resolves them via the DNS router before dialing.
 
+> **Packet size and WARP (SPEC 120).** The outer QUIC connection to the server starts with
+> `InitialPacketSize` = `mtu + 51` (clamped 1200…1452; 1331 at `mtu` 1280), so an inner packet of
+> `mtu` bytes fits the datagram from the first packet on, not after the first PMTUD probe. WARP
+> passes inner IPv4 fragments and **drops IPv6 fragments**: a node above masque whose packet does
+> not fit `mtu` (a QUIC proxy with a 1280-byte payload = 1328 bytes over IPv6) is silent over IPv6
+> and works over IPv4. A node above masque — via `detour`, via a group, or as a `chain` link — gets
+> a packet size that fits `mtu` automatically ([§13, `lx.mtu_align`](#lxmtu_align--path-mtu--packet-size-alignment));
+> by hand — `initial_packet_size: 1232` on the QUIC node or `mtu: 1340` on masque (the latter needs
+> an outer path of ≈ 1440 bytes to WARP).
+
 > **h3 vs h2 — which to use.** `h3` (QUIC) is the default and fastest. But on networks that
 > filter inbound UDP:443, the QUIC handshake hangs and `h3` never comes up — switch that node to
 > `h2` (TCP:443), which is device-verified to work there. Also note the first `h3` dial is slow
@@ -964,11 +975,15 @@ endpoint.
 - **`direct` at position ≥ 1 is transparent** — "no hop here"; put `direct` into a selector
   to switch a position off at runtime. `block` rejects. All-`direct` positions ≥ 1 make the
   chain equal to position 0.
-- **MTU of tunnel links (WireGuard, MASQUE) is lowered automatically**: `mtu` in the node's
-  config means "as standalone"; the chain subtracts the exact encapsulation overhead of
-  IP tunnels *below* the link (WG inside an IP tunnel −60/−80 by the server address family,
-  MASQUE ≈ −90), taking the worst case over a group's members. Over stream proxies
-  (vless/trojan/ss over TCP, mux) and datagram proxies the MTU is left as configured.
+- **MTU and packet size of links are aligned automatically** — by the shared `lx.mtu_align`
+  mechanism ([§13](#lxmtu_align--path-mtu--packet-size-alignment)), the same one that works
+  under a plain `detour`: `mtu` in the node's config means "as standalone"; the chain
+  subtracts the exact encapsulation overhead of IP tunnels *below* the link (WG inside an IP
+  tunnel −60/−80 by the server address family, MASQUE −79/−99), taking the worst case over a
+  group's members. QUIC links (hysteria2, tuic, hysteria) at positions ≥ 1 get an
+  `initial_packet_size` that fits the hop below plus `disable_path_mtu_discovery: true`. Over
+  stream proxies (vless/trojan/ss over TCP, mux) and datagram proxies nothing changes. The
+  mode (`clamp` by default, `fill`, `off`) and `except` apply to links the same way.
 - **`strip` catalog** (one-sided, the server never sees them): `tls.fragment` (packet-level
   ClientHello fragmentation + `fragment_fallback_delay`; **`record_fragment` is not
   touched** — under `detour` it switches on automatically as a path fix, see §9),
@@ -1037,7 +1052,8 @@ is the same as none. A misspelt key is a load error, not a silent default.
   },
   "masque": {
     "idle_timeout": "5m"
-  }
+  },
+  "mtu_align": "clamp"
 }
 ```
 
@@ -1087,6 +1103,95 @@ Validation errors name the full key path:
 Priority: the node's `idle_timeout` > `lx.masque.idle_timeout` > off. An explicit `"0"` on a node
 keeps that node's tunnel up even when the global value is set. MASQUE already builds its session
 lazily, so there is no cap here.
+
+### `lx.mtu_align` — path MTU / packet-size alignment
+
+A node that sits above an IP tunnel — via `detour`, via a group under `detour`, transitively
+(`detour` to a node whose own `detour` is a tunnel) or as a `chain` link ([§10](#10-chain-outbound--a-virtual-multi-hop-path-of-groups-and-nodes-spec-073)) —
+gets a packet size that fits that tunnel: `mtu` on tunnels (`wireguard`, `masque`),
+`initial_packet_size` plus `disable_path_mtu_discovery: true` on QUIC proxies (`hysteria2`,
+`tuic`, `hysteria`). Computed once at start from the config, before the nodes are created; the
+upstream constructors read the already-adjusted options. Values only go down, and every changed
+field is visible in the start log with its reason. SPEC 120; the originating report is issue #37
+(hysteria2 via `detour` over WARP worked against an IPv4 server and was silent against an IPv6 one).
+
+One key in the root `lx` block, two shapes:
+
+```jsonc
+"lx": { "mtu_align": "clamp" }                                        // string — the mode
+"lx": { "mtu_align": { "mode": "clamp", "except": ["my-wg"] } }       // object — mode + exceptions
+```
+
+| Mode | Field not set | Set explicitly and **above** the limit | Set explicitly and fits |
+|---|---|---|---|
+| `off` | left alone | left alone | left alone |
+| `fill` | limit is filled in | left alone; warning "does not fit under `<tag>`" | left alone |
+| `clamp` **(default)** | limit is filled in | **lowered** to the limit; logged as configured → effective with the reason | left alone |
+
+No mode ever raises a value. `except` lists node tags that are never touched in any mode (an
+unknown tag is a start error, as is an unknown mode). No key = `clamp`; this is the contract `chain`
+has kept since SPEC 073 ("`mtu` in the config = as standalone, the chain only lowers"), now applied
+under a plain `detour` as well.
+
+**Capacity of a node** — how many bytes of IP packet it carries for the node above it:
+
+| Node below | Capacity |
+|---|---|
+| `masque`, `wireguard` (endpoint and legacy outbound), `openvpn-client`, `openconnect` | its **effective** `mtu` (after its own alignment, recursively downwards) |
+| `tailscale` endpoint | `system_interface_mtu`, else 1280 |
+| `selector`, `urltest` | min over all reachable members, recursively |
+| any other node with `detour` | the capacity of its `detour` (it adds nothing above IP itself) |
+| `direct`, TCP proxies, proxies with a UDP relay (ss, socks, vless, trojan, …) without `detour` | unlimited (no IP layer) |
+| `tuic` with `udp_relay_mode: native`; `chain` as a `detour` target | unlimited + warning (a chain aligns itself) |
+
+**What the node above gets** (`ipudp` = 28 for an IPv4 server, 48 for IPv6; a domain or an
+unparsed address counts as IPv6; a WG endpoint takes its family from `peers[0].address`):
+
+| Node above | Field | Limit | Overhead v4 / v6 |
+|---|---|---|---|
+| `wireguard` | `mtu` | `capacity − 32 − ipudp` | 60 / 80 |
+| `masque` | `mtu` | `capacity − 51 − ipudp` | 79 / 99 |
+| `hysteria2`, `tuic`, `hysteria` | `initial_packet_size` (+ `disable_path_mtu_discovery: true`) | `capacity − ipudp`, clamped 1200…1452 | — |
+| `openvpn-client`, `openconnect` | — | not derived; one warning if there is capacity below the node | unknown |
+
+If a QUIC node's limit is below 1200 (a tunnel with `mtu` < 1248 under an IPv6 server), 1200 is set
+with a warning — QUIC cannot go below its minimum. PMTUD is switched off together with the derived
+`initial_packet_size`, because quic-go only knows how to search upwards to 1452: over IPv6 the
+probes are lost with the fragments, over IPv4 they "pass" by fragmentation and every packet then
+travels as two. A node with an explicit `initial_packet_size` is left alone entirely, PMTUD included.
+
+**Example — default WARP** (`masque` with `mtu` 1280) and hysteria2 with a `detour` to it:
+
+```jsonc
+{ "type": "masque", "tag": "warp", "mtu": 1280, /* … */ },
+{ "type": "hysteria2", "tag": "hy2", "server": "2001:db8::1", "detour": "warp", /* … */ }
+```
+
+`hy2` gets `initial_packet_size: 1232` (1280 − 48) and `disable_path_mtu_discovery: true`; with an
+IPv4 server — 1252 (1280 − 28). Without alignment quic-go sends 1280-byte payloads, 1328 bytes over
+IPv6, the tunnel splits them into fragments and WARP drops those ([§4](#4-masque-outbound--cloudflare-warp-spec-021)).
+
+**Groups.** Under a group the min over all members is taken at start; switching the selector/urltest
+does not recompute it — the QUIC packet size is fixed when the client is created, a WG device's MTU
+when the device is created, and a live connection does not migrate to the new path. The cost on a
+wide group member: up to 200 bytes per packet (1452 → 1252) and PMTUD off. If that matters — an
+explicit value in `fill`, the tag in `except`, or `off`.
+
+**Start log** — one Info line per changed field, warnings at Warn:
+
+```
+mtu_align: hy2 initial_packet_size → 1232 (detour warp[masque] mtu 1280 − 48 ipv6; pmtud off)
+mtu_align: wg-exit mtu 1420 → 1200 clamped (limited by warp[masque] mtu 1280 via sel −80 ipv6)
+```
+
+For `chain` the same decision shows in `ChainInfo` (`mtu_configured` / `mtu_effective` /
+`mtu_reason` with the mode prefix `clamped:` / `filled:`). Decisions made for `detour` are not yet
+exposed over the lx RPC.
+
+**Not aligned:** xhttp over h3 and naive (cronet) — their own QUIC transport; `openvpn-client` and
+`openconnect` as upper nodes — a warning only; the server → client direction — controlled by the
+server. What masque does from below (outer `InitialPacketSize` = `mtu + 51`, ICMP Packet Too Big
+with the real budget) is in [§4](#4-masque-outbound--cloudflare-warp-spec-021).
 
 ### Deprecated `route.lx_idle_*`
 

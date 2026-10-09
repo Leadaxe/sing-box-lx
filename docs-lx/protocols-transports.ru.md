@@ -823,7 +823,7 @@ HTTP/2-соединения через **CONNECT-IP (RFC 9484)**, в перву�
 | `ipv6` | string (CIDR) | ✅² | — | локальный IPv6 внутри туннеля; голый адрес → `/128` |
 | `tls` | object | — | — | **стандартный** outbound-блок TLS — `server_name`, `insecure`, `disable_sni`, `fragment`, `record_fragment`, `fragment_fallback_delay`, … Тот же контейнер, что у любого TLS-outbound |
 | `uri` | string | — | по профилю³ | CONNECT-IP request URI |
-| `mtu` | int | — | `1280` | MTU userspace-стека. На `h2` максимум `16000` (один IP-пакет = один HTTP/2 DATA frame) |
+| `mtu` | int | — | `1280` | MTU userspace-стека. На `h2` максимум `16000` (один IP-пакет = один HTTP/2 DATA frame). Узлы над masque (через `detour`, группу или как звено `chain`) получают размер пакета под этот `mtu` автоматически — `mtu` туннелей, `initial_packet_size` + PMTUD off у hysteria2/tuic/hysteria (при 1280: 1232 для IPv6-сервера, 1252 для IPv4; SPEC 120, [lx-config.ru.md §13](lx-config.ru.md#lxmtu_align--выравнивание-mtu-и-размера-пакета-по-пути)). Внешний QUIC к серверу стартует с `mtu + 51` (кламп 1200…1452) |
 | `idle_timeout` | duration | — | наследует `lx.masque.idle_timeout`, иначе выкл | suspend туннеля после простоя (освобождает gVisor-стек, насосы и QUIC keepalive); следующий dial его пересобирает. Отсутствие ключа → глобальный `lx.masque.idle_timeout` (SPEC 098, [lx-config.ru.md §13](lx-config.ru.md#13-корневой-блок-lx-spec-098)); явный `0` или отрицательное держат узел поднятым при любом глобальном значении; включает только положительное значение |
 | `keep_alive_period` | duration | — | `30s` | QUIC keepalive (только h3). **Отрицательное отключает** |
 | `network_list` | list | — | tcp+udp | L4-протоколы, идущие через туннель |

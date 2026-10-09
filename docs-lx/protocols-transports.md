@@ -829,7 +829,7 @@ registration (ECDSA keys, WARP enroll) is done by the client, not the core.
 | `ipv6` | string (CIDR) | ✅² | — | local IPv6 inside the tunnel; a bare address → `/128` |
 | `tls` | object | — | — | the **standard** outbound TLS block — `server_name`, `insecure`, `disable_sni`, `fragment`, `record_fragment`, `fragment_fallback_delay`, … Same container every other TLS outbound uses |
 | `uri` | string | — | per profile³ | CONNECT-IP request URI |
-| `mtu` | int | — | `1280` | userspace-stack MTU. On `h2`, max `16000` (one IP packet = one HTTP/2 DATA frame) |
+| `mtu` | int | — | `1280` | userspace-stack MTU. On `h2`, max `16000` (one IP packet = one HTTP/2 DATA frame). Nodes above masque (via `detour`, a group, or as a `chain` link) get a packet size that fits this `mtu` automatically — `mtu` on tunnels, `initial_packet_size` + PMTUD off on hysteria2/tuic/hysteria (at 1280: 1232 for an IPv6 server, 1252 for IPv4; SPEC 120, [lx-config.md §13](lx-config.md#lxmtu_align--path-mtu--packet-size-alignment)). The outer QUIC to the server starts at `mtu + 51` (clamped 1200…1452) |
 | `idle_timeout` | duration | — | inherits `lx.masque.idle_timeout`, else off | suspend the tunnel after this long with no traffic (frees the gVisor stack, pumps and QUIC keepalive); the next dial rebuilds it. Absent → the global `lx.masque.idle_timeout` (SPEC 098, [lx-config.md §13](lx-config.md#13-the-lx-root-block-spec-098)); an explicit `0` or a negative value keeps this node up whatever the global default; only a positive value enables suspend |
 | `keep_alive_period` | duration | — | `30s` | QUIC keepalive (h3 only). **Negative disables** |
 | `network_list` | list | — | tcp+udp | L4 protocols routed through the tunnel |
