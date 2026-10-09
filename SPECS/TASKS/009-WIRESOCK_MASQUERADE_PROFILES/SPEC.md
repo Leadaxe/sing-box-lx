@@ -110,9 +110,10 @@ Initial с новыми DCID/SCID, TLS random, key_share, раскладкой �
 **Device-verified (LTE).** 09.10.2026, телефон CPH2411, Tele2, Wi-Fi выключен, VPN приложения
 остановлен, проверка владельца по узлам папки `EXP-009 rc.1` (блобы rc.1 как статичный `i1` в
 ядре lx.11, у каждого узла свой WARP-аккаунт): `P` (чистый WG, контроль) — не работает;
-**`ib=chrome` — работает**; `ib=chrome-full` — не работает. Решение владельца: схема `chrome`
-(Chrome 155 без PQ, QUIC-ClientHello Chrome, chaos-раскладка, один Initial 1250 байт) считается
-**подтверждённой**. `chrome-full` на мобильной сети непригоден: фрагментированный IP-пакет до
+**`ib=chrome` — работает**; **`ib=firefox` — работает**; `ib=chrome-full` — не работает.
+Решение владельца: схемы `chrome` (Chrome 155 без PQ, QUIC-ClientHello Chrome, chaos-раскладка,
+один Initial 1250 байт) и `firefox` (Firefox 148 по захвату 149, SCID 3, pn_len 2, 1252 байта с
+нулями после пакета) считаются **подтверждёнными на устройстве**. `chrome-full` на мобильной сети непригоден: фрагментированный IP-пакет до
 WARP не доходит (согласуется с частичным проходом F в §618 на проводе). На Маке (провод,
 08.10 23:52) `chrome` 6/6 при контроле 0/3.
 
@@ -232,7 +233,7 @@ generic, 1252б у firefox; `chrome-full` растёт под ClientHello (+128�
   `max_ack_delay` 20, `active_connection_id_limit` 8, `initial_source_connection_id` = SCID (3
   байта), `version_information`, `min_ack_delay` (draft, 1000), `max_datagram_frame_size` 65535.
   PQ-гибрид срезан (один пакет). Заголовок neqo: SCID 3 байта, pn_len 2, pn случайный, нули
-  после пакета до 1252. Плоская раскладка.
+  после пакета до 1252. Плоская раскладка. **Device-verified на LTE** 09.10.2026 (§3.1).
 - **GREASE-версия** в `version_information` считается у нас: `(rand & 0xf0f0f0f0) | 0x0a0a0a0a`
   (хелпер форка utls ставит `| 0x0a0a0a0a` без маски и даёт форму `?a?a?a?a` в 1 случае из 256).
 
