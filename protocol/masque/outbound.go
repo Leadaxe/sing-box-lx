@@ -59,6 +59,25 @@ const maxH2MTU = 16000
 // genuinely slow-but-working path lose h3.
 const autoH3Timeout = 3 * time.Second
 
+// lx: SPEC 121 — how long `auto` keeps preferring h2 after it won. The memory
+// exists so that a filtered path does not pay the 3 s h3 probe on every
+// tunnel; a window makes it a preference, not a verdict: networks change, and
+// the bring-up after the window tries h3 first again. The window climbs a
+// ladder: the first h2 win is remembered for 1 s (in practice "retry h3 on
+// the next bring-up" — seen in the field as intermittent PROTOCOL_VIOLATION
+// from WARP that succeeds on the next attempt, where a permanent memory
+// silently parked the node on TCP until h2 itself failed, SPEC 108), every
+// further h2 win takes the next rung, the top rung (10 min) repeats, and an
+// h3 success drops back to the first. Few rungs on purpose: with a silent h3
+// each rung below the tunnel's rebuild period costs one 3 s probe.
+var autoH2MemoryLadder = []time.Duration{
+	time.Second,
+	10 * time.Second,
+	30 * time.Second,
+	5 * time.Minute,
+	10 * time.Minute,
+}
+
 type Outbound struct {
 	outbound.Adapter
 	ctx         context.Context
@@ -97,10 +116,24 @@ type Outbound struct {
 	// Network()/logging outside it.
 	autoMode    bool
 	autoH3Delay time.Duration
-	autoNetwork atomic.Pointer[string]
+	// autoH2Ladder bounds a remembered h2 (lx: SPEC 121): each h2 win takes
+	// the next rung, the last rung repeats, an h3 win drops back to the first.
+	// autoH2Rung is the index the NEXT h2 win gets. nil ladder = no window
+	// (tests built without the wiring remember h2 until Close, as before 121).
+	autoH2Ladder []time.Duration
+	autoH2Rung   atomic.Int64
+	autoNetwork  atomic.Pointer[autoMemory]
 	// legsForTest substitutes the two dial legs in unit tests; nil in production.
 	legsForTest *connectLegs
 	// lx:end masque-auto
+}
+
+// autoMemory is the remembered leg of `auto` and, for h2, when the memory
+// expires (zero = never). lx: SPEC 121.
+type autoMemory struct {
+	network string
+	window  time.Duration
+	expires time.Time
 }
 
 // session is one established MASQUE tunnel with its userspace stack and pumps.
@@ -343,23 +376,24 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	networkList := options.NetworkList.Build()
 
 	return &Outbound{
-		Adapter:     outbound.NewAdapterWithDialerOptions(C.TypeMASQUE, tag, networkList, options.DialerOptions),
-		ctx:         ctx,
-		logger:      logger,
-		dialer:      outboundDialer,
-		dnsRouter:   service.FromContext[adapter.DNSRouter](ctx),
-		profile:     profile,
-		idleTimeout: idleTimeout,
-		server:      options.ServerOptions.Build(),
-		uri:         uri,
-		network:     network,
-		autoMode:    autoMode,
-		autoH3Delay: autoH3Timeout,
-		mtu:         mtu,
-		prefixes:    prefixes,
-		tlsConfig:   tlsConfig,
-		h2TLSClient: h2TLSClient,
-		quicConfig:  quicConfig,
+		Adapter:      outbound.NewAdapterWithDialerOptions(C.TypeMASQUE, tag, networkList, options.DialerOptions),
+		ctx:          ctx,
+		logger:       logger,
+		dialer:       outboundDialer,
+		dnsRouter:    service.FromContext[adapter.DNSRouter](ctx),
+		profile:      profile,
+		idleTimeout:  idleTimeout,
+		server:       options.ServerOptions.Build(),
+		uri:          uri,
+		network:      network,
+		autoMode:     autoMode,
+		autoH3Delay:  autoH3Timeout,
+		autoH2Ladder: autoH2MemoryLadder, // lx: SPEC 121
+		mtu:          mtu,
+		prefixes:     prefixes,
+		tlsConfig:    tlsConfig,
+		h2TLSClient:  h2TLSClient,
+		quicConfig:   quicConfig,
 	}, nil
 }
 
@@ -681,6 +715,9 @@ func (o *Outbound) connect(ctx context.Context, network string) (io.Closer, masq
 		if h2Err == nil {
 			drainH3()
 			o.rememberNetwork("h2")
+			if memory := o.autoNetwork.Load(); memory != nil && memory.window > 0 {
+				o.logger.InfoContext(ctx, "masque: h2 to ", o.server, " remembered for ", memory.window, "; then h3 is tried first again")
+			}
 			return h2Closer, h2Conn, "h2", nil
 		}
 	}
@@ -711,17 +748,61 @@ func (o *Outbound) effectiveNetwork() string {
 	if !o.autoMode {
 		return o.network
 	}
-	if remembered := o.autoNetwork.Load(); remembered != nil {
-		return *remembered
+	remembered := o.autoNetwork.Load()
+	if remembered == nil {
+		return "h3"
 	}
-	return "h3"
+	// lx: SPEC 121 — an expired h2 memory is dropped on read: the bring-up that
+	// finds it expired starts with h3 again, and h2 is remembered afresh (with
+	// a longer window) only if h3 still does not come up.
+	if !remembered.expires.IsZero() && !time.Now().Before(remembered.expires) {
+		if o.autoNetwork.CompareAndSwap(remembered, nil) {
+			o.logger.Info("masque: remembered h2 to ", o.server, " expired after ", remembered.window, "; trying h3 first again")
+		}
+		return "h3"
+	}
+	return remembered.network
 }
 
+// rememberNetwork records the leg that just won. h3 is remembered without
+// limit and drops the h2 ladder back to its first rung; h2 for the current
+// rung, which then advances (lx: SPEC 121). Re-recording the same leg keeps
+// the existing window: the clock runs from the fallback, not from every
+// bring-up that reused h2, so h3 gets its retry at most once per window.
 func (o *Outbound) rememberNetwork(network string) {
-	if previous := o.autoNetwork.Load(); previous != nil && *previous == network {
+	if previous := o.autoNetwork.Load(); previous != nil && previous.network == network {
 		return
 	}
-	o.autoNetwork.Store(&network)
+	memory := &autoMemory{network: network}
+	if network == "h2" {
+		memory.window = o.nextH2Window()
+		if memory.window > 0 {
+			memory.expires = time.Now().Add(memory.window)
+		}
+	} else {
+		o.autoH2Rung.Store(0)
+	}
+	o.autoNetwork.Store(memory)
+}
+
+// nextH2Window hands out the current rung of the h2 ladder and arms the next
+// one; the last rung repeats. No ladder (tests, or an Outbound built without
+// the wiring) means "no window": h2 is remembered until Close or until it
+// fails, as before 121.
+func (o *Outbound) nextH2Window() time.Duration {
+	if len(o.autoH2Ladder) == 0 {
+		return 0
+	}
+	for {
+		rung := o.autoH2Rung.Load()
+		next := rung + 1
+		if next >= int64(len(o.autoH2Ladder)) {
+			next = int64(len(o.autoH2Ladder)) - 1
+		}
+		if o.autoH2Rung.CompareAndSwap(rung, next) {
+			return o.autoH2Ladder[rung]
+		}
+	}
 }
 
 // forgetNetwork returns `auto` to its default order (h3 first). lx: SPEC 108.
