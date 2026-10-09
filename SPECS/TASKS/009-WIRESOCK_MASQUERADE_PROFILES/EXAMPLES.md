@@ -168,9 +168,9 @@ Max-Forwards:70/Contact, `Content-Length: 0`, без SDP), одна валидн
 ## 3. Что выбрать
 
 - **Коннект к WARP под реальным DPI** → `ip=quic`, `id=<популярный домен>`,
-  `ib=chrome`. Один QUIC Initial с Chrome-155-ClientHello и `id` как SNI; device-proven
-  против реального LTE-DPI. `ib=chrome-full` — то же с ML-KEM key_share ценой
-  IP-фрагментации (проход на пути частичный, §618 LxBox).
+  `ib=chrome`. Один QUIC Initial с Chrome-155-ClientHello и `id` как SNI; device-verified
+  против реального LTE-DPI (09.10.2026, rc.1-форма). `ib=chrome-full` — то же с ML-KEM
+  key_share ценой IP-фрагментации: на LTE не проходит, только для путей, доносящих фрагменты.
 - **Нужно, чтобы DPI увидел «разрешённый» домен** → `ip=quic`/`ip=dns`/`ip=sip` с
   региональным популярным `id` (SNI / QNAME / SIP-host).
 - **STUN** — нишево (выглядит как ответ STUN-сервера); домен не несёт.
