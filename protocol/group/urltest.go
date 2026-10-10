@@ -393,6 +393,7 @@ type URLTestGroup struct {
 	groupTag                     string                    // lx: SPEC 020 — set by URLTest.Start (probe gating)
 	failover                     bool                      // lx: SPEC 116 — set by URLTest.Start
 	lastTickRunEnd               atomic.Int64              // lx: SPEC 125 — end of the last non-forced probe run, UnixNano
+	failoverSlow                 atomic.Pointer[tagSet]    // lx: SPEC 126 — confirmed-slow held tags during a failover reselect
 	reachability                 adapter.ReachabilityReporter
 	// lx: SPEC 054 — penalty failover (least_test): tag → счётчик отказов «путь
 	// мёртв»; сброс только доказательством жизни (успешный дайл / ответ на пробу).

@@ -33,6 +33,7 @@ type failoverNode struct {
 	err      atomic.Pointer[error]
 	addr     string
 	dials    atomic.Int32
+	spike    atomic.Int64 // one-shot extra latency for the next dial, ns
 }
 
 func newFailoverNode(tag string, latency time.Duration, networks ...string) *failoverNode {
@@ -61,6 +62,9 @@ func (n *failoverNode) DialContext(ctx context.Context, network string, destinat
 	}
 	if n.latency > 0 {
 		time.Sleep(n.latency)
+	}
+	if spike := n.spike.Swap(0); spike > 0 {
+		time.Sleep(time.Duration(spike))
 	}
 	return net.Dial("tcp", n.addr)
 }
@@ -163,14 +167,15 @@ func TestFailover_coldStart(t *testing.T) {
 // the tick probes only the held node and keeps it.
 func TestFailover_holdProbesOnlyCurrent(t *testing.T) {
 	a := newFailoverNode("a", 0)
-	b := newFailoverNode("b", 60*time.Millisecond)
-	c := newFailoverNode("c", 80*time.Millisecond)
+	b := newFailoverNode("b", 100*time.Millisecond)
+	c := newFailoverNode("c", 120*time.Millisecond)
 	g := newFailoverTestGroup(t, a, b, c)
 	if _, err := g.urlTest(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
 	assertSelected(t, g, N.NetworkTCP, a)
 
+	// slower than b now, but not 2× its last delay (SPEC 126 does not trigger)
 	a.latency = 100 * time.Millisecond
 	b.latency = 0
 	resetDials(a, b, c)
