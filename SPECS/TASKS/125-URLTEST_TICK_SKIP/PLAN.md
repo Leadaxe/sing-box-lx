@@ -8,7 +8,9 @@
 |------|--------------|
 | `protocol/group/urltest_tick_lx.go` | `testNodesTick`: порог `tickFreshWindow(interval, lastEnd, now)` → `urlTestOutbounds(…, window, false, …)` → отметка `lastTickRunEnd`; `tickFreshWindow` — время с конца прошлого тикового прогона, кап `interval`, `interval` до первого |
 | `protocol/group/urltest.go` | поле `lastTickRunEnd atomic.Int64`; `testNodes` при `!force` уходит в `testNodesTick` — два шва `// lx: SPEC 125` внутри lx-кода (`testNodes` — lx-функция) |
-| `protocol/group/urltest_tick_lx_test.go` | тесты по SPEC §3 на фикстуре 116 |
+| `protocol/group/urltest_tick_lx.go` (пауза) | `tickTooSoon`: конец прошлого тикового прогона меньше `interval/2` назад |
+| `protocol/group/urltest.go` (пауза) | в `urlTest` после `checking`: `if !force && g.tickTooSoon() { return }` |
+| `protocol/group/urltest_tick_lx_test.go` | тесты по SPEC §3 на фикстуре 116; `ageHistory` в тестах 116 двигает и отметку конца |
 | `SPECS/README.md`, `SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md`, `SPECS/TASKS/116-…/SPEC.md`, `docs-lx/lx-changelog.md` | строка 125, пометка о частоте проб, запись Unreleased |
 
 ## Почему не `interval − 15 с`
