@@ -12,6 +12,11 @@ package group
 // history written by the previous tick run is never fresh, history written after
 // it (a manual URLTest, a nested group's own ticker) still is. Forced runs keep
 // upstream semantics and do not move the mark.
+//
+// A tick run longer than interval would otherwise be followed at once by the
+// tick the ticker buffered during it, and the group would probe without a
+// break. A tick that comes less than interval/2 after the previous tick run
+// ended is skipped: there is always at least interval/2 of quiet.
 
 import (
 	"context"
@@ -30,6 +35,13 @@ func (g *URLTestGroup) testNodesTick(ctx context.Context, outbounds []adapter.Ou
 	result := urlTestOutbounds(ctx, g.outbound, g.history, g.logger, outbounds, g.link, window, false, g.penaltyReset)
 	g.lastTickRunEnd.Store(time.Now().UnixNano())
 	return result
+}
+
+// tickTooSoon reports whether a tick run must be skipped: the previous tick run
+// ended less than interval/2 ago.
+func (g *URLTestGroup) tickTooSoon() bool {
+	nanos := g.lastTickRunEnd.Load()
+	return nanos != 0 && time.Since(time.Unix(0, nanos)) < g.interval/2
 }
 
 // tickFreshWindow returns the freshness window for a tick run: the time since

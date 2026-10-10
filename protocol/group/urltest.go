@@ -588,6 +588,9 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 		return make(map[string]uint16), nil
 	}
 	defer g.checking.Store(false)
+	if !force && g.tickTooSoon() { // lx: SPEC 125 — quiet pause after a long tick run
+		return make(map[string]uint16), nil
+	}
 	// lx: SPEC 019 v2 — round_robin uses a lazy, pool-bounded health-check that tests no more
 	// nodes than needed (unless force, e.g. a manual URLTest, which always tests everything).
 	if g.balancer != nil && !force {

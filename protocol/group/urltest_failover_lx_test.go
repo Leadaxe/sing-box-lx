@@ -93,8 +93,12 @@ func newFailoverTestGroup(t *testing.T, nodes ...*failoverNode) *URLTestGroup {
 }
 
 // ageHistory makes every stored result older than interval, so the next
-// non-forced run probes the nodes it is asked to (testNodes skips fresh history).
+// non-forced run probes the nodes it is asked to (testNodes skips fresh history),
+// and moves the previous tick run end back with it (SPEC 125 quiet pause).
 func ageHistory(g *URLTestGroup) {
+	if nanos := g.lastTickRunEnd.Load(); nanos != 0 {
+		g.lastTickRunEnd.Store(nanos - int64(2*g.interval))
+	}
 	for _, detour := range g.outbounds {
 		if history := g.history.LoadURLTestHistory(detour.Tag()); history != nil {
 			g.history.StoreURLTestHistory(detour.Tag(), &adapter.URLTestHistory{Time: time.Now().Add(-2 * g.interval), Delay: history.Delay})
