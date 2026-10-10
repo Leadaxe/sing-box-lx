@@ -28,6 +28,10 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### Unreleased
+
+- 🐛 **`lxd --service=install` и `--service=copy` падали на чистой macOS: нет `/Library/PrivilegedHelperTools`.** Каталог не входит в установку системы — его создаёт SMJobBless при первом root-помощнике, и на маке, где никто помощника не ставил (MacBook Pro 2016, macOS 12.7.6, lx.14), ядро отказывало с `exec dir … does not exist; it is part of macOS`. Так же падали кнопка Install и classic TUN лаунчера и `install-macos.sh`. Теперь install и copy создают последний компонент дефолта `root:wheel 0755` (`os.Mkdir`, явный chown 0:0, chmod 0755, повторная проверка цепочки) — то же, что `sudo mkdir -m 0755`; `/Library` должен существовать и проходить инвариант 100, существующий каталог проверяется как раньше и не «чинится», `--dry-run` печатает `would create`, status и uninstall каталог не создают; `--exec-dir` без изменений. Тест `TestServiceDefaultExecDirCreated`. ([SPEC 124](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/124-LXD_DEFAULT_EXEC_DIR_CREATE/SPEC.md))
+
 #### v1.14.3-lx.14
 
 Стабильный релиз после `v1.14.2-lx.13`, без rc-линии. База — sing-box `v1.14.3` (`upstream/stable` `7054cac51`), как у lx.13, дрейф 0. Два полевых репорта: issue #36 (XHTTP, query в `path`) и issue #37 (размер пакета над IP-туннелем). Срез 09.10.2026.

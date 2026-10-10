@@ -146,7 +146,7 @@ connection-настроек: у команды нет флагов `--listen/--t
 | `--config-force <файл>` | всегда бутиться с этого файла, поверх last-good |
 | `--run` | поднять ядро независимо от записанного run-состояния |
 | `--service install\|install-user\|copy\|uninstall\|status` | установка службой, защищённая копия без службы, снятие, отчёт (см. разделы ОС, [7.1](#71-root-owned-копия-бинаря) и [7a](#7a-windows--автоматическая-установка)); на Windows `install`/`copy`/`uninstall` требуют повышенного токена, `install-user` — отказ |
-| `--exec-dir <dir>` | с `install`/`copy`/`uninstall`/`status` — каталог защищённой копии и её сайдкара. macOS: `sing-box-lxd`, дефолт `/Library/PrivilegedHelperTools`, должен существовать; заданный здесь создаётся. Windows: `sing-box-lxd.exe` (с `libcronet.dll`, если она лежит рядом с источником), дефолт `<ProgramFiles>\sing-box-lxd`, создаётся, если его нет |
+| `--exec-dir <dir>` | с `install`/`copy`/`uninstall`/`status` — каталог защищённой копии и её сайдкара. macOS: `sing-box-lxd`, дефолт `/Library/PrivilegedHelperTools`, при отсутствии создаётся `root:wheel 0755`; заданный здесь создаётся вместе с недостающими родителями. Windows: `sing-box-lxd.exe` (с `libcronet.dll`, если она лежит рядом с источником), дефолт `<ProgramFiles>\sing-box-lxd`, создаётся, если его нет |
 | `--allow-unsafe-exec` | только для отладки: служба (root-job launchd, служба SCM на Windows) стартует и с бинаря, который не защищённая копия (WARN вместо отказа) |
 | `--purge` | с `uninstall` — снести и state-каталог (Windows: весь `<ProgramData>\sing-box-lxd`, state и логи) |
 | `--keep-copy` | с `uninstall` — снять службу, защищённую копию оставить для запуска без службы ([7.1](#71-root-owned-копия-бинаря), [7a](#7a-windows--автоматическая-установка)) |
@@ -269,8 +269,12 @@ LaunchDaemon исполняется от root при каждой загрузк
 `sing-box-lxd` влезает целиком и содержит `sing-box`, так что `pgrep sing-box`, `pkill` и
 `ps -c` находят демон без `-f`. Ярлык службы, plist и `XPC_SERVICE_NAME` остаются
 `com.leadaxe.sing-box-lxd`.
-`/Library/PrivilegedHelperTools` поставляется с macOS; install его не создаёт, а его
-отсутствие — ошибка с подсказкой.
+На чистой macOS `/Library/PrivilegedHelperTools` нет, пока SMJobBless не поставит первый
+привилегированный помощник; `install` и `copy` тогда создают его `root:wheel 0755` — то же,
+что дал бы `sudo mkdir -m 0755` (`lxd: created … (root:wheel 0755)`; `--dry-run` пишет
+`would create`). Создаётся только этот последний компонент: `/Library` должен существовать
+и проходить инвариант, существующий каталог проверяется и не «чинится», `status`/`uninstall`
+его не создают (SPEC 124).
 
 - **Инвариант.** Каждый компонент пути от `/` до бинаря — настоящий каталог или файл
   (не симлинк), принадлежит uid 0 и не имеет записи для group и other. Сам
