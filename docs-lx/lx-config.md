@@ -419,7 +419,7 @@ Upstream `urltest` always selects the single lowest-delay node. sing-box-lx adds
 |---|---|---|---|
 | `least_test` (default) | the fastest node | as soon as another one is faster by `tolerance` | every node |
 | `round_robin` | a pool of live nodes | rotation over the pool | pool members (lazily) |
-| `failover` | the fastest node at selection time | **only when the current one fails**; the next one is again the fastest | **only the current node** |
+| `failover` | the fastest node at selection time | **only when the current one fails or degrades** (> 2× slower than the others, confirmed); the next one is again the fastest | **only the current node** |
 
 The common upstream fields (`url`, `interval`, `idle_timeout`, `interrupt_exist_connections`) are
 unchanged; `mode`/`balancer` need no build tag; the `GetPool` CommandClient method (see
@@ -506,13 +506,18 @@ the order of the `outbounds` list does not matter.
 **Hold.** While the node works the group stays on it, even if another one becomes faster. Each
 `interval` probes **only the held node** — one probe instead of N; the other nodes sleep.
 
+**Degradation (SPEC 126).** If the held node answers more than 2× slower than the fastest other
+node of the same network (by its last known delay), it is probed once more at once. Still more than
+2× slower → a full run, and the group moves to the fastest node only if it is more than 1.5×
+faster; otherwise it stays (the whole network got slower, not the node). No config key.
+
 **Failure.** Two kinds:
 
 - the held node fails a probe → a full run over every node → the fastest live one;
 - a dial through it fails with a "path is dead" error → SPEC 054 penalty and fallback dial → the
   selection moves without `Interrupt`.
 
-After the move the new node becomes the held one.
+After the move the new node becomes the held one. A degraded node (above) moves the same way.
 
 **Manual test.** A group test from the UI, CLI (`sing-box api group urltest <tag>`) or Clash API
 is always `force`: it probes every node and re-selects the fastest. This is the only way back to
