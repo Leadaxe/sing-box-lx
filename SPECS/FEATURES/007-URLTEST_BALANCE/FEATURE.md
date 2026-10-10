@@ -157,6 +157,7 @@
 | [050 — URLTEST_ZOMBIE_RUN_SURVIVES_RESTART](../../TASKS/050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md) | Отменяемость прогона: `Close()` группы гасит идущий тест (ведётся в [HOTFIXES](../004-HOTFIXES/FEATURE.md); алгоритм выбора узлов не меняется) | D |
 | [054 — URLTEST_PENALTY_FAILOVER](../../TASKS/054-URLTEST_PENALTY_FAILOVER/SPEC.md) | least_test: штрафы за отказы «путь мёртв» + один fallback-дайл (кап 2), аварийное ранжирование (штрафы ↑, задержка ↑) при ≥3 у лучшего, force-прогон при тотальных штрафах (не чаще раза в 2 мин от конца прошлого); сброс штрафа только доказательством жизни | C |
 | [116 — URLTEST_FAILOVER_MODE](../../TASKS/116-URLTEST_FAILOVER_MODE/SPEC.md) | Режим `failover` (держаться до отказа, проба только текущего узла, переезд на самого быстрого); удаление `passive_check` | I |
+| [125 — URLTEST_TICK_SKIP](../../TASKS/125-URLTEST_TICK_SKIP/SPEC.md) | Тиковый прогон пробует узлы каждый `interval`, а не раз в 2×`interval` (`least_test`, `failover`): порог свежести — от конца прошлого тикового прогона | I |
 
 Разбор отвергнутых схем распределения — в журнале [SPEC.md](../../TASKS/019-URLTEST_MODE_STICKY/SPEC.md) задачи.
 Конфиг — [docs/configuration/outbound/urltest.md](../../../docs/configuration/outbound/urltest.md).
