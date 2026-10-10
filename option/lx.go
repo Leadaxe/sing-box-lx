@@ -1,9 +1,12 @@
 package option
 
 import (
+	"reflect"
 	"time"
 
+	"github.com/sagernet/sing-box/schema"
 	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badoption"
 )
 
@@ -16,6 +19,10 @@ import (
 type LXOptions struct {
 	WG     *LXWGOptions     `json:"wg,omitempty"`
 	MASQUE *LXMASQUEOptions `json:"masque,omitempty"`
+	// MTUAlign is the path-MTU alignment policy for nodes above IP tunnels
+	// (lx: SPEC 120): a mode string, or an object with the mode and the tags
+	// to leave alone. Absent = "clamp".
+	MTUAlign *LXMTUAlign `json:"mtu_align,omitempty"`
 }
 
 // LXWGOptions holds the WG/AWG endpoint knobs. The three idle keys keep the
@@ -52,6 +59,62 @@ type LXMASQUEOptions struct {
 	IdleTimeout badoption.Duration `json:"idle_timeout,omitempty"`
 }
 
+// The lx.mtu_align modes (lx: SPEC 120 §2.3). The parsing side of the same
+// table lives in common/lxmtu, which this package must not import.
+const (
+	LXMTUAlignOff   = "off"
+	LXMTUAlignFill  = "fill"
+	LXMTUAlignClamp = "clamp"
+)
+
+type _LXMTUAlign struct {
+	Mode   string                     `json:"mode,omitempty" enum:"off,fill,clamp"`
+	Except badoption.Listable[string] `json:"except,omitempty"`
+}
+
+// LXMTUAlign is lx.mtu_align in either of its two JSON forms: a bare mode
+// string, or {"mode": …, "except": […]}. The string form is the canonical
+// output when there are no exceptions.
+type LXMTUAlign _LXMTUAlign
+
+func (o LXMTUAlign) MarshalJSON() ([]byte, error) {
+	if len(o.Except) == 0 {
+		return json.Marshal(o.Mode)
+	}
+	return json.Marshal(_LXMTUAlign(o))
+}
+
+func (o *LXMTUAlign) UnmarshalJSON(bytes []byte) error {
+	var mode string
+	if err := json.Unmarshal(bytes, &mode); err == nil {
+		*o = LXMTUAlign{Mode: mode}
+		return validateLXMTUAlignMode(mode)
+	}
+	if err := json.UnmarshalDisallowUnknownFields(bytes, (*_LXMTUAlign)(o)); err != nil {
+		return err
+	}
+	return validateLXMTUAlignMode(o.Mode)
+}
+
+func (o LXMTUAlign) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("LXMTUAlign", func() (*schema.Node, error) {
+		objectForm := schema.StrictObject()
+		err := builder.FlattenStruct(objectForm, reflect.TypeFor[LXMTUAlign]())
+		if err != nil {
+			return nil, err
+		}
+		return schema.AnyOf(schema.StringEnum(LXMTUAlignOff, LXMTUAlignFill, LXMTUAlignClamp), objectForm), nil
+	})
+}
+
+func validateLXMTUAlignMode(mode string) error {
+	switch mode {
+	case "", LXMTUAlignOff, LXMTUAlignFill, LXMTUAlignClamp:
+		return nil
+	}
+	return E.New(`lx.mtu_align.mode must be "off", "fill" or "clamp"`)
+}
+
 // LXBuildOverflow is the resolved lx.wg.build_overflow.
 type LXBuildOverflow uint8
 
@@ -67,6 +130,8 @@ const (
 type LXResolved struct {
 	WG     LXWGResolved
 	MASQUE LXMASQUEResolved
+	// MTUAlign always carries a mode: "clamp" when the key is absent.
+	MTUAlign LXMTUAlignResolved
 }
 
 type LXWGResolved struct {
@@ -87,6 +152,12 @@ type LXMASQUEResolved struct {
 	IdleTimeout time.Duration
 }
 
+// LXMTUAlignResolved is the resolved lx.mtu_align (lx: SPEC 120).
+type LXMTUAlignResolved struct {
+	Mode   string
+	Except []string
+}
+
 // WGOrZero returns the WG values, or all-off when r is nil.
 func (r *LXResolved) WGOrZero() LXWGResolved {
 	if r == nil {
@@ -101,6 +172,15 @@ func (r *LXResolved) MASQUEOrZero() LXMASQUEResolved {
 		return LXMASQUEResolved{}
 	}
 	return r.MASQUE
+}
+
+// MTUAlignOrDefault returns the mtu_align policy, or the default (clamp,
+// no exceptions) when r is nil.
+func (r *LXResolved) MTUAlignOrDefault() LXMTUAlignResolved {
+	if r == nil || r.MTUAlign.Mode == "" {
+		return LXMTUAlignResolved{Mode: LXMTUAlignClamp}
+	}
+	return r.MTUAlign
 }
 
 // ResolveLX folds the deprecated route.lx_idle_* aliases into the `lx` block,
@@ -165,7 +245,7 @@ func ResolveLX(options *Options) (*LXResolved, []string, error) {
 		wg.IdleTeardown = &value
 	}
 
-	resolved, err := resolveLXValues(wg, lx.MASQUE)
+	resolved, err := resolveLXValues(wg, lx.MASQUE, lx.MTUAlign)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -178,7 +258,10 @@ func ResolveLX(options *Options) (*LXResolved, []string, error) {
 	if lx.MASQUE != nil && *lx.MASQUE == (LXMASQUEOptions{}) {
 		lx.MASQUE = nil
 	}
-	if lx.WG == nil && lx.MASQUE == nil {
+	if lx.MTUAlign != nil && lx.MTUAlign.Mode == "" && len(lx.MTUAlign.Except) == 0 {
+		lx.MTUAlign = nil
+	}
+	if lx.WG == nil && lx.MASQUE == nil && lx.MTUAlign == nil {
 		options.LX = nil
 	} else {
 		options.LX = &lx
@@ -192,8 +275,25 @@ func ResolveLX(options *Options) (*LXResolved, []string, error) {
 	return resolved, warnings, nil
 }
 
-func resolveLXValues(wg LXWGOptions, masque *LXMASQUEOptions) (*LXResolved, error) {
+func resolveLXValues(wg LXWGOptions, masque *LXMASQUEOptions, mtuAlign *LXMTUAlign) (*LXResolved, error) {
 	var resolved LXResolved
+	resolved.MTUAlign.Mode = LXMTUAlignClamp
+	if mtuAlign != nil {
+		if err := validateLXMTUAlignMode(mtuAlign.Mode); err != nil {
+			return nil, err
+		}
+		if mtuAlign.Mode != "" {
+			resolved.MTUAlign.Mode = mtuAlign.Mode
+		}
+		for _, tag := range mtuAlign.Except {
+			if tag == "" {
+				return nil, E.New("lx.mtu_align.except: empty tag")
+			}
+		}
+		if len(mtuAlign.Except) > 0 {
+			resolved.MTUAlign.Except = append([]string(nil), mtuAlign.Except...)
+		}
+	}
 	if wg.IdleSuspend < 0 {
 		return nil, E.New("lx.wg.idle_suspend must be >= 0")
 	}

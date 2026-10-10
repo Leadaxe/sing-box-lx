@@ -1,27 +1,17 @@
 //go:build with_awg
 
-// SIP INVITE + 100 Trying masquerade generator (multi-packet i1+i2).
+// SIP INVITE masquerade generator (i1).
 //
-// MODEL. The decoy is the opening exchange of a real SIP dialog (RFC 3261 §17):
-//   - i1 = a complete, self-contained INVITE request (Content-Length: 0, no SDP
-//     body) — exactly what a UAC sends to start a call.
-//   - i2 = a complete, self-contained "SIP/2.0 100 Trying" provisional response —
-//     what the server immediately replies with to acknowledge the INVITE.
+// MODEL. The decoy is the first packet of a real SIP dialog (RFC 3261 §17): a
+// complete, self-contained INVITE request (Content-Length: 0, no SDP body) —
+// exactly what a UAC sends to start a call. It goes out as one UDP datagram
+// before the WireGuard handshake (amneziawg-go send.go, src=nil).
 //
-// Each datagram is a WHOLE, valid SIP message on its own. This matters because
-// these go out as two independent UDP datagrams (amneziawg-go send.go sends each
-// ipacket separately, src=nil): UDP has no stream reassembly, so a pattern-
-// matching DPI inspects each datagram in isolation. An INVITE and a 100 Trying
-// each parse as valid SIP; together they read as the canonical start of a call.
-// (An earlier attempt fragmented ONE INVITE across i1/i2 — head in i1, SDP body
-// in i2 — which left each datagram individually malformed, since nothing
-// reassembles UDP. This shape supersedes it.)
-//
-// The two messages belong to ONE dialog, so their Via branch, From tag, Call-ID
-// and CSeq are IDENTICAL across i1 and i2. They are therefore generated ONCE and
-// baked into the static <b> bytes of both halves — they cannot be per-packet
-// <rc>/<rd> runs, which would emit different values into each slot and break the
-// dialog identity a stateful DPI checks.
+// Earlier shapes are gone: one INVITE fragmented across i1/i2 (head in i1, SDP
+// body in i2) left each datagram individually malformed since nothing
+// reassembles UDP; the later INVITE (i1) + "SIP/2.0 100 Trying" (i2) pair put a
+// SERVER response into the client's slot — a UAC never sends 100 Trying, and a
+// WireSock-style responder answers the INVITE with its own 100 Trying.
 //
 // TEMPLATE. The byte layout matches the canonical RFC 3261 §24.2 example exactly
 // — header ORDER (INVITE → Via → Max-Forwards → To → From → Call-ID → CSeq →
@@ -39,16 +29,16 @@
 // CRLF-safe) becomes the caller domain so it stays visible on the wire.
 //
 // REQUIRES junk packets. This profile is meant to be used with jc/jmin/jmax > 0:
-// the masquerade decoys ride out alongside junk in the same pre-handshake burst.
+// the masquerade decoy rides out alongside junk in the same pre-handshake burst.
 package wireguard
 
 import (
 	"strings"
 )
 
-// sipDialog holds the per-generation identifiers shared verbatim by the INVITE
-// (i1) and its 100 Trying (i2): without this sharing the two would not read as
-// one dialog. All fields are baked into static <b> bytes, never <rc>/<rd>.
+// sipDialog holds the per-generation identifiers of the INVITE. All fields are
+// baked into static <b> bytes, never <rc>/<rd>, so the headers agree with each
+// other within the message.
 //
 // Three hosts, per the RFC 3261 §24.2 call shape (see file header):
 type sipDialog struct {
@@ -106,27 +96,6 @@ func masqueSIPInviteCPS(d sipDialog) (string, error) {
 	s.WriteString("CSeq: " + d.cseq + " INVITE\r\n")
 	s.WriteString("Contact: <sip:" + d.fromUser + "@" + d.uaHost + ">\r\n")
 	s.WriteString("Content-Type: application/sdp\r\n")
-	s.WriteString("Content-Length: 0\r\n")
-	s.WriteString("\r\n")
-
-	var b cpsBuilder
-	b.addBytes([]byte(s.String()))
-	return b.String(), nil
-}
-
-// masqueSIPTryingCPS builds the i2 "SIP/2.0 100 Trying" provisional response for
-// the SAME dialog: status line + Via/To/From/Call-ID/CSeq echoed verbatim (same
-// branch/tag/Call-ID/CSeq and the same three hosts) + Content-Length: 0. A
-// provisional response omits the request-only headers (Max-Forwards/Contact/
-// Content-Type). Returns the CPS string for slot i2.
-func masqueSIPTryingCPS(d sipDialog) (string, error) {
-	var s strings.Builder
-	s.WriteString("SIP/2.0 100 Trying\r\n")
-	s.WriteString("Via: SIP/2.0/UDP " + d.uaHost + ";branch=z9hG4bK" + d.branch + "\r\n")
-	s.WriteString("To: " + d.toDisp + " <sip:" + d.toUser + "@" + d.calleeHost + ">\r\n")
-	s.WriteString("From: " + d.fromDisp + " <sip:" + d.fromUser + "@" + d.callerDom + ">;tag=" + d.tag + "\r\n")
-	s.WriteString("Call-ID: " + d.callID + "@" + d.uaHost + "\r\n")
-	s.WriteString("CSeq: " + d.cseq + " INVITE\r\n")
 	s.WriteString("Content-Length: 0\r\n")
 	s.WriteString("\r\n")
 

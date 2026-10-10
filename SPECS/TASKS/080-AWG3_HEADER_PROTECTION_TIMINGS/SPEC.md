@@ -170,7 +170,7 @@ reject.PickOne − keepalive.Lo − rekey.Lo; `keychainExpireTime` = reject.Hi;
   AWG-поле, число проходит.
 - `lx-test/config/awg3_full.json` + строки в `lx-ci.yml` (позитивная и негативная
   проверки).
-- Доки: `docs-lx/lx-config{,.ru}.md` (пример, счёт полей 30), `lx-protocols-transports{,.ru}.md`
+- Доки: `docs-lx/lx-config{,.ru}.md` (пример, счёт полей 30), `protocols-transports{,.ru}.md`
   (§2.1, §2.7, §2.8, §2.9, новый §2.10), FEATURE 003, баннер в SPEC 031.
 
 ## 4. Критерии приёмки — выполнено
@@ -285,4 +285,4 @@ AWG3; speedtest через узел — **35,67 Мбит/с** download (U1 HOST,
   big-endian длины + zlib; в JSON `containers[].awg.last_config` — строка с JSON, чей
   ключ `config` — текст `.conf` (`[Interface]` со всеми ключами выше, `[Peer]` с
   `PersistentKeepalive = 25-35`); `protocol_version: "3.1"`; `mtu` там же (`1376`).
-  Маппинг в JSON ядра — `docs-lx/lx-protocols-transports.md` §2.7.
+  Маппинг в JSON ядра — `docs-lx/protocols-transports.md` §2.7.

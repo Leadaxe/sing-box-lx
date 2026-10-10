@@ -21,12 +21,17 @@ import (
 // the live QUIC sniffer (common/sniff/quic.go): derive Initial keys from the
 // DCID, strip header protection, AEAD-open, walk frames, reassemble CRYPTO. If
 // our generator and the decryptor agree, the crypto is correct (a wrong tag,
-// wrong key, or wrong nonce fails the Open). The assertions check STRUCTURE and
-// the I1–I4 invariants, never "two outputs differ" tautologies.
+// wrong key, or wrong nonce fails the Open). The assertions check STRUCTURE
+// (frame layout per browser, contiguous reassembly I4), never "two outputs
+// differ" tautologies.
 
 // decodedInitial is the result of reverse-parsing a generated Initial.
 type decodedInitial struct {
 	dcid         []byte
+	scid         []byte
+	packetNumber uint64
+	pnLen        int
+	trailing     int // datagram bytes after the QUIC packet (neqo zero fill)
 	lengthField  uint64
 	frameTypes   []byte           // frame type bytes in wire order
 	cryptoFrames []cryptoFragment // CRYPTO frames in wire order
@@ -34,7 +39,17 @@ type decodedInitial struct {
 }
 
 // decryptInitial reverse-parses a QUIC v1 Initial: it mirrors common/sniff/quic.go.
+// The CRYPTO frames must reassemble to a complete ClientHello (I4).
 func decryptInitial(t *testing.T, packet []byte) decodedInitial {
+	t.Helper()
+	d := decryptInitialFrames(t, packet)
+	d.clientHello = reassemble(t, d.cryptoFrames)
+	return d
+}
+
+// decryptInitialFrames is decryptInitial without the reassembly: for a capture
+// whose ClientHello spans several Initials.
+func decryptInitialFrames(t *testing.T, packet []byte) decodedInitial {
 	t.Helper()
 	reader := bytes.NewReader(packet)
 
@@ -55,7 +70,9 @@ func decryptInitial(t *testing.T, packet []byte) decodedInitial {
 
 	scidLen, err := reader.ReadByte()
 	require.NoError(t, err)
-	require.Equal(t, byte(0), scidLen, "empty SCID")
+	scid := make([]byte, scidLen)
+	_, err = io.ReadFull(reader, scid)
+	require.NoError(t, err)
 
 	tokenLen, err := reader.ReadByte()
 	require.NoError(t, err)
@@ -78,7 +95,6 @@ func decryptInitial(t *testing.T, packet []byte) decodedInitial {
 	copy(unprotected, packet)
 	unprotected[0] ^= mask[0] & 0x0f
 	pnLen := int(unprotected[0]&0x03) + 1
-	require.Equal(t, quicPacketNumberLen, pnLen, "packet number length")
 	for i := 0; i < pnLen; i++ {
 		unprotected[hdrLen+i] ^= mask[1+i]
 	}
@@ -130,10 +146,13 @@ func decryptInitial(t *testing.T, packet []byte) decodedInitial {
 
 	return decodedInitial{
 		dcid:         dcid,
+		scid:         scid,
+		packetNumber: packetNumber,
+		pnLen:        pnLen,
+		trailing:     len(packet) - (hdrLen + int(lengthField)),
 		lengthField:  lengthField,
 		frameTypes:   frameTypes,
 		cryptoFrames: cryptos,
-		clientHello:  reassemble(t, cryptos),
 	}
 }
 
@@ -263,15 +282,8 @@ func TestQUICInitialDecrypt(t *testing.T) {
 	require.NotEmpty(t, d.clientHello)
 }
 
-// §5.2 — frame-walk + invariants I1–I3.
-func TestQUICInitialFrameWalkInvariants(t *testing.T) {
-	t.Parallel()
-	pkt := genInitial(t, "gosuslugi.ru")
-	d := decryptInitial(t, pkt)
-
-	require.GreaterOrEqual(t, len(d.cryptoFrames), 6, "≥6 CRYPTO frames (§3.2)")
-
-	var pings, paddings int
+// countFrames returns the PING and PADDING byte counts of a decoded Initial.
+func countFrames(d decodedInitial) (pings, paddings int) {
 	for _, ft := range d.frameTypes {
 		switch ft {
 		case 0x01:
@@ -280,21 +292,107 @@ func TestQUICInitialFrameWalkInvariants(t *testing.T) {
 			paddings++
 		}
 	}
-	require.GreaterOrEqual(t, pings, 1, "≥1 PING frame (I3)")
-	require.Greater(t, paddings, 0, "PADDING runs present (I3)")
+	return
+}
 
-	// I1: first CRYPTO frame in wire order has offset≠0.
-	require.NotEqual(t, uint64(0), d.cryptoFrames[0].offset, "first CRYPTO frame offset≠0 (I1)")
+// §5.2 — frame-walk, chaos layout (ib=chrome): the frame census must stay inside
+// the QuicChaosProtector ranges — 2..11 CRYPTO frames (1 + up to 10 splits),
+// 2..10 PINGs — with PADDING present.
+func TestQUICInitialFrameWalkInvariants(t *testing.T) {
+	t.Parallel()
+	pkt := genInitial(t, "gosuslugi.ru")
+	d := decryptInitial(t, pkt)
+	assertChaosLayout(t, d)
+}
 
-	// I2: the offset-0 CRYPTO frame is NOT first.
-	zeroIdx := -1
-	for i, f := range d.cryptoFrames {
-		if f.offset == 0 {
-			zeroIdx = i
-			break
+// assertChaosLayout checks one decoded Initial against the QuicChaosProtector
+// frame census (quic_chaos_protector.cc constants). The first split always
+// lands (the only frame is CRYPTO and longer than one byte), later attempts can
+// pick a one-byte piece and be skipped — exactly as in Chrome — so the floor is
+// 2 CRYPTO frames, the ceiling 1 + kMaxAddedCryptoFrames.
+func assertChaosLayout(t *testing.T, d decodedInitial) {
+	t.Helper()
+	require.GreaterOrEqual(t, len(d.cryptoFrames), 2, "≥2 CRYPTO frames (at least one split)")
+	require.LessOrEqual(t, len(d.cryptoFrames), 11, "≤11 CRYPTO frames (1 + kMaxAddedCryptoFrames)")
+	pings, paddings := countFrames(d)
+	require.GreaterOrEqual(t, pings, 2, "≥2 PING frames (kMinAddedPingFrames)")
+	require.LessOrEqual(t, pings, 10, "≤10 PING frames (kMaxAddedPingFrames)")
+	require.Greater(t, paddings, 0, "PADDING present")
+	require.Equal(t, uint64(1), d.packetNumber, "quiche numbers packets from 1")
+	require.Equal(t, 1, d.pnLen, "Chrome pn_len 1 on the first Initial")
+	require.Empty(t, d.scid, "Chrome sends an empty SCID")
+	require.Equal(t, 0, d.trailing)
+}
+
+// assertPlainLayout checks the one-CRYPTO layout (neqo / ngtcp2 / quic-go
+// style) used by ib=firefox and the generic ClientHello: the first frame is the
+// whole ClientHello at offset 0 and there are no PINGs. The fill differs per
+// stack (PADDING frames inside the packet, or zeros after it) and is checked
+// by the header assertions.
+func assertPlainLayout(t *testing.T, d decodedInitial) {
+	t.Helper()
+	require.Len(t, d.cryptoFrames, 1, "exactly one CRYPTO frame")
+	require.Equal(t, uint64(0), d.cryptoFrames[0].offset, "CRYPTO at offset 0")
+	require.Equal(t, byte(0x06), d.frameTypes[0], "CRYPTO is the first frame")
+	pings, _ := countFrames(d)
+	require.Equal(t, 0, pings, "no PING frames")
+}
+
+// assertFirefoxHeader checks the neqo Initial shape (Firefox 149 capture): a
+// 1252-byte datagram, 3-byte SCID, 2-byte packet number, the QUIC packet sized
+// to its frames with zero fill after it, and that SCID echoed in
+// initial_source_connection_id.
+func assertFirefoxHeader(t *testing.T, d decodedInitial, pktLen int) {
+	t.Helper()
+	require.Equal(t, quicFirefoxTotalLen, pktLen, "Firefox datagram size")
+	require.Len(t, d.scid, 3, "Firefox 3-byte SCID")
+	require.Equal(t, 2, d.pnLen, "Firefox pn_len 2")
+	require.Greater(t, d.trailing, 0, "zero fill after the QUIC packet")
+	_, paddings := countFrames(d)
+	require.Equal(t, 0, paddings, "no PADDING frames inside the packet")
+}
+
+// assertGenericHeader checks the generic / curl Initial: 1250 bytes, empty
+// SCID, pn_len 1, packet number 0, PADDING inside the packet.
+func assertGenericHeader(t *testing.T, d decodedInitial, pktLen int) {
+	t.Helper()
+	require.Equal(t, quicInitialTotalLen, pktLen)
+	require.Empty(t, d.scid)
+	require.Equal(t, 1, d.pnLen)
+	require.Equal(t, uint64(0), d.packetNumber)
+	_, paddings := countFrames(d)
+	require.Greater(t, paddings, 0, "PADDING tail inside the packet")
+	require.Equal(t, 0, d.trailing)
+}
+
+// Layout follows the browser: chrome → chaos, firefox / generic → plain. Over
+// many chaos samples the shuffle must sometimes put the offset-0 fragment first
+// and sometimes not (a plain Fisher–Yates, nothing pinned).
+func TestQUICInitialLayoutPerBrowser(t *testing.T) {
+	t.Parallel()
+	const sni = "www.google.com"
+	for _, ib := range []string{"", "curl"} {
+		pkt, err := buildInitialPacket(sni, ib, defaultQUICGenParams())
+		require.NoError(t, err, "ib=%q", ib)
+		d := decryptInitial(t, pkt)
+		assertPlainLayout(t, d)
+		assertGenericHeader(t, d, len(pkt))
+		require.Equal(t, sni, extractSNI(t, d.clientHello))
+	}
+	zeroFirst, zeroLater := 0, 0
+	for iter := 0; iter < 200; iter++ {
+		pkt, err := buildInitialPacket(sni, "chrome", defaultQUICGenParams())
+		require.NoError(t, err)
+		d := decryptInitial(t, pkt)
+		assertChaosLayout(t, d)
+		if d.cryptoFrames[0].offset == 0 {
+			zeroFirst++
+		} else {
+			zeroLater++
 		}
 	}
-	require.Greater(t, zeroIdx, 0, "offset-0 CRYPTO frame is not the first one (I2)")
+	require.Greater(t, zeroFirst, 0, "offset-0 fragment is sometimes first (no pinned order)")
+	require.Greater(t, zeroLater, 0, "offset-0 fragment is sometimes not first")
 }
 
 // §5.3 — reassembly + SNI (I4).
@@ -324,12 +422,11 @@ func TestQUICInitialUniqueness(t *testing.T) {
 }
 
 // Regression: a long but VALID LDH domain (validateMasqueDomain accepts up to
-// 253 bytes) must NOT hard-fail generation. Before the flex-PADDING fix, an SNI
-// past ~77 bytes overflowed the fixed 294-byte ClientHello target and the
-// endpoint failed to start with an opaque error after config was accepted. The
-// flex PADDING run absorbs the slack, so the packet stays exactly 1250 bytes for
-// any supportable SNI, and the longer ClientHello still reassembles to the right
-// SNI (I4).
+// 253 bytes) must NOT hard-fail generation. An SNI past ~77 bytes once
+// overflowed the fixed 294-byte ClientHello target and the endpoint failed to
+// start with an opaque error after config was accepted. The PADDING budget
+// absorbs the slack, so the packet stays exactly 1250 bytes for any supportable
+// SNI, and the longer ClientHello still reassembles to the right SNI (I4).
 func TestQUICInitialLongSNI(t *testing.T) {
 	t.Parallel()
 	// 80-char domain across two ≤63-byte labels — valid LDH, well past the old
@@ -347,11 +444,10 @@ func TestQUICInitialLongSNI(t *testing.T) {
 	require.Greater(t, len(d.clientHello), quicCHTargetLen, "long SNI grows the ClientHello past the etalon")
 }
 
-// Randomization: the layout is fresh per call (random cut points + wire order),
-// but the I1–I4 invariants must hold on EVERY sample, and two calls must differ
-// in their fragment offsets (no fixed cross-user signature). This guards the
-// randomizedWirePlan / planFragmentsN paths against a bad seed breaking an
-// invariant.
+// Randomization: the chaos layout is fresh per call (random splits, PINGs,
+// PADDING spread and order), the chaos census and the reassembly (I4) must hold
+// on EVERY sample, and two calls must differ in their fragment offsets (no fixed
+// cross-user signature).
 func TestQUICInitialRandomizedInvariants(t *testing.T) {
 	t.Parallel()
 	const sni = "www.google.com"
@@ -361,20 +457,7 @@ func TestQUICInitialRandomizedInvariants(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, quicInitialTotalLen, len(pkt))
 		d := decryptInitial(t, pkt)
-		// I1 + I2
-		require.NotEqual(t, uint64(0), d.cryptoFrames[0].offset, "I1: first wire CRYPTO offset != 0 (iter %d)", iter)
-		// I3
-		var pings, pads int
-		for _, ft := range d.frameTypes {
-			switch ft {
-			case 0x01:
-				pings++
-			case 0x00:
-				pads++
-			}
-		}
-		require.GreaterOrEqual(t, pings, 1, "I3 PING (iter %d)", iter)
-		require.Greater(t, pads, 0, "I3 PADDING (iter %d)", iter)
+		assertChaosLayout(t, d)
 		// I4
 		require.Equal(t, byte(0x01), d.clientHello[0])
 		require.Equal(t, sni, extractSNI(t, d.clientHello), "I4 SNI (iter %d)", iter)
@@ -396,25 +479,25 @@ func TestQUICInitialRandomizedInvariants(t *testing.T) {
 	require.False(t, allSame, "randomized cut points must differ across calls (no fixed signature)")
 }
 
-// Robustness knobs: more fragments, more PINGs, and a variable datagram size
-// must all still satisfy I1–I4 and stay within the configured size range.
+// Datagram size range: every size in the configured range must still carry a
+// valid chaos layout that reassembles (I4) and stay within the range.
 func TestQUICInitialRobustnessKnobs(t *testing.T) {
 	t.Parallel()
 	const sni = "gosuslugi.ru"
 	for _, p := range []quicGenParams{
-		{fragments: 10, pings: 3, totalLenMin: 1250, totalLenMax: 1400},
-		{fragments: 4, pings: 1, totalLenMin: 1200, totalLenMax: 1300},
-		{fragments: 12, pings: 4, totalLenMin: 1300, totalLenMax: 1500},
+		{totalLenMin: 1250, totalLenMax: 1400},
+		{totalLenMin: 1200, totalLenMax: 1300},
+		{totalLenMin: 1300, totalLenMax: 1500},
+		{totalLenMin: 1250, totalLenMax: 1250},
 	} {
 		for iter := 0; iter < 30; iter++ {
 			pkt, err := buildInitialPacket(sni, "chrome", p)
-			require.NoError(t, err, "fragments=%d", p.fragments)
+			require.NoError(t, err)
 			require.GreaterOrEqual(t, len(pkt), p.totalLenMin)
 			require.LessOrEqual(t, len(pkt), p.totalLenMax)
 			d := decryptInitial(t, pkt)
-			require.Equal(t, p.fragments, len(d.cryptoFrames), "fragment count knob")
-			require.NotEqual(t, uint64(0), d.cryptoFrames[0].offset, "I1 at fragments=%d", p.fragments)
-			require.Equal(t, sni, extractSNI(t, d.clientHello), "I4 SNI at fragments=%d", p.fragments)
+			assertChaosLayout(t, d)
+			require.Equal(t, sni, extractSNI(t, d.clientHello), "I4 SNI at fragments=%d", len(d.cryptoFrames))
 		}
 	}
 }

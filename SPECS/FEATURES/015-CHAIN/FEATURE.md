@@ -134,12 +134,16 @@ GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
   health check, sticky, penalties and fallback, `interrupt_exist_connections`. Switching a group
   with that flag also cuts the chain's connections that went through it, including the tunnels of
   links above — they come back up through the new pick.
-- **A link = the original minus the DPI garb, plus `rewrite`, with an adjusted MTU.** The order of
-  transformations is fixed: `strip` → `rewrite` → MTU. `mtu` in a node's config means "as a
-  standalone node"; the chain only **lowers** it by the exact overhead of the IP tunnels below the
-  link (WireGuard inside an IP tunnel −60/−80 by the server's address family, MASQUE ≈ −90); over
-  stream and datagram proxies the MTU is left alone. Under a group the worst case over all its
-  members is taken — so a link is not rebuilt when a group below switches.
+- **A link = the original minus the DPI garb, plus `rewrite`, with an aligned MTU / packet size.**
+  The order of transformations is fixed: `strip` → `rewrite` → MTU. The MTU rule is the shared
+  mechanism of [SPEC 120](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) (`lx.mtu_align`), the same one
+  that acts under a plain `detour`: `mtu` in a node's config means "as a standalone node"; the chain
+  only **lowers** it by the exact overhead of the IP tunnels below the link (WireGuard inside an IP
+  tunnel −60/−80 by the server's address family, MASQUE −79/−99); QUIC links (hysteria2, tuic,
+  hysteria) get `initial_packet_size` that fits the hop below plus `disable_path_mtu_discovery:
+  true`; over stream and datagram proxies nothing changes. The mode (`clamp` default, `fill`,
+  `off`) and `except` apply to links as they do to `detour`. Under a group the worst case over
+  all its members is taken — so a link is not rebuilt when a group below switches.
 - **Transparent `direct`.** At a position ≥ 1 `direct` means "no hop here": the path shortens by
   that position. `direct` as a member of a selector is a runtime off-switch for the position.
   `block` is terminal at any position.
@@ -279,12 +283,16 @@ GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
   sticky, штрафы и fallback, `interrupt_exist_connections`. Переключение группы с этим флагом рвёт
   и соединения цепочки, прошедшие через неё, включая туннели звеньев выше — они переподнимаются
   через новый выбор.
-- **Звено = оригинал минус DPI-обвес плюс `rewrite`, с подогнанным MTU.** Порядок преобразований
-  фиксирован: `strip` → `rewrite` → MTU. `mtu` в конфиге узла трактуется как «MTU как
-  самостоятельного»; цепочка только **понижает** его на точные накладные IP-туннелей под звеном
-  (WireGuard внутри IP-туннеля −60/−80 по семейству адреса сервера, MASQUE ≈ −90); над потоковыми
-  и датаграммными прокси MTU не меняется. Под группой берётся худший случай по всем её участникам —
-  звено не пересоздаётся при переключении группы ниже.
+- **Звено = оригинал минус DPI-обвес плюс `rewrite`, с выровненным MTU / размером пакета.**
+  Порядок преобразований фиксирован: `strip` → `rewrite` → MTU. Правило MTU — общий механизм
+  [SPEC 120](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) (`lx.mtu_align`), тот же, что действует под
+  обычным `detour`: `mtu` в конфиге узла трактуется как «MTU как самостоятельного»; цепочка только
+  **понижает** его на точные накладные IP-туннелей под звеном (WireGuard внутри IP-туннеля −60/−80
+  по семейству адреса сервера, MASQUE −79/−99); QUIC-звенья (hysteria2, tuic, hysteria) получают
+  `initial_packet_size` под ёмкость хопа ниже и `disable_path_mtu_discovery: true`; над потоковыми
+  и датаграммными прокси ничего не меняется. Режим (`clamp` по умолчанию, `fill`, `off`) и
+  `except` действуют на звенья так же, как на `detour`. Под группой берётся худший случай по всем
+  её участникам — звено не пересоздаётся при переключении группы ниже.
 - **Прозрачный `direct`.** На позиции ≥ 1 `direct` — «хопа нет»: путь укорачивается на эту
   позицию. `direct` участником селектора = выключатель позиции на лету. `block` — терминален на
   любой позиции.
@@ -336,3 +344,4 @@ GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
 |---------------|-----------------------------|
 | [073](../../TASKS/073-CHAIN_OUTBOUND/SPEC.md) | Outbound `chain`: group positions, runtime links, transparent `direct`, warm-up/idleness, MTU, `strip`/`rewrite`, observability / Outbound `chain`: позиции-группы, рантайм-звенья, прозрачный `direct`, прогрев/простой, MTU, `strip`/`rewrite`, наблюдаемость |
 | [075](../../TASKS/075-CHAIN_POSITION_TOGGLE/SPEC.md) | Runtime enable/disable of any position over gRPC (`SetChainPositionEnabled`), cache-file persistence, selector-style connection interrupt, effective link config (`GetChainCloneConfig`), `disabled` in diagnostics / Runtime вкл/выкл любой позиции по gRPC, персистентность в cache-file, разрыв соединений по селекторной модели, эффективный конфиг звена, `disabled` в диагностике |
+| [120](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) | One MTU/packet-size alignment for `chain` links **and** plain `detour`: capacity of the node below → `mtu` of tunnels, `initial_packet_size` (+ PMTUD off) of QUIC proxies; `lx.mtu_align` = `off`/`fill`/`clamp` (default) with `except`; masque outer QUIC starts at `mtu + 51` / Единое выравнивание MTU и размера пакета для звеньев `chain` **и** обычного `detour`: ёмкость узла снизу → `mtu` туннелей, `initial_packet_size` (+ PMTUD off) QUIC-прокси; `lx.mtu_align` = `off`/`fill`/`clamp` (дефолт) с `except`; внешний QUIC masque стартует с `mtu + 51` |

@@ -99,35 +99,55 @@ func TestAwgIpcLinesValidJunkRange(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// ip=quic is a SINGLE Initial: i1 only, i2 empty. One Initial is what a real
-// client sends to open one QUIC session; the realism is in the browser-accurate
-// ClientHello (Ib), not in packet count. The i1 must be a valid fragmented
-// Initial carrying the SNI.
-func TestAwgIpcLinesQUICSingleInitial(t *testing.T) {
+// ip=quic is a dynamic decoy: awgIpcLines emits no static i1/i2 for it (a
+// baked CPS blob would repeat the same DCID and ciphertext on every handshake),
+// and awgDecoyFunc hands the device a generator that builds ONE fresh Initial
+// per call — the whole ClientHello in one QUIC packet (a multi-packet start is
+// dropped on the WARP path, LxBox §618). The non-QUIC profiles stay static CPS.
+func TestAwgIpcLinesQUICDynamicDecoy(t *testing.T) {
 	t.Parallel()
 	const sni = "www.google.com"
-	lines, err := awgIpcLines(option.AmneziaWGOptions{Id: sni, Ip: "quic", Ib: "chrome"})
+	for _, ib := range []string{"chrome", "chrome-full", "firefox", ""} {
+		o := option.AmneziaWGOptions{Id: sni, Ip: "quic", Ib: ib}
+		lines, err := awgIpcLines(o)
+		require.NoError(t, err, "ib=%q", ib)
+		require.Empty(t, ipcValue(t, lines, "i1"), "ib=%q: quic decoy is not a static i1", ib)
+		require.Empty(t, ipcValue(t, lines, "i2"), "ib=%q: i2 empty", ib)
+
+		gen := awgDecoyFunc(o, nil)
+		require.NotNil(t, gen, "ib=%q: dynamic decoy generator", ib)
+		a, b := gen(), gen()
+		require.Len(t, a, 1, "ib=%q: one Initial per handshake", ib)
+		require.Len(t, b, 1)
+		da, db := decryptInitial(t, a[0]), decryptInitial(t, b[0])
+		require.Equal(t, sni, extractSNI(t, da.clientHello), "ib=%q: decoy carries the SNI", ib)
+		require.NotEqual(t, da.dcid, db.dcid, "ib=%q: fresh DCID per handshake", ib)
+		require.NotEqual(t, a[0], b[0], "ib=%q: fresh ciphertext per handshake", ib)
+		switch ib {
+		case "chrome", "chrome-full":
+			assertChaosLayout(t, da)
+		default:
+			assertPlainLayout(t, da)
+		}
+	}
+
+	// Static profiles and plain configs have no dynamic decoy.
+	require.Nil(t, awgDecoyFunc(option.AmneziaWGOptions{Id: sni, Ip: "dns"}, nil))
+	require.Nil(t, awgDecoyFunc(option.AmneziaWGOptions{Jc: 4, Jmin: 40, Jmax: 70}, nil))
+	lines, err := awgIpcLines(option.AmneziaWGOptions{Id: sni, Ip: "dns"})
 	require.NoError(t, err)
-
-	i1 := ipcValue(t, lines, "i1")
-	require.NotEmpty(t, i1, "i1 present")
-	require.Empty(t, ipcValue(t, lines, "i2"), "quic is single-packet: i2 empty")
-
-	pkt := obfuscateCPS(t, i1)
-	require.Equal(t, 1250, len(pkt), "i1 is a 1250B Initial")
-	d := decryptInitial(t, pkt)
-	require.Equal(t, sni, extractSNI(t, d.clientHello), "i1 carries the SNI")
-	require.NotEqual(t, uint64(0), d.cryptoFrames[0].offset, "first CRYPTO offset != 0 (I1)")
+	require.NotEmpty(t, ipcValue(t, lines, "i1"), "dns stays a static i1")
 }
 
-// dns/stun/quic are single-packet: they fill i1 only, leaving i2 empty. (sip is
-// multi-packet — INVITE + 100 Trying — covered by its own test below.)
+// dns/stun/sip are single-packet static decoys: they fill i1 only, leaving i2
+// empty. (quic is generated per handshake and emits no static slot — see
+// TestAwgIpcLinesQUICDynamicDecoy.)
 func TestAwgIpcLinesNonSIPNoI2(t *testing.T) {
 	t.Parallel()
 	for _, o := range []option.AmneziaWGOptions{
 		{Id: "a.com", Ip: "dns"},
 		{Ip: "stun"},
-		{Id: "a.com", Ip: "quic"},
+		{Id: "a.com", Ip: "sip"},
 	} {
 		lines, err := awgIpcLines(o)
 		require.NoError(t, err)
@@ -136,35 +156,17 @@ func TestAwgIpcLinesNonSIPNoI2(t *testing.T) {
 	}
 }
 
-// ip=sip is multi-packet: i1 = a complete INVITE, i2 = the matching 100 Trying.
-// Both must be whole valid SIP messages wired into the device, and they must
-// share one dialog (Via branch / tag / Call-ID / CSeq) — the cross-slot check.
-func TestAwgIpcLinesSIPFillsI1AndI2(t *testing.T) {
+// ip=sip wires a complete INVITE into i1 and leaves i2 to the user: an explicit
+// i2 next to the sugar is passed through unchanged.
+func TestAwgIpcLinesSIPFillsI1(t *testing.T) {
 	t.Parallel()
 	const host = "pbx.example.com"
-	lines, err := awgIpcLines(option.AmneziaWGOptions{Id: host, Ip: "sip"})
+	lines, err := awgIpcLines(option.AmneziaWGOptions{Id: host, Ip: "sip", I2: "<b 0x0844>"})
 	require.NoError(t, err)
 
-	i1 := ipcValue(t, lines, "i1")
-	i2 := ipcValue(t, lines, "i2")
-	require.NotEmpty(t, i1, "i1 (INVITE) present")
-	require.NotEmpty(t, i2, "i2 (100 Trying) present")
-
-	invite := string(obfuscateCPS(t, i1))
-	trying := string(obfuscateCPS(t, i2))
+	invite := string(obfuscateCPS(t, ipcValue(t, lines, "i1")))
 	assertSIPInvite(t, invite, host)
-	assertSIPTrying(t, trying)
-	assertSameSIPDialog(t, invite, trying)
-}
-
-// ip=sip is the only multi-packet sugar profile, so an explicit i2 alongside it
-// is a conflict (the sugar fills i2), mirroring the i1 conflict guard. quic/dns/
-// stun are single-packet and leave i2 free, so a user i2 there is not a conflict.
-func TestAwgIpcLinesSIPExplicitI2Conflict(t *testing.T) {
-	t.Parallel()
-	_, err := awgIpcLines(option.AmneziaWGOptions{Id: "a.com", Ip: "sip", I2: "<b 0x0844>"})
-	require.Error(t, err, "ip=sip + explicit i2 must conflict")
-	require.Contains(t, err.Error(), "explicit i2 conflicts")
+	require.Equal(t, "<b 0x0844>", ipcValue(t, lines, "i2"), "user i2 passes through")
 }
 
 // ipcValue extracts the value of a "\nkey=value" line from awgIpcLines output,

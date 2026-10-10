@@ -1,136 +1,44 @@
 package chain
 
 import (
-	stdjson "encoding/json"
-	"math"
-	"net/netip"
 	"strconv"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/lxmtu"
 	C "github.com/sagernet/sing-box/constant"
 )
 
-// MTU звеньев-туннелей. Контракт: mtu в конфиге узла = «как самостоятельного»;
-// цепочка только ПОНИЖАЕТ его на точные накладные IP-туннелей под звеном.
+// MTU звеньев-туннелей и размер пакета QUIC-звеньев. Контракт: mtu в конфиге
+// узла = «как самостоятельного»; цепочка только ПОНИЖАЕТ его на точные
+// накладные IP-туннелей под звеном (lx: SPEC 073 §3.5; таблицы, режимы и
+// правка карты — общий пакет common/lxmtu, SPEC 120).
 //
 //	capacity(i−1) = узел i−1: IP-туннель → его (уже подогнанный) MTU;
 //	                          поток / direct / датаграммный прокси → ∞
 //	                группа i−1: min по всем достижимым узлам
 //	clone.mtu     = min(orig.mtu, capacity(i−1) − overhead(тип звена))
+//	clone.initial_packet_size = capacity(i−1) − ip/udp(сервер), кламп QUIC
 //
 // Смотрим только на непосредственно нижний узел: глубже либо учтено в его MTU,
 // либо сброшено потоком. Min по группе — чтобы не пересоздавать звено при
 // переключении группы ниже.
-const (
-	wgOverheadV4   = 60 // IPv4 20 + UDP 8 + WG data header 32
-	wgOverheadV6   = 80 // IPv6 40 + UDP 8 + WG data header 32
-	masqueOverhead = 90 // UDP/IP + QUIC short header + h3 datagram framing (оценка)
 
-	defaultWGMTU     = 1408
-	defaultMasqueMTU = 1280
-
-	unlimited = math.MaxInt
-)
-
-func isTunnelType(typeName string) bool {
-	switch typeName {
-	case C.TypeWireGuard, C.TypeMASQUE, C.TypeOpenVPNClient, C.TypeOpenConnect:
-		return true
-	}
-	return false
-}
-
-func tunnelDefaultMTU(typeName string) uint32 {
-	switch typeName {
-	case C.TypeWireGuard:
-		return defaultWGMTU
-	case C.TypeMASQUE:
-		return defaultMasqueMTU
-	}
-	return 0
-}
-
-func mtuFromMap(m map[string]any, typeName string) uint32 {
-	if value := numberFromMap(m["mtu"]); value > 0 {
-		return uint32(value)
-	}
-	return tunnelDefaultMTU(typeName)
-}
-
-func numberFromMap(value any) int64 {
-	switch v := value.(type) {
-	case stdjson.Number:
-		n, err := v.Int64()
-		if err != nil {
-			f, ferr := v.Float64()
-			if ferr != nil {
-				return 0
-			}
-			return int64(f)
-		}
-		return n
-	case float64:
-		return int64(v)
-	case int:
-		return int64(v)
-	case int64:
-		return v
-	case uint32:
-		return int64(v)
-	}
-	return 0
-}
-
-// overheadOf — накладные звена данного типа внутри IP-туннеля; −1 = неизвестны
-// (openvpn/openconnect как верхний туннель не подгоняются).
-func overheadOf(typeName string, m map[string]any) int {
-	switch typeName {
-	case C.TypeWireGuard:
-		if peers, ok := m["peers"].([]any); ok && len(peers) > 0 {
-			if peer, ok := peers[0].(map[string]any); ok {
-				if address, ok := peer["address"].(string); ok {
-					if addr, err := netip.ParseAddr(address); err == nil && addr.Is4() {
-						return wgOverheadV4
-					}
-				}
-			}
-		}
-		return wgOverheadV6
-	case C.TypeMASQUE:
-		return masqueOverhead
-	}
-	return -1
-}
-
-// applyMTU — подгонка mtu туннельного звена на позиции position.
-func (c *Chain) applyMTU(position int, typeName string, m map[string]any, info *cloneInfo) {
-	configured := mtuFromMap(m, typeName)
-	info.mtuConfigured = configured
-	info.mtuEffective = configured
-	overhead := overheadOf(typeName, m)
-	if overhead < 0 {
-		info.mtuReason = "kept (overhead of " + typeName + " unknown)"
-		return
-	}
+// applyMTU — подгонка mtu / initial_packet_size звена tag на позиции position
+// по политике lx.mtu_align (SPEC 120 §2.3).
+func (c *Chain) applyMTU(position int, tag, typeName string, m map[string]any, info *cloneInfo) {
 	capacity, reason := c.capacityBelow(position)
-	if capacity == unlimited {
-		if reason != "" {
-			info.mtuReason = reason
-		}
+	decision := lxmtu.AlignMap(c.mtuPolicy, tag, typeName, m, capacity, reason)
+	if decision == nil {
 		return
 	}
-	limit := capacity - overhead
-	if limit <= 0 {
-		info.mtuReason = "kept (capacity below too small: " + reason + ")"
+	if lxmtu.IsQUICType(typeName) {
+		info.packetSizeEffective = decision.Effective
+		info.packetSizeReason = decision.ChainReason()
 		return
 	}
-	if uint32(limit) < configured {
-		info.mtuEffective = uint32(limit)
-		info.mtuReason = reason + " −" + strconv.Itoa(overhead)
-		m["mtu"] = info.mtuEffective
-		return
-	}
-	info.mtuReason = "fits (" + reason + ")"
+	info.mtuConfigured = decision.Configured
+	info.mtuEffective = decision.Effective
+	info.mtuReason = decision.ChainReason()
 }
 
 // capacityBelow — сколько байт IP-пакета пронесёт позиция position−1:
@@ -139,9 +47,9 @@ func (c *Chain) capacityBelow(position int) (int, string) {
 	below := position - 1
 	leaves, err := c.leavesOf(c.targets[below])
 	if err != nil || len(leaves) == 0 {
-		return unlimited, ""
+		return lxmtu.Unlimited, ""
 	}
-	capacity := unlimited
+	capacity := lxmtu.Unlimited
 	reason := ""
 	warning := ""
 	for _, leaf := range leaves {
@@ -150,12 +58,12 @@ func (c *Chain) capacityBelow(position int) (int, string) {
 			capacity = leafCapacity
 			reason = leafReason
 		}
-		if leafReason != "" && leafCapacity == unlimited && warning == "" {
+		if leafReason != "" && leafCapacity == lxmtu.Unlimited && warning == "" {
 			warning = leafReason
 		}
 	}
-	if capacity == unlimited {
-		return unlimited, warning
+	if capacity == lxmtu.Unlimited {
+		return lxmtu.Unlimited, warning
 	}
 	return capacity, reason
 }
@@ -165,27 +73,27 @@ func (c *Chain) capacityBelow(position int) (int, string) {
 // прочее → ∞ (датаграммный tuic в native-режиме — ∞ с предупреждением).
 func (c *Chain) leafCapacity(position int, leaf adapter.Outbound) (int, string) {
 	typeName := leaf.Type()
-	if !isTunnelType(typeName) {
+	if !lxmtu.IsTunnelType(typeName) {
 		if typeName == C.TypeTUIC {
 			if _, m, _, err := c.leafOptionsMap(position, leaf); err == nil {
 				if mode, _ := m["udp_relay_mode"].(string); mode != "quic" {
-					return unlimited, "warning: tuic " + leaf.Tag() + " in native udp_relay_mode below a tunnel may drop oversize datagrams; use quic"
+					return lxmtu.Unlimited, "warning: tuic " + leaf.Tag() + " in native udp_relay_mode below a tunnel may drop oversize datagrams; use quic"
 				}
 			}
 		}
-		return unlimited, ""
+		return lxmtu.Unlimited, ""
 	}
 	_, m, _, err := c.leafOptionsMap(position, leaf)
 	if err != nil {
-		return unlimited, ""
+		return lxmtu.Unlimited, ""
 	}
-	mtu := mtuFromMap(m, typeName)
+	mtu := lxmtu.MTUFromMap(m, typeName)
 	if mtu == 0 {
-		return unlimited, ""
+		return lxmtu.Unlimited, ""
 	}
 	if position > 0 {
 		var info cloneInfo
-		c.applyMTU(position, typeName, m, &info)
+		c.applyMTU(position, leaf.Tag(), typeName, m, &info)
 		mtu = info.mtuEffective
 	}
 	return int(mtu), "limited by " + leaf.Tag() + "(" + typeName + ") mtu " + strconv.Itoa(int(mtu))

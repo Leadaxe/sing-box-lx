@@ -63,6 +63,7 @@ type Client struct {
 	scheme       string
 	host         string
 	path         string
+	query        string // configured path after the first "?", sent verbatim (lx: SPEC 119)
 	mode         string
 	headers      http.Header
 	paddingRange intRange
@@ -208,7 +209,10 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	// The one place the slash must go is stream-one's bare path (empty sessionId),
 	// where the Xray server keys the bidirectional branch on an exact bare path —
 	// that trim happens locally in applyMeta, not globally here (lx: SPEC 002).
-	path := options.Path
+	// Like Xray (GetNormalizedPath/GetNormalizedQuery), everything after the
+	// first "?" is the request query, not part of the path: relays such as
+	// Cloudflare Workers read their parameters from it (lx: SPEC 119, issue #36).
+	path, query, _ := strings.Cut(options.Path, "?")
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
@@ -237,6 +241,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		scheme:         scheme,
 		host:           host,
 		path:           path,
+		query:          query,
 		mode:           mode,
 		headers:        headers,
 		paddingRange:   paddingRange,
@@ -301,7 +306,8 @@ func (c *Client) Close() error {
 // baseURL builds a fresh request URL targeting the normalized base path. The
 // placement engine (applyMeta) appends session/seq path segments and query params
 // as configured; applyXPadding attaches the padding. The base path is set via
-// sHTTP.URLSetPath so percent-encoding matches the rest of sing-box.
+// sHTTP.URLSetPath so percent-encoding matches the rest of sing-box; the
+// configured query is set verbatim, and query placements add to it.
 func (c *Client) baseURL() (*url.URL, error) {
 	u := &url.URL{
 		Scheme: c.scheme,
@@ -313,6 +319,7 @@ func (c *Client) baseURL() (*url.URL, error) {
 	if !strings.HasPrefix(u.Path, "/") {
 		u.Path = "/" + u.Path
 	}
+	u.RawQuery = c.query
 	return u, nil
 }
 

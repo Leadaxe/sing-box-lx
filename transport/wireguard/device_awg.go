@@ -7,9 +7,11 @@ import (
 	"encoding/hex"
 	"strings"
 
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
+	"github.com/sagernet/wireguard-go/device"
 )
 
 // awgHeaderCipherKeySize / awgHeaderCipherNonceSize mirror the vendored
@@ -86,27 +88,22 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 		writeStr(key, spec)
 		return nil
 	}
-	// WireSock-style id/ip/ib masquerade is sugar over I1 (and, for ip=quic and
-	// ip=sip, also I2): masqueI1I2 generates both CPS strings in one pass. It
-	// returns "" for both when no masquerade is set, and errors on a conflict
-	// with an explicit I1 or on invalid id/ip/ib. When set, its output is used
-	// as the i1/i2 values below.
+	// WireSock-style id/ip/ib masquerade is sugar over I1: masqueI1I2 generates
+	// the CPS string (i2 is always "" today). It returns "" when no masquerade
+	// is set, and errors on a conflict with an explicit I1 or on invalid
+	// id/ip/ib. The QUIC profile is generated per handshake instead (see
+	// masqueQUICDynamic / awgDecoyFunc).
 	i1 := o.I1
 	i2 := o.I2
 	masque, masque2, err := masqueI1I2(o)
 	if err != nil {
 		return "", err
 	}
-	if masque != "" {
+	if masque != "" && !masqueQUICDynamic(o) {
 		i1 = masque
-		// ip=sip fills i2 with the matching 100 Trying of the INVITE dialog (quic
-		// and dns/stun are single-packet and leave i2 empty). A user-supplied i2
-		// alongside an i2-filling sugar profile is ambiguous, exactly like the i1
-		// conflict masqueI1 already rejects.
+		// Every sugar profile is single-packet today (i2 == ""); a user-supplied
+		// i2 next to the sugar stays the user's.
 		if masque2 != "" {
-			if o.I2 != "" {
-				return "", E.New("amneziawg: id/ip/ib masquerade (ip=sip) fills i2; an explicit i2 conflicts with it")
-			}
 			i2 = masque2
 		}
 	}
@@ -222,4 +219,36 @@ func validateJunk(o option.AmneziaWGOptions) error {
 		return E.New("amneziawg: jmin (", F.ToString(o.Jmin), ") must be <= jmax (", F.ToString(o.Jmax), ")")
 	}
 	return nil
+}
+
+// masqueQUICDynamic reports whether the id/ip/ib masquerade is the QUIC profile,
+// whose decoy is generated per handshake by awgDecoyFunc instead of being baked
+// into a static i1 CPS string (a QUIC Initial must change DCID, random and
+// ciphertext per session; a static blob repeats byte-for-byte on every rekey).
+func masqueQUICDynamic(o option.AmneziaWGOptions) bool {
+	return strings.ToLower(strings.TrimSpace(o.Ip)) == masqueProtoQUIC && strings.TrimSpace(o.Id) != ""
+}
+
+// awgDecoyFunc returns the per-handshake decoy generator for the endpoint's
+// AmneziaWG options, or nil when the config has no dynamic decoy (no id/ip/ib
+// masquerade, or a non-QUIC profile, which stays a static CPS decoy). The
+// options were validated by awgIpcLines before the device exists, so a
+// generation failure here is logged and the handshake goes out without a decoy
+// rather than failing.
+func awgDecoyFunc(o option.AmneziaWGOptions, logger log.ContextLogger) device.DecoyPacketsFunc {
+	if !masqueQUICDynamic(o) {
+		return nil
+	}
+	domain := strings.TrimSpace(o.Id)
+	browser := strings.ToLower(strings.TrimSpace(o.Ib))
+	return func() [][]byte {
+		packet, err := buildInitialPacket(domain, browser, defaultQUICGenParams())
+		if err != nil {
+			if logger != nil {
+				logger.Error("amneziawg: generate quic decoy: ", err)
+			}
+			return nil
+		}
+		return [][]byte{packet}
+	}
 }
