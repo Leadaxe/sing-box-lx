@@ -375,6 +375,7 @@ func init() {
 	randomizedFingerprint = utls.HelloRandomized
 	randomizedFingerprint.Seed, _ = utls.NewPRNGSeed()
 	randomizedFingerprint.Weights = &weights
+	lxRandomFingerprints() // lx: SPEC 123 — hybrid share and ALPN in random/randomized
 }
 
 func uTLSClientHelloID(name string) (utls.ClientHelloID, error) {
