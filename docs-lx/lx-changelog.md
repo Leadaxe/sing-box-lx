@@ -28,6 +28,10 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### Unreleased
+
+- ✨ **`GET /admin/info` отдаёт платформенную карточку: `goos`, `goarch`, `platform`, `init_system`, `service`.** Лаунчер брал платформу машины из записи, введённой руками (дефолт `linux/amd64`; запись роутера владельца так и осталась `amd64` при реальном `aarch64` — «Download core» скачал бы чужой бинарь), а init-систему просил выбрать в окне Service. Теперь `goos`/`goarch` — `runtime` самого бинаря; `platform` — суффикс релизного ассета для его платформы (`linux-armv7`, `linux-mipsle-softfloat`, `windows-386-legacy-windows-7`) по `GOARM`/`GOMIPS` из build info — `GOARCH` один ассет для arm и mips не называет, а соглашение об именах живёт здесь, рядом с `lx-release.yml`; `init_system` — что за init на **хосте** (`procd` / `systemd` / `openrc` / `launchd` / `scm`, `""` — не распознан); `service` — запущен ли **этот процесс** под ним службой. Два поля вместо одного по решению владельца: демон, запущенный руками на systemd-хосте, отдаёт `systemd`/`false` — лаунчер видит, что службу можно установить, а единственная эвристика (`ppid 1` на linux) не трогает поле, по которому строятся рецепты. Детектор linux один для рецепта `--service` и для паспорта: `/proc/1/comm`, затем `/etc/openwrt_release`, `/run/systemd/system`, `/run/openrc` (новое: openrc). Считается раз при старте; поля есть всегда; `/admin/host` и `daemon.json` не тронуты. Тесты `TestDetectLinuxInit`, `TestDetectInitSystem`, `TestReleasePlatform`. ([SPEC 127](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/127-LXD_INFO_PLATFORM/SPEC.md))
+
 #### v1.14.3-lx.15
 
 Стабильный релиз после `v1.14.3-lx.14`, без rc-линии. База — sing-box `v1.14.3` (`upstream/stable` `7054cac51`), как у lx.14, дрейф 0. Срез 11.10.2026.

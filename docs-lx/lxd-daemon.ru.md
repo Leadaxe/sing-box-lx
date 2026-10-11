@@ -179,7 +179,10 @@ connection-настроек: у команды нет флагов `--listen/--t
 включая лог ядра и паники) и ротирует по возрасту/размеру с лимитами из
 daemon.json. При ручном запуске в терминале лог остаётся на экране, файл не
 трогается. Путь к логу и state-dir клиент узнаёт из `GET /admin/info` — ничего
-хардкодить не нужно. Реализовано на macOS, Linux и Windows.
+хардкодить не нужно. Там же демон называет платформу и релизный ассет бинаря, init-систему
+хоста и запущен ли он под ней службой: таблицу uname → GOARCH клиенту держать не нужно,
+и спрашивать пользователя про init тоже.
+Реализовано на macOS, Linux и Windows.
 
 **Windows.** Лог службы — `<ProgramData>\sing-box-lxd\logs\lxd.log` (install пишет этот
 `log_file` в daemon.json), рядом с `classic.log` лаунчера. Живой файл там нельзя
@@ -917,7 +920,7 @@ junction на пути — отказ, файл удаляется). Сущес�
 | `POST /admin/start` · `POST /admin/stop` | жизнь ядра отдельно от конфига (stop запоминается) |
 | `GET /admin/config` | активный конфиг |
 | `GET /admin/status` | `idle\|started\|fatal`, sha активного/last-good, `last_error`, `interrupted_apply` |
-| `GET /admin/info` | паспорт: версия, state_dir, listen, tls, отпечаток, pid, uptime, log_path, `executable` и `executable_sha256` (работающий бинарь — ядра сравниваются по хешу, не по пути; хеш считается один раз при старте, первые мгновения — `""`) |
+| `GET /admin/info` | паспорт: версия, state_dir, listen, tls, отпечаток, pid, uptime, log_path, `executable` и `executable_sha256` (работающий бинарь — ядра сравниваются по хешу, не по пути; хеш считается один раз при старте, первые мгновения — `""`), и платформенная карточка (SPEC 127): `goos`, `goarch`, `platform` (релизный ассет для платформы бинаря, напр. `linux-armv7`, `linux-mipsle-softfloat` — что качать для этой машины), `init_system` (что за init на хосте: `procd` / `systemd` / `openrc` / `launchd` / `scm`, `""` — не распознан) и `service` (`true` — этот процесс запущен под ним как служба) |
 | `POST /admin/enroll` | регистрация клиента по одноразовому коду |
 | `GET /admin/resources` · `PUT`/`GET`/`DELETE /admin/resources/{имя}` | файлы, на которые **ссылается** конфиг (`.srs`, geo-базы): список с sha256, заливка, выгрузка, удаление; 409, пока на имя ссылается активный или last-good конфиг |
 | `GET /admin/memory` | память процесса: heap/stack/sys, горутины, GC и **два** числа RSS — `rss_current_bytes` и `rss_peak_bytes` (сырые байты; пик не убывает, поэтому отдаётся отдельно от текущего) |

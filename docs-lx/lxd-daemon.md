@@ -181,7 +181,10 @@ Under a service manager (stdout is not a terminal) the daemon **owns** the
 lands in the file, including the core's log and runtime panics) and rotates it
 by age and size with the daemon.json limits. When run by hand in a terminal the
 log stays on the screen and no file is touched. Clients discover the log path
-and state dir from `GET /admin/info` — nothing needs to be hard-coded.
+and state dir from `GET /admin/info` — nothing needs to be hard-coded. The
+same card names the binary's platform and release asset, the host's init
+system and whether the daemon runs as its service, so a client keeps no
+uname → GOARCH table and does not ask the user which init runs the host.
 Implemented on macOS, Linux and Windows.
 
 **Windows.** The service's log is `<ProgramData>\sing-box-lxd\logs\lxd.log` (install
@@ -940,7 +943,7 @@ Error map:
 | `POST /admin/start` · `POST /admin/stop` | core lifecycle apart from the config (stop is remembered) |
 | `GET /admin/config` | the active config |
 | `GET /admin/status` | `idle\|started\|fatal`, active/last-good sha, `last_error`, `interrupted_apply` |
-| `GET /admin/info` | identity card: version, state_dir, listen, tls, fingerprint, pid, uptime, log_path, `executable` and `executable_sha256` (the running binary — compare cores by hash, not by path; the hash is computed once at start and reads `""` for the first moments) |
+| `GET /admin/info` | identity card: version, state_dir, listen, tls, fingerprint, pid, uptime, log_path, `executable` and `executable_sha256` (the running binary — compare cores by hash, not by path; the hash is computed once at start and reads `""` for the first moments), and the platform card (SPEC 127): `goos`, `goarch`, `platform` (the release asset for this binary's platform, e.g. `linux-armv7`, `linux-mipsle-softfloat` — what to download for this machine), `init_system` (what runs the host: `procd` / `systemd` / `openrc` / `launchd` / `scm`, `""` when none is recognised) and `service` (`true` when this process runs under it as a service) |
 | `POST /admin/enroll` | client registration with a one-time code |
 | `GET /admin/resources` · `PUT`/`GET`/`DELETE /admin/resources/{name}` | the files a config REFERS to (`.srs`, geo bases): list with sha256, upload, fetch, remove; 409 while the active or last-good config references the name |
 | `GET /admin/memory` | process memory: heap/stack/sys, goroutines, GC, and **two** RSS numbers — `rss_current_bytes` and `rss_peak_bytes` (raw bytes; the peak never decreases, so it is reported apart from the current size) |
