@@ -339,7 +339,9 @@ func (c *controller) handleConfig(writer http.ResponseWriter, request *http.Requ
 // hard-coding the daemon's paths on their side — e.g. the state_dir is where
 // a client should point config paths the core WRITES (cache_file), because it
 // is the one directory the daemon owns — and compare executable_sha256, not
-// the path, with their own core (SPEC 100).
+// the path, with their own core (SPEC 100). The platform card (SPEC 127):
+// goos/goarch and platform (the release asset for this machine), init_system
+// (what runs the host) and service (this process runs under it).
 func (c *controller) handleInfo(writer http.ResponseWriter, request *http.Request) {
 	logPath := ""
 	if c.infoLogPath != "" {
@@ -359,6 +361,11 @@ func (c *controller) handleInfo(writer http.ResponseWriter, request *http.Reques
 		"log_path":          logPath,
 		"executable":        executable,
 		"executable_sha256": executableSHA,
+		"goos":              c.platform.goos,
+		"goarch":            c.platform.goarch,
+		"platform":          c.platform.platform,
+		"init_system":       c.platform.initSystem,
+		"service":           c.platform.service,
 	})
 }
 

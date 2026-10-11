@@ -117,6 +117,10 @@ type controller struct {
 	// client compares hashes, not paths, to tell whether the daemon runs
 	// the same core as its own — the service executes a root-owned copy.
 	executable *executableIdentity
+	// platform is the platform card (SPEC 127): the binary's goos/goarch and
+	// release asset, the host's init system and whether this process is its
+	// service; read once in Run.
+	platform platformInfo
 
 	// Observability plane (SPEC 065). memory is nil-safe only through
 	// newController; profiles holds the mutable pprof state (in-flight

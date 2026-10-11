@@ -135,6 +135,7 @@ func Run(ctx context.Context, options Options) error {
 		infoTLS:          options.TLS,
 		startedAt:        time.Now(),
 		executable:       newExecutableIdentity(ownExecutable),
+		platform:         readPlatformInfo(),
 		memory:           newMemoryCache(),
 		clientInfo:       newClientInfo(labels, options.DHCPLeaseFiles),
 		host:             newHostCache(absStateDir),

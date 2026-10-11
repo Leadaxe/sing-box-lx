@@ -51,34 +51,6 @@ func readOSRelease() (name string, id string, idLike []string) {
 	return name, id, idLike
 }
 
-// parseOSRelease reads the KEY=value shape shared by /etc/os-release and
-// /etc/openwrt_release. Split out so it can be tested on captured content.
-func parseOSRelease(content string) (name string, id string, idLike []string) {
-	for _, line := range strings.Split(content, "\n") {
-		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
-		if !found {
-			continue
-		}
-		value = strings.Trim(value, "\"' ")
-		if value == "" {
-			continue
-		}
-		switch key {
-		case "PRETTY_NAME", "DISTRIB_DESCRIPTION":
-			if name == "" {
-				name = value
-			}
-		case "ID":
-			id = value
-		case "ID_LIKE":
-			// The standard says space-separated; a slice spares every client
-			// the same split.
-			idLike = strings.Fields(value)
-		}
-	}
-	return name, id, idLike
-}
-
 func unameRelease() string {
 	var buffer syscall.Utsname
 	if syscall.Uname(&buffer) != nil {
