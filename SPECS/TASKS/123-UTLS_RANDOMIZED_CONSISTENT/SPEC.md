@@ -5,13 +5,13 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — `fingerprint: "randomized"` раз на процесс выбрасывает ClientHello без гибридного шара или без ALPN; узел мёртв до рестарта |
-| Статус | N (new) — 2026-10-10: спека, код не начат |
+| Статус | I (implemented) — 2026-10-11: код и стражи, `random` включён в задачу решением владельца ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)); стенд Xray не прогонялся |
 | Ветка | `lx` |
 | Build-tag | нет (`with_utls`, как весь `common/tls/utls_*`) |
 | Источник | [shtorm-7/sing-box-extended#162](https://github.com/shtorm-7/sing-box-extended/issues/162) п.2 — патч podkop-engine `0010-utls-keep-the-randomized-fingerprint-consistent`; разбор по нашему дереву ниже. Патч не скачался (сеть), спека написана по нашему коду |
 | Связанные | [083](../083-REALITY_MLKEM_KEYSHARE/SPEC.md) (Xray ≥ v26.9.8 требует гибрид), [089](../089-REALITY_KEY_SHARE_OPTION/SPEC.md) (`key_share`), [086](../086-UTLS_FORK_FIREFOX148/SPEC.md) (форк utls) |
 
-**Touches:** `common/tls/utls_client.go` (одна `// lx:`-строка в `init`), новый `common/tls/utls_randomized_lx.go`, страж в `common/tls/utls_firefox148_lx_test.go` (или новый `utls_randomized_lx_test.go`), строка 123 в реестре `SPECS/README.md`, строка `randomized` в таблицах `SPECS/FEATURES/017-REALITY/FEATURE.md` и `docs-lx/protocols-transports.{ru.,}md` §5.2. Форк `submodules/utls` не трогается.
+**Touches:** `common/tls/utls_client.go` (одна `// lx:`-строка в конце `init`), новый `common/tls/utls_randomized_lx.go`, новый `utls_randomized_lx_test.go`, два списка отпечатков в `reality_client_lx_test.go`, строка 123 в реестре `SPECS/README.md`, строка `randomized` в таблицах `SPECS/FEATURES/017-REALITY/FEATURE.md` и `docs-lx/protocols-transports.{ru.,}md` §5.2. Форк `submodules/utls` не трогается.
 
 ## 1. Проблема
 
@@ -61,7 +61,8 @@ Xray для `randomized` берёт `HelloRandomizedALPN` (сверка 2026-10-
 ## 3. Требования
 
 - **R1.** `common/tls/utls_randomized_lx.go` (`with_utls`): `func lxRandomizedFingerprint(seed *utls.PRNGSeed) utls.ClientHelloID` — `HelloRandomizedALPN`, копия `DefaultWeights` с `TLSVersMax_Set_VersionTLS13 = 1`, `FirstKeyShare_Set_CurveP256 = 0` (как сейчас) и п. 2–3 выше. Seed параметром — чтобы страж перебирал семена.
-- **R2.** `common/tls/utls_client.go` `init`: три строки построения `randomizedFingerprint` заменяются одной `// lx: SPEC 123`-строкой `randomizedFingerprint = lxRandomizedFingerprint(seed)`; генерация seed остаётся на месте. Ветка `case "randomized"` в `uTLSClientHelloID` не меняется.
+- **R2.** `common/tls/utls_client.go` `init`: апстримные строки не меняются, в конец добавлена одна `// lx: SPEC 123`-строка `lxRandomFingerprints()`. Она перевыбирает `randomFingerprint` из пула R6 и строит `randomizedFingerprint = lxRandomizedFingerprint(seed)` на seed, сгенерированном апстримным `init`. Ветки `case "random"`/`"randomized"` в `uTLSClientHelloID` не меняются.
+- **R6.** Пул `random` — `chrome`, `firefox`, `safari` (пресеты с гибридным шаром); `edge` и `ios` исключены. Решение владельца 2026-10-11 (был открытый вопрос §6).
 - **R3.** Страж (`with_utls`), 500 семян: в каждом ClientHello гибрид есть в `supported_groups` и в `key_share` ровно по разу и стоит перед `X25519`; расширение ALPN есть; при `NextProtos = ["h2"]` ALPN = `["h2"]`, без `NextProtos` — `["h2","http/1.1"]`. Ещё одна проверка: при одном и том же seed спеки двух `UClient` совпадают (seed на процесс остаётся детерминированным).
 - **R4.** `TestLxRealityKeyShareClassicalStripsHybrid` и `TestLxRealityKeyShareHybridRequiresShare` (`reality_client_lx_test.go`) дополнить случаем `randomized`: `classical` вырезает гибрид и из групп, и из шаров; `hybrid` проходит.
 - **R5.** Доки: строка `randomized` в таблице отпечатков FEATURE 017 и `docs-lx/protocols-transports.{ru.,}md` §5.2 — «X25519MLKEM768, X25519, P-256; ALPN всегда | ходит».
@@ -81,7 +82,7 @@ Xray для `randomized` берёт `HelloRandomizedALPN` (сверка 2026-10-
 
 ## 6. Открытые вопросы к владельцу
 
-- **`random`.** Соседний баг той же природы: пул `random` (`utls_client.go:363-369`) — chrome/firefox/edge/safari/ios, у `edge` и `ios` гибрида нет, REALITY к Xray ≥ v26.9.8 мёртв в 2/5 процессов (FEATURE 017, сверка 2026-10-09). Предлагалось `// lx:`-строкой убрать `edge`/`ios` из пула; решения не было. В эту задачу не входит без решения.
+- ~~**`random`.**~~ Решено владельцем 2026-10-11 — входит в задачу (R6).
 - **Имена Xray.** `randomizednoalpn` и `hello*`-имена у нас не принимаются (`unknown uTLS fingerprint`). Добавлять не предлагается — только фиксирую.
 
 ## Условие снятия

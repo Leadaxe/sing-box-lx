@@ -39,8 +39,8 @@ REALITY — TLS-слой, в котором клиент выглядит как
 | `firefox` | **X25519MLKEM768**, X25519 (один ключ в обеих записях) | ходит | форк utls, Firefox 148 |
 | `safari` | **X25519MLKEM768**, X25519 | ходит | форк utls, Safari 26.3 |
 | `edge`, `ios`, `android`, `360`, `qq` | только X25519 | отвергается | пресетов с гибридом нет ни у metacubex, ни у refraction — у Xray та же граница; подмена — в приложениях (решение владельца 2026-09-16) |
-| `random` | как у выпавшего | 3 из 5 | — |
-| `randomized` | гибрид монетой | ~½ процессов | — |
+| `random` | как у выпавшего из `chrome`/`firefox`/`safari` | ходит | пул без `edge`/`ios` (SPEC 123) |
+| `randomized` | **X25519MLKEM768**, X25519, P-256; ALPN всегда | ходит | `HelloRandomizedALPN`, гибрид всегда (SPEC 123) |
 
 ## Входы
 
@@ -101,7 +101,7 @@ REALITY — TLS-слой, в котором клиент выглядит как
 | [089 — REALITY_KEY_SHARE_OPTION](../../TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md) | `tls.reality.key_share`: `classical` / `hybrid` по узлу; противовес 083 для сетей, теряющих длинный ClientHello | D |
 | [090 — REALITY_SHORT_ID_OVERFLOW_PANIC](../../TASKS/090-REALITY_SHORT_ID_OVERFLOW_PANIC/SPEC.md) | `short_id` длиннее 16 hex — ошибка конфигурации `invalid short_id` вместо паники процесса в `hex.Decode`; клиент и сервер | C |
 | [122 — UTLS_RELEASE_HANDSHAKE_STATE](../../TASKS/122-UTLS_RELEASE_HANDSHAKE_STATE/SPEC.md) | После рукопожатия соединение отпускает ClientHello, ключи key share и объекты расширений (REALITY `chrome` 27,4 → 13,3 КиБ на соединение); варианты A/B — решение владельца | N |
-| [123 — UTLS_RANDOMIZED_CONSISTENT](../../TASKS/123-UTLS_RANDOMIZED_CONSISTENT/SPEC.md) | `fingerprint: "randomized"` всегда с ALPN и гибридным шаром — без «мёртвого до рестарта» узла | N |
+| [123 — UTLS_RANDOMIZED_CONSISTENT](../../TASKS/123-UTLS_RANDOMIZED_CONSISTENT/SPEC.md) | `randomized` всегда с ALPN и гибридом в группах и шарах; пул `random` — только пресеты с гибридом (chrome/firefox/safari) — без «мёртвого до рестарта» узла | I |
 
 Задачи 053, 083, 086, 087, 088, 090 одновременно числятся хотфиксами в [HOTFIXES](../004-HOTFIXES/FEATURE.md) — там их условия снятия и что сторожить на мерже. Здесь — состояние фичи целиком.
 
