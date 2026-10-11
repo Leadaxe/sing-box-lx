@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | R (refactor, память) — после успешного uTLS/REALITY-рукопожатия соединение отпускает ClientHello, приватные ключи key share и объекты расширений; провод и поведение не меняются |
-| Статус | N (new) — черновик 2026-10-10, решения владельца 2026-10-11 (§8): делать (роутерный профиль), вариант B, ALPN один раз при создании соединения вместо стража 0086 (§3.1); код не начат |
+| Статус | N (new) — финальное ТЗ 2026-10-11: решения владельца (§8), вариант B, ALPN один раз в первом `HandshakeContext` lx-типа (§3.1); логика проверена двумя ревью кода (Fable); код не начат |
 | Ветка | `lx` |
 | Build-tag | нет (внутри `with_utls`, как вся фича) |
 | Источник | podkop-engine [`0026 — tls: release the uTLS handshake state after the handshake`](https://github.com/FiyeroT/podkop-engine/blob/main/patches/v1.14/0026-tls-release-the-uTLS-handshake-state-after-the-hands.patch) и его обязательное дополнение [`0086 — tls: do not rebuild the Client Hello after the handshake`](https://github.com/FiyeroT/podkop-engine/blob/main/patches/v1.14/0086-tls-do-not-rebuild-the-Client-Hello-after-the-handsh.patch); обсуждение — [sing-box-extended#162](https://github.com/shtorm-7/sing-box-extended/issues/162) п. 4 |
@@ -80,47 +80,59 @@ Loopback, go1.26.8 darwin/arm64, 200 соединений, 3 раунда, ме�
 Патч 0026 ложится на наши файлы без адаптации: `reality_client.go:163` (`return &realityClientConnWrapper{uConn}`) и `utls_client.go:193` (`return c.UConn.HandshakeContext(ctx)`) — те же строки, что у podkop. Но один 0026 недостаточен:
 
 - **ALPN-обёртка пересобирает ClientHello на каждом вызове** `HandshakeContext` (`utls_client.go:177-191`: `BuildHandshakeState` → `MarshalClientHello`, `u_conn.go:599` разыменовывает `HandshakeState.Hello`). После освобождения второй вызов роняет процесс — воспроизведено в §2. Сегодня второго вызова нет: `tls.ClientHandshake` (`client.go:168`) → `aTLS.ClientHandshake` вызывает его один раз, `ECHClientConfig.ClientHandshake` (`ech.go:123`) — один раз; но обёртка — `net.Conn`, уходящий в чужие транспорты (http2, gRPC, XHTTP), и гарантии единственного вызова у неё нет. Поэтому podkop добавил 0086: если `HandshakeState.Hello == nil`, обёртка идёт сразу в `UConn.HandshakeContext`, который отвечает «готово». Берём вместе, как 086 брала два коммита refraction.
-### 3.1 Решение: ALPN один раз при создании соединения, а не страж
+### 3.1 Решение: ALPN один раз в первом `HandshakeContext` lx-типа, а не страж
 
 Пересборка ClientHello в `utlsALPNWrapper.HandshakeContext` — способ подменить ALPN пресета
-(utls для пресетов игнорирует `Config.NextProtos`), а не потребность рукопожатия. Нужный ALPN
-известен уже в `UTLSClientConfig.Client` (`utls_client.go:102`: `c.config.NextProtos` уходит в
-обёртку), и подмена — разовая настройка ClientHello. Так уже устроен REALITY: `prepareClientHello`
-подменяет ALPN один раз до рукопожатия (`reality_client.go:231-238`).
+(utls для пресетов игнорирует `Config.NextProtos`), а не потребность рукопожатия. Её достаточно
+сделать **один раз**. Так уже устроен REALITY: `prepareClientHello` подменяет ALPN однократно до
+рукопожатия (`reality_client.go:231-238`).
 
-Решение владельца 2026-10-11 — вместо стража 0086:
+Решение владельца 2026-10-11 (вместо стража 0086; две редакции проверены ревью кода):
 
-- `Client` одной `// lx:`-строкой отдаёт соединение из lx-хелпера `lxNewUTLSConn(uConn, nextProtos)`.
-  Хелпер при непустом `nextProtos` делает `BuildHandshakeState` → подмена в `ALPNExtension` →
-  `BuildHandshakeState` один раз (код апстримной обёртки, перенесённый в момент создания) и
-  возвращает lx-тип, который встраивает `utlsALPNWrapper` с **пустым** `nextProtocols`.
-- Апстримный `utlsALPNWrapper.HandshakeContext` при пустом списке сразу зовёт
-  `UConn.HandshakeContext` — ветка у него уже есть; функция не меняется.
-- lx-тип переопределяет `HandshakeContext`: `UConn.HandshakeContext(ctx)`, при успехе —
-  освобождение (R1). Первый вызов: библиотека сама ещё раз зовёт `BuildHandshakeState`
-  (`u_conn.go:374-379`) — `ApplyConfig` + `Marshal` по уже построенному состоянию, ключи не
-  перегенерируются (они создаются один раз в `ApplyPreset`, `u_parrots.go:3096-3104`). Повторный
-  вызов: `UConn` отвечает по `isHandshakeComplete` (`u_conn.go:321-323`) до любой сборки,
-  освобождение идемпотентно.
+- `UTLSClientConfig.Client` одной `// lx:`-строкой возвращает
+  `*lxUTLSConn{utlsALPNWrapper{utlsConnWrapper{uConn}, nil}, nextProtos: c.config.NextProtos}`.
+  Поля lx-типа: `nextProtos []string`, `alpnApplied bool`, `access sync.Mutex`.
+- `(*lxUTLSConn).HandshakeContext(ctx)` целиком под `access`:
+  1. если `!alpnApplied && len(nextProtos) > 0` — `BuildHandshakeState` → подмена
+     `ALPNExtension.AlpnProtocols` → `BuildHandshakeState` (код апстримной обёртки). Ошибка —
+     вернуть её, флаг не ставить (повтор пересоберёт, как апстрим). Успех — `alpnApplied = true`;
+  2. `UConn.HandshakeContext(ctx)`; при `nil` — `releaseHandshakeState` (R1, идемпотентно, страж R1a).
+- Апстримный `utlsALPNWrapper.HandshakeContext` не меняется: при пустом `nextProtocols` он не
+  достигается.
 
-Провод не меняется: последовательность `Build` → подмена ALPN → `Build` та же, что в апстримной
-обёртке, только раньше по времени. Конфиг клонируется в `UClient` (`utls_client.go:102`), поэтому
-`NextProtos`, `ServerName` и `EncryptedClientHelloConfigList` к моменту `Client` уже заморожены
-(ECH-список кладётся до `Client`, `ech.go:169,179`). GREASE ECH, фрагментация и spoof
-(обёртки `net.Conn` до `UClient`), kTLS (берёт соединение после рукопожатия) от раннего `Build`
-не зависят. Проверено ревью кода (Fable, 2026-10-11).
+**Провод эквивалентен апстриму полностью:** та же последовательность в тот же момент (первый
+`HandshakeContext`); `UConn.handshakeContext` затем сам ещё раз зовёт `BuildHandshakeState`
+(`u_conn.go:374-379`) — как сейчас; ключи генерируются один раз в `ApplyPreset`
+(`u_parrots.go:3096-3104`). ECH-список кладётся до `Client` (`ech.go:169,179`), GREASE ECH,
+фрагментация и spoof (обёртки `net.Conn` до `UClient`), kTLS (после рукопожатия) не задеты.
+`Client` остаётся дешёвым, как в апстриме: под `ECHClientConfig.access` (`ech.go:131-179`) сборка
+не попадает.
+
+Отвергнутая редакция — сборка в `Client`: замер `UClient` + 2×`BuildHandshakeState`
+(`NextProtos = ["h2"]`) — Chrome 133 ~0,25 мс, Firefox 148 ~0,20 мс на соединение (машина под
+нагрузкой); под мьютексом ECH это сериализовало бы новые ECH-подключения (~25 мс на пачку из 100).
+
+**Синхронизация.** `UConn` сериализует только своё рукопожатие (`handshakeMutex`, `c.in`,
+`u_conn.go:362,370`); код обёртки до него в апстриме идёт без замка. Мьютекс lx-типа покрывает
+флаг, подмену, рукопожатие и release: второй конкурент ждёт, видит флаг и уходит в fast path.
+`sync.Once` не подходит — нужен повтор после ошибки сборки. Дедлока с неявным рукопожатием нет:
+`Read`/`Write` наш мьютекс не берут.
+
+**Ошибки и повтор.**
+- Ошибка `BuildHandshakeState`: флаг не выставлен, `handshakeErr` не выставлен — повтор
+  пересобирает, как апстрим; release не вызывался, состояние целое.
+- Ошибка рукопожатия (в том числе отмена `ctx`): флаг стоит, release не было. Повторный вызов
+  возвращает кешированный `handshakeErr` (`u_conn.go:357-359`) — тот же результат, что в апстриме,
+  без лишней пересборки.
+- Повтор после успеха: fast path `isHandshakeComplete` (`u_conn.go:321-323`), без пересборки.
 
 **Известное ограничение.** `UConn.Read`/`Write` при незавершённом рукопожатии сами зовут
-`c.Handshake()` (`u_conn.go:440,862`) — мимо переопределения lx-типа, и освобождения на этом
-пути не будет. В апстриме этот путь терял подмену ALPN; теперь ALPN уже в ClientHello, так что
-провод там даже правильнее. Сегодня неявного рукопожатия нет: оба входа в `Client` —
-`aTLS.ClientHandshake` и `ECHClientConfig` — сразу зовут `HandshakeContext`.
-
-Что меняется в поведении: ошибка сборки ClientHello при непустом ALPN возвращается из `Client`,
-а не из рукопожатия — на том же соединении, раньше на время одного TCP-коннекта; вызывающие
-`Client` ошибку обрабатывают. Методы `utlsConnWrapper` (`ConnectionState`, `Upstream`,
-`Reader/WriterReplaceable`) продвигаются через встраивание; `badtls` достаёт `*utls.UConn`
-через `N.CastReader` по `Upstream()`, тип обёртки ему не важен.
+`c.Handshake()` (`u_conn.go:440,862`) — мимо lx-типа: без подмены ALPN (как в апстриме) и без
+release. Вызывающих в дереве нет: оба входа в `Client` — `aTLS.ClientHandshake` и
+`ECHClientConfig` — сразу зовут `HandshakeContext`. Методы `utlsConnWrapper`
+(`ConnectionState`, `Upstream`, `Reader/WriterReplaceable`) продвигаются через встраивание;
+`badtls` и Vision достают `*utls.UConn` через `N.CastReader` по `Upstream()`; type-assertions на
+обёртки в дереве нет.
 
 - **Освобождение только после успеха.** При ошибке REALITY `uConn` уходит в `realityClientFallback` (`reality_client.go:159`) как `net.Conn` — состояние ему не нужно, но порядок «сначала проверка `verified`, потом release» сохраняется, как в патче.
 
@@ -139,7 +151,7 @@ Loopback, go1.26.8 darwin/arm64, 200 соединений, 3 раунда, ме�
 ## 5. Требования
 
 - **R1. Освобождение после успеха.** В `HandshakeContext` lx-типа uTLS-соединения (§3.1) и в `RealityClientConfig.ClientHandshake` после успешного рукопожатия (для REALITY — после `verifier.verified`) обнуляются `HandshakeState.Hello`, `HandshakeState.ServerHello`, `HandshakeState.State13`, `Extensions`; при варианте B — также `clientHelloSpec` и `echCtx` методом форка. При ошибке состояние не трогается.
-- **R2. Повторный `HandshakeContext` не роняет процесс — по построению.** ALPN подменяется один раз в `Client` (§3.1); наша обёртка ClientHello при рукопожатии не пересобирает, а библиотечный `BuildHandshakeState` на повторном вызове не достигается (выход по `isHandshakeComplete`) — освобождённые поля никто не читает. Страж 0086 не нужен. На `realityClientConnWrapper` поведение уже такое.
+- **R2. Повторный `HandshakeContext` не роняет процесс — по построению.** ALPN подменяется один раз (флаг `alpnApplied` под мьютексом lx-типа, §3.1); после успеха повторный вызов уходит в fast path `isHandshakeComplete`, освобождённые поля никто не читает. Страж 0086 не нужен. На `realityClientConnWrapper` поведение уже такое.
 - **R2a. Провод ALPN прежний.** Для каждого транспорта ALPN в ClientHello тот же, что до задачи: `NextProtos` подменяет список пресета; при пустом `NextProtos` — список пресета.
 - **R3. Провод и поведение не меняются.** ClientHello, `AuthKey`, `key_share`, фрагментация, ALPN — как до задачи: стражи 083/086/088/089/118 проходят без правок. Данные, `KeyUpdate` и `NewSessionTicket` после рукопожатия обрабатываются как раньше.
 - **R4. Вариант B — метод форка в новом файле**, без правок файлов metacubex; тест метода там же; гитлинк в ядре, комментарий `go.mod`, раннбук §1.1 и FEATURE 017 обновлены на «восемь коммитов».
@@ -148,7 +160,7 @@ Loopback, go1.26.8 darwin/arm64, 200 соединений, 3 раунда, ме�
 
 ## 6. Критерии приёмки
 
-1. Новый тест `common/tls/utls_release_lx_test.go` (`with_utls`): ALPN на проводе для `NextProtos` = `["h2"]`, `["http/1.1"]` и пустого совпадает с апстримной обёрткой; пресет без ALPN при непустом `NextProtos` — ALPN не добавляется, `Build` один (как в апстриме); рукопожатие uTLS+ALPN против `crypto/tls`-сервера на `net.Pipe` → `HandshakeState.Hello == nil`, `KeyShareKeys == nil`, `Extensions == nil`; данные ходят; второй `HandshakeContext` → `nil` без паники. REALITY: `utls.RealityServer` в процессе с `DialContext` на внутренний TLS-сервер → те же проверки через `realityClientConnWrapper`; рукопожатие с ошибкой (пайп, закрытый после первого flight'а, как `lxRealityFirstFlight`) состояние не трогает.
+1. Новый тест `common/tls/utls_release_lx_test.go` (`with_utls`, прогон под `-race`): два конкурентных `HandshakeContext` на одном соединении — один release, без паники; ошибка рукопожатия — флаг стоит, состояние цело, повтор возвращает ту же ошибку; ALPN на проводе для `NextProtos` = `["h2"]`, `["http/1.1"]` и пустого совпадает с апстримной обёрткой; пресет без ALPN при непустом `NextProtos` — ALPN не добавляется, `Build` один (как в апстриме); рукопожатие uTLS+ALPN против `crypto/tls`-сервера на `net.Pipe` → `HandshakeState.Hello == nil`, `KeyShareKeys == nil`, `Extensions == nil`; данные ходят; второй `HandshakeContext` → `nil` без паники. REALITY: `utls.RealityServer` в процессе с `DialContext` на внутренний TLS-сервер → те же проверки через `realityClientConnWrapper`; рукопожатие с ошибкой (пайп, закрытый после первого flight'а, как `lxRealityFirstFlight`) состояние не трогает.
 2. `go test -ldflags=-checklinkname=0 -tags with_utls ./common/tls/` — зелёный, включая стражи 083/086/118 без правок.
 3. Повтор замера §2 на реализации: REALITY `chrome` ≤ 13,5 КиБ (A) или ≤ 10,5 КиБ (B) на соединение.
 4. `make -f Makefile.lx lx-build` полным `LX_TAGS`; при B — `go test .` форка.
@@ -159,8 +171,7 @@ Loopback, go1.26.8 darwin/arm64, 200 соединений, 3 раунда, ме�
 - **Чтение состояния после рукопожатия из будущего кода.** Сегодня читателей нет (§1); новый код, которому понадобится, например, `ServerHello` после рукопожатия, получит `nil`. Страховка — комментарий у функции освобождения и тест критерия 1.
 - **Гонки.** Освобождение идёт в горутине, вызвавшей `HandshakeContext`, до того как соединение отдано наружу (`tls.ClientHandshake` возвращает `Conn` после него); библиотека после рукопожатия поля не читает. Отдельной синхронизации не нужно.
 - **Второй вызов `HandshakeContext`** — закрыт R2 по построению (§3.1); без него паника (§2).
-- **Ошибка сборки ClientHello раньше** — из `Client`, а не из рукопожатия (§3.1).
-- **ECH: сборка под мьютексом.** `ECHClientConfig` зовёт `Client` под `s.access` (`ech.go:131-132,179`): при ECH с непустым ALPN генерация ключей (ML-KEM-768) и два `Marshal` идут под мьютексом конфига, раньше — в `HandshakeContext` вне его. Микросекунды на соединение; учитывать при ECH с большим числом параллельных подключений.
+- **ECH и мьютекс конфига** — снят выбором редакции §3.1: сборка остаётся в `HandshakeContext`, вне `ECHClientConfig.access`, как в апстриме.
 - **Неявное рукопожатие через `Read`/`Write`** — без освобождения (§3.1, известное ограничение).
 - **Ренегоциация TLS 1.2** — недостижима (`RenegotiateNever`), но если когда-нибудь ядро выставит `Renegotiation`, `clientHandshake` упадёт на `nil` Hello. Метод форка (B) может отказываться освобождать при `config.Renegotiation != RenegotiateNever`.
 - **Сопровождение.** A: две точки в апстримных файлах, обе в зонах, которые upstream правил 16 и 11 раз с 2025-01 (`git log --since=2025-01-01 upstream/stable`), конфликты ожидаемы и тривиальны. B: плюс коммит форка в новом файле — переезжает `cherry-pick` без конфликтов; счётчик коммитов в раннбуке §1.1 и `go.mod` растёт до восьми.
@@ -172,7 +183,7 @@ Loopback, go1.26.8 darwin/arm64, 200 соединений, 3 раунда, ме�
 2. Вариант — B (§4).
 3. Состав обнуления в форке — набор podkop + `clientHelloSpec`/`echCtx` (п. 3 ниже не решался отдельно; по умолчанию — без `State12`/`Session`).
 4. Фича-владелец — 017-REALITY.
-5. Страж 0086 заменён подменой ALPN при создании соединения (§3.1).
+5. Страж 0086 заменён однократной подменой ALPN в первом `HandshakeContext` lx-типа (§3.1); редакция «сборка в `Client`» отвергнута замером (мьютекс ECH).
 
 ### Исходные вопросы черновика
 
