@@ -2,16 +2,16 @@
 
 **Фича:** [REALITY](../../FEATURES/017-REALITY/FEATURE.md) · контракт — [SPEC.md](SPEC.md)
 
-План под вариант B (§4 SPEC); вариант A — те же файлы ядра без строк «форк».
+План под вариант B (§4 SPEC, решение владельца 2026-10-11) и ALPN при создании соединения (§3.1).
 
 ## Файлы
 
 | Файл | Что меняется |
 |------|--------------|
-| `common/tls/utls_release_lx.go` (новый, `with_utls`) | `releaseHandshakeState(uConn *utls.UConn)`: обнуляет `HandshakeState.Hello`, `.ServerHello`, `.State13`, `Extensions`; затем `if r, ok := any(uConn).(interface{ ReleaseHandshakeState() }); ok { r.ReleaseHandshakeState() }` — метод форка, если он есть. Комментарий: что отпускается, почему безопасно (§1 SPEC), кто не должен читать состояние после рукопожатия |
-| `common/tls/utls_client.go` | `utlsALPNWrapper.HandshakeContext`: `// lx: SPEC 122` — при `HandshakeState.Hello == nil` сразу `return c.UConn.HandshakeContext(ctx)` (0086); после успешного `c.UConn.HandshakeContext(ctx)` — `releaseHandshakeState(c.UConn)` (0026) |
+| `common/tls/utls_release_lx.go` (новый, `with_utls`) | `lxNewUTLSConn(uConn, nextProtos) (Conn, error)`: при непустом `nextProtos` — `BuildHandshakeState`, подмена `ALPNExtension.AlpnProtocols`, `BuildHandshakeState`; возвращает `*lxUTLSConn{utlsALPNWrapper{utlsConnWrapper{uConn}, nil}}`. `(*lxUTLSConn).HandshakeContext`: `UConn.HandshakeContext(ctx)`, при `nil` — `releaseHandshakeState`. `releaseHandshakeState(uConn *utls.UConn, config *utls.Config)`: no-op при `config.Renegotiation != RenegotiateNever` (R1a); иначе обнуляет `HandshakeState.Hello`, `.ServerHello`, `.State13`, `Extensions`; затем `if r, ok := any(uConn).(interface{ ReleaseHandshakeState() }); ok { r.ReleaseHandshakeState() }` — метод форка, если он есть. Комментарий: что отпускается, почему безопасно (§1 SPEC), кто не должен читать состояние после рукопожатия |
+| `common/tls/utls_client.go` | `UTLSClientConfig.Client`: `// lx: SPEC 122` — `return lxNewUTLSConn(utls.UClient(conn, c.config.Clone(), c.id), c.config.NextProtos)` вместо `&utlsALPNWrapper{…}`. `utlsALPNWrapper.HandshakeContext` не меняется |
 | `common/tls/reality_client.go` | `ClientHandshake`: одна строка `releaseHandshakeState(uConn)` перед `return &realityClientConnWrapper{uConn}` (`// lx: SPEC 122`) |
-| `common/tls/utls_release_lx_test.go` (новый, `with_utls`) | Критерий 1 SPEC: uTLS+ALPN на `net.Pipe` против `crypto/tls`-сервера в горутине; REALITY через `utls.RealityServer` с `DialContext` на внутренний TLS-сервер; проверка полей, данные, второй `HandshakeContext`; неуспешное рукопожатие состояние не трогает |
+| `common/tls/utls_release_lx_test.go` (новый, `with_utls`) | Критерий 1 SPEC: uTLS+ALPN на `net.Pipe` против `crypto/tls`-сервера в горутине; REALITY через `utls.RealityServer` с `DialContext` на внутренний TLS-сервер; проверка полей, данные, второй `HandshakeContext`; ALPN на проводе для `NextProtos` = `["h2"]`, `["http/1.1"]` и пустого — как до задачи; неуспешное рукопожатие состояние не трогает |
 | `submodules/utls/u_conn_release_lx.go` (новый, форк) | `func (uconn *UConn) ReleaseHandshakeState()`: `clientHelloSpec = nil`, `echCtx = nil` (и, по решению владельца, `HandshakeState = PubClientHandshakeState{}`); no-op при `config.Renegotiation != RenegotiateNever`; тест в `u_conn_release_lx_test.go` |
 | `go.mod` | абзац `lx:begin utls-firefox148`: «seven commits» → восемь, строка про новый файл |
 | `docs-lx/lx-release-runbook.{ru.,}md` §1.1 | ожидаемое число строк `git log` форка: 7 → 8 |
@@ -22,7 +22,7 @@
 
 1. форк: новый файл + тест → push форка **до** суперпроекта;
 2. ядро: `utls_release_lx.go` + тест (новые файлы);
-3. ядро: `// lx:` правки `utls_client.go`, `reality_client.go` (один коммит, одна зона);
+3. ядро: `// lx:` строки в `utls_client.go` (`Client`) и `reality_client.go` (`ClientHandshake`) — один коммит;
 4. гитлинк + `go.mod` + раннбук + FEATURE/Roadmap/changelog.
 
 ## Что не меняется
