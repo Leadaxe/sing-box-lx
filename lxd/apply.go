@@ -137,6 +137,10 @@ type controller struct {
 	// and interface samples that percentages and rates are derived from.
 	host *hostCache
 
+	// commands runs daemon.json's named commands (SPEC 128); nil when none
+	// are configured, and the routes are registered only when it is set.
+	commands *commandRunner
+
 	applyAccess sync.Mutex
 	// closed is set (under applyAccess) by the daemon teardown: admin requests
 	// that were queued behind the mutex must not touch the service afterwards.

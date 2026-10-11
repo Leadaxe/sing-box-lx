@@ -65,6 +65,9 @@ type Options struct {
 	// DHCPLeaseFiles overrides the client directory's lease paths (SPEC 066);
 	// empty = the platform defaults.
 	DHCPLeaseFiles []string
+	// Commands are daemon.json's named commands (SPEC 128); empty = the
+	// /admin/commands routes are not registered.
+	Commands map[string]string
 }
 
 const (
@@ -141,6 +144,18 @@ func Run(ctx context.Context, options Options) error {
 		host:             newHostCache(absStateDir),
 	}
 	control.advertiseAddr = options.Listen.Advertise()
+	if len(options.Commands) > 0 {
+		if commandsSupported {
+			control.commands, err = newCommandRunner(options.Commands, commandOutcomeDir(options.LogFile, absStateDir),
+				commandEnv(control.platform, absStateDir, ownExecutable))
+			if err != nil {
+				startedService.Close()
+				return err
+			}
+		} else {
+			log.Warn("lxd: daemon.json commands are ignored on this platform (unix only)")
+		}
+	}
 
 	var serverIdentity *identity
 	if options.TLS {

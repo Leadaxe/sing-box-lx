@@ -73,6 +73,14 @@ func (c *controller) adminHandler(secret string) http.Handler {
 		mux.HandleFunc("GET /admin/host", c.handleHost)
 		mux.HandleFunc("GET /admin/host/interfaces", c.handleHostInterfaces)
 	}
+	// Named commands (SPEC 128): the operator's list from daemon.json, run by
+	// name. Same plane and the same gate as /admin/apply — one barrier for
+	// every route, by owner decision; apply under root does no less.
+	if c.commands != nil {
+		mux.HandleFunc("GET /admin/commands", c.handleCommandList)
+		mux.HandleFunc("GET /admin/commands/{name}", c.handleCommandGet)
+		mux.HandleFunc("POST /admin/commands/{name}", c.handleCommandStart)
+	}
 	// Operator routes serve the `client` CLI over loopback: they need the
 	// Bearer secret but NOT a client cert (the operator on the host has none).
 	// Registered on the loopback-only, secret-gated, cert-exempt path below.
