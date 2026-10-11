@@ -66,7 +66,13 @@ const devDefaultListen = "127.0.0.1:9091"
 var commandLxd = &cobra.Command{
 	Use:   "lxd",
 	Short: "Run the sing-box-lx daemon: host the core in-process behind a reload-surviving control channel",
-	Args:  cobra.NoArgs,
+	Long: `Run the sing-box-lx daemon: host the core in-process behind a reload-surviving control channel.
+
+Subcommands: client (mTLS enrollment), update (self-update, linux).
+daemon.json may list named root commands the launcher runs by name over
+/admin/commands, e.g. "commands": {"update": "/usr/bin/sing-box lxd update"}
+(docs-lx/lxd-daemon.md §8.5).`,
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := lxdMain(cmd); err != nil {
 			log.Fatal(err)
@@ -78,6 +84,55 @@ var commandLxdClient = &cobra.Command{
 	Use:   "client",
 	Short: "Manage trusted launcher clients (mTLS enrollment)",
 }
+
+// commandLxdUpdate is the self-updater (SPEC 129): the usual entry in
+// daemon.json is `"commands": {"update": "/usr/bin/sing-box lxd update"}`,
+// which the launcher runs by name (SPEC 128); by hand it prints the same lines.
+var commandLxdUpdate = &cobra.Command{
+	Use:   "update",
+	Short: "Update this binary to the latest release for its platform and restart the service (linux, root)",
+	Long: `Update this binary in place from the latest sing-box-lx release (linux, root).
+
+Reads the release's SHA256SUMS, streams the archive of this binary's platform
+into <binary>.new, verifies the sum, checks that the new binary runs and
+accepts the current config, swaps it atomically (the old one stays as a hard
+link until the new service is up), restarts the service through the host's
+init (procd, systemd, openrc) and rolls back when the new service does not
+come up within 15 s. Downloads honour HTTPS_PROXY / ALL_PROXY.
+
+Exit codes: 0 updated or already up to date, 1 nothing changed, 2 rolled back.
+
+Expose it to the launcher as a named command in daemon.json:
+  "commands": {"update": "/usr/bin/sing-box lxd update"}
+See docs-lx/lxd-daemon.md §8.5-8.6.`,
+	Args: cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		stateDir := ""
+		if cmd.Flags().Changed("state-dir") {
+			stateDir = lxdStateDir
+		} else if dir, found := lxd.FindServiceStateDir(); found {
+			stateDir = dir
+		}
+		code, err := lxd.Update(lxd.UpdateOptions{
+			DryRun:     lxdUpdateDryRun,
+			Prerelease: lxdUpdatePrerelease,
+			NoRestart:  lxdUpdateNoRestart,
+			Service:    lxdUpdateService,
+			StateDir:   stateDir,
+		}, os.Stdout)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "update: ERROR:", err)
+		}
+		os.Exit(code)
+	},
+}
+
+var (
+	lxdUpdateDryRun     bool
+	lxdUpdatePrerelease bool
+	lxdUpdateNoRestart  bool
+	lxdUpdateService    string
+)
 
 var commandLxdClientAdd = &cobra.Command{
 	Use:   "add",
@@ -143,6 +198,12 @@ func init() {
 	commandLxdClient.AddCommand(commandLxdClientAdd)
 	commandLxdClient.AddCommand(commandLxdClientList)
 	commandLxdClient.AddCommand(commandLxdClientRemove)
+
+	commandLxdUpdate.Flags().BoolVar(&lxdUpdateDryRun, "dry-run", false, "report installed and available versions and the asset, change nothing")
+	commandLxdUpdate.Flags().BoolVar(&lxdUpdatePrerelease, "prerelease", false, "take the newest release including rc builds (default: the latest stable)")
+	commandLxdUpdate.Flags().BoolVar(&lxdUpdateNoRestart, "no-restart", false, "replace the binary and stop; restart the service yourself")
+	commandLxdUpdate.Flags().StringVar(&lxdUpdateService, "service", "sing-box-lxd", "service name for the init's restart and health check")
+	commandLxd.AddCommand(commandLxdUpdate)
 
 	mainCommand.AddCommand(commandLxd)
 
@@ -276,6 +337,7 @@ func lxdDaemonOptions(cmd *cobra.Command) (lxd.Options, error) {
 		// client directory serves a dev run too, and an absent list just means
 		// the platform defaults.
 		DHCPLeaseFiles: fileConfig.DHCPLeaseFiles,
+		Commands:       fileConfig.Commands,
 	}
 	// The rotated log file exists only for an installed daemon (daemon.json
 	// present): a fileless dev run keeps its terminal, and Run additionally

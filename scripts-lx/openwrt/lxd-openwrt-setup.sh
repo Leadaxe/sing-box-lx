@@ -616,6 +616,7 @@ else
 fi
 
 # log_file on tmpfs: the rotated daemon log must not wear the overlay flash.
+# commands.update: the launcher's Update button runs the core's own updater (SPEC 128/129).
 cat > "$STATE_DIR/daemon.json" <<EOF
 {
   "listen": {
@@ -624,7 +625,10 @@ cat > "$STATE_DIR/daemon.json" <<EOF
   },
   "log_file": "/tmp/lxd.log",
   "tls": true,
-  "secret": "$SECRET"
+  "secret": "$SECRET",
+  "commands": {
+    "update": "$BIN lxd update"
+  }
 }
 EOF
 chmod 600 "$STATE_DIR/daemon.json"

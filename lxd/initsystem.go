@@ -182,3 +182,10 @@ func readPlatformInfo() platformInfo {
 		service:    service,
 	}
 }
+
+// PlatformSummary is the platform card for `sing-box version`: the release
+// asset of this binary and the host's init system (SPEC 127, 129).
+func PlatformSummary() (platform, initSystem string) {
+	initSystem, _ = detectInitSystem(platformInitSystemEnv())
+	return releasePlatform(runtime.GOOS, runtime.GOARCH, buildSettings()), initSystem
+}
