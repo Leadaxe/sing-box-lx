@@ -101,6 +101,7 @@ and Windows or by the operator's editor).
 | `log_max_size_mb` | `1` | log rotation: safety size ceiling |
 | `log_max_backups` | `1` | how many rotated generations (`lxd.log.1…N`) to keep |
 | `log_max_age_hours` | `24` | rotation by file age |
+| `commands` | absent | named root commands a client may start **by name** over `/admin/commands` (SPEC 128), e.g. `{"update": "/usr/bin/sing-box lxd update"}`; name `[a-z0-9][a-z0-9_-]{0,31}`, a bad name or an empty command refuses to start; absent = no such routes. Every command runs as the daemon's user (root) with no input from the client — see §8.5 |
 
 The rotation defaults give "about a day of history"; 0/absent key = default,
 and there is deliberately no "unlimited" setting. Changing any setting is a
@@ -156,6 +157,7 @@ Rules worth knowing:
 | `--invite-name <name>` | with `--service=install` — the name of the client the invite pairs (default `singbox-launcher` with `--invite-out`, no name without it) |
 | `client add [--name <label>] [--invite-out <file>]` | mint a one-time invite for a new client; `--invite-out` writes it into a new file instead of printing it |
 | `client list` / `client remove <name-or-fingerprint>` | list / revoke trusted clients |
+| `update [--dry-run] [--prerelease] [--no-restart] [--service <name>]` | self-update from the latest release for this binary's platform and a service restart through the init (linux, root; [8.6](#86-updating-sing-box-lxd-update)) |
 
 The subcommand exists only in builds with the `with_lxd` tag.
 
@@ -805,8 +807,90 @@ firewall) — [openwrt-vpn-ssid.md](openwrt-vpn-ssid.md).
 
 - Automatic installation — by principle, not by omission (see above): the
   recipe is printed, the operator runs it.
-- Self-update — updating the binary means "deliver the file + restart the
-  service".
+- Self-update by the service manager — the binary updates itself instead:
+  `sing-box lxd update` ([8.6](#86-updating-sing-box-lxd-update)).
+
+### 8.5. Maintenance from the launcher: named commands
+
+The daemon runs as root, so a client must never be able to hand it code to
+execute (SPEC 100: a client configures the network, nothing more). What it
+can do is pick from a list **the operator wrote on the host** — the sudoers
+model. `daemon.json`:
+
+```json
+"commands": {
+  "update":  "/usr/bin/sing-box lxd update",
+  "restart": "/etc/init.d/sing-box-lxd restart"
+}
+```
+
+A client sees the list with the command text and the last outcome
+(`GET /admin/commands`), starts one by name (`POST /admin/commands/update`)
+and passes nothing else: a body is a `400`. The command runs detached in its
+own session, so a service restart kills the daemon but not the command; its
+output and exit code are written to `<dir of the log file>/commands/`
+(tmpfs on a router, so a run wears no flash; the state dir when the daemon
+has no log file) and survive the daemon's restart — `GET /admin/commands/update`
+afterwards shows `done`, the exit code and the log tail. `lost` means the
+process died before it could record an exit code.
+
+The command's environment carries facts from the daemon, never from the
+client: `LXD_PLATFORM` (release asset, e.g. `linux-arm64`), `LXD_VERSION`,
+`LXD_INIT_SYSTEM`, `LXD_STATE_DIR`, `LXD_BIN` (the running binary),
+`LXD_CLIENT` (who pressed the button); `PATH` is set to the usual
+`/usr/sbin:/usr/bin:/sbin:/bin` when the service manager gave none. Every
+start is logged with the client's name.
+
+Each command is root. A `wget http://…` without a checksum is root for whoever
+sits in the path — prefer `sing-box lxd update` (§8.6) over a hand-written
+download. The gate is the one every admin route has (the client certificate
+under mTLS, the Bearer secret without it); the key is unix-only (Linux,
+macOS) and ignored with a warning on Windows.
+
+### 8.6. Updating: `sing-box lxd update`
+
+```bash
+sing-box lxd update            # latest stable, restart via the init, roll back if it does not come up
+sing-box lxd update --dry-run  # installed / available / asset — changes nothing
+```
+
+The binary knows what a hand-written script had to guess: its own path
+(`os.Executable`, symlinks resolved — that is the file to replace), its
+version, its release asset (`Platform:` in `sing-box version`, e.g.
+`linux-armv7`, `linux-mipsle-softfloat`) and the host's init. Steps:
+
+1. `SHA256SUMS` of the latest stable release (`--prerelease`: the newest
+   release including rc, through the GitHub API) gives the asset name, the
+   version and the sum in one request. Same version → `already up to date`,
+   exit 0. An installed version newer than the available one is refused —
+   no downgrades.
+2. Free space beside the binary ≥ its size + 10 %.
+3. The archive streams straight into `<binary>.new` on the same filesystem:
+   sha256 over the compressed bytes, gunzip, tar, only the `sing-box` entry
+   is written — nothing lands in `/tmp` (RAM on a router). A sum mismatch
+   deletes `.new`.
+4. `<binary>.new version` must run; with an applied config
+   (`<state>/last_good.json`) `<binary>.new check -c` must accept it.
+5. Swap: `link(binary, binary.old)` keeps the old inode for free, `rename(new,
+   binary)` is atomic — no `ETXTBSY`, the running daemon keeps its old inode.
+6. Restart through the init: `/etc/init.d/<service> restart` (procd),
+   `systemctl restart <service>` (systemd), `rc-service <service> restart`
+   (openrc); `--service` names a unit called differently. An unknown init,
+   `--no-restart`, or a restart command that itself fails leaves the new
+   binary in place and asks you to restart — nothing to roll back from.
+7. Health: the init must report the service running within 15 s and still
+   running 3 s later (a crash loop under procd flickers). Otherwise
+   `binary.old` goes back and the service is restarted again — exit 2.
+
+Exit codes: `0` updated or already current, `1` nothing changed, `2` rolled
+back. Downloads honour `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`, so where
+GitHub is unreachable the command can go through the core's own inbound:
+`"update": "HTTPS_PROXY=socks5://127.0.0.1:2080 /usr/bin/sing-box lxd update"`.
+TLS roots come from the system (`ca-bundle` on OpenWrt, which the installer
+requires). Linux only in this iteration; macOS and Windows have their own
+installation paths (§7, §7a). The OpenWrt installer writes
+`"commands": {"update": "/usr/bin/sing-box lxd update"}` into `daemon.json`,
+so the launcher's Update button runs exactly this.
 
 ## 9. Pairing a client (the same on every OS)
 
@@ -958,6 +1042,9 @@ Error map:
 | `PUT`/`DELETE /admin/clients-info/labels/{key}` | operator's own name for a client; key is an IP or a MAC (400 otherwise) |
 | `GET /admin/host` | the MACHINE the daemon runs on: CPU (per-core), memory, thermal zones, disks, file descriptors — as opposed to `/admin/memory`, which is the process |
 | `GET /admin/host/interfaces` | every network interface with raw counters and derived rates |
+| `GET /admin/commands` | the operator's named commands (SPEC 128): name, command text, state of the last run (`idle` / `running` / `done` / `lost`), `started_at`, `finished_at`, `exit_code`, `client` |
+| `POST /admin/commands/{name}` | start a command by name, no body: `202` + the running view; `404` not configured; `409` already running; `400` non-empty body |
+| `GET /admin/commands/{name}` | the same view plus `log` — the last 64 KiB of the command's output |
 
 **Operator routes** — `GET /admin/clients`, `POST /admin/client-code`,
 `POST /admin/client-remove`. These are the wire behind the `client list / add /
