@@ -100,6 +100,8 @@ REALITY — TLS-слой, в котором клиент выглядит как
 | [088 — REALITY_FRAGMENT_BYPASS](../../TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md) | `fragment` / `record_fragment` (и дефолт 060) доходят до REALITY-рукопожатия | D |
 | [089 — REALITY_KEY_SHARE_OPTION](../../TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md) | `tls.reality.key_share`: `classical` / `hybrid` по узлу; противовес 083 для сетей, теряющих длинный ClientHello | D |
 | [090 — REALITY_SHORT_ID_OVERFLOW_PANIC](../../TASKS/090-REALITY_SHORT_ID_OVERFLOW_PANIC/SPEC.md) | `short_id` длиннее 16 hex — ошибка конфигурации `invalid short_id` вместо паники процесса в `hex.Decode`; клиент и сервер | C |
+| [122 — UTLS_RELEASE_HANDSHAKE_STATE](../../TASKS/122-UTLS_RELEASE_HANDSHAKE_STATE/SPEC.md) | После рукопожатия соединение отпускает ClientHello, ключи key share и объекты расширений (REALITY `chrome` 27,4 → 13,3 КиБ на соединение); варианты A/B — решение владельца | N |
+| [123 — UTLS_RANDOMIZED_CONSISTENT](../../TASKS/123-UTLS_RANDOMIZED_CONSISTENT/SPEC.md) | `fingerprint: "randomized"` всегда с ALPN и гибридным шаром — без «мёртвого до рестарта» узла | N |
 
 Задачи 053, 083, 086, 087, 088, 090 одновременно числятся хотфиксами в [HOTFIXES](../004-HOTFIXES/FEATURE.md) — там их условия снятия и что сторожить на мерже. Здесь — состояние фичи целиком.
 
