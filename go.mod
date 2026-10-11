@@ -240,7 +240,7 @@ replace github.com/sagernet/gvisor => ./submodules/gvisor
 
 // lx:begin utls-firefox148 (SPECS/TASKS/086)
 // Fork of metacubex/utls at the pinned v1.8.7 (the exact `require` above, identical to
-// upstream's pin) plus seven commits. Four are cherry-picked from refraction-networking/utls:
+// upstream's pin) plus eight commits. Four are cherry-picked from refraction-networking/utls:
 // fc716b2 (the HelloFirefox_148 preset + reuse of one classical X25519 key between the
 // hybrid and the classical key_share entries), ddebe39 (the same reuse re-done via
 // marker bytes in KeyShare.Data instead of an unexported field), aa6edf4 (the
@@ -248,7 +248,9 @@ replace github.com/sagernet/gvisor => ./submodules/gvisor
 // the trust_anchors extension, SPECS/TASKS/118). Three are ours, around 6ebdceb: the ML-DSA
 // signature scheme codepoints only (no ML-DSA handshake support, that needs Go 1.27), the
 // dropped ML-DSA handshake test, and HelloChrome_Auto kept at Chrome 133 — Chrome 155 is
-// opt-in under the `chrome_155` fingerprint name (common/tls/utls_client.go). REALITY servers on
+// opt-in under the `chrome_155` fingerprint name (common/tls/utls_client.go). The eighth, ours, is a
+// new file u_conn_release_lx.go: UConn.ReleaseHandshakeState drops the ClientHelloSpec and ECH
+// context after a TLS 1.3 handshake (SPECS/TASKS/122). REALITY servers on
 // Xray >= v26.9.8 accept a ClientHello only with an X25519MLKEM768 share ahead of
 // X25519; metacubex/utls carries that share in the chrome presets alone, so
 // `fp=firefox` (HelloFirefox_120 there) and `fp=safari` (HelloSafari_16_0) are silently

@@ -99,7 +99,7 @@ func (c *UTLSClientConfig) Client(conn net.Conn) (Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &utlsALPNWrapper{utlsConnWrapper{utls.UClient(conn, c.config.Clone(), c.id)}, c.config.NextProtos}, nil
+	return newLXUTLSConn(utls.UClient(conn, c.config.Clone(), c.id), c.config.NextProtos), nil // lx: SPEC 122 — ALPN once, release the handshake state
 }
 
 func (c *UTLSClientConfig) SetSessionIDGenerator(generator func(clientHello []byte, sessionID []byte) error) {
