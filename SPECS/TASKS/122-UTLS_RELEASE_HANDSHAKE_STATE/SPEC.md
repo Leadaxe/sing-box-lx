@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | R (refactor, память) — после успешного uTLS/REALITY-рукопожатия соединение отпускает ClientHello, приватные ключи key share и объекты расширений; провод и поведение не меняются |
-| Статус | N (new) — финальное ТЗ 2026-10-11: решения владельца (§8), вариант B, ALPN один раз в первом `HandshakeContext` lx-типа (§3.1); логика проверена двумя ревью кода (Fable); код не начат |
+| Статус | I (implemented) — 2026-10-11: форк (`u_conn_release_lx.go`, восьмой коммит) и ядро, тесты под `-race` включая REALITY end-to-end, замер −18…−25 КБ на соединение; финальное ревью кода (Fable) — «можно сдавать» ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)); стенд Xray не прогонялся |
 | Ветка | `lx` |
 | Build-tag | нет (внутри `with_utls`, как вся фича) |
 | Источник | podkop-engine [`0026 — tls: release the uTLS handshake state after the handshake`](https://github.com/FiyeroT/podkop-engine/blob/main/patches/v1.14/0026-tls-release-the-uTLS-handshake-state-after-the-hands.patch) и его обязательное дополнение [`0086 — tls: do not rebuild the Client Hello after the handshake`](https://github.com/FiyeroT/podkop-engine/blob/main/patches/v1.14/0086-tls-do-not-rebuild-the-Client-Hello-after-the-handsh.patch); обсуждение — [sing-box-extended#162](https://github.com/shtorm-7/sing-box-extended/issues/162) п. 4 |
@@ -155,7 +155,7 @@ release. Вызывающих в дереве нет: оба входа в `Clie
 - **R2a. Провод ALPN прежний.** Для каждого транспорта ALPN в ClientHello тот же, что до задачи: `NextProtos` подменяет список пресета; при пустом `NextProtos` — список пресета.
 - **R3. Провод и поведение не меняются.** ClientHello, `AuthKey`, `key_share`, фрагментация, ALPN — как до задачи: стражи 083/086/088/089/118 проходят без правок. Данные, `KeyUpdate` и `NewSessionTicket` после рукопожатия обрабатываются как раньше.
 - **R4. Вариант B — метод форка в новом файле**, без правок файлов metacubex; тест метода там же; гитлинк в ядре, комментарий `go.mod`, раннбук §1.1 и FEATURE 017 обновлены на «восемь коммитов».
-- **R1a. Страж ренегоциации — в ядре.** `releaseHandshakeState` ничего не освобождает, если в `utls.Config` соединения `Renegotiation != RenegotiateNever` (единственный читатель `Hello` после рукопожатия — ренегоциация TLS 1.2, `u_conn.go:945`). Ядро `Renegotiation` не выставляет; страж — на случай, если начнёт. В методе форка — та же проверка.
+- **R1a. Освобождение только на TLS 1.3.** `releaseHandshakeState` ничего не трогает, если согласована не TLS 1.3; метод форка — no-op до завершения рукопожатия и при `vers != TLS13 && Renegotiation != Never`. Отступление от черновика (страж «`Renegotiation != Never`»), найденное при реализации: браузерные пресеты сами включают ренегоциацию — `RenegotiationInfoExtension.writeToUConn` пишет `Config.Renegotiation = RenegotiateOnceAsClient` (`u_tls_extensions.go:1700-1706`), и такой страж отключил бы освобождение для `chrome`/`firefox`/`safari`. Ренегоциация есть только в TLS 1.2 (на 1.3 `handleRenegotiation` — ошибка, `conn.go:1313`). На TLS 1.2 выигрыша нет; REALITY и Xray — только TLS 1.3.
 - **R5. Сборка без `with_utls`** не затрагивается (новые файлы под тегом, как соседи).
 
 ## 6. Критерии приёмки
@@ -173,7 +173,7 @@ release. Вызывающих в дереве нет: оба входа в `Clie
 - **Второй вызов `HandshakeContext`** — закрыт R2 по построению (§3.1); без него паника (§2).
 - **ECH и мьютекс конфига** — снят выбором редакции §3.1: сборка остаётся в `HandshakeContext`, вне `ECHClientConfig.access`, как в апстриме.
 - **Неявное рукопожатие через `Read`/`Write`** — без освобождения (§3.1, известное ограничение).
-- **Ренегоциация TLS 1.2** — недостижима (`RenegotiateNever`), но если когда-нибудь ядро выставит `Renegotiation`, `clientHandshake` упадёт на `nil` Hello. Метод форка (B) может отказываться освобождать при `config.Renegotiation != RenegotiateNever`.
+- **Ренегоциация TLS 1.2** — закрыта R1a (на TLS 1.2 состояние не освобождается). Прежняя оценка: недостижима (`RenegotiateNever`), но если когда-нибудь ядро выставит `Renegotiation`, `clientHandshake` упадёт на `nil` Hello. Метод форка (B) может отказываться освобождать при `config.Renegotiation != RenegotiateNever`.
 - **Сопровождение.** A: две точки в апстримных файлах, обе в зонах, которые upstream правил 16 и 11 раз с 2025-01 (`git log --since=2025-01-01 upstream/stable`), конфликты ожидаемы и тривиальны. B: плюс коммит форка в новом файле — переезжает `cherry-pick` без конфликтов; счётчик коммитов в раннбуке §1.1 и `go.mod` растёт до восьми.
 - **Снятие форка** (условие снятия 086/087/118): при развязке через интерфейс — без последствий, кроме потери 2,9 КиБ.
 
