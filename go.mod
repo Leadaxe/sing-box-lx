@@ -77,7 +77,7 @@ require (
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.40.0
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
-	google.golang.org/grpc v1.79.1
+	google.golang.org/grpc v1.83.1
 	google.golang.org/protobuf v1.36.11
 	howett.net/plist v1.0.1
 	lukechampine.com/blake3 v1.3.0
@@ -107,7 +107,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/gaissmai/bart v0.26.1 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go4org/hashtriemap v0.0.0-20251130024219-545ba229f689 // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
@@ -194,7 +194,7 @@ require (
 	golang.org/x/tools v0.47.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	zombiezen.com/go/capnproto2 v2.18.2+incompatible // indirect
 )
@@ -240,7 +240,7 @@ replace github.com/sagernet/gvisor => ./submodules/gvisor
 
 // lx:begin utls-firefox148 (SPECS/TASKS/086)
 // Fork of metacubex/utls at the pinned v1.8.7 (the exact `require` above, identical to
-// upstream's pin) plus seven commits. Four are cherry-picked from refraction-networking/utls:
+// upstream's pin) plus eight commits. Four are cherry-picked from refraction-networking/utls:
 // fc716b2 (the HelloFirefox_148 preset + reuse of one classical X25519 key between the
 // hybrid and the classical key_share entries), ddebe39 (the same reuse re-done via
 // marker bytes in KeyShare.Data instead of an unexported field), aa6edf4 (the
@@ -248,7 +248,9 @@ replace github.com/sagernet/gvisor => ./submodules/gvisor
 // the trust_anchors extension, SPECS/TASKS/118). Three are ours, around 6ebdceb: the ML-DSA
 // signature scheme codepoints only (no ML-DSA handshake support, that needs Go 1.27), the
 // dropped ML-DSA handshake test, and HelloChrome_Auto kept at Chrome 133 — Chrome 155 is
-// opt-in under the `chrome_155` fingerprint name (common/tls/utls_client.go). REALITY servers on
+// opt-in under the `chrome_155` fingerprint name (common/tls/utls_client.go). The eighth, ours, is a
+// new file u_conn_release_lx.go: UConn.ReleaseHandshakeState drops the ClientHelloSpec and ECH
+// context after a TLS 1.3 handshake (SPECS/TASKS/122). REALITY servers on
 // Xray >= v26.9.8 accept a ClientHello only with an X25519MLKEM768 share ahead of
 // X25519; metacubex/utls carries that share in the chrome presets alone, so
 // `fp=firefox` (HelloFirefox_120 there) and `fp=safari` (HelloSafari_16_0) are silently

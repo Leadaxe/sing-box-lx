@@ -1154,8 +1154,8 @@ substitute the fingerprint.
 | `firefox` | **X25519MLKEM768**, X25519 | passes | utls-lx fork, Firefox 148 (SPEC 086) |
 | `safari` | **X25519MLKEM768**, X25519 | passes | utls-lx fork, Safari 26.3 (SPEC 087) |
 | `edge`, `ios`, `android`, `360`, `qq` | X25519 only | rejected | no presets with the hybrid exist |
-| `random` | as the drawn preset | 3 of 5 | — |
-| `randomized` | hybrid by coin flip | ~½ of processes | — |
+| `random` | as the drawn preset: `chrome`, `firefox` or `safari` | passes | pool without `edge`/`ios` (SPEC 123) |
+| `randomized` | **X25519MLKEM768**, X25519, P-256; ALPN always | passes | `HelloRandomizedALPN` with the hybrid always on (SPEC 123); the rest stays random |
 
 `AuthKey` is computed from the key the server will choose: pure X25519 if present in
 `key_share`, otherwise the X25519 part of the hybrid. The client version in the session

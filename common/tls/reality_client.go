@@ -160,6 +160,7 @@ func (e *RealityClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
 		return nil, E.New("reality verification failed")
 	}
 
+	releaseHandshakeState(uConn) // lx: SPEC 122 — drop the ClientHello, key shares and extensions after a verified handshake
 	return &realityClientConnWrapper{uConn}, nil
 }
 

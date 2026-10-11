@@ -147,7 +147,7 @@ Rules worth knowing:
 | `--config-force <file>` | always boot from this file, overriding last-good |
 | `--run` | bring the core up regardless of the recorded run state |
 | `--service install\|install-user\|copy\|uninstall\|status` | service installation, a protected copy without a service, removal, a status report (see the OS sections, [7.1](#71-the-root-owned-copy-of-the-binary) and [7a](#7a-windows--automatic-installation)); on Windows `install`/`copy`/`uninstall` need an elevated token and `install-user` is refused |
-| `--exec-dir <dir>` | with `install`/`copy`/`uninstall`/`status` — directory of the protected copy and its sidecar. macOS: `sing-box-lxd`, default `/Library/PrivilegedHelperTools`, which must exist; a directory given here is created. Windows: `sing-box-lxd.exe` (with `libcronet.dll` when it lies beside the source), default `<ProgramFiles>\sing-box-lxd`, created if missing |
+| `--exec-dir <dir>` | with `install`/`copy`/`uninstall`/`status` — directory of the protected copy and its sidecar. macOS: `sing-box-lxd`, default `/Library/PrivilegedHelperTools`, created `root:wheel 0755` if missing; a directory given here is created with any missing parents. Windows: `sing-box-lxd.exe` (with `libcronet.dll` when it lies beside the source), default `<ProgramFiles>\sing-box-lxd`, created if missing |
 | `--allow-unsafe-exec` | debug only: let the service (root launchd job, Windows SCM service) start from a binary that is not a protected copy (WARN instead of a refusal) |
 | `--purge` | with `uninstall` — also delete the state directory (Windows: all of `<ProgramData>\sing-box-lxd`, state and logs) |
 | `--keep-copy` | with `uninstall` — remove the service but keep the protected copy for non-service use ([7.1](#71-the-root-owned-copy-of-the-binary), [7a](#7a-windows--automatic-installation)) |
@@ -274,8 +274,12 @@ named `sing-box-lxd`, not by the label: macOS truncates a process name to 16 cha
 and `sing-box-lxd` fits whole and contains `sing-box`, so `pgrep sing-box`, `pkill` and
 `ps -c` find the daemon without `-f`. The service label, the plist and
 `XPC_SERVICE_NAME` stay `com.leadaxe.sing-box-lxd`.
-`/Library/PrivilegedHelperTools` ships with macOS; install never creates it, and a
-missing one is an error with the remedy.
+A clean macOS has no `/Library/PrivilegedHelperTools` until SMJobBless installs the first
+privileged helper; `install` and `copy` then create it `root:wheel 0755`, exactly what
+`sudo mkdir -m 0755` would (`lxd: created … (root:wheel 0755)`; `--dry-run` prints
+`would create`). Only that last component is created: `/Library` must exist and pass the
+invariant, an existing directory is checked and never repaired, and `status`/`uninstall`
+never create it (SPEC 124).
 
 - **The invariant.** Every path component from `/` down to the binary is a real
   directory or file (not a symlink), owned by uid 0, with no write bit for group or

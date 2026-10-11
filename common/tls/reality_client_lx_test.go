@@ -204,7 +204,7 @@ func TestLxRealityDetourDefaultFragmentsFirstFlight(t *testing.T) {
 // on the wire, ahead of X25519, for all three presets the fork stands on.
 func TestLxRealityKeyShareDefaultKeepsHybrid(t *testing.T) {
 	t.Parallel()
-	for _, fingerprint := range []string{"chrome", "firefox", "safari"} {
+	for _, fingerprint := range []string{"chrome", "firefox", "safari", "random", "randomized"} { // lx: SPEC 123 — random/randomized
 		t.Run(fingerprint, func(t *testing.T) {
 			t.Parallel()
 			uConn := lxRealityPrepare(t, lxNewRealityClient(t, fingerprint, C.RealityKeyShareDefault, false, false))
@@ -224,7 +224,7 @@ func TestLxRealityKeyShareDefaultKeepsHybrid(t *testing.T) {
 // share (with its private key, which REALITY derives AuthKey from) in place.
 func TestLxRealityKeyShareClassicalStripsHybrid(t *testing.T) {
 	t.Parallel()
-	for _, fingerprint := range []string{"chrome", "firefox", "safari"} {
+	for _, fingerprint := range []string{"chrome", "firefox", "safari", "random", "randomized"} { // lx: SPEC 123 — random/randomized
 		t.Run(fingerprint, func(t *testing.T) {
 			t.Parallel()
 			hybrid := lxRealityPrepare(t, lxNewRealityClient(t, fingerprint, C.RealityKeyShareDefault, false, false))

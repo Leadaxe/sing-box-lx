@@ -13,9 +13,12 @@ package group
 //     whose held node still answers keeps it;
 //   - a "path dead" dial failure moves the selection through the SPEC 054
 //     machinery (penaltyFailoverDial → moveSelection), unchanged;
+//   - a held node that answers but degraded (SPEC 126: slower than
+//     failoverTrigger × the fastest other node's last delay, confirmed by an
+//     immediate second probe) escalates the tick the same way; the network moves
+//     only if the fresh full run found a node failoverMove × faster;
 //   - a forced run (manual URLTest, SPEC 054 valve) tests all nodes and
-//     re-selects the fastest — the only way back to the best node while the held
-//     one is alive.
+//     re-selects the fastest.
 //
 // DialContext/ListenPacket are unchanged: pickForDial reads the held selection
 // from selectedOutbound*, exactly as in least_test.
@@ -47,6 +50,7 @@ func (g *URLTestGroup) failoverCheck(ctx context.Context) map[string]uint16 {
 	held := g.failoverHeld()
 	result := make(map[string]uint16)
 	failed := make(map[string]bool, len(held))
+	slow := make(tagSet, len(held))
 	if len(held) > 0 {
 		result = g.testNodes(ctx, held, false)
 		if ctx.Err() != nil {
@@ -57,14 +61,32 @@ func (g *URLTestGroup) failoverCheck(ctx context.Context) map[string]uint16 {
 				failed[node.Tag()] = true
 			}
 		}
-		if len(failed) == 0 {
+		// lx: SPEC 126 — a live held node far slower than the others is confirmed
+		// by a second probe; confirmed slow escalates like a failure.
+		for _, node := range held {
+			if failed[node.Tag()] || !g.failoverDegraded(node) {
+				continue
+			}
+			for tag, delay := range g.probeNow(ctx, node) {
+				result[tag] = delay
+			}
+			if ctx.Err() != nil {
+				return result
+			}
+			if g.history.LoadURLTestHistory(RealTag(g.outbound, node)) == nil {
+				failed[node.Tag()] = true
+			} else if g.failoverDegraded(node) {
+				slow[node.Tag()] = true
+			}
+		}
+		if len(failed) == 0 && len(slow) == 0 {
 			return result
 		}
 	}
-	// Escalation: the failed held node was just probed, skip it in the full run.
+	// Escalation: the failed or slow held node was just probed, skip it in the full run.
 	others := make([]adapter.Outbound, 0, len(g.outbounds))
 	for _, detour := range g.outbounds {
-		if !failed[detour.Tag()] {
+		if !failed[detour.Tag()] && !slow[detour.Tag()] {
 			others = append(others, detour)
 		}
 	}
@@ -72,9 +94,74 @@ func (g *URLTestGroup) failoverCheck(ctx context.Context) map[string]uint16 {
 		result[tag] = delay
 	}
 	// reselect=false: the network whose held node still answers keeps it; the
-	// failed one (no history any more) moves to the fastest live node.
+	// failed one (no history any more) moves to the fastest live node; the slow
+	// one moves only to a node failoverMove × faster (failoverSelect).
+	if len(slow) > 0 {
+		g.failoverSlow.Store(&slow)
+		defer g.failoverSlow.Store(nil)
+	}
 	g.performSelectionUpdate(false)
 	return result
+}
+
+// tagSet is a set of outbound tags.
+type tagSet map[string]bool
+
+// SPEC 126 degradation thresholds, as num/den ratios of delays.
+const (
+	// failoverTrigger: the held node is suspect when slower than 2× the fastest
+	// other node's last known delay (possibly stale — only a reason to look).
+	failoverTriggerNum, failoverTriggerDen = 2, 1
+	// failoverMove: after a confirmed trigger and a fresh full run, the network
+	// moves only to a node at least 1.5× faster than the held one.
+	failoverMoveNum, failoverMoveDen = 3, 2
+)
+
+// failoverDegraded reports whether a live held node is slower than
+// failoverTrigger × the fastest other node with history that supports a network
+// the node is held for. No such node — false.
+func (g *URLTestGroup) failoverDegraded(node adapter.Outbound) bool {
+	history := g.history.LoadURLTestHistory(RealTag(g.outbound, node))
+	if history == nil {
+		return false
+	}
+	for _, network := range []string{N.NetworkTCP, N.NetworkUDP} {
+		held := g.selectedOutboundTCP
+		if network == N.NetworkUDP {
+			held = g.selectedOutboundUDP
+		}
+		if held != node {
+			continue
+		}
+		var best uint16
+		found := false
+		for _, detour := range g.outbounds {
+			if detour == node || !supportsNetwork(detour, network) {
+				continue
+			}
+			other := g.history.LoadURLTestHistory(RealTag(g.outbound, detour))
+			if other == nil {
+				continue
+			}
+			if !found || other.Delay < best {
+				best, found = other.Delay, true
+			}
+		}
+		if found && slowerBy(history.Delay, best, failoverTriggerNum, failoverTriggerDen) {
+			return true
+		}
+	}
+	return false
+}
+
+// slowerBy reports delay > num/den × than.
+func slowerBy(delay, than uint16, num, den int) bool {
+	return int(delay)*den > int(than)*num
+}
+
+// probeNow probes one node regardless of its history age (confirmation probe).
+func (g *URLTestGroup) probeNow(ctx context.Context, node adapter.Outbound) map[string]uint16 {
+	return urlTestOutbounds(ctx, g.outbound, g.history, g.logger, []adapter.Outbound{node}, g.link, 0, false, g.penaltyReset)
 }
 
 // failoverSelect is the failover selection used by performSelectionUpdate.
@@ -93,8 +180,19 @@ func (g *URLTestGroup) failoverSelect(network string, reselect bool) (adapter.Ou
 		case N.NetworkUDP:
 			current = g.selectedOutboundUDP
 		}
-		if current != nil && g.history.LoadURLTestHistory(RealTag(g.outbound, current)) != nil {
-			return current, true
+		if current != nil {
+			if history := g.history.LoadURLTestHistory(RealTag(g.outbound, current)); history != nil {
+				// lx: SPEC 126 — a confirmed-slow held node yields only to a node
+				// failoverMove × faster in the fresh full run.
+				if slow := g.failoverSlow.Load(); slow != nil && (*slow)[current.Tag()] {
+					if fastest := g.fastestByDelay(network); fastest != nil && fastest != current {
+						if best := g.history.LoadURLTestHistory(RealTag(g.outbound, fastest)); best != nil && slowerBy(history.Delay, best.Delay, failoverMoveNum, failoverMoveDen) {
+							return fastest, true
+						}
+					}
+				}
+				return current, true
+			}
 		}
 	}
 	if fastest := g.fastestByDelay(network); fastest != nil {

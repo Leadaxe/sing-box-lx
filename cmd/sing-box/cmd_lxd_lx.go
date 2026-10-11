@@ -122,7 +122,7 @@ func init() {
 	commandLxd.Flags().BoolVar(&lxdRun, "run", false, "force the core up regardless of recorded run-state")
 	serviceUsage := "install (system LaunchDaemon, root) | install-user (per-user LaunchAgent, no sudo) | copy (root-owned copy only, no service; root) | uninstall | status (exit 0 OK, 2 reinstall needed, 3 not installed, 4 copy only, 5 not running)"
 	allowUnsafeUsage := "debug only: let the root launchd service start from a binary that is not a root-owned copy (logs a WARN instead of refusing)"
-	execDirUsage := "with --service=install|copy|uninstall|status: directory for the root-owned binary copy sing-box-lxd and its sidecar (default /Library/PrivilegedHelperTools, which must exist; a directory given here is created if missing); every component from / must be root-owned and not group/world-writable"
+	execDirUsage := "with --service=install|copy|uninstall|status: directory for the root-owned binary copy sing-box-lxd and its sidecar (default /Library/PrivilegedHelperTools, created root:wheel 0755 if missing; a directory given here is created if missing, with any missing parents); every component from / must be root-owned and not group/world-writable"
 	if runtime.GOOS == "windows" {
 		serviceUsage = "install (Windows service sing-box-lxd; elevated) | copy (protected copy only, no service; elevated) | uninstall (elevated) | status (no elevation; exit 0 OK, 2 reinstall needed, 3 not installed, 4 copy only, 5 not running)"
 		allowUnsafeUsage = "debug only: let the Windows service start from a binary that is not a protected copy (logs a WARN instead of refusing)"

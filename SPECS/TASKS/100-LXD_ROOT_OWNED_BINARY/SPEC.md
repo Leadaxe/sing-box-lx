@@ -9,7 +9,7 @@
 | Ветка | `spec100-lxd-root-owned-binary` (от `lx`) |
 | База | `4146bc8ce` |
 | Релиз | `v1.14.1-lx.11`; имя файла копии `sing-box-lxd` — `v1.14.1-lx.12` |
-| Связано | [057](../057-LXD_MTLS_SERVICE/SPEC.md) (служба `--service`), [065](../065-LXD_OBSERVABILITY_PLANE/SPEC.md) (`/admin/info`); лаунчер: SPEC 137 (classic TUN на macOS через `--service=copy`) |
+| Связано | [124](../124-LXD_DEFAULT_EXEC_DIR_CREATE/SPEC.md) (дефолтный каталог создаётся, заменяет пункт §2.3), [057](../057-LXD_MTLS_SERVICE/SPEC.md) (служба `--service`), [065](../065-LXD_OBSERVABILITY_PLANE/SPEC.md) (`/admin/info`); лаунчер: SPEC 137 (classic TUN на macOS через `--service=copy`) |
 
 Решение владельца 2026-09-24, нормы согласованы с сессией-владельцем ядра.
 
@@ -53,8 +53,10 @@
 
 `--exec-dir <dir>` — каталог, куда кладутся оба файла с теми же именами; дефолт —
 `/Library/PrivilegedHelperTools`. Инвариант (2.2) проверяется по цепочке от `/` до
-каталога и на самом файле. Дефолтный каталог принадлежит macOS и не создаётся: его
-отсутствие — ошибка с причиной. Каталог из `--exec-dir` при отсутствии создаётся
+каталога и на самом файле. ~~Дефолтный каталог принадлежит macOS и не создаётся: его
+отсутствие — ошибка с причиной.~~ Заменено [124](../124-LXD_DEFAULT_EXEC_DIR_CREATE/SPEC.md):
+на чистой macOS каталога нет до первого SMJobBless, install и copy создают его последний
+компонент `root:wheel 0755`. Каталог из `--exec-dir` при отсутствии создаётся
 (недостающие компоненты `root:wheel 0755`).
 
 **Старая раскладка.** Если по пути копии лежит **каталог** (остаток пре-релиза с
@@ -290,7 +292,7 @@ root-owned copy`. launchd пишет его в `lxd.log` (StandardErrorPath) п�
 5. darwin: табличный тест переходов none → copy only → installed → (обновление ядра) →
    copy only (`--keep-copy`, повтор — no-op) → installed → none и copy only → none с вердиктом и кодом после каждого шага; аномалии → код 2 с
    причиной; plist ↔ `ProgramArguments` туда-обратно; dry-run install/copy; разбор
-   `launchctl print`; дефолтный каталог не создаётся, старая раскладка — отказ и exit 2.
+   `launchctl print`; дефолтный каталог не создаётся (заменено 124 — `TestServiceDefaultExecDirCreated`), старая раскладка — отказ и exit 2.
    Выполнено (`TestServiceStateTransitions`, `TestServiceExecDirAndLegacyLayout`,
    `TestServiceLeavesEarlierBuildFiles`,
    `TestServiceStatusAnomalies`, `TestBuildPlist*`, `TestDryRun*`, `TestServiceLaunchctlPrint`).

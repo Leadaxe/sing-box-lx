@@ -655,23 +655,14 @@ func TestWaitUntilGone(t *testing.T) {
 	}
 }
 
-// TestServiceExecDirAndLegacyLayout: the default exec dir is macOS's and is
-// never created; a directory left where the flat copy belongs (an early
-// pre-release's <label>/sing-box) blocks copy and install with the remedy,
-// shows in status with exit 2, and is never deleted by uninstall.
+// TestServiceExecDirAndLegacyLayout: a directory left where the flat copy
+// belongs (an early pre-release's <label>/sing-box) blocks copy and install
+// with the remedy, shows in status with exit 2, and is never deleted by
+// uninstall.
 func TestServiceExecDirAndLegacyLayout(t *testing.T) {
 	env, out, _ := testServiceEnv(t)
 	callerSHA := setSource(t, env, "core v1")
-
-	missing := env
-	missing.execDir = filepath.Join(filepath.Dir(env.execDir), "absent")
-	err := missing.copyOnly()
-	if err == nil || !strings.Contains(err.Error(), "does not exist; it is part of macOS") {
-		t.Fatalf("a missing default exec dir must be an error with the remedy, got %v", err)
-	}
-	if _, statErr := os.Lstat(missing.execDir); !os.IsNotExist(statErr) {
-		t.Fatal("the default exec dir must never be created")
-	}
+	var err error
 
 	legacy := filepath.Join(env.execDir, execCopyName)
 	mustDo(t, os.MkdirAll(filepath.Join(legacy, "sing-box"), 0o755))
@@ -746,5 +737,98 @@ func TestServiceLeavesEarlierBuildFiles(t *testing.T) {
 	}
 	if binaryAfter, markerAfter := snapshot(); binaryAfter != binaryBefore || markerAfter != markerBefore {
 		t.Fatal("the earlier build's copy and sidecar must stay untouched")
+	}
+}
+
+// TestServiceDefaultExecDirCreated (SPEC 124): a clean macOS has no
+// PrivilegedHelperTools until SMJobBless installs a helper. install and copy
+// create the default's last component root:wheel 0755, the dry run announces
+// it, status and uninstall leave it absent; a missing parent, an unsafe
+// parent and an unsafe existing directory are refused as before.
+func TestServiceDefaultExecDirCreated(t *testing.T) {
+	env, out, base := testServiceEnv(t)
+	callerSHA := setSource(t, env, "core v1")
+	mustDo(t, os.Remove(env.execDir))
+	absent := func() bool { _, err := os.Lstat(env.execDir); return os.IsNotExist(err) }
+	created := "lxd: created " + env.execDir + " (root:wheel 0755)"
+
+	verdict, err := env.status(callerSHA)
+	if err != nil || verdict != ServiceNotInstalled || !absent() {
+		t.Fatalf("status over a missing default: %s %v, absent=%v\n%s", verdict, err, absent(), out.String())
+	}
+	out.Reset()
+	if err = env.uninstall(false, false, false); err != nil || !absent() {
+		t.Fatalf("uninstall over a missing default: %v, absent=%v\n%s", err, absent(), out.String())
+	}
+	out.Reset()
+	mustDo(t, env.planCopy())
+	if !strings.Contains(out.String(), "lxd: would create "+env.execDir+" (root:wheel 0755)") || !absent() {
+		t.Fatalf("dry-run copy must announce the directory and create nothing:\n%s", out.String())
+	}
+	out.Reset()
+	mustDo(t, printPlan(out, env.system, []string{"lxd"}, env.execDir, false))
+	if !strings.Contains(out.String(), "lxd: would create "+env.execDir+" (root:wheel 0755)") || !absent() {
+		t.Fatalf("dry-run install must announce the directory and create nothing:\n%s", out.String())
+	}
+
+	for name, action := range map[string]func() error{
+		"copy":    env.copyOnly,
+		"install": func() error { return env.installSystem([]string{"lxd"}) },
+	} {
+		out.Reset()
+		if err = action(); err != nil {
+			t.Fatalf("%s over a missing default: %v\n%s", name, err, out.String())
+		}
+		info, statErr := os.Lstat(env.execDir)
+		if statErr != nil || !info.IsDir() || info.Mode().Perm() != 0o755 || !strings.Contains(out.String(), created) {
+			t.Fatalf("%s must create the default 0755 and say so: %v %v\n%s", name, info, statErr, out.String())
+		}
+		mustDo(t, env.uninstall(false, false, false))
+		mustDo(t, os.Remove(env.execDir))
+	}
+
+	// Only the last component: a missing parent is a damaged system.
+	deep := env
+	deep.execDir = filepath.Join(base, "Library", "PrivilegedHelperTools")
+	if err = deep.copyOnly(); err == nil || !strings.Contains(err.Error(), "its parent "+filepath.Join(base, "Library")+" does not exist") {
+		t.Fatalf("a missing parent must be refused, got %v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(base, "Library")); !os.IsNotExist(statErr) {
+		t.Fatal("a missing parent must never be created")
+	}
+
+	// A parent failing the chain: refused before anything is created.
+	useOwnerLstat(t, func(path string) (ownerInfo, error) {
+		if path == base {
+			return ownerInfo{uid: 501, mode: os.ModeDir | 0o755}, nil
+		}
+		return rootOwnsEverything(path)
+	})
+	if err = env.copyOnly(); err == nil || !strings.Contains(err.Error(), "must be root-owned") || !absent() {
+		t.Fatalf("an unsafe parent must be refused, got %v, absent=%v", err, absent())
+	}
+
+	// An existing directory is checked as before, never repaired.
+	mustDo(t, os.Mkdir(env.execDir, 0o755))
+	useOwnerLstat(t, func(path string) (ownerInfo, error) {
+		if path == env.execDir {
+			return ownerInfo{uid: 501, mode: os.ModeDir | 0o755}, nil
+		}
+		return rootOwnsEverything(path)
+	})
+	for _, plan := range []bool{false, true} {
+		run := env.copyOnly
+		if plan {
+			run = env.planCopy
+		}
+		if err = run(); err == nil || !strings.Contains(err.Error(), env.execDir+": owned by uid 501") {
+			t.Fatalf("an unsafe existing default must be refused (dry run %v), got %v", plan, err)
+		}
+	}
+	useOwnerLstat(t, rootOwnsEverything)
+	mustDo(t, os.Remove(env.execDir))
+	mustDo(t, os.Symlink(filepath.Join(base, "bundle"), env.execDir))
+	if err = env.copyOnly(); err == nil || !strings.Contains(err.Error(), "is a symbolic link") {
+		t.Fatalf("a symlinked default must be refused, got %v", err)
 	}
 }
