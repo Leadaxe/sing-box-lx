@@ -15,6 +15,24 @@
 | `scripts-lx/openwrt/lxd-openwrt-setup.sh`, `-ru.sh` | `"commands": {"update": "$BIN lxd update"}` в heredoc `daemon.json`; README EN/RU — две строки в «Служба и логи» |
 | `lxd/update_test.go` | порядок версий и отказ мусора; `SHA256SUMS` (mips vs mipsle, `*`, нет платформы, zip не ассет); распаковка (содержимое, `0755`, несовпадение удаляет, два бинаря); `fakeUpdateHost` (URL→байты, скриптованные ответы `running`, падения команд): успех (точная последовательность вызовов, `done`, без хвостов), откат (старое содержимое, второй restart, `skipping check`), restart упал (новый бинарь, без health-проб), `--no-restart`/неизвестный init (init не трогается), `--dry-run`/актуально/даунгрейд, `--prerelease`, гварды goos/euid/место/нет ассета ничего не меняют; `serviceCommands` |
 
+## Довесок 2026-10-12: гонка рестарта под procd (§2.6)
+
+Живой прогон lx.15-test128 → lx.16 на RouteRich: update вернул `done`, а ядро нового демона не
+поднялось (`TUNSETIFF: device or resource busy` — старый процесс ещё держал `lxd-tun0`), VPN
+лежал ~80 с до ручного `restart`.
+
+| Файл | Содержимое |
+|------|-----------|
+| `lxd/daemon.go` | `startRetryingBusy`: в `bootstrap` старт повторяется каждые 500 мс до 10 с, пока `isDeviceBusy(err)` (`errors.Is(err, syscall.EBUSY)` по цепочке `E.Cause` либо текст `device or resource busy`); первая попытка — `WARN … retrying for up to 10s`; пауза — `bootBusyRetrySleep` (ctx-aware, тесты подменяют); другая ошибка — окончательна сразу |
+| `lxd/admin.go` | `GET /admin/status` на операторском mux тоже; корневой demux `pinnedOrOperator`: без сертификата с loopback-пира → операторский путь (секрет), иначе → пин (удалённый без сертификата получает прежний `401`); `isLoopbackPeer` вынесен из `requireLoopback` |
+| `lxd/localclient.go` | `CoreStatus{Status, LastError}`, `(*LocalClient).Status()` — `GET /admin/status`, не-200 — ошибка с текстом демона |
+| `lxd/update.go` | `updateEnv.coreStatus`/`coreStatusSkip`; шаг 8b `waitForCore`: 21 проба с паузой 1 с (счётчик, не часы — тесты мгновенны), `started` → ok, `fatal` → ошибка с `last_error`, `idle` до конца → `still idle after 20s`, без единого ответа → `core status unknown`, выход 0; провал ядра идёт в общий откат шага 8 с текстом `<ver> is up but the core did not start: …`. `coreProbe(stateDir)`: `daemon.json` → `loopbackAdminAddress` (loopback как есть, `0.0.0.0`/`::`/пустой хост → `127.0.0.1`/`::1`, только LAN → нет пробы), run-state `stopped` → нет пробы; `NewLocalClient(address, secret, tls)` |
+| `lxd/bootstrap_test.go` | `TestBootstrapRetriesBusyDevice` (`busyReloader` со скриптованными ошибками) |
+| `lxd/admin_test.go` | `TestAdminStatusOperatorRoute` |
+| `lxd/update_test.go` | `TestUpdateWaitsForCore` (4 сценария + «пробы нет»), `TestLoopbackAdminAddress` (+ `coreProbe`) |
+| `cmd/sing-box/cmd_lxd_lx.go` | `Long`: ожидание ядра |
+| `docs-lx/lxd-daemon.md`, `.ru.md` | §8.6 шаг 7 → 7–8; операторские маршруты — `/admin/status`; `lx-changelog.md` Unreleased |
+
 ## Проверка
 
 - `gofmt -l lxd/ cmd/` — пусто.
@@ -24,5 +42,5 @@
 
 ## Открыто
 
-- Живой прогон на роутере (lx.N-1 → новый) — до тега, вместе со 127/128.
+- Живой прогон lx.15-test128 → lx.16 на RouteRich 2026-10-12 — прошёл (подмена, сумма, procd, `/admin/commands` на lx.16 = 200, паспорт платформы пришёл), вскрыл §2.6. Ретрай `EBUSY` и шаг 8b на роутере ещё не прогонялись — следующий update (lx.16 → lx.17) должен показать `core started` в `update.log` и ни одной строки `TUNSETIFF` в `lxd.log` либо один `WARN … retrying`.
 - `Bfree` считает место для root; на ФС с резервом для root это верно для нашего процесса.

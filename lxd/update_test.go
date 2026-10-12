@@ -224,6 +224,111 @@ func TestUpdateSucceeds(t *testing.T) {
 	}
 }
 
+// TestUpdateWaitsForCore: the init's "running" is not enough — the update
+// asks /admin/status and succeeds only on "started"; "fatal" rolls back with
+// the daemon's error; an unanswered probe is reported, not punished (§2.2 8b).
+func TestUpdateWaitsForCore(t *testing.T) {
+	type probe struct {
+		answers  []CoreStatus
+		err      error
+		wantCode int
+		wantOut  string
+		wantBin  string
+	}
+	busy := "start inbound/tun[tun-in]: configure tun interface: open tun: TUNSETIFF: device or resource busy"
+	cases := map[string]probe{
+		"idle then started": {
+			answers:  []CoreStatus{{Status: "idle"}, {Status: "idle"}, {Status: "started"}},
+			wantCode: UpdateExitOK, wantOut: "core started", wantBin: "new core",
+		},
+		"fatal rolls back": {
+			answers:  []CoreStatus{{Status: "idle"}, {Status: "fatal", LastError: busy}},
+			wantCode: UpdateExitRolledBack, wantOut: "is up but the core did not start: " + busy, wantBin: "old core",
+		},
+		"idle for the whole window rolls back": {
+			answers:  []CoreStatus{{Status: "idle"}},
+			wantCode: UpdateExitRolledBack, wantOut: "still idle after 20s", wantBin: "old core",
+		},
+		"unreachable is not a verdict": {
+			err:      E.New("reach daemon (is it running?)"),
+			wantCode: UpdateExitOK, wantOut: "core status unknown", wantBin: "new core",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			host, target := newFakeUpdateHost(t, []byte("new core"), "1.14.3-lx.16")
+			host.running = []bool{true, true, true, true}
+			env := host.env(target)
+			answers := tc.answers
+			env.coreStatus = func() (CoreStatus, error) {
+				if tc.err != nil {
+					return CoreStatus{}, tc.err
+				}
+				answer := answers[0]
+				if len(answers) > 1 {
+					answers = answers[1:]
+				}
+				return answer, nil
+			}
+			code, err := runUpdate(env, UpdateOptions{})
+			if code != tc.wantCode {
+				t.Fatalf("code %d err %v\n%s", code, err, host.out.String())
+			}
+			if !strings.Contains(host.out.String(), tc.wantOut) && (err == nil || !strings.Contains(err.Error(), tc.wantOut)) {
+				t.Fatalf("want %q in output or error\nout: %s\nerr: %v", tc.wantOut, host.out.String(), err)
+			}
+			if readTarget(t, target) != tc.wantBin {
+				t.Fatalf("binary is %q, want %q", readTarget(t, target), tc.wantBin)
+			}
+		})
+	}
+
+	// No probe: the reason is printed and the init's verdict stands.
+	host, target := newFakeUpdateHost(t, []byte("new core"), "1.14.3-lx.16")
+	host.running = []bool{true, true}
+	env := host.env(target)
+	env.coreStatusSkip = "no daemon.json in /x"
+	if code, err := runUpdate(env, UpdateOptions{}); code != UpdateExitOK || err != nil || !strings.Contains(host.out.String(), "core status not checked: no daemon.json in /x") {
+		t.Fatalf("code %d err %v\n%s", code, err, host.out.String())
+	}
+}
+
+func TestLoopbackAdminAddress(t *testing.T) {
+	cases := map[string]string{
+		"127.0.0.1:19091":   "127.0.0.1:19091",
+		"0.0.0.0:19091":     "127.0.0.1:19091",
+		"[::]:19091":        "[::1]:19091",
+		":19091":            "127.0.0.1:19091",
+		"192.168.1.1:19091": "",
+	}
+	for listen, want := range cases {
+		if got := loopbackAdminAddress(ListenAddress(listen)); got != want {
+			t.Errorf("%s: got %q want %q", listen, got, want)
+		}
+	}
+	multi := ListenConfig{Address: []string{"192.168.1.1", "127.0.0.1"}, Port: 19091}
+	if got := loopbackAdminAddress(multi); got != "127.0.0.1:19091" {
+		t.Errorf("multi: got %q", got)
+	}
+	// coreProbe: stopped-by-operator state yields no probe with a reason.
+	dir := t.TempDir()
+	if err := SaveDaemonConfig(dir, DaemonConfig{Listen: ListenAddress("127.0.0.1:19091")}); err != nil {
+		t.Fatal(err)
+	}
+	stateStore, _ := newStore(dir)
+	_ = stateStore.SetWasRunning(false)
+	if probe, skip := coreProbe(dir); probe != nil || !strings.Contains(skip, "stopped by the operator") {
+		t.Fatalf("probe %v skip %q", probe != nil, skip)
+	}
+	_ = stateStore.SetWasRunning(true)
+	if probe, skip := coreProbe(dir); probe == nil || skip != "" {
+		t.Fatalf("probe %v skip %q", probe != nil, skip)
+	}
+	if _, skip := coreProbe(""); skip != "no state dir" {
+		t.Fatal(skip)
+	}
+}
+
 func TestUpdateRollsBack(t *testing.T) {
 	host, target := newFakeUpdateHost(t, []byte("new core"), "1.14.3-lx.16")
 	host.running = nil // never comes up

@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -79,7 +81,16 @@ type updateEnv struct {
 	// freeBytes is the free space on the filesystem holding dir.
 	freeBytes func(dir string) (uint64, error)
 	sleep     func(time.Duration)
+	// coreStatus asks the (new) daemon whether the core is up — /admin/status
+	// over loopback. nil = the probe is unavailable; coreStatusSkip says why.
+	coreStatus     func() (CoreStatus, error)
+	coreStatusSkip string
 }
+
+// updateCoreWait bounds the wait for the core inside the restarted daemon
+// (§2.2 step 8b): the daemon itself retries a busy TUN for 10 s, so 20 s
+// covers that plus a slow start on a router.
+const updateCoreWait = 20 * time.Second
 
 func (env updateEnv) say(format string, args ...any) {
 	fmt.Fprintf(env.out, "update: "+format+"\n", args...)
@@ -415,17 +426,128 @@ func runUpdate(env updateEnv, options UpdateOptions) (int, error) {
 			break
 		}
 	}
+	failure := asset.version + " did not come up"
+	// 8b. The init's "running" is the daemon process, not the core: a daemon
+	// that lost the TUN race on restart stays up with a control channel and
+	// no VPN (seen live, 2026-10-12). Ask the daemon itself and wait for
+	// "started"; a fatal core is a health failure like a dead process.
+	if healthy {
+		if coreErr := env.waitForCore(); coreErr != nil {
+			healthy = false
+			failure = asset.version + " is up but the core did not start: " + coreErr.Error()
+		}
+	}
 	if healthy {
 		_ = os.Remove(oldPath)
 		env.say("done: %s is running", asset.version)
 		return UpdateExitOK, nil
 	}
-	env.say("%s did not come up, rolling back to %s", asset.version, env.version)
+	env.say("%s, rolling back to %s", failure, env.version)
 	if err := os.Rename(oldPath, target); err != nil {
 		return UpdateExitRolledBack, E.Cause(err, "roll back ", target, " (the old binary is at ", oldPath, ")")
 	}
 	_, _ = env.run(restart[0], restart[1:]...)
-	return UpdateExitRolledBack, E.New(asset.version, " did not come up, rolled back to ", env.version)
+	return UpdateExitRolledBack, E.New(failure, ", rolled back to ", env.version)
+}
+
+// waitForCore polls /admin/status once a second for up to updateCoreWait.
+// "started" is success; "fatal" is final at once (the daemon has given up —
+// it retries a busy device itself before saying so); "idle" means the core
+// is still starting (bootstrap runs behind the listener). A probe that never
+// gets an answer is not a verdict: the init says the process is up, and an
+// unreachable or misconfigured admin plane must not trigger a rollback, so
+// it is reported and the update stands. No probe at all (no daemon.json,
+// control channel not on loopback, core stopped by the operator) says why.
+func (env updateEnv) waitForCore() error {
+	if env.coreStatus == nil {
+		env.say("core status not checked: %s", env.coreStatusSkip)
+		return nil
+	}
+	var lastErr error
+	last := CoreStatus{}
+	for attempt := 0; attempt <= int(updateCoreWait/time.Second); attempt++ {
+		if attempt > 0 {
+			env.sleep(time.Second)
+		}
+		status, err := env.coreStatus()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		lastErr = nil
+		last = status
+		switch status.Status {
+		case "started":
+			env.say("core started")
+			return nil
+		case "fatal":
+			return E.New(status.LastError)
+		}
+	}
+	if lastErr != nil {
+		env.say("core status unknown (%s); the service is running, not rolling back", lastErr)
+		return nil
+	}
+	if last.LastError != "" {
+		return E.New("still ", last.Status, " after ", updateCoreWait, ": ", last.LastError)
+	}
+	return E.New("still ", last.Status, " after ", updateCoreWait)
+}
+
+// coreProbe builds the /admin/status probe for the host's daemon from its
+// state dir, or explains why there is none.
+func coreProbe(stateDir string) (func() (CoreStatus, error), string) {
+	if stateDir == "" {
+		return nil, "no state dir"
+	}
+	config, found, err := LoadDaemonConfig(stateDir)
+	if err != nil {
+		return nil, "daemon.json: " + err.Error()
+	}
+	if !found {
+		return nil, "no daemon.json in " + stateDir
+	}
+	if stateStore, err := newStore(stateDir); err == nil {
+		if running, recorded := stateStore.WasRunning(); recorded && !running {
+			return nil, "the core is stopped by the operator"
+		}
+	}
+	address := loopbackAdminAddress(config.Listen)
+	if address == "" {
+		return nil, "control channel is not on loopback (" + config.Listen.Advertise() + ")"
+	}
+	client := NewLocalClient(address, config.Secret, config.TLS)
+	return client.Status, ""
+}
+
+// loopbackAdminAddress picks a control-channel address the host can reach
+// as a loopback peer (the operator route's condition): a loopback bind as is,
+// an unspecified bind (0.0.0.0, ::) through 127.0.0.1; a daemon bound only
+// to LAN addresses has none.
+func loopbackAdminAddress(listen ListenConfig) string {
+	for _, address := range listen.Addresses() {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			continue
+		}
+		if host == "" {
+			return net.JoinHostPort("127.0.0.1", port)
+		}
+		ip, err := netip.ParseAddr(host)
+		if err != nil {
+			continue
+		}
+		if ip.IsLoopback() {
+			return address
+		}
+		if ip.IsUnspecified() {
+			if ip.Is6() {
+				return net.JoinHostPort("::1", port)
+			}
+			return net.JoinHostPort("127.0.0.1", port)
+		}
+	}
+	return ""
 }
 
 // Update runs `lxd update` against the real host (SPEC 129).
@@ -464,5 +586,6 @@ func Update(options UpdateOptions, out io.Writer) (int, error) {
 		freeBytes: freeBytes,
 		sleep:     time.Sleep,
 	}
+	env.coreStatus, env.coreStatusSkip = coreProbe(options.StateDir)
 	return runUpdate(env, options)
 }

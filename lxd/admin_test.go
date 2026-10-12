@@ -492,6 +492,35 @@ func TestAdminOperatorRoutes(t *testing.T) {
 // Bearer on top (clients never learn the daemon-owned secret). And the
 // inverse: the Bearer secret alone must NOT open the pinned plane, or a
 // leaked operator secret would void the whole mTLS model remotely.
+// TestAdminStatusOperatorRoute: /admin/status is readable from the host
+// without a client cert (loopback + secret) — `lxd update` asks it whether
+// the core came up (SPEC 129 §2.6). A remote peer without a cert still gets
+// the pin's 401, and a wrong secret on loopback is refused.
+func TestAdminStatusOperatorRoute(t *testing.T) {
+	control := newTestController(t, &fakeReloader{}, nil)
+	control.clients = newTestRegistry(t)
+	handler := control.adminHandler("s3cret")
+
+	statusGet := func(remoteAddr, bearer string) (int, map[string]any) {
+		request := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
+		request.RemoteAddr = remoteAddr
+		if bearer != "" {
+			request.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		return serveAdmin(t, handler, request)
+	}
+	if status, payload := statusGet("127.0.0.1:40000", "s3cret"); status != http.StatusOK || payload["status"] != "idle" {
+		t.Fatalf("loopback + secret must read the status, got %d %v", status, payload)
+	}
+	if status, _ := statusGet("127.0.0.1:40000", "wrong"); status != http.StatusUnauthorized {
+		t.Fatal("expected 401 for a wrong secret on loopback, got", status)
+	}
+	if status, payload := statusGet("192.0.2.10:443", "s3cret"); status != http.StatusUnauthorized ||
+		!strings.Contains(payload["error"].(string), "client certificate not trusted") {
+		t.Fatalf("a remote certless peer must hit the pin, got %d %v", status, payload)
+	}
+}
+
 func TestAdminTrustedCertNeedsNoBearer(t *testing.T) {
 	control := newTestController(t, &fakeReloader{}, nil)
 	registry := newTestRegistry(t)

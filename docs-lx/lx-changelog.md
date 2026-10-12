@@ -30,6 +30,8 @@ required for stable tags); this changelog section is the fallback used for pre-r
 
 #### Unreleased
 
+- 🐛 **`lxd update` / рестарт под procd: ядро не поднималось после подмены бинаря (SPEC 129 §2.6).** Живой прогон lx.15-test128 → lx.16 на RouteRich: `/etc/init.d/sing-box-lxd restart` стартует новый процесс раньше, чем старый отпустил `lxd-tun0`, новое ядро получало `TUNSETIFF: device or resource busy` и демон уходил в `staying up` без VPN; update смотрел только на `running` у procd и честно вернул `done`, VPN лежал ~80 с до ручного restart. Два исправления: (1) загрузка демона повторяет старт каждые 500 мс до 10 с, пока ошибка — `EBUSY` (чинит и обычный `restart`); (2) шаг здоровья update после `running` у init ждёт `started` у `GET /admin/status` до 20 с — `fatal` или `idle` всё окно = провал здоровья с откатом (выход 2, текст `… is up but the core did not start: <last_error>`), проба без ответа — не вердикт (`core status unknown`, выход 0), пробы нет — `core status not checked: <почему>`. Для этого `GET /admin/status` стал ещё и операторским маршрутом (loopback + секрет без сертификата; пин для остальных не изменился). ([SPEC 129](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/129-LXD_UPDATE/SPEC.md))
+
 #### v1.14.3-lx.16
 
 Стабильный релиз после `v1.14.3-lx.15`, без rc-линии. База — sing-box `v1.14.3`, `upstream/stable` `d630fa94c` (влит один коммит — сборка Wayland-трея Linux-клиента в `build.yml`, на ядро не влияет), дрейф 0. Срез 12.10.2026.

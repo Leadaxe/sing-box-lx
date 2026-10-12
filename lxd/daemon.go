@@ -13,6 +13,7 @@ package lxd
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -403,7 +404,7 @@ func bootstrap(ctx context.Context, control *controller, stateStore *store, opti
 		log.Info("lxd: config loaded from ", source, " but the recorded run-state is stopped — core not started (use --run or POST /admin/start)")
 		return
 	}
-	if err := control.service.StartOrReloadService(ctx, bootConfig, nil); err != nil {
+	if err := startRetryingBusy(ctx, control.service, bootConfig, bootBusyRetrySleep); err != nil {
 		control.setFatal(err)
 		log.Error(E.Cause(err, "lxd: boot from "+source+"; staying up — fix and apply over the admin plane"))
 		return
@@ -416,6 +417,55 @@ func bootstrap(ctx context.Context, control *controller, stateStore *store, opti
 	}
 	control.setActive(bootConfig, "")
 	log.Info("lxd: core started from ", source)
+}
+
+// Boot retry on a busy device (SPEC 129 §2.6). `/etc/init.d/sing-box-lxd
+// restart` under procd starts the new process before the old one has released
+// its TUN: the kernel keeps the interface until the old fd closes, and the new
+// core's TUNSETIFF fails with EBUSY a few seconds too early. Seen live on
+// `lxd update` (RouteRich, 2026-10-12): the daemon went fatal while the old
+// tun was still being torn down, and the VPN stayed down until a manual
+// restart. The window is the old daemon's teardown, seconds at most, so the
+// boot retries the whole start while the error is "device busy" — the
+// instance is closed on a failed start, nothing leaks between attempts.
+// Any other error is final at once: a bad config does not get better by
+// waiting. Boot only — a REST apply runs with the old instance already closed
+// by this same process, so there is nobody to wait for.
+const (
+	bootBusyRetryWindow = 10 * time.Second
+	bootBusyRetryStep   = 500 * time.Millisecond
+)
+
+// bootBusyRetrySleep is the pause between attempts; tests replace it.
+var bootBusyRetrySleep = func(ctx context.Context, step time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(step):
+		return true
+	}
+}
+
+func startRetryingBusy(ctx context.Context, service reloader, content string, sleep func(context.Context, time.Duration) bool) error {
+	deadline := time.Now().Add(bootBusyRetryWindow)
+	for attempt := 1; ; attempt++ {
+		err := service.StartOrReloadService(ctx, content, nil)
+		if err == nil || !isDeviceBusy(err) || !time.Now().Before(deadline) {
+			return err
+		}
+		if attempt == 1 {
+			log.Warn(E.Cause(err, "lxd: boot: device busy (the previous instance is still shutting down?), retrying for up to ", bootBusyRetryWindow))
+		}
+		if !sleep(ctx, bootBusyRetryStep) {
+			return err
+		}
+	}
+}
+
+// isDeviceBusy recognizes EBUSY anywhere in the cause chain; the text form
+// is the fallback for an error that was flattened to a string on its way up.
+func isDeviceBusy(err error) bool {
+	return errors.Is(err, syscall.EBUSY) || strings.Contains(err.Error(), "device or resource busy")
 }
 
 func resolveBootConfig(stateStore *store, options Options) (content string, source string) {

@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — `sing-box lxd update`: самообновление ядра из релизов GitHub на Linux |
-| Статус | I (implemented) — 2026-10-12: код и тесты ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)); дизайн утверждён 2026-10-11, раунд вопросов закрыт 2026-10-12; живой прогон на роутере — до тега, вместе со 127/128 |
+| Статус | I (implemented) — 2026-10-12: код и тесты ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)); дизайн утверждён 2026-10-11, раунд вопросов закрыт 2026-10-12; живой прогон lx.15-test128 → lx.16 на RouteRich 2026-10-12 прошёл, но вскрыл гонку рестарта под procd (§2.6) — ретрай TUN на старте демона и шаг 8b добавлены тем же днём, их живая проверка — на следующем update |
 | Ветка | `lx` |
 | Build-tag | `with_lxd` (lx-файлы `lxd/update*.go`, `cmd/sing-box/cmd_lxd_lx.go`; одна `// lx:`-строка-хук в `cmd/sing-box/cmd_version.go`) |
 | Источник | Обсуждение с владельцем 2026-10-11: штатная команда `update` для [128](../128-LXD_COMMANDS/SPEC.md) |
@@ -101,9 +101,26 @@ sing-box lxd update [--dry-run] [--prerelease] [--no-restart] [--service <name>]
    detached, апдейтер жив).
 8. **Здоровье и откат.** До 15 с ждём, что init считает службу работающей (`/etc/init.d/… running`
    / `systemctl is-active`), затем ещё 3 с проверяем, что она держится (respawn-цикл под procd
-   виден как мигание). Держится → `unlink(.old)`, `done: <ver> is running`, выход 0. Нет →
-   `rename(.old, бинарь)`, повторный restart, `ERROR: <ver> did not come up, rolled back to
-   <old>`, выход 2.
+   виден как мигание). Не держится → `rename(.old, бинарь)`, повторный restart, `ERROR: <ver>
+   did not come up, rolled back to <old>`, выход 2.
+8b. **Ядро внутри демона.** «running» у init — это процесс демона, не ядро: демон, проигравший
+   гонку за TUN (§2.6), стоит с управляющим каналом и без VPN. Поэтому после шага 8 апдейтер
+   опрашивает `GET /admin/status` нового демона раз в секунду до 20 с (демон сам ретраит
+   занятое устройство 10 с, запас — на медленный старт роутера). `started` → `core started`,
+   `unlink(.old)`, `done: <ver> is running`, выход 0. `fatal` — окончательный ответ сразу
+   (демон уже отретраил и сдался): `ERROR: <ver> is up but the core did not start:
+   <last_error>, rolled back to <old>`, откат по правилам шага 8, выход 2; `idle` все 20 с —
+   то же с текстом `still idle after 20s`. Пробы без ответа (демон недостижим, `401` на
+   секрете) — **не вердикт**: init говорит, что процесс жив, а недостижимость админ-плоскости
+   может быть нашей же конфигурацией; печатается `core status unknown (<ошибка>); the service
+   is running, not rolling back`, выход 0. Пробы нет вовсе — строка `core status not checked:
+   <почему>` и выход 0 по шагу 8: нет state-dir / `daemon.json`; `listen` не на loopback
+   (демон слушает только LAN-адреса — операторский маршрут требует loopback-пира;
+   `0.0.0.0`/`::` → `127.0.0.1`/`::1`); run-state записан как `stopped` (ядро остановлено
+   оператором, `idle` штатно). Адрес, секрет и `tls` — из `daemon.json` state-dir'а, как у
+   `lxd client`. Для этого `GET /admin/status` стал ещё и **операторским маршрутом**: без
+   сертификата с loopback-пира — Bearer-секрет; с доверенным сертификатом или не с loopback
+   — прежний пин (удалённый клиент без сертификата по-прежнему получает `401`).
 
 ### 2.3 `sing-box version` и `--help`
 
@@ -138,6 +155,29 @@ sing-box lxd update [--dry-run] [--prerelease] [--no-restart] [--service <name>]
   было бы вторым якорем и отдельным решением.
 - Релиз — вместе со 127 и 128 одним тегом (решение владельца).
 
+### 2.6 Гонка рестарта под procd (живой прогон 2026-10-12)
+
+`/etc/init.d/sing-box-lxd restart` под procd запускает новый процесс раньше, чем старый
+освободил TUN: ядро держит интерфейс, пока не закрыт старый fd, и `TUNSETIFF` нового ядра
+получает `EBUSY` на несколько секунд раньше срока. На RouteRich (lx.15-test128 → lx.16):
+12:59:47 старый процесс отпускает `lxd-tun0`, 12:59:50 новый демон уже пишет `boot from
+last-good; staying up — … open tun: TUNSETIFF: device or resource busy`, 12:59:52 `lxd-tun0`
+удалён; шаг 8 видел `running` у procd и честно вернул `done`, VPN лежал ~80 с до ручного
+`restart`. Два исправления в ядре:
+
+- **Ретрай старта на `EBUSY` (демон, `bootstrap`).** Окно старого демона — секунды, поэтому
+  загрузка повторяет весь `StartOrReloadService` каждые 500 мс до 10 с, пока ошибка — «device
+  busy» (`errors.Is(err, EBUSY)` по цепочке причин; текст `device or resource busy` —
+  страховка для сплющенной ошибки). Упавший старт закрывает инстанс, между попытками ничего
+  не течёт. Любая другая ошибка окончательна сразу — плохой конфиг от ожидания не улучшится.
+  Только загрузка: REST-apply идёт при уже закрытом старом инстансе этого же процесса, ждать
+  некого. Чинит и обычный `restart`, не только update. Первая попытка логируется `WARN lxd:
+  boot: device busy (the previous instance is still shutting down?), retrying for up to 10s`.
+- **Шаг 8b** (выше): апдейтер ждёт `started` у `/admin/status`, `fatal` → откат.
+
+Лаунчер со своей стороны после возвращения демона сверяет `CoreStatus` и при не-`started`
+показывает «обновлено, но ядро не запустилось: <ошибка>» вместо зелёного `done`.
+
 ## 3. Критерии приёмки
 
 - Табличные тесты чистых функций: разбор `SHA256SUMS` (строка своей платформы среди соседних,
@@ -151,6 +191,16 @@ sing-box lxd update [--dry-run] [--prerelease] [--no-restart] [--service <name>]
 - Тест `--dry-run`: ничего не создано; тест «уже актуально» и «установленная новее».
 - `sing-box version` с `with_lxd` содержит `Platform:`; без тега — не содержит
   (`cmd_schema_lx_test.go`-стиль).
+- Ретрай `EBUSY`: два `EBUSY` подряд → третья попытка успешна, две паузы; сплющенный текст
+  ретраится; другая ошибка — одна попытка без паузы; отказ паузы (shutdown) возвращает
+  busy-ошибку; через `bootstrap` демон оказывается `running` после одного `EBUSY`.
+- Шаг 8b: `idle, idle, started` → выход 0 и `core started`; `fatal` → выход 2, бинарь старый,
+  текст с `last_error`; `idle` всё окно → выход 2 `still idle after 20s`; проба недостижима →
+  выход 0 и `core status unknown`; пробы нет → `core status not checked: <почему>`.
+  `loopbackAdminAddress`: `127.0.0.1`/`0.0.0.0`/`[::]`/`:port`/multi → loopback-адрес,
+  только-LAN → пусто; `coreProbe` при run-state `stopped` — без пробы с причиной.
+- `/admin/status` операторским маршрутом: loopback + секрет без сертификата → 200; неверный
+  секрет → 401; удалённый пир без сертификата → 401 `client certificate not trusted` (пин).
 - `go vet` на darwin/linux/windows; существующие тесты `lxd` зелёные.
 - Живой прогон владельцем до тега: роутер на lx.N-1 → кнопка/`POST /admin/commands/update`
   → `GET` показывает `done: … is running`, `/admin/info.version` новая; повторный запуск →

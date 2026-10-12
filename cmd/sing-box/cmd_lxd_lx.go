@@ -98,7 +98,8 @@ into <binary>.new, verifies the sum, checks that the new binary runs and
 accepts the current config, swaps it atomically (the old one stays as a hard
 link until the new service is up), restarts the service through the host's
 init (procd, systemd, openrc) and rolls back when the new service does not
-come up within 15 s. Downloads honour HTTPS_PROXY / ALL_PROXY.
+come up within 15 s or its core is not started (GET /admin/status over
+loopback) within 20 s more. Downloads honour HTTPS_PROXY / ALL_PROXY.
 
 Exit codes: 0 updated or already up to date, 1 nothing changed, 2 rolled back.
 

@@ -6,8 +6,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
+	"github.com/sagernet/sing-box/daemon"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
@@ -120,6 +123,76 @@ func TestBootstrapPrefersLastGoodOverSeed(t *testing.T) {
 	if len(service.calls) != 1 || service.calls[0] != `{"from":"last-good"}` {
 		t.Fatalf("bootstrap must prefer last-good, calls: %v", service.calls)
 	}
+}
+
+// TestBootstrapRetriesBusyDevice: a start failing with EBUSY (the previous
+// daemon still holds the TUN during a procd restart) is retried until it
+// succeeds; any other error is final at once (SPEC 129 §2.6).
+func TestBootstrapRetriesBusyDevice(t *testing.T) {
+	dir := t.TempDir()
+	stateStore, err := newStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = stateStore.SaveLastGood(`{"v":1}`); err != nil {
+		t.Fatal(err)
+	}
+	busy := E.Cause(E.Cause(syscall.EBUSY, "TUNSETIFF"), "start inbound/tun[tun-in]")
+	service := &busyReloader{fakeReloader: fakeReloader{}, failures: []error{busy, busy}}
+	control := &controller{service: service, store: stateStore, validate: func(context.Context, string) error { return nil }}
+	sleeps := 0
+	sleep := func(context.Context, time.Duration) bool { sleeps++; return true }
+
+	if err = startRetryingBusy(context.Background(), service, `{"v":1}`, sleep); err != nil {
+		t.Fatal("the third attempt must succeed, got", err)
+	}
+	if len(service.calls) != 3 || sleeps != 2 {
+		t.Fatalf("expected 3 attempts and 2 pauses, got %d/%d", len(service.calls), sleeps)
+	}
+
+	// The text form (flattened error) is recognized too.
+	service.calls, service.failures, sleeps = nil, []error{E.New("open tun: TUNSETIFF: device or resource busy")}, 0
+	if err = startRetryingBusy(context.Background(), service, `{"v":1}`, sleep); err != nil || len(service.calls) != 2 {
+		t.Fatalf("flattened EBUSY must be retried: err=%v calls=%d", err, len(service.calls))
+	}
+
+	// A different error is final: one attempt, no pause.
+	service.calls, service.failures, sleeps = nil, []error{E.New("bind: address already in use")}, 0
+	if err = startRetryingBusy(context.Background(), service, `{"v":1}`, sleep); err == nil || len(service.calls) != 1 || sleeps != 0 {
+		t.Fatalf("a non-busy error must not be retried: err=%v calls=%d sleeps=%d", err, len(service.calls), sleeps)
+	}
+
+	// A cancelled wait (daemon shutting down) returns the busy error.
+	service.calls, service.failures = nil, []error{busy, busy}
+	err = startRetryingBusy(context.Background(), service, `{"v":1}`, func(context.Context, time.Duration) bool { return false })
+	if !isDeviceBusy(err) || len(service.calls) != 1 {
+		t.Fatalf("a refused pause must return the busy error: err=%v calls=%d", err, len(service.calls))
+	}
+
+	// Through bootstrap: the retry is on the boot path and the daemon ends up started.
+	service.calls, service.failures = nil, []error{busy}
+	control.applyAccess.Lock()
+	bootstrap(context.Background(), control, stateStore, Options{StateDir: dir})
+	control.applyAccess.Unlock()
+	if !control.running || len(service.calls) != 2 {
+		t.Fatalf("bootstrap must retry a busy start: running=%v calls=%d", control.running, len(service.calls))
+	}
+}
+
+// busyReloader fails the first len(failures) starts with the scripted errors.
+type busyReloader struct {
+	fakeReloader
+	failures []error
+}
+
+func (b *busyReloader) StartOrReloadService(ctx context.Context, content string, options *daemon.OverrideOptions) error {
+	b.calls = append(b.calls, content)
+	if len(b.failures) > 0 {
+		err := b.failures[0]
+		b.failures = b.failures[1:]
+		return err
+	}
+	return nil
 }
 
 func TestBootstrapDoesNotRunWhenStopped(t *testing.T) {

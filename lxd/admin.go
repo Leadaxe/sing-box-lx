@@ -85,6 +85,9 @@ func (c *controller) adminHandler(secret string) http.Handler {
 	// Bearer secret but NOT a client cert (the operator on the host has none).
 	// Registered on the loopback-only, secret-gated, cert-exempt path below.
 	operator := http.NewServeMux()
+	// Status is on both muxes: pinned for clients, operator for the host's
+	// own `lxd update` (see pinnedOrOperator below).
+	operator.HandleFunc("GET /admin/status", c.handleStatus)
 	if c.clients != nil {
 		operator.HandleFunc("GET /admin/clients", c.handleClients)
 		operator.HandleFunc("POST /admin/client-code", c.handleClientCode)
@@ -130,11 +133,43 @@ func (c *controller) adminHandler(secret string) http.Handler {
 	// everything else (pin + secret).
 	root := http.NewServeMux()
 	root.HandleFunc("POST /admin/enroll", c.handleEnroll)
+	// /admin/status is ALSO reachable as an operator route (SPEC 129 §2.6):
+	// `lxd update` runs on the host with no client cert and must learn whether
+	// the core came up inside the restarted daemon — the init's "running" says
+	// nothing about that. Read-only and trust-neutral, so the loopback +
+	// secret contract is enough; a trusted cert keeps taking the pinned path,
+	// so remote clients see no change.
+	root.Handle("/admin/status", c.pinnedOrOperator(handler, operatorHandler))
 	root.Handle("/admin/clients", operatorHandler)
 	root.Handle("/admin/client-code", operatorHandler)
 	root.Handle("/admin/client-remove", operatorHandler)
 	root.Handle("/", handler)
 	return root
+}
+
+// pinnedOrOperator serves a certless request from a loopback peer on the
+// operator path (secret-gated) and everything else on the pinned path, so a
+// remote client without a trusted cert still gets the pin's 401, not a
+// loopback-only 403. Used for routes an on-host process must read without a
+// cert while remote clients keep their usual gate.
+func (c *controller) pinnedOrOperator(pinned, operator http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		certless := request.TLS == nil || len(request.TLS.PeerCertificates) == 0
+		if certless && isLoopbackPeer(request.RemoteAddr) {
+			operator.ServeHTTP(writer, request)
+			return
+		}
+		pinned.ServeHTTP(writer, request)
+	})
+}
+
+func isLoopbackPeer(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	addr, err := netip.ParseAddr(host)
+	return err == nil && addr.IsLoopback()
 }
 
 // withBearer wraps next behind a constant-time Bearer check; an empty secret
@@ -159,12 +194,7 @@ func withBearer(secret string, next http.Handler) http.Handler {
 // cannot be spoofed by a remote client.
 func requireLoopback(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		host, _, err := net.SplitHostPort(request.RemoteAddr)
-		if err != nil {
-			host = request.RemoteAddr
-		}
-		addr, err := netip.ParseAddr(host)
-		if err != nil || !addr.IsLoopback() {
+		if !isLoopbackPeer(request.RemoteAddr) {
 			writeJSON(writer, http.StatusForbidden, map[string]any{"error": "operator routes are loopback-only"})
 			return
 		}

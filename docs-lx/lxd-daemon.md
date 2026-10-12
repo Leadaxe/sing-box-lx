@@ -881,6 +881,19 @@ version, its release asset (`Platform:` in `sing-box version`, e.g.
 7. Health: the init must report the service running within 15 s and still
    running 3 s later (a crash loop under procd flickers). Otherwise
    `binary.old` goes back and the service is restarted again — exit 2.
+8. The core, not just the process: the init's "running" is the daemon, and a
+   daemon that lost the TUN to the old process during the restart stays up
+   with a control channel and no VPN. So the updater asks the new daemon's
+   `GET /admin/status` (loopback, the secret from `daemon.json`) once a second
+   for up to 20 s: `started` → `core started`, done; `fatal` → rollback as in
+   step 7 with `ERROR: <ver> is up but the core did not start: <last_error>`,
+   exit 2; still `idle` after 20 s → the same. A probe that never gets an
+   answer is not a verdict — `core status unknown (…); the service is running,
+   not rolling back`, exit 0 — and `core status not checked: <why>` says when
+   there is no probe at all (no `daemon.json`, `listen` not on loopback, core
+   stopped by the operator). The daemon itself retries a busy TUN at boot for
+   10 s (every 500 ms), so an ordinary `restart` under procd no longer loses
+   the race either.
 
 Exit codes: `0` updated or already current, `1` nothing changed, `2` rolled
 back. Downloads honour `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`, so where
@@ -1052,7 +1065,10 @@ remove` subcommands and are deliberately **not** part of the remote surface:
 they are served on loopback only, require the Bearer secret, and — uniquely —
 do **not** require a client certificate, because the operator standing on the
 host has none. Minting an invite code is handing out trust, so it must not be
-reachable from the network.
+reachable from the network. `GET /admin/status` is on both sides: a certless
+request from a loopback peer takes the operator path (secret) — that is how
+`lxd update` learns whether the core came up — while a trusted certificate,
+or any non-loopback peer, takes the pinned path as before.
 
 SIGHUP to the daemon = re-read the config file (`--config-force`/`-c`) and
 apply it through the same validated, rollback-protected apply pipeline.
