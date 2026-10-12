@@ -9,4 +9,4 @@
 - [x] 5. Табличные тесты; `fakeInit` на `linuxInitProbe`; тесты пакета зелёные, linux-тесты компилируются
 - [x] 6. lxd-daemon EN/RU, changelog, FEATURE, Roadmap
 - [x] 7. IMPLEMENTATION_REPORT.md; статус I
-- [ ] 8. Ручная проверка после тега: роутер `linux-arm64`/`procd`/`true`, Mac со службой `darwin-arm64`/`launchd`/`true`, `sing-box lxd` руками — `service:false`
+- [ ] 8. Ручная проверка: роутер `linux-arm64`/`procd`/`true`, Mac со службой `darwin-arm64`/`launchd`/`true`, `sing-box lxd` руками — `service:false`. 2026-10-12 частично: на RouteRich тестовая сборка `bab56fe12` показывает `Platform: linux-arm64`, `Init: procd` в `sing-box version`; Mac — `darwin-arm64`/`launchd`; поля `/admin/info` — через лаунчер, когда получит поддержку
