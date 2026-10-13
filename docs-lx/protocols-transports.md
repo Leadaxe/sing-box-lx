@@ -968,13 +968,17 @@ The config is rejected at load if:
 
 ## 3.10 Migrating from the pre-SPEC-062 shape
 
-Both shapes are accepted until **v1.14.0-lx.30**; using a legacy field logs one
-deprecation line per outbound. A legacy field that *disagrees* with its replacement
-is a hard error rather than a silent pick.
+The flat TLS fields below are still accepted; using one logs one deprecation line
+per outbound. A legacy field that *disagrees* with its replacement is a hard error
+rather than a silent pick.
 
-| Legacy (deprecated) | Current |
+The legacy `network` key for the HTTP version was **removed in `v1.14.3-lx.18`**: a
+masque outbound carrying it fails to decode with `unknown field "network"`. Rename it
+to `vhttp` (same values).
+
+| Legacy | Current |
 |---|---|
-| `network: "h3"` / `"h2"` | `vhttp: "h3"` / `"h2"` |
+| `network: "h3"` / `"h2"` — **removed** | `vhttp: "h3"` / `"h2"` |
 | `sni` | `tls.server_name` |
 | `skip_cert_verify: true` | `tls.insecure: true` |
 | `fragment: true` | `tls.fragment: true` |

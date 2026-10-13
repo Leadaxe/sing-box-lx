@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | R (refactor) — снятие legacy-чтения, обещанного SPEC 062 «Removed in v1.14.0-lx.30» |
-| Статус | N (new) — поставлена 2026-10-13 из сессии лаунчера по решению владельца |
+| Статус | C (complete) — поставлена 2026-10-13 из сессии лаунчера по решению владельца; реализована 2026-10-13, целевой релиз `v1.14.3-lx.18` |
 
 ## 1. Решение владельца (13.10.2026)
 
@@ -74,3 +74,37 @@
 
 - Контракт клиентов: `singbox-launcher/contract/README.md` 1.1.118, `SPECS/103-F-O-LX_SHARED_CONTRACT/DECISIONS.md` D-129, `contract/registry/protocols/masque.json` (`body.skipped.network`).
 - SPEC 062 (миграция схемы masque), SPEC 060 (fragment на h3).
+
+## 6. Результат (2026-10-13)
+
+Сделано по §3, без исключений для `network`:
+
+| файл | что |
+|---|---|
+| `option/masque_lx.go` | поле `Network` удалено; комментарий у `VHTTP` объясняет, почему `network` намеренно отсутствует |
+| `protocol/masque/legacy_options_lx.go` | ветка `network` → `VHTTP` снята; файл остаётся ради плоских TLS-алиасов |
+| `protocol/masque/legacy_options_lx_test.go` | `TestResolveLegacyVHTTP` снят (конфликт/перенос больше не существуют) |
+| `experimental/deprecated/constants.go` | `Description` у `OptionMASQUELegacyFields` без слова `network` и без «planned for removal in lx.30» (§3 п.3, ветка «нет» — остальной блок не трогался) |
+| `test/masque_lx_test.go` | стенд декодирования переведён на `vhttp` |
+| `docs-lx/lx-config.md`/`.ru.md`, `protocols-transports.md`/`.ru.md` | врезка и таблица миграции: `network` — removed; `FEATURES/009` абзац; SPEC 062 §0/§1.2 — текущее состояние; `lx-changelog.md` Unreleased |
+
+**Поведение ядра на теле с `network`** (§3 п.2): ровно как у любого неизвестного ключа
+outbound — строгий декодер `badjson.UnmarshallExcludedContext` отвергает конфиг целиком:
+
+```
+FATAL decode config at …: outbounds[0].network: json: unknown field "network"
+```
+
+Это уточняет §4: «конфиг с `network: h2` без `vhttp` получает дефолт профиля» — нет,
+он не стартует; лечение — переименовать ключ в `vhttp`. Путь `outbounds[0].network` в
+ошибке есть, отдельного сообщения не делалось (исключений для ключа не вводим).
+
+Проверено: `grep` §4 — остались только `rememberNetwork`/`forgetNetwork`/
+`TestEffectiveNetwork*` (память h3/h2 режима `auto`, SPEC 108), поля версии HTTP нет;
+`go build` под `LX_TAGS`, `go vet` и `go test -race` по `protocol/masque`, `option`,
+`experimental/deprecated` — зелёные; `gofmt -l` чист; живой `sing-box check` на двух
+конфигах — legacy отвергнут с текстом выше, `vhttp` проходит декодирование.
+
+**Открыто (§3 п.3):** плоские TLS-алиасы (`sni`, `skip_cert_verify`, `fragment*`) и
+константа `OptionMASQUELegacyFields` остаются — срок lx.30 у них тоже истёк, решение
+владельца по ним не принималось.

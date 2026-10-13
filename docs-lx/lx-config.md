@@ -570,8 +570,10 @@ through it like a WireGuard endpoint. Gated on `with_quic` + `with_gvisor` (both
 enroll) is done by the client, not the core.
 
 > ⚠️ **The HTTP version is `vhttp`, not `network`** (SPEC 062). Older configs used `network`
-> for `h3`/`h2` — the opposite of what `network` means on every other outbound. The old shape
-> still works and reports a deprecation; see the migration table below.
+> for `h3`/`h2` — the opposite of what `network` means on every other outbound. That key was
+> removed in `v1.14.3-lx.18`: a masque outbound carrying `network` no longer decodes
+> (`unknown field "network"`) — rename it to `vhttp`. The flat TLS fields still work with a
+> deprecation; see the migration table below.
 
 The required fields are `server`/`server_port`, the key pair (`private_key`/`public_key`,
 for the default `cloudflare` profile) and at least one of `ip`/`ipv6` (your local address
