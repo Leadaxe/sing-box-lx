@@ -870,7 +870,9 @@ version, its release asset (`Platform:` in `sing-box version`, e.g.
 2. Free space beside the binary ≥ its size + 10 %.
 3. The archive streams straight into `<binary>.new` on the same filesystem:
    sha256 over the compressed bytes, gunzip, tar, only the `sing-box` entry
-   is written — nothing lands in `/tmp` (RAM on a router). A sum mismatch
+   is written — nothing lands in `/tmp` (RAM on a router). Progress goes to
+   the output at most once a second (`downloading <asset>: 3.2 / 14.1 MiB
+   (23%)`; bytes only when the server gave no length). A sum mismatch
    deletes `.new`.
 4. `<binary>.new version` must run; with an applied config
    (`<state>/last_good.json`) `<binary>.new check -c` must accept it.

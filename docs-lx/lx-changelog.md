@@ -30,6 +30,8 @@ required for stable tags); this changelog section is the fallback used for pre-r
 
 #### Unreleased
 
+- ✨ **`lxd update` пишет прогресс скачивания.** После `downloading <asset>` тело ответа молча уходило в распаковку, и в окне Service лаунчера строка висела без движения всю закачку (на роутере — десятки секунд). Теперь тело обёрнуто в считающий reader: не чаще раза в секунду (`progressInterval`) печатается `update: downloading <asset>: 3.2 / 14.1 MiB (23%)`, итог — из `Content-Length` (у GitHub-ассетов есть; нет — только байты). Раз в секунду, а не на каждый процент: лог — файл, который демон отдаёт хвостом и лаунчер опрашивает раз в секунду, `\r` в нём не работает; на 15 МиБ выходит десятки строк. `fetch` в `updateEnv` возвращает ещё размер, часы — `now` (тесты подставляют свои). Тест `TestDownloadProgress`. ([SPEC 129](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/129-LXD_UPDATE/SPEC.md))
+
 #### v1.14.3-lx.19
 
 Стабильный релиз после `v1.14.3-lx.18`, без rc-линии. База — sing-box `v1.14.3`, `upstream/stable` `d630fa94c`, дрейф 0 (сабмодули и зависимости с lx.18 не менялись, Go 1.26.8). Один хотфикс по живому прогону `lxd update` lx.17 → lx.18 на RouteRich.

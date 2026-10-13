@@ -74,13 +74,16 @@ type updateEnv struct {
 	platform   string // release asset suffix (SPEC 127)
 	initSystem string // host's init (SPEC 127)
 	out        io.Writer
-	// fetch GETs a URL; the caller closes the body.
-	fetch func(url string) (io.ReadCloser, error)
+	// fetch GETs a URL; the caller closes the body. size is the response's
+	// Content-Length, -1 when the server did not say.
+	fetch func(url string) (body io.ReadCloser, size int64, err error)
 	// run executes a program with arguments and returns its combined output.
 	run func(name string, args ...string) (string, error)
 	// freeBytes is the free space on the filesystem holding dir.
 	freeBytes func(dir string) (uint64, error)
 	sleep     func(time.Duration)
+	// now is the clock behind the download progress lines; nil = time.Now.
+	now func() time.Time
 	// coreStatus asks the (new) daemon whether the core is up — /admin/status
 	// over loopback. nil = the probe is unavailable; coreStatusSkip says why.
 	coreStatus     func() (CoreStatus, error)
@@ -94,6 +97,54 @@ const updateCoreWait = 20 * time.Second
 
 func (env updateEnv) say(format string, args ...any) {
 	fmt.Fprintf(env.out, "update: "+format+"\n", args...)
+}
+
+// progressInterval bounds the download progress lines to one per second:
+// the log is a file the daemon serves by its tail and the launcher polls
+// once a second, so a line per second is what a reader can see, and a
+// 15 MiB archive on a router leaves tens of lines, not thousands.
+const progressInterval = time.Second
+
+// progress wraps the download body so the archive's bytes are reported as
+// they stream in: `downloading <name>: 3.2 / 14.1 MiB (23%)`, or only the
+// count when the server gave no Content-Length. Nothing is printed when the
+// download finishes within one tick; "sha256 match" follows anyway.
+func (env updateEnv) progress(body io.Reader, name string, total int64) io.Reader {
+	now := env.now
+	if now == nil {
+		now = time.Now
+	}
+	return &progressReader{Reader: body, env: env, name: name, total: total, now: now, last: now()}
+}
+
+type progressReader struct {
+	io.Reader
+	env   updateEnv
+	name  string
+	total int64
+	done  int64
+	now   func() time.Time
+	last  time.Time
+}
+
+func (r *progressReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.done += int64(n)
+	if n > 0 {
+		if at := r.now(); at.Sub(r.last) >= progressInterval {
+			r.last = at
+			r.env.say("downloading %s: %s", r.name, formatProgress(r.done, r.total))
+		}
+	}
+	return n, err
+}
+
+func formatProgress(done, total int64) string {
+	mib := func(n int64) string { return strconv.FormatFloat(float64(n)/(1<<20), 'f', 1, 64) }
+	if total <= 0 {
+		return mib(done) + " MiB"
+	}
+	return mib(done) + " / " + mib(total) + " MiB (" + strconv.FormatInt(done*100/total, 10) + "%)"
 }
 
 // lxVersion is a fork version: upstream semver, the lx build number, and an
@@ -259,7 +310,7 @@ func serviceCommands(initSystem, service string) (restart, running []string, ok 
 // latestReleaseTag resolves the newest release including pre-releases through
 // the API; the stable path needs no API at all (releases/latest/download/…).
 func latestReleaseTag(env updateEnv) (string, error) {
-	body, err := env.fetch("https://api.github.com/repos/" + updateRepo + "/releases?per_page=1")
+	body, _, err := env.fetch("https://api.github.com/repos/" + updateRepo + "/releases?per_page=1")
 	if err != nil {
 		return "", E.Cause(err, "list releases")
 	}
@@ -277,7 +328,7 @@ func latestReleaseTag(env updateEnv) (string, error) {
 }
 
 func fetchText(env updateEnv, url string) (string, error) {
-	body, err := env.fetch(url)
+	body, _, err := env.fetch(url)
 	if err != nil {
 		return "", err
 	}
@@ -358,11 +409,11 @@ func runUpdate(env updateEnv, options UpdateOptions) (int, error) {
 
 	// 4. Stream the archive into <target>.new; the sum is checked after.
 	env.say("downloading %s", asset.name)
-	body, err := env.fetch("https://github.com/" + updateRepo + "/releases/download/v" + asset.version + "/" + asset.name)
+	body, size, err := env.fetch("https://github.com/" + updateRepo + "/releases/download/v" + asset.version + "/" + asset.name)
 	if err != nil {
 		return UpdateExitFailed, E.Cause(err, "download ", asset.name)
 	}
-	err = extractBinary(body, newPath, asset.sha256)
+	err = extractBinary(env.progress(body, asset.name, size), newPath, asset.sha256)
 	_ = body.Close()
 	if err != nil {
 		_ = os.Remove(newPath)
@@ -566,21 +617,21 @@ func Update(options UpdateOptions, out io.Writer) (int, error) {
 		platform:   releasePlatform(runtimeGOOS, runtimeGOARCH, buildSettings()),
 		initSystem: initSystem,
 		out:        out,
-		fetch: func(url string) (io.ReadCloser, error) {
+		fetch: func(url string) (io.ReadCloser, int64, error) {
 			request, err := http.NewRequest(http.MethodGet, url, nil)
 			if err != nil {
-				return nil, err
+				return nil, -1, err
 			}
 			request.Header.Set("User-Agent", "sing-box-lx/"+C.Version+" lxd update")
 			response, err := client.Do(request)
 			if err != nil {
-				return nil, err
+				return nil, -1, err
 			}
 			if response.StatusCode != http.StatusOK {
 				_ = response.Body.Close()
-				return nil, E.New("HTTP ", response.Status, " for ", url)
+				return nil, -1, E.New("HTTP ", response.Status, " for ", url)
 			}
-			return response.Body, nil
+			return response.Body, response.ContentLength, nil
 		},
 		run:       runCombined,
 		freeBytes: freeBytes,
