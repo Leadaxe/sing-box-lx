@@ -30,6 +30,12 @@ required for stable tags); this changelog section is the fallback used for pre-r
 
 #### Unreleased
 
+#### v1.14.3-lx.18
+
+Стабильный релиз после `v1.14.3-lx.17`, без rc-линии. База — sing-box `v1.14.3`, `upstream/stable` `d630fa94c`, дрейф 0 (сабмодули и зависимости с lx.17 не менялись, Go 1.26.8). Одно изменение схемы конфига masque.
+
+- 🧹 **masque: снят устаревший ключ `network` (SPEC 131, обещано SPEC 062).** С lx.26 версия HTTP задаётся `vhttp`, а `network` жил алиасом с предупреждением (на любом другом outbound `network` — список tcp/udp, то есть обратный смысл). Поле удалено из `option.MASQUEOutboundOptions` и из `resolveLegacyOptions`; конфиг с `network` у masque теперь не разбирается — `unknown field "network"`, лечение — переименовать в `vhttp` (значения те же). LxBox и лаунчер пишут `vhttp` с lx.27, лаунчер мигрирует сохранённые URI. Плоские TLS-алиасы (`sni`, `skip_cert_verify`, `fragment*`) не тронуты — по-прежнему с предупреждением `masque-legacy-fields`. ([SPEC 131](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/131-MASQUE_DROP_LEGACY_NETWORK/SPEC.md), [SPEC 062](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/062-MASQUE_CONFIG_SCHEMA_MIGRATION/SPEC.md))
+
 #### v1.14.3-lx.17
 
 Стабильный релиз после `v1.14.3-lx.16`, без rc-линии. База — sing-box `v1.14.3`, `upstream/stable` `d630fa94c`, дрейф 0 (сабмодули и зависимости с lx.16 не менялись). Один хотфикс по живому прогону `lxd update` на RouteRich.
