@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -104,7 +105,8 @@ func TestExtractBinary(t *testing.T) {
 	if err != nil || string(content) != "new core" {
 		t.Fatalf("extracted %q %v", content, err)
 	}
-	if info, _ := os.Stat(dst); info.Mode().Perm() != 0o755 {
+	// Windows has no execute bits: os.OpenFile's 0o755 comes back as 0o666.
+	if info, _ := os.Stat(dst); runtime.GOOS != "windows" && info.Mode().Perm() != 0o755 {
 		t.Fatalf("mode %v", info.Mode())
 	}
 	// Wrong sum: the file is gone.
