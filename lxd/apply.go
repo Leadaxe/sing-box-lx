@@ -117,6 +117,10 @@ type controller struct {
 	// client compares hashes, not paths, to tell whether the daemon runs
 	// the same core as its own — the service executes a root-owned copy.
 	executable *executableIdentity
+	// platform is the platform card (SPEC 127): the binary's goos/goarch and
+	// release asset, the host's init system and whether this process is its
+	// service; read once in Run.
+	platform platformInfo
 
 	// Observability plane (SPEC 065). memory is nil-safe only through
 	// newController; profiles holds the mutable pprof state (in-flight
@@ -132,6 +136,10 @@ type controller struct {
 	// host is the host telemetry cache (SPEC 068), holding the previous CPU
 	// and interface samples that percentages and rates are derived from.
 	host *hostCache
+
+	// commands runs daemon.json's named commands (SPEC 128); nil when none
+	// are configured, and the routes are registered only when it is set.
+	commands *commandRunner
 
 	applyAccess sync.Mutex
 	// closed is set (under applyAccess) by the daemon teardown: admin requests

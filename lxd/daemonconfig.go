@@ -57,6 +57,12 @@ type DaemonConfig struct {
 	// OpenWrt's /tmp/dhcp.leases first. Only needed for a server that keeps its
 	// leases somewhere unusual.
 	DHCPLeaseFiles []string `json:"dhcp_lease_files,omitempty"`
+
+	// Commands are the operator's named root commands a client may start by
+	// name over /admin/commands (SPEC 128): name → shell command line. The
+	// operator writes them here, on the host; the client passes nothing but
+	// the name. Absent = no such routes at all.
+	Commands map[string]string `json:"commands,omitempty"`
 }
 
 // ListenConfig is the control channel's bind spec. Two JSON forms, one
@@ -229,6 +235,9 @@ func LoadDaemonConfig(stateDir string) (DaemonConfig, bool, error) {
 	var config DaemonConfig
 	if err = json.Unmarshal([]byte(content), &config); err != nil {
 		return DaemonConfig{}, false, E.Cause(err, "parse ", daemonConfigFile)
+	}
+	if err = validateCommands(config.Commands); err != nil {
+		return DaemonConfig{}, false, err
 	}
 	return config, true, nil
 }

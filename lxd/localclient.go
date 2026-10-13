@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	E "github.com/sagernet/sing/common/exceptions"
@@ -125,4 +126,29 @@ func (c *LocalClient) RemoveClient(nameOrFingerprint string) error {
 		return E.New("daemon returned ", status, ": ", string(data))
 	}
 	return nil
+}
+
+// CoreStatus is /admin/status as `lxd update` reads it: whether the core is
+// up inside the daemon, and the last error when it is not.
+type CoreStatus struct {
+	Status    string `json:"status"` // started | idle | fatal
+	LastError string `json:"last_error"`
+}
+
+// Status reads /admin/status over the operator path (loopback + secret). A
+// non-200 answer is an error carrying the daemon's text, so a wrong secret
+// (401) is distinguishable from an unreachable daemon.
+func (c *LocalClient) Status() (CoreStatus, error) {
+	data, status, err := c.do(http.MethodGet, "/admin/status", nil)
+	if err != nil {
+		return CoreStatus{}, err
+	}
+	if status != http.StatusOK {
+		return CoreStatus{}, E.New("daemon returned ", status, ": ", strings.TrimSpace(string(data)))
+	}
+	var out CoreStatus
+	if err := json.Unmarshal(data, &out); err != nil {
+		return CoreStatus{}, E.Cause(err, "decode /admin/status")
+	}
+	return out, nil
 }

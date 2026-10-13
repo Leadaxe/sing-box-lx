@@ -101,6 +101,7 @@ and Windows or by the operator's editor).
 | `log_max_size_mb` | `1` | log rotation: safety size ceiling |
 | `log_max_backups` | `1` | how many rotated generations (`lxd.log.1…N`) to keep |
 | `log_max_age_hours` | `24` | rotation by file age |
+| `commands` | absent | named root commands a client may start **by name** over `/admin/commands` (SPEC 128), e.g. `{"update": "/usr/bin/sing-box lxd update"}`; name `[a-z0-9][a-z0-9_-]{0,31}`, a bad name or an empty command refuses to start; absent = no such routes. Every command runs as the daemon's user (root) with no input from the client — see §8.5 |
 
 The rotation defaults give "about a day of history"; 0/absent key = default,
 and there is deliberately no "unlimited" setting. Changing any setting is a
@@ -156,6 +157,7 @@ Rules worth knowing:
 | `--invite-name <name>` | with `--service=install` — the name of the client the invite pairs (default `singbox-launcher` with `--invite-out`, no name without it) |
 | `client add [--name <label>] [--invite-out <file>]` | mint a one-time invite for a new client; `--invite-out` writes it into a new file instead of printing it |
 | `client list` / `client remove <name-or-fingerprint>` | list / revoke trusted clients |
+| `update [--dry-run] [--prerelease] [--no-restart] [--service <name>]` | self-update from the latest release for this binary's platform and a service restart through the init (linux, root; [8.6](#86-updating-sing-box-lxd-update)) |
 
 The subcommand exists only in builds with the `with_lxd` tag.
 
@@ -181,7 +183,10 @@ Under a service manager (stdout is not a terminal) the daemon **owns** the
 lands in the file, including the core's log and runtime panics) and rotates it
 by age and size with the daemon.json limits. When run by hand in a terminal the
 log stays on the screen and no file is touched. Clients discover the log path
-and state dir from `GET /admin/info` — nothing needs to be hard-coded.
+and state dir from `GET /admin/info` — nothing needs to be hard-coded. The
+same card names the binary's platform and release asset, the host's init
+system and whether the daemon runs as its service, so a client keeps no
+uname → GOARCH table and does not ask the user which init runs the host.
 Implemented on macOS, Linux and Windows.
 
 **Windows.** The service's log is `<ProgramData>\sing-box-lxd\logs\lxd.log` (install
@@ -802,8 +807,103 @@ firewall) — [openwrt-vpn-ssid.md](openwrt-vpn-ssid.md).
 
 - Automatic installation — by principle, not by omission (see above): the
   recipe is printed, the operator runs it.
-- Self-update — updating the binary means "deliver the file + restart the
-  service".
+- Self-update by the service manager — the binary updates itself instead:
+  `sing-box lxd update` ([8.6](#86-updating-sing-box-lxd-update)).
+
+### 8.5. Maintenance from the launcher: named commands
+
+The daemon runs as root, so a client must never be able to hand it code to
+execute (SPEC 100: a client configures the network, nothing more). What it
+can do is pick from a list **the operator wrote on the host** — the sudoers
+model. `daemon.json`:
+
+```json
+"commands": {
+  "update":  "/usr/bin/sing-box lxd update",
+  "restart": "/etc/init.d/sing-box-lxd restart"
+}
+```
+
+A client sees the list with the command text and the last outcome
+(`GET /admin/commands`), starts one by name (`POST /admin/commands/update`)
+and passes nothing else: a body is a `400`. The command runs detached in its
+own session, so a service restart kills the daemon but not the command; its
+output and exit code are written to `<dir of the log file>/commands/`
+(tmpfs on a router, so a run wears no flash; the state dir when the daemon
+has no log file) and survive the daemon's restart — `GET /admin/commands/update`
+afterwards shows `done`, the exit code and the log tail. `lost` means the
+process died before it could record an exit code.
+
+The command's environment carries facts from the daemon, never from the
+client: `LXD_PLATFORM` (release asset, e.g. `linux-arm64`), `LXD_VERSION`,
+`LXD_INIT_SYSTEM`, `LXD_STATE_DIR`, `LXD_BIN` (the running binary),
+`LXD_CLIENT` (who pressed the button); `PATH` is set to the usual
+`/usr/sbin:/usr/bin:/sbin:/bin` when the service manager gave none. Every
+start is logged with the client's name.
+
+Each command is root. A `wget http://…` without a checksum is root for whoever
+sits in the path — prefer `sing-box lxd update` (§8.6) over a hand-written
+download. The gate is the one every admin route has (the client certificate
+under mTLS, the Bearer secret without it); the key is unix-only (Linux,
+macOS) and ignored with a warning on Windows.
+
+### 8.6. Updating: `sing-box lxd update`
+
+```bash
+sing-box lxd update            # latest stable, restart via the init, roll back if it does not come up
+sing-box lxd update --dry-run  # installed / available / asset — changes nothing
+```
+
+The binary knows what a hand-written script had to guess: its own path
+(`os.Executable`, symlinks resolved — that is the file to replace), its
+version, its release asset (`Platform:` in `sing-box version`, e.g.
+`linux-armv7`, `linux-mipsle-softfloat`) and the host's init. Steps:
+
+1. `SHA256SUMS` of the latest stable release (`--prerelease`: the newest
+   release including rc, through the GitHub API) gives the asset name, the
+   version and the sum in one request. Same version → `already up to date`,
+   exit 0. An installed version newer than the available one is refused —
+   no downgrades.
+2. Free space beside the binary ≥ its size + 10 %.
+3. The archive streams straight into `<binary>.new` on the same filesystem:
+   sha256 over the compressed bytes, gunzip, tar, only the `sing-box` entry
+   is written — nothing lands in `/tmp` (RAM on a router). A sum mismatch
+   deletes `.new`.
+4. `<binary>.new version` must run; with an applied config
+   (`<state>/last_good.json`) `<binary>.new check -c` must accept it.
+5. Swap: `link(binary, binary.old)` keeps the old inode for free, `rename(new,
+   binary)` is atomic — no `ETXTBSY`, the running daemon keeps its old inode.
+6. Restart through the init: `/etc/init.d/<service> restart` (procd),
+   `systemctl restart <service>` (systemd), `rc-service <service> restart`
+   (openrc); `--service` names a unit called differently. An unknown init,
+   `--no-restart`, or a restart command that itself fails leaves the new
+   binary in place and asks you to restart — nothing to roll back from.
+7. Health: the init must report the service running within 15 s and still
+   running 3 s later (a crash loop under procd flickers). Otherwise
+   `binary.old` goes back and the service is restarted again — exit 2.
+8. The core, not just the process: the init's "running" is the daemon, and a
+   daemon that lost the TUN to the old process during the restart stays up
+   with a control channel and no VPN. So the updater asks the new daemon's
+   `GET /admin/status` (loopback, the secret from `daemon.json`) once a second
+   for up to 20 s: `started` → `core started`, done; `fatal` → rollback as in
+   step 7 with `ERROR: <ver> is up but the core did not start: <last_error>`,
+   exit 2; still `idle` after 20 s → the same. A probe that never gets an
+   answer is not a verdict — `core status unknown (…); the service is running,
+   not rolling back`, exit 0 — and `core status not checked: <why>` says when
+   there is no probe at all (no `daemon.json`, `listen` not on loopback, core
+   stopped by the operator). The daemon itself retries a busy TUN at boot for
+   10 s (every 500 ms), so an ordinary `restart` under procd no longer loses
+   the race either.
+
+Exit codes: `0` updated or already current, `1` nothing changed, `2` rolled
+back. Downloads honour `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`, so where
+GitHub is unreachable the command can go through the core's own inbound:
+`"update": "HTTPS_PROXY=socks5://127.0.0.1:2080 /usr/bin/sing-box lxd update"`.
+TLS roots come from the system (`ca-bundle` on OpenWrt, which the installer
+requires). Linux only in this iteration; macOS and Windows have their own
+installation paths (§7, §7a). The OpenWrt installer writes
+`"commands": {"update": "/usr/bin/sing-box lxd update"}` into `daemon.json`,
+so the launcher's Update button runs exactly this.
 
 ## 9. Pairing a client (the same on every OS)
 
@@ -940,7 +1040,7 @@ Error map:
 | `POST /admin/start` · `POST /admin/stop` | core lifecycle apart from the config (stop is remembered) |
 | `GET /admin/config` | the active config |
 | `GET /admin/status` | `idle\|started\|fatal`, active/last-good sha, `last_error`, `interrupted_apply` |
-| `GET /admin/info` | identity card: version, state_dir, listen, tls, fingerprint, pid, uptime, log_path, `executable` and `executable_sha256` (the running binary — compare cores by hash, not by path; the hash is computed once at start and reads `""` for the first moments) |
+| `GET /admin/info` | identity card: version, state_dir, listen, tls, fingerprint, pid, uptime, log_path, `executable` and `executable_sha256` (the running binary — compare cores by hash, not by path; the hash is computed once at start and reads `""` for the first moments), and the platform card (SPEC 127): `goos`, `goarch`, `platform` (the release asset for this binary's platform, e.g. `linux-armv7`, `linux-mipsle-softfloat` — what to download for this machine), `init_system` (what runs the host: `procd` / `systemd` / `openrc` / `launchd` / `scm`, `""` when none is recognised) and `service` (`true` when this process runs under it as a service) |
 | `POST /admin/enroll` | client registration with a one-time code |
 | `GET /admin/resources` · `PUT`/`GET`/`DELETE /admin/resources/{name}` | the files a config REFERS to (`.srs`, geo bases): list with sha256, upload, fetch, remove; 409 while the active or last-good config references the name |
 | `GET /admin/memory` | process memory: heap/stack/sys, goroutines, GC, and **two** RSS numbers — `rss_current_bytes` and `rss_peak_bytes` (raw bytes; the peak never decreases, so it is reported apart from the current size) |
@@ -955,6 +1055,9 @@ Error map:
 | `PUT`/`DELETE /admin/clients-info/labels/{key}` | operator's own name for a client; key is an IP or a MAC (400 otherwise) |
 | `GET /admin/host` | the MACHINE the daemon runs on: CPU (per-core), memory, thermal zones, disks, file descriptors — as opposed to `/admin/memory`, which is the process |
 | `GET /admin/host/interfaces` | every network interface with raw counters and derived rates |
+| `GET /admin/commands` | the operator's named commands (SPEC 128): name, command text, state of the last run (`idle` / `running` / `done` / `lost`), `started_at`, `finished_at`, `exit_code`, `client` |
+| `POST /admin/commands/{name}` | start a command by name, no body: `202` + the running view; `404` not configured; `409` already running; `400` non-empty body |
+| `GET /admin/commands/{name}` | the same view plus `log` — the last 64 KiB of the command's output |
 
 **Operator routes** — `GET /admin/clients`, `POST /admin/client-code`,
 `POST /admin/client-remove`. These are the wire behind the `client list / add /
@@ -962,7 +1065,10 @@ remove` subcommands and are deliberately **not** part of the remote surface:
 they are served on loopback only, require the Bearer secret, and — uniquely —
 do **not** require a client certificate, because the operator standing on the
 host has none. Minting an invite code is handing out trust, so it must not be
-reachable from the network.
+reachable from the network. `GET /admin/status` is on both sides: a certless
+request from a loopback peer takes the operator path (secret) — that is how
+`lxd update` learns whether the core came up — while a trusted certificate,
+or any non-loopback peer, takes the pinned path as before.
 
 SIGHUP to the daemon = re-read the config file (`--config-force`/`-c`) and
 apply it through the same validated, rollback-protected apply pipeline.

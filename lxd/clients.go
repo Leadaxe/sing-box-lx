@@ -159,6 +159,18 @@ func (r *clientRegistry) isTrusted(fingerprint string) bool {
 	return false
 }
 
+// nameOf returns the trusted client's name for a certificate fingerprint.
+func (r *clientRegistry) nameOf(fingerprint string) (string, bool) {
+	r.access.Lock()
+	defer r.access.Unlock()
+	for _, client := range r.clients {
+		if client.Fingerprint == fingerprint {
+			return client.Name, true
+		}
+	}
+	return "", false
+}
+
 // nowStamp is a fixed-format timestamp; wall clock is acceptable here because
 // this code never runs inside a workflow script (the Date restriction is a
 // workflow-only concern).

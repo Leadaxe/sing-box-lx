@@ -59,6 +59,9 @@ func printVersion(cmd *cobra.Command, args []string) {
 	} else {
 		version += "CGO: disabled\n"
 	}
+	// lx:begin lxd
+	version += versionExtraLx()
+	// lx:end lxd
 
 	os.Stdout.WriteString(version)
 }

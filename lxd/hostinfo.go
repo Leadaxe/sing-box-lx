@@ -4,6 +4,7 @@ package lxd
 
 import (
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -541,4 +542,34 @@ func roundTo(value float64, decimals int) float64 {
 	}
 	rounded := float64(int64(value*factor+0.5)) / factor
 	return rounded
+}
+
+// parseOSRelease reads the KEY=value shape shared by /etc/os-release and
+// /etc/openwrt_release. Split out so it can be tested on captured content;
+// platform-neutral because the init-system detection (SPEC 127) is tested
+// on every host.
+func parseOSRelease(content string) (name string, id string, idLike []string) {
+	for _, line := range strings.Split(content, "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
+		if !found {
+			continue
+		}
+		value = strings.Trim(value, "\"' ")
+		if value == "" {
+			continue
+		}
+		switch key {
+		case "PRETTY_NAME", "DISTRIB_DESCRIPTION":
+			if name == "" {
+				name = value
+			}
+		case "ID":
+			id = value
+		case "ID_LIKE":
+			// The standard says space-separated; a slice spares every client
+			// the same split.
+			idLike = strings.Fields(value)
+		}
+	}
+	return name, id, idLike
 }
