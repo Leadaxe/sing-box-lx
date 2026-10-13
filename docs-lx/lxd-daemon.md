@@ -827,8 +827,11 @@ model. `daemon.json`:
 A client sees the list with the command text and the last outcome
 (`GET /admin/commands`), starts one by name (`POST /admin/commands/update`)
 and passes nothing else: a body is a `400`. The command runs detached in its
-own session, so a service restart kills the daemon but not the command; its
-output and exit code are written to `<dir of the log file>/commands/`
+own session, so a service restart kills the daemon but not the command, and
+without the daemon's descriptors (`FD_CLOEXEC` is set on everything before the
+spawn: a detached command holding a copy of the TUN fd kept the interface
+alive across a restart, and the new core could not open it); its output and
+exit code are written to `<dir of the log file>/commands/`
 (tmpfs on a router, so a run wears no flash; the state dir when the daemon
 has no log file) and survive the daemon's restart — `GET /admin/commands/update`
 afterwards shows `done`, the exit code and the log tail. `lost` means the

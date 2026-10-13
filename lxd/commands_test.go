@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -205,5 +206,56 @@ func readJSONFile(t *testing.T, path string, target any) {
 	}
 	if err := json.Unmarshal(content, target); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestMarkInheritableCloseOnExec: a descriptor opened without CLOEXEC (the
+// way sing-tun opens /dev/net/tun) gets the flag; stdio is left alone.
+func TestMarkInheritableCloseOnExec(t *testing.T) {
+	var pipe [2]int
+	if err := unix.Pipe(pipe[:]); err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(pipe[0])
+	defer unix.Close(pipe[1])
+	cloexec := func(fd int) bool {
+		flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return flags&unix.FD_CLOEXEC != 0
+	}
+	if cloexec(pipe[0]) {
+		t.Skip("unix.Pipe returned a close-on-exec descriptor; nothing to prove")
+	}
+	stdioBefore := []bool{cloexec(0), cloexec(1), cloexec(2)}
+	markInheritableCloseOnExec()
+	if !cloexec(pipe[0]) || !cloexec(pipe[1]) {
+		t.Fatal("inheritable descriptors must be marked close-on-exec")
+	}
+	for fd, before := range stdioBefore {
+		if cloexec(fd) != before {
+			t.Fatalf("fd %d must not be touched", fd)
+		}
+	}
+}
+
+// TestCommandDoesNotInheritDescriptors: the spawned command must not see a
+// descriptor the daemon holds without CLOEXEC — a copy of the TUN fd in a
+// detached `lxd update` kept the interface alive across the service restart.
+func TestCommandDoesNotInheritDescriptors(t *testing.T) {
+	var pipe [2]int
+	if err := unix.Pipe(pipe[:]); err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(pipe[0])
+	defer unix.Close(pipe[1])
+	probe := "if [ -e /dev/fd/" + strconv.Itoa(pipe[1]) + " ]; then echo leaked; else echo clean; fi"
+	_, handler := commandsController(t, map[string]string{"fds": probe})
+	if status, _ := serveAdmin(t, handler, httptest.NewRequest(http.MethodPost, "/admin/commands/fds", nil)); status != http.StatusAccepted {
+		t.Fatal("POST = ", status)
+	}
+	if logText, _ := waitDone(t, handler, "fds")["log"].(string); logText != "clean\n" {
+		t.Fatalf("the command inherited the daemon's descriptor: %q", logText)
 	}
 }
