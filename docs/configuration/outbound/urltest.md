@@ -71,7 +71,11 @@ Load-balancing mode — how a node is chosen per connection:
 - `failover` (SPEC 116): pick the lowest-delay node and **hold it until it fails**, even if
   another node becomes faster. Each `interval` only the held node is tested. When it fails
   a test, or a dial through it fails with a "path is dead" error, the group moves to the
-  lowest-delay live node and holds that one. A manual URL test tests every node and
+  lowest-delay live node and holds that one. A degraded node moves too (SPEC 126): when the
+  held node answers more than 2× slower than the fastest other node of the same network,
+  it is tested once more; still more than 2× slower → every node is tested, and the group
+  moves only to a node more than 1.5× faster (otherwise the whole network got slower, not
+  the node). These ratios have no config key. A manual URL test tests every node and
   re-selects the fastest. `tolerance` is ignored (a startup warning says so); `balancer`
   must not be set.
 
