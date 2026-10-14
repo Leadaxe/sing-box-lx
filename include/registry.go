@@ -3,7 +3,7 @@ package include
 import (
 	"context"
 
-	"github.com/sagernet/sing-box"
+	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/certificate"
 	"github.com/sagernet/sing-box/adapter/endpoint"
@@ -14,6 +14,7 @@ import (
 	"github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/dns/transport"
 	"github.com/sagernet/sing-box/dns/transport/fakeip"
+
 	// lx:begin dns-group
 	dnsgroup "github.com/sagernet/sing-box/dns/transport/group"
 	// lx:end dns-group
@@ -72,6 +73,7 @@ func InboundRegistry() *inbound.Registry {
 	shadowtls.RegisterInbound(registry)
 	vless.RegisterInbound(registry)
 	anytls.RegisterInbound(registry)
+	registerMieruInbound(registry)
 
 	registerQUICInbounds(registry)
 	registerCloudflaredInbound(registry)
@@ -106,6 +108,7 @@ func OutboundRegistry() *outbound.Registry {
 	shadowtls.RegisterOutbound(registry)
 	vless.RegisterOutbound(registry)
 	anytls.RegisterOutbound(registry)
+	registerMieruOutbound(registry)
 
 	registerQUICOutbounds(registry)
 	registerStubForRemovedOutbounds(registry)

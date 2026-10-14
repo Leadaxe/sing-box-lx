@@ -5,7 +5,6 @@ import (
 	"net"
 	"time"
 
-	juicity "github.com/dyhkwong/sing-juicity"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/inbound"
 	"github.com/sagernet/sing-box/common/listener"
@@ -20,6 +19,7 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 
+	"github.com/exclavenetwork/sing-juicity"
 	"github.com/gofrs/uuid/v5"
 )
 
