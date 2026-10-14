@@ -18,6 +18,9 @@
 
 Подробности по каждому пункту — [Фичи](#фичи).
 
+Проект бесплатный и развивается в свободное время — если он вам полезен,
+**[поддержите его](docs-lx/donate.ru.md)**.
+
 ## Оглавление
 
 - [Почему появился форк](#почему-появился-форк)
@@ -293,6 +296,7 @@ upstream/stable  ──merge──►  lx  =  upstream  +  швы // lx  +  lx-�
 | Changelog и релиз-ноты | [docs-lx/lx-changelog.md](docs-lx/lx-changelog.md) · [docs-lx/releases/](docs-lx/releases/) |
 | Референсные ядра | [docs-lx/lx-reference-cores.ru.md](docs-lx/lx-reference-cores.ru.md) ([EN](docs-lx/lx-reference-cores.md)) — где искать ответы по wire-протоколу |
 | Spec Kit | [SPECS/FEATURES](SPECS/FEATURES/README.md) · [SPECS/TASKS](SPECS/README.md) · [CONSTITUTION](SPECS/CONSTITUTION.md) |
+| Поддержать проект | [docs-lx/donate.ru.md](docs-lx/donate.ru.md) ([EN](docs-lx/donate.md)) — криптовалюта и как помочь без денег |
 | Происхождение протоколов | [XTLS/Xray-core](https://github.com/XTLS/Xray-core) (XHTTP, REALITY, VLESS encryption) · [amnezia-vpn/amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go) · [Cloudflare WARP / MASQUE](https://developers.cloudflare.com/warp-client/) |
 
 ---

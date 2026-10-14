@@ -17,6 +17,9 @@ with current Xray and AmneziaWG servers, a daemon and observability for the apps
 
 Details of every item — [Features](#features).
 
+The project is free and developed in spare time — **[support it](docs-lx/donate.md)** if it is
+useful to you.
+
 ## Table of contents
 
 - [Why the fork exists](#why-the-fork-exists)
@@ -292,6 +295,7 @@ Everything downstream is either a new file or a seam marked `// lx`; `grep -rn "
 | Changelog & release notes | [docs-lx/lx-changelog.md](docs-lx/lx-changelog.md) · [docs-lx/releases/](docs-lx/releases/) |
 | Reference cores | [docs-lx/lx-reference-cores.md](docs-lx/lx-reference-cores.md) ([RU](docs-lx/lx-reference-cores.ru.md)) — where to look for wire-protocol answers |
 | Spec Kit | [SPECS/FEATURES](SPECS/FEATURES/README.md) · [SPECS/TASKS](SPECS/README.md) · [CONSTITUTION](SPECS/CONSTITUTION.md) |
+| Support the project | [docs-lx/donate.md](docs-lx/donate.md) ([RU](docs-lx/donate.ru.md)) — cryptocurrency, and how to help without money |
 | Protocol origins | [XTLS/Xray-core](https://github.com/XTLS/Xray-core) (XHTTP, REALITY, VLESS encryption) · [amnezia-vpn/amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go) · [Cloudflare WARP / MASQUE](https://developers.cloudflare.com/warp-client/) |
 
 ---
