@@ -62,7 +62,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		Logger:      logger,
 		TLSConfig:   tlsConfig,
 		AuthTimeout: time.Duration(options.AuthTimeout),
-						Handler:     inbound,
+		Handler:     inbound,
 	})
 	if err != nil {
 		return nil, err
@@ -132,7 +132,7 @@ func (h *Inbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, 
 	h.router.RoutePacketConnectionEx(ctx, conn, metadata, onClose)
 }
 
-func (h *Inbound) Start(stage adapter.StartStage) error {
+func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
@@ -146,6 +146,7 @@ func (h *Inbound) Start(stage adapter.StartStage) error {
 	if err != nil {
 		return err
 	}
+	scope.Add(h.Close)
 	return h.server.Start(packetConn)
 }
 
