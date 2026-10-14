@@ -44,6 +44,7 @@ const (
 	TypeHysteriaRealm      = "hysteria-realm"
 	TypeACME               = "acme"
 	TypeCloudflareOriginCA = "cloudflare-origin-ca"
+	TypeTrustTunnel        = "trusttunnel"
 )
 
 const (
@@ -143,6 +144,8 @@ func ProxyDisplayName(proxyType string) string {
 		return "Selector"
 	case TypeURLTest:
 		return "URLTest"
+	case TypeTrustTunnel:
+		return "TrustTunnel"
 	default:
 		return "Unknown"
 	}
