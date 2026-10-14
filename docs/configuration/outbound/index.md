@@ -22,6 +22,7 @@
 | `block`        | [Block](./block/)               |
 | `socks`        | [SOCKS](./socks/)               |
 | `http`         | [HTTP](./http/)                 |
+| `mieru`        | [Mieru](./mieru/)               |
 | `shadowsocks`  | [Shadowsocks](./shadowsocks/)   |
 | `vmess`        | [VMess](./vmess/)               |
 | `trojan`       | [Trojan](./trojan/)             |

@@ -22,6 +22,7 @@ const (
 	TypeSSH                = "ssh"
 	TypeShadowTLS          = "shadowtls"
 	TypeAnyTLS             = "anytls"
+	TypeMieru              = "mieru"
 	TypeShadowsocksR       = "shadowsocksr"
 	TypeVLESS              = "vless"
 	TypeTUIC               = "tuic"
@@ -44,6 +45,8 @@ const (
 	TypeHysteriaRealm      = "hysteria-realm"
 	TypeACME               = "acme"
 	TypeCloudflareOriginCA = "cloudflare-origin-ca"
+	TypeTrustTunnel        = "trusttunnel"
+	TypeJuicity      	     = "juicity"
 )
 
 const (
@@ -117,6 +120,8 @@ func ProxyDisplayName(proxyType string) string {
 		return "SSH"
 	case TypeShadowTLS:
 		return "ShadowTLS"
+	case TypeMieru:
+		return "Mieru"
 	case TypeShadowsocksR:
 		return "ShadowsocksR"
 	case TypeVLESS:
@@ -143,6 +148,10 @@ func ProxyDisplayName(proxyType string) string {
 		return "Selector"
 	case TypeURLTest:
 		return "URLTest"
+	case TypeTrustTunnel:
+		return "TrustTunnel"
+	case TypeJuicity:
+		return "Juicity"
 	default:
 		return "Unknown"
 	}
