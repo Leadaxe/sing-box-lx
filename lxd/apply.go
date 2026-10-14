@@ -48,6 +48,7 @@ func execSelfCheck(ctx context.Context, configPath string) error {
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, validateTimeout)
 	defer cancel()
+	markInheritableCloseOnExec()
 	output, err := exec.CommandContext(checkCtx, executable, "check", "--disable-color", "-c", configPath).CombinedOutput()
 	if err != nil {
 		// The parent request being canceled aborts the check mid-flight; that

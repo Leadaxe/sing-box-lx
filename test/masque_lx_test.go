@@ -39,7 +39,7 @@ func TestMASQUEOptionDecode(t *testing.T) {
 				"server": "162.159.198.1",
 				"server_port": 443,
 				"profile": "cloudflare",
-				"network": "h3",
+				"vhttp": "h3",
 				"private_key": "` + priv + `",
 				"public_key": "` + pub + `",
 				"ip": "172.16.0.2/32",
@@ -58,7 +58,7 @@ func TestMASQUEOptionDecode(t *testing.T) {
 	masqueOpts, ok := options.Outbounds[0].Options.(*option.MASQUEOutboundOptions)
 	require.True(t, ok, "outbound options must decode to *MASQUEOutboundOptions")
 	require.Equal(t, "cloudflare", masqueOpts.Profile)
-	require.Equal(t, "h3", masqueOpts.Network)
+	require.Equal(t, "h3", masqueOpts.VHTTP)
 	require.Equal(t, priv, masqueOpts.PrivateKey)
 	require.Equal(t, "172.16.0.2/32", masqueOpts.IP)
 }

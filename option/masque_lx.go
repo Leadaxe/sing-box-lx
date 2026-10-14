@@ -9,10 +9,10 @@ import "github.com/sagernet/sing/common/json/badoption"
 // allow-list is `network_list`, as in every other outbound. TLS goes in the
 // standard `tls` block.
 //
-// Legacy shapes still work until v1.14.0-lx.30 and report a deprecation:
-// `network` for the HTTP version (it meant the opposite of everyone else's
-// `network`), and flat `sni` / `skip_cert_verify` / `fragment*` for their `tls`
-// counterparts. See SPEC 062.
+// Legacy flat `sni` / `skip_cert_verify` / `fragment*` still work and report a
+// deprecation (SPEC 062). The legacy `network` key for the HTTP version (it
+// meant the opposite of everyone else's `network`) was removed in v1.14.3-lx.18:
+// the strict decoder rejects it as an unknown field.
 type MASQUEOutboundOptions struct {
 	DialerOptions
 	ServerOptions
@@ -34,14 +34,12 @@ type MASQUEOutboundOptions struct {
 	// Not named `transport`: that key is an object (V2RayTransportOptions) on
 	// vless/trojan/vmess, and reusing it for a string here would repeat exactly
 	// the confusion this migration removes. lx: SPEC 062.
-	VHTTP string `json:"vhttp,omitempty" enum:"h3,h2,auto"`
-
-	// Deprecated: use `vhttp`. Removed in v1.14.0-lx.30.
 	//
-	// This field means the HTTP version (h3/h2), not the tcp/udp list — the
-	// opposite of `network` in every other outbound. That inversion is why it
-	// is being retired; `network` is expected to take its usual meaning later.
-	Network string `json:"network,omitempty"`
+	// There is deliberately no `network` here. It used to carry the HTTP
+	// version — the opposite of `network` in every other outbound — and was
+	// removed in v1.14.3-lx.18; the key is kept free so it can later take its
+	// usual tcp/udp meaning (today that is NetworkList).
+	VHTTP string `json:"vhttp,omitempty" enum:"h3,h2,auto"`
 
 	// Key material (required for the cloudflare profile). Base64-encoded DER:
 	// PrivateKey via x509.ParseECPrivateKey, PublicKey via x509.ParsePKIXPublicKey.

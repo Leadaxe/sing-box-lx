@@ -962,13 +962,16 @@ device-проверено, что там работает.
 
 ## 3.10 Миграция со схемы до SPEC 062
 
-Обе формы принимаются до **v1.14.0-lx.30**; использование legacy-поля логирует одну
+Плоские TLS-поля ниже пока принимаются; использование такого поля логирует одну
 строку deprecation на outbound. Legacy-поле, которое *расходится* со своей заменой, —
 жёсткая ошибка, а не тихий выбор.
 
-| Legacy (устарело) | Актуальное |
+Legacy-ключ `network` для версии HTTP **снят в `v1.14.3-lx.18`**: masque-outbound с ним
+не разбирается — `unknown field "network"`. Переименуй его в `vhttp` (значения те же).
+
+| Legacy | Актуальное |
 |---|---|
-| `network: "h3"` / `"h2"` | `vhttp: "h3"` / `"h2"` |
+| `network: "h3"` / `"h2"` — **снят** | `vhttp: "h3"` / `"h2"` |
 | `sni` | `tls.server_name` |
 | `skip_cert_verify: true` | `tls.insecure: true` |
 | `fragment: true` | `tls.fragment: true` |

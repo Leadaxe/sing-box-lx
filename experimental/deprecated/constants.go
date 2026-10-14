@@ -181,7 +181,7 @@ var OptionImplicitDefaultHTTPClient = Note{
 // The removal date lives in SPEC 062 instead.
 var OptionMASQUELegacyFields = Note{
 	Name:              "masque-legacy-fields",
-	Description:       "legacy masque options (network, sni, skip_cert_verify, fragment*), replaced by `vhttp` and the standard `tls` block (planned for removal in v1.14.0-lx.30)",
+	Description:       "legacy flat masque TLS options (sni, skip_cert_verify, fragment*), replaced by the standard `tls` block",
 	DeprecatedVersion: "1.14.0-lx.26",
 	EnvName:           "MASQUE_LEGACY_FIELDS",
 }
