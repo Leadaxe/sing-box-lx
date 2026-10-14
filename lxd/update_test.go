@@ -137,12 +137,12 @@ func (h *fakeUpdateHost) env(target string) updateEnv {
 	return updateEnv{
 		goos: "linux", euid: 0, executable: target, version: "1.14.3-lx.15", platform: "linux-arm64", initSystem: "procd",
 		out: &h.out,
-		fetch: func(url string) (io.ReadCloser, error) {
+		fetch: func(url string) (io.ReadCloser, int64, error) {
 			content, found := h.urls[url]
 			if !found {
-				return nil, E.New("404 ", url)
+				return nil, -1, E.New("404 ", url)
 			}
-			return io.NopCloser(bytes.NewReader(content)), nil
+			return io.NopCloser(bytes.NewReader(content)), int64(len(content)), nil
 		},
 		run: func(name string, args ...string) (string, error) {
 			call := name + " " + strings.Join(args, " ")
@@ -461,5 +461,42 @@ func TestServiceCommands(t *testing.T) {
 	}
 	if _, _, ok := serviceCommands("launchd", "x"); ok {
 		t.Fatal("launchd is not driven here")
+	}
+}
+
+// TestDownloadProgress: the archive's bytes are reported at most once per
+// progressInterval, with the total when the server gave one.
+func TestDownloadProgress(t *testing.T) {
+	var out bytes.Buffer
+	clock := time.Unix(0, 0)
+	env := updateEnv{out: &out, now: func() time.Time { return clock }}
+	payload := bytes.Repeat([]byte("x"), 3<<20)
+	reader := env.progress(bytes.NewReader(payload), "core.tar.gz", int64(len(payload)))
+	chunk := make([]byte, 1<<20)
+	// Same tick: silent.
+	if _, err := reader.Read(chunk); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("no line within one tick, got %q", out.String())
+	}
+	clock = clock.Add(progressInterval)
+	if _, err := reader.Read(chunk); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "update: downloading core.tar.gz: 2.0 / 3.0 MiB (66%)\n" {
+		t.Fatalf("progress line = %q", got)
+	}
+	// Half a tick later: still silent.
+	clock = clock.Add(progressInterval / 2)
+	if _, err := reader.Read(chunk); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out.String(), "\n") != 1 {
+		t.Fatalf("one line per tick, got %q", out.String())
+	}
+	// Unknown total: bytes only.
+	if got := formatProgress(1536<<10, -1); got != "1.5 MiB" {
+		t.Fatalf("unknown total = %q", got)
 	}
 }

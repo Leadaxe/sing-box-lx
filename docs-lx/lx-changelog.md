@@ -30,6 +30,18 @@ required for stable tags); this changelog section is the fallback used for pre-r
 
 #### Unreleased
 
+#### v1.14.3-lx.20
+
+Стабильный релиз после `v1.14.3-lx.19`, без rc-линии. База — sing-box `v1.14.3`, `upstream/stable` `d630fa94c`, дрейф 0 (сабмодули и зависимости с lx.19 не менялись, Go 1.26.8). Одно изменение — прогресс скачивания в `lxd update`, запрос из окна Service лаунчера.
+
+- ✨ **`lxd update` пишет прогресс скачивания.** После `downloading <asset>` тело ответа молча уходило в распаковку, и в окне Service лаунчера строка висела без движения всю закачку (на роутере — десятки секунд). Теперь тело обёрнуто в считающий reader: не чаще раза в секунду (`progressInterval`) печатается `update: downloading <asset>: 3.2 / 14.1 MiB (23%)`, итог — из `Content-Length` (у GitHub-ассетов есть; нет — только байты). Раз в секунду, а не на каждый процент: лог — файл, который демон отдаёт хвостом и лаунчер опрашивает раз в секунду, `\r` в нём не работает; на 15 МиБ выходит десятки строк. `fetch` в `updateEnv` возвращает ещё размер, часы — `now` (тесты подставляют свои). Тест `TestDownloadProgress`. ([SPEC 129](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/129-LXD_UPDATE/SPEC.md))
+
+#### v1.14.3-lx.19
+
+Стабильный релиз после `v1.14.3-lx.18`, без rc-линии. База — sing-box `v1.14.3`, `upstream/stable` `d630fa94c`, дрейф 0 (сабмодули и зависимости с lx.18 не менялись, Go 1.26.8). Один хотфикс по живому прогону `lxd update` lx.17 → lx.18 на RouteRich.
+
+- 🐛 **`lxd update` из лаунчера откатывался: команда из `commands` наследовала fd TUN и держала интерфейс через рестарт службы (SPEC 128 §2.3).** Живой прогон lx.17 → lx.18 на RouteRich 2026-10-13: оба исправления SPEC 129 §2.6 отработали и всё равно `… is up but the core did not start: … TUNSETIFF: device or resource busy, rolled back`. Держал `lxd-tun0` не старый демон, а сам `update`: порождённый демоном detached-процесс получает копию таблицы дескрипторов, sing-tun открывает `/dev/net/tun` без `CLOEXEC`, и ядро держит интерфейс, пока открыта последняя копия — то есть пока `update` ждёт в шаге 8b, дольше 10 с ретрая демона. Теперь перед порождением любой команды (и перед `check` в apply) демон ставит `FD_CLOEXEC` всем своим дескрипторам выше stderr (`/proc/self/fd`; без `/proc` — перебор до soft-лимита, не выше 65536): в самом демоне ничего не закрывается, флаг срабатывает только на `exec` в потомке. Правка в lxd, не в форке sing-tun — до fd добирается только `commands`. Тесты `TestMarkInheritableCloseOnExec`, `TestCommandDoesNotInheritDescriptors`. **Переход с lx.17/lx.18 на эту версию кнопкой невозможен** — порождает ещё старый демон: один раз `stop` ядра → `update` → `start` из лаунчера (ядро остановлено, копировать нечего; после рестарта run-state `stopped`, `start` поднимает новое ядро) либо `sing-box lxd update` по SSH. ([SPEC 128](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/128-LXD_COMMANDS/SPEC.md), [SPEC 129](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/129-LXD_UPDATE/SPEC.md))
+
 #### v1.14.3-lx.18
 
 Стабильный релиз после `v1.14.3-lx.17`, без rc-линии. База — sing-box `v1.14.3`, `upstream/stable` `d630fa94c`, дрейф 0 (сабмодули и зависимости с lx.17 не менялись, Go 1.26.8). Одно изменение схемы конфига masque.
