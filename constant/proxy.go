@@ -143,6 +143,10 @@ func ProxyDisplayName(proxyType string) string {
 		return "Selector"
 	case TypeURLTest:
 		return "URLTest"
+	// lx:begin chain
+	case TypeChain:
+		return "Chain"
+	// lx:end chain
 	default:
 		return "Unknown"
 	}

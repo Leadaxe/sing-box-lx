@@ -279,6 +279,7 @@ overhead: WG внутри IP-туннеля = 60 (v4) / 80 (v6; домен → 8
 | `common/trafficcontrol/tracker.go` | ветка `PathProvider` в обходе `detourList` — внутри уже существующей lx-зоны SPEC 017 | расширение существующего маркера |
 | `daemon/started_service.proto` | поле `ChainInfo` в `OutboundInfo` (§3.6) + регенерация `.pb.go` | `lx:begin lx_command` |
 | `Makefile.lx`, `cmd/internal/build_libbox/main.go` | тег `with_lx_chain` | lx-блоки |
+| `constant/proxy.go` (2 строки) | `case TypeChain` в `ProxyDisplayName` → «Chain» (Clash API `type`, `Libbox.ProxyDisplayType`; без него — «Unknown»), решение владельца 2026-10-15 | `lx:begin chain` |
 
 Всё остальное — новые файлы: `protocol/group/chain*.go` (или пакет
 `protocol/chain`), `adapter/chain_lx.go` (привязка, `ResolveChainLeaf`,
