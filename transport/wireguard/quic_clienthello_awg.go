@@ -7,14 +7,12 @@
 // look like a genuine QUIC client's first flight (non-empty cipher_suites,
 // key_share, ALPN "h3", quic_transport_params, supported_versions TLS1.3) so
 // that when a DPI does reassemble or partially parse it, it classifies the flow
-// as "QUIC to a CDN" rather than something to fingerprint. The exact extension
-// set/order is not byte-critical — what matters is that the required extensions
-// are present and the total length lands near the etalon so the fragment
-// cutpoints stay valid.
-//
-// We do not imitate a specific JA3/JA4 fingerprint: the bypass works on
-// CRYPTO-frame fragmentation, not on TLS fingerprint, so a plausible generic
-// ClientHello suffices.
+// as "QUIC to a CDN" rather than something to fingerprint. Field runs (LxBox
+// §617/§618) showed that CRYPTO-frame order carries no weight and that only an
+// Initial carrying the whole ClientHello passes, so the generic CH here is a
+// plausible first flight, not a byte-exact browser fingerprint. Browser
+// fingerprints (Ib = chrome/chrome-full/firefox) come from uTLS in
+// quic_clienthello_utls_awg.go; "" / curl use this generic builder.
 package wireguard
 
 import (
@@ -23,15 +21,16 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-// quicCHTargetLen is the target ClientHello length (handshake header included).
-// The etalon is 294 bytes; we pad with a padding extension to hit this so the
-// etalonCutpoints (last = 290) always yield non-empty fragments. A long SNI can
-// push the CH past this, which is fine (see buildClientHello); a short SNI is
-// padded up to it.
+// quicCHTargetLen is the target generic ClientHello length (handshake header
+// included). The etalon is 294 bytes; we pad with a padding extension to hit
+// this so the generic CH keeps a stable, browser-like size. A long SNI can push
+// the CH past this, which is fine (see buildClientHello); a short SNI is padded
+// up to it.
 const quicCHTargetLen = 294
 
-// quicCHMinLen is the minimum ClientHello length that still fragments at the
-// etalon cutpoints (last cutpoint 290 ⇒ the final fragment needs ≥1 byte).
+// quicCHMinLen is the floor the assembled generic ClientHello must reach: the
+// flat and chaos layouts (quic_initial_awg.go) need a CH of at least this size
+// so that every CRYPTO fragment the planner cuts stays non-empty.
 const quicCHMinLen = 291
 
 // appendVec16 appends a 16-bit-length-prefixed vector: u16(len(body)) ‖ body.
@@ -50,19 +49,21 @@ func appendExtension(dst []byte, extType uint16, data []byte) []byte {
 // buildClientHello produces the ClientHello bytes for the QUIC Initial. The
 // browser hint (Ib) selects how it is built:
 //
-//   - "" or "curl" → buildGenericClientHello: our own ~294-byte device-proven CH
-//     (the default that passed the real LTE/WARP DPI; uTLS has no curl-QUIC fp).
-//   - "chrome"/"firefox" → buildBrowserClientHello (uTLS, with_utls builds only):
-//     a real browser QUIC ClientHello with that browser's genuine JA3/JA4. Bigger
-//     (~530–630B), so the fragment plan cuts it differently — see buildInitialPacket.
-//     Without the with_utls tag it falls back to the generic CH (see the stub file).
+//   - "" or "curl" → buildGenericClientHello: our own ~294-byte CH (uTLS has no
+//     curl-QUIC fingerprint).
+//   - "chrome"/"chrome-full"/"firefox" → buildBrowserClientHello (uTLS, with_utls
+//     builds only): a real browser QUIC ClientHello with that browser's JA3/JA4.
+//     chrome strips the PQ key_share so the CH fits one 1250-byte Initial;
+//     chrome-full keeps it and the Initial grows past the MTU — see
+//     buildInitialPacket. Without the with_utls tag both fall back to the generic
+//     CH (see the stub file).
 //
 // The uTLS path needs neither tlsRandom nor x25519Pub (uTLS makes its own fresh
 // random and key_share), so those are used only by the generic path.
-func buildClientHello(sni string, tlsRandom [32]byte, x25519Pub []byte, browser string) ([]byte, error) {
+func buildClientHello(sni string, tlsRandom [32]byte, x25519Pub []byte, browser string, scid []byte) ([]byte, error) {
 	switch browser {
-	case masqueBrowserChrome, masqueBrowserFirefox:
-		return buildBrowserClientHello(sni, browser)
+	case masqueBrowserChrome, masqueBrowserChromeFull, masqueBrowserFirefox:
+		return buildBrowserClientHello(sni, browser, scid)
 	default: // "" or "curl"
 		return buildGenericClientHello(sni, tlsRandom, x25519Pub)
 	}
@@ -164,9 +165,9 @@ func buildGenericClientHello(sni string, tlsRandom [32]byte, x25519Pub []byte) (
 	// AT LEAST quicCHTargetLen. The SNI is interpolated 1:1 into server_name, so a
 	// long (but valid, ≤253-byte) domain can already exceed the etalon length
 	// before any padding — in that case we add zero padding and let the CH be
-	// naturally longer. The fragment plan (etalonCutpoints, last=290) only needs
-	// len(ch) > 290, and a longer CH keeps I1–I4 (the final fragment just runs
-	// longer); the device-proven geometry is preserved for typical short domains.
+	// naturally longer. The frame planner (quic_initial_awg.go) only needs
+	// len(ch) >= quicCHMinLen; a longer CH keeps invariants I1–I4 (the padding
+	// budget simply shrinks), and typical short domains land on the target.
 	// Compute the slack accounting for the extensions block length prefix (u16)
 	// and the padding extension's own 4-byte header.
 	const handshakeHdr = 4 // type(1) + length(3)
@@ -188,8 +189,8 @@ func buildGenericClientHello(sni string, tlsRandom [32]byte, x25519Pub []byte) (
 	out = append(out, byte(len(body)>>16), byte(len(body)>>8), byte(len(body)))
 	out = append(out, body...)
 
-	// Must be at least the etalon length so the offset cutpoints (last 290) yield
-	// non-empty fragments; for short SNIs padding pins it exactly to the target.
+	// Must reach the planner floor so every CRYPTO fragment stays non-empty; for
+	// short SNIs padding pins it exactly to the target.
 	if len(out) < quicCHMinLen {
 		return nil, E.New("amneziawg: ClientHello assembled shorter than the minimum fragmentable length")
 	}

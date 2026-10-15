@@ -1,10 +1,11 @@
-// lx: SPEC 062 — masque predates the shared config conventions. Its HTTP
-// version lived in `network` (which selects tcp/udp in every other outbound) and its
-// TLS settings were flat fields instead of the standard `tls` block.
+// lx: SPEC 062 — masque predates the shared config conventions: its TLS
+// settings were flat fields instead of the standard `tls` block. This file folds
+// the legacy ones into the standard block before anything else looks at the
+// options, so the rest of the outbound only ever sees `TLS`.
 //
-// Both shapes keep working until v1.14.0-lx.30: this file folds the legacy ones
-// into the standard shapes before anything else looks at the options, so the
-// rest of the outbound only ever sees `VHTTP` and `TLS`.
+// The legacy `network` key (HTTP version, the opposite of what `network` means
+// in every other outbound) was removed in v1.14.3-lx.18; the HTTP version is
+// `vhttp` only, and a config still carrying `network` fails to decode.
 package masque
 
 import (
@@ -27,24 +28,12 @@ import (
 func resolveLegacyOptions(ctx context.Context, options *option.MASQUEOutboundOptions) error {
 	usedLegacy := false
 
-	//nolint:staticcheck // reading the deprecated field is this function's job
-	if legacy := options.Network; legacy != "" {
-		if options.VHTTP != "" && options.VHTTP != legacy {
-			return E.New("masque: `vhttp` is ", options.VHTTP,
-				" but deprecated `network` is ", legacy, " — remove `network`")
-		}
-		if options.VHTTP == "" {
-			options.VHTTP = legacy
-		}
-		usedLegacy = true
-	}
-
 	if options.TLS == nil {
 		options.TLS = &option.OutboundTLSOptions{}
 	}
 	tlsOptions := options.TLS
 
-	//nolint:staticcheck
+	//nolint:staticcheck // reading the deprecated fields is this function's job
 	if legacy := options.SNI; legacy != "" {
 		if tlsOptions.ServerName != "" && tlsOptions.ServerName != legacy {
 			return E.New("masque: `tls.server_name` is ", tlsOptions.ServerName,

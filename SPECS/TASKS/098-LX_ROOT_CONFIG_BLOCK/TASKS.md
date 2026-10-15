@@ -8,4 +8,4 @@
 - [x] 6. Тесты: `option/lx_test.go` (парсинг, правила, алиасы ×4, канонизация, `naive` отвергнут), роутер (оба входа дают одинаковый тик; гейт stub), masque (приоритет ×3), running-config (канонический `lx`); `lx-test/config/lx_block.json` + `lx-check` по всем конфигам
 - [x] 7. `go build` без тегов и с `LX_TAGS`; `go test` (с `-ldflags "-checklinkname=0"`) пакетов `option`, `route`, `protocol/masque`, `daemon`, `protocol/wireguard`; `gofmt` lx-файлов; стенды `lx-test`
 - [x] 8. Доки: `lx-config(.ru).md` (раздел «Блок `lx`», deprecated у старых ключей, §0), `lx-energy(.ru).md`, FEATURE 008/009, changelog; IMPLEMENTATION_REPORT
-- [x] 9. Статус I; ревью 2026-09-24 (стейл-строки masque `idle_timeout` в lx-protocols-transports и комментарий build_libbox поправлены); уведомить сессии LxBox/лаунчера о переходе на `lx.*` до снятия алиасов
+- [x] 9. Статус I; ревью 2026-09-24 (стейл-строки masque `idle_timeout` в protocols-transports и комментарий build_libbox поправлены); уведомить сессии LxBox/лаунчера о переходе на `lx.*` до снятия алиасов

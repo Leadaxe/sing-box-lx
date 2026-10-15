@@ -20,7 +20,8 @@ import (
 
 // defaultExecDir holds the system service's root-owned copy of the binary
 // and its sidecar (SPEC 100 §2.1): Apple's place for privileged helpers, one
-// flat file per label. macOS ships the directory; install never creates it.
+// flat file per label. A clean macOS lacks it until SMJobBless installs the
+// first helper, so install and copy create it root:wheel 0755 (SPEC 124).
 const defaultExecDir = "/Library/PrivilegedHelperTools"
 
 // ServiceInstallIsAdvisory is false here: on darwin --service really installs
@@ -87,8 +88,9 @@ type serviceEnv struct {
 	out     io.Writer
 	source  string // the running binary, symlinks resolved
 	execDir string
-	// createExecDir: the operator named the exec dir (--exec-dir), so missing
-	// components may be created root:wheel 0755. The default must exist.
+	// createExecDir: the operator named the exec dir (--exec-dir), so every
+	// missing component may be created root:wheel 0755. The default may
+	// lack only its last component (SPEC 124).
 	createExecDir bool
 	root          bool // the system scope may be touched
 	chown         bool // hand what install creates to root:wheel
@@ -324,11 +326,7 @@ func planExecCopy(out io.Writer, execDir string, createExecDir bool) (execCopyRe
 	if err != nil {
 		return execCopyResult{}, err
 	}
-	action := dirCheck
-	if createExecDir {
-		action = dirPlan
-	}
-	if err = checkExecDir(out, execDir, action, false); err != nil {
+	if err = checkExecDir(out, execDir, dirPlan, false, !createExecDir); err != nil {
 		fmt.Fprintln(out, "lxd: dry run result: would refuse:", err)
 		return execCopyResult{}, err
 	}
@@ -355,29 +353,33 @@ func (env serviceEnv) planCopy() error {
 	return nil
 }
 
-// checkExecDir walks the exec dir from "/" (SPEC 100 §2.3 step 2). The
-// default directory belongs to macOS: missing, it is an error with the
-// remedy, never created here; an --exec-dir may be created (dirCreate/dirPlan).
-func checkExecDir(out io.Writer, execDir string, action dirAction, chown bool) error {
-	err := ensureRootOwnedDir(out, execDir, action, chown)
-	if err != nil && action == dirCheck && os.IsNotExist(err) {
-		return E.Cause(err, "exec dir ", execDir, " does not exist; it is part of macOS — recreate it root:wheel 0755 (sudo mkdir -m 0755 ", execDir, ") or pass --exec-dir")
+// checkExecDir walks the exec dir from "/" (SPEC 100 §2.3 step 2) and
+// creates or plans what is missing (dirCreate/dirPlan). leafOnly is the
+// default directory (SPEC 124): only its last component may be missing — the
+// parent must exist and pass the root-owned chain first, as it would for
+// SMJobBless; a missing parent is a damaged system, not ours to rebuild.
+func checkExecDir(out io.Writer, execDir string, action dirAction, chown bool, leafOnly bool) error {
+	if leafOnly {
+		parent := filepath.Dir(filepath.Clean(execDir))
+		if err := checkRootOwnedChain(parent, ownerLstat); err != nil {
+			if os.IsNotExist(err) {
+				return E.Cause(err, "exec dir ", execDir, ": its parent ", parent, " does not exist; it is part of macOS — the system is damaged; pass --exec-dir")
+			}
+			return err
+		}
 	}
-	return err
+	return ensureRootOwnedDir(out, execDir, action, chown)
 }
 
 // placeCopy lays down the root-owned copy (SPEC 100 §2.3): the exec dir is
-// checked from "/" (an --exec-dir is created if missing), the binary goes in by a verified rename,
+// checked from "/" (created if missing: an --exec-dir whole, the default
+// only as its last component), the binary goes in by a verified rename,
 // then the sidecar by the same temp+rename. plistPath binds the copy to a
 // service ("" for a copy only; a copy refreshed under an installed service
 // keeps its binding). An up-to-date copy with a sidecar already saying the
 // same is a no-op.
 func (env serviceEnv) placeCopy(plistPath string) (execCopyResult, error) {
-	action := dirCheck
-	if env.createExecDir {
-		action = dirCreate
-	}
-	if err := checkExecDir(env.out, env.execDir, action, env.chown); err != nil {
+	if err := checkExecDir(env.out, env.execDir, dirCreate, env.chown, !env.createExecDir); err != nil {
 		return execCopyResult{}, err
 	}
 	result, err := installExecCopy(env.out, env.source, env.execDir, execCopyOptions{chown: env.chown})

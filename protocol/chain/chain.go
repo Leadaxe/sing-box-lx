@@ -24,6 +24,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/interrupt"
+	"github.com/sagernet/sing-box/common/lxmtu"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -66,6 +67,8 @@ type Chain struct {
 	idleTimeout time.Duration
 	strip       stripSet
 	rewrite     map[string]any
+	// mtuPolicy — lx.mtu_align из контекста бокса (SPEC 120); без блока — clamp.
+	mtuPolicy lxmtu.Policy
 
 	// SPEC 075: runtime position toggle. disabled is per position; a disabled
 	// position >= 1 is a passthrough to the previous hop, a disabled entry
@@ -129,6 +132,11 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	} else if idleTimeout < 0 {
 		idleTimeout = 0
 	}
+	mtuAlign := service.PtrFromContext[option.LXResolved](ctx).MTUAlignOrDefault()
+	mtuPolicy, err := lxmtu.NewPolicy(mtuAlign.Mode, mtuAlign.Except)
+	if err != nil {
+		return nil, E.Cause(err, "lx.mtu_align")
+	}
 	return &Chain{
 		Adapter:           outbound.NewAdapter(C.TypeChain, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.Outbounds),
 		ctx:               ctx,
@@ -142,6 +150,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		idleTimeout:       idleTimeout,
 		strip:             strip,
 		rewrite:           options.Rewrite,
+		mtuPolicy:         mtuPolicy,
 		disabled:          make([]atomic.Bool, len(options.Outbounds)),
 		interruptGroup:    interrupt.NewGroup(),
 		interruptExternal: options.InterruptExistConnections,

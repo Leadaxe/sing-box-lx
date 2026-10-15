@@ -492,6 +492,35 @@ func TestAdminOperatorRoutes(t *testing.T) {
 // Bearer on top (clients never learn the daemon-owned secret). And the
 // inverse: the Bearer secret alone must NOT open the pinned plane, or a
 // leaked operator secret would void the whole mTLS model remotely.
+// TestAdminStatusOperatorRoute: /admin/status is readable from the host
+// without a client cert (loopback + secret) — `lxd update` asks it whether
+// the core came up (SPEC 129 §2.6). A remote peer without a cert still gets
+// the pin's 401, and a wrong secret on loopback is refused.
+func TestAdminStatusOperatorRoute(t *testing.T) {
+	control := newTestController(t, &fakeReloader{}, nil)
+	control.clients = newTestRegistry(t)
+	handler := control.adminHandler("s3cret")
+
+	statusGet := func(remoteAddr, bearer string) (int, map[string]any) {
+		request := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
+		request.RemoteAddr = remoteAddr
+		if bearer != "" {
+			request.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		return serveAdmin(t, handler, request)
+	}
+	if status, payload := statusGet("127.0.0.1:40000", "s3cret"); status != http.StatusOK || payload["status"] != "idle" {
+		t.Fatalf("loopback + secret must read the status, got %d %v", status, payload)
+	}
+	if status, _ := statusGet("127.0.0.1:40000", "wrong"); status != http.StatusUnauthorized {
+		t.Fatal("expected 401 for a wrong secret on loopback, got", status)
+	}
+	if status, payload := statusGet("192.0.2.10:443", "s3cret"); status != http.StatusUnauthorized ||
+		!strings.Contains(payload["error"].(string), "client certificate not trusted") {
+		t.Fatalf("a remote certless peer must hit the pin, got %d %v", status, payload)
+	}
+}
+
 func TestAdminTrustedCertNeedsNoBearer(t *testing.T) {
 	control := newTestController(t, &fakeReloader{}, nil)
 	registry := newTestRegistry(t)
@@ -540,6 +569,7 @@ func TestAdminInfoEndpoint(t *testing.T) {
 		path:   "/Library/PrivilegedHelperTools/sing-box-lxd",
 		sha256: "0f1e",
 	}
+	control.platform = platformInfo{goos: "linux", goarch: "arm64", platform: "linux-arm64", initSystem: initNameProcd, service: true}
 	handler := control.adminHandler("")
 
 	request := httptest.NewRequest(http.MethodGet, "/admin/info", nil)
@@ -568,6 +598,12 @@ func TestAdminInfoEndpoint(t *testing.T) {
 	if payload["executable"] != "/Library/PrivilegedHelperTools/sing-box-lxd" || payload["executable_sha256"] != "0f1e" {
 		t.Fatalf("executable/executable_sha256 = %v/%v", payload["executable"], payload["executable_sha256"])
 	}
+	if payload["goos"] != "linux" || payload["goarch"] != "arm64" || payload["platform"] != "linux-arm64" {
+		t.Fatalf("goos/goarch/platform = %v/%v/%v", payload["goos"], payload["goarch"], payload["platform"])
+	}
+	if payload["init_system"] != "procd" || payload["service"] != true {
+		t.Fatalf("init_system/service = %v/%v", payload["init_system"], payload["service"])
+	}
 }
 
 // TestAdminInfoExecutableHash: the hash is computed once, in the background,
@@ -578,6 +614,17 @@ func TestAdminInfoExecutableHash(t *testing.T) {
 	status, payload := serveAdmin(t, control.adminHandler(""), httptest.NewRequest(http.MethodGet, "/admin/info", nil))
 	if status != http.StatusOK || payload["executable"] != "" || payload["executable_sha256"] != "" {
 		t.Fatalf("without an identity the fields must be empty strings, got %d %v/%v", status, payload["executable"], payload["executable_sha256"])
+	}
+	// SPEC 127: an unknown platform card is empty strings and false, never
+	// missing keys.
+	if initSystem, ok := payload["init_system"].(string); !ok || initSystem != "" {
+		t.Fatalf("init_system must be present and empty, got %#v", payload["init_system"])
+	}
+	if service, ok := payload["service"].(bool); !ok || service {
+		t.Fatalf("service must be present and false, got %#v", payload["service"])
+	}
+	if platform, ok := payload["platform"].(string); !ok || platform != "" {
+		t.Fatalf("platform must be present and empty, got %#v", payload["platform"])
 	}
 
 	binary := filepath.Join(t.TempDir(), "sing-box")

@@ -14,45 +14,6 @@ import (
 	"github.com/sagernet/sing/common/json/badoption"
 )
 
-func TestResolveLegacyVHTTP(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name    string
-		network string
-		vhttp   string
-		want    string
-		wantErr bool
-	}{
-		{name: "legacy only", network: "h2", want: "h2"},
-		{name: "new only", vhttp: "h2", want: "h2"},
-		{name: "both agree", network: "h2", vhttp: "h2", want: "h2"},
-		{name: "both disagree", network: "h3", vhttp: "h2", wantErr: true},
-		{name: "neither", want: ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			opts := &option.MASQUEOutboundOptions{VHTTP: tc.vhttp}
-			//nolint:staticcheck
-			opts.Network = tc.network
-			err := resolveLegacyOptions(context.Background(), opts)
-			if tc.wantErr {
-				if err == nil {
-					t.Fatal("conflicting HTTP version must be rejected")
-				}
-				if !strings.Contains(err.Error(), "network") {
-					t.Errorf("error should name the offending field, got %q", err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if opts.VHTTP != tc.want {
-				t.Errorf("vhttp = %q, want %q", opts.VHTTP, tc.want)
-			}
-		})
-	}
-}
-
 func TestResolveLegacySNI(t *testing.T) {
 	t.Parallel()
 	t.Run("legacy fills empty", func(t *testing.T) {

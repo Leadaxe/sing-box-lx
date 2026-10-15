@@ -2,10 +2,11 @@
 
 // Masquerade I1 generators (009) — WireSock-style declarative obfuscation.
 //
-// All four profiles are client-initiated decoys: QUIC = fragmented Initial
-// (quic_initial_awg.go), STUN = WebRTC Binding Request (stun_request_awg.go),
-// DNS = client query (masqueDNSQueryCPS below), SIP = INVITE request with SDP
-// (sip_invite_awg.go). The DNS/SIP packet shapes are inspired by the open-source
+// All four profiles are client-initiated decoys: QUIC = one Initial carrying a
+// whole ClientHello (quic_initial_awg.go), STUN = WebRTC Binding Request
+// (stun_request_awg.go), DNS = client query (masqueDNSQueryCPS below), SIP =
+// INVITE (i1), no SDP body (sip_invite_awg.go).
+// The DNS/SIP packet shapes are inspired by the open-source
 // WireSock reference, but translated from its server-side responses into the
 // client-side requests a UA actually sends first:
 //
@@ -126,45 +127,23 @@ func masqueI1(o option.AmneziaWGOptions) (string, error) {
 // single call, so multi-packet profiles whose two halves must agree are built
 // from ONE generation pass. It returns ("","",nil) when no masquerade is set.
 //
-//   - ip=quic   → ONE fragmented QUIC Initial (i1 only, i2 == ""). A single
-//     Initial is exactly what a real client sends to start one QUIC session;
-//     two Initials with different DCIDs would read as two abandoned sessions
-//     (each DCID is a distinct connection), which is more anomalous, not less.
-//     Realism comes from the browser-accurate ClientHello (Ib → uTLS), not from
-//     packet count.
-//   - ip=sip    → ONE INVITE fragmented into head (i1) + body (i2). Both come
-//     from a single masqueSIPInviteSplitCPS call, so the shared host and the
-//     Content-Length announced in the head match the body byte-for-byte.
+//   - ip=quic   → ONE QUIC Initial with the whole ClientHello (i1 only,
+//     i2 == ""). A single Initial is exactly what a real client sends to start
+//     one QUIC session; two Initials with different DCIDs would read as two
+//     abandoned sessions (each DCID is a distinct connection), which is more
+//     anomalous, not less. Realism comes from the browser-accurate ClientHello
+//     (Ib → uTLS) and the frame layout, not from packet count.
+//   - ip=sip    → ONE packet: a complete INVITE (i1), no SDP body. The
+//     "100 Trying" that used to ride in i2 was a server response sent by the
+//     client — a direction a UAC never produces (and a WireSock-style
+//     responder answers the INVITE itself) — so i2 stays empty.
 //   - dns/stun  → single-packet decoys: i1 only, i2 == "".
 //
-// i1 is produced by masqueI1 (which also runs all validation); masqueI1I2 is
-// the wiring entry point and assumes nothing has been validated yet — it calls
-// masqueI1 first and only fills i2 when that succeeds.
+// i1 is produced by masqueI1 (which also runs all validation); i2 is kept in
+// the signature for the wiring code and is always "" today.
 func masqueI1I2(o option.AmneziaWGOptions) (i1, i2 string, err error) {
 	i1, err = masqueI1(o)
-	if err != nil || i1 == "" {
-		return i1, "", err
-	}
-	proto := strings.ToLower(strings.TrimSpace(o.Ip))
-	domain := strings.TrimSpace(o.Id)
-	switch proto {
-	case masqueProtoSIP:
-		// Build ONE dialog and emit both messages from it: i1 = INVITE, i2 = the
-		// matching 100 Trying. They share Via branch / From tag / Call-ID / CSeq,
-		// so they read as one SIP dialog. i1 is rebuilt here (replacing masqueI1's
-		// independent INVITE) so both slots come from this single dialog.
-		d := newSIPDialog(domain)
-		invite, err := masqueSIPInviteCPS(d)
-		if err != nil {
-			return "", "", err
-		}
-		trying, err := masqueSIPTryingCPS(d)
-		if err != nil {
-			return "", "", err
-		}
-		i1, i2 = invite, trying
-	}
-	return i1, i2, nil
+	return i1, "", err
 }
 
 // validateMasqueDomain enforces a strict LDH (letter-digit-hyphen) hostname,
@@ -216,30 +195,28 @@ func validateMasqueDomain(domain string) error {
 
 // masqueBrowser identifiers (option.AmneziaWGOptions.Ib).
 const (
-	masqueBrowserChrome  = "chrome"
-	masqueBrowserFirefox = "firefox"
-	masqueBrowserCurl    = "curl"
+	masqueBrowserChrome     = "chrome"      // Chrome 155 ClientHello without the PQ key_share, one 1250-byte Initial
+	masqueBrowserChromeFull = "chrome-full" // Chrome 155 ClientHello with X25519MLKEM768, one Initial above the MTU
+	masqueBrowserFirefox    = "firefox"
+	masqueBrowserCurl       = "curl"
 )
 
 // normalizeMasqueBrowser validates Ib against the accepted set and returns it
 // lower-cased, or "" when unset.
 //
-// Note: the QUIC masquerade emits a fragmented QUIC Initial with a real
-// ClientHello (see quic_initial_awg.go), but the DPI bypass works on
-// out-of-order CRYPTO-frame fragmentation, not on a TLS fingerprint, so no
-// specific browser JA3/JA4 is imitated. Ib is accepted for syntax compatibility
-// with WireSock configs and validated, but currently does not change the
-// generated ClientHello. For dns/stun/sip it has no effect; ib is only
-// meaningful (and even then only as a future hook) for ip=quic.
+// Ib selects both the TLS fingerprint of the ClientHello and the QUIC frame
+// layout of the Initial (see quic_initial_awg.go and
+// quic_clienthello_utls_awg.go). It is only meaningful for ip=quic; for
+// dns/stun/sip it is rejected.
 func normalizeMasqueBrowser(ib, proto string) (string, error) {
 	browser := strings.ToLower(strings.TrimSpace(ib))
 	if browser == "" {
 		return "", nil
 	}
 	switch browser {
-	case masqueBrowserChrome, masqueBrowserFirefox, masqueBrowserCurl:
+	case masqueBrowserChrome, masqueBrowserChromeFull, masqueBrowserFirefox, masqueBrowserCurl:
 	default:
-		return "", E.New("amneziawg: unknown masquerade browser ", strconv.Quote(ib), "; one of chrome|firefox|curl")
+		return "", E.New("amneziawg: unknown masquerade browser ", strconv.Quote(ib), "; one of chrome|chrome-full|firefox|curl")
 	}
 	if proto != masqueProtoQUIC {
 		return "", E.New("amneziawg: ib (browser) is only meaningful with ip=quic, got ip=", strconv.Quote(proto))
@@ -316,35 +293,28 @@ func (c *cpsBuilder) String() string {
 // device-confirmed for WARP — use ip=quic for WARP. ip=dns is kept for other
 // providers whose DPI only checks well-formedness, not protocol-to-destination.
 //
-// Layout (one well-formed DNS query, no trailing bytes):
+// Layout (one well-formed DNS query, no trailing bytes), the shape a stub
+// resolver sends: header, one HTTPS question, an EDNS OPT RR advertising the
+// UDP payload size and carrying no options.
 //
-//	[ Header 12 ][ Question (QNAME + HTTPS + IN) ][ OPT RR 11 ][ opt hdr 4 ][ cover ]
+//	[ Header 12 ][ Question (QNAME + HTTPS + IN) ][ OPT RR 11, RDLENGTH 0 ]
 //
-// TXID is <r 2> (fresh per packet, like a stub resolver). RDLENGTH covers the
-// option header + option-data; OPTION-LENGTH covers just the cover bytes.
+// TXID is <r 2> (fresh per packet, like a stub resolver). An earlier shape
+// appended an unknown EDNS option (0xFDE9) with 40 random bytes — inherited from
+// WireSock's server-side S1 tail — which no resolver sends and which a DNS
+// dissector flags; it is gone.
 
 const (
 	// EDNS OPT advertised UDP payload size (modern resolver default, RFC 6891).
 	dnsOptUDPSize uint16 = 1232
-	// EDNS option code for the opaque cover payload. 0xFDE9 (65001) is in the
-	// IANA local/experimental range (RFC 6891 §6.1.2): resolvers must ignore
-	// unknown options, so it carries opaque cover bytes without the zero-content
-	// expectation of option code 12 (Padding, RFC 7830).
-	dnsOptCoverCode uint16 = 0xFDE9
-	// Number of opaque cover bytes (the encrypted-looking OPT option-data). The
-	// standalone decoy has no real ciphertext tail, so we emit a fixed-size
-	// random body to give the message a realistic size.
-	dnsCoverLen = 40
 	// QTYPE HTTPS (RR type 65, RFC 9460): the most common query a modern browser
 	// emits per navigation — the most "expected" query shape on the wire.
 	dnsQTypeHTTPS uint16 = 0x0041
 )
 
-// masqueDNSQueryCPS builds an EDNS-OPT DNS query (QR=0) for the configured
-// domain (QNAME), carrying the cover bytes as the opaque option-data of a single
-// unknown EDNS option (code 0xFDE9) in the Additional section — the normal EDNS
-// query shape. The whole datagram parses as one well-formed DNS message with no
-// trailing bytes.
+// masqueDNSQueryCPS builds an EDNS DNS query (QR=0) for the configured domain
+// (QNAME): one HTTPS question and an OPT RR without options. The whole datagram
+// parses as one well-formed DNS message with no trailing bytes.
 func masqueDNSQueryCPS(domain string) (string, error) {
 	qname, err := encodeDNSName(domain)
 	if err != nil {
@@ -356,12 +326,6 @@ func masqueDNSQueryCPS(domain string) (string, error) {
 	question := make([]byte, 0, len(qname)+4)
 	question = append(question, qname...)
 	question = append(question, qtHi, qtLo, 0x00, 0x01)
-
-	const optOptionHdrLen = 4 // OPTION-CODE(2)+OPTION-LENGTH(2)
-
-	// OPTION-LENGTH covers the cover bytes; RDLENGTH covers option header + data.
-	optLen := uint16(dnsCoverLen)
-	rdLength := uint16(optOptionHdrLen + dnsCoverLen)
 
 	var hdr cpsBuilder
 
@@ -379,24 +343,16 @@ func masqueDNSQueryCPS(domain string) (string, error) {
 	// Question section.
 	hdr.addBytes(question)
 
-	// OPT RR fixed prefix (11) + option header (4).
+	// OPT RR (11 bytes): no options, RDLENGTH 0.
 	udpHi, udpLo := be16(dnsOptUDPSize)
-	rdHi, rdLo := be16(rdLength)
-	ocHi, ocLo := be16(dnsOptCoverCode)
-	olHi, olLo := be16(optLen)
 	opt := []byte{
 		0x00,       // NAME: root label (OPT must use the root name)
 		0x00, 0x29, // TYPE = OPT (41)
 		udpHi, udpLo, // CLASS = requestor UDP size (1232)
 		0x00, 0x00, 0x00, 0x00, // TTL: ext-RCODE 0, EDNS version 0, flags 0 (DO=0)
-		rdHi, rdLo, // RDLENGTH = option header + option-data
-		ocHi, ocLo, // OPTION-CODE = 0xFDE9 (unknown)
-		olHi, olLo, // OPTION-LENGTH = cover bytes
+		0x00, 0x00, // RDLENGTH = 0 (no options)
 	}
 	hdr.addBytes(opt)
-
-	// Opaque cover bytes (the "encrypted" OPT option-data).
-	hdr.addRand(dnsCoverLen)
 
 	return hdr.String(), nil
 }

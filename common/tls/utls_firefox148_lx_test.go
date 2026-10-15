@@ -16,10 +16,12 @@ import (
 // client from cutting that share out; whether a fingerprint carries it at all is decided
 // by the utls preset. `chrome` had it in metacubex/utls v1.8.7 already; `firefox` and
 // `safari` get it from the fork submodule (submodules/utls: Firefox 148 + key share reuse,
-// SPEC 086, and Safari 26.3, SPEC 087, ported from refraction-networking/utls). These tests
-// pin what the three presets send, so a utls bump that drops the hybrid share, reorders it
-// behind X25519, or loses the Firefox 148 / Safari 26.3 aliases fails here instead of in
-// the field as a silent `reality verification failed`.
+// SPEC 086, and Safari 26.3, SPEC 087, ported from refraction-networking/utls). The fork
+// also carries Chrome 155 as the opt-in `chrome_155` name (SPEC 118); `chrome` stays Chrome
+// 133. These tests pin what the presets send, so a utls bump that drops the hybrid share,
+// reorders it behind X25519, moves `chrome` off 133, or loses the Chrome 155 / Firefox 148 /
+// Safari 26.3 presets fails here instead of in the field as a silent
+// `reality verification failed`.
 
 func lxBuildClientHello(t *testing.T, id utls.ClientHelloID) *utls.UConn {
 	t.Helper()
@@ -72,6 +74,27 @@ func lxIndexOfCurve(curves []utls.CurveID, group utls.CurveID) int {
 	return -1
 }
 
+// The `chrome` name (and the empty default) resolves to HelloChrome_Auto, which the fork
+// keeps at Chrome 133 (SPEC 118): Chrome 155 advertises ML-DSA signatures the fork cannot
+// verify and trust_anchors, so it is not forced on every default user.
+func TestLxChromeFingerprintStaysChrome133(t *testing.T) {
+	for _, name := range []string{"chrome", ""} {
+		id, err := uTLSClientHelloID(name)
+		require.NoError(t, err)
+		require.Equal(t, utls.HelloChrome_Auto, id)
+		require.Equal(t, utls.HelloChrome_133, id)
+		require.Equal(t, "133", id.Version)
+	}
+}
+
+// Chrome 155 is reachable only under the explicit `chrome_155` name (SPEC 118).
+func TestLxChrome155FingerprintIsOptIn(t *testing.T) {
+	id, err := uTLSClientHelloID("chrome_155")
+	require.NoError(t, err)
+	require.Equal(t, utls.HelloChrome_155, id)
+	require.Equal(t, "155", id.Version)
+}
+
 // The `firefox` name resolves to HelloFirefox_Auto, which the fork's port makes
 // Firefox 148 (SPEC 086 R3). A metacubex/utls without the port would leave it at
 // HelloFirefox_120 — no hybrid share, dead on Xray >= v26.9.8.
@@ -94,10 +117,10 @@ func TestLxSafariFingerprintIsSafari26_3(t *testing.T) {
 	require.Equal(t, "26.3", id.Version)
 }
 
-// The three presets the fork stands on for REALITY send X25519MLKEM768 before X25519,
+// The presets the fork stands on for REALITY send X25519MLKEM768 before X25519,
 // each exactly once, in key_share and in supported_groups — the server's acceptance rule.
 func TestLxRealityFingerprintsCarryHybridShareFirst(t *testing.T) {
-	for _, name := range []string{"chrome", "firefox", "safari"} {
+	for _, name := range []string{"chrome", "chrome_155", "firefox", "safari"} {
 		t.Run(name, func(t *testing.T) {
 			id, err := uTLSClientHelloID(name)
 			require.NoError(t, err)

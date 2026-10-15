@@ -2,10 +2,12 @@ package option
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badoption"
 )
@@ -64,18 +66,19 @@ func TestLXBlockParsesEveryKey(t *testing.T) {
 			BuildMax:             4,
 			BuildOverflow:        LXBuildOverflowBuild,
 		},
-		MASQUE: LXMASQUEResolved{IdleTimeout: 2 * time.Minute},
+		MASQUE:   LXMASQUEResolved{IdleTimeout: 2 * time.Minute},
+		MTUAlign: LXMTUAlignResolved{Mode: LXMTUAlignClamp},
 	}
-	if *resolved != want {
+	if !reflect.DeepEqual(*resolved, want) {
 		t.Fatalf("resolved = %+v, want %+v", *resolved, want)
 	}
 }
 
 func TestLXBlockEmptyEqualsAbsent(t *testing.T) {
 	t.Parallel()
-	for _, content := range []string{`{}`, `{"lx": {}}`, `{"lx": {"wg": {}, "masque": {}}}`} {
+	for _, content := range []string{`{}`, `{"lx": {}}`, `{"lx": {"wg": {}, "masque": {}, "mtu_align": {}}}`, `{"lx": {"mtu_align": ""}}`} {
 		options, resolved, warnings := mustResolveLX(t, content)
-		if *resolved != (LXResolved{}) || len(warnings) != 0 {
+		if !reflect.DeepEqual(*resolved, lxDefaults()) || len(warnings) != 0 {
 			t.Fatalf("%s: expected all-off without warnings, got %+v %v", content, *resolved, warnings)
 		}
 		if options.LX != nil {
@@ -84,11 +87,20 @@ func TestLXBlockEmptyEqualsAbsent(t *testing.T) {
 	}
 }
 
+// lxDefaults is what an absent block resolves to: every knob off, mtu_align
+// at its default (lx: SPEC 120).
+func lxDefaults() LXResolved {
+	return LXResolved{MTUAlign: LXMTUAlignResolved{Mode: LXMTUAlignClamp}}
+}
+
 func TestLXResolvedNilIsAllOff(t *testing.T) {
 	t.Parallel()
 	var resolved *LXResolved
 	if resolved.WGOrZero() != (LXWGResolved{}) || resolved.MASQUEOrZero() != (LXMASQUEResolved{}) {
 		t.Fatal("a nil *LXResolved must read as all-off")
+	}
+	if !reflect.DeepEqual(resolved.MTUAlignOrDefault(), LXMTUAlignResolved{Mode: LXMTUAlignClamp}) {
+		t.Fatal("a nil *LXResolved must read as mtu_align clamp")
 	}
 }
 
@@ -125,6 +137,7 @@ func TestLXBlockValidation(t *testing.T) {
 		{`{"lx":{"wg":{"build_max":-1}}}`, "lx.wg.build_max must be >= 0"},
 		{`{"lx":{"wg":{"build_overflow":"drop"}}}`, `lx.wg.build_overflow must be "wait" or "build"`},
 		{`{"lx":{"masque":{"idle_timeout":"-1s"}}}`, "lx.masque.idle_timeout must be >= 0"},
+		{`{"lx":{"mtu_align":{"except":[""]}}}`, "lx.mtu_align.except: empty tag"},
 		// the same rules apply to values that arrived through an alias
 		{`{"route":{"lx_idle_suspend_reachable":"5m"}}`, "lx.wg.idle_suspend_reachable requires lx.wg.idle_suspend"},
 		{`{"route":{"lx_idle_teardown":"0"}}`, "lx.wg.idle_teardown requires lx.wg.idle_suspend"},
@@ -277,7 +290,7 @@ func TestLXCanonicalForm(t *testing.T) {
 		"idle_suspend_reachable": "5m",
 		"idle_teardown": "0"
 	}}}`)
-	if *legacyResolved != *canonicalResolved {
+	if !reflect.DeepEqual(*legacyResolved, *canonicalResolved) {
 		t.Fatalf("legacy and lx input must resolve the same:\n  %+v\n  %+v", *legacyResolved, *canonicalResolved)
 	}
 	content, err := json.Marshal(legacy)
@@ -299,7 +312,7 @@ func TestLXCanonicalForm(t *testing.T) {
 		t.Fatal(err)
 	}
 	again, warnings, err := ResolveLX(&roundTrip)
-	if err != nil || len(warnings) != 0 || *again != *legacyResolved {
+	if err != nil || len(warnings) != 0 || !reflect.DeepEqual(*again, *legacyResolved) {
 		t.Fatalf("canonical round trip: %+v %v %v", again, warnings, err)
 	}
 }
@@ -314,7 +327,7 @@ func TestLXResolveIdempotent(t *testing.T) {
 	}
 	lx, route := options.LX, options.Route
 	second, warnings, err := ResolveLX(&options)
-	if err != nil || len(warnings) != 0 || *second != *first {
+	if err != nil || len(warnings) != 0 || !reflect.DeepEqual(*second, *first) {
 		t.Fatalf("second resolve: %+v %v %v", second, warnings, err)
 	}
 	if options.Route != route || *options.LX.WG != *lx.WG || *options.LX.MASQUE != *lx.MASQUE {
@@ -360,5 +373,66 @@ func TestMASQUEIdleTimeoutZeroIsAValue(t *testing.T) {
 	}
 	if absent.IdleTimeout != nil {
 		t.Fatal("an omitted idle_timeout must decode as absent")
+	}
+}
+
+// lx: SPEC 120 — lx.mtu_align: a mode string or {mode, except}; absent,
+// empty and "" all mean clamp; an unknown mode is rejected by key name; the
+// canonical form round-trips.
+func TestLXMTUAlign(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		content string
+		want    LXMTUAlignResolved
+	}{
+		{`{}`, LXMTUAlignResolved{Mode: "clamp"}},
+		{`{"lx":{"mtu_align":"clamp"}}`, LXMTUAlignResolved{Mode: "clamp"}},
+		{`{"lx":{"mtu_align":"fill"}}`, LXMTUAlignResolved{Mode: "fill"}},
+		{`{"lx":{"mtu_align":"off"}}`, LXMTUAlignResolved{Mode: "off"}},
+		{`{"lx":{"mtu_align":{"mode":"fill"}}}`, LXMTUAlignResolved{Mode: "fill"}},
+		{`{"lx":{"mtu_align":{"except":["my-wg"]}}}`, LXMTUAlignResolved{Mode: "clamp", Except: []string{"my-wg"}}},
+		{`{"lx":{"mtu_align":{"except":"my-wg"}}}`, LXMTUAlignResolved{Mode: "clamp", Except: []string{"my-wg"}}},
+		{`{"lx":{"mtu_align":{"mode":"off","except":["a","b"]}}}`, LXMTUAlignResolved{Mode: "off", Except: []string{"a", "b"}}},
+	}
+	for _, tc := range cases {
+		options, resolved, warnings := mustResolveLX(t, tc.content)
+		if !reflect.DeepEqual(resolved.MTUAlign, tc.want) || len(warnings) != 0 {
+			t.Fatalf("%s: %+v %v, want %+v", tc.content, resolved.MTUAlign, warnings, tc.want)
+		}
+		if !reflect.DeepEqual(resolved.MTUAlignOrDefault(), tc.want) {
+			t.Fatalf("%s: accessor %+v", tc.content, resolved.MTUAlignOrDefault())
+		}
+		// the canonical form decodes back to the same values
+		content, err := json.Marshal(options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		again, _, err := ResolveLX(common.Ptr(mustDecodeLXConfig(t, string(content))))
+		if err != nil || !reflect.DeepEqual(again.MTUAlign, tc.want) {
+			t.Fatalf("%s: round trip %s → %+v %v", tc.content, content, again, err)
+		}
+	}
+	for _, content := range []string{
+		`{"lx":{"mtu_align":"auto"}}`,
+		`{"lx":{"mtu_align":{"mode":"auto"}}}`,
+		`{"lx":{"mtu_align":{"mode":"clamp","exclude":["a"]}}}`,
+		`{"lx":{"mtu_align":1}}`,
+	} {
+		if _, err := decodeLXConfig(t, content); err == nil {
+			t.Fatalf("%s: must be rejected", content)
+		} else if strings.Contains(content, "auto") && !strings.Contains(err.Error(), "lx.mtu_align.mode") {
+			t.Fatalf("%s: the error must name the key, got %v", content, err)
+		}
+	}
+	// marshal: string form without exceptions, object form with them
+	short, _ := json.Marshal(LXMTUAlign{Mode: "fill"})
+	long, _ := json.Marshal(LXMTUAlign{Mode: "fill", Except: []string{"a", "b"}})
+	if string(short) != `"fill"` || string(long) != `{"mode":"fill","except":["a","b"]}` {
+		t.Fatalf("%s %s", short, long)
+	}
+	// the struct path validates too (configs built in code)
+	bad := Options{LX: &LXOptions{MTUAlign: &LXMTUAlign{Mode: "auto"}}}
+	if _, _, err := ResolveLX(&bad); err == nil {
+		t.Fatal("an unknown mode must fail resolve")
 	}
 }

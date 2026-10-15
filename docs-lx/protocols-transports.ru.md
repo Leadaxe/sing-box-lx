@@ -1,8 +1,14 @@
 # Протоколы и транспорты — полный справочник параметров
 
-> 🌐 English version: **[lx-protocols-transports.md](lx-protocols-transports.md)**.
+> 🌐 English version: **[protocols-transports.md](protocols-transports.md)**.
 
-Исчерпывающий, по-полевой справочник по трём downstream-фичам протоколов/транспортов
+> 🧭 **Где что искать.** Документация форка — три уровня, по вопросу читателя:
+> [lx-config](lx-config.ru.md) — что есть в форке и как включить;
+> [protocols-transports](protocols-transports.ru.md) — каждое поле, тип, дефолт, текст ошибки;
+> [xray-protocols-explained](xray-protocols-explained.ru.md) и [amneziawg-explained](amneziawg-explained.ru.md) —
+> как устроено, почему, как сделано у нас и чем отличается от ванили.
+
+Исчерпывающий, по-полевой справочник по downstream-фичам протоколов/транспортов
 `sing-box-lx`:
 
 | Фича | Build tag | Куда крепится | Глава |
@@ -10,6 +16,7 @@
 | **XHTTP** транспорт (Xray "splithttp"/"xhttp") | `with_xhttp` | блок `transport` у VLESS / VMess / Trojan **outbound** | [§1](#1-xhttp-транспорт) |
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) обфускация | `with_awg` | промо-поля на `wireguard` **endpoint** | [§2](#2-amneziawg-203x-awg2-awg3) |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic` + `with_gvisor` | `outbounds[].type: "masque"` | [§3](#3-masque-outbound-connect-ip--warp) |
+| **REALITY**-клиент (гибридный key share, `key_share`, фрагментация) и **VLESS `encryption`** | — (REALITY внутри `with_utls`) | блок `tls` у TLS-over-TCP **outbound**; плоское поле `encryption` у `vless` | [§5](#5-reality-и-vless-encryption) |
 
 Плюс [§4](#4-grpc-транспорт) — **gRPC**-транспорт, он апстримный, не наш, и попал
 сюда ради одного места, где у нашего поведения есть downstream-заметки по
@@ -84,10 +91,20 @@ make -f Makefile.lx lx-build
   - [3.12 Частые грабли](#312-частые-грабли)
 - [§4 gRPC-транспорт](#4-grpc-транспорт)
   - [4.1 `service_name`: формы Xray](#41-service_name-формы-xray)
+- [§5 REALITY и VLESS `encryption`](#5-reality-и-vless-encryption)
+  - [5.1 Поля `tls.reality`](#51-поля-tlsreality)
+  - [5.2 Отпечатки и гибридный key share](#52-отпечатки-и-гибридный-key-share)
+  - [5.3 Фрагментация ClientHello](#53-фрагментация-clienthello)
+  - [5.4 Ошибки валидации REALITY (дословно)](#54-ошибки-валидации-reality-дословно)
+  - [5.5 Поле `encryption` у `vless`](#55-поле-encryption-у-vless)
+  - [5.6 Ошибки валидации `encryption` (дословно)](#56-ошибки-валидации-encryption-дословно)
+  - [5.7 Примеры](#57-примеры)
 
 ---
 
 # 1. XHTTP транспорт
+
+> 🧭 Как XHTTP устроен, почему так и как сделан в форке — [xray-protocols-explained §4](xray-protocols-explained.ru.md#4-xhttp); диагностика по симптому — там же, [§4.6](xray-protocols-explained.ru.md#46-грабли-на-которых-соединение-молчит). Здесь — только поля, дефолты и ошибки.
 
 XHTTP (Xray "splithttp"/"xhttp") — v2ray-транспорт, туннелирующий прокси поверх
 обычных HTTP-запросов — по умолчанию HTTP/2, HTTP/1.1 или HTTP/3, когда их
@@ -372,18 +389,16 @@ Referer-паддинг (см. примечание в [§1.10](#110-пример
 
 ## 1.11 Диагностика
 
-| Симптом | Вероятная причина |
-|---------|-------------------|
-| Сервер отвечает **`400`** на каждый запрос | отсутствует/короткий `x_padding` — сервер требует длину; проверь `x_padding_bytes` и что режим совпадает с сервером |
-| Сервер отвечает **`404`** | несовпадение префикса `path` — срезанный хвостовой слэш был корнем реального провала `stream-one` (SPEC 043); подтверди точный `path`, который ждёт сервер |
-| `stream-one` dial **висит до таймаута**, без ошибки | прокси/CDN забуферизовал ответ, т.к. gRPC content-type отсутствовал — оставь `no_grpc_header` **выключенным** (SPEC 042). Наоборот, если сервер отвергает gRPC-тип — включи |
-| Работает с перебоями, ломается через время | рассинхрон версий Xray клиент/сервер — формат XHTTP на проводе меняется быстро; выровняй версии |
-| Сервер с `alpn: ["h3"]` не поднимается, dial по таймауту или с ошибкой `HTTP/3 needs UDP to the server` | HTTP/3 идёт по UDP: цепочка `detour` должна пропускать UDP, а путь — не резать QUIC. Если сервер слушает и TCP, убери `h3` из `tls.alpn`, чтобы пойти по HTTP/2 |
-| Upload-payload отвергается | `uplink_data_placement: header`/`cookie` вне `packet-up`, или `uplink_http_method: GET` вне `packet-up` — обе ошибки при загрузке, так что видны на старте, а не в рантайме |
+Диагностика по симптому ведётся в объясняющем документе:
+[xray-protocols-explained §4.6 «Грабли, на которых соединение молчит»](xray-protocols-explained.ru.md#46-грабли-на-которых-соединение-молчит).
+Здесь — только тексты ошибок загрузки: [§1.8](#18-принятые-но-игнорируемые-поля) и
+таблицы полей выше.
 
 ---
 
 # 2. AmneziaWG 2.0/3.x (AWG2, AWG3)
+
+> 🧭 Как AmneziaWG устроен, бюджет MTU, графт и валидация — [amneziawg-explained](amneziawg-explained.ru.md); типичные отказы — там же, [§10](amneziawg-explained.ru.md#10-типичные-отказы). Здесь — только поля, дефолты и ошибки.
 
 AWG — это WireGuard + обфускация для обхода DPI: AWG2 меняет форму пакетов, AWG3
 дополнительно шифрует их заголовки и рандомизирует размеры и тайминги
@@ -398,17 +413,15 @@ WireGuard endpoint, **байт-в-байт как в апстриме**.
 
 ## 2.1 Модель: AWG1 vs AWG2 vs AWG3
 
-- **AWG1** = junk/signature/magic-header поля: `jc`, `jmin`, `jmax`, `s1`, `s2`,
-  `h1`–`h4` (одиночные значения).
-- **AWG2** = AWG1 **плюс** CPS-пакеты `i1`–`i5`, AWG-2.0 junk-size параметры `s3`/`s4`
-  и **диапазонные** magic-заголовки (`"min-max"` форма `h1`–`h4`).
-- **AWG3** (amneziawg-go v3.0 / v3.1, контейнер `amnezia-awg2` с
-  `protocol_version` 3.x) = AWG2 **плюс** защита заголовка
-  (`header_protection_key`), паддинг содержимого (`content_padding_addition`),
-  случайные хвосты, отключённые cookie, диапазонные тайминги и диапазонный
-  `persistent_keepalive_interval` — см. [§2.10](#210-awg-3x-защита-заголовка-паддинг-хвосты-тайминги).
+| Слой | Ключи |
+|------|-------|
+| **AWG1** | `jc`, `jmin`, `jmax`, `s1`, `s2`, `h1`–`h4` одиночными значениями |
+| **AWG2** | AWG1 плюс `i1`–`i5`, `s3`/`s4`, `h1`–`h4` диапазоном `"min-max"`, сахар `id`/`ip`/`ib` |
+| **AWG3** | AWG2 плюс `header_protection_key`, `content_padding_addition`, `random_trailers`, `disable_cookies`, диапазонные тайминги и диапазонный `persistent_keepalive_interval` ([§2.10](#210-awg-3x-защита-заголовка-паддинг-хвосты-тайминги)) |
 
-И клиент, и сервер должны крутить AmneziaWG с **совпадающими** параметрами — junk и
+Что каждый слой делает с пакетами и зачем — [amneziawg-explained §0–§4](amneziawg-explained.ru.md#0-картина-целиком-три-слоя-поверх-wireguard).
+
+Клиент и сервер должны крутить AmneziaWG с **совпадающими** параметрами — junk и
 I-пакеты это *конфигурация*, не согласовываются. Задавай их из одного `awg.conf` на
 обоих концах.
 
@@ -484,37 +497,37 @@ I-пакеты это *конфигурация*, не согласовываю�
 |------|-----|-------|
 | `id` | string | **домен** маскировки (хост, выглядящий нормально для твоего региона, напр. `www.google.com`). Строгий LDH-хост. Вшивается в декой для `ip=quic` (как **SNI** в ClientHello), `ip=dns` (как **QNAME**) и `ip=sip` (как **host**); `ip=stun` некуда нести имя хоста и игнорирует его. **Обязателен только для `quic`**; для `dns`/`sip` при отсутствии генерируется псевдо-имя; `stun` игнорирует. Когда задан — всегда LDH-валидируется (инъекционные значения отвергаются) |
 | `ip` | string | **протокол** маскировки: `quic` \| `dns` \| `stun` \| `sip` |
-| `ib` | string | **браузер** маскировки: `chrome` \| `firefox` \| `curl`. Осмыслен только при `ip=quic`, и даже тогда эффект **минимален** (см. заметки ниже) |
+| `ib` | string | **браузер** маскировки: `chrome` \| `firefox` \| `curl` (`chrome-full` — экспериментальный, не для клиентов). Только при `ip=quic`. Задаёт TLS-отпечаток ClientHello и раскладку фреймов Initial (см. ниже) |
 
 Декой шлётся до handshake, как написанный руками `i1`. Каждый профиль —
 **клиент-инициируемый** пакет в форме этого протокола (формы вдохновлены
 open-source-референсом WireSock, но эмитятся как клиентский запрос, который peer
 реально шлёт первым, а не серверный ответ):
 
-- **`quic`** — целевой **QUIC Initial (RFC 9001)**, несущий реалистичный
-  браузер-образный ClientHello (с твоим `id` как SNI) **разбитый на несколько
-  out-of-order CRYPTO-фреймов**: первый фрейм на проводе начинается в середине
-  ClientHello (offset≠0), так что line-rate DPI, хватающий первый фрейм и
-  считающий offset 0, парсит мусор и пропускает (fail-open), а реальный QUIC-сервер
-  переупорядочивает фреймы нормально. Раскладка рандомизирована на каждый вызов (нет
-  фиксированной кросс-юзерной сигнатуры). `ip=quic` эмитит **один** фрагментированный
-  Initial в `i1` — это device-proven DPI-обход (простой QUIC short header
-  эмпирически блокировался).
+- **`quic`** — **QUIC Initial (RFC 9001)** с целым ClientHello (твой `id` — SNI)
+  и отпечатком браузера из `ib`; фреймы внутри разложены как у его стека.
+  `chrome` — Chrome 155 без PQ key_share, 1250 байт, ClientHello порезан на 2–11
+  CRYPTO с 2–10 PING и PADDING вразброс (`QuicChaosProtector`); `chrome-full` —
+  Chrome 155 с `X25519MLKEM768`, один Initial ~2 КБ больше MTU (два IP-фрагмента);
+  `firefox` и `curl`/пусто — один CRYPTO плюс PADDING. Раскладка и DCID/random свежие
+  на каждый вызов (нет кросс-юзерной сигнатуры). `ip=quic` эмитит **один** Initial в
+  `i1`: ClientHello, размазанный по нескольким Initial, на пути к WARP давится, порядок
+  фреймов внутри одного пакета значения не имеет (полевые прогоны). Простой QUIC short
+  header блокировался.
 - **`dns`** — клиентский DNS **query** (QR=0, QTYPE HTTPS/тип 65), чей QNAME — твой
-  `id`, несущий случайные cover-байты как opaque неизвестную EDNS-опцию.
+  `id`, с обычной EDNS OPT-записью без опций — форма запроса stub-резолвера.
 - **`stun`** — WebRTC/ICE **STUN Binding Request** (magic cookie + USERNAME +
   ICE-CONTROLLING + PRIORITY + SOFTWARE + MESSAGE-INTEGRITY + FINGERPRINT). Это
   клиентский connectivity-check — пакет, который ICE-агент легитимно шлёт первым.
 - **`sip`** — SIP **INVITE request** без тела (`i1`: request-line + Via /
   Max-Forwards / To / From / Call-ID / CSeq / Contact + `Content-Type:
-  application/sdp` и `Content-Length: 0`, без SDP-тела) в паре с соответствующим
-  провизорным ответом **`100 Trying`** того же диалога (`i2`), с твоим `id` (или
+  application/sdp` и `Content-Length: 0`, без SDP-тела), с твоим `id` (или
   сгенерированным псевдо-host) как host и произносимыми псевдо-именами пользователей.
-  `ip=sip` поэтому заполняет **оба** `i1` и `i2`.
+  `i2` остаётся пустым: `100 Trying` — ответ сервера, а не пакет клиента.
 
 **Куда `id` попадает на провод:**
 
-| `ip` | декой | `id` виден цензору? |
+| `ip` | декой | `id` виден посреднику? |
 |------|-------|---------------------|
 | `quic` | фрагментированный QUIC Initial, `id` = **SNI** | **да** — DPI, расшифровывающий Initial (ключи выводятся из DCID), прочтёт его, если соберёт фреймы по порядку |
 | `dns` | EDNS query (QR=0), `id` = **QNAME** | **да**, открытым текстом |
@@ -523,32 +536,20 @@ open-source-референсом WireSock, но эмитятся как клие
 
 **Какой профиль выбрать:**
 
-- **Коннект к WARP под реальным DPI** → `ip=quic`, `id=<популярный домен>`,
-  `ib=chrome`. Фрагментированный QUIC Initial с `id` как SNI; device-proven против
-  реального LTE-DPI.
-- **Нужно, чтобы DPI увидел «разрешённый» домен** → `ip=quic`/`dns`/`sip` с
-  региональным популярным `id` (SNI / QNAME / SIP-host).
-- **`stun`** нишевый (выглядит как ICE connectivity-check); домен не несёт.
+Какой профиль выбирать и почему на устройстве прошёл только `quic` —
+[amneziawg-explained §3.3–§3.4](amneziawg-explained.ru.md#33-сахар-маскировки-id--ip--ib).
 
 ### Заметки и ограничения
 
 - `id`/`ip`/`ib` **взаимоисключимы** с явным `i1` — задавай одно или другое (конфиг с
   обоими отвергается).
-- Это **декой** перед handshake, не полноценная протокол-сессия — `quic`-Initial
-  никогда не завершает TLS-handshake (ему нужно лишь, чтобы первый пакет потока
-  выглядел как легитимный старт QUIC). `id` **попадает** на провод как SNI, так что
-  выбирай **правдоподобный, разрешённый** домен — никогда VPN/Cloudflare-маяк.
-- DPI-обход держится в первую очередь на **фрагментации CRYPTO-фреймов**, не на
-  TLS-fingerprint. `ib` всё же выбирает один: `chrome`/`firefox` эмитят настоящий
-  браузерный ClientHello (реальный JA3/JA4) в сборках с поддержкой TLS-мимикрии, а
-  `curl` и отсутствующий `ib` используют generic ClientHello. Без этой поддержки
-  сборки браузерные профили откатываются к generic.
-- Полевой статус: `ip=quic` — **device-proven против реального LTE-DPI**. Для
+- `ib` выбирает TLS-отпечаток приманки: `chrome`/`firefox` эмитят настоящий
+  браузерный ClientHello только в сборках с поддержкой TLS-мимикрии; `curl` и
+  отсутствующий `ib` — generic ClientHello. Без этой поддержки браузерные профили
+  откатываются к generic.
+- Полевой статус: `ip=quic` — device-proven против реального LTE-DPI; для
   `dns`/`stun`/`sip` подтверждены приём движком, структурная валидность и
-  `sing-box check`, но систематический полевой A/B против конкретного DPI не
-  проводился. На тестовом LTE/WARP DPI `dns`/`stun` упирались в таймаут (DPI режет
-  DNS/STUN к дата-центровому IP как класс протокола) — для WARP используй `ip=quic`.
-- Мотивирующий кейс — облегчение подключений к **Cloudflare WARP**.
+  `sing-box check`, полевой A/B не проводился.
 
 **📖 [Подробные примеры →](../SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md)** —
 полные конфиги по каждому профилю (включая Cloudflare WARP), генерируемый CPS для
@@ -556,52 +557,39 @@ open-source-референсом WireSock, но эмитятся как клие
 
 ## 2.6 Бюджет MTU
 
-`s4` у AmneziaWG добавляет junk-байты перед **каждым transport (data) сообщением**,
-поэтому AWG-endpoint нуждается в **более низком `mtu`, чем обычный WireGuard**. (`s3`
-паддит только cookie-reply сообщения, так что на бюджет MTU не влияет.) Если
-обфусцированный пакет превысит path MTU, ОС его отвергает, и туннель завершает
-handshake, но **не может слать данные**:
+`s4` добавляет junk перед **каждым** transport-пакетом, поэтому AWG-endpoint нуждается
+в более низком `mtu`, чем обычный WireGuard (`s3` паддит только cookie-reply и на
+бюджет не влияет). Перебор `mtu` не мешает хендшейку, но ломает передачу данных:
 
 ```
 peer(…) - received handshake response
 peer(…) - failed to send data packets: write udp4 …: sendmsg: message too long
 ```
 
-Считай накладные против 1500-байтового пути:
+Бюджет против 1500-байтового пути:
 
 ```
 mtu ≤ 1500 − 28 (UDP/IP) − 32 (WireGuard) − S4 junk-байт
 ```
 
-Для `S4 = 60` это `mtu ≤ 1380`. **Используй `1280`** (рекомендованный AmneziaWG
-клиентский MTU) для запаса на меньших path MTU (PPPoE, вложенные туннели). Это не
-связано с handshake — слишком высокий `mtu` позволяет handshake пройти, но тихо
-ломает передачу данных.
+Для `S4 = 60` это `mtu ≤ 1380`; рекомендованный AmneziaWG клиентский MTU — **1280**
+(запас на PPPoE и вложенные туннели).
 
-**Что sing-box-lx делает за тебя:**
+**Что ядро делает само:**
 
-- Если ты опустил `mtu` на endpoint, задающем `s4`, ядро дефолтит на **`1280`**
-  (вместо plain-WireGuard `1408`).
-- Если ты задал `mtu` явно, и он слишком высок для junk-накладных, ядро логирует
-  startup-warning — против консервативного **1492**-байтового (PPPoE) бюджета,
-  `mtu ≤ 1492 − 28 − 32 − S4`, так что может отметить значение на несколько байт ниже
-  1500-байтового Ethernet-потолка. Предупреждение рекомендательное; туннель всё равно
+- `mtu` не задан, `s4` задан → дефолт **`1280`** (вместо plain-WireGuard `1408`).
+- `mtu` задан явно и не влезает в бюджет → предупреждение при старте, считается против
+  консервативных **1492** (PPPoE): `mtu ≤ 1492 − 28 − 32 − S4`. Туннель всё равно
   грузится.
+- Внешний сокет **не форсит DF** (SPEC 028): негабаритная внешняя датаграмма
+  IP-фрагментируется, а не дропается; это и даёт работать вложенным туннелям
+  (`masque`/`wireguard`/AWG через `detour`). Старое поведение на конкретном endpoint —
+  `"udp_fragment": false`. Корректный `mtu` предпочтительнее: фрагментация — страховка.
+- `jmax` держи **ниже** реального path MTU: junk-пакет длиннее MTU фрагментируется, и
+  узкие пути роняют фрагменты.
 
-**Внешний сокет больше не форсит DF (SPEC 028).** По умолчанию sing-box-lx теперь
-даёт ОС IP-фрагментировать негабаритную внешнюю датаграмму на `wireguard` endpoint (и
-`masque` outbound), а не дропать её — старый дефолт ставил
-`IP_MTU_DISCOVER=IP_PMTUDISC_DO` (Linux/Android) / `IP_DONTFRAG` (macOS), что как раз
-и производило `sendmsg: message too long` выше. Именно это даёт работать **вложенным
-туннелям**: `masque`/`wireguard`/AWG в цепочке через `detour` в любой комбинации, где
-внешняя датаграмма рутинно негабаритна и должна фрагментироваться. Чтобы вернуть
-старое поведение на конкретном endpoint, задай на нём `"udp_fragment": false`. Подбор
-корректного `mtu` (выше) всё равно избегает фрагментации целиком и предпочтителен —
-фрагментация это страховка, а не цель.
-
-Также держи `jmax` **ниже** реального path MTU: amneziawg-go предупреждает, что если
-размер junk-пакета достигнет системного MTU, он IP-фрагментируется, что те же узкие
-пути потом дропают.
+Почему именно так и как это выглядит с точки зрения пользователя —
+[amneziawg-explained §5](amneziawg-explained.ru.md#5-mtu-куда-уходят-байты).
 
 ## 2.7 Маппинг `awg.conf` 1:1
 
@@ -778,16 +766,12 @@ endpoint, как и поля AWG2, и требует `with_awg`. Контейн�
   [§2.6](#26-бюджет-mtu) не меняется (кламп по UDP-окну держит добавки внутри
   размеров, которые путь уже проносил), но держи `mtu` на рекомендованном сервером
   значении (`1376` в экспорте Amnezia).
-- `random_trailers` расширяет классификацию на приёме: любая датаграмма **длиннее**
-  `s1`+148 / `s2`+92 / `s3`+64 *тоже* пробуется как handshake-сообщение по слову типа.
-  С одиночными `h1`–`h4` (дефолт AWG3) это ложное совпадение с вероятностью 2⁻³²; с
-  широкими AWG2-**диапазонами** `h1`–`h4` вероятность становится ширина/2³² на каждый
-  data-пакет, который затем не проходит MAC и отбрасывается. **Наш приёмник к этому
-  невосприимчив** (SPEC 081): датаграмма с одним из наших живых receiver index за
-  словом типа transport классифицируется как данные до handshake-кандидатов, поэтому
-  downlink пакеты так не теряет — и в более узком AWG2-варианте (data-датаграмма ровно
-  `s1`+148 байт) тоже. Приёмник сервера — референсная реализация, поэтому **uplink**
-  по-прежнему уязвим: не сочетай `random_trailers` с широкими диапазонами `h1`–`h4`.
+- `random_trailers` расширяет классификацию на приёме: датаграммы длиннее
+  `s1`+148 / `s2`+92 / `s3`+64 тоже пробуются как handshake по слову типа. Наш приёмник
+  к ложным совпадениям невосприимчив (SPEC 081), приёмник сервера — референсный,
+  поэтому **не сочетай `random_trailers` с широкими диапазонами `h1`–`h4`**:
+  uplink будет терять пакеты. Механика —
+  [amneziawg-explained §6.3](amneziawg-explained.ru.md#63-приём-классификация-пакетов).
 - Тайминги не обязаны совпадать с сервером, но бессмыслица (например
   `rekey_after_time` выше `reject_after_time`) заставит туннель дёргаться. Копируй
   экспорт сервера.
@@ -799,6 +783,8 @@ endpoint, как и поля AWG2, и требует `with_awg`. Контейн�
 ---
 
 # 3. MASQUE outbound (CONNECT-IP / WARP)
+
+> 🧭 Устройство MASQUE/WARP и принятые решения — спека фичи [009-MASQUE_WARP](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md). Здесь — только поля, дефолты и ошибки.
 
 ## 3.1 Что это
 
@@ -837,7 +823,7 @@ HTTP/2-соединения через **CONNECT-IP (RFC 9484)**, в перву�
 | `ipv6` | string (CIDR) | ✅² | — | локальный IPv6 внутри туннеля; голый адрес → `/128` |
 | `tls` | object | — | — | **стандартный** outbound-блок TLS — `server_name`, `insecure`, `disable_sni`, `fragment`, `record_fragment`, `fragment_fallback_delay`, … Тот же контейнер, что у любого TLS-outbound |
 | `uri` | string | — | по профилю³ | CONNECT-IP request URI |
-| `mtu` | int | — | `1280` | MTU userspace-стека. На `h2` максимум `16000` (один IP-пакет = один HTTP/2 DATA frame) |
+| `mtu` | int | — | `1280` | MTU userspace-стека. На `h2` максимум `16000` (один IP-пакет = один HTTP/2 DATA frame). Узлы над masque (через `detour`, группу или как звено `chain`) получают размер пакета под этот `mtu` автоматически — `mtu` туннелей, `initial_packet_size` + PMTUD off у hysteria2/tuic/hysteria (при 1280: 1232 для IPv6-сервера, 1252 для IPv4; SPEC 120, [lx-config.ru.md §13](lx-config.ru.md#lxmtu_align--выравнивание-mtu-и-размера-пакета-по-пути)). Внешний QUIC к серверу стартует с `mtu + 51` (кламп 1200…1452) |
 | `idle_timeout` | duration | — | наследует `lx.masque.idle_timeout`, иначе выкл | suspend туннеля после простоя (освобождает gVisor-стек, насосы и QUIC keepalive); следующий dial его пересобирает. Отсутствие ключа → глобальный `lx.masque.idle_timeout` (SPEC 098, [lx-config.ru.md §13](lx-config.ru.md#13-корневой-блок-lx-spec-098)); явный `0` или отрицательное держат узел поднятым при любом глобальном значении; включает только положительное значение |
 | `keep_alive_period` | duration | — | `30s` | QUIC keepalive (только h3). **Отрицательное отключает** |
 | `network_list` | list | — | tcp+udp | L4-протоколы, идущие через туннель |
@@ -917,8 +903,10 @@ endpoint (`consumer-masque.cloudflareclient.com`) намеренно **не** д
 ## 3.7 `vhttp`: auto / h3 / h2
 
 `auto` — дефолт (SPEC 074): сначала пробует `h3` (QUIC) и падает на `h2`, если
-QUIC-хендшейк не завершился за 3 с; победившая нога запоминается; если она перестала
-подниматься, память сбрасывается и в той же попытке пробуется другая.
+QUIC-хендшейк не завершился за 3 с. Победа h3 запоминается; победа h2 — на окно по
+лестнице 1 с → 10 с → 30 с → 5 мин → 10 мин (победа h3 возвращает на первую ступень),
+после которого h3 пробуется снова (SPEC 121); нога, которая перестала подниматься, забывается, и в той же попытке
+пробуется другая.
 Отказ, ради которого он существует, **не даёт ошибки** — endpoint (или TCP-only-хоп
 перед ним: HTTP CONNECT в `detour`, звено VLESS/Trojan в цепочке) молча глотает QUIC,
 и каждый dial просто виснет. Фиксированный `h3` — самый быстрый на заведомо чистом
@@ -974,13 +962,16 @@ device-проверено, что там работает.
 
 ## 3.10 Миграция со схемы до SPEC 062
 
-Обе формы принимаются до **v1.14.0-lx.30**; использование legacy-поля логирует одну
+Плоские TLS-поля ниже пока принимаются; использование такого поля логирует одну
 строку deprecation на outbound. Legacy-поле, которое *расходится* со своей заменой, —
 жёсткая ошибка, а не тихий выбор.
 
-| Legacy (устарело) | Актуальное |
+Legacy-ключ `network` для версии HTTP **снят в `v1.14.3-lx.18`**: masque-outbound с ним
+не разбирается — `unknown field "network"`. Переименуй его в `vhttp` (значения те же).
+
+| Legacy | Актуальное |
 |---|---|
-| `network: "h3"` / `"h2"` | `vhttp: "h3"` / `"h2"` |
+| `network: "h3"` / `"h2"` — **снят** | `vhttp: "h3"` / `"h2"` |
 | `sni` | `tls.server_name` |
 | `skip_cert_verify: true` | `tls.insecure: true` |
 | `fragment: true` | `tls.fragment: true` |
@@ -1061,6 +1052,8 @@ network_list=tcp+udp — всё по умолчанию. Не забудь бл�
 
 # 4. gRPC-транспорт
 
+> 🧭 Транспорт апстримный, объясняющего раздела нет; здесь только формы `service_name`, где наше поведение расходится с апстримом.
+
 gRPC-транспорту (`"transport": { "type": "grpc" }`) build-тег не нужен: в наших
 сборках отгружается lite-реализация (`v2raygrpclite`); полная, на `grpc-go`, живёт
 под `with_grpc` и в desktop/CLI-бинарь не входит.
@@ -1109,6 +1102,166 @@ grpc-go. Доступно с `v1.14.1-lx.8`.
 
 ---
 
+# 5. REALITY и VLESS `encryption`
+
+> 🧭 Как REALITY узнаёт своих, что такое гибридный key share, как устроен слой `mlkem768x25519plus` и почему — [xray-protocols-explained §1–§2](xray-protocols-explained.ru.md#1-фундамент-tls-clienthello-и-отпечаток) и [§5](xray-protocols-explained.ru.md#5-vless-encryption-постквантовый-слой); типичные отказы REALITY — там же, [§2.7](xray-protocols-explained.ru.md#27-типичные-отказы). Здесь — только поля, дефолты и ошибки.
+
+Два независимых слоя. REALITY живёт в блоке `tls` любого TLS-over-TCP outbound
+(VLESS, trojan, vmess, XHTTP-транспорт) и требует `with_utls`. `encryption` — плоское
+поле у `vless`-outbound, рядом с `uuid`, без build-тега. Апстримные поля блока `tls`
+(`server_name`, `alpn`, `insecure`, `ech`, …) описаны в
+[апстримной доке TLS](../docs/configuration/shared/tls.md); ниже — только то, что
+форк добавил или изменил.
+
+## 5.1 Поля `tls.reality`
+
+| Ключ | Тип | Дефолт | Смысл |
+|------|-----|--------|-------|
+| `enabled` | bool | `false` | Включить REALITY вместо обычной проверки сертификата ([апстрим](../docs/configuration/shared/tls.md#reality-fields)) |
+| `public_key` | base64url, 32 байта | — | Публичный ключ X25519 сервера (Xray `publicKey`) |
+| `short_id` | hex, до 8 байт | — | Метка клиента (Xray `shortId`) |
+| `key_share` | `""` \| `"hybrid"` \| `"classical"` | `""` | Форма key share в ClientHello (SPEC 089, [§5.2](#52-отпечатки-и-гибридный-key-share)) |
+
+| `key_share` | ClientHello | Работает против |
+|---|---|---|
+| `""` | как несёт отпечаток ([§5.2](#52-отпечатки-и-гибридный-key-share)) | как раньше |
+| `"classical"` | `X25519MLKEM768` вырезан из `key_share` и `supported_groups`; `chrome`: 594 байта вместо 1720, один TCP-сегмент вместо двух | **только Xray < v26.9.8**; новые серверы отвергают молча (`reality verification failed`) |
+| `"hybrid"` | гибрид обязателен; на отпечатке без него — ошибка при рукопожатии с текстом ([§5.4](#54-ошибки-валидации-reality-дословно)) | как `""` |
+
+Автофолбэка между `hybrid` и `classical` нет. Поля Xray `spiderX`, `mldsa65Verify`
+и `realitySettings.password` ядро не принимает.
+
+## 5.2 Отпечатки и гибридный key share
+
+`tls.utls.fingerprint` — апстримный ключ (enum: `chrome`, `chrome_psk`,
+`chrome_psk_shuffle`, `chrome_padding_psk_shuffle`, `chrome_pq`, `chrome_pq_psk`,
+`firefox`, `edge`, `safari`, `360`, `qq`, `ios`, `android`, `random`, `randomized`;
+плюс наш `chrome_155`, SPEC 118), но под REALITY он решает судьбу узла: Xray ≥ v26.9.8 принимает только ClientHello с
+гибридным шаром `X25519MLKEM768` перед `X25519` (SPEC 083). Ядро отпечаток **не
+подменяет**.
+
+| `fingerprint` | Шар в ClientHello | Xray ≥ v26.9.8 | Откуда пресет |
+|---|---|---|---|
+| `chrome` и апстримные `chrome_*` | GREASE, **X25519MLKEM768**, X25519 | ходит | metacubex/utls, Chrome 133 |
+| `chrome_155` | GREASE, **X25519MLKEM768**, X25519 | ходит | форк utls-lx, Chrome 155 (SPEC 118): только явно, добавляет подписи ML-DSA и `trust_anchors`; `chrome` остаётся 133 |
+| `firefox` | **X25519MLKEM768**, X25519 | ходит | форк utls-lx, Firefox 148 (SPEC 086) |
+| `safari` | **X25519MLKEM768**, X25519 | ходит | форк utls-lx, Safari 26.3 (SPEC 087) |
+| `edge`, `ios`, `android`, `360`, `qq` | только X25519 | отвергается | пресетов с гибридом нет |
+| `random` | как у выпавшего: `chrome`, `firefox` или `safari` | ходит | пул без `edge`/`ios` (SPEC 123) |
+| `randomized` | **X25519MLKEM768**, X25519, P-256; ALPN всегда | ходит | `HelloRandomizedALPN` с гибридом всегда (SPEC 123); остальное случайно |
+
+`AuthKey` считается по тому ключу, который выберет сервер: чистый X25519, если он
+есть в `key_share`, иначе X25519-часть гибрида. Версия клиента в session id —
+требуемый минимум (SPEC 053).
+
+## 5.3 Фрагментация ClientHello
+
+Апстримные ключи блока `tls`; в форке они действуют и на REALITY (SPEC 088).
+
+| Ключ | Тип | Дефолт | Смысл |
+|------|-----|--------|-------|
+| `fragment` | bool | `false` | Разрез первого пакета по SNI на TCP-сегменты с ожиданием ACK ([апстрим](../docs/configuration/shared/tls.md#fragment)) |
+| `record_fragment` | bool | `false`; **`true` под `detour`** (SPEC 060) | Те же точки разреза, каждая — своя TLS-запись, один пакет ([апстрим](../docs/configuration/shared/tls.md#record_fragment)) |
+| `fragment_fallback_delay` | duration | `500ms` | Пауза, когда время ожидания ACK вычислить нельзя ([апстрим](../docs/configuration/shared/tls.md#fragment_fallback_delay)) |
+
+Правила дефолта под `detour`: явное `fragment: true` или `record_fragment: true`
+сильнее дефолта; фрагментируется только рукопожатие; `h3`/QUIC не затронут; у
+каждого звена `chain` свой `detour`. Явный `"record_fragment": false` неотличим от «не
+задано» — под `detour` дефолт включится всё равно. Обзор — [lx-config §9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060).
+
+## 5.4 Ошибки валидации REALITY (дословно)
+
+| Конфиг | Ошибка |
+|--------|--------|
+| `public_key` не base64url | `decode public_key: …` |
+| `public_key` не 32 байта | `invalid public_key` |
+| `short_id` длиннее 8 байт | `invalid short_id` |
+| `short_id` не hex | `decode short_id: …` |
+| `key_share` не из набора | `unknown reality key_share: X (expected "hybrid" or "classical")` |
+| `key_share: "hybrid"` на отпечатке без гибрида (при рукопожатии) | `reality key_share "hybrid": fingerprint Edge 85 carries no X25519MLKEM768 key share` |
+| сервер отверг клиента (любая причина) | `reality verification failed` — это не ошибка конфига; разбор причин — [xray-protocols-explained §2.7](xray-protocols-explained.ru.md#27-типичные-отказы) |
+
+## 5.5 Поле `encryption` у `vless`
+
+| Ключ | Тип | Дефолт | Смысл |
+|------|-----|--------|-------|
+| `encryption` | string | `""` | `""` / `"none"` — слой выключен, поведение апстрима байт в байт. Иначе — spec-строка, валидируется на `check`/старте (SPEC 032). В Xray — `users[0].encryption`, переносится дословно |
+
+Грамматика (сегменты через точку):
+
+```
+mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>[.<padding>…].<key>[.<key>…]
+```
+
+| Сегмент | Значения | Смысл |
+|---------|----------|-------|
+| метод | `mlkem768x25519plus` | единственный; должен совпасть с сервером |
+| вид | `native` \| `xorpub` \| `random` | как слой выглядит на проводе: записи в форме TLS 1.3 / плюс XOR публичных ключей / полностью случайный поток |
+| rtt | `0rtt` \| `1rtt` | билет сервера с повторным использованием / полное рукопожатие на каждом соединении |
+| padding | блоки `p-min-max`, через точку | сегменты короче 20 символов до первого ключа; чётные блоки — длины (вероятность %, от, до байт), нечётные — паузы (вероятность %, от, до мс); у первого блока `p ≥ 100`, `min`/`max ≥ 35`; сумма максимумов ≤ 65553; только для `1rtt` |
+| key | base64url | публичный ключ сервера: X25519 (32 байта) или ML-KEM-768 (1184 байта, ~1579 символов); один или несколько |
+
+Дефолт паддинга, если блоки не заданы: длины `100-111-1111.50-0-3333`, паузы `75-0-111`.
+Серверная половина (`decryption`) не портирована.
+
+## 5.6 Ошибки валидации `encryption` (дословно)
+
+| Конфиг | Ошибка |
+|--------|--------|
+| пустая строка после обрезки пробелов | `empty encryption string` |
+| меньше четырёх сегментов | `invalid encryption string: expected at least method.appearance.rtt.key, got N segments` |
+| метод не `mlkem768x25519plus` | `unsupported encryption method: X (only mlkem768x25519plus exists)` |
+| вид не из набора | `unknown encryption appearance: X (expected native\|xorpub\|random)` |
+| rtt не из набора | `unknown encryption RTT mode: X (expected 0rtt\|1rtt)` |
+| пустой сегмент (две точки подряд) | `empty segment in encryption string` |
+| ключ не base64url | `invalid encryption key (not base64url): X` |
+| ключ не 32 и не 1184 байта | `invalid encryption key length: N (expected 32 or 1184)` |
+| ни одного ключа | `no encryption keys in encryption string` |
+| блок паддинга не `a-b-c` | `invalid padding lenth/gap parameter: X` (орфография референса) |
+| первый блок паддинга меньше порога | `first padding length must not be smaller than 35` |
+| сумма максимумов паддинга больше порога | `total padding length must not be larger than 65553` |
+
+## 5.7 Примеры
+
+VLESS + Vision + REALITY на голом TCP:
+
+```jsonc
+{
+  "type": "vless",
+  "tag": "reality-out",
+  "server": "203.0.113.10",
+  "server_port": 443,
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "flow": "xtls-rprx-vision",
+  "tls": {
+    "enabled": true,
+    "server_name": "www.microsoft.com",
+    "utls": { "enabled": true, "fingerprint": "chrome" },
+    "reality": { "enabled": true, "public_key": "<reality-public-key-base64url>", "short_id": "0123abcd" }
+  }
+}
+```
+
+VLESS + `encryption` поверх WebSocket без внешнего TLS:
+
+```jsonc
+{
+  "type": "vless",
+  "tag": "pq-ws",
+  "server": "203.0.113.20",
+  "server_port": 80,
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "encryption": "mlkem768x25519plus.native.0rtt.<base64url ML-KEM-768 key>",
+  "transport": { "type": "ws", "path": "/ws" }
+}
+```
+
+Соответствие ключам Xray (`realitySettings.*`, `users[0].encryption`) с пояснениями —
+[xray-protocols-explained §2.8](xray-protocols-explained.ru.md#28-пример-xray-и-sing-box-lx)
+и [§5.8](xray-protocols-explained.ru.md#58-пример-xray-и-sing-box-lx).
+
+---
+
 ## См. также
 
 - **[lx-config.ru.md](lx-config.ru.md)** — обзор downstream-фич, который эти главы
@@ -1116,5 +1269,10 @@ grpc-go. Доступно с `v1.14.1-lx.8`.
   `encryption`, `lxd`, наблюдаемость).
 - **[lx-energy.ru.md](lx-energy.ru.md)** — энергомодель, тайминги idle-suspend и
   рекомендованная мобильная конфигурация (актуально для suspend AWG- и MASQUE-endpoint).
+- **[xray-protocols-explained.ru.md](xray-protocols-explained.ru.md)** — как устроены
+  XHTTP, REALITY, Vision и VLESS `encryption` и как они поддержаны в форке;
+  **[amneziawg-explained.ru.md](amneziawg-explained.ru.md)** — то же для AmneziaWG,
+  включая бюджет MTU.
 - Feature-спеки: [XHTTP](../SPECS/FEATURES/002-XHTTP/), [AWG](../SPECS/FEATURES/003-AWG/),
-  [MASQUE/WARP](../SPECS/FEATURES/009-MASQUE_WARP/).
+  [MASQUE/WARP](../SPECS/FEATURES/009-MASQUE_WARP/), [REALITY](../SPECS/FEATURES/017-REALITY/),
+  [VLESS_ENCRYPTION](../SPECS/FEATURES/012-VLESS_ENCRYPTION/).

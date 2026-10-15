@@ -73,8 +73,24 @@ var (
 )
 
 // If a packet is too large to fit into a QUIC datagram, we send an ICMP Packet
-// Too Big packet. On IPv6, the minimum MTU of a link is 1280 bytes.
+// Too Big packet. On IPv6, the minimum MTU of a link is 1280 bytes: the ICMP
+// reply names the actual datagram budget but never less than this (see
+// icmpAdvertisedMTU). minMTU also bounds the header snapshot quoted back.
 const minMTU = 1280
+
+// icmpAdvertisedMTU converts quic-go's datagram budget (the
+// MaxDatagramPayloadSize of a DatagramTooLargeError) into the MTU an ICMP
+// "packet too big" reply should name: the budget minus the context-id prefix
+// every proxied packet carries, floored at minMTU. The stack will not go below
+// the IPv6 minimum anyway, and an honest smaller number only makes it retry
+// the same packet. lx: SPEC 120 §2.6 (before: always 1280, a defect from 107).
+func icmpAdvertisedMTU(budget int64) int {
+	mtu := int(budget) - len(contextIDZero)
+	if mtu < minMTU {
+		return minMTU
+	}
+	return mtu
+}
 
 // Conn is a connection that proxies IP packets over HTTP/3.
 type Conn struct {
@@ -397,7 +413,9 @@ func (c *Conn) WritePacket(b []byte) (icmp []byte, err error) {
 	if err := c.str.SendDatagram(data); err != nil {
 		var errDTL *quic.DatagramTooLargeError
 		if errors.As(err, &errDTL) {
-			icmpPacket, cerr := composeICMPTooLargePacket(origHead, minMTU)
+			// lx: SPEC 120 §2.6 — name the real budget, not the 1280 constant, so
+			// the stack learns the size that would actually have gone through.
+			icmpPacket, cerr := composeICMPTooLargePacket(origHead, icmpAdvertisedMTU(errDTL.MaxDatagramPayloadSize))
 			if cerr != nil {
 				return nil, nil
 			}

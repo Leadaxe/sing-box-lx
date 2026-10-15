@@ -11,7 +11,7 @@
 ## 2. Доки
 
 - [x] 2.1 FEATURE 002: «Версия HTTP», режимы, сборка, правила и гарантии, границы, `h_keep_alive_period`
-- [x] 2.2 `docs-lx/lx-protocols-transports.md` и `.ru.md`: подраздел HTTP version, troubleshooting, пример `alpn: ["h3"]`, `h_keep_alive_period`
+- [x] 2.2 `docs-lx/protocols-transports.md` и `.ru.md`: подраздел HTTP version, troubleshooting, пример `alpn: ["h3"]`, `h_keep_alive_period`
 - [x] 2.3 Задача 002: `URL_PARSING.md` §6, `PARAM_MAP.md` (`alpn`), `IMPLEMENTATION_REPORT.md` п. 2
 
 ## 3. Реализация

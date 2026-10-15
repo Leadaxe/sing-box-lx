@@ -39,32 +39,15 @@ const (
 	initProcd
 )
 
-// Probe paths, indirected so tests can point them at a fake root.
-var (
-	pid1CommPath       = "/proc/1/comm"
-	openwrtReleasePath = "/etc/openwrt_release"
-	systemdRunPath     = "/run/systemd/system"
-)
-
-// detectInit asks who actually runs the machine. /proc/1/comm is the honest
-// answer (it names the live init, not what happens to be installed on disk);
-// the file probes only disambiguate when PID 1 is something else entirely
-// (a container shim, a supervisor). /run/systemd/system is the same check
-// libsystemd's sd_booted() uses — /run is tmpfs, so a chroot cannot fake it.
+// detectInit is the host's init for the recipe, from the detector shared
+// with /admin/info (initsystem.go, SPEC 127). openrc has no recipe here and
+// reads as unknown.
 func detectInit() initSystem {
-	if pid1, err := os.ReadFile(pid1CommPath); err == nil {
-		switch strings.TrimSpace(string(pid1)) {
-		case "systemd":
-			return initSystemd
-		case "procd":
-			return initProcd
-		}
-	}
-	if _, err := os.Stat(openwrtReleasePath); err == nil {
-		return initProcd
-	}
-	if info, err := os.Stat(systemdRunPath); err == nil && info.IsDir() {
+	switch detectLinuxInit(linuxInitProbe()) {
+	case initNameSystemd:
 		return initSystemd
+	case initNameProcd:
+		return initProcd
 	}
 	return initUnknown
 }

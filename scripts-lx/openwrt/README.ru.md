@@ -223,6 +223,8 @@ awk -v d=$((B-A)) -v t=$T -v c=$(grep -c ^processor /proc/cpuinfo) \
 /etc/init.d/sing-box-lxd status | restart | stop | start
 logread | grep sing-box | tail -20        # системный лог
 tail -f /etc/sing-box-lxd/lxd.log         # собственный лог демона, ротация своя
+sing-box lxd update --dry-run             # установленный и доступный релиз
+sing-box lxd update                       # обновить ядро и перезапустить (то же делает кнопка Update лаунчера)
 ```
 
 ### Память на маленьком роутере

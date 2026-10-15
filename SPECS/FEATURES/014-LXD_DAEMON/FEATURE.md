@@ -32,10 +32,11 @@ data-plane лежит.
 | `--config-force <файл>` | путь | **всегда** бутиться с этого файла, поверх last-good; после успешного старта он становится last-good |
 | `--run` | флаг | форсит подъём ядра независимо от памяти run-состояния; без него: записанная память (`was_running`) обязательна к исполнению, а **свежий state с конфигом = запуск** (явный `-c` на чистом хосте бутится сам; лежать остаётся только после явного `stop`) |
 | `<state-dir>/daemon.json` | файл `0600`, **не флаги** | единственный источник connection-настроек демона: `listen` (дефолт `127.0.0.1:9091`; строка `"host:port"` либо `{"address": [...], "port": N}` — несколько адресов, обе плоскости на каждом, бинд «всё или ничего», первый адрес рекламируемый; масок нет), `tls` (mTLS с регистрацией клиентов; без него h2c loopback-only), `secret` (Bearer операторских маршрутов и единственный гейт plain-h2c; пусто = выключен); connection-флагов у команды НЕТ по построению; файла нет = dev-дефолты, создаёт его только `--service=install` или редактор оператора |
+| `commands` | ключ daemon.json, `{имя: команда}`, нет по умолчанию | именованные root-команды для запуска клиентом по имени через `/admin/commands` (SPEC 128); имя `[a-z0-9][a-z0-9_-]{0,31}`; исход в `<каталог лога>/commands/`; окружение `LXD_*`; unix |
 | `log_max_size_mb` / `log_max_backups` / `log_max_age_hours` | ключи daemon.json, дефолт `1` / `1` / `24` | лимиты ротации лога демона («≈сутки истории»: ротация по возрасту раз в 24 ч, текущий + 1 бэкап; размер — страховка); 0/отсутствие = дефолт, «безлимита» нет |
 | `--state-dir` | путь, дефолт `lxd-state` (сервис — абсолютный `<support>/state`; Windows — `<ProgramData>\sing-box-lxd\state`) | каталог состояния: daemon.json, last-good, кандидат, pending, was_running, серверная пара, доверенные клиенты |
 | `--service` | `install` \| `install-user` \| `copy` \| `uninstall` \| `status` | установка службой, защищённая копия без службы, снятие, отчёт (см. ниже); на Windows `install`/`copy`/`uninstall` — повышенный токен (elevated), `status` — без прав, `install-user` — отказ |
-| `--exec-dir <dir>` | путь; macOS — дефолт `/Library/PrivilegedHelperTools` (должен существовать; заданный — создаётся); Windows — дефолт `<ProgramFiles>\sing-box-lxd` (создаётся) | с `--service=install\|copy\|uninstall\|status` — каталог защищённой копии и её сайдкара; macOS: каждый компонент от `/` принадлежит root без записи для group/other; Windows: копия `sing-box-lxd.exe` (+ `libcronet.dll`, если лежит рядом с источником), владелец и DACL каждого звена от корня тома — инвариант SPEC 103 §2.2 |
+| `--exec-dir <dir>` | путь; macOS — дефолт `/Library/PrivilegedHelperTools` (при отсутствии создаётся `root:wheel 0755`, SPEC 124; заданный — создаётся с родителями); Windows — дефолт `<ProgramFiles>\sing-box-lxd` (создаётся) | с `--service=install\|copy\|uninstall\|status` — каталог защищённой копии и её сайдкара; macOS: каждый компонент от `/` принадлежит root без записи для group/other; Windows: копия `sing-box-lxd.exe` (+ `libcronet.dll`, если лежит рядом с источником), владелец и DACL каждого звена от корня тома — инвариант SPEC 103 §2.2 |
 | `--allow-unsafe-exec` | флаг, отладка | служба (root-job launchd, служба SCM) стартует и с бинаря, который не защищённая копия, — с `WARN` вместо отказа |
 | `--purge` | флаг | с `--service=uninstall` — снести и state-каталог (Windows: весь `<ProgramData>\sing-box-lxd`, state и `logs\`, включая `classic.log` лаунчера) |
 | `--keep-copy` | флаг | с `--service=uninstall` — снять службу, защищённую копию и сайдкар оставить для запуска без службы (состояние «только копия»; на Windows сайдкар получает `service: ""`) |
@@ -112,7 +113,9 @@ TUN, до логина); `install-user` — пользовательский Lau
 Ядро под root (`lxd` и `run`) при старте проверяет собственный бинарь: служба с меткой
 launchd (`ppid 1` и `XPC_SERVICE_NAME` = ярлык) на не root-owned бинаре не стартует,
 любой другой запуск под root — `WARN`. `GET /admin/info` отдаёт `executable` и
-`executable_sha256` — клиент сравнивает ядро по хешу, не по пути.
+`executable_sha256` — клиент сравнивает ядро по хешу, не по пути, — а также платформенную
+карточку `goos`, `goarch`, `platform`, `init_system`, `service` (SPEC 127): платформу, ассет
+для скачивания и init-систему хоста клиент узнаёт у демона.
 
 **Windows — служба SCM `sing-box-lxd` (SPEC 103).** `LocalSystem`, автозапуск, зависимость
 `Tcpip`, restart ×3 через 5 с (и при остановке с ненулевым кодом), DACL службы
@@ -189,6 +192,10 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
   явно; первый успешный старт записывает его как last-good) → пусто (IDLE).
   Кандидат не загружается на старте никогда; прерванный процессной смертью
   apply помечается в статусе (`interrupted_apply`).
+- **Клиент не исполняет код — он выбирает из перечисленного оператором.** `commands`
+  (SPEC 128): текст команды пишет оператор в `daemon.json` на хосте, клиент передаёт только
+  имя (тело запроса — `400`); окружение команды — факты от демона, не вход клиента. Гейт —
+  тот же, что у всех admin-маршрутов, без исключений (решение владельца 2026-10-12).
 - Статус `fatal` означает «инстанса нет»; после успешного отката статус
   `started`, а причина провала остаётся в `last_error` информационно.
 - Аутентификация обеих плоскостей: с `--tls` — пиннингованный клиентский
@@ -201,6 +208,11 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
 - Не заменяет Clash API: если конфиг содержит `experimental.clash_api`,
   он работает как обычно внутри инстанса.
 - Не супервизор самого себя: смерть процесса лечит systemd/launchd/SCM.
+- **Обслуживание из лаунчера без SSH — три задачи одной линией.** 127: демон называет
+  платформу, релизный ассет, init хоста и свой статус службы. 128: оператор перечисляет
+  root-команды в `daemon.json`, клиент запускает их по имени — код клиента не исполняется.
+  129: `sing-box lxd update` — штатная команда `update`, самообновление с проверкой суммы,
+  атомарной подменой и откатом. Windows/macOS — только 127 и (macOS) 128; Linux/OpenWrt — всё.
 - Не менеджер парка ядер: один демон — одно ядро.
 - Android/gomobile не затрагивает (другая точка входа).
 - Откат, mTLS, admin-плоскость, хранилище ресурсов и плоскость наблюдаемости
@@ -226,6 +238,10 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
 | [065-LXD_OBSERVABILITY_PLANE](../../TASKS/065-LXD_OBSERVABILITY_PLANE/SPEC.md) | Диагностика демона: `/admin/memory` (два RSS — текущий и пик, кеш 200 мс), `/admin/stats` (uptime ядра, трафик, соединения; без ядра `null`, а не 503), `/admin/logs` (хвост `lxd.log` — лог **демона**, которого нет в gRPC-потоке), `/admin/pprof/*` (шесть снимков по whitelist, CPU/trace с потолком и 409, вкл/выкл block/mutex) — за тем же mTLS-пином, без отдельного debug-порта; живой прогон на macOS |
 | [100-LXD_ROOT_OWNED_BINARY](../../TASKS/100-LXD_ROOT_OWNED_BINARY/SPEC.md) | Системная служба исполняет root-owned копию бинаря, а не файл, из которого её поставили (закрыто повышение привилегий через user-writable бинарь в plist): копия `/Library/PrivilegedHelperTools/sing-box-lxd` (плоский файл), сайдкар `sing-box-lxd.install.json`, `--exec-dir`, `--service=copy` (копия без службы, для classic TUN лаунчера), `--service=status` с кодами выхода, uninstall только своей копии, самопроверка `lxd`/`run` под root, `executable`/`executable_sha256` в `/admin/info`; табличный тест переходов состояний |
 | [103-LXD_WINDOWS_SERVICE](../../TASKS/103-LXD_WINDOWS_SERVICE/SPEC.md) | Реализовано (I): служба Windows (SCM `sing-box-lxd`, LocalSystem, автозапуск, recovery) по модели 100 — защищённая копия `<ProgramFiles>\sing-box-lxd\` (exe + `libcronet.dll`, сайдкар с `files[]`/`service`/`warnings`), инвариант по владельцу и DACL от корня тома, захват `<ProgramData>\sing-box-lxd` до записи секрета, install (stop → замена образа → configure → start, откат на прежний образ), copy, uninstall по сайдкару, status без прав с кодами 0/2/3/4/5/1; `svc.Run` с рабочим каталогом state, лог `logs\lxd.log` с ротацией копированием, `SetDefaultDllDirectories` и закрепление `libcronet.dll`; `--invite-out`/`--invite-name`, норма имени клиента, именной enroll заменяет запись; джоба CI `test-windows`. Живой прогон на Windows — за лаунчер-сессией; пара SPEC 141 лаунчера |
+| [124-LXD_DEFAULT_EXEC_DIR_CREATE](../../TASKS/124-LXD_DEFAULT_EXEC_DIR_CREATE/SPEC.md) | Реализовано (I): на чистой macOS нет `/Library/PrivilegedHelperTools` (её создаёт SMJobBless при первом помощнике) — `--service=install`/`copy` падали; теперь создают последний компонент дефолта `root:wheel 0755` после проверки цепочки `/Library`, dry-run пишет `would create`, status/uninstall не создают; существующий каталог проверяется как в 100 |
+| [127-LXD_INFO_PLATFORM](../../TASKS/127-LXD_INFO_PLATFORM/SPEC.md) | Реализовано (I): платформенная карточка в `GET /admin/info` — `goos`/`goarch` (`runtime`), `platform` (релизный ассет по `GOARM`/`GOMIPS` из build info: `linux-armv7`, `linux-mipsle-softfloat`), `init_system` (init **хоста**: `procd` / `systemd` / `openrc` / `launchd` / `scm` / `""`) и `service` (**этот процесс** запущен под ним службой); раз при старте. Детектор linux общий с рецептом `--service` (`/proc/1/comm`, затем пробы; +openrc). Лаунчер перестаёт хранить платформу машины руками и спрашивать init |
+| [128-LXD_COMMANDS](../../TASKS/128-LXD_COMMANDS/SPEC.md) | Реализовано (I) 2026-10-12: `"commands": {имя: строка}` в `daemon.json` — админ перечисляет root-команды, клиент запускает по имени без входа (`sudoers`-модель); `GET/POST /admin/commands[/{name}]`, detached-исполнение, исход рядом с логом демона (tmpfs на роутере), окружение `LXD_*` от демона, гейт — как у остальных операторских маршрутов (однородно, решение владельца); граница 100 сохраняется |
+| [129-LXD_UPDATE](../../TASKS/129-LXD_UPDATE/SPEC.md) | Реализовано (I) 2026-10-12: `sing-box lxd update` — самообновление на Linux из `SHA256SUMS` релиза по `platform` 127, поток в `.new`, хардлинк `.old`, атомарный `rename`, рестарт по init и откат; `--dry-run`/`--prerelease`/`--no-restart`; `sing-box version` печатает `Platform:`/`Init:` |
 
 ## 8. Особенности сопровождения
 

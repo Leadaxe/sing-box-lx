@@ -307,13 +307,6 @@ func (s *CommandServer) RecordScreenState(on bool) {
 	}
 }
 
-func (s *CommandServer) RecordLockState(locked bool) {
-	recorder := s.powerManager.Recorder()
-	if recorder != nil {
-		recorder.RecordLockState(locked)
-	}
-}
-
 func (s *CommandServer) ResetNetwork() {
 	// lx: early-rpc-guard — Ready() вместо Box() != nil, SPECS/TASKS/047.
 	// Box() перестаёт быть nil при создании box, а поля NetworkManager

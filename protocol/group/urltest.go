@@ -392,6 +392,8 @@ type URLTestGroup struct {
 	balancer                     *balancer                 // lx: SPEC 019 v2 — round_robin pool; nil for least_test
 	groupTag                     string                    // lx: SPEC 020 — set by URLTest.Start (probe gating)
 	failover                     bool                      // lx: SPEC 116 — set by URLTest.Start
+	lastTickRunEnd               atomic.Int64              // lx: SPEC 125 — end of the last non-forced probe run, UnixNano
+	failoverSlow                 atomic.Pointer[tagSet]    // lx: SPEC 126 — confirmed-slow held tags during a failover reselect
 	reachability                 adapter.ReachabilityReporter
 	// lx: SPEC 054 — penalty failover (least_test): tag → счётчик отказов «путь
 	// мёртв»; сброс только доказательством жизни (успешный дайл / ответ на пробу).
@@ -587,6 +589,9 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 		return make(map[string]uint16), nil
 	}
 	defer g.checking.Store(false)
+	if !force && g.tickTooSoon() { // lx: SPEC 125 — quiet pause after a long tick run
+		return make(map[string]uint16), nil
+	}
 	// lx: SPEC 019 v2 — round_robin uses a lazy, pool-bounded health-check that tests no more
 	// nodes than needed (unless force, e.g. a manual URLTest, which always tests everything).
 	if g.balancer != nil && !force {
@@ -611,6 +616,9 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 // and the round_robin pool paths; upstream's nested-group-aware batch (66beaf541) with the
 // SPEC 054 hook: a probe answer is proof of life and resets the node's penalties.
 func (g *URLTestGroup) testNodes(ctx context.Context, outbounds []adapter.Outbound, force bool) map[string]uint16 {
+	if !force { // lx: SPEC 125 — freshness from the previous tick run, not a fixed interval
+		return g.testNodesTick(ctx, outbounds)
+	}
 	return urlTestOutbounds(ctx, g.outbound, g.history, g.logger, outbounds, g.link, g.interval, force, g.penaltyReset)
 }
 

@@ -60,7 +60,7 @@ JSON-ключи sing-box — **snake_case**. Источник в URL — camelCa
 | URL-параметр | → transport JSON | Тип | Дефолт | Примечание |
 |--------------|------------------|-----|--------|------------|
 | `host`       | `host`           | str | SNI/server | HTTP Host header |
-| `path`       | `path`           | str | `/`    | префикс пути; **обрезать `?…` хвост** (см. §4) |
+| `path`       | `path`           | str | `/`    | префикс пути; **передавать целиком, с `?…` хвостом** (см. §4) |
 | `mode`       | `mode`           | str | `auto` | `auto`\|`packet-up`\|`stream-up`\|`stream-one` |
 | `xPaddingBytes` | `x_padding_bytes` | str | `100-1000` | формат `"min-max"` или одиночное число |
 | `noGRPCHeader` | `no_grpc_header` | bool | `false` | |
@@ -131,9 +131,10 @@ JSON-ключи sing-box — **snake_case**. Источник в URL — camelCa
 
 ## 4. Подводные камни (обязательно учесть)
 
-1. **`path` с query-хвостом.** Реальные ноды дают `path=/GaMeOpTiMiZeR?ed=2048`. Часть после `?` — это
-   НЕ путь; либо отрезать (`path` = `/GaMeOpTiMiZeR`), либо сохранить как есть, если ваш клиент это умеет.
-   sing-box-lx сам нормализует путь, но `?` внутри `path` лучше срезать на стороне парсера.
+1. **`path` с query-хвостом.** Реальные ноды дают `path=/GaMeOpTiMiZeR?ed=2048` или `path=/?proxyip=…`.
+   Часть после `?` — query запроса: ядро делит `path` по первому `?` и отправляет хвост как query,
+   как Xray ([SPEC 119](../119-XHTTP_PATH_QUERY/SPEC.md)). Парсер передаёт `path` **целиком**, не срезая
+   хвост: релеи (Cloudflare Worker и т. п.) читают из него свои параметры, без них узел не работает.
 2. **`extra` — это JSON, не query.** Сначала `urldecode`, потом `JSON.parse`. Не пытаться парсить как `&k=v`.
 3. **Числа vs строки в `extra`.** `scMaxEachPostBytes`/`scMinPostsIntervalMs` приходят числами →
    привести к строке `"min-max"` (см. §2.4).
@@ -258,7 +259,7 @@ vless://c59eb5ed-…@199.232.244.214:443?type=xhttp&mode=packet-up&security=tls&
 - [ ] `extra` декодируется как URL-encoded JSON и вливается в transport.
 - [ ] Числовые `sc*`-поля из `extra` → строка `"min-max"`.
 - [ ] camelCase → snake_case по таблицам §2.
-- [ ] `path` с `?`-хвостом обрезается/обрабатывается.
+- [ ] `path` с `?`-хвостом передаётся целиком (хвост — query запроса).
 - [ ] `security=reality` → `tls.reality.{public_key,short_id}` из `pbk`/`sid`.
 - [ ] `mode=auto` передаётся как есть (резолвится в ядре).
 - [ ] `flow=""` для XHTTP.

@@ -3,8 +3,10 @@
 package wireguard
 
 import (
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/wireguard-go/device"
 )
 
 // awgIpcLines is the no-`with_awg` stub. AmneziaWG obfuscation is not compiled
@@ -33,4 +35,10 @@ func awgKeepaliveSpec(keepalive option.AWGRange) (string, error) {
 		return "", E.New("AmneziaWG (awg) support is not included in this build (persistent_keepalive_interval range), rebuild with -tags with_awg")
 	}
 	return spec, nil
+}
+
+// awgDecoyFunc (no-AWG build): there is no masquerade generator, so no dynamic
+// decoy; awgIpcLines already rejected any AWG field.
+func awgDecoyFunc(o option.AmneziaWGOptions, logger log.ContextLogger) device.DecoyPacketsFunc {
+	return nil
 }

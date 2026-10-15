@@ -73,10 +73,21 @@ func (c *controller) adminHandler(secret string) http.Handler {
 		mux.HandleFunc("GET /admin/host", c.handleHost)
 		mux.HandleFunc("GET /admin/host/interfaces", c.handleHostInterfaces)
 	}
+	// Named commands (SPEC 128): the operator's list from daemon.json, run by
+	// name. Same plane and the same gate as /admin/apply — one barrier for
+	// every route, by owner decision; apply under root does no less.
+	if c.commands != nil {
+		mux.HandleFunc("GET /admin/commands", c.handleCommandList)
+		mux.HandleFunc("GET /admin/commands/{name}", c.handleCommandGet)
+		mux.HandleFunc("POST /admin/commands/{name}", c.handleCommandStart)
+	}
 	// Operator routes serve the `client` CLI over loopback: they need the
 	// Bearer secret but NOT a client cert (the operator on the host has none).
 	// Registered on the loopback-only, secret-gated, cert-exempt path below.
 	operator := http.NewServeMux()
+	// Status is on both muxes: pinned for clients, operator for the host's
+	// own `lxd update` (see pinnedOrOperator below).
+	operator.HandleFunc("GET /admin/status", c.handleStatus)
 	if c.clients != nil {
 		operator.HandleFunc("GET /admin/clients", c.handleClients)
 		operator.HandleFunc("POST /admin/client-code", c.handleClientCode)
@@ -122,11 +133,43 @@ func (c *controller) adminHandler(secret string) http.Handler {
 	// everything else (pin + secret).
 	root := http.NewServeMux()
 	root.HandleFunc("POST /admin/enroll", c.handleEnroll)
+	// /admin/status is ALSO reachable as an operator route (SPEC 129 §2.6):
+	// `lxd update` runs on the host with no client cert and must learn whether
+	// the core came up inside the restarted daemon — the init's "running" says
+	// nothing about that. Read-only and trust-neutral, so the loopback +
+	// secret contract is enough; a trusted cert keeps taking the pinned path,
+	// so remote clients see no change.
+	root.Handle("/admin/status", c.pinnedOrOperator(handler, operatorHandler))
 	root.Handle("/admin/clients", operatorHandler)
 	root.Handle("/admin/client-code", operatorHandler)
 	root.Handle("/admin/client-remove", operatorHandler)
 	root.Handle("/", handler)
 	return root
+}
+
+// pinnedOrOperator serves a certless request from a loopback peer on the
+// operator path (secret-gated) and everything else on the pinned path, so a
+// remote client without a trusted cert still gets the pin's 401, not a
+// loopback-only 403. Used for routes an on-host process must read without a
+// cert while remote clients keep their usual gate.
+func (c *controller) pinnedOrOperator(pinned, operator http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		certless := request.TLS == nil || len(request.TLS.PeerCertificates) == 0
+		if certless && isLoopbackPeer(request.RemoteAddr) {
+			operator.ServeHTTP(writer, request)
+			return
+		}
+		pinned.ServeHTTP(writer, request)
+	})
+}
+
+func isLoopbackPeer(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	addr, err := netip.ParseAddr(host)
+	return err == nil && addr.IsLoopback()
 }
 
 // withBearer wraps next behind a constant-time Bearer check; an empty secret
@@ -151,12 +194,7 @@ func withBearer(secret string, next http.Handler) http.Handler {
 // cannot be spoofed by a remote client.
 func requireLoopback(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		host, _, err := net.SplitHostPort(request.RemoteAddr)
-		if err != nil {
-			host = request.RemoteAddr
-		}
-		addr, err := netip.ParseAddr(host)
-		if err != nil || !addr.IsLoopback() {
+		if !isLoopbackPeer(request.RemoteAddr) {
 			writeJSON(writer, http.StatusForbidden, map[string]any{"error": "operator routes are loopback-only"})
 			return
 		}
@@ -339,7 +377,9 @@ func (c *controller) handleConfig(writer http.ResponseWriter, request *http.Requ
 // hard-coding the daemon's paths on their side — e.g. the state_dir is where
 // a client should point config paths the core WRITES (cache_file), because it
 // is the one directory the daemon owns — and compare executable_sha256, not
-// the path, with their own core (SPEC 100).
+// the path, with their own core (SPEC 100). The platform card (SPEC 127):
+// goos/goarch and platform (the release asset for this machine), init_system
+// (what runs the host) and service (this process runs under it).
 func (c *controller) handleInfo(writer http.ResponseWriter, request *http.Request) {
 	logPath := ""
 	if c.infoLogPath != "" {
@@ -359,6 +399,11 @@ func (c *controller) handleInfo(writer http.ResponseWriter, request *http.Reques
 		"log_path":          logPath,
 		"executable":        executable,
 		"executable_sha256": executableSHA,
+		"goos":              c.platform.goos,
+		"goarch":            c.platform.goarch,
+		"platform":          c.platform.platform,
+		"init_system":       c.platform.initSystem,
+		"service":           c.platform.service,
 	})
 }
 
