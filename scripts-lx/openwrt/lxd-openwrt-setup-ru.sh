@@ -19,7 +19,7 @@
 
 set -e
 
-VERSION="1.2"
+VERSION="1.3"
 STATE_DIR="/etc/sing-box-lxd/state"
 BIN="/usr/bin/sing-box"
 INIT="/etc/init.d/sing-box-lxd"
@@ -94,15 +94,21 @@ case "$ARCH_RAW" in
     armv7l)  ARCH="linux-armv7" ;;
     mips)    ARCH="linux-mips-softfloat"  ;;
     mipsel)  ARCH="linux-mipsle-softfloat" ;;
+    # 32-битный x86: релиз собран под SSE2 (Pentium 4 и новее)
+    i686)    ARCH="linux-386" ;;
+    riscv64) ARCH="linux-riscv64" ;;
     *) die "архитектура $ARCH_RAW: подберите релиз вручную" ;;
 esac
 say "архитектура: $ARCH_RAW → $ARCH"
 
-# Бинарь ~41 МБ: на NAND-overlay маленького роутера не влезет
+# Бинарь 75–90 МБ: на NAND-overlay маленького роутера не влезет. Место уже
+# установленного бинаря считается свободным — установка его заменит. На
+# arm64/mipsle при скачивании предлагается копия, сжатая UPX (~17 МБ).
 AVAIL_KB=$(df -k /overlay 2>/dev/null | awk 'NR==2{print $4}')
 [ -z "$AVAIL_KB" ] && AVAIL_KB=$(df -k / | awk 'NR==2{print $4}')
+[ -f "$BIN" ] && AVAIL_KB=$((AVAIL_KB + $(du -k "$BIN" | awk '{print $1}')))
 say "свободно:    $((AVAIL_KB / 1024)) МБ"
-[ "$AVAIL_KB" -lt 50000 ] && warn "меньше 50 МБ свободно — бинарь ~41 МБ может не влезть (нужен extroot)"
+[ "$AVAIL_KB" -lt 100000 ] && warn "меньше 100 МБ свободно — бинарь 75–90 МБ может не влезть (на arm64/mipsle есть копия, сжатая UPX, иначе нужен extroot)"
 
 # ── Бэкап pre-lxd: до любых изменений, один раз ─────────────────────────────
 # Точка полного отката — скрипт сноса восстанавливается из него (--restore).
@@ -446,17 +452,30 @@ if [ "$NEED_DL" = 1 ]; then
     say "версия:      $TAG"
 
     cd /tmp
-    rm -f "$TARBALL" SHA256SUMS
+    rm -f SHA256SUMS
+    # при неудаче -O оставляет пустой файл — убрать, иначе сверка ниже
+    # примет его за настоящий SHA256SUMS и завалит установку
+    wget -q -O SHA256SUMS "$BASE/SHA256SUMS" \
+        || { rm -f SHA256SUMS; warn "SHA256SUMS не скачался — пропускаю сверку"; }
+
+    # Копия, сжатая UPX: ~17 МБ на флеше вместо 75–90 МБ, ценой RAM и долгого
+    # старта (15–20 с на mipsle). Предлагается, когда на overlay тесно и в
+    # релизе есть такая копия под эту архитектуру (arm64, mipsle); `lxd update`
+    # потом сохраняет сжатый вариант.
+    UPX_TARBALL="sing-box-$VER-$ARCH.upx.tar.gz"
+    if [ "$AVAIL_KB" -lt 100000 ] && [ -f SHA256SUMS ] \
+        && awk -v f="$UPX_TARBALL" '$NF==f {found=1} END {exit !found}' SHA256SUMS; then
+        ask_yn_default "Свободно всего $((AVAIL_KB / 1024)) МБ: поставить бинарь, сжатый UPX (~17 МБ на флеше, больше RAM, дольше старт)?" \
+            && TARBALL="$UPX_TARBALL"
+    fi
+
+    rm -f "$TARBALL"
     # -O обязателен: GitHub отдаёт ассет через redirect, и busybox-wget без -O
     # сохраняет файл под именем из КОНЕЧНОГО URL — не под именем ассета.
     wget -q -O "$TARBALL" "$BASE/$TARBALL" || die "не скачался $TARBALL
   (если ошибка про SSL/TLS: opkg install ca-bundle libustream-mbedtls
    либо скачайте архив на компьютере и залейте бинарь вручную —
    см. §8.3 в docs-lx/lxd-daemon.ru.md)"
-    # при неудаче -O оставляет пустой файл — убрать, иначе сверка ниже
-    # примет его за настоящий SHA256SUMS и завалит установку
-    wget -q -O SHA256SUMS "$BASE/SHA256SUMS" \
-        || { rm -f SHA256SUMS; warn "SHA256SUMS не скачался — пропускаю сверку"; }
 
     if [ -f SHA256SUMS ]; then
         # сверка по точному имени файла: substring-grep мог бы зацепить соседний ассет

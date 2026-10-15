@@ -20,7 +20,7 @@
 
 set -e
 
-VERSION="1.2"
+VERSION="1.3"
 STATE_DIR="/etc/sing-box-lxd/state"
 BIN="/usr/bin/sing-box"
 INIT="/etc/init.d/sing-box-lxd"
@@ -97,15 +97,21 @@ case "$ARCH_RAW" in
     # mips releases are built softfloat-only — the asset name carries the suffix
     mips)    ARCH="linux-mips-softfloat" ;;
     mipsel)  ARCH="linux-mipsle-softfloat" ;;
+    # 32-bit x86: the release is built for SSE2 (Pentium 4 and later)
+    i686)    ARCH="linux-386" ;;
+    riscv64) ARCH="linux-riscv64" ;;
     *) die "architecture $ARCH_RAW: pick a release manually" ;;
 esac
 say "architecture: $ARCH_RAW → $ARCH"
 
-# The binary is ~41 MB: won't fit the NAND overlay of a small router
+# The binary is 75–90 MB: won't fit the NAND overlay of a small router. The
+# space of an installed binary counts as free — the install replaces it. On
+# arm64/mipsle a UPX-packed copy (~17 MB) is offered at the download.
 AVAIL_KB=$(df -k /overlay 2>/dev/null | awk 'NR==2{print $4}')
 [ -z "$AVAIL_KB" ] && AVAIL_KB=$(df -k / | awk 'NR==2{print $4}')
+[ -f "$BIN" ] && AVAIL_KB=$((AVAIL_KB + $(du -k "$BIN" | awk '{print $1}')))
 say "free space:  $((AVAIL_KB / 1024)) MB"
-[ "$AVAIL_KB" -lt 50000 ] && warn "less than 50 MB free — the ~41 MB binary may not fit (extroot needed)"
+[ "$AVAIL_KB" -lt 100000 ] && warn "less than 100 MB free — the 75–90 MB binary may not fit (UPX-packed copy on arm64/mipsle, otherwise extroot)"
 
 # ── pre-lxd backup: before any changes, exactly once ────────────────────────
 # The full-rollback point — the teardown script restores from it (--restore).
@@ -454,17 +460,30 @@ if [ "$NEED_DL" = 1 ]; then
     say "version:     $TAG"
 
     cd /tmp
-    rm -f "$TARBALL" SHA256SUMS
+    rm -f SHA256SUMS
+    # on failure -O leaves an empty file — remove it, or the check below
+    # mistakes it for a real SHA256SUMS and fails the install
+    wget -q -O SHA256SUMS "$BASE/SHA256SUMS" \
+        || { rm -f SHA256SUMS; warn "SHA256SUMS did not download — skipping the check"; }
+
+    # UPX-packed copy: ~17 MB on flash instead of 75–90 MB, paid for with more
+    # RAM and a slower start (15–20 s on mipsle). Offered when the overlay is
+    # short and the release ships one for this architecture (arm64, mipsle);
+    # `lxd update` keeps the packed flavour afterwards.
+    UPX_TARBALL="sing-box-$VER-$ARCH.upx.tar.gz"
+    if [ "$AVAIL_KB" -lt 100000 ] && [ -f SHA256SUMS ] \
+        && awk -v f="$UPX_TARBALL" '$NF==f {found=1} END {exit !found}' SHA256SUMS; then
+        ask_yn_default "Only $((AVAIL_KB / 1024)) MB free: install the UPX-packed binary (~17 MB on flash, more RAM, slower start)?" \
+            && TARBALL="$UPX_TARBALL"
+    fi
+
+    rm -f "$TARBALL"
     # -O is mandatory: GitHub serves assets via a redirect, and busybox-wget
     # without -O saves the file under the name from the FINAL URL — not the asset name.
     wget -q -O "$TARBALL" "$BASE/$TARBALL" || die "failed to download $TARBALL
   (on an SSL/TLS error: opkg install ca-bundle libustream-mbedtls
    or download the archive on a computer and upload the binary by hand —
    see §8.3 in docs-lx/lxd-daemon.md)"
-    # on failure -O leaves an empty file — remove it, or the check below
-    # mistakes it for a real SHA256SUMS and fails the install
-    wget -q -O SHA256SUMS "$BASE/SHA256SUMS" \
-        || { rm -f SHA256SUMS; warn "SHA256SUMS did not download — skipping the check"; }
 
     if [ -f SHA256SUMS ]; then
         # match the exact file name: a substring grep could hit a neighboring asset
