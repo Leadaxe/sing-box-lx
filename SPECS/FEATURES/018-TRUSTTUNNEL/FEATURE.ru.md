@@ -93,7 +93,7 @@ Surge он уже есть, в апстриме sing-box — нет (запро�
 | `has_ipv6: false` | `domain_resolver: { strategy: "ipv4_only" }` на узле (endpoint отказывает IPv6-адресатам) |
 | `dns_upstreams`, `name` | вне ядра — забота клиента-приложения |
 
-### Серверная сторона (набросок; контракт — в задаче 134)
+### Серверная сторона (контракт — в [задаче 134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.ru.md))
 
 ```json
 {
@@ -234,7 +234,7 @@ CONNECT _udp2 ─► кадры: длина | src | dst | имя приложе�
 | Задача | Что | Статус |
 |--------|-----|--------|
 | [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.ru.md) | Outbound `trusttunnel`: TCP + UDP поверх HTTP/2 и HTTP/3; пакет-ядро протокола (клиентская половина) | N |
-| 134 — TRUSTTUNNEL_INBOUND | Inbound `trusttunnel` на серверной половине пакета-ядра; SPEC ещё не написана | план |
+| [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.ru.md) | Inbound `trusttunnel` на серверной половине пакета-ядра: Basic auth, TCP-`CONNECT`, потоки `_udp2` в роутер, `_check`; HTTP/2 + HTTP/3 | N |
 
 ## Особенности сопровождения
 

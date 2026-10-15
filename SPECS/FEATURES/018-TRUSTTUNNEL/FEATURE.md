@@ -93,7 +93,7 @@ subscription, `tt://` link) to the keys above:
 | `has_ipv6: false` | `domain_resolver: { strategy: "ipv4_only" }` on the node (the endpoint refuses IPv6 destinations) |
 | `dns_upstreams`, `name` | outside the core — the client app's job |
 
-### Server side (sketch; the contract is in task 134)
+### Server side (contract in [task 134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md))
 
 ```json
 {
@@ -232,7 +232,7 @@ stale session (closed by the endpoint, NAT expired, device slept)
 | Task | What | State |
 |------|------|-------|
 | [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md) | `trusttunnel` outbound: TCP + UDP over HTTP/2 and HTTP/3; the protocol core package (client half) | N |
-| 134 — TRUSTTUNNEL_INBOUND | `trusttunnel` inbound on the server half of the core package; SPEC not written yet | planned |
+| [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md) | `trusttunnel` inbound on the server half of the core package: Basic auth, TCP `CONNECT`, `_udp2` flows to the router, `_check`; HTTP/2 + HTTP/3 | N |
 
 ## Maintenance notes
 

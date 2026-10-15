@@ -336,10 +336,10 @@ What a submitter takes upstream: `transport/trusttunnel/`, `option/trusttunnel.g
   same feature, on the server half of the core package. The model inside sing-box is the
   upstream `naive` inbound: an `http.Server` serving `CONNECT` with Basic auth over H2, H3
   attached through a hook set under `with_quic` (`ConfigureHTTP3ListenerFunc`). Scope and
-  contract are in SPEC 134; the known limitation to settle there: sing-box's router gives an
-  inbound no dial result back, so the server cannot answer 502 + `X-Warning` after a failed
-  upstream connect the way the official endpoint does — it answers 200 and closes the stream,
-  as `naive` does.
+  contract are in [SPEC 134](../134-TRUSTTUNNEL_INBOUND/SPEC.md); the question of how a
+  failed upstream connect reaches the client (sing-box's router gives an inbound no dial
+  result; `naive` answers 200 before routing) is settled there as a deferred 200 (SPEC 134
+  R4, Q2).
 - **Q7. `idle_timeout` and the stale-session budget.** Proposal: the key as in §3, the global
   default next to `lx.masque.idle_timeout` (a shared `lx.idle_timeout` or a sibling
   `lx.trusttunnel.idle_timeout`), default 5 min; the short `CONNECT` budget on a stale session
