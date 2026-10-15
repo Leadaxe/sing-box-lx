@@ -1,8 +1,6 @@
 # SPEC 133 — Outbound `trusttunnel`: TCP + UDP поверх HTTP/2 и HTTP/3
 
 > 🌐 English version: **[SPEC.md](SPEC.md)**.
->
-> **Язык.** Фича пришла снаружи (PR [#45](https://github.com/Leadaxe/sing-box-lx/pull/45), обсуждение в [#46](https://github.com/Leadaxe/sing-box-lx/issues/46)), поэтому основной язык её документов — английский. Русская копия (`*.ru.md`) лежит рядом с каждым файлом, чтобы фичу было проще сопровождать.
 
 **Фича:** [TRUSTTUNNEL](../../FEATURES/018-TRUSTTUNNEL/FEATURE.ru.md)
 
