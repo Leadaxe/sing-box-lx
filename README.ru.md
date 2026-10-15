@@ -7,7 +7,8 @@
 
 - **Совместимость с сегодняшними серверами и сетями.** REALITY с гибридным постквантовым
   обменом ключами ML-KEM (X25519MLKEM768), как требует актуальный Xray, XHTTP,
-  VLESS `encryption`, AmneziaWG 3.x, фрагментация ClientHello, WARP через MASQUE.
+  VLESS `encryption`, AmneziaWG 3.x, фрагментация ClientHello, WARP через MASQUE,
+  TrustTunnel (экспериментально).
 - **Ядро, сделанное под эксплуатацию** в сложных потребителях — десктопном лаунчере,
   Android-приложении LxBox, на роутерах: режим демона, наблюдаемость по gRPC, энергосбережение
   и сон простаивающих туннелей, роутерные сборки.
@@ -68,6 +69,7 @@ README — [на GitHub](https://github.com/SagerNet/sing-box/blob/main/README.m
 | **MASQUE / Cloudflare WARP** — [009](SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md) | outbound `type: masque` | CONNECT-IP (RFC 9484) поверх HTTP/3 или HTTP/2 через userspace-стек; `profile: cloudflare` для WARP; стандартный блок `tls`; idle-suspend и самовосстанавливающийся реконнект | — | девайс-верифицирован на Wi-Fi и LTE, `h3` и `h2` |
 | **REALITY против актуального Xray** — [017](SPECS/FEATURES/017-REALITY/FEATURE.md) | `tls.reality` + `tls.utls.fingerprint`, `tls.reality.key_share`, `tls.fragment` / `record_fragment` | Гибридный постквантовый key share `X25519MLKEM768`, которого требует Xray ≥ v26.9.8, на `chrome`, `firefox`, `safari` (последние два — через форк-сабмодуль utls); по-узловой `key_share: classical \| hybrid`; фрагментация ClientHello теперь работает и на REALITY | — (внутри `with_utls`) | стенд-верифицировано против Xray v26.9.9 и более старых; `firefox`/`safari` подтверждены в поле; `key_share` и фрагментация ждут полевого прогона |
 | **VLESS `encryption`** — [012](SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) | поле `encryption` на `vless`-outbound | Постквантовый слой `mlkem768x25519plus` *внутри* VLESS, под транспортом и независимо от TLS/REALITY | — | девайс-верифицирован: ранее мёртвые узлы подписки ожили |
+| **TrustTunnel** — [018](SPECS/FEATURES/018-TRUSTTUNNEL/FEATURE.md) | outbound **и inbound** `type: trusttunnel` | TrustTunnel от AdGuard: прокси-`CONNECT` с Basic-авторизацией поверх HTTP/2 (TLS, uTLS) или HTTP/3 (QUIC); TCP по стриму на соединение, UDP кадрами `_udp2`; одна сессия на узел, тишина в простое, прозрачная пересборка; inbound повторяет лимиты официального endpoint и отвечает зондам 404 | `with_trusttunnel` | экспериментально; совместимость с официальными endpoint 1.1.0 и клиентом 1.1.11 снята на стенде в обе стороны; живого VPS ещё не было |
 
 ### Маршрутизация и DNS
 
@@ -86,7 +88,7 @@ README — [на GitHub](https://github.com/SagerNet/sing-box/blob/main/README.m
 | **Idle-suspend (энергия)** — [008](SPECS/FEATURES/008-ENERGY/FEATURE.md) | `route.lx_idle_suspend` / `lx_idle_suspend_reachable` / `lx_idle_teardown`, `urltest` `mode: failover` | Три уровня сна для простаивающих WireGuard/AWG-эндпоинтов: батарея, нагрев и RAM на многоузловых мобильных профилях | `with_lx_idle_suspend` (вшит в AAR) | девайс-верифицирован: RSS −31 % |
 | **Демон `lxd`** — [014](SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md) | подкоманда `sing-box lxd` | Ядро in-process за управляющим каналом, который переживает любую смену конфига: gRPC + admin-REST на одном порту, `apply` с автоматическим откатом, mTLS с энролментом, установка службы, телеметрия хоста | `with_lxd` | девайс-верифицирован на macOS; OpenWrt-скрипты установки проверены в поле |
 
-> **Не поддерживается by design:** серверные половины перечисленного; постквантовые **подписи** REALITY у Xray (`pqv` / ML-DSA-65) и `spiderX` — это другой механизм, не обмен ключами, и в sing-box его нет; отпечатки `edge`, `ios`, `android`, `360`, `qq` против Xray ≥ v26.9.8 (ни один апстримный пресет не несёт гибридного шара, у Xray та же граница; подменять отпечаток — работа приложений).
+> **Не поддерживается by design:** серверные половины перечисленного, кроме inbound `trusttunnel`; постквантовые **подписи** REALITY у Xray (`pqv` / ML-DSA-65) и `spiderX` — это другой механизм, не обмен ключами, и в sing-box его нет; отпечатки `edge`, `ios`, `android`, `360`, `qq` против Xray ≥ v26.9.8 (ни один апстримный пресет не несёт гибридного шара, у Xray та же граница; подменять отпечаток — работа приложений).
 
 ---
 
@@ -104,7 +106,7 @@ make -f Makefile.lx lx-check        # проверка примеров конф
 - **Набор тегов** (`make -f Makefile.lx lx-print-tags` — единственный источник истины):
 
   ```
-  with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command,with_lxd,with_openvpn,with_openconnect,with_lx_chain,with_tailscale
+  with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command,with_lxd,with_openvpn,with_openconnect,with_lx_chain,with_tailscale,with_trusttunnel
   ```
 
   Это клиентский набор апстрима минус серверные теги (`with_acme`, `with_ccm`/`with_ocm`), плюс `with_purego` (кросс-компиляция без CGO, чтобы `with_naive_outbound` собирался при `CGO=0`) и наши собственные теги. `with_lx_command` (расширения командного протокола libbox) и `with_lxd` (демон) независимы by design.

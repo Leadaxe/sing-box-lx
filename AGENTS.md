@@ -33,7 +33,7 @@
 - **Синхронизация с upstream — ручной merge `upstream/testing`** (не rebase); `lx` никогда не форс-пушится. Ритуал — в runbook.
 - **Два форк-сабмодуля** — `submodules/wireguard-go` и `submodules/sing-tun`: встречные upstream-бампы их гитлинков на мерже не принимать вслепую (откатят наши патчи).
 - **Имя бинаря — `sing-box`** (drop-in для лаунчера); идентичность `-lx` — в версии.
-- **Scope — client-only**: outbound/endpoint. Server/inbound отложены.
+- **Scope — client-first**: outbound/endpoint. Server/inbound — только там, где фича без них неполна (на 2026-10-16 это inbound `trusttunnel`, SPEC 134); решение владельца от 2026-09-17.
 
 ---
 
