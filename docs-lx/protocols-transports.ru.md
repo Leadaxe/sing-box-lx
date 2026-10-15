@@ -1351,8 +1351,8 @@ TLS-in-TLS проксируемого HTTPS остаётся виден анал
   или `trusttunnel: server responded 407 Proxy Authentication Required`. 403/404/405/407
   вдобавок рвут сессию.
 - **Ни keepalive, ни таймеров в простое.** Нет HTTP/2 PING, нет QUIC keepalive. QUIC
-  idle timeout HTTP/3-сессии равен idle-окну (не больше 600 с — это
-  `client_listener_timeout_secs` endpoint). Сессия, молчавшая дольше idle-окна, считается
+  idle timeout HTTP/3-сессии фиксирован: 600 с, это `client_listener_timeout_secs`
+  endpoint; idle-окно ниже действует поверх него. Сессия, молчавшая дольше idle-окна, считается
   устаревшей: следующий `CONNECT` в ней получает 3 с, затем сессия пересобирается и
   `CONNECT` повторяется один раз в пределах дедлайна вызывающего.
 - **Одна сессия на узел.** На пределе стримов endpoint (1000 на HTTP/2, 4096 на HTTP/3)

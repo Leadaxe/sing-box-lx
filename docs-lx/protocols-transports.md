@@ -1363,8 +1363,8 @@ so TLS-in-TLS of a proxied HTTPS connection stays visible to traffic analysis.
   or `trusttunnel: server responded 407 Proxy Authentication Required`. A 403/404/405/407
   also tears the session down.
 - **No keepalive, no timers while idle.** No HTTP/2 PING, no QUIC keepalive. The HTTP/3
-  session's QUIC idle timeout equals the idle window (capped at 600 s, the endpoint's
-  `client_listener_timeout_secs`). A session silent for longer than the idle window is
+  session's QUIC idle timeout is a fixed 600 s, the endpoint's own
+  `client_listener_timeout_secs`; the idle window below applies on top of it. A session silent for longer than the idle window is
   treated as stale: the next `CONNECT` on it gets 3 s, then the session is rebuilt and the
   `CONNECT` repeated once within the caller's deadline.
 - **One session per node.** At the endpoint's stream limit (1000 on HTTP/2, 4096 on

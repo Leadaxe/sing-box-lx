@@ -195,8 +195,8 @@ of this task) plus `idle_timeout`. mihomo's keys (`health-check`, `udp`, `sni`, 
   from the dial fields (`detour` works).
   - **No keepalive.** No HTTP/2 PING (`ReadIdleTimeout` off), no QUIC `KeepAlivePeriod`; the
     QUIC session is allowed to time out silently (quic-go closes locally without sending).
-    Its QUIC idle timeout equals the idle window (`idle_timeout`, or the 5-minute stale
-    window when teardown is off), capped at 600 s, the endpoint's own session limit.
+    Its QUIC idle timeout is a fixed 600 s, the endpoint's own session limit; the idle
+    window (`idle_timeout`) and the stale rule apply on top of it.
     While the node is idle there are no outgoing packets, whatever the config.
   - **Idle teardown.** After `idle_timeout` without a request the session is closed locally
     (no packets); the next request opens a new one. This is the MASQUE `idle_timeout`

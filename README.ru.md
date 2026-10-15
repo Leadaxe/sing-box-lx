@@ -287,6 +287,7 @@ upstream/stable  ──merge──►  lx  =  upstream  +  швы // lx  +  lx-�
 | Протоколы и транспорты | [docs-lx/protocols-transports.ru.md](docs-lx/protocols-transports.ru.md) ([EN](docs-lx/protocols-transports.md)) — XHTTP, AmneziaWG, MASQUE, REALITY, VLESS `encryption` в деталях |
 | Как устроены протоколы Xray | [docs-lx/xray-protocols-explained.ru.md](docs-lx/xray-protocols-explained.ru.md) ([EN](docs-lx/xray-protocols-explained.md)) — REALITY, Vision, XHTTP, VLESS `encryption`: логика, реализация в форке, отличия от ванили, примеры Xray ↔ sing-box-lx |
 | Как устроен AmneziaWG | [docs-lx/amneziawg-explained.ru.md](docs-lx/amneziawg-explained.ru.md) ([EN](docs-lx/amneziawg-explained.md)) — три слоя обфускации, бюджет MTU, графт в форке wireguard-go, пример `awg.conf` ↔ endpoint |
+| Как устроен TrustTunnel | [docs-lx/trusttunnel-protocols-explained.ru.md](docs-lx/trusttunnel-protocols-explained.ru.md) ([EN](docs-lx/trusttunnel-protocols-explained.md)) — формат на проводе поверх HTTP/2 и HTTP/3, обнаружимость, модель сессии, outbound и inbound в форке, практика |
 | Руководство по энергии | [docs-lx/lx-energy.ru.md](docs-lx/lx-energy.ru.md) ([EN](docs-lx/lx-energy.md)) — уровни idle-suspend, `mode: failover`, тюнинг |
 | Снифферы | [docs-lx/lx-sniff.ru.md](docs-lx/lx-sniff.ru.md) ([EN](docs-lx/lx-sniff.md)) |
 | Руководство оператора `lxd` | [docs-lx/lxd-daemon.ru.md](docs-lx/lxd-daemon.ru.md) ([EN](docs-lx/lxd-daemon.md)) |
