@@ -1296,7 +1296,8 @@ and [§5.8](xray-protocols-explained.md#58-example-xray-and-sing-box-lx).
 
 ## 6.1 What it is
 
-TrustTunnel is the AdGuard VPN protocol (Apache-2.0, `PROTOCOL.md` v1.0): HTTP/2 over
+TrustTunnel is the AdGuard VPN protocol (Apache-2.0; the wire specification is
+[`PROTOCOL.md` v1.0](https://github.com/TrustTunnel/TrustTunnel/blob/master/PROTOCOL.md) in the official repository `TrustTunnel/TrustTunnel`): HTTP/2 over
 TLS or HTTP/3 over QUIC to a real domain, with a proxy `CONNECT` and Basic auth inside.
 Every TCP connection is a `CONNECT host:port` stream, every UDP session a
 `CONNECT _udp2` stream carrying framed datagrams; all streams of a node share one

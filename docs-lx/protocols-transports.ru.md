@@ -1284,7 +1284,8 @@ VLESS + `encryption` поверх WebSocket без внешнего TLS:
 
 ## 6.1 Что это
 
-TrustTunnel — протокол AdGuard VPN (Apache-2.0, `PROTOCOL.md` v1.0): HTTP/2 поверх TLS
+TrustTunnel — протокол AdGuard VPN (Apache-2.0; спецификация провода —
+[`PROTOCOL.md` v1.0](https://github.com/TrustTunnel/TrustTunnel/blob/master/PROTOCOL.md) в официальном репозитории `TrustTunnel/TrustTunnel`): HTTP/2 поверх TLS
 или HTTP/3 поверх QUIC к настоящему домену, внутри — прокси-`CONNECT` и Basic-авторизация.
 Каждое TCP-соединение — стрим `CONNECT host:port`, каждая UDP-сессия — стрим
 `CONNECT _udp2` с кадрами датаграмм; все стримы узла идут в одной сессии. **Outbound**
