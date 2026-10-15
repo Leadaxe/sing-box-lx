@@ -867,11 +867,17 @@ version, its release asset (`Platform:` in `sing-box version`, e.g.
    release including rc, through the GitHub API) gives the asset name, the
    version and the sum in one request. Same version → `already up to date`,
    exit 0. An installed version newer than the available one is refused —
-   no downgrades.
+   no downgrades. A UPX-packed binary (`UPX!` in its first 4 KiB) takes the
+   packed copy, `sing-box-<ver>-<platform>.upx.tar.gz`, so a router whose
+   overlay fits only the packed core keeps it; a release without that copy
+   falls back to the plain archive and says so.
 2. Free space beside the binary ≥ its size + 10 %.
 3. The archive streams straight into `<binary>.new` on the same filesystem:
    sha256 over the compressed bytes, gunzip, tar, only the `sing-box` entry
-   is written — nothing lands in `/tmp` (RAM on a router). Progress goes to
+   is written — nothing lands in `/tmp` (RAM on a router). Before the write
+   the free space is checked again against the size in the entry's tar header
+   (+ 10 %): the plain binary replacing a packed one is 4–5× larger, and the
+   update stops here, after the first kilobytes of the archive. Progress goes to
    the output at most once a second (`downloading <asset>: 3.2 / 14.1 MiB
    (23%)`; bytes only when the server gave no length). A sum mismatch
    deletes `.new`.

@@ -70,12 +70,18 @@ sing-box lxd update [--dry-run] [--prerelease] [--no-restart] [--service <name>]
 2. **Что доступно.** `GET https://github.com/Leadaxe/sing-box-lx/releases/latest/download/SHA256SUMS`
    (с `--prerelease`: тег из API, затем `releases/download/<tag>/SHA256SUMS`). Строка
    `<sha256>  sing-box-<ver>-<platform>.tar.gz` даёт версию, имя и сумму; нет строки для
-   платформы → `ERROR: no asset for <platform>`. Сравнение версий: upstream semver, затем
+   платформы → `ERROR: no asset for <platform>`. Бинарь, упакованный UPX (`packedWithUPX`:
+   `UPX!` в первых 4 КиБ файла), ищет `sing-box-<ver>-<platform>.upx.tar.gz` — релизный CI
+   кладёт такие копии для linux-arm64 и linux-mipsle-softfloat, и роутер с маленьким overlay
+   остаётся на сжатом ядре; копии нет (шаг UPX в CI необязательный) — строка
+   `no UPX-packed copy in this release, falling back to the plain binary` и обычный архив. Сравнение версий: upstream semver, затем
    `lx.N`, затем `rc.M` (без rc новее, чем с rc). Равно → `already up to date`, выход 0.
    Доступная старше установленной → `ERROR: installed <v> is newer than <v'>` (hint про
    `--prerelease`), выход 1 — даунгрейда нет.
-3. **Место.** `statfs` каталога бинаря: свободно ≥ размер текущего бинаря × 1.1 (новый того же
-   порядка); иначе `ERROR: need N KiB free beside <path>, have M`.
+3. **Место.** `statfs` каталога бинаря: свободно ≥ размер текущего бинаря × 1.1; иначе
+   `ERROR: need N KiB free beside <path>, have M`. Размер нового бинаря до скачивания
+   неизвестен, поэтому та же проверка повторяется на шаге 4 по размеру из tar-заголовка записи
+   `sing-box`, до записи первого байта: обычный бинарь вместо упакованного в 4–5 раз больше.
 4. **Скачивание потоком.** `GET releases/download/v<ver>/<asset>` → `TeeReader` в sha256 →
    `gzip` → `tar`: единственная запись `sing-box` пишется в `<бинарь>.new` (`0755`, тот же
    каталог ⇒ та же ФС). Прогресс — в лог, не чаще раза в секунду (`progressInterval`):

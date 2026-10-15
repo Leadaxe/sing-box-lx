@@ -45,23 +45,54 @@ func TestParseChecksums(t *testing.T) {
 	sums := strings.Join([]string{
 		strings.Repeat("a", 64) + "  sing-box-1.14.3-lx.16-linux-mips-softfloat.tar.gz",
 		strings.Repeat("b", 64) + "  sing-box-1.14.3-lx.16-linux-mipsle-softfloat.tar.gz",
+		strings.Repeat("e", 64) + "  sing-box-1.14.3-lx.16-linux-arm64.upx.tar.gz",
 		strings.Repeat("c", 64) + " *sing-box-1.14.3-lx.16-linux-arm64.tar.gz",
 		strings.Repeat("d", 64) + "  sing-box-1.14.3-lx.16-windows-amd64.zip",
 		"garbage line",
 		"",
 	}, "\n")
-	asset, err := parseChecksums(sums, "linux-mips-softfloat")
+	asset, err := parseChecksums(sums, "linux-mips-softfloat", false)
 	if err != nil || asset.name != "sing-box-1.14.3-lx.16-linux-mips-softfloat.tar.gz" || asset.sha256 != strings.Repeat("a", 64) || asset.version != "1.14.3-lx.16" {
 		t.Fatalf("mips: %+v %v", asset, err)
 	}
-	if asset, err = parseChecksums(sums, "linux-arm64"); err != nil || asset.sha256 != strings.Repeat("c", 64) {
-		t.Fatalf("arm64 (with the binary-mode star): %+v %v", asset, err)
+	if asset, err = parseChecksums(sums, "linux-arm64", false); err != nil || asset.sha256 != strings.Repeat("c", 64) || asset.packed {
+		t.Fatalf("arm64 (with the binary-mode star, the .upx copy listed first): %+v %v", asset, err)
 	}
-	if _, err = parseChecksums(sums, "linux-amd64"); err == nil {
+	if asset, err = parseChecksums(sums, "linux-arm64", true); err != nil || asset.sha256 != strings.Repeat("e", 64) || !asset.packed || asset.version != "1.14.3-lx.16" {
+		t.Fatalf("arm64 UPX copy: %+v %v", asset, err)
+	}
+	if _, err = parseChecksums(sums, "linux-mips-softfloat", true); err == nil {
+		t.Fatal("a platform without a UPX copy must be an error for the packed flavour")
+	}
+	if _, err = parseChecksums(sums, "linux-amd64", false); err == nil {
 		t.Fatal("a missing platform must be an error")
 	}
-	if _, err = parseChecksums(sums, "windows-amd64"); err == nil {
+	if _, err = parseChecksums(sums, "windows-amd64", false); err == nil {
 		t.Fatal("only tar.gz assets are updates")
+	}
+}
+
+func TestPackedWithUPX(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, content []byte) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, content, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	elf := append([]byte("\x7fELF"), make([]byte, 0xac)...)
+	if !packedWithUPX(write("packed", append(append(elf, "UPX!"...), make([]byte, 8192)...))) {
+		t.Fatal("UPX! after the ELF headers marks a packed binary")
+	}
+	if packedWithUPX(write("plain", append(elf, make([]byte, 8192)...))) {
+		t.Fatal("a plain binary is not packed")
+	}
+	if packedWithUPX(write("late", append(append(elf, make([]byte, 8192)...), "UPX!"...))) {
+		t.Fatal("only the head counts: a string deep in .rodata is not the loader")
+	}
+	if packedWithUPX(write("short", []byte("UPX"))) || packedWithUPX(filepath.Join(dir, "missing")) {
+		t.Fatal("a short or missing file is not packed")
 	}
 }
 
@@ -98,7 +129,7 @@ func makeArchive(t *testing.T, binary []byte, extraBinary bool) ([]byte, string)
 func TestExtractBinary(t *testing.T) {
 	archive, sum := makeArchive(t, []byte("new core"), false)
 	dst := filepath.Join(t.TempDir(), "sing-box.new")
-	if err := extractBinary(bytes.NewReader(archive), dst, sum); err != nil {
+	if err := extractBinary(bytes.NewReader(archive), dst, sum, nil); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(dst)
@@ -110,7 +141,7 @@ func TestExtractBinary(t *testing.T) {
 		t.Fatalf("mode %v", info.Mode())
 	}
 	// Wrong sum: the file is gone.
-	if err := extractBinary(bytes.NewReader(archive), dst, strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "MISMATCH") {
+	if err := extractBinary(bytes.NewReader(archive), dst, strings.Repeat("0", 64), nil); err == nil || !strings.Contains(err.Error(), "MISMATCH") {
 		t.Fatal("mismatch must fail, got", err)
 	}
 	if _, err := os.Stat(dst); !os.IsNotExist(err) {
@@ -118,8 +149,22 @@ func TestExtractBinary(t *testing.T) {
 	}
 	// Two binaries: refused.
 	archive, sum = makeArchive(t, []byte("x"), true)
-	if err := extractBinary(bytes.NewReader(archive), dst, sum); err == nil {
+	if err := extractBinary(bytes.NewReader(archive), dst, sum, nil); err == nil {
 		t.Fatal("two sing-box entries must be refused")
+	}
+	// No room for the binary its tar header announces: nothing is written.
+	archive, sum = makeArchive(t, []byte("new core"), false)
+	dst = filepath.Join(t.TempDir(), "sing-box.new")
+	var announced int64
+	err = extractBinary(bytes.NewReader(archive), dst, sum, func(size int64) error {
+		announced = size
+		return E.New("no room")
+	})
+	if err == nil || announced != int64(len("new core")) {
+		t.Fatalf("room: %v, announced %d", err, announced)
+	}
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Fatal("a refused binary must not be written")
 	}
 }
 
@@ -449,6 +494,57 @@ func TestUpdatePrereleaseAndGuards(t *testing.T) {
 	}
 	if readTarget(t, target) != "old core" {
 		t.Fatal("guards must change nothing")
+	}
+}
+
+// TestUpdateKeepsUPXFlavour: a packed binary updates to the packed copy of
+// the release; a release without one falls back to the plain binary.
+func TestUpdateKeepsUPXFlavour(t *testing.T) {
+	host, target := newFakeUpdateHost(t, []byte("plain core"), "1.14.3-lx.16")
+	packed, packedSum := makeArchive(t, []byte("packed core"), false)
+	upxName := "sing-box-1.14.3-lx.16-linux-arm64.upx.tar.gz"
+	sumsURL := "https://github.com/Leadaxe/sing-box-lx/releases/latest/download/SHA256SUMS"
+	plainSums := string(host.urls[sumsURL])
+	host.urls[sumsURL] = []byte(packedSum + "  " + upxName + "\n" + plainSums)
+	host.urls["https://github.com/Leadaxe/sing-box-lx/releases/download/v1.14.3-lx.16/"+upxName] = packed
+	host.running = []bool{true, true}
+	env := host.env(target)
+	env.packed = true
+	if code, err := runUpdate(env, UpdateOptions{}); err != nil || code != UpdateExitOK || readTarget(t, target) != "packed core" {
+		t.Fatalf("packed: code %d err %v\n%s", code, err, host.out.String())
+	}
+	if !strings.Contains(host.out.String(), "(linux-arm64, UPX-packed)") {
+		t.Fatal(host.out.String())
+	}
+
+	host, target = newFakeUpdateHost(t, []byte("plain core"), "1.14.3-lx.16")
+	host.running = []bool{true, true}
+	env = host.env(target)
+	env.packed = true
+	if code, err := runUpdate(env, UpdateOptions{}); err != nil || code != UpdateExitOK || readTarget(t, target) != "plain core" {
+		t.Fatalf("fallback: code %d err %v\n%s", code, err, host.out.String())
+	}
+	if !strings.Contains(host.out.String(), "falling back to the plain binary") {
+		t.Fatal(host.out.String())
+	}
+}
+
+// TestUpdateRoomForTheNewBinary: the running binary passes the early check,
+// but the new one is larger (a packed core replaced by the plain one) — its
+// tar header stops the update before the write, the old binary stays.
+func TestUpdateRoomForTheNewBinary(t *testing.T) {
+	host, target := newFakeUpdateHost(t, bytes.Repeat([]byte("x"), 64<<10), "1.14.3-lx.16")
+	env := host.env(target)
+	env.freeBytes = func(string) (uint64, error) { return 16 << 10, nil }
+	code, err := runUpdate(env, UpdateOptions{})
+	if err == nil || code != UpdateExitFailed || !strings.Contains(err.Error(), "need 70 KiB free") {
+		t.Fatalf("code %d err %v\n%s", code, err, host.out.String())
+	}
+	if readTarget(t, target) != "old core" {
+		t.Fatal("the old binary must stay")
+	}
+	if _, err := os.Stat(target + ".new"); !os.IsNotExist(err) {
+		t.Fatal("nothing may be left beside the binary")
 	}
 }
 

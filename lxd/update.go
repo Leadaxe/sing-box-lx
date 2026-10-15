@@ -4,6 +4,7 @@ package lxd
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -72,6 +73,7 @@ type updateEnv struct {
 	executable string // the running binary, symlinks resolved — the file to replace
 	version    string // C.Version
 	platform   string // release asset suffix (SPEC 127)
+	packed     bool   // the running binary is a UPX-packed copy (*.upx.tar.gz)
 	initSystem string // host's init (SPEC 127)
 	out        io.Writer
 	// fetch GETs a URL; the caller closes the body. size is the response's
@@ -202,13 +204,18 @@ type releaseAsset struct {
 	name    string // sing-box-1.14.3-lx.16-linux-arm64.tar.gz
 	sha256  string
 	version string // 1.14.3-lx.16
+	packed  bool   // the UPX-packed copy, sing-box-…-linux-arm64.upx.tar.gz
 }
 
-// parseChecksums finds the asset of platform in a SHA256SUMS file. The name
-// is matched as a whole — a substring match could hit a neighbouring asset
-// (linux-mips vs linux-mipsle).
-func parseChecksums(content, platform string) (releaseAsset, error) {
+// parseChecksums finds the asset of platform in a SHA256SUMS file, the
+// UPX-packed copy when packed. The name is matched as a whole — a substring
+// match could hit a neighbouring asset (linux-mips vs linux-mipsle, the plain
+// archive vs its .upx copy).
+func parseChecksums(content, platform string, packed bool) (releaseAsset, error) {
 	suffix := "-" + platform + ".tar.gz"
+	if packed {
+		suffix = "-" + platform + ".upx.tar.gz"
+	}
 	for _, line := range strings.Split(content, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) != 2 || len(fields[0]) != sha256.Size*2 {
@@ -222,16 +229,38 @@ func parseChecksums(content, platform string) (releaseAsset, error) {
 		if _, err := parseLxVersion(version); err != nil {
 			continue
 		}
-		return releaseAsset{name: name, sha256: strings.ToLower(fields[0]), version: version}, nil
+		return releaseAsset{name: name, sha256: strings.ToLower(fields[0]), version: version, packed: packed}, nil
+	}
+	if packed {
+		return releaseAsset{}, E.New("no UPX-packed asset for platform ", platform, " in SHA256SUMS")
 	}
 	return releaseAsset{}, E.New("no asset for platform ", platform, " in SHA256SUMS")
+}
+
+// upxMagic marks a UPX-packed executable: the loader's l_info header carries
+// it right after the ELF program headers.
+var upxMagic = []byte("UPX!")
+
+// packedWithUPX reports whether the binary at path is a UPX-packed copy. The
+// update then keeps that flavour: a router whose overlay fits only the packed
+// binary must not be handed the full-size one.
+func packedWithUPX(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	head := make([]byte, 4096)
+	n, _ := io.ReadFull(file, head)
+	return bytes.Contains(head[:n], upxMagic)
 }
 
 // extractBinary streams a .tar.gz into dst: sha256 over the compressed bytes,
 // gunzip, tar, and only the entry named sing-box is written — nothing lands
 // in a temp dir, nothing is held in memory. The stream is drained to the end
-// so the sum covers the whole archive; a mismatch removes dst.
-func extractBinary(archive io.Reader, dst, wantSum string) error {
+// so the sum covers the whole archive; a mismatch removes dst. room, when
+// set, sees the binary's size from its tar header before a byte is written.
+func extractBinary(archive io.Reader, dst, wantSum string, room func(size int64) error) error {
 	hasher := sha256.New()
 	tee := io.TeeReader(archive, hasher)
 	gunzip, err := gzip.NewReader(tee)
@@ -255,6 +284,11 @@ func extractBinary(archive io.Reader, dst, wantSum string) error {
 			return E.New("archive holds more than one sing-box")
 		}
 		found = true
+		if room != nil {
+			if err := room(header.Size); err != nil {
+				return err
+			}
+		}
 		if err := writeFileFrom(dst, reader); err != nil {
 			return err
 		}
@@ -371,11 +405,22 @@ func runUpdate(env updateEnv, options UpdateOptions) (int, error) {
 	if err != nil {
 		return UpdateExitFailed, E.Cause(err, "download SHA256SUMS")
 	}
-	asset, err := parseChecksums(sums, env.platform)
+	asset, err := parseChecksums(sums, env.platform, env.packed)
+	if err != nil && env.packed {
+		// The UPX copy is optional in CI and may be missing from a release;
+		// the plain binary still updates, the room check below guards the
+		// overlay against its full size.
+		env.say("no UPX-packed copy in this release, falling back to the plain binary")
+		asset, err = parseChecksums(sums, env.platform, false)
+	}
 	if err != nil {
 		return UpdateExitFailed, err
 	}
-	env.say("installed %s, available %s (%s)", env.version, asset.version, env.platform)
+	flavour := env.platform
+	if asset.packed {
+		flavour += ", UPX-packed"
+	}
+	env.say("installed %s, available %s (%s)", env.version, asset.version, flavour)
 	available, _ := parseLxVersion(asset.version)
 	if installed, err := parseLxVersion(env.version); err != nil {
 		env.say("installed version is not a release build; comparing nothing")
@@ -389,18 +434,27 @@ func runUpdate(env updateEnv, options UpdateOptions) (int, error) {
 		}
 	}
 
-	// 3. Room for one more copy beside the running one.
+	// 3. Room for one more copy beside the running one. The new binary's
+	// size is unknown until its tar header arrives, so the running one stands
+	// in here and the header is checked again before the write (step 4): a
+	// packed binary replaced by the plain one is 4-5x larger.
 	targetInfo, err := os.Stat(target)
 	if err != nil {
 		return UpdateExitFailed, E.Cause(err, "stat ", target)
 	}
-	need := uint64(targetInfo.Size()) + uint64(targetInfo.Size())/10
-	free, err := env.freeBytes(filepath.Dir(target))
-	if err != nil {
-		return UpdateExitFailed, E.Cause(err, "free space of ", filepath.Dir(target))
+	room := func(size int64) error {
+		need := uint64(size) + uint64(size)/10
+		free, err := env.freeBytes(filepath.Dir(target))
+		if err != nil {
+			return E.Cause(err, "free space of ", filepath.Dir(target))
+		}
+		if free < need {
+			return E.New("need ", need>>10, " KiB free beside ", target, ", have ", free>>10)
+		}
+		return nil
 	}
-	if free < need {
-		return UpdateExitFailed, E.New("need ", need>>10, " KiB free beside ", target, ", have ", free>>10)
+	if err := room(targetInfo.Size()); err != nil {
+		return UpdateExitFailed, err
 	}
 	if options.DryRun {
 		env.say("dry run: would download %s into %s and restart %s via %s", asset.name, newPath, options.Service, env.initSystem)
@@ -413,7 +467,7 @@ func runUpdate(env updateEnv, options UpdateOptions) (int, error) {
 	if err != nil {
 		return UpdateExitFailed, E.Cause(err, "download ", asset.name)
 	}
-	err = extractBinary(env.progress(body, asset.name, size), newPath, asset.sha256)
+	err = extractBinary(env.progress(body, asset.name, size), newPath, asset.sha256, room)
 	_ = body.Close()
 	if err != nil {
 		_ = os.Remove(newPath)
@@ -615,6 +669,7 @@ func Update(options UpdateOptions, out io.Writer) (int, error) {
 		executable: executable,
 		version:    C.Version,
 		platform:   releasePlatform(runtimeGOOS, runtimeGOARCH, buildSettings()),
+		packed:     packedWithUPX(executable),
 		initSystem: initSystem,
 		out:        out,
 		fetch: func(url string) (io.ReadCloser, int64, error) {
