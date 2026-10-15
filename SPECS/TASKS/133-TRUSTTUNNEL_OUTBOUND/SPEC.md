@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | Type | F (feature) — client outbound |
-| Status | N (new) — draft for discussion; Q1 (in-tree implementation), Q4 (desktop + routers) and Q5 ("TrustTunnel" label) are decided, the rest of §7 is open |
+| Status | N (new) — draft for discussion; decided: Q1 (in-tree, protocol core as a self-contained package), Q4 (desktop + routers), Q5 ("TrustTunnel" label), Q6 (the server side is written right away, task 134), tests (`lx-test/` stands, upstream `test/` left to others); the rest of §7 is open |
 | Branch | `lx` |
 | Build tag | `with_trusttunnel` |
 | Discussion | [Leadaxe/sing-box-lx#46](https://github.com/Leadaxe/sing-box-lx/issues/46) |
@@ -19,10 +19,14 @@
 A new `trusttunnel` outbound behind the `with_trusttunnel` tag: TCP as `CONNECT host:port`,
 UDP as `CONNECT _udp2` with the protocol's frames, transport HTTP/2 over TLS or HTTP/3
 over QUIC (`quic: true`). The key schema is the one already used by husi and its
-derivatives. Inbound, ICMP, `client_random` rules and `auto` H2/H3 selection are out of
-the task. The implementation is in-tree, without a third-party library (§7, Q1). The
-session between requests is governed by the ENERGY rules: no keepalive, no timers while
-idle; a stale session is rebuilt transparently by the next dial (§4, R3).
+derivatives. ICMP, `client_random` rules and `auto` H2/H3 selection are out of the task;
+the inbound is the sibling task 134 of the same feature. The implementation is in-tree,
+without a third-party library, in two layers: a self-contained protocol package with its
+own API (client and server, no imports from sing-box `adapter`/`option`, fit to be lifted
+into a `sing-*` style module or taken by husi/NekoBox as is) and thin sing-box adapters
+over it (§5, §7 Q1). The session between requests is governed by the ENERGY rules: no
+keepalive, no timers while idle; a stale session is rebuilt transparently by the next dial
+(§4, R3).
 
 ## 1. Problem and §3.1 criteria
 
@@ -34,8 +38,8 @@ idle; a stale session is rebuilt transparently by the next dial (§4, R3).
 - **(a2) Upstream does not provide it.** TrustTunnel is in none of `upstream/stable`,
   `testing` or `unstable` (checked 2026-10-15); #3723 has no maintainer response.
 - **(a3) Cheaper than the alternative.** The user's alternative is mihomo or husi. The cost
-  here is new files plus marked blocks in `include/registry.go` (3 lines) and
-  `constant/proxy.go` (2 lines); `go.mod` is not touched (§5).
+  here is new files plus marked blocks in `include/registry.go` (two registries, 6 lines)
+  and `constant/proxy.go` (type constant and label, 4 lines); `go.mod` is not touched (§5).
 - **(b) Isolation** — §5.
 - **(c) Spec Kit** — feature [018](../../FEATURES/018-TRUSTTUNNEL/FEATURE.md) was written first.
 
@@ -214,7 +218,7 @@ of this task) plus `idle_timeout`. mihomo's keys (`health-check`, `udp`, `sni`, 
 - **R7. Authorization.** Basic per §2.2, standard base64 with padding. A 407 (or the
   configured refusal code) tears the session down (specification 5.2); GOAWAY / H3 error
   `0x1F` surfaces as "authentication required", not as a bare connection close.
-- **R8. Without the tag.** Without `with_trusttunnel` the type is registered as a stub with
+- **R8. Without the tag.** Without `with_trusttunnel` both types are registered as stubs with
   the error `trusttunnel is not included in this build, rebuild with -tags with_trusttunnel`;
   the rest of the core is upstream byte for byte.
 - **R9. Builds.** The tag goes into `LX_TAGS` — desktop binaries and static router builds
@@ -235,19 +239,34 @@ of this task) plus `idle_timeout`. mihomo's keys (`health-check`, `udp`, `sni`, 
 
 ## 5. Isolation and merge cost
 
-Following the CHAIN pattern (SPEC 073), not MASQUE:
+Two layers, both in **upstream form** (owner 2026-10-15): new files are named and laid out
+the way upstream lays out a tagged protocol (`tailscale`, `cloudflared`, `naive`), with no
+`_lx` suffixes. The `// lx:` markers remain only on the lines inserted into shared upstream
+files — they are the merge seam, not the shape of the code, and a submitter strips them.
+This departs from the CHAIN pattern (SPEC 073) on purpose: chain is fork-only, this protocol
+is meant to be liftable.
 
 | What | Where | Upstream file? |
 |------|-------|----------------|
-| `TypeTrustTunnel` constant | `constant/trusttunnel_lx.go` | no |
-| Options | `option/trusttunnel_lx.go` | no |
-| Registration / stub | `include/lx_trusttunnel.go` + `include/lx_trusttunnel_stub.go` | no |
-| Registration call | `include/registry.go` — block `// lx:begin trusttunnel … // lx:end trusttunnel` | **yes, 3 lines** |
-| Protocol | `protocol/trusttunnel/` (H3 part under `with_quic` inside the package) | no |
-| UI label | `constant/proxy.go` `ProxyDisplayName` — `case` behind `// lx:begin trusttunnel` | **yes, 2 lines** (§7, Q5) |
+| **Protocol core** — client and server: session, `CONNECT` streams, `_udp2` codec, `_check`, Basic auth, errors; H3 under `with_quic` inside the package | `transport/trusttunnel/` (Q11) — imports only `sagernet/sing`, `x/net/http2`, `sagernet/quic-go`; **no** `adapter`, `option`, `log` of sing-box | no |
+| Options — `TrustTunnelOutboundOptions`, `TrustTunnelInboundOptions` | `option/trusttunnel.go` | no |
+| sing-box adapters — `outbound.go` (this task), `inbound.go` (task 134): dial fields, DNS, lifecycle, logging, mapping of options onto the core API | `protocol/trusttunnel/` | no |
+| Registration / stub | `include/trusttunnel.go` (`//go:build with_trusttunnel`) + `include/trusttunnel_stub.go` | no |
+| Registration calls | `include/registry.go` — `registerTrustTunnelInbound` / `registerTrustTunnelOutbound`, each inside `// lx:begin trusttunnel … // lx:end trusttunnel` | **yes, 6 lines** |
+| `TypeTrustTunnel` constant and UI label | `constant/proxy.go` — the constant in the type block and the `case` in `ProxyDisplayName`, each behind `// lx:begin trusttunnel` | **yes, 4 lines** (§7, Q5) |
 | Tags | `Makefile.lx` `LX_TAGS` | no (lx file) |
+| Tests | `*_test.go` next to the code, no `_lx` suffix; stands in `lx-test/trusttunnel/` | no |
 
-`include/quic.go` and `include/quic_stub.go` are not touched.
+`include/quic.go` and `include/quic_stub.go` are not touched: the H3 halves of client and
+server are gated by `with_quic` inside `transport/trusttunnel/` and `protocol/trusttunnel/`
+(a hook set from a `//go:build with_quic` file, as `naive` does with
+`ConfigureHTTP3ListenerFunc`, but inside our own package). User documentation stays in
+`docs-lx/` (R12); `docs/configuration/*` pages are the submitter's job.
+
+What a submitter takes upstream: `transport/trusttunnel/`, `option/trusttunnel.go`,
+`protocol/trusttunnel/`, `include/trusttunnel*.go` as they are; the four marked lines in
+`constant/proxy.go` and six in `include/registry.go` without the markers; plus docs and
+`test/` suites written there.
 
 ## 6. Acceptance criteria
 
@@ -271,11 +290,19 @@ Following the CHAIN pattern (SPEC 073), not MASQUE:
    succeeds within its `ctx`, with one rebuild and no error surfaced; `urltest` over the node
    shows no spurious failure.
 7. A live server (own VPS or a public test one) — `curl` through the node on desktop.
+8. Core package tests run without sing-box: client against the package's own server (task
+   134) in-process, H2 and H3, plus the official endpoint on the stand (3). Upstream-style
+   `test/` docker suites are **not** written here (owner 2026-10-15): the `test/` module does
+   not build in the fork, and that work is left to whoever submits the protocol upstream.
 
 ## 7. Open questions (for discussion)
 
-- **Q1. Implementation — decided by the owner 2026-10-15: in-tree**, in `protocol/trusttunnel/`
-  (~700–900 lines, estimate). Reused from the MASQUE outbound: the shared TLS client
+- **Q1. Implementation — decided by the owner 2026-10-15: in-tree, two layers.** The protocol
+  core is a self-contained package with its own API (§5): client and server, no imports from
+  sing-box `adapter`/`option`, written to the bar of a `sing-*` library so that it can be
+  sent upstream by someone else or taken by husi/NekoBox directly; `protocol/trusttunnel/`
+  holds only the sing-box adapters. Estimate ~700–900 lines for the client core and outbound
+  adapter. Reused from the MASQUE outbound (in the adapter): the shared TLS client
   construction (`buildH2TLSClient`), the QUIC dial through dial fields, the session lifecycle
   and `idle_timeout` machinery. **Not** reused: `transport/masque` stream code — it is a
   hand-written framer for a single extended-`CONNECT` stream with capsules, while TrustTunnel
@@ -305,7 +332,14 @@ Following the CHAIN pattern (SPEC 073), not MASQUE:
 - **Q5. `ProxyDisplayName` — decided by the owner 2026-10-15:** a marked `case` in
   `constant/proxy.go` (2 lines), the UI shows "TrustTunnel". By the same decision `chain`
   got the "Chain" label (SPEC 073 §8).
-- **Q6. Inbound.** Out of this task; whether to open a second task right away or on request.
+- **Q6. Inbound — decided by the owner 2026-10-15: written right away**, as task 134 of the
+  same feature, on the server half of the core package. The model inside sing-box is the
+  upstream `naive` inbound: an `http.Server` serving `CONNECT` with Basic auth over H2, H3
+  attached through a hook set under `with_quic` (`ConfigureHTTP3ListenerFunc`). Scope and
+  contract are in SPEC 134; the known limitation to settle there: sing-box's router gives an
+  inbound no dial result back, so the server cannot answer 502 + `X-Warning` after a failed
+  upstream connect the way the official endpoint does — it answers 200 and closes the stream,
+  as `naive` does.
 - **Q7. `idle_timeout` and the stale-session budget.** Proposal: the key as in §3, the global
   default next to `lx.masque.idle_timeout` (a shared `lx.idle_timeout` or a sibling
   `lx.trusttunnel.idle_timeout`), default 5 min; the short `CONNECT` budget on a stale session
@@ -322,7 +356,13 @@ Following the CHAIN pattern (SPEC 073), not MASQUE:
 - **Q10. Application string in `user-agent` and `app_name`.** Options: `sing-box`,
   `sing-box-lx`, with or without the version (`sing-box-lx/1.14.3-lx.21`). The endpoint
   operator sees it in logs and in SOCKS5 extended auth. Proposal — `sing-box-lx` without the
-  version.
+  version. The core package takes the string as a parameter; the adapter sets it.
+- **Q11. Where the core package lives.** Proposal — `transport/trusttunnel/` in this
+  repository, next to `transport/masque`: no `go.mod` change, no submodule, the package is
+  lifted into its own module later by copying. Alternative — a separate repository
+  `sing-trusttunnel` under the owner's account as a module dependency; cleaner for upstream
+  submission, but a fifth fork-submodule-like moving part on every sync. Either way the
+  package boundary is the same. (The file layout around it is decided: upstream form, §5.)
 
 ## 8. Removal condition
 

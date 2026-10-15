@@ -23,7 +23,15 @@ open since January 2026 with no maintainer response).
 
 The feature adds a `trusttunnel` outbound: a TrustTunnel node in the core config on a
 par with the others, carrying TCP and UDP, usable in groups, under `detour` and in
-chains.
+chains. It also adds a `trusttunnel` inbound: a sing-box instance can be the endpoint
+for the official clients and for the outbound above (owner 2026-10-15; task 134).
+
+The protocol itself is written as a self-contained package with its own API, client and
+server, with no dependency on sing-box internals, to the bar of an upstream `sing-*`
+library: it can be sent upstream by someone else or taken by husi/NekoBox as is. sing-box
+sees only thin adapters over it, and those files are laid out in upstream form
+(`option/trusttunnel.go`, `protocol/trusttunnel/`, `include/trusttunnel.go`), not with the
+fork's `_lx` naming (owner 2026-10-15; SPEC 133 §5).
 
 ## Controlled parameters
 
@@ -84,6 +92,27 @@ subscription, `tt://` link) to the keys above:
 | `client_random_prefix`, `client_random_auth_key` | none (see "Boundaries") |
 | `has_ipv6: false` | `domain_resolver: { strategy: "ipv4_only" }` on the node (the endpoint refuses IPv6 destinations) |
 | `dns_upstreams`, `name` | outside the core — the client app's job |
+
+### Server side (sketch; the contract is in task 134)
+
+```json
+{
+  "type": "trusttunnel",
+  "tag": "tt-in",
+  "listen": "::",
+  "listen_port": 443,
+  "users": [ { "username": "user", "password": "secret" } ],
+  "network": "",
+  "tls": { "enabled": true, "certificate_path": "…", "key_path": "…" }
+}
+```
+
+The inbound serves what the official clients send: TCP `CONNECT`, `CONNECT _udp2` with
+the protocol's frames, `CONNECT _check`, Basic auth with 407 + `proxy-authenticate` on
+refusal; HTTP/2 always, HTTP/3 when the build has `with_quic`. Routing, access rules and
+address filtering are sing-box's route rules, not endpoint settings. What the official
+endpoint offers beyond the tunnel — rules by `client_random`, subscription, ping and
+speed-test hosts, reverse proxy, ICMP, SOCKS5 forwarding — is out of the feature.
 
 Build: tag `with_trusttunnel`, built into the desktop binaries and the static router
 builds; the Android AAR does not carry it. Without the tag `type: trusttunnel` is
@@ -175,8 +204,10 @@ stale session (closed by the endpoint, NAT expired, device slept)
 
 ## Boundaries
 
-- **Client only.** Inbound/server is out of the feature: the protocol has its own
-  official server, and the server side is second priority under CONSTITUTION §3.1.
+- **The server is a tunnel endpoint, not the AdGuard product.** The inbound speaks the
+  protocol and hands connections to the router; everything the official endpoint does
+  around the tunnel (rules, subscription, ping, speed test, reverse proxy) stays with the
+  official endpoint.
 - **ICMP is not tunnelled.** The protocol supports `CONNECT _icmp` (echo only, without
   payload), but in the core that is a separate ICMP routing path; deferred until requested.
 - **No `upstream_protocol: auto`.** The official client races H2 against H3; here there is
@@ -200,13 +231,20 @@ stale session (closed by the endpoint, NAT expired, device slept)
 
 | Task | What | State |
 |------|------|-------|
-| [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md) | `trusttunnel` outbound: TCP + UDP over HTTP/2 and HTTP/3 | N |
+| [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md) | `trusttunnel` outbound: TCP + UDP over HTTP/2 and HTTP/3; the protocol core package (client half) | N |
+| 134 — TRUSTTUNNEL_INBOUND | `trusttunnel` inbound on the server half of the core package; SPEC not written yet | planned |
 
 ## Maintenance notes
 
 - The protocol belongs to AdGuard; the specification is `TrustTunnel/TrustTunnel/PROTOCOL.md`.
   The wire format is checked against it and against the official client
   `TrustTunnel/TrustTunnelClient`, not against third-party implementations.
+- The protocol core package must stay free of sing-box imports (`adapter`, `option`, `log`):
+  that boundary is what makes it liftable into its own module and usable by other clients.
+  A review that finds a sing-box type in the core is a review that fails.
+- Tests: unit tests in the core package (client against the package's own server), stands in
+  `lx-test/` against the official endpoint. Upstream-style `test/` suites are left to whoever
+  submits the protocol upstream (owner 2026-10-15).
 - The server compares the authorization byte for byte with standard base64 **with
   padding** of `user:pass`; any deviation in the encoding is a 407 with correct credentials.
 - The magic `:authority` values (`_udp2`, `_check`, `_icmp`) are compared literally by the
