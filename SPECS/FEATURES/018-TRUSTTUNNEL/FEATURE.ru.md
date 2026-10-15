@@ -1,6 +1,8 @@
 # FEATURE 018 — TRUSTTUNNEL — клиент протокола TrustTunnel (AdGuard)
 
 > 🌐 English version: **[FEATURE.md](FEATURE.md)**.
+>
+> **Язык.** Фича пришла снаружи (PR [#45](https://github.com/Leadaxe/sing-box-lx/pull/45), обсуждение в [#46](https://github.com/Leadaxe/sing-box-lx/issues/46)), поэтому основной язык её документов — английский. Русская копия (`*.ru.md`) лежит рядом с каждым файлом, чтобы фичу было проще сопровождать.
 
 | Поле | Значение |
 |------|----------|

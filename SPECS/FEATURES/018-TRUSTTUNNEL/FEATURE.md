@@ -1,6 +1,8 @@
 # FEATURE 018 — TRUSTTUNNEL — TrustTunnel protocol client (AdGuard)
 
 > 🌐 Русская версия: **[FEATURE.ru.md](FEATURE.ru.md)**.
+>
+> **Language.** This feature came from outside (PR [#45](https://github.com/Leadaxe/sing-box-lx/pull/45), discussion in [#46](https://github.com/Leadaxe/sing-box-lx/issues/46)), so its documents use English as the primary language. The Russian copy (`*.ru.md`) sits next to each file to make the feature easier to maintain.
 
 | Field | Value |
 |-------|-------|
