@@ -439,6 +439,7 @@ jobs:
       # packed binary ran `version` under qemu-user. Old router kernels may still
       # reject the stub (5.2.1 verified live on Keenetic 4.9-ndm-5, mipsel).
       - name: UPX copy
+        id: upx
         if: matrix.upx && !contains(steps.ver.outputs.version, '-rc.') && !contains(steps.ver.outputs.version, '-alpha.') && !contains(steps.ver.outputs.version, '-beta.')
         continue-on-error: true
         env:
@@ -447,7 +448,7 @@ jobs:
         run: |
           set -xeuo pipefail
           NAME="sing-box-${{ steps.ver.outputs.version }}-${{ matrix.asset }}"
-          curl -fsSL -o upx.tar.xz "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz"
+          curl -fsSL --retry 3 --retry-all-errors -o upx.tar.xz "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz"
           echo "${UPX_SHA256}  upx.tar.xz" | sha256sum -c -
           tar -xJf upx.tar.xz
           UPX="$PWD/upx-${UPX_VERSION}-amd64_linux/upx"
@@ -459,6 +460,11 @@ jobs:
           tar -C stage-upx -czf upx.tar.gz "$NAME"
           mv upx.tar.gz "dist/$NAME.upx.tar.gz"
           ls -la dist
+
+      # continue-on-error leaves the job green; surface the lost copy in the run summary.
+      - name: UPX copy failed
+        if: steps.upx.outcome == 'failure'
+        run: echo "::warning::UPX copy for ${{ matrix.asset }} failed — the release ships without its .upx.tar.gz"
 
       - uses: actions/upload-artifact@v6
         with:
@@ -634,7 +640,7 @@ jobs:
 
           **Linux — big-endian MIPS** (OpenWrt \`mips_24kc\`, e.g. Atheros AR93xx): \`linux-mips-softfloat\` — pure-Go static build **without NaïveProxy** (Chromium/cronet has no big-endian MIPS toolchain); everything else matches the desktop tag set.
 
-          **Linux — UPX-packed copies** (stable releases only): \`linux-arm64.upx.tar.gz\` and \`linux-mipsle-softfloat.upx.tar.gz\` — the same binary packed with UPX (\`--best --lzma\`, version pinned in the workflow), ~4× smaller, for routers with a small flash overlay and no USB. The binary unpacks itself into RAM at every start: +15–20 MB RSS and a slower start (seconds on mipsle). Some older router kernels refuse the packed binary — if it does not start, use the plain archive.
+          **Linux — UPX-packed copies** (stable releases only): \`linux-arm64.upx.tar.gz\` and \`linux-mipsle-softfloat.upx.tar.gz\` — the same binary packed with UPX (\`--best --lzma\`, version pinned in the workflow), for routers with a small flash overlay and no USB: ~17 MB on flash instead of 75–90 MB (the download itself is only ~1.6× smaller). The binary unpacks itself into RAM at every start: about +17 MB RSS (measured on x86) and a cold start of 15–20 s on mipsle. Some older router kernels refuse the packed binary — if it does not start, use the plain archive. \`sing-box lxd update\` always installs the plain binary: on a small overlay it stops for lack of space, on a larger one it replaces the packed binary with the full-size one — download the \`.upx\` archive again by hand instead.
 
           </details>
 
