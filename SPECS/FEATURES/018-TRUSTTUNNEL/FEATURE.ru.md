@@ -8,7 +8,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | `with_trusttunnel` |
-| Состояние | N — черновик на обсуждение ([#46](https://github.com/Leadaxe/sing-box-lx/issues/46)), задача [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.ru.md) |
+| Состояние | Экспериментальная — в релизных бинарях с lx.21 (`LX_TAGS` с 2026-10-16), интерфейс ещё может измениться; обсуждение [#46](https://github.com/Leadaxe/sing-box-lx/issues/46), задачи [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.ru.md), [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.ru.md) |
 
 ## Назначение
 
@@ -88,7 +88,7 @@ Surge он уже есть, в апстриме sing-box — нет (запро�
 | `skip_verification` | `tls.insecure` |
 | `upstream_protocol` `http2` / `http3` | `quic: false` / `true` |
 | `anti_dpi` | `tls.fragment` (см. «Границы») |
-| `tls_profile` клиента | `tls.utls.fingerprint` |
+| `tls_profile` клиента | `tls.utls.fingerprint`, только HTTP/2. Рекомендуемая форма для H2 при любом профиле: `"utls": { "enabled": true, "fingerprint": "chrome" }`. С `quic: true` uTLS недоступен (ошибка старта), H3 остаётся с отпечатком quic-go |
 | `client_random_prefix`, `client_random_auth_key` | нет (см. «Границы») |
 | `has_ipv6: false` | `domain_resolver: { strategy: "ipv4_only" }` на узле (endpoint отказывает IPv6-адресатам) |
 | `dns_upstreams`, `name` | вне ядра — забота клиента-приложения |
@@ -114,8 +114,9 @@ Inbound обслуживает то, что шлют официальные кл
 Что официальный endpoint даёт сверх туннеля — правила по `client_random`, подписка,
 ping- и speedtest-хосты, reverse proxy, ICMP, SOCKS5-форвардинг — вне фичи.
 
-Build: тег `with_trusttunnel`, собирается в desktop-бинари и в статические сборки
-для роутеров; в Android AAR его нет. Без тега `type: trusttunnel` отвергается при
+Build: тег `with_trusttunnel`, в `LX_TAGS` с 2026-10-16 — собирается в desktop-бинари и в
+статические сборки для роутеров как экспериментальная фича (тип `trusttunnel` есть,
+интерфейс ещё может измениться); в Android AAR его нет. Без тега `type: trusttunnel` отвергается при
 чтении конфига понятной ошибкой, остальное ядро ведёт себя как апстрим. В UI
 (Clash API `type`, libbox) узел подписан «TrustTunnel».
 
@@ -201,6 +202,15 @@ CONNECT _udp2 ─► кадры: длина | src | dst | имя приложе�
   ждёт свободный поток в пределах своего дедлайна.
 - **Смена сети сбрасывает сессию**, иначе она висит до idle-таймаута QUIC
   или TCP; миграция QUIC на endpoint'е по умолчанию выключена.
+- **Сервер не признаётся, что он прокси.** Официальный endpoint на любой не-`CONNECT`
+  запрос по умолчанию отвечает 407 с `proxy-authenticate`, то есть сам сообщает активному
+  зонду, что здесь прокси (оператор может переключить на 403/404/405 или поставить перед
+  ним reverse proxy с настоящим сайтом). Наш inbound на любой не-`CONNECT` запрос и на
+  `CONNECT _icmp` отвечает 404 с пустым телом без `proxy-authenticate`; 407 уходит только
+  на `CONNECT` с неверными учётными данными. Зонд видит пустой веб-сервер и отличить его от
+  настоящего нечем. Чего протокол скрыть не может, лежит на проводе: потоки `CONNECT`
+  несут TLS-в-TLS без паддинга, а у Go-стека HTTP/2 и QUIC свой отпечаток (SETTINGS,
+  порядок псевдозаголовков, QUIC Initial); `tls.utls` закрывает только ClientHello HTTP/2.
 
 ## Границы
 
@@ -228,13 +238,18 @@ CONNECT _udp2 ─► кадры: длина | src | dst | имя приложе�
   забота лаунчера и LxBox, ядро получает готовый JSON.
 - **Нет мультиплексирования сверх одной сессии.** Все потоки узла идут в одно
   HTTP/2- или HTTP/3-соединение; пула и ротации нет.
+- **Отпечаток похож на Chrome лишь частично.** На H2 ClientHello — uTLS Chrome при
+  `tls.utls`, значения SETTINGS HTTP/2 и окно соединения — как у Chrome; порядок SETTINGS,
+  лишний `MAX_FRAME_SIZE`, порядок псевдозаголовков и HEADERS без приоритета остаются как в
+  Go (`x/net/http2` без форка, SPEC 133 R13). H3 целиком на quic-go. Паддинга в протоколе
+  нет, поэтому TLS-in-TLS проксируемого HTTPS остаётся виден.
 
 ## Задачи фичи
 
 | Задача | Что | Статус |
 |--------|-----|--------|
-| [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.ru.md) | Outbound `trusttunnel`: TCP + UDP поверх HTTP/2 и HTTP/3; пакет-ядро протокола (клиентская половина) | N |
-| [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.ru.md) | Inbound `trusttunnel` на серверной половине пакета-ядра: Basic auth, TCP-`CONNECT`, потоки `_udp2` в роутер, `_check`; HTTP/2 + HTTP/3 | N |
+| [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.ru.md) | Outbound `trusttunnel`: TCP + UDP поверх HTTP/2 и HTTP/3; пакет-ядро протокола (клиентская половина) | O |
+| [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.ru.md) | Inbound `trusttunnel` на серверной половине пакета-ядра: Basic auth, TCP-`CONNECT`, потоки `_udp2` в роутер, `_check`; HTTP/2 + HTTP/3 | O |
 
 ## Особенности сопровождения
 

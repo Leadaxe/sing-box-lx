@@ -17,6 +17,7 @@
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) обфускация | `with_awg` | промо-поля на `wireguard` **endpoint** | [§2](#2-amneziawg-203x-awg2-awg3) |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic` + `with_gvisor` | `outbounds[].type: "masque"` | [§3](#3-masque-outbound-connect-ip--warp) |
 | **REALITY**-клиент (гибридный key share, `key_share`, фрагментация) и **VLESS `encryption`** | — (REALITY внутри `with_utls`) | блок `tls` у TLS-over-TCP **outbound**; плоское поле `encryption` у `vless` | [§5](#5-reality-и-vless-encryption) |
+| **TrustTunnel** outbound и inbound (протокол AdGuard VPN), экспериментально | `with_trusttunnel` (+ `with_quic` для HTTP/3), в `LX_TAGS` с lx.21, не в AAR | `outbounds[].type` / `inbounds[].type: "trusttunnel"` | [§6](#6-trusttunnel-outbound-и-inbound-экспериментально) |
 
 Плюс [§4](#4-grpc-транспорт) — **gRPC**-транспорт, он апстримный, не наш, и попал
 сюда ради одного места, где у нашего поведения есть downstream-заметки по
@@ -48,6 +49,7 @@ make -f Makefile.lx lx-build
 - XHTTP без `with_xhttp` → `XHTTP transport requires the with_xhttp build tag`
 - AWG-поле без `with_awg` → `AmneziaWG (awg) support is not included in this build, rebuild with -tags with_awg`
 - `masque` outbound без `with_quic`+`with_gvisor` → тип `masque` не зарегистрирован (`unknown outbound type: masque`)
+- `trusttunnel` без `with_trusttunnel` → `trusttunnel is not included in this build, rebuild with -tags with_trusttunnel` (только в своей сборке без тега: `lx-build` несёт его с lx.21, Android AAR — нет, §6)
 
 ---
 
@@ -99,6 +101,16 @@ make -f Makefile.lx lx-build
   - [5.5 Поле `encryption` у `vless`](#55-поле-encryption-у-vless)
   - [5.6 Ошибки валидации `encryption` (дословно)](#56-ошибки-валидации-encryption-дословно)
   - [5.7 Примеры](#57-примеры)
+- [§6 TrustTunnel outbound и inbound (экспериментально)](#6-trusttunnel-outbound-и-inbound-экспериментально)
+  - [6.1 Что это](#61-что-это)
+  - [6.2 Поля outbound](#62-поля-outbound)
+  - [6.3 Проверки при старте (дословно)](#63-проверки-при-старте-дословно)
+  - [6.4 Поведение сессии](#64-поведение-сессии)
+  - [6.5 Соответствие ключей outbound](#65-соответствие-ключей-outbound)
+  - [6.6 Поля inbound](#66-поля-inbound)
+  - [6.7 Inbound: что нужно знать оператору](#67-inbound-что-нужно-знать-оператору)
+  - [6.8 Соответствие ключей inbound](#68-соответствие-ключей-inbound)
+  - [6.9 Примеры](#69-примеры)
 
 ---
 
@@ -1262,6 +1274,241 @@ VLESS + `encryption` поверх WebSocket без внешнего TLS:
 
 ---
 
+# 6. TrustTunnel outbound и inbound (экспериментально)
+
+> 🧪 **Экспериментально.** Входит в релизные desktop- и роутерные бинари с lx.21 (тег
+> `with_trusttunnel` в `LX_TAGS`; HTTP/3 нужен ещё `with_quic`, он в наборе). Тип
+> `trusttunnel` поставляется, но его интерфейс ещё может меняться между релизами. В
+> Android AAR тега нет. Своя сборка без тега отвергает оба типа при загрузке конфига:
+> `trusttunnel is not included in this build, rebuild with -tags with_trusttunnel`.
+
+## 6.1 Что это
+
+TrustTunnel — протокол AdGuard VPN (Apache-2.0, `PROTOCOL.md` v1.0): HTTP/2 поверх TLS
+или HTTP/3 поверх QUIC к настоящему домену, внутри — прокси-`CONNECT` и Basic-авторизация.
+Каждое TCP-соединение — стрим `CONNECT host:port`, каждая UDP-сессия — стрим
+`CONNECT _udp2` с кадрами датаграмм; все стримы узла идут в одной сессии. **Outbound**
+`trusttunnel` работает с официальным endpoint (`trusttunnel_endpoint`) и с нашим inbound;
+**inbound** `trusttunnel` обслуживает официальных клиентов и наш outbound. Фича:
+[018-TRUSTTUNNEL](../SPECS/FEATURES/018-TRUSTTUNNEL/FEATURE.ru.md).
+
+## 6.2 Поля outbound
+
+| Поле | Тип | По умолчанию | Смысл |
+|------|-----|--------------|-------|
+| `server`, `server_port` | string, number | обязательно | Адрес endpoint. IP-литерал требует `tls.server_name` (§6.3) |
+| `username`, `password` | string | обязательно | Уходят как `proxy-authorization: Basic` (стандартный base64 с паддингом) на каждом `CONNECT` |
+| `network` | `tcp` \| `udp` \| список | оба | Какие сети несёт узел |
+| `quic` | bool | `false` | `false` — HTTP/2 поверх TLS/TCP, `true` — HTTP/3 поверх QUIC (нужен `with_quic`) |
+| `quic_congestion_control` | `bbr` \| `cubic` \| `reno` | `bbr` | Без `quic` игнорируется |
+| `health_check` | bool | `false` | `CONNECT _check` перед dial в сессии, молчавшей дольше 30 с (дедлайн 7 с); никогда не по таймеру |
+| `idle_timeout` | duration | `lx.trusttunnel.idle_timeout`, иначе `5m` | Локально закрыть сессию после стольких без активности и без открытых стримов; `"0"` отключает закрытие |
+| `tls` | блок `tls` sing-box | обязательно, `enabled: true` | `server_name`, `certificate`, `insecure`, `utls`, `fragment`, `ech`. ALPN: пусто → `h2` (`h3` при `quic`) |
+| Dial Fields | — | — | `detour`, `bind_interface`, `domain_resolver`, … |
+
+Глобальный дефолт — в корневом блоке `lx` (нет ключа или `0` — 5 минут; собственный
+`idle_timeout` узла сильнее, включая явный `"0"`):
+
+```json
+{ "lx": { "trusttunnel": { "idle_timeout": "10m" } } }
+```
+
+**Рекомендуемая форма TLS для HTTP/2** — uTLS с отпечатком Chrome:
+
+```json
+"tls": { "enabled": true, "server_name": "vpn.example.com", "utls": { "enabled": true, "fingerprint": "chrome" } }
+```
+
+С `quic: true` uTLS недоступен (`uTLS is not supported with quic` при старте), и HTTP/3
+остаётся с отпечатком quic-go: его QUIC Initial, ClientHello и SETTINGS HTTP/3 — как в Go.
+На HTTP/2 значения SETTINGS сессии и окно соединения — как у Chrome
+(`HEADER_TABLE_SIZE 65536`, `ENABLE_PUSH 0`, `INITIAL_WINDOW_SIZE 6291456`,
+`MAX_HEADER_LIST_SIZE 262144`, `WINDOW_UPDATE 15663105`), с uTLS и без него. Не покрыто:
+порядок SETTINGS, лишний `MAX_FRAME_SIZE`, порядок псевдозаголовков и HEADERS без
+приоритета остаются как в Go (`x/net/http2` без форка), а паддинга в протоколе нет, поэтому
+TLS-in-TLS проксируемого HTTPS остаётся виден анализу трафика.
+
+## 6.3 Проверки при старте (дословно)
+
+| Условие | Ошибка |
+|---------|--------|
+| `tls` нет или `enabled: false` | `TLS required` |
+| `server` — IP, `tls.server_name` пуст | `tls.server_name is required when server is an IP address: the server routes by SNI and drops a ClientHello without it` |
+| пустой `username` / `password` | `missing username` / `missing password` |
+| `icmp` в `network` | `outbounds[N].network: unknown network: icmp` (разбор конфига) |
+| `quic: true` + `tls.utls.enabled` | `uTLS is not supported with quic` |
+| неизвестный congestion control | `unknown quic_congestion_control: <значение>` |
+| `tls.alpn` задан без `h2` (`h3` при `quic`) | `tls.alpn must contain h2` |
+| `quic: true` в сборке без `with_quic` | `trusttunnel: HTTP/3 requires the with_quic build tag` |
+| `lx.trusttunnel.idle_timeout` < 0 | `lx.trusttunnel.idle_timeout must be >= 0` |
+
+## 6.4 Поведение сессии
+
+- **Dial ждёт ответа сервера.** 200 — соединение; всё остальное — ошибка dial с кодом и
+  `X-Warning`, например
+  `trusttunnel: server responded 502 Bad Gateway: 300 - Connection failed for some reason`
+  или `trusttunnel: server responded 407 Proxy Authentication Required`. 403/404/405/407
+  вдобавок рвут сессию.
+- **Ни keepalive, ни таймеров в простое.** Нет HTTP/2 PING, нет QUIC keepalive. QUIC
+  idle timeout HTTP/3-сессии равен idle-окну (не больше 600 с — это
+  `client_listener_timeout_secs` endpoint). Сессия, молчавшая дольше idle-окна, считается
+  устаревшей: следующий `CONNECT` в ней получает 3 с, затем сессия пересобирается и
+  `CONNECT` повторяется один раз в пределах дедлайна вызывающего.
+- **Одна сессия на узел.** На пределе стримов endpoint (1000 на HTTP/2, 4096 на HTTP/3)
+  dial ждёт свободный стрим в пределах своего дедлайна; вторая сессия не открывается.
+- **Смена сети** (`InterfaceUpdated`) сбрасывает сессию: миграция QUIC на endpoint
+  выключена.
+- **Асимметрия DNS.** TCP-домены уходят на endpoint без резолва и резолвятся там. UDP-кадры
+  несут только IP, поэтому домен UDP-назначения резолвится локально `domain_resolver` узла
+  (иначе `route.default_domain_resolver`, иначе DNS-правилами). Чтобы UDP-DNS не утекал,
+  резолвер стоит пустить через сам узел (`detour`).
+- **IPv6 внутри `::/96`** (включая `::1`) в UDP-кадре не передаётся: 12 нулевых байт в
+  формате кадра означают IPv4, официальный endpoint декодирует так же.
+- Узел представляется как `user-agent: <platform> sing-box-lx` (`Mac`, `Windows`, `Linux`,
+  `Android`, `iOS`) и шлёт `sing-box-lx` именем приложения в каждом UDP-кадре.
+
+## 6.5 Соответствие ключей outbound
+
+Три источника рядом: официальный CLI-клиент (`trusttunnel_client` 1.1.11, таблица
+`[endpoint]` его TOML; экспорт endpoint, подписка и ссылка `tt://` несут те же ключи), форк
+sing-box-extended 2.7.2 (ключи его
+[`examples/trusttunnel/client.json`](https://github.com/shtorm-7/sing-box-extended/tree/v1.14.1-extended-2.7.2/examples/trusttunnel))
+и этот форк. sing-box отвергает незнакомые ключи при загрузке, поэтому конфиг extended
+перед стартом здесь нужно переименовать по таблице.
+
+| Официальный клиент (TOML) | sing-box-extended 2.7.2 | sing-box-lx | Примечание |
+|---------------------------|-------------------------|-------------|------------|
+| `addresses = ["ip:port"]` | `server`, `server_port` | `server`, `server_port` | Узел на адрес. IP в `server` требует `tls.server_name` |
+| `hostname` (`custom_sni`, если задан) | `tls.server_name` | `tls.server_name` | Endpoint маршрутизирует по SNI |
+| `username`, `password` | `username`, `password` | `username`, `password` | Пустой `password` здесь — ошибка старта |
+| — | `network` | `network` | `tcp`, `udp` или обе (по умолчанию) |
+| `upstream_protocol = "http2"` / `"http3"` | `quic: false` / `true` | `quic: false` / `true` | `auto` клиента (гонка H2/H3) здесь — `urltest`-группа из двух узлов |
+| — | `congestion_controller` (`bbr`, `bbr_standard`, `bbr2`, `bbr2_variant`, `cubic`, `reno`) | `quic_congestion_control` (`bbr`, `cubic`, `reno`) | Имя как у апстримного outbound `naive`; ключ переименовать |
+| — | `cwnd` | — | Не поддерживается; ключ убрать |
+| — | `multiplex` (`max_connections`, `min_streams`, `max_streams`) | — | Одна сессия на узел по замыслу (§6.4); ключ убрать |
+| — (клиент проверяет по событиям сам) | `health_check` | `health_check` | Здесь: `CONNECT _check` только по событиям, никогда по таймеру |
+| — | — | `idle_timeout` (по умолчанию `5m`, `lx.trusttunnel.idle_timeout`) | Только в этом форке |
+| `tls_profile` (`chrome`, `safari`, `firefox`, …) | `tls.utls.fingerprint` | `tls.utls.fingerprint` | Только HTTP/2; рекомендуется `chrome` (§6.2); с `quic: true` — ошибка старта |
+| `certificate` (PEM) | `tls.certificate` / `certificate_path` | `tls.certificate` / `certificate_path` | Ссылка `tt://` несёт DER-цепочку; импортёр конвертирует в PEM |
+| `skip_verification` | `tls.insecure` | `tls.insecure` | |
+| `anti_dpi` | `tls.fragment` | `tls.fragment` | Ближайший встроенный аналог, не та же нарезка |
+| `has_ipv6 = false` | `domain_resolver.strategy: "ipv4_only"` | `domain_resolver.strategy: "ipv4_only"` | Endpoint отказывает IPv6-адресатам |
+| `client_random` (в экспорте: `client_random_prefix`), `client_random_auth_key` | — | — | Не поддерживается: сервер с такими правилами роняет ClientHello |
+| `dns_upstreams`, `vpn_mode`, `exclusions`, `killswitch_*`, `post_quantum_group_enabled`, `[listener.*]`, `name` | `dns`, `route`, `inbounds` | `dns`, `route`, `inbounds` | Не дело узла: DNS, маршрутизация и локальные inbound'ы sing-box |
+
+## 6.6 Поля inbound
+
+| Поле | Тип | По умолчанию | Смысл |
+|------|-----|--------------|-------|
+| Listen Fields | — | — | `listen`, `listen_port`, … |
+| `users` | `[{username, password}]` | обязательно | Пустой список или пустое поле в записи — ошибка старта (`missing users`, `users[N]: missing password`) |
+| `network` | `tcp` \| `udp` \| список | оба | **Какие слушатели открыть**, как у апстримного `naive` inbound: `tcp` — HTTP/2 поверх TLS, `udp` — HTTP/3 поверх QUIC. `udp` без `with_quic`: ошибка старта, если он один, предупреждение (`HTTP/3 disabled: …`), если оба. Туннелируемые сети — всегда TCP и UDP; ограничивать — route-правилами |
+| `quic_congestion_control` | `bbr` \| `cubic` \| `reno` | `bbr` | Неизвестный — ошибка старта |
+| `tls` | inbound-блок `tls` sing-box | обязательно, `enabled: true` | ALPN ставит inbound: `h2` впереди на TCP, `h3` в конце на UDP |
+
+Каждый TCP `CONNECT` приходит в роутер с `inbound`, `user`, `source` (клиент),
+`destination` (домен остаётся доменом) и `origin_destination` (адрес слушателя); каждый
+UDP-поток стрима `_udp2` — packet-соединением с источником из кадра (или адресом сессии,
+когда клиент шлёт нулевой источник).
+
+## 6.7 Inbound: что нужно знать оператору
+
+- **Ответ на `CONNECT` идёт после dial.** 200 уходит на первом чтении соединения роутером,
+  провал dial — 502 + `X-Warning` (`300 - Connection failed for some reason`, `301 - …` на
+  недоступный хост, `302 - …` на таймаут), ровно как отвечает официальный endpoint. С
+  route-действием `sniff` роутер читает до dial: 200 уходит раньше, и поздний провал dial
+  выглядит как обычное закрытие стрима.
+- **Неверные учётные данные** → 407 + `proxy-authenticate: Basic realm=Authorization Required`;
+  в логе — адрес источника, учётные данные никогда.
+- **Это не продукт AdGuard.** Нет правил по `client_random`, нет подписки, нет
+  ping/speed-test-хостов, нет reverse proxy, нет ICMP (`CONNECT _icmp` → 404). Любой
+  не-туннельный запрос (браузер, сканер) получает 404 с пустым телом и без
+  `proxy-authenticate`. HTTP/1.1 не обслуживается.
+- **`allow_private_network_connections = false` endpoint** здесь — route-правило:
+
+```json
+{ "route": { "rules": [ { "inbound": "tt-in", "ip_is_private": true, "action": "reject" } ] } }
+```
+
+## 6.8 Соответствие ключей inbound
+
+Официальный endpoint (`trusttunnel_endpoint` 1.1.0: `vpn.toml`, `credentials.toml`,
+`hosts.toml`), sing-box-extended 2.7.2 (ключи его
+[`examples/trusttunnel/server.json`](https://github.com/shtorm-7/sing-box-extended/tree/v1.14.1-extended-2.7.2/examples/trusttunnel))
+и этот форк.
+
+| Официальный endpoint (TOML) | sing-box-extended 2.7.2 | sing-box-lx | Примечание |
+|-----------------------------|-------------------------|-------------|------------|
+| `listen_address = "0.0.0.0:443"` | `listen`, `listen_port` | `listen`, `listen_port` | |
+| есть `[listen_protocols.http2]` / `[listen_protocols.quic]` | `network: tcp` / `udp` | `network: tcp` / `udp` | Какие слушатели открыть; по умолчанию оба. Туннелируемые сети — всегда TCP и UDP |
+| `credentials.toml` `[[client]]` `username`, `password` | `users[].name`, `users[].password` | `users[].username`, `users[].password` | `username`, как у всех апстримных inbound'ов; `name` переименовать |
+| `hosts.toml` `[[main_hosts]]` `hostname`, `cert_chain_path`, `private_key_path` | `tls.server_name`, `certificate_path`, `key_path` | `tls.server_name`, `certificate_path`, `key_path` | |
+| — | `tls.alpn: ["h2", "h3"]` | ставит inbound | `h2` на TCP, `h3` на UDP; явный список сохраняется и дополняется |
+| — | `congestion_controller` | `quic_congestion_control` (`bbr`, `cubic`, `reno`) | Ключ переименовать |
+| — | `cwnd` | — | Не поддерживается; ключ убрать |
+| `client_listener_timeout_secs` | — | фиксировано 600 с | Предел простоя сессии, как дефолт endpoint |
+| `max_concurrent_streams`, `initial_max_streams_bidi` | — | фиксировано 1000 (H2) / 4096 (H3) | Дефолты endpoint |
+| `allow_private_network_connections = false` | — | route-правило `ip_is_private` + `action: reject` | Пример в §6.7 |
+| `auth_failure_status_code` | — | фиксировано: 407 на `CONNECT`, 404 на остальное | |
+| `ipv6_available = false` | — | route-правила / `strategy` DNS | |
+| `udp_connections_timeout_secs` | — | UDP-таймаут sing-box | `udp_timeout` правила `route-options`, по умолчанию 5 мин |
+| `rules_file` (правила `client_random`), `[reverse_proxy]`, `[icmp]`, `[metrics]`, `[subscription]`, хосты ping / speed-test | — | — | Не поддерживается |
+
+## 6.9 Примеры
+
+### Outbound
+
+```json
+{
+  "type": "trusttunnel",
+  "tag": "tt-node",
+  "server": "vpn.example.com",
+  "server_port": 443,
+  "username": "user",
+  "password": "secret",
+  "network": "",
+  "quic": false,
+  "quic_congestion_control": "bbr",
+  "health_check": false,
+  "idle_timeout": "5m",
+  "tls": {
+    "enabled": true,
+    "server_name": "vpn.example.com",
+    "utls": { "enabled": true, "fingerprint": "chrome" }
+  }
+}
+```
+
+### Inbound
+
+```json
+{
+  "type": "trusttunnel",
+  "tag": "tt-in",
+  "listen": "::",
+  "listen_port": 443,
+  "users": [
+    { "username": "user", "password": "secret" }
+  ],
+  "network": "",
+  "quic_congestion_control": "bbr",
+  "tls": {
+    "enabled": true,
+    "server_name": "vpn.example.com",
+    "certificate_path": "/etc/sing-box/fullchain.pem",
+    "key_path": "/etc/sing-box/key.pem"
+  }
+}
+```
+
+Loopback-стенд с официальными endpoint и клиентом —
+[`lx-test/trusttunnel/`](../lx-test/trusttunnel/README.md). Официальный клиент соединяется
+с loopback-назначениями напрямую, мимо туннеля, поэтому `check-in` обращается к origin по
+имени `localhost` (`curl --socks5-hostname`): домен уходит в `CONNECT` и резолвится уже нашим
+inbound.
+
+---
+
 ## См. также
 
 - **[lx-config.ru.md](lx-config.ru.md)** — обзор downstream-фич, который эти главы
@@ -1275,4 +1522,5 @@ VLESS + `encryption` поверх WebSocket без внешнего TLS:
   включая бюджет MTU.
 - Feature-спеки: [XHTTP](../SPECS/FEATURES/002-XHTTP/), [AWG](../SPECS/FEATURES/003-AWG/),
   [MASQUE/WARP](../SPECS/FEATURES/009-MASQUE_WARP/), [REALITY](../SPECS/FEATURES/017-REALITY/),
-  [VLESS_ENCRYPTION](../SPECS/FEATURES/012-VLESS_ENCRYPTION/).
+  [VLESS_ENCRYPTION](../SPECS/FEATURES/012-VLESS_ENCRYPTION/),
+  [TRUSTTUNNEL](../SPECS/FEATURES/018-TRUSTTUNNEL/).

@@ -19,6 +19,8 @@ import (
 type LXOptions struct {
 	WG     *LXWGOptions     `json:"wg,omitempty"`
 	MASQUE *LXMASQUEOptions `json:"masque,omitempty"`
+	// TrustTunnel holds the trusttunnel outbound knobs (lx: SPEC 133).
+	TrustTunnel *LXTrustTunnelOptions `json:"trusttunnel,omitempty"`
 	// MTUAlign is the path-MTU alignment policy for nodes above IP tunnels
 	// (lx: SPEC 120): a mode string, or an object with the mode and the tags
 	// to leave alone. Absent = "clamp".
@@ -56,6 +58,14 @@ type LXMASQUEOptions struct {
 	// IdleTimeout is the global default idle window for every masque outbound
 	// without its own idle_timeout. A node's own key wins, including an
 	// explicit "0" there, which keeps that node's tunnel up.
+	IdleTimeout badoption.Duration `json:"idle_timeout,omitempty"`
+}
+
+// LXTrustTunnelOptions holds the trusttunnel outbound knobs (lx: SPEC 133).
+type LXTrustTunnelOptions struct {
+	// IdleTimeout is the global default idle window for every trusttunnel
+	// outbound without its own idle_timeout; 0 / absent = 5 minutes. A node's
+	// own key wins, including an explicit "0" there, which disables teardown.
 	IdleTimeout badoption.Duration `json:"idle_timeout,omitempty"`
 }
 
@@ -130,6 +140,9 @@ const (
 type LXResolved struct {
 	WG     LXWGResolved
 	MASQUE LXMASQUEResolved
+	// TrustTunnel carries the raw global window: 0 means "unset", the outbound
+	// applies its own default.
+	TrustTunnel LXTrustTunnelResolved
 	// MTUAlign always carries a mode: "clamp" when the key is absent.
 	MTUAlign LXMTUAlignResolved
 }
@@ -149,6 +162,10 @@ type LXWGResolved struct {
 }
 
 type LXMASQUEResolved struct {
+	IdleTimeout time.Duration
+}
+
+type LXTrustTunnelResolved struct {
 	IdleTimeout time.Duration
 }
 
@@ -172,6 +189,14 @@ func (r *LXResolved) MASQUEOrZero() LXMASQUEResolved {
 		return LXMASQUEResolved{}
 	}
 	return r.MASQUE
+}
+
+// TrustTunnelOrZero returns the trusttunnel values, or all-unset when r is nil.
+func (r *LXResolved) TrustTunnelOrZero() LXTrustTunnelResolved {
+	if r == nil {
+		return LXTrustTunnelResolved{}
+	}
+	return r.TrustTunnel
 }
 
 // MTUAlignOrDefault returns the mtu_align policy, or the default (clamp,
@@ -245,7 +270,7 @@ func ResolveLX(options *Options) (*LXResolved, []string, error) {
 		wg.IdleTeardown = &value
 	}
 
-	resolved, err := resolveLXValues(wg, lx.MASQUE, lx.MTUAlign)
+	resolved, err := resolveLXValues(wg, lx.MASQUE, lx.TrustTunnel, lx.MTUAlign)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -258,10 +283,13 @@ func ResolveLX(options *Options) (*LXResolved, []string, error) {
 	if lx.MASQUE != nil && *lx.MASQUE == (LXMASQUEOptions{}) {
 		lx.MASQUE = nil
 	}
+	if lx.TrustTunnel != nil && *lx.TrustTunnel == (LXTrustTunnelOptions{}) {
+		lx.TrustTunnel = nil
+	}
 	if lx.MTUAlign != nil && lx.MTUAlign.Mode == "" && len(lx.MTUAlign.Except) == 0 {
 		lx.MTUAlign = nil
 	}
-	if lx.WG == nil && lx.MASQUE == nil && lx.MTUAlign == nil {
+	if lx.WG == nil && lx.MASQUE == nil && lx.TrustTunnel == nil && lx.MTUAlign == nil {
 		options.LX = nil
 	} else {
 		options.LX = &lx
@@ -275,7 +303,7 @@ func ResolveLX(options *Options) (*LXResolved, []string, error) {
 	return resolved, warnings, nil
 }
 
-func resolveLXValues(wg LXWGOptions, masque *LXMASQUEOptions, mtuAlign *LXMTUAlign) (*LXResolved, error) {
+func resolveLXValues(wg LXWGOptions, masque *LXMASQUEOptions, trustTunnel *LXTrustTunnelOptions, mtuAlign *LXMTUAlign) (*LXResolved, error) {
 	var resolved LXResolved
 	resolved.MTUAlign.Mode = LXMTUAlignClamp
 	if mtuAlign != nil {
@@ -343,6 +371,12 @@ func resolveLXValues(wg LXWGOptions, masque *LXMASQUEOptions, mtuAlign *LXMTUAli
 			return nil, E.New("lx.masque.idle_timeout must be >= 0")
 		}
 		resolved.MASQUE.IdleTimeout = time.Duration(masque.IdleTimeout)
+	}
+	if trustTunnel != nil {
+		if trustTunnel.IdleTimeout < 0 {
+			return nil, E.New("lx.trusttunnel.idle_timeout must be >= 0")
+		}
+		resolved.TrustTunnel.IdleTimeout = time.Duration(trustTunnel.IdleTimeout)
 	}
 	return &resolved, nil
 }

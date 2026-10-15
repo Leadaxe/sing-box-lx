@@ -7,7 +7,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — серверный inbound |
-| Статус | N (new) — черновик на обсуждение; форма (inbound, не endpoint), двухслойная раскладка и форма файлов унаследованы из SPEC 133 и здесь не пересматриваются; §7 открыт |
+| Статус | N (new) — черновик на обсуждение; форма (inbound, не endpoint), двухслойная раскладка и форма файлов унаследованы из SPEC 133 и здесь не пересматриваются; §7 открыт. Экспериментальная: в `LX_TAGS` с 2026-10-16 вместе с SPEC 133 (владелец), входит в desktop- и роутерные бинари, интерфейс ещё может измениться |
 | Ветка | `lx` |
 | Build-tag | `with_trusttunnel` (половина HTTP/3 дополнительно требует `with_quic`) |
 | Обсуждение | [Leadaxe/sing-box-lx#46](https://github.com/Leadaxe/sing-box-lx/issues/46) |
@@ -119,7 +119,7 @@ sniff и роутер читает, чтобы снифить). Апстримн
 | `users` | `[]auth.User` (`username`, `password`) | обязателен | пустой список — ошибка старта; пустой `username` или `password` в записи — ошибка старта |
 | `network` | `NetworkList` (`tcp`/`udp`) | оба | **какие листенеры открывать**, как у апстримного inbound `naive`: `tcp` — HTTP/2 поверх TLS на TCP-листенере, `udp` — HTTP/3 поверх QUIC на UDP-листенере. `udp` без `with_quic` — ошибка старта, если он единственный, и предупреждение, если перечислены оба. Туннелируемые сети — всегда обе; что клиенту доступно, решают route-правила (В1) |
 | `quic_congestion_control` | `string` enum `bbr,cubic,reno` | `bbr` | неизвестное — ошибка старта; без `udp` игнорируется |
-| `tls` | `InboundTLSOptions` | обязателен, `enabled: true` | `enabled: false` — `C.ErrTLSRequired` (В3 про h2c); ALPN задаёт inbound: `h2` на TCP, `h3` на UDP, пользовательские значения добавляются впереди, но не заменяют их |
+| `tls` | `InboundTLSOptions` | обязателен, `enabled: true` | `enabled: false` — `C.ErrTLSRequired` (В3 про h2c); ALPN дополняет inbound: `h2` (TCP) ставится первым, `h3` (UDP) — последним, пользовательские значения сохраняются между ними; уже указанное пользователем значение остаётся на своём месте |
 
 Схема совпадает с husi `TrustTunnelInboundOptions` (`ListenOptions`, `Users`,
 `QUICCongestionControl`, `Network`, контейнер TLS), кроме `icmp` в `network` — здесь это
@@ -129,10 +129,11 @@ sniff и роутер читает, чтобы снифить). Апстримн
 ## 4. Требования
 
 - **R1. Листенеры.** `Start(StartStateStart)`: TLS-конфиг стартует и попадает в scope; при
-  `tcp` — `http.Server` поверх TLS-листенера с включённым HTTP/2 и выключенным HTTP/1.1,
-  ALPN `h2`; при `udp` — HTTP/3-сервер поверх UDP-листенера через хук, который выставляет
-  файл пакета с `//go:build with_quic` (как `naive` делает с `ConfigureHTTP3ListenerFunc`, но
-  внутри `protocol/trusttunnel/` — `include/quic.go` не трогается). Лимиты сервера повторяют
+  `tcp` — HTTP/2 поверх TLS-листенера (своя accept-петля ядра: TLS-рукопожатие, ALPN обязан
+  быть `h2`, HTTP/1.1 не обслуживается), ALPN `h2`; при `udp` — HTTP/3 поверх
+  UDP-листенера. H3-половину закрывает `with_quic` внутри пакета-ядра, без тега оно отвечает
+  `ErrQUICNotIncluded`; адаптер узнаёт это до открытия UDP-листенера, поэтому файл-хук в
+  `protocol/trusttunnel/` не нужен, `include/quic.go` не трогается. Лимиты сервера повторяют
   официальный endpoint: `MaxConcurrentStreams` 1000 на HTTP/2 (дефолт Go — 250, и R11
   outbound'а ждал бы на четверти ожидаемой глубины), idle-таймаут сессии 600 с на обоих
   транспортах, QUIC `MaxIncomingStreams` 4096, 0-RTT выключен.
@@ -178,7 +179,10 @@ sniff и роутер читает, чтобы снифить). Апстримн
 - **R9. API пакета-ядра.** Серверная половина живёт в `transport/trusttunnel/` рядом с
   клиентом (SPEC 133 §5): `Service` с обработчиками TCP-соединений и UDP-потоков (каждый
   несёт имя пользователя), таблица пользователей, заменяемая на лету,
-  `Start(tcpListener, packetConn, tlsServerConfig)` / `Close()`, H3-часть под `with_quic`.
+  `NewService` + `ServeTCP(listener, tlsConfig)` / `ServeQUIC(packetConn, tlsConfig)` (каждый
+  блокируется, пока его листенер не упадёт или сервис не закроют; листенеры открывает и
+  держит адаптер и запускает только те, что просит `network`) / `Close()`, H3-часть под
+  `with_quic`.
   Без импортов sing-box: логирование через `sing/common/logger`, TLS через интерфейсы
   `sing/common/tls`, пользователи через `sing/common/auth`.
   `protocol/trusttunnel/inbound.go` отображает на него опции, листенер, метаданные и
@@ -197,7 +201,7 @@ sniff и роутер читает, чтобы снифить). Апстримн
 | Что | Где | Апстримный файл? |
 |-----|-----|------------------|
 | Серверная половина ядра — `Service`, обработка запросов, таблица потоков `_udp2`, ответы 407/502 | `transport/trusttunnel/service.go`, `service_udp.go`; `service_quic.go` под `with_quic` | нет |
-| Адаптер sing-box | `protocol/trusttunnel/inbound.go`; `inbound_quic.go` (`//go:build with_quic`) выставляет H3-хук | нет |
+| Адаптер sing-box | `protocol/trusttunnel/inbound.go` (файла под `with_quic` нет: H3 закрывает ядро) | нет |
 | Опции | `TrustTunnelInboundOptions` в `option/trusttunnel.go` (общий со 133) | нет |
 | Регистрация / заглушка / константа | `include/trusttunnel.go`, `include/trusttunnel_stub.go`, маркированные блоки в `include/registry.go` и `constant/proxy.go` — **уже посчитаны в SPEC 133 §5** | — |
 | Тесты | `*_test.go` рядом с кодом; стенд `lx-test/trusttunnel/` общий со 133 | нет |
@@ -226,9 +230,9 @@ sniff и роутер читает, чтобы снифить). Апстримн
    клиент с включённым ICMP продолжает работать по TCP/UDP после отказа на `_icmp`.
 6. Простой: сессию без запросов 600 с inbound закрывает; наш outbound прозрачно
    пересобирает её на следующем dial (SPEC 133 §6 п. 6, теперь против нашего же сервера).
-7. Route-правила на inbound (`inbound: tt-in` + `ip_is_private` → `block`) не пускают клиента
-   в приватную сеть сервера — это sing-box-путь к `allow_private_network_connections = false`
-   endpoint'а.
+7. Route-правило на inbound (`inbound: tt-in` + `ip_is_private: true` с `"action": "reject"`)
+   не пускает клиента в приватную сеть сервера — это sing-box-путь к
+   `allow_private_network_connections = false` endpoint'а.
 
 ## 7. Открытые вопросы (на обсуждение)
 

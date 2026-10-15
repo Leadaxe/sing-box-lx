@@ -69,6 +69,9 @@ func InboundRegistry() *inbound.Registry {
 	vmess.RegisterInbound(registry)
 	trojan.RegisterInbound(registry)
 	naive.RegisterInbound(registry)
+	// lx:begin trusttunnel
+	registerTrustTunnelInbound(registry)
+	// lx:end trusttunnel
 	shadowtls.RegisterInbound(registry)
 	vless.RegisterInbound(registry)
 	anytls.RegisterInbound(registry)
@@ -101,6 +104,9 @@ func OutboundRegistry() *outbound.Registry {
 	vmess.RegisterOutbound(registry)
 	trojan.RegisterOutbound(registry)
 	registerNaiveOutbound(registry)
+	// lx:begin trusttunnel
+	registerTrustTunnelOutbound(registry)
+	// lx:end trusttunnel
 	tor.RegisterOutbound(registry)
 	ssh.RegisterOutbound(registry)
 	shadowtls.RegisterOutbound(registry)

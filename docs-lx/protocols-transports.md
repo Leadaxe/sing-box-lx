@@ -17,6 +17,7 @@ features of `sing-box-lx`:
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) obfuscation | `with_awg` | promoted fields on a `wireguard` **endpoint** | [§2](#2-amneziawg-203x-awg2-awg3) |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic` + `with_gvisor` | `outbounds[].type: "masque"` | [§3](#3-masque-outbound-connect-ip--warp) |
 | **REALITY** client (hybrid key share, `key_share`, fragmentation) and **VLESS `encryption`** | — (REALITY inside `with_utls`) | `tls` block of a TLS-over-TCP **outbound**; flat `encryption` field on `vless` | [§5](#5-reality-and-vless-encryption) |
+| **TrustTunnel** outbound and inbound (AdGuard VPN protocol), experimental | `with_trusttunnel` (+ `with_quic` for HTTP/3), in `LX_TAGS` since lx.21, not in the AAR | `outbounds[].type` / `inbounds[].type: "trusttunnel"` | [§6](#6-trusttunnel-outbound-and-inbound-experimental) |
 
 Plus [§4](#4-grpc-transport) — the **gRPC** transport, which is upstream's, not
 ours, and appears here only for the one place our behaviour has downstream
@@ -48,6 +49,7 @@ transport (which would defeat the obfuscation). The exact messages:
 - XHTTP without `with_xhttp` → `XHTTP transport requires the with_xhttp build tag`
 - AWG field without `with_awg` → `AmneziaWG (awg) support is not included in this build, rebuild with -tags with_awg`
 - `masque` outbound without `with_quic`+`with_gvisor` → the `masque` type is not registered (`unknown outbound type: masque`)
+- `trusttunnel` without `with_trusttunnel` → `trusttunnel is not included in this build, rebuild with -tags with_trusttunnel` (only in a custom build without the tag: `lx-build` carries it since lx.21, the Android AAR does not, §6)
 
 ---
 
@@ -99,6 +101,16 @@ transport (which would defeat the obfuscation). The exact messages:
   - [5.5 The `encryption` field on `vless`](#55-the-encryption-field-on-vless)
   - [5.6 `encryption` validation errors (verbatim)](#56-encryption-validation-errors-verbatim)
   - [5.7 Examples](#57-examples)
+- [§6 TrustTunnel outbound and inbound (experimental)](#6-trusttunnel-outbound-and-inbound-experimental)
+  - [6.1 What it is](#61-what-it-is)
+  - [6.2 Outbound fields](#62-outbound-fields)
+  - [6.3 Start-time validation (verbatim)](#63-start-time-validation-verbatim)
+  - [6.4 Session behaviour](#64-session-behaviour)
+  - [6.5 Outbound key mapping](#65-outbound-key-mapping)
+  - [6.6 Inbound fields](#66-inbound-fields)
+  - [6.7 Inbound: what an operator must know](#67-inbound-what-an-operator-must-know)
+  - [6.8 Inbound key mapping](#68-inbound-key-mapping)
+  - [6.9 Examples](#69-examples)
 
 ---
 
@@ -1274,6 +1286,242 @@ and [§5.8](xray-protocols-explained.md#58-example-xray-and-sing-box-lx).
 
 ---
 
+# 6. TrustTunnel outbound and inbound (experimental)
+
+> 🧪 **Experimental.** Built into the desktop and router release binaries since lx.21 (tag
+> `with_trusttunnel` in `LX_TAGS`; HTTP/3 also needs `with_quic`, which is in the set). The
+> `trusttunnel` type ships, but its interface may still change between releases. The
+> Android AAR does not carry the tag. A custom build without it rejects both types at load
+> time: `trusttunnel is not included in this build, rebuild with -tags with_trusttunnel`.
+
+## 6.1 What it is
+
+TrustTunnel is the AdGuard VPN protocol (Apache-2.0, `PROTOCOL.md` v1.0): HTTP/2 over
+TLS or HTTP/3 over QUIC to a real domain, with a proxy `CONNECT` and Basic auth inside.
+Every TCP connection is a `CONNECT host:port` stream, every UDP session a
+`CONNECT _udp2` stream carrying framed datagrams; all streams of a node share one
+session. The `trusttunnel` **outbound** talks to the official endpoint
+(`trusttunnel_endpoint`) and to our inbound; the `trusttunnel` **inbound** serves the
+official clients and our outbound. Feature: [018-TRUSTTUNNEL](../SPECS/FEATURES/018-TRUSTTUNNEL/FEATURE.md).
+
+## 6.2 Outbound fields
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `server`, `server_port` | string, number | required | Endpoint address. An IP literal requires `tls.server_name` (§6.3) |
+| `username`, `password` | string | required | Sent as `proxy-authorization: Basic` (standard base64 with padding) on every `CONNECT` |
+| `network` | `tcp` \| `udp` \| list | both | Networks the node carries |
+| `quic` | bool | `false` | `false` — HTTP/2 over TLS/TCP, `true` — HTTP/3 over QUIC (needs `with_quic`) |
+| `quic_congestion_control` | `bbr` \| `cubic` \| `reno` | `bbr` | Ignored without `quic` |
+| `health_check` | bool | `false` | `CONNECT _check` before a dial on a session silent for more than 30 s (deadline 7 s); never on a timer |
+| `idle_timeout` | duration | `lx.trusttunnel.idle_timeout`, else `5m` | Close the session locally after this long without activity and without open streams; `"0"` disables teardown |
+| `tls` | sing-box `tls` block | required, `enabled: true` | `server_name`, `certificate`, `insecure`, `utls`, `fragment`, `ech`. ALPN: empty → `h2` (`h3` with `quic`) |
+| Dial Fields | — | — | `detour`, `bind_interface`, `domain_resolver`, … |
+
+The global default lives in the root `lx` block (absent or `0` = 5 minutes; a node's own
+`idle_timeout` wins, including an explicit `"0"`):
+
+```json
+{ "lx": { "trusttunnel": { "idle_timeout": "10m" } } }
+```
+
+**Recommended TLS shape for HTTP/2** — uTLS with the Chrome fingerprint:
+
+```json
+"tls": { "enabled": true, "server_name": "vpn.example.com", "utls": { "enabled": true, "fingerprint": "chrome" } }
+```
+
+With `quic: true` uTLS is unavailable (`uTLS is not supported with quic` at start), and
+HTTP/3 keeps quic-go's fingerprint: its QUIC Initial, ClientHello and HTTP/3 SETTINGS are
+Go's. On HTTP/2 the session's SETTINGS values and connection window are Chrome's
+(`HEADER_TABLE_SIZE 65536`, `ENABLE_PUSH 0`, `INITIAL_WINDOW_SIZE 6291456`,
+`MAX_HEADER_LIST_SIZE 262144`, `WINDOW_UPDATE 15663105`), with or without uTLS. Not
+covered: the SETTINGS order, an extra `MAX_FRAME_SIZE`, the pseudo-header order and HEADERS
+without priority stay Go's (`x/net/http2` without a fork), and the protocol has no padding,
+so TLS-in-TLS of a proxied HTTPS connection stays visible to traffic analysis.
+
+## 6.3 Start-time validation (verbatim)
+
+| Condition | Error |
+|-----------|-------|
+| `tls` missing or `enabled: false` | `TLS required` |
+| `server` is an IP, `tls.server_name` empty | `tls.server_name is required when server is an IP address: the server routes by SNI and drops a ClientHello without it` |
+| empty `username` / `password` | `missing username` / `missing password` |
+| `icmp` in `network` | `outbounds[N].network: unknown network: icmp` (config decoding) |
+| `quic: true` + `tls.utls.enabled` | `uTLS is not supported with quic` |
+| unknown congestion control | `unknown quic_congestion_control: <value>` |
+| `tls.alpn` set without `h2` (`h3` with `quic`) | `tls.alpn must contain h2` |
+| `quic: true` in a build without `with_quic` | `trusttunnel: HTTP/3 requires the with_quic build tag` |
+| `lx.trusttunnel.idle_timeout` < 0 | `lx.trusttunnel.idle_timeout must be >= 0` |
+
+## 6.4 Session behaviour
+
+- **The dial waits for the server's answer.** 200 → a connection; anything else is an
+  error from the dial with the code and `X-Warning`, e.g.
+  `trusttunnel: server responded 502 Bad Gateway: 300 - Connection failed for some reason`
+  or `trusttunnel: server responded 407 Proxy Authentication Required`. A 403/404/405/407
+  also tears the session down.
+- **No keepalive, no timers while idle.** No HTTP/2 PING, no QUIC keepalive. The HTTP/3
+  session's QUIC idle timeout equals the idle window (capped at 600 s, the endpoint's
+  `client_listener_timeout_secs`). A session silent for longer than the idle window is
+  treated as stale: the next `CONNECT` on it gets 3 s, then the session is rebuilt and the
+  `CONNECT` repeated once within the caller's deadline.
+- **One session per node.** At the endpoint's stream limit (1000 on HTTP/2, 4096 on
+  HTTP/3) a dial waits for a free stream within its deadline; no second session is opened.
+- **Network change** (`InterfaceUpdated`) drops the session; QUIC migration is off on
+  the endpoint.
+- **DNS asymmetry.** TCP domains go to the endpoint unresolved and are resolved there. UDP
+  frames carry IP addresses only, so a UDP destination domain is resolved locally with
+  the node's `domain_resolver` (else `route.default_domain_resolver`, else the DNS rules).
+  For UDP DNS that does not leak, detour the resolver through the node itself.
+- **IPv6 inside `::/96`** (including `::1`) cannot be carried by a UDP frame: 12 zero bytes
+  mean IPv4 in the frame format, and the official endpoint decodes them the same way.
+- The node identifies itself as `user-agent: <platform> sing-box-lx` (`Mac`, `Windows`,
+  `Linux`, `Android`, `iOS`) and sends `sing-box-lx` as the application name in every UDP
+  frame.
+
+## 6.5 Outbound key mapping
+
+Three sources side by side: the official CLI client (`trusttunnel_client` 1.1.11, the
+`[endpoint]` table of its TOML; the endpoint's export, subscription and `tt://` link carry
+the same keys), the fork sing-box-extended 2.7.2 (keys of its
+[`examples/trusttunnel/client.json`](https://github.com/shtorm-7/sing-box-extended/tree/v1.14.1-extended-2.7.2/examples/trusttunnel)),
+and this fork. sing-box rejects unknown keys at load time, so an extended config needs the
+renames below before it starts here.
+
+| Official client (TOML) | sing-box-extended 2.7.2 | sing-box-lx | Note |
+|------------------------|-------------------------|-------------|------|
+| `addresses = ["ip:port"]` | `server`, `server_port` | `server`, `server_port` | One node per address. An IP in `server` needs `tls.server_name` |
+| `hostname` (`custom_sni` if set) | `tls.server_name` | `tls.server_name` | The endpoint routes by SNI |
+| `username`, `password` | `username`, `password` | `username`, `password` | An empty `password` is a start error here |
+| — | `network` | `network` | `tcp`, `udp` or both (default) |
+| `upstream_protocol = "http2"` / `"http3"` | `quic: false` / `true` | `quic: false` / `true` | The client's `auto` (H2/H3 race) is a `urltest` group of two nodes here |
+| — | `congestion_controller` (`bbr`, `bbr_standard`, `bbr2`, `bbr2_variant`, `cubic`, `reno`) | `quic_congestion_control` (`bbr`, `cubic`, `reno`) | Named as on the upstream `naive` outbound; rename the key |
+| — | `cwnd` | — | Not supported; drop the key |
+| — | `multiplex` (`max_connections`, `min_streams`, `max_streams`) | — | One session per node by design (§6.4); drop the key |
+| — (the client checks on events itself) | `health_check` | `health_check` | Here: `CONNECT _check` on events only, never on a timer |
+| — | — | `idle_timeout` (default `5m`, `lx.trusttunnel.idle_timeout`) | This fork only |
+| `tls_profile` (`chrome`, `safari`, `firefox`, …) | `tls.utls.fingerprint` | `tls.utls.fingerprint` | HTTP/2 only; recommended `chrome` (§6.2); with `quic: true` a start error |
+| `certificate` (PEM) | `tls.certificate` / `certificate_path` | `tls.certificate` / `certificate_path` | The `tt://` link carries a DER chain; the importer converts it to PEM |
+| `skip_verification` | `tls.insecure` | `tls.insecure` | |
+| `anti_dpi` | `tls.fragment` | `tls.fragment` | The closest built-in equivalent, not the same split |
+| `has_ipv6 = false` | `domain_resolver.strategy: "ipv4_only"` | `domain_resolver.strategy: "ipv4_only"` | The endpoint refuses IPv6 destinations |
+| `client_random` (export: `client_random_prefix`), `client_random_auth_key` | — | — | Not supported: a server with such rules drops the ClientHello |
+| `dns_upstreams`, `vpn_mode`, `exclusions`, `killswitch_*`, `post_quantum_group_enabled`, `[listener.*]`, `name` | `dns`, `route`, `inbounds` | `dns`, `route`, `inbounds` | Not the node's business: sing-box's DNS, routing and local inbounds |
+
+## 6.6 Inbound fields
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| Listen Fields | — | — | `listen`, `listen_port`, … |
+| `users` | `[{username, password}]` | required | Empty list or an empty field in an entry — start error (`missing users`, `users[N]: missing password`) |
+| `network` | `tcp` \| `udp` \| list | both | **Which listeners to open**, as on the upstream `naive` inbound: `tcp` — HTTP/2 over TLS, `udp` — HTTP/3 over QUIC. `udp` without `with_quic`: start error when alone, a warning (`HTTP/3 disabled: …`) when both. Tunnelled networks are always TCP and UDP; restrict them with route rules |
+| `quic_congestion_control` | `bbr` \| `cubic` \| `reno` | `bbr` | Unknown — start error |
+| `tls` | sing-box inbound `tls` block | required, `enabled: true` | ALPN is set by the inbound: `h2` is prepended on TCP, `h3` appended on UDP |
+
+Each TCP `CONNECT` reaches the router with `inbound`, `user`, `source` (the client),
+`destination` (a domain stays a domain) and `origin_destination` (the listener address);
+each UDP flow of a `_udp2` stream reaches it as a packet connection with the frame's
+source (or the session address when the client sends a zero source).
+
+## 6.7 Inbound: what an operator must know
+
+- **The answer to `CONNECT` follows the dial.** 200 goes out on the router's first read of
+  the connection, a failed dial is 502 + `X-Warning` (`300 - Connection failed for some
+  reason`, `301 - …` for an unreachable host, `302 - …` for a timeout), exactly as the
+  official endpoint answers. With a `sniff` route action the router reads before dialing,
+  so the 200 goes out early and a later dial failure is a plain stream close.
+- **Refused credentials** → 407 + `proxy-authenticate: Basic realm=Authorization Required`;
+  the log line names the source address, never the credentials.
+- **Not the AdGuard product.** No rules by `client_random`, no subscription endpoint, no
+  ping / speed-test hosts, no reverse proxy, no ICMP (`CONNECT _icmp` → 404). Every
+  non-tunnel request (a browser, a scanner) gets 404 with an empty body and no
+  `proxy-authenticate`. HTTP/1.1 is not served.
+- **`allow_private_network_connections = false` of the endpoint** is a route rule here:
+
+```json
+{ "route": { "rules": [ { "inbound": "tt-in", "ip_is_private": true, "action": "reject" } ] } }
+```
+
+## 6.8 Inbound key mapping
+
+The official endpoint (`trusttunnel_endpoint` 1.1.0: `vpn.toml`, `credentials.toml`,
+`hosts.toml`), sing-box-extended 2.7.2 (keys of its
+[`examples/trusttunnel/server.json`](https://github.com/shtorm-7/sing-box-extended/tree/v1.14.1-extended-2.7.2/examples/trusttunnel))
+and this fork.
+
+| Official endpoint (TOML) | sing-box-extended 2.7.2 | sing-box-lx | Note |
+|--------------------------|-------------------------|-------------|------|
+| `listen_address = "0.0.0.0:443"` | `listen`, `listen_port` | `listen`, `listen_port` | |
+| `[listen_protocols.http2]` / `[listen_protocols.quic]` present | `network: tcp` / `udp` | `network: tcp` / `udp` | Which listeners open; both by default. Tunnelled networks are always TCP and UDP |
+| `credentials.toml` `[[client]]` `username`, `password` | `users[].name`, `users[].password` | `users[].username`, `users[].password` | `username`, as on every upstream inbound; rename `name` |
+| `hosts.toml` `[[main_hosts]]` `hostname`, `cert_chain_path`, `private_key_path` | `tls.server_name`, `certificate_path`, `key_path` | `tls.server_name`, `certificate_path`, `key_path` | |
+| — | `tls.alpn: ["h2", "h3"]` | set by the inbound | `h2` on TCP, `h3` on UDP; an explicit list is kept and completed |
+| — | `congestion_controller` | `quic_congestion_control` (`bbr`, `cubic`, `reno`) | Rename the key |
+| — | `cwnd` | — | Not supported; drop the key |
+| `client_listener_timeout_secs` | — | fixed 600 s | Idle session limit, as the endpoint's default |
+| `max_concurrent_streams`, `initial_max_streams_bidi` | — | fixed 1000 (H2) / 4096 (H3) | The endpoint's defaults |
+| `allow_private_network_connections = false` | — | route rule `ip_is_private` + `action: reject` | Example in §6.7 |
+| `auth_failure_status_code` | — | fixed: 407 on `CONNECT`, 404 otherwise | |
+| `ipv6_available = false` | — | route rules / DNS `strategy` | |
+| `udp_connections_timeout_secs` | — | sing-box's UDP timeout | `udp_timeout` of a `route-options` rule, 5 min by default |
+| `rules_file` (`client_random` rules), `[reverse_proxy]`, `[icmp]`, `[metrics]`, `[subscription]`, ping / speed-test hosts | — | — | Not supported |
+
+## 6.9 Examples
+
+### Outbound
+
+```json
+{
+  "type": "trusttunnel",
+  "tag": "tt-node",
+  "server": "vpn.example.com",
+  "server_port": 443,
+  "username": "user",
+  "password": "secret",
+  "network": "",
+  "quic": false,
+  "quic_congestion_control": "bbr",
+  "health_check": false,
+  "idle_timeout": "5m",
+  "tls": {
+    "enabled": true,
+    "server_name": "vpn.example.com",
+    "utls": { "enabled": true, "fingerprint": "chrome" }
+  }
+}
+```
+
+### Inbound
+
+```json
+{
+  "type": "trusttunnel",
+  "tag": "tt-in",
+  "listen": "::",
+  "listen_port": 443,
+  "users": [
+    { "username": "user", "password": "secret" }
+  ],
+  "network": "",
+  "quic_congestion_control": "bbr",
+  "tls": {
+    "enabled": true,
+    "server_name": "vpn.example.com",
+    "certificate_path": "/etc/sing-box/fullchain.pem",
+    "key_path": "/etc/sing-box/key.pem"
+  }
+}
+```
+
+A loopback stand with the official endpoint and client lives in
+[`lx-test/trusttunnel/`](../lx-test/trusttunnel/README.md). The official client connects
+loopback destinations directly, bypassing the tunnel, so `check-in` reaches the origin by the
+name `localhost` (`curl --socks5-hostname`): the domain goes into the `CONNECT` and is resolved
+by our inbound.
+
+---
+
 ## See also
 
 - **[lx-config.md](lx-config.md)** — the downstream-features overview these
@@ -1287,4 +1535,5 @@ and [§5.8](xray-protocols-explained.md#58-example-xray-and-sing-box-lx).
   including the MTU budget.
 - Feature specs: [XHTTP](../SPECS/FEATURES/002-XHTTP/), [AWG](../SPECS/FEATURES/003-AWG/),
   [MASQUE/WARP](../SPECS/FEATURES/009-MASQUE_WARP/), [REALITY](../SPECS/FEATURES/017-REALITY/),
-  [VLESS_ENCRYPTION](../SPECS/FEATURES/012-VLESS_ENCRYPTION/).
+  [VLESS_ENCRYPTION](../SPECS/FEATURES/012-VLESS_ENCRYPTION/),
+  [TRUSTTUNNEL](../SPECS/FEATURES/018-TRUSTTUNNEL/).

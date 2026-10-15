@@ -8,7 +8,7 @@
 |-------|-------|
 | Type | Product feature |
 | Build tag | `with_trusttunnel` |
-| State | N — draft for discussion ([#46](https://github.com/Leadaxe/sing-box-lx/issues/46)), task [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md) |
+| State | Experimental — in the release binaries from lx.21 (`LX_TAGS` since 2026-10-16), the interface may still change; discussion [#46](https://github.com/Leadaxe/sing-box-lx/issues/46), tasks [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md), [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md) |
 
 ## Purpose
 
@@ -88,7 +88,7 @@ subscription, `tt://` link) to the keys above:
 | `skip_verification` | `tls.insecure` |
 | `upstream_protocol` `http2` / `http3` | `quic: false` / `true` |
 | `anti_dpi` | `tls.fragment` (see "Boundaries") |
-| client `tls_profile` | `tls.utls.fingerprint` |
+| client `tls_profile` | `tls.utls.fingerprint`, HTTP/2 only. Recommended default for H2 whatever the profile: `"utls": { "enabled": true, "fingerprint": "chrome" }`. With `quic: true` uTLS is unavailable (start error), H3 keeps quic-go's fingerprint |
 | `client_random_prefix`, `client_random_auth_key` | none (see "Boundaries") |
 | `has_ipv6: false` | `domain_resolver: { strategy: "ipv4_only" }` on the node (the endpoint refuses IPv6 destinations) |
 | `dns_upstreams`, `name` | outside the core — the client app's job |
@@ -114,8 +114,9 @@ address filtering are sing-box's route rules, not endpoint settings. What the of
 endpoint offers beyond the tunnel — rules by `client_random`, subscription, ping and
 speed-test hosts, reverse proxy, ICMP, SOCKS5 forwarding — is out of the feature.
 
-Build: tag `with_trusttunnel`, built into the desktop binaries and the static router
-builds; the Android AAR does not carry it. Without the tag `type: trusttunnel` is
+Build: tag `with_trusttunnel`, in `LX_TAGS` since 2026-10-16 — built into the desktop
+binaries and the static router builds as an experimental feature (the `trusttunnel` type
+ships, its interface may still change); the Android AAR does not carry it. Without the tag `type: trusttunnel` is
 rejected when the config is read, with a clear error, and the rest of the core behaves
 exactly like upstream. In the UI (Clash API `type`, libbox) the node is labelled
 "TrustTunnel".
@@ -201,6 +202,16 @@ stale session (closed by the endpoint, NAT expired, device slept)
   cap waits for a free stream within its deadline.
 - **A network change resets the session**, otherwise it hangs until the QUIC or TCP
   idle timeout; the endpoint has QUIC migration off by default.
+- **The server does not admit to being a proxy.** The official endpoint answers any
+  non-`CONNECT` request with 407 and `proxy-authenticate` by default, which tells an active
+  prober that a proxy lives there (the operator can switch it to 403/404/405 or put a
+  reverse proxy with a real site in front). Our inbound answers every non-`CONNECT` request
+  and `CONNECT _icmp` with 404 and an empty body, without `proxy-authenticate`; 407 is sent
+  only to a `CONNECT` with bad credentials. A probe therefore sees an empty web server, which
+  is indistinguishable from one. What the protocol cannot hide is on the wire: `CONNECT`
+  streams carry TLS-in-TLS without padding, and a Go HTTP/2 or QUIC stack has its own
+  fingerprint (SETTINGS, pseudo-header order, QUIC Initial); `tls.utls` covers the
+  ClientHello of HTTP/2 only.
 
 ## Boundaries
 
@@ -226,13 +237,18 @@ stale session (closed by the endpoint, NAT expired, device slept)
   the job of the launcher and LxBox; the core receives ready JSON.
 - **No multiplexing beyond one session.** All streams of a node go into one HTTP/2 or
   HTTP/3 connection; there is no pool and no rotation.
+- **The fingerprint is Chrome-like only in part.** On H2 the ClientHello is uTLS Chrome with
+  `tls.utls`, and the HTTP/2 SETTINGS values and connection window are Chrome's; the
+  SETTINGS order, an extra `MAX_FRAME_SIZE`, the pseudo-header order and HEADERS without
+  priority stay Go's (`x/net/http2` without a fork, SPEC 133 R13). H3 is quic-go
+  throughout. The protocol has no padding, so TLS-in-TLS of proxied HTTPS stays visible.
 
 ## Feature tasks
 
 | Task | What | State |
 |------|------|-------|
-| [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md) | `trusttunnel` outbound: TCP + UDP over HTTP/2 and HTTP/3; the protocol core package (client half) | N |
-| [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md) | `trusttunnel` inbound on the server half of the core package: Basic auth, TCP `CONNECT`, `_udp2` flows to the router, `_check`; HTTP/2 + HTTP/3 | N |
+| [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md) | `trusttunnel` outbound: TCP + UDP over HTTP/2 and HTTP/3; the protocol core package (client half) | O |
+| [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md) | `trusttunnel` inbound on the server half of the core package: Basic auth, TCP `CONNECT`, `_udp2` flows to the router, `_check`; HTTP/2 + HTTP/3 | O |
 
 ## Maintenance notes
 

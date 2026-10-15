@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | Type | F (feature) — server inbound |
-| Status | N (new) — draft for discussion; the shape (inbound, not endpoint), the two-layer layout and the file form are inherited from SPEC 133 and not re-opened here; §7 is open |
+| Status | N (new) — draft for discussion; the shape (inbound, not endpoint), the two-layer layout and the file form are inherited from SPEC 133 and not re-opened here; §7 is open. Experimental: in `LX_TAGS` since 2026-10-16 together with SPEC 133 (owner), ships in the desktop and router binaries, the interface may still change |
 | Branch | `lx` |
 | Build tag | `with_trusttunnel` (HTTP/3 half additionally needs `with_quic`) |
 | Discussion | [Leadaxe/sing-box-lx#46](https://github.com/Leadaxe/sing-box-lx/issues/46) |
@@ -118,7 +118,7 @@ upstream `naive` inbound ignores this and answers 200 before routing.
 | `users` | `[]auth.User` (`username`, `password`) | required | empty list — start error; empty `username` or `password` in an entry — start error |
 | `network` | `NetworkList` (`tcp`/`udp`) | both | **which listeners to open**, as on the upstream `naive` inbound: `tcp` — HTTP/2 over TLS on the TCP listener, `udp` — HTTP/3 over QUIC on the UDP listener. `udp` without `with_quic` — start error when it is the only one, a warning when both are listed. Tunnelled networks are always both; what a client may reach is route rules (Q1) |
 | `quic_congestion_control` | `string` enum `bbr,cubic,reno` | `bbr` | unknown — start error; ignored without `udp` |
-| `tls` | `InboundTLSOptions` | required, `enabled: true` | `enabled: false` — `C.ErrTLSRequired` (Q3 on h2c); ALPN is set by the inbound: `h2` on TCP, `h3` on UDP, user values are prepended to, never replace them |
+| `tls` | `InboundTLSOptions` | required, `enabled: true` | `enabled: false` — `C.ErrTLSRequired` (Q3 on h2c); ALPN is completed by the inbound: `h2` (TCP) is put first, `h3` (UDP) appended last, user values are kept in between; a value the user already lists keeps its place |
 
 The schema matches husi's `TrustTunnelInboundOptions` (`ListenOptions`, `Users`,
 `QUICCongestionControl`, `Network`, TLS container) except `icmp` in `network`, which is a
@@ -127,12 +127,12 @@ the outbound options (SPEC 133 §5).
 
 ## 4. Requirements
 
-- **R1. Listeners.** `Start(StartStateStart)`: TLS config started and scoped; with `tcp` an
-  `http.Server` over the TLS listener with HTTP/2 enabled and HTTP/1.1 off, ALPN `h2`;
-  with `udp` an HTTP/3 server over the UDP listener through a hook that the
-  `//go:build with_quic` file of the package sets (as `naive` does with
-  `ConfigureHTTP3ListenerFunc`, but inside `protocol/trusttunnel/` — `include/quic.go` is
-  not touched). Server limits mirror the official endpoint: `MaxConcurrentStreams` 1000 on
+- **R1. Listeners.** `Start(StartStateStart)`: TLS config started and scoped; with `tcp`
+  HTTP/2 over the TLS listener (the core's own accept loop: TLS handshake, ALPN must be
+  `h2`, HTTP/1.1 is not served), ALPN `h2`; with `udp` HTTP/3 over the UDP listener. The H3
+  half is gated by `with_quic` inside the core package, which answers `ErrQUICNotIncluded`
+  without it; the adapter learns that before opening the UDP listener, so no hook file is
+  needed in `protocol/trusttunnel/` and `include/quic.go` is not touched. Server limits mirror the official endpoint: `MaxConcurrentStreams` 1000 on
   HTTP/2 (Go's default is 250 and would make the outbound's R11 wait at a quarter of the
   expected depth), session idle timeout 600 s on both transports, QUIC `MaxIncomingStreams`
   4096, 0-RTT off.
@@ -179,8 +179,10 @@ the outbound options (SPEC 133 §5).
   timers while no session is open.
 - **R9. Core package API.** The server half lives in `transport/trusttunnel/` next to the
   client (SPEC 133 §5): a `Service` with handlers for TCP connections and UDP flows (each
-  carrying the username), a user table that can be replaced at runtime, `Start(tcpListener,
-  packetConn, tlsServerConfig)` / `Close()`, the H3 part under `with_quic`. No imports from
+  carrying the username), a user table that can be replaced at runtime, `NewService` +
+  `ServeTCP(listener, tlsConfig)` / `ServeQUIC(packetConn, tlsConfig)` (each blocks until its
+  listener fails or the service is closed; the adapter opens and owns the listeners and
+  runs only the ones `network` asks for) / `Close()`, the H3 part under `with_quic`. No imports from
   sing-box: logging through `sing/common/logger`, TLS through `sing/common/tls` interfaces,
   users through `sing/common/auth`. `protocol/trusttunnel/inbound.go` maps options, listener,
   metadata and the router onto it.
@@ -198,7 +200,7 @@ lines:
 | What | Where | Upstream file? |
 |------|-------|----------------|
 | Server half of the core — `Service`, request handling, `_udp2` flow table, 407/502 answers | `transport/trusttunnel/service.go`, `service_udp.go`; `service_quic.go` under `with_quic` | no |
-| sing-box adapter | `protocol/trusttunnel/inbound.go`; `inbound_quic.go` (`//go:build with_quic`) sets the H3 hook | no |
+| sing-box adapter | `protocol/trusttunnel/inbound.go` (no `with_quic` file: the core gates H3) | no |
 | Options | `TrustTunnelInboundOptions` in `option/trusttunnel.go` (shared with 133) | no |
 | Registration / stub / constant | `include/trusttunnel.go`, `include/trusttunnel_stub.go`, the marked blocks in `include/registry.go` and `constant/proxy.go` — **already counted in SPEC 133 §5** | — |
 | Tests | `*_test.go` next to the code; stand `lx-test/trusttunnel/` shared with 133 | no |
@@ -227,9 +229,9 @@ lines:
    client with ICMP on keeps TCP/UDP working after its `_icmp` is refused.
 6. Idle: a session with no request for 600 s is closed by the inbound; our outbound rebuilds
    transparently on the next dial (SPEC 133 §6 item 6, now against our own server).
-7. Route rules on the inbound (`inbound: tt-in` + `ip_is_private` → `block`) stop a client
-   from reaching the server's private network, which is the sing-box way to the endpoint's
-   `allow_private_network_connections = false`.
+7. A route rule on the inbound (`inbound: tt-in` + `ip_is_private: true` with
+   `"action": "reject"`) stops a client from reaching the server's private network, which is
+   the sing-box way to the endpoint's `allow_private_network_connections = false`.
 
 ## 7. Open questions (for discussion)
 

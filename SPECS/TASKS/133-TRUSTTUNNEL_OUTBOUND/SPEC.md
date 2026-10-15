@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | Type | F (feature) — client outbound |
-| Status | N (new) — draft for discussion; decided: Q1 (in-tree, protocol core as a self-contained package), Q4 (desktop + routers), Q5 ("TrustTunnel" label), Q6 (the server side is written right away, task 134), tests (`lx-test/` stands, upstream `test/` left to others); the rest of §7 is open |
+| Status | N (new) — draft for discussion; decided: Q1 (in-tree, protocol core as a self-contained package), Q4 (desktop + routers), Q5 ("TrustTunnel" label), Q6 (the server side is written right away, task 134), tests (`lx-test/` stands, upstream `test/` left to others); the rest of §7 is open. Experimental: in `LX_TAGS` since 2026-10-16 (owner), ships in the desktop and router binaries, the interface may still change |
 | Branch | `lx` |
 | Build tag | `with_trusttunnel` |
 | Discussion | [Leadaxe/sing-box-lx#46](https://github.com/Leadaxe/sing-box-lx/issues/46) |
@@ -105,8 +105,9 @@ client → server:  u32 len | src_ip[16] | src_port u16 | dst_ip[16] | dst_port 
 server → client:  u32 len | src_ip[16] | src_port u16 | dst_ip[16] | dst_port u16 | payload
 ```
 
-`len` does not include itself; IPv4 is 12 zero bytes + 4 address bytes. Frames carry IP
-addresses only: the client resolves domains. `app_name` is the same application string as
+`len` does not include itself; IPv4 is 12 zero bytes + 4 address bytes, so an IPv6 address
+inside `::/96` (including `::1`) cannot be carried: it decodes as IPv4, on the official
+endpoint as well. Frames carry IP addresses only: the client resolves domains. `app_name` is the same application string as
 in the user agent (the official client sends the originating process name). The endpoint
 tracks flows per stream by the 4-tuple; the specification says 120 s idle, the endpoint's
 default config is `udp_connections_timeout_secs = 300` — irrelevant to the client. A zero
@@ -116,7 +117,9 @@ flow, which is the intended mapping.
 
 ### 2.5 Health check
 
-`CONNECT _check` with `user-agent: <platform>`; the server answers 200 at once. In the
+`CONNECT _check` with `user-agent: <platform> unknown` (observed on the stand with the
+official client 1.1.11 over H2 and H3; the application slot is literally `unknown`); the
+server answers 200 at once. In the
 official client this is **not a timer**. It is issued on tunnel events — a new connection
 opened, a connection migrating between upstreams, a flow-control update while the client is
 waiting for data from the server, an ICMP request, wake-up after sleep (forced) — throttled
@@ -192,6 +195,8 @@ of this task) plus `idle_timeout`. mihomo's keys (`health-check`, `udp`, `sni`, 
   from the dial fields (`detour` works).
   - **No keepalive.** No HTTP/2 PING (`ReadIdleTimeout` off), no QUIC `KeepAlivePeriod`; the
     QUIC session is allowed to time out silently (quic-go closes locally without sending).
+    Its QUIC idle timeout equals the idle window (`idle_timeout`, or the 5-minute stale
+    window when teardown is off), capped at 600 s, the endpoint's own session limit.
     While the node is idle there are no outgoing packets, whatever the config.
   - **Idle teardown.** After `idle_timeout` without a request the session is closed locally
     (no packets); the next request opens a new one. This is the MASQUE `idle_timeout`
@@ -221,13 +226,15 @@ of this task) plus `idle_timeout`. mihomo's keys (`health-check`, `udp`, `sni`, 
 - **R8. Without the tag.** Without `with_trusttunnel` both types are registered as stubs with
   the error `trusttunnel is not included in this build, rebuild with -tags with_trusttunnel`;
   the rest of the core is upstream byte for byte.
-- **R9. Builds.** The tag goes into `LX_TAGS` — desktop binaries and static router builds
-  (owner's decision 2026-10-15, §7 Q4). The AAR (`sharedTags`) does not carry it. The build
-  without the tag and `go vet` under both tag sets are green.
+- **R9. Builds.** The tag is in `LX_TAGS` — desktop binaries and static router builds
+  (owner's decision 2026-10-15, §7 Q4; enabled 2026-10-16). It ships as experimental: the
+  `trusttunnel` type is in the release binaries, its interface may still change. The AAR
+  (`sharedTags`) does not carry it. The build without the tag and `go vet` under both tag
+  sets are green.
 - **R10. Identity headers.** `user-agent` per §2.3: platform from `GOOS`
   (`darwin` → `Mac`, `windows` → `Windows`, `linux` → `Linux`, `android` → `Android`,
   `ios` → `iOS`), application string per Q10; `<platform> _udp2` on the UDP stream,
-  `<platform>` on `_check`. The same application string goes into the `app_name` field of
+  `<platform> unknown` on `_check` (as the official client does). The same application string goes into the `app_name` field of
   UDP frames. The originating process name from sniff metadata is **not** sent.
 - **R11. Stream limit.** The node never opens a second session to get around the endpoint's
   `max_concurrent_streams` (§2.6): Go's `http2.Transport` does that by default and must be
@@ -236,6 +243,19 @@ of this task) plus `idle_timeout`. mihomo's keys (`health-check`, `udp`, `sni`, 
 - **R12. Documentation.** A section in `docs-lx/protocols-transports.md` (as for MASQUE and
   chain), the release note, and the mapping table from the TrustTunnel export (FEATURE 018)
   are part of the deliverable.
+- **R13. Fingerprint.** With H2 the ClientHello is what `tls` gives: uTLS with
+  `tls.utls` (`fingerprint: chrome` is the recommended shape), Go's `crypto/tls` without it.
+  The HTTP/2 preface is Chrome-like as far as `x/net/http2` allows without a fork
+  (`newHTTP2Transport` in `client_http2.go`, pinned by `TestHTTP2Preface`): the SETTINGS
+  values `HEADER_TABLE_SIZE 65536`, `ENABLE_PUSH 0`, `INITIAL_WINDOW_SIZE 6291456`,
+  `MAX_HEADER_LIST_SIZE 262144` and the connection `WINDOW_UPDATE 15663105` are Chrome's.
+  Go-like remain: the order of the settings (`2,4,5,6,1` instead of `1,2,4,6`), an extra
+  `MAX_FRAME_SIZE 16384` entry (x/net always sends it; 16384 is the spec default), the
+  pseudo-header order (hardcoded in x/net `internal/httpcommon`: a plain `CONNECT` carries
+  `:authority` before `:method`, Chrome sends `:method` first) and HEADERS without priority.
+  With H3 uTLS is unavailable (start error); the QUIC Initial, the ClientHello and the
+  HTTP/3 SETTINGS are quic-go's. On both transports the inner TLS of a proxied HTTPS
+  connection goes without padding, so TLS-in-TLS stays visible to traffic analysis.
 
 ## 5. Isolation and merge cost
 
@@ -248,7 +268,7 @@ is meant to be liftable.
 
 | What | Where | Upstream file? |
 |------|-------|----------------|
-| **Protocol core** — client and server: session, `CONNECT` streams, `_udp2` codec, `_check`, Basic auth, errors; H3 under `with_quic` inside the package | `transport/trusttunnel/` (Q11) — imports only `sagernet/sing`, `x/net/http2`, `sagernet/quic-go`; **no** `adapter`, `option`, `log` of sing-box | no |
+| **Protocol core** — client and server: session, `CONNECT` streams, `_udp2` codec, `_check`, Basic auth, errors; H3 under `with_quic` inside the package | `transport/trusttunnel/` (Q11) — imports only `sagernet/sing`, `x/net/http2`, and in the `with_quic` files `sagernet/quic-go` and `sagernet/sing-quic`; **no** `adapter`, `option`, `log` of sing-box | no |
 | Options — `TrustTunnelOutboundOptions`, `TrustTunnelInboundOptions` | `option/trusttunnel.go` | no |
 | sing-box adapters — `outbound.go` (this task), `inbound.go` (task 134): dial fields, DNS, lifecycle, logging, mapping of options onto the core API | `protocol/trusttunnel/` | no |
 | Registration / stub | `include/trusttunnel.go` (`//go:build with_trusttunnel`) + `include/trusttunnel_stub.go` | no |
@@ -258,9 +278,9 @@ is meant to be liftable.
 | Tests | `*_test.go` next to the code, no `_lx` suffix; stands in `lx-test/trusttunnel/` | no |
 
 `include/quic.go` and `include/quic_stub.go` are not touched: the H3 halves of client and
-server are gated by `with_quic` inside `transport/trusttunnel/` and `protocol/trusttunnel/`
-(a hook set from a `//go:build with_quic` file, as `naive` does with
-`ConfigureHTTP3ListenerFunc`, but inside our own package). User documentation stays in
+server are gated by `with_quic` inside `transport/trusttunnel/` (`client_quic.go`,
+`service_quic.go` and their stubs answering `ErrQUICNotIncluded`); `protocol/trusttunnel/`
+needs no `with_quic` file of its own. User documentation stays in
 `docs-lx/` (R12); `docs/configuration/*` pages are the submitter's job.
 
 What a submitter takes upstream: `transport/trusttunnel/`, `option/trusttunnel.go`,

@@ -51,7 +51,8 @@ func TestLXBlockParsesEveryKey(t *testing.T) {
 			"build_max": 4,
 			"build_overflow": "build"
 		},
-		"masque": {"idle_timeout": "2m"}
+		"masque": {"idle_timeout": "2m"},
+		"trusttunnel": {"idle_timeout": "3m"}
 	}}`)
 	if len(warnings) != 0 {
 		t.Fatalf("canonical keys must not warn, got %v", warnings)
@@ -66,8 +67,9 @@ func TestLXBlockParsesEveryKey(t *testing.T) {
 			BuildMax:             4,
 			BuildOverflow:        LXBuildOverflowBuild,
 		},
-		MASQUE:   LXMASQUEResolved{IdleTimeout: 2 * time.Minute},
-		MTUAlign: LXMTUAlignResolved{Mode: LXMTUAlignClamp},
+		MASQUE:      LXMASQUEResolved{IdleTimeout: 2 * time.Minute},
+		TrustTunnel: LXTrustTunnelResolved{IdleTimeout: 3 * time.Minute},
+		MTUAlign:    LXMTUAlignResolved{Mode: LXMTUAlignClamp},
 	}
 	if !reflect.DeepEqual(*resolved, want) {
 		t.Fatalf("resolved = %+v, want %+v", *resolved, want)
@@ -76,7 +78,7 @@ func TestLXBlockParsesEveryKey(t *testing.T) {
 
 func TestLXBlockEmptyEqualsAbsent(t *testing.T) {
 	t.Parallel()
-	for _, content := range []string{`{}`, `{"lx": {}}`, `{"lx": {"wg": {}, "masque": {}, "mtu_align": {}}}`, `{"lx": {"mtu_align": ""}}`} {
+	for _, content := range []string{`{}`, `{"lx": {}}`, `{"lx": {"wg": {}, "masque": {}, "trusttunnel": {}, "mtu_align": {}}}`, `{"lx": {"mtu_align": ""}}`} {
 		options, resolved, warnings := mustResolveLX(t, content)
 		if !reflect.DeepEqual(*resolved, lxDefaults()) || len(warnings) != 0 {
 			t.Fatalf("%s: expected all-off without warnings, got %+v %v", content, *resolved, warnings)
@@ -96,7 +98,8 @@ func lxDefaults() LXResolved {
 func TestLXResolvedNilIsAllOff(t *testing.T) {
 	t.Parallel()
 	var resolved *LXResolved
-	if resolved.WGOrZero() != (LXWGResolved{}) || resolved.MASQUEOrZero() != (LXMASQUEResolved{}) {
+	if resolved.WGOrZero() != (LXWGResolved{}) || resolved.MASQUEOrZero() != (LXMASQUEResolved{}) ||
+		resolved.TrustTunnelOrZero() != (LXTrustTunnelResolved{}) {
 		t.Fatal("a nil *LXResolved must read as all-off")
 	}
 	if !reflect.DeepEqual(resolved.MTUAlignOrDefault(), LXMTUAlignResolved{Mode: LXMTUAlignClamp}) {
@@ -112,6 +115,7 @@ func TestLXBlockRejectsUnknownKeys(t *testing.T) {
 		`{"lx": {"naive": {"single_engine": true}}}`,
 		`{"lx": {"wg": {"idle_supend": "30s"}}}`,
 		`{"lx": {"masque": {"idle": "5m"}}}`,
+		`{"lx": {"trusttunnel": {"idle": "5m"}}}`,
 		`{"lx": {"foo": 1}}`,
 	} {
 		if _, err := decodeLXConfig(t, content); err == nil {
@@ -137,6 +141,7 @@ func TestLXBlockValidation(t *testing.T) {
 		{`{"lx":{"wg":{"build_max":-1}}}`, "lx.wg.build_max must be >= 0"},
 		{`{"lx":{"wg":{"build_overflow":"drop"}}}`, `lx.wg.build_overflow must be "wait" or "build"`},
 		{`{"lx":{"masque":{"idle_timeout":"-1s"}}}`, "lx.masque.idle_timeout must be >= 0"},
+		{`{"lx":{"trusttunnel":{"idle_timeout":"-1s"}}}`, "lx.trusttunnel.idle_timeout must be >= 0"},
 		{`{"lx":{"mtu_align":{"except":[""]}}}`, "lx.mtu_align.except: empty tag"},
 		// the same rules apply to values that arrived through an alias
 		{`{"route":{"lx_idle_suspend_reachable":"5m"}}`, "lx.wg.idle_suspend_reachable requires lx.wg.idle_suspend"},
@@ -166,6 +171,7 @@ func TestLXBlockValidationAccepts(t *testing.T) {
 		`{"lx":{"wg":{"idle_suspend":"30s","idle_suspend_reachable":"30s"}}}`,
 		`{"lx":{"wg":{"idle_suspend":"30s","idle_teardown":"0","lazy_build":true}}}`,
 		`{"lx":{"masque":{"idle_timeout":"0"}}}`,
+		`{"lx":{"trusttunnel":{"idle_timeout":"0"}}}`,
 	} {
 		mustResolveLX(t, content)
 	}
