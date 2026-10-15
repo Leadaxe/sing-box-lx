@@ -2,7 +2,7 @@
 
 **Фича:** [018-TRUSTTUNNEL](../../FEATURES/018-TRUSTTUNNEL/FEATURE.md) · план — [PLAN.md](PLAN.md)
 
-Реализация экспериментальная: тег `with_trusttunnel` в `LX_TAGS` с 2026-10-16 — тип в desktop- и роутерных бинарях, интерфейс ещё может измениться; в AAR тега нет.
+Тег `with_trusttunnel` в `LX_TAGS` с 2026-10-16 — тип в desktop- и роутерных бинарях; в AAR тега нет.
 
 - [x] 1. Ядро, общая часть: `wire.go` (кодек кадров `_udp2` обеих сторон, границы, усечённый кадр → `io.ErrUnexpectedEOF`), `auth.go`, `errors.go`, `useragent.go`
 - [x] 2. Клиент H2: одна сессия на `http2.ClientConn`, проверка ALPN `h2`, `StrictMaxConcurrentStreams`, без PING; `DialContext` возвращает conn после 200, иначе `*StatusError`
@@ -24,5 +24,5 @@
 - [x] 12. `docs-lx/protocols-transports.md` и `.ru.md`: раздел, таблица маппинга, асимметрия DNS, предел IPv6 `::/96`
 - [x] 13. Отпечаток H2 (R13): преамбула как у Chrome в пределах `x/net/http2` — `newHTTP2Transport` (`http.HTTP2Config` окна 6291456 / 15663105 + `http2.ConfigureTransports`, `MaxHeaderListSize` 262144, `MaxDecoderHeaderTableSize` 65536); `TestHTTP2Preface` читает с провода SETTINGS `2:0;4:6291456;5:16384;6:262144;1:65536` и `WINDOW_UPDATE 15663105`; стенд 2026-10-16: `check-out` по H2 к официальному endpoint зелёный, также с `tls.utls` `chrome`
 - [ ] 14. Решения владельца по В7–В11
-- [x] 15. Тег в `LX_TAGS` (R9) — 2026-10-16, решение владельца: выходит в следующем релизе как экспериментальная; релиз-нота — подраздел в черновике `docs-lx/releases/v1.14.3-lx.21.md`
+- [x] 15. Тег в `LX_TAGS` (R9) — 2026-10-16, решение владельца: выходит в следующем релизе; релиз-нота — подраздел в черновике `docs-lx/releases/v1.14.3-lx.21.md`
 - [ ] 16. IMPLEMENTATION_REPORT, статус задачи и Roadmap

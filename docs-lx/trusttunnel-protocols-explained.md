@@ -26,7 +26,7 @@ lives, which decisions were made and what has been verified. **How to use
 it**: which transport to pick, what a server needs and where DNS behaves in
 a non-obvious way. Fields, defaults and error texts are not listed here.
 For those, see
-[protocols-transports §6](protocols-transports.md#6-trusttunnel-outbound-and-inbound-experimental)
+[protocols-transports §6](protocols-transports.md#6-trusttunnel-outbound-and-inbound)
 (parameter reference and key-mapping tables). The current state of the
 area is in the feature spec
 [018-TRUSTTUNNEL](../SPECS/FEATURES/018-TRUSTTUNNEL/FEATURE.md).
@@ -44,9 +44,8 @@ Callouts in the text are marked by type:
 - 🧭 TL;DR: the section's conclusion in a few sentences;
 - 📖 normative source.
 
-> 🧪 **Experimental.** The `trusttunnel` type ships in the desktop and
-> router release binaries since lx.21, but its interface may still change
-> between releases. The Android AAR does not carry it
+> The `trusttunnel` type ships in the desktop and router release binaries
+> since lx.21. The Android AAR does not carry it
 > ([§5.1](#51-status-and-builds)).
 
 ## Table of contents
@@ -658,7 +657,7 @@ had closed reported the node as available.
 
 | | |
 |---|---|
-| State | Experimental since lx.21: the type ships, the interface may change |
+| State | Ships since lx.21 |
 | Build tag | `with_trusttunnel`, in `LX_TAGS` since 2026-10-16; HTTP/3 also needs `with_quic`, which is in the set |
 | Where it is | Desktop binaries and static router builds |
 | Where it is not | The Android AAR (LxBox) |
@@ -1024,7 +1023,7 @@ the node:
 
 ## See also
 
-- **[protocols-transports.md §6](protocols-transports.md#6-trusttunnel-outbound-and-inbound-experimental)**:
+- **[protocols-transports.md §6](protocols-transports.md#6-trusttunnel-outbound-and-inbound)**:
   every field, default, error verbatim; §6.4 session behaviour, §6.5 and
   §6.8 key-mapping tables, §6.9 examples.
 - **[lx-energy.md](lx-energy.md)**: the energy model and `mode: failover`.

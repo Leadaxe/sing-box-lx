@@ -2,7 +2,7 @@
 
 **Фича:** [018-TRUSTTUNNEL](../../FEATURES/018-TRUSTTUNNEL/FEATURE.md) · план — [PLAN.md](PLAN.md)
 
-Реализация экспериментальная: тег `with_trusttunnel` в `LX_TAGS` с 2026-10-16 — inbound в desktop- и роутерных бинарях, интерфейс ещё может измениться; в AAR тега нет.
+Тег `with_trusttunnel` в `LX_TAGS` с 2026-10-16 — inbound в desktop- и роутерных бинарях; в AAR тега нет.
 
 - [x] 1. `Service`: accept-петля H2 (TLS → ALPN `h2` → `http2.Server.ServeConn`, 1000 стримов, idle 600 с), HTTP/1.1 не обслуживается, `UpdateUsers`, `Close`
 - [x] 2. `ServeHTTP`: 404 на не-CONNECT без `proxy-authenticate`; 407 + `proxy-authenticate`; `_check` → 200; `_icmp` → 404; authority без порта → 400
@@ -21,4 +21,4 @@
   - не снято: ICMP у клиента — у CLI-клиента 1.1.11 ручки ICMP нет.
 - [x] 11. `docs-lx/protocols-transports.md` и `.ru.md`: раздел inbound
 - [ ] 12. Решения владельца по §7; IMPLEMENTATION_REPORT, статус
-- [x] 13. Тег в `LX_TAGS` вместе с 133 — 2026-10-16 (решение владельца, экспериментально)
+- [x] 13. Тег в `LX_TAGS` вместе с 133 — 2026-10-16 (решение владельца)

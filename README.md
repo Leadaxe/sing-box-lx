@@ -7,7 +7,7 @@ with current Xray and AmneziaWG servers, a daemon and observability for the apps
 
 - **Compatibility with today's servers and networks.** REALITY with the hybrid post-quantum
   ML-KEM key exchange (X25519MLKEM768) that current Xray requires, XHTTP, VLESS `encryption`,
-  AmneziaWG 3.x, ClientHello fragmentation, WARP over MASQUE, TrustTunnel (experimental).
+  AmneziaWG 3.x, ClientHello fragmentation, WARP over MASQUE, TrustTunnel.
 - **A core built to be operated** by demanding consumers — the desktop launcher, the LxBox
   Android app, routers: daemon mode, observability over gRPC, energy saving with sleep for idle
   tunnels, router builds.
@@ -67,7 +67,7 @@ its README — [on GitHub](https://github.com/SagerNet/sing-box/blob/main/README
 | **MASQUE / Cloudflare WARP** — [009](SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md) | `type: masque` outbound | CONNECT-IP (RFC 9484) over HTTP/3 or HTTP/2 through a userspace network stack; `profile: cloudflare` for WARP; standard `tls` block; idle-suspend and self-healing reconnect | — | device-verified on Wi-Fi and LTE, `h3` and `h2` |
 | **REALITY against current Xray** — [017](SPECS/FEATURES/017-REALITY/FEATURE.md) | `tls.reality` + `tls.utls.fingerprint`, `tls.reality.key_share`, `tls.fragment` / `record_fragment` | The hybrid post-quantum key share `X25519MLKEM768` that Xray ≥ v26.9.8 requires, on `chrome`, `firefox`, `safari` (the latter two via the utls fork submodule); per-node `key_share: classical \| hybrid`; ClientHello fragmentation now applies to REALITY | — (inside `with_utls`) | stand-verified against Xray v26.9.9 and older; `firefox`/`safari` field-confirmed; `key_share` and fragmentation await a field run |
 | **VLESS `encryption`** — [012](SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) | `encryption` field on a `vless` outbound | Post-quantum `mlkem768x25519plus` layer *inside* VLESS, beneath the transport and independent of TLS/REALITY | — | device-verified: previously dead subscription nodes came alive |
-| **TrustTunnel** — [018](SPECS/FEATURES/018-TRUSTTUNNEL/FEATURE.md) | `type: trusttunnel` outbound **and inbound** | AdGuard's TrustTunnel: proxy `CONNECT` with Basic auth over HTTP/2 (TLS, uTLS) or HTTP/3 (QUIC); TCP per stream, UDP as `_udp2` frames; one session per node, silent while idle, transparent rebuild; the inbound mirrors the official endpoint's limits and answers probes with 404 | `with_trusttunnel` | experimental; interoperable with the official endpoint 1.1.0 and client 1.1.11 on the stand, both directions; no live VPS run yet |
+| **TrustTunnel** — [018](SPECS/FEATURES/018-TRUSTTUNNEL/FEATURE.md) | `type: trusttunnel` outbound **and inbound** | AdGuard's TrustTunnel: proxy `CONNECT` with Basic auth over HTTP/2 (TLS, uTLS) or HTTP/3 (QUIC); TCP per stream, UDP as `_udp2` frames; one session per node, silent while idle, transparent rebuild; the inbound mirrors the official endpoint's limits and answers probes with 404 | `with_trusttunnel` | interoperable with the official endpoint 1.1.0 and client 1.1.11 on the stand, both directions; no live VPS run yet |
 
 ### Routing and DNS
 

@@ -8,7 +8,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | `with_trusttunnel` |
-| Состояние | Экспериментальная — в релизных бинарях с lx.21 (`LX_TAGS` с 2026-10-16), интерфейс ещё может измениться; обсуждение [#46](https://github.com/Leadaxe/sing-box-lx/issues/46), задачи [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.ru.md), [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.ru.md) |
+| Состояние | В релизных бинарях с lx.21 (`LX_TAGS` с 2026-10-16); обсуждение [#46](https://github.com/Leadaxe/sing-box-lx/issues/46), задачи [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.ru.md), [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.ru.md) |
 
 ## Назначение
 
@@ -115,8 +115,7 @@ Inbound обслуживает то, что шлют официальные кл
 ping- и speedtest-хосты, reverse proxy, ICMP, SOCKS5-форвардинг — вне фичи.
 
 Build: тег `with_trusttunnel`, в `LX_TAGS` с 2026-10-16 — собирается в desktop-бинари и в
-статические сборки для роутеров как экспериментальная фича (тип `trusttunnel` есть,
-интерфейс ещё может измениться); в Android AAR его нет. Без тега `type: trusttunnel` отвергается при
+статические сборки для роутеров; в Android AAR его нет. Без тега `type: trusttunnel` отвергается при
 чтении конфига понятной ошибкой, остальное ядро ведёт себя как апстрим. В UI
 (Clash API `type`, libbox) узел подписан «TrustTunnel».
 

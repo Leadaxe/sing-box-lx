@@ -1,8 +1,8 @@
 # Руководство для AI-агентов — sing-box-lx
 
-`sing-box-lx` — **тонкий downstream** апстрима [SagerNet/sing-box](https://github.com/SagerNet/sing-box): upstream **плюс небольшой набор клиентских фич** (XHTTP, AWG, MASQUE, VLESS-шифрование, DNS-группа, наблюдаемость, балансировка, энергосбережение — актуальный индекс в [SPECS/FEATURES/](SPECS/FEATURES/README.md)) и ничего больше.
+`sing-box-lx` — **тонкий downstream** апстрима [SagerNet/sing-box](https://github.com/SagerNet/sing-box): upstream **плюс небольшой набор фич** (XHTTP, AWG, MASQUE, REALITY против актуального Xray, VLESS-шифрование, TrustTunnel, цепочки `chain`, DNS-группа, снифферы, балансировка, энергосбережение, наблюдаемость, демон `lxd` — актуальный индекс в [SPECS/FEATURES/](SPECS/FEATURES/README.md)) и ничего больше.
 
-Главная ценность проекта — **согласованность с upstream**. Любое изменение оценивается по тому, насколько дёшево оно переживёт следующий мерж `upstream/testing` (ритуал — [docs-lx/lx-release-runbook.md](docs-lx/lx-release-runbook.md)).
+Главная ценность проекта — **согласованность с upstream**. Любое изменение оценивается по тому, насколько дёшево оно переживёт следующий мерж `upstream/stable` (ритуал — [docs-lx/lx-release-runbook.md](docs-lx/lx-release-runbook.md)).
 
 ---
 
@@ -28,10 +28,10 @@
 
 - **Набор фич ограничен.** Новая фича — только через тест §3.1 CONSTITUTION и решение пользователя, не по собственной инициативе.
 - **Go module path остаётся `github.com/sagernet/sing-box`** (для дешёвых синков).
-- **Всё новое — за build-tag** (`with_xhttp`, `with_awg`, `with_lx_command`, `with_lx_idle_suspend`) и **в новых файлах/пакетах**; фичи без ручки в сборке (MASQUE, VLESS-шифрование, DNS-группа) изолируются lx-файлами.
+- **Всё новое — за build-tag** (`with_xhttp`, `with_awg`, `with_lx_command`, `with_lxd`, `with_lx_chain`, `with_trusttunnel`, `with_lx_idle_suspend`; канонический набор — `LX_TAGS` в `Makefile.lx`) и **в новых файлах/пакетах**; фичи без ручки в сборке (MASQUE, VLESS-шифрование, DNS-группа) изолируются lx-файлами. Файлы, рассчитанные на передачу в апстрим (TrustTunnel), идут в апстримной форме без суффикса `_lx`, маркеры `// lx:` остаются только на вставках в общие файлы.
 - **Правки upstream-файлов** — только помеченными `// lx:` блоками, атомарными коммитами.
-- **Синхронизация с upstream — ручной merge `upstream/testing`** (не rebase); `lx` никогда не форс-пушится. Ритуал — в runbook.
-- **Два форк-сабмодуля** — `submodules/wireguard-go` и `submodules/sing-tun`: встречные upstream-бампы их гитлинков на мерже не принимать вслепую (откатят наши патчи).
+- **Синхронизация с upstream — ручной merge `upstream/stable`** (не rebase; `upstream/testing` — ветка разработки апстрима, дрейф меряется только по `stable`); `lx` никогда не форс-пушится. Ритуал — в runbook.
+- **Четыре форк-сабмодуля** — `submodules/wireguard-go`, `submodules/sing-tun`, `submodules/gvisor`, `submodules/utls`: встречные upstream-бампы их гитлинков на мерже не принимать вслепую (откатят наши патчи); сабмодули разбираются до мержа ядра.
 - **Имя бинаря — `sing-box`** (drop-in для лаунчера); идентичность `-lx` — в версии.
 - **Scope — client-first**: outbound/endpoint. Server/inbound — только там, где фича без них неполна (на 2026-10-16 это inbound `trusttunnel`, SPEC 134); решение владельца от 2026-09-17.
 
@@ -39,4 +39,4 @@
 
 ## Язык
 
-Спеки, отчёты и ответы в чате — **русский**. Код, комментарии, коммиты — английский, в стиле upstream sing-box.
+Спеки, отчёты и ответы в чате — **русский**. Код, комментарии, коммиты — английский, в стиле upstream sing-box. Исключение — фичи, рассчитанные на внешнюю аудиторию (TrustTunnel: FEATURE 018, SPEC 133/134): их SPEC и FEATURE пишутся по-английски с русской копией `.ru.md` рядом, обе правятся вместе.

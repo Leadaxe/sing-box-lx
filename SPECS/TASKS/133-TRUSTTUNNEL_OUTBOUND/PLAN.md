@@ -2,10 +2,9 @@
 
 **Фича:** [018-TRUSTTUNNEL](../../FEATURES/018-TRUSTTUNNEL/FEATURE.md) · контракт — [SPEC.md](SPEC.md) · серверная половина — [134](../134-TRUSTTUNNEL_INBOUND/PLAN.md)
 
-> **Реализация экспериментальная.** Всё за тегом `with_trusttunnel`; тег в `LX_TAGS`
-> (`Makefile.lx`) с 2026-10-16 (решение владельца, R9): desktop- и роутерные бинари несут тип
-> `trusttunnel`, AAR — нет. «Экспериментальная» значит: в бинарях есть, интерфейс ещё может
-> измениться. Открытые вопросы §7 (В7–В11) этим не закрыты.
+> Всё за тегом `with_trusttunnel`; тег в `LX_TAGS` (`Makefile.lx`) с 2026-10-16 (решение
+> владельца, R9): desktop- и роутерные бинари несут тип `trusttunnel`, AAR — нет. Открытые
+> вопросы §7 (В7–В11) этим не закрыты.
 
 ## Этапы
 
@@ -40,7 +39,7 @@
 | `constant/proxy.go` | 2 | `TypeTrustTunnel` и `case` в `ProxyDisplayName` → «TrustTunnel» (4 строки), отдельный коммит |
 | `docs-lx/protocols-transports.md`, `.ru.md` | 3 | Раздел outbound + inbound: конфиг, таблица маппинга экспорта TrustTunnel (FEATURE 018), асимметрия DNS (TCP-домены резолвит сервер, UDP — узел), предел IPv6 `::/96` в кадрах |
 | `lx-test/trusttunnel/` | 3 | Стенд с официальными endpoint и клиентом уже есть (`stand.sh`); добавить сценарии §6 для нашего outbound |
-| `docs-lx/lx-changelog.md`, `docs-lx/releases/*.md` | 3 | Релиз-нота lx.21 — подраздел «экспериментально» |
+| `docs-lx/lx-changelog.md`, `docs-lx/releases/*.md` | 3 | Релиз-нота lx.21 — подраздел TrustTunnel |
 
 ## Решения реализации
 

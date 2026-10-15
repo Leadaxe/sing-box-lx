@@ -8,7 +8,7 @@
 |-------|-------|
 | Type | Product feature |
 | Build tag | `with_trusttunnel` |
-| State | Experimental — in the release binaries from lx.21 (`LX_TAGS` since 2026-10-16), the interface may still change; discussion [#46](https://github.com/Leadaxe/sing-box-lx/issues/46), tasks [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md), [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md) |
+| State | In the release binaries from lx.21 (`LX_TAGS` since 2026-10-16); discussion [#46](https://github.com/Leadaxe/sing-box-lx/issues/46), tasks [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md), [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md) |
 
 ## Purpose
 
@@ -115,8 +115,7 @@ endpoint offers beyond the tunnel — rules by `client_random`, subscription, pi
 speed-test hosts, reverse proxy, ICMP, SOCKS5 forwarding — is out of the feature.
 
 Build: tag `with_trusttunnel`, in `LX_TAGS` since 2026-10-16 — built into the desktop
-binaries and the static router builds as an experimental feature (the `trusttunnel` type
-ships, its interface may still change); the Android AAR does not carry it. Without the tag `type: trusttunnel` is
+binaries and the static router builds; the Android AAR does not carry it. Without the tag `type: trusttunnel` is
 rejected when the config is read, with a clear error, and the rest of the core behaves
 exactly like upstream. In the UI (Clash API `type`, libbox) the node is labelled
 "TrustTunnel".

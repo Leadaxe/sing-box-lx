@@ -15,7 +15,7 @@ lx-test/trusttunnel/stand.sh check       # curl через клиента: пр�
 lx-test/trusttunnel/stand.sh down
 ```
 
-Наш sing-box (тег `with_trusttunnel` в `LX_TAGS` с 2026-10-16, фича экспериментальная; стенд собирает свой бинарь из рабочего дерева):
+Наш sing-box (тег `with_trusttunnel` в `LX_TAGS` с 2026-10-16; стенд собирает свой бинарь из рабочего дерева):
 
 ```bash
 lx-test/trusttunnel/stand.sh build       # LX_TAGS (с with_trusttunnel) -> bin/sing-box (nice 15, -p 4)

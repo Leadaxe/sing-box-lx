@@ -8,7 +8,7 @@
 - **Совместимость с сегодняшними серверами и сетями.** REALITY с гибридным постквантовым
   обменом ключами ML-KEM (X25519MLKEM768), как требует актуальный Xray, XHTTP,
   VLESS `encryption`, AmneziaWG 3.x, фрагментация ClientHello, WARP через MASQUE,
-  TrustTunnel (экспериментально).
+  TrustTunnel.
 - **Ядро, сделанное под эксплуатацию** в сложных потребителях — десктопном лаунчере,
   Android-приложении LxBox, на роутерах: режим демона, наблюдаемость по gRPC, энергосбережение
   и сон простаивающих туннелей, роутерные сборки.
@@ -69,7 +69,7 @@ README — [на GitHub](https://github.com/SagerNet/sing-box/blob/main/README.m
 | **MASQUE / Cloudflare WARP** — [009](SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md) | outbound `type: masque` | CONNECT-IP (RFC 9484) поверх HTTP/3 или HTTP/2 через userspace-стек; `profile: cloudflare` для WARP; стандартный блок `tls`; idle-suspend и самовосстанавливающийся реконнект | — | девайс-верифицирован на Wi-Fi и LTE, `h3` и `h2` |
 | **REALITY против актуального Xray** — [017](SPECS/FEATURES/017-REALITY/FEATURE.md) | `tls.reality` + `tls.utls.fingerprint`, `tls.reality.key_share`, `tls.fragment` / `record_fragment` | Гибридный постквантовый key share `X25519MLKEM768`, которого требует Xray ≥ v26.9.8, на `chrome`, `firefox`, `safari` (последние два — через форк-сабмодуль utls); по-узловой `key_share: classical \| hybrid`; фрагментация ClientHello теперь работает и на REALITY | — (внутри `with_utls`) | стенд-верифицировано против Xray v26.9.9 и более старых; `firefox`/`safari` подтверждены в поле; `key_share` и фрагментация ждут полевого прогона |
 | **VLESS `encryption`** — [012](SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) | поле `encryption` на `vless`-outbound | Постквантовый слой `mlkem768x25519plus` *внутри* VLESS, под транспортом и независимо от TLS/REALITY | — | девайс-верифицирован: ранее мёртвые узлы подписки ожили |
-| **TrustTunnel** — [018](SPECS/FEATURES/018-TRUSTTUNNEL/FEATURE.md) | outbound **и inbound** `type: trusttunnel` | TrustTunnel от AdGuard: прокси-`CONNECT` с Basic-авторизацией поверх HTTP/2 (TLS, uTLS) или HTTP/3 (QUIC); TCP по стриму на соединение, UDP кадрами `_udp2`; одна сессия на узел, тишина в простое, прозрачная пересборка; inbound повторяет лимиты официального endpoint и отвечает зондам 404 | `with_trusttunnel` | экспериментально; совместимость с официальными endpoint 1.1.0 и клиентом 1.1.11 снята на стенде в обе стороны; живого VPS ещё не было |
+| **TrustTunnel** — [018](SPECS/FEATURES/018-TRUSTTUNNEL/FEATURE.md) | outbound **и inbound** `type: trusttunnel` | TrustTunnel от AdGuard: прокси-`CONNECT` с Basic-авторизацией поверх HTTP/2 (TLS, uTLS) или HTTP/3 (QUIC); TCP по стриму на соединение, UDP кадрами `_udp2`; одна сессия на узел, тишина в простое, прозрачная пересборка; inbound повторяет лимиты официального endpoint и отвечает зондам 404 | `with_trusttunnel` | совместимость с официальными endpoint 1.1.0 и клиентом 1.1.11 снята на стенде в обе стороны; живого VPS ещё не было |
 
 ### Маршрутизация и DNS
 

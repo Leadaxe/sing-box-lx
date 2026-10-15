@@ -17,7 +17,7 @@
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) обфускация | `with_awg` | промо-поля на `wireguard` **endpoint** | [§2](#2-amneziawg-203x-awg2-awg3) |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic` + `with_gvisor` | `outbounds[].type: "masque"` | [§3](#3-masque-outbound-connect-ip--warp) |
 | **REALITY**-клиент (гибридный key share, `key_share`, фрагментация) и **VLESS `encryption`** | — (REALITY внутри `with_utls`) | блок `tls` у TLS-over-TCP **outbound**; плоское поле `encryption` у `vless` | [§5](#5-reality-и-vless-encryption) |
-| **TrustTunnel** outbound и inbound (протокол AdGuard VPN), экспериментально | `with_trusttunnel` (+ `with_quic` для HTTP/3), в `LX_TAGS` с lx.21, не в AAR | `outbounds[].type` / `inbounds[].type: "trusttunnel"` | [§6](#6-trusttunnel-outbound-и-inbound-экспериментально) |
+| **TrustTunnel** outbound и inbound (протокол AdGuard VPN) | `with_trusttunnel` (+ `with_quic` для HTTP/3), в `LX_TAGS` с lx.21, не в AAR | `outbounds[].type` / `inbounds[].type: "trusttunnel"` | [§6](#6-trusttunnel-outbound-и-inbound) |
 
 Плюс [§4](#4-grpc-транспорт) — **gRPC**-транспорт, он апстримный, не наш, и попал
 сюда ради одного места, где у нашего поведения есть downstream-заметки по
@@ -101,7 +101,7 @@ make -f Makefile.lx lx-build
   - [5.5 Поле `encryption` у `vless`](#55-поле-encryption-у-vless)
   - [5.6 Ошибки валидации `encryption` (дословно)](#56-ошибки-валидации-encryption-дословно)
   - [5.7 Примеры](#57-примеры)
-- [§6 TrustTunnel outbound и inbound (экспериментально)](#6-trusttunnel-outbound-и-inbound-экспериментально)
+- [§6 TrustTunnel outbound и inbound](#6-trusttunnel-outbound-и-inbound)
   - [6.1 Что это](#61-что-это)
   - [6.2 Поля outbound](#62-поля-outbound)
   - [6.3 Проверки при старте (дословно)](#63-проверки-при-старте-дословно)
@@ -1274,11 +1274,10 @@ VLESS + `encryption` поверх WebSocket без внешнего TLS:
 
 ---
 
-# 6. TrustTunnel outbound и inbound (экспериментально)
+# 6. TrustTunnel outbound и inbound
 
-> 🧪 **Экспериментально.** Входит в релизные desktop- и роутерные бинари с lx.21 (тег
-> `with_trusttunnel` в `LX_TAGS`; HTTP/3 нужен ещё `with_quic`, он в наборе). Тип
-> `trusttunnel` поставляется, но его интерфейс ещё может меняться между релизами. В
+> Входит в релизные desktop- и роутерные бинари с lx.21 (тег
+> `with_trusttunnel` в `LX_TAGS`; HTTP/3 нужен ещё `with_quic`, он в наборе). В
 > Android AAR тега нет. Своя сборка без тега отвергает оба типа при загрузке конфига:
 > `trusttunnel is not included in this build, rebuild with -tags with_trusttunnel`.
 
