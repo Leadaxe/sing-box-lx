@@ -626,6 +626,9 @@ func TestAdminInfoExecutableHash(t *testing.T) {
 	if platform, ok := payload["platform"].(string); !ok || platform != "" {
 		t.Fatalf("platform must be present and empty, got %#v", payload["platform"])
 	}
+	if packed, ok := payload["packed"].(bool); !ok || packed {
+		t.Fatalf("packed must be present and false, got %#v", payload["packed"])
+	}
 
 	binary := filepath.Join(t.TempDir(), "sing-box")
 	content := []byte("the running core")
@@ -633,6 +636,16 @@ func TestAdminInfoExecutableHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity := newExecutableIdentity(binary)
+	if identity.isPacked() {
+		t.Fatal("a plain binary must not read as UPX-packed")
+	}
+	packedBinary := filepath.Join(t.TempDir(), "sing-box")
+	if err := os.WriteFile(packedBinary, []byte("\x7fELF....UPX!...."), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !newExecutableIdentity(packedBinary).isPacked() {
+		t.Fatal("a binary with the UPX magic must read as packed")
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		path, sum := identity.snapshot()

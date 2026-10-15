@@ -500,9 +500,13 @@ func unbindInstalledCopy(out io.Writer, dir, label, plistPath string, dryRun, ca
 // resolved path, known at once, and its sha256, hashed once in the
 // background at start — the control channel comes up first, and on a router
 // hashing a 40 MB binary takes seconds (SPEC 100 §2.9). The hash reads ""
-// until it is ready, or for good if the file cannot be read.
+// until it is ready, or for good if the file cannot be read. packed — the
+// binary is a UPX-packed copy (the same 4 KiB probe lxd update uses), so a
+// client downloading a core for this machine picks the .upx.tar.gz asset;
+// read once at start, the running binary does not change under the process.
 type executableIdentity struct {
 	path   string
+	packed bool
 	access sync.Mutex
 	sha256 string
 }
@@ -512,6 +516,7 @@ func newExecutableIdentity(path string) *executableIdentity {
 	if path == "" {
 		return identity
 	}
+	identity.packed = packedWithUPX(path)
 	go func() {
 		sum, err := sha256File(path, maxExecutableSize)
 		if err != nil {
@@ -532,4 +537,9 @@ func (identity *executableIdentity) snapshot() (path, sha256 string) {
 	identity.access.Lock()
 	defer identity.access.Unlock()
 	return identity.path, identity.sha256
+}
+
+// isPacked reports whether the running binary is a UPX-packed copy.
+func (identity *executableIdentity) isPacked() bool {
+	return identity != nil && identity.packed
 }

@@ -379,7 +379,9 @@ func (c *controller) handleConfig(writer http.ResponseWriter, request *http.Requ
 // is the one directory the daemon owns — and compare executable_sha256, not
 // the path, with their own core (SPEC 100). The platform card (SPEC 127):
 // goos/goarch and platform (the release asset for this machine), init_system
-// (what runs the host) and service (this process runs under it).
+// (what runs the host) and service (this process runs under it). packed: the
+// running binary is a UPX-packed copy — its next core is the .upx.tar.gz
+// asset, as lxd update picks it.
 func (c *controller) handleInfo(writer http.ResponseWriter, request *http.Request) {
 	logPath := ""
 	if c.infoLogPath != "" {
@@ -404,6 +406,7 @@ func (c *controller) handleInfo(writer http.ResponseWriter, request *http.Reques
 		"platform":          c.platform.platform,
 		"init_system":       c.platform.initSystem,
 		"service":           c.platform.service,
+		"packed":            c.executable.isPacked(),
 	})
 }
 
