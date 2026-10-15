@@ -58,10 +58,6 @@ jobs:
           # (runs on musl), it just drops naive/cronet (with_purego doesn't compile on
           # mips either — purego has no mips port).
           - { goos: linux, goarch: mips, gomips: softfloat, no_naive: true }
-          # 32-bit x86 and RISC-V routers — same no_naive recipe: pure-Go static,
-          # cronet/Chromium has no toolchain for either target.
-          - { goos: linux, goarch: "386", no_naive: true }
-          - { goos: linux, goarch: riscv64, no_naive: true }
     steps:
       - uses: actions/checkout@v5
         with:
@@ -276,10 +272,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # upx: also ship a UPX-packed copy (*.upx.tar.gz) on stable tags — for
+          # routers with RAM to spare but a small flash overlay and no USB
+          # (MT7981 aarch64, MT7621 mipsel). Two targets until downloads show
+          # the copies are wanted.
           - { arch: amd64,  asset: linux-amd64 }
-          - { arch: arm64,  asset: linux-arm64 }
+          - { arch: arm64,  asset: linux-arm64, upx: true, qemu: aarch64 }
           - { arch: arm,    goarm: "7",        asset: linux-armv7 }
-          - { arch: mipsle, gomips: softfloat, asset: linux-mipsle-softfloat }
+          - { arch: mipsle, gomips: softfloat, asset: linux-mipsle-softfloat, upx: true, qemu: mipsel }
+          # OpenWrt i386_pentium4 / riscv64_generic, upstream's linux-*-musl recipe.
+          - { arch: "386",   go386: sse2, asset: linux-386 }
+          - { arch: riscv64, asset: linux-riscv64 }
     steps:
       - uses: actions/checkout@v5
         with:
@@ -399,6 +402,7 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           GOARM: ${{ matrix.goarm }}
           GOMIPS: ${{ matrix.gomips }}
+          GO386: ${{ matrix.go386 }}
         run: |
           set -xeuo pipefail
           # LX_TAGS is the single source of truth (Makefile.lx). Swap the purego
@@ -427,6 +431,34 @@ jobs:
           cp dist/sing-box "stage/$NAME/"
           cp LICENSE LICENSING.md README.md "stage/$NAME/" 2>/dev/null || true
           tar -C stage -czf "dist/$NAME.tar.gz" "$NAME"
+
+      # UPX-packed copy for the `upx: true` legs, stable tags only (an rc is
+      # verified on the plain binary). UPX is pinned by version AND sha256: it
+      # rewrites what we publish. Optional: continue-on-error keeps a UPX outage
+      # from blocking the release, and the archive reaches dist/ only after the
+      # packed binary ran `version` under qemu-user. Old router kernels may still
+      # reject the stub (5.2.1 verified live on Keenetic 4.9-ndm-5, mipsel).
+      - name: UPX copy
+        if: matrix.upx && !contains(steps.ver.outputs.version, '-rc.') && !contains(steps.ver.outputs.version, '-alpha.') && !contains(steps.ver.outputs.version, '-beta.')
+        continue-on-error: true
+        env:
+          UPX_VERSION: '5.2.1'
+          UPX_SHA256: 402162aad30af47e60dbd767fb2e64ca394ace9727ba1f40283641f1d1b91657
+        run: |
+          set -xeuo pipefail
+          NAME="sing-box-${{ steps.ver.outputs.version }}-${{ matrix.asset }}"
+          curl -fsSL -o upx.tar.xz "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz"
+          echo "${UPX_SHA256}  upx.tar.xz" | sha256sum -c -
+          tar -xJf upx.tar.xz
+          UPX="$PWD/upx-${UPX_VERSION}-amd64_linux/upx"
+          rm -rf stage-upx && mkdir stage-upx
+          cp -r "stage/$NAME" stage-upx/
+          "$UPX" -q --best --lzma "stage-upx/$NAME/sing-box"
+          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static
+          "qemu-${{ matrix.qemu }}-static" "stage-upx/$NAME/sing-box" version
+          tar -C stage-upx -czf upx.tar.gz "$NAME"
+          mv upx.tar.gz "dist/$NAME.upx.tar.gz"
+          ls -la dist
 
       - uses: actions/upload-artifact@v6
         with:
@@ -500,62 +532,9 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  # UPX-packed duplicates of every linux archive (`*.upx.tar.gz`, same layout).
-  # UPX is pinned by version AND sha256: this binary rewrites what we publish.
-  # The duplicates are optional — continue-on-error keeps a UPX outage (release
-  # download unavailable, checksum mismatch) from blocking the main release:
-  # download-artifact in `release` picks up only the artifacts that exist.
-  # Packed binaries must still be verified on real hardware — some Keenetic 4.9
-  # kernels SIGSEGV on certain UPX versions (5.2.1 verified live on 4.9-ndm-5).
-  upx:
-    name: upx linux archives
-    runs-on: ubuntu-latest
-    needs: [build, build_linux_musl]
-    continue-on-error: true
-    env:
-      UPX_VERSION: '5.2.1'
-      UPX_SHA256: 402162aad30af47e60dbd767fb2e64ca394ace9727ba1f40283641f1d1b91657
-    steps:
-      - uses: actions/download-artifact@v7
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: Install upx
-        run: |
-          set -xeuo pipefail
-          curl -fsSL -o upx.tar.xz "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz"
-          echo "${UPX_SHA256}  upx.tar.xz" | sha256sum -c -
-          tar -xJf upx.tar.xz
-          sudo install -m 755 "upx-${UPX_VERSION}-amd64_linux/upx" /usr/local/bin/upx
-          upx --version | head -1
-
-      - name: Pack
-        run: |
-          set -xeuo pipefail
-          mkdir -p dist-upx
-          for src in dist/sing-box-*-linux-*.tar.gz; do
-            NAME="$(basename "$src" .tar.gz)"
-            rm -rf work && mkdir work
-            tar -C work -xzf "$src"
-            upx -q --best --lzma "work/$NAME/sing-box"
-            case "$NAME" in
-              *-linux-amd64|*-linux-386) "work/$NAME/sing-box" version ;;
-            esac
-            tar -C work -czf "dist-upx/$NAME.upx.tar.gz" "$NAME"
-            rm -rf work
-          done
-          ls -la dist-upx
-
-      - uses: actions/upload-artifact@v6
-        with:
-          name: dist-upx
-          path: dist-upx/*
-          if-no-files-found: warn
-
   release:
     name: publish release
-    needs: [build, build_darwin, build_linux_musl, build_android, upx]
+    needs: [build, build_darwin, build_linux_musl, build_android]
     # lx: a tag push carries no inputs — always publish there; a manual run publishes
     # unless dry_run. The implicit success() on `needs` still applies.
     if: ${{ github.event_name == 'push' || inputs.dry_run != true }}
@@ -651,13 +630,11 @@ jobs:
 
           Windows archives include \`libcronet.dll\` — keep it next to \`sing-box.exe\`, the \`naive\` outbound loads it from there. The darwin binaries are built with CGO on a macOS runner: \`libcronet.a\` is linked statically, so NaïveProxy works with nothing extra to install (tag set drops \`with_purego\` there).
 
-          **Linux — static musl builds for routers** (AsusWRT Merlin, OpenWrt, Keenetic): \`linux-amd64\`, \`linux-arm64\`, \`linux-armv7\`, \`linux-mipsle-softfloat\`. These are statically linked (no \`libdl.so.2\`/glibc dependency) and **keep NaïveProxy** — they run on musl routers where the previous dynamic builds failed with \`libdl.so.2: cannot open shared object file\`. See SPECS/TASKS/006.
+          **Linux — static musl builds for routers** (AsusWRT Merlin, OpenWrt, Keenetic): \`linux-amd64\`, \`linux-arm64\`, \`linux-armv7\`, \`linux-mipsle-softfloat\`, \`linux-386\` (SSE2), \`linux-riscv64\`. These are statically linked (no \`libdl.so.2\`/glibc dependency) and **keep NaïveProxy** — they run on musl routers where the previous dynamic builds failed with \`libdl.so.2: cannot open shared object file\`. See SPECS/TASKS/006.
 
           **Linux — big-endian MIPS** (OpenWrt \`mips_24kc\`, e.g. Atheros AR93xx): \`linux-mips-softfloat\` — pure-Go static build **without NaïveProxy** (Chromium/cronet has no big-endian MIPS toolchain); everything else matches the desktop tag set.
 
-          **Linux — extra router targets**: \`linux-386\` and \`linux-riscv64\` — pure-Go static builds **without NaïveProxy** (same recipe as big-endian MIPS; cronet/Chromium has no toolchain for them).
-
-          **Linux — compressed copies**: \`*.upx.tar.gz\` archives mirror the plain ones with the binary packed by UPX (\`--best --lzma\`, version pinned in the workflow) — ~3-4× smaller download, self-unpacking at start. UPX-packed binaries can fail to start on some older router kernels; if the packed binary does not start on your device, use the plain archive.
+          **Linux — UPX-packed copies** (stable releases only): \`linux-arm64.upx.tar.gz\` and \`linux-mipsle-softfloat.upx.tar.gz\` — the same binary packed with UPX (\`--best --lzma\`, version pinned in the workflow), ~4× smaller, for routers with a small flash overlay and no USB. The binary unpacks itself into RAM at every start: +15–20 MB RSS and a slower start (seconds on mipsle). Some older router kernels refuse the packed binary — if it does not start, use the plain archive.
 
           </details>
 
