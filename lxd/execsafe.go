@@ -311,10 +311,10 @@ var unixSelfCheckWords = selfCheckWords{
 	service:    "launchd service " + launchdLabel,
 }
 
-// unixSelfCheckEnv builds the unix environment from the process facts
+// unixSelfCheckEnv builds the macOS environment from the process facts
 // (SPEC 100 §2.8): root is euid 0, the service is the launchd job of this
 // label — parent pid 1 AND XPC_SERVICE_NAME equal to the label. Pure, so the
-// table test drives it on any host.
+// table test drives it on any host; only darwin builds it at run time.
 func unixSelfCheckEnv(euid, ppid int, xpcService string, executable func() (string, error), lstat func(string) (ownerInfo, error)) selfCheckEnv {
 	return selfCheckEnv{
 		privileged:     euid == 0,
@@ -341,7 +341,8 @@ func unixSelfCheckEnv(euid, ppid int, xpcService string, executable func() (stri
 // Windows. Only the service itself refuses to start on a violation; a
 // privileged run anywhere else (sudo from a terminal, nohup, a launcher
 // elevating the core) only warns, as does allowUnsafe. Without privileges
-// there is nothing to escalate to and nothing is checked. daemon says the
+// there is nothing to escalate to and nothing is checked; neither is anything
+// on a platform other than macOS and Windows (SPEC 132). daemon says the
 // caller is the `lxd` command, not `run`: on Windows only `lxd` under the SCM
 // is the service; unix tells the service apart by launchd's marks alone.
 // A passed check in the service context logs one INFO line.

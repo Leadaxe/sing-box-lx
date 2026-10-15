@@ -9,8 +9,3 @@ import E "github.com/sagernet/sing/common/exceptions"
 func lstatOwner(path string) (ownerInfo, error) {
 	return ownerInfo{}, E.New(path, ": file ownership is not available on this platform")
 }
-
-// platformSelfCheckEnv: no privileged service exists here, nothing to check.
-func platformSelfCheckEnv(daemon bool) selfCheckEnv {
-	return selfCheckEnv{}
-}

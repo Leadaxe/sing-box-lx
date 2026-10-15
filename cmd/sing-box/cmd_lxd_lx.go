@@ -210,7 +210,8 @@ func init() {
 
 	// Root running the core outside the lxd service — the launcher's classic
 	// TUN mode elevates `sing-box run` — gets the same executable check,
-	// which outside the launchd job of this label only warns (SPEC 100).
+	// which outside the service only warns (SPEC 100), and only on macOS and
+	// Windows (SPEC 132).
 	// Wraps Run only while upstream defines the command through Run; if it
 	// moves to RunE this hook drops out instead of calling nil, and the
 	// guard test in cmd_lxd_lx_test.go flags the move.

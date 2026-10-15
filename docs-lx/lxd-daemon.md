@@ -366,7 +366,8 @@ but keeps the copy and its sidecar, whose `plist_path` is cleared — the copy-o
 unbound it changes nothing, prints the same line and exits 0.
 
 **Self-check at start.** A core started as root (`lxd` or `run`) checks its own binary
-against the invariant. The launchd job — parent pid 1 and
+against the invariant — on macOS and Windows only, where the core installs the service
+itself; on Linux and elsewhere there is no self-check and nothing is logged. The launchd job — parent pid 1 and
 `XPC_SERVICE_NAME=com.leadaxe.sing-box-lxd` — refuses to start and says why in
 `lxd.log`:
 

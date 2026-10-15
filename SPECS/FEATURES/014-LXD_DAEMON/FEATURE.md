@@ -110,9 +110,10 @@ TUN, до логина); `install-user` — пользовательский Lau
 копию только по совпадению sha с её сайдкаром. `status` (без root) печатает plist,
 программу, владельца и режим, хеши, сайдкар и состояние launchd и выходит с кодом
 0 `OK`, 2 `MISMATCH`/`UNSAFE` (нужна переустановка), 3 `NOT INSTALLED`, 4 `COPY ONLY`, 5 `NOT RUNNING` (на диске исправно, job не запущен).
-Ядро под root (`lxd` и `run`) при старте проверяет собственный бинарь: служба с меткой
+Ядро под root (`lxd` и `run`) на macOS при старте проверяет собственный бинарь: служба с меткой
 launchd (`ppid 1` и `XPC_SERVICE_NAME` = ярлык) на не root-owned бинаре не стартует,
-любой другой запуск под root — `WARN`. `GET /admin/info` отдаёт `executable` и
+любой другой запуск под root — `WARN`. Самопроверка есть только на macOS и Windows, где службу
+ставит само ядро; на Linux и прочих — ни отказа, ни `WARN` (SPEC 132). `GET /admin/info` отдаёт `executable` и
 `executable_sha256` — клиент сравнивает ядро по хешу, не по пути, — а также платформенную
 карточку `goos`, `goarch`, `platform`, `init_system`, `service` (SPEC 127): платформу, ассет
 для скачивания и init-систему хоста клиент узнаёт у демона.
@@ -242,6 +243,7 @@ dup2 stdout/stderr на файл (туда попадает всё, включа
 | [127-LXD_INFO_PLATFORM](../../TASKS/127-LXD_INFO_PLATFORM/SPEC.md) | Реализовано (I): платформенная карточка в `GET /admin/info` — `goos`/`goarch` (`runtime`), `platform` (релизный ассет по `GOARM`/`GOMIPS` из build info: `linux-armv7`, `linux-mipsle-softfloat`), `init_system` (init **хоста**: `procd` / `systemd` / `openrc` / `launchd` / `scm` / `""`) и `service` (**этот процесс** запущен под ним службой); раз при старте. Детектор linux общий с рецептом `--service` (`/proc/1/comm`, затем пробы; +openrc). Лаунчер перестаёт хранить платформу машины руками и спрашивать init |
 | [128-LXD_COMMANDS](../../TASKS/128-LXD_COMMANDS/SPEC.md) | Реализовано (I) 2026-10-12: `"commands": {имя: строка}` в `daemon.json` — админ перечисляет root-команды, клиент запускает по имени без входа (`sudoers`-модель); `GET/POST /admin/commands[/{name}]`, detached-исполнение, исход рядом с логом демона (tmpfs на роутере), окружение `LXD_*` от демона, гейт — как у остальных операторских маршрутов (однородно, решение владельца); граница 100 сохраняется |
 | [129-LXD_UPDATE](../../TASKS/129-LXD_UPDATE/SPEC.md) | Реализовано (I) 2026-10-12: `sing-box lxd update` — самообновление на Linux из `SHA256SUMS` релиза по `platform` 127, поток в `.new`, хардлинк `.old`, атомарный `rename`, рестарт по init и откат; `--dry-run`/`--prerelease`/`--no-restart`; `sing-box version` печатает `Platform:`/`Init:` |
+| [132-LXD_SELFCHECK_SERVICE_PLATFORMS_ONLY](../../TASKS/132-LXD_SELFCHECK_SERVICE_PLATFORMS_ONLY/SPEC.md) | Реализовано (I) 2026-10-14: самопроверка бинаря при старте под root — только macOS и Windows; на Linux (вкл. OpenWrt) и прочих снята целиком — WARN про launchd с неисполнимым советом (issue #40, Asus Merlin `/` = `0777`) |
 
 ## 8. Особенности сопровождения
 
