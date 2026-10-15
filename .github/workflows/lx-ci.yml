@@ -74,6 +74,11 @@ jobs:
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd" \
             ./option/ ./constant/ ./transport/v2ray/ ./transport/v2rayxhttp/ \
             ./protocol/wireguard/ ./transport/wireguard/ ./lxd/
+          # trusttunnel (SPEC 133/134): upstream-form files, so no _lx suffix —
+          # the packages are listed here and in the gofmt filter explicitly.
+          go vet \
+            -tags "${BASE_TAGS},with_trusttunnel" \
+            ./transport/trusttunnel/ ./protocol/trusttunnel/ ./include/
           go vet -unsafeptr=false \
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd" \
             ./daemon/ ./experimental/libbox/
@@ -102,7 +107,7 @@ jobs:
         run: |
           # Only our downstream files — never the whole upstream tree.
           # Generated *.pb.go are excluded (machine output, not hand-edited).
-          files=$(git ls-files '*.go' | grep -E 'v2rayxhttp|_xhttp|_awg|_lx(_test)?\.go|_command_lx|^lxd/' | grep -v '\.pb\.go' || true)
+          files=$(git ls-files '*.go' | grep -E 'v2rayxhttp|_xhttp|_awg|_lx(_test)?\.go|_command_lx|^lxd/|trusttunnel' | grep -v '\.pb\.go' || true)
           echo "checking:"; echo "$files"
           if [ -n "$files" ]; then
             bad=$(gofmt -l $files)
@@ -125,6 +130,16 @@ jobs:
             -ldflags "-checklinkname=0" \
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd" \
             ./lxd/ ./cmd/sing-box/
+
+      # trusttunnel core and adapters (SPEC 133/134): the core's end-to-end
+      # tests run client against server in-process over H2 and, with
+      # with_quic from BASE_TAGS, over H3.
+      - name: go test (trusttunnel)
+        run: |
+          go test -count=1 \
+            -ldflags "-checklinkname=0" \
+            -tags "${BASE_TAGS},with_trusttunnel" \
+            ./transport/trusttunnel/ ./protocol/trusttunnel/
 
   # SPEC 103 §4.2 p. 9: the Windows service code runs its tests on Windows —
   # the handler, the command line round trip, the file-level half of the
