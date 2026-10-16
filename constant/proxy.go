@@ -47,6 +47,9 @@ const (
 	// lx:begin trusttunnel
 	TypeTrustTunnel = "trusttunnel"
 	// lx:end trusttunnel
+	// lx:begin mieru
+	TypeMieru = "mieru"
+	// lx:end mieru
 )
 
 const (
@@ -154,6 +157,10 @@ func ProxyDisplayName(proxyType string) string {
 	case TypeTrustTunnel:
 		return "TrustTunnel"
 	// lx:end trusttunnel
+	// lx:begin mieru
+	case TypeMieru:
+		return "Mieru"
+	// lx:end mieru
 	default:
 		return "Unknown"
 	}
