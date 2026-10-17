@@ -142,6 +142,10 @@ type controller struct {
 	// are configured, and the routes are registered only when it is set.
 	commands *commandRunner
 
+	// hooks runs the admin's lifecycle scripts (SPEC 135); nil when the
+	// platform has none — every call on a nil runner is a no-op.
+	hooks *hookRunner
+
 	applyAccess sync.Mutex
 	// closed is set (under applyAccess) by the daemon teardown: admin requests
 	// that were queued behind the mutex must not touch the service afterwards.
@@ -212,15 +216,30 @@ func (c *controller) Apply(ctx context.Context, content string) applyResult {
 	}
 	defer c.store.ClearPending()
 
+	// Lifecycle hooks (SPEC 135): the facts of the live core are taken BEFORE
+	// the swap — they are the _PREV side of post_reload, or what post_stop
+	// announces when the swap leaves nothing behind. An apply over no core is
+	// a start: pre_start gates it, post_start (not post_reload) answers it.
+	origin := hookOriginFrom(ctx)
+	previous, wasRunning := c.liveFacts()
+	if !wasRunning {
+		if err = c.hooks.preStart(origin, configFacts(content, nil)); err != nil {
+			c.setFatal(err)
+			return applyResult{Outcome: applyFailed, Err: err}
+		}
+	}
 	if err = c.service.StartOrReloadService(ctx, content, nil); err == nil {
 		_ = c.store.SetWasRunning(true)
+		result := applyResult{Outcome: applyApplied}
 		if saveErr := c.store.SaveLastGood(content); saveErr != nil {
 			// The config is live; a failed persist only degrades the next boot.
 			c.setActive(content, E.Cause(saveErr, "persist last-good").Error())
-			return applyResult{Outcome: applyApplied, Err: E.Cause(saveErr, "applied, but persisting last-good failed")}
+			result.Err = E.Cause(saveErr, "applied, but persisting last-good failed")
+		} else {
+			c.setActive(content, "")
 		}
-		c.setActive(content, "")
-		return applyResult{Outcome: applyApplied}
+		c.announceSwap(origin, previous, wasRunning, "")
+		return result
 	}
 
 	applyErr := err
@@ -234,17 +253,71 @@ func (c *controller) Apply(ctx context.Context, content string) applyResult {
 		// Nothing distinct to roll back to (no last-good, or it is the very
 		// config that just failed): no running instance remains.
 		c.setFatal(applyErr)
+		c.announceFatal(previous, wasRunning, content, applyErr)
 		return applyResult{Outcome: applyFailed, Err: applyErr}
 	}
 	if rollbackErr := c.service.StartOrReloadService(ctx, lastGood, nil); rollbackErr != nil {
 		c.setFatal(rollbackErr)
-		return applyResult{Outcome: applyFailed, Err: E.Cause(applyErr, "rollback also failed: "+rollbackErr.Error())}
+		combined := E.Cause(applyErr, "rollback also failed: "+rollbackErr.Error())
+		c.announceFatal(previous, wasRunning, lastGood, combined)
+		return applyResult{Outcome: applyFailed, Err: combined}
 	}
 	// The rollback left the core running: record the intent so a daemon
 	// restart brings it back even if this was the very first apply.
 	_ = c.store.SetWasRunning(true)
 	c.setActive(lastGood, applyErr.Error())
+	c.announceSwap(hookOrigin{reason: hookReasonRollback, client: origin.client}, previous, wasRunning, applyErr.Error())
 	return applyResult{Outcome: applyFailed, RolledBack: true, Err: applyErr}
+}
+
+// tunNames is the live box's answer to "what are the tun interfaces called";
+// nil for a service that cannot say (the unit tests' fake).
+func (c *controller) tunNames() tunNameSource {
+	if source, ok := c.service.(tunNameSource); ok {
+		return source
+	}
+	return nil
+}
+
+// liveFacts are the facts of the running core: config facts from the active
+// content plus the actual interface names from the box. ok=false when no core
+// is up. Taken before a swap or a close, so the _PREV side of the next hook
+// describes what existed.
+func (c *controller) liveFacts() (coreFacts, bool) {
+	c.stateAccess.Lock()
+	content, running := c.activeContent, c.running
+	c.stateAccess.Unlock()
+	if !running {
+		return coreFacts{}, false
+	}
+	return configFacts(content, c.tunNames()), true
+}
+
+// mustLiveFacts is liveFacts right after setActive, where a core is up.
+func (c *controller) mustLiveFacts() coreFacts {
+	facts, _ := c.liveFacts()
+	return facts
+}
+
+// announceSwap fires the hook after a successful StartOrReloadService: a
+// reload when a core was running before, a start otherwise.
+func (c *controller) announceSwap(origin hookOrigin, previous coreFacts, wasRunning bool, errorText string) {
+	current, _ := c.liveFacts()
+	if wasRunning {
+		c.hooks.postReload(origin, current, previous, errorText)
+		return
+	}
+	c.hooks.postStart(origin, current, errorText)
+}
+
+// announceFatal fires post_stop(fatal) after a swap that left no core: the
+// facts are those of the core that existed before the swap, or — when none
+// did — of the config that did not come up.
+func (c *controller) announceFatal(previous coreFacts, wasRunning bool, failedContent string, err error) {
+	if !wasRunning {
+		previous = configFacts(failedContent, nil)
+	}
+	c.hooks.postStop(hookOrigin{reason: hookReasonFatal}, previous, err.Error())
 }
 
 // resourceReferenced reports whether a config that must not lose the resource
@@ -298,12 +371,27 @@ func (c *controller) Rollback(ctx context.Context) (applyResult, bool) {
 	if !loaded {
 		return applyResult{}, false
 	}
+	// With a live core this is a reload of last-good (post_reload, reason
+	// rollback); without one it is a start (pre_start gate, post_start).
+	origin := hookOriginFrom(ctx)
+	previous, wasRunning := c.liveFacts()
+	if wasRunning {
+		origin.reason = hookReasonRollback
+	} else {
+		origin.reason = hookReasonStart
+		if err := c.hooks.preStart(origin, configFacts(lastGood, nil)); err != nil {
+			c.setFatal(err)
+			return applyResult{Outcome: applyFailed, Err: err}, true
+		}
+	}
 	if err := c.service.StartOrReloadService(ctx, lastGood, nil); err != nil {
 		c.setFatal(err)
+		c.announceFatal(previous, wasRunning, lastGood, err)
 		return applyResult{Outcome: applyFailed, Err: err}, true
 	}
 	_ = c.store.SetWasRunning(true)
 	c.setActive(lastGood, "")
+	c.announceSwap(origin, previous, wasRunning, "")
 	return applyResult{Outcome: applyApplied}, true
 }
 
@@ -319,11 +407,17 @@ func (c *controller) Start(ctx context.Context) (applyResult, bool) {
 // all client connections stay up. Records the stopped intent so a restart
 // does not silently bring the core back.
 func (c *controller) Stop() error {
+	return c.stopFrom(hookOrigin{reason: hookReasonStop})
+}
+
+// stopFrom is Stop with the hook origin (the REST client's name).
+func (c *controller) stopFrom(origin hookOrigin) error {
 	c.applyAccess.Lock()
 	defer c.applyAccess.Unlock()
 	if c.closed {
 		return E.New("daemon is shutting down")
 	}
+	previous, wasRunning := c.liveFacts()
 	_ = c.store.SetWasRunning(false)
 	if err := c.service.CloseService(); err != nil {
 		return err
@@ -334,5 +428,8 @@ func (c *controller) Stop() error {
 	c.activeSHA = ""
 	c.lastError = ""
 	c.stateAccess.Unlock()
+	if wasRunning {
+		c.hooks.postStop(origin, previous, "")
+	}
 	return nil
 }

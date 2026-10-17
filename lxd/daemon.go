@@ -69,6 +69,8 @@ type Options struct {
 	// Commands are daemon.json's named commands (SPEC 128); empty = the
 	// /admin/commands routes are not registered.
 	Commands map[string]string
+	// Hooks is daemon.json's `hooks` object (SPEC 135); nil = no key.
+	Hooks *HooksConfig
 }
 
 const (
@@ -156,6 +158,18 @@ func Run(ctx context.Context, options Options) error {
 		} else {
 			log.Warn("lxd: daemon.json commands are ignored on this platform (unix only)")
 		}
+	}
+	// Lifecycle hooks (SPEC 135): the directory and the stubs exist whether or
+	// not the hooks are enabled, so the admin sees where to write.
+	if hooksSupported {
+		control.hooks, err = newHookRunner(options.Hooks, absStateDir, options.LogFile,
+			commandEnv(control.platform, absStateDir, ownExecutable), stateStore)
+		if err != nil {
+			startedService.Close()
+			return err
+		}
+	} else if options.Hooks != nil {
+		log.Warn("lxd: daemon.json hooks are ignored on this platform (unix only)")
 	}
 
 	var serverIdentity *identity
@@ -274,7 +288,7 @@ func Run(ctx context.Context, options Options) error {
 			// that never reached STARTED.
 			control.applyAccess.Lock()
 			control.closed = true
-			shutdown(startedService, httpServer, grpcServer)
+			shutdown(control, startedService, httpServer, grpcServer)
 			control.applyAccess.Unlock()
 			return E.Cause(err, "control channel")
 		case osSignal := <-osSignals:
@@ -287,7 +301,7 @@ func Run(ctx context.Context, options Options) error {
 			// queued admin requests from resurrecting the core afterwards.
 			control.applyAccess.Lock()
 			control.closed = true
-			shutdown(startedService, httpServer, grpcServer)
+			shutdown(control, startedService, httpServer, grpcServer)
 			control.applyAccess.Unlock()
 			return nil
 		case <-ctx.Done():
@@ -297,7 +311,7 @@ func Run(ctx context.Context, options Options) error {
 			log.Info("lxd: stop requested, shutting down")
 			control.applyAccess.Lock()
 			control.closed = true
-			shutdown(startedService, httpServer, grpcServer)
+			shutdown(control, startedService, httpServer, grpcServer)
 			control.applyAccess.Unlock()
 			return nil
 		}
@@ -364,8 +378,16 @@ func (w *sentTracker) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
-func shutdown(startedService *daemon.StartedService, httpServer *http.Server, grpcServer interface{ Stop() }) {
+// shutdown tears the process down: the core first, then post_stop(shutdown)
+// while the hook still has the init system's stop budget (SPEC 135 §2.5 —
+// shutdownGrace does not apply to it), then the control planes. Caller holds
+// applyAccess.
+func shutdown(control *controller, startedService *daemon.StartedService, httpServer *http.Server, grpcServer interface{ Stop() }) {
+	previous, wasRunning := control.liveFacts()
 	_ = startedService.CloseService()
+	if wasRunning {
+		control.hooks.postStop(hookOrigin{reason: hookReasonShutdown}, previous, "")
+	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
 	_ = httpServer.Shutdown(shutdownCtx)
@@ -380,6 +402,9 @@ func shutdown(startedService *daemon.StartedService, httpServer *http.Server, gr
 // is reported via /admin/status and boots the last config known to work.
 // Caller holds applyAccess.
 func bootstrap(ctx context.Context, control *controller, stateStore *store, options Options) {
+	// A state.json left by the previous process = it died without post_stop:
+	// announce that end first, before anything else starts (SPEC 135 §2.4).
+	control.hooks.recoverAtBoot()
 	if pendingSHA, interrupted := stateStore.PendingSHA(); interrupted {
 		log.Warn("lxd: interrupted apply detected (candidate ", shortSHA(pendingSHA), "), booting last-good")
 		control.stateAccess.Lock()
@@ -404,9 +429,19 @@ func bootstrap(ctx context.Context, control *controller, stateStore *store, opti
 		log.Info("lxd: config loaded from ", source, " but the recorded run-state is stopped — core not started (use --run or POST /admin/start)")
 		return
 	}
+	origin := hookOrigin{reason: hookReasonBoot}
+	if err := control.hooks.preStart(origin, configFacts(bootConfig, nil)); err != nil {
+		// Fail-closed: the gate said no, the core does not start.
+		control.setFatal(err)
+		log.Error(E.Cause(err, "lxd: boot from "+source+" cancelled by the pre_start hook; staying up"))
+		return
+	}
 	if err := startRetryingBusy(ctx, control.service, bootConfig, bootBusyRetrySleep); err != nil {
 		control.setFatal(err)
 		log.Error(E.Cause(err, "lxd: boot from "+source+"; staying up — fix and apply over the admin plane"))
+		// Every pre_start is answered by exactly one post_*: the start that
+		// vanished is a post_stop(fatal) with the facts of the config.
+		control.hooks.postStop(hookOrigin{reason: hookReasonFatal}, configFacts(bootConfig, nil), err.Error())
 		return
 	}
 	_ = stateStore.SetWasRunning(true)
@@ -417,6 +452,7 @@ func bootstrap(ctx context.Context, control *controller, stateStore *store, opti
 	}
 	control.setActive(bootConfig, "")
 	log.Info("lxd: core started from ", source)
+	control.hooks.postStart(origin, control.mustLiveFacts(), "")
 }
 
 // Boot retry on a busy device (SPEC 129 §2.6). `/etc/init.d/sing-box-lxd
@@ -507,7 +543,7 @@ func reloadFromFile(ctx context.Context, control *controller, options Options) {
 		log.Error(E.Cause(err, "lxd: reload: read config"))
 		return
 	}
-	switch result := control.Apply(ctx, string(content)); result.Outcome {
+	switch result := control.Apply(withHookOrigin(ctx, hookReasonSighup, ""), string(content)); result.Outcome {
 	case applyApplied:
 		log.Info("lxd: reload applied")
 	case applyRejected:

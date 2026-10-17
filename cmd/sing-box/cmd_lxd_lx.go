@@ -340,6 +340,7 @@ func lxdDaemonOptions(cmd *cobra.Command) (lxd.Options, error) {
 		// the platform defaults.
 		DHCPLeaseFiles: fileConfig.DHCPLeaseFiles,
 		Commands:       fileConfig.Commands,
+		Hooks:          fileConfig.Hooks,
 	}
 	// The rotated log file exists only for an installed daemon (daemon.json
 	// present): a fileless dev run keeps its terminal, and Run additionally

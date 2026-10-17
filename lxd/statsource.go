@@ -5,6 +5,7 @@ package lxd
 import (
 	"time"
 
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/daemon"
 )
 
@@ -44,4 +45,31 @@ func (s observableService) CoreStats() (time.Duration, int64, int64, int, bool) 
 	}
 	uplink, downlink := manager.Total()
 	return time.Since(startedAt), uplink, downlink, manager.ConnectionsLen(), true
+}
+
+// TunInterfaceNames answers the hooks' LXD_TUN_INTERFACE (SPEC 135): the
+// actual name of every tun inbound named by tag, in the caller's order, ""
+// where the box has no such tun. The core runs in this process, so the name
+// is read straight off the inbound through its lx accessor.
+func (s observableService) TunInterfaceNames(tags []string) []string {
+	names := make([]string, len(tags))
+	instance := s.Instance()
+	if instance == nil {
+		return names
+	}
+	boxInstance := instance.Box()
+	if boxInstance == nil {
+		return names
+	}
+	manager := boxInstance.Inbound()
+	for index, tag := range tags {
+		inbound, loaded := manager.Get(tag)
+		if !loaded || inbound.Type() != C.TypeTun {
+			continue
+		}
+		if named, ok := inbound.(interface{ InterfaceName() string }); ok {
+			names[index] = named.InterfaceName()
+		}
+	}
+	return names
 }

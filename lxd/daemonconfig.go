@@ -63,6 +63,11 @@ type DaemonConfig struct {
 	// operator writes them here, on the host; the client passes nothing but
 	// the name. Absent = no such routes at all.
 	Commands map[string]string `json:"commands,omitempty"`
+
+	// Hooks enables the admin's lifecycle scripts in <state_dir>/hooks/
+	// (SPEC 135): enabled, timeout_seconds, unsafe_skip_owner_check. Absent =
+	// no hooks (the directory and the stubs are still created).
+	Hooks *HooksConfig `json:"hooks,omitempty"`
 }
 
 // ListenConfig is the control channel's bind spec. Two JSON forms, one
@@ -237,6 +242,9 @@ func LoadDaemonConfig(stateDir string) (DaemonConfig, bool, error) {
 		return DaemonConfig{}, false, E.Cause(err, "parse ", daemonConfigFile)
 	}
 	if err = validateCommands(config.Commands); err != nil {
+		return DaemonConfig{}, false, err
+	}
+	if err = validateHooks(config.Hooks); err != nil {
 		return DaemonConfig{}, false, err
 	}
 	return config, true, nil

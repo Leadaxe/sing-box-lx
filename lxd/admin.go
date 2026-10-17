@@ -218,7 +218,7 @@ func (c *controller) handleApply(writer http.ResponseWriter, request *http.Reque
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": "empty body"})
 		return
 	}
-	result := c.Apply(request.Context(), string(content))
+	result := c.Apply(withHookOrigin(request.Context(), hookReasonApply, clientNameOf(request, c.clients)), string(content))
 	switch result.Outcome {
 	case applyApplied:
 		response := map[string]any{"applied": true, "active_sha256": contentSHA(string(content))}
@@ -243,7 +243,7 @@ func (c *controller) handleApply(writer http.ResponseWriter, request *http.Reque
 }
 
 func (c *controller) handleStart(writer http.ResponseWriter, request *http.Request) {
-	result, found := c.Start(request.Context())
+	result, found := c.Start(withHookOrigin(request.Context(), hookReasonStart, clientNameOf(request, c.clients)))
 	if !found {
 		writeJSON(writer, http.StatusNotFound, map[string]any{"error": "no config to start from"})
 		return
@@ -256,7 +256,7 @@ func (c *controller) handleStart(writer http.ResponseWriter, request *http.Reque
 }
 
 func (c *controller) handleStop(writer http.ResponseWriter, request *http.Request) {
-	if err := c.Stop(); err != nil {
+	if err := c.stopFrom(hookOrigin{reason: hookReasonStop, client: clientNameOf(request, c.clients)}); err != nil {
 		writeJSON(writer, http.StatusInternalServerError, map[string]any{"stopped": false, "error": err.Error()})
 		return
 	}
@@ -347,7 +347,7 @@ func (c *controller) handleClientRemove(writer http.ResponseWriter, request *htt
 }
 
 func (c *controller) handleRollback(writer http.ResponseWriter, request *http.Request) {
-	result, found := c.Rollback(request.Context())
+	result, found := c.Rollback(withHookOrigin(request.Context(), hookReasonRollback, clientNameOf(request, c.clients)))
 	if !found {
 		writeJSON(writer, http.StatusNotFound, map[string]any{"error": "no last-good config recorded"})
 		return
@@ -684,5 +684,7 @@ func (c *controller) handleStatus(writer http.ResponseWriter, request *http.Requ
 		"last_good_sha256":  lastGoodSHA,
 		"last_error":        c.lastError,
 		"interrupted_apply": c.interruptedApply,
+		// lx: lifecycle hooks (SPEC 135) — the last outcome per event.
+		"hooks": c.hooks.statusView(),
 	})
 }
