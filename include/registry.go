@@ -72,6 +72,9 @@ func InboundRegistry() *inbound.Registry {
 	// lx:begin trusttunnel
 	registerTrustTunnelInbound(registry)
 	// lx:end trusttunnel
+	// lx:begin mieru
+	registerTrustTunnelInbound(registry)
+	// lx:end mieru
 	shadowtls.RegisterInbound(registry)
 	vless.RegisterInbound(registry)
 	anytls.RegisterInbound(registry)
@@ -107,6 +110,9 @@ func OutboundRegistry() *outbound.Registry {
 	// lx:begin trusttunnel
 	registerTrustTunnelOutbound(registry)
 	// lx:end trusttunnel
+	// lx:begin mieru
+	registerTrustTunnelOutbound(registry)
+	// lx:end mieru
 	tor.RegisterOutbound(registry)
 	ssh.RegisterOutbound(registry)
 	shadowtls.RegisterOutbound(registry)
