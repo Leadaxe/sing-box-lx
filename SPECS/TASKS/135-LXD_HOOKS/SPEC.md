@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | Type | F (feature) — admin scripts at the lifecycle boundaries of the core inside the daemon |
-| Status | N (new) — design approved by the owner 2026-10-17 (event model, variables, `hooks/state.json` written by the daemon, stubs created by the daemon, explicit `on/off`, logging); code ahead. This English file is the primary spec; [SPEC.ru.md](SPEC.ru.md) is the auxiliary Russian copy, both are maintained together (owner decision 2026-10-17) |
+| Status | I (implemented) 2026-10-17 — see [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md); the manual owner checks of §3 are open. Design approved by the owner 2026-10-17 (event model, variables, `hooks/state.json` written by the daemon, stubs created by the daemon, explicit `on/off`, logging). This English file is the primary spec; [SPEC.ru.md](SPEC.ru.md) is the auxiliary Russian copy, both are maintained together (owner decision 2026-10-17) |
 | Branch | `lx` |
 | Build tag | `with_lxd` (lx files `lxd/hooks*.go`, insertions in `lxd/apply.go`, `lxd/daemon.go`, `lxd/daemonconfig.go`, `lxd/admin.go`; one `// lx:` accessor in `protocol/tun/inbound.go` — §2.3) |
 | Origin | Discussion with the owner 2026-10-17. Trigger — issue #12: the system-DNS automation on darwin was rolled back out of the core; the policy "where to point DNS and how to restore it" must live with the admin; `commands` (SPEC 128) do not fit — a client runs them, not an event |
@@ -108,9 +108,9 @@ Four events. The "current" core is what exists after the event; `_PREV` is what 
 
 | Event | When | `LXD_REASON` | Hook failure (non-zero exit, timeout, gate failure) |
 |---|---|---|---|
-| `pre_start` | before `StartOrReloadService`, when there is no core | `boot` (daemon boot, `bootstrap`), `start` (`POST /admin/start`) | **fail-closed**: the core does not start, `status: fatal`, `last_error` = `hook pre_start: …`; on `boot` the daemon stays alive without a core, as with any start failure |
-| `post_start` | after a successful return from `StartOrReloadService` for the same reasons — tun and routes already exist | `boot`, `start` | the core keeps running; Error in the log, a mark in `/admin/status` (§2.6) |
-| `post_reload` | after the instance is swapped in the live process | `apply` (REST), `sighup` (file re-read), `rollback` (the new config did not come up, last-good is up) | the core keeps running; Error in the log, a mark in the status |
+| `pre_start` | before `StartOrReloadService`, when there is no core | `boot` (daemon boot, `bootstrap`), `start` (`POST /admin/start`, `POST /admin/rollback` with no core), `apply` / `sighup` (an apply that brings the core up from nothing — implementation clarification 2026-10-17: such an apply is a start, not a reload) | **fail-closed**: the core does not start, `status: fatal`, `last_error` = `hook pre_start: …`; on `boot` the daemon stays alive without a core, as with any start failure |
+| `post_start` | after a successful return from `StartOrReloadService` for the same reasons — tun and routes already exist | `boot`, `start`, `apply` / `sighup` (the same case) | the core keeps running; Error in the log, a mark in `/admin/status` (§2.6) |
+| `post_reload` | after the instance is swapped in the live process | `apply` (REST), `sighup` (file re-read), `rollback` (the new config did not come up, last-good is up; also `POST /admin/rollback` over a live core — then `LXD_ERROR` is empty) | the core keeps running; Error in the log, a mark in the status |
 | `post_stop` | when the core is gone | `stop` (`POST /admin/stop`), `shutdown` (SIGTERM — including `update` and a service restart), `fatal` (the start failed after a passed `pre_start`, or the rollback failed too), `recover` (the new daemon found a `state.json` from the previous run at boot — §2.4) | log only; nothing blocks the stop |
 
 Rules:
@@ -176,7 +176,7 @@ all inbounds into the check.
 | `pre_start` | from the config; `LXD_TUN_INTERFACE` only explicit | none |
 | `post_start` | full, `LXD_TUN_INTERFACE` actual | none |
 | `post_reload` | full (the new instance) | full (the old instance; `LXD_TUN_INTERFACE_PREV` taken **before** it is closed) |
-| `post_stop` | none | full: on `stop`/`shutdown` — from the live instance before it is closed; on `fatal` — from the config that did not come up (interface only explicit); on `recover` — from `state.json` |
+| `post_stop` | none | full: on `stop`/`shutdown` — from the live instance before it is closed; on `fatal` — from the instance that was live before the swap when there was one (an apply whose rollback also failed), else from the config that did not come up (interface only explicit); on `recover` — from `state.json` |
 
 **The actual interface name.** `protocol/tun/inbound.go` computes the name before the interface
 is created (`CalculateInterfaceName` takes the next free `utunN`/`tunN`); after `tun.New` it sits

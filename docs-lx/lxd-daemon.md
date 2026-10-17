@@ -14,6 +14,7 @@ macOS and Windows, and the setup approaches on Linux.
 - [4. Command-line keys](#4-command-line-keys)
 - [5. Security: who authenticates with what](#5-security-who-authenticates-with-what)
 - [6. Logs](#6-logs)
+- [6a. Hooks: the admin's scripts at the core's lifecycle boundaries](#6a-hooks-the-admins-scripts-at-the-cores-lifecycle-boundaries)
 - [7. macOS — automatic installation](#7-macos--automatic-installation)
   - [7.1. The root-owned copy of the binary](#71-the-root-owned-copy-of-the-binary)
 - [7a. Windows — automatic installation](#7a-windows--automatic-installation)
@@ -102,6 +103,7 @@ and Windows or by the operator's editor).
 | `log_max_backups` | `1` | how many rotated generations (`lxd.log.1…N`) to keep |
 | `log_max_age_hours` | `24` | rotation by file age |
 | `commands` | absent | named root commands a client may start **by name** over `/admin/commands` (SPEC 128), e.g. `{"update": "/usr/bin/sing-box lxd update"}`; name `[a-z0-9][a-z0-9_-]{0,31}`, a bad name or an empty command refuses to start; absent = no such routes. Every command runs as the daemon's user (root) with no input from the client — see §8.5 |
+| `hooks` | absent | the admin's lifecycle scripts in `<state_dir>/hooks/` (SPEC 135): `{"enabled": true, "timeout_seconds": 15, "unsafe_skip_owner_check": false}`; absent or `enabled: false` = no hooks (the directory and the stubs are still created); a negative timeout refuses to start — see §6a |
 
 The rotation defaults give "about a day of history"; 0/absent key = default,
 and there is deliberately no "unlimited" setting. Changing any setting is a
@@ -210,6 +212,155 @@ remote client does not need shell access to the host:
 curl -s --cert client.pem --key client.key -k \
   "https://server:9091/admin/logs?tail=500"
 ```
+
+## 6a. Hooks: the admin's scripts at the core's lifecycle boundaries
+
+The core on a host with TUN changes the routes but never touches the system
+DNS: on macOS, on Linux without `systemd-resolved` and on routers the resolver
+keeps pointing at the ISP. Doing that inside the core was tried and rolled
+back (issue #12): the core cannot know every network service and the order to
+restore them in, and a failed restore leaves the host without DNS. So the
+policy lives with the admin, in four scripts, and the daemon only promises
+to call them at the right moment with the right facts ([SPEC 135](../SPECS/TASKS/135-LXD_HOOKS/SPEC.md)).
+
+**Files.** The daemon creates `<state_dir>/hooks/` (root-owned, `0755`) at
+every start, with a stub for every missing script:
+
+| File | Who writes it | Purpose |
+|---|---|---|
+| `hooks/pre_start`, `post_start`, `post_reload`, `post_stop` | you | the scripts (executables run directly, your shell is the `#!` line) |
+| `hooks/state.json` | the daemon | facts of the last live core; its presence at boot = the previous process never reached `post_stop` |
+| `hooks/.lock` | the daemon | `flock` around every run, across processes |
+| `<log dir>/hooks/<event>.log` | the script (redirected) | output of the last run; without a log file — `hooks/log/` |
+| anything else in `hooks/` | you | your snapshot of the system state, in your format |
+
+A stub left byte-for-byte as created (or a missing file) is **not configured**:
+the event is skipped with a Warn. The stub's comment lists the variables of
+its event — the documentation sits where you write the script.
+
+**daemon.json:**
+
+```jsonc
+"hooks": {
+  "enabled": true,                 // default false: no key = no hooks (the stubs are still created)
+  "timeout_seconds": 15,           // per hook; 0/absent = 15; negative = the daemon refuses to start
+  "unsafe_skip_owner_check": false // true = the ownership gate is off; WARN at every start
+}
+```
+
+**Events.** The "current" core is what exists after the event, `_PREV` is what
+no longer exists.
+
+| Event | When | `LXD_REASON` | If the script fails (non-zero exit, timeout, gate) |
+|---|---|---|---|
+| `pre_start` | before the core starts | `boot` (daemon boot), `start` (`POST /admin/start`), `apply` / `sighup` (an apply that brings the core up from nothing) | **fail-closed**: the core does not start, `status: fatal`, `last_error` names the hook |
+| `post_start` | after the core came up — tun and routes exist | `boot`, `start`, `apply` / `sighup` (same case) | the core keeps running; Error in the log, mark in `/admin/status` |
+| `post_reload` | after the instance was swapped in the live process | `apply`, `sighup`, `rollback` (the new config did not come up, last-good is up; also `POST /admin/rollback` over a live core) | the core keeps running; Error, mark in the status |
+| `post_stop` | after the core is gone | `stop`, `shutdown` (SIGTERM, `update`, service restart), `fatal` (the start failed after `pre_start` passed, or the rollback failed too), `recover` (see below) | log only; nothing blocks the stop |
+
+Every start ends with either `post_start` or `post_stop(fatal)`; a rollback
+inside an apply is a `post_reload(rollback)` with `LXD_ERROR` = why the new
+config was rejected. There is no `pre_stop` or `pre_reload`: a crash of the
+daemon process takes the core with it, and nothing before the crash can be
+relied on. Hence the contract for the `post_*` scripts: **idempotent and
+recovering** — read your own snapshot in `$LXD_HOOK_DIR`, act on it, never
+assume that `post_start` preceded this `post_stop`. `pre_start` is a
+precondition gate (the uplink is up, the disk is not full) with no side
+effects.
+
+**`recover`.** After every successful start the daemon writes
+`hooks/state.json`; after `post_stop` it deletes it. A daemon that boots and
+finds the file knows the previous process died without `post_stop` (core
+panic, `kill -9`, power loss) and calls `post_stop` with `LXD_REASON=recover`
+and `_PREV` from the file — before its own `pre_start`. For the script it is
+an ordinary stop. This is the only coverage of a core panic: the core lives in
+the daemon process, there is no child supervision.
+
+**Environment.** Facts from the daemon, never client input; empty = unknown
+or not applicable. Common: `LXD_EVENT`, `LXD_REASON`, `LXD_CLIENT` (the client
+name when a REST request caused the transition — by certificate, `operator`
+over Bearer; empty for `boot`, `sighup`, `shutdown`, `fatal`, `recover`),
+`LXD_PLATFORM`, `LXD_VERSION`, `LXD_INIT_SYSTEM`, `LXD_STATE_DIR`, `LXD_BIN`,
+`PATH` (as for `commands`), `LXD_LOG_FILE` (empty in a terminal run),
+`LXD_HOOK_DIR`, `LXD_HOOK_TIMEOUT` (seconds). Facts about the core — current
+without a suffix, previous with `_PREV`:
+
+| Variable | Value |
+|---|---|
+| `LXD_CONFIG_SHA` / `_PREV` | sha256 of the config, as in `/admin/status` |
+| `LXD_TUN_ADDRESS` / `_PREV` | addresses of all tun inbounds, comma-separated, v4 and v6 together, config order |
+| `LXD_TUN_INTERFACE` / `_PREV` | the actual interface names (`utunN`, `tunN`), same order; in `pre_start` and in `post_stop(fatal)` only an explicit `interface_name`, otherwise empty |
+| `LXD_TUN_MTU` / `_PREV` | mtu per tun inbound (9000 when not set) |
+| `LXD_TUN_AUTO_ROUTE` / `_PREV` | `1`/`0` per tun inbound — with `0` pointing the system DNS at the tun is pointless |
+| `LXD_ERROR` | the core's error on `rollback` and `fatal` |
+
+`pre_start` has only current facts, `post_stop` only `_PREV`, `post_reload`
+both; no tun inbound = all `LXD_TUN_*` empty.
+
+**Execution.** Synchronous, in the daemon process's lifetime: the file is run
+directly (no shell), cwd `/`, stdin `/dev/null`, stdout and stderr redirected
+to `<event>.log` (overwritten each run), in its own process group; on timeout
+the whole group gets `SIGKILL`. A backgrounded child (`nohup … &`) is not
+waited for, but it dies with the daemon under the service's SIGTERM unless it
+called `setsid` — whatever DNS depends on must finish before `exit`. Before
+every run the daemon checks that every path component from `/` to the script
+is root-owned, not group/world-writable and not a symlink, and the file is
+regular and executable (the SPEC 100 invariant); a violation is a hook
+failure. The transition waits for the hook: `POST /admin/apply` may take up
+to `timeout_seconds` longer. Across processes the runs are serialized by a
+`flock` on `hooks/.lock`: on `update` procd starts the new daemon before the
+old one finished — without the lock the new `post_start` would snapshot a
+system DNS that still holds the VPN DNS.
+
+**Stop budget.** `post_stop` under SIGTERM runs before the control planes
+close; the window is the init system's: procd kills after `term_timeout`
+(default 5 s — the OpenWrt installer sets 30), launchd after `ExitTimeOut`
+(20 s). A `SIGKILL` in the middle of `post_stop` leaves DNS pointing at a dead
+tun, so keep the script inside that window.
+
+**Windows:** the `hooks` key is accepted with a Warn and ignored (unix only).
+
+**Sample `post_start` / `post_stop` for macOS** — point the Wi-Fi service's
+DNS at the tun, restore from the snapshot:
+
+```sh
+#!/bin/sh
+# post_start
+set -e
+SERVICE="Wi-Fi"
+case "$LXD_TUN_AUTO_ROUTE" in 1*) ;; *) exit 0 ;; esac
+[ -f "$LXD_HOOK_DIR/dns.snapshot" ] || networksetup -getdnsservers "$SERVICE" > "$LXD_HOOK_DIR/dns.snapshot"
+DNS=$(printf '%s' "$LXD_TUN_ADDRESS" | cut -d, -f1 | cut -d/ -f1)
+networksetup -setdnsservers "$SERVICE" "$DNS"
+```
+
+```sh
+#!/bin/sh
+# post_stop — idempotent: with no snapshot there is nothing to restore
+SERVICE="Wi-Fi"
+[ -f "$LXD_HOOK_DIR/dns.snapshot" ] || exit 0
+if grep -q "aren't any" "$LXD_HOOK_DIR/dns.snapshot"; then
+  networksetup -setdnsservers "$SERVICE" empty
+else
+  networksetup -setdnsservers "$SERVICE" $(cat "$LXD_HOOK_DIR/dns.snapshot")
+fi
+rm -f "$LXD_HOOK_DIR/dns.snapshot"
+```
+
+**Sample for Linux with `systemd-resolved`** — per-link DNS, nothing to
+restore (the setting dies with the interface):
+
+```sh
+#!/bin/sh
+# post_start
+IFACE=$(printf '%s' "$LXD_TUN_INTERFACE" | cut -d, -f1)
+DNS=$(printf '%s' "$LXD_TUN_ADDRESS" | cut -d, -f1 | cut -d/ -f1)
+[ -n "$IFACE" ] && resolvectl dns "$IFACE" "$DNS" && resolvectl domain "$IFACE" '~.'
+```
+
+`GET /admin/status` carries a `hooks` object with the last outcome per event
+(`ok` / `failed` / `timeout` / `skipped` / `never`, `reason`, `exit_code`,
+`finished_at`, `detail`), so a client can draw a mark next to the core state.
 
 ## 7. macOS — automatic installation
 
@@ -1051,7 +1202,7 @@ Error map:
 | `POST /admin/rollback` | roll back to last-good (404 — nothing recorded) |
 | `POST /admin/start` · `POST /admin/stop` | core lifecycle apart from the config (stop is remembered) |
 | `GET /admin/config` | the active config |
-| `GET /admin/status` | `idle\|started\|fatal`, active/last-good sha, `last_error`, `interrupted_apply` |
+| `GET /admin/status` | `idle\|started\|fatal`, active/last-good sha, `last_error`, `interrupted_apply`, `hooks` (`enabled` and the last outcome per event: `state` `ok\|failed\|timeout\|skipped\|never`, `reason`, `exit_code`, `finished_at`, `detail` — §6a) |
 | `GET /admin/info` | identity card: version, state_dir, listen, tls, fingerprint, pid, uptime, log_path, `executable` and `executable_sha256` (the running binary — compare cores by hash, not by path; the hash is computed once at start and reads `""` for the first moments), and the platform card (SPEC 127): `goos`, `goarch`, `platform` (the release asset for this binary's platform, e.g. `linux-armv7`, `linux-mipsle-softfloat` — what to download for this machine), `init_system` (what runs the host: `procd` / `systemd` / `openrc` / `launchd` / `scm`, `""` when none is recognised), `service` (`true` when this process runs under it as a service) and `packed` (`true` when the running binary is a UPX-packed copy — download the `<platform>.upx.tar.gz` asset for it, as `lxd update` does) |
 | `POST /admin/enroll` | client registration with a one-time code |
 | `GET /admin/resources` · `PUT`/`GET`/`DELETE /admin/resources/{name}` | the files a config REFERS to (`.srs`, geo bases): list with sha256, upload, fetch, remove; 409 while the active or last-good config references the name |

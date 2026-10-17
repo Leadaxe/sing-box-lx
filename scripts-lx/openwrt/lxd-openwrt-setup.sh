@@ -703,6 +703,9 @@ start_service() {
     procd_set_param respawn
     procd_set_param stdout 1
     procd_set_param stderr 1
+    # Stop budget: the post_stop hook ($STATE_DIR/hooks/post_stop, SPEC 135) runs
+    # synchronously under SIGTERM; procd's default 5 s would SIGKILL it mid-way.
+    procd_set_param term_timeout 30
     procd_close_instance
 }
 EOF

@@ -227,6 +227,16 @@ sing-box lxd update --dry-run             # installed vs available release
 sing-box lxd update                       # update the core and restart (also the launcher's Update button)
 ```
 
+**Lifecycle hooks.** The daemon creates `/etc/sing-box-lxd/state/hooks/` with four stub
+scripts — `pre_start`, `post_start`, `post_reload`, `post_stop` — and runs them at the
+boundaries of the core's life once `"hooks": {"enabled": true}` is in `daemon.json`
+(a stub that is left untouched is skipped as "not configured"). The script gets the facts
+in the environment (`LXD_EVENT`, `LXD_REASON`, `LXD_TUN_ADDRESS`, `LXD_TUN_INTERFACE`, …);
+the typical job is pointing the router's resolver at the tun and restoring it afterwards.
+The directory must stay root-owned and not group/world-writable, as the daemon checks it
+before every run. The init script sets `term_timeout 30` so `post_stop` is not killed by
+procd's default 5 s stop budget. Details: `docs-lx/lxd-daemon.md`, section "Hooks".
+
 ### Memory on a small router
 
 The service runs with `GOMEMLIMIT` (RAM/3, clamped to 64..512 MiB, computed at install) and `GOGC=50`: the Go GC keeps the heap below the limit instead of growing until the kernel OOM-killer hangs the router. Both live in `/etc/init.d/sing-box-lxd` (`procd_set_param env`), edit and `restart`. The core's `oom-killer` service is a second line: it measures the process RSS and only resets connections once RSS is near `memory_limit`, so on a 256 MB router `memory_limit` must sit well below RAM (about 120 MB), not at 260 MB — otherwise it never fires. Confirm memory is the culprit before tuning: `logread | grep -i "out of memory"`.

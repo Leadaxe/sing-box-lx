@@ -28,6 +28,10 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### Не выпущено (после v1.14.3-lx.21)
+
+- ✨ **lxd: хуки жизненного цикла ядра — `<state_dir>/hooks/{pre_start,post_start,post_reload,post_stop}` (SPEC 135, FEATURE 014).** Ключ `hooks` в `daemon.json` (`enabled`, `timeout_seconds`, `unsafe_skip_owner_check`); демон создаёт каталог и заготовки на каждом старте, нетронутая заготовка = «не настроено». Скрипт получает факты о ядре в окружении (`LXD_EVENT`, `LXD_REASON`, `LXD_CLIENT`, `LXD_CONFIG_SHA`, `LXD_TUN_ADDRESS`/`LXD_TUN_INTERFACE`/`LXD_TUN_MTU`/`LXD_TUN_AUTO_ROUTE` и `_PREV`, `LXD_ERROR`); `pre_start` fail-closed, `post_*` идемпотентные; `post_stop(fatal)` после провального старта, `post_reload(rollback)` после отката; `hooks/state.json` пишет демон → `post_stop(recover)` при загрузке после аварийного выхода. Синхронно, вывод в `<каталог лога>/hooks/<event>.log`, таймаут → `SIGKILL` группе, `flock` против гонки старого и нового демона под procd, root-owned гейт перед каждым запуском; `hooks` в `GET /admin/status`. Один `// lx:` аксессор `InterfaceName()` на tun-inbound. Инсталлятор OpenWrt ставит `term_timeout 30`. Главный сценарий — системный DNS на tun и обратно, политика у админа (issue #12). Unix; на Windows ключ игнорируется с WARN. ([SPEC 135](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/135-LXD_HOOKS/SPEC.md))
+
 #### v1.14.3-lx.21
 
 Стабильный релиз после `v1.14.3-lx.20`, без rc-линии. База — sing-box `v1.14.3`, `upstream/stable` `d630fa94c`, дрейф 0 (сабмодули и зависимости с lx.20 не менялись, Go 1.26.8). Три темы: TrustTunnel (outbound и inbound), роутерные сборки `linux-386`/`linux-riscv64` и UPX-копии для маленького overlay с поддержкой в `lxd update` и установщике OpenWrt.
