@@ -27,7 +27,7 @@ import (
 // process, with facts about the core in the environment (LXD_EVENT,
 // LXD_REASON, LXD_TUN_ADDRESS, LXD_TUN_INTERFACE, …). The daemon promises one
 // thing only: every boundary is announced, including after a process crash
-// (post_stop with reason `recover`, from hooks/state.json) and across a
+// (post_stop with reason `recover`, from hooks/core_snapshot.json) and across a
 // service restart (the hook runs under an inter-process flock). What to do at
 // the boundary — pointing the system DNS at the tun and restoring it — is the
 // script's business; the daemon keeps no snapshot of the system (issue #12).
@@ -117,10 +117,10 @@ type coreFacts struct {
 	TunAutoRoute string `json:"tun_auto_route"`
 }
 
-// hookState is hooks/state.json: the facts of the last live core, written by
+// coreSnapshot is hooks/core_snapshot.json: the facts of the last live core, written by
 // the daemon after every successful start and removed after post_stop. Its
 // presence at boot means the previous process never reached post_stop.
-type hookState struct {
+type coreSnapshot struct {
 	coreFacts
 	StartedAt string `json:"started_at"`
 	PID       int    `json:"pid"`
@@ -242,8 +242,8 @@ func hookLogDir(logFile, hookDir string) string {
 	return filepath.Join(hookDir, "log")
 }
 
-func (r *hookRunner) statePath() string { return filepath.Join(r.dir, "state.json") }
-func (r *hookRunner) lockPath() string  { return filepath.Join(r.dir, ".lock") }
+func (r *hookRunner) snapshotPath() string { return filepath.Join(r.dir, "core_snapshot.json") }
+func (r *hookRunner) lockPath() string     { return filepath.Join(r.dir, ".lock") }
 
 // statusView is the `hooks` object of GET /admin/status.
 func (r *hookRunner) statusView() map[string]any {
@@ -395,7 +395,7 @@ func (r *hookRunner) preStart(origin hookOrigin, current coreFacts) error {
 	return r.fire(hookPreStart, origin, current, coreFacts{}, "")
 }
 
-// postStart announces a core that came up; state.json is written first so
+// postStart announces a core that came up; core_snapshot.json is written first so
 // a crash during the hook still leaves the record for recover.
 func (r *hookRunner) postStart(origin hookOrigin, current coreFacts, errorText string) {
 	r.writeState(current)
@@ -408,7 +408,7 @@ func (r *hookRunner) postReload(origin hookOrigin, current, previous coreFacts, 
 	_ = r.fire(hookPostReload, origin, current, previous, errorText)
 }
 
-// postStop announces a core that is gone; state.json is removed afterwards
+// postStop announces a core that is gone; core_snapshot.json is removed afterwards
 // whatever the hook did.
 func (r *hookRunner) postStop(origin hookOrigin, previous coreFacts, errorText string) {
 	_ = r.fire(hookPostStop, origin, coreFacts{}, previous, errorText)
@@ -419,12 +419,12 @@ func (r *hookRunner) writeState(facts coreFacts) {
 	if r == nil || !r.enabled {
 		return
 	}
-	encoded, err := json.MarshalIndent(hookState{coreFacts: facts, StartedAt: nowStamp(), PID: os.Getpid()}, "", "  ")
+	encoded, err := json.MarshalIndent(coreSnapshot{coreFacts: facts, StartedAt: nowStamp(), PID: os.Getpid()}, "", "  ")
 	if err == nil {
-		err = r.store.writeAtomic(r.statePath(), append(encoded, '\n'))
+		err = r.store.writeAtomic(r.snapshotPath(), append(encoded, '\n'))
 	}
 	if err != nil {
-		log.Error(E.Cause(err, "lxd: hooks: write state.json"))
+		log.Error(E.Cause(err, "lxd: hooks: write core_snapshot.json"))
 	}
 }
 
@@ -432,12 +432,12 @@ func (r *hookRunner) removeState() {
 	if r == nil {
 		return
 	}
-	if err := os.Remove(r.statePath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		log.Error(E.Cause(err, "lxd: hooks: remove state.json"))
+	if err := os.Remove(r.snapshotPath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		log.Error(E.Cause(err, "lxd: hooks: remove core_snapshot.json"))
 	}
 }
 
-// recoverAtBoot runs before the first pre_start: a state.json left by the
+// recoverAtBoot runs before the first pre_start: a core_snapshot.json left by the
 // previous process means it never reached post_stop (core panic, kill -9,
 // power loss), so post_stop runs now with reason `recover` and the facts from
 // the file. With hooks disabled a leftover file is removed silently: a
@@ -447,10 +447,10 @@ func (r *hookRunner) recoverAtBoot() {
 	if r == nil {
 		return
 	}
-	content, err := os.ReadFile(r.statePath())
+	content, err := os.ReadFile(r.snapshotPath())
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			log.Error(E.Cause(err, "lxd: hooks: read state.json"))
+			log.Error(E.Cause(err, "lxd: hooks: read core_snapshot.json"))
 		}
 		return
 	}
@@ -458,12 +458,12 @@ func (r *hookRunner) recoverAtBoot() {
 		r.removeState()
 		return
 	}
-	var state hookState
-	if err = json.Unmarshal(content, &state); err != nil {
-		log.Error(E.Cause(err, "lxd: hooks: decode state.json; running post_stop(recover) with empty facts"))
+	var snapshot coreSnapshot
+	if err = json.Unmarshal(content, &snapshot); err != nil {
+		log.Error(E.Cause(err, "lxd: hooks: decode core_snapshot.json; running post_stop(recover) with empty facts"))
 	}
-	log.Warn("lxd: hooks: state.json from a previous run (pid ", state.PID, ", started ", state.StartedAt, ") — the previous daemon did not reach post_stop, recovering")
-	r.postStop(hookOrigin{reason: hookReasonRecover}, state.coreFacts, "")
+	log.Warn("lxd: hooks: core_snapshot.json from a previous run (pid ", snapshot.PID, ", started ", snapshot.StartedAt, ") — the previous daemon did not reach post_stop, recovering")
+	r.postStop(hookOrigin{reason: hookReasonRecover}, snapshot.coreFacts, "")
 }
 
 // ---- facts ----
@@ -602,7 +602,7 @@ var hookStubSpecs = map[hookEvent]hookStubSpec{
 	},
 	hookPostStop: {
 		when:    "after the core is gone",
-		reasons: "stop | shutdown (SIGTERM, update, service restart) | fatal (the start failed after pre_start passed, or the rollback failed too) | recover (the previous daemon process died without reaching post_stop; facts from hooks/state.json)",
+		reasons: "stop | shutdown (SIGTERM, update, service restart) | fatal (the start failed after pre_start passed, or the rollback failed too) | recover (the previous daemon process died without reaching post_stop; facts from hooks/core_snapshot.json)",
 		failure: "a non-zero exit is logged only; nothing blocks the stop",
 		prev:    "actual interface names of the instance that was closed; on fatal only an explicit interface_name",
 		errVar:  "set on fatal: the core's error",

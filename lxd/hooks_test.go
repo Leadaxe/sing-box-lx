@@ -465,8 +465,8 @@ func TestHooksFatalAfterPreStart(t *testing.T) {
 		"LXD_TUN_INTERFACE_PREV": ",lx0", // fatal: explicit names only
 		"LXD_CONFIG_SHA":         "",
 	})
-	if _, err := os.Stat(control.hooks.statePath()); !os.IsNotExist(err) {
-		t.Fatal("no state.json after a fatal start")
+	if _, err := os.Stat(control.hooks.snapshotPath()); !os.IsNotExist(err) {
+		t.Fatal("no core_snapshot.json after a fatal start")
 	}
 }
 
@@ -518,22 +518,22 @@ func TestHooksStateJSONAndRecover(t *testing.T) {
 	seedLastGood(t, control, hookConfigTwoTuns)
 	bootstrap(context.Background(), control, control.store, Options{StateDir: control.store.dir})
 
-	raw, err := os.ReadFile(control.hooks.statePath())
+	raw, err := os.ReadFile(control.hooks.snapshotPath())
 	if err != nil {
-		t.Fatal("state.json must exist after post_start:", err)
+		t.Fatal("core_snapshot.json must exist after post_start:", err)
 	}
-	var state hookState
-	if err := json.Unmarshal(raw, &state); err != nil {
+	var snapshot coreSnapshot
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if state.ConfigSHA != contentSHA(hookConfigTwoTuns) || state.TunInterface != "utun5,lx0" || state.TunAddress == "" || state.PID != os.Getpid() || state.StartedAt == "" {
-		t.Fatalf("state.json %+v", state)
+	if snapshot.ConfigSHA != contentSHA(hookConfigTwoTuns) || snapshot.TunInterface != "utun5,lx0" || snapshot.TunAddress == "" || snapshot.PID != os.Getpid() || snapshot.StartedAt == "" {
+		t.Fatalf("core_snapshot.json %+v", snapshot)
 	}
 	if err := control.Stop(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(control.hooks.statePath()); !os.IsNotExist(err) {
-		t.Fatal("state.json must be gone after post_stop")
+	if _, err := os.Stat(control.hooks.snapshotPath()); !os.IsNotExist(err) {
+		t.Fatal("core_snapshot.json must be gone after post_stop")
 	}
 
 	// Simulate a crash: the record is there, the process is gone. A new
@@ -558,17 +558,17 @@ func TestHooksStateJSONAndRecover(t *testing.T) {
 		"LXD_CONFIG_SHA":          "",
 	})
 	// The new start wrote its own record.
-	raw, err = os.ReadFile(runner.statePath())
+	raw, err = os.ReadFile(runner.snapshotPath())
 	if err != nil || strings.Contains(string(raw), "deadbeef") {
-		t.Fatal("state.json must describe the new core:", string(raw), err)
+		t.Fatal("core_snapshot.json must describe the new core:", string(raw), err)
 	}
 
 	// Disabled hooks: a leftover record is removed silently, no recover.
 	control.hooks.writeState(coreFacts{ConfigSHA: "stale"})
 	disabled, _ := newHookRunner(&HooksConfig{}, control.store.dir, "", nil, control.store)
 	disabled.recoverAtBoot()
-	if _, err := os.Stat(disabled.statePath()); !os.IsNotExist(err) {
-		t.Fatal("a disabled daemon must drop a stale state.json")
+	if _, err := os.Stat(disabled.snapshotPath()); !os.IsNotExist(err) {
+		t.Fatal("a disabled daemon must drop a stale core_snapshot.json")
 	}
 }
 

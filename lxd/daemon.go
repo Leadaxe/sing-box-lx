@@ -402,7 +402,7 @@ func shutdown(control *controller, startedService *daemon.StartedService, httpSe
 // is reported via /admin/status and boots the last config known to work.
 // Caller holds applyAccess.
 func bootstrap(ctx context.Context, control *controller, stateStore *store, options Options) {
-	// A state.json left by the previous process = it died without post_stop:
+	// A core_snapshot.json left by the previous process = it died without post_stop:
 	// announce that end first, before anything else starts (SPEC 135 §2.4).
 	control.hooks.recoverAtBoot()
 	if pendingSHA, interrupted := stateStore.PendingSHA(); interrupted {

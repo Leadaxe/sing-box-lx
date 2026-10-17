@@ -229,7 +229,7 @@ every start, with a stub for every missing script:
 | File | Who writes it | Purpose |
 |---|---|---|
 | `hooks/pre_start`, `post_start`, `post_reload`, `post_stop` | you | the scripts (executables run directly, your shell is the `#!` line) |
-| `hooks/state.json` | the daemon | facts of the last live core; its presence at boot = the previous process never reached `post_stop` |
+| `hooks/core_snapshot.json` | the daemon | facts of the last live core; its presence at boot = the previous process never reached `post_stop` |
 | `hooks/.lock` | the daemon | `flock` around every run, across processes |
 | `<log dir>/hooks/<event>.log` | the script (redirected) | output of the last run; without a log file — `hooks/log/` |
 | anything else in `hooks/` | you | your snapshot of the system state, in your format |
@@ -269,7 +269,7 @@ precondition gate (the uplink is up, the disk is not full) with no side
 effects.
 
 **`recover`.** After every successful start the daemon writes
-`hooks/state.json`; after `post_stop` it deletes it. A daemon that boots and
+`hooks/core_snapshot.json`; after `post_stop` it deletes it. A daemon that boots and
 finds the file knows the previous process died without `post_stop` (core
 panic, `kill -9`, power loss) and calls `post_stop` with `LXD_REASON=recover`
 and `_PREV` from the file — before its own `pre_start`. For the script it is

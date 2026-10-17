@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | Type | F (feature) — admin scripts at the lifecycle boundaries of the core inside the daemon |
-| Status | I (implemented) 2026-10-17 — see [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md); the manual owner checks of §3 are open. Design approved by the owner 2026-10-17 (event model, variables, `hooks/state.json` written by the daemon, stubs created by the daemon, explicit `on/off`, logging). This English file is the primary spec; [SPEC.ru.md](SPEC.ru.md) is the auxiliary Russian copy, both are maintained together (owner decision 2026-10-17) |
+| Status | I (implemented) 2026-10-17 — see [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md); the manual owner checks of §3 are open. Design approved by the owner 2026-10-17 (event model, variables, `hooks/core_snapshot.json` written by the daemon, stubs created by the daemon, explicit `on/off`, logging). This English file is the primary spec; [SPEC.ru.md](SPEC.ru.md) is the auxiliary Russian copy, both are maintained together (owner decision 2026-10-17) |
 | Branch | `lx` |
 | Build tag | `with_lxd` (lx files `lxd/hooks*.go`, insertions in `lxd/apply.go`, `lxd/daemon.go`, `lxd/daemonconfig.go`, `lxd/admin.go`; one `// lx:` accessor in `protocol/tun/inbound.go` — §2.3) |
 | Origin | Discussion with the owner 2026-10-17. Trigger — issue #12: the system-DNS automation on darwin was rolled back out of the core; the policy "where to point DNS and how to restore it" must live with the admin; `commands` (SPEC 128) do not fit — a client runs them, not an event |
@@ -63,7 +63,7 @@ Rejected:
 - **Hook state written by the script** — the decision "whether to run recovery at boot" is made
   by the daemon, and it must not depend on whether the script ran (timed out, not configured);
   the actual interface name after a crash can come from nowhere but the daemon's record; one
-  writer and one reader — the format stays internal. Therefore `hooks/state.json` is written by
+  writer and one reader — the format stays internal. Therefore `hooks/core_snapshot.json` is written by
   the daemon (§2.4), and the snapshot of the system state by the script, in the same directory,
   in its own format.
 
@@ -83,10 +83,10 @@ Rejected:
 |---|---|---|
 | `<state_dir>/hooks/` | the daemon at start (if absent), `root:root 0755` | hook directory; `LXD_HOOK_DIR` |
 | `<state_dir>/hooks/pre_start`, `post_start`, `post_reload`, `post_stop` | the daemon at start, if the file is absent: a stub, `0755` | admin scripts |
-| `<state_dir>/hooks/state.json` | the daemon only | facts of the last core start (§2.4) |
+| `<state_dir>/hooks/core_snapshot.json` | the daemon only | facts of the last core start (§2.4) |
 | `<state_dir>/hooks/.lock` | the daemon | inter-process `flock` around every hook (§2.5) |
 | `<dirname(log_file)>/hooks/<event>.log` | the hook (redirected by the daemon) | output of the last run; without `log_file` — `<state_dir>/hooks/log/`, a daemon-owned subdirectory, not part of the script's area |
-| everything else in `<state_dir>/hooks/` (except `state.json`, `.lock`, `log/`) | the script | snapshot of the system state, format at the script's discretion |
+| everything else in `<state_dir>/hooks/` (except `core_snapshot.json`, `.lock`, `log/`) | the script | snapshot of the system state, format at the script's discretion |
 
 **The stub** is not an empty file (an empty `exec` returns `ENOEXEC`, indistinguishable from a
 broken hook) but `#!/bin/sh`, `exit 0` and a comment listing the environment variables of **this**
@@ -111,7 +111,7 @@ Four events. The "current" core is what exists after the event; `_PREV` is what 
 | `pre_start` | before `StartOrReloadService`, when there is no core | `boot` (daemon boot, `bootstrap`), `start` (`POST /admin/start`, `POST /admin/rollback` with no core), `apply` / `sighup` (an apply that brings the core up from nothing — implementation clarification 2026-10-17: such an apply is a start, not a reload) | **fail-closed**: the core does not start, `status: fatal`, `last_error` = `hook pre_start: …`; on `boot` the daemon stays alive without a core, as with any start failure |
 | `post_start` | after a successful return from `StartOrReloadService` for the same reasons — tun and routes already exist | `boot`, `start`, `apply` / `sighup` (the same case) | the core keeps running; Error in the log, a mark in `/admin/status` (§2.6) |
 | `post_reload` | after the instance is swapped in the live process | `apply` (REST), `sighup` (file re-read), `rollback` (the new config did not come up, last-good is up; also `POST /admin/rollback` over a live core — then `LXD_ERROR` is empty) | the core keeps running; Error in the log, a mark in the status |
-| `post_stop` | when the core is gone | `stop` (`POST /admin/stop`), `shutdown` (SIGTERM — including `update` and a service restart), `fatal` (the start failed after a passed `pre_start`, or the rollback failed too), `recover` (the new daemon found a `state.json` from the previous run at boot — §2.4) | log only; nothing blocks the stop |
+| `post_stop` | when the core is gone | `stop` (`POST /admin/stop`), `shutdown` (SIGTERM — including `update` and a service restart), `fatal` (the start failed after a passed `pre_start`, or the rollback failed too), `recover` (the new daemon found a `core_snapshot.json` from the previous run at boot — §2.4) | log only; nothing blocks the stop |
 
 Rules:
 
@@ -176,7 +176,7 @@ all inbounds into the check.
 | `pre_start` | from the config; `LXD_TUN_INTERFACE` only explicit | none |
 | `post_start` | full, `LXD_TUN_INTERFACE` actual | none |
 | `post_reload` | full (the new instance) | full (the old instance; `LXD_TUN_INTERFACE_PREV` taken **before** it is closed) |
-| `post_stop` | none | full: on `stop`/`shutdown` — from the live instance before it is closed; on `fatal` — from the instance that was live before the swap when there was one (an apply whose rollback also failed), else from the config that did not come up (interface only explicit); on `recover` — from `state.json` |
+| `post_stop` | none | full: on `stop`/`shutdown` — from the live instance before it is closed; on `fatal` — from the instance that was live before the swap when there was one (an apply whose rollback also failed), else from the config that did not come up (interface only explicit); on `recover` — from `core_snapshot.json` |
 
 **The actual interface name.** `protocol/tun/inbound.go` computes the name before the interface
 is created (`CalculateInterfaceName` takes the next free `utunN`/`tunN`); after `tun.New` it sits
@@ -187,16 +187,16 @@ is the only insertion into an upstream file in this task; the alternative "from 
 would leave the variable empty on darwin without an explicit `interface_name`, and Linux scripts
 with `resolvectl dns <iface>` without a name. Owner decision 2026-10-17 — the accessor.
 
-### 2.4 `state.json` and `recover`
+### 2.4 `core_snapshot.json` and `recover`
 
-The daemon writes `<state_dir>/hooks/state.json` **after every successful start** (`post_start`,
+The daemon writes `<state_dir>/hooks/core_snapshot.json` **after every successful start** (`post_start`,
 `post_reload` — regardless of the outcome of the hook itself) and deletes it after `post_stop`
 (any reason). The content is the facts of the last live core: `config_sha`, `tun_address`,
 `tun_interface`, `tun_mtu`, `tun_auto_route`, `started_at`, the daemon `pid`. The file is written
 atomically (`store.writeAtomic`); it is the same state dir as `last_good.json`: one write per
 start, not in a loop, so the flash objection from 128 does not carry over here.
 
-At daemon boot, **before** `bootstrap`: `state.json` exists → the previous process did not reach
+At daemon boot, **before** `bootstrap`: `core_snapshot.json` exists → the previous process did not reach
 `post_stop` (core panic, `kill -9`, power loss) → the daemon calls `post_stop` with reason
 `recover` and `_PREV` from the file, deletes the file and only then proceeds to the usual
 `pre_start`. For the script there is no difference from a regular `stop`: the same variables, the
@@ -318,7 +318,7 @@ is no separate route (as with 128). `GET /admin/info` is not touched: it holds i
   `LXD_ERROR`.
 - `rollback` test: apply failed, last-good came up → one `post_reload(rollback)` with the current
   last-good facts and `LXD_ERROR`; last-good failed too → `post_stop(fatal)`.
-- `state.json` test: after `post_start` the file exists and holds the facts; after `post_stop`
+- `core_snapshot.json` test: after `post_start` the file exists and holds the facts; after `post_stop`
   there is no file; a new controller over a state dir with a leftover file calls
   `post_stop(recover)` with `_PREV` from the file **before** `pre_start`, the file is deleted.
 - Output test: a hook with `echo hi; (sleep 30 &)` finishes without waiting for the background,

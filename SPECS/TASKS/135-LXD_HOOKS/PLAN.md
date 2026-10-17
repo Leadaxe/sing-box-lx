@@ -6,7 +6,7 @@
 
 | File | What changes |
 |------|--------------|
-| `lxd/hooks.go` | `HooksConfig` validation; `hookRunner` (directory and stub creation, "not configured" by byte-equality with the embedded stubs, ownership gate, per-event outcomes for `/admin/status`, `state.json` write/remove, `recover` at boot); `coreFacts` (tun facts parsed from the config JSON tree, actual interface names from the box); the environment of §2.3; `hookOrigin` carried in the context (reason + client) |
+| `lxd/hooks.go` | `HooksConfig` validation; `hookRunner` (directory and stub creation, "not configured" by byte-equality with the embedded stubs, ownership gate, per-event outcomes for `/admin/status`, `core_snapshot.json` write/remove, `recover` at boot); `coreFacts` (tun facts parsed from the config JSON tree, actual interface names from the box); the environment of §2.3; `hookOrigin` carried in the context (reason + client) |
 | `lxd/hooks_unix.go` | `runHookProcess`: `exec.Command(path)` in its own process group, cwd `/`, stdin `/dev/null`, stdout/stderr to `<log dir>/hooks/<event>.log`, `flock` on `hooks/.lock`, `markInheritableCloseOnExec`, timeout → `SIGKILL` to the group |
 | `lxd/hooks_other.go` | Windows and the rest: `hooksSupported = false`, no runner |
 | `lxd/daemonconfig.go` | `Hooks *HooksConfig` (`enabled`, `timeout_seconds`, `unsafe_skip_owner_check`), validated in `LoadDaemonConfig` |
@@ -28,7 +28,7 @@
 - `POST /admin/rollback` and `POST /admin/start` share `Rollback`: with a live core it is a reload (`post_reload`, reason `rollback`, `LXD_ERROR` empty — a manual rollback), without one it is a start (`pre_start`/`post_start`, reason `start`).
 - `post_stop(fatal)` after a failed apply carries the facts of the instance that was live before the swap (what no longer exists), not of the config that failed — that one never existed; the boot case keeps the spec wording (facts from the config, interface only explicit).
 - Facts of a live instance are collected before the swap/close (`liveFacts`): config facts from the active content plus actual names via `TunInterfaceNames`.
-- With `enabled: false` a leftover `state.json` is removed silently: a disabled daemon makes no promise about hooks and must not call `post_stop(recover)` later when they are re-enabled for a core that is long gone.
+- With `enabled: false` a leftover `core_snapshot.json` is removed silently: a disabled daemon makes no promise about hooks and must not call `post_stop(recover)` later when they are re-enabled for a core that is long gone.
 
 ## Not changed
 
