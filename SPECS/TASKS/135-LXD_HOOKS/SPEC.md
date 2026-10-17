@@ -204,6 +204,13 @@ same snapshot. This is the **only** coverage for a core panic: the core lives in
 process, there is no "child supervision", and nobody is there to run `post_stop` at the moment of
 the crash.
 
+A leftover `core_snapshot.json` at boot with `enabled: false` is **removed with a Warn** (owner
+decision 2026-10-18): `lxd: hooks disabled, dropping stale core_snapshot.json from a run that did
+not reach post_stop …`. A disabled daemon runs no script, so `post_stop(recover)` is not called;
+the Warn tells the admin that the system state (DNS) may still point at the dead tun and has to
+be restored by hand. The record is not kept: re-enabling hooks later must not fire a `recover` for
+a core that is long gone over the one that is live.
+
 ### 2.5 Execution
 
 - **Synchronous.** The daemon runs the file directly (`exec.Command(path)`, no shell), cwd `/`,

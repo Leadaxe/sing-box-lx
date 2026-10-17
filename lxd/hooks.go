@@ -440,9 +440,10 @@ func (r *hookRunner) removeState() {
 // recoverAtBoot runs before the first pre_start: a core_snapshot.json left by the
 // previous process means it never reached post_stop (core panic, kill -9,
 // power loss), so post_stop runs now with reason `recover` and the facts from
-// the file. With hooks disabled a leftover file is removed silently: a
-// disabled daemon makes no promise, and the record must not fire a recover
-// for a long-gone core once hooks are re-enabled.
+// the file. With hooks disabled a leftover file is removed with a Warn: a
+// disabled daemon runs no script, so the system DNS may still point at the
+// dead tun and the admin has to restore it by hand; the record must not fire
+// a recover for a long-gone core once hooks are re-enabled.
 func (r *hookRunner) recoverAtBoot() {
 	if r == nil {
 		return
@@ -455,6 +456,7 @@ func (r *hookRunner) recoverAtBoot() {
 		return
 	}
 	if !r.enabled {
+		log.Warn("lxd: hooks disabled, dropping stale core_snapshot.json from a run that did not reach post_stop — post_stop(recover) is not run, restore the system state by hand if the previous run changed it")
 		r.removeState()
 		return
 	}

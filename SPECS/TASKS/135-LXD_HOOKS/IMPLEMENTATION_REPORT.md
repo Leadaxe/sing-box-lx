@@ -30,7 +30,7 @@ Implemented 2026-10-17 on branch `lx`, behind `with_lxd`.
 1. **An apply over no core is a start.** `POST /admin/apply` (or SIGHUP) when the daemon is idle, stopped or fatal brings the core up from nothing: `pre_start` gates it and `post_start` answers it, with `LXD_REASON` = `apply` / `sighup`. The spec listed only `boot`/`start` for those events; the alternative — `post_reload` with an empty `_PREV` — would break "the current core is what exists after the event, `_PREV` what no longer exists".
 2. **`POST /admin/rollback` over a live core** is a `post_reload` with reason `rollback` and an empty `LXD_ERROR` (a manual rollback); with no core it is a start (`pre_start`/`post_start`, reason `start`).
 3. **`post_stop(fatal)` after an apply whose rollback also failed** carries the facts of the instance that was live before the swap (what no longer exists), not of the config that failed — that one never existed. The boot case keeps the spec wording (facts from the config, interface only explicit).
-4. **A leftover `core_snapshot.json` with hooks disabled** is removed silently: a disabled daemon must not fire `post_stop(recover)` for a long-gone core once hooks are re-enabled.
+4. **A leftover `core_snapshot.json` with hooks disabled** is removed with a Warn (silent at first; Warn by owner decision 2026-10-18, so the admin knows the system state may need a manual restore): a disabled daemon must not fire `post_stop(recover)` for a long-gone core once hooks are re-enabled.
 
 None of these reopens an owner decision; they fill gaps the code met. The owner may overrule any of them.
 

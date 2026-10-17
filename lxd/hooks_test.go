@@ -563,7 +563,7 @@ func TestHooksStateJSONAndRecover(t *testing.T) {
 		t.Fatal("core_snapshot.json must describe the new core:", string(raw), err)
 	}
 
-	// Disabled hooks: a leftover record is removed silently, no recover.
+	// Disabled hooks: a leftover record is dropped (with a Warn, not a recover).
 	control.hooks.writeState(coreFacts{ConfigSHA: "stale"})
 	disabled, _ := newHookRunner(&HooksConfig{}, control.store.dir, "", nil, control.store)
 	disabled.recoverAtBoot()
