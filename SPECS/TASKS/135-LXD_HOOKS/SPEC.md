@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | Type | F (feature) — admin scripts at the lifecycle boundaries of the core inside the daemon |
-| Status | N (new) — design approved by the owner 2026-10-17 (event model, variables, `hooks.state` written by the daemon, stubs created at install, explicit `on/off`, logging); code ahead. This English file is the primary spec; [SPEC.ru.md](SPEC.ru.md) is the auxiliary Russian copy, both are maintained together (owner decision 2026-10-17) |
+| Status | N (new) — design approved by the owner 2026-10-17 (event model, variables, `hooks/state.json` written by the daemon, stubs created by the daemon, explicit `on/off`, logging); code ahead. This English file is the primary spec; [SPEC.ru.md](SPEC.ru.md) is the auxiliary Russian copy, both are maintained together (owner decision 2026-10-17) |
 | Branch | `lx` |
 | Build tag | `with_lxd` (lx files `lxd/hooks*.go`, insertions in `lxd/apply.go`, `lxd/daemon.go`, `lxd/daemonconfig.go`, `lxd/admin.go`; one `// lx:` accessor in `protocol/tun/inbound.go` — §2.3) |
 | Origin | Discussion with the owner 2026-10-17. Trigger — issue #12: the system-DNS automation on darwin was rolled back out of the core; the policy "where to point DNS and how to restore it" must live with the admin; `commands` (SPEC 128) do not fit — a client runs them, not an event |
@@ -74,7 +74,7 @@ Rejected:
 ```jsonc
 "hooks": {
   "enabled": true,                 // default false: no key = no hooks
-  "timeout_seconds": 15,           // per hook; 0/absent = 15
+  "timeout_seconds": 15,           // per hook, integer seconds; 0/absent = 15; negative = the daemon refuses to start, naming the key
   "unsafe_skip_owner_check": false // default false; true = the §2.5 gate is off, WARN on every daemon start
 }
 ```
@@ -85,8 +85,8 @@ Rejected:
 | `<state_dir>/hooks/pre_start`, `post_start`, `post_reload`, `post_stop` | the daemon at start, if the file is absent: a stub, `0755` | admin scripts |
 | `<state_dir>/hooks/state.json` | the daemon only | facts of the last core start (§2.4) |
 | `<state_dir>/hooks/.lock` | the daemon | inter-process `flock` around every hook (§2.5) |
-| `<dirname(log_file)>/hooks/<event>.log` | the hook (redirected by the daemon) | output of the last run; without `log_file` — `<state_dir>/hooks/log/` |
-| everything else in `<state_dir>/hooks/` | the script | snapshot of the system state, format at the script's discretion |
+| `<dirname(log_file)>/hooks/<event>.log` | the hook (redirected by the daemon) | output of the last run; without `log_file` — `<state_dir>/hooks/log/`, a daemon-owned subdirectory, not part of the script's area |
+| everything else in `<state_dir>/hooks/` (except `state.json`, `.lock`, `log/`) | the script | snapshot of the system state, format at the script's discretion |
 
 **The stub** is not an empty file (an empty `exec` returns `ENOEXEC`, indistinguishable from a
 broken hook) but `#!/bin/sh`, `exit 0` and a comment listing the environment variables of **this**
@@ -117,8 +117,8 @@ Rules:
 
 - **Every entry into start ends with either `post_start` or `post_stop`.** `pre_start` passed, the
   core did not come up → `post_stop` with reason `fatal` (owner decision): the script has no
-  snapshot and exits silently, but the symmetry has no exceptions, and the tail of a previous
-  crashed run is cleaned up along the way if `recover` did not fire.
+  snapshot and exits silently, but the symmetry has no exceptions: every `pre_start` is answered
+  by exactly one `post_*`, and the script never has to reason about a start that vanished.
 - **A rollback inside Apply** is a `post_reload` with reason `rollback`: the core never
   disappeared, the current facts describe last-good, `LXD_ERROR` is the reason the new config was
   rejected. If last-good did not come up either — `post_stop` with reason `fatal`.
@@ -129,10 +129,12 @@ Rules:
   `post_stop`, or that nothing crashed between two `post_reload`s; it reads its own snapshot and
   acts on it. This is a contract: the spec requires it, the daemon cannot verify it.
 - **A hook that is not configured** (stub or no file) with `enabled: true` — the event is skipped
-  with a Warn in the log (owner decision, item 7): `lxd: hook post_reload skipped: not configured
+  with a Warn in the log (owner decision 2026-10-17: a skipped event is a Warn): `lxd: hook post_reload skipped: not configured
   (stub unchanged)`. `pre_start` not configured — no gate, the start proceeds.
-- **Hooks do not block each other across events**, but within one process they are serialized by
-  the same `applyAccess` under which the transition runs. The transition waits for the hook:
+- **No hook waits for the outcome of a previous event's hook** — a failed `post_start` does not
+  hold back the next `post_reload`. Concurrency is a separate matter: within one process hooks are
+  serialized by the same `applyAccess` under which the transition runs, across processes by the
+  `flock` of §2.5. The transition waits for the hook:
   `POST /admin/apply` may take up to `timeout_seconds` longer.
 
 ### 2.3 Environment
@@ -214,7 +216,9 @@ the crash.
   only the exit code of the synchronous part; the background lives in the daemon's process group
   and dies with it under the service's SIGTERM unless the script called `setsid`; the flock is
   released when the script exits. Whatever DNS or the gate depends on must finish before `exit`.
-  This is stated in the documentation and in the stub comment.
+  This is stated in the documentation and in the stub comment. The stub comment lists every variable
+  of its event, marking the ones that are usually empty (`LXD_TUN_INTERFACE` in `pre_start` and
+  `LXD_TUN_INTERFACE_PREV` in `post_stop(fatal)` are set only for an explicit `interface_name`).
 - **Descriptors are not inherited.** `markInheritableCloseOnExec` (128 §2.3) before every run:
   otherwise `pre_start` or a backgrounded child would get a copy of the TUN fd and hold the
   interface until `EBUSY` on the next start — exactly the lx.17/lx.18 bug.
@@ -240,12 +244,12 @@ the crash.
   not help. Therefore `lxd-openwrt-setup.sh` (both languages) adds `procd_set_param term_timeout
   30`, and the documentation requires fitting `post_stop` into the host init system's window.
 - **Windows** — the `hooks` key is accepted with a Warn in the log (`hooks are ignored on this
-  platform (unix only)`), no directory, no calls: `flock`, `checkRootOwnedChain`, process groups
+  platform (unix only)`), no directory, no stubs (this overrides the `enabled: false` rule of §2.1), no calls: `flock`, `checkRootOwnedChain`, process groups
   are unix. Linux (including OpenWrt) and macOS share one code path.
 
 ### 2.6 Status, log, audit
 
-Log levels (owner decision, items 7–8):
+Log levels (owner decision 2026-10-17: a skipped event is a Warn, a run is an Info):
 
 | Level | When | Example |
 |---|---|---|
