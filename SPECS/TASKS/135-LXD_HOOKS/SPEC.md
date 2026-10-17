@@ -1,250 +1,260 @@
 # SPEC: 135 — LXD_HOOKS
 
-**Фича:** [014-LXD_DAEMON](../../FEATURES/014-LXD_DAEMON/FEATURE.md)
+> 🌐 Русская версия: **[SPEC.ru.md](SPEC.ru.md)** (auxiliary copy; this English file is primary — owner decision 2026-10-17).
 
-| Поле | Значение |
-|------|----------|
-| Тип | F (feature) — скрипты админа на границах жизни ядра внутри демона |
-| Статус | N (new) — дизайн утверждён владельцем 2026-10-17 (событийная модель, переменные, `hooks.state` пишет демон, заготовки при установке, явные `on/off`, логирование); код впереди |
-| Ветка | `lx` |
-| Build-tag | `with_lxd` (lx-файлы `lxd/hooks*.go`, вставки в `lxd/apply.go`, `lxd/daemon.go`, `lxd/daemonconfig.go`, `lxd/admin.go`; один `// lx:` аксессор в `protocol/tun/inbound.go` — §2.3) |
-| Источник | Обсуждение с владельцем 2026-10-17. Повод — issue #12: автоматика системного DNS на darwin откачена из ядра, политика «куда переводить DNS и как возвращать» должна жить у админа; `commands` (SPEC 128) для этого не годятся — их запускает клиент, а не событие |
-| Связано | [128](../128-LXD_COMMANDS/SPEC.md) (тот же `LXD_*`-механизм окружения, `markInheritableCloseOnExec`, каталог исхода рядом с логом), [056](../056-LXD_APPLY_ROLLBACK/SPEC.md) (границы `Apply`/`Rollback`/`Start`/`Stop`, на которые встают хуки), [100](../100-LXD_ROOT_OWNED_BINARY/SPEC.md) (`checkRootOwnedChain` — гейт владения), [129](../129-LXD_UPDATE/SPEC.md) (гонка старого и нового демона под procd, §2.6 там — здесь §2.5), [127](../127-LXD_INFO_PLATFORM/SPEC.md) (факты платформы в окружении) |
+**Feature:** [014-LXD_DAEMON](../../FEATURES/014-LXD_DAEMON/FEATURE.md)
 
-Админ кладёт в `<state_dir>/hooks/` четыре скрипта — `pre_start`, `post_start`, `post_reload`,
-`post_stop` — и включает их в `daemon.json`. Демон вызывает их на границах жизни ядра **в своём
-процессе**: перед подъёмом, после подъёма, после подмены конфига, после остановки. Скрипт
-получает факты о ядре в окружении (`LXD_EVENT`, `LXD_TUN_ADDRESS`, `LXD_TUN_INTERFACE`, …) и
-сам решает, что делать с системой: перевести системный DNS на tun и вернуть обратно — главный
-сценарий. Демон гарантирует только одно: каждая граница объявлена, в том числе после падения
-процесса и после `update`. Что делать на границе — целиком дело админа.
+| Field | Value |
+|-------|-------|
+| Type | F (feature) — admin scripts at the lifecycle boundaries of the core inside the daemon |
+| Status | N (new) — design approved by the owner 2026-10-17 (event model, variables, `hooks.state` written by the daemon, stubs created at install, explicit `on/off`, logging); code ahead. This English file is the primary spec; [SPEC.ru.md](SPEC.ru.md) is the auxiliary Russian copy, both are maintained together (owner decision 2026-10-17) |
+| Branch | `lx` |
+| Build tag | `with_lxd` (lx files `lxd/hooks*.go`, insertions in `lxd/apply.go`, `lxd/daemon.go`, `lxd/daemonconfig.go`, `lxd/admin.go`; one `// lx:` accessor in `protocol/tun/inbound.go` — §2.3) |
+| Origin | Discussion with the owner 2026-10-17. Trigger — issue #12: the system-DNS automation on darwin was rolled back out of the core; the policy "where to point DNS and how to restore it" must live with the admin; `commands` (SPEC 128) do not fit — a client runs them, not an event |
+| Related | [128](../128-LXD_COMMANDS/SPEC.md) (the same `LXD_*` environment mechanism, `markInheritableCloseOnExec`, the outcome directory next to the log), [056](../056-LXD_APPLY_ROLLBACK/SPEC.md) (the `Apply`/`Rollback`/`Start`/`Stop` boundaries the hooks attach to), [100](../100-LXD_ROOT_OWNED_BINARY/SPEC.md) (`checkRootOwnedChain` — the ownership gate), [129](../129-LXD_UPDATE/SPEC.md) (the race between the old and the new daemon under procd, §2.6 there — §2.5 here), [127](../127-LXD_INFO_PLATFORM/SPEC.md) (platform facts in the environment) |
 
-## 1. Проблема
+The admin puts four scripts into `<state_dir>/hooks/` — `pre_start`, `post_start`, `post_reload`,
+`post_stop` — and enables them in `daemon.json`. The daemon calls them at the lifecycle boundaries
+of the core **in its own process**: before the core comes up, after it is up, after the config is
+swapped, after it stops. The script receives facts about the core in the environment (`LXD_EVENT`,
+`LXD_TUN_ADDRESS`, `LXD_TUN_INTERFACE`, …) and decides for itself what to do with the system:
+pointing the system DNS at the tun and restoring it afterwards is the main scenario. The daemon
+guarantees only one thing: every boundary is announced, including after a process crash and
+after `update`. What to do at the boundary is entirely the admin's business.
 
-Ядро на хосте с TUN меняет маршрутизацию, но не трогает системный DNS: на macOS, Linux без
-`systemd-resolved` и на роутерах DNS-резолвер системы продолжает смотреть в сторону провайдера.
-Попытка делать это автоматикой внутри ядра (`networksetup` на darwin) откачена в issue #12: ядро
-не может знать всех сетевых служб, конфигураций и порядка их восстановления, а неудачный откат
-оставляет систему без DNS. Правильное место для такой политики — скрипт админа; у демона
-достаточно знаний, чтобы вызвать его в нужный момент с нужными фактами.
+## 1. Problem
 
-`commands` (128) эту роль не закрывают: команду запускает аутентифицированный клиент по
-кнопке, событие ядра её не вызовет, и факты о ядре (адрес tun, фактическое имя `utunN`) ей
-не передаются.
+The core on a host with TUN changes routing but does not touch the system DNS: on macOS, on
+Linux without `systemd-resolved` and on routers the system resolver keeps pointing at the ISP.
+An attempt to do this automatically inside the core (`networksetup` on darwin) was rolled back
+in issue #12: the core cannot know all network services, configurations and the order in which
+to restore them, and a failed rollback leaves the system without DNS. The right place for such
+a policy is an admin script; the daemon knows enough to call it at the right moment with the
+right facts.
 
-Отвергнуто:
+`commands` (128) do not cover this role: an authenticated client runs a command by pressing a
+button, a core event will not trigger it, and the facts about the core (the tun address, the
+actual `utunN` name) are not passed to it.
 
-- **Автоматика DNS в ядре или демоне** — issue #12, причина выше. Демон не знает системного
-  состояния и не хранит его снимок.
-- **Пара `pre_*` на каждое событие** (восемь хуков) — скрипт не может опираться ни на один
-  `pre_*`: паника в ядре валит процесс демона, и единственное, что гарантированно выполнится,
-  это `post_*` на следующей границе. Восстановительная логика обязана жить в `post_*`, быть
-  идемпотентной и исходить из собственного состояния на диске. `pre_stop` снят ещё и потому,
-  что он тратит стоп-бюджет под SIGTERM (§2.5) впустую: снимок системного состояния снимается
-  в `post_start`, а не перед остановкой. Единственный `pre_*` — `pre_start`, и он гейт, не
-  восстановление.
-- **Apply как полная остановка и подъём** (`post_stop` → `pre_start` → `post_start` на каждом
-  применении конфига) — DNS мигает на каждом применении из лаунчера, два лишних хука под
-  `applyAccess`, и `post_stop` делает то, что следующий хук сразу отменит. Семантика «ядро есть
-  непрерывно, сменился только адрес» точнее — для неё отдельное событие `post_reload`.
-- **Пути скриптов в `daemon.json`** (`{"post_start": "/path"}`) — файлы лежат в фиксированных
-  путях под `<state_dir>/hooks/`, которые создаёт демон. Цепочка владения root-owned по
-  построению, вопрос «путь или шелл-строка с кавычками» снимается, в конфиге остаются только
-  `on/off`-ключи.
-- **Исполнение через `/bin/sh -c "<строка>"`**, как у `commands` — у гейта владения нет субъекта:
-  что проверять в `VAR=1 /path/x` или `cd /opt && ./x`? Хук — исполняемый файл, запускаемый
-  напрямую; шелл у админа внутри файла через `#!`.
-- **Detached-исполнение** (`spawnDetached` из 128) — демону нужен код выхода для fail-closed на
-  `pre_start` и для метки в статусе; хуки синхронные.
-- **Состояние хуков пишет скрипт** — решение «вызывать ли восстановление при загрузке»
-  принимает демон, и оно не должно зависеть от того, отработал ли скрипт (упал по таймауту,
-  не задан); фактическое имя интерфейса после падения неоткуда взять, кроме записи демона;
-  один писатель и один читатель — формат остаётся внутренним. Поэтому `hooks/state.json` пишет
-  демон (§2.4), снимок системного состояния — скрипт, в том же каталоге, своим форматом.
+Rejected:
 
-## 2. Поведение
+- **DNS automation in the core or in the daemon** — issue #12, reason above. The daemon does not
+  know the system state and does not keep a snapshot of it.
+- **A `pre_*` counterpart for every event** (eight hooks) — a script cannot rely on any `pre_*`:
+  a panic in the core takes the daemon process down, and the only thing guaranteed to run is the
+  `post_*` at the next boundary. Recovery logic must live in `post_*`, be idempotent and proceed
+  from the script's own state on disk. `pre_stop` is dropped also because it spends the stop
+  budget under SIGTERM (§2.5) for nothing: the snapshot of the system state is taken in
+  `post_start`, not before the stop. The only `pre_*` is `pre_start`, and it is a gate, not a
+  recovery.
+- **Apply as a full stop and start** (`post_stop` → `pre_start` → `post_start` on every config
+  apply) — DNS blinks on every apply from the launcher, two extra hooks under `applyAccess`, and
+  `post_stop` does what the next hook immediately undoes. The semantics "the core is there
+  continuously, only the address changed" is more precise — it gets its own event, `post_reload`.
+- **Script paths in `daemon.json`** (`{"post_start": "/path"}`) — the files live at fixed paths
+  under `<state_dir>/hooks/`, which the daemon creates. The ownership chain is root-owned by
+  construction, the question "a path or a quoted shell string" disappears, and only `on/off` keys
+  remain in the config.
+- **Execution via `/bin/sh -c "<string>"`**, as `commands` do — the ownership gate would have no
+  subject: what is there to check in `VAR=1 /path/x` or `cd /opt && ./x`? A hook is an executable
+  file run directly; the admin's shell is inside the file via `#!`.
+- **Detached execution** (`spawnDetached` from 128) — the daemon needs the exit code for
+  fail-closed on `pre_start` and for the mark in the status; hooks are synchronous.
+- **Hook state written by the script** — the decision "whether to run recovery at boot" is made
+  by the daemon, and it must not depend on whether the script ran (timed out, not configured);
+  the actual interface name after a crash can come from nowhere but the daemon's record; one
+  writer and one reader — the format stays internal. Therefore `hooks/state.json` is written by
+  the daemon (§2.4), and the snapshot of the system state by the script, in the same directory,
+  in its own format.
 
-### 2.1 Конфиг и файлы
+## 2. Behaviour
+
+### 2.1 Config and files
 
 ```jsonc
 "hooks": {
-  "enabled": true,                 // дефолт false: ключа нет = хуков нет
-  "timeout_seconds": 15,           // на один хук; 0/отсутствие = 15
-  "unsafe_skip_owner_check": false // дефолт false; true = гейт §2.5 выключен, WARN на каждом старте демона
+  "enabled": true,                 // default false: no key = no hooks
+  "timeout_seconds": 15,           // per hook; 0/absent = 15
+  "unsafe_skip_owner_check": false // default false; true = the §2.5 gate is off, WARN on every daemon start
 }
 ```
 
-| Путь | Кто пишет | Назначение |
+| Path | Written by | Purpose |
 |---|---|---|
-| `<state_dir>/hooks/` | демон при старте (если нет), `root:root 0755` | каталог хуков; `LXD_HOOK_DIR` |
-| `<state_dir>/hooks/pre_start`, `post_start`, `post_reload`, `post_stop` | демон при старте, если файла нет: заготовка `0755` | скрипты админа |
-| `<state_dir>/hooks/state.json` | только демон | факты последнего подъёма ядра (§2.4) |
-| `<state_dir>/hooks/.lock` | демон | межпроцессный `flock` вокруг каждого хука (§2.5) |
-| `<dirname(log_file)>/hooks/<event>.log` | хук (перенаправление демоном) | вывод последнего запуска; без `log_file` — `<state_dir>/hooks/log/` |
-| всё остальное в `<state_dir>/hooks/` | скрипт | снимок системного состояния, формат на усмотрение скрипта |
+| `<state_dir>/hooks/` | the daemon at start (if absent), `root:root 0755` | hook directory; `LXD_HOOK_DIR` |
+| `<state_dir>/hooks/pre_start`, `post_start`, `post_reload`, `post_stop` | the daemon at start, if the file is absent: a stub, `0755` | admin scripts |
+| `<state_dir>/hooks/state.json` | the daemon only | facts of the last core start (§2.4) |
+| `<state_dir>/hooks/.lock` | the daemon | inter-process `flock` around every hook (§2.5) |
+| `<dirname(log_file)>/hooks/<event>.log` | the hook (redirected by the daemon) | output of the last run; without `log_file` — `<state_dir>/hooks/log/` |
+| everything else in `<state_dir>/hooks/` | the script | snapshot of the system state, format at the script's discretion |
 
-**Заготовка** — не пустой файл (пустой `exec` вернёт `ENOEXEC`, и это неотличимо от сломанного
-хука), а `#!/bin/sh`, `exit 0` и комментарий со списком переменных окружения **этого** события,
-по строке на каждую (§2.3). Документация по переменным живёт там, где админ будет писать
-скрипт. Эталоны заготовок вшиты в бинарь; хук, чей файл байт-в-байт равен эталону или
-отсутствует, считается **не настроенным**. Заготовки создаёт демон при каждом старте для
-отсутствующих файлов — это покрывает все платформы и способы установки (на Linux
-`--service=install` только печатает инструкцию); инсталляторы (`--service=install` на macOS,
-`lxd-openwrt-setup.sh`) дополнительно ничего не делают, но их документация называет каталог.
+**The stub** is not an empty file (an empty `exec` returns `ENOEXEC`, indistinguishable from a
+broken hook) but `#!/bin/sh`, `exit 0` and a comment listing the environment variables of **this**
+event, one line each (§2.3). The variable documentation lives where the admin will write the
+script. The reference stubs are embedded in the binary; a hook whose file is byte-for-byte equal
+to the reference, or absent, counts as **not configured**. The daemon creates the stubs for the
+missing files on every start — this covers all platforms and ways of installation (on Linux
+`--service=install` only prints an instruction); the installers (`--service=install` on macOS,
+`lxd-openwrt-setup.sh`) do nothing extra, but their documentation names the directory.
 
-`enabled: false` или ключа нет — демон каталог и заготовки всё равно создаёт (чтобы админ видел,
-куда писать), пишет одну Info-строку `lxd: hooks disabled` при старте и больше о хуках не
-говорит. Смена ключей = правка файла + рестарт службы, как у всех ключей `daemon.json`.
+With `enabled: false` or no key the daemon still creates the directory and the stubs (so that the
+admin sees where to write), logs one Info line `lxd: hooks disabled` at start and says nothing
+more about hooks. Changing the keys = editing the file + restarting the service, as with every
+`daemon.json` key.
 
-### 2.2 События и семантика отказа
+### 2.2 Events and failure semantics
 
-Четыре события. «Текущее» ядро — то, что есть после события; `_PREV` — то, чего больше нет.
+Four events. The "current" core is what exists after the event; `_PREV` is what no longer exists.
 
-| Событие | Когда | `LXD_REASON` | Отказ хука (ненулевой выход, таймаут, провал гейта) |
+| Event | When | `LXD_REASON` | Hook failure (non-zero exit, timeout, gate failure) |
 |---|---|---|---|
-| `pre_start` | перед `StartOrReloadService`, когда ядра нет | `boot` (загрузка демона, `bootstrap`), `start` (`POST /admin/start`) | **fail-closed**: ядро не стартует, `status: fatal`, `last_error` = `hook pre_start: …`; при `boot` демон остаётся жить без ядра, как при любом провале старта |
-| `post_start` | после успешного возврата `StartOrReloadService` при тех же причинах — tun и маршруты уже есть | `boot`, `start` | ядро работает; Error в лог, метка в `/admin/status` (§2.6) |
-| `post_reload` | после подмены инстанса в живом процессе | `apply` (REST), `sighup` (перечитан файл), `rollback` (новый конфиг не поднялся, last-good поднят) | ядро работает; Error в лог, метка в статусе |
-| `post_stop` | когда ядра не стало | `stop` (`POST /admin/stop`), `shutdown` (SIGTERM — в т. ч. `update` и рестарт службы), `fatal` (старт не удался после прошедшего `pre_start`, или rollback тоже упал), `recover` (новый демон при загрузке нашёл `state.json` от прошлого запуска — §2.4) | только лог; остановку ничто не блокирует |
+| `pre_start` | before `StartOrReloadService`, when there is no core | `boot` (daemon boot, `bootstrap`), `start` (`POST /admin/start`) | **fail-closed**: the core does not start, `status: fatal`, `last_error` = `hook pre_start: …`; on `boot` the daemon stays alive without a core, as with any start failure |
+| `post_start` | after a successful return from `StartOrReloadService` for the same reasons — tun and routes already exist | `boot`, `start` | the core keeps running; Error in the log, a mark in `/admin/status` (§2.6) |
+| `post_reload` | after the instance is swapped in the live process | `apply` (REST), `sighup` (file re-read), `rollback` (the new config did not come up, last-good is up) | the core keeps running; Error in the log, a mark in the status |
+| `post_stop` | when the core is gone | `stop` (`POST /admin/stop`), `shutdown` (SIGTERM — including `update` and a service restart), `fatal` (the start failed after a passed `pre_start`, or the rollback failed too), `recover` (the new daemon found a `state.json` from the previous run at boot — §2.4) | log only; nothing blocks the stop |
 
-Правила:
+Rules:
 
-- **Каждый вход в старт заканчивается либо `post_start`, либо `post_stop`.** `pre_start` прошёл,
-  ядро не поднялось → `post_stop` с причиной `fatal` (решение владельца): у скрипта нет снимка,
-  он выйдет молча, зато симметрия без исключений и заодно подчищается хвост прошлого
-  аварийного запуска, если `recover` не сработал.
-- **Rollback внутри Apply** — это `post_reload` с причиной `rollback`: ядро не исчезало,
-  текущие факты описывают last-good, `LXD_ERROR` — причину отказа нового конфига. Если и
-  last-good не поднялся — `post_stop` с причиной `fatal`.
-- **`pre_start` без побочных эффектов.** Это гейт предпосылок (интерфейс аплинка есть, диск не
-  полон); ему падение не страшно: не выполнился — ядро и не стартовало. Контрпары у него нет.
-- **`post_*` идемпотентны и восстановительны.** Скрипт не может рассчитывать, что перед `post_stop`
-  был `post_start`, или что между двумя `post_reload` ничего не упало; он читает свой снимок и
-  действует по нему. Это контракт, спека его требует, демон проверить не может.
-- **Не настроенный хук** (заготовка или нет файла) при `enabled: true` — событие пропускается с
-  Warn в лог (решение владельца, п. 7): `lxd: hook post_reload skipped: not configured (stub
-  unchanged)`. `pre_start` не настроен — гейта нет, старт идёт.
-- **Хуки не блокируют друг друга между событиями**, но в одном процессе сериализованы тем же
-  `applyAccess`, под которым идёт переход. Переход ждёт хук: `POST /admin/apply` может длиться
-  на `timeout_seconds` дольше.
+- **Every entry into start ends with either `post_start` or `post_stop`.** `pre_start` passed, the
+  core did not come up → `post_stop` with reason `fatal` (owner decision): the script has no
+  snapshot and exits silently, but the symmetry has no exceptions, and the tail of a previous
+  crashed run is cleaned up along the way if `recover` did not fire.
+- **A rollback inside Apply** is a `post_reload` with reason `rollback`: the core never
+  disappeared, the current facts describe last-good, `LXD_ERROR` is the reason the new config was
+  rejected. If last-good did not come up either — `post_stop` with reason `fatal`.
+- **`pre_start` has no side effects.** It is a precondition gate (the uplink interface exists, the
+  disk is not full); a crash is harmless to it: if it did not run, the core did not start either.
+  It has no counterpart.
+- **`post_*` are idempotent and recovering.** The script cannot assume that `post_start` preceded
+  `post_stop`, or that nothing crashed between two `post_reload`s; it reads its own snapshot and
+  acts on it. This is a contract: the spec requires it, the daemon cannot verify it.
+- **A hook that is not configured** (stub or no file) with `enabled: true` — the event is skipped
+  with a Warn in the log (owner decision, item 7): `lxd: hook post_reload skipped: not configured
+  (stub unchanged)`. `pre_start` not configured — no gate, the start proceeds.
+- **Hooks do not block each other across events**, but within one process they are serialized by
+  the same `applyAccess` under which the transition runs. The transition waits for the hook:
+  `POST /admin/apply` may take up to `timeout_seconds` longer.
 
-### 2.3 Окружение
+### 2.3 Environment
 
-Переменные — факты от демона, никогда не вход клиента. Пустая строка = факт неизвестен или
-неприменим.
+The variables are facts from the daemon, never client input. An empty string = the fact is
+unknown or not applicable.
 
-**Общие для всех событий**
+**Common to all events**
 
-| Переменная | Значение |
+| Variable | Value |
 |---|---|
 | `LXD_EVENT` | `pre_start` / `post_start` / `post_reload` / `post_stop` |
-| `LXD_REASON` | причина перехода из таблицы §2.2 |
-| `LXD_CLIENT` | имя клиента, если переход начал REST-запрос (как в аудите 128: по сертификату, `operator` при Bearer); пусто для `boot`, `sighup`, `shutdown`, `fatal`, `recover` |
-| `LXD_PLATFORM`, `LXD_VERSION`, `LXD_INIT_SYSTEM`, `LXD_STATE_DIR`, `LXD_BIN`, `PATH` | как у `commands` (128 §2.3, `commandEnv`) |
-| `LXD_LOG_FILE` | путь лога демона; пусто при запуске в терминале |
-| `LXD_HOOK_DIR` | `<state_dir>/hooks` — место для снимка скрипта |
-| `LXD_HOOK_TIMEOUT` | бюджет в секундах, чтобы скрипт укладывал в него свои вызовы |
+| `LXD_REASON` | the transition reason from the §2.2 table |
+| `LXD_CLIENT` | the client name if the transition was started by a REST request (as in the 128 audit: by certificate, `operator` for Bearer); empty for `boot`, `sighup`, `shutdown`, `fatal`, `recover` |
+| `LXD_PLATFORM`, `LXD_VERSION`, `LXD_INIT_SYSTEM`, `LXD_STATE_DIR`, `LXD_BIN`, `PATH` | as for `commands` (128 §2.3, `commandEnv`) |
+| `LXD_LOG_FILE` | path of the daemon log; empty when run in a terminal |
+| `LXD_HOOK_DIR` | `<state_dir>/hooks` — the place for the script's snapshot |
+| `LXD_HOOK_TIMEOUT` | the budget in seconds, so that the script fits its own calls into it |
 
-**Факты о ядре** — текущие без суффикса, прошлые с `_PREV`:
+**Facts about the core** — current ones without a suffix, previous ones with `_PREV`:
 
-| Переменная | Значение | Откуда |
+| Variable | Value | Source |
 |---|---|---|
-| `LXD_CONFIG_SHA` / `_PREV` | sha256 активного контента, как в `/admin/status` | контроллер |
-| `LXD_TUN_ADDRESS` / `_PREV` | адреса всех tun-inbound'ов через запятую, v4 и v6 вместе, в порядке конфига (`inbounds[type=tun].address`) | парсинг конфига |
-| `LXD_TUN_INTERFACE` / `_PREV` | фактические имена интерфейсов через запятую, тем же порядком | аксессор на инстансе; в `pre_start` — только явный `interface_name`, иначе пусто |
-| `LXD_TUN_MTU` / `_PREV` | mtu через запятую | парсинг конфига (дефолт ядра 9000, если не задан) |
-| `LXD_TUN_AUTO_ROUTE` / `_PREV` | `1` / `0` через запятую | парсинг конфига; при `0` перевод системного DNS на tun бессмыслен, скрипт должен это видеть без `jq` |
-| `LXD_ERROR` | текст ошибки ядра, когда переход вызван отказом (`rollback`, `fatal`) | `lastError` |
+| `LXD_CONFIG_SHA` / `_PREV` | sha256 of the active content, as in `/admin/status` | controller |
+| `LXD_TUN_ADDRESS` / `_PREV` | addresses of all tun inbounds, comma-separated, v4 and v6 together, in config order (`inbounds[type=tun].address`) | config parsing |
+| `LXD_TUN_INTERFACE` / `_PREV` | actual interface names, comma-separated, in the same order | accessor on the instance; in `pre_start` — only an explicit `interface_name`, otherwise empty |
+| `LXD_TUN_MTU` / `_PREV` | mtu, comma-separated | config parsing (the core default 9000 if not set) |
+| `LXD_TUN_AUTO_ROUTE` / `_PREV` | `1` / `0`, comma-separated | config parsing; with `0` pointing the system DNS at the tun is pointless, the script must see this without `jq` |
+| `LXD_ERROR` | the core error text when the transition is caused by a failure (`rollback`, `fatal`) | `lastError` |
 
-Нет tun-inbound'а — все `LXD_TUN_*` пустые. Парсинг конфига — `json` по дереву без
-`option.Options`: демону нужны четыре поля, а полная декодировка затянула бы регистрацию
-всех inbound'ов в проверку.
+No tun inbound — all `LXD_TUN_*` are empty. Config parsing is `json` over the tree without
+`option.Options`: the daemon needs four fields, and a full decode would drag the registration of
+all inbounds into the check.
 
-**По событиям**
+**Per event**
 
-| Событие | Текущие | `_PREV` |
+| Event | Current | `_PREV` |
 |---|---|---|
-| `pre_start` | из конфига; `LXD_TUN_INTERFACE` только явный | нет |
-| `post_start` | полные, `LXD_TUN_INTERFACE` фактический | нет |
-| `post_reload` | полные (новый инстанс) | полные (старый инстанс; `LXD_TUN_INTERFACE_PREV` снят **до** его закрытия) |
-| `post_stop` | нет | полные: при `stop`/`shutdown` — со живого инстанса до закрытия; при `fatal` — из конфига, который не поднялся (интерфейс только явный); при `recover` — из `state.json` |
+| `pre_start` | from the config; `LXD_TUN_INTERFACE` only explicit | none |
+| `post_start` | full, `LXD_TUN_INTERFACE` actual | none |
+| `post_reload` | full (the new instance) | full (the old instance; `LXD_TUN_INTERFACE_PREV` taken **before** it is closed) |
+| `post_stop` | none | full: on `stop`/`shutdown` — from the live instance before it is closed; on `fatal` — from the config that did not come up (interface only explicit); on `recover` — from `state.json` |
 
-**Фактическое имя интерфейса.** `protocol/tun/inbound.go` вычисляет имя до создания
-интерфейса (`CalculateInterfaceName` берёт следующий свободный `utunN`/`tunN`), после `tun.New`
-оно лежит в `t.tunOptions.Name`. Ядро в процессе демона, значит демон читает его напрямую:
-один `// lx:` метод `InterfaceName() string` на `*Inbound`, демон после старта обходит
-inbound'ы бокса (`adapter.InboundManager`) и собирает имена с `Type() == C.TypeTun`. Это
-единственная вставка в апстримный файл в задаче; альтернатива «только из конфига» оставляла
-бы переменную пустой на darwin без явного `interface_name`, а Linux-скрипты с `resolvectl dns
-<iface>` — без имени. Решение владельца 2026-10-17 — аксессор.
+**The actual interface name.** `protocol/tun/inbound.go` computes the name before the interface
+is created (`CalculateInterfaceName` takes the next free `utunN`/`tunN`); after `tun.New` it sits
+in `t.tunOptions.Name`. The core runs in the daemon process, so the daemon reads it directly:
+one `// lx:` method `InterfaceName() string` on `*Inbound`; after the start the daemon walks the
+box's inbounds (`adapter.InboundManager`) and collects the names with `Type() == C.TypeTun`. This
+is the only insertion into an upstream file in this task; the alternative "from the config only"
+would leave the variable empty on darwin without an explicit `interface_name`, and Linux scripts
+with `resolvectl dns <iface>` without a name. Owner decision 2026-10-17 — the accessor.
 
-### 2.4 `state.json` и `recover`
+### 2.4 `state.json` and `recover`
 
-Демон пишет `<state_dir>/hooks/state.json` **после каждого успешного подъёма** (`post_start`,
-`post_reload` — независимо от исхода самого хука) и удаляет после `post_stop` (любой причины).
-Содержимое — факты последнего живого ядра: `config_sha`, `tun_address`, `tun_interface`,
-`tun_mtu`, `tun_auto_route`, `started_at`, `pid` демона. Файл пишется атомарно
-(`store.writeAtomic`), это тот же state-dir, что и `last_good.json`: запись раз на подъём, а не
-в цикле, поэтому отказ 128 от flash сюда не переносится.
+The daemon writes `<state_dir>/hooks/state.json` **after every successful start** (`post_start`,
+`post_reload` — regardless of the outcome of the hook itself) and deletes it after `post_stop`
+(any reason). The content is the facts of the last live core: `config_sha`, `tun_address`,
+`tun_interface`, `tun_mtu`, `tun_auto_route`, `started_at`, the daemon `pid`. The file is written
+atomically (`store.writeAtomic`); it is the same state dir as `last_good.json`: one write per
+start, not in a loop, so the flash objection from 128 does not carry over here.
 
-При загрузке демона, **до** `bootstrap`: `state.json` есть → прошлый процесс не дошёл до
-`post_stop` (паника ядра, `kill -9`, потеря питания) → демон вызывает `post_stop` с причиной
-`recover` и `_PREV` из файла, удаляет файл и только затем идёт в обычный `pre_start`. Скрипту
-разницы с обычным `stop` нет: те же переменные, тот же снимок. Это **единственное** покрытие
-для паники ядра: ядро живёт в процессе демона, «супервизии потомка» нет, `post_stop` в момент
-падения выполнить некому.
+At daemon boot, **before** `bootstrap`: `state.json` exists → the previous process did not reach
+`post_stop` (core panic, `kill -9`, power loss) → the daemon calls `post_stop` with reason
+`recover` and `_PREV` from the file, deletes the file and only then proceeds to the usual
+`pre_start`. For the script there is no difference from a regular `stop`: the same variables, the
+same snapshot. This is the **only** coverage for a core panic: the core lives in the daemon
+process, there is no "child supervision", and nobody is there to run `post_stop` at the moment of
+the crash.
 
-### 2.5 Исполнение
+### 2.5 Execution
 
-- **Синхронно.** Демон запускает файл напрямую (`exec.Command(path)`, без шелла), cwd `/`,
-  stdin `/dev/null`, окружение демона плюс §2.3, ждёт выхода с таймаутом `timeout_seconds`;
-  по таймауту — `SIGKILL` группе процессов хука, исход «таймаут».
-- **Вывод — в файл, не в пайп.** stdout/stderr перенаправлены в `<каталог лога>/hooks/<event>.log`
-  (перезапись на каждом запуске). С пайпом `exec.Cmd.Wait` ждал бы закрытия пайпа, и фоновый
-  потомок скрипта (`nohup … &`) держал бы демон до таймаута. Асинхронный хвост внутри хука
-  допустим, но демон видит только код выхода синхронной части; фон живёт в группе процессов
-  демона и под SIGTERM службы умрёт вместе с ней, если скрипт не вызвал `setsid`; flock
-  снимается по выходу скрипта. Что от этого зависит DNS или гейт — должно завершиться до
-  `exit`. Это оговаривается в документации и в комментарии заготовки.
-- **Дескрипторы не наследуются.** `markInheritableCloseOnExec` (128 §2.3) перед каждым запуском:
-  иначе `pre_start` или забэкграунденный потомок получит копию fd TUN и продержит интерфейс до
-  `EBUSY` на следующем старте — ровно баг lx.17/lx.18.
-- **Гейт владения.** Перед **каждым** запуском (не только при старте демона: четыре `lstat`
-  ничего не стоят, а скрипт, подменённый после старта службы, иначе проскочит):
-  `checkRootOwnedChain(path)` из `execsafe.go` — каждый компонент от `/` до файла принадлежит
-  root, без записи для group/other, сам файл — обычный (не симлинк), исполняемый. Провал гейта
-  = провал хука с семантикой §2.2 (на `pre_start` ядро не стартует). `unsafe_skip_owner_check:
-  true` отключает проверку целиком — для dev-запуска из домашнего каталога, где state-dir не
-  может быть root-owned; WARN на каждом старте демона, не один раз.
-- **Межпроцессный `flock`** на `<state_dir>/hooks/.lock` на время каждого хука. Причина — гонка,
-  задокументированная в `daemon.go` у `startRetryingBusy`: procd при `restart` (а `update` —
-  это он) стартует новый процесс до того, как старый закончил teardown. Без замка новый
-  `post_start` снял бы снимок системного DNS, в котором уже стоит VPN-DNS, потому что старый
-  `post_stop` его ещё не вернул — снимок отравлен, после остановки DNS не вернётся. Замок плюс
-  порядок «новый демон сначала доводит `recover`, потом `pre_start`» (§2.4) закрывают
-  интерливинг: новый процесс либо ждёт старый, либо сам закрывает его хвост.
-- **Стоп-бюджет.** `post_stop` под SIGTERM выполняется внутри `shutdown()` до `CloseService`
-  остальных плоскостей и до выхода процесса; `shutdownGrace` (3 с) на него не распространяется.
-  Окно даёт init-система: procd убивает через `term_timeout` (дефолт 5 с), launchd —
-  `ExitTimeOut` (20 с). `SIGKILL` посреди `post_stop` = DNS на мёртвом tun, лог не поможет.
-  Поэтому `lxd-openwrt-setup.sh` (оба языка) добавляет `procd_set_param term_timeout 30`, а
-  документация требует укладывать `post_stop` в окно init-системы хоста.
-- **Windows** — ключ `hooks` принимается с Warn в лог (`hooks are ignored on this platform (unix
-  only)`), ни каталога, ни вызовов: `flock`, `checkRootOwnedChain`, группы процессов — unix.
-  Linux (включая OpenWrt) и macOS одним кодом.
+- **Synchronous.** The daemon runs the file directly (`exec.Command(path)`, no shell), cwd `/`,
+  stdin `/dev/null`, the daemon environment plus §2.3, waits for exit with the `timeout_seconds`
+  timeout; on timeout — `SIGKILL` to the hook's process group, outcome "timeout".
+- **Output goes to a file, not a pipe.** stdout/stderr are redirected to
+  `<log directory>/hooks/<event>.log` (overwritten on every run). With a pipe `exec.Cmd.Wait`
+  would wait for the pipe to close, and a background child of the script (`nohup … &`) would hold
+  the daemon until the timeout. An asynchronous tail inside a hook is allowed, but the daemon sees
+  only the exit code of the synchronous part; the background lives in the daemon's process group
+  and dies with it under the service's SIGTERM unless the script called `setsid`; the flock is
+  released when the script exits. Whatever DNS or the gate depends on must finish before `exit`.
+  This is stated in the documentation and in the stub comment.
+- **Descriptors are not inherited.** `markInheritableCloseOnExec` (128 §2.3) before every run:
+  otherwise `pre_start` or a backgrounded child would get a copy of the TUN fd and hold the
+  interface until `EBUSY` on the next start — exactly the lx.17/lx.18 bug.
+- **Ownership gate.** Before **every** run (not only at daemon start: four `lstat`s cost nothing,
+  while a script replaced after the service started would otherwise slip through):
+  `checkRootOwnedChain(path)` from `execsafe.go` — every component from `/` to the file is owned
+  by root, no write for group/other, the file itself is regular (not a symlink) and executable.
+  A gate failure = a hook failure with the §2.2 semantics (on `pre_start` the core does not
+  start). `unsafe_skip_owner_check: true` disables the check entirely — for a dev run from a home
+  directory where the state dir cannot be root-owned; WARN on every daemon start, not once.
+- **Inter-process `flock`** on `<state_dir>/hooks/.lock` for the duration of every hook. The
+  reason is the race documented in `daemon.go` at `startRetryingBusy`: procd on `restart` (and
+  `update` is one) starts the new process before the old one has finished its teardown. Without
+  the lock the new `post_start` would snapshot a system DNS that already holds the VPN DNS,
+  because the old `post_stop` has not restored it yet — the snapshot is poisoned, DNS will not come
+  back after the stop. The lock plus the order "the new daemon first completes `recover`, then
+  `pre_start`" (§2.4) close the interleaving: the new process either waits for the old one or
+  closes its tail itself.
+- **Stop budget.** `post_stop` under SIGTERM runs inside `shutdown()` before the `CloseService` of
+  the other planes and before the process exits; `shutdownGrace` (3 s) does not apply to it. The
+  window is given by the init system: procd kills via `term_timeout` (default 5 s), launchd via
+  `ExitTimeOut` (20 s). `SIGKILL` in the middle of `post_stop` = DNS on a dead tun, the log will
+  not help. Therefore `lxd-openwrt-setup.sh` (both languages) adds `procd_set_param term_timeout
+  30`, and the documentation requires fitting `post_stop` into the host init system's window.
+- **Windows** — the `hooks` key is accepted with a Warn in the log (`hooks are ignored on this
+  platform (unix only)`), no directory, no calls: `flock`, `checkRootOwnedChain`, process groups
+  are unix. Linux (including OpenWrt) and macOS share one code path.
 
-### 2.6 Статус, лог, аудит
+### 2.6 Status, log, audit
 
-Градации лога (решение владельца, пп. 7–8):
+Log levels (owner decision, items 7–8):
 
-| Уровень | Когда | Пример |
+| Level | When | Example |
 |---|---|---|
-| Info | хук запущен; хук завершился успешно (с длительностью) | `lxd: hook post_start (reason boot) started`, `lxd: hook post_start done in 420ms` |
-| Warn | событие пропущено: не настроен; `unsafe_skip_owner_check` включён (на старте демона); `hooks` на Windows | `lxd: hook post_reload skipped: not configured` |
-| Error | хук запущен и упал, вышел по таймауту или не прошёл гейт — с кодом выхода и хвостом вывода (≤ 4 КиБ) | `lxd: hook post_start failed: exit 2: networksetup: … (output tail)` |
+| Info | hook started; hook finished successfully (with duration) | `lxd: hook post_start (reason boot) started`, `lxd: hook post_start done in 420ms` |
+| Warn | event skipped: not configured; `unsafe_skip_owner_check` enabled (at daemon start); `hooks` on Windows | `lxd: hook post_reload skipped: not configured` |
+| Error | hook ran and failed, timed out or did not pass the gate — with the exit code and the output tail (≤ 4 KiB) | `lxd: hook post_start failed: exit 2: networksetup: … (output tail)` |
 
-`GET /admin/status` получает объект `hooks` — последний исход по каждому событию, чтобы
-лаунчер рисовал жёлтую метку:
+`GET /admin/status` gets a `hooks` object — the last outcome per event, so that the launcher can
+draw a yellow mark:
 
 ```jsonc
 "hooks": {
@@ -255,72 +265,77 @@ inbound'ы бокса (`adapter.InboundManager`) и собирает имена 
 }
 ```
 
-`detail` — причина пропуска или первая строка ошибки; хвост лога — в файле §2.1, отдельного
-маршрута нет (как у 128). `GET /admin/info` не трогается: там неизменяемые факты.
+`detail` is the skip reason or the first line of the error; the log tail is in the §2.1 file, there
+is no separate route (as with 128). `GET /admin/info` is not touched: it holds immutable facts.
 
-### 2.7 Документация и changelog
+### 2.7 Documentation and changelog
 
-- `docs-lx/lxd-daemon.md` и `.ru.md`: ключ `hooks` в §3; новый раздел «Hooks» после §6 (Logs):
-  четыре события с причинами, таблицы переменных §2.3, контракт идемпотентности `post_*`,
-  правило про асинхронный хвост, стоп-бюджет и `term_timeout`/`ExitTimeOut`, образец
-  `post_start`/`post_stop` для macOS (`networksetup -setdnsservers` по снимку в
-  `$LXD_HOOK_DIR`) и для Linux (`resolvectl dns $LXD_TUN_INTERFACE …`); поле `hooks` в §10.
-- `scripts-lx/openwrt/lxd-openwrt-setup.sh` и `-ru`: `term_timeout 30`; README обоих языков —
-  абзац про каталог хуков.
-- `docs-lx/lx-changelog.md`: пункт со ссылкой на SPEC. `SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md`:
-  строка в §2, абзац в §5 (граница 100: хуки — root-owned файлы в root-owned каталоге, клиент
-  к ним не прикасается), строка в §7.
+- `docs-lx/lxd-daemon.md` and `.ru.md`: the `hooks` key in §3; a new "Hooks" section after §6
+  (Logs): the four events with their reasons, the §2.3 variable tables, the `post_*` idempotency
+  contract, the rule about the asynchronous tail, the stop budget and `term_timeout`/`ExitTimeOut`,
+  a sample `post_start`/`post_stop` for macOS (`networksetup -setdnsservers` from the snapshot in
+  `$LXD_HOOK_DIR`) and for Linux (`resolvectl dns $LXD_TUN_INTERFACE …`); the `hooks` field in §10.
+- `scripts-lx/openwrt/lxd-openwrt-setup.sh` and `-ru`: `term_timeout 30`; the README in both
+  languages — a paragraph about the hook directory.
+- `docs-lx/lx-changelog.md`: an item linking the SPEC. `SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md`:
+  a row in §2, a paragraph in §5 (the 100 boundary: hooks are root-owned files in a root-owned
+  directory, the client does not touch them), a row in §7.
 
-### 2.8 Чего не делать
+### 2.8 What not to do
 
-- Демон не хранит снимок системного DNS и не знает о его формате — это скрипт.
-- Не добавлять `pre_stop`, `pre_reload` и прочие `pre_*`: см. §1.
-- Не передавать хукам ничего от клиента: ни тело, ни параметры, ни имя кроме `LXD_CLIENT`.
-- Не делать маршрутов для запуска хуков руками — для этого есть `commands`.
-- Не трогать апстримные файлы сверх одного аксессора §2.3.
-- Не планировать Windows в этой задаче.
+- The daemon does not keep a snapshot of the system DNS and does not know its format — that is
+  the script.
+- Do not add `pre_stop`, `pre_reload` or other `pre_*`: see §1.
+- Do not pass anything from the client to the hooks: no body, no parameters, no name other than
+  `LXD_CLIENT`.
+- Do not add routes for running hooks by hand — `commands` exist for that.
+- Do not touch upstream files beyond the single §2.3 accessor.
+- Do not plan Windows in this task.
 
-## 3. Критерии приёмки
+## 3. Acceptance criteria
 
-- Табличный тест конфига (`daemonconfig_test.go`): ключа нет / `enabled: false` → хуков нет и
-  одна Info-строка; `timeout_seconds` 0 → 15; `unsafe_skip_owner_check: true` → Warn при старте.
-- Тест заготовок: на пустом state-dir демон создаёт каталог `0755` и четыре файла `0755`,
-  байт-в-байт равные эталонам; существующий файл не перезаписывается; хук, равный эталону,
-  даёт `skipped: not configured`.
-- Тест событий на фейковом `reloader` (как `fakeReloader` в `apply_test.go`) со скриптом,
-  который пишет своё окружение в файл: последовательность `boot` → `apply` → `stop` даёт
-  `pre_start(boot)`, `post_start(boot)`, `post_reload(apply)`, `post_stop(stop)` с правильными
-  `LXD_REASON`, `LXD_CONFIG_SHA`/`_PREV`, `LXD_TUN_ADDRESS`/`_PREV` (конфиг с двумя адресами tun),
-  `LXD_TUN_AUTO_ROUTE`, пустыми `LXD_TUN_*` без tun-inbound'а; `LXD_CLIENT` только на REST.
-- Тест отказов: `pre_start` с `exit 1` → `StartOrReloadService` не вызван, `status: fatal`,
-  `last_error` называет хук; `post_start` с `exit 2` → ядро работает, `hooks.post_start.state =
-  failed`, `exit_code: 2`; `post_stop` с `exit 1` → остановка прошла, только лог; таймаут
-  (`sleep 60` при `timeout_seconds: 1`) → `state: timeout`, демон не ждёт дольше ~1 с, потомок
-  убит.
-- Тест `fatal`: `pre_start` прошёл, `reloader` вернул ошибку → `post_stop(fatal)` с `LXD_ERROR`.
-- Тест `rollback`: apply упал, last-good поднялся → один `post_reload(rollback)` с текущими
-  фактами last-good и `LXD_ERROR`; last-good тоже упал → `post_stop(fatal)`.
-- Тест `state.json`: после `post_start` файл есть и содержит факты; после `post_stop` файла нет;
-  новый контроллер над state-dir с оставленным файлом вызывает `post_stop(recover)` с `_PREV`
-  из файла **до** `pre_start`, файл удалён.
-- Тест вывода: хук с `echo hi; (sleep 30 &)` завершается без ожидания фона, `hi` в
-  `<event>.log`.
-- Тест гейта: файл с `0777`, файл в каталоге с group-write, симлинк → `failed` с текстом
-  `checkRootOwnedChain`; с `unsafe_skip_owner_check: true` — запускается. На `pre_start` —
-  старт отменён.
-- Тест `flock`: два процесса-имитатора (или два контроллера над одним каталогом) не выполняют
-  хуки одновременно.
-- Тест аксессора: `InterfaceName()` на tun-inbound возвращает `tunOptions.Name` после старта;
-  сборка под `with_lxd` на darwin/linux/windows зелёная, `go vet` по lx-файлам чистый.
-- Существующие тесты 056/057/128 зелёные.
-- Ручная проверка владельцем: Mac-лаунчер, `post_start` переводит DNS сетевой службы на
-  `LXD_TUN_ADDRESS`, `post_stop` возвращает по снимку; `kill -9` демона → после рестарта
-  службы `post_stop(recover)` вернул DNS, затем обычный подъём. На RouteRich: `update` через
-  `commands` → в логе `post_stop(shutdown)` старого и `post_start(boot)` нового без
-  перекрытия.
+- Table-driven config test (`daemonconfig_test.go`): no key / `enabled: false` → no hooks and one
+  Info line; `timeout_seconds` 0 → 15; `unsafe_skip_owner_check: true` → Warn at start.
+- Stub test: on an empty state dir the daemon creates the directory `0755` and four files `0755`,
+  byte-for-byte equal to the references; an existing file is not overwritten; a hook equal to the
+  reference yields `skipped: not configured`.
+- Event test on a fake `reloader` (like `fakeReloader` in `apply_test.go`) with a script that
+  writes its environment to a file: the sequence `boot` → `apply` → `stop` yields
+  `pre_start(boot)`, `post_start(boot)`, `post_reload(apply)`, `post_stop(stop)` with the correct
+  `LXD_REASON`, `LXD_CONFIG_SHA`/`_PREV`, `LXD_TUN_ADDRESS`/`_PREV` (a config with two tun
+  addresses), `LXD_TUN_AUTO_ROUTE`, empty `LXD_TUN_*` without a tun inbound; `LXD_CLIENT` only on
+  REST.
+- Failure test: `pre_start` with `exit 1` → `StartOrReloadService` not called, `status: fatal`,
+  `last_error` names the hook; `post_start` with `exit 2` → the core keeps running,
+  `hooks.post_start.state = failed`, `exit_code: 2`; `post_stop` with `exit 1` → the stop went
+  through, log only; timeout (`sleep 60` with `timeout_seconds: 1`) → `state: timeout`, the daemon
+  waits no longer than ~1 s, the child is killed.
+- `fatal` test: `pre_start` passed, the `reloader` returned an error → `post_stop(fatal)` with
+  `LXD_ERROR`.
+- `rollback` test: apply failed, last-good came up → one `post_reload(rollback)` with the current
+  last-good facts and `LXD_ERROR`; last-good failed too → `post_stop(fatal)`.
+- `state.json` test: after `post_start` the file exists and holds the facts; after `post_stop`
+  there is no file; a new controller over a state dir with a leftover file calls
+  `post_stop(recover)` with `_PREV` from the file **before** `pre_start`, the file is deleted.
+- Output test: a hook with `echo hi; (sleep 30 &)` finishes without waiting for the background,
+  `hi` is in `<event>.log`.
+- Gate test: a file with `0777`, a file in a group-writable directory, a symlink → `failed` with
+  the `checkRootOwnedChain` text; with `unsafe_skip_owner_check: true` — it runs. On `pre_start` —
+  the start is cancelled.
+- `flock` test: two simulated processes (or two controllers over one directory) do not run hooks
+  concurrently.
+- Accessor test: `InterfaceName()` on a tun inbound returns `tunOptions.Name` after start; the
+  build under `with_lxd` on darwin/linux/windows is green, `go vet` over the lx files is clean.
+- The existing 056/057/128 tests are green.
+- Manual check by the owner: the Mac launcher, `post_start` points the network service's DNS at
+  `LXD_TUN_ADDRESS`, `post_stop` restores it from the snapshot; `kill -9` of the daemon → after a
+  service restart `post_stop(recover)` restored the DNS, then a regular start. On RouteRich:
+  `update` via `commands` → the log shows `post_stop(shutdown)` of the old daemon and
+  `post_start(boot)` of the new one without overlap.
 
-## 4. Потребитель (для справки, в объём ядра не входит)
+## 4. Consumer (for reference, outside the core scope)
 
-Лаунчер, окно Service: `hooks` в `/admin/status` → жёлтая метка у состояния ядра, когда любой
-`post_*` в `failed`/`timeout`, с `detail` в подсказке; `skipped: not configured` метки не даёт.
-Коллекция образцов скриптов под macOS/Linux/OpenWrt — на стороне документации и лаунчера.
+The launcher, Service window: `hooks` in `/admin/status` → a yellow mark next to the core state
+when any `post_*` is `failed`/`timeout`, with `detail` in the tooltip; `skipped: not configured`
+gives no mark. A collection of sample scripts for macOS/Linux/OpenWrt is on the documentation and
+launcher side.
