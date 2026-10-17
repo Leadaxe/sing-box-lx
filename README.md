@@ -238,6 +238,7 @@ upstream/stable  ──merge──►  lx  =  upstream  +  // lx seams  +  lx-ow
 - **Releases**: tags `vX.Y.Z-lx.N` are stable, `-rc.N` / `-alpha.N` / `-beta.N` are pre-releases; the procedure is the [release runbook](docs-lx/lx-release-runbook.md) ([RU](docs-lx/lx-release-runbook.ru.md)); the engineering log is [lx-changelog.md](docs-lx/lx-changelog.md), user-facing notes are in [`docs-lx/releases/`](docs-lx/releases/).
 - **Spec Kit**: [`SPECS/FEATURES`](SPECS/FEATURES/README.md) describes each feature's current state as a black box; [`SPECS/TASKS`](SPECS/README.md) holds one folder per unit of work (`SPEC → PLAN → TASKS → report`), with a roadmap and status codes; [CONSTITUTION](SPECS/CONSTITUTION.md) holds the rules.
 - **Remotes**: `origin` = `Leadaxe/sing-box-lx` (default branch `lx`), `upstream` = `SagerNet/sing-box`.
+- **Contributing**: the feature path (issue → spec → stand → code → acceptance), code rules and PR requirements are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Consumers
 

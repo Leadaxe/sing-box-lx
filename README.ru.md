@@ -240,6 +240,7 @@ upstream/stable  ──merge──►  lx  =  upstream  +  швы // lx  +  lx-�
 - **Релизы**: теги `vX.Y.Z-lx.N` — стабильные, `-rc.N` / `-alpha.N` / `-beta.N` — пререлизы; процедура — [раннбук релиза](docs-lx/lx-release-runbook.ru.md) ([EN](docs-lx/lx-release-runbook.md)); инженерный лог — [lx-changelog.md](docs-lx/lx-changelog.md), пользовательские ноты — в [`docs-lx/releases/`](docs-lx/releases/).
 - **Spec Kit**: [`SPECS/FEATURES`](SPECS/FEATURES/README.md) описывает текущее состояние каждой фичи как чёрный ящик; [`SPECS/TASKS`](SPECS/README.md) держит по папке на единицу работы (`SPEC → PLAN → TASKS → отчёт`), с роадмапом и кодами статуса; правила — в [CONSTITUTION](SPECS/CONSTITUTION.md).
 - **Remotes**: `origin` = `Leadaxe/sing-box-lx` (ветка по умолчанию `lx`), `upstream` = `SagerNet/sing-box`.
+- **Участие**: путь фичи (issue → спека → стенд → код → приёмка), правила кода и требования к PR — в [CONTRIBUTING.ru.md](CONTRIBUTING.ru.md).
 
 ### Потребители
 
