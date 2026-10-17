@@ -317,6 +317,16 @@ func (t *Inbound) Tag() string {
 	return t.tag
 }
 
+// lx:begin lxd_hooks
+// InterfaceName is the actual interface name (utunN / tunN) once the
+// interface exists; before Start it is the explicit interface_name or "".
+// Read by the lxd daemon for its lifecycle hooks (SPEC 135).
+func (t *Inbound) InterfaceName() string {
+	return t.tunOptions.Name
+}
+
+// lx:end lxd_hooks
+
 func (t *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	switch stage {
 	case adapter.StartStateInitialize:
