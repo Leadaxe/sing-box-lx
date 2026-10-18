@@ -1,4 +1,4 @@
-//go:build !with_trusttunnel
+//go:build !with_mieru
 
 package include
 
