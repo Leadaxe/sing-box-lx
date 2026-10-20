@@ -153,6 +153,7 @@ outbound'ов, где исходящая датаграмма помечаетс
 | [091 — CONFIG_VALIDATION_TUIC_MASQUE](../../TASKS/091-CONFIG_VALIDATION_TUIC_MASQUE/SPEC.md) (§2) | `profile: standard` без `uri` — один текст ошибки при любом `vhttp`, с формой CONNECT-IP URI; проверка `uri` стоит раньше `vhttp` | C |
 | [120 — PATH_MTU_ALIGN](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) | Issue #37: QUIC-прокси над masque получает `initial_packet_size` под MTU туннеля (WARP теряет внутренние IPv6-фрагменты); внешний QUIC masque стартует с `mtu + 51` вместо 1242; ICMP Too Big с фактическим бюджетом | I |
 | [121 — MASQUE_AUTO_MEMORY_TTL](../../TASKS/121-MASQUE_AUTO_MEMORY_TTL/SPEC.md) | Память h2 в `auto` — окно по лестнице 1 с → 10 мин вместо «навсегда»: один быстрый отказ h3 (`PROTOCOL_VIOLATION` от WARP) больше не паркует узел на TCP | I |
+| [137 — MASQUE_DRAINH3_LEAK](../../TASKS/137-MASQUE_DRAINH3_LEAK/SPEC.md) | Issue #52: в `auto` дренаж уже потреблённого результата h3 вешал горутину навсегда; она держала старый Outbound и через его контекст весь закрытый Box — мёртвый Box на каждый lxd apply, куча у `GOMEMLIMIT`, GC-спираль на роутере | I |
 
 Полная таблица параметров — `CONFIG.md` в задаче 021; таблица соответствия
 старых и новых ключей — в конфиг-справочнике ([docs-lx/lx-config.ru.md §4](../../../docs-lx/lx-config.ru.md)).
