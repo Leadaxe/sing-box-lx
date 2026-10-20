@@ -713,7 +713,14 @@ func (o *Outbound) connect(ctx context.Context, network string) (io.Closer, masq
 		)
 		h2Closer, h2Conn, h2Err = connectH2(ctx)
 		if h2Err == nil {
-			drainH3()
+			// lx: SPEC 137 — the leg's single result may already be consumed by
+			// the first select (h3 failed before the budget): draining it again
+			// parked a goroutine on the empty channel forever, and its closure
+			// kept this Outbound — and the Box behind o.ctx — reachable after
+			// Close (issue #52).
+			if !h3Returned {
+				drainH3()
+			}
 			o.rememberNetwork("h2")
 			if memory := o.autoNetwork.Load(); memory != nil && memory.window > 0 {
 				o.logger.InfoContext(ctx, "masque: h2 to ", o.server, " remembered for ", memory.window, "; then h3 is tried first again")

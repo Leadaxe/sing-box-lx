@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -520,5 +521,47 @@ func TestResolveVHTTPRejects(t *testing.T) {
 	}
 	if _, _, err := resolveVHTTP("h2", "standard", discardLogger{}); err == nil {
 		t.Fatal("h2 on the standard profile must be rejected")
+	}
+}
+
+// connectGoroutines counts goroutines parked inside (*Outbound).connect — the
+// detached h3 leg and the drain of its result both live there.
+func connectGoroutines() int {
+	buf := make([]byte, 1<<20)
+	n := runtime.Stack(buf, true)
+	count := 0
+	for _, goroutine := range strings.Split(string(buf[:n]), "\n\n") {
+		if strings.Contains(goroutine, "masque.(*Outbound).connect.func") {
+			count++
+		}
+	}
+	return count
+}
+
+// lx: SPEC 137 — an h3 leg that fails before the budget hands its single result
+// to the first select; draining it again parked a goroutine on the empty channel
+// forever. The closure held the Outbound and, through o.ctx, the whole Box —
+// one dead Box per in-process reload (issue #52).
+func TestAutoFastH3FailureThenH2LeavesNoGoroutine(t *testing.T) {
+	var calls []string
+	o := newAutoOutbound(true, "h3")
+	o.autoH3Delay = time.Second // the leg answers long before the budget
+	o.legsForTest = scripted(&calls, errors.New("PROTOCOL_VIOLATION"), false, nil)
+	baseline := connectGoroutines()
+
+	_, _, network, err := o.connect(context.Background(), o.effectiveNetwork())
+	if err != nil || network != "h2" {
+		t.Fatalf("h2 must win after a fast h3 failure: network=%q err=%v", network, err)
+	}
+	if strings.Join(calls, ",") != "h3,h2" {
+		t.Fatalf("expected h3 then h2: %v", calls)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for connectGoroutines() > baseline {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d goroutine(s) of connect() still parked after the dial returned: drainH3 on an already consumed h3Done", connectGoroutines()-baseline)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
