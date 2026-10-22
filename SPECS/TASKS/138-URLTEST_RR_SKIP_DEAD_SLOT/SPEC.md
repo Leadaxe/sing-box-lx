@@ -5,8 +5,8 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — `round_robin` шлёт новые соединения в слот, чей узел провалил последнюю пробу, пока для слота нет живой замены |
-| Статус | I (implemented) — 2026-10-22, решение владельца — в issue/PR; lx-файл + одна строка в lx-блоке `urltest.go`, юнит-тесты падают до правки; A/B на роутере на бэкпорте v1.14.2-lx.11, 2026-10-22: 0 отказов с ~20 с простоя против ~1/3 у стокового ядра ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)); D — за владельцем: прогон был не на `lx` |
-| Ветка | `lx-spec138-rr-skip-dead-slots` → `lx` |
+| Статус | I (implemented) — 2026-10-22, решение владельца — в issue/PR; lx-файл + одна строка в lx-блоке `urltest.go`, юнит-тесты падают до правки; A/B на роутере на бэкпорте v1.14.2-lx.11, 2026-10-22: 0 отказов с ~20 с простоя против ~1/3 у стокового ядра ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)); D — 2026-10-23: PR #54 принят владельцем и влит rebase'ом в `lx` (`a212f936d`); на tip `lx` `go vet` и тесты `protocol/group` под полным `LX_TAGS` зелёные, с `-race` тоже |
+| Ветка | `lx-spec138-rr-skip-dead-slots` → `lx`, влита 2026-10-23 ([#54](https://github.com/Leadaxe/sing-box-lx/pull/54), issue [#53](https://github.com/Leadaxe/sing-box-lx/issues/53)) |
 | Build-tag | — (ядро `protocol/group`: lx-файл `urltest_balance_lx.go` + одна строка в существующем lx-блоке `urltest.go`) |
 | Источник | Полевой отчёт 2026-10-22: роутер OpenWrt, группа `round_robin` из четырёх узлов на двух физических серверах; при коротком простое одного сервера заметная доля новых соединений через группу висит, хотя узлы второго сервера отвечают на `/proxies/<tag>/delay` |
 | Связано | [019](../019-URLTEST_MODE_STICKY/SPEC.md) (пул, слоты, slot-hash — инварианты, которые сохраняются), [054](../054-URLTEST_PENALTY_FAILOVER/SPEC.md) (штрафы — `round_robin` не касаются), [125](../125-URLTEST_TICK_SKIP/SPEC.md) (тиковый прогон), [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) (достижимость пула), [109](../109-UPSTREAM_SYNC_1_14_2_PLUS_15/SPEC.md) (References пула) |
