@@ -47,6 +47,11 @@ type balancer struct {
 	// URLTestGroup wires it to invalidate the SPEC 020 reachable cache, since the
 	// active pool just changed. Called WITHOUT the access lock held.
 	onChange func()
+
+	// alive, if set, reports whether a slot's node passed its last probe; pick skips
+	// slots that did not (SPEC 138). The URLTest wires it to slotAlive. Called WITHOUT
+	// the access lock held.
+	alive func(tag string) bool
 }
 
 // warnLegacyTolerance reports whether the legacy urltest `tolerance` option deserves a
@@ -136,30 +141,74 @@ func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {
 
 // pick selects one node for this connection from the current pool. fallback is returned
 // when the pool is empty (start, before the first health-check fills it).
+// lx: SPEC 138 — a slot whose node failed its last probe is skipped while the pool has a
+// live one; pick never changes the slots.
 func (b *balancer) pick(ctx context.Context, destination M.Socksaddr, fallback adapter.Outbound, resolve func(tag string) adapter.Outbound) adapter.Outbound {
 	b.access.Lock()
-	n := len(b.slots)
+	slots := b.slots // setSlots publishes a new slice and never mutates a published one
+	b.access.Unlock()
+	n := len(slots)
 	if n == 0 {
-		b.access.Unlock()
 		return fallback
 	}
-	var tag string
+	// Reduce in uint64 BEFORE narrowing: int(counter) on a 32-bit platform goes negative
+	// past 2^31 and a signed % would produce a negative index (slice panic).
+	var idx int
 	if len(b.stickyHash) > 0 {
 		// slot-hash: fixed slot index from the key; living node in its slot keeps its keys.
-		idx := int(hashKey(b.stickyKey(ctx, destination)) % uint64(n))
-		tag = b.slots[idx].tag
+		hash := hashKey(b.stickyKey(ctx, destination))
+		idx = int(hash % uint64(n))
+		if b.alive != nil && !b.alive(slots[idx].tag) {
+			// Keys of a dead slot spread over the live slots by the rest of the hash.
+			if live, ok := b.liveSlot(slots, hash/uint64(n)); ok {
+				idx = live
+			}
+		}
 	} else {
-		// plain round-robin over the fixed slots. Reduce in uint64 BEFORE narrowing:
-		// int(counter) on a 32-bit platform goes negative past 2^31 and a signed %
-		// would produce a negative index (slice panic).
-		idx := int((b.counter.Add(1) - 1) % uint64(n))
-		tag = b.slots[idx].tag
+		// plain round-robin over the live slots; with all of them live it is counter % n.
+		counter := b.counter.Add(1) - 1
+		idx = int(counter % uint64(n))
+		if b.alive != nil {
+			if live, ok := b.liveSlot(slots, counter); ok {
+				idx = live
+			}
+		}
 	}
-	b.access.Unlock()
-	if node := resolve(tag); node != nil {
+	if node := resolve(slots[idx].tag); node != nil {
 		return node
 	}
 	return fallback
+}
+
+// liveSlot returns the index of the k-th live slot, k taken modulo the live count. ok is
+// false with no live slot (cold start, total outage): the caller keeps its pick.
+func (b *balancer) liveSlot(slots []slot, k uint64) (int, bool) {
+	var live uint64
+	for _, s := range slots {
+		if b.alive(s.tag) {
+			live++
+		}
+	}
+	if live == 0 {
+		return 0, false
+	}
+	k %= live
+	for i, s := range slots {
+		if b.alive(s.tag) {
+			if k == 0 {
+				return i, true
+			}
+			k--
+		}
+	}
+	return 0, false // a probe changed the live set between the passes
+}
+
+// slotAlive reports whether the node in a slot has URL test history (under its RealTag),
+// i.e. its last probe answered. A tag that does not resolve counts as dead. lx: SPEC 138.
+func (s *URLTest) slotAlive(tag string) bool {
+	node, loaded := s.outbound.Outbound(tag)
+	return loaded && s.group.history.LoadURLTestHistory(RealTag(s.outbound, node)) != nil
 }
 
 // poolTags returns the current slot tags (snapshot under lock). Used by Pool()/GetPool.
