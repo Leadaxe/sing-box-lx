@@ -141,6 +141,26 @@ jobs:
             -tags "${BASE_TAGS},with_trusttunnel" \
             ./transport/trusttunnel/ ./protocol/trusttunnel/
 
+      # WireGuard endpoint (transport + protocol), the router's lx mechanisms
+      # (idle-suspend tick, shutdown quiesce, reference manager) and the
+      # lx-test/startclose stands over a live box. Upstream's test.yml runs
+      # `go test ./...` only on its own branches (stable/testing), never on
+      # `lx`, so without this step none of these suites runs in CI — the SPEC 030
+      # pre-pass regression (upstream 6364d9a5f) went unnoticed that way.
+      # with_lx_idle_suspend compiles the SPEC 020/030 tests that are tag-gated
+      # like the code. The stands run without -race on purpose (see the header
+      # of wireguard_start_close_race_lx_test.go).
+      - name: go test (wireguard endpoint, route, startclose stands)
+        run: |
+          go test -race -count=1 \
+            -ldflags "-checklinkname=0" \
+            -tags "${BASE_TAGS},with_awg,with_lx_idle_suspend" \
+            ./transport/wireguard/ ./protocol/wireguard/ ./route/
+          go test -count=1 \
+            -ldflags "-checklinkname=0" \
+            -tags "${BASE_TAGS},with_awg,with_lx_idle_suspend" \
+            ./lx-test/startclose/
+
   # SPEC 103 §4.2 p. 9: the Windows service code runs its tests on Windows —
   # the handler, the command line round trip, the file-level half of the
   # set and every portable test under Windows semantics (no unix modes, no
