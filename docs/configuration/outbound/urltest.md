@@ -108,9 +108,17 @@ In milliseconds. Controls how the pool is filled and maintained:
   only when an outside node beats it by more than `pool_tolerance` ms (hysteresis against
   churn). Testing all nodes is more expensive — suitable for smaller lists.
 
-A dead pool node keeps its slot until a live replacement is found, so the pool never empties.
-A dial error never changes the pool (its cause is unknowable from one failure); only the
-periodic health-check does.
+A dead pool node keeps its slot until a live replacement is found, so the pool never empties,
+but while the pool has a live node, new connections skip the slot of a node that failed its
+last health-check: with stickiness the keys of dead slots spread evenly over the live slots
+and come back once the node answers again, without stickiness the rotation runs over the
+live slots. When every slot is dead, selection is unchanged. A dial error never changes the
+pool (its cause is unknowable from one failure); only the periodic health-check does.
+
+Liveness is the node's shared URL test history. A manual delay test with a short timeout
+(Clash API `/proxies/{name}/delay`, the daemon's `URLTestOutbound`) that does not complete,
+or a failed dial of a `least_test` group sharing the node, also takes the node out of the
+rotation until the next pool health-check, at most `interval` plus the probe time.
 
 ##### balancer.sticky_hash
 
