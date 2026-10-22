@@ -168,7 +168,7 @@
 | [010](../../TASKS/010-WG_ENDPOINT_GRO_SPLIT_BRAIN/SPEC.md) | WG-endpoint без `detour` режет download на Android (0.44 Mbps) | submodule `conn/` | ✅ **выполнено** — upstream `24ea133` | **СНЯТ** |
 | [028](../../TASKS/028-NESTED_TUNNEL_UDP_FRAGMENT/SPEC.md) | Вложенные туннели через `detour` не ходят | `protocol/masque/outbound.go`, endpoint | Апстрим сам выставит `UDPFragmentDefault` для туннельных outbound'ов | держим; на Linux/Android действует с синка 109 (до него флаг не снимал DF) |
 | [029](../../TASKS/029-ENDPOINT_DETOUR_START_ORDER/SPEC.md) | Endpoint с `detour` мёртв, если провайдер объявлен позже | `protocol/wireguard/endpoint.go` | ✅ причина устранена — upstream `f39ab0e9` (lx.15). Остаток: апстрим сам введёт ранний резолв detour с fail-fast | **частично снят** — держим только fail-fast |
-| [030](../../TASKS/030-FAST_BOX_SHUTDOWN/SPEC.md) | `box.Close()` виснет 10 с+ при ~30 узлах | `box.go`, `route/reachability_common_lx.go` | Апстрим введёт свой quiesce-этап при остановке | держим |
+| [030](../../TASKS/030-FAST_BOX_SHUTDOWN/SPEC.md) | `box.Close()` виснет 10 с+ при ~30 узлах | `box.go`, `route/reachability_common_lx.go`, `adapter/shutdown_quiesce_lx.go`, `protocol/wireguard/endpoint_quiesce_lx.go`, `transport/wireguard/endpoint_quiesce_lx.go`, `adapter/endpoint/manager_close_lx.go` | Апстрим введёт свой quiesce-этап при остановке | держим; пре-пасс восстановлен 2026-10-23 явным обходом endpoint'ов (с lx.37 broadcast паузы его не делал — апстрим `6364d9a5f`) |
 | [012](../../TASKS/012-TCP_DOWNLINK_STALL_ZOMBIE_CONNS/SPEC.md) | ↑517 ↓0, приложения «висят» | — (кода нет) | — | закрыт: не воспроизводится |
 | [039](../../TASKS/039-REPORT_ARCHIVE_ROTATION/SPEC.md) | Архивы отчётов растут без предела — 427 МБ / 575 папок за 19 дней | `experimental/libbox/report.go` + вызов в OOM- и crash-путях | Апстрим введёт свою ротацию архивов отчётов | держим |
 | [040](../../TASKS/040-SINGTUN_ACCEPTLOOP_SELFHEAL/SPEC.md) | acceptLoop system-стека молча умирает от чужого close fd → весь новый TCP получает мгновенный RST до рестарта VPN (LxBox §047: «браузер мёртв, QUIC жив») | форк `submodules/sing-tun` (`stack_system.go`: warn с errno + relisten + счётчик) | Апстрим сделает acceptLoop устойчивым (или заменит механику system-стека) | держим |
@@ -242,7 +242,10 @@ linux-only, из-за чего Android получал склеенные пак�
 ещё слал wake-пинги; каждый `Endpoint.Close()` блокировался на `resumeMu`,
 дожидаясь полного device-rebuild с хендшейком (~0.5–5 с), и это суммировалось
 последовательно. Фикс из четырёх шагов; drain намеренно **не трогаем** —
-иначе use-after-free в gVisor netstack.
+иначе use-after-free в gVisor netstack. Пре-пасс (закрытие сокетов вперёд)
+с 2026-10-23 — явный обход endpoint'ов через `adapter.ShutdownQuiescer`, а не
+broadcast `DevicePause()`: апстрим снял реакцию WG на паузу устройства
+(CONSTRAINT в [UPSTREAM_SYNC](../005-UPSTREAM_SYNC/FEATURE.md)).
 
 **012 — зонтик, а не баг.** Симптом наблюдался на разных узлах, включая WG,
 то есть за ним стояло несколько причин. WG-долю закрыл 010. Для не-WG

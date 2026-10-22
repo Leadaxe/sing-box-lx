@@ -3,10 +3,11 @@ package endpoint
 // lx: SPEC 030 — close endpoints concurrently instead of one at a time.
 //
 // Upstream starts every endpoint in a child of the manager's scope, and closing
-// that scope runs the children one after another. With the sockets already
-// closed by box.Close's pre-pass (router DevicePause), each device teardown is
-// fast; running them in parallel turns the serial sum over N endpoints into a
-// bounded max. Each endpoint therefore runs in a scope of its own, and the
+// that scope runs the children one after another. box.Close's pre-pass
+// (Router.QuiesceForShutdown → each endpoint's QuiesceForShutdown) has already
+// marked every WG/AWG endpoint closing and kicked its socket release off, so
+// each device teardown is fast; running them in parallel turns the serial sum
+// over N endpoints into a bounded max. Each endpoint therefore runs in a scope of its own, and the
 // manager's scope gets one cleanup that closes all of them under a capped
 // task.Group, so N large gVisor netstack teardowns don't spike memory. Run (no
 // FastFail) joins every close before returning — a teardown is never
