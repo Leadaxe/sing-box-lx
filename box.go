@@ -695,7 +695,7 @@ func (s *Box) Close() error {
 	if s.quiesced.CompareAndSwap(false, true) && s.router != nil {
 		s.router.QuiesceForShutdown()
 	}
-	return s.scope.Close()
+	return s.closeScopeWatched() // lx: SPEC 030 §8 — goroutine dump to the log if the close hangs
 }
 
 func (s *Box) Network() adapter.NetworkManager {

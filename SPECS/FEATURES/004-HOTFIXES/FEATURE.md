@@ -199,6 +199,7 @@
 | [113](../../TASKS/113-TAILSCALE_ALWAYS_DERP_REBIND_LEAK/SPEC.md) | `TS_DEBUG_ALWAYS_USE_DERP=true` + любой `Rebind()` magicsock: прежняя заглушка-сокет не закрывается, приёмная горутина wireguard-go виснет, `device.Close()` ждёт её вечно — lxd Stop/Apply не возвращаются | нет патча (понадобился бы форк `sagernet/tailscale` или lx-опция `force_derp` в endpoint'е) | апстрим tailscale закрывает прежний pconn в ветке `debugAlwaysDERP()` `bindSocket` (проверять при бампе `sagernet/tailscale`) | **не планируется** — переменную на стендах со штатным Stop/Apply не использовать |
 | [130](../../TASKS/130-WIN7_REGISTRY_NOTIFY_THREAD_AGNOSTIC/SPEC.md) | Windows 7: ядро с lx.14 не стартует — `watch registry key …Tcpip\Parameters\Interfaces: The parameter is incorrect` ([issue #38](https://github.com/Leadaxe/sing-box-lx/issues/38)): апстримный DNS-наблюдатель sing-tun `bca4bf0` регистрирует `RegNotifyChangeKeyValue` с `REG_NOTIFY_THREAD_AGNOSTIC` (Win8+) | форк `submodules/sing-tun` (`monitor_windows.go`: фоллбэк без флага + регистрация на прибитом потоке, `// lx: SPEC 130`) | Апстрим sing-tun перестанет требовать флаг либо сборки sing-box откажутся от Win7 | держим; Win7-проверка за репортёром |
 | [136](../../TASKS/136-REFERENCE_MANAGER_START_MUX_LOCK/SPEC.md) | `Box.Start` стоит 10–16 с на стадии `Started` ([issue #49](https://github.com/Leadaxe/sing-box-lx/issues/49)): апстримный `ReferenceManager.Start` синхронно вызывает `update()` → `SetKeepIdleConnections(false)` неиспользуемому mux-outbound'у → sing-mux `Client.CloseIdleConnections` → `c.access.Lock()`, а замок держит URL-тест с `PostStart` — `Client.offer` не отпускает `access` на весь `offerNew()` (сетевой dial); старт ядра ждёт чужой handshake | `route/reference.go` (`// lx: SPEC 136`: первый `update()` в горутине перед `loop()`, `update` остаётся однопоточным) | Апстрим перестанет вызывать `update()` на стартовом пути **или** sing-mux перестанет держать `access` поверх `offerNew()` | держим; юнит red/green + `-race`; на устройстве репортёра не прогонялось |
+| [139](../../TASKS/139-CLOSE_WATCHDOG_DUMP/SPEC.md) | Зависший stop (issue #50, Android, ~6 ч простоя) не оставляет улик — клиент не успевает снять дамп | `common/lxclosewatch/`, `adapter/endpoint/manager_close_lx.go` (теги незакрытых endpoint'ов), `box_close_watchdog_lx.go` + одна строка в `box.go` | Апстрим введёт свой дамп горутин при зависшем `Close` | держим; диагностика, закрытие не прерывает; в поле ещё не срабатывал |
 
 ## Разбор записей
 
@@ -246,6 +247,13 @@ linux-only, из-за чего Android получал склеенные пак�
 с 2026-10-23 — явный обход endpoint'ов через `adapter.ShutdownQuiescer`, а не
 broadcast `DevicePause()`: апстрим снял реакцию WG на паузу устройства
 (CONSTRAINT в [UPSTREAM_SYNC](../005-UPSTREAM_SYNC/FEATURE.md)).
+
+**139 — сторож закрытия.** Продолжение 030 по issue #50: если проход закрытия
+(endpoint'ы — или весь `Box.Close`) не вернулся за 20 с, ядро один раз пишет в
+лог на `Warn` полный дамп горутин кусками ≤ 3 КиБ (под logcat) и теги
+endpoint'ов, ещё не вернувших `Close`, — и ждёт дальше. Закрытие не
+прерывается: инвариант 030 «drain не трогаем» в силе. Это сбор доказательства,
+не фикс; порог — константа в lx-файле, env-ручки у ядра нет.
 
 **012 — зонтик, а не баг.** Симптом наблюдался на разных узлах, включая WG,
 то есть за ним стояло несколько причин. WG-долю закрыл 010. Для не-WG

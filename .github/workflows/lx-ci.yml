@@ -150,12 +150,14 @@ jobs:
       # with_lx_idle_suspend compiles the SPEC 020/030 tests that are tag-gated
       # like the code. The stands run without -race on purpose (see the header
       # of wireguard_start_close_race_lx_test.go).
-      - name: go test (wireguard endpoint, route, startclose stands)
+      # adapter/endpoint + common/lxclosewatch: the SPEC 030 §8 close watchdog.
+      - name: go test (wireguard endpoint, route, close watchdog, startclose stands)
         run: |
           go test -race -count=1 \
             -ldflags "-checklinkname=0" \
             -tags "${BASE_TAGS},with_awg,with_lx_idle_suspend" \
-            ./transport/wireguard/ ./protocol/wireguard/ ./route/
+            ./transport/wireguard/ ./protocol/wireguard/ ./route/ \
+            ./adapter/endpoint/ ./common/lxclosewatch/
           go test -count=1 \
             -ldflags "-checklinkname=0" \
             -tags "${BASE_TAGS},with_awg,with_lx_idle_suspend" \

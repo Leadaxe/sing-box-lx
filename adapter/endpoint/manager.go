@@ -24,10 +24,11 @@ type Manager struct {
 	// lx:end chain
 	// lx:begin fast-close
 	// SPEC 030: each endpoint runs in its own scope so Close can tear them down
-	// concurrently (see manager_close_lx.go).
+	// concurrently (see manager_close_lx.go); closers carry the tag (SPEC 030 §8)
+	// so the close watchdog can name the endpoints that have not returned.
 	logger          log.ContextLogger
 	endpointScopes  map[adapter.Endpoint]*adapter.Scope
-	endpointClosers []*adapter.Scope
+	endpointClosers []endpointCloser
 	// lx:end fast-close
 }
 
