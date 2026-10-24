@@ -1,5 +1,15 @@
 # sing-box-lx — конфигурация фич форка
 
+## Произвольный uTLS ClientHello
+
+С тегами `with_utls,with_lx_utls_custom` клиентский `tls.utls` принимает
+`{"enabled":true,"fingerprint":"custom","client_hello":{...}}`. В объекте
+`client_hello` порядок массивов `cipher_suites`, `compression_methods` и
+`extensions` сохраняется на проводе. Числовое расширение задаётся как
+`{"name":"generic","id":65000,"data_base64":"AQID"}`. Профиль работает
+для TLS и REALITY. Без нового тега конфиг отвергается; именованные профили
+сохраняют прежнее поведение.
+
 > 🌐 English version: **[lx-config.md](lx-config.md)**.
 
 > 🧭 **Где что искать.** Документация форка — три уровня, по вопросу читателя:

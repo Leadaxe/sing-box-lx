@@ -247,7 +247,26 @@ type OutboundECHOptions struct {
 type OutboundUTLSOptions struct {
 	Enabled bool `json:"enabled,omitempty"`
 	// lx: SPEC 118 — `chrome_155` is the opt-in Chrome 155 preset from the utls fork.
-	Fingerprint string `json:"fingerprint,omitempty" enum:"chrome_psk,chrome_psk_shuffle,chrome_padding_psk_shuffle,chrome_pq,chrome_pq_psk,chrome,chrome_155,firefox,edge,safari,360,qq,ios,android,random,randomized"`
+	// lx:begin custom_utls_hello
+	Fingerprint string          `json:"fingerprint,omitempty" enum:"chrome_psk,chrome_psk_shuffle,chrome_padding_psk_shuffle,chrome_pq,chrome_pq_psk,chrome,chrome_155,firefox,edge,safari,360,qq,ios,android,random,randomized,custom"`
+	ClientHello ClientHelloJSON `json:"client_hello,omitempty"`
+	// lx:end custom_utls_hello
+}
+
+// ClientHelloJSON preserves uTLS's flexible JSON while giving schema generation
+// an object type for the browser/editor. The engine validates the full shape.
+type ClientHelloJSON json.RawMessage
+
+func (c ClientHelloJSON) MarshalJSON() ([]byte, error) {
+	return json.RawMessage(c).MarshalJSON()
+}
+
+func (c *ClientHelloJSON) UnmarshalJSON(data []byte) error {
+	return (*json.RawMessage)(c).UnmarshalJSON(data)
+}
+
+func (c ClientHelloJSON) DescribeSchema(schema.Builder) (*schema.Node, error) {
+	return schema.LooseObject(), nil
 }
 
 type OutboundRealityOptions struct {
