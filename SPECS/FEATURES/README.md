@@ -26,6 +26,7 @@
 | [016-SNIFF](016-SNIFF/FEATURE.md) | Снифферы для чужих туннелей и звонков: `wireguard`, `openvpn`, `ike`, `tailscale`, `sip` — по форме первого пакета, апстримные файлы не правим | — | 078 · 079 |
 | [017-REALITY](017-REALITY/FEATURE.md) | ✅ Клиент REALITY против актуального Xray: версия клиента, гибридный key share `X25519MLKEM768` на `chrome`/`firefox`/`safari` (форк-сабмодуль utls), по-узловой `tls.reality.key_share` `classical`/`hybrid`, фрагментация ClientHello в REALITY — отгружено (`lx.36` … `v1.14.1-lx.4`), стенд-верифицировано | — (внутри `with_utls`) | 053 · 083 · 086 · 087 · 088 · 089 · 090 |
 | [018-TRUSTTUNNEL](018-TRUSTTUNNEL/FEATURE.md) | ✅ Протокол TrustTunnel (AdGuard): outbound и inbound `trusttunnel`, TCP + UDP поверх HTTP/2 и HTTP/3; ядро — самостоятельный пакет в апстримной форме — в релизных бинарях с `v1.14.3-lx.21`, совместимость с официальными endpoint 1.1.0 и клиентом 1.1.11 проверена на стенде; обсуждение открыто ([#46](https://github.com/Leadaxe/sing-box-lx/issues/46)) | `with_trusttunnel` | 133 · 134 |
+| [019-CUSTOM_UTLS_HELLO](019-CUSTOM_UTLS_HELLO/FEATURE.md) | Произвольный TCP ClientHello в outbound TLS/REALITY, с проверкой JSON и сохранением порядка расширений | `with_utls,with_lx_utls_custom` | 139 |
 
 ## Процессные
 

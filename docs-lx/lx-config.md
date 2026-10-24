@@ -1,5 +1,15 @@
 # sing-box-lx — configuration of the downstream features
 
+## Custom uTLS ClientHello
+
+With `with_utls,with_lx_utls_custom`, outbound `tls.utls` accepts
+`{"enabled":true,"fingerprint":"custom","client_hello":{...}}`. The
+`client_hello` object has ordered `cipher_suites`, `compression_methods`, and
+`extensions` arrays in uTLS JSON ClientHelloSpec format. A numeric extension
+can use `{"name":"generic","id":65000,"data_base64":"AQID"}`. TLS and
+REALITY both apply the profile. Builds without the custom tag reject it; named
+fingerprints retain their existing behavior.
+
 > 🌐 Русская версия: **[lx-config.ru.md](lx-config.ru.md)**.
 
 > 🧭 **Where to look.** The fork's documentation has three levels, by the reader's question:
