@@ -39,6 +39,9 @@ type UTLSClientConfig struct {
 	recordFragment        bool
 	spoof                 string
 	spoofMethod           tlsspoof.Method
+	// lx:begin custom_utls_hello
+	clientHello []byte
+	// lx:end custom_utls_hello
 }
 
 func (c *UTLSClientConfig) ServerName() string {
@@ -99,7 +102,15 @@ func (c *UTLSClientConfig) Client(conn net.Conn) (Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newLXUTLSConn(utls.UClient(conn, c.config.Clone(), c.id), c.config.NextProtos), nil // lx: SPEC 122 — ALPN once, release the handshake state
+	// lx:begin custom_utls_hello
+	uConn := utls.UClient(conn, c.config.Clone(), c.id)
+	if len(c.clientHello) > 0 {
+		if err := applyLXCustomClientHello(uConn, c.clientHello); err != nil {
+			return nil, err
+		}
+	}
+	// lx:end custom_utls_hello
+	return newLXUTLSConn(uConn, c.config.NextProtos), nil // lx: SPEC 122 — ALPN once, release the handshake state
 }
 
 func (c *UTLSClientConfig) SetSessionIDGenerator(generator func(clientHello []byte, sessionID []byte) error) {
@@ -120,6 +131,9 @@ func (c *UTLSClientConfig) Clone() Config {
 		recordFragment:        c.recordFragment,
 		spoof:                 c.spoof,
 		spoofMethod:           c.spoofMethod,
+		// lx:begin custom_utls_hello
+		clientHello: c.clientHello,
+		// lx:end custom_utls_hello
 	}
 	cloned.SetServerName(cloned.serverName)
 	return cloned
@@ -312,6 +326,18 @@ func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 	if err != nil {
 		return nil, err
 	}
+	// lx:begin custom_utls_hello
+	var clientHello []byte
+	if options.UTLS.Fingerprint == "custom" || len(options.UTLS.ClientHello) > 0 {
+		if options.UTLS.Fingerprint != "custom" || len(options.UTLS.ClientHello) == 0 {
+			return nil, E.New("uTLS client_hello requires fingerprint custom, and custom requires client_hello")
+		}
+		if err := validateLXCustomClientHello(options.UTLS.ClientHello); err != nil {
+			return nil, E.Cause(err, "uTLS client_hello")
+		}
+		clientHello = append([]byte(nil), options.UTLS.ClientHello...)
+	}
+	// lx:end custom_utls_hello
 	id, err := uTLSClientHelloID(options.UTLS.Fingerprint)
 	if err != nil {
 		return nil, err
@@ -329,6 +355,9 @@ func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 		recordFragment:        options.RecordFragment,
 		spoof:                 spoof,
 		spoofMethod:           spoofMethod,
+		// lx:begin custom_utls_hello
+		clientHello: clientHello,
+		// lx:end custom_utls_hello
 	}
 	config.SetServerName(serverName)
 	if options.ECH != nil && options.ECH.Enabled {
@@ -380,6 +409,10 @@ func init() {
 
 func uTLSClientHelloID(name string) (utls.ClientHelloID, error) {
 	switch name {
+	// lx:begin custom_utls_hello
+	case "custom":
+		return utls.HelloCustom, nil
+	// lx:end custom_utls_hello
 	case "chrome_psk", "chrome_psk_shuffle", "chrome_padding_psk_shuffle", "chrome_pq", "chrome_pq_psk":
 		fallthrough
 	case "chrome", "":

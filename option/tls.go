@@ -247,7 +247,10 @@ type OutboundECHOptions struct {
 type OutboundUTLSOptions struct {
 	Enabled bool `json:"enabled,omitempty"`
 	// lx: SPEC 118 — `chrome_155` is the opt-in Chrome 155 preset from the utls fork.
-	Fingerprint string `json:"fingerprint,omitempty" enum:"chrome_psk,chrome_psk_shuffle,chrome_padding_psk_shuffle,chrome_pq,chrome_pq_psk,chrome,chrome_155,firefox,edge,safari,360,qq,ios,android,random,randomized"`
+	// lx:begin custom_utls_hello
+	Fingerprint string          `json:"fingerprint,omitempty" enum:"chrome_psk,chrome_psk_shuffle,chrome_padding_psk_shuffle,chrome_pq,chrome_pq_psk,chrome,chrome_155,firefox,edge,safari,360,qq,ios,android,random,randomized,custom"`
+	ClientHello json.RawMessage `json:"client_hello,omitempty"`
+	// lx:end custom_utls_hello
 }
 
 type OutboundRealityOptions struct {

@@ -80,6 +80,9 @@ func init() {
 	// rejects any wireguard-with-AWG or xhttp config at runtime ("support not built").
 	sharedTags = append(sharedTags, "with_xhttp", "with_awg")
 	// lx:end awg,xhttp
+	// lx:begin custom_utls_hello
+	sharedTags = append(sharedTags, "with_lx_utls_custom")
+	// lx:end custom_utls_hello
 	// lx:begin lx_command
 	// SPEC 014 — bake the libbox command-protocol extensions (URLTestOutbound, GetRules)
 	// into the AAR. Without the tag the generated RPCs are still registered but the

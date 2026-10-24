@@ -185,6 +185,13 @@ func (e *RealityClientConfig) prepareClientHello(conn net.Conn) (*utls.UConn, *r
 		return nil, nil, err
 	}
 	uConn := utls.UClient(conn, uConfig, e.uClient.id)
+	// lx:begin custom_utls_hello
+	if len(e.uClient.clientHello) > 0 {
+		if err := applyLXCustomClientHello(uConn, e.uClient.clientHello); err != nil {
+			return nil, nil, err
+		}
+	}
+	// lx:end custom_utls_hello
 	verifier.UConn = uConn
 	// lx: SPEC 083 — апстрим здесь вырезал X25519MLKEM768 из supported_groups
 	// и key_share (костыль под utls v1.7.2, где Ecdhe гибрида и чистого X25519
