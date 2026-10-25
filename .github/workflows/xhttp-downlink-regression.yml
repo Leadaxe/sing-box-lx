@@ -60,3 +60,33 @@ jobs:
             work/gofmt.diff
           if-no-files-found: warn
           retention-days: 14
+  race:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: '1'
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      GOMAXPROCS: '4'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.5'
+          cache: false
+      - name: Repeated pool and cancellation checks under race detector
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p work
+          go test -race -json -count=5 -timeout=10m -p 2 -tags with_xhttp,with_quic,with_utls,with_reality ./transport/v2rayxhttp ./option 2>&1 | tee work/native-race.jsonl
+      - name: Save race evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xhttp-independent-downlink-race-evidence
+          path: work/native-race.jsonl
+          if-no-files-found: warn
+          retention-days: 14
