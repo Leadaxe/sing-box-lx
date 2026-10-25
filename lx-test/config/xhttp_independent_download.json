@@ -1,0 +1,70 @@
+{
+  "log": {
+    "level": "warn"
+  },
+  "inbounds": [],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "independent-xhttp",
+      "server": "127.0.0.1",
+      "server_port": 24443,
+      "uuid": "11111111-1111-4111-8111-111111111111",
+      "tls": {
+        "enabled": true,
+        "server_name": "upload.fixture.invalid",
+        "alpn": [
+          "h2"
+        ],
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "QcXc9_kGy4JFwezja7iKFIAR8MaO79vasN4OQIU9Ykk",
+          "short_id": "0123456789abcdef"
+        }
+      },
+      "transport": {
+        "type": "xhttp",
+        "mode": "auto",
+        "host": "upload.fixture.invalid",
+        "path": "/upload/",
+        "xmux": {
+          "max_concurrency": 2
+        },
+        "download_settings": {
+          "server": "127.0.0.1",
+          "server_port": 24444,
+          "tls": {
+            "enabled": true,
+            "server_name": "download.fixture.invalid",
+            "alpn": [
+              "h2"
+            ],
+            "utls": {
+              "enabled": true,
+              "fingerprint": "chrome"
+            },
+            "reality": {
+              "enabled": true,
+              "public_key": "f4XJO0PGOVkzVe3CS1ec7jq9RZxBAqEV6gn6J3jDOU0",
+              "short_id": "0123456789abcdef"
+            }
+          },
+          "xhttp": {
+            "host": "download.fixture.invalid",
+            "path": "/download/",
+            "xmux": {
+              "max_concurrency": 4
+            }
+          }
+        }
+      }
+    }
+  ],
+  "route": {
+    "final": "independent-xhttp"
+  }
+}

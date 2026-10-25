@@ -2,10 +2,10 @@ name: XHTTP independent downlink regression
 on:
   push:
     branches: ['codex/xhttp-independent-downlink', lx, 'lx-*']
-    paths: ['transport/v2rayxhttp/**', 'option/v2ray_xhttp*', '.github/workflows/xhttp-downlink-regression.yml']
+    paths: ['transport/v2rayxhttp/**', 'option/v2ray_xhttp*', '.github/workflows/xhttp-downlink-regression.yml', 'lx-test/config/xhttp_independent_download.json', 'lx-test/check-independent-download.py']
   pull_request:
     branches: [lx, 'lx-*']
-    paths: ['transport/v2rayxhttp/**', 'option/v2ray_xhttp*', '.github/workflows/xhttp-downlink-regression.yml']
+    paths: ['transport/v2rayxhttp/**', 'option/v2ray_xhttp*', '.github/workflows/xhttp-downlink-regression.yml', 'lx-test/config/xhttp_independent_download.json', 'lx-test/check-independent-download.py']
 permissions:
   contents: read
 concurrency:
@@ -14,7 +14,7 @@ concurrency:
 jobs:
   regression:
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       CGO_ENABLED: '0'
       GOTOOLCHAIN: local
@@ -50,6 +50,22 @@ jobs:
           $env:NOVA_XRAY_BINARY = (Resolve-Path work/xray/xray.exe).Path
           & go test -json -count=1 -timeout=10m -p 2 -tags 'with_xhttp,with_quic,with_utls,with_reality' ./transport/v2rayxhttp ./option 2>&1 | Tee-Object -FilePath work/native-tests.jsonl
           if ($LASTEXITCODE -ne 0) { throw 'Native downlink tests failed' }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build baseline and canonical CLI, validate independent configuration
+        shell: pwsh
+        run: |
+          & go build -p 2 ./... 2>&1 | Tee-Object -FilePath work/native-no-tags-build.log
+          if ($LASTEXITCODE -ne 0) { throw 'No-tags native build failed' }
+          $line = @(Get-Content Makefile.lx | Where-Object { $_ -match '^LX_TAGS \?=' })
+          if ($line.Count -ne 1) { throw 'Canonical tag set missing' }
+          $tags = ($line[0] -split '\?=', 2)[1].Trim()
+          if ($tags -notmatch '^[a-z0-9_,]+$') { throw 'Unexpected canonical tags' }
+          & go build -p 2 -tags $tags -trimpath -ldflags '-checklinkname=0 -buildid=' -o work/sing-box.exe ./cmd/sing-box 2>&1 | Tee-Object -FilePath work/native-canonical-build.log
+          if ($LASTEXITCODE -ne 0) { throw 'Canonical CLI build failed' }
+          & python lx-test/check-independent-download.py --binary work/sing-box.exe --work work/config-checks
+          if ($LASTEXITCODE -ne 0) { throw 'Independent configuration checks failed' }
       - name: Save test evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -58,6 +74,9 @@ jobs:
           path: |
             work/native-tests.jsonl
             work/gofmt.diff
+            work/native-no-tags-build.log
+            work/native-canonical-build.log
+            work/config-checks/
           if-no-files-found: warn
           retention-days: 14
   race:
