@@ -35,6 +35,18 @@ func (c *Client) configureDownload(ctx context.Context, inherited N.Dialer, sett
 			return E.Cause(err, "create XHTTP download dialer")
 		}
 	}
+	// A dialer built for an IP uplink has no resolver wrapper. Preserve its
+	// physical-network/protect options, but resolve a domain download endpoint
+	// through the core default bootstrap path instead of passing it unresolved.
+	if settings.Dialer == nil && address.IsFqdn() {
+		if _, plainDirect := inherited.(*D.DefaultDialer); plainDirect {
+			queryOptions, err := D.NewDNSQueryOptions(ctx, nil, false)
+			if err != nil {
+				return E.Cause(err, "create XHTTP download resolver")
+			}
+			dialer = D.NewResolveDialer(ctx, inherited, true, "", queryOptions, 0)
+		}
+	}
 	var tlsConfig tls.Config
 	if settings.TLS != nil {
 		var err error

@@ -8,7 +8,8 @@
 - [x] 27 комбинаций auto/packet-up/stream-up и H1/H2/H3 фронтендов, с реальным VLESS echo.
 - [x] Пять повторов тестов под Linux race detector.
 - [ ] Согласование владельца/issue и номера задачи.
-- [ ] Независимый REALITY/downlink и DNS bootstrap обоих направлений.
+- [x] Host red/green: IP uplink + domain downlink и оба домена через искусственный core bootstrap DNS.
+- [ ] Независимый REALITY/downlink и реальный Android TUN/DNS bootstrap обоих направлений.
 - [ ] Длительные конкурентные XMUX-сессии и смены сети.
 - [ ] Полный DoD без тегов/канонические теги/пример конфига.
 - [ ] Физическая Android ARM64/16КБ/TUN приёмка.

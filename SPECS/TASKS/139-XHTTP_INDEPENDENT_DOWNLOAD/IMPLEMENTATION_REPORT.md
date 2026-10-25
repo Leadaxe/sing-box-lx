@@ -11,3 +11,8 @@
 Xray v26.10.21: SHA256 ZIP `fc58c39ee2f2717b4c54d28d374362389e5319b20ae44aea76ea45a5243ec827`, EXE `c77a00eb84fb93ae044c2d771a1cabcc033b81e487253fbc35b12df6879c1e15`.
 
 H3 проверяется на двух TLS-фронтендах перед одним официальным H2 Xray. Ни прямой H3 ingress Xray, ни независимая REALITY-аутентификация этим не доказаны. Незакрытый список — TASKS.md. Production AAR NOVA не заменён.
+
+
+## Дополнительный bootstrap regression
+
+На локальном Windows-стенде воспроизведён отказ отдельного доменного download при IP uplink: DefaultDialer, созданный для IP, отклоняет неразрешённый домен. Тест использует только `uplink.invalid`/`downlink.invalid`, искусственный DNSRouter с проверкой выбранного bootstrap transport и HTTP loopback. До исправления IP-uplink сценарий падал; при доменном uplink проходил. После добавления resolver-обёртки вокруг того же DefaultDialer проходят оба. Исходные bind/protect параметры dialer сохраняются; уже resolving/detour/custom dialer не заменяются. Это host-проверка ядра, Android TUN/DNS и реальные физические сети ею не проверены.
