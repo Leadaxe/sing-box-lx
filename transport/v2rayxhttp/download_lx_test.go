@@ -29,8 +29,26 @@ type downloadSeen struct {
 
 // Supplied by the QUIC-tagged test file; absent builds exercise H1/H2 only.
 var newHTTP3DownloadServer func(*testing.T, http.Handler) (M.Socksaddr, *option.OutboundTLSOptions)
+var newRealityDownloadServer func(*testing.T, http.Handler) (M.Socksaddr, *option.OutboundTLSOptions)
+
+func downloadEndpointLabel(version int) string {
+	if version == 0 {
+		return "reality-h2"
+	}
+	return fmt.Sprintf("h%d", version)
+}
+
+func downloadEndpointHTTPVersion(version int) int {
+	if version == 0 {
+		return 2
+	}
+	return version
+}
 
 func downloadTestEndpoint(t *testing.T, version int, handler http.Handler) (M.Socksaddr, *option.OutboundTLSOptions) {
+	if version == 0 {
+		return newRealityDownloadServer(t, handler)
+	}
 	if version == 3 {
 		return newHTTP3DownloadServer(t, handler)
 	}
@@ -75,14 +93,25 @@ func assertNoDownloadLeases(t *testing.T, client *Client) {
 	}
 }
 
-func TestIndependentDownloadEndpoints(t *testing.T) {
+func independentDownloadTestPairs() [][2]int {
 	pairs := [][2]int{{1, 1}, {1, 2}, {2, 1}, {2, 2}}
 	if newHTTP3DownloadServer != nil {
 		pairs = append(pairs, [2]int{1, 3}, [2]int{2, 3}, [2]int{3, 1}, [2]int{3, 2}, [2]int{3, 3})
 	}
+	if newRealityDownloadServer != nil {
+		pairs = append(pairs, [2]int{0, 1}, [2]int{1, 0}, [2]int{0, 2}, [2]int{2, 0}, [2]int{0, 0})
+		if newHTTP3DownloadServer != nil {
+			pairs = append(pairs, [2]int{0, 3}, [2]int{3, 0})
+		}
+	}
+	return pairs
+}
+
+func TestIndependentDownloadEndpoints(t *testing.T) {
+	pairs := independentDownloadTestPairs()
 	for _, mode := range []string{modeAuto, modePacketUp, modeStreamUp} {
 		for _, versions := range pairs {
-			name := fmt.Sprintf("%s/h%d-h%d", mode, versions[0], versions[1])
+			name := fmt.Sprintf("%s/%s-%s", mode, downloadEndpointLabel(versions[0]), downloadEndpointLabel(versions[1]))
 			t.Run(name, func(t *testing.T) {
 				data := make(chan []byte, 1)
 				seenUp, seenDown := make(chan downloadSeen, 1), make(chan downloadSeen, 1)
@@ -156,7 +185,7 @@ func TestIndependentDownloadEndpoints(t *testing.T) {
 				if upSession != downSession || !strings.HasPrefix(u.path, "/up/") || !strings.HasPrefix(d.path, "/down/") || !strings.Contains(u.query, "u=1") || !strings.Contains(d.query, "d=2") {
 					t.Fatalf("different session or request metadata: up=%+v down=%+v", u, d)
 				}
-				if u.proto != versions[0] || d.proto != versions[1] {
+				if u.proto != downloadEndpointHTTPVersion(versions[0]) || d.proto != downloadEndpointHTTPVersion(versions[1]) {
 					t.Fatal("HTTP version leaked between legs")
 				}
 				conn.Close()
@@ -315,5 +344,58 @@ func TestDownloadUploadFailureReleasesBothPools(t *testing.T) {
 	down.access.Unlock()
 	if upUsage != 0 || downUsage != 0 {
 		t.Fatalf("upload failure retained leases: %d/%d", upUsage, downUsage)
+	}
+}
+
+type downloadFailureRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f downloadFailureRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestPacketWritePreservesDownloadFailure(t *testing.T) {
+	for _, testCase := range []struct {
+		name           string
+		failedDownload bool
+		postError      error
+	}{
+		{"caller-cancel", false, context.Canceled}, {"download-cancels-upload", true, context.Canceled}, {"upload-error", false, errors.New("upload refused")}, {"independent-upload-error", true, errors.New("upload refused")},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			failedDownload := testCase.failedDownload
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cause := errors.New("download TLS authentication refused")
+			var conn *packetConn
+			transport := downloadFailureRoundTripper(func(request *http.Request) (*http.Response, error) {
+				if failedDownload {
+					conn.fail(cause)
+				} else {
+					cancel()
+				}
+				return nil, testCase.postError
+			})
+			client := streamOneClient(t, transport)
+			client.download = streamOneClient(t, transport)
+			defer client.Close()
+			up, _ := client.xmux.get()
+			down, _ := client.download.xmux.get()
+			up.addOpenUsage(1)
+			down.addOpenUsage(1)
+			release := newXmuxRelease(up)
+			release.peer = newXmuxRelease(down)
+			conn = newPacketConn(ctx, client, "synthetic-session", M.ParseSocksaddr("127.0.0.1:1"), release)
+			conn.cancel = cancel
+			_, err := conn.Write([]byte("hello"))
+			expected := testCase.postError
+			if failedDownload && errors.Is(testCase.postError, context.Canceled) {
+				expected = cause
+			}
+			if !errors.Is(err, expected) {
+				t.Errorf("Write returned %v instead of primary cause %v", err, expected)
+			}
+			conn.Close()
+			assertNoDownloadLeases(t, client)
+		})
 	}
 }

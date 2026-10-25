@@ -9,8 +9,10 @@
 - [x] Пять повторов тестов под Linux race detector.
 - [ ] Согласование владельца/issue и номера задачи.
 - [x] Host red/green: IP uplink + domain downlink и оба домена через искусственный core bootstrap DNS.
-- [ ] Независимый REALITY/downlink и реальный Android TUN/DNS bootstrap обоих направлений.
-- [ ] Длительные конкурентные XMUX-сессии и смены сети.
+- [x] Host REALITY: отдельные ключи/SNI/short_id, key share, отрицательные сценарии и HTTP/2 обмен через native frontend.
+- [ ] Прямой официальный Xray REALITY ingress, доверенный camouflage control и Android TUN/DNS bootstrap обоих направлений.
+- [x] Host H2/H2: 12 постоянных VLESS сессий, по 300 секунд в трёх режимах, лимиты XMUX и освобождение аренд.
+- [ ] Длительные H1/H3 и реальные смены сети.
 - [x] Полная host-сборка `go build ./...` без тегов.
 - [x] CLI с точным каноническим LX_TAGS из Makefile.lx и check примера независимого downlink.
 - [x] CLI: три корректных и пять отклоняемых синтетических конфигураций, без запуска туннеля.

@@ -34,6 +34,10 @@ import (
 )
 
 func officialXrayBackend(t *testing.T, executable string) (string, *stdTLS.Config) {
+	return officialXrayBackendLifetime(t, executable, 10*time.Second)
+}
+
+func officialXrayBackendLifetime(t *testing.T, executable string, lifetime time.Duration) (string, *stdTLS.Config) {
 	t.Helper()
 	file, err := os.Open(executable)
 	if err != nil {
@@ -56,7 +60,7 @@ func officialXrayBackend(t *testing.T, executable string) (string, *stdTLS.Confi
 			if err != nil {
 				return
 			}
-			go func() { defer conn.Close(); conn.SetDeadline(time.Now().Add(10 * time.Second)); io.Copy(conn, conn) }()
+			go func() { defer conn.Close(); conn.SetDeadline(time.Now().Add(lifetime)); io.Copy(conn, conn) }()
 		}
 	}()
 	reserve, err := net.Listen("tcp", "127.0.0.1:0")
@@ -158,13 +162,10 @@ func TestIndependentDownloadOfficialXray(t *testing.T) {
 	}
 	backend, backendTLS := officialXrayBackend(t, executable)
 	target, _ := url.Parse("https://" + backend)
-	pairs := [][2]int{{1, 1}, {1, 2}, {2, 1}, {2, 2}}
-	if newHTTP3DownloadServer != nil {
-		pairs = append(pairs, [2]int{1, 3}, [2]int{2, 3}, [2]int{3, 1}, [2]int{3, 2}, [2]int{3, 3})
-	}
+	pairs := independentDownloadTestPairs()
 	for _, mode := range []string{modeAuto, modePacketUp, modeStreamUp} {
 		for _, pair := range pairs {
-			t.Run(fmt.Sprintf("%s/h%d-h%d", mode, pair[0], pair[1]), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/%s-%s", mode, downloadEndpointLabel(pair[0]), downloadEndpointLabel(pair[1])), func(t *testing.T) {
 				var upRequests, downGets, wrongLeg atomic.Int32
 				front := func(prefix string, up bool) http.Handler {
 					proxy := httputil.NewSingleHostReverseProxy(target)

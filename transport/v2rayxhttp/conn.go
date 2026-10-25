@@ -2,6 +2,7 @@ package v2rayxhttp
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -892,6 +893,17 @@ func (c *packetConn) Write(b []byte) (int, error) {
 			end = len(b)
 		}
 		if err := c.sendPacket(b[written:end]); err != nil {
+			// lx: download failure cancels the POST; keep its primary cause.
+			// Other upload errors and caller cancellation retain their identity.
+			if errors.Is(err, context.Canceled) {
+				select {
+				case <-c.created:
+					if c.readerErr != nil {
+						return written, c.readerErr
+					}
+				default:
+				}
+			}
 			return written, err
 		}
 		written = end
