@@ -202,6 +202,7 @@ func (c *xmuxClient) roundTrip(request *http.Request) (*http.Response, error) {
 // connection would then never be torn down after retirement.
 type xmuxRelease struct {
 	client *xmuxClient
+	peer   *xmuxRelease // lx: optional download acquisition, released with the session
 	once   sync.Once
 }
 
@@ -215,6 +216,7 @@ func (r *xmuxRelease) release() {
 	}
 	r.once.Do(func() {
 		r.client.addOpenUsage(-1)
+		r.peer.release()
 	})
 }
 

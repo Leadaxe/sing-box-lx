@@ -1,0 +1,59 @@
+name: XHTTP independent downlink regression
+on:
+  push:
+    branches: ['codex/xhttp-independent-downlink', lx, 'lx-*']
+    paths: ['transport/v2rayxhttp/**', 'option/v2ray_xhttp*', '.github/workflows/xhttp-downlink-regression.yml']
+  pull_request:
+    branches: [lx, 'lx-*']
+    paths: ['transport/v2rayxhttp/**', 'option/v2ray_xhttp*', '.github/workflows/xhttp-downlink-regression.yml']
+permissions:
+  contents: read
+concurrency:
+  group: xhttp-downlink-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: '0'
+      GOTOOLCHAIN: local
+      GOFLAGS: -mod=readonly
+      GOMAXPROCS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.5'
+          cache: false
+      - name: Restore checksum-pinned official Xray fixture
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path work -Force | Out-Null
+          Invoke-WebRequest 'https://github.com/XTLS/Xray-core/releases/download/v26.10.21/Xray-windows-64.zip' -OutFile work/xray.zip
+          if ((Get-FileHash work/xray.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'fc58c39ee2f2717b4c54d28d374362389e5319b20ae44aea76ea45a5243ec827') { throw 'Official Xray archive mismatch' }
+          Expand-Archive work/xray.zip work/xray
+          if ((Get-FileHash work/xray/xray.exe -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'c77a00eb84fb93ae044c2d771a1cabcc033b81e487253fbc35b12df6879c1e15') { throw 'Official Xray executable mismatch' }
+      - name: Formatting, vet and independent downlink tests
+        shell: pwsh
+        run: |
+          $files = @('option/v2ray_xhttp.go','option/v2ray_xhttp_download_lx.go','transport/v2rayxhttp/client.go','transport/v2rayxhttp/conn.go','transport/v2rayxhttp/download_lx.go','transport/v2rayxhttp/download_lx_test.go','transport/v2rayxhttp/download_quic_lx_test.go','transport/v2rayxhttp/download_xray_windows_test.go','transport/v2rayxhttp/xmux.go')
+          $bad = & gofmt -l @files
+          if ($bad) { & gofmt -d @files | Set-Content work/gofmt.diff; throw ('Formatting differs: '+($bad -join ', ')) }
+          & go vet -p 2 -tags with_xhttp,with_quic,with_utls,with_reality ./transport/v2rayxhttp ./option
+          if ($LASTEXITCODE -ne 0) { throw 'Native vet failed' }
+          $env:NOVA_XRAY_BINARY = (Resolve-Path work/xray/xray.exe).Path
+          & go test -json -count=1 -timeout=10m -p 2 -tags with_xhttp,with_quic,with_utls,with_reality ./transport/v2rayxhttp ./option 2>&1 | Tee-Object -FilePath work/native-tests.jsonl
+          if ($LASTEXITCODE -ne 0) { throw 'Native downlink tests failed' }
+      - name: Save test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xhttp-independent-downlink-evidence
+          path: |
+            work/native-tests.jsonl
+            work/gofmt.diff
+          if-no-files-found: warn
+          retention-days: 14

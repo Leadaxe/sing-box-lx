@@ -20,6 +20,8 @@ import "github.com/sagernet/sing/common/json/badoption"
 // selects the documented default. This mirrors x_padding_bytes and avoids adding a
 // range type to the option layer.
 type V2RayXHTTPOptions struct {
+	// lx: independent XHTTP download endpoint; absent preserves the single-pool transport.
+	DownloadSettings *V2RayXHTTPDownloadOptions `json:"download_settings,omitempty"`
 	// ---- v1 fields (unchanged, preserved verbatim) --------------------------
 
 	// Host overrides the HTTP Host header (defaults to the TLS SNI or the

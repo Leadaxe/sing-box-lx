@@ -184,10 +184,12 @@ func (c *Client) dialStreamOne(ctx context.Context, sessionID string, xmuxClient
 // delivered bytes, so blocking on it here deadlocks the dial and the fronting
 // proxy answers 504. See the note on dialPacketUp. lx: SPEC 002.
 func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient *xmuxClient, release *xmuxRelease) (net.Conn, error) {
+	downClient := c.downloadClient()
+	downPool := release.readSide().client
 	// lx: SPEC 072 — conn-scoped request context; see dialStreamOne.
 	connCtx, connCancel := context.WithCancel(c.transportContext())
 	// Download: GET response body (no seq — stream mode).
-	downReq, err := c.newRequest(connCtx, http.MethodGet, sessionID, "", nil)
+	downReq, err := downClient.newRequest(connCtx, http.MethodGet, sessionID, "", nil)
 	if err != nil {
 		connCancel()
 		return nil, err
@@ -205,7 +207,7 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient 
 	conn := newSplitConn(pipeReader, pipeWriter, c.serverAddr, release)
 	conn.cancel = connCancel
 	go func() {
-		downResp, err := xmuxClient.roundTrip(downReq)
+		downResp, err := downPool.roundTrip(downReq)
 		if err != nil {
 			conn.fail(E.Cause(err, "open download"))
 			return
@@ -254,6 +256,8 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient 
 // the connection is established (httptrace GotConn) and processes the response
 // asynchronously. lx: SPEC 002.
 func (c *Client) dialPacketUp(ctx context.Context, sessionID string, xmuxClient *xmuxClient, release *xmuxRelease) (net.Conn, error) {
+	downClient := c.downloadClient()
+	downPool := release.readSide().client
 	// lx: SPEC 072 — conn-scoped request context (see dialStreamOne); the
 	// download GET and every upload POST ride it, and Close/fail cancel it. The
 	// dial context is deliberately NOT waited on here (lx: SPEC 077 applies to
@@ -265,7 +269,7 @@ func (c *Client) dialPacketUp(ctx context.Context, sessionID string, xmuxClient 
 	_ = ctx
 	connCtx, connCancel := context.WithCancel(c.transportContext())
 	// Download stream: GET with the session id but no seq (downlink).
-	downReq, err := c.newRequest(connCtx, http.MethodGet, sessionID, "", nil)
+	downReq, err := downClient.newRequest(connCtx, http.MethodGet, sessionID, "", nil)
 	if err != nil {
 		connCancel()
 		return nil, err
@@ -273,7 +277,7 @@ func (c *Client) dialPacketUp(ctx context.Context, sessionID string, xmuxClient 
 	conn := newPacketConn(connCtx, c, sessionID, c.serverAddr, release)
 	conn.cancel = connCancel
 	go func() {
-		downResp, err := xmuxClient.roundTrip(downReq)
+		downResp, err := downPool.roundTrip(downReq)
 		if err != nil {
 			conn.fail(E.Cause(err, "open download"))
 			return
@@ -514,7 +518,7 @@ type streamConn struct {
 func newStreamConn(reader *io.PipeReader, writer *io.PipeWriter, serverAddr M.Socksaddr, xmux *xmuxRelease) *streamConn {
 	conn := &streamConn{
 		xmux:       xmux,
-		breaker:    connBreaker{xmux: xmux},
+		breaker:    connBreaker{xmux: xmux.readSide()},
 		writer:     writer,
 		created:    make(chan struct{}),
 		serverAddr: serverAddr,
@@ -661,7 +665,7 @@ type splitConn struct {
 func newSplitConn(uploadReader *io.PipeReader, writer *io.PipeWriter, serverAddr M.Socksaddr, xmux *xmuxRelease) *splitConn {
 	conn := &splitConn{
 		xmux:       xmux,
-		breaker:    connBreaker{xmux: xmux},
+		breaker:    connBreaker{xmux: xmux.readSide()},
 		created:    make(chan struct{}),
 		writer:     writer,
 		serverAddr: serverAddr,
@@ -704,7 +708,10 @@ func (c *splitConn) fail(err error) {
 // the writer a bare ErrClosedPipe (io.Pipe's writeCloseError prefers rerr and
 // suppresses werr; see the writeDeadline note). lx: SPEC 072.
 func (c *splitConn) uploadFailed(err error) {
-	c.writeDeadline.reader.CloseWithError(err)
+	// A split session cannot survive without its upload stream. Close both
+	// leases and cancel the download request even if the caller never closes
+	// the failed connection. Close marks the download teardown as local.
+	c.closeWithUploadError(err)
 }
 
 func (c *splitConn) Read(b []byte) (int, error) {
@@ -724,12 +731,20 @@ func (c *splitConn) Read(b []byte) (int, error) {
 func (c *splitConn) Write(b []byte) (int, error) { return c.writer.Write(b) }
 
 func (c *splitConn) Close() error {
+	return c.closeWithUploadError(nil)
+}
+
+func (c *splitConn) closeWithUploadError(uploadErr error) error {
 	c.closeOnce.Do(func() {
 		c.breaker.localClosed.Store(true) // lx: SPEC 076 — before closing the reader
 		// lx: 050 — drop armed timers before closing, as in streamConn.
 		c.writeDeadline.stop()
 		c.readDeadline.stop()
-		c.writer.Close()
+		if uploadErr != nil {
+			c.writeDeadline.reader.CloseWithError(uploadErr)
+		} else {
+			c.writer.Close()
+		}
 		// The reader may not be bound yet (see dialStreamUp); a pending
 		// RoundTrip is torn down by the conn-context cancel below.
 		select {
@@ -805,7 +820,7 @@ func newPacketConn(ctx context.Context, client *Client, sessionID string, server
 		ctx:        ctx,
 		client:     client,
 		xmux:       xmux,
-		breaker:    connBreaker{xmux: xmux},
+		breaker:    connBreaker{xmux: xmux.readSide()},
 		sessionID:  sessionID,
 		created:    make(chan struct{}),
 		serverAddr: serverAddr,

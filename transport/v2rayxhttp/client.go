@@ -54,6 +54,7 @@ const (
 var _ adapter.V2RayClientTransport = (*Client)(nil)
 
 type Client struct {
+	download   *Client // lx: separate download-only transport, nil for the legacy path
 	ctx        context.Context
 	dialer     N.Dialer
 	serverAddr M.Socksaddr
@@ -233,7 +234,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		}
 	}
 
-	return &Client{
+	client := &Client{
 		ctx:            ctx,
 		dialer:         dialer,
 		serverAddr:     serverAddr,
@@ -249,7 +250,12 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		realityEnabled: realityEnabled,
 		httpVersion:    version,
 		noGRPCHeader:   options.NoGRPCHeader,
-	}, nil
+	}
+	if err := client.configureDownload(ctx, dialer, options.DownloadSettings); err != nil {
+		client.Close()
+		return nil, err
+	}
+	return client, nil
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
@@ -268,6 +274,15 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	// (fail already released the slot before the error surfaced here) cannot
 	// release twice and drive openUsage negative.
 	release := newXmuxRelease(xmuxClient)
+	if c.download != nil && c.mode != modeStreamOne {
+		down, err := c.download.xmux.getContext(ctx)
+		if err != nil {
+			release.release()
+			return nil, err
+		}
+		down.addOpenUsage(1)
+		release.peer = newXmuxRelease(down)
+	}
 	conn, err := c.dialMode(ctx, sessionID, xmuxClient, release)
 	if err != nil {
 		release.release()
@@ -281,9 +296,12 @@ func (c *Client) dialMode(ctx context.Context, sessionID string, xmuxClient *xmu
 	case modeAuto:
 		// Match Xray's auto resolution (transport/internet/splithttp/dialer.go):
 		// Reality → stream-one; otherwise → packet-up (the most broadly compatible
-		// mode, live-validated against Xray 3x-ui). Xray also picks stream-up when
-		// downloadSettings is present, but we don't support asymmetric transport.
+		// mode, live-validated against Xray 3x-ui). Reality with a separate download
+		// leg uses stream-up, preserving Xray's asymmetric auto-mode contract.
 		if c.realityEnabled {
+			if c.download != nil {
+				return c.dialStreamUp(ctx, sessionID, xmuxClient, release)
+			}
 			return c.dialStreamOne(ctx, sessionID, xmuxClient, release)
 		}
 		return c.dialPacketUp(ctx, sessionID, xmuxClient, release)
@@ -299,6 +317,9 @@ func (c *Client) dialMode(ctx context.Context, sessionID string, xmuxClient *xmu
 }
 
 func (c *Client) Close() error {
+	if c.download != nil {
+		c.download.Close()
+	}
 	c.xmux.Close()
 	return nil
 }
