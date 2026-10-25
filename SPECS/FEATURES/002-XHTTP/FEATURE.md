@@ -223,18 +223,23 @@ XTLS/Xray-core#6376), секция хотя бы с одним полем бер
 - **Только клиент.** Серверную сторону форк не реализует.
 - **Паддинг вне obfs-режима намеренно минимален** — сохраняется совместимость
   со старым поведением Xray.
-- **Не поддерживаются:** `downloadSettings` Xray (download по другому адресу
-  или версии), `finalmask.quicParams` (параметры QUIC задаются как у Xray
+- **В draft-задаче [139](../../TASKS/139-XHTTP_INDEPENDENT_DOWNLOAD/SPEC.md):** независимый download по другому адресу, TLS и версии HTTP; в стабильном выпуске пока не заявлен.
+- **Не поддерживаются:** `finalmask.quicParams` (параметры QUIC задаются как у Xray
   по умолчанию, контроль перегрузки — Cubic, у Xray BBR), ECH на HTTP/3
   (узел грузится, dial отвечает ошибкой), сырые pipelined upload-POST'ы
   HTTP/1.1 без чтения ответов.
 - **Служебный паддинг, вставляемый сервером в `stream-up`, не вычищается** —
   если целевой сервер его шлёт, поведение нужно проверять отдельно.
 
+### Независимый download (draft)
+
+Контракт и ограничения — [139](../../TASKS/139-XHTTP_INDEPENDENT_DOWNLOAD/SPEC.md). Расширение существующей клиентской фичи; согласование владельца и полная приёмка открыты. При `auto`+REALITY с отдельным download выбирается `stream-up`.
+
 ## Задачи фичи
 
 | Задача | Роль | Статус |
 |--------|------|--------|
+| [139 — XHTTP_INDEPENDENT_DOWNLOAD](../../TASKS/139-XHTTP_INDEPENDENT_DOWNLOAD/SPEC.md) | Независимый endpoint/TLS/dialer/XMUX; draft, полная приёмка открыта | W |
 | [002 — XHTTP_CLIENT_TRANSPORT](../../TASKS/002-XHTTP_CLIENT_TRANSPORT/SPEC.md) | Транспорт целиком: режимы, размещения, паддинг, темп | C |
 | [011 — XHTTP_STREAM_ONE_DOWNLINK](../../TASKS/011-XHTTP_STREAM_ONE_DOWNLINK/SPEC.md) | Маршрутизация `stream-one` и выбор режима при REALITY | C |
 | [042 — XHTTP_STREAM_GRPC_CONTENT_TYPE](../../TASKS/042-XHTTP_STREAM_GRPC_CONTENT_TYPE/SPEC.md) | Тип контента на потоковых запросах | C |
