@@ -314,11 +314,159 @@ func TestFinishClosesRunningStages(t *testing.T) {
 	if len(again.Stages) != 2 || again.RootCause != tcp.ID() || stageByID(again, tcp.ID()).Result != Failed {
 		t.Fatalf("Finish must be idempotent: %+v", again)
 	}
-	// nil cause → "canceled"
+	// nil cause = the path completed: leftovers are Skipped/unfinished, not a root
 	trace3 := New(Options{})
-	_, s := Begin(With(context.Background(), trace3), "dial", "x")
-	if got := stageByID(trace3.Finish(nil), s.ID()).Error; got != "canceled" {
-		t.Fatalf("nil cause must read canceled, got %q", got)
+	ctx3 := With(context.Background(), trace3)
+	_, s := Begin(ctx3, "dial", "x")
+	_, ok := Begin(ctx3, "http", "y")
+	ok.End(nil)
+	summary3 := trace3.Finish(nil)
+	left := stageByID(summary3, s.ID())
+	if left.Result != Skipped || left.Error != "" {
+		t.Fatalf("leftover on nil cause must be Skipped without error, got %+v", left)
+	}
+	if reason, _ := attrOf(left, "reason"); reason != "unfinished" {
+		t.Fatalf("leftover must carry reason=unfinished, got %+v", left)
+	}
+	if summary3.RootCause != 0 {
+		t.Fatalf("a completed path has no root cause, got %d", summary3.RootCause)
+	}
+}
+
+// Finish closes every leftover with one shared end time, so among unfinished
+// stages the deepest one is the root (SPEC 139 §5.11), not the one with the
+// lowest id.
+func TestFinishTimeoutRootIsDeepest(t *testing.T) {
+	trace := New(Options{})
+	ctx := With(context.Background(), trace)
+	_, shallow := Begin(ctx, "first_byte", "target") // id 1, depth 0, begun first
+	ctx1, dial := Begin(ctx, "dial", "node")         // id 2, depth 0
+	ctx2, detour := Begin(ctx1, "detour", "hop")     // id 3, depth 1
+	_, tcp := Begin(ctx2, "tcp_connect", "1.2.3.4")  // id 4, depth 2
+	summary := trace.Finish(errors.New("timeout"))
+	for _, id := range []uint32{shallow.ID(), dial.ID(), detour.ID(), tcp.ID()} {
+		if got := stageByID(summary, id); got.Result != Failed || got.Error != "timeout" {
+			t.Fatalf("stage %d = %+v, want Failed/timeout", id, got)
+		}
+	}
+	if summary.RootCause != tcp.ID() {
+		t.Fatalf("root = %d, want the deepest unfinished stage %d", summary.RootCause, tcp.ID())
+	}
+}
+
+// Begin/End from many goroutines while Finish runs: no send on a closed
+// channel, no panic, and every stage ends up closed.
+func TestFinishRacesEmitNoPanic(t *testing.T) {
+	for iteration := 0; iteration < 200; iteration++ {
+		trace := New(Options{Emit: func(StageSnapshot) {}})
+		ctx := With(context.Background(), trace)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for g := 0; g < 8; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				for i := 0; i < 20; i++ {
+					c, s := Begin(ctx, "tcp_connect", strconv.Itoa(i))
+					_, child := Begin(c, "tls", "x")
+					child.LostRace(s)
+					if i%2 == 0 {
+						s.End(nil)
+					} else {
+						s.End(errors.New("boom"))
+					}
+				}
+			}()
+		}
+		close(start)
+		summary := trace.Finish(errors.New("timeout"))
+		wg.Wait()
+		again := trace.Finish(nil)
+		if len(again.Stages) != len(summary.Stages) {
+			t.Fatalf("Finish must be idempotent: %d vs %d stages", len(again.Stages), len(summary.Stages))
+		}
+		for _, s := range again.Stages {
+			if s.Result == Running {
+				t.Fatalf("stage %d still running after Finish", s.ID)
+			}
+		}
+	}
+}
+
+// Ends the emitter could not queue are reported in Summary.Dropped, so the
+// union of what was streamed and what Finish returns covers every stage.
+func TestDroppedEndSnapshotsReported(t *testing.T) {
+	release := make(chan struct{})
+	var access sync.Mutex
+	streamed := make(map[uint32]bool)
+	trace := New(Options{MaxStages: 1000, Emit: func(snapshot StageSnapshot) {
+		<-release // the consumer is stuck: the queue fills and drops
+		if snapshot.Result != Running {
+			access.Lock()
+			streamed[snapshot.ID] = true
+			access.Unlock()
+		}
+	}})
+	ctx := With(context.Background(), trace)
+	for i := 0; i < 1000; i++ {
+		_, s := Begin(ctx, "dns", strconv.Itoa(i))
+		s.End(nil)
+	}
+	close(release)
+	summary := trace.Finish(nil)
+	if len(summary.Dropped) == 0 {
+		t.Fatal("2000 snapshots through a 1024 queue must drop some ends")
+	}
+	access.Lock()
+	defer access.Unlock()
+	dropped := make(map[uint32]bool, len(summary.Dropped))
+	for _, s := range summary.Dropped {
+		if s.Result == Running {
+			t.Fatalf("Dropped must hold final snapshots, got %+v", s)
+		}
+		if streamed[s.ID] {
+			t.Fatalf("stage %d was streamed and is also in Dropped", s.ID)
+		}
+		dropped[s.ID] = true
+	}
+	for _, s := range summary.Stages {
+		if !streamed[s.ID] && !dropped[s.ID] {
+			t.Fatalf("stage %d end was neither streamed nor reported dropped", s.ID)
+		}
+	}
+	// without an emitter there is nothing to drop
+	if d := New(Options{}).Finish(nil).Dropped; len(d) != 0 {
+		t.Fatalf("no emitter → no Dropped, got %d", len(d))
+	}
+}
+
+// Nested selectors unfold through Options.Outbounds when the ctx carries no
+// service registry (the handler's stream ctx), and RouteRecorded tells the
+// handler that the route stage exists.
+func TestRoutedUnfoldsViaOptionsOutbounds(t *testing.T) {
+	leaf := &testOutbound{tag: "vless-nl", typ: C.TypeVLESS}
+	inner := &testOutbound{tag: "eu", typ: C.TypeSelector, now: "vless-nl"}
+	outer := &testOutbound{tag: "proxy", typ: C.TypeSelector, now: "eu"}
+	manager := &testOutboundManager{outbounds: map[string]adapter.Outbound{"vless-nl": leaf, "eu": inner, "proxy": outer}}
+	trace := New(Options{Depth: DepthHTTP, Outbounds: manager})
+	ctx := With(context.Background(), trace) // no service.ContextWith: like the gRPC stream ctx
+	if trace.RouteRecorded() {
+		t.Fatal("RouteRecorded before Routed")
+	}
+	Routed(ctx, &adapter.InboundContext{Destination: M.ParseSocksaddrHostPort("example.com", 443)}, nil, outer)
+	if !trace.RouteRecorded() {
+		t.Fatal("RouteRecorded must be true after Routed")
+	}
+	summary := trace.Finish(nil)
+	if len(summary.Stages) != 3 {
+		t.Fatalf("expected route + 2 group stages, got %+v", summary.Stages)
+	}
+	if sel, _ := attrOf(summary.Stages[1], "selected"); summary.Stages[1].Subject != "proxy" || sel != "eu" {
+		t.Fatalf("outer group: %+v", summary.Stages[1])
+	}
+	if sel, _ := attrOf(summary.Stages[2], "selected"); summary.Stages[2].Subject != "eu" || sel != "vless-nl" {
+		t.Fatalf("inner group: %+v", summary.Stages[2])
 	}
 }
 

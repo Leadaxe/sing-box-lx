@@ -99,12 +99,21 @@ type connectionTest struct {
 	routeSeen  atomic.Bool
 	pathFailed atomic.Bool // a top-level route/dial failure: later HTTP stages are skipped, not failed
 
-	dialDone     chan struct{} // closed once the first-hop dial ended OK (DEPTH_CONNECT stop)
-	dialDoneOnce sync.Once
-	routeDone    chan struct{} // closed once the router reported the connection closed
-	routeAccess  sync.Mutex
-	routeClosed  bool
-	routeErr     error
+	// first_byte begins once BOTH the request has been written and the
+	// first-hop dial has ended OK: on the router path the request is written
+	// into the pipe (and consumed by the sniffer) before the route runs, so
+	// httptrace alone would start the stage before the path is up.
+	requestWritten atomic.Bool
+	dialFinished   atomic.Bool
+
+	dialDone      chan struct{} // closed once the first-hop dial ended OK (DEPTH_CONNECT stop)
+	dialDoneOnce  sync.Once
+	routeDone     chan struct{} // closed once the router reported the connection closed
+	routeDoneOnce sync.Once
+	routeCalls    atomic.Int32 // RouteConnectionEx calls; the HTTP client may ask to redial (GOAWAY, REFUSED_STREAM)
+	routeAccess   sync.Mutex
+	routeClosed   bool
+	routeErr      error
 
 	httpAccess     sync.Mutex
 	tlsStage       *lxtrace.Stage // running target_tls, nil once ended
@@ -352,20 +361,31 @@ func (t *connectionTest) nodeType(tag string) string {
 // synthesizeAfterDial adds what the pipeline cannot report about a finished
 // dial/detour stage (PLAN §2.7): a NO_ACK proxy_header child for protocols
 // whose header the server never confirms, and a class attribute for the
-// external modules whose QUIC and auth steps happen in one call.
-func (t *connectionTest) synthesizeAfterDial(ctx context.Context, snapshot lxtrace.StageSnapshot, target string) {
+// external modules whose QUIC and auth steps happen in one call. The header
+// target is the hop's own destination: the test's target for the first hop,
+// the address handed to a detour for a detour (its `destination` attr). The
+// first hop sends its header with the first payload, so at DEPTH_CONNECT,
+// where there is none, it has no header (SPEC 139 §7); a detour's header is
+// part of setting the tunnel up and exists at every depth that dials. The
+// stage has already ended when this runs, so attributes added to it would
+// miss the snapshot on the stream: they are returned and merged into the
+// outgoing snapshot by the caller.
+func (t *connectionTest) synthesizeAfterDial(ctx context.Context, snapshot lxtrace.StageSnapshot, target string, firstHop bool) []lxtrace.Attr {
 	nodeType := t.nodeType(snapshot.Subject)
 	if nodeType == "" {
-		return
+		return nil
 	}
 	stage := t.trace().Stage(snapshot.ID)
 	if stage == nil {
-		return
+		return nil
 	}
 	switch nodeType {
 	case C.TypeVLESS, C.TypeVMess, C.TypeTrojan, C.TypeShadowsocks:
-		if snapshot.Result != lxtrace.OK {
-			return
+		if snapshot.Result != lxtrace.OK || target == "" {
+			return nil
+		}
+		if firstHop && t.depth != lxtrace.DepthHTTP {
+			return nil
 		}
 		_, header := lxtrace.Begin(lxtrace.WithStage(ctx, stage), stageProxyHeader, target)
 		header.Attr("protocol", nodeType)
@@ -373,14 +393,26 @@ func (t *connectionTest) synthesizeAfterDial(ctx context.Context, snapshot lxtra
 		header.Mark(lxtrace.NoAck)
 	case C.TypeHysteria2, C.TypeTUIC, C.TypeNaive:
 		if snapshot.Result != lxtrace.Failed {
-			return
+			return nil
 		}
+		class := lxtrace.Attr{Key: "class", Value: "quic"}
 		if isAuthError(snapshot.Error) {
-			stage.Attr("class", "auth")
-		} else {
-			stage.Attr("class", "quic")
+			class.Value = "auth"
+		}
+		stage.Attr(class.Key, class.Value) // for Summary.Stages
+		return []lxtrace.Attr{class}
+	}
+	return nil
+}
+
+// snapshotAttr returns the value of an attribute of a stage snapshot.
+func snapshotAttr(snapshot lxtrace.StageSnapshot, key string) string {
+	for _, attr := range snapshot.Attrs {
+		if attr.Key == key {
+			return attr.Value
 		}
 	}
+	return ""
 }
 
 func isAuthError(text string) bool {

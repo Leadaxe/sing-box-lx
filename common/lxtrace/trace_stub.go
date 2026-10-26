@@ -55,6 +55,7 @@ type Summary struct {
 	Stages    []StageSnapshot
 	RootCause uint32
 	Truncated bool
+	Dropped   []StageSnapshot
 }
 
 type Options struct {
@@ -63,6 +64,7 @@ type Options struct {
 	Depth     Depth
 	MaxStages int
 	Emit      func(StageSnapshot)
+	Outbounds adapter.OutboundManager
 }
 
 const DefaultMaxStages = 512
@@ -107,8 +109,12 @@ func IsProbe(ctx context.Context) bool { return false }
 
 func DepthOf(ctx context.Context) Depth { return DepthHTTP }
 
+func OutboundsOf(ctx context.Context) adapter.OutboundManager { return nil }
+
 func Routed(ctx context.Context, metadata *adapter.InboundContext, rule adapter.Rule, outbound adapter.Outbound) bool {
 	return false
 }
 
 func (t *Trace) Finish(cause error) Summary { return Summary{} }
+
+func (t *Trace) RouteRecorded() bool { return false }

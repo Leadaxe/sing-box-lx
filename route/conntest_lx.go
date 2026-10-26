@@ -12,6 +12,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxtrace"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -26,14 +27,21 @@ func closeRoutedLx(conn io.Closer, onClose N.CloseHandlerFunc) {
 	}
 }
 
-// beginDialLx opens the `dial` stage of the first hop: the outbound the
-// route selected, dialing the final destination.
+// beginDialLx opens the `dial` stage of the first hop: the node the route
+// selected, dialing the final destination. A selector is followed through
+// Now() to the node it currently points at (SPEC 139 §4, Appendix A: `group
+// proxy → vless-nl`, then `dial vless-nl`); the groups passed on the way are
+// the `via_group` attribute. A urltest/failover/round_robin group keeps its
+// own tag: its pick is per connection and is named by the `group` stage the
+// group writes under this dial.
 func beginDialLx(ctx context.Context, this N.Dialer, metadata *adapter.InboundContext) (context.Context, *lxtrace.Stage) {
 	if lxtrace.From(ctx) == nil {
 		return ctx, nil
 	}
 	var tag, outboundType string
+	var viaGroups []string
 	if outbound, isOutbound := this.(adapter.Outbound); isOutbound {
+		outbound, viaGroups = resolveSelectorsLx(ctx, outbound)
 		tag = outbound.Tag()
 		outboundType = outbound.Type()
 	}
@@ -41,9 +49,35 @@ func beginDialLx(ctx context.Context, this N.Dialer, metadata *adapter.InboundCo
 	if outboundType != "" {
 		stage.Attr("type", outboundType)
 	}
+	if len(viaGroups) > 0 {
+		stage.Attr("via_group", strings.Join(viaGroups, ","))
+	}
 	stage.Attr("destination", metadata.Destination.String())
 	if len(metadata.DestinationAddresses) > 0 {
 		stage.Attr("addresses", strings.Join(common.Map(metadata.DestinationAddresses, netip.Addr.String), ","))
 	}
 	return ctx, stage
+}
+
+// resolveSelectorsLx follows nested selectors to the outbound they point at
+// right now and returns the chain of group tags passed. Any other group, or
+// a selector whose pick is unknown to the manager, is returned as is.
+func resolveSelectorsLx(ctx context.Context, outbound adapter.Outbound) (adapter.Outbound, []string) {
+	var via []string
+	manager := lxtrace.OutboundsOf(ctx)
+	seen := make(map[string]bool)
+	for outbound.Type() == C.TypeSelector && manager != nil && !seen[outbound.Tag()] {
+		group, isGroup := outbound.(adapter.OutboundGroup)
+		if !isGroup {
+			break
+		}
+		seen[outbound.Tag()] = true
+		next, loaded := manager.Outbound(group.Now())
+		if !loaded {
+			break
+		}
+		via = append(via, outbound.Tag())
+		outbound = next
+	}
+	return outbound, via
 }

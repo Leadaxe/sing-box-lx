@@ -85,10 +85,11 @@ func (t *connectionTest) run(stream grpc.ServerStreamingServer[ConnectionTestPro
 	ctx, cancel := context.WithCancelCause(timeoutCtx)
 	defer cancel(nil)
 	t.tr = lxtrace.New(lxtrace.Options{
-		Fresh: t.fresh,
-		Probe: true,
-		Depth: t.depth,
-		Emit:  t.emit,
+		Fresh:     t.fresh,
+		Probe:     true,
+		Depth:     t.depth,
+		Emit:      t.emit,
+		Outbounds: t.instance.outboundManager, // the stream ctx carries no service registry
 	})
 	ctx = lxtrace.With(ctx, t.tr)
 	t.ctx = ctx
@@ -110,10 +111,23 @@ func (t *connectionTest) run(stream grpc.ServerStreamingServer[ConnectionTestPro
 	}
 	summary := t.tr.Finish(cause)
 	result.RootCause = summary.RootCause
+	if result.HttpStatus != 0 {
+		// The path was completed (§3.2): a stage still open when the response
+		// arrived (a lost race ending late, a detour unwinding) is not a cause.
+		result.RootCause = 0
+	}
 	result.StagesTruncated = summary.Truncated
 	result.ElapsedMs = clampRttMs(time.Since(t.started))
 	if t.sendFailed.Load() {
 		return nil
+	}
+	// The emitter has stopped; stage ends it could not queue go out now, on
+	// this goroutine, before the result, so the client's tree is complete.
+	for _, snapshot := range summary.Dropped {
+		err := stream.Send(&ConnectionTestProgress{Event: &ConnectionTestProgress_Stage{Stage: connectionTestStageToProto(snapshot)}})
+		if err != nil {
+			return nil
+		}
 	}
 	return sendConnectionTestResult(stream, result)
 }
@@ -212,10 +226,14 @@ func (t *connectionTest) detourType() string {
 }
 
 // runViaNode is the GetURLViaOutbound path plus the trace: the node's
-// DialContext inside a `dial` stage, then the test's HTTP client.
+// DialContext inside a `dial` stage, then the test's HTTP client. The dial
+// runs on the test ctx, not on the ctx net/http hands to DialContext: that
+// one has its cancellation stripped and is cancelled later by
+// CloseIdleConnections, which would turn a timeout into a misfiled
+// "context canceled" / lost_race (§5.11 wants FAILED/timeout).
 func (t *connectionTest) runViaNode(ctx context.Context, destination M.Socksaddr, result *ConnectionTestResult) {
-	dial := func(dialCtx context.Context) (net.Conn, error) {
-		stageCtx, stage := lxtrace.Begin(dialCtx, stageDial, t.detourTag)
+	dial := func(context.Context) (net.Conn, error) {
+		stageCtx, stage := lxtrace.Begin(ctx, stageDial, t.detourTag)
 		stage.Attr("type", t.detourType())
 		stage.Attr("destination", destination.String())
 		conn, err := t.detour.DialContext(stageCtx, N.NetworkTCP, destination)
@@ -246,6 +264,12 @@ func (t *connectionTest) runViaRouter(ctx context.Context, destination M.Socksad
 	metadata := t.metadata
 	metadata.Destination = destination
 	route := func(context.Context) (net.Conn, error) {
+		if t.routeCalls.Add(1) > 1 {
+			// net/http retries on a new connection after GOAWAY or
+			// REFUSED_STREAM. One routed connection per test: a second route
+			// would write a second route stage and a second onClose.
+			return nil, E.New("connection test: the HTTP client asked for a second connection; one routed connection per test")
+		}
 		clientConn, serverConn := net.Pipe()
 		t.conns.add(clientConn)
 		t.conns.add(serverConn)
@@ -300,7 +324,7 @@ func (t *connectionTest) onRouteClosed(err error) {
 	if err != nil {
 		t.pathFailed.Store(true)
 	}
-	close(t.routeDone)
+	t.routeDoneOnce.Do(func() { close(t.routeDone) })
 }
 
 // recordRouteError writes the route refusal as a FAILED `route` stage when
@@ -311,7 +335,7 @@ func (t *connectionTest) recordRouteError(ctx context.Context, destination M.Soc
 	t.routeAccess.Lock()
 	err := t.routeErr
 	t.routeAccess.Unlock()
-	if err == nil || t.routeSeen.Load() {
+	if err == nil || t.routeSeen.Load() || t.tr.RouteRecorded() {
 		return
 	}
 	_, stage := lxtrace.Begin(ctx, stageRoute, destination.String())
@@ -434,23 +458,30 @@ func (t *connectionTest) runHTTP(ctx context.Context, result *ConnectionTestResu
 	result.ContentType = httpResponse.Header.Get("Content-Type")
 }
 
+// beginFirstByte opens the first_byte stage once the request is written and
+// the first-hop dial has ended OK (see requestWritten/dialFinished). Called
+// from httptrace.WroteRequest and from observe on the dial's end; whichever
+// comes second opens the stage.
+func (t *connectionTest) beginFirstByte(ctx context.Context) {
+	if t.depth != lxtrace.DepthHTTP || !t.requestWritten.Load() || !t.dialFinished.Load() {
+		return
+	}
+	t.httpAccess.Lock()
+	defer t.httpAccess.Unlock()
+	if t.httpBegun[stageFirstByte] {
+		return
+	}
+	_, t.firstByteStage = lxtrace.Begin(ctx, stageFirstByte, t.host)
+	t.httpBegun[stageFirstByte] = true
+}
+
 // clientTrace maps the HTTP client's progress to the target_tls, first_byte
 // and http stages. The callbacks run on the transport's goroutines.
 func (t *connectionTest) clientTrace(ctx context.Context) *httptrace.ClientTrace {
-	beginFirstByte := func() {
-		t.httpAccess.Lock()
-		defer t.httpAccess.Unlock()
-		if t.httpBegun[stageFirstByte] {
-			return
-		}
-		_, t.firstByteStage = lxtrace.Begin(ctx, stageFirstByte, t.host)
-		t.httpBegun[stageFirstByte] = true
-	}
 	return &httptrace.ClientTrace{
-		GotConn: func(httptrace.GotConnInfo) {
-			if !t.https {
-				beginFirstByte()
-			}
+		WroteRequest: func(httptrace.WroteRequestInfo) {
+			t.requestWritten.Store(true)
+			t.beginFirstByte(ctx)
 		},
 		TLSHandshakeStart: func() {
 			t.httpAccess.Lock()
@@ -481,9 +512,6 @@ func (t *connectionTest) clientTrace(ctx context.Context) *httptrace.ClientTrace
 				}
 			}
 			t.httpAccess.Unlock()
-			if err == nil {
-				beginFirstByte()
-			}
 		},
 		GotFirstResponseByte: func() {
 			t.httpAccess.Lock()
@@ -491,6 +519,14 @@ func (t *connectionTest) clientTrace(ctx context.Context) *httptrace.ClientTrace
 			if t.firstByteStage != nil {
 				t.firstByteStage.End(nil)
 				t.firstByteStage = nil
+			} else if !t.httpBegun[stageFirstByte] {
+				// The response came before the dial's end was observed (or no
+				// top-level dial stage exists, e.g. a truncated trace): the
+				// stage is recorded without a measured wait.
+				_, stage := lxtrace.Begin(ctx, stageFirstByte, t.host)
+				stage.Attr("start", "late")
+				stage.End(nil)
+				t.httpBegun[stageFirstByte] = true
 			}
 			if !t.httpBegun[stageHTTP] {
 				_, t.httpStage = lxtrace.Begin(ctx, stageHTTP, t.link.String())
@@ -508,12 +544,21 @@ func (t *connectionTest) clientTrace(ctx context.Context) *httptrace.ClientTrace
 func (t *connectionTest) finishHTTPFailure(ctx context.Context, err error) {
 	t.waitRouteClosed(200 * time.Millisecond)
 	pathFailed := t.pathFailed.Load()
+	// On a timeout or cancel the HTTP client returns before the pipeline has
+	// unwound: a dial may still be in flight and pathFailed not yet set. The
+	// running stages are then left to Finish, which closes them FAILED with
+	// the cause so the deepest one is the root (§5.11); the stages that never
+	// began are SKIPPED, not FAILED with the client's ctx error.
+	timedOut := ctx.Err() != nil && !pathFailed
 
 	t.httpAccess.Lock()
 	defer t.httpAccess.Unlock()
 	failed := false
 	closeRunning := func(stage *lxtrace.Stage, stageErr error) {
 		if stage == nil {
+			return
+		}
+		if timedOut {
 			return
 		}
 		if pathFailed {
@@ -544,7 +589,7 @@ func (t *connectionTest) finishHTTPFailure(ctx context.Context, err error) {
 		_, stage := lxtrace.Begin(ctx, kind, subject)
 		stage.Mark(lxtrace.Skipped)
 	}
-	if !pathFailed && !failed {
+	if !pathFailed && !failed && !timedOut {
 		// Nothing of the path and nothing of the exchange carries the error
 		// yet (e.g. a client-side failure before any dial): the http stage does.
 		if !t.httpBegun[stageHTTP] {
@@ -565,7 +610,7 @@ func (t *connectionTest) finishHTTPFailure(ctx context.Context, err error) {
 // forwards the snapshot to the stream. Only this goroutine sends stages, and
 // the result is sent after Finish has stopped it, so Send is never concurrent.
 func (t *connectionTest) emit(snapshot lxtrace.StageSnapshot) {
-	t.observe(snapshot)
+	snapshot = t.observe(snapshot)
 	if t.sendFailed.Load() {
 		return
 	}
@@ -576,9 +621,13 @@ func (t *connectionTest) emit(snapshot lxtrace.StageSnapshot) {
 	}
 }
 
-func (t *connectionTest) observe(snapshot lxtrace.StageSnapshot) {
+// observe returns the snapshot to send, with the attributes synthesis added
+// to an already-ended stage merged in. Synthesis runs BEFORE dialDone is
+// closed: the handler finishes the trace once dialDone is closed, so any
+// stage synthesized after that point would race Finish.
+func (t *connectionTest) observe(snapshot lxtrace.StageSnapshot) lxtrace.StageSnapshot {
 	if snapshot.Result == lxtrace.Running {
-		return
+		return snapshot
 	}
 	switch snapshot.Kind {
 	case stageRoute:
@@ -587,22 +636,32 @@ func (t *connectionTest) observe(snapshot lxtrace.StageSnapshot) {
 			t.pathFailed.Store(true)
 		}
 	case stageDial, stageDetour:
-		if snapshot.Parent == 0 {
-			if snapshot.Result == lxtrace.Failed {
-				t.pathFailed.Store(true)
-			}
-			if snapshot.Kind == stageDial && snapshot.Result == lxtrace.OK {
-				t.dialDoneOnce.Do(func() { close(t.dialDone) })
-			}
+		if snapshot.Parent == 0 && snapshot.Result == lxtrace.Failed {
+			t.pathFailed.Store(true)
 		}
 		t.httpAccess.Lock()
 		already := t.synthesized[snapshot.ID]
 		t.synthesized[snapshot.ID] = true
 		t.httpAccess.Unlock()
 		if !already {
-			t.synthesizeAfterDial(t.ctx, snapshot, t.target)
+			// The header target is the hop's own destination (SPEC 139 §4):
+			// the test's target for the first hop, the address handed to the
+			// detour for a detour.
+			target, firstHop := t.target, true
+			if snapshot.Kind == stageDetour {
+				target, firstHop = snapshotAttr(snapshot, "destination"), false
+			}
+			if extra := t.synthesizeAfterDial(t.ctx, snapshot, target, firstHop); len(extra) > 0 {
+				snapshot.Attrs = append(append([]lxtrace.Attr(nil), snapshot.Attrs...), extra...)
+			}
+		}
+		if snapshot.Parent == 0 && snapshot.Kind == stageDial && snapshot.Result == lxtrace.OK {
+			t.dialFinished.Store(true)
+			t.beginFirstByte(t.ctx)
+			t.dialDoneOnce.Do(func() { close(t.dialDone) })
 		}
 	}
+	return snapshot
 }
 
 func connectionTestStageToProto(snapshot lxtrace.StageSnapshot) *ConnectionTestStage {

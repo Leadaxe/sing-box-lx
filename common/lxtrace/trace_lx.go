@@ -66,6 +66,11 @@ type Summary struct {
 	Stages    []StageSnapshot
 	RootCause uint32 // id of the root-cause stage; 0 when nothing failed
 	Truncated bool   // the stage cap was hit; the tree is incomplete
+	// Dropped holds the final snapshot of every stage whose end was never
+	// handed to Emit (the queue was full, or the stage ended while Finish
+	// was closing the queue). The handler resends them before the result,
+	// so the client's tree is complete even when the stream fell behind.
+	Dropped []StageSnapshot
 }
 
 // Options configure a trace for one test.
@@ -75,6 +80,9 @@ type Options struct {
 	Depth     Depth               // how far the test goes
 	MaxStages int                 // stage cap; 0 → DefaultMaxStages
 	Emit      func(StageSnapshot) // receives every begin/end snapshot; may be nil
+	// Outbounds lets Routed unfold nested selectors when the ctx the test
+	// runs on carries no service registry (the gRPC stream ctx does not).
+	Outbounds adapter.OutboundManager
 }
 
 // DefaultMaxStages is the stage cap of a test (SPEC 139 §5.15).
@@ -91,11 +99,13 @@ type Trace struct {
 	opts  Options
 	start time.Time
 
-	access    sync.Mutex
-	stages    []*Stage
-	nextID    uint32
-	truncated uint32
-	finished  bool
+	access     sync.Mutex
+	stages     []*Stage
+	nextID     uint32
+	truncated  uint32
+	finished   bool
+	routed     bool // Routed wrote the route stage
+	emitClosed bool // Finish closed emitQueue; emit must not send any more
 
 	emitQueue chan StageSnapshot
 	emitDone  chan struct{}
@@ -124,6 +134,10 @@ type Stage struct {
 	// lookup stages only: the resolver/domain pair for cycle detection.
 	lookupResolver string
 	lookupDomain   string
+
+	// emittedEnd is set once the end snapshot was handed to the emitter.
+	// Guarded by trace.access, not by access: emit and Finish hold that one.
+	emittedEnd bool
 }
 
 type (
@@ -156,15 +170,26 @@ func (t *Trace) emitLoop() {
 	}
 }
 
-// emit queues a snapshot for the emitter; a full queue drops it (the stage
-// is still in Summary.Stages, so the result loses nothing) rather than
-// blocking the pipeline.
-func (t *Trace) emit(snapshot StageSnapshot) {
+// emit queues a snapshot for the emitter without blocking the pipeline: a
+// full queue drops it. A dropped end snapshot is reported by Finish in
+// Summary.Dropped so the handler can resend it; a dropped RUNNING snapshot is
+// not recovered (the end snapshot carries the whole stage). The send happens
+// under access together with the emitClosed check, so a stage that ends while
+// Finish closes the queue can never send on the closed channel.
+func (t *Trace) emit(s *Stage, snapshot StageSnapshot, final bool) {
 	if t.emitQueue == nil {
+		return
+	}
+	t.access.Lock()
+	defer t.access.Unlock()
+	if t.emitClosed {
 		return
 	}
 	select {
 	case t.emitQueue <- snapshot:
+		if final && s != nil {
+			s.emittedEnd = true
+		}
 	default:
 	}
 }
@@ -276,7 +301,7 @@ func (t *Trace) begin(parent *Stage, kind, subject string) *Stage {
 	}
 	t.stages = append(t.stages, s)
 	t.access.Unlock()
-	t.emit(s.snapshot())
+	t.emit(s, s.snapshot(), false)
 	return s
 }
 
@@ -361,11 +386,20 @@ func (s *Stage) LostRace(winner *Stage) {
 
 // finish closes the stage once; later calls are ignored.
 func (s *Stage) finish(result Result, errText string) {
-	now := time.Now()
+	s.finishAt(result, errText, time.Now(), nil)
+}
+
+// finishAt is finish with an explicit end time (Finish closes every leftover
+// stage with one shared time, so the root-cause tie-break by depth decides
+// among them) and an optional attribute written together with the close.
+func (s *Stage) finishAt(result Result, errText string, now time.Time, extra *Attr) {
 	s.access.Lock()
 	if s.done {
 		s.access.Unlock()
 		return
+	}
+	if extra != nil {
+		s.attrs = append(s.attrs, *extra)
 	}
 	s.done = true
 	s.end = now
@@ -374,7 +408,7 @@ func (s *Stage) finish(result Result, errText string) {
 	s.err = errText
 	snapshot := s.snapshotLocked()
 	s.access.Unlock()
-	s.trace.emit(snapshot)
+	s.trace.emit(s, snapshot, true)
 }
 
 func (s *Stage) snapshot() StageSnapshot {
@@ -410,15 +444,15 @@ func (s *Stage) hasAttr(key string) bool {
 	return false
 }
 
-// Finish closes the trace: every still-running stage ends Failed with the
-// cause ("canceled" for nil), the emitter is drained and stopped, and the
-// summary with the root cause (SPEC 139 §5.2) is returned. Later Begin calls
-// are no-ops. Finish is idempotent; repeated calls return the same summary.
+// Finish closes the trace and returns the summary with the root cause
+// (SPEC 139 §5.2). Every still-running stage is closed with one shared end
+// time: with a cause (timeout, cancel) it ends Failed with that cause, so the
+// deepest unfinished stage becomes the root (§5.11); with a nil cause the
+// path completed and leftovers end Skipped with reason=unfinished, never as
+// a false root. The emitter is drained and stopped; later Begin calls are
+// no-ops. Finish is idempotent; repeated calls return the same summary.
 func (t *Trace) Finish(cause error) Summary {
-	causeText := "canceled"
-	if cause != nil {
-		causeText = cause.Error()
-	}
+	now := time.Now()
 	t.access.Lock()
 	alreadyFinished := t.finished
 	t.finished = true
@@ -428,11 +462,22 @@ func (t *Trace) Finish(cause error) Summary {
 	t.access.Unlock()
 
 	if !alreadyFinished {
-		for _, s := range stages {
-			s.finish(Failed, causeText)
+		if cause != nil {
+			causeText := cause.Error()
+			for _, s := range stages {
+				s.finishAt(Failed, causeText, now, nil)
+			}
+		} else {
+			unfinished := Attr{Key: "reason", Value: "unfinished"}
+			for _, s := range stages {
+				s.finishAt(Skipped, "", now, &unfinished)
+			}
 		}
 		if t.emitQueue != nil {
+			t.access.Lock()
+			t.emitClosed = true
 			close(t.emitQueue)
+			t.access.Unlock()
 			<-t.emitDone
 		}
 	}
@@ -444,8 +489,29 @@ func (t *Trace) Finish(cause error) Summary {
 	for _, s := range stages {
 		summary.Stages = append(summary.Stages, s.snapshot())
 	}
+	if t.emitQueue != nil {
+		t.access.Lock()
+		for _, s := range stages {
+			if !s.emittedEnd {
+				summary.Dropped = append(summary.Dropped, s.snapshot())
+			}
+		}
+		t.access.Unlock()
+	}
 	summary.RootCause = rootCause(stages)
 	return summary
+}
+
+// RouteRecorded reports whether Routed has written the route stage of this
+// trace. The handler reads it synchronously, so a fast first-hop failure
+// cannot make it add a second route stage of its own.
+func (t *Trace) RouteRecorded() bool {
+	if t == nil {
+		return false
+	}
+	t.access.Lock()
+	defer t.access.Unlock()
+	return t.routed
 }
 
 // rootCause implements SPEC 139 §5.2: among Failed stages that did not lose a
@@ -504,6 +570,9 @@ func Routed(ctx context.Context, metadata *adapter.InboundContext, rule adapter.
 	}
 	_, s := Begin(ctx, "route", metadata.Destination.String())
 	if s != nil {
+		t.access.Lock()
+		t.routed = true
+		t.access.Unlock()
 		s.Attr("network", metadata.Network)
 		if rule != nil {
 			s.Attr("rule", rule.String())
@@ -553,7 +622,7 @@ func Routed(ctx context.Context, metadata *adapter.InboundContext, rule adapter.
 			}
 		}
 		s.End(nil)
-		unfoldSelectors(ctx, outbound)
+		unfoldSelectors(ctx, t, outbound)
 	}
 	switch t.opts.Depth {
 	case DepthRoute, DepthDNS:
@@ -590,8 +659,25 @@ func processName(info *adapter.ConnectionOwner) string {
 // Now() through the outbound manager until the first non-selector. Other
 // group types (urltest, failover) record their per-connection choice in
 // their own lx code, so they are not synthesized here.
-func unfoldSelectors(ctx context.Context, outbound adapter.Outbound) {
+// OutboundsOf returns the outbound manager a stage writer may use to follow a
+// group to its node: the one registered in ctx, else the one the test handler
+// passed in Options (the stream ctx carries no service registry). nil without
+// a trace or when neither is known.
+func OutboundsOf(ctx context.Context) adapter.OutboundManager {
+	if manager := service.FromContext[adapter.OutboundManager](ctx); manager != nil {
+		return manager
+	}
+	if t := From(ctx); t != nil {
+		return t.opts.Outbounds
+	}
+	return nil
+}
+
+func unfoldSelectors(ctx context.Context, t *Trace, outbound adapter.Outbound) {
 	manager := service.FromContext[adapter.OutboundManager](ctx)
+	if manager == nil {
+		manager = t.opts.Outbounds
+	}
 	seen := make(map[string]bool)
 	for outbound != nil && outbound.Type() == C.TypeSelector {
 		group, isGroup := outbound.(adapter.OutboundGroup)
