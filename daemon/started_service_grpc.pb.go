@@ -72,6 +72,7 @@ const (
 	StartedService_SetEndpointEnabled_FullMethodName             = "/daemon.StartedService/SetEndpointEnabled"
 	StartedService_GetWireGuardStatus_FullMethodName             = "/daemon.StartedService/GetWireGuardStatus"
 	StartedService_GetTailscaleStatus_FullMethodName             = "/daemon.StartedService/GetTailscaleStatus"
+	StartedService_StartConnectionTest_FullMethodName            = "/daemon.StartedService/StartConnectionTest"
 )
 
 // StartedServiceClient is the client API for StartedService service.
@@ -137,6 +138,7 @@ type StartedServiceClient interface {
 	// endpoint type, so GetOutbounds stays a plain node list.
 	GetWireGuardStatus(ctx context.Context, in *WireGuardStatusRequest, opts ...grpc.CallOption) (*WireGuardEndpointStatus, error)
 	GetTailscaleStatus(ctx context.Context, in *TailscaleStatusRequest, opts ...grpc.CallOption) (*TailscaleEndpointStatus, error)
+	StartConnectionTest(ctx context.Context, in *ConnectionTestRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ConnectionTestProgress], error)
 }
 
 type startedServiceClient struct {
@@ -888,6 +890,25 @@ func (c *startedServiceClient) GetTailscaleStatus(ctx context.Context, in *Tails
 	return out, nil
 }
 
+func (c *startedServiceClient) StartConnectionTest(ctx context.Context, in *ConnectionTestRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ConnectionTestProgress], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &StartedService_ServiceDesc.Streams[21], StartedService_StartConnectionTest_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ConnectionTestRequest, ConnectionTestProgress]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type StartedService_StartConnectionTestClient = grpc.ServerStreamingClient[ConnectionTestProgress]
+
 // StartedServiceServer is the server API for StartedService service.
 // All implementations must embed UnimplementedStartedServiceServer
 // for forward compatibility.
@@ -951,6 +972,7 @@ type StartedServiceServer interface {
 	// endpoint type, so GetOutbounds stays a plain node list.
 	GetWireGuardStatus(context.Context, *WireGuardStatusRequest) (*WireGuardEndpointStatus, error)
 	GetTailscaleStatus(context.Context, *TailscaleStatusRequest) (*TailscaleEndpointStatus, error)
+	StartConnectionTest(*ConnectionTestRequest, grpc.ServerStreamingServer[ConnectionTestProgress]) error
 	mustEmbedUnimplementedStartedServiceServer()
 }
 
@@ -1187,6 +1209,10 @@ func (UnimplementedStartedServiceServer) GetWireGuardStatus(context.Context, *Wi
 
 func (UnimplementedStartedServiceServer) GetTailscaleStatus(context.Context, *TailscaleStatusRequest) (*TailscaleEndpointStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetTailscaleStatus not implemented")
+}
+
+func (UnimplementedStartedServiceServer) StartConnectionTest(*ConnectionTestRequest, grpc.ServerStreamingServer[ConnectionTestProgress]) error {
+	return status.Errorf(codes.Unimplemented, "method StartConnectionTest not implemented")
 }
 func (UnimplementedStartedServiceServer) mustEmbedUnimplementedStartedServiceServer() {}
 func (UnimplementedStartedServiceServer) testEmbeddedByValue()                        {}
@@ -2076,6 +2102,17 @@ func _StartedService_GetTailscaleStatus_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StartedService_StartConnectionTest_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ConnectionTestRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(StartedServiceServer).StartConnectionTest(m, &grpc.GenericServerStream[ConnectionTestRequest, ConnectionTestProgress]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type StartedService_StartConnectionTestServer = grpc.ServerStreamingServer[ConnectionTestProgress]
+
 // StartedService_ServiceDesc is the grpc.ServiceDesc for StartedService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2335,6 +2372,11 @@ var StartedService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "SubscribeDNSQueries",
 			Handler:       _StartedService_SubscribeDNSQueries_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "StartConnectionTest",
+			Handler:       _StartedService_StartConnectionTest_Handler,
 			ServerStreams: true,
 		},
 	},

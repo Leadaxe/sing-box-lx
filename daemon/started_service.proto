@@ -72,6 +72,7 @@ service StartedService {
   // endpoint type, so GetOutbounds stays a plain node list.
   rpc GetWireGuardStatus(WireGuardStatusRequest) returns (WireGuardEndpointStatus) {}
   rpc GetTailscaleStatus(TailscaleStatusRequest) returns (TailscaleEndpointStatus) {}
+  rpc StartConnectionTest(ConnectionTestRequest) returns (stream ConnectionTestProgress) {}
 
   // lx:end lx_command
 }
@@ -912,6 +913,102 @@ message GetURLViaOutboundResponse {
   uint32 elapsedMs = 6;
   string error = 7;
 }
+
+// lx:begin lx_command
+// lx: SPEC 139
+
+// On whose behalf the test runs. All fields are optional; fill those the
+// rules use to tell sources apart on the given platform.
+message ConnectionTestSource {
+  string inbound = 1;      // inbound tag; empty — no inbound
+  string packageName = 2;  // Android
+  int32 uid = 3;           // 0 — not set; on Android derived from packageName when the platform provides a package manager (§7)
+  string processPath = 4;  // desktop
+  string sourceIP = 5;     // router: address of a LAN device
+  string sourceMAC = 6;
+  string authUser = 7;
+}
+
+message ConnectionTestRequest {
+  string link = 1;                      // http/https URL
+  string outboundTag = 2;               // empty — through the router; a tag — directly through that node or endpoint
+  ConnectionTestSource source = 3;
+  bool appDNS = 4;                      // first issue the DNS queries the app would issue
+  string connectIP = 5;                 // connect to this address instead of the DNS answer
+  bool fresh = 6;                       // false — as in operation (cache, live connections); true — everything from scratch
+  ConnectionTestDepth depth = 7;
+  string network = 8;                   // "tcp" (default) or "udp"
+  uint32 timeout = 9;                   // ms; 0 — default 15000; ceiling 60000
+  uint32 maxBytes = 10;                 // as in GetURLViaOutbound: default 256 KiB, ceiling 1 MiB
+  repeated HttpHeaderPair headers = 11;
+}
+
+enum ConnectionTestDepth {
+  DEPTH_HTTP = 0;      // the full path up to the HTTP response
+  DEPTH_DNS = 1;       // only the app's DNS queries (implies appDNS)
+  DEPTH_ROUTE = 2;     // DNS (if appDNS) + rule, group and node selection; nothing is dialed
+  DEPTH_CONNECT = 3;   // up to an established tunnel, no request to the target
+}
+
+message ConnectionTestAttr {
+  string key = 1;
+  string value = 2;
+}
+
+enum ConnectionTestStageResult {
+  STAGE_RUNNING = 0;
+  STAGE_OK = 1;
+  STAGE_FAILED = 2;
+  STAGE_SKIPPED = 3;        // not run: an earlier stage failed or the depth does not reach it
+  STAGE_REUSED = 4;         // not run: something ready was used (cache, live connection, tunnel already up)
+  STAGE_NO_ACK = 5;         // run, but the protocol does not confirm its success
+  STAGE_NOT_EVALUATED = 6;  // not computed: data was missing (e.g. the address is unknown)
+}
+
+message ConnectionTestStage {
+  uint32 id = 1;            // unique within the test, increasing
+  uint32 parent = 2;        // 0 — top-level stage
+  string kind = 3;          // vocabulary — §4
+  string subject = 4;       // what the stage is about: tag, domain, address
+  uint32 startMs = 5;       // since the start of the test
+  uint32 durationMs = 6;
+  ConnectionTestStageResult result = 7;
+  string error = 8;         // the cause as is; empty unless FAILED
+  repeated ConnectionTestAttr attrs = 9;
+}
+
+enum ConnectionTestFindingLevel {
+  FINDING_INFO = 0;
+  FINDING_WARNING = 1;
+  FINDING_PROBLEM = 2;
+}
+
+message ConnectionTestFinding {
+  string code = 1;                      // vocabulary — §6
+  ConnectionTestFindingLevel level = 2;
+  repeated uint32 stages = 3;           // stages it refers to
+  repeated ConnectionTestAttr attrs = 4;
+}
+
+message ConnectionTestResult {
+  string error = 1;         // error of the test itself (invalid request); empty — the test ran
+  uint32 rootCause = 2;     // stage id; 0 — the path was completed
+  repeated ConnectionTestFinding findings = 3;
+  uint32 httpStatus = 4;
+  bytes body = 5;
+  bool truncated = 6;
+  string contentType = 7;
+  uint32 elapsedMs = 8;
+  bool stagesTruncated = 9; // the stage cap (§5.15) was hit; the tree is incomplete
+}
+
+message ConnectionTestProgress {
+  oneof event {
+    ConnectionTestStage stage = 1;    // a new stage (RUNNING) or its completion — same id
+    ConnectionTestResult result = 2;  // the last message of the stream
+  }
+}
+// lx:end lx_command
 
 message Rule {
   string type = 1;
