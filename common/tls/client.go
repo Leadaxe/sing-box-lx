@@ -166,7 +166,9 @@ func NewClientWithOptions(options ClientOptions) (Config, error) {
 }
 
 func ClientHandshake(ctx context.Context, conn net.Conn, config Config) (Conn, error) {
+	ctx, stage := beginHandshakeLx(ctx, config) // lx: SPEC 139
 	tlsConn, err := aTLS.ClientHandshake(ctx, conn, config)
+	endHandshakeLx(stage, tlsConn, err) // lx: SPEC 139
 	if err != nil {
 		return nil, err
 	}

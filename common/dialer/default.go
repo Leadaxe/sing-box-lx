@@ -274,6 +274,7 @@ func (d *DefaultDialer) DialContext(ctx context.Context, network string, address
 		return nil, E.New("domain not resolved")
 	}
 	if d.networkStrategy == nil {
+		stage := beginConnectLx(ctx, network, address) // lx: SPEC 139
 		conn, err := listener.ListenNetworkNamespace[net.Conn](ctx, d.netns, func() (net.Conn, error) {
 			switch N.NetworkName(network) {
 			case N.NetworkUDP:
@@ -289,6 +290,7 @@ func (d *DefaultDialer) DialContext(ctx context.Context, network string, address
 				return DialSlowContext(&d.dialer6, ctx, network, address)
 			}
 		})
+		endConnLx(ctx, stage, conn, err) // lx: SPEC 139
 		return d.trackConn(ctx, address, conn, err)
 	} else {
 		return d.DialParallelInterface(ctx, network, address, d.networkStrategy, d.networkType, d.fallbackNetworkType, d.networkFallbackDelay)
@@ -323,11 +325,13 @@ func (d *DefaultDialer) DialParallelInterface(ctx context.Context, network strin
 		isPrimary bool
 		err       error
 	)
+	stage := beginConnectLx(ctx, network, address) // lx: SPEC 139 — one stage for the whole interface race
 	if !fastFallback {
 		conn, isPrimary, err = d.dialParallelInterface(ctx, dialer, network, address.String(), *strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 	} else {
 		conn, isPrimary, err = d.dialParallelInterfaceFastFallback(ctx, dialer, network, address.String(), *strategy, interfaceType, fallbackInterfaceType, fallbackDelay, d.networkLastFallback.Store)
 	}
+	endConnLx(ctx, stage, conn, err) // lx: SPEC 139
 	if err != nil {
 		// bind interface failed on legacy xiaomi systems
 		if d.defaultNetworkStrategy && errors.Is(err, syscall.EPERM) {
@@ -345,6 +349,7 @@ func (d *DefaultDialer) DialParallelInterface(ctx context.Context, network strin
 
 func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	if d.networkStrategy == nil {
+		stage := beginConnectLx(ctx, N.NetworkUDP, destination) // lx: SPEC 139
 		packetConn, err := listener.ListenNetworkNamespace[net.PacketConn](ctx, d.netns, func() (net.PacketConn, error) {
 			listenConfig := d.udpListener
 			if d.autoDetectBindFunc != nil {
@@ -363,6 +368,7 @@ func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 				return listenConfig.ListenPacket(ctx, N.NetworkUDP, d.udpAddr4)
 			}
 		})
+		endPacketConnLx(ctx, stage, packetConn, err) // lx: SPEC 139
 		return d.trackPacketConn(ctx, destination, packetConn, err)
 	} else {
 		return d.ListenSerialInterfacePacket(ctx, destination, d.networkStrategy, d.networkType, d.fallbackNetworkType, d.networkFallbackDelay)
@@ -397,7 +403,9 @@ func (d *DefaultDialer) ListenSerialInterfacePacket(ctx context.Context, destina
 	if destination.IsIPv4() && !destination.Addr.IsUnspecified() {
 		network += "4"
 	}
+	stage := beginConnectLx(ctx, N.NetworkUDP, destination) // lx: SPEC 139
 	packetConn, err := d.listenSerialInterfacePacket(ctx, d.udpListener, network, "", *strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+	endPacketConnLx(ctx, stage, packetConn, err) // lx: SPEC 139
 	if err != nil {
 		// bind interface failed on legacy xiaomi systems
 		if d.defaultNetworkStrategy && errors.Is(err, syscall.EPERM) {

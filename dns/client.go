@@ -359,6 +359,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 			return nil, nil, exchangeDone, ErrResponseRejectedCached
 		}
 	}
+	operation.ctx = traceExchangeBegin(operation.ctx, transport, question) // lx: SPEC 139
 	return operation, nil, exchangeReady, nil
 }
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/lxtrace" // lx: SPEC 139
 	"github.com/sagernet/sing-box/common/sniff"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -183,6 +184,12 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 		metadata.RouteRule = selectedRule.String()
 	}
 	metadata.RouteOutbound = selectedOutbound.Tag()
+	// lx:begin SPEC 139
+	if lxtrace.Routed(ctx, &metadata, selectedRule, selectedOutbound) {
+		closeRoutedLx(conn, onClose)
+		return nil
+	}
+	// lx:end SPEC 139
 	for _, tracker := range r.trackers {
 		conn = tracker.RoutedConnection(ctx, conn, metadata, selectedRule, selectedOutbound)
 	}
@@ -318,6 +325,12 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 		metadata.RouteRule = selectedRule.String()
 	}
 	metadata.RouteOutbound = selectedOutbound.Tag()
+	// lx:begin SPEC 139
+	if lxtrace.Routed(ctx, &metadata, selectedRule, selectedOutbound) {
+		closeRoutedLx(conn, onClose)
+		return nil
+	}
+	// lx:end SPEC 139
 	for _, tracker := range r.trackers {
 		conn = tracker.RoutedPacketConnection(ctx, conn, metadata, selectedRule, selectedOutbound)
 	}

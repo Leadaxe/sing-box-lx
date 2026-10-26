@@ -243,7 +243,7 @@ func (s *URLTest) selectBalanced(ctx context.Context, network string, destinatio
 		return node
 	})
 	if selected != nil {
-		s.group.lastSelected.Store(selected.Tag())
+		s.group.balancedPicked(ctx, selected) // lx: SPEC 139 — group stage; a probe leaves Now() alone
 	}
 	return selected
 }
@@ -285,7 +285,7 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 		case N.NetworkTCP, N.NetworkUDP:
 			// lx: SPEC 054 — penalty-aware pick: аварийный режим обходит кеш
 			// selectedOutbound*; обычный — апстримная семантика (кеш, иначе Select).
-			outbound = s.group.pickForDial(N.NetworkName(network))
+			outbound = s.group.pickForDial(ctx, N.NetworkName(network)) // lx: SPEC 139 (ctx: group stage)
 		default:
 			return nil, E.Extend(N.ErrUnknownNetwork, network)
 		}
@@ -304,7 +304,7 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 	// lx:end chain
 	if err == nil {
 		if s.balancer == nil {
-			s.group.penaltyReset(RealTag(s.outbound, outbound)) // lx: SPEC 054 — успех = доказательство жизни
+			s.group.penaltyResetOnDial(ctx, RealTag(s.outbound, outbound)) // lx: SPEC 054 — успех = доказательство жизни; SPEC 139 — not for a probe
 		}
 		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
@@ -313,7 +313,7 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 	// unknown (dead node vs. dead destination vs. local network drop). Only the health-check
 	// changes pool membership. least_test keeps the upstream behaviour (drop the history).
 	if s.balancer == nil {
-		s.group.history.DeleteURLTestHistory(outbound.Tag())
+		s.group.deleteHistoryOnDialError(ctx, outbound.Tag()) // lx: SPEC 139 — a probe keeps the history
 		// lx: SPEC 054 — «путь мёртв» → штраф + один fallback-дайл; успех
 		// переносит выбор группы на fallback (без Interrupt).
 		if fbConn, fallback, ok := s.group.penaltyFailoverDial(ctx, N.NetworkName(network), destination, outbound, err); ok {
@@ -332,7 +332,7 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 	} else {
 		// lx: SPEC 054 — общий penalty-aware выбор (штрафы копит только TCP,
 		// UDP ими пользуется).
-		outbound = s.group.pickForDial(N.NetworkUDP)
+		outbound = s.group.pickForDial(ctx, N.NetworkUDP) // lx: SPEC 139 (ctx: group stage)
 	}
 	if outbound == nil {
 		return nil, E.New("missing supported outbound")
@@ -350,7 +350,7 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 	s.logger.ErrorContext(ctx, err)
 	// lx: SPEC 019 v2 — round_robin dial error leaves the pool untouched (see DialContext).
 	if s.balancer == nil {
-		s.group.history.DeleteURLTestHistory(outbound.Tag())
+		s.group.deleteHistoryOnDialError(ctx, outbound.Tag()) // lx: SPEC 139 — a probe keeps the history
 	}
 	return nil, err
 }

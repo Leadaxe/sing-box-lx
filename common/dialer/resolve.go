@@ -100,7 +100,7 @@ func (d *resolveDialer) DialContext(ctx context.Context, network string, destina
 		return d.dialer.DialContext(ctx, network, destination)
 	}
 	ctx = log.ContextWithOverrideLevel(ctx, log.LevelDebug)
-	addresses, err := d.router.Lookup(ctx, destination.Fqdn, d.queryOptions)
+	addresses, err := d.lookupLx(ctx, destination.Fqdn) // lx: SPEC 139 — d.router.Lookup inside a `lookup` stage
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (d *resolveDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 		return d.dialer.ListenPacket(ctx, destination)
 	}
 	ctx = log.ContextWithOverrideLevel(ctx, log.LevelDebug)
-	addresses, err := d.router.Lookup(ctx, destination.Fqdn, d.queryOptions)
+	addresses, err := d.lookupLx(ctx, destination.Fqdn) // lx: SPEC 139 — d.router.Lookup inside a `lookup` stage
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func (d *resolveParallelNetworkDialer) DialParallelInterface(ctx context.Context
 		return d.dialer.DialContext(ctx, network, destination)
 	}
 	ctx = log.ContextWithOverrideLevel(ctx, log.LevelDebug)
-	addresses, err := d.router.Lookup(ctx, destination.Fqdn, d.queryOptions)
+	addresses, err := d.lookupLx(ctx, destination.Fqdn) // lx: SPEC 139 — d.router.Lookup inside a `lookup` stage
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func (d *resolveParallelNetworkDialer) ListenSerialInterfacePacket(ctx context.C
 		return d.dialer.ListenPacket(ctx, destination)
 	}
 	ctx = log.ContextWithOverrideLevel(ctx, log.LevelDebug)
-	addresses, err := d.router.Lookup(ctx, destination.Fqdn, d.queryOptions)
+	addresses, err := d.lookupLx(ctx, destination.Fqdn) // lx: SPEC 139 — d.router.Lookup inside a `lookup` stage
 	if err != nil {
 		return nil, err
 	}

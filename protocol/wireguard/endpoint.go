@@ -652,21 +652,21 @@ func (w *Endpoint) DialContext(ctx context.Context, network string, destination 
 		// lx: SPEC 020 — resolve BEFORE waking: the lookup does not go through this
 		// endpoint (a DNS detour through it re-enters DialContext with an IP and
 		// wakes it itself), so a failed lookup must not pay a full Up+handshake.
-		destinationAddresses, err := w.dnsRouter.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{})
+		destinationAddresses, err := w.lookupLx(ctx, destination.Fqdn) // lx: SPEC 139 — w.dnsRouter.Lookup inside a `lookup` stage
 		if err != nil {
 			return nil, err
 		}
 		if !w.resumeOnDial(ctx) { // lx: SPEC 020 — stamp activity + wake if idle-suspended
 			return nil, w.notReadyError() // lx: SPEC 106
 		}
-		return N.DialSerial(ctx, w.endpoint, network, destination, destinationAddresses)
+		return N.DialSerial(ctx, w.netstackLx(ctx), network, destination, destinationAddresses) // lx: SPEC 139 — upstream: w.endpoint
 	} else if !destination.Addr.IsValid() {
 		return nil, E.New("invalid destination: ", destination)
 	}
 	if !w.resumeOnDial(ctx) { // lx: SPEC 020 — stamp activity + wake if idle-suspended
 		return nil, w.notReadyError() // lx: SPEC 106
 	}
-	return w.endpoint.DialContext(ctx, network, destination)
+	return w.netstackLx(ctx).DialContext(ctx, network, destination) // lx: SPEC 139 — upstream: w.endpoint
 }
 
 func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
@@ -675,14 +675,14 @@ func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination 
 	w.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	if destination.IsDomain() {
 		// lx: SPEC 020 — resolve before waking (see DialContext).
-		destinationAddresses, err := w.dnsRouter.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{})
+		destinationAddresses, err := w.lookupLx(ctx, destination.Fqdn) // lx: SPEC 139 — w.dnsRouter.Lookup inside a `lookup` stage
 		if err != nil {
 			return nil, netip.Addr{}, err
 		}
 		if !w.resumeOnDial(ctx) { // lx: SPEC 020 — stamp activity + wake if idle-suspended
 			return nil, netip.Addr{}, w.notReadyError() // lx: SPEC 106
 		}
-		packetConn, destinationAddress, err := N.ListenSerial(ctx, w.endpoint, destination, destinationAddresses)
+		packetConn, destinationAddress, err := N.ListenSerial(ctx, w.netstackLx(ctx), destination, destinationAddresses) // lx: SPEC 139 — upstream: w.endpoint
 		if err != nil {
 			return nil, netip.Addr{}, err
 		}
@@ -691,7 +691,7 @@ func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination 
 	if !w.resumeOnDial(ctx) { // lx: SPEC 020 — stamp activity + wake if idle-suspended
 		return nil, netip.Addr{}, w.notReadyError() // lx: SPEC 106
 	}
-	packetConn, err := w.endpoint.ListenPacket(ctx, destination)
+	packetConn, err := w.netstackLx(ctx).ListenPacket(ctx, destination) // lx: SPEC 139 — upstream: w.endpoint
 	if err != nil {
 		return nil, netip.Addr{}, err
 	}
