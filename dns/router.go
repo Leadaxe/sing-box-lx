@@ -311,6 +311,7 @@ func (r *Router) matchDNS(ctx context.Context, rules []adapter.DNSRule, allowFak
 			} else {
 				r.logger.DebugContext(ctx, "match[", currentRuleIndex, "] => ", currentRule.Action())
 			}
+			traceDNSRule(ctx, currentRuleIndex, currentRule) // lx: SPEC 139 — legacy mode
 			switch action := currentRule.Action().(type) {
 			case *R.RuleActionDNSRoute:
 				transport, loaded := r.transport.Transport(action.Server)
@@ -431,6 +432,7 @@ func (r *Router) logRuleMatch(ctx context.Context, ruleIndex int, currentRule ad
 	} else {
 		r.logger.DebugContext(ctx, "match[", ruleIndex, "] => ", currentRule.Action())
 	}
+	traceDNSRule(ctx, ruleIndex, currentRule) // lx: SPEC 139
 }
 
 type exchangeWithRulesResult struct {
@@ -771,6 +773,7 @@ func (r *Router) walkDNSRules(ctx context.Context, rules []adapter.DNSRule, mess
 	if len(state.armedRules) > 0 {
 		return exchangeWithRulesResult{}, &dnsWalkSuspension{drain: true}
 	}
+	traceDNSRule(ctx, -1, nil) // lx: SPEC 139 — final
 	return exchangeWithRulesResult{}, &dnsWalkSuspension{pending: &dnsPendingExchange{transport: r.transport.Default(), options: state.effectiveOptions}}
 }
 

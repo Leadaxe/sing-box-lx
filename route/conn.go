@@ -100,11 +100,13 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 		remoteConn net.Conn
 		err        error
 	)
+	ctx, dialStage := beginDialLx(ctx, this, &metadata) // lx: SPEC 139
 	if len(metadata.DestinationAddresses) > 0 || metadata.Destination.IsIP() {
 		remoteConn, err = dialer.DialSerialNetwork(ctx, this, N.NetworkTCP, metadata.Destination, metadata.DestinationAddresses, metadata.NetworkStrategy, metadata.NetworkType, metadata.FallbackNetworkType, metadata.FallbackDelay)
 	} else {
 		remoteConn, err = this.DialContext(ctx, N.NetworkTCP, metadata.Destination)
 	}
+	dialStage.End(err) // lx: SPEC 139
 	if err != nil {
 		var remoteString string
 		if len(metadata.DestinationAddresses) > 0 {
@@ -163,6 +165,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 		destinationAddress netip.Addr
 		err                error
 	)
+	ctx, dialStage := beginDialLx(ctx, this, &metadata) // lx: SPEC 139
 	if metadata.UDPConnect {
 		parallelDialer, isParallelDialer := this.(dialer.ParallelInterfaceDialer)
 		if len(metadata.DestinationAddresses) > 0 {
@@ -180,6 +183,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 		} else {
 			remoteConn, err = this.DialContext(ctx, N.NetworkUDP, metadata.Destination)
 		}
+		dialStage.End(err) // lx: SPEC 139
 		if err != nil {
 			var remoteString string
 			if len(metadata.DestinationAddresses) > 0 {
@@ -209,6 +213,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 		} else {
 			remotePacketConn, err = this.ListenPacket(ctx, metadata.Destination)
 		}
+		dialStage.End(err) // lx: SPEC 139
 		if err != nil {
 			var dialerString string
 			if outbound, isOutbound := this.(adapter.Outbound); isOutbound {
