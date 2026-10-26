@@ -91,20 +91,32 @@ func (b *adoptedBody) Read(p []byte) (int, error) {
 // A raise that lands together with the cancel still wins: the conn is usable,
 // and failing it would only make the caller redial the same node.
 func awaitRaise(ctx context.Context, adopted, created <-chan struct{}, uploadFailed <-chan error, raiseErr func() error) error {
-	select {
-	case <-adopted:
-		return nil
-	case <-created:
-		return raiseErr()
-	case err := <-uploadFailed:
-		return err
-	case <-ctx.Done():
+	// lx: SPEC 077: download headers may arrive before an independent upload.
+	// Only upload adoption completes a successful raise; download failure still aborts it.
+	for {
 		select {
 		case <-adopted:
 			return nil
 		case <-created:
-			return raiseErr()
-		default:
+			if err := raiseErr(); err != nil {
+				return err
+			}
+			created = nil
+		case err := <-uploadFailed:
+			return err
+		case <-ctx.Done():
+			select {
+			case <-adopted:
+				return nil
+			default:
+			}
+			select {
+			case <-created:
+				if err := raiseErr(); err != nil {
+					return err
+				}
+			default:
+			}
 			return ctx.Err()
 		}
 	}
