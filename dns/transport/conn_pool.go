@@ -53,6 +53,8 @@ type connPoolState[T comparable] struct {
 	sharedCancel  context.CancelCauseFunc
 
 	connecting *connPoolConnect[T]
+
+	probeOwned map[T]struct{} // lx: SPEC 139 — connections a connection test opened (conntest_lx.go)
 }
 
 type connPoolConnect[T comparable] struct {
@@ -118,6 +120,7 @@ func (p *ConnPool[T]) Release(conn T, reuse bool) {
 		p.options.Close(conn, net.ErrClosed)
 		return
 	}
+	reuse = reuse && !p.releaseProbeOwnedLx(state, conn) // lx: SPEC 139 — a test's connection is not parked for production
 	if !reuse || !p.options.IsAlive(conn) {
 		p.removeConn(state, conn, net.ErrClosed)
 		p.access.Unlock()
@@ -180,6 +183,7 @@ func (p *ConnPool[T]) releaseSlot() {
 // removeConn must be called with p.access held.
 func (p *ConnPool[T]) removeConn(state *connPoolState[T], conn T, cause error) {
 	delete(state.all, conn)
+	p.forgetProbeOwnedLx(state, conn) // lx: SPEC 139
 	switch p.options.Mode {
 	case ConnPoolSingle:
 		if state.hasShared && state.shared == conn {
@@ -314,6 +318,7 @@ func (p *ConnPool[T]) dialAndInstall(ctx context.Context, current *connPoolState
 		return zero, false, net.ErrClosed
 	}
 	current.all[conn] = struct{}{}
+	p.markProbeOwnedLx(current, ctx, conn) // lx: SPEC 139
 	p.access.Unlock()
 	return conn, true, nil
 }
@@ -416,6 +421,7 @@ func (p *ConnPool[T]) connectSingle(current *connPoolState[T], state *connPoolCo
 		current.sharedCtx = sharedCtx
 		current.sharedCancel = sharedCancel
 		current.all[conn] = struct{}{}
+		p.markProbeOwnedLx(current, ctx, conn) // lx: SPEC 139
 	}
 	p.access.Unlock()
 
