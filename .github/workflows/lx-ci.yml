@@ -142,7 +142,8 @@ jobs:
             -ldflags "-checklinkname=0" \
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd,with_lx_chain" \
             ./common/lxtrace/ ./common/dialer/ ./daemon/ ./experimental/libbox/ \
-            ./dns/ ./protocol/group/ ./protocol/chain/ ./transport/v2rayxhttp/
+            ./dns/ ./dns/transport/ ./protocol/group/ ./protocol/chain/ ./transport/v2rayxhttp/ \
+            ./lx-test/conntest/
 
       # trusttunnel core and adapters (SPEC 133/134): the core's end-to-end
       # tests run client against server in-process over H2 and, with
