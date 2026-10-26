@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/sagernet/sing-box/common/lxtrace"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -86,4 +87,78 @@ func (t *xhttpTrace) response(response *http.Response, err error) {
 		child.Attr("http_status", strconv.Itoa(response.StatusCode))
 	}
 	child.End(err)
+}
+
+// requestContext is the parent of the conn-scoped request context (SPEC 072):
+// parent itself without a trace. With one it is parent — the transport
+// lifetime, so cancellation stays the pool's — plus the trace with the
+// `transport` stage as the current one. The HTTP layer dials a missing
+// connection on the context of the request that needs it (x/net http2
+// dialCall, net/http dialConnFor; HTTP/3 alike), so the TCP and TLS dials of
+// that connection become children of this stage. Only the requests of this
+// conn carry it: a later dial of the same pooled transport made for another
+// conn is that conn's.
+func (t *xhttpTrace) requestContext(parent context.Context) context.Context {
+	if t == nil {
+		return parent
+	}
+	return lxtrace.WithStage(lxtrace.With(parent, lxtrace.From(t.ctx)), t.stage)
+}
+
+// acquire takes the pooled connection for one dial. Without a trace it is
+// c.xmux.getContext. In a connection test:
+//
+//   - fresh=true takes a connection outside the pool, so nothing the test
+//     opened is ever handed to a production dial (SPEC 139 §5.6, §5.14). It is
+//     born retired: the dial's single release (conn Close/fail, or the dial's
+//     error path) tears it down — the deferred close of xmuxClient. It has no
+//     manager, so its breaker cannot arm the pool's backoff either;
+//   - a pooled connection handed out again opens no TCP or TLS, which a REUSED
+//     stage with its age says instead of a missing or zero-length one (§5.3).
+//
+// Without fresh a probe uses the pool like any dial.
+func (t *xhttpTrace) acquire(ctx context.Context, c *Client) (*xmuxClient, error) {
+	if t == nil {
+		return c.xmux.getContext(ctx)
+	}
+	if lxtrace.Fresh(ctx) {
+		t.stage.Attr("pool", "detached")
+		return c.xmux.newDetachedClient(), nil
+	}
+	client, created, err := c.xmux.acquireContext(ctx)
+	if err == nil && !created {
+		t.reused(c, client)
+	}
+	return client, err
+}
+
+// reused records the handshake a pooled transport did not repeat. HTTP/1.1
+// gets none: its long requests (download GET, streamed bodies) each dial their
+// own connection (SPEC 104), and that dial is traced for real. On HTTP/2 a
+// connection the transport lost is redialed silently and then traced too, next
+// to this stage. HTTP/3 reuses a QUIC connection, hence the `quic` kind.
+func (t *xhttpTrace) reused(c *Client, client *xmuxClient) {
+	kind := "tls"
+	switch c.httpVersion {
+	case httpVersion11:
+		return
+	case httpVersion3:
+		kind = "quic"
+	}
+	_, stage := lxtrace.Begin(t.ctx, kind, c.serverName)
+	stage.Attr("reuse", "pooled")
+	stage.Attr("age", strconv.FormatInt(int64(timeNow().Sub(client.createdAt)/time.Second), 10))
+	stage.Mark(lxtrace.Reused)
+}
+
+// newDetachedClient opens a connection that never enters the pool, for a
+// connection-test dial with fresh=true (see xhttpTrace.acquire).
+func (m *xmuxManager) newDetachedClient() *xmuxClient {
+	return &xmuxClient{
+		conn:         m.newConn(),
+		leftUsage:    -1,
+		leftRequests: maxInt32,
+		createdAt:    timeNow(),
+		closed:       true,
+	}
 }

@@ -79,6 +79,9 @@ type Client struct {
 	// noGRPCHeader suppresses the default "Content-Type: application/grpc" on
 	// streamed-body requests (stream-one, stream-up). See option.NoGRPCHeader.
 	noGRPCHeader bool
+	// serverName is the TLS server name, the subject of the REUSED `tls` stage a
+	// connection test records for a pooled transport (lx: SPEC 139).
+	serverName string
 }
 
 // NewClient builds an XHTTP client transport. The tlsConfig (possibly Reality)
@@ -193,6 +196,10 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		logger.Debug("HTTP version ", version)
 	}
 
+	var serverName string // lx: SPEC 139
+	if tlsConfig != nil {
+		serverName = tlsConfig.ServerName()
+	}
 	var host string
 	if options.Host != "" {
 		host = options.Host
@@ -249,6 +256,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		realityEnabled: realityEnabled,
 		httpVersion:    version,
 		noGRPCHeader:   options.NoGRPCHeader,
+		serverName:     serverName,
 	}, nil
 }
 
@@ -259,7 +267,10 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	// and every upload POST of packet-up. It is released once, when the conn
 	// closes — see releaseOnce in conn.go. getContext may wait out the breaker's
 	// backoff window before opening a transport (lx: SPEC 076).
-	xmuxClient, err := c.xmux.getContext(ctx)
+	// lx: SPEC 139 — in a connection test: fresh=true takes a transport outside
+	// the pool, a reused pooled transport gets a REUSED stage. Without a test it
+	// is c.xmux.getContext(ctx).
+	xmuxClient, err := trace.acquire(ctx, c)
 	if err != nil {
 		trace.end(err)
 		return nil, err
