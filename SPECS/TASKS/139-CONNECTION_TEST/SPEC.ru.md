@@ -7,7 +7,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature). RPC — мост §3.6; трасса (`common/lxtrace` и её вставки) — lx-логика, изолированная по CONSTITUTION §3.2–3.3, цена мержа зафиксирована в §10 |
-| Статус | N (new) |
+| Статус | I (implemented) — релиз 1 в `lx` 2026-10-27; см. [IMPLEMENTATION_REPORT.ru.md](IMPLEMENTATION_REPORT.ru.md); релиз 2 не начат |
 | Ветка | `lx` |
 | Связанные | [#59](https://github.com/Leadaxe/sing-box-lx/issues/59) (запрос: DNS через роутер и матч правила — закрывается этой задачей) · [Leadaxe/LxBox#176](https://github.com/Leadaxe/LxBox/issues/176) (экран «Connection Check») · [[SPECS/TASKS/058-GET_URL_VIA_OUTBOUND]] (HTTP-пробник узла — образец модели ошибок и лимитов тела) · [[SPECS/TASKS/018-DNS_QUERY_STREAM]] · [[SPECS/TASKS/035-DNS_GROUP_OBSERVABILITY]] (атрибуция DNS и пробы группы) · [[SPECS/TASKS/017-CONNECTION_DETOUR_CHAIN]] · [[SPECS/TASKS/038-GOMOBILE_STRING_RETURN_FRAME_KILL]] (форма возврата libbox) |
 
@@ -417,14 +417,17 @@ handler и stub в `daemon/*_lx.go`, клиент в `experimental/libbox/*_lx.g
 
 | Файл | Релиз | Вставок |
 |------|------|---------|
-| `route/route.go` | 1 | 1 (`lxtrace.Routed` до трекеров: стадия `route` и останов `DEPTH_ROUTE`) |
-| `route/conn.go` | 1 | 1–2 (`dial` первого хопа вокруг `DialContext` / `DialSerialNetwork`, TCP и UDP) |
-| `common/dialer/default.go`, `detour.go`, `resolve.go` | 1 | по 1–2 |
-| `common/tls/client.go` | 1 | 1 |
-| `dns/router.go` | 1 | 1–3 (сработавшее DNS-правило) |
-| `protocol/wireguard/endpoint.go` | 1 | 2 (`lookup` по правилам и `tcp_connect` внутри туннеля, обе в `DialContext`, рядом с lx-блоками SPEC 020) |
+| `route/route.go` | 1 | 2 блока по 4 строки (`lxtrace.Routed` до трекеров в TCP- и UDP-путях: стадия `route` и останов `DEPTH_ROUTE`) + импорт |
+| `route/conn.go` | 1 | 5 строк (`dial` первого хопа вокруг `DialContext` / `DialSerialNetwork`: begin + end в TCP, begin + 2 end в UDP) |
+| `common/dialer/default.go`, `detour.go`, `resolve.go` | 1 | 8 / 4 / 4 строк (`tcp_connect`/`udp` вкл. пути interface-strategy; `detour` в `DialContext` и `ListenPacket`; `lookup` в четырёх путях резолва) |
+| `common/tls/client.go` | 1 | 2 строки (`tls` begin/end в `ClientHandshake`) |
+| `dns/router.go` | 1 | 3 строки (сработавшее DNS-правило: обход правил, legacy-цикл, `final`) |
+| `protocol/wireguard/endpoint.go` | 1 | 6 строк (`lookup` по правилам в `DialContext` и `ListenPacketWithDestination`; `tcp_connect`/`udp` внутри туннеля через `netstackLx` на четырёх dial-вызовах) |
+| `protocol/group/urltest.go` | 1 | 6 изменённых строк на уже lx-помеченных вызовах (probe-aware выбор, сброс истории и штрафов; стадия `group`) |
+| `dns/client.go` | 1 | 1 строка (begin стадии `dns` в `beginExchange`; релиз 2 добавит `fresh`) |
 | `common/tls/reality_client.go` | 2 | 1 (уже несёт lx-правки) |
-| `dns/client.go`, `dns/transport/conn_pool.go` | 2 | по 1–2 |
+| `dns/transport/conn_pool.go` | 1 | 1 поле + 4 строки (соединения, открытые пробой, не паркуются при release — §5.14, критерий 10) |
+| `protocol/group/urltest.go` (хотфикс) | 1 | `selectedOutbound*` под `selectedAccess`: гонка данных, вскрытая SPEC 136, внесена в [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md) |
 | `dns/transport/fakeip/store.go` | 2 | 1 |
 
 Альтернативы на стороне потребителя нет: решение маршрута, sniff, выбор

@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | Type | F (feature). The RPC is a §3.6 bridge; the trace (`common/lxtrace` and its insertions) is lx logic isolated under CONSTITUTION §3.2–3.3, with its merge cost fixed in §10 |
-| Status | N (new) |
+| Status | I (implemented) — release 1 on `lx` 2026-10-27; see [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md); release 2 not started |
 | Branch | `lx` |
 | Related | [#59](https://github.com/Leadaxe/sing-box-lx/issues/59) (request: DNS through the router and rule match — closed by this task) · [Leadaxe/LxBox#176](https://github.com/Leadaxe/LxBox/issues/176) ("Connection Check" screen) · [[SPECS/TASKS/058-GET_URL_VIA_OUTBOUND]] (HTTP probe through a node — the model for errors and body limits) · [[SPECS/TASKS/018-DNS_QUERY_STREAM]] · [[SPECS/TASKS/035-DNS_GROUP_OBSERVABILITY]] (DNS attribution and group probes) · [[SPECS/TASKS/017-CONNECTION_DETOUR_CHAIN]] · [[SPECS/TASKS/038-GOMOBILE_STRING_RETURN_FRAME_KILL]] (libbox return shape) |
 
@@ -421,14 +421,17 @@ a nil-safe call that costs one `ctx.Value` check without a trace:
 
 | File | Release | Insertions |
 |------|-------|------------|
-| `route/route.go` | 1 | 1 (`lxtrace.Routed` before the trackers: the `route` stage and the `DEPTH_ROUTE` stop) |
-| `route/conn.go` | 1 | 1–2 (`dial` of the first hop around `DialContext` / `DialSerialNetwork`, TCP and UDP) |
-| `common/dialer/default.go`, `detour.go`, `resolve.go` | 1 | 1–2 each |
-| `common/tls/client.go` | 1 | 1 |
-| `dns/router.go` | 1 | 1–3 (matched DNS rule) |
-| `protocol/wireguard/endpoint.go` | 1 | 2 (`lookup` by rules and `tcp_connect` inside the tunnel, both in `DialContext`, next to the SPEC 020 lx blocks) |
+| `route/route.go` | 1 | 2 blocks of 4 lines (`lxtrace.Routed` before the trackers in the TCP and UDP paths: the `route` stage and the `DEPTH_ROUTE` stop) + import |
+| `route/conn.go` | 1 | 5 lines (`dial` of the first hop around `DialContext` / `DialSerialNetwork`: begin + end in TCP, begin + 2 ends in UDP) |
+| `common/dialer/default.go`, `detour.go`, `resolve.go` | 1 | 8 / 4 / 4 lines (`tcp_connect`/`udp` incl. interface-strategy paths; `detour` in `DialContext` and `ListenPacket`; `lookup` in four resolve paths) |
+| `common/tls/client.go` | 1 | 2 lines (`tls` begin/end in `ClientHandshake`) |
+| `dns/router.go` | 1 | 3 lines (matched DNS rule: rule walk, legacy loop, `final`) |
+| `protocol/wireguard/endpoint.go` | 1 | 6 lines (`lookup` by rules in `DialContext` and `ListenPacketWithDestination`; `tcp_connect`/`udp` inside the tunnel via `netstackLx` on four dial calls) |
+| `protocol/group/urltest.go` | 1 | 6 changed lines on already lx-marked calls (probe-aware pick, history and penalty reset; `group` stage) |
+| `dns/client.go` | 1 | 1 line (`dns` stage begin in `beginExchange`; release 2 adds `fresh`) |
 | `common/tls/reality_client.go` | 2 | 1 (already carries lx edits) |
-| `dns/client.go`, `dns/transport/conn_pool.go` | 2 | 1–2 each |
+| `dns/transport/conn_pool.go` | 1 | 1 field + 4 lines (probe-owned connections are not parked on release — §5.14, criterion 10) |
+| `protocol/group/urltest.go` (hotfix) | 1 | `selectedOutbound*` behind `selectedAccess`: a data race exposed by SPEC 136, registered in [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md) |
 | `dns/transport/fakeip/store.go` | 2 | 1 |
 
 A consumer-side alternative does not exist: the route decision, sniffing,

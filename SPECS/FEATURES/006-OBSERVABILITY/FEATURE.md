@@ -197,7 +197,7 @@ DNS-запросы — и управлять им. Штатный канал д�
 | [099 — GETURL_NAIVE_NIL_REMOTEADDR_PANIC](../../TASKS/099-GETURL_NAIVE_NIL_REMOTEADDR_PANIC/SPEC.md) | Пробник ронял процесс на naive-узле: conn cronet-go без адреса, `RemoteAddr().String()` на nil | I |
 | [114 — WG_PEER_STATUS](../../TASKS/114-WG_PEER_STATUS/SPEC.md) | `GetWireGuardStatus(tag)`: состояние устройства и каждого пира WG/AWG; CLI `api peers`; сценарии — [CONSUMERS.md](../../TASKS/114-WG_PEER_STATUS/CONSUMERS.md) | I |
 | [115 — TAILSCALE_PEER_PATH_STATUS](../../TASKS/115-TAILSCALE_PEER_PATH_STATUS/SPEC.md) | `GetTailscaleStatus(tag)`: путь к каждому пиру Tailscale (direct / peer relay / DERP), хендшейк, `health`; CLI `api tailscale peers`; сценарии — [CONSUMERS.md](../../TASKS/115-TAILSCALE_PEER_PATH_STATUS/CONSUMERS.md) | I |
-| [139 — CONNECTION_TEST](../../TASKS/139-CONNECTION_TEST/SPEC.md) | `StartConnectionTest`: активная проверка соединения через весь конвейер от имени источника, поток стадий с вложенностью, корневая причина, выводы | N |
+| [139 — CONNECTION_TEST](../../TASKS/139-CONNECTION_TEST/SPEC.md) | `StartConnectionTest`: активная проверка соединения через весь конвейер от имени источника, поток стадий с вложенностью, корневая причина; релиз 1 без выводов (`findings` пусты), релиз 2 — выводы, `fresh` на вложенных уровнях, REALITY, WG, fakeip | I |
 
 ## Особенности сопровождения
 

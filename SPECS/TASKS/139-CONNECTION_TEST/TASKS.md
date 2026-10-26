@@ -13,54 +13,54 @@ release 2 is scoped from its field experience.
 
 ### Stage 1 — wire and skeleton
 
-- [ ] `started_service.proto`: `rpc StartConnectionTest` and the messages of SPEC §3.1 inside `lx:begin/end lx_command`
-- [ ] `make -f Makefile.lx lx-proto`; revert protogen noise and gofumpt in `submodules/wireguard-go`
-- [ ] `common/lxtrace`: holder, `Begin`/`End`/`Mark`/`Attr`/`LostRace`/`Routed`, nesting via ctx, stream emit, resolve-cycle check, stage cap 512, root cause per SPEC §5.2; stub without the tag
-- [ ] Handler + stub: validation, semaphore of 4, timeout, source metadata (`PackageManager` only when present), cancellation
-- [ ] Through a node: the 058 path + trace
-- [ ] Through the router: `net.Pipe` → `RouteConnectionEx`, error from `onClose`
-- [ ] Insertion in `route/route.go`: `lxtrace.Routed` before the trackers (`route` stage + `DEPTH_ROUTE` stop, TCP and UDP)
+- [x] `started_service.proto`: `rpc StartConnectionTest` and the messages of SPEC §3.1 inside `lx:begin/end lx_command`
+- [x] `make -f Makefile.lx lx-proto`; revert protogen noise and gofumpt in `submodules/wireguard-go`
+- [x] `common/lxtrace`: holder, `Begin`/`End`/`Mark`/`Attr`/`LostRace`/`Routed`, nesting via ctx, stream emit, resolve-cycle check, stage cap 512, root cause per SPEC §5.2; stub without the tag
+- [x] Handler + stub: validation, semaphore of 4, timeout, source metadata (`PackageManager` only when present), cancellation
+- [x] Through a node: the 058 path + trace
+- [x] Through the router: `net.Pipe` → `RouteConnectionEx`, error from `onClose`
+- [x] Insertion in `route/route.go`: `lxtrace.Routed` before the trackers (`route` stage + `DEPTH_ROUTE` stop, TCP and UDP)
 
-- [ ] Insertion in `route/conn.go`: first-hop `dial` around `DialContext` / `DialSerialNetwork` (TCP and UDP) — separate commit
-- [ ] HTTP client with `httptrace`: `target_tls`, `first_byte`, `http`
-- [ ] Root, result, `stagesTruncated`; all test connections closed at the end (SPEC §5.14); `OnError` only for transport failures (SPEC §3.3)
+- [x] Insertion in `route/conn.go`: first-hop `dial` around `DialContext` / `DialSerialNetwork` (TCP and UDP) — separate commit
+- [x] HTTP client with `httptrace`: `target_tls`, `first_byte`, `http`
+- [x] Root, result, `stagesTruncated`; all test connections closed at the end (SPEC §5.14); `OnError` only for transport failures (SPEC §3.3)
 
 ### Stage 2 — path to the node
 
-- [ ] Insertions: `default.go` (`tcp_connect`, conn wrapper), `detour.go` (`detour`, nested `dial`), `resolve.go` (`lookup` + cycle)
-- [ ] Insertions in `protocol/wireguard/endpoint.go` `DialContext`: `lookup` by rules, `tcp_connect` inside the tunnel
-- [ ] DNS: `client_log.go` → `dns` stage; insertion in `dns/router.go` (matched rule) — separate commit
-- [ ] TLS: insertion in `common/tls/client.go` (`tls`)
-- [ ] Our packages: XHTTP `transport`, `chain`, groups (choice, slot, `IsProbe` without penalties, history, degradation and stickiness)
-- [ ] `proxy_header` `NO_ACK` by node type
-- [ ] External modules: one `quic + auth` / `auth` stage per dial, classified by the error
+- [x] Insertions: `default.go` (`tcp_connect`, conn wrapper), `detour.go` (`detour`, nested `dial`), `resolve.go` (`lookup` + cycle)
+- [x] Insertions in `protocol/wireguard/endpoint.go` `DialContext`: `lookup` by rules, `tcp_connect` inside the tunnel
+- [x] DNS: `client_log.go` → `dns` stage; insertion in `dns/router.go` (matched rule) — separate commit
+- [x] TLS: insertion in `common/tls/client.go` (`tls`)
+- [x] Our packages: XHTTP `transport`, `chain`, groups (choice, slot, `IsProbe` without penalties, history, degradation and stickiness)
+- [x] `proxy_header` `NO_ACK` by node type
+- [x] External modules: one `quic + auth` / `auth` stage per dial, classified by the error
 
 ### Stage 3 — depth and appDNS
 
-- [ ] `app_dns` for A, AAAA, HTTPS with the source metadata; `DisableCache` from `fresh` passed directly
-- [ ] `DEPTH_DNS` (implies `appDNS`), `DEPTH_ROUTE` (via `Routed`), `DEPTH_CONNECT` (end of the first-hop `dial`)
-- [ ] `network = "udp"` up to the route
-- [ ] `connectIP` without fakeip findings
+- [x] `app_dns` for A, AAAA, HTTPS with the source metadata; `DisableCache` from `fresh` passed directly
+- [x] `DEPTH_DNS` (implies `appDNS`), `DEPTH_ROUTE` (via `Routed`), `DEPTH_CONNECT` (end of the first-hop `dial`)
+- [x] `network = "udp"` up to the route
+- [x] `connectIP` without fakeip findings
 
 ### Stage 4 — libbox and CLI
 
-- [ ] Request with setters, handler, session, getters, iterators
-- [ ] 038 guard with no exceptions
-- [ ] `api connection-test`
+- [x] Request with setters, handler, session, getters, iterators
+- [x] 038 guard with no exceptions
+- [x] `api connection-test`
 
 ### Stage 5 — verification
 
-- [ ] Stand `lx-test/conntest`: local VLESS+REALITY+XHTTP, AWG, Shadowsocks, DoH servers; the config from SPEC Appendix A
-- [ ] SPEC acceptance criteria 1, 3, 8, 9, 10, 11; criterion 2 without the finding
-- [ ] `-race` on `lxtrace`, `daemon` and the touched packages; build with and without the tags
-- [ ] lx-ci entries for the new packages: lx-ci runs tests only from an explicit list
-- [ ] `gofmt` on lx files
+- [x] Stand `lx-test/conntest`: in-process shadowsocks ×2 + trojan/TLS servers, test DNS over TCP, httptest target (Appendix A's AWG/Hysteria2/REALITY/XHTTP servers are not in-process — see IMPLEMENTATION_REPORT)
+- [x] SPEC acceptance criteria 1, 3, 8, 9, 10, 11; criterion 2 without the finding
+- [x] `-race` on `lxtrace`, `daemon` and the touched packages; build with and without the tags
+- [x] lx-ci entries for the new packages: lx-ci runs tests only from an explicit list
+- [x] `gofmt` on lx files
 
 ### Stage 6 — documents
 
-- [ ] FEATURE 006: sync with what landed
-- [ ] SPEC §10: insertion counts as landed
-- [ ] IMPLEMENTATION_REPORT.md
+- [x] FEATURE 006: sync with what landed
+- [x] SPEC §10: insertion counts as landed
+- [x] IMPLEMENTATION_REPORT.md
 - [ ] Reply in #59 with a link to the commit, close it
 
 ## Release 2
