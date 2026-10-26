@@ -153,7 +153,7 @@ func TestFailover_coldStart(t *testing.T) {
 	fast := newFailoverNode("fast", 0)
 	g := newFailoverTestGroup(t, slow, fast)
 
-	if first := g.pickForDial(N.NetworkTCP); first == nil || first.Tag() != "slow" {
+	if first := g.pickForDial(context.Background(), N.NetworkTCP); first == nil || first.Tag() != "slow" {
 		t.Fatal("before the first result the first listed node must be used")
 	}
 	if _, err := g.urlTest(context.Background(), false); err != nil {

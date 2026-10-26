@@ -22,6 +22,7 @@ import (
 // a client can rebuild the CNAME chain from one event. The per-subscriber includeAnswers
 // flag is applied by the command server, not here — the emit is shared across subscribers.
 func emitQueryEvent(ctx context.Context, transport adapter.DNSTransport, response *dns.Msg, source dnstrack.Source, ttl uint32) {
+	traceResponse(ctx, transport, response, source, ttl) // lx: SPEC 139 — the dns stage, without the subscriber gate
 	manager := service.PtrFromContext[dnstrack.Manager](ctx)
 	// HasSubscribers gate: with no profiler attached, build nothing — not the event, not the
 	// answers slice, not the outbound tag. The query never left for cached/optimistic, so its
@@ -76,6 +77,7 @@ func emitQueryEvent(ctx context.Context, transport adapter.DNSTransport, respons
 // signal. domain/qtype come from the request question (a failed exchange has no response).
 // rcode is the real code when a response exists, RcodeNoAnswer (-1) when it does not.
 func emitFailedQuery(ctx context.Context, transport adapter.DNSTransport, question dns.Question, rcode int32, cause string) {
+	traceFailed(ctx, transport, question, rcode, cause) // lx: SPEC 139 — the dns stage, without the subscriber gate
 	manager := service.PtrFromContext[dnstrack.Manager](ctx)
 	if manager == nil || !manager.HasSubscribers() {
 		return

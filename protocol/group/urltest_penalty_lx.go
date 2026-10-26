@@ -45,6 +45,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/lxtrace"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -168,8 +169,15 @@ func (g *URLTestGroup) selectPenaltyAware(network string) (adapter.Outbound, boo
 
 // pickForDial — выбор узла для боевого дайла: аварийный режим обходит кеш
 // selectedOutbound* (он может указывать на оштрафованного лучшего), обычный —
-// апстримная семантика (кеш, иначе Select).
-func (g *URLTestGroup) pickForDial(network string) adapter.Outbound {
+// апстримная семантика (кеш, иначе Select). lx: SPEC 139 — the pick is written
+// to the connection test trace as a `group` stage.
+func (g *URLTestGroup) pickForDial(ctx context.Context, network string) adapter.Outbound {
+	outbound := g.pickForDialNode(network)
+	g.traceGroup(ctx, outbound, "")
+	return outbound
+}
+
+func (g *URLTestGroup) pickForDialNode(network string) adapter.Outbound {
 	if g.balancer == nil && g.penaltyEmergency(network) {
 		if best := g.penaltyBest(network, ""); best != nil {
 			return best
@@ -223,12 +231,18 @@ func (g *URLTestGroup) penaltyFailoverDial(ctx context.Context, network string, 
 	if g.balancer != nil || !isPathDeadDialError(dialErr) {
 		return nil, nil, false
 	}
-	g.penaltyAdd(RealTag(g.outbound, failed))
-	g.maybeForceRetest()
+	// lx: SPEC 139 §5.7 — a connection test takes the same fallback path but
+	// leaves penalties, history, selection and the retest valve untouched.
+	probe := lxtrace.IsProbe(ctx)
+	if !probe {
+		g.penaltyAdd(RealTag(g.outbound, failed))
+		g.maybeForceRetest()
+	}
 	fallback := g.penaltyBest(network, RealTag(g.outbound, failed))
 	if fallback == nil {
 		return nil, nil, false
 	}
+	g.traceGroup(ctx, fallback, failed.Tag())
 	// lx: SPEC 073 — fallback-дайл внутри цепочки тоже идёт в звено, не в оригинал.
 	fallbackDialer, err := adapter.ResolveChainLeaf(ctx, fallback)
 	if err != nil {
@@ -237,6 +251,9 @@ func (g *URLTestGroup) penaltyFailoverDial(ctx context.Context, network string, 
 	conn, err := fallbackDialer.DialContext(ctx, network, destination)
 	if err != nil {
 		g.logger.Error("lx penalty: fallback via ", fallback.Tag(), ": ", E.Cause(err, "dial"))
+		if probe {
+			return nil, nil, false
+		}
 		// Симметрия с апстримным поведением least_test для отказавшего дайла.
 		g.history.DeleteURLTestHistory(RealTag(g.outbound, fallback))
 		if isPathDeadDialError(err) {
@@ -245,8 +262,10 @@ func (g *URLTestGroup) penaltyFailoverDial(ctx context.Context, network string, 
 		}
 		return nil, nil, false
 	}
-	g.penaltyReset(RealTag(g.outbound, fallback))
-	g.moveSelection(network, fallback)
+	if !probe {
+		g.penaltyReset(RealTag(g.outbound, fallback))
+		g.moveSelection(network, fallback)
+	}
 	return conn, fallback, true
 }
 

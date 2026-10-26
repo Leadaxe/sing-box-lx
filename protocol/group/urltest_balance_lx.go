@@ -166,7 +166,7 @@ func (b *balancer) pick(ctx context.Context, destination M.Socksaddr, fallback a
 		}
 	} else {
 		// plain round-robin over the live slots; with all of them live it is counter % n.
-		counter := b.counter.Add(1) - 1
+		counter := b.rotate(ctx)
 		idx = int(counter % uint64(n))
 		if b.alive != nil {
 			if live, ok := b.liveSlot(slots, counter); ok {

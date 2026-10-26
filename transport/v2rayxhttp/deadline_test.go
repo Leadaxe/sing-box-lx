@@ -133,7 +133,7 @@ func dialStreamOneAsync(ctx context.Context, client *Client) (<-chan dialResult,
 	xc.addOpenUsage(1)
 	done := make(chan dialResult, 1)
 	go func() {
-		conn, err := client.dialStreamOne(ctx, "", xc, newXmuxRelease(xc))
+		conn, err := client.dialStreamOne(ctx, "", xc, newXmuxRelease(xc), nil)
 		done <- dialResult{conn, err}
 	}()
 	return done, xc
@@ -148,7 +148,7 @@ func TestStreamOneWriteDeadlineUnblocksWrite(t *testing.T) {
 	client := streamOneClient(t, transport)
 
 	xc, _ := client.xmux.get()
-	conn, err := client.dialStreamOne(context.Background(), "", xc, newXmuxRelease(xc))
+	conn, err := client.dialStreamOne(context.Background(), "", xc, newXmuxRelease(xc), nil)
 	if err != nil {
 		t.Fatalf("dialStreamOne: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestStreamOneCancelAfterStreamUpKeepsConnAlive(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	xc, _ := client.xmux.get()
-	conn, err := client.dialStreamOne(ctx, "", xc, newXmuxRelease(xc))
+	conn, err := client.dialStreamOne(ctx, "", xc, newXmuxRelease(xc), nil)
 	if err != nil {
 		t.Fatalf("dialStreamOne: %v", err)
 	}

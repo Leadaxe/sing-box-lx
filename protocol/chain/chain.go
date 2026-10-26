@@ -417,6 +417,7 @@ func (c *Chain) Close() error {
 
 func (c *Chain) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	c.stats.dials.Add(1)
+	c.traceChain(ctx) // SPEC 139
 	conn, err := c.hops[len(c.hops)-1].DialContext(ctx, network, destination)
 	if err != nil {
 		c.stats.errors.Add(1)
@@ -429,6 +430,7 @@ func (c *Chain) DialContext(ctx context.Context, network string, destination M.S
 
 func (c *Chain) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	c.stats.dials.Add(1)
+	c.traceChain(ctx) // SPEC 139
 	conn, err := c.hops[len(c.hops)-1].ListenPacket(ctx, destination)
 	if err != nil {
 		c.stats.errors.Add(1)
