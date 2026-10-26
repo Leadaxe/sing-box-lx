@@ -42,7 +42,7 @@ jobs:
       - name: Formatting, vet and independent downlink tests
         shell: pwsh
         run: |
-          $files = @('option/v2ray_xhttp.go','option/v2ray_xhttp_download_lx.go','transport/v2rayxhttp/client.go','transport/v2rayxhttp/conn.go','transport/v2rayxhttp/download_lx.go','transport/v2rayxhttp/download_lx_test.go','transport/v2rayxhttp/download_dns_lx_test.go','transport/v2rayxhttp/download_reality_lx_test.go','transport/v2rayxhttp/download_load_windows_test.go','transport/v2rayxhttp/download_quic_lx_test.go','transport/v2rayxhttp/download_xray_windows_test.go','transport/v2rayxhttp/xmux.go')
+          $files = @('option/v2ray_xhttp.go','option/v2ray_xhttp_download_lx.go','transport/v2rayxhttp/client.go','transport/v2rayxhttp/conn.go','transport/v2rayxhttp/upload_readiness_lx_test.go','transport/v2rayxhttp/download_lx.go','transport/v2rayxhttp/download_lx_test.go','transport/v2rayxhttp/download_dns_lx_test.go','transport/v2rayxhttp/download_reality_lx_test.go','transport/v2rayxhttp/download_load_windows_test.go','transport/v2rayxhttp/download_quic_lx_test.go','transport/v2rayxhttp/download_xray_windows_test.go','transport/v2rayxhttp/xmux.go')
           $bad = & gofmt -l @files
           if ($bad) { & gofmt -d @files | Set-Content work/gofmt.diff; throw ('Formatting differs: '+($bad -join ', ')) }
           & go vet -p 2 -tags 'with_xhttp,with_quic,with_utls,with_reality' ./transport/v2rayxhttp ./option

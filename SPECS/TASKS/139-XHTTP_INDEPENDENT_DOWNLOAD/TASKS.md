@@ -10,7 +10,12 @@
 - [ ] Согласование владельца/issue и номера задачи.
 - [x] Host red/green: IP uplink + domain downlink и оба домена через искусственный core bootstrap DNS.
 - [x] Host REALITY: отдельные ключи/SNI/short_id, key share, отрицательные сценарии и HTTP/2 обмен через native frontend.
-- [ ] Прямой официальный Xray REALITY ingress, доверенный camouflage control и Android TUN/DNS bootstrap обоих направлений.
+- [x] Прямой официальный Xray REALITY/H2 ingress: Android TUN, packet-up/stream-up/auto, отдельный UID IPv4/IPv6 и отказ неверного download public key.
+- [x] Прямой официальный Xray H3/TLS ingress: Android TUN, три режима, отдельный UID IPv4/IPv6 и отказ неверной download TLS identity.
+- [ ] Отдельный отрицательный REALITY-сценарий с доверенным camouflage сертификатом.
+- [ ] Android protect/bind/bootstrap DNS обоих независимых направлений при смене физической сети.
+- [x] Android 16 API36 x86_64 16КБ runtime: отдельный UID/TUN, оба ядра и расширенные XHTTP-проверки; не физическая ARM64 приёмка.
+- [x] SPEC 077: ранние успешные download headers не завершают dial до upload adoption и не скрывают отмену dial.
 - [x] Host H2/H2: 12 постоянных VLESS сессий, по 300 секунд в трёх режимах, лимиты XMUX и освобождение аренд.
 - [ ] Длительные H1/H3 и реальные смены сети.
 - [x] Полная host-сборка `go build ./...` без тегов.
