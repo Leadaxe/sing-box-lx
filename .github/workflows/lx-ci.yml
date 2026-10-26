@@ -131,6 +131,19 @@ jobs:
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd" \
             ./lxd/ ./cmd/sing-box/
 
+      # StartConnectionTest (SPEC 139): the trace holder, the handler, the
+      # libbox client and every package that carries a `// lx: SPEC 139` stage
+      # insertion or an IsProbe guard. common/tls is left out on purpose: its
+      # own suite runs minutes under -race and the SPEC 139 lines there are
+      # covered by the daemon end-to-end tests.
+      - name: go test (SPEC 139 connection test, race)
+        run: |
+          go test -race -count=1 \
+            -ldflags "-checklinkname=0" \
+            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd,with_lx_chain" \
+            ./common/lxtrace/ ./common/dialer/ ./daemon/ ./experimental/libbox/ \
+            ./dns/ ./protocol/group/ ./protocol/chain/ ./transport/v2rayxhttp/
+
       # trusttunnel core and adapters (SPEC 133/134): the core's end-to-end
       # tests run client against server in-process over H2 and, with
       # with_quic from BASE_TAGS, over H3.
