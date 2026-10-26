@@ -215,7 +215,13 @@ func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr
 	if err != nil {
 		return nil, err
 	}
-	tlsConn, err := aTLS.ClientHandshake(ctx, conn, d.config)
+	// lx:begin SPEC 139 — upstream calls aTLS.ClientHandshake directly; the stage
+	// helpers wrap it so tls.NewDialer users (VLESS, Trojan, VMess, WS, gRPC, DoT/DoH)
+	// record the `tls` stage too, not only callers of tls.ClientHandshake.
+	handshakeCtx, stage := beginHandshakeLx(ctx, d.config)
+	tlsConn, err := aTLS.ClientHandshake(handshakeCtx, conn, d.config)
+	endHandshakeLx(stage, tlsConn, err)
+	// lx:end SPEC 139
 	if err != nil {
 		conn.Close()
 		var echErr *tls.ECHRejectionError
