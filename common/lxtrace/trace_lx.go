@@ -411,6 +411,22 @@ func (s *Stage) finishAt(result Result, errText string, now time.Time, extra *At
 	s.trace.emit(s, snapshot, true)
 }
 
+// Children returns snapshots of the direct children of s, in begin order.
+func (s *Stage) Children() []StageSnapshot {
+	if s == nil {
+		return nil
+	}
+	s.trace.access.Lock()
+	defer s.trace.access.Unlock()
+	var children []StageSnapshot
+	for _, stage := range s.trace.stages {
+		if stage.parent == s {
+			children = append(children, stage.snapshot())
+		}
+	}
+	return children
+}
+
 func (s *Stage) snapshot() StageSnapshot {
 	s.access.Lock()
 	defer s.access.Unlock()

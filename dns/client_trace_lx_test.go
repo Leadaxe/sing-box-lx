@@ -106,3 +106,28 @@ func TestDNSStageFailed_LX(t *testing.T) {
 	require.Equal(t, "SERVFAIL", stageAttr(summary.Stages[0], "rcode"))
 	require.Equal(t, summary.Stages[0].ID, summary.RootCause)
 }
+
+func TestDNSStageCacheAge_LX(t *testing.T) {
+	client := NewClient(ClientOptions{Context: context.Background(), Logger: log.NewNOPFactory().NewLogger("dns")})
+	transport := &answerTransport{TransportAdapter: NewTransportAdapter(C.DNSTypeUDP, "remote", nil)}
+	query := new(mDNS.Msg)
+	query.SetQuestion("example.org.", mDNS.TypeA)
+	// Stored with TTL 300 and 200 s of lifetime left: the entry is 100 s old.
+	stored := new(mDNS.Msg)
+	stored.SetReply(query)
+	stored.Answer = []mDNS.RR{&mDNS.A{
+		Hdr: mDNS.RR_Header{Name: "example.org.", Rrtype: mDNS.TypeA, Class: mDNS.ClassINET, Ttl: 300},
+		A:   net.IPv4(192, 0, 2, 1),
+	}}
+	client.storeCache(client.newCacheKey(transport, query.Question[0], query, adapter.DNSQueryOptions{}), stored, 200)
+
+	trace := lxtrace.New(lxtrace.Options{})
+	_, err := client.Exchange(lxtrace.With(context.Background(), trace), transport, query, adapter.DNSQueryOptions{}, nil)
+	require.NoError(t, err)
+	require.Zero(t, transport.exchanges)
+
+	summary := trace.Finish(nil)
+	require.Len(t, summary.Stages, 1)
+	require.Equal(t, lxtrace.Reused, summary.Stages[0].Result)
+	require.Contains(t, []string{"100", "101"}, stageAttr(summary.Stages[0], "cache_age"))
+}
