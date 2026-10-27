@@ -67,7 +67,8 @@
 
 ### Этап 7 — переиспользование и fresh на вложенных уровнях
 
-- [ ] Вставки в `dns/client.go` (`DisableCache` от `lxtrace.Fresh`, ответ из кэша → `REUSED` с возрастом) и `conn_pool.go` (`created == false` → `REUSED`, `fresh` → новое соединение)
+- [x] Атрибуты `app_dns` по полевому прогону (#59): `answer` на каждую запись, `authority` при NXDOMAIN / NODATA, `source` / `cache_age`; `cache_age` на кэшированной стадии `dns` (2 вставки в `dns/client.go`)
+- [ ] Вставки в `dns/client.go` (`DisableCache` от `lxtrace.Fresh`) и `conn_pool.go` (`created == false` → `REUSED`, `fresh` → новое соединение)
 - [ ] WG/AWG: `wake`, `wg_handshake`; `reuse=uncontrolled` для внешних модулей
 - [ ] MASQUE и TrustTunnel `auth`
 

@@ -225,14 +225,14 @@ DNS-сервера, и так далее.
 
 | `kind` | Что | Основные атрибуты |
 |--------|-----|-------------------|
-| `app_dns` | DNS-запрос приложения (при `appDNS`), по одному на тип: A, AAAA, HTTPS | тип, правило (`dns[i]` или `final`), сервер, ответы, rcode, источник ответа (сеть / кэш с возрастом) |
+| `app_dns` | DNS-запрос приложения (при `appDNS`), по одному на тип: A, AAAA, HTTPS | тип, правило (`dns[i]` или `final`), сервер, rcode; по одному `answer` на запись ответа в порядке секции, в формате представления без владельца и класса (`A 300 192.0.2.1`, `CNAME 300 a.example.`, `HTTPS 300 1 . alpn="h2,h3" ech=…`); при NXDOMAIN / NODATA по одному `authority` на запись секции authority с владельцем (`example. SOA 60 …`); `source` = `network` / `cache` с `cache_age` в секундах (и `stale` для оптимистичного ответа) / `local` (fakeip, hosts: ядро ответило без запроса), нет, когда ответило само правило |
 | `route` | Выбор правила маршрута | назначение, откуда взят домен (`request` / `fakeip` / `reverse_mapping` / `sniff` / `none`), результат sniff, применённые не финальные действия по порядку, правило (`route[i]` + описание или `final`), действие, outbound, правила, которые не удалось вычислить, и почему |
 | `group` | Выбор в группе | тип и режим группы, выбранный узел; для выбора на каждое соединение — признак и слот |
 | `chain` | Развёртка `chain` | позиции, разрешённые узлы |
 | `dial` | Соединение через узел | тег, тип, адрес сервера |
 | `detour` | Передача соединения детуру | тег детура, что передано: домен или адрес |
 | `lookup` | Резолв адреса сервера узла или DNS-сервера | домен, кто резолвит (`domain_resolver` / `default_domain_resolver` / `dns_rules` с правилом), сервер, ответ |
-| `dns` | Запрос к DNS-серверу | тег, тип, путь групп, пробы группы (как в 035), соединение (новое / переиспользовано, возраст), rcode |
+| `dns` | Запрос к DNS-серверу | тег, тип, путь групп, пробы группы (как в 035), соединение (новое / переиспользовано, возраст), rcode; попадание в кэш — `REUSED` с `source=cache`, `ttl` (остаток) и `cache_age` в секундах |
 | `wake` | Подъём усыплённого endpoint'а | сколько спал |
 | `tcp_connect` | TCP-соединение | адрес, локальный адрес |
 | `quic` | QUIC-соединение | адрес, обфускация |
@@ -424,7 +424,7 @@ handler и stub в `daemon/*_lx.go`, клиент в `experimental/libbox/*_lx.g
 | `dns/router.go` | 1 | 3 строки (сработавшее DNS-правило: обход правил, legacy-цикл, `final`) |
 | `protocol/wireguard/endpoint.go` | 1 | 6 строк (`lookup` по правилам в `DialContext` и `ListenPacketWithDestination`; `tcp_connect`/`udp` внутри туннеля через `netstackLx` на четырёх dial-вызовах) |
 | `protocol/group/urltest.go` | 1 | 6 изменённых строк на уже lx-помеченных вызовах (probe-aware выбор, сброс истории и штрафов; стадия `group`) |
-| `dns/client.go` | 1 | 1 строка (begin стадии `dns` в `beginExchange`; релиз 2 добавит `fresh`) |
+| `dns/client.go` | 3 | 1 строка (begin стадии `dns` в `beginExchange`), 2 строки (возраст записи кэша при попадании в `beginExchange` и `questionCache`); релиз 2 добавит `fresh` |
 | `common/tls/reality_client.go` | 2 | 1 (уже несёт lx-правки) |
 | `dns/transport/conn_pool.go` | 1 | 1 поле + 4 строки (соединения, открытые пробой, не паркуются при release — §5.14, критерий 10) |
 | `protocol/group/urltest.go` (хотфикс) | 1 | `selectedOutbound*` под `selectedAccess`: гонка данных, вскрытая SPEC 136, внесена в [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md) |

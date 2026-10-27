@@ -227,14 +227,14 @@ without changing the protocol. A client renders an unknown kind as `kind` +
 
 | `kind` | What | Main attributes |
 |--------|------|-----------------|
-| `app_dns` | DNS query of the app (with `appDNS`), one per type: A, AAAA, HTTPS | type, rule (`dns[i]` or `final`), server, answers, rcode, answer source (network / cache with age) |
+| `app_dns` | DNS query of the app (with `appDNS`), one per type: A, AAAA, HTTPS | type, rule (`dns[i]` or `final`), server, rcode; one `answer` per answer record in answer-section order, presentation format without owner and class (`A 300 192.0.2.1`, `CNAME 300 a.example.`, `HTTPS 300 1 . alpn="h2,h3" ech=…`); on NXDOMAIN / NODATA one `authority` per authority record with its owner (`example. SOA 60 …`); `source` = `network` / `cache` with `cache_age` in seconds (and `stale` for an optimistic answer) / `local` (fakeip, hosts: the core answered without a query), absent when a rule answered |
 | `route` | Route rule selection | destination, where the domain came from (`request` / `fakeip` / `reverse_mapping` / `sniff` / `none`), sniff result, non-final actions applied in order, rule (`route[i]` + description or `final`), action, outbound, rules that could not be evaluated and why |
 | `group` | Selection in a group | group type and mode, selected node; for per-connection selection — a marker and the slot |
 | `chain` | Unfolding of a `chain` | positions, resolved nodes |
 | `dial` | Connection through a node | tag, type, server address |
 | `detour` | Handing the connection to a detour | detour tag, what was passed: domain or address |
 | `lookup` | Resolving the server address of a node or DNS server | domain, who resolves (`domain_resolver` / `default_domain_resolver` / `dns_rules` with the rule), server, answer |
-| `dns` | Query to a DNS server | tag, type, group path, group probes (as in 035), connection (new / reused, age), rcode |
+| `dns` | Query to a DNS server | tag, type, group path, group probes (as in 035), connection (new / reused, age), rcode; a cache hit is `REUSED` with `source=cache`, `ttl` (remaining) and `cache_age` in seconds |
 | `wake` | Waking an idle-suspended endpoint | how long it slept |
 | `tcp_connect` | TCP connection | address, local address |
 | `quic` | QUIC connection | address, obfuscation |
@@ -428,7 +428,7 @@ a nil-safe call that costs one `ctx.Value` check without a trace:
 | `dns/router.go` | 1 | 3 lines (matched DNS rule: rule walk, legacy loop, `final`) |
 | `protocol/wireguard/endpoint.go` | 1 | 6 lines (`lookup` by rules in `DialContext` and `ListenPacketWithDestination`; `tcp_connect`/`udp` inside the tunnel via `netstackLx` on four dial calls) |
 | `protocol/group/urltest.go` | 1 | 6 changed lines on already lx-marked calls (probe-aware pick, history and penalty reset; `group` stage) |
-| `dns/client.go` | 1 | 1 line (`dns` stage begin in `beginExchange`; release 2 adds `fresh`) |
+| `dns/client.go` | 3 | 1 line (`dns` stage begin in `beginExchange`), 2 lines (cache age at the cache hits of `beginExchange` and `questionCache`); release 2 adds `fresh` |
 | `common/tls/reality_client.go` | 2 | 1 (already carries lx edits) |
 | `dns/transport/conn_pool.go` | 1 | 1 field + 4 lines (probe-owned connections are not parked on release — §5.14, criterion 10) |
 | `protocol/group/urltest.go` (hotfix) | 1 | `selectedOutbound*` behind `selectedAccess`: a data race exposed by SPEC 136, registered in [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md) |

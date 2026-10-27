@@ -67,7 +67,8 @@ release 2 is scoped from its field experience.
 
 ### Stage 7 — reuse and fresh at nested levels
 
-- [ ] Insertions in `dns/client.go` (`DisableCache` from `lxtrace.Fresh`, cached answer → `REUSED` with age) and `conn_pool.go` (`created == false` → `REUSED`, `fresh` → new connection)
+- [x] `app_dns` attrs from the field run (#59): one `answer` per record, `authority` on NXDOMAIN / NODATA, `source` / `cache_age`; `cache_age` on the cached `dns` stage (2 insertions in `dns/client.go`)
+- [ ] Insertions in `dns/client.go` (`DisableCache` from `lxtrace.Fresh`) and `conn_pool.go` (`created == false` → `REUSED`, `fresh` → new connection)
 - [ ] WG/AWG: `wake`, `wg_handshake`; `reuse=uncontrolled` for external modules
 - [ ] MASQUE and TrustTunnel `auth`
 
