@@ -28,6 +28,18 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.3-lx.24-rc.2
+
+Кандидат после `v1.14.3-lx.24-rc.1`. База та же — sing-box `v1.14.3`, `upstream/stable` `d630fa94c`; дрейф по-прежнему отложен: `upstream/stable` впереди на те же 66 коммитов до `c005f3530` (`v1.14.4`), синк — отдельная задача перед стабильным `lx.24`. Тулчейн, зависимости и форк-сабмодули с rc.1 не менялись — dry run релизной сборки не требуется. Одна тема: стадия `app_dns` проверки соединения по полевому прогону rc.1 на LxBox v2.25.18-rc.1.
+
+- 🆕 **`app_dns` отдаёт полный ответ DNS (SPEC 139, issue #59).** Только атрибуты, `.proto` и публичный API libbox не менялись.
+  - **`answer` — по атрибуту на запись**, в порядке секции ответа, в формате представления без класса: `A 300 192.0.2.1`, `CNAME 300 youtube-ui.l.google.com.`, `HTTPS 300 1 . alpn="h2,h3" ech="…"`. Владелец пишется впереди, только когда отличается от запрошенного имени: после CNAME — `youtube-ui.l.google.com. A 300 142.251.154.119`. Значения SvcParam в кавычках, как печатает `dig`. Склеенный атрибут `answers` убран.
+  - **`source`** — `network`, `cache` (с `cache_age` в секундах и `stale=true` для просроченного ответа, отданного на время фонового обновления) или `local` (fakeip и hosts: ядро ответило без запроса). Нет `source`, когда ответило само правило (`predefined`, `reject`).
+  - **`authority` при NXDOMAIN/NODATA** — по атрибуту на запись секции authority в том же формате (`google.com. SOA 30 ns1.google.com. …`); TTL — тот, с которым отрицательный ответ лежит в кэше, min(TTL SOA, minimum).
+  - Стадия `dns` при ответе из кэша (`REUSED`) несёт `cache_age` на любом уровне вложенности. Возраст = TTL, с которым запись положена в кэш, минус остаток её жизни; запись перечитывается только под трассой.
+  - Цена мержа: две строки `// lx: SPEC 139` в `dns/client.go` (попадания в кэш в `beginExchange` и `questionCache`); логика в `dns/client_trace_lx.go`, `daemon/started_service_conntest_lx.go`, `common/lxtrace` (`Stage.Children`).
+  - Проверено под `-race`: тест через настоящий DNS-роутер и клиент (UDP-сервер на loopback, CNAME-цепочка, NODATA, NXDOMAIN, fakeip, hosts), формула возраста на подложенной записи кэша, стенд `lx-test/conntest`. На устройстве — нет.
+
 #### v1.14.3-lx.24-rc.1
 
 Кандидат после `v1.14.3-lx.23`. База — sing-box `v1.14.3`, `upstream/stable` `d630fa94c`. **Дрейф отложен осознанно:** `upstream/stable` ушёл вперёд на 66 коммитов до `c005f3530` (`v1.14.4`: Go 1.26.10, бампы `sing`, `sing-tun`, `quic-go` mod.12, `sing-quic`, `sing-vmess`, `wireguard-go`, `tailscale`; фиксы «URL test failover for routed connections», «outbound group resolution and interruption for nested groups», «flow close racing with tracker attach», «WireGuard pause and sleep handling» и другие). Синк — отдельная задача по раннбуку §1–3 (сабмодули до ядра) перед стабильным `lx.24`; этот rc выпускается ради полевой проверки SPEC 139 на устройствах и роутере, не дожидаясь мержа. Тулчейн и зависимости с lx.23 не менялись — dry run релизной сборки не требуется. Одна тема: активная проверка соединения.
