@@ -184,30 +184,26 @@ func (t *connectionTest) runAppDNS(ctx context.Context) netip.Addr {
 			continue
 		}
 		stage.Attr("rcode", dns.RcodeToString[response.Rcode])
-		var answers []string
 		for _, record := range response.Answer {
+			stage.Attr("answer", recordText(record))
+			if answer.IsValid() {
+				continue
+			}
 			switch typed := record.(type) {
 			case *dns.A:
-				answers = append(answers, typed.A.String())
-				if !answer.IsValid() {
-					answer, _ = netip.AddrFromSlice(typed.A)
-				}
+				answer, _ = netip.AddrFromSlice(typed.A)
 			case *dns.AAAA:
-				answers = append(answers, typed.AAAA.String())
-				if !answer.IsValid() {
-					answer, _ = netip.AddrFromSlice(typed.AAAA)
-				}
-			case *dns.CNAME:
-				answers = append(answers, "CNAME "+typed.Target)
-			case *dns.HTTPS:
-				answers = append(answers, "HTTPS "+typed.Target)
-			default:
-				answers = append(answers, dns.TypeToString[record.Header().Rrtype])
+				answer, _ = netip.AddrFromSlice(typed.AAAA)
 			}
 		}
-		if len(answers) > 0 {
-			stage.Attr("answers", strings.Join(answers, ","))
+		if len(response.Answer) == 0 && (response.Rcode == dns.RcodeSuccess || response.Rcode == dns.RcodeNameError) {
+			// NODATA / NXDOMAIN: the SOA says which zone answered and how
+			// long the negative answer is cached.
+			for _, record := range response.Ns {
+				stage.Attr("authority", record.Header().Name+" "+recordText(record))
+			}
 		}
+		attrAnswerSource(stage)
 		if response.Rcode != dns.RcodeSuccess {
 			stage.End(E.New("rcode ", dns.RcodeToString[response.Rcode]))
 			continue
@@ -215,6 +211,55 @@ func (t *connectionTest) runAppDNS(ctx context.Context) netip.Addr {
 		stage.End(nil)
 	}
 	return answer
+}
+
+// recordText is a resource record in presentation format without the owner
+// name and the class: "A 300 192.0.2.1", "HTTPS 300 1 . alpn=h2,h3 ...".
+func recordText(record dns.RR) string {
+	header := record.Header()
+	rdata := strings.TrimPrefix(record.String(), header.String())
+	return dns.Type(header.Rrtype).String() + " " + strconv.FormatUint(uint64(header.Ttl), 10) + " " + rdata
+}
+
+// attrAnswerSource copies where the answer came from onto the app_dns stage:
+// the last `dns` child is the exchange the router took the answer from
+// (rules may reject earlier ones). fakeip and hosts answer from the core
+// itself: `local`, not `network`. No child means the rule answered itself
+// (predefined, reject) and there is no source to name.
+func attrAnswerSource(stage *lxtrace.Stage) {
+	var source *lxtrace.StageSnapshot
+	for _, child := range stage.Children() {
+		if child.Kind == "dns" {
+			source = &child
+		}
+	}
+	if source == nil {
+		return
+	}
+	if source.Result != lxtrace.Reused {
+		switch stageAttrValue(source.Attrs, "type") {
+		case C.DNSTypeFakeIP, C.DNSTypeHosts:
+			stage.Attr("source", "local")
+		default:
+			stage.Attr("source", "network")
+		}
+		return
+	}
+	stage.Attr("source", "cache")
+	for _, attr := range source.Attrs {
+		if attr.Key == "cache_age" || attr.Key == "stale" {
+			stage.Attr(attr.Key, attr.Value)
+		}
+	}
+}
+
+func stageAttrValue(attrs []lxtrace.Attr, key string) string {
+	for _, attr := range attrs {
+		if attr.Key == key {
+			return attr.Value
+		}
+	}
+	return ""
 }
 
 // detourType is the protocol type of the node the test goes through directly.
