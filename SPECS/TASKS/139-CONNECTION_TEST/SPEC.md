@@ -227,7 +227,7 @@ without changing the protocol. A client renders an unknown kind as `kind` +
 
 | `kind` | What | Main attributes |
 |--------|------|-----------------|
-| `app_dns` | DNS query of the app (with `appDNS`), one per type: A, AAAA, HTTPS | type, rule (`dns[i]` or `final`), server, rcode; one `answer` per answer record in answer-section order, presentation format without the class; the owner name leads only when it differs from the queried name (`A 300 192.0.2.1`, `CNAME 300 a.example.`, then `a.example. A 300 192.0.2.1`; `HTTPS 300 1 . alpn="h2,h3" ech="…"`, SvcParam values quoted as `dig` prints them); on NXDOMAIN / NODATA one `authority` per authority record in the same format (`example. SOA 30 …`, TTL as cached: min(SOA TTL, minimum)); `source` = `network` / `cache` with `cache_age` in seconds (and `stale` for an optimistic answer) / `local` (fakeip, hosts: the core answered without a query), absent when a rule answered |
+| `app_dns` | DNS query of the app (with `appDNS`), one per type: A, AAAA, HTTPS | type, rule (`dns[i]` or `final`), server, rcode; one `answer` per answer record in answer-section order, presentation format without the class; the owner name leads only when it differs from the queried name (`A 300 192.0.2.1`, `CNAME 300 a.example.`, then `a.example. A 300 192.0.2.1`; `HTTPS 300 1 . alpn="h2,h3" ech="…"`, SvcParam values quoted as `dig` prints them); on NXDOMAIN / NODATA one `authority` per authority record in the same format (`example. SOA 30 …`, TTL as cached: min(SOA TTL, minimum)); `source` = `network` / `cache` with `cache_age` in seconds (and `stale` for an optimistic answer) / `local` (fakeip, hosts: the core answered without a query); absent when no DNS server was asked: a rule answered (`predefined`, `reject`), or the domain strategy dropped the type (`ipv4_only` answers AAAA, `ipv6_only` answers A with an empty NOERROR before any `dns` stage) |
 | `route` | Route rule selection | destination, where the domain came from (`request` / `fakeip` / `reverse_mapping` / `sniff` / `none`), sniff result, non-final actions applied in order, rule (`route[i]` + description or `final`), action, outbound, rules that could not be evaluated and why |
 | `group` | Selection in a group | group type and mode, selected node; for per-connection selection — a marker and the slot |
 | `chain` | Unfolding of a `chain` | positions, resolved nodes |
@@ -236,7 +236,8 @@ without changing the protocol. A client renders an unknown kind as `kind` +
 | `lookup` | Resolving the server address of a node or DNS server | domain, who resolves (`domain_resolver` / `default_domain_resolver` / `dns_rules` with the rule), server, answer |
 | `dns` | Query to a DNS server | tag, type, group path, group probes (as in 035), connection (new / reused, age), rcode; a cache hit is `REUSED` with `source=cache`, `ttl` (remaining) and `cache_age` in seconds |
 | `wake` | Waking an idle-suspended endpoint | how long it slept |
-| `tcp_connect` | TCP connection | address, local address |
+| `tcp_connect` | TCP connection | address, local address; `tfo=deferred` when TCP Fast Open connects on the first write; `inside` = the WG/AWG endpoint tag for a connection opened inside its tunnel |
+| `udp` | UDP socket (a packet connection or a connected UDP socket) | address, local address; `inside` as for `tcp_connect` |
 | `quic` | QUIC connection | address, obfuscation |
 | `tls` | TLS handshake | SNI, fingerprint, ALPN, version, key share |
 | `reality` | REALITY verdict | `accepted` / `dest_cert` (the server did not recognize the client and served the dest certificate) / `invalid_cert` |
@@ -402,7 +403,7 @@ the user without waiting for the whole stage vocabulary.
 
 | Release | Content | Acceptance criteria |
 |-------|---------|---------------------|
-| 1 | Protocol, trace holder, both paths (router and node), all depths, `appDNS`, `connectIP` without fakeip findings; stages `app_dns`, `route`, `group`, `chain`, `dial`, `detour`, `lookup`, `dns`, `tcp_connect`, `tls`, `transport` (XHTTP), `proxy_header`, `target_tls`, `first_byte`, `http`; root cause, resolve-cycle detection, libbox, CLI. No findings | 1, 3, 8, 9, 10, 11; criterion 2 without the finding |
+| 1 | Protocol, trace holder, both paths (router and node), all depths, `appDNS`, `connectIP` without fakeip findings; stages `app_dns`, `route`, `group`, `chain`, `dial`, `detour`, `lookup`, `dns`, `tcp_connect`, `udp`, `tls`, `transport` (XHTTP), `proxy_header`, `target_tls`, `first_byte`, `http`; root cause, resolve-cycle detection, libbox, CLI. No findings | 1, 3, 8, 9, 10, 11; criterion 2 without the finding |
 | 2 | `fresh` at nested levels with `REUSED` ages, `reality` verdict, `wake`, `wg_handshake`, `auth` and `quic` stages, fakeip state, all findings of §6 | 2 (the finding), 4, 5, 6, 7 |
 
 Release 1 closes #59 and gives the LxBox screen its data. Release 2 is scoped
