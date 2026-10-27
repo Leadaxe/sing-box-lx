@@ -38,10 +38,11 @@ func TestRecordText_LX(t *testing.T) {
 		Hdr: dns.RR_Header{Name: "example.org.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
 		A:   net.IPv4(192, 0, 2, 1),
 	}
-	require.Equal(t, "A 300 192.0.2.1", recordText(record))
+	require.Equal(t, "A 300 192.0.2.1", recordText(record, "Example.org."))
+	require.Equal(t, "example.org. A 300 192.0.2.1", recordText(record, "www.example.org."))
 	https, err := dns.NewRR("example.org. 60 IN HTTPS 1 . alpn=h2,h3 ipv4hint=192.0.2.1")
 	require.NoError(t, err)
-	require.Equal(t, "HTTPS 60 1 . alpn=\"h2,h3\" ipv4hint=\"192.0.2.1\"", recordText(https))
+	require.Equal(t, "HTTPS 60 1 . alpn=\"h2,h3\" ipv4hint=\"192.0.2.1\"", recordText(https, "example.org."))
 }
 
 func appDNSSource(t *testing.T, children func(ctx context.Context)) []lxtrace.Attr {
@@ -82,8 +83,9 @@ func TestAppDNSSource_LX(t *testing.T) {
 	}))
 }
 
-// appDNSServer answers net.test with A, AAAA (NODATA) and HTTPS, and nx.test
-// with NXDOMAIN and a SOA, on a loopback UDP port.
+// appDNSServer answers net.test with A, AAAA (NODATA) and HTTPS, chain.test
+// with a CNAME to net.test, and anything else with NXDOMAIN and a SOA, on a
+// loopback UDP port.
 func appDNSServer(t *testing.T) string {
 	t.Helper()
 	soa := func(name string) dns.RR {
@@ -96,6 +98,10 @@ func appDNSServer(t *testing.T) string {
 		response.SetReply(request)
 		question := request.Question[0]
 		switch question.Name {
+		case "chain.test.":
+			cname, _ := dns.NewRR("chain.test. 300 IN CNAME net.test.")
+			address, _ := dns.NewRR("net.test. 300 IN A 192.0.2.1")
+			response.Answer = []dns.RR{cname, address}
 		case "net.test.":
 			switch question.Qtype {
 			case dns.TypeA:
@@ -209,7 +215,7 @@ func TestStartConnectionTest_AppDNS_LX(t *testing.T) {
 	require.Empty(t, attrOf(first["A"], "cache_age"))
 	require.Equal(t, []string{`HTTPS 300 1 . alpn="h2,h3"`}, attrsOf(first["HTTPS"], "answer"))
 	require.Empty(t, attrsOf(first["AAAA"], "answer"))
-	require.Equal(t, []string{"net.test. SOA 30 ns.test. admin.test. 1 900 900 1800 30"}, attrsOf(first["AAAA"], "authority"))
+	require.Equal(t, []string{"SOA 30 ns.test. admin.test. 1 900 900 1800 30"}, attrsOf(first["AAAA"], "authority"))
 
 	second := appDNSStages(t, startedService, "net.test")
 	require.Equal(t, "cache", attrOf(second["A"], "source"))
@@ -220,6 +226,9 @@ func TestStartConnectionTest_AppDNS_LX(t *testing.T) {
 	require.Equal(t, ConnectionTestStageResult_STAGE_FAILED, nx["A"].Result)
 	require.Equal(t, "NXDOMAIN", attrOf(nx["A"], "rcode"))
 	require.Equal(t, []string{"test. SOA 30 ns.test. admin.test. 1 900 900 1800 30"}, attrsOf(nx["A"], "authority"))
+
+	chain := appDNSStages(t, startedService, "chain.test")
+	require.Equal(t, []string{"CNAME 300 net.test.", "net.test. A 300 192.0.2.1"}, attrsOf(chain["A"], "answer"))
 
 	fake := appDNSStages(t, startedService, "fake.test")
 	require.Equal(t, "local", attrOf(fake["A"], "source"))

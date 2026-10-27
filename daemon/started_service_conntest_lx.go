@@ -185,7 +185,7 @@ func (t *connectionTest) runAppDNS(ctx context.Context) netip.Addr {
 		}
 		stage.Attr("rcode", dns.RcodeToString[response.Rcode])
 		for _, record := range response.Answer {
-			stage.Attr("answer", recordText(record))
+			stage.Attr("answer", recordText(record, message.Question[0].Name))
 			if answer.IsValid() {
 				continue
 			}
@@ -200,7 +200,7 @@ func (t *connectionTest) runAppDNS(ctx context.Context) netip.Addr {
 			// NODATA / NXDOMAIN: the SOA says which zone answered and how
 			// long the negative answer is cached.
 			for _, record := range response.Ns {
-				stage.Attr("authority", record.Header().Name+" "+recordText(record))
+				stage.Attr("authority", recordText(record, message.Question[0].Name))
 			}
 		}
 		attrAnswerSource(stage)
@@ -213,12 +213,18 @@ func (t *connectionTest) runAppDNS(ctx context.Context) netip.Addr {
 	return answer
 }
 
-// recordText is a resource record in presentation format without the owner
-// name and the class: "A 300 192.0.2.1", "HTTPS 300 1 . alpn=h2,h3 ...".
-func recordText(record dns.RR) string {
+// recordText is a resource record in presentation format without the class:
+// `A 300 192.0.2.1`, `HTTPS 300 1 . alpn="h2,h3"`. The owner name leads only
+// when it is not the queried name: the records after a CNAME, the zone of a
+// SOA in the authority section.
+func recordText(record dns.RR, question string) string {
 	header := record.Header()
 	rdata := strings.TrimPrefix(record.String(), header.String())
-	return dns.Type(header.Rrtype).String() + " " + strconv.FormatUint(uint64(header.Ttl), 10) + " " + rdata
+	text := dns.Type(header.Rrtype).String() + " " + strconv.FormatUint(uint64(header.Ttl), 10) + " " + rdata
+	if !strings.EqualFold(header.Name, question) {
+		text = header.Name + " " + text
+	}
+	return text
 }
 
 // attrAnswerSource copies where the answer came from onto the app_dns stage:
