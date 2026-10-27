@@ -307,6 +307,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 		for {
 			response, ttl, isStale := c.loadResponse(cacheKey)
 			if response != nil {
+				ctx = c.traceCacheAge(ctx, cacheKey) // lx: SPEC 139 — cache_age of the REUSED dns stage
 				if isStale && !options.DisableOptimisticCache {
 					c.backgroundRefreshDNS(transport, cacheKey, message.Copy(), options, responseChecker)
 					logOptimisticResponse(c.logger, ctx, transport, response) // lx: SPEC 018 (transport arg)
@@ -581,6 +582,7 @@ func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTranspo
 	if response == nil {
 		return nil, ErrNotCached
 	}
+	ctx = c.traceCacheAge(ctx, cacheKey) // lx: SPEC 139 — cache_age of the REUSED dns stage
 	if isStale {
 		if options.DisableOptimisticCache {
 			return nil, ErrNotCached
