@@ -28,6 +28,20 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.4-lx.24
+
+Стабильный релиз после `v1.14.3-lx.23`, промоут rc-линии `lx.24` (rc.1–rc.3) плюс правки после rc.3. **База — sing-box `v1.14.4`**, `upstream/stable` `c005f3530`, дрейф 0. Форк-сабмодули, тулчейн и зависимости с rc.3 не менялись: dry run релизной сборки прогнан перед rc.3, rc.3 собран `lx-release` зелёным. Две темы: проверка соединения (SPEC 139, релизы 1 и 2) и синк апстрима до `v1.14.4` (SPEC 140). Пользовательские ноты — `docs-lx/releases/v1.14.4-lx.24.md`.
+
+- 🆕 **`StartConnectionTest` (SPEC 139, issue #59, LxBox#176)** — подробности по rc в секциях rc.1 (протокол, стадии, CLI, libbox), rc.2 (полный ответ `app_dns`), rc.3 (выводы §6, `fresh` на вложенных уровнях, стадии REALITY / WG / MASQUE / TrustTunnel, правило корня). После rc.3:
+  - **Редирект — это ответ.** HTTP-клиент проверки больше не идёт по 3xx (`CheckRedirect` → `http.ErrUseLastResponse`), у стадии `http` атрибут `location`. Полевой случай LxBox на rc.3: `https://ya.ru` → 302, второй маршрутизированный dial отбит правилом «одно соединение на проверку», а ошибка копирования после обмена в `onRouteClosed` ставила `pathFailed` → `http` SKIPPED, `http_status=0`, корня нет. Теперь `onRouteClosed` считает обрывом пути только ошибку до поднятого первого хопа (`dialFinished`). Тесты: `TestStartConnectionTest_RedirectNotFollowed_LX` (через узел), подтест стенда `RedirectIsTheAnswer` (через роутер).
+  - **DoH и DoH3 под `fresh`** идут через одноразовый клиент (`HTTPSTransportWrapper` / `http3.Transport`), закрытый после обмена; стадия `dns` — `connection=new`, `pool=detached`. Таймаут под `fresh` не сбрасывает боевой клиент. Цена мержа: по две `// lx: SPEC 139` в `dns/transport/https.go` и `dns/transport/quic/http3.go`, логика в `https_fresh_lx.go` и `quic/http3_fresh_lx.go`. `dns/transport/quic` добавлен в race-шаг lx-ci.
+  - **`wg_handshake` несёт `detour`** — тег detour'а endpoint'а из `Dependencies()`.
+  - **Hysteria2/TUIC изнутри — не планируется** (SPEC §7): соединение долгоживущее, классификация ошибки покрывает частые случаи, видимость потребовала бы форка sing-quic.
+  - Проверено под `-race`: `daemon`, `protocol/wireguard`, `dns/transport`, `dns/transport/quic`, стенд `lx-test/conntest`. Правки после rc.3 на устройстве не прогонялись; issue #59 открыт до прогона на устройстве.
+- 🧰 **Синк `upstream/stable` до `v1.14.4` (SPEC 140)** — см. rc.3: роутер разворачивает группы сам, наш urltest остановлен на группе (`resolveOutboundLx`), сабмодули `wireguard-go` `7188e15`, `sing-tun` `1cb218d`.
+- 🐛 **Гонка на `selectedOutboundTCP/UDP` urltest (хотфикс, реестр HOTFIXES)** — см. rc.1.
+- 🧰 **Сверка зависимостей (раннбук §2a)** — как в rc.3: Go `go1.26.10` = stable, `CRONET_GO_VERSION` совпадает, NDK `r28c` против `r28` осознанно, `upstream.version` = `1.14.4`; алерты Dependabot (`grpc` < 1.83.2, `chi` < 5.4.0) не закрыты по той же причине.
+
 #### v1.14.4-lx.24-rc.3
 
 Кандидат после `v1.14.3-lx.24-rc.2`. **База — sing-box `v1.14.4`**, `upstream/stable` `c005f3530`, дрейф 0: синк 66 коммитов, отложенный на rc.1 и rc.2, закрыт (SPEC 140). Тулчейн и форк-сабмодули менялись — dry run релизной сборки прогнан перед тегом. Две темы: синк апстрима и релиз 2 проверки соединения.
