@@ -99,5 +99,5 @@ release 2 is scoped from its field experience.
 
 ### Stage 12 — after lx.24
 
-- [x] DNS group parallel query: the members cut short when another one answered are `SKIPPED` with `lost_race`, not `FAILED` (`Stage.EndRace` on `tls` and `dns`; field: two FAILED `tls` to a DoT server under a group step that ended OK)
+- [x] DNS group fan: a `dns_member` stage per member asked (subject = tag), so its dial stages sit under it; a participant that ended after the winner answered is `SKIPPED` with `lost_race=<winner's dns_member>`; inside, `tls` and `dns` cut short by the cancelled request ctx are `SKIPPED` with `lost_race` (`Stage.EndRace`) — issue #59 reopened: losing DoT/DoH `tls` were FAILED, subtrees unlabeled
 - [x] CI: `dns/transport/group` added to the SPEC 139 step

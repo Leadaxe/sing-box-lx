@@ -190,17 +190,27 @@ gofmt -l по lx-файлам                                                  �
   гонит всех участников на контексте запроса; как только один ответил,
   DNS-клиент отменяет этот контекст, и участник посреди TLS-рукопожатия
   заканчивает с `context canceled`. `lost_race` ставился только на
-  сокетные стадии dialer'а. Теперь `Stage.EndRace` (`common/lxtrace`)
-  закрывает стадию, упавшую на отменённом контексте — не на истёкшем, —
-  как `SKIPPED` с `lost_race=0`; им пользуются стадия `tls`
-  (`common/tls/conntest_lx.go`) и стадия `dns` упавшего резолва
-  (`dns/client_trace_lx.go`). Два вызова `// lx: SPEC 139` в
-  `common/tls/client.go` теперь передают контекст рукопожатия; новых
-  вставок нет. Тесты: `TestEndRace`, `TestLxHandshakeCancelledLostRace` /
-  `TestLxHandshakeTimeoutStaysFailed`, `TestDNSStageCancelledLostRace_LX` и
-  `TestParallelLoserHandshakeLostRace_LX` — настоящий DoT-участник,
-  застрявший в рукопожатии, против быстрого через `dns.Client`; до правки
-  красный с `context canceled`.
+  сокетные стадии dialer'а, а стадии dial участников лежали рядом под
+  группой с одним адресом сервера (issue #59 переоткрыт; выборы fastest
+  давали то же для DoT и DoH).
+  - Каждый участник, которого спрашивает группа, получает стадию
+    `dns_member` (subject = тег, `type`, `outbound`) на всех путях: single,
+    survival, fan (`dns/transport/group/conntest_lx.go`). В fan
+    `collectFan` закрывает стадию победителя OK, участника, закончившего
+    после него, — `SKIPPED` с `lost_race=<id dns_member победителя>`,
+    участника, упавшего сам при живом запросе, — `FAILED`.
+  - `Stage.EndRace` (`common/lxtrace`) закрывает стадию, упавшую на
+    отменённом контексте — не на истёкшем, — как `SKIPPED` с
+    `lost_race=0`; им пользуются стадия `tls` (`common/tls/conntest_lx.go`)
+    и стадия `dns` упавшего резолва (`dns/client_trace_lx.go`). Два вызова
+    `// lx: SPEC 139` в `common/tls/client.go` теперь передают контекст
+    рукопожатия; новых вставок в апстримные файлы нет.
+  - Тесты: `TestEndRace`, `TestLxHandshakeCancelledLostRace` /
+    `TestLxHandshakeTimeoutStaysFailed`, `TestDNSStageCancelledLostRace_LX`,
+    `TestParallelOwnFailureStaysFailed_LX`, `TestSingleMemberStage_LX` и
+    `TestParallelLoserHandshakeLostRace_LX` — настоящий DoT-участник,
+    застрявший в рукопожатии, против быстрого через `dns.Client`; до правки
+    красный с `context canceled`.
 - CI: `dns/transport/group` добавлен в шаг SPEC 139; тесты DNS-группы до
   этого не шли ни в одном шаге CI.
 

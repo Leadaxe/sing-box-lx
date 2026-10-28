@@ -235,6 +235,7 @@ without changing the protocol. A client renders an unknown kind as `kind` +
 | `detour` | Handing the connection to a detour | detour tag, what was passed: domain or address |
 | `lookup` | Resolving the server address of a node or DNS server | domain, who resolves (`domain_resolver` / `default_domain_resolver` / `dns_rules` with the rule), server, answer |
 | `dns` | Query to a DNS server | tag, type, group path, group probes (as in 035), rcode; `connection=new` / `reused` (a pooled server connection); a reused one adds a child `connection` stage, `REUSED`, subject = server address, `reuse=pooled` (idle in the pool) / `joined` (dialed by a parallel query, e.g. A and AAAA of one lookup), `age` in seconds; under `fresh` `connection=new`, `pool=detached`; a cache hit is `REUSED` with `source=cache`, `ttl` (remaining) and `cache_age` in seconds |
+| `dns_member` | A DNS group member asked by the group, one per attempt (single, rescue fan, fastest election, parallel); the member's own dial stages are its children | subject = member tag; type, outbound; `rcode` when it answered SERVFAIL; a fan participant that ended after the winner answered is `SKIPPED` with `lost_race=<winner's dns_member id>` |
 | `wake` | Waking an idle-suspended WG/AWG endpoint, recorded by the dial that wakes it | subject = endpoint tag; `slept` in seconds, `mode=resume` (device up) / `rebuild` (torn-down device rebuilt); `FAILED` when the endpoint stays down |
 | `tcp_connect` | TCP connection | address, local address; `tfo=deferred` when TCP Fast Open connects on the first write; `inside` = the WG/AWG endpoint tag for a connection opened inside its tunnel |
 | `udp` | UDP socket (a packet connection or a connected UDP socket) | address, local address; `inside` as for `tcp_connect` |
@@ -306,11 +307,14 @@ actual path, not the expected one.
 13. **Parallel dials.** When the dialer races several addresses or
     interfaces, the siblings that lost the race are `SKIPPED` with the
     attribute `lost_race=<winner stage id>`, not `FAILED`, and are never
-    the root cause. The same holds for the members of a DNS group's
-    parallel query: once one member answers, the request's context is
-    cancelled, and a `tls` handshake or a `dns` lookup that ends on that
-    cancelled context is `SKIPPED` with `lost_race=0` (the winner is not
-    known at that level). A stage that ran out of time stays `FAILED`
+    the root cause. The same holds for the participants of a DNS group's
+    fan (rescue fan, fastest election, parallel mode): a participant that
+    ends after the winner answered is `SKIPPED` with
+    `lost_race=<winner's dns_member id>`. Inside its subtree, a `tls`
+    handshake or a `dns` lookup that ends on the request's cancelled
+    context is `SKIPPED` with `lost_race=0` (the winner is not known at
+    that level). A member that failed on its own before the winner
+    answered stays `FAILED`, and so does a stage that ran out of time
     (item 11).
 14. **The test owns its connections.** Every connection the test opened,
     including those forced by `fresh`, is closed when the test ends and

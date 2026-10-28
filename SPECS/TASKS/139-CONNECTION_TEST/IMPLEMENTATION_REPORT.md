@@ -192,17 +192,27 @@ reading only the diff; the review's findings are fixed (below).
   every member on the request's context; once one answers, the DNS client
   cancels that context, and a member caught in its TLS handshake ends with
   `context canceled`. `lost_race` was set only on the dialer's socket
-  stages. Now `Stage.EndRace` (`common/lxtrace`) closes a stage that failed
-  on a cancelled context — not a timed-out one — as `SKIPPED` with
-  `lost_race=0`; the `tls` stage (`common/tls/conntest_lx.go`) and the
-  `dns` stage of a failed lookup (`dns/client_trace_lx.go`) use it. The two
-  `// lx: SPEC 139` calls in `common/tls/client.go` now pass the
-  handshake's context; no new insertion. Tests: `TestEndRace`,
-  `TestLxHandshakeCancelledLostRace` / `TestLxHandshakeTimeoutStaysFailed`,
-  `TestDNSStageCancelledLostRace_LX`, and
-  `TestParallelLoserHandshakeLostRace_LX` — a real DoT member stalled in its
-  handshake against a fast member through `dns.Client`, red before the fix
-  with `context canceled`.
+  stages, and the members' dial stages sat side by side under the group
+  with only the server address (issue #59 reopened; the fastest election
+  showed the same for DoT and DoH).
+  - Each member the group asks gets a `dns_member` stage (subject = tag,
+    `type`, `outbound`) in every path: single, survival, fan
+    (`dns/transport/group/conntest_lx.go`). In the fan, `collectFan` closes
+    the winner's stage OK, a participant that ended after it `SKIPPED` with
+    `lost_race=<winner's dns_member id>`, and a participant that failed on
+    its own while the request was alive `FAILED`.
+  - `Stage.EndRace` (`common/lxtrace`) closes a stage that failed on a
+    cancelled context — not a timed-out one — as `SKIPPED` with
+    `lost_race=0`; the `tls` stage (`common/tls/conntest_lx.go`) and the
+    `dns` stage of a failed lookup (`dns/client_trace_lx.go`) use it. The
+    two `// lx: SPEC 139` calls in `common/tls/client.go` now pass the
+    handshake's context; no new insertion in upstream files.
+  - Tests: `TestEndRace`, `TestLxHandshakeCancelledLostRace` /
+    `TestLxHandshakeTimeoutStaysFailed`, `TestDNSStageCancelledLostRace_LX`,
+    `TestParallelOwnFailureStaysFailed_LX`, `TestSingleMemberStage_LX`, and
+    `TestParallelLoserHandshakeLostRace_LX` — a real DoT member stalled in
+    its handshake against a fast member through `dns.Client`, red before the
+    fix with `context canceled`.
 - CI: `dns/transport/group` added to the SPEC 139 step; the DNS group's
   tests ran in no CI step before.
 
