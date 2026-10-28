@@ -4,7 +4,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | `with_xhttp` |
-| Состояние | ✅ live-validated против Xray; `stream-one`/`auto`+REALITY девайс-верифицированы (`v1.14.0-lx.17`). ⚠️ `packet-up`/`stream-up` за обратным прокси залипали на дайле — устранено задачей [061](../../TASKS/061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md) — в поле с `v1.14.0-lx.30` без жалоб |
+| Состояние | ✅ live-validated против Xray; `stream-one`/`auto`+REALITY девайс-верифицированы (`v1.14.0-lx.17`). ⚠️ `packet-up`/`stream-up` за обратным прокси залипали на дайле — устранено задачей [061](../../TASKS/061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md) — в поле с `v1.14.0-lx.30` без жалоб. Аплинк `packet-up` с 2026-10-29 конвейерный ([141](../../TASKS/141-XHTTP_PACKET_UP_PIPELINE/SPEC.md), issue #58) — проверен на h2/h3-стендах в тестах, против живого Xray и на устройстве ещё нет |
 
 ## Назначение
 
@@ -93,8 +93,16 @@ upload-POST'ы `packet-up` переиспользуют соединения.
 
 | Ключ | Тип | Дефолт | Смысл |
 |------|-----|--------|-------|
-| `sc_max_each_post_bytes` | `"min-max"` | `1000000-1000000` | Порог разбиения одного POST |
-| `sc_min_posts_interval_ms` | `"min-max"` | `30-30` | Минимальная пауза между POST (антивсплеск) |
+| `sc_max_each_post_bytes` | `"min-max"` | `1000000-1000000` | Размер буфера склейки записей и верхняя граница одного POST (розыгрыш один раз на поток) |
+| `sc_min_posts_interval_ms` | `"min-max"` | `30-30` | Минимальная пауза между POST (антивсплеск); записи за время паузы склеиваются в следующий POST |
+
+Аплинк `packet-up` — конвейер ([141](../../TASKS/141-XHTTP_PACKET_UP_PIPELINE/SPEC.md)):
+записи копятся в буфере, цикл отправки забирает буфер целиком и переходит к
+следующему POST, как только тело предыдущего записано на провод
+(`httptrace.WroteRequest`), не дожидаясь ответа; ответы собираются в фоне,
+не больше 16 незавершённых на поток. На HTTP/1.1 — по одному POST за раз
+(net/http не умеет pipelining), склейка действует. Сбой любого POST
+(ошибка, не-200, таймаут) роняет поток: `Write` и `Read` возвращают причину.
 
 ### Переиспользование соединений (`xmux`)
 
@@ -150,9 +158,10 @@ XTLS/Xray-core#6376), секция хотя бы с одним полем бер
 **`packet-up` (аплинк и даунлинк раздельно):**
 
 ```
-поток вверх → нарезка на куски (sc_max_each_post_bytes)
+поток вверх → буфер склейки (sc_max_each_post_bytes)
             → пауза между отправками (sc_min_posts_interval_ms)
             → POST: путь + идентификатор сессии + номер пакета + паддинг
+              (следующий — как только тело ушло; ≤ 16 ответов в ожидании)
                                     │
 поток вниз ← отдельный GET-поток ───┘
 ```
@@ -227,7 +236,8 @@ XTLS/Xray-core#6376), секция хотя бы с одним полем бер
   или версии), `finalmask.quicParams` (параметры QUIC задаются как у Xray
   по умолчанию, контроль перегрузки — Cubic, у Xray BBR), ECH на HTTP/3
   (узел грузится, dial отвечает ошибкой), сырые pipelined upload-POST'ы
-  HTTP/1.1 без чтения ответов.
+  HTTP/1.1 без чтения ответов (на HTTP/1.1 POST'ы `packet-up` идут по одному,
+  выигрыш конвейера [141](../../TASKS/141-XHTTP_PACKET_UP_PIPELINE/SPEC.md) там — только склейка записей).
 - **Служебный паддинг, вставляемый сервером в `stream-up`, не вычищается** —
   если целевой сервер его шлёт, поведение нужно проверять отдельно.
 
@@ -248,6 +258,7 @@ XTLS/Xray-core#6376), секция хотя бы с одним полем бер
 | [094 — XHTTP_LOCAL_CLOSE_NOT_FAILURE](../../TASKS/094-XHTTP_LOCAL_CLOSE_NOT_FAILURE/SPEC.md) | Наш же `Close()` не считается сбоем: `context.Canceled` нейтрален для брейкера xmux (вытеснение `failing` и backoff от шторма `interrupt_exist_connections`), закрытое нами тело отдаёт релею `net.ErrClosed`/`os.ErrDeadlineExceeded` вместо `http2: response body closed` на ERROR (LxBox #148; живой A/B 2026-09-24: 13/13/15 ERROR → 0/0/0). За чем следить: `v2rayhttp`/`v2raygrpclite` читают тела теми же путями, тот же симптом в логе возможен и там | I |
 | [104 — XHTTP_HTTP_VERSION_PARITY](../../TASKS/104-XHTTP_HTTP_VERSION_PARITY/SPEC.md) | Выбор версии HTTP по правилам Xray (`decideHTTPVersion`): `tls.alpn` `["h3"]` → HTTP/3 по QUIC (issue #25), `["http/1.1"]` и без TLS → HTTP/1.1 (раньше h2c), REALITY → HTTP/2; отпечаток uTLS на HTTP/3 не применяется | I |
 | [119 — XHTTP_PATH_QUERY](../../TASKS/119-XHTTP_PATH_QUERY/SPEC.md) | `?query` в `path` уходит в query запроса, а не кодируется в путь — паритет с Xray; Cloudflare-релей не получал `proxyip` (issue #36) | I |
+| [141 — XHTTP_PACKET_UP_PIPELINE](../../TASKS/141-XHTTP_PACKET_UP_PIPELINE/SPEC.md) | Конвейер аплинка `packet-up`: склейка записей в буфере `sc_max_each_post_bytes`, следующий POST после записи тела предыдущего, ответы в фоне (≤ 16 в ожидании), сбой POST роняет поток — паритет с Xray; раньше один поток выгружал одну запись за RTT (issue #58) | I |
 
 Соответствие параметров Xray — `PARAM_MAP.md` в задаче 002;
 разбор ссылок — там же `URL_PARSING.md`.
