@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/common/dnstrack"
+	"github.com/sagernet/sing-box/common/lxtrace"
 	E "github.com/sagernet/sing/common/exceptions"
 
 	mDNS "github.com/miekg/dns"
@@ -16,6 +17,7 @@ type fanResult struct {
 	response *mDNS.Msg
 	err      error
 	rtt      time.Duration
+	stage    *lxtrace.Stage // lx: SPEC 139 — the participant's dns_member stage
 }
 
 // fan is the single fan-out primitive serving three callers: the rescue fan
@@ -40,8 +42,9 @@ func (t *Transport) fan(ctx context.Context, message *mDNS.Msg, participants []*
 	results := make(chan fanResult, len(participants))
 	for _, participant := range participants {
 		go func(current *member) {
-			response, err, rtt := t.timedExchange(ctx, current, message.Copy())
-			results <- fanResult{member: current, response: response, err: err, rtt: rtt}
+			memberCtx, stage := beginMemberLx(ctx, current) // lx: SPEC 139
+			response, err, rtt := t.timedExchange(memberCtx, current, message.Copy())
+			results <- fanResult{member: current, response: response, err: err, rtt: rtt, stage: stage}
 		}(participant)
 	}
 	winnerCh := make(chan fanResult, 1)
@@ -74,6 +77,7 @@ func (t *Transport) collectFan(ctx context.Context, count int, results chan fanR
 	var (
 		errs      []error
 		delivered bool
+		winner    *lxtrace.Stage // lx: SPEC 139 — named by the losers' lost_race
 	)
 	for i := 0; i < count; i++ {
 		result := <-results
@@ -84,8 +88,10 @@ func (t *Transport) collectFan(ctx context.Context, count int, results chan fanR
 			// dead context, not evidence about the server — it goes neither
 			// into the health records nor into the trace.
 			if ctx.Err() != nil {
+				t.endLoserLx(ctx, result, delivered, winner) // lx: SPEC 139
 				continue
 			}
+			endMemberLx(ctx, result.stage, result.response, result.err) // lx: SPEC 139 — failed on its own
 			t.traceAttempt(ctx, result.member, result.response, result.err, result.rtt)
 			t.noteError(result.member.tag, gen)
 			t.logProbeFailure(ctx, result.member.tag, result.response, result.err)
@@ -104,10 +110,16 @@ func (t *Transport) collectFan(ctx context.Context, count int, results chan fanR
 		// FAILED query: it heals the server but must not mint a win, must
 		// not re-elect the current and must not pretend to answer.
 		if ctx.Err() != nil {
+			t.endLoserLx(ctx, result, delivered, winner) // lx: SPEC 139
 			continue
+		}
+		if delivered {
+			result.stage.LostRace(winner) // lx: SPEC 139 — a late answer
 		}
 		if !delivered {
 			delivered = true
+			result.stage.End(nil) // lx: SPEC 139
+			winner = result.stage // lx: SPEC 139
 			if t.mode == ModeFastest {
 				t.noteWin(result.member.tag, gen)
 			}

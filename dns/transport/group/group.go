@@ -448,7 +448,9 @@ func (t *Transport) exchangeSingle(ctx context.Context, message *mDNS.Msg, sel s
 		}
 	}
 	targetCtx, cancel := context.WithTimeout(ctx, t.targetBudget(ctx))
+	targetCtx, stage := beginMemberLx(targetCtx, sel.target) // lx: SPEC 139
 	response, err, rtt := t.timedExchange(targetCtx, sel.target, message)
+	endMemberLx(targetCtx, stage, response, err) // lx: SPEC 139
 	cancel()
 	t.traceAttempt(ctx, sel.target, response, err, rtt)
 	if !isFailure(response, err) {
@@ -475,7 +477,9 @@ func (t *Transport) exchangeSurvival(ctx context.Context, message *mDNS.Msg, sel
 	target := sel.target
 	dnstrack.MarkSurvival(ctx)
 	t.logger.WarnContext(ctx, "group[", t.Tag(), "]: no clean servers, survival attempt via ", target.tag)
-	response, err, rtt := t.timedExchange(ctx, target, message)
+	memberCtx, stage := beginMemberLx(ctx, target) // lx: SPEC 139
+	response, err, rtt := t.timedExchange(memberCtx, target, message)
+	endMemberLx(memberCtx, stage, response, err) // lx: SPEC 139
 	t.traceAttempt(ctx, target, response, err, rtt)
 	if !isFailure(response, err) {
 		t.noteSuccess(target.tag, rtt, sel.gen) // erases its errors → back to clean, stickiness holds it
