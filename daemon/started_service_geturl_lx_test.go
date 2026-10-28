@@ -4,6 +4,8 @@ package daemon
 
 import (
 	"context"
+	"errors"
+	"github.com/sagernet/sing-box/common/lxtrace"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -31,12 +33,17 @@ type probeDialer struct {
 	fail    error
 	block   chan struct{} // если не nil — дайл висит до закрытия канала или отмены ctx
 	nilAddr bool          // если true — conn отдаёт nil из LocalAddr/RemoteAddr, как conn naive (cronet-go)
+	retried bool          // если true — перед удачным дайлом пишет проваленную первую попытку, как повтор транспорта (MASQUE h3→h2)
 }
 
 func (d *probeDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	d.dials++
 	if d.fail != nil {
 		return nil, d.fail
+	}
+	if d.retried {
+		_, attempt := lxtrace.Begin(ctx, "quic", "first-attempt")
+		attempt.End(errors.New("first attempt failed"))
 	}
 	if d.block != nil {
 		select {

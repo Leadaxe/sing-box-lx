@@ -531,16 +531,40 @@ func (t *Trace) RouteRecorded() bool {
 }
 
 // rootCause implements SPEC 139 §5.2: among Failed stages that did not lose a
-// race, the one that finished first and has no Failed descendant. Ties by end
-// time go to the deeper stage, then to the smaller id.
+// race and were not recovered by an ancestor that ended OK after them, the one that finished
+// first and has no Failed descendant. Ties by end time go to the deeper stage,
+// then to the smaller id.
 func rootCause(stages []*Stage) uint32 {
 	failed := make(map[uint32]bool, len(stages))
+	ends := make(map[uint32]time.Time, len(stages))
+	succeeded := make(map[uint32]time.Time, len(stages))
 	for _, s := range stages {
 		s.access.Lock()
 		if s.result == Failed && !s.hasAttr("lost_race") {
 			failed[s.id] = true
+			ends[s.id] = s.end
+		}
+		if s.result == OK {
+			succeeded[s.id] = s.end
 		}
 		s.access.Unlock()
+	}
+	// A failure inside a stage that ended OK after it was recovered by that
+	// step: a transport that retried on its own (MASQUE h3 falling back to h2,
+	// TrustTunnel replacing a stale session), a lookup answered by another
+	// server. It stays in the trace but is not what stopped the pipeline. A
+	// failure that ends after its ancestor's OK (an XHTTP response refused
+	// once the lazily dialed transport returned) is not recovered.
+	for _, s := range stages {
+		if !failed[s.id] {
+			continue
+		}
+		for ancestor := s.parent; ancestor != nil; ancestor = ancestor.parent {
+			if end, ok := succeeded[ancestor.id]; ok && !end.Before(ends[s.id]) {
+				delete(failed, s.id)
+				break
+			}
+		}
 	}
 	if len(failed) == 0 {
 		return 0

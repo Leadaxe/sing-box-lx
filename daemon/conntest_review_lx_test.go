@@ -134,6 +134,25 @@ func TestStartConnectionTest_ProxyHeaderDepthGate_LX(t *testing.T) {
 			t.Fatalf("stages = %s, want only dial at DEPTH_CONNECT", kinds)
 		}
 	})
+
+	// A transport that retried on its own (MASQUE h3 falling back to h2,
+	// TrustTunnel replacing a stale session) leaves its failed first attempt
+	// in the trace; the hop is up, so it is not the root cause.
+	t.Run("DEPTH_CONNECT after a retried attempt", func(t *testing.T) {
+		service := newTypedProbeService(&probeDialer{retried: true}, C.TypeVLESS)
+		stream := newRecordingStream(context.Background())
+		if err := service.StartConnectionTest(&ConnectionTestRequest{Link: server.URL, OutboundTag: "node", Depth: ConnectionTestDepth_DEPTH_CONNECT}, stream); err != nil {
+			t.Fatalf("transport error: %v", err)
+		}
+		result := stream.result()
+		if result == nil || result.RootCause != 0 {
+			t.Fatalf("result = %v, want no root cause after a successful retry", result)
+		}
+		attempt := findStage(stream.finalStages(), "quic")
+		if attempt == nil || attempt.Result != ConnectionTestStageResult_STAGE_FAILED {
+			t.Fatalf("first attempt = %v, want it kept as FAILED", attempt)
+		}
+	})
 }
 
 // The class of a failed hysteria2/tuic/naive dial is synthesized after the

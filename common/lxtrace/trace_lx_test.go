@@ -206,7 +206,7 @@ func TestBeginLookupDetectsCycle(t *testing.T) {
 	if ctx3 != ctx2 {
 		t.Fatal("a cycle must not return a child ctx")
 	}
-	d.End(nil)
+	d.End(err) // the cycle error propagates up the lookups it is nested in
 	l1.End(err)
 	summary := trace.Finish(nil)
 	cycle := stageByID(summary, l2.ID())
@@ -698,7 +698,7 @@ func TestConcurrentBeginEnd(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-	parent.End(nil)
+	parent.End(errors.New("boom below")) // under an OK parent the booms would count as recovered
 	summary := trace.Finish(nil)
 	if len(summary.Stages) != 1+50+50*20 {
 		t.Fatalf("stages: %d", len(summary.Stages))
@@ -737,5 +737,51 @@ func TestWithStageAndStageLookup(t *testing.T) {
 	}
 	if WithStage(ctx, nil) != ctx {
 		t.Fatal("WithStage(nil) must return ctx unchanged")
+	}
+}
+
+// A failure inside a stage that ended OK was recovered by that step (a
+// transport retrying on its own, a lookup answered by another server): it is
+// kept in the trace but is not the root cause; a later top-level failure is.
+func TestRootCauseSkipsRecoveredFailure(t *testing.T) {
+	trace := New(Options{})
+	ctx := With(context.Background(), trace)
+	dialCtx, dial := Begin(ctx, "dial", "masque")
+	_, h3 := Begin(dialCtx, "quic", "h3")
+	h3.End(errors.New("handshake timeout"))
+	_, h2 := Begin(dialCtx, "auth", "h2")
+	h2.End(nil)
+	dial.End(nil)
+	_, firstByte := Begin(ctx, "first_byte", "target")
+	firstByte.End(errors.New("timeout"))
+	summary := trace.Finish(nil)
+	if summary.RootCause != firstByte.ID() {
+		t.Fatalf("root = %d, want first_byte %d, not the recovered h3 attempt %d", summary.RootCause, firstByte.ID(), h3.ID())
+	}
+	if attempt := stageByID(summary, h3.ID()); attempt.Result != Failed {
+		t.Fatalf("the recovered attempt must stay FAILED in the trace: %+v", attempt)
+	}
+
+	// A failure that ends after its ancestor's OK is not recovered: the XHTTP
+	// transport returns before the server refuses the response.
+	trace = New(Options{})
+	ctx = With(context.Background(), trace)
+	transportCtx, transport := Begin(ctx, "transport", "xhttp")
+	_, response := Begin(transportCtx, "transport_response", "xhttp")
+	transport.End(nil)
+	time.Sleep(time.Millisecond)
+	response.End(errors.New("status 403"))
+	if root := trace.Finish(nil).RootCause; root != response.ID() {
+		t.Fatalf("root = %d, want the late refusal %d", root, response.ID())
+	}
+
+	trace = New(Options{})
+	ctx = With(context.Background(), trace)
+	dialCtx, dial = Begin(ctx, "dial", "masque")
+	_, h3 = Begin(dialCtx, "quic", "h3")
+	h3.End(errors.New("handshake timeout"))
+	dial.End(errors.New("dial failed"))
+	if root := trace.Finish(nil).RootCause; root != h3.ID() {
+		t.Fatalf("root = %d, want the h3 attempt %d when the dial failed", root, h3.ID())
 	}
 }
