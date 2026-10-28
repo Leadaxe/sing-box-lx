@@ -30,6 +30,7 @@ import (
 var (
 	_ adapter.OutboundWithPreferredRoutes = (*Endpoint)(nil)
 	_ adapter.InterfaceUpdateListener     = (*Endpoint)(nil)
+	_ adapter.OutboundWithMultiplex       = (*Endpoint)(nil)
 	_ dialer.PacketDialerWithDestination  = (*Endpoint)(nil)
 	_ adapter.IdleSuspendable             = (*Endpoint)(nil) // lx: SPEC 020 idle-suspend
 )
@@ -523,6 +524,10 @@ func (w *Endpoint) Close() error {
 	w.resumeMu.Unlock()
 	w.bindAccess.Unlock()
 	return w.endpoint.Close()
+}
+
+func (w *Endpoint) MultiplexEnabled() bool {
+	return true
 }
 
 func (w *Endpoint) InterfaceUpdated(ctx context.Context) {

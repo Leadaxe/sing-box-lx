@@ -19,6 +19,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxtrace"
 	C "github.com/sagernet/sing-box/constant"
+	N "github.com/sagernet/sing/common/network"
 )
 
 // mode reports the selection mode, as URLTest.Mode does.
@@ -45,7 +46,7 @@ func (g *URLTestGroup) traceGroup(ctx context.Context, selected adapter.Outbound
 	}
 	stage.Attr("type", C.TypeURLTest)
 	stage.Attr("mode", g.mode())
-	realTag := RealTag(g.outbound, selected)
+	realTag := RealTag(selected, N.NetworkTCP)
 	stage.Attr("selected", realTag)
 	if selected.Tag() != realTag {
 		// a nested group: selected is its live leaf, member the group itself

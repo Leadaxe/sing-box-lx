@@ -701,7 +701,7 @@ func unfoldSelectors(ctx context.Context, t *Trace, outbound adapter.Outbound) {
 			return
 		}
 		seen[outbound.Tag()] = true
-		selected := group.Now()
+		selected := adapter.GroupNow(group)
 		_, s := Begin(ctx, "group", outbound.Tag())
 		s.Attr("type", outbound.Type())
 		s.Attr("selected", selected)

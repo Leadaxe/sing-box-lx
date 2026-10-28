@@ -212,7 +212,7 @@ func walkReachable(tag string, manual bool, result *reachability, resolve func(t
 	// A selector routes through its single current choice only — Now(), NOT All()
 	// (a non-selected member is exactly what we want to be able to suspend).
 	if group, ok := outbound.(adapter.OutboundGroup); ok {
-		walkReachable(group.Now(), true, result, resolve)
+		walkReachable(adapter.GroupNow(group), true, result, resolve)
 		return
 	}
 

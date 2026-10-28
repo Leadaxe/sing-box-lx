@@ -57,7 +57,7 @@ func (g *URLTestGroup) failoverCheck(ctx context.Context) map[string]uint16 {
 			return result
 		}
 		for _, node := range held {
-			if g.history.LoadURLTestHistory(RealTag(g.outbound, node)) == nil {
+			if g.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)) == nil {
 				failed[node.Tag()] = true
 			}
 		}
@@ -73,7 +73,7 @@ func (g *URLTestGroup) failoverCheck(ctx context.Context) map[string]uint16 {
 			if ctx.Err() != nil {
 				return result
 			}
-			if g.history.LoadURLTestHistory(RealTag(g.outbound, node)) == nil {
+			if g.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)) == nil {
 				failed[node.Tag()] = true
 			} else if g.failoverDegraded(node) {
 				slow[node.Tag()] = true
@@ -121,7 +121,7 @@ const (
 // failoverTrigger × the fastest other node with history that supports a network
 // the node is held for. No such node — false.
 func (g *URLTestGroup) failoverDegraded(node adapter.Outbound) bool {
-	history := g.history.LoadURLTestHistory(RealTag(g.outbound, node))
+	history := g.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP))
 	if history == nil {
 		return false
 	}
@@ -139,7 +139,7 @@ func (g *URLTestGroup) failoverDegraded(node adapter.Outbound) bool {
 			if detour == node || !supportsNetwork(detour, network) {
 				continue
 			}
-			other := g.history.LoadURLTestHistory(RealTag(g.outbound, detour))
+			other := g.history.LoadURLTestHistory(RealTag(detour, N.NetworkTCP))
 			if other == nil {
 				continue
 			}
@@ -181,12 +181,12 @@ func (g *URLTestGroup) failoverSelect(network string, reselect bool) (adapter.Ou
 			current = g.selectedOutboundUDP
 		}
 		if current != nil {
-			if history := g.history.LoadURLTestHistory(RealTag(g.outbound, current)); history != nil {
+			if history := g.history.LoadURLTestHistory(RealTag(current, N.NetworkTCP)); history != nil {
 				// lx: SPEC 126 — a confirmed-slow held node yields only to a node
 				// failoverMove × faster in the fresh full run.
 				if slow := g.failoverSlow.Load(); slow != nil && (*slow)[current.Tag()] {
 					if fastest := g.fastestByDelay(network); fastest != nil && fastest != current {
-						if best := g.history.LoadURLTestHistory(RealTag(g.outbound, fastest)); best != nil && slowerBy(history.Delay, best.Delay, failoverMoveNum, failoverMoveDen) {
+						if best := g.history.LoadURLTestHistory(RealTag(fastest, N.NetworkTCP)); best != nil && slowerBy(history.Delay, best.Delay, failoverMoveNum, failoverMoveDen) {
 							return fastest, true
 						}
 					}

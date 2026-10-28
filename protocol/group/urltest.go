@@ -2,8 +2,10 @@ package group
 
 import (
 	"context"
+	"io"
 	"maps"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,7 +41,6 @@ type URLTest struct {
 	outbound.Adapter
 	ctx                          context.Context
 	outbound                     adapter.OutboundManager
-	connection                   adapter.ConnectionManager
 	logger                       log.ContextLogger
 	tags                         []string
 	link                         string
@@ -74,7 +75,6 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 		Adapter:                      outbound.NewAdapter(C.TypeURLTest, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.Outbounds),
 		ctx:                          ctx,
 		outbound:                     service.FromContext[adapter.OutboundManager](ctx),
-		connection:                   service.FromContext[adapter.ConnectionManager](ctx),
 		logger:                       logger,
 		tags:                         options.Outbounds,
 		link:                         options.URL,
@@ -87,6 +87,11 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	if len(outbound.tags) == 0 {
 		return nil, E.New("missing tags")
+	}
+	for i, tag := range outbound.tags {
+		if slices.Contains(outbound.tags[:i], tag) {
+			return nil, E.New("duplicate tag: ", tag)
+		}
 	}
 	return outbound, nil
 }
@@ -126,30 +131,6 @@ func (s *URLTest) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	return nil
 }
 
-func (s *URLTest) Now() string {
-	// lx: SPEC 019 — balanced modes have no single "current" node; report the last picked tag.
-	if s.balancer != nil {
-		return s.group.lastSelected.Load()
-	}
-	selectedTCP, selectedUDP := s.group.selectedLx() // lx: SPEC 139
-	if selectedTCP != nil {
-		return selectedTCP.Tag()
-	} else if selectedUDP != nil {
-		return selectedUDP.Tag()
-	}
-	// lx: SPEC 019 — cold start: before the first URL-test, selectedOutbound* is nil but
-	// traffic already flows via the Select() fallback (outbounds[0] when no history yet).
-	// Mirror exactly what the next DialContext would pick, so the UI shows the real node
-	// instead of blank. Select() is the same source of truth DialContext uses.
-	if outbound, _ := s.group.Select(N.NetworkTCP); outbound != nil {
-		return outbound.Tag()
-	}
-	if outbound, _ := s.group.Select(N.NetworkUDP); outbound != nil {
-		return outbound.Tag()
-	}
-	return ""
-}
-
 func (s *URLTest) All() []string {
 	return s.tags
 }
@@ -173,13 +154,13 @@ func (s *URLTest) Pool() []PoolSlot {
 	slots := make([]PoolSlot, len(tags))
 	for i, tag := range tags {
 		var delay uint16
-		// History is keyed by RealTag(manager, detour) (a nested-group member is tested and
+		// History is keyed by RealTag(detour, tcp) (a nested-group member is tested and
 		// stored under its live leaf, not the group tag); read it the same way, or
 		// the slot's delay is always 0/dead for group members (SPEC 022 #5). Fall
 		// back to the raw slot tag if the outbound can't be resolved.
 		historyTag := tag
 		if node, loaded := s.outbound.Outbound(tag); loaded {
-			historyTag = RealTag(s.outbound, node)
+			historyTag = RealTag(node, N.NetworkTCP)
 		}
 		if history := s.group.history.LoadURLTestHistory(historyTag); history != nil {
 			delay = history.Delay
@@ -205,6 +186,31 @@ func (s *URLTest) Mode() string {
 		return C.URLTestModeFailover
 	}
 	return C.URLTestModeLeastTest
+}
+
+func (s *URLTest) Selected(network string) adapter.Outbound {
+	// lx: SPEC 019 — balanced modes have no single selected node; report the last pick.
+	if s.balancer != nil {
+		if selected, loaded := s.outbound.Outbound(s.group.lastSelected.Load()); loaded {
+			return selected
+		}
+	}
+	var outbound adapter.Outbound
+	selectedTCP, selectedUDP := s.group.selectedLx() // lx: SPEC 139
+	if network == N.NetworkUDP {
+		outbound = selectedUDP
+	} else {
+		outbound = selectedTCP
+	}
+	if outbound == nil {
+		outbound, _ = s.group.Select(network)
+	}
+	return outbound
+}
+
+func (s *URLTest) AttachConnection(closer io.Closer) func() {
+	s.group.Touch()
+	return s.group.interruptGroup.Add(closer, true)
 }
 
 func (s *URLTest) References() []string {
@@ -306,7 +312,7 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 	// lx:end chain
 	if err == nil {
 		if s.balancer == nil {
-			s.group.penaltyResetOnDial(ctx, RealTag(s.outbound, outbound)) // lx: SPEC 054 — успех = доказательство жизни; SPEC 139 — not for a probe
+			s.group.penaltyResetOnDial(ctx, RealTag(outbound, N.NetworkTCP)) // lx: SPEC 054 — успех = доказательство жизни; SPEC 139 — not for a probe
 		}
 		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
@@ -355,16 +361,6 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 		s.group.deleteHistoryOnDialError(ctx, outbound.Tag()) // lx: SPEC 139 — a probe keeps the history
 	}
 	return nil, err
-}
-
-func (s *URLTest) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	ctx = interrupt.ContextWithIsExternalConnection(ctx)
-	s.connection.NewConnection(ctx, s, conn, metadata, onClose)
-}
-
-func (s *URLTest) NewPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	ctx = interrupt.ContextWithIsExternalConnection(ctx)
-	s.connection.NewPacketConnection(ctx, s, conn, metadata, onClose)
 }
 
 type URLTestGroup struct {
@@ -506,14 +502,14 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
 	switch network {
 	case N.NetworkTCP:
 		if selectedTCP != nil {
-			if history := g.history.LoadURLTestHistory(RealTag(g.outbound, selectedTCP)); history != nil {
+			if history := g.history.LoadURLTestHistory(RealTag(selectedTCP, N.NetworkTCP)); history != nil {
 				minOutbound = selectedTCP
 				minDelay = history.Delay
 			}
 		}
 	case N.NetworkUDP:
 		if selectedUDP != nil {
-			if history := g.history.LoadURLTestHistory(RealTag(g.outbound, selectedUDP)); history != nil {
+			if history := g.history.LoadURLTestHistory(RealTag(selectedUDP, N.NetworkUDP)); history != nil {
 				minOutbound = selectedUDP
 				minDelay = history.Delay
 			}
@@ -523,7 +519,7 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
 		if !common.Contains(detour.Network(), network) {
 			continue
 		}
-		history := g.history.LoadURLTestHistory(RealTag(g.outbound, detour))
+		history := g.history.LoadURLTestHistory(RealTag(detour, network))
 		if history == nil {
 			continue
 		}
@@ -667,7 +663,7 @@ func urlTestOutbounds(ctx context.Context, outboundManager adapter.OutboundManag
 	testBatch.test(outbounds, link, interval, force)
 	b.Wait()
 	for _, outboundGroup := range testBatch.groups {
-		groupHistory := history.LoadURLTestHistory(RealTag(outboundManager, outboundGroup))
+		groupHistory := history.LoadURLTestHistory(RealTag(outboundGroup, N.NetworkTCP))
 		if groupHistory != nil {
 			testBatch.result[outboundGroup.Tag()] = groupHistory.Delay
 		}
@@ -956,7 +952,7 @@ func (g *URLTestGroup) rebuildPool() {
 	results := make(map[string]candidate, len(g.outbounds))
 	for _, detour := range g.outbounds {
 		tag := detour.Tag()
-		if history := g.history.LoadURLTestHistory(RealTag(g.outbound, detour)); history != nil {
+		if history := g.history.LoadURLTestHistory(RealTag(detour, N.NetworkTCP)); history != nil {
 			results[tag] = candidate{tag: tag, delay: history.Delay, alive: true}
 		} else {
 			results[tag] = candidate{tag: tag, alive: false}
@@ -1008,7 +1004,7 @@ func (g *URLTestGroup) seedPool() {
 	// Nodes with existing history first (top by delay), then config order to fill.
 	withHistory := make([]candidate, 0, len(g.outbounds))
 	for _, detour := range g.outbounds {
-		if history := g.history.LoadURLTestHistory(RealTag(g.outbound, detour)); history != nil {
+		if history := g.history.LoadURLTestHistory(RealTag(detour, N.NetworkTCP)); history != nil {
 			withHistory = append(withHistory, candidate{tag: detour.Tag(), delay: history.Delay, alive: true})
 		}
 	}

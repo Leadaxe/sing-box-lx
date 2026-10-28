@@ -35,7 +35,7 @@ var (
 )
 
 type Manager struct {
-	outbound adapter.OutboundManager
+	outboundLx adapter.OutboundManager // lx: detour-chain (SPEC 017), see SetOutboundManagerLx
 
 	connections             compatible.Map[uuid.UUID, Tracker]
 	closedConnectionsAccess sync.Mutex
@@ -47,9 +47,8 @@ type Manager struct {
 	eventObserver   *observable.Observer[ConnectionEvent]
 }
 
-func NewManager(outbound adapter.OutboundManager) *Manager {
+func NewManager() *Manager {
 	return &Manager{
-		outbound:        outbound,
 		eventSubscriber: observable.NewSubscriber[ConnectionEvent](256),
 	}
 }

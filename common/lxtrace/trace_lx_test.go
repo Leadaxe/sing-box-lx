@@ -5,6 +5,7 @@ package lxtrace
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/netip"
 	"strconv"
@@ -518,8 +519,14 @@ func (o *testOutbound) DialContext(context.Context, string, M.Socksaddr) (net.Co
 func (o *testOutbound) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
 	return nil, errors.New("not dialable")
 }
-func (o *testOutbound) Now() string   { return o.now }
 func (o *testOutbound) All() []string { return []string{o.now} }
+func (o *testOutbound) Selected(string) adapter.Outbound {
+	if o.now == "" {
+		return nil
+	}
+	return &testOutbound{tag: o.now}
+}
+func (o *testOutbound) AttachConnection(io.Closer) func() { return func() {} }
 
 type testOutboundManager struct {
 	outbounds map[string]adapter.Outbound

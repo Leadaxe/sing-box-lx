@@ -63,14 +63,13 @@ func newNestedSelectorsUnderTest(t *testing.T) (outer, inner *Selector, nodeA, n
 
 	ctx := context.Background()
 	ctx = service.ContextWith[adapter.OutboundManager](ctx, mgr)
-	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(logger.NOP()))
+	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(context.Background(), logger.NOP()))
 
 	newSelector := func(tag string, tags []string) *Selector {
 		return &Selector{
 			Adapter:                      outbound.NewAdapter(C.TypeSelector, tag, nil, tags),
 			ctx:                          ctx,
 			outbound:                     mgr,
-			connection:                   service.FromContext[adapter.ConnectionManager](ctx),
 			logger:                       logger.NOP(),
 			tags:                         tags,
 			defaultTag:                   tags[0],
@@ -113,14 +112,14 @@ func TestLxNestedSelectorSwitchDuringDetourCloseNoDeadlock(t *testing.T) {
 		t.Fatalf("inner.DialContext: %v", err)
 	}
 
-	// 2. Входящее из TUN: outer.NewConnection → inner.NewConnection → узел.
+	// 2. Входящее из TUN: роутер прикрепляет его к outer и inner, узел берёт.
 	inboundClient, inboundServer := net.Pipe()
 	defer inboundClient.Close()
 	metadata := adapter.InboundContext{
 		Network:     N.NetworkTCP,
 		Destination: M.ParseSocksaddr("example.com:80"),
 	}
-	go outer.NewConnection(context.Background(), inboundServer, metadata, func(it error) {})
+	go routeLikeRouter(outer, inboundServer, metadata, func(it error) {})
 	deadline := time.Now().Add(2 * time.Second)
 	for nodeA.dialed.Load() < 2 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -161,8 +160,8 @@ func TestLxNestedSelectorSwitchDuringDetourCloseNoDeadlock(t *testing.T) {
 		}
 	}
 
-	if now := inner.Now(); now != "node-b" {
-		t.Errorf("inner.Now() = %q, ожидали node-b", now)
+	if now := adapter.GroupNow(inner); now != "node-b" {
+		t.Errorf("GroupNow(inner) = %q, ожидали node-b", now)
 	}
 	if connAlive(t, upstreamRemote) {
 		t.Error("сокет узла пережил переключение — interrupt не сработал")

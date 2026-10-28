@@ -1,12 +1,11 @@
 // lx: проверка того, доходит ли interrupt_exist_connections до реального
 // трафика селектора.
 //
-// Утверждение, которое проверяется: соединение, пришедшее из inbound (то есть
-// через Selector.NewConnection — именно так его отдаёт роутер, route/route.go:175),
-// НЕ регистрируется в s.interruptGroup, потому что Selector.NewConnection
-// передаёт в ConnectionManager `selected`, а не `s`, и собственный
-// Selector.DialContext (единственное место регистрации, selector.go:154)
-// не вызывается.
+// Соединение из inbound роутер с апстрима 03335338a отдаёт так: разворачивает
+// цепочку групп (resolveOutbound), каждой группе цепочки прикрепляет
+// соединение для прерываний (registerInterrupt → AttachConnection) и отдаёт
+// его узлу. routeLikeRouter ниже повторяет это без роутера. До 03335338a тот
+// же разрыв закрывала наша регистрация в Selector.NewConnection (SPEC 064).
 //
 // Тест намеренно НЕ моделирует interrupt.Group отдельно: он поднимает
 // настоящий Selector и настоящий route.ConnectionManager и смотрит на факт
@@ -77,6 +76,38 @@ func (m *stubOutboundManager) Outbounds() []adapter.Outbound {
 
 func (m *stubOutboundManager) Default() adapter.Outbound { return nil }
 
+// routeLikeRouter отдаёт входящее соединение так, как это делает роутер:
+// цепочка через Selected, AttachConnection у каждой группы, снятие на закрытии,
+// узел-handler берёт соединение сам, остальным его отдаёт ConnectionManager.
+func routeLikeRouter(head adapter.Outbound, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+	chain := []adapter.Outbound{head}
+	for {
+		group, isGroup := chain[len(chain)-1].(adapter.OutboundGroup)
+		if !isGroup {
+			break
+		}
+		chain = append(chain, group.Selected(metadata.Network))
+	}
+	var removers []func()
+	for _, element := range chain {
+		if group, isGroup := element.(adapter.OutboundGroup); isGroup {
+			removers = append(removers, group.AttachConnection(conn))
+		}
+	}
+	onClose = N.AppendClose(onClose, func(error) {
+		for _, remove := range removers {
+			remove()
+		}
+	})
+	ctx := interrupt.ContextWithIsExternalConnection(context.Background(), true)
+	node := chain[len(chain)-1]
+	if handler, isHandler := node.(adapter.ConnectionHandler); isHandler {
+		handler.NewConnection(ctx, conn, metadata, onClose)
+		return
+	}
+	route.NewConnectionManager(context.Background(), logger.NOP()).NewConnection(ctx, node, conn, metadata, onClose)
+}
+
 // newSelectorUnderTest поднимает настоящий Selector над двумя узлами,
 // с настоящим route.ConnectionManager в контексте.
 func newSelectorUnderTest(t *testing.T, interruptExisting bool) (*Selector, *probeNode, *probeNode) {
@@ -92,13 +123,12 @@ func newSelectorUnderTest(t *testing.T, interruptExisting bool) (*Selector, *pro
 
 	ctx := context.Background()
 	ctx = service.ContextWith[adapter.OutboundManager](ctx, mgr)
-	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(logger.NOP()))
+	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(context.Background(), logger.NOP()))
 
 	sel := &Selector{
 		Adapter:                      outbound.NewAdapter(C.TypeSelector, "sel", nil, []string{"node-a", "node-b"}),
 		ctx:                          ctx,
 		outbound:                     mgr,
-		connection:                   service.FromContext[adapter.ConnectionManager](ctx),
 		logger:                       logger.NOP(),
 		tags:                         []string{"node-a", "node-b"},
 		defaultTag:                   "node-a",
@@ -139,8 +169,8 @@ func TestLxSelectorInterruptViaDialContext(t *testing.T) {
 	}
 }
 
-// Путь 2 — селектор как HANDLER (роутер отдаёт соединение через NewConnection).
-// Это путь всего inbound-трафика: route/route.go:175.
+// Путь 2 — соединение из inbound: роутер прикрепляет его к группам цепочки.
+// Это путь всего inbound-трафика.
 // Проверяем, рвётся ли соединение при переключении узла.
 func TestLxSelectorInterruptViaNewConnection(t *testing.T) {
 	sel, nodeA, _ := newSelectorUnderTest(t, true)
@@ -158,7 +188,7 @@ func TestLxSelectorInterruptViaNewConnection(t *testing.T) {
 		Destination: M.ParseSocksaddr("example.com:80"),
 	}
 
-	go sel.NewConnection(context.Background(), inboundServer, metadata, func(it error) {})
+	go routeLikeRouter(sel, inboundServer, metadata, func(it error) {})
 
 	// Ждём, пока узел реально сдиалит.
 	deadline := time.Now().Add(2 * time.Second)
@@ -206,13 +236,12 @@ func TestLxSelectorInterruptHandlerBranch(t *testing.T) {
 
 	ctx := context.Background()
 	ctx = service.ContextWith[adapter.OutboundManager](ctx, mgr)
-	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(logger.NOP()))
+	ctx = service.ContextWith[adapter.ConnectionManager](ctx, route.NewConnectionManager(context.Background(), logger.NOP()))
 
 	sel := &Selector{
 		Adapter:                      outbound.NewAdapter(C.TypeSelector, "sel", nil, []string{"node-a", "node-b"}),
 		ctx:                          ctx,
 		outbound:                     mgr,
-		connection:                   service.FromContext[adapter.ConnectionManager](ctx),
 		logger:                       logger.NOP(),
 		tags:                         []string{"node-a", "node-b"},
 		defaultTag:                   "node-a",
@@ -231,7 +260,7 @@ func TestLxSelectorInterruptHandlerBranch(t *testing.T) {
 		Network:     N.NetworkTCP,
 		Destination: M.ParseSocksaddr("example.com:80"),
 	}
-	sel.NewConnection(context.Background(), inboundServer, metadata, func(it error) {})
+	routeLikeRouter(sel, inboundServer, metadata, func(it error) {})
 
 	if nodeA.held.Load() == nil {
 		t.Fatal("handler-узел не получил соединение — окружение нерабочее")
@@ -290,7 +319,7 @@ func TestLxSelectorHandlerPathSanity(t *testing.T) {
 		Network:     N.NetworkTCP,
 		Destination: M.ParseSocksaddr("example.com:80"),
 	}
-	go sel.NewConnection(context.Background(), inboundServer, metadata, func(it error) {})
+	go routeLikeRouter(sel, inboundServer, metadata, func(it error) {})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for nodeA.dialed.Load() == 0 && time.Now().Before(deadline) {

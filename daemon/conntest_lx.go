@@ -353,7 +353,7 @@ func (t *connectionTest) nodeType(tag string) string {
 		if !isGroup {
 			return outbound.Type()
 		}
-		tag = group.Now()
+		tag = adapter.GroupNow(group)
 	}
 	return ""
 }

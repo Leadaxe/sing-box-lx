@@ -293,7 +293,7 @@ func deterministicLeaf(manager adapter.OutboundManager, target adapter.Outbound)
 		if target.Type() != C.TypeSelector {
 			return nil
 		}
-		now := group.Now()
+		now := adapter.GroupNow(group)
 		if now == "" || seen[now] {
 			return nil
 		}
@@ -444,12 +444,12 @@ func (c *Chain) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.
 // treated as internal and ripped on any toggle regardless of
 // interrupt_exist_connections (SPEC 075, selector model).
 func (c *Chain) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	ctx = interrupt.ContextWithIsExternalConnection(ctx)
+	ctx = interrupt.ContextWithIsExternalConnection(ctx, true)
 	c.connection.NewConnection(ctx, c, conn, metadata, onClose)
 }
 
 func (c *Chain) NewPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	ctx = interrupt.ContextWithIsExternalConnection(ctx)
+	ctx = interrupt.ContextWithIsExternalConnection(ctx, true)
 	c.connection.NewPacketConnection(ctx, c, conn, metadata, onClose)
 }
 
@@ -463,7 +463,7 @@ func (c *Chain) resolvedLeaf(position int) adapter.Outbound {
 		if !isGroup {
 			return target
 		}
-		now := group.Now()
+		now := adapter.GroupNow(group)
 		if now == "" || seen[now] {
 			return nil
 		}

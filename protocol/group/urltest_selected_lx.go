@@ -26,3 +26,8 @@ func (g *URLTestGroup) setSelectedUDPLx(outbound adapter.Outbound) {
 	g.selectedOutboundUDP = outbound
 	g.selectedAccess.Unlock()
 }
+
+// SelectsPerConnectionLx tells the router to hand a routed connection to this
+// group instead of the node Selected reports (route/group_resolve_lx.go): the
+// pick, penalties and the in-connection fallback run in DialContext.
+func (s *URLTest) SelectsPerConnectionLx() {}

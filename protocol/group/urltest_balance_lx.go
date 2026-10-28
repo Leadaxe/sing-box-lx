@@ -12,6 +12,7 @@ import (
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 )
 
 // lx: SPEC 019 v2 — round_robin load-balancing for the urltest group.
@@ -208,7 +209,7 @@ func (b *balancer) liveSlot(slots []slot, k uint64) (int, bool) {
 // i.e. its last probe answered. A tag that does not resolve counts as dead. lx: SPEC 138.
 func (s *URLTest) slotAlive(tag string) bool {
 	node, loaded := s.outbound.Outbound(tag)
-	return loaded && s.group.history.LoadURLTestHistory(RealTag(s.outbound, node)) != nil
+	return loaded && s.group.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)) != nil
 }
 
 // poolTags returns the current slot tags (snapshot under lock). Used by Pool()/GetPool.
@@ -480,7 +481,7 @@ func (s *URLTest) ActiveTags() []string {
 		}
 		// Cold start: pool not yet filled — fall back to the single current pick.
 	}
-	if now := s.Now(); now != "" {
+	if now := adapter.GroupNow(s); now != "" {
 		return []string{now}
 	}
 	return nil

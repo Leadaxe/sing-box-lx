@@ -131,7 +131,7 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 		}
 		if len(rawPeer.Reserved) > 0 {
 			if len(rawPeer.Reserved) != 3 {
-				return nil, E.New("invalid reserved value for peer ", peerIndex, ", required 3 bytes, got ", len(peer.reserved))
+				return nil, E.New("invalid reserved value for peer ", peerIndex, ", required 3 bytes, got ", len(rawPeer.Reserved))
 			}
 			copy(peer.reserved[:], rawPeer.Reserved[:])
 		}
@@ -616,16 +616,20 @@ func (e *Endpoint) applyPauseEvent(event int) {
 		return
 	}
 	switch event {
-	case pause.EventNetworkPause:
-		e.device.Down()
-	case pause.EventNetworkWake:
-		// lx: SPEC 020/007 — a suspended device (idle-suspend or AWG guard) stays
-		// down through pause/wake cycles; the owning state machine wakes it
-		// (resumeOnDial) or keeps it down (guard) on its own terms.
-		if e.suspended.Load() {
-			return
+	case pause.EventNetworkPause, pause.EventNetworkWake:
+		// upstream cc022098f: apply the current pause state, not the event, so
+		// a pause and a wake that race each other settle on the latest state.
+		if e.pause.IsNetworkPaused() {
+			e.device.Down()
+		} else {
+			// lx: SPEC 020/007 — a suspended device (idle-suspend or AWG guard)
+			// stays down through pause/wake cycles; the owning state machine
+			// wakes it (resumeOnDial) or keeps it down (guard) on its own terms.
+			if e.suspended.Load() {
+				return
+			}
+			e.device.Up()
 		}
-		e.device.Up()
 	}
 }
 
