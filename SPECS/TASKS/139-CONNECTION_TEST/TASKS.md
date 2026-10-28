@@ -68,24 +68,24 @@ release 2 is scoped from its field experience.
 ### Stage 7 — reuse and fresh at nested levels
 
 - [x] `app_dns` attrs from the field run (#59): one `answer` per record, `authority` on NXDOMAIN / NODATA, `source` / `cache_age`; `cache_age` on the cached `dns` stage (2 insertions in `dns/client.go`)
-- [ ] Insertions in `dns/client.go` (`DisableCache` from `lxtrace.Fresh`) and `conn_pool.go` (`created == false` → `REUSED`, `fresh` → new connection)
-- [ ] WG/AWG: `wake`, `wg_handshake`; `reuse=uncontrolled` for external modules
-- [ ] MASQUE and TrustTunnel `auth`
+- [x] Insertions in `dns/client.go` (`DisableCache` from `lxtrace.Fresh`) and `conn_pool.go` (`created == false` → `REUSED`, `fresh` → new connection)
+- [x] WG/AWG: `wake`, `wg_handshake`; `reuse=uncontrolled` for external modules
+- [x] MASQUE and TrustTunnel `auth`
 
 ### Stage 8 — REALITY and fakeip
 
-- [ ] Verdict in `reality_client.go` (`accepted` / `dest_cert` / `invalid_cert`)
-- [ ] lx access to the fakeip store; wrap-counter insertion in `store.go`
-- [ ] `connectIP` from the fakeip range: `route` `FAILED` + findings
+- [x] Verdict in `reality_client.go` (`accepted` / `dest_cert` / `invalid_cert`)
+- [x] lx access to the fakeip store; wrap-counter insertion in `store.go`
+- [x] `connectIP` from the fakeip range: `route` `FAILED` + findings
 
 ### Stage 9 — findings
 
-- [ ] `findings_lx.go`: all codes of SPEC §6 (`ip_rules_not_evaluated` from the selected rule index, no `matchRule` insertion)
-- [ ] Unit tests on synthetic traces
+- [x] `findings_lx.go`: all codes of SPEC §6 (`ip_rules_not_evaluated` from the selected rule index, no `matchRule` insertion)
+- [x] Unit tests on synthetic traces
 
 ### Stage 10 — verification and documents
 
-- [ ] Stand: add Hysteria2 to `lx-test/conntest`
-- [ ] SPEC acceptance criteria 2 (the finding), 4, 5, 6, 7
-- [ ] `-race`, builds, lx-ci, `gofmt` as in stage 5
-- [ ] FEATURE 006, SPEC §10, IMPLEMENTATION_REPORT.md updated
+- [x] Stand: add Hysteria2 to `lx-test/conntest`
+- [x] SPEC acceptance criteria 2 (the finding), 4, 5, 6, 7
+- [x] `-race`, builds, lx-ci, `gofmt` as in stage 5
+- [x] FEATURE 006, SPEC §10, IMPLEMENTATION_REPORT.md updated

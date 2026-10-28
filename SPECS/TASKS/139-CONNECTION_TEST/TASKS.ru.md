@@ -68,24 +68,24 @@
 ### Этап 7 — переиспользование и fresh на вложенных уровнях
 
 - [x] Атрибуты `app_dns` по полевому прогону (#59): `answer` на каждую запись, `authority` при NXDOMAIN / NODATA, `source` / `cache_age`; `cache_age` на кэшированной стадии `dns` (2 вставки в `dns/client.go`)
-- [ ] Вставки в `dns/client.go` (`DisableCache` от `lxtrace.Fresh`) и `conn_pool.go` (`created == false` → `REUSED`, `fresh` → новое соединение)
-- [ ] WG/AWG: `wake`, `wg_handshake`; `reuse=uncontrolled` для внешних модулей
-- [ ] MASQUE и TrustTunnel `auth`
+- [x] Вставки в `dns/client.go` (`DisableCache` от `lxtrace.Fresh`) и `conn_pool.go` (`created == false` → `REUSED`, `fresh` → новое соединение)
+- [x] WG/AWG: `wake`, `wg_handshake`; `reuse=uncontrolled` для внешних модулей
+- [x] MASQUE и TrustTunnel `auth`
 
 ### Этап 8 — REALITY и fakeip
 
-- [ ] Вердикт в `reality_client.go` (`accepted` / `dest_cert` / `invalid_cert`)
-- [ ] lx-доступ к хранилищу fakeip; вставка счётчика оборотов в `store.go`
-- [ ] `connectIP` из диапазона fakeip: `route` `FAILED` + выводы
+- [x] Вердикт в `reality_client.go` (`accepted` / `dest_cert` / `invalid_cert`)
+- [x] lx-доступ к хранилищу fakeip; вставка счётчика оборотов в `store.go`
+- [x] `connectIP` из диапазона fakeip: `route` `FAILED` + выводы
 
 ### Этап 9 — выводы
 
-- [ ] `findings_lx.go`: все коды §6 SPEC (`ip_rules_not_evaluated` по индексу выбранного правила, без вставки в `matchRule`)
-- [ ] Юниты на синтетических трассах
+- [x] `findings_lx.go`: все коды §6 SPEC (`ip_rules_not_evaluated` по индексу выбранного правила, без вставки в `matchRule`)
+- [x] Юниты на синтетических трассах
 
 ### Этап 10 — проверка и документы
 
-- [ ] Стенд: добавить Hysteria2 в `lx-test/conntest`
-- [ ] Критерии приёмки SPEC 2 (вывод), 4, 5, 6, 7
-- [ ] `-race`, сборки, lx-ci, `gofmt` как в этапе 5
-- [ ] FEATURE 006, SPEC §10, IMPLEMENTATION_REPORT.md обновлены
+- [x] Стенд: добавить Hysteria2 в `lx-test/conntest`
+- [x] Критерии приёмки SPEC 2 (вывод), 4, 5, 6, 7
+- [x] `-race`, сборки, lx-ci, `gofmt` как в этапе 5
+- [x] FEATURE 006, SPEC §10, IMPLEMENTATION_REPORT.md обновлены

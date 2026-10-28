@@ -1,13 +1,14 @@
-# IMPLEMENTATION REPORT 139 — StartConnectionTest, release 1
+# IMPLEMENTATION REPORT 139 — StartConnectionTest, releases 1 and 2
 
 > 🌐 Русская версия: **[IMPLEMENTATION_REPORT.ru.md](IMPLEMENTATION_REPORT.ru.md)** (a Russian copy for reference; this English file is primary).
 
 **Status:** I (implemented) — release 1 of SPEC §9 is on `lx` (2026-10-27,
-`a0ec238b8` … `cdf9a297a`). Builds with and without the lx tags, `go vet`,
-the unit tests of every touched package and the acceptance stand pass under
-`-race`. Not done: a device run (LxBox screen, router), the reply in #59 and
-the field check of criterion 1 outside the stand. Release 2 (§9) is not
-started.
+`a0ec238b8` … `cdf9a297a`), release 2 on 2026-10-28 (`980c9145d` …
+`1b4aa8317`, on top of the v1.14.4 sync, SPEC 140). Builds with and without
+the lx tags, `go vet`, the unit tests of every touched package and the
+acceptance stand pass under `-race`. Not done: a device run (LxBox screen,
+router) and the field check of criterion 1 outside the stand. Release 2 is
+described in its own section below.
 
 ## What landed
 
@@ -105,10 +106,84 @@ go test -count=1 (no tags) ./common/lxtrace/ ./daemon/ ./experimental/libbox/
 gofmt -l on lx files                                                   clean
 ```
 
+## Release 2
+
+Implemented by three parallel agents on disjoint files, reviewed by a fourth
+reading only the diff; the review's findings are fixed (below).
+
+| Area | Files | Content |
+|------|-------|---------|
+| `fresh` and reuse at nested DNS levels | `dns/client.go` (+2), `dns/client_trace_lx.go`, `dns/transport/conn_pool.go` (+11), `dns/transport/conntest_lx.go` | `fresh` sets `DisableCache` in `beginExchange` and `Lookup` (no cache read or write, RDRC skipped); the pool gives a fresh test a connection of its own that is closed on release, never shared or idle; a reused pooled connection is a `REUSED` child `connection` stage (`reuse=pooled|joined`, `age`); `connection=new|reused` on the `dns` stage |
+| WG/AWG | `protocol/wireguard/endpoint.go` (+1 in the lx idle-suspend block), `protocol/wireguard/conntest_lx.go` | `wake` (slept, resume/rebuild, FAILED when the endpoint stays down); `wg_handshake` before each TCP connect inside the tunnel (new — ends at the handshake time; existing — REUSED with age; none — FAILED and the root; unreadable — NOT_EVALUATED) |
+| MASQUE, TrustTunnel | `protocol/masque/{outbound,conntest_lx}.go`, `protocol/trusttunnel/conntest_lx.go`, `transport/trusttunnel/{client,trace}.go` | `quic` and `auth` (status, `refused=access_denied` / `authentication_required`), reused tunnel or session REUSED with age. TrustTunnel gets a generic httptrace-style `ClientTrace` hook with no lxtrace import, so the file stays in upstream-ready form |
+| `reuse=uncontrolled` | `daemon/conntest_lx.go` | under `fresh` on hysteria, hysteria2, tuic, naive, anytls, `multiplex.enabled` and the gRPC transport (from the running config), MASQUE and TrustTunnel |
+| REALITY | `common/tls/reality_client.go` (+1), `common/tls/reality_conntest_lx.go` | `reality` child of `tls`: `accepted` / `dest_cert` / `invalid_cert` |
+| fakeip | `dns/transport/fakeip/store.go` (+1), `store_lx.go` | read-only access (ranges, persistence, address ↔ domain) and a pool-wrap counter; `connectIP` in the range ends `route` FAILED with `fakeip=no_record` |
+| Findings | `common/lxtrace/findings_lx.go`, `daemon/started_service_conntest_lx.go` | all 15 codes of §6 with levels, pure functions over the summary and the core state (TUN options and rules from the running config, the fakeip store, `router.Rules()`); libbox and the CLI already carried them |
+| Root cause | `common/lxtrace/trace_lx.go`, handler | a failure inside a stage that ended OK after it is recovered (MASQUE h3→h2, TrustTunnel session retry) and is not the root; `DEPTH_CONNECT` with the first hop up has no root cause |
+| Stand | `lx-test/conntest/conntest_hysteria2_lx_test.go` | Hysteria2 node: path, `reuse=uncontrolled` under `fresh`, wrong password → `class=auth` root |
+| CI | `.github/workflows/lx-ci.yml` | fakeip, masque and the REALITY tests of common/tls added to the SPEC 139 step |
+
+### Fixed after the review
+
+- A transport retry left its failed first attempt as the root cause when a
+  later stage failed: the root rule now skips failures recovered by an
+  ancestor ending OK after them. The first version skipped any failure
+  under an OK ancestor and broke the XHTTP late refusal (the lazily dialed
+  transport returns before the server refuses); the timing condition keeps
+  it.
+- `fakeip_pool_wrapped` fired after a restart with a persisted store: the
+  first pass resumes mid-range, so the interval is measured only between
+  two wraps.
+- `excluded_from_vpn` gave `include_uid` for a uid-only source under
+  `include_package`: an include verdict now needs every list in use to be
+  checkable.
+- `reuse=uncontrolled` was missing for the gRPC transport.
+
+### Deviations and limits (written into the SPEC)
+
+- Appendix A changed: the WG endpoint's own detour and peer lookup run on
+  the endpoint's context and never show; `wake` is a leaf, `wg_handshake`
+  its sibling; `reality` is a child of `tls`.
+- Hysteria2 and TUIC open QUIC on the client's long-lived context: the hop
+  is one opaque `dial`, classified by the error.
+- MASQUE success reports `status=2xx`: the transport does not return the
+  exact code.
+- DoH and DoH3 bypass the DNS connection pool: `fresh` does not force a new
+  connection and reuse is not marked.
+- Finding levels were not in the SPEC; chosen and written into §6.
+  `quic_rejected` for TCP and `fakeip_pool_wrapped` are approximate (§7).
+- Criterion 5: a wrong `public_key` gives `dest_cert` only with a publicly
+  trusted dest certificate; with a self-signed one it is `invalid_cert`.
+
+### Known, not fixed
+
+- A probe touches shared state in upstream DNS code: a retry error on the
+  test's own DoQ connection calls `Reset()` on the production pool
+  (`dns/transport/quic/quic.go`), and closing a fresh multiplexed
+  connection resets `demoteFailures` (`dns/transport/multiplexer.go`).
+- A QUIC session opened by a test (TrustTunnel h3, MASQUE, a shared DoQ
+  connection) keeps the dial context's values, the trace among them, for
+  its lifetime (quic-go builds the connection context with
+  `WithoutCancel`): memory only, no behaviour.
+
+### Verification
+
+```
+go build ./...  (no tags / LX_TAGS; windows, linux; android libbox with the AAR tags)   ok
+go vet (LX_TAGS) on the touched packages                                                  clean
+go test -race -tags LX_TAGS,with_lx_chain: common/lxtrace, common/dialer,
+  common/trafficcontrol, common/interrupt, daemon, experimental/libbox, dns/...,
+  protocol/{group,chain,masque/...,trusttunnel}, transport/{trusttunnel,v2rayxhttp},
+  route, cmd/sing-box, lx-test/{conntest,chain}                                           ok
+go test -race (CI wireguard step tags): transport/wireguard, protocol/wireguard, route,
+  adapter/endpoint, common/lxclosewatch; lx-test/startclose                               ok
+go test ./common/tls/ -run 'Reality|Lx'                                                   ok
+make -f Makefile.lx lx-check                                                              ok
+```
+
 ## Open
 
-- Reply in #59 and close it (after the owner's go-ahead, with the commit link).
-- Device run: LxBox screen against this core, `api connection-test` on a
-  router with a real DNS detour.
-- Release 2 (SPEC §9): `fresh` at nested DNS levels, REALITY verdict,
-  `wake`/`wg_handshake`, fakeip, findings.
+- Device run: the LxBox screen against this core, `api connection-test` on
+  a router with a real DNS detour; #59 stays open until then.
+- The two known probe side effects above.

@@ -157,7 +157,9 @@ the attribute `reuse=uncontrolled`.
 ## 4. Root
 
 SPEC §5.2, literally: among `FAILED` stages, excluding those marked
-`lost_race` (SPEC §5.13), take the one that finished first and has no
+`lost_race` (SPEC §5.13) and those with an ancestor that ended OK after
+them (a recovered step: MASQUE h3 falling back to h2, TrustTunnel replacing a stale
+session), take the one that finished first and has no
 failed descendants. Stages that did not run because of it are `SKIPPED`.
 On timeout, unfinished stages are closed as `FAILED/timeout` and the same
 rule applies to them. Lost-race marking: `DialParallelNetwork` and
