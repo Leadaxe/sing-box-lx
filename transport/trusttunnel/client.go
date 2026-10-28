@@ -190,7 +190,7 @@ func (c *Client) DialContext(ctx context.Context, destination M.Socksaddr) (net.
 	if !destination.IsValid() || destination.Port == 0 {
 		return nil, E.New("trusttunnel: invalid destination: ", destination)
 	}
-	session, stream, err := c.openStream(ctx, destination.String(), c.userAgent, true)
+	session, stream, err := c.openStream(ctx, ContextClientTrace(ctx), destination.String(), c.userAgent, true)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +200,7 @@ func (c *Client) DialContext(ctx context.Context, destination M.Socksaddr) (net.
 // ListenPacket opens one _udp2 stream. Datagrams on it carry IP addresses only;
 // the caller resolves domains.
 func (c *Client) ListenPacket(ctx context.Context) (*PacketConn, error) {
-	session, stream, err := c.openStream(ctx, AuthorityUDP, c.userAgentUDP, true)
+	session, stream, err := c.openStream(ctx, ContextClientTrace(ctx), AuthorityUDP, c.userAgentUDP, true)
 	if err != nil {
 		return nil, err
 	}
@@ -210,11 +210,12 @@ func (c *Client) ListenPacket(ctx context.Context) (*PacketConn, error) {
 // Check sends CONNECT _check on the session, opening it if needed. A failed
 // check tears the session down.
 func (c *Client) Check(ctx context.Context) error {
-	session, _, err := c.getSession(ctx)
+	trace := ContextClientTrace(ctx)
+	session, _, err := c.getSession(ctx, trace)
 	if err != nil {
 		return err
 	}
-	return c.check(ctx, session)
+	return c.check(ctx, trace, session)
 }
 
 // Reset tears the session down; the next request opens a new one. Meant for
@@ -241,41 +242,44 @@ func (c *Client) Close() error {
 	return nil
 }
 
-func (c *Client) openStream(ctx context.Context, authority string, userAgent string, withBody bool) (*clientSession, *rawStream, error) {
-	session, fresh, err := c.getSession(ctx)
+func (c *Client) openStream(ctx context.Context, trace *ClientTrace, authority string, userAgent string, withBody bool) (*clientSession, *rawStream, error) {
+	session, fresh, err := c.getSession(ctx, trace)
 	if err != nil {
 		return nil, nil, err
 	}
 	if !fresh && c.healthCheck && session.checkDue() {
-		err = c.check(ctx, session)
+		err = c.check(ctx, trace, session)
 		if err != nil {
 			if ctx.Err() != nil || !retryable(err) {
 				return nil, nil, err
 			}
 			c.logger.DebugContext(ctx, "trusttunnel: health check of session to ", c.server, " failed, reconnecting: ", err)
-			session, fresh, err = c.getSession(ctx)
+			session, fresh, err = c.getSession(ctx, trace)
 			if err != nil {
 				return nil, nil, err
 			}
 		}
 	}
-	stream, err := c.roundTrip(ctx, session, authority, userAgent, withBody, !fresh)
+	stream, err := c.roundTrip(ctx, trace, session, authority, userAgent, withBody, !fresh)
 	if err == nil || fresh || ctx.Err() != nil || !retryable(err) {
 		return session, stream, err
 	}
 	c.logger.DebugContext(ctx, "trusttunnel: CONNECT on session to ", c.server, " failed, reconnecting: ", err)
-	session, _, err = c.getSession(ctx)
+	session, _, err = c.getSession(ctx, trace)
 	if err != nil {
 		return nil, nil, err
 	}
-	stream, err = c.roundTrip(ctx, session, authority, userAgent, withBody, false)
+	stream, err = c.roundTrip(ctx, trace, session, authority, userAgent, withBody, false)
 	return session, stream, err
 }
 
 // roundTrip sends one CONNECT on the session and checks the answer. A transport
 // failure or an authentication refusal tears the session down; a CONNECT that
 // may land on a stale session is bounded by staleConnectBudget.
-func (c *Client) roundTrip(ctx context.Context, session *clientSession, authority string, userAgent string, withBody bool, mayBeStale bool) (*rawStream, error) {
+func (c *Client) roundTrip(ctx context.Context, trace *ClientTrace, session *clientSession, authority string, userAgent string, withBody bool, mayBeStale bool) (_ *rawStream, err error) {
+	var status int
+	done := trace.connect(ctx, authority)
+	defer func() { done(status, err) }()
 	attemptCtx := ctx
 	if mayBeStale && session.silentFor() > c.staleWindow {
 		var cancel context.CancelFunc
@@ -292,6 +296,7 @@ func (c *Client) roundTrip(ctx context.Context, session *clientSession, authorit
 		}
 		return nil, E.Cause(err, "trusttunnel: CONNECT ", authority)
 	}
+	status = stream.response.StatusCode
 	if stream.response.StatusCode != http.StatusOK {
 		stream.close()
 		statusError := NewStatusError(stream.response.StatusCode, stream.response.Header)
@@ -308,7 +313,10 @@ func (c *Client) roundTrip(ctx context.Context, session *clientSession, authorit
 	return stream, nil
 }
 
-func (c *Client) check(ctx context.Context, session *clientSession) error {
+func (c *Client) check(ctx context.Context, trace *ClientTrace, session *clientSession) (err error) {
+	var status int
+	done := trace.connect(ctx, AuthorityCheck)
+	defer func() { done(status, err) }()
 	checkCtx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
 	defer cancel()
 	session.checked.Store(time.Now().UnixNano())
@@ -322,6 +330,7 @@ func (c *Client) check(ctx context.Context, session *clientSession) error {
 		}
 		return E.Cause(err, "trusttunnel: health check")
 	}
+	status = stream.response.StatusCode
 	stream.close()
 	if stream.response.StatusCode != http.StatusOK {
 		c.teardown(session)
@@ -347,7 +356,7 @@ func retryable(err error) bool {
 
 // getSession returns the live session, opening one when there is none. fresh
 // reports that the session was opened by this call.
-func (c *Client) getSession(ctx context.Context) (*clientSession, bool, error) {
+func (c *Client) getSession(ctx context.Context, trace *ClientTrace) (*clientSession, bool, error) {
 	c.access.Lock()
 	defer c.access.Unlock()
 	if c.closed {
@@ -356,6 +365,7 @@ func (c *Client) getSession(ctx context.Context) (*clientSession, bool, error) {
 	if session := c.session; session != nil {
 		if session.conn.alive() {
 			session.markActivity()
+			trace.sessionReused(ctx, c.protocol, c.server, session.opened)
 			return session, false, nil
 		}
 		c.session = nil
@@ -367,12 +377,14 @@ func (c *Client) getSession(ctx context.Context) (*clientSession, bool, error) {
 		conn sessionConn
 		err  error
 	)
+	dialCtx, done := trace.sessionOpen(ctx, c.protocol, c.server)
 	switch c.protocol {
 	case ProtocolHTTP3:
-		conn, err = c.connectQUIC(ctx)
+		conn, err = c.connectQUIC(dialCtx)
 	default:
-		conn, err = c.connectHTTP2(ctx)
+		conn, err = c.connectHTTP2(dialCtx)
 	}
+	done(err)
 	if err != nil {
 		return nil, false, E.Cause(err, "trusttunnel: open session to ", c.server)
 	}
@@ -456,6 +468,7 @@ type clientSession struct {
 	received  atomic.Int64
 	checked   atomic.Int64
 	streams   atomic.Int64
+	opened    time.Time
 	closeOnce sync.Once
 }
 
@@ -465,6 +478,7 @@ func newClientSession(ctx context.Context, conn sessionConn) *clientSession {
 		conn:   conn,
 		ctx:    sessionCtx,
 		cancel: cancel,
+		opened: time.Now(),
 	}
 	session.markReceived()
 	return session

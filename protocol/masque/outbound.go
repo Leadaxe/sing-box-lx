@@ -147,6 +147,7 @@ type session struct {
 	// by the idle watcher. Atomic so pumps update it lock-free.
 	activity atomic.Int64
 	teardown sync.Once
+	opened   time.Time // lx: SPEC 139 — the age of a reused tunnel
 }
 
 func (s *session) markActivity(now int64) { s.activity.Store(now) }
@@ -466,6 +467,7 @@ func (o *Outbound) ensureSession(ctx context.Context) (*session, error) {
 		return nil, E.New("masque: outbound closed")
 	}
 	if o.sess != nil {
+		o.traceTunnelReusedLx(ctx, o.sess) // lx: SPEC 139 — REUSED `auth` with the tunnel's age
 		return o.sess, nil
 	}
 
@@ -503,6 +505,7 @@ func (o *Outbound) ensureSession(ctx context.Context) (*session, error) {
 		ipConn: ipConn,
 		ctx:    sessCtx,
 		cancel: cancel,
+		opened: time.Now(), // lx: SPEC 139
 	}
 	s.markActivity(time.Now().UnixNano())
 	o.sess = s
@@ -846,12 +849,16 @@ func (o *Outbound) connectH3WithBudget(ctx context.Context, handshakeBudget time
 		handshakeCtx, cancel = context.WithTimeout(ctx, handshakeBudget)
 		defer cancel()
 	}
+	quicStage := o.beginQUICLx(ctx) // lx: SPEC 139 — `quic` stage
 	quicConn, err := quic.DialEarly(handshakeCtx, bufio.NewUnbindPacketConn(udpConn), udpConn.RemoteAddr(), o.tlsConfig, o.quicConfig)
+	quicStage.End(err) // lx: SPEC 139
 	if err != nil {
 		_ = udpConn.Close()
 		return nil, nil, E.Cause(err, "dial quic")
 	}
+	authStage := o.beginAuthLx(ctx, "h3") // lx: SPEC 139 — `auth` stage: CONNECT-IP status
 	tr, ipConn, err := masque.ConnectTunnelH3(ctx, o.profile, quicConn, o.uri)
+	endAuthLx(authStage, err) // lx: SPEC 139
 	if err != nil {
 		_ = udpConn.Close()
 		return nil, nil, err
@@ -872,7 +879,10 @@ func (o *Outbound) connectH2(ctx context.Context) (io.Closer, masque.IpConn, err
 		_ = c.Close()
 		return nil, nil, E.Cause(err, "tls handshake")
 	}
-	return masque.ConnectTunnelH2(ctx, o.profile, tlsConn, o.uri)
+	authStage := o.beginAuthLx(ctx, "h2") // lx: SPEC 139 — `auth` stage: CONNECT-IP status
+	closer, ipConn, err := masque.ConnectTunnelH2(ctx, o.profile, tlsConn, o.uri)
+	endAuthLx(authStage, err) // lx: SPEC 139
+	return closer, ipConn, err
 }
 
 // pumpToTunnel reads outgoing IP packets from the userspace stack and writes

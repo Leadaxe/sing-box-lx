@@ -321,6 +321,7 @@ func runEndToEnd(t *testing.T, protocol string) {
 	t.Run("StaleSession", func(t *testing.T) { testStaleSession(t, protocol) })
 	t.Run("IdleTeardown", func(t *testing.T) { testIdleTeardown(t, protocol) })
 	t.Run("HealthCheck", func(t *testing.T) { testHealthCheck(t, protocol) })
+	t.Run("Trace", func(t *testing.T) { testTrace(t, protocol) })
 }
 
 func TestHTTP2(t *testing.T) {
@@ -476,7 +477,7 @@ func testReservedAuthorities(t *testing.T, protocol string) {
 		{"example.com:0", http.StatusBadRequest},
 		{AuthorityICMP, http.StatusNotFound},
 	} {
-		_, _, err := client.openStream(ctx, testCase.authority, UserAgent("test"), true)
+		_, _, err := client.openStream(ctx, nil, testCase.authority, UserAgent("test"), true)
 		var statusError *StatusError
 		if !errors.As(err, &statusError) || statusError.StatusCode != testCase.statusCode {
 			t.Errorf("%s: got %v, want %d", testCase.authority, err, testCase.statusCode)

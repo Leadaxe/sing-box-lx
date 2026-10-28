@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"math/rand/v2"
@@ -122,6 +123,9 @@ type connectionTest struct {
 	httpStage      *lxtrace.Stage
 	httpBegun      map[string]bool
 	synthesized    map[uint32]bool
+
+	multiplexOnce sync.Once
+	multiplexTags map[string]bool // outbounds with multiplex enabled, from the running config
 }
 
 func (t *connectionTest) trace() *lxtrace.Trace { return t.tr }
@@ -332,6 +336,12 @@ func (t *connectionTest) destination(appDNSAnswer netip.Addr) M.Socksaddr {
 // type that actually carries the connection: selectors are followed through
 // Now(); for a urltest/failover group the current pick is the best guess.
 func (t *connectionTest) nodeType(tag string) string {
+	_, nodeType := t.resolveNode(tag)
+	return nodeType
+}
+
+// resolveNode is nodeType that also returns the tag of the resolved node.
+func (t *connectionTest) resolveNode(tag string) (string, string) {
 	seen := make(map[string]bool)
 	for !seen[tag] {
 		seen[tag] = true
@@ -343,19 +353,52 @@ func (t *connectionTest) nodeType(tag string) string {
 		}
 		if outbound == nil && t.instance.endpointManager != nil {
 			if endpoint, loaded := t.instance.endpointManager.Get(tag); loaded {
-				return endpoint.Type()
+				return tag, endpoint.Type()
 			}
 		}
 		if outbound == nil {
-			return ""
+			return "", ""
 		}
 		group, isGroup := outbound.(adapter.OutboundGroup)
 		if !isGroup {
-			return outbound.Type()
+			return tag, outbound.Type()
 		}
 		tag = adapter.GroupNow(group)
 	}
-	return ""
+	return "", ""
+}
+
+// multiplexed reports whether the outbound tag runs over sing-mux. The
+// outbound does not expose it, so it is read from the running config once
+// per test; without a captured config it reports false.
+func (t *connectionTest) multiplexed(tag string) bool {
+	t.multiplexOnce.Do(func() {
+		var config struct {
+			Outbounds []struct {
+				Tag       string `json:"tag"`
+				Multiplex *struct {
+					Enabled bool `json:"enabled"`
+				} `json:"multiplex"`
+				Transport *struct {
+					Type string `json:"type"`
+				} `json:"transport"`
+			} `json:"outbounds"`
+		}
+		if t.instance.runningConfig == "" || json.Unmarshal([]byte(t.instance.runningConfig), &config) != nil {
+			return
+		}
+		for _, outbound := range config.Outbounds {
+			// The gRPC transport keeps one grpc.ClientConn per outbound and
+			// multiplexes every stream over it, as sing-mux does.
+			if outbound.Multiplex != nil && outbound.Multiplex.Enabled || outbound.Transport != nil && outbound.Transport.Type == C.V2RayTransportTypeGRPC {
+				if t.multiplexTags == nil {
+					t.multiplexTags = make(map[string]bool)
+				}
+				t.multiplexTags[outbound.Tag] = true
+			}
+		}
+	})
+	return t.multiplexTags[tag]
 }
 
 // synthesizeAfterDial adds what the pipeline cannot report about a finished
@@ -370,8 +413,13 @@ func (t *connectionTest) nodeType(tag string) string {
 // stage has already ended when this runs, so attributes added to it would
 // miss the snapshot on the stream: they are returned and merged into the
 // outgoing snapshot by the caller.
+//
+// Under `fresh` a hop whose connection lives in an external module that keeps
+// its own QUIC, mux or session pool (PLAN §3.3) gets reuse=uncontrolled: the
+// module cannot be told to open a new connection, so the stage may have run
+// over a live one.
 func (t *connectionTest) synthesizeAfterDial(ctx context.Context, snapshot lxtrace.StageSnapshot, target string, firstHop bool) []lxtrace.Attr {
-	nodeType := t.nodeType(snapshot.Subject)
+	nodeTag, nodeType := t.resolveNode(snapshot.Subject)
 	if nodeType == "" {
 		return nil
 	}
@@ -379,13 +427,21 @@ func (t *connectionTest) synthesizeAfterDial(ctx context.Context, snapshot lxtra
 	if stage == nil {
 		return nil
 	}
+	var extra []lxtrace.Attr
+	add := func(key, value string) {
+		stage.Attr(key, value) // for Summary.Stages
+		extra = append(extra, lxtrace.Attr{Key: key, Value: value})
+	}
+	if t.fresh && (pooledByModule(nodeType) || t.multiplexed(nodeTag)) {
+		add("reuse", "uncontrolled")
+	}
 	switch nodeType {
 	case C.TypeVLESS, C.TypeVMess, C.TypeTrojan, C.TypeShadowsocks:
 		if snapshot.Result != lxtrace.OK || target == "" {
-			return nil
+			break
 		}
 		if firstHop && t.depth != lxtrace.DepthHTTP {
-			return nil
+			break
 		}
 		_, header := lxtrace.Begin(lxtrace.WithStage(ctx, stage), stageProxyHeader, target)
 		header.Attr("protocol", nodeType)
@@ -393,16 +449,27 @@ func (t *connectionTest) synthesizeAfterDial(ctx context.Context, snapshot lxtra
 		header.Mark(lxtrace.NoAck)
 	case C.TypeHysteria2, C.TypeTUIC, C.TypeNaive:
 		if snapshot.Result != lxtrace.Failed {
-			return nil
+			break
 		}
-		class := lxtrace.Attr{Key: "class", Value: "quic"}
+		class := "quic"
 		if isAuthError(snapshot.Error) {
-			class.Value = "auth"
+			class = "auth"
 		}
-		stage.Attr(class.Key, class.Value) // for Summary.Stages
-		return []lxtrace.Attr{class}
+		add("class", class)
 	}
-	return nil
+	return extra
+}
+
+// pooledByModule reports the node types whose external module reuses its own
+// connections whatever the caller asks: QUIC (sing-quic: Hysteria, Hysteria2,
+// TUIC), cronet's HTTP/2 and QUIC pool (naive) and the session pool of AnyTLS.
+// sing-mux is per outbound and checked by multiplexed.
+func pooledByModule(nodeType string) bool {
+	switch nodeType {
+	case C.TypeHysteria, C.TypeHysteria2, C.TypeTUIC, C.TypeNaive, C.TypeAnyTLS:
+		return true
+	}
+	return false
 }
 
 // snapshotAttr returns the value of an attribute of a stage snapshot.

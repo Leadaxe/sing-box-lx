@@ -161,7 +161,7 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
 		h.logger.InfoContext(ctx, "outbound connection to ", destination)
-		return h.client.DialContext(ctx, destination)
+		return h.client.DialContext(withConnTestLx(ctx), destination) // lx: SPEC 139 — session and auth stages
 	case N.NetworkUDP:
 		conn, err := h.ListenPacket(ctx, destination)
 		if err != nil {
@@ -185,7 +185,7 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 		}
 		resolved = address
 	}
-	packetConn, err := h.client.ListenPacket(ctx)
+	packetConn, err := h.client.ListenPacket(withConnTestLx(ctx)) // lx: SPEC 139 — session and auth stages
 	if err != nil {
 		return nil, err
 	}
