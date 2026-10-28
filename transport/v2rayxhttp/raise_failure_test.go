@@ -386,7 +386,9 @@ func TestPacketUpPostsSurviveDialContextExpiry(t *testing.T) {
 // TestPacketUpPostBounded: a single upload POST must be bounded even though
 // posts no longer ride the (possibly bounded) dial context — a wedged pooled
 // connection costs one post timeout, not a forever-blocked Write inside the
-// WG send path.
+// WG send path. lx: SPEC 141 — the first Write lands in the batch buffer and
+// returns; the timed-out post aborts the stream, and the Writes after it fail
+// with the timeout.
 func TestPacketUpPostBounded(t *testing.T) {
 	// NOT parallel: overrides packetUpPostTimeout, and a write to the package
 	// var must not race the parallel tests that read it.
@@ -402,13 +404,26 @@ func TestPacketUpPostBounded(t *testing.T) {
 	}
 	defer conn.Close()
 
-	select {
-	case err := <-writeUnderTest(conn, []byte("payload")):
-		if err == nil {
-			t.Fatal("Write succeeded against a wedged pooled connection")
+	if _, err := conn.Write([]byte("payload")); err != nil {
+		t.Fatalf("first Write (buffered): %v", err)
+	}
+	deadline := time.Now().Add(writeFreeBudget)
+	for {
+		_, err := conn.Write([]byte("payload"))
+		if err != nil {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("Write error = %v, want the post timeout", err)
+			}
+			break
 		}
-	case <-time.After(writeFreeBudget):
-		t.Fatal("Write not bounded: post still blocked on a wedged pooled connection")
+		if time.Now().After(deadline) {
+			t.Fatal("Write not bounded: post still blocked on a wedged pooled connection")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// The read side is torn down with the failed post (abort), with its cause.
+	if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Read after the post timeout = %v, want the post timeout", err)
 	}
 }
 

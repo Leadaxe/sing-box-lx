@@ -23,17 +23,21 @@ import (
 // countingTransport answers every request with 200 and counts them.
 type countingTransport struct {
 	requests atomic.Int32
+	posts    atomic.Int32
 }
 
 func (t *countingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	t.requests.Add(1)
+	if request.Method != http.MethodGet {
+		t.posts.Add(1)
+	}
 	if request.Body != nil {
 		io.Copy(io.Discard, request.Body)
 		request.Body.Close()
 	}
 	// Only the download GET holds its body open, like a real server. Upload POST
-	// responses must end: sendPacket drains them inline, so a blocking body there
-	// would wedge every Write.
+	// responses must end: the upload loop holds a slot per outstanding response,
+	// so a blocking body there would wedge the stream.
 	if request.Method == http.MethodGet {
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -89,9 +93,15 @@ func TestPacketUpUploadsCountAgainstRequestLimit(t *testing.T) {
 	}
 	defer conn.Close()
 
+	// lx: SPEC 141 — writes are batched into POSTs by the upload loop; wait for
+	// each POST to land before the next write so three of them are issued.
 	for i := 0; i < 3; i++ {
 		if _, err := conn.Write([]byte("payload")); err != nil {
 			t.Fatalf("write %d: %v", i, err)
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for transport.posts.Load() < int32(i+1) && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
 		}
 	}
 

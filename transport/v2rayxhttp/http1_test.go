@@ -85,6 +85,25 @@ func (s *http1Server) waitRequests(t *testing.T, n int) []http1Seen {
 	return nil
 }
 
+// waitPosts waits until the server has seen n upload POSTs.
+func (s *http1Server) waitPosts(t *testing.T, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		posts := 0
+		for _, request := range s.requests() {
+			if request.method == http.MethodPost {
+				posts++
+			}
+		}
+		if posts >= n {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("server did not see %d upload POSTs", n)
+}
+
 func newHTTP1TestClient(t *testing.T, server *http1Server, mode string) *Client {
 	t.Helper()
 	address := server.server.Listener.Addr().(*net.TCPAddr)
@@ -110,10 +129,13 @@ func TestHTTP1PacketUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	for range 3 {
+	// lx: SPEC 141 — writes are batched; wait for each POST to land before the
+	// next write so the test sees three of them.
+	for i := range 3 {
 		if _, err := conn.Write([]byte("up")); err != nil {
 			t.Fatal(err)
 		}
+		server.waitPosts(t, i+1)
 	}
 	buffer := make([]byte, 4)
 	if _, err := io.ReadFull(conn, buffer); err != nil || string(buffer) != "down" {
