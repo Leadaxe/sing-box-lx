@@ -89,3 +89,10 @@
 - [x] Критерии приёмки SPEC 2 (вывод), 4, 5, 6, 7
 - [x] `-race`, сборки, lx-ci, `gofmt` как в этапе 5
 - [x] FEATURE 006, SPEC §10, IMPLEMENTATION_REPORT.md обновлены
+
+### Этап 11 — после rc.3
+
+- [x] Редирект — это ответ: `CheckRedirect` → последний ответ, `location` в `http`; ошибка закрытия маршрутизированного соединения после dial первого хопа — не обрыв пути (поле: 302 давал HTTP 0 без корня)
+- [x] DoH / DoH3 при `fresh`: одноразовый клиент, `connection=new`, `pool=detached`
+- [x] `wg_handshake`: атрибут `detour`
+- [x] Внутренние стадии Hysteria2 / TUIC: не планируются, причины в SPEC §7

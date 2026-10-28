@@ -154,7 +154,7 @@ message ConnectionTestProgress {
 
 | Outcome | Response |
 |---------|----------|
-| The path was completed and the target server answered with any status | `result.error == ""`, `rootCause == 0`, HTTP fields filled. Non-2xx is data, not an error (as in `GetURLViaOutbound`) |
+| The path was completed and the target server answered with any status | `result.error == ""`, `rootCause == 0`, HTTP fields filled. Non-2xx is data, not an error (as in `GetURLViaOutbound`). A redirect is not followed: the test answers whether this URL opens, so a 3xx is the answer, with its `Location` on the `http` stage |
 | The path broke (DNS, `reject` rule, dial, TLS, timeout…) | `result.error == ""`, `rootCause` points to the stage, HTTP fields empty. A connection failure is a test result, not a call error |
 | Invalid request: malformed URL, unknown node or inbound tag, `network = "udp"` deeper than `DEPTH_ROUTE` | A stream of one `result` with `error`; no stages |
 | The limit of concurrent tests is reached | `result.error = "busy"` |
@@ -243,11 +243,11 @@ without changing the protocol. A client renders an unknown kind as `kind` +
 | `reality` | REALITY verdict, a child of `tls` | `accepted` / `dest_cert` (the handshake completed without verification: the server did not recognize the client and served the dest certificate) / `invalid_cert` (the certificate failed verification). No verdict when the handshake broke otherwise (reset, EOF) |
 | `transport` | Transport over TLS (XHTTP, gRPC, WS, HTTPUpgrade, H2) | type, mode, method, path, HTTP status |
 | `auth` | Authentication where the protocol confirms it (Hysteria2, TUIC, naive, TrustTunnel, MASQUE, SOCKS, HTTP CONNECT) | response status. MASQUE: `vhttp=h3` / `h2`, `status` (`2xx` on success: the transport does not return the exact code), `refused=access_denied` for a Cloudflare Access TLS alert; a dial over the live tunnel is `REUSED` with `tunnel=existing` and `age`. TrustTunnel: one stage per CONNECT, subject = authority (incl. `_udp2`, `_check`), `status`, `refused=authentication_required` when the server closes the session instead of answering 407; the session itself is `tls` (h2) or `quic` (h3) |
-| `wg_handshake` | WG/AWG handshake, recorded before each TCP connect inside the tunnel | subject = endpoint tag; `handshake=new` with `peer`, the stage ending at the handshake time; `handshake=existing`, `REUSED` with `age`; `FAILED` "no handshake with the peer" when there is no session and the dial failed; `NOT_EVALUATED` with `handshake=unknown` when the peer status cannot be read |
+| `wg_handshake` | WG/AWG handshake, recorded before each TCP connect inside the tunnel | subject = endpoint tag; `detour` = the endpoint's detour tag, when it has one; `handshake=new` with `peer`, the stage ending at the handshake time; `handshake=existing`, `REUSED` with `age`; `FAILED` "no handshake with the peer" when there is no session and the dial failed; `NOT_EVALUATED` with `handshake=unknown` when the peer status cannot be read |
 | `proxy_header` | Protocol header with no confirmation (VLESS, VMess, Trojan, Shadowsocks) | target; result is always `NO_ACK` |
 | `target_tls` | The test's TLS with the target through the tunnel | SNI, ALPN |
 | `first_byte` | First bytes of the target's response | — |
-| `http` | HTTP response | status, Content-Type, bytes |
+| `http` | HTTP response | status, Content-Type, bytes; `location` on a redirect |
 
 The stages of a test are the ones the pipeline actually ran. If a node sent
 the connection somewhere other than the user expected, the trace shows the
@@ -373,16 +373,22 @@ cause of the failure.
 - **Inside a WG/AWG endpoint.** Its outer UDP is dialed by `wireguard-go`
   on the endpoint's own context and its peer domains resolve at start, so
   the endpoint's own detour and peer lookup never show in a trace: `wake`
-  is a leaf, `wg_handshake` its sibling. `wg_handshake` is recorded only
+  is a leaf, `wg_handshake` its sibling. `wg_handshake` names the detour
+  (`detour`), so a handshake that times out points at the detour to test
+  next. `wg_handshake` is recorded only
   for TCP: a UDP socket sends nothing to trigger a handshake. Inner TCP
   connects inside MASQUE's userspace stack are not traced.
 - **Hysteria2 and TUIC** (sing-quic) open the QUIC connection on the
   client's own long-lived context, so the hop's socket, its detour and its
   `domain_resolver` lookup never show: the hop is one opaque `dial` stage,
   classified by the error on failure (`class=auth` / `quic`; Hysteria2
-  answers a wrong password with 404 to look like a web server).
-- **DoH and DoH3 servers** do not use the DNS connection pool: under
-  `fresh` they may reuse a live connection, and reuse is not marked.
+  answers a wrong password with 404 to look like a web server). Not planned:
+  the client keeps that connection alive, so a test usually runs through an
+  existing one with nothing to trace; the error classification answers
+  the two common questions (wrong password, QUIC blocked); and seeing
+  inside would mean forking sing-quic as a fifth submodule for the trace
+  alone. To be revisited if field cases show the classification sending
+  users the wrong way.
 - **Approximate findings.** `quic_rejected` for a TCP test matches the
   rules against `udp/443` without sniffing or resolving; `fakeip_pool_wrapped`
   compares with the default answer TTL (600 s), not `rewrite_ttl`.
@@ -462,6 +468,7 @@ a nil-safe call that costs one `ctx.Value` check without a trace:
 | `dns/transport/conn_pool.go` | 1, 2 | 1 field + 15 lines: probe-owned connections are not parked on release (§5.14, criterion 10); `fresh` takes a connection of its own (2 blocks of 3 lines in `acquireShared` / `acquireOrdered`); reuse marks at the pooled and joined paths (3 lines) |
 | `protocol/group/urltest.go` (hotfix) | 1 | `selectedOutbound*` behind `selectedAccess`: a data race exposed by SPEC 136, registered in [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md) |
 | `dns/transport/fakeip/store.go` | 2 | 1 line in `Create` (pool-wrap counter; per new address one weak pointer and one map read, no trace needed) |
+| `dns/transport/https.go`, `dns/transport/quic/http3.go` | 2 | 2 lines each where the exchange takes its client: under `fresh` a one-off DoH / DoH3 client, closed after the exchange (their connections live in the HTTP client, not in the pool); 1 changed line in `https.go`: a fresh query's timeout does not reset the production client |
 
 A consumer-side alternative does not exist: the route decision, sniffing,
 group selection and nested resolves are visible only inside the core, and

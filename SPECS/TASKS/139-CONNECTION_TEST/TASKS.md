@@ -89,3 +89,10 @@ release 2 is scoped from its field experience.
 - [x] SPEC acceptance criteria 2 (the finding), 4, 5, 6, 7
 - [x] `-race`, builds, lx-ci, `gofmt` as in stage 5
 - [x] FEATURE 006, SPEC §10, IMPLEMENTATION_REPORT.md updated
+
+### Stage 11 — after rc.3
+
+- [x] A redirect is the answer: `CheckRedirect` → last response, `location` on `http`; the routed close error after the first-hop dial is not a path failure (field: 302 gave HTTP 0 with no root)
+- [x] DoH / DoH3 under `fresh`: a one-off client, `connection=new`, `pool=detached`
+- [x] `wg_handshake`: `detour` attribute
+- [x] Hysteria2 / TUIC internal stages: not planned, reasons in SPEC §7

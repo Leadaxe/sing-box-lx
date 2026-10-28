@@ -146,11 +146,10 @@ reading only the diff; the review's findings are fixed (below).
   the endpoint's context and never show; `wake` is a leaf, `wg_handshake`
   its sibling; `reality` is a child of `tls`.
 - Hysteria2 and TUIC open QUIC on the client's long-lived context: the hop
-  is one opaque `dial`, classified by the error.
+  is one opaque `dial`, classified by the error. Tracing inside is not
+  planned (§7): it would take a sing-quic fork for little gain.
 - MASQUE success reports `status=2xx`: the transport does not return the
   exact code.
-- DoH and DoH3 bypass the DNS connection pool: `fresh` does not force a new
-  connection and reuse is not marked.
 - Finding levels were not in the SPEC; chosen and written into §6.
   `quic_rejected` for TCP and `fakeip_pool_wrapped` are approximate (§7).
 - Criterion 5: a wrong `public_key` gives `dest_cert` only with a publicly
@@ -166,6 +165,24 @@ reading only the diff; the review's findings are fixed (below).
   connection) keeps the dial context's values, the trace among them, for
   its lifetime (quic-go builds the connection context with
   `WithoutCancel`): memory only, no behaviour.
+
+### After rc.3
+
+- A redirect gave HTTP 0 with no root cause (field, phone, `https://ya.ru`
+  answering 302 through the router). The HTTP client followed the
+  redirect, the second connection was refused (one routed connection per
+  test), and the routed pipe closing with a copy error after the exchange
+  was taken for a path failure, so `http` was SKIPPED and the error lost.
+  Now a 3xx is the answer (`CheckRedirect` returns the last response,
+  `location` on `http`), and the routed connection's close error counts as
+  a path failure only before the first-hop dial ended OK; after that the
+  running exchange stage takes the client's error.
+- DoH and DoH3 under `fresh` run on a one-off client closed after the
+  exchange (`https_fresh_lx.go`, `quic/http3_fresh_lx.go`); the `dns`
+  stage gets `connection=new`, `pool=detached`; a fresh query's timeout
+  does not reset the production DoH client.
+- `wg_handshake` names the endpoint's detour (`detour`).
+- CI: `dns/transport/quic` added to the SPEC 139 step.
 
 ### Verification
 
