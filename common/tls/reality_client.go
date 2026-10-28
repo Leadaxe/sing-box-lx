@@ -148,6 +148,7 @@ func (e *RealityClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
 	}
 
 	err = uConn.HandshakeContext(ctx)
+	realityVerdictLx(ctx, e, verifier.verified, err) // lx: SPEC 139 — reality verdict
 	if err != nil {
 		return nil, err
 	}

@@ -117,6 +117,7 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
 		return address, nil
 	}
 
+	defer lxNoteCreate(s, s.inet4Current, s.inet6Current) // lx: SPEC 139 — pool-wrap counter
 	var address netip.Addr
 	if !isIPv6 {
 		if !s.inet4Current.IsValid() {
