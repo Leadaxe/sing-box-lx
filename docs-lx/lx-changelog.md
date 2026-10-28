@@ -28,6 +28,18 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.4-lx.25
+
+Стабильный релиз после `v1.14.4-lx.24`, без rc-линии. База — sing-box `v1.14.4`, `upstream/stable` `c005f3530`, дрейф 0 (сабмодули, `go.mod` и Go 1.26.10 с lx.24 не менялись; dry run релизной сборки не требуется). Одна тема: стадии участников DNS-группы и `lost_race` у проигравших её fan (issue #59 переоткрыт).
+
+- 🐛 **Проверка соединения: стадия `dns_member` на каждого участника DNS-группы; проигравшие fan — `SKIPPED` с `lost_race`, не `FAILED` (SPEC 139 §4, §5.13, issue #59).** Поле (LxBox v2.25.18-rc.3 на lx.24, эмулятор, группа `dns_ru` = UDP + DoT + DoH, `fastest`, после истечения `win_ttl`): выборы гонят всех трёх, UDP отвечает, `tls` DoT и DoH закрыты `FAILED` `context canceled` через 1–2 мс после `tcp_connect`, рядом под группой, различимые только портом. Группа гонит участников на контексте запроса; после ответа победителя `dns.Client` делает `cancel()`. `lost_race` ставил только dialer на сокетных стадиях.
+  - `dns/transport/group/conntest_lx.go`: стадия `dns_member` (subject = тег, `type`, `outbound`, `rcode` при SERVFAIL) на путях single, survival и fan. `collectFan`: победитель — OK; участник, закончивший после него, — `SKIPPED`, `lost_race=<id dns_member победителя>`; упавший сам при живом запросе — `FAILED`.
+  - `Stage.EndRace(ctx, err)` в `common/lxtrace`: сбой при отменённом (не истёкшем) контексте → `SKIPPED`, `lost_race=0`; таймаут остаётся `FAILED` (§5.11). Им закрываются `tls` (`common/tls/conntest_lx.go`) и `dns` упавшего резолва (`dns/client_trace_lx.go`).
+  - Цена мержа: два существующих вызова `// lx: SPEC 139` в `common/tls/client.go` передают контекст рукопожатия; новых вставок в апстримные файлы нет. Пакет группы — наш.
+  - Тесты: `TestParallelLoserHandshakeLostRace_LX` (настоящий DoT-участник, застрявший в рукопожатии, против быстрого через `dns.Client`) до правки красный с `context canceled`; `TestParallelOwnFailureStaysFailed_LX`, `TestSingleMemberStage_LX`, `TestEndRace`, `TestLxHandshake*`, `TestDNSStageCancelledLostRace_LX`. Под `-race`: `common/lxtrace`, `common/dialer`, `common/tls` (lx), `dns`, `dns/transport/...`, `daemon`, стенд `lx-test/conntest`. На устройстве — нет.
+- 🧰 **lx-ci:** `dns/transport/group` добавлен в race-шаг SPEC 139 — тесты DNS-группы до этого не шли ни в одном шаге.
+- 🧰 **Сверка зависимостей (раннбук §2a)** — как в lx.24.
+
 #### v1.14.4-lx.24
 
 Стабильный релиз после `v1.14.3-lx.23`, промоут rc-линии `lx.24` (rc.1–rc.3) плюс правки после rc.3. **База — sing-box `v1.14.4`**, `upstream/stable` `c005f3530`, дрейф 0. Форк-сабмодули, тулчейн и зависимости с rc.3 не менялись: dry run релизной сборки прогнан перед rc.3, rc.3 собран `lx-release` зелёным. Две темы: проверка соединения (SPEC 139, релизы 1 и 2) и синк апстрима до `v1.14.4` (SPEC 140). Пользовательские ноты — `docs-lx/releases/v1.14.4-lx.24.md`.
