@@ -38,7 +38,6 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	sHTTP "github.com/sagernet/sing/protocol/http"
 	"github.com/sagernet/sing/service"
 
 	"golang.org/x/net/http2"
@@ -184,12 +183,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		}
 		tlsDialer := tls.NewDialer(dialer, tlsConfig)
 		newConn = func() xmuxConn {
-			return &http2XmuxConn{transport: &http2.Transport{
-				ReadIdleTimeout: xmuxConfig.keepAlivePeriod,
-				DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.STDConfig) (net.Conn, error) {
-					return tlsDialer.DialTLSContext(ctx, M.ParseSocksaddr(addr))
-				},
-			}}
+			return &http2XmuxConn{transport: newHTTP2Transport(tlsDialer, xmuxConfig.keepAlivePeriod)}
 		}
 	}
 	if logger != nil {
@@ -228,6 +222,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	for key, value := range options.Headers {
 		headers[key] = value
 	}
+	applyDefaultHeaders(headers) // lx: SPEC 142 — Xray's TryDefaultHeadersWith(header, "fetch")
 
 	xmux := newXmuxManager(xmuxConfig, newConn)
 	// The pool's transitions (a connection opened, a connection retired and why)
@@ -320,16 +315,17 @@ func (c *Client) Close() error {
 
 // baseURL builds a fresh request URL targeting the normalized base path. The
 // placement engine (applyMeta) appends session/seq path segments and query params
-// as configured; applyXPadding attaches the padding. The base path is set via
-// sHTTP.URLSetPath so percent-encoding matches the rest of sing-box; the
-// configured query is set verbatim, and query placements add to it.
+// as configured; applyXPadding attaches the padding. The base path is literal
+// (lx: SPEC 142); the configured query is set verbatim, and query placements
+// add to it.
 func (c *Client) baseURL() (*url.URL, error) {
+	// lx: SPEC 142 — the path is literal, as Xray assigns GetNormalizedPath to
+	// requestURL.Path: "/a%2Fb/" is the prefix the server was configured with,
+	// not an escape of "/a/b/", and "/100%/" is a path, not a parse error.
 	u := &url.URL{
 		Scheme: c.scheme,
 		Host:   c.serverAddr.String(),
-	}
-	if err := sHTTP.URLSetPath(u, c.path); err != nil {
-		return nil, E.Cause(err, "parse path")
+		Path:   c.path,
 	}
 	if !strings.HasPrefix(u.Path, "/") {
 		u.Path = "/" + u.Path

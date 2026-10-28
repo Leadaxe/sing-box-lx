@@ -379,18 +379,20 @@ func parseRange(raw, field string) (intRange, error) {
 // final path is written to request.URL.Path.
 func (c *Client) applyMeta(request *http.Request, basePath, sessionID, seqStr string) {
 	m := &c.meta
-	path := basePath
-
-	// session id — an empty sessionID (stream-one) emits no session metadata, but
-	// the path still carries the trailing slash that path-placement implies.
 	// Xray/NekoBox normalize the CONFIGURED path to end in "/" whenever session or
 	// seq live in the path (GetNormalizedPath), and the server prefix-matches every
-	// request against that normalized path. Trimming the slash here made stream-one
+	// request against that normalized path. Trimming the slash made stream-one
 	// request "<path>" against a server expecting "<path>/" — no prefix match, 404,
-	// and the dial hung until timeout (lx: SPEC 043, wire-reproduced).
-	if sessionID == "" {
-		path = barePathForStreamOne(path, m)
-	} else {
+	// and the dial hung until timeout (lx: SPEC 043, wire-reproduced). The same
+	// rule covers every request (lx: SPEC 142): with the session off the path and
+	// the seq on it, the download GET of "/up" missed the server's "/up/" the
+	// same way, while session-in-path requests always got the slash from
+	// appendPathSegment. Off-path placements keep the configured path verbatim
+	// (SPEC 002 §9: a reverse proxy's `location /upload/` 301s a bare "/upload").
+	path := normalizedBasePath(basePath, m)
+
+	// session id — an empty sessionID (stream-one) emits no session metadata.
+	if sessionID != "" {
 		switch m.sessionPlacement {
 		case placementPath:
 			path = appendPathSegment(path, sessionID)
@@ -422,8 +424,8 @@ func (c *Client) applyMeta(request *http.Request, basePath, sessionID, seqStr st
 
 // applyUplinkData attaches a packet-up upload payload to a request per
 // uplink_data_placement:
-//   - body / auto: the raw payload is the request body (Content-Length set,
-//     Content-Type application/octet-stream). On the client "auto" == body.
+//   - body / auto: the raw payload is the request body (Content-Length set, no
+//     Content-Type, as Xray). On the client "auto" == body.
 //   - header / cookie: the payload is base64.RawURLEncoding-encoded and sliced into
 //     chunks sized by uplink_chunk_size; each chunk i becomes header "<key>-<i>" or
 //     cookie "<key>_<i>" (i ascending from 0). No request body.
@@ -439,8 +441,10 @@ func (c *Client) applyUplinkData(request *http.Request, payload []byte) {
 			request.AddCookie(&http.Cookie{Name: fmt.Sprintf("%s_%d", m.uplinkDataKey, i), Value: chunk, Path: "/"})
 		}
 	default: // body / auto
+		// No Content-Type: Xray's FillPacketRequest sets none on a packet-up
+		// POST, and the body type was one more byte-level difference from it on
+		// the wire (lx: SPEC 142).
 		request.Body = readCloser{&byteReader{data: payload}}
-		request.Header.Set("Content-Type", "application/octet-stream")
 		request.ContentLength = int64(len(payload))
 		// lx: SPEC 076 — the payload is a bounded slice we own, so hand http2 a
 		// replay: with GetBody set the transport silently retries the POST on a
@@ -475,17 +479,12 @@ func chunkEncoded(payload []byte, size intRange) []string {
 // the XMUX age-based eviction (SPECS/TASKS/059) testable without sleeping.
 var timeNow = time.Now
 
-// trimBarePathSlash strips trailing slashes for the stream-one bare-path case,
-// while never collapsing the root path to "" (a root-only path stays "/"). Used
-// only when no sessionId is appended, so it cannot affect proxy routing for the
-// other modes, which keep the configured path verbatim.
-// barePathForStreamOne returns the path a stream-one request targets. stream-one
-// sends no sessionId, but the trailing slash is still load-bearing: Xray and
-// NekoBox normalize the configured path to end in "/" when session or seq are
-// placed in the path, and the server prefix-matches requests against it. So the
-// slash is appended under exactly the same condition, and left alone otherwise
-// (non-path placements keep the configured path verbatim).
-func barePathForStreamOne(path string, m *metaConfig) string {
+// normalizedBasePath is Xray's GetNormalizedPath: the configured path ends in
+// "/" when session or seq are placed in the path (the server prefix-matches
+// every request against that form), and is left alone otherwise — non-path
+// placements keep the configured path verbatim, trailing slash included
+// (SPEC 002 §9). An empty path is the root. lx: SPEC 043, 142.
+func normalizedBasePath(path string, m *metaConfig) string {
 	if path == "" {
 		return "/"
 	}

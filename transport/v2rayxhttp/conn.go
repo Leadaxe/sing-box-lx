@@ -23,6 +23,10 @@ import (
 // Variable, not const: tests shrink it.
 var packetUpPostTimeout = C.TCPTimeout
 
+// errUploadStreamEnded is what a stream-up Write reports once the server has
+// ended the upload response (lx: SPEC 142).
+var errUploadStreamEnded = E.New("v2ray-xhttp: upload stream ended by server")
+
 // transportContext is the transport-lifetime context conn-scoped request
 // contexts derive from (lx: SPEC 072). NewClient always sets c.ctx; the
 // Background fallback keeps literal-constructed clients (tests) valid.
@@ -229,7 +233,24 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient 
 			uploadFailed <- err
 			return
 		}
+		// lx: SPEC 142 — the upload response decides the upload stream, as the
+		// download response decides the download: a refusal (an Xray server in
+		// packet-up answers 400 to a POST without seq, 409 to a duplicate) or
+		// the end of the response (the server keeps it open for the session's
+		// life — hub.go — so its end is the end of the upload) breaks the pipe,
+		// and Write reports it instead of parking until the deadline. Xray's
+		// client closes the body on both (client.go OpenStream, uploadOnly).
+		if upResp.StatusCode != http.StatusOK {
+			upResp.Body.Close()
+			err = E.New("v2ray-xhttp: unexpected upload status: ", upResp.Status)
+			conn.uploadFailed(err)
+			uploadFailed <- err
+			return
+		}
 		drainAndClose(upResp.Body)
+		if !conn.breaker.localClosed.Load() { // our own Close ended it: the pipe is already closed as ours (SPEC 094)
+			conn.uploadFailed(errUploadStreamEnded)
+		}
 	}()
 	// lx: SPEC 077 — the raise this dial waits for is the UPLOAD body's
 	// adoption; the download GET is not awaited (SPEC 061).

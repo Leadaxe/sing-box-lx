@@ -80,8 +80,10 @@ func TestSessionPlacement(t *testing.T) {
 		if got := req.URL.Query().Get("x_session"); got != "sid" {
 			t.Fatalf("query x_session = %q, want sid", got)
 		}
-		if req.URL.Path != "/xhttp" {
-			t.Fatalf("path = %q, want /xhttp (no path segment for query placement)", req.URL.Path)
+		// No session segment; the seq still lives in the path, so the base
+		// path takes the trailing slash the server prefix-matches (SPEC 142).
+		if req.URL.Path != "/xhttp/" {
+			t.Fatalf("path = %q, want /xhttp/ (no session segment, slash for the path-placed seq)", req.URL.Path)
 		}
 	})
 	t.Run("header custom key", func(t *testing.T) {
