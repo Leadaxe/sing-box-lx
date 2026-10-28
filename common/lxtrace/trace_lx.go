@@ -384,6 +384,23 @@ func (s *Stage) LostRace(winner *Stage) {
 	s.finish(Skipped, "")
 }
 
+// EndRace closes the stage like End, except that a failure while ctx is
+// cancelled — not timed out — is a loser of a race a sibling won, such as a
+// DNS group's parallel query answered by another member: the request's ctx is
+// cancelled once the answer is in, cutting the others' handshakes and lookups
+// short. It ends Skipped with lost_race (§5.13); the winner is not known here,
+// so lost_race carries 0. A timeout stays Failed (§5.11).
+func (s *Stage) EndRace(ctx context.Context, err error) {
+	if s == nil {
+		return
+	}
+	if err != nil && errors.Is(ctx.Err(), context.Canceled) {
+		s.LostRace(nil)
+		return
+	}
+	s.End(err)
+}
+
 // finish closes the stage once; later calls are ignored.
 func (s *Stage) finish(result Result, errText string) {
 	s.finishAt(result, errText, time.Now(), nil)

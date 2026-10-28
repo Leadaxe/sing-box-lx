@@ -201,7 +201,9 @@ func traceFailed(ctx context.Context, transport adapter.DNSTransport, question d
 		stage.Attr("rcode", rcodeText(int(rcode)))
 	}
 	attrGroup(ctx, stage)
-	stage.End(errors.New(cause))
+	// A lookup cut short by a cancelled ctx (a DNS group member's own server
+	// domain, the request already answered by another member) lost a race.
+	stage.EndRace(ctx, errors.New(cause))
 }
 
 // traceDNSRule records the DNS rule the router matched on the enclosing stage

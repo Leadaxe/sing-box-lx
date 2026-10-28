@@ -168,7 +168,7 @@ func NewClientWithOptions(options ClientOptions) (Config, error) {
 func ClientHandshake(ctx context.Context, conn net.Conn, config Config) (Conn, error) {
 	ctx, stage := beginHandshakeLx(ctx, config) // lx: SPEC 139
 	tlsConn, err := aTLS.ClientHandshake(ctx, conn, config)
-	endHandshakeLx(stage, tlsConn, err) // lx: SPEC 139
+	endHandshakeLx(ctx, stage, tlsConn, err) // lx: SPEC 139
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +220,7 @@ func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr
 	// record the `tls` stage too, not only callers of tls.ClientHandshake.
 	handshakeCtx, stage := beginHandshakeLx(ctx, d.config)
 	tlsConn, err := aTLS.ClientHandshake(handshakeCtx, conn, d.config)
-	endHandshakeLx(stage, tlsConn, err)
+	endHandshakeLx(handshakeCtx, stage, tlsConn, err)
 	// lx:end SPEC 139
 	if err != nil {
 		conn.Close()

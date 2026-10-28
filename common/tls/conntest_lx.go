@@ -24,7 +24,9 @@ func beginHandshakeLx(ctx context.Context, config Config) (context.Context, *lxt
 	return ctx, stage
 }
 
-func endHandshakeLx(stage *lxtrace.Stage, conn Conn, err error) {
+// endHandshakeLx closes the stage on the handshake's ctx: a handshake cut
+// short by a cancelled ctx lost a race (§5.13).
+func endHandshakeLx(ctx context.Context, stage *lxtrace.Stage, conn Conn, err error) {
 	if stage == nil {
 		return
 	}
@@ -35,5 +37,5 @@ func endHandshakeLx(stage *lxtrace.Stage, conn Conn, err error) {
 			stage.Attr("negotiated_alpn", state.NegotiatedProtocol)
 		}
 	}
-	stage.End(err)
+	stage.EndRace(ctx, err)
 }

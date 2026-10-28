@@ -103,6 +103,8 @@ func (s *Stage) Mark(result Result) {}
 
 func (s *Stage) LostRace(winner *Stage) {}
 
+func (s *Stage) EndRace(ctx context.Context, err error) {}
+
 func (s *Stage) Children() []StageSnapshot { return nil }
 
 func Fresh(ctx context.Context) bool { return false }

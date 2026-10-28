@@ -61,6 +61,7 @@ func TestNoTraceIsNoop(t *testing.T) {
 	nilStage.End(errors.New("x"))
 	nilStage.Mark(Reused)
 	nilStage.LostRace(nil)
+	nilStage.EndRace(context.Background(), errors.New("x"))
 	if nilStage.ID() != 0 {
 		t.Fatal("nil stage id must be 0")
 	}
@@ -783,5 +784,44 @@ func TestRootCauseSkipsRecoveredFailure(t *testing.T) {
 	dial.End(errors.New("dial failed"))
 	if root := trace.Finish(nil).RootCause; root != h3.ID() {
 		t.Fatalf("root = %d, want the h3 attempt %d when the dial failed", root, h3.ID())
+	}
+}
+
+// EndRace: a failure on a cancelled ctx lost a race (§5.13); a timeout and a
+// failure on a live ctx stay Failed; success is OK whatever the ctx.
+func TestEndRace(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	timedOut, cancelTimeout := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelTimeout()
+	for _, testCase := range []struct {
+		name     string
+		ctx      context.Context
+		err      error
+		want     Result
+		lostRace bool
+	}{
+		{"cancelled", cancelled, context.Canceled, Skipped, true},
+		{"cancelled, other error", cancelled, io.EOF, Skipped, true},
+		{"timed out", timedOut, context.DeadlineExceeded, Failed, false},
+		{"live ctx", context.Background(), io.EOF, Failed, false},
+		{"success on cancelled", cancelled, nil, OK, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			trace := New(Options{})
+			_, stage := Begin(With(context.Background(), trace), "tls", "example.com")
+			stage.EndRace(testCase.ctx, testCase.err)
+			summary := trace.Finish(nil)
+			snapshot := stageByID(summary, stage.ID())
+			if snapshot.Result != testCase.want {
+				t.Fatalf("result = %v, want %v", snapshot.Result, testCase.want)
+			}
+			if _, ok := attrOf(snapshot, "lost_race"); ok != testCase.lostRace {
+				t.Fatalf("lost_race = %v, want %v: %+v", ok, testCase.lostRace, snapshot)
+			}
+			if testCase.lostRace && summary.RootCause != 0 {
+				t.Fatalf("a lost race is never the root: %d", summary.RootCause)
+			}
+		})
 	}
 }
