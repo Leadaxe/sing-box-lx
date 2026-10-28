@@ -174,6 +174,8 @@ func (t *HTTP3Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS
 	t.transportAccess.Lock()
 	currentTransport := t.transport
 	t.transportAccess.Unlock()
+	currentTransport, releaseTransport := t.freshTransportLx(ctx, currentTransport) // lx: SPEC 139 — fresh: a one-off client, closed after the exchange
+	defer releaseTransport()                                                        // lx: SPEC 139
 	response, err := currentTransport.RoundTrip(request)
 	requestBuffer.Release()
 	if err != nil {

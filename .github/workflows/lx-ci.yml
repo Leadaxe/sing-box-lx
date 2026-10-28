@@ -141,7 +141,7 @@ jobs:
             -ldflags "-checklinkname=0" \
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd,with_lx_chain" \
             ./common/lxtrace/ ./common/dialer/ ./daemon/ ./experimental/libbox/ \
-            ./dns/ ./dns/transport/ ./dns/transport/fakeip/ ./protocol/group/ ./protocol/chain/ \
+            ./dns/ ./dns/transport/ ./dns/transport/fakeip/ ./dns/transport/quic/ ./protocol/group/ ./protocol/chain/ \
             ./protocol/masque/... ./transport/v2rayxhttp/ ./lx-test/conntest/
           go test -count=1 \
             -ldflags "-checklinkname=0" \

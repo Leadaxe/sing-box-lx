@@ -190,7 +190,7 @@ func (t *HTTPSTransport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS
 		t.CloseIdleConnections()
 	}
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) && !isFreshLx(ctx) { // lx: SPEC 139 — a fresh query's timeout is not the production client's
 			t.transportAccess.Lock()
 			defer t.transportAccess.Unlock()
 			if t.transportResetAt.After(startAt) {
@@ -230,6 +230,8 @@ func (t *HTTPSTransport) exchange(ctx context.Context, message *mDNS.Msg) (*mDNS
 	t.transportAccess.Lock()
 	currentTransport := t.transport
 	t.transportAccess.Unlock()
+	currentTransport, releaseTransport := t.freshTransportLx(ctx, currentTransport) // lx: SPEC 139 — fresh: a one-off client, closed after the exchange
+	defer releaseTransport()                                                        // lx: SPEC 139
 	response, err := currentTransport.RoundTrip(request)
 	requestBuffer.Release()
 	if err != nil {
