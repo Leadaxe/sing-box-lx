@@ -143,6 +143,12 @@ func (w *Endpoint) beginHandshakeLx(ctx context.Context) *handshakeTraceLx {
 	if stage == nil {
 		return nil
 	}
+	// The outer UDP runs over the endpoint's detour, set up at start on the
+	// endpoint's own context, so it is never a stage of the test (SPEC 139
+	// §7): naming it tells a silent peer from a dead detour to test next.
+	if dependencies := w.Dependencies(); len(dependencies) > 0 {
+		stage.Attr("detour", dependencies[0])
+	}
 	return newHandshakeTraceLx(stage, w.PeerStatuses)
 }
 

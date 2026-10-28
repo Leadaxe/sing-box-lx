@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/endpoint"
 	"github.com/sagernet/sing-box/common/lxtrace"
+	C "github.com/sagernet/sing-box/constant"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -216,5 +218,25 @@ func TestConnTestHandshake_noTrace(t *testing.T) {
 		w.wakeLx(context.Background())()
 	}); allocs != 0 {
 		t.Fatalf("no-trace helpers allocate %v", allocs)
+	}
+}
+
+func TestConnTestHandshake_detour(t *testing.T) {
+	for _, testCase := range []struct {
+		name         string
+		dependencies []string
+		want         string
+	}{
+		{"with detour", []string{"upstream"}, "upstream"},
+		{"without detour", nil, ""},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			w := &Endpoint{Adapter: endpoint.NewAdapter(C.TypeWireGuard, "wg", []string{N.NetworkTCP}, testCase.dependencies)}
+			ctx, trace := traceCtxLx(false)
+			w.beginHandshakeLx(ctx).end(nil)
+			if got := attrLx(stageOfLx(t, trace.Finish(nil), "wg_handshake"), "detour"); got != testCase.want {
+				t.Fatalf("detour = %q, want %q", got, testCase.want)
+			}
+		})
 	}
 }
