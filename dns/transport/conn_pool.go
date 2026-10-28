@@ -54,7 +54,7 @@ type connPoolState[T comparable] struct {
 
 	connecting *connPoolConnect[T]
 
-	probeOwned map[T]struct{} // lx: SPEC 139 — connections a connection test opened (conntest_lx.go)
+	lx connPoolStateLx[T] // lx: SPEC 139 — connection-test state (conntest_lx.go)
 }
 
 type connPoolConnect[T comparable] struct {
@@ -183,7 +183,7 @@ func (p *ConnPool[T]) releaseSlot() {
 // removeConn must be called with p.access held.
 func (p *ConnPool[T]) removeConn(state *connPoolState[T], conn T, cause error) {
 	delete(state.all, conn)
-	p.forgetProbeOwnedLx(state, conn) // lx: SPEC 139
+	p.forgetProbeOwnedLx(state, conn, cause) // lx: SPEC 139
 	switch p.options.Mode {
 	case ConnPoolSingle:
 		if state.hasShared && state.shared == conn {
@@ -252,6 +252,9 @@ func (p *ConnPool[T]) Close() error {
 }
 
 func (p *ConnPool[T]) acquireOrdered(ctx context.Context, dial func(context.Context) (T, error)) (T, bool, error) {
+	if isFreshLx(ctx) { // lx: SPEC 139 — fresh: a connection of the test's own, never pooled
+		return p.acquireOrderedFreshLx(ctx, dial)
+	}
 	var zero T
 	for {
 		p.access.Lock()
@@ -265,6 +268,7 @@ func (p *ConnPool[T]) acquireOrdered(ctx context.Context, dial func(context.Cont
 			delete(current.idleElements, idleConn)
 			if p.options.IsAlive(idleConn) {
 				p.access.Unlock()
+				p.tracePooledLx(ctx, current, idleConn) // lx: SPEC 139 — REUSED with its age
 				return idleConn, false, nil
 			}
 			delete(current.all, idleConn)
@@ -318,12 +322,15 @@ func (p *ConnPool[T]) dialAndInstall(ctx context.Context, current *connPoolState
 		return zero, false, net.ErrClosed
 	}
 	current.all[conn] = struct{}{}
-	p.markProbeOwnedLx(current, ctx, conn) // lx: SPEC 139
+	p.installedLx(current, ctx, conn) // lx: SPEC 139
 	p.access.Unlock()
 	return conn, true, nil
 }
 
 func (p *ConnPool[T]) acquireShared(ctx context.Context, dial func(context.Context) (T, error)) (T, context.Context, bool, error) {
+	if isFreshLx(ctx) { // lx: SPEC 139 — fresh: a connection of the test's own, never shared
+		return p.acquireFreshLx(ctx, dial)
+	}
 	var zero T
 	for {
 		p.access.Lock()
@@ -340,6 +347,7 @@ func (p *ConnPool[T]) acquireShared(ctx context.Context, dial func(context.Conte
 				current.sharedUsers++
 				connCtx := current.sharedCtx
 				p.access.Unlock()
+				p.tracePooledLx(ctx, current, conn) // lx: SPEC 139 — REUSED with its age
 				return conn, connCtx, created, nil
 			}
 			p.removeConn(current, conn, net.ErrClosed)
@@ -366,6 +374,7 @@ func (p *ConnPool[T]) acquireShared(ctx context.Context, dial func(context.Conte
 			if retry {
 				continue
 			}
+			p.traceCollectedLx(ctx, current, conn, startDial, err) // lx: SPEC 139
 			return conn, connCtx, created, err
 		case <-ctx.Done():
 			p.access.Lock()
@@ -421,7 +430,7 @@ func (p *ConnPool[T]) connectSingle(current *connPoolState[T], state *connPoolCo
 		current.sharedCtx = sharedCtx
 		current.sharedCancel = sharedCancel
 		current.all[conn] = struct{}{}
-		p.markProbeOwnedLx(current, ctx, conn) // lx: SPEC 139
+		p.installedLx(current, ctx, conn) // lx: SPEC 139
 	}
 	p.access.Unlock()
 

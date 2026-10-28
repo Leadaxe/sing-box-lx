@@ -285,6 +285,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 				return it.Option() == dns.EDNS0SUBNET
 			}))
 	message = c.prepareExchangeMessage(message, options)
+	options = traceFreshOptions(ctx, options) // lx: SPEC 139 — fresh: no cache read or write
 	disableCache := !isSimpleRequest || c.disableCache || options.DisableCache
 	operation := &exchangeOperation{
 		message:         message,
@@ -467,6 +468,7 @@ func (c *Client) ExchangeAsync(ctx context.Context, transport adapter.DNSTranspo
 func (c *Client) Lookup(ctx context.Context, transport adapter.DNSTransport, domain string, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) ([]netip.Addr, error) {
 	domain = FqdnToDomain(domain)
 	dnsName := dns.Fqdn(domain)
+	options = traceFreshOptions(ctx, options) // lx: SPEC 139 — fresh: no cache read or write
 	var strategy C.DomainStrategy
 	if options.LookupStrategy != C.DomainStrategyAsIS {
 		strategy = options.LookupStrategy

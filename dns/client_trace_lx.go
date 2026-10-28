@@ -66,6 +66,18 @@ func traceExchangeBegin(ctx context.Context, transport adapter.DNSTransport, que
 	})
 }
 
+// traceFreshOptions sets DisableCache for every query of a connection test
+// with fresh=true (SPEC 139 §5.6): the cache is neither read nor written, at
+// any nesting level — a node's server address, a DNS server's own domain —
+// where the caller's options are not the test's to set. Without a trace it
+// costs one ctx.Value lookup, none when the cache is already off.
+func traceFreshOptions(ctx context.Context, options adapter.DNSQueryOptions) adapter.DNSQueryOptions {
+	if !options.DisableCache && lxtrace.Fresh(ctx) {
+		options.DisableCache = true
+	}
+	return options
+}
+
 type dnsCacheAgeKey struct{}
 
 // dnsCacheAge is the age of the cache entry a cache hit is served from. The
