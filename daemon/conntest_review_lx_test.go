@@ -155,6 +155,32 @@ func TestStartConnectionTest_ProxyHeaderDepthGate_LX(t *testing.T) {
 	})
 }
 
+// A redirect is the answer (§3.2): the client does not follow it, so the
+// test reports the 3xx and its Location instead of the page it leads to.
+func TestStartConnectionTest_RedirectNotFollowed_LX(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/start" {
+			http.Redirect(writer, request, "/next", http.StatusFound)
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	service := newTypedProbeService(&probeDialer{}, C.TypeVLESS)
+	stream := newRecordingStream(context.Background())
+	if err := service.StartConnectionTest(&ConnectionTestRequest{Link: server.URL + "/start", OutboundTag: "node"}, stream); err != nil {
+		t.Fatalf("transport error: %v", err)
+	}
+	result := stream.result()
+	if result == nil || result.Error != "" || result.HttpStatus != http.StatusFound || result.RootCause != 0 {
+		t.Fatalf("result = %v, want 302 and no root cause", result)
+	}
+	httpStage := findStage(stream.finalStages(), stageHTTP)
+	if httpStage == nil || httpStage.Result != ConnectionTestStageResult_STAGE_OK || attrOf(httpStage, "location") != "/next" {
+		t.Fatalf("http = %v, want OK with location=/next", httpStage)
+	}
+}
+
 // The class of a failed hysteria2/tuic/naive dial is synthesized after the
 // stage ended; it must still be on the snapshot the client receives.
 func TestStartConnectionTest_ClassAttrReachesStream_LX(t *testing.T) {

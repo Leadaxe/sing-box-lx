@@ -228,8 +228,13 @@ func newStand(t *testing.T) *stand {
 	go dnsServer.ActivateAndServe()
 	t.Cleanup(func() { dnsServer.Shutdown() })
 
-	// The target: "/" answers, "/hang" blocks until the client goes away.
+	// The target: "/" answers, "/hang" blocks until the client goes away,
+	// "/redirect" sends the client back to "/".
 	s.target = httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/redirect" {
+			http.Redirect(writer, request, "/", http.StatusFound)
+			return
+		}
 		if request.URL.Path == "/hang" {
 			select {
 			case <-request.Context().Done():
@@ -818,6 +823,27 @@ func TestConnectionTestAcceptance(t *testing.T) {
 		require.Empty(t, run.find("dial", "", nil))
 		require.Empty(t, run.find("tcp_connect", "", nil))
 		require.Zero(t, run.result.RootCause)
+	})
+
+	// A redirect is the answer: through the router (one routed connection
+	// per test) the 302 comes back with its Location, the path is complete
+	// and nothing is skipped.
+	t.Run("RedirectIsTheAnswer", func(t *testing.T) {
+		service, _ := s.newClient(t, clientConfig{})
+		run := runTest(t, service, &daemon.ConnectionTestRequest{
+			Link:   s.targetURL("target.test", "/redirect"),
+			Source: &daemon.ConnectionTestSource{Inbound: "mixed"},
+		})
+		require.Empty(t, run.result.Error)
+		require.EqualValues(t, http.StatusFound, run.result.HttpStatus)
+		require.Zero(t, run.result.RootCause)
+		httpStage := run.topLevel(t, "http")
+		require.Equal(t, stageOK, httpStage.Result)
+		require.Equal(t, "302", attr(httpStage, "status"))
+		require.Equal(t, "/", attr(httpStage, "location"))
+		for _, s := range run.stages {
+			require.NotEqual(t, stageSkipped, s.Result, "stage %s #%d", s.Kind, s.Id)
+		}
 	})
 
 	// C9 — a test through a group to a dead node changes neither the selected

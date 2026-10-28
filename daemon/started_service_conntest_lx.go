@@ -375,13 +375,16 @@ func (t *connectionTest) runPacketRoute(ctx context.Context, destination M.Socks
 
 // onRouteClosed is the onClose of the routed connection: a non-nil error is a
 // route refusal (reject, outbound not found, missing fakeip record) or the
-// first-hop dial failure, both of which end the path.
+// first-hop dial failure, both of which end the path. Once the first-hop dial
+// has ended OK, the error is the copy loop unwinding (the client closed its
+// side, the server reset the stream): the path was up, and the exchange
+// stage that was running takes the client's error instead.
 func (t *connectionTest) onRouteClosed(err error) {
 	t.routeAccess.Lock()
 	t.routeClosed = true
 	t.routeErr = err
 	t.routeAccess.Unlock()
-	if err != nil {
+	if err != nil && !t.dialFinished.Load() {
 		t.pathFailed.Store(true)
 	}
 	t.routeDoneOnce.Do(func() { close(t.routeDone) })
@@ -467,7 +470,16 @@ func (t *connectionTest) runHTTP(ctx context.Context, result *ConnectionTestResu
 	}
 	defer transport.CloseIdleConnections()
 
-	httpResponse, err := (&http.Client{Transport: transport}).Do(httpRequest)
+	client := &http.Client{
+		Transport: transport,
+		// The test answers whether this URL opens, not where its redirect
+		// chain leads: a 3xx is the answer (§3.2), and following it would ask
+		// for a second connection, to a host the test did not route.
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	httpResponse, err := client.Do(httpRequest)
 	if t.depth != lxtrace.DepthHTTP {
 		if httpResponse != nil {
 			httpResponse.Body.Close()
@@ -494,6 +506,9 @@ func (t *connectionTest) runHTTP(ctx context.Context, result *ConnectionTestResu
 		stage.Attr("content_type", contentType)
 	}
 	stage.Attr("proto", httpResponse.Proto)
+	if location := httpResponse.Header.Get("Location"); location != "" {
+		stage.Attr("location", location)
+	}
 
 	// One byte past the limit tells "ended at the limit" from "was cut" (058).
 	body, err := io.ReadAll(io.LimitReader(httpResponse.Body, t.maxBytes+1))
