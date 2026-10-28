@@ -182,6 +182,28 @@ gofmt -l по lx-файлам                                                  �
 - `wg_handshake` называет detour endpoint'а (`detour`).
 - CI: `dns/transport/quic` добавлен в шаг SPEC 139.
 
+### После lx.24
+
+- Параллельный опрос DNS-группы оставлял проигравших `FAILED` (поле, LxBox
+  v2.25.18-rc.3: под шагом группы, закончившимся OK, две стадии `tls` к
+  DoT-серверу закрылись `FAILED` через 5 мс после TCP-подключения). Группа
+  гонит всех участников на контексте запроса; как только один ответил,
+  DNS-клиент отменяет этот контекст, и участник посреди TLS-рукопожатия
+  заканчивает с `context canceled`. `lost_race` ставился только на
+  сокетные стадии dialer'а. Теперь `Stage.EndRace` (`common/lxtrace`)
+  закрывает стадию, упавшую на отменённом контексте — не на истёкшем, —
+  как `SKIPPED` с `lost_race=0`; им пользуются стадия `tls`
+  (`common/tls/conntest_lx.go`) и стадия `dns` упавшего резолва
+  (`dns/client_trace_lx.go`). Два вызова `// lx: SPEC 139` в
+  `common/tls/client.go` теперь передают контекст рукопожатия; новых
+  вставок нет. Тесты: `TestEndRace`, `TestLxHandshakeCancelledLostRace` /
+  `TestLxHandshakeTimeoutStaysFailed`, `TestDNSStageCancelledLostRace_LX` и
+  `TestParallelLoserHandshakeLostRace_LX` — настоящий DoT-участник,
+  застрявший в рукопожатии, против быстрого через `dns.Client`; до правки
+  красный с `context canceled`.
+- CI: `dns/transport/group` добавлен в шаг SPEC 139; тесты DNS-группы до
+  этого не шли ни в одном шаге CI.
+
 ### Проверка
 
 ```

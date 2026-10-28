@@ -96,3 +96,8 @@ release 2 is scoped from its field experience.
 - [x] DoH / DoH3 under `fresh`: a one-off client, `connection=new`, `pool=detached`
 - [x] `wg_handshake`: `detour` attribute
 - [x] Hysteria2 / TUIC internal stages: not planned, reasons in SPEC §7
+
+### Stage 12 — after lx.24
+
+- [x] DNS group parallel query: the members cut short when another one answered are `SKIPPED` with `lost_race`, not `FAILED` (`Stage.EndRace` on `tls` and `dns`; field: two FAILED `tls` to a DoT server under a group step that ended OK)
+- [x] CI: `dns/transport/group` added to the SPEC 139 step

@@ -184,6 +184,28 @@ reading only the diff; the review's findings are fixed (below).
 - `wg_handshake` names the endpoint's detour (`detour`).
 - CI: `dns/transport/quic` added to the SPEC 139 step.
 
+### After lx.24
+
+- A DNS group's parallel query left its losers `FAILED` (field, LxBox
+  v2.25.18-rc.3: under a group step that ended OK, two `tls` stages to a
+  DoT server closed `FAILED` 5 ms after their TCP connect). The group runs
+  every member on the request's context; once one answers, the DNS client
+  cancels that context, and a member caught in its TLS handshake ends with
+  `context canceled`. `lost_race` was set only on the dialer's socket
+  stages. Now `Stage.EndRace` (`common/lxtrace`) closes a stage that failed
+  on a cancelled context — not a timed-out one — as `SKIPPED` with
+  `lost_race=0`; the `tls` stage (`common/tls/conntest_lx.go`) and the
+  `dns` stage of a failed lookup (`dns/client_trace_lx.go`) use it. The two
+  `// lx: SPEC 139` calls in `common/tls/client.go` now pass the
+  handshake's context; no new insertion. Tests: `TestEndRace`,
+  `TestLxHandshakeCancelledLostRace` / `TestLxHandshakeTimeoutStaysFailed`,
+  `TestDNSStageCancelledLostRace_LX`, and
+  `TestParallelLoserHandshakeLostRace_LX` — a real DoT member stalled in its
+  handshake against a fast member through `dns.Client`, red before the fix
+  with `context canceled`.
+- CI: `dns/transport/group` added to the SPEC 139 step; the DNS group's
+  tests ran in no CI step before.
+
 ### Verification
 
 ```

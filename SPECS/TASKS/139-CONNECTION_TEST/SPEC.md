@@ -306,7 +306,12 @@ actual path, not the expected one.
 13. **Parallel dials.** When the dialer races several addresses or
     interfaces, the siblings that lost the race are `SKIPPED` with the
     attribute `lost_race=<winner stage id>`, not `FAILED`, and are never
-    the root cause.
+    the root cause. The same holds for the members of a DNS group's
+    parallel query: once one member answers, the request's context is
+    cancelled, and a `tls` handshake or a `dns` lookup that ends on that
+    cancelled context is `SKIPPED` with `lost_race=0` (the winner is not
+    known at that level). A stage that ran out of time stays `FAILED`
+    (item 11).
 14. **The test owns its connections.** Every connection the test opened,
     including those forced by `fresh`, is closed when the test ends and
     never enters a production pool (XHTTP transport pool, DNS connection

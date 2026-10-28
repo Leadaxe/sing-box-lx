@@ -96,3 +96,8 @@
 - [x] DoH / DoH3 при `fresh`: одноразовый клиент, `connection=new`, `pool=detached`
 - [x] `wg_handshake`: атрибут `detour`
 - [x] Внутренние стадии Hysteria2 / TUIC: не планируются, причины в SPEC §7
+
+### Этап 12 — после lx.24
+
+- [x] Параллельный опрос DNS-группы: участники, оборванные ответом другого, — `SKIPPED` с `lost_race`, не `FAILED` (`Stage.EndRace` на `tls` и `dns`; поле: два FAILED `tls` к DoT-серверу под шагом группы, закончившимся OK)
+- [x] CI: `dns/transport/group` добавлен в шаг SPEC 139
