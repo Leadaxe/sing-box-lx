@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | Type | F (feature) — server inbound |
-| Status | N (new) — draft for discussion; the shape (inbound, not endpoint), the two-layer layout and the file form are inherited from SPEC 133 and not re-opened here; §7 is open. In `LX_TAGS` since 2026-10-16 together with SPEC 133 (owner), ships in the desktop and router binaries |
+| Status | I (implemented) — released in v1.14.3-lx.21 (2026-10-16) together with SPEC 133, in `LX_TAGS`, desktop and router binaries; verified by the owner on a live link 2026-10-29, task closed. The shape (inbound, not endpoint), the two-layer layout and the file form are inherited from SPEC 133; §7 Q1–Q5 shipped as proposed and accepted with the release |
 | Branch | `lx` |
 | Build tag | `with_trusttunnel` (HTTP/3 half additionally needs `with_quic`) |
 | Discussion | [Leadaxe/sing-box-lx#46](https://github.com/Leadaxe/sing-box-lx/issues/46) |

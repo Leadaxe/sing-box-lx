@@ -8,7 +8,7 @@
 |-------|-------|
 | Type | Product feature |
 | Build tag | `with_trusttunnel` |
-| State | In the release binaries from lx.21 (`LX_TAGS` since 2026-10-16); discussion [#46](https://github.com/Leadaxe/sing-box-lx/issues/46), tasks [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md), [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md) |
+| State | Done: in the release binaries from lx.21 (`LX_TAGS` since 2026-10-16), verified by the owner on a live link 2026-10-29; discussion [#46](https://github.com/Leadaxe/sing-box-lx/issues/46), tasks [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md), [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md) |
 
 ## Purpose
 
@@ -246,8 +246,8 @@ stale session (closed by the endpoint, NAT expired, device slept)
 
 | Task | What | State |
 |------|------|-------|
-| [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md) | `trusttunnel` outbound: TCP + UDP over HTTP/2 and HTTP/3; the protocol core package (client half) | O |
-| [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md) | `trusttunnel` inbound on the server half of the core package: Basic auth, TCP `CONNECT`, `_udp2` flows to the router, `_check`; HTTP/2 + HTTP/3 | O |
+| [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md) | `trusttunnel` outbound: TCP + UDP over HTTP/2 and HTTP/3; the protocol core package (client half) | I — lx.21, live-verified 2026-10-29 |
+| [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md) | `trusttunnel` inbound on the server half of the core package: Basic auth, TCP `CONNECT`, `_udp2` flows to the router, `_check`; HTTP/2 + HTTP/3 | I — lx.21, live-verified 2026-10-29 |
 
 ## Maintenance notes
 

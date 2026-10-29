@@ -8,7 +8,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | `with_trusttunnel` |
-| Состояние | В релизных бинарях с lx.21 (`LX_TAGS` с 2026-10-16); обсуждение [#46](https://github.com/Leadaxe/sing-box-lx/issues/46), задачи [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.ru.md), [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.ru.md) |
+| Состояние | Сделано: в релизных бинарях с lx.21 (`LX_TAGS` с 2026-10-16), проверено владельцем на живой связке 2026-10-29; обсуждение [#46](https://github.com/Leadaxe/sing-box-lx/issues/46), задачи [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.ru.md), [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.ru.md) |
 
 ## Назначение
 
@@ -247,8 +247,8 @@ CONNECT _udp2 ─► кадры: длина | src | dst | имя приложе�
 
 | Задача | Что | Статус |
 |--------|-----|--------|
-| [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.ru.md) | Outbound `trusttunnel`: TCP + UDP поверх HTTP/2 и HTTP/3; пакет-ядро протокола (клиентская половина) | O |
-| [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.ru.md) | Inbound `trusttunnel` на серверной половине пакета-ядра: Basic auth, TCP-`CONNECT`, потоки `_udp2` в роутер, `_check`; HTTP/2 + HTTP/3 | O |
+| [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.ru.md) | Outbound `trusttunnel`: TCP + UDP поверх HTTP/2 и HTTP/3; пакет-ядро протокола (клиентская половина) | I — lx.21, проверено вживую 2026-10-29 |
+| [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.ru.md) | Inbound `trusttunnel` на серверной половине пакета-ядра: Basic auth, TCP-`CONNECT`, потоки `_udp2` в роутер, `_check`; HTTP/2 + HTTP/3 | I — lx.21, проверено вживую 2026-10-29 |
 
 ## Особенности сопровождения
 

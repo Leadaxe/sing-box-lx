@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | Type | F (feature) — client outbound |
-| Status | N (new) — draft for discussion; decided: Q1 (in-tree, protocol core as a self-contained package), Q4 (desktop + routers), Q5 ("TrustTunnel" label), Q6 (the server side is written right away, task 134), tests (`lx-test/` stands, upstream `test/` left to others); the rest of §7 is open. In `LX_TAGS` since 2026-10-16 (owner), ships in the desktop and router binaries |
+| Status | I (implemented) — released in v1.14.3-lx.21 (2026-10-16), in `LX_TAGS`, desktop and router binaries; verified by the owner on a live link 2026-10-29 (§6 item 7 closed), task closed. Decided: Q1 (in-tree, protocol core as a self-contained package), Q4 (desktop + routers), Q5 ("TrustTunnel" label), Q6 (the server side written right away, task 134), tests (`lx-test/` stands, upstream `test/` left to others); Q7–Q11 shipped as proposed and accepted with the release |
 | Branch | `lx` |
 | Build tag | `with_trusttunnel` |
 | Discussion | [Leadaxe/sing-box-lx#46](https://github.com/Leadaxe/sing-box-lx/issues/46) |
