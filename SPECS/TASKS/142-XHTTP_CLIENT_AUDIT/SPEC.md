@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — шесть расхождений клиента XHTTP с эталоном Xray, найденные инспекцией пакета 2026-10-29 |
-| Статус | I (implemented) — 2026-10-29: правки в нашем пакете `transport/v2rayxhttp` (апстримных файлов ноль), тест на каждую находку в `audit_test.go`, пакет под `with_xhttp,with_quic` и `-race` зелёный; в поле не прогонялось |
+| Статус | I (implemented) — 2026-10-29: правки в нашем пакете `transport/v2rayxhttp` (апстримных файлов ноль), тест на каждую находку в `audit_test.go`, пакет под `with_xhttp,with_quic` и `-race` зелёный; в поле 2026-10-30 подтверждены §1 (живой Xray `stream-one` отвечает 400, поток закрыт за <0,5 с) и §4 (пинги 45 с не мешают живому `stream-one`), §5 только против REALITY без CDN; §2, §3, §6 в поле нет (§7) |
 | Ветка | `lx` |
 | Build-tag | `with_xhttp` |
 | Источник | Инспекция `transport/v2rayxhttp` против Xray-core `1b1647cd` (`transport/internet/splithttp/`), проведённая параллельно с [141](../141-XHTTP_PACKET_UP_PIPELINE/SPEC.md); решение владельца чинить — 2026-10-29 |
@@ -114,6 +114,20 @@ path: invalid URL escape` на каждом dial. У Xray путь буквал�
 `TestSessionPlacement/query` переведён на слэш по §2. Пакет под
 `with_xhttp,with_quic` зелёный, `-race` ×2 чистый, сборка под `LX_TAGS` и без
 тегов проходит.
+
+В поле 2026-10-30 (`v1.14.4-lx.25`, узлы владельца, Xray-серверы Liberty):
+
+- §1 — против живого сервера `stream-one` (Турция-БС-3, REALITY): копия узла с
+  `mode: packet-up` получила `400 Bad Request` на upload, поток закрыт с
+  `unexpected upload status: 400 Bad Request` за 0,1–0,5 с (standalone lx.25 на
+  macOS, два dial'а подряд). До правки `Write` висел бы до дедлайна.
+- §4 — `stream-one` + REALITY + xmux с `h_keep_alive_period: 0` (пинги 45 с) на
+  роутере lx.25: URL-тест 359/398 мс, `StartNetworkQualityTest` через узел —
+  аплинк 2,45 МБ/с, даунлинк 2,76 МБ/с, холостая задержка 968 мс, ошибок нет.
+- §5 — заголовки Chrome fetch() дошли только до сервера с REALITY напрямую (без
+  CDN) и приняты; за CDN не проверено: единственный такой узел мёртв
+  ([141 §3](../141-XHTTP_PACKET_UP_PIPELINE/SPEC.md)).
+- §2, §3, §6 — в поле не проверялись.
 
 ## 8. Границы
 
