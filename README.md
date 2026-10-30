@@ -184,7 +184,7 @@ Client half only; `decryption` is server-side and deliberately not ported. Refer
 { "type": "group", "tag": "dns-public", "mode": "stable", "servers": ["dns-cf", "dns-google", "dns-quad9"] }   // stable | fastest | parallel
 ```
 
-Reference — [lx-config.md §5](docs-lx/lx-config.md#5-dns-server-group-spec-033035) ([RU](docs-lx/lx-config.ru.md#5-группа-dns-серверов-spec-033035)).
+Reference — [lx-config.md §5](docs-lx/lx-config.md#5-dns-server-group-spec-033035143) ([RU](docs-lx/lx-config.ru.md#5-группа-dns-серверов-spec-033035143)).
 
 ### `chain` outbound
 

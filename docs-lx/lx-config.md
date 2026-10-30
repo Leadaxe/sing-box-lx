@@ -17,7 +17,7 @@
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`); the old `route.lx_idle_*` are deprecated aliases | **mobile only** (AAR) |
 | **Root `lx` block** (SPEC 098) | — (always parsed) | `lx.wg`, `lx.masque`, `lx.mtu_align` — the fork's global knobs, [§13](#13-the-lx-root-block-spec-098) | desktop + mobile |
-| **DNS server group** (SPEC 033/035) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
+| **DNS server group** (SPEC 033/035/143) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
 | **`lxd` daemon** (SPEC 055–057, 063–068) | `with_lxd` | not a config key — the `sing-box lxd` subcommand + `<state-dir>/daemon.json`; see [lxd-daemon.md](lxd-daemon.md) | desktop / server (**not** Win7, **not** AAR) |
 | **`chain` outbound** (SPEC 073) | `with_lx_chain` | `outbounds[].type: "chain"` — a multi-hop path of groups and nodes | desktop + mobile |
@@ -63,9 +63,11 @@ timelines and the recommended mobile configuration live in
   - [Example — urltest with round_robin](#example--urltest-with-round_robin)
 - [4. MASQUE outbound — Cloudflare WARP (SPEC 021)](#4-masque-outbound--cloudflare-warp-spec-021)
   - [Example — WARP (defaults: `vhttp: auto`)](#example--warp-defaults-vhttp-auto)
-- [5. DNS server group (SPEC 033/035)](#5-dns-server-group-spec-033035)
+- [5. DNS server group (SPEC 033/035/143)](#5-dns-server-group-spec-033035143)
   - [Fields (a `dns.servers[]` entry)](#fields-a-dnsservers-entry)
+  - [Local names first: `hosts`](#local-names-first-hosts)
   - [Example — resilient public DNS as the default](#example--resilient-public-dns-as-the-default)
+  - [Example — one local name for a dual-stack WireGuard server](#example--one-local-name-for-a-dual-stack-wireguard-server)
 - [6. VLESS `encryption` — post-quantum layer (SPEC 032)](#6-vless-encryption--post-quantum-layer-spec-032)
   - [Field (on a `vless` outbound)](#field-on-a-vless-outbound)
   - [Example](#example)
@@ -84,7 +86,7 @@ timelines and the recommended mobile configuration live in
 One config carrying every field of the **outbound-side** features — XHTTP transport,
 AmneziaWG 2.0 endpoint, the `id`/`ip`/`ib` masquerade sugar, VLESS `encryption`, and the
 `urltest` `round_robin` balancer, plus the root `lx` block with every key (MASQUE and the DNS group have
-their own examples in [§4](#4-masque-outbound--cloudflare-warp-spec-021) and [§5](#5-dns-server-group-spec-033035);
+their own examples in [§4](#4-masque-outbound--cloudflare-warp-spec-021) and [§5](#5-dns-server-group-spec-033035143);
 the `lx` block is described in [§13](#13-the-lx-root-block-spec-098), its energy keys in [lx-energy.md](lx-energy.md)). This is a **kitchen-sink reference**, not a recommended config: many fields are
 mutually exclusive (e.g. the `id`/`ip`/`ib` sugar vs. a hand-written `i1`) or are server-only
 and ignored by the client — those are flagged inline. For a working setup, copy only the block
@@ -667,7 +669,7 @@ table, profile matrix, key-material format, start-time validation and common foo
 
 ---
 
-## 5. DNS server group (SPEC 033/035)
+## 5. DNS server group (SPEC 033/035/143)
 
 Several DNS servers behind one tag with a selection strategy. Solves the
 "one dead DNS server kills resolution" problem: upstream's `dns.final` is a
@@ -688,6 +690,9 @@ live errors. A network change amnesties both tables.
 {
   "type": "group",                  // selector — must be "group"
   "tag": "public",
+  "hosts": ["local"],               // optional: tags of hosts-type servers only.
+                                    //   Consulted first, in this order; never
+                                    //   counted as servers (no health, no fan)
   "servers": ["google", "cloudflare", "quad9"], // REQUIRED, ≥1 tags.
                                     //   Order is NOT meaningful in any mode
   "mode": "stable",                 // stable (default) | fastest | parallel
@@ -734,6 +739,36 @@ wins, last rtt, current flag.
 > on a failure; `parallel` does it on every query. Do not mix internal and
 > public resolvers in one group.
 
+### Local names first: `hosts`
+
+SPEC 143. The optional `hosts` key lists `hosts`-type servers that the group
+consults **before** choosing a target, in key order:
+
+- **Hit** — the query is A or AAAA, the member knows the name, and it answers
+  NOERROR: that answer is returned as is, no network member is asked. This
+  includes an **empty** NOERROR when the entry has only the other address
+  family: an IPv4-only name asked for AAAA gets an empty answer and does not
+  leak to the network. So `strategy: ipv6_only` on such a name yields no
+  address — the same as the OS hosts file.
+- **Miss** — unknown name, another query type, or a non-NOERROR reply: the
+  query goes to `servers` by the group's mode, unchanged.
+- `hosts` members carry no health records, never join a fan or survival mode,
+  never become current and are absent from `GetDNSGroups`. A hit is reported
+  as the `hosts` member being the server that answered, with one `answered`
+  probe; a miss leaves no trace.
+- `servers` stays required and non-empty. A `hosts` (or `fakeip`) server
+  inside `servers` is still rejected at load, and the error points at the
+  `hosts` key. The key accepts only `hosts`-type tags, with no duplicates and
+  no overlap with `servers`.
+
+It works wherever the group tag is accepted: `domain_resolver` (per node or
+`route.default_domain_resolver`), `dns.final`, rules. The reason it exists:
+outbound and endpoint server addresses resolve through `domain_resolver`,
+which goes straight to the server and bypasses DNS rules, so neither a
+`predefined` rule action nor a `server: hosts` rule ever reaches them. A plain
+`hosts` server cannot be that resolver either, because it answers NXDOMAIN for
+every other name.
+
 ### Example — resilient public DNS as the default
 
 ```jsonc
@@ -750,6 +785,34 @@ wins, last rtt, current flag.
   }
 }
 ```
+
+### Example — one local name for a dual-stack WireGuard server
+
+A self-hosted WireGuard server (or WARP) reachable over IPv4 and IPv6 under one
+local name (issue #60):
+
+```jsonc
+{
+  "dns": {
+    "servers": [
+      { "type": "hosts", "tag": "local",
+        "predefined": { "wg.home": ["203.0.113.10", "2001:db8::10"] } },
+      { "type": "udp", "tag": "google",     "server": "8.8.8.8" },
+      { "type": "udp", "tag": "cloudflare", "server": "1.1.1.1" },
+      { "type": "group", "tag": "resolver",
+        "hosts": ["local"],
+        "servers": ["google", "cloudflare"],
+        "mode": "stable" }
+    ],
+    "final": "resolver"
+  },
+  "route": { "default_domain_resolver": { "server": "resolver", "strategy": "prefer_ipv6" } }
+}
+```
+
+`wg.home` as an endpoint's server address gets both addresses from `local`, and
+`strategy` picks the family; every other name goes to `google` / `cloudflare`
+under `stable`.
 
 > ⚠️ The v1 contract (`mode: failover|race`, `interval`, `down_time`,
 > shipped in `v1.14.0-lx.16-rc.1`) is GONE: such configs fail to load.
@@ -861,7 +924,7 @@ The added `CommandClient` methods:
 - **`GetPool(groupTag)`** — read a `urltest` group's current round_robin rotation pool, slot
   by slot (SPEC 019; see [§3](#3-urltest-node-selection-modes-spec-019--116)).
 - **`GetDNSGroups()`** — the live state of every DNS `group` server (SPEC 035; see
-  [§5](#5-dns-server-group-spec-033035)): per member `clean` / `liveErrors` /
+  [§5](#5-dns-server-group-spec-033035143)): per member `clean` / `liveErrors` /
   `lastErrorAgeMs` / `liveWins` / `current`.
 - **`GetRunningConfig()`** — the canonical JSON options the running box was actually built
   from, post-override (SPEC 037). Returned as an object with a `Content()` accessor — a bare

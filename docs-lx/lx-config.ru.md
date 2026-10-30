@@ -17,7 +17,7 @@
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`); старые `route.lx_idle_*` — устаревшие алиасы | **только mobile** (AAR) |
 | **Корневой блок `lx`** (SPEC 098) | — (разбирается всегда) | `lx.wg`, `lx.masque`, `lx.mtu_align` — глобальные ручки форка, [§13](#13-корневой-блок-lx-spec-098) | desktop + mobile |
-| **Группа DNS-серверов** (SPEC 033/035) | — (всегда в сборке) | `dns.servers[].type: "group"` | desktop + mobile |
+| **Группа DNS-серверов** (SPEC 033/035/143) | — (всегда в сборке) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (всегда в сборке) | `encryption` на `vless`-outbound | desktop + mobile |
 | **Демон `lxd`** (SPEC 055–057, 063–068) | `with_lxd` | не ключ конфига — подкоманда `sing-box lxd` + `<state-dir>/daemon.json`; см. [lxd-daemon.ru.md](lxd-daemon.ru.md) | desktop / сервер (**не** Win7, **не** AAR) |
 | **Outbound `chain`** (SPEC 073) | `with_lx_chain` | `outbounds[].type: "chain"` — многохоповый путь из групп и узлов | desktop + mobile |
@@ -61,9 +61,11 @@ netstack; пробуждение = rebuild ~0.5–1 с; дефолт = reachable
   - [Пример — urltest с round_robin](#пример--urltest-с-round_robin)
 - [4. MASQUE outbound — Cloudflare WARP (SPEC 021)](#4-masque-outbound--cloudflare-warp-spec-021)
   - [Пример — WARP (дефолты: `vhttp: auto`)](#пример--warp-дефолты-vhttp-auto)
-- [5. Группа DNS-серверов (SPEC 033/035)](#5-группа-dns-серверов-spec-033035)
+- [5. Группа DNS-серверов (SPEC 033/035/143)](#5-группа-dns-серверов-spec-033035143)
   - [Поля (запись в `dns.servers[]`)](#поля-запись-в-dnsservers)
+  - [Локальные имена первыми: `hosts`](#локальные-имена-первыми-hosts)
   - [Пример — отказоустойчивый публичный DNS по умолчанию](#пример--отказоустойчивый-публичный-dns-по-умолчанию)
+  - [Пример — одно локальное имя для WireGuard-сервера с IPv4 и IPv6](#пример--одно-локальное-имя-для-wireguard-сервера-с-ipv4-и-ipv6)
 - [6. VLESS `encryption` — пост-квантовый слой (SPEC 032)](#6-vless-encryption--пост-квантовый-слой-spec-032)
   - [Поле (на `vless`-outbound)](#поле-на-vless-outbound)
   - [Пример](#пример)
@@ -82,7 +84,7 @@ netstack; пробуждение = rebuild ~0.5–1 с; дефолт = reachable
 Один конфиг, несущий все поля **outbound-фич** — XHTTP-транспорт, AmneziaWG 2.0 endpoint,
 masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-балансировщик `urltest`
 и корневой блок `lx` со всеми ключами (у MASQUE и DNS-группы — свои примеры в [§4](#4-masque-outbound--cloudflare-warp-spec-021)
-и [§5](#5-группа-dns-серверов-spec-033035); блок `lx` описан в [§13](#13-корневой-блок-lx-spec-098), его энергоключи — в [lx-energy.ru.md](lx-energy.ru.md)).
+и [§5](#5-группа-dns-серверов-spec-033035143); блок `lx` описан в [§13](#13-корневой-блок-lx-spec-098), его энергоключи — в [lx-energy.ru.md](lx-energy.ru.md)).
 Это **справочник «всё сразу»**, а не рекомендуемый конфиг: многие поля взаимоисключающи
 (например, сахар `id`/`ip`/`ib` против написанного вручную `i1`) либо серверные и игнорируются
 клиентом — такие помечены прямо в комментариях. Для рабочей настройки скопируйте только нужный
@@ -675,7 +677,7 @@ QUIC не несёт TLS поверх TCP вовсе.
 
 ---
 
-## 5. Группа DNS-серверов (SPEC 033/035)
+## 5. Группа DNS-серверов (SPEC 033/035/143)
 
 Несколько DNS-серверов под одним тегом со стратегией выбора. Решает проблему
 «один мёртвый DNS-сервер роняет резолв целиком»: upstream'овский `dns.final` —
@@ -695,6 +697,9 @@ QUIC не несёт TLS поверх TCP вовсе.
 {
   "type": "group",                  // селектор — строго "group"
   "tag": "public",
+  "hosts": ["local"],               // необязательное: только теги серверов hosts.
+                                    //   Опрашиваются первыми, в этом порядке;
+                                    //   серверами группы не считаются (без здоровья и веера)
   "servers": ["google", "cloudflare", "quad9"], // ОБЯЗАТЕЛЬНОЕ, ≥1 тегов.
                                     //   Порядок НЕ значим ни в одном режиме
   "mode": "stable",                 // stable (дефолт) | fastest | parallel
@@ -739,6 +744,35 @@ QUIC не несёт TLS поверх TCP вовсе.
 > всем чистым участникам; `parallel` — каждым запросом. Не смешивайте
 > внутренние и публичные резолверы в одной группе.
 
+### Локальные имена первыми: `hosts`
+
+SPEC 143. Необязательный ключ `hosts` перечисляет серверы типа `hosts`, которые
+группа опрашивает **до** выбора цели, в порядке ключа:
+
+- **Попадание** — запрос A или AAAA, участник знает имя и отвечает NOERROR:
+  этот ответ отдаётся как есть, сетевые участники не опрашиваются. Сюда входит
+  и **пустой** NOERROR, когда в записи есть только другое семейство адресов:
+  имя только с IPv4 на запрос AAAA получает пустой ответ, и в сеть запрос
+  не уходит. Поэтому `strategy: ipv6_only` на таком имени адреса не даёт —
+  так же, как `hosts`-файл ОС.
+- **Промах** — имя неизвестно, другой тип запроса или ответ не NOERROR: запрос
+  уходит в `servers` по режиму группы без изменений.
+- У участников `hosts` нет записей здоровья, они не входят в веер и режим
+  выживания, не становятся текущими и отсутствуют в `GetDNSGroups`. Попадание
+  видно как ответивший сервер — участник `hosts` — с одной пробой `answered`;
+  промах следа не оставляет.
+- `servers` остаётся обязательным и непустым. Сервер `hosts` (или `fakeip`)
+  внутри `servers` по-прежнему отвергается при загрузке, и ошибка указывает
+  на ключ `hosts`. Ключ принимает только теги типа `hosts`, без дубликатов
+  и без пересечения с `servers`.
+
+Работает везде, где принимается тег группы: `domain_resolver` (у узла или
+`route.default_domain_resolver`), `dns.final`, правила. Зачем он нужен: адреса
+серверов outbound и endpoint резолвятся через `domain_resolver`, который идёт
+в сервер напрямую, минуя DNS-правила, поэтому ни действие правила `predefined`,
+ни правило `server: hosts` до них не доходят. Сам `hosts` таким резолвером быть
+не может: на любое другое имя он отвечает NXDOMAIN.
+
 ### Пример — отказоустойчивый публичный DNS по умолчанию
 
 ```jsonc
@@ -755,6 +789,34 @@ QUIC не несёт TLS поверх TCP вовсе.
   }
 }
 ```
+
+### Пример — одно локальное имя для WireGuard-сервера с IPv4 и IPv6
+
+Свой WireGuard-сервер (или WARP), доступный по IPv4 и IPv6 под одним локальным
+именем (issue #60):
+
+```jsonc
+{
+  "dns": {
+    "servers": [
+      { "type": "hosts", "tag": "local",
+        "predefined": { "wg.home": ["203.0.113.10", "2001:db8::10"] } },
+      { "type": "udp", "tag": "google",     "server": "8.8.8.8" },
+      { "type": "udp", "tag": "cloudflare", "server": "1.1.1.1" },
+      { "type": "group", "tag": "resolver",
+        "hosts": ["local"],
+        "servers": ["google", "cloudflare"],
+        "mode": "stable" }
+    ],
+    "final": "resolver"
+  },
+  "route": { "default_domain_resolver": { "server": "resolver", "strategy": "prefer_ipv6" } }
+}
+```
+
+`wg.home` в адресе сервера endpoint'а получает оба адреса из `local`, семейство
+выбирает `strategy`; любое другое имя идёт в `google` / `cloudflare` по режиму
+`stable`.
 
 > ⚠️ Контракт v1 (`mode: failover|race`, `interval`, `down_time`,
 > отгружался в `v1.14.0-lx.16-rc.1`) УДАЛЁН: такие конфиги не загружаются.
@@ -861,7 +923,7 @@ mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>[.<padding>…].<ключ>[
 - **`GetPool(groupTag)`** — прочитать текущий пул ротации round_robin группы `urltest`, слот за
   слотом (SPEC 019; см. [§3](#3-режимы-выбора-узла-в-urltest-spec-019--116)).
 - **`GetDNSGroups()`** — live-состояние каждого DNS-сервера `group` (SPEC 035; см.
-  [§5](#5-группа-dns-серверов-spec-033035)): по каждому члену `clean` / `liveErrors` /
+  [§5](#5-группа-dns-серверов-spec-033035143)): по каждому члену `clean` / `liveErrors` /
   `lastErrorAgeMs` / `liveWins` / `current`.
 - **`GetRunningConfig()`** — канонический JSON options, из которых реально построен
   работающий box, post-override (SPEC 037). Возвращается объектом с аксессором `Content()` —

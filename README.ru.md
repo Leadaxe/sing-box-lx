@@ -186,7 +186,7 @@ make -f Makefile.lx lx-check        # проверка примеров конф
 { "type": "group", "tag": "dns-public", "mode": "stable", "servers": ["dns-cf", "dns-google", "dns-quad9"] }   // stable | fastest | parallel
 ```
 
-Справка — [lx-config.ru.md §5](docs-lx/lx-config.ru.md#5-группа-dns-серверов-spec-033035) ([EN](docs-lx/lx-config.md#5-dns-server-group-spec-033035)).
+Справка — [lx-config.ru.md §5](docs-lx/lx-config.ru.md#5-группа-dns-серверов-spec-033035143) ([EN](docs-lx/lx-config.md#5-dns-server-group-spec-033035143)).
 
 ### Outbound `chain`
 

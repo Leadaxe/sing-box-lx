@@ -23,7 +23,8 @@
 
 Пакет `dns/transport/group`, регистрация/зависимости/валидации состава —
 как в v1 (реестр, `Dependencies()` = участники, резолв в
-`Start(StartStateStart)`, отказ `fakeip`/`hosts`, циклы ловит менеджер).
+`Start(StartStateStart)`, отказ `fakeip`/`hosts` в `servers`; `hosts` подключается
+ключом `hosts` — [SPEC 143](../143-DNS_GROUP_HOSTS_OVERLAY/SPEC.md), циклы ловит менеджер).
 
 ### Модель данных
 
