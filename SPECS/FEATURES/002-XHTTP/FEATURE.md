@@ -4,7 +4,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | `with_xhttp` |
-| Состояние | ✅ live-validated против Xray; `stream-one`/`auto`+REALITY девайс-верифицированы (`v1.14.0-lx.17`). ⚠️ `packet-up`/`stream-up` за обратным прокси залипали на дайле — устранено задачей [061](../../TASKS/061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md) — в поле с `v1.14.0-lx.30` без жалоб. Аплинк `packet-up` с 2026-10-29 конвейерный ([141](../../TASKS/141-XHTTP_PACKET_UP_PIPELINE/SPEC.md), issue #58) — 2026-10-30 проверен против живого Xray 26.3.27 (`mode: auto`, REALITY) с роутера на lx.25: аплинк `packet-up` 17–38 Мбит/с при RTT 200 мс, где старый код упирался в 0,7–1,3; на устройстве (AAR) ещё нет. Из инспекции [142](../../TASKS/142-XHTTP_CLIENT_AUDIT/SPEC.md) в поле подтверждены §1 (живой Xray `stream-one` отвечает 400 на `packet-up`, поток закрыт за <0,5 с) и §4 |
+| Состояние | ✅ live-validated против Xray; `stream-one`/`auto`+REALITY девайс-верифицированы (`v1.14.0-lx.17`). ⚠️ `packet-up`/`stream-up` за обратным прокси залипали на дайле — устранено задачей [061](../../TASKS/061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md) — в поле с `v1.14.0-lx.30` без жалоб. Аплинк `packet-up` с 2026-10-29 конвейерный ([141](../../TASKS/141-XHTTP_PACKET_UP_PIPELINE/SPEC.md), issue #58) — 2026-10-30 проверен против живого Xray 26.3.27 (`mode: auto`, REALITY) с роутера на lx.25: A/B на одном сервере с macOS — lx.24 0,55 МБ/с, lx.25 3,7–4,6 МБ/с (×7–8), в пределах 20 % от `stream-one`; на устройстве (AAR) ещё нет. Из инспекции [142](../../TASKS/142-XHTTP_CLIENT_AUDIT/SPEC.md) в поле подтверждены §1 (живой Xray `stream-one` отвечает 400 на `packet-up`, поток закрыт за <0,5 с) и §4 |
 
 ## Назначение
 
