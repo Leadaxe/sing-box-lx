@@ -138,6 +138,47 @@ func TestSingleMemberStage_LX(t *testing.T) {
 	}
 }
 
+// SPEC 143: a hosts hit is one dns_member stage of the hosts member that
+// answered; a miss leaves no stage of a hosts member, only the network one's.
+func TestHostsHitMemberStage_LX(t *testing.T) {
+	network := answering("a")
+	local := newFakeHosts("local", map[string][]string{"wg.home": {"203.0.113.10"}})
+	stale := staleHosts("stale", "example.org", func(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+		return rcodeResponse(message, mDNS.RcodeNameError), nil
+	})
+	group := newTestGroupWithHosts(t, ModeStable, time.Minute, 0, []*fakeHosts{local, stale}, network)
+
+	stagesOf := func(query *mDNS.Msg) []lxtrace.StageSnapshot {
+		trace := lxtrace.New(lxtrace.Options{})
+		ctx, parent := lxtrace.Begin(lxtrace.With(context.Background(), trace), "app_dns", query.Question[0].Name)
+		_, err := group.Exchange(ctx, query)
+		require.NoError(t, err)
+		parent.End(nil)
+		trace.Finish(nil)
+		return memberStagesLx(trace, parent)
+	}
+
+	hit := stagesOf(newQuery("wg.home", mDNS.TypeA))
+	require.Len(t, hit, 1)
+	require.Equal(t, "local", hit[0].Subject)
+	require.Equal(t, lxtrace.OK, hit[0].Result)
+	require.Equal(t, C.DNSTypeHosts, attrLx(hit[0], "type"))
+	require.Empty(t, attrLx(hit[0], "outbound"))
+
+	misses := []*mDNS.Msg{
+		newQuery("example.org", mDNS.TypeA), // stale claims it, answers NXDOMAIN
+		newQuery("unknown.org", mDNS.TypeA),
+		newQuery("wg.home", mDNS.TypeTXT),
+	}
+	for _, query := range misses {
+		miss := stagesOf(query)
+		require.Len(t, miss, 1, "query %s", query.Question[0].String())
+		require.Equal(t, "a", miss[0].Subject)
+		require.Equal(t, C.DNSTypeUDP, attrLx(miss[0], "type"))
+	}
+	require.Equal(t, int32(1), stale.calls.Load())
+}
+
 // memberStagesLx returns the dns_member stages under parent, at any depth.
 func memberStagesLx(trace *lxtrace.Trace, parent *lxtrace.Stage) []lxtrace.StageSnapshot {
 	var members []lxtrace.StageSnapshot

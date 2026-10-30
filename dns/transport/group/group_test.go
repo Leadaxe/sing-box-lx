@@ -9,6 +9,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/dns"
+	"github.com/sagernet/sing-box/dns/transport/hosts"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -465,12 +466,22 @@ func registerFakeType(registry *dns.TransportRegistry, transportType string, ada
 		})
 }
 
+// fakeFakeIP stands in for a fakeip server: the manager requires Store().
+type fakeFakeIP struct{ *fakeMember }
+
+func (f fakeFakeIP) Store() adapter.FakeIPStore { return nil }
+
 func newTestManager(t *testing.T, defaultTag string) (*dns.TransportManager, context.Context) {
 	t.Helper()
 	registry := dns.NewTransportRegistry()
 	RegisterTransport(registry)
+	hosts.RegisterTransport(registry)
 	registerFakeType(registry, "fakeudp", C.DNSTypeUDP)
 	registerFakeType(registry, "fakehosts", C.DNSTypeHosts)
+	dns.RegisterTransport[fakeTransportOptions](registry, "fakefakeip",
+		func(ctx context.Context, logger log.ContextLogger, tag string, options fakeTransportOptions) (adapter.DNSTransport, error) {
+			return fakeFakeIP{&fakeMember{TransportAdapter: dns.NewTransportAdapter(C.DNSTypeFakeIP, tag, nil)}}, nil
+		})
 	manager := dns.NewTransportManager(registry, nil, defaultTag)
 	ctx := service.ContextWith[adapter.DNSTransportManager](context.Background(), manager)
 	return manager, ctx
@@ -495,13 +506,26 @@ func TestManagerRejectsMissingMember(t *testing.T) {
 }
 
 func TestManagerRejectsLocalSourceMember(t *testing.T) {
-	manager, ctx := newTestManager(t, "g1")
-	logger := testLogger()
-	require.NoError(t, manager.Create(ctx, logger, "h", "fakehosts", &fakeTransportOptions{}))
-	require.NoError(t, manager.Create(ctx, logger, "g1", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"h"}}))
-	err := manager.Start(adapter.StartStateStart, testScope())
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "is not allowed in a group")
+	cases := []struct {
+		name          string
+		transportType string
+		err           string
+	}{
+		// SPEC 143: hosts belongs under the `hosts` key, the error says so.
+		{"hosts", "fakehosts", `server type hosts is not allowed in servers, put it under "hosts": h`},
+		{"fakeip", "fakefakeip", "server type fakeip is not allowed in a group: h"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			manager, ctx := newTestManager(t, "g1")
+			logger := testLogger()
+			require.NoError(t, manager.Create(ctx, logger, "h", testCase.transportType, &fakeTransportOptions{}))
+			require.NoError(t, manager.Create(ctx, logger, "g1", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"h"}}))
+			err := manager.Start(adapter.StartStateStart, testScope())
+			require.Error(t, err)
+			require.Contains(t, err.Error(), testCase.err)
+		})
+	}
 }
 
 func TestManagerStartsGroupAndNestedGroup(t *testing.T) {
