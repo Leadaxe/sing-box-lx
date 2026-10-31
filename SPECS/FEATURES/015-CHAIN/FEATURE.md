@@ -179,9 +179,9 @@ GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
 - **A nested chain** is allowed only at position 0.
 - **DPI between hops** (`["domestic-relay", "foreign-node"]`) needs
   `"strip": {"tls.fragment": false}` — the default assumes DPI between the client and the entry.
-- **A tunnel over a datagram proxy** (hysteria2, tuic, ss-UDP) keeps the configured `mtu` — the
-  physical path is unknown, exactly as with a plain `detour`; over `tuic` in `native` mode a
-  warning is emitted.
+- **A tunnel over a proxy** (vless, trojan, hysteria2, tuic, ss, …) keeps the configured `mtu` —
+  a proxy delivers the link's packet whole, as a stream or by its own fragmentation, so whatever
+  lies under the proxy does not limit the link (SPEC 144); exactly as with a plain `detour`.
 - **The first dial to a new pick** pays for creating the link synchronously (for WireGuard — stack
   start plus handshake).
 - Server side, per-position overrides outside `rewrite`-by-type, and limits on the number of links
@@ -326,9 +326,9 @@ GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
 - **Вложенная цепочка** допустима только на позиции 0.
 - **DPI между хопами** (`["domestic-relay", "foreign-node"]`) требует
   `"strip": {"tls.fragment": false}` — дефолт рассчитан на DPI между клиентом и входом.
-- **Туннель над датаграммным прокси** (hysteria2, tuic, ss-UDP) сохраняет `mtu` конфига —
-  физический путь неизвестен, как и при обычном `detour`; над `tuic` в `native`-режиме выдаётся
-  предупреждение.
+- **Туннель над прокси** (vless, trojan, hysteria2, tuic, ss, …) сохраняет `mtu` конфига —
+  прокси доставляет пакет звена целиком, потоком или своей нарезкой, и то, что лежит под
+  прокси, звено не ограничивает (SPEC 144); как и при обычном `detour`.
 - **Первый дозвон к новому выбору** платит создание звена синхронно (для WireGuard — старт стека
   и хендшейк).
 - Серверная сторона, per-позиционные переопределения вне `rewrite`-по-типу, лимиты числа звеньев —
@@ -345,4 +345,4 @@ GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
 | [073](../../TASKS/073-CHAIN_OUTBOUND/SPEC.md) | Outbound `chain`: group positions, runtime links, transparent `direct`, warm-up/idleness, MTU, `strip`/`rewrite`, observability / Outbound `chain`: позиции-группы, рантайм-звенья, прозрачный `direct`, прогрев/простой, MTU, `strip`/`rewrite`, наблюдаемость |
 | [075](../../TASKS/075-CHAIN_POSITION_TOGGLE/SPEC.md) | Runtime enable/disable of any position over gRPC (`SetChainPositionEnabled`), cache-file persistence, selector-style connection interrupt, effective link config (`GetChainCloneConfig`), `disabled` in diagnostics / Runtime вкл/выкл любой позиции по gRPC, персистентность в cache-file, разрыв соединений по селекторной модели, эффективный конфиг звена, `disabled` в диагностике |
 | [120](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) | One MTU/packet-size alignment for `chain` links **and** plain `detour`: capacity of the node below → `mtu` of tunnels, `initial_packet_size` (+ PMTUD off) of QUIC proxies; `lx.mtu_align` = `off`/`fill`/`clamp` (default) with `except`; masque outer QUIC starts at `mtu + 51` / Единое выравнивание MTU и размера пакета для звеньев `chain` **и** обычного `detour`: ёмкость узла снизу → `mtu` туннелей, `initial_packet_size` (+ PMTUD off) QUIC-прокси; `lx.mtu_align` = `off`/`fill`/`clamp` (дефолт) с `except`; внешний QUIC masque стартует с `mtu + 51` |
-| [144](../../TASKS/144-MTU_ALIGN_STREAM_BOUNDARY/SPEC.md) | Alignment fixes: a node that delivers the datagram whole itself (stream proxies; hysteria/hysteria2/tuic own fragmentation) ends the capacity, IP tunnels never go below 1280, AWG `s4` counts in the overhead / Поправки выравнивания: узел, сам доставляющий датаграмму целиком (потоковые прокси; своя нарезка hysteria/hysteria2/tuic), обрывает ёмкость, IP-туннели не ниже 1280, `s4` AWG в накладных |
+| [144](../../TASKS/144-MTU_ALIGN_STREAM_BOUNDARY/SPEC.md) | Alignment fixes: only IP tunnels and groups carry a capacity upwards, any other node is a boundary (a proxy delivers the packet whole; no per-protocol table); IP tunnels with IPv6 inside never go below 1280; AWG `s4` counts in the overhead / Поправки выравнивания: ёмкость наверх несут только IP-туннели и группы, любой другой узел — граница (прокси доставляет пакет целиком; таблицы по протоколам нет); IP-туннели с IPv6 внутри не ниже 1280; `s4` AWG в накладных |

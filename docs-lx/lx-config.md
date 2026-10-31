@@ -1054,7 +1054,7 @@ endpoint.
   tunnel −60/−80 by the server address family, MASQUE −79/−99), taking the worst case over a
   group's members. QUIC links (hysteria2, tuic, hysteria) at positions ≥ 1 get an
   `initial_packet_size` that fits the hop below plus `disable_path_mtu_discovery: true`. Over
-  stream proxies (vless/trojan/ss over TCP, mux) and datagram proxies nothing changes. The
+  any proxy (vless/trojan/ss/hysteria2/…) nothing changes. The
   mode (`clamp` by default, `fill`, `off`) and `except` apply to links the same way.
 - **`strip` catalog** (one-sided, the server never sees them): `tls.fragment` (packet-level
   ClientHello fragmentation + `fragment_fallback_delay`; **`record_fragment` is not
@@ -1178,8 +1178,8 @@ lazily, so there is no cap here.
 
 ### `lx.mtu_align` — path MTU / packet-size alignment
 
-A node that sits above an IP tunnel — via `detour`, via a group under `detour`, transitively
-(`detour` to a node whose own `detour` is a tunnel) or as a `chain` link ([§10](#10-chain-outbound--a-virtual-multi-hop-path-of-groups-and-nodes-spec-073)) —
+A node that sits right above an IP tunnel — via `detour`, via a group under `detour` or as a
+`chain` link ([§10](#10-chain-outbound--a-virtual-multi-hop-path-of-groups-and-nodes-spec-073)) —
 gets a packet size that fits that tunnel: `mtu` on tunnels (`wireguard`, `masque`),
 `initial_packet_size` plus `disable_path_mtu_discovery: true` on QUIC proxies (`hysteria2`,
 `tuic`, `hysteria`). Computed once at start from the config, before the nodes are created; the
@@ -1212,19 +1212,29 @@ under a plain `detour` as well.
 | `masque`, `wireguard` (endpoint and legacy outbound), `openvpn-client`, `openconnect` | its **effective** `mtu` (after its own alignment, recursively downwards) |
 | `tailscale` endpoint | `system_interface_mtu`, else 1280 |
 | `selector`, `urltest` | min over all reachable members, recursively |
-| any other node with `detour` | the capacity of its `detour` (it adds nothing above IP itself) |
-| `direct`, TCP proxies, proxies with a UDP relay (ss, socks, vless, trojan, …) without `detour` | unlimited (no IP layer) |
-| `tuic` with `udp_relay_mode: native`; `chain` as a `detour` target | unlimited + warning (a chain aligns itself) |
+| `chain` as a `detour` target | unlimited + warning (a chain aligns itself) |
+| any other node — `direct` and every proxy (vless, trojan, ss, socks, hysteria2, tuic, …), with or without `detour` | unlimited: a proxy delivers the packet of the node above whole (as a TCP stream, or by its own fragmentation), so whatever lies under its `detour` does not limit the node above (SPEC 144) |
+
+Only tunnels and groups carry a capacity upwards. The one case this leaves out: a tunnel over
+`shadowsocks` / `socks` **UDP** whose own `detour` is a tunnel — those pass datagrams through, and
+the limit below them is real; set `mtu` on the upper tunnel by hand there.
 
 **What the node above gets** (`ipudp` = 28 for an IPv4 server, 48 for IPv6; a domain or an
 unparsed address counts as IPv6; a WG endpoint takes its family from `peers[0].address`):
 
 | Node above | Field | Limit | Overhead v4 / v6 |
 |---|---|---|---|
-| `wireguard` | `mtu` | `capacity − 32 − ipudp` | 60 / 80 |
+| `wireguard` | `mtu` | `capacity − 32 − s4 − ipudp` (`s4` = AmneziaWG transport padding, 0 for plain WG) | 60 / 80 (+ `s4`) |
 | `masque` | `mtu` | `capacity − 51 − ipudp` | 79 / 99 |
 | `hysteria2`, `tuic`, `hysteria` | `initial_packet_size` (+ `disable_path_mtu_discovery: true`) | `capacity − ipudp`, clamped 1200…1452 | — |
 | `openvpn-client`, `openconnect` | — | not derived; one warning if there is capacity below the node | unknown |
+
+**IPv6 floor (SPEC 144).** A tunnel that carries IPv6 inside — a `wireguard` endpoint with an IPv6
+prefix in `address`, `masque` always — is never aligned below 1280: gvisor silently refuses to bring
+up IPv6 on a link with a smaller MTU, and a dead IPv6 inside the tunnel is worse than fragments. When
+the path leaves less than 1280, the tunnel gets 1280 and a Warn line (`… is above the path: … leaves
+1220 bytes, below the IPv6 minimum 1280; outer packets will be fragmented`). A tunnel with only IPv4
+inside goes below 1280 as before; an explicit `mtu` below 1280 is never raised.
 
 If a QUIC node's limit is below 1200 (a tunnel with `mtu` < 1248 under an IPv6 server), 1200 is set
 with a warning — QUIC cannot go below its minimum. PMTUD is switched off together with the derived
