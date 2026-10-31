@@ -2,6 +2,7 @@ package lxmtu
 
 import (
 	stdjson "encoding/json"
+	"net/netip"
 	"strconv"
 
 	C "github.com/sagernet/sing-box/constant"
@@ -31,7 +32,8 @@ func alignMapTunnel(policy Policy, tag, typeName string, m map[string]any, capac
 	explicit := NumberFromMap(m["mtu"]) > 0
 	decision := Decision{Tag: tag, Field: "mtu", Configured: configured, Effective: configured, Explicit: explicit}
 	server := MapServer(typeName, m)
-	overhead, known := TunnelOverhead(typeName, server)
+	padding := mapPadding(typeName, m)
+	overhead, known := TunnelOverhead(typeName, server, padding)
 	if !known {
 		decision.Reason = "kept (overhead of " + typeName + " unknown)"
 		if capacity != Unlimited {
@@ -54,12 +56,64 @@ func alignMapTunnel(policy Policy, tag, typeName string, m map[string]any, capac
 		decision.Reason = "kept (" + capacityReason + ")"
 		return &decision
 	}
-	decision = policy.Apply(tag, "mtu", configured, explicit, uint32(limit),
-		capacityReason+" − "+strconv.Itoa(overhead)+" "+Family(server))
+	reason := capacityReason + " " + OverheadText(overhead, server, padding)
+	size, floored := FloorIPv6(limit, mapCarriesIPv6(typeName, m))
+	if floored {
+		reason += "; floor " + strconv.Itoa(IPv6MinimumMTU)
+	}
+	decision = policy.Apply(tag, "mtu", configured, explicit, uint32(size), reason)
 	if decision.Changed {
 		m["mtu"] = decision.Effective
 	}
+	if floored && decision.Effective > uint32(limit) && policy.Mode != ModeOff {
+		decision.Warning = joinWarning(decision.Warning, FloorWarning(tag, decision.Effective, limit, reason))
+	}
 	return &decision
+}
+
+// mapPadding is the AmneziaWG s4 of a WireGuard map (SPEC 144 §2.3).
+func mapPadding(typeName string, m map[string]any) uint32 {
+	if typeName != C.TypeWireGuard {
+		return 0
+	}
+	return uint32(NumberFromMap(m["s4"]))
+}
+
+// mapCarriesIPv6 is carriesIPv6 for the map form: an IPv6 prefix in a
+// WireGuard `address` (a string or a list of strings); masque always.
+func mapCarriesIPv6(typeName string, m map[string]any) bool {
+	switch typeName {
+	case C.TypeMASQUE:
+		return true
+	case C.TypeWireGuard:
+		switch address := m["address"].(type) {
+		case string:
+			return prefixIs6(address)
+		case []any:
+			for _, item := range address {
+				if text, ok := item.(string); ok && prefixIs6(text) {
+					return true
+				}
+			}
+		case []string:
+			for _, text := range address {
+				if prefixIs6(text) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func prefixIs6(text string) bool {
+	if prefix, err := netip.ParsePrefix(text); err == nil {
+		return prefix.Addr().Is6()
+	}
+	if addr, err := netip.ParseAddr(text); err == nil {
+		return addr.Is6()
+	}
+	return false
 }
 
 func alignMapQUIC(policy Policy, tag string, m map[string]any, capacity int, capacityReason string) *Decision {

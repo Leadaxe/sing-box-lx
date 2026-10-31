@@ -2,11 +2,13 @@ package lxmtu
 
 import (
 	stdjson "encoding/json"
+	"net/netip"
 	"strings"
 	"testing"
 
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common/json/badoption"
 )
 
 // lx: SPEC 120 §6.1 — formula table, graph walk, modes.
@@ -30,9 +32,30 @@ func TestTable(t *testing.T) {
 		{C.TypeOpenConnect, "1.2.3.4", 0, false},
 	}
 	for _, tc := range cases {
-		overhead, known := TunnelOverhead(tc.typeName, tc.server)
+		overhead, known := TunnelOverhead(tc.typeName, tc.server, 0)
 		if overhead != tc.overhead || known != tc.known {
 			t.Fatalf("%s/%s: overhead %d known %v, want %d %v", tc.typeName, tc.server, overhead, known, tc.overhead, tc.known)
+		}
+	}
+	// lx: SPEC 144 §2.3 — AWG s4 is paid on top of the WG header.
+	if overhead, _ := TunnelOverhead(C.TypeWireGuard, "1.2.3.4", 20); overhead != 80 {
+		t.Fatalf("wg + s4 20: %d", overhead)
+	}
+	if overhead, _ := TunnelOverhead(C.TypeMASQUE, "1.2.3.4", 20); overhead != 79 {
+		t.Fatalf("masque ignores padding: %d", overhead)
+	}
+	if OverheadText(80, "1.2.3.4", 20) != "− 80 ipv4 (s4 20)" || OverheadText(60, "1.2.3.4", 0) != "− 60 ipv4" {
+		t.Fatal("overhead text")
+	}
+	// lx: SPEC 144 §2.2 — the IPv6 floor.
+	for _, tc := range []struct {
+		limit   int
+		ipv6    bool
+		size    int
+		floored bool
+	}{{1220, true, 1280, true}, {1220, false, 1220, false}, {1280, true, 1280, false}, {1300, true, 1300, false}} {
+		if size, floored := FloorIPv6(tc.limit, tc.ipv6); size != tc.size || floored != tc.floored {
+			t.Fatalf("floor %d/%v: %d %v", tc.limit, tc.ipv6, size, floored)
 		}
 	}
 	if IPUDP("1.2.3.4") != 28 || IPUDP("2001:db8::1") != 48 || IPUDP("example.com") != 48 {
@@ -290,15 +313,25 @@ func TestResolverTunnelOverTunnel(t *testing.T) {
 		}
 	})
 	t.Run("capacity of a tunnel is its effective mtu", func(t *testing.T) {
-		// hy2 → masque (1280 explicit, fits) → wg 1300 v4 peer: masque limit 1300 − 79 = 1221 → hy2 1221 − 48 = 1173 → QUIC minimum.
+		// hy2 → masque (1280 explicit) → wg 1340 v4 peer: masque limit 1340 − 79 = 1261 →
+		// floor 1280 (SPEC 144 §2.2), kept with a warning → hy2 1280 − 48 = 1232.
 		node := hy2("2606:4700:104::2", "warp", 0)
 		warp := masque("162.159.192.1", "wg-in", 1280)
-		decisions := (&graph{}).ep("wg-in", C.TypeWireGuard, wg("1.2.3.4", "", 1300)).out("warp", C.TypeMASQUE, warp).out("hy2", C.TypeHysteria2, node).align(t, Policy{})
-		if warp.MTU != 1221 || node.InitialPacketSize != 1200 {
+		decisions := (&graph{}).ep("wg-in", C.TypeWireGuard, wg("1.2.3.4", "", 1340)).out("warp", C.TypeMASQUE, warp).out("hy2", C.TypeHysteria2, node).align(t, Policy{})
+		if warp.MTU != 1280 || node.InitialPacketSize != 1232 {
 			t.Fatalf("masque %d hy2 %d", warp.MTU, node.InitialPacketSize)
 		}
-		d := findDecision(decisions, "hy2", "initial_packet_size")
-		if d == nil || !strings.Contains(d.Warning, "QUIC minimum") {
+		if d := findDecision(decisions, "warp", "mtu"); d == nil || !strings.Contains(d.Warning, "leaves 1261 bytes") {
+			t.Fatalf("floor must warn: %+v", d)
+		}
+		// a wg exit (IPv4 inside) over wg 1300: 1300 − 60 = 1240, no floor → hy2 1240 − 48 = 1192 → QUIC minimum.
+		node = hy2("2606:4700:104::2", "wg-mid", 0)
+		mid := wg("1.2.3.4", "wg-in", 0)
+		decisions = (&graph{}).ep("wg-in", C.TypeWireGuard, wg("1.2.3.4", "", 1300)).ep("wg-mid", C.TypeWireGuard, mid).out("hy2", C.TypeHysteria2, node).align(t, Policy{})
+		if mid.MTU != 1240 || node.InitialPacketSize != 1200 {
+			t.Fatalf("wg-mid %d hy2 %d", mid.MTU, node.InitialPacketSize)
+		}
+		if d := findDecision(decisions, "hy2", "initial_packet_size"); d == nil || !strings.Contains(d.Warning, "QUIC minimum") {
 			t.Fatalf("QUIC minimum must warn: %+v", d)
 		}
 	})
@@ -356,30 +389,163 @@ func TestResolverGroups(t *testing.T) {
 	})
 }
 
-func TestResolverTransitiveDetour(t *testing.T) {
+// lx: SPEC 144 §2.1 — a proxy is a boundary: its own detour never limits
+// the node above it. Only tunnels and groups carry a capacity upwards.
+func TestResolverProxyBoundary(t *testing.T) {
 	t.Parallel()
-	node := hy2("2606:4700:104::2", "vless", 0)
-	vless := &option.VLESSOutboundOptions{}
-	vless.Detour = "warp"
-	decisions := (&graph{}).
-		out("hy2", C.TypeHysteria2, node).
-		out("vless", C.TypeVLESS, vless).
-		out("warp", C.TypeMASQUE, masque("162.159.192.1", "", 0)).align(t, Policy{})
-	if node.InitialPacketSize != 1232 {
-		t.Fatalf("%d", node.InitialPacketSize)
+	t.Run("hy2 over vless over masque is not aligned", func(t *testing.T) {
+		node := hy2("2606:4700:104::2", "vless", 0)
+		vless := &option.VLESSOutboundOptions{}
+		vless.Detour = "warp"
+		decisions := (&graph{}).
+			out("hy2", C.TypeHysteria2, node).
+			out("vless", C.TypeVLESS, vless).
+			out("warp", C.TypeMASQUE, masque("162.159.192.1", "", 0)).align(t, Policy{})
+		if node.InitialPacketSize != 0 || node.DisablePathMTUDiscovery || len(decisions) != 0 {
+			t.Fatalf("%+v %v", node.QUICOptions, decisions)
+		}
+	})
+	t.Run("datagram proxies are boundaries too", func(t *testing.T) {
+		// shadowsocks / socks with a detour: the documented loss of SPEC 144 §5.
+		ss := &option.ShadowsocksOutboundOptions{}
+		ss.Detour = "warp"
+		socks := &option.SOCKSOutboundOptions{}
+		socks.Detour = "warp"
+		overSS := wg("1.2.3.4", "ss", 0)
+		overSocks := wg("1.2.3.4", "socks", 0)
+		decisions := (&graph{}).
+			out("warp", C.TypeMASQUE, masque("162.159.192.1", "", 0)).
+			out("ss", C.TypeShadowsocks, ss).
+			out("socks", C.TypeSOCKS, socks).
+			ep("wg-ss", C.TypeWireGuard, overSS).
+			ep("wg-socks", C.TypeWireGuard, overSocks).align(t, Policy{})
+		if overSS.MTU != 0 || overSocks.MTU != 0 || len(decisions) != 0 {
+			t.Fatalf("%d %d %v", overSS.MTU, overSocks.MTU, decisions)
+		}
+	})
+	t.Run("field case 2026-10-31: wg over a selector with a vless member on a wg", func(t *testing.T) {
+		// SPEC 144 §1.1: "Warp chain" (WG 1280, v4+v6 inside) → "Warp relay"
+		// (selector: vless via vpn-2, direct) ; vpn-2 → selector [home WG 1280].
+		// The vless member must not carry home's 1280 upwards: no clamp, no decision.
+		chain := wg("162.159.192.181", "relay", 1280)
+		chain.Address = prefixes("172.16.0.2/32", "2606:4700:110:8a36::1/128")
+		home := wg("203.0.113.1", "", 1280)
+		vless := &option.VLESSOutboundOptions{}
+		vless.Detour = "vpn-2"
+		decisions := (&graph{}).
+			ep("chain", C.TypeWireGuard, chain).
+			out("relay", C.TypeSelector, &option.SelectorOutboundOptions{Outbounds: []string{"vless", "direct"}}).
+			out("vless", C.TypeVLESS, vless).
+			out("direct", C.TypeDirect, &option.DirectOutboundOptions{}).
+			out("vpn-2", C.TypeSelector, &option.SelectorOutboundOptions{Outbounds: []string{"home"}}).
+			ep("home", C.TypeWireGuard, home).align(t, Policy{})
+		if chain.MTU != 1280 || len(decisions) != 0 {
+			t.Fatalf("mtu %d decisions %v", chain.MTU, decisions)
+		}
+	})
+	t.Run("group of a stream proxy and a QUIC proxy over wg 1280 is unlimited", func(t *testing.T) {
+		vless := &option.VLESSOutboundOptions{}
+		vless.Detour = "wg-in"
+		h := hy2("1.2.3.4", "wg-in", 0)
+		exit := wg("1.2.3.4", "sel", 0)
+		decisions := (&graph{}).
+			ep("wg-in", C.TypeWireGuard, wg("1.2.3.4", "", 1280)).
+			out("vless", C.TypeVLESS, vless).
+			out("hy2", C.TypeHysteria2, h).
+			out("sel", C.TypeSelector, &option.SelectorOutboundOptions{Outbounds: []string{"vless", "hy2"}}).
+			ep("wg-exit", C.TypeWireGuard, exit).align(t, Policy{})
+		if exit.MTU != 0 || findDecision(decisions, "wg-exit", "mtu") != nil {
+			t.Fatalf("mtu %d %v", exit.MTU, decisions)
+		}
+		// hy2 itself is still aligned towards the tunnel right under it
+		if h.InitialPacketSize != 1252 {
+			t.Fatalf("hy2 %d", h.InitialPacketSize)
+		}
+	})
+	t.Run("group of a stream proxy and a wg 1340 is 1340", func(t *testing.T) {
+		exit := wg("1.2.3.4", "sel", 0)
+		decisions := (&graph{}).
+			ep("wg-in", C.TypeWireGuard, wg("1.2.3.4", "", 1340)).
+			out("vless", C.TypeVLESS, &option.VLESSOutboundOptions{}).
+			out("sel", C.TypeSelector, &option.SelectorOutboundOptions{Outbounds: []string{"vless", "wg-in"}}).
+			ep("wg-exit", C.TypeWireGuard, exit).align(t, Policy{})
+		d := findDecision(decisions, "wg-exit", "mtu")
+		if exit.MTU != 1280 || d == nil || !strings.Contains(d.Reason, "wg-in[wireguard] mtu 1340 via sel") {
+			t.Fatalf("mtu %d %+v", exit.MTU, d)
+		}
+	})
+}
+
+// lx: SPEC 144 §2.2 — a tunnel that carries IPv6 is never aligned below 1280.
+func TestResolverFloor(t *testing.T) {
+	t.Parallel()
+	t.Run("wg with an IPv6 address over wg 1280 floors to 1280 with a warning", func(t *testing.T) {
+		exit := wg("1.2.3.4", "wg-in", 0)
+		exit.Address = prefixes("10.0.0.2/32", "fd00::2/128")
+		decisions := (&graph{}).ep("wg-in", C.TypeWireGuard, wg("1.2.3.4", "", 1280)).ep("wg-exit", C.TypeWireGuard, exit).align(t, Policy{})
+		d := findDecision(decisions, "wg-exit", "mtu")
+		if exit.MTU != 1280 || d == nil || !d.Changed || !strings.Contains(d.Reason, "floor 1280") {
+			t.Fatalf("mtu %d %+v", exit.MTU, d)
+		}
+		if !strings.Contains(d.Warning, "leaves 1220 bytes") || !strings.Contains(d.Warning, "fragmented") {
+			t.Fatalf("warning %q", d.Warning)
+		}
+	})
+	t.Run("wg with only IPv4 inside goes below 1280 without a warning", func(t *testing.T) {
+		exit := wg("1.2.3.4", "wg-in", 0)
+		exit.Address = prefixes("10.0.0.2/32")
+		decisions := (&graph{}).ep("wg-in", C.TypeWireGuard, wg("1.2.3.4", "", 1280)).ep("wg-exit", C.TypeWireGuard, exit).align(t, Policy{})
+		d := findDecision(decisions, "wg-exit", "mtu")
+		if exit.MTU != 1220 || d == nil || d.Warning != "" || strings.Contains(d.Reason, "floor") {
+			t.Fatalf("mtu %d %+v", exit.MTU, d)
+		}
+	})
+	t.Run("explicit mtu below the floor is kept and fits", func(t *testing.T) {
+		exit := wg("1.2.3.4", "wg-in", 1200)
+		exit.Address = prefixes("fd00::2/128")
+		decisions := (&graph{}).ep("wg-in", C.TypeWireGuard, wg("1.2.3.4", "", 1280)).ep("wg-exit", C.TypeWireGuard, exit).align(t, Policy{})
+		d := findDecision(decisions, "wg-exit", "mtu")
+		if exit.MTU != 1200 || d == nil || d.Changed || d.Warning != "" {
+			t.Fatalf("mtu %d %+v", exit.MTU, d)
+		}
+	})
+	t.Run("masque default 1280 over wg 1300 keeps 1280 and warns", func(t *testing.T) {
+		warp := masque("162.159.192.1", "wg-in", 0)
+		decisions := (&graph{}).ep("wg-in", C.TypeWireGuard, wg("1.2.3.4", "", 1300)).out("warp", C.TypeMASQUE, warp).align(t, Policy{})
+		d := findDecision(decisions, "warp", "mtu")
+		if warp.MTU != 0 || d == nil || d.Changed || d.Effective != 1280 || !strings.Contains(d.Warning, "leaves 1221 bytes") {
+			t.Fatalf("mtu %d %+v", warp.MTU, d)
+		}
+	})
+	t.Run("fill keeps the explicit value and reports both", func(t *testing.T) {
+		exit := wg("1.2.3.4", "wg-in", 1408)
+		exit.Address = prefixes("fd00::2/128")
+		decisions := (&graph{}).ep("wg-in", C.TypeWireGuard, wg("1.2.3.4", "", 1280)).ep("wg-exit", C.TypeWireGuard, exit).align(t, Policy{Mode: ModeFill})
+		d := findDecision(decisions, "wg-exit", "mtu")
+		if exit.MTU != 1408 || d == nil || d.Changed || !strings.Contains(d.Warning, "does not fit") || !strings.Contains(d.Warning, "fragmented") {
+			t.Fatalf("mtu %d %+v", exit.MTU, d)
+		}
+	})
+}
+
+// lx: SPEC 144 §2.3 — AWG s4 padding counts in the overhead.
+func TestResolverAWGPadding(t *testing.T) {
+	t.Parallel()
+	exit := wg("1.2.3.4", "wg-in", 0)
+	exit.S4 = 20
+	decisions := (&graph{}).ep("wg-in", C.TypeWireGuard, wg("1.2.3.4", "", 0)).ep("wg-exit", C.TypeWireGuard, exit).align(t, Policy{})
+	d := findDecision(decisions, "wg-exit", "mtu")
+	if exit.MTU != 1328 || d == nil || !strings.Contains(d.Reason, "− 80 ipv4 (s4 20)") {
+		t.Fatalf("mtu %d %+v", exit.MTU, d)
 	}
-	d := findDecision(decisions, "hy2", "initial_packet_size")
-	if d == nil || !strings.Contains(d.Reason, "warp[masque] mtu 1280 via vless") {
-		t.Fatalf("%+v", d)
+}
+
+func prefixes(texts ...string) badoption.Listable[netip.Prefix] {
+	var list badoption.Listable[netip.Prefix]
+	for _, text := range texts {
+		list = append(list, netip.MustParsePrefix(text))
 	}
-	// a stream proxy without detour, or with detour direct, is unlimited
-	plain := hy2("1.2.3.4", "vless2", 0)
-	direct := &option.VLESSOutboundOptions{}
-	direct.Detour = "direct"
-	(&graph{}).out("hy2", C.TypeHysteria2, plain).out("vless2", C.TypeVLESS, direct).out("direct", C.TypeDirect, &option.DirectOutboundOptions{}).align(t, Policy{})
-	if plain.InitialPacketSize != 0 {
-		t.Fatal("no tunnel below, nothing to align")
-	}
+	return list
 }
 
 func TestResolverCycle(t *testing.T) {
@@ -495,18 +661,15 @@ func TestResolverExplicitModes(t *testing.T) {
 
 func TestResolverWarnings(t *testing.T) {
 	t.Parallel()
-	t.Run("tuic native below is unlimited with a warning", func(t *testing.T) {
+	t.Run("tuic native below is a boundary, no warning", func(t *testing.T) {
+		// SPEC 144 §2.1: tuic fragments oversize UDP messages itself.
 		tuic := &option.TUICOutboundOptions{}
 		tuic.Server = "1.2.3.4"
 		tuic.Detour = "warp"
 		node := hy2("1.2.3.4", "tuic", 0)
 		decisions := (&graph{}).out("warp", C.TypeMASQUE, masque("162.159.192.1", "", 0)).out("tuic", C.TypeTUIC, tuic).out("hy2", C.TypeHysteria2, node).align(t, Policy{})
-		if node.InitialPacketSize != 0 {
-			t.Fatalf("%d", node.InitialPacketSize)
-		}
-		d := findDecision(decisions, "hy2", "initial_packet_size")
-		if d == nil || d.Changed || !strings.Contains(d.Warning, "native") {
-			t.Fatalf("%+v", d)
+		if node.InitialPacketSize != 0 || findDecision(decisions, "hy2", "initial_packet_size") != nil {
+			t.Fatalf("%d %v", node.InitialPacketSize, decisions)
 		}
 		// tuic itself is still aligned towards its own detour
 		if tuic.InitialPacketSize != 1252 {
@@ -603,8 +766,36 @@ func TestAlignMap(t *testing.T) {
 	})
 	t.Run("masque v6 server", func(t *testing.T) {
 		m := map[string]any{"server": "2606:4700:104::2"}
-		d := AlignMap(Policy{}, "warp", C.TypeMASQUE, m, 1300, "r")
-		if d.Effective != 1201 || NumberFromMap(m["mtu"]) != 1201 {
+		d := AlignMap(Policy{}, "warp", C.TypeMASQUE, m, 1400, "r")
+		if d.Changed || d.Effective != 1280 || m["mtu"] != nil || d.Warning != "" {
+			t.Fatalf("default 1280 fits under 1400 − 99: %+v", d)
+		}
+		explicit := map[string]any{"server": "2606:4700:104::2", "mtu": 1340}
+		d = AlignMap(Policy{}, "warp", C.TypeMASQUE, explicit, 1400, "r")
+		if !d.Changed || d.Effective != 1301 || NumberFromMap(explicit["mtu"]) != 1301 {
+			t.Fatalf("%+v", d)
+		}
+		// 1300 − 99 = 1201 is below the IPv6 floor: the default 1280 stays, with a warning
+		floored := map[string]any{"server": "2606:4700:104::2"}
+		d = AlignMap(Policy{}, "warp", C.TypeMASQUE, floored, 1300, "r")
+		if d.Changed || d.Effective != 1280 || floored["mtu"] != nil || !strings.Contains(d.Warning, "leaves 1201 bytes") {
+			t.Fatalf("%+v %v", d, floored["mtu"])
+		}
+	})
+	t.Run("wg with s4 and an IPv6 address", func(t *testing.T) {
+		m := map[string]any{"s4": stdjson.Number("20"), "address": []any{"10.0.0.2/32", "fd00::2/128"}, "peers": []any{map[string]any{"address": "5.6.7.8"}}}
+		d := AlignMap(Policy{}, "wg-exit", C.TypeWireGuard, m, 1408, "r")
+		if d.Effective != 1328 || NumberFromMap(m["mtu"]) != 1328 || !strings.Contains(d.Reason, "(s4 20)") {
+			t.Fatalf("%+v", d)
+		}
+		low := map[string]any{"address": []any{"fd00::2/128"}, "peers": []any{map[string]any{"address": "5.6.7.8"}}}
+		d = AlignMap(Policy{}, "wg-exit", C.TypeWireGuard, low, 1280, "r")
+		if d.Effective != 1280 || !d.Changed || NumberFromMap(low["mtu"]) != 1280 || !strings.Contains(d.Warning, "fragmented") {
+			t.Fatalf("%+v", d)
+		}
+		v4 := map[string]any{"address": "10.0.0.2/32", "peers": []any{map[string]any{"address": "5.6.7.8"}}}
+		d = AlignMap(Policy{}, "wg-exit", C.TypeWireGuard, v4, 1280, "r")
+		if d.Effective != 1220 || d.Warning != "" {
 			t.Fatalf("%+v", d)
 		}
 	})

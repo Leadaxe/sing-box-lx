@@ -8,6 +8,7 @@ package lxmtu
 import (
 	"math"
 	"net/netip"
+	"strconv"
 
 	C "github.com/sagernet/sing-box/constant"
 )
@@ -34,6 +35,11 @@ const (
 	DefaultWGMTU        = 1408
 	DefaultMASQUEMTU    = 1280
 	DefaultTailscaleMTU = 1280
+
+	// IPv6MinimumMTU is the floor of an IP tunnel that carries IPv6 (lx: SPEC
+	// 144 §2.2): gvisor refuses to bring up an IPv6 endpoint on a link with
+	// a smaller MTU, silently, so a clamp below it is worse than fragments.
+	IPv6MinimumMTU = 1280
 
 	// Unlimited is the capacity of a node without an IP layer of its own.
 	Unlimited = math.MaxInt
@@ -97,16 +103,45 @@ func TunnelDefaultMTU(typeName string) uint32 {
 }
 
 // TunnelOverhead is what a tunnel of typeName adds to each inner IP packet
-// on the way to server: WireGuard 60 / 80, MASQUE 79 / 99 (v4 / v6). ok is
-// false for tunnels whose framing is not modelled (openvpn, openconnect).
-func TunnelOverhead(typeName, server string) (overhead int, ok bool) {
+// on the way to server: WireGuard 60 / 80, MASQUE 79 / 99 (v4 / v6). padding
+// is the AmneziaWG `s4` of a WireGuard node: AWG 2.0 prepends it to every
+// transport packet, so it is paid on top (SPEC 144 §2.3). ok is false for
+// tunnels whose framing is not modelled (openvpn, openconnect).
+func TunnelOverhead(typeName, server string, padding uint32) (overhead int, ok bool) {
 	switch typeName {
 	case C.TypeWireGuard:
-		return WGOverhead + IPUDP(server), true
+		return WGOverhead + int(padding) + IPUDP(server), true
 	case C.TypeMASQUE:
 		return MASQUEDatagramOverhead + IPUDP(server), true
 	}
 	return 0, false
+}
+
+// OverheadText renders the overhead part of a reason: "− 60 ipv4", or
+// "− 80 ipv4 (s4 20)" when AWG padding is part of it.
+func OverheadText(overhead int, server string, padding uint32) string {
+	text := "− " + strconv.Itoa(overhead) + " " + Family(server)
+	if padding > 0 {
+		text += " (s4 " + strconv.FormatUint(uint64(padding), 10) + ")"
+	}
+	return text
+}
+
+// FloorIPv6 applies the IPv6 floor to a tunnel limit (SPEC 144 §2.2): a
+// tunnel that carries IPv6 is never aligned below IPv6MinimumMTU. floored
+// reports that the limit was raised to the floor, i.e. packets of the
+// returned size will be fragmented by the path below.
+func FloorIPv6(limit int, carriesIPv6 bool) (size int, floored bool) {
+	if carriesIPv6 && limit < IPv6MinimumMTU {
+		return IPv6MinimumMTU, true
+	}
+	return limit, false
+}
+
+// FloorWarning is the Warn line of a floored tunnel whose effective mtu is
+// above what the path carries.
+func FloorWarning(tag string, mtu uint32, limit int, reason string) string {
+	return tag + " mtu " + strconv.Itoa(int(mtu)) + " is above the path: " + reason + " leaves " + strconv.Itoa(limit) + " bytes, below the IPv6 minimum " + strconv.Itoa(IPv6MinimumMTU) + "; outer packets will be fragmented"
 }
 
 // QUICClamp bounds a derived initial_packet_size to [QUICMinPacketSize,

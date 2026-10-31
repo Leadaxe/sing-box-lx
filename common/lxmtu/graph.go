@@ -151,12 +151,13 @@ func (r *Resolver) capacityOf(tag string) capacity {
 		return r.groupCapacity(n, options.Outbounds)
 	case *option.ChainOutboundOptions:
 		return capacity{value: Unlimited, warning: "chain " + tag + " as a detour target aligns its own links; nodes above it are not aligned"}
-	case *option.TUICOutboundOptions:
-		if options.UDPRelayMode != "quic" {
-			return capacity{value: Unlimited, warning: "tuic " + tag + " in native udp_relay_mode below a tunnel may drop oversize datagrams; use quic"}
-		}
 	}
-	return r.detourCapacity(n)
+	// lx: SPEC 144 §2.1 — every other node is a boundary. A proxy delivers
+	// the packet of the node above whole, as a byte stream (TCP re-segments
+	// under it) or by its own fragmentation (hysteria2/tuic UDP), so whatever
+	// lies under its detour does not limit the node above; direct has no IP
+	// layer at all. Only tunnels and groups carry a capacity upwards.
+	return capacity{value: Unlimited}
 }
 
 // tunnelCapacity is the tunnel's effective mtu, i.e. after its own alignment
@@ -196,20 +197,6 @@ func (r *Resolver) groupCapacity(n *node, members []string) capacity {
 	return result
 }
 
-// detourCapacity: a node without an IP layer of its own passes its detour's
-// capacity through unchanged.
-func (r *Resolver) detourCapacity(n *node) capacity {
-	detour := detourOf(n.options)
-	if detour == "" {
-		return capacity{value: Unlimited}
-	}
-	value, reason, warning := r.Capacity(detour)
-	if value == Unlimited {
-		return capacity{value: Unlimited, warning: warning}
-	}
-	return capacity{value: value, reason: reason + " via " + n.tag}
-}
-
 func detourOf(options any) string {
 	wrapper, ok := options.(option.DialerOptionsWrapper)
 	if !ok {
@@ -241,6 +228,34 @@ func (r *Resolver) configuredMTU(tag string) uint32 {
 	}
 	mtu, _, _ := tunnelFields(n)
 	return mtu
+}
+
+// tunnelPadding is the AmneziaWG s4 of a WireGuard node (SPEC 144 §2.3), 0
+// for anything else.
+func tunnelPadding(n *node) uint32 {
+	if options, ok := n.options.(*option.WireGuardEndpointOptions); ok {
+		return options.S4
+	}
+	return 0
+}
+
+// carriesIPv6 reports whether the tunnel has an IPv6 address inside, i.e.
+// whether the IPv6 floor applies (SPEC 144 §2.2): a WireGuard endpoint with
+// an IPv6 prefix in `address`; masque always, CONNECT-IP assigns both
+// families.
+func carriesIPv6(n *node) bool {
+	switch options := n.options.(type) {
+	case *option.WireGuardEndpointOptions:
+		for _, prefix := range options.Address {
+			if prefix.Addr().Is6() {
+				return true
+			}
+		}
+		return false
+	case *option.MASQUEOutboundOptions:
+		return true
+	}
+	return false
 }
 
 // tunnelFields reads the mtu (default applied), the server used for the
@@ -323,7 +338,8 @@ func (r *Resolver) alignOf(tag string) uint32 {
 		}
 		return mtu
 	}
-	overhead, known := TunnelOverhead(n.typeName, server)
+	padding := tunnelPadding(n)
+	overhead, known := TunnelOverhead(n.typeName, server, padding)
 	if !known {
 		r.record(tag, Decision{
 			Tag: tag, Field: "mtu", Configured: mtu, Effective: mtu, Explicit: explicit,
@@ -333,17 +349,24 @@ func (r *Resolver) alignOf(tag string) uint32 {
 		return mtu
 	}
 	limit := value - overhead
+	reason = "detour " + reason + " " + OverheadText(overhead, server, padding)
 	if limit <= 0 {
 		r.record(tag, Decision{
 			Tag: tag, Field: "mtu", Configured: mtu, Effective: mtu, Explicit: explicit,
-			Warning: tag + " mtu not aligned: capacity below too small (detour " + reason + " − " + strconv.Itoa(overhead) + " " + Family(server) + ")",
+			Warning: tag + " mtu not aligned: capacity below too small (" + reason + ")",
 		})
 		return mtu
 	}
-	decision := r.policy.Apply(tag, "mtu", mtu, explicit, uint32(limit),
-		"detour "+reason+" − "+strconv.Itoa(overhead)+" "+Family(server))
+	size, floored := FloorIPv6(limit, carriesIPv6(n))
+	if floored {
+		reason += "; floor " + strconv.Itoa(IPv6MinimumMTU)
+	}
+	decision := r.policy.Apply(tag, "mtu", mtu, explicit, uint32(size), reason)
 	if decision.Changed {
 		setTunnelMTU(n, decision.Effective)
+	}
+	if floored && decision.Effective > uint32(limit) && r.policy.Mode != ModeOff {
+		decision.Warning = joinWarning(decision.Warning, FloorWarning(tag, decision.Effective, limit, reason))
 	}
 	r.record(tag, decision)
 	return decision.Effective

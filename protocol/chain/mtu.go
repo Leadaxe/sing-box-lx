@@ -5,7 +5,6 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxmtu"
-	C "github.com/sagernet/sing-box/constant"
 )
 
 // MTU звеньев-туннелей и размер пакета QUIC-звеньев. Контракт: mtu в конфиге
@@ -70,17 +69,11 @@ func (c *Chain) capacityBelow(position int) (int, string) {
 
 // leafCapacity — ёмкость одного узла на позиции position: IP-туннель → его
 // эффективный MTU (позиция 0: как в конфиге; ≥ 1: как у его звена);
-// прочее → ∞ (датаграммный tuic в native-режиме — ∞ с предупреждением).
+// прочее → ∞ — прокси доставляет пакет звена целиком, потоком или своей
+// нарезкой (lx: SPEC 144 §2.1).
 func (c *Chain) leafCapacity(position int, leaf adapter.Outbound) (int, string) {
 	typeName := leaf.Type()
 	if !lxmtu.IsTunnelType(typeName) {
-		if typeName == C.TypeTUIC {
-			if _, m, _, err := c.leafOptionsMap(position, leaf); err == nil {
-				if mode, _ := m["udp_relay_mode"].(string); mode != "quic" {
-					return lxmtu.Unlimited, "warning: tuic " + leaf.Tag() + " in native udp_relay_mode below a tunnel may drop oversize datagrams; use quic"
-				}
-			}
-		}
 		return lxmtu.Unlimited, ""
 	}
 	_, m, _, err := c.leafOptionsMap(position, leaf)

@@ -256,28 +256,30 @@ func TestMTUAlignGraph(t *testing.T) {
 			t.Fatalf("%v", logger.info)
 		}
 	})
-	t.Run("nested group and a narrower wg", func(t *testing.T) {
-		// wg 1300 becomes the minimum through vless-via-wg: 1300 − 48 = 1252
+	t.Run("nested group: a narrower wg behind a vless member does not count", func(t *testing.T) {
+		// lx: SPEC 144 §2.1 — vless-via-wg is a boundary, wg 1300 under it stays
+		// out of the minimum: warp 1340 wins again → 1292.
 		options, logger, err := applyMTU(t, groupGraph("auto", `, "mtu": 1300`))
 		if err != nil {
 			t.Fatal(err)
 		}
 		hy2 := outboundOptions[option.Hysteria2OutboundOptions](t, options, "hy2")
-		if hy2.InitialPacketSize != 1252 {
+		if hy2.InitialPacketSize != 1292 {
 			t.Fatalf("%+v", hy2.QUICOptions)
 		}
-		if len(logger.info) != 1 || !strings.Contains(logger.info[0], "wg[wireguard] mtu 1300 via vless-via-wg via sel via auto") {
+		if len(logger.info) != 1 || !strings.Contains(logger.info[0], "warp[masque] mtu 1340 via sel via auto") {
 			t.Fatalf("%v", logger.info)
 		}
 	})
-	t.Run("transitive detour", func(t *testing.T) {
-		options, _, err := applyMTU(t, groupGraph("vless-via-wg", ""))
+	t.Run("detour to a stream proxy on a tunnel is not aligned", func(t *testing.T) {
+		// lx: SPEC 144 §2.1 — hy2 packets ride vless as a TCP stream; wg below vless does not limit them.
+		options, logger, err := applyMTU(t, groupGraph("vless-via-wg", ""))
 		if err != nil {
 			t.Fatal(err)
 		}
 		hy2 := outboundOptions[option.Hysteria2OutboundOptions](t, options, "hy2")
-		if hy2.InitialPacketSize != 1360 {
-			t.Fatalf("1408 − 48, got %+v", hy2.QUICOptions)
+		if hy2.InitialPacketSize != 0 || hy2.DisablePathMTUDiscovery || len(logger.info) != 0 || len(logger.warn) != 0 {
+			t.Fatalf("%+v %v %v", hy2.QUICOptions, logger.info, logger.warn)
 		}
 	})
 }
