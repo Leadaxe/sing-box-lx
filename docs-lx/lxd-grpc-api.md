@@ -89,7 +89,9 @@ exist **only when the binary is built with `with_lx_command`**:
 The same block also carries control RPCs outside this document's scope:
 `SetChainPositionEnabled` and `GetChainCloneConfig` (SPEC 075), `SetEndpointEnabled`
 (manual on/off of a WG/AWG endpoint, SPEC 106; see
-[lx-energy.md §12](lx-energy.md#12-manual-onoff-switch-spec-106)).
+[lx-energy.md §12](lx-energy.md#12-manual-onoff-switch-spec-106); also a Tailscale endpoint,
+SPEC 149), `TailscaleLogin` (login of a Tailscale endpoint with a new auth key without a
+box restart, SPEC 149).
 
 Against a binary built without the tag they return `codes.Unimplemented`. The
 generated client stubs still contain the methods — the gate is server-side, so
@@ -284,7 +286,7 @@ full picture.
 | `GetStartedAt → StartedAt` | core start time, for uptime |
 | `GetRules → RuleList` | **lx**: structured rules — resolves `Connection.rule` |
 | `GetGroups → Groups` / `SubscribeGroups` | **lx** (`GetGroups`) / upstream (stream) — group state |
-| `GetOutbounds → OutboundList` | **lx**: outbound tags, to resolve chain entries; WG/AWG state (`endpointState`, SPEC 097) |
+| `GetOutbounds → OutboundList` | **lx**: outbound tags, to resolve chain entries; WG/AWG state (`endpointState`, SPEC 097); Tailscale `up`/`disabled`/`down` (SPEC 149) |
 | `GetWireGuardStatus(tag) → WireGuardEndpointStatus` | **lx**: one WG/AWG endpoint — device state and per-peer last handshake, address, transfer (SPEC 114) |
 | `GetTailscaleStatus(endpointTag) → TailscaleEndpointStatus` | **lx**: one Tailscale endpoint, fresh — per-peer path (direct / peer relay / DERP), handshake, backend health (SPEC 115) |
 | `GetPool(GetPoolRequest) → PoolList` | **lx**: rotation state of a balanced urltest group (SPEC 019) |

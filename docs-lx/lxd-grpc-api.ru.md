@@ -90,7 +90,9 @@ REST-ручки для профилирования **самого процес�
 В том же блоке — управляющие RPC вне предмета этого документа: `SetChainPositionEnabled`
 и `GetChainCloneConfig` (SPEC 075), `SetEndpointEnabled` (ручное включение и выключение
 WG/AWG-endpoint'а, SPEC 106; см.
-[lx-energy.ru.md §12](lx-energy.ru.md#12-ручной-переключатель-spec-106)).
+[lx-energy.ru.md §12](lx-energy.ru.md#12-ручной-переключатель-spec-106); и Tailscale-endpoint'а,
+SPEC 149), `TailscaleLogin` (вход Tailscale-endpoint'а с новым auth key без перезапуска
+box, SPEC 149).
 
 Против сборки без тега они возвращают `codes.Unimplemented`. Сгенерированные
 клиентские заглушки методы всё равно содержат — гейт серверный, поэтому это
@@ -286,7 +288,7 @@ detour пусто. Профайлеру, показывающему «весь �
 | `GetStartedAt → StartedAt` | время старта ядра, для uptime |
 | `GetRules → RuleList` | **lx**: структурные правила — раскрывает `Connection.rule` |
 | `GetGroups → Groups` / `SubscribeGroups` | **lx** (`GetGroups`) / апстрим (стрим) — состояние групп |
-| `GetOutbounds → OutboundList` | **lx**: теги outbound'ов, чтобы раскрывать элементы цепочки; состояние WG/AWG (`endpointState`, SPEC 097) |
+| `GetOutbounds → OutboundList` | **lx**: теги outbound'ов, чтобы раскрывать элементы цепочки; состояние WG/AWG (`endpointState`, SPEC 097); у Tailscale `up`/`disabled`/`down` (SPEC 149) |
 | `GetWireGuardStatus(tag) → WireGuardEndpointStatus` | **lx**: один WG/AWG-endpoint — состояние устройства и по каждому пиру последний хендшейк, адрес, трафик (SPEC 114) |
 | `GetTailscaleStatus(endpointTag) → TailscaleEndpointStatus` | **lx**: один Tailscale-endpoint, свежий снимок — путь к каждому пиру (direct / peer relay / DERP), хендшейк, предупреждения бэкенда (SPEC 115) |
 | `GetPool(GetPoolRequest) → PoolList` | **lx**: состояние ротации балансируемой urltest-группы (SPEC 019) |
