@@ -29,6 +29,12 @@ DNS-запросы — и управлять им. Штатный канал д�
 | `with_lx_command` | Включает расширения протокола. Без тега доступен только базовый набор вызовов |
 | `with_clash_api` | REST-интерфейс. ⚠️ **Выключается только в мобильной библиотеке.** Сборки для десктопа и CLI обязаны его сохранять — ими управляют внешние панели |
 
+### Параметры встраивания (`SetupOptions`)
+
+| Поле | Тип | Дефолт | Смысл |
+|------|-----|--------|-------|
+| `OomMemoryLimitHeap` | bool | `false` | Лимит памяти oom-killer сравнивается с памятью Go-рантайма, а не с RSS процесса; слежение за свободной памятью системы при этом не выключается. Для ядра, встроенного в чужой процесс (LxBox на Android) ([148](../../TASKS/148-OOM_KILLER_RUNTIME_MEMORY/SPEC.md)) |
+
 ### Вызовы
 
 | Вызов | Что возвращает |
@@ -99,6 +105,8 @@ DNS-запросы — и управлять им. Штатный канал д�
 
 - **Ответы на вызовы** и **потоки событий** в приложение.
 - **Состояние соединений** с цепочкой проксирования.
+- **Статус ядра** раз в секунду: RSS процесса и отдельно память Go-рантайма
+  (`MemoryRuntime`) — чтобы приложение в общем процессе отличало своё от чужого.
 
 ## Data flow
 
@@ -197,6 +205,7 @@ DNS-запросы — и управлять им. Штатный канал д�
 | [099 — GETURL_NAIVE_NIL_REMOTEADDR_PANIC](../../TASKS/099-GETURL_NAIVE_NIL_REMOTEADDR_PANIC/SPEC.md) | Пробник ронял процесс на naive-узле: conn cronet-go без адреса, `RemoteAddr().String()` на nil | I |
 | [114 — WG_PEER_STATUS](../../TASKS/114-WG_PEER_STATUS/SPEC.md) | `GetWireGuardStatus(tag)`: состояние устройства и каждого пира WG/AWG; CLI `api peers`; сценарии — [CONSUMERS.md](../../TASKS/114-WG_PEER_STATUS/CONSUMERS.md) | I |
 | [145 — WG_PEER_SESSION_STATUS](../../TASKS/145-WG_PEER_SESSION_STATUS/SPEC.md) | Статус пира WG/AWG по сессиям: после включения, пробуждения или паузы сети хендшейк прошлой сессии не отдаётся; `sessionRxBytes`/`sessionTxBytes` рядом с итогом устройства | I |
+| [148 — OOM_KILLER_RUNTIME_MEMORY](../../TASKS/148-OOM_KILLER_RUNTIME_MEMORY/SPEC.md) | Лимит oom-killer по памяти Go-рантайма (режим `runtime_limit` по флагу `SetupOptions`), память рантайма в `Status` рядом с RSS; закрывает [#62](https://github.com/Leadaxe/sing-box-lx/issues/62) | I |
 | [115 — TAILSCALE_PEER_PATH_STATUS](../../TASKS/115-TAILSCALE_PEER_PATH_STATUS/SPEC.md) | `GetTailscaleStatus(tag)`: путь к каждому пиру Tailscale (direct / peer relay / DERP), хендшейк, `health`; CLI `api tailscale peers`; сценарии — [CONSUMERS.md](../../TASKS/115-TAILSCALE_PEER_PATH_STATUS/CONSUMERS.md) | I |
 | [139 — CONNECTION_TEST](../../TASKS/139-CONNECTION_TEST/SPEC.md) | `StartConnectionTest`: активная проверка соединения через весь конвейер от имени источника, поток стадий с вложенностью, корневая причина; релиз 1 — стадии, корень, глубины; релиз 2 — все выводы §6 с уровнями, `fresh` на вложенных уровнях DNS (кэш и пул), вердикт REALITY, `wake`/`wg_handshake`, `quic`/`auth` MASQUE и TrustTunnel, `reuse=uncontrolled`, состояние fakeip; восстановленный шаг не становится корнем | I |
 
@@ -205,6 +214,9 @@ DNS-запросы — и управлять им. Штатный канал д�
 - **Conn узла может не иметь адреса.** `RemoteAddr()` и `LocalAddr()` у conn'а
   naive-узла (cronet-go) возвращают nil. Потребитель адреса в lx-обработчике
   проверяет nil до `String()`; иначе падает весь процесс (SPEC 099).
+- **Лимит памяти имеет два смысла.** Для процесса под внешним ограничением
+  (iOS NE, cgroup) мера — RSS, как в апстриме; для ядра в чужом процессе —
+  память рантайма по явному флагу. Автоматика по платформе отвергнута (SPEC 148).
 - **Два набора сборки расходятся намеренно.** Мобильная библиотека
   и десктоп имеют разный состав; правка «для единообразия» ломает
   внешние панели — это уже происходило.

@@ -170,13 +170,16 @@ jobs:
       # adapter/endpoint + common/lxclosewatch: the SPEC 030 §8 close watchdog.
       # experimental/cachefile: the SPEC 147 cache.db takeover from a Box still
       # stuck in Close.
+      # service/oomkiller + common/lxmemory: the SPEC 148 runtime_limit mode and
+      # runtime memory figure.
       - name: go test (wireguard endpoint, route, close watchdog, startclose stands)
         run: |
           go test -race -count=1 \
             -ldflags "-checklinkname=0" \
             -tags "${BASE_TAGS},with_awg,with_lx_idle_suspend" \
             ./transport/wireguard/ ./protocol/wireguard/ ./route/ \
-            ./adapter/endpoint/ ./common/lxclosewatch/ ./experimental/cachefile/
+            ./adapter/endpoint/ ./common/lxclosewatch/ ./experimental/cachefile/ \
+            ./service/oomkiller/ ./common/lxmemory/
           go test -count=1 \
             -ldflags "-checklinkname=0" \
             -tags "${BASE_TAGS},with_awg,with_lx_idle_suspend" \

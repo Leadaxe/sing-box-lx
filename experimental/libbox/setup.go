@@ -37,6 +37,7 @@ var (
 	sOOMKillerEnabled        bool
 	sOOMKillerDisabled       bool
 	sOOMMemoryLimit          int64
+	sOOMMemoryLimitHeap      bool // lx: SPEC 148
 	sPowerReportEnabled      bool
 	sPlatformMetadata        []byte
 )
@@ -61,6 +62,7 @@ type SetupOptions struct {
 	OomKillerEnabled        bool
 	OomKillerDisabled       bool
 	OomMemoryLimit          int64
+	OomMemoryLimitHeap      bool // lx: SPEC 148 — the limit applies to the Go runtime memory, not the process RSS
 	PowerReportEnabled      bool
 	PlatformMetadata        string
 }
@@ -91,6 +93,7 @@ func ReloadSetupOptions(options *SetupOptions) {
 	sOOMKillerEnabled = options.OomKillerEnabled
 	sOOMKillerDisabled = options.OomKillerDisabled
 	sOOMMemoryLimit = options.OomMemoryLimit
+	sOOMMemoryLimitHeap = options.OomMemoryLimitHeap // lx: SPEC 148
 	sPowerReportEnabled = options.PowerReportEnabled
 	if json.Valid([]byte(options.PlatformMetadata)) {
 		sPlatformMetadata = []byte(options.PlatformMetadata)

@@ -51,6 +51,8 @@ type timerConfig struct {
 	maxInterval     time.Duration
 	policyMode      policyMode
 	killerDisabled  bool
+	// lx: SPEC 148 — safety_margin set in the config, not the memory-limit default
+	explicitSafetyMargin bool
 }
 
 func buildTimerConfig(options option.OOMKillerServiceOptions, memoryLimit uint64, policyMode policyMode, killerDisabled bool) (timerConfig, error) {
@@ -94,6 +96,8 @@ func buildTimerConfig(options option.OOMKillerServiceOptions, memoryLimit uint64
 		maxInterval:     maxInterval,
 		policyMode:      policyMode,
 		killerDisabled:  killerDisabled,
+		// lx: SPEC 148
+		explicitSafetyMargin: options.SafetyMargin != nil && options.SafetyMargin.Value() > 0,
 	}, nil
 }
 
@@ -128,6 +132,9 @@ func newAdaptiveTimer(logger log.ContextLogger, network adapter.NetworkManager, 
 		recorder:    recorder,
 	}
 	if config.policyMode == policyModeMemoryLimit || config.policyMode == policyModeNetworkExtension {
+		t.limitThresholds = computeLimitThresholds(config.memoryLimit, config.safetyMargin)
+	}
+	if config.policyMode == policyModeRuntimeLimit { // lx: SPEC 148
 		t.limitThresholds = computeLimitThresholds(config.memoryLimit, config.safetyMargin)
 	}
 	return t
@@ -254,6 +261,8 @@ func (t *adaptiveTimer) belowTrigger(sample memorySample) bool {
 		return sample.usage < t.limitThresholds.trigger
 	case policyModeAvailable:
 		return !sample.availableKnown || sample.available > t.availableThresholds(sample).trigger
+	case policyModeRuntimeLimit: // lx: SPEC 148
+		return t.belowTriggerRuntimeLimit(sample)
 	default:
 		return true
 	}
@@ -275,6 +284,8 @@ func (t *adaptiveTimer) nextState(sample memorySample) pressureState {
 			sample.available <= thresholds.trigger,
 			sample.available <= thresholds.armed,
 		)
+	case policyModeRuntimeLimit: // lx: SPEC 148
+		return t.nextStateRuntimeLimit(sample)
 	default:
 		return pressureStateNormal
 	}
@@ -332,6 +343,8 @@ func (t *adaptiveTimer) logDetails(sample memorySample) string {
 		if sample.availableKnown {
 			return ", available: " + byteformats.FormatMemoryBytes(sample.available)
 		}
+	case policyModeRuntimeLimit: // lx: SPEC 148
+		return t.logDetailsRuntimeLimit(sample)
 	}
 	return ""
 }
@@ -353,6 +366,9 @@ func nextPressureState(current pressureState, shouldTrigger, shouldArm bool) pre
 }
 
 func readMemorySample(mode policyMode) memorySample {
+	if mode == policyModeRuntimeLimit { // lx: SPEC 148
+		return readMemorySampleRuntimeLimit()
+	}
 	sample := memorySample{
 		usage: memory.Total(),
 	}

@@ -78,6 +78,7 @@ func NewCommandServer(handler CommandServerHandler, platformInterface PlatformIn
 		// UserID:           sUserID,
 		// GroupID:          sGroupID,
 		// SystemProxyEnabled: false,
+		OOMMemoryLimitHeap: sOOMMemoryLimitHeap, // lx: SPEC 148
 	})
 	oomRecorder := oomkiller.NewRecorder(OOMRecorderOptions(server.StartedService))
 	service.MustRegister[*oomkiller.Recorder](ctx, oomRecorder)

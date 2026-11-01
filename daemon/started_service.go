@@ -12,6 +12,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/lxmemory" // lx: SPEC 148
 	"github.com/sagernet/sing-box/common/networkquality"
 	"github.com/sagernet/sing-box/common/stun"
 	"github.com/sagernet/sing-box/common/trafficcontrol"
@@ -57,6 +58,7 @@ type StartedService struct {
 	// userID           int
 	// groupID          int
 	// systemProxyEnabled      bool
+	oomMemoryLimitHeap      bool // lx: SPEC 148
 	lifecycleAccess         sync.Mutex
 	serviceAccess           sync.RWMutex
 	closed                  bool
@@ -92,6 +94,7 @@ type ServiceOptions struct {
 	// UserID             int
 	// GroupID            int
 	// SystemProxyEnabled bool
+	OOMMemoryLimitHeap bool // lx: SPEC 148
 }
 
 func NewStartedService(options ServiceOptions) *StartedService {
@@ -109,6 +112,7 @@ func NewStartedService(options ServiceOptions) *StartedService {
 		// userID:           options.UserID,
 		// groupID:          options.GroupID,
 		// systemProxyEnabled:      options.SystemProxyEnabled,
+		oomMemoryLimitHeap:      options.OOMMemoryLimitHeap, // lx: SPEC 148
 		serviceStatus:           &ServiceStatus{Status: ServiceStatus_IDLE},
 		serviceStatusSubscriber: observable.NewSubscriber[*ServiceStatus](4),
 		logSubscriber:           observable.NewSubscriber[*log.Entry](128),
@@ -513,6 +517,7 @@ func (s *StartedService) SubscribeStatus(request *SubscribeStatusRequest, server
 func (s *StartedService) readStatus() *Status {
 	var status Status
 	status.Memory = memory.Total()
+	status.MemoryRuntime = lxmemory.Runtime() // lx: SPEC 148
 	status.Goroutines = int32(runtime.NumGoroutine())
 	s.serviceAccess.RLock()
 	nowService := s.instance

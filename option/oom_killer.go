@@ -12,4 +12,5 @@ type OOMKillerServiceOptions struct {
 	MaxInterval         badoption.Duration       `json:"max_interval,omitempty"`
 	KillerDisabled      bool                     `json:"-"`
 	MemoryLimitOverride uint64                   `json:"-"`
+	MemoryLimitHeap     bool                     `json:"-"` // lx: SPEC 148 — compare the limit with the Go runtime memory instead of the process RSS
 }

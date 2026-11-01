@@ -112,6 +112,7 @@ func (s *StartedService) newInstance(ctx context.Context, profileContent string,
 			oomOptions := &option.OOMKillerServiceOptions{
 				KillerDisabled:      s.oomKillerDisabled,
 				MemoryLimitOverride: s.oomMemoryLimit,
+				MemoryLimitHeap:     s.oomMemoryLimitHeap, // lx: SPEC 148
 			}
 			options.Services = append(options.Services, option.Service{
 				Type:    C.TypeOOMKiller,

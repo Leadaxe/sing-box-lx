@@ -36,6 +36,8 @@ func (m policyMode) String() string {
 		return "available"
 	case policyModeNetworkExtension:
 		return "network_extension"
+	case policyModeRuntimeLimit: // lx: SPEC 148
+		return "runtime_limit"
 	default:
 		return "none"
 	}
@@ -45,6 +47,10 @@ func resolvePolicyMode(ctx context.Context, options option.OOMKillerServiceOptio
 	platformInterface := service.FromContext[adapter.PlatformInterface](ctx)
 	if C.IsIos && platformInterface != nil && platformInterface.UnderNetworkExtension() {
 		return DefaultAppleNetworkExtensionMemoryLimit, policyModeNetworkExtension
+	}
+	// lx: SPEC 148
+	if memoryLimit, isRuntimeLimit := resolveRuntimeLimitPolicy(options); isRuntimeLimit {
+		return memoryLimit, policyModeRuntimeLimit
 	}
 	if options.MemoryLimitOverride > 0 {
 		return options.MemoryLimitOverride, policyModeMemoryLimit

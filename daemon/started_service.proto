@@ -131,6 +131,9 @@ message Status {
   int64 downlink = 7;
   int64 uplinkTotal = 8;
   int64 downlinkTotal = 9;
+  // lx: SPEC 148 — memory held by the Go runtime (runtime/metrics total − released),
+  // the quantity debug.SetMemoryLimit governs; `memory` stays the process RSS.
+  uint64 memoryRuntime = 10;
 }
 
 message Groups {
