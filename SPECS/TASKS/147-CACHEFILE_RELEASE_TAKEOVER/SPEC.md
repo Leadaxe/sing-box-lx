@@ -105,7 +105,7 @@
 - `go test -race ./experimental/cachefile/` — зелёный; пакет добавлен в lx-ci (шаг
   «wireguard endpoint, route, close watchdog, startclose stands»), раньше его тесты нигде не бежали.
 - Устройство (LxBox): проба → стоп с закрытием дольше 3 с → сразу старт VPN → без
-  `initialize cache-file: timeout`, выбор в группах сохранён. За владельцем; после lx.27
+  `initialize cache-file: timeout`, выбор в группах сохранён. За владельцем; после lx.28
   страховка §703 в приложении должна перестать срабатывать.
 
 ## 5. Файлы
