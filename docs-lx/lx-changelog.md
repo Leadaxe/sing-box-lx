@@ -28,6 +28,17 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.4-lx.27
+
+Стабильный релиз после `v1.14.4-lx.26`, без rc-линии. База — sing-box `v1.14.4`, `upstream/stable` `c005f3530`, дрейф 0 (сабмодули, `go.mod` и Go 1.26.10 с lx.26 не менялись; dry run релизной сборки не требуется). Одна тема: статус пира WG/AWG по сессиям (SPEC 145, запрос LxBox). Пользовательские ноты — `docs-lx/releases/v1.14.4-lx.27.md`.
+
+- 🐛 **Статус пира WG/AWG после включения или пробуждения показывал хендшейк уничтоженной сессии ([SPEC 145](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/145-WG_PEER_SESSION_STATUS/SPEC.md)).** `device.Down()` (тумблер SPEC 106, сон по простою SPEC 020, AWG-guard, пауза сети) стирает ключевые пары, но не `lastHandshakeNano` и rx/tx; после следующего `Up` пир в `up` показывал хендшейк прошлой сессии, и потребитель по CONSUMERS §2 видел его «на связи» до 180 с, хотя ключей нет. Карточка LxBox: выкл/вкл тумблером — зелёный пир с «1 min ago».
+  - Сессия начинается при сборке устройства и при каждом `Up` после `Down`; `Up` уже поднятого устройства её не начинает. `lastHandshakeUnix` — только текущей сессии, хендшейк старше её начала отдаётся как `0`. Пока устройство лежит (`asleep`, `disabled`), ответ прежний — видна прошлая сессия.
+  - ✨ `PeerStatus.sessionRxBytes`/`sessionTxBytes` (6/7) — байты с начала сессии; `rxBytes`/`txBytes` остаются итогом устройства с момента сборки. libbox — `SessionRxBytes`/`SessionTxBytes`; CLI `sing-box api peers` — колонки `RX (TOTAL)`/`TX (TOTAL)`: байты сессии, в скобках итог. Расширение, не изменение формы: старый клиент получает правильный `lastHandshakeUnix` без доработки.
+  - `transport/wireguard/peer_session_lx.go` (снимок счётчиков и момент перед `Up`, вычитание в `PeerStatuses`); в `endpoint.go` — вызовы `// lx: SPEC 145` в `Suspend`/`Resume`/`Teardown`/`applyPauseEvent`. wireguard-go и amneziawg-go не тронуты; `TransferTotals` тика простоя читает сырые счётчики. Юниты и живой юнит выкл/вкл на паре endpoint'ов через loopback; на устройстве не прогонялось.
+
+- 🧰 **Сверка зависимостей (раннбук §2a)** — как в lx.26: Go `go1.26.10` = stable, `CRONET_GO_VERSION` совпадает, NDK `r28c` против `r28` осознанно, `upstream.version` = `1.14.4`; `grpc` v1.83.1 и `go-jose/v4` v4.1.4 — наши бампы по Dependabot (lx.22), остаются.
+
 #### v1.14.4-lx.26
 
 Стабильный релиз после `v1.14.4-lx.25`, без rc-линии. База — sing-box `v1.14.4`, `upstream/stable` `c005f3530`, дрейф 0 (сабмодули, `go.mod` и Go 1.26.10 с lx.25 не менялись; dry run релизной сборки не требуется). Две темы: ключ `hosts` у DNS-группы (SPEC 143, issue #60) и поправки выравнивания MTU после полевого случая с WARP над большим селектором (SPEC 144). Пользовательские ноты — `docs-lx/releases/v1.14.4-lx.26.md`.
