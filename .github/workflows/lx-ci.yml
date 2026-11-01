@@ -168,13 +168,15 @@ jobs:
       # like the code. The stands run without -race on purpose (see the header
       # of wireguard_start_close_race_lx_test.go).
       # adapter/endpoint + common/lxclosewatch: the SPEC 030 §8 close watchdog.
+      # experimental/cachefile: the SPEC 147 cache.db takeover from a Box still
+      # stuck in Close.
       - name: go test (wireguard endpoint, route, close watchdog, startclose stands)
         run: |
           go test -race -count=1 \
             -ldflags "-checklinkname=0" \
             -tags "${BASE_TAGS},with_awg,with_lx_idle_suspend" \
             ./transport/wireguard/ ./protocol/wireguard/ ./route/ \
-            ./adapter/endpoint/ ./common/lxclosewatch/
+            ./adapter/endpoint/ ./common/lxclosewatch/ ./experimental/cachefile/
           go test -count=1 \
             -ldflags "-checklinkname=0" \
             -tags "${BASE_TAGS},with_awg,with_lx_idle_suspend" \

@@ -41,6 +41,7 @@ func (c *CacheFile) FakeIPMetadata() *adapter.FakeIPMetadata {
 	if err != nil {
 		return nil
 	}
+	c.seedFakeIPMetadata(&metadata) // lx: SPEC 147
 	return &metadata
 }
 
@@ -188,6 +189,7 @@ func (c *CacheFile) FakeIPLoadDomain(domain string, isIPv6 bool) (netip.Addr, bo
 }
 
 func (c *CacheFile) FakeIPReset() error {
+	c.clearPendingFakeIPMetadata() // lx: SPEC 147
 	return c.batch(func(tx *bbolt.Tx) error {
 		for _, bucketName := range [][]byte{bucketFakeIP, bucketFakeIPDomain4, bucketFakeIPDomain6} {
 			if tx.Bucket(bucketName) == nil {

@@ -66,6 +66,7 @@ type CacheFile struct {
 	saveRDRC           map[saveCacheKey]bool
 	saveDNSCacheAccess sync.RWMutex
 	saveDNSCache       map[saveCacheKey]saveDNSCacheEntry
+	releaseState       cacheFileReleaseState // lx: SPEC 147
 }
 
 type saveCacheKey struct {
@@ -148,9 +149,7 @@ func (c *CacheFile) Start(stage adapter.StartStage, scope *adapter.Scope) error 
 		if err != nil {
 			return err
 		}
-		scope.Add(func() error {
-			return c.database().Close()
-		})
+		scope.Add(c.Release) // lx: SPEC 147 — flush, close and unregister
 	case adapter.StartStateStart:
 		c.startCacheCleanup()
 	}
@@ -183,6 +182,7 @@ func (c *CacheFile) start() error {
 		return err
 	}
 	cacheFile.Close()
+	c.takeOverPath() // lx: SPEC 147 — release a previous instance of this process
 	options := bbolt.Options{Timeout: time.Second}
 	var db *bbolt.DB
 	for range 10 {
@@ -243,6 +243,7 @@ func (c *CacheFile) start() error {
 		return err
 	}
 	c.DB = db
+	registerCacheFile(c) // lx: SPEC 147
 	return nil
 }
 
@@ -265,6 +266,9 @@ func (c *CacheFile) database() *bbolt.DB {
 }
 
 func (c *CacheFile) view(fn func(tx *bbolt.Tx) error) (err error) {
+	if c.isReleased() { // lx: SPEC 147
+		return os.ErrClosed
+	}
 	db := c.database()
 	defer func() {
 		r := recover()
@@ -277,6 +281,9 @@ func (c *CacheFile) view(fn func(tx *bbolt.Tx) error) (err error) {
 }
 
 func (c *CacheFile) batch(fn func(tx *bbolt.Tx) error) (err error) {
+	if c.isReleased() { // lx: SPEC 147
+		return os.ErrClosed
+	}
 	db := c.database()
 	defer func() {
 		r := recover()
@@ -295,6 +302,9 @@ func (c *CacheFile) batch(fn func(tx *bbolt.Tx) error) (err error) {
 }
 
 func (c *CacheFile) update(fn func(tx *bbolt.Tx) error) (err error) {
+	if c.isReleased() { // lx: SPEC 147
+		return os.ErrClosed
+	}
 	db := c.database()
 	defer func() {
 		r := recover()
@@ -309,6 +319,9 @@ func (c *CacheFile) update(fn func(tx *bbolt.Tx) error) (err error) {
 func (c *CacheFile) resetDB(failedDB *bbolt.DB, reason any) {
 	c.dbAccess.Lock()
 	defer c.dbAccess.Unlock()
+	if c.isReleased() { // lx: SPEC 147 — never reopen a released file
+		return
+	}
 	if c.DB != failedDB {
 		return
 	}

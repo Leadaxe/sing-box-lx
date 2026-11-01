@@ -18,7 +18,7 @@
 | [006-OBSERVABILITY](006-OBSERVABILITY/FEATURE.md) | Расширения libbox gRPC для UI: RPC, `detourList`, DNS-стрим, HTTP-пробник узла | `with_lx_command` | 014 · 015 · 016 · 017 · 018 · 035 · 037 · 038 · 058 · 099 |
 | [007-URLTEST_BALANCE](007-URLTEST_BALANCE/FEATURE.md) | `round_robin` в `urltest`: пул, ленивый health-check, sticky-слоты, обход мёртвых слотов; режим `failover`; реакция `least_test` на отказы боевых дайлов | `with_lx_command` (только `GetPool`) | 019 · 054 · 116 · 125 · 126 · 138 |
 | [008-ENERGY](008-ENERGY/FEATURE.md) | Idle-suspend простаивающих WG/AWG: батарея, нагрев, RSS −31 % | `with_lx_idle_suspend` | 020 · 096 · 097 · 098 · 106 |
-| [009-MASQUE_WARP](009-MASQUE_WARP/FEATURE.md) | MASQUE CONNECT-IP outbound (RFC 9484), профиль Cloudflare WARP; конфиг по стандарту sing-box (`vhttp` + блок `tls`) | — | 021 · 062 · 074 · 091 · 098 · 108 · 110 |
+| [009-MASQUE_WARP](009-MASQUE_WARP/FEATURE.md) | MASQUE CONNECT-IP outbound (RFC 9484), профиль Cloudflare WARP; конфиг по стандарту sing-box (`vhttp` + блок `tls`) | — | 021 · 062 · 074 · 091 · 098 · 108 · 110 · 137 · 146 |
 | [012-VLESS_ENCRYPTION](012-VLESS_ENCRYPTION/FEATURE.md) | ✅ PQ-слой `mlkem768x25519plus` внутри VLESS — отгружено (`v1.14.0-lx.18`), девайс-верифицировано | — | 032 |
 | [013-DNS_GROUP](013-DNS_GROUP/FEATURE.md) | Группа DNS-серверов: `stable` / `fastest` / `parallel` на TTL-модели, трасса и состояние в наблюдаемости; ключ `hosts` — локальные имена перед сетевыми | — | 033 · 035 · 143 |
 | [014-LXD_DAEMON](014-LXD_DAEMON/FEATURE.md) | Headless-демон `sing-box lxd`: ядро in-process за reload-surviving каналом (gRPC + admin-REST на одном порту), apply с автооткатом на last-good, mTLS с регистрацией клиентов, системная служба, хранилище файловых ресурсов, диагностика демона и телеметрия хоста, справочник «IP → устройство» | `with_lxd` | 055 · 056 · 057 · 063 · 065 · 066 · 067 · 068 · 100 · 128 · 129 · 135 |
@@ -32,7 +32,7 @@
 | Фича | Что даёт | Задачи |
 |------|----------|--------|
 | [001-BUILD_CI_CD](001-BUILD_CI_CD/FEATURE.md) | Сборка, теги, musl-таргеты, пайплайны, релиз, зеркало тулчейна, пин Go в `go.version` | 001 · 004 · 006 · 023 · 044 · 049 · 067 |
-| [004-HOTFIXES](004-HOTFIXES/FEATURE.md) | Что мы чиним за апстримом; у каждого патча — условие снятия | 010 · 012 · 028 · 029 · 030 · 039 · 040 · 041 · 045 · 046 · 047 · 048 · 050 · 052 · 053 · 060 · 064 · 069 · 072 · 083 · 084 · 085 · 086 · 087 · 088 · 089 · 090 · 091 · 092 · 093 · 136 |
+| [004-HOTFIXES](004-HOTFIXES/FEATURE.md) | Что мы чиним за апстримом; у каждого патча — условие снятия | 010 · 012 · 028 · 029 · 030 · 039 · 040 · 041 · 045 · 046 · 047 · 048 · 050 · 052 · 053 · 060 · 064 · 069 · 072 · 083 · 084 · 085 · 086 · 087 · 088 · 089 · 090 · 091 · 092 · 093 · 136 · 147 |
 | [005-UPSTREAM_SYNC](005-UPSTREAM_SYNC/FEATURE.md) | Watchlist дельты: **DROP / REWORK / HOLD / CONSTRAINT**, ритуал мержа | 013 · 010 · 051 · 095 · 102 · 109 |
 | [010-AUDITS](010-AUDITS/FEATURE.md) | Сплошная проверка своей дельты с адверсариальной верификацией находок | 022 |
 | [011-RESEARCH](011-RESEARCH/FEATURE.md) | Исследования и проработка решений; отрицательный результат тоже результат | 012 · 024 · 027 · 107 |
