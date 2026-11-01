@@ -68,6 +68,8 @@ func peerStatusesToGRPC(statuses []adapter.PeerStatus) []*PeerStatus {
 			LastHandshakeUnix: lastHandshake,
 			RxBytes:           int64(status.RxBytes),
 			TxBytes:           int64(status.TxBytes),
+			SessionRxBytes:    int64(status.SessionRxBytes),
+			SessionTxBytes:    int64(status.SessionTxBytes),
 		})
 	}
 	return peers

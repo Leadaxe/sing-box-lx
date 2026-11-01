@@ -141,6 +141,39 @@ func TestPeerStatuses_serverLearnsEndpoint(t *testing.T) {
 		t.Fatalf("client status: %+v", clientStatuses)
 	}
 
+	// lx: SPEC 145 — Down destroys the session: after the next Up the old
+	// handshake is gone and the session counters restart, the totals stay.
+	beforeDown := clientStatuses[0]
+	client.Suspend()
+	if asleep := client.PeerStatuses(); len(asleep) != 1 || !asleep[0].LastHandshake.Equal(beforeDown.LastHandshake) {
+		t.Fatalf("while down the previous session is still reported: %+v", asleep)
+	}
+	resumed := time.Now()
+	if err = client.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	afterUp := client.PeerStatuses()
+	if len(afterUp) != 1 || !afterUp[0].LastHandshake.IsZero() || afterUp[0].SessionRxBytes != 0 ||
+		afterUp[0].RxBytes < beforeDown.RxBytes || afterUp[0].TxBytes < beforeDown.TxBytes {
+		t.Fatalf("after Up: no handshake, session rx from zero, totals kept: before %+v after %+v", beforeDown, afterUp)
+	}
+	deadline = time.Now().Add(15 * time.Second)
+	for {
+		_, _ = packetConn.WriteTo([]byte("ping"), target)
+		statuses := client.PeerStatuses()
+		if len(statuses) == 1 && !statuses[0].LastHandshake.IsZero() {
+			if statuses[0].LastHandshake.Before(resumed.Truncate(time.Second)) || statuses[0].SessionRxBytes == 0 ||
+				statuses[0].SessionRxBytes >= statuses[0].RxBytes {
+				t.Fatalf("new session: %+v", statuses[0])
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no handshake after Resume: %+v", statuses)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	if err = server.Close(); err != nil {
 		t.Fatal(err)
 	}

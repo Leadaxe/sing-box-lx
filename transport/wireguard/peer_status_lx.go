@@ -28,7 +28,9 @@ func (e *Endpoint) PeerStatuses() []adapter.PeerStatus {
 	if err != nil {
 		return nil
 	}
-	return orderPeerStatuses(parsePeerStatuses(ipc), e.peers)
+	statuses := parsePeerStatuses(ipc)
+	e.applySession(statuses) // lx: SPEC 145
+	return orderPeerStatuses(statuses, e.peers)
 }
 
 // parsePeerStatuses extracts the per-peer block of a UAPI "get" dump, keyed by

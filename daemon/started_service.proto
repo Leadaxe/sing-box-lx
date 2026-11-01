@@ -1208,10 +1208,17 @@ message PeerStatus {
   // Current remote ip:port: configured, or learned from the peer's packets
   // (server side, roaming). Last known address; empty until known.
   string endpoint = 2;
-  // Unix seconds of the last completed handshake; 0 = none yet.
+  // Unix seconds of the last completed handshake of the current session; 0 =
+  // none yet. A session starts at the device build and at every Up after a
+  // Down (enable, wake from sleep, network wake); an older handshake belongs
+  // to destroyed keys and is not reported (SPEC 145).
   int64 lastHandshakeUnix = 3;
+  // Device totals since it was built, service traffic included.
   int64 rxBytes = 4;
   int64 txBytes = 5;
+  // Since the start of the current session (SPEC 145).
+  int64 sessionRxBytes = 6;
+  int64 sessionTxBytes = 7;
 }
 
 // SPEC 114 — status snapshot of one WG/AWG endpoint: device state and peers in

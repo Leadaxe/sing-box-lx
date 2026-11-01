@@ -67,6 +67,8 @@ type Endpoint struct {
 	// lx: SPEC 020 — test seam standing in for a device.Up() failure, which needs
 	// a real bind to reproduce. Nil in production.
 	resumeErrHook func() error
+	// lx: SPEC 145 — session start for the per-peer status (peer_session_lx.go).
+	session peerSession
 }
 
 // SetResumeErrHookForTest injects a Resume failure. Test-only.
@@ -241,6 +243,7 @@ func (e *Endpoint) Teardown() {
 		e.device.Close()
 		e.device = nil
 	}
+	e.resetSession() // lx: SPEC 145 — a rebuilt device counts from zero
 	e.pauseOpAccess.Unlock()
 	e.closeTunDevice()
 	e.allowedIPs = nil
@@ -486,6 +489,7 @@ func (e *Endpoint) Suspend() {
 	e.suspended.Store(true)
 	if e.device != nil {
 		e.device.Down()
+		e.markSessionDown() // lx: SPEC 145
 	}
 }
 
@@ -506,6 +510,7 @@ func (e *Endpoint) Resume() error {
 		return e.resumeErrHook()
 	}
 	if e.device != nil {
+		e.markSessionUp() // lx: SPEC 145
 		return e.device.Up()
 	}
 	return nil
@@ -621,6 +626,7 @@ func (e *Endpoint) applyPauseEvent(event int) {
 		// a pause and a wake that race each other settle on the latest state.
 		if e.pause.IsNetworkPaused() {
 			e.device.Down()
+			e.markSessionDown() // lx: SPEC 145
 		} else {
 			// lx: SPEC 020/007 — a suspended device (idle-suspend or AWG guard)
 			// stays down through pause/wake cycles; the owning state machine
@@ -628,6 +634,7 @@ func (e *Endpoint) applyPauseEvent(event int) {
 			if e.suspended.Load() {
 				return
 			}
+			e.markSessionUp() // lx: SPEC 145
 			e.device.Up()
 		}
 	}

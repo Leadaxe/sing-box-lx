@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sagernet/sing-box/adapter"
 )
 
 // lx: SPEC 114 — UAPI dump parsing for per-peer status.
@@ -73,5 +75,60 @@ func TestParsePeerStatuses(t *testing.T) {
 func TestParsePeerStatuses_noPeers(t *testing.T) {
 	if statuses := parsePeerStatuses("private_key=" + strings.Repeat("11", 32) + "\nlisten_port=1\n"); len(statuses) != 0 {
 		t.Fatalf("device lines must not produce peers: %+v", statuses)
+	}
+}
+
+// lx: SPEC 145 — session view: handshake of the current session only, transfer
+// since the session start next to the device totals.
+
+func TestApplySession_noBase(t *testing.T) {
+	endpoint := &Endpoint{}
+	handshake := time.Unix(1790000000, 0)
+	statuses := map[string]*adapter.PeerStatus{"aa": {LastHandshake: handshake, RxBytes: 100, TxBytes: 40}}
+	endpoint.applySession(statuses)
+	status := statuses["aa"]
+	if !status.LastHandshake.Equal(handshake) || status.SessionRxBytes != 100 || status.SessionTxBytes != 40 {
+		t.Fatalf("without a Down the session is the device lifetime: %+v", status)
+	}
+}
+
+func TestApplySession_afterResume(t *testing.T) {
+	endpoint := &Endpoint{}
+	since := time.Unix(1790000100, 0)
+	endpoint.session.base.Store(&peerSessionBase{
+		since:    since,
+		counters: map[string]peerCounters{"aa": {rx: 100, tx: 40}, "bb": {rx: 500, tx: 500}},
+	})
+	statuses := map[string]*adapter.PeerStatus{
+		"aa": {LastHandshake: since.Add(-time.Second), RxBytes: 130, TxBytes: 40},
+		"bb": {LastHandshake: since.Add(time.Second), RxBytes: 20, TxBytes: 10},
+		"cc": {RxBytes: 7, TxBytes: 3},
+	}
+	endpoint.applySession(statuses)
+	if a := statuses["aa"]; !a.LastHandshake.IsZero() || a.SessionRxBytes != 30 || a.SessionTxBytes != 0 || a.RxBytes != 130 {
+		t.Fatalf("handshake before the session start is dropped, totals kept: %+v", a)
+	}
+	if b := statuses["bb"]; !b.LastHandshake.Equal(since.Add(time.Second)) || b.SessionRxBytes != 20 || b.SessionTxBytes != 10 {
+		t.Fatalf("new handshake kept; total below the snapshot counts as a fresh start: %+v", b)
+	}
+	if c := statuses["cc"]; c.SessionRxBytes != 7 || c.SessionTxBytes != 3 {
+		t.Fatalf("a peer missing from the snapshot counts from zero: %+v", c)
+	}
+}
+
+func TestMarkSession(t *testing.T) {
+	endpoint := &Endpoint{}
+	endpoint.markSessionUp()
+	if endpoint.session.base.Load() != nil {
+		t.Fatal("an Up without a Down must keep the running session")
+	}
+	endpoint.markSessionDown()
+	endpoint.markSessionUp()
+	if endpoint.session.base.Load() == nil {
+		t.Fatal("an Up after a Down starts a session")
+	}
+	endpoint.resetSession()
+	if endpoint.session.base.Load() != nil || endpoint.session.down.Load() {
+		t.Fatal("reset forgets the session")
 	}
 }

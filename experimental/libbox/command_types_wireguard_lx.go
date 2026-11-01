@@ -24,15 +24,20 @@ func (s *WireGuardEndpointStatus) Peers() PeerStatusIterator {
 }
 
 // PeerStatus is one WireGuard peer of a WG/AWG endpoint. Raw facts, no
-// "connected" verdict: derive liveness from LastHandshakeUnix (0 = none yet).
-// Endpoint is the last known remote ip:port — configured, or learned from the
-// peer's packets on the server side — and stays after the peer goes silent.
+// "connected" verdict: derive liveness from LastHandshakeUnix (0 = none yet in
+// the current session; a session starts at the device build and again after
+// enable, wake from sleep or network wake). Endpoint is the last known remote
+// ip:port — configured, or learned from the peer's packets on the server side
+// — and stays after the peer goes silent. RxBytes/TxBytes are the device
+// totals, SessionRxBytes/SessionTxBytes count from the session start.
 type PeerStatus struct {
 	PublicKey         string
 	Endpoint          string
 	LastHandshakeUnix int64
 	RxBytes           int64
 	TxBytes           int64
+	SessionRxBytes    int64
+	SessionTxBytes    int64
 }
 
 type PeerStatusIterator interface {
@@ -61,6 +66,8 @@ func peerStatusesFromGRPC(peers []*daemon.PeerStatus) []*PeerStatus {
 			LastHandshakeUnix: peer.LastHandshakeUnix,
 			RxBytes:           peer.RxBytes,
 			TxBytes:           peer.TxBytes,
+			SessionRxBytes:    peer.SessionRxBytes,
+			SessionTxBytes:    peer.SessionTxBytes,
 		})
 	}
 	return result

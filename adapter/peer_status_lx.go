@@ -17,10 +17,19 @@ type PeerStatus struct {
 	// packet, and WireGuard roaming updates it whenever the peer moves. Empty
 	// until known. It is the last known address, not a liveness signal.
 	Endpoint string
-	// LastHandshake is the time of the last completed handshake; zero if none.
+	// LastHandshake is the time of the last completed handshake of the current
+	// session; zero if none. A session starts when the device is built and
+	// again at every Up after a Down (enable, wake from sleep, network wake):
+	// Down destroys the keys, so an older handshake is not reported (SPEC 145).
 	LastHandshake time.Time
-	RxBytes       uint64
-	TxBytes       uint64
+	// RxBytes and TxBytes are the device totals since it was built, service
+	// traffic (handshakes, keepalives) included.
+	RxBytes uint64
+	TxBytes uint64
+	// SessionRxBytes and SessionTxBytes count from the start of the current
+	// session (SPEC 145).
+	SessionRxBytes uint64
+	SessionTxBytes uint64
 }
 
 // PeerStatusReporter is implemented by WG/AWG endpoints. It returns nil while

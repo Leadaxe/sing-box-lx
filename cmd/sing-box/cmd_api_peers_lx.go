@@ -55,7 +55,7 @@ func runAPIPeers(tag string) error {
 		}
 	}
 	table := tableWriter{
-		header:       []string{"ENDPOINT", "STATE", "PEER", "ADDRESS", "HANDSHAKE", "RX", "TX"},
+		header:       []string{"ENDPOINT", "STATE", "PEER", "ADDRESS", "HANDSHAKE", "RX (TOTAL)", "TX (TOTAL)"},
 		emptyMessage: "no peers",
 	}
 	now := time.Now()
@@ -71,7 +71,8 @@ func runAPIPeers(tag string) error {
 		}
 		for _, peer := range endpoint.GetPeers() {
 			table.addRow(endpoint.GetEndpointTag(), endpoint.GetEndpointState(), abbreviatePeerKey(peer.GetPublicKey()), peer.GetEndpoint(),
-				formatHandshakeAge(now, peer.GetLastHandshakeUnix()), formatTaildropSize(peer.GetRxBytes()), formatTaildropSize(peer.GetTxBytes()))
+				formatHandshakeAge(now, peer.GetLastHandshakeUnix()),
+				formatPeerTransfer(peer.GetSessionRxBytes(), peer.GetRxBytes()), formatPeerTransfer(peer.GetSessionTxBytes(), peer.GetTxBytes()))
 		}
 	}
 	table.flush()
@@ -85,6 +86,12 @@ func abbreviatePeerKey(key string) string {
 		return key
 	}
 	return key[0:4] + "…" + key[39:43]
+}
+
+// formatPeerTransfer shows the current session's bytes with the device total in
+// parentheses (SPEC 145).
+func formatPeerTransfer(session int64, total int64) string {
+	return F.ToString(formatTaildropSize(session), " (", formatTaildropSize(total), ")")
 }
 
 func formatHandshakeAge(now time.Time, unix int64) string {
