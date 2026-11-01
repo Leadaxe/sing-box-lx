@@ -125,7 +125,11 @@ func init() {
 	// DNS transport and DERP service have to be present at runtime. This is upstream's
 	// mobile tag set unchanged: with_tailscale plus the ts_omit_* trims (logtail, ssh,
 	// drive, taildrop, webclient, doctor, capture, kube, aws, synology, bird), which
-	// strip client features a VPN app never calls. Tailscale is the single largest
+	// strip client features a VPN app never calls. ts_omit_taildrop is a no-op: the
+	// sagernet/tailscale fork has no feature/taildrop package, and sing-box implements
+	// Taildrop itself in protocol/tailscale/taildrop.go, so the AAR carries it (libbox.so
+	// with and without the tag differ only in the embedded tag string, measured
+	// 2026-11-02). Tailscale is the single largest
 	// dependency in the APK; the size cost is accepted. The AAR now matches the desktop
 	// LX_TAGS set (Makefile.lx), which carries with_tailscale since 2026-09-04.
 	sharedTags = append(sharedTags, "with_tailscale", "ts_omit_logtail", "ts_omit_ssh", "ts_omit_drive", "ts_omit_taildrop", "ts_omit_webclient", "ts_omit_doctor", "ts_omit_capture", "ts_omit_kube", "ts_omit_aws", "ts_omit_synology", "ts_omit_bird")
