@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — лимит памяти oom-killer по памяти Go-рантайма вместо RSS процесса (режим для ядра, встроенного в чужой процесс) + память рантайма в `Status` |
-| Статус | I (implemented) — 2026-11-01: код и юниты; на устройстве не проверялась |
+| Статус | D (done, device-verified) — выпущена в `v1.14.4-lx.29` 2026-11-01; LxBox develop (пин d579253a) на arm64 AVD, release-APK с lx.29: без `memory threshold reached` на старте с лимитом 200, `Memory` 331 МБ против `MemoryRuntime` 50,3 МБ, переключение на Auto без рестарта. Срабатывание порога по реальной утечке — только юнит |
 | Ветка | `lx` |
 | Build-tag | — (сервис `oom-killer`, `daemon`, `libbox` собираются всегда) |
 | Источник | [#62](https://github.com/Leadaxe/sing-box-lx/issues/62) (LxBox, Android): RSS 461 МБ при лимите 200 МБ, живая Go-куча по allocs-профилю 42 МБ |
@@ -107,6 +107,16 @@ WG», allocs-профилем **не подтверждён**: живая куч
   выбор режима по флагу и лимиту; выборка в новом режиме несёт `Available`; рост `usage`
   до порога даёт `triggered`, низкий `available` при малом `usage` — тоже; гистерезис выхода;
   величина §2.1 растёт при удержании живого среза и ≥ `HeapInuse + StackInuse`.
-- Устройство (LxBox, WARP-группа WG, лимит 200): нет `memory threshold reached` на старте;
-  в `Status` `MemoryRuntime` ≠ `Memory`; тестовая утечка кучи даёт сброс. **Не прогнано** —
-  за сессией LxBox после тега.
+- Устройство — прогон LxBox 2026-11-01 на arm64 AVD (release-APK, `libbox.so` = 1.14.4-lx.29),
+  лимит 200 МБ: в логе ядра после старта только `status=Starting/Started`, строк
+  `memory threshold reached` нет; `Status`: `Memory` 331 МБ (RSS), `MemoryRuntime` 50,3 МБ,
+  в шторке «Core memory 50.3 MB / 200 MB»; переключение на Auto через `reloadSetupOptions`
+  применилось без рестарта. Срабатывание порога по реальной утечке на устройстве не воспроизвести
+  (приложению нечем нарастить кучу ядра) — остаётся на юните `runtime_limit_lx_test.go`.
+  Телефон владельца — после релиза LxBox rc.2.
+
+## 5. Долг
+
+- Нет Info-строки при старте oom-killer с выбранным режимом и порогами (`mode=runtime_limit
+  limit=200MiB trigger=195MiB`) — по полевому логу не видно, какой `policyMode` активен.
+  Замечание LxBox 2026-11-01; одна строка в `startTimer`, не сделано.
