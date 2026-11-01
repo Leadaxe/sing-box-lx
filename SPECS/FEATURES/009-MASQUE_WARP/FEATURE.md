@@ -154,6 +154,7 @@ outbound'ов, где исходящая датаграмма помечаетс
 | [120 — PATH_MTU_ALIGN](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) | Issue #37: QUIC-прокси над masque получает `initial_packet_size` под MTU туннеля (WARP теряет внутренние IPv6-фрагменты); внешний QUIC masque стартует с `mtu + 51` вместо 1242; ICMP Too Big с фактическим бюджетом | I |
 | [121 — MASQUE_AUTO_MEMORY_TTL](../../TASKS/121-MASQUE_AUTO_MEMORY_TTL/SPEC.md) | Память h2 в `auto` — окно по лестнице 1 с → 10 мин вместо «навсегда»: один быстрый отказ h3 (`PROTOCOL_VIOLATION` от WARP) больше не паркует узел на TCP | I |
 | [137 — MASQUE_DRAINH3_LEAK](../../TASKS/137-MASQUE_DRAINH3_LEAK/SPEC.md) | Issue #52: в `auto` дренаж уже потреблённого результата h3 вешал горутину навсегда; она держала старый Outbound и через его контекст весь закрытый Box — мёртвый Box на каждый lxd apply, куча у `GOMEMLIMIT`, GC-спираль на роутере | I |
+| [146 — MASQUE_CLOSE_WEDGE_DETOUR_DEADLINE](../../TASKS/146-MASQUE_CLOSE_WEDGE_DETOUR_DEADLINE/SPEC.md) | Дампы 2026-11-01 (#61, #50): `Box.Close` стоял за `Outbound.Close` на `runMu`, который держал h3-dial через detour — quic-go ждал слушателя на conn без рабочего `SetReadDeadline` (vless XUDP над ws). Дедлайн-обёртка на detour-conn; `Close` отменяет connect и не берёт `runMu` | I |
 
 Полная таблица параметров — `CONFIG.md` в задаче 021; таблица соответствия
 старых и новых ключей — в конфиг-справочнике ([docs-lx/lx-config.ru.md §4](../../../docs-lx/lx-config.ru.md)).
@@ -178,3 +179,11 @@ outbound'ов, где исходящая датаграмма помечаетс
   [110](../../TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md).
 - **Вложенность требует внимания к размеру пакетов** — см.
   [HOTFIXES](../004-HOTFIXES/FEATURE.md).
+- **quic-go не закрывает чужой `PacketConn`.** Одноразовый транспорт при гашении
+  ставит дедлайн чтения и ждёт выхода слушателя; conn через detour (XUDP над
+  WebSocket) дедлайна не имеет, и без обёртки `deadline.NewConn` dial не
+  возвращается никогда, а `Close` outbound'а стоит за ним
+  ([146](../../TASKS/146-MASQUE_CLOSE_WEDGE_DETOUR_DEADLINE/SPEC.md)). Любой
+  новый путь, отдающий quic-go conn от `o.dialer`, обязан проходить ту же
+  проверку `NeedAdditionalReadDeadline`; `Close` outbound'а не должен брать
+  замок, который держится через сеть.

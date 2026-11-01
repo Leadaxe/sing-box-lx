@@ -24,25 +24,25 @@ func TestTeardownGenerationGuard(t *testing.T) {
 
 	// Simulate reconnect: a new session becomes current.
 	fresh := newBareSession()
-	o.runMu.Lock()
+	o.stateMu.Lock()
 	o.sess = fresh
-	o.runMu.Unlock()
+	o.stateMu.Unlock()
 
 	// Late teardown of the OLD session must not touch the fresh one.
 	o.teardownSession(old)
 
-	o.runMu.Lock()
+	o.stateMu.Lock()
 	got := o.sess
-	o.runMu.Unlock()
+	o.stateMu.Unlock()
 	if got != fresh {
 		t.Fatal("teardown of stale session cleared the current (fresh) session")
 	}
 
 	// Tearing down the fresh (current) session clears it → next dial rebuilds.
 	o.teardownSession(fresh)
-	o.runMu.Lock()
+	o.stateMu.Lock()
 	got = o.sess
-	o.runMu.Unlock()
+	o.stateMu.Unlock()
 	if got != nil {
 		t.Fatal("teardown of current session must clear o.sess (enables reconnect)")
 	}
@@ -66,9 +66,9 @@ func TestTeardownIdempotent(t *testing.T) {
 	}
 	wg.Wait()
 
-	o.runMu.Lock()
+	o.stateMu.Lock()
 	got := o.sess
-	o.runMu.Unlock()
+	o.stateMu.Unlock()
 	if got != nil {
 		t.Fatal("concurrent teardown must end with o.sess == nil")
 	}

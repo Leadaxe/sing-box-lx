@@ -33,6 +33,7 @@ import (
 	"github.com/sagernet/sing-box/transport/wireguard"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
+	"github.com/sagernet/sing/common/bufio/deadline"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
 	"github.com/sagernet/sing/common/logger"
@@ -101,11 +102,21 @@ type Outbound struct {
 	// Tunnel lifecycle. The current live tunnel is a *session; it is nil
 	// whenever no tunnel is up (before the first dial, after an idle-suspend, or
 	// after the tunnel died). A fresh session is built lazily on the next dial.
-	// runMu guards sess and closed. (lx: SPEC 021 B1/C1/C2 — stateless idle,
-	// self-healing reconnect, no leaked half-open tunnel.)
-	runMu  sync.Mutex
-	sess   *session
-	closed bool
+	// (lx: SPEC 021 B1/C1/C2 — stateless idle, self-healing reconnect, no
+	// leaked half-open tunnel.)
+	//
+	// runMu serializes tunnel establishment: one connect per gap. It is held
+	// across the network dial, so nothing that has to return promptly may take
+	// it — Close in particular (lx: SPEC 146, field dump 2026-11-01: Box.Close
+	// stood behind a dial that quic-go never finished).
+	//
+	// stateMu guards sess, closed and connectCancel. It is never held across
+	// I/O, so Close and teardown always get it within microseconds.
+	runMu         sync.Mutex
+	stateMu       sync.Mutex
+	sess          *session
+	closed        bool
+	connectCancel context.CancelFunc // cancels the connect in flight, if any
 
 	// lx:begin masque-auto
 	// SPEC 074 — `vhttp: auto`. autoMode means "try h3, fall back to h2"; the
@@ -463,13 +474,28 @@ func buildH2TLSClient(
 func (o *Outbound) ensureSession(ctx context.Context) (*session, error) {
 	o.runMu.Lock()
 	defer o.runMu.Unlock()
+	o.stateMu.Lock()
 	if o.closed {
-		return nil, E.New("masque: outbound closed")
+		o.stateMu.Unlock()
+		return nil, errOutboundClosed
 	}
-	if o.sess != nil {
-		o.traceTunnelReusedLx(ctx, o.sess) // lx: SPEC 139 — REUSED `auth` with the tunnel's age
-		return o.sess, nil
+	if s := o.sess; s != nil {
+		o.stateMu.Unlock()
+		o.traceTunnelReusedLx(ctx, s) // lx: SPEC 139 — REUSED `auth` with the tunnel's age
+		return s, nil
 	}
+	// lx: SPEC 146 — the connect runs under a context Close can cancel, so a
+	// closing outbound does not wait for a dial parked in a detour or a
+	// handshake; the caller gets a cancellation error instead of a tunnel.
+	connectCtx, connectCancel := context.WithCancel(ctx)
+	o.connectCancel = connectCancel
+	o.stateMu.Unlock()
+	defer func() {
+		o.stateMu.Lock()
+		o.connectCancel = nil
+		o.stateMu.Unlock()
+		connectCancel()
+	}()
 
 	device, err := wireguard.NewDevice(wireguard.DeviceOptions{
 		Context: o.ctx,
@@ -490,7 +516,7 @@ func (o *Outbound) ensureSession(ctx context.Context) (*session, error) {
 	o.logger.DebugContext(ctx, "masque: establishing ", network, " tunnel to ", o.server, " (sni=", o.tlsConfig.ServerName, ")")
 	var closer io.Closer
 	var ipConn masque.IpConn
-	closer, ipConn, network, err = o.connect(ctx, network)
+	closer, ipConn, network, err = o.connect(connectCtx, network)
 	if err != nil {
 		o.logger.WarnContext(ctx, "masque: ", network, " tunnel to ", o.server, " failed: ", err)
 		_ = device.Close()
@@ -508,7 +534,16 @@ func (o *Outbound) ensureSession(ctx context.Context) (*session, error) {
 		opened: time.Now(), // lx: SPEC 139
 	}
 	s.markActivity(time.Now().UnixNano())
+	o.stateMu.Lock()
+	if o.closed {
+		// lx: SPEC 146 — Close ran while the tunnel was coming up: it found no
+		// session to tear down, so this one is ours to dispose of.
+		o.stateMu.Unlock()
+		o.teardownSession(s)
+		return nil, errOutboundClosed
+	}
 	o.sess = s
+	o.stateMu.Unlock()
 
 	go o.pumpToTunnel(s)
 	go o.pumpFromTunnel(s)
@@ -536,13 +571,15 @@ func (o *Outbound) teardownSession(s *session) {
 		if s.device != nil {
 			_ = s.device.Close()
 		}
-		o.runMu.Lock()
+		o.stateMu.Lock()
 		if o.sess == s {
 			o.sess = nil // next dial rebuilds a fresh tunnel (self-healing)
 		}
-		o.runMu.Unlock()
+		o.stateMu.Unlock()
 	})
 }
+
+var errOutboundClosed = E.New("masque: outbound closed")
 
 // idleWindow resolves the suspend window: the node's idle_timeout when set
 // (positive = suspend after that long with no traffic; an explicit "0" or a
@@ -839,6 +876,18 @@ func (o *Outbound) connectH3WithBudget(ctx context.Context, handshakeBudget time
 	if err != nil {
 		return nil, nil, E.Cause(err, "dial udp")
 	}
+	// lx: SPEC 146 — quic-go never closes a PacketConn it did not create. When
+	// its single-use transport shuts down (handshake failed, dial cancelled) it
+	// sets a read deadline on the conn and waits for its listener to return.
+	// Through a detour the "socket" is a stream-tunnelled conn (vless XUDP over
+	// WebSocket, …) whose SetReadDeadline is a no-op: the listener never woke,
+	// Transport.Close never returned, DialEarly never came back, and the dial
+	// held runMu for good (field dump 2026-11-01). Conns that say so get a real
+	// read deadline here, the way the stream transports do for themselves.
+	var rawConn net.Conn = udpConn
+	if deadline.NeedAdditionalReadDeadline(udpConn) {
+		rawConn = deadline.NewConn(udpConn)
+	}
 	// UDP socket is up; the QUIC handshake is the next (and most commonly stuck)
 	// step — a hang here means our ClientHello left but no ServerHello came back
 	// (e.g. inbound UDP:443 filtered), distinct from the socket failing above.
@@ -850,7 +899,7 @@ func (o *Outbound) connectH3WithBudget(ctx context.Context, handshakeBudget time
 		defer cancel()
 	}
 	quicStage := o.beginQUICLx(ctx) // lx: SPEC 139 — `quic` stage
-	quicConn, err := quic.DialEarly(handshakeCtx, bufio.NewUnbindPacketConn(udpConn), udpConn.RemoteAddr(), o.tlsConfig, o.quicConfig)
+	quicConn, err := quic.DialEarly(handshakeCtx, bufio.NewUnbindPacketConn(rawConn), udpConn.RemoteAddr(), o.tlsConfig, o.quicConfig)
 	quicStage.End(err) // lx: SPEC 139
 	if err != nil {
 		_ = udpConn.Close()
@@ -1012,16 +1061,26 @@ func (o *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	return nil
 }
 
+// Close tears the current tunnel down and cancels a connect in flight. It
+// deliberately does not take runMu: that lock is held for the whole dial, and
+// a dial through a detour can sit in a handshake for as long as the path lets
+// it. Waiting there kept Box.Close — and with it the next start — hostage
+// (lx: SPEC 146). A session that comes up after Close is disposed of by
+// ensureSession itself.
 func (o *Outbound) Close() error {
-	o.runMu.Lock()
+	o.stateMu.Lock()
 	if o.closed {
-		o.runMu.Unlock()
+		o.stateMu.Unlock()
 		return nil
 	}
 	o.closed = true
 	s := o.sess
 	o.sess = nil
-	o.runMu.Unlock()
+	connectCancel := o.connectCancel
+	o.stateMu.Unlock()
+	if connectCancel != nil {
+		connectCancel()
+	}
 	if s != nil {
 		o.teardownSession(s)
 	}
