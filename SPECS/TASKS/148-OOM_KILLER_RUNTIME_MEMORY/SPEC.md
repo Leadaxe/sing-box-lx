@@ -115,8 +115,9 @@ WG», allocs-профилем **не подтверждён**: живая куч
   (приложению нечем нарастить кучу ядра) — остаётся на юните `runtime_limit_lx_test.go`.
   Телефон владельца — после релиза LxBox rc.2.
 
-## 5. Долг
+## 5. Снятый долг
 
-- Нет Info-строки при старте oom-killer с выбранным режимом и порогами (`mode=runtime_limit
-  limit=200MiB trigger=195MiB`) — по полевому логу не видно, какой `policyMode` активен.
-  Замечание LxBox 2026-11-01; одна строка в `startTimer`, не сделано.
+- Info-строка при старте oom-killer: `memory pressure monitoring started, mode: runtime_limit,
+  limit: 200 MB, trigger: 195 MB, armed: 190 MB` — для всех режимов, включая апстримные
+  (`available` — только режим), суффикс `, report only` при `killer_disabled`.
+  `service/oomkiller/start_log_lx.go`, вызов в `startTimer`; тест `start_log_lx_test.go`.
