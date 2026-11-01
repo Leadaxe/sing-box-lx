@@ -72,6 +72,9 @@ service StartedService {
   // endpoint type, so GetOutbounds stays a plain node list.
   rpc GetWireGuardStatus(WireGuardStatusRequest) returns (WireGuardEndpointStatus) {}
   rpc GetTailscaleStatus(TailscaleStatusRequest) returns (TailscaleEndpointStatus) {}
+  // Login of a Tailscale endpoint with a new auth key without a box restart
+  // (SPEC 149); on/off of the endpoint is SetEndpointEnabled.
+  rpc TailscaleLogin(TailscaleLoginRequest) returns (google.protobuf.Empty) {}
   rpc StartConnectionTest(ConnectionTestRequest) returns (stream ConnectionTestProgress) {}
 
   // lx:end lx_command
@@ -1201,6 +1204,15 @@ message SetEndpointEnabledRequest {
 }
 message SetEndpointEnabledResponse {
   string state = 1; // GroupItem.endpointState after the call
+}
+
+// lx: SPEC 149 — login of a Tailscale endpoint on the running backend, the way
+// the endpoint start does it. An empty authKey starts an interactive login
+// (AuthURL in the status). Refused for a logged-in or disabled node; a
+// rejected key shows in the backend state and health, as at start.
+message TailscaleLoginRequest {
+  string endpointTag = 1;
+  string authKey = 2;
 }
 
 // One WireGuard peer of a WG/AWG endpoint. Raw facts, no "connected" verdict:

@@ -5,6 +5,8 @@ import (
 
 	"github.com/sagernet/sing-box/daemon"
 	E "github.com/sagernet/sing/common/exceptions"
+
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // lx: SPEC 115 — on-demand Tailscale status.
@@ -23,6 +25,23 @@ func (c *CommandClient) GetTailscaleStatus(endpointTag string) (*TailscaleEndpoi
 		}
 		return tailscaleEndpointStatusFromGRPC(response), nil
 	})
+}
+
+// TailscaleLogin logs a Tailscale endpoint in with a new auth key without
+// restarting the service (SPEC 149); an empty key starts an interactive login
+// with the AuthURL in the status. A rejected key shows in the backend state
+// and Health() of the status, as at start. Errors: FailedPrecondition for a
+// node already logged in (log out first), a disabled node
+// (SetEndpointEnabled) or an endpoint not started; NotFound for an unknown
+// tag, InvalidArgument for an endpoint of another type.
+func (c *CommandClient) TailscaleLogin(endpointTag string, authKey string) error {
+	_, err := callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*emptypb.Empty, error) {
+		return client.TailscaleLogin(ctx, &daemon.TailscaleLoginRequest{EndpointTag: endpointTag, AuthKey: authKey})
+	})
+	if err != nil {
+		return E.Cause(err, "tailscale login")
+	}
+	return nil
 }
 
 func tailscalePeerPathFromGRPC(path daemon.TailscalePeerPath) string {

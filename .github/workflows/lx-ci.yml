@@ -148,6 +148,16 @@ jobs:
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command" \
             ./common/tls/ -run 'Reality|Lx'
 
+      # tailscale endpoint lx code: SPEC 112 send headroom, SPEC 115 peer path,
+      # SPEC 149 on/off switch and login refusals, control HTTPS. No other step
+      # lists the package, so without this one its tests run nowhere.
+      - name: go test (tailscale endpoint, race)
+        run: |
+          go test -race -count=1 \
+            -ldflags "-checklinkname=0" \
+            -tags "${BASE_TAGS},with_lx_command" \
+            ./protocol/tailscale/
+
       # trusttunnel core and adapters (SPEC 133/134): the core's end-to-end
       # tests run client against server in-process over H2 and, with
       # with_quic from BASE_TAGS, over H3.

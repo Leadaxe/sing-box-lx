@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -96,6 +97,69 @@ func TestGetTailscaleStatus_LX(t *testing.T) {
 
 	stopped := &StartedService{serviceStatus: &ServiceStatus{Status: ServiceStatus_IDLE}}
 	if _, err := stopped.GetTailscaleStatus(context.Background(), &TailscaleStatusRequest{EndpointTag: "ts"}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("not started: %v", err)
+	}
+}
+
+// lx: SPEC 149 — TailscaleLogin hands the key to the endpoint and maps the
+// endpoint's refusals to gRPC codes.
+
+type tailscaleLoginEndpoint struct {
+	tailscaleListedEndpoint
+	authKey string
+	calls   int
+	err     error
+}
+
+func (e *tailscaleLoginEndpoint) TailscaleLogin(ctx context.Context, authKey string) error {
+	e.calls++
+	e.authKey = authKey
+	return e.err
+}
+
+func TestTailscaleLogin_LX(t *testing.T) {
+	ts := &tailscaleLoginEndpoint{tailscaleListedEndpoint: tailscaleListedEndpoint{listedEndpoint: listedEndpoint{tag: "ts"}}}
+	wg := &listedEndpoint{tag: "wg"}
+	endpointManager := &gettingEndpointManager{listingEndpointManager{endpoints: []adapter.Endpoint{ts, wg}}}
+	service := &StartedService{
+		serviceStatus: &ServiceStatus{Status: ServiceStatus_STARTED},
+		instance: &Instance{
+			ctx:             service.ContextWith[adapter.EndpointManager](context.Background(), endpointManager),
+			endpointManager: endpointManager,
+		},
+	}
+
+	_, err := service.TailscaleLogin(context.Background(), &TailscaleLoginRequest{EndpointTag: "ts", AuthKey: "tskey-auth-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ts.calls != 1 || ts.authKey != "tskey-auth-test" {
+		t.Fatalf("calls %d, key %q", ts.calls, ts.authKey)
+	}
+
+	cases := []struct {
+		name string
+		tag  string
+		err  error
+		code codes.Code
+	}{
+		{"unknown tag", "missing", nil, codes.NotFound},
+		{"not tailscale", "wg", nil, codes.InvalidArgument},
+		{"endpoint not started", "ts", os.ErrClosed, codes.FailedPrecondition},
+		{"disabled", "ts", adapter.ErrTailscaleDisabled, codes.FailedPrecondition},
+		{"logged in", "ts", adapter.ErrTailscaleLoggedIn, codes.FailedPrecondition},
+		{"backend failure", "ts", E.New("restart backend: boom"), codes.Unavailable},
+	}
+	for _, tc := range cases {
+		ts.err = tc.err
+		_, err = service.TailscaleLogin(context.Background(), &TailscaleLoginRequest{EndpointTag: tc.tag})
+		if status.Code(err) != tc.code {
+			t.Fatalf("%s: got %v, want %v", tc.name, err, tc.code)
+		}
+	}
+
+	stopped := &StartedService{serviceStatus: &ServiceStatus{Status: ServiceStatus_IDLE}}
+	if _, err = stopped.TailscaleLogin(context.Background(), &TailscaleLoginRequest{EndpointTag: "ts"}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("not started: %v", err)
 	}
 }
