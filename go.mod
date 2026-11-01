@@ -1,6 +1,11 @@
 module github.com/sagernet/sing-box
 
-go 1.25.5
+// lx: go 1.26.0 while upstream/stable has 1.25.5 — golang.org/x/net v0.62.0
+// requires it. x/net v0.62.0, x/crypto v0.58.0 and grpc v1.83.2 are ahead of
+// upstream for security fixes (2026-11-02: HTTP/2 server DoS, html quadratic
+// parse, ssh channel deadlocks). On a sync take upstream's pins once they are
+// not older. All builds use go.version (go1.26.10), Win7 included.
+go 1.26.0
 
 require (
 	filippo.io/age v1.3.1
@@ -68,16 +73,16 @@ require (
 	github.com/vishvananda/netns v0.0.5
 	go.uber.org/zap v1.27.1
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.58.0
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f
-	golang.org/x/mod v0.37.0
-	golang.org/x/net v0.57.0
-	golang.org/x/sync v0.22.0
-	golang.org/x/sys v0.47.0
-	golang.org/x/term v0.45.0
-	golang.org/x/text v0.40.0
+	golang.org/x/mod v0.41.0
+	golang.org/x/net v0.62.0
+	golang.org/x/sync v0.24.0
+	golang.org/x/sys v0.49.0
+	golang.org/x/term v0.47.0
+	golang.org/x/text v0.43.0
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
-	google.golang.org/grpc v1.83.1
+	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.11
 	howett.net/plist v1.0.1
 	lukechampine.com/blake3 v1.3.0
@@ -191,7 +196,7 @@ require (
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	golang.org/x/tools v0.47.0 // indirect
+	golang.org/x/tools v0.51.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
