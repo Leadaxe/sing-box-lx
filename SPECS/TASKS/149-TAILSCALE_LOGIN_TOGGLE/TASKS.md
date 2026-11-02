@@ -8,4 +8,4 @@
 - [x] 4. Юниты `protocol/tailscale`, `daemon` (обе сборки), `experimental/libbox`
 - [x] 5. Сборки и тесты по PLAN этапу 3; javap; gofmt
 - [x] 6. Доки
-- [ ] 7. Живой прогон: вход по ключу из `NeedsLogin`, выключение и включение на tailnet
+- [x] 7. Живой прогон: вход по ключу из `NeedsLogin`, выключение и включение на tailnet (LxBox, AVD, SaaS, 2026-11-02)

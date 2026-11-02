@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — вход Tailscale-узла с новым ключом и его выключение/включение без перезапуска ядра |
-| Статус | I (implemented) — юниты; живого входа на tailnet нет |
+| Статус | D (done, device-verified) — пререлиз `v1.14.4-lx.30-rc.1` 2026-11-02; LxBox на arm64 AVD (Android 14) против login.tailscale.com: Logout → `TailscaleLogin` → Running ≈2 с без reload; узел с отвергнутым ключом → `TailscaleLogin` с действующим → Running ≈2 с; выключение → `disabled`/Stopped, включение → `up`/Running |
 | Ветка | `lx` |
 | Build-tag | ядро — без тега (методы без вызова ведут себя как апстрим); RPC — `with_lx_command` |
 | Связано | [106](../106-WG_ENDPOINT_TOGGLE/SPEC.md) (переключатель WG/AWG, тот же RPC), [115](../115-TAILSCALE_PEER_PATH_STATUS/SPEC.md) (статус Tailscale-узла) |

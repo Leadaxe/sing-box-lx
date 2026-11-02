@@ -19,7 +19,13 @@
 - `go vet` затронутых пакетов: новых замечаний нет (два `unsafe.Pointer` в апстримных `managed_service.go`/`debug.go` — прежние, lx-ci гоняет эти пакеты с `-unsafeptr=false`).
 - AAR (`build_libbox`, `android/arm64`) против AAR той же ветки до задачи: javap всех классов `io.nekohasekai.*` отличается одной строкой — `CommandClient`: `public native void tailscaleLogin(java.lang.String, java.lang.String) throws java.lang.Exception;`. Выключение — прежний `setEndpointEnabled`.
 
+## Живая проверка
+
+- Локальный control (`testcontrol` из `tailscale.com` v1.102.1 на 127.0.0.1, ключ обязателен для каждой регистрации), box в процессе на коде rc.1: Running → `Logout` → `NeedsLogin` → `TailscaleLogin` → вход; старт с отвергнутым ключом → `NeedsLogin` → `TailscaleLogin` с правильным → вход. В trace ключ уходит в `RegisterReq` (`doLogin(regen=true)`), `StartLoginInteractive` вход по ключу не перебивает — та же последовательность, что у старта tsnet и `tailscale up --auth-key`.
+- LxBox, `v1.14.4-lx.30-rc.1`, arm64 AVD (Android 14), login.tailscale.com, 2026-11-02: `Logout` → `TailscaleLogin(ключ)` → Running ≈2 с без reload; узел с отвергнутым ключом (`invalid key: unable to validate API key`) → `TailscaleLogin(действующий)` → Running ≈2 с; `SetEndpointEnabled` off → `disabled`/Stopped, on → `up`/Running, off→on ≈20 мс.
+- Ложная тревога по ходу: первые неудачи давал обрезанный ключ (`adb input text` терял символы — в узел попали 55 и 20 символов), control отвечал `invalid key: API key does not exist`. Контрольный reload ключ не проверял: узел с сохранённым node key (`Persist{n=…}`, `regen=false`) входит без auth key. Ключ проверяет только регистрация нового node key — на это смотреть при разборе подобных жалоб.
+
 ## Не проверено
 
-- Живой вход по ключу из `NeedsLogin` и цикл выключение → включение против control (tailnet или Headscale). Юниты покрывают отказы, коды и проброс ключа; вызовы `LocalBackend` (`Start`, `EditPrefs`, `StartLoginInteractive`) — нет.
-- Поведение установленных потоков после включения (SPEC §2: должны оживать по ретрансмитам) — на живом узле.
+- Поведение установленных потоков после включения (SPEC §2: должны оживать по ретрансмитам).
+- Одна ранняя неудача LxBox с полным ключом (61 символ) не воспроизвелась.
