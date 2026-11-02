@@ -163,7 +163,11 @@ func TestLxNestedSelectorSwitchDuringDetourCloseNoDeadlock(t *testing.T) {
 	if now := adapter.GroupNow(inner); now != "node-b" {
 		t.Errorf("GroupNow(inner) = %q, ожидали node-b", now)
 	}
-	if connAlive(t, upstreamRemote) {
+	// Сокет узла interrupt не держит: его закрывает цикл копирования
+	// ConnectionManager, когда видит закрытое входящее, — уже после возврата
+	// SelectOutbound. Проверка сразу же ловила цикл живым (проба уходила в его
+	// чтение), отсюда ожидание.
+	if !connClosedWithin(t, upstreamRemote, 2*time.Second) {
 		t.Error("сокет узла пережил переключение — interrupt не сработал")
 	}
 	if connAlive(t, inboundClient) {
@@ -188,4 +192,18 @@ func TestLxNestedSelectorSwitchDuringDetourCloseNoDeadlock(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("новый dial после переключения завис — замок группы не отпущен")
 	}
+}
+
+// connClosedWithin ждёт, пока конец пайпа не окажется закрытым, — для
+// сокетов, которые рвутся асинхронно.
+func connClosedWithin(t *testing.T, c net.Conn, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for connAlive(t, c) {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return true
 }
