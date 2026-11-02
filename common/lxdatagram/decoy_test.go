@@ -5,8 +5,10 @@ import (
 	"net"
 	"testing"
 
+	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 )
 
 type writeRecordingConn struct {
@@ -19,15 +21,15 @@ func (c *writeRecordingConn) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func dialBoth(t *testing.T) (tcp, udp *writeRecordingConn) {
+func dialBoth(t *testing.T, ctx context.Context) (tcp, udp *writeRecordingConn) {
 	t.Helper()
 	destination := M.ParseSocksaddr("1.1.1.1:443")
 	tcp = &writeRecordingConn{framedConn: newFramedConn()}
-	if _, err := Dialer(&recordingDialer{conn: tcp}, nil).DialContext(context.Background(), N.NetworkTCP, destination); err != nil {
+	if _, err := Dialer(ctx, &recordingDialer{conn: tcp}, nil).DialContext(context.Background(), N.NetworkTCP, destination); err != nil {
 		t.Fatal(err)
 	}
 	udp = &writeRecordingConn{framedConn: newFramedConn()}
-	conn, err := Dialer(&recordingDialer{conn: udp}, nil).DialContext(context.Background(), N.NetworkUDP, destination)
+	conn, err := Dialer(ctx, &recordingDialer{conn: udp}, nil).DialContext(context.Background(), N.NetworkUDP, destination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,9 +39,13 @@ func dialBoth(t *testing.T) (tcp, udp *writeRecordingConn) {
 	return tcp, udp
 }
 
+func decoyContext(enabled bool) context.Context {
+	return service.ContextWithPtr(context.Background(), &option.LXResolved{QUICSniffDecoy: enabled})
+}
+
 func TestDialerSendsSniffDecoyFirstOnUDPOnly(t *testing.T) {
-	t.Setenv("LX_QUIC_SNIFF_DECOY", "1")
-	tcp, udp := dialBoth(t)
+	t.Setenv("LX_QUIC_SNIFF_DECOY", "")
+	tcp, udp := dialBoth(t, decoyContext(true))
 	if len(tcp.writes) != 0 {
 		t.Fatalf("tcp dial must not carry a decoy: %x", tcp.writes)
 	}
@@ -48,11 +54,27 @@ func TestDialerSendsSniffDecoyFirstOnUDPOnly(t *testing.T) {
 	}
 }
 
-func TestDialerSendsNoDecoyWhenDisabled(t *testing.T) {
+func TestSniffDecoyOffByDefault(t *testing.T) {
 	t.Setenv("LX_QUIC_SNIFF_DECOY", "")
-	_, udp := dialBoth(t)
-	if len(udp.writes) != 1 {
-		t.Fatalf("no decoy expected: %x", udp.writes)
+	for _, ctx := range []context.Context{context.Background(), decoyContext(false)} {
+		if _, udp := dialBoth(t, ctx); len(udp.writes) != 1 {
+			t.Fatalf("no decoy expected: %x", udp.writes)
+		}
+	}
+}
+
+func TestSniffDecoyEnvOverridesConfig(t *testing.T) {
+	t.Setenv("LX_QUIC_SNIFF_DECOY", "1")
+	if !SniffDecoyFromContext(context.Background()) {
+		t.Fatal("LX_QUIC_SNIFF_DECOY=1 must enable the decoy without the key")
+	}
+	t.Setenv("LX_QUIC_SNIFF_DECOY", "0")
+	if SniffDecoyFromContext(decoyContext(true)) {
+		t.Fatal("LX_QUIC_SNIFF_DECOY=0 must disable the decoy over the key")
+	}
+	t.Setenv("LX_QUIC_SNIFF_DECOY", "junk")
+	if !SniffDecoyFromContext(decoyContext(true)) {
+		t.Fatal("a non-boolean LX_QUIC_SNIFF_DECOY must leave the key in charge")
 	}
 }
 

@@ -442,3 +442,20 @@ func TestLXMTUAlign(t *testing.T) {
 		t.Fatal("an unknown mode must fail resolve")
 	}
 }
+
+// lx.quic_sniff_decoy (lx: SPEC 151): absent = off, true survives the
+// canonical rewrite on its own (no other lx key set).
+func TestLXQUICSniffDecoy(t *testing.T) {
+	t.Parallel()
+	_, off, _ := mustResolveLX(t, `{}`)
+	if off.QUICSniffDecoyOrOff() || (*LXResolved)(nil).QUICSniffDecoyOrOff() {
+		t.Fatal("quic_sniff_decoy must default to off")
+	}
+	options, on, _ := mustResolveLX(t, `{"lx":{"quic_sniff_decoy":true}}`)
+	if !on.QUICSniffDecoyOrOff() {
+		t.Fatal("quic_sniff_decoy: true must resolve on")
+	}
+	if options.LX == nil || !options.LX.QUICSniffDecoy {
+		t.Fatal("canonical options must keep lx.quic_sniff_decoy")
+	}
+}

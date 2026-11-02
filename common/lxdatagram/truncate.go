@@ -97,16 +97,17 @@ var (
 )
 
 // Dialer wraps the UDP conns a dialer hands out with TruncateReads and, when
-// enabled, sends the SPEC 151 sniff decoy on each; TCP dials and ListenPacket
-// pass through. It is the seam for clients that dial inside
-// a library (sing-quic's hysteria2 and tuic).
-func Dialer(dialer N.Dialer, logger logger.Logger) N.Dialer {
-	return &truncDialer{Dialer: dialer, logger: logger}
+// lx.quic_sniff_decoy is on in ctx, sends the SPEC 151 sniff decoy on each;
+// TCP dials and ListenPacket pass through. It is the seam for clients that
+// dial inside a library (sing-quic's hysteria2 and tuic).
+func Dialer(ctx context.Context, dialer N.Dialer, logger logger.Logger) N.Dialer {
+	return &truncDialer{Dialer: dialer, logger: logger, sniffDecoy: SniffDecoyFromContext(ctx)}
 }
 
 type truncDialer struct {
 	N.Dialer
-	logger logger.Logger
+	logger     logger.Logger
+	sniffDecoy bool
 }
 
 func (d *truncDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -117,7 +118,7 @@ func (d *truncDialer) DialContext(ctx context.Context, network string, destinati
 	if N.NetworkName(network) != N.NetworkUDP {
 		return conn, nil
 	}
-	if SniffDecoyEnabled() {
+	if d.sniffDecoy {
 		WriteSniffDecoy(conn, d.logger)
 	}
 	return TruncateReads(conn, d.logger), nil

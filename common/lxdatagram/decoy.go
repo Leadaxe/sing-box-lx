@@ -14,20 +14,26 @@ package lxdatagram
 // stateless reset.
 
 import (
+	"context"
 	"net"
 	"os"
 	"strconv"
 
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/logger"
+	"github.com/sagernet/sing/service"
 )
 
 var sniffDecoy = []byte{0x00}
 
-// SniffDecoyEnabled reports whether the decoy is on. Gated by
-// LX_QUIC_SNIFF_DECOY until the config form is settled.
-func SniffDecoyEnabled() bool {
-	enabled, _ := strconv.ParseBool(os.Getenv("LX_QUIC_SNIFF_DECOY"))
-	return enabled
+// SniffDecoyFromContext reports whether the decoy is on for outbounds built
+// in ctx: lx.quic_sniff_decoy from the box context (absent = off), unless the
+// debug variable LX_QUIC_SNIFF_DECOY holds a boolean, which wins either way.
+func SniffDecoyFromContext(ctx context.Context) bool {
+	if enabled, err := strconv.ParseBool(os.Getenv("LX_QUIC_SNIFF_DECOY")); err == nil {
+		return enabled
+	}
+	return service.PtrFromContext[option.LXResolved](ctx).QUICSniffDecoyOrOff()
 }
 
 // WriteSniffDecoy sends the decoy datagram on a freshly dialled QUIC conn,

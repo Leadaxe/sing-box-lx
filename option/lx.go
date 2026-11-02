@@ -25,6 +25,11 @@ type LXOptions struct {
 	// (lx: SPEC 120): a mode string, or an object with the mode and the tags
 	// to leave alone. Absent = "clamp".
 	MTUAlign *LXMTUAlign `json:"mtu_align,omitempty"`
+	// QUICSniffDecoy sends one non-QUIC byte ahead of the first Initial of
+	// every masque h3, hysteria2 and tuic dial, so a relay that rewrites the
+	// destination by the sniffed SNI leaves it as dialled (lx: SPEC 151).
+	// Absent = off.
+	QUICSniffDecoy bool `json:"quic_sniff_decoy,omitempty"`
 }
 
 // LXWGOptions holds the WG/AWG endpoint knobs. The three idle keys keep the
@@ -145,6 +150,8 @@ type LXResolved struct {
 	TrustTunnel LXTrustTunnelResolved
 	// MTUAlign always carries a mode: "clamp" when the key is absent.
 	MTUAlign LXMTUAlignResolved
+	// QUICSniffDecoy is lx.quic_sniff_decoy (lx: SPEC 151).
+	QUICSniffDecoy bool
 }
 
 type LXWGResolved struct {
@@ -197,6 +204,11 @@ func (r *LXResolved) TrustTunnelOrZero() LXTrustTunnelResolved {
 		return LXTrustTunnelResolved{}
 	}
 	return r.TrustTunnel
+}
+
+// QUICSniffDecoyOrOff returns lx.quic_sniff_decoy, or false when r is nil.
+func (r *LXResolved) QUICSniffDecoyOrOff() bool {
+	return r != nil && r.QUICSniffDecoy
 }
 
 // MTUAlignOrDefault returns the mtu_align policy, or the default (clamp,
@@ -274,6 +286,7 @@ func ResolveLX(options *Options) (*LXResolved, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	resolved.QUICSniffDecoy = lx.QUICSniffDecoy
 
 	if wg != (LXWGOptions{}) {
 		lx.WG = &wg
@@ -289,7 +302,7 @@ func ResolveLX(options *Options) (*LXResolved, []string, error) {
 	if lx.MTUAlign != nil && lx.MTUAlign.Mode == "" && len(lx.MTUAlign.Except) == 0 {
 		lx.MTUAlign = nil
 	}
-	if lx.WG == nil && lx.MASQUE == nil && lx.TrustTunnel == nil && lx.MTUAlign == nil {
+	if lx.WG == nil && lx.MASQUE == nil && lx.TrustTunnel == nil && lx.MTUAlign == nil && !lx.QUICSniffDecoy {
 		options.LX = nil
 	} else {
 		options.LX = &lx
