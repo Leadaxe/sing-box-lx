@@ -28,6 +28,19 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.4-lx.30-rc.1
+
+Пререлиз после `v1.14.4-lx.29`. База — sing-box `v1.14.4`, `upstream/stable` `c005f3530`, дрейф 0, сабмодули и Go 1.26.10 не менялись. Темы: вход по новому ключу и выключатель Tailscale-endpoint'а без перезапуска (SPEC 149, запрос LxBox), бамп `x/net`/`x/crypto`/`grpc` по govulncheck и строка режима oom-killer при старте (SPEC 148 §5). rc нужен LxBox для пина под SPEC 149 и служит полной релизной сборкой после смены зависимостей.
+
+- 🆕 **Tailscale: вход с новым ключом и выключение endpoint'а без перезапуска box ([SPEC 149](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/149-TAILSCALE_LOGIN_TOGGLE/SPEC.md)).** Узел, которому control отказал (`invalid key: API key does not exist`), раньше брал новый ключ только правкой конфига и полным рестартом сервиса.
+  - RPC `TailscaleLogin(endpointTag, authKey)` (блок `lx_command`) повторяет на работающем backend'е старт tsnet: `Start` с ключом и prefs старта, `editPrefs`, `StartLoginInteractive` в `NeedsLogin`; пустой ключ — интерактивный вход, AuthURL появляется в статусе endpoint'а. Вошедший узел (tsnet там ключ игнорирует) и выключенный — `FailedPrecondition`. Ключ не логируется.
+  - Выключатель — `adapter.EndpointToggle` за прежним `SetEndpointEnabled` (SPEC 106): `WantRunning=false/true`, идентичность и состояние узла сохраняются. Дайлы и listen через выключенный endpoint отказывают сразу, до резолва домена, а не по таймауту gVisor; апстримный `Logout` выключенного отказывает. Выключение не переживает рестарт: tsnet ставит `WantRunning=true` при каждом старте.
+  - `GetOutbounds.endpointState` для Tailscale: `up`/`disabled`/`down`. libbox — `CommandClient.TailscaleLogin`, javap-дельта — один метод `tailscaleLogin(String, String)`.
+  - Логика в `protocol/tailscale/toggle_lx.go`, в апстримном `endpoint.go` четыре блока `// lx:`. `protocol/tailscale` добавлен в lx-ci — раньше его тесты не бежали ни в одном шаге. Против живого control (tailnet/Headscale) не прогонялось, проверка — за LxBox.
+- 🔧 **Зависимости по govulncheck.** `golang.org/x/net` v0.57.0 → v0.62.0 (HTTP/2-сервер, квадратичный разбор HTML), `golang.org/x/crypto` v0.54.0 → v0.58.0 (SSH), `google.golang.org/grpc` v1.83.1 → v1.83.2; заодно `x/sys`, `x/text`, `x/term`, `x/sync`, `x/mod`, `x/tools`. govulncheck: 10 достижимых → 0. `x/net` ≥ v0.60 требует `go 1.26.0` в `go.mod` (апстрим — 1.25.5); сборки и раньше шли на `go.version`, Win7 тоже. Расхождение с апстримом — `// lx:` над директивой `go`, на синке брать пины апстрима, когда они не старше.
+- 🧰 **oom-killer пишет режим и пороги при старте слежения (SPEC 148 §5):** `mode: runtime_limit, limit: 200 MB, trigger: 195 MB, armed: 190 MB`, `, report only` при `killer_disabled` — по просьбе LxBox после проверки lx.29 на AVD.
+- 🧰 Мелочи: `lxd` снова собирается под freebsd (`Rlimit.Cur` там `int64`); нестабильный `TestLxNestedSelectorSwitchDuringDetourCloseNoDeadlock` ждёт асинхронного закрытия сокета узла вместо мгновенной проверки; комментарий `build_libbox` и ноты lx.38 — `ts_omit_taildrop` в AAR no-op, Taildrop в AAR есть.
+
 #### v1.14.4-lx.29
 
 Стабильный релиз после `v1.14.4-lx.28`, без rc-линии. База — sing-box `v1.14.4`, `upstream/stable` `c005f3530`, дрейф 0 (сабмодули, `go.mod` и Go 1.26.10 с lx.28 не менялись; dry run релизной сборки не требуется). Одна тема: лимит памяти oom-killer по памяти Go-рантайма вместо RSS процесса и память рантайма в `Status` (SPEC 148, issue #62). Пользовательские ноты — `docs-lx/releases/v1.14.4-lx.29.md`.
