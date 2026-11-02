@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | Type | B (bug) — a QUIC client (`masque` h3, upstream `hysteria2`, `tuic`) dies a few seconds after the handshake when its UDP runs through a stream-tunnelled `detour` |
-| Status | I (implemented) — 2026-11-02: helper, three seams, red/green units in the tree; the final build on the owner's Mac kept h3 alive through the n009 relay in plain and XUDP packing (4 of 4 pings over 20 s, where it died at 1–5 s before); the second relay of the 2026-11-01 stand (n002) had broken on its own that day (vless TCP ping failed, QUIC through it landed on a foreign key); the reporter's device and live hysteria2/tuic servers not run |
+| Status | I (implemented) — 2026-11-02: helper, three seams, red/green units in the tree; the final build on the owner's Mac kept h3 alive through the n009 relay in plain and XUDP packing (4 of 4 pings over 20 s, where it died at 1–5 s before); the second relay of the 2026-11-01 stand (n002) had broken on its own that day (vless TCP ping failed, QUIC through it landed on a foreign key); the reporter's device not run; hysteria2 and tuic through a vless detour verified on a loopback stand with an injected WARP-like ladder (§3): pre-fix binary dies with `short buffer`, fixed one 7 of 7 in both packings |
 | Branch | `lx` |
 | Build tag | — (`common/lxdatagram`, `protocol/masque` build always; the `protocol/hysteria2` and `protocol/tuic` seams sit under upstream's `with_quic`) |
 | Origin | Telegram report by zomg 2026-11-01 (LxBox 2.25.19-rc.1, core `v1.14.4-lx.28`): the node "WARP (MASQUE) h3" with `detour` through free `[BL]` relays never comes up, while MASQUE h2 and AWG through the same relays work. Stand on the owner's Mac 2026-11-01 against the relays of `igareck/vpn-configs-for-russia`, decisive measurement with a debug build the same evening |
@@ -287,6 +287,21 @@ the wrapper is a no-op (§2.1), so the hot path of both protocols does not chang
   through the detour must survive past the 5-second mark where it died before.
 - Device (LxBox): the reporter's "WARP (MASQUE) h3" node with `detour` through a `[BL]` relay that
   passes UDP. Behind the reporter.
+- Loopback stand for hysteria2/tuic (Mac, 2026-11-02, no network): one `sing-box` process serves
+  a `vless` inbound (the "relay"), a `hysteria2` inbound and a `tuic` inbound with a self-signed
+  certificate; a small Python UDP proxy sits between the relay's egress and the two QUIC servers
+  and, after the fourth server→client datagram of every session, injects the WARP ladder of twelve
+  oversize datagrams (3×1462, 3×1457, 3×1454, 3×1453, first byte `0x40`, random body); the client
+  process routes two `mixed` inbounds to a `hysteria2` and a `tuic` outbound, both with `detour` to
+  the vless outbound, `packet_encoding` `xudp` and `packetaddr` in turn; seven `curl` rounds through
+  each, 3 s apart, to a local HTTP server. Pre-fix binary (built from the parent of the fix
+  commit): hysteria2 fails every round in both packings with
+  `http3: parsing frame failed: quic: transport closed: short buffer` and re-dials a session per
+  request; tuic answers the first one or two requests before the ladder lands and then times out
+  every round. Fixed binary: 7 of 7 `200` for hysteria2 and tuic in both packings, one session
+  per outbound for the whole run, and the one-shot debug line
+  `datagram of 1462 bytes truncated to the 1452-byte read buffer` once per outbound. The stand
+  reproduces the mechanism, not a live hysteria2/tuic server with its own PMTUD.
 
 ## 4. Files
 
