@@ -16,8 +16,6 @@ package lxdatagram
 import (
 	"context"
 	"net"
-	"os"
-	"strconv"
 
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/logger"
@@ -27,12 +25,8 @@ import (
 var sniffDecoy = []byte{0x00}
 
 // SniffDecoyFromContext reports whether the decoy is on for outbounds built
-// in ctx: lx.quic_sniff_decoy from the box context (absent = off), unless the
-// debug variable LX_QUIC_SNIFF_DECOY holds a boolean, which wins either way.
+// in ctx: lx.quic_sniff_decoy from the box context, absent = off.
 func SniffDecoyFromContext(ctx context.Context) bool {
-	if enabled, err := strconv.ParseBool(os.Getenv("LX_QUIC_SNIFF_DECOY")); err == nil {
-		return enabled
-	}
 	return service.PtrFromContext[option.LXResolved](ctx).QUICSniffDecoyOrOff()
 }
 

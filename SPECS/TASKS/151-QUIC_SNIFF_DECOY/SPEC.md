@@ -70,8 +70,7 @@ previous error"), so the decoy would hold there too.
 - `WriteSniffDecoy(conn, logger)` writes it once; a failed write is logged at debug and ignored
   (the decoy is advisory, the handshake reports a broken conn by itself).
 - `SniffDecoyFromContext(ctx)` returns `lx.quic_sniff_decoy` from the box context
-  (`option.LXResolved.QUICSniffDecoyOrOff`, absent = off); `LX_QUIC_SNIFF_DECOY` holding a
-  boolean (`strconv.ParseBool`) wins over the key either way — a debug lever (§4).
+  (`option.LXResolved.QUICSniffDecoyOrOff`, absent = off). No environment override (§4).
 
 ### 3.2 Seams
 
@@ -107,7 +106,8 @@ global for the three clients; absent = off.
 "lx": { "quic_sniff_decoy": true }
 ```
 
-`LX_QUIC_SNIFF_DECOY=1`/`0` in the environment overrides the key for debugging. User docs —
+The key is the only switch: the `LX_QUIC_SNIFF_DECOY` environment override that rc.3 carried is
+removed (owner 2026-11-02). User docs —
 `docs-lx/lx-config.md` §13.
 
 ## 5. Verification
@@ -131,8 +131,7 @@ The key itself (no env) on the same stands: absent — masque 0 of 5, hysteria2/
 5 of 5 and 4 of 4.
 
 Units (`common/lxdatagram/decoy_test.go`, `option/lx_test.go`): the dialer sends the decoy first on
-`udp` only, nothing when the key is absent or false; the env overrides the key both ways and a
-non-boolean value leaves the key in charge; the key resolves and survives the canonical rewrite; the decoy is not a long header, has the fixed bit clear and is shorter than a
+`udp` only, nothing when the key is absent or false; the key resolves and survives the canonical rewrite; the decoy is not a long header, has the fixed bit clear and is shorter than a
 stateless-reset trigger.
 
 ### 5.1 Live `[BL]` relays (2026-11-02, rc.3 build)

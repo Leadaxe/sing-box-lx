@@ -44,7 +44,6 @@ func decoyContext(enabled bool) context.Context {
 }
 
 func TestDialerSendsSniffDecoyFirstOnUDPOnly(t *testing.T) {
-	t.Setenv("LX_QUIC_SNIFF_DECOY", "")
 	tcp, udp := dialBoth(t, decoyContext(true))
 	if len(tcp.writes) != 0 {
 		t.Fatalf("tcp dial must not carry a decoy: %x", tcp.writes)
@@ -55,26 +54,10 @@ func TestDialerSendsSniffDecoyFirstOnUDPOnly(t *testing.T) {
 }
 
 func TestSniffDecoyOffByDefault(t *testing.T) {
-	t.Setenv("LX_QUIC_SNIFF_DECOY", "")
 	for _, ctx := range []context.Context{context.Background(), decoyContext(false)} {
 		if _, udp := dialBoth(t, ctx); len(udp.writes) != 1 {
 			t.Fatalf("no decoy expected: %x", udp.writes)
 		}
-	}
-}
-
-func TestSniffDecoyEnvOverridesConfig(t *testing.T) {
-	t.Setenv("LX_QUIC_SNIFF_DECOY", "1")
-	if !SniffDecoyFromContext(context.Background()) {
-		t.Fatal("LX_QUIC_SNIFF_DECOY=1 must enable the decoy without the key")
-	}
-	t.Setenv("LX_QUIC_SNIFF_DECOY", "0")
-	if SniffDecoyFromContext(decoyContext(true)) {
-		t.Fatal("LX_QUIC_SNIFF_DECOY=0 must disable the decoy over the key")
-	}
-	t.Setenv("LX_QUIC_SNIFF_DECOY", "junk")
-	if !SniffDecoyFromContext(decoyContext(true)) {
-		t.Fatal("a non-boolean LX_QUIC_SNIFF_DECOY must leave the key in charge")
 	}
 }
 

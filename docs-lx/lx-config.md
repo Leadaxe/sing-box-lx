@@ -1292,8 +1292,7 @@ long-header packet takes its QUIC sniffer out, and the destination stays as dial
 drops the byte unparsed (QUIC fixed bit clear). No delay, no extra handshake. Turn it on when a
 QUIC node works directly and breaks through a relay you do not control (h2 masque through the same
 relay usually works — SPEC 060). sing-box relays (1.13+) do not rewrite the destination by sniffing
-and need nothing. Debug override: environment `LX_QUIC_SNIFF_DECOY=1`/`0` wins over the key.
-Not covered: hysteria2 port hopping (`server_ports`). Details — [SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md).
+and need nothing. Not covered: hysteria2 port hopping (`server_ports`). Details — [SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md).
 
 ### Deprecated `route.lx_idle_*`
 
