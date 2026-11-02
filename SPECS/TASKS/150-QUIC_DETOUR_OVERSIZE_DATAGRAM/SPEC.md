@@ -302,6 +302,18 @@ the wrapper is a no-op (§2.1), so the hot path of both protocols does not chang
   per outbound for the whole run, and the one-shot debug line
   `datagram of 1462 bytes truncated to the 1452-byte read buffer` once per outbound. The stand
   reproduces the mechanism, not a live hysteria2/tuic server with its own PMTUD.
+- Relay matrix re-run on the fixed binary (Mac, 2026-11-02 16:00, the same fourteen `[BL]`
+  candidates as the 2026-11-01 stand, h2 and h3 to WARP through each, h3 in XUDP and native vless
+  UDP packing): h3 comes up and stays up only through n009 (Poland, REALITY), the one relay that
+  passes UDP untouched — 7 of 7 pings at 3-second intervals in both packings (341–460 ms XUDP,
+  367–481 ms native after a 1.2 s first), with the one-shot debug line `datagram of 1462 bytes
+  truncated to the 1452-byte read buffer` right after `h3 tunnel established`, i.e. the WARP ladder
+  did arrive and was absorbed. No `short buffer` anywhere in the run. The other thirteen fail in
+  their own layers, unchanged from §1.1: six Anycast ws fronts close the WebSocket or EOF on the
+  first UDP frame (no UDP), n011 and n002 land on a foreign key (Xray QUIC sniffing by SNI), n001
+  times out on its own TCP, n014/n058/n059/n085 EOF on dial. h2 passes through n009, n011, n001,
+  n002. `packet_encoding: packetaddr` is a sing-box-only encoding and EOFs on every Xray relay; the
+  two packings that matter in the field are XUDP (LxBox default) and native.
 
 ## 4. Files
 
