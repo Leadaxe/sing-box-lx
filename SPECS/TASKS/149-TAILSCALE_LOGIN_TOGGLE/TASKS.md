@@ -9,3 +9,5 @@
 - [x] 5. Сборки и тесты по PLAN этапу 3; javap; gofmt
 - [x] 6. Доки
 - [x] 7. Живой прогон: вход по ключу из `NeedsLogin`, выключение и включение на tailnet (LxBox, AVD, SaaS, 2026-11-02)
+- [x] 8. Taildrop (SPEC §4): `disable_taildrop`, `senderID` в `TaildropFile`, юниты, доки
+- [ ] 9. Живой прогон Taildrop: отказ приёма и отправки, `senderID` у полученного файла (LxBox)

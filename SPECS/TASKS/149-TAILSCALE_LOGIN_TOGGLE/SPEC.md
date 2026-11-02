@@ -4,8 +4,8 @@
 
 | Поле | Значение |
 |------|----------|
-| Тип | F (feature) — вход Tailscale-узла с новым ключом и его выключение/включение без перезапуска ядра |
-| Статус | D (done, device-verified) — пререлиз `v1.14.4-lx.30-rc.1` 2026-11-02; LxBox на arm64 AVD (Android 14) против login.tailscale.com: Logout → `TailscaleLogin` → Running ≈2 с без reload; узел с отвергнутым ключом → `TailscaleLogin` с действующим → Running ≈2 с; выключение → `disabled`/Stopped, включение → `up`/Running |
+| Тип | F (feature) — вход Tailscale-узла с новым ключом и его выключение/включение без перезапуска ядра; выключатель Taildrop узла и отправитель входящего файла |
+| Статус | D (done, device-verified) — пререлиз `v1.14.4-lx.30-rc.1` 2026-11-02; LxBox на arm64 AVD (Android 14) против login.tailscale.com: Logout → `TailscaleLogin` → Running ≈2 с без reload; узел с отвергнутым ключом → `TailscaleLogin` с действующим → Running ≈2 с; выключение → `disabled`/Stopped, включение → `up`/Running. §4 (Taildrop, 2026-11-02) — I (implemented), юниты; на устройстве не проверен |
 | Ветка | `lx` |
 | Build-tag | ядро — без тега (методы без вызова ведут себя как апстрим); RPC — `with_lx_command` |
 | Связано | [106](../106-WG_ENDPOINT_TOGGLE/SPEC.md) (переключатель WG/AWG, тот же RPC), [115](../115-TAILSCALE_PEER_PATH_STATUS/SPEC.md) (статус Tailscale-узла) |
@@ -16,6 +16,11 @@
 
 1. **Вход** с переданным auth key, без перезапуска box. Пустой ключ = интерактивный вход (AuthURL в статусе).
 2. **Выключение/включение** узла, как у WG/AWG в SPEC 106: узел уходит из tailnet с сохранением личности, дайлы через него отвергаются, остальной box работает. Выключение и включение подряд = «перезапустить один залипший узел».
+
+Второй запрос LxBox, решение владельца 2026-11-02 — §4:
+
+3. **Выключатель Taildrop** узла. Сейчас узел принимает файлы от своих устройств всегда, если file sharing включён в админке; клиент не может отказаться от файла, только удалить его после приёма.
+4. **Отправитель входящего файла.** Разрешения на служебные файлы у LxBox и лаунчера привязаны к устройству-отправителю, а имя пира можно сменить; нужен stable node ID.
 
 ## 2. Выключение и включение
 
@@ -56,7 +61,42 @@
 - Ключ не пишется в лог и не возвращается ни в каком ответе. `KeyAuth` статуса (SPEC 115) по-прежнему отражает только конфиг.
 - Апстримный `Logout` выключенного узла отвергается той же ошибкой: он перезапускает бэкенд с `WantRunning=true` и включил бы узел в обход флага.
 
-## 4. RPC
+## 4. Taildrop
+
+### 4.1 `disable_taildrop`
+
+```json
+{ "type": "tailscale", "tag": "ts", "disable_taildrop": true }
+```
+
+Поле отсутствует или `false` — как апстрим. `true`:
+
+| Путь | Результат |
+|---|---|
+| peer API `/v0/put/` (PUT файла и GET докачки) | 403 `Taildrop is disabled on this node`; у отправителя — ошибка с этим текстом |
+| `SendTaildropFiles` с этого узла | `FailedPrecondition` `Taildrop is disabled on this node`, до проверки состояния узла |
+| статус узла (`GetTailscaleStatus`, поток статуса) | `canShareFiles = false`, у всех пиров `canReceiveFiles = false` |
+| файлы, уже лежащие в `taildrop_directory` | остаются во входящих; открытие и удаление работают |
+
+- Проверка стоит перед апстримными проверками прав: при выключенном Taildrop узел не смотрит ни права пира, ни capability админки.
+- Другие устройства tailnet по-прежнему видят узел получателем: это решает control (`CapabilityFileSharing`, `PeerCapabilityFileSharingTarget`), а не узел. Отказ отправитель узнаёт ответом 403.
+- Ключ конфига: меняется reload'ом, переключения на лету нет.
+
+### 4.2 `senderID` у полученного файла
+
+`TaildropFile` (адаптер, proto, libbox) получает `senderID` — stable node ID отправителя, тот же, что у `TaildropReceivingFile.senderID` во время приёма.
+
+```proto
+message TaildropFile {
+  ...
+  string senderID = 5; // empty for files received before the core restarted
+}
+```
+
+- Хранится в памяти рядом с `senderName` и с ним же чистится (удаление файла, файл пропал с диска). После перезапуска ядра у файлов, лежавших на диске, пустые оба поля.
+- libbox: `TaildropFile.SenderID` (`getSenderID()` в javap).
+
+## 5. RPC
 
 ```proto
 rpc TailscaleLogin(TailscaleLoginRequest) returns (google.protobuf.Empty) {}
@@ -79,7 +119,7 @@ message TailscaleLoginRequest {
 
 libbox для LxBox: `CommandClient.TailscaleLogin(endpointTag, authKey string) error` → в javap `public native void tailscaleLogin(java.lang.String, java.lang.String) throws java.lang.Exception`. Выключение — существующий `setEndpointEnabled`.
 
-## 5. Карта реализации
+## 6. Карта реализации
 
 | Файл | Что |
 |---|---|
@@ -89,22 +129,33 @@ libbox для LxBox: `CommandClient.TailscaleLogin(endpointTag, authKey string) 
 | `daemon/started_service.proto` + регенерация `*.pb.go` | RPC и сообщение в блоке `lx_command` |
 | `daemon/started_service_tailscale_lx.go` / `_stub.go` | обработчик `TailscaleLogin` и близнец `Unimplemented` |
 | `experimental/libbox/command_client_tailscale_lx.go` | `CommandClient.TailscaleLogin` |
+| `option/tailscale.go` | `// lx:` поле `DisableTaildrop` |
+| `protocol/tailscale/endpoint.go` | `// lx:` поле `taildropDisabled` из опции |
+| `protocol/tailscale/taildrop.go` | `// lx:` отказ 403 в `handleTaildropRequest`; карта `senderIDs` рядом с `senderNames` |
+| `protocol/tailscale/taildrop_send.go` | `// lx:` отказ в `SendTaildropFile`, `false` в `taildropTargets` |
+| `adapter/tailscale.go`, `adapter/tailscale_login_lx.go` | `// lx:` поле `TaildropFile.SenderID`; ошибка `ErrTaildropDisabled` |
+| `daemon/started_service.proto`, `started_service_taildrop.go` | `senderID = 5` в блоке `lx_command`; `ErrTaildropDisabled` → `FailedPrecondition`, перенос `SenderID` |
+| `experimental/libbox/command_types_taildrop.go` | `// lx:` поле `TaildropFile.SenderID` |
 
-## 6. Границы
+## 7. Границы
 
 - CLI-команды нет: управление — из LxBox и через `lxd` (тот же обработчик).
 - Ядро не следит за ключом и не меняет его само; когда звать вход — решает клиент по `GetTailscaleStatus`.
 - Режим `system_interface` (системный TUN Tailscale): выключение опускает бэкенд так же; трафик ОС в интерфейс без пиров никуда не уходит.
 
-## 7. За чем следить на мерже
+## 8. За чем следить на мерже
 
 - `protocol/tailscale/endpoint.go`: проверки в `DialContext` (сразу после `started`) и в начале `ListenPacketWithDestination`; `Logout` — порядок `Start` → `editPrefs` → `StartLoginInteractive`, его повторяет `TailscaleLogin`.
 - `tsnet.Server.start` в `sagernet/tailscale`: состав prefs и `UpdatePrefs` с `WantRunning=true` при старте — на нём держится «не сохраняется» §2.
 - `daemon/started_service.proto`: блок `lx_command` переносится руками, `*.pb.go` — только регенерацией.
+- `TaildropFile` в proto — апстримное сообщение: если апстрим займёт номер 5, наш `senderID` уходит на следующий свободный, клиенты пересобираются.
+- `protocol/tailscale/taildrop.go`: каждое изменение `senderNames` сопровождается тем же для `senderIDs`; новая апстримная ветка, чистящая `senderNames`, без пары оставит лишнюю запись в памяти.
 
-## 8. Тесты
+## 9. Тесты
 
 - `protocol/tailscale/toggle_lx_test.go`: отказ дайла и listen у выключенного до резолва домена; `IdleState` по трём состояниям; `SetEnabled` и `TailscaleLogin` у незапущенного → `os.ErrClosed`; вход у выключенного → `ErrTailscaleDisabled`; `Logout` выключенного отвергается.
 - `daemon/started_service_tailscale_lx_test.go`: коды `TailscaleLogin` — `FailedPrecondition` (сервис не запущен, `ErrTailscaleDisabled`, `ErrTailscaleLoggedIn`, `os.ErrClosed`), `NotFound`, `InvalidArgument`, `Unavailable`; ключ доходит до endpoint'а; `_stub_lx_test.go`: `Unimplemented`.
 - `experimental/libbox`: запрос через подменённый `StartedServiceClient`, gRPC-код доходит до вызывающего.
-- Вход по ключу и `WantRunning` против живого control юнитами не покрываются: нужен tailnet или Headscale.
+- `protocol/tailscale/taildrop_lx_test.go`: 403 на PUT и GET peer API при `disable_taildrop`; отказ `SendTaildropFile` и `canShareFiles = false` у запущенного и незапущенного; `SenderID` во входящих, очистка при удалении, пустой после перезапуска менеджера.
+- `daemon/started_service_taildrop_lx_test.go`: `ErrTaildropDisabled` → `FailedPrecondition`; `SenderID` в proto.
+- Вход по ключу и `WantRunning` против живого control юнитами не покрываются: нужен tailnet или Headscale. Taildrop между двумя узлами — тоже.

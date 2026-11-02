@@ -289,6 +289,7 @@ full picture.
 | `GetOutbounds → OutboundList` | **lx**: outbound tags, to resolve chain entries; WG/AWG state (`endpointState`, SPEC 097); Tailscale `up`/`disabled`/`down` (SPEC 149) |
 | `GetWireGuardStatus(tag) → WireGuardEndpointStatus` | **lx**: one WG/AWG endpoint — device state and per-peer last handshake, address, transfer (SPEC 114) |
 | `GetTailscaleStatus(endpointTag) → TailscaleEndpointStatus` | **lx**: one Tailscale endpoint, fresh — per-peer path (direct / peer relay / DERP), handshake, backend health (SPEC 115) |
+| `SubscribeTaildropInbox(endpointTag) → stream TaildropInbox` | upstream; **lx**: a received file carries `senderID`, the sender's stable node ID, empty for files that were on disk before the core restarted (SPEC 149) |
 | `GetPool(GetPoolRequest) → PoolList` | **lx**: rotation state of a balanced urltest group (SPEC 019) |
 | `GetDNSGroups → DnsGroupList` | **lx**: full DNS group state |
 | `GetRunningConfig → RunningConfig` | **lx**: the config the core is actually running |

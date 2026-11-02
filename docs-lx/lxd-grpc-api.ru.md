@@ -291,6 +291,7 @@ detour пусто. Профайлеру, показывающему «весь �
 | `GetOutbounds → OutboundList` | **lx**: теги outbound'ов, чтобы раскрывать элементы цепочки; состояние WG/AWG (`endpointState`, SPEC 097); у Tailscale `up`/`disabled`/`down` (SPEC 149) |
 | `GetWireGuardStatus(tag) → WireGuardEndpointStatus` | **lx**: один WG/AWG-endpoint — состояние устройства и по каждому пиру последний хендшейк, адрес, трафик (SPEC 114) |
 | `GetTailscaleStatus(endpointTag) → TailscaleEndpointStatus` | **lx**: один Tailscale-endpoint, свежий снимок — путь к каждому пиру (direct / peer relay / DERP), хендшейк, предупреждения бэкенда (SPEC 115) |
+| `SubscribeTaildropInbox(endpointTag) → stream TaildropInbox` | апстрим; **lx**: у полученного файла `senderID` — stable node ID отправителя, пустой для файлов, лежавших до перезапуска ядра (SPEC 149) |
 | `GetPool(GetPoolRequest) → PoolList` | **lx**: состояние ротации балансируемой urltest-группы (SPEC 019) |
 | `GetDNSGroups → DnsGroupList` | **lx**: полное состояние DNS-групп |
 | `GetRunningConfig → RunningConfig` | **lx**: конфиг, на котором ядро реально работает |

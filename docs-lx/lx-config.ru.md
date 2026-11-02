@@ -76,6 +76,7 @@ netstack; пробуждение = rebuild ~0.5–1 с; дефолт = reachable
 - [11. Снифферы протоколов для трафика из LAN (SPEC 078 / 080)](#11-снифферы-протоколов-для-трафика-из-lan-spec-078--080)
 - [12. Проверка и сборка](#12-проверка-и-сборка)
 - [13. Корневой блок `lx` (SPEC 098)](#13-корневой-блок-lx-spec-098)
+- [14. Tailscale: выключить Taildrop (SPEC 149)](#14-tailscale-выключить-taildrop-spec-149)
 
 ---
 
@@ -1294,3 +1295,13 @@ Running-config (`GetRunningConfig`, SPEC 037) отдаёт блок в кано�
 
 `single_engine` и `lazy_start` зарезервированы за SPEC 096. До неё подблок `lx.naive` отвергается
 как любой неизвестный ключ.
+
+## 14. Tailscale: выключить Taildrop (SPEC 149)
+
+Ключ `disable_taildrop` на endpoint'е `tailscale`. Без ключа Taildrop работает как в апстриме.
+
+```json
+{ "type": "tailscale", "tag": "ts", "disable_taildrop": true }
+```
+
+С `true` узел не принимает файлы: отправитель получает ошибку 403 `Taildrop is disabled on this node`. Отправка с узла тоже отвергается, в статусе `canShareFiles = false`. Файлы, полученные раньше, остаются в `taildrop_directory`, их можно открыть и удалить. Другие устройства tailnet по-прежнему видят узел получателем, это задаёт админка Tailscale, а не узел.

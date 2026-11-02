@@ -78,6 +78,7 @@ timelines and the recommended mobile configuration live in
 - [11. Protocol sniffers for LAN traffic (SPEC 078 / 080)](#11-protocol-sniffers-for-lan-traffic-spec-078--080)
 - [12. Validate & build](#12-validate--build)
 - [13. The `lx` root block (SPEC 098)](#13-the-lx-root-block-spec-098)
+- [14. Tailscale: turning Taildrop off (SPEC 149)](#14-tailscale-turning-taildrop-off-spec-149)
 
 ---
 
@@ -1297,3 +1298,13 @@ with `route.lx_idle_*` is shown as `lx.wg.*`, and the old keys are gone from it.
 
 `single_engine` and `lazy_start` are reserved for SPEC 096. Until that lands, an `lx.naive`
 sub-block is rejected like any unknown key.
+
+## 14. Tailscale: turning Taildrop off (SPEC 149)
+
+The `disable_taildrop` key on a `tailscale` endpoint. Without it Taildrop works as upstream.
+
+```json
+{ "type": "tailscale", "tag": "ts", "disable_taildrop": true }
+```
+
+With `true` the node accepts no files: the sender gets a 403 `Taildrop is disabled on this node`. Sending from the node is refused as well, and the status reports `canShareFiles = false`. Files received earlier stay in `taildrop_directory` and can still be opened and deleted. Other devices on the tailnet still see the node as a target; that is set by the Tailscale admin console, not by the node.
