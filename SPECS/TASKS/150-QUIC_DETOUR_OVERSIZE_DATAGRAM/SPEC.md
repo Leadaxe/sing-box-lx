@@ -327,6 +327,44 @@ the wrapper is a no-op (§2.1), so the hot path of both protocols does not chang
   Behind the router's tunnel path (NL egress) the same stand gives `remote endpoint has a different
   public key than pinned` for h2 and h3 alike, with or without the relay — the path, not the fix.
 
+### 3.1 The Xray sniffing layer, taken apart (2026-11-02, the owner's own Xray in NL)
+
+Not this spec's defect, recorded here because it is the other reason "h3 through a relay does not
+reach WARP", and because the stand showed why h2 survives it. The owner's router egressed through
+the owner's own Xray in Amsterdam; the Mac behind it, no detour, `sing-box-new`:
+
+| Masque node | Result |
+|---|---|
+| h3, `www.cloudflare.com` SNI | `remote endpoint has a different public key than pinned` |
+| h2, same SNI, whole ClientHello | the same foreign key |
+| h2, same SNI, `tls.record_fragment: true` | tunnel established, 204 three of three |
+
+Three `curl --resolve` connections to `162.159.198.2:443` through the same path explain the key:
+SNI `www.cloudflare.com` returns the certificate of the real `www.cloudflare.com` (Let's Encrypt,
+HTTP 200), SNI `consumer-masque.cloudflareclient.com` (no A record) and a nonexistent name are
+reset. That is Xray `sniffing` with `destOverride` and `routeOnly: false`: the inbound reads the
+SNI out of the TLS or QUIC ClientHello, replaces the destination with the name and resolves it
+again. A resolvable name lands on that name's host and its key; an unresolvable one is dropped.
+No SNI on our side helps; the only name that resolves inside `cloudflareclient.com`,
+`engage.cloudflareclient.com`, points at the WireGuard endpoint `162.159.192.1`, which does not
+serve MASQUE (h3 `handshake failure`, h2 a generic edge key).
+
+Why h2 passes and h3 does not, by Xray's code (`app/dispatcher/default.go`,
+`common/protocol/quic/sniff.go`, `common/protocol/tls/sniff.go`): the sniff loop has a 200 ms
+budget; the TLS sniffer answers a partial ClientHello with `ErrNoClue`, which counts as an attempt,
+and the loop gives up after two, so a ClientHello split into TLS records (SPEC 060 does it under any
+`detour`, hence every relay user's h2 worked) is never parsed and the destination stays. The QUIC
+sniffer decrypts the Initial packets with the version's initial secret, reassembles CRYPTO frames
+across packets and answers `ErrProtoNeedMoreData`, which does not count as an attempt: it keeps
+reading until the 200 ms run out. A QUIC ClientHello, whole or split, is therefore parsed as long
+as all its Initial packets arrive within 200 ms, which they do.
+
+Relay-side cure: `"routeOnly": true` in the inbound's `sniffing` (the sniffed domain is used for
+routing only, the destination stays the IP). A client-side counter for h3 exists in principle,
+the second Initial packet held back past the 200 ms budget, and is not part of this spec: a new
+behaviour under the owner's §3.1 test. The same sniffer explains why upstream hysteria2 and tuic
+with a fake SNI (`addons.mozilla.org` in #37) cannot pass such a relay either.
+
 ## 4. Files
 
 - `common/lxdatagram/truncate.go` — `TruncateReads`, `Dialer` (new)

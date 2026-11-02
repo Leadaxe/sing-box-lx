@@ -322,6 +322,44 @@ Salamander/Gecko/HopConn (hysteria2) и отдаёт результат в `qtls
   роутера (выход NL) тот же стенд даёт `remote endpoint has a different public key than pinned` для
   h2 и h3 одинаково, с релеем и без — путь, не фикс.
 
+### 3.1 Слой сниффинга Xray, разобранный (2026-11-02, собственный Xray владельца в NL)
+
+Не дефект этой спеки, записано здесь потому, что это вторая причина «h3 через релей не доходит
+до WARP», и потому, что стенд показал, почему h2 через неё проходит. Роутер владельца выходил
+через собственный Xray в Амстердаме; Mac за ним, без detour, `sing-box-new`:
+
+| Узел masque | Результат |
+|---|---|
+| h3, SNI `www.cloudflare.com` | `remote endpoint has a different public key than pinned` |
+| h2, тот же SNI, цельный ClientHello | тот же чужой ключ |
+| h2, тот же SNI, `tls.record_fragment: true` | туннель поднят, 204 три из трёх |
+
+Три соединения `curl --resolve` к `162.159.198.2:443` тем же путём объясняют ключ: с SNI
+`www.cloudflare.com` приходит сертификат настоящего `www.cloudflare.com` (Let's Encrypt, HTTP
+200), с SNI `consumer-masque.cloudflareclient.com` (A-записи нет) и с несуществующим именем —
+обрыв. Это `sniffing` Xray с `destOverride` и `routeOnly: false`: inbound читает SNI из TLS- или
+QUIC-ClientHello, подменяет назначение именем и резолвит его заново. Резолвящееся имя уводит на
+хост этого имени и его ключ, нерезолвящееся обрывается. Никакой SNI с нашей стороны не поможет;
+единственное имя в `cloudflareclient.com` с A-записью, `engage.cloudflareclient.com`, ведёт на
+WireGuard-эндпоинт `162.159.192.1`, который MASQUE не отдаёт (h3 `handshake failure`, h2 ключ
+обычного edge).
+
+Почему h2 проходит, а h3 нет, по коду Xray (`app/dispatcher/default.go`,
+`common/protocol/quic/sniff.go`, `common/protocol/tls/sniff.go`): у цикла сниффинга бюджет 200 мс;
+TLS-сниффер на неполный ClientHello отвечает `ErrNoClue`, это считается попыткой, после двух цикл
+сдаётся, поэтому ClientHello, порезанный на TLS-записи (SPEC 060 делает это под любым `detour`,
+отсюда рабочий h2 у всех пользователей релеев), не разбирается, и назначение остаётся. QUIC-сниффер
+расшифровывает Initial-пакеты начальным секретом версии, собирает CRYPTO-кадры из нескольких
+пакетов и отвечает `ErrProtoNeedMoreData`, что попыткой не считается: читает, пока не кончатся
+200 мс. QUIC-ClientHello, цельный или порезанный, разбирается, пока все его Initial-пакеты приходят
+за 200 мс, а они приходят.
+
+Лечение на релее: `"routeOnly": true` в `sniffing` входящего (домен из сниффинга только для
+маршрутизации, назначение остаётся IP). Клиентский контрход для h3 в принципе есть — второй
+Initial-пакет, придержанный дольше бюджета 200 мс, — и в эту спеку не входит: новое поведение,
+тест §3.1 за владельцем. Тот же сниффер объясняет, почему апстримные hysteria2 и tuic с чужим SNI
+(`addons.mozilla.org` в #37) через такой релей тоже не проходят.
+
 ## 4. Файлы
 
 - `common/lxdatagram/truncate.go` — `TruncateReads`, `Dialer` (новый)
