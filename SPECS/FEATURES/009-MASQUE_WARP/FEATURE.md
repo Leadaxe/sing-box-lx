@@ -155,6 +155,7 @@ outbound'ов, где исходящая датаграмма помечаетс
 | [121 — MASQUE_AUTO_MEMORY_TTL](../../TASKS/121-MASQUE_AUTO_MEMORY_TTL/SPEC.md) | Память h2 в `auto` — окно по лестнице 1 с → 10 мин вместо «навсегда»: один быстрый отказ h3 (`PROTOCOL_VIOLATION` от WARP) больше не паркует узел на TCP | I |
 | [137 — MASQUE_DRAINH3_LEAK](../../TASKS/137-MASQUE_DRAINH3_LEAK/SPEC.md) | Issue #52: в `auto` дренаж уже потреблённого результата h3 вешал горутину навсегда; она держала старый Outbound и через его контекст весь закрытый Box — мёртвый Box на каждый lxd apply, куча у `GOMEMLIMIT`, GC-спираль на роутере | I |
 | [146 — MASQUE_CLOSE_WEDGE_DETOUR_DEADLINE](../../TASKS/146-MASQUE_CLOSE_WEDGE_DETOUR_DEADLINE/SPEC.md) | Дампы 2026-11-01 (#61, #50): `Box.Close` стоял за `Outbound.Close` на `runMu`, который держал h3-dial через detour — quic-go ждал слушателя на conn без рабочего `SetReadDeadline` (vless XUDP над ws). Дедлайн-обёртка на detour-conn; `Close` отменяет connect и не берёт `runMu` | I |
+| [150 — QUIC_DETOUR_OVERSIZE_DATAGRAM](../../TASKS/150-QUIC_DETOUR_OVERSIZE_DATAGRAM/SPEC.md) | Отчёт zomg 2026-11-01: h3 через любой потоковый `detour` умирал через 1–5 с после хендшейка — WARP шлёт PMTUD-зонды 1453–1462 байт сверх объявленных quic-go 1452, сокет ядра их усекает, а vless/XUDP отдают `io.ErrShortBuffer`, фатальный для quic-go. `common/lxdatagram.TruncateReads` даёт detour-conn семантику ядра; тот же шов у апстримных hysteria2/tuic | I |
 
 Полная таблица параметров — `CONFIG.md` в задаче 021; таблица соответствия
 старых и новых ключей — в конфиг-справочнике ([docs-lx/lx-config.ru.md §4](../../../docs-lx/lx-config.ru.md)).
@@ -187,3 +188,11 @@ outbound'ов, где исходящая датаграмма помечаетс
   новый путь, отдающий quic-go conn от `o.dialer`, обязан проходить ту же
   проверку `NeedAdditionalReadDeadline`; `Close` outbound'а не должен брать
   замок, который держится через сеть.
+- **Detour-conn обязан усекать, как сокет ядра.** quic-go читает в буфер 1452
+  байта и любую ошибку чтения, кроме временной и `EMSGSIZE`, считает фатальной;
+  WARP шлёт PMTUD-зонды 1453–1462 байт в каждую h3-сессию. Поверх потокового
+  detour (vless UDP/XUDP над ws, gRPC, XHTTP) sing отдаёт `io.ErrShortBuffer`,
+  и туннель умирал через секунды после подъёма
+  ([150](../../TASKS/150-QUIC_DETOUR_OVERSIZE_DATAGRAM/SPEC.md)). Любой новый
+  путь, отдающий quic-go conn от `o.dialer`, обязан проходить через
+  `lxdatagram.TruncateReads` рядом с проверкой дедлайна SPEC 146.
