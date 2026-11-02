@@ -365,6 +365,58 @@ the second Initial packet held back past the 200 ms budget, and is not part of t
 behaviour under the owner's §3.1 test. The same sniffer explains why upstream hysteria2 and tuic
 with a fake SNI (`addons.mozilla.org` in #37) cannot pass such a relay either.
 
+### 3.2 Prototype: holding the second Initial past the relay sniff budget (2026-11-02)
+
+Research, not a shipped behaviour; recorded so the result is not lost. Follows from §3.1: Xray's
+QUIC sniffer reassembles the ClientHello across Initial packets and answers `ErrProtoNeedMoreData`,
+which does not count against its two-attempt budget, so it keeps reading until its 200 ms timer
+runs out. If the second Initial datagram of a fresh h3 dial arrives after that timer, the sniffer
+gives up and forwards the cached first packet to the original destination IP; the tunnel reaches
+WARP with its real key.
+
+Prototype (`protocol/masque/initial_delay_lx.go`, one marked line before `quic.DialEarly`):
+a write wrapper over the QUIC conn that, for QUIC v1 long-header Initial datagrams, lets the first
+through and sleeps the rest of the window on each later one. Off unless `LX_H3_INITIAL_DELAY` holds
+a positive duration; no config key yet (the form is the owner's §3.1 call).
+
+Stand (`scratchpad/xr/`): a local Xray `v26.10.31` vless inbound with `sniffing` `destOverride`
+`["http","tls","quic"]`, `routeOnly: false`; a masque h3 node with `detour` through it; the NL
+egress with `routeOnly: true` underneath. `run.sh` fires five `generate_204` through SOCKS5.
+
+| Binary | Result through the local sniffing relay |
+|---|---|
+| plain `sing-box` (lx.30) | 0 of 5, every dial `different public key than pinned` (40 foreign-key errors over the run) |
+| prototype, `LX_H3_INITIAL_DELAY=250ms` | 5 of 5, tunnel established, one held Initial per dial |
+
+Delay sweep through the same relay:
+
+| Hold | Result | h3 handshake |
+|---|---|---|
+| 150 ms | 0 of 5, still sniffed | — |
+| 200 ms | 5 of 5 | 658 ms |
+| 250 ms | 5 of 5 | 706 ms |
+| 300 ms | 5 of 5 | 760 ms |
+
+The threshold sits at Xray's 200 ms budget exactly; below it the relay still catches the whole
+ClientHello. The cost is the hold added to the handshake, about `delay + base`.
+
+Live `[BL]` relays (`scratchpad/xr/live.json`, the owner's NL egress underneath), plain vs
+prototype at 250 ms:
+
+| Relay | Layer | Plain | Prototype 250 ms |
+|---|---|---|---|
+| n009 (REALITY, no sniffing) | — | 4 of 4 | 4 of 4 |
+| n002 (ws behind Cloudflare, sniffing) | foreign key | 0 of 4 | 4 of 4 |
+| n011 (REALITY, sniffing) | foreign key | 0 of 4 | 4 of 4 requests, but the tunnel dies ~1 s after each — `datagram of 1462 bytes truncated` then `tunnel died: use of closed network connection` |
+
+The delay defeats the sniffer on both relays that ran it (n002 and n011 now reach WARP with the
+real key). n011 still drops the tunnel a second after each request, after the SPEC 150 truncation
+line, with `use of closed network connection` — a separate death on that relay's path, not the
+sniffer and not the oversize datagram (the fix truncated it); request still completes because it
+finishes before the drop. Left for the owner's decision on whether to pursue (candidate: n011's
+own relay closes the stream, or an interaction with idle-suspend). The main result stands: holding
+the second Initial past 200 ms makes masque h3 pass an Xray sniffing relay.
+
 ## 4. Files
 
 - `common/lxdatagram/truncate.go` — `TruncateReads`, `Dialer` (new)
