@@ -30,6 +30,11 @@ type TaildropFile struct {
 	Size       int64
 	SenderName string
 	ModifiedAt int64
+	// lx:begin tailscale-taildrop
+	// SPEC 149: stable node ID of the sender; empty for files received before
+	// the core restarted, like SenderName.
+	SenderID string
+	// lx:end tailscale-taildrop
 }
 
 type TaildropReceivingFile struct {

@@ -80,6 +80,13 @@ func handleTaildropRequest(handler ipnlocal.PeerAPIHandler, w http.ResponseWrite
 		http.Error(w, "taildrop not available", http.StatusForbidden)
 		return
 	}
+	// lx:begin tailscale-taildrop
+	// SPEC 149: refuse uploads and resume probes alike.
+	if endpoint.taildropDisabled {
+		http.Error(w, adapter.ErrTaildropDisabled.Error(), http.StatusForbidden)
+		return
+	}
+	// lx:end tailscale-taildrop
 	endpoint.taildrop.handlePeerRequest(handler, w, r)
 }
 
@@ -140,6 +147,7 @@ type taildropManager struct {
 	closed        bool
 	incoming      map[taildropIncomingKey]*taildropIncomingFile
 	senderNames   map[string]string
+	senderIDs     map[string]string // lx: SPEC 149, keyed like senderNames
 	unreadFiles   map[string]bool
 	deleteTimers  map[string]*time.Timer
 	inboxWatchers map[chan struct{}]bool
@@ -155,6 +163,7 @@ func newTaildropManager(ctx context.Context, logger logger.ContextLogger, tag st
 		platformInterface: platformInterface,
 		incoming:          make(map[taildropIncomingKey]*taildropIncomingFile),
 		senderNames:       make(map[string]string),
+		senderIDs:         make(map[string]string), // lx: SPEC 149
 		unreadFiles:       make(map[string]bool),
 		deleteTimers:      make(map[string]*time.Timer),
 		inboxWatchers:     make(map[chan struct{}]bool),
@@ -274,6 +283,7 @@ func (m *taildropManager) deleteExpired(name string) {
 		}
 		m.access.Lock()
 		delete(m.senderNames, baseName)
+		delete(m.senderIDs, baseName) // lx: SPEC 149
 		delete(m.unreadFiles, baseName)
 		m.access.Unlock()
 	}
@@ -485,6 +495,7 @@ func (m *taildropManager) putFile(senderID string, senderName string, baseName s
 	}
 	m.access.Lock()
 	m.senderNames[finalName] = senderName
+	m.senderIDs[finalName] = senderID // lx: SPEC 149
 	m.unreadFiles[finalName] = true
 	m.access.Unlock()
 	m.totalReceived.Add(1)
@@ -655,11 +666,13 @@ func (m *taildropManager) inbox() *adapter.TaildropInbox {
 				Size:       information.Size(),
 				SenderName: m.senderNames[name],
 				ModifiedAt: information.ModTime().Unix(),
+				SenderID:   m.senderIDs[name], // lx: SPEC 149
 			})
 		}
 		for name := range m.senderNames {
 			if !fileNames[name] {
 				delete(m.senderNames, name)
+				delete(m.senderIDs, name) // lx: SPEC 149
 				delete(m.unreadFiles, name)
 			}
 		}
@@ -817,6 +830,7 @@ func (m *taildropManager) deleteFile(baseName string) error {
 	}
 	m.access.Lock()
 	delete(m.senderNames, baseName)
+	delete(m.senderIDs, baseName) // lx: SPEC 149
 	delete(m.unreadFiles, baseName)
 	m.access.Unlock()
 	m.notifyFilesChanged()

@@ -64,6 +64,11 @@ func taildropError(err error) error {
 	if errors.Is(err, os.ErrNotExist) {
 		return status.Error(codes.NotFound, err.Error())
 	}
+	// lx:begin tailscale-taildrop
+	if errors.Is(err, adapter.ErrTaildropDisabled) {
+		return status.Error(codes.FailedPrecondition, err.Error())
+	}
+	// lx:end tailscale-taildrop
 	return err
 }
 
@@ -132,6 +137,7 @@ func taildropInboxToProto(endpointTag string, inbox *adapter.TaildropInbox) *Tai
 			Size:       file.Size,
 			SenderName: file.SenderName,
 			ModifiedAt: file.ModifiedAt,
+			SenderID:   file.SenderID, // lx: SPEC 149
 		})
 	}
 	for _, file := range inbox.Receiving {

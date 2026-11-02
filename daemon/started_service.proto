@@ -519,6 +519,11 @@ message TaildropFile {
   int64 size = 2;
   string senderName = 3;
   int64 modifiedAt = 4;
+  // lx:begin lx_command
+  // Stable node ID of the sender; empty for files received before the core
+  // restarted, like senderName. lx: SPEC 149.
+  string senderID = 5;
+  // lx:end lx_command
 }
 
 message TaildropReceivingFile {

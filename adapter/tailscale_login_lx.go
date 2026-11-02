@@ -15,6 +15,8 @@ var (
 	// ErrTailscaleLoggedIn: login was asked of a node that is already logged
 	// in; the auth key would be ignored, so the caller logs out first.
 	ErrTailscaleLoggedIn = E.New("Tailscale is already logged in, log out first")
+	// ErrTaildropDisabled: Taildrop is switched off by disable_taildrop.
+	ErrTaildropDisabled = E.New("Taildrop is disabled on this node")
 )
 
 // TailscaleLoginProvider is implemented by the Tailscale endpoint. Login

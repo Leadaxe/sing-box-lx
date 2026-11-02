@@ -4135,11 +4135,15 @@ func (x *TaildropInbox) GetReceiving() []*TaildropReceivingFile {
 }
 
 type TaildropFile struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Size          int64                  `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
-	SenderName    string                 `protobuf:"bytes,3,opt,name=senderName,proto3" json:"senderName,omitempty"`
-	ModifiedAt    int64                  `protobuf:"varint,4,opt,name=modifiedAt,proto3" json:"modifiedAt,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Name       string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Size       int64                  `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
+	SenderName string                 `protobuf:"bytes,3,opt,name=senderName,proto3" json:"senderName,omitempty"`
+	ModifiedAt int64                  `protobuf:"varint,4,opt,name=modifiedAt,proto3" json:"modifiedAt,omitempty"`
+	// lx:begin lx_command
+	// Stable node ID of the sender; empty for files received before the core
+	// restarted, like senderName. lx: SPEC 149.
+	SenderID      string `protobuf:"bytes,5,opt,name=senderID,proto3" json:"senderID,omitempty"` // lx:end lx_command
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4200,6 +4204,13 @@ func (x *TaildropFile) GetModifiedAt() int64 {
 		return x.ModifiedAt
 	}
 	return 0
+}
+
+func (x *TaildropFile) GetSenderID() string {
+	if x != nil {
+		return x.SenderID
+	}
+	return ""
 }
 
 type TaildropReceivingFile struct {
@@ -10883,7 +10894,7 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\rTaildropInbox\x12 \n" +
 	"\vendpointTag\x18\x01 \x01(\tR\vendpointTag\x12*\n" +
 	"\x05files\x18\x02 \x03(\v2\x14.daemon.TaildropFileR\x05files\x12;\n" +
-	"\treceiving\x18\x03 \x03(\v2\x1d.daemon.TaildropReceivingFileR\treceiving\"v\n" +
+	"\treceiving\x18\x03 \x03(\v2\x1d.daemon.TaildropReceivingFileR\treceiving\"\x92\x01\n" +
 	"\fTaildropFile\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x03R\x04size\x12\x1e\n" +
@@ -10892,7 +10903,8 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"senderName\x12\x1e\n" +
 	"\n" +
 	"modifiedAt\x18\x04 \x01(\x03R\n" +
-	"modifiedAt\"\xa1\x01\n" +
+	"modifiedAt\x12\x1a\n" +
+	"\bsenderID\x18\x05 \x01(\tR\bsenderID\"\xa1\x01\n" +
 	"\x15TaildropReceivingFile\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x03R\x04size\x12$\n" +

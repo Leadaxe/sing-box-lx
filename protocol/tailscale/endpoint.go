@@ -133,6 +133,10 @@ type Endpoint struct {
 	disabled     atomic.Bool
 	toggleAccess sync.Mutex
 	// lx:end tailscale-toggle
+	// lx:begin tailscale-taildrop
+	// SPEC 149: disable_taildrop; checks in taildrop.go and taildrop_send.go.
+	taildropDisabled bool
+	// lx:end tailscale-taildrop
 }
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.TailscaleEndpointOptions) (adapter.Endpoint, error) {
@@ -251,6 +255,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		systemInterfaceName:        options.SystemInterfaceName,
 		systemInterfaceMTU:         options.SystemInterfaceMTU,
 		keyAuth:                    options.AuthKey != "",
+		taildropDisabled:           options.DisableTaildrop, // lx: SPEC 149
 	}, nil
 }
 

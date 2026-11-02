@@ -34,6 +34,10 @@ type TailscaleEndpointOptions struct {
 	UDPTimeout                 UDPTimeoutCompat           `json:"udp_timeout,omitempty"`
 	SSHServer                  *TailscaleSSHServerOptions `json:"ssh_server,omitempty"`
 	TaildropDirectory          string                     `json:"taildrop_directory,omitempty"`
+	// lx:begin tailscale-taildrop
+	// SPEC 149: the node neither receives nor sends Taildrop files.
+	DisableTaildrop bool `json:"disable_taildrop,omitempty"`
+	// lx:end tailscale-taildrop
 }
 
 type _TailscaleSSHServerOptions struct {

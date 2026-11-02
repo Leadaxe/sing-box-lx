@@ -27,6 +27,9 @@ type TaildropFile struct {
 	Size       int64
 	SenderName string
 	ModifiedAt int64
+	// lx: SPEC 149 — stable node ID of the sender; empty for files received
+	// before the core restarted.
+	SenderID string
 }
 
 type TaildropFileIterator interface {
@@ -64,6 +67,7 @@ func taildropInboxFromGRPC(inbox *daemon.TaildropInbox) *TaildropInbox {
 			Size:       file.Size,
 			SenderName: file.SenderName,
 			ModifiedAt: file.ModifiedAt,
+			SenderID:   file.SenderID, // lx: SPEC 149
 		})
 	}
 	for _, file := range inbox.Receiving {
