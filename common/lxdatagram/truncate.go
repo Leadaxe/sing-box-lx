@@ -96,8 +96,9 @@ var (
 	_ N.WriterWithUpstream = (*truncConn)(nil)
 )
 
-// Dialer wraps the UDP conns a dialer hands out with TruncateReads; TCP dials
-// and ListenPacket pass through. It is the seam for clients that dial inside
+// Dialer wraps the UDP conns a dialer hands out with TruncateReads and, when
+// enabled, sends the SPEC 151 sniff decoy on each; TCP dials and ListenPacket
+// pass through. It is the seam for clients that dial inside
 // a library (sing-quic's hysteria2 and tuic).
 func Dialer(dialer N.Dialer, logger logger.Logger) N.Dialer {
 	return &truncDialer{Dialer: dialer, logger: logger}
@@ -115,6 +116,9 @@ func (d *truncDialer) DialContext(ctx context.Context, network string, destinati
 	}
 	if N.NetworkName(network) != N.NetworkUDP {
 		return conn, nil
+	}
+	if SniffDecoyEnabled() {
+		WriteSniffDecoy(conn, d.logger)
 	}
 	return TruncateReads(conn, d.logger), nil
 }

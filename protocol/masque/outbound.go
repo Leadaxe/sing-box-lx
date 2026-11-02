@@ -904,8 +904,12 @@ func (o *Outbound) connectH3WithBudget(ctx context.Context, handshakeBudget time
 		handshakeCtx, cancel = context.WithTimeout(ctx, handshakeBudget)
 		defer cancel()
 	}
-	rawConn = wrapInitialDelay(rawConn, initialDelayFromEnv(), o.logger) // lx: prototype, see initial_delay_lx.go
-	quicStage := o.beginQUICLx(ctx)                                      // lx: SPEC 139 — `quic` stage
+	// lx: SPEC 151 — a datagram no relay sniffer recognises goes first, so a
+	// sniffing relay leaves the destination as dialled.
+	if lxdatagram.SniffDecoyEnabled() {
+		lxdatagram.WriteSniffDecoy(rawConn, o.logger)
+	}
+	quicStage := o.beginQUICLx(ctx) // lx: SPEC 139 — `quic` stage
 	quicConn, err := quic.DialEarly(handshakeCtx, bufio.NewUnbindPacketConn(rawConn), udpConn.RemoteAddr(), o.tlsConfig, o.quicConfig)
 	quicStage.End(err) // lx: SPEC 139
 	if err != nil {
