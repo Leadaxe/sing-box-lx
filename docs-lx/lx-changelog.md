@@ -28,6 +28,16 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.4-lx.30-rc.2
+
+Пререлиз после `v1.14.4-lx.30-rc.1`. База та же — sing-box `v1.14.4`, `upstream/stable` `c005f3530`, дрейф 0, сабмодули, `go.mod` и Go 1.26.10 не менялись. Одна тема: второй запрос LxBox по Taildrop (SPEC 149 §4). rc нужен LxBox и лаунчеру для пина под новый ключ и поле.
+
+- 🆕 **Tailscale: выключатель Taildrop узла и отправитель полученного файла ([SPEC 149 §4](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/149-TAILSCALE_LOGIN_TOGGLE/SPEC.md)).** Узел принимал файлы от своих устройств всегда, если file sharing включён в админке; клиент мог только удалить файл после приёма.
+  - Ключ endpoint'а `disable_taildrop` (bool, по умолчанию — как апстрим). При `true` peer API `/v0/put/` (PUT и GET докачки) отвечает 403 `Taildrop is disabled on this node` до апстримных проверок прав; `SendTaildropFiles` — `FailedPrecondition`; `canShareFiles = false`, у пиров `canReceiveFiles = false`. Файлы на диске остаются во входящих. Меняется reload'ом. Другие устройства по-прежнему видят узел получателем — это решает control, отказ они получают ответом 403.
+  - `TaildropFile.senderID` (proto 5, блок `lx_command`; libbox `TaildropFile.SenderID`) — stable node ID отправителя рядом с `senderName`; в памяти, после перезапуска ядра пустой у файлов с диска.
+  - В апстримных `taildrop.go`, `taildrop_send.go`, `endpoint.go`, `option/tailscale.go`, `adapter/tailscale.go`, `started_service_taildrop.go`, libbox `command_types_taildrop.go` — блоки и строки `// lx: SPEC 149`. Юниты в `protocol/tailscale` (под `-race`) и `daemon`; на живом tailnet не прогонялось, проверка — за LxBox.
+- 🧰 В `rc.1` вошла и [SPEC 150](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/150-QUIC_DETOUR_OVERSIZE_DATAGRAM/SPEC.md) (`6d80663b9`): QUIC-клиент (`masque` h3, `hysteria2`, `tuic`) с UDP через потоковый `detour` больше не умирает на датаграмме длиннее буфера. Раздел `rc.1` её не называл.
+
 #### v1.14.4-lx.30-rc.1
 
 Пререлиз после `v1.14.4-lx.29`. База — sing-box `v1.14.4`, `upstream/stable` `c005f3530`, дрейф 0, сабмодули и Go 1.26.10 не менялись. Темы: вход по новому ключу и выключатель Tailscale-endpoint'а без перезапуска (SPEC 149, запрос LxBox), бамп `x/net`/`x/crypto`/`grpc` по govulncheck и строка режима oom-killer при старте (SPEC 148 §5). rc нужен LxBox для пина под SPEC 149 и служит полной релизной сборкой после смены зависимостей.
