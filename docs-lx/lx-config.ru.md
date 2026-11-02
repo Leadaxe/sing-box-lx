@@ -111,7 +111,7 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
       "idle_timeout": "5m"                      // дефолт: выкл. Глобальное окно простоя masque-узлов без своего ключа
     },
     "mtu_align": "clamp",                       // дефолт: clamp. off | fill | clamp, либо объект {"mode", "except": [теги]} (§13)
-    "quic_sniff_decoy": false                   // дефолт: выкл. Один байт перед QUIC Initial против сниффинга SNI на релее (§13, SPEC 151)
+    "quic_sniff_decoy": "off"                   // дефолт: off. off | direct | detour | all (или bool). Один байт перед QUIC Initial против сниффинга SNI на релее (§13, SPEC 151)
   },
 
   "outbounds": [
@@ -1126,7 +1126,7 @@ CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`base
     "idle_timeout": "5m"
   },
   "mtu_align": "clamp",
-  "quic_sniff_decoy": true
+  "quic_sniff_decoy": "detour"
 }
 ```
 
@@ -1277,9 +1277,16 @@ ICMP Packet Too Big с фактическим бюджетом) — в [§4](#4-
 
 ### `lx.quic_sniff_decoy` — QUIC через релей, который сниффит SNI
 
-| Ключ | Тип | Дефолт | Смысл |
-|---|---|---|---|
-| `quic_sniff_decoy` | bool | `false` | Каждый дозвон masque h3, hysteria2 и tuic шлёт один байт (`0x00`) перед первым QUIC Initial |
+| Значение | Дозвоны masque h3, hysteria2 и tuic, которые шлют один байт (`0x00`) перед первым QUIC Initial |
+|---|---|
+| `"off"` / `false` / нет ключа (**дефолт**) | никакие |
+| `"direct"` | дозвоны через собственный сокет устройства: без `detour` или `detour` на outbound `direct` |
+| `"detour"` | дозвоны, которые несёт другой outbound — прокси или туннель |
+| `"all"` / `true` | все |
+
+```jsonc
+"lx": { "quic_sniff_decoy": "detour" }
+```
 
 Релей с Xray `sniffing` (`destOverride` с `quic`, без `routeOnly`) расшифровывает QUIC Initial,
 берёт SNI и отправляет поток на это имя вместо набранного адреса: masque падает с `different
@@ -1288,7 +1295,9 @@ Xray решает по первой датаграмме потока; перв�
 его QUIC-сниффер из игры, назначение остаётся набранным. Сервер отбрасывает байт не разбирая
 (снят fixed bit QUIC). Без задержки и лишнего хендшейка. Включать, когда QUIC-узел работает
 напрямую и ломается через чужой релей (h2 masque через тот же релей обычно работает — SPEC 060).
-sing-box-релеи (1.13+) назначение по сниффу не переписывают, им ничего не нужно. Не покрыто: port hopping у
+Режимы уводят обманку с пути, где на неё может среагировать DPI вашего аплинка: `"detour"` шлёт
+её только через релеи, `"direct"` — только по собственному сокету устройства (сниффер может стоять
+и там, выше по сети, например роутер с выходом через Xray). sing-box-релеи (1.13+) назначение по сниффу не переписывают, им ничего не нужно. Не покрыто: port hopping у
 hysteria2 (`server_ports`). Подробности — [SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.ru.md).
 
 ### Удалённые `route.lx_idle_*`

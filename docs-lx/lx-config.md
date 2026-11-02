@@ -113,7 +113,7 @@ you need and read its section below. Each comment shows the **default** and the 
       "idle_timeout": "5m"                      // default: off. Global idle window for masque nodes without their own key
     },
     "mtu_align": "clamp",                       // default: clamp. off | fill | clamp, or an object {"mode", "except": [tags]} (§13)
-    "quic_sniff_decoy": false                   // default: off. One byte ahead of the QUIC Initial against relay SNI sniffing (§13, SPEC 151)
+    "quic_sniff_decoy": "off"                   // default: off. off | direct | detour | all (or a boolean). One byte ahead of the QUIC Initial against relay SNI sniffing (§13, SPEC 151)
   },
 
   "outbounds": [
@@ -1128,7 +1128,7 @@ is the same as none. A misspelt key is a load error, not a silent default.
     "idle_timeout": "5m"
   },
   "mtu_align": "clamp",
-  "quic_sniff_decoy": true
+  "quic_sniff_decoy": "detour"
 }
 ```
 
@@ -1280,9 +1280,16 @@ with the real budget) is in [§4](#4-masque-outbound--cloudflare-warp-spec-021).
 
 ### `lx.quic_sniff_decoy` — QUIC through a relay that sniffs the SNI
 
-| Key | Type | Default | Meaning |
-|---|---|---|---|
-| `quic_sniff_decoy` | bool | `false` | Every masque h3, hysteria2 and tuic dial sends one byte (`0x00`) before its first QUIC Initial |
+| Value | masque h3, hysteria2 and tuic dials that send one byte (`0x00`) before their first QUIC Initial |
+|---|---|
+| `"off"` / `false` / absent (**default**) | none |
+| `"direct"` | dials on the device's own socket: no `detour`, or `detour` to a `direct` outbound |
+| `"detour"` | dials carried by another outbound — a proxy or a tunnel |
+| `"all"` / `true` | every dial |
+
+```jsonc
+"lx": { "quic_sniff_decoy": "detour" }
+```
 
 A relay with Xray `sniffing` (`destOverride` with `quic`, no `routeOnly`) decrypts the QUIC
 Initial, takes the SNI and sends the flow to that name instead of the address you dialled: masque
@@ -1291,8 +1298,10 @@ host or nothing. Xray decides on the first datagram of a flow; a first byte that
 long-header packet takes its QUIC sniffer out, and the destination stays as dialled. The server
 drops the byte unparsed (QUIC fixed bit clear). No delay, no extra handshake. Turn it on when a
 QUIC node works directly and breaks through a relay you do not control (h2 masque through the same
-relay usually works — SPEC 060). sing-box relays (1.13+) do not rewrite the destination by sniffing
-and need nothing. Not covered: hysteria2 port hopping (`server_ports`). Details — [SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md).
+relay usually works — SPEC 060). The modes keep the decoy off the path a DPI on your own uplink
+might react to: `"detour"` sends it only through relays, `"direct"` only on the device's own
+socket (a sniffer can sit upstream there too, e.g. a router egressing through Xray). sing-box
+relays (1.13+) do not rewrite the destination by sniffing and need nothing. Not covered: hysteria2 port hopping (`server_ports`). Details — [SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md).
 
 ### Removed `route.lx_idle_*`
 

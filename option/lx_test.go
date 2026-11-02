@@ -340,19 +340,45 @@ func TestLXMTUAlign(t *testing.T) {
 	}
 }
 
-// lx.quic_sniff_decoy (lx: SPEC 151): absent = off, true survives the
-// canonical rewrite on its own (no other lx key set).
+// lx.quic_sniff_decoy (lx: SPEC 151): absent = off; a mode string or a
+// boolean ("all"/"off"); off canonicalizes to absent, any other mode stays.
 func TestLXQUICSniffDecoy(t *testing.T) {
 	t.Parallel()
-	_, off := mustResolveLX(t, `{}`)
-	if off.QUICSniffDecoyOrOff() || (*LXResolved)(nil).QUICSniffDecoyOrOff() {
-		t.Fatal("quic_sniff_decoy must default to off")
+	if (*LXResolved)(nil).QUICSniffDecoyOrOff() != LXQUICSniffDecoyOff {
+		t.Fatal("a nil *LXResolved must read as off")
 	}
-	options, on := mustResolveLX(t, `{"lx":{"quic_sniff_decoy":true}}`)
-	if !on.QUICSniffDecoyOrOff() {
-		t.Fatal("quic_sniff_decoy: true must resolve on")
+	cases := []struct {
+		content, want string
+		canonical     LXQUICSniffDecoy
+	}{
+		{`{}`, LXQUICSniffDecoyOff, ""},
+		{`{"lx":{"quic_sniff_decoy":false}}`, LXQUICSniffDecoyOff, ""},
+		{`{"lx":{"quic_sniff_decoy":"off"}}`, LXQUICSniffDecoyOff, ""},
+		{`{"lx":{"quic_sniff_decoy":true}}`, LXQUICSniffDecoyAll, LXQUICSniffDecoyAll},
+		{`{"lx":{"quic_sniff_decoy":"all"}}`, LXQUICSniffDecoyAll, LXQUICSniffDecoyAll},
+		{`{"lx":{"quic_sniff_decoy":"direct"}}`, LXQUICSniffDecoyDirect, LXQUICSniffDecoyDirect},
+		{`{"lx":{"quic_sniff_decoy":"detour"}}`, LXQUICSniffDecoyDetour, LXQUICSniffDecoyDetour},
 	}
-	if options.LX == nil || !options.LX.QUICSniffDecoy {
-		t.Fatal("canonical options must keep lx.quic_sniff_decoy")
+	for _, tc := range cases {
+		options, resolved := mustResolveLX(t, tc.content)
+		if got := resolved.QUICSniffDecoyOrOff(); got != tc.want {
+			t.Fatalf("%s: got %q, want %q", tc.content, got, tc.want)
+		}
+		var canonical LXQUICSniffDecoy
+		if options.LX != nil {
+			canonical = options.LX.QUICSniffDecoy
+		}
+		if canonical != tc.canonical {
+			t.Fatalf("%s: canonical %q, want %q", tc.content, canonical, tc.canonical)
+		}
+	}
+	for _, content := range []string{`{"lx":{"quic_sniff_decoy":"on"}}`, `{"lx":{"quic_sniff_decoy":1}}`} {
+		if _, err := decodeLXConfig(t, content); err == nil {
+			t.Fatalf("%s: must be rejected", content)
+		}
+	}
+	text, err := json.Marshal(mustDecodeLXConfig(t, `{"lx":{"quic_sniff_decoy":true}}`))
+	if err != nil || !strings.Contains(string(text), `"quic_sniff_decoy":"all"`) {
+		t.Fatalf("a boolean must marshal as its mode: %s %v", text, err)
 	}
 }

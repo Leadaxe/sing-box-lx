@@ -24,10 +24,27 @@ import (
 
 var sniffDecoy = []byte{0x00}
 
-// SniffDecoyFromContext reports whether the decoy is on for outbounds built
-// in ctx: lx.quic_sniff_decoy from the box context, absent = off.
-func SniffDecoyFromContext(ctx context.Context) bool {
+// SniffDecoyFromContext returns the lx.quic_sniff_decoy mode for outbounds
+// built in ctx: "off" (absent), "direct", "detour" or "all".
+func SniffDecoyFromContext(ctx context.Context) string {
 	return service.PtrFromContext[option.LXResolved](ctx).QUICSniffDecoyOrOff()
+}
+
+// SniffDecoyApplies reports whether a dial whose freshly dialled conn is conn
+// carries the decoy under mode. "direct" means a kernel socket under the QUIC
+// stack (no detour, or a detour to a direct outbound), "detour" means a conn
+// carried by another outbound — a proxy or a tunnel. Pass the conn as dialled,
+// before any wrapper.
+func SniffDecoyApplies(mode string, conn net.Conn) bool {
+	switch mode {
+	case option.LXQUICSniffDecoyAll:
+		return true
+	case option.LXQUICSniffDecoyDirect:
+		return isKernelSocket(conn)
+	case option.LXQUICSniffDecoyDetour:
+		return !isKernelSocket(conn)
+	}
+	return false
 }
 
 // WriteSniffDecoy sends the decoy datagram on a freshly dialled QUIC conn,

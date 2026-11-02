@@ -88,7 +88,7 @@ type Outbound struct {
 	dnsRouter   adapter.DNSRouter
 	profile     masque.Profile
 	idleTimeout time.Duration
-	sniffDecoy  bool // lx: SPEC 151 — lx.quic_sniff_decoy
+	sniffDecoy  string // lx: SPEC 151 — lx.quic_sniff_decoy mode
 
 	server    M.Socksaddr
 	uri       string
@@ -908,7 +908,7 @@ func (o *Outbound) connectH3WithBudget(ctx context.Context, handshakeBudget time
 	}
 	// lx: SPEC 151 — a datagram no relay sniffer recognises goes first, so a
 	// sniffing relay leaves the destination as dialled.
-	if o.sniffDecoy {
+	if lxdatagram.SniffDecoyApplies(o.sniffDecoy, udpConn) {
 		lxdatagram.WriteSniffDecoy(rawConn, o.logger)
 	}
 	quicStage := o.beginQUICLx(ctx) // lx: SPEC 139 — `quic` stage
