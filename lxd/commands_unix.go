@@ -61,7 +61,8 @@ func markInheritableCloseOnExec() {
 	// Linux lists the open descriptors exactly; without /proc (darwin, where
 	// reading /dev/fd stops at the directory's own fd) walk the descriptor
 	// space up to the soft limit, capped — Go raises the soft limit to the
-	// hard one at startup, which can be millions.
+	// hard one at startup, which can be millions. Cur is int64 on freebsd and
+	// uint64 elsewhere, hence the conversion.
 	if entries, err := os.ReadDir("/proc/self/fd"); err == nil {
 		for _, entry := range entries {
 			if fd, err := strconv.Atoi(entry.Name()); err == nil {
@@ -72,7 +73,7 @@ func markInheritableCloseOnExec() {
 	}
 	limit := 65536
 	var rlimit unix.Rlimit
-	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &rlimit); err == nil && rlimit.Cur < uint64(limit) {
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &rlimit); err == nil && uint64(rlimit.Cur) < uint64(limit) {
 		limit = int(rlimit.Cur)
 	}
 	for fd := 3; fd < limit; fd++ {
