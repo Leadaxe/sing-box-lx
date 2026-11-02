@@ -28,6 +28,14 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.4-lx.30
+
+Stable после `v1.14.4-lx.29`, сводит `rc.1`–`rc.3` и три правки после `rc.3`. База — sing-box `v1.14.4`, `upstream/stable` `c005f3530`, дрейф 0, сабмодули и Go 1.26.10 не менялись; `go.mod` — бамп `rc.1` (полная релизная сборка прошла на `rc.1`–`rc.3`). Содержимое `rc.N` — в их разделах ниже; здесь только то, что изменилось после `rc.3`.
+
+- 🔧 **`lx.quic_sniff_decoy` — режимы вместо bool ([SPEC 151](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md) §4).** `"off"` (по умолчанию, как и отсутствие ключа), `"direct"` — только дозвоны на собственном сокете устройства (без `detour` или с `detour` на `direct`), `"detour"` — только дозвоны через другой outbound, `"all"`. Путь различается по тому, что лежит под QUIC: сокет ядра или conn другого outbound (та же проверка, что у усечения SPEC 150). `true`/`false` из `rc.3` принимаются и канонизируются в `"all"`/`"off"`; другая строка — ошибка загрузки. Стенд xr: `detour` через сниффящий релей 5/5, `direct` через тот же релей 0/5 (обманки на этом пути нет — так и задумано), `direct` без релея 5/5.
+- ⚠️ **Удалена env-переменная `LX_QUIC_SNIFF_DECOY`** (была в `rc.3` как отладочный оверрайд). Единственный выключатель — ключ.
+- ⚠️ **Удалены алиасы `route.lx_idle_suspend`, `route.lx_idle_suspend_reachable`, `route.lx_idle_teardown`** (SPEC 098, SPEC 020). Конфиг с ними не стартует: `unknown field`. Писать `lx.wg.idle_suspend`, `lx.wg.idle_suspend_reachable`, `lx.wg.idle_teardown`. `option/route.go` снова совпадает с апстримом байт в байт. LxBox и лаунчеру — проверить, что они пишут только `lx.wg.*`.
+
 #### v1.14.4-lx.30-rc.3
 
 Пререлиз после `v1.14.4-lx.30-rc.2`. База та же — sing-box `v1.14.4`, `upstream/stable` `c005f3530`, дрейф 0, сабмодули, `go.mod` и Go 1.26.10 не менялись. Одна тема: QUIC через чужой релей, который сниффит SNI (SPEC 151).
