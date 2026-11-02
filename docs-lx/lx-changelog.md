@@ -28,6 +28,15 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.4-lx.30-rc.3
+
+Пререлиз после `v1.14.4-lx.30-rc.2`. База та же — sing-box `v1.14.4`, `upstream/stable` `c005f3530`, дрейф 0, сабмодули, `go.mod` и Go 1.26.10 не менялись. Одна тема: QUIC через чужой релей, который сниффит SNI (SPEC 151).
+
+- 🆕 **QUIC-узлы через релей со сниффингом Xray ([SPEC 151](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md)).** Релей с Xray `sniffing` (`destOverride` с `quic`, без `routeOnly`) расшифровывал QUIC Initial, брал SNI и уводил поток на это имя: masque h3 падал с `different public key than pinned`, hysteria2/tuic с подставным SNI попадали на чужой хост. h2 через те же релеи работал (SPEC 060).
+  - Ключ `lx.quic_sniff_decoy` (bool, по умолчанию выключен): каждый дозвон masque h3, hysteria2 и tuic шлёт один байт `0x00` перед первым Initial. Xray решает по первой датаграмме потока — QUIC-сниффер выбывает, назначение остаётся набранным. Сервер отбрасывает байт не разбирая (снят fixed bit QUIC). Без задержки и лишнего хендшейка. Отладка: `LX_QUIC_SNIFF_DECOY=1`/`0` сильнее ключа.
+  - Стенд против Xray `v26.10.31`: masque h3 → WARP 0/5 → 5/5 (хендшейк 454–478 мс), 2 минуты жизни 12/12 без обрывов; hysteria2 и tuic на loopback 0/4 → 4/4. Port hopping hysteria2 (`server_ports`) не покрыт.
+  - Прототип задержки второго Initial (SPEC 150 §3.2, `LX_H3_INITIAL_DELAY`) удалён: он стоил ~200 мс на хендшейк.
+
 #### v1.14.4-lx.30-rc.2
 
 Пререлиз после `v1.14.4-lx.30-rc.1`. База та же — sing-box `v1.14.4`, `upstream/stable` `c005f3530`, дрейф 0, сабмодули, `go.mod` и Go 1.26.10 не менялись. Одна тема: второй запрос LxBox по Taildrop (SPEC 149 §4). rc нужен LxBox и лаунчеру для пина под новый ключ и поле.

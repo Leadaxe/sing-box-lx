@@ -16,7 +16,7 @@
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | доп. поля на `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`); старые `route.lx_idle_*` — устаревшие алиасы | **только mobile** (AAR) |
-| **Корневой блок `lx`** (SPEC 098) | — (разбирается всегда) | `lx.wg`, `lx.masque`, `lx.mtu_align` — глобальные ручки форка, [§13](#13-корневой-блок-lx-spec-098) | desktop + mobile |
+| **Корневой блок `lx`** (SPEC 098) | — (разбирается всегда) | `lx.wg`, `lx.masque`, `lx.mtu_align`, `lx.quic_sniff_decoy` — глобальные ручки форка, [§13](#13-корневой-блок-lx-spec-098) | desktop + mobile |
 | **Группа DNS-серверов** (SPEC 033/035/143) | — (всегда в сборке) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (всегда в сборке) | `encryption` на `vless`-outbound | desktop + mobile |
 | **Демон `lxd`** (SPEC 055–057, 063–068) | `with_lxd` | не ключ конфига — подкоманда `sing-box lxd` + `<state-dir>/daemon.json`; см. [lxd-daemon.ru.md](lxd-daemon.ru.md) | desktop / сервер (**не** Win7, **не** AAR) |
@@ -110,7 +110,8 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
     "masque": {
       "idle_timeout": "5m"                      // дефолт: выкл. Глобальное окно простоя masque-узлов без своего ключа
     },
-    "mtu_align": "clamp"                        // дефолт: clamp. off | fill | clamp, либо объект {"mode", "except": [теги]} (§13)
+    "mtu_align": "clamp",                       // дефолт: clamp. off | fill | clamp, либо объект {"mode", "except": [теги]} (§13)
+    "quic_sniff_decoy": false                   // дефолт: выкл. Один байт перед QUIC Initial против сниффинга SNI на релее (§13, SPEC 151)
   },
 
   "outbounds": [
@@ -282,7 +283,7 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
 ```
 
 > **Счёт полей:** 26 XHTTP + 30 AmneziaWG (вкл. `id`/`ip`/`ib` и 9 ключей AWG 3.x) + 1 VLESS (`encryption`) +
-> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 8 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.mtu_align`). Взаимоисключающие / игнорируемые поля помечены
+> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 9 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.mtu_align` + `lx.quic_sniff_decoy`). Взаимоисключающие / игнорируемые поля помечены
 > в комментариях выше; разделы ниже дают семантику каждого поля, подводные камни и статус
 > живой проверки.
 
@@ -1124,7 +1125,8 @@ CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`base
   "masque": {
     "idle_timeout": "5m"
   },
-  "mtu_align": "clamp"
+  "mtu_align": "clamp",
+  "quic_sniff_decoy": true
 }
 ```
 
@@ -1272,6 +1274,23 @@ mtu_align: wg-exit mtu 1420 → 1200 clamped (limited by warp[masque] mtu 1280 v
 `openconnect` как верхние узлы — только предупреждение; направление «сервер → клиент» —
 управляется сервером. Чем masque отвечает на это снизу (внешний `InitialPacketSize` = `mtu + 51`,
 ICMP Packet Too Big с фактическим бюджетом) — в [§4](#4-masque-outbound--cloudflare-warp-spec-021).
+
+### `lx.quic_sniff_decoy` — QUIC через релей, который сниффит SNI
+
+| Ключ | Тип | Дефолт | Смысл |
+|---|---|---|---|
+| `quic_sniff_decoy` | bool | `false` | Каждый дозвон masque h3, hysteria2 и tuic шлёт один байт (`0x00`) перед первым QUIC Initial |
+
+Релей с Xray `sniffing` (`destOverride` с `quic`, без `routeOnly`) расшифровывает QUIC Initial,
+берёт SNI и отправляет поток на это имя вместо набранного адреса: masque падает с `different
+public key than pinned`, hysteria2/tuic с подставным SNI попадают на чужой хост или в пустоту.
+Xray решает по первой датаграмме потока; первый байт, который не long-header пакет QUIC, выводит
+его QUIC-сниффер из игры, назначение остаётся набранным. Сервер отбрасывает байт не разбирая
+(снят fixed bit QUIC). Без задержки и лишнего хендшейка. Включать, когда QUIC-узел работает
+напрямую и ломается через чужой релей (h2 masque через тот же релей обычно работает — SPEC 060).
+sing-box-релеи (1.13+) назначение по сниффу не переписывают, им ничего не нужно. Отладка:
+переменная окружения `LX_QUIC_SNIFF_DECOY=1`/`0` сильнее ключа. Не покрыто: port hopping у
+hysteria2 (`server_ports`). Подробности — [SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.ru.md).
 
 ### Устаревшие `route.lx_idle_*`
 

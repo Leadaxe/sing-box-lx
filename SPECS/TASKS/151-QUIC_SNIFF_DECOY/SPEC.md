@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | Type | F (feature) — a QUIC client (`masque` h3, `hysteria2`, `tuic`) passes a relay that sniffs UDP and rewrites the destination by the SNI |
-| Status | I (implemented behind `LX_QUIC_SNIFF_DECOY`) — 2026-11-02: helper, two seams, units; stand on the owner's Mac against Xray `v26.10.31` with `destOverride` and no `routeOnly`: masque h3 → WARP 0 of 5 without the decoy (foreign key), 5 of 5 with it in XUDP and plain packing, the tunnel held 2 minutes (12 of 12 requests, 20 MB at 2.6 MB/s); hysteria2 and tuic on a loopback server 0 of 4 → 4 of 4. **Config form open** (§4, the owner's call); live `[BL]` relays not run with this build |
+| Status | I (implemented) — key `lx.quic_sniff_decoy`, off by default (owner 2026-11-02); 2026-11-02: helper, two seams, units; stand on the owner's Mac against Xray `v26.10.31` with `destOverride` and no `routeOnly`: masque h3 → WARP 0 of 5 without the decoy (foreign key), 5 of 5 with it in XUDP and plain packing, the tunnel held 2 minutes (12 of 12 requests, 20 MB at 2.6 MB/s); hysteria2 and tuic on a loopback server 0 of 4 → 4 of 4. live `[BL]` relays not run with this build |
 | Branch | `lx` |
 | Build tag | — (`common/lxdatagram`, `protocol/masque` build always; the `hysteria2`/`tuic` seam is SPEC 150's line under upstream's `with_quic`) |
 | Origin | SPEC 150 §3.1 (Xray sniffing explains why h3 through `[BL]` relays lands on a foreign key) and §3.2 (prototype that held the second Initial past Xray's 200 ms sniff budget). Reading Xray's dispatcher for that prototype showed a cheaper lever: the first datagram decides |
@@ -69,16 +69,19 @@ previous error"), so the decoy would hold there too.
 - `sniffDecoy = []byte{0x00}`.
 - `WriteSniffDecoy(conn, logger)` writes it once; a failed write is logged at debug and ignored
   (the decoy is advisory, the handshake reports a broken conn by itself).
-- `SniffDecoyEnabled()` reads `LX_QUIC_SNIFF_DECOY` (`strconv.ParseBool`) until the config form
-  is settled (§4).
+- `SniffDecoyFromContext(ctx)` returns `lx.quic_sniff_decoy` from the box context
+  (`option.LXResolved.QUICSniffDecoyOrOff`, absent = off); `LX_QUIC_SNIFF_DECOY` holding a
+  boolean (`strconv.ParseBool`) wins over the key either way — a debug lever (§4).
 
 ### 3.2 Seams
 
-- `masque` — `connectH3WithBudget` (`// lx: SPEC 151`): after the SPEC 150/146 wrappers and before
+- `masque` — `NewOutbound` reads the flag once into `Outbound.sniffDecoy`;
+  `connectH3WithBudget` (`// lx: SPEC 151`) sends the decoy after the SPEC 150/146 wrappers and before
   `quic.DialEarly`, on the conn quic-go will write to. Covers direct and `detour` alike: a
   sniffing relay may sit upstream of a kernel socket too (SPEC 150 §3.1: the owner's router
   egressing through the owner's own Xray).
-- `hysteria2`, `tuic` — `lxdatagram.Dialer` (SPEC 150's seam) sends the decoy on every `udp`
+- `hysteria2`, `tuic` — `lxdatagram.Dialer(ctx, …)` (SPEC 150's seam, now taking the box context
+  for the flag) sends the decoy on every `udp`
   `DialContext` before handing the conn to `sing-quic`; `tcp` and `ListenPacket` are untouched.
   hysteria2 port hopping dials through `ListenPacket` and gets no decoy (out of scope).
 
@@ -95,10 +98,17 @@ Initial with its own random connection IDs and a ClientHello prefix (Xray decryp
 with keys from that packet's DCID and assembles CRYPTO by offset), real Initials held past the
 budget — no packet-number rewriting of quic-go's packets. Not implemented: no such sniffer known.
 
-## 4. Open: config form (owner's call)
+## 4. Config
 
-Candidates: always on without a key (the cost is one byte per QUIC dial, the server discards it);
-a key `off`/`on` per outbound; env only. Until decided, `LX_QUIC_SNIFF_DECOY=1` turns it on.
+Owner's decision 2026-11-02: one boolean in the root `lx` block (SPEC 098), next to `mtu_align`,
+global for the three clients; absent = off.
+
+```json
+"lx": { "quic_sniff_decoy": true }
+```
+
+`LX_QUIC_SNIFF_DECOY=1`/`0` in the environment overrides the key for debugging. User docs —
+`docs-lx/lx-config.md` §13.
 
 ## 5. Verification
 
@@ -117,13 +127,20 @@ The loopback stand needs `finalRules: [{"action":"allow","ip":["127.0.0.0/8"]}]`
 freedom, which blocks private targets by default. For comparison, the SPEC 150 §3.2 hold
 prototype passed at ≥ 200 ms with a 658–760 ms handshake.
 
-Units (`common/lxdatagram/decoy_test.go`): the dialer sends the decoy first on `udp` only, nothing
-when disabled; the decoy is not a long header, has the fixed bit clear and is shorter than a
+The key itself (no env) on the same stands: absent — masque 0 of 5, hysteria2/tuic 0 of 4; `true` —
+5 of 5 and 4 of 4.
+
+Units (`common/lxdatagram/decoy_test.go`, `option/lx_test.go`): the dialer sends the decoy first on
+`udp` only, nothing when the key is absent or false; the env overrides the key both ways and a
+non-boolean value leaves the key in charge; the key resolves and survives the canonical rewrite; the decoy is not a long header, has the fixed bit clear and is shorter than a
 stateless-reset trigger.
 
 ## 6. Files
 
 - `common/lxdatagram/decoy.go`, `common/lxdatagram/decoy_test.go` (new)
-- `common/lxdatagram/truncate.go` — `truncDialer.DialContext` sends the decoy
-- `protocol/masque/outbound.go` — `connectH3WithBudget` (`// lx: SPEC 151`)
+- `common/lxdatagram/truncate.go` — `Dialer(ctx, …)`, `truncDialer.DialContext` sends the decoy
+- `option/lx.go` — `LXOptions.QUICSniffDecoy`, `LXResolved.QUICSniffDecoy`; `option/lx_test.go`
+- `protocol/hysteria2/outbound.go`, `protocol/tuic/outbound.go` — the SPEC 150 line passes `ctx`
+- `docs-lx/lx-config.md`, `docs-lx/lx-config.ru.md` — §13 `lx.quic_sniff_decoy`
+- `protocol/masque/outbound.go` — `Outbound.sniffDecoy`, `connectH3WithBudget` (`// lx: SPEC 151`)
 - `protocol/masque/initial_delay_lx.go` — removed (SPEC 150 §3.2 prototype)

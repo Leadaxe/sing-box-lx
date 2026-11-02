@@ -7,7 +7,7 @@
 | Поле | Значение |
 |-------|-------|
 | Тип | F (фича) — QUIC-клиент (`masque` h3, `hysteria2`, `tuic`) проходит релей, который сниффит UDP и подменяет назначение по SNI |
-| Статус | I (реализовано за `LX_QUIC_SNIFF_DECOY`) — 2026-11-02: хелпер, два шва, юниты; стенд на Mac владельца против Xray `v26.10.31` с `destOverride` без `routeOnly`: masque h3 → WARP без обманки 0 из 5 (чужой ключ), с ней 5 из 5 в XUDP и plain, туннель продержался 2 минуты (12 из 12 запросов, 20 МБ на 2,6 МБ/с); hysteria2 и tuic на loopback-сервере 0 из 4 → 4 из 4. **Форма конфига открыта** (§4, решение владельца); живые релеи `[BL]` с этой сборкой не прогонялись |
+| Статус | I (реализовано) — ключ `lx.quic_sniff_decoy`, по умолчанию выключен (владелец 2026-11-02); 2026-11-02: хелпер, два шва, юниты; стенд на Mac владельца против Xray `v26.10.31` с `destOverride` без `routeOnly`: masque h3 → WARP без обманки 0 из 5 (чужой ключ), с ней 5 из 5 в XUDP и plain, туннель продержался 2 минуты (12 из 12 запросов, 20 МБ на 2,6 МБ/с); hysteria2 и tuic на loopback-сервере 0 из 4 → 4 из 4. живые релеи `[BL]` с этой сборкой не прогонялись |
 | Ветка | `lx` |
 | Build tag | — (`common/lxdatagram`, `protocol/masque` собираются всегда; шов `hysteria2`/`tuic` — строка SPEC 150 под апстримным `with_quic`) |
 | Происхождение | SPEC 150 §3.1 (сниффинг Xray объясняет, почему h3 через релеи `[BL]` попадает на чужой ключ) и §3.2 (прототип, придерживавший второй Initial дольше бюджета сниффинга Xray 200 мс). Разбор диспетчера Xray для прототипа показал более дешёвый рычаг: решает первая датаграмма |
@@ -69,16 +69,19 @@ to previous error»), обманка сработала бы и там.
 - `sniffDecoy = []byte{0x00}`.
 - `WriteSniffDecoy(conn, logger)` пишет её один раз; ошибка записи — debug-строка, дальше
   игнорируется (обманка вспомогательная, сломанный conn проявит сам хендшейк).
-- `SniffDecoyEnabled()` читает `LX_QUIC_SNIFF_DECOY` (`strconv.ParseBool`), пока не решена
-  форма конфига (§4).
+- `SniffDecoyFromContext(ctx)` возвращает `lx.quic_sniff_decoy` из контекста бокса
+  (`option.LXResolved.QUICSniffDecoyOrOff`, без ключа — выключено); `LX_QUIC_SNIFF_DECOY` с
+  булевым значением (`strconv.ParseBool`) сильнее ключа в обе стороны — отладочный рычаг (§4).
 
 ### 3.2 Швы
 
-- `masque` — `connectH3WithBudget` (`// lx: SPEC 151`): после обёрток SPEC 150/146 и до
+- `masque` — `NewOutbound` один раз читает флаг в `Outbound.sniffDecoy`;
+  `connectH3WithBudget` (`// lx: SPEC 151`) шлёт обманку после обёрток SPEC 150/146 и до
   `quic.DialEarly`, на тот conn, в который пишет quic-go. Покрывает и прямой путь, и `detour`:
   сниффящий релей может стоять и выше сокета ядра (SPEC 150 §3.1: роутер владельца с выходом
   через собственный Xray владельца).
-- `hysteria2`, `tuic` — `lxdatagram.Dialer` (шов SPEC 150) шлёт обманку на каждом `udp`
+- `hysteria2`, `tuic` — `lxdatagram.Dialer(ctx, …)` (шов SPEC 150, теперь берёт контекст бокса
+  ради флага) шлёт обманку на каждом `udp`
   `DialContext` до передачи conn в `sing-quic`; `tcp` и `ListenPacket` не трогаются. Port
   hopping у hysteria2 идёт через `ListenPacket` и обманки не получает (вне скоупа).
 
@@ -95,10 +98,17 @@ to previous error»), обманка сработала бы и там.
 ключами из его DCID и собирает CRYPTO по offset), настоящие Initial держатся дольше бюджета — без
 переписывания номеров пакетов quic-go. Не реализовано: такого сниффера не знаем.
 
-## 4. Открыто: форма конфига (решение владельца)
+## 4. Конфиг
 
-Кандидаты: всегда включено без ключа (цена — один байт на QUIC-дозвон, сервер его отбрасывает);
-ключ `off`/`on` у outbound; только env. До решения включается `LX_QUIC_SNIFF_DECOY=1`.
+Решение владельца 2026-11-02: один bool в корневом блоке `lx` (SPEC 098), рядом с `mtu_align`,
+общий для трёх клиентов; без ключа — выключено.
+
+```json
+"lx": { "quic_sniff_decoy": true }
+```
+
+`LX_QUIC_SNIFF_DECOY=1`/`0` в окружении перекрывает ключ для отладки. Пользовательская
+документация — `docs-lx/lx-config.ru.md` §13.
 
 ## 5. Проверка
 
@@ -117,12 +127,19 @@ Loopback-стенду нужен `finalRules: [{"action":"allow","ip":["127.0.0.
 по умолчанию он блокирует приватные адреса. Для сравнения: прототип задержки SPEC 150 §3.2
 проходил при ≥ 200 мс с хендшейком 658–760 мс.
 
-Юниты (`common/lxdatagram/decoy_test.go`): дайлер шлёт обманку первой только на `udp`, при
-выключенном — ничего; обманка не long header, fixed bit снят, короче триггера stateless reset.
+Сам ключ (без env) на тех же стендах: без ключа — masque 0 из 5, hysteria2/tuic 0 из 4; `true` —
+5 из 5 и 4 из 4.
+
+Юниты (`common/lxdatagram/decoy_test.go`, `option/lx_test.go`): дайлер шлёт обманку первой только
+на `udp`, без ключа или с `false` — ничего; env перекрывает ключ в обе стороны, небулево значение
+оставляет решение ключу; ключ разбирается и переживает каноникализацию; обманка не long header, fixed bit снят, короче триггера stateless reset.
 
 ## 6. Файлы
 
 - `common/lxdatagram/decoy.go`, `common/lxdatagram/decoy_test.go` (новые)
-- `common/lxdatagram/truncate.go` — `truncDialer.DialContext` шлёт обманку
-- `protocol/masque/outbound.go` — `connectH3WithBudget` (`// lx: SPEC 151`)
+- `common/lxdatagram/truncate.go` — `Dialer(ctx, …)`, `truncDialer.DialContext` шлёт обманку
+- `option/lx.go` — `LXOptions.QUICSniffDecoy`, `LXResolved.QUICSniffDecoy`; `option/lx_test.go`
+- `protocol/hysteria2/outbound.go`, `protocol/tuic/outbound.go` — строка SPEC 150 передаёт `ctx`
+- `docs-lx/lx-config.md`, `docs-lx/lx-config.ru.md` — §13 `lx.quic_sniff_decoy`
+- `protocol/masque/outbound.go` — `Outbound.sniffDecoy`, `connectH3WithBudget` (`// lx: SPEC 151`)
 - `protocol/masque/initial_delay_lx.go` — удалён (прототип SPEC 150 §3.2)

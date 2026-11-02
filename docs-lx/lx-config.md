@@ -16,7 +16,7 @@
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | extra fields on a `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`); the old `route.lx_idle_*` are deprecated aliases | **mobile only** (AAR) |
-| **Root `lx` block** (SPEC 098) | — (always parsed) | `lx.wg`, `lx.masque`, `lx.mtu_align` — the fork's global knobs, [§13](#13-the-lx-root-block-spec-098) | desktop + mobile |
+| **Root `lx` block** (SPEC 098) | — (always parsed) | `lx.wg`, `lx.masque`, `lx.mtu_align`, `lx.quic_sniff_decoy` — the fork's global knobs, [§13](#13-the-lx-root-block-spec-098) | desktop + mobile |
 | **DNS server group** (SPEC 033/035/143) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
 | **`lxd` daemon** (SPEC 055–057, 063–068) | `with_lxd` | not a config key — the `sing-box lxd` subcommand + `<state-dir>/daemon.json`; see [lxd-daemon.md](lxd-daemon.md) | desktop / server (**not** Win7, **not** AAR) |
@@ -112,7 +112,8 @@ you need and read its section below. Each comment shows the **default** and the 
     "masque": {
       "idle_timeout": "5m"                      // default: off. Global idle window for masque nodes without their own key
     },
-    "mtu_align": "clamp"                        // default: clamp. off | fill | clamp, or an object {"mode", "except": [tags]} (§13)
+    "mtu_align": "clamp",                       // default: clamp. off | fill | clamp, or an object {"mode", "except": [tags]} (§13)
+    "quic_sniff_decoy": false                   // default: off. One byte ahead of the QUIC Initial against relay SNI sniffing (§13, SPEC 151)
   },
 
   "outbounds": [
@@ -284,7 +285,7 @@ you need and read its section below. Each comment shows the **default** and the 
 ```
 
 > **Field count:** 26 XHTTP + 30 AmneziaWG (incl. `id`/`ip`/`ib` and the 9 AWG 3.x keys) + 1 VLESS (`encryption`) +
-> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 8 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.mtu_align`). Mutually-exclusive / ignored fields are
+> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 9 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.mtu_align` + `lx.quic_sniff_decoy`). Mutually-exclusive / ignored fields are
 > labelled inline above; the sections below give the per-field semantics, gotchas and live
 > verification status.
 
@@ -1126,7 +1127,8 @@ is the same as none. A misspelt key is a load error, not a silent default.
   "masque": {
     "idle_timeout": "5m"
   },
-  "mtu_align": "clamp"
+  "mtu_align": "clamp",
+  "quic_sniff_decoy": true
 }
 ```
 
@@ -1275,6 +1277,23 @@ exposed over the lx RPC.
 `openconnect` as upper nodes — a warning only; the server → client direction — controlled by the
 server. What masque does from below (outer `InitialPacketSize` = `mtu + 51`, ICMP Packet Too Big
 with the real budget) is in [§4](#4-masque-outbound--cloudflare-warp-spec-021).
+
+### `lx.quic_sniff_decoy` — QUIC through a relay that sniffs the SNI
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `quic_sniff_decoy` | bool | `false` | Every masque h3, hysteria2 and tuic dial sends one byte (`0x00`) before its first QUIC Initial |
+
+A relay with Xray `sniffing` (`destOverride` with `quic`, no `routeOnly`) decrypts the QUIC
+Initial, takes the SNI and sends the flow to that name instead of the address you dialled: masque
+fails with `different public key than pinned`, hysteria2/tuic with a fake SNI reach someone else's
+host or nothing. Xray decides on the first datagram of a flow; a first byte that is not a QUIC
+long-header packet takes its QUIC sniffer out, and the destination stays as dialled. The server
+drops the byte unparsed (QUIC fixed bit clear). No delay, no extra handshake. Turn it on when a
+QUIC node works directly and breaks through a relay you do not control (h2 masque through the same
+relay usually works — SPEC 060). sing-box relays (1.13+) do not rewrite the destination by sniffing
+and need nothing. Debug override: environment `LX_QUIC_SNIFF_DECOY=1`/`0` wins over the key.
+Not covered: hysteria2 port hopping (`server_ports`). Details — [SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md).
 
 ### Deprecated `route.lx_idle_*`
 
