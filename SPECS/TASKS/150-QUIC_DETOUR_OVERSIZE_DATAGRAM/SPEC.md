@@ -314,6 +314,18 @@ the wrapper is a no-op (§2.1), so the hot path of both protocols does not chang
   times out on its own TCP, n014/n058/n059/n085 EOF on dial. h2 passes through n009, n011, n001,
   n002. `packet_encoding: packetaddr` is a sing-box-only encoding and EOFs on every Xray relay; the
   two packings that matter in the field are XUDP (LxBox default) and native.
+- Red/green on the reporter's exact path with a local relay (Mac on the direct RU uplink
+  93.100.173.230, 2026-11-02 16:19): a `vless` inbound of our own `sing-box` as the relay, masque h3
+  to 162.159.198.2 with `detour` through it, seven requests 3 s apart through a `mixed` inbound,
+  pre-fix binary (parent of 6d80663b9) against the fixed one, XUDP and `packetaddr` packing (the
+  relay is sing-box, so `packetaddr` is valid here). Pre-fix: every request dials a fresh tunnel
+  and the tunnel dies within the same second as `h3 tunnel established` — 6 established / 6 died in
+  XUDP, 4 / 4 in packetaddr, plus one `PROTOCOL_VIOLATION` and one stateless reset on the WARP side;
+  a request still gets its `204` because it completes before the ladder lands, which is why a
+  single ping never showed this. Fixed: 1 established / 0 died in both packings, 7 of 7, and the
+  one-shot `datagram of 1462 bytes truncated to the 1452-byte read buffer` line once per run.
+  Behind the router's tunnel path (NL egress) the same stand gives `remote endpoint has a different
+  public key than pinned` for h2 and h3 alike, with or without the relay — the path, not the fix.
 
 ## 4. Files
 
