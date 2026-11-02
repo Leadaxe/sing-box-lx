@@ -77,8 +77,7 @@ The set is cached and recomputed **only on events** (selector switch, urltest au
 
 The keys live in the root `lx` block since SPEC 098 ([lx-config.md §13](lx-config.md#13-the-lx-root-block-spec-098)).
 The old `route.lx_idle_suspend` / `route.lx_idle_suspend_reachable` / `route.lx_idle_teardown`
-are accepted for one release as deprecated aliases, with a warning per key; a value that differs
-between the two places is a start error.
+are removed (2026-11-02): a config with them fails to load as one with unknown keys.
 
 | | Unreachable endpoint | Reachable endpoint | Any SLEEPING endpoint |
 |---|---|---|---|

@@ -15,7 +15,7 @@
 | **XHTTP** транспорт (совместим с Xray) | `with_xhttp` | `transport.type: "xhttp"` на VLESS / VMess / Trojan outbound | desktop + mobile |
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | доп. поля на `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
-| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`); старые `route.lx_idle_*` — устаревшие алиасы | **только mobile** (AAR) |
+| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`) | **только mobile** (AAR) |
 | **Корневой блок `lx`** (SPEC 098) | — (разбирается всегда) | `lx.wg`, `lx.masque`, `lx.mtu_align`, `lx.quic_sniff_decoy` — глобальные ручки форка, [§13](#13-корневой-блок-lx-spec-098) | desktop + mobile |
 | **Группа DNS-серверов** (SPEC 033/035/143) | — (всегда в сборке) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (всегда в сборке) | `encryption` на `vless`-outbound | desktop + mobile |
@@ -35,8 +35,8 @@ GC-нагрева / RAM, ~8 МБ каждый там, где `BatchSize=128` —
 старте** с ошибкой `lx.wg.* is set but this build lacks idle-suspend support; rebuild with
 -tags with_lx_idle_suspend (mobile-only feature)`. См. [фичу ENERGY](../SPECS/FEATURES/008-ENERGY/FEATURE.md).
 
-Смежные ключи (ревизия 2026-07-15; SPEC 098 перенесла их в блок `lx`, старые имена
-`route.lx_idle_*` — устаревшие алиасы на один релиз): `lx.wg.idle_suspend_reachable` — опциональное
+Смежные ключи (ревизия 2026-07-15; с SPEC 098 в блоке `lx` — старые имена `route.lx_idle_*`
+удалены, конфиг с ними не загружается как с неизвестными ключами): `lx.wg.idle_suspend_reachable` — опциональное
 второе, более длинное окно простоя, после которого гасятся и *достижимые* эндпоинты
 (члены пула, выбранный узел, final); `lx.wg.idle_teardown` — третий уровень:
 сколько эндпоинт может *спать* до полного сноса (Close, освобождается и gVisor
@@ -1291,23 +1291,19 @@ Xray решает по первой датаграмме потока; перв�
 sing-box-релеи (1.13+) назначение по сниффу не переписывают, им ничего не нужно. Не покрыто: port hopping у
 hysteria2 (`server_ports`). Подробности — [SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.ru.md).
 
-### Устаревшие `route.lx_idle_*`
+### Удалённые `route.lx_idle_*`
 
-| Старый ключ | Новый ключ |
+| Старый ключ (удалён) | Ключ |
 |---|---|
 | `route.lx_idle_suspend` | `lx.wg.idle_suspend` |
 | `route.lx_idle_suspend_reachable` | `lx.wg.idle_suspend_reachable` |
 | `route.lx_idle_teardown` | `lx.wg.idle_teardown` |
 
-Старые ключи принимаются один релиз, с предупреждением на каждый ключ в логе старта
-(`route.lx_idle_suspend is deprecated, use lx.wg.idle_suspend`). Ключ, заданный в обоих местах с
-одинаковым значением, даёт то же предупреждение; с разными — ядро не стартует:
-`route.lx_idle_suspend conflicts with lx.wg.idle_suspend`. Алиасы снимаются в релизе после
-перехода LxBox и лаунчера на `lx`. Предупреждения пишутся в лог работающего ядра;
-`sing-box check` их не печатает.
+Устаревшие алиасы удалены (владелец 2026-11-02): конфиг, в котором они остались, не загружается с
+ошибкой неизвестного поля, как при любой опечатке в ключе. Значения переносятся в `lx.wg`.
 
-Running-config (`GetRunningConfig`, SPEC 037) отдаёт блок в канонической форме: конфиг, пришедший
-с `route.lx_idle_*`, показывается как `lx.wg.*`, старых ключей в нём нет.
+Running-config (`GetRunningConfig`, SPEC 037) отдаёт блок `lx` в канонической форме (пустые
+подблоки отброшены).
 
 ### Зарезервировано: `lx.naive`
 

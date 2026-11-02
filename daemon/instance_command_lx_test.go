@@ -49,48 +49,47 @@ func TestCaptureRunningConfig_LX(t *testing.T) {
 	}
 }
 
-// lx: SPEC 098 — the snapshot shows the root `lx` block canonical: a config that
-// still uses the deprecated route.lx_idle_* aliases comes back as lx.wg.*, with
-// the explicit teardown "0" kept as a value, no route.lx_idle_* key left, and
-// the caller's options (which box.New resolves next, with warnings) untouched.
+// lx: SPEC 098 — the snapshot shows the root `lx` block canonical: an empty
+// sub-block is dropped, an explicit teardown "0" stays a value, and the
+// caller's options (which box.New resolves next) are untouched.
 func TestCaptureRunningConfig_canonicalLXBlock_LX(t *testing.T) {
 	zero := badoption.Duration(0)
 	options := option.Options{
-		Route: &option.RouteOptions{
-			Final:                  "direct-out",
-			LXIdleSuspend:          badoption.Duration(30 * time.Second),
-			LXIdleSuspendReachable: badoption.Duration(5 * time.Minute),
-			LXIdleTeardown:         &zero,
+		Route: &option.RouteOptions{Final: "direct-out"},
+		LX: &option.LXOptions{
+			WG: &option.LXWGOptions{
+				IdleSuspend:          badoption.Duration(30 * time.Second),
+				IdleSuspendReachable: badoption.Duration(5 * time.Minute),
+				IdleTeardown:         &zero,
+			},
+			MASQUE:      &option.LXMASQUEOptions{IdleTimeout: badoption.Duration(2 * time.Minute)},
+			TrustTunnel: &option.LXTrustTunnelOptions{},
 		},
-		LX: &option.LXOptions{MASQUE: &option.LXMASQUEOptions{IdleTimeout: badoption.Duration(2 * time.Minute)}},
 	}
 	content := captureRunningConfig(options)
 	var document struct {
-		Route map[string]any `json:"route"`
-		LX    struct {
-			WG     map[string]any `json:"wg"`
-			MASQUE map[string]any `json:"masque"`
-		} `json:"lx"`
+		Route map[string]any            `json:"route"`
+		LX    map[string]map[string]any `json:"lx"`
 	}
 	if err := json.Unmarshal([]byte(content), &document); err != nil {
 		t.Fatalf("snapshot is not valid JSON: %v", err)
-	}
-	if strings.Contains(content, "lx_idle_") {
-		t.Fatalf("snapshot still carries route.lx_idle_*: %s", content)
 	}
 	if document.Route["final"] != "direct-out" {
 		t.Fatalf("the rest of route must survive: %s", content)
 	}
 	want := map[string]any{"idle_suspend": "30s", "idle_suspend_reachable": "5m0s", "idle_teardown": "0s"}
 	for key, value := range want {
-		if document.LX.WG[key] != value {
-			t.Fatalf("lx.wg.%s = %v, want %v: %s", key, document.LX.WG[key], value, content)
+		if document.LX["wg"][key] != value {
+			t.Fatalf("lx.wg.%s = %v, want %v: %s", key, document.LX["wg"][key], value, content)
 		}
 	}
-	if document.LX.MASQUE["idle_timeout"] != "2m0s" {
+	if document.LX["masque"]["idle_timeout"] != "2m0s" {
 		t.Fatalf("lx.masque must survive: %s", content)
 	}
-	if options.Route.LXIdleSuspend == 0 || options.Route.LXIdleTeardown == nil || options.LX.WG != nil {
+	if _, present := document.LX["trusttunnel"]; present {
+		t.Fatalf("an empty lx.trusttunnel must be dropped from the snapshot: %s", content)
+	}
+	if options.LX.TrustTunnel == nil {
 		t.Fatal("capturing the snapshot must not canonicalize the caller's options")
 	}
 }

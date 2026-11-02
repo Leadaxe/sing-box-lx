@@ -168,12 +168,11 @@ func TestIdleTick_passesTeardownThreshold(t *testing.T) {
 // option.ResolveLX — see option/lx_test.go; lx_block_lx_test.go proves the
 // router reads the resolved values from the context. SPEC 098.
 
-// lx: SPEC 098 — the lx block and the aliases both start the tick with the
-// same period; routers are built through the context as box.New does.
-func TestStartIdleSuspend_lxBlockAndAliasesStartTheTick(t *testing.T) {
+// lx: SPEC 098 — the lx block starts the tick; routers are built through the
+// context as box.New does.
+func TestStartIdleSuspend_lxBlockStartsTheTick(t *testing.T) {
 	for _, content := range []string{
 		`{"lx":{"wg":{"idle_suspend":"30s","idle_suspend_reachable":"5m","idle_teardown":"0"}}}`,
-		`{"route":{"lx_idle_suspend":"30s","lx_idle_suspend_reachable":"5m","lx_idle_teardown":"0"}}`,
 	} {
 		r := routerFromConfig(t, content)
 		if err := r.startIdleSuspend(); err != nil {

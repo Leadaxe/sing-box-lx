@@ -32,9 +32,9 @@ type LXOptions struct {
 	QUICSniffDecoy bool `json:"quic_sniff_decoy,omitempty"`
 }
 
-// LXWGOptions holds the WG/AWG endpoint knobs. The three idle keys keep the
-// SPEC 020 semantics they had as route.lx_idle_*; they act only in builds with
-// with_lx_idle_suspend, and the router refuses them at start otherwise.
+// LXWGOptions holds the WG/AWG endpoint knobs. The three idle keys carry the
+// SPEC 020 semantics; they act only in builds with with_lx_idle_suspend, and
+// the router refuses them at start otherwise.
 type LXWGOptions struct {
 	// IdleSuspend is the idle threshold after which an endpoint outside the
 	// active routing tree is brought Down. 0 / absent disables the idle tick.
@@ -220,16 +220,14 @@ func (r *LXResolved) MTUAlignOrDefault() LXMTUAlignResolved {
 	return r.MTUAlign
 }
 
-// ResolveLX folds the deprecated route.lx_idle_* aliases into the `lx` block,
-// validates it and returns the resolved values plus one warning per alias used.
+// ResolveLX validates the root `lx` block and returns the resolved values.
 //
-// On success options is left in canonical form: options.LX carries every value
-// (nil when nothing is set) and the route.lx_idle_* fields are cleared. Both
-// options.LX and options.Route are replaced by fresh copies, never written
-// through, so a shallow copy of the caller's Options can be resolved without
-// touching the original. On error options is not modified. Resolving a
-// canonical Options again is a no-op without warnings.
-func ResolveLX(options *Options) (*LXResolved, []string, error) {
+// On success options is left in canonical form: empty sub-blocks are dropped
+// and options.LX is nil when nothing is set. options.LX is replaced by a fresh
+// copy, never written through, so a shallow copy of the caller's Options can
+// be resolved without touching the original. On error options is not
+// modified. Resolving a canonical Options again is a no-op.
+func ResolveLX(options *Options) (*LXResolved, error) {
 	var lx LXOptions
 	if options.LX != nil {
 		lx = *options.LX
@@ -238,53 +236,10 @@ func ResolveLX(options *Options) (*LXResolved, []string, error) {
 	if lx.WG != nil {
 		wg = *lx.WG
 	}
-	var route RouteOptions
-	if options.Route != nil {
-		route = *options.Route
-	}
-
-	var warnings []string
-	aliasUsed := false
-	alias := func(key string, legacySet, currentSet, equal bool) error {
-		if !legacySet {
-			return nil
-		}
-		if currentSet && !equal {
-			return E.New("route.lx_", key, " conflicts with lx.wg.", key)
-		}
-		warnings = append(warnings, "route.lx_"+key+" is deprecated, use lx.wg."+key)
-		aliasUsed = true
-		return nil
-	}
-	err := alias("idle_suspend", route.LXIdleSuspend != 0, wg.IdleSuspend != 0,
-		route.LXIdleSuspend == wg.IdleSuspend)
-	if err != nil {
-		return nil, nil, err
-	}
-	if route.LXIdleSuspend != 0 {
-		wg.IdleSuspend = route.LXIdleSuspend
-	}
-	err = alias("idle_suspend_reachable", route.LXIdleSuspendReachable != 0, wg.IdleSuspendReachable != 0,
-		route.LXIdleSuspendReachable == wg.IdleSuspendReachable)
-	if err != nil {
-		return nil, nil, err
-	}
-	if route.LXIdleSuspendReachable != 0 {
-		wg.IdleSuspendReachable = route.LXIdleSuspendReachable
-	}
-	err = alias("idle_teardown", route.LXIdleTeardown != nil, wg.IdleTeardown != nil,
-		route.LXIdleTeardown != nil && wg.IdleTeardown != nil && *route.LXIdleTeardown == *wg.IdleTeardown)
-	if err != nil {
-		return nil, nil, err
-	}
-	if route.LXIdleTeardown != nil {
-		value := *route.LXIdleTeardown
-		wg.IdleTeardown = &value
-	}
 
 	resolved, err := resolveLXValues(wg, lx.MASQUE, lx.TrustTunnel, lx.MTUAlign)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	resolved.QUICSniffDecoy = lx.QUICSniffDecoy
 
@@ -307,13 +262,7 @@ func ResolveLX(options *Options) (*LXResolved, []string, error) {
 	} else {
 		options.LX = &lx
 	}
-	if aliasUsed {
-		route.LXIdleSuspend = 0
-		route.LXIdleSuspendReachable = 0
-		route.LXIdleTeardown = nil
-		options.Route = &route
-	}
-	return resolved, warnings, nil
+	return resolved, nil
 }
 
 func resolveLXValues(wg LXWGOptions, masque *LXMASQUEOptions, trustTunnel *LXTrustTunnelOptions, mtuAlign *LXMTUAlign) (*LXResolved, error) {

@@ -55,7 +55,6 @@ func TestStartIdleSuspend_stubRejectsLXWGKeys(t *testing.T) {
 	for _, content := range []string{
 		`{"lx":{"wg":{"idle_suspend":"30s"}}}`,
 		`{"lx":{"wg":{"idle_suspend":"30s","idle_teardown":"0"}}}`,
-		`{"route":{"lx_idle_suspend":"30s"}}`,
 		`{"lx":{"wg":{"idle_suspend":"30s","lazy_build":true}}}`,
 		`{"lx":{"wg":{"build_max":2}}}`,
 		`{"lx":{"wg":{"build_overflow":"build"}}}`,

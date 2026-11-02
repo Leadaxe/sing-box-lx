@@ -15,7 +15,7 @@
 | **XHTTP** transport (Xray-compatible) | `with_xhttp` | `transport.type: "xhttp"` on a VLESS / VMess / Trojan outbound | desktop + mobile |
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | extra fields on a `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
-| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`); the old `route.lx_idle_*` are deprecated aliases | **mobile only** (AAR) |
+| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`) | **mobile only** (AAR) |
 | **Root `lx` block** (SPEC 098) | — (always parsed) | `lx.wg`, `lx.masque`, `lx.mtu_align`, `lx.quic_sniff_decoy` — the fork's global knobs, [§13](#13-the-lx-root-block-spec-098) | desktop + mobile |
 | **DNS server group** (SPEC 033/035/143) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
@@ -36,8 +36,8 @@ mismatch, a desktop/CLI binary that is handed a config with `lx.wg.idle_suspend`
 idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
 See the [ENERGY feature](../SPECS/FEATURES/008-ENERGY/FEATURE.md).
 
-Related keys (2026-07-15 revision; moved to the `lx` block by SPEC 098, the old
-`route.lx_idle_*` names are deprecated aliases for one release): `lx.wg.idle_suspend_reachable` — optional
+Related keys (2026-07-15 revision; in the `lx` block since SPEC 098 — the old `route.lx_idle_*`
+names are removed and fail to load as unknown keys): `lx.wg.idle_suspend_reachable` — optional
 second, longer idle window after which even *reachable* endpoints (pool members,
 the selected node, final) suspend; `lx.wg.idle_teardown` — the third level:
 how long an endpoint may *sleep* before a full teardown (Close, the gVisor
@@ -1294,23 +1294,19 @@ QUIC node works directly and breaks through a relay you do not control (h2 masqu
 relay usually works — SPEC 060). sing-box relays (1.13+) do not rewrite the destination by sniffing
 and need nothing. Not covered: hysteria2 port hopping (`server_ports`). Details — [SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md).
 
-### Deprecated `route.lx_idle_*`
+### Removed `route.lx_idle_*`
 
-| Old key | New key |
+| Old key (removed) | Key |
 |---|---|
 | `route.lx_idle_suspend` | `lx.wg.idle_suspend` |
 | `route.lx_idle_suspend_reachable` | `lx.wg.idle_suspend_reachable` |
 | `route.lx_idle_teardown` | `lx.wg.idle_teardown` |
 
-The old keys are accepted for one release with a warning per key in the start log
-(`route.lx_idle_suspend is deprecated, use lx.wg.idle_suspend`). A key set in both places with
-the same value gets the same warning; with different values the core refuses to start:
-`route.lx_idle_suspend conflicts with lx.wg.idle_suspend`. The aliases go away in the release
-after LxBox and the launcher switch to `lx`. The warnings go to the log of a running core;
-`sing-box check` does not print them.
+The deprecated aliases are gone (owner 2026-11-02): a config that still carries one fails to load
+with an unknown-field error, like any misspelt key. Move the values to `lx.wg`.
 
-The running config (`GetRunningConfig`, SPEC 037) returns the block canonical: a config that came
-with `route.lx_idle_*` is shown as `lx.wg.*`, and the old keys are gone from it.
+The running config (`GetRunningConfig`, SPEC 037) returns the `lx` block canonical (empty
+sub-blocks dropped).
 
 ### Reserved: `lx.naive`
 

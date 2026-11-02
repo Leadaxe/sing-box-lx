@@ -85,7 +85,7 @@ README — [на GitHub](https://github.com/SagerNet/sing-box/blob/main/README.m
 | Фича | Поверхность конфига | Что даёт | Build-тег | Статус |
 |---|---|---|---|---|
 | **Наблюдаемость** — [006](SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md) | расширения `CommandClient` в libbox | `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetChains`, `SubscribeDNSQueries`, `Connection.detourList` — то, на чём живёт Android-клиент | `with_lx_command` | выпущено, используется LxBox |
-| **Idle-suspend (энергия)** — [008](SPECS/FEATURES/008-ENERGY/FEATURE.md) | `route.lx_idle_suspend` / `lx_idle_suspend_reachable` / `lx_idle_teardown`, `urltest` `mode: failover` | Три уровня сна для простаивающих WireGuard/AWG-эндпоинтов: батарея, нагрев и RAM на многоузловых мобильных профилях | `with_lx_idle_suspend` (вшит в AAR) | девайс-верифицирован: RSS −31 % |
+| **Idle-suspend (энергия)** — [008](SPECS/FEATURES/008-ENERGY/FEATURE.md) | `lx.wg.idle_suspend` / `idle_suspend_reachable` / `idle_teardown`, `urltest` `mode: failover` | Три уровня сна для простаивающих WireGuard/AWG-эндпоинтов: батарея, нагрев и RAM на многоузловых мобильных профилях | `with_lx_idle_suspend` (вшит в AAR) | девайс-верифицирован: RSS −31 % |
 | **Демон `lxd`** — [014](SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md) | подкоманда `sing-box lxd` | Ядро in-process за управляющим каналом, который переживает любую смену конфига: gRPC + admin-REST на одном порту, `apply` с автоматическим откатом, mTLS с энролментом, установка службы, телеметрия хоста | `with_lxd` | девайс-верифицирован на macOS; OpenWrt-скрипты установки проверены в поле |
 
 > **Не поддерживается by design:** серверные половины перечисленного, кроме inbound `trusttunnel`; постквантовые **подписи** REALITY у Xray (`pqv` / ML-DSA-65) и `spiderX` — это другой механизм, не обмен ключами, и в sing-box его нет; отпечатки `edge`, `ios`, `android`, `360`, `qq` против Xray ≥ v26.9.8 (ни один апстримный пресет не несёт гибридного шара, у Xray та же граница; подменять отпечаток — работа приложений).
@@ -204,7 +204,7 @@ make -f Makefile.lx lx-check        # проверка примеров конф
 
 ### Балансировка, энергия, снифферы
 
-Новых типов нет — несколько полей на существующих: `urltest` `mode: round_robin` + `balancer{…}` и `mode: failover` ([lx-config.ru.md §3](docs-lx/lx-config.ru.md#3-режимы-выбора-узла-в-urltest-spec-019--116), [EN](docs-lx/lx-config.md#3-urltest-node-selection-modes-spec-019--116)); уровни сна `route.lx_idle_*` ([lx-energy.ru.md](docs-lx/lx-energy.ru.md), [EN](docs-lx/lx-energy.md)); имена протоколов в действии `sniff` и правилах `protocol` ([lx-sniff.ru.md](docs-lx/lx-sniff.ru.md), [EN](docs-lx/lx-sniff.md)).
+Новых типов нет — несколько полей на существующих: `urltest` `mode: round_robin` + `balancer{…}` и `mode: failover` ([lx-config.ru.md §3](docs-lx/lx-config.ru.md#3-режимы-выбора-узла-в-urltest-spec-019--116), [EN](docs-lx/lx-config.md#3-urltest-node-selection-modes-spec-019--116)); уровни сна `lx.wg.idle_*` ([lx-energy.ru.md](docs-lx/lx-energy.ru.md), [EN](docs-lx/lx-energy.md)); имена протоколов в действии `sniff` и правилах `protocol` ([lx-sniff.ru.md](docs-lx/lx-sniff.ru.md), [EN](docs-lx/lx-sniff.md)).
 
 ---
 
