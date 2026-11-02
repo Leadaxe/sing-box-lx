@@ -23,6 +23,85 @@ detour conn kernel semantics: a read into a short buffer returns the truncated h
 and drops the rest, exactly what the OS does on a real socket. Upstream `hysteria2` and `tuic`
 hand quic-go their detour conn through the same read path and get the same wrapper.
 
+## 0. In plain words
+
+Written after the owner's questions on 2026-11-02; the sections below are the formal record, this
+one is the explanation.
+
+**What happens, step by step.**
+
+1. WARP sends a probe datagram of 1462 bytes a few seconds after the handshake.
+2. The vless or XUDP stream carries it to us whole; the stream does not care about size.
+3. quic-go asks the conn below it: "give me the next packet into this 1452-byte buffer".
+4. sing's reader sees that a 1462-byte frame does not fit a 1452-byte buffer and, instead of cutting
+   the tail, returns `io.ErrShortBuffer`.
+5. quic-go receives a read error. For it a read error means "the socket is broken", so it closes
+   the whole transport. The tunnel dies.
+
+quic-go never looks at the size of the packet. It trusts what is below it, and below it there is a
+stream with a different character instead of a socket.
+
+**What "sing's reader" is.** The code in the `sing-vmess` library that unpacks the vless tunnel on
+our side. When a masque outbound runs through `detour` to a vless relay, its QUIC traffic to WARP
+is wrapped into the vless connection to the relay: one TCP stream on the wire, datagrams laid one
+after another with a length prefix. Something on our side has to split that stream back into
+datagrams. That is the reader: `vless.PacketConn.Read` in plain packing, `XUDPConn.ReadFrom` in
+XUDP. It reads two bytes of length, then that many bytes of body, and hands the result to whoever
+is above as one datagram. The "buffer too small" check lives there.
+
+**Why quic-go reads into 1452 and expects truncation.** 1452 is the largest UDP payload at an
+Ethernet MTU of 1500 minus the IPv6 and UDP headers. quic-go advertises it to the server as
+`max_udp_payload_size` and keeps a pool of fixed-size buffers for it so that no allocation happens
+per packet. By RFC 9000 the server must not send packets larger than that, except PMTUD probes,
+which are built to be lost. So from quic-go's point of view a packet longer than 1452 is always
+either a probe or garbage, and the right reaction is the same: it does not decrypt, it is dropped.
+There is no separate "buffer too small" handling in quic-go because a socket does not need one: the
+kernel cuts the tail of the datagram by POSIX `recvfrom` semantics and reports no error. Windows is
+the only one that reports `WSAEMSGSIZE`, and quic-go explicitly ignores that code. Any other read
+error on a UDP socket means the socket is closed or the network is gone, so `Transport.listen`
+honestly closes the transport on it.
+
+**Why sing answers with an error instead of truncating.** For sing it is not "the transport
+delivered a long packet" but "the caller gave too small a buffer"; it blames the caller, not the
+network. The reader must put the datagram into the caller's buffer whole, cutting it would hand
+corrupted data upwards and hide that. So it uses the standard Go answer to "buffer too small":
+`io.ErrShortBuffer`, let the caller bring a bigger buffer. In sing's own world this never fires:
+every caller there reads through a `buf.Buffer` of 65535 bytes, the maximum datagram size. Nobody
+ever asked sing for the "behave like a kernel socket, cut silently" contract, because the situation
+never came up. There is a second reason: reading the body into a temporary buffer and copying, for
+a case that does not happen, is an extra copy per datagram, and sing is written for minimal copies.
+
+**Where they collide.** quic-go thinks there is a socket below it; through `detour` there is a sing
+stream. Neither side is wrong on its own, the defect is in the joint, and the joint is ours.
+Upstream sing-box glues hysteria2 and tuic to a stream `detour` the same way, with the same defect,
+but detouring QUIC protocols through a stream proxy is rare and not every server probes, so nobody
+hit it. We hit it because WARP always probes and every `[BL]` relay is a stream.
+
+**Why h2 and AWG through the same relays worked.** h2 runs over TCP, no datagrams and no probes at
+all. AWG reads into a full-MTU buffer and survives the loss of one frame. Only QUIC broke, because
+only quic-go closes the connection on a read error. hysteria2 and tuic sit on the same quic-go, so
+through `detour` they carried the same disease and got the same wrapper.
+
+**How the shim fixes it.** It stands between the two and speaks each one's language. quic-go calls
+`Read` with its 1452-byte buffer. The shim puts that buffer aside and calls `Read` on sing's reader
+with its own 65535-byte buffer, an ordinary call for sing, any frame fits, no error. Having the
+frame, the shim copies into quic-go's buffer as much as fits, the first 1452 bytes; the 10-byte tail
+stays in the shim's buffer and is overwritten by the next read. quic-go gets 1452 bytes without an
+error, as from a socket, fails to decrypt and drops the packet. The probe is "lost", the server
+stays at 1452. Ordinary packets shorter than 1452 pass through unchanged, with one extra copy. The
+direct path without `detour` is not touched: the shim checks that a real kernel UDP socket is below
+it and then does not install itself.
+
+**Why truncate rather than drop oversize datagrams.** For WARP the outcome would be the same, the
+probe disappears, but truncation was chosen for three reasons. It is an exact copy of what the
+kernel does, and the shim's only job is to make the stream indistinguishable from a UDP socket;
+copying the kernel literally removes the need to guess whether quic-go has a case where the stump
+matters. The shim does not know what is inside: it sits below QUIC and sees bytes; dropping would
+mean the shim decides for the protocol which packets it does not need, while a stump reaches the
+one who can read its header and decide. And dropping is awkward at this level: `Read` must return
+something, so skipping a packet means looping until a fitting one arrives, a second behaviour rule
+with its own waiting logic; truncation is one `copy`.
+
 ## 1. Problem
 
 ### 1.1 The stand
