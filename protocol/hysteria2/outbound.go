@@ -12,6 +12,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/lxdatagram"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -128,7 +129,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	networkList := options.Network.Build()
 	client, err := hysteria2.NewClient(hysteria2.ClientOptions{
 		Context:            ctx,
-		Dialer:             outboundDialer,
+		Dialer:             lxdatagram.Dialer(outboundDialer, logger), // lx: SPEC 150
 		Logger:             logger,
 		BrutalDebug:        options.BrutalDebug,
 		ServerAddress:      options.ServerOptions.Build(),

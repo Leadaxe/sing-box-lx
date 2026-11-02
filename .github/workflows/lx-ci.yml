@@ -140,9 +140,9 @@ jobs:
           go test -race -count=1 \
             -ldflags "-checklinkname=0" \
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd,with_lx_chain" \
-            ./common/lxtrace/ ./common/dialer/ ./daemon/ ./experimental/libbox/ \
+            ./common/lxtrace/ ./common/lxdatagram/ ./common/dialer/ ./daemon/ ./experimental/libbox/ \
             ./dns/ ./dns/transport/ ./dns/transport/fakeip/ ./dns/transport/quic/ ./dns/transport/group/ ./protocol/group/ ./protocol/chain/ \
-            ./protocol/masque/... ./transport/v2rayxhttp/ ./lx-test/conntest/
+            ./protocol/masque/... ./protocol/hysteria2/ ./protocol/tuic/ ./transport/v2rayxhttp/ ./lx-test/conntest/
           go test -count=1 \
             -ldflags "-checklinkname=0" \
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command" \

@@ -9,6 +9,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/lxdatagram"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -76,7 +77,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	client, err := tuic.NewClient(tuic.ClientOptions{
 		Context:       ctx,
-		Dialer:        outboundDialer,
+		Dialer:        lxdatagram.Dialer(outboundDialer, logger), // lx: SPEC 150
 		ServerAddress: options.ServerOptions.Build(),
 		TLSConfig:     tlsConfig,
 		QUICOptions: qtls.QUICOptions{
