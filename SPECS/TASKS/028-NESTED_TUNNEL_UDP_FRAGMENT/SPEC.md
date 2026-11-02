@@ -7,6 +7,7 @@
 | Тип | B (bug) — вложенные туннели (AWG/WG/MASQUE через `detour`) не ходят на устройстве; direct-ноды через тот же detour работают |
 | Статус | C — фикс реализован, стенд зелёный (юнит DF-флага + e2e AWG-over-AWG); остался field-тест на устройстве |
 | Владелец конфигурации | Поведение `udp_fragment` **по умолчанию** для `wireguard`-endpoint и `masque`-outbound (протокольный default, само поле — upstream). Взаимодействие «вложенный туннель ↔ detour ↔ MTU» — эта спека |
+| Связано | Начало линии «размер пакета на отправке против туннеля ниже»: → [073](../073-CHAIN_OUTBOUND/SPEC.md) §3.5 (MTU звеньев `chain`) → [120](../120-PATH_MTU_ALIGN/SPEC.md) (`lx.mtu_align` под обычным `detour`, issue #37) → [144](../144-MTU_ALIGN_STREAM_BOUNDARY/SPEC.md) (границы ёмкости, пол 1280, `s4`). Не та линия: [150](../150-QUIC_DETOUR_OVERSIZE_DATAGRAM/SPEC.ru.md) — приём, один оверсайз-пакет через потоковый `detour` закрывал QUIC-транспорт; здесь и далее читатели (ядро ОС, netstack) усекают молча |
 
 ## 0. TL;DR
 

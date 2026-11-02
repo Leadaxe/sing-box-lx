@@ -136,7 +136,9 @@ GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
   links above — they come back up through the new pick.
 - **A link = the original minus the DPI garb, plus `rewrite`, with an aligned MTU / packet size.**
   The order of transformations is fixed: `strip` → `rewrite` → MTU. The MTU rule is the shared
-  mechanism of [SPEC 120](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) (`lx.mtu_align`), the same one
+  mechanism of [SPEC 120](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) (`lx.mtu_align`, capacity model
+  amended by [SPEC 144](../../TASKS/144-MTU_ALIGN_STREAM_BOUNDARY/SPEC.md); the line starts at
+  [SPEC 028](../../TASKS/028-NESTED_TUNNEL_UDP_FRAGMENT/SPEC.md)), the same one
   that acts under a plain `detour`: `mtu` in a node's config means "as a standalone node"; the chain
   only **lowers** it by the exact overhead of the IP tunnels below the link (WireGuard inside an IP
   tunnel −60/−80 by the server's address family, MASQUE −79/−99); QUIC links (hysteria2, tuic,
@@ -285,7 +287,9 @@ GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
   через новый выбор.
 - **Звено = оригинал минус DPI-обвес плюс `rewrite`, с выровненным MTU / размером пакета.**
   Порядок преобразований фиксирован: `strip` → `rewrite` → MTU. Правило MTU — общий механизм
-  [SPEC 120](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) (`lx.mtu_align`), тот же, что действует под
+  [SPEC 120](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) (`lx.mtu_align`, модель ёмкости поправлена
+  [SPEC 144](../../TASKS/144-MTU_ALIGN_STREAM_BOUNDARY/SPEC.md); начало линии —
+  [SPEC 028](../../TASKS/028-NESTED_TUNNEL_UDP_FRAGMENT/SPEC.md)), тот же, что действует под
   обычным `detour`: `mtu` в конфиге узла трактуется как «MTU как самостоятельного»; цепочка только
   **понижает** его на точные накладные IP-туннелей под звеном (WireGuard внутри IP-туннеля −60/−80
   по семейству адреса сервера, MASQUE −79/−99); QUIC-звенья (hysteria2, tuic, hysteria) получают
