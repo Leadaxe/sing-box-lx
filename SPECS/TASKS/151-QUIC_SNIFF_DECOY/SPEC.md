@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | Type | F (feature) — a QUIC client (`masque` h3, `hysteria2`, `tuic`) passes a relay that sniffs UDP and rewrites the destination by the SNI |
-| Status | I (implemented) — key `lx.quic_sniff_decoy`, off by default (owner 2026-11-02); 2026-11-02: helper, two seams, units; stand on the owner's Mac against Xray `v26.10.31` with `destOverride` and no `routeOnly`: masque h3 → WARP 0 of 5 without the decoy (foreign key), 5 of 5 with it in XUDP and plain packing, the tunnel held 2 minutes (12 of 12 requests, 20 MB at 2.6 MB/s); hysteria2 and tuic on a loopback server 0 of 4 → 4 of 4. live `[BL]` relays not run with this build |
+| Status | I (implemented) — key `lx.quic_sniff_decoy`, off by default (owner 2026-11-02); 2026-11-02: helper, two seams, units; stand on the owner's Mac against Xray `v26.10.31` with `destOverride` and no `routeOnly`: masque h3 → WARP 0 of 5 without the decoy (foreign key), 5 of 5 with it in XUDP and plain packing, the tunnel held 2 minutes (12 of 12 requests, 20 MB at 2.6 MB/s); hysteria2 and tuic on a loopback server 0 of 4 → 4 of 4; live `[BL]` list (14 relays, 4 alive) on the rc.3 build: h3 through the three sniffing relays 0 of 3 → 3 of 3 / 3 of 3 / 2 of 3 (§5.1) |
 | Branch | `lx` |
 | Build tag | — (`common/lxdatagram`, `protocol/masque` build always; the `hysteria2`/`tuic` seam is SPEC 150's line under upstream's `with_quic`) |
 | Origin | SPEC 150 §3.1 (Xray sniffing explains why h3 through `[BL]` relays lands on a foreign key) and §3.2 (prototype that held the second Initial past Xray's 200 ms sniff budget). Reading Xray's dispatcher for that prototype showed a cheaper lever: the first datagram decides |
@@ -134,6 +134,27 @@ Units (`common/lxdatagram/decoy_test.go`, `option/lx_test.go`): the dialer sends
 `udp` only, nothing when the key is absent or false; the env overrides the key both ways and a
 non-boolean value leaves the key in charge; the key resolves and survives the canonical rewrite; the decoy is not a long header, has the fixed bit clear and is shorter than a
 stateless-reset trigger.
+
+### 5.1 Live `[BL]` relays (2026-11-02, rc.3 build)
+
+The 14 vless relays of the 2026-11-01 stand (SPEC 150 §1.1), one masque h3 node per relay through
+XUDP plus an h2 node as a liveness control; three `generate_204` delay probes per node through the
+clash API, the same binary with the key absent and with `true`. Mac egress unchanged.
+
+| Relay | h2 (control) | h3, key absent | h3, `quic_sniff_decoy: true` |
+|---|---|---|---|
+| n001 | 3 of 3 | 0 of 3, foreign key ×3 | 3 of 3 (431–1477 ms) |
+| n002 | 2 of 3 | 0 of 3, foreign key ×3 | 3 of 3 (414–1423 ms) |
+| n009 (no sniffing) | 3 of 3 | 3 of 3 | 3 of 3 |
+| n011 | 3 of 3 | 0 of 3, foreign key ×3 | 2 of 3, real key; the tunnel dies after each request |
+| 10 others | 0 of 3 (four of them: foreign key on h2 — TLS sniffing too) | 0 of 3 | 0 of 3 |
+
+The decoy turns every live sniffing relay from foreign key to WARP's real key. n011's tunnel then
+dies with `received a stateless reset` and `use of closed network connection`, as with the §3.2
+hold prototype before: WARP no longer knows the connection a second in — consistent with the
+relay sending later packets from another egress (a different anycast landing), not with the decoy,
+which a server cannot answer. Not pursued here. The dead relays and the four that sniff TLS on h2
+are outside this spec: the decoy is for QUIC only.
 
 ## 6. Files
 
