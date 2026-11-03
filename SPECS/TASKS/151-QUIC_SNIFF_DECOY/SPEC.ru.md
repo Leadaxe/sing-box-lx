@@ -176,6 +176,15 @@ detour-conn; все формы значения разбираются, `off` к
 ответить не может. Здесь не разбиралось. Мёртвые релеи и четыре, сниффящие TLS на h2, — вне этой
 спеки: обманка только для QUIC.
 
+### 5.2 Не покрыто: маскировка AWG `ip: quic` через сниффящий релей (2026-11-03)
+
+Тот же сниффер ломает WireGuard/AmneziaWG-endpoint, маскировка которого шлёт QUIC-обманку (`ip: quic`, SNI из `id`), когда его `detour` — релей с Xray `sniffing`, `quic` в `destOverride` и без `routeOnly`.
+
+- Случай из поля (zomg, LxBox 2.25.19-rc.2-dev.38 на `1.14.4-lx.30-rc.1`, два дампа 2026-11-03): узел к собственному WireGuard-серверу репортёра — `jc 4/40/70`, `id: cdn.jsdelivr.net`, `ip: quic`, `ib: chrome`, `detour` через селектор `[BL]`-релеев — падает на каждом URL-тесте с `context deadline exceeded`; чистый WireGuard к WARP через тот же селектор проходит (391 и 440 мс).
+- Механизм: QUIC Initial маскировки — первая датаграмма потока. QUIC-сниффер Xray расшифровывает его, берёт SNI из `id` и уводит поток на `<id>:<порт>`; хендшейк WireGuard до сервера не доходит. Чистый WireGuard и мусор AWG (`jc`) ни один сниффер не распознаёт — они проходят.
+- Loopback-стенд на lx.30 (WireGuard-сервер sing-box, клиент через vless, релей Xray `v26.10.31` с `destOverride` `http`/`tls`/`quic`): чистый WireGuard 3/3, AWG `jc` 3/3, AWG `ip: quic` + `id` 0/3 в XUDP и без упаковки, то же без релея 3/3; через vless-релей sing-box все варианты 3/3. Лог Xray называет подменённое назначение: `failed to open connection to udp:nonexistent.invalid:51820` при `id: nonexistent.invalid`.
+- В ядре не исправляется, решение владельца 2026-11-03: `lx.quic_sniff_decoy` до WireGuard-bind не доходит. Лечится конфигом — у узла с `detour` через чужие релеи убрать `id`/`ip`/`ib` (маскировка там всё равно бессмысленна: на проводе до релея протокол релея, а не WireGuard-поток); `jc`/`jmin`/`jmax` можно оставить. Со стороны релея — `routeOnly: true`.
+
 ## 6. Файлы
 
 - `common/lxdatagram/decoy.go`, `common/lxdatagram/decoy_test.go` (новые)

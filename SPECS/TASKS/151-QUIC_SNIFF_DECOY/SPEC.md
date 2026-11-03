@@ -177,6 +177,15 @@ relay sending later packets from another egress (a different anycast landing), n
 which a server cannot answer. Not pursued here. The dead relays and the four that sniff TLS on h2
 are outside this spec: the decoy is for QUIC only.
 
+### 5.2 Not covered: AWG `ip: quic` masquerade through a sniffing relay (2026-11-03)
+
+The same sniffer breaks a WireGuard/AmneziaWG endpoint whose masquerade sends a QUIC decoy (`ip: quic`, SNI from `id`) when its `detour` is a relay running Xray `sniffing` with `quic` in `destOverride` and no `routeOnly`.
+
+- Field case (zomg, LxBox 2.25.19-rc.2-dev.38 on `1.14.4-lx.30-rc.1`, two dumps 2026-11-03): the node to the reporter's own WireGuard server — `jc 4/40/70`, `id: cdn.jsdelivr.net`, `ip: quic`, `ib: chrome`, `detour` through the `[BL]` relay selector — fails every URL test with `context deadline exceeded`; plain WireGuard to WARP through the same selector passes (391 and 440 ms).
+- Mechanism: the masquerade's QUIC Initial is the first datagram of the flow. Xray's QUIC sniffer decrypts it, takes the SNI from `id` and sends the flow to `<id>:<port>`; the WireGuard handshake never reaches the server. Plain WireGuard and AWG junk (`jc`) are not recognised by any sniffer and pass.
+- Loopback stand on lx.30 (sing-box WireGuard server, client through vless, Xray `v26.10.31` relay with `destOverride` `http`/`tls`/`quic`): plain WireGuard 3/3, AWG `jc` 3/3, AWG `ip: quic` + `id` 0/3 in XUDP and plain packing, the same without the relay 3/3; through a sing-box vless relay every variant 3/3. Xray's log names the rewritten destination: `failed to open connection to udp:nonexistent.invalid:51820` with `id: nonexistent.invalid`.
+- Not fixed in the core, owner's decision 2026-11-03: `lx.quic_sniff_decoy` does not reach the WireGuard bind. The cure is on the config side — a node with a `detour` through third-party relays drops `id`/`ip`/`ib` (the masquerade is pointless there anyway: on the wire up to the relay there is the relay's protocol, not the WireGuard flow); `jc`/`jmin`/`jmax` can stay. On the relay's side — `routeOnly: true`.
+
 ## 6. Files
 
 - `common/lxdatagram/decoy.go`, `common/lxdatagram/decoy_test.go` (new)
