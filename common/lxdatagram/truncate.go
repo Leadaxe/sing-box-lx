@@ -21,6 +21,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
@@ -98,10 +99,13 @@ var (
 
 // Dialer wraps the UDP conns a dialer hands out with TruncateReads and, where
 // lx.quic_sniff_decoy in ctx covers the conn, sends the SPEC 151 sniff decoy;
-// TCP dials and ListenPacket pass through. It is the seam for clients that
-// dial inside a library (sing-quic's hysteria2 and tuic).
-func Dialer(ctx context.Context, dialer N.Dialer, logger logger.Logger) N.Dialer {
-	return &truncDialer{Dialer: dialer, logger: logger, sniffDecoy: SniffDecoyFromContext(ctx)}
+// TCP dials and ListenPacket pass through untouched by this package. It is the
+// seam for clients that dial inside a library (sing-quic's hysteria2 and tuic).
+func Dialer(ctx context.Context, outboundDialer N.Dialer, logger logger.Logger) N.Dialer {
+	// lx: SPEC 152 — this is the dialer the QUIC client opens its session
+	// underlay with; the session is internal to the tunnel, so a selector in
+	// the detour drops it on every node switch (see dialer.NewSessionDialerLx).
+	return &truncDialer{Dialer: dialer.NewSessionDialerLx(outboundDialer), logger: logger, sniffDecoy: SniffDecoyFromContext(ctx)}
 }
 
 type truncDialer struct {

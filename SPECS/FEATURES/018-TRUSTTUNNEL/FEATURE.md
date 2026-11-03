@@ -248,6 +248,7 @@ stale session (closed by the endpoint, NAT expired, device slept)
 |------|------|-------|
 | [133](../../TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md) | `trusttunnel` outbound: TCP + UDP over HTTP/2 and HTTP/3; the protocol core package (client half) | I — lx.21, live-verified 2026-10-29 |
 | [134](../../TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md) | `trusttunnel` inbound on the server half of the core package: Basic auth, TCP `CONNECT`, `_udp2` flows to the router, `_check`; HTTP/2 + HTTP/3 | I — lx.21, live-verified 2026-10-29 |
+| [152](../../TASKS/152-TUNNEL_SESSION_INTERNAL_UNDERLAY/SPEC.md) | The session underlay is dialled as an internal connection (`dialer.NewSessionDialerLx`, upstream's `ContextForMultiplexSession` contract): a selector in `detour` drops it on every node switch, with or without `interrupt_exist_connections`; shared with masque, hysteria2, tuic | I — 2026-11-03, units only |
 
 ## Maintenance notes
 

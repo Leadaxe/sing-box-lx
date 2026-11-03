@@ -393,7 +393,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		Adapter:      outbound.NewAdapterWithDialerOptions(C.TypeMASQUE, tag, networkList, options.DialerOptions),
 		ctx:          ctx,
 		logger:       logger,
-		dialer:       outboundDialer,
+		dialer:       dialer.NewSessionDialerLx(outboundDialer), // lx: SPEC 152 — session underlay is internal to the tunnel
 		dnsRouter:    service.FromContext[adapter.DNSRouter](ctx),
 		profile:      profile,
 		idleTimeout:  idleTimeout,

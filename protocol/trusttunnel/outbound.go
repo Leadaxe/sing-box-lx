@@ -105,7 +105,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	client, err := trusttunnel.NewClient(trusttunnel.ClientOptions{
 		Context:   ctx,
 		Logger:    logger,
-		Dialer:    outboundDialer,
+		Dialer:    dialer.NewSessionDialerLx(outboundDialer), // lx: SPEC 152 — session underlay is internal to the tunnel
 		Server:    options.ServerOptions.Build(),
 		TLSConfig: tlsConfig,
 		Protocol:  protocol,
