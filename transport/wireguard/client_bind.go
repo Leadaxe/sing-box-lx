@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing-box/common/lxdatagram"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
@@ -126,6 +127,7 @@ func (c *ClientBind) connect() (*wireConn, error) {
 		serverConn = &wireConn{
 			PacketConn: bufio.NewUnbindPacketConn(udpConn),
 			done:       make(chan struct{}),
+			kernel:     lxdatagram.IsKernelSocket(udpConn), // lx: SPEC 153
 		}
 	} else {
 		udpConn, err := c.dialer.ListenPacket(dialCtx, M.Socksaddr{Addr: netip.IPv4Unspecified()})
@@ -136,6 +138,7 @@ func (c *ClientBind) connect() (*wireConn, error) {
 		serverConn = &wireConn{
 			PacketConn: bufio.NewPacketConn(udpConn),
 			done:       make(chan struct{}),
+			kernel:     lxdatagram.IsKernelPacketConn(udpConn), // lx: SPEC 153
 		}
 	}
 	// lx: SPEC 071 — release the timeout context only when this connection
@@ -284,6 +287,21 @@ type wireConn struct {
 	conn   net.Conn
 	access sync.Mutex
 	done   chan struct{}
+	// kernel records whether the conn as dialled is a kernel socket (no
+	// detour, or a detour to a direct outbound) — lx: SPEC 153.
+	kernel bool
+}
+
+// PathIsKernel reports whether the bind's socket is a kernel socket, dialling
+// it first when no connection generation is alive (the handshake that asks
+// would dial it on its first Send anyway). A dial failure is returned as is;
+// the caller leaves the burst alone and the Send reports the fault. lx: SPEC 153.
+func (c *ClientBind) PathIsKernel() (bool, error) {
+	serverConn, err := c.connect()
+	if err != nil {
+		return false, err
+	}
+	return serverConn.kernel, nil
 }
 
 func (w *wireConn) WriteToUDPAddrPort(b []byte, addr netip.AddrPort) (int, error) {

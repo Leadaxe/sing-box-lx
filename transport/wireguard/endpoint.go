@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/lxdatagram"
 	"github.com/sagernet/sing-box/service/powerreport"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
@@ -295,6 +296,8 @@ func (e *Endpoint) Start(postStart bool) error {
 		return nil
 	}
 	var bind conn.Bind
+	// lx: SPEC 153 — how the masquerade burst learns which path it is on.
+	var pathIsKernel func() (bool, error)
 	udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 	if isUDPListener {
 		listenerControl, egressEnabled := udpListener.UDPListenerControl()
@@ -324,6 +327,7 @@ func (e *Endpoint) Start(postStart bool) error {
 			}
 		}
 		bind = standardBind
+		pathIsKernel = func() (bool, error) { return true, nil }
 	} else {
 		var (
 			isConnect   bool
@@ -337,7 +341,9 @@ func (e *Endpoint) Start(postStart bool) error {
 				connectAddr = e.peers[0].endpoint
 			}
 		}
-		bind = NewClientBind(e.options.Context, e.options.Logger, e.options.Dialer, isConnect, connectAddr, reserved)
+		clientBind := NewClientBind(e.options.Context, e.options.Logger, e.options.Dialer, isConnect, connectAddr, reserved)
+		bind = clientBind
+		pathIsKernel = clientBind.PathIsKernel
 	}
 	if isUDPListener || len(e.peers) > 1 {
 		for _, peer := range e.peers {
@@ -368,6 +374,13 @@ func (e *Endpoint) Start(postStart bool) error {
 	// (fresh DCID/ciphertext each time) instead of a static i1 CPS blob.
 	if decoy := awgDecoyFunc(e.options.AmneziaWG, e.options.Logger); decoy != nil {
 		wgDevice.SetDecoyPacketsFunc(decoy)
+	}
+	// lx: SPEC 153 — the masquerade burst goes out by path (lx.awg_masquerade)
+	// and, when QUIC-shaped, behind the lx.quic_sniff_decoy byte.
+	if e.options.AmneziaWG.IsSet() {
+		if filter := newHandshakeBurstFilter(lxdatagram.AWGMasqueradeFromContext(e.options.Context), lxdatagram.SniffDecoyFromContext(e.options.Context), pathIsKernel, e.options.Logger); filter != nil {
+			wgDevice.SetHandshakeBurstFunc(filter)
+		}
 	}
 	e.tunDevice.SetDevice(wgDevice)
 	domainPeers := make(map[device.NoisePublicKey]*peerConfig)

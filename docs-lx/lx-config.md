@@ -16,7 +16,7 @@
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | extra fields on a `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`) | **mobile only** (AAR) |
-| **Root `lx` block** (SPEC 098) | — (always parsed) | `lx.wg`, `lx.masque`, `lx.mtu_align`, `lx.quic_sniff_decoy` — the fork's global knobs, [§13](#13-the-lx-root-block-spec-098) | desktop + mobile |
+| **Root `lx` block** (SPEC 098) | — (always parsed) | `lx.wg`, `lx.masque`, `lx.mtu_align`, `lx.quic_sniff_decoy`, `lx.awg_masquerade` — the fork's global knobs, [§13](#13-the-lx-root-block-spec-098) | desktop + mobile |
 | **DNS server group** (SPEC 033/035/143) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
 | **`lxd` daemon** (SPEC 055–057, 063–068) | `with_lxd` | not a config key — the `sing-box lxd` subcommand + `<state-dir>/daemon.json`; see [lxd-daemon.md](lxd-daemon.md) | desktop / server (**not** Win7, **not** AAR) |
@@ -113,7 +113,8 @@ you need and read its section below. Each comment shows the **default** and the 
       "idle_timeout": "5m"                      // default: off. Global idle window for masque nodes without their own key
     },
     "mtu_align": "clamp",                       // default: clamp. off | fill | clamp, or an object {"mode", "except": [tags]} (§13)
-    "quic_sniff_decoy": "off"                   // default: off. off | direct | detour | all (or a boolean). One byte ahead of the QUIC Initial against relay SNI sniffing (§13, SPEC 151)
+    "quic_sniff_decoy": "off",                  // default: off. off | direct | detour | all (or a boolean). One byte ahead of the QUIC Initial against relay SNI sniffing; reaches the AWG masquerade burst too (§13, SPEC 151/153)
+    "awg_masquerade": "direct"                  // default: direct. direct | all (or a boolean). Where an AWG endpoint sends its masquerade burst (decoy, i1…i5, junk): only on its own socket, or over a detour too (§13, SPEC 153)
   },
 
   "outbounds": [
@@ -285,7 +286,7 @@ you need and read its section below. Each comment shows the **default** and the 
 ```
 
 > **Field count:** 26 XHTTP + 30 AmneziaWG (incl. `id`/`ip`/`ib` and the 9 AWG 3.x keys) + 1 VLESS (`encryption`) +
-> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 9 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.mtu_align` + `lx.quic_sniff_decoy`). Mutually-exclusive / ignored fields are
+> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 10 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.mtu_align` + `lx.quic_sniff_decoy` + `lx.awg_masquerade`). Mutually-exclusive / ignored fields are
 > labelled inline above; the sections below give the per-field semantics, gotchas and live
 > verification status.
 
@@ -1128,7 +1129,8 @@ is the same as none. A misspelt key is a load error, not a silent default.
     "idle_timeout": "5m"
   },
   "mtu_align": "clamp",
-  "quic_sniff_decoy": "detour"
+  "quic_sniff_decoy": "detour",
+  "awg_masquerade": "direct"
 }
 ```
 
@@ -1302,6 +1304,35 @@ relay usually works — SPEC 060). The modes keep the decoy off the path a DPI o
 might react to: `"detour"` sends it only through relays, `"direct"` only on the device's own
 socket (a sniffer can sit upstream there too, e.g. a router egressing through Xray). sing-box
 relays (1.13+) do not rewrite the destination by sniffing and need nothing. Not covered: hysteria2 port hopping (`server_ports`). Details — [SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md).
+
+The same byte goes ahead of an AmneziaWG masquerade burst that starts with a QUIC-shaped packet
+(`ip: quic`, or a static `i1` taken from a QUIC capture), on the paths the mode selects, whenever
+that burst is sent at all (see `lx.awg_masquerade` below). `ip: dns|stun|sip` and plain junk are
+not QUIC-shaped and get no byte (SPEC 153).
+
+### `lx.awg_masquerade` — where an AmneziaWG endpoint sends its masquerade burst
+
+| Value | The burst ahead of every handshake initiation (the `ip`/`id`/`ib` decoy, `i1`…`i5`, `jc` junk) is sent |
+|---|---|
+| `"direct"` / `false` / absent (**default**) | only when the endpoint's socket is a kernel socket: no `detour`, or `detour` to a `direct` outbound. Over a proxy or tunnel detour the initiation goes alone |
+| `"all"` / `true` | on every path (the behaviour before lx.31) |
+
+```jsonc
+"lx": { "awg_masquerade": "direct" }
+```
+
+The masquerade exists for the first mile. Over a detour the first mile sees the carrying protocol
+(VLESS, WireGuard, Hysteria…), never the burst, so there it protects nothing and costs: a relay
+with Xray `sniffing` (`destOverride` with `quic`, no `routeOnly`) parses the `ip: quic` decoy as
+the first datagram of the association, takes its SNI and sends the whole association — the
+WireGuard handshake behind it included — to that name; the endpoint never comes up while plain
+WireGuard through the same detour does (issue #64). A ~1200-byte Initial, up to five `i` packets and
+`jc` junk per handshake also ride every retry and rekey, inside a reduced-MTU WireGuard detour too.
+Only what the server ignores is dropped: `s1`–`s4` padding, `h1`–`h4`, AWG 3.x header protection,
+`content_padding_addition`, `random_trailers` and the timings are untouched, so the server accepts
+the handshake as before. `"all"` keeps the burst inside the tunnel; pair it with
+`lx.quic_sniff_decoy: "detour"` or `"all"` to pass a sniffing relay with the burst intact. Details
+— [SPEC 153](../SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md).
 
 ### Removed `route.lx_idle_*`
 

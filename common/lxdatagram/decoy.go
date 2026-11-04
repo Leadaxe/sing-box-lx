@@ -16,9 +16,12 @@ package lxdatagram
 import (
 	"context"
 	"net"
+	"syscall"
 
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/logger"
+	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 )
 
@@ -36,15 +39,63 @@ func SniffDecoyFromContext(ctx context.Context) string {
 // carried by another outbound — a proxy or a tunnel. Pass the conn as dialled,
 // before any wrapper.
 func SniffDecoyApplies(mode string, conn net.Conn) bool {
+	return SniffDecoyAppliesTo(mode, isKernelSocket(conn))
+}
+
+// SniffDecoyAppliesTo is SniffDecoyApplies for a path already classified:
+// kernel is true for a kernel socket, false for a conn carried by another
+// outbound. The WireGuard bind classifies its own socket (lx: SPEC 153).
+func SniffDecoyAppliesTo(mode string, kernel bool) bool {
 	switch mode {
 	case option.LXQUICSniffDecoyAll:
 		return true
 	case option.LXQUICSniffDecoyDirect:
-		return isKernelSocket(conn)
+		return kernel
 	case option.LXQUICSniffDecoyDetour:
-		return !isKernelSocket(conn)
+		return !kernel
 	}
 	return false
+}
+
+// SniffDecoy returns the decoy datagram, for a sender that assembles its own
+// burst (the AmneziaWG handshake, lx: SPEC 153).
+func SniffDecoy() []byte {
+	return append([]byte(nil), sniffDecoy...)
+}
+
+// IsKernelSocket reports whether conn, as dialled and before any wrapper, is
+// a kernel socket (the direct path) rather than a conn carried by another
+// outbound.
+func IsKernelSocket(conn net.Conn) bool {
+	return isKernelSocket(conn)
+}
+
+// IsKernelPacketConn is IsKernelSocket for an unconnected packet conn
+// (ListenPacket): the replaceable readers are unwrapped the way UnwrapReader
+// does, then the conn is checked for a kernel descriptor.
+func IsKernelPacketConn(conn net.PacketConn) bool {
+	var current any = conn
+	for {
+		if _, isSyscallConn := current.(syscall.Conn); isSyscallConn {
+			return true
+		}
+		if u, ok := current.(N.ReaderWithUpstream); !ok || !u.ReaderReplaceable() {
+			return false
+		}
+		if u, ok := current.(N.WithUpstreamReader); ok {
+			current = u.UpstreamReader()
+		} else if u, ok := current.(common.WithUpstream); ok {
+			current = u.Upstream()
+		} else {
+			return false
+		}
+	}
+}
+
+// AWGMasqueradeFromContext returns the lx.awg_masquerade mode for endpoints
+// built in ctx: "direct" (absent) or "all" (lx: SPEC 153).
+func AWGMasqueradeFromContext(ctx context.Context) string {
+	return service.PtrFromContext[option.LXResolved](ctx).AWGMasqueradeOrDirect()
 }
 
 // WriteSniffDecoy sends the decoy datagram on a freshly dialled QUIC conn,

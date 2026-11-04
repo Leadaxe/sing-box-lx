@@ -16,7 +16,7 @@
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | доп. поля на `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`) | **только mobile** (AAR) |
-| **Корневой блок `lx`** (SPEC 098) | — (разбирается всегда) | `lx.wg`, `lx.masque`, `lx.mtu_align`, `lx.quic_sniff_decoy` — глобальные ручки форка, [§13](#13-корневой-блок-lx-spec-098) | desktop + mobile |
+| **Корневой блок `lx`** (SPEC 098) | — (разбирается всегда) | `lx.wg`, `lx.masque`, `lx.mtu_align`, `lx.quic_sniff_decoy`, `lx.awg_masquerade` — глобальные ручки форка, [§13](#13-корневой-блок-lx-spec-098) | desktop + mobile |
 | **Группа DNS-серверов** (SPEC 033/035/143) | — (всегда в сборке) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (всегда в сборке) | `encryption` на `vless`-outbound | desktop + mobile |
 | **Демон `lxd`** (SPEC 055–057, 063–068) | `with_lxd` | не ключ конфига — подкоманда `sing-box lxd` + `<state-dir>/daemon.json`; см. [lxd-daemon.ru.md](lxd-daemon.ru.md) | desktop / сервер (**не** Win7, **не** AAR) |
@@ -111,7 +111,8 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
       "idle_timeout": "5m"                      // дефолт: выкл. Глобальное окно простоя masque-узлов без своего ключа
     },
     "mtu_align": "clamp",                       // дефолт: clamp. off | fill | clamp, либо объект {"mode", "except": [теги]} (§13)
-    "quic_sniff_decoy": "off"                   // дефолт: off. off | direct | detour | all (или bool). Один байт перед QUIC Initial против сниффинга SNI на релее (§13, SPEC 151)
+    "quic_sniff_decoy": "off",                  // дефолт: off. off | direct | detour | all (или bool). Один байт перед QUIC Initial против сниффинга SNI на релее; достаёт и до маскировки AWG (§13, SPEC 151/153)
+    "awg_masquerade": "direct"                  // дефолт: direct. direct | all (или bool). Где AWG-endpoint шлёт маскировочную пачку (приманка, i1…i5, junk): только на своём сокете или и через detour (§13, SPEC 153)
   },
 
   "outbounds": [
@@ -283,7 +284,7 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
 ```
 
 > **Счёт полей:** 26 XHTTP + 30 AmneziaWG (вкл. `id`/`ip`/`ib` и 9 ключей AWG 3.x) + 1 VLESS (`encryption`) +
-> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 9 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.mtu_align` + `lx.quic_sniff_decoy`). Взаимоисключающие / игнорируемые поля помечены
+> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 10 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.mtu_align` + `lx.quic_sniff_decoy` + `lx.awg_masquerade`). Взаимоисключающие / игнорируемые поля помечены
 > в комментариях выше; разделы ниже дают семантику каждого поля, подводные камни и статус
 > живой проверки.
 
@@ -1126,7 +1127,8 @@ CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`base
     "idle_timeout": "5m"
   },
   "mtu_align": "clamp",
-  "quic_sniff_decoy": "detour"
+  "quic_sniff_decoy": "detour",
+  "awg_masquerade": "direct"
 }
 ```
 
@@ -1299,6 +1301,35 @@ Xray решает по первой датаграмме потока; перв�
 её только через релеи, `"direct"` — только по собственному сокету устройства (сниффер может стоять
 и там, выше по сети, например роутер с выходом через Xray). sing-box-релеи (1.13+) назначение по сниффу не переписывают, им ничего не нужно. Не покрыто: port hopping у
 hysteria2 (`server_ports`). Подробности — [SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.ru.md).
+
+Тот же байт идёт перед маскировочной пачкой AmneziaWG, которая начинается с QUIC-образного пакета
+(`ip: quic` или статичный `i1`, снятый с QUIC-дампа), на путях, которые выбирает режим, — всякий раз,
+когда пачка вообще отправляется (см. `lx.awg_masquerade` ниже). `ip: dns|stun|sip` и обычный junk
+не QUIC-образны и байта не получают (SPEC 153).
+
+### `lx.awg_masquerade` — где AmneziaWG-endpoint шлёт маскировочную пачку
+
+| Значение | Пачка перед каждой инициацией хендшейка (приманка `ip`/`id`/`ib`, `i1`…`i5`, junk `jc`) отправляется |
+|---|---|
+| `"direct"` / `false` / нет ключа (**дефолт**) | только когда сокет endpoint'а — сокет ядра: без `detour` или `detour` на outbound `direct`. Через прокси- или туннельный `detour` инициация идёт одна |
+| `"all"` / `true` | на любом пути (поведение до lx.31) |
+
+```jsonc
+"lx": { "awg_masquerade": "direct" }
+```
+
+Маскировка нужна на первой миле. Через `detour` первая миля видит несущий протокол (VLESS,
+WireGuard, Hysteria…), а не пачку, так что там она ничего не защищает и только вредит: релей с
+Xray `sniffing` (`destOverride` с `quic`, без `routeOnly`) разбирает приманку `ip: quic` как первую
+датаграмму ассоциации, берёт из неё SNI и уводит всю ассоциацию — вместе с хендшейком WireGuard за
+ней — на это имя; endpoint не поднимается, хотя чистый WireGuard через тот же `detour` работает
+(issue #64). Кроме того, Initial на ~1200 байт, до пяти `i`-пакетов и junk `jc` на каждый хендшейк
+едут и на каждом ретрае и rekey, в том числе внутри WireGuard-`detour` с урезанным MTU.
+Убирается только то, что сервер игнорирует: паддинг `s1`–`s4`, `h1`–`h4`, защита заголовка AWG 3.x,
+`content_padding_addition`, `random_trailers` и тайминги не трогаются, сервер принимает хендшейк как
+раньше. `"all"` оставляет пачку внутри туннеля; в паре с `lx.quic_sniff_decoy: "detour"` или `"all"`
+она пройдёт сниффящий релей целиком. Подробности —
+[SPEC 153](../SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md).
 
 ### Удалённые `route.lx_idle_*`
 

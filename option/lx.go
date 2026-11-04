@@ -31,6 +31,12 @@ type LXOptions struct {
 	// "off", "direct", "detour" or "all", or a boolean for "all"/"off".
 	// Absent = off.
 	QUICSniffDecoy LXQUICSniffDecoy `json:"quic_sniff_decoy,omitempty"`
+	// AWGMasquerade says on which paths an AmneziaWG endpoint sends its
+	// masquerade burst (per-handshake decoy, i1..i5, Jc junk) ahead of the
+	// handshake initiation (lx: SPEC 153): "direct" — only when the endpoint's
+	// socket is a kernel socket, "all" — over a detour too; or a boolean for
+	// "all"/"direct". Absent = direct.
+	AWGMasquerade LXAWGMasquerade `json:"awg_masquerade,omitempty"`
 }
 
 // LXWGOptions holds the WG/AWG endpoint knobs. The three idle keys carry the
@@ -174,6 +180,47 @@ func (o LXQUICSniffDecoy) DescribeSchema(builder schema.Builder) (*schema.Node, 
 	})
 }
 
+// The lx.awg_masquerade modes (lx: SPEC 153): "direct" sends the masquerade
+// burst only on a kernel socket (no detour, or a detour to a direct outbound),
+// "all" on every path.
+const (
+	LXAWGMasqueradeDirect = "direct"
+	LXAWGMasqueradeAll    = "all"
+)
+
+// LXAWGMasquerade is lx.awg_masquerade: a mode string, or a boolean that
+// reads as "all" (true) or "direct" (false). The mode string is the canonical
+// output.
+type LXAWGMasquerade string
+
+func (o *LXAWGMasquerade) UnmarshalJSON(bytes []byte) error {
+	var enabled bool
+	if err := json.Unmarshal(bytes, &enabled); err == nil {
+		if enabled {
+			*o = LXAWGMasqueradeAll
+		} else {
+			*o = LXAWGMasqueradeDirect
+		}
+		return nil
+	}
+	var mode string
+	if err := json.Unmarshal(bytes, &mode); err != nil {
+		return E.New(`lx.awg_masquerade must be "direct", "all" or a boolean`)
+	}
+	switch mode {
+	case LXAWGMasqueradeDirect, LXAWGMasqueradeAll:
+		*o = LXAWGMasquerade(mode)
+		return nil
+	}
+	return E.New(`lx.awg_masquerade must be "direct", "all" or a boolean`)
+}
+
+func (o LXAWGMasquerade) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("LXAWGMasquerade", func() (*schema.Node, error) {
+		return schema.AnyOf(schema.StringEnum(LXAWGMasqueradeDirect, LXAWGMasqueradeAll), schema.BooleanNode()), nil
+	})
+}
+
 // LXBuildOverflow is the resolved lx.wg.build_overflow.
 type LXBuildOverflow uint8
 
@@ -197,6 +244,9 @@ type LXResolved struct {
 	// QUICSniffDecoy is the lx.quic_sniff_decoy mode (lx: SPEC 151); "" or
 	// "off" when the key is absent.
 	QUICSniffDecoy string
+	// AWGMasquerade is the lx.awg_masquerade mode (lx: SPEC 153); "" or
+	// "direct" when the key is absent.
+	AWGMasquerade string
 }
 
 type LXWGResolved struct {
@@ -260,6 +310,15 @@ func (r *LXResolved) QUICSniffDecoyOrOff() string {
 	return r.QUICSniffDecoy
 }
 
+// AWGMasqueradeOrDirect returns the lx.awg_masquerade mode, or "direct" when
+// r is nil or the key is absent.
+func (r *LXResolved) AWGMasqueradeOrDirect() string {
+	if r == nil || r.AWGMasquerade == "" {
+		return LXAWGMasqueradeDirect
+	}
+	return r.AWGMasquerade
+}
+
 // MTUAlignOrDefault returns the mtu_align policy, or the default (clamp,
 // no exceptions) when r is nil.
 func (r *LXResolved) MTUAlignOrDefault() LXMTUAlignResolved {
@@ -294,6 +353,10 @@ func ResolveLX(options *Options) (*LXResolved, error) {
 		lx.QUICSniffDecoy = ""
 	}
 	resolved.QUICSniffDecoy = string(lx.QUICSniffDecoy)
+	if lx.AWGMasquerade == LXAWGMasqueradeDirect {
+		lx.AWGMasquerade = ""
+	}
+	resolved.AWGMasquerade = string(lx.AWGMasquerade)
 
 	if wg != (LXWGOptions{}) {
 		lx.WG = &wg
@@ -309,7 +372,7 @@ func ResolveLX(options *Options) (*LXResolved, error) {
 	if lx.MTUAlign != nil && lx.MTUAlign.Mode == "" && len(lx.MTUAlign.Except) == 0 {
 		lx.MTUAlign = nil
 	}
-	if lx.WG == nil && lx.MASQUE == nil && lx.TrustTunnel == nil && lx.MTUAlign == nil && lx.QUICSniffDecoy == "" {
+	if lx.WG == nil && lx.MASQUE == nil && lx.TrustTunnel == nil && lx.MTUAlign == nil && lx.QUICSniffDecoy == "" && lx.AWGMasquerade == "" {
 		options.LX = nil
 	} else {
 		options.LX = &lx
