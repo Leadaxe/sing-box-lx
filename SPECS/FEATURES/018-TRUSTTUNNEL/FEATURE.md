@@ -115,7 +115,8 @@ endpoint offers beyond the tunnel — rules by `client_random`, subscription, pi
 speed-test hosts, reverse proxy, ICMP, SOCKS5 forwarding — is out of the feature.
 
 Build: tag `with_trusttunnel`, in `LX_TAGS` since 2026-10-16 — built into the desktop
-binaries and the static router builds; the Android AAR does not carry it. Without the tag `type: trusttunnel` is
+binaries and the static router builds; in the Android AAR (`build_libbox` sharedTags, main
+and legacy) since 2026-11-05 by owner decision, reversing the earlier "not in the AAR". Without the tag `type: trusttunnel` is
 rejected when the config is read, with a clear error, and the rest of the core behaves
 exactly like upstream. In the UI (Clash API `type`, libbox) the node is labelled
 "TrustTunnel".

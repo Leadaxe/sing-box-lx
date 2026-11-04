@@ -115,7 +115,8 @@ Inbound обслуживает то, что шлют официальные кл
 ping- и speedtest-хосты, reverse proxy, ICMP, SOCKS5-форвардинг — вне фичи.
 
 Build: тег `with_trusttunnel`, в `LX_TAGS` с 2026-10-16 — собирается в desktop-бинари и в
-статические сборки для роутеров; в Android AAR его нет. Без тега `type: trusttunnel` отвергается при
+статические сборки для роутеров; в Android AAR (`build_libbox` sharedTags, основной и legacy)
+с 2026-11-05 по решению владельца — прежнее «не в AAR» отменено. Без тега `type: trusttunnel` отвергается при
 чтении конфига понятной ошибкой, остальное ядро ведёт себя как апстрим. В UI
 (Clash API `type`, libbox) узел подписан «TrustTunnel».
 

@@ -117,6 +117,15 @@ func init() {
 	// diverge between the two builds.
 	sharedTags = append(sharedTags, "with_openvpn", "with_openconnect")
 	// lx:end openvpn
+	// lx:begin trusttunnel
+	// TrustTunnel outbound + inbound (SPEC 133/134, FEATURE 018) in the AAR — owner
+	// decision 2026-11-05, reversing the 2026-10-16 "desktop and router only" one:
+	// LxBox receives trusttunnel nodes (tt:// links) and the core must resolve
+	// `type: trusttunnel` instead of failing with "not included in this build".
+	// Pure Go (H2/H3 over the existing TLS and quic stacks), no extra dependency.
+	// The AAR now matches the desktop LX_TAGS set (Makefile.lx) for this tag too.
+	sharedTags = append(sharedTags, "with_trusttunnel")
+	// lx:end trusttunnel
 	darwinTags = append(darwinTags, "with_dhcp", "grpcnotrace")
 	// memcTags = append(memcTags, "with_tailscale")
 	// lx:begin tailscale
