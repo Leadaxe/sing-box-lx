@@ -94,8 +94,9 @@
    сборкой. SPEC 020 замеры памяти повторить (были на gVisor).
 5. **Группы**: снять 064 и `SingPacketConn` (тест 084 остаётся как страж), переложить 019/054/020/073
    на `Selected(network)`/`RealTag(detour, network)`.
-6. **MASQUE**: оставить наш outbound как есть на первом проходе, если стек даёт ему собраться без
-   gVisor (он берёт `wireguard.NewDevice`); перевод на их транспорт — отдельно, [110](../110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md) этапы Э0/Э1.
+6. **MASQUE**: наш outbound (`protocol/masque/outbound.go`, `transport/masque/{masque,client_h2,profile,request}.go`,
+   `connectip/`) удаляется; WARP-слой по [110](../110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md) поверх апстримного
+   `masque-client`, начиная с этапов Э0/Э1 (решение 5.4).
 7. **Теги LxBox/лаунчера**: пин `kCoreBuildTagsPin` без `with_gvisor` — задача в их репозиториях.
 8. Сборка без тегов, с `LX_TAGS`, тесты затронутых пакетов, стенды `lx-test`, `lx-check`; кросс под
    android/linux/windows; dry run `lx-release.yml`.
@@ -108,7 +109,7 @@
 | 5.1 | Форк-сабмодуль `gvisor` (патч 048) | **Снимаем вместе с `with_gvisor`** — идём за апстримом. Дефект 048 (`handleConnecting` на занулённом `h`) проверить в `tun.Go` **по коду**, без стенда; результат — строкой в 048 |
 | 5.2 | Релизная линия | **Только пререлизы с `lx-1.15`; в `lx` не вливаем.** `lx` остаётся на stable 1.14.x |
 | 5.3 | Момент промоута | **Не раньше беты 1.15** |
-| 5.4 | MASQUE | Открыто: владелец запросил напоминание по [110](../110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md) |
+| 5.4 | MASQUE | **Сразу на апстримном `masque-client` с нашим тонким слоем — [110](../110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md)**, свой outbound на новый стек не переносим. Перед швами перепроверить, не появилось ли у апстрима своё под WARP (на `9f1cd1ef7` — нет: токен константой, `ADDRESS_REQUEST` безусловный, профилей нет) |
 | 5.5 | Новые теги апстрима `with_acme`, `with_ccm`, `with_ocm`, `with_cloudflared`, `with_usbip` | **Брать в `LX_TAGS`** |
 | 5.6 | `go.mod` `go` директива | **Свежая (наша 1.26.0)**, не 1.25.5 из `testing` |
 | 5.7 | Порядок | Сначала отказ от gVisor (§4.3), потом остальное — иначе сборка не проходит |
