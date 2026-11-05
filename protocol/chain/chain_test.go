@@ -224,11 +224,11 @@ func newStand(t *testing.T) *stand {
 			name:     options.Name,
 		}, nil
 	})
-	// masque под фейковым конструктором (SPEC 120): накладные по семейству сервера.
-	outbound.Register[option.MASQUEOutboundOptions](registry, C.TypeMASQUE, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.MASQUEOutboundOptions) (adapter.Outbound, error) {
+	// masque-client под фейковым конструктором (SPEC 120, SPEC 155 §5.4): накладные по семейству сервера.
+	outbound.Register[option.MASQUEClientEndpointOptions](registry, C.TypeMASQUEClient, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.MASQUEClientEndpointOptions) (adapter.Outbound, error) {
 		fakes.record(tag, fakeOptions{DialerOptions: options.DialerOptions, Name: "mtu=" + itoa(int(options.MTU))})
 		return &fakeOutbound{
-			Adapter:  outbound.NewAdapterWithDialerOptions(C.TypeMASQUE, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
+			Adapter:  outbound.NewAdapterWithDialerOptions(C.TypeMASQUEClient, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
 			registry: fakes,
 			manager:  service.FromContext[adapter.OutboundManager](ctx),
 			detour:   options.Detour,
@@ -814,9 +814,9 @@ func TestChainMTU(t *testing.T) {
 		// явный 1400 → 1329; v6-сервер → 1309.
 		s := newStand(t)
 		wg("wg-in", 1408, "1.2.3.4")(s)
-		s.add("warp-v4", C.TypeMASQUE, masqueOptions("162.159.192.1", 1400))
-		s.add("warp-v6", C.TypeMASQUE, masqueOptions("2606:4700:104::2", 1400))
-		s.add("warp-default", C.TypeMASQUE, masqueOptions("162.159.192.1", 0))
+		s.add("warp-v4", C.TypeMASQUEClient, masqueOptions("162.159.192.1", 1400))
+		s.add("warp-v6", C.TypeMASQUEClient, masqueOptions("2606:4700:104::2", 1400))
+		s.add("warp-default", C.TypeMASQUEClient, masqueOptions("162.159.192.1", 0))
 		s.chain("v4", []string{"wg-in", "warp-v4"})
 		s.chain("v6", []string{"wg-in", "warp-v6"})
 		s.chain("default", []string{"wg-in", "warp-default"})
@@ -833,8 +833,9 @@ func TestChainMTU(t *testing.T) {
 	})
 }
 
-func masqueOptions(server string, mtu uint32) *option.MASQUEOutboundOptions {
-	options := &option.MASQUEOutboundOptions{MTU: mtu}
+func masqueOptions(server string, mtu uint32) *option.MASQUEClientEndpointOptions {
+	options := &option.MASQUEClientEndpointOptions{}
+	options.MTU = mtu
 	options.Server = server
 	options.ServerPort = 443
 	return options

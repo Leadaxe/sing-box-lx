@@ -1,5 +1,3 @@
-//go:build with_gvisor
-
 // lx: SPEC 030 — the shutdown pre-pass. box.Close must close every WG/AWG UDP
 // socket before the endpoint scopes run, so the per-device Close drain
 // (stopping.Wait on the receive workers' ReadFrom) returns at once instead of
@@ -51,6 +49,9 @@ func newQuiesceTestEndpoint(t *testing.T) (*Endpoint, pause.Manager, uint16) {
 	if err != nil {
 		t.Fatalf("endpoint construction failed: %v", err)
 	}
+	if err = e.Initialize(nil); err != nil {
+		t.Fatalf("endpoint initialize failed: %v", err)
+	}
 	t.Cleanup(func() { _ = e.Close() })
 	for _, postStart := range []bool{false, true} {
 		if err = e.Start(postStart); err != nil {
@@ -58,8 +59,9 @@ func newQuiesceTestEndpoint(t *testing.T) (*Endpoint, pause.Manager, uint16) {
 		}
 	}
 	// device.Up runs off the tun device's EventUp, so the socket appears a beat
-	// after Start returns.
-	if !waitUDPPort(port, true, 2*time.Second) {
+	// after Start returns — under a loaded package run (many stack engines
+	// alive) that beat was seen to pass 2 s on the 1.15 stack, so wait longer.
+	if !waitUDPPort(port, true, 10*time.Second) {
 		t.Fatalf("precondition: a started endpoint must hold its listen_port %d", port)
 	}
 	return e, pause.ManagerFromContext(ctx), port
@@ -111,7 +113,7 @@ func TestQuiesceForShutdownClosesSocket(t *testing.T) {
 	if !waitUDPPort(port, false, 2*time.Second) {
 		t.Fatalf("QuiesceForShutdown left the WireGuard socket on port %d open", port)
 	}
-	if e.device == nil {
+	if e.device.Load() == nil {
 		t.Fatal("QuiesceForShutdown must only bring the device down, not close it — Close owns the teardown")
 	}
 	if err := e.Close(); err != nil {
@@ -119,17 +121,17 @@ func TestQuiesceForShutdownClosesSocket(t *testing.T) {
 	}
 }
 
-// Close after the pre-pass still runs the full teardown, and a pre-pass stamped
-// before Close never applies after it (the SPEC 071 latest-wins contract).
+// Close after the pre-pass still runs the full teardown, and a pre-pass queued
+// behind the state mutex finds no device once Close has released it.
 func TestQuiesceForShutdownThenCloseIsClean(t *testing.T) {
 	e, _, _ := newQuiesceTestEndpoint(t)
-	e.pauseOpAccess.Lock()
+	e.stateAccess.Lock()
 	e.QuiesceForShutdown() // queued behind the lock
-	e.pauseOpAccess.Unlock()
+	e.stateAccess.Unlock()
 	if err := e.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if e.device != nil {
+	if e.device.Load() != nil {
 		t.Fatal("Close must release the device")
 	}
 	// A second quiesce on a closed endpoint is a no-op.
@@ -142,7 +144,7 @@ func TestQuiesceForShutdownNilDevice(t *testing.T) {
 	e := &Endpoint{}
 	e.QuiesceForShutdown()
 	time.Sleep(50 * time.Millisecond)
-	if e.pauseSeq.Load() == 0 {
-		t.Fatal("QuiesceForShutdown must stamp pauseSeq so a stale pause event cannot undo it")
+	if e.QuiesceCountForTest() != 1 {
+		t.Fatal("QuiesceForShutdown must count the pre-pass even without a device")
 	}
 }

@@ -15,16 +15,17 @@ import (
 
 // PeerStatuses returns one entry per configured peer, in config order, or nil
 // while there is no device (never built, torn down, closed). The read runs
-// under pauseOpAccess — the mutex Close and Teardown release the device under —
+// under stateAccess — the mutex Close and Teardown release the device under —
 // so it never touches a device that is being shut down. Off the hot path: it
 // runs only on an explicit observability pull.
 func (e *Endpoint) PeerStatuses() []adapter.PeerStatus {
-	e.pauseOpAccess.Lock()
-	defer e.pauseOpAccess.Unlock()
-	if e.device == nil {
+	e.stateAccess.Lock()
+	defer e.stateAccess.Unlock()
+	wgDevice := e.device.Load()
+	if wgDevice == nil {
 		return nil
 	}
-	ipc, err := e.device.IpcGet()
+	ipc, err := wgDevice.IpcGet()
 	if err != nil {
 		return nil
 	}
@@ -87,9 +88,10 @@ func parsePeerStatuses(ipc string) map[string]*adapter.PeerStatus {
 func orderPeerStatuses(statuses map[string]*adapter.PeerStatus, peers []peerConfig) []adapter.PeerStatus {
 	result := make([]adapter.PeerStatus, 0, len(statuses))
 	for _, peer := range peers {
-		if status, loaded := statuses[peer.publicKeyHex]; loaded {
+		publicKeyHex := hex.EncodeToString(peer.publicKey[:])
+		if status, loaded := statuses[publicKeyHex]; loaded {
 			result = append(result, *status)
-			delete(statuses, peer.publicKeyHex)
+			delete(statuses, publicKeyHex)
 		}
 	}
 	for _, status := range statuses {

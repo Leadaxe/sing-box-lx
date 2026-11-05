@@ -703,11 +703,11 @@ func domainOrigin(metadata *adapter.InboundContext) string {
 }
 
 func processName(info *adapter.ConnectionOwner) string {
-	if info.ProcessPath != "" {
-		return info.ProcessPath
+	if len(info.ProcessPaths) > 0 {
+		return info.ProcessPaths[0]
 	}
-	if len(info.AndroidPackageNames) > 0 {
-		return info.AndroidPackageNames[0]
+	if len(info.PackageNames) > 0 {
+		return info.PackageNames[0]
 	}
 	return ""
 }

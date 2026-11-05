@@ -37,29 +37,17 @@ type Endpoint struct {
 	allowedAddress []netip.Prefix
 	tunDevice      Device
 	returnDevice   *returnDeviceWrapper
-	device         *device.Device
+	device         atomic.Pointer[device.Device]
 	allowedIPs     *device.AllowedIPs
 	egressPool     *tun.UDPEgressPool
 	pause          pause.Manager
 	pauseCallback  *list.Element[pause.Callback]
-	// lx: SPEC 071 — detached pause application. onPauseUpdated must never
-	// block inside the pause manager's lock; events apply asynchronously,
-	// serialized by pauseOpAccess, latest pauseSeq stamp wins. Close/Teardown
-	// bump the stamp under the same mutex so a queued application can never
-	// touch a device that is being shut down. pauseApplyHookForTest replaces
-	// the device side effect in unit tests (seam precedent: resumeErrHook).
-	pauseOpAccess         sync.Mutex
-	pauseSeq              atomic.Uint64
-	pauseApplyHookForTest func(int)
-	// lx: SPEC 020 — true while the protocol layer holds this device down for
-	// idle-suspend. onPauseUpdated must not Up() a suspended device: a
-	// screen-off/on or network pause/wake cycle would otherwise resurrect it
-	// behind the protocol state machine's back (started=false, idleAsleep
-	// unchanged), making it unsuspendable until restart.
-	suspended atomic.Bool
+	stateAccess    sync.Mutex
+	suspended      atomic.Bool
+	networkPaused  bool
 	// lx: SPEC 020 level 3 — the recipe for rebuilding the tun device after a
-	// Teardown released it (Device/netstack objects are one-shot: their Close
-	// closes channels and runs under a sync.Once). inet4/inet6 are the port
+	// Teardown released it (Device/stack objects are one-shot), or that a lazy
+	// endpoint (SPEC 097) builds on first dial. inet4/inet6 are the port
 	// addresses cached from the device so PortAddresses() never has to touch a
 	// possibly-nil tunDevice.
 	deviceOptions DeviceOptions
@@ -70,6 +58,8 @@ type Endpoint struct {
 	resumeErrHook func() error
 	// lx: SPEC 145 — session start for the per-peer status (peer_session_lx.go).
 	session peerSession
+	// lx: SPEC 030 — pre-passes requested (endpoint_quiesce_lx.go); tests only.
+	quiesceCount atomic.Uint32
 }
 
 // SetResumeErrHookForTest injects a Resume failure. Test-only.
@@ -121,7 +111,10 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 		if err != nil {
 			return nil, E.Cause(err, "decode public key for peer ", peerIndex)
 		}
-		peer.publicKeyHex = hex.EncodeToString(publicKeyBytes)
+		if len(publicKeyBytes) != device.NoisePublicKeySize {
+			return nil, E.New("invalid public key for peer ", peerIndex, ", required ", device.NoisePublicKeySize, " bytes, got ", len(publicKeyBytes))
+		}
+		peer.publicKey = device.NoisePublicKey(publicKeyBytes)
 		if rawPeer.PreSharedKey != "" {
 			preSharedKeyBytes, err := base64.StdEncoding.DecodeString(rawPeer.PreSharedKey)
 			if err != nil {
@@ -186,6 +179,16 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 		}
 	}
 	// lx:end awg
+	return &Endpoint{
+		options:        options,
+		peers:          peers,
+		ipcConf:        ipcConf,
+		allowedAddress: allowedAddresses,
+	}, nil
+}
+
+func (e *Endpoint) Initialize(memoryPressure func() tun.MemoryPressure) error {
+	options := e.options
 	deviceOptions := DeviceOptions{
 		Context:         options.Context,
 		Logger:          options.Logger,
@@ -197,55 +200,49 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 		UDPFiltering:    options.UDPFiltering,
 		UDPNATMax:       options.UDPNATMax,
 		InterfaceFinder: options.InterfaceFinder,
+		MemoryPressure:  memoryPressure,
 		CreateDialer:    options.CreateDialer,
 		Name:            options.Name,
 		MTU:             options.MTU,
 		Address:         options.Address,
-		AllowedAddress:  allowedAddresses,
+		AllowedAddress:  e.allowedAddress,
 	}
+	// lx: SPEC 020 level 3 / SPEC 097 — keep the recipe so a torn-down or lazy
+	// endpoint can build the device later; the port addresses are static config.
+	e.deviceOptions = deviceOptions
+	e.inet4Address, e.inet6Address = devicePortAddresses(deviceOptions)
 	// lx:begin lazy-build
 	if options.LazyDevice {
-		return newLazyEndpoint(options, peers, ipcConf, allowedAddresses, deviceOptions), nil
+		e.initializeLazy()
+		return nil
 	}
 	// lx:end lazy-build
 	tunDevice, err := NewDevice(deviceOptions)
 	if err != nil {
-		return nil, E.Cause(err, "create WireGuard device")
+		return E.Cause(err, "create WireGuard device")
 	}
-	return &Endpoint{
-		options:        options,
-		peers:          peers,
-		ipcConf:        ipcConf,
-		allowedAddress: allowedAddresses,
-		tunDevice:      tunDevice,
-		returnDevice:   &returnDeviceWrapper{Device: tunDevice},
-		// lx: SPEC 020 teardown — keep the recipe so a torn-down endpoint can be
-		// rebuilt in place (the tun device and its netstack are one-shot objects).
-		deviceOptions: deviceOptions,
-		inet4Address:  tunDevice.Inet4Address(),
-		inet6Address:  tunDevice.Inet6Address(),
-	}, nil
+	e.tunDevice = tunDevice
+	e.returnDevice = &returnDeviceWrapper{Device: tunDevice}
+	return nil
 }
 
 // lx:begin idle-suspend
 // Teardown releases EVERYTHING this endpoint holds — the wireguard device AND
-// the tun device with its gVisor netstack (~5.9 MB) — while keeping the recipe
+// the tun device with its network stack — while keeping the recipe
 // (options/peers/ipcConf) so Rebuild can bring it back. SPEC 020 level 3: the
 // tick calls it for an endpoint that has been asleep past lx_idle_teardown.
 // Idempotent; the endpoint stays flagged suspended (only a dial rebuilds it).
 func (e *Endpoint) Teardown() {
 	e.suspended.Store(true)
-	// lx: SPEC 071 — same shutdown guard as Close: invalidate queued pause
-	// applications and release the device under pauseOpAccess.
-	e.pauseOpAccess.Lock()
-	e.pauseSeq.Add(1)
-	if e.device != nil {
-		e.device.Down()
-		e.device.Close()
-		e.device = nil
+	// Release the device under stateAccess, the mutex the pause handler and
+	// SetIdle take, so neither can touch a device that is being shut down.
+	e.stateAccess.Lock()
+	if wgDevice := e.device.Swap(nil); wgDevice != nil {
+		wgDevice.Down()
+		wgDevice.Close()
 	}
 	e.resetSession() // lx: SPEC 145 — a rebuilt device counts from zero
-	e.pauseOpAccess.Unlock()
+	e.stateAccess.Unlock()
 	e.closeTunDevice()
 	e.allowedIPs = nil
 	if e.pauseCallback != nil {
@@ -382,19 +379,11 @@ func (e *Endpoint) Start(postStart bool) error {
 			wgDevice.SetHandshakeBurstFunc(filter)
 		}
 	}
-	e.tunDevice.SetDevice(wgDevice)
 	domainPeers := make(map[device.NoisePublicKey]*peerConfig)
 	for peerIndex, peer := range e.peers {
-		if !peer.destination.IsDomain() {
-			continue
+		if peer.destination.IsDomain() {
+			domainPeers[peer.publicKey] = &e.peers[peerIndex]
 		}
-		var publicKey device.NoisePublicKey
-		err = publicKey.FromHex(peer.publicKeyHex)
-		if err != nil {
-			wgDevice.Close()
-			return E.Cause(err, "decode public key for peer ", peerIndex)
-		}
-		domainPeers[publicKey] = &e.peers[peerIndex]
 	}
 	if len(domainPeers) > 0 {
 		wgDevice.SetEndpointResolverFunc(func(publicKey device.NoisePublicKey) ([]conn.Endpoint, error) {
@@ -431,7 +420,15 @@ func (e *Endpoint) Start(postStart bool) error {
 		wgDevice.Close()
 		return E.Cause(err, "setup wireguard: \n", ipcConf.String())
 	}
-	e.device = wgDevice
+	wgPeers := make([]*device.Peer, 0, len(e.peers))
+	for _, peer := range e.peers {
+		wgPeer, loaded := wgDevice.LookupActivePeer(peer.publicKey)
+		if loaded {
+			wgPeers = append(wgPeers, wgPeer)
+		}
+	}
+	e.tunDevice.SetDevice(wgDevice, wgPeers)
+	e.device.Store(wgDevice)
 	e.pause = service.FromContext[pause.Manager](e.options.Context)
 	if e.pause != nil {
 		e.pauseCallback = e.pause.RegisterCallback(e.onPauseUpdated)
@@ -449,6 +446,7 @@ func (e *Endpoint) DialContext(ctx context.Context, network string, destination 
 	if e.tunDevice == nil {
 		return nil, E.New("WireGuard endpoint is torn down")
 	}
+	e.resume()
 	return e.tunDevice.DialContext(ctx, network, destination)
 }
 
@@ -459,7 +457,49 @@ func (e *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	if e.tunDevice == nil { // lx: SPEC 020 level 3
 		return nil, E.New("WireGuard endpoint is torn down")
 	}
+	e.resume()
 	return e.tunDevice.ListenPacket(ctx, destination)
+}
+
+func (e *Endpoint) SetIdle(idle bool) {
+	e.stateAccess.Lock()
+	defer e.stateAccess.Unlock()
+	wgDevice := e.device.Load()
+	if wgDevice == nil {
+		return
+	}
+	if idle {
+		if e.suspended.Load() {
+			return
+		}
+		e.suspended.Store(true)
+		wgDevice.Down()
+	} else {
+		e.resumeLocked(wgDevice)
+	}
+}
+
+func (e *Endpoint) resume() {
+	if !e.suspended.Load() {
+		return
+	}
+	e.stateAccess.Lock()
+	defer e.stateAccess.Unlock()
+	wgDevice := e.device.Load()
+	if wgDevice == nil {
+		return
+	}
+	e.resumeLocked(wgDevice)
+}
+
+func (e *Endpoint) resumeLocked(wgDevice *device.Device) {
+	if !e.suspended.Load() {
+		return
+	}
+	e.suspended.Store(false)
+	if !e.networkPaused {
+		wgDevice.Up()
+	}
 }
 
 func (e *Endpoint) Close() error {
@@ -471,18 +511,14 @@ func (e *Endpoint) Close() error {
 		e.egressPool.Close()
 		e.egressPool = nil
 	}
-	// lx: SPEC 071 — shut the device down under pauseOpAccess with the stamp
-	// bumped, so a queued pause application (now asynchronous) can never run
-	// against a device that is being closed. The synchronous callback got this
-	// guarantee implicitly from UnregisterCallback waiting out the in-flight
-	// emit; detaching the work moves the guarantee here.
-	e.pauseOpAccess.Lock()
-	defer e.pauseOpAccess.Unlock()
-	e.pauseSeq.Add(1)
-	if e.device != nil {
-		e.device.Down()
-		e.device.Close()
-		e.device = nil
+	e.stateAccess.Lock()
+	wgDevice := e.device.Swap(nil)
+	if wgDevice != nil {
+		wgDevice.Down()
+		wgDevice.Close()
+	}
+	e.stateAccess.Unlock()
+	if wgDevice != nil {
 		return nil
 	}
 	return e.closeTunDevice() // lx: SPEC 020 level 3 — see endpoint_close_lx.go
@@ -499,9 +535,11 @@ func (e *Endpoint) Close() error {
 // per-endpoint heap / GC-scan holder, ~8 MB per recv-worker). The trade-off is
 // that Down zeroes the crypto session, so Resume pays a fresh handshake.
 func (e *Endpoint) Suspend() {
+	e.stateAccess.Lock()
+	defer e.stateAccess.Unlock()
 	e.suspended.Store(true)
-	if e.device != nil {
-		e.device.Down()
+	if wgDevice := e.device.Load(); wgDevice != nil {
+		wgDevice.Down()
 		e.markSessionDown() // lx: SPEC 145
 	}
 }
@@ -518,20 +556,23 @@ func (e *Endpoint) Suspend() {
 // leave the endpoint marked live over a device that is down — silently
 // black-holing every packet routed through it, with no path back up.
 func (e *Endpoint) Resume() error {
+	e.stateAccess.Lock()
+	defer e.stateAccess.Unlock()
 	e.suspended.Store(false)
 	if e.resumeErrHook != nil { // tests only: stand in for a device.Up() failure
 		return e.resumeErrHook()
 	}
-	if e.device != nil {
-		e.markSessionUp() // lx: SPEC 145
-		return e.device.Up()
+	wgDevice := e.device.Load()
+	if wgDevice == nil || e.networkPaused {
+		return nil
 	}
-	return nil
+	e.markSessionUp() // lx: SPEC 145
+	return wgDevice.Up()
 }
 
 // ActiveTCPFlows reports the number of ESTABLISHED TCP connections inside the
-// device's gVisor stack (0 for the system-interface device, which has no
-// stack). lx: SPEC 020 — precise, keepalive-immune "live flows" gate for the
+// device's network stack (0 for the system-interface device, which has no
+// stack, and 0 while the stack does not expose the counter). lx: SPEC 020 — precise, keepalive-immune "live flows" gate for the
 // idle tick.
 func (e *Endpoint) ActiveTCPFlows() uint64 {
 	if counter, ok := e.tunDevice.(interface{ CurrentEstablished() uint64 }); ok {
@@ -549,7 +590,7 @@ func (e *Endpoint) ActiveTCPFlows() uint64 {
 // suspend candidates (unreachable + dial-idle), so the IpcGet string round-trip
 // is off the hot path. Returns 0 for a nil device.
 func (e *Endpoint) TransferTotals() uint64 {
-	dev := e.device
+	dev := e.device.Load()
 	if dev == nil {
 		return 0
 	}
@@ -582,17 +623,18 @@ func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
 }
 
 func (e *Endpoint) BindUpdate() error {
-	if e.device == nil {
+	wgDevice := e.device.Load()
+	if wgDevice == nil {
 		return nil
 	}
-	return e.device.BindUpdate()
+	return wgDevice.BindUpdate()
 }
 
 // lx: SPEC 041 v2 — wake-nudge passthrough: rebind the device's socket now if
 // its session is provably dead (see device.RebindIfSessionStale). Nil-safe
 // over a torn-down endpoint (SPEC 020 level 3 releases the device).
 func (e *Endpoint) RebindIfSessionStale() bool {
-	wgDevice := e.device
+	wgDevice := e.device.Load()
 	if wgDevice == nil {
 		return false
 	}
@@ -600,63 +642,31 @@ func (e *Endpoint) RebindIfSessionStale() bool {
 }
 
 func (e *Endpoint) onPauseUpdated(event int) {
-	// lx: SPEC 071 — the pause manager invokes callbacks while still holding
-	// its own lock (sing service/pause), and Down()/Up() can block on device
-	// mutexes for as long as a bind close takes (field dump: 54 minutes behind
-	// a dead-detour dial). Blocking here therefore freezes pause/wake/network
-	// delivery for the whole process. Detach: apply asynchronously with
-	// latest-event-wins — pauseSeq stamps the event, and only the goroutine
-	// carrying the newest stamp applies under pauseOpAccess, so out-of-order
-	// scheduling cannot park the device in a stale state and a burst of
-	// pause/wake flips coalesces to its final state.
-	seq := e.pauseSeq.Add(1)
-	go func() {
-		e.pauseOpAccess.Lock()
-		defer e.pauseOpAccess.Unlock()
-		if e.pauseSeq.Load() != seq {
-			return // superseded by a newer event (or invalidated by Close/Teardown)
-		}
-		e.applyPauseEvent(event)
-	}()
-}
-
-// applyPauseEvent is the former synchronous body of onPauseUpdated. Runs only
-// under pauseOpAccess (lx: SPEC 071).
-func (e *Endpoint) applyPauseEvent(event int) {
-	if e.pauseApplyHookForTest != nil {
-		e.pauseApplyHookForTest(event)
-		return
-	}
-	// lx: SPEC 020 level 3 — a torn-down endpoint has no device at all; the
-	// callback is unregistered by Teardown, but a pause event already in flight
-	// must not nil-deref.
-	if e.device == nil {
-		return
-	}
 	switch event {
 	case pause.EventNetworkPause, pause.EventNetworkWake:
-		// upstream cc022098f: apply the current pause state, not the event, so
-		// a pause and a wake that race each other settle on the latest state.
-		if e.pause.IsNetworkPaused() {
-			e.device.Down()
-			e.markSessionDown() // lx: SPEC 145
-		} else {
-			// lx: SPEC 020/007 — a suspended device (idle-suspend or AWG guard)
-			// stays down through pause/wake cycles; the owning state machine
-			// wakes it (resumeOnDial) or keeps it down (guard) on its own terms.
-			if e.suspended.Load() {
-				return
-			}
-			e.markSessionUp() // lx: SPEC 145
-			e.device.Up()
-		}
+		go e.updateNetworkPause()
+	}
+}
+
+func (e *Endpoint) updateNetworkPause() {
+	e.stateAccess.Lock()
+	defer e.stateAccess.Unlock()
+	wgDevice := e.device.Load()
+	if wgDevice == nil {
+		return
+	}
+	e.networkPaused = e.pause.IsNetworkPaused()
+	if e.networkPaused {
+		wgDevice.Down()
+	} else if !e.suspended.Load() {
+		wgDevice.Up()
 	}
 }
 
 type peerConfig struct {
 	destination     M.Socksaddr
 	endpoint        netip.AddrPort
-	publicKeyHex    string
+	publicKey       device.NoisePublicKey
 	preSharedKeyHex string
 	allowedIPs      []netip.Prefix
 	keepalive       string // lx: awg — canonical spec, "" = off
@@ -665,7 +675,7 @@ type peerConfig struct {
 
 func (c peerConfig) GenerateIpcLines() string {
 	var ipcLines strings.Builder
-	ipcLines.WriteString("\npublic_key=" + c.publicKeyHex)
+	ipcLines.WriteString("\npublic_key=" + hex.EncodeToString(c.publicKey[:]))
 	if c.endpoint.IsValid() {
 		ipcLines.WriteString("\nendpoint=" + c.endpoint.String())
 	}

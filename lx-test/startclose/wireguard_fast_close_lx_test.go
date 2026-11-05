@@ -1,4 +1,4 @@
-//go:build with_gvisor && with_wireguard
+//go:build with_wireguard
 
 // lx: SPECS/TASKS/030-FAST_BOX_SHUTDOWN
 //
@@ -63,7 +63,7 @@ func TestWGFastClose_LX(t *testing.T) {
 						Address:    "127.0.0.1",
 						Port:       uint16(20000 + i),
 						PublicKey:  peerPub,
-						AllowedIPs: badoption.Listable[netip.Prefix]{netip.MustParsePrefix("0.0.0.0/0")},
+						AllowedIPs: option.LegacyListable[netip.Prefix]{netip.MustParsePrefix("0.0.0.0/0")},
 					},
 				},
 			},

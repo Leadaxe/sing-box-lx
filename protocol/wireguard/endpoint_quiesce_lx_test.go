@@ -46,11 +46,11 @@ func TestQuiesceForShutdown_setsClosingGate(t *testing.T) {
 }
 
 // Nothing in the protocol layer waits: the pre-pass hands the socket release
-// to the transport (its pauseSeq stamp moves) and returns.
+// to the transport (its quiesce counter moves) and returns.
 func TestQuiesceForShutdown_reachesTransport(t *testing.T) {
 	w := newQuiesceTestEndpoint()
 	w.QuiesceForShutdown()
-	if w.endpoint.PauseSeqForTest() == 0 {
+	if w.endpoint.QuiesceCountForTest() == 0 {
 		t.Fatal("QuiesceForShutdown must reach the transport endpoint")
 	}
 }

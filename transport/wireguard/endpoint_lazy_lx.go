@@ -2,8 +2,8 @@ package wireguard
 
 // lx: SPEC 097 — lazy device build.
 //
-// With EndpointOptions.LazyDevice the constructor stops short of NewDevice: the
-// endpoint is born in the SPEC 020 level-3 shape (tunDevice == nil, so
+// With EndpointOptions.LazyDevice, Initialize stops short of NewDevice: the
+// endpoint is left in the SPEC 020 level-3 shape (tunDevice == nil, so
 // TornDown() is true) with its recipe kept in deviceOptions, and the first
 // dial builds the device through the ordinary Rebuild path. Everything that may
 // be asked before that first build is served without a device: the port
@@ -35,40 +35,20 @@ func SetNewDeviceFnForTest(fn func(options DeviceOptions) (Device, error)) (rest
 	return func() { newDeviceFn = previous }
 }
 
-// newLazyEndpoint finishes NewEndpoint without building the device.
-func newLazyEndpoint(options EndpointOptions, peers []peerConfig, ipcConf string, allowedAddress []netip.Prefix, deviceOptions DeviceOptions) *Endpoint {
-	inet4Address, inet6Address := devicePortAddresses(deviceOptions)
-	e := &Endpoint{
-		options:        options,
-		peers:          peers,
-		ipcConf:        ipcConf,
-		allowedAddress: allowedAddress,
-		returnDevice:   &returnDeviceWrapper{Device: unbuiltDevice{}},
-		deviceOptions:  deviceOptions,
-		inet4Address:   inet4Address,
-		inet6Address:   inet6Address,
-	}
+// initializeLazy finishes Initialize without building the device; the recipe
+// and the port addresses are already stored by Initialize.
+func (e *Endpoint) initializeLazy() {
+	e.returnDevice = &returnDeviceWrapper{Device: unbuiltDevice{}}
 	// Same flag a Teardown leaves behind: a pause/wake event has no device to
 	// bring up, and only a dial builds one.
 	e.suspended.Store(true)
-	return e
 }
 
 // devicePortAddresses derives the port addresses from the configured prefixes
-// the way the device would: the gVisor stack device keeps the last address of
-// each family, the system device the first.
+// the way both devices do since 1.15 (deviceAddresses: the first address of
+// each family).
 func devicePortAddresses(options DeviceOptions) (inet4Address netip.Addr, inet6Address netip.Addr) {
-	for _, prefix := range options.Address {
-		addr := prefix.Addr()
-		if addr.Is4() {
-			if !options.System || !inet4Address.IsValid() {
-				inet4Address = addr
-			}
-		} else if !options.System || !inet6Address.IsValid() {
-			inet6Address = addr
-		}
-	}
-	return
+	return deviceAddresses(options.Address)
 }
 
 // closedEvents is the event channel of unbuiltDevice: closed, so a reader
@@ -117,7 +97,9 @@ func (unbuiltDevice) ListenPacket(ctx context.Context, destination M.Socksaddr) 
 
 func (unbuiltDevice) Start() error { return os.ErrClosed }
 
-func (unbuiltDevice) SetDevice(device *device.Device) {}
+func (unbuiltDevice) SetDevice(device *device.Device, peers []*device.Peer) {}
+
+func (unbuiltDevice) UpstreamPort() any { return nil }
 
 func (unbuiltDevice) Inet4Address() netip.Addr { return netip.Addr{} }
 

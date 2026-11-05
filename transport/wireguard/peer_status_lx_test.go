@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/wireguard-go/device"
 )
 
 // lx: SPEC 114 — UAPI dump parsing for per-peer status.
@@ -45,7 +46,7 @@ func TestParsePeerStatuses(t *testing.T) {
 		t.Fatalf("want 2 peers, got %d", len(statuses))
 	}
 	// Config order, not dump order.
-	ordered := orderPeerStatuses(statuses, []peerConfig{{publicKeyHex: keyA}, {publicKeyHex: keyB}})
+	ordered := orderPeerStatuses(statuses, []peerConfig{{publicKey: mustNoiseKey(t, keyA)}, {publicKey: mustNoiseKey(t, keyB)}})
 	if len(ordered) != 2 {
 		t.Fatalf("want 2 ordered peers, got %d", len(ordered))
 	}
@@ -131,4 +132,14 @@ func TestMarkSession(t *testing.T) {
 	if endpoint.session.base.Load() != nil || endpoint.session.down.Load() {
 		t.Fatal("reset forgets the session")
 	}
+}
+
+// mustNoiseKey decodes a hex public key into the device's key type.
+func mustNoiseKey(t *testing.T, hexKey string) device.NoisePublicKey {
+	t.Helper()
+	var key device.NoisePublicKey
+	if err := key.FromHex(hexKey); err != nil {
+		t.Fatal(err)
+	}
+	return key
 }

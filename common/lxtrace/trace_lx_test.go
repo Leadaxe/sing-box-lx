@@ -596,7 +596,7 @@ func TestRoutedFullAttrsAndSelectorUnfold(t *testing.T) {
 		Domain:               "www.youtube.com",
 		Client:               "chrome",
 		DestinationAddresses: []netip.Addr{netip.MustParseAddr("142.250.1.1"), netip.MustParseAddr("142.250.1.2")},
-		ProcessInfo:          &adapter.ConnectionOwner{UserId: 10123, AndroidPackageNames: []string{"com.android.chrome"}},
+		ProcessInfo:          &adapter.ConnectionOwner{UserId: 10123, PackageNames: []string{"com.android.chrome"}},
 	}
 	rule := &testRule{text: "domain_suffix=youtube.com => route(proxy)", action: testAction(C.RuleActionTypeRoute)}
 	if !Routed(ctx, metadata, rule, outer) {

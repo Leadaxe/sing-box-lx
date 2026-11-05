@@ -42,6 +42,9 @@ func newLazyTransportEndpoint(t *testing.T, system bool, addresses ...string) *E
 	if err != nil {
 		t.Fatalf("lazy endpoint construction failed: %v", err)
 	}
+	if err = e.Initialize(nil); err != nil {
+		t.Fatalf("lazy endpoint initialize failed: %v", err)
+	}
 	return e
 }
 
@@ -82,10 +85,11 @@ func (d *fakeDevice) DialContext(ctx context.Context, network string, destinatio
 func (d *fakeDevice) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	return nil, os.ErrInvalid
 }
-func (d *fakeDevice) Start() error                    { return nil }
-func (d *fakeDevice) SetDevice(device *device.Device) {}
-func (d *fakeDevice) Inet4Address() netip.Addr        { return netip.MustParseAddr("10.0.0.2") }
-func (d *fakeDevice) Inet6Address() netip.Addr        { return netip.Addr{} }
+func (d *fakeDevice) Start() error                                          { return nil }
+func (d *fakeDevice) SetDevice(device *device.Device, peers []*device.Peer) {}
+func (d *fakeDevice) UpstreamPort() any                                     { return nil }
+func (d *fakeDevice) Inet4Address() netip.Addr                              { return netip.MustParseAddr("10.0.0.2") }
+func (d *fakeDevice) Inet6Address() netip.Addr                              { return netip.Addr{} }
 
 type fakeReturn struct{}
 
@@ -127,7 +131,7 @@ func TestLazyEndpoint_bornTornDown(t *testing.T) {
 	if err := e.Resume(); err != nil {
 		t.Fatal(err)
 	}
-	e.applyPauseEvent(0)
+	e.updateNetworkPause()
 	if err := e.Close(); err != nil {
 		t.Fatalf("closing an unbuilt endpoint: %v", err)
 	}
@@ -161,20 +165,19 @@ func TestLazyEndpoint_placeholderDeviceSafe(t *testing.T) {
 	if _, err := wrapper.ListenPacket(context.Background(), M.ParseSocksaddr("10.0.0.9:80")); err == nil {
 		t.Fatal("the placeholder must refuse listens")
 	}
-	wrapper.SetDevice(nil)
+	wrapper.SetDevice(nil, nil)
 	if wrapper.Inet4Address().IsValid() || wrapper.Inet6Address().IsValid() {
 		t.Fatal("the placeholder has no addresses")
 	}
 }
 
-// Port addresses come from the configured prefixes, the way each device kind
-// would pick them: the stack device keeps the last address per family, the
-// system device the first.
+// Port addresses come from the configured prefixes the way both device kinds
+// pick them since 1.15 (deviceAddresses): the first address per family.
 func TestLazyEndpoint_portAddressesFromOptions(t *testing.T) {
 	addresses := []string{"10.0.0.2/32", "10.0.0.3/32", "fd00::2/128", "fd00::3/128"}
 	stack := newLazyTransportEndpoint(t, false, addresses...)
 	v4, v6 := stack.PortAddresses()
-	if v4 != netip.MustParseAddr("10.0.0.3") || v6 != netip.MustParseAddr("fd00::3") {
+	if v4 != netip.MustParseAddr("10.0.0.2") || v6 != netip.MustParseAddr("fd00::2") {
 		t.Fatalf("stack device: got %v %v", v4, v6)
 	}
 	system := newLazyTransportEndpoint(t, true, addresses...)

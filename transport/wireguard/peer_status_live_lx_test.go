@@ -1,5 +1,3 @@
-//go:build with_gvisor
-
 package wireguard
 
 import (
@@ -65,6 +63,9 @@ func startPeerStatusEndpoint(t *testing.T, options EndpointOptions) *Endpoint {
 	options.MTU = 1408
 	endpoint, err := NewEndpoint(options)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err = endpoint.Initialize(nil); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = endpoint.Close() })

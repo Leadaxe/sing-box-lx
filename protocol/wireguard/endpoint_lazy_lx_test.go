@@ -95,10 +95,11 @@ func (d *fakeTunDevice) DialContext(ctx context.Context, network string, destina
 func (d *fakeTunDevice) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	return nil, os.ErrInvalid
 }
-func (d *fakeTunDevice) Start() error                    { return nil }
-func (d *fakeTunDevice) SetDevice(device *device.Device) {}
-func (d *fakeTunDevice) Inet4Address() netip.Addr        { return netip.MustParseAddr("10.0.0.2") }
-func (d *fakeTunDevice) Inet6Address() netip.Addr        { return netip.Addr{} }
+func (d *fakeTunDevice) Start() error                                          { return nil }
+func (d *fakeTunDevice) SetDevice(device *device.Device, peers []*device.Peer) {}
+func (d *fakeTunDevice) UpstreamPort() any                                     { return nil }
+func (d *fakeTunDevice) Inet4Address() netip.Addr                              { return netip.MustParseAddr("10.0.0.2") }
+func (d *fakeTunDevice) Inet6Address() netip.Addr                              { return netip.Addr{} }
 
 // newLazyTestEndpoint builds a lazy endpoint over a real (lazy) transport
 // endpoint; its devices come from countDeviceBuilds. Closed at cleanup.
@@ -119,6 +120,9 @@ func newLazyTestEndpoint(t *testing.T, tag string, budget *BuildBudget) *Endpoin
 		LazyDevice: true,
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err = transport.Initialize(nil); err != nil {
 		t.Fatal(err)
 	}
 	w := &Endpoint{

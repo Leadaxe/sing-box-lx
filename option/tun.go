@@ -25,6 +25,7 @@ type TunInboundOptions struct {
 	AutoRedirectInputMark         FwMark                           `json:"auto_redirect_input_mark,omitempty"`
 	AutoRedirectOutputMark        FwMark                           `json:"auto_redirect_output_mark,omitempty"`
 	AutoRedirectResetMark         FwMark                           `json:"auto_redirect_reset_mark,omitempty"`
+	AutoRedirectTProxyMark        FwMark                           `json:"auto_redirect_tproxy_mark,omitempty"`
 	AutoRedirectNFQueue           uint16                           `json:"auto_redirect_nfqueue,omitempty"`
 	AutoRedirectFallbackRuleIndex int                              `json:"auto_redirect_iproute2_fallback_rule_index,omitempty"`
 	ExcludeMPTCP                  bool                             `json:"exclude_mptcp,omitempty"`
@@ -49,9 +50,11 @@ type TunInboundOptions struct {
 	UDPMapping                    UDPNATBehavior                   `json:"udp_mapping,omitempty"`
 	UDPFiltering                  UDPNATBehavior                   `json:"udp_filtering,omitempty"`
 	UDPNATMax                     uint32                           `json:"udp_nat_max,omitempty"`
-	Stack                         string                           `json:"stack,omitempty" enum:"system,gvisor,mixed"`
+	MultiQueue                    bool                             `json:"multi_queue,omitempty"`
 	Platform                      *TunPlatformOptions              `json:"platform,omitempty"`
 	InboundOptions
+
+	Stack string `json:"stack,omitempty" schema:"omit"`
 
 	// Deprecated: removed
 	GSO bool `json:"gso,omitempty" schema:"omit"`

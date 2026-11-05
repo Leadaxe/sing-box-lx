@@ -8,10 +8,13 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/kernelports"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
+	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
@@ -25,6 +28,7 @@ type systemDevice struct {
 	options      DeviceOptions
 	dialer       N.Dialer
 	device       tun.Tun
+	ports        atomic.Pointer[kernelports.Pool]
 	batchDevice  tun.LinuxTUN
 	events       chan wgTun.Event
 	closeOnce    sync.Once
@@ -36,22 +40,7 @@ func newSystemDevice(options DeviceOptions) (*systemDevice, error) {
 	if options.Name == "" {
 		options.Name = tun.CalculateInterfaceName("wg")
 	}
-	var inet4Address netip.Addr
-	var inet6Address netip.Addr
-	if len(options.Address) > 0 {
-		if prefix := common.Find(options.Address, func(it netip.Prefix) bool {
-			return it.Addr().Is4()
-		}); prefix.IsValid() {
-			inet4Address = prefix.Addr()
-		}
-	}
-	if len(options.Address) > 0 {
-		if prefix := common.Find(options.Address, func(it netip.Prefix) bool {
-			return it.Addr().Is6()
-		}); prefix.IsValid() {
-			inet6Address = prefix.Addr()
-		}
-	}
+	inet4Address, inet6Address := deviceAddresses(options.Address)
 	return &systemDevice{
 		options:      options,
 		dialer:       options.CreateDialer(options.Name),
@@ -77,7 +66,15 @@ func (w *systemDevice) Inet6Address() netip.Addr {
 	return w.inet6Address
 }
 
-func (w *systemDevice) SetDevice(device *device.Device) {
+func (w *systemDevice) SetDevice(device *device.Device, peers []*device.Peer) {
+}
+
+func (w *systemDevice) UpstreamPort() any {
+	ports := w.ports.Load()
+	if ports == nil {
+		return nil
+	}
+	return ports
 }
 
 func (w *systemDevice) Start() error {
@@ -114,6 +111,12 @@ func (w *systemDevice) Start() error {
 	if err != nil {
 		tunInterface.Close()
 		return err
+	}
+	ports, err := kernelports.New()
+	if err != nil {
+		w.options.Logger.Warn(E.Cause(err, "reserve selector ports"))
+	} else {
+		w.ports.Store(ports)
 	}
 	w.options.Logger.Info("started at ", w.options.Name)
 	w.device = tunInterface
@@ -185,6 +188,10 @@ func (w *systemDevice) Close() error {
 		close(w.events)
 		if w.device != nil {
 			err = w.device.Close()
+		}
+		ports := w.ports.Load()
+		if ports != nil {
+			err = E.Errors(err, ports.Close())
 		}
 	})
 	return err

@@ -259,25 +259,7 @@ func TestLXResolveDoesNotWriteThrough(t *testing.T) {
 	}
 }
 
-// MASQUE node idle_timeout: an explicit "0" must decode as present, so that it
-// can override the global default.
-func TestMASQUEIdleTimeoutZeroIsAValue(t *testing.T) {
-	t.Parallel()
-	var zero MASQUEOutboundOptions
-	if err := json.Unmarshal([]byte(`{"idle_timeout":"0"}`), &zero); err != nil {
-		t.Fatal(err)
-	}
-	if zero.IdleTimeout == nil || *zero.IdleTimeout != 0 {
-		t.Fatal(`an explicit "0" must decode as a present zero`)
-	}
-	var absent MASQUEOutboundOptions
-	if err := json.Unmarshal([]byte(`{}`), &absent); err != nil {
-		t.Fatal(err)
-	}
-	if absent.IdleTimeout != nil {
-		t.Fatal("an omitted idle_timeout must decode as absent")
-	}
-}
+// lx: node idle_timeout left with the removed masque outbound (SPEC 155 §5.4)
 
 // lx: SPEC 120 — lx.mtu_align: a mode string or {mode, except}; absent,
 // empty and "" all mean clamp; an unknown mode is rejected by key name; the

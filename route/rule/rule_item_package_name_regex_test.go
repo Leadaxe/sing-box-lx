@@ -16,7 +16,7 @@ func TestPackageNameRegexItem(t *testing.T) {
 
 	matchWith := func(packageNames ...string) bool {
 		return item.Match(&adapter.InboundContext{
-			ProcessInfo: &adapter.ConnectionOwner{AndroidPackageNames: packageNames},
+			ProcessInfo: &adapter.ConnectionOwner{PackageNames: packageNames},
 		})
 	}
 

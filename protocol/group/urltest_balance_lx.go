@@ -261,10 +261,13 @@ func stickyComponent(component string, metadata *adapter.InboundContext, destina
 		if metadata == nil || metadata.ProcessInfo == nil {
 			return ""
 		}
-		if len(metadata.ProcessInfo.AndroidPackageNames) > 0 {
-			return metadata.ProcessInfo.AndroidPackageNames[0]
+		if len(metadata.ProcessInfo.PackageNames) > 0 {
+			return metadata.ProcessInfo.PackageNames[0]
 		}
-		return metadata.ProcessInfo.ProcessPath
+		if len(metadata.ProcessInfo.ProcessPaths) > 0 {
+			return metadata.ProcessInfo.ProcessPaths[0]
+		}
+		return ""
 	case C.URLTestStickyDomain:
 		// The router resolves a domain destination to an IP and overwrites metadata.Destination
 		// (route.go: `metadata.Destination = M.Socksaddr{Addr: ...}`) BEFORE the group's

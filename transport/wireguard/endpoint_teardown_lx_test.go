@@ -1,5 +1,3 @@
-//go:build with_gvisor
-
 // lx:begin idle-suspend
 
 package wireguard
@@ -35,17 +33,18 @@ func newTeardownTestEndpoint(t *testing.T) *Endpoint {
 	})
 	if err != nil {
 		// No Skip inside the test: a silent skip once hid this whole file from
-		// the suite. The stack device needs `with_gvisor` (see NewDevice), so
-		// the requirement lives in this file's build tag instead — every real
-		// test run (CI test.yml, Makefile, AAR) carries that tag, and here a
-		// construction failure is a real failure.
+		// the suite. The stack device needs no build tag since 1.15 (sing-tun's
+		// own stack), so a construction failure here is a real failure.
 		t.Fatalf("endpoint construction failed: %v", err)
+	}
+	if err = e.Initialize(nil); err != nil {
+		t.Fatalf("endpoint initialize failed: %v", err)
 	}
 	return e
 }
 
 // TestTeardownRebuildCycle: Teardown releases the tun device (and with it the
-// gVisor netstack — the ~5.9 MB level-3 targets), Rebuild installs a fresh one.
+// network stack — the level-3 target), Rebuild installs a fresh one.
 // The one-shot nature of the closed objects (closeOnce + closed channels) is
 // exactly why a rebuild must create a NEW device instead of reusing it, so this
 // pins that a second cycle works too.

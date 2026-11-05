@@ -123,6 +123,20 @@ func DialedThroughDetour(options option.DialerOptions) bool {
 //
 // An explicit `fragment` or `record_fragment` in the config always wins — this
 // only fills in the case where the user asked for nothing. lx: SPEC 060.
+// ApplyDetourFragmentDefault is applyDetourFragmentDefault for callers that
+// build their TLS dialer from option.OutboundTLSOptions directly instead of
+// through ClientOptions (the 1.15 HTTP outbound goes through
+// transport/http.NewClientWithTLS). lx: SPEC 060.
+func ApplyDetourFragmentDefault(tlsOptions *option.OutboundTLSOptions, dialerOptions option.DialerOptions) {
+	if !DialedThroughDetour(dialerOptions) {
+		return
+	}
+	if tlsOptions.Fragment || tlsOptions.RecordFragment {
+		return
+	}
+	tlsOptions.RecordFragment = true
+}
+
 func applyDetourFragmentDefault(options *ClientOptions) {
 	if !options.DialedThroughDetour {
 		return

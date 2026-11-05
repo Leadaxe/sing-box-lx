@@ -28,13 +28,13 @@ import (
 func mtuTestContext() context.Context {
 	outboundRegistry := outbound.NewRegistry()
 	hysteria2.RegisterOutbound(outboundRegistry)
-	masque.RegisterOutbound(outboundRegistry)
 	vless.RegisterOutbound(outboundRegistry)
 	direct.RegisterOutbound(outboundRegistry)
 	group.RegisterSelector(outboundRegistry)
 	group.RegisterURLTest(outboundRegistry)
 	endpointRegistry := endpoint.NewRegistry()
 	wireguard.RegisterEndpoint(endpointRegistry)
+	masque.RegisterEndpoint(endpointRegistry)
 	ctx := service.ContextWithDefaultRegistry(context.Background())
 	ctx = service.ContextWith[option.OutboundOptionsRegistry](ctx, outboundRegistry)
 	ctx = service.ContextWith[adapter.OutboundRegistry](ctx, outboundRegistry)
@@ -56,17 +56,17 @@ const issue37Config = `{
       "tls": {"enabled": true, "server_name": "hy2.example.com"},
       "detour": "warp"{{hy2}}
     },
+    {"type": "direct", "tag": "direct"}
+  ],
+  "endpoints": [
     {
-      "type": "masque",
+      "type": "masque-client",
       "tag": "warp",
       "server": "2606:4700:104::2",
       "server_port": 443,
-      "private_key": "AA==",
-      "public_key": "AA==",
-      "ip": "172.16.0.2",
+      "tls": {"enabled": true, "server_name": "x"},
       "mtu": 1280
-    },
-    {"type": "direct", "tag": "direct"}
+    }
   ]{{root}}
 }`
 
@@ -144,14 +144,14 @@ func TestMTUAlignIssue37(t *testing.T) {
 		if hy2.InitialPacketSize != 1232 || !hy2.DisablePathMTUDiscovery {
 			t.Fatalf("%+v", hy2.QUICOptions)
 		}
-		if len(logger.info) != 1 || !strings.HasPrefix(logger.info[0], "mtu_align: hy2 initial_packet_size → 1232 (detour warp[masque] mtu 1280 − 48 ipv6; pmtud off)") {
+		if len(logger.info) != 1 || !strings.HasPrefix(logger.info[0], "mtu_align: hy2 initial_packet_size → 1232 (detour warp[masque-client] mtu 1280 − 48 ipv6; pmtud off)") {
 			t.Fatalf("info %v", logger.info)
 		}
 		if len(logger.warn) != 0 {
 			t.Fatalf("warn %v", logger.warn)
 		}
 		// masque itself has no detour and stays as configured
-		if warp := outboundOptions[option.MASQUEOutboundOptions](t, options, "warp"); warp.MTU != 1280 {
+		if warp := endpointOptions[option.MASQUEClientEndpointOptions](t, options, "warp"); warp.MTU != 1280 {
 			t.Fatalf("%d", warp.MTU)
 		}
 	})
@@ -227,11 +227,11 @@ const groupConfig = `{
     {"type": "urltest", "tag": "auto", "outbounds": ["sel"]},
     {"type": "vless", "tag": "vless-via-wg", "server": "1.2.3.4", "server_port": 443,
      "uuid": "b831381d-6324-4d53-ad4f-8cda48b30811", "detour": "wg"},
-    {"type": "masque", "tag": "warp", "server": "162.159.192.1", "server_port": 443,
-     "private_key": "AA==", "public_key": "AA==", "ip": "172.16.0.2", "mtu": 1340},
     {"type": "direct", "tag": "direct"}
   ],
   "endpoints": [
+    {"type": "masque-client", "tag": "warp", "server": "162.159.192.1", "server_port": 443,
+     "tls": {"enabled": true, "server_name": "x"}, "mtu": 1340},
     {"type": "wireguard", "tag": "wg", "address": ["10.0.0.2/32"], "private_key": "AA==",
      "peers": [{"address": "2001:db8::1", "port": 51820, "public_key": "AA==", "allowed_ips": ["0.0.0.0/0"]}]{{wg}}}
   ]
@@ -252,7 +252,7 @@ func TestMTUAlignGraph(t *testing.T) {
 		if hy2.InitialPacketSize != 1292 || !hy2.DisablePathMTUDiscovery {
 			t.Fatalf("%+v", hy2.QUICOptions)
 		}
-		if len(logger.info) != 1 || !strings.Contains(logger.info[0], "warp[masque] mtu 1340 via sel") {
+		if len(logger.info) != 1 || !strings.Contains(logger.info[0], "warp[masque-client] mtu 1340 via sel") {
 			t.Fatalf("%v", logger.info)
 		}
 	})
@@ -267,7 +267,7 @@ func TestMTUAlignGraph(t *testing.T) {
 		if hy2.InitialPacketSize != 1292 {
 			t.Fatalf("%+v", hy2.QUICOptions)
 		}
-		if len(logger.info) != 1 || !strings.Contains(logger.info[0], "warp[masque] mtu 1340 via sel via auto") {
+		if len(logger.info) != 1 || !strings.Contains(logger.info[0], "warp[masque-client] mtu 1340 via sel via auto") {
 			t.Fatalf("%v", logger.info)
 		}
 	})
@@ -289,11 +289,11 @@ func TestMTUAlignGraph(t *testing.T) {
 func TestMTUAlignWireGuardOverMASQUE(t *testing.T) {
 	const content = `{
   "outbounds": [
-    {"type": "masque", "tag": "warp", "server": "162.159.192.1", "server_port": 443,
-     "private_key": "AA==", "public_key": "AA==", "ip": "172.16.0.2"},
     {"type": "direct", "tag": "direct"}
   ],
   "endpoints": [
+    {"type": "masque-client", "tag": "warp", "server": "162.159.192.1", "server_port": 443,
+     "tls": {"enabled": true, "server_name": "x"}},
     {"type": "wireguard", "tag": "wg-v6", "address": ["10.0.0.2/32"], "private_key": "AA==", "detour": "warp",
      "peers": [{"address": "2001:db8::1", "port": 51820, "public_key": "AA==", "allowed_ips": ["0.0.0.0/0"]}]},
     {"type": "wireguard", "tag": "wg-v4", "address": ["10.0.0.3/32"], "private_key": "AA==", "detour": "warp", "mtu": 1420,

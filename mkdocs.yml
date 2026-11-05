@@ -158,6 +158,8 @@ nav:
           - OpenConnect Client: configuration/endpoint/openconnect.md
           - OpenVPN Client: configuration/endpoint/openvpn-client.md
           - OpenVPN Server: configuration/endpoint/openvpn-server.md
+          - MASQUE Client: configuration/endpoint/masque-client.md
+          - MASQUE Server: configuration/endpoint/masque-server.md
       - Inbound:
           - configuration/inbound/index.md
           - Direct: configuration/inbound/direct.md
@@ -179,6 +181,7 @@ nav:
           - Redirect: configuration/inbound/redirect.md
           - TProxy: configuration/inbound/tproxy.md
           - Cloudflared: configuration/inbound/cloudflared.md
+          - Tailcat: configuration/inbound/tailcat.md
       - Outbound:
           - configuration/outbound/index.md
           - Direct: configuration/outbound/direct.md
@@ -198,6 +201,7 @@ nav:
           - Hysteria2: configuration/outbound/hysteria2.md
           - AnyTLS: configuration/outbound/anytls.md
           - Snell: configuration/outbound/snell.md
+          - Tailcat: configuration/outbound/tailcat.md
           - Tor: configuration/outbound/tor.md
           - SSH: configuration/outbound/ssh.md
           - DNS: configuration/outbound/dns.md

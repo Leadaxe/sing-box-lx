@@ -572,8 +572,8 @@ func dnsQueryEventToProto(event dnstrack.QueryEvent, includeAnswers bool, outbou
 			ProcessId:    event.ProcessInfo.ProcessID,
 			UserId:       event.ProcessInfo.UserId,
 			UserName:     event.ProcessInfo.UserName,
-			ProcessPath:  event.ProcessInfo.ProcessPath,
-			PackageNames: event.ProcessInfo.AndroidPackageNames,
+			ProcessPath:  firstOrEmpty(event.ProcessInfo.ProcessPaths),
+			PackageNames: event.ProcessInfo.PackageNames,
 		}
 	}
 	if includeAnswers && len(event.Answers) > 0 {
@@ -613,4 +613,13 @@ func resolveOutboundChain(tags []string, outboundManager adapter.OutboundManager
 		}
 	}
 	return chain
+}
+
+// firstOrEmpty returns the first element or "" — the 1.15 ConnectionOwner
+// carries ProcessPaths as a list, the lx command protocol a single path.
+func firstOrEmpty(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
 }

@@ -294,12 +294,14 @@ func connectionTestMetadata(instance *Instance, source *ConnectionTestSource, ne
 
 	if source.PackageName != "" || source.Uid != 0 || source.ProcessPath != "" {
 		owner := &adapter.ConnectionOwner{
-			UserId:      -1,
-			ProcessPath: source.ProcessPath,
+			UserId: -1,
+		}
+		if source.ProcessPath != "" {
+			owner.ProcessPaths = []string{source.ProcessPath}
 		}
 		uid := source.Uid
 		if source.PackageName != "" {
-			owner.AndroidPackageNames = []string{source.PackageName}
+			owner.PackageNames = []string{source.PackageName}
 			if uid == 0 {
 				// Only a platform build with a tun inbound has a package manager
 				// (SPEC 139 §7); without it the uid stays 0.

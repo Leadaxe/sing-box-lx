@@ -3,6 +3,7 @@ package oomkiller
 import (
 	"context"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func newRuntimeLimitTestTimer(t *testing.T, options option.OOMKillerServiceOptio
 	t.Helper()
 	config, err := buildTimerConfig(options, testRuntimeLimit, policyModeRuntimeLimit, true)
 	require.NoError(t, err)
-	return newAdaptiveTimer(log.NewNOPFactory().Logger(), nil, nil, nil, config)
+	return newAdaptiveTimer(log.NewNOPFactory().Logger(), nil, nil, nil, nil, new(atomic.Uint32), config)
 }
 
 func TestRuntimeLimitPolicyResolve(t *testing.T) {

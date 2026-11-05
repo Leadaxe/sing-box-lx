@@ -129,8 +129,8 @@ func TestAwgKeepaliveSpec(t *testing.T) {
 	_, err := awgKeepaliveSpec("35-25")
 	require.Error(t, err)
 
-	lines := peerConfig{publicKeyHex: "aa", keepalive: "25-35"}.GenerateIpcLines()
+	lines := peerConfig{keepalive: "25-35"}.GenerateIpcLines()
 	require.True(t, strings.HasSuffix(lines, "\npersistent_keepalive_interval=25-35"), lines)
-	lines = peerConfig{publicKeyHex: "aa", keepalive: ""}.GenerateIpcLines()
+	lines = peerConfig{keepalive: ""}.GenerateIpcLines()
 	require.NotContains(t, lines, "persistent_keepalive_interval")
 }

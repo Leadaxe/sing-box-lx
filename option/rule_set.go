@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/sagernet/sing-box/common/ipset"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/schema"
 	"github.com/sagernet/sing/common"
@@ -15,8 +16,6 @@ import (
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badjson"
 	"github.com/sagernet/sing/common/json/badoption"
-
-	"go4.org/netipx"
 )
 
 type _RuleSet struct {
@@ -255,8 +254,8 @@ type DefaultHeadlessRule struct {
 	DomainSuffix            badoption.Listable[string]                                                  `json:"domain_suffix,omitempty"`
 	DomainKeyword           badoption.Listable[string]                                                  `json:"domain_keyword,omitempty"`
 	DomainRegex             badoption.Listable[string]                                                  `json:"domain_regex,omitempty"`
-	SourceIPCIDR            badoption.Listable[string]                                                  `json:"source_ip_cidr,omitempty"`
-	IPCIDR                  badoption.Listable[string]                                                  `json:"ip_cidr,omitempty"`
+	SourceIPCIDR            badoption.Listable[*badoption.Prefixable]                                   `json:"source_ip_cidr,omitempty"`
+	IPCIDR                  badoption.Listable[*badoption.Prefixable]                                   `json:"ip_cidr,omitempty"`
 	SourcePort              badoption.Listable[uint16]                                                  `json:"source_port,omitempty"`
 	SourcePortRange         badoption.Listable[string]                                                  `json:"source_port_range,omitempty"`
 	Port                    badoption.Listable[uint16]                                                  `json:"port,omitempty"`
@@ -277,8 +276,8 @@ type DefaultHeadlessRule struct {
 	Invert bool `json:"invert,omitempty"`
 
 	DomainMatcher *domain.Matcher `json:"-"`
-	SourceIPSet   *netipx.IPSet   `json:"-"`
-	IPSet         *netipx.IPSet   `json:"-"`
+	SourceIPSet   *ipset.Set      `json:"-"`
+	IPSet         *ipset.Set      `json:"-"`
 
 	AdGuardDomain        badoption.Listable[string] `json:"-"`
 	AdGuardDomainMatcher *domain.AdGuardMatcher     `json:"-"`

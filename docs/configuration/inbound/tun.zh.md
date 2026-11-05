@@ -2,6 +2,12 @@
 icon: material/new-box
 ---
 
+!!! quote "sing-box 1.15.0 中的更改"
+
+    :material-plus: [auto_redirect_tproxy_mark](#auto_redirect_tproxy_mark)  
+    :material-plus: [multi_queue](#multi_queue)  
+    :material-delete-clock: [stack](#stack)
+
 !!! quote "sing-box 1.14.0 中的更改"
 
     :material-plus: [include_mac_address](#include_mac_address)  
@@ -91,6 +97,7 @@ icon: material/new-box
   "auto_redirect_input_mark": "0x2023",
   "auto_redirect_output_mark": "0x2024",
   "auto_redirect_reset_mark": "0x2025",
+  "auto_redirect_tproxy_mark": "0x2026",
   "auto_redirect_nfqueue": 100,
   "auto_redirect_iproute2_fallback_rule_index": 32768,
   "exclude_mptcp": false,
@@ -119,7 +126,7 @@ icon: material/new-box
 
   ... // UDP NAT 字段
 
-  "stack": "system",
+  "multi_queue": false,
   "include_interface": [
     "lan0"
   ],
@@ -165,6 +172,7 @@ icon: material/new-box
   },
 
   // 已弃用
+  "stack": "system",
   "gso": false,
   "inet4_address": [
     "172.19.0.1/30"
@@ -343,8 +351,9 @@ TUN 接口上 DNS 的处理方式。
 
 在 Linux 上始终推荐使用 `auto_redirect`，它提供更好的路由、更高的性能（优于 tproxy），并避免了 TUN 和 Docker 桥接网络之间的冲突。
 
-请注意，`auto_redirect` 也适用于 Android，但由于缺少 `nftables` 和 `ip6tables`，仅执行简单的 IPv4 TCP 转发。  
-若要在 Android 上通过热点或中继器共享 VPN 连接，请使用 [VPNHotspot](https://github.com/Mygod/VPNHotspot)。
+预匹配需要内核支持 nfqueue（`nfnetlink_queue`）。
+
+`auto_redirect` 在 Android 上通过图形客户端的 root 服务或 root shell 得到完整支持，包括转发流量（热点、中继器）。
 
 `auto_redirect` 还会自动将兼容性规则插入 OpenWrt 的 fw4 表中，即无需额外配置即可在路由器上工作。
 
@@ -356,7 +365,7 @@ TUN 接口上 DNS 的处理方式。
 
 `auto_redirect` 使用的连接输入标记。
 
-默认使用 `0x2023`。
+默认使用 `0x2023`（Android 上为 `0x400000`）。
 
 #### auto_redirect_output_mark
 
@@ -364,7 +373,7 @@ TUN 接口上 DNS 的处理方式。
 
 `auto_redirect` 使用的连接输出标记。
 
-默认使用 `0x2024`。
+默认使用 `0x2024`（Android 上为 `0x200000`）。
 
 #### auto_redirect_reset_mark
 
@@ -372,7 +381,15 @@ TUN 接口上 DNS 的处理方式。
 
 `auto_redirect` 预匹配使用的连接重置标记。
 
-默认使用 `0x2025`。
+默认使用 `0x2025`（Android 上为 `0x600000`）。
+
+#### auto_redirect_tproxy_mark
+
+!!! question "自 sing-box 1.15.0 起"
+
+`auto_redirect` iptables 后端为 IPv6 TCP 使用的连接 TPROXY 标记。
+
+默认使用 `0x2026`（Android 上为 `0x800000`）。
 
 #### auto_redirect_nfqueue
 
@@ -488,9 +505,9 @@ TUN 接口上 DNS 的处理方式。
     
     !!! quote ""
     
-        仅支持 Linux，且需要 nftables，`auto_route` 和 `auto_redirect` 已启用。 
+        仅支持 Linux，且需要 `auto_route` 和 `auto_redirect` 已启用。
     
-    将指定规则集中的目标 IP CIDR 规则添加到防火墙。
+    在预匹配中匹配指定规则集中的目标 IP CIDR 规则。
     不匹配的流量将绕过 sing-box 路由。
 
 === "`auto_redirect` 未启用"
@@ -511,9 +528,9 @@ TUN 接口上 DNS 的处理方式。
     
     !!! quote ""
     
-        仅支持 Linux，且需要 nftables，`auto_route` 和 `auto_redirect` 已启用。 
+        仅支持 Linux，且需要 `auto_route` 和 `auto_redirect` 已启用。
 
-    将指定规则集中的目标 IP CIDR 规则添加到防火墙。
+    在预匹配中匹配指定规则集中的目标 IP CIDR 规则。
     匹配的流量将绕过 sing-box 路由。
 
     与 `route.default_mark` 和 `[dialOptions].routing_mark` 冲突。
@@ -536,6 +553,16 @@ TUN 接口上 DNS 的处理方式。
 
 #### stack
 
+!!! failure "已在 sing-box 1.15.0 废弃"
+
+    `stack` 已废弃，并将在 sing-box 1.17.0 中被移除。
+    移除 `stack` 参数以使用 sing-tun 自有的 TCP/IP stack。
+    参阅[迁移指南](/zh/migration/#迁移-tun-stack)。
+
+!!! quote "sing-box 1.15.0 中的更改"
+
+    自 1.15.0 起，sing-tun 使用自有 TCP/IP stack，极限性能、能效以及内存占用均大幅领先于所有旧实现。
+
 !!! quote "sing-box 1.8.0 中的更改"
 
     :material-delete-alert: 旧的 LWIP 栈已被弃用并移除。
@@ -548,7 +575,13 @@ TCP/IP 栈。
 | `gvisor` | 基于 [gVisor](https://github.com/google/gvisor) 虚拟网络栈执行 L3 到 L4 转换                            |
 | `mixed`  | 混合 `system` TCP 栈与 `gvisor` UDP 栈                                                                 |
 
-默认使用 `mixed` 栈如果 gVisor 构建标记已启用，否则默认使用 `system` 栈。
+#### multi_queue
+
+!!! quote ""
+
+    仅在 Linux 下被支持，且需要使用 sing-tun 自有的 TCP/IP stack。
+
+启用基于 `IFF_MULTI_QUEUE` 的多队列支持，使吞吐量能够随 CPU 核心数量扩展。
 
 #### include_interface
 

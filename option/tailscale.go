@@ -24,7 +24,7 @@ type TailscaleEndpointOptions struct {
 	ExitNodeAllowLANAccess     bool                       `json:"exit_node_allow_lan_access,omitempty"`
 	AdvertiseRoutes            []netip.Prefix             `json:"advertise_routes,omitempty"`
 	AdvertiseExitNode          bool                       `json:"advertise_exit_node,omitempty"`
-	AdvertiseTags              badoption.Listable[string] `json:"advertise_tags,omitempty"`
+	AdvertiseTags              LegacyListable[string]     `json:"advertise_tags,omitempty"`
 	ListenPort                 uint16                     `json:"listen_port,omitempty"`
 	RelayServerPort            *uint16                    `json:"relay_server_port,omitempty"`
 	RelayServerStaticEndpoints []netip.AddrPort           `json:"relay_server_static_endpoints,omitempty"`
@@ -34,6 +34,7 @@ type TailscaleEndpointOptions struct {
 	UDPTimeout                 UDPTimeoutCompat           `json:"udp_timeout,omitempty"`
 	SSHServer                  *TailscaleSSHServerOptions `json:"ssh_server,omitempty"`
 	TaildropDirectory          string                     `json:"taildrop_directory,omitempty"`
+	OnDemand                   bool                       `json:"on_demand,omitempty"`
 	// lx:begin tailscale-taildrop
 	// SPEC 149: the node neither receives nor sends Taildrop files.
 	DisableTaildrop bool `json:"disable_taildrop,omitempty"`
@@ -89,6 +90,8 @@ type DERPServiceOptions struct {
 	ConfigPath           string                                          `json:"config_path,omitempty"`
 	VerifyClientEndpoint badoption.Listable[string]                      `json:"verify_client_endpoint,omitempty"`
 	VerifyClientURL      badoption.Listable[*DERPVerifyClientURLOptions] `json:"verify_client_url,omitempty"`
+	VerifyClientInbound  badoption.Listable[string]                      `json:"verify_client_inbound,omitempty"`
+	VerifyClientKey      badoption.Listable[string]                      `json:"verify_client_key,omitempty"`
 	Home                 string                                          `json:"home,omitempty"`
 	MeshWith             badoption.Listable[*DERPMeshOptions]            `json:"mesh_with,omitempty"`
 	MeshPSK              string                                          `json:"mesh_psk,omitempty"`

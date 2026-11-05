@@ -63,16 +63,17 @@ func init() {
 	sharedFlags = append(sharedFlags, "-ldflags", build_shared.LinkerFlags(currentTag, false))
 	debugFlags = append(debugFlags, "-ldflags", build_shared.LinkerFlags(currentTag, true))
 
-	// lx: with_usbip (new in 1.14) is intentionally omitted — USB/IP is a server-side
-	// service that contradicts the client-trim philosophy and Android client configs
-	// never reference usbip endpoints (a missing tag only yields a stub-registration
-	// error if a config uses it, which lx configs won't).
+	// lx: with_usbip is intentionally omitted from the AAR — USB/IP is a server-side
+	// service Android client configs never reference (a missing tag only yields a
+	// stub-registration error if a config uses it, which lx configs won't). The
+	// desktop/CLI LX_TAGS (Makefile.lx) do carry it since 1.15. with_gvisor is gone
+	// upstream (1.15 runs every stack on sing-tun's own TCP/IP stack).
 	// lx: with_clash_api is intentionally omitted — LxBox manages the core over the
 	// native libbox CommandClient (group/url-test/select/connections streams), so the
 	// Clash REST API is dead weight on the client. Without the tag a config referencing
 	// experimental.clash_api fails fast with "clash api is not included in this build,
 	// rebuild with -tags with_clash_api" (no silent fallback). lx configs won't.
-	sharedTags = append(sharedTags, "with_gvisor", "with_quic", "with_wireguard", "with_utls", "with_naive_outbound", "badlinkname", "tfogo_checklinkname0")
+	sharedTags = append(sharedTags, "with_quic", "with_wireguard", "with_utls", "with_naive_outbound", "badlinkname", "tfogo_checklinkname0")
 	// lx:begin awg,xhttp
 	// Promote the two downstream features into the Android AAR. They flow into both
 	// the main (SDK23) and legacy (SDK21) variants, since legacy derives from

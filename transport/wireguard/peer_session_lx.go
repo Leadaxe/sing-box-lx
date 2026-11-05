@@ -51,7 +51,7 @@ func (e *Endpoint) markSessionUp() {
 		return
 	}
 	base := &peerSessionBase{since: time.Now()}
-	if wgDevice := e.device; wgDevice != nil {
+	if wgDevice := e.device.Load(); wgDevice != nil {
 		if ipc, err := wgDevice.IpcGet(); err == nil {
 			statuses := parsePeerStatuses(ipc)
 			base.counters = make(map[string]peerCounters, len(statuses))

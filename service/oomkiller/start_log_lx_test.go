@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/sagernet/sing-box/log"
@@ -36,7 +37,7 @@ func TestStartLogDetails(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			config := startLogTestConfig(t, testCase.policyMode, testCase.memoryLimit, testCase.killerDisabled)
-			timer := newAdaptiveTimer(log.NewNOPFactory().Logger(), nil, nil, nil, config)
+			timer := newAdaptiveTimer(log.NewNOPFactory().Logger(), nil, nil, nil, nil, new(atomic.Uint32), config)
 			require.Equal(t, testCase.expected, startLogDetails(config, timer.limitThresholds))
 		})
 	}
@@ -66,6 +67,7 @@ func TestStartTimerLogsPolicy(t *testing.T) {
 	defer factory.Close()
 
 	service := &Service{
+		ctx:         context.Background(),
 		logger:      factory.NewLogger("oom-killer"),
 		timerConfig: startLogTestConfig(t, policyModeRuntimeLimit, testRuntimeLimit, true),
 	}

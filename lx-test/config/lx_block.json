@@ -17,21 +17,21 @@
     { "type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 2080 }
   ],
   "outbounds": [
-    { "type": "direct", "tag": "direct" },
+    { "type": "direct", "tag": "direct" }
+  ],
+  "endpoints": [
     {
-      "type": "masque", "tag": "masque-global",
+      "type": "masque-client", "tag": "masque-global",
       "server": "127.0.0.1", "server_port": 443,
-      "profile": "standard", "vhttp": "h3",
-      "uri": "https://example.com/.well-known/masque/ip/*/*/",
-      "ip": "172.16.0.2/32"
+      "tls": { "enabled": true, "server_name": "example.com" },
+      "path": "/.well-known/masque/ip/{target}/{ipproto}/"
     },
     {
-      "type": "masque", "tag": "masque-always-up",
+      "type": "masque-client", "tag": "masque-on-demand",
       "server": "127.0.0.1", "server_port": 443,
-      "profile": "standard", "vhttp": "h3",
-      "uri": "https://example.com/.well-known/masque/ip/*/*/",
-      "ip": "172.16.0.3/32",
-      "idle_timeout": "0"
+      "tls": { "enabled": true, "server_name": "example.com" },
+      "path": "/.well-known/masque/ip/{target}/{ipproto}/",
+      "on_demand": true
     }
   ],
   "route": { "final": "direct" }

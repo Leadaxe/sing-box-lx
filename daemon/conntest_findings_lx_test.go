@@ -22,7 +22,9 @@ import (
 	"github.com/sagernet/sing-box/dns/transport/hosts"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/direct"
+	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/json"
+	"github.com/sagernet/sing/common/json/badoption"
 	"github.com/sagernet/sing/service"
 
 	"github.com/stretchr/testify/require"
@@ -217,7 +219,7 @@ func TestRuleAddressConditions_LX(t *testing.T) {
 		Mode: C.LogicalTypeAnd,
 		Rules: []option.Rule{
 			{Type: C.RuleTypeDefault, DefaultOptions: option.DefaultRule{RawDefaultRule: option.RawDefaultRule{IPIsPrivate: true}}},
-			{Type: C.RuleTypeDefault, DefaultOptions: option.DefaultRule{RawDefaultRule: option.RawDefaultRule{IPCIDR: []string{"10.0.0.0/8"}, Domain: []string{"x.test"}}}},
+			{Type: C.RuleTypeDefault, DefaultOptions: option.DefaultRule{RawDefaultRule: option.RawDefaultRule{IPCIDR: badoption.Listable[*badoption.Prefixable]{common.Ptr(badoption.Prefixable(netip.MustParsePrefix("10.0.0.0/8")))}, Domain: []string{"x.test"}}}},
 			{Type: C.RuleTypeDefault, DefaultOptions: option.DefaultRule{RawDefaultRule: option.RawDefaultRule{Domain: []string{"y.test"}}}},
 		},
 	}}}

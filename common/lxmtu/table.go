@@ -74,7 +74,7 @@ func IPUDP(server string) int {
 // on nodes below.
 func IsTunnelType(typeName string) bool {
 	switch typeName {
-	case C.TypeWireGuard, C.TypeMASQUE, C.TypeOpenVPNClient, C.TypeOpenConnect:
+	case C.TypeWireGuard, C.TypeMASQUEClient, C.TypeOpenVPNClient, C.TypeOpenConnect:
 		return true
 	}
 	return false
@@ -96,7 +96,7 @@ func TunnelDefaultMTU(typeName string) uint32 {
 	switch typeName {
 	case C.TypeWireGuard:
 		return DefaultWGMTU
-	case C.TypeMASQUE:
+	case C.TypeMASQUEClient:
 		return DefaultMASQUEMTU
 	}
 	return 0
@@ -111,7 +111,7 @@ func TunnelOverhead(typeName, server string, padding uint32) (overhead int, ok b
 	switch typeName {
 	case C.TypeWireGuard:
 		return WGOverhead + int(padding) + IPUDP(server), true
-	case C.TypeMASQUE:
+	case C.TypeMASQUEClient:
 		return MASQUEDatagramOverhead + IPUDP(server), true
 	}
 	return 0, false

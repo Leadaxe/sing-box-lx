@@ -136,7 +136,7 @@ func (r *Resolver) capacityOf(tag string) capacity {
 		return capacity{value: Unlimited}
 	}
 	switch options := n.options.(type) {
-	case *option.WireGuardEndpointOptions, *option.MASQUEOutboundOptions,
+	case *option.WireGuardEndpointOptions, *option.MASQUEClientEndpointOptions,
 		*option.OpenVPNClientEndpointOptions, *option.OpenConnectEndpointOptions:
 		return r.tunnelCapacity(n)
 	case *option.TailscaleEndpointOptions:
@@ -252,7 +252,7 @@ func carriesIPv6(n *node) bool {
 			}
 		}
 		return false
-	case *option.MASQUEOutboundOptions:
+	case *option.MASQUEClientEndpointOptions:
 		return true
 	}
 	return false
@@ -267,7 +267,7 @@ func tunnelFields(n *node) (mtu uint32, server string, explicit bool) {
 		if len(options.Peers) > 0 {
 			server = options.Peers[0].Address
 		}
-	case *option.MASQUEOutboundOptions:
+	case *option.MASQUEClientEndpointOptions:
 		mtu = options.MTU
 		server = options.Server
 	case *option.OpenVPNClientEndpointOptions:
@@ -290,7 +290,7 @@ func setTunnelMTU(n *node, mtu uint32) {
 	switch options := n.options.(type) {
 	case *option.WireGuardEndpointOptions:
 		options.MTU = mtu
-	case *option.MASQUEOutboundOptions:
+	case *option.MASQUEClientEndpointOptions:
 		options.MTU = mtu
 	}
 }

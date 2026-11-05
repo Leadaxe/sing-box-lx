@@ -9,17 +9,15 @@ package cachefile
 //
 // Every started CacheFile registers itself by path. A new instance releases
 // every other registered instance with the same path before opening the
-// database: the previous one flushes its pending FakeIP metadata, closes the
-// database and from then on answers writes with os.ErrClosed and reads with
-// zero values. The timeout loop in start() stays as the guard against a
-// foreign process holding the file.
+// database: the previous one stops its flush loop, flushes its pending writes,
+// closes the database and from then on answers writes with os.ErrClosed and
+// reads with zero values. The timeout loop in start() stays as the guard
+// against a foreign process holding the file.
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
-
-	"github.com/sagernet/sing-box/adapter"
-	E "github.com/sagernet/sing/common/exceptions"
 )
 
 var (
@@ -28,8 +26,10 @@ var (
 )
 
 type cacheFileReleaseState struct {
-	access   sync.Mutex
-	released atomic.Bool
+	access      sync.Mutex
+	released    atomic.Bool
+	cancelFlush context.CancelFunc
+	flushGroup  sync.WaitGroup
 }
 
 func registerCacheFile(c *CacheFile) {
@@ -80,8 +80,22 @@ func (c *CacheFile) isReleased() bool {
 	return c.releaseState.released.Load()
 }
 
-// Release flushes the pending FakeIP metadata, closes the database and
-// unregisters the instance. It is idempotent: later calls return nil. After
+// startFlushLoop runs the upstream flush loop under a context Release can
+// cancel, so a released instance stops flushing before its database closes,
+// also when its scope never closes.
+func (c *CacheFile) startFlushLoop(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	c.releaseState.access.Lock()
+	c.releaseState.cancelFlush = cancel
+	c.releaseState.access.Unlock()
+	c.releaseState.flushGroup.Go(func() {
+		c.loopFlush(ctx)
+	})
+}
+
+// Release stops the flush loop, flushes the pending writes, closes the
+// database and unregisters the instance, in the order of the upstream scope
+// closers it replaces. It is idempotent: later calls return nil. After
 // Release, view, batch and update return os.ErrClosed and resetDB never
 // reopens the file.
 func (c *CacheFile) Release() error {
@@ -90,54 +104,21 @@ func (c *CacheFile) Release() error {
 	if c.isReleased() {
 		return nil
 	}
-	flushErr := c.flushPendingFakeIPMetadata()
+	if c.releaseState.cancelFlush != nil {
+		c.releaseState.cancelFlush()
+	}
+	c.releaseState.flushGroup.Wait()
+	c.flushTimer.Stop()
+	c.Flush()
 	c.dbAccess.Lock()
 	c.releaseState.released.Store(true)
 	db := c.DB
 	c.dbAccess.Unlock()
 	unregisterCacheFile(c)
 	if db == nil {
-		return flushErr
+		return nil
 	}
 	// Not under dbAccess: bbolt Close waits for in-flight transactions, and
 	// view/batch/update take dbAccess only to read the pointer.
-	closeErr := db.Close()
-	return E.Errors(flushErr, closeErr)
-}
-
-func (c *CacheFile) flushPendingFakeIPMetadata() error {
-	c.saveMetadataAccess.Lock()
-	if c.saveMetadataTimer != nil {
-		c.saveMetadataTimer.Stop()
-	}
-	metadata := c.saveMetadata
-	c.saveMetadataAccess.Unlock()
-	if metadata == nil {
-		return nil
-	}
-	err := c.FakeIPSaveMetadata(metadata)
-	if err != nil {
-		return E.Cause(err, "save FakeIP metadata")
-	}
-	return nil
-}
-
-// seedFakeIPMetadata keeps the metadata FakeIPMetadata has just read and
-// deleted as the pending value, so Release writes it back even when this
-// session never allocates an address. Without it, a session released by a
-// takeover (its FakeIP store never closes) loses the pointer and the next one
-// resets the pool.
-func (c *CacheFile) seedFakeIPMetadata(metadata *adapter.FakeIPMetadata) {
-	c.saveMetadataAccess.Lock()
-	defer c.saveMetadataAccess.Unlock()
-	if c.saveMetadata == nil {
-		seeded := *metadata
-		c.saveMetadata = &seeded
-	}
-}
-
-func (c *CacheFile) clearPendingFakeIPMetadata() {
-	c.saveMetadataAccess.Lock()
-	defer c.saveMetadataAccess.Unlock()
-	c.saveMetadata = nil
+	return db.Close()
 }

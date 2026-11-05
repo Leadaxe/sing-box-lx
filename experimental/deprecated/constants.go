@@ -167,6 +167,15 @@ var OptionImplicitDefaultHTTPClient = Note{
 	EnvName:           "IMPLICIT_DEFAULT_HTTP_CLIENT",
 }
 
+var OptionTunStack = Note{
+	Name:              "tun-stack",
+	Description:       "`stack` option in TUN",
+	DeprecatedVersion: "1.15.0",
+	ScheduledVersion:  "1.17.0",
+	EnvName:           "TUN_STACK",
+	MigrationLink:     "https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+}
+
 // lx: SPEC 062 — masque predates the shared config conventions: its HTTP
 // version lived in `network` (which means tcp/udp everywhere else) and its TLS settings
 // were flat fields instead of the standard `tls` block. Both shapes still work,
@@ -199,4 +208,5 @@ var Options = []Note{
 	OptionIndependentDNSCache,
 	OptionStoreRDRC,
 	OptionImplicitDefaultHTTPClient,
+	OptionTunStack,
 }

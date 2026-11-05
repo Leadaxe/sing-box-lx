@@ -10,7 +10,6 @@ go 1.26.0
 require (
 	filippo.io/age v1.3.1
 	github.com/anthropics/anthropic-sdk-go v1.26.0
-	github.com/anytls/sing-anytls v0.0.11
 	github.com/caddyserver/certmagic v0.25.3-0.20260421143802-60d9d8b415d6
 	github.com/caddyserver/zerossl v0.1.5
 	github.com/coder/websocket v1.8.14
@@ -50,28 +49,30 @@ require (
 	github.com/sagernet/netlink v0.0.0-20260814022025-64455d367bbf
 	github.com/sagernet/nftables v0.3.0-mod.4
 	github.com/sagernet/quic-go v0.61.0-sing-box-mod.12
-	github.com/sagernet/sing v0.9.7-0.20261023115459-5dc452e537bf
+	github.com/sagernet/sing v0.9.7-0.20261023115510-03a6cce64bf7
+	github.com/sagernet/sing-anytls v0.0.0-20260928104022-580984e4d8cb
 	github.com/sagernet/sing-cloudflared v0.1.4-0.20261021152903-2d40d788fcf6
 	github.com/sagernet/sing-mux v0.3.10-0.20260929204512-caf09fe32475
-	github.com/sagernet/sing-openconnect v0.1.1-0.20261103042343-d47571aba517
-	github.com/sagernet/sing-openvpn v0.1.1-0.20261020061838-432d37b47c92
+	github.com/sagernet/sing-openconnect v0.1.1-0.20261103042440-6c98622bada6
+	github.com/sagernet/sing-openvpn v0.1.1-0.20261020061844-7d24ecd92837
 	github.com/sagernet/sing-quic v0.7.2-0.20261020082049-7e0a5869a5f4
 	github.com/sagernet/sing-shadowsocks v0.2.9-0.20260929204512-65740e0f0e3e
 	github.com/sagernet/sing-shadowsocks2 v0.2.2-0.20260929152114-a69d1086332b
 	github.com/sagernet/sing-shadowtls v0.2.2-0.20260928201441-a9c0127d5c99
 	github.com/sagernet/sing-snell v0.0.0-20260904135315-bc5a12ac736f
-	github.com/sagernet/sing-tun v0.9.7-0.20261103032833-620991cbdec9
+	github.com/sagernet/sing-tun v0.9.7-0.20261103032840-7ac0256fa09d
 	github.com/sagernet/sing-usbip v0.0.0-20260817040617-28bd42667eca
 	github.com/sagernet/sing-vmess v0.2.9-0.20261019223527-a0c58542bd9d
 	github.com/sagernet/smux v1.5.50-sing-box-mod.1
-	github.com/sagernet/tailscale v1.102.1-sing-box-1.14-mod.5.0.20261019070639-79c1732442a9
-	github.com/sagernet/wireguard-go v0.0.8-0.20261022215841-e4d85ef2ed38
+	github.com/sagernet/tailscale v1.102.1-sing-box-1.14-mod.5.0.20261028024127-670967df7dbf
+	github.com/sagernet/wireguard-go v0.0.8-0.20261022215849-fdf0ad046586
 	github.com/sagernet/ws v0.0.0-20231204124109-acfe8907c854
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.0
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55
 	github.com/vishvananda/netns v0.0.5
 	go.uber.org/zap v1.27.1
+	go4.org/mem v0.0.0-20240501181205-ae6ca9944745
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
 	golang.org/x/crypto v0.58.0
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f
@@ -193,7 +194,6 @@ require (
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
-	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.51.0 // indirect
@@ -228,20 +228,6 @@ replace github.com/sagernet/wireguard-go => ./submodules/wireguard-go
 replace github.com/sagernet/sing-tun => ./submodules/sing-tun
 
 // lx:end singtun-selfheal
-
-// lx:begin gvisor-handshake-guard (SPECS/TASKS/048)
-// Snapshot fork of sagernet/gvisor at the pinned v0.0.0-20260727.0-sing-box-mod.1
-// with a single-file patch: nil-guard on ep.h in handleConnecting. performHandshake
-// zeroes ep.h and releases ep.mu before ep.Close() changes the state, so a segment
-// arriving in that window reaches ep.h.processSegments() on a nil handshake and
-// panics the whole process (device crash bundle, 1.14.0-lx.19-rc.3). Our lazy-mode
-// sing-tun widens the window by driving CreateEndpoint from the sniffer.
-// Snapshot without history on purpose: upstream carries 1.45 GB of it, the delta is
-// one function, and every CI job clones this. Local-path replace, same scheme as
-// wireguard-go/sing-tun.
-replace github.com/sagernet/gvisor => ./submodules/gvisor
-
-// lx:end gvisor-handshake-guard
 
 // lx:begin utls-firefox148 (SPECS/TASKS/086)
 // Fork of metacubex/utls at the pinned v1.8.7 (the exact `require` above, identical to
