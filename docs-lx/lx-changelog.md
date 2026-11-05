@@ -28,6 +28,42 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.15.0-lx.1-rc.1
+
+Первый пререлиз линии 1.15 с ветки `lx-1.15` (SPEC 155). База — `upstream/testing` `9f1cd1ef7`
+(sing-box `v1.15.0-alpha.13` + 2), у апстрима это альфа. Ветка `lx` и линия `v1.14.4-lx.N` не
+затронуты; в `lx` 1.15 не вливается раньше беты апстрима. Нумерация `lx.N` у линии 1.15 своя.
+Форк-сабмодули: `wireguard-go` и `sing-tun` на ветках `lx-1.15` (пины `testing` + наша дельта),
+`utls` без изменений, `gvisor` снят. Go 1.26.10; `go.mod` `go 1.26.0`.
+
+- 📌 **Мерж `upstream/testing`** (44 коммита поверх v1.14.4): собственный TCP/IP-стек `sing-tun`
+  вместо gVisor у WireGuard, Tailscale, OpenVPN, OpenConnect; endpoint'ы `masque-client` и
+  `masque-server`; переписанный HTTP-прокси; `on_demand` у endpoint'ов; tailcat. 18 конфликтов,
+  перечень — в сообщении merge-коммита и SPEC 155 §3.
+- ⚠️ **Тег `with_gvisor` и сабмодуль `gvisor` сняты.** `LX_TAGS` без `with_gvisor`, с новыми
+  `with_acme`, `with_ccm`, `with_ocm`, `with_cloudflared`, `with_usbip` (AAR `usbip` и `clash_api`
+  не несёт). Приложениям — убрать `with_gvisor` из пина тегов. Дефект SPEC 048 в новом стеке
+  проверен по коду: класса нет.
+- ⚠️ **Outbound `masque` удалён, вместо него endpoint `masque-client`** с ключами форка `profile`
+  (`standard` | `cloudflare`) и `address` (SPEC 110). Старый тип отдаёт поясняющую ошибку. WARP:
+  `profile: cloudflare`, `address` из регистрации, `path: "/"`, `headers.Host:
+  cloudflareaccess.com`, сертификат и пин — стандартным блоком `tls`. `lx.masque.idle_timeout`
+  парсится и ни на что не влияет; усыпление — апстримный `on_demand`.
+- 🔧 **WireGuard/AWG на апстримной модели состояния**: `Initialize` отдельно от конструктора,
+  устройство под `stateAccess`; свой отвязанный pause-обработчик (SPEC 071) и хотфикс 064
+  (`SingPacketConn`) сняты — апстрим делает то же. Ленивая сборка (097), teardown (020), rebind
+  (041), маскарад (009/153), статусы пиров (145) перенесены.
+- 🐛 В порте найден и исправлен до пререлиза: ленивый WG-endpoint падал на первом dial
+  (`Initialize` стоял после ветки lazy).
+- ⚠️ **Известные ограничения пререлиза**: счётчик established-потоков для idle-тика SPEC 020
+  недоступен (тик работает по дельте байтов); `on_demand` и `lx.wg.idle_suspend` вместе не
+  валидируются; на Android и с TUN-inbound не запускалось; Tailscale, OpenVPN, OpenConnect
+  проверены только сборкой и юнит-тестами.
+- 🧪 Проверка: сборка без тегов, с `LX_TAGS`, кросс linux/arm64, linux/amd64, android/arm64,
+  windows/amd64; тесты всех пакетов и стенды `lx-test`; `lx-ci` на ветке; живой прогон на
+  OpenWrt arm64 — WARP MASQUE h3/h2, WG и AWG через `detour` на `masque-client`, hysteria2,
+  vmess+ws+tls.
+
 #### v1.14.4-lx.31
 
 Stable после `v1.14.4-lx.30`, без rc-линии. База — sing-box `v1.14.4` + 9 коммитов `upstream/stable` от 2026-11-03 (`8eb4395a3`, тега апстрима нет), дрейф 0 ([SPEC 154](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/154-UPSTREAM_SYNC_1_14_4_PLUS_9/SPEC.md)); форк `sing-tun` на новом пине, Go 1.26.10 и остальные сабмодули не менялись; `go.mod` — бампы апстрима (cronet-go/naiveproxy v154, sing-openconnect, sing-tun). Темы: AWG с маскировкой через detour на сниффящий релей (SPEC 153, issue #64), туннель на старом узле после смены выбора в селекторе (SPEC 152), TrustTunnel в Android AAR, синк апстрима.
