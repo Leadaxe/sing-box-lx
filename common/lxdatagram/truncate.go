@@ -19,7 +19,6 @@ import (
 	"context"
 	"net"
 	"sync"
-	"syscall"
 
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing/common"
@@ -38,15 +37,10 @@ const maxDatagramSize = 65535
 // (syscall.Conn once the replaceable readers are unwrapped — the direct path)
 // already behaves that way and is returned unchanged.
 func TruncateReads(conn net.Conn, logger logger.Logger) net.Conn {
-	if isKernelSocket(conn) {
+	if IsKernelSocket(conn) {
 		return conn
 	}
 	return &truncConn{Conn: conn, logger: logger}
-}
-
-func isKernelSocket(conn net.Conn) bool {
-	_, isSyscallConn := N.UnwrapReader(conn).(syscall.Conn)
-	return isSyscallConn
 }
 
 type truncConn struct {

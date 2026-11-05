@@ -16,12 +16,9 @@ package lxdatagram
 import (
 	"context"
 	"net"
-	"syscall"
 
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/logger"
-	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 )
 
@@ -39,7 +36,7 @@ func SniffDecoyFromContext(ctx context.Context) string {
 // carried by another outbound — a proxy or a tunnel. Pass the conn as dialled,
 // before any wrapper.
 func SniffDecoyApplies(mode string, conn net.Conn) bool {
-	return SniffDecoyAppliesTo(mode, isKernelSocket(conn))
+	return SniffDecoyAppliesTo(mode, IsKernelSocket(conn))
 }
 
 // SniffDecoyAppliesTo is SniffDecoyApplies for a path already classified:
@@ -63,39 +60,10 @@ func SniffDecoy() []byte {
 	return append([]byte(nil), sniffDecoy...)
 }
 
-// IsKernelSocket reports whether conn, as dialled and before any wrapper, is
-// a kernel socket (the direct path) rather than a conn carried by another
-// outbound.
-func IsKernelSocket(conn net.Conn) bool {
-	return isKernelSocket(conn)
-}
-
-// IsKernelPacketConn is IsKernelSocket for an unconnected packet conn
-// (ListenPacket): the replaceable readers are unwrapped the way UnwrapReader
-// does, then the conn is checked for a kernel descriptor.
-func IsKernelPacketConn(conn net.PacketConn) bool {
-	var current any = conn
-	for {
-		if _, isSyscallConn := current.(syscall.Conn); isSyscallConn {
-			return true
-		}
-		if u, ok := current.(N.ReaderWithUpstream); !ok || !u.ReaderReplaceable() {
-			return false
-		}
-		if u, ok := current.(N.WithUpstreamReader); ok {
-			current = u.UpstreamReader()
-		} else if u, ok := current.(common.WithUpstream); ok {
-			current = u.Upstream()
-		} else {
-			return false
-		}
-	}
-}
-
 // AWGMasqueradeFromContext returns the lx.awg_masquerade mode for endpoints
-// built in ctx: "direct" (absent) or "all" (lx: SPEC 153).
+// built in ctx: "all" (absent) or "direct" (lx: SPEC 153).
 func AWGMasqueradeFromContext(ctx context.Context) string {
-	return service.PtrFromContext[option.LXResolved](ctx).AWGMasqueradeOrDirect()
+	return service.PtrFromContext[option.LXResolved](ctx).AWGMasqueradeOrAll()
 }
 
 // WriteSniffDecoy sends the decoy datagram on a freshly dialled QUIC conn,

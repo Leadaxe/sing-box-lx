@@ -72,10 +72,16 @@ previous error"), so the decoy would hold there too.
 - `SniffDecoyFromContext(ctx)` returns the `lx.quic_sniff_decoy` mode from the box context
   (`option.LXResolved.QUICSniffDecoyOrOff`, absent = `off`). No environment override (§4).
 - `SniffDecoyApplies(mode, conn)` decides per dial by what lies under the QUIC stack, on the conn
-  as dialled, before any wrapper: `direct` — a kernel socket (the SPEC 150 check: `syscall.Conn`
-  once replaceable readers are unwrapped); `detour` — anything else, a conn carried by another
-  outbound (proxy or tunnel); `all` — both; `off` — neither. A `detour` to a `direct` outbound
-  yields a kernel socket and counts as `direct`.
+  as dialled, before any wrapper: `direct` — a kernel socket (`IsKernelSocket` in
+  `common/lxdatagram/kernel.go`, the check SPEC 150 and SPEC 153 share); `detour` — anything
+  else, a conn carried by another outbound (proxy or tunnel); `all` — both; `off` — neither.
+- `direct` is a property of the dialled conn, not of the config. No `detour`, a `detour` to a
+  `direct` outbound, and a `detour` to a group (selector, urltest, nested to any depth) whose
+  current member is `direct` all yield a kernel socket and count as `direct`; the same group
+  switched to a proxy counts as `detour` from the next dial on. The check walks the transparent
+  wrappers down to a `syscall.Conn`: replaceable readers, the plain packet adapters a group puts
+  around its member's `ListenPacket` socket, the power-report counters of the default dialer. A
+  protocol conn of a proxy outbound is none of these and ends the walk.
 
 ### 3.2 Seams
 
@@ -112,7 +118,7 @@ still get the decoy:
 | Value | Decoy on |
 |---|---|
 | `"off"` / `false` / absent | nothing |
-| `"direct"` | dials whose UDP is a kernel socket (no `detour`, or `detour` to a `direct` outbound) |
+| `"direct"` | dials whose UDP is a kernel socket: no `detour`, `detour` to a `direct` outbound, or `detour` to a group (selector, urltest) currently set to `direct` |
 | `"detour"` | dials whose UDP is carried by another outbound (proxy or tunnel) |
 | `"all"` / `true` | every dial |
 
@@ -184,12 +190,13 @@ The same sniffer breaks a WireGuard/AmneziaWG endpoint whose masquerade sends a 
 - Field case (zomg, LxBox 2.25.19-rc.2-dev.38 on `1.14.4-lx.30-rc.1`, two dumps 2026-11-03): the node to the reporter's own WireGuard server — `jc 4/40/70`, `id: cdn.jsdelivr.net`, `ip: quic`, `ib: chrome`, `detour` through the `[BL]` relay selector — fails every URL test with `context deadline exceeded`; plain WireGuard to WARP through the same selector passes (391 and 440 ms).
 - Mechanism: the masquerade's QUIC Initial is the first datagram of the flow. Xray's QUIC sniffer decrypts it, takes the SNI from `id` and sends the flow to `<id>:<port>`; the WireGuard handshake never reaches the server. Plain WireGuard and AWG junk (`jc`) are not recognised by any sniffer and pass.
 - Loopback stand on lx.30 (sing-box WireGuard server, client through vless, Xray `v26.10.31` relay with `destOverride` `http`/`tls`/`quic`): plain WireGuard 3/3, AWG `jc` 3/3, AWG `ip: quic` + `id` 0/3 in XUDP and plain packing, the same without the relay 3/3; through a sing-box vless relay every variant 3/3. Xray's log names the rewritten destination: `failed to open connection to udp:nonexistent.invalid:51820` with `id: nonexistent.invalid`.
-- The 2026-11-03 decision was to leave it to the config (drop `id`/`ip`/`ib` on a detour node, `routeOnly: true` on the relay). Two independent field reports the same day (issue #64) turned it into [SPEC 153](../153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md): `lx.awg_masquerade` (default `direct`) sends no masquerade burst over a detour at all, and `lx.quic_sniff_decoy` now reaches the AmneziaWG handshake — the byte precedes a QUIC-shaped burst on the paths the mode selects.
+- The 2026-11-03 decision was to leave it to the config (drop `id`/`ip`/`ib` on a detour node, `routeOnly: true` on the relay). Two independent field reports the same day (issue #64) turned it into [SPEC 153](../153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md): `lx.awg_masquerade: "direct"` (default `all`) sends no masquerade burst over a detour at all, and `lx.quic_sniff_decoy` now reaches the AmneziaWG handshake — the byte precedes a QUIC-shaped burst on the paths the mode selects.
 
 ## 6. Files
 
 - `common/lxdatagram/decoy.go`, `common/lxdatagram/decoy_test.go` (new)
 - `common/lxdatagram/truncate.go` — `Dialer(ctx, …)`, `truncDialer.DialContext` sends the decoy
+- `common/lxdatagram/kernel.go`, `kernel_test.go` — `IsKernelSocket`, `IsKernelPacketConn`: the path check
 - `option/lx.go` — `LXQUICSniffDecoy` (modes, boolean form, schema), `LXOptions.QUICSniffDecoy`, `LXResolved.QUICSniffDecoy`; `option/lx_test.go`
 - `protocol/hysteria2/outbound.go`, `protocol/tuic/outbound.go` — the SPEC 150 line passes `ctx`
 - `docs-lx/lx-config.md`, `docs-lx/lx-config.ru.md` — §13 `lx.quic_sniff_decoy`

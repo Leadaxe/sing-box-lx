@@ -73,10 +73,16 @@ to previous error»), обманка сработала бы и там.
   (`option.LXResolved.QUICSniffDecoyOrOff`, без ключа — `off`). Переопределения через окружение
   нет (§4).
 - `SniffDecoyApplies(mode, conn)` решает на каждом дозвоне по тому, что лежит под QUIC-стеком, на
-  conn сразу после дозвона, до обёрток: `direct` — сокет ядра (проверка SPEC 150: `syscall.Conn`
-  после разворачивания заменяемых ридеров); `detour` — всё остальное, conn, который несёт другой
-  outbound (прокси или туннель); `all` — оба; `off` — ни один. `detour` на outbound `direct` даёт
-  сокет ядра и считается `direct`.
+  conn сразу после дозвона, до обёрток: `direct` — сокет ядра (`IsKernelSocket` в
+  `common/lxdatagram/kernel.go`, общая проверка SPEC 150 и SPEC 153); `detour` — всё остальное,
+  conn, который несёт другой outbound (прокси или туннель); `all` — оба; `off` — ни один.
+- `direct` — свойство conn после дозвона, а не конфига. Без `detour`, `detour` на outbound
+  `direct` и `detour` на группу (selector, urltest, любой вложенности), в которой сейчас выбран
+  `direct`, дают сокет ядра и считаются `direct`; та же группа, переключённая на прокси,
+  со следующего дозвона считается `detour`. Проверка спускается по прозрачным обёрткам до
+  `syscall.Conn`: заменяемые ридеры, простые пакетные адаптеры, в которые группа заворачивает
+  `ListenPacket`-сокет своего участника, счётчики power-report дефолтного дайлера. Протокольный
+  conn прокси-outbound'а к ним не относится и обрывает спуск.
 
 ### 3.2 Швы
 
@@ -113,7 +119,7 @@ to previous error»), обманка сработала бы и там.
 | Значение | Обманка на |
 |---|---|
 | `"off"` / `false` / нет ключа | ничём |
-| `"direct"` | дозвонах, где UDP — сокет ядра (нет `detour` или `detour` на outbound `direct`) |
+| `"direct"` | дозвонах, где UDP — сокет ядра: нет `detour`, `detour` на outbound `direct` или `detour` на группу (selector, urltest), в которой сейчас выбран `direct` |
 | `"detour"` | дозвонах, где UDP несёт другой outbound (прокси или туннель) |
 | `"all"` / `true` | всех дозвонах |
 
@@ -183,12 +189,13 @@ detour-conn; все формы значения разбираются, `off` к
 - Случай из поля (zomg, LxBox 2.25.19-rc.2-dev.38 на `1.14.4-lx.30-rc.1`, два дампа 2026-11-03): узел к собственному WireGuard-серверу репортёра — `jc 4/40/70`, `id: cdn.jsdelivr.net`, `ip: quic`, `ib: chrome`, `detour` через селектор `[BL]`-релеев — падает на каждом URL-тесте с `context deadline exceeded`; чистый WireGuard к WARP через тот же селектор проходит (391 и 440 мс).
 - Механизм: QUIC Initial маскировки — первая датаграмма потока. QUIC-сниффер Xray расшифровывает его, берёт SNI из `id` и уводит поток на `<id>:<порт>`; хендшейк WireGuard до сервера не доходит. Чистый WireGuard и мусор AWG (`jc`) ни один сниффер не распознаёт — они проходят.
 - Loopback-стенд на lx.30 (WireGuard-сервер sing-box, клиент через vless, релей Xray `v26.10.31` с `destOverride` `http`/`tls`/`quic`): чистый WireGuard 3/3, AWG `jc` 3/3, AWG `ip: quic` + `id` 0/3 в XUDP и без упаковки, то же без релея 3/3; через vless-релей sing-box все варианты 3/3. Лог Xray называет подменённое назначение: `failed to open connection to udp:nonexistent.invalid:51820` при `id: nonexistent.invalid`.
-- Решение 2026-11-03 было оставить это конфигу (убрать `id`/`ip`/`ib` у узла с `detour`, `routeOnly: true` на релее). Два независимых полевых отчёта в тот же день (issue #64) превратили его в [SPEC 153](../153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md): `lx.awg_masquerade` (дефолт `direct`) через `detour` маскировочную пачку не шлёт вовсе, а `lx.quic_sniff_decoy` теперь доходит до хендшейка AmneziaWG — байт идёт перед QUIC-образной пачкой на путях, которые выбирает режим.
+- Решение 2026-11-03 было оставить это конфигу (убрать `id`/`ip`/`ib` у узла с `detour`, `routeOnly: true` на релее). Два независимых полевых отчёта в тот же день (issue #64) превратили его в [SPEC 153](../153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md): `lx.awg_masquerade: "direct"` (дефолт `all`) через `detour` маскировочную пачку не шлёт вовсе, а `lx.quic_sniff_decoy` теперь доходит до хендшейка AmneziaWG — байт идёт перед QUIC-образной пачкой на путях, которые выбирает режим.
 
 ## 6. Файлы
 
 - `common/lxdatagram/decoy.go`, `common/lxdatagram/decoy_test.go` (новые)
 - `common/lxdatagram/truncate.go` — `Dialer(ctx, …)`, `truncDialer.DialContext` шлёт обманку
+- `common/lxdatagram/kernel.go`, `kernel_test.go` — `IsKernelSocket`, `IsKernelPacketConn`: проверка пути
 - `option/lx.go` — `LXQUICSniffDecoy` (режимы, булева форма, схема), `LXOptions.QUICSniffDecoy`, `LXResolved.QUICSniffDecoy`; `option/lx_test.go`
 - `protocol/hysteria2/outbound.go`, `protocol/tuic/outbound.go` — строка SPEC 150 передаёт `ctx`
 - `docs-lx/lx-config.md`, `docs-lx/lx-config.ru.md` — §13 `lx.quic_sniff_decoy`

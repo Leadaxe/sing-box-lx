@@ -33,9 +33,9 @@ type LXOptions struct {
 	QUICSniffDecoy LXQUICSniffDecoy `json:"quic_sniff_decoy,omitempty"`
 	// AWGMasquerade says on which paths an AmneziaWG endpoint sends its
 	// masquerade burst (per-handshake decoy, i1..i5, Jc junk) ahead of the
-	// handshake initiation (lx: SPEC 153): "direct" — only when the endpoint's
-	// socket is a kernel socket, "all" — over a detour too; or a boolean for
-	// "all"/"direct". Absent = direct.
+	// handshake initiation (lx: SPEC 153): "all" — on every path, "direct" —
+	// only when the endpoint's socket is a kernel socket, not over a detour;
+	// or a boolean for "all"/"direct". Absent = all.
 	AWGMasquerade LXAWGMasquerade `json:"awg_masquerade,omitempty"`
 }
 
@@ -180,9 +180,9 @@ func (o LXQUICSniffDecoy) DescribeSchema(builder schema.Builder) (*schema.Node, 
 	})
 }
 
-// The lx.awg_masquerade modes (lx: SPEC 153): "direct" sends the masquerade
-// burst only on a kernel socket (no detour, or a detour to a direct outbound),
-// "all" on every path.
+// The lx.awg_masquerade modes (lx: SPEC 153): "all" (the default) sends the
+// masquerade burst on every path, "direct" only on a kernel socket (no detour,
+// or a detour that ends in a direct outbound).
 const (
 	LXAWGMasqueradeDirect = "direct"
 	LXAWGMasqueradeAll    = "all"
@@ -245,7 +245,7 @@ type LXResolved struct {
 	// "off" when the key is absent.
 	QUICSniffDecoy string
 	// AWGMasquerade is the lx.awg_masquerade mode (lx: SPEC 153); "" or
-	// "direct" when the key is absent.
+	// "all" when the key is absent.
 	AWGMasquerade string
 }
 
@@ -310,11 +310,11 @@ func (r *LXResolved) QUICSniffDecoyOrOff() string {
 	return r.QUICSniffDecoy
 }
 
-// AWGMasqueradeOrDirect returns the lx.awg_masquerade mode, or "direct" when
-// r is nil or the key is absent.
-func (r *LXResolved) AWGMasqueradeOrDirect() string {
+// AWGMasqueradeOrAll returns the lx.awg_masquerade mode, or "all" when r is
+// nil or the key is absent.
+func (r *LXResolved) AWGMasqueradeOrAll() string {
 	if r == nil || r.AWGMasquerade == "" {
-		return LXAWGMasqueradeDirect
+		return LXAWGMasqueradeAll
 	}
 	return r.AWGMasquerade
 }
@@ -353,7 +353,7 @@ func ResolveLX(options *Options) (*LXResolved, error) {
 		lx.QUICSniffDecoy = ""
 	}
 	resolved.QUICSniffDecoy = string(lx.QUICSniffDecoy)
-	if lx.AWGMasquerade == LXAWGMasqueradeDirect {
+	if lx.AWGMasquerade == LXAWGMasqueradeAll {
 		lx.AWGMasquerade = ""
 	}
 	resolved.AWGMasquerade = string(lx.AWGMasquerade)

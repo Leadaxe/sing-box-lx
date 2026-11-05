@@ -114,7 +114,7 @@ you need and read its section below. Each comment shows the **default** and the 
     },
     "mtu_align": "clamp",                       // default: clamp. off | fill | clamp, or an object {"mode", "except": [tags]} (§13)
     "quic_sniff_decoy": "off",                  // default: off. off | direct | detour | all (or a boolean). One byte ahead of the QUIC Initial against relay SNI sniffing; reaches the AWG masquerade burst too (§13, SPEC 151/153)
-    "awg_masquerade": "direct"                  // default: direct. direct | all (or a boolean). Where an AWG endpoint sends its masquerade burst (decoy, i1…i5, junk): only on its own socket, or over a detour too (§13, SPEC 153)
+    "awg_masquerade": "all"                     // default: all. all | direct (or a boolean). Where an AWG endpoint sends its masquerade burst (decoy, i1…i5, junk): on every path, or only on its own socket (§13, SPEC 153)
   },
 
   "outbounds": [
@@ -1285,7 +1285,7 @@ with the real budget) is in [§4](#4-masque-outbound--cloudflare-warp-spec-021).
 | Value | masque h3, hysteria2 and tuic dials that send one byte (`0x00`) before their first QUIC Initial |
 |---|---|
 | `"off"` / `false` / absent (**default**) | none |
-| `"direct"` | dials on the device's own socket: no `detour`, or `detour` to a `direct` outbound |
+| `"direct"` | dials on the device's own socket: no `detour`, `detour` to a `direct` outbound, or `detour` to a group (selector, urltest) currently set to `direct` |
 | `"detour"` | dials carried by another outbound — a proxy or a tunnel |
 | `"all"` / `true` | every dial |
 
@@ -1314,14 +1314,14 @@ not QUIC-shaped and get no byte (SPEC 153).
 
 | Value | The burst ahead of every handshake initiation (the `ip`/`id`/`ib` decoy, `i1`…`i5`, `jc` junk) is sent |
 |---|---|
-| `"direct"` / `false` / absent (**default**) | only when the endpoint's socket is a kernel socket: no `detour`, or `detour` to a `direct` outbound. Over a proxy or tunnel detour the initiation goes alone |
-| `"all"` / `true` | on every path (the behaviour before lx.31) |
+| `"all"` / `true` / absent (**default**) | on every path, over a `detour` too |
+| `"direct"` / `false` | only when the endpoint's socket is a kernel socket: no `detour`, `detour` to a `direct` outbound, or `detour` to a group (selector, urltest) currently set to `direct`. Over a proxy or tunnel detour the initiation goes alone |
 
 ```jsonc
 "lx": { "awg_masquerade": "direct" }
 ```
 
-The masquerade exists for the first mile. Over a detour the first mile sees the carrying protocol
+`"direct"` is for nodes behind a relay. The masquerade exists for the first mile. Over a detour the first mile sees the carrying protocol
 (VLESS, WireGuard, Hysteria…), never the burst, so there it protects nothing and costs: a relay
 with Xray `sniffing` (`destOverride` with `quic`, no `routeOnly`) parses the `ip: quic` decoy as
 the first datagram of the association, takes its SNI and sends the whole association — the
@@ -1330,8 +1330,9 @@ WireGuard through the same detour does (issue #64). A ~1200-byte Initial, up to 
 `jc` junk per handshake also ride every retry and rekey, inside a reduced-MTU WireGuard detour too.
 Only what the server ignores is dropped: `s1`–`s4` padding, `h1`–`h4`, AWG 3.x header protection,
 `content_padding_addition`, `random_trailers` and the timings are untouched, so the server accepts
-the handshake as before. `"all"` keeps the burst inside the tunnel; pair it with
-`lx.quic_sniff_decoy: "detour"` or `"all"` to pass a sniffing relay with the burst intact. Details
+the handshake as before. The default `"all"` keeps the burst inside the tunnel; pair it with
+`lx.quic_sniff_decoy: "detour"` or `"all"` to pass a sniffing relay with the burst intact, or set
+`"direct"` to send no burst there. Details
 — [SPEC 153](../SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md).
 
 ### Removed `route.lx_idle_*`

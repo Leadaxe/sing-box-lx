@@ -385,22 +385,22 @@ func TestLXQUICSniffDecoy(t *testing.T) {
 
 func TestLXAWGMasquerade(t *testing.T) {
 	t.Parallel()
-	if (*LXResolved)(nil).AWGMasqueradeOrDirect() != LXAWGMasqueradeDirect {
-		t.Fatal("a nil *LXResolved must read as direct")
+	if (*LXResolved)(nil).AWGMasqueradeOrAll() != LXAWGMasqueradeAll {
+		t.Fatal("a nil *LXResolved must read as all")
 	}
 	cases := []struct {
 		content, want string
 		canonical     LXAWGMasquerade
 	}{
-		{`{}`, LXAWGMasqueradeDirect, ""},
-		{`{"lx":{"awg_masquerade":false}}`, LXAWGMasqueradeDirect, ""},
-		{`{"lx":{"awg_masquerade":"direct"}}`, LXAWGMasqueradeDirect, ""},
-		{`{"lx":{"awg_masquerade":true}}`, LXAWGMasqueradeAll, LXAWGMasqueradeAll},
-		{`{"lx":{"awg_masquerade":"all"}}`, LXAWGMasqueradeAll, LXAWGMasqueradeAll},
+		{`{}`, LXAWGMasqueradeAll, ""},
+		{`{"lx":{"awg_masquerade":true}}`, LXAWGMasqueradeAll, ""},
+		{`{"lx":{"awg_masquerade":"all"}}`, LXAWGMasqueradeAll, ""},
+		{`{"lx":{"awg_masquerade":false}}`, LXAWGMasqueradeDirect, LXAWGMasqueradeDirect},
+		{`{"lx":{"awg_masquerade":"direct"}}`, LXAWGMasqueradeDirect, LXAWGMasqueradeDirect},
 	}
 	for _, tc := range cases {
 		options, resolved := mustResolveLX(t, tc.content)
-		if got := resolved.AWGMasqueradeOrDirect(); got != tc.want {
+		if got := resolved.AWGMasqueradeOrAll(); got != tc.want {
 			t.Fatalf("%s: got %q, want %q", tc.content, got, tc.want)
 		}
 		var canonical LXAWGMasquerade
@@ -416,8 +416,8 @@ func TestLXAWGMasquerade(t *testing.T) {
 			t.Fatalf("%s: must be rejected", content)
 		}
 	}
-	text, err := json.Marshal(mustDecodeLXConfig(t, `{"lx":{"awg_masquerade":true}}`))
-	if err != nil || !strings.Contains(string(text), `"awg_masquerade":"all"`) {
+	text, err := json.Marshal(mustDecodeLXConfig(t, `{"lx":{"awg_masquerade":false}}`))
+	if err != nil || !strings.Contains(string(text), `"awg_masquerade":"direct"`) {
 		t.Fatalf("a boolean must marshal as its mode: %s %v", text, err)
 	}
 }

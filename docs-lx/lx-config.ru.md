@@ -112,7 +112,7 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
     },
     "mtu_align": "clamp",                       // дефолт: clamp. off | fill | clamp, либо объект {"mode", "except": [теги]} (§13)
     "quic_sniff_decoy": "off",                  // дефолт: off. off | direct | detour | all (или bool). Один байт перед QUIC Initial против сниффинга SNI на релее; достаёт и до маскировки AWG (§13, SPEC 151/153)
-    "awg_masquerade": "direct"                  // дефолт: direct. direct | all (или bool). Где AWG-endpoint шлёт маскировочную пачку (приманка, i1…i5, junk): только на своём сокете или и через detour (§13, SPEC 153)
+    "awg_masquerade": "all"                     // дефолт: all. all | direct (или bool). Где AWG-endpoint шлёт маскировочную пачку (приманка, i1…i5, junk): на любом пути или только на своём сокете (§13, SPEC 153)
   },
 
   "outbounds": [
@@ -1282,7 +1282,7 @@ ICMP Packet Too Big с фактическим бюджетом) — в [§4](#4-
 | Значение | Дозвоны masque h3, hysteria2 и tuic, которые шлют один байт (`0x00`) перед первым QUIC Initial |
 |---|---|
 | `"off"` / `false` / нет ключа (**дефолт**) | никакие |
-| `"direct"` | дозвоны через собственный сокет устройства: без `detour` или `detour` на outbound `direct` |
+| `"direct"` | дозвоны через собственный сокет устройства: без `detour`, `detour` на outbound `direct` или `detour` на группу (selector, urltest), в которой сейчас выбран `direct` |
 | `"detour"` | дозвоны, которые несёт другой outbound — прокси или туннель |
 | `"all"` / `true` | все |
 
@@ -1311,14 +1311,14 @@ hysteria2 (`server_ports`). Подробности — [SPEC 151](../SPECS/TASKS
 
 | Значение | Пачка перед каждой инициацией хендшейка (приманка `ip`/`id`/`ib`, `i1`…`i5`, junk `jc`) отправляется |
 |---|---|
-| `"direct"` / `false` / нет ключа (**дефолт**) | только когда сокет endpoint'а — сокет ядра: без `detour` или `detour` на outbound `direct`. Через прокси- или туннельный `detour` инициация идёт одна |
-| `"all"` / `true` | на любом пути (поведение до lx.31) |
+| `"all"` / `true` / нет ключа (**дефолт**) | на любом пути, в том числе через `detour` |
+| `"direct"` / `false` | только когда сокет endpoint'а — сокет ядра: без `detour`, `detour` на outbound `direct` или `detour` на группу (selector, urltest), в которой сейчас выбран `direct`. Через прокси- или туннельный `detour` инициация идёт одна |
 
 ```jsonc
 "lx": { "awg_masquerade": "direct" }
 ```
 
-Маскировка нужна на первой миле. Через `detour` первая миля видит несущий протокол (VLESS,
+`"direct"` — для узлов за релеем. Маскировка нужна на первой миле. Через `detour` первая миля видит несущий протокол (VLESS,
 WireGuard, Hysteria…), а не пачку, так что там она ничего не защищает и только вредит: релей с
 Xray `sniffing` (`destOverride` с `quic`, без `routeOnly`) разбирает приманку `ip: quic` как первую
 датаграмму ассоциации, берёт из неё SNI и уводит всю ассоциацию — вместе с хендшейком WireGuard за
@@ -1327,8 +1327,8 @@ Xray `sniffing` (`destOverride` с `quic`, без `routeOnly`) разбирае�
 едут и на каждом ретрае и rekey, в том числе внутри WireGuard-`detour` с урезанным MTU.
 Убирается только то, что сервер игнорирует: паддинг `s1`–`s4`, `h1`–`h4`, защита заголовка AWG 3.x,
 `content_padding_addition`, `random_trailers` и тайминги не трогаются, сервер принимает хендшейк как
-раньше. `"all"` оставляет пачку внутри туннеля; в паре с `lx.quic_sniff_decoy: "detour"` или `"all"`
-она пройдёт сниффящий релей целиком. Подробности —
+раньше. Дефолтный `"all"` оставляет пачку внутри туннеля; в паре с `lx.quic_sniff_decoy: "detour"`
+или `"all"` она пройдёт сниффящий релей целиком, а `"direct"` пачку там не шлёт вовсе. Подробности —
 [SPEC 153](../SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md).
 
 ### Удалённые `route.lx_idle_*`

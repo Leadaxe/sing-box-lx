@@ -66,8 +66,8 @@ func TestHandshakeBurstFilterTable(t *testing.T) {
 	}
 }
 
-// The default (masquerade direct, decoy off) still installs a filter: it
-// strips over a detour. Only "all" with the decoy off has nothing to do.
+// "direct" installs a filter even with the decoy off: it strips over a
+// detour. The default ("all" with the decoy off) has nothing to do.
 func TestHandshakeBurstFilterInstalledOnlyWhenItCanAct(t *testing.T) {
 	t.Parallel()
 	require.NotNil(t, newHandshakeBurstFilter(option.LXAWGMasqueradeDirect, option.LXQUICSniffDecoyOff, pathKernel(true), nil))

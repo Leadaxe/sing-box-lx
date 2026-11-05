@@ -21,14 +21,15 @@ QUIC-сниффер Xray её разбирает и при `destOverride: ["quic
 
 Два изменения, оба в lx-слое:
 
-1. `lx.awg_masquerade`: `direct` (дефолт) / `all`. Через `detour` маскировочная пачка
-   (per-handshake приманка, `i1`…`i5`, junk `Jc`) не шлётся вовсе; протокольные поля, которые
+1. `lx.awg_masquerade`: `all` (дефолт) / `direct`. В режиме `direct` через `detour`
+   маскировочная пачка (per-handshake приманка, `i1`…`i5`, junk `Jc`) не шлётся вовсе; протокольные поля, которые
    сервер проверяет (`S1`–`S4`, `H1`–`H4`, защита заголовка AWG 3.x, паддинг, хвосты), не тронуты.
 2. `lx.quic_sniff_decoy` (SPEC 151) достаёт до AmneziaWG: когда пачка отправляется и начинается с
    QUIC-образного пакета, а режим выбирает этот путь, перед ней идёт та же однобайтовая датаграмма.
 
-Они независимы: с дефолтами (`direct` + `off`) случай с `detour` закрыт пунктом 1; кто оставляет
-пачку через `detour` (`all`), прикрывается пунктом 2; кто сидит за домашним роутером со сниффящим
+Они независимы. Дефолты (`all` + `off`) — поведение до задачи: пачка идёт на любом пути
+(решение владельца 2026-11-05), и случай с `detour` на сниффящий релей закрывается конфигом —
+пунктом 1 (`direct`) или пунктом 2 (пачка остаётся, перед ней байт); кто сидит за домашним роутером со сниффящим
 прокси на прямом пути, включает 2 в `direct`/`all`, как уже может для MASQUE.
 
 ## 1. Полевые отчёты (Telegram LxBox, 2026-11-03)
@@ -121,11 +122,17 @@ Hysteria…), а не внутреннюю пачку, так что там он
 - `endpoint.go` `Start` (`// lx: SPEC 153`): `pathIsKernel` = всегда `true` для `StdNetBind`
   (UDP-listener без `detour`), `clientBind.PathIsKernel` для `ClientBind`; фильтр ставится,
   когда у endpoint'а есть AWG-поля. Решение по пути — то же, что у `SniffDecoyApplies` для
-  QUIC-дайлов (SPEC 151 §3.1): сокет ядра на conn как надиалено, до обёрток; `detour` на `direct`
-  даёт сокет ядра и считается прямым путём.
+  QUIC-дайлов (SPEC 151 §3.1): сокет ядра на conn как надиалено, до обёрток.
+- Прямой путь — свойство conn, а не конфига: `detour` на `direct` и `detour` на группу
+  (selector, urltest, любой вложенности), в которой сейчас выбран `direct`, дают сокет ядра и
+  считаются прямым путём; та же группа на прокси — detour, со следующего дайла. Оба пути бинда
+  классифицируются одинаково: connect (один peer с IP-адресом) и `ListenPacket` (peer с доменным
+  адресом или несколько peer'ов).
+- `common/lxdatagram/kernel.go` — `IsKernelSocket`, `IsKernelPacketConn`: спуск по прозрачным
+  обёрткам до `syscall.Conn` — заменяемые ридеры, простые пакетные адаптеры, в которые группа
+  заворачивает `ListenPacket`-сокет участника, счётчики power-report дефолтного дайлера.
 - `common/lxdatagram/decoy.go` — `SniffDecoyAppliesTo(mode, kernel)` (общий корень
-  `SniffDecoyApplies`), `SniffDecoy()`, `IsKernelSocket`, `IsKernelPacketConn` (распаковка
-  заменяемых ридеров по образцу `UnwrapReader`), `AWGMasqueradeFromContext`.
+  `SniffDecoyApplies`), `SniffDecoy()`, `AWGMasqueradeFromContext`.
 
 ### 4.3 Таблица взаимодействия
 
@@ -141,7 +148,9 @@ Hysteria…), а не внутреннюю пачку, так что там он
 только когда может подействовать; байт только перед QUIC-образной пачкой (`dns`-приманка и junk
 без байта; сам байт и long header без fixed bit не QUIC); ошибка зонда оставляет пачку;
 `ClientBind.PathIsKernel` — системный дайлер (connect и `ListenPacket`) → сокет ядра,
-`net.Pipe`-дайлер → detour.
+`net.Pipe`-дайлер → detour. Юниты проверки пути (`common/lxdatagram/kernel_test.go`):
+`ListenPacket`-сокет под одним и двумя селекторами → сокет ядра; сокет и пакетный сокет под
+счётчиками и под двумя группами → сокет ядра; conn прокси под теми же обёртками → detour.
 
 ## 5. Конфиг
 
@@ -149,15 +158,15 @@ Hysteria…), а не внутреннюю пачку, так что там он
 
 | Значение | Пачка отправляется |
 |---|---|
-| `"direct"` / `false` / нет ключа (**дефолт**) | только на сокете ядра (без `detour` или `detour` на `direct`); через прокси/туннель — одна инициация |
-| `"all"` / `true` | на любом пути (поведение до lx.31) |
+| `"all"` / `true` / нет ключа (**дефолт**) | на любом пути, в том числе через `detour` |
+| `"direct"` / `false` | только на сокете ядра (без `detour`, `detour` на `direct` или `detour` на группу, в которой сейчас выбран `direct`); через прокси/туннель — одна инициация |
 
 ```json
 "lx": { "awg_masquerade": "direct" }
 ```
 
 Разбор как у `quic_sniff_decoy`: строка-enum, bool принимается для симметрии и пишется обратно
-режимом; `direct` канонизируется в отсутствие ключа; неизвестное значение — ошибка загрузки.
+режимом; `all` канонизируется в отсутствие ключа; неизвестное значение — ошибка загрузки.
 `lx.quic_sniff_decoy` нового ключа не получает: его режимы применяются к AWG-пачке как есть.
 Юниты — `option/lx_test.go` `TestLXAWGMasquerade`. Документация пользователя —
 `docs-lx/lx-config.md` / `.ru.md` §13.
@@ -170,8 +179,8 @@ Loopback-стенд 2026-11-05 на Mac владельца — стенд SPEC 1
 
 | Путь | `awg_masquerade` | `quic_sniff_decoy` | Результат | Пачка снята | Байт | Подмена в Xray |
 |---|---|---|---|---|---|---|
-| detour | all | off (контроль, поведение до задачи) | 0/3 | — | — | 8 |
-| detour | direct (дефолт) | off (дефолт) | 3/3 | да | — | 0 |
+| detour | all (дефолт) | off (дефолт; поведение до задачи) | 0/3 | — | — | 8 |
+| detour | direct | off (дефолт) | 3/3 | да | — | 0 |
 | detour, без упаковки | direct | off | 3/3 | да | — | 0 |
 | detour | all | detour | 3/3 | — | да | 0 |
 | detour | all | direct | 0/3 | — | — | 8 |
@@ -186,9 +195,9 @@ Loopback-стенд 2026-11-05 на Mac владельца — стенд SPEC 1
    WireGuard-сервер; `detour` = этот VLESS.
 3. До изменения: хендшейк не проходит; `tcpdump` на WireGuard-сервере ничего с хоста VLESS;
    хост VLESS резолвит SNI приманки.
-4. После, дефолты: хендшейк с первой попытки; дамп на сервере — только инициация и транспорт с
+4. После, `awg_masquerade=direct`: хендшейк с первой попытки; дамп на сервере — только инициация и транспорт с
    хоста VLESS, ничего из пачки.
-5. `awg_masquerade=all`, `quic_sniff_decoy=off`: падает как раньше (контроль).
+5. Дефолты (`awg_masquerade=all`, `quic_sniff_decoy=off`): падает как раньше.
    `awg_masquerade=all`, `quic_sniff_decoy=detour`: поднимается; дамп на входе VLESS — байт,
    Initial, junk, инициация.
 6. Прямой путь, `quic_sniff_decoy=direct`: байт перед Initial, хендшейк проходит; прямой путь с
@@ -202,8 +211,8 @@ Loopback-стенд 2026-11-05 на Mac владельца — стенд SPEC 1
 - `submodules/wireguard-go/device/lx_handshake_burst_test.go` (новый)
 - `option/lx.go` — `LXAWGMasquerade`, `LXOptions.AWGMasquerade`, `LXResolved.AWGMasquerade`,
   `AWGMasqueradeOrDirect`; `option/lx_test.go`
-- `common/lxdatagram/decoy.go` — `SniffDecoyAppliesTo`, `SniffDecoy`, `IsKernelSocket`,
-  `IsKernelPacketConn`, `AWGMasqueradeFromContext`
+- `common/lxdatagram/decoy.go` — `SniffDecoyAppliesTo`, `SniffDecoy`, `AWGMasqueradeFromContext`
+- `common/lxdatagram/kernel.go`, `kernel_test.go` — `IsKernelSocket`, `IsKernelPacketConn`
 - `transport/wireguard/handshake_burst_lx.go`, `handshake_burst_lx_test.go` (новые)
 - `transport/wireguard/client_bind.go` — `wireConn.kernel`, `ClientBind.PathIsKernel`
 - `transport/wireguard/endpoint.go` — `pathIsKernel`, установка фильтра (`// lx: SPEC 153`)
