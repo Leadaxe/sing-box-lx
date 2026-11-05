@@ -51,6 +51,7 @@ type ClientOptions struct {
 	DisableVersionFallback bool
 	HTTP2Options           option.HTTP2Options
 	HTTP3Options           option.QUICOptions
+	TunnelLX               TunnelLXOptions // lx: SPEC 110
 }
 
 type http3Client interface {
@@ -82,6 +83,7 @@ type Client struct {
 	http3                           http3Client
 	http3Broken                     atomic.Int64
 	http3Backoff                    atomic.Int64
+	tunnelLX                        TunnelLXOptions // lx: SPEC 110
 }
 
 func NewClientWithTLS(ctx context.Context, logger logger.ContextLogger, outboundDialer N.Dialer, serverOptions option.ServerOptions, tlsOptions option.OutboundTLSOptions, options ClientOptions) (*Client, error) {
@@ -133,6 +135,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 		headers:                options.Headers.Clone(),
 		version:                options.Version,
 		disableVersionFallback: options.DisableVersionFallback,
+		tunnelLX:               options.TunnelLX, // lx: SPEC 110
 	}
 	if client.headers != nil {
 		client.host = client.headers.Get("Host")

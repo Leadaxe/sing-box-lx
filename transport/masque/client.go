@@ -40,6 +40,7 @@ type ClientOptions struct {
 	Path            string
 	AdvertiseRoutes []netip.Prefix
 	Handler         ClientHandler
+	LX              ClientLXOptions // lx: SPEC 110
 }
 
 type Client struct {
@@ -57,6 +58,7 @@ type Client struct {
 	lastError       error
 	stateUpdated    chan struct{}
 	loopDone        chan struct{}
+	lx              ClientLXOptions // lx: SPEC 110
 }
 
 type clientSession struct {
@@ -86,6 +88,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 		advertiseRoutes: advertiseRoutes,
 		handler:         options.Handler,
 		stateUpdated:    make(chan struct{}),
+		lx:              options.LX, // lx: SPEC 110
 	}, nil
 }
 
@@ -164,7 +167,7 @@ func (c *Client) loop() {
 
 func (c *Client) connect() (bool, error) {
 	dialCtx, cancelDial := context.WithTimeout(c.ctx, C.TCPTimeout)
-	stream, err := c.httpClient.OpenTunnel(dialCtx, upgradeToken, c.template.Expand())
+	stream, err := c.httpClient.OpenTunnel(dialCtx, c.tunnelProtocol(), c.template.Expand()) // lx: SPEC 110
 	cancelDial()
 	if err != nil {
 		return false, err
@@ -183,10 +186,7 @@ func (c *Client) connect() (bool, error) {
 	current.session = newSession(c.ctx, stream, current, c.handler.FrontHeadroom)
 	c.current = current
 	c.access.Unlock()
-	err = current.writeCapsule(newAddressCapsule(capsuleTypeAddressRequest, []AssignedAddress{
-		{RequestID: 1, Prefix: netip.PrefixFrom(netip.IPv4Unspecified(), 32)},
-		{RequestID: 2, Prefix: netip.PrefixFrom(netip.IPv6Unspecified(), 128)},
-	}))
+	err = current.requestOrApplyAddress() // lx: SPEC 110 — static addresses skip ADDRESS_REQUEST
 	if err == nil && len(c.advertiseRoutes) > 0 {
 		err = current.writeCapsule(newRouteCapsule(c.advertiseRoutes))
 	}
@@ -335,6 +335,9 @@ func (c *Client) WritePacketBuffers(packetBuffers []*buf.Buffer, forwarded bool)
 }
 
 func (s *clientSession) handleAddressAssign(addresses []AssignedAddress) error {
+	if s.client.ignoreAddressAssign(addresses) { // lx: SPEC 110
+		return nil
+	}
 	var assigned []netip.Prefix
 	for _, address := range addresses {
 		if address.RequestID != 0 && address.Prefix.Addr().IsUnspecified() && address.Prefix.IsSingleIP() {

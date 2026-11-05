@@ -46,7 +46,7 @@ func (c *Client) OpenTunnel(ctx context.Context, protocol string, path string) (
 
 func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Conn, DatagramStream, error) {
 	if c.http3Available() {
-		stream, err := c.http3.OpenTunnel(ctx, request)
+		stream, err := c.openTunnelHTTP3(ctx, request) // lx: SPEC 110 — bounded CONNECT wait
 		if err == nil {
 			c.clearHTTP3Broken()
 			return nil, stream, nil
@@ -153,7 +153,7 @@ func (c *Client) openTunnelHTTP2(ctx context.Context, clientConn *http2ClientCon
 		Host:   c.authority(),
 		Header: buildRequestHeader(c.headers, c.authorization, request.originAuthorization),
 	}
-	httpRequest.Header.Set(":protocol", request.protocol)
+	c.tunnelHeadersHTTP2(httpRequest.Header, request.protocol) // lx: SPEC 110 — plain CONNECT for WARP
 	httpRequest.Header.Set("Capsule-Protocol", "?1")
 	streamConn, err := c.roundTripHTTP2(ctx, clientConn, httpRequest, request.destination)
 	if err != nil {

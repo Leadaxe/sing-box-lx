@@ -70,7 +70,7 @@ func newHTTP3Client(options ClientOptions, authorization string) (http3Client, e
 		headers:       headers,
 		authorization: authorization,
 		quicConfig:    quicConfig,
-		transport:     &http3.Transport{EnableDatagrams: true, DisableCompression: true},
+		transport:     &http3.Transport{EnableDatagrams: true, DisableCompression: true, AdditionalSettings: options.TunnelLX.HTTP3AdditionalSettings}, // lx: SPEC 110
 	}, nil
 }
 

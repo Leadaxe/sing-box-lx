@@ -107,7 +107,7 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 			}
 		}
 	}
-	httpClient, err := http.NewClientWithTLS(ctx, logger, outboundDialer, options.ServerOptions, common.PtrValueOrDefault(options.TLS), http.ClientOptions{
+	httpOptions := http.ClientOptions{
 		Authority:              authority,
 		Username:               options.Username,
 		Password:               options.Password,
@@ -116,7 +116,13 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 		DisableVersionFallback: options.DisableVersionFallback,
 		HTTP2Options:           http2Options,
 		HTTP3Options:           options.HTTP3Options,
-	})
+	}
+	// lx: SPEC 110 — `profile` / `address` configure both clients.
+	httpOptions, clientOptions, err := applyLXProfile(options, httpOptions, masque.ClientOptions{})
+	if err != nil {
+		return nil, err
+	}
+	httpClient, err := http.NewClientWithTLS(ctx, logger, outboundDialer, options.ServerOptions, common.PtrValueOrDefault(options.TLS), httpOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -135,14 +141,13 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	}
 	clientEndpoint.state.Store(&clientState{})
 	clientEndpoint.deviceOptions = newDeviceOptions(ctx, logger, clientEndpoint, options.MASQUEEndpointOptions, time.Duration(options.UDPTimeout), nil)
-	clientEndpoint.client, err = masque.NewClient(masque.ClientOptions{
-		Context:         ctx,
-		Logger:          logger,
-		HTTPClient:      httpClient,
-		Path:            options.Path,
-		AdvertiseRoutes: options.AdvertiseRoutes,
-		Handler:         clientEndpoint,
-	})
+	clientOptions.Context = ctx
+	clientOptions.Logger = logger
+	clientOptions.HTTPClient = httpClient
+	clientOptions.Path = options.Path
+	clientOptions.AdvertiseRoutes = options.AdvertiseRoutes
+	clientOptions.Handler = clientEndpoint
+	clientEndpoint.client, err = masque.NewClient(clientOptions)
 	if err != nil {
 		httpClient.Close()
 		return nil, err

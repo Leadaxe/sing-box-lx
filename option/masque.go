@@ -25,8 +25,9 @@ type _MASQUEClientEndpointOptions struct {
 	DialerOptions
 	ServerOptions
 	MASQUEEndpointOptions
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
+	MASQUEClientLXOptions        // lx: SPEC 110
+	Username              string `json:"username,omitempty"`
+	Password              string `json:"password,omitempty"`
 	OutboundTLSOptionsContainer
 	Path                   string               `json:"path,omitempty"`
 	Headers                badoption.HTTPHeader `json:"headers,omitempty"`
