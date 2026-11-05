@@ -259,6 +259,9 @@ func (e *Endpoint) Rebuild() error {
 	if e.tunDevice != nil {
 		return nil // never torn down (or already rebuilt)
 	}
+	if e.returnDevice == nil {
+		return E.New("WireGuard endpoint is not initialized")
+	}
 	tunDevice, err := newDeviceFn(e.deviceOptions) // lx: SPEC 097 — counted in tests
 	if err != nil {
 		return E.Cause(err, "rebuild WireGuard device")

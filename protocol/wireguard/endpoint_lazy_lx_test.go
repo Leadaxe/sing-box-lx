@@ -122,9 +122,6 @@ func newLazyTestEndpoint(t *testing.T, tag string, budget *BuildBudget) *Endpoin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = transport.Initialize(nil); err != nil {
-		t.Fatal(err)
-	}
 	w := &Endpoint{
 		Adapter:  endpoint.NewAdapter(C.TypeWireGuard, tag, []string{N.NetworkTCP}, nil),
 		ctx:      context.Background(),
@@ -137,9 +134,12 @@ func newLazyTestEndpoint(t *testing.T, tag string, budget *BuildBudget) *Endpoin
 	return w
 }
 
+// startLazy walks the endpoint through the box's start stages, Initialize
+// included: that stage hands the transport its device recipe, and a lazy
+// endpoint that skipped it crashed on its first dial (1.15 port, found live).
 func startLazy(t *testing.T, w *Endpoint) {
 	t.Helper()
-	for _, stage := range []adapter.StartStage{adapter.StartStateStart, adapter.StartStatePostStart} {
+	for _, stage := range []adapter.StartStage{adapter.StartStateInitialize, adapter.StartStateStart, adapter.StartStatePostStart} {
 		if err := w.Start(stage, testScope()); err != nil {
 			t.Fatalf("start stage %d: %v", stage, err)
 		}

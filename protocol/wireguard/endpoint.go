@@ -241,6 +241,14 @@ func (w *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	// branch so a never-built endpoint is closed as well.
 	if stage == adapter.StartStateInitialize {
 		scope.Add(w.Close)
+		// lx: the device recipe (and, without lazy build, the device itself) —
+		// before the lazy branch: a lazy endpoint needs the recipe for its first
+		// build. endpoint.Close is not registered here: w.Close, registered
+		// above, runs it together with the SPEC 020/030/097/106 bookkeeping.
+		err := w.endpoint.Initialize(oomkiller.MemoryPressure(w.ctx))
+		if err != nil {
+			return err
+		}
 	}
 	// lx:begin lazy-build
 	if w.lazy {
@@ -248,14 +256,6 @@ func (w *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	}
 	// lx:end lazy-build
 	switch stage {
-	case adapter.StartStateInitialize:
-		// lx: the device recipe (and, without lazy build, the device itself).
-		// endpoint.Close is not registered here: w.Close, registered above, runs
-		// it together with the SPEC 020/030/097/106 bookkeeping.
-		err := w.endpoint.Initialize(oomkiller.MemoryPressure(w.ctx))
-		if err != nil {
-			return err
-		}
 	case adapter.StartStateStart:
 		if err := w.endpoint.Start(false); err != nil {
 			return err
