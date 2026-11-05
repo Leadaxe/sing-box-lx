@@ -50,8 +50,8 @@ required for stable tags); this changelog section is the fallback used for pre-r
   cloudflareaccess.com`, сертификат и пин — стандартным блоком `tls`. `lx.masque.idle_timeout`
   парсится и ни на что не влияет; усыпление — апстримный `on_demand`.
 - 🔧 **WireGuard/AWG на апстримной модели состояния**: `Initialize` отдельно от конструктора,
-  устройство под `stateAccess`; свой отвязанный pause-обработчик (SPEC 071) и хотфикс 064
-  (`SingPacketConn`) сняты — апстрим делает то же. Ленивая сборка (097), teardown (020), rebind
+  устройство под `stateAccess`; свой отвязанный pause-обработчик со штампом очерёдности (SPEC 071)
+  снят — апстрим применяет pause-событие в отдельной горутине сам. Ленивая сборка (097), teardown (020), rebind
   (041), маскарад (009/153), статусы пиров (145) перенесены.
 - 🐛 В порте найден и исправлен до пререлиза: ленивый WG-endpoint падал на первом dial
   (`Initialize` стоял после ветки lazy).
