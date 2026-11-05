@@ -37,6 +37,7 @@ func applyLXProfile(options option.MASQUEClientEndpointOptions, httpOptions tran
 	case "", option.MASQUEProfileStandard:
 	case option.MASQUEProfileCloudflare:
 		clientOptions.LX.Protocol = warpProtocol
+		clientOptions.LX.RawStreamCapsules = true
 		httpOptions.TunnelLX = transportHTTP.TunnelLXOptions{
 			PlainConnectHTTP2: true,
 			PlainConnectHeaders: http.Header{

@@ -184,6 +184,7 @@ func (c *Client) connect() (bool, error) {
 		return false, nil
 	}
 	current.session = newSession(c.ctx, stream, current, c.handler.FrontHeadroom)
+	current.session.rawCapsules = c.lx.RawStreamCapsules && current.session.datagrams == nil // lx: SPEC 110
 	c.current = current
 	c.access.Unlock()
 	err = current.requestOrApplyAddress() // lx: SPEC 110 — static addresses skip ADDRESS_REQUEST

@@ -7,7 +7,9 @@ import (
 	"slices"
 	"strings"
 
+	transportHTTP "github.com/sagernet/sing-box/transport/http"
 	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing/common/buf"
 )
 
 // ClientLXOptions are set by the masque-client endpoint from its `profile` and
@@ -21,6 +23,11 @@ type ClientLXOptions struct {
 	// in-band. With it set the client sends no ADDRESS_REQUEST, becomes ready
 	// as soon as the tunnel is open, and ignores ADDRESS_ASSIGN.
 	Address []netip.Prefix
+	// RawStreamCapsules drops the HTTP Datagram context ID inside DATAGRAM
+	// capsules on a stream transport (HTTP/2, HTTP/1.1): WARP's HTTP/2 path
+	// carries the bare IP packet as the capsule payload, where RFC 9297 puts a
+	// context ID (0) in front. QUIC datagrams are not affected.
+	RawStreamCapsules bool
 }
 
 func (c *Client) tunnelProtocol() string {
@@ -59,4 +66,22 @@ func (c *Client) ignoreAddressAssign(addresses []AssignedAddress) bool {
 		c.logger.Debug("ignoring ADDRESS_ASSIGN ", strings.Join(assigned, " "), ": addresses are configured as ", strings.Join(configured, " "))
 	}
 	return true
+}
+
+// prependContextID frames an outgoing packet as an HTTP Datagram payload:
+// context ID 0 in front, or nothing in raw-capsule mode.
+func (s *session) prependContextID(buffer *buf.Buffer) *buf.Buffer {
+	if s.rawCapsules {
+		return buffer
+	}
+	return transportHTTP.PrependContextID(buffer)
+}
+
+// readContextID reads the context ID of an incoming DATAGRAM capsule; in
+// raw-capsule mode there is none and the payload is the packet itself.
+func (s *session) readContextID() (contextID uint64, contextLength int, err error) {
+	if s.rawCapsules {
+		return 0, 0, nil
+	}
+	return transportHTTP.ReadVarint(s.reader)
 }

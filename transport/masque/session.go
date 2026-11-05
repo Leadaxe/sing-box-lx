@@ -39,6 +39,7 @@ type session struct {
 	handler        sessionHandler
 	packetHeadroom func() int
 	writeAccess    sync.Mutex
+	rawCapsules    bool // lx: SPEC 110 — stream capsules carry the bare IP packet
 }
 
 func newSession(ctx context.Context, stream io.ReadWriteCloser, handler sessionHandler, packetHeadroom func() int) *session {
@@ -119,7 +120,7 @@ func (s *session) loopCapsule() error {
 }
 
 func (s *session) readDatagramCapsule(length int) error {
-	contextID, contextLength, err := transportHTTP.ReadVarint(s.reader)
+	contextID, contextLength, err := s.readContextID() // lx: SPEC 110
 	if err != nil {
 		return err
 	}
@@ -190,7 +191,7 @@ func (s *session) writeCapsule(capsule *buf.Buffer) error {
 func (s *session) writePackets(buffers []*buf.Buffer) error {
 	capsules := buffers[:0]
 	for i, buffer := range buffers {
-		datagram := transportHTTP.PrependContextID(buffer)
+		datagram := s.prependContextID(buffer) // lx: SPEC 110
 		if s.datagrams != nil {
 			err := s.datagrams.SendDatagram(datagram.Bytes())
 			var tooLarge *transportHTTP.DatagramTooLargeError
