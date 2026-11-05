@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | R (sync) — перевод базы форка с линии 1.14 (`upstream/stable`) на линию 1.15 (`upstream/testing`) |
-| Статус | O (open) — 2026-11-05: ветка `lx-1.15` создана, пробный мерж измерен (§3), решения §5 приняты, сабмодули слиты с пинами `testing` (§5a); мерж ядра впереди |
+| Статус | O (open) — 2026-11-05: мерж `upstream/testing` в `lx-1.15` выполнен, сборка и тесты зелёные (§5a); впереди прогон на NanoPi, доки, пререлиз |
 | Ветка | `lx-1.15` от `lx` = `ec4b85566` (v1.14.4-lx.31), worktree `../sing-box-lx-1.15` с собственными копиями четырёх форк-сабмодулей (без симлинков) |
 | Срез апстрима | `upstream/testing` = `9f1cd1ef7` (v1.15.0-alpha.13 + 2, 2026-11-03). Ветка перезаливается force-push'ем: хеши ниже верны для этого среза |
 | Связано | [107](../107-MASQUE_UPSTREAM_1_15_COMPARISON/SPEC.md), [110](../110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md) (MASQUE), [048](../048-GVISOR_HANDSHAKE_NIL_CRASH/SPEC.md) (патч gvisor), [064](../064-SELECTOR_INTERRUPT_DEAD_ON_INBOUND/SPEC.md) (снимается), [117](../117-UPSTREAM_SYNC_SCOPED_LIFECYCLE/SPEC.md) (scope уже у нас), память: миграция 1.14 шла в ветке `lx-1.14` |
@@ -117,6 +117,23 @@
 ## 5a. Ход работ
 
 - 2026-11-05: §4.1 выполнен. Форки: `wireguard-go` ветка `lx-1.15` = `c1d6138` (merge `fdf0ad046586`; конфликт `device/send.go` — AWG-раскладка `outboundLayout` перенесена внутрь апстримного `newInputElement`, `InputPacket` у апстрима удалён, четыре lx-теста переведены на хелпер над `InputPackets`); `sing-tun` ветка `lx-1.15` = `02095c3` (merge `7ac0256fa09d`, 32 коммита; конфликт `stack_system.go` — поля 040 и апстримные `dispatchStage`/`processAccess` вместе). Тесты device/conn/tun и selfheal зелёные; `TestGoKernel*` в sing-tun падают «operation not permitted» и на чистом пине — нужен TUN, не регресс. Обе ветки запушены в форк-remote'ы; гитлинки в `lx-1.15` обновлены.
+
+- 2026-11-05 (ночь): §4.2–4.6 выполнены первым проходом, merge-коммит в `lx-1.15` (сообщение коммита —
+  полный перечень). Сборка без тегов, с `LX_TAGS` (+`with_lx_idle_suspend`), кросс linux/amd64,
+  linux/arm64, android/arm64; `lx-check` на 9 конфигах; тесты всех пакетов и стенды `lx-test`
+  (chain, conntest, initerr, startclose, zombie) зелёные. Снято: хотфиксы 064 (`SingPacketConn`)
+  и 071 (детачнутый pause — апстрим делает то же через `go updateNetworkPause()`), 048 (gVisor
+  ушёл; проверка `tun.Go` по коду — в SPEC 048). Открытые хвосты первого прохода:
+  - `Endpoint.ActiveTCPFlows()` возвращает 0 — у `tun.Go` нет счётчика established-потоков;
+    idle-тик SPEC 020 работает по дельте байтов. Вариант: lx-файл в форке sing-tun со счётчиком
+    по движкам.
+  - `on_demand` (апстрим: `SetKeepIdleConnections` → `SetIdle`) и `lx.wg.idle_suspend` — два
+    механизма усыпления на одном устройстве; совместное включение не валидируется.
+  - `lx.masque.idle_timeout` парсится и ни на что не влияет; доки masque описывают удалённый
+    outbound — переписать под SPEC 110.
+  - В `TestDevicePauseLeavesSocketOpen` первый bind порта в загруженном прогоне превышал 2 с —
+    окно ожидания расширено до 10 с; причина не исследована.
+  - AAR: `with_usbip` по-прежнему не включён (решение 5.5 касалось `LX_TAGS`).
 
 ## 6. Критерии приёмки
 
