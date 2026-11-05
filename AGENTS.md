@@ -29,10 +29,10 @@
 
 - **Набор фич ограничен.** Новая фича — только через тест §3.1 CONSTITUTION и решение пользователя, не по собственной инициативе.
 - **Go module path остаётся `github.com/sagernet/sing-box`** (для дешёвых синков).
-- **Всё новое — за build-tag** (`with_xhttp`, `with_awg`, `with_lx_command`, `with_lxd`, `with_lx_chain`, `with_trusttunnel`, `with_lx_idle_suspend`; канонический набор — `LX_TAGS` в `Makefile.lx`) и **в новых файлах/пакетах**; фичи без ручки в сборке (MASQUE, VLESS-шифрование, DNS-группа) изолируются lx-файлами. Файлы, рассчитанные на передачу в апстрим (TrustTunnel), идут в апстримной форме без суффикса `_lx`, маркеры `// lx:` остаются только на вставках в общие файлы.
+- **Всё новое — за build-tag** (`with_xhttp`, `with_awg`, `with_lx_command`, `with_lxd`, `with_lx_chain`, `with_trusttunnel`, `with_lx_idle_suspend`; канонический набор — `LX_TAGS` в `Makefile.lx`) и **в новых файлах/пакетах**; фичи без ручки в сборке (VLESS-шифрование, DNS-группа) изолируются lx-файлами. Файлы, рассчитанные на передачу в апстрим (TrustTunnel), идут в апстримной форме без суффикса `_lx`, маркеры `// lx:` остаются только на вставках в общие файлы.
 - **Правки upstream-файлов** — только помеченными `// lx:` блоками, атомарными коммитами.
 - **Синхронизация с upstream — ручной merge `upstream/stable`** (не rebase; `upstream/testing` — ветка разработки апстрима, дрейф меряется только по `stable`); `lx` никогда не форс-пушится. Ритуал — в runbook.
-- **Четыре форк-сабмодуля** — `submodules/wireguard-go`, `submodules/sing-tun`, `submodules/gvisor`, `submodules/utls`: встречные upstream-бампы их гитлинков на мерже не принимать вслепую (откатят наши патчи); сабмодули разбираются до мержа ядра.
+- **Три форк-сабмодуля** — `submodules/wireguard-go`, `submodules/sing-tun`, `submodules/utls` (`submodules/gvisor` снят вместе с `with_gvisor` на линии 1.15): встречные upstream-бампы их гитлинков на мерже не принимать вслепую (откатят наши патчи); сабмодули разбираются до мержа ядра.
 - **Имя бинаря — `sing-box`** (drop-in для лаунчера); идентичность `-lx` — в версии.
 - **Scope — client-first**: outbound/endpoint. Server/inbound — только там, где фича без них неполна (на 2026-10-16 это inbound `trusttunnel`, SPEC 134); решение владельца от 2026-09-17.
 

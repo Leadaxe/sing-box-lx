@@ -18,19 +18,27 @@
 
 ### Build-теги
 
-`LX_TAGS` — upstream feature set минус нерелевантное клиенту
-(`with_tailscale`, `with_ccm`/`with_ocm`, `with_acme`) плюс `with_purego`
-и наши фичи:
+`LX_TAGS` (`make -f Makefile.lx lx-print-tags` — источник правды) — набор
+тегов апстрима по умолчанию плюс `with_naive_outbound` с `with_purego` и наши
+фичи:
 
 ```
-with_gvisor, with_quic, with_dhcp, with_wireguard, with_utls, with_clash_api,
+with_quic, with_dhcp, with_wireguard, with_utls, with_clash_api,
 with_naive_outbound, with_purego, badlinkname, tfogo_checklinkname0,
-with_xhttp, with_awg, with_lx_command
+with_xhttp, with_awg, with_lx_command, with_lxd, with_openvpn,
+with_openconnect, with_lx_chain, with_tailscale, with_trusttunnel,
+with_acme, with_ccm, with_ocm, with_cloudflared, with_usbip
 ```
+
+С апстрима 1.15 тега `with_gvisor` нет: все туннели (WireGuard/AWG, Tailscale,
+OpenVPN, OpenConnect) работают на собственном TCP/IP-стеке sing-tun (`tun.Go`),
+форк-сабмодуль `submodules/gvisor` ([048](../../TASKS/048-GVISOR_HANDSHAKE_NIL_CRASH/SPEC.md))
+снят. Форк-сабмодулей три: `wireguard-go`, `sing-tun`, `utls`.
 
 ⚠️ **Два набора тегов расходятся намеренно.** `with_clash_api` остаётся
 в desktop/CLI (внешние дашборды ходят по Clash REST) и убирается **только
-из AAR** — см. [OBSERVABILITY](../006-OBSERVABILITY/FEATURE.md).
+из AAR**; так же из AAR убран `with_usbip` (серверный USB/IP, в клиентских
+конфигах не встречается) — см. [OBSERVABILITY](../006-OBSERVABILITY/FEATURE.md).
 
 ⚠️ `with_purego` и `badlinkname` требуют `-checklinkname=0` в `LX_LDFLAGS`,
 иначе линковка падает.

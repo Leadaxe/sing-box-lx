@@ -118,6 +118,7 @@ func OutboundRegistry() *outbound.Registry {
 	registerQUICOutbounds(registry)
 	registerTailcatOutbound(registry)
 	registerStubForRemovedOutbounds(registry)
+	registerStubForRemovedMASQUEOutbound(registry) // lx: SPEC 155 §5.4
 
 	return registry
 }

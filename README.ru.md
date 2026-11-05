@@ -7,7 +7,7 @@
 
 - **Совместимость с сегодняшними серверами и сетями.** REALITY с гибридным постквантовым
   обменом ключами ML-KEM (X25519MLKEM768), как требует актуальный Xray, XHTTP,
-  VLESS `encryption`, AmneziaWG 3.x, фрагментация ClientHello, WARP через MASQUE,
+  VLESS `encryption`, AmneziaWG 3.x, фрагментация ClientHello,
   TrustTunnel.
 - **Ядро, сделанное под эксплуатацию** в сложных потребителях — десктопном лаунчере,
   Android-приложении LxBox, на роутерах: режим демона, наблюдаемость по gRPC, энергосбережение
@@ -66,7 +66,7 @@ README — [на GitHub](https://github.com/SagerNet/sing-box/blob/main/README.m
 |---|---|---|---|---|
 | **XHTTP** — [002](SPECS/FEATURES/002-XHTTP/FEATURE.md) | `transport.type: xhttp` | Xray-совместимый «splithttp»: режимы `auto` / `packet-up` / `stream-up` / `stream-one` поверх TLS, REALITY или h2c; переиспользование соединений `xmux`; опции обфускации | `with_xhttp` | проверен вживую на Xray-серверах; `stream-one` (путь `auto`+REALITY) девайс-верифицирован |
 | **AmneziaWG 2.0 / 3.x** — [003](SPECS/FEATURES/003-AWG/FEATURE.md) | поля `wireguard`-endpoint `jc/jmin/jmax`, `s1–s4`, `h1–h4`, `i1–i5`, AWG 3.x `header_protection_key`, паддинг, хвосты, диапазонные тайминги | Полный набор обфускации amneziawg-go v3.1 плюс сахар **маскировки** в духе WireSock — `id`/`ip`/`ib`, который сам собирает декой `I1` | `with_awg` | проверено на живых серверах AWG 2.0 и 3.1; декой `ip=quic` девайс-верифицирован против DPI на LTE/WARP |
-| **MASQUE / Cloudflare WARP** — [009](SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md) | outbound `type: masque` | CONNECT-IP (RFC 9484) поверх HTTP/3 или HTTP/2 через userspace-стек; `profile: cloudflare` для WARP; стандартный блок `tls`; idle-suspend и самовосстанавливающийся реконнект | — | девайс-верифицирован на Wi-Fi и LTE, `h3` и `h2` |
+| **MASQUE / Cloudflare WARP** — [009](SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md) | — | Собственный outbound форка `type: masque` на линии 1.15 удалён; апстрим 1.15 даёт endpoint'ы [`masque-client`](docs/configuration/endpoint/masque-client.md) / [`masque-server`](docs/configuration/endpoint/masque-server.md). WARP-слой поверх `masque-client` ещё не сделан — [SPEC 110](SPECS/TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md); до него WARP через MASQUE недоступен | — | удалён на 1.15; WARP-слой ждёт SPEC 110 |
 | **REALITY против актуального Xray** — [017](SPECS/FEATURES/017-REALITY/FEATURE.md) | `tls.reality` + `tls.utls.fingerprint`, `tls.reality.key_share`, `tls.fragment` / `record_fragment` | Гибридный постквантовый key share `X25519MLKEM768`, которого требует Xray ≥ v26.9.8, на `chrome`, `firefox`, `safari` (последние два — через форк-сабмодуль utls); по-узловой `key_share: classical \| hybrid`; фрагментация ClientHello теперь работает и на REALITY | — (внутри `with_utls`) | стенд-верифицировано против Xray v26.9.9 и более старых; `firefox`/`safari` подтверждены в поле; `key_share` и фрагментация ждут полевого прогона |
 | **VLESS `encryption`** — [012](SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) | поле `encryption` на `vless`-outbound | Постквантовый слой `mlkem768x25519plus` *внутри* VLESS, под транспортом и независимо от TLS/REALITY | — | девайс-верифицирован: ранее мёртвые узлы подписки ожили |
 | **TrustTunnel** — [018](SPECS/FEATURES/018-TRUSTTUNNEL/FEATURE.md) | outbound **и inbound** `type: trusttunnel` | TrustTunnel от AdGuard: прокси-`CONNECT` с Basic-авторизацией поверх HTTP/2 (TLS, uTLS) или HTTP/3 (QUIC); TCP по стриму на соединение, UDP кадрами `_udp2`; одна сессия на узел, тишина в простое, прозрачная пересборка; inbound повторяет лимиты официального endpoint и отвечает зондам 404 | `with_trusttunnel` | совместимость с официальными endpoint 1.1.0 и клиентом 1.1.11 снята на стенде в обе стороны; живого VPS ещё не было |
@@ -102,23 +102,23 @@ make -f Makefile.lx lx-build        # → ./sing-box, версия вида vX.Y
 make -f Makefile.lx lx-check        # проверка примеров конфигов в lx-test/config/
 ```
 
-- **`--recurse-submodules` обязателен для любой сборки.** Четыре зависимости заменены форк-сабмодулями через `replace` в `go.mod`: `sing-tun`, `gvisor` и `utls` — безусловно, `wireguard-go` (рантайм AmneziaWG) — за `with_awg`. Клон без них не собирается.
+- **`--recurse-submodules` обязателен для любой сборки.** Три зависимости заменены форк-сабмодулями через `replace` в `go.mod`: `sing-tun` и `utls` — безусловно, `wireguard-go` (рантайм AmneziaWG) — за `with_awg`. Клон без них не собирается.
 - **Набор тегов** (`make -f Makefile.lx lx-print-tags` — единственный источник истины):
 
   ```
-  with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command,with_lxd,with_openvpn,with_openconnect,with_lx_chain,with_tailscale,with_trusttunnel
+  with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command,with_lxd,with_openvpn,with_openconnect,with_lx_chain,with_tailscale,with_trusttunnel,with_acme,with_ccm,with_ocm,with_cloudflared,with_usbip
   ```
 
-  Это клиентский набор апстрима минус серверные теги (`with_acme`, `with_ccm`/`with_ocm`), плюс `with_purego` (кросс-компиляция без CGO, чтобы `with_naive_outbound` собирался при `CGO=0`) и наши собственные теги. `with_lx_command` (расширения командного протокола libbox) и `with_lxd` (демон) независимы by design.
+  Это набор тегов апстрима по умолчанию (с 1.15 в нём `with_acme`, `with_ccm`/`with_ocm`, `with_cloudflared`, `with_usbip`; тега `with_gvisor` больше нет — все туннели работают на собственном TCP/IP-стеке sing-tun), плюс `with_naive_outbound` с `with_purego` (кросс-компиляция без CGO, чтобы `with_naive_outbound` собирался при `CGO=0`) и наши собственные теги. `with_lx_command` (расширения командного протокола libbox) и `with_lxd` (демон) независимы by design.
 - **Тулчейн.** Версия Go пинуется в **`go.version`** и читается каждым CI-шагом `setup-go`; версия апстрима, на которой стоит форк, — в **`upstream.version`**. Не `go-version-file: go.mod` — это разрешилось бы в языковой минимум, а не в тулчейн, а AAR на Go 1.24 убивает любой quic-go-outbound на Android.
-- **Android (`libbox.aar`).** `make lib_install && make lib_android` собирает `libbox.aar` (SDK 23) и `libbox-legacy.aar` (SDK 21) с вшитыми `with_xhttp` / `with_awg` / `with_lx_command` / `with_lx_idle_suspend` / `with_lx_chain` / `with_tailscale`. `clash_api` выброшен только из AAR — Android-клиент управляет ядром через нативный `CommandClient`.
+- **Android (`libbox.aar`).** `make lib_install && make lib_android` собирает `libbox.aar` (SDK 23) и `libbox-legacy.aar` (SDK 21) с вшитыми `with_xhttp` / `with_awg` / `with_lx_command` / `with_lx_idle_suspend` / `with_lx_chain` / `with_tailscale`. `with_clash_api` и `with_usbip` выброшены только из AAR — Android-клиент управляет ядром через нативный `CommandClient`.
 - **Релизная матрица** (`lx-release.yml` на теге `v*-lx.*`): десктопные бинари для linux / darwin / windows, включая legacy-сборку под **Windows 7 (32-бит)** (без naive и `lxd`), linux-musl и mips/mipsle softfloat для роутеров, оба AAR, `SHA256SUMS`. Релиз-ноты берутся из `docs-lx/releases/`.
 
 ---
 
 ## Конфигурация — короткий тур
 
-По одному сниппету на фичу. Таблицы полей, дефолты и все опции — **[docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md)** ([EN](docs-lx/lx-config.md)); детали уровня провода для XHTTP, AmneziaWG и MASQUE — **[docs-lx/protocols-transports.ru.md](docs-lx/protocols-transports.ru.md)** ([EN](docs-lx/protocols-transports.md)).
+По одному сниппету на фичу. Таблицы полей, дефолты и все опции — **[docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md)** ([EN](docs-lx/lx-config.md)); детали уровня провода для XHTTP и AmneziaWG — **[docs-lx/protocols-transports.ru.md](docs-lx/protocols-transports.ru.md)** ([EN](docs-lx/protocols-transports.md)).
 
 ### Транспорт XHTTP
 
@@ -141,21 +141,9 @@ make -f Makefile.lx lx-check        # проверка примеров конф
 
 `id`/`ip`/`ib` и явный `i1` взаимоисключающи. `ip=quic` шлёт один QUIC Initial с целым браузерным ClientHello (`ib=chrome` — Chrome 155 с хромовской раскладкой фреймов; `ib=chrome-full` — то же с ML-KEM key share в одном Initial больше MTU) — это профиль, доказанный против живого DPI; `dns`/`stun`/`sip` — корректные запросы, оставленные для провайдеров, чей DPI проверяет только правильность формы. Справка — [protocols-transports.ru.md §2](docs-lx/protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3) ([EN](docs-lx/protocols-transports.md#2-amneziawg-203x-awg2-awg3)) · [примеры маскировки](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
-### Outbound MASQUE (Cloudflare WARP)
+### MASQUE (Cloudflare WARP)
 
-```jsonc
-{
-  "type": "masque", "tag": "warp",
-  "server": "162.159.198.2", "server_port": 443,
-  "profile": "cloudflare",                        // cloudflare (WARP) | standard (RFC 9484)
-  "vhttp": "h3",                                  // h3 (QUIC) | h2 (HTTP/2, для сетей, фильтрующих UDP:443)
-  "tls": { "server_name": "www.microsoft.com" },  // фронтящий SNI; аутентификация — пиннинг публичного ключа
-  "private_key": "<base64 DER EC>", "public_key": "<base64 DER PKIX>",
-  "ip": "172.16.0.2/32", "ipv6": "2606:4700:110:...::/128"
-}
-```
-
-Ключевой материал берётся из регистрации WARP-устройства, которую делает клиент. Не путать с сахаром *маскировки* AWG выше — слово то же, фича другая. Справка — [protocols-transports.ru.md §3](docs-lx/protocols-transports.ru.md#3-masque-outbound-connect-ip--warp) ([EN](docs-lx/protocols-transports.md#3-masque-outbound-connect-ip--warp)).
+Собственный outbound форка `type: masque` на линии 1.15 удалён. Апстрим 1.15 даёт endpoint `masque-client` — [docs/configuration/endpoint/masque-client.md](docs/configuration/endpoint/masque-client.md). WARP-слой поверх него — отдельная задача [SPEC 110](SPECS/TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md), пока не реализована: на этой линии WARP через MASQUE недоступен. Не путать с сахаром *маскировки* AWG выше.
 
 ### REALITY: отпечаток и `key_share`
 
@@ -229,13 +217,13 @@ sing-box lxd --state-dir ./lxd-state -c config.json
 ## Как сопровождается форк
 
 ```
-upstream/stable  ──merge──►  lx  =  upstream  +  швы // lx  +  lx-файлы  +  4 форк-сабмодуля
+upstream/stable  ──merge──►  lx  =  upstream  +  швы // lx  +  lx-файлы  +  3 форк-сабмодуля
                                      │
                                      └─►  тег vX.Y.Z-lx.N  ──►  lx-release.yml  ──►  GitHub Release
 ```
 
 - **Ручной мерж `upstream/stable`, никогда не ребейз.** `lx` — одновременно рабочая и релизная ветка, force-push по ней не делается. Дрейф меряется только по merge-base против `upstream/stable`; баннер GitHub «N commits behind testing» дрейфом не является.
-- **Форк-сабмодули — часть дельты**: [wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) (рантайм AmneziaWG), [sing-tun-lx](https://github.com/Leadaxe/sing-tun-lx) (self-heal accept-loop), [gvisor-lx](https://github.com/Leadaxe/gvisor-lx) (nil-guard в хендшейке), [utls-lx](https://github.com/Leadaxe/utls-lx) (пресеты Firefox 148 и Safari 26.3). Каждый — свой апстрим плюс несколько коммитов; дрейф сабмодулей закрывается **до** мержа ядра.
+- **Форк-сабмодули — часть дельты**: [wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) (рантайм AmneziaWG), [sing-tun-lx](https://github.com/Leadaxe/sing-tun-lx) (self-heal accept-loop), [utls-lx](https://github.com/Leadaxe/utls-lx) (пресеты Firefox 148 и Safari 26.3). Каждый — свой апстрим плюс несколько коммитов; дрейф сабмодулей закрывается **до** мержа ядра.
 - **У хотфиксов апстримных багов есть срок годности**: каждая заплатка в [реестре HOTFIXES](SPECS/FEATURES/004-HOTFIXES/FEATURE.md) называет условие, при котором её снимают.
 - **Релизы**: теги `vX.Y.Z-lx.N` — стабильные, `-rc.N` / `-alpha.N` / `-beta.N` — пререлизы; процедура — [раннбук релиза](docs-lx/lx-release-runbook.ru.md) ([EN](docs-lx/lx-release-runbook.md)); инженерный лог — [lx-changelog.md](docs-lx/lx-changelog.md), пользовательские ноты — в [`docs-lx/releases/`](docs-lx/releases/).
 - **Spec Kit**: [`SPECS/FEATURES`](SPECS/FEATURES/README.md) описывает текущее состояние каждой фичи как чёрный ящик; [`SPECS/TASKS`](SPECS/README.md) держит по папке на единицу работы (`SPEC → PLAN → TASKS → отчёт`), с роадмапом и кодами статуса; правила — в [CONSTITUTION](SPECS/CONSTITUTION.md).
@@ -269,15 +257,14 @@ upstream/stable  ──merge──►  lx  =  upstream  +  швы // lx  +  lx-�
 | `scripts-lx/openwrt/` | роутерный установщик `lxd` |
 | `transport/v2rayxhttp/` | клиентский транспорт XHTTP |
 | `transport/wireguard/device_awg.go`, `submodules/wireguard-go` | параметры и рантайм AmneziaWG |
-| `protocol/masque/` | outbound MASQUE / CONNECT-IP |
 | `protocol/chain/` | outbound `chain` |
 | `common/tls/` (`*_lx*`), `submodules/utls` | key share REALITY, фрагментация, пресеты отпечатков |
 | `common/sniff/*_lx.go` | снифферы протоколов |
 | `dns/transport/group/`, `common/dnstrack/` | группа DNS-серверов и трассировка DNS-запросов за `SubscribeDNSQueries` |
 | `experimental/libbox/`, `daemon/` (швы `lx:`) | расширения `CommandClient` |
 | `lxd/` | демон `lxd` |
-| `option/v2ray_xhttp.go`, `option/wireguard_awg.go`, `option/masque_lx.go`, `option/chain_lx.go` | опции фич |
-| `submodules/sing-tun`, `submodules/gvisor` | форк-сабмодули для TUN-стека |
+| `option/v2ray_xhttp.go`, `option/wireguard_awg.go`, `option/chain_lx.go` | опции фич |
+| `submodules/sing-tun` | форк-сабмодуль для TUN-стека |
 
 ---
 
@@ -287,7 +274,7 @@ upstream/stable  ──merge──►  lx  =  upstream  +  швы // lx  +  lx-�
 |---|---|
 | Апстрим | [SagerNet/sing-box](https://github.com/SagerNet/sing-box) · [документация](https://sing-box.sagernet.org/) |
 | Обзор конфигурации | [docs-lx/lx-config.ru.md](docs-lx/lx-config.ru.md) ([EN](docs-lx/lx-config.md)) — каждое поле каждой фичи, с примерами |
-| Протоколы и транспорты | [docs-lx/protocols-transports.ru.md](docs-lx/protocols-transports.ru.md) ([EN](docs-lx/protocols-transports.md)) — XHTTP, AmneziaWG, MASQUE, REALITY, VLESS `encryption` в деталях |
+| Протоколы и транспорты | [docs-lx/protocols-transports.ru.md](docs-lx/protocols-transports.ru.md) ([EN](docs-lx/protocols-transports.md)) — XHTTP, AmneziaWG, REALITY, VLESS `encryption` в деталях |
 | Как устроены протоколы Xray | [docs-lx/xray-protocols-explained.ru.md](docs-lx/xray-protocols-explained.ru.md) ([EN](docs-lx/xray-protocols-explained.md)) — REALITY, Vision, XHTTP, VLESS `encryption`: логика, реализация в форке, отличия от ванили, примеры Xray ↔ sing-box-lx |
 | Как устроен AmneziaWG | [docs-lx/amneziawg-explained.ru.md](docs-lx/amneziawg-explained.ru.md) ([EN](docs-lx/amneziawg-explained.md)) — три слоя обфускации, бюджет MTU, графт в форке wireguard-go, пример `awg.conf` ↔ endpoint |
 | Как устроен TrustTunnel | [docs-lx/trusttunnel-protocols-explained.ru.md](docs-lx/trusttunnel-protocols-explained.ru.md) ([EN](docs-lx/trusttunnel-protocols-explained.md)) — формат на проводе поверх HTTP/2 и HTTP/3, обнаружимость, модель сессии, outbound и inbound в форке, практика |

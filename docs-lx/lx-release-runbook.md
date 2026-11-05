@@ -92,7 +92,7 @@ Repository context:
 
 **Drift in the child fork repositories is resolved BEFORE merging the core, not after.**
 Our `replace` directives in `go.mod` substitute upstream modules with fork submodules
-(`wireguard-go`, `sing-tun`, `gvisor`, `utls`). Merging the core raises the versions in `require`, but
+(`wireguard-go`, `sing-tun`, `utls`; `gvisor` was dropped together with `with_gvisor` on the 1.15 line). Merging the core raises the versions in `require`, but
 `replace` keeps substituting OUR branch — so the build silently runs on code upstream no longer
 expects.
 
@@ -103,7 +103,7 @@ the commit `go.mod` requires"**. Checking by eye is useless: `go build` passes, 
 and the race shows up at runtime.
 
 ```bash
-for m in wireguard-go sing-tun gvisor; do
+for m in wireguard-go sing-tun; do
   req=$(grep -E "sagernet/$m v" go.mod | grep -oE "[0-9a-f]{12}$")
   echo "=== $m (go.mod requires: ${req:-snapshot without a hash}) ==="
   [ -z "$req" ] && continue
@@ -119,9 +119,6 @@ for m in wireguard-go sing-tun gvisor; do
   fi
 done
 ```
-
-For `gvisor` the `require` version carries no hash (it is a snapshot) — compare the version string
-against the snapshot date in the submodule's history.
 
 For `utls` the pin is a `metacubex/utls vX.Y.Z` tag (currently `v1.8.7`), also without a hash: the
 fork's `lx` branch must sit **on that tag** and carry exactly eight commits on top: three
@@ -182,8 +179,8 @@ the AAR does not, and you find out from CI.
 A real case (SPEC 051): upstream raised `tailscale` 1.92 → 1.102, which required
 `device.PeerLookupFunc`/`NewPeerConfig`/`SetPeerLookupFunc` from a newer `wireguard-go`. The chain
 was `libbox/native_shell_session.go` → `protocol/tailscale/tailssh` → `wgengine/wgcfg` →
-`wireguard-go/device`. Build tags do not avoid it: `tailssh` is gated on `with_gvisor`, which is
-always on.
+`wireguard-go/device`. Build tags do not avoid it: `tailssh` is gated only on `with_tailscale`, which both the desktop
+set and the AAR carry (before 1.15 it was gated on `with_gvisor`, which was always on).
 
 ### 1.4 After closing the drift — a device run is mandatory
 
@@ -256,7 +253,7 @@ deliberately: the reason goes into an `lx:` comment next to the pin (like `ndk-v
 | Language: Go toolchain | `go.version` | `go-version:` in `upstream/stable:.github/workflows/build.yml`; `VERSION=` in `.github/setup_go_for_windows7.sh` and `setup_go_for_macos1013.sh` — upstream files that arrive with the merge and must match `go.version` |
 | Language: `go.mod` | `go` / `toolchain` directives | `upstream/stable:go.mod` — identical |
 | Go modules | the `require` blocks in `go.mod` | `upstream/stable:go.mod` — the same set; `replace` onto fork submodules — section 1.1 |
-| Fork submodules | `submodules/{wireguard-go,sing-tun,gvisor,utls}` | section 1.1 |
+| Fork submodules | `submodules/{wireguard-go,sing-tun,utls}` | section 1.1 |
 | naive / cronet-go | `.github/CRONET_GO_VERSION` | the same file in `upstream/stable`; after a bump run `lx-musl-toolchain-mirror.yml` by hand (SPEC 023) |
 | Android | `ndk-version`, OpenJDK in `lx-*.yml` | `ndk-version` / `java-version` in upstream `build.yml` |
 | Code generation | `LX_PROTOC_GEN_GO_VERSION`, `LX_PROTOC_GEN_GO_GRPC_VERSION` in `Makefile.lx` | `google.golang.org/protobuf` / `grpc` in `go.mod` and the style of upstream's generated code |
@@ -338,27 +335,23 @@ On conflicts, these are the zones we touch most often (keep lx semantics, accept
   upstream regenerated the descriptors, regenerate via `make -f Makefile.lx lx-proto` and re-apply
   the lx fields, or do it by hand: see `lx-commandclient-extensions` in memory (pinned protoc
   toolchain).
-- `submodules/wireguard-go`, `submodules/sing-tun`, `submodules/gvisor` and `submodules/utls` — our
+- `submodules/wireguard-go`, `submodules/sing-tun` and `submodules/utls` — our
   fork submodules. Never accept an upstream bump blindly (including a commit like "Update sing-tun"
-  or a `sagernet/gvisor` / `metacubex/utls` bump in `go.mod`): it silently moves `replace` off the
+  or a `metacubex/utls` bump in `go.mod`): it silently moves `replace` off the
   fork and reverts our patches (AWG obfuscation, SPEC 040 acceptLoop self-heal, SPEC 041 rebind,
-  SPEC 048 nil-guard in gvisor's `handleConnecting`, SPEC 086/087 Firefox 148 + key share reuse + Safari 26.3 in
+  SPEC 086/087 Firefox 148 + key share reuse + Safari 26.3 in
   utls); see `wg-1.14-migration` and the 2026-08-01 sync in the changelog.
   The revert is silent: everything builds, package tests are green, and the bug returns in the
-  field — so after any merge that touched `go.mod`, verify all four with `go list -m`:
+  field — so after any merge that touched `go.mod`, verify all three with `go list -m`:
 
   ```bash
-  go list -m github.com/sagernet/wireguard-go github.com/sagernet/sing-tun github.com/sagernet/gvisor github.com/metacubex/utls
+  go list -m github.com/sagernet/wireguard-go github.com/sagernet/sing-tun github.com/metacubex/utls
   # each must resolve to => ./submodules/<name>
   ```
 
   For `utls` the tests guard it too: `go test -tags with_utls ./common/tls/` (`TestLxFirefox…`,
   `TestLxRealityFingerprints…`) fails if `HelloFirefox_Auto` stops being Firefox 148, `HelloSafari_Auto`
   stops being Safari 26.3, or the hybrid share leaves `chrome`/`firefox`/`safari` — i.e. if `replace` slid onto bare metacubex.
-
-  `submodules/gvisor` is maintained as a **snapshot of the pin without history** (upstream's full
-  history is 1.45 GB per CI clone): a new pin lands as a new snapshot commit, the patch is applied
-  on top, and the red/green test travels with it. Details in SPEC 048 §6.
 - `cmd/internal/build_libbox/main.go` — the only upstream-file edit in the CI zone, marked `// lx`.
 - `box.go`, `dns/client*.go`, `route/route.go`, `common/trafficcontrol/tracker.go` — these carry lx
   observability on top of upstream logic; on conflict keep upstream resolve/routing behaviour, our

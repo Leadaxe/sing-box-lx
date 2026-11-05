@@ -7,7 +7,7 @@ with current Xray and AmneziaWG servers, a daemon and observability for the apps
 
 - **Compatibility with today's servers and networks.** REALITY with the hybrid post-quantum
   ML-KEM key exchange (X25519MLKEM768) that current Xray requires, XHTTP, VLESS `encryption`,
-  AmneziaWG 3.x, ClientHello fragmentation, WARP over MASQUE, TrustTunnel.
+  AmneziaWG 3.x, ClientHello fragmentation, TrustTunnel.
 - **A core built to be operated** by demanding consumers — the desktop launcher, the LxBox
   Android app, routers: daemon mode, observability over gRPC, energy saving with sleep for idle
   tunnels, router builds.
@@ -64,7 +64,7 @@ its README — [on GitHub](https://github.com/SagerNet/sing-box/blob/main/README
 |---|---|---|---|---|
 | **XHTTP** — [002](SPECS/FEATURES/002-XHTTP/FEATURE.md) | `transport.type: xhttp` | Xray-compatible "splithttp": modes `auto` / `packet-up` / `stream-up` / `stream-one` over TLS, REALITY or h2c; `xmux` connection reuse; obfuscation options | `with_xhttp` | live-validated against Xray servers; `stream-one` (the `auto`+REALITY path) device-verified |
 | **AmneziaWG 2.0 / 3.x** — [003](SPECS/FEATURES/003-AWG/FEATURE.md) | `wireguard` endpoint fields `jc/jmin/jmax`, `s1–s4`, `h1–h4`, `i1–i5`, AWG 3.x `header_protection_key`, padding, trailers, ranged timings | The full obfuscation set of amneziawg-go v3.1, plus WireSock-style **masquerade** sugar `id`/`ip`/`ib` that builds the `I1` decoy for you | `with_awg` | verified against live AWG 2.0 and 3.1 servers; `ip=quic` decoy device-proven against an LTE/WARP DPI |
-| **MASQUE / Cloudflare WARP** — [009](SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md) | `type: masque` outbound | CONNECT-IP (RFC 9484) over HTTP/3 or HTTP/2 through a userspace network stack; `profile: cloudflare` for WARP; standard `tls` block; idle-suspend and self-healing reconnect | — | device-verified on Wi-Fi and LTE, `h3` and `h2` |
+| **MASQUE / Cloudflare WARP** — [009](SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md) | — | The fork's `type: masque` outbound is removed on the 1.15 line; upstream 1.15 provides the [`masque-client`](docs/configuration/endpoint/masque-client.md) / [`masque-server`](docs/configuration/endpoint/masque-server.md) endpoints. The WARP layer on top of `masque-client` is pending — [SPEC 110](SPECS/TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md); until then WARP over MASQUE is not available | — | removed on 1.15; WARP layer pending (SPEC 110) |
 | **REALITY against current Xray** — [017](SPECS/FEATURES/017-REALITY/FEATURE.md) | `tls.reality` + `tls.utls.fingerprint`, `tls.reality.key_share`, `tls.fragment` / `record_fragment` | The hybrid post-quantum key share `X25519MLKEM768` that Xray ≥ v26.9.8 requires, on `chrome`, `firefox`, `safari` (the latter two via the utls fork submodule); per-node `key_share: classical \| hybrid`; ClientHello fragmentation now applies to REALITY | — (inside `with_utls`) | stand-verified against Xray v26.9.9 and older; `firefox`/`safari` field-confirmed; `key_share` and fragmentation await a field run |
 | **VLESS `encryption`** — [012](SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) | `encryption` field on a `vless` outbound | Post-quantum `mlkem768x25519plus` layer *inside* VLESS, beneath the transport and independent of TLS/REALITY | — | device-verified: previously dead subscription nodes came alive |
 | **TrustTunnel** — [018](SPECS/FEATURES/018-TRUSTTUNNEL/FEATURE.md) | `type: trusttunnel` outbound **and inbound** | AdGuard's TrustTunnel: proxy `CONNECT` with Basic auth over HTTP/2 (TLS, uTLS) or HTTP/3 (QUIC); TCP per stream, UDP as `_udp2` frames; one session per node, silent while idle, transparent rebuild; the inbound mirrors the official endpoint's limits and answers probes with 404 | `with_trusttunnel` | interoperable with the official endpoint 1.1.0 and client 1.1.11 on the stand, both directions; no live VPS run yet |
@@ -100,23 +100,23 @@ make -f Makefile.lx lx-build        # → ./sing-box, version like vX.Y.Z-lx.N
 make -f Makefile.lx lx-check        # validate the sample configs in lx-test/config/
 ```
 
-- **`--recurse-submodules` is required for every build.** Four dependencies are swapped for fork submodules through `replace` in `go.mod`: `sing-tun`, `gvisor` and `utls` unconditionally, `wireguard-go` (the AmneziaWG runtime) behind `with_awg`. A clone without them does not compile.
+- **`--recurse-submodules` is required for every build.** Three dependencies are swapped for fork submodules through `replace` in `go.mod`: `sing-tun` and `utls` unconditionally, `wireguard-go` (the AmneziaWG runtime) behind `with_awg`. A clone without them does not compile.
 - **The tag set** (`make -f Makefile.lx lx-print-tags` is the single source of truth):
 
   ```
-  with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command,with_lxd,with_openvpn,with_openconnect,with_lx_chain,with_tailscale,with_trusttunnel
+  with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg,with_lx_command,with_lxd,with_openvpn,with_openconnect,with_lx_chain,with_tailscale,with_trusttunnel,with_acme,with_ccm,with_ocm,with_cloudflared,with_usbip
   ```
 
-  That is upstream's client feature set minus the server-only tags (`with_acme`, `with_ccm`/`with_ocm`), plus `with_purego` (CGO-free cross-compile, so `with_naive_outbound` builds at `CGO=0`) and our own tags. `with_lx_command` (libbox command-protocol extensions) and `with_lxd` (the daemon) are independent by design.
+  That is upstream's default tag set (since 1.15 including `with_acme`, `with_ccm`/`with_ocm`, `with_cloudflared`, `with_usbip`; `with_gvisor` no longer exists — every tunnel runs on sing-tun's own TCP/IP stack), plus `with_naive_outbound` with `with_purego` (CGO-free cross-compile, so `with_naive_outbound` builds at `CGO=0`) and our own tags. `with_lx_command` (libbox command-protocol extensions) and `with_lxd` (the daemon) are independent by design.
 - **Toolchain.** The Go version is pinned in **`go.version`** and read by every CI `setup-go` step; the upstream version the fork is based on lives in **`upstream.version`**. Not `go-version-file: go.mod` — that would resolve to a language floor, not a toolchain, and a Go 1.24 AAR kills every quic-go outbound on Android.
-- **Android (`libbox.aar`).** `make lib_install && make lib_android` builds `libbox.aar` (SDK 23) and `libbox-legacy.aar` (SDK 21) with `with_xhttp` / `with_awg` / `with_lx_command` / `with_lx_idle_suspend` / `with_lx_chain` / `with_tailscale` baked in. `clash_api` is dropped from the AAR only — the Android client manages the core over the native `CommandClient`.
+- **Android (`libbox.aar`).** `make lib_install && make lib_android` builds `libbox.aar` (SDK 23) and `libbox-legacy.aar` (SDK 21) with `with_xhttp` / `with_awg` / `with_lx_command` / `with_lx_idle_suspend` / `with_lx_chain` / `with_tailscale` baked in. `with_clash_api` and `with_usbip` are dropped from the AAR only — the Android client manages the core over the native `CommandClient`.
 - **Release matrix** (`lx-release.yml` on a `v*-lx.*` tag): desktop binaries for linux / darwin / windows incl. a **Windows 7 (32-bit)** legacy build (without naive and `lxd`), linux-musl and mips/mipsle softfloat for routers, both AARs, `SHA256SUMS`. Release notes come from `docs-lx/releases/`.
 
 ---
 
 ## Configuration — a quick tour
 
-One snippet per feature. Field tables, defaults and every option — **[docs-lx/lx-config.md](docs-lx/lx-config.md)** ([RU](docs-lx/lx-config.ru.md)); wire-level detail for XHTTP, AmneziaWG and MASQUE — **[docs-lx/protocols-transports.md](docs-lx/protocols-transports.md)** ([RU](docs-lx/protocols-transports.ru.md)).
+One snippet per feature. Field tables, defaults and every option — **[docs-lx/lx-config.md](docs-lx/lx-config.md)** ([RU](docs-lx/lx-config.ru.md)); wire-level detail for XHTTP and AmneziaWG — **[docs-lx/protocols-transports.md](docs-lx/protocols-transports.md)** ([RU](docs-lx/protocols-transports.ru.md)).
 
 ### XHTTP transport
 
@@ -139,21 +139,9 @@ One snippet per feature. Field tables, defaults and every option — **[docs-lx/
 
 `id`/`ip`/`ib` and an explicit `i1` are mutually exclusive. `ip=quic` sends one QUIC Initial carrying a whole browser ClientHello (`ib=chrome` — Chrome 155 with Chrome's own frame layout; `ib=chrome-full` — the same with the ML-KEM key share in one Initial above the MTU) and is the profile proven against a live DPI; `dns`/`stun`/`sip` are correct requests kept for providers whose DPI only checks well-formedness. Reference — [protocols-transports.md §2](docs-lx/protocols-transports.md#2-amneziawg-203x-awg2-awg3) ([RU](docs-lx/protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)) · [masquerade examples](SPECS/TASKS/009-WIRESOCK_MASQUERADE_PROFILES/EXAMPLES.md).
 
-### MASQUE outbound (Cloudflare WARP)
+### MASQUE (Cloudflare WARP)
 
-```jsonc
-{
-  "type": "masque", "tag": "warp",
-  "server": "162.159.198.2", "server_port": 443,
-  "profile": "cloudflare",                        // cloudflare (WARP) | standard (RFC 9484)
-  "vhttp": "h3",                                  // h3 (QUIC) | h2 (HTTP/2, for networks that filter UDP:443)
-  "tls": { "server_name": "www.microsoft.com" },  // fronting SNI; auth is public-key pinning
-  "private_key": "<base64 DER EC>", "public_key": "<base64 DER PKIX>",
-  "ip": "172.16.0.2/32", "ipv6": "2606:4700:110:...::/128"
-}
-```
-
-Key material comes from the WARP device registration done by the client. Not to be confused with the AWG *masquerade* sugar above — same word, different feature. Reference — [protocols-transports.md §3](docs-lx/protocols-transports.md#3-masque-outbound-connect-ip--warp) ([RU](docs-lx/protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)).
+The fork's `type: masque` outbound is removed on the 1.15 line. Upstream 1.15 provides the `masque-client` endpoint — [docs/configuration/endpoint/masque-client.md](docs/configuration/endpoint/masque-client.md). The Cloudflare WARP layer on top of it is a separate task, [SPEC 110](SPECS/TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md), not implemented yet: WARP over MASQUE is not available on this line. Not to be confused with the AWG *masquerade* sugar above.
 
 ### REALITY: fingerprint and `key_share`
 
@@ -227,13 +215,13 @@ sing-box lxd --state-dir ./lxd-state -c config.json
 ## How the fork is maintained
 
 ```
-upstream/stable  ──merge──►  lx  =  upstream  +  // lx seams  +  lx-owned files  +  4 fork submodules
+upstream/stable  ──merge──►  lx  =  upstream  +  // lx seams  +  lx-owned files  +  3 fork submodules
                                      │
                                      └─►  tag vX.Y.Z-lx.N  ──►  lx-release.yml  ──►  GitHub Release
 ```
 
 - **Manual merge of `upstream/stable`, never a rebase.** `lx` is both the working and the release branch and is never force-pushed. Drift is measured only by merge-base against `upstream/stable`; the GitHub "N commits behind testing" banner is not drift.
-- **Fork submodules are part of the delta**: [wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) (AmneziaWG runtime), [sing-tun-lx](https://github.com/Leadaxe/sing-tun-lx) (accept-loop self-heal), [gvisor-lx](https://github.com/Leadaxe/gvisor-lx) (handshake nil-guard), [utls-lx](https://github.com/Leadaxe/utls-lx) (Firefox 148 and Safari 26.3 presets). Each is its upstream plus a few commits; submodule drift is closed **before** the core merge.
+- **Fork submodules are part of the delta**: [wireguard-go-awg2-lx](https://github.com/Leadaxe/wireguard-go-awg2-lx) (AmneziaWG runtime), [sing-tun-lx](https://github.com/Leadaxe/sing-tun-lx) (accept-loop self-heal), [utls-lx](https://github.com/Leadaxe/utls-lx) (Firefox 148 and Safari 26.3 presets). Each is its upstream plus a few commits; submodule drift is closed **before** the core merge.
 - **Hotfixes for upstream bugs carry an expiry**: every patch in the [HOTFIXES registry](SPECS/FEATURES/004-HOTFIXES/FEATURE.md) names the condition under which it is removed.
 - **Releases**: tags `vX.Y.Z-lx.N` are stable, `-rc.N` / `-alpha.N` / `-beta.N` are pre-releases; the procedure is the [release runbook](docs-lx/lx-release-runbook.md) ([RU](docs-lx/lx-release-runbook.ru.md)); the engineering log is [lx-changelog.md](docs-lx/lx-changelog.md), user-facing notes are in [`docs-lx/releases/`](docs-lx/releases/).
 - **Spec Kit**: [`SPECS/FEATURES`](SPECS/FEATURES/README.md) describes each feature's current state as a black box; [`SPECS/TASKS`](SPECS/README.md) holds one folder per unit of work (`SPEC → PLAN → TASKS → report`), with a roadmap and status codes; [CONSTITUTION](SPECS/CONSTITUTION.md) holds the rules.
@@ -267,15 +255,14 @@ Everything downstream is either a new file or a seam marked `// lx`; `grep -rn "
 | `scripts-lx/openwrt/` | router installer for `lxd` |
 | `transport/v2rayxhttp/` | XHTTP client transport |
 | `transport/wireguard/device_awg.go`, `submodules/wireguard-go` | AmneziaWG parameters and runtime |
-| `protocol/masque/` | MASQUE / CONNECT-IP outbound |
 | `protocol/chain/` | `chain` outbound |
 | `common/tls/` (`*_lx*`), `submodules/utls` | REALITY key share, fragmentation, fingerprint presets |
 | `common/sniff/*_lx.go` | protocol sniffers |
 | `dns/transport/group/`, `common/dnstrack/` | DNS server group and the DNS query trace behind `SubscribeDNSQueries` |
 | `experimental/libbox/`, `daemon/` (`lx:` seams) | `CommandClient` extensions |
 | `lxd/` | the `lxd` daemon |
-| `option/v2ray_xhttp.go`, `option/wireguard_awg.go`, `option/masque_lx.go`, `option/chain_lx.go` | feature options |
-| `submodules/sing-tun`, `submodules/gvisor` | fork submodules for the TUN stack |
+| `option/v2ray_xhttp.go`, `option/wireguard_awg.go`, `option/chain_lx.go` | feature options |
+| `submodules/sing-tun` | fork submodule for the TUN stack |
 
 ---
 
@@ -285,7 +272,7 @@ Everything downstream is either a new file or a seam marked `// lx`; `grep -rn "
 |---|---|
 | Upstream | [SagerNet/sing-box](https://github.com/SagerNet/sing-box) · [docs](https://sing-box.sagernet.org/) |
 | Config overview | [docs-lx/lx-config.md](docs-lx/lx-config.md) ([RU](docs-lx/lx-config.ru.md)) — every field of every feature, with examples |
-| Protocols & transports | [docs-lx/protocols-transports.md](docs-lx/protocols-transports.md) ([RU](docs-lx/protocols-transports.ru.md)) — XHTTP, AmneziaWG, MASQUE, REALITY, VLESS `encryption` in depth |
+| Protocols & transports | [docs-lx/protocols-transports.md](docs-lx/protocols-transports.md) ([RU](docs-lx/protocols-transports.ru.md)) — XHTTP, AmneziaWG, REALITY, VLESS `encryption` in depth |
 | How the Xray protocols work | [docs-lx/xray-protocols-explained.md](docs-lx/xray-protocols-explained.md) ([RU](docs-lx/xray-protocols-explained.ru.md)) — REALITY, Vision, XHTTP, VLESS `encryption`: mechanics, the fork's implementation, differences from vanilla, Xray ↔ sing-box-lx examples |
 | How AmneziaWG works | [docs-lx/amneziawg-explained.md](docs-lx/amneziawg-explained.md) ([RU](docs-lx/amneziawg-explained.ru.md)) — three obfuscation layers, the MTU budget, the graft in the wireguard-go fork, `awg.conf` ↔ endpoint example |
 | How TrustTunnel works | [docs-lx/trusttunnel-protocols-explained.md](docs-lx/trusttunnel-protocols-explained.md) ([RU](docs-lx/trusttunnel-protocols-explained.ru.md)) — the wire format over HTTP/2 and HTTP/3, detectability, the session model, the outbound and inbound in the fork, practical guidance |

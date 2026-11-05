@@ -14,7 +14,7 @@
 |------|-----------|---------------------|----------|
 | **XHTTP** транспорт (совместим с Xray) | `with_xhttp` | `transport.type: "xhttp"` на VLESS / VMess / Trojan outbound | desktop + mobile |
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | доп. поля на `wireguard` **endpoint** | desktop + mobile |
-| **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
+| **MASQUE** outbound (CONNECT-IP / WARP) | — | удалён на линии 1.15; вместо него апстримный endpoint `masque-client`, WARP-слой ещё не сделан — [§4](#4-masque-outbound--cloudflare-warp-spec-021) | — |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`) | **только mobile** (AAR) |
 | **Корневой блок `lx`** (SPEC 098) | — (разбирается всегда) | `lx.wg`, `lx.masque`, `lx.mtu_align`, `lx.quic_sniff_decoy`, `lx.awg_masquerade` — глобальные ручки форка, [§13](#13-корневой-блок-lx-spec-098) | desktop + mobile |
 | **Группа DNS-серверов** (SPEC 033/035/143) | — (всегда в сборке) | `dns.servers[].type: "group"` | desktop + mobile |
@@ -39,7 +39,7 @@ GC-нагрева / RAM, ~8 МБ каждый там, где `BatchSize=128` —
 удалены, конфиг с ними не загружается как с неизвестными ключами): `lx.wg.idle_suspend_reachable` — опциональное
 второе, более длинное окно простоя, после которого гасятся и *достижимые* эндпоинты
 (члены пула, выбранный узел, final); `lx.wg.idle_teardown` — третий уровень:
-сколько эндпоинт может *спать* до полного сноса (Close, освобождается и gVisor
+сколько эндпоинт может *спать* до полного сноса (Close, освобождается и userspace
 netstack; пробуждение = rebuild ~0.5–1 с; дефолт = reachable-окну);
 `urltest` `mode: failover` — держаться за рабочий узел и пробовать только его
 (одно пробуждение в `interval` вместо N). Полная энергомодель,
@@ -60,7 +60,6 @@ netstack; пробуждение = rebuild ~0.5–1 с; дефолт = reachable
   - [Привязка по слот-хешу](#привязка-по-слот-хешу)
   - [Пример — urltest с round_robin](#пример--urltest-с-round_robin)
 - [4. MASQUE outbound — Cloudflare WARP (SPEC 021)](#4-masque-outbound--cloudflare-warp-spec-021)
-  - [Пример — WARP (дефолты: `vhttp: auto`)](#пример--warp-дефолты-vhttp-auto)
 - [5. Группа DNS-серверов (SPEC 033/035/143)](#5-группа-dns-серверов-spec-033035143)
   - [Поля (запись в `dns.servers[]`)](#поля-запись-в-dnsservers)
   - [Локальные имена первыми: `hosts`](#локальные-имена-первыми-hosts)
@@ -84,8 +83,8 @@ netstack; пробуждение = rebuild ~0.5–1 с; дефолт = reachable
 
 Один конфиг, несущий все поля **outbound-фич** — XHTTP-транспорт, AmneziaWG 2.0 endpoint,
 masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-балансировщик `urltest`
-и корневой блок `lx` со всеми ключами (у MASQUE и DNS-группы — свои примеры в [§4](#4-masque-outbound--cloudflare-warp-spec-021)
-и [§5](#5-группа-dns-серверов-spec-033035143); блок `lx` описан в [§13](#13-корневой-блок-lx-spec-098), его энергоключи — в [lx-energy.ru.md](lx-energy.ru.md)).
+и корневой блок `lx` со всеми ключами (у DNS-группы — свой пример в
+[§5](#5-группа-dns-серверов-spec-033035143); блок `lx` описан в [§13](#13-корневой-блок-lx-spec-098), его энергоключи — в [lx-energy.ru.md](lx-energy.ru.md)).
 Это **справочник «всё сразу»**, а не рекомендуемый конфиг: многие поля взаимоисключающи
 (например, сахар `id`/`ip`/`ib` против написанного вручную `i1`) либо серверные и игнорируются
 клиентом — такие помечены прямо в комментариях. Для рабочей настройки скопируйте только нужный
@@ -108,7 +107,7 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
       "build_overflow": "wait"                  // дефолт: wait. wait | build (SPEC 097; до неё инертен)
     },
     "masque": {
-      "idle_timeout": "5m"                      // дефолт: выкл. Глобальное окно простоя masque-узлов без своего ключа
+      "idle_timeout": "5m"                      // дефолт: выкл. Разбирается, на 1.15 ни на что не влияет (outbound masque форка удалён, §4)
     },
     "mtu_align": "clamp",                       // дефолт: clamp. off | fill | clamp, либо объект {"mode", "except": [теги]} (§13)
     "quic_sniff_decoy": "off",                  // дефолт: off. off | direct | detour | all (или bool). Один байт перед QUIC Initial против сниффинга SNI на релее; достаёт и до маскировки AWG (§13, SPEC 151/153)
@@ -572,111 +571,16 @@ Upstream `urltest` всегда выбирает единственную нод
 
 ## 4. MASQUE outbound — Cloudflare WARP (SPEC 021)
 
-Outbound `masque` туннелирует **целые IP-пакеты** поверх HTTP/3 или HTTP/2 через
-**CONNECT-IP (RFC 9484)**, в первую очередь для подключения к **Cloudflare WARP**. (Это
-CONNECT-IP, а НЕ CONNECT-UDP/RFC 9298; и не путать с AWG-сахаром *masquerade* `id/ip/ib` из §2 —
-одно слово, разные фичи.) Ядро поднимает userspace gVisor-стек на туннель и гонит трафик через
-него, как через WireGuard-endpoint. За тегами `with_quic` + `with_gvisor` (оба в дефолтном
-`LX_TAGS`). Ключевой материал берётся готовым из конфига — регистрацию устройства (ECDSA-ключи,
-WARP enroll) делает клиент, не ядро.
+Собственный outbound форка `type: masque` (CONNECT-IP поверх HTTP/3 или HTTP/2, `profile: cloudflare`,
+ключи `vhttp`, `ip`, `ipv6`, `private_key`, `public_key`, `uri`, `idle_timeout`, …) **на линии 1.15
+удалён**; конфиг с ним не загружается. Апстрим 1.15 даёт endpoint'ы `masque-client` /
+`masque-server` — см. апстримную
+[docs/configuration/endpoint/masque-client.md](../docs/configuration/endpoint/masque-client.md).
 
-> ⚠️ **Версия HTTP задаётся полем `vhttp`, а не `network`** (SPEC 062). В старых конфигах
-> `h3`/`h2` жили в `network` — обратно тому, что `network` значит на всех остальных outbound.
-> Ключ снят в `v1.14.3-lx.18`: masque-outbound с `network` больше не разбирается
-> (`unknown field "network"`) — переименуй его в `vhttp`. Плоские TLS-поля пока принимаются
-> с deprecation; таблица миграции ниже.
-
-Обязательные поля — `server`/`server_port`, пара ключей (`private_key`/`public_key`, для
-дефолтного профиля `cloudflare`) и хотя бы один из `ip`/`ipv6` (твой локальный адрес
-*внутри* туннеля, не выходной IP). У всего остального есть дефолт: `profile: cloudflare`,
-`vhttp: auto`, `tls.server_name: www.cloudflare.com`, `mtu: 1280`, `idle_timeout` выкл (или глобальный
-`lx.masque.idle_timeout`, [§13](#13-корневой-блок-lx-spec-098); ключ узла сильнее, `"0"` тоже),
-`keep_alive_period: 30s`, `network_list: tcp+udp`. TLS — в стандартном блоке `tls`
-outbound'а.
-
-> **SNI по умолчанию — `www.cloudflare.com`, а не имя эндпоинта** — назвать MASQUE-эндпоинт
-> в ClientHello это то, по чему его режет DPI. Эндпоинт аутентифицируется пиннингом
-> `public_key`, поэтому SNI волен отличаться.
-
-> **📖 Полный справочник полей — каждое поле с типом и дефолтом, матрица профилей
-> (`cloudflare` vs `standard`), формат ключевого материала, гайд `vhttp` h3-vs-h2,
-> поведение idle-suspend/keepalive, валидация при старте, таблица миграции с до-SPEC-062
-> и частые грабли — в
-> [protocols-transports.ru.md §3](protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)**
-> ([EN](protocols-transports.md#3-masque-outbound-connect-ip--warp)).
-
-### Пример — WARP (дефолты: `vhttp: auto`)
-
-```jsonc
-{
-  "type": "masque",
-  "tag": "warp",
-  "server": "162.159.198.2",
-  "server_port": 443,
-  "profile": "cloudflare",
-  "tls": {
-    "server_name": "www.microsoft.com"   // любой нейтральный популярный хост (domain-fronting)
-  },
-  "private_key": "<base64 DER EC private key>",
-  "public_key":  "<base64 DER PKIX public key>",
-  "ip":   "172.16.0.2/32",
-  "ipv6": "2606:4700:110:...::/128",
-  "mtu":  1280
-}
-```
-
-`"vhttp": "auto"` — **дефолт** — сначала пробует h3 и падает на h2, если QUIC-хендшейк не
-уложился в 3 с. Победа h3 запоминается; победа h2 — на окно по лестнице (1 с → 10 с → 30 с → 5 мин → 10 мин, ступень за каждую
-следующую победу h2; победа h3 возвращает на первую), после которого h3 пробуется снова
-(SPEC 121); если запомненный режим перестал подниматься, память сбрасывается и в той же
-попытке пробуется другой. Отказ, ради которого
-он существует: эндпоинт (или TCP-only-хоп перед ним — HTTP CONNECT в `detour`, звено
-VLESS/Trojan в цепочке) **молча игнорирует QUIC** — ошибки нет, есть зависание; поймано в поле
-на проксированном хопе, где Cloudflare отвечал по TCP:443 и не отвечал по QUIC (SPEC 074). На
-профиле `standard` ноги h2 нет, поэтому дефолт там тихо означает h3 (явный `"vhttp": "auto"`
-на `standard` даёт предупреждение).
-
-> **Профиль `"standard"` требует `uri`** — у `cloudflare` есть дефолт
-> (`https://cloudflareaccess.com`), у `standard` его нет, поэтому без него outbound не поднимется
-> вовсе: `masque: uri is required for the standard profile — set it to the server's CONNECT-IP
-> request URI, e.g. https://<host>/.well-known/masque/ip/*/*/`. Значение уходит в запрос
-> Extended CONNECT как есть (ядро ничего в нём не подставляет), поэтому пишется тот шаблон,
-> который публикует сервер, — RFC 9484 описывает форму полного туннеля с `*` на местах
-> хоста и порта.
-
-
-Для `h2` (CONNECT-IP over TCP:443) меняется одно поле: `"vhttp": "h2"`. Путь `h2` гонит свой
-TLS через общий слой `common/tls`, поэтому получает фрагментацию ClientHello наравне с любым
-другим TLS-outbound — включая автоматическую под `detour`
-([§9](#9-автоматическая-фрагментация-clienthello-под-detour-spec-060)). `h3` этим не затронут:
-QUIC не несёт TLS поверх TCP вовсе.
-
-> Нужен блок `dns` верхнего уровня — userspace-стек работает на L3 и сам домены не резолвит;
-> outbound резолвит их через DNS-роутер перед dial.
-
-> **Размер пакета и WARP (SPEC 120).** Внешний QUIC к серверу стартует с `InitialPacketSize` =
-> `mtu + 51` (кламп 1200…1452; при `mtu` 1280 — 1331), чтобы внутренний пакет размером `mtu`
-> помещался в датаграмму с первого пакета, а не после первой пробы PMTUD. WARP пропускает
-> внутренние IPv4-фрагменты и **теряет IPv6-фрагменты**: узел над masque, чей пакет не влезает в
-> `mtu` (QUIC-прокси с payload 1280 = 1328 байт по IPv6), по IPv6 молчит, по IPv4 работает. Узел
-> над masque — через `detour`, группу или как звено `chain` — получает размер пакета под `mtu`
-> автоматически ([§13, `lx.mtu_align`](#lxmtu_align--выравнивание-mtu-и-размера-пакета-по-пути));
-> вручную — `initial_packet_size: 1232` у QUIC-узла или `mtu: 1340` у masque (второе требует
-> внешнего пути ≈ 1440 байт до WARP).
-
-> **h3 vs h2 — что выбрать.** `h3` (QUIC) — по умолчанию и быстрее. Но на сетях, где режется
-> входящий UDP:443, QUIC-handshake виснет и `h3` не поднимается — переключите такой узел на
-> `h2` (TCP:443), он device-verified работает там. Учтите также: первый dial `h3` медленный
-> (холодный CONNECT-IP: QUIC-handshake + Extended CONNECT + анонс маршрута + стек), поэтому
-> короткий urltest-таймаут может пометить свежий h3-узел `-1` на первой пробе, хотя дальше он
-> работает.
-
-> **Статус.** Device-verified end-to-end на реальных Wi-Fi и LTE — `warp=on`, реальный трафик на
-> обоих `h3` и `h2`, idle-suspend + самовосстановление подтверждены на устройстве.
-
-**📖 [Полный справочник →](protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)**
-([EN](protocols-transports.md#3-masque-outbound-connect-ip--warp)) — полная таблица
-параметров, матрица профилей, формат ключевого материала, валидация при старте и частые грабли.
+Cloudflare WARP поверх `masque-client` — отдельная задача
+[SPEC 110](../SPECS/TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md), пока не реализована: на этой
+линии WARP через MASQUE недоступен. Корневой ключ `lx.masque.idle_timeout` ([§13](#13-корневой-блок-lx-spec-098))
+по-прежнему разбирается и ни на что не влияет.
 
 ---
 
@@ -1110,7 +1014,7 @@ CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`base
 
 Глобальные ручки форка живут в одном корневом блоке `lx`, сгруппированные по подсистеме. Всё, что
 описывает конкретный узел, остаётся в его объекте, как в апстриме: поля AWG — в endpoint'е, `xhttp` —
-в `transport`, собственный `idle_timeout` masque-узла — в узле. Все подблоки и ключи опциональны;
+в `transport`. Все подблоки и ключи опциональны;
 пустой `lx` и отсутствующий равнозначны. Опечатка в имени ключа — ошибка загрузки, не тихий дефолт.
 
 ```jsonc
@@ -1173,18 +1077,14 @@ CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`base
 
 | Ключ | Тип | Дефолт | Значение |
 |---|---|---|---|
-| `idle_timeout` | длительность ≥ 0 | выкл | Глобальное окно простоя для всех `masque`-узлов без своего `idle_timeout`: после него сессия (netstack, насосы, QUIC keepalive) разбирается, следующий дайл собирает её заново |
-
-Приоритет: `idle_timeout` узла > `lx.masque.idle_timeout` > выкл. Явный `"0"` в узле держит его
-туннель поднятым даже при заданном глобальном значении. Сессия MASQUE и так собирается лениво,
-потолка здесь нет.
+| `idle_timeout` | длительность ≥ 0 | выкл | **Разбирается, на 1.15 ни на что не влияет**: это было глобальное окно простоя outbound'а `masque` форка, который на этой линии удалён ([§4](#4-masque-outbound--cloudflare-warp-spec-021)) |
 
 ### `lx.mtu_align` — выравнивание MTU и размера пакета по пути
 
 Узел, стоящий прямо над IP-туннелем — через `detour`, через группу под `detour` или как звено
 `chain` ([§10](#10-outbound-chain--виртуальная-цепочка-хопов-из-групп-и-узлов-spec-073)), —
 получает размер пакета, который в этот туннель влезает: `mtu` у туннелей (`wireguard`,
-`masque`), `initial_packet_size` плюс `disable_path_mtu_discovery: true` у QUIC-прокси
+`masque-client`), `initial_packet_size` плюс `disable_path_mtu_discovery: true` у QUIC-прокси
 (`hysteria2`, `tuic`, `hysteria`). Считается один раз на старте по конфигу, до создания узлов;
 апстримные конструкторы читают уже поправленные опции. Значения только понижаются, каждое
 изменённое поле видно в логе старта с причиной. SPEC 120; исходная заявка — issue #37
@@ -1212,7 +1112,7 @@ CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`base
 
 | Узел снизу | Ёмкость |
 |---|---|
-| `masque`, `wireguard` (endpoint и legacy outbound), `openvpn-client`, `openconnect` | его **эффективный** `mtu` (после собственного выравнивания, рекурсивно вниз) |
+| `masque-client`, `wireguard` (endpoint и legacy outbound), `openvpn-client`, `openconnect` | его **эффективный** `mtu` (после собственного выравнивания, рекурсивно вниз) |
 | `tailscale` endpoint | `system_interface_mtu`, иначе 1280 |
 | `selector`, `urltest` | min по всем достижимым членам, рекурсивно |
 | `chain` как цель `detour` | без предела + предупреждение (цепочка выравнивает себя сама) |
@@ -1228,13 +1128,13 @@ CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`base
 | Узел сверху | Поле | Предел | Накладные v4 / v6 |
 |---|---|---|---|
 | `wireguard` | `mtu` | `ёмкость − 32 − s4 − ipudp` (`s4` — транспортный паддинг AmneziaWG, 0 у обычного WG) | 60 / 80 (+ `s4`) |
-| `masque` | `mtu` | `ёмкость − 51 − ipudp` | 79 / 99 |
+| `masque-client` | `mtu` | `ёмкость − 51 − ipudp` | 79 / 99 |
 | `hysteria2`, `tuic`, `hysteria` | `initial_packet_size` (+ `disable_path_mtu_discovery: true`) | `ёмкость − ipudp`, кламп 1200…1452 | — |
 | `openvpn-client`, `openconnect` | — | не выводится; одно предупреждение, если под узлом есть ёмкость | неизвестны |
 
 **Пол IPv6 (SPEC 144).** Туннель, несущий IPv6 внутри — `wireguard`-endpoint с IPv6-префиксом в
-`address`, `masque` всегда, — никогда не выравнивается ниже 1280: gvisor молча не поднимает IPv6 на
-канале с меньшим MTU, а мёртвый IPv6 внутри туннеля хуже фрагментов. Если путь оставляет меньше
+`address`, `masque-client` всегда, — никогда не выравнивается ниже 1280: IPv6 требует MTU канала
+не меньше 1280 (RFC 8200; gVisor, стек до 1.15, ниже него молча не поднимал IPv6), а мёртвый IPv6 внутри туннеля хуже фрагментов. Если путь оставляет меньше
 1280, туннель получает 1280 и строку Warn (`… is above the path: … leaves 1220 bytes, below the IPv6
 minimum 1280; outer packets will be fragmented`). Туннель только с IPv4 внутри опускается ниже 1280
 как раньше; явный `mtu` ниже 1280 никогда не повышается.
@@ -1245,16 +1145,16 @@ minimum 1280; outer packets will be fragmented`). Туннель только с
 теряются вместе с фрагментами, по IPv4 «проходят» фрагментацией, и каждый пакет едет двумя. Узел с
 явным `initial_packet_size` не трогается целиком, включая PMTUD.
 
-**Пример — WARP по умолчанию** (`masque` с `mtu` 1280) и hysteria2 с `detour` на него:
+**Пример — endpoint `masque-client`** с `mtu` 1280 и hysteria2 с `detour` на него:
 
 ```jsonc
-{ "type": "masque", "tag": "warp", "mtu": 1280, /* … */ },
+{ "type": "masque-client", "tag": "warp", "mtu": 1280, /* … */ },   // в endpoints[]
 { "type": "hysteria2", "tag": "hy2", "server": "2001:db8::1", "detour": "warp", /* … */ }
 ```
 
 `hy2` получает `initial_packet_size: 1232` (1280 − 48) и `disable_path_mtu_discovery: true`; с
 IPv4-сервером — 1252 (1280 − 28). Без выравнивания quic-go шлёт пакеты с payload 1280, по IPv6 это
-1328 байт, туннель режет их на фрагменты, и WARP их теряет ([§4](#4-masque-outbound--cloudflare-warp-spec-021)).
+1328 байт, туннель режет их на фрагменты, и WARP их теряет.
 
 **Группы.** Под группой берётся min по всем членам на старте; при переключении селектора/urltest
 значение не пересчитывается — размер QUIC-пакета фиксируется при создании клиента, MTU
@@ -1265,8 +1165,8 @@ WG-устройства — при создании устройства, и ж�
 **Лог старта** — одна Info-строка на изменённое поле, предупреждения — Warn:
 
 ```
-mtu_align: hy2 initial_packet_size → 1232 (detour warp[masque] mtu 1280 − 48 ipv6; pmtud off)
-mtu_align: wg-exit mtu 1420 → 1200 clamped (limited by warp[masque] mtu 1280 via sel −80 ipv6)
+mtu_align: hy2 initial_packet_size → 1232 (detour warp[masque-client] mtu 1280 − 48 ipv6; pmtud off)
+mtu_align: wg-exit mtu 1420 → 1200 clamped (limited by warp[masque-client] mtu 1280 via sel −80 ipv6)
 ```
 
 У `chain` то же решение видно в `ChainInfo` (`mtu_configured` / `mtu_effective` / `mtu_reason`
@@ -1274,12 +1174,11 @@ mtu_align: wg-exit mtu 1420 → 1200 clamped (limited by warp[masque] mtu 1280 v
 
 **Не выравниваются:** xhttp по h3 и naive (cronet) — свой QUIC-транспорт; `openvpn-client` и
 `openconnect` как верхние узлы — только предупреждение; направление «сервер → клиент» —
-управляется сервером. Чем masque отвечает на это снизу (внешний `InitialPacketSize` = `mtu + 51`,
-ICMP Packet Too Big с фактическим бюджетом) — в [§4](#4-masque-outbound--cloudflare-warp-spec-021).
+управляется сервером.
 
 ### `lx.quic_sniff_decoy` — QUIC через релей, который сниффит SNI
 
-| Значение | Дозвоны masque h3, hysteria2 и tuic, которые шлют один байт (`0x00`) перед первым QUIC Initial |
+| Значение | Дозвоны hysteria2 и tuic, которые шлют один байт (`0x00`) перед первым QUIC Initial |
 |---|---|
 | `"off"` / `false` / нет ключа (**дефолт**) | никакие |
 | `"direct"` | дозвоны через собственный сокет устройства: без `detour` или `detour` на outbound `direct` |
@@ -1291,12 +1190,11 @@ ICMP Packet Too Big с фактическим бюджетом) — в [§4](#4-
 ```
 
 Релей с Xray `sniffing` (`destOverride` с `quic`, без `routeOnly`) расшифровывает QUIC Initial,
-берёт SNI и отправляет поток на это имя вместо набранного адреса: masque падает с `different
-public key than pinned`, hysteria2/tuic с подставным SNI попадают на чужой хост или в пустоту.
+берёт SNI и отправляет поток на это имя вместо набранного адреса: hysteria2/tuic с подставным SNI попадают на чужой хост или в пустоту.
 Xray решает по первой датаграмме потока; первый байт, который не long-header пакет QUIC, выводит
 его QUIC-сниффер из игры, назначение остаётся набранным. Сервер отбрасывает байт не разбирая
 (снят fixed bit QUIC). Без задержки и лишнего хендшейка. Включать, когда QUIC-узел работает
-напрямую и ломается через чужой релей (h2 masque через тот же релей обычно работает — SPEC 060).
+напрямую и ломается через чужой релей.
 Режимы уводят обманку с пути, где на неё может среагировать DPI вашего аплинка: `"detour"` шлёт
 её только через релеи, `"direct"` — только по собственному сокету устройства (сниффер может стоять
 и там, выше по сети, например роутер с выходом через Xray). sing-box-релеи (1.13+) назначение по сниффу не переписывают, им ничего не нужно. Не покрыто: port hopping у

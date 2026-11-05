@@ -90,7 +90,7 @@
 
 **Дрейф в дочерних форк-репозиториях разбирается ДО мержа ядра, а не после.**
 Наши `replace` в `go.mod` подменяют апстримовые модули на форк-сабмодули
-(`wireguard-go`, `sing-tun`, `gvisor`, `utls`). Мерж ядра поднимает версии в `require`,
+(`wireguard-go`, `sing-tun`, `utls`; `gvisor` снят вместе с `with_gvisor` на линии 1.15). Мерж ядра поднимает версии в `require`,
 но `replace` продолжает подставлять НАШУ ветку — то есть сборка молча идёт на
 коде, которого апстрим уже не ожидает.
 
@@ -101,7 +101,7 @@
 бесполезно: `go build` пройдёт, тесты пройдут, а в рантайме будет гонка.
 
 ```bash
-for m in wireguard-go sing-tun gvisor; do
+for m in wireguard-go sing-tun; do
   req=$(grep -E "sagernet/$m v" go.mod | grep -oE "[0-9a-f]{12}$")
   echo "=== $m (go.mod требует: ${req:-снапшот без хеша}) ==="
   [ -z "$req" ] && continue
@@ -117,9 +117,6 @@ for m in wireguard-go sing-tun gvisor; do
   fi
 done
 ```
-
-Для `gvisor` версия в `require` без хеша (снапшот) — там сверять строку версии
-с датой снапшота в истории сабмодуля.
 
 Для `utls` пин — тег `metacubex/utls vX.Y.Z` (сейчас `v1.8.7`), тоже без хеша:
 ветка `lx` форка должна стоять **на этом теге** и нести поверх ровно восемь
@@ -185,7 +182,8 @@ lx-коммитов, обновление снесёт AWG-обфускацию 
 потребовал `device.PeerLookupFunc`/`NewPeerConfig`/`SetPeerLookupFunc` из
 свежего `wireguard-go`. Цепочка `libbox/native_shell_session.go` →
 `protocol/tailscale/tailssh` → `wgengine/wgcfg` → `wireguard-go/device`. Тегами
-не обходится: `tailssh` гейтится по `with_gvisor`, который включён всегда.
+не обходится: `tailssh` гейтится только по `with_tailscale`, который есть и в desktop-наборе,
+и в AAR (до 1.15 — по `with_gvisor`, который был включён всегда).
 
 ### 1.4 После закрытия дрейфа — обязательный прогон на устройстве
 
@@ -260,7 +258,7 @@ comm -23 <(git log --format=%s $(git merge-base lx upstream/stable)..upstream/st
 | Язык: тулчейн Go | `go.version` | `go-version:` в `upstream/stable:.github/workflows/build.yml`; `VERSION=` в `.github/setup_go_for_windows7.sh` и `setup_go_for_macos1013.sh` — это файлы апстрима, они приезжают мержем и должны совпасть с `go.version` |
 | Язык: `go.mod` | директивы `go` / `toolchain` | `upstream/stable:go.mod` — совпадают |
 | Go-модули | блок `require` в `go.mod` | `upstream/stable:go.mod` — набор совпадает; `replace` на форк-сабмодули — раздел 1.1 |
-| Форк-сабмодули | `submodules/{wireguard-go,sing-tun,gvisor,utls}` | раздел 1.1 |
+| Форк-сабмодули | `submodules/{wireguard-go,sing-tun,utls}` | раздел 1.1 |
 | naive / cronet-go | `.github/CRONET_GO_VERSION` | тот же файл в `upstream/stable`; после бампа — вручную `lx-musl-toolchain-mirror.yml` (SPEC 023) |
 | Android | `ndk-version`, OpenJDK в `lx-*.yml` | `ndk-version` / `java-version` в upstream `build.yml` |
 | Кодогенерация | `LX_PROTOC_GEN_GO_VERSION`, `LX_PROTOC_GEN_GO_GRPC_VERSION` в `Makefile.lx` | `google.golang.org/protobuf` / `grpc` в `go.mod` и стиль сгенерированного кода апстрима |
@@ -341,27 +339,23 @@ git merge upstream/stable             # ручной merge, НЕ rebase
 - `daemon/*.pb.go` / `*.proto` — наши поля аддитивны (`detourList=23`, DnsQueryEvent 1..12). Если
   upstream регенерил дескрипторы, перегенери через `make -f Makefile.lx lx-proto` и заново наложи
   lx-поля, либо вручную: см. `lx-commandclient-extensions` в памяти (pinned protoc-toolchain).
-- `submodules/wireguard-go`, `submodules/sing-tun`, `submodules/gvisor` и `submodules/utls` — наши
-  форк-сабмодули; upstream-bump (в т.ч. коммит вида «Update sing-tun», бамп `sagernet/gvisor`
-  или `metacubex/utls` в `go.mod`) не принимать вслепую — он молча уводит `replace` с форка и
+- `submodules/wireguard-go`, `submodules/sing-tun` и `submodules/utls` — наши
+  форк-сабмодули; upstream-bump (в т.ч. коммит вида «Update sing-tun», бамп
+  `metacubex/utls` в `go.mod`) не принимать вслепую — он молча уводит `replace` с форка и
   откатывает наши патчи (обфускация AWG, SPEC 040 self-heal acceptLoop, SPEC 041 rebind,
-  SPEC 048 nil-guard в gvisor `handleConnecting`, SPEC 086/087 Firefox 148 + reuse key share + Safari 26.3 в utls);
+  SPEC 086/087 Firefox 148 + reuse key share + Safari 26.3 в utls);
   см. `wg-1.14-migration` и синк 2026-08-01 в changelog.
   Откат бесшумный: всё собирается, тесты пакета зелёные, а баг возвращается в поле —
-  поэтому после мержа, тронувшего `go.mod`, сверять `go list -m` по всем четырём:
+  поэтому после мержа, тронувшего `go.mod`, сверять `go list -m` по всем трём:
 
   ```bash
-  go list -m github.com/sagernet/wireguard-go github.com/sagernet/sing-tun github.com/sagernet/gvisor github.com/metacubex/utls
+  go list -m github.com/sagernet/wireguard-go github.com/sagernet/sing-tun github.com/metacubex/utls
   # каждый должен резолвиться в => ./submodules/<name>
   ```
 
   Для `utls` страж есть и в тестах: `go test -tags with_utls ./common/tls/` (`TestLxFirefox…`,
   `TestLxRealityFingerprints…`) падает, если `HelloFirefox_Auto` перестал быть Firefox 148,
   `HelloSafari_Auto` — Safari 26.3, или гибридный шар ушёл из `chrome`/`firefox`/`safari` — то есть если `replace` съехал на голый metacubex.
-
-  `submodules/gvisor` ведётся **снапшотом пина без истории** (полная история апстрима —
-  1.45 ГБ на каждый CI-клон): новый пин вливается новым снапшот-коммитом, патч
-  накладывается поверх, red/green-тест едет вместе с ним. Подробности — SPEC 048 §6.
 - `cmd/internal/build_libbox/main.go` — единственная правка upstream-файла в CI-зоне, по `// lx`-маркеру.
 - `box.go`, `dns/client*.go`, `route/route.go`, `common/trafficcontrol/tracker.go` — несут lx-наблюдаемость
   поверх upstream-логики; при конфликте сохранить upstream-поведение резолва/роутинга, наши emit/Detour —

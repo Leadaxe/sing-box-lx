@@ -15,7 +15,7 @@ features of `sing-box-lx`:
 |---------|-----------|-------------------|---------|
 | **XHTTP** transport (Xray "splithttp"/"xhttp") | `with_xhttp` | `transport` block of a VLESS / VMess / Trojan **outbound** | [§1](#1-xhttp-transport) |
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) obfuscation | `with_awg` | promoted fields on a `wireguard` **endpoint** | [§2](#2-amneziawg-203x-awg2-awg3) |
-| **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic` + `with_gvisor` | `outbounds[].type: "masque"` | [§3](#3-masque-outbound-connect-ip--warp) |
+| **MASQUE** outbound (CONNECT-IP / WARP) | — | removed on the 1.15 line (upstream `masque-client` endpoint instead) | [§3](#3-masque-outbound-connect-ip--warp) |
 | **REALITY** client (hybrid key share, `key_share`, fragmentation) and **VLESS `encryption`** | — (REALITY inside `with_utls`) | `tls` block of a TLS-over-TCP **outbound**; flat `encryption` field on `vless` | [§5](#5-reality-and-vless-encryption) |
 | **TrustTunnel** outbound and inbound (AdGuard VPN protocol) | `with_trusttunnel` (+ `with_quic` for HTTP/3), in `LX_TAGS` since lx.21, not in the AAR | `outbounds[].type` / `inbounds[].type: "trusttunnel"` | [§6](#6-trusttunnel-outbound-and-inbound) |
 
@@ -30,7 +30,7 @@ overview links to: every field, its type, its default, its validation, and the
 exact error text you get when it is wrong.
 
 Everything here is sourced from the option structs (`option/v2ray_xhttp.go`,
-`option/wireguard_awg.go`, `option/masque_lx.go`) and the protocol implementations,
+`option/wireguard_awg.go`) and the protocol implementations,
 not from memory — defaults and error strings are the ones the current core emits.
 
 > ⚠️ Every key / UUID / address below is a **placeholder**. Never commit real
@@ -48,7 +48,6 @@ transport (which would defeat the obfuscation). The exact messages:
 
 - XHTTP without `with_xhttp` → `XHTTP transport requires the with_xhttp build tag`
 - AWG field without `with_awg` → `AmneziaWG (awg) support is not included in this build, rebuild with -tags with_awg`
-- `masque` outbound without `with_quic`+`with_gvisor` → the `masque` type is not registered (`unknown outbound type: masque`)
 - `trusttunnel` without `with_trusttunnel` → `trusttunnel is not included in this build, rebuild with -tags with_trusttunnel` (only in a custom build without the tag: `lx-build` carries it since lx.21, the Android AAR does not, §6)
 
 ---
@@ -79,18 +78,6 @@ transport (which would defeat the obfuscation). The exact messages:
   - [2.9 Validation errors (verbatim)](#29-validation-errors-verbatim)
   - [2.10 AWG 3.x: header protection, padding, trailers, timings](#210-awg-3x-header-protection-padding-trailers-timings)
 - [§3 MASQUE outbound (CONNECT-IP / WARP)](#3-masque-outbound-connect-ip--warp)
-  - [3.1 What it is](#31-what-it-is)
-  - [3.2 MASQUE-specific fields](#32-masque-specific-fields)
-  - [3.3 Inherited DialerOptions](#33-inherited-dialeroptions)
-  - [3.4 Profiles — what `profile` switches](#34-profiles--what-profile-switches)
-  - [3.5 Key material & value formats](#35-key-material--value-formats)
-  - [3.6 SNI strategy](#36-sni-strategy)
-  - [3.7 `vhttp`: auto / h3 / h2](#37-vhttp-auto--h3--h2)
-  - [3.8 Idle-suspend & keepalive](#38-idle-suspend--keepalive)
-  - [3.9 Start-time validation (fail-fast)](#39-start-time-validation-fail-fast)
-  - [3.10 Migrating from the pre-SPEC-062 shape](#310-migrating-from-the-pre-spec-062-shape)
-  - [3.11 Examples](#311-examples)
-  - [3.12 Common footguns](#312-common-footguns)
 - [§4 gRPC transport](#4-grpc-transport)
   - [4.1 `service_name`: the Xray forms](#41-service_name-the-xray-forms)
 - [§5 REALITY and VLESS `encryption`](#5-reality-and-vless-encryption)
@@ -598,7 +585,7 @@ For `S4 = 60` that is `mtu ≤ 1380`; the AmneziaWG-recommended client MTU is **
   conservative **1492** (PPPoE): `mtu ≤ 1492 − 28 − 32 − S4`. The tunnel still loads.
 - The outer socket **does not force DF** (SPEC 028): an oversize outer datagram is
   IP-fragmented, not dropped; this is what lets nested tunnels work
-  (`masque`/`wireguard`/AWG through `detour`). The old behaviour on a specific
+  (`masque-client`/`wireguard`/AWG through `detour`). The old behaviour on a specific
   endpoint: `"udp_fragment": false`. A correct `mtu` is still preferred: fragmentation
   is the safety net.
 - Keep `jmax` **below** the real path MTU: a junk packet longer than the MTU gets
@@ -802,273 +789,18 @@ Notes:
 
 # 3. MASQUE outbound (CONNECT-IP / WARP)
 
-> 🧭 How MASQUE/WARP is built and the decisions behind it: the feature spec [009-MASQUE_WARP](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md). This chapter holds only fields, defaults and errors.
+The fork's own `type: masque` outbound (CONNECT-IP over HTTP/3 or HTTP/2, `profile: cloudflare`,
+keys `vhttp`, `ip`, `ipv6`, `private_key`, `public_key`, `uri`, `idle_timeout`, `network_list`, …)
+is **removed on the 1.15 line**; a config carrying it does not load. Upstream 1.15 provides the
+`masque-client` / `masque-server` endpoints — their fields are in upstream's
+[docs/configuration/endpoint/masque-client.md](../docs/configuration/endpoint/masque-client.md)
+and [masque-server.md](../docs/configuration/endpoint/masque-server.md).
 
-## 3.1 What it is
-
-A `masque` outbound tunnels **whole IP packets** over an HTTP/3 or HTTP/2 connection
-using **CONNECT-IP (RFC 9484)**, primarily to connect to **Cloudflare WARP**. (This
-is CONNECT-IP, not CONNECT-UDP / RFC 9298; and unrelated to the AWG `id/ip/ib`
-*masquerade* sugar in [§2.5](#25-masquerade-sugar-id--ip--ib) — same word, different
-feature.) The core builds a userspace gVisor stack per tunnel and routes traffic
-through it like a WireGuard endpoint. Gated on `with_quic` + `with_gvisor` (both in
-the default `LX_TAGS`). Key material is taken ready from config — device
-registration (ECDSA keys, WARP enroll) is done by the client, not the core.
-
-> A top-level `dns` block is **required** — the userspace stack works at L3 and does
-> not resolve domains itself; the outbound resolves them via the DNS router before
-> dialing. Without it, domain traffic through the tunnel fails to resolve
-> (`masque: no DNS router available to resolve …`).
-
-> ⚠️ **The HTTP version is `vhttp`, not `network`** (SPEC 062). Older configs used
-> `network` for `h3`/`h2` — the opposite of what `network` means on every other
-> outbound. The old shape still works and reports a deprecation; see the
-> [migration table](#310-migrating-from-the-pre-spec-062-shape).
-
-## 3.2 MASQUE-specific fields
-
-| Key | Type | Required | Default | Meaning |
-|-----|------|----------|---------|---------|
-| `type` | string | ✅ | — | always `"masque"` |
-| `tag` | string | ✅ | — | outbound name (for route/groups) |
-| `server` | string | ✅ | — | IP/host of the WARP endpoint |
-| `server_port` | uint16 | ✅ | — | port (usually 443) |
-| `profile` | string | — | `cloudflare` | `cloudflare` \| `standard` (see [§3.4](#34-profiles--what-profile-switches)) |
-| `vhttp` | string | — | `auto` | **HTTP version carrying CONNECT-IP**: `auto` (h3 first, h2 fallback when the QUIC handshake does not complete in 3 s — SPEC 074) \| `h3` (QUIC) \| `h2` (HTTP/2, TCP:443). On `standard` the default quietly means `h3` (no h2 leg there). The tcp/udp list is `network_list`, as everywhere else |
-| `private_key` | string (base64) | ✅¹ | — | client EC private key, DER (`x509.ParseECPrivateKey`) |
-| `public_key` | string (base64) | ✅¹ | — | endpoint PKIX public key, DER (`x509.ParsePKIXPublicKey`, ECDSA) |
-| `ip` | string (CIDR) | ✅² | — | local IPv4 inside the tunnel; a bare address → `/32` |
-| `ipv6` | string (CIDR) | ✅² | — | local IPv6 inside the tunnel; a bare address → `/128` |
-| `tls` | object | — | — | the **standard** outbound TLS block — `server_name`, `insecure`, `disable_sni`, `fragment`, `record_fragment`, `fragment_fallback_delay`, … Same container every other TLS outbound uses |
-| `uri` | string | — | per profile³ | CONNECT-IP request URI |
-| `mtu` | int | — | `1280` | userspace-stack MTU. On `h2`, max `16000` (one IP packet = one HTTP/2 DATA frame). Nodes above masque (via `detour`, a group, or as a `chain` link) get a packet size that fits this `mtu` automatically — `mtu` on tunnels, `initial_packet_size` + PMTUD off on hysteria2/tuic/hysteria (at 1280: 1232 for an IPv6 server, 1252 for IPv4; SPEC 120, [lx-config.md §13](lx-config.md#lxmtu_align--path-mtu--packet-size-alignment)). The outer QUIC to the server starts at `mtu + 51` (clamped 1200…1452) |
-| `idle_timeout` | duration | — | inherits `lx.masque.idle_timeout`, else off | suspend the tunnel after this long with no traffic (frees the gVisor stack, pumps and QUIC keepalive); the next dial rebuilds it. Absent → the global `lx.masque.idle_timeout` (SPEC 098, [lx-config.md §13](lx-config.md#13-the-lx-root-block-spec-098)); an explicit `0` or a negative value keeps this node up whatever the global default; only a positive value enables suspend |
-| `keep_alive_period` | duration | — | `30s` | QUIC keepalive (h3 only). **Negative disables** |
-| `network_list` | list | — | tcp+udp | L4 protocols routed through the tunnel |
-
-¹ Required for `profile=cloudflare`; optional for `standard`.
-² At least **one** of `ip`/`ipv6` is required.
-³ Per-profile defaults — see [§3.4](#34-profiles--what-profile-switches).
-
-## 3.3 Inherited DialerOptions
-
-MASQUE embeds the standard sing-box `DialerOptions`, applied to the outgoing dial to
-the WARP endpoint. All optional:
-
-| Key | Type | Meaning |
-|-----|------|---------|
-| `detour` | string | route the dial to the endpoint through another outbound (nested tunnels) |
-| `bind_interface` | string | bind to a network interface |
-| `inet4_bind_address` / `inet6_bind_address` | addr | outgoing bind address |
-| `routing_mark` | int | fwmark (Linux) |
-| `reuse_addr` | bool | SO_REUSEADDR |
-| `connect_timeout` | duration | connection-establishment timeout |
-| `tcp_fast_open` | bool | TFO (relevant on `h2`) |
-| `domain_resolver` | object | which DNS resolves `server` when it is a domain |
-| `domain_strategy` | string | `prefer_ipv4` \| `prefer_ipv6` \| `ipv4_only` \| `ipv6_only` |
-| `fallback_delay` | duration | happy-eyeballs delay |
-| `network_strategy` / `network_type` / `fallback_network_type` | | multi-network strategies |
-
-(Full list — the shared `DialerOptions` in `option/outbound.go`.)
-
-## 3.4 Profiles — what `profile` switches
-
-The profile varies four things; everything else (QUIC/HTTP2, capsule/datagram, the
-userspace stack, the pumps) is profile-independent.
-
-| Aspect | `cloudflare` (default) | `standard` (RFC 9484) |
-|--------|------------------------|-----------------------|
-| `:protocol` (h3) / `cf-connect-proto` (h2) | `cf-connect-ip` | `connect-ip` |
-| Extended CONNECT settings | tolerate absence (WARP does not send it) | require |
-| default `tls.server_name` | `www.cloudflare.com` | = `server` |
-| default `uri` | `https://cloudflareaccess.com` | none (required) |
-| TLS validation | pin `public_key` (ECDSA) | normal chain by `server_name` |
-| `private_key`/`public_key` | required | optional |
-
-`standard` targets a self-hosted RFC-compliant CONNECT-IP server; it **will not
-connect to Cloudflare WARP**. For WARP always use `cloudflare` (the default). Note
-`vhttp: h2` is **not implemented for `standard`** — a load-time error.
-
-## 3.5 Key material & value formats
-
-**Keys** (`private_key` / `public_key`): base64 of DER. `private_key` =
-`x509.MarshalECPrivateKey` (SEC1 EC), `public_key` = `x509.MarshalPKIXPublicKey` of
-an `*ecdsa.PublicKey` (P-256) — exactly the format the WARP registration produces on
-the client side, parsed by the core without conversion.
-
-**`ip` / `ipv6`**: an address or a CIDR. `"172.16.0.2"` → `172.16.0.2/32`,
-`"2606:…::"` → `/128`. These are the **local** addresses **inside** the tunnel (your
-address in the WARP network), **not** the exit IP.
-
-**Duration** (`idle_timeout`, `keep_alive_period`, `connect_timeout`, …): a Go
-duration string — `"30s"`, `"5m"`, `"1h30m"`. Empty = default. Negative (`"-1s"`) =
-"disable".
-
-## 3.6 SNI strategy
-
-> **The default SNI is `www.cloudflare.com`, not the endpoint hostname.** Naming the
-> MASQUE endpoint in the ClientHello is exactly what a DPI filters on; a neutral
-> high-traffic host is not. The endpoint is authenticated by pinning `public_key`,
-> so the SNI is free to differ. `tls.disable_sni: true` sends none at all — some
-> endpoints only present their real certificate to a ClientHello without one.
-
-Override `tls.server_name` per node (LxBox rotates a pool). The endpoint's own name
-(`consumer-masque.cloudflareclient.com`) is deliberately **not** the default —
-sending it was measured to trip a silent CONNECT-IP timeout on Russian uplinks,
-while `www.cloudflare.com`, `yandex.ru`, `www.google.com` and other neutral names
-all connect to the same endpoint.
-
-## 3.7 `vhttp`: auto / h3 / h2
-
-`auto` is the default (SPEC 074): it tries `h3` (QUIC) first and falls back to `h2`
-when the QUIC handshake does not complete within 3 s. An h3 win is remembered; an h2 win
-only for a window that climbs a ladder, 1 s → 10 s → 30 s → 5 min → 10 min (an h3 win drops it back), after which h3
-is tried first again (SPEC 121); a remembered leg that stops coming up is forgotten and
-the other one is tried in the same dial. The failure mode it exists for produces **no error** — the
-endpoint (or a TCP-only hop in front of it: an HTTP CONNECT detour, a VLESS/Trojan
-link in a chain) silently swallows QUIC and every dial just hangs. A fixed `h3` is
-the fastest when the path is known-clean; on networks that filter inbound UDP:443
-pin the node to `h2` (TCP:443), which is device-verified to work there.
-
-- On `h2`, one IP packet = one HTTP/2 DATA frame, so `mtu` may go up to **16000**.
-- The `h2` path runs its TLS through the shared `common/tls` layer, so it gets
-  ClientHello fragmentation like any other TLS outbound — including the automatic
-  one under `detour` (SPEC 060). `h3` is untouched by that: QUIC does not carry TLS
-  over TCP at all.
-- The **first** `h3` dial is slow (cold CONNECT-IP setup: QUIC handshake + Extended
-  CONNECT + route advertise + stack), so a short urltest timeout may mark a fresh h3
-  node `-1` on the first probe though it works after.
-
-To pin a config to one leg, set the single field: `"vhttp": "h3"` or `"vhttp": "h2"`.
-
-## 3.8 Idle-suspend & keepalive
-
-- `idle_timeout` suspends the tunnel after that long with no traffic, freeing the
-  gVisor stack, the pumps and the QUIC keepalive; the next dial rebuilds it.
-  **Off by default** (since lx.31): absent, `0` and negative all keep the tunnel up
-  until the outbound is closed; only a positive value (e.g. `"5m"`) enables suspend.
-  Waking a suspended tunnel costs a full QUIC handshake + CONNECT-IP + a fresh gVisor
-  stack on the first request after the quiet spell, which on routers and desktops is
-  a worse trade than the ~6 MB RSS and one keepalive packet per 30s it saves. Enable
-  it explicitly on battery-powered hosts where that trade flips.
-- `keep_alive_period` (default `30s`, h3 only) is the QUIC keepalive interval. A
-  negative value disables it.
-- **Interaction:** with suspend off, keepalive is what holds the tunnel through the
-  server's idle-timeout and the provider's UDP NAT mapping — do **not** disable it
-  (`-1s`) unless `idle_timeout` is short enough that the tunnel is torn down before
-  keepalive matters; otherwise the server drops the tunnel on its own idle and the
-  next dial pays a silent rebuild.
-- The exit IP **changes** after idle-suspend/reconnect — WARP anycast hands out a
-  different edge address on each new connection. The internal `ip`/`ipv6` stays
-  stable.
-
-## 3.9 Start-time validation (fail-fast)
-
-The config is rejected at load if:
-
-- `profile=cloudflare` but `private_key`/`public_key` is missing or unparsable →
-  `masque: private_key and public_key are required for the cloudflare profile` /
-  `parse private_key` / `parse public_key`;
-- neither `ip` nor `ipv6` is set → `masque: at least one of ip/ipv6 is required`;
-- `vhttp` ∉ {`h3`, `h2`, `auto`} (e.g. the habitual `"tcp"`) →
-  `masque: invalid vhttp: … (expected h3, h2 or auto)`;
-- `vhttp=h2` and `mtu > 16000` → `masque: mtu … too large for h2 (max 16000)`;
-- `vhttp=h2` and `profile=standard` →
-  `masque: vhttp h2 is not implemented for the standard profile`;
-- `profile=standard` without `uri` → `masque: uri is required for the standard profile — set it to the server's CONNECT-IP request URI, e.g. https://<host>/.well-known/masque/ip/*/*/` (checked before `vhttp`, so the text is the same for h2/h3/auto — SPEC 091);
-- `public_key` is not an ECDSA key → `public_key is not an ECDSA key`.
-
-## 3.10 Migrating from the pre-SPEC-062 shape
-
-The flat TLS fields below are still accepted; using one logs one deprecation line
-per outbound. A legacy field that *disagrees* with its replacement is a hard error
-rather than a silent pick.
-
-The legacy `network` key for the HTTP version was **removed in `v1.14.3-lx.18`**: a
-masque outbound carrying it fails to decode with `unknown field "network"`. Rename it
-to `vhttp` (same values).
-
-| Legacy | Current |
-|---|---|
-| `network: "h3"` / `"h2"` — **removed** | `vhttp: "h3"` / `"h2"` |
-| `sni` | `tls.server_name` |
-| `skip_cert_verify: true` | `tls.insecure: true` |
-| `fragment: true` | `tls.fragment: true` |
-| `fragment_fallback_delay` | `tls.fragment_fallback_delay` |
-| `record_fragment: true` | `tls.record_fragment: true` |
-
-> The legacy booleans cannot tell "absent" from an explicit `false`, so only a
-> legacy `true` carries over — write the `tls` form if you need to turn something
-> off.
-
-## 3.11 Examples
-
-### WARP over h3 (QUIC)
-
-```jsonc
-{
-  "type": "masque",
-  "tag": "warp",
-  "server": "162.159.198.2",
-  "server_port": 443,
-  "profile": "cloudflare",
-  "vhttp": "h3",
-  "tls": {
-    "server_name": "www.microsoft.com"   // any neutral high-traffic host (domain-fronting)
-  },
-  "private_key": "<base64 DER EC private key>",
-  "public_key":  "<base64 DER PKIX public key>",
-  "ip":   "172.16.0.2/32",
-  "ipv6": "2606:4700:110:...::/128",
-  "mtu":  1280
-}
-```
-
-### WARP over h2 (CONNECT-IP over TCP:443)
-
-Same as above with one field changed:
-
-```jsonc
-{ /* … */ "vhttp": "h2", "mtu": 1280 }
-```
-
-### Minimal config (only what is required)
-
-```jsonc
-{
-  "type": "masque",
-  "tag": "warp",
-  "server": "162.159.198.2",
-  "server_port": 443,
-  "private_key": "<base64 DER EC private key>",
-  "public_key":  "<base64 DER PKIX public key>",
-  "ip":   "172.16.0.2",
-  "ipv6": "2606:4700:110:...::"
-}
-```
-
-(profile=cloudflare, vhttp=h3, `tls.server_name`=`www.cloudflare.com`,
-uri=`https://cloudflareaccess.com`, mtu=1280, idle_timeout=off,
-keep_alive_period=30s, network_list=tcp+udp — all default. Remember the top-level
-`dns` block.)
-
-## 3.12 Common footguns
-
-1. **`vhttp` ≠ tcp/udp.** On `masque`, `vhttp` is the HTTP version (h3/h2). The
-   tcp/udp list is `network_list`. `"vhttp": "tcp"` is a fail-fast error. Every
-   other outbound uses `network` the opposite way — here it is `vhttp` by design.
-2. **Top-level `dns` block is required** — otherwise domain traffic through the
-   tunnel does not resolve.
-3. **The exit IP changes** after idle-suspend/reconnect — WARP anycast hands out
-   different edge addresses per new connection. The internal `ip`/`ipv6` stays
-   stable.
-4. **`tls.insecure: true`** removes public-key pinning entirely — the only defense
-   left when WARP SNI is masqueraded. Debug only.
-5. **`keep_alive_period` vs `idle_timeout`** — see [§3.8](#38-idle-suspend--keepalive).
-
-**📖 Status.** Device-verified end-to-end on real Wi-Fi and LTE — `warp=on`, real
-traffic on both `h3` and `h2`, idle-suspend + self-healing reconnect confirmed
-on-device.
+Cloudflare WARP on top of `masque-client` is a separate task,
+[SPEC 110](../SPECS/TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md), not implemented yet: on this
+line WARP over MASQUE is not available. The root key `lx.masque.idle_timeout` is still parsed and
+has no effect ([lx-config.md §13](lx-config.md#13-the-lx-root-block-spec-098)). Feature context —
+[009-MASQUE_WARP](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md).
 
 ---
 
@@ -1528,7 +1260,7 @@ by our inbound.
   chapters expand on (feature table, build tags, plus idle-suspend, DNS group, VLESS
   `encryption`, `lxd`, observability).
 - **[lx-energy.md](lx-energy.md)** — the energy model, idle-suspend timelines and the
-  recommended mobile configuration (relevant to AWG and MASQUE endpoint suspend).
+  recommended mobile configuration (relevant to AWG endpoint suspend).
 - **[xray-protocols-explained.md](xray-protocols-explained.md)** — how XHTTP, REALITY,
   Vision and VLESS `encryption` work and how the fork supports them;
   **[amneziawg-explained.md](amneziawg-explained.md)** — the same for AmneziaWG,
