@@ -33,7 +33,15 @@ type TunnelLXOptions struct {
 	// (WARP's official client still advertises the legacy
 	// SETTINGS_H3_DATAGRAM_00, 0x276).
 	HTTP3AdditionalSettings map[uint64]uint64
+	// NoHTTP1 refuses the HTTP/1.1 leg of the tunnel. WARP has no HTTP/1.1
+	// form of CONNECT-IP (the Upgrade request gets 404), so descending to it
+	// only replaces the real reason with an unrelated status in the log.
+	NoHTTP1 bool
 }
+
+// ErrTunnelHTTP1Refused is returned instead of trying HTTP/1.1 when the
+// profile has no such tunnel.
+var ErrTunnelHTTP1Refused = E.New("the endpoint has no HTTP/1.1 tunnel: HTTP/3 and HTTP/2 were not usable")
 
 // openTunnelHTTP3 is the HTTP/3 leg of openTunnel. With a connect budget a
 // silent CONNECT is reported as ErrHTTP3Unavailable so the caller falls back

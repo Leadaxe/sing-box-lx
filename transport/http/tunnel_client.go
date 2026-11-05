@@ -88,6 +88,10 @@ func (c *Client) openTunnel(ctx context.Context, request tunnelRequest) (net.Con
 }
 
 func (c *Client) openTunnelHTTP1AndClose(ctx context.Context, conn net.Conn, request tunnelRequest) (net.Conn, DatagramStream, error) {
+	if c.tunnelLX.NoHTTP1 { // lx: SPEC 110 — WARP has no HTTP/1.1 tunnel
+		conn.Close()
+		return nil, nil, ErrTunnelHTTP1Refused
+	}
 	tunnelConn, err := c.openTunnelHTTP1(ctx, conn, request)
 	if err != nil {
 		conn.Close()

@@ -197,6 +197,30 @@ func TestOpenTunnelSilentHTTP3FallsBack(t *testing.T) {
 	require.EqualValues(t, 1, http3.calls.Load())
 }
 
+func TestOpenTunnelNoHTTP1(t *testing.T) {
+	t.Parallel()
+	// Same descent as above, but the profile has no HTTP/1.1 tunnel: the
+	// caller gets the refusal, and no Upgrade request reaches the server.
+	dialer := &pipeDialer{requests: make(chan *http.Request, 1)}
+	client := &Client{
+		http1Dialer: dialer,
+		server:      M.ParseSocksaddr("127.0.0.1:443"),
+		http3:       &fakeHTTP3Client{silent: true},
+		tunnelLX:    TunnelLXOptions{HTTP3ConnectBudget: 50 * time.Millisecond, NoHTTP1: true},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, stream, err := client.openTunnel(ctx, testTunnelRequest())
+	require.ErrorIs(t, err, ErrTunnelHTTP1Refused)
+	require.Nil(t, conn)
+	require.Nil(t, stream)
+	select {
+	case <-dialer.requests:
+		t.Fatal("HTTP/1.1 request was sent")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestTunnelHeadersHTTP2(t *testing.T) {
 	t.Parallel()
 	plainHeaders := http.Header{

@@ -28,6 +28,7 @@ func TestApplyLXProfile(t *testing.T) {
 		},
 		HTTP3ConnectBudget:      3 * time.Second,
 		HTTP3AdditionalSettings: map[uint64]uint64{0x276: 1},
+		NoHTTP1:                 true,
 	}
 	for _, testCase := range []struct {
 		name         string
@@ -80,4 +81,14 @@ func TestApplyLXProfileUnknown(t *testing.T) {
 	options.Profile = "warp"
 	_, _, err := applyLXProfile(options, transportHTTP.ClientOptions{}, masque.ClientOptions{})
 	require.ErrorContains(t, err, "unknown masque profile: warp")
+}
+
+func TestApplyLXProfileCloudflareRejectsHTTP1(t *testing.T) {
+	t.Parallel()
+	var options option.MASQUEClientEndpointOptions
+	options.Profile = option.MASQUEProfileCloudflare
+	_, _, err := applyLXProfile(options, transportHTTP.ClientOptions{Version: 1}, masque.ClientOptions{})
+	require.ErrorContains(t, err, "no HTTP/1.1 tunnel")
+	_, _, err = applyLXProfile(options, transportHTTP.ClientOptions{Version: 2}, masque.ClientOptions{})
+	require.NoError(t, err)
 }

@@ -36,6 +36,9 @@ func applyLXProfile(options option.MASQUEClientEndpointOptions, httpOptions tran
 	switch options.Profile {
 	case "", option.MASQUEProfileStandard:
 	case option.MASQUEProfileCloudflare:
+		if httpOptions.Version == 1 {
+			return httpOptions, clientOptions, E.New("masque profile cloudflare has no HTTP/1.1 tunnel: use version 3 or 2")
+		}
 		clientOptions.LX.Protocol = warpProtocol
 		clientOptions.LX.RawStreamCapsules = true
 		httpOptions.TunnelLX = transportHTTP.TunnelLXOptions{
@@ -46,6 +49,7 @@ func applyLXProfile(options option.MASQUEClientEndpointOptions, httpOptions tran
 			},
 			HTTP3ConnectBudget:      warpHTTP3ConnectBudget,
 			HTTP3AdditionalSettings: map[uint64]uint64{warpLegacyDatagramSetting: 1},
+			NoHTTP1:                 true,
 		}
 	default:
 		return httpOptions, clientOptions, E.New("unknown masque profile: ", options.Profile)
