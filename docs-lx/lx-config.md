@@ -15,8 +15,9 @@
 | **XHTTP** transport (Xray-compatible) | `with_xhttp` | `transport.type: "xhttp"` on a VLESS / VMess / Trojan outbound | desktop + mobile |
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | extra fields on a `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
+| **TrustTunnel** outbound and inbound (SPEC 133/134) | `with_trusttunnel` (+ `with_quic` for HTTP/3) | `outbounds[].type` / `inbounds[].type: "trusttunnel"`; fields — [protocols-transports.md §6](protocols-transports.md#6-trusttunnel-outbound-and-inbound), the global `lx.trusttunnel.idle_timeout` — [§13](#lxtrusttunnel--trusttunnel-outbounds) | desktop + mobile |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`) | **mobile only** (AAR) |
-| **Root `lx` block** (SPEC 098) | — (always parsed) | `lx.wg`, `lx.masque`, `lx.mtu_align`, `lx.quic_sniff_decoy`, `lx.awg_masquerade` — the fork's global knobs, [§13](#13-the-lx-root-block-spec-098) | desktop + mobile |
+| **Root `lx` block** (SPEC 098) | — (always parsed) | `lx.wg`, `lx.masque`, `lx.trusttunnel`, `lx.mtu_align`, `lx.quic_sniff_decoy` — the fork's global knobs, [§13](#13-the-lx-root-block-spec-098) | desktop + mobile |
 | **DNS server group** (SPEC 033/035/143) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
 | **`lxd` daemon** (SPEC 055–057, 063–068) | `with_lxd` | not a config key — the `sing-box lxd` subcommand + `<state-dir>/daemon.json`; see [lxd-daemon.md](lxd-daemon.md) | desktop / server (**not** Win7, **not** AAR) |
@@ -105,16 +106,24 @@ you need and read its section below. Each comment shows the **default** and the 
       "idle_suspend": "30s",                    // default: off. Endpoint outside the routing tree → Down after this idle
       "idle_suspend_reachable": "5m",           // default: off. Same for endpoints in the tree; >= idle_suspend, requires it
       "idle_teardown": "10m",                   // default: = idle_suspend_reachable. Sleep before full teardown; "0" = never
-      "lazy_build": true,                       // default: false. Build the device on first dial (SPEC 097; inert until then)
-      "build_max": 4,                           // default: 0 (no cap). Max devices built at once (SPEC 097; inert until then)
-      "build_overflow": "wait"                  // default: wait. wait | build (SPEC 097; inert until then)
+      "lazy_build": true,                       // default: false. Build the device on first dial (SPEC 097)
+      "build_max": 4,                           // default: 0 (no cap). Max devices built at once (SPEC 097)
+      "build_overflow": "wait"                  // default: wait. wait | build (SPEC 097)
     },
     "masque": {
       "idle_timeout": "5m"                      // default: off. Global idle window for masque nodes without their own key
     },
+    "trusttunnel": {
+      "idle_timeout": "5m"                      // default: 5m. Global idle window for trusttunnel nodes without their own key; only a node's "0" turns it off (SPEC 133)
+    },
     "mtu_align": "clamp",                       // default: clamp. off | fill | clamp, or an object {"mode", "except": [tags]} (§13)
-    "quic_sniff_decoy": "off",                  // default: off. off | direct | detour | all (or a boolean). One byte ahead of the QUIC Initial against relay SNI sniffing; reaches the AWG masquerade burst too (§13, SPEC 151/153)
-    "awg_masquerade": "all"                     // default: all. all | direct (or a boolean). Where an AWG endpoint sends its masquerade burst (decoy, i1…i5, junk): on every path, or only on its own socket (§13, SPEC 153)
+    "quic_sniff_decoy": {                       // object only; a string/boolean is a load error. One byte ahead of the QUIC Initial against relay SNI sniffing (§13, SPEC 151)
+      "mode": "off",                            // default: off. off | direct | detour | all — on which paths the byte is allowed
+      "outbound_type": ["masque"],              // default: ["masque"]. masque | hysteria2 | tuic | trusttunnel | vless | vmess | trojan | wireguard
+      "detour_type": ["vless"],                 // default: ["vless"]. Relay types; no selector/urltest — a group resolves to the member it picked
+      "send": "retry"                           // default: retry. retry | always — the byte only on the retry after a failure, or on every dial
+    }
+    // "awg_masquerade" removed in lx.33: any value is a load error, the AWG burst goes on every path (§13)
   },
 
   "outbounds": [
@@ -286,7 +295,7 @@ you need and read its section below. Each comment shows the **default** and the 
 ```
 
 > **Field count:** 26 XHTTP + 30 AmneziaWG (incl. `id`/`ip`/`ib` and the 9 AWG 3.x keys) + 1 VLESS (`encryption`) +
-> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 10 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.mtu_align` + `lx.quic_sniff_decoy` + `lx.awg_masquerade`). Mutually-exclusive / ignored fields are
+> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 13 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.trusttunnel.idle_timeout` + `lx.mtu_align` + 4 `lx.quic_sniff_decoy{mode,outbound_type,detour_type,send}`). Mutually-exclusive / ignored fields are
 > labelled inline above; the sections below give the per-field semantics, gotchas and live
 > verification status.
 
@@ -1128,9 +1137,16 @@ is the same as none. A misspelt key is a load error, not a silent default.
   "masque": {
     "idle_timeout": "5m"
   },
+  "trusttunnel": {
+    "idle_timeout": "5m"
+  },
   "mtu_align": "clamp",
-  "quic_sniff_decoy": "detour",
-  "awg_masquerade": "direct"
+  "quic_sniff_decoy": {
+    "mode": "detour",
+    "outbound_type": ["masque"],
+    "detour_type": ["vless"],
+    "send": "retry"
+  }
 }
 ```
 
@@ -1181,6 +1197,22 @@ Priority: the node's `idle_timeout` > `lx.masque.idle_timeout` > off. An explici
 keeps that node's tunnel up even when the global value is set. MASQUE already builds its session
 lazily, so there is no cap here.
 
+Validation error: `lx.masque.idle_timeout must be >= 0` for a negative duration.
+
+### `lx.trusttunnel` — TrustTunnel outbounds
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `idle_timeout` | duration ≥ 0 | `5m` | Global idle window for every `trusttunnel` node without its own `idle_timeout`: after it the session is closed locally and the next dial opens it again. Absent or `0` means 5 minutes |
+
+Priority: the node's `idle_timeout` > `lx.trusttunnel.idle_timeout` > 5 minutes. An explicit `"0"`
+on a node disables teardown of its session whatever the global value is. Unlike `lx.masque`, a
+global `0` here does not turn the window off, it means "unset": teardown can only be disabled on
+the node. SPEC 133. The fields of the outbound itself, its `idle_timeout` included, are in
+[protocols-transports.md §6.2](protocols-transports.md#62-outbound-fields).
+
+Validation error: `lx.trusttunnel.idle_timeout must be >= 0` for a negative duration.
+
 ### `lx.mtu_align` — path MTU / packet-size alignment
 
 A node that sits right above an IP tunnel — via `detour`, via a group under `detour` or as a
@@ -1206,9 +1238,18 @@ One key in the root `lx` block, two shapes:
 | `clamp` **(default)** | limit is filled in | **lowered** to the limit; logged as configured → effective with the reason | left alone |
 
 No mode ever raises a value. `except` lists node tags that are never touched in any mode (an
-unknown tag is a start error, as is an unknown mode). No key = `clamp`; this is the contract `chain`
+unknown mode is rejected when the config is parsed, an unknown tag later, when the instance is
+built and every node is known). No key = `clamp`; this is the contract `chain`
 has kept since SPEC 073 ("`mtu` in the config = as standalone, the chain only lowers"), now applied
 under a plain `detour` as well.
+
+Validation errors (`sing-box check` catches all three too):
+
+- `lx.mtu_align.mode must be "off", "fill" or "clamp"` — an unknown mode, in the string and in
+  the object form; at config parse
+- `lx.mtu_align.except: empty tag` — an empty string in `except`
+- `lx.mtu_align.except: unknown outbound/endpoint tag: <tags>` — the tag is neither an outbound
+  nor an endpoint; checked before alignment, ahead of node creation
 
 **Capacity of a node** — how many bytes of IP packet it carries for the node above it:
 
@@ -1282,58 +1323,86 @@ with the real budget) is in [§4](#4-masque-outbound--cloudflare-warp-spec-021).
 
 ### `lx.quic_sniff_decoy` — QUIC through a relay that sniffs the SNI
 
-| Value | masque h3, hysteria2 and tuic dials that send one byte (`0x00`) before their first QUIC Initial |
-|---|---|
-| `"off"` / `false` / absent (**default**) | none |
-| `"direct"` | dials on the device's own socket: no `detour`, `detour` to a `direct` outbound, or `detour` to a group (selector, urltest) currently set to `direct` |
-| `"detour"` | dials carried by another outbound — a proxy or a tunnel |
-| `"all"` / `true` | every dial |
+One byte `0x00` ahead of the first QUIC Initial of a dial. The key takes an object only; the
+string (`"detour"`) and boolean (`true`) forms of lx.30–lx.32 are a load error.
 
 ```jsonc
-"lx": { "quic_sniff_decoy": "detour" }
+"lx": {
+  "quic_sniff_decoy": {
+    "mode": "detour",             // off (default) | direct | detour | all
+    "outbound_type": ["masque"],  // default: ["masque"]
+    "detour_type": ["vless"],     // default: ["vless"]
+    "send": "retry"               // retry (default) | always
+  }
+}
 ```
 
-A relay with Xray `sniffing` (`destOverride` with `quic`, no `routeOnly`) decrypts the QUIC
-Initial, takes the SNI and sends the flow to that name instead of the address you dialled: masque
-fails with `different public key than pinned`, hysteria2/tuic with a fake SNI reach someone else's
-host or nothing. Xray decides on the first datagram of a flow; a first byte that is not a QUIC
-long-header packet takes its QUIC sniffer out, and the destination stays as dialled. The server
-drops the byte unparsed (QUIC fixed bit clear). No delay, no extra handshake. Turn it on when a
-QUIC node works directly and breaks through a relay you do not control (h2 masque through the same
-relay usually works — SPEC 060). The modes keep the decoy off the path a DPI on your own uplink
-might react to: `"detour"` sends it only through relays, `"direct"` only on the device's own
-socket (a sniffer can sit upstream there too, e.g. a router egressing through Xray). sing-box
-relays (1.13+) do not rewrite the destination by sniffing and need nothing. Not covered: hysteria2 port hopping (`server_ports`). Details — [SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md).
+| Key | Values | Absent | Meaning |
+|---|---|---|---|
+| `mode` | `off`, `direct`, `detour`, `all` | `off` | On which paths the byte is allowed. `direct` — the node's UDP socket is a kernel socket: no `detour`, `detour` to a `direct` outbound, or to a group (selector, urltest) currently set to `direct`; `detour` — the UDP is carried by another outbound whose type is in `detour_type`; `all` — both. `off` sends nothing anywhere |
+| `outbound_type` | `masque`, `hysteria2`, `tuic`, `trusttunnel`, `vless`, `vmess`, `trojan`, `wireguard` | `["masque"]` | Which outbounds send the byte. The type selects the node; the byte goes only where the node actually opens QUIC (table below) |
+| `detour_type` | any outbound type except the groups `selector` and `urltest` | `["vless"]` | Through relays of which types. The relay is the nearest hop that carries the datagram; its type is read at dial time: the outbound the node's `detour` names, or, when `detour` is a group, the member the group picked for this dial |
+| `send` | `retry`, `always` | `retry` | `retry` — the first attempt is clean, a failed one is retried with the byte; `always` — every applicable dial carries the byte, the lx.30–lx.32 behaviour. Does not apply to `wireguard` |
 
-The same byte goes ahead of an AmneziaWG masquerade burst that starts with a QUIC-shaped packet
-(`ip: quic`, or a static `i1` taken from a QUIC capture), on the paths the mode selects, whenever
-that burst is sent at all (see `lx.awg_masquerade` below). `ip: dns|stun|sip` and plain junk are
-not QUIC-shaped and get no byte (SPEC 153).
+Load errors, all naming the key:
 
-### `lx.awg_masquerade` — where an AmneziaWG endpoint sends its masquerade burst
+- a string or a boolean — `lx.quic_sniff_decoy must be an object: {mode, outbound_type, detour_type, send}`;
+- `lx.quic_sniff_decoy.mode must be "off", "direct", "detour" or "all"`;
+- `lx.quic_sniff_decoy.send must be "retry" or "always"`;
+- `lx.quic_sniff_decoy.outbound_type: "<x>" is not a QUIC client; one of masque, hysteria2, tuic, trusttunnel, vless, vmess, trojan, wireguard`;
+- `lx.quic_sniff_decoy.detour_type: "<x>" is a group; name the member types, a group is resolved to the member it picks`; an empty string — `lx.quic_sniff_decoy.detour_type: empty type`; a type no registry of the build knows (a typo) — `lx.quic_sniff_decoy.detour_type: unknown outbound type "<x>"` at box start (`sing-box check` catches it too), only with `mode` other than `off`;
+- an unknown key in the object — a parse error prefixed `lx.quic_sniff_decoy`.
 
-| Value | The burst ahead of every handshake initiation (the `ip`/`id`/`ib` decoy, `i1`…`i5`, `jc` junk) is sent |
-|---|---|
-| `"all"` / `true` / absent (**default**) | on every path, over a `detour` too |
-| `"direct"` / `false` | only when the endpoint's socket is a kernel socket: no `detour`, `detour` to a `direct` outbound, or `detour` to a group (selector, urltest) currently set to `direct`. Over a proxy or tunnel detour the initiation goes alone |
+An object holding only the defaults is canonicalised to an absent key. There is no environment
+override.
 
-```jsonc
-"lx": { "awg_masquerade": "direct" }
-```
+**Why.** A relay with Xray `sniffing` (`destOverride` with `quic`, no `routeOnly`) decrypts the
+QUIC Initial, takes the SNI and sends the flow to that name instead of the address you dialled:
+masque fails with `different public key than pinned`, hysteria2/tuic with a fake SNI reach someone
+else's host or nothing. Xray decides on the first datagram of a flow; a first byte that is not a
+QUIC long-header packet takes its QUIC sniffer out, and the destination stays as dialled. The
+server drops the byte unparsed (QUIC fixed bit clear). sing-box relays (1.13+) do not rewrite the
+destination by sniffing and need nothing. The modes keep the byte off the path a DPI on your own
+uplink might react to: `detour` sends it only through relays of the listed types, `direct` only on
+the device's own socket.
 
-`"direct"` is for nodes behind a relay. The masquerade exists for the first mile. Over a detour the first mile sees the carrying protocol
-(VLESS, WireGuard, Hysteria…), never the burst, so there it protects nothing and costs: a relay
-with Xray `sniffing` (`destOverride` with `quic`, no `routeOnly`) parses the `ip: quic` decoy as
-the first datagram of the association, takes its SNI and sends the whole association — the
-WireGuard handshake behind it included — to that name; the endpoint never comes up while plain
-WireGuard through the same detour does (issue #64). A ~1200-byte Initial, up to five `i` packets and
-`jc` junk per handshake also ride every retry and rekey, inside a reduced-MTU WireGuard detour too.
-Only what the server ignores is dropped: `s1`–`s4` padding, `h1`–`h4`, AWG 3.x header protection,
-`content_padding_addition`, `random_trailers` and the timings are untouched, so the server accepts
-the handshake as before. The default `"all"` keeps the burst inside the tunnel; pair it with
-`lx.quic_sniff_decoy: "detour"` or `"all"` to pass a sniffing relay with the burst intact, or set
-`"direct"` to send no burst there. Details
-— [SPEC 153](../SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md).
+**`send: retry`.** The client cannot see whether a relay sniffs, and the byte on a path without a
+sniffer can get in the way (field report 2026-11-06: masque h3 through `socks` with UDP-over-TCP
+came up only with the byte off). So the first dial goes clean; if it fails, the retry carries the
+byte — at once when the error is fast and not a timeout (the usual sniffer signature: masque gets
+a foreign key within one RTT), otherwise on the next dial. The outcome is remembered per outbound
+and path (`direct`, or `detour:<type>`) in three states: `clean` (no byte) → on failure `armed`
+(next dial with the byte) → on success `decoy` (the byte stays); a failure with the byte goes back
+to `clean`, so a node that was merely down does not pin the byte on a path where the byte itself
+breaks the flow. A different path (the group switched from `direct` to a relay, or to a relay of
+another type) starts from `clean`; the memory lives with the outbound and dies when it is rebuilt
+or the box restarts. `send: always` has no memory: every applicable dial carries the byte.
+
+| `outbound_type` | When the byte goes | How a failure is detected |
+|---|---|---|
+| `masque` | h3 only (`vhttp: h3`, or the h3 leg of `auto`) | its own handshake; in `auto` the retry with the byte happens before the h2 fallback, a silent h3 falls back to h2 as before and the next h3 leg is `armed` |
+| `hysteria2`, `tuic` | always | indirectly: the handshake runs inside `sing-quic`; a conn closed less than 30 s after its dial counts as a failure, one that lived longer or is still open as a success, judged at the next dial. A false positive costs one byte on the next dial. Port hopping (`server_ports`) is not covered |
+| `trusttunnel` | only with the node's `quic: true` | as masque |
+| `vless`, `vmess`, `trojan` | only with the `xhttp` transport on h3 | as masque; the type checked is the node's, not the transport's |
+| `wireguard` | ahead of an AmneziaWG masquerade burst that starts with a QUIC-shaped packet (`ip: quic`, or a static `i1` taken from a QUIC capture); `ip` set to `dns`, `stun` or `sip` and plain junk get no byte | no retry: handshake retries reuse the socket, the relay has already decided on the first packet. The byte goes at once on every handshake on the paths `mode` selects; `send` does not apply |
+
+**What the retry does not catch.** A handshake that lands elsewhere without an error (`tuic` with
+`insecure` and an SNI that resolves to a live QUIC host): the failure shows up later as a dead
+connection, which the 30 s window catches only when the server drops it quickly; `masque` is
+protected by key pinning, `hysteria2` by the authentication round trip. A silent relay
+(unresolvable SNI): the first dial runs out its deadline, the first URL test of such a node fails,
+the second passes; in `auto` masque falls back to h2 on that bring-up. A relay that sniffs TLS on
+h2 is outside this key, the byte is for QUIC only. Details —
+[SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md).
+
+### `lx.awg_masquerade` — removed
+
+Removed in lx.33 (SPEC 151, owner 2026-11-07). Any value is a load error:
+`lx.awg_masquerade is removed: the AmneziaWG masquerade burst is sent on every path`. The
+AmneziaWG masquerade burst (the `ip`/`id`/`ib` decoy, `i1`…`i5`, `jc` junk) is sent on every path,
+over a `detour` too, as the lx.32 default `all` did. Drop the key from the config; the sniffing
+relay case (issue #64) is covered by `lx.quic_sniff_decoy` with `wireguard` in `outbound_type`.
+History — [SPEC 153](../SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md).
 
 ### Removed `route.lx_idle_*`
 

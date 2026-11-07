@@ -5,13 +5,21 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) + F (feature) — AWG-endpoint с маскировкой через `detour` на сниффящий релей не поднимается; новый ключ `lx.awg_masquerade` |
-| Статус | C (closed) — 2026-11-04: хук форка, ключ, фильтр пачки, зонд пути, юниты форка и lx-слоя (`c7f24d3f8`); loopback-стенд 2026-11-05 (Xray `v26.10.31`, `destOverride` с `quic`, без `routeOnly`): все восемь строк матрицы как в §4.3 — контроль `all`+`off` 0/3 с подменой назначения в логе Xray, дефолты 3/3 без пачки, `all`+`detour` 3/3 с байтом, прямой путь 3/3 с байтом и без, чистый WG через релей 3/3 (§6); issue #64 закрыт |
+| Статус | C (closed) — ключ `lx.awg_masquerade` удалён в SPEC 151 (владелец 2026-11-07): любое значение — ошибка загрузки, пачка шлётся на любом пути; фильтр пачки остаётся швом для байта по `outbound_type: wireguard`. Ниже — состояние на закрытие 2026-11-04/05, как хронология. 2026-11-04: хук форка, ключ, фильтр пачки, зонд пути, юниты форка и lx-слоя (`c7f24d3f8`); loopback-стенд 2026-11-05 (Xray `v26.10.31`, `destOverride` с `quic`, без `routeOnly`): все восемь строк матрицы как в §4.3 — контроль `all`+`off` 0/3 с подменой назначения в логе Xray, дефолты 3/3 без пачки, `all`+`detour` 3/3 с байтом, прямой путь 3/3 с байтом и без, чистый WG через релей 3/3 (§6); issue #64 закрыт |
 | Ветка | `lx`; форк `submodules/wireguard-go` ветка `lx-awg2-v007` |
 | Build-tag | — (`option`, `common/lxdatagram`, `transport/wireguard` собираются всегда; `with_awg` нужен, чтобы AWG-поля вообще прошли загрузку) |
 | Источник | [Issue #64](https://github.com/Leadaxe/sing-box-lx/issues/64) (владелец, 2026-11-04) по двум независимым полевым отчётам из Telegram LxBox 2026-11-03 |
 | Связано | [151](../151-QUIC_SNIFF_DECOY/SPEC.md) (§5.2 — тот же случай, тогда оставленный конфигу; байт-обманка), [009](../009-WIRESOCK_MASQUERADE_PROFILES/SPEC.md) (per-handshake приманка `ip=quic`, `SetDecoyPacketsFunc`), [007](../007-AWG_OVER_WIREGUARD_DETOUR_GUARD/SPEC.md) (AWG через WG-detour), [150](../150-QUIC_DETOUR_OVERSIZE_DATAGRAM/SPEC.md) (проверка «сокет ядра» на conn как надиалено) |
 
 ## 0. TL;DR
+
+> **Состояние после SPEC 151 (владелец 2026-11-07).** Ключ `lx.awg_masquerade` удалён: любое
+> значение — ошибка загрузки `lx.awg_masquerade is removed: the AmneziaWG masquerade burst is sent
+> on every path`. Маскировочная пачка идёт на любом пути (как дефолт `all` в lx.32), ветки `direct`
+> в фильтре больше нет. Сам фильтр в `transport/wireguard/handshake_burst_lx.go` остаётся швом:
+> байт перед QUIC-образной пачкой идёт по `lx.quic_sniff_decoy` с `wireguard` в `outbound_type`,
+> на каждом рукопожатии, без ретрая (SPEC 151 §3.4–3.5, §4). Разделы ниже описывают ключ таким,
+> каким он был в lx.31–lx.32; хронология и стенды сохранены.
 
 AmneziaWG-endpoint с маскировкой (`ip=quic` или статичный `i1`) через `detour` на VLESS/Xray
 не поднимается, тот же endpoint напрямую и чистый WireGuard через тот же `detour` работают.

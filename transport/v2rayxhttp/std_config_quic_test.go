@@ -100,7 +100,7 @@ func TestSTDConfigForQUICDisableSNI(t *testing.T) {
 	}
 	// The pool then runs this server without the Chrome profile, with a warning.
 	var warnings []string
-	newConn, err := newHTTP3Transport(N.SystemDialer, M.ParseSocksaddr("127.0.0.1:443"), newTestTLSClient(t, options), 0, func(message string) { warnings = append(warnings, message) })
+	newConn, err := newHTTP3Transport(N.SystemDialer, M.ParseSocksaddr("127.0.0.1:443"), newTestTLSClient(t, options), 0, func(message string) { warnings = append(warnings, message) }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

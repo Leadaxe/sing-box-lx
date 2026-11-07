@@ -96,11 +96,14 @@ WARP там, где чистый WireGuard не поднимается (пров
 Вся пачка перед инициацией — приманка `ip`, статичные `i1`…`i5`, junk `jc` — нужна на
 первой миле. Через `detour` первая миля видит несущий протокол, а релей с Xray-сниффингом
 разбирает приманку `ip=quic` как первую датаграмму ассоциации и уводит её на SNI из `id`
-(issue #64). Глобальный ключ `lx.awg_masquerade` (задача 153): `all` (дефолт) — пачка на любом
-пути; `direct` — только на сокете ядра (без `detour`, `detour` на `direct` или на группу, где
-сейчас выбран `direct`), через прокси/туннель идёт одна инициация. `lx.quic_sniff_decoy` (задача 151) достаёт и до этой пачки:
-перед QUIC-образной пачкой на выбранных режимом путях идёт байт `0x00`. Серверные поля
-(`s1`–`s4`, `h1`–`h4`, защита заголовка, хвосты) не трогаются.
+(issue #64). Пачка шлётся на любом пути, в том числе через `detour`; ключ `lx.awg_masquerade`
+задачи 153 (`all`/`direct`, lx.31–lx.32) удалён в задаче 151 (владелец 2026-11-07), любое его
+значение — ошибка загрузки. Сниффящий релей закрывается `lx.quic_sniff_decoy` (задача 151) с
+`wireguard` в `outbound_type`: перед QUIC-образной пачкой (`ip: quic` или статичный `i1` с
+QUIC-дампа) на путях из `mode` идёт байт `0x00`, сразу на каждом рукопожатии и без ретрая —
+повторы рукопожатия идут по тому же сокету, релей уже решил по первой датаграмме; `send` на
+`wireguard` не действует. Пачки `ip: dns|stun|sip` и обычный junk байта не получают. Серверные
+поля (`s1`–`s4`, `h1`–`h4`, защита заголовка, хвосты) не трогаются.
 
 ### AWG 3.x — защита заголовка, паддинг, хвосты, тайминги
 
@@ -225,7 +228,7 @@ padding и заголовки читаются из одного и того ж�
 | [081 — AWG_RECEIVE_INDEX_FIRST_CLASSIFICATION](../../TASKS/081-AWG_RECEIVE_INDEX_FIRST_CLASSIFICATION/SPEC.md) | Приём: data-пакет с живым receiver index классифицируется до handshake-кандидатов — downlink не теряет пакеты при широких `h1–h4` (точный размер AWG2, `random_trailers` AWG 3.1) | C |
 | [007 — AWG_OVER_WIREGUARD_DETOUR_GUARD](../../TASKS/007-AWG_OVER_WIREGUARD_DETOUR_GUARD/SPEC.md) | Guard AWG-over-WG — снят, причина устранена | C |
 | [101 — WG_HANDSHAKE_GSO_RETRY_LOG_NOISE](../../TASKS/101-WG_HANDSHAKE_GSO_RETRY_LOG_NOISE/SPEC.md) | Хендшейк-пути форка wireguard-go: успешная переотправка без UDP GSO — Verbose, не ERROR (LxBox #95) | I |
-| [153 — AWG_MASQUERADE_OVER_DETOUR](../../TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md) | `lx.awg_masquerade` (`all` дефолт / `direct`): в режиме `direct` через `detour` маскировочная пачка не шлётся; `lx.quic_sniff_decoy` достаёт до AWG-хендшейка (issue #64, два полевых отчёта 2026-11-03) | C |
+| [153 — AWG_MASQUERADE_OVER_DETOUR](../../TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md) | Хук форка `SetHandshakeBurstFunc` (пачка как голые payload'ы до headroom) и фильтр пачки — шов для байта `lx.quic_sniff_decoy` перед QUIC-образной пачкой (issue #64, два полевых отчёта 2026-11-03). Ключ `lx.awg_masquerade` (`all`/`direct`) удалён в задаче 151, владелец 2026-11-07 | C |
 | [112 — TAILSCALE_DIRECT_PATH_SEND_HEADROOM](../../TASKS/112-TAILSCALE_DIRECT_PATH_SEND_HEADROOM/SPEC.md) | Запас 8 байт перед датаграммой в `Bind.Send()` возвращён на всех путях отправки: графт обнулял его, и узел Tailscale (тот же форк) не слал трафик по прямому UDP-пути (issue #33) | C |
 
 Примеры конфигурации — [docs-lx/lx-config.md](../../../docs-lx/lx-config.md)

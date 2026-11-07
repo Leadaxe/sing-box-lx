@@ -1,7 +1,7 @@
 package wireguard
 
-// lx: SPEC 153 — the masquerade burst by path, one case per row of the
-// interaction table, plus the bind's own path classification.
+// lx: SPEC 151 — the sniff decoy ahead of the masquerade burst by policy and
+// path, plus the bind's own path classification.
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"testing"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxdatagram"
 	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
@@ -27,34 +28,51 @@ var (
 	burstDecoyByte   = lxdatagram.SniffDecoy()
 )
 
-func pathKernel(kernel bool) func() (bool, error) {
-	return func() (bool, error) { return kernel, nil }
+func pathOf(path lxdatagram.Path) func() (lxdatagram.Path, error) {
+	return func() (lxdatagram.Path, error) { return path, nil }
 }
 
+func burstPolicy(mode string, outboundTypes, detourTypes []string) option.LXQUICSniffDecoyResolved {
+	if outboundTypes == nil {
+		outboundTypes = []string{"wireguard"}
+	}
+	if detourTypes == nil {
+		detourTypes = []string{"vless"}
+	}
+	return option.LXQUICSniffDecoyResolved{Mode: mode, OutboundTypes: outboundTypes, DetourTypes: detourTypes, Retry: true}
+}
+
+// The byte by mode and path: the direct path (a kernel socket), a relay of a
+// type in detour_type, a relay of another type. The burst itself is never
+// stripped.
 func TestHandshakeBurstFilterTable(t *testing.T) {
 	t.Parallel()
 	quicBurst := [][]byte{burstQUICInitial, burstJunk}
+	withByte := append([][]byte{burstDecoyByte}, quicBurst...)
+	kernel := lxdatagram.Path{Kernel: true}
+	vless := lxdatagram.Path{Carrier: "vless"}
+	socks := lxdatagram.Path{Carrier: "socks"}
 	cases := []struct {
-		name       string
-		kernel     bool
-		masquerade string
-		sniff      string
-		want       [][]byte
+		name string
+		mode string
+		path lxdatagram.Path
+		want [][]byte
 	}{
-		{"direct / direct / off", true, option.LXAWGMasqueradeDirect, option.LXQUICSniffDecoyOff, quicBurst},
-		{"direct / all / detour", true, option.LXAWGMasqueradeAll, option.LXQUICSniffDecoyDetour, quicBurst},
-		{"direct / direct / direct", true, option.LXAWGMasqueradeDirect, option.LXQUICSniffDecoyDirect, append([][]byte{burstDecoyByte}, quicBurst...)},
-		{"direct / all / all", true, option.LXAWGMasqueradeAll, option.LXQUICSniffDecoyAll, append([][]byte{burstDecoyByte}, quicBurst...)},
-		{"detour / direct / all", false, option.LXAWGMasqueradeDirect, option.LXQUICSniffDecoyAll, nil},
-		{"detour / direct / off", false, option.LXAWGMasqueradeDirect, option.LXQUICSniffDecoyOff, nil},
-		{"detour / all / off", false, option.LXAWGMasqueradeAll, option.LXQUICSniffDecoyOff, quicBurst},
-		{"detour / all / direct", false, option.LXAWGMasqueradeAll, option.LXQUICSniffDecoyDirect, quicBurst},
-		{"detour / all / detour", false, option.LXAWGMasqueradeAll, option.LXQUICSniffDecoyDetour, append([][]byte{burstDecoyByte}, quicBurst...)},
-		{"detour / all / all", false, option.LXAWGMasqueradeAll, option.LXQUICSniffDecoyAll, append([][]byte{burstDecoyByte}, quicBurst...)},
+		{"off / kernel", option.LXQUICSniffDecoyOff, kernel, quicBurst},
+		{"off / vless", option.LXQUICSniffDecoyOff, vless, quicBurst},
+		{"direct / kernel", option.LXQUICSniffDecoyDirect, kernel, withByte},
+		{"direct / vless", option.LXQUICSniffDecoyDirect, vless, quicBurst},
+		{"detour / kernel", option.LXQUICSniffDecoyDetour, kernel, quicBurst},
+		{"detour / vless", option.LXQUICSniffDecoyDetour, vless, withByte},
+		{"detour / socks", option.LXQUICSniffDecoyDetour, socks, quicBurst},
+		{"detour / unknown carrier", option.LXQUICSniffDecoyDetour, lxdatagram.Path{}, quicBurst},
+		{"all / kernel", option.LXQUICSniffDecoyAll, kernel, withByte},
+		{"all / vless", option.LXQUICSniffDecoyAll, vless, withByte},
+		{"all / socks", option.LXQUICSniffDecoyAll, socks, quicBurst},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			filter := newHandshakeBurstFilter(tc.masquerade, tc.sniff, pathKernel(tc.kernel), nil)
+			filter := newHandshakeBurstFilter(burstPolicy(tc.mode, nil, nil), pathOf(tc.path), nil)
 			var got [][]byte
 			if filter == nil {
 				got = quicBurst
@@ -66,21 +84,20 @@ func TestHandshakeBurstFilterTable(t *testing.T) {
 	}
 }
 
-// "direct" installs a filter even with the decoy off: it strips over a
-// detour. The default ("all" with the decoy off) has nothing to do.
+// A filter is installed only when the policy covers wireguard.
 func TestHandshakeBurstFilterInstalledOnlyWhenItCanAct(t *testing.T) {
 	t.Parallel()
-	require.NotNil(t, newHandshakeBurstFilter(option.LXAWGMasqueradeDirect, option.LXQUICSniffDecoyOff, pathKernel(true), nil))
-	require.NotNil(t, newHandshakeBurstFilter(option.LXAWGMasqueradeAll, option.LXQUICSniffDecoyDetour, pathKernel(true), nil))
-	require.Nil(t, newHandshakeBurstFilter(option.LXAWGMasqueradeAll, option.LXQUICSniffDecoyOff, pathKernel(true), nil))
-	require.Nil(t, newHandshakeBurstFilter(option.LXAWGMasqueradeAll, "", pathKernel(true), nil))
+	require.NotNil(t, newHandshakeBurstFilter(burstPolicy(option.LXQUICSniffDecoyDetour, nil, nil), pathOf(lxdatagram.Path{Kernel: true}), nil))
+	require.Nil(t, newHandshakeBurstFilter(burstPolicy(option.LXQUICSniffDecoyOff, nil, nil), pathOf(lxdatagram.Path{Kernel: true}), nil))
+	require.Nil(t, newHandshakeBurstFilter(burstPolicy(option.LXQUICSniffDecoyAll, []string{"masque"}, nil), pathOf(lxdatagram.Path{Kernel: true}), nil))
+	require.Nil(t, newHandshakeBurstFilter(option.LXQUICSniffDecoyResolved{}, pathOf(lxdatagram.Path{Kernel: true}), nil))
 }
 
 // Only a burst that starts QUIC-shaped gets the byte: a dns/stun/sip decoy or
 // plain junk is not what the sniffer is after. An empty burst stays empty.
 func TestHandshakeBurstDecoyOnlyAheadOfQUIC(t *testing.T) {
 	t.Parallel()
-	filter := newHandshakeBurstFilter(option.LXAWGMasqueradeAll, option.LXQUICSniffDecoyAll, pathKernel(false), nil)
+	filter := newHandshakeBurstFilter(burstPolicy(option.LXQUICSniffDecoyAll, nil, nil), pathOf(lxdatagram.Path{Carrier: "vless"}), nil)
 	require.Equal(t, [][]byte{burstDNSQuery, burstJunk}, filter([][]byte{burstDNSQuery, burstJunk}))
 	require.Equal(t, [][]byte{burstJunk}, filter([][]byte{burstJunk}))
 	require.Nil(t, filter(nil))
@@ -94,15 +111,22 @@ func TestHandshakeBurstDecoyOnlyAheadOfQUIC(t *testing.T) {
 // assembled: the Send right behind reports the fault.
 func TestHandshakeBurstFilterKeepsBurstOnPathError(t *testing.T) {
 	t.Parallel()
-	filter := newHandshakeBurstFilter(option.LXAWGMasqueradeDirect, option.LXQUICSniffDecoyAll, func() (bool, error) { return false, errors.New("dial") }, nil)
+	filter := newHandshakeBurstFilter(burstPolicy(option.LXQUICSniffDecoyAll, nil, nil), func() (lxdatagram.Path, error) { return lxdatagram.Path{}, errors.New("dial") }, nil)
 	burst := [][]byte{burstQUICInitial}
 	require.Equal(t, burst, filter(burst))
 }
 
-// pipeDialer stands for a detour: its conns are not kernel sockets.
+// pipeDialer stands for a detour to a vless node: it records the carrier the
+// way the detour dialer does and its conns are not kernel sockets.
 type pipeDialer struct{}
 
-func (pipeDialer) DialContext(context.Context, string, M.Socksaddr) (net.Conn, error) {
+type pipeCarrier struct{ adapter.Outbound }
+
+func (pipeCarrier) Type() string { return "vless" }
+func (pipeCarrier) Tag() string  { return "relay" }
+
+func (pipeDialer) DialContext(ctx context.Context, _ string, _ M.Socksaddr) (net.Conn, error) {
+	adapter.RecordCarrier(ctx, pipeCarrier{})
 	client, server := net.Pipe()
 	go func() {
 		buf := make([]byte, 65535)
@@ -119,7 +143,7 @@ func (pipeDialer) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, er
 	return nil, errors.New("not a packet dialer")
 }
 
-func TestClientBindPathIsKernel(t *testing.T) {
+func TestClientBindPath(t *testing.T) {
 	t.Parallel()
 	ctx := pause.ContextWithDefaultManager(context.Background())
 	target := netip.MustParseAddrPort("127.0.0.1:9")
@@ -128,25 +152,25 @@ func TestClientBindPathIsKernel(t *testing.T) {
 	_, _, err := kernel.Open(0)
 	require.NoError(t, err)
 	t.Cleanup(func() { kernel.Close() })
-	isKernel, err := kernel.PathIsKernel()
+	path, err := kernel.Path()
 	require.NoError(t, err)
-	require.True(t, isKernel, "a system dialer yields a kernel socket")
+	require.Equal(t, lxdatagram.Path{Kernel: true}, path, "a system dialer yields a kernel socket")
 
 	detour := NewClientBind(ctx, nil, pipeDialer{}, true, target, [3]uint8{})
 	_, _, err = detour.Open(0)
 	require.NoError(t, err)
 	t.Cleanup(func() { detour.Close() })
-	isKernel, err = detour.PathIsKernel()
+	path, err = detour.Path()
 	require.NoError(t, err)
-	require.False(t, isKernel, "a pipe-carried conn is a detour")
+	require.Equal(t, lxdatagram.Path{Carrier: "vless"}, path, "a pipe-carried conn is a detour of the recorded type")
 
 	listen := NewClientBind(ctx, nil, N.SystemDialer, false, netip.AddrPort{}, [3]uint8{})
 	_, _, err = listen.Open(0)
 	require.NoError(t, err)
 	t.Cleanup(func() { listen.Close() })
-	isKernel, err = listen.PathIsKernel()
+	path, err = listen.Path()
 	require.NoError(t, err)
-	require.True(t, isKernel, "ListenPacket on the system dialer is a kernel socket")
+	require.Equal(t, lxdatagram.Path{Kernel: true}, path, "ListenPacket on the system dialer is a kernel socket")
 
 	require.True(t, bytes.Equal(lxdatagram.SniffDecoy(), []byte{0x00}))
 }

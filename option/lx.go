@@ -2,6 +2,9 @@ package option
 
 import (
 	"reflect"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sagernet/sing-box/schema"
@@ -25,23 +28,20 @@ type LXOptions struct {
 	// (lx: SPEC 120): a mode string, or an object with the mode and the tags
 	// to leave alone. Absent = "clamp".
 	MTUAlign *LXMTUAlign `json:"mtu_align,omitempty"`
-	// QUICSniffDecoy sends one non-QUIC byte ahead of the first Initial of
-	// masque h3, hysteria2 and tuic dials, so a relay that rewrites the
-	// destination by the sniffed SNI leaves it as dialled (lx: SPEC 151):
-	// "off", "direct", "detour" or "all", or a boolean for "all"/"off".
+	// QUICSniffDecoy sends one non-QUIC byte ahead of the first Initial of a
+	// QUIC dial, so a relay that rewrites the destination by the sniffed SNI
+	// leaves it as dialled (lx: SPEC 151). An object: mode (where), outbound_type
+	// (who), detour_type (through which relays), send (retry or always).
 	// Absent = off.
-	QUICSniffDecoy LXQUICSniffDecoy `json:"quic_sniff_decoy,omitempty"`
-	// AWGMasquerade says on which paths an AmneziaWG endpoint sends its
-	// masquerade burst (per-handshake decoy, i1..i5, Jc junk) ahead of the
-	// handshake initiation (lx: SPEC 153): "all" — on every path, "direct" —
-	// only when the endpoint's socket is a kernel socket, not over a detour;
-	// or a boolean for "all"/"direct". Absent = all.
-	AWGMasquerade LXAWGMasquerade `json:"awg_masquerade,omitempty"`
+	QUICSniffDecoy *LXQUICSniffDecoyOptions `json:"quic_sniff_decoy,omitempty"`
+	// AWGMasquerade is removed (lx: SPEC 153 → 151): any value fails the load.
+	AWGMasquerade *LXRemovedAWGMasquerade `json:"awg_masquerade,omitempty"`
 }
 
-// LXWGOptions holds the WG/AWG endpoint knobs. The three idle keys carry the
-// SPEC 020 semantics; they act only in builds with with_lx_idle_suspend, and
-// the router refuses them at start otherwise.
+// LXWGOptions holds the WG/AWG endpoint knobs: the three idle keys carry the
+// SPEC 020 semantics, lazy_build, build_max and build_overflow are SPEC 097.
+// All six act only in builds with with_lx_idle_suspend; without the tag the
+// router refuses them at start.
 type LXWGOptions struct {
 	// IdleSuspend is the idle threshold after which an endpoint outside the
 	// active routing tree is brought Down. 0 / absent disables the idle tick.
@@ -54,14 +54,15 @@ type LXWGOptions struct {
 	// an explicit "0" disables teardown, hence the pointer. Requires IdleSuspend.
 	IdleTeardown *badoption.Duration `json:"idle_teardown,omitempty"`
 	// LazyBuild starts endpoints torn down and builds the device on first dial
-	// (SPEC 097). Requires IdleSuspend. Parsed and validated only until 097.
+	// (SPEC 097). Requires IdleSuspend. An endpoint with listen_port is never
+	// lazy.
 	LazyBuild bool `json:"lazy_build,omitempty"`
 	// BuildMax caps the number of simultaneously built devices; 0 = no cap
-	// (SPEC 097). Parsed and validated only until 097.
+	// (SPEC 097). Does not require LazyBuild.
 	BuildMax int `json:"build_max,omitempty"`
 	// BuildOverflow is what happens when all BuildMax devices carry live
-	// connections: "wait" (default) or "build" (SPEC 097). Parsed and validated
-	// only until 097.
+	// connections: "wait" (default) waits within the dial deadline, "build"
+	// builds above the cap (SPEC 097).
 	BuildOverflow string `json:"build_overflow,omitempty"`
 }
 
@@ -137,9 +138,10 @@ func validateLXMTUAlignMode(mode string) error {
 	return E.New(`lx.mtu_align.mode must be "off", "fill" or "clamp"`)
 }
 
-// The lx.quic_sniff_decoy modes (lx: SPEC 151): which QUIC dials carry the
-// decoy, by what lies under the QUIC stack — "direct" a kernel socket,
-// "detour" a conn carried by another outbound.
+// The lx.quic_sniff_decoy.mode values (lx: SPEC 151): on which paths the
+// decoy is allowed, by what lies under the QUIC stack — "direct" a kernel
+// socket, "detour" a conn carried by another outbound of a type in
+// detour_type, "all" both, "off" nowhere.
 const (
 	LXQUICSniffDecoyOff    = "off"
 	LXQUICSniffDecoyDirect = "direct"
@@ -147,78 +149,113 @@ const (
 	LXQUICSniffDecoyAll    = "all"
 )
 
-// LXQUICSniffDecoy is lx.quic_sniff_decoy: a mode string, or a boolean that
-// reads as "all" (true) or "off" (false). The mode string is the canonical
-// output.
-type LXQUICSniffDecoy string
-
-func (o *LXQUICSniffDecoy) UnmarshalJSON(bytes []byte) error {
-	var enabled bool
-	if err := json.Unmarshal(bytes, &enabled); err == nil {
-		if enabled {
-			*o = LXQUICSniffDecoyAll
-		} else {
-			*o = LXQUICSniffDecoyOff
-		}
-		return nil
-	}
-	var mode string
-	if err := json.Unmarshal(bytes, &mode); err != nil {
-		return E.New(`lx.quic_sniff_decoy must be "off", "direct", "detour", "all" or a boolean`)
-	}
-	switch mode {
-	case LXQUICSniffDecoyOff, LXQUICSniffDecoyDirect, LXQUICSniffDecoyDetour, LXQUICSniffDecoyAll:
-		*o = LXQUICSniffDecoy(mode)
-		return nil
-	}
-	return E.New(`lx.quic_sniff_decoy must be "off", "direct", "detour", "all" or a boolean`)
-}
-
-func (o LXQUICSniffDecoy) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
-	return builder.Define("LXQUICSniffDecoy", func() (*schema.Node, error) {
-		return schema.AnyOf(schema.StringEnum(LXQUICSniffDecoyOff, LXQUICSniffDecoyDirect, LXQUICSniffDecoyDetour, LXQUICSniffDecoyAll), schema.BooleanNode()), nil
-	})
-}
-
-// The lx.awg_masquerade modes (lx: SPEC 153): "all" (the default) sends the
-// masquerade burst on every path, "direct" only on a kernel socket (no detour,
-// or a detour that ends in a direct outbound).
+// The lx.quic_sniff_decoy.send values (lx: SPEC 151): "retry" — the first
+// attempt is clean and a failed one is retried with the decoy, "always" —
+// every applicable dial carries it.
 const (
-	LXAWGMasqueradeDirect = "direct"
-	LXAWGMasqueradeAll    = "all"
+	LXQUICSniffDecoySendRetry  = "retry"
+	LXQUICSniffDecoySendAlways = "always"
 )
 
-// LXAWGMasquerade is lx.awg_masquerade: a mode string, or a boolean that
-// reads as "all" (true) or "direct" (false). The mode string is the canonical
-// output.
-type LXAWGMasquerade string
+// LXQUICSniffDecoyOutboundTypes are the outbound types that can send the
+// decoy, in the order the docs list them. The type selects the node; the byte
+// goes only where the node actually opens QUIC (masque h3, trusttunnel with
+// quic, vless/vmess/trojan with XHTTP on h3, wireguard before a QUIC-shaped
+// AmneziaWG burst).
+var LXQUICSniffDecoyOutboundTypes = []string{"masque", "hysteria2", "tuic", "trusttunnel", "vless", "vmess", "trojan", "wireguard"}
 
-func (o *LXAWGMasquerade) UnmarshalJSON(bytes []byte) error {
-	var enabled bool
-	if err := json.Unmarshal(bytes, &enabled); err == nil {
-		if enabled {
-			*o = LXAWGMasqueradeAll
-		} else {
-			*o = LXAWGMasqueradeDirect
-		}
-		return nil
-	}
-	var mode string
-	if err := json.Unmarshal(bytes, &mode); err != nil {
-		return E.New(`lx.awg_masquerade must be "direct", "all" or a boolean`)
-	}
-	switch mode {
-	case LXAWGMasqueradeDirect, LXAWGMasqueradeAll:
-		*o = LXAWGMasquerade(mode)
-		return nil
-	}
-	return E.New(`lx.awg_masquerade must be "direct", "all" or a boolean`)
+// lxQUICSniffDecoyDefaultOutboundTypes and lxQUICSniffDecoyDefaultDetourTypes
+// are the lists an absent key stands for (owner 2026-11-07).
+var (
+	lxQUICSniffDecoyDefaultOutboundTypes = []string{"masque"}
+	lxQUICSniffDecoyDefaultDetourTypes   = []string{"vless"}
+)
+
+// lxQUICSniffDecoyGroupTypes cannot be a detour_type: a group is always
+// resolved to the member it picked.
+var lxQUICSniffDecoyGroupTypes = []string{"selector", "urltest"}
+
+const errLXQUICSniffDecoyForm = "lx.quic_sniff_decoy must be an object: {mode, outbound_type, detour_type, send}"
+
+type _LXQUICSniffDecoyOptions struct {
+	Mode         string                     `json:"mode,omitempty" enum:"off,direct,detour,all"`
+	OutboundType badoption.Listable[string] `json:"outbound_type,omitempty"`
+	DetourType   badoption.Listable[string] `json:"detour_type,omitempty"`
+	Send         string                     `json:"send,omitempty" enum:"retry,always"`
 }
 
-func (o LXAWGMasquerade) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
-	return builder.Define("LXAWGMasquerade", func() (*schema.Node, error) {
-		return schema.AnyOf(schema.StringEnum(LXAWGMasqueradeDirect, LXAWGMasqueradeAll), schema.BooleanNode()), nil
+// LXQUICSniffDecoyOptions is lx.quic_sniff_decoy (lx: SPEC 151). Only the
+// object form is accepted: the string and boolean forms of lx.30–lx.32 are a
+// load error (owner 2026-11-07).
+type LXQUICSniffDecoyOptions _LXQUICSniffDecoyOptions
+
+func (o *LXQUICSniffDecoyOptions) UnmarshalJSON(bytes []byte) error {
+	trimmed := strings.TrimSpace(string(bytes))
+	if !strings.HasPrefix(trimmed, "{") {
+		return E.New(errLXQUICSniffDecoyForm)
+	}
+	if err := json.UnmarshalDisallowUnknownFields(bytes, (*_LXQUICSniffDecoyOptions)(o)); err != nil {
+		return E.Cause(err, "lx.quic_sniff_decoy")
+	}
+	return o.validate()
+}
+
+func (o LXQUICSniffDecoyOptions) validate() error {
+	switch o.Mode {
+	case "", LXQUICSniffDecoyOff, LXQUICSniffDecoyDirect, LXQUICSniffDecoyDetour, LXQUICSniffDecoyAll:
+	default:
+		return E.New(`lx.quic_sniff_decoy.mode must be "off", "direct", "detour" or "all"`)
+	}
+	switch o.Send {
+	case "", LXQUICSniffDecoySendRetry, LXQUICSniffDecoySendAlways:
+	default:
+		return E.New(`lx.quic_sniff_decoy.send must be "retry" or "always"`)
+	}
+	for _, outboundType := range o.OutboundType {
+		if !slices.Contains(LXQUICSniffDecoyOutboundTypes, outboundType) {
+			return E.New("lx.quic_sniff_decoy.outbound_type: ", strconv.Quote(outboundType), " is not a QUIC client; one of ", strings.Join(LXQUICSniffDecoyOutboundTypes, ", "))
+		}
+	}
+	for _, detourType := range o.DetourType {
+		if detourType == "" {
+			return E.New("lx.quic_sniff_decoy.detour_type: empty type")
+		}
+		if slices.Contains(lxQUICSniffDecoyGroupTypes, detourType) {
+			return E.New("lx.quic_sniff_decoy.detour_type: ", strconv.Quote(detourType), " is a group; name the member types, a group is resolved to the member it picks")
+		}
+	}
+	return nil
+}
+
+func (o LXQUICSniffDecoyOptions) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("LXQUICSniffDecoyOptions", func() (*schema.Node, error) {
+		node := schema.StrictObject()
+		err := builder.FlattenStruct(node, reflect.TypeFor[LXQUICSniffDecoyOptions]())
+		if err != nil {
+			return nil, err
+		}
+		return node, nil
 	})
+}
+
+// LXRemovedAWGMasquerade is the guard on the removed lx.awg_masquerade (SPEC
+// 153, removed by SPEC 151, owner 2026-11-07): any value is a load error, so a
+// config that still carries the key fails with the reason instead of an
+// unknown-field message. The masquerade burst is sent on every path.
+type LXRemovedAWGMasquerade struct{}
+
+const errLXAWGMasqueradeRemoved = "lx.awg_masquerade is removed: the AmneziaWG masquerade burst is sent on every path"
+
+func (LXRemovedAWGMasquerade) UnmarshalJSON([]byte) error {
+	return E.New(errLXAWGMasqueradeRemoved)
+}
+
+func (LXRemovedAWGMasquerade) MarshalJSON() ([]byte, error) {
+	return nil, E.New(errLXAWGMasqueradeRemoved)
+}
+
+func (LXRemovedAWGMasquerade) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return &schema.Node{Deprecated: true}, nil
 }
 
 // LXBuildOverflow is the resolved lx.wg.build_overflow.
@@ -231,8 +268,8 @@ const (
 
 // LXResolved carries the resolved `lx` values: aliases folded in, defaults
 // applied, validated. It is registered in the box context (service.ContextWithPtr)
-// and read by the router, WG endpoints and masque outbounds. A nil *LXResolved
-// means every knob is off.
+// and read by the router, WG endpoints, and masque and trusttunnel outbounds.
+// A nil *LXResolved means every knob is at its default.
 type LXResolved struct {
 	WG     LXWGResolved
 	MASQUE LXMASQUEResolved
@@ -241,12 +278,31 @@ type LXResolved struct {
 	TrustTunnel LXTrustTunnelResolved
 	// MTUAlign always carries a mode: "clamp" when the key is absent.
 	MTUAlign LXMTUAlignResolved
-	// QUICSniffDecoy is the lx.quic_sniff_decoy mode (lx: SPEC 151); "" or
-	// "off" when the key is absent.
-	QUICSniffDecoy string
-	// AWGMasquerade is the lx.awg_masquerade mode (lx: SPEC 153); "" or
-	// "all" when the key is absent.
-	AWGMasquerade string
+	// QUICSniffDecoy is the resolved lx.quic_sniff_decoy (lx: SPEC 151):
+	// defaults applied, mode "off" when the key is absent.
+	QUICSniffDecoy LXQUICSniffDecoyResolved
+}
+
+// LXQUICSniffDecoyResolved is lx.quic_sniff_decoy with its defaults applied
+// (lx: SPEC 151): Mode "off" when the key is absent, OutboundTypes
+// ["masque"] and DetourTypes ["vless"] when their lists are absent, Retry true
+// unless send is "always".
+type LXQUICSniffDecoyResolved struct {
+	Mode          string
+	OutboundTypes []string
+	DetourTypes   []string
+	Retry         bool
+}
+
+// Enabled reports whether outboundType is covered: a mode other than off and
+// the type in outbound_type.
+func (r LXQUICSniffDecoyResolved) Enabled(outboundType string) bool {
+	return r.Mode != "" && r.Mode != LXQUICSniffDecoyOff && slices.Contains(r.OutboundTypes, outboundType)
+}
+
+// DetourMatches reports whether a relay of detourType is in detour_type.
+func (r LXQUICSniffDecoyResolved) DetourMatches(detourType string) bool {
+	return detourType != "" && slices.Contains(r.DetourTypes, detourType)
 }
 
 type LXWGResolved struct {
@@ -301,22 +357,43 @@ func (r *LXResolved) TrustTunnelOrZero() LXTrustTunnelResolved {
 	return r.TrustTunnel
 }
 
-// QUICSniffDecoyOrOff returns the lx.quic_sniff_decoy mode, or "off" when r
-// is nil or the key is absent.
-func (r *LXResolved) QUICSniffDecoyOrOff() string {
-	if r == nil || r.QUICSniffDecoy == "" {
-		return LXQUICSniffDecoyOff
+// QUICSniffDecoyOrOff returns the resolved lx.quic_sniff_decoy, or the
+// all-off policy when r is nil.
+func (r *LXResolved) QUICSniffDecoyOrOff() LXQUICSniffDecoyResolved {
+	if r == nil {
+		return resolveLXQUICSniffDecoy(nil)
 	}
 	return r.QUICSniffDecoy
 }
 
-// AWGMasqueradeOrAll returns the lx.awg_masquerade mode, or "all" when r is
-// nil or the key is absent.
-func (r *LXResolved) AWGMasqueradeOrAll() string {
-	if r == nil || r.AWGMasquerade == "" {
-		return LXAWGMasqueradeAll
+// resolveLXQUICSniffDecoy applies the defaults; a nil key is mode off.
+func resolveLXQUICSniffDecoy(o *LXQUICSniffDecoyOptions) LXQUICSniffDecoyResolved {
+	resolved := LXQUICSniffDecoyResolved{
+		Mode:          LXQUICSniffDecoyOff,
+		OutboundTypes: lxQUICSniffDecoyDefaultOutboundTypes,
+		DetourTypes:   lxQUICSniffDecoyDefaultDetourTypes,
+		Retry:         true,
 	}
-	return r.AWGMasquerade
+	if o == nil {
+		return resolved
+	}
+	if o.Mode != "" {
+		resolved.Mode = o.Mode
+	}
+	if len(o.OutboundType) > 0 {
+		resolved.OutboundTypes = append([]string(nil), o.OutboundType...)
+	}
+	if len(o.DetourType) > 0 {
+		resolved.DetourTypes = append([]string(nil), o.DetourType...)
+	}
+	resolved.Retry = o.Send != LXQUICSniffDecoySendAlways
+	return resolved
+}
+
+// isDefault reports whether the object says nothing an absent key would not:
+// mode off or unset, no lists, send unset or retry.
+func (o *LXQUICSniffDecoyOptions) isDefault() bool {
+	return o == nil || (o.Mode == "" || o.Mode == LXQUICSniffDecoyOff) && len(o.OutboundType) == 0 && len(o.DetourType) == 0 && (o.Send == "" || o.Send == LXQUICSniffDecoySendRetry)
 }
 
 // MTUAlignOrDefault returns the mtu_align policy, or the default (clamp,
@@ -349,14 +426,22 @@ func ResolveLX(options *Options) (*LXResolved, error) {
 	if err != nil {
 		return nil, err
 	}
-	if lx.QUICSniffDecoy == LXQUICSniffDecoyOff {
-		lx.QUICSniffDecoy = ""
+	if lx.QUICSniffDecoy != nil {
+		if err := lx.QUICSniffDecoy.validate(); err != nil {
+			return nil, err
+		}
 	}
-	resolved.QUICSniffDecoy = string(lx.QUICSniffDecoy)
-	if lx.AWGMasquerade == LXAWGMasqueradeAll {
-		lx.AWGMasquerade = ""
+	resolved.QUICSniffDecoy = resolveLXQUICSniffDecoy(lx.QUICSniffDecoy)
+	if lx.QUICSniffDecoy.isDefault() {
+		lx.QUICSniffDecoy = nil
+	} else {
+		decoy := *lx.QUICSniffDecoy
+		if decoy.Send == LXQUICSniffDecoySendRetry {
+			decoy.Send = ""
+		}
+		lx.QUICSniffDecoy = &decoy
 	}
-	resolved.AWGMasquerade = string(lx.AWGMasquerade)
+	lx.AWGMasquerade = nil
 
 	if wg != (LXWGOptions{}) {
 		lx.WG = &wg
@@ -372,7 +457,7 @@ func ResolveLX(options *Options) (*LXResolved, error) {
 	if lx.MTUAlign != nil && lx.MTUAlign.Mode == "" && len(lx.MTUAlign.Except) == 0 {
 		lx.MTUAlign = nil
 	}
-	if lx.WG == nil && lx.MASQUE == nil && lx.TrustTunnel == nil && lx.MTUAlign == nil && lx.QUICSniffDecoy == "" && lx.AWGMasquerade == "" {
+	if lx.WG == nil && lx.MASQUE == nil && lx.TrustTunnel == nil && lx.MTUAlign == nil && lx.QUICSniffDecoy == nil {
 		options.LX = nil
 	} else {
 		options.LX = &lx

@@ -146,7 +146,13 @@ outbound'ов, где исходящая датаграмма помечаетс
   QUIC-сниффер собирает Initial-пакеты 200 мс и разбирает h3 всегда. Лечение на релее —
   `routeOnly: true`; разбор и код Xray — SPEC 150 §3.x. Со стороны клиента — SPEC 151: один
   байт `0x00` перед первым Initial выводит QUIC-сниффер Xray из потока (решает первая
-  датаграмма), без задержки; то же для hysteria2/tuic. Ключ `lx.quic_sniff_decoy`: `off` (дефолт) / `direct` / `detour` / `all`.
+  датаграмма), без задержки; то же для hysteria2/tuic, trusttunnel h3, XHTTP h3 и маскировки AWG.
+  Ключ `lx.quic_sniff_decoy` — объект `{mode, outbound_type, detour_type, send}`: `mode` `off`
+  (дефолт) / `direct` / `detour` / `all` — на каких путях; `outbound_type` (дефолт `["masque"]`)
+  — какие узлы; `detour_type` (дефолт `["vless"]`) — через релеи каких типов, тип читается по
+  участнику, которого выбрала группа; `send: retry` (дефолт) — первый дозвон без байта, неудачный
+  повторяется с байтом (память `clean → armed → decoy` на outbound и путь), `always` — байт на
+  каждом дозвоне. Строковая/булева форма lx.30–lx.32 — ошибка загрузки (владелец 2026-11-07).
 - **Внешний QUIC к серверу стартует с `mtu + 51`** (кламп 1200…1452), чтобы
   внутренний пакет размером `mtu` помещался в датаграмму с первого пакета, а не
   после первой пробы PMTUD (SPEC 120 §1.3).
@@ -168,7 +174,7 @@ outbound'ов, где исходящая датаграмма помечаетс
 | [137 — MASQUE_DRAINH3_LEAK](../../TASKS/137-MASQUE_DRAINH3_LEAK/SPEC.md) | Issue #52: в `auto` дренаж уже потреблённого результата h3 вешал горутину навсегда; она держала старый Outbound и через его контекст весь закрытый Box — мёртвый Box на каждый lxd apply, куча у `GOMEMLIMIT`, GC-спираль на роутере | I |
 | [146 — MASQUE_CLOSE_WEDGE_DETOUR_DEADLINE](../../TASKS/146-MASQUE_CLOSE_WEDGE_DETOUR_DEADLINE/SPEC.md) | Дампы 2026-11-01 (#61, #50): `Box.Close` стоял за `Outbound.Close` на `runMu`, который держал h3-dial через detour — quic-go ждал слушателя на conn без рабочего `SetReadDeadline` (vless XUDP над ws). Дедлайн-обёртка на detour-conn; `Close` отменяет connect и не берёт `runMu` | I |
 | [150 — QUIC_DETOUR_OVERSIZE_DATAGRAM](../../TASKS/150-QUIC_DETOUR_OVERSIZE_DATAGRAM/SPEC.md) | Отчёт zomg 2026-11-01: h3 через любой потоковый `detour` умирал через 1–5 с после хендшейка — WARP шлёт PMTUD-зонды 1453–1462 байт сверх объявленных quic-go 1452, сокет ядра их усекает, а vless/XUDP отдают `io.ErrShortBuffer`, фатальный для quic-go. `common/lxdatagram.TruncateReads` даёт detour-conn семантику ядра; тот же шов у апстримных hysteria2/tuic | I |
-| [151 — QUIC_SNIFF_DECOY](../../TASKS/151-QUIC_SNIFF_DECOY/SPEC.md) | Клиентский обход сниффинга Xray (`destOverride` без `routeOnly`): датаграмма `0x00` перед первым Initial, QUIC-сниффер выбывает, назначение остаётся исходным; masque h3 + hysteria2/tuic, стенд 0/5 → 5/5 без задержки; ключ `lx.quic_sniff_decoy`: `off` (дефолт) / `direct` / `detour` / `all` |
+| [151 — QUIC_SNIFF_DECOY](../../TASKS/151-QUIC_SNIFF_DECOY/SPEC.md) | Клиентский обход сниффинга Xray (`destOverride` без `routeOnly`): датаграмма `0x00` перед первым Initial, QUIC-сниффер выбывает, назначение остаётся исходным; masque h3 + hysteria2/tuic + trusttunnel h3 + XHTTP h3 + маскировка AWG, стенд строковой формы 0/5 → 5/5 без задержки; ключ `lx.quic_sniff_decoy` — объект `{mode, outbound_type, detour_type, send}`, байт по умолчанию только на повторе после неудачного чистого дозвона (`send: retry`), тип релея — по фактически выбранному участнику группы; `lx.awg_masquerade` удалён | I |
 | [152 — TUNNEL_SESSION_INTERNAL_UNDERLAY](../../TASKS/152-TUNNEL_SESSION_INTERNAL_UNDERLAY/SPEC.md) | Разбор 2026-11-03: `masque` за селектором без `interrupt_exist_connections` оставался на старом узле после смены выбора — подложка сессии дайлилась в контексте первого пользовательского соединения и считалась внешней. `dialer.NewSessionDialerLx` на дайлере подложки (как апстримный `ContextForMultiplexSession` у mux); тот же шов у trusttunnel и через `lxdatagram.Dialer` у hysteria2/tuic | I |
 
 Полная таблица параметров — `CONFIG.md` в задаче 021; таблица соответствия

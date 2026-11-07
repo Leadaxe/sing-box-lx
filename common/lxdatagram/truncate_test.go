@@ -140,7 +140,7 @@ func (d *recordingDialer) ListenPacket(context.Context, M.Socksaddr) (net.Packet
 
 func TestDialerWrapsOnlyUDP(t *testing.T) {
 	framed := newFramedConn(datagram(1462, 0xa1))
-	dialer := Dialer(context.Background(), &recordingDialer{conn: framed}, nil)
+	dialer := Dialer(context.Background(), "hysteria2", &recordingDialer{conn: framed}, nil)
 	destination := M.ParseSocksaddr("1.1.1.1:443")
 
 	tcpConn, err := dialer.DialContext(context.Background(), N.NetworkTCP, destination)

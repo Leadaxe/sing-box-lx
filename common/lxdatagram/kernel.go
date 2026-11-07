@@ -2,12 +2,11 @@ package lxdatagram
 
 // lx: the path under a datagram conn — a kernel socket or another outbound.
 //
-// Three things in this fork depend on what carries a datagram conn. Reads of a
+// Two things in this fork depend on what carries a datagram conn. Reads of a
 // conn tunnelled through a proxy need kernel truncation semantics, a kernel
 // socket already has them (SPEC 150, truncate.go). The sniff decoy goes out by
-// path, lx.quic_sniff_decoy direct/detour (SPEC 151, decoy.go). The AmneziaWG
-// masquerade burst is for the first mile only, lx.awg_masquerade (SPEC 153,
-// transport/wireguard). All three ask the same question of the conn as
+// path, lx.quic_sniff_decoy mode direct/detour (SPEC 151, decoy.go), for the
+// QUIC clients and the AmneziaWG masquerade burst alike. Both ask the same question of the conn as
 // dialled, before any wrapper of their own: is there a kernel descriptor
 // under it. "Direct" is therefore a property of the dialled conn, not of the
 // config: no detour, a detour to a direct outbound, or a detour to a group

@@ -3,6 +3,7 @@ package option
 import (
 	"context"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,12 @@ func mustDecodeLXConfig(t *testing.T, content string) Options {
 		t.Fatalf("decode %s: %v", content, err)
 	}
 	return options
+}
+
+func mustResolveLXResolved(t *testing.T, content string) *LXResolved {
+	t.Helper()
+	_, resolved := mustResolveLX(t, content)
+	return resolved
 }
 
 func mustResolveLX(t *testing.T, content string) (Options, *LXResolved) {
@@ -63,9 +70,10 @@ func TestLXBlockParsesEveryKey(t *testing.T) {
 			BuildMax:             4,
 			BuildOverflow:        LXBuildOverflowBuild,
 		},
-		MASQUE:      LXMASQUEResolved{IdleTimeout: 2 * time.Minute},
-		TrustTunnel: LXTrustTunnelResolved{IdleTimeout: 3 * time.Minute},
-		MTUAlign:    LXMTUAlignResolved{Mode: LXMTUAlignClamp},
+		MASQUE:         LXMASQUEResolved{IdleTimeout: 2 * time.Minute},
+		TrustTunnel:    LXTrustTunnelResolved{IdleTimeout: 3 * time.Minute},
+		MTUAlign:       LXMTUAlignResolved{Mode: LXMTUAlignClamp},
+		QUICSniffDecoy: resolveLXQUICSniffDecoy(nil),
 	}
 	if !reflect.DeepEqual(*resolved, want) {
 		t.Fatalf("resolved = %+v, want %+v", *resolved, want)
@@ -86,9 +94,10 @@ func TestLXBlockEmptyEqualsAbsent(t *testing.T) {
 }
 
 // lxDefaults is what an absent block resolves to: every knob off, mtu_align
-// at its default (lx: SPEC 120).
+// at its default (lx: SPEC 120), quic_sniff_decoy off with its default lists
+// (lx: SPEC 151).
 func lxDefaults() LXResolved {
-	return LXResolved{MTUAlign: LXMTUAlignResolved{Mode: LXMTUAlignClamp}}
+	return LXResolved{MTUAlign: LXMTUAlignResolved{Mode: LXMTUAlignClamp}, QUICSniffDecoy: resolveLXQUICSniffDecoy(nil)}
 }
 
 func TestLXResolvedNilIsAllOff(t *testing.T) {
@@ -340,84 +349,68 @@ func TestLXMTUAlign(t *testing.T) {
 	}
 }
 
-// lx.quic_sniff_decoy (lx: SPEC 151): absent = off; a mode string or a
-// boolean ("all"/"off"); off canonicalizes to absent, any other mode stays.
+// lx.quic_sniff_decoy (lx: SPEC 151): an object with four optional keys and
+// their defaults (mode off, outbound_type [masque], detour_type [vless], send
+// retry); the string and boolean forms are a load error; a default-only
+// object canonicalizes to an absent key.
 func TestLXQUICSniffDecoy(t *testing.T) {
 	t.Parallel()
-	if (*LXResolved)(nil).QUICSniffDecoyOrOff() != LXQUICSniffDecoyOff {
-		t.Fatal("a nil *LXResolved must read as off")
+	off := (*LXResolved)(nil).QUICSniffDecoyOrOff()
+	if off.Mode != LXQUICSniffDecoyOff || off.Enabled("masque") || !off.Retry {
+		t.Fatalf("a nil *LXResolved must read as off with the defaults: %+v", off)
 	}
 	cases := []struct {
-		content, want string
-		canonical     LXQUICSniffDecoy
+		content   string
+		want      LXQUICSniffDecoyResolved
+		canonical string // marshalled lx block, "" for absent
 	}{
-		{`{}`, LXQUICSniffDecoyOff, ""},
-		{`{"lx":{"quic_sniff_decoy":false}}`, LXQUICSniffDecoyOff, ""},
-		{`{"lx":{"quic_sniff_decoy":"off"}}`, LXQUICSniffDecoyOff, ""},
-		{`{"lx":{"quic_sniff_decoy":true}}`, LXQUICSniffDecoyAll, LXQUICSniffDecoyAll},
-		{`{"lx":{"quic_sniff_decoy":"all"}}`, LXQUICSniffDecoyAll, LXQUICSniffDecoyAll},
-		{`{"lx":{"quic_sniff_decoy":"direct"}}`, LXQUICSniffDecoyDirect, LXQUICSniffDecoyDirect},
-		{`{"lx":{"quic_sniff_decoy":"detour"}}`, LXQUICSniffDecoyDetour, LXQUICSniffDecoyDetour},
+		{`{}`, LXQUICSniffDecoyResolved{Mode: "off", OutboundTypes: []string{"masque"}, DetourTypes: []string{"vless"}, Retry: true}, ""},
+		{`{"lx":{"quic_sniff_decoy":{}}}`, LXQUICSniffDecoyResolved{Mode: "off", OutboundTypes: []string{"masque"}, DetourTypes: []string{"vless"}, Retry: true}, ""},
+		{`{"lx":{"quic_sniff_decoy":{"mode":"off","send":"retry"}}}`, LXQUICSniffDecoyResolved{Mode: "off", OutboundTypes: []string{"masque"}, DetourTypes: []string{"vless"}, Retry: true}, ""},
+		{`{"lx":{"quic_sniff_decoy":{"mode":"detour"}}}`, LXQUICSniffDecoyResolved{Mode: "detour", OutboundTypes: []string{"masque"}, DetourTypes: []string{"vless"}, Retry: true}, `{"quic_sniff_decoy":{"mode":"detour"}}`},
+		{`{"lx":{"quic_sniff_decoy":{"mode":"all","outbound_type":["hysteria2","wireguard"],"detour_type":"socks","send":"always"}}}`, LXQUICSniffDecoyResolved{Mode: "all", OutboundTypes: []string{"hysteria2", "wireguard"}, DetourTypes: []string{"socks"}, Retry: false}, `{"quic_sniff_decoy":{"mode":"all","outbound_type":["hysteria2","wireguard"],"detour_type":"socks","send":"always"}}`},
+		{`{"lx":{"quic_sniff_decoy":{"outbound_type":["tuic"]}}}`, LXQUICSniffDecoyResolved{Mode: "off", OutboundTypes: []string{"tuic"}, DetourTypes: []string{"vless"}, Retry: true}, `{"quic_sniff_decoy":{"outbound_type":"tuic"}}`},
 	}
 	for _, tc := range cases {
 		options, resolved := mustResolveLX(t, tc.content)
-		if got := resolved.QUICSniffDecoyOrOff(); got != tc.want {
-			t.Fatalf("%s: got %q, want %q", tc.content, got, tc.want)
+		got := resolved.QUICSniffDecoyOrOff()
+		if got.Mode != tc.want.Mode || got.Retry != tc.want.Retry || !slices.Equal(got.OutboundTypes, tc.want.OutboundTypes) || !slices.Equal(got.DetourTypes, tc.want.DetourTypes) {
+			t.Fatalf("%s: got %+v, want %+v", tc.content, got, tc.want)
 		}
-		var canonical LXQUICSniffDecoy
+		var canonical string
 		if options.LX != nil {
-			canonical = options.LX.QUICSniffDecoy
+			text, err := json.Marshal(options.LX)
+			if err != nil {
+				t.Fatal(err)
+			}
+			canonical = string(text)
 		}
 		if canonical != tc.canonical {
-			t.Fatalf("%s: canonical %q, want %q", tc.content, canonical, tc.canonical)
+			t.Fatalf("%s: canonical %s, want %s", tc.content, canonical, tc.canonical)
 		}
 	}
-	for _, content := range []string{`{"lx":{"quic_sniff_decoy":"on"}}`, `{"lx":{"quic_sniff_decoy":1}}`} {
-		if _, err := decodeLXConfig(t, content); err == nil {
-			t.Fatalf("%s: must be rejected", content)
+	enabled := mustResolveLXResolved(t, `{"lx":{"quic_sniff_decoy":{"mode":"detour","outbound_type":["masque","tuic"]}}}`).QUICSniffDecoyOrOff()
+	if !enabled.Enabled("masque") || !enabled.Enabled("tuic") || enabled.Enabled("hysteria2") || !enabled.DetourMatches("vless") || enabled.DetourMatches("socks") || enabled.DetourMatches("") {
+		t.Fatalf("Enabled/DetourMatches: %+v", enabled)
+	}
+	rejected := []struct{ content, want string }{
+		{`{"lx":{"quic_sniff_decoy":"detour"}}`, "must be an object"},
+		{`{"lx":{"quic_sniff_decoy":true}}`, "must be an object"},
+		{`{"lx":{"quic_sniff_decoy":false}}`, "must be an object"},
+		{`{"lx":{"quic_sniff_decoy":1}}`, "must be an object"},
+		{`{"lx":{"quic_sniff_decoy":{"mode":"on"}}}`, "lx.quic_sniff_decoy.mode"},
+		{`{"lx":{"quic_sniff_decoy":{"send":"first"}}}`, "lx.quic_sniff_decoy.send"},
+		{`{"lx":{"quic_sniff_decoy":{"outbound_type":["shadowsocks"]}}}`, "lx.quic_sniff_decoy.outbound_type"},
+		{`{"lx":{"quic_sniff_decoy":{"detour_type":["selector"]}}}`, "is a group"},
+		{`{"lx":{"quic_sniff_decoy":{"detour_type":[""]}}}`, "empty type"},
+		{`{"lx":{"quic_sniff_decoy":{"protocols":["masque"]}}}`, "lx.quic_sniff_decoy"},
+		{`{"lx":{"awg_masquerade":"direct"}}`, "lx.awg_masquerade is removed"},
+		{`{"lx":{"awg_masquerade":true}}`, "lx.awg_masquerade is removed"},
+	}
+	for _, tc := range rejected {
+		_, err := decodeLXConfig(t, tc.content)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: got %v, want an error containing %q", tc.content, err, tc.want)
 		}
-	}
-	text, err := json.Marshal(mustDecodeLXConfig(t, `{"lx":{"quic_sniff_decoy":true}}`))
-	if err != nil || !strings.Contains(string(text), `"quic_sniff_decoy":"all"`) {
-		t.Fatalf("a boolean must marshal as its mode: %s %v", text, err)
-	}
-}
-
-func TestLXAWGMasquerade(t *testing.T) {
-	t.Parallel()
-	if (*LXResolved)(nil).AWGMasqueradeOrAll() != LXAWGMasqueradeAll {
-		t.Fatal("a nil *LXResolved must read as all")
-	}
-	cases := []struct {
-		content, want string
-		canonical     LXAWGMasquerade
-	}{
-		{`{}`, LXAWGMasqueradeAll, ""},
-		{`{"lx":{"awg_masquerade":true}}`, LXAWGMasqueradeAll, ""},
-		{`{"lx":{"awg_masquerade":"all"}}`, LXAWGMasqueradeAll, ""},
-		{`{"lx":{"awg_masquerade":false}}`, LXAWGMasqueradeDirect, LXAWGMasqueradeDirect},
-		{`{"lx":{"awg_masquerade":"direct"}}`, LXAWGMasqueradeDirect, LXAWGMasqueradeDirect},
-	}
-	for _, tc := range cases {
-		options, resolved := mustResolveLX(t, tc.content)
-		if got := resolved.AWGMasqueradeOrAll(); got != tc.want {
-			t.Fatalf("%s: got %q, want %q", tc.content, got, tc.want)
-		}
-		var canonical LXAWGMasquerade
-		if options.LX != nil {
-			canonical = options.LX.AWGMasquerade
-		}
-		if canonical != tc.canonical {
-			t.Fatalf("%s: canonical %q, want %q", tc.content, canonical, tc.canonical)
-		}
-	}
-	for _, content := range []string{`{"lx":{"awg_masquerade":"detour"}}`, `{"lx":{"awg_masquerade":"off"}}`, `{"lx":{"awg_masquerade":1}}`} {
-		if _, err := decodeLXConfig(t, content); err == nil {
-			t.Fatalf("%s: must be rejected", content)
-		}
-	}
-	text, err := json.Marshal(mustDecodeLXConfig(t, `{"lx":{"awg_masquerade":false}}`))
-	if err != nil || !strings.Contains(string(text), `"awg_masquerade":"direct"`) {
-		t.Fatalf("a boolean must marshal as its mode: %s %v", text, err)
 	}
 }

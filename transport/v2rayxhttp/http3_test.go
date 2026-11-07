@@ -52,7 +52,7 @@ func TestHTTP3KeepAlivePeriod(t *testing.T) {
 		{25 * time.Second, 25 * time.Second},
 		{-time.Second, 0},
 	} {
-		newConn, err := newHTTP3Transport(N.SystemDialer, M.ParseSocksaddr("127.0.0.1:443"), testTLSConfig(t, "h3"), testCase.in, func(string) {})
+		newConn, err := newHTTP3Transport(N.SystemDialer, M.ParseSocksaddr("127.0.0.1:443"), testTLSConfig(t, "h3"), testCase.in, func(string) {}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,7 +74,7 @@ func TestHTTP3KeepAlivePeriod(t *testing.T) {
 // TestHTTP3XmuxConnIsClosed: evicted after our Close and once the QUIC
 // connection it dialed is gone.
 func TestHTTP3XmuxConnIsClosed(t *testing.T) {
-	newConn, err := newHTTP3Transport(N.SystemDialer, M.ParseSocksaddr("127.0.0.1:443"), testTLSConfig(t, "h3"), 0, func(string) {})
+	newConn, err := newHTTP3Transport(N.SystemDialer, M.ParseSocksaddr("127.0.0.1:443"), testTLSConfig(t, "h3"), 0, func(string) {}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,8 +15,9 @@
 | **XHTTP** транспорт (совместим с Xray) | `with_xhttp` | `transport.type: "xhttp"` на VLESS / VMess / Trojan outbound | desktop + mobile |
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | доп. поля на `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
+| **TrustTunnel** outbound и inbound (SPEC 133/134) | `with_trusttunnel` (+ `with_quic` для HTTP/3) | `outbounds[].type` / `inbounds[].type: "trusttunnel"`; поля — [protocols-transports.ru.md §6](protocols-transports.ru.md#6-trusttunnel-outbound-и-inbound), глобальный `lx.trusttunnel.idle_timeout` — [§13](#lxtrusttunnel--trusttunnel-outboundы) | desktop + mobile |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`) | **только mobile** (AAR) |
-| **Корневой блок `lx`** (SPEC 098) | — (разбирается всегда) | `lx.wg`, `lx.masque`, `lx.mtu_align`, `lx.quic_sniff_decoy`, `lx.awg_masquerade` — глобальные ручки форка, [§13](#13-корневой-блок-lx-spec-098) | desktop + mobile |
+| **Корневой блок `lx`** (SPEC 098) | — (разбирается всегда) | `lx.wg`, `lx.masque`, `lx.trusttunnel`, `lx.mtu_align`, `lx.quic_sniff_decoy` — глобальные ручки форка, [§13](#13-корневой-блок-lx-spec-098) | desktop + mobile |
 | **Группа DNS-серверов** (SPEC 033/035/143) | — (всегда в сборке) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (всегда в сборке) | `encryption` на `vless`-outbound | desktop + mobile |
 | **Демон `lxd`** (SPEC 055–057, 063–068) | `with_lxd` | не ключ конфига — подкоманда `sing-box lxd` + `<state-dir>/daemon.json`; см. [lxd-daemon.ru.md](lxd-daemon.ru.md) | desktop / сервер (**не** Win7, **не** AAR) |
@@ -103,16 +104,24 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
       "idle_suspend": "30s",                    // дефолт: выкл. Endpoint вне дерева маршрутизации → Down после простоя
       "idle_suspend_reachable": "5m",           // дефолт: выкл. То же для endpoint'ов в дереве; >= idle_suspend, требует его
       "idle_teardown": "10m",                   // дефолт: = idle_suspend_reachable. Сон до полной разборки; "0" = никогда
-      "lazy_build": true,                       // дефолт: false. Сборка устройства при первом дайле (SPEC 097; до неё инертен)
-      "build_max": 4,                           // дефолт: 0 (без потолка). Не больше N собранных устройств (SPEC 097; до неё инертен)
-      "build_overflow": "wait"                  // дефолт: wait. wait | build (SPEC 097; до неё инертен)
+      "lazy_build": true,                       // дефолт: false. Сборка устройства при первом дайле (SPEC 097)
+      "build_max": 4,                           // дефолт: 0 (без потолка). Не больше N собранных устройств (SPEC 097)
+      "build_overflow": "wait"                  // дефолт: wait. wait | build (SPEC 097)
     },
     "masque": {
       "idle_timeout": "5m"                      // дефолт: выкл. Глобальное окно простоя masque-узлов без своего ключа
     },
+    "trusttunnel": {
+      "idle_timeout": "5m"                      // дефолт: 5m. Глобальное окно простоя trusttunnel-узлов без своего ключа; выключается только "0" в узле (SPEC 133)
+    },
     "mtu_align": "clamp",                       // дефолт: clamp. off | fill | clamp, либо объект {"mode", "except": [теги]} (§13)
-    "quic_sniff_decoy": "off",                  // дефолт: off. off | direct | detour | all (или bool). Один байт перед QUIC Initial против сниффинга SNI на релее; достаёт и до маскировки AWG (§13, SPEC 151/153)
-    "awg_masquerade": "all"                     // дефолт: all. all | direct (или bool). Где AWG-endpoint шлёт маскировочную пачку (приманка, i1…i5, junk): на любом пути или только на своём сокете (§13, SPEC 153)
+    "quic_sniff_decoy": {                       // только объект; строка/bool — ошибка загрузки. Один байт перед QUIC Initial против сниффинга SNI на релее (§13, SPEC 151)
+      "mode": "off",                            // дефолт: off. off | direct | detour | all — на каких путях байт разрешён
+      "outbound_type": ["masque"],              // дефолт: ["masque"]. masque | hysteria2 | tuic | trusttunnel | vless | vmess | trojan | wireguard
+      "detour_type": ["vless"],                 // дефолт: ["vless"]. Типы релеев; группы selector/urltest нельзя — берётся выбранный участник
+      "send": "retry"                           // дефолт: retry. retry | always — байт только на повторе после неудачи, или на каждом дозвоне
+    }
+    // "awg_masquerade" удалён в lx.33: любое значение — ошибка загрузки, пачка AWG идёт на любом пути (§13)
   },
 
   "outbounds": [
@@ -284,7 +293,7 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
 ```
 
 > **Счёт полей:** 26 XHTTP + 30 AmneziaWG (вкл. `id`/`ip`/`ib` и 9 ключей AWG 3.x) + 1 VLESS (`encryption`) +
-> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 10 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.mtu_align` + `lx.quic_sniff_decoy` + `lx.awg_masquerade`). Взаимоисключающие / игнорируемые поля помечены
+> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 13 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.trusttunnel.idle_timeout` + `lx.mtu_align` + 4 `lx.quic_sniff_decoy{mode,outbound_type,detour_type,send}`). Взаимоисключающие / игнорируемые поля помечены
 > в комментариях выше; разделы ниже дают семантику каждого поля, подводные камни и статус
 > живой проверки.
 
@@ -1126,9 +1135,16 @@ CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`base
   "masque": {
     "idle_timeout": "5m"
   },
+  "trusttunnel": {
+    "idle_timeout": "5m"
+  },
   "mtu_align": "clamp",
-  "quic_sniff_decoy": "detour",
-  "awg_masquerade": "direct"
+  "quic_sniff_decoy": {
+    "mode": "detour",
+    "outbound_type": ["masque"],
+    "detour_type": ["vless"],
+    "send": "retry"
+  }
 }
 ```
 
@@ -1179,6 +1195,22 @@ CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`base
 туннель поднятым даже при заданном глобальном значении. Сессия MASQUE и так собирается лениво,
 потолка здесь нет.
 
+Ошибка валидации: `lx.masque.idle_timeout must be >= 0` для отрицательной длительности.
+
+### `lx.trusttunnel` — TrustTunnel-outbound'ы
+
+| Ключ | Тип | Дефолт | Значение |
+|---|---|---|---|
+| `idle_timeout` | длительность ≥ 0 | `5m` | Глобальное окно простоя для всех `trusttunnel`-узлов без своего `idle_timeout`: после него сессия закрывается локально, следующий дайл открывает её заново. Отсутствие ключа или `0` — 5 минут |
+
+Приоритет: `idle_timeout` узла > `lx.trusttunnel.idle_timeout` > 5 минут. Явный `"0"` в узле
+отключает разборку его сессии при любом глобальном значении. В отличие от `lx.masque`, глобальный
+`0` здесь не выключает окно, а означает «не задано»: выключить разборку можно только в узле.
+SPEC 133. Поля самого outbound'а, включая его `idle_timeout`, — в
+[protocols-transports.ru.md §6.2](protocols-transports.ru.md#62-поля-outbound).
+
+Ошибка валидации: `lx.trusttunnel.idle_timeout must be >= 0` для отрицательной длительности.
+
 ### `lx.mtu_align` — выравнивание MTU и размера пакета по пути
 
 Узел, стоящий прямо над IP-туннелем — через `detour`, через группу под `detour` или как звено
@@ -1204,9 +1236,18 @@ CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`base
 | `clamp` **(дефолт)** | дописывается предел | **понижается** до предела; в лог: configured → effective и причина | не трогается |
 
 Ни один режим не повышает значения. `except` — теги узлов, которые не трогаются ни в одном режиме
-(неизвестный тег — ошибка старта, как и неизвестный режим). Отсутствие ключа = `clamp`; это тот же
+(неизвестный режим отвергается при разборе конфига, неизвестный тег — позже, при сборке
+экземпляра, когда известны все узлы). Отсутствие ключа = `clamp`; это тот же
 контракт, который `chain` держал с SPEC 073 («`mtu` в конфиге = как самостоятельного, цепочка только
 понижает»), теперь он действует и под обычным `detour`.
+
+Ошибки валидации (все три ловит и `sing-box check`):
+
+- `lx.mtu_align.mode must be "off", "fill" or "clamp"` — неизвестный режим, в строковой и в
+  объектной форме; при разборе конфига
+- `lx.mtu_align.except: empty tag` — пустая строка в `except`
+- `lx.mtu_align.except: unknown outbound/endpoint tag: <теги>` — тега нет ни среди outbound'ов, ни
+  среди endpoint'ов; проверяется перед выравниванием, до создания узлов
 
 **Ёмкость узла** — сколько байт IP-пакета он пронесёт для узла над собой:
 
@@ -1279,56 +1320,83 @@ ICMP Packet Too Big с фактическим бюджетом) — в [§4](#4-
 
 ### `lx.quic_sniff_decoy` — QUIC через релей, который сниффит SNI
 
-| Значение | Дозвоны masque h3, hysteria2 и tuic, которые шлют один байт (`0x00`) перед первым QUIC Initial |
-|---|---|
-| `"off"` / `false` / нет ключа (**дефолт**) | никакие |
-| `"direct"` | дозвоны через собственный сокет устройства: без `detour`, `detour` на outbound `direct` или `detour` на группу (selector, urltest), в которой сейчас выбран `direct` |
-| `"detour"` | дозвоны, которые несёт другой outbound — прокси или туннель |
-| `"all"` / `true` | все |
+Один байт `0x00` перед первым QUIC Initial дозвона. Ключ принимает только объект; строка
+(`"detour"`) и булево (`true`), как в lx.30–lx.32, — ошибка загрузки.
 
 ```jsonc
-"lx": { "quic_sniff_decoy": "detour" }
+"lx": {
+  "quic_sniff_decoy": {
+    "mode": "detour",             // off (дефолт) | direct | detour | all
+    "outbound_type": ["masque"],  // дефолт: ["masque"]
+    "detour_type": ["vless"],     // дефолт: ["vless"]
+    "send": "retry"               // retry (дефолт) | always
+  }
+}
 ```
 
-Релей с Xray `sniffing` (`destOverride` с `quic`, без `routeOnly`) расшифровывает QUIC Initial,
-берёт SNI и отправляет поток на это имя вместо набранного адреса: masque падает с `different
-public key than pinned`, hysteria2/tuic с подставным SNI попадают на чужой хост или в пустоту.
-Xray решает по первой датаграмме потока; первый байт, который не long-header пакет QUIC, выводит
-его QUIC-сниффер из игры, назначение остаётся набранным. Сервер отбрасывает байт не разбирая
-(снят fixed bit QUIC). Без задержки и лишнего хендшейка. Включать, когда QUIC-узел работает
-напрямую и ломается через чужой релей (h2 masque через тот же релей обычно работает — SPEC 060).
-Режимы уводят обманку с пути, где на неё может среагировать DPI вашего аплинка: `"detour"` шлёт
-её только через релеи, `"direct"` — только по собственному сокету устройства (сниффер может стоять
-и там, выше по сети, например роутер с выходом через Xray). sing-box-релеи (1.13+) назначение по сниффу не переписывают, им ничего не нужно. Не покрыто: port hopping у
-hysteria2 (`server_ports`). Подробности — [SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.ru.md).
+| Ключ | Значения | Без ключа | Смысл |
+|---|---|---|---|
+| `mode` | `off`, `direct`, `detour`, `all` | `off` | На каких путях байт разрешён. `direct` — UDP-сокет узла является сокетом ядра: без `detour`, `detour` на outbound `direct` или на группу (selector, urltest), в которой сейчас выбран `direct`; `detour` — UDP несёт другой outbound, тип которого есть в `detour_type`; `all` — оба. `off` — байт не уходит нигде |
+| `outbound_type` | `masque`, `hysteria2`, `tuic`, `trusttunnel`, `vless`, `vmess`, `trojan`, `wireguard` | `["masque"]` | Какие outbound'ы шлют байт. Тип выбирает узел; байт уходит только там, где узел действительно открывает QUIC (таблица ниже) |
+| `detour_type` | любой тип outbound, кроме групп `selector` и `urltest` | `["vless"]` | Через релеи каких типов. Релей — ближайший хоп, который несёт датаграмму; его тип определяется при дозвоне: outbound из `detour` узла, а если `detour` — группа, то участник, которого группа выбрала для этого дозвона |
+| `send` | `retry`, `always` | `retry` | `retry` — первая попытка без байта, неудачная повторяется с байтом; `always` — байт на каждом подходящем дозвоне, поведение lx.30–lx.32. На `wireguard` не действует |
 
-Тот же байт идёт перед маскировочной пачкой AmneziaWG, которая начинается с QUIC-образного пакета
-(`ip: quic` или статичный `i1`, снятый с QUIC-дампа), на путях, которые выбирает режим, — всякий раз,
-когда пачка вообще отправляется (см. `lx.awg_masquerade` ниже). `ip: dns|stun|sip` и обычный junk
-не QUIC-образны и байта не получают (SPEC 153).
+Ошибки загрузки, все с именем ключа:
 
-### `lx.awg_masquerade` — где AmneziaWG-endpoint шлёт маскировочную пачку
+- строка или булево — `lx.quic_sniff_decoy must be an object: {mode, outbound_type, detour_type, send}`;
+- `lx.quic_sniff_decoy.mode must be "off", "direct", "detour" or "all"`;
+- `lx.quic_sniff_decoy.send must be "retry" or "always"`;
+- `lx.quic_sniff_decoy.outbound_type: "<x>" is not a QUIC client; one of masque, hysteria2, tuic, trusttunnel, vless, vmess, trojan, wireguard`;
+- `lx.quic_sniff_decoy.detour_type: "<x>" is a group; name the member types, a group is resolved to the member it picks`; пустая строка — `lx.quic_sniff_decoy.detour_type: empty type`; тип, которого нет ни в одном реестре сборки (опечатка) — `lx.quic_sniff_decoy.detour_type: unknown outbound type "<x>"` при старте бокса (ловит и `sing-box check`), только при `mode` не `off`;
+- неизвестный ключ в объекте — ошибка разбора с префиксом `lx.quic_sniff_decoy`.
 
-| Значение | Пачка перед каждой инициацией хендшейка (приманка `ip`/`id`/`ib`, `i1`…`i5`, junk `jc`) отправляется |
-|---|---|
-| `"all"` / `true` / нет ключа (**дефолт**) | на любом пути, в том числе через `detour` |
-| `"direct"` / `false` | только когда сокет endpoint'а — сокет ядра: без `detour`, `detour` на outbound `direct` или `detour` на группу (selector, urltest), в которой сейчас выбран `direct`. Через прокси- или туннельный `detour` инициация идёт одна |
+Объект из одних дефолтов канонизируется в отсутствие ключа. Переопределения из окружения нет.
 
-```jsonc
-"lx": { "awg_masquerade": "direct" }
-```
+**Зачем.** Релей с Xray `sniffing` (`destOverride` с `quic`, без `routeOnly`) расшифровывает QUIC
+Initial, берёт SNI и отправляет поток на это имя вместо набранного адреса: masque падает с
+`different public key than pinned`, hysteria2/tuic с подставным SNI попадают на чужой хост или в
+пустоту. Xray решает по первой датаграмме потока; первый байт, который не long-header пакет QUIC,
+выводит его QUIC-сниффер из игры, назначение остаётся набранным. Сервер отбрасывает байт не
+разбирая (снят fixed bit QUIC). sing-box-релеи (1.13+) назначение по сниффу не переписывают, им
+ничего не нужно. Режимы уводят байт с пути, где на него может среагировать DPI аплинка: `detour`
+шлёт его только через релеи перечисленных типов, `direct` — только по собственному сокету
+устройства.
 
-`"direct"` — для узлов за релеем. Маскировка нужна на первой миле. Через `detour` первая миля видит несущий протокол (VLESS,
-WireGuard, Hysteria…), а не пачку, так что там она ничего не защищает и только вредит: релей с
-Xray `sniffing` (`destOverride` с `quic`, без `routeOnly`) разбирает приманку `ip: quic` как первую
-датаграмму ассоциации, берёт из неё SNI и уводит всю ассоциацию — вместе с хендшейком WireGuard за
-ней — на это имя; endpoint не поднимается, хотя чистый WireGuard через тот же `detour` работает
-(issue #64). Кроме того, Initial на ~1200 байт, до пяти `i`-пакетов и junk `jc` на каждый хендшейк
-едут и на каждом ретрае и rekey, в том числе внутри WireGuard-`detour` с урезанным MTU.
-Убирается только то, что сервер игнорирует: паддинг `s1`–`s4`, `h1`–`h4`, защита заголовка AWG 3.x,
-`content_padding_addition`, `random_trailers` и тайминги не трогаются, сервер принимает хендшейк как
-раньше. Дефолтный `"all"` оставляет пачку внутри туннеля; в паре с `lx.quic_sniff_decoy: "detour"`
-или `"all"` она пройдёт сниффящий релей целиком, а `"direct"` пачку там не шлёт вовсе. Подробности —
+**`send: retry`.** Клиент не видит, сниффит ли релей, а байт на пути без сниффера может
+мешать (полевой случай 2026-11-06: masque h3 через `socks` с UDP-over-TCP поднимался только с
+выключенным байтом). Поэтому первый дозвон идёт чистым; если он не удался, повтор идёт с байтом —
+сразу, когда ошибка быстрая и не таймаут (обычная сигнатура сниффера: masque получает чужой ключ
+за один RTT), иначе на следующем дозвоне. Результат запоминается на outbound и путь (`direct` или
+`detour:<тип>`), три состояния: `clean` (байта нет) → при неудаче `armed` (следующий дозвон с
+байтом) → при удаче `decoy` (байт остаётся); неудача с байтом возвращает в `clean`, чтобы
+просто лежащий узел не закрепил байт на пути, где он сам всё ломает. Смена пути (группа
+переключилась с `direct` на релей или на релей другого типа) начинает с `clean`; память живёт с
+outbound'ом и умирает при его пересборке или перезапуске box. `send: always` — памяти нет, байт
+на каждом подходящем дозвоне.
+
+| `outbound_type` | Когда байт уходит | Как определяется неудача |
+|---|---|---|
+| `masque` | только h3 (`vhttp: h3`, или h3-нога `auto`) | свой хендшейк; в `auto` повтор с байтом идёт до отката на h2, молчащий h3 откатывается на h2 как раньше, следующая h3-нога — `armed` |
+| `hysteria2`, `tuic` | всегда | косвенно: хендшейк внутри `sing-quic`; conn, закрытый меньше чем через 30 с после дозвона, считается неудачей, проживший дольше или живой — удачей; решение при следующем дозвоне. Ложное срабатывание стоит одного байта на следующем дозвоне. Port hopping (`server_ports`) не покрыт |
+| `trusttunnel` | только при `quic: true` у узла | как masque |
+| `vless`, `vmess`, `trojan` | только с транспортом `xhttp` по h3 | как masque; проверяется тип узла, не транспорта |
+| `wireguard` | перед маскировочной пачкой AmneziaWG, которая начинается с QUIC-образного пакета (`ip: quic` или статичный `i1`, снятый с QUIC-дампа); `ip` со значениями `dns`, `stun`, `sip` и обычный junk байта не получают | ретрая нет: повторы рукопожатия идут по тому же сокету, релей уже решил по первому пакету. Байт уходит сразу на каждом рукопожатии на путях из `mode`; `send` не действует |
+
+**Что ретрай не ловит.** Хендшейк, который без ошибки уходит не туда (`tuic` с `insecure` и SNI,
+разрешающимся в живой QUIC-хост): неудача видна позже как мёртвое соединение, 30-секундное окно
+ловит её только при быстром сбросе сервером; `masque` защищён пином ключа, `hysteria2` —
+аутентификацией. Молчащий релей (неразрешимый SNI): первый дозвон выжидает дедлайн, первый URL-тест
+такого узла падает, второй проходит; в `auto` masque на этом поднятии откатывается на h2. Релей,
+сниффящий TLS на h2, — вне задачи, байт только для QUIC. Подробности —
+[SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.ru.md).
+
+### `lx.awg_masquerade` — удалён
+
+Удалён в lx.33 (SPEC 151, владелец 2026-11-07). Любое значение — ошибка загрузки:
+`lx.awg_masquerade is removed: the AmneziaWG masquerade burst is sent on every path`. Маскировочная
+пачка AmneziaWG (приманка `ip`/`id`/`ib`, `i1`…`i5`, junk `jc`) шлётся на любом пути, в том числе
+через `detour`, как при дефолте `all` в lx.32. Ключ из конфига убрать; случай релея со сниффингом
+(issue #64) закрывается `lx.quic_sniff_decoy` с `wireguard` в `outbound_type`. История —
 [SPEC 153](../SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md).
 
 ### Удалённые `route.lx_idle_*`

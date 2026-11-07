@@ -19,9 +19,12 @@ import (
 	"context"
 	"net"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing/common"
+	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -92,34 +95,103 @@ var (
 )
 
 // Dialer wraps the UDP conns a dialer hands out with TruncateReads and, where
-// lx.quic_sniff_decoy in ctx covers the conn, sends the SPEC 151 sniff decoy;
+// lx.quic_sniff_decoy covers outboundType, runs the SPEC 151 sniff decoy;
 // TCP dials and ListenPacket pass through untouched by this package. It is the
 // seam for clients that dial inside a library (sing-quic's hysteria2 and tuic).
-func Dialer(ctx context.Context, outboundDialer N.Dialer, logger logger.Logger) N.Dialer {
+func Dialer(ctx context.Context, outboundType string, outboundDialer N.Dialer, logger logger.Logger) N.Dialer {
 	// lx: SPEC 152 — this is the dialer the QUIC client opens its session
 	// underlay with; the session is internal to the tunnel, so a selector in
 	// the detour drops it on every node switch (see dialer.NewSessionDialerLx).
-	return &truncDialer{Dialer: dialer.NewSessionDialerLx(outboundDialer), logger: logger, sniffDecoy: SniffDecoyFromContext(ctx)}
+	return &truncDialer{Dialer: dialer.NewSessionDialerLx(outboundDialer), logger: logger, decoy: NewSniffDecoy(ctx, outboundType, logger)}
 }
+
+// youngConnWindow is how long a conn handed to the QUIC library must live to
+// count as a successful attempt (lx: SPEC 151). The library does not report
+// its handshake to the dialer; a conn it closed sooner than this failed the
+// handshake, the authentication or died right after, which through a
+// sniffing relay is what happens. hysteria2 authenticates within 15 s by
+// default, quic-go's handshake idle timeout is 5 s; a false verdict on a conn
+// that died young for another reason costs one byte on the next dial.
+const youngConnWindow = 30 * time.Second
 
 type truncDialer struct {
 	N.Dialer
-	logger     logger.Logger
-	sniffDecoy string
+	logger logger.Logger
+	decoy  *Decoy
+	access sync.Mutex
+	last   *attemptConn
 }
 
 func (d *truncDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	conn, err := d.Dialer.DialContext(ctx, network, destination)
+	if N.NetworkName(network) != N.NetworkUDP || !d.decoy.Enabled() {
+		conn, err := d.Dialer.DialContext(ctx, network, destination)
+		if err != nil {
+			return nil, err
+		}
+		if N.NetworkName(network) != N.NetworkUDP {
+			return conn, nil
+		}
+		return TruncateReads(conn, d.logger), nil
+	}
+	d.judgePrevious()
+	attempt := d.decoy.Begin(ctx)
+	conn, err := d.Dialer.DialContext(attempt.Context, network, destination)
 	if err != nil {
 		return nil, err
 	}
-	if N.NetworkName(network) != N.NetworkUDP {
-		return conn, nil
+	attempt.Dialed(conn, conn)
+	wrapped := &attemptConn{Conn: TruncateReads(conn, d.logger), attempt: attempt, dialedAt: time.Now()}
+	d.access.Lock()
+	d.last = wrapped
+	d.access.Unlock()
+	return wrapped, nil
+}
+
+// judgePrevious reports the previous attempt to the memory at the moment it
+// matters — the next dial: still open or lived past youngConnWindow is a
+// success, closed sooner is a failure. The redo verdict is ignored, the
+// library is already dialling again.
+func (d *truncDialer) judgePrevious() {
+	d.access.Lock()
+	last := d.last
+	d.last = nil
+	d.access.Unlock()
+	if last == nil {
+		return
 	}
-	if SniffDecoyApplies(d.sniffDecoy, conn) {
-		WriteSniffDecoy(conn, d.logger)
+	var err error
+	if closedAt := last.closedAt.Load(); closedAt != 0 && time.Duration(closedAt-last.dialedAt.UnixNano()) < youngConnWindow {
+		err = errYoungConn
 	}
-	return TruncateReads(conn, d.logger), nil
+	last.attempt.Done(err)
+}
+
+var errYoungConn = E.New("conn closed before the handshake could have settled")
+
+// attemptConn is the conn handed to the QUIC library, remembering when it was
+// dialled and closed so the dialer can judge the attempt later.
+type attemptConn struct {
+	net.Conn
+	attempt  *Attempt
+	dialedAt time.Time
+	closedAt atomic.Int64
+}
+
+func (c *attemptConn) Close() error {
+	c.closedAt.CompareAndSwap(0, time.Now().UnixNano())
+	return c.Conn.Close()
+}
+
+func (c *attemptConn) Upstream() any {
+	return c.Conn
+}
+
+func (c *attemptConn) ReaderReplaceable() bool {
+	return true
+}
+
+func (c *attemptConn) WriterReplaceable() bool {
+	return true
 }
 
 func (d *truncDialer) Upstream() any {
