@@ -46,7 +46,7 @@ func lxRealityOptions(fingerprint, keyShare string, fragment, recordFragment boo
 		Enabled:        true,
 		ServerName:     "www.example.com",
 		Fragment:       fragment,
-		RecordFragment: recordFragment,
+		RecordFragment: lxRecordFragment(recordFragment),
 		UTLS:           &option.OutboundUTLSOptions{Enabled: true, Fingerprint: fingerprint},
 		Reality: &option.OutboundRealityOptions{
 			Enabled:   true,
@@ -380,4 +380,13 @@ func lxRealityServerOptions(shortID string) option.InboundTLSOptions {
 			ShortID:    badoption.Listable[string]{shortID},
 		},
 	}
+}
+
+// lxRecordFragment maps the helpers' bool onto the option: false means "not
+// set", so the detour default (SPEC 060) still applies. lx: SPEC 156.
+func lxRecordFragment(enabled bool) *bool {
+	if !enabled {
+		return nil
+	}
+	return lxBoolPtr(true)
 }

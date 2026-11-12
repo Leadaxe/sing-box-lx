@@ -4,13 +4,15 @@
 // The rules under test:
 //   - no detour            → nothing changes (the direct path must stay untouched)
 //   - detour, no choice    → record_fragment turns on
-//   - detour, user chose   → the user's choice is preserved, never overridden
+//   - detour, user chose   → the user's choice is preserved, never overridden;
+//     an explicit `record_fragment: false` is a choice too (lx: SPEC 156)
 package tls
 
 import (
 	"testing"
 
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badoption"
 )
 
@@ -30,7 +32,7 @@ func TestApplyDetourFragmentDefault(t *testing.T) {
 		name           string
 		detour         bool
 		fragment       bool
-		recordFragment bool
+		recordFragment *bool
 		wantFragment   bool
 		wantRecordFrag bool
 	}{
@@ -49,9 +51,18 @@ func TestApplyDetourFragmentDefault(t *testing.T) {
 		{
 			name:           "explicit record_fragment kept",
 			detour:         true,
-			recordFragment: true,
+			recordFragment: lxBoolPtr(true),
 			wantFragment:   false,
 			wantRecordFrag: true,
+		},
+		{
+			// SPEC 156: the opt-out for a network whose DPI drops a split
+			// ClientHello (LxBox#215).
+			name:           "explicit record_fragment false kept",
+			detour:         true,
+			recordFragment: lxBoolPtr(false),
+			wantFragment:   false,
+			wantRecordFrag: false,
 		},
 		{
 			// The user asked for packet-split specifically; adding record-split on
@@ -82,8 +93,8 @@ func TestApplyDetourFragmentDefault(t *testing.T) {
 			if opts.Options.Fragment != tc.wantFragment {
 				t.Errorf("fragment = %v, want %v", opts.Options.Fragment, tc.wantFragment)
 			}
-			if opts.Options.RecordFragment != tc.wantRecordFrag {
-				t.Errorf("record_fragment = %v, want %v", opts.Options.RecordFragment, tc.wantRecordFrag)
+			if opts.Options.RecordFragmentEnabled() != tc.wantRecordFrag {
+				t.Errorf("record_fragment = %v, want %v", opts.Options.RecordFragmentEnabled(), tc.wantRecordFrag)
 			}
 		})
 	}
@@ -103,7 +114,7 @@ func TestApplyDetourFragmentDefaultKeepsDelay(t *testing.T) {
 	if opts.Options.FragmentFallbackDelay != badoption.Duration(1234) {
 		t.Fatalf("fallback delay changed: %v", opts.Options.FragmentFallbackDelay)
 	}
-	if !opts.Options.RecordFragment {
+	if !opts.Options.RecordFragmentEnabled() {
 		t.Fatal("record_fragment should still be enabled")
 	}
 }
@@ -126,4 +137,40 @@ func TestNewClientWithOptionsAppliesDefault(t *testing.T) {
 	if config != nil {
 		t.Fatal("disabled TLS must yield a nil config")
 	}
+}
+
+// TestRecordFragmentJSON: an explicit `false` must survive decoding as a set
+// value, distinct from an absent key — that is the whole opt-out. lx: SPEC 156.
+func TestRecordFragmentJSON(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		input   string
+		wantNil bool
+		want    bool
+	}{
+		{`{}`, true, false},
+		{`{"record_fragment":false}`, false, false},
+		{`{"record_fragment":true}`, false, true},
+	} {
+		var options option.OutboundTLSOptions
+		if err := json.Unmarshal([]byte(tc.input), &options); err != nil {
+			t.Fatalf("%s: %v", tc.input, err)
+		}
+		if (options.RecordFragment == nil) != tc.wantNil || options.RecordFragmentEnabled() != tc.want {
+			t.Errorf("%s: record_fragment = %v (enabled %v)", tc.input, options.RecordFragment, options.RecordFragmentEnabled())
+		}
+		// Round trip keeps the explicit false: re-serialised configs (running
+		// config export, lxd) must not lose the opt-out.
+		encoded, err := json.Marshal(options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(encoded) != tc.input {
+			t.Errorf("round trip: got %s, want %s", encoded, tc.input)
+		}
+	}
+}
+
+func lxBoolPtr(b bool) *bool {
+	return &b
 }

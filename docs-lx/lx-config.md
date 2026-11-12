@@ -994,9 +994,10 @@ Rules:
   so this matters more than it used to. Whether fragmentation helps on a network that drops that
   first flight is a property of that network — see §7 for the other lever.
 
-> ⚠️ **Known limit:** an explicit `"record_fragment": false` is indistinguishable from "unset",
-> so auto still turns it on under `detour`. To dial through a detour with a different mode, set
-> `"fragment": true`; there is currently no way to ask for no fragmentation at all there.
+- **`"record_fragment": false` opts out** (SPEC 156). The ClientHello then goes through the
+  detour as one record. Use it when the network behind the leg drops a split ClientHello
+  (a DPI that treats fragmentation as a signature) and has no PMTU hole — for example a
+  `detour` that ends in `direct`. Absent key = the default above.
 
 ---
 

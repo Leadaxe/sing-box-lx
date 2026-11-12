@@ -1184,13 +1184,13 @@ Upstream `tls` keys; in the fork they also apply to REALITY (SPEC 088).
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `fragment` | bool | `false` | Cut the first packet by SNI into TCP segments, waiting for the ACK ([upstream](../docs/configuration/shared/tls.md#fragment)) |
-| `record_fragment` | bool | `false`; **`true` under `detour`** (SPEC 060) | The same cut points, each its own TLS record, one packet ([upstream](../docs/configuration/shared/tls.md#record_fragment)) |
+| `record_fragment` | bool | `false`; **`true` under `detour`** unless set explicitly (SPEC 060, 156) | The same cut points, each its own TLS record, one packet ([upstream](../docs/configuration/shared/tls.md#record_fragment)) |
 | `fragment_fallback_delay` | duration | `500ms` | The pause used when the ACK wait time cannot be computed ([upstream](../docs/configuration/shared/tls.md#fragment_fallback_delay)) |
 
-Rules of the `detour` default: an explicit `fragment: true` or `record_fragment: true`
-beats the default; only the handshake is fragmented; `h3`/QUIC is untouched; every
-`chain` link has its own `detour`. An explicit `"record_fragment": false` cannot be
-told apart from "unset", so under `detour` the default still turns on. Overview:
+Rules of the `detour` default: an explicit `fragment: true` or `record_fragment` set
+either way beats the default — `"record_fragment": false` sends the ClientHello as one
+record through the detour (SPEC 156); only the handshake is fragmented; `h3`/QUIC is
+untouched; every `chain` link has its own `detour`. Overview:
 [lx-config §9](lx-config.md#9-automatic-clienthello-fragmentation-under-detour-spec-060).
 
 ## 5.4 REALITY validation errors (verbatim)

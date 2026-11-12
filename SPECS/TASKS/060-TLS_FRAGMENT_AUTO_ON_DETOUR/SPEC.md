@@ -87,8 +87,9 @@ ICMP `Fragmentation Needed` до клиента не доходит ⇒ паке
 ```go
 func applyDetourFragmentDefault(options *ClientOptions) {
     if !options.DialedThroughDetour { return }
-    if options.Options.Fragment || options.Options.RecordFragment { return }
-    options.Options.RecordFragment = true
+    if options.Options.Fragment || options.Options.RecordFragment != nil { return }
+    recordFragment := true // SPEC 156: the field is *bool
+    options.Options.RecordFragment = &recordFragment
 }
 ```
 
@@ -114,14 +115,10 @@ func applyDetourFragmentDefault(options *ClientOptions) {
    этого пути нет: их «через чужой сервер» всегда приходит из конфига как `detour`.
    Протаскивать флаг из диалера ради внутреннего httpclient не потребовалось.
    Вложенные цепочки покрыты автоматически: у каждого звена свой `detour`.
-3. **`*bool` не понадобился.** `OutboundTLSOptions` — upstream-структура; смена типа поля
-   расширила бы зону ребейза. Вместо этого «пользователь сделал выбор» = любой из
-   `fragment`/`record_fragment` уже `true`.
-   ⚠️ **Известный компромисс:** явный `"record_fragment": false` под detour неотличим от
-   «не задано», поэтому авто всё равно включится. Отключить фрагментацию под detour можно
-   только выбрав другой режим (`"fragment": true`). Практического способа «detour без
-   всякой фрагментации» сейчас нет — если понадобится, потребуется `*bool` и переоценка
-   стоимости ребейза.
+3. **«Пользователь сделал выбор»** = `fragment: true` либо `record_fragment` задан явно
+   с любым значением. `record_fragment` — `*bool` с
+   [SPEC 156](../156-RECORD_FRAGMENT_EXPLICIT_FALSE/SPEC.md): явный `false` выключает дефолт
+   (сеть, где DPI дропает разрезанный ClientHello, LxBox#215).
 4. **`fragment: true` не апгрейдится.** Если пользователь выбрал packet-split, авто не
    добавляет сверху record-split — иначе молча меняется выбранный режим.
 5. **DPI-побочка** — принята владельцем: фрагментированный ClientHello сам по себе

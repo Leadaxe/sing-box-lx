@@ -71,7 +71,7 @@ func TestResolveLegacyBools(t *testing.T) {
 		if err := resolveLegacyOptions(context.Background(), opts); err != nil {
 			t.Fatal(err)
 		}
-		if !opts.TLS.Insecure || !opts.TLS.RecordFragment || !opts.TLS.Fragment {
+		if !opts.TLS.Insecure || !opts.TLS.RecordFragmentEnabled() || !opts.TLS.Fragment {
 			t.Errorf("legacy true must carry over: %+v", opts.TLS)
 		}
 	})

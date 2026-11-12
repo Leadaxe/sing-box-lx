@@ -1173,13 +1173,13 @@ grpc-go. Доступно с `v1.14.1-lx.8`.
 | Ключ | Тип | Дефолт | Смысл |
 |------|-----|--------|-------|
 | `fragment` | bool | `false` | Разрез первого пакета по SNI на TCP-сегменты с ожиданием ACK ([апстрим](../docs/configuration/shared/tls.md#fragment)) |
-| `record_fragment` | bool | `false`; **`true` под `detour`** (SPEC 060) | Те же точки разреза, каждая — своя TLS-запись, один пакет ([апстрим](../docs/configuration/shared/tls.md#record_fragment)) |
+| `record_fragment` | bool | `false`; **`true` под `detour`**, если не задан явно (SPEC 060, 156) | Те же точки разреза, каждая — своя TLS-запись, один пакет ([апстрим](../docs/configuration/shared/tls.md#record_fragment)) |
 | `fragment_fallback_delay` | duration | `500ms` | Пауза, когда время ожидания ACK вычислить нельзя ([апстрим](../docs/configuration/shared/tls.md#fragment_fallback_delay)) |
 
-Правила дефолта под `detour`: явное `fragment: true` или `record_fragment: true`
-сильнее дефолта; фрагментируется только рукопожатие; `h3`/QUIC не затронут; у
-каждого звена `chain` свой `detour`. Явный `"record_fragment": false` неотличим от «не
-задано» — под `detour` дефолт включится всё равно. Обзор — [lx-config §9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060).
+Правила дефолта под `detour`: явное `fragment: true` или `record_fragment` с любым
+значением сильнее дефолта — `"record_fragment": false` пускает ClientHello через detour
+одной записью (SPEC 156); фрагментируется только рукопожатие; `h3`/QUIC не затронут; у
+каждого звена `chain` свой `detour`. Обзор — [lx-config §9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060).
 
 ## 5.4 Ошибки валидации REALITY (дословно)
 
