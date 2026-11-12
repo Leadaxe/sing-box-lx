@@ -450,7 +450,7 @@ func buildH2TLSClient(
 		// their real certificate when the ClientHello carries no SNI at all.
 		AllowEmptyServerName: true,
 		// lx: SPEC 060 — masque over a detour is exactly the case that surfaced
-		// the PMTU black hole; fragment the ClientHello by default there.
+		// relay SNI sniffing; fragment the ClientHello by default there.
 		DialedThroughDetour: tls.DialedThroughDetour(options.DialerOptions),
 	})
 	if err != nil {

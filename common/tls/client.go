@@ -110,13 +110,12 @@ func DialedThroughDetour(options option.DialerOptions) bool {
 // applyDetourFragmentDefault enables record fragmentation when the connection is
 // carried by another outbound and the config asked for no fragmentation itself.
 //
-// Why: under a detour the leg forwards our ClientHello from its own address. If
-// the PMTU beyond that leg is smaller than the ClientHello, the packet is
-// dropped and the ICMP "fragmentation needed" never reaches us — the handshake
-// simply hangs for ~15s and dies as "EOF". Measured against live nodes: a 1488 B
-// ClientHello passes where 1502 B disappears, and the threshold belongs to the
-// path behind the leg, not to any protocol. Splitting the first TLS record puts
-// every piece under it.
+// Why: a relay in the detour can sniff the SNI out of our ClientHello and send
+// the connection to that name instead of our destination (Xray sniffing with
+// destOverride and without routeOnly). A target whose SNI is a disguise (WARP
+// with a foreign name, REALITY) then hangs for ~15s and dies as "EOF", or
+// answers with a foreign key. Xray's TLS sniffer gives up on a ClientHello split
+// into records, so the destination stays ours.
 //
 // Cost is confined to the handshake: tlsfragment only rewrites the first record,
 // so steady-state traffic is untouched (0.1s vs a 12s timeout in measurement).
