@@ -39,10 +39,27 @@ Xray-инбаунд с `sniffing.destOverride` и `routeOnly: false` читае�
 | целый ClientHello | чужой ключ |
 | `record_fragment: true` | туннель поднят, 3/3 |
 
-По коду Xray (`app/dispatcher/default.go`, `common/protocol/tls/sniff.go`): у цикла сниффинга
-бюджет 200 мс; на неполный ClientHello TLS-сниффер отвечает `ErrNoClue`, это считается
-попыткой, после двух цикл сдаётся. ClientHello, разрезанный на TLS-записи, не разбирается
-никогда — назначение остаётся нашим.
+По коду Xray (`XTLS/Xray-core` `c456141`, 2026-11-11; `common/protocol/tls/sniff.go`,
+`app/dispatcher/sniffer.go`, `app/dispatcher/default.go`):
+
+- **`record_fragment`.** `SniffTLS` разбирает только **первую** TLS-запись
+  (`b[5:5+headerLen]`). `tlsfragment` sing-box режет ClientHello внутри имени SNI, поэтому
+  первая запись обрывается посреди расширений, и `ReadClientHello` на проверке
+  `extensionsLength != len(data)` возвращает `errNotClientHello` — не `ErrNoClue`, то есть
+  окончательно «не TLS», с первой же попытки. TLS-сниффер выбывает, домена нет, назначение
+  остаётся нашим. Таймингов и попыток механизм не требует — детерминированно.
+- **`fragment`** (TCP-сплит без записей). Первый кусок неполон: `SniffTLS` видит
+  `5+headerLen > len(b)` → `ErrNoClue`, цикл ждёт ещё данных в остатке бюджета 200 мс. Через
+  detour следующий кусок приходит через `fragment_fallback_delay` (500 мс) — чтение по таймауту
+  обрывает сниффинг. Работает за счёт паузы больше бюджета; при паузе меньше 200 мс куски
+  склеились бы в кэше и ClientHello разобрался бы.
+- **Целый ClientHello** разбирается при любом размере: кэш сниффера копит до 32767 байт,
+  неполный хвост даёт одну `ErrNoClue`-попытку, следующее чтение дополняет.
+
+Проверено опытом 2026-11-12: ClientHello Go (`www.google.com`, `mail.ru`,
+`consumer-masque.cloudflareclient.com`; 1508–1537 B) через копию Xray `SniffTLS` — целый даёт
+домен; пропущенный через `tlsfragment.NewConn(record)` — `not client hello` в 20 из 20
+случайных разрезов на каждое имя, первая запись 114–122 B.
 
 ### 1.2 Факты замеров 060 (2026-08-12) под этим механизмом
 
@@ -54,7 +71,7 @@ Xray-инбаунд с `sniffing.destOverride` и `routeOnly: false` читае�
 | `sni: www.google.com` — резолвящееся имя | назначение уходит на `www.google.com:8443`, там никто не отвечает |
 | без detour тот же ClientHello проходит | на прямом пути релея нет |
 | `VLESS(DE-2) detour VLESS(FI)` — EOF | SNI REALITY — реальный сайт; уведённое соединение REALITY не проходит |
-| `record_fragment` ✅ 0.1 с, `fragment` ✅ 0.6 с | оба режут ClientHello на неполные куски для сниффера |
+| `record_fragment` ✅ 0.1 с, `fragment` ✅ 0.6 с | первая запись — не ClientHello для сниффера; TCP-куски с паузой 500 мс не успевают в бюджет 200 мс (§1.1) |
 | прикладные записи до 64 КБ после хендшейка — мгновенно | сниффер смотрит только начало потока |
 | masque h3 через FI — 4/4 | согласуется, если у FI в `destOverride` не было `quic` (не проверено); h3 через релей со сниффингом `quic` ловится — SPEC 150/151 |
 
