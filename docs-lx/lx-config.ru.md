@@ -36,6 +36,11 @@ GC-нагрева / RAM, ~8 МБ каждый там, где `BatchSize=128` —
 старте** с ошибкой `lx.wg.* is set but this build lacks idle-suspend support; rebuild with
 -tags with_lx_idle_suspend (mobile-only feature)`. См. [фичу ENERGY](../SPECS/FEATURES/008-ENERGY/FEATURE.md).
 
+Апстримный ключ `on_demand` (1.15) у WireGuard-endpoint'а с `lx.wg.idle_suspend`, `lazy_build` или
+`build_max` не сочетается: конфиг отклоняется с ошибкой `on_demand cannot be combined with lx.wg…`.
+Оба механизма усыпляют одно и то же устройство; достижимость узла `lx.wg` берёт из того же расчёта
+ссылок, что и `on_demand`.
+
 Смежные ключи (ревизия 2026-07-15; с SPEC 098 в блоке `lx` — старые имена `route.lx_idle_*`
 удалены, конфиг с ними не загружается как с неизвестными ключами): `lx.wg.idle_suspend_reachable` — опциональное
 второе, более длинное окно простоя, после которого гасятся и *достижимые* эндпоинты

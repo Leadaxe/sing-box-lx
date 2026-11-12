@@ -115,12 +115,9 @@ func (s *URLTest) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		group.groupTag = s.Tag()    // lx: SPEC 020 — probe gating needs the group's own tag
 		group.failover = s.failover // lx: SPEC 116
 		if s.balancer != nil {
-			// lx: SPEC 020 — a pool rebuild changes the active routing tree; invalidate
-			// the router's reachable cache. ctx captured here has the invalidator.
-			ctx := s.ctx
-			s.balancer.onChange = func() {
-				invalidateReachability(ctx)
-			}
+			// lx: SPEC 020 — a pool rebuild changes what the group references; the
+			// reference manager recomputes on a history update.
+			s.balancer.onChange = group.history.NotifyUpdated
 			s.balancer.alive = s.slotAlive // lx: SPEC 138 — pick skips slots that failed their last probe
 		}
 		s.group = group
@@ -752,16 +749,12 @@ func (g *URLTestGroup) performSelectionUpdate(reselect bool) {
 	var (
 		updated  bool
 		selected bool
-		changed  bool // lx: SPEC 020 — ANY selection change (incl. nil→first) re-shapes the active tree
 	)
 	// lx: SPEC 054 — переизбор с учётом штрафов (в аварийном режиме — штрафы ↑, задержка ↑).
 	// lx: SPEC 116 — failover держит текущий узел (selectForUpdate).
 	if outbound, exists := g.selectForUpdate(N.NetworkTCP, reselect); outbound != nil && (g.selectedOutboundTCP == nil || (exists && outbound != g.selectedOutboundTCP)) {
 		if g.selectedOutboundTCP != nil {
 			updated = true
-		}
-		if outbound != g.selectedOutboundTCP {
-			changed = true
 		}
 		g.setSelectedTCPLx(outbound) // lx: SPEC 139
 		selected = true
@@ -770,21 +763,11 @@ func (g *URLTestGroup) performSelectionUpdate(reselect bool) {
 		if g.selectedOutboundUDP != nil {
 			updated = true
 		}
-		if outbound != g.selectedOutboundUDP {
-			changed = true
-		}
 		g.setSelectedUDPLx(outbound) // lx: SPEC 139
 		selected = true
 	}
 	if updated {
 		g.interruptGroup.Interrupt(g.interruptExternalConnections)
-	}
-	if changed {
-		// lx: SPEC 020 — invalidate on the FIRST selection too: the nil→first
-		// transition changes the active node just as much as a later switch, and a
-		// cache computed from the cold-start fallback would otherwise stay stale
-		// (wrong node held live / real node suspended) until the next auto-switch.
-		invalidateReachability(g.ctx)
 	}
 	if selected {
 		g.history.NotifyUpdated()

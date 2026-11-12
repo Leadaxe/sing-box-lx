@@ -75,6 +75,13 @@ required for stable tags); this changelog section is the fallback used for pre-r
 - 🔧 **`masque-client`: усечение датаграмм (SPEC 150) и приманка (SPEC 151)** через обёртку
   UDP-диалера; в rc.1 у endpoint'а не было ни того, ни другого. В `lx.quic_sniff_decoy.outbound_type`
   тип называется `masque-client`, он же дефолт вместо `masque`.
+- 🔧 **Достижимость WG-узлов считает апстрим (SPEC 020).** Свой обход дерева маршрутизации и точки
+  инвалидации в `selector`/`urltest` удалены; idle-тик, probe-гейт urltest и потолок сборки читают
+  множество апстримного `ReferenceManager`. Сидами стали ещё входящие, сервисы, HTTP-клиенты и
+  правила с учётом clash-режима. Пороги, освобождение устройств, ленивая сборка, потолок и
+  выключатель без изменений. `on_demand: true` у WG-endpoint'а вместе с `lx.wg.idle_suspend`,
+  `lazy_build` или `build_max` — ошибка конфига; без `lx.wg` узел, усыплённый `on_demand`, виден как
+  `asleep`.
 - 🔀 **Синк с перезалитым `upstream/testing`** (`9f1cd1ef7` → `a13dbe1f7`, 29 файлов): зона
   link-local адресов в диалере и листенере, правки DNS-роутера, `direct`, tailscale, auto-redirect;
   `quic-go` mod.13, свежие `sing`, `sing-quic`, `sing-tun` (форк влит до `79ed0653fdc6`). SPEC 155 §5a.

@@ -169,11 +169,15 @@ func (m *ReferenceManager) update() {
 			outboundQueue = append(outboundQueue, defaultOutbound.Tag())
 		}
 	}
+	manualSeedsLx := slices.Clone(outboundQueue) // lx: SPEC 020 — final, rule targets, static detours
 	var onDemandEndpoints []adapter.OnDemandEndpoint
 	for _, endpoint := range endpointManager.Endpoints() {
 		onDemandEndpoint, isOnDemandEndpoint := endpoint.(adapter.OnDemandEndpoint)
 		if isOnDemandEndpoint && onDemandEndpoint.OnDemand() {
 			onDemandEndpoints = append(onDemandEndpoints, onDemandEndpoint)
+			continue
+		}
+		if m.selfSuspendingLx(endpoint) { // lx: SPEC 020 — the idle tick owns it: referenced only through the tree
 			continue
 		}
 		outboundQueue = append(outboundQueue, endpoint.Tag())
@@ -290,6 +294,7 @@ func (m *ReferenceManager) update() {
 	}
 	m.keepIdle = keepIdle
 	m.unreferencedTransports = unreferencedTransports
+	m.publishLx(manualSeedsLx, referencedOutbounds) // lx: SPEC 020
 }
 
 type idleKeeper interface {

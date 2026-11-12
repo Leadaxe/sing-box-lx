@@ -426,6 +426,9 @@ func ResolveLX(options *Options) (*LXResolved, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateLXWGOnDemand(options.Endpoints, resolved.WG); err != nil {
+		return nil, err
+	}
 	if lx.QUICSniffDecoy != nil {
 		if err := lx.QUICSniffDecoy.validate(); err != nil {
 			return nil, err
@@ -463,6 +466,27 @@ func ResolveLX(options *Options) (*LXResolved, error) {
 		options.LX = &lx
 	}
 	return resolved, nil
+}
+
+// validateLXWGOnDemand rejects a WireGuard endpoint that is put to sleep by
+// two owners at once. Upstream's `on_demand` (1.15) brings the device down the
+// moment nothing in the routing tree references the endpoint; lx.wg does the
+// same after an idle window, and also tears devices down, builds them lazily
+// and budgets them. Both act on the same device and neither knows the other's
+// state, so the endpoint state reported to clients would be wrong and a wake
+// by one could be undone by the other. lx: SPEC 020.
+func validateLXWGOnDemand(endpoints []Endpoint, wg LXWGResolved) error {
+	if wg.IdleSuspend <= 0 && !wg.LazyBuild && wg.BuildMax <= 0 {
+		return nil
+	}
+	for _, endpoint := range endpoints {
+		wireGuardOptions, isWireGuard := endpoint.Options.(*WireGuardEndpointOptions)
+		if !isWireGuard || !wireGuardOptions.OnDemand {
+			continue
+		}
+		return E.New("endpoint[", endpoint.Tag, "]: on_demand cannot be combined with lx.wg.idle_suspend, lx.wg.lazy_build or lx.wg.build_max: lx.wg already suspends endpoints nothing routes to; remove on_demand from the endpoint or the lx.wg keys")
+	}
+	return nil
 }
 
 func resolveLXValues(wg LXWGOptions, masque *LXMASQUEOptions, trustTunnel *LXTrustTunnelOptions, mtuAlign *LXMTUAlign) (*LXResolved, error) {

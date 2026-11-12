@@ -30,47 +30,67 @@
 
 ### Слой 1 — модель достижимости (reachability)
 
-Эндпоинт **достижим**, если трафик может прямо сейчас на него попасть. Динамический обход активного дерева (НЕ статический `ConsumersOf`/`dependByTag`, который перечисляет ВСЕ члены селектора — нам нужен *активный* выбор).
+Эндпоинт **достижим**, если трафик может прямо сейчас на него попасть. На линии 1.15 множество
+достижимых считает **апстрим**: `ReferenceManager` (`route/reference.go`, коммит «Improve idle
+connection management»). Своего обхода у нас больше нет.
 
-**Сиды** (точки входа):
-- **final**: `outboundManager.Default()`.
-- **Правила**: каждый outbound-тег из действия правила (`route`/`bypass`) в `router.Rules()`. Действия reject/sniff/dns/resolve/hijack-dns сида не дают.
-- **DNS-detour'ы**: `OutboundTag()` каждого DNS-транспорта (`dnsTransportManager.Transports()`). DNS-сервер дайлится на каждой резолюции — его detour достижим по определению; без сида DNS-only-WG эндпоинт флапал бы Down/Up вокруг каждой паузы, добавляя handshake к первому DNS-запросу каждой сессии.
+**Сиды апстрима:**
+- **final**: `outboundManager.Default()`, если его не перекрывает правило, срабатывающее всегда.
+- **Правила**: цели `route`/`bypass`, с учётом clash-режима — правило неактивного режима сида не даёт.
+- **DNS**: серверы, на которые ведут DNS-правила, дефолтный сервер, резолверы узлов; их `detour`.
+- **Входящие, сервисы, HTTP-клиенты**: всё, что объявляет `References()`.
+- **Endpoint без `on_demand`**: сам себе сид — он работает независимо от ссылок.
 
-**Обход вниз** от каждого сида (visited-set = дедуп + защита от циклов):
+**Обход вниз:** у группы — `References()` (selector: текущий выбор; urltest: выбранные TCP/UDP и
+весь пул `round_robin`, SPEC 109), у остальных — `Dependencies()` (цепочка `detour`, позиции chain).
 
-| Тип узла | Достижимые дети |
+**Наш шов — три строки в `update()`:**
+
+| Шов | Зачем |
 |---|---|
-| selector | **только** `Now()` (текущий выбор), НЕ `All()` |
-| urltest round_robin | **весь** текущий пул — `ActiveTags()` |
-| urltest legacy (least_test) | `Now()` |
-| обычный outbound | его `Dependencies()` (detour-цепочка) |
+| WG/AWG-endpoint под `lx.wg` не становится сидом сам себе (`selfSuspendingLx`) | Иначе каждый такой узел достижим всегда, и порог для недостижимых не срабатывал бы. Достижим он только через дерево. Действует при заданных `idle_suspend`, `lazy_build` или `build_max` |
+| Снимок сидов со стороны маршрутизации (`manualSeedsLx`) | Классы рёбер SPEC 097 |
+| `publishLx` в конце `update()` | Отдаёт множество и счётчики рёбер роутеру |
 
-Обход транзитивный (selector→urltest→эндпоинты и т.д.). Реализация: `reachableSet`/`walkReachable` в [`route/reachability_lx.go`](../../../route/reachability_lx.go) — чистые функции, развязанные с `*Router` через `resolve`-замыкание (юнит-тестируемы со стабами).
+**Счётчики рёбер SPEC 097** (`countSelectionRefs` в `route/reference_lx.go`) выводятся из готового
+множества одним проходом, без спуска: сид со стороны маршрутизации и выбор селектора — ручное ребро;
+ссылки urltest, `detour`, позиция chain — авто. Вес не наследуется. Достижимый тег без единого ребра
+(сид от DNS, входящего, сервиса) получает одно авто-ребро.
 
-**Семантика urltest — «дайл будит, idle-тик усыпляет».** Health-check probe идёт через `DialContext` узла — то есть обычный дайл. Тот же ленивый `Up()`-на-дайле, что обслуживает трафик, будит спящий узел под probe. Узел в пуле probe'ится каждый `interval` → не простаивает → не усыпляется; выбывший из пула перестаёт probe'иться → простоит > порога → усыпляется тиком. Probe сам узел обратно не гасит — это работа тика по таймауту.
+**Семантика urltest — «дайл будит, idle-тик усыпляет».** Health-check probe идёт через `DialContext`
+узла, то есть обычным дайлом, и будит спящий узел под probe. Узел в пуле пробуется каждый `interval`
+и не простаивает; выбывший перестаёт пробоваться и засыпает.
 
-**Гейтинг проб по достижимости группы.** Обратная связь тоже стоит: после ухода селектора с urltest-группы её тикер продолжал бы пробы до `idle_timeout` (дефолт 30m = 10 циклов по N узлов), каждым probe будя усыплённых членов (handshake) впустую. Поэтому `loopCheck` перед пробой спрашивает `adapter.ReachabilityReporter` (Router, из ctx): **недостижимая группа пропускает цикл проб** (тикер жив, `idle_timeout` его добьёт; вернувшийся трафик через `Touch` — или возвращение достижимости — немедленно возобновляет пробы). С выключенной фичей (`lx_idle_suspend: 0`) или без build-тега reporter отвечает `true` для всего — гейт не вмешивается, поведение бит-в-бит апстримное. Цена согласована: history недостижимой группы стареет, первый выбор после возвращения идёт по устаревшей истории — ровно как сегодня после `idle_timeout`.
+**Гейтинг проб по достижимости группы.** После ухода селектора с urltest-группы её тикер продолжал
+бы пробы до `idle_timeout`, будя усыплённых членов впустую. `loopCheck` перед пробой спрашивает
+`adapter.ReachabilityReporter` (Router) и пропускает цикл, пока группа недостижима.
 
-**Инвалидация первого выбора.** `performUpdateCheck` инвалидирует reach-кэш при **любой** смене выбранного узла, включая переход nil→первый выбор (раньше первый выбор кэш не инвалидировал: кэш, посчитанный на cold-start fallback-узле, зависал устаревшим до следующего auto-switch — не тот узел держался живым, а реальный усыплялся).
+**Отличия от обхода линии 1.14.** Сидов больше (clash-режим, входящие, сервисы, HTTP-клиенты);
+DNS-сервер, на который не ведёт ни одно правило, сидом не считается (раньше считался любой).
 
-### Слой 2 — кэш достижимости и инвалидация (event-driven)
+### Слой 2 — публикация и события
 
-Полный обход на каждый тик — расточительство (бьёт по цели экономии). Набор достижимых кэшируется, пересчитывается **только когда активное дерево изменилось**:
-- `r.reachDirty atomic.Bool` — «грязно» (стартует `true`).
-- `r.reachCache map[string]bool` под `r.reachMu sync.RWMutex`.
-- `InvalidateReachability()` (реализует `adapter.ReachabilityInvalidator`) ставит флаг. Обход НЕ под локом кэша (зовёт группы с их локами → риск лок-ордер дедлока): считаем вне лока, публикуем под локом.
+Пересчёт запускает апстрим: `ReferenceManager` подписан на обновления `urltest.HistoryStorage`, смену
+clash-режима, паузу и пробуждение устройства; расчёт идёт в его горутине, не на пути дайла.
 
-Точки инвалидации (через `service.FromContext[ReachabilityInvalidator]`, чтобы `protocol/group` не импортировал `route`):
-
-| Точка | Файл |
+| Событие | Кто уведомляет |
 |---|---|
-| `Selector.SelectOutbound` | `protocol/group/selector.go` |
-| urltest legacy auto-switch | `protocol/group/urltest.go` |
-| перестроение пула `balancer.onChange` | `protocol/group/urltest_balance_lx.go` |
-| перезагрузка конфига/роутера | пересоздание Router |
+| `Selector.SelectOutbound` | апстрим (`history.NotifyUpdated`) |
+| выбор urltest, включая первый | апстрим |
+| перестроение пула `round_robin` | `balancer.onChange` → `history.NotifyUpdated` (наш код SPEC 019) |
+| перенос выбора штрафом SPEC 054 | `history.NotifyUpdated` (наш код) |
+| перезагрузка конфига | новый Box, новый менеджер |
 
-Между событиями тик читает кэш и делает одно сравнение простоя на эндпоинт — без обхода.
+Результат — `referenceSnapshotLx` в `Router.referenceLx` (`atomic.Pointer`). Тик читает его и делает
+одно сравнение простоя на эндпоинт. До первой публикации (первый `update()` вынесен со старта,
+SPEC 136) тик ничего не усыпляет, а `OutboundReachable` отвечает `true`.
+
+**`on_demand` и `lx.wg` на одном узле — ошибка конфига.** Апстримный `on_demand` кладёт устройство
+сразу, как пропала ссылка; `lx.wg` делает то же после порога и ещё освобождает, лениво собирает и
+ограничивает устройства. Два владельца одного `device.Down()` не знают о состоянии друг друга,
+поэтому `option.ResolveLX` отклоняет WG-endpoint с `on_demand: true` при заданных
+`lx.wg.idle_suspend`, `lazy_build` или `build_max`. Без `lx.wg` `on_demand` работает как у апстрима,
+и узел, усыплённый им, виден в наблюдаемости как `asleep`.
 
 ### Слой 3 — сторона эндпоинта (учёт простоя, Down/Up)
 
@@ -283,21 +303,22 @@ AWG-detour-guard ([awg-detour-guard-must-be-at-start]) гасит `device.Down()
 ## Файлы
 
 Новые (lx-owned):
-- [`route/reachability_lx.go`](../../../route/reachability_lx.go) — `//go:build with_lx_idle_suspend` — walk, кэш, idle-тик (pause-registered), `suspendIdleEndpoints`, `startIdleSuspend`/`stopIdleSuspend`, `OutboundReachable`.
+- [`route/reference_lx.go`](../../../route/reference_lx.go) — без тега: снимок множества апстрима, счётчики рёбер, условие «не сид сам себе».
+- [`route/reachability_lx.go`](../../../route/reachability_lx.go) — `//go:build with_lx_idle_suspend` — idle-тик (pause-registered), `suspendIdleEndpoints`, `startIdleSuspend`/`stopIdleSuspend`, `OutboundReachable`, `SelectionRefs`.
 - [`route/idle_suspend_stub_lx.go`](../../../route/idle_suspend_stub_lx.go) — `//go:build !with_lx_idle_suspend` — заглушки (ошибка если опция задана; `OutboundReachable`→true).
-- [`route/reachability_common_lx.go`](../../../route/reachability_common_lx.go) — без тега: только `InvalidateReachability`.
-- [`protocol/group/reachability_lx.go`](../../../protocol/group/reachability_lx.go) — хук `invalidateReachability(ctx)`.
+- [`route/reachability_common_lx.go`](../../../route/reachability_common_lx.go) — без тега: `lxWG`, `QuiesceForShutdown`.
 
 Изменённые:
+- [`route/reference.go`](../../../route/reference.go) — три строки шва в `update()`.
 - [`option/route.go`](../../../option/route.go) — `LXIdleSuspend`, `LXIdleSuspendReachable`.
 - [`route/router.go`](../../../route/router.go) — состояние тика (+pause-callback), `endpoint adapter.EndpointManager` (из ctx), PostStart→`startIdleSuspend()`, стоп в Close.
-- [`box.go`](../../../box.go) — регистрация Router как `ReachabilityInvalidator` и `ReachabilityReporter`.
+- [`box.go`](../../../box.go) — регистрация Router как `ReachabilityReporter`.
 - [`cmd/internal/build_libbox/main.go`](../../../cmd/internal/build_libbox/main.go) — тег в `sharedTags` (mobile).
-- [`adapter/outbound.go`](../../../adapter/outbound.go) — интерфейсы `IdleSuspendable` (3-арг `SuspendIfIdle`), `ReachabilityInvalidator`, `ReachabilityReporter`.
+- [`adapter/outbound.go`](../../../adapter/outbound.go) — интерфейсы `IdleSuspendable` (3-арг `SuspendIfIdle`), `ReachabilityReporter` (сейчас в `adapter/idle_suspend_lx.go`).
 - [`protocol/wireguard/endpoint.go`](../../../protocol/wireguard/endpoint.go) — состояние (+`listenMode`, `lastTransferSum`) + `SuspendIfIdle`/`resumeOnDial`, DNS-lookup до wake, `Close` под `resumeMu`, вставка `resumeOnDial` в гейты дайла (без тега — дёшево).
 - [`transport/wireguard/endpoint.go`](../../../transport/wireguard/endpoint.go) — `suspended`-флаг (pause-wake гейт), `TransferTotals()`, `ActiveTCPFlows()`.
 - [`transport/wireguard/device_stack.go`](../../../transport/wireguard/device_stack.go) — `CurrentEstablished()` (gauge gVisor-стека).
-- `protocol/group/selector.go`, `urltest.go`, `urltest_balance_lx.go` — точки инвалидации (включая первый выбор), probe-гейт по `ReachabilityReporter`.
+- `protocol/group/urltest.go` — probe-гейт по `ReachabilityReporter`, `balancer.onChange` → `history.NotifyUpdated`. В `selector.go` шва SPEC 020 больше нет.
 
 ## Проверено
 

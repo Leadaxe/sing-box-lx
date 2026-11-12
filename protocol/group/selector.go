@@ -144,7 +144,6 @@ func (s *Selector) SelectOutbound(tag string) bool {
 		return true
 	}
 	s.selected.Store(detour)
-	invalidateReachability(s.ctx) // lx: SPEC 020 — active selection changed
 	if s.Tag() != "" {
 		cacheFile := service.FromContext[adapter.CacheFile](s.ctx)
 		if cacheFile != nil {

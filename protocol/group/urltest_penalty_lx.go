@@ -218,7 +218,7 @@ func (g *URLTestGroup) moveSelection(network string, detour adapter.Outbound) {
 	g.access.Unlock()
 	if changed {
 		g.logger.Info("lx penalty: selection moved to ", detour.Tag(), " (", network, ")")
-		invalidateReachability(g.ctx)
+		g.history.NotifyUpdated() // lx: SPEC 020 — the reference manager recomputes on it
 	}
 }
 

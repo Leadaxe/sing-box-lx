@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
-	R "github.com/sagernet/sing-box/route/rule"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/service/pause"
 )
@@ -22,205 +21,32 @@ const idleTickDivisor = 2
 
 // SPEC 020 — reachability from the active routing tree.
 //
-// An outbound is "reachable" if traffic can currently reach it: it is the final
-// outbound, the target of a routing rule, the active choice of a selector on a
-// reachable path, a member of a reachable urltest's current pool, or detoured-to
-// (transitively) by any of the above. Idle-suspend (the router idle tick) only
-// suspends WG/AWG endpoints that are NOT in this set — an endpoint nothing can
-// currently route to.
-//
-// The reachable set is recomputed EVENT-DRIVEN, not every tick: it only changes
-// when the active routing tree changes — a selector switch (SelectOutbound), a
-// urltest auto-switch / pool rebuild (setSlots), or a config reload. Each of
-// those calls InvalidateReachability(), which marks the cache dirty; the next
-// idle tick recomputes the walk once and caches it. Between events the tick reads
-// the cached map and does a single idle comparison per endpoint — no walk.
+// An outbound is "reachable" if traffic can currently reach it. The set is
+// upstream's: ReferenceManager computes it on every event that reshapes the
+// active tree and publishes it to the router (reference_lx.go). The idle tick
+// suspends only WG/AWG endpoints outside it; between events the tick reads the
+// published map and does one idle comparison per endpoint.
 
-// reachableActiveTags is the narrow capability a urltest group exposes so the
-// walk can descend into its WHOLE current pool (round_robin), not just Now().
-// Implemented by *group.URLTest; kept as an interface so route does not import
-// protocol/group.
-type reachableActiveTags interface {
-	ActiveTags() []string
-}
-
-// reachableOutbounds returns the cached reachable set, recomputing the walk only
-// when it is dirty (initial state, or after an event). The walk is NOT run under
-// the cache lock — it calls into the outbound manager and groups, which take
-// their own locks; holding ours across that risks a lock-order deadlock with an
-// event point that invalidates while holding a group lock. So: compute outside
-// the lock, then publish under it.
+// reachableOutbounds returns the published reachable set, nil before the
+// reference manager's first update.
 func (r *Router) reachableOutbounds() map[string]bool {
-	reachable, _ := r.reachability()
-	return reachable
-}
-
-// reachability returns the cached walk: the reachable set and, per tag, the
-// incoming edges counted by class (SPEC 097). Both come from the same walk and
-// share the dirty flag.
-func (r *Router) reachability() (map[string]bool, map[string]selectionRefs) {
-	if !r.reachDirty.Load() {
-		r.reachMu.RLock()
-		cached, cachedRefs := r.reachCache, r.reachRefs
-		r.reachMu.RUnlock()
-		if cached != nil {
-			return cached, cachedRefs
-		}
+	snapshot := r.referenceLx.Load()
+	if snapshot == nil {
+		return nil
 	}
-	// Dirty (or first call): recompute outside any lock. Clear the flag BEFORE the
-	// walk so a concurrent event during the walk re-dirties us (we recompute next
-	// tick) rather than being lost.
-	r.reachDirty.Store(false)
-	fresh := r.computeReachability()
-	r.reachMu.Lock()
-	r.reachCache = fresh.reachable
-	r.reachRefs = fresh.refs
-	r.reachMu.Unlock()
-	return fresh.reachable, fresh.refs
-}
-
-// computeReachable runs the actual walk from the seeds (final + rule targets +
-// DNS-server detours).
-func (r *Router) computeReachable() map[string]bool {
-	return r.computeReachability().reachable
-}
-
-// computeReachability runs the walk from the seeds: final and rule targets are
-// manual roots, DNS-server detours auto ones.
-func (r *Router) computeReachability() reachability {
-	var seeds []string
-	if def := r.outbound.Default(); def != nil {
-		seeds = append(seeds, def.Tag())
-	}
-	for _, rule := range r.rules {
-		seeds = append(seeds, ruleOutboundTags(rule)...)
-	}
-	// A DNS-server detour is dialable at any moment (every resolution goes
-	// through it), so it is "traffic can currently reach it" by definition. Not
-	// seeding it made a DNS-only WG endpoint flap Down/Up around every quiet gap,
-	// adding a wake handshake to the first resolution of each browsing session.
-	var dnsSeeds []string
-	if r.dnsTransport != nil {
-		for _, transport := range r.dnsTransport.Transports() {
-			if tag := transport.OutboundTag(); tag != "" {
-				dnsSeeds = append(dnsSeeds, tag)
-			}
-		}
-	}
-	return walkReachability(seeds, dnsSeeds, r.outbound.Outbound)
+	return snapshot.referenced
 }
 
 // SelectionRefs implements adapter.ReachabilityReporter (SPEC 097): the
-// incoming edges into tag from the cached walk. Computed whether or not the
-// idle tick runs — lx.wg.build_max works without lx.wg.idle_suspend; the event
-// points invalidate the cache either way.
+// incoming edges into tag, from the same published walk. Counted whether or
+// not the idle tick runs — lx.wg.build_max works without lx.wg.idle_suspend.
 func (r *Router) SelectionRefs(tag string) (manual int, auto int) {
-	_, refs := r.reachability()
-	counted := refs[tag]
+	snapshot := r.referenceLx.Load()
+	if snapshot == nil {
+		return 0, 0
+	}
+	counted := snapshot.refs[tag]
 	return counted.manual, counted.auto
-}
-
-// reachability is the result of one walk: the reachable set and the incoming
-// edge counts per tag.
-type reachability struct {
-	reachable map[string]bool
-	refs      map[string]selectionRefs
-}
-
-// reachableSet is the pure reachability walk, decoupled from *Router so it is
-// unit-testable with a stub resolver. seeds are the entry tags (final + rule
-// targets); resolve looks a tag up to an outbound (the second return is false
-// for an unknown tag).
-func reachableSet(seeds []string, resolve func(tag string) (adapter.Outbound, bool)) map[string]bool {
-	return walkReachability(seeds, nil, resolve).reachable
-}
-
-// walkReachability walks from the manual seeds (final, rule targets) and the
-// auto seeds (DNS-server detours), marking reachable tags and counting every
-// edge that leads into a tag by class.
-func walkReachability(manualSeeds []string, autoSeeds []string, resolve func(tag string) (adapter.Outbound, bool)) reachability {
-	result := reachability{
-		reachable: make(map[string]bool),
-		refs:      make(map[string]selectionRefs),
-	}
-	for _, seed := range manualSeeds {
-		walkReachable(seed, true, &result, resolve)
-	}
-	for _, seed := range autoSeeds {
-		walkReachable(seed, false, &result, resolve)
-	}
-	return result
-}
-
-// ruleOutboundTags extracts the outbound tag(s) a rule's action routes to. Only
-// route/bypass actions carry an outbound; everything else (reject, sniff, dns,
-// resolve, hijack-dns) routes nowhere and contributes no seed.
-func ruleOutboundTags(rule adapter.Rule) []string {
-	switch action := rule.Action().(type) {
-	case *R.RuleActionRoute:
-		if action.Outbound != "" {
-			return []string{action.Outbound}
-		}
-	case *R.RuleActionBypass:
-		if action.Outbound != "" {
-			return []string{action.Outbound}
-		}
-	}
-	return nil
-}
-
-// walkReachable counts the edge that led here (manual or auto), marks tag
-// reachable and descends into whatever tag actively routes through right now,
-// transitively. The edge is counted BEFORE the visited check, so every incoming
-// edge counts once; reachable (== the visited set) guards against cycles and
-// keeps each tag's own edges from being expanded twice.
-//
-// Edge classes (SPEC 097): a selector's current choice is manual; a urltest
-// pool member, a static dependency (detour, chain position) and a DNS-server
-// detour are auto. No weight is inherited: selector → urltest → X gives X one
-// auto edge, not a manual one.
-func walkReachable(tag string, manual bool, result *reachability, resolve func(tag string) (adapter.Outbound, bool)) {
-	if tag == "" {
-		return
-	}
-	counted := result.refs[tag]
-	if manual {
-		counted.manual++
-	} else {
-		counted.auto++
-	}
-	result.refs[tag] = counted
-	if result.reachable[tag] {
-		return
-	}
-	result.reachable[tag] = true
-
-	outbound, loaded := resolve(tag)
-	if !loaded {
-		return
-	}
-
-	// A urltest group routes through its WHOLE active pool (round_robin) or its
-	// single current node (legacy). Descend into all of them.
-	if active, ok := outbound.(reachableActiveTags); ok {
-		for _, child := range active.ActiveTags() {
-			walkReachable(child, false, result, resolve)
-		}
-		return
-	}
-
-	// A selector routes through its single current choice only — Now(), NOT All()
-	// (a non-selected member is exactly what we want to be able to suspend).
-	if group, ok := outbound.(adapter.OutboundGroup); ok {
-		walkReachable(adapter.GroupNow(group), true, result, resolve)
-		return
-	}
-
-	// An ordinary outbound routes through its static detour dependencies (a
-	// chain outbound lists its positions here).
-	for _, dependency := range outbound.Dependencies() {
-		walkReachable(dependency, false, result, resolve)
-	}
 }
 
 // startIdleSuspend launches the idle-suspend tick goroutine. No-op (nil error)
@@ -276,8 +102,7 @@ func (r *Router) stopIdleSuspend() {
 	}
 }
 
-// idleSuspendLoop ticks every period. Each tick fetches the reachable set (from
-// cache — the walk only re-runs when an event invalidated it, never per tick) and
+// idleSuspendLoop ticks every period. Each tick reads the published reachable set and
 // asks each WG/AWG endpoint to suspend itself if it is unreachable AND idle past
 // the threshold. Per endpoint this is a single map lookup + an atomic idle
 // comparison; the endpoint owns the suspend/CAS/log decision.
@@ -288,7 +113,11 @@ func (r *Router) idleSuspendLoop(ticker *time.Ticker, stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-ticker.C:
-			r.suspendIdleEndpoints(r.reachableOutbounds())
+			// No walk published yet (the reference manager's first update runs off
+			// the start path): nothing is known to be unreachable, skip the tick.
+			if reachable := r.reachableOutbounds(); reachable != nil {
+				r.suspendIdleEndpoints(reachable)
+			}
 		}
 	}
 }
@@ -300,7 +129,8 @@ func (r *Router) OutboundReachable(tag string) bool {
 	if r.idleSuspend <= 0 {
 		return true
 	}
-	return r.reachableOutbounds()[tag]
+	reachable := r.reachableOutbounds()
+	return reachable == nil || reachable[tag]
 }
 
 // suspendIdleEndpoints runs one tick's per-endpoint suspend decision over every

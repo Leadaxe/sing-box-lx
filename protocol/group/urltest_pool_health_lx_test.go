@@ -21,7 +21,7 @@ import (
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/service"
+	"github.com/sagernet/sing/common/observable"
 )
 
 // fakeManager resolves tags from a fixed map; just enough for URLTestGroup to
@@ -138,32 +138,29 @@ func TestBalancePoolFirstLive_fullPoolProbesOnlyPool(t *testing.T) {
 	}
 }
 
-// --- SPEC 020: first legacy selection must invalidate the reachable cache ----
+// --- SPEC 020: the first legacy selection must reach the reference manager ----
 
-type recordingInvalidator struct {
-	calls int
-}
-
-func (r *recordingInvalidator) InvalidateReachability() { r.calls++ }
-
-// TestPerformUpdateCheck_firstSelectionInvalidates pins the nil→first fix: the
-// very first auto-selection re-shapes the active tree and must dirty the cache,
-// even though there is no previous selection to interrupt.
-func TestPerformUpdateCheck_firstSelectionInvalidates(t *testing.T) {
-	inv := &recordingInvalidator{}
-	ctx := service.ContextWith[adapter.ReachabilityInvalidator](context.Background(), inv)
+// TestPerformUpdateCheck_firstSelectionNotifies pins the nil→first case: the very
+// first auto-selection re-shapes the active tree, and the reference manager only
+// recomputes on a history update — there is no previous selection to interrupt.
+func TestPerformUpdateCheck_firstSelectionNotifies(t *testing.T) {
 	a := &testDialNode{tag: "a", addr: "server"}
-	g := newPoolTestGroup(t, ctx, []*testDialNode{a}, 0)
+	g := newPoolTestGroup(t, context.Background(), []*testDialNode{a}, 0)
 	g.balancer = nil // legacy least_test path
 	g.history.StoreURLTestHistory("a", &adapter.URLTestHistory{Time: time.Now(), Delay: 10})
+	hook := observable.NewSubscriber[struct{}](1)
+	g.history.AddUpdateHook(hook)
+	subscription, _ := hook.Subscription()
 
 	g.performUpdateCheck()
 
 	if g.selectedOutboundTCP == nil || g.selectedOutboundTCP.Tag() != "a" {
 		t.Fatal("precondition: first selection must land on a")
 	}
-	if inv.calls == 0 {
-		t.Fatal("the FIRST selection must invalidate the reachable cache (nil→first lost update)")
+	select {
+	case <-subscription:
+	default:
+		t.Fatal("the FIRST selection must notify the history hooks (nil→first lost update)")
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"runtime"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,8 +27,7 @@ import (
 )
 
 var (
-	_ adapter.Router                  = (*Router)(nil)
-	_ adapter.ReachabilityInvalidator = (*Router)(nil) // lx: SPEC 020 idle-suspend
+	_ adapter.Router = (*Router)(nil)
 )
 
 type Router struct {
@@ -57,29 +55,23 @@ type Router struct {
 	platformInterface adapter.PlatformInterface
 	// lx:begin idle-suspend
 	// SPEC 020. idleSuspend is the configured threshold (0 = feature off). idleStop
-	// is closed by Close() to stop the idle tick goroutine. reachCache holds the
-	// event-driven reachable set (recomputed only when reachDirty is set by
-	// InvalidateReachability — selector switch / urltest auto-switch / pool rebuild
-	// / reload); reachMu guards publishing it. reachDirty starts true so the first
-	// tick computes it. endpoint is the endpoint manager: WG/AWG endpoints live
-	// there (NOT in the outbound manager — outbound.Outbounds() never lists them),
-	// so the idle tick must iterate it to find IdleSuspendable endpoints.
-	// idleTeardownSet records that lx.wg.idle_teardown was present in the config,
-	// which an explicit "0" (teardown disabled) makes indistinguishable from
-	// absent in the resolved duration alone. Prerequisite checks key off this,
-	// so "0" still requires lx.wg.idle_suspend and still fails loudly in a build
-	// without the tag. All four come from the resolved `lx` block in the context
-	// (SPEC 098).
+	// is closed by Close() to stop the idle tick goroutine. referenceLx is the
+	// reachable set and the edge counts the upstream ReferenceManager published
+	// after its last update (reference_lx.go); nil until the first one. endpoint
+	// is the endpoint manager: WG/AWG endpoints live there (NOT in the outbound
+	// manager — outbound.Outbounds() never lists them), so the idle tick must
+	// iterate it to find IdleSuspendable endpoints. idleTeardownSet records that
+	// lx.wg.idle_teardown was present in the config, which an explicit "0"
+	// (teardown disabled) makes indistinguishable from absent in the resolved
+	// duration alone. All four windows come from the resolved `lx` block in the
+	// context (SPEC 098).
 	idleSuspend          time.Duration
 	idleSuspendReachable time.Duration
 	idleTeardown         time.Duration
 	idleTeardownSet      bool
 	idleStop             chan struct{}
 	idlePauseCallback    *list.Element[pause.Callback]
-	reachMu              sync.RWMutex
-	reachCache           map[string]bool
-	reachRefs            map[string]selectionRefs // SPEC 097 — incoming edges per tag, same walk and dirty flag
-	reachDirty           atomic.Bool
+	referenceLx          atomic.Pointer[referenceSnapshotLx]
 	endpoint             adapter.EndpointManager
 	// lx:end idle-suspend
 	// lx:begin dns-hijack-async
@@ -115,7 +107,6 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		endpoint:             service.FromContext[adapter.EndpointManager](ctx), // lx: SPEC 020 — idle tick iterates endpoints
 		dnsHijackSem:         semaphore.NewWeighted(dnsHijackConcurrencyLimit),  // lx: SPEC 046
 	}
-	router.reachDirty.Store(true) // lx: SPEC 020 — first tick computes the reachable set
 	return router
 }
 

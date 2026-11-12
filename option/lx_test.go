@@ -396,3 +396,28 @@ func TestLXQUICSniffDecoy(t *testing.T) {
 		}
 	}
 }
+
+// lx: SPEC 020 on 1.15 — upstream's on_demand and lx.wg both suspend a
+// WireGuard device; one endpoint cannot have two owners.
+func TestLXWGRejectsOnDemand(t *testing.T) {
+	t.Parallel()
+	endpoints := []Endpoint{
+		{Type: "wireguard", Tag: "wg-plain", Options: &WireGuardEndpointOptions{}},
+		{Type: "wireguard", Tag: "wg-od", Options: &WireGuardEndpointOptions{OnDemand: true}},
+	}
+	for name, wg := range map[string]LXWGResolved{
+		"idle_suspend": {IdleSuspend: time.Minute},
+		"build_max":    {BuildMax: 2},
+	} {
+		err := validateLXWGOnDemand(endpoints, wg)
+		if err == nil || !strings.Contains(err.Error(), "endpoint[wg-od]: on_demand cannot be combined") {
+			t.Errorf("%s: want the on_demand conflict on wg-od, got %v", name, err)
+		}
+	}
+	if err := validateLXWGOnDemand(endpoints, LXWGResolved{}); err != nil {
+		t.Errorf("without lx.wg on_demand is upstream's business, got %v", err)
+	}
+	if err := validateLXWGOnDemand(endpoints[:1], LXWGResolved{IdleSuspend: time.Minute}); err != nil {
+		t.Errorf("no on_demand endpoint → no conflict, got %v", err)
+	}
+}
