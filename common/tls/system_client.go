@@ -43,7 +43,7 @@ func ValidateSystemTLSOptions(ctx context.Context, options option.OutboundTLSOpt
 	if len(options.ClientCertificate) > 0 || options.ClientCertificatePath != "" || len(options.ClientKey) > 0 || options.ClientKeyPath != "" {
 		return SystemTLSValidated{}, E.New("client certificate is unsupported in ", engineName)
 	}
-	if options.Fragment || options.RecordFragment {
+	if options.Fragment || options.RecordFragmentEnabled() { // lx: SPEC 156
 		return SystemTLSValidated{}, E.New("tls fragment is unsupported in ", engineName)
 	}
 	if options.KernelTx || options.KernelRx {

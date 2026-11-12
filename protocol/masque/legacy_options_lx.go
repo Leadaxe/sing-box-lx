@@ -13,6 +13,7 @@ import (
 
 	"github.com/sagernet/sing-box/experimental/deprecated"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
 )
@@ -64,7 +65,7 @@ func resolveLegacyOptions(ctx context.Context, options *option.MASQUEOutboundOpt
 	}
 	//nolint:staticcheck
 	if options.RecordFragment {
-		tlsOptions.RecordFragment = true
+		tlsOptions.RecordFragment = common.Ptr(true)
 		usedLegacy = true
 	}
 	//nolint:staticcheck
@@ -111,7 +112,7 @@ func warnUnsupportedTLSOptions(ctx context.Context, logger interface {
 	if tlsOptions.KernelTx || tlsOptions.KernelRx {
 		logger.WarnContext(ctx, "masque: `tls.kernel_tx`/`tls.kernel_rx` are ignored — not supported for masque")
 	}
-	if transport == "h3" && (tlsOptions.Fragment || tlsOptions.RecordFragment) {
+	if transport == "h3" && (tlsOptions.Fragment || tlsOptions.RecordFragmentEnabled()) {
 		// h3 carries TLS inside QUIC, not over TCP: there is no TLS record
 		// stream to split. See SPEC 060.
 		logger.WarnContext(ctx, "masque: fragmentation is ignored on `vhttp: h3` — QUIC carries no TLS records over TCP")

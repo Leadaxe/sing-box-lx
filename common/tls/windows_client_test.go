@@ -2086,7 +2086,7 @@ func TestValidateWindowsTLSOptionsRejections(t *testing.T) {
 		}, "tls fragment"},
 		{"record_fragment", option.OutboundTLSOptions{
 			Enabled: true, Engine: C.TLSEngineWindows, ServerName: "x",
-			RecordFragment: true,
+			RecordFragment: lxBoolPtr(true), // lx: SPEC 156
 		}, "tls fragment"},
 		{"kernel_tx", option.OutboundTLSOptions{
 			Enabled: true, Engine: C.TLSEngineWindows, ServerName: "x",

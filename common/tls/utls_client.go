@@ -326,7 +326,7 @@ func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 		id:                    id,
 		fragment:              options.Fragment,
 		fragmentFallbackDelay: time.Duration(options.FragmentFallbackDelay),
-		recordFragment:        options.RecordFragment,
+		recordFragment:        options.RecordFragmentEnabled(), // lx: SPEC 156
 		spoof:                 spoof,
 		spoofMethod:           spoofMethod,
 	}

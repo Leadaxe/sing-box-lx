@@ -121,16 +121,19 @@ func DialedThroughDetour(options option.DialerOptions) bool {
 // Cost is confined to the handshake: tlsfragment only rewrites the first record,
 // so steady-state traffic is untouched (0.1s vs a 12s timeout in measurement).
 //
-// An explicit `fragment` or `record_fragment` in the config always wins — this
-// only fills in the case where the user asked for nothing. lx: SPEC 060.
+// An explicit choice in the config always wins — `fragment: true`, or
+// `record_fragment` set either way (an explicit `false` is the opt-out for a
+// leg whose network drops a split ClientHello). This only fills in the case
+// where the user asked for nothing. lx: SPEC 060, SPEC 156.
 func applyDetourFragmentDefault(options *ClientOptions) {
 	if !options.DialedThroughDetour {
 		return
 	}
-	if options.Options.Fragment || options.Options.RecordFragment {
+	if options.Options.Fragment || options.Options.RecordFragment != nil {
 		return // user made a choice; do not second-guess it
 	}
-	options.Options.RecordFragment = true
+	recordFragment := true
+	options.Options.RecordFragment = &recordFragment
 }
 
 func NewClientWithOptions(options ClientOptions) (Config, error) {

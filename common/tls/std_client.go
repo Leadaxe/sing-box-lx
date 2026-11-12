@@ -240,7 +240,7 @@ func newSTDClient(ctx context.Context, logger logger.ContextLogger, serverAddres
 		handshakeTimeout:      handshakeTimeout,
 		fragment:              options.Fragment,
 		fragmentFallbackDelay: time.Duration(options.FragmentFallbackDelay),
-		recordFragment:        options.RecordFragment,
+		recordFragment:        options.RecordFragmentEnabled(), // lx: SPEC 156
 		spoof:                 spoof,
 		spoofMethod:           spoofMethod,
 	}

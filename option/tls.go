@@ -124,7 +124,7 @@ type OutboundTLSOptions struct {
 	ClientKeyPath              string                              `json:"client_key_path,omitempty"`
 	Fragment                   bool                                `json:"fragment,omitempty"`
 	FragmentFallbackDelay      badoption.Duration                  `json:"fragment_fallback_delay,omitempty"`
-	RecordFragment             bool                                `json:"record_fragment,omitempty"`
+	RecordFragment             *bool                               `json:"record_fragment,omitempty"` // lx: SPEC 156 — explicit false opts out of the detour default
 	Spoof                      string                              `json:"spoof,omitempty"`
 	SpoofMethod                string                              `json:"spoof_method,omitempty" enum:"wrong-sequence,wrong-checksum,wrong-ack,wrong-md5,wrong-timestamp"`
 	KernelTx                   bool                                `json:"kernel_tx,omitempty"`
