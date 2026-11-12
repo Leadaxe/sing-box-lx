@@ -86,6 +86,7 @@ type Endpoint struct {
 	network           adapter.NetworkManager
 	platformInterface adapter.PlatformInterface
 	detour            string
+	binding           systemBinding
 	server            *tsnet.Server
 	stack             *tun.Go
 	returnAccess      sync.Mutex
@@ -286,6 +287,7 @@ func (t *Endpoint) start(scope *adapter.Scope) error {
 	if err != nil {
 		return err
 	}
+	t.binding = binding
 	t.server.ControlFunc = binding.control
 	t.server.ListenPacketFunc = binding.listenPacket
 	t.server.DefaultRouteFunc = binding.defaultRoute
@@ -342,6 +344,11 @@ func (t *Endpoint) postStart(scope *adapter.Scope) error {
 		return err
 	}
 	scope.Add(t.server.Close)
+	unwatch := t.binding.watch(t.server.Sys().NetMon.Get())
+	scope.Add(func() error {
+		unwatch()
+		return nil
+	})
 	localBackend := t.server.ExportLocalBackend()
 	t.localBackend.Store(localBackend)
 	scope.Add(func() error {

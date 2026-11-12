@@ -145,7 +145,8 @@ func (i *TailcatInbound) Start(stage adapter.StartStage, scope *adapter.Scope) e
 		PrivateKey:   i.privateKey,
 		PresharedKey: i.presharedKey,
 		Region:       region,
-		Hooks:        binding.hooks(i.dialer),
+		Dialer:       i.dialer,
+		Binding:      binding,
 		LookupHook: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return i.dnsRouter.Lookup(ctx, host, i.queryOptions)
 		},

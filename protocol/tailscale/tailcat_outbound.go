@@ -185,7 +185,8 @@ func (o *TailcatOutbound) ensureLocked(ctx context.Context) (*tailcatNode, error
 		PrivateKey:   o.privateKey,
 		PresharedKey: o.presharedKey,
 		Region:       region,
-		Hooks:        binding.hooks(o.dialer),
+		Dialer:       o.dialer,
+		Binding:      binding,
 		LookupHook: func(ctx context.Context, host string) ([]netip.Addr, error) {
 			return o.dnsRouter.Lookup(ctx, host, o.queryOptions)
 		},

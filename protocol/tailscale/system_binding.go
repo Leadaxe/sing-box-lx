@@ -6,6 +6,8 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"slices"
+	"sync"
 	"syscall"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -20,9 +22,10 @@ import (
 )
 
 type systemBinding struct {
-	control      func(network, address string, conn syscall.RawConn) error
-	listenPacket func(ctx context.Context, network, address string) (nettype.PacketConn, error)
-	defaultRoute func() (netmon.DefaultRouteDetails, error)
+	interfaceFinder control.InterfaceFinder
+	control         func(network, address string, conn syscall.RawConn) error
+	listenPacket    func(ctx context.Context, network, address string) (nettype.PacketConn, error)
+	defaultRoute    func() (netmon.DefaultRouteDetails, error)
 }
 
 func newSystemBinding(ctx context.Context, logger logger.ContextLogger) (systemBinding, error) {
@@ -34,8 +37,11 @@ func newSystemBinding(ctx context.Context, logger logger.ContextLogger) (systemB
 		if err != nil {
 			return systemBinding{}, err
 		}
+	}
+	if interfaceMonitor := network.InterfaceMonitor(); interfaceMonitor != nil {
+		interfaceFinder := network.InterfaceFinder()
 		netmon.RegisterInterfaceGetter(func() ([]netmon.Interface, error) {
-			return common.Map(network.InterfaceFinder().Interfaces(), func(it control.Interface) netmon.Interface {
+			return common.Map(interfaceFinder.Interfaces(), func(it control.Interface) netmon.Interface {
 				return netmon.Interface{
 					Interface: &net.Interface{
 						Index:        it.Index,
@@ -53,8 +59,9 @@ func newSystemBinding(ctx context.Context, logger logger.ContextLogger) (systemB
 				}
 			}), nil
 		})
+		binding.interfaceFinder = interfaceFinder
 		binding.defaultRoute = func() (netmon.DefaultRouteDetails, error) {
-			defaultInterface := network.InterfaceMonitor().DefaultInterface()
+			defaultInterface := interfaceMonitor.DefaultInterface()
 			if defaultInterface == nil {
 				return netmon.DefaultRouteDetails{}, nil
 			}
@@ -119,4 +126,24 @@ func newSystemBinding(ctx context.Context, logger logger.ContextLogger) (systemB
 
 func (b systemBinding) hooks(dialer N.Dialer) netmon.Hooks {
 	return netmon.Hooks{Dialer: dialer, Control: b.control, ListenPacket: b.listenPacket, DefaultRoute: b.defaultRoute}
+}
+
+func (b systemBinding) watch(netMon *netmon.Monitor) (unwatch func()) {
+	if b.interfaceFinder == nil {
+		return func() {}
+	}
+	var access sync.Mutex
+	lastInterfaces := b.interfaceFinder.Interfaces()
+	element := b.interfaceFinder.RegisterInterfaceUpdateCallback(func(interfaces []control.Interface) {
+		access.Lock()
+		changed := !slices.EqualFunc(lastInterfaces, interfaces, control.Interface.Equals)
+		lastInterfaces = interfaces
+		access.Unlock()
+		if changed {
+			netMon.Poll()
+		}
+	})
+	return func() {
+		b.interfaceFinder.UnregisterInterfaceUpdateCallback(element)
+	}
 }

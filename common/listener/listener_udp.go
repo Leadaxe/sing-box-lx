@@ -16,7 +16,6 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/service"
 )
 
 const udpOutputBatchSize = 128
@@ -27,8 +26,11 @@ func (l *Listener) ListenUDP() (net.PacketConn, error) {
 
 func (l *Listener) ListenUDPWithConfig(listenConfig net.ListenConfig) (net.PacketConn, error) {
 	bindAddr := M.SocksaddrFrom(l.listenOptions.Listen.Build(netip.AddrFrom4([4]byte{127, 0, 0, 1})), l.listenOptions.ListenPort)
+	var followInterface func(conn syscall.Conn)
 	if l.listenOptions.BindInterface != "" {
-		listenConfig.Control = control.Append(listenConfig.Control, control.BindToInterface(service.FromContext[adapter.NetworkManager](l.ctx).InterfaceFinder(), l.listenOptions.BindInterface, -1))
+		var bindFunc control.Func
+		bindFunc, followInterface = l.followBindInterface()
+		listenConfig.Control = control.Append(listenConfig.Control, bindFunc)
 	}
 	if l.listenOptions.RoutingMark != 0 {
 		listenConfig.Control = control.Append(listenConfig.Control, control.RoutingMark(uint32(l.listenOptions.RoutingMark)))
@@ -62,6 +64,9 @@ func (l *Listener) ListenUDPWithConfig(listenConfig net.ListenConfig) (net.Packe
 	}
 	l.udpConn = udpConn.(*net.UDPConn)
 	l.udpAddr = bindAddr
+	if followInterface != nil {
+		followInterface(l.udpConn)
+	}
 	l.logger.Info("udp server started at ", udpConn.LocalAddr())
 	return udpConn, err
 }
@@ -69,7 +74,7 @@ func (l *Listener) ListenUDPWithConfig(listenConfig net.ListenConfig) (net.Packe
 func (l *Listener) DialContext(dialer net.Dialer, ctx context.Context, network string, address string) (net.Conn, error) {
 	return ListenNetworkNamespace[net.Conn](l.ctx, l.listenOptions.NetNs, func() (net.Conn, error) {
 		if l.listenOptions.BindInterface != "" {
-			dialer.Control = control.Append(dialer.Control, control.BindToInterface(service.FromContext[adapter.NetworkManager](l.ctx).InterfaceFinder(), l.listenOptions.BindInterface, -1))
+			dialer.Control = control.Append(dialer.Control, l.bindInterfaceFunc())
 		}
 		if l.listenOptions.RoutingMark != 0 {
 			dialer.Control = control.Append(dialer.Control, control.RoutingMark(uint32(l.listenOptions.RoutingMark)))
@@ -85,7 +90,7 @@ func (l *Listener) ListenPacket(listenConfig net.ListenConfig, ctx context.Conte
 	return ListenNetworkNamespace[net.PacketConn](l.ctx, l.listenOptions.NetNs, func() (net.PacketConn, error) {
 		listenConfig.Control = control.Append(listenConfig.Control, control.UDPSocketBuffer(UDPSocketBufferSize()))
 		if l.listenOptions.BindInterface != "" {
-			listenConfig.Control = control.Append(listenConfig.Control, control.BindToInterface(service.FromContext[adapter.NetworkManager](l.ctx).InterfaceFinder(), l.listenOptions.BindInterface, -1))
+			listenConfig.Control = control.Append(listenConfig.Control, l.bindInterfaceFunc())
 		}
 		if l.listenOptions.RoutingMark != 0 {
 			listenConfig.Control = control.Append(listenConfig.Control, control.RoutingMark(uint32(l.listenOptions.RoutingMark)))

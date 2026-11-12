@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/iponly"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
@@ -71,6 +72,11 @@ func unwrapSpliceTarget(conn any, allowOffload bool) (spliceTarget, bool) {
 				target.offload = offload
 				return target, true
 			}
+		}
+		ipOnlyConn, isIPOnly := conn.(*iponly.PacketConn)
+		if isIPOnly {
+			conn = ipOnlyConn.Upstream()
+			continue
 		}
 		readerWithUpstream, isReaderWithUpstream := conn.(N.ReaderWithUpstream)
 		if !isReaderWithUpstream || !readerWithUpstream.ReaderReplaceable() {
