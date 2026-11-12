@@ -77,7 +77,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	client, err := tuic.NewClient(tuic.ClientOptions{
 		Context:       ctx,
-		Dialer:        lxdatagram.Dialer(ctx, outboundDialer, logger), // lx: SPEC 150, 151
+		Dialer:        lxdatagram.Dialer(ctx, C.TypeTUIC, outboundDialer, logger), // lx: SPEC 150, 151
 		ServerAddress: options.ServerOptions.Build(),
 		TLSConfig:     tlsConfig,
 		QUICOptions: qtls.QUICOptions{

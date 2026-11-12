@@ -15,6 +15,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/endpoint"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/iponly"
+	"github.com/sagernet/sing-box/common/lxdatagram"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -94,6 +95,7 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	if err != nil {
 		return nil, err
 	}
+	outboundDialer = lxdatagram.Dialer(ctx, C.TypeMASQUEClient, outboundDialer, logger) // lx: SPEC 150, 151
 	headers := options.Headers.Build()
 	authority := headers.Get("Host")
 	headers.Del("Host")

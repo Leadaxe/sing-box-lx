@@ -64,6 +64,40 @@ required for stable tags); this changelog section is the fallback used for pre-r
   OpenWrt arm64 — WARP MASQUE h3/h2, WG и AWG через `detour` на `masque-client`, hysteria2,
   vmess+ws+tls.
 
+#### `lx-1.15` после v1.15.0-lx.1-rc.1 (не выпущено)
+
+- 🔧 **Профиль `cloudflare` не спускается на HTTP/1.1 (SPEC 110, Ш8).** `version: 1` с профилем —
+  ошибка конфига; спуск на h1 в работе заканчивается ошибкой без запроса к серверу. Туннеля на h1
+  у WARP нет (`404` на `Upgrade`, `400` на `CONNECT`, 16 форм запроса), раньше в лог попадал этот
+  статус вместо причины.
+- 🔀 **Влит `lx` до `v1.14.4-lx.33`**: объектный `lx.quic_sniff_decoy`, удалённый
+  `lx.awg_masquerade`, путь через `direct` в `detour` (SPEC 151, 153).
+- 🔧 **`masque-client`: усечение датаграмм (SPEC 150) и приманка (SPEC 151)** через обёртку
+  UDP-диалера; в rc.1 у endpoint'а не было ни того, ни другого. В `lx.quic_sniff_decoy.outbound_type`
+  тип называется `masque-client`, он же дефолт вместо `masque`.
+- 📎 Доки `README` и `lx-config` §4 описывают WARP на `masque-client`; в rc.1 они называли слой
+  несделанным.
+
+#### v1.14.4-lx.33
+
+Stable после `v1.14.4-lx.32`, без rc-линии. База, сабмодули, Go и `go.mod` — как в lx.32 (sing-box `v1.14.4` + 9 коммитов `upstream/stable`, `8eb4395a3`, дрейф 0). Одна тема: QUIC-обманка перестраивается после полевого случая 2026-11-06 (masque h3 через `socks` с UDP-over-TCP без сниффера на пути поднимался только с выключенным байтом). Решения владельца 2026-11-06/07.
+
+- ⚠️ **`lx.quic_sniff_decoy` — только объект, байт по умолчанию на повторе ([SPEC 151](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md) §3–4).** Форма `{mode, outbound_type, detour_type, send}`; строка (`"detour"`) и bool (`true`) из lx.30–lx.32 — ошибка загрузки `lx.quic_sniff_decoy must be an object: {mode, outbound_type, detour_type, send}`. `mode` (`off` дефолт / `direct` / `detour` / `all`) — на каких путях байт разрешён, как раньше. `outbound_type` (дефолт `["masque"]`; допустимы `masque`, `hysteria2`, `tuic`, `trusttunnel`, `vless`, `vmess`, `trojan`, `wireguard`) — какие узлы шлют байт; байт идёт только там, где узел открывает QUIC: masque h3, trusttunnel с `quic: true`, vless/vmess/trojan с xhttp по h3, wireguard перед QUIC-образной пачкой AmneziaWG. `detour_type` (дефолт `["vless"]`; любой тип, кроме групп) — через релеи каких типов; тип ближайшего релея читается при дозвоне по участнику, которого фактически выбрала группа (`adapter/carrier_lx.go`, запись из `DetourDialer` и `ResolveChainLeaf`). `send` (`retry` дефолт / `always`): первая попытка без байта, неудачная повторяется с байтом — сразу при быстрой ошибке не-таймауте, иначе на следующем дозвоне; память на outbound и путь `clean → armed → decoy`, неудача с байтом возвращает в `clean`. `always` — поведение lx.30–lx.32. На `wireguard` `send` не действует: байт на каждом рукопожатии, повторы идут по тому же сокету. hysteria2/tuic судят о неудаче косвенно (conn закрыт раньше 30 с после дозвона). Объект из одних дефолтов канонизируется в отсутствие ключа; env-переопределения нет.
+  - Новые швы: `transport/trusttunnel/client_quic.go`, `transport/v2rayxhttp/http3.go`; masque — цикл попыток в `connectH3WithBudget` (в `auto` повтор с байтом до отката на h2); `common/lxdatagram/truncate.go` оборачивает conn hysteria2/tuic для оценки прошлого дозвона.
+  - Что ретрай не ловит — SPEC 151 §3.5: хендшейк, ушедший не туда без ошибки (tuic с `insecure`), молчащий релей (первый URL-тест падает, второй проходит), сниффинг TLS на h2.
+  - Юниты `option/lx_test.go`, `common/lxdatagram/decoy_test.go`, `adapter/carrier_lx_test.go`, `transport/wireguard/handshake_burst_lx_test.go`; стендов на объектной форме ещё нет (стендовые цифры lx.30–lx.32 — SPEC 151 §6).
+- ⚠️ **Удалён `lx.awg_masquerade` ([SPEC 151](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md) §3.4, [SPEC 153](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md)).** Любое значение — ошибка загрузки `lx.awg_masquerade is removed: the AmneziaWG masquerade burst is sent on every path`. Маскировочная пачка AmneziaWG шлётся на любом пути, как при дефолте `all` в lx.32; ветка фильтра `direct` снята, сам фильтр в `transport/wireguard/handshake_burst_lx.go` остаётся швом для байта по `outbound_type: wireguard`. Случай issue #64 (`ip=quic` через `detour` на релей со сниффингом) закрывается `lx.quic_sniff_decoy` с `wireguard` в `outbound_type`.
+- 📎 **Клиентам.** Конфиг LxBox 2.25.x с `"quic_sniff_decoy": "detour"` или с `awg_masquerade` на этом ядре не стартует — решение владельца 2026-11-07. В LxBox бамп пина ядра идёт вместе с правкой генератора конфига (writer блока `lx`: объектная форма `quic_sniff_decoy`, ключ `awg_masquerade` не писать) и подсказок; пользовательский конфиг LxBox не переписывает — только свой writer. Остальные клиенты: убрать `awg_masquerade`, перевести `quic_sniff_decoy` в объект (`"detour"` → `{"mode": "detour"}`, `true` → `{"mode": "all"}`; прежнее поведение «байт на каждом дозвоне» — `"send": "always"`).
+
+#### v1.14.4-lx.32
+
+Stable после `v1.14.4-lx.31`, без rc-линии. База, сабмодули, Go и `go.mod` — как в lx.31 (sing-box `v1.14.4` + 9 коммитов `upstream/stable`, `8eb4395a3`, дрейф 0). Темы: определение прямого пути для `lx.awg_masquerade` и `lx.quic_sniff_decoy`, дефолт `lx.awg_masquerade`.
+
+- 🔧 **`lx.awg_masquerade` по умолчанию `"all"` ([SPEC 153](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md)).** Решение владельца 2026-11-05: без ключа маскировочная пачка AWG идёт на любом пути, как до lx.31; `"direct"` (или `false`) — только на сокете ядра, через `detour` одна инициация. В lx.31 дефолтом был `"direct"`. Канонизация: `"all"`/`true` пишутся как отсутствие ключа. Случай issue #64 (`ip=quic` через `detour` на релей со сниффингом Xray) с дефолтами снова не поднимается — нужен `"direct"` либо `lx.quic_sniff_decoy: "detour"`/`"all"`.
+- 🐛 **`detour` на селектор с выбранным `direct` считался путём через прокси ([SPEC 153](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md), [SPEC 151](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md)).** Проверка «сокет ядра под conn» останавливалась на пакетном адаптере, в который группа (selector, urltest) заворачивает `ListenPacket`-сокет участника: AWG-endpoint с доменным адресом peer'а или несколькими peer'ами при `awg_masquerade: "direct"` терял пачку, а `quic_sniff_decoy` выбирал не тот режим. Connect-путь (один peer по IP) классифицировался верно. Вторая причина того же симптома — счётчики power-report дефолтного дайлера (libbox/boxdd с включённым отчётом).
+  - Проверка вынесена в `common/lxdatagram/kernel.go` (`IsKernelSocket`, `IsKernelPacketConn`), общая для SPEC 150/151/153; спускается по заменяемым ридерам, адаптерам групп и счётчикам до `syscall.Conn`, протокольный conn прокси-outbound'а обрывает спуск. Прямой путь — свойство conn после дайла: без `detour`, `detour` на `direct`, `detour` на группу любой вложенности с выбранным `direct`; группа, переключённая на прокси, считается detour со следующего дайла.
+  - Юниты `common/lxdatagram/kernel_test.go` (сбой воспроизведён до правки); сборка под `LX_TAGS`, тесты `option`, `common/lxdatagram`, `transport/wireguard`, `protocol/masque`, `protocol/tuic` зелёные. Живой туннель и устройство не прогонялись.
+
 #### v1.14.4-lx.31
 
 Stable после `v1.14.4-lx.30`, без rc-линии. База — sing-box `v1.14.4` + 9 коммитов `upstream/stable` от 2026-11-03 (`8eb4395a3`, тега апстрима нет), дрейф 0 ([SPEC 154](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/154-UPSTREAM_SYNC_1_14_4_PLUS_9/SPEC.md)); форк `sing-tun` на новом пине, Go 1.26.10 и остальные сабмодули не менялись; `go.mod` — бампы апстрима (cronet-go/naiveproxy v154, sing-openconnect, sing-tun). Темы: AWG с маскировкой через detour на сниффящий релей (SPEC 153, issue #64), туннель на старом узле после смены выбора в селекторе (SPEC 152), TrustTunnel в Android AAR, синк апстрима.

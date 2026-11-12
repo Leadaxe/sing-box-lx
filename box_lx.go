@@ -2,6 +2,7 @@ package box
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxmtu"
@@ -27,6 +28,9 @@ func applyLXOptions(ctx context.Context, options *option.Options, logger log.Log
 		return ctx, err
 	}
 	if err := alignPathMTU(options, resolved.MTUAlignOrDefault(), logger); err != nil {
+		return ctx, err
+	}
+	if err := checkSniffDecoyDetourTypes(ctx, resolved.QUICSniffDecoy); err != nil {
 		return ctx, err
 	}
 	ctx = service.ContextWithPtr(ctx, resolved)
@@ -56,6 +60,34 @@ func alignPathMTU(options *option.Options, align option.LXMTUAlignResolved, logg
 		}
 		if decision.Warning != "" {
 			logger.Warn("mtu_align: ", decision.Warning)
+		}
+	}
+	return nil
+}
+
+// checkSniffDecoyDetourTypes fails the start on a detour_type that no
+// outbound or endpoint registry of this build knows (lx: SPEC 151): a typo
+// would otherwise match nothing and the byte would never go out.
+func checkSniffDecoyDetourTypes(ctx context.Context, decoy option.LXQUICSniffDecoyResolved) error {
+	if decoy.Mode == "" || decoy.Mode == option.LXQUICSniffDecoyOff {
+		return nil
+	}
+	known := func(detourType string) bool {
+		if registry := service.FromContext[adapter.OutboundRegistry](ctx); registry != nil {
+			if _, loaded := registry.CreateOptions(detourType); loaded {
+				return true
+			}
+		}
+		if registry := service.FromContext[adapter.EndpointRegistry](ctx); registry != nil {
+			if _, loaded := registry.CreateOptions(detourType); loaded {
+				return true
+			}
+		}
+		return false
+	}
+	for _, detourType := range decoy.DetourTypes {
+		if !known(detourType) {
+			return E.New("lx.quic_sniff_decoy.detour_type: unknown outbound type ", strconv.Quote(detourType))
 		}
 	}
 	return nil

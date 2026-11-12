@@ -15,6 +15,7 @@ import (
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
+	"github.com/sagernet/sing-box/common/lxdatagram"
 	"github.com/sagernet/sing-box/common/tls"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -98,7 +99,7 @@ func http3PathMTUDiscovery() bool {
 
 // newHTTP3Transport returns the factory of pooled HTTP/3 connections. warn
 // receives the load-time warnings of SPEC 104 §6.
-func newHTTP3Transport(dialer N.Dialer, serverAddr M.Socksaddr, tlsConfig tls.Config, keepAlivePeriod time.Duration, warn func(string)) (func() xmuxConn, error) {
+func newHTTP3Transport(dialer N.Dialer, serverAddr M.Socksaddr, tlsConfig tls.Config, keepAlivePeriod time.Duration, warn func(string), sniffDecoy *lxdatagram.Decoy) (func() xmuxConn, error) {
 	stdConfig, fromUTLS, err := tls.STDConfigForQUIC(tlsConfig)
 	var dialErr error
 	if err != nil {
@@ -150,23 +151,33 @@ func newHTTP3Transport(dialer N.Dialer, serverAddr M.Socksaddr, tlsConfig tls.Co
 				if dialErr != nil {
 					return nil, dialErr
 				}
-				packetConn, err := dialer.DialContext(ctx, N.NetworkUDP, serverAddr)
-				if err != nil {
-					return nil, E.Cause(err, "v2ray-xhttp: HTTP/3 needs UDP to the server")
+				// lx: SPEC 151 — the first attempt goes without the sniff decoy; a
+				// fast handshake failure is redone at once with the byte in front.
+				for {
+					attempt := sniffDecoy.Begin(ctx)
+					packetConn, err := dialer.DialContext(attempt.Context, N.NetworkUDP, serverAddr)
+					if err != nil {
+						return nil, E.Cause(err, "v2ray-xhttp: HTTP/3 needs UDP to the server")
+					}
+					attempt.Dialed(packetConn, packetConn)
+					quicConn, err := quic.DialEarlyConn(ctx, packetConn, stdConfig.Clone(), quicConfig)
+					if err != nil {
+						packetConn.Close()
+						if attempt.Done(err) {
+							continue
+						}
+						return nil, err
+					}
+					attempt.Done(nil)
+					// quic-go does not own the conn it was given: close it when the QUIC
+					// connection ends.
+					go func() {
+						<-quicConn.Context().Done()
+						packetConn.Close()
+					}()
+					conn.conn.Store(quicConn)
+					return quicConn, nil
 				}
-				quicConn, err := quic.DialEarlyConn(ctx, packetConn, stdConfig.Clone(), quicConfig)
-				if err != nil {
-					packetConn.Close()
-					return nil, err
-				}
-				// quic-go does not own the conn it was given: close it when the QUIC
-				// connection ends.
-				go func() {
-					<-quicConn.Context().Done()
-					packetConn.Close()
-				}()
-				conn.conn.Store(quicConn)
-				return quicConn, nil
 			},
 		}
 		return conn

@@ -296,8 +296,8 @@ func (e *Endpoint) Start(postStart bool) error {
 		return nil
 	}
 	var bind conn.Bind
-	// lx: SPEC 153 — how the masquerade burst learns which path it is on.
-	var pathIsKernel func() (bool, error)
+	// lx: SPEC 151 — how the sniff decoy learns which path the burst is on.
+	var burstPath func() (lxdatagram.Path, error)
 	udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 	if isUDPListener {
 		listenerControl, egressEnabled := udpListener.UDPListenerControl()
@@ -327,7 +327,7 @@ func (e *Endpoint) Start(postStart bool) error {
 			}
 		}
 		bind = standardBind
-		pathIsKernel = func() (bool, error) { return true, nil }
+		burstPath = func() (lxdatagram.Path, error) { return lxdatagram.Path{Kernel: true}, nil }
 	} else {
 		var (
 			isConnect   bool
@@ -343,7 +343,7 @@ func (e *Endpoint) Start(postStart bool) error {
 		}
 		clientBind := NewClientBind(e.options.Context, e.options.Logger, e.options.Dialer, isConnect, connectAddr, reserved)
 		bind = clientBind
-		pathIsKernel = clientBind.PathIsKernel
+		burstPath = clientBind.Path
 	}
 	if isUDPListener || len(e.peers) > 1 {
 		for _, peer := range e.peers {
@@ -375,10 +375,10 @@ func (e *Endpoint) Start(postStart bool) error {
 	if decoy := awgDecoyFunc(e.options.AmneziaWG, e.options.Logger); decoy != nil {
 		wgDevice.SetDecoyPacketsFunc(decoy)
 	}
-	// lx: SPEC 153 — the masquerade burst goes out by path (lx.awg_masquerade)
-	// and, when QUIC-shaped, behind the lx.quic_sniff_decoy byte.
+	// lx: SPEC 151 — a QUIC-shaped masquerade burst goes out behind the
+	// lx.quic_sniff_decoy byte on the paths the policy selects.
 	if e.options.AmneziaWG.IsSet() {
-		if filter := newHandshakeBurstFilter(lxdatagram.AWGMasqueradeFromContext(e.options.Context), lxdatagram.SniffDecoyFromContext(e.options.Context), pathIsKernel, e.options.Logger); filter != nil {
+		if filter := newHandshakeBurstFilter(lxdatagram.SniffDecoyFromContext(e.options.Context), burstPath, e.options.Logger); filter != nil {
 			wgDevice.SetHandshakeBurstFunc(filter)
 		}
 	}

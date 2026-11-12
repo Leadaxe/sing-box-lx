@@ -69,6 +69,7 @@ func (r *Registry) CreateOutbound(ctx context.Context, router adapter.Router, lo
 	if !loaded {
 		return nil, E.New("outbound type not found: " + outboundType)
 	}
+	ctx = adapter.ContextWithOutboundType(ctx, outboundType) // lx: SPEC 151 — transports learn the node type
 	return constructor(ctx, router, logger, tag, options)
 }
 

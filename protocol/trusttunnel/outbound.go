@@ -9,6 +9,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/lxdatagram"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -103,12 +104,13 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, err
 	}
 	client, err := trusttunnel.NewClient(trusttunnel.ClientOptions{
-		Context:   ctx,
-		Logger:    logger,
-		Dialer:    dialer.NewSessionDialerLx(outboundDialer), // lx: SPEC 152 — session underlay is internal to the tunnel
-		Server:    options.ServerOptions.Build(),
-		TLSConfig: tlsConfig,
-		Protocol:  protocol,
+		Context:      ctx,
+		Logger:       logger,
+		Dialer:       dialer.NewSessionDialerLx(outboundDialer),                                   // lx: SPEC 152 — session underlay is internal to the tunnel
+		QUICDialHook: newSniffDecoyHook(lxdatagram.NewSniffDecoy(ctx, C.TypeTrustTunnel, logger)), // lx: SPEC 151
+		Server:       options.ServerOptions.Build(),
+		TLSConfig:    tlsConfig,
+		Protocol:     protocol,
 		QUIC: &trusttunnel.QUICOptions{
 			CongestionControl: options.QUICCongestionControl,
 		},

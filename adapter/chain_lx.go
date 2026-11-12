@@ -40,6 +40,7 @@ func ContextWithoutChainHop(ctx context.Context) context.Context {
 // иначе — звено для (хоп, picked). Звено несёт тег оригинала, поэтому вся
 // логика группы (история, штрафы, sticky, passive-check) продолжает работать.
 func ResolveChainLeaf(ctx context.Context, picked Outbound) (Outbound, error) {
+	RecordCarrier(ctx, picked) // lx: SPEC 151 — the member the group picked carries the dial
 	hop, _ := ctx.Value(chainHopKey{}).(ChainLeafResolver)
 	if hop == nil || picked == nil {
 		return picked, nil

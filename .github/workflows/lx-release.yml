@@ -665,10 +665,12 @@ jobs:
           </details>
           EOF
 
-          # Previous-release footer (LxBox-style). Tag list is already complete here:
-          # checkout runs with fetch-depth 0, and the upstream tag fetch above cannot add
-          # v*-lx* tags (upstream has none).
-          PREV="$(git tag -l 'v*-lx*' --sort=-creatordate | awk -v t="$TAG" '$0==t {f=1; next} f {print; exit}')"
+          # Previous-release footer (LxBox-style): the nearest v*-lx* tag in this tag's own
+          # history, not the newest tag by date — with two release lines alive (1.14 on lx,
+          # 1.15 prereleases on lx-1.15) the date order pointed v1.14.4-lx.32 at
+          # v1.15.0-lx.1-rc.1. History and tags are complete here: checkout runs with
+          # fetch-depth 0, and the upstream tag fetch above cannot add v*-lx* tags.
+          PREV="$(git describe --tags --abbrev=0 --match 'v*-lx*' "${TAG}^" 2>/dev/null || true)"
           if [ -n "$PREV" ]; then
             printf '\n---\n\nPrevious release / Предыдущий релиз: [%s](https://github.com/%s/releases/tag/%s)\n' \
               "$PREV" "${{ github.repository }}" "$PREV" >> notes.md

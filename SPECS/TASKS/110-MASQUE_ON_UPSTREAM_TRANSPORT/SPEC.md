@@ -399,7 +399,7 @@ base64 -d <<< "$PUBLIC_KEY" | openssl dgst -sha256 -binary | base64
 | Имя эндпоинта в SNI режется DPI | SNI задаёт приложение; дефолта в ядре больше не будет |
 | URI запроса — `https://cloudflareaccess.com` без пути | У апстрима путь обязан начинаться с `/`. Какой `:path` уходит у нас при пустом пути и важен ли он WARP — не проверено |
 | С некоторых выходных адресов QUIC игнорируется без отказа | Шов Ш4 |
-| Туннеля на HTTP/1.1 нет: на `GET` с `Upgrade: cf-connect-ip` эндпоинт отвечает `404 Not Found` | Профиль `cloudflare` на h1 не спускается и `version: 1` не принимает — шов Ш8 |
+| Туннеля на HTTP/1.1 нет: `GET` с `Upgrade` получает `404 Not Found`, `CONNECT` — `400 Bad Request` (16 форм запроса, §12) | Профиль `cloudflare` на h1 не спускается и `version: 1` не принимает — шов Ш8 |
 
 ### 7.2 Особенности апстримной реализации
 
@@ -586,7 +586,7 @@ curl -s -x socks5h://127.0.0.1:12345 https://www.cloudflare.com/cdn-cgi/trace
 | Э2 | `profile: cloudflare` + `address`, h3 | `warp=on`; 20 МБ за 2,0 с | h3 работает; `:path` `/`, отсутствие пустого User-Agent и `InitialPacketSize` 1331 WARP не мешают |
 | Э3 | то же, h2 | до шва Ш7: туннель открыт, пакеты не идут; после: `warp=on`, 20 МБ за 2,1 с | на h2 WARP кладёт в капсулу DATAGRAM голый IP-пакет без context ID |
 | Э4 | `profile: cloudflare` без `address`, h3 | «endpoint is not ready yet» | WARP не присылает `ADDRESS_ASSIGN` — Ш2 обязателен |
-| h1 | `profile: cloudflare` + `address`, `version: 1` (до шва Ш8) | `404 Not Found` на `GET` с `Upgrade: cf-connect-ip` | у WARP нет формы CONNECT-IP на HTTP/1.1; пробовалась одна форма запроса — та, что шлёт апстрим |
+| h1 | `profile: cloudflare` + `address`, `version: 1` (до шва Ш8) | `404 Not Found` на `GET` с `Upgrade: cf-connect-ip` | у WARP нет формы CONNECT-IP на HTTP/1.1; перебор форм — ниже |
 | — | WG и AWG (jc/jmin/jmax) endpoint с `detour` на `masque-client` | `warp=on`, 20 МБ за 2,2 с, загрузка 5 МБ | вложенный туннель поверх нового транспорта и стека работает |
 
 Закрытые вопросы §10: 1 и 2 (WARP не шлёт `ADDRESS_ASSIGN`; на `ADDRESS_REQUEST` не отвечает — без
@@ -622,6 +622,29 @@ ALPN `http/1.1` вместо `h2`; h2 отказал с причиной «се�
 «masque profile cloudflare has no HTTP/1.1 tunnel: use version 3 or 2», а спуск на h1 в работе
 заканчивается ошибкой `ErrTunnelHTTP1Refused` без запроса к серверу. Без профиля поведение
 апстрима не меняется. Тесты: `TestOpenTunnelNoHTTP1`, `TestApplyLXProfileCloudflareRejectsHTTP1`.
+
+**Перебор форм запроса на HTTP/1.1 (2026-11-12, сырые запросы `openssl s_client` с NanoPi, тот же
+клиентский сертификат).** Эндпоинт согласует `http/1.1`, если клиент предлагает только его; при
+`h2,http/1.1` выбирает `h2`. TCP-порты 443, 500, 1701, 4500, 4443, 8443, 8095 отвечают одинаково.
+
+| Форма | Ответ |
+|---|---|
+| `GET /` с `Upgrade: cf-connect-ip` (форма апстрима); то же с `Upgrade: connect-ip`; то же с `Cf-Connect-Proto`/`Pq-Enabled`; `GET /.well-known/masque/ip/*/*/`; `GET /` без `Upgrade`; `POST /` с `Cf-Connect-Proto` | `404 Not Found`, из заголовков только `Cf-Team` |
+| `CONNECT cloudflareaccess.com:443` с `Cf-Connect-Proto: cf-connect-ip` и `Pq-Enabled` (аналог рабочего запроса на h2); без порта; на адрес эндпоинта; с `Pq-Enabled: true`; с `Cf-Connect-Proto: connect-ip`; с бессмысленным значением; без заголовка; с `Upgrade`-заголовками; с пустым `User-Agent` и `Transfer-Encoding: chunked`; `HTTP/1.0` | `400 Bad Request` с `Cf-Warp-Metal` и `Cf-Warp-Colo` |
+
+`CONNECT` доходит до обработчика WARP (заголовки `Cf-Warp-*`), но ответ не зависит от содержимого
+запроса, включая бессмысленный `Cf-Connect-Proto`: отвергается сам метод на h1. Формы, которая
+открывает туннель, не найдено; Ш8 остаётся.
+
+**Усечение и приманка у `masque-client` (2026-11-12).** UDP-диалер endpoint'а обёрнут
+`lxdatagram.Dialer` — одна строка в `protocol/masque/client.go`: чтение длинных датаграмм
+усекается как у ядра (SPEC 150), на h3 работает `lx.quic_sniff_decoy` (SPEC 151) с типом
+`masque-client` в `outbound_type` (он же дефолт на линии 1.15 вместо `masque`). Неудача попытки
+определяется косвенно, по времени жизни conn (как у hysteria2), потому что QUIC-хендшейк идёт
+внутри апстримного клиента. Стенд: `mode: all`, `send: retry` — `warp=on`; `send: always` без
+релея — CONNECT без ответа. Контроль на ядре 1.14 (`masque` outbound, `quic_sniff_decoy: "all"`,
+тот же ключ) дал то же: QUIC-хендшейк проходит, ответа на CONNECT нет. Причина — WARP или аплинк
+стенда — не разделялась; через релей на линии 1.15 приманка не проверялась.
 
 Старый тип `masque` (outbound линии 1.14) на `lx-1.15` удалён; конфиг с ним получает ошибку
 «removed in 1.15; use the masque-client endpoint» (`include/masque_removed_lx.go`). Конфиг лаунчера

@@ -31,7 +31,7 @@ func (d *ctxRecordingDialer) ListenPacket(ctx context.Context, destination M.Soc
 // selector in the detour interrupts it on a node switch.
 func TestDialerMarksSessionUnderlayInternal(t *testing.T) {
 	inner := &ctxRecordingDialer{}
-	dialer := Dialer(context.Background(), inner, logger.NOP())
+	dialer := Dialer(context.Background(), "hysteria2", inner, logger.NOP())
 	userCtx := interrupt.ContextWithIsExternalConnection(context.Background(), true)
 	_, _ = dialer.DialContext(userCtx, N.NetworkUDP, M.ParseSocksaddr("1.1.1.1:443"))
 	_, _ = dialer.ListenPacket(userCtx, M.Socksaddr{})
