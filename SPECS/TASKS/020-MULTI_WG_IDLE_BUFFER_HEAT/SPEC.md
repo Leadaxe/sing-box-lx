@@ -85,12 +85,23 @@ clash-режима, паузу и пробуждение устройства; �
 одно сравнение простоя на эндпоинт. До первой публикации (первый `update()` вынесен со старта,
 SPEC 136) тик ничего не усыпляет, а `OutboundReachable` отвечает `true`.
 
-**`on_demand` и `lx.wg` на одном узле — ошибка конфига.** Апстримный `on_demand` кладёт устройство
-сразу, как пропала ссылка; `lx.wg` делает то же после порога и ещё освобождает, лениво собирает и
-ограничивает устройства. Два владельца одного `device.Down()` не знают о состоянии друг друга,
-поэтому `option.ResolveLX` отклоняет WG-endpoint с `on_demand: true` при заданных
-`lx.wg.idle_suspend`, `lazy_build` или `build_max`. Без `lx.wg` `on_demand` работает как у апстрима,
-и узел, усыплённый им, виден в наблюдаемости как `asleep`.
+**`on_demand` и наш слой — один владелец устройства.** Апстрим усыпляет `on_demand`-узел сразу,
+как пропала ссылка или устройство ушло в паузу (`SetKeepIdleConnections`), и будит подвешенное
+устройство из транспорта на путях dial, listen и пакетов. Раньше оба вызова действовали на
+`device` мимо нашего учёта. Теперь (`protocol/wireguard/endpoint_ondemand_lx.go`):
+
+| Вызов апстрима | Что происходит |
+|---|---|
+| `SetKeepIdleConnections(false)` | Узел засыпает сразу, без порога и без гейтов живого трафика (так задуман `on_demand`), но через наш учёт: `asleep`, часы освобождения, уведомление потолка. Слушающий, выключенный и собираемый узел не трогается |
+| `SetKeepIdleConnections(true)` | Будится только то, что усыпил сам `on_demand`. Узел, уснувший по порогу или несобранный, ждёт трафика; выключенный — выключателя |
+| Пробуждение из транспорта (`resume()`) | Идёт через хук `wakeByTrafficLx`: состояние снимается вместе с подъёмом устройства. Выключенный узел не будится, освобождённый собирается только dial'ом через потолок |
+
+Последняя строка закрывает дыру линии 1.15: маршрутизируемый пакет поднимал усыплённое устройство
+внутри транспорта, узел работал в состоянии `asleep`, и тик, усыпляющий только на переходе
+«бодрствует → спит», больше его не усыплял; так же будился узел, выключенный вручную (SPEC 106).
+
+`on_demand: true` и ключи `lx.wg` сочетаются: `on_demand`-узел засыпает сразу по пропаже ссылки,
+остальные — по порогам; освобождение, ленивая сборка и потолок действуют на все.
 
 ### Слой 3 — сторона эндпоинта (учёт простоя, Down/Up)
 
@@ -307,6 +318,8 @@ AWG-detour-guard ([awg-detour-guard-must-be-at-start]) гасит `device.Down()
 - [`route/reachability_lx.go`](../../../route/reachability_lx.go) — `//go:build with_lx_idle_suspend` — idle-тик (pause-registered), `suspendIdleEndpoints`, `startIdleSuspend`/`stopIdleSuspend`, `OutboundReachable`, `SelectionRefs`.
 - [`route/idle_suspend_stub_lx.go`](../../../route/idle_suspend_stub_lx.go) — `//go:build !with_lx_idle_suspend` — заглушки (ошибка если опция задана; `OutboundReachable`→true).
 - [`route/reachability_common_lx.go`](../../../route/reachability_common_lx.go) — без тега: `lxWG`, `QuiesceForShutdown`.
+- [`protocol/wireguard/endpoint_ondemand_lx.go`](../../../protocol/wireguard/endpoint_ondemand_lx.go) — апстримные `on_demand` и пробуждение из транспорта через наш учёт.
+- [`transport/wireguard/endpoint_suspended_lx.go`](../../../transport/wireguard/endpoint_suspended_lx.go) — хук пробуждения; шов в `resume()` — три строки.
 
 Изменённые:
 - [`route/reference.go`](../../../route/reference.go) — три строки шва в `update()`.

@@ -205,10 +205,6 @@ func (w *Endpoint) IdleState() adapter.IdleState {
 		state = adapter.EndpointStateTornDown
 	case w.idleAsleep.Load():
 		state = adapter.EndpointStateAsleep
-	case w.onDemand && w.endpoint.Suspended():
-		// Upstream's on_demand brought the device down (nothing references the
-		// endpoint, or the device is paused): the same level as an idle-suspend.
-		state = adapter.EndpointStateAsleep
 	case w.started.Load():
 		state = adapter.EndpointStateUp
 	default:

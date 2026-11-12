@@ -56,6 +56,8 @@ type Endpoint struct {
 	// lx: SPEC 020 — test seam standing in for a device.Up() failure, which needs
 	// a real bind to reproduce. Nil in production.
 	resumeErrHook func() error
+	// lx: SPEC 020 — the protocol layer's accounted wake (endpoint_suspended_lx.go).
+	wakeHookLx func()
 	// lx: SPEC 145 — session start for the per-peer status (peer_session_lx.go).
 	session peerSession
 	// lx: SPEC 030 — pre-passes requested (endpoint_quiesce_lx.go); tests only.
@@ -484,6 +486,9 @@ func (e *Endpoint) SetIdle(idle bool) {
 
 func (e *Endpoint) resume() {
 	if !e.suspended.Load() {
+		return
+	}
+	if e.wakeLx() { // lx: SPEC 020 — the protocol layer owns the sleep state
 		return
 	}
 	e.stateAccess.Lock()

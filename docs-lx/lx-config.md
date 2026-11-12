@@ -37,10 +37,9 @@ mismatch, a desktop/CLI binary that is handed a config with `lx.wg.idle_suspend`
 idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
 See the [ENERGY feature](../SPECS/FEATURES/008-ENERGY/FEATURE.md).
 
-Upstream's `on_demand` key (1.15) on a WireGuard endpoint does not combine with `lx.wg.idle_suspend`,
-`lazy_build` or `build_max`: the config is rejected with `on_demand cannot be combined with lx.wg…`.
-Both mechanisms suspend the same device; `lx.wg` takes an endpoint's reachability from the same
-reference computation `on_demand` uses.
+Upstream's `on_demand` key (1.15) on a WireGuard endpoint combines with `lx.wg`: such an endpoint
+sleeps as soon as nothing in the routing tree references it, the others by the `lx.wg` windows. The
+endpoint state (`asleep`, switched off by hand) is one for both mechanisms.
 
 Related keys (2026-07-15 revision; in the `lx` block since SPEC 098 — the old `route.lx_idle_*`
 names are removed and fail to load as unknown keys): `lx.wg.idle_suspend_reachable` — optional

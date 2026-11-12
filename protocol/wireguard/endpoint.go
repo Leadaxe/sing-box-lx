@@ -68,7 +68,9 @@ type Endpoint struct {
 	// dial's wake.
 	lastActivity atomic.Int64
 	idleAsleep   atomic.Bool
-	resumeMu     sync.Mutex
+	// lx: SPEC 020 — asleep because upstream's on_demand asked (endpoint_ondemand_lx.go)
+	onDemandAsleep atomic.Bool
+	resumeMu       sync.Mutex
 	// listenMode marks an endpoint with listen_port (inbound peers may connect at
 	// any time). It has no dial path to wake it, so idle-suspend must skip it —
 	// suspending would silently drop remote peers with no recovery.
@@ -216,6 +218,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, err
 	}
 	ep.endpoint = wgEndpoint
+	wgEndpoint.SetWakeHookLx(ep.wakeByTrafficLx) // lx: SPEC 020 — upstream's wake goes through the sleep state
 	return ep, nil
 }
 
@@ -558,7 +561,7 @@ func (w *Endpoint) OnDemand() bool {
 }
 
 func (w *Endpoint) SetKeepIdleConnections(keep bool) {
-	w.endpoint.SetIdle(!keep)
+	w.setOnDemandKeepLx(keep) // lx: SPEC 020 — through the endpoint's sleep state, not past it
 }
 
 func (w *Endpoint) updateBind(ctx context.Context) {
