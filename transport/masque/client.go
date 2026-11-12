@@ -59,6 +59,7 @@ type Client struct {
 	stateUpdated    chan struct{}
 	loopDone        chan struct{}
 	lx              ClientLXOptions // lx: SPEC 110
+	lxTunnel        tunnelStateLx   // lx: SPEC 139
 }
 
 type clientSession struct {
@@ -185,6 +186,7 @@ func (c *Client) connect() (bool, error) {
 	}
 	current.session = newSession(c.ctx, stream, current, c.handler.FrontHeadroom)
 	current.session.rawCapsules = c.lx.RawStreamCapsules && current.session.datagrams == nil // lx: SPEC 110
+	c.lxTunnel.opened(current.session.datagrams != nil)                                      // lx: SPEC 139
 	c.current = current
 	c.access.Unlock()
 	err = current.requestOrApplyAddress() // lx: SPEC 110 — static addresses skip ADDRESS_REQUEST

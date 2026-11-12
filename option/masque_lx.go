@@ -21,6 +21,17 @@ type MASQUEClientLXOptions struct {
 	// client does not send ADDRESS_REQUEST and is ready as soon as the tunnel
 	// is open; an ADDRESS_ASSIGN from the server is then logged and ignored.
 	Address badoption.Listable[netip.Prefix] `json:"address,omitempty"`
+	// PrivateKey is the WARP registration key (base64 of the DER EC private
+	// key), profile cloudflare only. The endpoint presents a self-signed client
+	// certificate issued from it, so the config carries the key the
+	// registration returned instead of a PEM pair made elsewhere. Conflicts
+	// with tls.client_certificate / tls.client_key.
+	PrivateKey string `json:"private_key,omitempty"`
+	// PublicKey is the WARP endpoint key (base64 of the DER PKIX public key),
+	// profile cloudflare only. The endpoint is authenticated by this key, not
+	// by the name in its certificate; it becomes
+	// tls.certificate_public_key_sha256. Conflicts with a pin set there.
+	PublicKey string `json:"public_key,omitempty"`
 }
 
 const (

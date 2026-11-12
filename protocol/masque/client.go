@@ -70,6 +70,10 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	if options.MTU == 0 {
 		options.MTU = masque.DefaultMTU
 	}
+	err := prepareLXProfile(&options) // lx: SPEC 110 — keys and defaults of the profile
+	if err != nil {
+		return nil, err
+	}
 	version := options.ResolvedVersion()
 	http2Options := options.HTTP2Options
 	if version == 3 {
@@ -95,7 +99,7 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	if err != nil {
 		return nil, err
 	}
-	outboundDialer = lxdatagram.Dialer(ctx, C.TypeMASQUEClient, outboundDialer, logger) // lx: SPEC 150, 151
+	outboundDialer = lxdatagram.ReadDeadlineDialer(lxdatagram.Dialer(ctx, C.TypeMASQUEClient, outboundDialer, logger)) // lx: SPEC 146, 150, 151
 	headers := options.Headers.Build()
 	authority := headers.Get("Host")
 	headers.Del("Host")
@@ -326,7 +330,7 @@ func (c *ClientEndpoint) DialContext(ctx context.Context, network string, destin
 	case N.NetworkUDP:
 		c.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	}
-	err := c.waitReady(ctx)
+	err := c.waitReadyTracedLx(ctx) // lx: SPEC 139
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +349,7 @@ func (c *ClientEndpoint) DialContext(ctx context.Context, network string, destin
 
 func (c *ClientEndpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
 	c.logger.InfoContext(ctx, "outbound packet connection to ", destination)
-	err := c.waitReady(ctx)
+	err := c.waitReadyTracedLx(ctx) // lx: SPEC 139
 	if err != nil {
 		return nil, netip.Addr{}, err
 	}

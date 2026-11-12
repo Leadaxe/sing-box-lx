@@ -62,8 +62,8 @@ func TestCaptureRunningConfig_canonicalLXBlock_LX(t *testing.T) {
 				IdleSuspendReachable: badoption.Duration(5 * time.Minute),
 				IdleTeardown:         &zero,
 			},
-			MASQUE:      &option.LXMASQUEOptions{IdleTimeout: badoption.Duration(2 * time.Minute)},
-			TrustTunnel: &option.LXTrustTunnelOptions{},
+			MASQUE:      &option.LXMASQUEOptions{},
+			TrustTunnel: &option.LXTrustTunnelOptions{IdleTimeout: badoption.Duration(2 * time.Minute)},
 		},
 	}
 	content := captureRunningConfig(options)
@@ -83,13 +83,13 @@ func TestCaptureRunningConfig_canonicalLXBlock_LX(t *testing.T) {
 			t.Fatalf("lx.wg.%s = %v, want %v: %s", key, document.LX["wg"][key], value, content)
 		}
 	}
-	if document.LX["masque"]["idle_timeout"] != "2m0s" {
-		t.Fatalf("lx.masque must survive: %s", content)
+	if document.LX["trusttunnel"]["idle_timeout"] != "2m0s" {
+		t.Fatalf("lx.trusttunnel must survive: %s", content)
 	}
-	if _, present := document.LX["trusttunnel"]; present {
-		t.Fatalf("an empty lx.trusttunnel must be dropped from the snapshot: %s", content)
+	if _, present := document.LX["masque"]; present {
+		t.Fatalf("an empty lx.masque must be dropped from the snapshot: %s", content)
 	}
-	if options.LX.TrustTunnel == nil {
+	if options.LX.MASQUE == nil {
 		t.Fatal("capturing the snapshot must not canonicalize the caller's options")
 	}
 }

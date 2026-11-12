@@ -8,9 +8,6 @@
       "lazy_build": true,
       "build_max": 4,
       "build_overflow": "wait"
-    },
-    "masque": {
-      "idle_timeout": "5m"
     }
   },
   "inbounds": [
@@ -31,6 +28,15 @@
       "server": "127.0.0.1", "server_port": 443,
       "tls": { "enabled": true, "server_name": "example.com" },
       "path": "/.well-known/masque/ip/{target}/{ipproto}/",
+      "on_demand": true
+    },
+    {
+      "type": "masque-client", "tag": "warp-profile",
+      "server": "192.0.2.1", "server_port": 443,
+      "profile": "cloudflare",
+      "private_key": "MHcCAQEEIC70rSMGJCq7fljQtliuNyPfMs3ARNQwvUG2PEf8Wg5RoAoGCCqGSM49AwEHoUQDQgAEFAWI4wolppk3WeP0VpNPq2dK0BBEt5iUclPkFNejAc5Bzyzy2YEjdtUSg1MaCpeTK5v11R0Db12WzC7j0uTSzw==",
+      "public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEFAWI4wolppk3WeP0VpNPq2dK0BBEt5iUclPkFNejAc5Bzyzy2YEjdtUSg1MaCpeTK5v11R0Db12WzC7j0uTSzw==",
+      "address": ["172.16.0.2/32", "2001:db8::2/128"],
       "on_demand": true
     }
   ],

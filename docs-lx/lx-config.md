@@ -581,12 +581,14 @@ one node; details in [lx-energy.md §6](lx-energy.md#6-urltest-probes-and-how-th
 The fork's own `type: masque` outbound is **removed on the 1.15 line**; a config that still has it
 fails with "removed in 1.15; use the masque-client endpoint". It is replaced by the upstream
 `masque-client` endpoint ([docs/configuration/endpoint/masque-client.md](../docs/configuration/endpoint/masque-client.md))
-with two fork keys:
+with the fork's keys:
 
-| Key | Values | Absent | Meaning |
+| Key | Values | When absent | Meaning |
 |---|---|---|---|
-| `profile` | `standard`, `cloudflare` | `standard` | `cloudflare` turns on the WARP dialect: the `cf-connect-ip` token, a plain CONNECT on h2 with `cf-connect-proto`, bare IP packets in capsules on h2, the `0x276` setting on h3, a fallback to h2 when h3 gives no CONNECT response within 3 s |
-| `address` | list of prefixes | — | The tunnel addresses, set statically. WARP assigns them at registration and never sends `ADDRESS_ASSIGN`: without `address` the endpoint does not become ready |
+| `profile` | `standard`, `cloudflare` | `standard` | `cloudflare` turns on the WARP dialect: the `cf-connect-ip` token, a plain CONNECT on h2 with `cf-connect-proto`, bare IP packets in capsules on h2, setting `0x276` on h3, fallback to h2 when h3 has not answered within 3 s, no HTTP/1.1 |
+| `address` | list of prefixes | — | The tunnel's own addresses, set statically. WARP hands them out at registration and sends no `ADDRESS_ASSIGN`: without `address` the endpoint never becomes ready |
+| `private_key` | base64 of the DER EC key | — | The WARP registration key. The core issues a self-signed client certificate from it at start. Only with `profile: cloudflare`; an error together with `tls.client_certificate`/`client_key` |
+| `public_key` | base64 of the DER PKIX key | — | The WARP endpoint key: the endpoint is authenticated by it, not by the name in its certificate. Becomes `tls.certificate_public_key_sha256`. Only with `profile: cloudflare`; an error together with a pin in `tls` |
 
 ```jsonc
 {
@@ -594,23 +596,26 @@ with two fork keys:
   "tag": "warp",
   "server": "162.159.198.2",
   "server_port": 443,
-  "path": "/",
-  "headers": { "Host": "cloudflareaccess.com" },
   "profile": "cloudflare",
+  "private_key": "<base64 DER EC private key>",
+  "public_key":  "<base64 DER PKIX public key>",
   "address": ["172.16.0.2/32", "2606:4700:110:…/128"],
-  "mtu": 1280,
-  "tls": {
-    "enabled": true,
-    "server_name": "www.cloudflare.com",
-    "client_certificate": ["…"],                 // self-signed, from the registration key
-    "client_key": ["…"],
-    "certificate_public_key_sha256": ["…"]       // pin of the endpoint key
-  }
+  "mtu": 1280
 }
 ```
 
-The certificate, the pin, SNI, `path` and `Host` are prepared by the application with the standard
-keys; the core keeps only the dialect. What is specific to `profile: cloudflare`:
+Profile `cloudflare` fills in what is not set explicitly:
+
+| What | Profile default | Override with |
+|---|---|---|
+| TLS | enabled | — |
+| SNI | `www.cloudflare.com` — DPI matches on the endpoint's own name, and the endpoint serves the tunnel under any name | `tls.server_name`; `tls.disable_sni` to send none |
+| Request authority | `cloudflareaccess.com` | `headers.Host` |
+| keepalive | 30 s (upstream: 10 s) | `keep_alive_period` |
+| Client certificate | from `private_key` | `tls.client_certificate` + `tls.client_key` |
+| Endpoint key pin | from `public_key` | `tls.certificate_public_key_sha256` |
+
+Specifics of profile `cloudflare`:
 
 - **No HTTP/1.1.** `version: 1` is a config error; a runtime descent to h1 ends with an error
   before any request is written. WARP has no tunnel on h1: a `GET` with `Upgrade` gets `404`, a
@@ -623,8 +628,13 @@ keys; the core keeps only the dialect. What is specific to `profile: cloudflare`
   WARP or the stand's uplink is the cause was not separated), so `mode: direct`/`all` with
   `send: always` is a poor fit for WARP without a relay; the default `send: retry` starts without
   the byte and works.
-- The root key `lx.masque.idle_timeout` is parsed and has no effect; idling is upstream's
-  `on_demand`.
+- **Read deadline on the path through `detour`** (SPEC 146): a conn without a working
+  `SetReadDeadline` (vless XUDP over ws and the like) gets one before it is handed to quic-go;
+  otherwise a failed h3 dial never returns.
+- **Connection test** (SPEC 139) shows one `auth` stage: the age and HTTP version of the live
+  tunnel, or the wait for it to come up.
+- **No idle timer.** The root key `lx.masque.idle_timeout` is a load error ("is not supported on
+  the 1.15 line"); idling is upstream's `on_demand`.
 
 Details, experiment results and the seams — [SPEC 110](../SPECS/TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md).
 
@@ -1136,13 +1146,12 @@ Validation errors name the full key path:
 - `lx.wg.<key> must be >= 0` for a negative duration, `lx.wg.build_max must be >= 0`
 - `lx.wg.build_overflow must be "wait" or "build"`
 
-### `lx.masque` — MASQUE outbounds
+### `lx.masque` — removed on the 1.15 line
 
-| Key | Type | Default | Meaning |
-|---|---|---|---|
-| `idle_timeout` | duration ≥ 0 | off | **Parsed, no effect on 1.15**: it was the global idle window of the fork's `masque` outbound, which is removed on this line ([§4](#4-masque--cloudflare-warp-over-masque-client-spec-110)) |
-
-Validation error: `lx.masque.idle_timeout must be >= 0` for a negative duration.
+`lx.masque.idle_timeout` was the global idle window of the fork's `masque` outbound, which is gone on
+this line ([§4](#4-masque--cloudflare-warp-over-masque-client-spec-110)). The `masque-client`
+endpoint has no idle timer; any value but `0` fails the load with `lx.masque.idle_timeout is not
+supported on the 1.15 line: the masque-client endpoint has no idle timer, use its on_demand`.
 
 ### `lx.trusttunnel` — TrustTunnel outbounds
 

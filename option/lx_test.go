@@ -57,7 +57,6 @@ func TestLXBlockParsesEveryKey(t *testing.T) {
 			"build_max": 4,
 			"build_overflow": "build"
 		},
-		"masque": {"idle_timeout": "2m"},
 		"trusttunnel": {"idle_timeout": "3m"}
 	}}`)
 	want := LXResolved{
@@ -70,7 +69,6 @@ func TestLXBlockParsesEveryKey(t *testing.T) {
 			BuildMax:             4,
 			BuildOverflow:        LXBuildOverflowBuild,
 		},
-		MASQUE:         LXMASQUEResolved{IdleTimeout: 2 * time.Minute},
 		TrustTunnel:    LXTrustTunnelResolved{IdleTimeout: 3 * time.Minute},
 		MTUAlign:       LXMTUAlignResolved{Mode: LXMTUAlignClamp},
 		QUICSniffDecoy: resolveLXQUICSniffDecoy(nil),
@@ -149,7 +147,8 @@ func TestLXBlockValidation(t *testing.T) {
 		{`{"lx":{"wg":{"idle_suspend":"5m","idle_suspend_reachable":"30s"}}}`, "lx.wg.idle_suspend_reachable must be >= lx.wg.idle_suspend"},
 		{`{"lx":{"wg":{"build_max":-1}}}`, "lx.wg.build_max must be >= 0"},
 		{`{"lx":{"wg":{"build_overflow":"drop"}}}`, `lx.wg.build_overflow must be "wait" or "build"`},
-		{`{"lx":{"masque":{"idle_timeout":"-1s"}}}`, "lx.masque.idle_timeout must be >= 0"},
+		{`{"lx":{"masque":{"idle_timeout":"-1s"}}}`, "lx.masque.idle_timeout is not supported on the 1.15 line: the masque-client endpoint has no idle timer, use its on_demand"},
+		{`{"lx":{"masque":{"idle_timeout":"5m"}}}`, "lx.masque.idle_timeout is not supported on the 1.15 line: the masque-client endpoint has no idle timer, use its on_demand"},
 		{`{"lx":{"trusttunnel":{"idle_timeout":"-1s"}}}`, "lx.trusttunnel.idle_timeout must be >= 0"},
 		{`{"lx":{"mtu_align":{"except":[""]}}}`, "lx.mtu_align.except: empty tag"},
 	}
@@ -239,13 +238,13 @@ func TestLXCanonicalForm(t *testing.T) {
 // Resolving twice is a no-op: same values, and the options are not rewritten.
 func TestLXResolveIdempotent(t *testing.T) {
 	t.Parallel()
-	options, first := mustResolveLX(t, `{"lx":{"wg":{"idle_suspend":"30s"},"masque":{"idle_timeout":"5m"}}}`)
+	options, first := mustResolveLX(t, `{"lx":{"wg":{"idle_suspend":"30s"},"trusttunnel":{"idle_timeout":"5m"}}}`)
 	lx := options.LX
 	second, err := ResolveLX(&options)
 	if err != nil || !reflect.DeepEqual(*second, *first) {
 		t.Fatalf("second resolve: %+v %v", second, err)
 	}
-	if *options.LX.WG != *lx.WG || *options.LX.MASQUE != *lx.MASQUE {
+	if *options.LX.WG != *lx.WG || *options.LX.TrustTunnel != *lx.TrustTunnel {
 		t.Fatal("a second resolve must not change the canonical options")
 	}
 }

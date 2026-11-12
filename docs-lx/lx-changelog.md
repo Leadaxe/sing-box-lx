@@ -75,6 +75,16 @@ required for stable tags); this changelog section is the fallback used for pre-r
 - 🔧 **`masque-client`: усечение датаграмм (SPEC 150) и приманка (SPEC 151)** через обёртку
   UDP-диалера; в rc.1 у endpoint'а не было ни того, ни другого. В `lx.quic_sniff_decoy.outbound_type`
   тип называется `masque-client`, он же дефолт вместо `masque`.
+- ✨ **Профиль `cloudflare`: ключи регистрации и умолчания (SPEC 110).** `private_key` — ядро само
+  выпускает клиентский сертификат; `public_key` — пин ключа эндпоинта. Без явных значений профиль
+  ставит SNI `www.cloudflare.com`, authority `cloudflareaccess.com`, keepalive 30 с и включает TLS.
+  Узел WARP пишется сервером, двумя ключами и адресами.
+- 💥 **`lx.masque.idle_timeout` — ошибка загрузки.** Таймера простоя у `masque-client` нет; раньше
+  ключ принимался и ничего не делал. Усыпление — `on_demand`.
+- 🔧 **`masque-client` через `detour`: дедлайн чтения для quic-go (SPEC 146)** — неудачный h3-dial
+  через conn без `SetReadDeadline` больше не зависает.
+- 🔧 **Тест соединения (SPEC 139) видит `masque-client`**: стадия `auth` с возрастом и версией HTTP
+  туннеля.
 - 🔧 **Достижимость WG-узлов считает апстрим (SPEC 020).** Свой обход дерева маршрутизации и точки
   инвалидации в `selector`/`urltest` удалены; idle-тик, probe-гейт urltest и потолок сборки читают
   множество апстримного `ReferenceManager`. Сидами стали ещё входящие, сервисы, HTTP-клиенты и

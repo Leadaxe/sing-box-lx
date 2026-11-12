@@ -587,12 +587,14 @@ Upstream `urltest` всегда выбирает единственную нод
 Собственный outbound форка `type: masque` **на линии 1.15 удалён**; конфиг с ним получает ошибку
 «removed in 1.15; use the masque-client endpoint». Вместо него — апстримный endpoint
 `masque-client` ([docs/configuration/endpoint/masque-client.md](../docs/configuration/endpoint/masque-client.md))
-с двумя ключами форка:
+с ключами форка:
 
 | Ключ | Значения | Без ключа | Смысл |
 |---|---|---|---|
-| `profile` | `standard`, `cloudflare` | `standard` | `cloudflare` включает диалект WARP: токен `cf-connect-ip`, обычный CONNECT на h2 с `cf-connect-proto`, голые IP-пакеты в капсулах на h2, настройка `0x276` на h3, откат на h2, если h3 не ответил на CONNECT за 3 с |
+| `profile` | `standard`, `cloudflare` | `standard` | `cloudflare` включает диалект WARP: токен `cf-connect-ip`, обычный CONNECT на h2 с `cf-connect-proto`, голые IP-пакеты в капсулах на h2, настройка `0x276` на h3, откат на h2, если h3 не ответил за 3 с, запрет HTTP/1.1 |
 | `address` | список префиксов | — | Адреса туннеля, заданные статически. WARP выдаёт их при регистрации и `ADDRESS_ASSIGN` не присылает: без `address` endpoint не становится готовым |
+| `private_key` | base64 DER EC-ключа | — | Ключ регистрации WARP. Ядро выпускает из него самоподписанный клиентский сертификат при старте. Только с `profile: cloudflare`; вместе с `tls.client_certificate`/`client_key` — ошибка |
+| `public_key` | base64 DER PKIX-ключа | — | Ключ эндпоинта WARP: подлинность проверяется по нему, а не по имени в сертификате. Становится `tls.certificate_public_key_sha256`. Только с `profile: cloudflare`; вместе с пином в `tls` — ошибка |
 
 ```jsonc
 {
@@ -600,23 +602,26 @@ Upstream `urltest` всегда выбирает единственную нод
   "tag": "warp",
   "server": "162.159.198.2",
   "server_port": 443,
-  "path": "/",
-  "headers": { "Host": "cloudflareaccess.com" },
   "profile": "cloudflare",
+  "private_key": "<base64 DER EC private key>",
+  "public_key":  "<base64 DER PKIX public key>",
   "address": ["172.16.0.2/32", "2606:4700:110:…/128"],
-  "mtu": 1280,
-  "tls": {
-    "enabled": true,
-    "server_name": "www.cloudflare.com",
-    "client_certificate": ["…"],                 // самоподписанный, из ключа регистрации
-    "client_key": ["…"],
-    "certificate_public_key_sha256": ["…"]       // пин ключа эндпоинта
-  }
+  "mtu": 1280
 }
 ```
 
-Сертификат, пин, SNI, `path` и `Host` готовит приложение стандартными ключами; в ядре остаётся
-только диалект. Особенности профиля `cloudflare`:
+Профиль `cloudflare` подставляет то, что не задано явно:
+
+| Что | Умолчание профиля | Чем переопределить |
+|---|---|---|
+| TLS | включён | — |
+| SNI | `www.cloudflare.com` — имя эндпоинта режет DPI, эндпоинт обслуживает туннель под любым именем | `tls.server_name`; `tls.disable_sni` — не слать вовсе |
+| Authority запроса | `cloudflareaccess.com` | `headers.Host` |
+| keepalive | 30 с (у апстрима 10 с) | `keep_alive_period` |
+| Клиентский сертификат | из `private_key` | `tls.client_certificate` + `tls.client_key` |
+| Пин ключа эндпоинта | из `public_key` | `tls.certificate_public_key_sha256` |
+
+Особенности профиля `cloudflare`:
 
 - **HTTP/1.1 нет.** `version: 1` — ошибка конфига; спуск на h1 в работе заканчивается ошибкой без
   запроса к серверу. У WARP туннеля на h1 нет: `GET` с `Upgrade` получает `404`, `CONNECT` — `400`.
@@ -627,8 +632,13 @@ Upstream `urltest` всегда выбирает единственную нод
   остался без ответа, на ядре 1.14 так же; WARP это или аплинк стенда — не разделялось), поэтому
   `mode: direct`/`all` вместе с `send: always` для WARP без релея — плохая пара; дефолтный
   `send: retry` начинает без байта и работает.
-- Корневой ключ `lx.masque.idle_timeout` разбирается и ни на что не влияет; усыпление — апстримный
-  `on_demand`.
+- **Дедлайн чтения на пути через `detour`** (SPEC 146): conn без рабочего `SetReadDeadline`
+  (vless XUDP над ws и подобные) получает его до передачи в quic-go, иначе неудачный h3-dial не
+  возвращается.
+- **Тест соединения** (SPEC 139) показывает одну стадию `auth`: возраст и версию HTTP живого
+  туннеля либо ожидание его подъёма.
+- **Таймера простоя нет.** Корневой ключ `lx.masque.idle_timeout` — ошибка загрузки
+  («is not supported on the 1.15 line»); усыпление — апстримный `on_demand`.
 
 Подробности, результаты опытов и швы — [SPEC 110](../SPECS/TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md).
 
@@ -1130,13 +1140,13 @@ CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`base
 - `lx.wg.<ключ> must be >= 0` для отрицательной длительности, `lx.wg.build_max must be >= 0`
 - `lx.wg.build_overflow must be "wait" or "build"`
 
-### `lx.masque` — MASQUE-outbound'ы
+### `lx.masque` — на линии 1.15 снят
 
-| Ключ | Тип | Дефолт | Значение |
-|---|---|---|---|
-| `idle_timeout` | длительность ≥ 0 | выкл | **Разбирается, на 1.15 ни на что не влияет**: это было глобальное окно простоя outbound'а `masque` форка, который на этой линии удалён ([§4](#4-masque--cloudflare-warp-поверх-masque-client-spec-110)) |
-
-Ошибка валидации: `lx.masque.idle_timeout must be >= 0` для отрицательной длительности.
+`lx.masque.idle_timeout` был глобальным окном простоя собственного outbound'а `masque`, которого на
+этой линии нет ([§4](#4-masque--cloudflare-warp-поверх-masque-client-spec-110)). У endpoint'а
+`masque-client` таймера простоя нет; любое значение, кроме `0`, — ошибка загрузки
+`lx.masque.idle_timeout is not supported on the 1.15 line: the masque-client endpoint has no idle
+timer, use its on_demand`.
 
 ### `lx.trusttunnel` — TrustTunnel-outbound'ы
 

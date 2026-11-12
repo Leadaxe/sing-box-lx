@@ -71,7 +71,7 @@ func TestStartIdleSuspend_stubRejectsLXWGKeys(t *testing.T) {
 	for _, content := range []string{
 		`{}`,
 		`{"lx":{"wg":{"build_overflow":"wait"}}}`,
-		`{"lx":{"masque":{"idle_timeout":"5m"}}}`,
+		`{"lx":{"trusttunnel":{"idle_timeout":"5m"}}}`,
 	} {
 		if err := routerFromConfig(t, content).startIdleSuspend(); err != nil {
 			t.Fatalf("%s: nothing to gate, got %v", content, err)

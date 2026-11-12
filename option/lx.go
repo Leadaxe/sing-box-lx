@@ -66,11 +66,12 @@ type LXWGOptions struct {
 	BuildOverflow string `json:"build_overflow,omitempty"`
 }
 
-// LXMASQUEOptions holds the MASQUE outbound knobs.
+// LXMASQUEOptions held the knobs of the 1.14 masque outbound.
 type LXMASQUEOptions struct {
-	// IdleTimeout is the global default idle window for every masque outbound
-	// without its own idle_timeout. A node's own key wins, including an
-	// explicit "0" there, which keeps that node's tunnel up.
+	// IdleTimeout was the global idle window of the 1.14 masque outbound. The
+	// masque-client endpoint of the 1.15 line has no idle timer: any value but
+	// "0" is rejected by name (SPEC 110), so a config that relied on it fails
+	// loudly instead of silently keeping every tunnel up.
 	IdleTimeout badoption.Duration `json:"idle_timeout,omitempty"`
 }
 
@@ -529,10 +530,11 @@ func resolveLXValues(wg LXWGOptions, masque *LXMASQUEOptions, trustTunnel *LXTru
 	resolved.WG.LazyBuild = wg.LazyBuild
 	resolved.WG.BuildMax = wg.BuildMax
 	if masque != nil {
-		if masque.IdleTimeout < 0 {
-			return nil, E.New("lx.masque.idle_timeout must be >= 0")
+		// lx: SPEC 110 — the idle timer left with the 1.14 masque outbound; a key
+		// that is accepted and does nothing would hide that.
+		if masque.IdleTimeout != 0 {
+			return nil, E.New("lx.masque.idle_timeout is not supported on the 1.15 line: the masque-client endpoint has no idle timer, use its on_demand")
 		}
-		resolved.MASQUE.IdleTimeout = time.Duration(masque.IdleTimeout)
 	}
 	if trustTunnel != nil {
 		if trustTunnel.IdleTimeout < 0 {
