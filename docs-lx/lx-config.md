@@ -972,20 +972,22 @@ make -f Makefile.lx lx-build   # includes with_lx_command (and with_xhttp/with_a
 anytls, shadowtls, http, masque `h2`, …) dials **through `detour`**, `record_fragment` now
 defaults to **on**.
 
-Why: the lower leg forwards our ClientHello under its own name, and the path MTU beyond that
-server can be lower than the ClientHello. The ICMP *Fragmentation Needed* never reaches us, so
-the packet simply vanishes and the connection dies as `tls handshake: EOF` after 12–17 s. It
-reproduces with a bare `curl`, so it is a property of the path, not of sing-box — but only
-fragmenting the first TLS record works around it. Measured through a broken leg: no
-fragmentation ❌ fail in 12 s; `fragment` ✅ 0.6 s; `record_fragment` ✅ **0.1 s**.
+Why: a relay can read the SNI out of our ClientHello and send the connection to that name
+instead of our destination — Xray `sniffing` with `destOverride` and without `routeOnly`. A
+target whose SNI is a disguise (WARP with a foreign name, REALITY) then gets a connection that
+goes elsewhere: the handshake hangs and dies as `tls handshake: EOF` after 12–17 s, or a foreign
+key arrives. Xray's TLS sniffer gives up on a ClientHello split into TLS records, so the
+destination stays ours. Measured through a sniffing leg: no fragmentation ❌ fail in 12 s;
+`fragment` ✅ 0.6 s; `record_fragment` ✅ **0.1 s**. The QUIC counterpart is
+`lx.quic_sniff_decoy` (SPEC 151).
 
 Rules:
 
 - **An explicit config value always wins.** `"fragment": true` is not upgraded to record-split —
   choosing packet-split stays your choice.
 - **Only the handshake is fragmented**, never the traffic after it. There is no ongoing cost.
-- **`h3`/QUIC is untouched** — no TLS over TCP there, and quic-go keeps its Initial below the
-  threshold anyway (masque `h3` through detour: 4/4 OK).
+- **`h3`/QUIC is untouched** — no TLS over TCP there; QUIC sniffing is handled by
+  `lx.quic_sniff_decoy`.
 - Nested chains are covered automatically: every link carries its own `detour`.
 - **REALITY nodes included — since SPEC 088.** Before it, the REALITY client built its uTLS
   connection on the bare socket, so both an explicit `fragment` / `record_fragment` and this
@@ -995,9 +997,9 @@ Rules:
   first flight is a property of that network — see §7 for the other lever.
 
 - **`"record_fragment": false` opts out** (SPEC 156). The ClientHello then goes through the
-  detour as one record. Use it when the network behind the leg drops a split ClientHello
-  (a DPI that treats fragmentation as a signature) and has no PMTU hole — for example a
-  `detour` that ends in `direct`. Absent key = the default above.
+  detour as one record. Use it when the network drops a split ClientHello (a DPI that treats
+  fragmentation as a signature) and the relay does not sniff — for example a `detour` that
+  ends in `direct`. Absent key = the default above.
 
 ---
 
