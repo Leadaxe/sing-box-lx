@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — апстримный дефект, ровесник самой фичи interrupt (c320be75a, 2023-09-15, v1.10.0) |
-| Статус | D (done, v2) — v1 field-verified на `rc.7` (2026-08-13), затем вытеснен v2 (обёртка входящего, покрывает и вложенные группы); v2 отдельно не гонялся; в поле с `v1.14.0-lx.25-rc.7` без жалоб, закрыта владельцем 2026-09-24. ⚠️ v2 дала вложенным selector'ам второй порядок захвата замков `interrupt.Group` → ABBA-дедлок при переключении внутренней группы (issue #20, с `lx.25`); закрыт в примитиве — [084](../084-INTERRUPT_GROUP_ABBA_DEADLOCK/SPEC.md) |
+| Статус | D (done), **патч снят**: точка вызова в `selector.go` ушла с синком v1.14.4 (апстрим `03335338a` — группы разворачивает роутер и крепит соединение через `AttachConnection`), обёртка `SingPacketConn` удалена 2026-11-12. Ниже — разбор дефекта и решения, действовавшего до синка. История: v1 field-verified на `rc.7` (2026-08-13), затем вытеснен v2 (обёртка входящего, покрывает и вложенные группы); v2 отдельно не гонялся; в поле с `v1.14.0-lx.25-rc.7` без жалоб, закрыта владельцем 2026-09-24. ⚠️ v2 дала вложенным selector'ам второй порядок захвата замков `interrupt.Group` → ABBA-дедлок при переключении внутренней группы (issue #20, с `lx.25`); закрыт в примитиве — [084](../084-INTERRUPT_GROUP_ABBA_DEADLOCK/SPEC.md) |
 
 `interrupt_exist_connections` у `selector` не работает для пользовательского трафика. Переключение узла внутри группы не разрывает активные соединения — они продолжают жить на старом узле до собственного таймаута. Помогает только полный перезапуск ядра.
 
@@ -139,9 +139,9 @@ conn = s.interruptGroup.NewSingPacketConn(conn, true)    // UDP (N.PacketConn)
 
 Разрыв входящей стороны валит копирующий цикл `ConnectionManager`, тот закрывает исходящий сокет — соединение умирает целиком. `isExternal=true` честен: входящий трафик — пользовательский по определению, при `interrupt_exist_connections: false` он переживает переключение, как задумано семантикой опции.
 
-Порт: `SingPacketConn` + `NewSingPacketConn` в `common/interrupt/sing_packet_conn_lx.go` (обёртка над `N.PacketConn` — штатный `NewPacketConn` принимает только `net.PacketConn`). `group.go` и `conn.go` пакета — апстримные без нашей дельты.
+Для UDP-пути в `common/interrupt` была портирована обёртка `SingPacketConn` над `N.PacketConn` (штатный `NewPacketConn` принимает только `net.PacketConn`).
 
-**Условие снятия.** В линии 1.15 апстрим переделал это место (`850e7a3dd`): `Selector.NewConnection` и `NewPacketConnection` удалены, соединение крепится к группе через `AttachConnection` и `route/flow_tracker.go`. При переходе на 1.15 обёртка и `SingPacketConn` снимаются после проверки вложенных групп на стенде [084](../084-INTERRUPT_GROUP_ABBA_DEADLOCK/SPEC.md).
+**Снято.** Апстрим закрыл дефект сам: `03335338a` (в `stable` с v1.14.4, в линии 1.15 — `6231b40d7`) убрал `Selector.NewConnection` и `NewPacketConnection`, группы разворачивает роутер и крепит входящее соединение к каждой группе цепочки через `AttachConnection`. Наша вставка в `selector.go` ушла с этим синком, файл `common/interrupt/sing_packet_conn_lx.go` удалён 2026-11-12 в обеих линиях. Стражи остаются: `protocol/group/interrupt_selector_lx_test.go` (разрыв живого сокета при `SelectOutbound`) и тесты [084](../084-INTERRUPT_GROUP_ABBA_DEADLOCK/SPEC.md).
 
 Подход взят из апстримного [PR #4285](https://github.com/SagerNet/sing-box/pull/4285) (xxspa). Сам PR в апстриме завис: его ветка отстала от `testing`, дифф раздут до +69922/−7087 в 300+ файлах, и месяц висит без реакции. Баг там же заведён дважды — [#4281](https://github.com/SagerNet/sing-box/issues/4281) (полный разбор с тем же корнем и минимальным репро) и [#2625](https://github.com/SagerNet/sing-box/issues/2625) (с 1.11.3). Контрибуция от нас невозможна.
 
@@ -183,7 +183,6 @@ Red-check прогнан в обе стороны: handler-branch-тест на 
   замком группы, и два порядка дали ABBA-дедлок `Interrupt(B)` против `Close` DoH через
   внешний `detour` (issue #20). Фикс в `common/interrupt` — [084](../084-INTERRUPT_GROUP_ABBA_DEADLOCK/SPEC.md);
   сама обёртка не менялась.
-- **UDP-путь** покрыт обёрткой `NewSingPacketConn`, но отдельным тестом не закреплён.
 - **LxBox.** Ядро теперь рвёт соединения само, и клиентский обход через трекер
   (`CloseConnection` → `connTracker.Close`) стал дублирующим. Снятие обхода — отдельная
   задача на стороне клиента; до неё разрыв происходит с двух сторон.

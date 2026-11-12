@@ -79,10 +79,6 @@ var abbaCases = []abbaCase{
 		b.NewPacketConn(a.NewPacketConn(rawIn, true), true)
 		return a.NewPacketConn(b.NewPacketConn(rawDial, false), false)
 	}},
-	{"SingPacketConn", func(a, b *Group, rawIn, rawDial *closeProbe) io.Closer {
-		b.NewSingPacketConn(a.NewSingPacketConn(rawIn, true), true)
-		return a.NewSingPacketConn(b.NewSingPacketConn(rawDial, false), false)
-	}},
 }
 
 func TestLxGroupNestedInterruptCloseNoDeadlock(t *testing.T) {
