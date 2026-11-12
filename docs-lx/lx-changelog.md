@@ -75,6 +75,8 @@ required for stable tags); this changelog section is the fallback used for pre-r
 - 🔧 **`masque-client`: усечение датаграмм (SPEC 150) и приманка (SPEC 151)** через обёртку
   UDP-диалера; в rc.1 у endpoint'а не было ни того, ни другого. В `lx.quic_sniff_decoy.outbound_type`
   тип называется `masque-client`, он же дефолт вместо `masque`.
+- 🧹 Удалена неиспользуемая обёртка `interrupt.SingPacketConn` (остаток хотфикса SPEC 064; точка
+  вызова ушла с синком v1.14.4). Тесты 064 и 084 остаются стражами.
 - 📎 Доки `README` и `lx-config` §4 описывают WARP на `masque-client`; в rc.1 они называли слой
   несделанным.
 
