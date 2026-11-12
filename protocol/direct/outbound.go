@@ -10,12 +10,14 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/iponly"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing-tun/ping"
 	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing/common/bufio"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
@@ -29,11 +31,12 @@ func RegisterOutbound(registry *outbound.Registry) {
 }
 
 var (
-	_ N.ParallelDialer                = (*Outbound)(nil)
-	_ dialer.ParallelNetworkDialer    = (*Outbound)(nil)
-	_ dialer.DirectDialer             = (*Outbound)(nil)
-	_ adapter.FlowOutbound            = (*Outbound)(nil)
-	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+	_ N.ParallelDialer                   = (*Outbound)(nil)
+	_ dialer.ParallelNetworkDialer       = (*Outbound)(nil)
+	_ dialer.PacketDialerWithDestination = (*Outbound)(nil)
+	_ dialer.DirectDialer                = (*Outbound)(nil)
+	_ adapter.FlowOutbound               = (*Outbound)(nil)
+	_ adapter.InterfaceUpdateListener    = (*Outbound)(nil)
 )
 
 type Outbound struct {
@@ -41,7 +44,7 @@ type Outbound struct {
 	ctx            context.Context
 	logger         logger.ContextLogger
 	network        adapter.NetworkManager
-	dialer         dialer.ParallelInterfaceDialer
+	dialer         dialer.ParallelInterfaceResolveDialer
 	domainStrategy C.DomainStrategy
 	fallbackDelay  time.Duration
 	isEmpty        bool
@@ -71,7 +74,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		//nolint:staticcheck
 		domainStrategy: C.DomainStrategy(options.DomainStrategy),
 		fallbackDelay:  time.Duration(options.FallbackDelay),
-		dialer:         outboundDialer.(dialer.ParallelInterfaceDialer),
+		dialer:         outboundDialer.(dialer.ParallelInterfaceResolveDialer),
 		isEmpty: reflect.DeepEqual(options.DialerOptions, option.DialerOptions{
 			AbstractDialerOptions: option.AbstractDialerOptions{UDPFragmentDefault: true},
 		}),
@@ -122,7 +125,12 @@ func (h *Outbound) fetchMyAddresses() {
 			continue
 		}
 		found = true
-		myAddresses = append(myAddresses, myInterface.Addresses...)
+		for _, prefix := range myInterface.Addresses {
+			if prefix.Addr().Is6() && prefix.Addr().IsLinkLocalUnicast() {
+				prefix = netip.PrefixFrom(prefix.Addr(), prefix.Addr().BitLen())
+			}
+			myAddresses = append(myAddresses, prefix)
+		}
 	}
 	if !found {
 		return
@@ -181,6 +189,25 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 		return nil, err
 	}
 	return conn, nil
+}
+
+func (h *Outbound) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
+	if h.isMyLoopbackAddress(destination.Addr) {
+		return nil, netip.Addr{}, E.New("loopback connection to TUN range")
+	}
+	ctx, metadata := adapter.ExtendContext(ctx)
+	metadata.Outbound = h.Tag()
+	metadata.Destination = destination
+	h.logger.InfoContext(ctx, "outbound packet connection")
+	conn, destinationAddress, err := h.dialer.ListenPacketWithDestination(ctx, destination)
+	if err != nil {
+		return nil, netip.Addr{}, err
+	}
+	packetConn := iponly.NewPacketConn(h.logger, conn)
+	if destinationAddress.IsValid() && !metadata.UDPDisableDomainUnmapping {
+		return bufio.NewNATPacketConn(packetConn, M.SocksaddrFrom(destinationAddress, destination.Port), destination), netip.Addr{}, nil
+	}
+	return packetConn, destinationAddress, nil
 }
 
 func (h *Outbound) PreMatchFlow(network string, destination netip.Addr) adapter.PreMatchAction {
@@ -263,7 +290,7 @@ func (h *Outbound) ListenSerialNetworkPacket(ctx context.Context, destination M.
 	if err != nil {
 		return nil, netip.Addr{}, err
 	}
-	return conn, newDestination, nil
+	return iponly.NewPacketConn(h.logger, conn), newDestination, nil
 }
 
 func (h *Outbound) IsEmpty() bool {
