@@ -70,6 +70,7 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	if options.MTU == 0 {
 		options.MTU = masque.DefaultMTU
 	}
+	options.UDPFragmentDefault = true // lx: SPEC 028 — the outer datagram of a tunnel may be fragmented
 	err := prepareLXProfile(&options) // lx: SPEC 110 — keys and defaults of the profile
 	if err != nil {
 		return nil, err
@@ -100,6 +101,9 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 		return nil, err
 	}
 	outboundDialer = lxdatagram.ReadDeadlineDialer(lxdatagram.Dialer(ctx, C.TypeMASQUEClient, outboundDialer, logger)) // lx: SPEC 146, 150, 151
+	if options.UDPFragment == nil || *options.UDPFragment {                                                            // lx: SPEC 028
+		outboundDialer = lxdatagram.OwnedSocketDialer(outboundDialer)
+	}
 	headers := options.Headers.Build()
 	authority := headers.Get("Host")
 	headers.Del("Host")

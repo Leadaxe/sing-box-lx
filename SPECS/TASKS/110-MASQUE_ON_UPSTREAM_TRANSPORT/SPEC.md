@@ -652,6 +652,19 @@ WARP `:path` не важен (§12, вопрос 6). `on_demand` профиль 
 HTTP-клиента. `lxdatagram.ReadDeadlineDialer` оборачивает UDP-conn'ы диалера `masque-client` поверх
 усечения SPEC 150; hysteria2 и tuic не затронуты.
 
+**Фрагментация внешнего UDP (SPEC 028) и ClientHello под `detour` (SPEC 060), 2026-11-13.**
+quic-go, получив conn с доступом к сокету, ставит на него запрет фрагментации (`IP_PMTUDISC_PROBE`)
+поверх настройки диалера. Первый пакет `masque-client` — `mtu` + 51 байт полезной нагрузки QUIC,
+1359 байт на проводе при `mtu` 1280. Стенд NanoPi, `eth0` mtu 1300: ядро 1.14 поднимает h3
+(`warp=on`), `masque-client` без шва — «no CONNECT response within 3s», h3 потерян; с откатом
+уходит на h2. Шов: `options.UDPFragmentDefault = true` и `lxdatagram.OwnedSocketDialer` — UDP-conn
+отдаётся quic-go без доступа к сокету, и тот остаётся таким, каким его настроил диалер; явный
+`udp_fragment: false` возвращает поведение апстрима. После шва на mtu 1300 h3 без отката
+поднимается (`assigned`, 5 МБ за 0,75 с); на mtu 1500 — 20 МБ за 2,0 с, как без шва. Цена — тонкая
+настройка сокета quic-go (GSO, ECN, буфер приёма), которой у outbound'а 1.14 тоже не было.
+Под `detour` первая TLS-запись h2 по умолчанию режется (`tls.ApplyDetourFragmentDefault`), как у
+остальных TLS-outbound'ов.
+
 **Тест соединения (SPEC 139).** Туннель открывает цикл endpoint'а, а не dial, поэтому стадий `quic`
 и `auth` на рукопожатие и CONNECT, как у outbound'а 1.14, нет. Dial через endpoint пишет одну
 стадию `auth` (`protocol/masque/conntest_lx.go`): живой туннель — REUSED с возрастом и версией HTTP
