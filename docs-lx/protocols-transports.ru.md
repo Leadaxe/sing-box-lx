@@ -928,8 +928,10 @@ device-проверено, что там работает.
 - На `h2` один IP-пакет = один HTTP/2 DATA frame, так что `mtu` можно поднять до
   **16000**.
 - Путь `h2` гонит свой TLS через общий слой `common/tls`, так что получает
-  ClientHello-фрагментацию как любой другой TLS-outbound — включая автоматическую под
-  `detour` (SPEC 060). `h3` этим не затронут: QUIC вообще не несёт TLS поверх TCP.
+  ClientHello-фрагментацию как любой другой TLS-outbound: узловые `fragment` /
+  `record_fragment` и секцию `tls` блока `lx.sniff_guard`
+  ([lx-config §13](lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni)).
+  Путь `h3` защищает секция `quic` того же блока: QUIC вообще не несёт TLS поверх TCP.
 - **Первый** `h3`-dial медленный (холодная настройка CONNECT-IP: QUIC-handshake +
   Extended CONNECT + route advertise + стек), так что короткий urltest-таймаут может
   отметить свежий h3-узел `-1` на первой пробе, хотя после он работает.
@@ -1173,13 +1175,16 @@ grpc-go. Доступно с `v1.14.1-lx.8`.
 | Ключ | Тип | Дефолт | Смысл |
 |------|-----|--------|-------|
 | `fragment` | bool | `false` | Разрез первого пакета по SNI на TCP-сегменты с ожиданием ACK ([апстрим](../docs/configuration/shared/tls.md#fragment)) |
-| `record_fragment` | bool | `false`; **`true` под `detour`**, если не задан явно (SPEC 060, 156) | Те же точки разреза, каждая — своя TLS-запись, один пакет ([апстрим](../docs/configuration/shared/tls.md#record_fragment)) |
+| `record_fragment` | bool | `false` | Те же точки разреза, каждая — своя TLS-запись, один пакет ([апстрим](../docs/configuration/shared/tls.md#record_fragment)) |
 | `fragment_fallback_delay` | duration | `500ms` | Пауза, когда время ожидания ACK вычислить нельзя ([апстрим](../docs/configuration/shared/tls.md#fragment_fallback_delay)) |
 
-Правила дефолта под `detour`: явное `fragment: true` или `record_fragment` с любым
-значением сильнее дефолта — `"record_fragment": false` пускает ClientHello через detour
-одной записью (SPEC 156); фрагментируется только рукопожатие; `h3`/QUIC не затронут; у
-каждого звена `chain` свой `detour`. Обзор — [lx-config §9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060).
+Дефолта под `detour` нет: без блока `lx.sniff_guard` ClientHello режется только там, где
+у узла задан `fragment` или `record_fragment`, через `detour` тоже. Защита от релеев,
+перенаправляющих по SNI, настраивается блоком `lx.sniff_guard`
+([lx-config §13](lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni)). Явное
+значение узла, включая `"record_fragment": false` (SPEC 156), сильнее блока, если в блоке
+не задан `"override": true`. Фрагментируется только рукопожатие. Обзор —
+[lx-config §9](lx-config.ru.md#9-clienthello-под-detour--без-дефолта-spec-060).
 
 ## 5.4 Ошибки валидации REALITY (дословно)
 

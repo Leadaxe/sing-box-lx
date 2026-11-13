@@ -17,7 +17,7 @@
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
 | **TrustTunnel** outbound and inbound (SPEC 133/134) | `with_trusttunnel` (+ `with_quic` for HTTP/3) | `outbounds[].type` / `inbounds[].type: "trusttunnel"`; fields — [protocols-transports.md §6](protocols-transports.md#6-trusttunnel-outbound-and-inbound), the global `lx.trusttunnel.idle_timeout` — [§13](#lxtrusttunnel--trusttunnel-outbounds) | desktop + mobile |
 | **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`) | **mobile only** (AAR) |
-| **Root `lx` block** (SPEC 098) | — (always parsed) | `lx.wg`, `lx.masque`, `lx.trusttunnel`, `lx.mtu_align`, `lx.quic_sniff_decoy` — the fork's global knobs, [§13](#13-the-lx-root-block-spec-098) | desktop + mobile |
+| **Root `lx` block** (SPEC 098) | — (always parsed) | `lx.wg`, `lx.masque`, `lx.trusttunnel`, `lx.mtu_align`, `lx.sniff_guard` — the fork's global knobs, [§13](#13-the-lx-root-block-spec-098) | desktop + mobile |
 | **DNS server group** (SPEC 033/035/143) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
 | **`lxd` daemon** (SPEC 055–057, 063–068) | `with_lxd` | not a config key — the `sing-box lxd` subcommand + `<state-dir>/daemon.json`; see [lxd-daemon.md](lxd-daemon.md) | desktop / server (**not** Win7, **not** AAR) |
@@ -74,7 +74,7 @@ timelines and the recommended mobile configuration live in
   - [Example](#example)
 - [7. REALITY `key_share` — hybrid or classical ClientHello (SPEC 089)](#7-reality-key_share--hybrid-or-classical-clienthello-spec-089)
 - [8. Observability (CommandClient extensions)](#8-observability-commandclient-extensions)
-- [9. Automatic ClientHello fragmentation under `detour` (SPEC 060)](#9-automatic-clienthello-fragmentation-under-detour-spec-060)
+- [9. ClientHello under `detour` — no default (SPEC 060)](#9-clienthello-under-detour--no-default-spec-060)
 - [10. `chain` outbound — a virtual multi-hop path of groups and nodes (SPEC 073)](#10-chain-outbound--a-virtual-multi-hop-path-of-groups-and-nodes-spec-073)
 - [11. Protocol sniffers for LAN traffic (SPEC 078 / 080)](#11-protocol-sniffers-for-lan-traffic-spec-078--080)
 - [12. Validate & build](#12-validate--build)
@@ -117,12 +117,30 @@ you need and read its section below. Each comment shows the **default** and the 
       "idle_timeout": "5m"                      // default: 5m. Global idle window for trusttunnel nodes without their own key; only a node's "0" turns it off (SPEC 133)
     },
     "mtu_align": "clamp",                       // default: clamp. off | fill | clamp, or an object {"mode", "except": [tags]} (§13)
-    "quic_sniff_decoy": {                       // object only; a string/boolean is a load error. One byte ahead of the QUIC Initial against relay SNI sniffing (§13, SPEC 151)
-      "mode": "off",                            // default: off. off | direct | detour | all — on which paths the byte is allowed
-      "outbound_type": ["masque"],              // default: ["masque"]. masque | hysteria2 | tuic | trusttunnel | vless | vmess | trojan | wireguard
-      "detour_type": ["vless"],                 // default: ["vless"]. Relay types; no selector/urltest — a group resolves to the member it picked
-      "send": "retry"                           // default: retry. retry | always — the byte only on the retry after a failure, or on every dial
+    "sniff_guard": {                            // default: no block = upstream behaviour. Guards the handshake against rerouting by SNI on a relay or router (§13, SPEC 060)
+      "nodes": {
+        "sni_mismatch": true,                   // default: no filter. true — only nodes whose SNI differs from server
+        "outbound_type": ["vless", "masque"]    // default: no filter. A list of types or false; true, [] and an unknown type are load errors
+      },
+      "detour_type": {                          // default: {"direct": "clean", "ssh": "clean", "socks": "clean", "*": "suspect"}
+        "direct": "clean",                      //   carrier type → never | clean | suspect; "*" — every other type; groups cannot be keys
+        "*": "suspect"
+      },
+      "override": false,                        // default: false. true — the block wins over a node's fragment / record_fragment
+      "tls": {
+        "method": "record_fragment",            // default: off. record_fragment | fragment | delay | off
+        "delay": "300ms",                       // default: 300ms. Pause of the delay method; > 0
+        "persist": true,                        // default: false. Relay labels in experimental.cache_file
+        "detour_type": { "ssh": "suspect" }     // default: the shared map. Override for TLS
+      },
+      "quic": {
+        "method": "decoy_first_byte",           // default: off. decoy_first_byte | delay | off
+        "delay": "300ms",                       // default: 300ms
+        "persist": true,                        // default: false
+        "detour_type": { "socks": "never" }     // default: the shared map. Override for QUIC
+      }
     }
+    // "quic_sniff_decoy" removed: any value is a load error, replaced by sniff_guard.quic (§13)
     // "awg_masquerade" removed in lx.33: any value is a load error, the AWG burst goes on every path (§13)
   },
 
@@ -295,7 +313,7 @@ you need and read its section below. Each comment shows the **default** and the 
 ```
 
 > **Field count:** 26 XHTTP + 30 AmneziaWG (incl. `id`/`ip`/`ib` and the 9 AWG 3.x keys) + 1 VLESS (`encryption`) +
-> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 13 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.trusttunnel.idle_timeout` + `lx.mtu_align` + 4 `lx.quic_sniff_decoy{mode,outbound_type,detour_type,send}`). Mutually-exclusive / ignored fields are
+> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 21 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.trusttunnel.idle_timeout` + `lx.mtu_align` + 12 `lx.sniff_guard{nodes{sni_mismatch,outbound_type},detour_type,override,tls{method,delay,persist,detour_type},quic{method,delay,persist,detour_type}}`). Mutually-exclusive / ignored fields are
 > labelled inline above; the sections below give the per-field semantics, gotchas and live
 > verification status.
 
@@ -649,9 +667,11 @@ QUIC (SPEC 074). On the `standard` profile there is no h2 leg, so `auto` quietly
 
 For `h2` (CONNECT-IP over TCP:443), change one field: `"vhttp": "h2"`. The `h2` path runs its
 TLS through the shared `common/tls` layer, so it gets ClientHello fragmentation like any other
-TLS outbound — including the automatic one under `detour`
-([§9](#9-automatic-clienthello-fragmentation-under-detour-spec-060)). `h3` is untouched by that:
-QUIC does not carry TLS over TCP at all.
+TLS outbound: the node's `fragment` / `record_fragment` and the `tls` section of
+[`lx.sniff_guard`](#lxsniff_guard--guard-against-rerouting-by-sni). The `h3` leg is guarded by
+the `quic` section of the same block; in `auto` the two legs have separate path labels. Without
+the block the ClientHello is not split under `detour`
+([§9](#9-clienthello-under-detour--no-default-spec-060)).
 
 > A top-level `dns` block is required — the userspace stack works at L3 and does not resolve
 > domains itself; the outbound resolves them via the DNS router before dialing.
@@ -966,40 +986,51 @@ make -f Makefile.lx lx-build   # includes with_lx_command (and with_xhttp/with_a
 
 ---
 
-## 9. Automatic ClientHello fragmentation under `detour` (SPEC 060)
+## 9. ClientHello under `detour` — no default (SPEC 060)
 
-**Not a config key — a changed default.** When a TLS-over-TCP outbound (VLESS, trojan, vmess,
-anytls, shadowtls, http, masque `h2`, …) dials **through `detour`**, `record_fragment` now
-defaults to **on**.
+> ⚠️ **Behaviour change without a load error.** In earlier releases a TLS-over-TCP outbound
+> (VLESS, trojan, vmess, anytls, shadowtls, http, masque `h2`, …) dialling **through `detour`**
+> split its ClientHello into TLS records by default (`record_fragment`). That default is gone.
+> Without the `lx.sniff_guard` block the core behaves as upstream: the ClientHello is split only
+> where the node sets `fragment` or `record_fragment`, under `detour` too. A config without the
+> block still loads, and TLS nodes behind relays that reroute connections by SNI stop
+> connecting.
 
-Why: a relay can read the SNI out of our ClientHello and send the connection to that name
-instead of our destination — Xray `sniffing` with `destOverride` and without `routeOnly`. A
-target whose SNI is a disguise (WARP with a foreign name, REALITY) then gets a connection that
-goes elsewhere: the handshake hangs and dies as `tls handshake: EOF` after 12–17 s, or a foreign
-key arrives. Xray's TLS sniffer gives up on a ClientHello split into TLS records, so the
-destination stays ours. Measured through a sniffing leg: no fragmentation ❌ fail in 12 s;
-`fragment` ✅ 0.6 s; `record_fragment` ✅ **0.1 s**. The QUIC counterpart is
-`lx.quic_sniff_decoy` (SPEC 151).
+Why the default existed: a relay can read the SNI out of the ClientHello and send the connection
+to that name instead of the node's destination — this is what Xray `sniffing` with `destOverride`
+and without `routeOnly` does. A node whose SNI is a disguise (WARP with a foreign name, REALITY)
+then gets a connection that goes elsewhere: the handshake hangs and dies as `tls handshake: EOF`
+after 12–17 s, or a foreign key arrives. Xray's TLS sniffer does not parse a ClientHello split
+into TLS records. Measured through a sniffing leg: no split ❌ fail in 12 s; `fragment` ✅ 0.6 s;
+`record_fragment` ✅ **0.1 s**.
 
-Rules:
+The [`lx.sniff_guard`](#lxsniff_guard--guard-against-rerouting-by-sni) block (§13) brings the
+protection back. The minimal block:
 
-- **An explicit config value always wins.** `"fragment": true` is not upgraded to record-split —
-  choosing packet-split stays your choice.
-- **Only the handshake is fragmented**, never the traffic after it. There is no ongoing cost.
-- **`h3`/QUIC is untouched** — no TLS over TCP there; QUIC sniffing is handled by
-  `lx.quic_sniff_decoy`.
-- Nested chains are covered automatically: every link carries its own `detour`.
-- **REALITY nodes included — since SPEC 088.** Before it, the REALITY client built its uTLS
-  connection on the bare socket, so both an explicit `fragment` / `record_fragment` and this
-  default were accepted by the config and silently ignored there. The hybrid ClientHello after
-  [SPEC 083](../SPECS/TASKS/083-REALITY_MLKEM_KEYSHARE/SPEC.md) is 1.5–1.9 KB (two TCP segments),
-  so this matters more than it used to. Whether fragmentation helps on a network that drops that
-  first flight is a property of that network — see §7 for the other lever.
+```json
+"lx": { "sniff_guard": { "tls": { "method": "record_fragment" } } }
+```
 
-- **`"record_fragment": false` opts out** (SPEC 156). The ClientHello then goes through the
-  detour as one record. Use it when the network drops a split ClientHello (a DPI that treats
-  fragmentation as a signature) and the relay does not sniff — for example a `detour` that
-  ends in `direct`. Absent key = the default above.
+With it, a path through any relay except `ssh` and `socks` starts with the split, the direct path
+without it. A path through `ssh` or `socks` starts without the split and turns it on once a node
+there failed without it and then passed with it. To start every relay with the split, as the old
+default did, add `"detour_type": {"ssh": "suspect", "socks": "suspect"}` — the map is laid over
+the defaults, so only the entries that change need listing. Unlike the old default,
+the block learns from connection outcomes and can drop the split on a path where it gets in the
+way.
+
+Node-level upstream keys:
+
+- **A node's `fragment` / `record_fragment` work as upstream**, with or without the block. The
+  block overrides them only with `"override": true`.
+- **`"record_fragment": false`** (SPEC 156) — the node asks for the ClientHello in one record.
+  Under the block without `override` such a node goes unsplit on every path.
+- **REALITY nodes — since SPEC 088.** Before it, the REALITY client built its uTLS connection on
+  the bare socket, and `fragment` / `record_fragment` were silently ignored there. The hybrid
+  ClientHello after [SPEC 083](../SPECS/TASKS/083-REALITY_MLKEM_KEYSHARE/SPEC.md) is 1.5–1.9 KB
+  (two TCP segments). Whether a split helps on a network that drops that first flight is a
+  property of that network — see §7 for the other lever.
+- Only the handshake is split; the traffic after it is untouched.
 
 ---
 
@@ -1073,7 +1104,8 @@ endpoint.
   mode (`clamp` by default, `fill`, `off`) and `except` apply to links the same way.
 - **`strip` catalog** (one-sided, the server never sees them): `tls.fragment` (packet-level
   ClientHello fragmentation + `fragment_fallback_delay`; **`record_fragment` is not
-  touched** — under `detour` it switches on automatically as a path fix, see §9),
+  touched** — protection of the path against rerouting by SNI is set by `lx.sniff_guard`, see §9
+  and §13),
   `multiplex.padding`, `xhttp.padding` (minimal range, obfs mode off). `tls.utls` is
   available via `"tls.utls": true` (start error on a node that uses `reality`). Server
   contracts — `flow`, `obfs`, `shadowtls`, `plugin`, `udp_over_tcp`, `ech`, transport
@@ -1144,11 +1176,9 @@ is the same as none. A misspelt key is a load error, not a silent default.
     "idle_timeout": "5m"
   },
   "mtu_align": "clamp",
-  "quic_sniff_decoy": {
-    "mode": "detour",
-    "outbound_type": ["masque"],
-    "detour_type": ["vless"],
-    "send": "retry"
+  "sniff_guard": {
+    "tls": { "method": "record_fragment" },
+    "quic": { "method": "decoy_first_byte" }
   }
 }
 ```
@@ -1324,87 +1354,277 @@ exposed over the lx RPC.
 server. What masque does from below (outer `InitialPacketSize` = `mtu + 51`, ICMP Packet Too Big
 with the real budget) is in [§4](#4-masque-outbound--cloudflare-warp-spec-021).
 
-### `lx.quic_sniff_decoy` — QUIC through a relay that sniffs the SNI
+### `lx.sniff_guard` — guard against rerouting by SNI
 
-One byte `0x00` ahead of the first QUIC Initial of a dial. The key takes an object only; the
-string (`"detour"`) and boolean (`true`) forms of lx.30–lx.32 are a load error.
+A node between the client and the server can read the name out of the first handshake packet and
+send the connection to that name instead of the dialled address. This is what an Xray inbound
+with `sniffing.destOverride` and without `routeOnly` does — on a relay under `detour`, or on a
+router with a VPN or a transparent proxy in the local network. While the SNI is the server's own
+name, the rerouting leads to the same place; when the SNI is a disguise (REALITY, WARP, hysteria2
+or tuic with a fake SNI, the AmneziaWG QUIC masquerade), the connection lands on someone else's
+host and the node looks dead. The block makes the first handshake packet unreadable to the
+sniffer without changing what the server receives, and learns from connection outcomes which
+paths need it.
+
+Without the block, as without a `method` in a section, there is no protection: the handshake goes
+out as upstream sends it. A block in which neither section has a method is the same as no block.
+The block does not turn itself on — protection defaults are up to the application that writes
+the config.
 
 ```jsonc
 "lx": {
-  "quic_sniff_decoy": {
-    "mode": "detour",             // off (default) | direct | detour | all
-    "outbound_type": ["masque"],  // default: ["masque"]
-    "detour_type": ["vless"],     // default: ["vless"]
-    "send": "retry"               // retry (default) | always
+  "sniff_guard": {
+    "nodes": {
+      "sni_mismatch": true,                 // false | absent — no filter
+      "outbound_type": ["vless", "masque"]  // false | absent — no filter
+    },
+    "detour_type": {                        // no detour = "direct"
+      "direct": "clean",
+      "ssh":    "clean",
+      "socks":  "clean",
+      "*":      "suspect"
+    },
+    "override": false,
+    "tls": {
+      "method": "record_fragment",          // record_fragment | fragment | delay | off
+      "delay": "300ms",
+      "persist": true
+    },
+    "quic": {
+      "method": "decoy_first_byte",         // decoy_first_byte | delay | off
+      "detour_type": { "socks": "never" },
+      "persist": true
+    }
   }
 }
 ```
 
+**Which nodes — `nodes`.** Two filters; a node is guarded when it passes both. A node that does
+not pass works as without the block.
+
 | Key | Values | Absent | Meaning |
 |---|---|---|---|
-| `mode` | `off`, `direct`, `detour`, `all` | `off` | On which paths the byte is allowed. `direct` — the node's UDP socket is a kernel socket: no `detour`, `detour` to a `direct` outbound, or to a group (selector, urltest) currently set to `direct`; `detour` — the UDP is carried by another outbound whose type is in `detour_type`; `all` — both. `off` sends nothing anywhere |
-| `outbound_type` | `masque`, `hysteria2`, `tuic`, `trusttunnel`, `vless`, `vmess`, `trojan`, `wireguard` | `["masque"]` | Which outbounds send the byte. The type selects the node; the byte goes only where the node actually opens QUIC (table below) |
-| `detour_type` | any outbound type except the groups `selector` and `urltest` | `["vless"]` | Through relays of which types. The relay is the nearest hop that carries the datagram; its type is read at dial time: the outbound the node's `detour` names, or, when `detour` is a group, the member the group picked for this dial |
-| `send` | `retry`, `always` | `retry` | `retry` — the first attempt is clean, a failed one is retried with the byte; `always` — every applicable dial carries the byte, the lx.30–lx.32 behaviour. Does not apply to `wireguard` |
+| `sni_mismatch` | `true`, `false` | no filter | `true` — only nodes whose SNI differs from the `server` address |
+| `outbound_type` | a list of types, `false` | no filter | Only nodes of the listed types. `true`, an empty list and an unknown type are load errors; a known type that cannot be guarded is allowed and skipped |
 
-Load errors, all naming the key:
+Whether the SNI matches `server` is decided at load time by comparing strings, without DNS:
+case-insensitive, trailing dot ignored, a subdomain is a different name. The name compared is the
+one that actually goes into the ClientHello or Initial; with ECH, the outer, public one. The
+outer name is taken only from an ECH config given inline in the node (`ech.config`); with
+`ech.config_path` or ECH from DNS the plain `server_name` is compared.
 
-- a string or a boolean — `lx.quic_sniff_decoy must be an object: {mode, outbound_type, detour_type, send}`;
-- `lx.quic_sniff_decoy.mode must be "off", "direct", "detour" or "all"`;
-- `lx.quic_sniff_decoy.send must be "retry" or "always"`;
-- `lx.quic_sniff_decoy.outbound_type: "<x>" is not a QUIC client; one of masque, hysteria2, tuic, trusttunnel, vless, vmess, trojan, wireguard`;
-- `lx.quic_sniff_decoy.detour_type: "<x>" is a group; name the member types, a group is resolved to the member it picks`; an empty string — `lx.quic_sniff_decoy.detour_type: empty type`; a type no registry of the build knows (a typo) — `lx.quic_sniff_decoy.detour_type: unknown outbound type "<x>"` at box start (`sing-box check` catches it too), only with `mode` other than `off`;
-- an unknown key in the object — a parse error prefixed `lx.quic_sniff_decoy`.
-
-An object holding only the defaults is canonicalised to an absent key. There is no environment
-override.
-
-**Why.** A relay with Xray `sniffing` (`destOverride` with `quic`, no `routeOnly`) decrypts the
-QUIC Initial, takes the SNI and sends the flow to that name instead of the address you dialled:
-masque fails with `different public key than pinned`, hysteria2/tuic with a fake SNI reach someone
-else's host or nothing. Xray decides on the first datagram of a flow; a first byte that is not a
-QUIC long-header packet takes its QUIC sniffer out, and the destination stays as dialled. The
-server drops the byte unparsed (QUIC fixed bit clear). sing-box relays (1.13+) do not rewrite the
-destination by sniffing and need nothing. The modes keep the byte off the path a DPI on your own
-uplink might react to: `detour` sends it only through relays of the listed types, `direct` only on
-the device's own socket.
-
-**`send: retry`.** The client cannot see whether a relay sniffs, and the byte on a path without a
-sniffer can get in the way (field report 2026-11-06: masque h3 through `socks` with UDP-over-TCP
-came up only with the byte off). So the first dial goes clean; if it fails, the retry carries the
-byte — at once when the error is fast and not a timeout (the usual sniffer signature: masque gets
-a foreign key within one RTT), otherwise on the next dial. The outcome is remembered per outbound
-and path (`direct`, or `detour:<type>`) in three states: `clean` (no byte) → on failure `armed`
-(next dial with the byte) → on success `decoy` (the byte stays); a failure with the byte goes back
-to `clean`, so a node that was merely down does not pin the byte on a path where the byte itself
-breaks the flow. A different path (the group switched from `direct` to a relay, or to a relay of
-another type) starts from `clean`; the memory lives with the outbound and dies when it is rebuilt
-or the box restarts. `send: always` has no memory: every applicable dial carries the byte.
-
-| `outbound_type` | When the byte goes | How a failure is detected |
+| `server` | SNI | Result |
 |---|---|---|
-| `masque` | h3 only (`vhttp: h3`, or the h3 leg of `auto`) | its own handshake; in `auto` the retry with the byte happens before the h2 fallback, a silent h3 falls back to h2 as before and the next h3 leg is `armed` |
-| `hysteria2`, `tuic` | always | indirectly: the handshake runs inside `sing-quic`; a conn closed less than 30 s after its dial counts as a failure, one that lived longer or is still open as a success, judged at the next dial. A false positive costs one byte on the next dial. Port hopping (`server_ports`) is not covered |
-| `trusttunnel` | only with the node's `quic: true` | as masque |
-| `vless`, `vmess`, `trojan` | only with the `xhttp` transport on h3 | as masque; the type checked is the node's, not the transport's |
-| `wireguard` | ahead of an AmneziaWG masquerade burst that starts with a QUIC-shaped packet (`ip: quic`, or a static `i1` taken from a QUIC capture); `ip` set to `dns`, `stun` or `sip` and plain junk get no byte | no retry: handshake retries reuse the socket, the relay has already decided on the first packet. The byte goes at once on every handshake on the paths `mode` selects; `send` does not apply |
+| domain | not set, or the same domain | match |
+| domain | another name | mismatch |
+| IP | a name | mismatch |
+| IP | not set | match — nothing for a sniffer to read |
+| any | no SNI sent (`disable_sni`) | match |
+| hysteria2 with Salamander obfuscation | any | match — a sniffer cannot read the Initial |
+| REALITY, masque (WARP), AWG QUIC masquerade | any | always mismatch |
 
-**What the retry does not catch.** A handshake that lands elsewhere without an error (`tuic` with
-`insecure` and an SNI that resolves to a live QUIC host): the failure shows up later as a dead
-connection, which the 30 s window catches only when the server drops it quickly; `masque` is
-protected by key pinning, `hysteria2` by the authentication round trip. A silent relay
-(unresolvable SNI): the first dial runs out its deadline, the first URL test of such a node fails,
-the second passes; in `auto` masque falls back to h2 on that bring-up. A relay that sniffs TLS on
-h2 is outside this key, the byte is for QUIC only. Details —
-[SPEC 151](../SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md).
+A node behind a CDN (`server` is a CDN IP, SNI is its own domain) passes the filter without
+needing to; the protection does not hurt it. A node whose name the relay's DNS resolves to a
+different address does not pass `sni_mismatch` — `outbound_type` covers it.
+
+**Starting state of a path — `detour_type`.** A map "carrier type → state the path starts in".
+The carrier is the nearest non-group outbound the connection actually goes through: a group
+(`selector`, `urltest`) resolves to its selected member. A node without `detour`, with `detour`
+to `direct`, or to a group currently set to `direct`, is on a path of type `direct`. When the
+carrier cannot be determined, the path is unknown: no protection, no label.
+
+| Value | Meaning |
+|---|---|
+| `never` | Never any protection on this path: no label, no retries, node keys work as upstream |
+| `clean` | Starts without protection |
+| `suspect` | Starts with protection |
+
+The `"*"` key covers every type not in the map. Groups cannot be keys. The map default: `direct`,
+`ssh`, `socks` — `clean`; `"*"` — `suspect`. The `tls` or `quic` section can override single
+types with its own `detour_type` map; the rest come from the shared one. `"socks": "never"` in
+the `quic` section of the example comes from a field report: through `socks` with UDP-over-TCP
+the decoy byte broke the tunnel with no sniffer on the path.
+
+**The `tls` and `quic` sections, `override`.**
+
+| Key | Values | Absent | Meaning |
+|---|---|---|---|
+| `tls.method` | `record_fragment`, `fragment`, `delay`, `off` | `off` | Method for TLS over TCP (table below) |
+| `quic.method` | `decoy_first_byte`, `delay`, `off` | `off` | Method for QUIC |
+| `delay` (per section) | positive duration | `300ms` | Pause of that section's `delay` method. Against Xray it must exceed 200 ms; a smaller value is allowed for a sniffer that waits less. Zero and negative are load errors |
+| `persist` (per section) | `true`, `false` | `false` | Keep labels of encrypted relays in `experimental.cache_file`. `true` without `cache_file` enabled is a load error |
+| `detour_type` (per section) | a map as above | the shared map | Starting states overridden for that protocol |
+| `override` (shared) | `true`, `false` | `false` | `false` — a node's `fragment` / `record_fragment` win over the block; a node with an explicit value follows it. `true` — for a node that passed `nodes`, the path label decides the ClientHello shape: the block's method on `suspect`, no split on `clean`, even if the node asked for a split. On a `never` path the block does nothing. QUIC has no node keys, `override` has no effect there |
+
+The node keys `tls.fragment`, `tls.record_fragment` (an explicit `false` opts out of splitting)
+and `tls.fragment_fallback_delay` work in any state of the block, as upstream.
+
+**Methods.** The server receives a valid handshake in every case. Traffic after the handshake is
+untouched.
+
+| Method | What goes on the wire | Against the Xray sniffer | Cost |
+|---|---|---|---|
+| `tls.record_fragment` | The ClientHello split into several TLS records, split points inside the SNI name | The sniffer parses only the first record, which ends mid-extensions — "not a ClientHello" on the first try | None |
+| `tls.fragment` | The ClientHello as one record, in chunks over TCP segments, waiting for the ACK (on the device's own socket) or pausing (through a relay) | Protects while the pause between chunks exceeds 200 ms: through a relay that is `fragment_fallback_delay` (500 ms), and on the direct path behind a transparent proxy the core holds the same pause | `fragment_fallback_delay` pause through a relay and on the direct path behind a transparent proxy |
+| `tls.delay` | The ClientHello as one record, in two chunks split inside the SNI, with a `delay` pause between them | The first chunk is incomplete; the sniffer waits 200 ms for the rest and gives up | `delay` pause on every guarded handshake |
+| `quic.decoy_first_byte` | A one-byte datagram `0x00` ahead of the first Initial; the server drops it | The QUIC sniffer decides on the first datagram: "not QUIC" | None |
+| `quic.delay` | The second Initial is held back by `delay` | The sniffer assembles the ClientHello from Initial packets within 200 ms and runs out of time | `delay` pause on every guarded handshake |
+
+**Which nodes can be guarded.** TLS over TCP: vless, trojan, vmess, anytls, shadowtls, http with
+TLS, masque `h2`, trusttunnel `h2`, XHTTP on `h2`. QUIC: masque `h3`, hysteria2, tuic,
+trusttunnel with QUIC, XHTTP on `h3`, wireguard with the QUIC-shaped AmneziaWG masquerade.
+Skipped silently: naive and nodes with a system TLS engine (`engine: apple`, `windows`).
+
+| Method | Applies to | Does not apply to |
+|---|---|---|
+| `tls.record_fragment`, `tls.fragment`, `tls.delay` | every TLS node listed above | naive, system TLS engines |
+| `quic.decoy_first_byte` | every QUIC node listed, AmneziaWG included | — |
+| `quic.delay` | QUIC nodes whose ClientHello spans two Initial packets | AmneziaWG; a node whose ClientHello fits in one Initial; hysteria2 with Salamander obfuscation. On such a node the method does nothing |
+
+A node the section's method does not apply to goes as without the block and does not move the
+path label.
+
+**How the path label is learned.** A label is kept per "path + protocol": the path is `direct`
+or the tag of the nearest relay, the protocol is `tls` or `quic`. The key is the tag, not the
+type: two VLESS relays with different sniffing settings are told apart. The label is shared by
+all nodes on that path; TLS and QUIC do not affect each other. On `clean` a node goes without
+protection, on `suspect` with it.
+
+The label changes only on a pair of outcomes on one node:
+
+- the node failed without protection, then passed with it → the path becomes `suspect`;
+- the node failed with protection, then passed without it → the path becomes `clean`;
+- any other outcome leaves the label alone. A dead node that fails both ways changes nothing, so
+  a bulk test of many nodes, some of them dead, does not take protection off a path.
+
+A fast error (not a timeout) is retried in the same dial with the opposite decision. A timeout
+returns the error, and the opposite decision goes to the node's next dial on that path (within
+10 minutes). On a `suspect` path an attempt without protection after a failure is allowed at most
+once per 10 minutes per path; the rest of the time a failure on `suspect` leads to nothing.
+
+Only attempts in which the handshake actually happened and the block's decision was applied go
+into a pair. A dial that lands on an already open session (mux, the anytls pool, XHTTP, a long
+QUIC session of masque, hysteria2, tuic, trusttunnel) and a node with its own choice under
+`override: false` do not.
+
+Only nodes whose SNI differs from `server` (per the table above) move the label — regardless of
+the `sni_mismatch` filter: a node with its own name passes a sniffing relay unprotected anyway, so
+its outcomes say nothing about the sniffer. Such a node is still protected by the label. On a
+`clean` path it does not retry. On a `suspect` path, if it failed with protection and passed
+without it, the node records a **personal opt-out**: from then on it goes unprotected on that
+path, while the path label and the other nodes stay as they were. The reverse pair on that node
+(failed without, passed with) clears the opt-out. Retries for such a node happen at most once per
+10 minutes. The opt-out lives as long as the core instance and is not persisted.
+
+Protocol specifics:
+
+- **hysteria2, tuic** — the handshake runs inside the QUIC library; the outcome is judged by the
+  connection's lifetime: closed less than 30 s after the dial is a failure, longer is a success.
+  The outcome is learnt only when the node makes its next new connection, so there is no retry
+  within the same dial and a pair forms only through the next dial. With hysteria2 port hopping,
+  the sockets opened by later hops carry no handshake and are not guarded; hysteria2 realm mode
+  is not guarded at all.
+- **masque `auto`** — the legs follow different labels: h3 the `quic` one, h2 the `tls` one. A
+  fast-failing h3 is retried with the opposite decision before the h2 fallback; a silent h3 falls
+  back to h2 as before, and the opposite decision goes to the next h3 leg.
+- **AmneziaWG** — a `wireguard` endpoint is covered when its masquerade is `ip: "quic"` or it has
+  a non-empty `i1`; the byte goes only ahead of a QUIC-shaped burst. The decision is taken from
+  the label when the socket is created; the handshake outcome does not move the label, so
+  AmneziaWG never moves a path label. With no other QUIC node on the path the label stays at its
+  start; for an AWG node on a path that starts `clean` (direct, `socks`) set protection
+  explicitly — `suspect` for that carrier type in `quic.detour_type`.
+
+Every label change and every personal opt-out set or cleared writes an info-level log line: path,
+protocol, old and new state, the node, and the outcomes of both attempts. There is no separate
+API.
+
+**Cost of learning.**
+
+- The first failure on a `clean` path: a sniffer that reroutes to a name where nobody answers
+  gives a timeout, not an error. The node's first dial hangs until its deadline, its first URL
+  test fails, protection arrives from the second dial.
+- A node that fails fast costs two handshakes instead of one.
+- A random glitch on a clean path (a failure without protection followed by a success with it)
+  sets `suspect`, and only the reverse pair clears it. For `record_fragment` and
+  `decoy_first_byte` this costs nothing; for `delay` and `fragment` it is a pause on every
+  handshake, with `persist` across restarts too.
+
+**Network change and `persist`.** A network change resets the labels of the `direct` path and of
+unencrypted carriers (`socks`, `http` without TLS) to their start, together with the personal
+opt-outs and pending retries on them. Labels of encrypted relays survive a network change. If a
+different relay (type, address or port) shows up under the same tag, its labels and opt-outs are
+reset. Without `persist` labels live as long as the core instance: a restart or applying a new
+config starts from the starting states. With `persist` the labels of encrypted relays are written
+to `experimental.cache_file` and loaded at start if the same relay is under the same tag; an
+entry for a path the map now declares `never` is not applied. Labels of `direct` and unencrypted
+carriers are not stored.
+
+**Load errors.** All of them are caught by `sing-box check`. `<key>` is the full path of the key
+in question, for example `lx.sniff_guard.quic.detour_type`.
+
+| Cause | Message |
+|---|---|
+| Unknown method | `lx.sniff_guard.tls.method must be one of "record_fragment", "fragment", "delay", "off"`; `lx.sniff_guard.quic.method must be one of "decoy_first_byte", "delay", "off"` |
+| `nodes.outbound_type: true` | `lx.sniff_guard.nodes.outbound_type: true is not a filter; list the types, or use false for no filter` |
+| `nodes.outbound_type: []` | `lx.sniff_guard.nodes.outbound_type: empty list; list the types, or use false for no filter` |
+| A type no outbound or endpoint of this build knows, in `nodes.outbound_type` or as a `detour_type` key | `<key>: unknown outbound type "<t>"` |
+| A group in `nodes.outbound_type` | `lx.sniff_guard.nodes.outbound_type: "<t>" is a group; a group is never dialled itself, name the member types` |
+| A group as a `detour_type` key | `<key>: "<t>" is a group; name the member types, a group is resolved to the member it picks` |
+| An unknown value in a `detour_type` map | `<key>.<type> must be "never", "clean" or "suspect"` |
+| A zero or negative `delay` | `<key>.delay must be > 0` (`<key>` is `lx.sniff_guard.tls` or `lx.sniff_guard.quic`) |
+| `persist: true` without `experimental.cache_file` enabled | `lx.sniff_guard.tls.persist: requires experimental.cache_file to be enabled`; the same with `.quic` |
+| An unknown key, or a value that is not an object | the message starts with the key: `lx.sniff_guard`, `lx.sniff_guard.nodes`, `lx.sniff_guard.tls`, `lx.sniff_guard.quic` |
+| The removed `lx.quic_sniff_decoy` key | `lx.quic_sniff_decoy is removed: the QUIC sniff decoy is configured by lx.sniff_guard.quic` |
+
+The unknown-type and `persist` checks run only when at least one section has a method; `persist`
+is checked for the section that has one.
+
+**Limits.**
+
+- A sniffer is not detected directly and not told apart from other causes of failure — only by a
+  pair of outcomes on one node; a random glitch can form a false pair.
+- A handshake that completes without an error in the wrong place counts as a success: `tuic` with
+  `insecure` and an SNI that resolves to a live QUIC host. masque is protected by key pinning,
+  hysteria2 by authentication, TLS nodes by certificate verification (without `insecure`).
+- The full gRPC transport (`grpc`, not lite) is not shaped: its handshake runs outside the node's
+  dial. Such a node goes as without the block.
+- On the direct path shadowtls v2/v3 and any node with `tcp_fast_open` are not protected: the
+  path cannot be classified. Through `detour` they are protected like the others.
+- The block does not fix the relay; the fix on the relay side is `"routeOnly": true` in
+  `sniffing`.
+- Not tested against sniffers other than Xray. sing-box as a relay does not reroute by sniffing
+  and needs no protection. The 200 ms wait is an Xray constant; for another sniffer tune `delay`.
+- A DPI that drops a guarded handshake (treating record splitting as a signature) is not bypassed:
+  the pair moves that path's label to `clean`.
+
+### `lx.quic_sniff_decoy` — removed
+
+Replaced by the `lx.sniff_guard` block (SPEC 060). Any value of the key is a load error:
+`lx.quic_sniff_decoy is removed: the QUIC sniff decoy is configured by lx.sniff_guard.quic`;
+there is no backward compatibility. The `0x00` byte ahead of the QUIC
+Initial is now the `"decoy_first_byte"` method of the `quic` section:
+
+```json
+"lx": { "sniff_guard": { "quic": { "method": "decoy_first_byte" } } }
+```
+
+| Was | Now |
+|---|---|
+| `mode`, `detour_type` | the `detour_type` map (shared or `quic.detour_type`): `never` for paths that need no byte |
+| `send: "always"` | starting state `suspect` |
+| `send: "retry"` | starting state `clean`; protection turns on by a pair of outcomes |
+| `outbound_type` | `nodes.outbound_type`; the filter is shared by the `tls` and `quic` sections |
+
+The per-outbound `clean → armed → decoy` memory is replaced by a shared label per relay tag and
+protocol. History — [SPEC 060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/HISTORY.md).
 
 ### `lx.awg_masquerade` — removed
 
-Removed in lx.33 (SPEC 151, owner 2026-11-07). Any value is a load error:
+Removed in lx.33 (SPEC 060, owner 2026-11-07). Any value is a load error:
 `lx.awg_masquerade is removed: the AmneziaWG masquerade burst is sent on every path`. The
 AmneziaWG masquerade burst (the `ip`/`id`/`ib` decoy, `i1`…`i5`, `jc` junk) is sent on every path,
 over a `detour` too, as the lx.32 default `all` did. Drop the key from the config; the sniffing
-relay case (issue #64) is covered by `lx.quic_sniff_decoy` with `wireguard` in `outbound_type`.
+relay case (issue #64) is covered by the `quic` section of `lx.sniff_guard` (`decoy_first_byte`).
 History — [SPEC 153](../SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md).
 
 ### Removed `route.lx_idle_*`

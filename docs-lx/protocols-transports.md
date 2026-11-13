@@ -932,9 +932,11 @@ pin the node to `h2` (TCP:443), which is device-verified to work there.
 
 - On `h2`, one IP packet = one HTTP/2 DATA frame, so `mtu` may go up to **16000**.
 - The `h2` path runs its TLS through the shared `common/tls` layer, so it gets
-  ClientHello fragmentation like any other TLS outbound — including the automatic
-  one under `detour` (SPEC 060). `h3` is untouched by that: QUIC does not carry TLS
-  over TCP at all.
+  ClientHello fragmentation like any other TLS outbound: the node's `fragment` /
+  `record_fragment` and the `tls` section of `lx.sniff_guard`
+  ([lx-config §13](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni)).
+  The `h3` path is guarded by the `quic` section of that block instead: QUIC does not
+  carry TLS over TCP at all.
 - The **first** `h3` dial is slow (cold CONNECT-IP setup: QUIC handshake + Extended
   CONNECT + route advertise + stack), so a short urltest timeout may mark a fresh h3
   node `-1` on the first probe though it works after.
@@ -1184,14 +1186,16 @@ Upstream `tls` keys; in the fork they also apply to REALITY (SPEC 088).
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `fragment` | bool | `false` | Cut the first packet by SNI into TCP segments, waiting for the ACK ([upstream](../docs/configuration/shared/tls.md#fragment)) |
-| `record_fragment` | bool | `false`; **`true` under `detour`** unless set explicitly (SPEC 060, 156) | The same cut points, each its own TLS record, one packet ([upstream](../docs/configuration/shared/tls.md#record_fragment)) |
+| `record_fragment` | bool | `false` | The same cut points, each its own TLS record, one packet ([upstream](../docs/configuration/shared/tls.md#record_fragment)) |
 | `fragment_fallback_delay` | duration | `500ms` | The pause used when the ACK wait time cannot be computed ([upstream](../docs/configuration/shared/tls.md#fragment_fallback_delay)) |
 
-Rules of the `detour` default: an explicit `fragment: true` or `record_fragment` set
-either way beats the default — `"record_fragment": false` sends the ClientHello as one
-record through the detour (SPEC 156); only the handshake is fragmented; `h3`/QUIC is
-untouched; every `chain` link has its own `detour`. Overview:
-[lx-config §9](lx-config.md#9-automatic-clienthello-fragmentation-under-detour-spec-060).
+There is no default under `detour`: without the `lx.sniff_guard` block the ClientHello is
+split only where the node sets `fragment` or `record_fragment`, through a `detour` too.
+Protection against relays that reroute by SNI is configured by `lx.sniff_guard`
+([lx-config §13](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni)). A node's
+explicit value, `"record_fragment": false` included (SPEC 156), wins over the block unless
+the block sets `"override": true`. Only the handshake is fragmented. Overview:
+[lx-config §9](lx-config.md#9-clienthello-under-detour--no-default-spec-060).
 
 ## 5.4 REALITY validation errors (verbatim)
 
