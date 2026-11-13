@@ -84,7 +84,7 @@ func (d *DetourDialer) DialContext(ctx context.Context, network string, destinat
 	}
 	// lx:begin SPEC 139 — upstream returns dialer.DialContext directly
 	ctx, stage := d.beginDetourLx(ctx, dialer, destination)
-	d.recordCarrierLx(ctx, dialer) // lx: SPEC 151
+	ctx = d.recordCarrierLx(ctx, dialer) // lx: SPEC 060 — the carrier dials without the node's attempt
 	conn, err := dialer.DialContext(ctx, network, destination)
 	stage.End(err)
 	return conn, err
@@ -98,7 +98,7 @@ func (d *DetourDialer) ListenPacket(ctx context.Context, destination M.Socksaddr
 	}
 	// lx:begin SPEC 139 — upstream returns dialer.ListenPacket directly
 	ctx, stage := d.beginDetourLx(ctx, dialer, destination)
-	d.recordCarrierLx(ctx, dialer) // lx: SPEC 151
+	ctx = d.recordCarrierLx(ctx, dialer) // lx: SPEC 060 — the carrier dials without the node's attempt
 	conn, err := dialer.ListenPacket(ctx, destination)
 	stage.End(err)
 	return conn, err

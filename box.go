@@ -584,6 +584,7 @@ func (s *Box) preStart() error {
 	if err != nil {
 		return err
 	}
+	loadSniffGuardCache(s.scope.Context()) // lx: SPEC 060 — the cache file is open from here on
 	err = s.startComponents(adapter.StartStateInitialize,
 		boxComponent{s.httpClientService.Name(), s.httpClientService},
 		boxComponent{"network", s.network},

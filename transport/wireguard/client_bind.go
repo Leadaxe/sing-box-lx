@@ -10,6 +10,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxdatagram"
+	"github.com/sagernet/sing-box/common/lxsniffguard"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
@@ -119,7 +120,7 @@ func (c *ClientBind) connect() (*wireConn, error) {
 	// cycling every detour conn at 15 s and re-rolling the raise dice until the
 	// freeze hit).
 	dialCtx, dialCancel := context.WithTimeout(c.bindCtx, clientBindDialTimeout)
-	dialCtx, carrier := adapter.ContextWithCarrierRecord(dialCtx) // lx: SPEC 151 — which outbound carries the socket
+	dialCtx, carrier := adapter.ContextWithCarrierRecord(dialCtx) // lx: SPEC 060 — which outbound carries the socket
 	if c.isConnect {
 		udpConn, err := c.dialer.DialContext(dialCtx, N.NetworkUDP, M.SocksaddrFromNetIP(c.connectAddr))
 		if err != nil {
@@ -129,7 +130,7 @@ func (c *ClientBind) connect() (*wireConn, error) {
 		serverConn = &wireConn{
 			PacketConn: bufio.NewUnbindPacketConn(udpConn),
 			done:       make(chan struct{}),
-			path:       lxdatagram.ClassifyPath(udpConn, carrier), // lx: SPEC 151
+			path:       lxdatagram.GuardPath(udpConn, carrier), // lx: SPEC 060
 		}
 	} else {
 		udpConn, err := c.dialer.ListenPacket(dialCtx, M.Socksaddr{Addr: netip.IPv4Unspecified()})
@@ -140,7 +141,7 @@ func (c *ClientBind) connect() (*wireConn, error) {
 		serverConn = &wireConn{
 			PacketConn: bufio.NewPacketConn(udpConn),
 			done:       make(chan struct{}),
-			path:       lxdatagram.ClassifyPath(udpConn, carrier), // lx: SPEC 151
+			path:       lxdatagram.GuardPath(udpConn, carrier), // lx: SPEC 060
 		}
 	}
 	// lx: SPEC 071 — release the timeout context only when this connection
@@ -290,21 +291,22 @@ type wireConn struct {
 	access sync.Mutex
 	done   chan struct{}
 	// path records where the conn as dialled went: a kernel socket (no
-	// detour, or a detour to a direct outbound) or the relay type that
-	// carries it — lx: SPEC 151.
-	path lxdatagram.Path
+	// detour, or a detour to a direct outbound) or the relay that carries it
+	// — lx: SPEC 060.
+	path lxsniffguard.Path
 }
 
-// Path reports the path of the bind's socket, dialling it first when no
+// Path reports the path of the bind's socket and its generation (the
+// connection itself, compared by identity), dialling it first when no
 // connection generation is alive (the handshake that asks would dial it on
 // its first Send anyway). A dial failure is returned as is; the caller leaves
-// the burst alone and the Send reports the fault. lx: SPEC 151.
-func (c *ClientBind) Path() (lxdatagram.Path, error) {
+// the burst alone and the Send reports the fault. lx: SPEC 060.
+func (c *ClientBind) Path() (lxsniffguard.Path, any, error) {
 	serverConn, err := c.connect()
 	if err != nil {
-		return lxdatagram.Path{}, err
+		return lxsniffguard.Path{}, nil, err
 	}
-	return serverConn.path, nil
+	return serverConn.path, serverConn, nil
 }
 
 func (w *wireConn) WriteToUDPAddrPort(b []byte, addr netip.AddrPort) (int, error) {

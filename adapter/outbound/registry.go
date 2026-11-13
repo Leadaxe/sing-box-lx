@@ -69,8 +69,10 @@ func (r *Registry) CreateOutbound(ctx context.Context, router adapter.Router, lo
 	if !loaded {
 		return nil, E.New("outbound type not found: " + outboundType)
 	}
-	ctx = adapter.ContextWithOutboundType(ctx, outboundType) // lx: SPEC 151 — transports learn the node type
-	return constructor(ctx, router, logger, tag, options)
+	ctx = adapter.ContextWithOutboundTag(ctx, tag) // lx: SPEC 060 — transports learn the node they serve
+	// lx:begin SPEC 060 — a covered node dials through the guard; upstream returns the constructor's result
+	return wrapSniffGuardLx(ctx, logger, tag)(constructor(ctx, router, logger, tag, options))
+	// lx:end SPEC 060
 }
 
 func (r *Registry) register(outboundType string, optionsConstructor optionsConstructorFunc, constructor constructorFunc) {

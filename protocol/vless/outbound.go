@@ -71,9 +71,6 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			KTLSCompatible: common.PtrValueOrDefault(options.Transport).Type == "" &&
 				!common.PtrValueOrDefault(options.Multiplex).Enabled &&
 				options.Flow == "",
-			// lx: SPEC 060 — fragment the ClientHello by default when the leg is
-			// someone else's outbound (a sniffing relay would reroute by our SNI).
-			DialedThroughDetour: tls.DialedThroughDetour(options.DialerOptions),
 		})
 		if err != nil {
 			return nil, err

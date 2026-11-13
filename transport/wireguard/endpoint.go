@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 
 	"github.com/sagernet/sing-box/common/dialer"
-	"github.com/sagernet/sing-box/common/lxdatagram"
+	"github.com/sagernet/sing-box/common/lxsniffguard"
 	"github.com/sagernet/sing-box/service/powerreport"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
@@ -296,8 +296,8 @@ func (e *Endpoint) Start(postStart bool) error {
 		return nil
 	}
 	var bind conn.Bind
-	// lx: SPEC 151 — how the sniff decoy learns which path the burst is on.
-	var burstPath func() (lxdatagram.Path, error)
+	// lx: SPEC 060 — how the sniff guard learns which path the burst is on.
+	var burstPath func() (lxsniffguard.Path, any, error)
 	udpListener, isUDPListener := common.Cast[dialer.UDPListener](e.options.Dialer)
 	if isUDPListener {
 		listenerControl, egressEnabled := udpListener.UDPListenerControl()
@@ -327,7 +327,7 @@ func (e *Endpoint) Start(postStart bool) error {
 			}
 		}
 		bind = standardBind
-		burstPath = func() (lxdatagram.Path, error) { return lxdatagram.Path{Kernel: true}, nil }
+		burstPath = func() (lxsniffguard.Path, any, error) { return lxsniffguard.Path{Direct: true}, nil, nil }
 	} else {
 		var (
 			isConnect   bool
@@ -375,10 +375,10 @@ func (e *Endpoint) Start(postStart bool) error {
 	if decoy := awgDecoyFunc(e.options.AmneziaWG, e.options.Logger); decoy != nil {
 		wgDevice.SetDecoyPacketsFunc(decoy)
 	}
-	// lx: SPEC 151 — a QUIC-shaped masquerade burst goes out behind the
-	// lx.quic_sniff_decoy byte on the paths the policy selects.
+	// lx: SPEC 060 — a QUIC-shaped masquerade burst goes out behind the
+	// sniff decoy byte on the paths lx.sniff_guard protects.
 	if e.options.AmneziaWG.IsSet() {
-		if filter := newHandshakeBurstFilter(lxdatagram.SniffDecoyFromContext(e.options.Context), burstPath, e.options.Logger); filter != nil {
+		if filter := newHandshakeBurstFilter(lxsniffguard.FromContext(e.options.Context).Node(e.options.Tag), burstPath, e.options.Logger); filter != nil {
 			wgDevice.SetHandshakeBurstFunc(filter)
 		}
 	}

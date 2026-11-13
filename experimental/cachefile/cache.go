@@ -34,6 +34,7 @@ var (
 		string(bucketRDRC),
 		string(bucketDNSCache),
 		string(bucketChainDisabled), // lx: SPEC 075
+		string(bucketSniffGuard),    // lx: SPEC 060
 	}
 
 	cacheIDDefault = []byte("default")

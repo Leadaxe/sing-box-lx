@@ -46,22 +46,15 @@ func applyTLSSpoof(conn net.Conn, spoof string, method tlsspoof.Method) (net.Con
 }
 
 func NewDialerFromOptions(ctx context.Context, logger logger.ContextLogger, dialer N.Dialer, serverAddress string, options option.OutboundTLSOptions) (N.Dialer, error) {
-	return NewDialerFromClientOptions(dialer, ClientOptions{
+	if !options.Enabled {
+		return dialer, nil
+	}
+	config, err := NewClientWithOptions(ClientOptions{
 		Context:       ctx,
 		Logger:        logger,
 		ServerAddress: serverAddress,
 		Options:       options,
 	})
-}
-
-// NewDialerFromClientOptions is NewDialerFromOptions for callers that need to
-// set the extra ClientOptions fields (notably DialedThroughDetour, SPEC 060).
-// lx.
-func NewDialerFromClientOptions(dialer N.Dialer, clientOptions ClientOptions) (N.Dialer, error) {
-	if !clientOptions.Options.Enabled {
-		return dialer, nil
-	}
-	config, err := NewClientWithOptions(clientOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -84,64 +77,12 @@ type ClientOptions struct {
 	Options              option.OutboundTLSOptions
 	AllowEmptyServerName bool
 	KTLSCompatible       bool
-	// DialedThroughDetour marks that this client's TCP leg is carried by another
-	// outbound rather than the local network stack. It turns on ClientHello
-	// record fragmentation by default — see applyDetourFragmentDefault.
-	// lx: SPEC 060.
-	DialedThroughDetour bool
-}
-
-// DialedThroughDetour reports whether an outbound with these dialer options
-// sends its bytes through another outbound instead of the local network stack.
-//
-// Only an explicit `detour` is visible here, which is all that is needed: the
-// other way a dialer routes through another outbound, dialer.Options
-// .DefaultOutbound, is set solely by common/httpclient (the internal client for
-// rule-sets and subscriptions). Proxy outbounds never take that path — for them
-// "through someone else's server" always arrives from the config as `detour`.
-//
-// Kept here so the condition has exactly one definition: every TLS outbound
-// passes its DialerOptions through this rather than testing `Detour != ""`
-// itself. lx: SPEC 060.
-func DialedThroughDetour(options option.DialerOptions) bool {
-	return options.Detour != ""
-}
-
-// applyDetourFragmentDefault enables record fragmentation when the connection is
-// carried by another outbound and the config asked for no fragmentation itself.
-//
-// Why: a relay in the detour can sniff the SNI out of our ClientHello and send
-// the connection to that name instead of our destination (Xray sniffing with
-// destOverride and without routeOnly). A target whose SNI is a disguise (WARP
-// with a foreign name, REALITY) then hangs for ~15s and dies as "EOF", or
-// answers with a foreign key. Xray's TLS sniffer gives up on a ClientHello split
-// into records, so the destination stays ours.
-//
-// Cost is confined to the handshake: tlsfragment only rewrites the first record,
-// so steady-state traffic is untouched (0.1s vs a 12s timeout in measurement).
-//
-// An explicit choice in the config always wins — `fragment: true`, or
-// `record_fragment` set either way (an explicit `false` is the opt-out for a
-// leg whose network drops a split ClientHello). This only fills in the case
-// where the user asked for nothing. lx: SPEC 060, SPEC 156.
-func applyDetourFragmentDefault(options *ClientOptions) {
-	if !options.DialedThroughDetour {
-		return
-	}
-	if options.Options.Fragment || options.Options.RecordFragment != nil {
-		return // user made a choice; do not second-guess it
-	}
-	recordFragment := true
-	options.Options.RecordFragment = &recordFragment
 }
 
 func NewClientWithOptions(options ClientOptions) (Config, error) {
 	if !options.Options.Enabled {
 		return nil, nil
 	}
-	// lx: SPEC 060 — before any engine sees the options, so REALITY and uTLS
-	// clients get the same default as the standard one.
-	applyDetourFragmentDefault(&options)
 	if !options.KTLSCompatible {
 		if options.Options.KernelTx {
 			options.Logger.Warn("enabling kTLS TX in current scenarios will definitely reduce performance, please checkout https://sing-box.sagernet.org/configuration/shared/tls/#kernel_tx")
@@ -169,6 +110,7 @@ func NewClientWithOptions(options ClientOptions) (Config, error) {
 
 func ClientHandshake(ctx context.Context, conn net.Conn, config Config) (Conn, error) {
 	ctx, stage := beginHandshakeLx(ctx, config) // lx: SPEC 139
+	conn = sniffGuardConnLx(ctx, conn, config)  // lx: SPEC 060
 	tlsConn, err := aTLS.ClientHandshake(ctx, conn, config)
 	endHandshakeLx(ctx, stage, tlsConn, err) // lx: SPEC 139
 	if err != nil {
@@ -221,6 +163,7 @@ func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr
 	// helpers wrap it so tls.NewDialer users (VLESS, Trojan, VMess, WS, gRPC, DoT/DoH)
 	// record the `tls` stage too, not only callers of tls.ClientHandshake.
 	handshakeCtx, stage := beginHandshakeLx(ctx, d.config)
+	conn = sniffGuardConnLx(handshakeCtx, conn, d.config) // lx: SPEC 060
 	tlsConn, err := aTLS.ClientHandshake(handshakeCtx, conn, d.config)
 	endHandshakeLx(handshakeCtx, stage, tlsConn, err)
 	// lx:end SPEC 139
