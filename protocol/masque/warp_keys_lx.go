@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
@@ -45,12 +46,20 @@ func prepareLXProfile(options *option.MASQUEClientEndpointOptions) error {
 		if options.PrivateKey != "" || options.PublicKey != "" {
 			return E.New("private_key and public_key need profile cloudflare; a standard server takes tls.client_certificate and tls.certificate_public_key_sha256")
 		}
+		if options.TLS != nil {
+			tlsOptions := *options.TLS
+			tls.ApplyDetourFragmentDefault(&tlsOptions, options.DialerOptions) // lx: SPEC 060
+			options.TLS = &tlsOptions
+		}
 		return nil
 	}
 	tlsOptions := option.OutboundTLSOptions{}
 	if options.TLS != nil {
 		tlsOptions = *options.TLS
 	}
+	// lx: SPEC 060 — the HTTP/2 leg sends a ClientHello through the detour's
+	// path like any TLS outbound; the fork fragments it there by default.
+	tls.ApplyDetourFragmentDefault(&tlsOptions, options.DialerOptions)
 	tlsOptions.Enabled = true
 	if tlsOptions.ServerName == "" && !tlsOptions.DisableSNI {
 		tlsOptions.ServerName = warpDefaultServerName

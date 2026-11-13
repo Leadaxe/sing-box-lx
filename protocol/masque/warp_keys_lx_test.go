@@ -117,3 +117,33 @@ func TestPrepareLXProfileRejects(t *testing.T) {
 	garbage.PublicKey = privateKey // a private key where the public one belongs
 	require.ErrorContains(t, prepareLXProfile(&garbage), "public_key")
 }
+
+// lx: SPEC 060 — under a detour the first TLS record is fragmented by default,
+// for either profile; an explicit choice in the config stands, and a direct
+// dial is left alone.
+func TestPrepareLXProfileDetourFragment(t *testing.T) {
+	t.Parallel()
+	for _, profile := range []string{"", option.MASQUEProfileCloudflare} {
+		var viaDetour option.MASQUEClientEndpointOptions
+		viaDetour.Profile = profile
+		viaDetour.Detour = "relay"
+		viaDetour.TLS = &option.OutboundTLSOptions{Enabled: true}
+		original := viaDetour.TLS
+		require.NoError(t, prepareLXProfile(&viaDetour))
+		require.True(t, viaDetour.TLS.RecordFragment, "profile %q", profile)
+		require.False(t, original.RecordFragment, "the caller's TLS options must not be written through")
+
+		var explicit option.MASQUEClientEndpointOptions
+		explicit.Profile = profile
+		explicit.Detour = "relay"
+		explicit.TLS = &option.OutboundTLSOptions{Enabled: true, Fragment: true}
+		require.NoError(t, prepareLXProfile(&explicit))
+		require.False(t, explicit.TLS.RecordFragment, "profile %q", profile)
+
+		var direct option.MASQUEClientEndpointOptions
+		direct.Profile = profile
+		direct.TLS = &option.OutboundTLSOptions{Enabled: true}
+		require.NoError(t, prepareLXProfile(&direct))
+		require.False(t, direct.TLS.RecordFragment, "profile %q", profile)
+	}
+}
