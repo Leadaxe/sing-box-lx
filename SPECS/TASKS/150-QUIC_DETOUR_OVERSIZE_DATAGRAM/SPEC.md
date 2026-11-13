@@ -369,7 +369,7 @@ with a fake SNI (`addons.mozilla.org` in #37) cannot pass such a relay either.
 
 ### 3.2 Prototype: holding the second Initial past the relay sniff budget (2026-11-02)
 
-Superseded by [SPEC 151](../151-QUIC_SNIFF_DECOY/SPEC.md): a one-byte decoy datagram ahead of the Initial takes Xray's QUIC sniffer out of the flow with no delay; the prototype below is removed from the tree. Research, kept so the result is not lost. Follows from §3.1: Xray's
+Superseded by [SPEC 060](../060-TLS_FRAGMENT_AUTO_ON_DETOUR/HISTORY.md): a one-byte decoy datagram ahead of the Initial takes Xray's QUIC sniffer out of the flow with no delay; the prototype below is removed from the tree. Research, kept so the result is not lost. Follows from §3.1: Xray's
 QUIC sniffer reassembles the ClientHello across Initial packets and answers `ErrProtoNeedMoreData`,
 which does not count against its two-attempt budget, so it keeps reading until its 200 ms timer
 runs out. If the second Initial datagram of a fresh h3 dial arrives after that timer, the sniffer

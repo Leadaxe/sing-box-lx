@@ -1,6 +1,6 @@
 # SPEC 156 — явный `"record_fragment": false` под `detour`
 
-**Фича:** [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md)
+**Фича:** [019-SNIFF_GUARD](../../FEATURES/019-SNIFF_GUARD/FEATURE.md)
 
 | Поле | Значение |
 |------|----------|

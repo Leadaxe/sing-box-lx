@@ -638,7 +638,7 @@ ALPN `http/1.1` вместо `h2`; h2 отказал с причиной «се�
 
 **Усечение и приманка у `masque-client` (2026-11-12).** UDP-диалер endpoint'а обёрнут
 `lxdatagram.Dialer` — одна строка в `protocol/masque/client.go`: чтение длинных датаграмм
-усекается как у ядра (SPEC 150), на h3 работает `lx.quic_sniff_decoy` (SPEC 151) с типом
+усекается как у ядра (SPEC 150), на h3 работает `lx.quic_sniff_decoy` (SPEC 060) с типом
 `masque-client` в `outbound_type` (он же дефолт на линии 1.15 вместо `masque`). Неудача попытки
 определяется косвенно, по времени жизни conn (как у hysteria2), потому что QUIC-хендшейк идёт
 внутри апстримного клиента. Стенд: `mode: all`, `send: retry` — `warp=on`; `send: always` без

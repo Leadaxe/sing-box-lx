@@ -1,24 +1,24 @@
 # SPEC: 153 — AWG_MASQUERADE_OVER_DETOUR
 
-**Фича:** [003-AWG](../../FEATURES/003-AWG/FEATURE.md) (маскировочная пачка перед хендшейком); затронута [009-MASQUE_WARP](../../FEATURES/009-MASQUE_WARP/FEATURE.md) (ключ `lx.quic_sniff_decoy` задачи 151 расширен на AWG).
+**Фича:** [003-AWG](../../FEATURES/003-AWG/FEATURE.md) (маскировочная пачка перед хендшейком); затронута [009-MASQUE_WARP](../../FEATURES/009-MASQUE_WARP/FEATURE.md) (ключ `lx.quic_sniff_decoy` задачи 060 расширен на AWG).
 
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) + F (feature) — AWG-endpoint с маскировкой через `detour` на сниффящий релей не поднимается; новый ключ `lx.awg_masquerade` |
-| Статус | C (closed) — ключ `lx.awg_masquerade` удалён в SPEC 151 (владелец 2026-11-07): любое значение — ошибка загрузки, пачка шлётся на любом пути; фильтр пачки остаётся швом для байта по `outbound_type: wireguard`. Ниже — состояние на закрытие 2026-11-04/05, как хронология. 2026-11-04: хук форка, ключ, фильтр пачки, зонд пути, юниты форка и lx-слоя (`c7f24d3f8`); loopback-стенд 2026-11-05 (Xray `v26.10.31`, `destOverride` с `quic`, без `routeOnly`): все восемь строк матрицы как в §4.3 — контроль `all`+`off` 0/3 с подменой назначения в логе Xray, дефолты 3/3 без пачки, `all`+`detour` 3/3 с байтом, прямой путь 3/3 с байтом и без, чистый WG через релей 3/3 (§6); issue #64 закрыт |
+| Статус | C (closed) — ключ `lx.awg_masquerade` удалён в SPEC 060 (владелец 2026-11-07): любое значение — ошибка загрузки, пачка шлётся на любом пути; фильтр пачки остаётся швом для байта по `outbound_type: wireguard`. Ниже — состояние на закрытие 2026-11-04/05, как хронология. 2026-11-04: хук форка, ключ, фильтр пачки, зонд пути, юниты форка и lx-слоя (`c7f24d3f8`); loopback-стенд 2026-11-05 (Xray `v26.10.31`, `destOverride` с `quic`, без `routeOnly`): все восемь строк матрицы как в §4.3 — контроль `all`+`off` 0/3 с подменой назначения в логе Xray, дефолты 3/3 без пачки, `all`+`detour` 3/3 с байтом, прямой путь 3/3 с байтом и без, чистый WG через релей 3/3 (§6); issue #64 закрыт |
 | Ветка | `lx`; форк `submodules/wireguard-go` ветка `lx-awg2-v007` |
 | Build-tag | — (`option`, `common/lxdatagram`, `transport/wireguard` собираются всегда; `with_awg` нужен, чтобы AWG-поля вообще прошли загрузку) |
 | Источник | [Issue #64](https://github.com/Leadaxe/sing-box-lx/issues/64) (владелец, 2026-11-04) по двум независимым полевым отчётам из Telegram LxBox 2026-11-03 |
-| Связано | [151](../151-QUIC_SNIFF_DECOY/SPEC.md) (§5.2 — тот же случай, тогда оставленный конфигу; байт-обманка), [009](../009-WIRESOCK_MASQUERADE_PROFILES/SPEC.md) (per-handshake приманка `ip=quic`, `SetDecoyPacketsFunc`), [007](../007-AWG_OVER_WIREGUARD_DETOUR_GUARD/SPEC.md) (AWG через WG-detour), [150](../150-QUIC_DETOUR_OVERSIZE_DATAGRAM/SPEC.md) (проверка «сокет ядра» на conn как надиалено) |
+| Связано | [060](../060-TLS_FRAGMENT_AUTO_ON_DETOUR/HISTORY.md) (§5.2 — тот же случай, тогда оставленный конфигу; байт-обманка), [009](../009-WIRESOCK_MASQUERADE_PROFILES/SPEC.md) (per-handshake приманка `ip=quic`, `SetDecoyPacketsFunc`), [007](../007-AWG_OVER_WIREGUARD_DETOUR_GUARD/SPEC.md) (AWG через WG-detour), [150](../150-QUIC_DETOUR_OVERSIZE_DATAGRAM/SPEC.md) (проверка «сокет ядра» на conn как надиалено) |
 
 ## 0. TL;DR
 
-> **Состояние после SPEC 151 (владелец 2026-11-07).** Ключ `lx.awg_masquerade` удалён: любое
+> **Состояние после SPEC 060 (владелец 2026-11-07).** Ключ `lx.awg_masquerade` удалён: любое
 > значение — ошибка загрузки `lx.awg_masquerade is removed: the AmneziaWG masquerade burst is sent
 > on every path`. Маскировочная пачка идёт на любом пути (как дефолт `all` в lx.32), ветки `direct`
 > в фильтре больше нет. Сам фильтр в `transport/wireguard/handshake_burst_lx.go` остаётся швом:
 > байт перед QUIC-образной пачкой идёт по `lx.quic_sniff_decoy` с `wireguard` в `outbound_type`,
-> на каждом рукопожатии, без ретрая (SPEC 151 §3.4–3.5, §4). Разделы ниже описывают ключ таким,
+> на каждом рукопожатии, без ретрая (SPEC 060 HISTORY §3.4–3.5, §4). Разделы ниже описывают ключ таким,
 > каким он был в lx.31–lx.32; хронология и стенды сохранены.
 
 AmneziaWG-endpoint с маскировкой (`ip=quic` или статичный `i1`) через `detour` на VLESS/Xray
@@ -32,7 +32,7 @@ QUIC-сниффер Xray её разбирает и при `destOverride: ["quic
 1. `lx.awg_masquerade`: `all` (дефолт) / `direct`. В режиме `direct` через `detour`
    маскировочная пачка (per-handshake приманка, `i1`…`i5`, junk `Jc`) не шлётся вовсе; протокольные поля, которые
    сервер проверяет (`S1`–`S4`, `H1`–`H4`, защита заголовка AWG 3.x, паддинг, хвосты), не тронуты.
-2. `lx.quic_sniff_decoy` (SPEC 151) достаёт до AmneziaWG: когда пачка отправляется и начинается с
+2. `lx.quic_sniff_decoy` (SPEC 060) достаёт до AmneziaWG: когда пачка отправляется и начинается с
    QUIC-образного пакета, а режим выбирает этот путь, перед ней идёт та же однобайтовая датаграмма.
 
 Они независимы. Дефолты (`all` + `off`) — поведение до задачи: пачка идёт на любом пути
@@ -76,7 +76,7 @@ Xray сниффит первый payload UDP-сессии (`app/dispatcher`), п
 (`routeOnly: true` или нет `quic` в `destOverride`). Порт не важен: QUIC-сниффер работает на любом
 UDP-порту, поэтому собственный сервер тестера A на не-443 падает так же.
 
-Разбор на loopback-стенде и лог Xray с подменённым назначением — SPEC 151 §5.2.
+Разбор на loopback-стенде и лог Xray с подменённым назначением — SPEC 060 HISTORY §5.2.
 
 ## 3. Почему через `detour` пачка снимается, а не только прикрывается байтом
 
@@ -96,7 +96,7 @@ Hysteria…), а не внутреннюю пачку, так что там он
 
 Байт перед пачкой сохраняет место: `awg_masquerade=all` через `detour` (пользователь хочет пачку
 внутри туннеля по своим причинам) и прямой путь за домашним роутером со сниффером — ровно случай
-`direct`/`all` SPEC 151 для MASQUE. Умный DPI классифицирует по самому Initial и на лишнюю
+`direct`/`all` SPEC 060 для MASQUE. Умный DPI классифицирует по самому Initial и на лишнюю
 датаграмму не реагирует; тупой сниффер спотыкается. Свидетельств, что лишний байт сам по себе
 сигнатура, нет, поэтому ручка предлагается, не навязывается.
 
@@ -130,7 +130,7 @@ Hysteria…), а не внутреннюю пачку, так что там он
 - `endpoint.go` `Start` (`// lx: SPEC 153`): `pathIsKernel` = всегда `true` для `StdNetBind`
   (UDP-listener без `detour`), `clientBind.PathIsKernel` для `ClientBind`; фильтр ставится,
   когда у endpoint'а есть AWG-поля. Решение по пути — то же, что у `SniffDecoyApplies` для
-  QUIC-дайлов (SPEC 151 §3.1): сокет ядра на conn как надиалено, до обёрток.
+  QUIC-дайлов (SPEC 060 HISTORY §3.1): сокет ядра на conn как надиалено, до обёрток.
 - Прямой путь — свойство conn, а не конфига: `detour` на `direct` и `detour` на группу
   (selector, urltest, любой вложенности), в которой сейчас выбран `direct`, дают сокет ядра и
   считаются прямым путём; та же группа на прокси — detour, со следующего дайла. Оба пути бинда
@@ -183,7 +183,7 @@ Hysteria…), а не внутреннюю пачку, так что там он
 
 Сделано 2026-11-04: юниты форка и lx-слоя (§4), `go vet`, сборка под `LX_TAGS` и без `with_awg`.
 
-Loopback-стенд 2026-11-05 на Mac владельца — стенд SPEC 151 §5.2 (генератор, ключи, Xray-релей `v26.10.31` с `destOverride` `http`/`tls`/`quic`, `routeOnly: false`, `finalRules` allow 127/8), сборка рабочего дерева `c7f24d3f8`: sing-box WireGuard-сервер на `127.0.0.1:51153`, клиентский endpoint `jc 4/40/70`, `ip: quic`, `id: nonexistent.invalid`, `ib: chrome`, через vless-релей (XUDP, в одной строке — без упаковки) или напрямую; три HTTP-запроса через туннель к мишени в LAN. Счётчики из trace-лога клиента и лога Xray (`failed to open connection to udp:nonexistent.invalid:51153` = подмена назначения).
+Loopback-стенд 2026-11-05 на Mac владельца — стенд SPEC 060 HISTORY §5.2 (генератор, ключи, Xray-релей `v26.10.31` с `destOverride` `http`/`tls`/`quic`, `routeOnly: false`, `finalRules` allow 127/8), сборка рабочего дерева `c7f24d3f8`: sing-box WireGuard-сервер на `127.0.0.1:51153`, клиентский endpoint `jc 4/40/70`, `ip: quic`, `id: nonexistent.invalid`, `ib: chrome`, через vless-релей (XUDP, в одной строке — без упаковки) или напрямую; три HTTP-запроса через туннель к мишени в LAN. Счётчики из trace-лога клиента и лога Xray (`failed to open connection to udp:nonexistent.invalid:51153` = подмена назначения).
 
 | Путь | `awg_masquerade` | `quic_sniff_decoy` | Результат | Пачка снята | Байт | Подмена в Xray |
 |---|---|---|---|---|---|---|
@@ -226,5 +226,5 @@ Loopback-стенд 2026-11-05 на Mac владельца — стенд SPEC 1
 - `transport/wireguard/endpoint.go` — `pathIsKernel`, установка фильтра (`// lx: SPEC 153`)
 - `docs-lx/lx-config.md`, `docs-lx/lx-config.ru.md` — §13 `lx.awg_masquerade`, дополнение
   `lx.quic_sniff_decoy`
-- `SPECS/TASKS/151-QUIC_SNIFF_DECOY/SPEC.md`, `SPEC.ru.md` — §5.2 ссылается сюда
+- `SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/HISTORY.md`, `SPEC.ru.md` — §5.2 ссылается сюда
 - `SPECS/FEATURES/003-AWG/FEATURE.md` — раздел «Маскировочная пачка и `detour`», строка задачи

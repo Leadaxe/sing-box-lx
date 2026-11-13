@@ -154,7 +154,7 @@
 
 - 2026-11-12: после пререлиза. Профиль `cloudflare` не спускается на HTTP/1.1 (110, Ш8; перебор
   16 форм запроса на h1 туннеля не дал). В `lx-1.15` влит `lx` до `v1.14.4-lx.33`: объектный
-  `lx.quic_sniff_decoy`, снятый `lx.awg_masquerade`, carrier-записи (SPEC 151, 153). Конфликты —
+  `lx.quic_sniff_decoy`, снятый `lx.awg_masquerade`, carrier-записи (SPEC 060, 153). Конфликты —
   доки и удалённый `protocol/masque/outbound.go`; его шов приманки заменён обёрткой
   `lxdatagram.Dialer` на UDP-диалере `masque-client`, она же вернула усечение датаграмм SPEC 150,
   которого у `masque-client` в rc.1 не было. Тип в `outbound_type` на этой линии —

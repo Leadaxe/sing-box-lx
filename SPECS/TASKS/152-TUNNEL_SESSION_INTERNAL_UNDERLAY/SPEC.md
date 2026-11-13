@@ -9,7 +9,7 @@
 | Ветка | `lx` |
 | Build-tag | — (`common/dialer`, `common/lxdatagram`, `protocol/masque` собираются всегда; шов hysteria2/tuic — строка SPEC 150 под апстримным `with_quic`; trusttunnel под `with_trusttunnel`) |
 | Источник | Разбор владельца по жалобе LxBox 2026-11-03: «после смены узла в Направлении туннель надо перезапускать руками» |
-| Связано | [146](../146-MASQUE_CLOSE_WEDGE_DETOUR_DEADLINE/SPEC.md), [150](../150-QUIC_DETOUR_OVERSIZE_DATAGRAM/SPEC.md), [151](../151-QUIC_SNIFF_DECOY/SPEC.md) (тот же шов `lxdatagram.Dialer` у hysteria2/tuic), [084](../084-INTERRUPT_GROUP_ABBA_DEADLOCK/SPEC.md) (interrupt-группа селектора), [133](../133-TRUSTTUNNEL_OUTBOUND/SPEC.md) (сессия TrustTunnel), [021](../021-MASQUE_CONNECT_IP_OUTBOUND/SPEC.md) (сессия MASQUE) |
+| Связано | [146](../146-MASQUE_CLOSE_WEDGE_DETOUR_DEADLINE/SPEC.md), [150](../150-QUIC_DETOUR_OVERSIZE_DATAGRAM/SPEC.md), [060](../060-TLS_FRAGMENT_AUTO_ON_DETOUR/HISTORY.md) (тот же шов `lxdatagram.Dialer` у hysteria2/tuic), [084](../084-INTERRUPT_GROUP_ABBA_DEADLOCK/SPEC.md) (interrupt-группа селектора), [133](../133-TRUSTTUNNEL_OUTBOUND/SPEC.md) (сессия TrustTunnel), [021](../021-MASQUE_CONNECT_IP_OUTBOUND/SPEC.md) (сессия MASQUE) |
 
 ## 0. TL;DR
 
