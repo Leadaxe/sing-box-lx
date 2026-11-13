@@ -7,12 +7,17 @@ import (
 	"io"
 	"net"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/common/lxsniffguard"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/bufio/deadline"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+
+	"github.com/stretchr/testify/require"
 )
 
 // framedConn mimics a datagram conn carried in a stream (vless.PacketConn):
@@ -200,4 +205,132 @@ func TestTruncateReadsIsTransparentToDeadlineCheck(t *testing.T) {
 	if !deadline.NeedAdditionalReadDeadline(TruncateReads(framed, nil)) {
 		t.Fatal("NeedAdditionalReadDeadline must be seen through the wrapper")
 	}
+}
+
+// manualTimer is a youngConnWindow timer fired by the test.
+type manualTimer struct {
+	window  time.Duration
+	fire    func()
+	access  sync.Mutex
+	stopped bool
+}
+
+func (m *manualTimer) isStopped() bool {
+	m.access.Lock()
+	defer m.access.Unlock()
+	return m.stopped
+}
+
+// manualTimers replaces the dialer's timers for the test; the returned slice
+// gets one timer per guarded connection, in dial order.
+func manualTimers(t *testing.T) *[]*manualTimer {
+	t.Helper()
+	var timers []*manualTimer
+	saved := afterFunc
+	afterFunc = func(d time.Duration, f func()) func() bool {
+		timer := &manualTimer{window: d, fire: f}
+		timers = append(timers, timer)
+		return func() bool {
+			timer.access.Lock()
+			defer timer.access.Unlock()
+			wasActive := !timer.stopped
+			timer.stopped = true
+			return wasActive
+		}
+	}
+	t.Cleanup(func() { afterFunc = saved })
+	return &timers
+}
+
+type guardedSeam struct {
+	t       *testing.T
+	node    *lxsniffguard.Node
+	carried *carriedDialer
+	dialer  N.Dialer
+	ctx     context.Context
+}
+
+func newGuardedSeam(t *testing.T) *guardedSeam {
+	buildCtx, g := testGuard(t, option.LXSniffGuardQUICDecoy)
+	carried := &carriedDialer{carrierType: "socks"}
+	return &guardedSeam{t: t, node: g.Node("node"), carried: carried, dialer: Dialer(buildCtx, "node", carried, nil), ctx: buildCtx}
+}
+
+// offer dials a new connection the way sing-quic does: with a context
+// derived from the client's lifetime context.
+func (s *guardedSeam) offer() net.Conn {
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	conn, err := s.dialer.DialContext(ctx, N.NetworkUDP, M.ParseSocksaddr("1.1.1.1:443"))
+	require.NoError(s.t, err)
+	return conn
+}
+
+func (s *guardedSeam) suspect() bool {
+	return s.node.Peek(lxsniffguard.ProtoQUIC, pathSOCKS).Protect
+}
+
+// A connection that lives youngConnWindow is a success right then: the pair
+// completes without the node dialling again.
+func TestDialerReportsSuccessAtWindowWithoutNextDial(t *testing.T) {
+	timers := manualTimers(t)
+	s := newGuardedSeam(t)
+
+	s.offer().Close() // failed without protection
+	s.offer()         // goes with protection and stays open
+	require.Len(t, *timers, 2)
+	require.Equal(t, youngConnWindow, (*timers)[1].window)
+	require.True(t, s.carried.conns[1].decoyFirst())
+	require.False(t, s.suspect(), "no outcome before the window")
+
+	(*timers)[1].fire()
+	require.True(t, s.suspect(), "failure without, success with at the window: suspect without a next dial")
+	require.True(t, (*timers)[0].isStopped(), "the closed connection stopped its timer")
+}
+
+// A connection closed within the window is a failure, judged at the next
+// new connection, which then takes the opposite decision.
+func TestDialerReportsEarlyCloseAsFailure(t *testing.T) {
+	timers := manualTimers(t)
+	s := newGuardedSeam(t)
+
+	first := s.offer()
+	require.False(t, s.carried.conns[0].decoyFirst())
+	require.NoError(t, first.Close())
+	require.True(t, (*timers)[0].isStopped(), "close stops the timer")
+	(*timers)[0].fire() // a timer that fires racing the close reports nothing
+	s.offer()
+	require.True(t, s.carried.conns[1].decoyFirst(), "the early close was a failure: the next dial goes with protection")
+}
+
+// The timer's success is the attempt's only report: a later close and the
+// next dial do not count it again.
+func TestDialerReportsOncePerConnection(t *testing.T) {
+	timers := manualTimers(t)
+	s := newGuardedSeam(t)
+
+	conn := s.offer()
+	(*timers)[0].fire()
+	require.NoError(t, conn.Close()) // closed "young" by the wall clock
+	s.offer()
+	require.False(t, s.carried.conns[1].decoyFirst(), "a second report as failure would leave a pending pair")
+	(*timers)[0].fire()
+	s.offer()
+	require.False(t, s.carried.conns[2].decoyFirst())
+}
+
+// A port hop settles the connection that hopped as a success and stops its
+// timer; closing it afterwards changes nothing.
+func TestDialerHopSettlesAndStopsTimer(t *testing.T) {
+	timers := manualTimers(t)
+	s := newGuardedSeam(t)
+
+	conn := s.offer()
+	_, err := s.dialer.DialContext(s.ctx, N.NetworkUDP, M.ParseSocksaddr("1.1.1.1:443"))
+	require.NoError(t, err)
+	require.Len(t, *timers, 1, "a hop arms no timer")
+	require.True(t, (*timers)[0].isStopped(), "the hop settled the attempt")
+	require.NoError(t, conn.Close())
+	s.offer()
+	require.False(t, s.carried.conns[2].decoyFirst(), "a hopped connection is no failure")
 }

@@ -7,10 +7,10 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing/common/baderror"
 	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
-	aTLS "github.com/sagernet/sing/common/tls"
 
 	"golang.org/x/net/http2"
 )
@@ -20,7 +20,9 @@ func (c *Client) connectHTTP2(ctx context.Context) (sessionConn, error) {
 	if err != nil {
 		return nil, E.Cause(err, "dial tcp")
 	}
-	tlsConn, err := aTLS.ClientHandshake(ctx, conn, c.tlsConfig)
+	// The shared handshake, so the client's TLS hooks (lx.sniff_guard, the
+	// connection test trace) see the session's handshake.
+	tlsConn, err := tls.ClientHandshake(ctx, conn, c.tlsConfig)
 	if err != nil {
 		conn.Close()
 		return nil, E.Cause(err, "TLS handshake")

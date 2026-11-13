@@ -2,10 +2,10 @@ package box
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxmtu"
+	"github.com/sagernet/sing-box/common/lxsniffguard"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -23,6 +23,10 @@ import (
 // A value is registered even when the block is absent, so a registry shared
 // across instances (daemon reloads) never hands a stale block to a new box.
 func applyLXOptions(ctx context.Context, options *option.Options, logger log.Logger) (context.Context, error) {
+	var rawSniffGuard *option.LXSniffGuardOptions
+	if options.LX != nil {
+		rawSniffGuard = options.LX.SniffGuard
+	}
 	resolved, err := option.ResolveLX(options)
 	if err != nil {
 		return ctx, err
@@ -30,9 +34,13 @@ func applyLXOptions(ctx context.Context, options *option.Options, logger log.Log
 	if err := alignPathMTU(options, resolved.MTUAlignOrDefault(), logger); err != nil {
 		return ctx, err
 	}
-	if err := checkSniffDecoyDetourTypes(ctx, resolved.QUICSniffDecoy); err != nil {
+	// lx: SPEC 060 — the guard of this box, registered even when off (nil) for
+	// the same reason as resolved below.
+	guard, err := newSniffGuard(ctx, options, rawSniffGuard, resolved.SniffGuard, logger)
+	if err != nil {
 		return ctx, err
 	}
+	ctx = lxsniffguard.ContextWith(ctx, guard)
 	ctx = service.ContextWithPtr(ctx, resolved)
 	// lx: SPEC 097 — a fresh build-budget slot per box; the WG endpoints fill
 	// it on first use (see adapter.LXBuildBudgetSlot).
@@ -60,34 +68,6 @@ func alignPathMTU(options *option.Options, align option.LXMTUAlignResolved, logg
 		}
 		if decision.Warning != "" {
 			logger.Warn("mtu_align: ", decision.Warning)
-		}
-	}
-	return nil
-}
-
-// checkSniffDecoyDetourTypes fails the start on a detour_type that no
-// outbound or endpoint registry of this build knows (lx: SPEC 151): a typo
-// would otherwise match nothing and the byte would never go out.
-func checkSniffDecoyDetourTypes(ctx context.Context, decoy option.LXQUICSniffDecoyResolved) error {
-	if decoy.Mode == "" || decoy.Mode == option.LXQUICSniffDecoyOff {
-		return nil
-	}
-	known := func(detourType string) bool {
-		if registry := service.FromContext[adapter.OutboundRegistry](ctx); registry != nil {
-			if _, loaded := registry.CreateOptions(detourType); loaded {
-				return true
-			}
-		}
-		if registry := service.FromContext[adapter.EndpointRegistry](ctx); registry != nil {
-			if _, loaded := registry.CreateOptions(detourType); loaded {
-				return true
-			}
-		}
-		return false
-	}
-	for _, detourType := range decoy.DetourTypes {
-		if !known(detourType) {
-			return E.New("lx.quic_sniff_decoy.detour_type: unknown outbound type ", strconv.Quote(detourType))
 		}
 	}
 	return nil

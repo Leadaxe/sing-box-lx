@@ -26,6 +26,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/lxdatagram"
+	"github.com/sagernet/sing-box/common/lxsniffguard"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -88,7 +89,7 @@ type Outbound struct {
 	dnsRouter   adapter.DNSRouter
 	profile     masque.Profile
 	idleTimeout time.Duration
-	sniffDecoy  *lxdatagram.Decoy // lx: SPEC 151 — nil when lx.quic_sniff_decoy does not cover masque
+	sniffGuard  *lxsniffguard.Node // lx: SPEC 060 — nil when lx.sniff_guard does not cover this node
 
 	server    M.Socksaddr
 	uri       string
@@ -397,7 +398,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		dnsRouter:    service.FromContext[adapter.DNSRouter](ctx),
 		profile:      profile,
 		idleTimeout:  idleTimeout,
-		sniffDecoy:   lxdatagram.NewSniffDecoy(ctx, C.TypeMASQUE, logger),
+		sniffGuard:   lxsniffguard.FromContext(ctx).Node(tag),
 		server:       options.ServerOptions.Build(),
 		uri:          uri,
 		network:      network,
@@ -449,9 +450,6 @@ func buildH2TLSClient(
 		// An empty server_name is legitimate here: some endpoints only present
 		// their real certificate when the ClientHello carries no SNI at all.
 		AllowEmptyServerName: true,
-		// lx: SPEC 060 — masque over a detour is exactly the case that surfaced
-		// relay SNI sniffing; fragment the ClientHello by default there.
-		DialedThroughDetour: tls.DialedThroughDetour(options.DialerOptions),
 	})
 	if err != nil {
 		return nil, err
@@ -636,6 +634,10 @@ func (o *Outbound) idleWatcher(s *session) {
 type connectLegs struct {
 	h3 func(context.Context, time.Duration) (io.Closer, masque.IpConn, error)
 	h2 func(context.Context) (io.Closer, masque.IpConn, error)
+	// h3Once and h2Once replace one attempt of a leg under the lx.sniff_guard
+	// retry (lx: SPEC 060); used when h3 and h2 are nil.
+	h3Once func(context.Context, time.Duration) (io.Closer, masque.IpConn, error)
+	h2Once func(context.Context) (io.Closer, masque.IpConn, error)
 }
 
 // SPEC 074 — one dial attempt, with the `auto` fallback folded in.
@@ -644,7 +646,7 @@ type connectLegs struct {
 // truth rather than the configured value.
 func (o *Outbound) connect(ctx context.Context, network string) (io.Closer, masque.IpConn, string, error) {
 	connectH3, connectH2 := o.connectH3WithBudget, o.connectH2
-	if o.legsForTest != nil {
+	if o.legsForTest != nil && o.legsForTest.h3 != nil {
 		connectH3, connectH2 = o.legsForTest.h3, o.legsForTest.h2
 	}
 	// Fixed h3 keeps the unbounded handshake; only `auto` needs a cap.
@@ -875,25 +877,32 @@ func (o *Outbound) connectH3(ctx context.Context) (io.Closer, masque.IpConn, err
 // needs to bound is the handshake: the failure mode is a ClientHello that leaves
 // and never gets an answer, which produces no error of its own.
 func (o *Outbound) connectH3WithBudget(ctx context.Context, handshakeBudget time.Duration) (io.Closer, masque.IpConn, error) {
-	// lx: SPEC 151 — the first attempt goes without the sniff decoy; a fast
-	// failure (the foreign key a sniffing relay produces) is redone at once
-	// with the byte in front, a slow one leaves the byte to the next dial.
-	for {
-		closer, ipConn, redo, err := o.connectH3Once(ctx, handshakeBudget)
-		if redo {
-			continue
-		}
-		return closer, ipConn, err
+	// lx: SPEC 060 — one h3 attempt runs inside lx.sniff_guard's Node.Dial on
+	// the quic label: a fast failure is redone at once with the opposite
+	// decision (before `auto` falls back to h2), a silent one leaves a pending
+	// pair for the next h3 leg.
+	var (
+		closer io.Closer
+		ipConn masque.IpConn
+	)
+	once := o.connectH3Once
+	if o.legsForTest != nil && o.legsForTest.h3Once != nil {
+		once = o.legsForTest.h3Once
 	}
+	err := o.sniffGuard.Dial(ctx, func(ctx context.Context) error {
+		var err error
+		closer, ipConn, err = once(ctx, handshakeBudget)
+		return err
+	})
+	return closer, ipConn, err
 }
 
-// connectH3Once is one h3 attempt; redo asks connectH3WithBudget to run
-// another one right away (lx: SPEC 151).
-func (o *Outbound) connectH3Once(ctx context.Context, handshakeBudget time.Duration) (closer io.Closer, ipConn masque.IpConn, redo bool, err error) {
-	attempt := o.sniffDecoy.Begin(ctx) // lx: SPEC 151 — carrier record in the dial context
-	udpConn, err := o.dialer.DialContext(attempt.Context, N.NetworkUDP, o.server)
+// connectH3Once is one h3 attempt (lx: SPEC 060).
+func (o *Outbound) connectH3Once(ctx context.Context, handshakeBudget time.Duration) (io.Closer, masque.IpConn, error) {
+	dialCtx, carrier := adapter.ContextWithCarrierRecord(ctx) // lx: SPEC 060 — which outbound carries this attempt
+	udpConn, err := o.dialer.DialContext(dialCtx, N.NetworkUDP, o.server)
 	if err != nil {
-		return nil, nil, false, E.Cause(err, "dial udp")
+		return nil, nil, E.Cause(err, "dial udp")
 	}
 	// lx: SPEC 146 — quic-go never closes a PacketConn it did not create. When
 	// its single-use transport shuts down (handshake failed, dial cancelled) it
@@ -922,30 +931,51 @@ func (o *Outbound) connectH3Once(ctx context.Context, handshakeBudget time.Durat
 		handshakeCtx, cancel = context.WithTimeout(ctx, handshakeBudget)
 		defer cancel()
 	}
-	// lx: SPEC 151 — on the attempts the policy and the memory select, a
-	// datagram no relay sniffer recognises goes first, after the wrappers and
-	// before quic-go's Initial, so a sniffing relay leaves the destination as
-	// dialled.
-	attempt.Dialed(udpConn, rawConn)
+	// lx: SPEC 060 — the lx.sniff_guard form of this handshake, after the
+	// wrappers and before quic-go's first Initial: the decoy datagram ahead of
+	// it, or the second Initial held back.
+	rawConn, sniffGuard := lxdatagram.GuardQUIC(lxsniffguard.AttemptFromContext(ctx), udpConn, carrier, rawConn, o.logger)
 	quicStage := o.beginQUICLx(ctx) // lx: SPEC 139 — `quic` stage
 	quicConn, err := quic.DialEarly(handshakeCtx, bufio.NewUnbindPacketConn(rawConn), udpConn.RemoteAddr(), o.tlsConfig, o.quicConfig)
 	quicStage.End(err) // lx: SPEC 139
+	sniffGuard.Done()  // lx: SPEC 060
 	if err != nil {
 		_ = udpConn.Close()
-		return nil, nil, attempt.Done(err), E.Cause(err, "dial quic")
+		return nil, nil, E.Cause(err, "dial quic")
 	}
 	authStage := o.beginAuthLx(ctx, "h3") // lx: SPEC 139 — `auth` stage: CONNECT-IP status
 	tr, ipConn, err := masque.ConnectTunnelH3(ctx, o.profile, quicConn, o.uri)
 	endAuthLx(authStage, err) // lx: SPEC 139
 	if err != nil {
 		_ = udpConn.Close()
-		return nil, nil, attempt.Done(err), err
+		return nil, nil, err
 	}
-	attempt.Done(nil)
-	return &h3Closer{transport: tr, rawConn: udpConn}, ipConn, false, nil
+	return &h3Closer{transport: tr, rawConn: udpConn}, ipConn, nil
 }
 
 func (o *Outbound) connectH2(ctx context.Context) (io.Closer, masque.IpConn, error) {
+	// lx: SPEC 060 — the h2 leg raises its session inside lx.sniff_guard's
+	// Node.Dial on the tls label, so its outcome is the session's and not the
+	// first stream's; a fast failure is redone with the opposite decision.
+	var (
+		closer io.Closer
+		ipConn masque.IpConn
+	)
+	once := o.connectH2Once
+	if o.legsForTest != nil && o.legsForTest.h2Once != nil {
+		once = o.legsForTest.h2Once
+	}
+	err := o.sniffGuard.Dial(ctx, func(ctx context.Context) error {
+		var err error
+		closer, ipConn, err = once(ctx)
+		return err
+	})
+	return closer, ipConn, err
+}
+
+// connectH2Once is one h2 attempt (lx: SPEC 060).
+func (o *Outbound) connectH2Once(ctx context.Context) (io.Closer, masque.IpConn, error) {
+	ctx, _ = adapter.ContextWithCarrierRecord(ctx) // lx: SPEC 060 — which outbound carries this attempt, for the TLS hook
 	c, err := o.dialer.DialContext(ctx, N.NetworkTCP, o.server)
 	if err != nil {
 		return nil, nil, E.Cause(err, "dial tcp")

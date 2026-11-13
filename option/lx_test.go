@@ -3,7 +3,6 @@ package option
 import (
 	"context"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -70,10 +69,9 @@ func TestLXBlockParsesEveryKey(t *testing.T) {
 			BuildMax:             4,
 			BuildOverflow:        LXBuildOverflowBuild,
 		},
-		MASQUE:         LXMASQUEResolved{IdleTimeout: 2 * time.Minute},
-		TrustTunnel:    LXTrustTunnelResolved{IdleTimeout: 3 * time.Minute},
-		MTUAlign:       LXMTUAlignResolved{Mode: LXMTUAlignClamp},
-		QUICSniffDecoy: resolveLXQUICSniffDecoy(nil),
+		MASQUE:      LXMASQUEResolved{IdleTimeout: 2 * time.Minute},
+		TrustTunnel: LXTrustTunnelResolved{IdleTimeout: 3 * time.Minute},
+		MTUAlign:    LXMTUAlignResolved{Mode: LXMTUAlignClamp},
 	}
 	if !reflect.DeepEqual(*resolved, want) {
 		t.Fatalf("resolved = %+v, want %+v", *resolved, want)
@@ -94,10 +92,9 @@ func TestLXBlockEmptyEqualsAbsent(t *testing.T) {
 }
 
 // lxDefaults is what an absent block resolves to: every knob off, mtu_align
-// at its default (lx: SPEC 120), quic_sniff_decoy off with its default lists
-// (lx: SPEC 151).
+// at its default (lx: SPEC 120).
 func lxDefaults() LXResolved {
-	return LXResolved{MTUAlign: LXMTUAlignResolved{Mode: LXMTUAlignClamp}, QUICSniffDecoy: resolveLXQUICSniffDecoy(nil)}
+	return LXResolved{MTUAlign: LXMTUAlignResolved{Mode: LXMTUAlignClamp}}
 }
 
 func TestLXResolvedNilIsAllOff(t *testing.T) {
@@ -349,61 +346,15 @@ func TestLXMTUAlign(t *testing.T) {
 	}
 }
 
-// lx.quic_sniff_decoy (lx: SPEC 151): an object with four optional keys and
-// their defaults (mode off, outbound_type [masque], detour_type [vless], send
-// retry); the string and boolean forms are a load error; a default-only
-// object canonicalizes to an absent key.
-func TestLXQUICSniffDecoy(t *testing.T) {
+// lx.quic_sniff_decoy is removed (lx: SPEC 060) and lx.awg_masquerade before
+// it (SPEC 153): any value of either is a load error that names the reason.
+func TestLXRemovedKeys(t *testing.T) {
 	t.Parallel()
-	off := (*LXResolved)(nil).QUICSniffDecoyOrOff()
-	if off.Mode != LXQUICSniffDecoyOff || off.Enabled("masque") || !off.Retry {
-		t.Fatalf("a nil *LXResolved must read as off with the defaults: %+v", off)
-	}
-	cases := []struct {
-		content   string
-		want      LXQUICSniffDecoyResolved
-		canonical string // marshalled lx block, "" for absent
-	}{
-		{`{}`, LXQUICSniffDecoyResolved{Mode: "off", OutboundTypes: []string{"masque"}, DetourTypes: []string{"vless"}, Retry: true}, ""},
-		{`{"lx":{"quic_sniff_decoy":{}}}`, LXQUICSniffDecoyResolved{Mode: "off", OutboundTypes: []string{"masque"}, DetourTypes: []string{"vless"}, Retry: true}, ""},
-		{`{"lx":{"quic_sniff_decoy":{"mode":"off","send":"retry"}}}`, LXQUICSniffDecoyResolved{Mode: "off", OutboundTypes: []string{"masque"}, DetourTypes: []string{"vless"}, Retry: true}, ""},
-		{`{"lx":{"quic_sniff_decoy":{"mode":"detour"}}}`, LXQUICSniffDecoyResolved{Mode: "detour", OutboundTypes: []string{"masque"}, DetourTypes: []string{"vless"}, Retry: true}, `{"quic_sniff_decoy":{"mode":"detour"}}`},
-		{`{"lx":{"quic_sniff_decoy":{"mode":"all","outbound_type":["hysteria2","wireguard"],"detour_type":"socks","send":"always"}}}`, LXQUICSniffDecoyResolved{Mode: "all", OutboundTypes: []string{"hysteria2", "wireguard"}, DetourTypes: []string{"socks"}, Retry: false}, `{"quic_sniff_decoy":{"mode":"all","outbound_type":["hysteria2","wireguard"],"detour_type":"socks","send":"always"}}`},
-		{`{"lx":{"quic_sniff_decoy":{"outbound_type":["tuic"]}}}`, LXQUICSniffDecoyResolved{Mode: "off", OutboundTypes: []string{"tuic"}, DetourTypes: []string{"vless"}, Retry: true}, `{"quic_sniff_decoy":{"outbound_type":"tuic"}}`},
-	}
-	for _, tc := range cases {
-		options, resolved := mustResolveLX(t, tc.content)
-		got := resolved.QUICSniffDecoyOrOff()
-		if got.Mode != tc.want.Mode || got.Retry != tc.want.Retry || !slices.Equal(got.OutboundTypes, tc.want.OutboundTypes) || !slices.Equal(got.DetourTypes, tc.want.DetourTypes) {
-			t.Fatalf("%s: got %+v, want %+v", tc.content, got, tc.want)
-		}
-		var canonical string
-		if options.LX != nil {
-			text, err := json.Marshal(options.LX)
-			if err != nil {
-				t.Fatal(err)
-			}
-			canonical = string(text)
-		}
-		if canonical != tc.canonical {
-			t.Fatalf("%s: canonical %s, want %s", tc.content, canonical, tc.canonical)
-		}
-	}
-	enabled := mustResolveLXResolved(t, `{"lx":{"quic_sniff_decoy":{"mode":"detour","outbound_type":["masque","tuic"]}}}`).QUICSniffDecoyOrOff()
-	if !enabled.Enabled("masque") || !enabled.Enabled("tuic") || enabled.Enabled("hysteria2") || !enabled.DetourMatches("vless") || enabled.DetourMatches("socks") || enabled.DetourMatches("") {
-		t.Fatalf("Enabled/DetourMatches: %+v", enabled)
-	}
 	rejected := []struct{ content, want string }{
-		{`{"lx":{"quic_sniff_decoy":"detour"}}`, "must be an object"},
-		{`{"lx":{"quic_sniff_decoy":true}}`, "must be an object"},
-		{`{"lx":{"quic_sniff_decoy":false}}`, "must be an object"},
-		{`{"lx":{"quic_sniff_decoy":1}}`, "must be an object"},
-		{`{"lx":{"quic_sniff_decoy":{"mode":"on"}}}`, "lx.quic_sniff_decoy.mode"},
-		{`{"lx":{"quic_sniff_decoy":{"send":"first"}}}`, "lx.quic_sniff_decoy.send"},
-		{`{"lx":{"quic_sniff_decoy":{"outbound_type":["shadowsocks"]}}}`, "lx.quic_sniff_decoy.outbound_type"},
-		{`{"lx":{"quic_sniff_decoy":{"detour_type":["selector"]}}}`, "is a group"},
-		{`{"lx":{"quic_sniff_decoy":{"detour_type":[""]}}}`, "empty type"},
-		{`{"lx":{"quic_sniff_decoy":{"protocols":["masque"]}}}`, "lx.quic_sniff_decoy"},
+		{`{"lx":{"quic_sniff_decoy":{"mode":"detour"}}}`, "lx.quic_sniff_decoy is removed: the QUIC sniff decoy is configured by lx.sniff_guard.quic"},
+		{`{"lx":{"quic_sniff_decoy":{}}}`, "lx.quic_sniff_decoy is removed"},
+		{`{"lx":{"quic_sniff_decoy":"detour"}}`, "lx.quic_sniff_decoy is removed"},
+		{`{"lx":{"quic_sniff_decoy":true}}`, "lx.quic_sniff_decoy is removed"},
 		{`{"lx":{"awg_masquerade":"direct"}}`, "lx.awg_masquerade is removed"},
 		{`{"lx":{"awg_masquerade":true}}`, "lx.awg_masquerade is removed"},
 	}

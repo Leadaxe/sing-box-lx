@@ -1,37 +1,43 @@
 package trusttunnel
 
-// lx: SPEC 151 — the sniff decoy on the HTTP/3 session of a trusttunnel
-// outbound, through the transport's QUICDialHook.
+// lx: SPEC 060 — lx.sniff_guard on the HTTP/3 session of a trusttunnel
+// outbound, through the transport's QUICDialHook: each attempt to open the
+// session runs inside the node's Node.Dial with a carrier record of its own,
+// and its QUIC handshake gets the guard's form.
 
 import (
 	"context"
 	"net"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxdatagram"
+	"github.com/sagernet/sing-box/common/lxsniffguard"
 	"github.com/sagernet/sing-box/transport/trusttunnel"
+	"github.com/sagernet/sing/common/logger"
 )
 
-type sniffDecoyHook struct {
-	decoy *lxdatagram.Decoy
+type sniffGuardHook struct {
+	node   *lxsniffguard.Node
+	logger logger.Logger
 }
 
-// newSniffDecoyHook returns the hook for decoy, or nil when the policy does
-// not cover trusttunnel.
-func newSniffDecoyHook(decoy *lxdatagram.Decoy) trusttunnel.QUICDialHook {
-	if !decoy.Enabled() {
+// newSniffGuardHook returns the hook for node, or nil when lx.sniff_guard
+// does not cover it.
+func newSniffGuardHook(node *lxsniffguard.Node, logger logger.Logger) trusttunnel.QUICDialHook {
+	if node == nil {
 		return nil
 	}
-	return sniffDecoyHook{decoy: decoy}
+	return sniffGuardHook{node: node, logger: logger}
 }
 
-func (h sniffDecoyHook) Begin(ctx context.Context) trusttunnel.QUICDialAttempt {
-	return sniffDecoyAttempt{h.decoy.Begin(ctx)}
+func (h sniffGuardHook) Dial(ctx context.Context, open func(ctx context.Context) error) error {
+	return h.node.Dial(ctx, func(ctx context.Context) error {
+		ctx, _ = adapter.ContextWithCarrierRecord(ctx)
+		return open(ctx)
+	})
 }
 
-type sniffDecoyAttempt struct {
-	attempt *lxdatagram.Attempt
+func (h sniffGuardHook) Handshake(ctx context.Context, conn net.Conn) (net.Conn, func()) {
+	handshakeConn, handshake := lxdatagram.GuardQUIC(lxsniffguard.AttemptFromContext(ctx), conn, adapter.CarrierRecordFromContext(ctx), conn, h.logger)
+	return handshakeConn, handshake.Done
 }
-
-func (a sniffDecoyAttempt) Context() context.Context { return a.attempt.Context }
-func (a sniffDecoyAttempt) Dialed(conn net.Conn)     { a.attempt.Dialed(conn, conn) }
-func (a sniffDecoyAttempt) Done(err error) bool      { return a.attempt.Done(err) }
