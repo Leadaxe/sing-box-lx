@@ -168,6 +168,23 @@ jobs:
             -tags "${BASE_TAGS},with_trusttunnel" \
             ./transport/trusttunnel/ ./protocol/trusttunnel/
 
+      # lx.sniff_guard (SPEC 060, FEATURE 019): the label store, the outbound
+      # wrapper, the option block and the box-level load checks. The seams run
+      # in the steps above (common/tls -run Lx, lxdatagram, dialer, masque,
+      # tuic, v2rayxhttp, trusttunnel) and below (wireguard, cachefile). The
+      # root package needs every covered outbound type registered, hence the
+      # trusttunnel tag there.
+      - name: go test (lx.sniff_guard, race)
+        run: |
+          go test -race -count=1 \
+            -ldflags "-checklinkname=0" \
+            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd,with_lx_chain" \
+            ./common/lxsniffguard/ ./adapter/ ./adapter/outbound/ ./option/
+          go test -count=1 \
+            -ldflags "-checklinkname=0" \
+            -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd,with_lx_chain,with_trusttunnel" \
+            -run 'SniffGuard|ApplyLXOptions' .
+
       # WireGuard endpoint (transport + protocol), the router's lx mechanisms
       # (idle-suspend tick, shutdown quiesce, reference manager) and the
       # lx-test/startclose stands over a live box. Upstream's test.yml runs
