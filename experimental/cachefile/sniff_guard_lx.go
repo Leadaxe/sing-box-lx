@@ -2,8 +2,8 @@ package cachefile
 
 // lx: SPEC 060 — persisted path labels of lx.sniff_guard. One bucket entry
 // per "<carrier tag>|<proto>" key holding the carrier fingerprint and the
-// state; the guard drops an entry whose fingerprint no longer matches the
-// carrier under that tag.
+// state; the guard deletes an entry whose tag left the config or whose
+// fingerprint no longer matches the carrier under that tag.
 
 import (
 	"encoding/json"
@@ -50,5 +50,23 @@ func (c *CacheFile) StoreSniffGuard(key string, entry lxsniffguard.CacheEntry) e
 			return err
 		}
 		return bucket.Put([]byte(key), data)
+	})
+}
+
+func (c *CacheFile) DeleteSniffGuard(keys ...string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	return c.batch(func(t *bbolt.Tx) error {
+		bucket := c.bucket(t, bucketSniffGuard)
+		if bucket == nil {
+			return nil
+		}
+		for _, key := range keys {
+			if err := bucket.Delete([]byte(key)); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }

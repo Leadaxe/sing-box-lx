@@ -32,6 +32,36 @@ type LXOptions struct {
 	AWGMasquerade *LXRemovedAWGMasquerade `json:"awg_masquerade,omitempty"`
 }
 
+// UnmarshalJSON decodes the block as a plain struct and fails on any
+// presence of a removed key, null included: a null leaves a pointer field
+// nil without calling the removed type's UnmarshalJSON.
+func (o *LXOptions) UnmarshalJSON(content []byte) error {
+	var keys map[string]json.RawMessage
+	if json.Unmarshal(content, &keys) == nil {
+		if _, present := keys["quic_sniff_decoy"]; present {
+			return E.New(errLXQUICSniffDecoyRemoved)
+		}
+		if _, present := keys["awg_masquerade"]; present {
+			return E.New(errLXAWGMasqueradeRemoved)
+		}
+	}
+	return json.UnmarshalDisallowUnknownFields(content, (*lxOptionsPlain)(o))
+}
+
+// lxOptionsPlain is LXOptions without its methods.
+type lxOptionsPlain LXOptions
+
+func (o LXOptions) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("LXOptions", func() (*schema.Node, error) {
+		node := schema.StrictObject()
+		err := builder.FlattenStruct(node, reflect.TypeFor[lxOptionsPlain]())
+		if err != nil {
+			return nil, err
+		}
+		return node, nil
+	})
+}
+
 // LXWGOptions holds the WG/AWG endpoint knobs: the three idle keys carry the
 // SPEC 020 semantics, lazy_build, build_max and build_overflow are SPEC 097.
 // All six act only in builds with with_lx_idle_suspend; without the tag the

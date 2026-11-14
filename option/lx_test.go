@@ -355,6 +355,9 @@ func TestLXRemovedKeys(t *testing.T) {
 		{`{"lx":{"quic_sniff_decoy":{}}}`, "lx.quic_sniff_decoy is removed"},
 		{`{"lx":{"quic_sniff_decoy":"detour"}}`, "lx.quic_sniff_decoy is removed"},
 		{`{"lx":{"quic_sniff_decoy":true}}`, "lx.quic_sniff_decoy is removed"},
+		{`{"lx":{"quic_sniff_decoy":null}}`, "lx.quic_sniff_decoy is removed: the QUIC sniff decoy is configured by lx.sniff_guard.quic"},
+		{`{"lx":{"sniff_guard":{"quic":{"method":"decoy_first_byte"}},"quic_sniff_decoy":null}}`, "lx.quic_sniff_decoy is removed"},
+		{`{"lx":{"awg_masquerade":null}}`, "lx.awg_masquerade is removed"},
 		{`{"lx":{"awg_masquerade":"direct"}}`, "lx.awg_masquerade is removed"},
 		{`{"lx":{"awg_masquerade":true}}`, "lx.awg_masquerade is removed"},
 	}

@@ -78,7 +78,7 @@ func (n *Node) settle(ctx context.Context, attempt *Attempt, err error) *forcedD
 	g.access.Lock()
 	m := attempt.mark
 	attempt.closed = true
-	if m == nil || attempt.late {
+	if m == nil {
 		g.access.Unlock()
 		return nil
 	}
@@ -96,8 +96,8 @@ func (n *Node) settle(ctx context.Context, attempt *Attempt, err error) *forcedD
 // Begin returns an attempt outside Node.Dial, for a seam whose handshake
 // runs under the client's own lifetime context, which no dial Attempt
 // reaches (hysteria2 and tuic in sing-quic). Decide on it as usual; nothing
-// settles it, so the seam reports the outcome through Report with the
-// decision it got, or calls Withdraw when the method did not apply.
+// settles it, so the seam reports the outcome through Attempt.Report, or
+// calls Withdraw when the method did not apply.
 func (n *Node) Begin() *Attempt {
 	if n == nil {
 		return nil
@@ -122,31 +122,6 @@ func (n *Node) Peek(proto Proto, path Path) Decision {
 		return Decision{}
 	}
 	return g.decision(proto, n.byLabel(key, g.label(key, start)))
-}
-
-// Report counts an outcome learnt after the dial returned (hysteria2, tuic:
-// a connection closed within 30 seconds of the dial is a failure). protected
-// is the decision the handshake went with. A failure never retries; it may
-// leave a pending pair for the next dial.
-func (n *Node) Report(proto Proto, path Path, protected, ok bool) {
-	if n == nil {
-		return
-	}
-	g := n.guard
-	g.access.Lock()
-	key, start, resolved := g.resolve(proto, path)
-	if !resolved {
-		g.access.Unlock()
-		return
-	}
-	m := &mark{key: key, start: start, epoch: g.epoch, protect: protected}
-	if pair := n.livePending(g.now()); pair != nil && pair.key == key && pair.failedProtect != protected {
-		m.second = true
-		m.pair = pair
-	}
-	_, notices := n.settleLocked(m, ok, false)
-	g.access.Unlock()
-	g.runNotices(notices)
 }
 
 // byLabel is the decision of the node by the label of key.
@@ -208,8 +183,7 @@ func (n *Node) settleLocked(m *mark, ok, fast bool) (retry bool, notices []notic
 		return true, nil
 	}
 	n.pending = &pendingPair{key: m.key, failedProtect: m.protect, at: now}
-	g.logger.Debug("sniff guard: ", m.key.String(), ": node ", n.tag, " failed ", describe(m.protect), ", next dial goes ", describe(!m.protect))
-	return false, nil
+	return false, []notice{{debug: true, message: []any{"sniff guard: ", m.key.String(), ": node ", n.tag, " failed ", describe(m.protect), ", next dial goes ", describe(!m.protect)}}}
 }
 
 // mayProbe reports whether the opposite of a failed attempt is allowed, and
@@ -278,9 +252,12 @@ func (n *Node) pairCompleted(m *mark, l *label) []notice {
 	return []notice{result}
 }
 
-// notice is the side effect of a transition, run outside the lock.
+// notice is a side effect of an outcome (a log line, a stored transition),
+// run outside the lock.
 type notice struct {
 	message []any
+	// debug logs message at debug level instead of info.
+	debug bool
 	// cache is read under the lock: LoadCache may attach it concurrently.
 	cache    Cache
 	storeKey string
@@ -289,7 +266,11 @@ type notice struct {
 
 func (g *Guard) runNotices(notices []notice) {
 	for _, item := range notices {
-		g.logger.Info(item.message...)
+		if item.debug {
+			g.logger.Debug(item.message...)
+		} else {
+			g.logger.Info(item.message...)
+		}
 		if item.storeKey == "" {
 			continue
 		}

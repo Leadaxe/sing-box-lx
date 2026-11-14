@@ -27,6 +27,15 @@ func (c *fakeClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
 type memCache struct {
 	entries map[string]CacheEntry
 	stored  map[string]CacheEntry
+	deleted []string
+}
+
+func (c *memCache) DeleteSniffGuard(keys ...string) error {
+	for _, key := range keys {
+		delete(c.entries, key)
+	}
+	c.deleted = append(c.deleted, keys...)
+	return nil
 }
 
 func (c *memCache) LoadSniffGuard() map[string]CacheEntry { return c.entries }
@@ -165,7 +174,6 @@ func TestNilSafe(t *testing.T) {
 	}), errRefused)
 	require.Equal(t, 1, calls)
 	require.Equal(t, Decision{}, n.Peek(ProtoTLS, pathDirect))
-	n.Report(ProtoTLS, pathDirect, false, false)
 	var a *Attempt
 	require.Equal(t, Decision{}, a.Decide(ProtoTLS, pathDirect, true))
 	require.Nil(t, New(Config{}))
@@ -525,40 +533,6 @@ func TestNetworkChangedDropsStaleOutcome(t *testing.T) {
 	require.Equal(t, 1, calls)
 }
 
-func TestReportAndLate(t *testing.T) {
-	g, clock := newTestGuard(t, nil)
-	node := g.Node("cover")
-	hysteria := func(outcomeOK func(bool) bool) {
-		var protect bool
-		err := node.Dial(context.Background(), func(ctx context.Context) error {
-			attempt := AttemptFromContext(ctx)
-			protect = attempt.Decide(ProtoQUIC, pathDirect, true).Protect
-			attempt.Late()
-			return nil
-		})
-		require.NoError(t, err)
-		node.Report(ProtoQUIC, pathDirect, protect, outcomeOK(protect))
-	}
-	sniffed := func(protect bool) bool { return protect }
-	hysteria(sniffed) // fails without protection: pending pair
-	require.Equal(t, option.LXSniffGuardClean, stateOf(g, ProtoQUIC, pathDirect))
-	clock.Advance(time.Second)
-	hysteria(sniffed) // succeeds with it: the pair completes
-	require.Equal(t, option.LXSniffGuardSuspect, stateOf(g, ProtoQUIC, pathDirect))
-
-	// Late with a fast error: no retry.
-	calls := 0
-	err := node.Dial(context.Background(), func(ctx context.Context) error {
-		calls++
-		attempt := AttemptFromContext(ctx)
-		attempt.Decide(ProtoQUIC, pathDirect, true)
-		require.Same(t, node, attempt.Late())
-		return errRefused
-	})
-	require.Error(t, err)
-	require.Equal(t, 1, calls)
-}
-
 func TestPersist(t *testing.T) {
 	cache := &memCache{entries: map[string]CacheEntry{
 		"relay|tls":      {Fingerprint: "vless|relay.example|443", State: option.LXSniffGuardClean},
@@ -587,6 +561,9 @@ func TestPersist(t *testing.T) {
 	_, loaded := g.labels[labelKey{tag: "socks-enc", proto: ProtoQUIC}]
 	g.access.Unlock()
 	require.False(t, loaded, "never path")
+	require.ElementsMatch(t, []string{"relay|quic", "gone|tls"}, cache.deleted, "foreign fingerprint and a tag gone from the config")
+	require.Contains(t, cache.entries, "socks-out|tls", "a known carrier is kept even when not loaded")
+	require.Contains(t, cache.entries, "socks-enc|quic")
 
 	node := g.Node("cover")
 	_, err := dial(node, ProtoTLS, pathRelay, sniffedFast)

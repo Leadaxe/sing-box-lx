@@ -80,6 +80,18 @@ func sniffGuardPath(ctx context.Context, conn net.Conn) lxsniffguard.Path {
 	return lxsniffguard.Path{}
 }
 
+// withoutSniffGuardLx hides the sniff guard attempt and the carrier record of
+// a node's handshake from the DNS exchange that fetches its ECH config: the
+// TLS handshake of a DoH or DoT transport is not the node's own, and the
+// transport's detour is not the node's carrier.
+func withoutSniffGuardLx(ctx context.Context) context.Context {
+	ctx = lxsniffguard.WithoutAttempt(ctx)
+	if adapter.CarrierRecordFromContext(ctx) != nil {
+		ctx, _ = adapter.ContextWithCarrierRecord(ctx)
+	}
+	return ctx
+}
+
 // sniffGuardConnLx returns the conn the handshake writes its ClientHello to.
 // It calls Attempt.Decide exactly once when the dial carries an Attempt and
 // returns conn itself whenever the guard does not intervene.

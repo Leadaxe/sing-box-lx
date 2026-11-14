@@ -12,7 +12,7 @@
 // The handshake layer reads the decision from the dial context
 // (AttemptFromContext → Attempt.Decide); the outbound wrapper drives the
 // retry around the node's dial (Node.Dial). Seams that learn the outcome
-// late report it through Node.Report; AmneziaWG reads the label without an
+// late report it through Attempt.Report; AmneziaWG reads the label without an
 // outcome through Node.Peek.
 package lxsniffguard
 
@@ -100,6 +100,7 @@ type CarrierInfo struct {
 type Cache interface {
 	LoadSniffGuard() map[string]CacheEntry
 	StoreSniffGuard(key string, entry CacheEntry) error
+	DeleteSniffGuard(keys ...string) error
 }
 
 type CacheEntry struct {
@@ -185,7 +186,7 @@ func New(config Config) *Guard {
 	for tag, info := range config.Nodes {
 		g.nodes[tag] = &Node{guard: g, tag: tag, info: info}
 	}
-	g.loadCache()
+	g.logDeleteStale(g.deleteStale(g.loadCache()))
 	return g
 }
 
@@ -220,7 +221,6 @@ func (g *Guard) NetworkChanged() {
 		return
 	}
 	g.access.Lock()
-	defer g.access.Unlock()
 	g.epoch++
 	for key := range g.labels {
 		if g.isLocal(key) {
@@ -237,6 +237,7 @@ func (g *Guard) NetworkChanged() {
 			}
 		}
 	}
+	g.access.Unlock()
 	g.logger.Debug("sniff guard: network changed, labels of local paths reset")
 }
 
@@ -311,14 +312,20 @@ func (g *Guard) LoadCache(cache Cache) {
 		return
 	}
 	g.access.Lock()
-	defer g.access.Unlock()
 	g.cache = cache
-	g.loadCache()
+	// Deleted under the lock, once per box: a transition stored after the
+	// unlock under a stale key's name must not be deleted with it.
+	err := g.deleteStale(g.loadCache())
+	g.access.Unlock()
+	g.logDeleteStale(err)
 }
 
-func (g *Guard) loadCache() {
+// loadCache reads the persisted labels and returns the keys of entries that
+// describe no carrier of this config: their tag is gone, or the relay behind
+// it changed.
+func (g *Guard) loadCache() (stale []string) {
 	if g.cache == nil || !(g.policy.TLS.Persist || g.policy.QUIC.Persist) {
-		return
+		return nil
 	}
 	for cacheKey, entry := range g.cache.LoadSniffGuard() {
 		index := strings.LastIndexByte(cacheKey, '|')
@@ -326,6 +333,11 @@ func (g *Guard) loadCache() {
 			continue
 		}
 		tag := cacheKey[:index]
+		carrier, ok := g.carriers[tag]
+		if !ok || carrier.Fingerprint != entry.Fingerprint {
+			stale = append(stale, cacheKey)
+			continue
+		}
 		proto, ok := parseProto(cacheKey[index+1:])
 		if !ok {
 			continue
@@ -334,8 +346,7 @@ func (g *Guard) loadCache() {
 		if !section.Enabled() || !section.Persist {
 			continue
 		}
-		carrier, ok := g.carriers[tag]
-		if !ok || !carrier.Encrypted || carrier.Fingerprint != entry.Fingerprint {
+		if !carrier.Encrypted {
 			continue
 		}
 		start := section.StartState(carrier.Type)
@@ -350,6 +361,21 @@ func (g *Guard) loadCache() {
 			continue
 		}
 		g.labels[key] = &label{state: entry.State}
+	}
+	return stale
+}
+
+// deleteStale deletes the entries loadCache found stale.
+func (g *Guard) deleteStale(stale []string) error {
+	if len(stale) == 0 {
+		return nil
+	}
+	return g.cache.DeleteSniffGuard(stale...)
+}
+
+func (g *Guard) logDeleteStale(err error) {
+	if err != nil {
+		g.logger.Warn("sniff guard: delete stale cache entries: ", err)
 	}
 }
 

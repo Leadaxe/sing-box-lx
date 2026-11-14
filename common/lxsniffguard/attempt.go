@@ -21,16 +21,19 @@ type Decision struct {
 	Override bool
 }
 
-// Attempt is one call of the node's dial function inside Node.Dial. A nil
-// *Attempt means the feature is off for this dial.
+// Attempt is one call of the node's dial function inside Node.Dial, or a
+// handshake begun outside it (Node.Begin). A nil *Attempt means the feature
+// is off for this dial.
 type Attempt struct {
 	node  *Node
 	start time.Time
 	// forced is the opposite decision of an in-dial retry.
 	forced *forcedDecision
+	// late marks an attempt from Node.Begin: nothing settles it, Report
+	// counts its outcome.
+	late bool
 	// Guarded by node.guard.access.
 	mark *mark
-	late bool
 	// closed is set once the attempt can no longer carry a mark: Node.Dial
 	// settled it, or Withdraw dropped its mark. A later Decide answers by the
 	// label without a mark and without the pending pair.
@@ -84,9 +87,11 @@ func (a *Attempt) Override() bool {
 // choice under override=false: the zero Decision is returned and the outcome
 // of the dial is not counted.
 //
-// Calling Decide again for the same key returns the same decision. Only an
-// attempt that called Decide with applicable=true has its outcome counted
-// and may be retried; a dial that reused a ready session leaves no mark.
+// Calling Decide again for the same key returns the same decision; once the
+// attempt holds a mark, a Decide for another key returns the zero Decision
+// and leaves the mark alone. Only an attempt that called Decide with
+// applicable=true has its outcome counted and may be retried; a dial that
+// reused a ready session leaves no mark.
 func (a *Attempt) Decide(proto Proto, path Path, applicable bool) Decision {
 	if a == nil {
 		return Decision{}
@@ -109,9 +114,10 @@ func (a *Attempt) Decide(proto Proto, path Path, applicable bool) Decision {
 		if a.mark.key == key {
 			return a.mark.decision
 		}
-		if a.mark.pair != nil {
-			a.mark.pair.taken = false
-		}
+		// A handshake on another path inside the node's own (a nested dial
+		// that still carries the attempt) is not the node's: the mark, and
+		// the pair it took, stay with the first handshake.
+		return Decision{}
 	}
 	now := g.now()
 	m := &mark{key: key, start: start, epoch: g.epoch, began: a.start}
@@ -130,18 +136,29 @@ func (a *Attempt) Decide(proto Proto, path Path, applicable bool) Decision {
 	return m.decision
 }
 
-// Late hands the outcome of this attempt over to the seam that learns it
-// later (hysteria2, tuic: the 30-second window). Node.Dial then neither
-// counts the dial's error nor retries; the seam reports through the returned
-// node's Report with the decision Decide gave.
-func (a *Attempt) Late() *Node {
+// Report counts the outcome of an attempt from Node.Begin, learnt after the
+// dial returned (hysteria2, tuic: a connection closed within 30 seconds of
+// the dial is a failure), against the mark Decide set: its path, start
+// state, network epoch and pending pair. A failure never retries; it may
+// leave a pending pair for the next dial. An attempt without a mark
+// (withdrawn, never decided or already reported) and an attempt Node.Dial
+// settles report nothing.
+func (a *Attempt) Report(ok bool) {
 	if a == nil {
-		return nil
+		return
 	}
-	a.node.guard.access.Lock()
-	a.late = true
-	a.node.guard.access.Unlock()
-	return a.node
+	g := a.node.guard
+	g.access.Lock()
+	m := a.mark
+	if m == nil || !a.late {
+		g.access.Unlock()
+		return
+	}
+	a.mark = nil
+	a.closed = true
+	_, notices := a.node.settleLocked(m, ok, false)
+	g.access.Unlock()
+	g.runNotices(notices)
 }
 
 // Withdraw drops the handshake mark: the decided method turned out to do

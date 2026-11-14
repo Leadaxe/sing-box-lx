@@ -33,8 +33,10 @@ func TestLoadCacheLate(t *testing.T) {
 	cache := &memCache{entries: map[string]CacheEntry{
 		"relay|tls":  {Fingerprint: "vless|relay.example|443", State: option.LXSniffGuardClean},
 		"relay2|tls": {Fingerprint: "vless|relay2.example|443", State: option.LXSniffGuardClean},
+		"gone|quic":  {Fingerprint: "vless|gone.example|443", State: option.LXSniffGuardSuspect},
 	}}
 	g.LoadCache(cache)
+	require.Equal(t, []string{"gone|quic"}, cache.deleted, "a tag that left the config is shed")
 	require.Equal(t, option.LXSniffGuardSuspect, stateOf(g, ProtoTLS, pathRelay), "a label learnt in this box wins")
 	require.Equal(t, option.LXSniffGuardClean, stateOf(g, ProtoTLS, pathRelay2), "loaded late")
 

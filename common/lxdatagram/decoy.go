@@ -72,7 +72,6 @@ func GuardPath(conn any, record *adapter.CarrierRecord) lxsniffguard.Path {
 // *QUICHandshake is a handshake the guard does not touch.
 type QUICHandshake struct {
 	attempt  *lxsniffguard.Attempt
-	path     lxsniffguard.Path
 	decision lxsniffguard.Decision
 	delay    *InitialDelayConn
 }
@@ -89,8 +88,8 @@ func GuardQUIC(attempt *lxsniffguard.Attempt, dialled any, record *adapter.Carri
 	if attempt == nil {
 		return conn, nil
 	}
-	handshake := &QUICHandshake{attempt: attempt, path: GuardPath(dialled, record)}
-	handshake.decision = attempt.Decide(lxsniffguard.ProtoQUIC, handshake.path, true)
+	handshake := &QUICHandshake{attempt: attempt}
+	handshake.decision = attempt.Decide(lxsniffguard.ProtoQUIC, GuardPath(dialled, record), true)
 	if handshake.decision.Protect && handshake.decision.Method == option.LXSniffGuardQUICDecoy {
 		WriteSniffDecoy(conn, logger)
 	}
@@ -128,5 +127,5 @@ func (h *QUICHandshake) Report(ok bool) {
 		h.attempt.Withdraw()
 		return
 	}
-	h.attempt.Late().Report(lxsniffguard.ProtoQUIC, h.path, h.decision.Protect, ok)
+	h.attempt.Report(ok)
 }

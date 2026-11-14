@@ -15,6 +15,7 @@ import (
 	"github.com/sagernet/sing-box/protocol/anytls"
 	"github.com/sagernet/sing-box/protocol/http"
 	"github.com/sagernet/sing-box/protocol/hysteria2"
+	"github.com/sagernet/sing-box/protocol/masque"
 	"github.com/sagernet/sing-box/protocol/shadowtls"
 	"github.com/sagernet/sing-box/protocol/trojan"
 	"github.com/sagernet/sing-box/protocol/trusttunnel"
@@ -56,6 +57,7 @@ const sniffGuardOutbounds = `[
   {"type": "hysteria2", "tag": "hysteria2", "server": "node.example", "server_port": 443, "password": "p", "tls": {"enabled": true, "server_name": "cover.example"}},
   {"type": "tuic", "tag": "tuic", "server": "node.example", "server_port": 443, "uuid": "b831381d-6324-4d53-ad4f-8cda48b30811", "password": "p", "tls": {"enabled": true, "server_name": "cover.example"}},
   {"type": "trusttunnel", "tag": "trusttunnel", "server": "node.example", "server_port": 443, "username": "u", "password": "p", "tls": {"enabled": true, "server_name": "cover.example"}},
+  {"type": "masque", "tag": "masque", "profile": "standard", "vhttp": "h3", "server": "127.0.0.1", "server_port": 443, "uri": "https://127.0.0.1/.well-known/masque/ip/*/*/", "ip": "172.16.0.2", "tls": {"server_name": "cover.example"}},
   {"type": "socks", "tag": "socks", "server": "127.0.0.1", "server_port": 1080},
   {"type": "selector", "tag": "group", "outbounds": ["vless", "trojan"]}
 ]`
@@ -99,6 +101,7 @@ func TestSniffGuardCheckFullBlock(t *testing.T) {
 		"hysteria2":   reflect.TypeOf((*hysteria2.Outbound)(nil)),
 		"tuic":        reflect.TypeOf((*tuic.Outbound)(nil)),
 		"trusttunnel": reflect.TypeOf((*trusttunnel.Outbound)(nil)),
+		"masque":      reflect.TypeOf((*masque.Outbound)(nil)),
 	}
 	for tag, protocolType := range covered {
 		outbound, loaded := manager.Outbound(tag)

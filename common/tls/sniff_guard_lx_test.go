@@ -20,6 +20,7 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/logger"
 
+	mDNS "github.com/miekg/dns"
 	"github.com/stretchr/testify/require"
 )
 
@@ -484,4 +485,38 @@ func TestLxSniffGuardDelaySplit(t *testing.T) {
 	t.Parallel()
 	require.Zero(t, sniffGuardDelaySplit(nil))
 	require.Zero(t, sniffGuardDelaySplit([]byte{23, 3, 3, 0, 1, 0}))
+}
+
+// lxGuardDNSRouter records the context of the ECH config exchange.
+type lxGuardDNSRouter struct {
+	adapter.DNSRouter
+	exchangeCtx context.Context
+}
+
+func (r *lxGuardDNSRouter) Exchange(ctx context.Context, message *mDNS.Msg, options adapter.DNSQueryOptions) (*mDNS.Msg, error) {
+	r.exchangeCtx = ctx
+	return nil, errors.New("no DNS in this test")
+}
+
+// The ECH config is fetched inside the node's handshake, but the DNS
+// exchange is not the node's: a DoT or DoH transport dialled from it must see
+// neither the node's attempt nor its carrier record.
+func TestLxSniffGuardECHExchangeHidesAttempt(t *testing.T) {
+	node := lxGuardNode(t, option.LXSniffGuardTLSRecordFragment, option.LXSniffGuardSuspect, false)
+	echCapable, isECH := lxGuardSTDConfig(t, false, nil).(ECHCapableConfig)
+	require.True(t, isECH)
+	router := &lxGuardDNSRouter{}
+	config := &ECHClientConfig{ECHCapableConfig: echCapable, dnsRouter: router}
+	dialCtx, record := adapter.ContextWithCarrierRecord(context.Background())
+	_ = node.Dial(dialCtx, func(ctx context.Context) error {
+		require.NotNil(t, lxsniffguard.AttemptFromContext(ctx))
+		_, err := config.fetchAndHandshake(ctx, nil)
+		require.Error(t, err)
+		return err
+	})
+	require.NotNil(t, router.exchangeCtx)
+	require.Nil(t, lxsniffguard.AttemptFromContext(router.exchangeCtx))
+	exchangeRecord := adapter.CarrierRecordFromContext(router.exchangeCtx)
+	require.NotNil(t, exchangeRecord)
+	require.NotSame(t, record, exchangeRecord, "the transport's detour is not the node's carrier")
 }
