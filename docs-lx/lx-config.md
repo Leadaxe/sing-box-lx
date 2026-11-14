@@ -1106,7 +1106,8 @@ endpoint.
   ClientHello fragmentation + `fragment_fallback_delay`; **`record_fragment` is not
   touched** — protection of the path against rerouting by SNI is set by `lx.sniff_guard`, see §9
   and §13),
-  `multiplex.padding`, `xhttp.padding` (minimal range, obfs mode off). `tls.utls` is
+  `multiplex.padding`, `xhttp.padding` (`x_padding_bytes` is pinned to the lower bound of the node's range, `100`
+  when unset; placement and obfs mode are kept). `tls.utls` is
   available via `"tls.utls": true` (start error on a node that uses `reality`). Server
   contracts — `flow`, `obfs`, `shadowtls`, `plugin`, `udp_over_tcp`, `ech`, transport
   paths — are never stripped.

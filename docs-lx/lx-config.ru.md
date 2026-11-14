@@ -1100,7 +1100,8 @@ endpoint или группа любой вложенности; все три ф
 - **Каталог `strip`** (односторонние, сервер их не видит): `tls.fragment` (пакетная
   фрагментация ClientHello + `fragment_fallback_delay`; **`record_fragment` не трогается** —
   защиту пути от перенаправления по SNI задаёт `lx.sniff_guard`, см. §9 и §13),
-  `multiplex.padding`, `xhttp.padding` (минимальный диапазон, obfs-режим выкл.).
+  `multiplex.padding`, `xhttp.padding` (`x_padding_bytes` фиксируется на нижней границе диапазона узла, `100`
+  без явного диапазона; размещение и obfs-режим не меняются).
   `tls.utls` доступен через `"tls.utls": true` (ошибка старта на узле с `reality`).
   Контракты с сервером — `flow`, `obfs`, `shadowtls`, `plugin`, `udp_over_tcp`, `ech`,
   пути транспортов — не снимаются никогда.
