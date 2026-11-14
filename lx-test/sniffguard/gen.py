@@ -272,7 +272,9 @@ def client(work, name):
         cfg["endpoints"] = endpoints
     lx = {}
     if sc.get("guard"):
-        lx["sniff_guard"] = sc["guard"]
+        # the stand also runs nodes with their own name (the "-own" controls):
+        # keep them covered, the block default protects only an SNI mismatch
+        lx["sniff_guard"] = dict({"nodes": {"sni_mismatch": False}}, **sc["guard"])
     lx.update(sc.get("lx_extra", {}))
     if lx:
         cfg["lx"] = lx

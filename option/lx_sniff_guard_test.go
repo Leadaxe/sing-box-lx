@@ -70,8 +70,8 @@ func TestLXSniffGuardDefaults(t *testing.T) {
 	if !resolved.Enabled() || !resolved.TLS.Enabled() || resolved.QUIC.Enabled() {
 		t.Fatalf("Enabled: %+v", resolved)
 	}
-	if resolved.SNIMismatchOnly || resolved.OutboundTypes != nil || resolved.Override {
-		t.Fatalf("nodes and override must default to no filter, false: %+v", resolved)
+	if !resolved.SNIMismatchOnly || resolved.OutboundTypes != nil || resolved.Override {
+		t.Fatalf("defaults: sni_mismatch on, no outbound_type filter, override off: %+v", resolved)
 	}
 	if resolved.TLS.Delay != 300*time.Millisecond || resolved.TLS.Persist {
 		t.Fatalf("section defaults: %+v", resolved.TLS)
@@ -81,6 +81,47 @@ func TestLXSniffGuardDefaults(t *testing.T) {
 	}
 	if resolved.QUIC.StartState("direct") != LXSniffGuardNever || resolved.QUIC.StartState("vless") != LXSniffGuardNever {
 		t.Fatal("a section without a method must start never on every path")
+	}
+}
+
+// sni_mismatch is on unless the key is false; the default spellings
+// canonicalize to an absent nodes block, false stays.
+func TestLXSniffGuardSNIMismatchDefault(t *testing.T) {
+	t.Parallel()
+	for _, content := range []string{
+		`{"lx":{"sniff_guard":{"tls":{"method":"fragment"}}}}`,
+		`{"lx":{"sniff_guard":{"nodes":{},"tls":{"method":"fragment"}}}}`,
+		`{"lx":{"sniff_guard":{"nodes":{"sni_mismatch":null},"tls":{"method":"fragment"}}}}`,
+		`{"lx":{"sniff_guard":{"nodes":{"sni_mismatch":true},"tls":{"method":"fragment"}}}}`,
+	} {
+		options, resolved := mustResolveLX(t, content)
+		if !resolved.SniffGuard.SNIMismatchOnly {
+			t.Fatalf("%s: sni_mismatch must default to on", content)
+		}
+		if options.LX.SniffGuard.Nodes != nil {
+			t.Fatalf("%s: the default must canonicalize to an absent nodes block", content)
+		}
+	}
+	options, resolved := mustResolveLX(t, `{"lx":{"sniff_guard":{"nodes":{"sni_mismatch":false},"tls":{"method":"fragment"}}}}`)
+	if resolved.SniffGuard.SNIMismatchOnly {
+		t.Fatal("sni_mismatch: false must cover every node")
+	}
+	nodes := options.LX.SniffGuard.Nodes
+	if nodes == nil || nodes.SNIMismatch == nil || *nodes.SNIMismatch {
+		t.Fatalf("sni_mismatch: false must stay in the canonical options, got %+v", nodes)
+	}
+	content, err := json.Marshal(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, again := mustResolveLX(t, string(content)); again.SniffGuard.SNIMismatchOnly {
+		t.Fatalf("canonical round trip lost sni_mismatch: false: %s", content)
+	}
+	// With an outbound_type filter the true key is dropped, the list stays.
+	options, resolved = mustResolveLX(t, `{"lx":{"sniff_guard":{"nodes":{"sni_mismatch":true,"outbound_type":["vless"]},"tls":{"method":"fragment"}}}}`)
+	nodes = options.LX.SniffGuard.Nodes
+	if !resolved.SniffGuard.SNIMismatchOnly || nodes == nil || nodes.SNIMismatch != nil || len(nodes.OutboundType) != 1 {
+		t.Fatalf("sni_mismatch: true next to outbound_type: %+v / %+v", resolved.SniffGuard, nodes)
 	}
 }
 

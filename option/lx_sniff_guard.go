@@ -70,10 +70,13 @@ type _LXSniffGuardOptions struct {
 type LXSniffGuardOptions _LXSniffGuardOptions
 
 // LXSniffGuardNodesOptions selects the protected nodes; a node is protected
-// when it passes both filters.
+// when it passes both filters. A nil block is the default: sni_mismatch on,
+// no outbound_type filter.
 type LXSniffGuardNodesOptions struct {
 	// SNIMismatch limits protection to nodes whose SNI differs from server.
-	SNIMismatch bool `json:"sni_mismatch,omitempty"`
+	// nil = true: a node with its own name passes a sniffer unprotected
+	// anyway; false covers every node.
+	SNIMismatch *bool `json:"sni_mismatch,omitempty"`
 	// OutboundType limits protection to the listed types; nil = no filter.
 	OutboundType LXSniffGuardOutboundTypes `json:"outbound_type,omitempty"`
 }
@@ -116,7 +119,7 @@ type lxSniffGuardRaw struct {
 }
 
 type lxSniffGuardNodesRaw struct {
-	SNIMismatch  bool            `json:"sni_mismatch"`
+	SNIMismatch  *bool           `json:"sni_mismatch"`
 	OutboundType json.RawMessage `json:"outbound_type"`
 }
 
@@ -306,6 +309,12 @@ func lxSniffGuardIsAbsent(content []byte) bool {
 	return len(trimmed) == 0 || string(trimmed) == "null"
 }
 
+// sniMismatchOnly is the sni_mismatch filter with its default: on unless the
+// key is false.
+func (o *LXSniffGuardNodesOptions) sniMismatchOnly() bool {
+	return o == nil || o.SNIMismatch == nil || *o.SNIMismatch
+}
+
 func lxSniffGuardMethodSet(method string) bool {
 	return method != "" && method != LXSniffGuardOff
 }
@@ -325,8 +334,16 @@ func (o *LXSniffGuardOptions) canonical() *LXSniffGuardOptions {
 		return nil
 	}
 	result := *o
-	if result.Nodes != nil && !result.Nodes.SNIMismatch && len(result.Nodes.OutboundType) == 0 {
-		result.Nodes = nil
+	if result.Nodes != nil {
+		nodes := *result.Nodes
+		if nodes.sniMismatchOnly() {
+			nodes.SNIMismatch = nil
+		}
+		if nodes.SNIMismatch == nil && len(nodes.OutboundType) == 0 {
+			result.Nodes = nil
+		} else {
+			result.Nodes = &nodes
+		}
 	}
 	if len(result.DetourType) == 0 {
 		result.DetourType = nil
@@ -355,7 +372,7 @@ func (o *LXSniffGuardOptions) canonical() *LXSniffGuardOptions {
 // LXSniffGuardResolved is lx.sniff_guard with its defaults applied. The zero
 // value is an absent block: the feature is off.
 type LXSniffGuardResolved struct {
-	SNIMismatchOnly bool     // nodes.sni_mismatch: true
+	SNIMismatchOnly bool     // true unless nodes.sni_mismatch: false
 	OutboundTypes   []string // nil = no filter
 	Override        bool
 	TLS             LXSniffGuardSectionResolved
@@ -419,9 +436,8 @@ func resolveLXSniffGuard(o *LXSniffGuardOptions) LXSniffGuardResolved {
 	if !o.tlsEnabled() && !o.quicEnabled() {
 		return LXSniffGuardResolved{}
 	}
-	resolved := LXSniffGuardResolved{Override: o.Override}
+	resolved := LXSniffGuardResolved{Override: o.Override, SNIMismatchOnly: o.Nodes.sniMismatchOnly()}
 	if o.Nodes != nil {
-		resolved.SNIMismatchOnly = o.Nodes.SNIMismatch
 		if len(o.Nodes.OutboundType) > 0 {
 			resolved.OutboundTypes = append([]string(nil), o.Nodes.OutboundType...)
 		}
