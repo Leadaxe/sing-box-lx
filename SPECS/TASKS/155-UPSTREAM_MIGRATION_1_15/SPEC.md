@@ -178,6 +178,16 @@
   порты SPEC 040 плюс апстримное `identification`. Сборка darwin, linux arm64/mipsle, windows,
   android; тесты затронутых пакетов зелёные (`TestDevicePauseLeavesSocketOpen` один раз упал в
   общем прогоне на занятом UDP-порту, отдельно проходит). На NanoPi этот срез не гонялся.
+- **2026-11-15, влит `lx` до `v1.14.4-lx.35` и третий синк с `testing`** (`a13dbe1f7` → `3dd8aa48d`,
+  ветку снова перезалили, база явная). `lx.sniff_guard` (SPEC 060) заменил `lx.quic_sniff_decoy`:
+  `masque-client` — узел охраны (h3 — `lxdatagram.Dialer` по тегу узла, h2 — открытие туннеля внутри
+  `Node.Dial`), обёртка над outbound'ами получила вариант для HTTP-outbound'а 1.15. Сабмодули:
+  `wireguard-go` — влит `lx-awg2-v007` (SPEC 041 по выбору, AWG 3.x без аллокаций), `sing-tun` — пин
+  `testing` `40bd6cff5647` (тоже перезалит, база `79ed065`), `utls` — `v1.9.0-alpha.1`, как у `lx`.
+  Синк `testing` после мержа `lx` изменил только 5 файлов доков: апстримные правки срезом уже пришли
+  через `stable`. Проверка дельты по файлам — ни один не отдалился от апстрима. Сборка с тегами и без,
+  кросс linux arm64/mipsle, windows, android; тесты затронутых пакетов зелёные, кроме сетевых
+  `tlsfragment` (живой 1.1.1.1) и известного `TestQuiesceForShutdown*`.
 
 ## 6. Критерии приёмки
 

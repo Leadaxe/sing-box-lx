@@ -70,6 +70,8 @@ required for stable tags); this changelog section is the fallback used for pre-r
   ошибка конфига; спуск на h1 в работе заканчивается ошибкой без запроса к серверу. Туннеля на h1
   у WARP нет (`404` на `Upgrade`, `400` на `CONNECT`, 16 форм запроса), раньше в лог попадал этот
   статус вместо причины.
+- 🔀 **Третий синк с перезалитым `upstream/testing`** (`a13dbe1f7` → `3dd8aa48d`): после мержа `lx` по
+  существу совпадал — апстримные правки пришли через `stable`; изменились доки. SPEC 155 §5a.
 - 🔀 **Влит `lx` до `v1.14.4-lx.35`**: `lx.sniff_guard` вместо `lx.quic_sniff_decoy` и дефолта
   разреза ClientHello под `detour` (SPEC 060), явное `record_fragment: false` (SPEC 156), гонка
   выбора urltest на пути dial (#69), отменённый запрос DNS-группы не штрафует участника (#68),
