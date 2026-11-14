@@ -20,6 +20,7 @@ type DNSRouter interface {
 	Lookup(ctx context.Context, domain string, options DNSQueryOptions) ([]netip.Addr, error)
 	ClearCache()
 	LookupReverseMapping(ip netip.Addr) (string, bool)
+	LookupECHPublicName(domain string) string
 	ResetNetwork()
 	// lx:begin lx_command
 	// Rules returns the live DNS rule table, mirroring Router.Rules() for route

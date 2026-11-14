@@ -32,7 +32,7 @@ require (
 	github.com/logrusorgru/aurora v2.0.3+incompatible
 	github.com/mattn/go-runewidth v0.0.27
 	github.com/mdlayher/netlink v1.11.2
-	github.com/metacubex/utls v1.8.7
+	github.com/metacubex/utls v1.9.0-alpha.1
 	github.com/mholt/acmez/v3 v3.1.6
 	github.com/miekg/dns v1.1.72
 	github.com/openai/openai-go/v3 v3.26.0
@@ -47,20 +47,20 @@ require (
 	github.com/sagernet/gliderssh v0.3.4-0.20261023092853-e0cad6d28647
 	github.com/sagernet/gomobile v0.1.12
 	github.com/sagernet/gvisor v0.0.0-20260727.0-sing-box-mod.1
-	github.com/sagernet/netlink v0.0.0-20260814022025-64455d367bbf
-	github.com/sagernet/nftables v0.3.0-mod.4
-	github.com/sagernet/quic-go v0.61.0-sing-box-mod.13
+	github.com/sagernet/netlink v0.0.0-20261114050611-bf24b30b925f
+	github.com/sagernet/nftables v0.3.0-mod.4.0.20261114074246-0b310c3e010b
+	github.com/sagernet/quic-go v0.61.0-sing-box-mod.14
 	github.com/sagernet/sing v0.9.7-0.20261110095939-f545d0260412
 	github.com/sagernet/sing-cloudflared v0.1.4-0.20261108120326-83391fb7b139
 	github.com/sagernet/sing-mux v0.3.10-0.20261110064256-375087483ea2
 	github.com/sagernet/sing-openconnect v0.1.1-0.20261110063157-f28cbff7da8d
 	github.com/sagernet/sing-openvpn v0.1.1-0.20261110111704-d1e498f993a0
-	github.com/sagernet/sing-quic v0.7.2-0.20261109110824-5253224b67cf
+	github.com/sagernet/sing-quic v0.7.2-0.20261114063120-0979e001618d
 	github.com/sagernet/sing-shadowsocks v0.2.9-0.20260929204512-65740e0f0e3e
 	github.com/sagernet/sing-shadowsocks2 v0.2.2-0.20261110092058-52ade8ab7e95
-	github.com/sagernet/sing-shadowtls v0.2.2-0.20261110092247-ce8a3b8474bb
+	github.com/sagernet/sing-shadowtls v0.2.2-0.20261114073233-97863830a3b3
 	github.com/sagernet/sing-snell v0.0.0-20261110094602-04667b0a321c
-	github.com/sagernet/sing-tun v0.9.7-0.20261109145621-cb941cc824bf
+	github.com/sagernet/sing-tun v0.9.7-0.20261114080500-78e734ea0994
 	github.com/sagernet/sing-usbip v0.0.0-20260817040617-28bd42667eca
 	github.com/sagernet/sing-vmess v0.2.9-0.20261110093549-d800eb57f96c
 	github.com/sagernet/smux v1.5.50-sing-box-mod.1
@@ -244,26 +244,22 @@ replace github.com/sagernet/gvisor => ./submodules/gvisor
 // lx:end gvisor-handshake-guard
 
 // lx:begin utls-firefox148 (SPECS/TASKS/086)
-// Fork of metacubex/utls at the pinned v1.8.7 (the exact `require` above, identical to
-// upstream's pin) plus eight commits. Four are cherry-picked from refraction-networking/utls:
-// fc716b2 (the HelloFirefox_148 preset + reuse of one classical X25519 key between the
-// hybrid and the classical key_share entries), ddebe39 (the same reuse re-done via
-// marker bytes in KeyShare.Data instead of an unexported field), aa6edf4 (the
-// HelloSafari_26_3 preset, SPECS/TASKS/087) and 6ebdceb (the HelloChrome_155 preset and
-// the trust_anchors extension, SPECS/TASKS/118). Three are ours, around 6ebdceb: the ML-DSA
-// signature scheme codepoints only (no ML-DSA handshake support, that needs Go 1.27), the
-// dropped ML-DSA handshake test, and HelloChrome_Auto kept at Chrome 133 — Chrome 155 is
-// opt-in under the `chrome_155` fingerprint name (common/tls/utls_client.go). The eighth, ours, is a
-// new file u_conn_release_lx.go: UConn.ReleaseHandshakeState drops the ClientHelloSpec and ECH
-// context after a TLS 1.3 handshake (SPECS/TASKS/122). REALITY servers on
-// Xray >= v26.9.8 accept a ClientHello only with an X25519MLKEM768 share ahead of
-// X25519; metacubex/utls carries that share in the chrome presets alone, so
-// `fp=firefox` (HelloFirefox_120 there) and `fp=safari` (HelloSafari_16_0) are silently
-// rejected. The primary source can't
-// be used directly: metacubex/utls carries the REALITY server and the go:linkname
-// exports common/badtls and common/ktls stand on, and metacubex itself takes no
-// external PRs and has no Firefox 148. Local-path replace, same scheme as the other
-// three submodules; the module path is unchanged so the linknames keep resolving.
+// Fork of metacubex/utls at the pinned v1.9.0-alpha.1 (the exact `require` above, identical
+// to upstream's pin) plus five commits. Since v1.9.0-alpha.1 metacubex itself carries
+// HelloFirefox_148 with the reuse of one classical X25519 key between the hybrid and the
+// classical key_share entries and HelloSafari_26_3 (SPECS/TASKS/086, 087), so those are no
+// longer ours. What stays: the cherry-pick of refraction-networking/utls 6ebdceb (the
+// HelloChrome_155 preset and the trust_anchors extension, SPECS/TASKS/118) with three of
+// ours around it — the ML-DSA signature scheme codepoints only (no ML-DSA handshake
+// support, that needs Go 1.27), the dropped ML-DSA handshake test, and HelloChrome_Auto
+// kept at Chrome 133: Chrome 155 is opt-in under the `chrome_155` fingerprint name
+// (common/tls/utls_client.go). The fifth, ours, is a new file u_conn_release_lx.go:
+// UConn.ReleaseHandshakeState drops the ClientHelloSpec and ECH context after a TLS 1.3
+// handshake (SPECS/TASKS/122). The primary source can't be used directly: metacubex/utls
+// carries the REALITY server and the go:linkname exports common/badtls and common/ktls
+// stand on, and metacubex itself takes no external PRs. Local-path replace, same scheme
+// as the other three submodules; the module path is unchanged so the linknames keep
+// resolving.
 replace github.com/metacubex/utls => ./submodules/utls
 
 // lx:end utls-firefox148

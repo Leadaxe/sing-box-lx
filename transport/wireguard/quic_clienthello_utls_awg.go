@@ -84,10 +84,17 @@ func buildBrowserClientHello(sni, browser string, scid []byte) ([]byte, error) {
 	if err := q.ApplyPreset(&spec); err != nil {
 		return nil, E.Cause(err, "amneziawg: uTLS ApplyPreset")
 	}
-	// uTLS ignores SetTransportParameters for a preset-built ClientHello; the
-	// transport parameters travel inside the QUICTransportParametersExtension
-	// the spec functions above add. Start still requires a non-nil value.
-	q.SetTransportParameters([]byte{})
+	// The transport parameters travel inside the QUICTransportParametersExtension
+	// the spec functions above add. Start requires SetTransportParameters, and
+	// since utls v1.9 that call overwrites the extension of a preset-built
+	// ClientHello, so it gets the extension's own parameters back.
+	var transportParameters []byte
+	for _, extension := range spec.Extensions {
+		if quicParameters, isQUICParameters := extension.(*utls.QUICTransportParametersExtension); isQUICParameters {
+			transportParameters = quicParameters.TransportParameters.Marshal()
+		}
+	}
+	q.SetTransportParameters(transportParameters)
 	if err := q.Start(context.Background()); err != nil {
 		return nil, E.Cause(err, "amneziawg: uTLS QUIC start")
 	}
