@@ -1288,3 +1288,48 @@ func TestChainCloneConfigJSON(t *testing.T) {
 		t.Fatal("evicted link must not serve a config")
 	}
 }
+
+// The XHTTP server validates the padding length against its own range and
+// reads it from the configured placement, so the strip may only narrow the
+// range to its lower bound.
+func TestApplyStripXHTTPPadding(t *testing.T) {
+	set := stripSet{"xhttp.padding": true}
+	for _, tc := range []struct {
+		name     string
+		padding  any
+		want     any
+		stripped bool
+	}{
+		{"default range", nil, "100", true},
+		{"empty", "", "100", true},
+		{"explicit range", "200-500", "200", true},
+		{"reversed range", "500-200", "200", true},
+		{"spaced range", " 300 - 900 ", "300", true},
+		{"single value", "150", "150", false},
+		{"unparsable", "abc", "abc", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := map[string]any{"type": "xhttp", "x_padding_obfs_mode": true, "x_padding_placement": "cookie"}
+			if tc.padding != nil {
+				transport["x_padding_bytes"] = tc.padding
+			}
+			stripped, err := applyStrip(map[string]any{"transport": transport}, set)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if transport["x_padding_bytes"] != tc.want {
+				t.Fatalf("x_padding_bytes=%v, want %v", transport["x_padding_bytes"], tc.want)
+			}
+			if got := len(stripped) == 1 && stripped[0] == "xhttp.padding"; got != tc.stripped {
+				t.Fatalf("stripped=%v, want reported=%v", stripped, tc.stripped)
+			}
+			if transport["x_padding_obfs_mode"] != true || transport["x_padding_placement"] != "cookie" {
+				t.Fatalf("padding placement is a server contract and must stay: %v", transport)
+			}
+		})
+	}
+	other := map[string]any{"type": "ws"}
+	if stripped, _ := applyStrip(map[string]any{"transport": other}, set); len(stripped) != 0 || other["x_padding_bytes"] != nil {
+		t.Fatalf("non-xhttp transport touched: %v %v", stripped, other)
+	}
+}
