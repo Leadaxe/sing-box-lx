@@ -147,7 +147,7 @@ func (s *ECHClientConfig) fetchAndHandshake(ctx context.Context, conn net.Conn) 
 				},
 			},
 		}
-		response, err := s.dnsRouter.Exchange(ctx, message, adapter.DNSQueryOptions{})
+		response, err := s.dnsRouter.Exchange(withoutSniffGuardLx(ctx), message, adapter.DNSQueryOptions{}) // lx: SPEC 060
 		if err != nil {
 			return nil, E.Cause(err, "fetch ECH config list")
 		}
