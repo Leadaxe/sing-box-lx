@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — `vhttp: auto` после одного быстрого отказа h3 парковал узел на h2 до рестарта или отказа h2 |
-| Статус | I (implemented) — 2026-10-09: код, юниты, прогон на живом WARP с GL ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)) |
+| Статус | D (done) — 2026-10-09: код, юниты, прогон на живом WARP с GL ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)); закрыта владельцем 2026-11-14 |
 | Ветка | `lx` |
 | Build-tag | нет (lx-файл `protocol/masque/outbound.go`) |
 | Источник | Наблюдение на стенде [120](../120-PATH_MTU_ALIGN/IMPLEMENTATION_REPORT.md): ~25 % подъёмов h3-туннеля к WARP падают сразу с `PROTOCOL_VIOLATION (remote)`, повтор проходит |

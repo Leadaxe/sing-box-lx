@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — отпечаток Chrome 155 по явному имени `fp=chrome_155`; `chrome` (и пустой `fingerprint`, и алиасы `chrome_*`) остаётся `HelloChrome_133` |
-| Статус | I (implemented) — 2026-10-08: в форке [Leadaxe/utls-lx](https://github.com/Leadaxe/utls-lx) четвёртый `cherry-pick -x` из refraction (`6ebdceb`) и три наших коммита, локально; в ядре имя `chrome_155` и страж в `common/tls`; `make -f Makefile.lx lx-build` и тесты зелёные. Форк не запушен, гитлинк в ядре не закоммичен. Полевая проверка (REALITY на Xray ≥ v26.9.8 со стенда 086 и обычный TLS через Cloudflare) не прогонялась. Открыт пункт по приложениям — см. «Открытые вопросы» |
+| Статус | D (done) — 2026-10-08: в форке [Leadaxe/utls-lx](https://github.com/Leadaxe/utls-lx) четвёртый `cherry-pick -x` из refraction (`6ebdceb`) и три наших коммита, локально; в ядре имя `chrome_155` и страж в `common/tls`; `make -f Makefile.lx lx-build` и тесты зелёные. Форк не запушен, гитлинк в ядре не закоммичен. Полевая проверка (REALITY на Xray ≥ v26.9.8 со стенда 086 и обычный TLS через Cloudflare) не прогонялась. Открыт пункт по приложениям — см. «Открытые вопросы»; закрыта владельцем 2026-11-14 |
 | Ветка | `lx` |
 | Связанные | [086](../086-UTLS_FORK_FIREFOX148/SPEC.md) (форк-сабмодуль и метод), [087](../087-UTLS_SAFARI_26_3/SPEC.md) (третий cherry-pick), [083](../083-REALITY_MLKEM_KEYSHARE/SPEC.md) (контракт `AuthKey`, гибрид перед X25519), [089](../089-REALITY_KEY_SHARE_OPTION/SPEC.md) (сети, теряющие длинный ClientHello) |
 

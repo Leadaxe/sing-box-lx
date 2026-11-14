@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — `lxd --service=install`/`copy` не работают на чистой macOS |
-| Статус | I (implemented) — 2026-10-10: код, табличный тест без root ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)); живой прогон на чистом маке — впереди |
+| Статус | D (done) — 2026-10-10: код, табличный тест без root ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)); живой прогон на чистом маке — впереди; закрыта владельцем 2026-11-14 |
 | Ветка | `lx` |
 | Build-tag | `with_lxd` (lx-файл `lxd/service_darwin.go`) |
 | Источник | Полевой отказ: MacBook Pro 2016 (Intel), macOS 12.7.6, ядро `1.14.3-lx.14` |

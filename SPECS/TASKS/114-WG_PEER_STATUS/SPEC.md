@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — состояние WG/AWG-endpoint'а и каждого его пира по запросу `GetWireGuardStatus` |
-| Статус | I (implemented) — заведена по просьбе владельца 2026-10-07; в rc.1 отдавалась через `GetOutbounds`, по решению владельца 2026-10-07 переведена на отдельный унарный вызов (см. [HISTORY.md](HISTORY.md)); юниты и живой стенд на двух бинарях зелёные; на устройстве не проверялась |
+| Статус | D (done) — заведена по просьбе владельца 2026-10-07; в rc.1 отдавалась через `GetOutbounds`, по решению владельца 2026-10-07 переведена на отдельный унарный вызов (см. [HISTORY.md](HISTORY.md)); юниты и живой стенд на двух бинарях зелёные; на устройстве не проверялась; закрыта владельцем 2026-11-14 |
 | Ветка | `lx` |
 | Build-tag | ядро (`adapter`, `transport/wireguard`, `protocol/wireguard`) — без тега, метод без вызова ничего не меняет; RPC и CLI — `with_lx_command` |
 | Связано | [145](../145-WG_PEER_SESSION_STATUS/SPEC.md) (сессия пира: хендшейк и счётчики после `Up`), [097](../097-LAZY_WG_DEVICE_BUILD/SPEC.md) (`endpointState`), [106](../106-WG_ENDPOINT_TOGGLE/SPEC.md) (`disabled`), [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) (уровни сна), [115](../115-TAILSCALE_PEER_PATH_STATUS/SPEC.md) (тот же паттерн для Tailscale) |

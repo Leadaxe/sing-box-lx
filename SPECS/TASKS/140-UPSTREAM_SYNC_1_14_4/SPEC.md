@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | R (sync) — мерж `upstream/stable` до `v1.14.4` (66 коммитов) в `lx`; два форк-сабмодуля, Go 1.26.10 |
-| Статус | I (implemented) — 2026-10-28: влит в `lx` (`3ff086951`), выпуск в v1.14.4-lx.24-rc.3; сборка и тесты зелёные, на устройстве не прогонялось |
+| Статус | D (done) — 2026-10-28: влит в `lx` (`3ff086951`), выпуск в v1.14.4-lx.24-rc.3; сборка и тесты зелёные, на устройстве не прогонялось; закрыта владельцем 2026-11-14 |
 | База | до: v1.14.3-lx.24-rc.2, merge-base `d630fa94c` (v1.14.3); после: `upstream/stable` = `c005f3530` (v1.14.4), дрейф 0 |
 | Связано | [117](../117-UPSTREAM_SYNC_SCOPED_LIFECYCLE/SPEC.md) (предыдущий синк), [019](../019-URLTEST_MODE_STICKY/SPEC.md)/[054](../054-URLTEST_PENALTY_FAILOVER/SPEC.md)/[116](../116-URLTEST_FAILOVER_MODE/SPEC.md) (выбор urltest на соединение), [064](../064-SELECTOR_INTERRUPT_DEAD_ON_INBOUND/SPEC.md)/[084](../084-INTERRUPT_GROUP_ABBA_DEADLOCK/SPEC.md) (прерывания групп), [017](../017-CONNECTION_DETOUR_CHAIN/SPEC.md) (detour-хвост), [071](../071-WG_BIND_DIAL_PAUSE_DEADLOCK/SPEC.md) (пауза WG), [130](../130-WIN7_REGISTRY_NOTIFY_THREAD_AGNOSTIC/SPEC.md) (реестр Windows 7), [139](../139-CONNECTION_TEST/SPEC.md) (проверка соединения) |
 

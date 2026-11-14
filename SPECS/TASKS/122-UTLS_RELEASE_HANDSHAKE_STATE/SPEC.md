@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | R (refactor, память) — после успешного uTLS/REALITY-рукопожатия соединение отпускает ClientHello, приватные ключи key share и объекты расширений; провод и поведение не меняются |
-| Статус | I (implemented) — 2026-10-11: форк (`u_conn_release_lx.go`, восьмой коммит) и ядро, тесты под `-race` включая REALITY end-to-end, замер −18…−25 КБ на соединение; финальное ревью кода (Fable) — «можно сдавать» ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)); стенд Xray не прогонялся |
+| Статус | D (done) — 2026-10-11: форк (`u_conn_release_lx.go`, восьмой коммит) и ядро, тесты под `-race` включая REALITY end-to-end, замер −18…−25 КБ на соединение; финальное ревью кода (Fable) — «можно сдавать» ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)); стенд Xray не прогонялся; закрыта владельцем 2026-11-14 |
 | Ветка | `lx` |
 | Build-tag | нет (внутри `with_utls`, как вся фича) |
 | Источник | podkop-engine [`0026 — tls: release the uTLS handshake state after the handshake`](https://github.com/FiyeroT/podkop-engine/blob/main/patches/v1.14/0026-tls-release-the-uTLS-handshake-state-after-the-hands.patch) и его обязательное дополнение [`0086 — tls: do not rebuild the Client Hello after the handshake`](https://github.com/FiyeroT/podkop-engine/blob/main/patches/v1.14/0086-tls-do-not-rebuild-the-Client-Hello-after-the-handsh.patch); обсуждение — [sing-box-extended#162](https://github.com/shtorm-7/sing-box-extended/issues/162) п. 4 |

@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | Type | F (feature). The RPC is a §3.6 bridge; the trace (`common/lxtrace` and its insertions) is lx logic isolated under CONSTITUTION §3.2–3.3, with its merge cost fixed in §10 |
-| Status | I (implemented) — release 1 on `lx` 2026-10-27, release 2 on `lx` 2026-10-28; see [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md) |
+| Status | D (done) — release 1 on `lx` 2026-10-27, release 2 on `lx` 2026-10-28; see [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md); closed by the owner 2026-11-14 |
 | Branch | `lx` |
 | Related | [#59](https://github.com/Leadaxe/sing-box-lx/issues/59) (request: DNS through the router and rule match — closed by this task) · [Leadaxe/LxBox#176](https://github.com/Leadaxe/LxBox/issues/176) ("Connection Check" screen) · [[SPECS/TASKS/058-GET_URL_VIA_OUTBOUND]] (HTTP probe through a node — the model for errors and body limits) · [[SPECS/TASKS/018-DNS_QUERY_STREAM]] · [[SPECS/TASKS/035-DNS_GROUP_OBSERVABILITY]] (DNS attribution and group probes) · [[SPECS/TASKS/017-CONNECTION_DETOUR_CHAIN]] · [[SPECS/TASKS/038-GOMOBILE_STRING_RETURN_FRAME_KILL]] (libbox return shape) |
 

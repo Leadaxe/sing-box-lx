@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — `fingerprint: "randomized"` раз на процесс выбрасывает ClientHello без гибридного шара или без ALPN; узел мёртв до рестарта |
-| Статус | I (implemented) — 2026-10-11: код и стражи, `random` включён в задачу решением владельца ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)); стенд Xray не прогонялся |
+| Статус | D (done) — 2026-10-11: код и стражи, `random` включён в задачу решением владельца ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)); стенд Xray не прогонялся; закрыта владельцем 2026-11-14 |
 | Ветка | `lx` |
 | Build-tag | нет (`with_utls`, как весь `common/tls/utls_*`) |
 | Источник | [shtorm-7/sing-box-extended#162](https://github.com/shtorm-7/sing-box-extended/issues/162) п.2 — патч podkop-engine `0010-utls-keep-the-randomized-fingerprint-consistent`; разбор по нашему дереву ниже. Патч не скачался (сеть), спека написана по нашему коду |

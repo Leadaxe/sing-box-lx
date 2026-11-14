@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | R (sync) — мерж `upstream/stable` v1.14.4 + 9 коммитов без тега в `lx`; один форк-сабмодуль |
-| Статус | I (implemented) — 2026-11-05: влит в `lx` (`eb1c58d1d`), выпущен в stable `v1.14.4-lx.31` (`c406c61c4`, lx-release 41917254577: 14 джоб зелёные, оба AAR); сборка и тесты зелёные, на устройстве не прогонялось |
+| Статус | D (done) — 2026-11-05: влит в `lx` (`eb1c58d1d`), выпущен в stable `v1.14.4-lx.31` (`c406c61c4`, lx-release 41917254577: 14 джоб зелёные, оба AAR); сборка и тесты зелёные, на устройстве не прогонялось; закрыта владельцем 2026-11-14 |
 | База | до: v1.14.4-lx.30 + 7, merge-base `c005f3530` (v1.14.4); после: `upstream/stable` = `8eb4395a3` (2026-11-03), дрейф 0 |
 | Связано | [140](../140-UPSTREAM_SYNC_1_14_4/SPEC.md) (предыдущий синк), [052](../052-NETSTACK_CONNECT_DEADLINE/SPEC.md) (таймаут connect-фазы в gVisor-стеках), [046](../046-DNS_HIJACK_PACKET_LOOP_STALL/SPEC.md) (DNS-hijack и пакетный цикл), [040](../040-SINGTUN_ACCEPTLOOP_SELFHEAL/SPEC.md)/[130](../130-WIN7_REGISTRY_NOTIFY_THREAD_AGNOSTIC/SPEC.md) (патчи форка `sing-tun`), [023](../023-MUSL_TOOLCHAIN_MIRROR/SPEC.md) (зеркало musl при бампе cronet) |
 
