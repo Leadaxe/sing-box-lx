@@ -1520,8 +1520,9 @@ Protocol specifics:
 
 - **hysteria2, tuic** — the handshake runs inside the QUIC library; the outcome is judged by the
   connection's lifetime: closed less than 30 s after the dial is a failure, longer is a success.
-  The outcome is learnt only when the node makes its next new connection, so there is no retry
-  within the same dial and a pair forms only through the next dial. With hysteria2 port hopping,
+  A success counts as soon as the connection has lived 30 s; a failure is learnt when the node
+  makes its next new connection. There is no retry within the same dial; a pair forms through the
+  next dial. With hysteria2 port hopping,
   the sockets opened by later hops carry no handshake and are not guarded; hysteria2 realm mode
   is not guarded at all.
 - **masque `auto`** — the legs follow different labels: h3 the `quic` one, h2 the `tls` one. A
@@ -1590,6 +1591,8 @@ is checked for the section that has one.
   dial. Such a node goes as without the block.
 - On the direct path shadowtls v2/v3 and any node with `tcp_fast_open` are not protected: the
   path cannot be classified. Through `detour` they are protected like the others.
+- shadowtls v3 without uTLS is not protected on any path: its handshake bypasses the core TLS
+  layer. With uTLS it is protected like the others.
 - The block does not fix the relay; the fix on the relay side is `"routeOnly": true` in
   `sniffing`.
 - Not tested against sniffers other than Xray. sing-box as a relay does not reroute by sniffing

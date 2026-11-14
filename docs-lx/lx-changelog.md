@@ -28,6 +28,21 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.4-lx.34
+
+Не выпущено. База, сабмодули, Go и `go.mod` — как в lx.33.
+
+- ⚠️ **Снят разрез ClientHello по умолчанию под `detour` — без ошибки загрузки ([SPEC 060](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md), [FEATURE 019](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/FEATURES/019-SNIFF_GUARD/FEATURE.md), [LxBox#215](https://github.com/Leadaxe/LxBox/issues/215)).** TLS-over-TCP узел через `detour` больше не режет ClientHello на записи сам: без блока `lx.sniff_guard` ядро ведёт себя как апстрим, разрез — только по узловым `fragment` / `record_fragment`. Конфиг без блока загружается, а TLS-узлы через релеи, которые перенаправляют соединение по SNI (Xray `sniffing.destOverride` без `routeOnly`), перестают подниматься. Минимальная замена: `"lx": {"sniff_guard": {"tls": {"method": "record_fragment"}}}` — релеи, кроме `ssh`/`socks`, стартуют с разрезом, прямой путь без него; все релеи сразу — плюс `"detour_type": {"ssh": "suspect", "socks": "suspect"}`. Генераторы конфига (LxBox, singbox-launcher) добавляют блок вместе с бампом ядра. `detour` в группу с выбранным `direct` теперь прямой путь — случай LxBox#215 (DPI дропает разрезанный ClientHello) по умолчанию не режется.
+- ⚠️ **`lx.quic_sniff_decoy` удалён — ошибка загрузки, замена `lx.sniff_guard.quic`.** Байт `0x00` перед QUIC Initial — метод `decoy_first_byte`: `"lx": {"sniff_guard": {"quic": {"method": "decoy_first_byte"}}}`. `send: always` ≈ стартовое `suspect`, `send: retry` ≈ стартовое `clean`; `mode`/`detour_type` → карта `detour_type`; `outbound_type` → `nodes.outbound_type` (общий для `tls` и `quic`). Ошибка — на любое значение ключа, включая `null`.
+- 🆕 **`lx.sniff_guard` — единый блок защиты TLS и QUIC от перенаправления по SNI.**
+  - Методы `tls`: `record_fragment` (разрез на записи, ноль по времени), `fragment` (TCP-сегменты, пауза `fragment_fallback_delay`), `delay` (одна запись двумя кусками с паузой, по умолчанию 300 мс); `quic`: `decoy_first_byte`, `delay` (второй Initial держится паузу).
+  - Кого защищать — `nodes.sni_mismatch`, `nodes.outbound_type`; с какого состояния стартует путь — карта `detour_type` (`never|clean|suspect`, ключ `"*"`), секция может перекрыть её своей.
+  - Метка пути (`direct` или тег ближайшего релея × протокол) учится по паре исходов на одном узле: упал без защиты и прошёл с ней → `suspect`, обратная пара → `clean`. Двигают метку только узлы с SNI ≠ `server`; узел с собственным именем получает личный отказ от защиты, метка не меняется. Проба на спуск и ожидающая пара — раз в 10 мин.
+  - Смена сети сбрасывает `direct` и незашифрованные носители (`socks`, `http` без TLS); метки зашифрованных релеев её переживают, с `persist` — и перезапуск (бакет `experimental.cache_file`, отпечаток релея сверяется при загрузке). `override: true` — блок сильнее узловых ключей.
+  - Швы: обёртка outbound'а (набор методов сверяется рефлексией, при расхождении узел без обёртки с warn), TLS-хук в std/uTLS/REALITY с решением на каждое рукопожатие, masque h2/h3 с порядком ног `auto`, trusttunnel h2/QUIC, XHTTP h2/h3, hysteria2/tuic (успех — когда соединение прожило 30 с), AmneziaWG (`ip: quic` или `i1`; решение на поколение сокета, метку не двигает).
+  - Не защищаются: naive, `engine: apple|windows`, полный gRPC-транспорт, shadowtls v3 без uTLS; на прямом пути — shadowtls v2/v3 и узлы с `tcp_fast_open`.
+  - Loopback-стенды против сниффера Xray (`lx-test/sniffguard/`): trojan+TLS, hysteria2, tuic, AmneziaWG через сниффящий релей и через middlebox на прямом пути — без блока не поднимаются, с каждым методом поднимаются, метки учатся по парам; `fragment` защищает и на прямом пути (апстрим выдерживает `fragment_fallback_delay`, когда ACK приходит быстрее 20 мс).
+
 #### v1.14.4-lx.33
 
 Stable после `v1.14.4-lx.32`, без rc-линии. База, сабмодули, Go и `go.mod` — как в lx.32 (sing-box `v1.14.4` + 9 коммитов `upstream/stable`, `8eb4395a3`, дрейф 0). Одна тема: QUIC-обманка перестраивается после полевого случая 2026-11-06 (masque h3 через `socks` с UDP-over-TCP без сниффера на пути поднимался только с выключенным байтом). Решения владельца 2026-11-06/07.
