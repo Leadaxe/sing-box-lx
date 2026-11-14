@@ -121,25 +121,29 @@ done
 Для `gvisor` версия в `require` без хеша (снапшот) — там сверять строку версии
 с датой снапшота в истории сабмодуля.
 
-Для `utls` пин — тег `metacubex/utls vX.Y.Z` (сейчас `v1.8.7`), тоже без хеша:
-ветка `lx` форка должна стоять **на этом теге** и нести поверх ровно восемь
-коммитов: три cherry-pick из refraction (fc716b2 + ddebe39 — Firefox 148 + reuse key share,
-SPEC 086; aa6edf4 — Safari 26.3, SPEC 087), cherry-pick refraction 6ebdceb (пресет Chrome 155,
-SPEC 118) и три наших вокруг него (перед ним — только кодпоинты подписей ML-DSA; после —
-убранный тест рукопожатия ML-DSA и `HelloChrome_Auto`, оставленный на Chrome 133: Chrome 155
-включается явно именем `chrome_155`) и наш поверх всех — новый файл `u_conn_release_lx.go` с
-`UConn.ReleaseHandshakeState` (SPEC 122):
+Для `utls` пин — тег `metacubex/utls vX.Y.Z` (сейчас `v1.9.0-alpha.1`), тоже без хеша:
+ветка `lx` форка должна **содержать этот тег** и отличаться от него пятью коммитами:
+cherry-pick refraction 6ebdceb (пресет Chrome 155, SPEC 118) и три наших вокруг него (перед
+ним — только кодпоинты подписей ML-DSA; после — убранный тест рукопожатия ML-DSA и
+`HelloChrome_Auto`, оставленный на Chrome 133: Chrome 155 включается явно именем `chrome_155`)
+и наш поверх всех — новый файл `u_conn_release_lx.go` с `UConn.ReleaseHandshakeState`
+(SPEC 122). Firefox 148 с reuse key share и Safari 26.3 (SPEC 086/087) с `v1.9.0-alpha.1`
+приходят из самого metacubex.
 
 ```bash
-req=$(grep -oE 'metacubex/utls v[0-9.]+' go.mod | awk '{print $2}')
+req=$(grep -oE 'metacubex/utls v[0-9a-z.-]+' go.mod | head -1 | awk '{print $2}')
 git -C submodules/utls fetch metacubex --tags 2>/dev/null
-git -C submodules/utls merge-base --is-ancestor "$req" HEAD && echo "✅ lx стоит на $req" || echo "❌ ДРЕЙФ: go.mod требует $req"
-git -C submodules/utls log --oneline "$req..HEAD"   # ожидаем ровно 8 строк (fc716b2, ddebe39, aa6edf4, кодпоинты ML-DSA, 6ebdceb, убранный тест ML-DSA, Auto = 133, ReleaseHandshakeState)
+git -C submodules/utls merge-base --is-ancestor "$req" HEAD && echo "✅ lx содержит $req" || echo "❌ ДРЕЙФ: go.mod требует $req"
+git -C submodules/utls diff --stat "$req" HEAD   # только файлы Chrome 155 / кодпоинтов ML-DSA / trust_anchors и u_conn_release_lx*.go
 ```
 
-Апстримный бамп `metacubex/utls` → ветка `lx` форка переезжает на новый тег с
-теми же восемью коммитами поверх (metacubex внешние PR не принимает — синк только
-своими силами); условие снятия форка — в SPEC 086/087/118.
+metacubex пересобирает историю между тегами (`v1.9.0-alpha.1` не потомок `v1.8.7`), поэтому
+`git log "$req..HEAD"` показывает и старую линию форка и проверкой больше не служит —
+сравниваются деревья. Апстримный бамп `metacubex/utls` → перенос: боковая ветка от нового
+тега, те же коммиты cherry-pick'ом поверх (без тех, что тег уже несёт), затем один коммит на
+`lx` форка с деревом боковой ветки и двумя родителями — старым `lx` и боковой веткой. Ветка
+`lx` форка не форс-пушится, старые гитлинки остаются достижимыми (metacubex внешние PR не
+принимает — синк только своими силами); условие снятия форка — в SPEC 086/087/118.
 
 ### 1.2 Брать ленту ЦЕЛИКОМ, а не выборочные коммиты
 

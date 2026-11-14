@@ -123,25 +123,29 @@ done
 For `gvisor` the `require` version carries no hash (it is a snapshot) — compare the version string
 against the snapshot date in the submodule's history.
 
-For `utls` the pin is a `metacubex/utls vX.Y.Z` tag (currently `v1.8.7`), also without a hash: the
-fork's `lx` branch must sit **on that tag** and carry exactly eight commits on top: three
-cherry-picks from refraction (fc716b2 + ddebe39 — Firefox 148 + key share reuse, SPEC 086; aa6edf4 —
-Safari 26.3, SPEC 087), the cherry-pick of refraction 6ebdceb (the Chrome 155 preset, SPEC 118) and
-three of ours around it (ML-DSA signature scheme codepoints only, before it; the dropped ML-DSA
-handshake test and `HelloChrome_Auto` kept at Chrome 133, after it — Chrome 155 is opt-in as
-`chrome_155`), and ours on top: the new file `u_conn_release_lx.go` with
-`UConn.ReleaseHandshakeState` (SPEC 122):
+For `utls` the pin is a `metacubex/utls vX.Y.Z` tag (currently `v1.9.0-alpha.1`), also without a
+hash: the fork's `lx` branch must **contain that tag** and differ from it by five commits: the
+cherry-pick of refraction 6ebdceb (the Chrome 155 preset, SPEC 118) and three of ours around it
+(ML-DSA signature scheme codepoints only, before it; the dropped ML-DSA handshake test and
+`HelloChrome_Auto` kept at Chrome 133, after it — Chrome 155 is opt-in as `chrome_155`), and ours
+on top: the new file `u_conn_release_lx.go` with `UConn.ReleaseHandshakeState` (SPEC 122).
+Firefox 148 with key share reuse and Safari 26.3 (SPEC 086/087) come from metacubex itself since
+`v1.9.0-alpha.1`.
 
 ```bash
-req=$(grep -oE 'metacubex/utls v[0-9.]+' go.mod | awk '{print $2}')
+req=$(grep -oE 'metacubex/utls v[0-9a-z.-]+' go.mod | head -1 | awk '{print $2}')
 git -C submodules/utls fetch metacubex --tags 2>/dev/null
-git -C submodules/utls merge-base --is-ancestor "$req" HEAD && echo "✅ lx sits on $req" || echo "❌ DRIFT: go.mod requires $req"
-git -C submodules/utls log --oneline "$req..HEAD"   # expect exactly 8 lines (fc716b2, ddebe39, aa6edf4, ML-DSA codepoints, 6ebdceb, dropped ML-DSA test, Auto kept at 133, ReleaseHandshakeState)
+git -C submodules/utls merge-base --is-ancestor "$req" HEAD && echo "✅ lx contains $req" || echo "❌ DRIFT: go.mod requires $req"
+git -C submodules/utls diff --stat "$req" HEAD   # only the Chrome 155 / ML-DSA codepoint / trust_anchors files and u_conn_release_lx*.go
 ```
 
-An upstream `metacubex/utls` bump means moving the fork's `lx` branch onto the new tag with the
-same eight commits on top (metacubex accepts no external PRs — the sync is ours alone); the
-condition for dropping the fork is in SPEC 086/087/118.
+metacubex rebuilds its history between tags (`v1.9.0-alpha.1` does not descend from `v1.8.7`), so
+`git log "$req..HEAD"` also lists the fork's older line and is no longer the check — compare
+trees. An upstream `metacubex/utls` bump means re-grafting: a side branch from the new tag, the
+same commits cherry-picked on top (dropping those the tag already carries), then one commit on the
+fork's `lx` whose tree is that side branch and whose parents are the old `lx` and the side branch —
+the fork's `lx` is not force-pushed, and old gitlinks stay reachable (metacubex accepts no external
+PRs — the sync is ours alone); the condition for dropping the fork is in SPEC 086/087/118.
 
 ### 1.2 Take the whole upstream line, not selected commits
 
