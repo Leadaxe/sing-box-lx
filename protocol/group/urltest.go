@@ -756,21 +756,24 @@ func (g *URLTestGroup) performSelectionUpdate(reselect bool) {
 	)
 	// lx: SPEC 054 — переизбор с учётом штрафов (в аварийном режиме — штрафы ↑, задержка ↑).
 	// lx: SPEC 116 — failover держит текущий узел (selectForUpdate).
-	if outbound, exists := g.selectForUpdate(N.NetworkTCP, reselect); outbound != nil && (g.selectedOutboundTCP == nil || (exists && outbound != g.selectedOutboundTCP)) {
-		if g.selectedOutboundTCP != nil {
+	// lx: SPEC 139 — the dial path (moveSelection) writes the selection outside
+	// updateAccess, so it is read through the guarded snapshot.
+	selectedTCP, selectedUDP := g.selectedLx()
+	if outbound, exists := g.selectForUpdate(N.NetworkTCP, reselect); outbound != nil && (selectedTCP == nil || (exists && outbound != selectedTCP)) {
+		if selectedTCP != nil {
 			updated = true
 		}
-		if outbound != g.selectedOutboundTCP {
+		if outbound != selectedTCP {
 			changed = true
 		}
 		g.setSelectedTCPLx(outbound) // lx: SPEC 139
 		selected = true
 	}
-	if outbound, exists := g.selectForUpdate(N.NetworkUDP, reselect); outbound != nil && (g.selectedOutboundUDP == nil || (exists && outbound != g.selectedOutboundUDP)) {
-		if g.selectedOutboundUDP != nil {
+	if outbound, exists := g.selectForUpdate(N.NetworkUDP, reselect); outbound != nil && (selectedUDP == nil || (exists && outbound != selectedUDP)) {
+		if selectedUDP != nil {
 			updated = true
 		}
-		if outbound != g.selectedOutboundUDP {
+		if outbound != selectedUDP {
 			changed = true
 		}
 		g.setSelectedUDPLx(outbound) // lx: SPEC 139
