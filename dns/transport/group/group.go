@@ -484,6 +484,11 @@ func (t *Transport) exchangeSingle(ctx context.Context, message *mDNS.Msg, sel s
 		t.recordEffective(ctx, sel.target)
 		return response, err
 	}
+	// A caller that gave up (its connection closed mid-query) says nothing
+	// about the server: no error record, no rescue fan under a dead context.
+	if callerCancelled(ctx) {
+		return response, err
+	}
 	// The target's sub-deadline was honest — its failure is always recorded.
 	t.noteError(sel.target.tag, sel.gen)
 	t.logProbeFailure(ctx, sel.target.tag, response, err)
@@ -512,9 +517,19 @@ func (t *Transport) exchangeSurvival(ctx context.Context, message *mDNS.Msg, sel
 		t.recordEffective(ctx, target)
 		return response, err
 	}
+	if callerCancelled(ctx) {
+		return response, err
+	}
 	t.noteError(target.tag, sel.gen)
 	t.logProbeFailure(ctx, target.tag, response, err)
 	return response, err
+}
+
+// callerCancelled reports a request abandoned by its caller. An expired
+// request budget is not that: a server that stayed silent for the whole
+// budget did fail, and its error is recorded.
+func callerCancelled(ctx context.Context) bool {
+	return errors.Is(ctx.Err(), context.Canceled)
 }
 
 // targetBudget is half of the remaining request budget (fallback: half of

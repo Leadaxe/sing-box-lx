@@ -796,10 +796,10 @@ is **removed on the 1.15 line**; a config carrying it does not load. Upstream 1.
 [docs/configuration/endpoint/masque-client.md](../docs/configuration/endpoint/masque-client.md)
 and [masque-server.md](../docs/configuration/endpoint/masque-server.md).
 
-Cloudflare WARP on top of `masque-client` is a separate task,
-[SPEC 110](../SPECS/TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md), not implemented yet: on this
-line WARP over MASQUE is not available. The root key `lx.masque.idle_timeout` is still parsed and
-has no effect ([lx-config.md §13](lx-config.md#13-the-lx-root-block-spec-098)). Feature context —
+Cloudflare WARP runs on `masque-client` with the fork's `profile: cloudflare` and its keys
+`address`, `private_key`, `public_key` — [lx-config.md §4](lx-config.md#4-masque--cloudflare-warp-over-masque-client-spec-110),
+design and seams in [SPEC 110](../SPECS/TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md). The root key
+`lx.masque.idle_timeout` is a load error on this line. Feature context —
 [009-MASQUE_WARP](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md).
 
 ---
@@ -916,14 +916,16 @@ Upstream `tls` keys; in the fork they also apply to REALITY (SPEC 088).
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `fragment` | bool | `false` | Cut the first packet by SNI into TCP segments, waiting for the ACK ([upstream](../docs/configuration/shared/tls.md#fragment)) |
-| `record_fragment` | bool | `false`; **`true` under `detour`** (SPEC 060) | The same cut points, each its own TLS record, one packet ([upstream](../docs/configuration/shared/tls.md#record_fragment)) |
+| `record_fragment` | bool | `false` | The same cut points, each its own TLS record, one packet ([upstream](../docs/configuration/shared/tls.md#record_fragment)) |
 | `fragment_fallback_delay` | duration | `500ms` | The pause used when the ACK wait time cannot be computed ([upstream](../docs/configuration/shared/tls.md#fragment_fallback_delay)) |
 
-Rules of the `detour` default: an explicit `fragment: true` or `record_fragment: true`
-beats the default; only the handshake is fragmented; `h3`/QUIC is untouched; every
-`chain` link has its own `detour`. An explicit `"record_fragment": false` cannot be
-told apart from "unset", so under `detour` the default still turns on. Overview:
-[lx-config §9](lx-config.md#9-automatic-clienthello-fragmentation-under-detour-spec-060).
+There is no default under `detour`: without the `lx.sniff_guard` block the ClientHello is
+split only where the node sets `fragment` or `record_fragment`, through a `detour` too.
+Protection against relays that reroute by SNI is configured by `lx.sniff_guard`
+([lx-config §13](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni)). A node's
+explicit value, `"record_fragment": false` included (SPEC 156), wins over the block unless
+the block sets `"override": true`. Only the handshake is fragmented. Overview:
+[lx-config §9](lx-config.md#9-clienthello-under-detour--no-default-spec-060).
 
 ## 5.4 REALITY validation errors (verbatim)
 

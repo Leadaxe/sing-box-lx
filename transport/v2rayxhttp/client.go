@@ -31,7 +31,7 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/lxdatagram"
+	"github.com/sagernet/sing-box/common/lxsniffguard"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -156,9 +156,9 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	switch version {
 	case httpVersion3:
 		scheme = "https"
-		// lx: SPEC 151 — the sniff decoy for the node type this transport serves.
-		sniffDecoy := lxdatagram.NewSniffDecoy(ctx, adapter.OutboundTypeFromContext(ctx), logger)
-		newConn, err = newHTTP3Transport(dialer, serverAddr, tlsConfig, xmuxConfig.keepAlivePeriod, warn, sniffDecoy)
+		// lx: SPEC 060 — lx.sniff_guard for the node this transport serves.
+		sniffGuard := lxsniffguard.FromContext(ctx).Node(adapter.OutboundTagFromContext(ctx))
+		newConn, err = newHTTP3Transport(dialer, serverAddr, tlsConfig, xmuxConfig.keepAlivePeriod, warn, sniffGuard, logger)
 		if err != nil {
 			return nil, err
 		}

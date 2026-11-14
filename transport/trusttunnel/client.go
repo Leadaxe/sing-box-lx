@@ -59,9 +59,8 @@ type ClientOptions struct {
 	Logger  logger.ContextLogger
 	// Dialer opens the TCP connection for HTTP/2 and the UDP socket for HTTP/3.
 	Dialer N.Dialer
-	// QUICDialHook, when set, observes every attempt to open the HTTP/3
-	// session: the UDP dial, the conn before the handshake, the handshake
-	// result. It may ask for another attempt.
+	// QUICDialHook, when set, wraps every attempt to open the HTTP/3 session
+	// and sees the UDP conn before the handshake. It may run an attempt again.
 	QUICDialHook QUICDialHook
 	Server       M.Socksaddr
 	// TLSConfig is the client TLS configuration. Its ALPN, when set, must contain
@@ -85,22 +84,16 @@ type ClientOptions struct {
 	IdleTimeout time.Duration
 }
 
-// QUICDialHook observes the attempts to open the HTTP/3 session.
+// QUICDialHook wraps the attempts to open the HTTP/3 session.
 type QUICDialHook interface {
-	// Begin starts an attempt; the UDP socket is dialled with the attempt's
-	// Context.
-	Begin(ctx context.Context) QUICDialAttempt
-}
-
-// QUICDialAttempt is one attempt to open the HTTP/3 session.
-type QUICDialAttempt interface {
-	// Context is the context the UDP dial runs with.
-	Context() context.Context
-	// Dialed is called with the UDP conn before the QUIC handshake starts.
-	Dialed(conn net.Conn)
-	// Done is called with the handshake result; redo asks for another attempt
-	// right away.
-	Done(err error) (redo bool)
+	// Dial runs open, one attempt to open the session (the UDP dial, the QUIC
+	// handshake, the ALPN check), once, or again right away when the hook so
+	// decides. Each run gets the context the attempt runs with.
+	Dial(ctx context.Context, open func(ctx context.Context) error) error
+	// Handshake is called with the UDP conn of an attempt before the QUIC
+	// handshake starts. The handshake uses the returned conn, and done is
+	// called once the handshake returned.
+	Handshake(ctx context.Context, conn net.Conn) (handshakeConn net.Conn, done func())
 }
 
 // Client is a TrustTunnel client: one lazily opened session to the server,

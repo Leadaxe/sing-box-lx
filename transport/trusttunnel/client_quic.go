@@ -74,45 +74,49 @@ func (c *Client) connectQUIC(ctx context.Context) (sessionConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	for {
-		session, redo, err := c.connectQUICOnce(ctx, congestionControl)
-		if redo {
-			continue
-		}
-		return session, err
+	if c.quicDialHook == nil {
+		return c.connectQUICOnce(ctx, congestionControl)
 	}
+	var session sessionConn
+	err = c.quicDialHook.Dial(ctx, func(ctx context.Context) error {
+		var err error
+		session, err = c.connectQUICOnce(ctx, congestionControl)
+		return err
+	})
+	return session, err
 }
 
-// connectQUICOnce is one attempt to open the session; redo is the hook's
-// request for another one.
-func (c *Client) connectQUICOnce(ctx context.Context, congestionControl func(*quic.Conn) congestion.CongestionControl) (sessionConn, bool, error) {
-	attempt := beginQUICDial(c.quicDialHook, ctx)
-	udpConn, err := c.dialer.DialContext(attempt.Context(), N.NetworkUDP, c.server)
+// connectQUICOnce is one attempt to open the session.
+func (c *Client) connectQUICOnce(ctx context.Context, congestionControl func(*quic.Conn) congestion.CongestionControl) (sessionConn, error) {
+	udpConn, err := c.dialer.DialContext(ctx, N.NetworkUDP, c.server)
 	if err != nil {
-		return nil, false, E.Cause(err, "dial udp")
+		return nil, E.Cause(err, "dial udp")
 	}
-	attempt.Dialed(udpConn)
+	handshakeConn := net.Conn(udpConn)
+	handshakeDone := func() {}
+	if c.quicDialHook != nil {
+		handshakeConn, handshakeDone = c.quicDialHook.Handshake(ctx, udpConn)
+	}
 	// No keepalive: the session may time out silently while idle and is
 	// reopened by the next request. The idle window of the client is applied
 	// by idleWatcher, which spares a session with open streams; the QUIC idle
 	// timeout counts packets, not streams, so it stays at the server's figure
 	// to keep a silent stream (an idle TCP connection) alive as long as HTTP/2
 	// would.
-	quicConn, err := qtls.Dial(ctx, udpConn, c.tlsConfig, &quic.Config{
+	quicConn, err := qtls.Dial(ctx, handshakeConn, c.tlsConfig, &quic.Config{
 		MaxIncomingStreams: -1,
 		MaxIdleTimeout:     maxClientIdleTimeout,
 	})
+	handshakeDone()
 	if err != nil {
 		udpConn.Close()
-		return nil, attempt.Done(err), E.Cause(err, "QUIC handshake")
+		return nil, E.Cause(err, "QUIC handshake")
 	}
 	if negotiated := quicConn.ConnectionState().TLS.NegotiatedProtocol; negotiated != http3.NextProtoH3 {
 		quicConn.CloseWithError(0, "")
 		udpConn.Close()
-		err = E.New("server negotiated ALPN ", strconv.Quote(negotiated), ", expected h3")
-		return nil, attempt.Done(err), err
+		return nil, E.New("server negotiated ALPN ", strconv.Quote(negotiated), ", expected h3")
 	}
-	attempt.Done(nil)
 	quicConn.SetCongestionControl(congestionControl(quicConn))
 	transport := &http3.Transport{DisableCompression: true}
 	clientConn := transport.NewClientConn(quicConn)
@@ -127,7 +131,7 @@ func (c *Client) connectQUICOnce(ctx context.Context, congestionControl func(*qu
 		closeSocket: func() {
 			udpConn.Close()
 		},
-	}, false, nil
+	}, nil
 }
 
 type http3Session struct {
@@ -190,17 +194,3 @@ func (s *http3Session) close() error {
 	s.closeSocket()
 	return s.quicConn.CloseWithError(0, "")
 }
-
-// beginQUICDial starts an attempt on hook, or a no-op attempt without one.
-func beginQUICDial(hook QUICDialHook, ctx context.Context) QUICDialAttempt {
-	if hook == nil {
-		return noQUICDialAttempt{ctx}
-	}
-	return hook.Begin(ctx)
-}
-
-type noQUICDialAttempt struct{ ctx context.Context }
-
-func (a noQUICDialAttempt) Context() context.Context { return a.ctx }
-func (noQUICDialAttempt) Dialed(net.Conn)            {}
-func (noQUICDialAttempt) Done(error) bool            { return false }

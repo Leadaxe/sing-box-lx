@@ -9,7 +9,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
-	"github.com/sagernet/sing-box/common/lxdatagram"
+	"github.com/sagernet/sing-box/common/lxsniffguard"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -85,13 +85,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	} else if !common.Contains(tlsOptions.ALPN, protocol) {
 		return nil, E.New("tls.alpn must contain ", protocol)
 	}
-	tlsConfig, err := tls.NewClientWithOptions(tls.ClientOptions{
-		Context:             ctx,
-		Logger:              logger,
-		ServerAddress:       options.Server,
-		Options:             tlsOptions,
-		DialedThroughDetour: tls.DialedThroughDetour(options.DialerOptions),
-	})
+	tlsConfig, err := tls.NewClient(ctx, logger, options.Server, tlsOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -106,8 +100,8 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	client, err := trusttunnel.NewClient(trusttunnel.ClientOptions{
 		Context:      ctx,
 		Logger:       logger,
-		Dialer:       dialer.NewSessionDialerLx(outboundDialer),                                   // lx: SPEC 152 — session underlay is internal to the tunnel
-		QUICDialHook: newSniffDecoyHook(lxdatagram.NewSniffDecoy(ctx, C.TypeTrustTunnel, logger)), // lx: SPEC 151
+		Dialer:       dialer.NewSessionDialerLx(outboundDialer),                          // lx: SPEC 152 — session underlay is internal to the tunnel
+		QUICDialHook: newSniffGuardHook(lxsniffguard.FromContext(ctx).Node(tag), logger), // lx: SPEC 060
 		Server:       options.ServerOptions.Build(),
 		TLSConfig:    tlsConfig,
 		Protocol:     protocol,

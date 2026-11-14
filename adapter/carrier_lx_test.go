@@ -33,7 +33,7 @@ func (carrierGroupStub) All() []string                              { return nil
 func (carrierGroupStub) Selected(string) Outbound                   { return nil }
 func (carrierGroupStub) AttachConnection(io.Closer) (detach func()) { return func() {} }
 
-// lx: SPEC 151 — the first non-group outbound recorded wins; groups are
+// lx: SPEC 060 — the first non-group outbound recorded wins; groups are
 // skipped so nested groups resolve down to the member; a context without a
 // record and a nil outbound are no-ops.
 func TestCarrierRecord(t *testing.T) {
@@ -70,3 +70,28 @@ var (
 	_ Outbound      = carrierStub{}
 	_ OutboundGroup = carrierGroupStub{}
 )
+
+// lx: SPEC 060 — the registry marks the build context with the node's tag;
+// an existing record can be carried into another context, a nil one is a
+// no-op.
+func TestOutboundTagAndExistingRecord(t *testing.T) {
+	if OutboundTagFromContext(context.Background()) != "" {
+		t.Fatal("no tag in a bare context")
+	}
+	if OutboundTagFromContext(ContextWithOutboundTag(context.Background(), "node")) != "node" {
+		t.Fatal("tag lost")
+	}
+	_, record := ContextWithCarrierRecord(context.Background())
+	carried := ContextWithExistingCarrierRecord(context.Background(), record)
+	if CarrierRecordFromContext(carried) != record {
+		t.Fatal("the same record must be carried")
+	}
+	RecordCarrier(carried, carrierStub{outboundType: "vless"})
+	if record.Tag != "vless-tag" {
+		t.Fatalf("a write through the carrying context must land in the record: %+v", record)
+	}
+	bare := context.Background()
+	if ContextWithExistingCarrierRecord(bare, nil) != bare {
+		t.Fatal("a nil record leaves the context alone")
+	}
+}

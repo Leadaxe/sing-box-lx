@@ -4,9 +4,9 @@ package lxdatagram
 //
 // Two things in this fork depend on what carries a datagram conn. Reads of a
 // conn tunnelled through a proxy need kernel truncation semantics, a kernel
-// socket already has them (SPEC 150, truncate.go). The sniff decoy goes out by
-// path, lx.quic_sniff_decoy mode direct/detour (SPEC 151, decoy.go), for the
-// QUIC clients and the AmneziaWG masquerade burst alike. Both ask the same question of the conn as
+// socket already has them (SPEC 150, truncate.go). lx.sniff_guard keeps its
+// labels by path (SPEC 060, decoy.go), for the QUIC clients, the AmneziaWG
+// masquerade burst and the TLS handshake alike. Both ask the same question of the conn as
 // dialled, before any wrapper of their own: is there a kernel descriptor
 // under it. "Direct" is therefore a property of the dialled conn, not of the
 // config: no detour, a detour to a direct outbound, or a detour to a group
@@ -36,7 +36,7 @@ func IsKernelPacketConn(conn net.PacketConn) bool {
 }
 
 // kernelUnder reports whether a kernel descriptor lies under conn once the
-// transparent wrappers are peeled (lx: SPEC 151/153): the replaceable readers
+// transparent wrappers are peeled (lx: SPEC 060/153): the replaceable readers
 // UnwrapReader follows, sing's packet adapters a group in `detour` puts
 // between its interrupt wrapper and the member's socket, and the power-report
 // counters of the default dialer. The adapters and counters are not

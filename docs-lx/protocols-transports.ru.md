@@ -790,11 +790,11 @@ endpoint, как и поля AWG2, и требует `with_awg`. Контейн�
 [docs/configuration/endpoint/masque-client.md](../docs/configuration/endpoint/masque-client.md)
 и [masque-server.md](../docs/configuration/endpoint/masque-server.md).
 
-Cloudflare WARP поверх `masque-client` — отдельная задача
-[SPEC 110](../SPECS/TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md), пока не реализована: на этой
-линии WARP через MASQUE недоступен. Корневой ключ `lx.masque.idle_timeout` по-прежнему разбирается
-и ни на что не влияет ([lx-config.ru.md §13](lx-config.ru.md#13-корневой-блок-lx-spec-098)). Контекст
-фичи — [009-MASQUE_WARP](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md).
+Cloudflare WARP работает на `masque-client` с профилем форка `profile: cloudflare` и его ключами
+`address`, `private_key`, `public_key` — [lx-config.ru.md §4](lx-config.ru.md#4-masque--cloudflare-warp-поверх-masque-client-spec-110),
+устройство и швы — [SPEC 110](../SPECS/TASKS/110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md). Корневой ключ
+`lx.masque.idle_timeout` на этой линии — ошибка загрузки. Контекст фичи —
+[009-MASQUE_WARP](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md).
 
 ---
 
@@ -909,13 +909,16 @@ grpc-go. Доступно с `v1.14.1-lx.8`.
 | Ключ | Тип | Дефолт | Смысл |
 |------|-----|--------|-------|
 | `fragment` | bool | `false` | Разрез первого пакета по SNI на TCP-сегменты с ожиданием ACK ([апстрим](../docs/configuration/shared/tls.md#fragment)) |
-| `record_fragment` | bool | `false`; **`true` под `detour`** (SPEC 060) | Те же точки разреза, каждая — своя TLS-запись, один пакет ([апстрим](../docs/configuration/shared/tls.md#record_fragment)) |
+| `record_fragment` | bool | `false` | Те же точки разреза, каждая — своя TLS-запись, один пакет ([апстрим](../docs/configuration/shared/tls.md#record_fragment)) |
 | `fragment_fallback_delay` | duration | `500ms` | Пауза, когда время ожидания ACK вычислить нельзя ([апстрим](../docs/configuration/shared/tls.md#fragment_fallback_delay)) |
 
-Правила дефолта под `detour`: явное `fragment: true` или `record_fragment: true`
-сильнее дефолта; фрагментируется только рукопожатие; `h3`/QUIC не затронут; у
-каждого звена `chain` свой `detour`. Явный `"record_fragment": false` неотличим от «не
-задано» — под `detour` дефолт включится всё равно. Обзор — [lx-config §9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060).
+Дефолта под `detour` нет: без блока `lx.sniff_guard` ClientHello режется только там, где
+у узла задан `fragment` или `record_fragment`, через `detour` тоже. Защита от релеев,
+перенаправляющих по SNI, настраивается блоком `lx.sniff_guard`
+([lx-config §13](lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni)). Явное
+значение узла, включая `"record_fragment": false` (SPEC 156), сильнее блока, если в блоке
+не задан `"override": true`. Фрагментируется только рукопожатие. Обзор —
+[lx-config §9](lx-config.ru.md#9-clienthello-под-detour--без-дефолта-spec-060).
 
 ## 5.4 Ошибки валидации REALITY (дословно)
 

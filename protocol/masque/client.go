@@ -16,6 +16,7 @@ import (
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/iponly"
 	"github.com/sagernet/sing-box/common/lxdatagram"
+	"github.com/sagernet/sing-box/common/lxsniffguard"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -100,8 +101,8 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	if err != nil {
 		return nil, err
 	}
-	outboundDialer = lxdatagram.ReadDeadlineDialer(lxdatagram.Dialer(ctx, C.TypeMASQUEClient, outboundDialer, logger)) // lx: SPEC 146, 150, 151
-	if options.UDPFragment == nil || *options.UDPFragment {                                                            // lx: SPEC 028
+	outboundDialer = lxdatagram.ReadDeadlineDialer(lxdatagram.Dialer(ctx, tag, outboundDialer, logger)) // lx: SPEC 146, 150, 060
+	if options.UDPFragment == nil || *options.UDPFragment {                                             // lx: SPEC 028
 		outboundDialer = lxdatagram.OwnedSocketDialer(outboundDialer)
 	}
 	headers := options.Headers.Build()
@@ -131,6 +132,9 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	httpOptions, clientOptions, err := applyLXProfile(options, httpOptions, masque.ClientOptions{})
 	if err != nil {
 		return nil, err
+	}
+	if node := lxsniffguard.FromContext(ctx).Node(tag); node != nil { // lx: SPEC 060
+		clientOptions.LX.SniffGuardDial = node.Dial
 	}
 	httpClient, err := http.NewClientWithTLS(ctx, logger, outboundDialer, options.ServerOptions, common.PtrValueOrDefault(options.TLS), httpOptions)
 	if err != nil {

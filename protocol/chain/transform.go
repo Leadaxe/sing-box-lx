@@ -251,14 +251,48 @@ func applyStrip(m map[string]any, set stripSet) ([]string, error) {
 	}
 	if set["xhttp.padding"] {
 		if transport, ok := m["transport"].(map[string]any); ok && transport["type"] == "xhttp" {
-			// Пустой x_padding_bytes означает дефолт 100-1000 — чтобы свести
-			// паддинг к минимуму, диапазон задаётся явно.
-			transport["x_padding_bytes"] = "1"
-			delete(transport, "x_padding_obfs_mode")
-			stripped = append(stripped, "xhttp.padding")
+			// The server validates the padding length against its own range
+			// (Xray: 100-1000 unless configured) and answers 400 outside it,
+			// so the length is pinned to the lower bound of the node's range,
+			// never below it. Placement and obfs mode are a contract with the
+			// server and stay as configured.
+			raw, _ := transport["x_padding_bytes"].(string)
+			if minimum, ok := xhttpPaddingMinimum(raw); ok && minimum != strings.TrimSpace(raw) {
+				transport["x_padding_bytes"] = minimum
+				stripped = append(stripped, "xhttp.padding")
+			}
 		}
 	}
 	return stripped, nil
+}
+
+// xhttpPaddingDefaultMinimum is the lower bound of the default x_padding_bytes
+// range (100-1000), shared by the XHTTP client and the Xray server.
+const xhttpPaddingDefaultMinimum = "100"
+
+// xhttpPaddingMinimum returns the lower bound of an x_padding_bytes value
+// ("min-max" or a single integer; empty selects the default range). A value
+// that does not parse is reported as !ok and left for the transport to reject.
+func xhttpPaddingMinimum(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return xhttpPaddingDefaultMinimum, true
+	}
+	low, high, isRange := strings.Cut(raw, "-")
+	lowValue, err := strconv.Atoi(strings.TrimSpace(low))
+	if err != nil {
+		return "", false
+	}
+	if isRange {
+		highValue, err := strconv.Atoi(strings.TrimSpace(high))
+		if err != nil {
+			return "", false
+		}
+		if highValue < lowValue {
+			lowValue = highValue
+		}
+	}
+	return strconv.Itoa(lowValue), true
 }
 
 // mergePatch — RFC 7396: null удаляет ключ, объект сливается рекурсивно,

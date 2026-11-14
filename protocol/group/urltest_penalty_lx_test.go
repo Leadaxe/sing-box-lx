@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -245,3 +246,45 @@ func waitUntil(t *testing.T, cond func() bool) {
 }
 
 // lx:end SPEC 054
+
+// lx: SPEC 139 — the dial path picks and moves the selection while a selection
+// update writes it; meaningful under -race.
+func TestSelectedOutboundConcurrentPickAndMove(t *testing.T) {
+	a := &penaltyDialNode{tag: "a", addr: "server"}
+	b := &penaltyDialNode{tag: "b", addr: "server"}
+	g := newPenaltyTestGroup(t, []*penaltyDialNode{a, b}, map[string]uint16{"a": 10, "b": 20})
+	g.setSelectedTCPLx(a)
+
+	var wg sync.WaitGroup
+	wg.Add(4)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 2000; i++ {
+			_ = g.pickForDialNode(N.NetworkTCP)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 2000; i++ {
+			if i%2 == 0 {
+				g.moveSelection(N.NetworkTCP, b)
+			} else {
+				g.moveSelection(N.NetworkTCP, a)
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 2000; i++ {
+			g.setSelectedTCPLx(a)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			g.performSelectionUpdate(false)
+			_ = g.failoverHeld()
+		}
+	}()
+	wg.Wait()
+}

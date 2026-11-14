@@ -24,9 +24,9 @@ import (
 // lx: SPEC 088 / SPEC 089 / SPEC 090 guards for the REALITY client (and, for 090,
 // the REALITY server).
 //
-// SPEC 088: `fragment` / `record_fragment` (and the SPEC 060 detour default) are
-// applied to the REALITY ClientHello. Upstream builds the UConn on the bare conn,
-// so the flags were written to the config and ignored — the test that catches a
+// SPEC 088: `fragment` / `record_fragment` (and the lx.sniff_guard shape, SPEC
+// 060, see sniff_guard_utls_lx_test.go) are applied to the REALITY ClientHello.
+// Upstream builds the UConn on the bare conn, so the flags were written to the config and ignored — the test that catches a
 // merge putting that back is TestLxRealityClientHelloGoesThroughFragmentConn.
 //
 // SPEC 089: `reality.key_share` — "" keeps what the fingerprint carries (the
@@ -46,7 +46,7 @@ func lxRealityOptions(fingerprint, keyShare string, fragment, recordFragment boo
 		Enabled:        true,
 		ServerName:     "www.example.com",
 		Fragment:       fragment,
-		RecordFragment: recordFragment,
+		RecordFragment: lxRecordFragment(recordFragment),
 		UTLS:           &option.OutboundUTLSOptions{Enabled: true, Fingerprint: fingerprint},
 		Reality: &option.OutboundRealityOptions{
 			Enabled:   true,
@@ -171,31 +171,6 @@ func TestLxRealityRecordFragmentSplitsFirstFlight(t *testing.T) {
 
 	fragmented := lxRealityFirstFlight(t, lxNewRealityClient(t, "chrome", "", false, true))
 	require.GreaterOrEqual(t, lxTLSRecordCount(t, fragmented), 2, "record_fragment must split the REALITY ClientHello into several TLS records")
-}
-
-// The SPEC 060 default — record_fragment switched on when the outbound dials
-// through a detour — must reach the REALITY wire, not just the config struct.
-// Built through NewClientWithOptions with DialedThroughDetour and no fragment
-// flags of its own, so the only thing that can split the first flight is the
-// default. Test idea by Alex01d (PR #23): checking the flag alone was
-// false-green before SPEC 088, the bytes were not.
-func TestLxRealityDetourDefaultFragmentsFirstFlight(t *testing.T) {
-	t.Parallel()
-	options := lxRealityOptions("chrome", "", false, false)
-	config, err := NewClientWithOptions(ClientOptions{
-		Context:             context.Background(),
-		Logger:              logger.NOP(),
-		ServerAddress:       "www.example.com",
-		Options:             options,
-		DialedThroughDetour: true,
-	})
-	require.NoError(t, err)
-	client, isReality := config.(*RealityClientConfig)
-	require.True(t, isReality, "expected *RealityClientConfig, got %T", config)
-	require.True(t, client.uClient.recordFragment, "detour default must reach the REALITY uTLS config")
-
-	flight := lxRealityFirstFlight(t, client)
-	require.GreaterOrEqual(t, lxTLSRecordCount(t, flight), 2, "detour default must split the REALITY ClientHello on the wire")
 }
 
 // --- SPEC 089 -----------------------------------------------------------------
@@ -380,4 +355,14 @@ func lxRealityServerOptions(shortID string) option.InboundTLSOptions {
 			ShortID:    badoption.Listable[string]{shortID},
 		},
 	}
+}
+
+// lxRecordFragment maps the helpers' bool onto the option: false means "not
+// set", which leaves lx.sniff_guard free to shape the hello (SPEC 060).
+// lx: SPEC 156.
+func lxRecordFragment(enabled bool) *bool {
+	if !enabled {
+		return nil
+	}
+	return lxBoolPtr(true)
 }

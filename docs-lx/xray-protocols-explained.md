@@ -294,82 +294,66 @@ handshake does not change. Xray has no equivalent of `record_fragment` as a
 separate mode: splitting into TLS records happens there only as a side
 effect, when a chunk boundary coincides with a record boundary.
 
-### Nested protocols: why the ClientHello gets lost and what the core does
+### Under `detour`: a relay that reroutes by SNI
 
-A separate case, and the reason fragmentation in `sing-box-lx` turns on by
-itself. When one protocol is wrapped in another (an outbound dials through
-`detour`, a `chain` link goes through the previous link, VLESS runs inside
-WireGuard or MASQUE), our ClientHello goes out **inside** someone else's
-tunnel. The lower leg forwards it further on its own behalf. The path behind
-that server has its own MTU, usually smaller than ours, because the tunnel
-used up part of the frame for its headers.
+A separate case: a node that dials through a `detour`, a `chain` link, or a
+router with a proxy in the local network. The node in between can read the
+name out of the ClientHello and send the connection to that name instead of
+the node's destination. This is what an Xray inbound with
+`sniffing.destOverride` and without `routeOnly` does. While the SNI is the
+server's own name, the rerouting leads to the same place. When the SNI is a
+disguise (REALITY with someone else's site, WARP with a cover name), the
+connection lands on someone else's host: the handshake hangs and dies as
+`tls handshake: EOF` after 12–17 seconds, or a foreign key arrives. From the
+outside the node looks dead.
 
-While the first packet is small, this goes unnoticed. After
-[SPEC 083](../SPECS/TASKS/083-REALITY_MLKEM_KEYSHARE/SPEC.md) the hybrid
-ClientHello weighs 1.5–1.9 KB and goes out as two TCP segments. On some lower
-legs it no longer fits. The ICMP *Fragmentation Needed* from an intermediate
-router does not reach us: it is addressed to the server of the lower leg, not
-to the client inside the tunnel. The packet just disappears. From the outside
-this is `tls handshake: EOF` after 12–17 seconds without a single hint. It
-reproduces with plain `curl` through the same leg, so the cause is in the
-path, not in the core.
+Xray's TLS sniffer parses only the first TLS record. A ClientHello split into
+several records is "not a ClientHello" to it on the first try, and the
+connection keeps its original destination. Measured through a sniffing leg:
+no split, failure after 12 s; `fragment`, 0.6 s; `record_fragment`, 0.1 s.
 
-> 🧭 **TL;DR:** a nested ClientHello can hit the MTU. Losing it is not an
-> option: without it the nested connection cannot be established. So the core
-> fragments it by itself.
+> 🔀 **In vanilla sing-box** `fragment` and `record_fragment` are manual node
+> keys; nodes behind sniffing relays have to be protected by hand. For REALITY
+> nodes in vanilla this does not help even by hand; see below about
+> [SPEC 088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md).
 
-> 🔀 **Vanilla sing-box has no such mechanism.** There `fragment` and
-> `record_fragment` are manual keys, and the core does not know that an
-> outbound dials through another outbound. A ClientHello under `detour` goes
-> out whole, as it does on a direct connection, and on a leg with a smaller
-> MTU the connection silently fails to come up. The user has to work out
-> on their own that the size of the first packet is the problem, and enable
-> fragmentation by hand on every node that goes through a tunnel.
-> For REALITY nodes in vanilla this does not help even by hand; see below
-> about [SPEC 088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md).
+In `sing-box-lx` the protection is configured by the root `lx.sniff_guard`
+block ([FEATURE 019](../SPECS/FEATURES/019-SNIFF_GUARD/FEATURE.md); overview:
+[lx-config §9](lx-config.md#9-clienthello-under-detour--no-default-spec-060)
+and [§13](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni)). The
+minimal block:
 
-So `sing-box-lx` does it by itself
-([SPEC 060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md),
-overview: [lx-config §9](lx-config.md#9-automatic-clienthello-fragmentation-under-detour-spec-060)):
+```json
+"lx": { "sniff_guard": { "tls": { "method": "record_fragment" } } }
+```
 
-- When the TLS client is built, the outbound gets a "dials through detour"
-  flag. If the flag is set and the user has set neither `fragment` nor
-  `record_fragment`, the core enables **`record_fragment`**
-  (`applyDetourFragmentDefault` in `common/tls/client.go`). This mode was
-  chosen on purpose: it cuts by TLS records without pauses, and each record
-  is always smaller than any reasonable MTU. Measured through a broken
-  leg: without fragmentation, failure after 12 s; `fragment`, 0.6 s;
-  `record_fragment`, 0.1 s.
-- The default is applied **before** a specific engine sees the options, so
-  the standard client, uTLS and REALITY get it the same way.
-  For REALITY this started working only with
+- **Without the block the core behaves as upstream.** The ClientHello is
+  split only where the node sets `fragment` or `record_fragment`, through a
+  `detour` too. Earlier releases split it under `detour` by default; that
+  default is gone (SPEC 060).
+- **The block learns per path.** A path through a relay other than `ssh` and
+  `socks` starts with the split, the direct path without it. A node that
+  failed without the split and then passed with it turns the split on for its
+  path; the reverse pair turns it off.
+- **The standard client, uTLS and REALITY are split the same way.** For
+  REALITY this started working only with
   [SPEC 088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md). Before it,
   the REALITY client built the uTLS connection on a bare socket, and
   fragmentation, even an explicit one, silently had no effect on it. Upstream
   sing-box still works this way.
-- **An explicit value in the config always wins.** `fragment: true` is not
-  upgraded to `record_fragment`: if packet-level cutting was chosen, it
-  stays the user's choice.
+- **A node's explicit value wins.** A node's `fragment` / `record_fragment`,
+  `"record_fragment": false` included (SPEC 156), work as upstream; the block
+  overrides them only with `"override": true`.
 - **Handshake only.** Traffic after it is not touched, so there is no
   permanent tax on the tunnel.
-- **`h3`/QUIC is not affected**: there is no TLS over TCP there, and QUIC
-  itself keeps the Initial below the threshold.
-- **Nested chains are covered automatically**: each
-  [`chain`](../SPECS/FEATURES/015-CHAIN/FEATURE.md) link has its own
-  `detour`, and [MASQUE](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md) over
-  `h2` through a detour takes the same path.
+- **`h3`/QUIC** carries no TLS over TCP; it is guarded by the `quic` section
+  of the same block (a one-byte decoy ahead of the first Initial).
+- **Chains**: each [`chain`](../SPECS/FEATURES/015-CHAIN/FEATURE.md) link has
+  its own `detour`, and [MASQUE](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md)
+  over `h2` through a detour takes the same path.
 
-> ⚠️ **Known limitation:** an explicit `"record_fragment": false` cannot be
-> told apart from "not set", so under `detour` the default turns on anyway.
-> There is currently no way to dial through a detour with no fragmentation at
-> all. The way to change the mode is `"fragment": true`. The task lives in
-> the [004-HOTFIXES](../SPECS/FEATURES/004-HOTFIXES/FEATURE.md) registry: it
-> is a patch for path behaviour, not a protocol feature, and it has a removal
-> condition.
-
-Whether fragmentation helps in a network that loses a large first packet
-**without** a tunnel is a property of that network. The second lever there
-is `key_share: classical` ([§1.3](#13-hybrid-key-share-and-clienthello-size)).
+Whether fragmentation helps in a network that loses the large hybrid first
+flight is a property of that network. The second lever there is `key_share: classical` ([§1.3](#13-hybrid-key-share-and-clienthello-size)).
 
 ## 1.5 Example: Xray and sing-box-lx
 
@@ -469,7 +453,7 @@ Key mapping:
 | `freedom` + `settings.fragment` + `sockopt.dialerProxy` | the same `tls.fragment` on the node that goes out directly | [§1.4](#14-fragmentation); the helper `freedom` does not become a separate outbound |
 | `length`, `delay` / `interval`, `maxSplit` | none | the core finds boundaries by SNI and pauses by ACK ([§1.4](#14-fragmentation)); there is nothing to carry over except the fact that fragmentation is on |
 | n/a | `tls.fragment_fallback_delay` | [`fragment_fallback_delay`](../docs/configuration/shared/tls.md#fragment_fallback_delay): the wait time used when the core cannot compute it itself; 500 ms by default |
-| n/a | `record_fragment` turns on by itself under `detour` | [lx-config §9](lx-config.md#9-automatic-clienthello-fragmentation-under-detour-spec-060) |
+| n/a | `lx.sniff_guard`: protection against a relay that reroutes by SNI, learnt per path | [lx-config §13](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni), [§9](lx-config.md#9-clienthello-under-detour--no-default-spec-060) |
 | n/a | `tls.reality.key_share` | ours only, [§1.3](#13-hybrid-key-share-and-clienthello-size); applies to REALITY, example in [§2.8](#28-example-xray-and-sing-box-lx) |
 
 > 📖 Normative description of the Xray fields: [TLS in the Project X documentation](https://xtls.github.io/config/transport.html#tlsobject).
@@ -702,7 +686,7 @@ Key mapping:
 | `realitySettings.spiderX` | none | [§2.5](#25-how-the-client-verifies-the-server), [§2.6](#26-what-our-core-does-differently-from-upstream) |
 | `realitySettings.mldsa65Verify` | none | [§2.6](#26-what-our-core-does-differently-from-upstream) |
 | n/a | `tls.reality.key_share` | ours only: [lx-config §7](lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello-spec-089), [§1.3](#13-hybrid-key-share-and-clienthello-size) |
-| n/a | `tls.fragment`, `tls.record_fragment` | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment); automatic under `detour`: [lx-config §9](lx-config.md#9-automatic-clienthello-fragmentation-under-detour-spec-060) |
+| n/a | `tls.fragment`, `tls.record_fragment` | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment); no default under `detour`, protection is configured by `lx.sniff_guard`: [lx-config §13](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni) |
 
 > 📖 Normative description of the Xray fields: [REALITY in the Project X documentation](https://xtls.github.io/config/transport.html#realityobject).
 
@@ -1457,7 +1441,7 @@ submodule. For this document that is `utls-lx` ([§1.2](#12-fingerprint-and-utls
 | **REALITY: hybrid key share** | Strips `X25519MLKEM768` from the ClientHello (a workaround for old uTLS, [SagerNet/sing-box#4520](https://github.com/SagerNet/sing-box/issues/4520)). Against Xray ≥ v26.9.8 every node ends up on the cover site | Sends what the preset carries; `AuthKey` from the key the server will choose | [§2.6](#26-what-our-core-does-differently-from-upstream), [083](../SPECS/TASKS/083-REALITY_MLKEM_KEYSHARE/SPEC.md) |
 | **REALITY: client version** | An outdated constant; a server with `minClientVer` rejects it | Exactly the required minimum | [053](../SPECS/TASKS/053-REALITY_MIN_CLIENT_VER/SPEC.md) |
 | **REALITY: `key_share`** | No such field | `classical` / `hybrid` per node, for networks that lose a two-segment ClientHello | [§1.3](#13-hybrid-key-share-and-clienthello-size), [089](../SPECS/TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md) |
-| **REALITY: fragmentation** | `fragment` / `record_fragment` leave REALITY untouched | Apply to REALITY too; under `detour`, `record_fragment` turns on by itself | [§1.4](#14-fragmentation), [088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md), [060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) |
+| **REALITY: fragmentation** | `fragment` / `record_fragment` leave REALITY untouched | Apply to REALITY too; protection against a relay that reroutes by SNI is configured by `lx.sniff_guard` | [§1.4](#14-fragmentation), [088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md), [060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) |
 | **uTLS fingerprints** | `metacubex/utls`: hybrid share only in `chrome` | Fork `utls-lx`: adds `firefox` (Firefox 148) and `safari` (Safari 26.3) with the hybrid, and the opt-in `chrome_155` (Chrome 155) | [§1.2](#12-fingerprint-and-utls), [086](../SPECS/TASKS/086-UTLS_FORK_FIREFOX148/SPEC.md), [087](../SPECS/TASKS/087-UTLS_SAFARI_26_3/SPEC.md), [118](../SPECS/TASKS/118-UTLS_CHROME_155/SPEC.md) |
 | **Vision** | Present (`sing-vmess`), only over TLS/REALITY on bare TCP | The same, plus over VLESS `encryption` on any transport | [§3.3](#33-what-vision-combines-with), [105](../SPECS/TASKS/105-VISION_OVER_VLESS_ENCRYPTION/SPEC.md) |
 | **VLESS `encryption`** | None; the field is rejected as unknown, and nodes with it are dead across the whole sing-box ecosystem | The client half of `mlkem768x25519plus`: all wire appearances, `0rtt`/`1rtt`, padding | [§5](#5-vless-encryption-the-post-quantum-layer), [012](../SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) |
@@ -1504,7 +1488,7 @@ submodule. For this document that is `utls-lx` ([§1.2](#12-fingerprint-and-utls
 ## See also
 
 - **[lx-config.md](lx-config.md)**: field overview by feature: [§6](lx-config.md#6-vless-encryption--post-quantum-layer-spec-032) VLESS
-  `encryption`, [§7](lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello-spec-089) REALITY `key_share`, [§9](lx-config.md#9-automatic-clienthello-fragmentation-under-detour-spec-060) fragmentation.
+  `encryption`, [§7](lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello-spec-089) REALITY `key_share`, [§9](lx-config.md#9-clienthello-under-detour--no-default-spec-060) ClientHello under `detour`, [§13](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni) `lx.sniff_guard`.
 - **[protocols-transports.md](protocols-transports.md)**: [§1](protocols-transports.md#1-xhttp-transport)
   XHTTP: every field, default and error.
 - Feature specs: [017-REALITY](../SPECS/FEATURES/017-REALITY/FEATURE.md),

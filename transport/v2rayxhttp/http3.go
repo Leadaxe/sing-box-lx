@@ -15,9 +15,12 @@ import (
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxdatagram"
+	"github.com/sagernet/sing-box/common/lxsniffguard"
 	"github.com/sagernet/sing-box/common/tls"
 	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -99,7 +102,7 @@ func http3PathMTUDiscovery() bool {
 
 // newHTTP3Transport returns the factory of pooled HTTP/3 connections. warn
 // receives the load-time warnings of SPEC 104 §6.
-func newHTTP3Transport(dialer N.Dialer, serverAddr M.Socksaddr, tlsConfig tls.Config, keepAlivePeriod time.Duration, warn func(string), sniffDecoy *lxdatagram.Decoy) (func() xmuxConn, error) {
+func newHTTP3Transport(dialer N.Dialer, serverAddr M.Socksaddr, tlsConfig tls.Config, keepAlivePeriod time.Duration, warn func(string), sniffGuard *lxsniffguard.Node, logger logger.Logger) (func() xmuxConn, error) {
 	stdConfig, fromUTLS, err := tls.STDConfigForQUIC(tlsConfig)
 	var dialErr error
 	if err != nil {
@@ -151,33 +154,37 @@ func newHTTP3Transport(dialer N.Dialer, serverAddr M.Socksaddr, tlsConfig tls.Co
 				if dialErr != nil {
 					return nil, dialErr
 				}
-				// lx: SPEC 151 — the first attempt goes without the sniff decoy; a
-				// fast handshake failure is redone at once with the byte in front.
-				for {
-					attempt := sniffDecoy.Begin(ctx)
-					packetConn, err := dialer.DialContext(attempt.Context, N.NetworkUDP, serverAddr)
+				// lx: SPEC 060 — each attempt runs inside lx.sniff_guard's
+				// Node.Dial with a carrier record of its own: a fast handshake
+				// failure is redone at once with the opposite decision.
+				var quicConn *quic.Conn
+				err := sniffGuard.Dial(ctx, func(ctx context.Context) error {
+					ctx, carrier := adapter.ContextWithCarrierRecord(ctx)
+					packetConn, err := dialer.DialContext(ctx, N.NetworkUDP, serverAddr)
 					if err != nil {
-						return nil, E.Cause(err, "v2ray-xhttp: HTTP/3 needs UDP to the server")
+						return E.Cause(err, "v2ray-xhttp: HTTP/3 needs UDP to the server")
 					}
-					attempt.Dialed(packetConn, packetConn)
-					quicConn, err := quic.DialEarlyConn(ctx, packetConn, stdConfig.Clone(), quicConfig)
+					handshakeConn, handshake := lxdatagram.GuardQUIC(lxsniffguard.AttemptFromContext(ctx), packetConn, carrier, packetConn, logger)
+					attemptConn, err := quic.DialEarlyConn(ctx, handshakeConn, stdConfig.Clone(), quicConfig)
+					handshake.Done()
 					if err != nil {
 						packetConn.Close()
-						if attempt.Done(err) {
-							continue
-						}
-						return nil, err
+						return err
 					}
-					attempt.Done(nil)
 					// quic-go does not own the conn it was given: close it when the QUIC
 					// connection ends.
 					go func() {
-						<-quicConn.Context().Done()
+						<-attemptConn.Context().Done()
 						packetConn.Close()
 					}()
-					conn.conn.Store(quicConn)
-					return quicConn, nil
+					quicConn = attemptConn
+					return nil
+				})
+				if err != nil {
+					return nil, err
 				}
+				conn.conn.Store(quicConn)
+				return quicConn, nil
 			},
 		}
 		return conn

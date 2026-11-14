@@ -351,6 +351,15 @@ func TestErrorTTLExpiryReturnsToCleanSet(t *testing.T) {
 	require.True(t, memberClean(group, "a"), "error must expire by error_ttl")
 }
 
+func liveErrors(group *Transport, tag string) int {
+	for _, memberState := range group.GroupState().Members {
+		if memberState.Tag == tag {
+			return memberState.LiveErrors
+		}
+	}
+	return -1
+}
+
 func memberClean(group *Transport, tag string) bool {
 	for _, memberState := range group.GroupState().Members {
 		if memberState.Tag == tag {
@@ -542,4 +551,50 @@ func TestManagerStartsGroupAndNestedGroup(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, mDNS.RcodeSuccess, response.Rcode)
 	require.Equal(t, C.DNSTypeGroup, outer.Type())
+}
+
+// A query abandoned by its caller is not evidence about the server: a slow
+// but healthy sticky member stays clean and current, in the normal path and
+// in survival alike.
+func TestCancelledQueryLeavesMemberHealthIntact(t *testing.T) {
+	cancelled := func() (context.Context, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(context.Background())
+		time.AfterFunc(50*time.Millisecond, cancel)
+		return ctx, cancel
+	}
+	t.Run("single", func(t *testing.T) {
+		group := newTestGroup(t, ModeStable, time.Hour, 0, delayed("a", time.Second), answering("b"))
+		group.access.Lock()
+		group.current = "a"
+		group.access.Unlock()
+
+		ctx, cancel := cancelled()
+		defer cancel()
+		_, err := group.Exchange(ctx, testQuery())
+		require.ErrorIs(t, err, context.Canceled)
+		require.True(t, memberClean(group, "a"), "a cancelled query must not mark the member dirty")
+		require.Equal(t, "a", group.GroupState().Current)
+	})
+	t.Run("survival", func(t *testing.T) {
+		group := newTestGroup(t, ModeStable, time.Hour, 0, delayed("a", time.Second))
+		group.noteError("a", group.gen)
+		before := liveErrors(group, "a")
+
+		ctx, cancel := cancelled()
+		defer cancel()
+		_, err := group.Exchange(ctx, testQuery())
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, before, liveErrors(group, "a"), "a cancelled survival attempt must not add an error record")
+	})
+	t.Run("expired budget still counts", func(t *testing.T) {
+		group := newTestGroup(t, ModeStable, time.Hour, 0, blackhole("a"))
+		group.noteError("a", group.gen)
+		before := liveErrors(group, "a")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		_, err := group.Exchange(ctx, testQuery())
+		require.Error(t, err)
+		require.Greater(t, liveErrors(group, "a"), before, "a member silent for the whole budget did fail")
+	})
 }

@@ -662,8 +662,9 @@ quic-go, получив conn с доступом к сокету, ставит �
 `udp_fragment: false` возвращает поведение апстрима. После шва на mtu 1300 h3 без отката
 поднимается (`assigned`, 5 МБ за 0,75 с); на mtu 1500 — 20 МБ за 2,0 с, как без шва. Цена — тонкая
 настройка сокета quic-go (GSO, ECN, буфер приёма), которой у outbound'а 1.14 тоже не было.
-Под `detour` первая TLS-запись h2 по умолчанию режется (`tls.ApplyDetourFragmentDefault`), как у
-остальных TLS-outbound'ов.
+Защиту от сниффинга на релее (`lx.sniff_guard`, SPEC 060) `masque-client` получает как узел: h3 —
+через `lxdatagram.Dialer` по тегу узла, h2 — открытие туннеля идёт внутри `Node.Dial`
+(`ClientLXOptions.SniffGuardDial`), и TLS-хук формирует ClientHello по решению попытки.
 
 **Тест соединения (SPEC 139).** Туннель открывает цикл endpoint'а, а не dial, поэтому стадий `quic`
 и `auth` на рукопожатие и CONNECT, как у outbound'а 1.14, нет. Dial через endpoint пишет одну
@@ -686,7 +687,7 @@ quic-go, получив conn с доступом к сокету, ставит �
 
 **Усечение и приманка у `masque-client` (2026-11-12).** UDP-диалер endpoint'а обёрнут
 `lxdatagram.Dialer` — одна строка в `protocol/masque/client.go`: чтение длинных датаграмм
-усекается как у ядра (SPEC 150), на h3 работает `lx.quic_sniff_decoy` (SPEC 151) с типом
+усекается как у ядра (SPEC 150), на h3 работает `lx.sniff_guard` (SPEC 060; до lx.34 — `lx.quic_sniff_decoy`) с типом
 `masque-client` в `outbound_type` (он же дефолт на линии 1.15 вместо `masque`). Неудача попытки
 определяется косвенно, по времени жизни conn (как у hysteria2), потому что QUIC-хендшейк идёт
 внутри апстримного клиента. Стенд: `mode: all`, `send: retry` — `warp=on`; `send: always` без

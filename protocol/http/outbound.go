@@ -7,7 +7,6 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
-	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -39,7 +38,6 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	headers := options.Headers.Build()
 	tlsOptions := common.PtrValueOrDefault(options.TLS)
-	tls.ApplyDetourFragmentDefault(&tlsOptions, options.DialerOptions) // lx: SPEC 060
 	client, err := http.NewClientWithTLS(ctx, logger, outboundDialer, options.ServerOptions, tlsOptions, http.ClientOptions{
 		Username:               options.Username,
 		Password:               options.Password,

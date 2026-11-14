@@ -168,7 +168,7 @@ func (c *Client) loop() {
 
 func (c *Client) connect() (bool, error) {
 	dialCtx, cancelDial := context.WithTimeout(c.ctx, C.TCPTimeout)
-	stream, err := c.httpClient.OpenTunnel(dialCtx, c.tunnelProtocol(), c.template.Expand()) // lx: SPEC 110
+	stream, err := c.openTunnelLx(dialCtx) // lx: SPEC 110, 060
 	cancelDial()
 	if err != nil {
 		return false, err

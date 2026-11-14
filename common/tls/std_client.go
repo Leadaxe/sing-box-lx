@@ -33,6 +33,7 @@ type STDClientConfig struct {
 	fragment              bool
 	fragmentFallbackDelay time.Duration
 	recordFragment        bool
+	fragmentChosen        bool // lx: SPEC 060 — fragment or record_fragment set in the config, an explicit false included
 	spoof                 string
 	spoofMethod           tlsspoof.Method
 }
@@ -76,7 +77,7 @@ func (c *STDClientConfig) STDConfig() (*STDConfig, error) {
 }
 
 func (c *STDClientConfig) Client(conn net.Conn) (Conn, error) {
-	if c.fragment || c.recordFragment {
+	if (c.fragment || c.recordFragment) && !sniffGuardShapedLx(conn) { // lx: SPEC 060 — lx.sniff_guard shaped this handshake itself
 		conn = tf.NewConn(conn, c.ctx, c.fragment, c.recordFragment, c.fragmentFallbackDelay)
 	}
 	conn, err := applyTLSSpoof(conn, c.spoof, c.spoofMethod)
@@ -97,6 +98,7 @@ func (c *STDClientConfig) Clone() Config {
 		fragment:              c.fragment,
 		fragmentFallbackDelay: c.fragmentFallbackDelay,
 		recordFragment:        c.recordFragment,
+		fragmentChosen:        c.fragmentChosen, // lx: SPEC 060
 		spoof:                 c.spoof,
 		spoofMethod:           c.spoofMethod,
 	}
@@ -241,9 +243,10 @@ func newSTDClient(ctx context.Context, logger logger.ContextLogger, serverAddres
 		handshakeTimeout:      handshakeTimeout,
 		fragment:              options.Fragment,
 		fragmentFallbackDelay: time.Duration(options.FragmentFallbackDelay),
-		recordFragment:        options.RecordFragment,
+		recordFragment:        options.RecordFragmentEnabled(), // lx: SPEC 156
 		spoof:                 spoof,
 		spoofMethod:           spoofMethod,
+		fragmentChosen:        options.Fragment || options.RecordFragment != nil, // lx: SPEC 060
 	}
 	config.SetServerName(serverName)
 	if options.ECH != nil && options.ECH.Enabled {

@@ -351,9 +351,11 @@ serve MASQUE (h3 `handshake failure`, h2 a generic edge key).
 
 Why h2 passes and h3 does not, by Xray's code (`app/dispatcher/default.go`,
 `common/protocol/quic/sniff.go`, `common/protocol/tls/sniff.go`): the sniff loop has a 200 ms
-budget; the TLS sniffer answers a partial ClientHello with `ErrNoClue`, which counts as an attempt,
-and the loop gives up after two, so a ClientHello split into TLS records (SPEC 060 does it under any
-`detour`, hence every relay user's h2 worked) is never parsed and the destination stays. The QUIC
+budget; the TLS sniffer parses only the first TLS record, and a ClientHello split into records
+(SPEC 060 does it under any `detour`, hence every relay user's h2 worked) has its first record cut
+inside the SNI, so the extensions length does not match and the sniffer answers `not client hello`
+on the first attempt — the ClientHello is never parsed and the destination stays (checked against
+Xray `c456141` and a copy of `SniffTLS`, 2026-11-12; see SPEC 060 §1.1). The QUIC
 sniffer decrypts the Initial packets with the version's initial secret, reassembles CRYPTO frames
 across packets and answers `ErrProtoNeedMoreData`, which does not count as an attempt: it keeps
 reading until the 200 ms run out. A QUIC ClientHello, whole or split, is therefore parsed as long
@@ -367,7 +369,7 @@ with a fake SNI (`addons.mozilla.org` in #37) cannot pass such a relay either.
 
 ### 3.2 Prototype: holding the second Initial past the relay sniff budget (2026-11-02)
 
-Superseded by [SPEC 151](../151-QUIC_SNIFF_DECOY/SPEC.md): a one-byte decoy datagram ahead of the Initial takes Xray's QUIC sniffer out of the flow with no delay; the prototype below is removed from the tree. Research, kept so the result is not lost. Follows from §3.1: Xray's
+Superseded by [SPEC 060](../060-TLS_FRAGMENT_AUTO_ON_DETOUR/HISTORY.md): a one-byte decoy datagram ahead of the Initial takes Xray's QUIC sniffer out of the flow with no delay; the prototype below is removed from the tree. Research, kept so the result is not lost. Follows from §3.1: Xray's
 QUIC sniffer reassembles the ClientHello across Initial packets and answers `ErrProtoNeedMoreData`,
 which does not count against its two-attempt budget, so it keeps reading until its 200 ms timer
 runs out. If the second Initial datagram of a fresh h3 dial arrives after that timer, the sniffer

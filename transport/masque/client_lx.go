@@ -3,10 +3,13 @@ package masque
 // lx: SPEC 110 — the Cloudflare WARP dialect of CONNECT-IP on the client side.
 
 import (
+	"context"
+	"io"
 	"net/netip"
 	"slices"
 	"strings"
 
+	"github.com/sagernet/sing-box/adapter"
 	transportHTTP "github.com/sagernet/sing-box/transport/http"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
@@ -28,6 +31,30 @@ type ClientLXOptions struct {
 	// carries the bare IP packet as the capsule payload, where RFC 9297 puts a
 	// context ID (0) in front. QUIC datagrams are not affected.
 	RawStreamCapsules bool
+	// SniffGuardDial runs the opening of a tunnel under lx.sniff_guard
+	// (lx: SPEC 060): one attempt of the node, retried at once with the
+	// opposite decision when the guard asks for it. Nil opens the tunnel as
+	// is. The HTTP/2 leg's ClientHello is shaped by the attempt in the
+	// context; the HTTP/3 leg is guarded at its socket by the dialer
+	// (lxdatagram.Dialer).
+	SniffGuardDial func(ctx context.Context, do func(ctx context.Context) error) error
+}
+
+// openTunnelLx opens the tunnel stream, under lx.sniff_guard when the
+// endpoint is covered. The carrier record lets the TLS hook tell which
+// outbound carries the attempt.
+func (c *Client) openTunnelLx(ctx context.Context) (io.ReadWriteCloser, error) {
+	if c.lx.SniffGuardDial == nil {
+		return c.httpClient.OpenTunnel(ctx, c.tunnelProtocol(), c.template.Expand())
+	}
+	var stream io.ReadWriteCloser
+	err := c.lx.SniffGuardDial(ctx, func(ctx context.Context) error {
+		ctx, _ = adapter.ContextWithCarrierRecord(ctx)
+		var err error
+		stream, err = c.httpClient.OpenTunnel(ctx, c.tunnelProtocol(), c.template.Expand())
+		return err
+	})
+	return stream, err
 }
 
 func (c *Client) tunnelProtocol() string {

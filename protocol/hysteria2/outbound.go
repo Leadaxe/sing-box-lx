@@ -129,7 +129,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	networkList := options.Network.Build()
 	client, err := hysteria2.NewClient(hysteria2.ClientOptions{
 		Context:            ctx,
-		Dialer:             lxdatagram.Dialer(ctx, C.TypeHysteria2, outboundDialer, logger), // lx: SPEC 150, 151
+		Dialer:             lxdatagram.Dialer(ctx, tag, outboundDialer, logger), // lx: SPEC 150, 060
 		Logger:             logger,
 		BrutalDebug:        options.BrutalDebug,
 		ServerAddress:      options.ServerOptions.Build(),

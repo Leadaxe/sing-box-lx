@@ -286,76 +286,65 @@ ClientHello и находит в нём расширение SNI. Имя сер�
 режима нет: нарезка на TLS-записи получается лишь побочно, когда граница
 куска совпала с границей записи.
 
-### Вложенные протоколы: почему ClientHello теряется и что делает ядро
+### Под `detour`: релей, который перенаправляет по SNI
 
-Отдельный случай, ради которого фрагментация в `sing-box-lx` включается
-сама. Когда один протокол заворачивается в другой — outbound диалит через
-`detour`, звено `chain` ходит через предыдущее звено, VLESS едет внутри
-WireGuard или MASQUE — наш ClientHello уходит **внутри** чужого туннеля.
-Нижнее плечо пересылает его дальше от своего имени, и у пути за тем
-сервером свой MTU, обычно меньше, чем у нас, потому что туннель съел часть
-кадра своими заголовками.
+Отдельный случай — узел, который диалит через `detour`, звено `chain` или
+через роутер с прокси в локальной сети. Промежуточный узел может прочитать
+имя из ClientHello и отправить соединение на это имя, а не на адрес
+назначения узла: так делает Xray-инбаунд с `sniffing.destOverride` без
+`routeOnly`. Пока SNI — собственное имя сервера, подмена приводит туда же.
+Когда SNI — маскировка (REALITY с чужим сайтом, WARP с подставным именем),
+соединение уходит на чужой хост: рукопожатие висит и умирает как
+`tls handshake: EOF` через 12–17 секунд или приходит чужой ключ. Снаружи
+узел выглядит мёртвым.
 
-Пока первый пакет маленький, это незаметно. Гибридный ClientHello после
-[SPEC 083](../SPECS/TASKS/083-REALITY_MLKEM_KEYSHARE/SPEC.md) весит
-1,5–1,9 КБ и уходит двумя TCP-сегментами; на части нижних плеч он уже не
-помещается. ICMP *Fragmentation Needed* от промежуточного маршрутизатора
-до нас не доходит — он адресован серверу нижнего плеча, а не клиенту
-внутри туннеля. Пакет просто исчезает. Снаружи это `tls handshake: EOF`
-через 12–17 секунд без единой подсказки; воспроизводится голым `curl` через
-то же плечо, то есть причина в пути, а не в ядре.
+TLS-сниффер Xray разбирает только первую TLS-запись. ClientHello,
+разрезанный на несколько записей, для него с первой попытки «не
+ClientHello», и соединение сохраняет исходное назначение. Замер через
+сниффящее плечо: без разреза — отказ за 12 с, `fragment` — 0,6 с,
+`record_fragment` — 0,1 с.
 
-> 🧭 **TL;DR:** вложенный ClientHello может упереться в MTU. Терять его нельзя: без
-> него вложенное соединение не установить. Поэтому ядро фрагментирует его
-> само.
-
-> 🔀 **В ванильном sing-box такой механики нет.** Там `fragment` и
-> `record_fragment` — ручные ключи, и ядро не знает, что outbound диалит
-> через другой outbound: ClientHello под `detour` уходит целиком, как и
-> напрямую, и на плече с меньшим MTU соединение молча не поднимается.
-> Пользователь должен сам догадаться, что дело в размере первого пакета, и
-> сам включить фрагментацию на каждом узле, который ходит через туннель.
-> К REALITY-узлам в ванили это не поможет даже вручную — см. ниже про
+> 🔀 **В ванильном sing-box** `fragment` и `record_fragment` — ручные ключи
+> узла; узлы за сниффящими релеями приходится защищать вручную. К
+> REALITY-узлам в ванили это не поможет даже вручную — см. ниже про
 > [SPEC 088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md).
 
-Поэтому `sing-box-lx` делает это сам
-([SPEC 060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md),
-обзор — [lx-config §9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060)):
+В `sing-box-lx` защиту настраивает корневой блок `lx.sniff_guard`
+([FEATURE 019](../SPECS/FEATURES/019-SNIFF_GUARD/FEATURE.md), обзор —
+[lx-config §9](lx-config.ru.md#9-clienthello-под-detour--без-дефолта-spec-060)
+и [§13](lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni)).
+Минимальный блок:
 
-- При сборке TLS-клиента outbound получает признак «диалю через detour».
-  Если он стоит, а пользователь не задал ни `fragment`, ни
-  `record_fragment`, ядро включает **`record_fragment`**
-  (`applyDetourFragmentDefault` в `common/tls/client.go`). Выбран именно
-  он: разрез по TLS-записям без пауз, и каждая запись заведомо меньше
-  любого разумного MTU. Замер через сломанное плечо: без фрагментации
-  отказ за 12 с, `fragment` — 0,6 с, `record_fragment` — 0,1 с.
-- Дефолт применяется **до** того, как опции увидит конкретный движок,
-  поэтому стандартный клиент, uTLS и REALITY получают его одинаково.
-  Для REALITY это заработало только с
+```json
+"lx": { "sniff_guard": { "tls": { "method": "record_fragment" } } }
+```
+
+- **Без блока ядро ведёт себя как апстрим.** ClientHello режется только там,
+  где у узла задан `fragment` или `record_fragment`, через `detour` тоже.
+  Прежние релизы резали его под `detour` по умолчанию; этого дефолта больше
+  нет (SPEC 060).
+- **Блок учится по путям.** Путь через релей, кроме `ssh` и `socks`,
+  стартует с разрезом, прямой — без него. Узел, который упал без разреза и
+  прошёл с ним, включает разрез на своём пути; обратная пара его снимает.
+- **Стандартный клиент, uTLS и REALITY режутся одинаково.** Для REALITY это
+  заработало только с
   [SPEC 088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md): до неё
   REALITY-клиент строил uTLS-соединение на голом сокете, и фрагментация,
   включая явную, на нём молча не действовала. Апстрим sing-box так и живёт.
-- **Явное значение в конфиге всегда сильнее.** `fragment: true` не
-  апгрейдится до `record_fragment`: если выбран разрез по пакетам, это
-  остаётся выбором пользователя.
+- **Явное значение узла сильнее блока.** Узловые `fragment` /
+  `record_fragment`, включая `"record_fragment": false` (SPEC 156),
+  действуют как в апстриме; блок перекрывает их только с `"override": true`.
 - **Только рукопожатие.** Трафик после него не трогается, постоянного
   налога на туннель нет.
-- **`h3`/QUIC не затронут**: там нет TLS поверх TCP, а QUIC сам держит
-  Initial ниже порога.
-- **Вложенные цепочки покрыты автоматически**: у каждого звена
+- **`h3`/QUIC** не несёт TLS поверх TCP; его защищает секция `quic` того же
+  блока (байт-приманка перед первым Initial).
+- **Цепочки**: у каждого звена
   [`chain`](../SPECS/FEATURES/015-CHAIN/FEATURE.md) свой `detour`, у
   [MASQUE](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md) по `h2` через
   detour — тот же путь.
 
-> ⚠️ **Известное ограничение:** явный `"record_fragment": false` неотличим от
-> «не задано», поэтому под `detour` дефолт всё равно включится. Способа
-> диалить через detour вообще без фрагментации сейчас нет; чтобы сменить
-> режим, ставят `"fragment": true`. Задача живёт в реестре
-> [004-HOTFIXES](../SPECS/FEATURES/004-HOTFIXES/FEATURE.md): это заплатка на
-> поведение пути, не фича протокола, и у неё есть условие снятия.
-
-Поможет ли фрагментация в сети, которая теряет большой первый пакет
-**без** туннеля, — свойство той сети; второй рычаг там —
+Поможет ли фрагментация в сети, которая теряет большой гибридный первый
+пакет, — свойство той сети; второй рычаг там —
 `key_share: classical` ([§1.3](#13-гибридный-key-share-и-размер-приветствия)).
 
 ## 1.5 Пример: Xray и sing-box-lx
@@ -456,7 +445,7 @@ sing-box-lx — один outbound для обеих форм:
 | `freedom` + `settings.fragment` + `sockopt.dialerProxy` | то же `tls.fragment` на узле, который ходит наружу напрямую | [§1.4](#14-фрагментация); служебный `freedom` отдельным outbound-ом не становится |
 | `length`, `delay` / `interval`, `maxSplit` | нет | границы ядро находит по SNI, паузы — по ACK ([§1.4](#14-фрагментация)); переносить нечего, переносится только факт включения |
 | — | `tls.fragment_fallback_delay` | [`fragment_fallback_delay`](../docs/configuration/shared/tls.md#fragment_fallback_delay): время ожидания, когда ядро не может вычислить его само; по умолчанию 500 мс |
-| — | `record_fragment` сам включается под `detour` | [lx-config §9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060) |
+| — | `lx.sniff_guard`: защита от релея, перенаправляющего по SNI, с обучением по путям | [lx-config §13](lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni), [§9](lx-config.ru.md#9-clienthello-под-detour--без-дефолта-spec-060) |
 | — | `tls.reality.key_share` | только у нас, [§1.3](#13-гибридный-key-share-и-размер-приветствия); относится к REALITY, пример в [§2.8](#28-пример-xray-и-sing-box-lx) |
 
 > 📖 Нормативное описание полей Xray — [TLS в документации Project X](https://xtls.github.io/config/transport.html#tlsobject).
@@ -685,7 +674,7 @@ sing-box-lx (`outbounds[]`):
 | `realitySettings.spiderX` | нет | [§2.5](#25-как-клиент-проверяет-сервер), [§2.6](#26-что-в-нашем-ядре-иначе-чем-в-апстриме) |
 | `realitySettings.mldsa65Verify` | нет | [§2.6](#26-что-в-нашем-ядре-иначе-чем-в-апстриме) |
 | — | `tls.reality.key_share` | только у нас: [lx-config §7](lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello-spec-089), [§1.3](#13-гибридный-key-share-и-размер-приветствия) |
-| — | `tls.fragment`, `tls.record_fragment` | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment); авто под `detour` — [lx-config §9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060) |
+| — | `tls.fragment`, `tls.record_fragment` | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment); дефолта под `detour` нет, защиту настраивает `lx.sniff_guard` — [lx-config §13](lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni) |
 
 > 📖 Нормативное описание полей Xray — [REALITY в документации Project X](https://xtls.github.io/config/transport.html#realityobject).
 
@@ -1422,7 +1411,7 @@ build-тегами. Обратное — принести в Xray платфор
 | **REALITY: гибридный key share** | Вырезает `X25519MLKEM768` из приветствия (костыль под старый uTLS, [SagerNet/sing-box#4520](https://github.com/SagerNet/sing-box/issues/4520)). Против Xray ≥ v26.9.8 каждый узел уходит на сайт-прикрытие | Шлёт то, что несёт пресет; `AuthKey` по тому ключу, который выберет сервер | [§2.6](#26-что-в-нашем-ядре-иначе-чем-в-апстриме), [083](../SPECS/TASKS/083-REALITY_MLKEM_KEYSHARE/SPEC.md) |
 | **REALITY: версия клиента** | Устаревшая константа; сервер с `minClientVer` отсекает | Ровно требуемый минимум | [053](../SPECS/TASKS/053-REALITY_MIN_CLIENT_VER/SPEC.md) |
 | **REALITY: `key_share`** | Поля нет | `classical` / `hybrid` по узлу — для сетей, теряющих двухсегментное приветствие | [§1.3](#13-гибридный-key-share-и-размер-приветствия), [089](../SPECS/TASKS/089-REALITY_KEY_SHARE_OPTION/SPEC.md) |
-| **REALITY: фрагментация** | `fragment` / `record_fragment` обходят REALITY стороной | Действуют и на REALITY; под `detour` `record_fragment` включается сам | [§1.4](#14-фрагментация), [088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md), [060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) |
+| **REALITY: фрагментация** | `fragment` / `record_fragment` обходят REALITY стороной | Действуют и на REALITY; защиту от релея, перенаправляющего по SNI, настраивает `lx.sniff_guard` | [§1.4](#14-фрагментация), [088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md), [060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) |
 | **Отпечатки uTLS** | `metacubex/utls`: гибридный шар только у `chrome` | Форк `utls-lx`: плюс `firefox` (Firefox 148) и `safari` (Safari 26.3) с гибридом и `chrome_155` (Chrome 155) по явному имени | [§1.2](#12-отпечаток-и-utls), [086](../SPECS/TASKS/086-UTLS_FORK_FIREFOX148/SPEC.md), [087](../SPECS/TASKS/087-UTLS_SAFARI_26_3/SPEC.md), [118](../SPECS/TASKS/118-UTLS_CHROME_155/SPEC.md) |
 | **Vision** | Есть (`sing-vmess`), только поверх TLS/REALITY на голом TCP | То же, плюс поверх VLESS `encryption` на любом транспорте | [§3.3](#33-с-чем-vision-сочетается), [105](../SPECS/TASKS/105-VISION_OVER_VLESS_ENCRYPTION/SPEC.md) |
 | **VLESS `encryption`** | Нет; поле отвергается как неизвестное, узлы с ним мертвы во всей экосистеме sing-box | Клиентская половина `mlkem768x25519plus`: все виды, `0rtt`/`1rtt`, паддинг | [§5](#5-vless-encryption-постквантовый-слой), [012](../SPECS/FEATURES/012-VLESS_ENCRYPTION/FEATURE.md) |
@@ -1469,7 +1458,7 @@ build-тегами. Обратное — принести в Xray платфор
 ## См. также
 
 - **[lx-config.ru.md](lx-config.ru.md)** — обзор полей по фичам: [§6](lx-config.ru.md#6-vless-encryption--пост-квантовый-слой-spec-032) VLESS
-  `encryption`, [§7](lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello-spec-089) REALITY `key_share`, [§9](lx-config.ru.md#9-автоматическая-фрагментация-clienthello-под-detour-spec-060) фрагментация.
+  `encryption`, [§7](lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello-spec-089) REALITY `key_share`, [§9](lx-config.ru.md#9-clienthello-под-detour--без-дефолта-spec-060) ClientHello под `detour`, [§13](lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni) `lx.sniff_guard`.
 - **[protocols-transports.ru.md](protocols-transports.ru.md)** — [§1](protocols-transports.ru.md#1-xhttp-транспорт)
   XHTTP: каждое поле, дефолт, ошибка.
 - Спеки фич: [017-REALITY](../SPECS/FEATURES/017-REALITY/FEATURE.md),
