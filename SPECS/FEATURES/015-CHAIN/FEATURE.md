@@ -64,7 +64,7 @@ The position order is the one thing to remember: **not** "who goes through whom"
 |-----|------------|-----------------|---------------------|
 | `tls.fragment` | stripped | packet-level ClientHello fragmentation (`fragment`, `fragment_fallback_delay`) | the server never sees it; inside a tunnel it only adds latency and failure points. **`record_fragment` is not touched** — under `detour` it is switched on automatically as a path fix (see [HOTFIXES / 060](../004-HOTFIXES/FEATURE.md)) and is not subject to stripping |
 | `multiplex.padding` | stripped | multiplexer padding | requested by the client; a server that supports it accepts traffic without it just the same |
-| `xhttp.padding` | stripped | XHTTP padding — reduced to the minimum of the range, obfs mode off | the server accepts any length |
+| `xhttp.padding` | stripped | XHTTP padding — `x_padding_bytes` is pinned to the lower bound of the node's range (`100` when unset); placement and obfs mode are kept | any length inside the range is valid for the server. The server rejects a length outside its range with 400 and reads the padding from the configured placement, so the strip never goes below the lower bound and leaves `x_padding_obfs_mode` alone |
 | `tls.utls` | **not** stripped | ClientHello fingerprint imitation | not a source of failures; can be stripped via `strip`, except on nodes with `reality` (where it is mandatory — start error) |
 
 The catalog deliberately **excludes** parameters that are contracts with the server: `flow`,
@@ -232,8 +232,11 @@ GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
   пути (см. [HOTFIXES / 060](../004-HOTFIXES/FEATURE.md)) и снятию не подлежит.
 - `multiplex.padding` — снимается: паддинг запрашивается клиентом, сервер одинаково принимает
   трафик и без него.
-- `xhttp.padding` — снимается: диапазон сводится к минимуму, обфус-режим выключается; сервер
-  допускает любую длину.
+- `xhttp.padding` — снимается: `x_padding_bytes` фиксируется на нижней границе диапазона узла
+  (`100`, если диапазон не задан); размещение и обфус-режим остаются как в конфиге. Сервер
+  принимает любую длину внутри своего диапазона, длину вне его отклоняет ответом 400, а паддинг
+  читает из настроенного размещения, поэтому ниже нижней границы strip не опускается и
+  `x_padding_obfs_mode` не трогает.
 - `tls.utls` — **не** снимается по умолчанию: имитация отпечатка ClientHello не источник отказов.
   Снять можно через `strip`, кроме узлов с `reality` (там utls обязателен — ошибка старта).
 

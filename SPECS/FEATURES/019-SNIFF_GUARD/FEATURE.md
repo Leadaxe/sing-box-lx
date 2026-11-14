@@ -4,7 +4,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | — (встроено в ядро) |
-| Состояние | I — реализовано в задаче [060](../../TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) 2026-11-13, не выпущено: юнит-тесты и loopback-стенды против сниффера Xray пройдены, полевых прогонов нет. Два прежних механизма (разрез ClientHello под `detour` по умолчанию и ключ `lx.quic_sniff_decoy`) сняты, описаны в [HISTORY задачи 060](../../TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/HISTORY.md) |
+| Состояние | C — реализовано в задаче [060](../../TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md), принято 2026-11-14, выйдет в `v1.14.4-lx.34`: юнит-тесты и loopback-стенды против сниффера Xray пройдены, полевых прогонов нет. Два прежних механизма (разрез ClientHello под `detour` по умолчанию и ключ `lx.quic_sniff_decoy`) сняты, описаны в [HISTORY задачи 060](../../TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/HISTORY.md) |
 
 ## Назначение
 
@@ -340,7 +340,7 @@ masque в режиме `auto` проходит это дважды, с разн�
 
 | Задача | Что | Статус |
 |---|---|---|
-| [060](../../TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) | Реализация `lx.sniff_guard`; в HISTORY — прежние механизмы: разрез ClientHello под `detour` по умолчанию (2026-08-12) и QUIC-приманка `lx.quic_sniff_decoy` (lx.30–lx.33) со стендами и полевыми прогонами | I |
+| [060](../../TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/SPEC.md) | Реализация `lx.sniff_guard`; в HISTORY — прежние механизмы: разрез ClientHello под `detour` по умолчанию (2026-08-12) и QUIC-приманка `lx.quic_sniff_decoy` (lx.30–lx.33) со стендами и полевыми прогонами | C |
 | [156](../../TASKS/156-RECORD_FRAGMENT_EXPLICIT_FALSE/SPEC.md) | Узловой `record_fragment` различает «не задано» и явный `false` (опора P6) | I |
 | [150](../../TASKS/150-QUIC_DETOUR_OVERSIZE_DATAGRAM/SPEC.md) | §3.1 — разбор сниффинга Xray на стенде владельца | C |
 | [088](../../TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md) | Разрез ClientHello доходит до REALITY | C |

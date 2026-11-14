@@ -46,8 +46,7 @@
 - [x] `go build ./...` без тегов и с `LX_TAGS`; тесты затронутых пакетов.
 - [x] Путь `sing-box check` (разбор + `box.New`) — тестом `box_lx_sniff_guard_check_test.go`: конфиг с
       блоком и каждая ошибка загрузки.
-- [x] `IMPLEMENTATION_REPORT.md`; статус I в шапке SPEC и в `SPECS/README.md` (C — после стендов и
-      приёмки).
+- [x] `IMPLEMENTATION_REPORT.md`; статус C в шапке SPEC и в `SPECS/README.md` (приёмка владельца 2026-11-14).
 
 ## После кода (сетевые прогоны, со словом владельца)
 
