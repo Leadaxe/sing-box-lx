@@ -44,7 +44,7 @@ const (
 // LXSniffGuardResolved — lx.sniff_guard с применёнными дефолтами.
 // Нулевое значение = блока нет = фича выключена.
 type LXSniffGuardResolved struct {
-    SNIMismatchOnly bool     // nodes.sni_mismatch: true
+    SNIMismatchOnly bool     // true unless nodes.sni_mismatch: false
     OutboundTypes   []string // nil = фильтра нет
     Override        bool
     TLS             LXSniffGuardSectionResolved

@@ -119,7 +119,7 @@ you need and read its section below. Each comment shows the **default** and the 
     "mtu_align": "clamp",                       // default: clamp. off | fill | clamp, or an object {"mode", "except": [tags]} (§13)
     "sniff_guard": {                            // default: no block = upstream behaviour. Guards the handshake against rerouting by SNI on a relay or router (§13, SPEC 060)
       "nodes": {
-        "sni_mismatch": true,                   // default: no filter. true — only nodes whose SNI differs from server
+        "sni_mismatch": true,                   // default: true — only nodes whose SNI differs from server. false — no filter
         "outbound_type": ["vless", "masque"]    // default: no filter. A list of types or false; true, [] and an unknown type are load errors
       },
       "detour_type": {                          // default: {"direct": "clean", "ssh": "clean", "socks": "clean", "*": "suspect"}
@@ -1015,7 +1015,9 @@ With it, a path through any relay except `ssh` and `socks` starts with the split
 without it. A path through `ssh` or `socks` starts without the split and turns it on once a node
 there failed without it and then passed with it. To start every relay with the split, as the old
 default did, add `"detour_type": {"ssh": "suspect", "socks": "suspect"}` — the map is laid over
-the defaults, so only the entries that change need listing. Unlike the old default,
+the defaults, so only the entries that change need listing. Nodes whose SNI matches `server` are
+not guarded by default (`nodes.sni_mismatch`); the old default split theirs too — for that add
+`"nodes": {"sni_mismatch": false}`. Unlike the old default,
 the block learns from connection outcomes and can drop the split on a path where it gets in the
 way.
 
@@ -1376,7 +1378,7 @@ the config.
 "lx": {
   "sniff_guard": {
     "nodes": {
-      "sni_mismatch": true,                 // false | absent — no filter
+      "sni_mismatch": true,                 // absent = true; false — no filter
       "outbound_type": ["vless", "masque"]  // false | absent — no filter
     },
     "detour_type": {                        // no detour = "direct"
@@ -1401,11 +1403,13 @@ the config.
 ```
 
 **Which nodes — `nodes`.** Two filters; a node is guarded when it passes both. A node that does
-not pass works as without the block.
+not pass works as without the block. Without a `nodes` block `sni_mismatch: true` applies: a node
+with its own name passes a sniffing relay unprotected anyway. `sni_mismatch: false` guards every
+node that supports it.
 
 | Key | Values | Absent | Meaning |
 |---|---|---|---|
-| `sni_mismatch` | `true`, `false` | no filter | `true` — only nodes whose SNI differs from the `server` address |
+| `sni_mismatch` | `true`, `false` | `true` | `true` — only nodes whose SNI differs from the `server` address; `false` — no filter |
 | `outbound_type` | a list of types, `false` | no filter | Only nodes of the listed types. `true`, an empty list and an unknown type are load errors; a known type that cannot be guarded is allowed and skipped |
 
 Whether the SNI matches `server` is decided at load time by comparing strings, without DNS:
@@ -1426,7 +1430,8 @@ outer name is taken only from an ECH config given inline in the node (`ech.confi
 
 A node behind a CDN (`server` is a CDN IP, SNI is its own domain) passes the filter without
 needing to; the protection does not hurt it. A node whose name the relay's DNS resolves to a
-different address does not pass `sni_mismatch` — `outbound_type` covers it.
+different address does not pass `sni_mismatch` — use `sni_mismatch: false` for it, narrowed with
+`outbound_type` if needed.
 
 **Starting state of a path — `detour_type`.** A map "carrier type → state the path starts in".
 The carrier is the nearest non-group outbound the connection actually goes through: a group
@@ -1510,7 +1515,8 @@ QUIC session of masque, hysteria2, tuic, trusttunnel) and a node with its own ch
 
 Only nodes whose SNI differs from `server` (per the table above) move the label — regardless of
 the `sni_mismatch` filter: a node with its own name passes a sniffing relay unprotected anyway, so
-its outcomes say nothing about the sniffer. Such a node is still protected by the label. On a
+its outcomes say nothing about the sniffer. Such a node is protected by the label only with
+`sni_mismatch: false`. On a
 `clean` path it does not retry. On a `suspect` path, if it failed with protection and passed
 without it, the node records a **personal opt-out**: from then on it goes unprotected on that
 path, while the path label and the other nodes stay as they were. The reverse pair on that node
