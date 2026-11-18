@@ -133,9 +133,10 @@ func (i *Service) NewConnection(ctx context.Context, conn net.Conn, metadata ada
 	metadata.Inbound = i.Tag()
 	metadata.InboundType = i.Type()
 	metadata.Destination = M.Socksaddr{}
+	streamConn := dnsOutbound.NewSerialWriteConn(conn) // lx: SPEC 157
 	for {
 		conn.SetReadDeadline(time.Now().Add(C.DNSTimeout))
-		err := dnsOutbound.HandleStreamDNSRequest(ctx, i.dnsRouter, conn, metadata)
+		err := dnsOutbound.HandleStreamDNSRequest(ctx, i.dnsRouter, streamConn, metadata)
 		if err != nil {
 			N.CloseOnHandshakeFailure(conn, onClose, err)
 			return

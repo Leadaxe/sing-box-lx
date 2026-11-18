@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"net"
+	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -48,6 +49,33 @@ func HandleStreamDNSRequest(ctx context.Context, router adapter.DNSRouter, conn 
 	})
 	return nil
 }
+
+// lx:begin dns-stream-write-lock
+// SPEC 157. Stream DNS responses are written from per-query goroutines, and
+// proxy server conns (VLESS, sing-mux) prepend their response header on the
+// first Write behind an unsynchronized flag: concurrent first responses
+// duplicate the header and the client reads a zero length prefix
+// ("dns: short read"). Callers wrap the conn once per stream.
+type serialWriteConn struct {
+	net.Conn
+	writeAccess sync.Mutex
+}
+
+func NewSerialWriteConn(conn net.Conn) net.Conn {
+	return &serialWriteConn{Conn: conn}
+}
+
+func (c *serialWriteConn) Write(b []byte) (int, error) {
+	c.writeAccess.Lock()
+	defer c.writeAccess.Unlock()
+	return c.Conn.Write(b)
+}
+
+func (c *serialWriteConn) Upstream() any {
+	return c.Conn
+}
+
+// lx:end dns-stream-write-lock
 
 func writeStreamResponse(conn net.Conn, response *mDNS.Msg) {
 	responseLength := response.Len()
