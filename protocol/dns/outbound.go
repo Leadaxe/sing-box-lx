@@ -45,9 +45,10 @@ func (d *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 
 func (d *Outbound) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	metadata.Destination = M.Socksaddr{}
+	streamConn := NewSerialWriteConn(conn) // lx: SPEC 157
 	for {
 		conn.SetReadDeadline(time.Now().Add(C.DNSTimeout))
-		err := HandleStreamDNSRequest(ctx, d.router, conn, metadata)
+		err := HandleStreamDNSRequest(ctx, d.router, streamConn, metadata)
 		if err != nil {
 			conn.Close()
 			if onClose != nil {
