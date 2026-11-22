@@ -267,6 +267,8 @@ upstream/stable  ──merge──►  lx  =  upstream  +  // lx seams  +  lx-ow
 
 Mapping subscription links to config fields is a consumer-side job; the same config JSON applies everywhere.
 
+Third-party projects that ship, embed or build on this core — routers, desktop and mobile clients, panels, tools — are listed in **[docs-lx/consumers.md](docs-lx/consumers.md)** ([RU](docs-lx/consumers.ru.md)).
+
 ---
 
 ## Repository map
@@ -309,6 +311,7 @@ Everything downstream is either a new file or a seam marked `// lx`; `grep -rn "
 | Energy guide | [docs-lx/lx-energy.md](docs-lx/lx-energy.md) ([RU](docs-lx/lx-energy.ru.md)) — idle-suspend levels, `mode: failover`, tuning |
 | Sniffers | [docs-lx/lx-sniff.md](docs-lx/lx-sniff.md) ([RU](docs-lx/lx-sniff.ru.md)) |
 | `lxd` operator's guide | [docs-lx/lxd-daemon.md](docs-lx/lxd-daemon.md) ([RU](docs-lx/lxd-daemon.ru.md)) |
+| Who uses the core | [docs-lx/consumers.md](docs-lx/consumers.md) ([RU](docs-lx/consumers.ru.md)) — first-party consumers and third-party projects built on sing-box-lx |
 | Observability API | [docs-lx/lxd-grpc-api.md](docs-lx/lxd-grpc-api.md) ([RU](docs-lx/lxd-grpc-api.ru.md)) — the contract clients speak, gRPC daemon and Android AAR alike |
 | OpenWrt walkthrough | [docs-lx/openwrt-vpn-ssid.md](docs-lx/openwrt-vpn-ssid.md) ([RU](docs-lx/openwrt-vpn-ssid.ru.md)) |
 | Release runbook | [docs-lx/lx-release-runbook.md](docs-lx/lx-release-runbook.md) ([RU](docs-lx/lx-release-runbook.ru.md)) |

@@ -269,6 +269,8 @@ upstream/stable  ──merge──►  lx  =  upstream  +  швы // lx  +  lx-�
 
 Маппинг ссылок подписок на поля конфига — работа потребителя; сам JSON конфига везде одинаков.
 
+Сторонние проекты, которые поставляют это ядро, встраивают его или строятся на нём — роутеры, десктопные и мобильные клиенты, панели, инструменты — перечислены в **[docs-lx/consumers.ru.md](docs-lx/consumers.ru.md)** ([EN](docs-lx/consumers.md)).
+
 ---
 
 ## Карта репозитория
@@ -311,6 +313,7 @@ upstream/stable  ──merge──►  lx  =  upstream  +  швы // lx  +  lx-�
 | Руководство по энергии | [docs-lx/lx-energy.ru.md](docs-lx/lx-energy.ru.md) ([EN](docs-lx/lx-energy.md)) — уровни idle-suspend, `mode: failover`, тюнинг |
 | Снифферы | [docs-lx/lx-sniff.ru.md](docs-lx/lx-sniff.ru.md) ([EN](docs-lx/lx-sniff.md)) |
 | Руководство оператора `lxd` | [docs-lx/lxd-daemon.ru.md](docs-lx/lxd-daemon.ru.md) ([EN](docs-lx/lxd-daemon.md)) |
+| Кто использует ядро | [docs-lx/consumers.ru.md](docs-lx/consumers.ru.md) ([EN](docs-lx/consumers.md)) — собственные потребители и сторонние проекты на базе sing-box-lx |
 | API наблюдаемости | [docs-lx/lxd-grpc-api.ru.md](docs-lx/lxd-grpc-api.ru.md) ([EN](docs-lx/lxd-grpc-api.md)) — контракт, на котором говорят клиенты, и gRPC-демон, и Android-AAR |
 | Разбор OpenWrt | [docs-lx/openwrt-vpn-ssid.ru.md](docs-lx/openwrt-vpn-ssid.ru.md) ([EN](docs-lx/openwrt-vpn-ssid.md)) |
 | Раннбук релиза | [docs-lx/lx-release-runbook.ru.md](docs-lx/lx-release-runbook.ru.md) ([EN](docs-lx/lx-release-runbook.md)) |
