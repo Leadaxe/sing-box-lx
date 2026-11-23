@@ -304,6 +304,11 @@ func (e *Endpoint) Start(postStart bool) error {
 		standardBind := conn.NewStdNetBind(listenerControl).(*conn.StdNetBind)
 		if e.options.ListenPort == 0 && len(e.peers) == 1 && e.peers[0].endpoint.IsValid() {
 			standardBind.SetSinglePeerMode()
+			e.connectStandardBind(standardBind) // lx: SPEC 160 — lx.wg.connected_socket
+		}
+		// lx: SPEC 158 part 2 — lx.wg.buffers.read_datagram_count
+		if err := e.tuneStandardBind(standardBind); err != nil {
+			return err
 		}
 		if egressEnabled {
 			egressPoolOptions := e.options.EgressPoolOptions
@@ -365,6 +370,7 @@ func (e *Endpoint) Start(postStart bool) error {
 		},
 	}
 	wgDevice := device.NewDevice(e.options.Context, e.returnDevice, bind, logger, e.options.Workers)
+	e.tuneDevice(wgDevice) // lx: SPEC 158 part 2 — lx.wg.buffers.send_by_mtu
 	// lx: SPEC 041 — passive self-heal: on handshake give-up the device rebinds
 	// its socket (fresh ephemeral port unless the user pinned listen_port) and
 	// re-initiates, so a dead NAT/DPI flow entry cannot hold the endpoint in
