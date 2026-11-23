@@ -1,0 +1,75 @@
+#!/bin/sh
+# Strip IDE/tool trailers from commit messages, but KEEP human co-authors.
+#
+# Install (hooks are not versioned by git, so once per clone; worktrees share
+# the hooks of the main checkout):
+#
+#   cp scripts-lx/git/prepare-commit-msg "$(git rev-parse --git-common-dir)/hooks/" && \
+#     chmod +x "$(git rev-parse --git-common-dir)/hooks/prepare-commit-msg"
+#
+# The same file serves the fork submodules (wireguard-go, sing-tun, gvisor,
+# utls): copy it into the hooks directory of their checkouts as well.
+#
+# Rationale: the blanket version of this hook also removed legitimate
+# `Co-authored-by:` lines crediting outside contributors (issue #75 here, the
+# zh localization PR in LxBox before that). Attribution for people is worth
+# keeping; only bot and tool credit gets stripped.
+#
+# Dropped:
+#   - any `Made-with:` line (Cursor emits `Made-with: Cursor`)
+#   - `Co-authored-by:` whose address is a known agent one. Verified against
+#     real commits via the GitHub commit-search API, Sept 2026:
+#       noreply@anthropic.com                        Claude / Claude Code
+#       cursoragent@cursor.com                       Cursor Agent
+#       223556219+Copilot@users.noreply.github.com   GitHub Copilot  <- no [bot] tag,
+#                                                    so it needs its own pattern
+#       codex@openai.com                             OpenAI Codex
+#       aider@aider.chat                             Aider
+#       ...devin-ai-integration[bot]@...             Devin (matched by [bot])
+#     plus the generic catch-alls: any address containing `[bot]`, and the
+#     tool domains @openai.com / @cursor.com / @sourcegraph.com / @ampcode.com /
+#     noreply@google.com (Gemini, Jules).
+# Kept:
+#   - `Co-authored-by:` with any other address (a real person)
+#
+# Matching is on the ADDRESS, never the display name: "Bot Fan <me@gmail.com>"
+# and "Claude Ivanov <klod@example.com>" are people and must survive.
+#
+# Only sh built-ins plus `tr` — works in Git Bash on Windows.
+COMMIT_MSG_FILE="$1"
+[ -z "$COMMIT_MSG_FILE" ] || [ ! -f "$COMMIT_MSG_FILE" ] && exit 0
+
+tmp="$COMMIT_MSG_FILE.$$"
+: > "$tmp"
+
+# `|| [ -n "$line" ]` keeps a last line that has no trailing newline.
+while IFS= read -r line || [ -n "$line" ]; do
+  # Normalize for matching: lowercase, so Co-Authored-By and co-authored-by
+  # are treated alike. `tr` is not a built-in but is present everywhere git is.
+  lower=$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')
+
+  case "$lower" in
+    *made-with:\ *)
+      continue
+      ;;
+    *co-authored-by:*)
+      case "$lower" in
+        *@anthropic.com*|\
+        *@openai.com*|\
+        *@cursor.com*|\
+        *@aider.chat*|\
+        *@sourcegraph.com*|\
+        *@ampcode.com*|\
+        *noreply@google.com*|\
+        *\[bot\]*|\
+        *+copilot@users.noreply.github.com*)
+          continue
+          ;;
+      esac
+      ;;
+  esac
+
+  echo "$line" >> "$tmp"
+done < "$COMMIT_MSG_FILE"
+
+mv "$tmp" "$COMMIT_MSG_FILE"
