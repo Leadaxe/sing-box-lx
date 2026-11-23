@@ -10,6 +10,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badoption"
 
@@ -58,9 +59,12 @@ func TestCaptureRunningConfig_canonicalLXBlock_LX(t *testing.T) {
 		Route: &option.RouteOptions{Final: "direct-out"},
 		LX: &option.LXOptions{
 			WG: &option.LXWGOptions{
-				IdleSuspend:          badoption.Duration(30 * time.Second),
-				IdleSuspendReachable: badoption.Duration(5 * time.Minute),
-				IdleTeardown:         &zero,
+				Idle: &option.LXWGIdleOptions{
+					Suspend:          badoption.Duration(30 * time.Second),
+					SuspendReachable: badoption.Duration(5 * time.Minute),
+					Teardown:         &zero,
+				},
+				Buffers: &option.LXWGBuffersOptions{ReadDatagramCount: common.Ptr(128)},
 			},
 			MASQUE:      &option.LXMASQUEOptions{IdleTimeout: badoption.Duration(2 * time.Minute)},
 			TrustTunnel: &option.LXTrustTunnelOptions{},
@@ -77,11 +81,15 @@ func TestCaptureRunningConfig_canonicalLXBlock_LX(t *testing.T) {
 	if document.Route["final"] != "direct-out" {
 		t.Fatalf("the rest of route must survive: %s", content)
 	}
-	want := map[string]any{"idle_suspend": "30s", "idle_suspend_reachable": "5m0s", "idle_teardown": "0s"}
+	idle, _ := document.LX["wg"]["idle"].(map[string]any)
+	want := map[string]any{"suspend": "30s", "suspend_reachable": "5m0s", "teardown": "0s"}
 	for key, value := range want {
-		if document.LX["wg"][key] != value {
-			t.Fatalf("lx.wg.%s = %v, want %v: %s", key, document.LX["wg"][key], value, content)
+		if idle[key] != value {
+			t.Fatalf("lx.wg.idle.%s = %v, want %v: %s", key, idle[key], value, content)
 		}
+	}
+	if _, present := document.LX["wg"]["buffers"]; present {
+		t.Fatalf("lx.wg.buffers at its defaults must be dropped from the snapshot: %s", content)
 	}
 	if document.LX["masque"]["idle_timeout"] != "2m0s" {
 		t.Fatalf("lx.masque must survive: %s", content)

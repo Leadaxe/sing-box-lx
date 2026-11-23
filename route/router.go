@@ -64,10 +64,10 @@ type Router struct {
 	// tick computes it. endpoint is the endpoint manager: WG/AWG endpoints live
 	// there (NOT in the outbound manager — outbound.Outbounds() never lists them),
 	// so the idle tick must iterate it to find IdleSuspendable endpoints.
-	// idleTeardownSet records that lx.wg.idle_teardown was present in the config,
+	// idleTeardownSet records that lx.wg.idle.teardown was present in the config,
 	// which an explicit "0" (teardown disabled) makes indistinguishable from
 	// absent in the resolved duration alone. Prerequisite checks key off this,
-	// so "0" still requires lx.wg.idle_suspend and still fails loudly in a build
+	// so "0" still requires lx.wg.idle.suspend and still fails loudly in a build
 	// without the tag. All four come from the resolved `lx` block in the context
 	// (SPEC 098).
 	idleSuspend          time.Duration
@@ -108,7 +108,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		leaseFiles:           options.DHCPLeaseFiles,
 		pauseManager:         service.FromContext[pause.Manager](ctx),
 		platformInterface:    service.FromContext[adapter.PlatformInterface](ctx),
-		idleSuspend:          lxWG(ctx).IdleSuspend,                             // lx: SPEC 020/098 — lx.wg.idle_suspend (0 = off)
+		idleSuspend:          lxWG(ctx).IdleSuspend,                             // lx: SPEC 020/098 — lx.wg.idle.suspend (0 = off)
 		idleSuspendReachable: lxWG(ctx).IdleSuspendReachable,                    // lx: SPEC 020/098 (0 = reachable never suspends)
 		idleTeardown:         lxWG(ctx).IdleTeardown,                            // lx: SPEC 020/098 level 3 (default = reachable window, explicit "0" = off)
 		idleTeardownSet:      lxWG(ctx).IdleTeardownSet,                         // lx: SPEC 020/098 — "0" is a value, not an absence

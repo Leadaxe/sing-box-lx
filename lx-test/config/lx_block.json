@@ -2,12 +2,19 @@
   "log": { "level": "info" },
   "lx": {
     "wg": {
-      "idle_suspend": "30s",
-      "idle_suspend_reachable": "5m",
-      "idle_teardown": "10m",
-      "lazy_build": true,
-      "build_max": 4,
-      "build_overflow": "wait"
+      "idle": {
+        "suspend": "30s",
+        "suspend_reachable": "5m",
+        "teardown": "10m",
+        "lazy_build": true,
+        "build_max": 4,
+        "build_overflow": "wait"
+      },
+      "buffers": {
+        "read_datagram_count": 8,
+        "send_by_mtu": true
+      },
+      "connected_socket": true
     },
     "masque": {
       "idle_timeout": "5m"

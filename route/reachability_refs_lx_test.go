@@ -107,8 +107,8 @@ func TestSelectionRefs_reachableSetUnchanged(t *testing.T) {
 }
 
 // SelectionRefs is served from the same cache as the reachable set and is
-// computed with the idle tick off (lx.wg.build_max works without
-// lx.wg.idle_suspend).
+// computed with the idle tick off (lx.wg.idle.build_max works without
+// lx.wg.idle.suspend).
 func TestSelectionRefs_router(t *testing.T) {
 	mgr := &countingManager{}
 	r := &Router{outbound: mgr} // idleSuspend == 0

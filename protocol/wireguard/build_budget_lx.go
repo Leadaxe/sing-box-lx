@@ -1,6 +1,6 @@
 package wireguard
 
-// lx: SPEC 097 — the build budget: at most lx.wg.build_max WG/AWG devices
+// lx: SPEC 097 — the build budget: at most lx.wg.idle.build_max WG/AWG devices
 // built at once.
 //
 // "Built" means the endpoint has a tun device (SPEC 020 levels 0–2); sleeping
@@ -232,7 +232,7 @@ func (b *BuildBudget) reachability() adapter.ReachabilityReporter {
 }
 
 // Register records that endpoint now has a device: after a rebuild that took
-// a slot, or a device built at start (which never asked — lx.wg.build_max
+// a slot, or a device built at start (which never asked — lx.wg.idle.build_max
 // applies from the first rebuild).
 func (b *BuildBudget) Register(endpoint *Endpoint) {
 	if b == nil {

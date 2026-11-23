@@ -172,7 +172,7 @@ func TestIdleTick_passesTeardownThreshold(t *testing.T) {
 // context as box.New does.
 func TestStartIdleSuspend_lxBlockStartsTheTick(t *testing.T) {
 	for _, content := range []string{
-		`{"lx":{"wg":{"idle_suspend":"30s","idle_suspend_reachable":"5m","idle_teardown":"0"}}}`,
+		`{"lx":{"wg":{"idle":{"suspend":"30s","suspend_reachable":"5m","teardown":"0"}}}}`,
 	} {
 		r := routerFromConfig(t, content)
 		if err := r.startIdleSuspend(); err != nil {
@@ -241,17 +241,17 @@ func TestOutboundReachable_featureOffAlwaysTrue(t *testing.T) {
 }
 
 // TestStartIdleSuspend_teardownRequiresSuspend pins the prerequisite for the
-// teardown kill switch: lx.wg.idle_teardown means nothing without lx.wg.idle_suspend,
+// teardown kill switch: lx.wg.idle.teardown means nothing without lx.wg.idle.suspend,
 // and an explicit "0" must be rejected just like any other value — its resolved
 // window is zero, so only the "option was present" flag can catch it.
 func TestStartIdleSuspend_teardownRequiresSuspend(t *testing.T) {
 	explicitZero := &Router{idleTeardown: 0, idleTeardownSet: true}
 	if err := explicitZero.startIdleSuspend(); err == nil {
-		t.Fatal(`an explicit lx.wg.idle_teardown "0" without lx.wg.idle_suspend must fail loudly`)
+		t.Fatal(`an explicit lx.wg.idle.teardown "0" without lx.wg.idle.suspend must fail loudly`)
 	}
 	window := &Router{idleTeardown: 5 * time.Minute, idleTeardownSet: true}
 	if err := window.startIdleSuspend(); err == nil {
-		t.Fatal("lx.wg.idle_teardown without lx.wg.idle_suspend must fail loudly")
+		t.Fatal("lx.wg.idle.teardown without lx.wg.idle.suspend must fail loudly")
 	}
 	absent := &Router{}
 	if err := absent.startIdleSuspend(); err != nil {

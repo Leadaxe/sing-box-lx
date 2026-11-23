@@ -7,7 +7,7 @@
 | Тип | F (feature) |
 | Статус | C (complete) — проверено вживую (desktop + Android device) и юнит-тестами |
 | Тег сборки | `with_lx_idle_suspend` (mobile-only, в AAR; НЕ в desktop/CLI) |
-| Фича-флаг | `lx.wg.idle_suspend: "<duration>"` (отсутствует/`0` = выключена); до SPEC 098 ключи жили в `route` как `lx_idle_*`, эти алиасы удалены 2026-11-02 — имена `lx_idle_*` ниже исторические |
+| Фича-флаг | `lx.wg.idle.suspend: "<duration>"` (отсутствует/`0` = выключена); до SPEC 098 ключи жили в `route` как `lx_idle_*` (алиасы удалены 2026-11-02), затем плоскими в `lx.wg` (до 2026-11-23, [098](../098-LX_ROOT_CONFIG_BLOCK/SPEC.md) §2.1) — имена `lx_idle_*` ниже исторические: `lx_idle_suspend` = `lx.wg.idle.suspend`, `lx_idle_suspend_reachable` = `lx.wg.idle.suspend_reachable`, `lx_idle_teardown` = `lx.wg.idle.teardown` |
 
 Фича `lx_idle_suspend` выборочно **гасит** (`device.Down()`) WG/AWG-эндпоинт, который одновременно **недостижим** из активного дерева маршрутизации и **простаивает** дольше порога. Пробуждение — лениво, на следующем дайле через эндпоинт (`device.Up()`). Опциональный второй порог `lx_idle_suspend_reachable` гасит и **достижимые** эндпоинты после более длинного окна простоя (см. «Конфигурация»).
 
@@ -243,15 +243,19 @@ Idle-suspend опирается на стабильный device-API вендо�
 ## Конфигурация
 
 ```jsonc
-"route": {
-  "lx_idle_suspend": "30s",             // порог простоя НЕдостижимых; "0"/отсутствует = фича выключена
-  "lx_idle_suspend_reachable": "5m",    // опционально: порог простоя ДОСТИЖИМЫХ; "0"/отсутствует = достижимые не усыпляются
-  "lx_idle_teardown": "5m"              // опционально: сколько СПАТЬ до полного сноса (Close);
-                                        //   дефолт = lx_idle_suspend_reachable; "0" = сноса нет
+"lx": {
+  "wg": {
+    "idle": {
+      "suspend": "30s",                 // порог простоя НЕдостижимых; "0"/отсутствует = фича выключена
+      "suspend_reachable": "5m",        // опционально: порог простоя ДОСТИЖИМЫХ; "0"/отсутствует = достижимые не усыпляются
+      "teardown": "5m"                  // опционально: сколько СПАТЬ до полного сноса (Close);
+                                        //   дефолт = suspend_reachable; "0" = сноса нет
+    }
+  }
 }
 ```
 
-- Поля `option.RouteOptions.LXIdleSuspend` / `LXIdleSuspendReachable badoption.Duration` в [`option/route.go`](../../../option/route.go) (`lx:begin/lx:end`).
+- Поля `option.LXWGIdleOptions.Suspend` / `SuspendReachable badoption.Duration` / `Teardown *badoption.Duration` в [`option/lx.go`](../../../option/lx.go) (SPEC 098).
 - **`lx_idle_teardown`** — третий уровень (снос netstack), см. §«Третий уровень». Отсчёт от засыпания; дефолт = `lx_idle_suspend_reachable`; требует включённого `lx_idle_suspend`. Поле — указатель (`*badoption.Duration`), потому что явный `"0"` (сноса нет) обязан отличаться от отсутствия (наследовать окно достижимых): у значимого типа оба схлопываются в один ноль, и kill-switch перестаёт существовать. Предусловия (`требует lx_idle_suspend`, отказ в сборке без тега) проверяются по факту присутствия поля, а не по величине окна, — иначе явный `"0"` проскакивал бы мимо них.
 - **`lx_idle_suspend_reachable`** — ответ на «пул round_robin жив 24/7 при нулевом трафике»: достижимый эндпоинт (член пула, выбранный узел, final), простоявший дольше этого окна, тоже гасится и лениво будится следующим дайлом (~1 handshake RTT на первый пакет — потому окно ДОЛЖНО быть заметно больше основного порога: цена wake платится на каждом «холодном» заходе). Валидация: требует `lx_idle_suspend`; должен быть `>= lx_idle_suspend`; **рекомендация** — `>= idle_timeout` всех urltest-групп над эндпоинтами (пробы уже заглохли к моменту сна, иначе probe-флап; с `passive_check` у группы, SPEC 019, требование мягче — пробы при живом трафике и так не ходят). Live-traffic-гейты защищают живые соединения через достижимый эндпоинт от гашения.
 - **Build-тег `with_lx_idle_suspend` (mobile-only).** Тик компилируется только с тегом; добавлен в mobile AAR ([`cmd/internal/build_libbox`](../../../cmd/internal/build_libbox/main.go)), НЕ в desktop `LX_TAGS` (на десктопе `BatchSize` мал, экономить нечего). Бинарь без тега, получивший конфиг с `lx_idle_suspend`, **падает при старте** с явной ошибкой (`rebuild with -tags with_lx_idle_suspend`) — никакого молчаливого no-op. Гейт — `startIdleSuspend` ([`route/reachability_lx.go`](../../../route/reachability_lx.go) / stub [`route/idle_suspend_stub_lx.go`](../../../route/idle_suspend_stub_lx.go)). Hot-path дайла (`resumeOnDial`) НЕ расщепляется (без тега `idleAsleep` никогда не true).
