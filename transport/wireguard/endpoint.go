@@ -232,7 +232,7 @@ func (e *Endpoint) Initialize(memoryPressure func() tun.MemoryPressure) error {
 // Teardown releases EVERYTHING this endpoint holds — the wireguard device AND
 // the tun device with its network stack — while keeping the recipe
 // (options/peers/ipcConf) so Rebuild can bring it back. SPEC 020 level 3: the
-// tick calls it for an endpoint that has been asleep past lx_idle_teardown.
+// tick calls it for an endpoint that has been asleep past lx.wg.idle.teardown.
 // Idempotent; the endpoint stays flagged suspended (only a dial rebuilds it).
 func (e *Endpoint) Teardown() {
 	e.suspended.Store(true)
@@ -306,6 +306,11 @@ func (e *Endpoint) Start(postStart bool) error {
 		standardBind := conn.NewStdNetBind(listenerControl).(*conn.StdNetBind)
 		if e.options.ListenPort == 0 && len(e.peers) == 1 && e.peers[0].endpoint.IsValid() {
 			standardBind.SetSinglePeerMode()
+			e.connectStandardBind(standardBind) // lx: SPEC 160 — lx.wg.connected_socket
+		}
+		// lx: SPEC 158 part 2 — lx.wg.buffers.read_datagram_count
+		if err := e.tuneStandardBind(standardBind); err != nil {
+			return err
 		}
 		if egressEnabled {
 			egressPoolOptions := e.options.EgressPoolOptions
@@ -367,6 +372,7 @@ func (e *Endpoint) Start(postStart bool) error {
 		},
 	}
 	wgDevice := device.NewDevice(e.options.Context, e.returnDevice, bind, logger, e.options.Workers)
+	e.tuneDevice(wgDevice) // lx: SPEC 158 part 2 — lx.wg.buffers.send_by_mtu
 	// lx: SPEC 041 — passive self-heal: on handshake give-up the device rebinds
 	// its socket (fresh ephemeral port unless the user pinned listen_port) and
 	// re-initiates, so a dead NAT/DPI flow entry cannot hold the endpoint in

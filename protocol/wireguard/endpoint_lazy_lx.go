@@ -26,8 +26,8 @@ var _ adapter.IdleStateReporter = (*Endpoint)(nil)
 const buildWaitMax = C.TCPTimeout
 
 // initLazyBuild reads lx.wg from the box context: whether this endpoint builds
-// lazily, and the per-box build budget when lx.wg.lazy_build or
-// lx.wg.build_max is set. A listen-mode endpoint is never lazy — inbound peers
+// lazily, and the per-box build budget when lx.wg.idle.lazy_build or
+// lx.wg.idle.build_max is set. A listen-mode endpoint is never lazy — inbound peers
 // connect without a dial to build it.
 func (w *Endpoint) initLazyBuild(ctx context.Context, options option.WireGuardEndpointOptions) {
 	wg := service.PtrFromContext[option.LXResolved](ctx).WGOrZero()

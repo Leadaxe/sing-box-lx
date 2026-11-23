@@ -38,17 +38,18 @@ func idleFieldsOf(r *Router) idleFields {
 	return idleFields{r.idleSuspend, r.idleSuspendReachable, r.idleTeardown, r.idleTeardownSet}
 }
 
-// lx: SPEC 098 — the `lx.wg` block gives the router its idle parameters.
+// lx: SPEC 098 — the `lx.wg.idle` block gives the router its idle parameters.
 func TestRouterIdleFields_lxBlock(t *testing.T) {
 	cases := []struct {
 		name string
 		lx   string
 		want idleFields
 	}{
-		{"all three, explicit teardown 0", `{"lx":{"wg":{"idle_suspend":"30s","idle_suspend_reachable":"5m","idle_teardown":"0"}}}`, idleFields{30 * time.Second, 5 * time.Minute, 0, true}},
-		{"teardown inherits the reachable window", `{"lx":{"wg":{"idle_suspend":"30s","idle_suspend_reachable":"5m"}}}`, idleFields{30 * time.Second, 5 * time.Minute, 5 * time.Minute, false}},
-		{"suspend only", `{"lx":{"wg":{"idle_suspend":"1m"}}}`, idleFields{time.Minute, 0, 0, false}},
+		{"all three, explicit teardown 0", `{"lx":{"wg":{"idle":{"suspend":"30s","suspend_reachable":"5m","teardown":"0"}}}}`, idleFields{30 * time.Second, 5 * time.Minute, 0, true}},
+		{"teardown inherits the reachable window", `{"lx":{"wg":{"idle":{"suspend":"30s","suspend_reachable":"5m"}}}}`, idleFields{30 * time.Second, 5 * time.Minute, 5 * time.Minute, false}},
+		{"suspend only", `{"lx":{"wg":{"idle":{"suspend":"1m"}}}}`, idleFields{time.Minute, 0, 0, false}},
 		{"nothing set", `{"lx":{}}`, idleFields{}},
+		{"buffers and connected_socket leave the idle fields off", `{"lx":{"wg":{"buffers":{"read_datagram_count":8},"connected_socket":true}}}`, idleFields{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

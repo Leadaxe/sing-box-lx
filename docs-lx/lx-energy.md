@@ -43,7 +43,7 @@ This is the main document on **why the fork saves battery on Android and how to 
 ┌───────────────▼─────────────────────────────────────────────────┐
 │ LAYER 3 · THE ENDPOINT (Down/Up + Close/Rebuild)                │
 │ Down: workers exit, buffers freed, timers silent                │
-│ Close (slept past lx.wg.idle_teardown): the netstack goes too   │
+│ Close (slept past lx.wg.idle.teardown): the netstack goes too   │
 │ Wake is dial-only: +1 RTT / rebuild ~0.5-1 s                    │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -67,27 +67,30 @@ The set is cached and recomputed **only on events** (selector switch, urltest au
 ```jsonc
 "lx": {
   "wg": {
-    "idle_suspend": "30s",             // threshold for UNREACHABLE endpoints (feature switch)
-    "idle_suspend_reachable": "5m",    // optional: threshold for REACHABLE endpoints
-    "idle_teardown": "5m"              // optional: how long to SLEEP before full teardown;
-                                       //   defaults to idle_suspend_reachable, "0" = off
+    "idle": {
+      "suspend": "30s",                // threshold for UNREACHABLE endpoints (feature switch)
+      "suspend_reachable": "5m",       // optional: threshold for REACHABLE endpoints
+      "teardown": "5m"                 // optional: how long to SLEEP before full teardown;
+                                       //   defaults to suspend_reachable, "0" = off
+    }
   }
 }
 ```
 
-The keys live in the root `lx` block since SPEC 098 ([lx-config.md §13](lx-config.md#13-the-lx-root-block-spec-098)).
+The keys live in the `lx.wg.idle` block of the root `lx` block ([lx-config.md §13](lx-config.md#13-the-lx-root-block-spec-098));
+the flat `lx.wg.idle_suspend` and the rest of the old layout fail to load with an error naming the new key.
 The old `route.lx_idle_suspend` / `route.lx_idle_suspend_reachable` / `route.lx_idle_teardown`
 are removed (2026-11-02): a config with them fails to load as one with unknown keys.
 
 | | Unreachable endpoint | Reachable endpoint | Any SLEEPING endpoint |
 |---|---|---|---|
-| Threshold | `lx.wg.idle_suspend` (30s idle) | `lx.wg.idle_suspend_reachable` (5m idle); `0`/absent — never | `lx.wg.idle_teardown` (5m of **sleep**, counted from falling asleep); an explicit `0` never tears down, an absent key inherits the reachable window |
+| Threshold | `lx.wg.idle.suspend` (30s idle) | `lx.wg.idle.suspend_reachable` (5m idle); `0`/absent — never | `lx.wg.idle.teardown` (5m of **sleep**, counted from falling asleep); an explicit `0` never tears down, an absent key inherits the reachable window |
 | What happens | `Down()` — freeze | `Down()` — freeze | **`Close()`** — full teardown: the gVisor netstack (~6 MB/node) goes too |
 | Wake | dial, +1 RTT | dial, +1 RTT | dial, **rebuild ~0.5–1 s** on the first request |
 
 The third level is "deep sleep": a freeze (`Down`) releases recv-buffers and timers but the netstack survives; a node that has slept through one more window is torn down entirely — nothing but its config remains. The window counts **from the moment of falling asleep** (not from the last dial), so it does not depend on which threshold put the node to sleep. Live connections are untouched by construction: a node with flows simply never falls asleep (§4), and only sleepers are torn down.
 
-Validation: the reachable threshold requires `lx.wg.idle_suspend` and must be `>=` it. Recommendation: `>=` the `idle_timeout` of your urltest groups (explained in §7).
+Validation: the reachable threshold requires `lx.wg.idle.suspend` and must be `>=` it. Recommendation: `>=` the `idle_timeout` of your urltest groups (explained in §7).
 
 "Idle" = time since the last **dial** through the endpoint (new-connection creation). Data on already-established connections bypasses the dial path — gates §4.5–4.6 protect it.
 
@@ -96,7 +99,7 @@ Validation: the reachable threshold requires `lx.wg.idle_suspend` and must be `>
 Every tick, for every endpoint, cheapest-first:
 
 1. **Listen mode** (`listen_port` set) → never suspend: inbound peers have no way to wake it.
-2. **Window selection**: unreachable → `lx.wg.idle_suspend`; reachable → `lx.wg.idle_suspend_reachable` (or bail out if unset).
+2. **Window selection**: unreachable → `lx.wg.idle.suspend`; reachable → `lx.wg.idle.suspend_reachable` (or bail out if unset).
 3. **Idle clock**: `IdleSince() < window` → too early.
 4. **Already down** (guard/closed) → someone else's state, don't touch.
 5. **Live TCP flows**: the device gVisor stack's `CurrentEstablished` gauge > 0 → established connections exist (a download, a push socket) → don't suspend. Precise and **keepalive-immune** (a keepalive is not a TCP flow).
@@ -107,7 +110,7 @@ Every tick, for every endpoint, cheapest-first:
 
 `Down()` (levels 1–2) is a freeze, not a Close: the UDP socket closes (recv-workers exit and release their buffers — the main RAM/GC win), session keys are zeroed, and **all** peer timers stop (keepalive, retransmit, the whole AWG junk machinery). Objects and the port survive the cycle.
 
-`Close()` (level 3, `lx.wg.idle_teardown`) is a teardown: the netstack, the Device/Peer objects, the queues and every device goroutine are gone; only the config remains in memory. Waking rebuilds from scratch (**~0.5–1 s** on the first dial instead of +1 RTT).
+`Close()` (level 3, `lx.wg.idle.teardown`) is a teardown: the netstack, the Device/Peer objects, the queues and every device goroutine are gone; only the config remains in memory. Waking rebuilds from scratch (**~0.5–1 s** on the first dial instead of +1 RTT).
 
 **What each level actually buys** (measured on-device, CPH2411 — not an estimate):
 
@@ -185,8 +188,10 @@ Before this revision an abandoned group kept probing (and waking) all members fo
 {
   "lx": {
     "wg": {
-      "idle_suspend": "30s",
-      "idle_suspend_reachable": "30m"
+      "idle": {
+        "suspend": "30s",
+        "suspend_reachable": "30m"
+      }
     }
   },
   "outbounds": [{
@@ -206,8 +211,8 @@ Threshold coordination rules:
 | Constraint | Enforced by | Consequence of violation |
 |---|---|---|
 | `interval <= idle_timeout` | core (upstream), start error | — |
-| `lx.wg.idle_suspend_reachable >= lx.wg.idle_suspend` | core (lx), start error | — |
-| `lx.wg.idle_suspend_reachable >= idle_timeout` of groups | recommendation | 1–2 probe flaps in the falling-asleep tail |
+| `lx.wg.idle.suspend_reachable >= lx.wg.idle.suspend` | core (lx), start error | — |
+| `lx.wg.idle.suspend_reachable >= idle_timeout` of groups | recommendation | 1–2 probe flaps in the falling-asleep tail |
 | a low reachable value (e.g. `5m`) | allowed | fast sleep during pauses; the cost is the same 1–2 extra handshakes during the first ~half hour of silence (until probes retire) plus +1 RTT on the first connection after every ≥5m pause |
 | `interval` > MASQUE idle (5m) for groups with MASQUE nodes | recommendation | probes keep the MASQUE tunnel from sleeping |
 | `pool_tolerance <= 15000` | core (lx), start error | — |
@@ -215,7 +220,7 @@ Threshold coordination rules:
 Notes:
 - `pool_tolerance > 0` is discouraged on mobile: that mode must measure **all** candidates every cycle (waking every sleeper outside the pool).
 - `persistent_keepalive` on peers is compatible with suspend: the timer is stopped while asleep, and keepalive noise does not block falling asleep (§4.6). An awake keepalive node keeps waking the radio — that is the user's choice.
-- The whole feature is disabled by omitting `lx.wg.idle_suspend` (kill switch, zero overhead) and exists only in the mobile AAR (`with_lx_idle_suspend`); a desktop binary given this key fails fast at start with an explicit error.
+- The whole feature is disabled by omitting `lx.wg.idle.suspend` (kill switch, zero overhead) and exists only in the mobile AAR (`with_lx_idle_suspend`); a desktop binary given this key fails fast at start with an explicit error.
 
 ## 9. Guarantees (what will NOT break)
 
@@ -223,7 +228,7 @@ Notes:
 - **Screen-off/on and network changes don't desync anything**: suspended devices stay suspended through pause/wake cycles.
 - **The AWG guard outranks idle logic**: a guard-downed AWG endpoint is woken by nothing — not a dial, not pause, not a probe.
 - **The first request after sleep always works**: it goes through the last known node (waking it), while an immediate re-test refreshes the selection in parallel. If that node died overnight — one request fails and the re-test repairs the pool right away.
-- **Kill switch**: without `lx.wg.idle_suspend` not even the tick starts.
+- **Kill switch**: without `lx.wg.idle.suspend` not even the tick starts.
 
 ## 10. Observability and troubleshooting
 
@@ -236,11 +241,11 @@ Notes:
 
 ## 11. Lazy build and the build budget (SPEC 097)
 
-Suspend and teardown free what an endpoint holds once it has been idle. A config with a dozen AWG nodes still pays for all of them at start: each device allocates its receive batches (128 × 64 KB per bind on Android, where the 64 KB segments feed GRO) the moment it starts, ≈17.5 MB per node. Two keys keep devices from being built for nothing.
+Suspend and teardown free what an endpoint holds once it has been idle. A config with a dozen AWG nodes still pays for all of them at start: each device allocates its receive batches (128 × 64 KiB per receive routine on Linux and Android, where the 64 KiB segments feed GRO) the moment it starts: 16.4 MiB per node at the default (≈17.5 MB measured on lx.8, before SPEC 158). `lx.wg.buffers.read_datagram_count` lowers it in any build ([lx-config.md §13](lx-config.md#13-the-lx-root-block-spec-098)). Two keys keep devices from being built for nothing.
 
-**`lx.wg.lazy_build: true`** — endpoints start at level 3 (§5): the detour is resolved at start as before, but the device and its netstack are not built. The first dial through the node (a user connection or a urltest probe) builds it along the same path a wake after teardown takes, and pays that cost once: the build plus the first handshake. A listen-mode endpoint (`listen_port`) is never lazy — nothing dials it. Requires `lx.wg.idle_suspend`.
+**`lx.wg.idle.lazy_build: true`** — endpoints start at level 3 (§5): the detour is resolved at start as before, but the device and its netstack are not built. The first dial through the node (a user connection or a urltest probe) builds it along the same path a wake after teardown takes, and pays that cost once: the build plus the first handshake. A listen-mode endpoint (`listen_port`) is never lazy — nothing dials it. Requires `lx.wg.idle.suspend`.
 
-**`lx.wg.build_max: N`** — at most N devices are built at once. Laziness alone only postpones the peak: a urltest probe of the whole group builds every node right after start. With a cap, a dial that needs device N+1 first tears down a victim:
+**`lx.wg.idle.build_max: N`** — at most N devices are built at once. Laziness alone only postpones the peak: a urltest probe of the whole group builds every node right after start. With a cap, a dial that needs device N+1 first tears down a victim:
 
 1. devices built over the cap (`build_overflow: "build"`) go first;
 2. then the node with the fewest **manual** refs — edges from a selector's current choice, the `final` outbound, a rule target;
@@ -249,7 +254,7 @@ Suspend and teardown free what an endpoint holds once it has been idle. A config
 
 The order is lexicographic: any number of auto refs loses to one manual ref. A ref is an edge leading straight into the node; nothing is inherited along the tree (selector → urltest → X gives X one auto ref). Sleep is not a key: an asleep node with a ref outlives an awake node without one. Traffic does not rank, it only guards: a node with a dial in flight, an established TCP flow or ≥ 4096 bytes moved since the budget's previous sample of it is never torn down. A node without refs that was built a moment ago is a legal victim — probes cannot wait out a sleep threshold.
 
-When every built node is guarded, `lx.wg.build_overflow` decides:
+When every built node is guarded, `lx.wg.idle.build_overflow` decides:
 
 | Value | Behaviour |
 |---|---|
@@ -258,7 +263,7 @@ When every built node is guarded, `lx.wg.build_overflow` decides:
 
 Probes under a cap run in waves: a group of K nodes with `build_max: N` is measured N builds at a time, so a probe round takes longer while memory stays bounded. If a wave does not fit into the probe timeout, the tail of the group is reported unavailable for that round.
 
-`build_max` without `lazy_build` is legal: devices are built at start as before, and the cap applies from the first rebuild (a wake after `idle_teardown`). A cap below the number of nodes in simultaneous use makes nodes tear each other down on every switch (each dial pays a build); LxBox sets `build_max` for probe sessions only.
+`build_max` without `lazy_build` is legal: devices are built at start as before, and the cap applies from the first rebuild (a wake after `idle.teardown`). A cap below the number of nodes in simultaneous use makes nodes tear each other down on every switch (each dial pays a build); LxBox sets `build_max` for probe sessions only.
 
 **States.** `GetOutbounds` reports each WG/AWG endpoint's state in `endpointState` (with seconds since its last dial in `idleSinceSeconds`):
 
@@ -280,7 +285,7 @@ Probes under a cap run in waves: a group of K nodes with `build_max: N` is measu
 
 The gRPC `SetEndpointEnabled(tag, enabled)` (`with_lx_command`, served by `lxd`) switches a WG/AWG endpoint off and on without a config change. The response carries the endpoint state after the call. LxBox calls it through libbox `CommandClient.SetEndpointEnabled`, which returns an `EndpointToggleResult` object (`State`).
 
-- **Off:** an awake endpoint is suspended the same way the idle tick does it, so established connections through it are cut. Every dial, UDP listen and L3-forwarded packet is refused with `WireGuard endpoint is disabled`; nothing wakes it. The idle tick can still tear it down after `idle_teardown`, and the build budget can evict it.
+- **Off:** an awake endpoint is suspended the same way the idle tick does it, so established connections through it are cut. Every dial, UDP listen and L3-forwarded packet is refused with `WireGuard endpoint is disabled`; nothing wakes it. The idle tick can still tear it down after `idle.teardown`, and the build budget can evict it.
 - **On:** a suspended endpoint is woken at once (one handshake on the next packet). A torn-down or never-built one stays as it is and is built by the next dial, through the budget. If the wake fails, the call returns `Unavailable`; the endpoint is on but asleep and the next dial retries.
 - **Not persisted:** a reload or `/admin/apply` creates every endpoint switched on.
 - Works without `with_lx_idle_suspend`; on desktop a switched-off endpoint keeps its device, Down, until it is switched on or closed.

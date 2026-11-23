@@ -16,7 +16,7 @@
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | доп. поля на `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** / Cloudflare WARP (SPEC 110) | `with_quic` для HTTP/3 | `endpoints[].type: "masque-client"` + `profile`, `address`; outbound `masque` линии 1.14 удалён — [§4](#4-masque--cloudflare-warp-поверх-masque-client-spec-110) | desktop + mobile |
 | **TrustTunnel** outbound и inbound (SPEC 133/134) | `with_trusttunnel` (+ `with_quic` для HTTP/3) | `outbounds[].type` / `inbounds[].type: "trusttunnel"`; поля — [protocols-transports.ru.md §6](protocols-transports.ru.md#6-trusttunnel-outbound-и-inbound), глобальный `lx.trusttunnel.idle_timeout` — [§13](#lxtrusttunnel--trusttunnel-outboundы) | desktop + mobile |
-| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`) | **только mobile** (AAR) |
+| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle.suspend` (+ `suspend_reachable`, `teardown`) | **только mobile** (AAR) |
 | **Корневой блок `lx`** (SPEC 098) | — (разбирается всегда) | `lx.wg`, `lx.masque`, `lx.trusttunnel`, `lx.mtu_align`, `lx.sniff_guard` — глобальные ручки форка, [§13](#13-корневой-блок-lx-spec-098) | desktop + mobile |
 | **Группа DNS-серверов** (SPEC 033/035/143) | — (всегда в сборке) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (всегда в сборке) | `encryption` на `vless`-outbound | desktop + mobile |
@@ -29,21 +29,24 @@
 **`with_lx_idle_suspend` — только для mobile** и добавляется лишь в Android/iOS AAR
 (`cmd/internal/build_libbox`), не в desktop `LX_TAGS`. Он гасит простаивающие +
 недостижимые WireGuard/AmneziaWG-эндпоинты, освобождая их recv-буферы (держатель
-GC-нагрева / RAM, ~8 МБ каждый там, где `BatchSize=128` — Android/Linux; замерено на
-устройстве: 8 эндпоинтов усыплены → освобождено 134 МБ). На десктопе `BatchSize` мал,
-экономить почти нечего; чтобы не было молчаливого расхождения, desktop/CLI-бинарь,
-которому дали конфиг с `lx.wg.idle_suspend` (или любым другим ключом `lx.wg`), **падает при
-старте** с ошибкой `lx.wg.* is set but this build lacks idle-suspend support; rebuild with
--tags with_lx_idle_suspend (mobile-only feature)`. См. [фичу ENERGY](../SPECS/FEATURES/008-ENERGY/FEATURE.md).
+GC-нагрева / RAM, ~8 МБ каждый там, где `BatchSize=128` — Linux и Android; замерено на
+устройстве: 8 эндпоинтов усыплены → освобождено 134 МБ). Фича рассчитана на телефон с десятком
+простаивающих узлов. Приёмные буферы малы не на всяком десктопе: на Linux-роутере туннель без
+`detour` держит их 16,4 МБ, и это число уменьшает `lx.wg.buffers.read_datagram_count` в любой
+сборке ([§13](#13-корневой-блок-lx-spec-098)). Чтобы не было молчаливого расхождения, desktop/CLI-бинарь,
+которому дали конфиг с `lx.wg.idle.suspend` (или любым другим ключом блока `lx.wg.idle`), **падает при
+старте** с ошибкой `lx.wg.idle.* is set but this build lacks idle-suspend support; rebuild with
+-tags with_lx_idle_suspend (mobile-only feature)`. Остальное в `lx.wg` (`buffers`,
+`connected_socket`) работает в любой сборке. См. [фичу ENERGY](../SPECS/FEATURES/008-ENERGY/FEATURE.md).
 
 Апстримный ключ `on_demand` (1.15) у WireGuard-endpoint'а сочетается с `lx.wg`: такой узел засыпает
 сразу, как на него пропала ссылка в маршрутизации, остальные — по порогам `lx.wg`. Состояние узла
 (`asleep`, выключен вручную) одно для обоих механизмов.
 
 Смежные ключи (ревизия 2026-07-15; с SPEC 098 в блоке `lx` — старые имена `route.lx_idle_*`
-удалены, конфиг с ними не загружается как с неизвестными ключами): `lx.wg.idle_suspend_reachable` — опциональное
+удалены, конфиг с ними не загружается как с неизвестными ключами): `lx.wg.idle.suspend_reachable` — опциональное
 второе, более длинное окно простоя, после которого гасятся и *достижимые* эндпоинты
-(члены пула, выбранный узел, final); `lx.wg.idle_teardown` — третий уровень:
+(члены пула, выбранный узел, final); `lx.wg.idle.teardown` — третий уровень:
 сколько эндпоинт может *спать* до полного сноса (Close, освобождается и userspace
 netstack; пробуждение = rebuild ~0.5–1 с; дефолт = reachable-окну);
 `urltest` `mode: failover` — держаться за рабочий узел и пробовать только его
@@ -99,17 +102,24 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
 {
   // ─────────────────────────────────────────────────────────────────────────
   // Корневой блок `lx` (§13) — глобальные ручки форка по подсистемам.
-  // lx.wg действует только с build-тегом with_lx_idle_suspend (мобильный AAR);
-  // десктоп-бинарь отвергает его на старте.
+  // lx.wg.idle действует только с build-тегом with_lx_idle_suspend (мобильный AAR);
+  // десктоп-бинарь отвергает его на старте. Остальное в lx.wg работает в любой сборке.
   // ─────────────────────────────────────────────────────────────────────────
   "lx": {
     "wg": {
-      "idle_suspend": "30s",                    // дефолт: выкл. Endpoint вне дерева маршрутизации → Down после простоя
-      "idle_suspend_reachable": "5m",           // дефолт: выкл. То же для endpoint'ов в дереве; >= idle_suspend, требует его
-      "idle_teardown": "10m",                   // дефолт: = idle_suspend_reachable. Сон до полной разборки; "0" = никогда
-      "lazy_build": true,                       // дефолт: false. Сборка устройства при первом дайле (SPEC 097)
-      "build_max": 4,                           // дефолт: 0 (без потолка). Не больше N собранных устройств (SPEC 097)
-      "build_overflow": "wait"                  // дефолт: wait. wait | build (SPEC 097)
+      "idle": {                                 // только сборки с with_lx_idle_suspend
+        "suspend": "30s",                       // дефолт: выкл. Endpoint вне дерева маршрутизации → Down после простоя
+        "suspend_reachable": "5m",              // дефолт: выкл. То же для endpoint'ов в дереве; >= suspend, требует его
+        "teardown": "10m",                      // дефолт: = suspend_reachable. Сон до полной разборки; "0" = никогда
+        "lazy_build": true,                     // дефолт: false. Сборка устройства при первом дайле (SPEC 097)
+        "build_max": 4,                         // дефолт: 0 (без потолка). Не больше N собранных устройств (SPEC 097)
+        "build_overflow": "wait"                // дефолт: wait. wait | build (SPEC 097)
+      },
+      "buffers": {                              // любая сборка (SPEC 158)
+        "read_datagram_count": 8,               // дефолт: 128. 1–128 датаграмм на одно чтение из сокета
+        "send_by_mtu": true                     // дефолт: true. false = буферы чтения из стека по 64 КБ (диагностика)
+      },
+      "connected_socket": true                  // дефолт: false. Подключённый сокет туннеля в режиме одного пира (SPEC 160)
     },
     "trusttunnel": {
       "idle_timeout": "5m"                      // дефолт: 5m. Глобальное окно простоя trusttunnel-узлов без своего ключа; выключается только "0" в узле (SPEC 133)
@@ -311,7 +321,7 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption` и `round_robin`-бал
 ```
 
 > **Счёт полей:** 26 XHTTP + 30 AmneziaWG (вкл. `id`/`ip`/`ib` и 9 ключей AWG 3.x) + 1 VLESS (`encryption`) +
-> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 21 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.trusttunnel.idle_timeout` + `lx.mtu_align` + 12 `lx.sniff_guard{nodes{sni_mismatch,outbound_type},detour_type,override,tls{method,delay,persist,detour_type},quic{method,delay,persist,detour_type}}`). Взаимоисключающие / игнорируемые поля помечены
+> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 24 `lx` (9 `lx.wg` + `lx.masque.idle_timeout` + `lx.trusttunnel.idle_timeout` + `lx.mtu_align` + 12 `lx.sniff_guard{nodes{sni_mismatch,outbound_type},detour_type,override,tls{method,delay,persist,detour_type},quic{method,delay,persist,detour_type}}`). Взаимоисключающие / игнорируемые поля помечены
 > в комментариях выше; разделы ниже дают семантику каждого поля, подводные камни и статус
 > живой проверки.
 
@@ -1109,12 +1119,19 @@ CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`base
 ```jsonc
 "lx": {
   "wg": {
-    "idle_suspend": "30s",
-    "idle_suspend_reachable": "5m",
-    "idle_teardown": "10m",
-    "lazy_build": true,
-    "build_max": 4,
-    "build_overflow": "wait"
+    "idle": {
+      "suspend": "30s",
+      "suspend_reachable": "5m",
+      "teardown": "10m",
+      "lazy_build": true,
+      "build_max": 4,
+      "build_overflow": "wait"
+    },
+    "buffers": {
+      "read_datagram_count": 8,
+      "send_by_mtu": true
+    },
+    "connected_socket": true
   },
   "trusttunnel": {
     "idle_timeout": "5m"
@@ -1129,14 +1146,20 @@ CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`base
 
 ### `lx.wg` — endpoint'ы WireGuard / AmneziaWG
 
+Правило одно: подблок `idle` требует мобильной сборки (`with_lx_idle_suspend`), всё остальное в
+`lx.wg` работает в любой сборке.
+
 | Ключ | Тип | Дефолт | Значение |
 |---|---|---|---|
-| `idle_suspend` | длительность | выкл | Порог простоя endpoint'а вне активного дерева маршрутизации: после него устройство уводится в Down (сокеты закрыты, приёмные буферы свободны), следующий дайл будит. Отсутствие или `0` выключает механизм, тик не стартует |
-| `idle_suspend_reachable` | длительность | выкл | Второй, более длинный порог для endpoint'ов в дереве (член urltest-пула, выбранный узел, final); без него они не спят. Обязан быть ≥ `idle_suspend`, требует его |
-| `idle_teardown` | длительность, явный `"0"` допустим | наследует `idle_suspend_reachable` | Сколько уже спящий endpoint спит до разборки устройства и netstack'а; считается от засыпания. `"0"` запрещает разборку. Требует `idle_suspend` |
-| `lazy_build` | bool | `false` | Endpoint'ы стартуют разобранными, устройство собирается при первом дайле. Требует `idle_suspend` |
-| `build_max` | целое ≥ 0 | `0` = без потолка | Не больше N собранных устройств одновременно |
-| `build_overflow` | `wait` \| `build` | `wait` | Когда все `build_max` устройств держат живые соединения: ждать в пределах дедлайна дайла или собрать сверх потолка с предупреждением |
+| `idle.suspend` | длительность | выкл | Порог простоя endpoint'а вне активного дерева маршрутизации: после него устройство уводится в Down (сокеты закрыты, приёмные буферы свободны), следующий дайл будит. Отсутствие или `0` выключает механизм, тик не стартует |
+| `idle.suspend_reachable` | длительность | выкл | Второй, более длинный порог для endpoint'ов в дереве (член urltest-пула, выбранный узел, final); без него они не спят. Обязан быть ≥ `idle.suspend`, требует его |
+| `idle.teardown` | длительность, явный `"0"` допустим | наследует `idle.suspend_reachable` | Сколько уже спящий endpoint спит до разборки устройства и netstack'а; считается от засыпания. `"0"` запрещает разборку. Требует `idle.suspend` |
+| `idle.lazy_build` | bool | `false` | Endpoint'ы стартуют разобранными, устройство собирается при первом дайле. Требует `idle.suspend` |
+| `idle.build_max` | целое ≥ 0 | `0` = без потолка | Не больше N собранных устройств одновременно |
+| `idle.build_overflow` | `wait` \| `build` | `wait` | Когда все `build_max` устройств держат живые соединения: ждать в пределах дедлайна дайла или собрать сверх потолка с предупреждением |
+| `buffers.read_datagram_count` | целое 1–128 | `128`, как в апстриме | Сколько датаграмм резервируется на одно чтение из сокета. Для слабых машин — `8`. Linux и Android, туннели без `detour` (SPEC 158) |
+| `buffers.send_by_mtu` | bool | `true` | Брать буфер чтения из стека по MTU туннеля, а не 64 КБ. `false` — для диагностики (SPEC 158) |
+| `connected_socket` | bool | `false` | Подключать сокет туннеля к адресу сервера в режиме одного пира. Linux и Android (SPEC 160) |
 
 Три ключа сна сохраняют семантику SPEC 020 — таймлайны и рекомендованный мобильный конфиг в
 [lx-energy.ru.md](lx-energy.ru.md). `lazy_build`, `build_max` и `build_overflow` — SPEC 097;
@@ -1145,24 +1168,72 @@ CI (`.github/workflows/lx-ci.yml`) собирает матрицу фич (`base
 
 - `lazy_build` не действует на endpoint с `listen_port` (его никто не дайлит).
 - `build_max` без `lazy_build` допустим: устройства собираются на старте, как раньше, а потолок
-  действует с первой пересборки (пробуждения после `idle_teardown`).
+  действует с первой пересборки (пробуждения после `idle.teardown`).
 - `wait` из `build_overflow` длится до дедлайна самого дайла, не дольше 15 с.
 - `build_max` ниже числа одновременно используемых узлов заставляет их разбирать друг друга при
   каждом переключении, и каждый дайл платит сборку устройства. Ставить для сессий с массовыми
   пробами, а не как общую ручку памяти.
 
-Все ключи `lx.wg` действуют только в сборках с `with_lx_idle_suspend` (мобильный AAR).
-Десктоп/CLI-бинарь отвергает их на старте — любое окно простоя, явный `idle_teardown` (включая `"0"`),
+`buffers` и `connected_socket` относятся к сокету туннеля без `detour`; у туннеля через
+`detour` своего сокета нет, и на него они не действуют.
+
+- `buffers.read_datagram_count`: туннель держит по одному буферу на 64 КБ на каждую датаграмму,
+  которую может прочитать за раз, в каждой из двух приёмных рутин (IPv4 и IPv6), всё время,
+  пока жив: 16,4 МБ при значении по умолчанию 128, около 1 МБ при 8. При значении меньше 128
+  сокет создаётся без склейки ядра на приём (UDP GRO); склейка на отправку (UDP GSO) остаётся.
+  На плате с четырьмя ядрами Cortex-A55 на 100–150 Мбит/с значение не влияло ни на скорость,
+  ни на процессор; на настоящей сетевой карте и на быстрых каналах пачки и GRO могут давать
+  выигрыш, поэтому значение по умолчанию оставлено апстримным. На macOS и Windows ключ
+  принимается и ничего не меняет.
+  Много туннелей. Замер на 100 простаивающих туннелях без `detour` в одном экземпляре (та же
+  плата):
+
+  | `read_datagram_count` | Куча Go | Занято физически (RSS) |
+  |---|---:|---:|
+  | 128 (по умолчанию) | 1740 МБ | 94 МБ |
+  | 8 | 138 МБ | 77 МБ |
+  | 2 | 58 МБ | 75 МБ |
+  | 1 | 44 МБ | 74 МБ |
+
+  Простаивающий туннель при любом значении занимает мало физической памяти: буфер, в который
+  ни разу не читали, страницами не подкреплён. Куча при этом важна. Она входит в лимит памяти
+  рантайма, сдвигает порог сборки мусора (при 1,74 ГБ живой кучи следующая сборка — на 3,5 ГБ),
+  а буфер становится физическим, как только через туннель пошёл трафик. Поэтому чем больше
+  туннелей, тем меньше значение: `8` для одного-двух туннелей на слабой машине, `1` или `2`
+  для десятков и сотен. Скорость при `1` на релизной сборке не мерилась; измерительная сборка
+  показала на 3 % меньше отдачи, чем при `8`.
+- `buffers.send_by_mtu: false` возвращает буферы чтения из стека туннеля к 64 КБ, как было до
+  lx.36. Нужен, чтобы исключить буферы по MTU из подозреваемых при разборе проблемы; в
+  остальных случаях ставить его незачем.
+- `connected_socket` действует на туннель с одним пиром, фиксированным адресом сервера и без
+  `listen_port`. Сокет подключается к серверу, и система хранит маршрут, а не ищет его на
+  каждую датаграмму: около 5 % отдачи на той же плате (7 % вместе с
+  `buffers.read_datagram_count: 8`), замер через loopback. Цена: подключённый
+  сокет слышит только адрес сервера, а его исходный адрес фиксируется при подключении. Ядро
+  отключает сокет при любой ошибке отправки и когда рукопожатие остаётся без ответа, затем
+  подключает снова; сервер, ответивший с нового адреса, будет услышан после ближайшего повтора
+  рукопожатия, а не сразу. По умолчанию выключен: не проверен на телефоне, который меняет
+  сеть. Linux и Android; на macOS сокет в этом режиме подключён всегда.
+
+Ключи `lx.wg.idle` действуют только в сборках с `with_lx_idle_suspend` (мобильный AAR).
+Десктоп/CLI-бинарь отвергает их на старте — любое окно простоя, явный `idle.teardown` (включая `"0"`),
 `lazy_build`, ненулевой `build_max` или `build_overflow: "build"`:
-`lx.wg.* is set but this build lacks idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
+`lx.wg.idle.* is set but this build lacks idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
+`lx.wg.buffers` и `lx.wg.connected_socket` в этом отказе не участвуют.
 `sing-box check` валидирует ключи, но роутер не стартует, поэтому на десктопе их принимает.
+
+Записанные явно значения по умолчанию из канонической формы отбрасываются:
+`read_datagram_count: 128`, `send_by_mtu: true`, `connected_socket: false`, пустые блоки `idle` и
+`buffers`.
 
 Ошибки валидации называют полный путь ключа:
 
-- `lx.wg.idle_suspend_reachable must be >= lx.wg.idle_suspend`
-- `lx.wg.idle_suspend_reachable requires lx.wg.idle_suspend`, так же для `idle_teardown`, `lazy_build`
-- `lx.wg.<ключ> must be >= 0` для отрицательной длительности, `lx.wg.build_max must be >= 0`
-- `lx.wg.build_overflow must be "wait" or "build"`
+- `lx.wg.idle.suspend_reachable must be >= lx.wg.idle.suspend`
+- `lx.wg.idle.suspend_reachable requires lx.wg.idle.suspend`, так же для `idle.teardown`, `idle.lazy_build`
+- `lx.wg.idle.<ключ> must be >= 0` для отрицательной длительности, `lx.wg.idle.build_max must be >= 0`
+- `lx.wg.idle.build_overflow must be "wait" or "build"`
+- `lx.wg.buffers.read_datagram_count must be between 1 and 128` для `0`, отрицательного значения и больше 128
+- `lx.wg.<старый ключ> is moved to lx.wg.idle.<новый ключ>` для плоского ключа прежней раскладки (ниже)
 
 ### `lx.masque` — на линии 1.15 снят
 
@@ -1563,16 +1634,31 @@ info: путь, протокол, старое и новое состояние,
 (issue #64) закрывается секцией `quic` блока `lx.sniff_guard` (`decoy_first_byte`). История —
 [SPEC 153](../SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md).
 
+### Переехали: плоские ключи сна в `lx.wg`
+
+| Старый ключ (удалён) | Ключ |
+|---|---|
+| `lx.wg.idle_suspend` | `lx.wg.idle.suspend` |
+| `lx.wg.idle_suspend_reachable` | `lx.wg.idle.suspend_reachable` |
+| `lx.wg.idle_teardown` | `lx.wg.idle.teardown` |
+| `lx.wg.lazy_build` | `lx.wg.idle.lazy_build` |
+| `lx.wg.build_max` | `lx.wg.idle.build_max` |
+| `lx.wg.build_overflow` | `lx.wg.idle.build_overflow` |
+
+Периода, когда действуют оба написания, нет (владелец 2026-11-23): конфиг с любым старым ключом не
+загружается, ошибка называет новое имя, например
+`lx.wg.idle_suspend is moved to lx.wg.idle.suspend`. Значения и семантика не меняются.
+
 ### Удалённые `route.lx_idle_*`
 
 | Старый ключ (удалён) | Ключ |
 |---|---|
-| `route.lx_idle_suspend` | `lx.wg.idle_suspend` |
-| `route.lx_idle_suspend_reachable` | `lx.wg.idle_suspend_reachable` |
-| `route.lx_idle_teardown` | `lx.wg.idle_teardown` |
+| `route.lx_idle_suspend` | `lx.wg.idle.suspend` |
+| `route.lx_idle_suspend_reachable` | `lx.wg.idle.suspend_reachable` |
+| `route.lx_idle_teardown` | `lx.wg.idle.teardown` |
 
 Устаревшие алиасы удалены (владелец 2026-11-02): конфиг, в котором они остались, не загружается с
-ошибкой неизвестного поля, как при любой опечатке в ключе. Значения переносятся в `lx.wg`.
+ошибкой неизвестного поля, как при любой опечатке в ключе. Значения переносятся в `lx.wg.idle`.
 
 Running-config (`GetRunningConfig`, SPEC 037) отдаёт блок `lx` в канонической форме (пустые
 подблоки отброшены).

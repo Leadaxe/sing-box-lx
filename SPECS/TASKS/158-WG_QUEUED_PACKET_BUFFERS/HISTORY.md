@@ -86,3 +86,31 @@ round and the comparison of modes in one binary confirmed the choice.
 - **Two benchmark hangs** with KeenProxy's port in the first series on the Mac (the pipeline
   idles, one packet is missing). In the new series on NanoPi the stand reports such stops itself;
   the outcome is in SPEC §6.
+
+## 5. Part 2: buffer settings (2026-11-23)
+
+After part 1, the permanent buffers of the receive routines, 16.4 MiB, remained in the heap of a
+tunnel without `detour`. The batch-size measurement (SPEC §6.1) showed that on the board speed
+does not depend on it, while memory does. The owner decided to make the number of buffers a
+setting and to add a switch for the send buffer by MTU for diagnostics; the key names and the
+`lx.wg.buffers` block are the owner's.
+
+At first the settings were written up as a separate task 160 (`WG_BUFFER_SETTINGS`, commit
+`66d027f14`). The same day the owner merged it into this one: receive and send buffers are one
+problem, and it has one owning task. Number 160 is now taken by the task about the send cost on
+the direct path.
+
+What changed in the problem statement along the way:
+
+- **Kernel coalescing is turned off only on receive.** The measurement switch in §6.1 turned off
+  both receive and send with a small batch. For the setting, send was left on: it does not depend
+  on the number of read buffers. The combination was measured again separately (SPEC §9.2).
+- **Why the message set must not be reduced.** At first the cause was taken to be a stack with
+  batched reads (that is how 020 recorded the 2026-07 panic). The code analysis for Android showed
+  that the stack there delivers one packet at a time, and more than eight datagrams per call come
+  from the AmneziaWG handshake. The decision stayed the same, the rationale was rewritten
+  (SPEC D20).
+- **The 020 conclusion "the memory lever on Android is not in the batch"** referred to the code
+  before part 1: at that time the "pool" in the profile was the buffers that travelled with
+  packets. After part 1 the read batch became the main permanent holder (SPEC §9.5.1). This has
+  not been measured on a device.

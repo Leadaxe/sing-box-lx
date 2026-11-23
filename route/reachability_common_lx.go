@@ -10,11 +10,11 @@ import (
 )
 
 // lxWG returns the resolved lx.wg values from the box context (SPEC 098), or
-// all-off when the context carries none (tests, a router built outside
+// the defaults when the context carries none (tests, a router built outside
 // box.New) or is nil.
 func lxWG(ctx context.Context) option.LXWGResolved {
 	if ctx == nil {
-		return option.LXWGResolved{}
+		return (*option.LXResolved)(nil).WGOrZero()
 	}
 	return service.PtrFromContext[option.LXResolved](ctx).WGOrZero()
 }

@@ -61,7 +61,7 @@ type Router struct {
 	// is the endpoint manager: WG/AWG endpoints live there (NOT in the outbound
 	// manager — outbound.Outbounds() never lists them), so the idle tick must
 	// iterate it to find IdleSuspendable endpoints. idleTeardownSet records that
-	// lx.wg.idle_teardown was present in the config, which an explicit "0"
+	// lx.wg.idle.teardown was present in the config, which an explicit "0"
 	// (teardown disabled) makes indistinguishable from absent in the resolved
 	// duration alone. All four windows come from the resolved `lx` block in the
 	// context (SPEC 098).
@@ -100,7 +100,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		leaseFiles:           options.DHCPLeaseFiles,
 		pauseManager:         service.FromContext[pause.Manager](ctx),
 		platformInterface:    service.FromContext[adapter.PlatformInterface](ctx),
-		idleSuspend:          lxWG(ctx).IdleSuspend,                             // lx: SPEC 020/098 — lx.wg.idle_suspend (0 = off)
+		idleSuspend:          lxWG(ctx).IdleSuspend,                             // lx: SPEC 020/098 — lx.wg.idle.suspend (0 = off)
 		idleSuspendReachable: lxWG(ctx).IdleSuspendReachable,                    // lx: SPEC 020/098 (0 = reachable never suspends)
 		idleTeardown:         lxWG(ctx).IdleTeardown,                            // lx: SPEC 020/098 level 3 (default = reachable window, explicit "0" = off)
 		idleTeardownSet:      lxWG(ctx).IdleTeardownSet,                         // lx: SPEC 020/098 — "0" is a value, not an absence
@@ -258,7 +258,7 @@ func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			r.ruleSetUpdater.Start()
 		}
 		// lx: SPEC 020 — start the idle-suspend tick (with_lx_idle_suspend); the
-		// no-tag stub errors here if lx.wg.* is set without the build tag. The
+		// no-tag stub errors here if a key of lx.wg.idle is in effect without the build tag. The
 		// scope stops it; box.Close also stops it earlier (QuiesceForShutdown).
 		scope.Add(func() error {
 			r.stopIdleSuspend()

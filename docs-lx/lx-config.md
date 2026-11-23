@@ -16,7 +16,7 @@
 | **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | extra fields on a `wireguard` **endpoint** | desktop + mobile |
 | **MASQUE** / Cloudflare WARP (SPEC 110) | `with_quic` for HTTP/3 | `endpoints[].type: "masque-client"` + `profile`, `address`; the 1.14 `masque` outbound is removed — [§4](#4-masque--cloudflare-warp-over-masque-client-spec-110) | desktop + mobile |
 | **TrustTunnel** outbound and inbound (SPEC 133/134) | `with_trusttunnel` (+ `with_quic` for HTTP/3) | `outbounds[].type` / `inbounds[].type: "trusttunnel"`; fields — [protocols-transports.md §6](protocols-transports.md#6-trusttunnel-outbound-and-inbound), the global `lx.trusttunnel.idle_timeout` — [§13](#lxtrusttunnel--trusttunnel-outbounds) | desktop + mobile |
-| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle_suspend` (+ `idle_suspend_reachable`, `idle_teardown`) | **mobile only** (AAR) |
+| **Idle-suspend** (SPEC 020) | `with_lx_idle_suspend` | `lx.wg.idle.suspend` (+ `suspend_reachable`, `teardown`) | **mobile only** (AAR) |
 | **Root `lx` block** (SPEC 098) | — (always parsed) | `lx.wg`, `lx.masque`, `lx.trusttunnel`, `lx.mtu_align`, `lx.sniff_guard` — the fork's global knobs, [§13](#13-the-lx-root-block-spec-098) | desktop + mobile |
 | **DNS server group** (SPEC 033/035/143) | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** (SPEC 032) | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
@@ -29,12 +29,14 @@ Without a tag the feature is absent: an `xhttp` transport or an AWG field is rej
 **`with_lx_idle_suspend` is mobile-only** and is added only to the Android/iOS AAR
 (`cmd/internal/build_libbox`), not to the desktop `LX_TAGS`. It suspends idle +
 unreachable WireGuard/AmneziaWG endpoints to free their recv-worker buffers (the
-GC-heat / RAM holder, ~8 MB each where `BatchSize=128` — Android/Linux; measured
-on-device: 8 endpoints suspended → 134 MB freed). A desktop build has small
-`BatchSize`, so the feature would save almost nothing there; to avoid a silent
-mismatch, a desktop/CLI binary that is handed a config with `lx.wg.idle_suspend`
-(or any other `lx.wg` key) **fails fast at start**: `lx.wg.* is set but this build lacks
+GC-heat / RAM holder, ~8 MB each where `BatchSize=128` — Linux and Android; measured
+on-device: 8 endpoints suspended → 134 MB freed). The feature is aimed at phones with many
+idle nodes. Receive buffers are not small on every desktop: a Linux router keeps 16.4 MiB of
+them per tunnel without `detour`, and `lx.wg.buffers.read_datagram_count` reduces that in any
+build ([§13](#13-the-lx-root-block-spec-098)). To avoid a silent mismatch, a desktop/CLI binary that is handed a config with `lx.wg.idle.suspend`
+(or any other key of the `lx.wg.idle` block) **fails fast at start**: `lx.wg.idle.* is set but this build lacks
 idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
+The rest of `lx.wg` (`buffers`, `connected_socket`) works in every build.
 See the [ENERGY feature](../SPECS/FEATURES/008-ENERGY/FEATURE.md).
 
 Upstream's `on_demand` key (1.15) on a WireGuard endpoint combines with `lx.wg`: such an endpoint
@@ -42,9 +44,9 @@ sleeps as soon as nothing in the routing tree references it, the others by the `
 endpoint state (`asleep`, switched off by hand) is one for both mechanisms.
 
 Related keys (2026-07-15 revision; in the `lx` block since SPEC 098 — the old `route.lx_idle_*`
-names are removed and fail to load as unknown keys): `lx.wg.idle_suspend_reachable` — optional
+names are removed and fail to load as unknown keys): `lx.wg.idle.suspend_reachable` — optional
 second, longer idle window after which even *reachable* endpoints (pool members,
-the selected node, final) suspend; `lx.wg.idle_teardown` — the third level:
+the selected node, final) suspend; `lx.wg.idle.teardown` — the third level:
 how long an endpoint may *sleep* before a full teardown (Close, the userspace
 netstack goes too; wake = rebuild ~0.5–1 s; defaults to the reachable window);
 `urltest` `mode: failover` — hold the working node and probe only it (one
@@ -101,17 +103,24 @@ you need and read its section below. Each comment shows the **default** and the 
 {
   // ─────────────────────────────────────────────────────────────────────────
   // Root `lx` block (§13) — the fork's global knobs, grouped by subsystem.
-  // lx.wg acts only with the with_lx_idle_suspend build tag (mobile AAR);
-  // a desktop binary refuses it at start.
+  // lx.wg.idle acts only with the with_lx_idle_suspend build tag (mobile AAR);
+  // a desktop binary refuses it at start. The rest of lx.wg works in every build.
   // ─────────────────────────────────────────────────────────────────────────
   "lx": {
     "wg": {
-      "idle_suspend": "30s",                    // default: off. Endpoint outside the routing tree → Down after this idle
-      "idle_suspend_reachable": "5m",           // default: off. Same for endpoints in the tree; >= idle_suspend, requires it
-      "idle_teardown": "10m",                   // default: = idle_suspend_reachable. Sleep before full teardown; "0" = never
-      "lazy_build": true,                       // default: false. Build the device on first dial (SPEC 097)
-      "build_max": 4,                           // default: 0 (no cap). Max devices built at once (SPEC 097)
-      "build_overflow": "wait"                  // default: wait. wait | build (SPEC 097)
+      "idle": {                                 // with_lx_idle_suspend builds only
+        "suspend": "30s",                       // default: off. Endpoint outside the routing tree → Down after this idle
+        "suspend_reachable": "5m",              // default: off. Same for endpoints in the tree; >= suspend, requires it
+        "teardown": "10m",                      // default: = suspend_reachable. Sleep before full teardown; "0" = never
+        "lazy_build": true,                     // default: false. Build the device on first dial (SPEC 097)
+        "build_max": 4,                         // default: 0 (no cap). Max devices built at once (SPEC 097)
+        "build_overflow": "wait"                // default: wait. wait | build (SPEC 097)
+      },
+      "buffers": {                              // any build (SPEC 158)
+        "read_datagram_count": 8,               // default: 128. 1–128 datagrams reserved per socket read
+        "send_by_mtu": true                     // default: true. false = 64 KiB stack-read buffers (diagnostics)
+      },
+      "connected_socket": true                  // default: false. Connect the tunnel socket in single-peer mode (SPEC 160)
     },
     "trusttunnel": {
       "idle_timeout": "5m"                      // default: 5m. Global idle window for trusttunnel nodes without their own key; only a node's "0" turns it off (SPEC 133)
@@ -313,7 +322,7 @@ you need and read its section below. Each comment shows the **default** and the 
 ```
 
 > **Field count:** 26 XHTTP + 30 AmneziaWG (incl. `id`/`ip`/`ib` and the 9 AWG 3.x keys) + 1 VLESS (`encryption`) +
-> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 21 `lx` (6 `lx.wg` + `lx.masque.idle_timeout` + `lx.trusttunnel.idle_timeout` + `lx.mtu_align` + 12 `lx.sniff_guard{nodes{sni_mismatch,outbound_type},detour_type,override,tls{method,delay,persist,detour_type},quic{method,delay,persist,detour_type}}`). Mutually-exclusive / ignored fields are
+> 5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 24 `lx` (9 `lx.wg` + `lx.masque.idle_timeout` + `lx.trusttunnel.idle_timeout` + `lx.mtu_align` + 12 `lx.sniff_guard{nodes{sni_mismatch,outbound_type},detour_type,override,tls{method,delay,persist,detour_type},quic{method,delay,persist,detour_type}}`). Mutually-exclusive / ignored fields are
 > labelled inline above; the sections below give the per-field semantics, gotchas and live
 > verification status.
 
@@ -1117,12 +1126,19 @@ is the same as none. A misspelt key is a load error, not a silent default.
 ```jsonc
 "lx": {
   "wg": {
-    "idle_suspend": "30s",
-    "idle_suspend_reachable": "5m",
-    "idle_teardown": "10m",
-    "lazy_build": true,
-    "build_max": 4,
-    "build_overflow": "wait"
+    "idle": {
+      "suspend": "30s",
+      "suspend_reachable": "5m",
+      "teardown": "10m",
+      "lazy_build": true,
+      "build_max": 4,
+      "build_overflow": "wait"
+    },
+    "buffers": {
+      "read_datagram_count": 8,
+      "send_by_mtu": true
+    },
+    "connected_socket": true
   },
   "trusttunnel": {
     "idle_timeout": "5m"
@@ -1137,14 +1153,20 @@ is the same as none. A misspelt key is a load error, not a silent default.
 
 ### `lx.wg` — WireGuard / AmneziaWG endpoints
 
+One rule: the `idle` sub-block needs the mobile build (`with_lx_idle_suspend`), everything else
+in `lx.wg` works in every build.
+
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `idle_suspend` | duration | off | Idle threshold for an endpoint outside the active routing tree: past it the device goes Down (sockets closed, receive buffers freed), the next dial wakes it. Absent or `0` turns the mechanism off; the idle tick does not start |
-| `idle_suspend_reachable` | duration | off | Second, longer threshold for endpoints in the tree (urltest pool member, selected node, final); without it they never sleep. Must be ≥ `idle_suspend` and requires it |
-| `idle_teardown` | duration, explicit `"0"` allowed | inherits `idle_suspend_reachable` | How long an already-sleeping endpoint sleeps before its device and netstack are torn down, counted from falling asleep. `"0"` disables teardown. Requires `idle_suspend` |
-| `lazy_build` | bool | `false` | Endpoints start torn down; the device is built on the first dial. Requires `idle_suspend` |
-| `build_max` | integer ≥ 0 | `0` = no cap | At most N devices built at once |
-| `build_overflow` | `wait` \| `build` | `wait` | When all `build_max` devices carry live connections: wait within the dial deadline, or build above the cap with a warning |
+| `idle.suspend` | duration | off | Idle threshold for an endpoint outside the active routing tree: past it the device goes Down (sockets closed, receive buffers freed), the next dial wakes it. Absent or `0` turns the mechanism off; the idle tick does not start |
+| `idle.suspend_reachable` | duration | off | Second, longer threshold for endpoints in the tree (urltest pool member, selected node, final); without it they never sleep. Must be ≥ `idle.suspend` and requires it |
+| `idle.teardown` | duration, explicit `"0"` allowed | inherits `idle.suspend_reachable` | How long an already-sleeping endpoint sleeps before its device and netstack are torn down, counted from falling asleep. `"0"` disables teardown. Requires `idle.suspend` |
+| `idle.lazy_build` | bool | `false` | Endpoints start torn down; the device is built on the first dial. Requires `idle.suspend` |
+| `idle.build_max` | integer ≥ 0 | `0` = no cap | At most N devices built at once |
+| `idle.build_overflow` | `wait` \| `build` | `wait` | When all `build_max` devices carry live connections: wait within the dial deadline, or build above the cap with a warning |
+| `buffers.read_datagram_count` | integer 1–128 | `128`, as upstream | How many datagrams are reserved per socket read. `8` for weak machines. Linux and Android, tunnels without `detour` (SPEC 158) |
+| `buffers.send_by_mtu` | bool | `true` | Size the buffers read from the stack by the tunnel MTU instead of 64 KiB. `false` is for diagnostics (SPEC 158) |
+| `connected_socket` | bool | `false` | Connect the tunnel socket to the server address in single-peer mode. Linux and Android (SPEC 160) |
 
 The three idle keys keep their SPEC 020 semantics — timelines and the recommended mobile
 configuration are in [lx-energy.md](lx-energy.md). `lazy_build`, `build_max` and
@@ -1153,24 +1175,69 @@ configuration are in [lx-energy.md](lx-energy.md). `lazy_build`, `build_max` and
 
 - `lazy_build` does not apply to an endpoint with `listen_port` (nothing dials it).
 - `build_max` without `lazy_build` is legal: devices are built at start as before, and the cap
-  applies from the first rebuild (a wake after `idle_teardown`).
+  applies from the first rebuild (a wake after `idle.teardown`).
 - The `wait` of `build_overflow` lasts until the dial's own deadline, at most 15 s.
 - A `build_max` below the number of nodes used at the same time makes them tear each other down
   on every switch, each dial paying a device build. Set it for probe-heavy sessions, not as a
   general memory knob.
 
-Every `lx.wg` key acts only in builds with `with_lx_idle_suspend` (the mobile AAR). A desktop/CLI
-binary refuses them at start — any idle window, an explicit `idle_teardown` (`"0"` included),
-`lazy_build`, a non-zero `build_max` or `build_overflow: "build"`:
-`lx.wg.* is set but this build lacks idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
+`buffers` and `connected_socket` are about the socket of a tunnel without `detour`; a tunnel
+through `detour` has no socket of its own and is not affected.
+
+- `buffers.read_datagram_count`: a tunnel keeps one 64 KiB buffer per datagram it may read at
+  once, in each of its two receive routines (IPv4 and IPv6), for as long as it is up: 16.4 MiB
+  at the default 128, about 1 MiB at 8. Below 128 the socket is created without kernel receive
+  coalescing (UDP GRO); send coalescing (UDP GSO) stays. On a 4-core Cortex-A55 board between
+  100 and 150 Mbit/s the value made no difference to speed or CPU; on a real NIC and on faster
+  links the batch and GRO may matter, so the default stays as upstream. Accepted and ignored on
+  macOS and Windows.
+  Many tunnels. Measured with 100 idle tunnels without `detour` in one instance (the same
+  board):
+
+  | `read_datagram_count` | Go heap | Physically used (RSS) |
+  |---|---:|---:|
+  | 128 (default) | 1740 MiB | 94 MiB |
+  | 8 | 138 MiB | 77 MiB |
+  | 2 | 58 MiB | 75 MiB |
+  | 1 | 44 MiB | 74 MiB |
+
+  An idle tunnel costs little physical memory at any value: a buffer that was never read into
+  is not backed by pages. The heap still matters. It counts toward a runtime memory limit, it
+  moves the garbage collection threshold (with 1.74 GiB live the next collection is at
+  3.5 GiB), and a buffer becomes physical once the tunnel carries traffic. So the more
+  tunnels, the smaller the value: `8` for a tunnel or two on a weak machine, `1` or `2` for
+  tens and hundreds. Speed at `1` is not measured on the release build; a measurement build
+  showed 3 % less upload than at `8`.
+- `buffers.send_by_mtu: false` puts the buffers read from the tunnel stack back at 64 KiB each,
+  as before lx.36. It exists to rule the MTU-sized buffers out when a problem is being
+  narrowed down; there is no reason to set it otherwise.
+- `connected_socket` applies to a tunnel with one peer, a fixed server address and no
+  `listen_port`. The socket is connected to the server, so the kernel keeps the route instead
+  of looking it up per datagram: about 5 % more upload on the same board (7 % together
+  with `buffers.read_datagram_count: 8`), measured over loopback. The price: a connected socket hears only the server's address, and its source
+  address is fixed at connect time. The core disconnects it whenever a send fails or a
+  handshake goes unanswered, then connects again; a server that answers from a new address is
+  heard after the next handshake retry, not at once. Off by default: not verified on a phone
+  that changes networks. Linux and Android; macOS connects in this mode by itself.
+
+The keys of `lx.wg.idle` act only in builds with `with_lx_idle_suspend` (the mobile AAR). A
+desktop/CLI binary refuses them at start — any idle window, an explicit `idle.teardown` (`"0"`
+included), `lazy_build`, a non-zero `build_max` or `build_overflow: "build"`:
+`lx.wg.idle.* is set but this build lacks idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
+`lx.wg.buffers` and `lx.wg.connected_socket` never take part in that refusal.
 `sing-box check` validates the keys but does not start the router, so it accepts them on desktop.
+
+Defaults written out are dropped from the canonical form: `read_datagram_count: 128`,
+`send_by_mtu: true`, `connected_socket: false`, and an empty `idle` or `buffers` block.
 
 Validation errors name the full key path:
 
-- `lx.wg.idle_suspend_reachable must be >= lx.wg.idle_suspend`
-- `lx.wg.idle_suspend_reachable requires lx.wg.idle_suspend`, and the same for `idle_teardown`, `lazy_build`
-- `lx.wg.<key> must be >= 0` for a negative duration, `lx.wg.build_max must be >= 0`
-- `lx.wg.build_overflow must be "wait" or "build"`
+- `lx.wg.idle.suspend_reachable must be >= lx.wg.idle.suspend`
+- `lx.wg.idle.suspend_reachable requires lx.wg.idle.suspend`, and the same for `idle.teardown`, `idle.lazy_build`
+- `lx.wg.idle.<key> must be >= 0` for a negative duration, `lx.wg.idle.build_max must be >= 0`
+- `lx.wg.idle.build_overflow must be "wait" or "build"`
+- `lx.wg.buffers.read_datagram_count must be between 1 and 128` for `0`, a negative value or above 128
+- `lx.wg.<old key> is moved to lx.wg.idle.<new key>` for a flat key of the old layout (below)
 
 ### `lx.masque` — removed on the 1.15 line
 
@@ -1580,16 +1647,31 @@ over a `detour` too, as the lx.32 default `all` did. Drop the key from the confi
 relay case (issue #64) is covered by the `quic` section of `lx.sniff_guard` (`decoy_first_byte`).
 History — [SPEC 153](../SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md).
 
+### Moved: the flat idle keys of `lx.wg`
+
+| Old key (removed) | Key |
+|---|---|
+| `lx.wg.idle_suspend` | `lx.wg.idle.suspend` |
+| `lx.wg.idle_suspend_reachable` | `lx.wg.idle.suspend_reachable` |
+| `lx.wg.idle_teardown` | `lx.wg.idle.teardown` |
+| `lx.wg.lazy_build` | `lx.wg.idle.lazy_build` |
+| `lx.wg.build_max` | `lx.wg.idle.build_max` |
+| `lx.wg.build_overflow` | `lx.wg.idle.build_overflow` |
+
+There is no period when both spellings work (owner 2026-11-23): a config with any old key fails to
+load, and the error names the new one, e.g.
+`lx.wg.idle_suspend is moved to lx.wg.idle.suspend`. Values and semantics are unchanged.
+
 ### Removed `route.lx_idle_*`
 
 | Old key (removed) | Key |
 |---|---|
-| `route.lx_idle_suspend` | `lx.wg.idle_suspend` |
-| `route.lx_idle_suspend_reachable` | `lx.wg.idle_suspend_reachable` |
-| `route.lx_idle_teardown` | `lx.wg.idle_teardown` |
+| `route.lx_idle_suspend` | `lx.wg.idle.suspend` |
+| `route.lx_idle_suspend_reachable` | `lx.wg.idle.suspend_reachable` |
+| `route.lx_idle_teardown` | `lx.wg.idle.teardown` |
 
 The deprecated aliases are gone (owner 2026-11-02): a config that still carries one fails to load
-with an unknown-field error, like any misspelt key. Move the values to `lx.wg`.
+with an unknown-field error, like any misspelt key. Move the values to `lx.wg.idle`.
 
 The running config (`GetRunningConfig`, SPEC 037) returns the `lx` block canonical (empty
 sub-blocks dropped).
