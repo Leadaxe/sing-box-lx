@@ -7,20 +7,27 @@ import (
 	"io"
 	"net"
 	stdHTTP "net/http"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
+	"github.com/sagernet/sing/service"
 )
 
 // TestLxHTTPConnectOutage exercises the real outbound and real TCP sockets. A
 // successful TCP dial must not leave CONNECT waiting forever, and a successful
 // CONNECT must not leave a timer that later closes the established tunnel.
 func TestLxHTTPConnectOutage(t *testing.T) {
+	originalTimeout := httpConnectHandshakeTimeoutLx
+	httpConnectHandshakeTimeoutLx = 500 * time.Millisecond
+	t.Cleanup(func() { httpConnectHandshakeTimeoutLx = originalTimeout })
+
 	for _, mode := range []string{"silent", "partial", "cancel", "deadline", "503", "tunnel-survives"} {
 		mode := mode
 		t.Run(mode, func(t *testing.T) {
@@ -51,7 +58,7 @@ func TestLxHTTPConnectOutage(t *testing.T) {
 				access.Lock()
 				peer = conn
 				access.Unlock()
-				conn.SetDeadline(time.Now().Add(C.TCPTimeout + 5*time.Second))
+				conn.SetDeadline(time.Now().Add(5 * time.Second))
 				reader := bufio.NewReader(conn)
 				request, err := stdHTTP.ReadRequest(reader)
 				if err != nil {
@@ -83,9 +90,18 @@ func TestLxHTTPConnectOutage(t *testing.T) {
 			}()
 
 			server := M.ParseSocksaddr(listener.Addr().String())
-			out, err := NewOutbound(context.Background(), nil, log.NewNOPFactory().Logger(), "http-test", option.HTTPOutboundOptions{
+			outboundContext := context.Background()
+			options := option.HTTPOutboundOptions{
 				ServerOptions: option.ServerOptions{Server: server.AddrString(), ServerPort: server.Port},
-			})
+			}
+			detourContext := make(chan context.Context, 1)
+			if mode == "tunnel-survives" {
+				options.Detour = "loopback-detour"
+				outboundContext = service.ContextWith[adapter.OutboundManager](outboundContext, httpOutageDetourManager{
+					detour: httpOutageDetour{dialContext: detourContext, delay: 2 * httpConnectHandshakeTimeoutLx},
+				})
+			}
+			out, err := NewOutbound(outboundContext, nil, log.NewNOPFactory().Logger(), "http-test", options)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -93,7 +109,7 @@ func TestLxHTTPConnectOutage(t *testing.T) {
 			defer cancel()
 			if mode == "deadline" {
 				var stop context.CancelFunc
-				ctx, stop = context.WithTimeout(ctx, 250*time.Millisecond)
+				ctx, stop = context.WithTimeout(ctx, httpConnectHandshakeTimeoutLx/2)
 				defer stop()
 			}
 			type dialResult struct {
@@ -107,22 +123,21 @@ func TestLxHTTPConnectOutage(t *testing.T) {
 			}()
 			select {
 			case <-requested:
-			case err := <-peerDone:
-				t.Fatal("proxy did not receive CONNECT: ", err)
 			case <-time.After(5 * time.Second):
+				select {
+				case err := <-peerDone:
+					t.Fatal("proxy did not receive CONNECT: ", err)
+				default:
+				}
 				t.Fatal("proxy did not receive CONNECT")
 			}
 			if mode == "cancel" {
 				cancel()
 			}
-			budget := C.TCPTimeout + 2*time.Second
-			if mode == "cancel" || mode == "deadline" || mode == "503" || mode == "tunnel-survives" {
-				budget = 2 * time.Second
-			}
 			var response dialResult
 			select {
 			case response = <-result:
-			case <-time.After(budget):
+			case <-time.After(httpConnectHandshakeTimeoutLx + 2*time.Second):
 				cancel()
 				select {
 				case response = <-result:
@@ -138,13 +153,21 @@ func TestLxHTTPConnectOutage(t *testing.T) {
 					t.Fatal(response.err)
 				}
 				defer response.conn.Close()
+				select {
+				case underlying := <-detourContext:
+					if _, hasDeadline := underlying.Deadline(); hasDeadline || underlying.Done() != ctx.Done() {
+						t.Fatal("HTTP outbound changed the detour's deadline or cancellation")
+					}
+				default:
+					t.Fatal("HTTP outbound did not dial via the detour")
+				}
 				cancel() // The HTTP client's cancellation watcher must be disarmed.
-				response.conn.SetDeadline(time.Now().Add(C.TCPTimeout + 3*time.Second))
+				response.conn.SetDeadline(time.Now().Add(3 * time.Second))
 				greeting := make([]byte, 5)
 				if _, err := io.ReadFull(response.conn, greeting); err != nil || string(greeting) != "hello" {
 					t.Fatalf("buffered tunnel bytes: %q, %v", greeting, err)
 				}
-				time.Sleep(C.TCPTimeout + 100*time.Millisecond)
+				time.Sleep(2 * httpConnectHandshakeTimeoutLx)
 				if _, err := io.WriteString(response.conn, "alive"); err != nil {
 					t.Fatal("established tunnel closed after handshake: ", err)
 				}
@@ -160,11 +183,23 @@ func TestLxHTTPConnectOutage(t *testing.T) {
 				if response.err == nil {
 					t.Fatal("failed handshake returned no error")
 				}
-				if mode == "cancel" && !errors.Is(response.err, context.Canceled) {
-					t.Fatal("caller cancellation was lost: ", response.err)
-				}
-				if mode == "deadline" && !errors.Is(response.err, context.DeadlineExceeded) {
-					t.Fatal("caller deadline was lost: ", response.err)
+				switch mode {
+				case "silent", "partial":
+					if !errors.Is(response.err, os.ErrDeadlineExceeded) || !strings.Contains(response.err.Error(), "CONNECT handshake timeout") {
+						t.Fatal("expected a named CONNECT timeout, got: ", response.err)
+					}
+				case "cancel":
+					if !errors.Is(response.err, context.Canceled) {
+						t.Fatal("caller cancellation was lost: ", response.err)
+					}
+				case "deadline":
+					if !errors.Is(response.err, context.DeadlineExceeded) {
+						t.Fatal("caller deadline was lost: ", response.err)
+					}
+				case "503":
+					if errors.Is(response.err, os.ErrDeadlineExceeded) || !strings.Contains(response.err.Error(), "503 Service Unavailable") {
+						t.Fatal("expected the proxy's 503 error, got: ", response.err)
+					}
 				}
 			}
 			select {
@@ -177,4 +212,32 @@ func TestLxHTTPConnectOutage(t *testing.T) {
 			}
 		})
 	}
+}
+
+type httpOutageDetourManager struct {
+	adapter.OutboundManager
+	detour httpOutageDetour
+}
+
+func (m httpOutageDetourManager) Outbound(tag string) (adapter.Outbound, bool) {
+	return m.detour, tag == m.detour.Tag()
+}
+
+type httpOutageDetour struct {
+	adapter.Outbound
+	dialContext chan<- context.Context
+	delay       time.Duration
+}
+
+func (d httpOutageDetour) Tag() string { return "loopback-detour" }
+
+func (d httpOutageDetour) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	d.dialContext <- ctx
+	select {
+	case <-time.After(d.delay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	var dialer net.Dialer
+	return dialer.DialContext(ctx, network, destination.String())
 }

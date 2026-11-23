@@ -48,9 +48,9 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHTTP, tag, []string{N.NetworkTCP}, options.DialerOptions),
 		logger:  logger,
 		client: sHTTP.NewClient(sHTTP.Options{
-			// lx:begin SPEC 157 — bound CONNECT after the underlying dial
+			// lx:begin SPEC 158 — bound CONNECT after the underlying dial
 			Dialer: &httpHandshakeDialerLx{Dialer: detour},
-			// lx:end SPEC 157
+			// lx:end SPEC 158
 			Server:   options.ServerOptions.Build(),
 			Username: options.Username,
 			Password: options.Password,
@@ -65,9 +65,9 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	metadata.Outbound = h.Tag()
 	metadata.Destination = destination
 	h.logger.InfoContext(ctx, "outbound connection to ", destination)
-	// lx:begin SPEC 157 — disarm the watchdog before returning a live tunnel
-	return finishHTTPHandshakeLx(h.client.DialContext(ctx, network, destination))
-	// lx:end SPEC 157
+	// lx:begin SPEC 158 — bound CONNECT without changing the dial deadline
+	return dialHTTPWithHandshakeTimeoutLx(ctx, h.client, network, destination)
+	// lx:end SPEC 158
 }
 
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
