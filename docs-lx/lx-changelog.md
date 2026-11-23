@@ -28,9 +28,9 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
-#### v1.14.4-lx.36
+#### v1.14.4-lx.36-rc.1
 
-Stable после `v1.14.4-lx.35`, без rc-линии. База — sing-box `v1.14.4` + 82 коммита `upstream/stable` (`f0fbf236f`, 2026-11-23, апстримного тега нет), дрейф 0; `go.mod` — по апстриму этой точки, Go `go1.26.10`. Сабмодули: `wireguard-go` — `012c2e9` (SPEC 158, SPEC 160), `sing-tun` — `ce427b7` (апстримный пин `294efeca1ba7`, самолечение acceptLoop сохранено), `gvisor` и `utls` без изменений. cronet-go — `7a29333436ca`, зеркало musl-тулчейна пересобрано под него.
+Пререлиз после `v1.14.4-lx.35`. База — sing-box `v1.14.4` + 82 коммита `upstream/stable` (`f0fbf236f`, 2026-11-23, апстримного тега нет), дрейф 0; `go.mod` — по апстриму этой точки, Go `go1.26.10`. Сабмодули: `wireguard-go` — `012c2e9` (SPEC 158, SPEC 160), `sing-tun` — `ce427b7` (апстримный пин `294efeca1ba7`, самолечение acceptLoop сохранено), `gvisor` и `utls` без изменений. cronet-go — `7a29333436ca`, зеркало musl-тулчейна пересобрано под него.
 
 - 🔧 **WireGuard / AmneziaWG: пакет в очереди держит буфер по своему размеру, а не 64 КБ ([SPEC 158](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/158-WG_QUEUED_PACKET_BUFFERS/SPEC.md), [wireguard-go-awg2-lx#5](https://github.com/Leadaxe/wireguard-go-awg2-lx/pull/5), [#6](https://github.com/Leadaxe/wireguard-go-awg2-lx/pull/6)).** Апстримный `wireguard-go` читает датаграмму и пакет из TUN в буфер `MaxMessageSize`, и буфер едет с пакетом через очередь шифрования или расшифровки и очередь пира: 1,4-КБ пакет в очереди держит 64 КБ, тысяча пакетов — 64 МБ в каждом направлении. Видно там, где канал быстрее процессора; отчёт KeenProxy — около 300 МБ на Keenetic при 300–400 Мбит/с.
   - Отправка: буфер чтения из TUN берётся по MTU (раскладка пути инъекции), данные не копируются. Пакет, прочитанный под меньший `s4`, переносится в больший буфер (раньше инъецированный пакет в этой ситуации отбрасывался). TUN, вернувший больше своего MTU, стоит одного пакета и возвращает устройство к буферам по 64 КБ.
