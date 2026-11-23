@@ -33,20 +33,13 @@ func (r *lxAsyncRouter) ExchangeAsync(ctx context.Context, message *mDNS.Msg, op
 	}()
 }
 
-// Serves stream DNS on proxied conns the way route hijack-dns does.
+// Serves stream DNS on proxied conns through the real dns outbound, so the
+// test also fails when its NewConnection stops wrapping the conn.
 type lxDNSHandler struct{}
 
 func (h *lxDNSHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
-	go func() {
-		defer conn.Close()
-		router := &lxAsyncRouter{}
-		streamConn := NewSerialWriteConn(conn)
-		for {
-			if HandleStreamDNSRequest(ctx, router, streamConn, adapter.InboundContext{}) != nil {
-				return
-			}
-		}
-	}()
+	outbound := &Outbound{router: &lxAsyncRouter{}}
+	go outbound.NewConnection(ctx, conn, adapter.InboundContext{}, nil)
 }
 
 func (h *lxDNSHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
