@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — потоковый DNS через прокси пишется в одно соединение из многих горутин без синхронизации, с обеих сторон туннеля: клиентский `queryMultiplexer` DNS-транспорта `tcp` и серверный `HandleStreamDNSRequest` (`hijack-dns`, `dns`-outbound, `resolved`). Прокси-соединения VLESS и sing-mux пишут свой заголовок первым `Write` под голым `bool`, и поток DNS ломается |
-| Статус | I (implemented) — 2026-11-17: клиентская половина (`dns/transport/multiplexer.go`); 2026-11-18: серверная половина (`protocol/dns/handle.go` и три вызывающих). Юниты красные до правки и зелёные после; в поле клиентская половина `short read` не убрала (§4), серверная на выходных узлах не проверялась |
+| Статус | I (implemented) — 2026-11-17: клиентская половина (`dns/transport/multiplexer.go`); 2026-11-18: серверная половина (`protocol/dns/stream_write_lock_lx.go` и три вызывающих). Юниты красные до правки и зелёные после; в поле клиентская половина `short read` не убрала (§4), серверная на выходных узлах не проверялась |
 | Ветка | `lx-spec157-dns-multiplexer-write-lock` → `lx` |
 | Build-tag | — (ядро: `dns/transport`, `protocol/dns`, `route`, `service/resolved`) |
 | Источник | [issue #77](https://github.com/Leadaxe/sing-box-lx/issues/77): роутер OpenWrt (тот же, что в #53), `v1.14.3-lx.23`; DNS-сервер `tcp` 8.8.4.4 с `detour` на `urltest`-группу из четырёх узлов (vless + reality с vision, vless + reality поверх HTTP-транспорта, два shadowsocks + shadowtls с h2mux); выходные узлы — sing-box 1.14.x с `hijack-dns`; за 1,5 ч — 210 строк `router: process DNS packet: dns: short read` пачками до 82 в секунду |
@@ -90,7 +90,7 @@ conn.writeAccess.Unlock()
 
 ### 2.2. Сервер
 
-`protocol/dns/handle.go`, блок `lx:begin dns-stream-write-lock`: обёртка
+`protocol/dns/stream_write_lock_lx.go` (новый файл, `handle.go` не тронут): обёртка
 `serialWriteConn` (`NewSerialWriteConn`) с `Write` под своим замком. Вызывающие
 оборачивают соединение один раз на поток, перед циклом
 `HandleStreamDNSRequest` (`// lx: SPEC 157`):
@@ -137,9 +137,12 @@ conn.writeAccess.Unlock()
   пишет их из одной горутины) **или** sing-vmess и sing-mux сделают первый `Write`
   потокобезопасным.
 
-При мерже: конфликт в `multiplexConn`, `exchangeAsync`, `handle.go` или циклах
-вызывающих = сверить с §2; страж — тесты §4, они упадут, если запись снова станет
-конкурентной.
+При мерже: конфликт в `multiplexConn`, `exchangeAsync` или циклах вызывающих =
+сверить с §2. Тесты §4 сторожат замок в `exchangeAsync` и саму обёртку. Три
+точки вызова они не покрывают: серверный тест оборачивает соединение сам, так
+что потерянная на мерже строка `NewSerialWriteConn` в `route/dns.go`,
+`protocol/dns/outbound.go` или `service/resolved/service.go` тестом не ловится —
+эти три маркера `// lx: SPEC 157` сверяются глазами.
 
 ## 4. Проверка
 
@@ -167,7 +170,8 @@ conn.writeAccess.Unlock()
   мультиплексор не использует.
 - `go build ./...`, сборка `cmd/sing-box` под `LX_TAGS`, `sing-box check` по
   `lx-test/config/*.json` — проходят (проверено для клиентской половины).
-- `-race` не гонялся: на хосте сборки нет cgo.
+- `-race`: `go test -race -count=3 -run TestLx ./dns/transport/ ./protocol/dns/`
+  под `LX_TAGS` — зелёный (darwin/arm64, 2026-11-23).
 - Поле, клиентская половина: ядро `v1.14.3-lx.23` + §2.1 на роутере из #77 около
   14 часов (2026-11-17/18). `short read` не исчез — 190 строк в одну секунду
   сразу после пробуждения ноутбука в LAN и около 30 в следующий час. Это и
@@ -179,6 +183,7 @@ conn.writeAccess.Unlock()
 
 - `dns/transport/multiplexer.go` — `writeAccess` в `multiplexConn`, запись под ним в `exchangeAsync` (`// lx: SPEC 157`)
 - `dns/transport/multiplexer_write_lock_lx_test.go` — регресс-тесты клиента (новый)
-- `protocol/dns/handle.go` — `serialWriteConn`, `NewSerialWriteConn` (`lx:begin dns-stream-write-lock`)
+- `protocol/dns/stream_write_lock_lx.go` — `serialWriteConn`, `NewSerialWriteConn` (новый)
 - `protocol/dns/outbound.go`, `route/dns.go`, `service/resolved/service.go` — обёртка соединения перед циклом (`// lx: SPEC 157`)
 - `protocol/dns/handle_write_lock_lx_test.go` — регресс-тесты сервера (новый)
+- `.github/workflows/lx-ci.yml` — `./protocol/dns/` в шаге тестов: без строки пакет не гоняется нигде
