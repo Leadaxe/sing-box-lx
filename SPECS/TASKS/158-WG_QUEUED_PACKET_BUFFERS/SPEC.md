@@ -8,7 +8,7 @@
 | Field | Value |
 |-------|-------|
 | Type | Part 1 — B (bug): a property of upstream `wireguard-go`, a queued packet holds a 64 KiB buffer. Part 2 — F (feature): two buffer settings in `lx.wg.buffers` |
-| Status | **Part 1 — I (implemented)**, **part 2 — O (open): the spec is written, implementation has not started (§9)**. Part 1 ships in `v1.14.4-lx.36`. Merged into the fork's release branch ([PR #6](https://github.com/Leadaxe/wireguard-go-awg2-lx/pull/6), commit `f1e73df`), the submodule is bumped, the core side (§2.4) is written. Verified by the stand, the end-to-end test and a live run of the release candidate on NanoPi (Linux arm64). Not verified: an Android device, a live link |
+| Status | **Part 1 — I (implemented)**, **part 2 — I (implemented), §9**. Both ship in `v1.14.4-lx.36`. Part 2: fork [PR #7](https://github.com/Leadaxe/wireguard-go-awg2-lx/pull/7), `b565d0c`; verified by the fork's tests and by a measurement of the finished build on NanoPi, not verified on Android. Part 1: merged into the fork's release branch ([PR #6](https://github.com/Leadaxe/wireguard-go-awg2-lx/pull/6), commit `f1e73df`), the submodule is bumped, the core side (§2.4) is written. Verified by the stand, the end-to-end test and a live run of the release candidate on NanoPi (Linux arm64). Not verified: an Android device, a live link |
 | Branch | `lx`; fork `Leadaxe/wireguard-go-awg2-lx`, branch `lx-awg2-v007` |
 | Build tag | — (the change is in the submodule and applies to all builds; the part 2 keys also work in any build, they do not need the `with_lx_idle_suspend` tag) |
 | Source | [wireguard-go-awg2-lx#5](https://github.com/Leadaxe/wireguard-go-awg2-lx/pull/5) — KeenProxy: about 300 MiB on a router at 300–400 Mbit/s |
@@ -21,7 +21,7 @@ How this solution was reached and what was rejected along the way is in [HISTORY
 | Part | What it is about | Sections | State |
 |---|---|---|---|
 | 1 | Buffers that travel with queued packets: a packet holds about 2 KiB instead of 64 KiB | §0–§8 | done |
-| 2 | Permanent receive buffers and the `lx.wg.buffers` settings: the number of buffers per socket read and the switch for the send buffer by MTU | §9 | open |
+| 2 | Permanent receive buffers and the `lx.wg.buffers` settings: the number of buffers per socket read and the switch for the send buffer by MTU | §9 | done |
 
 ## 0. In plain words
 
@@ -594,8 +594,7 @@ allocation by size, the fork's insertions are removed and the stand stays for cr
 
 ## 9. Part 2: permanent receive buffers and the `lx.wg.buffers` settings
 
-State: the spec is written, implementation has not started. The key names are the owner's
-(2026-11-23).
+State: implemented, ships in `v1.14.4-lx.36`. The key names are the owner's (2026-11-23).
 
 ### 9.0 In plain words
 
@@ -673,8 +672,9 @@ block, and the core's refusal without the tag applies only to that block. The fu
 
 ### 9.2 What it gives
 
-There are two measurements on the board (NanoPi, 4×Cortex-A55, the direct path, both core
-instances with the same value, 8 TCP streams, median of three rounds).
+There are three measurements on the board, two with the measurement build and one with the
+finished build (NanoPi, 4×Cortex-A55, the direct path, both core instances with the same value,
+8 TCP streams, median of three rounds).
 
 **The first** is in §6.1, the table "A clean check of the batch size": values 128, 32, 8 and 1.
 Speed and CPU time do not depend on the value, memory goes down. The measurement switch there
@@ -707,8 +707,22 @@ turned kernel coalescing off both on receive and on send.
   +16 % on upload: with eight buffers, receive prepares and cleans up eight messages instead of
   128.
 
-Both measurements were taken with a measurement build, not with the implementation: the
-measurement is repeated on the finished build (§9.6).
+Both measurements were taken with a measurement build. **The third is the finished build**, keys
+in the config, the same on client and server, three rounds (`.work/spec158/pr7-final-build.md`):
+
+| Variant | Download, Mbit/s | Upload, Mbit/s | CPU, s/GiB, down / up | Client peak RSS, download, MiB | 64 KiB receive slots in the client heap, MiB |
+|---|---:|---:|---:|---:|---:|
+| no keys | 118.9 | 140.0 | 267 / 235 | 73.6 | 12–15 |
+| `read_datagram_count: 8` | 124.1 | 142.3 | 258 / 227 | 62.3 | about 1 |
+| `send_by_mtu: false` (one round) | 118.1 | 139.2 | 272 / 234 | 105.3 | — |
+
+- With the key `8` the speed is within the spread of the build without keys, the receiver's CPU
+  is lower (the client on download 104 against 114 s/GiB), the client peak RSS on download
+  −11 MiB.
+- `send_by_mtu: false` brings back the 64 KiB buffers for reading from the stack: 8.2 MiB in the
+  heap on download and 37.6 MiB on upload against 0.5–1.5 MiB; the peak RSS is higher by 32 and
+  49 MiB. Speed and CPU are the same. The switch works and shows the cost of the buffers before
+  part 1.
 
 What the measurements do not show: everything is on loopback and at 100–160 Mbit/s. On a real
 network card and on fast links batches and kernel coalescing may give a gain that is not visible
@@ -743,8 +757,9 @@ machines, not a new standard.
   empty block is dropped, default values are not written).
 - The WireGuard endpoint, when creating the binding layer of the direct path, passes it the number
   of datagrams, and after creating the device, if `send_by_mtu: false`, turns off buffers by MTU.
-- Insertions in upstream files: one line in the transport endpoint file next to the enabling of
-  single-peer mode.
+- Insertions in upstream files: two in the transport endpoint file — the datagram count is
+  passed to the layer next to the enabling of single-peer mode, and the MTU-sized buffers are
+  turned off right after the device is created.
 
 ### 9.4 Decisions and rationale
 
@@ -863,51 +878,44 @@ remains a conclusion from the code.
 
 ### 9.6 Verification
 
-Not done — the list of what has to be done before status I.
+Done.
 
-Fork:
+Fork (`conn/lx_read_count_test.go`, device tests in `device/lx_packet_sized_test.go`; the full
+`conn` and `device` suites on linux/arm64, `conn` and the new device tests on darwin/arm64,
+`go vet` for linux and android, builds for windows and freebsd):
 
-- the number of buffers of the receive routine equals the setting; 128 by default;
-- with a small value the socket has UDP GRO off and coalescing is not declared; at 128 — as
-  before;
-- receiving a batch of datagrams through a real socket with values 1, 8, 128: everything is
-  delivered, intact and in order;
-- the part 1 stand through real sockets with the value 8: queue, send, receive;
-- **the combination with a batching stack** (TUN declares a batch of 128, the setting is 8):
-  start, traffic in both directions, no panic;
-- **a handshake longer than the read batch**: AmneziaWG with `Jc` and i1–i5 adding up to more
-  than the value, with values 8 and 1 — tunnel start and a repeated handshake;
-- packets injected in a batch larger than the value (direct L3 forwarding) are delivered;
-- a socket opened again declares the same number;
-- turning off buffers by MTU: the read loop switches to 64 KiB from the next packet;
-- `go test -race ./conn ./device` on darwin, the full suite on linux/arm64;
-- `go vet` for linux, android, windows, freebsd, ios.
+- the value range; a change on an open layer is rejected;
+- the layer's batch size equals the setting on Linux and Android, 128 by default; on other
+  platforms it does not change;
+- with a small value the sockets are opened without UDP GRO, on every open, and coalescing on
+  send stays the same as without the setting;
+- a batch of 60 datagrams through a real socket with values 1, 8, 128 and without the setting:
+  everything is delivered, intact and in order, no read returned more than promised;
+- one send of 40 datagrams with the value 8: all arrived (a handshake longer than the read batch,
+  a batch of injected packets);
+- **the combination with a batching stack** (TUN declares a batch of 128, the setting is 8, real
+  sockets): layer batch 8, device batch 128, traffic flows, no panic;
+- the switch for buffers by MTU: the read buffer size becomes 64 KiB, a packet in the send queue
+  holds 64 KiB again, packets arrive without loss.
 
-The core:
+The core: parsing and checking the block (1, 8, 128; 0, −1 and 129 — an error; default values
+are normalized to an absent key, `send_by_mtu: false` is kept); the block is accepted by a build
+without `with_lx_idle_suspend`; the value reaches the layer, and "not set" in any form leaves the
+layer untouched.
 
-- parsing and checking the block: values 1, 8, 128; 0, −1 and 129 — an error; an empty block is
-  dropped; `send_by_mtu: false` is kept, `true` is normalized to an absent key;
-- the block is accepted by a build without `with_lx_idle_suspend`;
-- the endpoint passes the values to the binding layer and to the device.
+The board (NanoPi), the finished build — §9.2, the third measurement. An AmneziaWG tunnel and a
+tunnel with `listen_port` start and work with the key `8`.
 
-The board (NanoPi), one build, a config with the key and without:
+Not done:
 
-- speed and CPU — as in §9.2;
-- heap: receive slots about 1 MiB per tunnel at `8` against 16.4 MiB;
-- `send_by_mtu: false`: 64 KiB send buffers come back into the profile;
-- a tunnel with `listen_port` and an AmneziaWG tunnel with the same key;
-- a TUN inbound with direct L3 forwarding and the key `8`.
-
-An Android device (after the board; without it §9.5.1 remains a conclusion from the code):
-
-- heap profile at idle and in a speed test: receive slots 16 MiB → 1 MiB per tunnel without
-  `detour`; 2 KiB buffers under load within reasonable limits;
-- whether coalescing on receive is enabled on kernels 5.10 and 5.15/6.1, without the setting and
-  with it;
-- download speed at `8` against the default on a device where coalescing is present;
-- an AmneziaWG node with a long handshake: start and repeated handshakes;
-- wake-up after idle suspend (020) and socket reopening on a network change with the setting;
-- the key arrives from the app's config generator.
+- **An Android device** (without it §9.5.1 remains a conclusion from the code): heap profile at
+  idle and in a speed test; whether coalescing on receive is enabled on kernels 5.10 and
+  5.15/6.1, without the setting and with it; download speed at `8` where coalescing is present;
+  an AmneziaWG node with a long handshake; wake-up after idle suspend (020) and socket reopening
+  on a network change with the setting; the key in the app's config generator;
+- a real network card and speeds above 150 Mbit/s;
+- a TUN inbound with direct L3 forwarding and the key `8` as part of the core (in the fork the
+  combination with a batching stack is covered by a test).
 
 ### 9.7 Boundaries
 
@@ -923,4 +931,15 @@ An Android device (after the board; without it §9.5.1 remains a conclusion from
 
 ### 9.8 Files
 
-Filled in during implementation.
+Fork `wireguard-go` (branch `lx-awg2-v007`, [PR #7](https://github.com/Leadaxe/wireguard-go-awg2-lx/pull/7), commit `b565d0c`):
+
+| File | What |
+|---|---|
+| `conn/lx_read_count.go` | new: the datagram count setting, the layer's batch size, turning off receive coalescing when the socket is created |
+| `conn/lx_read_count_linux.go`, `conn/lx_read_count_default.go` | new: removing UDP GRO on Linux, a stub for the others |
+| `conn/bind_std.go` | insertions: a field, the socket options function in two calls, the batch size |
+| `device/lx_packet_sized.go` | a method that turns off read buffers by MTU |
+| `conn/lx_read_count_test.go`, `device/lx_packet_sized_test.go`, `device/lx_backlog_stand_test.go` | tests and the stand |
+
+The core: `option/lx.go` (the `buffers` block), `transport/wireguard/tuning_lx.go` and two
+insertions in `transport/wireguard/endpoint.go`; the `submodules/wireguard-go` gitlink.
