@@ -41,7 +41,11 @@ func (d *httpHandshakeDialerLx) DialContext(ctx context.Context, network string,
 	if err != nil {
 		return nil, err
 	}
-	handshake := ctx.Value(httpHandshakeStateKeyLx{}).(*httpHandshakeStateLx)
+	handshake, loaded := ctx.Value(httpHandshakeStateKeyLx{}).(*httpHandshakeStateLx)
+	if !loaded {
+		// Not dialed through dialHTTPWithHandshakeTimeoutLx: behave as upstream.
+		return conn, nil
+	}
 	handshake.timer = time.AfterFunc(httpConnectHandshakeTimeoutLx, func() {
 		if !handshake.finished.Swap(true) {
 			_ = conn.Close()
