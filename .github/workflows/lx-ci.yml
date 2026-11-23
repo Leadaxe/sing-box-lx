@@ -131,6 +131,9 @@ jobs:
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd" \
             ./lxd/ ./cmd/sing-box/
 
+      - name: go test (HTTP outbound, race)
+        run: go test -race -count=1 ./protocol/http/
+
       # StartConnectionTest (SPEC 139): the trace holder, the handler, the
       # libbox client and every package that carries a `// lx: SPEC 139` stage
       # insertion or an IsProbe guard. The common/tls suite runs minutes under
