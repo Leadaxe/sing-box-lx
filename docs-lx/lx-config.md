@@ -29,10 +29,11 @@ Without a tag the feature is absent: an `xhttp` transport or an AWG field is rej
 **`with_lx_idle_suspend` is mobile-only** and is added only to the Android/iOS AAR
 (`cmd/internal/build_libbox`), not to the desktop `LX_TAGS`. It suspends idle +
 unreachable WireGuard/AmneziaWG endpoints to free their recv-worker buffers (the
-GC-heat / RAM holder, ~8 MB each where `BatchSize=128` — Android/Linux; measured
-on-device: 8 endpoints suspended → 134 MB freed). A desktop build has small
-`BatchSize`, so the feature would save almost nothing there; to avoid a silent
-mismatch, a desktop/CLI binary that is handed a config with `lx.wg.idle.suspend`
+GC-heat / RAM holder, ~8 MB each where `BatchSize=128` — Linux and Android; measured
+on-device: 8 endpoints suspended → 134 MB freed). The feature is aimed at phones with many
+idle nodes. Receive buffers are not small on every desktop: a Linux router keeps 16.4 MiB of
+them per tunnel without `detour`, and `lx.wg.buffers.read_datagram_count` reduces that in any
+build ([§13](#13-the-lx-root-block-spec-098)). To avoid a silent mismatch, a desktop/CLI binary that is handed a config with `lx.wg.idle.suspend`
 (or any other key of the `lx.wg.idle` block) **fails fast at start**: `lx.wg.idle.* is set but this build lacks
 idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
 The rest of `lx.wg` (`buffers`, `connected_socket`) works in every build.
@@ -1241,13 +1242,30 @@ through `detour` has no socket of its own and is not affected.
   100 and 150 Mbit/s the value made no difference to speed or CPU; on a real NIC and on faster
   links the batch and GRO may matter, so the default stays as upstream. Accepted and ignored on
   macOS and Windows.
+  Many tunnels. Measured with 100 idle tunnels without `detour` in one instance (the same
+  board):
+
+  | `read_datagram_count` | Go heap | Physically used (RSS) |
+  |---|---:|---:|
+  | 128 (default) | 1740 MiB | 94 MiB |
+  | 8 | 138 MiB | 77 MiB |
+  | 2 | 58 MiB | 75 MiB |
+  | 1 | 44 MiB | 74 MiB |
+
+  An idle tunnel costs little physical memory at any value: a buffer that was never read into
+  is not backed by pages. The heap still matters. It counts toward a runtime memory limit, it
+  moves the garbage collection threshold (with 1.74 GiB live the next collection is at
+  3.5 GiB), and a buffer becomes physical once the tunnel carries traffic. So the more
+  tunnels, the smaller the value: `8` for a tunnel or two on a weak machine, `1` or `2` for
+  tens and hundreds. Speed at `1` is not measured on the release build; a measurement build
+  showed 3 % less upload than at `8`.
 - `buffers.send_by_mtu: false` puts the buffers read from the tunnel stack back at 64 KiB each,
   as before lx.36. It exists to rule the MTU-sized buffers out when a problem is being
   narrowed down; there is no reason to set it otherwise.
 - `connected_socket` applies to a tunnel with one peer, a fixed server address and no
   `listen_port`. The socket is connected to the server, so the kernel keeps the route instead
-  of looking it up per datagram: about 7 % more upload on the same board, measured over
-  loopback. The price: a connected socket hears only the server's address, and its source
+  of looking it up per datagram: about 5 % more upload on the same board (7 % together
+  with `buffers.read_datagram_count: 8`), measured over loopback. The price: a connected socket hears only the server's address, and its source
   address is fixed at connect time. The core disconnects it whenever a send fails or a
   handshake goes unanswered, then connects again; a server that answers from a new address is
   heard after the next handshake retry, not at once. Off by default: not verified on a phone

@@ -101,10 +101,10 @@
 
 ## 4. Реализация (границы для PLAN)
 
-- Новый lx-файл `option/lx.go`: `LXOptions{WG *LXWGOptions; MASQUE *LXMASQUEOptions}` с валидацией; в апстримном `option/options.go` одна строка `LX *LXOptions json:"lx,omitempty"` под маркером; алиасы остаются в `option/route.go` внутри существующего блока `lx:begin idle-suspend` до снятия.
+- Новый lx-файл `option/lx.go`: `LXOptions{WG *LXWGOptions; MASQUE *LXMASQUEOptions}` с валидацией; в апстримном `option/options.go` одна строка `LX *LXOptions json:"lx,omitempty"` под маркером; алиасы жили в `option/route.go` до снятия 2026-11-02; файл вернулся к апстримному виду.
 - Точки чтения: `route/router.go` (поля idle-suspend) переходят на разрешённые значения `lx.wg`; `protocol/masque.NewOutbound` получает глобальный дефолт из контекста, а не через сигнатуру. В контексте лежит `*option.LXResolved` (`service.ContextWithPtr` в `box.New`, чтение — `service.PtrFromContext[option.LXResolved]`; пара `FromContext[*T]` ключуется по `**T` и молча отдаёт nil).
 - Тесты: парсинг блока, валидация каждого правила, алиасы (оба места, конфликт, совпадение), приоритет masque, гейт сборки; `sing-box check` на всех `lx-test/config/*.json` плюс новый `lx_block.json`; running-config отдаёт канонический блок.
-- Доки: `docs-lx/lx-config.md`/`.ru.md` (раздел «Блок `lx`» + пометка deprecated у старых ключей), `docs-lx/lx-energy.md`/`.ru.md` (пути ключей), changelog; контракт LxBox/лаунчера — по их регламенту, синхронно.
+- Доки: `docs-lx/lx-config.md`/`.ru.md` (раздел «Блок `lx`» + таблица снятых имён), `docs-lx/lx-energy.md`/`.ru.md` (пути ключей), changelog; контракт LxBox/лаунчера — по их регламенту, синхронно.
 
 **Переезд в `lx.wg.idle` (сделано в ядре; пункт «вне ядра» — нет):**
 
@@ -119,7 +119,7 @@
 
 1. Конфиг с блоком `lx` даёт роутеру окна тика из `lx.wg` (юнит на резолв + `check`); старые `route.lx_idle_*` — ошибка загрузки (после удаления алиасов 2026-11-02).
 2. `lx.masque.idle_timeout` действует на узел без своего ключа и не действует на узел с явным `"0"`.
-3. Новые ключи `wg.lazy_build`/`build_max`/`build_overflow` принимаются и валидируются; до 097 они инертны и об этом сказано в доке.
+3. Новые ключи `wg.idle.lazy_build`/`build_max`/`build_overflow` (до 2026-11-23 — плоские в `wg`) принимаются и валидируются; до 097 они инертны и об этом сказано в доке.
 4. `option/` меняется только этой задачей и по её списку; `go build` без тегов и с полным `LX_TAGS`; стенды `lx-test`.
 5. LxBox и лаунчер пишут `lx.*` до релиза, снимающего алиасы.
 

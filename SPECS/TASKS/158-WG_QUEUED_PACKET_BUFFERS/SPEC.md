@@ -3,7 +3,7 @@
 > 🌐 Русская версия: **[SPEC.ru.md](SPEC.ru.md)** (auxiliary copy; this English file is primary — owner decision 2026-11-23).
 
 **Feature:** [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md)
-**Touches:** P1 — entry 158 in the registry carries the removal condition. The other promises are not affected. Adjacent [ENERGY](../../FEATURES/008-ENERGY/FEATURE.md): the permanent buffers of the receive routines, described by [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md), are not changed by part 1; their number is set by the part 2 setting (§9), whose keys belong to the ENERGY parameter table.
+**Touches:** P1 — entry 158 in the registry carries the removal condition. The other promises are not affected. Adjacent [ENERGY](../../FEATURES/008-ENERGY/FEATURE.md): the permanent buffers of the receive routines, described by [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md), are not changed by part 1; their number is set by the part 2 setting (§9), and ENERGY's Boundaries section points to `read_datagram_count`.
 
 | Field | Value |
 |-------|-------|
@@ -729,6 +729,43 @@ network card and on fast links batches and kernel coalescing may give a gain tha
 here. That is why the default stays as in upstream, and `8` is a recommendation for weak
 machines, not a new standard.
 
+#### 9.2.1 Many tunnels
+
+Measurement: 100 WireGuard tunnels without `detour` in one instance of the core, the tunnels
+are up, no traffic goes through them (NanoPi, finished build; raw data —
+`.work/spec158/pr7/idle100.log`).
+
+| `read_datagram_count` | Go heap | Physically used (RSS) |
+|---|---:|---:|
+| 128 (default) | 1740 MiB | 94 MiB |
+| 8 | 138 MiB | 77 MiB |
+| 2 | 58 MiB | 75 MiB |
+| 1 | 44 MiB | 74 MiB |
+
+For comparison: one tunnel at the default — heap 21 MiB, RSS 50 MiB. 115 AmneziaWG tunnels
+with real node parameters (IPv4 and IPv6, `i1`) at the default — heap 2003 MiB, RSS 105 MiB.
+
+- **The heap and RSS are different things.** The heap is the memory the Go runtime set aside
+  for objects. RSS is what the system backed with pages. A buffer that has never been read
+  into is not backed. So an idle tunnel costs almost nothing physically: about 0.45 MiB at 128
+  and about 0.25 MiB at 1–8.
+- **The heap is still not free.**
+  - All of it counts toward the runtime memory limit
+    ([148](../148-OOM_KILLER_RUNTIME_MEMORY/SPEC.md)) and toward any external limit that counts
+    virtual memory.
+  - The garbage collection threshold is computed from it: with a live heap of 1.74 GiB the
+    next collection is set at 3.5 GiB, and garbage below that threshold is not collected. In
+    the measurement, unrelated traffic through the same core (a plain proxy, 6 Gbit/s, 40 s)
+    did not raise RSS: 95–97 MiB. A load that produces heap garbage was not tested.
+  - A buffer becomes physical once it has been read into. A tunnel under traffic occupies its
+    slots for real: 12–15 MiB per tunnel at 128 (the third measurement in §9.2).
+- **The more tunnels, the smaller the value.** For one or two tunnels on a weak machine — `8`.
+  For tens and hundreds — `1` or `2`: the difference between 8 and 1 over a hundred tunnels is
+  94 MiB of heap. The value `1` was not measured for speed on the finished build; with the
+  measurement build upload was 3 % lower than at 8, at the edge of the spread.
+- A tunnel through `detour` keeps one 64 KiB buffer at any value; a suspended tunnel (mobile
+  build) keeps none.
+
 ### 9.3 How it works
 
 **The `wireguard-go` fork:**
@@ -778,9 +815,10 @@ be confusing.
 behaviour for everyone: batches and coalescing on a fast network card were not invented for
 nothing.
 
-**D17. The recommendation for weak machines is 8.** At 8, 1 MiB of 16.4 remains. Going further
-down to 1 gives another 0.9 MiB and in the measurement cost 3 % on upload (at the edge of the
-spread) — it does not pay off.
+**D17. The recommendation for weak machines is 8, for many tunnels 1 or 2.** At 8, 1 MiB of
+16.4 remains. Going further down to 1 gives another 0.9 MiB per tunnel and in the measurement
+cost 3 % on upload (at the edge of the spread): for one tunnel it does not pay off. For a
+hundred tunnels the same 0.9 MiB is 94 MiB of heap, and the calculation is different (§9.2.1).
 
 **D18. A small value turns off kernel coalescing on receive, without a separate key.** This is
 not a choice but a correctness condition: splitting a coalesced datagram needs the full batch. A

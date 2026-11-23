@@ -199,7 +199,7 @@ func TestResumeOnDial_dialBeforeTickRace(t *testing.T) {
 	}
 }
 
-// TestSuspendIfIdle_reachableThreshold pins the lx_idle_suspend_reachable
+// TestSuspendIfIdle_reachableThreshold pins the lx.wg.idle.suspend_reachable
 // semantics: reachable + long-idle suspends ONLY when the second threshold is
 // set and exceeded.
 func TestSuspendIfIdle_reachableThreshold(t *testing.T) {
@@ -218,7 +218,7 @@ func TestSuspendIfIdle_reachableThreshold(t *testing.T) {
 	// Reachable, idle > reachableThreshold: suspends.
 	w.SuspendIfIdle(true, 30*time.Second, 5*time.Minute)
 	if !w.idleAsleep.Load() {
-		t.Fatal("reachable endpoint past lx_idle_suspend_reachable must suspend")
+		t.Fatal("reachable endpoint past lx.wg.idle.suspend_reachable must suspend")
 	}
 	if w.started.Load() {
 		t.Fatal("started must be false after reachable-idle suspend")
@@ -272,7 +272,7 @@ func TestSuspendIfIdle_transferDeltaGate(t *testing.T) {
 	}
 }
 
-// --- SPEC 020 level 3: lx_idle_teardown -------------------------------------
+// --- SPEC 020 level 3: lx.wg.idle.teardown -------------------------------------
 
 // TestTeardownIfSlept_onlyAfterSleepWindow: the teardown clock counts from the
 // moment of falling asleep, not from the last dial — an endpoint that just went
@@ -294,7 +294,7 @@ func TestTeardownIfSlept_onlyAfterSleepWindow(t *testing.T) {
 	w.sleepSince.Store(time.Now().Add(-6 * time.Minute).UnixNano())
 	w.TeardownIfSlept(5 * time.Minute)
 	if !w.torndown.Load() {
-		t.Fatal("an endpoint asleep past lx_idle_teardown must be torn down")
+		t.Fatal("an endpoint asleep past lx.wg.idle.teardown must be torn down")
 	}
 	if !w.idleAsleep.Load() {
 		t.Fatal("a torn-down endpoint is still idle-asleep (it is a deeper sleep, not a new state)")

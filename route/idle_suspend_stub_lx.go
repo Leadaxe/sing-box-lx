@@ -9,15 +9,17 @@ import (
 )
 
 // startIdleSuspend is the no-`with_lx_idle_suspend` stub. The idle-suspend tick
-// (SPEC 020) is a mobile-only power/RAM feature — it only pays off where the
-// recv-worker bufsArrs are large (Android/iOS, BatchSize=128), so it is gated
-// behind the build tag and included only in mobile builds.
+// (SPEC 020) is a mobile-only power/RAM feature — it pays off where many idle
+// endpoints keep their recv-worker bufsArrs (phones; BatchSize=128 on Android
+// and Linux), so it is gated behind the build tag and included only in mobile
+// builds.
 //
 // If any lx.wg.idle key is in effect (the idle windows, an explicit teardown
 // including "0", lazy_build, build_max, build_overflow "build") but the binary
 // was built without the tag, we fail loudly at start rather than silently
-// ignoring it. lx.wg.buffers and lx.wg.connected_socket act in every build and
-// never reach this gate (SPEC 098 §2.1) — a silent no-op would hide a misconfigured build. When nothing
+// ignoring it — a silent no-op would hide a misconfigured build.
+// lx.wg.buffers and lx.wg.connected_socket act in every build and never reach
+// this gate (SPEC 098 §2.1). When nothing
 // is set the stub is a clean no-op and the endpoint idle machinery
 // (stampActivity / resumeOnDial) stays dormant: idleAsleep is never set, so
 // resumeOnDial always takes its fast path and the hot dial path is unaffected.

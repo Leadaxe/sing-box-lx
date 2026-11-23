@@ -10,7 +10,7 @@
 | Статус | I (implemented) — выходит в `v1.14.4-lx.36`. Форк: [PR №7](https://github.com/Leadaxe/wireguard-go-awg2-lx/pull/7), `012c2e9`; сабмодуль поднят, ключ в ядре проведён. Проверено тестами форка на linux/arm64 и замером готовой сборки на NanoPi. Не проверено: телефон со сменой сети, настоящая сетевая карта, скачивание на живом канале |
 | Ветка | `lx`; форк `Leadaxe/wireguard-go-awg2-lx`, ветка `lx-awg2-v007` |
 | Build-tag | — (действует в любой сборке) |
-| Источник | Замер [158](../158-WG_QUEUED_PACKET_BUFFERS/SPEC.ru.md) §6.1: отдача туннеля без `detour` примерно на 28 % медленнее и дороже по процессору, чем того же туннеля через `detour` → `direct`. Разбор 2026-11-23, сырые данные — `.work/spec158/send-cost-findings.md` и `.work/spec158/sendcost/` |
+| Источник | Замер [158](../158-WG_QUEUED_PACKET_BUFFERS/SPEC.ru.md) §6.1: отдача туннеля без `detour` примерно на 22 % медленнее (120 против 154 Мбит/с) и на 29 % дороже по процессору на байт, чем того же туннеля через `detour` → `direct`. Разбор 2026-11-23, сырые данные — `.work/spec158/send-cost-findings.md` и `.work/spec158/sendcost/` |
 | Связано | [158](../158-WG_QUEUED_PACKET_BUFFERS/SPEC.ru.md) (буферы WireGuard; её вторая часть, настройки буферов, правит ту же строку чтения), [098](../098-LX_ROOT_CONFIG_BLOCK/SPEC.md) (раскладка `lx.wg`), [041](../041-WG_HANDSHAKE_GIVEUP_REBIND/SPEC.md) (самовосстановление с новым сокетом) |
 
 ## 0. На пальцах

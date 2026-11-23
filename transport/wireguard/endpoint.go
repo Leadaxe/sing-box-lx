@@ -231,7 +231,7 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 // Teardown releases EVERYTHING this endpoint holds — the wireguard device AND
 // the tun device with its gVisor netstack (~5.9 MB) — while keeping the recipe
 // (options/peers/ipcConf) so Rebuild can bring it back. SPEC 020 level 3: the
-// tick calls it for an endpoint that has been asleep past lx_idle_teardown.
+// tick calls it for an endpoint that has been asleep past lx.wg.idle.teardown.
 // Idempotent; the endpoint stays flagged suspended (only a dial rebuilds it).
 func (e *Endpoint) Teardown() {
 	e.suspended.Store(true)

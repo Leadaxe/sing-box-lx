@@ -294,7 +294,7 @@ func (LXRemovedQUICSniffDecoy) DescribeSchema(builder schema.Builder) (*schema.N
 	return &schema.Node{Deprecated: true}, nil
 }
 
-// LXBuildOverflow is the resolved lx.wg.build_overflow.
+// LXBuildOverflow is the resolved lx.wg.idle.build_overflow.
 type LXBuildOverflow uint8
 
 const (

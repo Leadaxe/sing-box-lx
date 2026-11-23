@@ -72,7 +72,7 @@ type Endpoint struct {
 	// device + gVisor netstack released. It coexists with idleAsleep (a torn-down
 	// endpoint is still "asleep by idle"); the difference is the wake path —
 	// rebuild instead of Up. sleepSince is the unix-nano moment it fell asleep,
-	// the clock lx_idle_teardown counts from (NOT the dial clock: the teardown
+	// the clock lx.wg.idle.teardown counts from (NOT the dial clock: the teardown
 	// window is "how long it has been sleeping", independent of which threshold
 	// put it to sleep). Both guarded by resumeMu.
 	torndown   atomic.Bool
@@ -84,10 +84,10 @@ type Endpoint struct {
 	// the clock instead. Guarded by resumeMu (only the tick reads/writes it).
 	lastTransferSum uint64
 	// SPEC 097 lazy build. lazy: the device is not built at start but by the
-	// first dial (lx.wg.lazy_build, never for listen-mode). neverBuilt marks a
+	// first dial (lx.wg.idle.lazy_build, never for listen-mode). neverBuilt marks a
 	// lazy endpoint whose device has never existed; building is set while a
 	// rebuild (budget wait included) runs under resumeMu. budget is the per-box
-	// build budget, nil when neither lx.wg.lazy_build nor lx.wg.build_max is
+	// build budget, nil when neither lx.wg.idle.lazy_build nor lx.wg.idle.build_max is
 	// set. dialsInFlight counts dial entries (DialContext, ListenPacket,
 	// WritePackets) still running, so a budget eviction never tears a device out
 	// from under a dial that already passed the wake. budgetTransferSum is the
@@ -264,7 +264,7 @@ func (w *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		// lx: SPEC 020 — baseline idle clock so a never-dialed endpoint is "idle
 		// since start" and only suspends after a genuine idle window, not at tick 1.
 		w.stampActivity()
-		w.budgetRegister() // lx: SPEC 097 — a device built at start counts against lx.wg.build_max
+		w.budgetRegister() // lx: SPEC 097 — a device built at start counts against lx.wg.idle.build_max
 	}
 	return nil
 }
@@ -319,7 +319,7 @@ func (w *Endpoint) SuspendIfIdle(reachable bool, threshold time.Duration, reacha
 	}
 	effective := threshold
 	if reachable {
-		// Reachable endpoints stay up by default; lx_idle_suspend_reachable opts
+		// Reachable endpoints stay up by default; lx.wg.idle.suspend_reachable opts
 		// them into a second, longer idle window (first dial after it pays ~1 RTT).
 		if reachableThreshold <= 0 {
 			return
@@ -365,7 +365,7 @@ func (w *Endpoint) SuspendIfIdle(reachable bool, threshold time.Duration, reacha
 }
 
 // SleepSince reports how long the endpoint has been idle-asleep, or 0 when it is
-// not asleep. lx: SPEC 020 level 3 — the clock lx_idle_teardown counts from.
+// not asleep. lx: SPEC 020 level 3 — the clock lx.wg.idle.teardown counts from.
 func (w *Endpoint) SleepSince() time.Duration {
 	since := w.sleepSince.Load()
 	if since == 0 || !w.idleAsleep.Load() {

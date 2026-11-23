@@ -267,7 +267,7 @@ func (r *Router) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			r.ruleSetUpdater.Start()
 		}
 		// lx: SPEC 020 — start the idle-suspend tick (with_lx_idle_suspend); the
-		// no-tag stub errors here if lx.wg.* is set without the build tag. The
+		// no-tag stub errors here if a key of lx.wg.idle is in effect without the build tag. The
 		// scope stops it; box.Close also stops it earlier (QuiesceForShutdown).
 		scope.Add(func() error {
 			r.stopIdleSuspend()

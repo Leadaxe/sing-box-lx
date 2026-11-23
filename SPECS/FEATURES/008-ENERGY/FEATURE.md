@@ -155,9 +155,9 @@ Linux-роутере туннель без `detour` держит 16,4 МБ, и �
 |--------|------|--------|
 | [020 — MULTI_WG_IDLE_BUFFER_HEAT](../../TASKS/020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) | Механизм целиком: уровни сна, пробуждение, пороги | C |
 | [096 — NAIVE_ENGINE_POOL](../../TASKS/096-NAIVE_ENGINE_POOL/SPEC.md) | Черновик: движки Cronet naive-узлов по требованию и без дублей (единый движок на узел, ленивый старт, усыпление, общий движок через форк cronet-go); отложена владельцем до lx.10 и замера | W |
-| [097 — LAZY_WG_DEVICE_BUILD](../../TASKS/097-LAZY_WG_DEVICE_BUILD/SPEC.md) | WG/AWG-устройство собирается при первом дайле (старт в торн-даун SPEC 020 уровня 3), потолок одновременно собранных устройств `lx.wg.idle.build_max`, состояние endpoint'а в наблюдаемости | I |
-| [098 — LX_ROOT_CONFIG_BLOCK](../../TASKS/098-LX_ROOT_CONFIG_BLOCK/SPEC.md) | Корневой блок `lx` конфига: `lx.wg` (три ключа сна переезжают из `route` + ключи 097), `lx.masque.idle_timeout` (глобальный дефолт), `lx.naive` (резерв 096); алиасы на один релиз | I |
-| [106 — WG_ENDPOINT_TOGGLE](../../TASKS/106-WG_ENDPOINT_TOGGLE/SPEC.md) | Ручное включение и выключение WG/AWG-узла по gRPC `SetEndpointEnabled`, состояние `disabled` | I |
+| [097 — LAZY_WG_DEVICE_BUILD](../../TASKS/097-LAZY_WG_DEVICE_BUILD/SPEC.md) | WG/AWG-устройство собирается при первом дайле (старт в торн-даун SPEC 020 уровня 3), потолок одновременно собранных устройств `lx.wg.idle.build_max`, состояние endpoint'а в наблюдаемости | D |
+| [098 — LX_ROOT_CONFIG_BLOCK](../../TASKS/098-LX_ROOT_CONFIG_BLOCK/SPEC.md) | Корневой блок `lx` конфига: `lx.wg.idle` (ключи сна и ключи 097; алиасы `route.lx_idle_*` удалены 2026-11-02), `lx.wg.buffers` и `lx.wg.connected_socket` (158, 160), `lx.masque.idle_timeout` (глобальный дефолт), `lx.naive` (резерв 096) | D |
+| [106 — WG_ENDPOINT_TOGGLE](../../TASKS/106-WG_ENDPOINT_TOGGLE/SPEC.md) | Ручное включение и выключение WG/AWG-узла по gRPC `SetEndpointEnabled`, состояние `disabled` | D |
 
 В задаче также замеры, опровержение первоначальной гипотезы о держателе
 памяти, план испытаний и результаты.

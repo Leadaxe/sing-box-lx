@@ -10,7 +10,7 @@
 | Status | I (implemented) — ships in `v1.14.4-lx.36`. Fork: [PR #7](https://github.com/Leadaxe/wireguard-go-awg2-lx/pull/7), `012c2e9`; the submodule is bumped, the key is wired into the core. Verified by the fork's tests on linux/arm64 and by a measurement of the finished build on NanoPi. Not verified: a phone with a network change, a real network card, download on a live link |
 | Branch | `lx`; fork `Leadaxe/wireguard-go-awg2-lx`, branch `lx-awg2-v007` |
 | Build tag | — (applies to any build) |
-| Source | Measurement in [158](../158-WG_QUEUED_PACKET_BUFFERS/SPEC.md) §6.1: upload over a tunnel without `detour` is about 28 % slower and costlier in CPU than over the same tunnel through `detour` → `direct`. Analysis of 2026-11-23, raw data — `.work/spec158/send-cost-findings.md` and `.work/spec158/sendcost/` |
+| Source | Measurement in [158](../158-WG_QUEUED_PACKET_BUFFERS/SPEC.md) §6.1: upload over a tunnel without `detour` is about 22 % slower (120 vs 154 Mbit/s) and about 29 % costlier in CPU per byte than over the same tunnel through `detour` → `direct`. Analysis of 2026-11-23, raw data — `.work/spec158/send-cost-findings.md` and `.work/spec158/sendcost/` |
 | Related | [158](../158-WG_QUEUED_PACKET_BUFFERS/SPEC.md) (WireGuard buffers; its second part, the buffer settings, changes the same read line), [098](../098-LX_ROOT_CONFIG_BLOCK/SPEC.md) (layout of `lx.wg`), [041](../041-WG_HANDSHAKE_GIVEUP_REBIND/SPEC.md) (self-recovery with a new socket) |
 
 ## 0. In plain words

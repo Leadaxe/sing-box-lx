@@ -96,8 +96,8 @@ func init() {
 	// SPEC 020 — idle-suspend of unreachable+idle WG/AWG endpoints (device.Down),
 	// a MOBILE-ONLY power/RAM feature: it frees the recv-worker bufsArrs, which are
 	// ~8 MB each only where BatchSize=128 (Android/Linux). It ships in the AAR so a
-	// LxBox config carrying lx.wg.idle.suspend (SPEC 098; route.lx_idle_suspend is
-	// a deprecated alias) works; without the tag the core rejects any lx.wg.idle key at
+	// LxBox config carrying lx.wg.idle.suspend (SPEC 098; route.lx_idle_suspend was
+	// removed 2026-11-02) works; without the tag the core rejects any lx.wg.idle key at
 	// start ("rebuild with -tags with_lx_idle_suspend"), so
 	// the desktop/CLI LX_TAGS (Makefile.lx) deliberately OMIT it. On iOS BatchSize=1
 	// makes bufsArrs tiny, so the tag is neutral there (harmless if the AAR path is
