@@ -123,7 +123,7 @@ func (w *stackDevice) DialContext(ctx context.Context, network string, destinati
 	}
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
-		tcpConn, err := DialTCPWithBind(ctx, w.stack, bind, addr, networkProtocol)
+		tcpConn, err := w.dialTCPLx(ctx, bind, addr, networkProtocol) // lx: issue #75 — upstream: DialTCPWithBind(ctx, w.stack, ...); see device_stack_close_lx.go
 		if err != nil {
 			return nil, err
 		}
