@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — расхождение клиентского XHTTP с контрактом Xray по `path` |
-| Статус | I (implemented), field-verified — репортёр #36 подтвердил 2026-10-09, что форма пути без `?` на lx.12 даёт `cdn-cgi/trace ip=<proxyip>` и убирает 502; сам фикс (`?query` дословно) ждёт релиза ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)) |
+| Статус | D (done), field-verified — репортёр #36 подтвердил 2026-10-09, что форма пути без `?` на lx.12 даёт `cdn-cgi/trace ip=<proxyip>` и убирает 502; сам фикс (`?query` дословно) ждёт релиза ([IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md)); закрыта владельцем 2026-11-14 |
 | Ветка | `lx` |
 | Build-tag | `with_xhttp` |
 | Заявка | [Leadaxe/sing-box-lx#36](https://github.com/Leadaxe/sing-box-lx/issues/36) |

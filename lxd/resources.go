@@ -204,3 +204,119 @@ func (rs *resourceStore) Delete(name string) (found bool, err error) {
 	}
 	return true, nil
 }
+
+// previousPrefix marks the kept copy of a replaced resource (SPEC 159). The
+// leading dot keeps it out of List and out of reach of the REST plane, whose
+// names never start with one.
+const previousPrefix = ".prev-"
+
+func (rs *resourceStore) previousPathOf(name string) string {
+	return filepath.Join(rs.dir, previousPrefix+name)
+}
+
+// PutKeepingPrevious is Put for a name a config still points at: before the
+// swap it sets the current bytes aside, unless a kept copy already exists —
+// the kept copy is always the last version a core is known to have run with,
+// never an unconfirmed one. kept=false when there was nothing to keep.
+func (rs *resourceStore) PutKeepingPrevious(name string, content []byte) (sha string, size int, kept bool, err error) {
+	safe, err := sanitizeResourceName(name)
+	if err != nil {
+		return "", 0, false, err
+	}
+	previousPath := rs.previousPathOf(safe)
+	if _, statErr := os.Stat(previousPath); statErr == nil {
+		kept = true
+	} else if !os.IsNotExist(statErr) {
+		return "", 0, false, statErr
+	} else if current, readErr := os.ReadFile(rs.pathOf(safe)); readErr == nil {
+		if err = rs.writeAtomic(previousPath, current); err != nil {
+			return "", 0, false, err
+		}
+		kept = true
+	} else if !os.IsNotExist(readErr) {
+		return "", 0, false, readErr
+	}
+	if err = rs.writeAtomic(rs.pathOf(safe), content); err != nil {
+		return "", 0, kept, err
+	}
+	return contentSHA(string(content)), len(content), kept, nil
+}
+
+// RestorePrevious puts the kept copy of name back in place; restored=false
+// when there is none.
+func (rs *resourceStore) RestorePrevious(name string) (restored bool, err error) {
+	safe, err := sanitizeResourceName(name)
+	if err != nil {
+		return false, err
+	}
+	if err = os.Rename(rs.previousPathOf(safe), rs.pathOf(safe)); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// DropPrevious forgets the kept copy of name: the replacement is confirmed.
+func (rs *resourceStore) DropPrevious(name string) error {
+	safe, err := sanitizeResourceName(name)
+	if err != nil {
+		return err
+	}
+	if err = os.Remove(rs.previousPathOf(safe)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// keptNames lists the names that have a kept copy.
+func (rs *resourceStore) keptNames() ([]string, error) {
+	entries, err := os.ReadDir(rs.dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasPrefix(entry.Name(), previousPrefix) {
+			names = append(names, strings.TrimPrefix(entry.Name(), previousPrefix))
+		}
+	}
+	return names, nil
+}
+
+// RestoreAllPrevious puts every kept copy back; DropAllPrevious forgets them
+// all. Both return the affected names and keep going past a failing entry, so
+// one bad file does not leave the rest unsettled.
+func (rs *resourceStore) RestoreAllPrevious() (restored []string, err error) {
+	names, err := rs.keptNames()
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range names {
+		done, restoreErr := rs.RestorePrevious(name)
+		if restoreErr != nil {
+			err = restoreErr
+			continue
+		}
+		if done {
+			restored = append(restored, name)
+		}
+	}
+	return restored, err
+}
+
+func (rs *resourceStore) DropAllPrevious() (dropped []string, err error) {
+	names, err := rs.keptNames()
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range names {
+		if dropErr := rs.DropPrevious(name); dropErr != nil {
+			err = dropErr
+			continue
+		}
+		dropped = append(dropped, name)
+	}
+	return dropped, err
+}

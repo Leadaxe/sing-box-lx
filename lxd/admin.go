@@ -436,7 +436,12 @@ func (c *controller) handleResourceList(writer http.ResponseWriter, request *htt
 
 func (c *controller) handleResourcePut(writer http.ResponseWriter, request *http.Request) {
 	name := request.PathValue("name")
-	// Reference guard (B2) and the write itself are serialized under applyAccess
+	content, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, resourceBodyLimit))
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	// Reference check and the write itself are serialized under applyAccess
 	// with apply: an apply that adds a reference cannot slip between the check
 	// and the overwrite.
 	c.applyAccess.Lock()
@@ -451,14 +456,36 @@ func (c *controller) handleResourcePut(writer http.ResponseWriter, request *http
 		return
 	}
 	if referenced {
-		writeJSON(writer, http.StatusConflict, map[string]any{
-			"error": "resource is referenced by the active or last-good config; apply a config without that reference first",
-		})
-		return
-	}
-	content, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, resourceBodyLimit))
-	if err != nil {
-		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		// SPEC 159: a referenced rule-set may be replaced in place, but only by
+		// bytes the core can load, and the previous bytes are kept until a
+		// core has proven the new ones (replaceReferenced).
+		checkable, checkErr := checkRuleSetContent(name, content)
+		if !checkable {
+			writeJSON(writer, http.StatusConflict, map[string]any{
+				"error": "resource is referenced by the active or last-good config; apply a config without that reference first",
+			})
+			return
+		}
+		if checkErr != nil {
+			writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{"error": checkErr.Error()})
+			return
+		}
+		meta, outcome, rejected, replaceErr := c.replaceReferenced(name, content)
+		switch {
+		case replaceErr != nil && isBadResourceName(replaceErr):
+			writeJSON(writer, http.StatusBadRequest, map[string]any{"error": replaceErr.Error()})
+		case replaceErr != nil:
+			writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": replaceErr.Error()})
+		case rejected != nil:
+			writeJSON(writer, http.StatusUnprocessableEntity, map[string]any{"error": rejected.Error()})
+		default:
+			meta = c.withPath(meta)
+			response := map[string]any{"name": meta.Name, "sha256": meta.SHA256, "size": meta.Size, "path": meta.Path}
+			if outcome != "" {
+				response["replace"] = outcome
+			}
+			writeJSON(writer, http.StatusOK, response)
+		}
 		return
 	}
 	sha, size, err := c.resources.Put(name, content)

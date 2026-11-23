@@ -28,6 +28,7 @@ useful to you.
 - [Build](#build)
 - [Configuration — a quick tour](#configuration--a-quick-tour)
 - [The `lxd` daemon](#the-lxd-daemon)
+- [Known issues and common questions](#known-issues-and-common-questions)
 - [How the fork is maintained](#how-the-fork-is-maintained)
 - [Repository map](#repository-map)
 - [Links](#links)
@@ -212,6 +213,22 @@ sing-box lxd --state-dir ./lxd-state -c config.json
 
 ---
 
+## Known issues and common questions
+
+### HTTP outbound: a proxy that stops answering `CONNECT` leaks memory
+
+Open issue [#74](https://github.com/Leadaxe/sing-box-lx/issues/74). When an `http` outbound points at a proxy that accepts the TCP connection but never answers the `CONNECT` request (or sends incomplete headers), the core waits forever. Every new attempt keeps one more goroutine, its sockets and buffers; nothing frees them, not even the proxy coming back. During a long outage the process grows in memory and file descriptors until it is restarted. Reproduced on `v1.14.4-lx.33` and on current `lx`; a proxy that answers with an error (for example `503`) does not cause it. The fix (a deadline on the `CONNECT` handshake) is proposed in [PR #73](https://github.com/Leadaxe/sing-box-lx/pull/73) and is not merged yet. Until then, restarting the core releases everything that has piled up.
+
+### Xray Mux.Cool is not sing-box `multiplex`
+
+Xray's `mux` (Mux.Cool) and sing-box's `multiplex` block are different protocols with the same idea. `multiplex` speaks sing-mux (`smux` / `yamux` / `h2mux`) and works only when the server is sing-box with multiplex enabled; an Xray server does not understand it and the node stops passing traffic. So `mux` from an Xray link or subscription must not be translated into `multiplex` — drop it. Nothing is lost for UDP: a `vless` outbound already packs UDP as XUDP (Xray's UDP-over-Mux.Cool) by default, see `packet_encoding` in the [VLESS outbound](https://sing-box.sagernet.org/configuration/outbound/vless/) reference.
+
+### REALITY: `reality verification failed` after the server updated Xray
+
+Xray ≥ v26.9.8 accepts a REALITY ClientHello only with the hybrid post-quantum key share `X25519MLKEM768`. Use the `chrome`, `firefox` or `safari` fingerprint and leave `key_share` empty — see [REALITY: fingerprint and `key_share`](#reality-fingerprint-and-key_share). That ClientHello is about 1.7 KB and goes out as two TCP segments; some networks, mobile ones more often, lose the second segment and the handshake hangs with no error. The levers are `record_fragment` or a `detour` on a new server and `key_share: classical` on an old one. Symptom table — [xray-protocols-explained.md §2.7](docs-lx/xray-protocols-explained.md#27-typical-failures) ([RU](docs-lx/xray-protocols-explained.ru.md#27-типичные-отказы)).
+
+---
+
 ## How the fork is maintained
 
 ```
@@ -237,6 +254,8 @@ upstream/stable  ──merge──►  lx  =  upstream  +  // lx seams  +  lx-ow
 | OpenWrt routers | mips / musl builds | the binary as `lxd` with the installer scripts |
 
 Mapping subscription links to config fields is a consumer-side job; the same config JSON applies everywhere.
+
+Third-party projects that ship, embed or build on this core — routers, desktop and mobile clients, panels, tools — are listed in **[docs-lx/consumers.md](docs-lx/consumers.md)** ([RU](docs-lx/consumers.ru.md)).
 
 ---
 
@@ -279,6 +298,7 @@ Everything downstream is either a new file or a seam marked `// lx`; `grep -rn "
 | Energy guide | [docs-lx/lx-energy.md](docs-lx/lx-energy.md) ([RU](docs-lx/lx-energy.ru.md)) — idle-suspend levels, `mode: failover`, tuning |
 | Sniffers | [docs-lx/lx-sniff.md](docs-lx/lx-sniff.md) ([RU](docs-lx/lx-sniff.ru.md)) |
 | `lxd` operator's guide | [docs-lx/lxd-daemon.md](docs-lx/lxd-daemon.md) ([RU](docs-lx/lxd-daemon.ru.md)) |
+| Who uses the core | [docs-lx/consumers.md](docs-lx/consumers.md) ([RU](docs-lx/consumers.ru.md)) — first-party consumers and third-party projects built on sing-box-lx |
 | Observability API | [docs-lx/lxd-grpc-api.md](docs-lx/lxd-grpc-api.md) ([RU](docs-lx/lxd-grpc-api.ru.md)) — the contract clients speak, gRPC daemon and Android AAR alike |
 | OpenWrt walkthrough | [docs-lx/openwrt-vpn-ssid.md](docs-lx/openwrt-vpn-ssid.md) ([RU](docs-lx/openwrt-vpn-ssid.ru.md)) |
 | Release runbook | [docs-lx/lx-release-runbook.md](docs-lx/lx-release-runbook.md) ([RU](docs-lx/lx-release-runbook.ru.md)) |

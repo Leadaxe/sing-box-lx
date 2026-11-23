@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — ключ `hosts` у группы DNS: локальные имена отвечаются до выбора сетевого сервера |
-| Статус | I (implemented) — 2026-10-30, юниты `dns/transport/group` с `-race` (без тегов и с `with_lx_command`), `go vet`, `gofmt`, `go build ./...`, `sing-box check` конфига §3 — зелёные; [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md) |
+| Статус | D (done) — 2026-10-30, юниты `dns/transport/group` с `-race` (без тегов и с `with_lx_command`), `go vet`, `gofmt`, `go build ./...`, `sing-box check` конфига §3 — зелёные; [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md); закрыта владельцем 2026-11-14 |
 | Ветка | `lx` |
 | Build-tag | — (пакет `dns/transport/group`, lx-блок `option/dns.go`; как и сама группа — всегда в сборке) |
 | Источник | Issue [#60](https://github.com/Leadaxe/sing-box-lx/issues/60) (владелец); повод — LxBox#185: свой WireGuard-сервер и WARP с IPv4 + IPv6 под одним локальным именем, семейство выбирает `strategy` |

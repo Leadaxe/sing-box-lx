@@ -55,7 +55,13 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
-	tlsConfig, err := tls.NewClient(ctx, logger, tlsServerAddress, tlsOptions)
+	tlsConfig, err := tls.NewClientWithOptions(tls.ClientOptions{
+		Context:        ctx,
+		Logger:         logger,
+		ServerAddress:  tlsServerAddress,
+		Options:        tlsOptions,
+		DomainResolver: options.DomainResolver,
+	})
 	if err != nil {
 		return nil, err
 	}

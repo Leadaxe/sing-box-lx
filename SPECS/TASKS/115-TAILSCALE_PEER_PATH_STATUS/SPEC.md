@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — статус Tailscale-endpoint'а по запросу `GetTailscaleStatus` с путём к каждому пиру (direct / peer relay / DERP) и предупреждениями бэкенда |
-| Статус | I (implemented) — контракт согласован с лаунчером и утверждён владельцем 2026-10-07; юниты зелёные; живой Tailscale-прогон — на стороне лаунчера после rc.2 |
+| Статус | D (done) — контракт согласован с лаунчером и утверждён владельцем 2026-10-07; юниты зелёные; живой Tailscale-прогон — на стороне лаунчера после rc.2; закрыта владельцем 2026-11-14 |
 | Ветка | `lx` |
 | Build-tag | ядро (`protocol/tailscale`) — `with_gvisor`/`with_tailscale`, как сам endpoint; RPC и CLI — `with_lx_command` |
 | Связано | [114](../114-WG_PEER_STATUS/SPEC.md) (тот же паттерн для WG/AWG), [112](../112-TAILSCALE_DIRECT_PATH_SEND_HEADROOM/SPEC.md) (прямой путь не работал — теперь это видно без `trace`), [113](../113-TAILSCALE_ALWAYS_DERP_REBIND_LEAK/SPEC.md) |

@@ -7,7 +7,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature). RPC — мост §3.6; трасса (`common/lxtrace` и её вставки) — lx-логика, изолированная по CONSTITUTION §3.2–3.3, цена мержа зафиксирована в §10 |
-| Статус | I (implemented) — релиз 1 в `lx` 2026-10-27, релиз 2 в `lx` 2026-10-28; см. [IMPLEMENTATION_REPORT.ru.md](IMPLEMENTATION_REPORT.ru.md) |
+| Статус | D (done) — релиз 1 в `lx` 2026-10-27, релиз 2 в `lx` 2026-10-28; см. [IMPLEMENTATION_REPORT.ru.md](IMPLEMENTATION_REPORT.ru.md); закрыта владельцем 2026-11-14 |
 | Ветка | `lx` |
 | Связанные | [#59](https://github.com/Leadaxe/sing-box-lx/issues/59) (запрос: DNS через роутер и матч правила — закрывается этой задачей) · [Leadaxe/LxBox#176](https://github.com/Leadaxe/LxBox/issues/176) (экран «Connection Check») · [[SPECS/TASKS/058-GET_URL_VIA_OUTBOUND]] (HTTP-пробник узла — образец модели ошибок и лимитов тела) · [[SPECS/TASKS/018-DNS_QUERY_STREAM]] · [[SPECS/TASKS/035-DNS_GROUP_OBSERVABILITY]] (атрибуция DNS и пробы группы) · [[SPECS/TASKS/017-CONNECTION_DETOUR_CHAIN]] · [[SPECS/TASKS/038-GOMOBILE_STRING_RETURN_FRAME_KILL]] (форма возврата libbox) |
 

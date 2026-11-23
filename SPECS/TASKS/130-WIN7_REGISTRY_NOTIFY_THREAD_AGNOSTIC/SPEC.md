@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — дефект апстрима sing-tun `bca4bf0`, пришёл с синком v1.14.3 (lx.14) |
-| Статус | I (implemented) — патч в форке `submodules/sing-tun`, кросс-сборка windows/386 и amd64; проверка на Win7 — за репортёром [issue #38](https://github.com/Leadaxe/sing-box-lx/issues/38) |
+| Статус | D (done) — патч в форке `submodules/sing-tun`, кросс-сборка windows/386 и amd64; проверка на Win7 — за репортёром [issue #38](https://github.com/Leadaxe/sing-box-lx/issues/38); закрыта владельцем 2026-11-14 |
 
 Сборка `windows-7` с `v1.14.3-lx.14` и `lx.15` не стартует на Windows 7:
 

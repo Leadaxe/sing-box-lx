@@ -7,7 +7,7 @@
 | Field | Value |
 |-------|-------|
 | Type | F (feature) — admin scripts at the lifecycle boundaries of the core inside the daemon |
-| Status | I (implemented) 2026-10-17 — see [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md); the manual owner checks of §3 are open. Design approved by the owner 2026-10-17 (event model, variables, `hooks/core_snapshot.json` written by the daemon, stubs created by the daemon, explicit `on/off`, logging). This English file is the primary spec; [SPEC.ru.md](SPEC.ru.md) is the auxiliary Russian copy, both are maintained together (owner decision 2026-10-17) |
+| Status | D (done) 2026-10-17 — see [IMPLEMENTATION_REPORT.md](IMPLEMENTATION_REPORT.md); the manual owner checks of §3 are open. Design approved by the owner 2026-10-17 (event model, variables, `hooks/core_snapshot.json` written by the daemon, stubs created by the daemon, explicit `on/off`, logging). This English file is the primary spec; [SPEC.ru.md](SPEC.ru.md) is the auxiliary Russian copy, both are maintained together (owner decision 2026-10-17); closed by the owner 2026-11-14 |
 | Branch | `lx` |
 | Build tag | `with_lxd` (lx files `lxd/hooks*.go`, insertions in `lxd/apply.go`, `lxd/daemon.go`, `lxd/daemonconfig.go`, `lxd/admin.go`; one `// lx:` accessor in `protocol/tun/inbound.go` — §2.3) |
 | Origin | Discussion with the owner 2026-10-17. Trigger — issue #12: the system-DNS automation on darwin was rolled back out of the core; the policy "where to point DNS and how to restore it" must live with the admin; `commands` (SPEC 128) do not fit — a client runs them, not an event |

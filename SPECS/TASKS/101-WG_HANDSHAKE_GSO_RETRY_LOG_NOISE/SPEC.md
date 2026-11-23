@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — шум лога: успешная переотправка хендшейка без UDP GSO печатается как ERROR |
-| Статус | I (implemented) — 2026-09-24: сабмодуль d0568ce (`device/lx_gso_unwrap.go`, три места в `device/send.go`, страж `lx_gso_handshake_log_test.go` red на d3a0e26 / green), гитлинк в суперпроекте; выпуск в v1.14.1-lx.13; полевое подтверждение по LxBox #95 впереди |
+| Статус | D (done) — 2026-09-24: сабмодуль d0568ce (`device/lx_gso_unwrap.go`, три места в `device/send.go`, страж `lx_gso_handshake_log_test.go` red на d3a0e26 / green), гитлинк в суперпроекте; выпуск в v1.14.1-lx.13; полевое подтверждение по LxBox #95 впереди; закрыта владельцем 2026-11-14 |
 | Ветка | `lx`; сабмодуль `submodules/wireguard-go`, ветка `lx-awg2-v007` (база d3a0e26) |
 | Связано | [094](../094-XHTTP_LOCAL_CLOSE_NOT_FAILURE/SPEC.md) (тот же класс: локальное штатное событие не есть ошибка), [041](../041-WG_HANDSHAKE_SELFHEAL/SPEC.md) (хендшейк-пути форка), LxBox #95 |
 
