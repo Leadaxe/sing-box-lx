@@ -489,6 +489,39 @@ return path (§2.4) and a false trigger of the guard on MTU growth (§2.2) — b
   there were no stops over 624 completed benchmark runs (90 of them with KeenProxy's port); the
   stand now reports a stop itself, with the number of packets in flight.
 
+### 6.1 Potential: batches for a tunnel through `detour`
+
+Not a defect and not part of this task — an observation that came up while the batch size was
+being traced.
+
+Without `detour`, WireGuard talks to the kernel through a UDP socket: it reads and writes up to
+128 datagrams in one system call, and the kernel coalesces and splits segments itself. Through
+`detour` there is no kernel socket: the core's binding layer (`ClientBind`) reads one datagram at
+a time from the outer node's connection and writes one at a time, so the batch size is 1. Every
+packet crosses the pipeline on its own, with its own container and a goroutine wake-up each.
+
+What could be done: gather packets into a batch inside the binding layer when the lower
+connection hands them over back to back (the first read blocks, the following ones run while data
+is ready, up to the batch limit); on send, pass the lower connection a batch in one call if it
+supports that.
+
+Why it is not done:
+
+- **The gain is not measured.** A tunnel through `detour` was not run in this task. At ordinary
+  speeds the ceiling is set by the outer node (the packet is encrypted and framed once more, often
+  over TCP), and batches may give nothing against that.
+- **The cost is immediate.** A batch larger than 1 brings the permanent buffers back: the receive
+  routine and the TUN read loop each hold a buffer per batch element (§1.2). After this task that
+  is 64 KiB per element for the receive routine and about 2 KiB for the read loop — so the batch
+  should be small (8–16), not 128.
+- **It is an edit in an upstream file of the core** (`transport/wireguard/client_bind.go`) that
+  has to be checked on every merge.
+
+Where to start, if it is taken up: measure the same tunnel on NanoPi directly and through
+`detour` over loopback (the stand and the load generator from §4.1 fit without changes). If the
+difference in speed or in CPU time per gigabyte is within the resolution of the stand — do not do
+it.
+
 ## 7. Files
 
 The `wireguard-go` fork (branch `lx-awg2-v007`, commit `f1e73df`):
