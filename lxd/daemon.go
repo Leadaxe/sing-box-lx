@@ -436,7 +436,13 @@ func bootstrap(ctx context.Context, control *controller, stateStore *store, opti
 		log.Error(E.Cause(err, "lxd: boot from "+source+" cancelled by the pre_start hook; staying up"))
 		return
 	}
-	if err := startRetryingBusy(ctx, control.service, bootConfig, bootBusyRetrySleep); err != nil {
+	err := startRetryingBusy(ctx, control.service, bootConfig, bootBusyRetrySleep)
+	if err != nil && control.revertReplacedResources() > 0 {
+		// SPEC 159: the boot config did not come up over a rule-set no core
+		// had confirmed; once more over the previous bytes.
+		err = startRetryingBusy(ctx, control.service, bootConfig, bootBusyRetrySleep)
+	}
+	if err != nil {
 		control.setFatal(err)
 		log.Error(E.Cause(err, "lxd: boot from "+source+"; staying up — fix and apply over the admin plane"))
 		// Every pre_start is answered by exactly one post_*: the start that
@@ -444,6 +450,7 @@ func bootstrap(ctx context.Context, control *controller, stateStore *store, opti
 		control.hooks.postStop(hookOrigin{reason: hookReasonFatal}, configFacts(bootConfig, nil), err.Error())
 		return
 	}
+	control.confirmReplacedResources()
 	_ = stateStore.SetWasRunning(true)
 	if source != "last-good" {
 		if err := stateStore.SaveLastGood(bootConfig); err != nil {

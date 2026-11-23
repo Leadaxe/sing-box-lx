@@ -47,6 +47,20 @@ func (s observableService) CoreStats() (time.Duration, int64, int64, int, bool) 
 	return time.Since(startedAt), uplink, downlink, manager.ConnectionsLen(), true
 }
 
+// LiveRuleSet hands out a rule-set of the running core by tag (SPEC 159), so
+// the controller can wait for it to reload a replaced file.
+func (s observableService) LiveRuleSet(tag string) (liveRuleSet, bool) {
+	instance := s.Instance()
+	if instance == nil {
+		return nil, false
+	}
+	boxInstance := instance.Box()
+	if boxInstance == nil {
+		return nil, false
+	}
+	return boxInstance.Router().RuleSet(tag)
+}
+
 // TunInterfaceNames answers the hooks' LXD_TUN_INTERFACE (SPEC 135): the
 // actual name of every tun inbound named by tag, in the caller's order, ""
 // where the box has no such tun. The core runs in this process, so the name

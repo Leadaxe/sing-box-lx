@@ -92,8 +92,10 @@ type controller struct {
 	service   reloader
 	store     *store
 	resources *resourceStore // nil until SPEC 063 wiring; guards handle absence
-	validate  validateFunc
-	clients   *clientRegistry // nil when TLS/mTLS is disabled
+	// ruleSetConfirmTimeout overrides defaultRuleSetConfirmTimeout (tests).
+	ruleSetConfirmTimeout time.Duration
+	validate              validateFunc
+	clients               *clientRegistry // nil when TLS/mTLS is disabled
 	// serverFingerprint and advertiseAddr build enrollment invites; set only
 	// when TLS is enabled.
 	serverFingerprint string
@@ -229,6 +231,7 @@ func (c *controller) Apply(ctx context.Context, content string) applyResult {
 		}
 	}
 	if err = c.service.StartOrReloadService(ctx, content, nil); err == nil {
+		c.confirmReplacedResources()
 		_ = c.store.SetWasRunning(true)
 		result := applyResult{Outcome: applyApplied}
 		if saveErr := c.store.SaveLastGood(content); saveErr != nil {
@@ -243,15 +246,19 @@ func (c *controller) Apply(ctx context.Context, content string) applyResult {
 	}
 
 	applyErr := err
+	// SPEC 159: a rule-set replaced while nobody could confirm it may be what
+	// broke this start — the previous bytes go back before anything else runs.
+	reverted := c.revertReplacedResources()
 	lastGood, loaded, loadErr := c.store.LoadLastGood()
 	if loadErr != nil {
 		// Per the store contract an IO failure is not "no file" — but at this
 		// point there is no instance either way; keep the cause visible.
 		applyErr = E.Cause(applyErr, "read last-good for rollback: "+loadErr.Error())
 	}
-	if !loaded || lastGood == content {
+	if !loaded || (lastGood == content && reverted == 0) {
 		// Nothing distinct to roll back to (no last-good, or it is the very
-		// config that just failed): no running instance remains.
+		// config that just failed, over the very same resources): no running
+		// instance remains.
 		c.setFatal(applyErr)
 		c.announceFatal(previous, wasRunning, content, applyErr)
 		return applyResult{Outcome: applyFailed, Err: applyErr}
@@ -262,6 +269,7 @@ func (c *controller) Apply(ctx context.Context, content string) applyResult {
 		c.announceFatal(previous, wasRunning, lastGood, combined)
 		return applyResult{Outcome: applyFailed, Err: combined}
 	}
+	c.confirmReplacedResources()
 	// The rollback left the core running: record the intent so a daemon
 	// restart brings it back even if this was the very first apply.
 	_ = c.store.SetWasRunning(true)
@@ -322,9 +330,11 @@ func (c *controller) announceFatal(previous coreFacts, wasRunning bool, failedCo
 
 // resourceReferenced reports whether a config that must not lose the resource
 // `name` currently references it — the active (running) config or the persisted
-// last-good. It gates PUT/DELETE (SPEC 063 guard B2): a named resource is
-// mutable, so overwriting or deleting one a live-or-recoverable config points at
-// would make a config rollback partial (text reverts, bytes do not).
+// last-good. It gates DELETE outright and PUT for anything but a verified
+// rule-set (SPEC 063 guard B2, narrowed by SPEC 159): a named resource is
+// mutable, so deleting one a live-or-recoverable config points at, or
+// overwriting it with bytes nobody checked, could leave that config unable to
+// start.
 //
 // Called under applyAccess so it cannot race an apply that adds a reference:
 // either the apply's new activeContent is already visible here, or this check
@@ -384,11 +394,18 @@ func (c *controller) Rollback(ctx context.Context) (applyResult, bool) {
 			return applyResult{Outcome: applyFailed, Err: err}, true
 		}
 	}
-	if err := c.service.StartOrReloadService(ctx, lastGood, nil); err != nil {
+	err := c.service.StartOrReloadService(ctx, lastGood, nil)
+	if err != nil && c.revertReplacedResources() > 0 {
+		// SPEC 159: last-good did not come up over an unconfirmed rule-set;
+		// once more over the bytes it is known to start with.
+		err = c.service.StartOrReloadService(ctx, lastGood, nil)
+	}
+	if err != nil {
 		c.setFatal(err)
 		c.announceFatal(previous, wasRunning, lastGood, err)
 		return applyResult{Outcome: applyFailed, Err: err}, true
 	}
+	c.confirmReplacedResources()
 	_ = c.store.SetWasRunning(true)
 	c.setActive(lastGood, "")
 	c.announceSwap(origin, previous, wasRunning, "")

@@ -281,10 +281,14 @@ func TestResourcePutRejectsBadName(t *testing.T) {
 
 func TestResourcePutConflictWhenReferenced(t *testing.T) {
 	control, _ := newResourceTestController(t)
-	control.activeContent = `{"path":"/x/resources/geosite-ru.srs"}`
+	if _, _, err := control.resources.Put("geoip.db", []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	control.activeContent = `{"path":"/x/resources/geoip.db"}`
 	srv := resourceServer(t, control)
 
-	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/admin/resources/geosite-ru.srs", strings.NewReader("new"))
+	// Not a rule-set the daemon can verify: the guard stays as it was.
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/admin/resources/geoip.db", strings.NewReader("new"))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -292,6 +296,9 @@ func TestResourcePutConflictWhenReferenced(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("PUT referenced status = %d, want 409", resp.StatusCode)
+	}
+	if content, _, _ := control.resources.Read("geoip.db"); string(content) != "old" {
+		t.Fatalf("referenced resource changed: %q", content)
 	}
 }
 
