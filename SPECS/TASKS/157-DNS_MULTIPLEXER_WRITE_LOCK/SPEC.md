@@ -138,11 +138,9 @@ conn.writeAccess.Unlock()
   потокобезопасным.
 
 При мерже: конфликт в `multiplexConn`, `exchangeAsync` или циклах вызывающих =
-сверить с §2. Тесты §4 сторожат замок в `exchangeAsync` и саму обёртку. Три
-точки вызова они не покрывают: серверный тест оборачивает соединение сам, так
-что потерянная на мерже строка `NewSerialWriteConn` в `route/dns.go`,
-`protocol/dns/outbound.go` или `service/resolved/service.go` тестом не ловится —
-эти три маркера `// lx: SPEC 157` сверяются глазами.
+сверить с §2. Тесты §4 сторожат замок в `exchangeAsync`, обёртку и каждую из
+трёх точек вызова: потерянная на мерже строка `NewSerialWriteConn` роняет тест
+своего пакета.
 
 ## 4. Проверка
 
@@ -164,6 +162,17 @@ conn.writeAccess.Unlock()
     соединений падают с `dns: short read`; после — 0, `-count=20`;
   - `TestLxStreamDNSConcurrentResponsesOnMuxConn`: до правки 34–43 из 50 с
     `dns: short read`; после — 0, `-count=20`.
+- Точки вызова. Серверные тесты выше идут через настоящий
+  `Outbound.NewConnection` (`protocol/dns/outbound.go`): без обёртки в нём —
+  43 из 50 соединений с `dns: short read`. Для двух других — по тесту в своём
+  пакете на `net.Pipe` с соединением, которое ловит `Write`, начатый во время
+  другого `Write`; 16 запросов подряд, ответы из 16 горутин:
+  - `route/dns_stream_write_lock_lx_test.go`,
+    `TestLxHijackDNSStreamSerializesResponseWrites`: без обёртки в
+    `hijackDNSStream` падает, с ней зелёный под `-race`, `-count=5`;
+  - `service/resolved/stream_write_lock_lx_test.go`,
+    `TestLxResolvedStreamSerializesResponseWrites`: пакет только под Linux,
+    локально проверена компиляция (`GOOS=linux go vet`), исполняется в lx-ci.
 - `go vet` и `go test` по `./protocol/dns/ ./dns/... ./route/... ./service/resolved/`
   — зелёные. `TestSurvivalSuccessRestoresService` (`dns/transport/group`)
   нестабилен и без правки (9 падений из 40 прогонов на `lx` без этой задачи),
@@ -186,4 +195,5 @@ conn.writeAccess.Unlock()
 - `protocol/dns/stream_write_lock_lx.go` — `serialWriteConn`, `NewSerialWriteConn` (новый)
 - `protocol/dns/outbound.go`, `route/dns.go`, `service/resolved/service.go` — обёртка соединения перед циклом (`// lx: SPEC 157`)
 - `protocol/dns/handle_write_lock_lx_test.go` — регресс-тесты сервера (новый)
-- `.github/workflows/lx-ci.yml` — `./protocol/dns/` в шаге тестов: без строки пакет не гоняется нигде
+- `route/dns_stream_write_lock_lx_test.go`, `service/resolved/stream_write_lock_lx_test.go` — стражи точек вызова (новые)
+- `.github/workflows/lx-ci.yml` — `./protocol/dns/` и `./service/resolved/` в шаге тестов: без строки пакет не гоняется нигде
