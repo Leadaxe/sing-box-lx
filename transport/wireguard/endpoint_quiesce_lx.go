@@ -28,8 +28,8 @@ func (e *Endpoint) QuiesceForShutdown() {
 		if e.pauseSeq.Load() != seq {
 			return // Close/Teardown or a newer event already own the device
 		}
-		if e.device != nil {
-			e.device.Down()
+		if wgDevice := e.loadDevice(); wgDevice != nil {
+			wgDevice.Down()
 		}
 	}()
 }

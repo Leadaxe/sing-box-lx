@@ -21,10 +21,11 @@ import (
 func (e *Endpoint) PeerStatuses() []adapter.PeerStatus {
 	e.pauseOpAccess.Lock()
 	defer e.pauseOpAccess.Unlock()
-	if e.device == nil {
+	wgDevice := e.loadDevice()
+	if wgDevice == nil {
 		return nil
 	}
-	ipc, err := e.device.IpcGet()
+	ipc, err := wgDevice.IpcGet()
 	if err != nil {
 		return nil
 	}

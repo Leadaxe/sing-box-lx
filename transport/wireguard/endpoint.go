@@ -70,6 +70,10 @@ type Endpoint struct {
 	resumeErrHook func() error
 	// lx: SPEC 145 — session start for the per-peer status (peer_session_lx.go).
 	session peerSession
+	// lx: issue #75 — guards the load and the store of tunDevice, returnDevice,
+	// device, allowedIPs and the cached port addresses; never held across a call
+	// on a device (endpoint_snapshot_lx.go).
+	deviceAccess sync.RWMutex
 }
 
 // SetResumeErrHookForTest injects a Resume failure. Test-only.
