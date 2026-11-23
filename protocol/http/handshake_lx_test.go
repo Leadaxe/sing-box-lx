@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -240,4 +241,102 @@ func (d httpOutageDetour) DialContext(ctx context.Context, network string, desti
 	}
 	var dialer net.Dialer
 	return dialer.DialContext(ctx, network, destination.String())
+}
+
+// TestLxHTTPConnectWatchdogRace answers CONNECT right at the watchdog's expiry.
+// Whichever side wins, the caller gets either a working tunnel with its
+// buffered bytes or a named timeout and no connection, never a closed tunnel.
+func TestLxHTTPConnectWatchdogRace(t *testing.T) {
+	originalTimeout := httpConnectHandshakeTimeoutLx
+	const timeout = 20 * time.Millisecond
+	httpConnectHandshakeTimeoutLx = timeout
+	t.Cleanup(func() { httpConnectHandshakeTimeoutLx = originalTimeout })
+
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		// Spread the answers a few milliseconds around the expiry.
+		for delay := timeout - 4*time.Millisecond; ; delay += 125 * time.Microsecond {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				conn.SetDeadline(time.Now().Add(5 * time.Second))
+				reader := bufio.NewReader(conn)
+				if _, err := stdHTTP.ReadRequest(reader); err != nil {
+					return
+				}
+				time.Sleep(delay)
+				if _, err := io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\nhello"); err != nil {
+					return
+				}
+				io.Copy(conn, reader)
+			}()
+		}
+	}()
+
+	server := M.ParseSocksaddr(listener.Addr().String())
+	out, err := NewOutbound(context.Background(), nil, log.NewNOPFactory().Logger(), "http-test", option.HTTPOutboundOptions{
+		ServerOptions: option.ServerOptions{Server: server.AddrString(), ServerPort: server.Port},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var (
+		group     sync.WaitGroup
+		tunnels   atomic.Int32
+		timeouts  atomic.Int32
+		failures  = make(chan string, 64)
+		attempts  = 64
+		reportErr = func(message string) {
+			select {
+			case failures <- message:
+			default:
+			}
+		}
+	)
+	for i := 0; i < attempts; i++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			conn, err := out.DialContext(context.Background(), "tcp", M.ParseSocksaddr("198.51.100.42:443"))
+			if err != nil {
+				if conn != nil {
+					reportErr("error returned together with a connection")
+				}
+				if !errors.Is(err, os.ErrDeadlineExceeded) || !strings.Contains(err.Error(), "CONNECT handshake timeout") {
+					reportErr("unexpected error: " + err.Error())
+				}
+				timeouts.Add(1)
+				return
+			}
+			defer conn.Close()
+			tunnels.Add(1)
+			conn.SetDeadline(time.Now().Add(5 * time.Second))
+			greeting := make([]byte, 5)
+			if _, err := io.ReadFull(conn, greeting); err != nil || string(greeting) != "hello" {
+				reportErr("returned tunnel lost its buffered bytes or was closed by the watchdog")
+				return
+			}
+			time.Sleep(2 * timeout)
+			if _, err := io.WriteString(conn, "alive"); err != nil {
+				reportErr("returned tunnel was closed after the handshake: " + err.Error())
+				return
+			}
+			if _, err := io.ReadFull(conn, greeting); err != nil || string(greeting) != "alive" {
+				reportErr("returned tunnel does not carry traffic")
+			}
+		}()
+	}
+	group.Wait()
+	close(failures)
+	for message := range failures {
+		t.Error(message)
+	}
+	t.Logf("tunnels: %d, timeouts: %d", tunnels.Load(), timeouts.Load())
 }
