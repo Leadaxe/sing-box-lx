@@ -143,6 +143,11 @@ neighbours and was dropped on the other side. It happens once per socket, on a n
 without hardware checksum offload, and only when more than one datagram goes out per call — for
 example, an AmneziaWG handshake.
 
+The defect is upstream's: it appeared in `sagernet/wireguard-go` with commit `fcbb7c4` ("Coalesce
+UDP GSO segments as iovecs", 2026-07-06), when coalescing went from copying to a list of buffers
+and the retry branch was not adapted. It was found by reading the code and was not reproduced on
+hardware. It has its own record: [issue #81](https://github.com/Leadaxe/sing-box-lx/issues/81).
+
 ### 2.2 Removal condition
 
 Upstream (`sagernet/wireguard-go`) stops zeroing the whole set on return — or the socket layer is
