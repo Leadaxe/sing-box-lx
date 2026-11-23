@@ -411,11 +411,16 @@ func TestHTTPOutboundHTTP2Deadline(t *testing.T) {
 	_, certPem, keyPem := createSelfSignedCertificate(t, "example.org")
 	startTLSHTTPInbound(t, certPem, keyPem, nil, nil)
 	origin := newForwardOrigin(t)
-	detour, err := sTLS.NewDialerFromOptions(globalCtx, log.NewNOPFactory().Logger(), N.SystemDialer, "127.0.0.1", option.OutboundTLSOptions{
-		Enabled:         true,
-		ServerName:      "example.org",
-		CertificatePath: certPem,
-		ALPN:            []string{http2.NextProtoTLS},
+	detour, err := sTLS.NewDialerFromOptions(N.SystemDialer, sTLS.ClientOptions{
+		Context:       globalCtx,
+		Logger:        log.NewNOPFactory().Logger(),
+		ServerAddress: "127.0.0.1",
+		Options: option.OutboundTLSOptions{
+			Enabled:         true,
+			ServerName:      "example.org",
+			CertificatePath: certPem,
+			ALPN:            []string{http2.NextProtoTLS},
+		},
 	})
 	require.NoError(t, err)
 	client, err := sHTTP.NewClient(sHTTP.ClientOptions{

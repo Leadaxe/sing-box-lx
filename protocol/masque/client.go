@@ -136,7 +136,7 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	if node := lxsniffguard.FromContext(ctx).Node(tag); node != nil { // lx: SPEC 060
 		clientOptions.LX.SniffGuardDial = node.Dial
 	}
-	httpClient, err := http.NewClientWithTLS(ctx, logger, outboundDialer, options.ServerOptions, common.PtrValueOrDefault(options.TLS), httpOptions)
+	httpClient, err := http.NewClientWithTLS(ctx, logger, outboundDialer, options.ServerOptions, common.PtrValueOrDefault(options.TLS), options.DomainResolver, httpOptions)
 	if err != nil {
 		return nil, err
 	}

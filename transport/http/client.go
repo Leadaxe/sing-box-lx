@@ -86,7 +86,7 @@ type Client struct {
 	tunnelLX                        TunnelLXOptions // lx: SPEC 110
 }
 
-func NewClientWithTLS(ctx context.Context, logger logger.ContextLogger, outboundDialer N.Dialer, serverOptions option.ServerOptions, tlsOptions option.OutboundTLSOptions, options ClientOptions) (*Client, error) {
+func NewClientWithTLS(ctx context.Context, logger logger.ContextLogger, outboundDialer N.Dialer, serverOptions option.ServerOptions, tlsOptions option.OutboundTLSOptions, domainResolver *option.DomainResolveOptions, options ClientOptions) (*Client, error) {
 	if options.Version == 3 && !tlsOptions.Enabled {
 		return nil, C.ErrTLSRequired
 	}
@@ -99,23 +99,30 @@ func NewClientWithTLS(ctx context.Context, logger logger.ContextLogger, outbound
 		}
 	}
 	var err error
-	options.Dialer, err = tls.NewDialerFromOptions(ctx, logger, outboundDialer, serverOptions.Server, tlsOptions)
+	tlsClientOptions := tls.ClientOptions{
+		Context:        ctx,
+		Logger:         logger,
+		ServerAddress:  serverOptions.Server,
+		Options:        tlsOptions,
+		DomainResolver: domainResolver,
+	}
+	options.Dialer, err = tls.NewDialerFromOptions(outboundDialer, tlsClientOptions)
 	if err != nil {
 		return nil, err
 	}
 	if options.Version >= 2 && (alpnIsDefault || slices.Contains(tlsOptions.ALPN, "http/1.1")) {
-		http1TLSOptions := tlsOptions
-		http1TLSOptions.ALPN = []string{"http/1.1"}
-		options.HTTP1Dialer, err = tls.NewDialerFromOptions(ctx, logger, outboundDialer, serverOptions.Server, http1TLSOptions)
+		http1TLSOptions := tlsClientOptions
+		http1TLSOptions.Options.ALPN = []string{"http/1.1"}
+		options.HTTP1Dialer, err = tls.NewDialerFromOptions(outboundDialer, http1TLSOptions)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if options.Version == 3 {
 		if alpnIsDefault {
-			tlsOptions.ALPN = []string{"h3"}
+			tlsClientOptions.Options.ALPN = []string{"h3"}
 		}
-		options.TLSConfig, err = tls.NewClient(ctx, logger, serverOptions.Server, tlsOptions)
+		options.TLSConfig, err = tls.NewClientWithOptions(tlsClientOptions)
 		if err != nil {
 			return nil, err
 		}
