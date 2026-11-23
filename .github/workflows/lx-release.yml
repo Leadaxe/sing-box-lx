@@ -456,8 +456,14 @@ jobs:
           rm -rf stage-upx && mkdir stage-upx
           cp -r "stage/$NAME" stage-upx/
           "$UPX" -q --best --lzma "stage-upx/$NAME/sing-box"
-          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static
-          "qemu-${{ matrix.qemu }}-static" "stage-upx/$NAME/sing-box" version
+          # ubuntu-26.04 dropped qemu-user-static (qemu-user carries the
+          # emulators there, without the -static suffix); 24.04 still has it.
+          # The missing package cost every release from lx.30 to lx.35 its
+          # .upx copies, silently — the step is optional.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static || sudo apt-get install -y -qq qemu-user
+          QEMU="$(command -v "qemu-${{ matrix.qemu }}-static" || command -v "qemu-${{ matrix.qemu }}")"
+          "$QEMU" "stage-upx/$NAME/sing-box" version
           tar -C stage-upx -czf upx.tar.gz "$NAME"
           mv upx.tar.gz "dist/$NAME.upx.tar.gz"
           ls -la dist
