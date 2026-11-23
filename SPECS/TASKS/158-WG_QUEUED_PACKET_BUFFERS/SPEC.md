@@ -3,18 +3,25 @@
 > 🌐 Русская версия: **[SPEC.ru.md](SPEC.ru.md)** (auxiliary copy; this English file is primary — owner decision 2026-11-23).
 
 **Feature:** [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md)
-**Touches:** P1 — entry 158 in the registry carries the removal condition. The other promises are not affected. Adjacent [ENERGY](../../FEATURES/008-ENERGY/FEATURE.md): the permanent buffers of the receive routines, described by [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md), are not changed here (§6).
+**Touches:** P1 — entry 158 in the registry carries the removal condition. The other promises are not affected. Adjacent [ENERGY](../../FEATURES/008-ENERGY/FEATURE.md): the permanent buffers of the receive routines, described by [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md), are not changed by part 1; their number is set by the part 2 setting (§9), whose keys belong to the ENERGY parameter table.
 
 | Field | Value |
 |-------|-------|
-| Type | B (bug) — a property of upstream `wireguard-go`: a queued packet holds a 64 KiB buffer |
-| Status | I (implemented) — ships in `v1.14.4-lx.36`. Merged into the fork's release branch ([PR #6](https://github.com/Leadaxe/wireguard-go-awg2-lx/pull/6), commit `f1e73df`), the submodule is bumped, the core side (§2.4) is written. Verified by the stand, the end-to-end test and a live run of the release candidate on NanoPi (Linux arm64). Not verified: an Android device, a live link |
+| Type | Part 1 — B (bug): a property of upstream `wireguard-go`, a queued packet holds a 64 KiB buffer. Part 2 — F (feature): two buffer settings in `lx.wg.buffers` |
+| Status | **Part 1 — I (implemented)**, **part 2 — O (open): the spec is written, implementation has not started (§9)**. Part 1 ships in `v1.14.4-lx.36`. Merged into the fork's release branch ([PR #6](https://github.com/Leadaxe/wireguard-go-awg2-lx/pull/6), commit `f1e73df`), the submodule is bumped, the core side (§2.4) is written. Verified by the stand, the end-to-end test and a live run of the release candidate on NanoPi (Linux arm64). Not verified: an Android device, a live link |
 | Branch | `lx`; fork `Leadaxe/wireguard-go-awg2-lx`, branch `lx-awg2-v007` |
-| Build tag | — (the change is in the submodule and applies to all builds) |
+| Build tag | — (the change is in the submodule and applies to all builds; the part 2 keys also work in any build, they do not need the `with_lx_idle_suspend` tag) |
 | Source | [wireguard-go-awg2-lx#5](https://github.com/Leadaxe/wireguard-go-awg2-lx/pull/5) — KeenProxy: about 300 MiB on a router at 300–400 Mbit/s |
-| Related | [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) (permanent buffers of the receive routines), [010](../010-WG_ENDPOINT_GRO_SPLIT_BRAIN/SPEC.md) (batched socket reads), [148](../148-OOM_KILLER_RUNTIME_MEMORY/SPEC.md) (runtime memory limit — these buffers count toward it) |
+| Related | [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) (permanent buffers of the receive routines), [010](../010-WG_ENDPOINT_GRO_SPLIT_BRAIN/SPEC.md) (batched socket reads), [148](../148-OOM_KILLER_RUNTIME_MEMORY/SPEC.md) (runtime memory limit — these buffers count toward it), [098](../098-LX_ROOT_CONFIG_BLOCK/SPEC.md) (layout of the `lx.wg` block), [160](../160-WG_DIRECT_SEND_COST/SPEC.md) (send cost on the direct path; done before part 2, edits the same read line) |
 
 How this solution was reached and what was rejected along the way is in [HISTORY.md](HISTORY.md).
+
+**A task in two parts** — both about the 64 KiB WireGuard buffers, on receive and on send:
+
+| Part | What it is about | Sections | State |
+|---|---|---|---|
+| 1 | Buffers that travel with queued packets: a packet holds about 2 KiB instead of 64 KiB | §0–§8 | done |
+| 2 | Permanent receive buffers and the `lx.wg.buffers` settings: the number of buffers per socket read and the switch for the send buffer by MTU | §9 | open |
 
 ## 0. In plain words
 
@@ -246,11 +253,11 @@ move, the first full-size packet after start under AWG was lost — the stand ca
 **D10. Handshakes are not touched.** There are few of them, they live for fractions of a second,
 and the handshake queue is bounded separately.
 
-**D11. The permanent buffers of the receive routines are not touched.** 16.4 MiB per endpoint
-without `detour` is the subject of [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md): batched reading
-requires ready buffers for the whole batch, and the batch size has to be changed consistently in
-the bind and in TUN. After this change they become the largest item in the tunnel's heap (§4.5)
-and the first candidate for the next step.
+**D11. Part 1 does not touch the permanent buffers of the receive routines.** 16.4 MiB per
+endpoint without `detour`: batched reading requires ready buffers for the whole batch, and only
+their number can be reduced. After the part 1 change they become the largest item in the tunnel's
+heap (§4.5). Part 2 deals with them (§9): the number of buffers is set by a setting, and the
+default stays as in upstream.
 
 **D12. Queue depth is not limited.** The change makes a queued packet cheap but does not shorten
 the queue. Dropping on overflow is a different behaviour with different consequences for TCP, and
@@ -479,7 +486,8 @@ return path (§2.4) and a false trigger of the guard on MTU growth (§2.2) — b
   applies to the whole endpoint while the return path is attached. Narrowing it to the packets
   that will actually go to TUN is not possible at the time a datagram is read — a different
   approach is needed (for example, coalescing for which compact buffers are enough).
-- **Permanent buffers of the receive routines** — 16.4 MiB per endpoint without `detour` (D11).
+- **Permanent buffers of the receive routines** — 16.4 MiB per endpoint without `detour`. Part 1
+  does not touch them (D11); their number is set by the part 2 setting (§9).
 - **Messages larger than 2 KiB** (tunnel MTU above 2016) stay on slots.
 - **Queue depth** is not limited on Linux and macOS (D12).
 - **Field verification**: an Android device, a router with a live link.
@@ -548,14 +556,11 @@ a coalesced datagram needs the full batch). The same scenario, median of three r
 
 What can be taken from this:
 
-- **A batch-size setting for the sake of memory** (for example 8–16 for routers and phones):
-  12–15 MiB less heap per endpoint without `detour`, with no loss of speed on this board. Kernel
-  coalescing has to be off with a small batch. The batch size is wired into several places (the
-  bind, the message pool, the device batch size as the maximum of bind and TUN) and has to change
-  consistently — this has gone wrong before, see
-  [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md).
+- **A batch-size setting for the sake of memory**: 12–15 MiB less heap per endpoint without
+  `detour`, with no loss of speed on this board. It is taken up as part 2 of this task — §9.
 - **Finding out why sending on the direct path costs more** than sending through `ClientBind` is
-  a task of its own, with a possible gain of up to a third on upload.
+  task [160](../160-WG_DIRECT_SEND_COST/SPEC.md): the causes are found, the gain is up to a quarter
+  on upload.
 
 Caveats for the whole section: loopback, not a network card (on a real card kernel coalescing may
 give a gain that is absent here); speeds of 100–160 Mbit/s, while batches are designed for more;
@@ -580,7 +585,342 @@ and its test; the `submodules/wireguard-go` gitlink.
 
 ## 8. Removal condition
 
+Applies to part 1. The part 2 settings are the fork's own knob and have no removal condition.
+
 Upstream (`WireGuard/wireguard-go` or `sagernet/wireguard-go`) stops carrying a `MaxMessageSize`
 buffer with every queued packet — on receive and in the TUN read loop. To be checked on every
 upstream merge into the fork: if `RoutineReceiveIncoming` and `RoutineReadFromTUN` gain their own
 allocation by size, the fork's insertions are removed and the stand stays for cross-checking.
+
+## 9. Part 2: permanent receive buffers and the `lx.wg.buffers` settings
+
+State: the spec is written, implementation has not started. The key names are the owner's
+(2026-11-23).
+
+### 9.0 In plain words
+
+Every WireGuard tunnel without `detour` on Linux and Android has permanent buffers that are held
+for as long as the tunnel is alive:
+
+| Buffers | How many | Size | Total per tunnel |
+|---|---|---|---:|
+| receive — datagrams from the network are read into them | 128 per receive routine, two routines | 64 KiB | 16.4 MiB |
+| send — packets from the stack are read into them | 128 | about 2 KiB (after part 1; was 64 KiB) | 0.25 MiB |
+
+The size of a receive buffer cannot be reduced: the length of a datagram is unknown before the
+read. Only their number can be reduced. That is what the first setting does. The second is a
+switch for the part 1 change, for diagnostics.
+
+```json
+"lx": {
+  "wg": {
+    "buffers": {
+      "read_datagram_count": 8,
+      "send_by_mtu": true
+    }
+  }
+}
+```
+
+### 9.1 Settings
+
+The `lx.wg.buffers` block is global: it applies to all WireGuard and AmneziaWG endpoints of the
+config.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `read_datagram_count` | integer 1–128 | not set = 128, as in upstream | How many datagrams are reserved for one socket read. For weak machines — `8` |
+| `send_by_mtu` | bool | not set = `true` | Take the buffer for reading from the stack by the tunnel MTU, not 64 KiB. `false` — for diagnostics |
+
+#### 9.1.1 `read_datagram_count`
+
+- The value is the number of 64 KiB buffers **per receive routine**. A tunnel has two routines,
+  IPv4 and IPv6, so there are twice as many buffers as the value: at 128 — 256 buffers
+  (16.4 MiB), at 8 — 16 (1 MiB), at 1 — 2 (0.13 MiB).
+- **With a value below 128, kernel coalescing on receive (UDP GRO) is turned off on the tunnel's
+  socket.** Reading a coalesced datagram needs the full batch: it is split back into segments into
+  the same set of buffers. Coalescing on send (UDP GSO) does not depend on the number of read
+  buffers and stays on. On kernels below 5.12 UDP GRO is not enabled even without the setting.
+- The number of send buffers depends on the same number when the tunnel's stack delivers one
+  packet at a time: at 8 there are 8 of them instead of 128. After part 1 this is 16 KiB instead
+  of 256 KiB.
+- The value is one for the whole lifetime of the tunnel: a socket opened again (network change,
+  wake-up after idle suspend) gets the same number.
+- Applies on Linux and Android. On macOS the socket has its own batch code, on Windows its own
+  socket; there the key is accepted and changes nothing.
+- Applies only to tunnels without `detour`: through `detour` reading already goes one datagram at
+  a time.
+- Applies to tunnels with `listen_port` as well.
+- `0`, a negative value and a value above 128 are a config load error. `128` is the same as an
+  absent key.
+
+#### 9.1.2 `send_by_mtu`
+
+- `true` (default): the part 1 behaviour (§2.2) — the buffer for reading from the stack is taken
+  by the tunnel MTU. Where the stack reads in batches, the buffers stay at 64 KiB anyway; if the
+  stack returned a packet longer than the MTU, the tunnel itself falls back to 64 KiB for the rest
+  of its lifetime.
+- `false`: buffers for reading from the stack are always 64 KiB, as before part 1. Needed to rule
+  the change out as a suspect when investigating a problem, without rebuilding the core.
+- The key does not affect receive (the copy of the message into a compact buffer, §2.1).
+
+#### 9.1.3 Builds
+
+Both keys work in any build, including desktop and router builds. Only the idle-suspend keys
+require the mobile build (tag `with_lx_idle_suspend`); they are gathered in the `lx.wg.idle`
+block, and the core's refusal without the tag applies only to that block. The full layout of
+`lx.wg` is in [098](../098-LX_ROOT_CONFIG_BLOCK/SPEC.md) §2.1.
+
+### 9.2 What it gives
+
+There are two measurements on the board (NanoPi, 4×Cortex-A55, the direct path, both core
+instances with the same value, 8 TCP streams, median of three rounds).
+
+**The first** is in §6.1, the table "A clean check of the batch size": values 128, 32, 8 and 1.
+Speed and CPU time do not depend on the value, memory goes down. The measurement switch there
+turned kernel coalescing off both on receive and on send.
+
+**The second** is the combination the setting produces: coalescing is off only on receive
+(§9.1.1). Raw data — `.work/spec158/read-count-gro-only.md`.
+
+| Variant | Download, Mbit/s | Upload, Mbit/s | CPU, s/GiB, down / up | Client peak RSS, download, MiB | 64 KiB buffers in the client heap, MiB |
+|---|---:|---:|---:|---:|---:|
+| 128, coalescing on (default) | 96.4 | 122.9 | 329 / 264 | 61.6 | 16.5 |
+| 8, coalescing off on receive — **how the setting works** | 97.7 | 122.0 | 326 / 260 | 52.7 | about 1 (0.5 in the sample) |
+| 8, coalescing off in both directions | 103.4 | 125.1 | 303 / 258 | 52.1 | about 1 (2.1 in the sample) |
+| 8, coalescing off on receive + the message cleanup change ([160](../160-WG_DIRECT_SEND_COST/SPEC.md)) | 120.3 | 141.9 | 265 / 229 | 53.4 | about 1 (1.1 in the sample) |
+
+- The setting against the default: speed and CPU are the same, receive buffers 16.5 MiB (by the
+  profile; 16.4 computed) → about
+  1 MiB, the client peak RSS during download −9 MiB. During upload the peak RSS is noisy
+  (83–97 MiB in all variants), no difference is visible.
+- The saving is multiplied by the number of tunnels without `detour`.
+- Coalescing on send stays on with the setting: the socket is opened with it. On a data stream it
+  has nothing to coalesce, the stack delivers one packet at a time; it did trigger on the
+  AmneziaWG handshake (16 datagrams went out as 11 messages). That is why the second and third
+  rows cannot be told apart on this stand.
+- Coalescing on receive with the default value did not coalesce a single datagram on loopback.
+  What it gives on a real network card the stand does not show.
+- AmneziaWG with `Jc` 10 and i1–i5 (16 datagrams in the first send) starts with the value 8, data
+  flows. There were no UDP losses, panics or hangs.
+- Together with the message cleanup change (task 160) a small batch gives +23 % on download and
+  +16 % on upload: with eight buffers, receive prepares and cleans up eight messages instead of
+  128.
+
+Both measurements were taken with a measurement build, not with the implementation: the
+measurement is repeated on the finished build (§9.6).
+
+What the measurements do not show: everything is on loopback and at 100–160 Mbit/s. On a real
+network card and on fast links batches and kernel coalescing may give a gain that is not visible
+here. That is why the default stays as in upstream, and `8` is a recommendation for weak
+machines, not a new standard.
+
+### 9.3 How it works
+
+**The `wireguard-go` fork:**
+
+- The binding layer of the direct path (`StdNetBind`) gets a setting for the number of datagrams
+  per read. It is set before the socket is opened and determines which batch size the layer
+  declares to the device. From it the device takes the number of buffers of the receive routine.
+- A socket read goes only into the buffers passed in, not into the whole prepared set of
+  messages.
+- With a value below 128 the socket is created without UDP GRO, and coalescing on receive is not
+  declared for it. The switch-off happens at the same point where the socket's other options are
+  set, before binding to the port: there is no window in which the kernel could coalesce a
+  datagram. If coalescing stayed declared, the read would go into the tail of the message set,
+  where there are no buffers, and receive would silently disappear entirely.
+- The message set for system calls stays at 128 elements (D20).
+- The number of datagrams is a property of the layer for the whole lifetime of the device. The
+  peer's sequential receiver allocates its working array by the batch size once; a layer that
+  declared a different number after the socket is reopened would break it.
+- The device gets a method that turns off buffers by MTU on send. The read loop from the stack
+  already checks the required size before every read (§2.2), so the switch-off takes effect from
+  the next packet.
+
+**The core:**
+
+- The `buffers` block in `lx.wg`: parsing, range check, normalization to the canonical form (an
+  empty block is dropped, default values are not written).
+- The WireGuard endpoint, when creating the binding layer of the direct path, passes it the number
+  of datagrams, and after creating the device, if `send_by_mtu: false`, turns off buffers by MTU.
+- Insertions in upstream files: one line in the transport endpoint file next to the enabling of
+  single-peer mode.
+
+### 9.4 Decisions and rationale
+
+**D14. A separate `lx.wg.buffers` block.** Both keys are about buffers, and their build condition
+differs from that of the six idle-suspend keys. In one flat list the user could not tell a key
+that requires the mobile build from a key that works everywhere; for the same reason the
+idle-suspend keys move to `lx.wg.idle` (098). Future buffer settings already have a place.
+
+**D15. The key names are the owner's.** `read_datagram_count` says what the number is, without
+jargon from the code (`batch`). `send_by_mtu` — without the word "align": the core already has
+`lx.mtu_align` for MTU agreement along a chain, and a second key with `align` next to `mtu` would
+be confusing.
+
+**D16. Default 128, as in upstream.** The measurement was taken on one board, on loopback and at
+100–160 Mbit/s. That is enough to recommend `8` to weak machines, and not enough to change the
+behaviour for everyone: batches and coalescing on a fast network card were not invented for
+nothing.
+
+**D17. The recommendation for weak machines is 8.** At 8, 1 MiB of 16.4 remains. Going further
+down to 1 gives another 0.9 MiB and in the measurement cost 3 % on upload (at the edge of the
+spread) — it does not pay off.
+
+**D18. A small value turns off kernel coalescing on receive, without a separate key.** This is
+not a choice but a correctness condition: splitting a coalesced datagram needs the full batch. A
+separate key would allow a combination that does not work. The user has no need for the reverse
+combination (128 without coalescing): it saves nothing. The setting does not touch coalescing on
+send: it has nothing to do with the number of read buffers, and turning it off along the way
+would change behaviour the key does not speak of.
+
+**D19. Global, not per tunnel.** It is the machine that is weak, not the tunnel. A per-tunnel key
+would have to be written by config generators into every subscription node.
+
+**D20. The message set for system calls is not reduced.** Send uses the same set, and it gets
+more datagrams than are read at once, with any stack:
+
+- the AmneziaWG handshake goes out in one call — the decoy packets, i1–i5, the `Jc` junk packets
+  and the handshake itself;
+- packets injected into the tunnel in a batch (direct L3 forwarding) go in containers of up to
+  128.
+
+In the 2026-07 experiment the set was cut to 8 together with the batch, and the core crashed at
+tunnel start (§9.5). A set of 128 empty headers takes kilobytes; there is nothing to save on it.
+The read is limited to a slice of the set by the number of buffers passed in: without the slice
+the kernel could return more messages than there are buffers, and parsing would go out of bounds.
+
+**D21. Not "the path as through `detour`", but a small batch on the same path.** Considered:
+forcing the tunnel through the binding layer for `detour`, which reads one at a time. This
+changes not the number but the whole layer: the traffic counters for the energy report, the
+per-interface socket pool and simultaneous IPv4 and IPv6 are lost; the path for AWG masquerading
+is determined differently; a tunnel with `listen_port` cannot work this way at all. A small batch
+gives the same memory without these losses, and equally for client and server.
+
+**D22. `send_by_mtu` is a public key, not an environment variable.** The owner's decision: any
+user should be able to run the diagnostics, including in the Android app, where an environment
+variable does not reach the core's code (§9.5). The part 1 change has no cost that
+would justify turning it off in normal use, so the key is described as diagnostic and is on by
+default.
+
+**D23. Both keys are outside the `with_lx_idle_suspend` tag.** The tag enables idle suspend,
+which makes sense only on mobile. Buffers are the same everywhere, and the main audience of
+`read_datagram_count` is routers, where the tag is absent.
+
+**D24. On macOS and Windows `read_datagram_count` is accepted and has no effect.** Batches there
+are arranged differently or are absent. A load failure on these platforms would break one config
+shared by several machines; the silent no-op is described in the documentation.
+
+### 9.5 Why this is not a repeat of what was rejected in 020
+
+In 2026-07, within [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/HISTORY.md), the experiment "coalescing
+off, batch 8" was rejected for three reasons. Where each stands now:
+
+| Reason for rejection | Now |
+|---|---|
+| **The wrong holder.** On Android the main memory holder turned out to be the shared slot pool, which does not depend on the batch; the buffers of the receive routines were secondary | The July profile called "pool" the allocation site shared by all 64 KiB slots. At that time it supplied the buffers of the read loop from the stack (128 of them, 8 MiB) and the buffer of every packet in the send and receive queues. Part 1 moved all of these to packet-sized buffers. The pool itself allocates nothing in advance: 4096 is a ceiling, not a reserve. By code, the part 1 change works in both directions on Android (§9.5.1), and the permanent holder that remains is the slots of the receive routines — 16 MiB per tunnel without `detour`. **Not measured on a device** |
+| **The switch was not delivered.** An environment variable does not reach Go code in the Android app | A config key |
+| **Panic at start.** The message set was cut to 8 together with the batch | The message set does not change (D20); a handshake longer than the read batch and the combination with a batching stack are covered by tests (§9.6) |
+
+020 recorded the cause of the July panic as "the stack gave the device a batch of 128". For
+Android this explanation is most likely wrong: the tunnel's stack there delivers one packet at a
+time. The probable cause is the AmneziaWG handshake, which at tunnel start sends more than eight
+datagrams in one call. The panic text was not saved at the time, so this is a conclusion from the
+code, not a fact. It does not affect D20: both explanations lead to the same thing — do not
+reduce the set.
+
+#### 9.5.1 Android by code (2026-11-23)
+
+The analysis was done by reading the code, without a build or a device.
+
+- **Which layer.** A tunnel without `detour` gets the same direct-path layer as on Linux, with a
+  batch of 128. There are two receive routines (IPv4 and IPv6); the third one, for per-interface
+  sockets, does not exist on Android. A tunnel through `detour` reads one datagram at a time into
+  one buffer.
+- **Kernel coalescing.** Files with the `_linux` suffix are compiled for Android too, so UDP GRO
+  is enabled on kernels 5.12 and newer. The note in the results of the 2026-07 experiment that the
+  variant without coalescing is what works on Android is wrong.
+- **The tunnel's stack.** The WireGuard device sees the gVisor stack, which reads and writes one
+  packet at a time. The device batch size is therefore equal to the layer's batch: 128 without
+  `detour`, 1 through `detour`.
+- **The return path into TUN.** Android hands over the VpnService descriptor without the virtio
+  header, GSO on the TUN inbound is not enabled there, and writes to TUN are not coalesced. The
+  condition that keeps receive on slots on Linux with GSO (§2.4) never triggers on Android.
+- **What holds memory per tunnel without `detour`:** at idle 16 MiB of receive-routine slots and
+  0.25 MiB of buffers for reading from the stack; under load 2 KiB buffers are added — up to
+  8 MiB on receive with a ceiling of 4096. 64 KiB slots beyond the permanent ones appear only in
+  the handshake queue, for keepalive, for messages longer than 2 KiB and after a packet from the
+  stack longer than the MTU.
+- **What `read_datagram_count: 8` gives:** 16 MiB → 1 MiB per tunnel without `detour`, buffers
+  for reading from the stack 0.25 MiB → 16 KiB. For tunnels through `detour` the setting changes
+  nothing.
+
+The 020 conclusion "the memory lever on Android is not in the batch" referred to the code before
+part 1 and, by this analysis, does not apply to the current code: the batch is now the main
+permanent holder. Idle suspend is not replaced by this — it frees a sleeping tunnel entirely,
+while the setting reduces a working one as well. Until the measurement on a device (§9.6) this
+remains a conclusion from the code.
+
+### 9.6 Verification
+
+Not done — the list of what has to be done before status I.
+
+Fork:
+
+- the number of buffers of the receive routine equals the setting; 128 by default;
+- with a small value the socket has UDP GRO off and coalescing is not declared; at 128 — as
+  before;
+- receiving a batch of datagrams through a real socket with values 1, 8, 128: everything is
+  delivered, intact and in order;
+- the part 1 stand through real sockets with the value 8: queue, send, receive;
+- **the combination with a batching stack** (TUN declares a batch of 128, the setting is 8):
+  start, traffic in both directions, no panic;
+- **a handshake longer than the read batch**: AmneziaWG with `Jc` and i1–i5 adding up to more
+  than the value, with values 8 and 1 — tunnel start and a repeated handshake;
+- packets injected in a batch larger than the value (direct L3 forwarding) are delivered;
+- a socket opened again declares the same number;
+- turning off buffers by MTU: the read loop switches to 64 KiB from the next packet;
+- `go test -race ./conn ./device` on darwin, the full suite on linux/arm64;
+- `go vet` for linux, android, windows, freebsd, ios.
+
+The core:
+
+- parsing and checking the block: values 1, 8, 128; 0, −1 and 129 — an error; an empty block is
+  dropped; `send_by_mtu: false` is kept, `true` is normalized to an absent key;
+- the block is accepted by a build without `with_lx_idle_suspend`;
+- the endpoint passes the values to the binding layer and to the device.
+
+The board (NanoPi), one build, a config with the key and without:
+
+- speed and CPU — as in §9.2;
+- heap: receive slots about 1 MiB per tunnel at `8` against 16.4 MiB;
+- `send_by_mtu: false`: 64 KiB send buffers come back into the profile;
+- a tunnel with `listen_port` and an AmneziaWG tunnel with the same key;
+- a TUN inbound with direct L3 forwarding and the key `8`.
+
+An Android device (after the board; without it §9.5.1 remains a conclusion from the code):
+
+- heap profile at idle and in a speed test: receive slots 16 MiB → 1 MiB per tunnel without
+  `detour`; 2 KiB buffers under load within reasonable limits;
+- whether coalescing on receive is enabled on kernels 5.10 and 5.15/6.1, without the setting and
+  with it;
+- download speed at `8` against the default on a device where coalescing is present;
+- an AmneziaWG node with a long handshake: start and repeated handshakes;
+- wake-up after idle suspend (020) and socket reopening on a network change with the setting;
+- the key arrives from the app's config generator.
+
+### 9.7 Boundaries
+
+- Permanent buffers on macOS and Windows do not change.
+- A tunnel through `detour` is not affected: the batch there is already 1.
+- The Tailscale endpoint runs on its own fork of `wireguard-go` and does not see these keys.
+- The reason why sending on the direct path costs more than sending through `detour` (§6.1) is
+  task [160](../160-WG_DIRECT_SEND_COST/SPEC.md).
+- Android: the key's effect on memory and on speed without coalescing on receive has not been
+  measured on a device (§9.5.1).
+- What the carrier connections of a tunnel through `detour` and the tunnel's stack itself hold is
+  not analysed here.
+
+### 9.8 Files
+
+Filled in during implementation.
