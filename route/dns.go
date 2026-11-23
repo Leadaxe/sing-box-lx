@@ -24,9 +24,10 @@ func (r *Router) hijackDNSStream(ctx context.Context, conn net.Conn, metadata ad
 	if err != nil {
 		return E.Cause(err, "report handshake success")
 	}
+	streamConn := dnsOutbound.NewSerialWriteConn(conn) // lx: SPEC 157
 	for {
 		conn.SetReadDeadline(time.Now().Add(C.DNSTimeout))
-		err = dnsOutbound.HandleStreamDNSRequest(ctx, r.dns, conn, metadata)
+		err = dnsOutbound.HandleStreamDNSRequest(ctx, r.dns, streamConn, metadata)
 		if err != nil {
 			if !E.IsClosedOrCanceled(err) {
 				return err
