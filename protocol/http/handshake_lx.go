@@ -24,7 +24,7 @@ type httpHandshakeStateLx struct {
 	timer    *time.Timer
 }
 
-// httpHandshakeDialerLx bounds only the HTTP CONNECT exchange (SPEC 158).
+// httpHandshakeDialerLx bounds only the HTTP CONNECT exchange (SPEC 161).
 // TCP connect_timeout no longer applies once the proxy accepts the socket, and
 // ordinary routed connections have no parent deadline. A proxy that never
 // answers CONNECT would otherwise retain a connection and goroutine per retry.

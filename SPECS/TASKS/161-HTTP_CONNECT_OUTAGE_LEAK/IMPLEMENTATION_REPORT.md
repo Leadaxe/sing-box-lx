@@ -83,7 +83,7 @@ detour не удерживал сокет. `CachedConn` сохраняет уж�
 | Два шва upstream | `protocol/http/outbound.go` |
 | CI | `.github/workflows/lx-ci.yml` |
 | Реестр и release notes | `SPECS/FEATURES/004-HOTFIXES/FEATURE.md`, `SPECS/README.md`, `docs-lx/lx-changelog.md` |
-| Документы задачи | `SPECS/TASKS/158-HTTP_CONNECT_OUTAGE_LEAK/{SPEC,PLAN,TASKS,IMPLEMENTATION_REPORT}.md` |
+| Документы задачи | `SPECS/TASKS/161-HTTP_CONNECT_OUTAGE_LEAK/{SPEC,PLAN,TASKS,IMPLEMENTATION_REPORT}.md` |
 
 ## Проверки
 
