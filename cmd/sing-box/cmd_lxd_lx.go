@@ -101,7 +101,17 @@ init (procd, systemd, openrc) and rolls back when the new service does not
 come up within 15 s or its core is not started (GET /admin/status over
 loopback) within 20 s more. Downloads honour HTTPS_PROXY / ALL_PROXY.
 
-Exit codes: 0 updated or already up to date, 1 nothing changed, 2 rolled back.
+When a second copy does not fit beside the binary (a router with a small
+flash overlay), or with --low-space, the update stages in the temp directory
+instead: the new binary and a gzip copy of the old one are kept in RAM, the
+service is stopped, the old binary removed, the new one written and the
+service started — the VPN is down for 10-20 s, and the device must stay
+powered while the flash is written. A new service that does not come up is
+replaced by the old binary from its copy.
+
+Exit codes: 0 updated or already up to date, 1 nothing changed, 2 rolled back,
+3 low-space rollback failed (the copies stay in the temp directory, the log
+says how to restore).
 
 Expose it to the launcher as a named command in daemon.json:
   "commands": {"update": "/usr/bin/sing-box lxd update"}
@@ -114,13 +124,28 @@ See docs-lx/lxd-daemon.md §8.5-8.6.`,
 		} else if dir, found := lxd.FindServiceStateDir(); found {
 			stateDir = dir
 		}
-		code, err := lxd.Update(lxd.UpdateOptions{
-			DryRun:     lxdUpdateDryRun,
-			Prerelease: lxdUpdatePrerelease,
-			NoRestart:  lxdUpdateNoRestart,
-			Service:    lxdUpdateService,
-			StateDir:   stateDir,
-		}, os.Stdout)
+		var code int
+		var err error
+		if lxdUpdateFinishLowSpace != "" {
+			// The staged binary of a low-space update, exec'ed by the
+			// installed one: finish what it prepared.
+			code, err = lxd.FinishLowSpaceUpdate(lxd.LowSpaceFinishOptions{
+				StageDir:    lxdUpdateFinishLowSpace,
+				Target:      lxdUpdateTarget,
+				FromVersion: lxdUpdateFromVersion,
+				Service:     lxdUpdateService,
+				StateDir:    stateDir,
+			}, os.Stdout)
+		} else {
+			code, err = lxd.Update(lxd.UpdateOptions{
+				DryRun:     lxdUpdateDryRun,
+				Prerelease: lxdUpdatePrerelease,
+				NoRestart:  lxdUpdateNoRestart,
+				Service:    lxdUpdateService,
+				StateDir:   stateDir,
+				LowSpace:   lxdUpdateLowSpace,
+			}, os.Stdout)
+		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "update: ERROR:", err)
 		}
@@ -133,6 +158,11 @@ var (
 	lxdUpdatePrerelease bool
 	lxdUpdateNoRestart  bool
 	lxdUpdateService    string
+	lxdUpdateLowSpace   bool
+	// The low-space hand-over (lxd/update_lowspace.go), not for the operator.
+	lxdUpdateFinishLowSpace string
+	lxdUpdateTarget         string
+	lxdUpdateFromVersion    string
 )
 
 var commandLxdClientAdd = &cobra.Command{
@@ -204,6 +234,13 @@ func init() {
 	commandLxdUpdate.Flags().BoolVar(&lxdUpdatePrerelease, "prerelease", false, "take the newest release including rc builds (default: the latest stable)")
 	commandLxdUpdate.Flags().BoolVar(&lxdUpdateNoRestart, "no-restart", false, "replace the binary and stop; restart the service yourself")
 	commandLxdUpdate.Flags().StringVar(&lxdUpdateService, "service", "sing-box-lxd", "service name for the init's restart and health check")
+	commandLxdUpdate.Flags().BoolVar(&lxdUpdateLowSpace, "low-space", false, "stage in the temp directory and replace the binary with the service stopped, even when a second copy fits beside it (the automatic fallback when it does not)")
+	commandLxdUpdate.Flags().StringVar(&lxdUpdateFinishLowSpace, "finish-low-space", "", "internal: the stage directory of a low-space update")
+	commandLxdUpdate.Flags().StringVar(&lxdUpdateTarget, "target", "", "internal: the binary a low-space update replaces")
+	commandLxdUpdate.Flags().StringVar(&lxdUpdateFromVersion, "from-version", "", "internal: the version a low-space update replaces")
+	for _, internal := range []string{"finish-low-space", "target", "from-version"} {
+		_ = commandLxdUpdate.Flags().MarkHidden(internal)
+	}
 	commandLxd.AddCommand(commandLxdUpdate)
 
 	mainCommand.AddCommand(commandLxd)

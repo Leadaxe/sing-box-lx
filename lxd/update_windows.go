@@ -23,3 +23,11 @@ func runCombined(name string, args ...string) (string, error) {
 	output, err := exec.Command(name, args...).CombinedOutput()
 	return string(output), err
 }
+
+// memAvailable and replaceProcess are never reached: runUpdate refuses before
+// them on a non-linux goos.
+func memAvailable() (uint64, bool) { return 0, false }
+
+func replaceProcess(path string, argv []string) error {
+	return E.New("not supported on windows")
+}
