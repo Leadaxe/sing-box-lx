@@ -519,27 +519,48 @@ What follows:
   9–21 % less CPU time per gigabyte. The idea is closed by the measurement.
 - **Speed through `detour` is cut by the outer node**, not by the absence of batches: with a
   second encryption and framing, by half.
-- **A potential in the opposite direction: a batch of 128 on the direct path may hurt** on a CPU
-  with a small cache. The mechanism is the one in §4.3: 128 slots of 64 KiB per receive routine
-  are cycled through, each next one cold; packets cross the pipeline in groups. A smaller batch
-  would also give memory back: the permanent buffers of the receive routines (§1.2) — 16.4 MiB
-  per endpoint — shrink in proportion.
+- **The hypothesis "a batch of 128 on the direct path hurts speed" was checked separately and
+  was not confirmed** — see below.
 
-Why the last point is a hypothesis for now:
+**A clean check of the batch size (2026-11-23).** One binary with a measurement switch (not part
+of the release): the direct path, both instances with the same setting — a batch of 128 with
+kernel coalescing (as released), 128 without coalescing, 32, 8 and 1 (without coalescing: reading
+a coalesced datagram needs the full batch). The same scenario, median of three rounds.
 
-- Two different binding layers were compared as a whole, not two batch sizes: the direct path has
-  its own send code and two sockets (IPv4 and IPv6), the path through `detour` has one connected
-  socket.
-- Everything ran over loopback; on a real network card, coalescing in the kernel may give a gain
-  that is not visible here.
-- The speeds are 100–160 Mbit/s; batches are designed for more.
-- `detour` was on the client only; the server read in batches in both cases.
+| Batch | Download, Mbit/s | Upload, Mbit/s | CPU, s/GiB, down / up | Client peak RSS, download, MiB | Client RSS after warm-up, MiB |
+|---|---:|---:|---:|---:|---:|
+| 128 + GRO/GSO | 99.4 | 122.2 | 318 / 266 | 63 | 49 |
+| 128 | 102.1 | 125.5 | 312 / 260 | 65 | 53 |
+| 32 | 103.2 | 123.7 | 306 / 260 | 56 | 49 |
+| 8 | 102.4 | 122.5 | 312 / 265 | 52 | 46 |
+| 1 | 100.2 | 119.1 | 315 / 276 | 50 | 45 |
 
-A clean check: the same direct path with a batch of 128 and with a small one (8–16), on the board
-and through its network port. The batch size is wired into several places (the bind, the message
-pools, the device batch size as the maximum of bind and TUN) and has to change consistently —
-this has gone wrong before, see [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md). Raw data of the
-measurement: `.work/spec158/logs/detour.log`; the scenario: `.work/spec158/detour.sh`.
+- **The batch size does not affect speed here**: all variants are within the spread between
+  rounds (up to 6 Mbit/s on download, up to 9 on upload), CPU time per gigabyte within ±4 %.
+  Kernel coalescing gives nothing on loopback either.
+- **It does affect memory**: the client peak during download is 63–65 MiB with a batch of 128,
+  56 with 32, 52 with 8, 50 with 1. These are the permanent buffers of the receive routines
+  (§1.2): 16.4 MiB of heap with a batch of 128, about 1 MiB with a batch of 8.
+- **So the gain of the `detour` → `direct` path (+29 % on upload) does not come from the batch
+  size**, but from another difference between the binding layers: on upload the client spends
+  154–163 s/GiB on the direct path with any batch and 117 through `ClientBind`. The cause was not
+  investigated; the candidates are the send code of the direct path and its two sockets.
+
+What can be taken from this:
+
+- **A batch-size setting for the sake of memory** (for example 8–16 for routers and phones):
+  12–15 MiB less heap per endpoint without `detour`, with no loss of speed on this board. Kernel
+  coalescing has to be off with a small batch. The batch size is wired into several places (the
+  bind, the message pool, the device batch size as the maximum of bind and TUN) and has to change
+  consistently — this has gone wrong before, see
+  [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md).
+- **Finding out why sending on the direct path costs more** than sending through `ClientBind` is
+  a task of its own, with a possible gain of up to a third on upload.
+
+Caveats for the whole section: loopback, not a network card (on a real card kernel coalescing may
+give a gain that is absent here); speeds of 100–160 Mbit/s, while batches are designed for more;
+one board. Raw data: `.work/spec158/logs/detour.log` and `batch.log`; scenarios:
+`.work/spec158/detour.sh` and `batch.sh`.
 
 ## 7. Files
 
