@@ -354,3 +354,20 @@ func TestResourceStatNotFound(t *testing.T) {
 		t.Fatalf("missing stat status = %d, want 404", resp.StatusCode)
 	}
 }
+
+// A config written on Windows names the resource with backslashes, escaped in
+// the JSON text; the guard must see through both forms.
+func TestResourceReferencedByWindowsPath(t *testing.T) {
+	control, _ := newResourceTestController(t)
+	control.activeContent = `{"path":"C:\\ProgramData\\sing-box-lxd\\state\\resources\\geosite-ru.srs"}`
+	if ref, err := control.resourceReferenced("geosite-ru.srs"); err != nil || !ref {
+		t.Fatalf("escaped Windows path: referenced=%v err=%v", ref, err)
+	}
+	control.activeContent = `{"path":"C:/ProgramData/sing-box-lxd/state/resources/geosite-ru.srs"}`
+	if ref, _ := control.resourceReferenced("geosite-ru.srs"); !ref {
+		t.Fatal("forward-slash Windows path not seen")
+	}
+	if ref, _ := control.resourceReferenced("other.srs"); ref {
+		t.Fatal("free name reported as referenced")
+	}
+}
