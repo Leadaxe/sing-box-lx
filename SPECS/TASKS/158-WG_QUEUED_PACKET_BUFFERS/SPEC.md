@@ -489,7 +489,7 @@ return path (§2.4) and a false trigger of the guard on MTU growth (§2.2) — b
   there were no stops over 624 completed benchmark runs (90 of them with KeenProxy's port); the
   stand now reports a stop itself, with the number of packets in flight.
 
-### 6.1 Potential: batches for a tunnel through `detour`
+### 6.1 Read batches: a measurement and a potential
 
 Not a defect and not part of this task — an observation that came up while the batch size was
 being traced.
@@ -497,30 +497,49 @@ being traced.
 Without `detour`, WireGuard talks to the kernel through a UDP socket: it reads and writes up to
 128 datagrams in one system call, and the kernel coalesces and splits segments itself. Through
 `detour` there is no kernel socket: the core's binding layer (`ClientBind`) reads one datagram at
-a time from the outer node's connection and writes one at a time, so the batch size is 1. Every
-packet crosses the pipeline on its own, with its own container and a goroutine wake-up each.
+a time from the outer node's connection and writes one at a time, so the batch size is 1.
 
-What could be done: gather packets into a batch inside the binding layer when the lower
-connection hands them over back to back (the first read blocks, the following ones run while data
-is ready, up to the batch limit); on send, pass the lower connection a batch in one call if it
-supports that.
+**Measurement (2026-11-23, NanoPi, release candidate).** The same WireGuard tunnel three ways:
+directly; through `detour` to a `direct` outbound (the same loopback UDP socket underneath, but
+read one datagram at a time); through `detour` to shadowsocks on loopback (a real outer node, a
+third process). SOCKS inbound, 8 TCP streams, 20 s per direction, median of three rounds.
 
-Why it is not done:
+| Client path | Download, Mbit/s | Upload, Mbit/s | CPU, s/GiB: client + server (+ node), down / up |
+|---|---:|---:|---:|
+| directly, batches of 128 | 96.6 | 122.3 | 331 / 263 |
+| `detour` → `direct`, one at a time | 102.1 | 157.6 | 302 / 209 |
+| `detour` → shadowsocks | 50.7 | 70.6 | 615 / 459 |
 
-- **The gain is not measured.** A tunnel through `detour` was not run in this task. At ordinary
-  speeds the ceiling is set by the outer node (the packet is encrypted and framed once more, often
-  over TCP), and batches may give nothing against that.
-- **The cost is immediate.** A batch larger than 1 brings the permanent buffers back: the receive
-  routine and the TUN read loop each hold a buffer per batch element (§1.2). After this task that
-  is 64 KiB per element for the receive routine and about 2 KiB for the read loop — so the batch
-  should be small (8–16), not 128.
-- **It is an edit in an upstream file of the core** (`transport/wireguard/client_bind.go`) that
-  has to be checked on every merge.
+The spread between rounds is up to 4 Mbit/s on download and up to 10 on upload.
 
-Where to start, if it is taken up: measure the same tunnel on NanoPi directly and through
-`detour` over loopback (the stand and the load generator from §4.1 fit without changes). If the
-difference in speed or in CPU time per gigabyte is within the resolution of the stand — do not do
-it.
+What follows:
+
+- **There is no reason to gather batches in the binding layer for the path through `detour`.**
+  The one-at-a-time path is not slower than the batched one: +6 % on download, +29 % on upload,
+  9–21 % less CPU time per gigabyte. The idea is closed by the measurement.
+- **Speed through `detour` is cut by the outer node**, not by the absence of batches: with a
+  second encryption and framing, by half.
+- **A potential in the opposite direction: a batch of 128 on the direct path may hurt** on a CPU
+  with a small cache. The mechanism is the one in §4.3: 128 slots of 64 KiB per receive routine
+  are cycled through, each next one cold; packets cross the pipeline in groups. A smaller batch
+  would also give memory back: the permanent buffers of the receive routines (§1.2) — 16.4 MiB
+  per endpoint — shrink in proportion.
+
+Why the last point is a hypothesis for now:
+
+- Two different binding layers were compared as a whole, not two batch sizes: the direct path has
+  its own send code and two sockets (IPv4 and IPv6), the path through `detour` has one connected
+  socket.
+- Everything ran over loopback; on a real network card, coalescing in the kernel may give a gain
+  that is not visible here.
+- The speeds are 100–160 Mbit/s; batches are designed for more.
+- `detour` was on the client only; the server read in batches in both cases.
+
+A clean check: the same direct path with a batch of 128 and with a small one (8–16), on the board
+and through its network port. The batch size is wired into several places (the bind, the message
+pools, the device batch size as the maximum of bind and TUN) and has to change consistently —
+this has gone wrong before, see [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md). Raw data of the
+measurement: `.work/spec158/logs/detour.log`; the scenario: `.work/spec158/detour.sh`.
 
 ## 7. Files
 
