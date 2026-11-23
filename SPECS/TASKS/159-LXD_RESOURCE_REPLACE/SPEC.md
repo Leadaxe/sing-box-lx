@@ -84,6 +84,14 @@
 - **Блокировка.** Проверка, подмена и ожидание идут под `applyAccess`: `apply` не вклинится
   между подменой и подтверждением. Тело запроса читается до захвата.
 
+### 2.5. Windows-пути в проверке занятости
+
+`resourceReferenced` искал в тексте конфига `/resources/<name>`. Конфиг с родными
+Windows-путями содержит `\\resources\\<name>` (обратный слэш, экранированный в JSON), и имя
+считалось свободным: гуард SPEC 063 на Windows не срабатывал, а замена шла мимо проверки и
+прежней копии. Теперь разделители перед сравнением приводятся к `/` (`referencesResource`).
+Найдено задачей `test-windows` в lx-ci.
+
 ## 3. Клиент (лаунчер)
 
 Признак возможностей не вводится. `PUT` как раньше:
@@ -108,7 +116,8 @@
     копии на каждом пути старта;
   - `TestResourceStoreKeepsOldestPrevious`, `TestCheckRuleSetContentBuildsRules`,
     `TestReplaceSameBytesIsNoop`.
-- `lxd/resources_test.go`: занятый `geoip.db` — 409, не меняется.
+- `lxd/resources_test.go`: занятый `geoip.db` — 409, не меняется;
+  `TestResourceReferencedByWindowsPath` — путь с `\\` и с `/`.
 - `go test -race -tags with_lxd ./lxd/` ✅; сборка `cmd/sing-box` под `LX_TAGS` ✅.
 - Живой прогон на macOS 2026-11-23 (бинарь из `lx` под `LX_TAGS`, отдельный `lxd` на
   loopback: mixed-вход, `direct`, два локальных набора — в правиле маршрута и в DNS-правиле):
@@ -120,6 +129,7 @@
   - ядро остановлено → `pending`, `.prev-a.srs` лежит; `start` → копия удалена, правила новые;
   - `pending` + `apply` конфига, не стартующего из-за занятого порта → `rolled_back: true`,
     прежние байты на месте, last-good поднялся по ним.
+- `GOOS=windows go vet -tags with_lxd ./lxd/` ✅; сами тесты на Windows идут только в lx-ci.
 - Не проверено: Linux/OpenWrt (слежение за файлом через inotify) и роутер владельца.
 
 ## 5. Не в scope

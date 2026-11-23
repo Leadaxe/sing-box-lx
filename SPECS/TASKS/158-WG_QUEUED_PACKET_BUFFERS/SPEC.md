@@ -489,6 +489,58 @@ return path (§2.4) and a false trigger of the guard on MTU growth (§2.2) — b
   there were no stops over 624 completed benchmark runs (90 of them with KeenProxy's port); the
   stand now reports a stop itself, with the number of packets in flight.
 
+### 6.1 Read batches: a measurement and a potential
+
+Not a defect and not part of this task — an observation that came up while the batch size was
+being traced.
+
+Without `detour`, WireGuard talks to the kernel through a UDP socket: it reads and writes up to
+128 datagrams in one system call, and the kernel coalesces and splits segments itself. Through
+`detour` there is no kernel socket: the core's binding layer (`ClientBind`) reads one datagram at
+a time from the outer node's connection and writes one at a time, so the batch size is 1.
+
+**Measurement (2026-11-23, NanoPi, release candidate).** The same WireGuard tunnel three ways:
+directly; through `detour` to a `direct` outbound (the same loopback UDP socket underneath, but
+read one datagram at a time); through `detour` to shadowsocks on loopback (a real outer node, a
+third process). SOCKS inbound, 8 TCP streams, 20 s per direction, median of three rounds.
+
+| Client path | Download, Mbit/s | Upload, Mbit/s | CPU, s/GiB: client + server (+ node), down / up |
+|---|---:|---:|---:|
+| directly, batches of 128 | 96.6 | 122.3 | 331 / 263 |
+| `detour` → `direct`, one at a time | 102.1 | 157.6 | 302 / 209 |
+| `detour` → shadowsocks | 50.7 | 70.6 | 615 / 459 |
+
+The spread between rounds is up to 4 Mbit/s on download and up to 10 on upload.
+
+What follows:
+
+- **There is no reason to gather batches in the binding layer for the path through `detour`.**
+  The one-at-a-time path is not slower than the batched one: +6 % on download, +29 % on upload,
+  9–21 % less CPU time per gigabyte. The idea is closed by the measurement.
+- **Speed through `detour` is cut by the outer node**, not by the absence of batches: with a
+  second encryption and framing, by half.
+- **A potential in the opposite direction: a batch of 128 on the direct path may hurt** on a CPU
+  with a small cache. The mechanism is the one in §4.3: 128 slots of 64 KiB per receive routine
+  are cycled through, each next one cold; packets cross the pipeline in groups. A smaller batch
+  would also give memory back: the permanent buffers of the receive routines (§1.2) — 16.4 MiB
+  per endpoint — shrink in proportion.
+
+Why the last point is a hypothesis for now:
+
+- Two different binding layers were compared as a whole, not two batch sizes: the direct path has
+  its own send code and two sockets (IPv4 and IPv6), the path through `detour` has one connected
+  socket.
+- Everything ran over loopback; on a real network card, coalescing in the kernel may give a gain
+  that is not visible here.
+- The speeds are 100–160 Mbit/s; batches are designed for more.
+- `detour` was on the client only; the server read in batches in both cases.
+
+A clean check: the same direct path with a batch of 128 and with a small one (8–16), on the board
+and through its network port. The batch size is wired into several places (the bind, the message
+pools, the device batch size as the maximum of bind and TUN) and has to change consistently —
+this has gone wrong before, see [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md). Raw data of the
+measurement: `.work/spec158/logs/detour.log`; the scenario: `.work/spec158/detour.sh`.
+
 ## 7. Files
 
 The `wireguard-go` fork (branch `lx-awg2-v007`, commit `f1e73df`):

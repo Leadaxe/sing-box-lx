@@ -345,11 +345,10 @@ func (c *controller) announceFatal(previous coreFacts, wasRunning bool, failedCo
 // answer "referenced" for a free name, which only ever costs an over-eager 409
 // — never a silently broken rollback, the failure that actually matters.
 func (c *controller) resourceReferenced(name string) (bool, error) {
-	token := "/resources/" + name
 	c.stateAccess.Lock()
 	active := c.activeContent
 	c.stateAccess.Unlock()
-	if strings.Contains(active, token) {
+	if referencesResource(active, name) {
 		return true, nil
 	}
 	lastGood, loaded, err := c.store.LoadLastGood()
@@ -358,10 +357,22 @@ func (c *controller) resourceReferenced(name string) (bool, error) {
 		// could green-light a delete that a recoverable config depends on.
 		return false, E.Cause(err, "read last-good for reference check")
 	}
-	if loaded && strings.Contains(lastGood, token) {
+	if loaded && referencesResource(lastGood, name) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// referencesResource is the substring test behind resourceReferenced. A
+// Windows path reaches a config with backslashes, written `\\` in the JSON
+// text, so separators are folded to `/` before the match — without that the
+// guard never fired for a config written with native Windows paths.
+func referencesResource(content string, name string) bool {
+	if strings.ContainsRune(content, '\\') {
+		content = strings.ReplaceAll(content, `\\`, "/")
+		content = strings.ReplaceAll(content, `\`, "/")
+	}
+	return strings.Contains(content, "/resources/"+name)
 }
 
 // Rollback re-applies last-good directly, skipping validation: it is the

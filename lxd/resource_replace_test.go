@@ -64,7 +64,18 @@ func TestCheckRuleSetContentBuildsRules(t *testing.T) {
 	}
 }
 
-const refConfig = `{"route":{"rule_set":[{"type":"local","tag":"ru","format":"binary","path":"%PATH%"}]}}`
+const refConfig = `{"route":{"rule_set":[{"type":"local","tag":"ru","format":"binary","path":%PATH%}]}}`
+
+// refConfigFor points refConfig at path, JSON-escaped as a real config has it
+// (a Windows path carries backslashes).
+func refConfigFor(t *testing.T, path string) string {
+	t.Helper()
+	quoted, err := json.Marshal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.ReplaceAll(refConfig, "%PATH%", string(quoted))
+}
 
 // stoppedReplace uploads v2 over v1 while only last-good points at the file,
 // and returns the controller with the replacement pending.
@@ -76,7 +87,7 @@ func stoppedReplace(t *testing.T, service reloader) (control *controller, config
 	if _, _, err := control.resources.Put("ru.srs", v1); err != nil {
 		t.Fatal(err)
 	}
-	config = strings.ReplaceAll(refConfig, "%PATH%", filepath.Join(resDir, "ru.srs"))
+	config = refConfigFor(t, filepath.Join(resDir, "ru.srs"))
 	if err := control.store.SaveLastGood(config); err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +266,7 @@ func runningReplace(t *testing.T, ctx context.Context) (control *controller, liv
 		t.Fatal(err)
 	}
 	control.service = &liveReloader{sets: map[string]*rule.LocalRuleSet{"ru": live}}
-	control.setActive(strings.ReplaceAll(refConfig, "%PATH%", path), "")
+	control.setActive(refConfigFor(t, path), "")
 
 	srv := resourceServer(t, control)
 	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/admin/resources/ru.srs", bytes.NewReader(testRuleSetBinary(t, "new.example")))
