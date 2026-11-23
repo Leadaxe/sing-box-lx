@@ -44,3 +44,26 @@
 
 - Живой прогон lx.15-test128 → lx.16 на RouteRich 2026-10-12 — прошёл (подмена, сумма, procd, `/admin/commands` на lx.16 = 200, паспорт платформы пришёл), вскрыл §2.6. Ретрай `EBUSY` и шаг 8b на роутере ещё не прогонялись — следующий update (lx.16 → lx.17) должен показать `core started` в `update.log` и ни одной строки `TUNSETIFF` в `lxd.log` либо один `WARN … retrying`.
 - `Bfree` считает место для root; на ФС с резервом для root это верно для нашего процесса.
+
+---
+
+## Режим малого места (§2.7, issue #79) — 2026-11-23
+
+| Файл | Что |
+|------|-----|
+| `lxd/update_lowspace.go` (новый) | `runLowSpaceUpdate` (подготовка в `os.TempDir()`, gzip-копия, `exec`), `finishLowSpaceUpdate` (stop → unlink → запись → start → здоровье → откат), `serviceStopStart`, `stageRoom`, `FinishLowSpaceUpdate` |
+| `lxd/update_lowspace_test.go` (новый) | обе стороны на фейковом хосте: успех, `--low-space`, переход по tar-заголовку, сбои подготовки, четыре причины отката, неудавшийся откат, сбои до `unlink`, `--dry-run` |
+| `lxd/update.go` | `UpdateOptions.LowSpace`, `UpdateExitBroken = 3`, поля `updateEnv` (`tempDir`, `memAvailable`, `replaceProcess`, `writeBinary`); `noRoomError` и переход в режим на шагах 3 и 4; шаги 5 и 8–8b вынесены в `checkNewBinary` / `waitHealthy` (поведение обычного пути прежнее); `hostUpdateEnv` |
+| `lxd/update_unix.go`, `update_windows.go` | `memAvailable` (`/proc/meminfo`), `replaceProcess` (`syscall.Exec`); на Windows — заглушки |
+| `lxd/update_test.go` | фейковый хост получил `replaceProcess`; `TestUpdateRoomForTheNewBinary` ждёт отказ режима малого места |
+| `cmd/sing-box/cmd_lxd_lx.go` | `--low-space`; скрытые `--finish-low-space`, `--target`, `--from-version`; `Long` |
+| `.github/workflows/lx-release.yml` | шаг UPX: `qemu-user-static`, иначе `qemu-user`; имя эмулятора с суффиксом `-static` или без |
+| `docs-lx/lxd-daemon.md`, `.ru.md` | §8.6: режим малого места, код выхода 3; строка CLI |
+
+Проверка: `gofmt -l lxd cmd/sing-box` — пусто; `go vet` с тегами lx-ci для `GOOS=linux|windows|darwin`
+на `./lxd/ ./cmd/sing-box/` — чисто; `go test` с тегами lx-ci `./lxd/` (go1.26.10) — ok.
+
+Не проверено: живой прогон (TASKS п. 13); шаг UPX на раннере — до первого тега; `lx-changelog.md`
+не тронут — секция пишется под тег, в который правка войдёт.
+
+Зона конфликтов при мерже upstream: нет, апстримные файлы не тронуты.
