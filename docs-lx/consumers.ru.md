@@ -37,6 +37,7 @@
 | [cloakwire](https://github.com/markwhite7881-cpu/cloakwire) | клиент для Windows, macOS и Android | поставляет sing-box-lx рядом с Xray |
 | [GhostBox](https://github.com/Krakva1337/GhostBox) | клиент на Flutter | собирает Android-`libbox` из закреплённого релиза sing-box-lx |
 | [vladossVPN](https://github.com/valdissor1990-ui/vladossVPN) | Android-клиент (VLESS + XHTTP + REALITY) | закрепляет релиз sing-box-lx |
+| [Brod](https://github.com/dqzaexxpess/brod) | бесплатный VPN-клиент для Linux, Windows и Android: собирает бесплатные подписки и проверяет узлы в сети пользователя | встраивает ядро как Go-модуль через `replace` на скачанное дерево исходников sing-box-lx, со своими патчами поверх |
 
 **Скрипты для роутеров**
 
