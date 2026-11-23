@@ -48,6 +48,7 @@ Independent projects that ship, embed or build on this core. They are not mainta
 | [mawg](https://github.com/MarkinAlexander/mawg) | WireGuard / AmneziaWG manager for Keenetic / Netcraze and OpenWrt | installs sing-box-lx from its panel as the engine for proxy nodes |
 | [cheburnet](https://github.com/ph4n70m1984/cheburnet) | transparent proxy and routing daemon | offers sing-box-lx as a core in its installer and builds packages from a release tag |
 | [singA](https://github.com/infinjest/singA) | transparent proxy gateway for OpenWrt with a web GUI | sing-box-lx is its core; the installer takes the latest release |
+| [Forkop](https://github.com/ushan0v/forkop) | rule-based traffic routing for OpenWrt | its core, [sing-box-forkop](https://github.com/ushan0v/sing-box-forkop), carries the TrustTunnel implementation from this repository — 19 of its 26 TrustTunnel files are byte-identical to the ones here — without naming the source |
 
 **Tools and compatible implementations**
 
@@ -58,5 +59,6 @@ Independent projects that ship, embed or build on this core. They are not mainta
 | [F-Droid](https://github.com/f-droid/fdroiddata) | app catalogue | builds LxBox from source with sing-box-lx as a source library |
 | [GUI.for.Cores Plugin-Hub](https://github.com/GUI-for-Cores/Plugin-Hub) | plugin catalogue for GUI.for.SingBox | carries a plugin that installs, verifies and updates sing-box-lx from this repository's releases |
 | [ALT Linux](https://github.com/altlinux/specs) | Linux distribution | its `sing-box` package in Sisyphus is built with the sing-box-lx features `with_xhttp` and `with_awg` |
+| [ScarletDevil](https://github.com/Areral/ScarletDevil) | aggregator and validator of proxy node lists | its client guide points to [singbox-launcher](https://github.com/Leadaxe/singbox-launcher), the desktop client built on this core |
 
 Shipping this core and not listed? Open an issue with a link to the place where the dependency is pinned.

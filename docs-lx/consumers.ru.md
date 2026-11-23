@@ -48,6 +48,7 @@
 | [mawg](https://github.com/MarkinAlexander/mawg) | менеджер WireGuard / AmneziaWG для Keenetic / Netcraze и OpenWrt | ставит sing-box-lx из своей панели как движок для прокси-узлов |
 | [cheburnet](https://github.com/ph4n70m1984/cheburnet) | прозрачный прокси и демон маршрутизации | предлагает sing-box-lx как ядро в установщике и собирает пакеты из релизного тега |
 | [singA](https://github.com/infinjest/singA) | прозрачный шлюз для OpenWrt с веб-интерфейсом | sing-box-lx — его ядро; установщик берёт последний релиз |
+| [Forkop](https://github.com/ushan0v/forkop) | маршрутизация трафика по правилам для OpenWrt | его ядро [sing-box-forkop](https://github.com/ushan0v/sing-box-forkop) содержит реализацию TrustTunnel из этого репозитория — 19 из 26 файлов TrustTunnel совпадают со здешними байт в байт — без указания источника |
 
 **Инструменты и совместимые реализации**
 
@@ -58,5 +59,6 @@
 | [F-Droid](https://github.com/f-droid/fdroiddata) | каталог приложений | собирает LxBox из исходников с sing-box-lx как исходной библиотекой |
 | [GUI.for.Cores Plugin-Hub](https://github.com/GUI-for-Cores/Plugin-Hub) | каталог плагинов для GUI.for.SingBox | содержит плагин, который ставит, проверяет и обновляет sing-box-lx из релизов этого репозитория |
 | [ALT Linux](https://github.com/altlinux/specs) | дистрибутив Linux | его пакет `sing-box` в Sisyphus собирается с возможностями sing-box-lx `with_xhttp` и `with_awg` |
+| [ScarletDevil](https://github.com/Areral/ScarletDevil) | агрегатор и валидатор списков прокси-узлов | в инструкции по клиентам ссылается на [singbox-launcher](https://github.com/Leadaxe/singbox-launcher) — десктоп-клиент на этом ядре |
 
 Поставляете это ядро и вас нет в списке? Откройте issue со ссылкой на место, где закреплена зависимость.
