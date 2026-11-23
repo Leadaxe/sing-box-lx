@@ -44,13 +44,14 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, err
 	}
+	// lx:begin SPEC 161 — bound CONNECT after the underlying dial
+	detour = &httpHandshakeDialerLx{Dialer: detour}
+	// lx:end SPEC 161
 	return &Outbound{
 		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHTTP, tag, []string{N.NetworkTCP}, options.DialerOptions),
 		logger:  logger,
 		client: sHTTP.NewClient(sHTTP.Options{
-			// lx:begin SPEC 161 — bound CONNECT after the underlying dial
-			Dialer: &httpHandshakeDialerLx{Dialer: detour},
-			// lx:end SPEC 161
+			Dialer:   detour,
 			Server:   options.ServerOptions.Build(),
 			Username: options.Username,
 			Password: options.Password,
