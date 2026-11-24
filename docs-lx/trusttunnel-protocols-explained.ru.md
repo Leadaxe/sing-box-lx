@@ -450,7 +450,7 @@ NaïveProxy: тот же `CONNECT` поверх HTTP/2 или HTTP/3 с Basic-а
 
 > 🔀 Подробности и границы — в
 > [SPEC 133 R13](../SPECS/TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.ru.md). Отпечаток
-> HTTP/2 закреплён тестом `TestHTTP2Preface`, так что обновление `x/net` не
+> HTTP/2 покрыт тестом `TestHTTP2Preface`, так что обновление `x/net` не
 > поменяет его незаметно.
 
 Есть у официального клиента и опция `anti_dpi`: задержка 25 мс между
