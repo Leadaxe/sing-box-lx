@@ -26,7 +26,7 @@
 | [Hiddify](https://github.com/hiddify/hiddify-app) | мультиплатформенный клиент на собственном форке sing-box | [документация ядра Hiddify](https://github.com/hiddify/hiddify.com/blob/main/docs/core/features/index.md) называет sing-box-lx источником дополнений URL-теста, REALITY `key_share`, failover для MASQUE и режимов DNS-группы, а [utls-lx](https://github.com/Leadaxe/utls-lx) — источником браузерных TLS-отпечатков |
 | [VPN Direct](https://github.com/TT450/vpn-direct-app) | нативный клиент для Apple (iOS / macOS / tvOS) | его ядро — тонкий форк, начатый от sing-box-lx (XHTTP, AWG, MASQUE, шифрование VLESS, idle suspend) |
 | [CELERITY panel](https://github.com/ClickDevTech/CELERITY-panel) | self-hosted панель для серверов Hysteria 2 и Xray VLESS | её пробы узлов ставят и запускают sing-box-lx, собранный с `with_xhttp`, — то же ядро, что у клиентов панели |
-| [ZDT-D](https://github.com/GAME-OVER-op/ZDT-D) | модуль обхода блокировок для Android с root | запускает sing-box-lx отдельным компонентом со своим разделом API, включая аккаунт WARP / MASQUE |
+| [ZDT-D](https://github.com/GAME-OVER-op/ZDT-D) | модуль обхода ограничений для Android с root | запускает sing-box-lx отдельным компонентом со своим разделом API, включая аккаунт WARP / MASQUE |
 | [justray](https://github.com/luynrs/justray) | VPN-клиент в терминале | встраивает ядро как Go-модуль через `replace`, запинен на коммит ветки `lx` |
 | [JiajiaBox](https://github.com/weilai090624-code/JiajiaBox) | Android-клиент линии NekoBox | в уведомлениях называет sing-box-lx источником клиента VLESS Encryption |
 | [MCRF](https://github.com/vnenapravo7-source/mcrf) | клиент для Windows с портами под Android | поставляет собственную сборку sing-box-lx, запиненную на релизный тег |
