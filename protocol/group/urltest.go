@@ -412,7 +412,7 @@ type URLTestGroup struct {
 	balancer                     *balancer                 // lx: SPEC 019 v2 — round_robin pool; nil for least_test
 	groupTag                     string                    // lx: SPEC 020 — set by URLTest.Start (probe gating)
 	failover                     bool                      // lx: SPEC 116 — set by URLTest.Start
-	lastTickRunEnd               atomic.Int64              // lx: SPEC 125 — end of the last non-forced probe run, UnixNano
+	lastTickRunEnd               atomic.Int64              // lx: SPEC 125 — end of the last non-forced probe run, a monotonic rrClock reading
 	failoverSlow                 atomic.Pointer[tagSet]    // lx: SPEC 126 — confirmed-slow held tags during a failover reselect
 	reachability                 adapter.ReachabilityReporter
 	// lx: SPEC 054 — penalty failover (least_test): tag → счётчик отказов «путь
