@@ -87,6 +87,7 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/pause"
 )
 
@@ -124,6 +125,7 @@ type rrHeal struct {
 	lastByte     atomic.Int64                       // rrClock of the last first byte of any connection (stage 2)
 	lastFreeze   atomic.Int64                       // rrClock of the last freeze: it voids the failures pending before it (stage 2)
 	interrupting atomic.Int32                       // an interrupt of the group is closing its connections
+	verdicts     atomic.Int32                       // verdict probes in flight (urltest_rr_track_lx.go)
 }
 
 // rrInterrupting marks the interrupt of the group's connections (a selection
@@ -327,7 +329,7 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 	if errors.Is(ctx.Err(), context.Canceled) || !struck && errors.Is(dialErr, context.Canceled) {
 		// A client cancel is no failure; after a long wait it is a reason for a check.
 		if !lxtrace.IsProbe(ctx) {
-			s.rrHang(failed.Tag(), picked.start)
+			s.rrHang(failed.Tag(), picked.start, true)
 		}
 		return rrRetried{}, false
 	}
@@ -366,7 +368,14 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 			s.balancer.rrCountConn(member.Tag(), &s.balancer.heal)
 		}
 		failure = s.rrNewFailure(picked, member.Tag())
-		s.rrPend(member, failure, false, true)
+		// A proxy leaf failed between us and its server: the node itself is under
+		// suspicion, the check with a control decides. A direct or endpoint leaf went
+		// to the site itself: a verdict probe of the node alone settles it.
+		if s.rrSiteOnOpen(member) {
+			s.rrPend(member, failure, false, rrVerdictNow)
+		} else {
+			s.rrPend(member, failure, false, rrCheckNow)
+		}
 	}
 	// A nested urltest retries on its own (SPEC 054 or this one), so it is neither
 	// retried nor taken for the retry: two attempts per call at most. A context
@@ -401,7 +410,7 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 	if err != nil {
 		return rrRetried{}, false
 	}
-	retryCtx, dial := s.rrTrackDial(ctx, s.balancer.trackOf(retry.Tag()), retry, dialer)
+	retryCtx, dial := s.rrTrackDial(ctx, s.balancer.trackOf(retry.Tag()), retry, dialer, rrClock(time.Now()))
 	if err = open(retryCtx, dialer); err != nil {
 		retryStruck := dial.failed()
 		s.logger.ErrorContext(ctx, "round_robin retry via ", retry.Tag(), ": ", err)
@@ -412,7 +421,7 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 				s.balancer.rrCountConn(retry.Tag(), &s.balancer.heal)
 			}
 			failure.retryFailed(retry.Tag())
-			s.rrPend(retry, failure, true, false)
+			s.rrPend(retry, failure, true, rrVerdictNow)
 		}
 		return rrRetried{}, false
 	}
@@ -620,24 +629,57 @@ func (s *URLTest) rrHealCheck(member adapter.Outbound, neighbour adapter.Outboun
 // checks from reasons keep their own gap, rrHangGap, without the gap of the
 // failure checks (one check in flight is shared). An interrupt of the group, its
 // Close and a connection test are no reason; the freeze holds as for failures.
-func (s *URLTest) rrHang(member string, start time.Time) {
+//
+// gaveUp tells a client that cancelled or closed (the log says so) from a pick
+// that found the connection still waiting (rrOnPick). It reports whether a check
+// started.
+func (s *URLTest) rrHang(member string, start time.Time, gaveUp bool) bool {
 	b := s.balancer
 	if start.IsZero() || time.Since(start) < rrHangAfter || s.group.ctx.Err() != nil || b.heal.frozen() || b.heal.interrupting.Load() > 0 {
-		return
+		return false
 	}
 	node, loaded := s.outbound.Outbound(member)
 	if !loaded {
-		return
+		return false
 	}
 	if b.rrByteSince(member, rrClock(start)) {
-		return
+		return false
 	}
 	if history := s.group.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)); history != nil && (history.Time.After(start) || time.Since(history.Time) < rrHealFresh) {
-		return
+		return false
 	}
-	if s.rrStartCheck(node, true) {
+	if !s.rrStartCheck(node, true) {
+		return false
+	}
+	if gaveUp {
 		s.logger.Debug("round_robin: the client gave up on a connection through ", member, " with no byte after ", time.Since(start).Round(time.Second), "; checking the node")
+	} else {
+		s.logger.Debug("round_robin: a connection through ", member, " has been waiting for ", time.Since(start).Round(time.Second), "; checking the node")
 	}
+	return true
+}
+
+// rrSiteOnOpen reports whether the leaf of node goes to the destination itself
+// when a connection opens: a direct outbound or an endpoint (WireGuard, AWG,
+// Tailscale and other tunnels). Its failed dial says as much about the site as
+// about the node. A proxy leaf fails its dial between us and its server: the node
+// itself is under suspicion.
+func (s *URLTest) rrSiteOnOpen(node adapter.Outbound) bool {
+	tag := RealTag(node, N.NetworkTCP)
+	if tag == "" {
+		tag = node.Tag()
+	}
+	if s.ctx != nil {
+		if endpoints := service.FromContext[adapter.EndpointManager](s.ctx); endpoints != nil {
+			if _, isEndpoint := endpoints.Get(tag); isEndpoint {
+				return true
+			}
+		}
+	}
+	if leaf, loaded := s.outbound.Outbound(tag); loaded {
+		node = leaf
+	}
+	return node.Type() == C.TypeDirect
 }
 
 // rrStartCheck starts the check of the pool member node and its neighbour when the

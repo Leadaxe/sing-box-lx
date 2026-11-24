@@ -302,6 +302,7 @@ func TestRRShift_ipWithoutDomain(t *testing.T) {
 func TestRRShift_lazyNodeClosesWithoutByte(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
 	f.fb["a"].set(&f.fb["a"].silent, "blocked.example", true)
+	f.s.balancer.trackOf("a").verdictLast.Store(rrClock(time.Now())) // this test covers the byte path, not the verdict probe
 	key := f.keyOn(t, "blocked.example", 0)
 	opened, answered := f.dial(t, key, "blocked.example")
 	if !opened || answered {
@@ -505,6 +506,7 @@ func TestRRShift_confirmOnce(t *testing.T) {
 func TestRRShift_keyConfirmsPassedNodes(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
 	f.fb["a"].set(&f.fb["a"].silent, "blocked.example", true)
+	f.s.balancer.trackOf("a").verdictLast.Store(rrClock(time.Now())) // this test covers the byte path, not the verdict probe
 	key := f.keyOn(t, "blocked.example", 0)
 	f.dial(t, key, "blocked.example") // silent close on a: pending, no retry
 	waitUntil(t, func() bool { return f.s.balancer.trackOf("a").pendingN.Load() == 1 })

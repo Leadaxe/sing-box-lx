@@ -35,8 +35,8 @@ package group
 // once, and never twice within one connection. An address-problem key confirms
 // nothing, nor does a node without history (dead). At 256 connections both
 // counters halve; the dead verdict drops them. A node with at least 8 connections,
-// 3 confirmed failures and a failure share above twice the median share of the
-// other pool members with at least 8 connections goes to quarantine (no such
+// 3 confirmed failures, a failure share of at least 5% and above twice the median
+// share of the other pool members with at least 8 connections goes to quarantine (no such
 // neighbour, no quarantine): the group skips
 // its slot (slotAlive) and refills it like a dead one, the node is no candidate and
 // no control; its history stays. The scheduled run, a manual run and a network
@@ -66,6 +66,10 @@ const (
 	rrCountHalveAt = 256
 	// rrQuarantineMinFails is the least number of confirmed failures for quarantine.
 	rrQuarantineMinFails = 3
+	// rrQuarantineMinShare is the least failure share for quarantine: with no
+	// failures at the neighbours the median is 0, and "above twice the median"
+	// alone would hold for any share.
+	rrQuarantineMinShare = 0.05
 	// rrQuarantineMinConns is the least number of connections of a node whose share
 	// counts: for the quarantine candidate and for the median of its neighbours.
 	rrQuarantineMinConns = 8
@@ -327,12 +331,12 @@ func (t *rrShiftTable) creditable(key uint64, success string, credited string) [
 	return tags
 }
 
-// firstLiveFrom returns the first live slot going round from idx, idx included.
-func (b *balancer) firstLiveFrom(slots []slot, idx int) (int, bool) {
+// firstLiveFrom returns the first usable slot going round from idx, idx included.
+func (b *balancer) firstLiveFrom(slots []slot, idx int, now int64, strict bool) (int, bool) {
 	n := len(slots)
 	for step := 0; step < n; step++ {
 		i := (idx + step) % n
-		if b.alive(slots[i].tag) {
+		if b.usable(slots[i], now, strict) {
 			return i, true
 		}
 	}
@@ -431,13 +435,9 @@ type rrSlotCount struct {
 
 // rrMemory is the stage-2 state of a round_robin group; it lives in the balancer.
 type rrMemory struct {
-	shifts rrShiftTable
-	access sync.Mutex // guards counts and bytes
-	counts map[string]*rrSlotCount
-	// bytes is the rrClock of the latest start of a connection through each pool
-	// member that got its first byte (or first UDP packet): the node proved alive
-	// after that moment (rrHang). TCP and UDP; it leaves with the node's counters.
-	bytes      map[string]int64
+	shifts     rrShiftTable
+	access     sync.Mutex // guards counts
+	counts     map[string]*rrSlotCount
 	quarantine atomic.Pointer[map[string]bool]
 }
 
@@ -492,31 +492,13 @@ func (b *balancer) rrCountConn(tag string, heal *rrHeal) {
 	}
 }
 
-// rrMarkByte records the first byte of a connection through the pool member tag at
-// clock (rrClock). Under access, as the counters: the mark leaves with them.
-func (b *balancer) rrMarkByte(tag string, clock int64) {
-	m := &b.memory
-	m.access.Lock()
-	defer m.access.Unlock()
-	if !b.inPool(tag) {
-		return
-	}
-	if m.bytes == nil {
-		m.bytes = make(map[string]int64)
-	}
-	if marked, loaded := m.bytes[tag]; !loaded || clock > marked {
-		m.bytes[tag] = clock
-	}
-}
-
-// rrByteSince reports whether a connection through tag got its first byte after
-// clock (rrClock).
+// rrByteSince reports whether a connection through the pool member tag that
+// started after clock (rrClock) got its first byte: the node's proof mark
+// (rrTrack.proved, which a probe that answered moves too). A node out of the pool
+// has no mark.
 func (b *balancer) rrByteSince(tag string, clock int64) bool {
-	m := &b.memory
-	m.access.Lock()
-	defer m.access.Unlock()
-	marked, loaded := m.bytes[tag]
-	return loaded && marked > clock // clock may be negative: a start before rrClockBase
+	t := b.trackOf(tag)
+	return t != nil && t.proved.Load() > clock
 }
 
 // rrQuarantineVerdict is the outcome of one confirmed failure.
@@ -542,7 +524,7 @@ func (b *balancer) rrCountFail(tag string) rrQuarantineVerdict {
 	c.fails++
 	share, counts := m.share(tag)
 	verdict := rrQuarantineVerdict{fails: c.fails, conns: c.conns, share: share}
-	if !counts || c.fails < rrQuarantineMinFails || b.isQuarantined(tag) {
+	if !counts || c.fails < rrQuarantineMinFails || share < rrQuarantineMinShare || b.isQuarantined(tag) {
 		return verdict
 	}
 	others := make([]float64, 0, len(slots))
@@ -594,11 +576,6 @@ func (b *balancer) rrSlotsChanged() {
 			delete(m.counts, tag)
 		}
 	}
-	for tag := range m.bytes {
-		if slotIndex(slots, tag) < 0 {
-			delete(m.bytes, tag)
-		}
-	}
 }
 
 // rrResetMarks lifts the address-problem marks and the quarantine: the scheduled
@@ -614,7 +591,6 @@ func (b *balancer) rrResetMarks() {
 	if set := m.quarantine.Swap(nil); set != nil {
 		for tag := range *set {
 			delete(m.counts, tag)
-			delete(m.bytes, tag)
 		}
 	}
 }
@@ -626,7 +602,6 @@ func (b *balancer) rrForget(tag string) {
 	m.access.Lock()
 	defer m.access.Unlock()
 	delete(m.counts, tag)
-	delete(m.bytes, tag)
 }
 
 // rrCreditFail counts a confirmed failure of tag; a quarantine refills its slot. A
@@ -801,17 +776,25 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch) {
 	if s.group.ctx.Err() != nil {
 		return
 	}
-	b.heal.lastByte.Store(rrClock(time.Now()))
+	track := w.track
+	if track == nil {
+		track = b.trackOf(w.member)
+	}
 	var started int64 // no pick, no proof
 	if !w.start.IsZero() {
 		started = rrClock(w.start)
-		b.rrMarkByte(w.member, started)
+		b.heal.lastByte.Store(started)
+		if track != nil {
+			track.markProved(started) // rrByteSince; lifts a suspicion of the slot (urltest_rr_track_lx.go)
+		}
+	} else {
+		b.heal.lastByte.Store(rrClock(time.Now()))
 	}
 	if b.heal.frozen() {
 		return
 	}
-	if started != 0 && w.track != nil && w.track.pendingN.Load() > 0 {
-		s.rrSettleAlive(w.track, started)
+	if started != 0 && track != nil && track.pendingN.Load() > 0 {
+		s.rrSettleAlive(track, started)
 	}
 	var credit []string
 	if w.confirmFor != "" && !w.packet { // UDP stays out of the slot counters
@@ -829,9 +812,10 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch) {
 
 // rrSilentClose is a connection that ended without a byte although the client
 // sent something (§3.1.2): no retry — the client sent its data to the node already
-// — and the failure is pending on the node. It puts the site under suspicion, so no
-// probe starts now: a first byte through the node settles it, and if none comes by
-// the next pick of the node rrVerdictWait later, that pick starts the check.
+// — and the failure is pending on the node. It puts the site under suspicion: a
+// verdict probe of the node alone starts at once (urltest_rr_track_lx.go); its
+// answer, or a first byte through the node, settles the failure, and its silence
+// starts the check with a control.
 func (s *URLTest) rrSilentClose(w *rrConnWatch) {
 	b := s.balancer
 	if s.group.ctx.Err() != nil || b.heal.frozen() {
@@ -849,7 +833,7 @@ func (s *URLTest) rrSilentClose(w *rrConnWatch) {
 	if w.failure != nil {
 		picked.shift = w.failure.expectedShift() // the retry: the key as its failure left it
 	}
-	s.rrPend(member, s.rrNewFailure(picked, w.member), false, false)
+	s.rrPend(member, s.rrNewFailure(picked, w.member), false, rrVerdictNow)
 }
 
 // lx:end SPEC 138

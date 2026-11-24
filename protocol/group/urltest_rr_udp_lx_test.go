@@ -790,7 +790,7 @@ func TestRRHang_skipsNodeProvedAlive(t *testing.T) {
 	for _, packet := range []bool{false, true} {
 		f := newUDPFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
 		f.s.rrFirstByte(&rrConnWatch{s: f.s, member: "b", start: time.Now(), packet: packet})
-		f.s.rrHang("a", old)
+		f.s.rrHang("a", old, true)
 		if !f.checkStarted() {
 			t.Fatal("a first byte through b proves nothing about a")
 		}
@@ -798,7 +798,7 @@ func TestRRHang_skipsNodeProvedAlive(t *testing.T) {
 		f.s.balancer.heal.lastHangEnd.Store(nil)
 		f.g.history.StoreURLTestHistory("a", &adapter.URLTestHistory{Time: time.Now().Add(-time.Minute), Delay: 100})
 		f.s.rrFirstByte(&rrConnWatch{s: f.s, member: "a", start: time.Now(), packet: packet})
-		f.s.rrHang("a", old)
+		f.s.rrHang("a", old, true)
 		if f.checkStarted() {
 			t.Fatalf("a first byte through a after the start proves it alive (packet %v)", packet)
 		}
@@ -806,7 +806,7 @@ func TestRRHang_skipsNodeProvedAlive(t *testing.T) {
 	f := newUDPFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
 	start := time.Now().Add(-rrHealFresh - 10*time.Second)
 	f.g.history.StoreURLTestHistory("a", &adapter.URLTestHistory{Time: start.Add(time.Second), Delay: 100})
-	f.s.rrHang("a", start)
+	f.s.rrHang("a", start, true)
 	if f.checkStarted() {
 		t.Fatal("history written after the start proves a alive")
 	}
@@ -817,7 +817,7 @@ func TestRRHang_skipsFreshHistory(t *testing.T) {
 	f := newUDPFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
 	// Written before the connection started, but less than 30 s ago.
 	f.g.history.StoreURLTestHistory("a", &adapter.URLTestHistory{Time: time.Now().Add(-rrHealFresh / 2), Delay: 100})
-	f.s.rrHang("a", time.Now().Add(-rrHangAfter-time.Second))
+	f.s.rrHang("a", time.Now().Add(-rrHangAfter-time.Second), true)
 	if f.checkStarted() {
 		t.Fatal("fresh history drops the reason")
 	}
@@ -827,14 +827,14 @@ func TestRRHang_skipsFreshHistory(t *testing.T) {
 // alone: a failed open right after it gets its probe.
 func TestRRHang_ownGap(t *testing.T) {
 	f := newUDPFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
-	f.s.rrHang("a", time.Now().Add(-rrHangAfter-time.Second))
+	f.s.rrHang("a", time.Now().Add(-rrHangAfter-time.Second), true)
 	waitUntil(t, func() bool { return f.probes("a") == 1 && !f.s.balancer.heal.running.Load() })
 	heal := &f.s.balancer.heal
 	if heal.lastCheckEnd.Load() != nil || heal.lastHangEnd.Load() == nil {
 		t.Fatal("a check from a reason marks its own gap only")
 	}
 	f.g.history.StoreURLTestHistory("c", &adapter.URLTestHistory{Time: time.Now().Add(-time.Minute), Delay: 100})
-	f.s.rrHang("c", time.Now().Add(-rrHangAfter-time.Second))
+	f.s.rrHang("c", time.Now().Add(-rrHangAfter-time.Second), true)
 	if heal.running.Load() || f.probes("c") != 0 {
 		t.Fatal("a second reason within rrHangGap starts no check")
 	}

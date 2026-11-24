@@ -147,10 +147,7 @@ func TestRRTrack_waitingConnectionClosedByDeadVerdict(t *testing.T) {
 	}()
 
 	ageTrack(track, rrHangAfter+time.Second)
-	m := &f.s.balancer.memory
-	m.access.Lock()
-	m.bytes["a"] = rrClock(time.Now().Add(-time.Minute)) // that byte came before the wait began
-	m.access.Unlock()
+	track.proved.Store(rrClock(time.Now().Add(-time.Minute))) // that byte came before the wait began
 	f.fb["a"].dead.Store(true)
 	f.s.selectBalanced(key, N.NetworkTCP, siteAddr("mute.example"))
 	select {
@@ -356,6 +353,7 @@ func TestRRPending_proofAfterFailureOnly(t *testing.T) {
 func TestRRPending_freezeVoids(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
 	f.fb["a"].set(&f.fb["a"].silent, "blocked.example", true)
+	f.s.balancer.trackOf("a").verdictLast.Store(rrClock(time.Now())) // this test covers the byte path, not the verdict probe
 	key := f.keyOn(t, "blocked.example", 0)
 	f.dial(t, key, "blocked.example")
 	track := f.s.balancer.trackOf("a")
@@ -392,14 +390,16 @@ func TestRRPending_deadDropsPending(t *testing.T) {
 	}
 }
 
-// A close without a byte probes nothing at once; the next pick of the node after
-// rrVerdictWait with no verdict yet starts the check, and its answer settles it.
+// A close without a byte whose verdict probe cannot start (the node had one
+// lately) probes nothing at once; the next pick of the node after rrVerdictWait
+// with no verdict yet starts the check, and its answer settles it.
 func TestRRPending_deferredCheckOnNextPick(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
 	f.fb["a"].set(&f.fb["a"].silent, "blocked.example", true)
 	key := f.keyOn(t, "blocked.example", 0)
-	f.dial(t, key, "blocked.example")
 	track := f.s.balancer.trackOf("a")
+	track.verdictLast.Store(rrClock(time.Now()))
+	f.dial(t, key, "blocked.example")
 	waitUntil(t, func() bool { return track.pendingN.Load() == 1 })
 	due := track.checkAfter.Load()
 	if due == 0 || due-rrClock(time.Now()) > int64(rrVerdictWait) {
@@ -529,7 +529,10 @@ func TestRRTrack_delayMeasurementUnwatched(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	m := &f.s.balancer.memory
 	m.access.Lock()
-	counted := len(m.counts) + len(m.bytes)
+	counted := len(m.counts)
+	if f.s.balancer.trackOf("a").proved.Load() != math.MinInt64 {
+		counted++ // a proof mark from a measurement
+	}
 	m.access.Unlock()
 	if counted != 0 || f.dials("b")+f.dials("c") > 1 || f.s.balancer.trackOf("a").pendingN.Load() != 0 {
 		t.Fatalf("a measurement records nothing and gets no retry: counted %d, b %d c %d", counted, f.dials("b"), f.dials("c"))

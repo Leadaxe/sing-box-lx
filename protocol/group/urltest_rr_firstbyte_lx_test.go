@@ -87,8 +87,7 @@ func TestRRFirstByte_success(t *testing.T) {
 }
 
 // Closed by the destination with no byte after the client sent: a failure, pending
-// on the node until it proves alive or dead (no probe yet: a first byte through the
-// node settles it). Closed with nothing sent, closed by us, or half-closed by us
+// on the node; a verdict probe of the node alone settles it. Closed with nothing sent, closed by us, or half-closed by us
 // first: no failure.
 func TestRRFirstByte_silentClose(t *testing.T) {
 	cases := []struct {
@@ -137,12 +136,14 @@ func TestRRFirstByte_silentClose(t *testing.T) {
 		conn.Close()
 		server.Close()
 		time.Sleep(20 * time.Millisecond)
-		pending := conn.watch.track.pendingN.Load() == 1
-		if pending != c.failure {
-			t.Fatalf("%s: failure pending %v, want %v", c.name, pending, c.failure)
+		// A failure starts a verdict probe of a alone; a answers it and the failure
+		// is settled. The check with a control does not run.
+		waitUntil(t, func() bool { return f.s.balancer.heal.verdicts.Load() == 0 })
+		if probed := f.probes("a") == 1; probed != c.failure {
+			t.Fatalf("%s: verdict probe %v, want %v", c.name, probed, c.failure)
 		}
-		if f.s.balancer.heal.running.Load() || f.probes("a") != 0 {
-			t.Fatalf("%s: a close without a byte probes nothing at once", c.name)
+		if conn.watch.track.pendingN.Load() != 0 || f.s.balancer.heal.running.Load() || f.s.balancer.heal.lastCheckEnd.Load() != nil {
+			t.Fatalf("%s: the verdict settles it, no check", c.name)
 		}
 	}
 }
@@ -195,6 +196,39 @@ func TestRRFirstByte_copyReselectsPath(t *testing.T) {
 	handshake := N.NewHandshakeState(conn, io.Discard)
 	if handshake.Upgradable() {
 		t.Fatal("after the first byte no handshake is pending")
+	}
+}
+
+// A node with a raw TCP connection after its handshake (socks, http): the copy of
+// sing tries copyDirect (splice on Linux) again after every re-selection of its
+// path (CopyWithCounters loops back to it on ErrHandshakeCompleted). Before the
+// first byte the wrapper keeps the copy off it; after the first byte the raw
+// connection is reachable for both the direct read and the read waiter, through the
+// group's interrupt wrapper as DialContext stacks them.
+func TestRRFirstByte_directReadAfterFirstByte(t *testing.T) {
+	client, server := tcpPair(t)
+	conn, _ := watched(t, client)
+	outer := interrupt.NewGroup().NewConn(conn, false)
+	if N.SyscallAvailableForRead(outer) {
+		t.Fatal("before the first byte the copy reads through the wrapper")
+	}
+	server.Write([]byte("x"))
+	buffer := make([]byte, 8)
+	if n, _ := outer.Read(buffer); n != 1 {
+		t.Fatal("precondition: the first byte")
+	}
+	if !N.SyscallAvailableForRead(outer) {
+		t.Fatal("after the first byte the direct read (splice) is available")
+	}
+	if _, raw := N.SyscallConnForRead(outer); raw == nil {
+		t.Fatal("after the first byte the raw connection is reached through the wrappers")
+	}
+	if N.SyscallAvailableForWrite(outer) {
+		t.Fatal("the upload path waits for the client's first write")
+	}
+	outer.Write([]byte("hi"))
+	if !N.SyscallAvailableForWrite(outer) {
+		t.Fatal("once the client has written the upload path is direct too")
 	}
 }
 
@@ -345,6 +379,9 @@ func TestRRFirstByte_copyReselectsWritePath(t *testing.T) {
 // group still closes the connection — a close by us, not a failure.
 func TestRRFirstByte_directNotWrappedInterruptWorks(t *testing.T) {
 	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
+	for _, node := range f.nodes {
+		node.direct = true
+	}
 	f.s.balancer.stickyHash = nil
 	conn, err := f.s.DialContext(context.Background(), N.NetworkTCP, siteAddr("example.org"))
 	if err != nil {

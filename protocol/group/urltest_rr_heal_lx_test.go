@@ -43,9 +43,17 @@ type healNode struct {
 	slow     time.Duration
 	probes   atomic.Int32
 	dials    atomic.Int32
+	direct   bool
 }
 
-func (n *healNode) Type() string           { return C.TypeDirect }
+// Type is a proxy by default (its failed open puts the node itself under
+// suspicion); direct makes it a direct outbound.
+func (n *healNode) Type() string {
+	if n.direct {
+		return C.TypeDirect
+	}
+	return C.TypeSOCKS
+}
 func (n *healNode) Tag() string            { return n.tag }
 func (n *healNode) Network() []string      { return []string{N.NetworkTCP} }
 func (n *healNode) Dependencies() []string { return nil }
@@ -84,7 +92,7 @@ type healFixture struct {
 
 // newHealFixture builds a round_robin group over the tags with the given pool. Every
 // node starts alive with stale history (probed when checked); pool_tolerance as given.
-func newHealFixture(t *testing.T, tags []string, pool []string, poolTolerance uint16) *healFixture {
+func newHealFixture(t testing.TB, tags []string, pool []string, poolTolerance uint16) *healFixture {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -152,7 +160,10 @@ func (s *URLTest) testPick(ctx context.Context, destination M.Socksaddr, start t
 func (f *healFixture) waitCheck(t *testing.T) {
 	t.Helper()
 	waitUntil(t, func() bool {
-		return !f.s.balancer.heal.running.Load()
+		return !f.s.balancer.heal.running.Load() && f.s.balancer.heal.verdicts.Load() == 0
+	})
+	waitUntil(t, func() bool { // a silent verdict probe hands over to the check
+		return !f.s.balancer.heal.running.Load() && f.s.balancer.heal.verdicts.Load() == 0
 	})
 	f.s.balancer.heal.lastCheckEnd.Store(nil)
 	f.s.balancer.heal.lastHangEnd.Store(nil)

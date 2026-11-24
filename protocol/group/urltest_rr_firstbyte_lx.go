@@ -57,6 +57,8 @@ package group
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net"
 	"sync/atomic"
 	"time"
@@ -116,46 +118,53 @@ func (s *URLTest) rrWatch(ctx context.Context, network string, dialed adapter.Ou
 		picked.dial.release()
 		return conn
 	}
-	watch, direct := s.rrNewWatch(ctx, dialed, picked, confirmFor, failure, packet)
-	if watch == nil {
+	watch, ok, direct := s.rrNewWatch(ctx, dialed, picked, confirmFor, failure, packet)
+	if !ok {
 		picked.dial.release() // not reached for a tracked dial (rrNewWatch); kept for every path
 		return conn
 	}
 	if direct {
 		if !packet {
-			s.rrFirstByte(watch)
+			s.rrFirstByte(&watch)
 		}
 		return conn
 	}
-	wrapped := newRRFirstByteConn(conn, watch)
+	wrapped := newRRFirstByteConn(conn, &watch)
 	wrapped.dial = picked.dial
 	return wrapped
 }
 
-// rrNewWatch counts a TCP connection opened through dialed and returns its watch; nil
-// when there is nothing to watch: a connection test, a closed group, a pick outside
+// rrNewWatch counts a TCP connection opened through dialed and returns its watch; ok
+// is false when there is nothing to watch: a connection test, a closed group, a pick outside
 // the pool or a nested urltest. direct reports a direct leaf, which is not wrapped:
 // for TCP its open is the first byte, for UDP the open proves nothing. A UDP watch
 // carries no key: UDP shifts none (§3.8). A tracked dial (picked.dial) is always
 // watched: its wrapper releases the dial's context on the close.
-func (s *URLTest) rrNewWatch(ctx context.Context, dialed adapter.Outbound, picked rrPick, confirmFor string, failure *rrFailure, packet bool) (*rrConnWatch, bool) {
+// The watch is a value: the wrapper holds it, so watching allocates nothing apart.
+func (s *URLTest) rrNewWatch(ctx context.Context, dialed adapter.Outbound, picked rrPick, confirmFor string, failure *rrFailure, packet bool) (rrConnWatch, bool, bool) {
 	tracked := picked.dial != nil
-	if !tracked && (rrUnwatched(ctx) || s.group.ctx.Err() != nil) {
-		return nil, false
-	}
 	member := dialed.Tag() // a chain hop carries the tag of its member
-	track := s.balancer.trackOf(member)
-	if !tracked && !s.balancer.inPool(member) {
-		return nil, false // a fallback pick outside the pool (cold start)
-	}
-	node, loaded := s.outbound.Outbound(member)
-	if !tracked && (!loaded || rrNestedURLTest(node)) {
-		return nil, false
+	var track *rrTrack
+	if tracked {
+		// The dial of a pool member tracked at its pick: nothing to look up again.
+		track = picked.dial.track
+	} else {
+		if rrUnwatched(ctx) || s.group.ctx.Err() != nil {
+			return rrConnWatch{}, false, false
+		}
+		track = s.balancer.trackOf(member)
+		if track == nil {
+			return rrConnWatch{}, false, false // a fallback pick outside the pool (cold start)
+		}
+		node, loaded := s.outbound.Outbound(member)
+		if !loaded || rrNestedURLTest(node) {
+			return rrConnWatch{}, false, false
+		}
 	}
 	if !packet {
 		s.balancer.rrCountConn(member, &s.balancer.heal) // UDP stays out of the slot counters
 	}
-	watch := &rrConnWatch{
+	watch := rrConnWatch{
 		s:          s,
 		member:     member,
 		track:      track,
@@ -171,7 +180,7 @@ func (s *URLTest) rrNewWatch(ctx context.Context, dialed adapter.Outbound, picke
 	}
 	// A tracked dial is wrapped even if its selector turned to a direct leaf since
 	// the dial started: the wrapper releases the dial's context on the close.
-	return watch, !tracked && rrDirectLeaf(dialed)
+	return watch, true, !tracked && rrDirectLeaf(dialed)
 }
 
 // rrDirectLeaf reports whether node, unwrapped through selectors, is a direct
@@ -202,21 +211,17 @@ const (
 // rrFirstByteConn watches a connection for its first byte (see the file header).
 type rrFirstByteConn struct {
 	net.Conn
-	reader N.ExtendedReader
-	writer N.ExtendedWriter
-	state  atomic.Uint32
-	watch  *rrConnWatch
-	entry  rrTrackEntry // in watch.track.waits while the client waits for the first byte
-	dial   *rrDial      // the tracked dial of the connection; its context is released on the close
+	state atomic.Uint32
+	watch *rrConnWatch // = &held
+	held  rrConnWatch
+	entry rrTrackEntry // in watch.track.waits while the client waits for the first byte
+	dial  *rrDial      // the tracked dial of the connection; its context is released on the close
 }
 
 func newRRFirstByteConn(conn net.Conn, watch *rrConnWatch) *rrFirstByteConn {
-	return &rrFirstByteConn{
-		Conn:   conn,
-		reader: bufio.NewExtendedReader(conn),
-		writer: bufio.NewExtendedWriter(conn),
-		watch:  watch,
-	}
+	c := &rrFirstByteConn{Conn: conn, held: *watch}
+	c.watch = &c.held
+	return c
 }
 
 func (c *rrFirstByteConn) set(bit uint32) uint32 {
@@ -288,11 +293,36 @@ func (c *rrFirstByteConn) Read(p []byte) (int, error) {
 
 func (c *rrFirstByteConn) ReadBuffer(buffer *buf.Buffer) error {
 	if c.state.Load()&rrStateGotByte != 0 {
-		return c.reader.ReadBuffer(buffer)
+		return c.readBuffer(buffer)
 	}
 	start := buffer.Len()
-	err := c.reader.ReadBuffer(buffer)
+	err := c.readBuffer(buffer)
 	c.observe(buffer.Len()-start, err)
+	return err
+}
+
+// readBuffer is bufio.NewExtendedReader(c.Conn).ReadBuffer without the adapter's
+// allocation.
+func (c *rrFirstByteConn) readBuffer(buffer *buf.Buffer) error {
+	if reader, isExtended := c.Conn.(N.ExtendedReader); isExtended {
+		return reader.ReadBuffer(buffer)
+	}
+	n, err := c.Conn.Read(buffer.FreeBytes())
+	buffer.Truncate(n)
+	if n > 0 && errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
+}
+
+// writeBuffer is bufio.NewExtendedWriter(c.Conn).WriteBuffer without the adapter's
+// allocation.
+func (c *rrFirstByteConn) writeBuffer(buffer *buf.Buffer) error {
+	if writer, isExtended := c.Conn.(N.ExtendedWriter); isExtended {
+		return writer.WriteBuffer(buffer)
+	}
+	defer buffer.Release()
+	_, err := c.Conn.Write(buffer.Bytes())
 	return err
 }
 
@@ -323,7 +353,7 @@ func (c *rrFirstByteConn) WriteBuffer(buffer *buf.Buffer) error {
 			c.wrote()
 		}
 	}
-	return c.writer.WriteBuffer(buffer)
+	return c.writeBuffer(buffer)
 }
 
 // LxClientFinished is the client's end of stream (route/conn.go tells it when the
@@ -359,7 +389,7 @@ func (c *rrFirstByteConn) Close() error {
 	old := c.set(rrStateClosed)
 	c.untrack()
 	if old&(rrStateClosed|rrStateDone|rrStateGotByte|rrStateClientEOF) == 0 && old&rrStateWrote != 0 {
-		c.watch.s.rrHang(c.watch.member, c.watch.start)
+		c.watch.s.rrHang(c.watch.member, c.watch.start, true)
 	}
 	err := c.Conn.Close()
 	c.dial.release()

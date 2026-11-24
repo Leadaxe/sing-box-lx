@@ -26,7 +26,7 @@ package group
 //     (rrInterrupting), its Close and a connection test are no reason. A packet
 //     counts as sent once its write succeeded.
 //   - The first packet received is the first byte for the "network alive" mark and
-//     the node's own mark (rrMarkByte). UDP stays out of the slot counters and the
+//     the node's proof mark (rrTrack.proved). UDP stays out of the slot counters and the
 //     quarantine: no flow counted, no failure confirmed by a UDP retry.
 //
 // The watch is a thin wrapper of the node's packet connection, under the group's
@@ -98,12 +98,12 @@ func (s *URLTest) rrWatchPacket(ctx context.Context, dialed adapter.Outbound, co
 
 func (s *URLTest) rrWatchPacketFor(ctx context.Context, dialed adapter.Outbound, conn net.PacketConn, picked rrPick, confirmFor string, failure *rrFailure) net.PacketConn {
 	picked.dial.opened()
-	watch, direct := s.rrNewWatch(ctx, dialed, picked, confirmFor, failure, true)
-	if watch == nil || direct {
+	watch, ok, direct := s.rrNewWatch(ctx, dialed, picked, confirmFor, failure, true)
+	if !ok || direct {
 		picked.dial.release() // not reached for a tracked open (rrNewWatch); kept for every path
 		return conn
 	}
-	wrapped := newRRFirstPacketConn(conn, watch)
+	wrapped := newRRFirstPacketConn(conn, &watch)
 	wrapped.dial = picked.dial
 	return wrapped
 }
@@ -112,13 +112,16 @@ func (s *URLTest) rrWatchPacketFor(ctx context.Context, dialed adapter.Outbound,
 type rrFirstPacketConn struct {
 	N.NetPacketConn
 	state atomic.Uint32 // rrStateWrote, rrStateGotByte, rrStateClosed, rrStateTracked
-	watch *rrConnWatch
+	watch *rrConnWatch  // = &held
+	held  rrConnWatch
 	entry rrTrackEntry // in watch.track.waits from the first packet sent to the first one received
 	dial  *rrDial      // the tracked open of the flow; its context is released on the close
 }
 
 func newRRFirstPacketConn(conn net.PacketConn, watch *rrConnWatch) *rrFirstPacketConn {
-	return &rrFirstPacketConn{NetPacketConn: bufio.NewPacketConn(conn), watch: watch}
+	c := &rrFirstPacketConn{NetPacketConn: bufio.NewPacketConn(conn), held: *watch}
+	c.watch = &c.held
+	return c
 }
 
 func (c *rrFirstPacketConn) set(bit uint32) uint32 {
@@ -212,7 +215,7 @@ func (c *rrFirstPacketConn) Close() error {
 	old := c.set(rrStateClosed)
 	c.untrack()
 	if old&(rrStateClosed|rrStateGotByte) == 0 && old&rrStateWrote != 0 {
-		c.watch.s.rrHang(c.watch.member, c.watch.start)
+		c.watch.s.rrHang(c.watch.member, c.watch.start, true)
 	}
 	err := c.NetPacketConn.Close()
 	c.dial.release()
