@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/lxhandshake"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/buf"
@@ -82,6 +83,10 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	// lx:begin handshake-timeout — bound the upgrade exchange by ctx and C.TCPTimeout
+	finishHandshake := lxhandshake.Guard(ctx, conn)
+	defer finishHandshake()
+	// lx:end handshake-timeout
 	request := &http.Request{
 		Method: http.MethodGet,
 		URL:    &c.requestURL,
