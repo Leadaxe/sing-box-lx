@@ -155,6 +155,7 @@ in the delta: new files → `// lx:` edits → `go.mod`/submodules → tag wirin
 - The fork's specs and documentation: Russian. Features for an outside audience (example:
   TrustTunnel) are written in English with a Russian `.ru.md` copy next to them; both are
   edited together.
+- How to write texts: the [L×Box editorial policy](https://github.com/Leadaxe/LxBox/blob/main/docs/EDITORIAL_POLICY.ru.md) (in Russian), shared by the app and the core.
 
 ## 7. What will not happen here
 
