@@ -60,6 +60,9 @@ type InboundContext struct {
 	RouteOutbound string
 	OutboundChain []Outbound
 
+	// lx: SPEC 138 — the node a per-connection group picked, shared by every copy
+	ActualOutboundLx *ActualOutboundLx
+
 	// sniffer
 
 	Protocol      string

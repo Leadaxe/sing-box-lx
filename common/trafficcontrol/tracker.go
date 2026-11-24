@@ -35,6 +35,7 @@ type TrackerMetadata struct {
 	Rule         adapter.Rule
 	Outbound     string
 	OutboundType string
+	actualLx     *actualViewLx // lx: SPEC 138 — the node a per-connection group picked, see Metadata
 }
 
 type Tracker interface {
@@ -91,6 +92,7 @@ func (m *Manager) newTrackerMetadata(metadata adapter.InboundContext, matchedRul
 		Rule:         matchedRule,
 		Outbound:     outbound.Tag(),
 		OutboundType: outbound.Type(),
+		actualLx:     newActualViewLx(metadata), // lx: SPEC 138
 	}
 }
 
@@ -101,7 +103,7 @@ type connTracker struct {
 }
 
 func (t *connTracker) Metadata() *TrackerMetadata {
-	return &t.metadata
+	return t.manager.actualLx(&t.metadata) // lx: SPEC 138 — the picked node once known
 }
 
 func (t *connTracker) Close() error {
@@ -133,7 +135,7 @@ type flowTracker struct {
 }
 
 func (t *flowTracker) Metadata() *TrackerMetadata {
-	return &t.metadata
+	return t.manager.actualLx(&t.metadata) // lx: SPEC 138 — the picked node once known
 }
 
 func (t *flowTracker) AttachFlow(handle tun.FlowHandle) {
@@ -173,7 +175,7 @@ type packetConnTracker struct {
 }
 
 func (t *packetConnTracker) Metadata() *TrackerMetadata {
-	return &t.metadata
+	return t.manager.actualLx(&t.metadata) // lx: SPEC 138 — the picked node once known
 }
 
 func (t *packetConnTracker) Close() error {

@@ -122,6 +122,7 @@ func (s *URLTest) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 				invalidateReachability(ctx)
 			}
 			s.balancer.alive = s.slotAlive // lx: SPEC 138 — pick skips slots that failed their last probe
+			group.rrWatchWake()            // lx: SPEC 138 — a wake freezes the self-heal
 		}
 		s.group = group
 	case adapter.StartStateStarted:
@@ -261,6 +262,7 @@ func (s *URLTest) PerformUpdateCheck() {
 }
 
 func (s *URLTest) InterfaceUpdated(ctx context.Context) {
+	s.rrNetworkChanged() // lx: SPEC 138 — a network change freezes the self-heal, run or not
 	group := s.group
 	if group == nil {
 		return
@@ -274,6 +276,7 @@ func (s *URLTest) InterfaceUpdated(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		defer s.rrNetworkRun()() // lx: SPEC 138 — the self-heal is frozen for the run
 		group.CheckOutbounds(ctx, true)
 	}()
 }
@@ -317,9 +320,11 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
-	// lx: SPEC 019 v2 — in round_robin a dial error must NOT touch the pool: the cause is
-	// unknown (dead node vs. dead destination vs. local network drop). Only the health-check
-	// changes pool membership. least_test keeps the upstream behaviour (drop the history).
+	// lx: SPEC 019 v2 / SPEC 138 — in round_robin a dial error by itself does not touch the
+	// pool or the history: the cause is unknown (dead node vs. dead destination vs. local
+	// network drop). It is retried once through the next live slot and starts a background
+	// check of the node; only the check's verdict and the health-check change history and
+	// pool membership. least_test keeps the upstream behaviour (drop the history).
 	if s.balancer == nil {
 		s.group.deleteHistoryOnDialError(ctx, outbound.Tag()) // lx: SPEC 139 — a probe keeps the history
 		// lx: SPEC 054 — «путь мёртв» → штраф + один fallback-дайл; успех
@@ -328,6 +333,8 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 			s.logger.InfoContext(ctx, "lx penalty: failover to ", fallback.Tag())
 			return s.group.interruptGroup.NewConn(fbConn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 		}
+	} else if retryConn, ok := s.rrHealDial(ctx, network, destination, outbound, err); ok { // lx: SPEC 138
+		return s.group.interruptGroup.NewConn(retryConn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	return nil, err
 }
@@ -356,7 +363,9 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 		return s.group.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
-	// lx: SPEC 019 v2 — round_robin dial error leaves the pool untouched (see DialContext).
+	// lx: SPEC 019 v2 / SPEC 138 — a round_robin UDP open error leaves history and the pool
+	// untouched and gets no retry and no check: stage 1 of the self-heal covers TCP only, UDP
+	// is a later stage (SPEC 138 §3.8).
 	if s.balancer == nil {
 		s.group.deleteHistoryOnDialError(ctx, outbound.Tag()) // lx: SPEC 139 — a probe keeps the history
 	}
