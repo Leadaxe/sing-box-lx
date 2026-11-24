@@ -242,9 +242,9 @@ func (s *URLTest) CheckOutbounds() {
 // selectBalanced picks an outbound per-connection in round_robin mode from the balancer's
 // fixed-size pool. lx: SPEC 019 v2. fallback (Select's outbounds[0]) covers the cold-start
 // window before the first health-check fills the pool. Returns nil only when nothing usable.
-func (s *URLTest) selectBalanced(ctx context.Context, network string, destination M.Socksaddr) adapter.Outbound {
+func (s *URLTest) selectBalanced(ctx context.Context, network string, destination M.Socksaddr) (adapter.Outbound, rrPick) {
 	fallback, _ := s.group.Select(network)
-	selected := s.balancer.pick(ctx, destination, fallback, func(tag string) adapter.Outbound {
+	selected, picked := s.balancer.pickKeyed(ctx, destination, fallback, func(tag string) adapter.Outbound { // lx: SPEC 138 — the pick hands its key to the dial
 		node, _ := s.outbound.Outbound(tag)
 		if node != nil && !common.Contains(node.Network(), network) {
 			return nil
@@ -254,7 +254,7 @@ func (s *URLTest) selectBalanced(ctx context.Context, network string, destinatio
 	if selected != nil {
 		s.group.balancedPicked(ctx, selected) // lx: SPEC 139 — group stage; a probe leaves Now() alone
 	}
-	return selected
+	return selected, picked
 }
 
 func (s *URLTest) PerformUpdateCheck() {
@@ -284,10 +284,11 @@ func (s *URLTest) InterfaceUpdated(ctx context.Context) {
 func (s *URLTest) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	s.group.Touch()
 	var outbound adapter.Outbound
+	var picked rrPick // lx: SPEC 138 — the round_robin pick: key, shift, start of the connection
 	if s.balancer != nil {
 		switch N.NetworkName(network) {
 		case N.NetworkTCP, N.NetworkUDP:
-			outbound = s.selectBalanced(ctx, network, destination)
+			outbound, picked = s.selectBalanced(ctx, network, destination)
 		default:
 			return nil, E.Extend(N.ErrUnknownNetwork, network)
 		}
@@ -317,6 +318,7 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 		if s.balancer == nil {
 			s.group.penaltyResetOnDial(ctx, RealTag(outbound, N.NetworkTCP)) // lx: SPEC 054 — успех = доказательство жизни; SPEC 139 — not for a probe
 		}
+		conn = s.rrWatchConn(ctx, network, outbound, conn, picked) // lx: SPEC 138 — round_robin watches for the first byte
 		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
@@ -333,7 +335,7 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 			s.logger.InfoContext(ctx, "lx penalty: failover to ", fallback.Tag())
 			return s.group.interruptGroup.NewConn(fbConn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 		}
-	} else if retryConn, ok := s.rrHealDial(ctx, network, destination, outbound, err); ok { // lx: SPEC 138
+	} else if retryConn, ok := s.rrHealDial(ctx, network, destination, outbound, err, picked); ok { // lx: SPEC 138
 		return s.group.interruptGroup.NewConn(retryConn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	return nil, err
@@ -343,7 +345,7 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 	s.group.Touch()
 	var outbound adapter.Outbound
 	if s.balancer != nil {
-		outbound = s.selectBalanced(ctx, N.NetworkUDP, destination)
+		outbound, _ = s.selectBalanced(ctx, N.NetworkUDP, destination)
 	} else {
 		// lx: SPEC 054 — общий penalty-aware выбор (штрафы копит только TCP,
 		// UDP ими пользуется).
@@ -789,6 +791,7 @@ func (g *URLTestGroup) performSelectionUpdate(reselect bool) {
 		selected = true
 	}
 	if updated {
+		defer g.rrInterrupting()() // lx: SPEC 138 — the connections the interrupt closes are no client giving up
 		g.interruptGroup.Interrupt(g.interruptExternalConnections)
 	}
 	if changed {
@@ -818,6 +821,7 @@ func (g *URLTestGroup) poolSize() int {
 // than needed to keep the pool full of live nodes, then applies the new slot occupancy.
 // Returns tag->delay for every node it tested live (for the URLTest map / UI).
 func (g *URLTestGroup) balancePool(ctx context.Context) map[string]uint16 {
+	g.balancer.rrResetMarks() // lx: SPEC 138 — the scheduled run lifts the address-problem marks and the quarantine
 	size := g.poolSize()
 	if size == 0 {
 		return map[string]uint16{}
@@ -957,6 +961,7 @@ func (g *URLTestGroup) balancePoolTolerant(ctx context.Context, size int) map[st
 // in their slots (first-live discipline — a manual test must not reshuffle a stable pool and
 // break sticky bindings); with tolerance > 0 it re-ranks by delay like the steady-state path.
 func (g *URLTestGroup) rebuildPool() {
+	g.balancer.rrResetMarks() // lx: SPEC 138 — a manual run or the run after a network change lifts the marks and the quarantine
 	size := g.poolSize()
 	if size == 0 {
 		return
