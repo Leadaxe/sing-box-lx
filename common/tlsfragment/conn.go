@@ -29,7 +29,7 @@ func NewConn(conn net.Conn, ctx context.Context, splitPacket bool, splitRecord b
 	if fallbackDelay == 0 {
 		fallbackDelay = C.TLSFragmentFallbackDelay
 	}
-	tcpConn, _ := N.UnwrapReader(conn).(*net.TCPConn)
+	tcpConn, _ := N.UnwrapWriter(conn).(*net.TCPConn)
 	return &Conn{
 		Conn:          conn,
 		tcpConn:       tcpConn,
