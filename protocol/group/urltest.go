@@ -121,8 +121,8 @@ func (s *URLTest) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			s.balancer.onChange = func() {
 				invalidateReachability(ctx)
 			}
-			s.balancer.alive = s.slotAlive // lx: SPEC 138 — pick skips slots that failed their last probe
-			group.rrWatchWake()            // lx: SPEC 138 — a wake freezes the self-heal
+			s.rrWire()          // lx: SPEC 138 — pick skips slots that failed their last probe and watches unfinished connections
+			group.rrWatchWake() // lx: SPEC 138 — a wake freezes the self-heal
 		}
 		s.group = group
 	case adapter.StartStateStarted:
@@ -312,7 +312,7 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 	if err != nil {
 		return nil, err
 	}
-	conn, err := outbound.DialContext(ctx, network, destination)
+	conn, err := outbound.DialContext(s.rrDialStart(ctx, outbound, &picked), network, destination) // lx: SPEC 138 — a round_robin dial in flight is tracked; the dead verdict cancels it
 	// lx:end chain
 	if err == nil {
 		if s.balancer == nil {
@@ -360,7 +360,7 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 	if err != nil {
 		return nil, err
 	}
-	conn, err := outbound.ListenPacket(ctx, destination)
+	conn, err := outbound.ListenPacket(s.rrDialStart(ctx, outbound, &picked), destination) // lx: SPEC 138 — a round_robin open in flight is tracked; the dead verdict cancels it
 	// lx:end chain
 	if err == nil {
 		conn = s.rrWatchPacket(ctx, outbound, conn, picked) // lx: SPEC 138 — round_robin watches for the first packet

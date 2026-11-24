@@ -302,6 +302,7 @@ func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn,
 	} else {
 		destinationWriter, _ := N.UnwrapCountWriter(destination, nil)
 		duplexDst, isDuplex := N.UnwrapWriter(destinationWriter).(N.WriteCloser)
+		lxClientFinished(destination, isDuplex) // lx: SPEC 138 — a round_robin watch on the write path learns the client finished sending
 		if isDuplex {
 			err = duplexDst.CloseWrite()
 			if err != nil {

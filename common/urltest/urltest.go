@@ -115,6 +115,7 @@ func urlTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err e
 	}
 
 	start := time.Now()
+	ctx = WithMeasureLx(ctx) // lx: SPEC 138 — a round_robin group leaves the measurement out of its self-heal
 	instance, err := detour.DialContext(ctx, "tcp", M.ParseSocksaddrHostPortStr(hostname, port))
 	if err != nil {
 		return
