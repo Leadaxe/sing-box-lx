@@ -112,8 +112,43 @@ A dead pool node keeps its slot until a live replacement is found, so the pool n
 but while the pool has a live node, new connections skip the slot of a node that failed its
 last health-check: with stickiness the keys of dead slots spread evenly over the live slots
 and come back once the node answers again, without stickiness the rotation runs over the
-live slots. When every slot is dead, selection is unchanged. A dial error never changes the
-pool (its cause is unknowable from one failure); only the periodic health-check does.
+live slots. When every slot is dead, selection is unchanged. A quarantined node (below) is
+skipped the same way.
+
+**Self-heal on a failed connection** (SPEC 138). One failed connection does not tell a dead node
+from a destination that is unreachable through it or from a local network outage, so a failure
+by itself changes neither the pool nor the history. Instead:
+
+- A connection that does not open through a pool node is retried once through the next live slot,
+  so the application keeps its connection. A connection that closes without a single byte from the
+  destination after the client sent something is a failure too, but it is not retried (the
+  application already sent its data).
+- The failure waits for a verdict on its node. When the node proves alive after the failure — a
+  first byte on a connection started later, or an answer to a probe started later — the
+  destination is the problem: with stickiness the sticky key moves to the next slot, and a key that
+  failed through every node of the pool is marked as an address problem and returns to its own
+  slot until the next run.
+- The group probes the node and a control node (the next slot) with the group's `url`, without
+  writing history. The node is silent and the control answers → the node is dead: its history is
+  dropped, its connections still waiting for it are closed, and its slot gets a replacement from
+  outside the pool at once, without waiting for `interval`. Nobody answers → the local network is
+  down: nothing changes, and the self-heal freezes for 15 s.
+- A node that accepts connections and stays silent gives no failure; a connection hanging without
+  an answer for more than 5 s triggers the same check.
+- A node that answers probes but fails noticeably more connections than the rest of the pool
+  (more than twice the pool median, from 8 connections and 3 confirmed failures) is quarantined:
+  skipped and replaced until the next scheduled run, manual run or network change. Its history
+  stays.
+- The self-heal also freezes for 15 s on a device wake and on a network change. It runs at most
+  one check at a time, with at least 15 s between checks, so a burst of failures costs one check.
+- UDP uses the same slots; a failed UDP open is retried and checked as TCP, a flow without an
+  answer only triggers a check, and UDP never moves sticky keys.
+
+There are no config keys for any of this. The state is visible with
+`sing-box api group pool <tag>` (with `with_lx_command`) and the daemon's `GetPool`: per slot the
+delay, `live`/`dead`/`quarantined`, connections and confirmed failures; per group the number of
+shifted and address-problem keys and the freeze. The connection list shows the node each
+connection actually went through, including the retry.
 
 Liveness is the node's shared URL test history. A manual delay test with a short timeout
 (Clash API `/proxies/{name}/delay`, the daemon's `URLTestOutbound`) that does not complete,

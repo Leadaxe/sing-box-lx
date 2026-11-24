@@ -11,8 +11,9 @@
 | История | [HISTORY.md](HISTORY.md) |
 | Связанные | [SPEC 052](../052-NETSTACK_CONNECT_DEADLINE/SPEC.md) (поставщик ошибок: 15s-дедлайн вместо 127s тишины), [RESEARCH 052](../052-NETSTACK_CONNECT_DEADLINE/RESEARCH.md) (ловушки S2/S6, прилипание urltest), SPEC 019 (режимы), [SPEC 116](../116-URLTEST_FAILOVER_MODE/SPEC.md) (режим failover), SPEC 020 (reachability/wake) |
 
-**Touches:** только least_test. round_robin-пул (SPEC 019 v2) не затронут — его
-инвариант «ошибка дайла не трогает пул» в силе. Апстрим-семантика удаления
+**Touches:** только least_test (и `failover`, SPEC 116). round_robin-пул (SPEC 019 v2)
+штрафами не пользуется: у него своё самовосстановление по отказам
+([SPEC 138](../138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md) §3). Апстрим-семантика удаления
 history при ошибке дайла сохранена.
 
 ## Why

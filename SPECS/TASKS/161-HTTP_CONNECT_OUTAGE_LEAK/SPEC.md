@@ -4,10 +4,11 @@
 
 | Поле | Значение |
 |------|----------|
-| Тип | B (bug) — неограниченное ожидание ответа HTTP CONNECT при отказе прокси |
-| Статус | I (implemented) — тесты под `-race`, сборки и стенд со Squid зелёные ([PR #73](https://github.com/Leadaxe/sing-box-lx/pull/73)) |
-| Ветка | `lx` |
-| Источник | [issue #74](https://github.com/Leadaxe/sing-box-lx/issues/74), [PR #73](https://github.com/Leadaxe/sing-box-lx/pull/73). Воспроизведение на официальном `v1.14.4-lx.33` |
+| Тип | B (bug) — неограниченное ожидание рукопожатия прокси-узла (HTTP CONNECT, SOCKS, httpupgrade, ShadowTLS v3), когда сервер принял TCP и замолчал |
+| Статус | I (implemented) — HTTP CONNECT: тесты под `-race`, сборки и стенд со Squid зелёные ([PR #73](https://github.com/Leadaxe/sing-box-lx/pull/73)), в `v1.14.4-lx.36`. SOCKS, httpupgrade, ShadowTLS v3: тесты на loopback-серверах (в том числе `-race`), в ветке `lx-spec138-rr-self-heal`, в lx-ci не включены |
+| Ветка | `lx` (HTTP CONNECT); `lx-spec138-rr-self-heal` (остальные рукопожатия) |
+| История | [HISTORY.md](HISTORY.md) |
+| Источник | [issue #74](https://github.com/Leadaxe/sing-box-lx/issues/74), [PR #73](https://github.com/Leadaxe/sing-box-lx/pull/73). Воспроизведение на официальном `v1.14.4-lx.33`. Остальные рукопожатия — стенд [SPEC 138](../138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md) на NanoPi: socks-сервер узла под `kill -STOP` держал открытие соединения без предела |
 
 ## Проблема и границы доказательства
 
@@ -80,6 +81,60 @@ HTTP-прокси принимает TCP и CONNECT, но не отвечает.
 Сборки выполняются с закреплёнными в HEAD сабмодулями, без пользовательских
 изменений их рабочих копий. Живой VPN и бинарь бандла не затрагиваются.
 
+## Рукопожатия других прокси-узлов
+
+Тот же класс дефекта есть у каждого outbound'а, который после установки TCP с сервером узла
+синхронно ведёт обмен внутри `DialContext`: роутер дозванивается без дедлайна, уход клиента
+дозвон не отменяет, и сервер, принявший сокет и замолчавший, держит дозвон бесконечно. Для
+самовосстановления `round_robin` (SPEC 138) это ещё и потерянный сигнал: открытие не кончается ни
+успехом, ни ошибкой.
+
+Общий пакет — `common/lxhandshake`, две формы, обе — обёртки вокруг библиотечного клиента, без
+копий его кода:
+
+- **`Context` + `Dialer`** — для клиентов, которые уже слушают контекст во время обмена (SOCKS-клиент
+  `sing`). Обёртка дайлера дозванивается с исходным контекстом вызывающего и после успешного
+  TCP-дозвона запускает таймер, который отменяет контекст обмена. Нижележащий дозвон и сессия
+  `detour` нового дедлайна не получают. Вызов без этого контекста проходит как без обёртки.
+- **`Guard`** — для обменов, которые контекста не принимают: дедлайн на соединении (15 с или более
+  ранний дедлайн вызывающего) плюс закрытие соединения при отмене вызывающего и, как страховка для
+  соединений, где дедлайн не работает, через секунду после дедлайна. Всё снимается, как только обмен
+  вернулся, до передачи соединения дальше.
+
+Истечение возвращает `handshake timeout` с `os.ErrDeadlineExceeded` и `Timeout() == true` — для
+SPEC 054 это «путь мёртв». Порог — переменная пакета `lxhandshake.Timeout`, по умолчанию
+`constant.TCPTimeout`; ключа конфига нет, тесты её сокращают.
+
+| Протокол | Что ограничено | Чем | Где |
+|----------|----------------|-----|-----|
+| `http` | запрос и ответ CONNECT | свой сторож, 15 с (выше) | `protocol/http/handshake_lx.go`, два места в `protocol/http/outbound.go` |
+| `socks` | рукопожатие SOCKS в `DialContext` и `ListenPacket` (UDP ASSOCIATE) | `lxhandshake.Context` + `NewDialer`: 15 с от установки TCP с сервером, отмена вызывающего | `protocol/socks/outbound.go`: обёртка дайлера в конструкторе, блоки в `DialContext` и `ListenPacket` |
+| `httpupgrade` (транспорт VLESS, VMess, Trojan) | запрос upgrade и чтение ответа | `lxhandshake.Guard`: дедлайн 15 с или раньше по вызывающему, закрытие при отмене | `transport/v2rayhttpupgrade/client.go`, блок в `DialContext` |
+| `shadowtls` v3 на стандартном TLS | TLS-рукопожатие `DefaultTLSHandshakeFunc` библиотеки | контекст с таймаутом рукопожатия TLS-конфига (15 с, если не задан), как у `tls.ClientHandshake` | `protocol/shadowtls/handshake_lx.go`, одна строка в `protocol/shadowtls/outbound.go` |
+
+ShadowTLS v1, v2 и v3 с uTLS идут через `tls.ClientHandshake`, у которого этот таймаут уже есть.
+
+**Не тронуто:**
+
+- **`tor`** — SOCKS-клиент к локальному процессу tor, а не к серверу узла; ожидание там —
+  построение цепочки самим tor, со своими сроками.
+- **VLESS `encryption`** — рукопожатие уже ограничено дедлайном дозвона на запись и сторожем по
+  контексту ([SPEC 050](../050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART/SPEC.md)); контракт закреплён
+  тестами `protocol/vless/lx_encryption_deadline_test.go` и `lx_encryption_guard_test.go`, второй
+  сторож поверх ломал бы его.
+- **`trusttunnel`** — CONNECT идёт потоком HTTP/2 или HTTP/3 на контексте вызывающего; у сессии свои
+  сроки: проверка `_check` (7 с) после 30 с тишины, CONNECT на устаревшей сессии — 3 с.
+- **`xhttp`** — дозвон не ждёт ответа загрузки (SPEC 061), контекст дозвона после возврата — по
+  [SPEC 077](../077-XHTTP_DIAL_CTX_CONTRACT/SPEC.md); отказ виден на чтении.
+
+**Приёмка.** На настоящем `NewOutbound` или клиенте транспорта против loopback-серверов: молчащий
+сервер — таймаут с `os.ErrDeadlineExceeded` и закрытый сокет; отмена вызывающего — немедленный
+возврат; более ранний дедлайн вызывающего побеждает; успешный обмен сохраняет туннель и байты,
+пришедшие вместе с ответом, после истечения порога; дайлер без контекста `lxhandshake` прозрачен.
+Тесты: `common/lxhandshake/handshake_test.go`, `protocol/socks/handshake_timeout_lx_test.go`,
+`transport/v2rayhttpupgrade/handshake_timeout_lx_test.go`, `protocol/shadowtls/handshake_lx_test.go`.
+Маркер в апстримных файлах — `// lx: handshake-timeout`.
+
 ## Основание принятия
 
 Дефект воспроизведён на стенде с живым сервером — Squid 6.12 с приостановленным
@@ -89,8 +144,22 @@ ACL-помощником. По CONSTITUTION §3.1 это воспроизвед�
 начался issue #74, показывает немедленные ответы 503 — другой режим, без
 накопления ресурсов; утечку на той установке эта правка может не закрывать.
 
+Для SOCKS, httpupgrade и ShadowTLS v3 основание — стенд SPEC 138 на NanoPi с живыми серверами
+sing-box (`kill -STOP` сервера узла), по тому же правилу §3.1.
+
 ## Условие снятия
 
-Удалить оба помеченных места и lx-обёртку, когда используемый `sagernet/sing` либо upstream
-sing-box ограничит HTTP CONNECT, закрывая сокет при отказе и сохраняя время жизни
-успешного туннеля. Перед удалением прогнать этот же регрессионный тест и стенд.
+Каждое место снимается отдельно, когда используемый `sagernet/sing` либо upstream sing-box
+ограничит этот обмен сам, закрывая сокет при отказе и сохраняя время жизни успешного соединения.
+Перед удалением прогнать регрессионные тесты этого места.
+
+- **HTTP CONNECT** — оба помеченных места в `protocol/http/outbound.go` и
+  `protocol/http/handshake_lx.go`; плюс стенд со Squid.
+- **SOCKS** — когда SOCKS-клиент `sing` сам ограничит рукопожатие по времени: блоки
+  `// lx: handshake-timeout` в `protocol/socks/outbound.go`.
+- **httpupgrade** — когда клиент `transport/v2rayhttpupgrade` сам ограничит обмен upgrade по времени
+  и по контексту: блок в `client.go`.
+- **ShadowTLS v3** — когда `sing-shadowtls` или вызов в `protocol/shadowtls/outbound.go` применит
+  таймаут рукопожатия к `DefaultTLSHandshakeFunc`: строка в `outbound.go` и `handshake_lx.go`.
+
+`common/lxhandshake` удаляется вместе с последним своим пользователем.

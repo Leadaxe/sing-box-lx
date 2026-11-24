@@ -63,6 +63,7 @@ timelines and the recommended mobile configuration live in
 - [3. urltest node selection modes (SPEC 019 / 116)](#3-urltest-node-selection-modes-spec-019--116)
   - [Fields (on a `urltest` outbound)](#fields-on-a-urltest-outbound)
   - [Slot-hash binding](#slot-hash-binding)
+  - [Self-heal on a failed connection (SPEC 138)](#self-heal-on-a-failed-connection-spec-138)
   - [Example — urltest with round_robin](#example--urltest-with-round_robin)
 - [4. MASQUE outbound — Cloudflare WARP (SPEC 021)](#4-masque-outbound--cloudflare-warp-spec-021)
   - [Example — WARP (defaults: `vhttp: auto`)](#example--warp-defaults-vhttp-auto)
@@ -493,7 +494,7 @@ round_robin — use `pool_tolerance` instead (a startup warning points this out 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `pool` | int | `3` | rotation pool size. `0`/omitted → `3`; negative is an error. Effective size is `min(pool, number of outbounds)`. Only the pool is URL-tested each `interval`, so a list of hundreds of nodes does **not** mean hundreds of tests |
-| `pool_tolerance` | int (ms) | `0` | `0` = keep the pool full of **live** nodes (delay not ranked), testing no more than needed — the cheap mode for large lists. `> 0` = test **all** nodes and keep the fastest `pool`; a member is replaced only when an outside node beats it by more than `pool_tolerance` ms (hysteresis). A dead pool node keeps its slot until a live replacement is found (the pool never empties), but new connections skip it while the pool has a live node (SPEC 138: sticky keys of dead slots spread evenly over the live slots, the plain rotation runs over live slots); a dial error never changes the pool — only the periodic health-check does. Liveness is the node's shared URL test history: a manual delay test with a short timeout that does not complete (Clash API `/proxies/{name}/delay`, `URLTestOutbound`) or a failed dial of a `least_test` group sharing the node also takes it out of rotation until the next pool health-check (at most `interval` plus the probe time) |
+| `pool_tolerance` | int (ms) | `0` | `0` = keep the pool full of **live** nodes (delay not ranked), testing no more than needed — the cheap mode for large lists. `> 0` = test **all** nodes and keep the fastest `pool`; a member is replaced only when an outside node beats it by more than `pool_tolerance` ms (hysteresis). A dead pool node keeps its slot until a live replacement is found (the pool never empties), but new connections skip it while the pool has a live node (SPEC 138: sticky keys of dead slots spread evenly over the live slots, the plain rotation runs over live slots, a quarantined node is skipped the same way); a failed connection by itself changes neither the pool nor the history — it starts the self-heal below. Liveness is the node's shared URL test history: a manual delay test with a short timeout that does not complete (Clash API `/proxies/{name}/delay`, `URLTestOutbound`) or a failed dial of a `least_test` group sharing the node also takes it out of rotation until the next pool health-check (at most `interval` plus the probe time) |
 | `sticky_hash` | string[] | `["process","domain"]` | flow-stickiness key components (see below). Omitted/`[]` → the default. **To disable** stickiness use the sentinel **`["none"]`** — never a bare `[]`. Components: `process` \| `domain` \| `source_ip` \| `dest_ip` \| `dest_port` |
 
 > **badjson `[]` caveat.** Do not write `"sticky_hash": []` to turn stickiness off: the
@@ -513,6 +514,49 @@ gives per-process, per-destination-domain affinity; `domain` reads the original 
 only literal-IP destinations). For domain-based traffic keep `domain` in the key — a key of only
 `source_ip`/`dest_ip`/`dest_port` can collapse to `""` for an unresolved destination, sticking
 every flow of one source to a single slot.
+
+#### Self-heal on a failed connection (SPEC 138)
+
+One failed connection does not tell a dead node from a destination unreachable through it or from
+a local network outage, so the group acts on what it learns about the node **after** the failure.
+No config keys.
+
+- **Retry.** A connection that does not open through a pool node is retried once through the next
+  live slot that is not a nested `urltest`. A connection that closes without a byte from the
+  destination after the client sent something is a failure, but not retried.
+- **Verdict per node.** The failure waits (at most 64 per node, 60 s) for the node's verdict:
+  - **alive** — a first byte on a connection started after the failure, or an answer to a probe
+    started after it: the destination is the problem, and the sticky key shifts to the slot after
+    the one it failed on. A key that failed through every live node of the pool is marked an
+    *address problem*: back to its own slot, no retries, checks or shifts until the next
+    scheduled run, manual run or network change;
+  - **dead** — the probe of the node is silent while a control node (the next slot) answers: its
+    history is dropped, its dials in flight are cancelled into the retry, its connections still
+    waiting for a first byte are closed, and its slot gets a replacement from outside the pool at
+    once (`pool_tolerance: 0`: the first live candidate in config order, probed in batches of the
+    pool size; `> 0`: the fastest by history);
+  - **nobody answers** — the local network is down: nothing changes, and the self-heal freezes.
+- **Probes** use the group `url` and a 15 s timeout and write no history themselves; the node and
+  the control are always probed live. One check at a time per group, at least 15 s between
+  checks after failures.
+- **Hanging node.** A node that accepts and stays silent gives no failure. A pick of its slot that
+  finds a connection through it unanswered for more than 5 s, or a client giving up after 5 s,
+  triggers a check (at most once a minute per group).
+- **Quarantine.** A node with at least 8 connections and 3 confirmed failures whose failure share
+  is above twice the median of the rest of the pool is skipped and replaced until the next
+  scheduled run, manual run or network change; its history stays.
+- **Freeze.** 15 s after the "nobody answered" verdict, a device or network wake and a network
+  change (and for the whole run after a network change): no retries, probes, shifts or counting.
+- **UDP** shares the slots: a failed UDP open is retried and checked like TCP; a flow that sent
+  packets and got none back only triggers a check. UDP shifts no keys and is not counted.
+- **Left alone:** a connection test (SPEC 139) gets the retry but changes no state; a delay
+  measurement through the group (an outer group's probe, Clash API) gets no retry and no check.
+
+**What you can see.** `sing-box api group pool <tag>` (needs `with_lx_command`) prints the shifted
+keys, the address problems, the freeze and a slot table with `DELAY`, `STATE`
+(`live`/`dead`/`quarantined`), `CONNECTIONS` and `FAILURES`; the daemon's `GetPool` carries the
+same fields. The connection list shows the node each connection actually went through, including a
+retry. Full rules — [SPEC 138 §3](../SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md#3-самовосстановление-по-отказу-соединения).
 
 #### Example — urltest with round_robin
 
@@ -963,7 +1007,10 @@ The added `CommandClient` methods:
   `disabled` is set by `SetEndpointEnabled` (SPEC 106, below;
   see [lx-energy.md §12](lx-energy.md#12-manual-onoff-switch-spec-106)).
 - **`GetPool(groupTag)`** — read a `urltest` group's current round_robin rotation pool, slot
-  by slot (SPEC 019; see [§3](#3-urltest-node-selection-modes-spec-019--116)).
+  by slot (SPEC 019; see [§3](#3-urltest-node-selection-modes-spec-019--116)). Per slot also
+  `Quarantined`, `Connections` and `ConfirmedFailures`; `GetPoolState(groupTag)` returns the
+  slots plus the group-wide `ShiftedKeys`, `MarkedKeys`, `Frozen` and `FrozenSeconds` (SPEC 138;
+  see [§3.3](#self-heal-on-a-failed-connection-spec-138)).
 - **`GetDNSGroups()`** — the live state of every DNS `group` server (SPEC 035; see
   [§5](#5-dns-server-group-spec-033035143)): per member `clean` / `liveErrors` /
   `lastErrorAgeMs` / `liveWins` / `current`.
