@@ -214,7 +214,7 @@ func TestRRSkip_deadMemberKeptButSkipped(t *testing.T) {
 	g := newPoolTestGroup(t, context.Background(), []*testDialNode{a, b, c}, 2)
 	g.balancer.setSlots([]string{"a", "b"})
 	s := &URLTest{outbound: g.outbound, group: g, balancer: g.balancer}
-	s.balancer.alive = s.slotAlive
+	s.rrWire()
 
 	g.balancePoolFirstLive(context.Background(), 2)
 	if tags := g.balancer.poolTags(); tags[0] != "a" || tags[1] != "b" {

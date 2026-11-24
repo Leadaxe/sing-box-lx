@@ -9,15 +9,16 @@ package group
 //     cancel aside) is handled as a failed TCP dial (rrHealRetry): one retry
 //     through the next live slot that takes UDP and is no nested urltest, and the
 //     background check of the node with the same verdicts, limits, gap and
-//     freeze. The kind of failure is the TCP one (rrSiteOnOpen): through a proxy
-//     node the node itself is under suspicion — not the address: a key that TCP
+//     freeze. It puts the node under suspicion, not the address: a key that TCP
 //     marked "address problem" is still retried and checked. A UDP failure shifts
 //     no key. The control of the check needs TCP only (the probe is TCP); the
 //     retry needs UDP.
-//   - "Packets went out, no answer came": the flow is closed from our side, the
-//     client sent at least one packet, none came back, and rrHangAfter or more
-//     passed since the pick. One-way UDP is legal, so this is only a reason for a
-//     check (rrHang): no retry, no key shift, no failure counted; the probe decides
+//   - "Packets went out, no answer came": from the client's first packet until the
+//     first packet back (or the close) the flow is an unfinished connection of its
+//     node (urltest_rr_track_lx.go): a pick of the slot that finds it older than
+//     rrHangAfter, or its close from our side after that long, is a reason for a
+//     check, and the dead verdict closes it. One-way UDP is legal, so this is only a
+//     reason for a check (rrHang): no retry, no key shift, no failure counted; the probe decides
 //     (dead with an answering control → struck out and replaced; nobody answers →
 //     own network; it answers → nothing). Such flows are common, so rrHang drops
 //     the reason for a node proved alive since the flow started or answering a
@@ -56,6 +57,7 @@ import (
 	"context"
 	"net"
 	"sync/atomic"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing/common/buf"
@@ -69,8 +71,9 @@ import (
 // through the next live slot that takes UDP. ok is false when there is no retry or
 // it failed too: the caller returns the error of the first node.
 func (s *URLTest) rrHealListen(ctx context.Context, destination M.Socksaddr, failed adapter.Outbound, listenErr error, picked rrPick) (net.PacketConn, bool) {
+	struck := picked.dial.failed()
 	var conn net.PacketConn
-	dialer, member, failure, ok := s.rrHealRetry(ctx, N.NetworkUDP, failed, listenErr, picked, func(dialer adapter.Outbound) error {
+	retry, ok := s.rrHealRetry(ctx, N.NetworkUDP, failed, listenErr, picked, struck, func(ctx context.Context, dialer adapter.Outbound) error {
 		var err error
 		conn, err = dialer.ListenPacket(ctx, destination)
 		return err
@@ -79,7 +82,8 @@ func (s *URLTest) rrHealListen(ctx context.Context, destination M.Socksaddr, fai
 		return nil, false
 	}
 	// The first packet of the retry confirms the failure of the first node.
-	return s.rrWatchPacketFor(ctx, dialer, conn, picked, member.Tag(), failure), true
+	picked.dial = retry.dial
+	return s.rrWatchPacketFor(ctx, retry.dialer, conn, picked, retry.confirmFor, retry.failure), true
 }
 
 // rrWatchPacket wraps an opened packet connection of a round_robin group to watch
@@ -93,18 +97,24 @@ func (s *URLTest) rrWatchPacket(ctx context.Context, dialed adapter.Outbound, co
 }
 
 func (s *URLTest) rrWatchPacketFor(ctx context.Context, dialed adapter.Outbound, conn net.PacketConn, picked rrPick, confirmFor string, failure *rrFailure) net.PacketConn {
+	picked.dial.opened()
 	watch, direct := s.rrNewWatch(ctx, dialed, picked, confirmFor, failure, true)
 	if watch == nil || direct {
+		picked.dial.release() // not reached for a tracked open (rrNewWatch); kept for every path
 		return conn
 	}
-	return newRRFirstPacketConn(conn, watch)
+	wrapped := newRRFirstPacketConn(conn, watch)
+	wrapped.dial = picked.dial
+	return wrapped
 }
 
 // rrFirstPacketConn watches a UDP flow for its first packet (see the file header).
 type rrFirstPacketConn struct {
 	N.NetPacketConn
-	state atomic.Uint32 // rrStateWrote, rrStateGotByte, rrStateClosed
+	state atomic.Uint32 // rrStateWrote, rrStateGotByte, rrStateClosed, rrStateTracked
 	watch *rrConnWatch
+	entry rrTrackEntry // in watch.track.waits from the first packet sent to the first one received
+	dial  *rrDial      // the tracked open of the flow; its context is released on the close
 }
 
 func newRRFirstPacketConn(conn net.PacketConn, watch *rrConnWatch) *rrFirstPacketConn {
@@ -125,15 +135,41 @@ func (c *rrFirstPacketConn) received(err error) {
 	if err != nil {
 		return // no packet: a read error is no failure for UDP, the close decides
 	}
-	if old := c.set(rrStateGotByte); old&rrStateGotByte == 0 {
+	old := c.set(rrStateGotByte)
+	c.untrack()
+	if old&rrStateGotByte == 0 {
 		c.watch.s.rrFirstByte(c.watch)
 	}
 }
 
+// sent takes a packet the client sent; the first one lists the flow as waiting for
+// an answer in the tracker of its node.
 func (c *rrFirstPacketConn) sent() {
-	if c.state.Load()&rrStateWrote == 0 {
-		c.set(rrStateWrote)
+	if c.state.Load()&rrStateWrote != 0 {
+		return
 	}
+	old := c.set(rrStateWrote)
+	if old&(rrStateWrote|rrStateGotByte|rrStateClosed) != 0 || c.watch.track == nil {
+		return
+	}
+	c.watch.track.track(&c.watch.track.waits, &c.entry, rrClock(time.Now()), c)
+	c.set(rrStateTracked)
+	if c.state.Load()&(rrStateGotByte|rrStateClosed) != 0 {
+		c.watch.track.untrack(&c.entry)
+	}
+}
+
+func (c *rrFirstPacketConn) untrack() {
+	if c.state.Load()&rrStateTracked != 0 {
+		c.watch.track.untrack(&c.entry)
+	}
+}
+
+// rrKill is the dead verdict on the node: the flow waits for an answer that will
+// not come; it is closed.
+func (c *rrFirstPacketConn) rrKill() {
+	c.set(rrStateClosed)
+	_ = c.NetPacketConn.Close()
 }
 
 func (c *rrFirstPacketConn) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, error) {
@@ -174,10 +210,13 @@ func (c *rrFirstPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 // reason for a check (rrHang skips an interrupt of the group and its Close).
 func (c *rrFirstPacketConn) Close() error {
 	old := c.set(rrStateClosed)
+	c.untrack()
 	if old&(rrStateClosed|rrStateGotByte) == 0 && old&rrStateWrote != 0 {
 		c.watch.s.rrHang(c.watch.member, c.watch.start)
 	}
-	return c.NetPacketConn.Close()
+	err := c.NetPacketConn.Close()
+	c.dial.release()
+	return err
 }
 
 // NeedHandshakeForRead holds until the first packet: then the copy re-selects its

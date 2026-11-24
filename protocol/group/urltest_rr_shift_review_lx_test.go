@@ -372,13 +372,22 @@ func TestRRReview_stickyHashWithoutStrings(t *testing.T) {
 	destination := M.ParseSocksaddrHostPort("203.0.113.7", 443)
 	key := process.rrKeyOf(ctx, destination)
 	want := fnvString(fnvString(hashKey(process.stickyKey(ctx, destination)), "\x00\x00"), "example.com")
-	if key.table != want || key.label() != "example.com" {
+	if key.table != want || key.label(process.stickyHash) != "example.com" {
 		t.Fatalf("domain table key %x, want %x", key.table, want)
 	}
 	key = process.rrKeyOf(context.Background(), destination)
 	want = fnvString(fnvString(hashKey(process.stickyKey(context.Background(), destination)), "\x00\x00"), "203.0.113.7")
-	if key.table != want || key.label() != "203.0.113.7" {
+	if key.table != want || key.label(process.stickyHash) != "203.0.113.7" {
 		t.Fatalf("IP table key %x, want %x", key.table, want)
+	}
+	// The log label of an IP destination carries the port when the sticky key holds it.
+	ported := &balancer{stickyHash: []string{C.URLTestStickyProcess, C.URLTestStickyDestPort}}
+	if label := ported.rrKeyOf(context.Background(), destination).label(ported.stickyHash); label != "203.0.113.7:443" {
+		t.Fatalf("an IP label with the port in the key: got %q", label)
+	}
+	v6 := M.ParseSocksaddrHostPort("2001:db8::2", 8443)
+	if label := ported.rrKeyOf(context.Background(), v6).label(ported.stickyHash); label != "[2001:db8::2]:8443" {
+		t.Fatalf("an IPv6 label with the port in the key: got %q", label)
 	}
 }
 

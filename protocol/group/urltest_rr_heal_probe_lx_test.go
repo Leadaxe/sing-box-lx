@@ -79,4 +79,29 @@ func TestRRShift_connectionTestRecordsNothing_LX(t *testing.T) {
 	if b.memory.shifts.size.Load() != 0 || counted != 0 || b.heal.lastByte.Load() != 0 {
 		t.Fatalf("a connection test records nothing: shifts %d counts %d lastByte %d", b.memory.shifts.size.Load(), counted, b.heal.lastByte.Load())
 	}
+	if b.trackOf("a").pendingN.Load() != 0 || b.trackOf("b").pendingN.Load() != 0 {
+		t.Fatal("a connection test leaves no pending failure")
+	}
+}
+
+// lx: SPEC 138 — the dial of a connection test is not tracked as unfinished: the
+// dead verdict does not cancel it, and a pick by it does not look at the slot.
+func TestRRTrack_connectionTestNotTracked_LX(t *testing.T) {
+	f := newShiftFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
+	key := f.keyOn(t, "site.example", 0)
+	ctx, _ := probeTrace()
+	ctx = adapter.WithContext(ctx, adapter.ContextFrom(key))
+	selected, picked := f.s.selectBalanced(ctx, N.NetworkTCP, siteAddr("site.example"))
+	if selected == nil || picked.track == nil {
+		t.Fatal("precondition: a pick from the pool")
+	}
+	if dialCtx := f.s.rrDialStart(ctx, selected, &picked); dialCtx != ctx || picked.dial != nil {
+		t.Fatal("a connection test dials on its own context, untracked")
+	}
+	plain := f.keyOn(t, "site.example", 0)
+	_, picked = f.s.selectBalanced(plain, N.NetworkTCP, siteAddr("site.example"))
+	if dialCtx := f.s.rrDialStart(plain, selected, &picked); dialCtx == plain || picked.dial == nil {
+		t.Fatal("precondition: a production dial is tracked")
+	}
+	picked.dial.failed()
 }

@@ -31,7 +31,8 @@ import (
 
 // slot is one fixed position in the pool. tag is the node currently occupying it.
 type slot struct {
-	tag string
+	tag   string
+	track *rrTrack // lx: SPEC 138 — unfinished connections and pending failures of the node (urltest_rr_track_lx.go)
 }
 
 // balancer holds the per-group round_robin state. nil for least_test.
@@ -53,6 +54,12 @@ type balancer struct {
 	// slots that did not (SPEC 138). The URLTest wires it to slotAlive. Called WITHOUT
 	// the access lock held.
 	alive func(tag string) bool
+
+	// onPick, if set, is the slow path of a pick whose slot has work: unfinished
+	// connections older than rrHangAfter or pending failures due for a check (SPEC 138,
+	// urltest_rr_track_lx.go). The URLTest wires it to rrOnPick. now is the rrClock of
+	// the pick. Called WITHOUT the access lock held.
+	onPick func(ctx context.Context, tag string, track *rrTrack, now int64)
 
 	// heal is the state of the self-heal after a failed dial (SPEC 138 §3,
 	// urltest_rr_heal_lx.go).
@@ -203,6 +210,16 @@ func (b *balancer) pickKeyed(ctx context.Context, destination M.Socksaddr, fallb
 		}
 	}
 	if node := resolve(slots[idx].tag); node != nil {
+		// SPEC 138: the slot's tracker goes with the pick; a few atomic loads tell
+		// whether it has work for the slow path.
+		if track := slots[idx].track; track != nil {
+			picked.track = track
+			if b.onPick != nil {
+				if now := rrClock(picked.start); track.attention(now) {
+					b.onPick(ctx, slots[idx].tag, track, now)
+				}
+			}
+		}
 		return node, picked
 	}
 	return fallback, picked
@@ -297,9 +314,13 @@ func (b *balancer) replaceSlot(dead, node string) bool {
 	}
 	next := make([]slot, len(b.slots))
 	copy(next, b.slots)
-	next[index] = slot{tag: node}
+	departed := next[index].track
+	next[index] = slot{tag: node, track: newRRTrack(node)}
 	b.slots = next
 	b.access.Unlock()
+	if departed != nil {
+		departed.dropPending() // its pending failures leave with it
+	}
 	b.rrSlotsChanged() // the new node's counters start from zero
 	// lx: SPEC 020 — same as setSlots: the active pool changed.
 	if b.onChange != nil {
@@ -312,11 +333,16 @@ func (b *balancer) replaceSlot(dead, node string) bool {
 // occupancy — which tag sits in which slot — and hands the ordered tag list here.
 func (b *balancer) setSlots(tags []string) {
 	b.access.Lock()
+	old := b.slots
 	b.slots = make([]slot, len(tags))
 	for i, tag := range tags {
-		b.slots[i] = slot{tag: tag}
+		b.slots[i] = slot{tag: tag, track: slotTrack(old, tag)} // lx: SPEC 138 — a node keeps its tracker
 	}
+	departed := departedTracks(old, b.slots)
 	b.access.Unlock()
+	for _, track := range departed {
+		track.dropPending() // lx: SPEC 138 — its pending failures leave with it
+	}
 	b.rrSlotsChanged() // lx: SPEC 138 — a node that takes a slot starts its counters from zero
 	// lx: SPEC 020 — the active pool changed; invalidate the reachable cache.
 	// Called outside the access lock so the callback never nests under it.

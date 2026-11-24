@@ -27,6 +27,8 @@ import (
 //     without a byte (a lazy node: VLESS/mux hand out the connection first);
 //   - hangup[host]: the connection opens and closes at once;
 //   - mute[host]: the connection opens, reads and never answers;
+//   - stall[host]: the dial hangs until its context is done (a node that accepts
+//     and stays silent: a stopped server behind a SOCKS handshake);
 //   - otherwise the destination answers "ok".
 type fbNode struct {
 	*healNode
@@ -35,6 +37,7 @@ type fbNode struct {
 	silent   map[string]bool
 	hangup   map[string]bool
 	mute     map[string]bool
+	stall    map[string]bool
 }
 
 func (n *fbNode) Type() string { return C.TypeVLESS }
@@ -60,6 +63,10 @@ func (n *fbNode) DialContext(ctx context.Context, network string, destination M.
 	}
 	n.dials.Add(1)
 	host := destination.AddrString()
+	if n.is(n.stall, host) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	if n.dead.Load() || n.siteDown.Load() || n.is(n.openFail, host) {
 		return nil, E.New("node ", n.tag, " cannot reach ", host)
 	}
@@ -210,7 +217,8 @@ func TestRRShift_aliveNodeShiftsKey(t *testing.T) {
 	}
 }
 
-// The dial through a and the retry through b fail, both answer the probe: shift 2.
+// The dial through a and the retry through b fail; a answers the probe, b proves
+// alive after its failure (a first byte through it): shift 2.
 func TestRRShift_retryFailsToo(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
 	f.fb["a"].set(&f.fb["a"].openFail, "blocked.example", true)
@@ -220,6 +228,12 @@ func TestRRShift_retryFailsToo(t *testing.T) {
 		t.Fatal("both attempts fail")
 	}
 	f.waitCheck(t)
+	if shift, _ := f.shift(key, "blocked.example"); shift != 1 && shift != 2 {
+		t.Fatalf("a answered its probe: shift at least 1, got %d", shift)
+	}
+	if _, answered := f.dial(t, f.keyOn(t, "open.example", 1), "open.example"); !answered {
+		t.Fatal("another site through b answers")
+	}
 	if shift, _ := f.shift(key, "blocked.example"); shift != 2 {
 		t.Fatalf("a and b alive: shift 2, got %d", shift)
 	}
@@ -283,7 +297,8 @@ func TestRRShift_ipWithoutDomain(t *testing.T) {
 }
 
 // A lazy node opens without the network and closes without a byte: a failure, no
-// retry, the key shifts.
+// retry; the first byte of another connection through the node settles it at once
+// and the key shifts, with no probe.
 func TestRRShift_lazyNodeClosesWithoutByte(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
 	f.fb["a"].set(&f.fb["a"].silent, "blocked.example", true)
@@ -292,13 +307,21 @@ func TestRRShift_lazyNodeClosesWithoutByte(t *testing.T) {
 	if !opened || answered {
 		t.Fatal("precondition: the lazy node opens and answers nothing")
 	}
-	waitUntil(t, func() bool { return f.s.balancer.heal.lastCheckEnd.Load() != nil })
-	f.waitCheck(t)
+	waitUntil(t, func() bool { return f.s.balancer.trackOf("a").pendingN.Load() == 1 })
+	if shift, _ := f.shift(key, "blocked.example"); shift != 0 {
+		t.Fatalf("no proof yet: no shift, got %d", shift)
+	}
+	if _, answered := f.dial(t, f.keyOn(t, "open.example", 0), "open.example"); !answered {
+		t.Fatal("another site through a answers")
+	}
 	if f.dials("b") != 0 {
 		t.Fatal("a close without a byte gets no retry")
 	}
 	if shift, _ := f.shift(key, "blocked.example"); shift != 1 {
 		t.Fatalf("the key shifts, got %d", shift)
+	}
+	if f.probes("a") != 0 || f.s.balancer.heal.running.Load() {
+		t.Fatal("a first byte settles it: no probe")
 	}
 	if _, answered := f.dial(t, key, "blocked.example"); !answered || f.dials("b") != 1 {
 		t.Fatal("the next connection of the key goes to b")
@@ -338,10 +361,10 @@ func TestRRShift_noStickinessNoShift(t *testing.T) {
 	}
 }
 
-// The network is gone while A has fresh history: without a first byte since the
-// connection started the fresh history proves nothing — no shift without a probe.
-// For a proxy whose dial failed a first byte is no proof either; history written
-// after the start is.
+// The network is gone: a failure on a with history from before it and no byte
+// since stays pending — no shift by history, no probe in the gap. History of a
+// written after the failure settles it at the next pick of a that asks for it. And
+// when nobody answers the check, nothing shifts and the self-heal freezes.
 func TestRRShift_networkGoneNoShiftByHistory(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
 	f.fresh("a", "b", "c")
@@ -349,37 +372,31 @@ func TestRRShift_networkGoneNoShiftByHistory(t *testing.T) {
 	key := f.keyOn(t, "blocked.example", 0)
 	end := time.Now()
 	f.s.balancer.heal.lastCheckEnd.Store(&end) // the gap: no probe now
-	start := time.Now()
-	f.s.balancer.heal.lastByte.Store(rrClock(start.Add(-time.Second)))
-	conn, _ := f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], E.New("dial failed"), f.pickAt(key, "blocked.example", start))
+	f.s.balancer.heal.lastByte.Store(rrClock(time.Now()))
+	conn, _ := f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], E.New("dial failed"), f.pickAt(key, "blocked.example", time.Now()))
 	closeConn(conn)
 	if shift, _ := f.shift(key, "blocked.example"); shift != 0 {
-		t.Fatalf("no first byte since the start: no shift, got %d", shift)
+		t.Fatalf("fresh history from before the failure: no shift, got %d", shift)
 	}
 	if f.probes("a") != 0 {
 		t.Fatal("the gap: no probe")
 	}
-
-	// a is a proxy and its dial failed: a first byte of the group is no proof for
-	// it, only a probe after the start is.
-	start = time.Now()
-	f.s.balancer.heal.lastByte.Store(rrClock(start.Add(time.Millisecond)))
-	conn, _ = f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], E.New("dial failed"), f.pickAt(key, "blocked.example", start))
-	closeConn(conn)
-	if shift, _ := f.shift(key, "blocked.example"); shift != 0 {
-		t.Fatalf("a proxy under suspicion: no shift by a first byte, got %d", shift)
+	track := f.s.balancer.trackOf("a")
+	if track.pendingN.Load() != 1 || track.checkAfter.Load() == 0 {
+		t.Fatal("the failure is pending and asks for a check later")
 	}
-	start = time.Now()
 	time.Sleep(time.Millisecond)
-	f.fresh("a") // a probe after the start: a scheduled run answered for a
-	conn, _ = f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], E.New("dial failed"), f.pickAt(key, "blocked.example", start))
-	closeConn(conn)
+	f.fresh("a")              // a scheduled run answered for a after the failure
+	track.checkAfter.Store(1) // the wait is over
+	f.s.selectBalanced(key, N.NetworkTCP, siteAddr("blocked.example"))
 	if shift, _ := f.shift(key, "blocked.example"); shift != 1 {
-		t.Fatalf("history written after the start: shift by history, got %d", shift)
+		t.Fatalf("history written after the failure settles it, got %d", shift)
+	}
+	if f.probes("a") != 0 {
+		t.Fatal("settled by history: no probe")
 	}
 
-	// All silent while the history is fresh: the check probes, nobody answers —
-	// the own network, no shift.
+	// All silent: the check probes, nobody answers — the own network, no shift.
 	g := newShiftFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
 	g.fresh("a", "b", "c")
 	for _, node := range g.fb {
@@ -489,9 +506,9 @@ func TestRRShift_keyConfirmsPassedNodes(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
 	f.fb["a"].set(&f.fb["a"].silent, "blocked.example", true)
 	key := f.keyOn(t, "blocked.example", 0)
-	f.dial(t, key, "blocked.example") // silent close on a: shift, no retry
-	waitUntil(t, func() bool { return f.s.balancer.heal.lastCheckEnd.Load() != nil })
-	f.waitCheck(t)
+	f.dial(t, key, "blocked.example") // silent close on a: pending, no retry
+	waitUntil(t, func() bool { return f.s.balancer.trackOf("a").pendingN.Load() == 1 })
+	f.dial(t, f.keyOn(t, "open.example", 0), "open.example") // a byte through a: the key shifts
 	if f.fails("a") != 0 {
 		t.Fatal("precondition: no confirmation yet")
 	}

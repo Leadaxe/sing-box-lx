@@ -115,7 +115,7 @@ func newHealFixture(t *testing.T, tags []string, pool []string, poolTolerance ui
 		interruptGroup: interrupt.NewGroup(),
 	}
 	s := &URLTest{outbound: g.outbound, logger: log.NewNOPFactory().NewLogger("test"), group: g, balancer: g.balancer}
-	s.balancer.alive = s.slotAlive
+	s.rrWire()
 	g.balancer.setSlots(pool)
 	for _, tag := range tags {
 		g.history.StoreURLTestHistory(tag, &adapter.URLTestHistory{Time: time.Now().Add(-time.Minute), Delay: 100})
@@ -438,7 +438,7 @@ func TestRRHeal_tickDuringCheck(t *testing.T) {
 			member := f.nodes[pool[i%len(pool)]]
 			neighbour := f.nodes[pool[(i+1)%len(pool)]]
 			f.s.balancer.heal.frozenUntil.Store(nil)
-			f.s.rrHealCheck(member, neighbour, nil, false)
+			f.s.rrHealCheck(member, neighbour, false)
 			observe()
 		}
 	}()
@@ -493,34 +493,22 @@ func TestRRHeal_oneCheckInFlightAndGap(t *testing.T) {
 	}
 }
 
-// A failed node A with history younger than 30 s is alive unprobed, and then no
-// control is needed either — when the network is proved alive since the failed
-// connection started (stage 2: a first byte of the group after that). Without the
-// proof A is probed.
-func TestRRHeal_freshNodeNotProbed(t *testing.T) {
+// Fresh history is no verdict any more: a failed node with history younger than
+// 30 s and a first byte of the group since is probed all the same; only a proof
+// after the failure — its byte, its probe, its history — settles the failure.
+func TestRRHeal_freshHistoryIsNoVerdict(t *testing.T) {
 	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
 	f.fresh("a", "b")
 	f.nodes["a"].siteDown.Store(true)
-	start := time.Now().Add(-time.Second)
 	f.s.balancer.heal.lastByte.Store(rrClock(time.Now()))
-	conn, _ := f.failAt(context.Background(), "a", start)
+	conn, _ := f.failAt(context.Background(), "a", time.Now().Add(-time.Second))
 	closeConn(conn)
 	f.waitCheck(t)
-	if f.probes("a") != 0 || f.probes("b") != 0 {
-		t.Fatalf("fresh nodes must not be probed: a=%d b=%d", f.probes("a"), f.probes("b"))
+	if f.probes("a") != 1 {
+		t.Fatalf("fresh a is probed, got %d", f.probes("a"))
 	}
 	if !samePool(f.pool(), "a", "b", "c") {
-		t.Fatalf("fresh a is alive: pool unchanged, got %v", f.pool())
-	}
-
-	g := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
-	g.fresh("a", "b")
-	g.nodes["a"].siteDown.Store(true)
-	conn, _ = g.fail(context.Background(), "a")
-	closeConn(conn)
-	g.waitCheck(t)
-	if g.probes("a") != 1 {
-		t.Fatalf("no first byte since the connection started: fresh a is probed, got %d", g.probes("a"))
+		t.Fatalf("a answered: pool unchanged, got %v", f.pool())
 	}
 }
 

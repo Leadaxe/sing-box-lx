@@ -13,9 +13,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
-	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/service"
 )
 
 // staleHistory writes history of tag from before a connection that starts now,
@@ -51,56 +49,31 @@ func TestRRStand_killedRightAfterProbe(t *testing.T) {
 	}
 }
 
-// fakeEndpoints is an endpoint manager that knows the tags of the endpoints.
-type fakeEndpoints struct {
-	adapter.EndpointManager
-	tags map[string]bool
-}
-
-func (m *fakeEndpoints) Get(tag string) (adapter.Endpoint, bool) {
-	if m.tags[tag] {
-		return nil, true
-	}
-	return nil, false
-}
-
 // A proxy node's dial fails in the gap after a check, with history from before the
-// connection: no verdict — the retry only, no shift, no count. An endpoint (it goes
-// to the destination on open itself) keeps the shortcut by fresh history.
-func TestRRStand_proxyDialFailureNoVerdictInGap(t *testing.T) {
-	for _, endpoint := range []bool{false, true} {
-		f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
-		if endpoint {
-			f.s.ctx = service.ContextWith[adapter.EndpointManager](context.Background(), &fakeEndpoints{tags: map[string]bool{"a": true}})
-		}
-		f.fb["a"].set(&f.fb["a"].openFail, "blocked.example", true)
-		f.staleHistory("a")
-		end := time.Now()
-		f.s.balancer.heal.lastCheckEnd.Store(&end)
-		key := f.keyOn(t, "blocked.example", 0)
-		conn, ok := f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], E.New("dial failed"), f.pickAt(key, "blocked.example", time.Now()))
-		if !ok || f.dials("b") != 1 {
-			t.Fatalf("endpoint=%v: the retry through b", endpoint)
-		}
-		conn.Write([]byte("hi"))
-		buffer := make([]byte, 8)
-		if n, _ := conn.Read(buffer); n == 0 {
-			t.Fatalf("endpoint=%v: the retry answers", endpoint)
-		}
-		conn.Close()
-		shift, _ := f.shift(key, "blocked.example")
-		if endpoint {
-			if shift != 1 || f.fails("a") != 1 {
-				t.Fatalf("endpoint: alive by fresh history, shift 1 and one failure; got %d, %d", shift, f.fails("a"))
-			}
-			continue
-		}
-		if shift != 0 || f.fails("a") != 0 {
-			t.Fatalf("proxy: no verdict in the gap, no shift and no count; got %d, %d", shift, f.fails("a"))
-		}
-		if f.probes("a") != 0 {
-			t.Fatal("proxy: the gap, no probe")
-		}
+// failure: no probe, and no verdict until the node proves alive after the failure
+// — then the key shifts and the failure, confirmed by the retry's first byte,
+// counts, within the same moment as that byte; no probe is needed.
+func TestRRStand_proxyDialFailureSettledByByte(t *testing.T) {
+	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
+	f.fb["a"].set(&f.fb["a"].openFail, "blocked.example", true)
+	f.staleHistory("a")
+	end := time.Now()
+	f.s.balancer.heal.lastCheckEnd.Store(&end)
+	key := f.keyOn(t, "blocked.example", 0)
+	if _, answered := f.dial(t, key, "blocked.example"); !answered || f.dials("b") != 1 {
+		t.Fatal("the retry through b answers")
+	}
+	if shift, _ := f.shift(key, "blocked.example"); shift != 0 || f.fails("a") != 0 {
+		t.Fatalf("no proof yet: no shift and no count; got %d, %d", shift, f.fails("a"))
+	}
+	if _, answered := f.dial(t, f.keyOn(t, "open.example", 0), "open.example"); !answered {
+		t.Fatal("another site through a answers")
+	}
+	if shift, _ := f.shift(key, "blocked.example"); shift != 1 || f.fails("a") != 1 {
+		t.Fatalf("a proved alive by a first byte: shift 1 and one failure; got %d, %d", shift, f.fails("a"))
+	}
+	if f.probes("a") != 0 || f.s.balancer.heal.running.Load() {
+		t.Fatal("the gap: no probe")
 	}
 }
 
@@ -162,23 +135,6 @@ func TestRRStand_ownCloseAfterWaitTriggersCheck(t *testing.T) {
 	f.waitCheck(t)
 	if f.g.history.LoadURLTestHistory("a") != nil {
 		t.Fatal("a hanging dead node is struck out")
-	}
-}
-
-// A check that ended without a probe (A alive by fresh history) leaves no gap.
-func TestRRStand_checkWithoutProbeLeavesNoGap(t *testing.T) {
-	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
-	f.fresh("a", "b")
-	f.nodes["a"].siteDown.Store(true)
-	f.s.balancer.heal.lastByte.Store(rrClock(time.Now().Add(time.Hour)))
-	conn, _ := f.failAt(context.Background(), "a", time.Now().Add(-time.Second))
-	closeConn(conn)
-	waitUntil(t, func() bool { return !f.s.balancer.heal.running.Load() })
-	if f.probes("a") != 0 {
-		t.Fatal("precondition: no probe")
-	}
-	if f.s.balancer.heal.lastCheckEnd.Load() != nil {
-		t.Fatal("a check without probes sets no gap")
 	}
 }
 

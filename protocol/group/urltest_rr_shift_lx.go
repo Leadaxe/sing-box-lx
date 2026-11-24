@@ -9,12 +9,11 @@ package group
 // site does not move a whole application off its node; the slot is still counted
 // from the sticky key, (hash + shift) % pool. The shift grows when a failure (a
 // dial that did not open, or a connection closed without a byte) hit a node that
-// is alive: it answered the check probe, or it has history younger than 30 s and
-// the network is proved alive since the failed connection started — the group got
-// a first byte after that, or the node answered a probe after that, and the
-// self-heal has not frozen since (a network change and its full run write fresh
-// history to every node while the old connections die). Without the proof a blink
-// of the own network would shift keys with no probe at all. A
+// proved alive after the failure (urltest_rr_track_lx.go): the first byte of any
+// connection through it, an answer of a probe of it that started after the
+// failure, or its history written after the failure. Until then the failure is
+// pending on the node; the dead verdict drops it, a freeze voids it. When the own
+// network is gone no byte comes, and nothing shifts. A
 // shifted key whose slot is dead goes to the next live slot going round, the same
 // one its retry went to. A connection remembers the shift its key was picked with;
 // its failure shifts the key only while the shift is still that one, so parallel
@@ -30,7 +29,8 @@ package group
 //
 // Slot counters (§3.6). Per pool member: connections and confirmed failures since
 // the node took its slot. A failure is confirmed when (1) the retry of the same
-// connection got the first byte — one to the node that failed the dial; (2) a
+// connection got the first byte — one to the node that failed the dial, counted
+// once that node proved alive after the failure; (2) a
 // shifted key got the first byte on another slot — one to every node it passed,
 // once, and never twice within one connection. An address-problem key confirms
 // nothing, nor does a node without history (dead). At 256 connections both
@@ -80,15 +80,20 @@ type rrKey struct {
 	table  uint64     // hash of the table key: the sticky key plus the destination
 	domain string     // the destination domain, for the log
 	addr   netip.Addr // the destination IP without a domain, for the log
+	port   uint16     // the destination port, for the log when the sticky key holds it
 	valid  bool       // stickiness is on
 }
 
-// label is the destination of the key, for the log.
-func (k rrKey) label() string {
+// label is the destination of the key, for the log: an IP destination carries its
+// port when the sticky key holds the port (dest_port).
+func (k rrKey) label(stickyHash []string) string {
 	if k.domain != "" {
 		return k.domain
 	}
 	if k.addr.IsValid() {
+		if k.port != 0 && common.Contains(stickyHash, C.URLTestStickyDestPort) {
+			return netip.AddrPortFrom(k.addr, k.port).String()
+		}
 		return k.addr.String()
 	}
 	return ""
@@ -100,6 +105,8 @@ type rrPick struct {
 	key   rrKey
 	shift int
 	start time.Time
+	track *rrTrack // the tracker of the picked slot; nil for a pick outside the pool
+	dial  *rrDial  // the dial of the pick in flight, when tracked (rrDialStart)
 }
 
 const (
@@ -184,7 +191,7 @@ func (b *balancer) rrKeyOf(ctx context.Context, destination M.Socksaddr) rrKey {
 	}
 	metadata := adapter.ContextFrom(ctx)
 	sticky := b.stickyHashOf(metadata, destination)
-	key := rrKey{sticky: sticky, table: sticky, valid: true}
+	key := rrKey{sticky: sticky, table: sticky, port: destination.Port, valid: true}
 	domain, addr, inKey := b.rrTarget(metadata, destination)
 	key.domain, key.addr = domain, addr
 	if !inKey {
@@ -408,10 +415,10 @@ func (s *URLTest) rrShiftOn(key rrKey, expected int, node string, credited bool)
 	shift := e.shift
 	table.access.Unlock()
 	if marked {
-		s.logger.Info("round_robin: ", key.label(), " is unreachable through every node of the pool; marked as an address problem, back to its own slot")
+		s.logger.Info("round_robin: ", key.label(b.stickyHash), " is unreachable through every node of the pool; marked as an address problem, back to its own slot")
 		return shift, true
 	}
-	s.logger.Debug("round_robin: ", key.label(), " failed through live ", node, "; key shifted by ", shift)
+	s.logger.Debug("round_robin: ", key.label(b.stickyHash), " failed through live ", node, "; key shifted by ", shift)
 	return shift, true
 }
 
@@ -427,9 +434,9 @@ type rrMemory struct {
 	shifts rrShiftTable
 	access sync.Mutex // guards counts and bytes
 	counts map[string]*rrSlotCount
-	// bytes is the rrClock of the latest first byte (or first UDP packet) of a
-	// connection through each pool member: it proved alive then (rrHang). TCP and
-	// UDP; it leaves with the node's counters.
+	// bytes is the rrClock of the latest start of a connection through each pool
+	// member that got its first byte (or first UDP packet): the node proved alive
+	// after that moment (rrHang). TCP and UDP; it leaves with the node's counters.
 	bytes      map[string]int64
 	quarantine atomic.Pointer[map[string]bool]
 }
@@ -677,31 +684,28 @@ func (s *URLTest) rrQuarantineReplace(tag string) {
 // --- failures and their verdicts ---------------------------------------------------
 
 // rrFailure is one failure of a connection — a dial that did not open, with its
-// retry, or a close without a byte — waiting for the verdict on its nodes.
+// retry, or a close without a byte. It is pending on the node it failed on, and on
+// the node of its retry when that failed too (rrPend), until each proves alive
+// after it (rrTrack.takeAlive) or the dead verdict drops it.
 type rrFailure struct {
 	s      *URLTest
 	key    rrKey
-	start  time.Time
 	member string // A, the node the connection failed on
 
-	access    sync.Mutex
-	aAlive    int8 // 1 alive, -1 dead, 0 unknown
-	aShifted  bool
-	confirmed bool   // the retry got the first byte: A's failure is confirmed (case 1)
-	bTag      string // the neighbour the check probed
-	bAlive    int8
-	rTag      string // the node of the retry
-	rFailed   bool
-	rAlive    int8
-	rShifted  bool
-	shift     int // the key's shift this connection expects: picked with, then its own
-
-	dialFailed    bool // the connection did not open (else it closed without a byte)
-	creditPending bool // the retry got the first byte; A's failure waits for "A alive"
+	access        sync.Mutex
+	aAlive        bool // A proved alive after the failure
+	aShifted      bool
+	confirmed     bool // the retry got the first byte: A's failure is confirmed (case 1)
+	creditPending bool // confirmed before A proved alive: counted then
+	rTag          string
+	rFailed       bool // the retry did not open either
+	rAlive        bool // the retry's node proved alive after its failure
+	rShifted      bool
+	shift         int // the key's shift this connection expects: picked with, then its own
 }
 
 func (s *URLTest) rrNewFailure(picked rrPick, member string) *rrFailure {
-	return &rrFailure{s: s, key: picked.key, start: picked.start, member: member, shift: picked.shift}
+	return &rrFailure{s: s, key: picked.key, member: member, shift: picked.shift}
 }
 
 // expectedShift is the shift of the key as this connection left it.
@@ -711,170 +715,107 @@ func (f *rrFailure) expectedShift() int {
 	return f.shift
 }
 
-// suspect reports whether this failure puts node itself under suspicion: its dial
-// failed and its leaf is a proxy — the error came between us and the node's
-// server. Such a node is alive only by a probe that started after the connection.
-// A close without a byte, or a failed dial of a direct or endpoint leaf (it goes
-// to the destination on open itself), puts the site under suspicion instead.
-func (f *rrFailure) suspect(node adapter.Outbound) bool {
-	return f.dialFailed && !f.s.rrSiteOnOpen(node)
+// setAlive is the verdict "A alive after the failure".
+func (f *rrFailure) setAlive() {
+	f.access.Lock()
+	defer f.access.Unlock()
+	f.aAlive = true
+	f.settle()
 }
 
-// proved reports whether node counts as alive without a probe: its history is
-// younger than rrHealFresh and the network is proved alive since the failed
-// connection started — the group got a first byte after that, or the node answered
-// a probe after that. A node under suspicion (suspect) takes only the latter: its
-// history must be written after the connection started. A freeze since the start
-// voids the proof: a network change kills the old connections, and its full run
-// writes fresh history to every node.
-func (f *rrFailure) proved(node adapter.Outbound) bool {
-	if f == nil || f.start.IsZero() {
-		return false
-	}
-	heal := &f.s.balancer.heal
-	started := rrClock(f.start)
-	if frozen := heal.lastFreeze.Load(); frozen != 0 && frozen >= started {
-		return false
-	}
-	leaf := RealTag(node, N.NetworkTCP)
-	if leaf == "" {
-		return false
-	}
-	history := f.s.group.freshHistory(leaf)
-	if history == nil {
-		return false
-	}
-	if history.Time.After(f.start) {
-		return true
-	}
-	if f.suspect(node) {
-		return false
-	}
-	lastByte := heal.lastByte.Load()
-	return lastByte != 0 && lastByte > started
+// setRetryAlive is the verdict "the retry's node alive after its failure".
+func (f *rrFailure) setRetryAlive() {
+	f.access.Lock()
+	defer f.access.Unlock()
+	f.rAlive = true
+	f.settle()
 }
 
-// aliveByHistory is the verdict on A when no check runs for this failure (one is
-// in flight, or the gap after the last one).
-func (f *rrFailure) aliveByHistory(member adapter.Outbound) {
-	if f.proved(member) {
-		f.setA(true)
-	}
-}
-
-func (f *rrFailure) setA(alive bool) {
+// retryFailed records that the retry through tag did not open either.
+func (f *rrFailure) retryFailed(tag string) {
 	if f == nil {
 		return
 	}
 	f.access.Lock()
 	defer f.access.Unlock()
-	f.aAlive = rrAlive(alive)
-	f.settle()
-}
-
-func (f *rrFailure) setB(tag string, alive bool) {
-	if f == nil {
-		return
-	}
-	f.access.Lock()
-	defer f.access.Unlock()
-	f.bTag, f.bAlive = tag, rrAlive(alive)
-	f.settle()
-}
-
-// retryFailed records that the retry through node did not open either.
-func (f *rrFailure) retryFailed(node adapter.Outbound) {
-	if f == nil {
-		return
-	}
-	proved := f.proved(node)
-	f.access.Lock()
-	defer f.access.Unlock()
-	f.rTag, f.rFailed = node.Tag(), true
-	if proved {
-		f.rAlive = 1
-	}
-	f.settle()
+	f.rTag, f.rFailed = tag, true
 }
 
 // confirm is the first byte of the retry: A's failure is confirmed (case 1), so the
 // key's later first byte does not confirm it again. It reports whether the failure
-// counts now; a node under suspicion counts only once it is found alive (settle),
-// and never when no verdict comes or it is found dead.
-func (f *rrFailure) confirm(member adapter.Outbound) bool {
+// counts now: only once A proved alive after it (settle counts it then), never when
+// A is found dead or no verdict comes.
+func (f *rrFailure) confirm() bool {
 	if f == nil {
 		return true
 	}
-	suspect := member != nil && f.suspect(member)
 	f.access.Lock()
 	defer f.access.Unlock()
 	f.confirmed = true
 	if f.aShifted && f.key.valid {
 		f.s.balancer.memory.shifts.markCredited(f.key.table, f.member)
 	}
-	if suspect && f.aAlive != 1 {
+	if !f.aAlive {
 		f.creditPending = true
 		return false
 	}
 	return true
 }
 
-// settle shifts the key once the verdict allows: by one past A when A is alive, by
+// settle shifts the key once the verdicts allow: by one past A when A is alive, by
 // one more past the retry node when the retry failed too and its node is alive.
 // The caller holds access.
 func (f *rrFailure) settle() {
-	if f.aAlive == 1 && f.creditPending {
+	if f.aAlive && f.creditPending {
 		f.creditPending = false
 		f.s.rrCreditFail(f.member)
 	}
 	if !f.key.valid {
 		return
 	}
-	if f.aAlive == 1 && !f.aShifted {
+	if f.aAlive && !f.aShifted {
 		f.aShifted = true
 		if shift, shifted := f.s.rrShiftOn(f.key, f.shift, f.member, f.confirmed); shifted {
 			f.shift = shift
 		}
 	}
-	if !f.aShifted || !f.rFailed || f.rShifted {
+	if !f.aShifted || !f.rFailed || !f.rAlive || f.rShifted {
 		return
 	}
-	alive := f.rAlive
-	if f.rTag == f.bTag && f.bAlive != 0 {
-		alive = f.bAlive
-	}
-	if alive == 1 {
-		f.rShifted = true
-		if shift, shifted := f.s.rrShiftOn(f.key, f.shift, f.rTag, false); shifted {
-			f.shift = shift
-		}
+	f.rShifted = true
+	if shift, shifted := f.s.rrShiftOn(f.key, f.shift, f.rTag, false); shifted {
+		f.shift = shift
 	}
 }
 
-func rrAlive(alive bool) int8 {
-	if alive {
-		return 1
-	}
-	return -1
-}
-
-// rrFirstByte is the success of a watched connection: the network is alive, and
-// the failures this success confirms are counted (§3.6.2).
+// rrFirstByte is the success of a watched connection: the network is alive, the
+// node proved alive, and the failures this success confirms are counted (§3.6.2).
+// The proof dates from the start of the connection (its pick), not from the read:
+// a byte that waited in a buffer (the kernel, a mux session, QUIC) and was read
+// after the node died or the network went away proves nothing about the time
+// after the connection started. So only a connection started after a failure
+// settles it, as only a probe started after it does; the node's byte mark
+// (rrByteSince, the filter of rrHang) keeps the start of the connection too.
 func (s *URLTest) rrFirstByte(w *rrConnWatch) {
 	b := s.balancer
 	if s.group.ctx.Err() != nil {
 		return
 	}
-	now := rrClock(time.Now())
-	b.heal.lastByte.Store(now)
-	b.rrMarkByte(w.member, now)
+	b.heal.lastByte.Store(rrClock(time.Now()))
+	var started int64 // no pick, no proof
+	if !w.start.IsZero() {
+		started = rrClock(w.start)
+		b.rrMarkByte(w.member, started)
+	}
 	if b.heal.frozen() {
 		return
 	}
+	if started != 0 && w.track != nil && w.track.pendingN.Load() > 0 {
+		s.rrSettleAlive(w.track, started)
+	}
 	var credit []string
 	if w.confirmFor != "" && !w.packet { // UDP stays out of the slot counters
-		member, _ := s.outbound.Outbound(w.confirmFor)
-		if w.failure.confirm(member) {
+		if w.failure.confirm() {
 			credit = append(credit, w.confirmFor)
 		}
 	}
@@ -888,7 +829,9 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch) {
 
 // rrSilentClose is a connection that ended without a byte although the client
 // sent something (§3.1.2): no retry — the client sent its data to the node already
-// — but the same check as for a failed dial.
+// — and the failure is pending on the node. It puts the site under suspicion, so no
+// probe starts now: a first byte through the node settles it, and if none comes by
+// the next pick of the node rrVerdictWait later, that pick starts the check.
 func (s *URLTest) rrSilentClose(w *rrConnWatch) {
 	b := s.balancer
 	if s.group.ctx.Err() != nil || b.heal.frozen() {
@@ -902,14 +845,11 @@ func (s *URLTest) rrSilentClose(w *rrConnWatch) {
 		return
 	}
 	s.logger.Debug("round_robin: a connection through ", w.member, " closed without a byte from the destination")
-	picked := rrPick{key: w.key, shift: w.shift, start: w.start}
+	picked := rrPick{key: w.key, shift: w.shift}
 	if w.failure != nil {
 		picked.shift = w.failure.expectedShift() // the retry: the key as its failure left it
 	}
-	failure := s.rrNewFailure(picked, w.member)
-	if !s.rrStartCheck(member, failure, false) {
-		failure.aliveByHistory(member)
-	}
+	s.rrPend(member, s.rrNewFailure(picked, w.member), false, false)
 }
 
 // lx:end SPEC 138

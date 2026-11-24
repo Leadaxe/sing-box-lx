@@ -8,6 +8,8 @@ import (
 	"errors"
 	"io"
 	"net"
+	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -84,34 +86,43 @@ func TestRRFirstByte_success(t *testing.T) {
 	}
 }
 
-// Closed by the destination with no byte after the client sent: a failure — the
-// check runs. Closed with nothing sent, or closed by us: no failure.
+// Closed by the destination with no byte after the client sent: a failure, pending
+// on the node until it proves alive or dead (no probe yet: a first byte through the
+// node settles it). Closed with nothing sent, closed by us, or half-closed by us
+// first: no failure.
 func TestRRFirstByte_silentClose(t *testing.T) {
 	cases := []struct {
-		name    string
-		send    bool
-		ourSide bool
-		failure bool
+		name       string
+		send       bool
+		ourSide    bool
+		halfClosed bool
+		failure    bool
 	}{
-		{"sent, closed by the destination", true, false, true},
-		{"nothing sent, closed by the destination", false, false, false},
-		{"sent, closed by us", true, true, false},
+		{"sent, closed by the destination", true, false, false, true},
+		{"nothing sent, closed by the destination", false, false, false, false},
+		{"sent, closed by us", true, true, false, false},
+		{"sent, half-closed by us, closed by the destination", true, false, true, false},
 	}
 	for _, c := range cases {
 		client, server := net.Pipe()
 		conn, f := watched(t, client)
 		f.nodes["a"].siteDown.Store(true)
+		conn.watch.track = f.s.balancer.trackOf("a")
 		go func() {
 			buffer := make([]byte, 8)
 			if c.send {
 				server.Read(buffer)
 			}
 			if !c.ourSide {
+				time.Sleep(10 * time.Millisecond)
 				server.Close()
 			}
 		}()
 		if c.send {
 			conn.Write([]byte("hi"))
+		}
+		if c.halfClosed {
+			conn.LxClientFinished(true) // route/conn.go, past the wrapper once it is WriterReplaceable
 		}
 		if c.ourSide {
 			go func() {
@@ -126,12 +137,12 @@ func TestRRFirstByte_silentClose(t *testing.T) {
 		conn.Close()
 		server.Close()
 		time.Sleep(20 * time.Millisecond)
-		started := f.s.balancer.heal.running.Load() || f.s.balancer.heal.lastCheckEnd.Load() != nil
-		if started != c.failure {
-			t.Fatalf("%s: check started %v, want %v", c.name, started, c.failure)
+		pending := conn.watch.track.pendingN.Load() == 1
+		if pending != c.failure {
+			t.Fatalf("%s: failure pending %v, want %v", c.name, pending, c.failure)
 		}
-		if c.failure {
-			f.waitCheck(t)
+		if f.s.balancer.heal.running.Load() || f.probes("a") != 0 {
+			t.Fatalf("%s: a close without a byte probes nothing at once", c.name)
 		}
 	}
 }
@@ -187,32 +198,145 @@ func TestRRFirstByte_copyReselectsPath(t *testing.T) {
 	}
 }
 
-// earlyConn needs a write handshake, as a VLESS/VMess client connection does.
+// earlyConn needs a write handshake, as a VLESS/VMess client connection does: it
+// completes with the first write, an empty one included. It counts the writes.
 type earlyConn struct {
 	net.Conn
-	need bool
+	need   atomic.Bool
+	writes atomic.Int32
+	empty  atomic.Int32
 }
 
-func (c *earlyConn) NeedHandshakeForWrite() bool { return c.need }
+func (c *earlyConn) NeedHandshakeForWrite() bool { return c.need.Load() }
 
-// The wrapper does not change kickWriteHandshake (route/conn.go): the write
-// handshake of the node's connection is found through it, as without it.
-func TestRRFirstByte_writeHandshakeUnchanged(t *testing.T) {
-	client, server := net.Pipe()
-	defer server.Close()
+func (c *earlyConn) Write(p []byte) (int, error) {
+	c.writes.Add(1)
+	if len(p) == 0 {
+		c.empty.Add(1)
+	}
+	c.need.Store(false)
+	return c.Conn.Write(p)
+}
+
+// The wrapper declares a write handshake until the client's first write, and the
+// node's own as long as that one lasts. The empty nudge of kickWriteHandshake
+// (route/conn.go) before the first write reaches the node's connection only when
+// that one needs it — as without the wrapper — and is not the client sending. After
+// the client's first write the wrapper steps aside for writes.
+func TestRRFirstByte_writeHandshake(t *testing.T) {
 	for _, need := range []bool{true, false} {
-		lower := &earlyConn{Conn: client, need: need}
+		client, server := net.Pipe()
+		go func() { _, _ = io.Copy(io.Discard, server) }()
+		lower := &earlyConn{Conn: client}
+		lower.need.Store(need)
 		conn, _ := watched(t, lower)
 		outer := interrupt.NewGroup().NewConn(conn, false)
-		if N.NeedHandshakeForWrite(outer) != need {
-			t.Fatalf("NeedHandshakeForWrite through the wrapper must be the node's (%v)", need)
+		if !N.NeedHandshakeForWrite(outer) || conn.WriterReplaceable() {
+			t.Fatalf("need=%v: before the client's first write the wrapper holds the write path", need)
 		}
-		if _, declares := any(conn).(N.EarlyWriter); declares {
-			t.Fatal("the wrapper must not declare a write handshake of its own")
+		// kickWriteHandshake: an empty write.
+		if _, err := outer.Write(nil); err != nil {
+			t.Fatal(err)
 		}
-		if conn.WriterReplaceable() {
-			t.Fatal("writes go through the wrapper")
+		if got := lower.empty.Load(); (got == 1) != need {
+			t.Fatalf("need=%v: the empty nudge reaches the node's connection only when it needs it, got %d", need, got)
 		}
+		if conn.state.Load()&rrStateWrote != 0 {
+			t.Fatalf("need=%v: the nudge is not the client sending", need)
+		}
+		if !N.NeedHandshakeForWrite(outer) || conn.WriterReplaceable() {
+			t.Fatalf("need=%v: after the nudge the wrapper still waits for the client", need)
+		}
+		if _, err := outer.Write([]byte("hi")); err != nil {
+			t.Fatal(err)
+		}
+		if conn.state.Load()&rrStateWrote == 0 || !conn.WriterReplaceable() || N.NeedHandshakeForWrite(outer) {
+			t.Fatalf("need=%v: after the client's first write the wrapper steps aside for writes", need)
+		}
+		if N.UnwrapWriter(outer) != net.Conn(lower) {
+			t.Fatalf("need=%v: the write path unwraps to the node's connection", need)
+		}
+		client.Close()
+		server.Close()
+	}
+	// The node's own write handshake keeps the copy on the wrapper until it completes.
+	client, server := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+	lower := &earlyConn{Conn: client}
+	conn, _ := watched(t, lower)
+	conn.state.Store(rrStateWrote)
+	lower.need.Store(true)
+	if !conn.NeedHandshakeForWrite() {
+		t.Fatal("the node's write handshake is reported through the wrapper")
+	}
+}
+
+// writeStackConn counts the writes of the copy into the node's connection, and how
+// many of them came through the wrapper.
+type writeStackConn struct {
+	net.Conn
+	writes  atomic.Int32
+	wrapped atomic.Int32
+}
+
+func (c *writeStackConn) note() {
+	c.writes.Add(1)
+	pcs := make([]uintptr, 32)
+	frames := runtime.CallersFrames(pcs[:runtime.Callers(2, pcs)])
+	for {
+		frame, more := frames.Next()
+		if strings.Contains(frame.Function, "rrFirstByteConn") {
+			c.wrapped.Add(1)
+			return
+		}
+		if !more {
+			return
+		}
+	}
+}
+
+func (c *writeStackConn) Write(p []byte) (int, error) {
+	c.note()
+	return c.Conn.Write(p)
+}
+
+func (c *writeStackConn) Upstream() any { return c.Conn }
+
+// The upload copy of sing writes through the wrapper until the client's first write
+// completes the "handshake"; then it re-selects its path and writes into the
+// node's connection directly. The data arrive intact.
+func TestRRFirstByte_copyReselectsWritePath(t *testing.T) {
+	clientIn, clientFar := tcpPair(t)
+	nodeConn, nodeFar := tcpPair(t)
+	lower := &writeStackConn{Conn: nodeConn}
+	conn, _ := watched(t, lower)
+	payload := bytes.Repeat([]byte("0123456789abcdef"), 64*1024)
+	go func() {
+		for sent := 0; sent < len(payload); sent += 4096 {
+			if _, err := clientFar.Write(payload[sent : sent+4096]); err != nil {
+				return
+			}
+		}
+		clientFar.(*net.TCPConn).CloseWrite()
+	}()
+	received := make(chan []byte, 1)
+	go func() {
+		data, _ := io.ReadAll(nodeFar)
+		received <- data
+	}()
+	if _, err := bufio.Copy(interrupt.NewGroup().NewConn(conn, false), clientIn); err != nil {
+		t.Fatal(err)
+	}
+	nodeConn.(*net.TCPConn).CloseWrite()
+	if data := <-received; !bytes.Equal(data, payload) {
+		t.Fatalf("the data must arrive intact: %d of %d bytes", len(data), len(payload))
+	}
+	if lower.writes.Load() < 2 {
+		t.Fatalf("precondition: several writes, got %d", lower.writes.Load())
+	}
+	if lower.wrapped.Load() != 1 {
+		t.Fatalf("only the client's first write goes through the wrapper, got %d of %d", lower.wrapped.Load(), lower.writes.Load())
 	}
 }
 
@@ -304,6 +428,53 @@ func BenchmarkRRFirstByteCopy(b *testing.B) {
 			if _, err := bufio.Copy(io.Discard, conn); err != nil {
 				b.Fatal(err)
 			}
+		})
+	}
+}
+
+// The cost of the wrapper on the upload: the client's stream (a loopback TCP
+// connection) copied into the node's connection (another loopback TCP connection)
+// as is and through the wrapper, under the group's interrupt wrapper as
+// DialContext stacks them. The node's connection supports the fast write paths of
+// sing; the wrapper must not take them away after the client's first write.
+func BenchmarkRRFirstByteUpload(b *testing.B) {
+	const chunk = 32 * 1024
+	for _, wrap := range []bool{false, true} {
+		name := "plain"
+		if wrap {
+			name = "wrapped"
+		}
+		b.Run(name, func(b *testing.B) {
+			clientIn, clientFar := tcpPair(b)
+			nodeConn, nodeFar := tcpPair(b)
+			var conn net.Conn = nodeConn
+			if wrap {
+				s := &URLTest{balancer: &balancer{}, group: &URLTestGroup{ctx: context.Background()}}
+				conn = newRRFirstByteConn(nodeConn, &rrConnWatch{s: s, member: "a", start: time.Now()})
+			}
+			conn = interrupt.NewGroup().NewConn(conn, false)
+			data := make([]byte, chunk)
+			b.SetBytes(chunk)
+			b.ReportAllocs()
+			drained := make(chan struct{})
+			go func() {
+				_, _ = io.Copy(io.Discard, nodeFar)
+				close(drained)
+			}()
+			b.ResetTimer()
+			go func() {
+				for i := 0; i < b.N; i++ {
+					if _, err := clientFar.Write(data); err != nil {
+						return
+					}
+				}
+				clientFar.(*net.TCPConn).CloseWrite()
+			}()
+			if _, err := bufio.Copy(conn, clientIn); err != nil {
+				b.Fatal(err)
+			}
+			nodeConn.(*net.TCPConn).CloseWrite()
+			<-drained
 		})
 	}
 }

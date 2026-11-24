@@ -12,17 +12,38 @@ package group
 // first byte is not a failure.
 //
 // The wrapper sits between the node's connection and the group's interrupt wrapper
-// and costs the connection no fast read path:
-//   - before the first byte it hands the copy the read waiter of the node's
+// and costs the connection no fast path once both directions have started:
+//   - reads: before the first byte it hands the copy the read waiter of the node's
 //     connection, peeking at each buffer (CreateReadWaiter), and declares
 //     NeedHandshakeForRead; with the first byte the copy's transfer hook sees the
 //     handshake completed (N.HandshakeState.Check), re-selects its path, and from
 //     then on gets the bare read waiter (or splice/vectorised reads: the wrapper
 //     becomes ReaderReplaceable);
-//   - writes always go through the wrapper (WriterReplaceable is false), so a
-//     half-close from the client reaches it. It does not declare
-//     NeedHandshakeForWrite: kickWriteHandshake (route/conn.go) finds the write
-//     handshake of the node's connection through Upstream, as without the wrapper.
+//   - writes: all the wrapper needs from them is the fact "the client sent
+//     something". Until the first non-empty write it declares
+//     NeedHandshakeForWrite, so the upload copy installs its transfer hook; after
+//     that write the hook sees the handshake completed, the copy re-selects its
+//     path, and the wrapper is WriterReplaceable: the node's writer (splice,
+//     vectorised writes, ReadFrom) is reached through Upstream. A write handshake
+//     of the node's own connection (VLESS/VMess/Trojan early data) is reported
+//     through the wrapper as without it and keeps the copy on the wrapper until it
+//     completes.
+//   - kickWriteHandshake (route/conn.go) sees the declared write handshake and
+//     nudges the connection before the copy starts. An empty nudge before the
+//     client's first write reaches the node's connection only when that one has a
+//     write handshake of its own — exactly when the nudge would reach it without
+//     the wrapper — and never counts as the client sending. When the client
+//     already has a payload cached (sniffed), the nudge writes it: the same bytes
+//     the copy would write first, only from kickWriteHandshake.
+//   - the client's end of stream reaches the node's connection past the wrapper
+//     once it is WriterReplaceable (a half-close, or a close when the node's
+//     connection has none); route/conn.go tells the wrapper about it
+//     (LxClientFinished) when the wrapper lies on the write path it unwraps.
+//
+// Unfinished connections (urltest_rr_track_lx.go): from the client's first write
+// until the first byte, a read error or the close, the connection is listed in the
+// tracker of its node, and the dead verdict on the node closes it. The dial of the
+// connection (rrDial) lives with it: its context is released on the close.
 //
 // Not wrapped: a connection test (SPEC 139), a pick outside the pool, a nested
 // urltest (it watches its own connections), and a direct leaf — an unreachable
@@ -41,7 +62,6 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/lxtrace"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/bufio"
@@ -61,6 +81,7 @@ func rrClock(at time.Time) int64 {
 type rrConnWatch struct {
 	s      *URLTest
 	member string    // the pool member the connection went through
+	track  *rrTrack  // the tracker of member; nil when it holds no slot
 	start  time.Time // the start of the connection (its pick)
 	key    rrKey     // the shift-table key; invalid without stickiness
 	shift  int       // the shift of the key at the pick
@@ -85,16 +106,19 @@ func (s *URLTest) rrWatchConn(ctx context.Context, network string, dialed adapte
 }
 
 func (s *URLTest) rrWatch(ctx context.Context, network string, dialed adapter.Outbound, conn net.Conn, picked rrPick, confirmFor string, failure *rrFailure) net.Conn {
+	picked.dial.opened()
 	var packet bool
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
 	case N.NetworkUDP:
 		packet = true // a connected UDP flow (stage 3): the close decides, not a read error
 	default:
+		picked.dial.release()
 		return conn
 	}
 	watch, direct := s.rrNewWatch(ctx, dialed, picked, confirmFor, failure, packet)
 	if watch == nil {
+		picked.dial.release() // not reached for a tracked dial (rrNewWatch); kept for every path
 		return conn
 	}
 	if direct {
@@ -103,24 +127,29 @@ func (s *URLTest) rrWatch(ctx context.Context, network string, dialed adapter.Ou
 		}
 		return conn
 	}
-	return newRRFirstByteConn(conn, watch)
+	wrapped := newRRFirstByteConn(conn, watch)
+	wrapped.dial = picked.dial
+	return wrapped
 }
 
 // rrNewWatch counts a TCP connection opened through dialed and returns its watch; nil
 // when there is nothing to watch: a connection test, a closed group, a pick outside
 // the pool or a nested urltest. direct reports a direct leaf, which is not wrapped:
 // for TCP its open is the first byte, for UDP the open proves nothing. A UDP watch
-// carries no key: UDP shifts none (§3.8).
+// carries no key: UDP shifts none (§3.8). A tracked dial (picked.dial) is always
+// watched: its wrapper releases the dial's context on the close.
 func (s *URLTest) rrNewWatch(ctx context.Context, dialed adapter.Outbound, picked rrPick, confirmFor string, failure *rrFailure, packet bool) (*rrConnWatch, bool) {
-	if lxtrace.IsProbe(ctx) || s.group.ctx.Err() != nil {
+	tracked := picked.dial != nil
+	if !tracked && (rrUnwatched(ctx) || s.group.ctx.Err() != nil) {
 		return nil, false
 	}
 	member := dialed.Tag() // a chain hop carries the tag of its member
-	if !s.balancer.inPool(member) {
+	track := s.balancer.trackOf(member)
+	if !tracked && !s.balancer.inPool(member) {
 		return nil, false // a fallback pick outside the pool (cold start)
 	}
 	node, loaded := s.outbound.Outbound(member)
-	if !loaded || rrNestedURLTest(node) {
+	if !tracked && (!loaded || rrNestedURLTest(node)) {
 		return nil, false
 	}
 	if !packet {
@@ -129,6 +158,7 @@ func (s *URLTest) rrNewWatch(ctx context.Context, dialed adapter.Outbound, picke
 	watch := &rrConnWatch{
 		s:          s,
 		member:     member,
+		track:      track,
 		start:      picked.start,
 		key:        picked.key,
 		shift:      picked.shift,
@@ -139,7 +169,9 @@ func (s *URLTest) rrNewWatch(ctx context.Context, dialed adapter.Outbound, picke
 	if packet {
 		watch.key = rrKey{}
 	}
-	return watch, rrDirectLeaf(dialed)
+	// A tracked dial is wrapped even if its selector turned to a direct leaf since
+	// the dial started: the wrapper releases the dial's context on the close.
+	return watch, !tracked && rrDirectLeaf(dialed)
 }
 
 // rrDirectLeaf reports whether node, unwrapped through selectors, is a direct
@@ -158,10 +190,13 @@ func rrDirectLeaf(node adapter.Outbound) bool {
 }
 
 const (
-	rrStateWrote   uint32 = 1 << iota // the client sent a byte
-	rrStateGotByte                    // the destination sent a byte
-	rrStateClosed                     // closed or half-closed from our side
-	rrStateDone                       // the outcome is reported
+	rrStateWrote      uint32 = 1 << iota // the client sent a byte
+	rrStateGotByte                       // the destination sent a byte
+	rrStateClosed                        // closed from our side
+	rrStateDone                          // the outcome is reported, or the dead verdict closed it
+	rrStateHalfClosed                    // half-closed from our side: a close without a byte is no failure
+	rrStateTracked                       // listed as waiting for its first byte (rrTrack.waits)
+	rrStateClientEOF                     // the copy closes it at the client's end of stream: no client giving up
 )
 
 // rrFirstByteConn watches a connection for its first byte (see the file header).
@@ -171,6 +206,8 @@ type rrFirstByteConn struct {
 	writer N.ExtendedWriter
 	state  atomic.Uint32
 	watch  *rrConnWatch
+	entry  rrTrackEntry // in watch.track.waits while the client waits for the first byte
+	dial   *rrDial      // the tracked dial of the connection; its context is released on the close
 }
 
 func newRRFirstByteConn(conn net.Conn, watch *rrConnWatch) *rrFirstByteConn {
@@ -191,10 +228,40 @@ func (c *rrFirstByteConn) set(bit uint32) uint32 {
 	}
 }
 
+// wrote takes the client's first non-empty write: the connection waits for its
+// first byte from now on, listed in the tracker of its node.
+func (c *rrFirstByteConn) wrote() {
+	old := c.set(rrStateWrote)
+	if old&(rrStateWrote|rrStateGotByte|rrStateClosed|rrStateDone) != 0 || c.watch.track == nil {
+		return
+	}
+	c.watch.track.track(&c.watch.track.waits, &c.entry, rrClock(time.Now()), c)
+	c.set(rrStateTracked)
+	if c.state.Load()&(rrStateGotByte|rrStateClosed|rrStateDone) != 0 {
+		c.watch.track.untrack(&c.entry) // the outcome came in meanwhile
+	}
+}
+
+// untrack takes the connection off the list of its node; set the outcome bit first.
+func (c *rrFirstByteConn) untrack() {
+	if c.state.Load()&rrStateTracked != 0 {
+		c.watch.track.untrack(&c.entry)
+	}
+}
+
+// rrKill is the dead verdict on the node: the connection waits for a first byte
+// that will not come; it is closed, and the client retries on its own.
+func (c *rrFirstByteConn) rrKill() {
+	c.set(rrStateDone | rrStateClosed)
+	_ = c.Conn.Close()
+}
+
 // observe takes the outcome of one read before the first byte.
 func (c *rrFirstByteConn) observe(n int, err error) {
 	if n > 0 {
-		if old := c.set(rrStateGotByte | rrStateDone); old&rrStateDone == 0 {
+		old := c.set(rrStateGotByte | rrStateDone)
+		c.untrack()
+		if old&rrStateDone == 0 {
 			c.watch.s.rrFirstByte(c.watch)
 		}
 		return
@@ -203,8 +270,9 @@ func (c *rrFirstByteConn) observe(n int, err error) {
 		return // a read deadline of the consumer is no outcome: still watched; UDP waits for the close
 	}
 	old := c.set(rrStateDone)
-	if old&(rrStateDone|rrStateGotByte|rrStateClosed) != 0 || old&rrStateWrote == 0 {
-		return // reported already, closed by us, or the client sent nothing
+	c.untrack()
+	if old&(rrStateDone|rrStateGotByte|rrStateClosed|rrStateHalfClosed) != 0 || old&rrStateWrote == 0 {
+		return // reported already, closed or half-closed by us, or the client sent nothing
 	}
 	c.watch.s.rrSilentClose(c.watch)
 }
@@ -228,44 +296,86 @@ func (c *rrFirstByteConn) ReadBuffer(buffer *buf.Buffer) error {
 	return err
 }
 
+// Write passes the client's data to the node's connection; the first non-empty
+// write marks the client as having sent something. An empty write before it is the
+// nudge of kickWriteHandshake (route/conn.go): it reaches the node's connection
+// only when that one has a write handshake of its own, as without the wrapper.
 func (c *rrFirstByteConn) Write(p []byte) (int, error) {
-	if len(p) > 0 && c.state.Load()&rrStateWrote == 0 {
-		c.set(rrStateWrote)
+	if c.state.Load()&rrStateWrote == 0 {
+		if len(p) == 0 {
+			if N.NeedHandshakeForWrite(c.Conn) {
+				return c.Conn.Write(p)
+			}
+			return 0, nil
+		}
+		c.wrote()
 	}
 	return c.Conn.Write(p)
 }
 
 func (c *rrFirstByteConn) WriteBuffer(buffer *buf.Buffer) error {
-	if !buffer.IsEmpty() && c.state.Load()&rrStateWrote == 0 {
-		c.set(rrStateWrote)
+	if c.state.Load()&rrStateWrote == 0 {
+		if buffer.IsEmpty() && !N.NeedHandshakeForWrite(c.Conn) {
+			buffer.Release()
+			return nil
+		}
+		if !buffer.IsEmpty() {
+			c.wrote()
+		}
 	}
 	return c.writer.WriteBuffer(buffer)
 }
 
-// CloseWrite is the half-close from the client: the connection may end without a
-// byte now, and that is not a failure. Without a half-close below it closes the
-// connection, as the copy does for a writer that has none.
+// LxClientFinished is the client's end of stream (route/conn.go tells it when the
+// wrapper lies on the write path): the connection may end without a byte now, and
+// that is not a failure. A half-close leaves it waiting for its first byte, and
+// its later close is still a reason (rrHang); a close at the end of stream
+// (halfClose false: the node's connection has no half-close) is none.
+func (c *rrFirstByteConn) LxClientFinished(halfClose bool) {
+	if halfClose {
+		c.set(rrStateHalfClosed)
+	} else {
+		c.set(rrStateHalfClosed | rrStateClientEOF)
+	}
+}
+
+// CloseWrite is the half-close from the client while writes still go through the
+// wrapper. Without a half-close below it closes the connection, as the copy does
+// for a writer that has none: the client's end of stream, no client giving up.
 func (c *rrFirstByteConn) CloseWrite() error {
-	c.set(rrStateClosed)
 	if closer, isCloser := N.UnwrapWriter(c.Conn).(N.WriteCloser); isCloser {
+		c.set(rrStateHalfClosed)
 		return closer.CloseWrite()
 	}
-	return c.Conn.Close()
+	c.set(rrStateHalfClosed | rrStateClientEOF)
+	return c.Close()
 }
 
 // Close from our side before the first byte, after the client sent something, is a
-// client that gave up: after a long wait a reason for a check (rrHang).
+// client that gave up: after a long wait a reason for a check (rrHang). A
+// half-close before it does not change that; a close at the client's end of
+// stream is no giving up.
 func (c *rrFirstByteConn) Close() error {
 	old := c.set(rrStateClosed)
-	if old&(rrStateClosed|rrStateDone|rrStateGotByte) == 0 && old&rrStateWrote != 0 {
+	c.untrack()
+	if old&(rrStateClosed|rrStateDone|rrStateGotByte|rrStateClientEOF) == 0 && old&rrStateWrote != 0 {
 		c.watch.s.rrHang(c.watch.member, c.watch.start)
 	}
-	return c.Conn.Close()
+	err := c.Conn.Close()
+	c.dial.release()
+	return err
 }
 
 // NeedHandshakeForRead holds until the first byte: then the copy re-selects its path.
 func (c *rrFirstByteConn) NeedHandshakeForRead() bool {
 	return c.state.Load()&rrStateGotByte == 0 || N.NeedHandshakeForRead(c.Conn)
+}
+
+// NeedHandshakeForWrite holds until the client's first write, and while the node's
+// connection has a write handshake of its own: then the upload copy re-selects its
+// path.
+func (c *rrFirstByteConn) NeedHandshakeForWrite() bool {
+	return c.state.Load()&rrStateWrote == 0 || N.NeedHandshakeForWrite(c.Conn)
 }
 
 // CreateReadWaiter hands out the read waiter of the node's connection; before the
@@ -286,7 +396,7 @@ func (c *rrFirstByteConn) ReaderReplaceable() bool {
 }
 
 func (c *rrFirstByteConn) WriterReplaceable() bool {
-	return false
+	return c.state.Load()&rrStateWrote != 0
 }
 
 func (c *rrFirstByteConn) Upstream() any {
