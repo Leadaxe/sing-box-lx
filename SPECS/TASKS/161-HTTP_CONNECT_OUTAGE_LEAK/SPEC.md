@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — неограниченное ожидание рукопожатия прокси-узла (HTTP CONNECT, SOCKS, httpupgrade, ShadowTLS v3), когда сервер принял TCP и замолчал |
-| Статус | I (implemented) — HTTP CONNECT: тесты под `-race`, сборки и стенд со Squid зелёные ([PR #73](https://github.com/Leadaxe/sing-box-lx/pull/73)), в `v1.14.4-lx.36`. SOCKS, httpupgrade, ShadowTLS v3: тесты на loopback-серверах (в том числе `-race`), в ветке `lx-spec138-rr-self-heal`, в lx-ci не включены |
+| Статус | I (implemented) — HTTP CONNECT: тесты под `-race`, сборки и стенд со Squid зелёные ([PR #73](https://github.com/Leadaxe/sing-box-lx/pull/73)), в `v1.14.4-lx.36`. SOCKS, httpupgrade, ShadowTLS v3: тесты на loopback-серверах (в том числе `-race`), в ветке `lx-spec138-rr-self-heal`; lx-ci гоняет их под `-race` |
 | Ветка | `lx` (HTTP CONNECT); `lx-spec138-rr-self-heal` (остальные рукопожатия) |
 | История | [HISTORY.md](HISTORY.md) |
 | Источник | [issue #74](https://github.com/Leadaxe/sing-box-lx/issues/74), [PR #73](https://github.com/Leadaxe/sing-box-lx/pull/73). Воспроизведение на официальном `v1.14.4-lx.33`. Остальные рукопожатия — стенд [SPEC 138](../138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md) на NanoPi: socks-сервер узла под `kill -STOP` держал открытие соединения без предела |
@@ -132,8 +132,8 @@ ShadowTLS v1, v2 и v3 с uTLS идут через `tls.ClientHandshake`, у к�
 возврат; более ранний дедлайн вызывающего побеждает; успешный обмен сохраняет туннель и байты,
 пришедшие вместе с ответом, после истечения порога; дайлер без контекста `lxhandshake` прозрачен.
 Тесты: `common/lxhandshake/handshake_test.go`, `protocol/socks/handshake_timeout_lx_test.go`,
-`transport/v2rayhttpupgrade/handshake_timeout_lx_test.go`, `protocol/shadowtls/handshake_lx_test.go`.
-Маркер в апстримных файлах — `// lx: handshake-timeout`.
+`transport/v2rayhttpupgrade/handshake_timeout_lx_test.go`, `protocol/shadowtls/handshake_lx_test.go`;
+lx-ci гоняет эти пакеты под `-race`. Маркер в апстримных файлах — `// lx: handshake-timeout`.
 
 ## Основание принятия
 

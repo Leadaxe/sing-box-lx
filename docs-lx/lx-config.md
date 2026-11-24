@@ -536,14 +536,23 @@ No config keys.
     once (`pool_tolerance: 0`: the first live candidate in config order, probed in batches of the
     pool size; `> 0`: the fastest by history);
   - **nobody answers** — the local network is down: nothing changes, and the self-heal freezes.
+- **Where the verdict starts.** A failed open through a proxy node puts the node itself under
+  suspicion: the check with a control starts at once. A close without a byte, a failed open
+  through a `direct` or endpoint (WireGuard, AWG, Tailscale and other tunnels) leaf and a failed
+  retry put the destination under suspicion: a probe of that node alone starts at once, outside
+  the check and its gap, at most once per node in 3 s. Its answer is the *alive* verdict (the key
+  shifts right away), its silence starts the check with a control.
 - **Probes** use the group `url` and a 15 s timeout and write no history themselves; the node and
   the control are always probed live. One check at a time per group, at least 15 s between
   checks after failures.
 - **Hanging node.** A node that accepts and stays silent gives no failure. A pick of its slot that
   finds a connection through it unanswered for more than 5 s, or a client giving up after 5 s,
-  triggers a check (at most once a minute per group).
+  triggers a check (at most once a minute per group; when the check cannot start, a probe of that
+  node alone). Until the node proves alive after that connection started, the pick skips its slot
+  like a dead one, as long as the pool has a slot that is neither dead nor holding such a
+  connection; the skip changes no history, shift or counter.
 - **Quarantine.** A node with at least 8 connections and 3 confirmed failures whose failure share
-  is above twice the median of the rest of the pool is skipped and replaced until the next
+  is at least 5 % and above twice the median of the rest of the pool is skipped and replaced until the next
   scheduled run, manual run or network change; its history stays.
 - **Freeze.** 15 s after the "nobody answered" verdict, a device or network wake and a network
   change (and for the whole run after a network change): no retries, probes, shifts or counting.
