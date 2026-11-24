@@ -53,6 +53,10 @@ type balancer struct {
 	// slots that did not (SPEC 138). The URLTest wires it to slotAlive. Called WITHOUT
 	// the access lock held.
 	alive func(tag string) bool
+
+	// heal is the state of the self-heal after a failed dial (SPEC 138 §3,
+	// urltest_rr_heal_lx.go).
+	heal rrHeal
 }
 
 // warnLegacyTolerance reports whether the legacy urltest `tolerance` option deserves a
@@ -221,6 +225,59 @@ func (b *balancer) poolTags() []string {
 		tags[i] = s.tag
 	}
 	return tags
+}
+
+// slotsSnapshot returns the published slot slice. setSlots and replaceSlot publish a
+// new slice and never mutate a published one, so it stays valid without the lock.
+func (b *balancer) slotsSnapshot() []slot {
+	b.access.Lock()
+	defer b.access.Unlock()
+	return b.slots
+}
+
+// nextLiveSlot returns the first slot after from, going round, whose node is usable;
+// ok is false when no other slot is. The retry and the neighbour of the self-heal
+// check (SPEC 138 §3.2–3.3). Called WITHOUT the access lock held.
+func (b *balancer) nextLiveSlot(slots []slot, from int, usable func(tag string) bool) (int, bool) {
+	n := len(slots)
+	for step := 1; step < n; step++ {
+		i := (from + step) % n
+		if usable(slots[i].tag) {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// replaceSlot puts node into the slot that holds dead, leaving every other slot as
+// is (SPEC 138 §3.4). It does nothing and returns false when dead no longer holds a
+// slot or node already holds one: the pool changed since the caller looked at it.
+func (b *balancer) replaceSlot(dead, node string) bool {
+	b.access.Lock()
+	index := -1
+	for i, s := range b.slots {
+		if s.tag == node {
+			b.access.Unlock()
+			return false
+		}
+		if s.tag == dead {
+			index = i
+		}
+	}
+	if index < 0 {
+		b.access.Unlock()
+		return false
+	}
+	next := make([]slot, len(b.slots))
+	copy(next, b.slots)
+	next[index] = slot{tag: node}
+	b.slots = next
+	b.access.Unlock()
+	// lx: SPEC 020 — same as setSlots: the active pool changed.
+	if b.onChange != nil {
+		b.onChange()
+	}
+	return true
 }
 
 // setSlots replaces the pool atomically. The health-check (urltest.go) computes the new

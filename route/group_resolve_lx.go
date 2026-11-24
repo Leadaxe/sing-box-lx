@@ -31,3 +31,13 @@ func resolveOutboundLx(outbound adapter.Outbound, network string) ([]adapter.Out
 	}
 	return chain, nil
 }
+
+// actualOutboundLx is the SPEC 138 cell of a routed connection: the group that
+// picks per connection records its node there, the connection list reads it.
+// Without a tracker nobody reads it, so no cell is allocated.
+func actualOutboundLx(trackers []adapter.ConnectionTracker) *adapter.ActualOutboundLx {
+	if len(trackers) == 0 {
+		return nil
+	}
+	return new(adapter.ActualOutboundLx)
+}

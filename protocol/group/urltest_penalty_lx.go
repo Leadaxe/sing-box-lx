@@ -31,9 +31,13 @@ package group
 // аварийный режим, но режим деградирует мягко (выбор уходит на здоровые узлы,
 // всё продолжает работать) и смывается первым же ответившим ретестом.
 // UDP штрафов не генерирует (у ListenPacket нет connect-сигнала), но выбором
-// пользуется общим. round_robin (balancer != nil) не затронут: у пула своя
-// машинерия здоровья (SPEC 019 v2), и его комментарий про «ошибка дайла не
-// трогает пул» остаётся в силе.
+// пользуется общим.
+//
+// round_robin (balancer != nil) does not use this machinery: its pool has its own
+// health-check (SPEC 019 v2), and a failed TCP dial goes to the SPEC 138 self-heal
+// (urltest_rr_heal_lx.go) — one retry through the next live slot and a background
+// check of the node, whose verdict may drop the node's history and replace it in
+// its slot. The dial error by itself still changes neither history nor the pool.
 
 import (
 	"context"

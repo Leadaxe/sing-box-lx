@@ -80,14 +80,34 @@ func (g *URLTestGroup) traceGroup(ctx context.Context, selected adapter.Outbound
 	stage.End(nil)
 }
 
-// balancedPicked is the round_robin tail of selectBalanced: the `group` stage,
-// then the Now() update, which a probe skips.
+// balancedPicked is the round_robin tail of selectBalanced: the pick goes into
+// the connection's SPEC 138 cell, where the connection list reads it; then the
+// `group` stage, then the Now() update, which a probe skips.
 func (g *URLTestGroup) balancedPicked(ctx context.Context, selected adapter.Outbound) {
+	adapter.RecordPickLx(ctx, g.groupTag, selected)
 	if lxtrace.From(ctx) != nil {
 		g.traceGroup(ctx, selected, "")
 		if lxtrace.IsProbe(ctx) {
 			return
 		}
+	}
+	g.lastSelected.Store(selected.Tag())
+}
+
+// balancedRetrying writes the `group` stage of the SPEC 138 retry through
+// another slot before its dial: it names the node whose dial failed in
+// fallback_for, as the SPEC 054 fallback does.
+func (g *URLTestGroup) balancedRetrying(ctx context.Context, selected adapter.Outbound, failed string) {
+	g.traceGroup(ctx, selected, failed)
+}
+
+// balancedRetried records an opened SPEC 138 retry: its node replaces the first
+// one in the connection's cell and in Now() (a probe leaves Now() alone). A retry
+// that did not open is not recorded: the first node stays.
+func (g *URLTestGroup) balancedRetried(ctx context.Context, selected adapter.Outbound) {
+	adapter.RecordPickLx(ctx, g.groupTag, selected)
+	if lxtrace.From(ctx) != nil && lxtrace.IsProbe(ctx) {
+		return
 	}
 	g.lastSelected.Store(selected.Tag())
 }
