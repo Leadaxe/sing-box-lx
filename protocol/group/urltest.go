@@ -344,8 +344,9 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	s.group.Touch()
 	var outbound adapter.Outbound
+	var picked rrPick // lx: SPEC 138 — the round_robin pick: key, shift, start of the flow
 	if s.balancer != nil {
-		outbound, _ = s.selectBalanced(ctx, N.NetworkUDP, destination)
+		outbound, picked = s.selectBalanced(ctx, N.NetworkUDP, destination) // lx: SPEC 138
 	} else {
 		// lx: SPEC 054 — общий penalty-aware выбор (штрафы копит только TCP,
 		// UDP ими пользуется).
@@ -362,14 +363,17 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 	conn, err := outbound.ListenPacket(ctx, destination)
 	// lx:end chain
 	if err == nil {
+		conn = s.rrWatchPacket(ctx, outbound, conn, picked) // lx: SPEC 138 — round_robin watches for the first packet
 		return s.group.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
 	// lx: SPEC 019 v2 / SPEC 138 — a round_robin UDP open error leaves history and the pool
-	// untouched and gets no retry and no check: stage 1 of the self-heal covers TCP only, UDP
-	// is a later stage (SPEC 138 §3.8).
+	// untouched; as a failed TCP dial it is retried once through the next live slot that
+	// takes UDP and starts a background check of the node (SPEC 138 §3.8).
 	if s.balancer == nil {
 		s.group.deleteHistoryOnDialError(ctx, outbound.Tag()) // lx: SPEC 139 — a probe keeps the history
+	} else if retryConn, ok := s.rrHealListen(ctx, destination, outbound, err, picked); ok { // lx: SPEC 138
+		return s.group.interruptGroup.NewPacketConn(retryConn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	return nil, err
 }
