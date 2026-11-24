@@ -4,6 +4,7 @@ package group
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,8 +15,8 @@ import (
 // shiftTime moves the previous tick run end and all history back by d, as if d
 // had passed since the last run.
 func shiftTime(g *URLTestGroup, d time.Duration) {
-	if nanos := g.lastTickRunEnd.Load(); nanos != 0 {
-		g.lastTickRunEnd.Store(nanos - int64(d))
+	if mark := g.lastTickRunEnd.Load(); mark != 0 {
+		g.lastTickRunEnd.Store(mark - int64(d))
 	}
 	for _, detour := range g.outbounds {
 		if history := g.history.LoadURLTestHistory(detour.Tag()); history != nil {
@@ -82,7 +83,7 @@ func TestTick_windowCappedAtInterval(t *testing.T) {
 	a := newFailoverNode("a", 0)
 	g := newFailoverTestGroup(t, a)
 	g.failover = false
-	g.lastTickRunEnd.Store(time.Now().Add(-3 * g.interval).UnixNano())
+	g.lastTickRunEnd.Store(rrClock(time.Now().Add(-3 * g.interval)))
 	g.history.StoreURLTestHistory("a", &adapter.URLTestHistory{Time: time.Now().Add(-g.interval / 2), Delay: 10})
 	resetDials(a)
 	runTick(t, g)
@@ -116,6 +117,32 @@ func TestTick_quietPauseAfterLongRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertDials(t, a, 1)
+}
+
+// The end of a tick run is a monotonic mark (rrClock), not wall-clock UnixNano:
+// a wall clock set back does not stretch the pause.
+func TestTick_runEndMonotonic(t *testing.T) {
+	a := newFailoverNode("a", 0)
+	g := newFailoverTestGroup(t, a)
+	g.failover = false
+	before := time.Now()
+	runTick(t, g)
+	after := time.Now()
+	mark := g.lastTickRunEnd.Load()
+	if mark < rrClock(before) || mark > rrClock(after) {
+		t.Fatalf("mark %d is not an rrClock reading in [%d, %d]", mark, rrClock(before), rrClock(after))
+	}
+	end := rrTime(mark)
+	if !strings.Contains(end.String(), " m=") {
+		t.Fatalf("end of the run %v has no monotonic reading", end)
+	}
+	if !g.tickTooSoon() {
+		t.Fatal("a tick right after the run must be skipped")
+	}
+	g.lastTickRunEnd.Store(rrClock(time.Now().Add(-g.interval)))
+	if g.tickTooSoon() {
+		t.Fatal("a tick interval after the run must not be skipped")
+	}
 }
 
 func TestTick_freshWindow(t *testing.T) {

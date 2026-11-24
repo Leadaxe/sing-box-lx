@@ -24,9 +24,12 @@ package group
 //     удерживаемого узла переносит выбор на лучшего кандидата через
 //     penaltyFailoverDial, аварийный режим и клапан действуют как здесь.
 //
-// Ошибки НЕ этого класса штрафа не дают и fallback не запускают: RST означает
-// «узел донёс, назначение отказало» — через другой узел будет тот же отказ;
-// Canceled — клиент ушёл сам. Причинная неоднозначность ошибок (мёртвый узел
+// Отказ в подключении (ECONNREFUSED) и сброс при открытии (ECONNRESET) зависят
+// от узла: у прокси-узла ошибка открытия возникает между нами и его сервером
+// (процесс сервера остановлен, порт закрыт) — это «путь мёртв». Узел, который
+// сам ходит до назначения при открытии (лист direct или endpoint,
+// penaltySiteOnOpen), получает этот отказ от сайта — через другой узел будет
+// тот же отказ, штрафа и fallback'а нет. Canceled — клиент ушёл сам. Причинная неоднозначность ошибок (мёртвый узел
 // vs мёртвый сайт) принята: один заблокированный сайт может уронить группу в
 // аварийный режим, но режим деградирует мягко (выбор уходит на здоровые узлы,
 // всё продолжает работать) и смывается первым же ответившим ретестом.
@@ -50,9 +53,11 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxtrace"
+	C "github.com/sagernet/sing-box/constant"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 )
 
 const (
@@ -64,10 +69,12 @@ const (
 	penaltyForcedRetestGap = 2 * time.Minute
 )
 
-// isPathDeadDialError отделяет «путь мёртв» (таймаут/недостижимость — штраф и
-// fallback) от «назначение отказало» (RST — не штраф) и «клиент ушёл» (Canceled).
-// context.DeadlineExceeded — это в том числе 15s-дедлайн SPEC 052.
-func isPathDeadDialError(err error) bool {
+// isPathDeadDialError отделяет «путь мёртв» (штраф и fallback) от «назначение
+// отказало» (не штраф) и «клиент ушёл» (Canceled). Путь мёртв при таймауте и
+// недостижимости; context.DeadlineExceeded — это в том числе 15s-дедлайн
+// SPEC 052. Отказ в подключении и сброс при открытии — путь мёртв, если узел не
+// ходит до назначения сам (siteOnOpen == false): тогда отказал сервер узла.
+func isPathDeadDialError(err error, siteOnOpen bool) bool {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return false
 	}
@@ -77,11 +84,46 @@ func isPathDeadDialError(err error) bool {
 	if errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.ETIMEDOUT) {
 		return true
 	}
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) {
+		return !siteOnOpen
+	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
 	}
 	return false
+}
+
+// penaltySiteOnOpen reports whether the leaf of node goes to the destination
+// itself when a connection opens: a direct outbound or an endpoint (WireGuard,
+// AWG, Tailscale and other tunnels). Its refused or reset dial is the site's
+// answer. A proxy leaf fails its dial between us and its server. node may be a
+// chain hop (SPEC 073): it carries the tag of the original and keeps its type.
+func penaltySiteOnOpen(ctx context.Context, outbounds adapter.OutboundManager, node adapter.Outbound) bool {
+	tag := RealTag(node, N.NetworkTCP)
+	if tag == "" {
+		tag = node.Tag()
+	}
+	if ctx != nil {
+		if endpoints := service.FromContext[adapter.EndpointManager](ctx); endpoints != nil {
+			if _, isEndpoint := endpoints.Get(tag); isEndpoint {
+				return true
+			}
+		}
+	}
+	if _, isGroup := node.(adapter.OutboundGroup); isGroup {
+		leaf, loaded := outbounds.Outbound(tag)
+		if !loaded {
+			return false
+		}
+		node = leaf
+	}
+	return node.Type() == C.TypeDirect
+}
+
+// pathDead classifies a failed dial through node (isPathDeadDialError).
+func (g *URLTestGroup) pathDead(node adapter.Outbound, err error) bool {
+	return isPathDeadDialError(err, penaltySiteOnOpen(g.ctx, g.outbound, node))
 }
 
 func (g *URLTestGroup) penaltyOf(tag string) int64 {
@@ -236,7 +278,7 @@ func (g *URLTestGroup) moveSelection(network string, detour adapter.Outbound) {
 // Возвращает (conn, узел, true) при успехе fallback'а; иначе (nil, nil, false)
 // и вызывающий отдаёт исходную ошибку приложению.
 func (g *URLTestGroup) penaltyFailoverDial(ctx context.Context, network string, destination M.Socksaddr, failed adapter.Outbound, dialErr error) (net.Conn, adapter.Outbound, bool) {
-	if g.balancer != nil || !isPathDeadDialError(dialErr) {
+	if g.balancer != nil || !g.pathDead(failed, dialErr) {
 		return nil, nil, false
 	}
 	// lx: SPEC 139 §5.7 — a connection test takes the same fallback path but
@@ -264,7 +306,7 @@ func (g *URLTestGroup) penaltyFailoverDial(ctx context.Context, network string, 
 		}
 		// Симметрия с апстримным поведением least_test для отказавшего дайла.
 		g.history.DeleteURLTestHistory(RealTag(fallback, N.NetworkTCP))
-		if isPathDeadDialError(err) {
+		if g.pathDead(fallbackDialer, err) {
 			g.penaltyAdd(RealTag(fallback, N.NetworkTCP))
 			g.maybeForceRetest()
 		}
