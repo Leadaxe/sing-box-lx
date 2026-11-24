@@ -223,7 +223,8 @@ func TestRRSkip_deadMemberKeptButSkipped(t *testing.T) {
 	picks := func() map[string]int {
 		count := map[string]int{}
 		for i := 0; i < 10; i++ {
-			count[s.selectBalanced(context.Background(), N.NetworkTCP, M.Socksaddr{}).Tag()]++
+			selected, _ := s.selectBalanced(context.Background(), N.NetworkTCP, M.Socksaddr{})
+			count[selected.Tag()]++
 		}
 		return count
 	}

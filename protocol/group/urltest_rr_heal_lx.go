@@ -10,8 +10,15 @@ package group
 //   - the probes do not write: a direct urltest.URLTest of the leaf (RealTag)
 //     with the group link and C.TCPTimeout; history changes only by verdict, so
 //     a blink of the local network does not strike every node at once;
-//   - A with history younger than rrHealFresh counts as alive unprobed: the
-//     question "is A alive" is answered. A control — B, the third node, the
+//   - A with history younger than rrHealFresh counts as alive unprobed when the
+//     network is proved alive since the failed connection started (the group got
+//     a first byte after that, or A answered a probe after that, and no freeze
+//     came in since, stage 2): the question "is A alive" is answered. That
+//     shortcut is for a failure that puts the site under suspicion: a close
+//     without a byte, or a failed dial of a direct or endpoint leaf. A failed dial
+//     of a proxy leaf puts the node itself under suspicion: it is alive only by a
+//     probe that started after the connection (a live one, or history written
+//     since); in the gap there is no verdict — the retry only, no shift, no count; Without the proof A is probed. A control — B, the third node, the
 //     candidates of a replacement search that serves as the control — is always
 //     probed live: history says nothing about whether the network answers now;
 //   - A silent, B answered: A is dead — its history is dropped (pick skips the
@@ -19,13 +26,22 @@ package group
 //     candidate of that replacement may count by fresh history, A is already
 //     proved dead by a live answer;
 //   - A answered: A is alive, the destination is not reachable through it; its
-//     fresh answer is written. The key shift of §3.5 hooks in here (stage 2);
+//     fresh answer is written and the key shifts (urltest_rr_shift_lx.go);
 //   - both silent: a third node answers → both dead; it is silent too → the
 //     local network is down, nothing changes and the group freezes;
 //   - no neighbour: the replacement search is the control;
 //   - the history of a dead node is dropped only if it is not newer than the
 //     start of its probe: a scheduled check that found it alive meanwhile wins,
 //     and the verdict about that node is dropped.
+//
+// A client that gave up — it cancelled the dial, or closed a connection that got
+// no byte after it sent something — rrHangAfter or more after the connection
+// started is a reason for a check on the usual terms (a node that accepts and
+// stays silent gives no failure at all); no retry, shift or count follows from it.
+// An interrupt of the group, its Close and a connection test are no reason.
+//
+// A check that ended without a probe (A alive by fresh history) sets no gap: the
+// gap bounds probes.
 //
 // The replacement runs under URLTestGroup.checking, the flag of the scheduled
 // health-check: there is one writer of the slots at a time, and a busy flag
@@ -66,6 +82,7 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/pause"
 )
 
@@ -81,6 +98,9 @@ const (
 	// rrHealYieldWait bounds how long the full run after a network change waits for
 	// the aborted self-heal check to end.
 	rrHealYieldWait = C.TCPTimeout
+	// rrHangAfter — a client that gives up on a connection with no byte after
+	// waiting this long is a reason for a check: a hanging node gives no failure.
+	rrHangAfter = 5 * time.Second
 )
 
 // rrHeal is the self-heal state of one round_robin group; it lives in the balancer.
@@ -92,6 +112,23 @@ type rrHeal struct {
 	frozenUntil  atomic.Pointer[time.Time]          // end of the freeze
 	networkRuns  atomic.Int32                       // full runs after a network change in flight
 	abort        atomic.Pointer[context.CancelFunc] // cancels the check in flight
+	lastByte     atomic.Int64                       // rrClock of the last first byte of any connection (stage 2)
+	lastFreeze   atomic.Int64                       // rrClock of the last freeze: it voids the "network alive" proof (stage 2)
+	interrupting atomic.Int32                       // an interrupt of the group is closing its connections
+}
+
+// rrInterrupting marks the interrupt of the group's connections (a selection
+// update) until the returned function runs: a connection it closes is no client
+// giving up. A no-op outside round_robin.
+func (g *URLTestGroup) rrInterrupting() func() {
+	if g.balancer == nil {
+		return func() {}
+	}
+	heal := &g.balancer.heal
+	heal.interrupting.Add(1)
+	return func() {
+		heal.interrupting.Add(-1)
+	}
 }
 
 // beginCheck claims the single check slot of the group, unless the previous check
@@ -111,8 +148,10 @@ func (h *rrHeal) endCheck() {
 
 // freeze freezes the self-heal for rrHealFreeze and aborts the check in flight.
 func (h *rrHeal) freeze() {
-	until := time.Now().Add(rrHealFreeze)
+	now := time.Now()
+	until := now.Add(rrHealFreeze)
 	h.frozenUntil.Store(&until)
+	h.lastFreeze.Store(rrClock(now))
 	h.abortCheck()
 }
 
@@ -156,6 +195,7 @@ func (h *rrHeal) yield(ctx context.Context) {
 func (s *URLTest) rrNetworkChanged() {
 	if s.balancer != nil {
 		s.balancer.heal.freeze()
+		s.balancer.rrResetMarks() // stage 2: a network change lifts the marks and the quarantine
 	}
 }
 
@@ -170,6 +210,7 @@ func (s *URLTest) rrNetworkRun() func() {
 	}
 	heal := &s.balancer.heal
 	heal.networkRuns.Add(1)
+	heal.lastFreeze.Store(rrClock(time.Now()))
 	heal.abortCheck()
 	heal.yield(s.group.ctx)
 	return func() {
@@ -198,14 +239,29 @@ func (g *URLTestGroup) rrWatchWake() {
 }
 
 // rrHealDial handles a failed dial of a round_robin group: it starts the background
-// check and returns the connection of the retry through the next live slot.
-// ok is false when there is no retry or it failed too: the caller returns dialErr.
-func (s *URLTest) rrHealDial(ctx context.Context, network string, destination M.Socksaddr, failed adapter.Outbound, dialErr error) (net.Conn, bool) {
-	if N.NetworkName(network) != N.NetworkTCP || errors.Is(dialErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+// check and returns the connection of the retry through the next live slot. picked
+// is the pick of the connection: its key, the key's shift then and its start. ok is
+// false when there is no retry or it failed too: the caller returns dialErr.
+func (s *URLTest) rrHealDial(ctx context.Context, network string, destination M.Socksaddr, failed adapter.Outbound, dialErr error, picked rrPick) (net.Conn, bool) {
+	if N.NetworkName(network) != N.NetworkTCP {
+		return nil, false
+	}
+	if errors.Is(dialErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		// A client cancel is no failure; after a long wait it is a reason for a check.
+		if !lxtrace.IsProbe(ctx) {
+			s.rrHang(failed.Tag(), picked.start)
+		}
 		return nil, false
 	}
 	if s.balancer.heal.frozen() {
 		return nil, false
+	}
+	probe := lxtrace.IsProbe(ctx)
+	if !probe {
+		// Stage 2: an address-problem key gets no retry, no check and no shift.
+		if picked.key.valid && s.balancer.memory.shifts.marked(picked.key.table) {
+			return nil, false
+		}
 	}
 	slots := s.balancer.slotsSnapshot()
 	failedSlot := -1
@@ -220,6 +276,14 @@ func (s *URLTest) rrHealDial(ctx context.Context, network string, destination M.
 	if failedSlot < 0 || !loaded {
 		return nil, false // a fallback pick outside the pool (cold start)
 	}
+	// Stage 2: the failure waits for the verdict on its nodes to shift the key; a
+	// connection test leaves the counters and the shifts alone.
+	var failure *rrFailure
+	if !probe {
+		s.balancer.rrCountConn(member.Tag(), &s.balancer.heal)
+		failure = s.rrNewFailure(picked, member.Tag())
+		failure.dialFailed = true
+	}
 	usable := func(tag string) bool {
 		return s.slotAlive(tag) && s.slotSupports(tag, network)
 	}
@@ -229,8 +293,14 @@ func (s *URLTest) rrHealDial(ctx context.Context, network string, destination M.
 	if i, found := s.balancer.nextLiveSlot(slots, failedSlot, usable); found {
 		neighbour, _ = s.outbound.Outbound(slots[i].tag)
 	}
-	if !lxtrace.IsProbe(ctx) && s.balancer.heal.beginCheck() {
-		go s.rrHealCheck(member, neighbour)
+	if failure != nil {
+		if s.balancer.heal.beginCheck() {
+			go s.rrHealCheck(member, neighbour, failure)
+		} else {
+			// No probe now (a check in flight, the gap): A is alive only by fresh
+			// history with the network proved alive since the connection started.
+			failure.aliveByHistory(member)
+		}
 	}
 	// A nested urltest retries on its own (SPEC 054 or this one), so it is neither
 	// retried nor taken for the retry: two attempts per call at most. A context
@@ -259,13 +329,19 @@ func (s *URLTest) rrHealDial(ctx context.Context, network string, destination M.
 	conn, err := dialer.DialContext(ctx, network, destination)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "round_robin retry via ", retry.Tag(), ": ", err)
+		// A client that gave up meanwhile is no failure of the retry's node.
+		if failure != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
+			s.balancer.rrCountConn(retry.Tag(), &s.balancer.heal)
+			failure.retryFailed(retry)
+		}
 		return nil, false
 	}
 	// Only an opened retry moves the connection's node and Now(): a failed one
 	// leaves the first node on record.
 	s.group.balancedRetried(ctx, retry)
 	s.logger.DebugContext(ctx, "round_robin: ", failed.Tag(), " failed, retried via ", retry.Tag())
-	return conn, true
+	// Stage 2: the first byte of the retry confirms the failure of the first node.
+	return s.rrWatch(ctx, network, dialer, conn, picked, member.Tag(), failure), true
 }
 
 // slotSupports reports whether a slot's node takes connections of network.
@@ -367,10 +443,19 @@ func (g *URLTestGroup) rrStore(probe rrProbe) {
 // rrHealCheck probes the failed node A and its neighbour B and acts on the verdict
 // (SPEC 138 §3.3). It owns the check slot taken by beginCheck. It runs on a
 // context that the group's Close and a freeze cancel, and stops at once then.
-func (s *URLTest) rrHealCheck(member adapter.Outbound, neighbour adapter.Outbound) {
+// failure takes the verdict for the key shift (stage 2); nil takes none.
+func (s *URLTest) rrHealCheck(member adapter.Outbound, neighbour adapter.Outbound, failure *rrFailure) {
 	g := s.group
 	heal := &s.balancer.heal
-	defer heal.endCheck()
+	// The gap bounds probes: a check that ended without one leaves no gap.
+	var probed bool
+	defer func() {
+		if probed {
+			heal.endCheck()
+		} else {
+			heal.running.Store(false)
+		}
+	}()
 	ctx, cancel := context.WithCancel(g.ctx)
 	heal.abort.Store(&cancel)
 	defer func() {
@@ -380,11 +465,14 @@ func (s *URLTest) rrHealCheck(member adapter.Outbound, neighbour adapter.Outboun
 	if heal.aborted(ctx) {
 		return
 	}
-	// A with fresh history is alive: the destination is the problem, no control
-	// is needed. The key shift of SPEC 138 §3.5 (stage 2) starts here too.
-	if g.rrFresh(member) {
+	// A with fresh history is alive when the network is proved alive since the
+	// failed connection started: the destination is the problem, no control is
+	// needed, the key shifts. Without the proof A is probed.
+	if g.rrFresh(member) && failure.proved(member) {
+		failure.setA(true)
 		return
 	}
+	probed = true
 	var a, b rrProbe
 	if neighbour != nil {
 		var wg sync.WaitGroup
@@ -407,9 +495,10 @@ func (s *URLTest) rrHealCheck(member adapter.Outbound, neighbour adapter.Outboun
 		g.rrStore(a)
 		if neighbour != nil {
 			g.rrStore(b)
+			failure.setB(neighbour.Tag(), b.answered)
 		}
-		// A is alive: the destination is not reachable through it. The key shift of
-		// SPEC 138 §3.5 (stage 2) starts here.
+		// A is alive: the destination is not reachable through it; the key shifts.
+		failure.setA(true)
 		return
 	}
 	if neighbour == nil {
@@ -431,8 +520,76 @@ func (s *URLTest) rrHealCheck(member adapter.Outbound, neighbour adapter.Outboun
 			s.rrStrike(ctx, []rrProbe{a, b}, c)
 			return
 		}
+		s.rrOwnNetwork(a, b, c)
+		return
 	}
 	s.rrOwnNetwork(a, b)
+}
+
+// rrHang is a client that gave up on a connection through member with no byte:
+// it cancelled the dial, or closed the connection after it sent something. After
+// rrHangAfter or more since the connection started it is a reason for a check on
+// the usual terms (one in flight, the gap, the freeze): a node that accepts and
+// stays silent gives no failure at all. It is only a reason — no retry, no shift,
+// no count: the check strikes a dead node out, freezes on the own network, and
+// writes the answer of a live one. An interrupt of the group, its Close and a
+// connection test are no reason.
+func (s *URLTest) rrHang(member string, start time.Time) {
+	b := s.balancer
+	if start.IsZero() || time.Since(start) < rrHangAfter || s.group.ctx.Err() != nil || b.heal.frozen() || b.heal.interrupting.Load() > 0 {
+		return
+	}
+	node, loaded := s.outbound.Outbound(member)
+	if !loaded {
+		return
+	}
+	s.logger.Debug("round_robin: the client gave up on a connection through ", member, " with no byte after ", time.Since(start).Round(time.Second), "; checking the node")
+	s.rrStartCheck(node, nil)
+}
+
+// rrStartCheck starts the check of the pool member node and its neighbour when the
+// check slot is free; it reports whether it started one.
+func (s *URLTest) rrStartCheck(node adapter.Outbound, failure *rrFailure) bool {
+	b := s.balancer
+	slots := b.slotsSnapshot()
+	index := slotIndex(slots, node.Tag())
+	if index < 0 {
+		return false
+	}
+	var neighbour adapter.Outbound
+	if i, found := b.nextLiveSlot(slots, index, func(tag string) bool {
+		return s.slotAlive(tag) && s.slotSupports(tag, N.NetworkTCP)
+	}); found {
+		neighbour, _ = s.outbound.Outbound(slots[i].tag)
+	}
+	if !b.heal.beginCheck() {
+		return false
+	}
+	go s.rrHealCheck(node, neighbour, failure)
+	return true
+}
+
+// rrSiteOnOpen reports whether the leaf of node goes to the destination itself
+// when a connection opens: a direct outbound or an endpoint (WireGuard, AWG,
+// Tailscale and other tunnels). Its failed dial says as much about the site as
+// about the node. A proxy leaf fails its dial between us and its server: the node
+// itself is under suspicion.
+func (s *URLTest) rrSiteOnOpen(node adapter.Outbound) bool {
+	tag := RealTag(node, N.NetworkTCP)
+	if tag == "" {
+		tag = node.Tag()
+	}
+	if s.ctx != nil {
+		if endpoints := service.FromContext[adapter.EndpointManager](s.ctx); endpoints != nil {
+			if _, isEndpoint := endpoints.Get(tag); isEndpoint {
+				return true
+			}
+		}
+	}
+	if leaf, loaded := s.outbound.Outbound(tag); loaded {
+		node = leaf
+	}
+	return node.Type() == C.TypeDirect
 }
 
 // rrThird returns the third node of a check where A and B are both silent: the next
@@ -504,6 +661,7 @@ func (s *URLTest) rrStrike(ctx context.Context, dead []rrProbe, control rrProbe)
 			continue
 		}
 		struck = append(struck, probe)
+		s.balancer.rrForget(probe.member) // stage 2: its failures while dead do not follow it
 		s.logger.Info("round_robin: ", probe.member, " struck out as dead: ", rrProbeSummary(probe), "; control ", rrProbeSummary(control))
 	}
 	if len(struck) == 0 || !s.rrTakeChecking(ctx) {
@@ -531,6 +689,7 @@ func (s *URLTest) rrReplaceAsControl(ctx context.Context, a rrProbe) {
 		return
 	}
 	if found {
+		s.balancer.rrForget(a.member) // stage 2: its failures while dead do not follow it
 		s.logger.Info("round_robin: ", a.member, " struck out as dead: ", rrProbeSummary(a), "; control ", rrProbeSummary(candidate))
 		return
 	}
@@ -555,8 +714,14 @@ func (s *URLTest) rrReplaceAsControl(ctx context.Context, a rrProbe) {
 // of the replacement, how many candidates it probed and whether a replacement took
 // the slot; an answer with found false means the verdict was dropped.
 func (s *URLTest) rrReplace(ctx context.Context, dead rrProbe, asControl bool) (rrProbe, int, bool) {
+	return s.rrReplaceNode(ctx, dead, asControl, false)
+}
+
+// rrReplaceNode is rrReplace; quarantined refills the slot of a quarantined node,
+// which keeps its history (stage 2).
+func (s *URLTest) rrReplaceNode(ctx context.Context, dead rrProbe, asControl bool, quarantined bool) (rrProbe, int, bool) {
 	g := s.group
-	if !asControl && g.history.LoadURLTestHistory(dead.leaf) != nil {
+	if !asControl && !quarantined && g.history.LoadURLTestHistory(dead.leaf) != nil {
 		return rrProbe{}, 0, false // probed alive again since the verdict: keep it
 	}
 	tolerant := g.balancer.poolTolerance > 0 && !asControl
@@ -644,7 +809,7 @@ func (g *URLTestGroup) rrProbeFirstAnswer(ctx context.Context, candidates []adap
 }
 
 // rrCandidates returns the nodes outside the pool in config order; byDelay puts the
-// ones with history first, fastest first.
+// ones with history first, fastest first. A quarantined node is no candidate.
 func (g *URLTestGroup) rrCandidates(byDelay bool) []adapter.Outbound {
 	inPool := make(map[string]bool)
 	for _, tag := range g.balancer.poolTags() {
@@ -653,7 +818,7 @@ func (g *URLTestGroup) rrCandidates(byDelay bool) []adapter.Outbound {
 	var withHistory []candidate
 	candidates := make([]adapter.Outbound, 0, len(g.outbounds))
 	for _, detour := range g.outbounds {
-		if inPool[detour.Tag()] || !common.Contains(detour.Network(), N.NetworkTCP) {
+		if inPool[detour.Tag()] || !common.Contains(detour.Network(), N.NetworkTCP) || g.balancer.isQuarantined(detour.Tag()) {
 			continue
 		}
 		if byDelay {

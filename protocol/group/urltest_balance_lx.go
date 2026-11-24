@@ -2,10 +2,10 @@ package group
 
 import (
 	"context"
-	"hash/fnv"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -57,6 +57,10 @@ type balancer struct {
 	// heal is the state of the self-heal after a failed dial (SPEC 138 §3,
 	// urltest_rr_heal_lx.go).
 	heal rrHeal
+
+	// memory is the key shift table, the slot counters and the quarantine (SPEC 138
+	// §3.5–3.6, urltest_rr_shift_lx.go).
+	memory rrMemory
 }
 
 // warnLegacyTolerance reports whether the legacy urltest `tolerance` option deserves a
@@ -146,26 +150,45 @@ func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {
 
 // pick selects one node for this connection from the current pool. fallback is returned
 // when the pool is empty (start, before the first health-check fills it).
-// lx: SPEC 138 — a slot whose node failed its last probe is skipped while the pool has a
-// live one; pick never changes the slots.
+// lx: SPEC 138 — a slot whose node failed its last probe (or is in quarantine) is skipped
+// while the pool has a live one; a key shifted past nodes the destination is unreachable
+// through takes the slot (hash + shift) % pool, or the next live one going round; pick
+// never changes the slots.
 func (b *balancer) pick(ctx context.Context, destination M.Socksaddr, fallback adapter.Outbound, resolve func(tag string) adapter.Outbound) adapter.Outbound {
+	node, _ := b.pickKeyed(ctx, destination, fallback, resolve)
+	return node
+}
+
+// pickKeyed is pick that also returns what the dial of the connection needs from
+// the pick (SPEC 138 stage 2): the shift-table key, computed once per connection,
+// the key's shift and the start of the connection.
+func (b *balancer) pickKeyed(ctx context.Context, destination M.Socksaddr, fallback adapter.Outbound, resolve func(tag string) adapter.Outbound) (adapter.Outbound, rrPick) {
+	picked := rrPick{start: time.Now()}
 	b.access.Lock()
 	slots := b.slots // setSlots publishes a new slice and never mutates a published one
 	b.access.Unlock()
 	n := len(slots)
 	if n == 0 {
-		return fallback
+		return fallback, picked
 	}
 	// Reduce in uint64 BEFORE narrowing: int(counter) on a 32-bit platform goes negative
 	// past 2^31 and a signed % would produce a negative index (slice panic).
 	var idx int
 	if len(b.stickyHash) > 0 {
 		// slot-hash: fixed slot index from the key; living node in its slot keeps its keys.
-		hash := hashKey(b.stickyKey(ctx, destination))
-		idx = int(hash % uint64(n))
+		picked.key = b.rrKeyOf(ctx, destination)
+		picked.shift = b.memory.shifts.shiftOf(picked.key.table)
+		hash := picked.key.sticky
+		shift := uint64(picked.shift)
+		idx = int((hash%uint64(n) + shift%uint64(n)) % uint64(n))
 		if b.alive != nil && !b.alive(slots[idx].tag) {
-			// Keys of a dead slot spread over the live slots by the rest of the hash.
-			if live, ok := b.liveSlot(slots, hash/uint64(n)); ok {
+			if shift > 0 {
+				// A shifted key goes on to the next live slot: where its retry went.
+				if live, ok := b.firstLiveFrom(slots, idx); ok {
+					idx = live
+				}
+			} else if live, ok := b.liveSlot(slots, hash/uint64(n)); ok {
+				// Keys of a dead slot spread over the live slots by the rest of the hash.
 				idx = live
 			}
 		}
@@ -180,9 +203,9 @@ func (b *balancer) pick(ctx context.Context, destination M.Socksaddr, fallback a
 		}
 	}
 	if node := resolve(slots[idx].tag); node != nil {
-		return node
+		return node, picked
 	}
-	return fallback
+	return fallback, picked
 }
 
 // liveSlot returns the index of the k-th live slot, k taken modulo the live count. ok is
@@ -210,8 +233,12 @@ func (b *balancer) liveSlot(slots []slot, k uint64) (int, bool) {
 }
 
 // slotAlive reports whether the node in a slot has URL test history (under its RealTag),
-// i.e. its last probe answered. A tag that does not resolve counts as dead. lx: SPEC 138.
+// i.e. its last probe answered, and is not in quarantine. A tag that does not resolve
+// counts as dead. lx: SPEC 138.
 func (s *URLTest) slotAlive(tag string) bool {
+	if s.balancer != nil && s.balancer.isQuarantined(tag) {
+		return false
+	}
 	node, loaded := s.outbound.Outbound(tag)
 	return loaded && s.group.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)) != nil
 }
@@ -273,6 +300,7 @@ func (b *balancer) replaceSlot(dead, node string) bool {
 	next[index] = slot{tag: node}
 	b.slots = next
 	b.access.Unlock()
+	b.rrSlotsChanged() // the new node's counters start from zero
 	// lx: SPEC 020 — same as setSlots: the active pool changed.
 	if b.onChange != nil {
 		b.onChange()
@@ -289,6 +317,7 @@ func (b *balancer) setSlots(tags []string) {
 		b.slots[i] = slot{tag: tag}
 	}
 	b.access.Unlock()
+	b.rrSlotsChanged() // lx: SPEC 138 — a node that takes a slot starts its counters from zero
 	// lx: SPEC 020 — the active pool changed; invalidate the reachable cache.
 	// Called outside the access lock so the callback never nests under it.
 	if b.onChange != nil {
@@ -353,9 +382,7 @@ func stickyComponent(component string, metadata *adapter.InboundContext, destina
 }
 
 func hashKey(key string) uint64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(key))
-	return h.Sum64()
+	return fnvString(fnvOffset64, key) // FNV-1a, 64 bit
 }
 
 // --- pool maintenance (pure planning, no I/O) ---------------------------------------

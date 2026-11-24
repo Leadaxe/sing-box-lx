@@ -131,14 +131,28 @@ func (f *healFixture) fresh(tags ...string) {
 
 // fail runs the dial-error branch for a connection that failed through tag.
 func (f *healFixture) fail(ctx context.Context, tag string) (net.Conn, bool) {
-	return f.s.rrHealDial(ctx, N.NetworkTCP, M.ParseSocksaddrHostPort("example.org", 443), f.nodes[tag], E.New("dial failed"))
+	return f.failAt(ctx, tag, time.Now())
 }
 
-// waitCheck waits for the background check to end and clears the probe gap.
+// failAt is fail for a connection that started at start.
+func (f *healFixture) failAt(ctx context.Context, tag string, start time.Time) (net.Conn, bool) {
+	destination := M.ParseSocksaddrHostPort("example.org", 443)
+	return f.s.rrHealDial(ctx, N.NetworkTCP, destination, f.nodes[tag], E.New("dial failed"), f.s.testPick(ctx, destination, start))
+}
+
+// testPick is the pick of a connection to destination that started at start.
+func (s *URLTest) testPick(ctx context.Context, destination M.Socksaddr, start time.Time) rrPick {
+	key := s.balancer.rrKeyOf(ctx, destination)
+	return rrPick{key: key, shift: s.balancer.memory.shifts.shiftOf(key.table), start: start}
+}
+
+// waitCheck waits for the background check to end and clears the probe gap. The
+// check slot is taken before the call that starts the check returns, so a check
+// that ended without a probe (and set no gap) is waited for too.
 func (f *healFixture) waitCheck(t *testing.T) {
 	t.Helper()
 	waitUntil(t, func() bool {
-		return !f.s.balancer.heal.running.Load() && f.s.balancer.heal.lastCheckEnd.Load() != nil
+		return !f.s.balancer.heal.running.Load()
 	})
 	f.s.balancer.heal.lastCheckEnd.Store(nil)
 }
@@ -423,7 +437,7 @@ func TestRRHeal_tickDuringCheck(t *testing.T) {
 			member := f.nodes[pool[i%len(pool)]]
 			neighbour := f.nodes[pool[(i+1)%len(pool)]]
 			f.s.balancer.heal.frozenUntil.Store(nil)
-			f.s.rrHealCheck(member, neighbour)
+			f.s.rrHealCheck(member, neighbour, nil)
 			observe()
 		}
 	}()
@@ -479,12 +493,16 @@ func TestRRHeal_oneCheckInFlightAndGap(t *testing.T) {
 }
 
 // A failed node A with history younger than 30 s is alive unprobed, and then no
-// control is needed either.
+// control is needed either — when the network is proved alive since the failed
+// connection started (stage 2: a first byte of the group after that). Without the
+// proof A is probed.
 func TestRRHeal_freshNodeNotProbed(t *testing.T) {
 	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
 	f.fresh("a", "b")
 	f.nodes["a"].siteDown.Store(true)
-	conn, _ := f.fail(context.Background(), "a")
+	start := time.Now().Add(-time.Second)
+	f.s.balancer.heal.lastByte.Store(rrClock(time.Now()))
+	conn, _ := f.failAt(context.Background(), "a", start)
 	closeConn(conn)
 	f.waitCheck(t)
 	if f.probes("a") != 0 || f.probes("b") != 0 {
@@ -492,6 +510,16 @@ func TestRRHeal_freshNodeNotProbed(t *testing.T) {
 	}
 	if !samePool(f.pool(), "a", "b", "c") {
 		t.Fatalf("fresh a is alive: pool unchanged, got %v", f.pool())
+	}
+
+	g := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
+	g.fresh("a", "b")
+	g.nodes["a"].siteDown.Store(true)
+	conn, _ = g.fail(context.Background(), "a")
+	closeConn(conn)
+	g.waitCheck(t)
+	if g.probes("a") != 1 {
+		t.Fatalf("no first byte since the connection started: fresh a is probed, got %d", g.probes("a"))
 	}
 }
 
@@ -644,7 +672,7 @@ func TestRRHeal_replacementProbesInParallel(t *testing.T) {
 // A client cancel is not a failure: no retry, no check.
 func TestRRHeal_clientCancel(t *testing.T) {
 	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
-	conn, ok := f.s.rrHealDial(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPort("example.org", 443), f.nodes["a"], context.Canceled)
+	conn, ok := f.s.rrHealDial(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPort("example.org", 443), f.nodes["a"], context.Canceled, rrPick{start: time.Now()})
 	closeConn(conn)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -675,7 +703,7 @@ func TestRRHeal_nestedGroups(t *testing.T) {
 	}
 	f.g.outbound.(*fakeManager).byTag["inner"] = inner
 	f.g.balancer.setSlots([]string{"inner", "b", "c"})
-	conn, ok := f.s.rrHealDial(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPort("example.org", 443), inner, E.New("dial failed"))
+	conn, ok := f.s.rrHealDial(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPort("example.org", 443), inner, E.New("dial failed"), rrPick{start: time.Now()})
 	closeConn(conn)
 	if ok || f.nodes["b"].dials.Load() != 0 {
 		t.Fatal("a nested urltest retries on its own: no outer retry")
@@ -689,7 +717,7 @@ func TestRRHeal_nestedGroups(t *testing.T) {
 	sel.selected.Store(x)
 	f.g.outbound.(*fakeManager).byTag["sel"] = sel
 	f.g.balancer.setSlots([]string{"sel", "b", "c"})
-	conn, ok = f.s.rrHealDial(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPort("example.org", 443), sel, E.New("dial failed"))
+	conn, ok = f.s.rrHealDial(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPort("example.org", 443), sel, E.New("dial failed"), rrPick{start: time.Now()})
 	closeConn(conn)
 	if !ok || f.nodes["b"].dials.Load() != 1 {
 		t.Fatal("a selector over a plain node is retried")
