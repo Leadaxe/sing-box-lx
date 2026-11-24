@@ -169,7 +169,7 @@ Key material comes from the WARP device registration done by the client. Not to 
 }
 ```
 
-`classical` exists for networks that drop the two-segment hybrid ClientHello; on a newer server the remaining levers are `record_fragment` (now effective on REALITY) and a `detour`. Reference — [lx-config.md §7](docs-lx/lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello-spec-089) ([RU](docs-lx/lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello-spec-089)).
+`classical` exists for networks that drop the two-segment hybrid ClientHello; on a newer server the remaining levers are `record_fragment` (now effective on REALITY) and a `detour`. Reference — [lx-config.md §7](docs-lx/lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello) ([RU](docs-lx/lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello)).
 
 ### VLESS `encryption`
 
@@ -177,7 +177,7 @@ Key material comes from the WARP device registration done by the client. Not to 
 { "type": "vless", "uuid": "…", "encryption": "mlkem768x25519plus.native.0rtt.<ML-KEM-768 key>" }   // absent or "none" = off
 ```
 
-Client half only; `decryption` is server-side and deliberately not ported. Reference — [lx-config.md §6](docs-lx/lx-config.md#6-vless-encryption--post-quantum-layer-spec-032) ([RU](docs-lx/lx-config.ru.md#6-vless-encryption--пост-квантовый-слой-spec-032)).
+Client half only; `decryption` is server-side and deliberately not ported. Reference — [lx-config.md §6](docs-lx/lx-config.md#6-vless-encryption--post-quantum-layer) ([RU](docs-lx/lx-config.ru.md#6-vless-encryption--пост-квантовый-слой)).
 
 ### DNS server group
 
@@ -185,7 +185,7 @@ Client half only; `decryption` is server-side and deliberately not ported. Refer
 { "type": "group", "tag": "dns-public", "mode": "stable", "servers": ["dns-cf", "dns-google", "dns-quad9"] }   // stable | fastest | parallel
 ```
 
-Reference — [lx-config.md §5](docs-lx/lx-config.md#5-dns-server-group-spec-033035143) ([RU](docs-lx/lx-config.ru.md#5-группа-dns-серверов-spec-033035143)).
+Reference — [lx-config.md §5](docs-lx/lx-config.md#5-dns-server-group) ([RU](docs-lx/lx-config.ru.md#5-группа-dns-серверов)).
 
 ### `chain` outbound
 
@@ -199,11 +199,11 @@ Reference — [lx-config.md §5](docs-lx/lx-config.md#5-dns-server-group-spec-03
 }
 ```
 
-Tunnel links get their MTU lowered automatically; the path shows in `detourList` and `GetChains`, per-layer latency via URLTest on the hop tags `<tag>#0`, `<tag>#1`, …. Reference — [lx-config.md §10](docs-lx/lx-config.md#10-chain-outbound--a-virtual-multi-hop-path-of-groups-and-nodes-spec-073) ([RU](docs-lx/lx-config.ru.md#10-outbound-chain--виртуальная-цепочка-хопов-из-групп-и-узлов-spec-073)).
+Tunnel links get their MTU lowered automatically; the path shows in `detourList` and `GetChains`, per-layer latency via URLTest on the hop tags `<tag>#0`, `<tag>#1`, …. Reference — [lx-config.md §10](docs-lx/lx-config.md#10-chain-outbound--a-virtual-multi-hop-path-of-groups-and-nodes) ([RU](docs-lx/lx-config.ru.md#10-outbound-chain--виртуальная-цепочка-хопов-из-групп-и-узлов)).
 
 ### Balancing, energy, sniffers
 
-No new types — a few fields on existing ones: `urltest` `mode: round_robin` + `balancer{…}` and `mode: failover` ([lx-config.md §3](docs-lx/lx-config.md#3-urltest-node-selection-modes-spec-019--116), [RU](docs-lx/lx-config.ru.md#3-режимы-выбора-узла-в-urltest-spec-019--116)); `lx.wg.idle_*` sleep levels ([lx-energy.md](docs-lx/lx-energy.md), [RU](docs-lx/lx-energy.ru.md)); protocol names in the `sniff` action and `protocol` rules ([lx-sniff.md](docs-lx/lx-sniff.md), [RU](docs-lx/lx-sniff.ru.md)).
+No new types — a few fields on existing ones: `urltest` `mode: round_robin` + `balancer{…}` and `mode: failover` ([lx-config.md §3](docs-lx/lx-config.md#3-urltest-node-selection-modes), [RU](docs-lx/lx-config.ru.md#3-режимы-выбора-узла-в-urltest)); `lx.wg.idle_*` sleep levels ([lx-energy.md](docs-lx/lx-energy.md), [RU](docs-lx/lx-energy.ru.md)); protocol names in the `sniff` action and `protocol` rules ([lx-sniff.md](docs-lx/lx-sniff.md), [RU](docs-lx/lx-sniff.ru.md)).
 
 ---
 

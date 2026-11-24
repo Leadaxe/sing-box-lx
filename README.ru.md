@@ -171,7 +171,7 @@ make -f Makefile.lx lx-check        # проверка примеров конф
 }
 ```
 
-`classical` существует для сетей, которые дропают двухсегментный гибридный ClientHello; на более новом сервере остаются только рычаги `record_fragment` (теперь действует на REALITY) и `detour`. Справка — [lx-config.ru.md §7](docs-lx/lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello-spec-089) ([EN](docs-lx/lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello-spec-089)).
+`classical` существует для сетей, которые дропают двухсегментный гибридный ClientHello; на более новом сервере остаются только рычаги `record_fragment` (теперь действует на REALITY) и `detour`. Справка — [lx-config.ru.md §7](docs-lx/lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello) ([EN](docs-lx/lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello)).
 
 ### VLESS `encryption`
 
@@ -179,7 +179,7 @@ make -f Makefile.lx lx-check        # проверка примеров конф
 { "type": "vless", "uuid": "…", "encryption": "mlkem768x25519plus.native.0rtt.<ML-KEM-768 key>" }   // нет поля или "none" = выключено
 ```
 
-Только клиентская половина; `decryption` — серверная сторона и намеренно не портируется. Справка — [lx-config.ru.md §6](docs-lx/lx-config.ru.md#6-vless-encryption--пост-квантовый-слой-spec-032) ([EN](docs-lx/lx-config.md#6-vless-encryption--post-quantum-layer-spec-032)).
+Только клиентская половина; `decryption` — серверная сторона и намеренно не портируется. Справка — [lx-config.ru.md §6](docs-lx/lx-config.ru.md#6-vless-encryption--пост-квантовый-слой) ([EN](docs-lx/lx-config.md#6-vless-encryption--post-quantum-layer)).
 
 ### Группа DNS-серверов
 
@@ -187,7 +187,7 @@ make -f Makefile.lx lx-check        # проверка примеров конф
 { "type": "group", "tag": "dns-public", "mode": "stable", "servers": ["dns-cf", "dns-google", "dns-quad9"] }   // stable | fastest | parallel
 ```
 
-Справка — [lx-config.ru.md §5](docs-lx/lx-config.ru.md#5-группа-dns-серверов-spec-033035143) ([EN](docs-lx/lx-config.md#5-dns-server-group-spec-033035143)).
+Справка — [lx-config.ru.md §5](docs-lx/lx-config.ru.md#5-группа-dns-серверов) ([EN](docs-lx/lx-config.md#5-dns-server-group)).
 
 ### Outbound `chain`
 
@@ -201,11 +201,11 @@ make -f Makefile.lx lx-check        # проверка примеров конф
 }
 ```
 
-Туннельным звеньям MTU понижается автоматически; путь виден в `detourList` и `GetChains`, послойная задержка — через URLTest по хоп-тегам `<tag>#0`, `<tag>#1`, …. Справка — [lx-config.ru.md §10](docs-lx/lx-config.ru.md#10-outbound-chain--виртуальная-цепочка-хопов-из-групп-и-узлов-spec-073) ([EN](docs-lx/lx-config.md#10-chain-outbound--a-virtual-multi-hop-path-of-groups-and-nodes-spec-073)).
+Туннельным звеньям MTU понижается автоматически; путь виден в `detourList` и `GetChains`, послойная задержка — через URLTest по хоп-тегам `<tag>#0`, `<tag>#1`, …. Справка — [lx-config.ru.md §10](docs-lx/lx-config.ru.md#10-outbound-chain--виртуальная-цепочка-хопов-из-групп-и-узлов) ([EN](docs-lx/lx-config.md#10-chain-outbound--a-virtual-multi-hop-path-of-groups-and-nodes)).
 
 ### Балансировка, энергия, снифферы
 
-Новых типов нет — несколько полей на существующих: `urltest` `mode: round_robin` + `balancer{…}` и `mode: failover` ([lx-config.ru.md §3](docs-lx/lx-config.ru.md#3-режимы-выбора-узла-в-urltest-spec-019--116), [EN](docs-lx/lx-config.md#3-urltest-node-selection-modes-spec-019--116)); уровни сна `lx.wg.idle_*` ([lx-energy.ru.md](docs-lx/lx-energy.ru.md), [EN](docs-lx/lx-energy.md)); имена протоколов в действии `sniff` и правилах `protocol` ([lx-sniff.ru.md](docs-lx/lx-sniff.ru.md), [EN](docs-lx/lx-sniff.md)).
+Новых типов нет — несколько полей на существующих: `urltest` `mode: round_robin` + `balancer{…}` и `mode: failover` ([lx-config.ru.md §3](docs-lx/lx-config.ru.md#3-режимы-выбора-узла-в-urltest), [EN](docs-lx/lx-config.md#3-urltest-node-selection-modes)); уровни сна `lx.wg.idle_*` ([lx-energy.ru.md](docs-lx/lx-energy.ru.md), [EN](docs-lx/lx-energy.md)); имена протоколов в действии `sniff` и правилах `protocol` ([lx-sniff.ru.md](docs-lx/lx-sniff.ru.md), [EN](docs-lx/lx-sniff.md)).
 
 ---
 

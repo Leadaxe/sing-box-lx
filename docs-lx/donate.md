@@ -7,7 +7,7 @@ upstream merges within days of every release, compatibility with current Xray an
 AmneziaWG servers, and the bugs that show up in real use of the desktop launcher,
 LxBox and routers. The project has no other income.
 
-Donating is entirely optional — the core works the same for everyone.
+Donating is optional; the core works the same for everyone.
 
 ---
 
@@ -46,8 +46,6 @@ bc1qupzrxnyvkccpfuv6pmnt58w8xyx5c0l8a6jue7
 ---
 
 ## Other ways to help
-
-Just as valuable:
 
 - **A star on GitHub** — [sing-box-lx](https://github.com/Leadaxe/sing-box-lx).
   Stars are how new users find the project.

@@ -9,12 +9,12 @@ icon: material/compass-outline
 The fork lives inside someone else's ecosystem: Xray defines the protocols, and
 next door there are clients that already solved the same problem. When a node
 works in another app and not in ours, the answer is almost always in someone
-else's source — finding it there is faster than deriving it from first
+else's source. Finding it there is faster than deriving it from first
 principles.
 
-This page is a map: which projects are useful for what, where each one keeps the
-part we care about, and how to check their **current** version rather than a
-copy downloaded six months ago.
+This page lists which projects are useful for what, where each one keeps the
+code we need, and how to check their current version rather than a copy
+downloaded six months ago.
 
 !!! warning "Don't keep clones next to the tree"
     A copy goes stale silently, and comparing against outdated code is worse
@@ -22,7 +22,7 @@ copy downloaded six months ago.
     on something the project no longer contains. Clone for the investigation,
     delete afterwards.
 
-## Protocol references
+## Xray defines the protocols
 
 ### Xray-core — the normative source
 
@@ -49,18 +49,18 @@ Check against a release tag, not `main`: the format has changed after merges
 The user-facing contract: which values are allowed, what each segment of a spec
 string means. Useful when the source answers "how" and you need "what".
 
-## Clients built on our own base
+## Neighbouring clients serve as cross-checks
 
-These matter because they are written on sing-box: the code ports almost
-verbatim, and the licence matches (GPL-3.0, same upstream) — borrowing is legal
+Code from clients written on sing-box ports to ours almost verbatim. Their
+licence is the same, GPL-3.0 from the shared upstream, so borrowing is legal
 and needs no relicensing.
 
 ### starifly/sing-box — the NekoBox+ core
 
 <https://github.com/starifly/sing-box>
 
-The most valuable neighbour: it implements what we lack, in our own terms. The
-`mlkem768x25519plus` layer (SPEC 032) came from here.
+The core implements what we lack, in our own terms. The
+`mlkem768x25519plus` layer came from here.
 
 **Finding the right commit.** It is pinned by the app, not by the core itself:
 
@@ -74,7 +74,7 @@ cat NekoBoxForAndroid/buildScript/lib/core/get_source_env.sh
 |------|-------|
 | VLESS `encryption` (client and server) | `protocol/vless/encryption/` |
 | Spec-string parsing, the seam into dialing | `protocol/vless/outbound.go` |
-| XHTTP with XMUX — a second reference for ours (SPEC 059) | `transport/v2rayxhttp/` |
+| XHTTP with XMUX — a second reference for ours | `transport/v2rayxhttp/` |
 
 ### shtorm-7/sing-box-extended
 
@@ -91,10 +91,10 @@ almost certainly ours.
 A different codebase, so no code ports across, but its documentation confirms
 the format independently of Xray.
 
-## Another client's configuration on the device
+## Another client's configuration answers faster than code
 
 The shortest path when a node lives in a different app and stays silent in ours:
-look at **its configuration** rather than comparing core behaviour. Twice in one
+look at its configuration rather than comparing core behaviour. Twice in one
 investigation this gave the answer in a minute where reasoning through code cost
 hours.
 
@@ -106,20 +106,20 @@ adb shell "su -c 'cat /data/data/com.nb4a.plus/databases/sager_net.db'" > sager.
 ```
 
 Table `proxy_entities`: the `*Bean` fields carry the node configuration, `ping`
-and `status` hold the last check, and **`error` holds the reason for failure in
-that client's own words**. The last one is the valuable part: another client has
+and `status` hold the last check, and `error` holds the reason for failure in
+that client's own words. The `error` field is the most useful: another client has
 already diagnosed what our log stays quiet about.
 
 !!! danger "This is a dump of someone's credentials"
     It contains real keys, passwords and server addresses. Delete it right after
     the investigation.
 
-## How to use all this
+## Comparisons rest on facts and release tags
 
 1. **Capture the fact first, reason second.** The wire, the configuration, a
    dump — each is cheaper than one build iteration. The "hangs with no error"
-   symptom is especially deceptive: it looks identical for a bug of ours, a
-   missing feature, and a dead server.
+   symptom looks identical for a bug of ours, a missing feature, and a dead
+   server.
 2. **Another client on the same device is the control measurement.** It brings
    the node up and we don't → the problem is ours. Both stay silent → the
    problem is outside the core. Measurements from a laptop behind an unrelated

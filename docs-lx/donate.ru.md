@@ -47,8 +47,6 @@ bc1qupzrxnyvkccpfuv6pmnt58w8xyx5c0l8a6jue7
 
 ## Как ещё помочь, если не деньгами
 
-Это не менее ценно:
-
 - **Звезда на GitHub** — [sing-box-lx](https://github.com/Leadaxe/sing-box-lx).
   По звёздам проект находят новые пользователи.
 - **Баг-репорт** — [issues на GitHub](https://github.com/Leadaxe/sing-box-lx/issues).
