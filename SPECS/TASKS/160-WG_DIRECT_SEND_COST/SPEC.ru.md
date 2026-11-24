@@ -235,6 +235,14 @@ GSO segments as iovecs», 2026-07-06), когда склейка перешла 
   Windows — принимается и ничего не меняет.
 - Работает в любой сборке: мобильной сборки требует только блок `lx.wg.idle` (098 §2.1).
 - `false` приводится к отсутствию ключа.
+- При включённом ключе каждое подключение и отключение пишется в **debug**-лог эндпоинта с
+  причиной, с префиксом `connected socket:` — `ipv4 connected to <сервер>`; `ipv4 disconnected
+  from <сервер>:` и дальше `path reset (handshake unanswered or route change), listening to any
+  address for 3s`, `send: <ошибка>, retry in 1s`, `read: <ошибка>, retry in 1s` или `a second
+  destination <адрес>, unconnected until the bind is reopened`; `ipv4 connect to <сервер>:
+  <ошибка>`; и `off: the sockets are bound to port N, not the chosen M`, когда порт закрепить не
+  удалось. Сервер, не отвечающий на рукопожатия, даёт строку отключения каждые несколько секунд,
+  поэтому уровень debug.
 
 ## 5. Решения и мотивация
 

@@ -243,6 +243,14 @@ Because of the first two points the fix goes behind a switch and is off by defau
   mode. On Windows it is accepted and changes nothing.
 - Works in any build: only the `lx.wg.idle` block requires the mobile build (098 §2.1).
 - `false` is normalised to an absent key.
+- With the key on, every connect and disconnect goes to the endpoint's **debug** log with its
+  reason, prefixed `connected socket:` — `ipv4 connected to <server>`; `ipv4 disconnected from
+  <server>:` then `path reset (handshake unanswered or route change), listening to any address
+  for 3s`, `send: <error>, retry in 1s`, `read: <error>, retry in 1s` or `a second destination
+  <address>, unconnected until the bind is reopened`; `ipv4 connect to <server>: <error>`; and
+  `off: the sockets are bound to port N, not the chosen M` when the port could not be pinned.
+  A server that does not answer handshakes gives a disconnect line every few seconds, hence the
+  debug level.
 
 ## 5. Decisions and rationale
 

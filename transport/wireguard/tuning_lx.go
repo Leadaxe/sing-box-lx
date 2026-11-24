@@ -1,6 +1,8 @@
 package wireguard
 
 import (
+	"fmt"
+
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/service"
@@ -34,10 +36,14 @@ func (e *Endpoint) tuneStandardBind(bind *conn.StdNetBind) error {
 // connectStandardBind applies lx.wg.connected_socket. It is called only for
 // a bind in single-peer mode, on the same promise: one peer with a fixed
 // address. The bind gives the connection up by itself whenever it is in
-// doubt, and for good when it meets a second destination.
+// doubt, and for good when it meets a second destination. Each connect and
+// disconnect, with its reason, goes to the endpoint's debug log.
 func (e *Endpoint) connectStandardBind(bind *conn.StdNetBind) {
 	if e.lxTuning().ConnectedSocket {
 		bind.SetConnectedSocket()
+		bind.SetConnectedSocketLog(func(format string, args ...any) {
+			e.options.Logger.Debug(fmt.Sprintf(format, args...))
+		})
 	}
 }
 

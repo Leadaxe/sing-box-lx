@@ -28,6 +28,10 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### Не выпущено
+
+- 🧰 **`lx.wg.connected_socket`: подключение и отключение сокета видно в debug-логе ([SPEC 160](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/160-WG_DIRECT_SEND_COST/SPEC.md) §4).** Раньше по логу нельзя было понять, подключён ли сокет туннеля вообще; при разборе WARP на роутере это пришлось выяснять перехватом трафика. Теперь эндпоинт пишет строку `connected socket: …` на каждое подключение, отключение (с причиной: сброс пути, ошибка отправки или чтения, второй адрес назначения) и неудачную попытку подключиться, а также когда режим не включился из-за порта. Только при включённом ключе. Форк `wireguard-go`: `SetConnectedSocketLog` в `conn/lx_connect_linux.go`, тест `TestConnectedSocketLog`; ядро — одна функция в `transport/wireguard/tuning_lx.go`.
+
 #### v1.14.4-lx.36
 
 Стабильный релиз линии rc.1: всё из секции `v1.14.4-lx.36-rc.1` ниже плюс правки после неё. База та же — sing-box `v1.14.4` + 82 коммита `upstream/stable` (`f0fbf236f`, 2026-11-23), дрейф 0; Go `go1.26.10`, `go.mod` и cronet-go без изменений с rc.1. Сабмодули: `wireguard-go` — `dc21fea` (SPEC 101 часть 2), `sing-tun`, `gvisor`, `utls` — как в rc.1.
