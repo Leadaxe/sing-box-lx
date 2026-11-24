@@ -123,6 +123,10 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		}
 		conn = bufio.NewCachedConn(conn, buffer)
 	}
+	if err = finishHandshake(); err != nil { // lx: handshake-timeout — the context or the backstop closed conn as the exchange ended
+		conn.Close()
+		return nil, err
+	}
 	return conn, nil
 }
 
