@@ -1,6 +1,7 @@
 package connectip
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"sync"
@@ -136,7 +137,10 @@ func TestWritePacketTooBigAdvertisesBudget(t *testing.T) {
 		t.Run(tc.name+" ipv4", func(t *testing.T) {
 			conn := NewProxiedConn(newTooLargeStream(tc.budget))
 			defer conn.Close()
-			reply, err := conn.WritePacket(ipv4Packet(1280))
+			packet := ipv4Packet(1280)
+			binary.BigEndian.PutUint16(packet[10:12], ^onesSum(packet[:ipv4.HeaderLen]))
+			sent := append([]byte(nil), packet[:ipv4.HeaderLen]...)
+			reply, err := conn.WritePacket(packet)
 			if err != nil {
 				t.Fatalf("WritePacket: %v", err)
 			}
@@ -154,6 +158,26 @@ func TestWritePacketTooBigAdvertisesBudget(t *testing.T) {
 			if msg[8+8] != 64 {
 				t.Fatalf("quoted TTL = %d, want the original 64", msg[8+8])
 			}
+			quoted := msg[8 : 8+ipv4.HeaderLen]
+			if !bytes.Equal(quoted, sent) {
+				t.Fatalf("quoted header\n% x\nwant the header as sent\n% x", quoted, sent)
+			}
+			if sum := onesSum(quoted); sum != 0xffff {
+				t.Fatalf("quoted header checksum invalid: sum %#04x", sum)
+			}
 		})
 	}
+}
+
+// onesSum is the ones' complement sum of b; 0xffff over a header with its
+// checksum in place means the checksum is valid.
+func onesSum(b []byte) uint16 {
+	var sum uint32
+	for i := 0; i+1 < len(b); i += 2 {
+		sum += uint32(binary.BigEndian.Uint16(b[i:]))
+	}
+	for sum>>16 != 0 {
+		sum = sum&0xffff + sum>>16
+	}
+	return uint16(sum)
 }

@@ -297,8 +297,32 @@ func (c *Conn) writeToStream() error {
 
 // ReadPacket reads a single proxied IP packet from the tunnel.
 func (c *Conn) ReadPacket() (b []byte, err error) {
+	return c.readPacket(context.Background())
+}
+
+// lx: SPEC 021 — ReadQueuedPacket returns a packet the tunnel has already
+// received, or nil when none is waiting. The pump drains the queue with it
+// after a blocking ReadPacket, so the packets of one burst reach the stack as
+// a batch.
+func (c *Conn) ReadQueuedPacket() []byte {
+	b, err := c.readPacket(cancelledContext)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// cancelledContext turns ReceiveDatagram into a poll: it returns a queued
+// datagram and gives up at once on an empty queue.
+var cancelledContext = func() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
+}()
+
+func (c *Conn) readPacket(ctx context.Context) (b []byte, err error) {
 start:
-	data, err := c.str.ReceiveDatagram(context.Background())
+	data, err := c.str.ReceiveDatagram(ctx)
 	if err != nil {
 		select {
 		case <-c.closeChan:
@@ -390,19 +414,6 @@ func (c *Conn) handleIncomingProxiedPacket(data []byte) error {
 // WritePacket writes an IP packet to the stream. If the packet is too large it
 // returns an ICMP "packet too big" reply the caller should feed back locally.
 func (c *Conn) WritePacket(b []byte) (icmp []byte, err error) {
-	// Snapshot the original header BEFORE composeDatagram mutates b in place
-	// (TTL/hop-limit decrement + checksum rewrite), so a potential ICMP "packet
-	// too big" reply quotes the datagram as the app sent it (RFC 1191/792).
-	// lx: SPEC 021 A3.
-	var origHead []byte
-	if len(b) > 0 {
-		snapLen := len(b)
-		if snapLen > minMTU {
-			snapLen = minMTU
-		}
-		origHead = append(origHead, b[:snapLen]...)
-	}
-
 	data, err := c.composeDatagram(b)
 	if err != nil {
 		return nil, nil
@@ -415,7 +426,12 @@ func (c *Conn) WritePacket(b []byte) (icmp []byte, err error) {
 		if errors.As(err, &errDTL) {
 			// lx: SPEC 120 §2.6 — name the real budget, not the 1280 constant, so
 			// the stack learns the size that would actually have gone through.
-			icmpPacket, cerr := composeICMPTooLargePacket(origHead, icmpAdvertisedMTU(errDTL.MaxDatagramPayloadSize))
+			// composeDatagram decremented TTL / Hop Limit in b; put the header
+			// back so the ICMP reply quotes the datagram as the app sent it
+			// (RFC 1191/792). Restoring on this rare path replaces a snapshot
+			// of every packet. lx: SPEC 021 A3.
+			restoreHopCount(b)
+			icmpPacket, cerr := composeICMPTooLargePacket(b, icmpAdvertisedMTU(errDTL.MaxDatagramPayloadSize))
 			if cerr != nil {
 				return nil, nil
 			}
@@ -429,6 +445,18 @@ func (c *Conn) WritePacket(b []byte) (icmp []byte, err error) {
 		}
 	}
 	return nil, nil
+}
+
+// restoreHopCount undoes the TTL / Hop Limit decrement composeDatagram made in
+// a packet it accepted.
+func restoreHopCount(b []byte) {
+	switch ipVersion(b) {
+	case 4:
+		b[8]++
+		binary.BigEndian.PutUint16(b[10:12], calculateIPv4Checksum(b[:int(b[0]&0x0f)*4]))
+	case 6:
+		b[7]++
+	}
 }
 
 func (c *Conn) composeDatagram(b []byte) ([]byte, error) {

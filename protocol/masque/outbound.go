@@ -918,6 +918,10 @@ func (o *Outbound) connectH3Once(ctx context.Context, handshakeBudget time.Durat
 	// io.ErrShortBuffer, which quic-go treats as fatal. Closest to the detour
 	// conn, below the SPEC 146 wrapper; a kernel socket passes through untouched.
 	rawConn := lxdatagram.TruncateReads(udpConn, o.logger)
+	// lx: SPEC 021 — the socket stays hidden from quic-go (it would set "don't
+	// fragment"), so the batched reads quic-go gives a socket it owns are put
+	// back here. A conn carried by another outbound passes through untouched.
+	rawConn = lxdatagram.BatchReads(rawConn)
 	if deadline.NeedAdditionalReadDeadline(rawConn) {
 		rawConn = deadline.NewConn(rawConn)
 	}
@@ -1034,6 +1038,12 @@ func (o *Outbound) pumpToTunnel(s *session) {
 // them into the userspace stack.
 func (o *Outbound) pumpFromTunnel(s *session) {
 	defer o.teardownSession(s)
+	// lx: SPEC 021 — the packets of one burst go to the stack as a batch, and
+	// through GRO where the device is the userspace stack: TCP then handles and
+	// acknowledges one merged segment instead of each 1280-byte packet.
+	queued, _ := s.ipConn.(interface{ ReadQueuedPacket() []byte })
+	coalescing := wireguard.NewCoalescingWriter(s.device)
+	batch := make([][]byte, 0, pumpBatchSize)
 	for s.ctx.Err() == nil {
 		packet, err := s.ipConn.ReadPacket()
 		if err != nil {
@@ -1041,12 +1051,27 @@ func (o *Outbound) pumpFromTunnel(s *session) {
 			return
 		}
 		s.markActivity(time.Now().UnixNano())
-		if _, err = s.device.Write([][]byte{packet}, 0); err != nil {
+		batch = append(batch[:0], packet)
+		if queued != nil {
+			for len(batch) < pumpBatchSize {
+				next := queued.ReadQueuedPacket()
+				if next == nil {
+					break
+				}
+				batch = append(batch, next)
+			}
+		}
+		if coalescing != nil {
+			coalescing.Write(batch)
+		} else if _, err = s.device.Write(batch, 0); err != nil {
 			o.pumpFatal(s, "write to stack", err)
 			return
 		}
 	}
 }
+
+// pumpBatchSize bounds the packets pumpFromTunnel hands to the stack at once.
+const pumpBatchSize = 64
 
 // pumpFatal logs the reason a pump is about to die, exactly once per tunnel
 // death: teardownSession cancels s.ctx BEFORE closing ipConn/device, so the
