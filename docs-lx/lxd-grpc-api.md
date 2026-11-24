@@ -57,8 +57,10 @@ The lx extensions (`SubscribeDNSQueries`, `GetRules`, `GetGroups`, `GetOutbounds
 are implemented once in the core and reached through either carrier with the same field semantics. The field tables below
 therefore describe the Android AAR just as much as a remote lxd machine. Only the
 wire framing and the method-call syntax differ. Transport-specific rules are
-called out where they apply. For example, the gRPC `Unimplemented` code has no
-libbox equivalent: there the missing-tag failure surfaces as a plain error.
+called out where they apply. For example, without the tag libbox receives the same
+`codes.Unimplemented`, but the app sees it as a plain error with text such as
+`get rules: rpc error: code = Unimplemented desc = …`: there is no separate code,
+and the failure can be recognised only by its text.
 
 ## This document covers observability only
 
