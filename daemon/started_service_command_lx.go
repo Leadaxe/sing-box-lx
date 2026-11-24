@@ -370,6 +370,12 @@ type poolProvider interface {
 	Pool() []group.PoolSlot
 }
 
+// poolHealProvider is the group-wide self-heal state of a round_robin group (SPEC 138);
+// zero for least_test and failover.
+type poolHealProvider interface {
+	PoolHeal() group.PoolHeal
+}
+
 // GetPool returns the current round_robin rotation pool of a urltest group (SPEC 019 v2).
 // delay is clamped 0->1 for live nodes inside Pool(), so 0 in the response unambiguously
 // means dead/not-measured. A non-round_robin group (or unknown tag) returns empty slots.
@@ -393,10 +399,20 @@ func (s *StartedService) GetPool(ctx context.Context, request *GetPoolRequest) (
 	}
 	for _, slot := range provider.Pool() {
 		list.Slots = append(list.Slots, &PoolSlot{
-			Slot:  uint32(slot.Slot),
-			Tag:   slot.Tag,
-			Delay: uint32(slot.Delay),
+			Slot:              uint32(slot.Slot),
+			Tag:               slot.Tag,
+			Delay:             uint32(slot.Delay),
+			Quarantined:       slot.Quarantined,
+			Connections:       slot.Conns,
+			ConfirmedFailures: slot.Fails,
 		})
+	}
+	if healProvider, ok := detour.(poolHealProvider); ok {
+		heal := healProvider.PoolHeal()
+		list.ShiftedKeys = uint32(heal.ShiftedKeys)
+		list.MarkedKeys = uint32(heal.MarkedKeys)
+		list.Frozen = heal.Frozen
+		list.FrozenSeconds = uint32((heal.FrozenFor + time.Second - 1) / time.Second)
 	}
 	return &list, nil
 }
