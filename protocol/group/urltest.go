@@ -141,6 +141,10 @@ type PoolSlot struct {
 	Slot  int
 	Tag   string
 	Delay uint16 // ms; 0 = not measured / dead. A living node is clamped to >= 1 (see Pool).
+	// lx: SPEC 138 — the self-heal state of the node (urltest_rr_status_lx.go).
+	Quarantined bool
+	Conns       uint32 // connections counted since the node took the slot (halved at 256)
+	Fails       uint32 // confirmed failures, halved with Conns
 }
 
 // Pool returns the current rotation pool (one entry per slot) for round_robin groups. For
@@ -171,6 +175,7 @@ func (s *URLTest) Pool() []PoolSlot {
 		}
 		slots[i] = PoolSlot{Slot: i, Tag: tag, Delay: delay}
 	}
+	s.balancer.rrSlotStates(slots) // lx: SPEC 138
 	return slots
 }
 
