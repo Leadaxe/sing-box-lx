@@ -111,6 +111,10 @@ type rrPick struct {
 	start time.Time
 	track *rrTrack // the tracker of the picked slot; nil for a pick outside the pool
 	dial  *rrDial  // the dial of the pick in flight, when tracked (rrDialStart)
+	// detour: the slot the key would take was under suspicion and the pick went to
+	// the next one instead; a failure there shifts no key — the shift counts from
+	// the slot the key takes without a suspicion, which was not tried.
+	detour bool
 }
 
 const (
@@ -680,7 +684,11 @@ type rrFailure struct {
 }
 
 func (s *URLTest) rrNewFailure(picked rrPick, member string) *rrFailure {
-	return &rrFailure{s: s, key: picked.key, member: member, shift: picked.shift}
+	key := picked.key
+	if picked.detour {
+		key = rrKey{}
+	}
+	return &rrFailure{s: s, key: key, member: member, shift: picked.shift}
 }
 
 // expectedShift is the shift of the key as this connection left it.
@@ -783,12 +791,9 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch) {
 	var started int64 // no pick, no proof
 	if !w.start.IsZero() {
 		started = rrClock(w.start)
-		b.heal.lastByte.Store(started)
 		if track != nil {
 			track.markProved(started) // rrByteSince; lifts a suspicion of the slot (urltest_rr_track_lx.go)
 		}
-	} else {
-		b.heal.lastByte.Store(rrClock(time.Now()))
 	}
 	if b.heal.frozen() {
 		return
@@ -829,7 +834,7 @@ func (s *URLTest) rrSilentClose(w *rrConnWatch) {
 		return
 	}
 	s.logger.Debug("round_robin: a connection through ", w.member, " closed without a byte from the destination")
-	picked := rrPick{key: w.key, shift: w.shift}
+	picked := rrPick{key: w.key, shift: w.shift, detour: w.detour}
 	if w.failure != nil {
 		picked.shift = w.failure.expectedShift() // the retry: the key as its failure left it
 	}

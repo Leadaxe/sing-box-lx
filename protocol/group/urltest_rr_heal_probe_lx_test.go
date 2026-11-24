@@ -76,8 +76,8 @@ func TestRRShift_connectionTestRecordsNothing_LX(t *testing.T) {
 	b.memory.access.Lock()
 	counted := len(b.memory.counts)
 	b.memory.access.Unlock()
-	if b.memory.shifts.size.Load() != 0 || counted != 0 || b.heal.lastByte.Load() != 0 {
-		t.Fatalf("a connection test records nothing: shifts %d counts %d lastByte %d", b.memory.shifts.size.Load(), counted, b.heal.lastByte.Load())
+	if b.memory.shifts.size.Load() != 0 || counted != 0 || provedAny(b) {
+		t.Fatalf("a connection test records nothing: shifts %d counts %d proved %v", b.memory.shifts.size.Load(), counted, provedAny(b))
 	}
 	if b.trackOf("a").pendingN.Load() != 0 || b.trackOf("b").pendingN.Load() != 0 {
 		t.Fatal("a connection test leaves no pending failure")

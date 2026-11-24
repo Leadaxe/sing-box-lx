@@ -511,7 +511,6 @@ func TestRRHeal_freshHistoryIsNoVerdict(t *testing.T) {
 	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
 	f.fresh("a", "b")
 	f.nodes["a"].siteDown.Store(true)
-	f.s.balancer.heal.lastByte.Store(rrClock(time.Now()))
 	conn, _ := f.failAt(context.Background(), "a", time.Now().Add(-time.Second))
 	closeConn(conn)
 	f.waitCheck(t)

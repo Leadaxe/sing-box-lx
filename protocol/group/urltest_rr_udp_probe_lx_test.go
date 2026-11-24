@@ -41,8 +41,8 @@ func TestRRUDP_connectionTestRetriesRecordsNothing_LX(t *testing.T) {
 	b.memory.access.Lock()
 	counted := len(b.memory.counts)
 	b.memory.access.Unlock()
-	if counted != 0 || b.heal.lastByte.Load() != 0 || b.memory.shifts.size.Load() != 0 {
-		t.Fatalf("a connection test records nothing: counts %d lastByte %d", counted, b.heal.lastByte.Load())
+	if counted != 0 || provedAny(b) || b.memory.shifts.size.Load() != 0 {
+		t.Fatalf("a connection test records nothing: counts %d proved %v", counted, provedAny(b))
 	}
 	var selected, fallbackFor []string
 	for _, stage := range trace.Finish(nil).Stages {

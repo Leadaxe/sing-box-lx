@@ -96,7 +96,6 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/pause"
 )
 
@@ -136,10 +135,14 @@ type rrHeal struct {
 	frozenUntil  atomic.Pointer[time.Time]          // end of the freeze
 	networkRuns  atomic.Int32                       // full runs after a network change in flight
 	abort        atomic.Pointer[context.CancelFunc] // cancels the check in flight
-	lastByte     atomic.Int64                       // rrClock of the start of the latest connection that got its first byte; tests read it, the self-heal does not
 	lastFreeze   atomic.Int64                       // rrClock of the last freeze: it voids the failures pending before it (stage 2)
 	interrupting atomic.Int32                       // an interrupt of the group is closing its connections
-	verdicts     atomic.Int32                       // verdict probes in flight (urltest_rr_track_lx.go)
+	verdicts     atomic.Int32                       // verdict probes in flight: one per group (urltest_rr_track_lx.go)
+	// verdictAccess guards the verdict probe budget: the starts in the window and
+	// the claim of a node's probe (claimVerdict).
+	verdictAccess sync.Mutex
+	verdictStarts [rrVerdictBurst]int64
+	verdictNext   int
 }
 
 // rrInterrupting marks the interrupt of the group's connections (a selection
@@ -404,17 +407,36 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 		node, loaded := s.outbound.Outbound(tag)
 		return loaded && !rrNestedURLTest(node)
 	}
+	// A slot under suspicion is no retry target while another one is (the pick skips
+	// it the same way, so the retry goes where the shifted key will go); failing that
+	// the retry goes as before.
+	now := rrClock(time.Now())
 	var retry adapter.Outbound
-	if failedSlot < 0 {
-		// Struck and replaced meanwhile: the first usable slot.
-		for _, entry := range slots {
-			if usable(entry.tag) {
-				retry, _ = s.outbound.Outbound(entry.tag)
-				break
+	for _, strict := range [2]bool{true, false} {
+		target := func(tag string) bool {
+			if !usable(tag) {
+				return false
 			}
+			if !strict {
+				return true
+			}
+			track := s.balancer.trackOf(tag)
+			return track == nil || !track.suspect(now)
 		}
-	} else if i, found := s.balancer.nextLiveSlot(slots, failedSlot, usable); found {
-		retry, _ = s.outbound.Outbound(slots[i].tag)
+		if failedSlot < 0 {
+			// Struck and replaced meanwhile: the first usable slot.
+			for _, entry := range slots {
+				if target(entry.tag) {
+					retry, _ = s.outbound.Outbound(entry.tag)
+					break
+				}
+			}
+		} else if i, found := s.balancer.nextLiveSlot(slots, failedSlot, target); found {
+			retry, _ = s.outbound.Outbound(slots[i].tag)
+		}
+		if retry != nil {
+			break
+		}
 	}
 	if retry == nil {
 		return rrRetried{}, false
@@ -674,26 +696,11 @@ func (s *URLTest) rrHang(member string, start time.Time, gaveUp bool) bool {
 }
 
 // rrSiteOnOpen reports whether the leaf of node goes to the destination itself
-// when a connection opens: a direct outbound or an endpoint (WireGuard, AWG,
-// Tailscale and other tunnels). Its failed dial says as much about the site as
-// about the node. A proxy leaf fails its dial between us and its server: the node
-// itself is under suspicion.
+// when a connection opens (siteOnOpenLx): its failed dial says as much about the
+// site as about the node. A proxy leaf fails its dial between us and its server:
+// the node itself is under suspicion.
 func (s *URLTest) rrSiteOnOpen(node adapter.Outbound) bool {
-	tag := RealTag(node, N.NetworkTCP)
-	if tag == "" {
-		tag = node.Tag()
-	}
-	if s.ctx != nil {
-		if endpoints := service.FromContext[adapter.EndpointManager](s.ctx); endpoints != nil {
-			if _, isEndpoint := endpoints.Get(tag); isEndpoint {
-				return true
-			}
-		}
-	}
-	if leaf, loaded := s.outbound.Outbound(tag); loaded {
-		node = leaf
-	}
-	return node.Type() == C.TypeDirect
+	return siteOnOpenLx(s.ctx, s.outbound, node)
 }
 
 // rrStartCheck starts the check of the pool member node and its neighbour when the

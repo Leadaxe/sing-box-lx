@@ -20,7 +20,6 @@ import (
 // and proves the network alive (a first byte of the group) for any such connection.
 func (f *shiftFixture) staleHistory(tag string) {
 	f.g.history.StoreURLTestHistory(tag, &adapter.URLTestHistory{Time: time.Now().Add(-time.Second), Delay: 100})
-	f.s.balancer.heal.lastByte.Store(rrClock(time.Now().Add(time.Hour)))
 }
 
 // A proxy node killed a second after its probe: its connection does not open; the

@@ -152,9 +152,14 @@ func (d *Dialer) Upstream() any {
 // Guard bounds a synchronous exchange on conn that takes no context: reads and
 // writes get a deadline of Timeout (or the earlier deadline of ctx), and conn is
 // closed when ctx ends or, as a backstop for conns whose deadline does not work,
-// shortly after the deadline. The returned func removes all three and must run as soon as
-// the exchange returns, before conn is handed to anyone else.
-func Guard(ctx context.Context, conn net.Conn) (finish func()) {
+// shortly after the deadline. The returned func removes all three and must run as
+// soon as the exchange returns, before conn is handed to anyone else. It reports
+// an error when the context watch or the backstop fired before it could stop them:
+// conn is closed or being closed then, however the exchange ended, and the caller
+// must not hand it out — ctx's error for the context, ErrTimeout for the backstop
+// (as sing's SOCKS client returns for a handshake that lost the race to its
+// context). Calling it again returns the same result.
+func Guard(ctx context.Context, conn net.Conn) (finish func() error) {
 	deadline := time.Now().Add(Timeout)
 	if ctxDeadline, loaded := ctx.Deadline(); loaded && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
@@ -172,11 +177,24 @@ func Guard(ctx context.Context, conn net.Conn) (finish func()) {
 	stopContext := context.AfterFunc(ctx, func() {
 		_ = conn.Close()
 	})
-	return func() {
-		stopContext()
-		timer.Stop()
-		if deadlineSet {
-			_ = conn.SetDeadline(time.Time{})
-		}
+	var (
+		once sync.Once
+		err  error
+	)
+	return func() error {
+		once.Do(func() {
+			contextStopped := stopContext()
+			timerStopped := timer.Stop()
+			if deadlineSet {
+				_ = conn.SetDeadline(time.Time{})
+			}
+			switch {
+			case !contextStopped:
+				err = ctx.Err()
+			case !timerStopped:
+				err = ErrTimeout
+			}
+		})
+		return err
 	}
 }

@@ -74,7 +74,7 @@ func TestRRFirstByte_success(t *testing.T) {
 	if n, _ := conn.Read(buffer); n == 0 {
 		t.Fatal("precondition: an answer")
 	}
-	if f.s.balancer.heal.lastByte.Load() == 0 {
+	if !provedAny(f.s.balancer) {
 		t.Fatal("the first byte marks the network alive")
 	}
 	if N.NeedHandshakeForRead(conn) || !conn.ReaderReplaceable() {
@@ -185,7 +185,7 @@ func TestRRFirstByte_copyReselectsPath(t *testing.T) {
 	if lower.creates.Load() != 2 {
 		t.Fatalf("the copy must ask for the read waiter twice (before and after the first byte), got %d", lower.creates.Load())
 	}
-	if f.s.balancer.heal.lastByte.Load() == 0 {
+	if !provedAny(f.s.balancer) {
 		t.Fatal("the first byte seen by the peeking waiter")
 	}
 	if waiter, ok := conn.CreateReadWaiter(); !ok {
@@ -391,7 +391,7 @@ func TestRRFirstByte_directNotWrappedInterruptWorks(t *testing.T) {
 		t.Fatal("a direct node must not be wrapped")
 	}
 	conn.Close()
-	if f.s.balancer.heal.lastByte.Load() == 0 {
+	if !provedAny(f.s.balancer) {
 		t.Fatal("the open of a direct node counts as the first byte")
 	}
 

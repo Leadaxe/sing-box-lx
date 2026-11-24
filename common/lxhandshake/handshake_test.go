@@ -3,6 +3,7 @@ package lxhandshake
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"testing"
@@ -93,7 +94,10 @@ func TestGuard(t *testing.T) {
 			start := time.Now()
 			_, err := conn.Read(make([]byte, 1))
 			elapsed := time.Since(start)
-			finish()
+			finishErr := finish()
+			if (finishErr == nil) != (mode == "success") && mode != "deadline" {
+				t.Fatalf("finish reported %v", finishErr)
+			}
 			switch mode {
 			case "deadline":
 				if !errors.Is(err, os.ErrDeadlineExceeded) || elapsed > time.Second {
@@ -120,5 +124,30 @@ func TestGuard(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The exchange succeeds and, at the same moment, ctx ends: the context watch has
+// closed conn before finish could stop it. finish must report it, so the caller
+// does not hand out a closed conn as a success.
+func TestGuardCancelBeforeFinish(t *testing.T) {
+	client, server := net.Pipe()
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	finish := Guard(ctx, client)
+	cancel()
+	// The watch runs in its own goroutine: wait until it has closed conn.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := client.Write([]byte("x")); errors.Is(err, net.ErrClosed) || errors.Is(err, io.ErrClosedPipe) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := finish(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("finish after the context closed conn: got %v, want context.Canceled", err)
+	}
+	if err := finish(); !errors.Is(err, context.Canceled) {
+		t.Fatal("finish is idempotent")
 	}
 }

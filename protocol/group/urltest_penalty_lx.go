@@ -54,11 +54,9 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxtrace"
-	C "github.com/sagernet/sing-box/constant"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/service"
 )
 
 const (
@@ -96,30 +94,10 @@ func isPathDeadDialError(err error, siteOnOpen bool) bool {
 }
 
 // penaltySiteOnOpen reports whether the leaf of node goes to the destination
-// itself when a connection opens: a direct outbound or an endpoint (WireGuard,
-// AWG, Tailscale and other tunnels). Its refused or reset dial is the site's
-// answer. A proxy leaf fails its dial between us and its server. node may be a
-// chain hop (SPEC 073): it carries the tag of the original and keeps its type.
+// itself when a connection opens (siteOnOpenLx): its refused or reset dial is the
+// site's answer.
 func penaltySiteOnOpen(ctx context.Context, outbounds adapter.OutboundManager, node adapter.Outbound) bool {
-	tag := RealTag(node, N.NetworkTCP)
-	if tag == "" {
-		tag = node.Tag()
-	}
-	if ctx != nil {
-		if endpoints := service.FromContext[adapter.EndpointManager](ctx); endpoints != nil {
-			if _, isEndpoint := endpoints.Get(tag); isEndpoint {
-				return true
-			}
-		}
-	}
-	if _, isGroup := node.(adapter.OutboundGroup); isGroup {
-		leaf, loaded := outbounds.Outbound(tag)
-		if !loaded {
-			return false
-		}
-		node = leaf
-	}
-	return node.Type() == C.TypeDirect
+	return siteOnOpenLx(ctx, outbounds, node)
 }
 
 // pathDead classifies a failed dial through node (isPathDeadDialError).

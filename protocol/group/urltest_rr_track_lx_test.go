@@ -17,11 +17,21 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
+// provedAny reports whether a first byte or an answer proved any pool node alive.
+func provedAny(b *balancer) bool {
+	for _, entry := range b.slotsSnapshot() {
+		if entry.track != nil && entry.track.proved.Load() != math.MinInt64 {
+			return true
+		}
+	}
+	return false
+}
+
 // ageTrack moves every unfinished connection of track d into the past.
 func ageTrack(track *rrTrack, d time.Duration) {
 	track.access.Lock()
 	defer track.access.Unlock()
-	for _, list := range []*rrTrackList{&track.dials, &track.waits} {
+	for _, list := range []*rrTrackList{&track.dials, &track.waits, &track.pwaits} {
 		for e := list.head; e != nil; e = e.next {
 			e.since -= int64(d)
 		}
@@ -282,13 +292,13 @@ func TestRRTrack_udpFlowWaits(t *testing.T) {
 	if _, err := echo.WriteTo([]byte("x"), pc.LocalAddr()); err != nil {
 		t.Fatal(err)
 	}
-	if track.waits.oldest.Load() == 0 {
-		t.Fatal("a flow that sent waits for an answer")
+	if track.pwaits.oldest.Load() == 0 || track.waits.oldest.Load() != 0 {
+		t.Fatal("a flow that sent waits for an answer, among the UDP flows")
 	}
 	if _, _, err := echo.ReadFrom(make([]byte, 8)); err != nil {
 		t.Fatal(err)
 	}
-	if track.waits.oldest.Load() != 0 {
+	if track.pwaits.oldest.Load() != 0 {
 		t.Fatal("the first packet back ends the wait")
 	}
 	silent, _ := open()

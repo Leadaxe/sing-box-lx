@@ -62,7 +62,7 @@ func TestRRReview_readTimeoutIsNoOutcome(t *testing.T) {
 	if n, _ := conn.Read(buffer); n == 0 {
 		t.Fatal("precondition: the answer")
 	}
-	if f.s.balancer.heal.lastByte.Load() == 0 {
+	if !provedAny(f.s.balancer) {
 		t.Fatal("the connection is still watched after a timeout: its first byte counts")
 	}
 }
@@ -123,7 +123,6 @@ func TestRRReview_freezeSinceStartNeedsProbe(t *testing.T) {
 	past := time.Now().Add(-time.Second)
 	heal.frozenUntil.Store(&past) // the freeze is over
 	f.fresh("a", "b", "c")        // the full run after the network change
-	heal.lastByte.Store(rrClock(time.Now()))
 	end := time.Now()
 	heal.lastCheckEnd.Store(&end) // the gap: no probe now
 	conn, _ := f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], E.New("dial failed"), f.pickAt(key, "blocked.example", start))

@@ -92,6 +92,9 @@ type rrConnWatch struct {
 	// failed dial, so the key shift and the confirmation do not count it twice.
 	confirmFor string
 	failure    *rrFailure
+	// detour marks a pick moved off its slot by a suspicion: a failure there shifts
+	// no key (the key's slot was not tried).
+	detour bool
 	// packet marks a UDP flow (stage 3): a read error before the first packet is
 	// no failure, only a close without an answer is a reason for a check (rrHang).
 	packet bool
@@ -169,6 +172,7 @@ func (s *URLTest) rrNewWatch(ctx context.Context, dialed adapter.Outbound, picke
 		member:     member,
 		track:      track,
 		start:      picked.start,
+		detour:     picked.detour,
 		key:        picked.key,
 		shift:      picked.shift,
 		confirmFor: confirmFor,
@@ -240,7 +244,11 @@ func (c *rrFirstByteConn) wrote() {
 	if old&(rrStateWrote|rrStateGotByte|rrStateClosed|rrStateDone) != 0 || c.watch.track == nil {
 		return
 	}
-	c.watch.track.track(&c.watch.track.waits, &c.entry, rrClock(time.Now()), c)
+	list := &c.watch.track.waits
+	if c.watch.packet {
+		list = &c.watch.track.pwaits // a connected UDP flow: no suspicion, a reason only
+	}
+	c.watch.track.track(list, &c.entry, rrClock(time.Now()), c)
 	c.set(rrStateTracked)
 	if c.state.Load()&(rrStateGotByte|rrStateClosed|rrStateDone) != 0 {
 		c.watch.track.untrack(&c.entry) // the outcome came in meanwhile

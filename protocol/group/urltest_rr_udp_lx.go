@@ -155,7 +155,7 @@ func (c *rrFirstPacketConn) sent() {
 	if old&(rrStateWrote|rrStateGotByte|rrStateClosed) != 0 || c.watch.track == nil {
 		return
 	}
-	c.watch.track.track(&c.watch.track.waits, &c.entry, rrClock(time.Now()), c)
+	c.watch.track.track(&c.watch.track.pwaits, &c.entry, rrClock(time.Now()), c)
 	c.set(rrStateTracked)
 	if c.state.Load()&(rrStateGotByte|rrStateClosed) != 0 {
 		c.watch.track.untrack(&c.entry)

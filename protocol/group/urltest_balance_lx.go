@@ -181,11 +181,8 @@ func (b *balancer) pickKeyed(ctx context.Context, destination M.Socksaddr, fallb
 	}
 	// Reduce in uint64 BEFORE narrowing: int(counter) on a 32-bit platform goes negative
 	// past 2^31 and a signed % would produce a negative index (slice panic).
-	// lx: SPEC 138 — a slot under suspicion (an unfinished connection through it with
-	// no proof of its node since, urltest_rr_track_lx.go) is skipped like a dead one
-	// while a slot that is neither is left; failing that the pick goes on as before.
 	now := rrClock(picked.start)
-	var idx, own int
+	var idx int
 	if len(b.stickyHash) > 0 {
 		// slot-hash: fixed slot index from the key; living node in its slot keeps its keys.
 		picked.key = b.rrKeyOf(ctx, destination)
@@ -193,50 +190,59 @@ func (b *balancer) pickKeyed(ctx context.Context, destination M.Socksaddr, fallb
 		hash := picked.key.sticky
 		shift := uint64(picked.shift)
 		idx = int((hash%uint64(n) + shift%uint64(n)) % uint64(n))
-		own = idx
-		for _, strict := range [2]bool{true, false} {
-			if b.usable(slots[own], now, strict) {
-				break
-			}
+		if b.alive != nil && !b.alive(slots[idx].tag) {
 			if shift > 0 {
 				// A shifted key goes on to the next live slot: where its retry went.
-				if live, ok := b.firstLiveFrom(slots, own, now, strict); ok {
+				if live, ok := b.firstLiveFrom(slots, idx, now, false); ok {
 					idx = live
-					break
 				}
-			} else if live, ok := b.liveSlot(slots, hash/uint64(n), now, strict); ok {
+			} else if live, ok := b.liveSlot(slots, hash/uint64(n), now, false); ok {
 				// Keys of a dead slot spread over the live slots by the rest of the hash.
 				idx = live
-				break
 			}
 		}
 	} else {
 		// plain round-robin over the live slots; with all of them live it is counter % n.
 		counter := b.rotate(ctx)
 		idx = int(counter % uint64(n))
-		own = idx
 		if b.alive != nil {
-			for _, strict := range [2]bool{true, false} {
-				if live, ok := b.liveSlot(slots, counter, now, strict); ok {
-					idx = live
-					break
-				}
+			if live, ok := b.liveSlot(slots, counter, now, false); ok {
+				idx = live
+			}
+		}
+	}
+	// lx: SPEC 138 — the slot found as before is under suspicion (an unfinished
+	// connection through it with no proof of its node since, urltest_rr_track_lx.go):
+	// the pick takes the nearest slot going round from it that is live and not under
+	// suspicion — the distribution of the keys stays as it is; failing that, the slot
+	// itself.
+	base := idx
+	if track := slots[base].track; track != nil && track.suspect(now) {
+		for step := 1; step < n; step++ {
+			i := (base + step) % n
+			if b.usable(slots[i], now, true) {
+				idx = i
+				picked.detour = true
+				break
 			}
 		}
 	}
 	if node := resolve(slots[idx].tag); node != nil {
 		// SPEC 138: the slot's tracker goes with the pick; a few atomic loads tell
-		// whether it has work for the slow path. A slot skipped as suspect gets its
-		// look too: the look is what lifts the suspicion.
+		// whether it has work for the slow path. The suspect slots the pick went past
+		// get their look too, at most once per rrHangLook: the look is what lifts or
+		// confirms the suspicion.
 		if track := slots[idx].track; track != nil {
 			picked.track = track
 			if b.onPick != nil && track.attention(now) {
 				b.onPick(ctx, slots[idx].tag, track, now)
 			}
 		}
-		if own != idx && b.onPick != nil {
-			if track := slots[own].track; track != nil && track.attention(now) {
-				b.onPick(ctx, slots[own].tag, track, now)
+		if idx != base && b.onPick != nil {
+			for i := base; i != idx; i = (i + 1) % n {
+				if track := slots[i].track; track != nil && track.suspect(now) && track.attention(now) {
+					b.onPick(ctx, slots[i].tag, track, now)
+				}
 			}
 		}
 		return node, picked

@@ -315,7 +315,7 @@ func TestRRUDP_firstPacketConfirmsRetryNoShift(t *testing.T) {
 			t.Fatalf("UDP counts nothing for %s, got %d/%d", tag, conns, fails)
 		}
 	}
-	if f.s.balancer.heal.lastByte.Load() == 0 {
+	if !provedAny(f.s.balancer) {
 		t.Fatal("the first packet marks the network alive")
 	}
 	if size := f.s.balancer.memory.shifts.size.Load(); size != 0 {
@@ -367,7 +367,7 @@ func TestRRUDP_directLeafNotWrapped(t *testing.T) {
 	if _, wrapped := common.Cast[*rrFirstPacketConn](conn); wrapped {
 		t.Fatal("a direct leaf must not be wrapped")
 	}
-	if f.s.balancer.heal.lastByte.Load() != 0 {
+	if provedAny(f.s.balancer) {
 		t.Fatal("the UDP open of a direct leaf is no first byte")
 	}
 	if conns, _ := f.counts("a"); conns != 0 {
@@ -651,7 +651,7 @@ func TestRRUDP_copyReselectsReadPath(t *testing.T) {
 	if lower.batches.Load() == 0 {
 		t.Fatal("after the first packet the copy reaches the batch read path of the node's connection")
 	}
-	if f.s.balancer.heal.lastByte.Load() == 0 {
+	if !provedAny(f.s.balancer) {
 		t.Fatal("the first packet seen by the peeking waiter")
 	}
 	if N.NeedHandshakeForReadAny(outer) || !conn.ReaderReplaceable() {

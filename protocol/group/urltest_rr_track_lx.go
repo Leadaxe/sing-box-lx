@@ -63,6 +63,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxtrace"
 	"github.com/sagernet/sing-box/common/urltest"
+	C "github.com/sagernet/sing-box/constant"
 	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -81,7 +82,40 @@ const (
 	rrHangLook = time.Second
 	// rrVerdictGap — a node gets a verdict probe no more often than this.
 	rrVerdictGap = 3 * time.Second
+	// rrVerdictBurst verdict probes start per group in rrVerdictWindow at most, one
+	// in flight: without stickiness the failures spread over every node of the
+	// pool, and the limit per node alone would allow 20 probes a minute per node.
+	rrVerdictBurst  = 4
+	rrVerdictWindow = 15 * time.Second
 )
+
+// claimVerdict takes a verdict probe for the node of t at now: one per node every
+// rrVerdictGap, one in flight per group, rrVerdictBurst starts per group in
+// rrVerdictWindow. It reports whether the probe may start.
+func (h *rrHeal) claimVerdict(t *rrTrack, now int64) bool {
+	h.verdictAccess.Lock()
+	defer h.verdictAccess.Unlock()
+	if last := t.verdictLast.Load(); last != 0 && now-last < int64(rrVerdictGap) {
+		return false
+	}
+	if t.verdictBusy.Load() || h.verdicts.Load() > 0 {
+		return false
+	}
+	if oldest := h.verdictStarts[h.verdictNext]; oldest != 0 && now-oldest < int64(rrVerdictWindow) {
+		return false
+	}
+	h.verdictStarts[h.verdictNext] = now
+	h.verdictNext = (h.verdictNext + 1) % rrVerdictBurst
+	t.verdictLast.Store(now)
+	t.verdictBusy.Store(true)
+	h.verdicts.Add(1)
+	return true
+}
+
+func (h *rrHeal) releaseVerdict(t *rrTrack) {
+	t.verdictBusy.Store(false)
+	h.verdicts.Add(-1)
+}
 
 // rrPendMode is how a failure asks for the verdict on its node (rrPend).
 type rrPendMode int
@@ -192,8 +226,9 @@ type rrPending struct {
 type rrTrack struct {
 	tag        string
 	access     sync.Mutex
-	dials      rrTrackList // dials in flight
-	waits      rrTrackList // the client sent, no first byte yet
+	dials      rrTrackList // dials in flight (TCP and UDP)
+	waits      rrTrackList // TCP (stream) connections: the client sent, no first byte yet
+	pwaits     rrTrackList // UDP flows: packets sent, none received — a reason for rrHang only, no suspicion
 	pending    []rrPending // ordered by at
 	pendingN   atomic.Int32
 	checkAfter atomic.Int64 // rrClock from which a pick of the node starts the check; 0 none
@@ -207,6 +242,7 @@ type rrTrack struct {
 	suspectSince atomic.Int64
 	verdictBusy  atomic.Bool  // a verdict probe of the node is in flight
 	verdictLast  atomic.Int64 // rrClock of the start of the last verdict probe
+	deadAt       atomic.Int64 // rrClock of the last dead verdict on the node (rrDead)
 }
 
 // markProved records that the node proved alive from at on.
@@ -283,12 +319,16 @@ func (t *rrTrack) attention(now int64) bool {
 	if d := t.dials.oldest.Load(); d != 0 && d <= cutoff {
 		return true
 	}
-	w := t.waits.oldest.Load()
-	return w != 0 && w <= cutoff
+	if w := t.waits.oldest.Load(); w != 0 && w <= cutoff {
+		return true
+	}
+	p := t.pwaits.oldest.Load()
+	return p != 0 && p <= cutoff
 }
 
-// newestHung returns the since of the newest unfinished connection not newer than
-// cutoff, over both lists; found is false for none.
+// newestHung returns the since of the newest dial in flight or TCP connection
+// waiting for its first byte not newer than cutoff — what makes the slot suspect;
+// found is false for none.
 func (t *rrTrack) newestHung(cutoff int64) (int64, bool) {
 	t.access.Lock()
 	defer t.access.Unlock()
@@ -297,6 +337,14 @@ func (t *rrTrack) newestHung(cutoff int64) (int64, bool) {
 		newest, found = w, true
 	}
 	return newest, found
+}
+
+// newestPacketWait returns the since of the newest UDP flow waiting for an answer
+// not newer than cutoff; found is false for none.
+func (t *rrTrack) newestPacketWait(cutoff int64) (int64, bool) {
+	t.access.Lock()
+	defer t.access.Unlock()
+	return t.pwaits.newestBefore(cutoff)
 }
 
 // kill ends every unfinished connection of the node: the dead verdict; the
@@ -310,6 +358,7 @@ func (t *rrTrack) kill() int {
 		owner.(*rrDial).struck.Store(true)
 	}
 	owners = t.waits.drain(owners)
+	owners = t.pwaits.drain(owners)
 	t.suspectSince.Store(0)
 	t.access.Unlock()
 	for _, owner := range owners {
@@ -531,29 +580,51 @@ func (s *URLTest) rrOnPick(ctx context.Context, tag string, t *rrTrack, now int6
 	if now < look || !t.hangLook.CompareAndSwap(look, now+int64(rrHangLook)) {
 		return
 	}
-	since, found := t.newestHung(now - int64(rrHangAfter))
-	if !found || t.proved.Load() >= since {
-		t.suspectSince.Store(0)
-		return
-	}
+	cutoff := now - int64(rrHangAfter)
 	node, loaded := s.outbound.Outbound(tag)
 	if !loaded {
 		return
 	}
-	if leaf := RealTag(node, N.NetworkTCP); leaf != "" {
-		if history := s.group.history.LoadURLTestHistory(leaf); history != nil {
-			if at := rrClock(history.Time); at > since {
-				t.markProved(at) // another run answered for the node since
-				t.suspectSince.Store(0)
-				return
-			}
+	since, found := t.newestHung(cutoff)
+	if found && t.proved.Load() < since {
+		// A history answer written by another run started no earlier than its time
+		// minus the probe timeout: only that much is proved by it.
+		if at, written := s.rrHistoryProof(node); written {
+			t.markProved(at)
 		}
 	}
-	t.suspectSince.Store(since)
-	if s.balancer.heal.hangReady() && s.rrHang(tag, rrTime(since), false) {
+	if !found || t.proved.Load() >= since {
+		t.suspectSince.Store(0)
+	} else {
+		t.suspectSince.Store(since)
+		if s.balancer.heal.hangReady() && s.rrHang(tag, rrTime(since), false) {
+			return
+		}
+		s.rrVerdictProbe(node, t, nil) // the check cannot run now: the node alone answers for itself
 		return
 	}
-	s.rrVerdictProbe(node, t, nil) // the check cannot run now: the node alone answers for itself
+	// A UDP flow without an answer is no suspicion (one-way UDP is common: QUIC to a
+	// blocked address, STUN, NTP) and gets no verdict probe: only the reason for a
+	// check (rrHang), with its gap and filters.
+	if packet, waiting := t.newestPacketWait(cutoff); waiting && t.proved.Load() < packet && s.balancer.heal.hangReady() {
+		s.rrHang(tag, rrTime(packet), false)
+	}
+}
+
+// rrHistoryProof is the proof that history of node gives: written by another run
+// (the scheduled check, another group's probe) at its time, by a probe that started
+// no earlier than that time minus the probe timeout — so the node is proved alive
+// only from then on. written is false without history.
+func (s *URLTest) rrHistoryProof(node adapter.Outbound) (int64, bool) {
+	leaf := RealTag(node, N.NetworkTCP)
+	if leaf == "" {
+		return 0, false
+	}
+	history := s.group.history.LoadURLTestHistory(leaf)
+	if history == nil {
+		return 0, false
+	}
+	return rrClock(history.Time) - int64(C.TCPTimeout), true
 }
 
 // rrPendingDue is a pick of a node whose pending failures asked for a check: the
@@ -564,11 +635,9 @@ func (s *URLTest) rrPendingDue(tag string, t *rrTrack, now int64) {
 	if !loaded {
 		return
 	}
-	if leaf := RealTag(node, N.NetworkTCP); leaf != "" {
-		if history := s.group.history.LoadURLTestHistory(leaf); history != nil {
-			t.markProved(rrClock(history.Time))
-			s.rrSettleAlive(t, rrClock(history.Time))
-		}
+	if at, written := s.rrHistoryProof(node); written {
+		t.markProved(at)
+		s.rrSettleAlive(t, at)
 	}
 	if t.pendingN.Load() == 0 || s.balancer.heal.frozen() {
 		return
@@ -617,18 +686,11 @@ func (s *URLTest) rrVerdictProbe(node adapter.Outbound, t *rrTrack, silent func(
 	if t == nil || heal.frozen() || s.group.ctx.Err() != nil {
 		return false
 	}
-	now := rrClock(time.Now())
-	if last := t.verdictLast.Load(); last != 0 && now-last < int64(rrVerdictGap) {
+	if !heal.claimVerdict(t, rrClock(time.Now())) {
 		return false
 	}
-	if !t.verdictBusy.CompareAndSwap(false, true) {
-		return false
-	}
-	t.verdictLast.Store(now)
-	heal.verdicts.Add(1)
 	go func() {
-		defer heal.verdicts.Add(-1)
-		defer t.verdictBusy.Store(false)
+		defer heal.releaseVerdict(t)
 		ctx, cancel := context.WithCancel(s.group.ctx)
 		defer cancel()
 		probe := s.group.rrProbeNode(ctx, node, false)
@@ -636,6 +698,12 @@ func (s *URLTest) rrVerdictProbe(node adapter.Outbound, t *rrTrack, silent func(
 			return
 		}
 		if probe.answered {
+			// The node may have been found dead or left the pool while it was probed
+			// (a check, a scheduled run): its answer is no longer ours to write — it
+			// would make a replaced node look like a live candidate.
+			if s.balancer.trackOf(probe.member) != t || t.deadAt.Load() >= rrClock(probe.started) {
+				return
+			}
 			s.group.rrStore(probe)
 			s.rrSettleProbe(probe)
 			return
@@ -686,6 +754,7 @@ func (s *URLTest) rrDead(t *rrTrack) {
 		return
 	}
 	t.dropPending()
+	t.deadAt.Store(rrClock(time.Now()))
 	if s.balancer.heal.frozen() {
 		return
 	}

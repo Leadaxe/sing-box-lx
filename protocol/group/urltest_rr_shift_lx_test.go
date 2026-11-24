@@ -373,7 +373,6 @@ func TestRRShift_networkGoneNoShiftByHistory(t *testing.T) {
 	key := f.keyOn(t, "blocked.example", 0)
 	end := time.Now()
 	f.s.balancer.heal.lastCheckEnd.Store(&end) // the gap: no probe now
-	f.s.balancer.heal.lastByte.Store(rrClock(time.Now()))
 	conn, _ := f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], E.New("dial failed"), f.pickAt(key, "blocked.example", time.Now()))
 	closeConn(conn)
 	if shift, _ := f.shift(key, "blocked.example"); shift != 0 {
@@ -386,12 +385,24 @@ func TestRRShift_networkGoneNoShiftByHistory(t *testing.T) {
 	if track.pendingN.Load() != 1 || track.checkAfter.Load() == 0 {
 		t.Fatal("the failure is pending and asks for a check later")
 	}
+	// History written by another run right after the failure: its probe may have
+	// started before the failure (it took up to the probe timeout), so it proves
+	// nothing about the time after it.
 	time.Sleep(time.Millisecond)
-	f.fresh("a")              // a scheduled run answered for a after the failure
+	f.fresh("a")
 	track.checkAfter.Store(1) // the wait is over
 	f.s.selectBalanced(key, N.NetworkTCP, siteAddr("blocked.example"))
+	if shift, _ := f.shift(key, "blocked.example"); shift != 0 {
+		t.Fatalf("history less than the probe timeout after the failure settles nothing, got %d", shift)
+	}
+	// History written the probe timeout or more after the failure: its probe
+	// started after the failure.
+	f.g.history.StoreURLTestHistory("a", &adapter.URLTestHistory{Time: time.Now().Add(C.TCPTimeout + time.Second), Delay: 100})
+	f.s.balancer.heal.lastCheckEnd.Store(&end) // still the gap
+	track.checkAfter.Store(1)
+	f.s.selectBalanced(key, N.NetworkTCP, siteAddr("blocked.example"))
 	if shift, _ := f.shift(key, "blocked.example"); shift != 1 {
-		t.Fatalf("history written after the failure settles it, got %d", shift)
+		t.Fatalf("history written the probe timeout after the failure settles it, got %d", shift)
 	}
 	if f.probes("a") != 0 {
 		t.Fatal("settled by history: no probe")
