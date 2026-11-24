@@ -138,6 +138,8 @@ jobs:
       # libbox client and every package that carries a `// lx: SPEC 139` stage
       # insertion or an IsProbe guard. The common/tls suite runs minutes under
       # -race, so only its REALITY verdict and lx tests run, without -race.
+      # The group's other lx code (SPEC 054/125/138) rides along: the tracker's node
+      # column (common/trafficcontrol) and the probe history (common/urltest).
       - name: go test (SPEC 139 connection test, race)
         run: |
           go test -race -count=1 \
@@ -145,6 +147,7 @@ jobs:
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd,with_lx_chain" \
             ./common/lxtrace/ ./common/lxdatagram/ ./common/dialer/ ./daemon/ ./experimental/libbox/ \
             ./dns/ ./dns/transport/ ./dns/transport/fakeip/ ./dns/transport/quic/ ./dns/transport/group/ ./protocol/dns/ ./service/resolved/ ./protocol/group/ ./protocol/chain/ \
+            ./common/trafficcontrol/ ./common/urltest/ \
             ./protocol/masque/... ./protocol/hysteria2/ ./protocol/tuic/ ./transport/v2rayxhttp/ ./lx-test/conntest/
           go test -count=1 \
             -ldflags "-checklinkname=0" \
