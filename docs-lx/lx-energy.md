@@ -106,7 +106,7 @@ Every tick, each endpoint goes through a chain of checks, cheapest first:
 1. **Listen mode** (`listen_port` set) → never suspend: inbound peers have no way to wake it.
 2. **Window selection**: unreachable → `lx.wg.idle.suspend`; reachable → `lx.wg.idle.suspend_reachable` (or bail out if unset).
 3. **Idle clock**: `IdleSince() < window` → too early.
-4. **Already down** (guard/closed) → someone else's state, don't touch.
+4. **Already down** (stopped or closed) → someone else's state, don't touch.
 5. **Live TCP flows**: the device gVisor stack's `CurrentEstablished` gauge > 0 → established connections exist (a download, a push socket) → don't suspend. The gate is precise, and keepalives do not affect it: a keepalive is not a TCP flow.
 6. **Counter delta**: rx+tx grew by ≥ 4096 bytes since the previous decision → live UDP/QUIC traffic → refresh the clock, don't suspend. The gate compares against a threshold instead of catching any change: WG keepalive (32 B/interval) and rekeys (~240 B/~2 min) move the counters forever. A `persistent_keepalive` peer must still be able to sleep, because silencing its timers is half the win. A silent QUIC flow with rare pings below the threshold will be suspended. That is an accepted trade-off: QUIC migrates or re-establishes.
 7. All quiet → `device.Down()`, log `lx idle: suspend <tag>`.
@@ -136,9 +136,7 @@ Two frequent questions about waking:
 - **The attempt itself wakes, not its success.** The wake happens at dial entry, before anything is sent. If the connection then fails (target unreachable), the tunnel is already awake and will fall asleep again after its window. Any app whose traffic is routed into this tunnel wakes it; traffic going direct or through another channel does not.
 - **An open TCP socket keeps the tunnel awake** (the established-flows gate, §4.5). So for TCP there is no "app writes into a socket while the tunnel already sleeps" case. A silent UDP/QUIC session may fall asleep; QUIC then re-establishes with a fresh dial, and that dial wakes the tunnel.
 
-Two events do not wake an endpoint:
-- screen-on and a network change (pause-wake). The transport remembers a `suspended` flag and skips such devices. Otherwise one screen cycle would wake every device and desync the bookkeeping until restart;
-- a guard-suspended AWG endpoint ([SPEC 007](../SPECS/TASKS/007-AWG_OVER_WIREGUARD_DETOUR_GUARD/SPEC.md)) comes back only with a core restart. That is the AWG-over-WG kernel-hang protection.
+Two events do not wake an endpoint: screen-on and a network change (pause-wake). The transport remembers a `suspended` flag and skips such devices. Otherwise one screen cycle would wake every device and desync the bookkeeping until restart.
 
 For domain destinations, DNS resolution happens before the wake, so a failed lookup does not pay a handshake. A sleeping tunnel does not break DNS. Ordinary DNS does not go through the tunnel: a failed lookup means DNS is broken even with the tunnel awake. A DNS server detoured through this very tunnel sends its query as a separate dial to the server's IP, and that dial wakes the tunnel itself. The "asleep, therefore can't resolve" deadlock cannot happen.
 
@@ -231,7 +229,6 @@ Notes:
 
 - **Live connections are never cut**: a node carrying an established TCP flow or bulk UDP traffic is not suspended, however "idle" it looks by dials (§4.5–4.6). The `interrupt_exist_connections=false` promise holds.
 - **Screen-off/on and network changes don't desync anything**: suspended devices stay suspended through pause/wake cycles.
-- **The AWG guard outranks idle logic**: a guard-downed AWG endpoint is woken by nothing — not a dial, not pause, not a probe.
 - **The first request after sleep always works**: it goes through the last known node and wakes it, while an immediate re-test refreshes the selection in parallel. If that node died overnight, one request fails and the re-test repairs the pool right away.
 - **Kill switch**: without `lx.wg.idle.suspend` not even the tick starts.
 
@@ -240,7 +237,6 @@ Notes:
 - `lx idle: suspend <tag> idle=…` / `lx idle: wake <tag> by=dial` — edge-triggered pairs in the log. Frequent suspend↔wake pairs for one tag mean flapping: check threshold coordination (§8) and that the probe gates are active.
 - A sleeping node has 0 recv-workers for its device (goroutine profile) and zero rx/tx.
 - A node won't sleep although it should: check whether it is reachable (selector, pool, rule, DNS detour — §2) and whether it carries established TCP or bulk UDP.
-- A node won't wake: check whether it is an AWG endpoint downed by the guard ([SPEC 007](../SPECS/TASKS/007-AWG_OVER_WIREGUARD_DETOUR_GUARD/SPEC.md)); the log then has `amneziawg endpoint suspended/will not start`.
 - Probes run at night: check whether there is traffic through the group (`Touch` keeps the ticker alive). Background push connections count as traffic too.
 - `lx idle: teardown <tag> by=budget` — the build budget tore the node down to make room for another (§11); `lx idle: build over budget N+1/N <tag>` — a build went over `build_max` because every built node carried live connections (`build_overflow: "build"`); `lx idle: build <tag>: build budget exhausted (N built, none idle)` — the dial gave up waiting for a slot (`build_overflow: "wait"`).
 

@@ -36,7 +36,7 @@ Defaults and error strings are the ones the current core emits.
 > ⚠️ Every key / UUID / address below is a placeholder. Never commit real
 > private keys or pre-shared keys to a repository.
 
-The desktop/CLI binary bundles all three and is built with one command:
+The desktop/CLI binary bundles all four and is built with one command:
 
 ```bash
 make -f Makefile.lx lx-build
@@ -407,8 +407,8 @@ server Xray versions should still match: XHTTP changes quickly.
 
 Symptom-based troubleshooting is in the explanatory document:
 [xray-protocols-explained §4.6 "Pitfalls where the connection stays silent"](xray-protocols-explained.md#46-a-mismatch-with-the-server-shows-up-as-silence-not-as-an-error).
-This reference keeps only load-time error texts: [§1.8](#18-accepted-but-ignored-fields) and
-the field tables above.
+This reference keeps only the fields: the tables above and the
+accepted-but-ignored fields ([§1.8](#18-accepted-but-ignored-fields)).
 
 ---
 
@@ -488,12 +488,11 @@ order before the handshake. They are case-sensitive tag-format strings and map
 |-----|------|---------|---------|
 | `i1` … `i5` | string | `""` | CPS decoy packets, sent in order. `i1` typically mimics a real protocol (e.g. a QUIC/STUN header) and is mutually exclusive with the [`id`/`ip`/`ib`](#25-masquerade-sugar-id--ip--ib) sugar |
 
-**Tag format** (UPPERCASE keywords, order matters):
+**Tag format** (lowercase keywords; case and order matter):
 
 | Tag | Emits |
 |-----|-------|
 | `<b 0xHEX>` | static bytes (the literal hex) |
-| `<c>` | a counter |
 | `<t>` | a timestamp |
 | `<r N>` | N random bytes |
 | `<rc N>` | N random characters |
@@ -826,7 +825,9 @@ registration (ECDSA keys, WARP enroll) is done by the client, not the core.
 
 > ⚠️ The HTTP version is set by `vhttp`, not `network`. On every other outbound
 > `network` means L4 protocols, while older masque configs used it for `h3`/`h2`. The
-> old shape still works and reports a deprecation; the replacements are in the
+> `network` key was removed in lx.18: a config with it fails to load
+> (`unknown field "network"`). The flat TLS fields are still accepted with a
+> deprecation warning; the replacements are in the
 > [migration table](#310-migrating-from-the-old-shape).
 
 ## 3.2 MASQUE-specific fields
@@ -877,7 +878,7 @@ The full list is the shared `DialerOptions` in `option/outbound.go`.
 
 ## 3.4 Profiles — what `profile` switches
 
-The profile varies four things; everything else (QUIC/HTTP2, capsule/datagram, the
+The profile varies six things; everything else (QUIC/HTTP2, capsule/datagram, the
 userspace stack, the pumps) is profile-independent.
 
 | Aspect | `cloudflare` (default) | `standard` (RFC 9484) |

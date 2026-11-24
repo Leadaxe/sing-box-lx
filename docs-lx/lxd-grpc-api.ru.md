@@ -50,12 +50,12 @@
 | Носитель | Где | Точка входа клиента |
 |---|---|---|
 | **gRPC** (`StartedService`) | демон `sing-box lxd` — десктоп / сервер | `daemon/started_service.proto` |
-| **libbox `CommandClient`** | Android / iOS AAR (duplex-соединение, не gRPC) | `experimental/libbox/command_client_command_lx.go` |
+| **libbox `CommandClient`** | Android / iOS AAR (gRPC через локальный сокет) | `experimental/libbox/command_client_command_lx.go` |
 
 lx-расширения (`SubscribeDNSQueries`, `GetRules`, `GetGroups`, `GetOutbounds`,
 `GetPool`, `GetDNSGroups`, `GetRunningConfig`, `URLTestOutbound`,
-`GetURLViaOutbound`, `GetChains`) реализованы один раз в ядре и доступны через оба
-носителя с одной и той же семантикой полей. Поэтому таблицы полей ниже описывают
+`GetURLViaOutbound`, `GetChains`, `GetWireGuardStatus`, `GetTailscaleStatus`)
+реализованы один раз в ядре и доступны через оба носителя с одной и той же семантикой полей. Поэтому таблицы полей ниже описывают
 Android-AAR так же, как удалённую lxd-машину. Различаются только обрамление на
 проводе и синтаксис вызова метода. Правила, зависящие от транспорта, отмечены
 отдельно. Так, у gRPC-кода `Unimplemented` нет эквивалента в libbox: там
@@ -79,7 +79,7 @@ REST-ручки для профилирования самого процесс�
 
 ## RPC форка есть только в сборке с `with_lx_command`
 
-Девять RPC живут внутри блока `lx:begin lx_command` … `lx:end lx_command`
+Двенадцать RPC живут внутри блока `lx:begin lx_command` … `lx:end lx_command`
 и существуют только в сборке с `with_lx_command`:
 
 `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `SubscribeDNSQueries`,
@@ -398,7 +398,7 @@ warp-статус даёт этот узел:
 
 ### Добавлено
 
-Девять RPC за `with_lx_command`, все отсутствуют в апстриме:
+Двенадцать RPC за `with_lx_command`, все отсутствуют в апстриме:
 
 | RPC | Зачем |
 |---|---|

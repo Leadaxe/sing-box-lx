@@ -941,7 +941,7 @@ transport group changed. The form seen in the field is `native.0rtt`. `1rtt` wit
 
 | Value | ClientHello | Works against |
 |---|---|---|
-| `""` (unset) | Whatever the fingerprint carries: `chrome` / `firefox` / `safari` send the `X25519MLKEM768` hybrid share, `edge` / `ios` / `android` / `360` / `qq` send X25519 only. The core changes nothing. | as before |
+| `""` (unset) | Whatever the fingerprint carries: `chrome` / `firefox` / `safari` send the `X25519MLKEM768` hybrid share, `edge` / `ios` / `android` / `360` / `qq` send X25519 only. The core changes nothing. | any Xray if the fingerprint carries the hybrid share; otherwise only Xray < v26.9.8 |
 | `"classical"` | `X25519MLKEM768` removed from `key_share` and `supported_groups`. The same hello as upstream, ~1.2 KB shorter (`chrome`: 594 B instead of 1720 B, one TCP segment instead of two). | Xray < v26.9.8 only. Newer servers silently reject a hello without the hybrid share (`reality verification failed`). |
 | `"hybrid"` | Requires the hybrid share. On a fingerprint that has none the handshake fails at once with `reality key_share "hybrid": fingerprint Edge 85 carries no X25519MLKEM768 key share`. Without this value the server would reject silently, and that looks the same as a wrong key. On `chrome` / `firefox` / `safari` it changes nothing. | as `""` |
 
@@ -1639,8 +1639,8 @@ Protocol specifics:
   the sockets opened by later hops carry no handshake and are not guarded; hysteria2 realm mode
   is not guarded at all.
 - **masque `auto`** — the legs follow different labels: h3 the `quic` one, h2 the `tls` one. A
-  fast-failing h3 is retried with the opposite decision before the h2 fallback. A silent h3 falls
-  back to h2 as usual, and the opposite decision goes to the next h3 leg.
+  fast-failing h3 is retried with the opposite decision before the h2 fallback. A silent h3 yields
+  to h2 after 3 s without a handshake, and the opposite decision goes to the next h3 leg.
 - **AmneziaWG** — a `wireguard` endpoint is covered when its masquerade is `ip: "quic"` or it has
   a non-empty `i1`; the byte goes only ahead of a QUIC-shaped burst. The decision is taken from
   the label when the socket is created. The handshake outcome does not move the label, so

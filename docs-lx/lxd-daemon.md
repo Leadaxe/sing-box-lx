@@ -1475,8 +1475,8 @@ keeps them continuously, so a GET returns in milliseconds and already covers
 the whole life of the process. Nothing has to be switched on in advance, and
 leaving these routes available adds no background load.
 
-**Suspected lock contention** — the one case that must be enabled first: its
-accounting costs resources.
+**Lock contention** is the one case to enable first: the `mutex` and `block`
+profiles cost resources.
 
 ```bash
 curl -s -X POST ".../admin/pprof/mutex?fraction=100"

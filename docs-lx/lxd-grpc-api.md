@@ -49,12 +49,12 @@ is exposed over two carriers:
 | Carrier | Where | Client entry point |
 |---|---|---|
 | **gRPC** (`StartedService`) | the `sing-box lxd` daemon — desktop / server | `daemon/started_service.proto` |
-| **libbox `CommandClient`** | the Android / iOS AAR (duplex conn, not gRPC) | `experimental/libbox/command_client_command_lx.go` |
+| **libbox `CommandClient`** | the Android / iOS AAR (gRPC over a local socket) | `experimental/libbox/command_client_command_lx.go` |
 
 The lx extensions (`SubscribeDNSQueries`, `GetRules`, `GetGroups`, `GetOutbounds`,
 `GetPool`, `GetDNSGroups`, `GetRunningConfig`, `URLTestOutbound`,
-`GetURLViaOutbound`, `GetChains`) are implemented once in the core and reached
-through either carrier with the same field semantics. The field tables below
+`GetURLViaOutbound`, `GetChains`, `GetWireGuardStatus`, `GetTailscaleStatus`)
+are implemented once in the core and reached through either carrier with the same field semantics. The field tables below
 therefore describe the Android AAR just as much as a remote lxd machine. Only the
 wire framing and the method-call syntax differ. Transport-specific rules are
 called out where they apply. For example, the gRPC `Unimplemented` code has no
@@ -78,7 +78,7 @@ documented in [lxd-daemon.md](lxd-daemon.md).
 
 ## Fork RPCs exist only in builds with `with_lx_command`
 
-Nine RPCs live inside an `lx:begin lx_command` … `lx:end lx_command` block and
+Twelve RPCs live inside an `lx:begin lx_command` … `lx:end lx_command` block and
 exist only when the binary is built with `with_lx_command`:
 
 `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `SubscribeDNSQueries`,
@@ -399,7 +399,7 @@ What the fork does to this plane relative to upstream sing-box.
 
 ### Added
 
-Nine RPCs behind `with_lx_command`, all absent upstream:
+Twelve RPCs behind `with_lx_command`, all absent upstream:
 
 | RPC | Why |
 |---|---|

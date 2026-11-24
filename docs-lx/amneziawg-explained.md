@@ -209,7 +209,8 @@ This is how a snapshot of a real protocol goes into `i1`: a STUN Binding
 Request, a QUIC Initial, a DNS query. The first meaningful packet of the
 flow then looks like someone else's legitimate traffic. The strings are
 case-sensitive, and tag order matters. Whichever side initiates the
-handshake sends them; both ends keep the same strings in their config.
+handshake sends them from its own config; the receiver does not check
+them, so the strings need not match.
 
 ## 3.2 Decoys go out first, before junk
 
@@ -329,8 +330,8 @@ above `reject_after_time` makes the tunnel flap.
 
 > 🧭 **TL;DR:** AWG1 hides sizes and types, AWG2 adds a decoy and ranges,
 > AWG3 encrypts everything that was still readable and randomises timing.
-> A byte-for-byte match with the server is required for `jc`/`jmin`/`jmax`,
-> `s1`–`s4`, `h1`–`h4`, `i1`–`i5` and `header_protection_key`.
+> `s1`–`s4`, `h1`–`h4` and `header_protection_key` must match the server;
+> `jc`/`jmin`/`jmax` and `i1`–`i5` act only on the side that sends them.
 
 ---
 
@@ -665,7 +666,7 @@ back, so the fork is permanent.
 
 | Symptom | Cause | Where to look |
 |---|---|---|
-| Handshake does not complete, nothing in the log | Some server parameter did not match: `jc`/`jmin`/`jmax`, `s1`–`s4`, `h1`–`h4`, `i1`–`i5`, `header_protection_key` | compare with the server export byte for byte, §4.4 |
+| Handshake does not complete, nothing in the log | A parameter shared with the server did not match: `s1`–`s4`, `h1`–`h4`, `header_protection_key` | compare with the server export byte for byte, §4.4 |
 | `received handshake response`, then `message too long` | `mtu` above the budget with `s4` set | §5: `mtu ≤ 1500 − 60 − s4`, better 1280 |
 | Handshake completes, data does not flow, no errors | `s4` does not match the server; or the upper tunnel's `allowed_ips` does not cover the addresses | §2.4; `allowed_ips: ["0.0.0.0/0", "::/0"]` |
 | `headers must not overlap` at load | `h1`–`h4` ranges overlap, or not all four are set | §2.3 |
