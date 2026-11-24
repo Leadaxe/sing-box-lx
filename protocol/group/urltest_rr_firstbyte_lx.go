@@ -28,6 +28,11 @@ package group
 // urltest (it watches its own connections), and a direct leaf — an unreachable
 // destination shows on its open, and the wrapper would cost it splice. Its open
 // counts as the first byte.
+//
+// A connected UDP flow (DialContext "udp") takes the same wrapper with the UDP
+// outcome of stage 3 (urltest_rr_udp_lx.go): the first packet is the first byte, a
+// read error is no failure, and only a close from our side with packets sent and
+// none received is a reason for a check.
 
 import (
 	"context"
@@ -64,6 +69,9 @@ type rrConnWatch struct {
 	// failed dial, so the key shift and the confirmation do not count it twice.
 	confirmFor string
 	failure    *rrFailure
+	// packet marks a UDP flow (stage 3): a read error before the first packet is
+	// no failure, only a close without an answer is a reason for a check (rrHang).
+	packet bool
 }
 
 // rrWatchConn wraps an opened TCP connection of a round_robin group to watch for
@@ -77,18 +85,47 @@ func (s *URLTest) rrWatchConn(ctx context.Context, network string, dialed adapte
 }
 
 func (s *URLTest) rrWatch(ctx context.Context, network string, dialed adapter.Outbound, conn net.Conn, picked rrPick, confirmFor string, failure *rrFailure) net.Conn {
-	if N.NetworkName(network) != N.NetworkTCP || lxtrace.IsProbe(ctx) || s.group.ctx.Err() != nil {
+	var packet bool
+	switch N.NetworkName(network) {
+	case N.NetworkTCP:
+	case N.NetworkUDP:
+		packet = true // a connected UDP flow (stage 3): the close decides, not a read error
+	default:
 		return conn
+	}
+	watch, direct := s.rrNewWatch(ctx, dialed, picked, confirmFor, failure, packet)
+	if watch == nil {
+		return conn
+	}
+	if direct {
+		if !packet {
+			s.rrFirstByte(watch)
+		}
+		return conn
+	}
+	return newRRFirstByteConn(conn, watch)
+}
+
+// rrNewWatch counts a TCP connection opened through dialed and returns its watch; nil
+// when there is nothing to watch: a connection test, a closed group, a pick outside
+// the pool or a nested urltest. direct reports a direct leaf, which is not wrapped:
+// for TCP its open is the first byte, for UDP the open proves nothing. A UDP watch
+// carries no key: UDP shifts none (§3.8).
+func (s *URLTest) rrNewWatch(ctx context.Context, dialed adapter.Outbound, picked rrPick, confirmFor string, failure *rrFailure, packet bool) (*rrConnWatch, bool) {
+	if lxtrace.IsProbe(ctx) || s.group.ctx.Err() != nil {
+		return nil, false
 	}
 	member := dialed.Tag() // a chain hop carries the tag of its member
 	if !s.balancer.inPool(member) {
-		return conn // a fallback pick outside the pool (cold start)
+		return nil, false // a fallback pick outside the pool (cold start)
 	}
 	node, loaded := s.outbound.Outbound(member)
 	if !loaded || rrNestedURLTest(node) {
-		return conn
+		return nil, false
 	}
-	s.balancer.rrCountConn(member, &s.balancer.heal)
+	if !packet {
+		s.balancer.rrCountConn(member, &s.balancer.heal) // UDP stays out of the slot counters
+	}
 	watch := &rrConnWatch{
 		s:          s,
 		member:     member,
@@ -97,12 +134,12 @@ func (s *URLTest) rrWatch(ctx context.Context, network string, dialed adapter.Ou
 		shift:      picked.shift,
 		confirmFor: confirmFor,
 		failure:    failure,
+		packet:     packet,
 	}
-	if rrDirectLeaf(dialed) {
-		s.rrFirstByte(watch)
-		return conn
+	if packet {
+		watch.key = rrKey{}
 	}
-	return newRRFirstByteConn(conn, watch)
+	return watch, rrDirectLeaf(dialed)
 }
 
 // rrDirectLeaf reports whether node, unwrapped through selectors, is a direct
@@ -162,8 +199,8 @@ func (c *rrFirstByteConn) observe(n int, err error) {
 		}
 		return
 	}
-	if err == nil || E.IsTimeout(err) {
-		return // a read deadline of the consumer is no outcome: still watched
+	if err == nil || E.IsTimeout(err) || c.watch.packet {
+		return // a read deadline of the consumer is no outcome: still watched; UDP waits for the close
 	}
 	old := c.set(rrStateDone)
 	if old&(rrStateDone|rrStateGotByte|rrStateClosed) != 0 || old&rrStateWrote == 0 {

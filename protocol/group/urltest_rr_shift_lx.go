@@ -424,9 +424,13 @@ type rrSlotCount struct {
 
 // rrMemory is the stage-2 state of a round_robin group; it lives in the balancer.
 type rrMemory struct {
-	shifts     rrShiftTable
-	access     sync.Mutex // guards counts
-	counts     map[string]*rrSlotCount
+	shifts rrShiftTable
+	access sync.Mutex // guards counts and bytes
+	counts map[string]*rrSlotCount
+	// bytes is the rrClock of the latest first byte (or first UDP packet) of a
+	// connection through each pool member: it proved alive then (rrHang). TCP and
+	// UDP; it leaves with the node's counters.
+	bytes      map[string]int64
 	quarantine atomic.Pointer[map[string]bool]
 }
 
@@ -479,6 +483,33 @@ func (b *balancer) rrCountConn(tag string, heal *rrHeal) {
 		c.conns /= 2
 		c.fails /= 2
 	}
+}
+
+// rrMarkByte records the first byte of a connection through the pool member tag at
+// clock (rrClock). Under access, as the counters: the mark leaves with them.
+func (b *balancer) rrMarkByte(tag string, clock int64) {
+	m := &b.memory
+	m.access.Lock()
+	defer m.access.Unlock()
+	if !b.inPool(tag) {
+		return
+	}
+	if m.bytes == nil {
+		m.bytes = make(map[string]int64)
+	}
+	if marked, loaded := m.bytes[tag]; !loaded || clock > marked {
+		m.bytes[tag] = clock
+	}
+}
+
+// rrByteSince reports whether a connection through tag got its first byte after
+// clock (rrClock).
+func (b *balancer) rrByteSince(tag string, clock int64) bool {
+	m := &b.memory
+	m.access.Lock()
+	defer m.access.Unlock()
+	marked, loaded := m.bytes[tag]
+	return loaded && marked > clock // clock may be negative: a start before rrClockBase
 }
 
 // rrQuarantineVerdict is the outcome of one confirmed failure.
@@ -556,6 +587,11 @@ func (b *balancer) rrSlotsChanged() {
 			delete(m.counts, tag)
 		}
 	}
+	for tag := range m.bytes {
+		if slotIndex(slots, tag) < 0 {
+			delete(m.bytes, tag)
+		}
+	}
 }
 
 // rrResetMarks lifts the address-problem marks and the quarantine: the scheduled
@@ -571,6 +607,7 @@ func (b *balancer) rrResetMarks() {
 	if set := m.quarantine.Swap(nil); set != nil {
 		for tag := range *set {
 			delete(m.counts, tag)
+			delete(m.bytes, tag)
 		}
 	}
 }
@@ -582,6 +619,7 @@ func (b *balancer) rrForget(tag string) {
 	m.access.Lock()
 	defer m.access.Unlock()
 	delete(m.counts, tag)
+	delete(m.bytes, tag)
 }
 
 // rrCreditFail counts a confirmed failure of tag; a quarantine refills its slot. A
@@ -827,12 +865,14 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch) {
 	if s.group.ctx.Err() != nil {
 		return
 	}
-	b.heal.lastByte.Store(rrClock(time.Now()))
+	now := rrClock(time.Now())
+	b.heal.lastByte.Store(now)
+	b.rrMarkByte(w.member, now)
 	if b.heal.frozen() {
 		return
 	}
 	var credit []string
-	if w.confirmFor != "" {
+	if w.confirmFor != "" && !w.packet { // UDP stays out of the slot counters
 		member, _ := s.outbound.Outbound(w.confirmFor)
 		if w.failure.confirm(member) {
 			credit = append(credit, w.confirmFor)
@@ -867,7 +907,7 @@ func (s *URLTest) rrSilentClose(w *rrConnWatch) {
 		picked.shift = w.failure.expectedShift() // the retry: the key as its failure left it
 	}
 	failure := s.rrNewFailure(picked, w.member)
-	if !s.rrStartCheck(member, failure) {
+	if !s.rrStartCheck(member, failure, false) {
 		failure.aliveByHistory(member)
 	}
 }

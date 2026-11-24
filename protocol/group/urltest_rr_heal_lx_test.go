@@ -155,6 +155,7 @@ func (f *healFixture) waitCheck(t *testing.T) {
 		return !f.s.balancer.heal.running.Load()
 	})
 	f.s.balancer.heal.lastCheckEnd.Store(nil)
+	f.s.balancer.heal.lastHangEnd.Store(nil)
 }
 
 func (f *healFixture) pool() []string { return f.g.balancer.poolTags() }
@@ -437,7 +438,7 @@ func TestRRHeal_tickDuringCheck(t *testing.T) {
 			member := f.nodes[pool[i%len(pool)]]
 			neighbour := f.nodes[pool[(i+1)%len(pool)]]
 			f.s.balancer.heal.frozenUntil.Store(nil)
-			f.s.rrHealCheck(member, neighbour, nil)
+			f.s.rrHealCheck(member, neighbour, nil, false)
 			observe()
 		}
 	}()
