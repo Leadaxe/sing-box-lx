@@ -37,10 +37,11 @@ package group
 // пользуется общим.
 //
 // round_robin (balancer != nil) does not use this machinery: its pool has its own
-// health-check (SPEC 019 v2), and a failed TCP dial goes to the SPEC 138 self-heal
-// (urltest_rr_heal_lx.go) — one retry through the next live slot and a background
-// check of the node, whose verdict may drop the node's history and replace it in
-// its slot. The dial error by itself still changes neither history nor the pool.
+// health-check (SPEC 019 v2), and a failed open — a TCP dial, a UDP open
+// (ListenPacket, a connected UDP flow) — goes to the SPEC 138 self-heal
+// (urltest_rr_heal_lx.go): one retry through the next live slot and a background
+// verdict on the node, which may drop the node's history and replace it in its
+// slot. The open error by itself still changes neither history nor the pool.
 
 import (
 	"context"

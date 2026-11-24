@@ -9,9 +9,9 @@ package group
 // site does not move a whole application off its node; the slot is still counted
 // from the sticky key, (hash + shift) % pool. The shift grows when a failure (a
 // dial that did not open, or a connection closed without a byte) hit a node that
-// proved alive after the failure (urltest_rr_track_lx.go): the first byte of any
-// connection through it, an answer of a probe of it that started after the
-// failure, or its history written after the failure. Until then the failure is
+// proved alive after the failure (urltest_rr_track_lx.go): the first byte of a
+// connection through it that started after the failure, an answer of a probe of it
+// that started after the failure, or its history written after the failure. Until then the failure is
 // pending on the node; the dead verdict drops it, a freeze voids it. When the own
 // network is gone no byte comes, and nothing shifts. A
 // shifted key whose slot is dead goes to the next live slot going round, the same

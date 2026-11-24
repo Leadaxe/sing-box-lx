@@ -3,13 +3,13 @@ package group
 // lx:begin SPEC 138 round_robin self-heal for UDP (stage 3)
 //
 // UDP takes its node from the same slots as TCP (pick), so a dead or quarantined
-// node is skipped for UDP too. On top of that (§3.8):
+// node, and a slot under suspicion, is skipped for UDP too. On top of that (§3.8):
 //
 //   - An open that fails (ListenPacket of the node returned an error, a client
 //     cancel aside) is handled as a failed TCP dial (rrHealRetry): one retry
 //     through the next live slot that takes UDP and is no nested urltest, and the
-//     background check of the node with the same verdicts, limits, gap and
-//     freeze. It puts the node under suspicion, not the address: a key that TCP
+//     verdict on the node as for TCP (the check with a control, or a verdict probe
+//     of a direct or endpoint leaf) with the same limits, gaps and freeze. It puts the node under suspicion, not the address: a key that TCP
 //     marked "address problem" is still retried and checked. A UDP failure shifts
 //     no key. The control of the check needs TCP only (the probe is TCP); the
 //     retry needs UDP.
@@ -25,9 +25,9 @@ package group
 //     probe lately, and its checks keep their own gap. An interrupt of the group
 //     (rrInterrupting), its Close and a connection test are no reason. A packet
 //     counts as sent once its write succeeded.
-//   - The first packet received is the first byte for the "network alive" mark and
-//     the node's proof mark (rrTrack.proved). UDP stays out of the slot counters and the
-//     quarantine: no flow counted, no failure confirmed by a UDP retry.
+//   - The first packet received is the first byte: it moves the node's proof mark
+//     (rrTrack.proved) to the start of the flow. UDP stays out of the slot counters
+//     and the quarantine: no flow counted, no failure confirmed by a UDP retry.
 //
 // The watch is a thin wrapper of the node's packet connection, under the group's
 // interrupt wrapper, that keeps the packet fast paths of sing (common/bufio

@@ -24,16 +24,17 @@ package group
 // connections that wait for a first byte; a connection that got one is left alone.
 // The "own network" verdict and a freeze cancel and close nothing.
 //
-// Pending failures: a failure of a connection (a dial that did not open, a close
-// without a byte) waits for the verdict on the node it failed on, at most
-// rrPendingMax per node (the oldest goes) and rrPendingTTL long. "Alive" comes from
-// the first of: the first byte of any connection through the node after the
-// failure, an answer of a probe of the node that started after it, history of the
-// node written after it. Every pending failure older than that proof then gets what
-// it is due (rrFailure.settle). The dead verdict drops the node's pending failures;
-// a freeze voids every pending failure older than it (rrHeal.lastFreeze). A failure
-// that needs a probe asks for one through checkAfter: the next pick of the node at
-// or after that time starts the check, unless the verdict came meanwhile.
+// Pending failures (SPEC 138 §3.10): a failure of a connection (a dial that did
+// not open, a close without a byte) waits for the verdict on the node it failed on,
+// at most rrPendingMax per node (the oldest goes) and rrPendingTTL long. "Alive"
+// comes from the first of: the first byte of a connection through the node that
+// started (was picked) after the failure, an answer of a probe of the node that
+// started after it, history of the node written after it. Every pending failure
+// older than that proof then gets what it is due (rrFailure.settle). The dead
+// verdict drops the node's pending failures; a freeze voids every pending failure
+// older than it (rrHeal.lastFreeze). A failure whose check or verdict probe cannot
+// start now asks again through checkAfter: the next pick of the node at or after
+// that time starts the check, unless the verdict came meanwhile.
 //
 // A failure that puts the site under suspicion (a close without a byte, a failed
 // open of a direct or endpoint leaf, a failed retry) starts a verdict probe at
@@ -44,7 +45,7 @@ package group
 // terms. A failed open of a proxy leaf puts the node under suspicion and goes to
 // the check with a control at once.
 //
-// A slot under suspicion (rrTrack.suspect): an unfinished connection through it is
+// A slot under suspicion (rrTrack.suspect, §3.11): an unfinished connection through it is
 // older than rrHangAfter and the node has not proved alive since that connection
 // started (proved: the start of a later connection that got its first byte, the
 // start of a probe that answered, history written later). The pick skips such a
@@ -71,10 +72,9 @@ const (
 	rrPendingMax = 64
 	// rrPendingTTL — a pending failure without a verdict this long is dropped.
 	rrPendingTTL = 60 * time.Second
-	// rrVerdictWait — a failure that puts the site under suspicion asks for a probe
-	// of its node at the next pick of the node this long after it, if no first byte
-	// through the node has given the verdict by then; a check that could not start
-	// asks again this long later.
+	// rrVerdictWait — a failure whose check or verdict probe could not start asks
+	// again at the next pick of its node this long later, if no proof of the node
+	// has given the verdict by then.
 	rrVerdictWait = time.Second
 	// rrHangLook — the unfinished connections of a slot are looked at by a pick no
 	// more often than this.

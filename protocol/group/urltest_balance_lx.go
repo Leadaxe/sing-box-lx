@@ -158,7 +158,8 @@ func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {
 // pick selects one node for this connection from the current pool. fallback is returned
 // when the pool is empty (start, before the first health-check fills it).
 // lx: SPEC 138 — a slot whose node failed its last probe (or is in quarantine) is skipped
-// while the pool has a live one; a key shifted past nodes the destination is unreachable
+// while the pool has a live one, and a slot under suspicion (a stalled connection, no
+// later proof of its node) while the pool has a slot that is neither; a key shifted past nodes the destination is unreachable
 // through takes the slot (hash + shift) % pool, or the next live one going round; pick
 // never changes the slots.
 func (b *balancer) pick(ctx context.Context, destination M.Socksaddr, fallback adapter.Outbound, resolve func(tag string) adapter.Outbound) adapter.Outbound {

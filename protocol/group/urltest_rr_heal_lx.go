@@ -12,10 +12,15 @@ package group
 //     with the group link and C.TCPTimeout; history changes only by verdict, so
 //     a blink of the local network does not strike every node at once;
 //   - the failure is pending on A until A proves alive after it (stage 2,
-//     urltest_rr_track_lx.go): a first byte through A, an answer of a probe of A
-//     that started after it, history of A written after it. A failed open starts
-//     the check at once; a close without a byte leaves the probe to the next pick
-//     of A rrVerdictWait later, if no first byte through A has settled it by then.
+//     urltest_rr_track_lx.go): the first byte of a connection through A that
+//     started after it, an answer of a probe of A that started after it, history
+//     of A written after it. A failed open of a proxy leaf puts A under suspicion
+//     and starts the check at once. A failure that puts the site under suspicion
+//     (a close without a byte, a failed open of a direct or endpoint leaf, a failed
+//     retry) starts a verdict probe of its node alone at once (rrVerdictProbe),
+//     outside the check slot and its gap; its silence starts the check. What
+//     cannot start now is asked again by the next pick of A rrVerdictWait later,
+//     unless the verdict came meanwhile.
 //     Every probe is live: A, the control — B, the third node, the candidates of
 //     a replacement search that serves as the control — history says nothing
 //     about whether the network answers now;
@@ -39,7 +44,10 @@ package group
 // reason for a check (urltest_rr_track_lx.go); so is a client that cancelled the
 // dial or closed such a connection after that long. No retry, shift or count
 // follows from a reason. It is dropped for a node proved alive meanwhile or with
-// fresh history, and its checks keep their own gap, rrHangGap (rrHang). The dead
+// fresh history, and its checks keep their own gap, rrHangGap (rrHang); when the
+// check cannot start, a verdict probe of the node alone runs instead. Until the
+// node proves alive such a slot is under suspicion, and the pick skips it while
+// another slot is fine (rrTrack.suspect). The dead
 // verdict cancels the node's dials in flight (they retry once through the next
 // live slot, with no new check) and closes its connections waiting for a first
 // byte.
@@ -50,7 +58,8 @@ package group
 // means a run is already doing that work. It changes only the dead node's slot.
 //
 // Limits (§3.7): one check in flight per group (its own flag, not checking);
-// no new probes for rrHealGap after the previous check ended (retries go on);
+// no new checks for rrHealGap after the previous check ended (retries go on; a
+// verdict probe keeps its own gap per node, rrVerdictGap);
 // nothing at all — no retries, no probes — for rrHealFreeze after the "own
 // network" verdict, a device/network wake or a network change signal
 // (URLTest.InterfaceUpdated, whether its full run starts or not), and on top of
@@ -92,19 +101,24 @@ import (
 )
 
 const (
-	// rrHealFresh — history younger than this counts as a fresh answer: the node is
-	// not probed again.
+	// rrHealFresh — history younger than this counts as a fresh answer for a
+	// candidate of a replacement once the failed node is proved dead, and drops a
+	// reason for a check (rrHang). The failed node and the control are always
+	// probed live.
 	rrHealFresh = 30 * time.Second
-	// rrHealGap — no new probes this long after the previous check ended.
+	// rrHealGap — no new check this long after the previous check ended.
 	rrHealGap = 15 * time.Second
-	// rrHealFreeze — no retries and no probes this long after the "own network"
-	// verdict or a wake signal.
+	// rrHealFreeze — no retries, probes, counts or shifts this long after the "own
+	// network" verdict, a device or network wake, or a network change signal; after
+	// the signal also as long as the full run it started is in flight (rrNetworkRun).
 	rrHealFreeze = 15 * time.Second
 	// rrHealYieldWait bounds how long the full run after a network change waits for
 	// the aborted self-heal check to end.
 	rrHealYieldWait = C.TCPTimeout
-	// rrHangAfter — a client that gives up on a connection with no byte after
-	// waiting this long is a reason for a check: a hanging node gives no failure.
+	// rrHangAfter — an unfinished connection this old (a dial in flight, a wait for
+	// the first byte), found by a pick or given up by its client, is a reason for a
+	// check: a hanging node gives no failure. With no proof of its node since it
+	// started, it also puts its slot under suspicion (rrTrack.suspect).
 	rrHangAfter = 5 * time.Second
 	// rrHangGap — no new check from a client that gave up (rrHang) this long after
 	// the previous such check ended. A steady stream of silent UDP flows closed by
@@ -122,7 +136,7 @@ type rrHeal struct {
 	frozenUntil  atomic.Pointer[time.Time]          // end of the freeze
 	networkRuns  atomic.Int32                       // full runs after a network change in flight
 	abort        atomic.Pointer[context.CancelFunc] // cancels the check in flight
-	lastByte     atomic.Int64                       // rrClock of the last first byte of any connection (stage 2)
+	lastByte     atomic.Int64                       // rrClock of the start of the latest connection that got its first byte; tests read it, the self-heal does not
 	lastFreeze   atomic.Int64                       // rrClock of the last freeze: it voids the failures pending before it (stage 2)
 	interrupting atomic.Int32                       // an interrupt of the group is closing its connections
 	verdicts     atomic.Int32                       // verdict probes in flight (urltest_rr_track_lx.go)
@@ -358,10 +372,10 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 		return rrRetried{}, false // a fallback pick outside the pool (cold start)
 	}
 	// Stage 2: the failure is pending on the node until it proves alive or dead; a
-	// connection test leaves the counters and the shifts alone. A failed open starts
-	// the check at once, as stage 1 does; when it cannot start (one in flight, the
-	// gap), the next pick of the node asks again unless a first byte through the
-	// node settles the failure first.
+	// connection test leaves the counters and the shifts alone. A failed open asks
+	// for the verdict at once (rrPend): the check, or a verdict probe of a direct or
+	// endpoint leaf; when that cannot start (one in flight, the gap), the next pick
+	// of the node asks again unless a proof of the node settles the failure first.
 	var failure *rrFailure
 	if !probe && !struck {
 		if tcp {
