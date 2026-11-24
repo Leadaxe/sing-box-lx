@@ -176,7 +176,7 @@
 | [116 — URLTEST_FAILOVER_MODE](../../TASKS/116-URLTEST_FAILOVER_MODE/SPEC.md) | Режим `failover` (держаться до отказа, проба только текущего узла, переезд на самого быстрого); удаление `passive_check` | I |
 | [125 — URLTEST_TICK_SKIP](../../TASKS/125-URLTEST_TICK_SKIP/SPEC.md) | Тиковый прогон пробует узлы каждый `interval`, а не раз в 2×`interval` (`least_test`, `failover`): порог свежести — от конца прошлого тикового прогона | I |
 | [126 — URLTEST_FAILOVER_DEGRADATION](../../TASKS/126-URLTEST_FAILOVER_DEGRADATION/SPEC.md) | `failover`: уход с деградировавшего узла — триггер 2× к лучшему соседу той же сети, подтверждающая проба, полный прогон, переезд при 1,5×; без ключа | I |
-| [138 — URLTEST_RR_SKIP_DEAD_SLOT](../../TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md) | `round_robin`: выбор обходит слот, чей узел провалил последнюю пробу, пока в пуле есть живые; раскладка слотов и закрепление живых не меняются | I |
+| [138 — URLTEST_RR_SKIP_DEAD_SLOT](../../TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md) | `round_robin`: выбор обходит слот, чей узел провалил последнюю пробу, пока в пуле есть живые; раскладка слотов и закрепление живых не меняются. Дополнение (не реализовано): соединение, не открывшееся через узел пула, повторяется через соседний; открылось — первый узел помечается мёртвым и точечно заменяется | O |
 
 Разбор отвергнутых схем распределения — в журнале [SPEC.md](../../TASKS/019-URLTEST_MODE_STICKY/SPEC.md) задачи.
 Конфиг — [docs/configuration/outbound/urltest.md](../../../docs/configuration/outbound/urltest.md).
