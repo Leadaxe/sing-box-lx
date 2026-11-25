@@ -94,7 +94,9 @@ REST-ручки для профилирования самого процесс�
   звеньев цепочки `chain` на лету ([фича CHAIN](../SPECS/FEATURES/015-CHAIN/FEATURE.md));
 - `SetEndpointEnabled` — ручное включение и выключение WG/AWG- и
   Tailscale-endpoint'а, см. [lx-energy.ru.md §12](lx-energy.ru.md#12-ручной-переключатель-выключает-endpoint-без-правки-конфига);
-- `TailscaleLogin` — вход Tailscale-endpoint'а с новым auth key без перезапуска box.
+- `TailscaleLogin` — вход Tailscale-endpoint'а с новым auth key без перезапуска box;
+- `SetImpair`, `ScheduleImpair`, `GetImpairStatus` — управление тестовым outbound'ом `impair` на
+  лету, см. [lx-impair.ru.md](lx-impair.ru.md#управление-на-лету).
 
 Против сборки без тега они возвращают `codes.Unimplemented`. Сгенерированные
 клиентские заглушки методы всё равно содержат: гейт стоит на сервере, поэтому

@@ -18,8 +18,8 @@ WARN impair outbound slow-se: traffic through the direct dialer is degraded on p
 ```
 
 While it runs it logs each link event at the moment it happens, with or without traffic: schedule
-entries at INFO, the start and end of a random `stall` at DEBUG. Rate swings of `vary` are not
-logged.
+entries and runtime commands at INFO, the start and end of a random `stall` at DEBUG. Rate swings
+of `vary` are not logged.
 
 ```text
 INFO impair outbound slow-se: schedule at 55s: up outage begins, connections reset; down outage begins, connections reset
@@ -100,7 +100,7 @@ one direction. Layer order: defaults < `profile` < top level < `up`/`down`.
 | `up`, `down` | objects with the keys of the rows above | — | — |
 | `stall` | `{"every": "20s", "duration": "400ms"}`: random stops of the whole link (both directions), exponential gaps with mean `every` | none | every 100ms..24h, duration 1ms..1h |
 | `schedule` | a list of changes over time, see below | none | — |
-| `start` | what `schedule` counts from: `"process"` (outbound creation, that is process start) or `"first_use"` (the first connection through it) | `"process"` | — |
+| `start` | what `schedule` counts from: `"process"` (outbound creation, that is process start) or `"first_use"` (the first traffic through it: a new connection or a unit of data on one already open) | `"process"` | — |
 | `profile` | a ready set: `"dsl"`, `"lte-walk"`, `"wifi-lossy"` | none | — |
 | `seed` | random seed, an integer: the same seed gives the same losses, jumps and stalls | random | — |
 
@@ -136,6 +136,67 @@ headers.
 The outage key is `outage`, not `down`, because `down` is a direction. An entry that changes nothing
 is an error.
 
+## Runtime control
+
+The link can be changed without restarting the core: a restart would reset the state of the groups
+under test. Three `StartedService` (gRPC) commands work by outbound tag and answer with the state:
+
+| Command | CLI | What it does |
+|---|---|---|
+| `SetImpair` | `sing-box api impair set <tag> <entry>` | changes the link now, on top of the running schedule. The entry is a `schedule` entry without `at` |
+| `ScheduleImpair` | `sing-box api impair schedule <tag> <list> [--start now\|first_use]` | replaces the schedule: the link goes back to the config's parameters with no outage, then the entries run from the call (`now`) or from the first traffic (`first_use`). `[]` stops the schedule and only restores the config's link |
+| `GetImpairStatus` | `sing-box api impair status <tag>` | the current parameters and counters per direction, whether a `stall` is on, where the schedule is |
+
+Entries are checked by the same rules as the keys in the config. A wrong entry is rejected whole and
+the link stays as it was. Every change is logged like a schedule event. When the config sets `seed`,
+a new schedule restarts the random generators: the same scenario over the same traffic draws the
+same losses. A CLI argument is inline JSON, `@file` or `-` (stdin).
+
+```sh
+sing-box api impair set slow-se '{"outage": true, "reset": true}'
+sing-box api impair set slow-se '{"direction": "down", "delay": "300ms"}'
+sing-box api impair schedule slow-se --start first_use '[
+  {"at": "0s",  "loss": "2%"},
+  {"at": "30s", "outage": true, "reset": true},
+  {"at": "40s", "outage": false}
+]'
+sing-box api impair schedule slow-se '[]'
+sing-box api impair status slow-se
+```
+
+```json
+{
+  "tag": "slow-se",
+  "up":   {"rate": "10mbit", "queue": "50ms", "delay": "20ms", "jitter": "0s", "reorder": false,
+           "loss": "2%", "loss_burst": 1, "stream_stall": "200ms", "outage": false, "reset": false,
+           "units": 1830, "bytes": 2531789, "dropped_queue": 0, "dropped_loss": 37,
+           "dropped_outage": 0, "stream_stalls": 4},
+  "down": {"...": "the same fields"},
+  "stall": false,
+  "schedule": {"entries": 3, "applied": 1, "waiting_for_traffic": false, "elapsed": "12.4s", "next_at": "30s"}
+}
+```
+
+`schedule.waiting_for_traffic` means a `first_use` schedule waits for the first traffic. `elapsed`
+and `next_at` count from the start of the schedule, like `at`. A direction's `vary` is the swing
+range, `rate` the rate at this moment.
+
+The commands are wherever `StartedService` is: through the `api` service in the config, through
+`lxd` and through libbox. For development on one's own machine the `api` service on loopback is
+enough, no keys needed:
+
+```json
+"services": [{"type": "api", "listen": "127.0.0.1", "listen_port": 9090}]
+```
+
+```sh
+export BOX_API_URL=127.0.0.1:9090
+```
+
+Without `secret` the service lets in anyone who reaches the port, so listen on `127.0.0.1` only.
+The commands are in builds with `with_lx_command`. A build without `with_lx_impair` has no `impair`
+outbound, and the commands answer `InvalidArgument` ("not an impair outbound").
+
 ## How datagrams and streams are degraded
 
 There is one bottleneck per `impair` instance and per direction. Every connection through this
@@ -165,9 +226,10 @@ the outage to end or for its own timeout, like a handshake that gets no answer. 
 `reset` refuses at once.
 
 **Closing a stream.** Data written before `Close` (including before `CloseWrite`) is not thrown
-away: `Close` waits until it has passed the queue and the delay and gone to the carrier, and only
-then closes the carrier. This is how a real TCP close sends out its send buffer. `Close` waits at
-most 5 s: if an outage or a slow link holds it longer, the rest is lost. A scheduled outage with
+away. `Close` returns at once and reads and writes fail after it, while what was written passes the
+queue and the delay in the background and goes to the carrier; only then is the carrier closed. This
+is how a real TCP close sends out its send buffer. The background delivery lasts at most 5 s: if an
+outage or a slow link holds it longer, the rest is lost. A scheduled outage with
 `reset` and closing the outbound itself break the connection at once. Datagrams not sent by the
 time of `Close` are lost, as is normal for UDP.
 
@@ -307,7 +369,7 @@ A `round_robin` pool of four nodes, each with its own link:
 }
 ```
 
-The schedule counts from the first connection through `line-a` (`"start": "first_use"`). From the
+The schedule counts from the first traffic through `line-a` (`"start": "first_use"`). From the
 60th to the 240th second 400 ms is added to the delay each way. The scheduled probe once a minute
 sees it, and if the node has become more than twice as slow as `via-b`, the group checks the
 [degradation](lx-urltest.md#4-failover--hold-until-it-fails). At the 300th second every connection

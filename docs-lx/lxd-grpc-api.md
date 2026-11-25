@@ -93,7 +93,9 @@ The same block also carries control RPCs outside this document's scope:
   hops of a `chain` at runtime ([CHAIN feature](../SPECS/FEATURES/015-CHAIN/FEATURE.md));
 - `SetEndpointEnabled` — manual on/off of a WG/AWG or Tailscale endpoint, see
   [lx-energy.md §12](lx-energy.md#12-a-manual-switch-turns-an-endpoint-off-without-a-config-change);
-- `TailscaleLogin` — login of a Tailscale endpoint with a new auth key without a box restart.
+- `TailscaleLogin` — login of a Tailscale endpoint with a new auth key without a box restart;
+- `SetImpair`, `ScheduleImpair`, `GetImpairStatus` — runtime control of the `impair` test
+  outbound, see [lx-impair.md](lx-impair.md#runtime-control).
 
 Against a binary built without the tag they return `codes.Unimplemented`. The
 generated client stubs still contain the methods: the gate is server-side, so
