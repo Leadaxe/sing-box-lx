@@ -269,6 +269,9 @@ func (g *URLTestGroup) rrHealProbe(ctx context.Context, member adapter.Outbound,
 		return g.rrProbeNode(ctx, member)
 	})
 	result.member, result.leaf = member.Tag(), leaf
+	if g.balancer != nil {
+		g.balancer.rrClockLook(time.Now()) // N3: every group that takes the outcome compares its clocks
+	}
 	return result
 }
 

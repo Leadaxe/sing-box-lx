@@ -84,4 +84,33 @@ func TestRRReview9_decisiveBesideFirstProbe(t *testing.T) {
 	}
 }
 
+// N3: a group that takes the outcome of a probe of another group (U3) compares its
+// own clocks too.
+func TestRRReview9_joinedGroupComparesClocks(t *testing.T) {
+	a := newHealFixture(t, []string{"n", "b"}, []string{"n", "b"}, 0)
+	b := newHealFixture(t, []string{"n", "b"}, []string{"n", "b"}, 0)
+	b.g.history, b.g.link = a.g.history, a.g.link
+	a.nodes["n"].hold = make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		a.g.rrQueuedProbe(context.Background(), a.nodes["n"], time.Time{})
+		close(done)
+	}()
+	waitLong(t, func() bool { return a.nodes["n"].active.Load() == 1 }, 2*time.Second)
+	now := time.Now()
+	b.s.balancer.clockMono, b.s.balancer.clockWall = rrClock(now), now.Add(-time.Minute).UnixNano()
+	joined := make(chan rrProbe, 1)
+	go func() { joined <- b.g.rrQueuedProbe(context.Background(), b.nodes["n"], time.Time{}) }()
+	time.Sleep(50 * time.Millisecond)
+	close(a.nodes["n"].hold)
+	<-done
+	probe := <-joined
+	if b.nodes["n"].probes.Load() != 0 || !probe.answered {
+		t.Fatalf("precondition: b takes the outcome of a's flight (probes %d, answered %v)", b.nodes["n"].probes.Load(), probe.answered)
+	}
+	if !b.s.balancer.heal.frozen() {
+		t.Fatal("the joined group did not compare its clocks at the outcome")
+	}
+}
+
 // lx:end SPEC 138
