@@ -53,6 +53,9 @@ plain-WireGuard handshake initiation к Proton и записал в лог
 - Константа `C.ProtocolWireGuard = "wireguard"`.
 - Дефолтный порядок: `DomainNameQuery, QUICClientHello, STUNMessage,
   WireGuard, UTP, …` — раньше uTP, позже QUIC/STUN (у тех сильнее проверки).
+  Порядок дефолтный и без опции: у `sniff` без `sniffer: [...]` handshake
+  initiation WireGuard получает `wireguard`, а не `bittorrent`, как у апстрима
+  (FEATURE 016, «Отличие от апстрима по умолчанию»).
 - `sniffer: ["wireguard"]` в `sniff`-действии; `protocol: wireguard` в правилах.
 - AmneziaWG с не-дефолтными H1–H4 или S1–S4 не распознаётся намеренно.
   С junk/decoy сниффер увидит их первыми: junk не совпадёт ни с чем,
