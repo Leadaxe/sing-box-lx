@@ -222,7 +222,8 @@ apply to streams: a stream always arrives in order. During a silent outage data 
 too and arrives after it.
 
 During a silent outage a connection (both TCP and a UDP socket) does not open: the attempt waits for
-the outage to end or for its own timeout, like a handshake that gets no answer. An outage with
+the outage to end, but no longer than the connect timeout (the outbound's `connect_timeout`, 5 s by
+default), and then fails with a timeout, like a handshake that gets no answer. An outage with
 `reset` refuses at once.
 
 **Closing a stream.** Data written before `Close` (including before `CloseWrite`) is not thrown
