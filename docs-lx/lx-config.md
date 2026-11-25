@@ -649,8 +649,7 @@ For a large node list, the recommended lowest-overhead setup is `pool_tolerance:
 `pool` and a longer `interval`.
 
 Status: even rotation is verified locally (10/10/10 with stickiness off) and end to end on a
-device, on a real multi-node pool. The rc.15 `domain` fix takes on-device per-domain uniformity
-from ~0.27 to 0.95+.
+device, on a real multi-node pool. Per-domain uniformity on the device is 0.95.
 
 📖 [Full reference](../docs/configuration/outbound/urltest.md): every field, the per-component
 sticky semantics, the pool fill and maintain rules, tuning tips.
