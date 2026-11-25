@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/urltest"
 	C "github.com/sagernet/sing-box/constant"
@@ -304,6 +305,30 @@ func TestRRReview9_nestedRoundRobinRetriesOnce(t *testing.T) {
 	}
 	b.waitCheck(t)
 	a.waitCheck(t)
+}
+
+// Step 2, L3: a part of the first probes (a pool larger than U) granted after a
+// batch of candidates started keeps its own batch: its outcome does not count
+// against the batch of candidates (c.left).
+func TestRRReview9_lateFirstPartKeepsItsBatch(t *testing.T) {
+	f := newHealFixture(t, []string{"a", "b"}, []string{"a"}, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := &rrCheck{
+		s: f.s, ctx: ctx, queue: f.g.rrQueue(), x: time.Now(),
+		results: make(chan rrCheckResult, 2), grants: make(chan func(), 2),
+		firstAt: make([]time.Time, 1), firstEnded: make([]bool, 1),
+	}
+	c.launchAll(rrRoleFirst, 0, []adapter.Outbound{f.nodes["a"]})
+	c.batches = 1 // a batch of candidates started before the part was granted
+	then := <-c.grants
+	c.flying--
+	then()
+	r := <-c.results
+	c.requests.Wait()
+	if r.batch != 0 {
+		t.Fatalf("the first probe counts against batch %d of the candidates", r.batch)
+	}
 }
 
 // lx:end SPEC 138

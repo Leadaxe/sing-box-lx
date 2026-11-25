@@ -939,11 +939,11 @@ func (c *rrCheck) settle() {
 }
 
 // launch starts one probe on a place the round holds; the place goes back at its
-// end.
-func (c *rrCheck) launch(role rrCheckRole, index int, node adapter.Outbound, from time.Time) {
+// end. batch is the batch of candidates the probe belongs to (0: the first probes
+// of the pool; -1: none), fixed when its places were asked for.
+func (c *rrCheck) launch(role rrCheckRole, index int, node adapter.Outbound, from time.Time, batch int) {
 	c.flying++
 	c.launched++
-	batch := c.batches
 	// The decisive probe of a node whose first probe still flies flies beside it from
 	// the moment of step 3, not after its end (U3).
 	alone := role == rrRoleDecisive && !c.firstEnded[index]
@@ -955,8 +955,11 @@ func (c *rrCheck) launch(role rrCheckRole, index int, node adapter.Outbound, fro
 }
 
 // launchAll asks for the probes of nodes in parts of at most U (U1); each part
-// starts when its places are granted.
+// starts when its places are granted. A part keeps the batch it was asked for in: a
+// first probe of a pool larger than U granted after a batch of candidates started
+// does not count against that batch (c.left).
 func (c *rrCheck) launchAll(role rrCheckRole, first int, nodes []adapter.Outbound) {
+	batch := c.batches
 	for start := 0; start < len(nodes); start += rrQueueCap {
 		end := min(start+rrQueueCap, len(nodes))
 		c.request(end-start, func() {
@@ -964,7 +967,7 @@ func (c *rrCheck) launchAll(role rrCheckRole, first int, nodes []adapter.Outboun
 				if role == rrRoleFirst {
 					c.firstAt[first+i] = time.Now()
 				}
-				c.launch(role, first+i, nodes[i], c.x)
+				c.launch(role, first+i, nodes[i], c.x, batch)
 			}
 		})
 	}
@@ -1142,7 +1145,7 @@ func (c *rrCheck) startDecisive() {
 			c.partDone(c.partOf[i])
 		case c.firstEnded[i] || !c.firstAt[i].IsZero() && now.Sub(c.firstAt[i]) >= rrHangAfter:
 			c.reserved--
-			c.launch(rrRoleDecisive, i, c.pool[i], c.b0)
+			c.launch(rrRoleDecisive, i, c.pool[i], c.b0, -1)
 		default:
 			kept = append(kept, i)
 		}
@@ -1161,7 +1164,7 @@ func (c *rrCheck) partDone(index int) {
 	}
 	c.reserved--
 	if part.missed {
-		c.launch(rrRoleAfter, index, c.control, time.Now())
+		c.launch(rrRoleAfter, index, c.control, time.Now(), -1)
 	} else {
 		c.queue.release(1)
 	}
