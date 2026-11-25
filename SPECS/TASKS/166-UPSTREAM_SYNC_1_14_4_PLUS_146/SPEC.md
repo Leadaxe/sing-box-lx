@@ -105,7 +105,8 @@
 - `go test` под `LX_TAGS` (`GOTOOLCHAIN` из `go.version`, `-checklinkname=0`): все пакеты, изменённые мержем, все пакеты списка lx-ci, `./transport/...`, `./common/...`, `./experimental/clashapi/...` — зелёные. Под `-race`: `protocol/group`, `route`, `common/urltest`, `common/dialer`, `common/tls`, `experimental/cachefile`, `dns/...`, `protocol/{dns,socks,chain,http,shadowtls,wireguard}`, `transport/{wireguard,v2rayhttpupgrade}`, `adapter/...`, `service/oomkiller`. Стенд `lx-test/initerr` (тексты ошибок инициализации, SPEC 092) зелёный. Все файлы, добавленные мерж-коммитом, — апстримные. Без тегов — `protocol/group`, `route`, `common/dialer`, `transport/wireguard`, `experimental/cachefile`. Форки: `wireguard-go` `conn`/`device`, `sing-tun` пакет целиком.
 - `make -f Makefile.lx lx-check` — все конфиги `lx-test/config` проходят новую проверку `box.New` (DNS-группа, chain, AWG, XHTTP/REALITY).
 - `gofmt -l` по изменённым файлам — пусто.
-- Не гонялось: dry run релизной матрицы (тулчейн не менялся, сменились версии модулей — по раннбуку §2b нужен перед тегом), прогон на устройстве (§1.4 — сабмодули менялись), linux-only тесты исполнением (только компиляция).
+- Прогон по раннбуку §1.4 на NanoPi (FriendlyWrt 25.12, aarch64, 2026-11-26), бинарь ветки под `LX_TAGS` без `with_purego`/`with_naive_outbound` (на musl им нужен glibc-загрузчик). Два процесса ядра: «сервер» с WG- и AWG-endpoint'ами и socks-релеем, клиент с mixed-inbound и узлами WG напрямую, WG через `detour` (socks-релей — путь детур-бинда, который переписал апстрим) и AWG2 под urltest-группой, DNS `udp 1.1.1.1` через туннель. Три круга подряд: соединение через группу — 204, выход виден снаружи; замеры всех трёх узлов и прогон группы — 76–139 мс; DNS через туннель резолвит. Сервер погашен — все три узла `Timeout`; поднят — все три снова меряются, соединение через группу 204. Ошибок, кроме ожидаемых на старте и при выключении сервера, нет. Каталог и процессы убраны.
+- Не гонялось: dry run релизной матрицы (тулчейн не менялся, сменились версии модулей — по раннбуку §2b нужен перед тегом), TUN-inbound на устройстве (изменения `sing-tun` — system-стек и auto-redirect), Android, Windows без IPv6, linux-only тесты исполнением (только компиляция).
 
 ## 7. Хотфиксы FEATURE 004 по итогам синка
 
@@ -124,9 +125,9 @@
 
 ## 8. Осталось
 
-- После «rc1 выпущен»: пуш форков (`wireguard-go` `5e0ba64` в `lx-awg2-v007`, `sing-tun` `53e0731` в `lx`) до суперпроекта, затем ветка `lx-sync-*` для CI; в `lx` — по слову владельца.
+- Форки запушены в боковые ветки `lx-sync-20261126` (`wireguard-go` `5e0ba64`, `sing-tun` `53e0731`), суперпроект — в `lx-sync-stable-20261126`; при влитии в `lx` передвинуть релизные ветки форков (`lx-awg2-v007`, `lx`) на эти коммиты — оба fast-forward.
 - Ручной `lx-musl-toolchain-mirror.yml` после пуша (SPEC 023) и dry run релизной матрицы перед тегом.
-- Раннбук §1.4: прогон на устройстве — TUN, DNS, urltest (least_test и round_robin), WG/AWG через detour (бинд теперь слушает), Windows без IPv6.
+- Раннбук §1.4, остаток: TUN-inbound и round_robin на устройстве, Windows без IPv6.
 - Будущее влитие SPEC 165 (цепочка): этот мерж правил `protocol/chain/chain_test.go` (стенд зовёт `Initialize` в `start()`), `adapter/outbound/manager.go`, `protocol/group/selector.go` (апстримный `References()`), `route/conn.go`.
 - `ALGORITHM.md` SPEC 138 получил фразу о записи истории в конце пачки (факт апстрима) — на глаза владельцу.
 - Строка об апстримной базе в changelog-секции следующего тега.
