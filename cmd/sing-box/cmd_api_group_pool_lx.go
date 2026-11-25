@@ -52,6 +52,8 @@ func runAPIGroupPool(groupTag string) error {
 	for _, slot := range pool.GetSlots() {
 		state := "live"
 		switch {
+		case slot.GetTag() == "":
+			state = "empty" // the node was struck out and no replacement answered yet
 		case slot.GetQuarantined():
 			state = "quarantined"
 		case slot.GetDelay() == 0:
@@ -65,12 +67,8 @@ func runAPIGroupPool(groupTag string) error {
 }
 
 func formatPoolFrozen(pool *daemon.PoolList) string {
-	switch {
-	case !pool.GetFrozen():
+	if !pool.GetFrozen() {
 		return "no"
-	case pool.GetFrozenSeconds() == 0:
-		return "yes, until the network change run ends"
-	default:
-		return F.ToString("yes, ", pool.GetFrozenSeconds(), "s left")
 	}
+	return F.ToString("yes, ", pool.GetFrozenSeconds(), "s left")
 }

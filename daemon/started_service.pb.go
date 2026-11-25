@@ -9323,9 +9323,9 @@ type PoolList struct {
 	Slots []*PoolSlot            `protobuf:"bytes,1,rep,name=slots,proto3" json:"slots,omitempty"`
 	// SPEC 138 — the group-wide self-heal state. shiftedKeys: keys moved off their own slot;
 	// markedKeys: keys marked as an address problem (reset by the scheduled run, a manual
-	// run or a network change). frozen: the self-heal does nothing for now (wake, network
-	// change, own network down); frozenSeconds is what is left of it, rounded up, and 0
-	// while the freeze lasts only for the full run after a network change.
+	// run or a network change). frozen: the self-heal infers nothing for now after a
+	// platform signal (wake, network change, a clock jump); frozenSeconds is what is left
+	// of it, rounded up.
 	ShiftedKeys   uint32 `protobuf:"varint,2,opt,name=shiftedKeys,proto3" json:"shiftedKeys,omitempty"`
 	MarkedKeys    uint32 `protobuf:"varint,3,opt,name=markedKeys,proto3" json:"markedKeys,omitempty"`
 	Frozen        bool   `protobuf:"varint,4,opt,name=frozen,proto3" json:"frozen,omitempty"`

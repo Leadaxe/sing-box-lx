@@ -1108,9 +1108,9 @@ message PoolList {
   repeated PoolSlot slots = 1;
   // SPEC 138 — the group-wide self-heal state. shiftedKeys: keys moved off their own slot;
   // markedKeys: keys marked as an address problem (reset by the scheduled run, a manual
-  // run or a network change). frozen: the self-heal does nothing for now (wake, network
-  // change, own network down); frozenSeconds is what is left of it, rounded up, and 0
-  // while the freeze lasts only for the full run after a network change.
+  // run or a network change). frozen: the self-heal infers nothing for now after a
+  // platform signal (wake, network change, a clock jump); frozenSeconds is what is left
+  // of it, rounded up.
   uint32 shiftedKeys = 2;
   uint32 markedKeys = 3;
   bool frozen = 4;
