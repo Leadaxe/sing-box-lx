@@ -88,6 +88,26 @@ func (h *rrHeal) setPollCount(polled int32) {
 	h.polled = polled
 }
 
+// rrQuarantine puts tag in quarantine as Q4 does.
+func (b *balancer) rrQuarantine(tag string) {
+	m := &b.memory
+	m.access.Lock()
+	defer m.access.Unlock()
+	m.quarantineLocked(tag)
+}
+
+// rrStruck is strikes(n) += 1 of D1 alone; it returns the new count.
+func (b *balancer) rrStruck(tag string) int {
+	m := &b.memory
+	m.access.Lock()
+	defer m.access.Unlock()
+	if m.strikes == nil {
+		m.strikes = make(map[string]int)
+	}
+	m.strikes[tag]++
+	return m.strikes[tag]
+}
+
 // inFlight returns the places of the queue held.
 func (q *rrQueue) inFlight() int {
 	q.access.Lock()

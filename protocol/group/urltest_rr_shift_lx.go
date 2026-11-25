@@ -660,27 +660,6 @@ func (m *rrMemory) quarantineLocked(tag string) {
 	delete(m.counts, tag) // the counters of the node start from zero
 }
 
-// rrQuarantine is the quarantine of Q4: the node is no candidate until the
-// scheduled run; its exits are those of Q2.
-func (b *balancer) rrQuarantine(tag string) {
-	m := &b.memory
-	m.access.Lock()
-	defer m.access.Unlock()
-	m.quarantineLocked(tag)
-}
-
-// rrStruck is strikes(n) += 1 of D1 (Q4); it returns the new count.
-func (b *balancer) rrStruck(tag string) int {
-	m := &b.memory
-	m.access.Lock()
-	defer m.access.Unlock()
-	if m.strikes == nil {
-		m.strikes = make(map[string]int)
-	}
-	m.strikes[tag]++
-	return m.strikes[tag]
-}
-
 // rrDropStruck empties, in the plan of the scheduled run, the slots of the nodes
 // struck out (D1) since the run started (§5): the run puts none of them back, its
 // slot stays empty and asks for the replacement search.
@@ -700,13 +679,7 @@ func (b *balancer) rrDropStruck(tags []string) []string {
 // (rrResetMarks) and strikes(n) of Q4 start from zero. It returns the nodes lifted
 // from quarantine: the run probes them (§8 item 19).
 func (b *balancer) rrScheduledRun() []string {
-	var lifted []string
-	if set := b.memory.quarantine.Load(); set != nil {
-		for tag := range *set {
-			lifted = append(lifted, tag)
-		}
-	}
-	b.rrResetMarks()
+	lifted := b.rrResetMarks()
 	m := &b.memory
 	m.access.Lock()
 	m.strikes = nil
@@ -759,8 +732,9 @@ func (b *balancer) rrSlotsChanged() {
 
 // rrResetMarks is the scheduled run, a manual run and a network change: the K5
 // marks and the quarantine lift (a node out of quarantine starts its counters from
-// zero), the K2 memory and the suspicions go (S3). The shifts stay.
-func (b *balancer) rrResetMarks() {
+// zero), the K2 memory and the suspicions go (S3). The shifts stay. It returns the
+// nodes lifted from quarantine.
+func (b *balancer) rrResetMarks() []string {
 	b.memory.shifts.unmarkAll()
 	b.memory.k2.keep(func(string) bool { return false })
 	for _, entry := range b.slotsSnapshot() {
@@ -773,19 +747,35 @@ func (b *balancer) rrResetMarks() {
 	// lock, and a swap between the two would bring a lifted quarantine back.
 	m.access.Lock()
 	defer m.access.Unlock()
+	var lifted []string
 	if set := m.quarantine.Swap(nil); set != nil {
 		for tag := range *set {
 			delete(m.counts, tag)
+			lifted = append(lifted, tag)
 		}
 	}
+	return lifted
 }
 
-// rrForget drops the counters of tag (Q3: D1).
-func (b *balancer) rrForget(tag string) {
+// rrStrikeOut is what D1 does to the memory of the node tag: its counters go (Q3),
+// its K2 records are erased, strikes(n) += 1, and the second D1 since the scheduled
+// run is the quarantine of Q4 when the rest of the pool is not empty (others). It
+// reports the quarantine.
+func (b *balancer) rrStrikeOut(tag string, others bool) bool {
 	m := &b.memory
 	m.access.Lock()
-	defer m.access.Unlock()
 	delete(m.counts, tag)
+	if m.strikes == nil {
+		m.strikes = make(map[string]int)
+	}
+	m.strikes[tag]++
+	quarantined := m.strikes[tag] >= 2 && others
+	if quarantined {
+		m.quarantineLocked(tag) // the node is no candidate until the scheduled run; its exits are those of Q2
+	}
+	m.access.Unlock()
+	m.k2.forget(tag)
+	return quarantined
 }
 
 // rrCreditFail counts a sign of tag by Q1 and reports whether it counted. A node

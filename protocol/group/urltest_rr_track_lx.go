@@ -225,7 +225,6 @@ type rrTrack struct {
 	wantCheck atomic.Bool
 	lifeBusy  atomic.Bool  // a life probe of the node is in flight
 	lifeLast  atomic.Int64 // rrClock of the start of its last life probe
-	deadAt    atomic.Int64 // rrClock of the last D1 on the node
 }
 
 func newRRTrack(tag string) *rrTrack {
@@ -691,7 +690,7 @@ func (s *URLTest) rrLifeProbe(node adapter.Outbound, t *rrTrack, from int64, udp
 		// N0, and a node found dead or gone while it was probed: the outcome is no
 		// longer about this slot.
 		if ctx.Err() != nil || probe.leaf == "" || probe.cancelled() || !heal.counts(probe.started) ||
-			s.balancer.trackOf(probe.member) != t || t.deadAt.Load() >= rrClock(probe.started) {
+			s.balancer.trackOf(probe.member) != t { // D1 empties the slot before rrDead: a struck node's tracker holds no slot
 			return
 		}
 		if probe.answered {
@@ -814,7 +813,6 @@ func (s *URLTest) rrInspect(t *rrTrack, now int64) {
 // in flight cancelled (they go to the retry), its waits closed (CANCEL).
 func (s *URLTest) rrDead(t *rrTrack) {
 	t.dropPending()
-	t.deadAt.Store(rrClock(time.Now()))
 	t.clearSuspicion()
 	if killed := t.kill(); killed > 0 {
 		s.logger.Info("round_robin: ", t.tag, " is dead: ", killed, " unfinished exchanges through it cancelled")

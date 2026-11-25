@@ -1307,13 +1307,11 @@ func (s *URLTest) rrStrike(ctx context.Context, c *rrCheck) {
 			continue // D1: a scheduled run answered for the node since x, no verdict
 		}
 		others := s.rrPoolOthers(node.Tag())
-		b.rrForget(node.Tag())         // Q3: D1 drops the counters
-		b.memory.k2.forget(node.Tag()) // K2: D1 erases the node's records
+		b.clearSlot(node.Tag()) // R1: first, so that nothing of the node's tracker applies any more
 		s.rrDead(t)
-		b.clearSlot(node.Tag())
+		quarantined := b.rrStrikeOut(node.Tag(), others)
 		s.logger.Info("round_robin: ", node.Tag(), " struck out as dead; control ", c.control.Tag())
-		if b.rrStruck(node.Tag()) >= 2 && others {
-			b.rrQuarantine(node.Tag()) // Q4: the second D1 since the scheduled run
+		if quarantined {
 			s.logger.Info("round_robin: ", node.Tag(), " quarantined: struck out twice since the scheduled run")
 		}
 	}
