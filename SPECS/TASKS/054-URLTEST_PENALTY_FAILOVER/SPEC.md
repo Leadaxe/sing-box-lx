@@ -9,6 +9,7 @@
 | Ветка | `lx` |
 | Base | `008ad3ac2` (v1.14.0-lx.21 + reality minClientVer) |
 | История | [HISTORY.md](HISTORY.md) |
+| Реестр хотфиксов | в [FEATURE 004](../../FEATURES/004-HOTFIXES/FEATURE.md#реестр): меняет поведение least_test у конфига без lx-опций (CONSTITUTION §3.2), решение владельца 2026-11-26 |
 | Связанные | [SPEC 052](../052-NETSTACK_CONNECT_DEADLINE/SPEC.md) (поставщик ошибок: 15s-дедлайн вместо 127s тишины), [RESEARCH 052](../052-NETSTACK_CONNECT_DEADLINE/RESEARCH.md) (ловушки S2/S6, прилипание urltest), SPEC 019 (режимы), [SPEC 116](../116-URLTEST_FAILOVER_MODE/SPEC.md) (режим failover), SPEC 020 (reachability/wake) |
 
 **Touches:** только least_test (и `failover`, SPEC 116). round_robin-пул (SPEC 019 v2)

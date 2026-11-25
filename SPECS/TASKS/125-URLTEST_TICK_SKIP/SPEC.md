@@ -9,6 +9,7 @@
 | Ветка | `lx` |
 | Build-tag | — (ядро `protocol/group`) |
 | Источник | Разбор жалобы «failover переключается медленно» (чат LxBox, 2026-10-09), чтение кода |
+| Реестр хотфиксов | в [FEATURE 004](../../FEATURES/004-HOTFIXES/FEATURE.md#реестр): меняет поведение least_test у конфига без lx-опций (CONSTITUTION §3.2), решение владельца 2026-11-26 |
 | Связано | [116](../116-URLTEST_FAILOVER_MODE/SPEC.md) (`failover`, §2.2), [054](../054-URLTEST_PENALTY_FAILOVER/SPEC.md) (боевые отказы — второй детектор), [020](../020-MULTI_WG_IDLE_BUFFER_HEAT/SPEC.md) (энергия) |
 
 Тиковый прогон `urltest` пробует узлы на каждом тике. Раньше узел, пробованный прошлым
