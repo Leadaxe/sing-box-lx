@@ -1,0 +1,227 @@
+package group
+
+// lx:begin SPEC 019, SPEC 138 the run of a round_robin group in flight
+//
+// A run of the group (scheduled, manual, after a network change) probes through
+// upstream's URLTestOutbounds, which erases the history of a node on one failed
+// probe. A batch of the run in which no probe answered has no control (A0):
+// nothing in it tells a dead node from a dead network. Such a batch erases
+// nothing: the run gives the history its probes erased back (I5, ALGORITHM §5).
+// A run in which no probe answered changes nothing of the group: the scheduled
+// run lifts the quarantine and the marks and restarts strikes(n) at its first
+// answer, not at its start, and a run with no answer lays out no slot.
+//
+// The run also keeps the nodes struck out (D1) while it is in flight: the
+// scheduled run puts none of them into a slot, neither by its fill nor by its
+// layout, which gives the hole to the next live node instead.
+
+import (
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/sagernet/sing-box/adapter"
+	N "github.com/sagernet/sing/common/network"
+)
+
+// rrRun is the run of the group in flight; it lives in the balancer. Only the
+// holder of URLTestGroup.checking begins and ends it.
+type rrRun struct {
+	access    sync.Mutex
+	active    bool           // a run is in flight
+	scheduled bool           // the scheduled run: its first answer lifts (rrScheduledRun)
+	answered  bool           // a probe of the run answered
+	struck    map[string]int // the D1 of the nodes while the run is in flight
+}
+
+// rrRunBegin begins a run; scheduled is the lazy scheduled run. It returns the
+// nodes in quarantine now: the scheduled run probes them (§8 item 19), and its
+// first answer lifts them.
+func (b *balancer) rrRunBegin(scheduled bool) []string {
+	r := &b.run
+	r.access.Lock()
+	r.active, r.scheduled, r.answered, r.struck = true, scheduled, false, nil
+	r.access.Unlock()
+	if !scheduled {
+		return nil
+	}
+	var quarantined []string
+	if set := b.memory.quarantine.Load(); set != nil {
+		for tag := range *set {
+			quarantined = append(quarantined, tag)
+		}
+	}
+	return quarantined
+}
+
+// rrRunAnswered takes an answer of a probe of the run. The first one of the
+// scheduled run does what the scheduled run does to the memory (rrScheduledRun),
+// before the fill of the answer looks at the quarantine; strikes(n) then counts
+// the D1 since the run began. A probe that answers outside a run changes nothing.
+func (b *balancer) rrRunAnswered() {
+	r := &b.run
+	r.access.Lock()
+	defer r.access.Unlock()
+	if !r.active || r.answered {
+		return
+	}
+	r.answered = true
+	if !r.scheduled {
+		return
+	}
+	b.rrScheduledRun()
+	if len(r.struck) == 0 {
+		return
+	}
+	m := &b.memory
+	m.access.Lock()
+	m.strikes = make(map[string]int, len(r.struck))
+	for tag, strikes := range r.struck {
+		m.strikes[tag] = strikes
+	}
+	m.access.Unlock()
+}
+
+// rrRunEnd ends the run and reports whether a probe of it answered.
+func (b *balancer) rrRunEnd() bool {
+	r := &b.run
+	r.access.Lock()
+	defer r.access.Unlock()
+	answered := r.answered
+	r.active, r.scheduled, r.answered, r.struck = false, false, false, nil
+	return answered
+}
+
+// rrRunGotAnswer reports whether a probe of the run in flight answered.
+func (b *balancer) rrRunGotAnswer() bool {
+	r := &b.run
+	r.access.Lock()
+	defer r.access.Unlock()
+	return r.active && r.answered
+}
+
+// rrRunStrike records a D1 of tag while a run is in flight.
+func (b *balancer) rrRunStrike(tag string) {
+	r := &b.run
+	r.access.Lock()
+	defer r.access.Unlock()
+	if !r.active {
+		return
+	}
+	if r.struck == nil {
+		r.struck = make(map[string]int)
+	}
+	r.struck[tag]++
+}
+
+// rrRunStruck reports whether tag was struck out while the run in flight runs.
+func (b *balancer) rrRunStruck(tag string) bool {
+	r := &b.run
+	r.access.Lock()
+	defer r.access.Unlock()
+	return r.active && r.struck[tag] > 0
+}
+
+// rrStruckInScheduledRun reports whether tag was struck out while the scheduled
+// run in flight runs: that run puts it into no slot (§5).
+func (b *balancer) rrStruckInScheduledRun(tag string) bool {
+	r := &b.run
+	r.access.Lock()
+	defer r.access.Unlock()
+	return r.active && r.scheduled && r.struck[tag] > 0
+}
+
+// rrDropStruck empties, in tags, the slots of the nodes struck out (D1) while the
+// scheduled run runs (§5): the run puts none of them back; struck out earlier, a
+// node that answered the run is a candidate as any other.
+func (b *balancer) rrDropStruck(tags []string) []string {
+	for i, tag := range tags {
+		if tag != "" && b.rrRunStruck(tag) {
+			tags[i] = ""
+		}
+	}
+	return tags
+}
+
+// rrBatch is a batch of probes of a round_robin run: the history of its leaves
+// before it, and whether a probe of it answered.
+type rrBatch struct {
+	start    time.Time
+	before   map[string]rrBatchLeaf // member tag → its leaf and the history of the leaf before the batch
+	nested   []*URLTest
+	answered atomic.Bool
+}
+
+type rrBatchLeaf struct {
+	leaf    string
+	history *adapter.URLTestHistory
+}
+
+// rrBatchBegin takes the history of the leaves of the members a batch probes; nil
+// outside round_robin. A nested urltest member keeps its own rules: its leaves are
+// not taken, its own run answering counts as an answer of the batch.
+func (g *URLTestGroup) rrBatchBegin(outbounds []adapter.Outbound) *rrBatch {
+	if g.balancer == nil {
+		return nil
+	}
+	batch := &rrBatch{start: time.Now(), before: make(map[string]rrBatchLeaf, len(outbounds))}
+	for _, detour := range outbounds {
+		if nested, isURLTest := detour.(*URLTest); isURLTest {
+			batch.nested = append(batch.nested, nested)
+			continue
+		}
+		leaf := RealTag(detour, N.NetworkTCP)
+		if leaf == "" {
+			continue
+		}
+		if history := g.history.LoadURLTestHistory(leaf); history != nil {
+			batch.before[detour.Tag()] = rrBatchLeaf{leaf: leaf, history: history}
+		}
+	}
+	return batch
+}
+
+// probeHook is the probe hook of the batch: it marks the answer, then runs the
+// hook of the group.
+func (g *URLTestGroup) probeHook(batch *rrBatch) func(tag string) {
+	if batch == nil {
+		return g.onProbeAliveLx
+	}
+	return func(tag string) {
+		batch.answered.Store(true)
+		g.onProbeAliveLx(tag)
+	}
+}
+
+// rrBatchEnd ends a batch: an answer is an answer of the run; a batch with no
+// answer gives back the history its failed probes erased, except to a node struck
+// out meanwhile (its D1 erased it).
+func (g *URLTestGroup) rrBatchEnd(batch *rrBatch) {
+	if batch == nil {
+		return
+	}
+	answered := batch.answered.Load()
+	for _, nested := range batch.nested {
+		if history := g.history.LoadURLTestHistory(RealTag(nested, N.NetworkTCP)); history != nil && !history.Time.Before(batch.start) {
+			answered = true
+		}
+	}
+	if answered {
+		g.balancer.rrRunAnswered()
+		return
+	}
+	for member, before := range batch.before {
+		if g.balancer.rrRunStruck(member) {
+			continue
+		}
+		g.history.RestoreURLTestHistoryLx(before.leaf, before.history)
+	}
+}
+
+// rrHasHistory reports whether the node of the member tag has history now.
+func (g *URLTestGroup) rrHasHistory(tag string) bool {
+	node, loaded := g.outbound.Outbound(tag)
+	return loaded && g.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)) != nil
+}
+
+// lx:end SPEC 019, SPEC 138

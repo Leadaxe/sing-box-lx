@@ -102,16 +102,19 @@ func (b *balancer) rrQuarantine(tag string) {
 	m.quarantineLocked(tag)
 }
 
-// rrStruck is strikes(n) += 1 of D1 alone; it returns the new count.
+// rrStruck is strikes(n) += 1 of D1 alone, recorded by the run in flight as
+// rrStrikeOut does; it returns the new count.
 func (b *balancer) rrStruck(tag string) int {
 	m := &b.memory
 	m.access.Lock()
-	defer m.access.Unlock()
 	if m.strikes == nil {
 		m.strikes = make(map[string]int)
 	}
 	m.strikes[tag]++
-	return m.strikes[tag]
+	strikes := m.strikes[tag]
+	m.access.Unlock()
+	b.rrRunStrike(tag)
+	return strikes
 }
 
 // inFlight returns the places of the queue held.

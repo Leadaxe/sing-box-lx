@@ -1,0 +1,176 @@
+// lx:begin SPEC 019, SPEC 138 the run of a round_robin group: no answer, no change
+
+package group
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/sagernet/sing-box/adapter"
+)
+
+// R1: a scheduled run in a total outage (no probe of the run answers) changes
+// nothing of the group: the layout, the history of the slots (no slot turns
+// empty), the counters, strikes(n) and the quarantine stay as they were.
+func TestRRRun_noAnswerChangesNothing(t *testing.T) {
+	tags := []string{"n0", "n1", "n2", "n3", "n4"}
+	f := newHealFixture(t, tags, tags[:3], 0)
+	b := f.s.balancer
+	b.rrQuarantine("n4")
+	b.rrStruck("n1")
+	b.memory.access.Lock()
+	b.memory.count("n0").conns, b.memory.count("n0").fails = 10, 2
+	b.memory.access.Unlock()
+	for _, tag := range tags {
+		f.nodes[tag].dead.Store(true)
+	}
+	result := f.g.balancePool(context.Background())
+	if len(result) != 0 || f.allProbes() != 5 {
+		t.Fatalf("precondition: the run probes every node and none answers: %v, %d probes", result, f.allProbes())
+	}
+	if !samePool(f.pool(), tags[:3]...) {
+		t.Fatalf("the layout changed: %v", f.pool())
+	}
+	if !f.allHistory(tags...) {
+		t.Fatal("the run erased history: its slots turn empty")
+	}
+	for _, tag := range tags[:3] {
+		if !f.s.slotAlive(tag) {
+			t.Fatalf("the slot of %s is no longer live", tag)
+		}
+	}
+	b.memory.access.Lock()
+	strikes, count := b.memory.strikes["n1"], *b.memory.count("n0")
+	b.memory.access.Unlock()
+	if !b.isQuarantined("n4") || strikes != 1 || count.conns != 10 || count.fails != 2 {
+		t.Fatalf("the memory changed: quarantine %v, strikes %d, counters %d/%d", b.isQuarantined("n4"), strikes, count.conns, count.fails)
+	}
+	// The network is back: the next run lifts the quarantine at its first answer.
+	for _, tag := range tags {
+		f.nodes[tag].dead.Store(false)
+	}
+	f.g.balancePool(context.Background())
+	if b.isQuarantined("n4") || !samePool(f.pool(), tags[:3]...) {
+		t.Fatalf("the run with answers lifts the quarantine and keeps the live pool: %v", f.pool())
+	}
+}
+
+// R1: the manual run (and the run after a network change) with no answer neither
+// lays out nor lifts.
+func TestRRRun_manualNoAnswerChangesNothing(t *testing.T) {
+	tags := []string{"n0", "n1", "n2", "n3", "n4"}
+	f := newHealFixture(t, tags, tags[:3], 0)
+	f.s.balancer.rrQuarantine("n4")
+	for _, tag := range tags {
+		f.nodes[tag].dead.Store(true)
+	}
+	if _, err := f.g.urlTest(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if !samePool(f.pool(), tags[:3]...) || !f.allHistory(tags...) || !f.s.balancer.isQuarantined("n4") {
+		t.Fatalf("the manual run with no answer changed the group: %v", f.pool())
+	}
+}
+
+// R1, the stand of impair 4a: the scheduled run starts in an outage, its pool batch
+// gets no answer, the network comes back and the walk answers. The batch with no
+// answer erases nothing, so the live pool keeps its nodes: no key moves.
+func TestRRRun_outageAtRunStartKeepsPool(t *testing.T) {
+	tags := []string{"n0", "n1", "n2", "n3", "n4"}
+	f := newHealFixture(t, tags, tags[:3], 0)
+	for _, tag := range tags[:3] {
+		f.nodes[tag].probeFails.Store(1) // the outage: the first probe of each fails
+	}
+	result := f.g.balancePool(context.Background())
+	if _, ok := result["n3"]; !ok {
+		t.Fatalf("precondition: the walk answered after the outage: %v", result)
+	}
+	if !samePool(f.pool(), tags[:3]...) {
+		t.Fatalf("the pool changed after an outage at the start of the run: %v", f.pool())
+	}
+	if !f.allHistory(tags[:3]...) {
+		t.Fatal("the batch with no answer erased the history of the pool")
+	}
+}
+
+// §5 (Ж): a node struck out in the previous interval that answers the scheduled run
+// is a candidate as any other: the run puts it into an empty slot.
+func TestRRRun_struckBeforeRunIsCandidate(t *testing.T) {
+	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
+	f.g.history.DeleteURLTestHistory("c")
+	f.s.balancer.clearSlot("c")
+	f.s.balancer.rrStruck("c") // D1 before the run
+	f.g.balancePool(context.Background())
+	if !samePool(f.pool(), "a", "b", "c") {
+		t.Fatalf("the node struck out before the run answered it and takes the empty slot: %v", f.pool())
+	}
+}
+
+// §5 (З, the live stand): a node of the walk took a hole during the run and was
+// struck out (D1) before the run ended; another node of the walk had answered with
+// no hole to take. The layout gives the hole to the next live node, not to the struck
+// one (which would leave the slot empty).
+func TestRRRun_layoutSkipsNodeStruckDuringRun(t *testing.T) {
+	tags := []string{"a", "b", "c", "d", "e", "f"}
+	f := newHealFixture(t, tags, []string{"a", "b", "c"}, 0)
+	f.nodes["c"].dead.Store(true)
+	f.nodes["e"].slow = 100 * time.Millisecond
+	f.nodes["f"].dead.Store(true)
+	f.nodes["f"].slow = time.Second // holds the run open after the D1
+	done := make(chan struct{})
+	go func() {
+		f.g.balancePool(context.Background())
+		close(done)
+	}()
+	fresh := time.Now()
+	waitUntil(t, func() bool {
+		history := f.g.history.LoadURLTestHistory("e")
+		return f.pool()[2] == "d" && history != nil && history.Time.After(fresh)
+	})
+	// D1 of d by a check beside the run, as rrStrike does it.
+	f.g.history.DeleteURLTestHistoryNotAfterLx("d", time.Now())
+	f.s.balancer.clearSlot("d")
+	f.s.balancer.rrStrikeOut("d", true)
+	<-done
+	if !samePool(f.pool(), "a", "b", "e") {
+		t.Fatalf("the hole goes to the next live node of the walk: %v", f.pool())
+	}
+}
+
+// З: after the run, the replacement search polls first the candidates with live
+// history (the reserve the run found), then the rest from the cursor. A failed
+// self-heal probe of a candidate that ended after its answer to the run takes the
+// liveness from that answer: the candidate goes by the cursor (§5, by the rule).
+func TestRRRun_searchPollsLiveHistoryFirst(t *testing.T) {
+	tags := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
+	f := newHealFixture(t, tags, []string{"a", "b", "c"}, 0)
+	for _, tag := range tags[3:] {
+		f.g.history.DeleteURLTestHistory(tag)
+	}
+	f.g.balancePool(context.Background())
+	if !f.allHistory("d", "e") || f.g.history.LoadURLTestHistory("f") != nil {
+		t.Fatal("precondition: the run walked to its reserve d, e")
+	}
+	f.s.balancer.heal.cursor = 6 // g
+	batch := f.s.rrCandidateBatch(map[string]bool{"a": true, "b": true, "c": true}, 3)
+	if got := outboundTags(batch); len(got) != 3 || got[2] != "g" || !(got[0] == "d" && got[1] == "e" || got[0] == "e" && got[1] == "d") {
+		t.Fatalf("live history first, then the cursor: %v", got)
+	}
+	f.s.balancer.heal.cursor = 6
+	f.s.balancer.heal.missed("d", time.Now())
+	batch = f.s.rrCandidateBatch(map[string]bool{"a": true, "b": true, "c": true}, 3)
+	if got := outboundTags(batch); len(got) != 3 || got[0] != "e" || got[1] != "g" || got[2] != "h" {
+		t.Fatalf("a candidate whose self-heal probe failed after its answer goes by the cursor: %v", got)
+	}
+}
+
+func outboundTags(outbounds []adapter.Outbound) []string {
+	tags := make([]string, len(outbounds))
+	for i, outbound := range outbounds {
+		tags[i] = outbound.Tag()
+	}
+	return tags
+}
+
+// lx:end SPEC 019, SPEC 138

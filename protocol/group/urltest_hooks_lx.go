@@ -210,6 +210,9 @@ func (g *URLTestGroup) probeGatedLx() bool {
 //   - SPEC 116 — failover probes only the held nodes; a failure escalates to a full run.
 func (g *URLTestGroup) urlTestLx(ctx context.Context, force bool) (map[string]uint16, bool) {
 	if force {
+		if g.balancer != nil {
+			g.balancer.rrRunBegin(false) // SPEC 019 — a manual run with no answer changes nothing (afterTestLx)
+		}
 		return nil, false
 	}
 	if g.tickTooSoon() {
@@ -225,11 +228,13 @@ func (g *URLTestGroup) urlTestLx(ctx context.Context, force bool) (map[string]ui
 }
 
 // afterTestLx follows the full run of urlTest: round_robin rebuilds the pool from
-// the fresh results; the other modes update the selection, a forced run
+// the fresh results when a probe of the run answered; the other modes update the selection, a forced run
 // re-selecting in failover (SPEC 116).
 func (g *URLTestGroup) afterTestLx(force bool) {
 	if g.balancer != nil {
-		g.rebuildPool()
+		if g.balancer.rrRunEnd() { // SPEC 019 — a run with no answer lays out nothing and lifts nothing
+			g.rebuildPool()
+		}
 		return
 	}
 	g.performSelectionUpdate(force)
@@ -239,12 +244,16 @@ func (g *URLTestGroup) afterTestLx(force bool) {
 // force), stores/deletes history, and returns tag->delay for the live ones: upstream's
 // nested-group-aware batch with the probe hook (SPEC 054: an answer is proof of life
 // and resets the node's penalties; SPEC 019: a node that answers fills a dead slot
-// during the run). Shared by least_test and the round_robin pool paths.
+// during the run). Shared by least_test and the round_robin pool paths. A round_robin
+// batch with no answer erases no history (SPEC 019, urltest_rr_run_lx.go).
 func (g *URLTestGroup) testNodes(ctx context.Context, outbounds []adapter.Outbound, force bool) map[string]uint16 {
+	batch := g.rrBatchBegin(outbounds)
+	defer g.rrBatchEnd(batch)
+	ctx = withProbeAlive(ctx, g.probeHook(batch))
 	if !force { // SPEC 125 — freshness from the previous tick run, not a fixed interval
 		return g.testNodesTick(ctx, outbounds)
 	}
-	return URLTestOutbounds(withProbeAlive(ctx, g.onProbeAliveLx), g.outbound, g.history, g.logger, outbounds, g.link, g.interval, force)
+	return URLTestOutbounds(ctx, g.outbound, g.history, g.logger, outbounds, g.link, g.interval, force)
 }
 
 // --- the probe hook of the batch -------------------------------------------------

@@ -71,6 +71,9 @@ type balancer struct {
 	// memory is the key shift table, the slot counters and the quarantine (SPEC 138
 	// §4.4–4.5, urltest_rr_shift_lx.go).
 	memory rrMemory
+
+	// run is the run of the group in flight (SPEC 019, urltest_rr_run_lx.go).
+	run rrRun
 }
 
 // rrOwner is the self-heal of a round_robin group (SPEC 138), *URLTest: whether the

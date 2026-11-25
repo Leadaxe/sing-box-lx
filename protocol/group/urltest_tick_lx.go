@@ -35,7 +35,7 @@ func (g *URLTestGroup) testNodesTick(ctx context.Context, outbounds []adapter.Ou
 		lastEnd = rrTime(mark)
 	}
 	window := tickFreshWindow(g.interval, lastEnd, time.Now())
-	result := URLTestOutbounds(withProbeAlive(ctx, g.onProbeAliveLx), g.outbound, g.history, g.logger, outbounds, g.link, window, false) // SPEC 019: fill a dead slot during the run
+	result := URLTestOutbounds(ctx, g.outbound, g.history, g.logger, outbounds, g.link, window, false) // ctx carries the probe hook (testNodes)
 	g.lastTickRunEnd.Store(rrClock(time.Now()))
 	return result
 }

@@ -118,8 +118,12 @@ func (g *URLTestGroup) poolSize() int {
 // balancePool is the per-interval lazy health-check for round_robin. It tests no more nodes
 // than needed to keep the pool full of live nodes, then applies the new slot occupancy.
 // Returns tag->delay for every node it tested live (for the URLTest map / UI).
+// A run with no answer changes nothing (urltest_rr_run_lx.go): its first answer lifts
+// the marks and the quarantine and restarts strikes(n) (Q4), and only a run with an
+// answer lays the pool out.
 func (g *URLTestGroup) balancePool(ctx context.Context) map[string]uint16 {
-	lifted := g.balancer.rrScheduledRun() // lx: SPEC 138 — the scheduled run lifts the address-problem marks and the quarantine, and restarts strikes(n) (Q4)
+	lifted := g.balancer.rrRunBegin(true) // lx: SPEC 138 — the nodes in quarantine: the run probes them
+	defer g.balancer.rrRunEnd()
 	size := g.poolSize()
 	if size == 0 {
 		return map[string]uint16{}
@@ -132,9 +136,9 @@ func (g *URLTestGroup) balancePool(ctx context.Context) map[string]uint16 {
 
 // balancePoolFirstLive (pool_tolerance == 0): re-test the nodes already in the pool, then walk
 // the rest in config order (rrWalkPool), and lay the pool out by planFirstLivePool over the
-// slots as they stand at the end of the run: a live member keeps its slot (also one that took
-// it during the run), a hole takes the next live node of the walk, and a dead member keeps its
-// slot until a live replacement is found.
+// slots as they stand at the end of the run: a member with history keeps its slot (also one
+// that took it during the run), a hole takes the next live node of the walk not struck out
+// during the run, and a dead member keeps its slot until a live replacement is found.
 func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int, lifted []string) map[string]uint16 {
 	current := g.balancer.poolTags()
 	inPool := make(map[string]bool, len(current))
@@ -151,16 +155,27 @@ func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int, lifte
 		}
 	}
 	walked, fillOrder := g.rrWalkPool(ctx, size, holes, inPool, result)
-	g.rrProbeLifted(ctx, lifted, inPool, walked, result) // lx: SPEC 138 §8 item 19 — the run probes the nodes it lifted from quarantine
-	live := make(map[string]bool, len(result))
-	for tag := range result {
-		live[tag] = true
+	g.rrProbeLifted(ctx, lifted, inPool, walked, result) // lx: SPEC 138 §8 item 19 — the run probes the nodes in quarantine
+	if !g.balancer.rrRunGotAnswer() {
+		return result // lx: SPEC 019 — a run with no answer lays out nothing
 	}
 	// lx: SPEC 138 §5 — the layout goes from the slots at the end of the run: a node that
-	// took a slot during it (rrFillOnAlive) keeps that slot, only empty and dead ones fill
-	current = g.balancer.poolTags()
-	next := planFirstLivePool(current, live, fillOrder, size)
-	g.rrSetRunSlots(g.balancer.rrDropStruck(next)) // lx: SPEC 138 §5 — the run puts no node struck out in its interval back
+	// took a slot during it (rrFillOnAlive) keeps that slot, only empty slots and slots
+	// without history fill; a node struck out during the run takes none, the hole goes to
+	// the next live node of the walk
+	current = g.balancer.rrDropStruck(g.balancer.poolTags())
+	live := make(map[string]bool, len(result))
+	for tag := range result {
+		if !g.balancer.rrRunStruck(tag) {
+			live[tag] = true
+		}
+	}
+	for _, tag := range current {
+		if tag != "" && !live[tag] && g.rrHasHistory(tag) {
+			live[tag] = true // I5: its probe of the run failed, a later answer wrote its history
+		}
+	}
+	g.rrSetRunSlots(planFirstLivePool(current, live, fillOrder, size))
 	return result
 }
 
@@ -204,14 +219,17 @@ func (g *URLTestGroup) rrWalkPool(ctx context.Context, size, holes int, inPool m
 // replacing a pool member only when an outside node beats it by more than the tolerance.
 func (g *URLTestGroup) balancePoolTolerant(ctx context.Context, size int) map[string]uint16 {
 	result := g.testNodes(ctx, g.outbounds, true)
+	if !g.balancer.rrRunGotAnswer() {
+		return result // lx: SPEC 019 — a run with no answer lays out nothing
+	}
 	results := make(map[string]candidate, len(g.outbounds))
 	for _, detour := range g.outbounds {
 		tag := detour.Tag()
 		delay, ok := result[tag]
-		results[tag] = candidate{tag: tag, delay: delay, alive: ok}
+		results[tag] = candidate{tag: tag, delay: delay, alive: ok && !g.balancer.rrRunStruck(tag)} // lx: SPEC 138 §5 — no node struck out during the run
 	}
-	next := planTolerantPool(g.balancer.poolTags(), results, size, g.balancer.poolTolerance)
-	g.rrSetRunSlots(g.balancer.rrDropStruck(next)) // lx: SPEC 138 §5 — the run puts no node struck out in its interval back
+	next := planTolerantPool(g.balancer.rrDropStruck(g.balancer.poolTags()), results, size, g.balancer.poolTolerance)
+	g.rrSetRunSlots(next)
 	return result
 }
 
