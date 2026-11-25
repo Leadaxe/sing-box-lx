@@ -112,8 +112,8 @@ A dead pool node keeps its slot until a live replacement is found, so the pool n
 but while the pool has a live node, new connections skip the slot of a node that failed its
 last health-check: with stickiness the keys of dead slots spread evenly over the live slots
 and come back once the node answers again, without stickiness the rotation runs over the
-live slots. When every slot is dead, selection is unchanged. A quarantined node (below) is
-skipped the same way.
+live slots. When every slot is dead, selection is unchanged. A quarantined node (one that
+fails connections more often than the rest of the pool) is skipped the same way.
 
 A `round_robin` pool handles node failures between checks on its own. A node that
 dies between two runs of `interval` is replaced at once, and the connection that hit it opens
@@ -124,50 +124,6 @@ failure, while other destinations stay where they are. A loss of the local netwo
 a network switch) strikes out no node. This works only in `round_robin` and has no config keys;
 download and upload speed do not change. The scenarios and limits are in
 [lx-config.md](../../../docs-lx/lx-config.md#pool-self-heal).
-
-**Self-heal on a failed connection** (SPEC 138). One failed connection does not tell a dead node
-from a destination that is unreachable through it or from a local network outage, so a failure
-by itself changes neither the pool nor the history. Instead:
-
-- A connection that does not open through a pool node is retried once through the next live slot,
-  so the application keeps its connection. A connection that closes without a single byte from the
-  destination after the client sent something is a failure too, but it is not retried (the
-  application already sent its data).
-- The failure waits for a verdict on its node. When the node proves alive after the failure — a
-  first byte on a connection started later, or an answer to a probe started later — the
-  destination is the problem: with stickiness the sticky key moves to the next slot, and a key that
-  failed through every node of the pool is marked as an address problem and returns to its own
-  slot until the next run.
-- A failure that points at the destination — a close without a byte, a failed open through a
-  `direct` or endpoint (WireGuard, AWG, Tailscale and other tunnels) leaf, a failed retry — is
-  settled at once by a probe of that node alone with the group's `url`, at most once per node in
-  3 s; its answer moves the key, its silence starts the check below. A failed open through a proxy
-  node puts the node itself under suspicion and goes to the check at once.
-- The check probes the node and a control node (the next slot) with the group's `url`, without
-  writing history. The node is silent and the control answers → the node is dead: its history is
-  dropped, its connections still waiting for it are closed, and its slot gets a replacement from
-  outside the pool at once, without waiting for `interval`. Nobody answers → the local network is
-  down: nothing changes, and the self-heal freezes for 15 s.
-- A node that accepts connections and stays silent gives no failure; a connection hanging without
-  an answer for more than 5 s triggers the same check. Until the node proves alive after that
-  connection started, its slot is skipped like a dead one, as long as the pool has a slot that is
-  neither dead nor holding such a connection.
-- A node that answers probes but fails noticeably more connections than the rest of the pool
-  (more than twice the pool median, from 8 connections, 3 confirmed failures and a 5 % failure
-  share) is quarantined:
-  skipped and replaced until the next scheduled run, manual run or network change. Its history
-  stays.
-- The self-heal also freezes for 15 s on a device wake and on a network change. It runs at most
-  one check at a time, with at least 15 s between checks, so a burst of failures costs one check;
-  the single-node probes keep their own limit of one per node in 3 s.
-- UDP uses the same slots; a failed UDP open is retried and checked as TCP, a flow without an
-  answer only triggers a check, and UDP never moves sticky keys.
-
-There are no config keys for any of this. The state is visible with
-`sing-box api group pool <tag>` (with `with_lx_command`) and the daemon's `GetPool`: per slot the
-delay, `live`/`dead`/`quarantined`, connections and confirmed failures; per group the number of
-shifted and address-problem keys and the freeze. The connection list shows the node each
-connection actually went through, including the retry.
 
 Liveness is the node's shared URL test history. A manual delay test with a short timeout
 (Clash API `/proxies/{name}/delay`, the daemon's `URLTestOutbound`) that does not complete,
