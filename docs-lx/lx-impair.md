@@ -17,6 +17,14 @@ It has no place in a production config. On start it always logs a warning:
 WARN impair outbound slow-se: traffic through the direct dialer is degraded on purpose (test tool): up rate 10mbit delay 20ms; down rate 10mbit delay 20ms
 ```
 
+When the core stops it logs counters per direction: units of data, bytes, drops on a full queue, on
+loss and in an outage, and stream stalls:
+
+```text
+INFO impair outbound slow-se up: 18234 units 25317890 bytes; dropped queue 0 loss 41 outage 0; stream stalls 12
+INFO impair outbound slow-se down: 61020 units 88410332 bytes; dropped queue 7 loss 130 outage 0; stream stalls 35
+```
+
 The build tag `with_lx_impair` is in neither `LX_TAGS` nor the AAR: release binaries do not have
 `impair`. Without the tag `"type": "impair"` is rejected at load time:
 
@@ -97,7 +105,7 @@ headers.
 
 | Key | Meaning |
 |---|---|
-| `at` | when, from the start point (`start`): `"15s"`; required, entries go in ascending `at` |
+| `at` | when, from the start point (`start`): `"15s"`, from 0 to `"168h"`; required, entries go in ascending `at` |
 | `direction` | `"up"` or `"down"`; without it, both directions |
 | link keys | `rate`, `queue`, `delay`, `jitter`, `reorder`, `loss`, `loss_burst`, `stream_stall`, `vary` — the new value from this moment |
 | `outage` | `true` — the link silently goes away, `false` — it comes back |
@@ -145,6 +153,12 @@ too and arrives after it.
 During a silent outage a connection (both TCP and a UDP socket) does not open: the attempt waits for
 the outage to end or for its own timeout, like a handshake that gets no answer. An outage with
 `reset` refuses at once.
+
+**Closing a stream.** Data the application has already written is not thrown away on `Close`: the
+close waits until it has passed the queue and the delay and gone to the carrier, and only then
+closes the carrier. The wait is bounded, so a stalled link does not hold the close forever. A real
+TCP socket behaves the same: what was written still goes out after `close`. A scheduled outage
+with `reset` breaks the connection at once, and what was not delivered is lost.
 
 **What degrading the receive side from this end does not reproduce.** The `down` direction is
 degraded after the data has crossed the real network. The real link carried it anyway, and its load
@@ -229,3 +243,65 @@ reproducibly.
 
 The other vless keys (TLS, transport) are the same as for a proxy without `impair`. The mean rate of
 each link is 7.5 Mbit/s, the middle of 3..12.
+
+## Recipes for balancing tests
+
+A `round_robin` pool of four nodes, each with its own link:
+
+```json
+{
+  "outbounds": [
+    {"type": "urltest", "tag": "pool", "outbounds": ["via-a", "via-b", "via-c", "via-d"], "interval": "15m",
+     "mode": "round_robin", "balancer": {"pool": 3}},
+    {"type": "vless", "tag": "via-a", "server": "<A>", "server_port": 443, "uuid": "<UUID>", "detour": "line-a"},
+    {"type": "vless", "tag": "via-b", "server": "<B>", "server_port": 443, "uuid": "<UUID>", "detour": "line-b"},
+    {"type": "vless", "tag": "via-c", "server": "<C>", "server_port": 443, "uuid": "<UUID>", "detour": "line-c"},
+    {"type": "vless", "tag": "via-d", "server": "<D>", "server_port": 443, "uuid": "<UUID>", "detour": "line-d"},
+    {"type": "impair", "tag": "line-a", "delay": "30ms", "seed": 1},
+    {"type": "impair", "tag": "line-b", "delay": "30ms", "loss": "5%", "seed": 2},
+    {"type": "impair", "tag": "line-c", "stall": {"every": "2m", "duration": "40s"}, "seed": 3},
+    {"type": "impair", "tag": "line-d", "delay": "2s", "jitter": "1s", "seed": 4}
+  ],
+  "route": {"final": "pool"}
+}
+```
+
+- `line-a` — an even link, the control.
+- `line-b` — 5 % loss. Over the TCP carrier of vless it does not break connections but stops the
+  stream for at least 200 ms about once per 29 KB: the node works, slowly. Over a UDP carrier
+  (hysteria2, tuic) the datagrams are really lost.
+- `line-c` — a flapping node: about once every 2 minutes the link silently goes away for 40 s. The
+  node is struck out and comes back; a second strike-out between scheduled checks sends it to
+  quarantine ([pool self-heal](lx-urltest.md#pool-self-heal)).
+- `line-d` — a slow node at the 15 s probe timeout. A probe makes several round trips, each costs
+  about 4 s here, so some probes fit into 15 s and some do not. The number of round trips depends
+  on the protocol, so tune `delay` by the probe delay on your stand.
+
+`failover` whose current node first slows down and then breaks connections:
+
+```json
+{
+  "outbounds": [
+    {"type": "urltest", "tag": "main", "outbounds": ["via-a", "via-b"], "interval": "1m", "mode": "failover"},
+    {"type": "vless", "tag": "via-a", "server": "<A>", "server_port": 443, "uuid": "<UUID>", "detour": "line-a"},
+    {"type": "vless", "tag": "via-b", "server": "<B>", "server_port": 443, "uuid": "<UUID>"},
+    {"type": "impair", "tag": "line-a", "start": "first_use", "seed": 1, "schedule": [
+      {"at": "60s", "delay": "400ms"},
+      {"at": "240s", "delay": "0s"},
+      {"at": "300s", "outage": true, "reset": true},
+      {"at": "310s", "outage": false}
+    ]}
+  ],
+  "route": {"final": "main"}
+}
+```
+
+The schedule counts from the first connection through `line-a` (`"start": "first_use"`). From the
+60th to the 240th second 400 ms is added to the delay each way. The scheduled probe once a minute
+sees it, and if the node has become more than twice as slow as `via-b`, the group checks the
+[degradation](lx-urltest.md#4-failover--hold-until-it-fails). At the 300th second every connection
+through `line-a` breaks, and for 10 s new ones are refused at once: the group penalises the node and
+moves to `via-b`.
+
+The same `seed` repeats the same losses, jumps and stalls from run to run; to compare builds, change
+the build, not the `seed`.
