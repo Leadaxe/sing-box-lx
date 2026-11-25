@@ -20,8 +20,9 @@ The project is free and developed in spare time — **[support it](docs-lx/donat
 - **Cloudflare WARP connects where UDP 443 is filtered.** The `masque` outbound carries the tunnel over HTTP/3 or over HTTP/2 on TCP 443. → [MASQUE](#cloudflare-warp-connects-over-masque-on-http3-or-http2)
 - **A phone with ten WireGuard nodes stops paying for nine idle ones.** Idle endpoints go to sleep: on a device, eight sleeping endpoints freed 134 MB. → [Idle-suspend](#idle-wireguard-tunnels-sleep-on-android)
 - **A router serves VPN on a separate SSID and rolls back if a config breaks it.** The `lxd` daemon checks a config before the swap and returns to the last one that worked if the core does not start; the control channel stays up all the while. → [`lxd`](#the-lxd-daemon-keeps-its-control-channel-through-every-config-change)
-- **An app shows what the core is doing without parsing logs.** Groups, pools, chains, rules, DNS queries and per-connection paths come over gRPC. → [Observability](#apps-read-the-cores-state-over-grpc)
-- **A product built on the core gets a self-healing load balancer, a remote management daemon and network impairment without root.** → [For developers](#for-developers-build-a-client-launcher-or-router-firmware-on-this-core)
+- **An app shows what the core is doing without parsing logs.** Groups, pools, chains, rules, DNS queries and per-connection paths come over gRPC. → [Observability](#observability-over-grpc-the-app-sees-what-the-core-is-doing)
+- **A pool server that goes down drops no requests.** The `round_robin` load balancer retries the connection through a neighbouring node and replaces the dead node with a live one from the reserve without waiting for a check. → [`urltest`](#urltest-balances-across-a-pool-or-holds-one-node-until-it-fails)
+- **Balancing, failover and transports are tested on a bad network without root.** The `impair` outbound degrades the link inside the core under control: rate, loss, scheduled outages, the same run again by `seed`. → [Network impairment](#network-impairment-without-root-a-controlled-bad-link-inside-the-core)
 
 ## Download and install
 
@@ -172,11 +173,16 @@ The path shows in `detourList` and `GetChains`; the hop tags `<tag>#0`, `<tag>#1
 
 A group of nodes spreads connections over several servers or holds on to one working server, instead of always picking the node with the lowest delay. `mode: round_robin` with `balancer{…}` spreads connections over a pool of live nodes and keeps each site on its own node; `mode: failover` holds the node until it fails and probes only that node; `least_test`, when a connection through a node fails to open, penalises the node and opens the connection through the next one.
 
-A pool server that goes down between checks drops no requests: the connection opens through a neighbouring node, and the dead one is replaced with a live one at once. A site closed to one node opens through another node of the pool, while the rest of the traffic stays on its nodes.
+A pool server that goes down between checks drops no requests: the connection opens through a neighbouring slot. A node that refuses connections leaves the pool in under a second; a node that accepts and stays silent is skipped by new connections from the 5th second and struck out in 41 s. Its slot is taken at once by a node from the reserve of `max(⌈pool/2⌉, 1)` live nodes the scheduled check keeps. A node is struck out only when it stays silent on its own probe while a control node answers, so a phone falling asleep, a Wi-Fi switch or an ISP outage leave the pool alone; while nobody answers, the pause between checks grows 15 → 30 → 60 → 120 s and does not drain the battery. A site closed to one node opens through another node of the pool, while the rest of the traffic stays on its nodes.
 
-Limits: recovery from failed connections works only in `round_robin`; the pool state for a UI (`GetPool`) is in a build with `with_lx_command`.
+```jsonc
+{ "type": "urltest", "tag": "auto", "outbounds": ["node-a", "node-b", "node-c", "node-d"],
+  "mode": "round_robin", "balancer": { "pool": 3 } }   // sticky by ["process","domain"] by default
+```
 
-No build tag · verified on a device with a real multi-node pool · [feature](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) · [guide](docs-lx/lx-urltest.md) ([RU](docs-lx/lx-urltest.ru.md))
+Limits: recovery from failed connections works only in `round_robin`; UDP failures move no sites; a network change the platform does not report (Windows Modern Standby included) can strike out a live node once, and it comes back by itself. The pool state for a UI (`GetPool`) is in a build with `with_lx_command`. The cost per connection — [measurements](SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/IMPLEMENTATION_REPORT.md).
+
+No build tag · verified on a device with a real multi-node pool · [feature](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) · [guide](docs-lx/lx-urltest.md#pool-self-heal) ([RU](docs-lx/lx-urltest.ru.md#самовосстановление-пула))
 
 ### A DNS server group answers from several servers as one
 
@@ -204,12 +210,6 @@ Limits: built into the AAR only (`with_lx_idle_suspend`); a desktop binary given
 
 [feature](SPECS/FEATURES/008-ENERGY/FEATURE.md)
 
-### Apps read the core's state over gRPC
-
-A client shows groups, the round-robin pool, chains, live rules, the running config, DNS queries and the path of every connection without scraping logs. The libbox `CommandClient` gains `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetChains`, `SubscribeDNSQueries` and `Connection.detourList`; the same contract serves the Android AAR and the `lxd` daemon.
-
-`with_lx_command` · consumed by LxBox · [feature](SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md) · [API](docs-lx/lxd-grpc-api.md) ([RU](docs-lx/lxd-grpc-api.ru.md))
-
 ### The `lxd` daemon keeps its control channel through every config change
 
 A core on a router or a server is managed remotely and stays reachable when a new config is broken. `sing-box lxd` runs the core inside a daemon that owns the listening port, so the channel comes up before the core and outlives it.
@@ -222,23 +222,13 @@ sing-box lxd --state-dir ./lxd-state -c config.json
 - **One port, two planes.** gRPC for state and logs, REST `/admin/*` for control.
 - **mTLS with enrolment.** The daemon is its own CA, prints a one-time invite and knows clients by certificate afterwards.
 - **Host telemetry.** CPU per core, memory, temperature, disks, interfaces and an IP → device directory, over the same port.
+- **Rule-sets and geo bases are uploaded by name.** `PUT /admin/resources/{name}` refuses a rule-set the core cannot load and keeps the previous copy until a core has started with the new one.
+- **The core updates itself on a Linux router.** `sing-box lxd update` downloads the release asset for the platform, verifies it against `SHA256SUMS`, swaps the binary atomically, restarts the service and rolls back if the new one does not come up; on a router with little flash it switches to a low-space mode.
 - **Service install.** Automatic on macOS and Windows. On Linux (systemd, OpenWrt / procd) the daemon prints a ready recipe and does not touch the disk; for OpenWrt there is an [installer script](scripts-lx/openwrt/README.md).
 
 Limits: not in the Windows 7 build and not in the AAR.
 
 `with_lxd` · verified on macOS; the OpenWrt scripts are tested in the field · [feature](SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md) · [operator's guide](docs-lx/lxd-daemon.md) ([RU](docs-lx/lxd-daemon.ru.md)) · [VPN on a dedicated SSID on OpenWrt](docs-lx/openwrt-vpn-ssid.md) ([RU](docs-lx/openwrt-vpn-ssid.ru.md))
-
-### `impair` degrades a link for testing
-
-A test outbound: it dials like `direct` or through its own `detour` and degrades everything that goes through it on purpose — a bottleneck with a queue, delay and jitter, bursty loss, rate swings, stalls and scheduled outages. No root and no netem, both directions from one end. Put it under a proxy node to test balancing, failover and chains against real servers over a bad link.
-
-```json
-{"type": "impair", "tag": "slow-se", "rate": "10mbit", "vary": {"min": "3mbit", "max": "12mbit", "every": "2s"}, "loss": "0.5%", "seed": 1}
-```
-
-Limits: a test tool, inert unless a config declares it; the receive side is degraded after the real network.
-
-`with_lx_impair` · [feature](SPECS/FEATURES/020-IMPAIR/FEATURE.md) · [config](docs-lx/lx-impair.md) ([RU](docs-lx/lx-impair.ru.md))
 
 ## Who uses it
 
@@ -254,48 +244,31 @@ The full list with links and what each project takes — **[docs-lx/consumers.md
 
 ## For developers: build a client, launcher or router firmware on this core
 
-A team shipping a VPN client, a desktop launcher, router firmware or a management panel gets three things from this core that matter most during development: a [load balancer](#a-load-balancer-with-self-healing-dead-nodes-leave-the-pool-on-their-own) that heals the pool without app code, a [remote management daemon](#a-remote-management-daemon-configs-rule-sets-and-core-updates-with-rollback) with rollback, and [network impairment](#network-impairment-without-root-emulate-a-bad-link-inside-the-binary) without root to test both on a bad link before users find the bugs.
+A team shipping a VPN client, a desktop launcher, router firmware or a management panel gets two things from this core that matter most during development: [observability](#observability-over-grpc-the-app-sees-what-the-core-is-doing), the live state of the core over gRPC, and [network impairment](#network-impairment-without-root-a-controlled-bad-link-inside-the-core) without root to test the product on a bad link before users find the bugs.
 
-### A load balancer with self-healing: dead nodes leave the pool on their own
+### Observability over gRPC: the app sees what the core is doing
 
-The app sets a group and reads its state; it writes no failover logic. `urltest` with `mode: round_robin` spreads connections over a pool of live nodes and keeps each site on its slot (by process and domain), so a site does not see its user jump between exit addresses. Between scheduled checks the pool repairs itself from the traffic:
+A client or a panel shows the live state of the core without scraping logs or opening a Clash API port. One contract runs over two carriers: gRPC of the `lxd` daemon on a desktop, server or router, and the libbox `CommandClient` in the Android and iOS library. The fields mean the same on both, so one UI code path serves a phone and a remote router.
 
-- a node that refuses connections is struck out in under a second; a node that accepts and stays silent is skipped by new connections from the 5th second and struck out in 41 s;
-- a connection that does not open through a node is retried once through another slot, so a server that goes down drops no requests;
-- a node is struck out only when it stays silent on its own probe while a control node answers; a phone falling asleep, a Wi-Fi switch or an ISP outage strike out no one;
-- the scheduled check finds live nodes for the pool plus a reserve of `max(⌈pool/2⌉, 1)`; a reserve node fills an empty slot within a fraction of a second;
-- at most 16 self-heal probes run at once for the whole core, one probe per node for all groups, and while nobody answers the pause between checks grows 15 → 30 → 60 → 120 s: a phone without a network does not spend its battery on probes.
+- **Connections.** A stream of the connection table with each connection's path through groups and chains (`detourList`) and the rule that matched it (`GetRules`); closing a connection is one call.
+- **DNS.** Every query with its answers and CNAME chain (`SubscribeDNSQueries`).
+- **Groups and nodes.** `GetGroups`, the balancer slots with `live` / `dead` / `quarantined` and the moved sites (`GetPool`), chains (`GetChains`), DNS groups, the state of WireGuard / AmneziaWG and Tailscale endpoints by tag.
+- **Probes on demand.** The delay of one node (`URLTestOutbound`) and which exit address a node gives (`GetURLViaOutbound`).
+- **The core as a whole.** The running config (`GetRunningConfig`), the core's log, memory, goroutines, traffic.
 
-```jsonc
-{ "type": "urltest", "tag": "auto", "outbounds": ["node-a", "node-b", "node-c", "node-d"],
-  "mode": "round_robin", "balancer": { "pool": 3 } }   // sticky by ["process","domain"] by default
+```text
+SubscribeConnections{interval: 1s}       → the connection table with each connection's path
+SubscribeDNSQueries{includeAnswers: true} → DNS queries with CNAME chains
+GetPool{tag}                             → balancer slots and their state
 ```
 
-A UI draws the pool from gRPC `GetPool`: per slot `live` / `dead` / `quarantined`, connection and failure counts, the sites moved to another node. Limits: self-heal works in `round_robin` only; UDP failures move no sites; a network change the platform does not report (Windows Modern Standby included) can strike out a live node once, and it comes back by itself. The cost per connection — [measurements](SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/IMPLEMENTATION_REPORT.md).
+Limits: the fork's calls are in a build with `with_lx_command`; without the tag they answer `Unimplemented`.
 
-[guide](docs-lx/lx-urltest.md#pool-self-heal) ([RU](docs-lx/lx-urltest.ru.md#самовосстановление-пула)) · [feature](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md)
+`with_lx_command` · consumed by LxBox · [feature](SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md) · [API](docs-lx/lxd-grpc-api.md) ([RU](docs-lx/lxd-grpc-api.ru.md))
 
-### A remote management daemon: configs, rule-sets and core updates with rollback
+### Network impairment without root: a controlled bad link inside the core
 
-A panel or an app manages a router or a server through one documented API instead of SSH and shell scripts. `sing-box lxd` owns the control port and runs the core under it, so a broken config never locks you out of the device.
-
-- **A config is checked before it goes live.** `POST /admin/apply` runs `sing-box check` with the daemon's own binary; if the new core does not start, the daemon returns to the last config that worked and reports `rolled_back`.
-- **Rule-sets and geo bases are uploaded by name.** `PUT /admin/resources/{name}` refuses a rule-set the core cannot load and keeps the previous copy until a core has started with the new one.
-- **The core updates itself on a Linux router.** `sing-box lxd update` downloads the release asset for the platform, verifies it against `SHA256SUMS`, swaps the binary atomically, restarts the service and rolls back if the new one does not come up; on a router with little flash it switches to a low-space mode.
-- **One port, two planes.** gRPC for state, logs and the pool; REST `/admin/*` for control. mTLS with one-time enrolment: the daemon is its own CA.
-- **The host in the same API.** CPU per core, memory, temperature, disks, interfaces, an IP → device directory, profiles; hooks run your scripts when the core starts and stops.
-
-```bash
-sing-box lxd update --dry-run      # what would be downloaded for this router, nothing is changed
-```
-
-Limits: not in the AAR and not in the Windows 7 build; on Linux the daemon prints a service recipe instead of installing itself, and OpenWrt has an [installer script](scripts-lx/openwrt/README.md).
-
-[operator's guide](docs-lx/lxd-daemon.md) ([RU](docs-lx/lxd-daemon.ru.md)) · [gRPC API](docs-lx/lxd-grpc-api.md) ([RU](docs-lx/lxd-grpc-api.ru.md)) · [feature](SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md)
-
-### Network impairment without root: emulate a bad link inside the binary
-
-A balancer, failover or a new transport is tested against real servers on a bad network without netem, root or a lab: the `impair` outbound degrades the link in the client binary itself, on a desktop, a router or a phone. It sits under a proxy node and degrades the road to its server in both directions from one end:
+A balancer, failover or a new transport is tested against real servers on a bad network without netem, root or a lab: the `impair` outbound degrades the link inside the core itself, on a desktop, a router or a phone. The config sets what to degrade, how much and when, and `seed` repeats a run exactly. It sits under a proxy node and degrades the road to its server in both directions from one end:
 
 - a bottleneck rate with a queue, delay and jitter, rate swings;
 - loss in bursts (Gilbert model) for datagrams; on a TCP carrier a loss stops the stream the way a retransmission does;
