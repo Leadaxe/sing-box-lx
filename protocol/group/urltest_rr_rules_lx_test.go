@@ -91,7 +91,7 @@ func TestRRPause_extraRoundChecks(t *testing.T) {
 	end := time.Now()
 	heal.setPauseStep(1)
 	heal.setPauseEnd(&end)
-	if !heal.grantExtra() {
+	if !heal.grantExtra(time.Now()) {
 		t.Fatal("no right xr in a pause above the base")
 	}
 	now := rrClock(time.Now())
@@ -116,7 +116,7 @@ func TestRRPause_extraRoundSearches(t *testing.T) {
 	end := time.Now()
 	heal.setPauseStep(1)
 	heal.setPauseEnd(&end)
-	heal.grantExtra()
+	heal.grantExtra(time.Now())
 	f.s.rrExtraRound()
 	waitLong(t, func() bool { return !heal.roundBusy() }, 10*time.Second)
 	if f.probes("b") != 0 || f.probes("c") != 0 || f.probes("d") == 0 {
@@ -131,7 +131,7 @@ func TestRRPause_extraRoundWaitsForAReason(t *testing.T) {
 	end := time.Now()
 	heal.setPauseStep(1)
 	heal.setPauseEnd(&end)
-	heal.grantExtra()
+	heal.grantExtra(time.Now())
 	f.s.rrExtraRound()
 	time.Sleep(50 * time.Millisecond)
 	if heal.roundBusy() || f.allProbes() != 0 || !heal.extraOpen() {

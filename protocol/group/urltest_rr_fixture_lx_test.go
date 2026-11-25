@@ -9,38 +9,84 @@ package group
 import "time"
 
 // roundBusy reports a round of the group in flight.
-func (h *rrHeal) roundBusy() bool { return h.running.Load() }
+func (h *rrHeal) roundBusy() bool {
+	h.access.Lock()
+	defer h.access.Unlock()
+	return h.round != nil
+}
 
-// holdRound takes the round of the group outside beginRoundAt: a round the test
+// holdRound takes the round of the group outside beginRound: a round the test
 // does not want to start.
-func (h *rrHeal) holdRound() { h.running.Store(true) }
+func (h *rrHeal) holdRound() {
+	h.access.Lock()
+	defer h.access.Unlock()
+	h.round = &rrRound{done: make(chan struct{})}
+}
 
 // tryHoldRound takes the round when it is free.
-func (h *rrHeal) tryHoldRound() bool { return h.running.CompareAndSwap(false, true) }
+func (h *rrHeal) tryHoldRound() bool {
+	h.access.Lock()
+	defer h.access.Unlock()
+	if h.round != nil {
+		return false
+	}
+	h.round = &rrRound{done: make(chan struct{})}
+	return true
+}
 
-// dropRound gives back a round taken by holdRound.
-func (h *rrHeal) dropRound() { h.running.Store(false) }
+// dropRound gives back a round taken by holdRound; no pause.
+func (h *rrHeal) dropRound() {
+	h.access.Lock()
+	defer h.access.Unlock()
+	if h.round != nil {
+		close(h.round.done)
+		h.round = nil
+	}
+}
 
 // pauseEnd returns e, the end of the previous round (nil: no pause).
-func (h *rrHeal) pauseEnd() *time.Time { return h.lastCheckEnd.Load() }
+func (h *rrHeal) pauseEnd() *time.Time {
+	h.access.Lock()
+	defer h.access.Unlock()
+	return h.end
+}
 
-// setPauseEnd sets e.
-func (h *rrHeal) setPauseEnd(end *time.Time) { h.lastCheckEnd.Store(end) }
+// setPauseEnd sets e; another pause has no right xr yet.
+func (h *rrHeal) setPauseEnd(end *time.Time) {
+	h.access.Lock()
+	defer h.access.Unlock()
+	if end != h.end {
+		h.right = rrRightNone
+	}
+	h.end = end
+}
 
 // clearPause ends the pause: what the passing time does.
-func (h *rrHeal) clearPause() { h.lastCheckEnd.Store(nil) }
+func (h *rrHeal) clearPause() { h.setPauseEnd(nil) }
 
 // pauseStep returns the step of the pause.
-func (h *rrHeal) pauseStep() int32 { return h.step.Load() }
+func (h *rrHeal) pauseStep() int32 {
+	h.access.Lock()
+	defer h.access.Unlock()
+	return h.step
+}
 
 // setPauseStep sets the step of the pause.
-func (h *rrHeal) setPauseStep(step int32) { h.step.Store(step) }
+func (h *rrHeal) setPauseStep(step int32) {
+	h.access.Lock()
+	defer h.access.Unlock()
+	h.step = step
+}
 
 // pollCount returns o.
-func (h *rrHeal) pollCount() int32 { return h.polled.Load() }
+func (h *rrHeal) pollCount() int32 { return int32(h.polls()) }
 
 // setPollCount sets o.
-func (h *rrHeal) setPollCount(polled int32) { h.polled.Store(polled) }
+func (h *rrHeal) setPollCount(polled int32) {
+	h.access.Lock()
+	defer h.access.Unlock()
+	h.polled = polled
+}
 
 // inFlight returns the places of the queue held.
 func (q *rrQueue) inFlight() int {

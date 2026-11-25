@@ -114,11 +114,11 @@ func TestRRHeal_failedRetryKeepsFirstPick(t *testing.T) {
 func TestRRHeal_marksMonotonic(t *testing.T) {
 	var h rrHeal
 	h.holdRound()
-	h.endCheck(true, false)
+	h.endRound(time.Now(), true, true, false)
 	check := h.pauseEnd() // a freeze drops the gap; read it before
 	h.freeze()
 	h.holdRound()
-	h.endCheck(true, false)
+	h.endRound(time.Now(), true, true, false)
 	if h.pauseEnd() != nil {
 		t.Fatal("a check that ends frozen sets no gap")
 	}
@@ -128,7 +128,7 @@ func TestRRHeal_marksMonotonic(t *testing.T) {
 			t.Fatalf("%s mark must keep the monotonic reading, got %v", name, mark)
 		}
 	}
-	if !h.frozen() || h.beginCheck() {
+	if !h.frozen() || h.beginRound(time.Now()) {
 		t.Fatal("frozen and inside the gap right after the marks")
 	}
 }

@@ -78,29 +78,20 @@ const (
 
 // rrHeal is the self-heal state of one round_robin group; it lives in the balancer.
 type rrHeal struct {
-	running      atomic.Bool                        // a round (a check or a search) is in flight
-	checkAccess  sync.Mutex                         // guards ended
-	ended        chan struct{}                      // closed when the round in flight ends (yield)
-	lastCheckEnd atomic.Pointer[time.Time]          // e, the end of the previous round (W1)
-	abort        atomic.Pointer[context.CancelFunc] // cancels the round in flight
+	// access guards the round in flight and the pause of rounds (§4.6).
+	access sync.Mutex
+	round  *rrRound   // the round in flight (a check or a search); nil for none
+	end    *time.Time // e, the end of the previous round (W1); nil: no pause
+	step   int32      // g = rrHealGap << step (W2)
+	polled int32      // o, the candidates the cursor gave since the last ANSWER of a probe of the group
+	right  rrRight    // xr of the pause that ends at end (W5)
 	// epochEnd is E, the rrClock of the end of the last freeze (N0): while now < E
 	// nothing is inferred or done, and an exchange that started before E takes part
 	// in no rule. 0: no event yet (epoch reads it as math.MinInt64).
 	epochEnd atomic.Int64
 	// cursor is c, the position in the config from which the next round goes on
-	// with the candidates; only the holder of running moves it.
+	// with the candidates; only the round in flight moves it.
 	cursor int
-	// The pause of rounds (§4.6): step is g as rrHealGap << step; polled is o, the
-	// candidates the cursor gave since the last ANSWER of a probe of the group;
-	// extraFor is the end of the round whose pause holds the right xr (W5), and
-	// extraTaken whether the round of that right started; extra marks the round in
-	// flight as the one of xr.
-	pauseAccess sync.Mutex
-	step        atomic.Int32
-	polled      atomic.Int32
-	extraFor    *time.Time
-	extraTaken  bool
-	extra       bool
 	// queue is the place of the group in the probe queue of the core (§4.7).
 	queue rrQueueOwner
 	// lifeAccess guards the budget of the life probes of the group.
@@ -113,6 +104,22 @@ type rrHeal struct {
 	missAccess sync.Mutex
 	missAt     map[string]time.Time
 }
+
+// rrRound is the round in flight.
+type rrRound struct {
+	cancel context.CancelFunc // aborts it; set once it runs (rrHealRound)
+	done   chan struct{}      // closed at its end (yield)
+	extra  bool               // the round of the right xr (W5)
+}
+
+// rrRight is the state of the right xr of the current pause (W5).
+type rrRight uint8
+
+const (
+	rrRightNone  rrRight = iota // not given in this pause
+	rrRightOpen                 // given, its round not started
+	rrRightTaken                // its round started
+)
 
 // missed records a self-heal probe of leaf that ended at at with no ANSWER.
 func (h *rrHeal) missed(leaf string, at time.Time) {
@@ -140,140 +147,134 @@ func (h *rrHeal) liveHistory(leaf string, history *adapter.URLTestHistory) bool 
 
 // pause returns g, the current step of the pause of rounds.
 func (h *rrHeal) pause() time.Duration {
-	return rrHealGap << h.step.Load()
+	h.access.Lock()
+	defer h.access.Unlock()
+	return rrHealGap << h.step
 }
 
 // pausing reports, at now, whether the pause after the last round still holds.
 func (h *rrHeal) pausing(now time.Time) bool {
-	end := h.lastCheckEnd.Load()
-	return end != nil && now.Sub(*end) < h.pause()
+	h.access.Lock()
+	defer h.access.Unlock()
+	return h.pausingLocked(now)
 }
 
-// checkReady reports, without a lock, whether a round could start now: none in
-// flight, not frozen, the pause over or the right of W5 not spent.
-func (h *rrHeal) checkReady() bool {
-	return h.readyAt(time.Now())
+func (h *rrHeal) pausingLocked(now time.Time) bool {
+	return h.end != nil && now.Sub(*h.end) < rrHealGap<<h.step
 }
 
-func (h *rrHeal) readyAt(now time.Time) bool {
-	if h.running.Load() || h.frozen() {
-		return false
-	}
-	return !h.pausing(now) || h.extraOpen()
+// lifeHeld is W4: while the step of the pause is above the base and the pause goes
+// on, no life probe starts.
+func (h *rrHeal) lifeHeld(now time.Time) bool {
+	h.access.Lock()
+	defer h.access.Unlock()
+	return h.step > 0 && h.pausingLocked(now)
+}
+
+// ready reports whether a round could start at now: none in flight, not frozen, the
+// pause over or the right of W5 open.
+func (h *rrHeal) ready(now time.Time) bool {
+	h.access.Lock()
+	defer h.access.Unlock()
+	return h.readyLocked(now)
+}
+
+func (h *rrHeal) readyLocked(now time.Time) bool {
+	return h.round == nil && !h.frozen() && (!h.pausingLocked(now) || h.right == rrRightOpen)
 }
 
 // extraOpen reports the right xr of the current pause, not spent yet (W5).
 func (h *rrHeal) extraOpen() bool {
-	h.pauseAccess.Lock()
-	defer h.pauseAccess.Unlock()
-	return h.extraFor != nil && h.extraFor == h.lastCheckEnd.Load() && !h.extraTaken
+	h.access.Lock()
+	defer h.access.Unlock()
+	return h.right == rrRightOpen
 }
 
-// beginCheck claims the single round of the group (W1: one at a time, after the
+// beginRound claims the single round of the group (W1: one at a time, after the
 // pause, or the round of the right xr).
-func (h *rrHeal) beginCheck() bool {
-	return h.beginRoundAt(time.Now())
-}
-
-func (h *rrHeal) beginRoundAt(now time.Time) bool {
-	if !h.readyAt(now) {
+func (h *rrHeal) beginRound(now time.Time) bool {
+	h.access.Lock()
+	defer h.access.Unlock()
+	if !h.readyLocked(now) {
 		return false
 	}
-	h.checkAccess.Lock()
-	defer h.checkAccess.Unlock()
-	if !h.running.CompareAndSwap(false, true) {
-		return false
+	extra := h.pausingLocked(now)
+	if extra {
+		h.right = rrRightTaken
 	}
-	h.pauseAccess.Lock()
-	h.extra = h.pausing(now)
-	if h.extra {
-		if h.extraFor == nil || h.extraFor != h.lastCheckEnd.Load() || h.extraTaken {
-			h.pauseAccess.Unlock()
-			h.running.Store(false)
-			return false
-		}
-		h.extraTaken = true
-	}
-	h.pauseAccess.Unlock()
-	h.ended = make(chan struct{})
+	h.round = &rrRound{done: make(chan struct{}), extra: extra}
 	return true
 }
 
-// endCheck ends a round and starts its pause (W1) — unless a freeze cut it short
-// (L3: the first reason after the freeze gets a round at once). answered: a probe
-// of the round had ANSWER; lap: the cursor went round C since the last ANSWER.
-// Without an ANSWER the step grows only after a lap (W2); a round of the right xr
-// with no ANSWER keeps the step and the end of the pause (W5).
-func (h *rrHeal) endCheck(answered, lap bool) {
-	h.endRoundAt(time.Now(), answered, lap)
-}
-
-func (h *rrHeal) endRoundAt(now time.Time, answered, lap bool) {
-	if !h.frozen() {
-		h.pauseAccess.Lock()
-		if !h.extra || answered {
-			if !answered && lap && h.step.Load() < rrPauseSteps {
-				h.step.Add(1)
-			}
-			h.lastCheckEnd.Store(&now)
+// endRound ends the round in flight. A round that started no probe is no round
+// (W1): no pause, the step as it was, and the right xr it took is not spent.
+// Otherwise its pause starts (W1) — unless a freeze cut it short (L3: the first
+// reason after the freeze gets a round at once). answered: a probe of the round had
+// ANSWER; lap: the cursor went round C since the last ANSWER. Without an ANSWER the
+// step grows only after a lap (W2); a round of the right xr with no ANSWER keeps the
+// step and the end of the pause (W5).
+func (h *rrHeal) endRound(now time.Time, probed, answered, lap bool) {
+	h.access.Lock()
+	defer h.access.Unlock()
+	extra := h.round != nil && h.round.extra
+	switch {
+	case !probed:
+		if extra && h.right == rrRightTaken {
+			h.right = rrRightOpen
 		}
-		h.extra = false
-		h.pauseAccess.Unlock()
+	case h.frozen():
+	case !extra || answered:
+		if !answered && lap && h.step < rrPauseSteps {
+			h.step++
+		}
+		h.end, h.right = &now, rrRightNone
 	}
-	h.release()
+	if h.round != nil {
+		close(h.round.done)
+		h.round = nil
+	}
 }
 
-// endIdle ends a round that started no probe (W1): it is no round — no pause, the
-// step as it was, and the right xr it took is not spent.
-func (h *rrHeal) endIdle() {
-	h.pauseAccess.Lock()
-	if h.extra {
-		h.extraTaken = false
-	}
-	h.extra = false
-	h.pauseAccess.Unlock()
-	h.release()
-}
-
-// release frees the single round of the group.
-func (h *rrHeal) release() {
-	h.checkAccess.Lock()
-	defer h.checkAccess.Unlock()
-	h.running.Store(false)
-	if h.ended != nil {
-		close(h.ended)
-		h.ended = nil
+// running sets the cancel of the round in flight.
+func (h *rrHeal) running(cancel context.CancelFunc) {
+	h.access.Lock()
+	defer h.access.Unlock()
+	if h.round != nil {
+		h.round.cancel = cancel
 	}
 }
 
 // probeAnswered is W3: an ANSWER of any probe of the group brings the step back to
 // the base and restarts o.
 func (h *rrHeal) probeAnswered() {
-	if h.step.Load() != 0 {
-		h.step.Store(0)
-	}
-	if h.polled.Load() != 0 {
-		h.polled.Store(0)
-	}
+	h.access.Lock()
+	defer h.access.Unlock()
+	h.step, h.polled = 0, 0
+}
+
+// poll counts a candidate the cursor gave (o).
+func (h *rrHeal) poll() {
+	h.access.Lock()
+	defer h.access.Unlock()
+	h.polled++
+}
+
+// polls returns o.
+func (h *rrHeal) polls() int {
+	h.access.Lock()
+	defer h.access.Unlock()
+	return int(h.polled)
 }
 
 // grantExtra is W5: an ANSWER of a connection of the group during a pause above
 // the base gives one round at once, once per pause. It reports a new right.
-func (h *rrHeal) grantExtra() bool {
-	return h.grantExtraAt(time.Now())
-}
-
-func (h *rrHeal) grantExtraAt(now time.Time) bool {
-	if h.step.Load() == 0 || !h.pausing(now) {
+func (h *rrHeal) grantExtra(now time.Time) bool {
+	h.access.Lock()
+	defer h.access.Unlock()
+	if h.step == 0 || !h.pausingLocked(now) || h.right != rrRightNone {
 		return false
 	}
-	h.pauseAccess.Lock()
-	defer h.pauseAccess.Unlock()
-	end := h.lastCheckEnd.Load()
-	if end == nil || h.extraFor == end {
-		return false
-	}
-	h.extraFor, h.extraTaken = end, false
+	h.right = rrRightOpen
 	return true
 }
 
@@ -296,20 +297,25 @@ func (h *rrHeal) freeze() {
 			break
 		}
 	}
-	h.pauseAccess.Lock()
-	h.lastCheckEnd.Store(nil)
-	h.step.Store(0)
-	h.extraFor, h.extraTaken = nil, false
-	h.pauseAccess.Unlock()
+	h.access.Lock()
+	h.end, h.step, h.right = nil, 0, rrRightNone
+	h.access.Unlock()
 	h.lifeAccess.Lock()
 	h.lifeStarts, h.udpLifeLast = [rrLifeBurst]int64{}, 0
 	h.lifeAccess.Unlock()
 	h.abortCheck()
 }
 
+// abortCheck aborts the round in flight.
 func (h *rrHeal) abortCheck() {
-	if cancel := h.abort.Load(); cancel != nil {
-		(*cancel)()
+	h.access.Lock()
+	var cancel context.CancelFunc
+	if h.round != nil {
+		cancel = h.round.cancel
+	}
+	h.access.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }
 
@@ -326,16 +332,19 @@ func (h *rrHeal) aborted(ctx context.Context) bool {
 
 // yield waits, at most rrHealYieldWait, for the round in flight to end.
 func (h *rrHeal) yield(ctx context.Context) {
-	h.checkAccess.Lock()
-	ended := h.ended
-	h.checkAccess.Unlock()
-	if ended == nil {
+	h.access.Lock()
+	var done chan struct{}
+	if h.round != nil {
+		done = h.round.done
+	}
+	h.access.Unlock()
+	if done == nil {
 		return
 	}
 	timer := time.NewTimer(rrHealYieldWait)
 	defer timer.Stop()
 	select {
-	case <-ended:
+	case <-done:
 	case <-ctx.Done():
 	case <-timer.C:
 	}
@@ -788,7 +797,7 @@ func (g *URLTestGroup) rrStore(probe rrProbe) {
 // the pause is over (or the right xr of W5 is open); it reports whether it did. Only
 // a soft sign on a pool node asks for it (§4.2).
 func (s *URLTest) rrStartCheck() bool {
-	if !s.balancer.heal.beginCheck() {
+	if !s.balancer.heal.beginRound(time.Now()) {
 		return false
 	}
 	go s.rrHealCheck()
@@ -800,7 +809,7 @@ func (s *URLTest) rrStartCheck() bool {
 // no candidate, or while a run holds its flag (the run fills the slots itself),
 // there is nothing to probe and no round (W1).
 func (s *URLTest) rrStartSearch() bool {
-	if s.group.checking.Load() || !s.rrHasCandidate() || !s.balancer.heal.beginCheck() {
+	if s.group.checking.Load() || !s.rrHasCandidate() || !s.balancer.heal.beginRound(time.Now()) {
 		return false
 	}
 	go s.rrHealSearch()
@@ -1205,18 +1214,13 @@ func (c *rrCheck) takeReady() adapter.Outbound {
 func (s *URLTest) rrHealRound(round func(c *rrCheck)) {
 	heal := &s.balancer.heal
 	ctx, cancel := context.WithCancel(s.group.ctx)
-	heal.abort.Store(&cancel)
+	heal.running(cancel)
 	slots := s.balancer.slotsSnapshot()
 	c := &rrCheck{s: s, ctx: ctx, queue: s.group.rrQueue(), x: time.Now(), size: len(slots), seen: make(map[string]bool)}
 	defer func() {
-		heal.abort.Store(nil)
 		cancel()
 		c.settle()
-		if c.launched == 0 {
-			heal.endIdle() // W1: a round that probed nothing is no round
-			return
-		}
-		heal.endCheck(c.anyAnswer, s.rrLap())
+		heal.endRound(time.Now(), c.launched > 0, c.anyAnswer, s.rrLap())
 	}()
 	if heal.aborted(ctx) {
 		return
@@ -1225,7 +1229,7 @@ func (s *URLTest) rrHealRound(round func(c *rrCheck)) {
 }
 
 // rrHealCheck is the check of the pool (§4.2) followed by D1 and the replacement
-// (§5). It owns the round taken by beginCheck.
+// (§5). It owns the round taken by beginRound.
 func (s *URLTest) rrHealCheck() {
 	s.rrHealRound(func(c *rrCheck) {
 		for _, entry := range s.balancer.slotsSnapshot() {
@@ -1291,7 +1295,7 @@ func (s *URLTest) rrLap() bool {
 		}
 		walk++
 	}
-	return int(b.heal.polled.Load()) >= walk
+	return b.heal.polls() >= walk
 }
 
 // rrStrike is D1 for every pool node whose decisive probe had no ANSWER while the
@@ -1433,7 +1437,7 @@ func (s *URLTest) rrCandidateBatch(seen map[string]bool, size int) []adapter.Out
 		batch = append(batch, node)
 		seen[node.Tag()] = true
 		b.heal.cursor = (i + 1) % n
-		b.heal.polled.Add(1)
+		b.heal.poll()
 	}
 	return batch
 }

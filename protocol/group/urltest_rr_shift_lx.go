@@ -879,7 +879,7 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch, c *rrFirstByteConn) {
 	if w.key.valid {
 		b.memory.shifts.answered(w.key.table) // K5: the circle starts anew
 	}
-	if b.heal.grantExtra() {
+	if b.heal.grantExtra(now) {
 		s.rrExtraRound() // W5: one round at once in a pause above the base
 	}
 	if c == nil || c.state.Load()&rrStateSilent == 0 {

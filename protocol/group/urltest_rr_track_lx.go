@@ -653,7 +653,7 @@ func (s *URLTest) rrOnPick(ctx context.Context, tag string, t *rrTrack, now int6
 // replacement search when the pause is over (§4.2, W1) — the search only, never the
 // check of the pool (I9). The pick of a probe or a measurement starts nothing.
 func (s *URLTest) rrPoolLook(ctx context.Context) {
-	if rrUnwatched(ctx) || !s.balancer.heal.checkReady() || s.group.checking.Load() || s.group.ctx.Err() != nil {
+	if rrUnwatched(ctx) || !s.balancer.heal.ready(time.Now()) || s.group.checking.Load() || s.group.ctx.Err() != nil {
 		return
 	}
 	if s.rrSlotToFill() {
@@ -674,7 +674,7 @@ func (s *URLTest) rrPoolLook(ctx context.Context) {
 func (s *URLTest) rrLifeProbe(node adapter.Outbound, t *rrTrack, from int64, udp bool) bool {
 	heal := &s.balancer.heal
 	now := time.Now()
-	if t == nil || heal.frozen() || s.group.ctx.Err() != nil || heal.step.Load() > 0 && heal.pausing(now) ||
+	if t == nil || heal.frozen() || s.group.ctx.Err() != nil || heal.lifeHeld(now) ||
 		!heal.claimLife(t, rrClock(now), udp) {
 		return false
 	}

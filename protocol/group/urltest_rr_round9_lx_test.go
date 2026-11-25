@@ -25,23 +25,23 @@ func TestRR9_W2_growsOnlyAfterALap(t *testing.T) {
 	var h rrHeal
 	at := time.Now()
 	for i := 0; i < 3; i++ {
-		if !h.beginRoundAt(at) {
+		if !h.beginRound(at) {
 			t.Fatalf("round %d: the base pause is over", i)
 		}
-		h.endRoundAt(at, false, false)
+		h.endRound(at, true, false, false)
 		if h.pauseStep() != 0 {
 			t.Fatal("W2: no lap, the step stays at the base")
 		}
-		if h.readyAt(at.Add(rrHealGap - time.Millisecond)) {
+		if h.ready(at.Add(rrHealGap - time.Millisecond)) {
 			t.Fatal("W1: no round inside the pause")
 		}
 		at = at.Add(rrHealGap)
 	}
 	for want := int32(1); want <= rrPauseSteps+1; want++ {
-		if !h.beginRoundAt(at) {
+		if !h.beginRound(at) {
 			t.Fatal("the pause is over")
 		}
-		h.endRoundAt(at, false, true)
+		h.endRound(at, true, false, true)
 		if got := h.pauseStep(); got != min(want, rrPauseSteps) {
 			t.Fatalf("W2: step %d, want %d", got, min(want, rrPauseSteps))
 		}
@@ -50,8 +50,8 @@ func TestRR9_W2_growsOnlyAfterALap(t *testing.T) {
 	if h.pause() != 120*time.Second {
 		t.Fatalf("the ceiling is 120 s, got %v", h.pause())
 	}
-	h.beginRoundAt(at)
-	h.endRoundAt(at, true, true)
+	h.beginRound(at)
+	h.endRound(at, true, true, true)
 	if h.pauseStep() != rrPauseSteps {
 		t.Fatal("a round with an ANSWER does not grow the step; W3 resets it at the answer")
 	}
@@ -83,27 +83,27 @@ func TestRR9_W3_resetByAnswerAndSignal(t *testing.T) {
 func TestRR9_W5_oneExtraRoundPerPause(t *testing.T) {
 	var h rrHeal
 	at := time.Now()
-	h.beginRoundAt(at)
-	h.endRoundAt(at, false, false)
-	if h.grantExtraAt(at.Add(time.Second)) {
+	h.beginRound(at)
+	h.endRound(at, true, false, false)
+	if h.grantExtra(at.Add(time.Second)) {
 		t.Fatal("W5: no right at the base")
 	}
 	h.setPauseStep(2)
-	if !h.grantExtraAt(at.Add(time.Second)) || h.grantExtraAt(at.Add(2*time.Second)) {
+	if !h.grantExtra(at.Add(time.Second)) || h.grantExtra(at.Add(2*time.Second)) {
 		t.Fatal("W5: one right per pause")
 	}
 	end := h.pauseEnd()
-	if !h.beginRoundAt(at.Add(2 * time.Second)) {
+	if !h.beginRound(at.Add(2 * time.Second)) {
 		t.Fatal("W5: the right gives a round inside the pause")
 	}
-	h.endRoundAt(at.Add(3*time.Second), false, true)
+	h.endRound(at.Add(3*time.Second), true, false, true)
 	if h.pauseEnd() != end || h.pauseStep() != 2 {
 		t.Fatal("W5: the round of the right with no ANSWER keeps the step and the end of the pause")
 	}
-	if h.readyAt(at.Add(4*time.Second)) || h.grantExtraAt(at.Add(5*time.Second)) {
+	if h.ready(at.Add(4*time.Second)) || h.grantExtra(at.Add(5*time.Second)) {
 		t.Fatal("W5: the second first byte of the same pause gives no round")
 	}
-	if !h.readyAt(at.Add(h.pause())) {
+	if !h.ready(at.Add(h.pause())) {
 		t.Fatal("the pause ends as it would")
 	}
 }
@@ -360,9 +360,9 @@ func virtualRounds(f *healFixture, origin time.Time, from, to int, firstBytes bo
 			}
 		}
 		if firstBytes {
-			heal.grantExtraAt(at)
+			heal.grantExtra(at)
 		}
-		if !heal.beginRoundAt(at) {
+		if !heal.beginRound(at) {
 			continue
 		}
 		before := f.allProbes()

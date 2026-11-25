@@ -189,7 +189,7 @@ func TestRRReview9_searchUnderRunIsNoRound(t *testing.T) {
 		waitLong(t, func() bool { return !heal.roundBusy() }, 5*time.Second)
 	}
 	// The round already claimed when the run took the flag.
-	if !heal.beginCheck() {
+	if !heal.beginRound(time.Now()) {
 		t.Fatal("no round")
 	}
 	f.s.rrHealSearch()

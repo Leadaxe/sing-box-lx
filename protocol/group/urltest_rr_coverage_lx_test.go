@@ -169,25 +169,25 @@ func TestRRCov_28_34_struckLiveNodeComesBackAsCandidate(t *testing.T) {
 // gets a round at once.
 func TestRRCov_L3_oneCheckAndTheGap(t *testing.T) {
 	var heal rrHeal
-	if !heal.beginCheck() || heal.beginCheck() {
+	if !heal.beginRound(time.Now()) || heal.beginRound(time.Now()) {
 		t.Fatal("one check at a time")
 	}
-	heal.endCheck(true, false)
-	if heal.beginCheck() {
+	heal.endRound(time.Now(), true, true, false)
+	if heal.beginRound(time.Now()) {
 		t.Fatal("the gap after a check")
 	}
 	past := time.Now().Add(-rrHealGap - time.Second)
 	heal.setPauseEnd(&past)
-	if !heal.beginCheck() {
+	if !heal.beginRound(time.Now()) {
 		t.Fatal("the gap is over")
 	}
 	heal.freeze()
-	heal.endCheck(false, true)
-	if heal.pauseEnd() != nil || heal.checkReady() {
+	heal.endRound(time.Now(), true, false, true)
+	if heal.pauseEnd() != nil || heal.ready(time.Now()) {
 		t.Fatal("a check cut by a freeze leaves no gap; nothing starts in the freeze")
 	}
 	heal.epochEnd.Store(rrClock(time.Now()))
-	if !heal.checkReady() {
+	if !heal.ready(time.Now()) {
 		t.Fatal("the first check after the freeze at once")
 	}
 }
