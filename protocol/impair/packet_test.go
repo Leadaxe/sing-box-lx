@@ -84,3 +84,33 @@ func TestPacketBlockedCarrierIsolated(t *testing.T) {
 		t.Fatalf("blocked carrier wrote %d", got)
 	}
 }
+
+// The event loop logs schedule entries at their moment without traffic.
+func TestEventLoopLogsOnTime(t *testing.T) {
+	cfg, err := resolve(Options{Seed: seed(1), Schedule: []ScheduleEntry{
+		{At: "100ms", Outage: boolp(true)},
+		{At: "200ms", Outage: boolp(false)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := newShaper(cfg, realClock())
+	defer sh.close()
+	got := make(chan string, 4)
+	start := time.Now()
+	sh.logf = func(debug bool, text string) { got <- text }
+	sh.startEvents()
+	for _, want := range []string{"schedule at 100ms: up outage begins; down outage begins", "schedule at 200ms: up outage ends; down outage ends"} {
+		select {
+		case text := <-got:
+			if text != want {
+				t.Fatalf("log %q, want %q", text, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("no log %q", want)
+		}
+	}
+	if d := time.Since(start); d < 200*time.Millisecond || d > 400*time.Millisecond {
+		t.Errorf("second entry logged after %v", d)
+	}
+}

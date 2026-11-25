@@ -25,7 +25,10 @@ type shaper struct {
 	conns map[resetter]struct{}
 	done  bool
 
-	resetOnce sync.Once
+	// logf writes a link event to the outbound's log (nil: no log).
+	logf      func(debug bool, text string)
+	eventOnce sync.Once
+	kick      chan struct{} // to the event loop: a first_use schedule started
 	stopped   chan struct{}
 }
 
@@ -34,7 +37,7 @@ type resetter interface {
 }
 
 func newShaper(cfg *config, now func() int64) *shaper {
-	s := &shaper{now: now, conns: make(map[resetter]struct{}), stopped: make(chan struct{})}
+	s := &shaper{now: now, conns: make(map[resetter]struct{}), kick: make(chan struct{}, 1), stopped: make(chan struct{})}
 	s.model = newModel(cfg, now)
 	s.pumps[dirUp] = newPump(dirUp, now)
 	s.pumps[dirDown] = newPump(dirDown, now)
@@ -85,12 +88,10 @@ func (s *shaper) handleReset(reset bool) {
 // down: a silent outage makes it wait (an unanswered handshake) until the
 // link is back or ctx ends; a resetting one fails it at once.
 func (s *shaper) beforeDial(ctx context.Context) error {
-	s.model.firstUse()
-	s.resetOnce.Do(func() {
-		if times := s.model.resetTimes(); len(times) > 0 {
-			go s.resetTimer(times)
-		}
-	})
+	s.startEvents()
+	if s.model.firstUse() {
+		signal(s.kick)
+	}
 	var timer *time.Timer
 	for {
 		resetting, wait, reset := s.model.dialState()
@@ -115,16 +116,43 @@ func (s *shaper) beforeDial(ctx context.Context) error {
 	}
 }
 
-// resetTimer makes the resetting outages of the schedule happen on time
-// even when no traffic passes (the rest of the model advances lazily, on
-// the next unit of data).
-func (s *shaper) resetTimer(times []int64) {
+// eventWakeMin keeps the event loop from spinning on an event that is due
+// but not yet applied.
+const eventWakeMin = 100 * time.Microsecond
+
+// startEvents starts the event loop once (on the outbound's start, or the
+// first dial if that comes first).
+func (s *shaper) startEvents() {
+	s.eventOnce.Do(func() { go s.eventLoop() })
+}
+
+// eventLoop applies the schedule entries and stall boundaries on time even
+// when no traffic passes (the model otherwise advances lazily, on the next
+// unit of data): resets happen at their moment and the log shows each
+// event when it happens.
+func (s *shaper) eventLoop() {
 	timer := newStoppedTimer()
-	for _, at := range times {
-		if wait := at - s.now(); wait > 0 && !sleep(timer, time.Duration(wait), s.stopped, nil, nil) {
+	for {
+		reset, logs := s.model.tick()
+		if s.logf != nil {
+			for _, l := range logs {
+				s.logf(l.debug, l.text)
+			}
+		}
+		s.handleReset(reset)
+		at, ok := s.model.nextWake()
+		if !ok {
+			select {
+			case <-s.kick:
+				continue
+			case <-s.stopped:
+				return
+			}
+		}
+		wait := max(time.Duration(at-s.now()), eventWakeMin)
+		if !sleep(timer, wait, s.stopped, s.kick, nil) && isClosed(s.stopped) {
 			return
 		}
-		s.handleReset(s.model.tick())
 	}
 }
 

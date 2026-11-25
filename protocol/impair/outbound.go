@@ -52,13 +52,21 @@ func New(ctx context.Context, router adapter.Router, logger log.ContextLogger, t
 	if err != nil {
 		return nil, err
 	}
+	shaper := newShaper(cfg, realClock())
+	shaper.logf = func(debug bool, text string) {
+		if debug {
+			logger.Debug("impair outbound ", tag, ": ", text)
+		} else {
+			logger.Info("impair outbound ", tag, ": ", text)
+		}
+	}
 	return &Outbound{
 		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeImpair, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
 		logger:  logger,
 		dialer:  carrier,
 		detour:  options.Detour,
 		cfg:     cfg,
-		shaper:  newShaper(cfg, realClock()),
+		shaper:  shaper,
 	}, nil
 }
 
@@ -71,6 +79,7 @@ func (h *Outbound) Start(stage adapter.StartStage, _ *adapter.Scope) error {
 		through = "the direct dialer"
 	}
 	h.logger.Warn("impair outbound ", h.Tag(), ": traffic through ", through, " is degraded on purpose (test tool): ", h.describe())
+	h.shaper.startEvents()
 	return nil
 }
 
@@ -79,28 +88,34 @@ func (h *Outbound) describe() string {
 	if h.cfg.profile != "" {
 		text = "profile " + h.cfg.profile + "; "
 	}
-	for dir, p := range h.cfg.dirs {
+	for dir := range h.cfg.dirs {
 		if dir > 0 {
 			text += "; "
 		}
-		text += dirNames[dir] + " "
-		if p.vary != nil {
-			text += "rate " + formatRate(p.vary.min) + ".." + formatRate(p.vary.max) + "/" + p.vary.every.String()
-		} else if p.rate > 0 {
-			text += "rate " + formatRate(p.rate)
-		} else {
-			text += "rate unlimited"
-		}
-		text += " delay " + p.delay.String()
-		if p.jitter > 0 {
-			text += "±" + p.jitter.String()
-		}
-		if p.loss > 0 {
-			text += " loss " + strconv.FormatFloat(p.loss*100, 'g', 4, 64) + "%"
-		}
+		text += dirNames[dir] + " " + describeLink(&h.cfg.dirs[dir])
 	}
 	if len(h.cfg.schedule) > 0 {
 		text += "; schedule of " + strconv.Itoa(len(h.cfg.schedule)) + " entries"
+	}
+	return text
+}
+
+// describeLink is a direction's link for the log: rate, delay, loss.
+func describeLink(p *params) string {
+	var text string
+	if p.vary != nil {
+		text = "rate " + formatRate(p.vary.min) + ".." + formatRate(p.vary.max) + "/" + p.vary.every.String()
+	} else if p.rate > 0 {
+		text = "rate " + formatRate(p.rate)
+	} else {
+		text = "rate unlimited"
+	}
+	text += " delay " + p.delay.String()
+	if p.jitter > 0 {
+		text += "±" + p.jitter.String()
+	}
+	if p.loss > 0 {
+		text += " loss " + strconv.FormatFloat(p.loss*100, 'g', 4, 64) + "%"
 	}
 	return text
 }

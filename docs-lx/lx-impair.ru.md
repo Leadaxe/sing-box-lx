@@ -17,6 +17,17 @@
 WARN impair outbound slow-se: traffic through the direct dialer is degraded on purpose (test tool): up rate 10mbit delay 20ms; down rate 10mbit delay 20ms
 ```
 
+По ходу работы он пишет каждое событие линии в момент, когда оно происходит, есть трафик или нет:
+записи расписания — на уровне INFO, начало и конец случайной остановки `stall` — на DEBUG. Скачки
+скорости `vary` в лог не идут.
+
+```text
+INFO impair outbound slow-se: schedule at 55s: up outage begins, connections reset; down outage begins, connections reset
+INFO impair outbound slow-se: schedule at 65s: up rate 3mbit delay 20ms outage ends; down rate 3mbit delay 20ms outage ends
+DEBUG impair outbound slow-se: stall of the whole link for 2s
+DEBUG impair outbound slow-se: stall ends
+```
+
 При остановке ядра он пишет счётчики по направлениям: порции данных, байты, отбросы из-за полной
 очереди, потерь и обрыва, остановки потоков:
 

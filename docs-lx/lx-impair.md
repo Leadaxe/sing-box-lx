@@ -17,6 +17,17 @@ It has no place in a production config. On start it always logs a warning:
 WARN impair outbound slow-se: traffic through the direct dialer is degraded on purpose (test tool): up rate 10mbit delay 20ms; down rate 10mbit delay 20ms
 ```
 
+While it runs it logs each link event at the moment it happens, with or without traffic: schedule
+entries at INFO, the start and end of a random `stall` at DEBUG. Rate swings of `vary` are not
+logged.
+
+```text
+INFO impair outbound slow-se: schedule at 55s: up outage begins, connections reset; down outage begins, connections reset
+INFO impair outbound slow-se: schedule at 65s: up rate 3mbit delay 20ms outage ends; down rate 3mbit delay 20ms outage ends
+DEBUG impair outbound slow-se: stall of the whole link for 2s
+DEBUG impair outbound slow-se: stall ends
+```
+
 When the core stops it logs counters per direction: units of data, bytes, drops on a full queue, on
 loss and in an outage, and stream stalls:
 

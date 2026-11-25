@@ -375,3 +375,42 @@ func TestParsers(t *testing.T) {
 		t.Errorf("0.5%%: %v %v", p, err)
 	}
 }
+
+func TestEventLogs(t *testing.T) {
+	m, clock := newTestModel(t, Options{Schedule: []ScheduleEntry{
+		{At: "1s", Outage: boolp(true), Reset: true},
+		{At: "2s", Outage: boolp(false), Direction: "up", ImpairLinkOptions: LinkOptions{Rate: "3mbit"}},
+	}})
+	clock.set(1500 * time.Millisecond)
+	reset, logs := m.tick()
+	if !reset || len(logs) != 1 || logs[0].debug || logs[0].text != "schedule at 1s: up outage begins, connections reset; down outage begins, connections reset" {
+		t.Fatalf("at 1.5s: reset %v, logs %+v", reset, logs)
+	}
+	if at, ok := m.nextWake(); !ok || at != int64(2*time.Second) {
+		t.Fatalf("next wake %v %v, want 2s", at, ok)
+	}
+	clock.set(2 * time.Second)
+	if _, logs = m.tick(); len(logs) != 1 || logs[0].text != "schedule at 2s: up rate 3mbit delay 0s outage ends" {
+		t.Fatalf("at 2s: %+v", logs)
+	}
+	if _, ok := m.nextWake(); ok {
+		t.Fatal("a wake after the last entry")
+	}
+}
+
+func TestStallLogs(t *testing.T) {
+	m, clock := newTestModel(t, Options{Stall: &StallOptions{Every: "10s", Duration: "1s"}})
+	start, _ := m.nextWake()
+	clock.set(time.Duration(start))
+	if _, logs := m.tick(); len(logs) != 1 || !logs[0].debug || logs[0].text != "stall of the whole link for 1s" {
+		t.Fatalf("stall start: %+v", logs)
+	}
+	end, _ := m.nextWake()
+	if end != start+int64(time.Second) {
+		t.Fatalf("stall end wake %v, want %v", end, start+int64(time.Second))
+	}
+	clock.set(time.Duration(end))
+	if _, logs := m.tick(); len(logs) != 1 || logs[0].text != "stall ends" {
+		t.Fatalf("stall end: %+v", logs)
+	}
+}

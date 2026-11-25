@@ -3,6 +3,7 @@ package impair
 import (
 	"math"
 	"math/rand/v2"
+	"strings"
 	"sync"
 	"time"
 )
@@ -86,6 +87,26 @@ type model struct {
 	stallEnd   int64
 
 	nextCheck int64 // before this time advance has nothing to do
+
+	stallOn bool       // the last stall state advance saw (for the log)
+	logs    []logEvent // events for the log, taken by tick
+}
+
+// logEvent is a link event for the log: schedule entries at INFO, stall
+// boundaries at DEBUG.
+type logEvent struct {
+	debug bool
+	text  string
+}
+
+// maxPendingLogs bounds the events waiting for tick (a model without the
+// event loop, as in the unit tests, drops the rest).
+const maxPendingLogs = 256
+
+func (m *model) note(debug bool, text string) {
+	if len(m.logs) < maxPendingLogs {
+		m.logs = append(m.logs, logEvent{debug: debug, text: text})
+	}
 }
 
 func newModel(cfg *config, now func() int64) *model {
@@ -117,15 +138,18 @@ func (m *model) expSample(mean time.Duration) int64 {
 	return int64(m.stallRng.ExpFloat64() * float64(mean))
 }
 
-// firstUse starts a "start": "first_use" schedule.
-func (m *model) firstUse() {
+// firstUse starts a "start": "first_use" schedule. It reports whether
+// this call started it.
+func (m *model) firstUse() bool {
 	m.mu.Lock()
-	if !m.schedStarted {
-		m.schedStarted = true
-		m.schedBase = m.now()
-		m.nextCheck = 0
+	defer m.mu.Unlock()
+	if m.schedStarted {
+		return false
 	}
-	m.mu.Unlock()
+	m.schedStarted = true
+	m.schedBase = m.now()
+	m.nextCheck = 0
+	return true
 }
 
 // advance applies what became due by now: schedule entries, stall
@@ -164,6 +188,7 @@ func (m *model) advance(now int64) (reset bool) {
 					}
 				}
 			}
+			m.note(false, m.describeEvent(ev))
 		}
 	}
 	if stall := m.cfg.stall; stall != nil {
@@ -175,6 +200,14 @@ func (m *model) advance(now int64) (reset bool) {
 			next = min(next, m.stallStart)
 		} else {
 			next = min(next, m.stallEnd)
+		}
+		if on := now >= m.stallStart; on != m.stallOn {
+			m.stallOn = on
+			if on {
+				m.note(true, "stall of the whole link for "+stall.duration.String())
+			} else {
+				m.note(true, "stall ends")
+			}
 		}
 	}
 	for dir := range m.links {
@@ -198,29 +231,59 @@ func (m *model) advance(now int64) (reset bool) {
 	return reset
 }
 
-// resetTimes are the moments of the resetting outages still to come (the
-// schedule must act on them even without traffic). Empty before a
-// first_use schedule has started.
-func (m *model) resetTimes() []int64 {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.schedStarted {
-		return nil
-	}
-	var times []int64
-	for _, ev := range m.cfg.schedule[m.nextEvent:] {
-		if ev.reset {
-			times = append(times, m.schedBase+int64(ev.at))
+// describeEvent is the log line of a schedule entry just applied.
+func (m *model) describeEvent(ev *event) string {
+	var parts []string
+	for dir, on := range ev.dirs {
+		if !on {
+			continue
 		}
+		text := dirNames[dir]
+		if ev.link != nil {
+			text += " " + describeLink(&m.links[dir].p)
+		}
+		if ev.outage != nil {
+			switch {
+			case *ev.outage && ev.reset:
+				text += " outage begins, connections reset"
+			case *ev.outage:
+				text += " outage begins"
+			default:
+				text += " outage ends"
+			}
+		}
+		parts = append(parts, text)
 	}
-	return times
+	return "schedule at " + ev.at.String() + ": " + strings.Join(parts, "; ")
 }
 
-// tick applies what became due by now.
-func (m *model) tick() (reset bool) {
+// nextWake is when the next logged event is due: a schedule entry or a
+// stall boundary (not a vary draw). ok is false when nothing is pending:
+// no stall and the schedule is done or, with first_use, not started.
+func (m *model) nextWake() (at int64, ok bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.advance(m.now())
+	at = math.MaxInt64
+	if m.schedStarted && m.nextEvent < len(m.cfg.schedule) {
+		at = m.schedBase + int64(m.cfg.schedule[m.nextEvent].at)
+	}
+	if m.cfg.stall != nil {
+		if m.now() < m.stallStart {
+			at = min(at, m.stallStart)
+		} else {
+			at = min(at, m.stallEnd)
+		}
+	}
+	return at, at != math.MaxInt64
+}
+
+// tick applies what became due by now and takes the events for the log.
+func (m *model) tick() (reset bool, logs []logEvent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	reset = m.advance(m.now())
+	logs, m.logs = m.logs, nil
+	return reset, logs
 }
 
 func (m *model) stalled(now int64) bool {
