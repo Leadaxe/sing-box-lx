@@ -100,10 +100,15 @@ process: two checks are often 10–15 minutes apart. That is too rare for live t
 dies right after a check would keep its share of new connections until the next one. So a
 `round_robin` group has recovery mechanisms driven by the connections themselves. A failed node
 does not drop connections: one that does not open through the dead node opens through the next
-one, and the node is replaced with a live one at once, without waiting for the check. A site
-closed to one node moves to another node of the pool, while the rest of the traffic stays on its
-nodes by stickiness. When the local network is lost (device sleep, a Wi-Fi switch), the group
-strikes out no node, and once the network is back the pool is the same.
+one, and the node is replaced with a live one without waiting for the check. A site closed to one
+node moves to another node of the pool, while the rest of the traffic stays on its nodes by
+stickiness.
+
+One error decides nothing: silence, a node's refusal or a client leaving give only a retry
+through another slot, a probe of the node and a count. A node is struck out only when it stayed
+silent on its own probe while a control node in the same check answered. If nobody answered,
+there is no conclusion and the pool does not change. Only a node that answered its own probe
+takes an empty slot.
 
 There is nothing to configure: the behaviour is always on, with no config keys.
 
@@ -111,11 +116,11 @@ There is nothing to configure: the behaviour is always on, with no config keys.
 
 | What happened | What the group does | What the application sees |
 |---|---|---|
-| A pool node died between checks: the server process stopped, the host went down | A connection that does not open through the node is retried through the next slot. The node is struck out, and its slot gets a replacement from outside the pool | No failed connection. If the host is down rather than the process, the first connection waits up to 5 s for the failure, then the retry runs |
-| A node accepts connections and stays silent | After 5 s new connections skip its slot. After 20 s (the 5 s wait and the 15 s probe timeout) the node is struck out and replaced. Connections still opening through it are retried through another node; open connections still waiting for a first byte are closed | Connections that reached the node in its first 5 s wait until it is struck out or the application gives up; the application repeats a closed one |
-| A destination is unreachable through one node: a geo-restriction, the site bans the node's address | After the first failure the group checks that the node itself answers and moves this destination to the next slot. Other destinations stay on their nodes | The first request can fail (see the limits); the next ones go through another node |
-| A node answers probes but fails a noticeable share of connections | A node with at least 5 % failures and more than twice the pool median goes to quarantine: its slot is skipped and gets a replacement until the next scheduled check | Fewer failed connections |
-| The local network is gone: device sleep, a Wi-Fi or mobile network switch, an ISP outage | Nothing answers, so no node is struck out, and the group freezes for 15 s | The same pool once the network is back |
+| A pool node died between checks: the server process stopped, the host went down | A connection that does not open through the node is retried through another slot, and the node gets a probe. Silent while the control answered — it is struck out, and its slot gets a replacement | No failed connection. If the host is down rather than the process, the first connection waits for the failure and goes to the retry; from the fifth second of waiting new connections skip the slot |
+| A node accepts connections and stays silent | After 5 s new connections skip its slot, and the node gets a probe. About 36 s after the silence began the node is struck out and replaced. Connections still opening through it are retried through another node; open connections still waiting for a first byte are closed | Connections that reached the node in its first 5 s are lost; the application repeats a closed one |
+| A destination is unreachable through one node: a geo-restriction, the site bans the node's address | An explicit refusal from the node or the site — the connection is retried through another slot at once, and the destination moves to the next slot. A close without a code or a site silent for over 15 s — the destination moves on the second such case on the same node, if the node answered other sites in between. Other destinations stay on their nodes | On an explicit refusal — nothing; otherwise the first request can fail (see the limits), the next ones go through another node |
+| A node answers probes but fails a noticeable share of connections | A node with at least 5 % failures and more than twice the pool median goes to quarantine: its slot is skipped and gets a replacement until the next scheduled check or network change | Fewer failed connections |
+| The local network is gone: device sleep, a Wi-Fi or mobile network switch, an ISP outage | The group does not conclude "the network is down" from probes: when nobody answers, nobody is struck out. A wake, a network change or a clock jump over 10 s freezes the group for 15 s: the retry through another slot works, there are no conclusions and no records | The same pool once the network is back |
 
 Where it shows:
 
@@ -125,21 +130,23 @@ Where it shows:
   choice;
 - phones and laptops — sleep and network switches do not lose the pool.
 
-Six limits:
+Limits:
 
 - Only `mode: round_robin` recovers this way. `least_test` and `failover` keep their penalty and
   fallback dial on "path is dead" errors ([§2](#2-least_test--fastest-node)).
-- The first request to a destination closed to a node can still fail. Through VLESS, Trojan, VMess
-  and Shadowsocks the failure shows only after the connection has opened, so the group does not
-  retry it; the application does. Through `direct` and WireGuard such a request waits out two
-  timeouts in a row.
+- The first request to a destination closed to a node without an explicit refusal can fail.
+  Through VLESS, Trojan, VMess and Shadowsocks such a failure shows only after the connection has
+  opened, so the group does not retry it; the application does, and the destination moves to
+  another node from the second failure.
 - A destination stays on its new slot until the core restarts. The table holds 1024 keys, and the
   oldest drops out when it is full. A destination closed through every pool node returns to its
-  own slot until the next check.
+  own slot until the next check or network change.
 - With stickiness off (`sticky_hash: ["none"]`) destinations do not move; dead and quarantined
   nodes are still skipped.
-- UDP is covered in part: a dead node is struck out for UDP too, but UDP failures move no keys and
-  do not count toward quarantine.
+- UDP is covered in part: a flow that fails to open is retried and a dead node is struck out for
+  UDP too, but UDP failures move no keys and do not count toward quarantine.
+- A network change the platform does not report (Windows Modern Standby included) can strike out
+  a live node once. It comes back by itself at the next replacement or check.
 - Each connection costs a little extra work when it opens. Download and upload speed stay at the
   level of a build without self-heal; the difference shows only in a synthetic run of thousands
   of very short connections in a row ([measurements](../SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/IMPLEMENTATION_REPORT.md)).
@@ -153,15 +160,15 @@ address problems and the freeze:
 - a moved key — a site closed to its node has moved to the next pool node;
 - an address problem — the site did not open through any pool node and went back to its own node
   until the next check or network change;
-- the freeze — for 15 s after the network is lost, the device wakes or the network changes, the
-  group touches nothing.
+- the freeze — for 15 s after the device wakes, the network changes or the clock jumps, the group
+  draws no conclusions; the retry through another slot works.
 
 The daemon's `GetPool` carries the same: per slot `quarantined`, `connections` and
 `confirmedFailures`, per group `shiftedKeys`, `markedKeys`, `frozen` and `frozenSeconds`. In
 libbox the group fields come with `GetPoolState` ([§8](lx-observability.md)).
 The connection list shows the node each connection went through, including a retry. The full
-rules are in
-[SPEC 138 §3](../SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md#3-самовосстановление-по-отказу-соединения).
+rules are in [SPEC 138](../SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md), the exact
+definitions and constants in [ALGORITHM.md](../SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/ALGORITHM.md).
 
 ### Example — urltest with round_robin
 
