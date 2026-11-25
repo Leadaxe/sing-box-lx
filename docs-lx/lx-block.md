@@ -169,7 +169,7 @@ Validation error: `lx.trusttunnel.idle_timeout must be >= 0` for a negative dura
 ## `lx.mtu_align` — path MTU / packet-size alignment
 
 A node can sit right above an IP tunnel: via `detour`, via a group under `detour`, or as a
-`chain` link ([§10](lx-config.md#10-chain-outbound--a-virtual-multi-hop-path-of-groups-and-nodes)).
+`chain` link ([§10](lx-chain.md)).
 Such a node gets a packet size that fits the tunnel: `mtu` on tunnels (`wireguard`, `masque`),
 `initial_packet_size` plus `disable_path_mtu_discovery: true` on QUIC proxies (`hysteria2`,
 `tuic`, `hysteria`). The size is computed once at start from the config, before the nodes are

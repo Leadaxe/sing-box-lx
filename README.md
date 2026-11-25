@@ -165,7 +165,7 @@ Entry, middle and exit are each chosen by their own selector or `urltest`, and t
 
 The path shows in `detourList` and `GetChains`; the hop tags `<tag>#0`, `<tag>#1`, … give per-layer latency through URLTest. Limits: verified on a live stand with real hops; WireGuard links have not been checked on a device.
 
-`with_lx_chain` · [feature](SPECS/FEATURES/015-CHAIN/FEATURE.md) · [config](docs-lx/lx-config.md#10-chain-outbound--a-virtual-multi-hop-path-of-groups-and-nodes) ([RU](docs-lx/lx-config.ru.md#10-outbound-chain--виртуальная-цепочка-хопов-из-групп-и-узлов))
+`with_lx_chain` · [feature](SPECS/FEATURES/015-CHAIN/FEATURE.md) · [config](docs-lx/lx-chain.md) ([RU](docs-lx/lx-chain.ru.md))
 
 ### `urltest` balances across a pool or holds one node until it fails
 

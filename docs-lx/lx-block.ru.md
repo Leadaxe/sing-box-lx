@@ -171,7 +171,7 @@ Running-config (`GetRunningConfig`) отдаёт блок `lx` в канонич
 ## `lx.mtu_align` — выравнивание MTU и размера пакета по пути
 
 Узел может стоять прямо над IP-туннелем: через `detour`, через группу под `detour` или как звено
-`chain` ([§10](lx-config.ru.md#10-outbound-chain--виртуальная-цепочка-хопов-из-групп-и-узлов)). Такой
+`chain` ([§10](lx-chain.ru.md)). Такой
 узел получает размер пакета, который влезает в туннель: `mtu` у туннелей (`wireguard`,
 `masque`), `initial_packet_size` плюс `disable_path_mtu_discovery: true` у QUIC-прокси
 (`hysteria2`, `tuic`, `hysteria`). Размер считается один раз на старте по конфигу, до создания

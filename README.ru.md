@@ -165,7 +165,7 @@ WARP работает там, где не отвечает его WireGuard-endp
 
 Путь виден в `detourList` и `GetChains`; теги хопов `<tag>#0`, `<tag>#1`, … дают задержку каждого слоя через URLTest. Ограничения: проверено на живом стенде с реальными хопами; WireGuard-звенья на устройстве не проверялись.
 
-`with_lx_chain` · [фича](SPECS/FEATURES/015-CHAIN/FEATURE.md) · [конфиг](docs-lx/lx-config.ru.md#10-outbound-chain--виртуальная-цепочка-хопов-из-групп-и-узлов) ([EN](docs-lx/lx-config.md#10-chain-outbound--a-virtual-multi-hop-path-of-groups-and-nodes))
+`with_lx_chain` · [фича](SPECS/FEATURES/015-CHAIN/FEATURE.md) · [конфиг](docs-lx/lx-chain.ru.md) ([EN](docs-lx/lx-chain.md))
 
 ### `urltest` балансирует по пулу или держит один узел до отказа
 
