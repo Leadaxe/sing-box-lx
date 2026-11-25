@@ -99,9 +99,9 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 		if err != nil {
 			return nil, err
 		}
-		return lxDestinationRefused(N.DialSerial(ctx, h.client, network, destination, destinationAddresses)) // lx: SPEC 138 — tell the destination's refusal from the node's failure
+		return h.lxDestinationRefused(N.DialSerial(ctx, h.client, network, destination, destinationAddresses)) // lx: SPEC 138 — tell the destination's refusal from the node's failure
 	}
-	return lxDestinationRefused(h.client.DialContext(ctx, network, destination)) // lx: SPEC 138 — tell the destination's refusal from the node's failure
+	return h.lxDestinationRefused(h.client.DialContext(ctx, network, destination)) // lx: SPEC 138 — tell the destination's refusal from the node's failure
 }
 
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {

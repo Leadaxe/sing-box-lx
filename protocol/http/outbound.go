@@ -67,7 +67,7 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	metadata.Destination = destination
 	h.logger.InfoContext(ctx, "outbound connection to ", destination)
 	// lx:begin SPEC 161 — bound CONNECT without changing the dial deadline
-	return dialHTTPWithHandshakeTimeoutLx(ctx, h.client, network, destination)
+	return dialHTTPWithHandshakeTimeoutLx(ctx, h.Tag(), h.client, network, destination)
 	// lx:end SPEC 161
 }
 

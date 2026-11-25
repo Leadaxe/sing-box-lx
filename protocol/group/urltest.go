@@ -743,13 +743,13 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 					b.history.DeleteURLTestHistory(tag)
 				} else {
 					b.logger.Debug("outbound ", tag, " available: ", testResult.delay, "ms")
-					if b.onAlive != nil {
-						b.onAlive(tag) // lx: SPEC 054 — ответ на пробу = доказательство жизни
-					}
 					b.history.StoreURLTestHistory(tag, &adapter.URLTestHistory{
 						Time:  time.Now(),
 						Delay: testResult.delay,
 					})
+					if b.onAlive != nil {
+						b.onAlive(tag) // lx: SPEC 054 — ответ на пробу = доказательство жизни; SPEC 019 — after the history write: the pool fill sees the node alive
+					}
 					b.access.Lock()
 					b.result[tag] = testResult.delay
 					b.access.Unlock()
