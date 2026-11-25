@@ -63,23 +63,24 @@ Only inbound connections are affected by this setting, internal connections will
 
 Load-balancing mode — how a node is chosen per connection:
 
-- `least_test` (default, also when empty): pick the lowest-delay node. This is upstream's
-  behaviour; `balancer` must not be set.
-- `round_robin`: rotate over a fixed-size **pool** of nodes (see `balancer`). Selection
-  happens once per connection; a UDP/QUIC session stays on one node. Designed to scale to
-  large node lists — only the pool is health-checked, not every node.
-- `failover` (SPEC 116): pick the lowest-delay node and **hold it until it fails**, even if
-  another node becomes faster. Each `interval` only the held node is tested. When it fails
-  a test, or a dial through it fails with a "path is dead" error, the group moves to the
-  lowest-delay live node and holds that one. A degraded node moves too (SPEC 126): when the
-  held node answers more than 2× slower than the fastest other node of the same network,
-  it is tested once more; still more than 2× slower → every node is tested, and the group
-  moves only to a node more than 1.5× faster (otherwise the whole network got slower, not
-  the node). These ratios have no config key. A manual URL test tests every node and
-  re-selects the fastest. `tolerance` is ignored (a startup warning says so); `balancer`
+- `least_test` (default, also when empty): pick the lowest-delay node, as upstream does. A
+  dial that fails with a "path is dead" error gives the node a penalty and retries once
+  through the next node ([lx-config.md §3.2](../../../docs-lx/lx-config.md#32-least_test--fastest-node)). `balancer`
   must not be set.
+- `round_robin`: rotate over a fixed-size **pool** of nodes (see `balancer`). Selection
+  happens once per connection; a UDP/QUIC session stays on one node. Only the pool is
+  health-checked, not every node, so the mode suits large node lists
+  ([lx-config.md §3.3](../../../docs-lx/lx-config.md#33-round_robin--pool-with-stickiness)).
+- `failover`: pick the fastest node and stay on it until it fails, even if another node gets
+  faster. Each `interval` only that node is tested. The group moves to the fastest live node
+  when the node fails a test, when a dial through it fails with a "path is dead" error, or
+  when it answers more than 2× slower than the fastest other node twice in a row and another
+  node is more than 1.5× faster. A manual URL test tests every node and picks the fastest.
+  `tolerance` is ignored with a startup warning; `balancer` must not be set
+  ([lx-config.md §3.4](../../../docs-lx/lx-config.md#34-failover--hold-until-it-fails)).
 
 `least_connection` is rejected at load: `round_robin` already spreads connections evenly.
+Which mode to pick: [lx-config.md §3.5](../../../docs-lx/lx-config.md#35-choosing-a-mode).
 
 #### balancer
 
@@ -159,7 +160,8 @@ slot (so keyless flows do not rotate). Allowed values:
 
 Binding is to a fixed **slot index** (`slot[hash(key) % pool]`), not a node position. Since
 slots never move and a replacement takes the exact slot it evicts, a node that stays in its
-slot keeps all its keys when other slots change — no needless reconnects, no per-key state.
+slot keeps all its keys when other slots change — no needless reconnects, no per-key state
+([lx-config.md](../../../docs-lx/lx-config.md#slot-hash-binding)).
 
 !!! note
 
