@@ -227,6 +227,18 @@ sing-box lxd --state-dir ./lxd-state -c config.json
 
 `with_lxd` · проверено на macOS; скрипты для OpenWrt опробованы в поле · [фича](SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md) · [руководство оператора](docs-lx/lxd-daemon.ru.md) ([EN](docs-lx/lxd-daemon.md)) · [VPN на отдельном SSID на OpenWrt](docs-lx/openwrt-vpn-ssid.ru.md) ([EN](docs-lx/openwrt-vpn-ssid.md))
 
+### `impair` ухудшает линию для испытаний
+
+Тестовый outbound: соединяется как `direct` или через свой `detour` и намеренно ухудшает всё, что через него проходит, — узкое место с очередью, задержка и разброс, потери сериями, скачки скорости, остановки и обрывы по расписанию. Без root и netem, в обе стороны с одного конца. Ставится под прокси-узел и проверяет балансировку, failover и цепочки на живых серверах под плохой линией.
+
+```json
+{"type": "impair", "tag": "slow-se", "rate": "10mbit", "vary": {"min": "3mbit", "max": "12mbit", "every": "2s"}, "loss": "0.5%", "seed": 1}
+```
+
+Ограничения: инструмент для испытаний, в релизных бинарях и в AAR его нет; приём ухудшается после настоящей сети.
+
+`with_lx_impair` · [фича](SPECS/FEATURES/020-IMPAIR/FEATURE.md) · [конфиг](docs-lx/lx-impair.ru.md) ([EN](docs-lx/lx-impair.md))
+
 ## Кто использует
 
 Одно и то же ядро и один и тот же JSON конфига работают в разных продуктах; маппинг ссылок подписок на поля конфига — работа самого продукта.

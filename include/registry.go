@@ -96,6 +96,9 @@ func OutboundRegistry() *outbound.Registry {
 	// lx:begin chain
 	registerChainOutbound(registry)
 	// lx:end chain
+	// lx:begin impair
+	registerImpairOutbound(registry)
+	// lx:end impair
 
 	socks.RegisterOutbound(registry)
 	http.RegisterOutbound(registry)
