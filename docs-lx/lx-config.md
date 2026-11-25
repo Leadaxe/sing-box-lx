@@ -581,8 +581,7 @@ Eight limits:
 - There are no config keys: the behaviour is always on and cannot be tuned.
 - Each connection costs a little extra work when it opens. Download and upload speed stay at the
   level of a build without self-heal; the difference shows only in a synthetic run of thousands
-  of very short connections in a row: on a NanoPi it takes up to 8 % more CPU time to open a
-  connection, and the run itself is 1.6 % longer.
+  of very short connections in a row ([measurements](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/IMPLEMENTATION_REPORT.md)).
 
 `sing-box api group pool <tag>` (a build with `with_lx_command`) shows the state: a slot table
 with `STATE` (`live`/`dead`/`quarantined`), `CONNECTIONS` and `FAILURES`, plus the moved keys, the
