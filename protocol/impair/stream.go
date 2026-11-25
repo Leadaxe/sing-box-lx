@@ -24,6 +24,11 @@ import (
 // connection (in flight between admission and delivery): rate × delay.
 const lineCap = 16 << 20
 
+// flushLimit bounds how long Close waits for the writer to deliver what was
+// written before it (a TCP close sends the send buffer too); an outage or a
+// slow line longer than this loses the rest.
+const flushLimit = 5 * time.Second
+
 type seg struct {
 	due int64
 	bp  *[]byte
@@ -81,9 +86,11 @@ type streamConn struct {
 	upQ      segQueue
 	upBytes  int
 	upFin    bool
+	upBusy   bool // the writer is writing a batch to the carrier
 	werr     error
 	upSig    chan struct{} // to the writer: a segment was queued
 	upSpace  chan struct{} // to Write: the line has room
+	upIdle   chan struct{} // to Close: the writer finished a batch
 	wDead    deadline
 	upClosed chan struct{} // the writer goroutine has ended
 
@@ -109,6 +116,7 @@ func newStreamConn(s *shaper, under net.Conn) *streamConn {
 		rtimer:   newStoppedTimer(),
 		upSig:    make(chan struct{}, 1),
 		upSpace:  make(chan struct{}, 1),
+		upIdle:   make(chan struct{}, 1),
 		rxSig:    make(chan struct{}, 1),
 		rxSpace:  make(chan struct{}, 1),
 		wDead:    makeDeadline(),
@@ -243,10 +251,15 @@ func (c *streamConn) writeLoop() {
 		}
 		if head.fin {
 			c.upQ.pop()
+			c.upBusy = true
 			c.upMu.Unlock()
 			if closer, ok := c.under.(interface{ CloseWrite() error }); ok {
 				_ = closer.CloseWrite()
 			}
+			c.upMu.Lock()
+			c.upBusy = false
+			c.upMu.Unlock()
+			signal(c.upIdle)
 			continue
 		}
 		now := c.sh.now()
@@ -261,13 +274,46 @@ func (c *streamConn) writeLoop() {
 			c.upBytes -= s.n
 			c.upQ.pop()
 		}
+		c.upBusy = true
 		c.upMu.Unlock()
 		signal(c.upSpace)
-		if _, err := c.under.Write(scratch); err != nil {
-			c.upMu.Lock()
+		_, err := c.under.Write(scratch)
+		c.upMu.Lock()
+		c.upBusy = false
+		if err != nil {
 			c.werr = err
-			c.upMu.Unlock()
+		}
+		c.upMu.Unlock()
+		signal(c.upIdle)
+		if err != nil {
 			signal(c.upSpace)
+			return
+		}
+	}
+}
+
+// flush waits, up to flushLimit, until the writer has delivered everything
+// queued by Write and CloseWrite. Not on a reset or the outbound's close.
+func (c *streamConn) flush() {
+	limit := time.NewTimer(flushLimit)
+	defer limit.Stop()
+	for {
+		if c.resetErr.Load() || isClosed(c.sh.stopped) {
+			return
+		}
+		c.upMu.Lock()
+		done := c.upQ.size == 0 && !c.upBusy || c.werr != nil
+		c.upMu.Unlock()
+		if done {
+			return
+		}
+		select {
+		case <-c.upIdle:
+		case <-c.upClosed:
+			return
+		case <-c.sh.stopped:
+			return
+		case <-limit.C:
 			return
 		}
 	}
@@ -397,6 +443,7 @@ func (c *streamConn) Read(p []byte) (int, error) {
 func (c *streamConn) Close() error {
 	var err error
 	c.closeOnce.Do(func() {
+		c.flush()
 		close(c.closed)
 		err = c.under.Close()
 		c.sh.unregister(c)

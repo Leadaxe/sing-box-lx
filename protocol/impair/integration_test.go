@@ -582,3 +582,31 @@ func TestIntegrationSharedBottleneck(t *testing.T) {
 	}
 	checkRate(t, "4 tcp flows together", got.rate(500*time.Millisecond, 2500*time.Millisecond), 8e6)
 }
+
+// Close delivers what was written before it, as a TCP close sends the send
+// buffer: nothing written is lost in the delay line.
+func TestIntegrationTCPCloseFlushes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real time")
+	}
+	instance := boxWith(t, `{"type": "impair", "tag": "slow", "rate": "8mbit", "queue": "1s", "delay": "300ms"}`)
+	sinkAddr, got := tcpSink(t)
+	conn, err := outboundOf(t, instance, "slow").DialContext(context.Background(), "tcp", dest(sinkAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const size = 200 << 10
+	if _, err = conn.Write(make([]byte, size)); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	conn.Close()
+	t.Logf("close took %v", time.Since(start))
+	deadline := time.Now().Add(2 * time.Second)
+	for got.total() < size && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if total := got.total(); total != size {
+		t.Errorf("sink got %d bytes, want %d", total, size)
+	}
+}
