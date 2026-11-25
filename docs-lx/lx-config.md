@@ -29,6 +29,7 @@
 - [12. Validate & build](#12-validate--build)
 - [13. The `lx` root block](#13-the-lx-root-block)
 - [14. Tailscale: turning Taildrop off](#14-tailscale-turning-taildrop-off)
+- [15. `impair` outbound — a degraded link for testing](#15-impair-outbound--a-degraded-link-for-testing)
 
 ---
 
@@ -48,6 +49,7 @@
 | **VLESS `encryption`** | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
 | **`lxd` daemon** | `with_lxd` | not a config key — the `sing-box lxd` subcommand + `<state-dir>/daemon.json`; see [lxd-daemon.md](lxd-daemon.md) | desktop / server (not Win7, not AAR) |
 | **`chain` outbound** | `with_lx_chain` | `outbounds[].type: "chain"` — a multi-hop path of groups and nodes | desktop + mobile |
+| **`impair` outbound** | `with_lx_impair` | `outbounds[].type: "impair"` — a link degraded on purpose for testing, [§15](#15-impair-outbound--a-degraded-link-for-testing) | desktop + mobile |
 
 `make -f Makefile.lx lx-build` builds the desktop/CLI binary: the output is `sing-box` with version `…-lx.N`.
 The build includes `with_xhttp` and `with_awg` (plus `with_lx_command` and `with_lxd`), but not `with_lx_idle_suspend`.
@@ -519,3 +521,37 @@ sleep energy model is in [lx-energy.md](lx-energy.md).
 
 With `true` the node accepts no files: the sender gets a 403 `Taildrop is disabled on this node`. Sending from the node is refused as well, and the status reports `canShareFiles = false`. Files received earlier stay in `taildrop_directory` and can still be opened and deleted. Other devices on the tailnet still see the node as a target: that is set by the Tailscale admin console, not by the node.
 
+---
+
+## 15. `impair` outbound — a degraded link for testing
+
+The `impair` outbound degrades the connections that go through it on purpose: a bottleneck with a
+queue, delay and its jitter, bursty loss, rate swings, stalls and scheduled outages. It dials like
+`direct` or through its own `detour`, degrades both directions from one end, and needs no root and
+no netem. Use it to test balancing, failover and chains against real servers over a bad link. The
+build tag `with_lx_impair` is in the desktop `LX_TAGS` and in the AAR; until a config declares
+`"type": "impair"` it does nothing. On start `impair` logs a warning that the link is degraded on
+purpose.
+
+| Key | Default | What it sets |
+|-----|---------|--------------|
+| `rate` | unlimited | bottleneck rate: `"10mbit"`, `"500kbit"`, `"unlimited"` |
+| `queue` | `"50ms"` | queue before the bottleneck: time at the current rate or a size (`"64KB"`) |
+| `delay`, `jitter` | `0` | added one-way delay and its spread |
+| `loss`, `loss_burst` | `0`, `1` | share of loss (`"0.5%"`) and mean length of a loss run |
+| `vary` | none | rate swings: `{"min", "max", "every"}` |
+| `up`, `down` | — | the same keys for one direction |
+| `stall`, `schedule` | none | random stops of the link; changes and outages over time |
+| `profile` | none | a ready set: `dsl`, `lte-walk`, `wifi-lossy` |
+| `seed` | random | the seed: the same one gives the same losses and swings |
+
+The main placement is under a proxy node: the proxy points at `impair` with its `detour`, and the
+road to the proxy server is degraded.
+
+```jsonc
+{"type": "vless", "tag": "via-se", "server": "se.example.net", "server_port": 443, "detour": "slow-se" /* … */},
+{"type": "impair", "tag": "slow-se", "rate": "10mbit", "delay": "20ms", "loss": "0.5%", "seed": 1}
+```
+
+Every key with its range, how datagrams and streams are degraded, the profiles, the errors and
+recipes for `round_robin` and `failover` tests — in [lx-impair.md](lx-impair.md).
