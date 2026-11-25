@@ -6,7 +6,7 @@ package tls
 // ClientHello through the wrapper of its uTLS config (SPEC 088).
 
 func (c *UTLSClientConfig) sniffGuardNodeLx() sniffGuardNode {
-	return sniffGuardNode{c.fragment, c.recordFragment, c.fragmentChosen, c.fragmentFallbackDelay}
+	return sniffGuardNode{c.fragment, c.recordFragment, c.fragmentChosen, c.fragmentFallbackDelay, c.ctx}
 }
 
 func (e *RealityClientConfig) sniffGuardNodeLx() sniffGuardNode {
