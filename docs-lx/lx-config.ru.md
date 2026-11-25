@@ -140,8 +140,6 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption`, `round_robin`-бала
         "detour_type": { "socks": "never" }     // дефолт: общая карта. Перекрытие для QUIC
       }
     }
-    // "quic_sniff_decoy" удалён: любое значение — ошибка загрузки, замена — sniff_guard.quic (§13)
-    // "awg_masquerade" удалён в lx.33: любое значение — ошибка загрузки, пачка AWG идёт на любом пути (§13)
   },
 
   "outbounds": [
@@ -1265,6 +1263,7 @@ windows/386. Остальные фичи в нём без изменений.
 описывает конкретный узел, остаётся в его объекте, как в апстриме: поля AWG — в endpoint'е, `xhttp` —
 в `transport`, собственный `idle_timeout` masque-узла — в узле. Все подблоки и ключи опциональны;
 пустой `lx` и отсутствующий равнозначны. Опечатка в имени ключа — ошибка загрузки, не тихий дефолт.
+Running-config (`GetRunningConfig`) отдаёт блок `lx` в канонической форме: пустые подблоки отброшены.
 
 ```jsonc
 "lx": {
@@ -1386,7 +1385,7 @@ windows/386. Остальные фичи в нём без изменений.
 - `lx.wg.idle.<ключ> must be >= 0` для отрицательной длительности, `lx.wg.idle.build_max must be >= 0`
 - `lx.wg.idle.build_overflow must be "wait" or "build"`
 - `lx.wg.buffers.read_datagram_count must be between 1 and 128` для `0`, отрицательного значения и больше 128
-- `lx.wg.<старый ключ> is moved to lx.wg.idle.<новый ключ>` для плоского ключа прежней раскладки; соответствие ключей — в разделе [Переехали: плоские ключи сна в `lx.wg`](#переехали-плоские-ключи-сна-в-lxwg)
+- `lx.wg.<старый ключ> is moved to lx.wg.idle.<новый ключ>` для плоского ключа прежней раскладки; соответствие ключей — в разделе [Удалённые ключи](#удалённые-ключи)
 
 ### `lx.masque` — MASQUE-outbound'ы
 
@@ -1765,64 +1764,16 @@ info: путь, протокол, старое и новое состояние,
 - DPI, который дропает защищённое рукопожатие (разрез на записи как сигнатура), блок не обходит:
   лейбл такого пути по паре уходит в `clean`.
 
-### `lx.quic_sniff_decoy` — удалён
+### Удалённые ключи
 
-Заменён блоком `lx.sniff_guard`. Любое значение ключа — ошибка загрузки:
-`lx.quic_sniff_decoy is removed: the QUIC sniff decoy is configured by lx.sniff_guard.quic`;
-обратной совместимости нет. Байт `0x00` перед QUIC Initial задаёт
-метод `"decoy_first_byte"` в секции `quic`:
+Конфиг с любым из этих ключей не загружается.
 
-```json
-"lx": { "sniff_guard": { "quic": { "method": "decoy_first_byte" } } }
-```
-
-| Было | Стало |
+| Ключ | Что вместо |
 |---|---|
-| `mode`, `detour_type` | карта `detour_type` (общая или `quic.detour_type`): `never` для путей, где байт не нужен |
-| `send: "always"` | стартовое состояние `suspect` |
-| `send: "retry"` | стартовое состояние `clean`; защита включается по паре исходов |
-| `outbound_type` | `nodes.outbound_type`; фильтр общий для секций `tls` и `quic` |
-
-Память `clean → armed → decoy` на outbound заменена общим лейблом на тег релея и протокол. История —
-[SPEC 060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/HISTORY.md).
-
-### `lx.awg_masquerade` — удалён
-
-Удалён в lx.33 (владелец 2026-11-07). Любое значение — ошибка загрузки:
-`lx.awg_masquerade is removed: the AmneziaWG masquerade burst is sent on every path`. Маскировочная
-пачка AmneziaWG (приманка `ip`/`id`/`ib`, `i1`…`i5`, junk `jc`) шлётся на любом пути, в том числе
-через `detour`, как при дефолте `all` в lx.32. Ключ уберите из конфига. Случай релея со
-сниффингом (issue #64) закрывает секция `quic` блока `lx.sniff_guard` (`decoy_first_byte`). История —
-[SPEC 153](../SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md).
-
-### Переехали: плоские ключи сна в `lx.wg`
-
-| Старый ключ (удалён) | Ключ |
-|---|---|
-| `lx.wg.idle_suspend` | `lx.wg.idle.suspend` |
-| `lx.wg.idle_suspend_reachable` | `lx.wg.idle.suspend_reachable` |
-| `lx.wg.idle_teardown` | `lx.wg.idle.teardown` |
-| `lx.wg.lazy_build` | `lx.wg.idle.lazy_build` |
-| `lx.wg.build_max` | `lx.wg.idle.build_max` |
-| `lx.wg.build_overflow` | `lx.wg.idle.build_overflow` |
-
-Периода, когда действуют оба написания, нет (владелец 2026-11-23): конфиг с любым старым ключом не
-загружается, ошибка называет новое имя, например
-`lx.wg.idle_suspend is moved to lx.wg.idle.suspend`. Значения и семантика не меняются.
-
-### Удалённые `route.lx_idle_*`
-
-| Старый ключ (удалён) | Ключ |
-|---|---|
-| `route.lx_idle_suspend` | `lx.wg.idle.suspend` |
-| `route.lx_idle_suspend_reachable` | `lx.wg.idle.suspend_reachable` |
-| `route.lx_idle_teardown` | `lx.wg.idle.teardown` |
-
-Устаревшие алиасы удалены (владелец 2026-11-02): конфиг, в котором они остались, не загружается с
-ошибкой неизвестного поля, как при любой опечатке в ключе. Значения переносятся в `lx.wg.idle`.
-
-Running-config (`GetRunningConfig`) отдаёт блок `lx` в канонической форме (пустые
-подблоки отброшены).
+| `lx.quic_sniff_decoy` | `lx.sniff_guard.quic` с `"method": "decoy_first_byte"` |
+| `lx.awg_masquerade` | ничего: пачка AmneziaWG идёт на любом пути |
+| `lx.wg.idle_suspend`, `idle_suspend_reachable`, `idle_teardown`, `lazy_build`, `build_max`, `build_overflow` | тот же ключ в `lx.wg.idle`: `idle_suspend` → `idle.suspend`, `lazy_build` → `idle.lazy_build` |
+| `route.lx_idle_suspend`, `lx_idle_suspend_reachable`, `lx_idle_teardown` | `lx.wg.idle.suspend`, `suspend_reachable`, `teardown` |
 
 ### Зарезервировано: `lx.naive`
 

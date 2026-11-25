@@ -141,8 +141,6 @@ you need and read its section below. Each comment shows the default and the allo
         "detour_type": { "socks": "never" }     // default: the shared map. Override for QUIC
       }
     }
-    // "quic_sniff_decoy" removed: any value is a load error, replaced by sniff_guard.quic (§13)
-    // "awg_masquerade" removed in lx.33: any value is a load error, the AWG burst goes on every path (§13)
   },
 
   "outbounds": [
@@ -1275,6 +1273,7 @@ The fork's global knobs live in one root block, `lx`, grouped by subsystem. What
 single node stays in that node's object, as upstream does: AWG fields on the endpoint, `xhttp` in
 `transport`, a masque node's own `idle_timeout`. Every sub-block and key is optional; an empty `lx`
 is the same as none. A misspelt key is a load error, not a silent default.
+The running config (`GetRunningConfig`) returns the `lx` block canonical: empty sub-blocks are dropped.
 
 ```jsonc
 "lx": {
@@ -1394,7 +1393,7 @@ Validation errors name the full key path:
 - `lx.wg.idle.<key> must be >= 0` for a negative duration, `lx.wg.idle.build_max must be >= 0`
 - `lx.wg.idle.build_overflow must be "wait" or "build"`
 - `lx.wg.buffers.read_datagram_count must be between 1 and 128` for `0`, a negative value or above 128
-- `lx.wg.<old key> is moved to lx.wg.idle.<new key>` for a flat key of the old layout; the key mapping is in [Moved: the flat idle keys of `lx.wg`](#moved-the-flat-idle-keys-of-lxwg)
+- `lx.wg.<old key> is moved to lx.wg.idle.<new key>` for a flat key of the old layout; the key mapping is in [Removed keys](#removed-keys)
 
 ### `lx.masque` — MASQUE outbounds
 
@@ -1784,64 +1783,16 @@ is checked for the section that has one.
 - A DPI that drops a guarded handshake (treating record splitting as a signature) is not bypassed:
   the pair moves that path's label to `clean`.
 
-### `lx.quic_sniff_decoy` — removed
+### Removed keys
 
-Replaced by the `lx.sniff_guard` block. Any value of the key is a load error:
-`lx.quic_sniff_decoy is removed: the QUIC sniff decoy is configured by lx.sniff_guard.quic`;
-there is no backward compatibility. The `0x00` byte ahead of the QUIC
-Initial is set by the `"decoy_first_byte"` method of the `quic` section:
+A config with any of these keys fails to load.
 
-```json
-"lx": { "sniff_guard": { "quic": { "method": "decoy_first_byte" } } }
-```
-
-| Was | Now |
+| Key | Instead |
 |---|---|
-| `mode`, `detour_type` | the `detour_type` map (shared or `quic.detour_type`): `never` for paths that need no byte |
-| `send: "always"` | starting state `suspect` |
-| `send: "retry"` | starting state `clean`; protection turns on by a pair of outcomes |
-| `outbound_type` | `nodes.outbound_type`; the filter is shared by the `tls` and `quic` sections |
-
-The per-outbound `clean → armed → decoy` memory is replaced by a shared label per relay tag and
-protocol. History — [SPEC 060](../SPECS/TASKS/060-TLS_FRAGMENT_AUTO_ON_DETOUR/HISTORY.md).
-
-### `lx.awg_masquerade` — removed
-
-Removed in lx.33 (owner 2026-11-07). Any value is a load error:
-`lx.awg_masquerade is removed: the AmneziaWG masquerade burst is sent on every path`. The
-AmneziaWG masquerade burst (the `ip`/`id`/`ib` decoy, `i1`…`i5`, `jc` junk) is sent on every path,
-over a `detour` too, as the lx.32 default `all` did. Drop the key from the config. The sniffing
-relay case (issue #64) is covered by the `quic` section of `lx.sniff_guard` (`decoy_first_byte`).
-History — [SPEC 153](../SPECS/TASKS/153-AWG_MASQUERADE_OVER_DETOUR/SPEC.md).
-
-### Moved: the flat idle keys of `lx.wg`
-
-| Old key (removed) | Key |
-|---|---|
-| `lx.wg.idle_suspend` | `lx.wg.idle.suspend` |
-| `lx.wg.idle_suspend_reachable` | `lx.wg.idle.suspend_reachable` |
-| `lx.wg.idle_teardown` | `lx.wg.idle.teardown` |
-| `lx.wg.lazy_build` | `lx.wg.idle.lazy_build` |
-| `lx.wg.build_max` | `lx.wg.idle.build_max` |
-| `lx.wg.build_overflow` | `lx.wg.idle.build_overflow` |
-
-There is no period when both spellings work (owner 2026-11-23): a config with any old key fails to
-load, and the error names the new one, e.g.
-`lx.wg.idle_suspend is moved to lx.wg.idle.suspend`. Values and semantics are unchanged.
-
-### Removed `route.lx_idle_*`
-
-| Old key (removed) | Key |
-|---|---|
-| `route.lx_idle_suspend` | `lx.wg.idle.suspend` |
-| `route.lx_idle_suspend_reachable` | `lx.wg.idle.suspend_reachable` |
-| `route.lx_idle_teardown` | `lx.wg.idle.teardown` |
-
-The deprecated aliases are gone (owner 2026-11-02): a config that still carries one fails to load
-with an unknown-field error, like any misspelt key. Move the values to `lx.wg.idle`.
-
-The running config (`GetRunningConfig`) returns the `lx` block canonical (empty
-sub-blocks dropped).
+| `lx.quic_sniff_decoy` | `lx.sniff_guard.quic` with `"method": "decoy_first_byte"` |
+| `lx.awg_masquerade` | nothing: the AmneziaWG burst goes on every path |
+| `lx.wg.idle_suspend`, `idle_suspend_reachable`, `idle_teardown`, `lazy_build`, `build_max`, `build_overflow` | the same key in `lx.wg.idle`: `idle_suspend` → `idle.suspend`, `lazy_build` → `idle.lazy_build` |
+| `route.lx_idle_suspend`, `lx_idle_suspend_reachable`, `lx_idle_teardown` | `lx.wg.idle.suspend`, `suspend_reachable`, `teardown` |
 
 ### Reserved: `lx.naive`
 
