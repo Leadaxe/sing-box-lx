@@ -479,6 +479,9 @@ func TestRRAlgo_S2_openTimeout(t *testing.T) {
 	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
 	f.s.balancer.heal.holdRound()
 	defer f.s.balancer.heal.dropRound()
+	// The probe the failed open starts through a gets no answer while the rule is read.
+	f.nodes["a"].hold = make(chan struct{})
+	defer close(f.nodes["a"].hold)
 	destination := siteAddr("site.example")
 	start := time.Now().Add(-6 * time.Second)
 	timeout := os.ErrDeadlineExceeded

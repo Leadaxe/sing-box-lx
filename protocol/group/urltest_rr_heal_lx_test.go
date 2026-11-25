@@ -35,21 +35,26 @@ import (
 //   - slow: probes take this long before they answer or fail;
 //   - probeFails: so many next probes fail at once (an EOF), then they answer;
 //   - dialErr: connections fail with this error.
+//
+// A probe that reaches the server goes through probeServer, in memory: real
+// sockets for every probe of a -count=50 run under -race run out of ephemeral
+// ports (TIME_WAIT) and fail probes at once, which no rule under test expects.
 type healNode struct {
 	adapter.Outbound
-	tag        string
-	server     string
-	refused    string
-	dead       atomic.Bool
-	siteDown   atomic.Bool
-	hold       chan struct{}
-	slow       time.Duration
-	probes     atomic.Int32
-	dials      atomic.Int32
-	direct     bool
-	probeFails atomic.Int32
-	dialErr    error
-	active     atomic.Int32 // probes in flight through the node
+	tag         string
+	server      string
+	probeServer *pipeListener
+	refused     string
+	dead        atomic.Bool
+	siteDown    atomic.Bool
+	hold        chan struct{}
+	slow        time.Duration
+	probes      atomic.Int32
+	dials       atomic.Int32
+	direct      bool
+	probeFails  atomic.Int32
+	dialErr     error
+	active      atomic.Int32 // probes in flight through the node
 }
 
 // Type is a proxy by default (its failed open puts the node itself under
@@ -95,8 +100,62 @@ func (n *healNode) DialContext(ctx context.Context, network string, destination 
 	if n.dead.Load() || (!probe && n.siteDown.Load()) {
 		return nil, E.New("node ", n.tag, " down")
 	}
+	if probe && n.probeServer != nil {
+		return n.probeServer.dial(ctx)
+	}
 	return net.Dial("tcp", n.server)
 }
+
+// pipeListener is an in-memory listener: dial hands the server one end of a
+// net.Pipe.
+type pipeListener struct {
+	addr  net.Addr
+	conns chan net.Conn
+	done  chan struct{}
+	once  sync.Once
+}
+
+// newPipeServer serves handler in memory under the address of a real server.
+func newPipeServer(t testing.TB, addr net.Addr, handler http.Handler) *pipeListener {
+	l := &pipeListener{addr: addr, conns: make(chan net.Conn), done: make(chan struct{})}
+	server := &http.Server{Handler: handler}
+	go server.Serve(l)
+	t.Cleanup(func() { server.Close() })
+	return l
+}
+
+func (l *pipeListener) dial(ctx context.Context) (net.Conn, error) {
+	client, server := net.Pipe()
+	select {
+	case l.conns <- server:
+		return client, nil
+	case <-l.done:
+		err := net.ErrClosed
+		client.Close()
+		server.Close()
+		return nil, err
+	case <-ctx.Done():
+		client.Close()
+		server.Close()
+		return nil, ctx.Err()
+	}
+}
+
+func (l *pipeListener) Accept() (net.Conn, error) {
+	select {
+	case conn := <-l.conns:
+		return conn, nil
+	case <-l.done:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *pipeListener) Close() error {
+	l.once.Do(func() { close(l.done) })
+	return nil
+}
+
+func (l *pipeListener) Addr() net.Addr { return l.addr }
 
 type healFixture struct {
 	s     *URLTest
@@ -108,18 +167,20 @@ type healFixture struct {
 // node starts alive with stale history (probed when checked); pool_tolerance as given.
 func newHealFixture(t testing.TB, tags []string, pool []string, poolTolerance uint16) *healFixture {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	answer := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
-	}))
+	})
+	server := httptest.NewServer(answer)
 	t.Cleanup(server.Close)
 	address := server.Listener.Addr().String()
+	probeServer := newPipeServer(t, server.Listener.Addr(), answer)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	byTag := make(map[string]adapter.Outbound, len(tags))
 	nodes := make(map[string]*healNode, len(tags))
 	outbounds := make([]adapter.Outbound, 0, len(tags))
 	for _, tag := range tags {
-		node := &healNode{tag: tag, server: address}
+		node := &healNode{tag: tag, server: address, probeServer: probeServer}
 		nodes[tag] = node
 		byTag[tag] = node
 		outbounds = append(outbounds, node)

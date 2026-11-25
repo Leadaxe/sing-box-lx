@@ -157,16 +157,26 @@ func TestRRReview9_searchLeavesManualTest(t *testing.T) {
 		f.nodes[tag].hold = make(chan struct{})
 	}
 	f.s.balancer.clearSlot("a")
+	held := func() int32 {
+		var active int32
+		for _, tag := range []string{"a", "d", "e", "f"} {
+			active += f.nodes[tag].active.Load()
+		}
+		return active
+	}
 	if !f.s.rrStartSearch() {
 		t.Fatal("no search")
 	}
-	time.Sleep(200 * time.Millisecond)
+	// The search probes its batch of candidates: they hang on hold.
+	waitLong(t, func() bool { return held() >= 3 }, 10*time.Second)
 	results := make(chan map[string]uint16, 1)
 	go func() {
 		result, _ := f.g.URLTest(context.Background())
 		results <- result
 	}()
-	time.Sleep(200 * time.Millisecond)
+	// The manual test is in flight beside the search: its own probes of the four
+	// candidates hang too (or it returned at once, refused by the flag).
+	waitLong(t, func() bool { return held() >= 3+4 || len(results) > 0 }, 10*time.Second)
 	for _, tag := range []string{"a", "d", "e", "f"} {
 		close(f.nodes[tag].hold)
 	}
