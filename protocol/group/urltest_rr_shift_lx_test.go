@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/lxhandshake"
 	C "github.com/sagernet/sing-box/constant"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -38,9 +39,17 @@ type fbNode struct {
 	hangup   map[string]bool
 	mute     map[string]bool
 	stall    map[string]bool
+	// release ends the stalled dials with a handshake timeout (lxhandshake.ErrTimeout)
+	release chan struct{}
 }
 
 func (n *fbNode) Type() string { return C.TypeVLESS }
+
+func (n *fbNode) releaseChan() chan struct{} {
+	n.access.Lock()
+	defer n.access.Unlock()
+	return n.release
+}
 
 func (n *fbNode) set(m *map[string]bool, host string, on bool) {
 	n.access.Lock()
@@ -64,8 +73,12 @@ func (n *fbNode) DialContext(ctx context.Context, network string, destination M.
 	n.dials.Add(1)
 	host := destination.AddrString()
 	if n.is(n.stall, host) {
-		<-ctx.Done()
-		return nil, ctx.Err()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-n.releaseChan():
+			return nil, lxhandshake.ErrTimeout
+		}
 	}
 	if n.dead.Load() || n.siteDown.Load() || n.is(n.openFail, host) {
 		return nil, E.New("node ", n.tag, " cannot reach ", host)

@@ -50,7 +50,7 @@ func TestRRHeal_controlsProbedLiveDespiteFreshHistory(t *testing.T) {
 	conn, _ = g.fail(context.Background(), "a")
 	closeConn(conn)
 	g.waitCheck(t)
-	if !samePool(g.pool(), "a") || g.g.history.LoadURLTestHistory("a") == nil || g.probes("d") != 1 {
+	if !samePool(g.pool(), "a") || g.g.history.LoadURLTestHistory("a") == nil || g.probes("d") < 1 {
 		t.Fatalf("control candidates are probed live: pool %v, d probed %d", g.pool(), g.probes("d"))
 	}
 
@@ -127,7 +127,7 @@ func TestRRHeal_retrySkipsNestedURLTest(t *testing.T) {
 		t.Fatalf("the retry must skip the nested urltest: ok=%v c=%d x=%d", ok, f.nodes["c"].dials.Load(), f.nodes["x"].dials.Load())
 	}
 	f.waitCheck(t)
-	if f.probes("x") != 1 {
+	if f.probes("x") != 2 { // once with a, once after a's silence (the bracket)
 		t.Fatalf("the control of the check is the leaf of the next slot, x probed %d", f.probes("x"))
 	}
 
@@ -154,7 +154,7 @@ func TestRRHeal_networkChangeAbortsSearchAndRuns(t *testing.T) {
 	d.hold = make(chan struct{})
 	conn, _ := f.fail(context.Background(), "a")
 	closeConn(conn)
-	waitUntil(t, func() bool { return d.probes.Load() == 1 && f.g.checking.Load() })
+	waitUntil(t, func() bool { return d.probes.Load() == 1 && f.s.balancer.heal.running.Load() })
 	aProbes, eProbes := f.probes("a"), f.probes("e")
 	f.s.InterfaceUpdated(context.Background())
 	waitUntil(t, func() bool { return !f.s.balancer.heal.running.Load() })

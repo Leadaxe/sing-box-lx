@@ -795,7 +795,9 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch) {
 			track.markProved(started) // rrByteSince; lifts a suspicion of the slot (urltest_rr_track_lx.go)
 		}
 	}
-	if b.heal.frozen() {
+	// The first byte after the whole network stalled is the network coming back:
+	// freeze instead of verdicts (rrNetworkBack).
+	if s.rrNetworkBack(rrClock(time.Now())) || b.heal.frozen() {
 		return
 	}
 	if started != 0 && track != nil && track.pendingN.Load() > 0 {

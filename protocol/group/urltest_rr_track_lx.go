@@ -55,7 +55,10 @@ package group
 
 import (
 	"context"
+	"errors"
 	"math"
+	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -658,6 +661,13 @@ func (s *URLTest) rrPend(node adapter.Outbound, failure *rrFailure, retry bool, 
 	}
 	at := rrClock(time.Now())
 	t.addPending(rrPending{failure: failure, retry: retry, at: at})
+	s.rrAskVerdict(node, t, at, mode)
+}
+
+// rrAskVerdict asks for the verdict on the pool member node of t as mode says;
+// when neither the check nor the verdict probe can start now, the next pick of the
+// node after rrVerdictWait asks again.
+func (s *URLTest) rrAskVerdict(node adapter.Outbound, t *rrTrack, at int64, mode rrPendMode) {
 	switch mode {
 	case rrCheckNow:
 		if s.rrStartCheck(node, false) {
@@ -696,6 +706,9 @@ func (s *URLTest) rrVerdictProbe(node adapter.Outbound, t *rrTrack, silent func(
 		probe := s.group.rrProbeNode(ctx, node, false)
 		if heal.aborted(ctx) || probe.leaf == "" {
 			return
+		}
+		if probe.answered && s.rrNetworkBack(rrClock(probe.ended)) {
+			return // the network came back: no verdict on anyone
 		}
 		if probe.answered {
 			// The node may have been found dead or left the pool while it was probed
@@ -744,6 +757,60 @@ func (s *URLTest) rrSettleProbe(probe rrProbe) {
 		}
 		s.rrSettleAlive(t, rrClock(probe.started))
 	}
+}
+
+// rrNetworkBack is a proof of life of the group at now (a first byte, a probe
+// answer). When it ends a stall of the whole network — no first byte or answer of
+// the group for rrHangAfter, and at least two nodes of the pool hold an unfinished
+// connection (a dial in flight, a TCP connection waiting for its first byte) older
+// than that — the network has just come back: the self-heal freezes as on any
+// network signal (no retries, probes, shifts or counts; the failures pending from
+// the stall are voided), so the failures of the connections that hung through the
+// stall (their handshake timeouts arrive now) count against nobody. One hung node
+// while the others serve bytes is no stall; neither is a pool of one. It reports
+// whether it froze.
+func (s *URLTest) rrNetworkBack(now int64) bool {
+	b := s.balancer
+	previous := b.heal.lastByte.Swap(now)
+	if previous > now {
+		b.heal.lastByte.CompareAndSwap(now, previous) // a later proof got there first
+		return false
+	}
+	if previous != 0 && now-previous < int64(rrHangAfter) {
+		return false
+	}
+	if b.heal.frozen() || s.group.ctx.Err() != nil {
+		return false
+	}
+	cutoff := now - int64(rrHangAfter)
+	stalled := 0
+	for _, entry := range b.slotsSnapshot() {
+		if entry.track == nil {
+			continue
+		}
+		d, w := entry.track.dials.oldest.Load(), entry.track.waits.oldest.Load()
+		if (d != 0 && d <= cutoff) || (w != 0 && w <= cutoff) {
+			stalled++
+		}
+	}
+	if stalled < 2 {
+		return false
+	}
+	b.heal.freeze()
+	s.logger.Info("round_robin: network back after a stall (", stalled, " nodes held connections with no answer); self-heal frozen for ", rrHealFreeze)
+	return true
+}
+
+// rrSilence reports whether a failed open is silence — nobody answered: a timeout
+// of the dial or the handshake, a deadline, the cancel of a hang verdict — rather
+// than an active refusal (refused, reset, a close, a proxy's "rejected"): someone
+// answered.
+func rrSilence(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, errRRStruck) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // rrDead is the dead verdict on the pool member tag: its pending failures are

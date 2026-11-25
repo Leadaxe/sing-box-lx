@@ -222,8 +222,10 @@ func TestRRHeal_deadNodeRetriedStruckReplaced(t *testing.T) {
 	if pool := f.pool(); !samePool(pool, "e", "b", "c") {
 		t.Fatalf("a's slot must go to e (d is silent), got %v", pool)
 	}
-	if f.probes("b") != 1 || f.probes("c") != 0 {
-		t.Fatalf("control b is probed live despite fresh history, c is not probed: b=%d c=%d", f.probes("b"), f.probes("c"))
+	// b is the control, probed live despite its fresh history, and once more after
+	// a's silence (the bracket); c, the third, is probed at the start with a and b.
+	if f.probes("b") != 2 || f.probes("c") != 1 {
+		t.Fatalf("control b is probed live twice, the third once: b=%d c=%d", f.probes("b"), f.probes("c"))
 	}
 	if h := f.g.history.LoadURLTestHistory("d"); h == nil || time.Since(h.Time) < 30*time.Second {
 		t.Fatal("the silence of a candidate is not written: d keeps its old history")
@@ -638,10 +640,15 @@ func TestRRHeal_replacementProbesInParallel(t *testing.T) {
 		if !found || answer.member != "e" || !samePool(f.pool(), "e", "b", "c") {
 			t.Fatalf("control=%v: e must replace a, got %v (answer %q)", asControl, f.pool(), answer.member)
 		}
-		if elapsed >= 2*slow {
+		// As the control the answering candidate is probed once more (the bracket).
+		rounds, eProbes := time.Duration(1), int32(1)
+		if asControl {
+			rounds, eProbes = 2, 2
+		}
+		if elapsed >= (rounds+1)*slow {
 			t.Fatalf("control=%v: the batch must be probed in parallel, took %v", asControl, elapsed)
 		}
-		if probed != 3 || f.probes("d") != 1 || f.probes("e") != 1 || f.probes("x") != 1 {
+		if probed != 3 || f.probes("d") != 1 || f.probes("e") != eProbes || f.probes("x") != 1 {
 			t.Fatalf("control=%v: one batch of the pool size, probed=%d d=%d e=%d x=%d", asControl, probed, f.probes("d"), f.probes("e"), f.probes("x"))
 		}
 		if h := f.g.history.LoadURLTestHistory("d"); h == nil || time.Since(h.Time) < 30*time.Second {
