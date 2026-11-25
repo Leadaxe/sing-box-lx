@@ -125,7 +125,7 @@
 
 ## 8. Осталось
 
-- Форки запушены в боковые ветки `lx-sync-20261126` (`wireguard-go` `5e0ba64`, `sing-tun` `53e0731`), суперпроект — в `lx-sync-stable-20261126`; при влитии в `lx` передвинуть релизные ветки форков (`lx-awg2-v007`, `lx`) на эти коммиты — оба fast-forward.
+- Форки запушены в релизные ветки по слову владельца (fast-forward): `wireguard-go` `lx-awg2-v007` → `5e0ba64`, `sing-tun` `lx` → `53e0731`; суперпроект — в `lx-sync-stable-20261126`, lx-ci 45723785661 зелёный. В `lx` вливает рецензент SPEC 138 первым, поверх — SPEC 165.
 - Ручной `lx-musl-toolchain-mirror.yml` после пуша (SPEC 023) и dry run релизной матрицы перед тегом.
 - Раннбук §1.4, остаток: TUN-inbound и round_robin на устройстве, Windows без IPv6.
 - Будущее влитие SPEC 165 (цепочка): этот мерж правил `protocol/chain/chain_test.go` (стенд зовёт `Initialize` в `start()`), `adapter/outbound/manager.go`, `protocol/group/selector.go` (апстримный `References()`), `route/conn.go`.
