@@ -582,12 +582,59 @@ func TestRewriteК5NotDialable(t *testing.T) {
 	s.add("x", typeNoDial, &noDialOptions{})
 	s.chain("virt", "a", "x")
 	requireError(t, s.rewrite(), "x (nodial) cannot dial through detour")
+}
 
-	s = newStand(t)
-	s.fake("a")
-	s.add("wg", C.TypeWireGuard, &option.WireGuardEndpointOptions{ListenPort: 51820})
-	s.chain("virt", "a", "wg")
-	requireError(t, s.rewrite(), "wg has listen_port")
+func TestRewriteК5LocalPorts(t *testing.T) {
+	port := uint16(41641)
+	for name, node := range map[string]struct {
+		typeName string
+		options  any
+		field    string
+	}{
+		"wireguard":        {C.TypeWireGuard, &option.WireGuardEndpointOptions{ListenPort: 51820}, "listen_port"},
+		"tailscale":        {C.TypeTailscale, &option.TailscaleEndpointOptions{ListenPort: port}, "listen_port"},
+		"tailscale relay":  {C.TypeTailscale, &option.TailscaleEndpointOptions{RelayServerPort: &port}, "relay_server_port"},
+		"openconnect dtls": {C.TypeOpenConnect, &option.OpenConnectEndpointOptions{DTLSLocalPort: port}, "dtls_local_port"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newStand(t)
+			s.fake("a")
+			s.add("n", node.typeName, node.options)
+			s.chain("virt", "a", "n")
+			requireError(t, s.rewrite(), "node n has "+node.field, "fixed local port")
+		})
+	}
+}
+
+func TestRewriteК5SocketFields(t *testing.T) {
+	mark := option.FwMark(1)
+	for name, mutate := range map[string]func(*option.DialerOptions){
+		"bind_interface":       func(o *option.DialerOptions) { o.BindInterface = "eth0" },
+		"routing_mark":         func(o *option.DialerOptions) { o.RoutingMark = mark },
+		"tcp_fast_open":        func(o *option.DialerOptions) { o.TCPFastOpen = true },
+		"tcp_multi_path":       func(o *option.DialerOptions) { o.TCPMultiPath = true },
+		"reuse_addr":           func(o *option.DialerOptions) { o.ReuseAddr = true },
+		"netns":                func(o *option.DialerOptions) { o.NetNs = "ns" },
+		"protect_path":         func(o *option.DialerOptions) { o.ProtectPath = "/p" },
+		"bind_address_no_port": func(o *option.DialerOptions) { o.BindAddressNoPort = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newStand(t)
+			s.fake("a")
+			mutate(&s.fake("n").DialerOptions)
+			s.chain("virt", "a", "n")
+			requireError(t, s.rewrite(), "node n has "+name, "do not apply under detour")
+		})
+	}
+	// Fields upstream applies under detour, and the entry, stay allowed.
+	s := newStand(t)
+	entry := s.fake("a")
+	entry.BindInterface = "eth0"
+	exit := s.fake("n")
+	exit.DomainResolver = &option.DomainResolveOptions{Server: "local"}
+	exit.ConnectTimeout = 1
+	s.chain("virt", "a", "n")
+	s.mustRewrite()
 }
 
 func TestRewriteК6Cycle(t *testing.T) {

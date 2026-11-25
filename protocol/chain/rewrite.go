@@ -264,15 +264,72 @@ func (r *rewriter) leavesOf(chainTag string, position int, tag string) ([]*rewri
 	return leaves, nil
 }
 
-// checkDialable is К5: the node must be able to dial through detour.
+// chainLocalPortFields are the fixed local ports a node cannot keep under
+// detour (К5): its socket is opened by the hop. WireGuard's is also refused
+// by its constructor; the rewrite says so earlier and names the chain.
+var chainLocalPortFields = map[string][]string{
+	C.TypeWireGuard:   {"listen_port"},
+	C.TypeTailscale:   {"listen_port", "relay_server_port"},
+	C.TypeOpenConnect: {"dtls_local_port"},
+}
+
+// chainSocketFields are the dial fields upstream silently does not apply
+// under detour (common/dialer.NewWithOptions builds the detour dialer and
+// skips the default one). domain_resolver and fallback_delay do apply;
+// connect_timeout, keepalive and udp_fragment are read by protocols.
+var chainSocketFields = []string{
+	"bind_interface", "inet4_bind_address", "inet6_bind_address", "bind_address_no_port",
+	"protect_path", "routing_mark", "reuse_addr", "netns", "tcp_fast_open", "tcp_multi_path",
+	"network_strategy", "network_type", "fallback_network_type",
+}
+
+// checkDialable is К5: the node must be able to work through detour.
 func (r *rewriter) checkDialable(chainTag string, position int, leaf *rewriteEntry) error {
 	if _, hasDialer := leaf.options.(option.DialerOptionsWrapper); !hasDialer {
 		return E.New("chain ", chainTag, ": position ", position, ": node ", leaf.tag, " (", leaf.typeName, ") cannot dial through detour")
 	}
-	if wireGuard, isWireGuard := leaf.options.(*option.WireGuardEndpointOptions); isWireGuard && wireGuard.ListenPort != 0 {
-		return E.New("chain ", chainTag, ": position ", position, ": node ", leaf.tag, " has listen_port, which does not work with detour")
+	m, err := optionsToMap(r.ctx, leaf.options)
+	if err != nil {
+		return E.Cause(err, "chain ", chainTag, ": serialize options of ", leaf.tag)
+	}
+	var ports, socket []string
+	for _, field := range chainLocalPortFields[leaf.typeName] {
+		if value, has := m[field]; has && !isZeroJSON(value) {
+			ports = append(ports, field)
+		}
+	}
+	for _, field := range chainSocketFields {
+		if value, has := m[field]; has && !isZeroJSON(value) {
+			socket = append(socket, field)
+		}
+	}
+	if len(ports) > 0 {
+		return E.New("chain ", chainTag, ": position ", position, ": node ", leaf.tag, " has ", strings.Join(ports, ", "),
+			": a fixed local port does not work with detour, and the chain gives the node one")
+	}
+	if len(socket) > 0 {
+		return E.New("chain ", chainTag, ": position ", position, ": node ", leaf.tag, " has ", strings.Join(socket, ", "),
+			": these socket options do not apply under detour, and the chain gives the node one")
 	}
 	return nil
+}
+
+func isZeroJSON(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return true
+	case bool:
+		return !typed
+	case string:
+		return typed == ""
+	case stdjson.Number:
+		return typed.String() == "0"
+	case []any:
+		return len(typed) == 0
+	case map[string]any:
+		return len(typed) == 0
+	}
+	return false
 }
 
 // rewriteNode applies П2 and П5 to a copy of the node's options.
