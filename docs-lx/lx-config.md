@@ -24,7 +24,6 @@
   - [3.4 failover — hold until it fails](#34-failover--hold-until-it-fails)
   - [3.5 Choosing a mode](#35-choosing-a-mode)
 - [4. MASQUE outbound — Cloudflare WARP](#4-masque-outbound--cloudflare-warp)
-  - [Example — WARP (defaults: `vhttp: auto`)](#example--warp-defaults-vhttp-auto)
 - [5. DNS server group](#5-dns-server-group)
   - [Fields (a `dns.servers[]` entry)](#fields-a-dnsservers-entry)
   - [Local names first: `hosts`](#local-names-first-hosts)
@@ -682,24 +681,16 @@ On energy: `least_test` wakes every node each `interval`, `round_robin` only the
 
 ## 4. MASQUE outbound — Cloudflare WARP
 
-A `masque` outbound tunnels whole IP packets over HTTP/3 or HTTP/2 using CONNECT-IP
-(RFC 9484). Its main use is connecting to Cloudflare WARP. This is CONNECT-IP, not
-CONNECT-UDP (RFC 9298). It shares only the word with the AWG `id/ip/ib` *masquerade* sugar
-in §2. The core builds a userspace gVisor stack per tunnel and routes traffic through it like
-a WireGuard endpoint. The outbound is built with the `with_quic` and `with_gvisor` tags, both
-in the default `LX_TAGS`. Keys are taken ready from the config: device registration (ECDSA
-keys, WARP enroll) is done by the client, not the core.
+A `masque` outbound connects to Cloudflare WARP and other CONNECT-IP (RFC 9484) servers: whole IP
+packets go over HTTP/3 or HTTP/2, and the core builds its own userspace stack on the tunnel, as
+for a WireGuard endpoint. It shares only the word with the AWG `id/ip/ib` *masquerade* sugar in
+§2. It needs the `with_quic` and `with_gvisor` tags, both in `LX_TAGS`. Keys are taken ready
+from the config: the client registers the device with WARP, not the core.
 
-> ⚠️ The HTTP version is set by `vhttp`, not `network`. Older configs set `h3`/`h2` in
-> `network`, although `network` means something else on every other outbound. The key was
-> removed in `v1.14.3-lx.18`: a masque outbound carrying `network` does not decode
-> (`unknown field "network"`); rename the key to `vhttp`. The flat TLS fields are still
-> accepted with a deprecation; the migration table is in the full reference (link below).
-
-The required fields are `server`/`server_port`, the key pair (`private_key`/`public_key`,
-for the default `cloudflare` profile) and at least one of `ip`/`ipv6`. `ip`/`ipv6` is the
-client's local address *inside* the tunnel, not the exit IP. TLS goes in the standard
-outbound `tls` block. Every other field has a default:
+The required fields are `server`/`server_port`, the `private_key`/`public_key` pair and at least
+one of `ip`/`ipv6`: the client's address inside the tunnel, not the exit IP. A top-level `dns`
+block is required: the outbound resolves domains through the DNS router. Every other field has a
+default:
 
 | Field | Default |
 |-------|---------|
@@ -711,90 +702,34 @@ outbound `tls` block. Every other field has a default:
 | `keep_alive_period` | `30s` |
 | `network_list` | `tcp+udp` |
 
-The default SNI is `www.cloudflare.com`, not the endpoint hostname: DPI filters a MASQUE
-endpoint by its name in the ClientHello. The endpoint is authenticated by pinning
-`public_key`, so the SNI is free to differ.
-
-> 📖 The full reference is in
-> [protocols-transports.md §3](protocols-transports.md#3-masque-outbound-connect-ip--warp)
-> ([RU](protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)): every field with its
-> type and default, the profile matrix (`cloudflare` and `standard`), key format, choosing
-> `vhttp` between h3 and h2, idle-suspend and keepalive behaviour, start-time validation, the
-> migration table from the `network` schema and common footguns.
-
-### Example — WARP (defaults: `vhttp: auto`)
-
 ```jsonc
 {
   "type": "masque",
   "tag": "warp",
   "server": "162.159.198.2",
   "server_port": 443,
-  "profile": "cloudflare",
-  "tls": {
-    "server_name": "www.microsoft.com"   // any neutral high-traffic host (domain-fronting)
-  },
   "private_key": "<base64 DER EC private key>",
   "public_key":  "<base64 DER PKIX public key>",
   "ip":   "172.16.0.2/32",
-  "ipv6": "2606:4700:110:...::/128",
-  "mtu":  1280
+  "ipv6": "2606:4700:110:...::/128"
 }
 ```
 
-`"vhttp": "auto"` is the default. It tries h3 first and falls back to h2 if the QUIC
-handshake does not complete within 3 s. An h3 win is remembered. An h2 win is remembered for
-a window that climbs a ladder, 1 s → 10 s → 30 s → 5 min → 10 min: each further h2 win moves
-one rung up, an h3 win drops it back to the first. When the window expires, h3 is tried first
-again. If the remembered mode stops coming up, the memory is dropped and the other mode is
-tried in the same dial.
+- The default SNI is `www.cloudflare.com`, not the endpoint name: DPI filters a MASQUE endpoint
+  by its name in the ClientHello, and the server is checked by `public_key`.
+- `vhttp: auto` tries h3 first and falls back to h2 (TCP:443) if QUIC is not up within 3 s, and
+  remembers what worked. It is for networks and `detour` hops that silently swallow QUIC. The
+  `standard` profile works over h3 only and requires `uri`.
+- Nodes above masque (through `detour`, a group or in a `chain`) get their packet size fitted to
+  `mtu` on their own ([`lx.mtu_align`](#lxmtu_align--path-mtu--packet-size-alignment)): WARP
+  drops inner IPv6 fragments. The outer QUIC to the server starts with an `mtu + 51` byte packet.
+- The HTTP version is set by `vhttp`; a `network` field in a `masque` node is a load error.
 
-`auto` exists for the failure where the endpoint silently ignores QUIC: there is no error,
-only a hang. A TCP-only hop in front of the endpoint behaves the same way — an HTTP CONNECT
-`detour` or a VLESS/Trojan link in a chain. The case was caught in the field on a proxied hop
-where Cloudflare answered TCP:443 and never replied to QUIC. On the `standard` profile there
-is no h2 leg, so the default means h3 there; an explicit `"vhttp": "auto"` on `standard` logs
-a warning.
+Verified on a device on Wi-Fi and LTE, over `h3` and `h2`, with sleep and recovery after a drop.
 
-> ⚠️ `profile: "standard"` requires `uri`. The `cloudflare` profile has a default
-> (`https://cloudflareaccess.com`), `standard` has none, and without `uri` the outbound does
-> not come up: `masque: uri is required for the standard profile — set it to the server's
-> CONNECT-IP request URI, e.g. https://<host>/.well-known/masque/ip/*/*/`. The value is sent
-> verbatim as the Extended CONNECT request URI; the core substitutes nothing in it. So write
-> the template your server publishes. RFC 9484 spells the full-tunnel form with `*` in the
-> host and port positions.
-
-For `h2` (CONNECT-IP over TCP:443), change one field: `"vhttp": "h2"`. The `h2` path runs its
-TLS through the shared `common/tls` layer, so its ClientHello is split like that of any other
-TLS outbound: by the node's `fragment` / `record_fragment` and by the `tls` section of
-[`lx.sniff_guard`](#lxsniff_guard--guard-against-rerouting-by-sni). The `h3` leg is guarded by
-the `quic` section of the same block; in `auto` the two legs have separate path labels.
-Without the block the ClientHello is not split under `detour`
-([§9](#9-clienthello-under-detour--no-default)).
-
-> ⚠️ A top-level `dns` block is required. The userspace stack works at L3 and does not
-> resolve domains itself: the outbound resolves them via the DNS router before dialing.
-
-The outer QUIC connection to the server starts with `InitialPacketSize` = `mtu + 51`
-(clamped 1200…1452; 1331 at `mtu` 1280). This way an inner packet of `mtu` bytes fits the
-datagram from the first packet on, not after the first PMTUD probe.
-
-> ⚠️ WARP passes inner IPv4 fragments and drops IPv6 fragments. A node above masque whose
-> packet does not fit `mtu` is silent over IPv6 and works over IPv4: a QUIC proxy with a
-> 1280-byte payload, 1328 bytes over IPv6, behaves this way. A node above masque — via
-> `detour`, via a group, or as a `chain` link — gets a packet size that fits `mtu`
-> automatically ([§13, `lx.mtu_align`](#lxmtu_align--path-mtu--packet-size-alignment)). By
-> hand: `initial_packet_size: 1232` on the QUIC node or `mtu: 1340` on masque; the latter
-> needs an outer path of ≈ 1440 bytes to WARP.
-
-`h3` (QUIC) is the default and is faster. On networks that filter inbound UDP:443, the QUIC
-handshake hangs and `h3` never comes up. Switch such a node to `h2` (TCP:443): it is
-device-verified there. The first `h3` dial is slow, because a cold CONNECT-IP setup is a QUIC
-handshake, Extended CONNECT, route advertisement and the stack. A short urltest timeout may
-mark a fresh h3 node `-1` on the first probe, though the node works afterwards.
-
-The outbound is device-verified end-to-end on Wi-Fi and LTE: `warp=on`, traffic flows on
-both `h3` and `h2`, idle-suspend and self-healing reconnect are confirmed.
+📖 Every field, the profiles, choosing between h3 and h2, examples and common footguns are in
+[protocols-transports.md §3](protocols-transports.md#3-masque-outbound-connect-ip--warp)
+([RU](protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)).
 
 ---
 
@@ -1793,6 +1728,7 @@ A config with any of these keys fails to load.
 | `lx.awg_masquerade` | nothing: the AmneziaWG burst goes on every path |
 | `lx.wg.idle_suspend`, `idle_suspend_reachable`, `idle_teardown`, `lazy_build`, `build_max`, `build_overflow` | the same key in `lx.wg.idle`: `idle_suspend` → `idle.suspend`, `lazy_build` → `idle.lazy_build` |
 | `route.lx_idle_suspend`, `lx_idle_suspend_reachable`, `lx_idle_teardown` | `lx.wg.idle.suspend`, `suspend_reachable`, `teardown` |
+| `network` in a `masque` node | `vhttp` |
 
 ### Reserved: `lx.naive`
 

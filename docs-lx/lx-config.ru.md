@@ -24,7 +24,6 @@
   - [3.4 failover — держаться до отказа](#34-failover--держаться-до-отказа)
   - [3.5 Сравнение и выбор режима](#35-сравнение-и-выбор-режима)
 - [4. MASQUE outbound — Cloudflare WARP](#4-masque-outbound--cloudflare-warp)
-  - [Пример — WARP (дефолты: `vhttp: auto`)](#пример--warp-дефолты-vhttp-auto)
 - [5. Группа DNS-серверов](#5-группа-dns-серверов)
   - [Поля (запись в `dns.servers[]`)](#поля-запись-в-dnsservers)
   - [Локальные имена первыми: `hosts`](#локальные-имена-первыми-hosts)
@@ -684,24 +683,15 @@ Upstream `urltest` всегда выбирает узел с наименьше�
 
 ## 4. MASQUE outbound — Cloudflare WARP
 
-Outbound `masque` туннелирует целые IP-пакеты поверх HTTP/3 или HTTP/2 через CONNECT-IP (RFC
-9484). Основное назначение — подключение к Cloudflare WARP. Это CONNECT-IP, а не CONNECT-UDP
-(RFC 9298). С AWG-сахаром *masquerade* `id/ip/ib` из §2 у него общее только слово. Ядро
-поднимает на туннель userspace gVisor-стек и гонит трафик через него, как через
-WireGuard-endpoint. Outbound собирается с тегами `with_quic` и `with_gvisor`, оба входят в
-дефолтный `LX_TAGS`. Ключи берутся готовыми из конфига: регистрацию устройства (ECDSA-ключи,
-WARP enroll) делает клиент, не ядро.
+Outbound `masque` подключается к Cloudflare WARP и другим серверам CONNECT-IP (RFC 9484): целые
+IP-пакеты идут поверх HTTP/3 или HTTP/2, а ядро поднимает на туннель свой userspace-стек, как у
+WireGuard-endpoint'а. С AWG-сахаром *masquerade* `id/ip/ib` из §2 у него общее только слово.
+Нужны теги `with_quic` и `with_gvisor`, оба есть в `LX_TAGS`. Ключи берутся готовыми из конфига:
+устройство в WARP регистрирует клиент, а не ядро.
 
-> ⚠️ Версия HTTP задаётся полем `vhttp`, а не `network`. В старых конфигах `h3`/`h2`
-> задавались в `network`, хотя на всех остальных outbound `network` значит другое. Ключ
-> снят в `v1.14.3-lx.18`: masque-outbound с `network` не разбирается
-> (`unknown field "network"`), переименуйте ключ в `vhttp`. Плоские TLS-поля пока
-> принимаются с deprecation; таблица миграции — в полном справочнике (ссылка ниже).
-
-Обязательные поля — `server`/`server_port`, пара ключей (`private_key`/`public_key`, для
-дефолтного профиля `cloudflare`) и хотя бы один из `ip`/`ipv6`. `ip`/`ipv6` — локальный адрес
-клиента *внутри* туннеля, не выходной IP. TLS задаётся в стандартном блоке `tls` outbound'а. У
-остальных полей есть дефолт:
+Обязательные поля — `server`/`server_port`, пара ключей `private_key`/`public_key` и хотя бы один
+из `ip`/`ipv6`: это адрес клиента внутри туннеля, а не выходной IP. Нужен блок `dns` верхнего
+уровня: домены outbound разрешает через DNS-роутер. У остальных полей есть значения по умолчанию:
 
 | Поле | По умолчанию |
 |------|--------------|
@@ -713,88 +703,35 @@ WARP enroll) делает клиент, не ядро.
 | `keep_alive_period` | `30s` |
 | `network_list` | `tcp+udp` |
 
-SNI по умолчанию — `www.cloudflare.com`, а не имя эндпоинта: по имени MASQUE-эндпоинта в
-ClientHello его режет DPI. Эндпоинт аутентифицируется пиннингом `public_key`, поэтому SNI может
-отличаться.
-
-> 📖 Полный справочник — в
-> [protocols-transports.ru.md §3](protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)
-> ([EN](protocols-transports.md#3-masque-outbound-connect-ip--warp)): каждое поле с типом и
-> дефолтом, матрица профилей (`cloudflare` и `standard`), формат ключей, выбор `vhttp`
-> между h3 и h2, поведение idle-suspend и keepalive, валидация при старте, таблица
-> миграции со схемы с `network` и частые грабли.
-
-### Пример — WARP (дефолты: `vhttp: auto`)
-
 ```jsonc
 {
   "type": "masque",
   "tag": "warp",
   "server": "162.159.198.2",
   "server_port": 443,
-  "profile": "cloudflare",
-  "tls": {
-    "server_name": "www.microsoft.com"   // любой нейтральный популярный хост (domain-fronting)
-  },
   "private_key": "<base64 DER EC private key>",
   "public_key":  "<base64 DER PKIX public key>",
   "ip":   "172.16.0.2/32",
-  "ipv6": "2606:4700:110:...::/128",
-  "mtu":  1280
+  "ipv6": "2606:4700:110:...::/128"
 }
 ```
 
-`"vhttp": "auto"` — значение по умолчанию. Оно сначала пробует h3 и переходит на h2, если
-QUIC-хендшейк не уложился в 3 с. Победа h3 запоминается. Победа h2 запоминается на окно, которое
-растёт по лестнице 1 с → 10 с → 30 с → 5 мин → 10 мин: каждая следующая победа h2 поднимает
-ступень, победа h3 возвращает на первую. Когда окно истекает, h3 снова пробуется первым. Если
-запомненный режим перестал подниматься, память сбрасывается, и в той же попытке пробуется
-другой.
+- SNI по умолчанию — `www.cloudflare.com`, а не имя эндпоинта: по имени MASQUE-эндпоинта в
+  ClientHello его режет DPI, а сервер проверяется по `public_key`.
+- `vhttp: auto` сначала пробует h3 и переходит на h2 (TCP:443), если QUIC не поднялся за 3 с, и
+  запоминает, что сработало. Это для сетей и хопов в `detour`, которые молча глотают QUIC.
+  Профиль `standard` работает только по h3 и требует `uri`.
+- Узлы над masque (через `detour`, группу или в `chain`) получают размер пакета под `mtu` сами
+  ([`lx.mtu_align`](#lxmtu_align--выравнивание-mtu-и-размера-пакета-по-пути)): WARP теряет
+  внутренние IPv6-фрагменты. Внешний QUIC к серверу стартует с пакета `mtu + 51` байт.
+- Версию HTTP задаёт `vhttp`; поле `network` в `masque`-узле — ошибка загрузки.
 
-`auto` нужен для отказа, при котором эндпоинт молча игнорирует QUIC: ошибки нет, есть зависание.
-Так же ведёт себя TCP-only-хоп перед эндпоинтом — HTTP CONNECT в `detour` или звено VLESS/Trojan
-в цепочке. Случай пойман в поле на проксированном хопе: Cloudflare отвечал по TCP:443 и не
-отвечал по QUIC. На профиле `standard` ноги h2 нет, поэтому дефолт там означает h3; явный
-`"vhttp": "auto"` на `standard` даёт предупреждение.
+Проверено на устройстве в Wi-Fi и LTE, по `h3` и по `h2`, вместе со сном и восстановлением после
+обрыва.
 
-> ⚠️ Профиль `"standard"` требует `uri`. У `cloudflare` есть дефолт
-> (`https://cloudflareaccess.com`), у `standard` его нет, и без `uri` outbound не поднимается:
-> `masque: uri is required for the standard profile — set it to the server's CONNECT-IP
-> request URI, e.g. https://<host>/.well-known/masque/ip/*/*/`. Значение уходит в запрос
-> Extended CONNECT как есть, ядро ничего в нём не подставляет. Поэтому пишите шаблон,
-> который публикует сервер. RFC 9484 описывает форму полного туннеля с `*` на местах
-> хоста и порта.
-
-Для `h2` (CONNECT-IP поверх TCP:443) меняется одно поле: `"vhttp": "h2"`. Путь `h2` гонит свой
-TLS через общий слой `common/tls`, поэтому ClientHello режется так же, как у любого другого
-TLS-outbound: узловыми `fragment` / `record_fragment` и секцией `tls` блока
-[`lx.sniff_guard`](#lxsniff_guard--защита-от-перенаправления-по-sni). Ногу `h3` защищает секция
-`quic` того же блока; в `auto` у ног отдельные лейблы пути. Без блока ClientHello через `detour`
-не режется ([§9](#9-clienthello-под-detour--без-дефолта)).
-
-> ⚠️ Нужен блок `dns` верхнего уровня. Userspace-стек работает на L3 и сам домены не
-> резолвит: outbound резолвит их через DNS-роутер перед dial.
-
-Внешний QUIC к серверу стартует с `InitialPacketSize` = `mtu + 51` (кламп 1200…1452; при `mtu`
-1280 — 1331). Так внутренний пакет размером `mtu` помещается в датаграмму с первого пакета, а не
-после первой пробы PMTUD.
-
-> ⚠️ WARP пропускает внутренние IPv4-фрагменты и теряет IPv6-фрагменты. Узел над masque,
-> чей пакет не влезает в `mtu`, по IPv6 молчит, по IPv4 работает: так ведёт себя QUIC-прокси
-> с payload 1280, это 1328 байт по IPv6. Узел над masque — через `detour`, группу или как
-> звено `chain` — получает размер пакета под `mtu` автоматически
-> ([§13, `lx.mtu_align`](#lxmtu_align--выравнивание-mtu-и-размера-пакета-по-пути)). Вручную —
-> `initial_packet_size: 1232` у QUIC-узла или `mtu: 1340` у masque; второе требует внешнего
-> пути ≈ 1440 байт до WARP.
-
-`h3` (QUIC) стоит по умолчанию и быстрее. В сетях, где режется входящий UDP:443, QUIC-хендшейк
-виснет и `h3` не поднимается. Такой узел переключите на `h2` (TCP:443): там он проверен на
-устройстве. Первый dial `h3` медленный, потому что холодный CONNECT-IP — это QUIC-хендшейк,
-Extended CONNECT, анонс маршрута и стек. Короткий таймаут urltest может пометить свежий h3-узел
-`-1` на первой пробе, хотя дальше узел работает.
-
-Outbound проверен на устройстве от начала до конца, на Wi-Fi и LTE: `warp=on`, трафик идёт и на
-`h3`, и на `h2`, idle-suspend и самовосстановление подтверждены.
+📖 Все поля, профили, выбор между h3 и h2, примеры и частые грабли — в
+[protocols-transports.ru.md §3](protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)
+([EN](protocols-transports.md#3-masque-outbound-connect-ip--warp)).
 
 ---
 
@@ -1774,6 +1711,7 @@ info: путь, протокол, старое и новое состояние,
 | `lx.awg_masquerade` | ничего: пачка AmneziaWG идёт на любом пути |
 | `lx.wg.idle_suspend`, `idle_suspend_reachable`, `idle_teardown`, `lazy_build`, `build_max`, `build_overflow` | тот же ключ в `lx.wg.idle`: `idle_suspend` → `idle.suspend`, `lazy_build` → `idle.lazy_build` |
 | `route.lx_idle_suspend`, `lx_idle_suspend_reachable`, `lx_idle_teardown` | `lx.wg.idle.suspend`, `suspend_reachable`, `teardown` |
+| `network` в `masque`-узле | `vhttp` |
 
 ### Зарезервировано: `lx.naive`
 
