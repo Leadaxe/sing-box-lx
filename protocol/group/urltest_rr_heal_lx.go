@@ -2,46 +2,24 @@ package group
 
 // lx:begin SPEC 138 round_robin self-heal: outcomes, the retry, the check and the replacement
 //
-// The rules named here are those of SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/
-// ALGORITHM.md.
+// The rules are those of SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/ALGORITHM.md: the
+// classes of a failed open (§2), the retry and the replacement (§5), the rounds —
+// the check of the pool and the replacement search (§4.2) — and their pause (§4.6).
 //
-// A failed open of a round_robin connection is classified (§2): CANCEL (the client
-// or the group gave up: nothing follows), LOCAL, an explicit REFUSE_DST (a code of
-// the node's own leaf; a refused or reset open of a leaf that goes to the site
-// itself), FAIL_NODE by an active refusal or by a timeout. It is retried once
-// through another slot of the pool whose leaf is no nested urltest, the next one
-// with no suspicion first, else the next one under suspicion (§5); a key marked by
-// K5 keeps only the retry of FAIL_NODE. In a freeze (N0) the retry stays and nothing
-// else: the open and the retry began before E and go to no rule. The sign then
-// goes to its rules: S1 (a fast refusal: the life probe, the bypass only after it
-// failed), S2 (a timeout: the bypass and the life probe at once), K1 (the key
-// shifts at once), K2/K4 (the memory of a soft sign) and Q1 (the count).
-//
-// A round (§4.2) is a check of the pool or a replacement search; one at a time per
-// group, the next one not earlier than the pause after the previous one (§4.6): 15 s,
-// doubled up to 120 s after a round with no ANSWER at a lap of the cursor, back to
-// 15 s at the ANSWER of any probe of the group and at N3; the first byte of a
-// connection in a pause above the base gives one round at once (W5). Every probe
-// takes its place in the queue of the core (urltest_rr_queue_lx.go, §4.7).
-//
-// The check is started only by a soft sign on a pool node and judges the whole
-// pool: the first probes of every node; after H with no answer the candidates in
-// batches of the pool size, at most k batches (rrCandidateBatches); the first
-// ANSWER is the control; a node that has not answered gets its decisive probe when
-// its first probe ended with no ANSWER or flew H, in parts of up to U − 1 nodes,
-// and a part with a decisive probe with no ANSWER gets one control after. D1
-// strikes a node out and empties its slot, D3 writes the answer, D4/D5 end with no
-// verdict and no event. The search is started by an empty slot or the slot of a
-// quarantined node: candidates only, no pool node, no control; a candidate takes
-// the slot by the ANSWER of its own probe (§5). Only one writer changes the slots at
-// a time, under the flag of the scheduled run (URLTestGroup.checking), taken for the
-// write of a slot only, never for the probes of a round: while a run holds it, the
-// run fills the slots itself, and a run or a manual test is never skipped for a round.
+// How it is kept:
+//   - rrHeal lives in the balancer; one lock (rrHeal.access) guards the round in
+//     flight and the pause, E is an atomic read on the hot path;
+//   - a round runs in its own goroutine (rrCheck) on a context the group's Close
+//     and an event cancel; only that goroutine touches the rrCheck and the cursor;
+//   - every probe takes its place in the queue of the core (urltest_rr_queue_lx.go);
+//   - the slots are written by one writer at a time under the flag of the run
+//     (URLTestGroup.checking), taken for the write of a slot only (rrWriteSlot).
 //
 // A connection test (SPEC 139, lxtrace.IsProbe) gets the retry and records nothing;
 // a delay measurement through the group (urltest.IsMeasureLx) gets nothing.
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"math"
@@ -68,9 +46,6 @@ const (
 	rrPauseSteps = 3
 	// rrHealFreeze — the freeze of an event, N3 (T).
 	rrHealFreeze = 15 * time.Second
-	// rrHealYieldWait bounds how long the full run after a network change waits for
-	// the aborted check to end.
-	rrHealYieldWait = C.TCPTimeout
 	// rrCandidateBatches is k: batches of candidates per round, the replacement of a
 	// check included (L3).
 	rrCandidateBatches = 2
@@ -336,7 +311,8 @@ func (h *rrHeal) aborted(ctx context.Context) bool {
 	return ctx.Err() != nil || h.frozen()
 }
 
-// yield waits, at most rrHealYieldWait, for the round in flight to end.
+// yield waits, at most C.TCPTimeout, for the round in flight to end: the full run
+// after a network change waits so for the aborted check.
 func (h *rrHeal) yield(ctx context.Context) {
 	h.access.Lock()
 	var done chan struct{}
@@ -347,7 +323,7 @@ func (h *rrHeal) yield(ctx context.Context) {
 	if done == nil {
 		return
 	}
-	timer := time.NewTimer(rrHealYieldWait)
+	timer := time.NewTimer(C.TCPTimeout)
 	defer timer.Stop()
 	select {
 	case <-done:
@@ -1358,18 +1334,11 @@ func (s *URLTest) rrRefill(ctx context.Context, c *rrCheck) {
 				return // a run holds the flag (the run fills the slots itself), or the round is over
 			}
 			if replaced {
-				s.logger.Info("round_robin: ", node.Tag(), " takes the slot of ", rrSlotName(dead))
+				s.logger.Info("round_robin: ", node.Tag(), " takes the slot of ", cmp.Or(dead, "a struck node"))
 				break
 			}
 		}
 	}
-}
-
-func rrSlotName(tag string) string {
-	if tag == "" {
-		return "a struck node"
-	}
-	return tag
 }
 
 // rrLiveHistory returns the history of the leaf of node when it is live (§5), else

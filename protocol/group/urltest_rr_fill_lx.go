@@ -66,15 +66,12 @@ func (g *URLTestGroup) rrFillOnAlive(tag string) {
 	}
 }
 
-// rrPoolReserveMin is the floor of the reserve of the lazy run (R10).
-const rrPoolReserveMin = 1
-
 // rrPoolReserve is the reserve of the lazy run of a pool of size slots: live nodes
-// beyond the pool the run walks to, ceil(size/2) and at least rrPoolReserveMin.
+// beyond the pool the run walks to, ceil(size/2) and at least 1.
 // They take no slot: their fresh history puts them first in a replacement search
 // (SPEC 138 §5); a candidate still takes a slot only by its own probe.
 func rrPoolReserve(size int) int {
-	return max((size+1)/2, rrPoolReserveMin)
+	return max((size+1)/2, 1)
 }
 
 // rrProbeLifted probes the nodes the scheduled run lifted from quarantine (SPEC 138

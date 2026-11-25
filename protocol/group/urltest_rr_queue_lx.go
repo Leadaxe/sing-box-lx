@@ -2,23 +2,13 @@ package group
 
 // lx:begin SPEC 138 round_robin: the probe queue of a core instance (§4.7)
 //
-// The rules named here are those of SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/
-// ALGORITHM.md. One queue per core instance, shared by every round_robin group of
-// it: at most rrQueueCap (U) self-heal probes in flight — the checks, the
-// replacement searches and the life probes. The scheduled run stays outside, it has
-// its own limit. The queue only orders and paces: no inference is made in it, the
-// pauses (W), the quarantine and the counts stay with the group.
-//   - U1: a group asks for a batch of places and gets all of them at once; a batch
-//     larger than U is asked for in parts (rrCheck.acquire).
-//   - U2: the groups waiting are served in turn, one batch each.
-//   - U3: one probe per node (leaf and URL) in flight per core. A probe asked for
-//     while one of the same node flies takes its outcome when that one started not
-//     earlier than the lower bound of the rule asking; otherwise it waits for its
-//     end and starts its own. The place of the asker is held all along. A flight
-//     whose askers all gave up is cancelled and leaves the table at once: nobody
-//     joins a cancelled probe, and a cancelled probe is no outcome (rrProbe.cancelled).
-//     The decisive probe of a node whose own first probe still flies does not wait
-//     for it and flies beside it (rrCheck.launch).
+// The rules are those of SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/ALGORITHM.md §4.7
+// (U1–U3). One queue per core instance, shared by every round_robin group of it; the
+// scheduled run stays outside. The queue only orders and paces: no inference is made
+// in it. A request larger than U is asked for in parts (rrCheck.launchAll). A flight
+// whose askers all gave up is cancelled and leaves the table at once, so nobody joins
+// a cancelled probe; the decisive probe of a node whose own first probe still flies
+// flies beside it (rrCheck.launch).
 //
 // The core instance is the owner of the shared URL test history: the queue is kept
 // by a weak pointer to the history storage and dropped with it, so two instances

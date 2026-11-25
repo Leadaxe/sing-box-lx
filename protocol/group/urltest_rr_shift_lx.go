@@ -2,37 +2,17 @@ package group
 
 // lx:begin SPEC 138 round_robin: the key shift, the K2 memory, the slot counters
 //
-// The rules named here are those of SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/
-// ALGORITHM.md.
+// The rules are those of SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/ALGORITHM.md: the
+// key shift K1–K5 (§4.4), the slot counters and the quarantine Q1–Q4 (§4.5).
 //
-// The key shift (§4.4). A destination may be unreachable through one live node and
-// reachable through another. The group keeps one number per key, the shift: the
-// key of the table is the sticky key plus the destination (the domain, else the
-// IP) unless the sticky key holds it already; the slot of the key is still counted
-// from the sticky key, (hash + shift) % pool. The key shifts past a node:
-//   - K1: at once by an explicit REFUSE_DST on the slot of the key;
-//   - K2: by the second soft sign (FAIL_NODE, implicit REFUSE_DST, SILENT) of the
-//     key on the node, both picked at the same shift on the slot of the key, the
-//     second started after the outcome of the first, with an ANSWER via the node
-//     between their starts (rrTrack.live) and no ANSWER to the key via the node
-//     that started at or after the first start, also one that came before the
-//     first outcome (rrTrack.keyAnsweredSince). The first sign is only a record in
-//     a table of rrK2Size per group (K4); a shift of the key (the record keeps its
-//     shift), E, the scheduled run and the node leaving the slot erase it, and an
-//     ANSWER to the key on the node makes it void (the cell of the key). Evidence
-//     the group no longer holds gives no shift. A SILENT that gets its ANSWER later
-//     takes back the shift that rested on it.
-// A connection shifts the key only while the shift is still the one it was picked
-// with. A sign on the slot of a retry or of a detour shifts nothing. K5: after |P|
-// shifts in a row with no ANSWER to the key it is marked "address problem": back
-// to its own slot, no K1/K2, no retry by an explicit refusal or LOCAL, until the
-// scheduled run, a manual run or a network change. UDP shifts no key, and without
-// stickiness there is no key.
-//
-// The slot counters (§4.5). Per pool member: connections and the signs counted by
-// Q1, at most once per key (no key: every sign); Q2 quarantines a node that fails
-// noticeably more often than the median of the pool; Q3 halves both counters at
-// 256 connections, and D1 and the node leaving its slot drop them. UDP stays out.
+// How it is kept, per group (rrMemory in the balancer):
+//   - the shift table: rrShiftTableSize keys, the oldest dropped first, read by the
+//     pick under a read lock behind an atomic size; the key of the table is hashed
+//     from the sticky key and the destination without building strings (rrKeyOf);
+//   - the K2 memory: a ring of rrK2Size records with an index; a record is the first
+//     soft sign and the tracker it was taken on (the evidence the group still holds);
+//   - the counters of the slots and strikes(n) under one lock, the quarantine an
+//     atomic copy-on-write set.
 
 import (
 	"context"
