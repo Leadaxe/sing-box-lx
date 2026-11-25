@@ -1364,11 +1364,10 @@ func (s *URLTest) rrRefill(ctx context.Context, c *rrCheck) {
 			if dead != "" && !s.rrSlotEmpty(dead) {
 				break // its node got history back meanwhile: the slot is no longer to fill
 			}
-			if !s.rrTakeChecking(ctx) {
-				return // a run holds the flag: the run fills the slots itself
+			replaced, held := s.rrWriteSlot(ctx, func() bool { return b.replaceSlot(dead, node.Tag()) })
+			if !held {
+				return // a run holds the flag (the run fills the slots itself), or the round is over
 			}
-			replaced := b.replaceSlot(dead, node.Tag())
-			s.group.checking.Store(false)
 			if replaced {
 				s.logger.Info("round_robin: ", node.Tag(), " takes the slot of ", rrSlotName(dead))
 				break
@@ -1456,18 +1455,18 @@ func (s *URLTest) rrHasCandidate() bool {
 	return false
 }
 
-// rrTakeChecking claims URLTestGroup.checking for a slot change of the self-heal;
-// it fails when the flag is busy (a run does the same work) or the round has been
-// aborted, in which case the flag is not held.
-func (s *URLTest) rrTakeChecking(ctx context.Context) bool {
+// rrWriteSlot writes a slot for the self-heal under URLTestGroup.checking, taken for
+// the write only (§5); held is false, with nothing written, when the flag is busy (a
+// run does the same work) or the round has been aborted.
+func (s *URLTest) rrWriteSlot(ctx context.Context, write func() bool) (written, held bool) {
 	if !s.group.checking.CompareAndSwap(false, true) {
-		return false
+		return false, false
 	}
+	defer s.group.checking.Store(false)
 	if s.balancer.heal.aborted(ctx) {
-		s.group.checking.Store(false)
-		return false
+		return false, false
 	}
-	return true
+	return write(), true
 }
 
 // lx:end SPEC 138

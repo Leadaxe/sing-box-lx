@@ -2,6 +2,7 @@ package group
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -318,8 +319,8 @@ func (b *balancer) poolTags() []string {
 	return tags
 }
 
-// slotsSnapshot returns the published slot slice. setSlots and replaceSlot publish a
-// new slice and never mutate a published one, so it stays valid without the lock.
+// slotsSnapshot returns the published slot slice. writeSlots publishes a
+// new slice and never mutates a published one, so it stays valid without the lock.
 func (b *balancer) slotsSnapshot() []slot {
 	b.access.Lock()
 	defer b.access.Unlock()
@@ -330,84 +331,75 @@ func (b *balancer) slotsSnapshot() []slot {
 // is (SPEC 138 §5). It does nothing and returns false when dead no longer holds a
 // slot or node already holds one: the pool changed since the caller looked at it.
 func (b *balancer) replaceSlot(dead, node string) bool {
-	b.access.Lock()
-	index := -1
-	for i, s := range b.slots {
-		if s.tag == node {
-			b.access.Unlock()
-			return false
+	return b.writeSlots(func(old []slot) []slot {
+		index := -1
+		for i, s := range old {
+			if s.tag == node {
+				return nil
+			}
+			if s.tag == dead {
+				index = i
+			}
 		}
-		if s.tag == dead {
-			index = i
+		if index < 0 {
+			return nil
 		}
-	}
-	if index < 0 {
-		b.access.Unlock()
-		return false
-	}
-	next := make([]slot, len(b.slots))
-	copy(next, b.slots)
-	departed := next[index].track
-	next[index] = slot{tag: node, track: newRRTrack(node)}
-	b.slots = next
-	b.access.Unlock()
-	if departed != nil {
-		departed.dropPending() // its Q1 signs leave with it
-	}
-	b.rrSlotsChanged() // the new node's counters start from zero
-	// lx: SPEC 020 — same as setSlots: the active pool changed.
-	if b.onChange != nil {
-		b.onChange()
-	}
-	return true
+		next := slices.Clone(old)
+		next[index] = slot{tag: node, track: newRRTrack(node)}
+		return next
+	})
 }
 
 // clearSlot empties the slot of tag, leaving every other slot as is (SPEC 138 D1:
 // the struck node leaves its slot even with no replacement). It reports whether tag
 // held a slot.
 func (b *balancer) clearSlot(tag string) bool {
+	return b.writeSlots(func(old []slot) []slot {
+		index := slotIndex(old, tag)
+		if tag == "" || index < 0 {
+			return nil
+		}
+		next := slices.Clone(old)
+		next[index] = slot{}
+		return next
+	})
+}
+
+// setSlots replaces the pool atomically. The health-check (urltest_pool_lx.go) computes the
+// new occupancy — which tag sits in which slot — and hands the ordered tag list here.
+func (b *balancer) setSlots(tags []string) {
+	b.writeSlots(func(old []slot) []slot {
+		next := make([]slot, len(tags))
+		for i, tag := range tags {
+			next[i] = slot{tag: tag, track: slotTrack(old, tag)} // lx: SPEC 138 — a node keeps its tracker
+		}
+		return next
+	})
+}
+
+// writeSlots is the one writer of the pool: change gets the published slots and returns
+// the next ones (nil: no change), which are published as a new slice — a published one is
+// never mutated. The nodes that left take their Q1 signs and their counters with them
+// (SPEC 138), and the active pool changed (SPEC 020: onChange, called outside the lock so
+// the callback never nests under it). It reports whether the pool changed.
+func (b *balancer) writeSlots(change func(old []slot) []slot) bool {
 	b.access.Lock()
-	index := slotIndex(b.slots, tag)
-	if tag == "" || index < 0 {
+	next := change(b.slots)
+	if next == nil {
 		b.access.Unlock()
 		return false
 	}
-	next := make([]slot, len(b.slots))
-	copy(next, b.slots)
-	departed := next[index].track
-	next[index] = slot{}
+	departed := departedTracks(b.slots, next)
 	b.slots = next
-	b.access.Unlock()
-	if departed != nil {
-		departed.dropPending()
-	}
-	b.rrSlotsChanged()
-	if b.onChange != nil {
-		b.onChange()
-	}
-	return true
-}
-
-// setSlots replaces the pool atomically. The health-check (urltest.go) computes the new
-// occupancy — which tag sits in which slot — and hands the ordered tag list here.
-func (b *balancer) setSlots(tags []string) {
-	b.access.Lock()
-	old := b.slots
-	b.slots = make([]slot, len(tags))
-	for i, tag := range tags {
-		b.slots[i] = slot{tag: tag, track: slotTrack(old, tag)} // lx: SPEC 138 — a node keeps its tracker
-	}
-	departed := departedTracks(old, b.slots)
 	b.access.Unlock()
 	for _, track := range departed {
 		track.dropPending() // lx: SPEC 138 — its Q1 signs leave with it
 	}
 	b.rrSlotsChanged() // lx: SPEC 138 — a node that takes a slot starts its counters from zero
-	// lx: SPEC 020 — the active pool changed; invalidate the reachable cache.
-	// Called outside the access lock so the callback never nests under it.
 	if b.onChange != nil {
 		b.onChange()
 	}
+	return true
 }
 
 // --- sticky key ---------------------------------------------------------------------
