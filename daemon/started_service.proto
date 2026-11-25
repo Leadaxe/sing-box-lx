@@ -76,6 +76,11 @@ service StartedService {
   // (SPEC 149); on/off of the endpoint is SetEndpointEnabled.
   rpc TailscaleLogin(TailscaleLoginRequest) returns (google.protobuf.Empty) {}
   rpc StartConnectionTest(ConnectionTestRequest) returns (stream ConnectionTestProgress) {}
+  // Runtime control of an `impair` test outbound (SPEC 164): change the link
+  // now, replace the schedule, read the state. Each answers with the status.
+  rpc SetImpair(SetImpairRequest) returns (ImpairStatus) {}
+  rpc ScheduleImpair(ScheduleImpairRequest) returns (ImpairStatus) {}
+  rpc GetImpairStatus(ImpairStatusRequest) returns (ImpairStatus) {}
 
   // lx:end lx_command
 }
@@ -1287,6 +1292,34 @@ enum TailscalePeerPath {
   TAILSCALE_PEER_PATH_DIRECT = 1;     // direct UDP, see TailscalePeer.endpoint
   TAILSCALE_PEER_PATH_PEER_RELAY = 2; // via a peer relay, see TailscalePeer.peerRelay
   TAILSCALE_PEER_PATH_DERP = 3;       // via DERP, see TailscalePeer.derpRegionCode
+}
+
+// SPEC 164 — runtime control of an `impair` outbound. Requests and the
+// status are JSON in the config's own schema, so the commands follow the
+// outbound's keys without a proto change.
+message SetImpairRequest {
+  string outboundTag = 1;
+  // One schedule entry without "at": {"outage": true, "reset": true},
+  // {"rate": "3mbit", "direction": "down"}.
+  string entry = 2;
+}
+
+message ScheduleImpairRequest {
+  string outboundTag = 1;
+  // A "schedule" list; [] stops the schedule and restores the config's link.
+  string entries = 2;
+  // "now" (default) or "first_use": count from the next traffic.
+  string start = 3;
+}
+
+message ImpairStatusRequest {
+  string outboundTag = 1;
+}
+
+message ImpairStatus {
+  // {"tag", "up": {...}, "down": {...}, "stall", "schedule": {...}}, see
+  // docs-lx/lx-impair.md.
+  string json = 1;
 }
 
 // lx:end lx_command
