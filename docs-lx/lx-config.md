@@ -535,15 +535,13 @@ There is nothing to configure: the behaviour is always on, with no config keys.
 | A node answers probes but fails a noticeable share of connections | A node with at least 5 % failures and more than twice the pool median goes to quarantine: its slot is skipped and gets a replacement until the next scheduled check | Fewer failed connections |
 | The local network is gone: device sleep, a Wi-Fi or mobile network switch, an ISP outage | Nothing answers, so no node is struck out, and the group freezes for 15 s | The same pool once the network is back |
 
-Three setups gain the most:
+Where it shows:
 
-- a pool of several servers with a rare check (`interval` of 10 minutes or more): a server that
-  goes down between checks costs a fraction of a second, not its share of connections until the
-  next check;
-- a subscription with nodes in several countries: a site closed to one country's node opens
-  through another node of the pool, and the rest of the traffic stays on its nodes;
-- phones and laptops: sleep and network switches strike out no nodes, so after a wake-up the
-  pool is the one that worked before.
+- a pool with a rare check (`interval` of 10 minutes or more) — a server that goes down between
+  checks does not take its share of connections until the next check, it is replaced at once;
+- a site closed to one node (by geography, for example) opens through another and keeps that
+  choice;
+- phones and laptops — sleep and network switches do not lose the pool.
 
 Seven limits:
 
