@@ -13,7 +13,12 @@ package group
 // plan at its end (balancePoolFirstLive, balancePoolTolerant, rebuildPool) still
 // sets the pool in its order — with pool_tolerance > 0 sorted by delay.
 
-import N "github.com/sagernet/sing/common/network"
+import (
+	"context"
+
+	"github.com/sagernet/sing-box/adapter"
+	N "github.com/sagernet/sing/common/network"
+)
 
 // onProbeAliveLx is the hook of a probe that answered (urlTestBatch.onAlive): the
 // SPEC 054 proof of life, the SPEC 138 proof of the path (rrRunAnswer), and the
@@ -58,6 +63,38 @@ func (g *URLTestGroup) rrFillOnAlive(tag string) {
 			g.logger.Debug("round_robin: ", tag, " answered during the run and takes the dead slot of ", entry.tag)
 			return
 		}
+	}
+}
+
+// rrPoolReserveMin is the floor of the reserve of the lazy run (R10).
+const rrPoolReserveMin = 1
+
+// rrPoolReserve is the reserve of the lazy run of a pool of size slots: live nodes
+// beyond the pool the run walks to, ceil(size/2) and at least rrPoolReserveMin.
+// They take no slot: their fresh history puts them first in a replacement search
+// (SPEC 138 §5); a candidate still takes a slot only by its own probe.
+func rrPoolReserve(size int) int {
+	return max((size+1)/2, rrPoolReserveMin)
+}
+
+// rrProbeLifted probes the nodes the scheduled run lifted from quarantine (SPEC 138
+// Q2, Q4) that it has not probed in the pool or in its walk: a quarantined node is
+// probed by every run, also with the pool and the reserve full.
+func (g *URLTestGroup) rrProbeLifted(ctx context.Context, lifted []string, inPool, walked map[string]bool, result map[string]uint16) {
+	var probe []adapter.Outbound
+	for _, tag := range lifted {
+		if inPool[tag] || walked[tag] {
+			continue
+		}
+		if node, loaded := g.outbound.Outbound(tag); loaded {
+			probe = append(probe, node)
+		}
+	}
+	if len(probe) == 0 {
+		return
+	}
+	for tag, delay := range g.testNodes(ctx, probe, true) {
+		result[tag] = delay
 	}
 }
 

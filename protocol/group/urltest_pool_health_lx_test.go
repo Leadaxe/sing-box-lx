@@ -92,7 +92,7 @@ func TestBalancePoolFirstLive_replaceInSlot(t *testing.T) {
 	g := newPoolTestGroup(t, context.Background(), []*testDialNode{a, b, c}, 2)
 	g.balancer.setSlots([]string{"a", "b"})
 
-	g.balancePoolFirstLive(context.Background(), 2)
+	g.balancePoolFirstLive(context.Background(), 2, nil)
 
 	tags := g.balancer.poolTags()
 	if len(tags) != 2 || tags[0] != "a" || tags[1] != "c" {
@@ -109,7 +109,7 @@ func TestBalancePoolFirstLive_deadKeepsSlotWithoutReplacement(t *testing.T) {
 	g := newPoolTestGroup(t, context.Background(), []*testDialNode{a, b, c}, 2)
 	g.balancer.setSlots([]string{"a", "b"})
 
-	g.balancePoolFirstLive(context.Background(), 2)
+	g.balancePoolFirstLive(context.Background(), 2, nil)
 
 	tags := g.balancer.poolTags()
 	if len(tags) != 2 || tags[0] != "a" || tags[1] != "b" {
@@ -117,20 +117,21 @@ func TestBalancePoolFirstLive_deadKeepsSlotWithoutReplacement(t *testing.T) {
 	}
 }
 
-// TestBalancePoolFirstLive_fullPoolProbesOnlyPool: with every slot alive, the
-// lazy check must not touch nodes outside the pool (energy: no out-of-pool
-// probe traffic, no wake of suspended out-of-pool endpoints).
-func TestBalancePoolFirstLive_fullPoolProbesOnlyPool(t *testing.T) {
+// TestBalancePoolFirstLive_fullPoolProbesOnlyThePoolAndTheReserve: with every slot
+// alive, the lazy check walks out of the pool only for its reserve (R10: ceil(2/2) =
+// 1 live node), which takes no slot; the nodes past it stay untouched.
+func TestBalancePoolFirstLive_fullPoolProbesOnlyThePoolAndTheReserve(t *testing.T) {
 	a := &testDialNode{tag: "a", addr: "server"}
 	b := &testDialNode{tag: "b", addr: "server"}
 	c := &testDialNode{tag: "c", addr: "server"}
-	g := newPoolTestGroup(t, context.Background(), []*testDialNode{a, b, c}, 2)
+	d := &testDialNode{tag: "d", addr: "server"}
+	g := newPoolTestGroup(t, context.Background(), []*testDialNode{a, b, c, d}, 2)
 	g.balancer.setSlots([]string{"a", "b"})
 
-	g.balancePoolFirstLive(context.Background(), 2)
+	g.balancePoolFirstLive(context.Background(), 2, nil)
 
-	if got := g.history.LoadURLTestHistory("c"); got != nil {
-		t.Fatal("a full live pool must not probe out-of-pool nodes")
+	if g.history.LoadURLTestHistory("c") == nil || g.history.LoadURLTestHistory("d") != nil {
+		t.Fatal("a full live pool probes its reserve (c) and nothing past it (d)")
 	}
 	tags := g.balancer.poolTags()
 	if tags[0] != "a" || tags[1] != "b" {

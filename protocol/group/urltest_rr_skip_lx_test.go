@@ -217,7 +217,7 @@ func TestRRSkip_deadMemberKeptButSkipped(t *testing.T) {
 	s := &URLTest{outbound: g.outbound, logger: log.NewNOPFactory().NewLogger("test"), group: g, balancer: g.balancer}
 	s.rrWire()
 
-	g.balancePoolFirstLive(context.Background(), 2)
+	g.balancePoolFirstLive(context.Background(), 2, nil)
 	if tags := g.balancer.poolTags(); tags[0] != "a" || tags[1] != "b" {
 		t.Fatalf("dead b must keep its slot, got %v", tags)
 	}

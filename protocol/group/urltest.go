@@ -829,7 +829,7 @@ func (g *URLTestGroup) poolSize() int {
 // than needed to keep the pool full of live nodes, then applies the new slot occupancy.
 // Returns tag->delay for every node it tested live (for the URLTest map / UI).
 func (g *URLTestGroup) balancePool(ctx context.Context) map[string]uint16 {
-	g.balancer.rrScheduledRun() // lx: SPEC 138 — the scheduled run lifts the address-problem marks and the quarantine, and restarts strikes(n) (Q4)
+	lifted := g.balancer.rrScheduledRun() // lx: SPEC 138 — the scheduled run lifts the address-problem marks and the quarantine, and restarts strikes(n) (Q4)
 	size := g.poolSize()
 	if size == 0 {
 		return map[string]uint16{}
@@ -837,13 +837,13 @@ func (g *URLTestGroup) balancePool(ctx context.Context) map[string]uint16 {
 	if g.balancer.poolTolerance > 0 {
 		return g.balancePoolTolerant(ctx, size)
 	}
-	return g.balancePoolFirstLive(ctx, size)
+	return g.balancePoolFirstLive(ctx, size, lifted)
 }
 
-// balancePoolFirstLive (pool_tolerance == 0): re-test the nodes already in the pool, then —
-// only if the pool is short of live nodes — walk the rest in config order, testing until the
-// pool is full again. A dead pool node keeps its slot until a live replacement is found.
-func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int) map[string]uint16 {
+// balancePoolFirstLive (pool_tolerance == 0): re-test the nodes already in the pool, then walk
+// the rest in config order, testing until the pool is full again and its reserve answered (lx:
+// SPEC 019 R10). A dead pool node keeps its slot until a live replacement is found.
+func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int, lifted []string) map[string]uint16 {
 	current := g.balancer.poolTags()
 	inPool := make(map[string]bool, len(current))
 	for _, tag := range current {
@@ -884,36 +884,51 @@ func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int) map[s
 	// 2b. Refill holes (dead/empty slots) by writing replacements INTO the hole's own index:
 	// walk non-pool nodes in config order, testing in batches of `size` (a full pool's worth)
 	// in parallel, until no holes remain or nodes run out.
-	if emptySlot(0) >= 0 {
-		candidates := make([]adapter.Outbound, 0, len(g.outbounds))
-		for _, detour := range g.outbounds {
-			if !inPool[detour.Tag()] {
-				candidates = append(candidates, detour)
+	// lx: SPEC 019 R10 — the walk goes on until the pool is full and rrPoolReserve
+	// more live nodes answered: the reserve takes no slot, it gets fresh history and
+	// so goes first in a replacement search (SPEC 138 §5).
+	reserve, spare := rrPoolReserve(size), 0
+	walked := make(map[string]bool, len(g.outbounds))
+	candidates := make([]adapter.Outbound, 0, len(g.outbounds))
+	for _, detour := range g.outbounds {
+		if !inPool[detour.Tag()] {
+			candidates = append(candidates, detour)
+		}
+	}
+	fill := 0
+	for start := 0; start < len(candidates); {
+		holes := 0
+		for i := fill; i < len(next); i++ {
+			if next[i] == "" {
+				holes++
 			}
 		}
-		fill := 0
-		for start := 0; start < len(candidates) && emptySlot(fill) >= 0; start += size {
-			end := start + size
-			if end > len(candidates) {
-				end = len(candidates)
+		need := holes + max(reserve-spare, 0)
+		if need == 0 {
+			break
+		}
+		end := min(start+min(size, need), len(candidates))
+		batch := candidates[start:end]
+		start = end
+		tested := g.testNodes(ctx, batch, true)
+		// Take live ones in config order (batch is already in config order).
+		for _, detour := range batch {
+			tag := detour.Tag()
+			walked[tag] = true
+			delay, ok := tested[tag]
+			if !ok {
+				continue
 			}
-			batch := candidates[start:end]
-			tested := g.testNodes(ctx, batch, true)
-			// Take live ones in config order (batch is already in config order).
-			for _, detour := range batch {
-				slot := emptySlot(fill)
-				if slot < 0 {
-					break
-				}
-				tag := detour.Tag()
-				if delay, ok := tested[tag]; ok {
-					next[slot] = tag
-					fill = slot + 1
-					result[tag] = delay
-				}
+			result[tag] = delay
+			if slot := emptySlot(fill); slot >= 0 {
+				next[slot] = tag
+				fill = slot + 1
+			} else {
+				spare++
 			}
 		}
 	}
+	g.rrProbeLifted(ctx, lifted, inPool, walked, result) // lx: SPEC 138 §8 item 19 — the run probes the nodes it lifted from quarantine
 	// 3. Any hole left (not enough live nodes): put a dead member back in it so the pool never
 	// shrinks. A dead occupant keeps the slot it already held when possible; otherwise the
 	// remaining dead members fill the leftover holes (order does not matter — all are dead).
