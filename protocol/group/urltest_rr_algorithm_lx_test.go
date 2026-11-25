@@ -458,7 +458,7 @@ func TestRRAlgo_S2_openTimeout(t *testing.T) {
 	conn, _ := f.s.rrHealDial(context.Background(), N.NetworkTCP, destination, f.nodes["a"], timeout, f.s.testPick(context.Background(), destination, start))
 	closeConn(conn)
 	track := f.s.balancer.trackOf("a")
-	if !track.suspect(rrClock(time.Now()), 0) || track.pendingN.Load() != 0 {
+	if !track.suspect(rrClock(time.Now()), f.s.balancer.heal.epoch()) || track.pendingN.Load() != 0 {
 		t.Fatal("S2: the bypass at once; no Live, no Q1 sign")
 	}
 	w := rrClock(start)
