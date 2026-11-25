@@ -44,7 +44,6 @@ package group
 import (
 	"context"
 	"net"
-	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -86,8 +85,7 @@ func (s *URLTest) rrWatchPacket(ctx context.Context, dialed adapter.Outbound, co
 func (s *URLTest) rrWatchPacketFor(ctx context.Context, dialed adapter.Outbound, conn net.PacketConn, picked rrPick, retry bool) net.PacketConn {
 	picked.dial.opened()
 	watch, ok, direct := s.rrNewWatch(ctx, dialed, picked, nil, retry, true)
-	if !ok || direct {
-		picked.dial.release() // not reached for a tracked open (rrNewWatch); kept for every path
+	if !ok || direct { // never for a tracked open (rrNewWatch): no context to release
 		return conn
 	}
 	wrapped := newRRFirstPacketConn(conn, &watch)
@@ -96,28 +94,17 @@ func (s *URLTest) rrWatchPacketFor(ctx context.Context, dialed adapter.Outbound,
 }
 
 // rrFirstPacketConn watches a UDP flow for its first packet (see the file header).
+// Its state takes rrStateWrote, rrStateGotByte, rrStateClosed and rrStateTracked; it
+// is in the pwaits of its node from the first packet sent to the first one received.
 type rrFirstPacketConn struct {
 	N.NetPacketConn
-	state atomic.Uint32 // rrStateWrote, rrStateGotByte, rrStateClosed, rrStateTracked
-	watch *rrConnWatch  // = &held
-	held  rrConnWatch
-	entry rrTrackEntry // in watch.track.waits from the first packet sent to the first one received
-	dial  *rrDial      // the tracked open of the flow; its context is released on the close
+	rrWatched
 }
 
 func newRRFirstPacketConn(conn net.PacketConn, watch *rrConnWatch) *rrFirstPacketConn {
-	c := &rrFirstPacketConn{NetPacketConn: bufio.NewPacketConn(conn), held: *watch}
-	c.watch = &c.held
+	c := &rrFirstPacketConn{NetPacketConn: bufio.NewPacketConn(conn)}
+	c.hold(watch)
 	return c
-}
-
-func (c *rrFirstPacketConn) set(bit uint32) uint32 {
-	for {
-		old := c.state.Load()
-		if old&bit == bit || c.state.CompareAndSwap(old, old|bit) {
-			return old
-		}
-	}
 }
 
 // received takes one packet read before the first one was seen.
@@ -145,12 +132,6 @@ func (c *rrFirstPacketConn) sent() {
 	c.watch.track.track(&c.watch.track.pwaits, &c.entry, rrClock(time.Now()), c)
 	c.set(rrStateTracked)
 	if c.state.Load()&(rrStateGotByte|rrStateClosed) != 0 {
-		c.watch.track.untrack(&c.entry)
-	}
-}
-
-func (c *rrFirstPacketConn) untrack() {
-	if c.state.Load()&rrStateTracked != 0 {
 		c.watch.track.untrack(&c.entry)
 	}
 }

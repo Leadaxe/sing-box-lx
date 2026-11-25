@@ -118,8 +118,7 @@ func (s *URLTest) rrWatch(ctx context.Context, network string, dialed adapter.Ou
 		return conn
 	}
 	watch, ok, direct := s.rrNewWatch(ctx, dialed, picked, sign, retry, packet)
-	if !ok {
-		picked.dial.release() // not reached for a tracked dial (rrNewWatch); kept for every path
+	if !ok { // never for a tracked dial (rrNewWatch): no context to release
 		return conn
 	}
 	if direct {
@@ -213,32 +212,52 @@ const (
 	rrStateEnded = rrStateGotByte | rrStateClosed | rrStateFailed
 )
 
-// rrFirstByteConn watches a connection for its first byte (see the file header).
-type rrFirstByteConn struct {
-	net.Conn
+// rrWatched is what a watched TCP connection and a watched UDP flow share: the
+// state, the watch, the entry in a list of the tracker of the node and the tracked
+// dial, whose context is released on the close. It is embedded in the wrapper, so
+// watching allocates nothing apart.
+type rrWatched struct {
 	state atomic.Uint32
 	watch *rrConnWatch // = &held
 	held  rrConnWatch
-	entry rrTrackEntry // in watch.track.waits while the client waits for the first byte
-	dial  *rrDial      // the tracked dial of the connection; its context is released on the close
+	entry rrTrackEntry // in a list of watch.track while the exchange waits for its answer
+	dial  *rrDial
+}
+
+func (w *rrWatched) hold(watch *rrConnWatch) {
+	w.held = *watch
+	w.watch = &w.held
+}
+
+func (w *rrWatched) set(bit uint32) uint32 {
+	for {
+		old := w.state.Load()
+		if old&bit == bit || w.state.CompareAndSwap(old, old|bit) {
+			return old
+		}
+	}
+}
+
+// untrack takes the exchange off the list of its node; set the outcome bit first.
+func (w *rrWatched) untrack() {
+	if w.state.Load()&rrStateTracked != 0 {
+		w.watch.track.untrack(&w.entry)
+	}
+}
+
+// rrFirstByteConn watches a connection for its first byte (see the file header).
+type rrFirstByteConn struct {
+	net.Conn
+	rrWatched
 	// wroteAt is w, the rrClock of the client's first write: the wait for the
 	// first byte starts there.
 	wroteAt atomic.Int64
 }
 
 func newRRFirstByteConn(conn net.Conn, watch *rrConnWatch) *rrFirstByteConn {
-	c := &rrFirstByteConn{Conn: conn, held: *watch}
-	c.watch = &c.held
+	c := &rrFirstByteConn{Conn: conn}
+	c.hold(watch)
 	return c
-}
-
-func (c *rrFirstByteConn) set(bit uint32) uint32 {
-	for {
-		old := c.state.Load()
-		if old&bit == bit || c.state.CompareAndSwap(old, old|bit) {
-			return old
-		}
-	}
 }
 
 // setUnless sets bit in one step while none of unless is set; it reports whether
@@ -281,13 +300,6 @@ func (c *rrFirstByteConn) wrote() {
 	c.set(rrStateTracked)
 	if c.state.Load()&rrStateEnded != 0 {
 		c.watch.track.untrack(&c.entry) // the outcome came in meanwhile
-	}
-}
-
-// untrack takes the connection off the list of its node; set the outcome bit first.
-func (c *rrFirstByteConn) untrack() {
-	if c.state.Load()&rrStateTracked != 0 {
-		c.watch.track.untrack(&c.entry)
 	}
 }
 
