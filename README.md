@@ -7,7 +7,7 @@
 [![Go toolchain](https://img.shields.io/badge/Go-1.26.10-00ADD8?logo=go&logoColor=white)](go.version)
 [![License: GPL-3.0](https://img.shields.io/github/license/Leadaxe/sing-box-lx)](LICENSE)
 
-**sing-box-lx is a client core based on [sing-box](https://github.com/SagerNet/sing-box) for desktop, Android and routers, compatible with current Xray and AmneziaWG servers.** The fork adds what those servers ask of a client: REALITY with the post-quantum key share, the XHTTP transport and VLESS `encryption` from Xray, AmneziaWG 2.0 / 3.x on the WireGuard endpoint, Cloudflare WARP over MASQUE, and TrustTunnel. Around the protocols it adds what apps and OpenWrt routers need to run a core: the `lxd` daemon, a gRPC state API, sleep for idle tunnels.
+**sing-box-lx is an extended client proxy and VPN core based on [sing-box](https://github.com/SagerNet/sing-box) for desktop, Android and routers, compatible with current Xray and AmneziaWG servers.** The fork adds what those servers ask of a client: REALITY with the post-quantum key share, the XHTTP transport and VLESS `encryption` from Xray, AmneziaWG 2.0 / 3.x on the WireGuard endpoint, Cloudflare WARP over MASQUE, and TrustTunnel. Around the protocols it adds what apps and OpenWrt routers need to run a core: the `lxd` daemon, a gRPC state API, sleep for idle tunnels.
 
 It is a drop-in: the binary is still `sing-box`, the config is still sing-box JSON, and `-lx` appears only in the version string. Every `upstream/stable` release is merged; a build without the fork's tags and a config without its fields behave as upstream, byte for byte.
 
@@ -244,7 +244,7 @@ The full list with links and what each project takes — **[docs-lx/consumers.md
 
 ## For developers: build a client, launcher or router firmware on this core
 
-A team shipping a VPN client, a desktop launcher, router firmware or a management panel gets two things from this core that matter most during development: [observability](#observability-over-grpc-the-app-sees-what-the-core-is-doing), the live state of the core over gRPC, and [network impairment](#network-impairment-without-root-a-controlled-bad-link-inside-the-core) without root to test the product on a bad link before users find the bugs.
+A team shipping a VPN client, a desktop launcher, router firmware or a management panel gets from this core what matters most during development: [observability](#observability-over-grpc-the-app-sees-what-the-core-is-doing), the live state of the core over gRPC; [network impairment](#network-impairment-without-root-a-controlled-bad-link-inside-the-core) without root to test the product on a bad link before users find the bugs; [a daemon API for a router panel and firmware hooks](#a-daemon-api-for-a-router-web-panel-and-firmware-hooks); [builds of any branch](#builds-of-any-branch-and-config-checks) to try a fix on a device.
 
 ### Observability over gRPC: the app sees what the core is doing
 
@@ -261,6 +261,8 @@ SubscribeConnections{interval: 1s}       → the connection table with each conn
 SubscribeDNSQueries{includeAnswers: true} → DNS queries with CNAME chains
 GetPool{tag}                             → balancer slots and their state
 ```
+
+The same calls work from a terminal: the fork extends the upstream `sing-box api` command with the `group pool`, `connection-test` and `impair` subcommands.
 
 Limits: the fork's calls are in a build with `with_lx_command`; without the tag they answer `Unimplemented`.
 
@@ -281,9 +283,47 @@ A balancer, failover or a new transport is tested against real servers on a bad 
   "schedule": [ { "at": "60s", "outage": true, "reset": true }, { "at": "70s", "outage": false } ] }
 ```
 
+The experiment is driven at runtime, without a core restart that would reset the groups' state. `sing-box api impair set` or `SetImpair` over gRPC change the link mid-run, `ScheduleImpair` replaces the schedule, and observability shows how the pool and the connections respond:
+
+```bash
+sing-box api impair set line-a '{"outage": true, "reset": true}'   # break the link now
+sing-box api group pool auto                                        # what the balancer did
+sing-box api impair set line-a '{"outage": false}'                  # bring the link back
+```
+
 `with_lx_impair` is in the release binaries and the AAR, adds 150 KB and does nothing until a config declares `"type": "impair"`; on start it logs a warning that the link is degraded on purpose. Limits: the receive side is degraded after the real network, so the server still sees the real round-trip time.
 
 [guide with recipes for `round_robin` and `failover`](docs-lx/lx-impair.md#recipes-for-balancing-tests) ([RU](docs-lx/lx-impair.ru.md#рецепты-для-испытаний-балансировки)) · [feature](SPECS/FEATURES/020-IMPAIR/FEATURE.md)
+
+### A daemon API for a router web panel, and firmware hooks
+
+A router panel is built on the `lxd` daemon's API, with no agent of its own on the device. Same port and same mTLS as observability:
+
+- **Who is on the network.** `GET /admin/clients-info` turns LAN addresses into devices: name, MAC, SSID, interface; `PUT /admin/clients-info/labels/{key}` keeps the name the operator gave.
+- **The state of the machine.** `GET /admin/host` — CPU per core, memory, thermal sensors, disks, file descriptors; `GET /admin/host/interfaces` — counters and rates of every interface; `GET /admin/stats` — the core's traffic and connections.
+- **Maintenance buttons.** `daemon.json` defines named commands (`"update": "/usr/bin/sing-box lxd update"`), and `POST /admin/commands/{name}` runs them by name with no input from the client; the output and exit code are read through the same API.
+- **Profiles.** `/admin/pprof` serves heap, goroutine, CPU and trace from the remote machine.
+
+Hooks fit the core into firmware. The daemon runs scripts from `<state-dir>/hooks/` on `pre_start`, `post_start`, `post_reload` and `post_stop` and passes the event and reason (`LXD_EVENT`, `LXD_REASON`) and the TUN interface, address and MTU (`LXD_TUN_INTERFACE`, `LXD_TUN_ADDRESS`, `LXD_TUN_MTU`) in the environment. Firmware adds its own firewall rules and routes for the TUN that came up. A failing `pre_start` keeps the core from starting; the outcome of each hook's last run shows in `/admin/status`.
+
+```sh
+#!/bin/sh
+# <state-dir>/hooks/post_start
+nft add rule inet fw4 forward iifname "$LXD_TUN_INTERFACE" accept
+```
+
+Limits: the daemon is not in the AAR or the Windows 7 build.
+
+[operator's guide](docs-lx/lxd-daemon.md) ([RU](docs-lx/lxd-daemon.ru.md)) · [hooks](docs-lx/lxd-daemon.md#6a-hooks-the-daemon-runs-the-admins-scripts-when-the-core-changes-state) · [feature](SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md)
+
+### Builds of any branch and config checks
+
+The `lx-build.yml` workflow builds a binary, Linux musl, the Android AAR or the Apple xcframework from any branch or tag of this repository, so a branch with a fix goes onto a device before the release:
+
+```bash
+gh workflow run lx-build.yml -f target=android-aar -f branch=<branch>
+make -f Makefile.lx lx-check      # build, then sing-box check every config in lx-test/config/
+```
 
 ## How the fork stays close to upstream
 
