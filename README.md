@@ -19,7 +19,7 @@ The project is free and developed in spare time — **[support it](docs-lx/donat
 - **WireGuard gets through a network that drops it by signature.** AmneziaWG changes the shape of the packets, and the masquerade keys put a browser's QUIC Initial ahead of the handshake. → [AmneziaWG](#amneziawg-20-and-3x-run-on-the-standard-wireguard-endpoint)
 - **Cloudflare WARP connects where UDP 443 is filtered.** The `masque` outbound carries the tunnel over HTTP/3 or over HTTP/2 on TCP 443. → [MASQUE](#cloudflare-warp-connects-over-masque-on-http3-or-http2)
 - **A phone with ten WireGuard nodes stops paying for nine idle ones.** Idle endpoints go to sleep: on a device, eight sleeping endpoints freed 134 MB. → [Idle-suspend](#idle-wireguard-tunnels-sleep-on-android)
-- **A router serves VPN on a separate SSID and survives a broken config.** The `lxd` daemon applies a config, rolls back if the core does not start, and stays reachable meanwhile. → [`lxd`](#the-lxd-daemon-keeps-its-control-channel-through-every-config-change)
+- **A router serves VPN on a separate SSID and rolls back if a config breaks it.** The `lxd` daemon checks a config before the swap and returns to the last one that worked if the core does not start; the control channel stays up all the while. → [`lxd`](#the-lxd-daemon-keeps-its-control-channel-through-every-config-change)
 - **An app shows what the core is doing without parsing logs.** Groups, pools, chains, rules, DNS queries and per-connection paths come over gRPC. → [Observability](#apps-read-the-cores-state-over-grpc)
 - **A product built on the core gets a self-healing load balancer, a remote management daemon and network impairment without root.** → [For developers](#for-developers-build-a-client-launcher-or-router-firmware-on-this-core)
 
