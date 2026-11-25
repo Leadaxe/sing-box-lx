@@ -153,6 +153,9 @@ func (s *URLTest) CheckOutbounds() {
 }
 
 func (s *URLTest) PerformUpdateCheck() {
+	if s.group.balancer != nil { // lx: SPEC 019 — round_robin keeps no single selection (afterTestLx); the router calls this on every failed open
+		return
+	}
 	if s.group.performUpdateCheck() {
 		s.group.history.NotifyUpdated()
 	}
@@ -207,7 +210,7 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 	}
 	s.logger.ErrorContext(ctx, err)
 	if !E.IsClosedOrCanceled(err) {
-		if s.group.deleteHistoryOnDialError(ctx, RealTag(outbound, N.NetworkName(network))) { // lx: SPEC 019, SPEC 139 — round_robin and a probe keep the history
+		if s.group.deleteHistoryOnDialError(ctx, RealTag(outbound, N.NetworkName(network))) && !s.group.pathDead(outbound, err) { // lx: SPEC 019, SPEC 139 — round_robin and a probe keep the history; SPEC 054 — a dead path moves the selection itself, without Interrupt
 			s.PerformUpdateCheck()
 		}
 	}

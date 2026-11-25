@@ -129,7 +129,7 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 			dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 		}
 		err = E.Cause(err, "open connection to ", remoteString, dialerString)
-		m.deleteURLTestHistory(metadata.OutboundChain, err)
+		m.deleteURLTestHistoryLx(ctx, metadata.OutboundChain, err) // lx: SPEC 139 — upstream: m.deleteURLTestHistory(metadata.OutboundChain, err)
 		N.CloseOnHandshakeFailure(conn, onClose, err)
 		m.logger.ErrorContext(ctx, err)
 		return
@@ -203,7 +203,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 				dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 			}
 			err = E.Cause(err, "open packet connection to ", remoteString, dialerString)
-			m.deleteURLTestHistory(metadata.OutboundChain, err)
+			m.deleteURLTestHistoryLx(ctx, metadata.OutboundChain, err) // lx: SPEC 139 — upstream: m.deleteURLTestHistory(metadata.OutboundChain, err)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
 			m.logger.ErrorContext(ctx, err)
 			return
@@ -230,7 +230,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 				dialerString = " using outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
 			}
 			err = E.Cause(err, "listen packet connection", dialerString)
-			m.deleteURLTestHistory(metadata.OutboundChain, err)
+			m.deleteURLTestHistoryLx(ctx, metadata.OutboundChain, err) // lx: SPEC 139 — upstream: m.deleteURLTestHistory(metadata.OutboundChain, err)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
 			m.logger.ErrorContext(ctx, err)
 			return

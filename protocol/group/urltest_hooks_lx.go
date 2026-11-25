@@ -240,7 +240,7 @@ func (g *URLTestGroup) afterTestLx(force bool) {
 }
 
 // testNodes runs the URL test over the given outbounds (skipping fresh history unless
-// force), stores/deletes history, and returns tag->delay for the live ones: upstream's
+// force), stores/deletes history when the batch ends, and returns tag->delay for the live ones: upstream's
 // nested-group-aware batch with the probe hook (SPEC 054: an answer is proof of life
 // and resets the node's penalties; SPEC 019: a node that answers fills a dead slot
 // during the run). Shared by least_test and the round_robin pool paths. A round_robin
@@ -262,7 +262,8 @@ func (g *URLTestGroup) testNodes(ctx context.Context, outbounds []adapter.Outbou
 type probeAliveKey struct{}
 
 // withProbeAlive attaches the hook the URL test batch calls for every leaf that
-// answered its probe, after the history write. It rides the context so the
+// answered its probe, as soon as it answers; the batch writes the history only
+// when it ends (upstream 37fffa325). It rides the context so the
 // upstream URLTestOutbounds keeps its signature; a nested URLTest group's own run
 // attaches its own hook.
 func withProbeAlive(ctx context.Context, onAlive func(tag string)) context.Context {
