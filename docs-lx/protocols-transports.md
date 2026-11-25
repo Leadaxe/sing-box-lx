@@ -519,7 +519,7 @@ packet shaped like its protocol that the client sends first. The shapes come fro
 open-source WireSock reference, but instead of a server response the device emits the
 client request a peer sends first:
 
-- **`quic`** — a QUIC Initial (RFC 9001) carrying a whole ClientHello: your `id` as
+- **`quic`** — a QUIC Initial ([RFC 9001](https://www.rfc-editor.org/rfc/rfc9001)) carrying a whole ClientHello: your `id` as
   the SNI, the fingerprint of the `ib` browser, frames laid out as that stack does:
   - `chrome` — Chrome 155 without the PQ key share, 1250 bytes, the ClientHello cut
     into 2–11 CRYPTO frames with 2–10 PINGs and scattered PADDING
@@ -807,7 +807,7 @@ Notes:
 
 ## 3.1 What it is
 
-A `masque` outbound carries whole IP packets over HTTP/3 or HTTP/2 using CONNECT-IP (RFC 9484),
+A `masque` outbound carries whole IP packets over HTTP/3 or HTTP/2 using CONNECT-IP ([RFC 9484](https://www.rfc-editor.org/rfc/rfc9484)),
 primarily for Cloudflare WARP. The build needs `with_quic` and `with_gvisor`, both in the default
 `LX_TAGS`. The core takes keys and addresses ready from the config: the client registers the
 device.
@@ -870,7 +870,7 @@ The full list is the shared `DialerOptions` in `option/outbound.go`.
 The profile varies six things; everything else (QUIC/HTTP2, capsule/datagram, the
 userspace stack, the pumps) is profile-independent.
 
-| Aspect | `cloudflare` (default) | `standard` (RFC 9484) |
+| Aspect | `cloudflare` (default) | `standard` ([RFC 9484](https://www.rfc-editor.org/rfc/rfc9484)) |
 |--------|------------------------|-----------------------|
 | `:protocol` (h3) / `cf-connect-proto` (h2) | `cf-connect-ip` | `connect-ip` |
 | Extended CONNECT settings | tolerate absence (WARP does not send it) | require |

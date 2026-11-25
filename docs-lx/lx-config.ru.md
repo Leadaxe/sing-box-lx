@@ -213,7 +213,7 @@ Upstream `urltest` всегда выбирает узел с наименьше�
 
 ## 4. MASQUE outbound — Cloudflare WARP
 
-Outbound `masque` подключается к Cloudflare WARP и другим серверам CONNECT-IP (RFC 9484): целые
+Outbound `masque` подключается к Cloudflare WARP и другим серверам CONNECT-IP ([RFC 9484](https://www.rfc-editor.org/rfc/rfc9484)): целые
 IP-пакеты идут поверх HTTP/3 или HTTP/2, а ядро поднимает на туннель свой userspace-стек, как у
 WireGuard-endpoint'а. Ключи берутся готовыми из конфига: устройство в WARP регистрирует клиент.
 SNI по умолчанию — `www.cloudflare.com`, сервер проверяется по закреплённому `public_key`.
@@ -225,7 +225,7 @@ SNI по умолчанию — `www.cloudflare.com`, сервер провер�
 | `server`, `server_port` | обязательные | адрес эндпоинта и порт, обычно `443` |
 | `private_key`, `public_key` | обязательные для `cloudflare` | ключи из регистрации WARP, base64 от DER |
 | `ip`, `ipv6` | хотя бы один | адреса клиента внутри туннеля |
-| `profile` | `cloudflare` | `cloudflare` — WARP, `standard` — свой сервер по RFC 9484 |
+| `profile` | `cloudflare` | `cloudflare` — WARP, `standard` — свой сервер по [RFC 9484](https://www.rfc-editor.org/rfc/rfc9484) |
 | `vhttp` | `auto` | `auto`, `h3` или `h2` |
 | `uri` | `https://cloudflareaccess.com` у `cloudflare` | адрес запроса CONNECT-IP; для `standard` обязателен |
 | `tls` | `server_name`: `www.cloudflare.com` | обычный TLS-блок: `server_name`, `disable_sni`, `insecure`, `fragment`, `record_fragment` |

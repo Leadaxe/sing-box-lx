@@ -7,7 +7,7 @@
 > [protocols-transports](protocols-transports.ru.md) — каждое поле, тип, дефолт, текст ошибки;
 > explained-документы — как устроено, почему, как сделано у нас и чем отличается от ванили.
 
-MASQUE в варианте CONNECT-IP (RFC 9484) переносит целые IP-пакеты внутри HTTP-соединения. Так
+MASQUE в варианте CONNECT-IP ([RFC 9484](https://www.rfc-editor.org/rfc/rfc9484)) переносит целые IP-пакеты внутри HTTP-соединения. Так
 работает Cloudflare WARP, и outbound `masque` в sing-box-lx подключается к нему и к другим
 серверам CONNECT-IP. Документ объясняет, что происходит на проводе, почему значения по умолчанию
 такие и как узел ведёт себя за релеем, на плохой сети и после простоя.
@@ -69,7 +69,7 @@ MASQUE в варианте CONNECT-IP (RFC 9484) переносит целые I
 
 ### 1.2 CONNECT-IP, а не CONNECT-UDP
 
-У MASQUE есть и вариант CONNECT-UDP (RFC 9298): он переносит UDP-датаграммы к одному адресу
+У MASQUE есть и вариант CONNECT-UDP ([RFC 9298](https://www.rfc-editor.org/rfc/rfc9298)): он переносит UDP-датаграммы к одному адресу
 назначения. WARP работает с целыми IP-пакетами, поэтому форк реализует только CONNECT-IP. С полями
 `id`/`ip`/`ib` у AmneziaWG («masquerade sugar») у MASQUE общее только слово.
 
@@ -85,7 +85,7 @@ MASQUE в варианте CONNECT-IP (RFC 9484) переносит целые I
 
 `profile: cloudflare` (по умолчанию) подстраивается под WARP: токен `cf-connect-ip`, сервер
 проверяется по закреплённому `public_key`, а не по цепочке сертификатов, адрес запроса задан
-заранее. `profile: standard` рассчитан на собственный сервер по RFC 9484: обычная проверка
+заранее. `profile: standard` рассчитан на собственный сервер по [RFC 9484](https://www.rfc-editor.org/rfc/rfc9484): обычная проверка
 сертификата, обязательный `uri` с шаблоном, который публикует сервер, и только HTTP/3. К WARP
 `standard` не подключается.
 
@@ -212,7 +212,7 @@ keepalive. Следующее подключение поднимает его �
 ## 6. MASQUE в апстриме 1.15
 
 Апстрим sing-box 1.15 (пока в альфа-версиях) добавил свой MASQUE: endpoint'ы `masque-client` и
-`masque-server` по RFC 9484. С WARP его клиент без доработок не работает: у него другой токен
+`masque-server` по [RFC 9484](https://www.rfc-editor.org/rfc/rfc9484). С WARP его клиент без доработок не работает: у него другой токен
 (`connect-ip` вместо `cf-connect-ip`), он ждёт от сервера назначения адреса, а у WARP адреса
 статические из регистрации, и в нём нет закрепления ключа и нейтрального SNI по умолчанию.
 
@@ -230,7 +230,7 @@ keepalive. Следующее подключение поднимает его �
 | `server`, `server_port` | да | — | адрес эндпоинта и порт, обычно `443` |
 | `private_key`, `public_key` | для `cloudflare` | — | ключи из регистрации WARP, base64 от DER (§1.3) |
 | `ip`, `ipv6` | хотя бы один | — | адреса клиента внутри туннеля; адрес без маски — `/32` и `/128` |
-| `profile` | — | `cloudflare` | `cloudflare` — WARP, `standard` — свой сервер по RFC 9484 (§1.4) |
+| `profile` | — | `cloudflare` | `cloudflare` — WARP, `standard` — свой сервер по [RFC 9484](https://www.rfc-editor.org/rfc/rfc9484) (§1.4) |
 | `vhttp` | — | `auto` | `auto`, `h3` или `h2` (§3) |
 | `uri` | для `standard` | `https://cloudflareaccess.com` у `cloudflare` | адрес запроса CONNECT-IP; для `standard` — шаблон, который публикует сервер |
 | `tls` | — | `server_name`: `www.cloudflare.com` у `cloudflare`, `server` у `standard` | обычный TLS-блок: `server_name`, `disable_sni`, `insecure`, `fragment`, `record_fragment` (§2.1) |

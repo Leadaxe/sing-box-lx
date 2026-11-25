@@ -215,7 +215,7 @@ the node is replaced with a live one at once. The `url`, `interval`, `idle_timeo
 
 ## 4. MASQUE outbound — Cloudflare WARP
 
-A `masque` outbound connects to Cloudflare WARP and other CONNECT-IP (RFC 9484) servers: whole IP
+A `masque` outbound connects to Cloudflare WARP and other CONNECT-IP ([RFC 9484](https://www.rfc-editor.org/rfc/rfc9484)) servers: whole IP
 packets go over HTTP/3 or HTTP/2, and the core builds its own userspace stack on the tunnel, as for
 a WireGuard endpoint. Keys are taken ready from the config: the client registers the device with
 WARP. The default SNI is `www.cloudflare.com`, and the server is checked against the pinned
@@ -227,7 +227,7 @@ top-level `dns` block and the `with_quic` and `with_gvisor` tags (both in `LX_TA
 | `server`, `server_port` | required | the endpoint address and port, usually `443` |
 | `private_key`, `public_key` | required for `cloudflare` | keys from the WARP registration, base64 of DER |
 | `ip`, `ipv6` | at least one | the client's addresses inside the tunnel |
-| `profile` | `cloudflare` | `cloudflare` — WARP, `standard` — your own RFC 9484 server |
+| `profile` | `cloudflare` | `cloudflare` — WARP, `standard` — your own [RFC 9484](https://www.rfc-editor.org/rfc/rfc9484) server |
 | `vhttp` | `auto` | `auto`, `h3` or `h2` |
 | `uri` | `https://cloudflareaccess.com` for `cloudflare` | the CONNECT-IP request address; required for `standard` |
 | `tls` | `server_name`: `www.cloudflare.com` | the ordinary TLS block: `server_name`, `disable_sni`, `insecure`, `fragment`, `record_fragment` |

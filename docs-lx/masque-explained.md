@@ -7,7 +7,7 @@
 > [protocols-transports](protocols-transports.md): every field, type, default, error text;
 > the explained documents: how it works, why, how the fork does it and how it differs from vanilla.
 
-MASQUE in its CONNECT-IP form (RFC 9484) carries whole IP packets inside an HTTP connection.
+MASQUE in its CONNECT-IP form ([RFC 9484](https://www.rfc-editor.org/rfc/rfc9484)) carries whole IP packets inside an HTTP connection.
 Cloudflare WARP works this way, and the `masque` outbound of sing-box-lx connects to it and to
 other CONNECT-IP servers. This document explains what happens on the wire, why the defaults are
 what they are and how a node behaves behind a relay, on a poor network and after idling.
@@ -71,7 +71,7 @@ tunnel.
 
 ### 1.2 CONNECT-IP, not CONNECT-UDP
 
-MASQUE also has CONNECT-UDP (RFC 9298), which carries UDP datagrams to a single destination. WARP
+MASQUE also has CONNECT-UDP ([RFC 9298](https://www.rfc-editor.org/rfc/rfc9298)), which carries UDP datagrams to a single destination. WARP
 works with whole IP packets, so the fork implements only CONNECT-IP. With the AmneziaWG
 `id`/`ip`/`ib` fields ("masquerade sugar") MASQUE shares only the word.
 
@@ -88,7 +88,7 @@ its anycast network the client reached.
 
 `profile: cloudflare` (the default) fits WARP: the `cf-connect-ip` token, the server is checked
 against the pinned `public_key` rather than a certificate chain, and the request address is
-preset. `profile: standard` is for your own RFC 9484 server: ordinary certificate checking, a
+preset. `profile: standard` is for your own [RFC 9484](https://www.rfc-editor.org/rfc/rfc9484) server: ordinary certificate checking, a
 required `uri` with the template the server publishes, and HTTP/3 only. `standard` does not
 connect to WARP.
 
@@ -220,7 +220,7 @@ node, even without `interrupt_exist_connections`.
 ## 6. MASQUE in upstream 1.15
 
 Upstream sing-box 1.15 (still in alpha) added its own MASQUE: the `masque-client` and
-`masque-server` endpoints per RFC 9484. Its client does not work with WARP without changes: it
+`masque-server` endpoints per [RFC 9484](https://www.rfc-editor.org/rfc/rfc9484). Its client does not work with WARP without changes: it
 uses a different token (`connect-ip` instead of `cf-connect-ip`), it expects the server to assign
 an address while WARP addresses are static from registration, and it has no key pinning and no
 neutral SNI by default.
@@ -239,7 +239,7 @@ line the fork moves the WARP profile onto the upstream transport; that line is n
 | `server`, `server_port` | yes | — | the endpoint address and port, usually `443` |
 | `private_key`, `public_key` | for `cloudflare` | — | keys from the WARP registration, base64 of DER (§1.3) |
 | `ip`, `ipv6` | at least one | — | the client's addresses inside the tunnel; an address without a mask becomes `/32` and `/128` |
-| `profile` | — | `cloudflare` | `cloudflare` — WARP, `standard` — your own RFC 9484 server (§1.4) |
+| `profile` | — | `cloudflare` | `cloudflare` — WARP, `standard` — your own [RFC 9484](https://www.rfc-editor.org/rfc/rfc9484) server (§1.4) |
 | `vhttp` | — | `auto` | `auto`, `h3` or `h2` (§3) |
 | `uri` | for `standard` | `https://cloudflareaccess.com` for `cloudflare` | the CONNECT-IP request address; for `standard`, the template the server publishes |
 | `tls` | — | `server_name`: `www.cloudflare.com` for `cloudflare`, `server` for `standard` | the ordinary TLS block: `server_name`, `disable_sni`, `insecure`, `fragment`, `record_fragment` (§2.1) |

@@ -116,7 +116,7 @@ VLESS-узел с транспортом XHTTP («splithttp») из Xray раб�
 
 ### Cloudflare WARP подключается через MASQUE по HTTP/3 или HTTP/2
 
-WARP работает там, где не отвечает его WireGuard-endpoint, а с `vhttp: h2` — и там, где фильтруется UDP 443. Outbound `masque` несёт целые IP-пакеты по CONNECT-IP (RFC 9484) через userspace-стек, спит в простое и сам переподключается.
+WARP работает там, где не отвечает его WireGuard-endpoint, а с `vhttp: h2` — и там, где фильтруется UDP 443. Outbound `masque` несёт целые IP-пакеты по CONNECT-IP ([RFC 9484](https://www.rfc-editor.org/rfc/rfc9484)) через userspace-стек, спит в простое и сам переподключается.
 
 ```jsonc
 {

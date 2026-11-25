@@ -514,7 +514,7 @@ AWG-поля — обычный WireGuard endpoint, байт-в-байт как 
 open-source-референса WireSock, но вместо серверного ответа устройство шлёт
 клиентский запрос — тот, что peer отправляет первым:
 
-- **`quic`** — QUIC Initial (RFC 9001) с целым ClientHello: SNI — твой `id`,
+- **`quic`** — QUIC Initial ([RFC 9001](https://www.rfc-editor.org/rfc/rfc9001)) с целым ClientHello: SNI — твой `id`,
   отпечаток — браузера из `ib`, фреймы разложены как у его стека:
   - `chrome` — Chrome 155 без PQ key_share, 1250 байт, ClientHello порезан на 2–11
     CRYPTO с 2–10 PING и PADDING вразброс (`QuicChaosProtector`);
@@ -798,7 +798,7 @@ AmneziaWG делит параметры на серверные и клиент�
 
 ## 3.1 Что это
 
-`masque` outbound переносит целые IP-пакеты поверх HTTP/3 или HTTP/2 через CONNECT-IP (RFC 9484),
+`masque` outbound переносит целые IP-пакеты поверх HTTP/3 или HTTP/2 через CONNECT-IP ([RFC 9484](https://www.rfc-editor.org/rfc/rfc9484)),
 в первую очередь для Cloudflare WARP. Сборка требует `with_quic` и `with_gvisor`, оба есть в
 дефолтных `LX_TAGS`. Ключи и адреса ядро берёт готовыми из конфига: устройство регистрирует
 клиент.
@@ -860,7 +860,7 @@ MASQUE встраивает стандартные sing-box `DialerOptions`, п�
 Профиль меняет шесть вещей; остальное (QUIC/HTTP2, capsule/datagram,
 userspace-стек, насосы) от профиля не зависит.
 
-| Аспект | `cloudflare` (деф) | `standard` (RFC 9484) |
+| Аспект | `cloudflare` (деф) | `standard` ([RFC 9484](https://www.rfc-editor.org/rfc/rfc9484)) |
 |--------|--------------------|-----------------------|
 | `:protocol` (h3) / `cf-connect-proto` (h2) | `cf-connect-ip` | `connect-ip` |
 | Extended CONNECT settings | терпеть отсутствие (WARP их не шлёт) | требовать |

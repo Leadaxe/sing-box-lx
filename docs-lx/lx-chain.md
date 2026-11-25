@@ -39,7 +39,7 @@ group of any nesting. All three shapes behave the same, and the length is free (
 | `idle_timeout` | duration | `5m` | an idle link instance (see below) with zero live connections is removed after this; `0` = keep until stop |
 | `strip_evasion` | bool | `true` | remove one-sided DPI tricks from links at positions ≥ 1 (catalog below) |
 | `strip` | map key → bool | `{}` | patch over the catalog: `false` keep, `true` strip additionally; unknown key = start error |
-| `rewrite` | map type → JSON object | `{}` | merge-patch (RFC 7396) applied to the config of every link of that type at positions ≥ 1 |
+| `rewrite` | map type → JSON object | `{}` | merge-patch ([RFC 7396](https://www.rfc-editor.org/rfc/rfc7396)) applied to the config of every link of that type at positions ≥ 1 |
 
 Tags in `outbounds` must be distinct: a repeat fails the start with
 `duplicate outbound in chain`, because in a list read as a path it is almost always a typo.

@@ -116,7 +116,7 @@ Limits: `s1`–`s4`, `h1`–`h4` and, on AWG 3.x, `header_protection_key` must m
 
 ### Cloudflare WARP connects over MASQUE on HTTP/3 or HTTP/2
 
-WARP works where its WireGuard endpoint does not answer, and with `vhttp: h2` also where UDP 443 is filtered. The `masque` outbound carries whole IP packets with CONNECT-IP (RFC 9484) through a userspace network stack, sleeps while idle and reconnects by itself.
+WARP works where its WireGuard endpoint does not answer, and with `vhttp: h2` also where UDP 443 is filtered. The `masque` outbound carries whole IP packets with CONNECT-IP ([RFC 9484](https://www.rfc-editor.org/rfc/rfc9484)) through a userspace network stack, sleeps while idle and reconnects by itself.
 
 ```jsonc
 {
