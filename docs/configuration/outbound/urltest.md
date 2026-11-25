@@ -124,7 +124,7 @@ geo-restriction, the site bans the node's address) moves to another pool node af
 failure, while other destinations stay where they are. A loss of the local network (device sleep,
 a network switch) strikes out no node. This works only in `round_robin` and has no config keys;
 download and upload speed do not change. The scenarios and limits are in
-[lx-config.md](../../../docs-lx/lx-config.md#the-pool-recovers-from-a-node-failure-without-waiting-for-interval).
+[lx-config.md](../../../docs-lx/lx-config.md#pool-self-heal).
 
 **Self-heal on a failed connection** (SPEC 138). One failed connection does not tell a dead node
 from a destination that is unreachable through it or from a local network outage, so a failure

@@ -70,10 +70,10 @@ energy model, timelines and the recommended mobile configuration live in [lx-ene
   - [Example — AmneziaWG 2.0 endpoint](#example--amneziawg-20-endpoint)
 - [3. urltest node selection modes](#3-urltest-node-selection-modes)
   - [3.1 Common fields](#31-common-fields)
-  - [Slot-hash binding](#slot-hash-binding)
-  - [The pool recovers from a node failure without waiting for `interval`](#the-pool-recovers-from-a-node-failure-without-waiting-for-interval)
-  - [Self-heal on a failed connection](#self-heal-on-a-failed-connection)
-  - [Example — urltest with round_robin](#example--urltest-with-round_robin)
+  - [3.2 least_test — fastest node](#32-least_test--fastest-node)
+  - [3.3 round_robin — pool with stickiness](#33-round_robin--pool-with-stickiness)
+  - [3.4 failover — hold until it fails](#34-failover--hold-until-it-fails)
+  - [3.5 Choosing a mode](#35-choosing-a-mode)
 - [4. MASQUE outbound — Cloudflare WARP](#4-masque-outbound--cloudflare-warp)
   - [Example — WARP (defaults: `vhttp: auto`)](#example--warp-defaults-vhttp-auto)
 - [5. DNS server group](#5-dns-server-group)
@@ -507,7 +507,7 @@ warning points this out.
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `pool` | int | `3` | rotation pool size. `0`/omitted → `3`; negative is an error. Effective size is `min(pool, number of outbounds)`. Only the pool is URL-tested each `interval`, so a list of hundreds of nodes does not mean hundreds of tests |
-| `pool_tolerance` | int (ms) | `0` | `0` — the pool stays full of live nodes, delay is not ranked, and no more tests run than needed; the cheap mode for large lists. `> 0` — all nodes are tested and the pool keeps the fastest `pool`. A member is replaced only when an outside node beats it by more than `pool_tolerance` ms (hysteresis). A dead pool node keeps its slot until a live replacement is found, so the pool never empties. While the pool has a live node, new connections skip the dead one: sticky keys of dead slots spread evenly over the live slots, and the plain rotation runs over live slots. A quarantined node is skipped the same way. A failed connection by itself changes neither the pool nor the history; it starts the [self-heal](#self-heal-on-a-failed-connection). Liveness is the node's shared URL test history. So a manual delay test with a short timeout that does not complete (Clash API `/proxies/{name}/delay`, `URLTestOutbound`) and a failed dial of a `least_test` group sharing the node also take it out of rotation until the next pool health-check (at most `interval` plus the probe time) |
+| `pool_tolerance` | int (ms) | `0` | `0` — the pool stays full of live nodes, delay is not ranked, and no more tests run than needed; the cheap mode for large lists. `> 0` — all nodes are tested and the pool keeps the fastest `pool`. A member is replaced only when an outside node beats it by more than `pool_tolerance` ms (hysteresis). A dead pool node keeps its slot until a live replacement is found, so the pool never empties. While the pool has a live node, new connections skip the dead one: sticky keys of dead slots spread evenly over the live slots, and the plain rotation runs over live slots. A quarantined node is skipped the same way. A failed connection by itself changes neither the pool nor the history; it starts the [self-heal](#pool-self-heal). Liveness is the node's shared URL test history. So a manual delay test with a short timeout that does not complete (Clash API `/proxies/{name}/delay`, `URLTestOutbound`) and a failed dial of a `least_test` group sharing the node also take it out of rotation until the next pool health-check (at most `interval` plus the probe time) |
 | `sticky_hash` | string[] | `["process","domain"]` | components of the flow's sticky key (see [Slot-hash binding](#slot-hash-binding)). Omitted/`[]` → the default. To disable stickiness, set the sentinel `["none"]`, never a bare `[]`. Components: `process` \| `domain` \| `source_ip` \| `dest_ip` \| `dest_port` |
 
 > ⚠️ `"sticky_hash": []` does not turn stickiness off. The sing-box config decoder (badjson)
@@ -529,14 +529,16 @@ for normal domain traffic, not only for literal-IP destinations. For domain-base
 `domain` in the key: a key of only `source_ip`/`dest_ip`/`dest_port` can collapse to `""` for an
 unresolved destination and stick every flow of one source to a single slot.
 
-#### The pool recovers from a node failure without waiting for `interval`
+#### Pool self-heal
 
-A `round_robin` group learns about a dead node, a destination closed to one node and a lost
+The pool recovers from a node failure without waiting for `interval`. A `round_robin` group learns about a dead node, a destination closed to one node and a lost
 local network from the failed connections themselves, and handles each case in seconds. The
 scheduled check runs once per `interval`, often 10–15 minutes on a large list; a node that dies
 between checks would otherwise keep its share of new connections until the next one. There is
 nothing to configure. Download and upload speed do not change; the extra work per connection does
 not show in ordinary traffic.
+
+##### What the application sees when a node fails
 
 | What happened | What the group does | What the application sees |
 |---|---|---|
@@ -588,10 +590,10 @@ with `STATE` (`live`/`dead`/`quarantined`), `CONNECTIONS` and `FAILURES`, plus t
 address problems and the freeze. The daemon's `GetPool` carries the same: per slot `quarantined`,
 `connections` and `confirmedFailures`, per group `shiftedKeys`, `markedKeys`, `frozen` and
 `frozenSeconds`. In libbox the group fields come with `GetPoolState`
-([§8](#8-observability-commandclient-extensions)). How the group tells the cases apart is in the
-next section.
+([§8](#8-observability-commandclient-extensions)). How the group tells the cases apart is in
+[the next part](#how-the-group-tells-a-dead-node-from-a-closed-site-and-a-lost-network).
 
-#### Self-heal on a failed connection
+##### How the group tells a dead node from a closed site and a lost network
 
 One failed connection does not tell a dead node from a destination unreachable through it or
 from a local network outage. So the group acts on what it learns about the node after the
@@ -1108,7 +1110,7 @@ The methods the fork adds to `CommandClient`:
   `Quarantined`, `Connections` and `ConfirmedFailures`.
 - **`GetPoolState(groupTag)`** — returns the same slots plus the group-wide `ShiftedKeys`,
   `MarkedKeys`, `Frozen` and `FrozenSeconds`
-  ([self-heal](#self-heal-on-a-failed-connection)).
+  ([self-heal](#pool-self-heal)).
 - **`GetDNSGroups()`** — returns the live state of every DNS `group` server
   ([§5](#5-dns-server-group)): per member `clean` / `liveErrors` / `lastErrorAgeMs` /
   `liveWins` / `current`.
