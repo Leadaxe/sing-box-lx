@@ -673,6 +673,13 @@ type rrProbe struct {
 	ended    time.Time
 }
 
+// cancelled reports a probe cut short by its context (the round, the group, the
+// askers of a shared flight gone): no outcome for any rule (U3) — neither an
+// ANSWER nor its absence.
+func (p rrProbe) cancelled() bool {
+	return !p.answered && errors.Is(p.err, context.Canceled)
+}
+
 // rrProbeTimeoutNs is T, the timeout of a probe (C.TCPTimeout); atomic so that
 // tests can shorten it while probes of other tests still run.
 var rrProbeTimeoutNs atomic.Int64
@@ -815,8 +822,9 @@ type rrCheck struct {
 	answered   []bool      // a probe of the pool node answered in this check (D3)
 	firstAt    []time.Time // the start of the first probe of the pool node
 	firstEnded []bool
-	partOf     []int // the decisive part of the pool node; -1 for none
-	waiting    []int // pool nodes of a part whose decisive probe waits (step 3)
+	voided     []bool // the decisive probe of the pool node was cancelled: no D1 (U3)
+	partOf     []int  // the decisive part of the pool node; -1 for none
+	waiting    []int  // pool nodes of a part whose decisive probe waits (step 3)
 	parts      []*rrDecisivePart
 	control    adapter.Outbound
 	b0         time.Time
@@ -970,6 +978,10 @@ func (c *rrCheck) take(r rrCheckResult) {
 	if r.probe.answered {
 		c.anyAnswer = true
 	}
+	if r.probe.cancelled() {
+		c.void(r) // U3: a cancelled probe is no outcome
+		return
+	}
 	switch r.role {
 	case rrRoleFirst:
 		c.firstEnded[r.index] = true
@@ -1006,6 +1018,20 @@ func (c *rrCheck) take(r rrCheckResult) {
 			c.ready = append(c.ready, node)
 			c.found(node)
 		}
+	}
+}
+
+// void takes a cancelled probe: it ends its role and proves nothing either way.
+func (c *rrCheck) void(r rrCheckResult) {
+	switch r.role {
+	case rrRoleFirst:
+		c.firstEnded[r.index] = true
+		if len(c.waiting) > 0 {
+			c.startDecisive()
+		}
+	case rrRoleDecisive:
+		c.voided[r.index] = true
+		c.partDone(c.partOf[r.index])
 	}
 }
 
@@ -1135,6 +1161,7 @@ func (s *URLTest) rrHealCheck() {
 		c.results = make(chan rrCheckResult, 3*n+2*rrCandidateBatches*c.size+1)
 		c.grants = make(chan func(), 2*n+2*rrCandidateBatches*c.size+1)
 		c.answered, c.firstEnded, c.firstAt = make([]bool, n), make([]bool, n), make([]time.Time, n)
+		c.voided = make([]bool, n)
 		c.partOf = make([]int, n)
 		c.launchAll(rrRoleFirst, 0, c.pool) // step 1
 		c.left = n
@@ -1194,8 +1221,8 @@ func (s *URLTest) rrLap() bool {
 func (s *URLTest) rrStrike(ctx context.Context, c *rrCheck) {
 	b := s.balancer
 	for i, node := range c.pool {
-		if c.answered[i] || c.control == nil || b.heal.aborted(ctx) {
-			continue // D3, or no control (D5)
+		if c.answered[i] || c.voided[i] || c.control == nil || b.heal.aborted(ctx) {
+			continue // D3, no outcome of the decisive probe (U3), or no control (D5)
 		}
 		if part := c.partOf[i]; part >= len(c.parts) || !c.parts[part].afterOK {
 			continue // D4

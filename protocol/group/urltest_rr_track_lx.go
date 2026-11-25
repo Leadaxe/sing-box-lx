@@ -686,7 +686,7 @@ func (s *URLTest) rrLifeProbe(node adapter.Outbound, t *rrTrack, from int64, udp
 		queue.release(1)
 		// N0, and a node found dead or gone while it was probed: the outcome is no
 		// longer about this slot.
-		if ctx.Err() != nil || probe.leaf == "" || heal.frozen() || s.rrBeforeEvent(probe.started) ||
+		if ctx.Err() != nil || probe.leaf == "" || probe.cancelled() || heal.frozen() || s.rrBeforeEvent(probe.started) ||
 			s.balancer.trackOf(probe.member) != t || t.deadAt.Load() >= rrClock(probe.started) {
 			return
 		}

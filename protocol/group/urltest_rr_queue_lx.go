@@ -14,7 +14,11 @@ package group
 //   - U3: one probe per node (leaf and URL) in flight per core. A probe asked for
 //     while one of the same node flies takes its outcome when that one started not
 //     earlier than the lower bound of the rule asking; otherwise it waits for its
-//     end and starts its own. The place of the asker is held all along.
+//     end and starts its own. The place of the asker is held all along. A flight
+//     whose askers all gave up is cancelled and leaves the table at once: nobody
+//     joins a cancelled probe, and a cancelled probe is no outcome (rrProbe.cancelled).
+//     The decisive probe of a node whose own first probe still flies does not wait
+//     for it and flies beside it (rrCheck.launch).
 //
 // The core instance is the owner of the shared URL test history: the queue is kept
 // by a weak pointer to the history storage and dropped with it, so two instances
@@ -61,6 +65,7 @@ type rrFlightKey struct {
 }
 
 type rrFlight struct {
+	key     rrFlightKey
 	started time.Time
 	done    chan struct{}
 	result  rrProbe
@@ -191,7 +196,7 @@ func (q *rrQueue) probe(ctx context.Context, key rrFlightKey, from time.Time, ru
 		flight := q.flights[key]
 		if flight == nil {
 			probeCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-			flight = &rrFlight{started: time.Now(), done: make(chan struct{}), waiters: 1, cancel: cancel}
+			flight = &rrFlight{key: key, started: time.Now(), done: make(chan struct{}), waiters: 1, cancel: cancel}
 			q.flights[key] = flight
 			q.access.Unlock()
 			go func() {
@@ -230,7 +235,12 @@ func (q *rrQueue) wait(ctx context.Context, flight *rrFlight) rrProbe {
 	q.access.Lock()
 	flight.waiters--
 	if flight.waiters == 0 {
+		// Nobody waits for it: cancelled, it leaves the table now, so that a new asker
+		// starts a probe of its own instead of taking the cancel as an outcome.
 		flight.cancel()
+		if q.flights[flight.key] == flight {
+			delete(q.flights, flight.key)
+		}
 	}
 	q.access.Unlock()
 	return rrProbe{err: ctx.Err(), started: time.Now(), ended: time.Now()}
