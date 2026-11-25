@@ -143,4 +143,31 @@ func TestRRReview9_staleHistoryGoesByCursor(t *testing.T) {
 	}
 }
 
+// §5: a replacement search takes the flag of the run for the write of a slot only:
+// a manual test during the probes of the search runs.
+func TestRRReview9_searchLeavesManualTest(t *testing.T) {
+	f := newHealFixture(t, []string{"a", "b", "c", "d", "e", "f"}, []string{"a", "b", "c"}, 0)
+	for _, tag := range []string{"a", "d", "e", "f"} {
+		f.nodes[tag].hold = make(chan struct{})
+	}
+	f.s.balancer.clearSlot("a")
+	if !f.s.rrStartSearch() {
+		t.Fatal("no search")
+	}
+	time.Sleep(200 * time.Millisecond)
+	results := make(chan map[string]uint16, 1)
+	go func() {
+		result, _ := f.g.URLTest(context.Background())
+		results <- result
+	}()
+	time.Sleep(200 * time.Millisecond)
+	for _, tag := range []string{"a", "d", "e", "f"} {
+		close(f.nodes[tag].hold)
+	}
+	if result := <-results; len(result) == 0 {
+		t.Fatal("the manual test returned nothing while the search probed its candidates")
+	}
+	waitLong(t, func() bool { return !f.s.balancer.heal.running.Load() }, 20*time.Second)
+}
+
 // lx:end SPEC 138

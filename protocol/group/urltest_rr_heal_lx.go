@@ -34,8 +34,9 @@ package group
 // verdict and no event. The search is started by an empty slot or the slot of a
 // quarantined node: candidates only, no pool node, no control; a candidate takes
 // the slot by the ANSWER of its own probe (§5). Only one writer changes the slots at
-// a time, under the flag of the scheduled run (URLTestGroup.checking): while a run
-// holds it, the run fills the slots itself.
+// a time, under the flag of the scheduled run (URLTestGroup.checking), taken for the
+// write of a slot only, never for the probes of a round: while a run holds it, the
+// run fills the slots itself, and a run or a manual test is never skipped for a round.
 //
 // A connection test (SPEC 139, lxtrace.IsProbe) gets the retry and records nothing;
 // a delay measurement through the group (urltest.IsMeasureLx) gets nothing.
@@ -1216,6 +1217,9 @@ func (s *URLTest) rrHealCheck() {
 // size, at most k; a candidate that answered its own probe takes the slot.
 func (s *URLTest) rrHealSearch() {
 	s.rrHealRound(func(c *rrCheck) {
+		if s.group.checking.Load() {
+			return // a run is in flight: the run fills the slots itself (§5)
+		}
 		for _, entry := range s.balancer.slotsSnapshot() {
 			if entry.tag != "" {
 				c.seen[entry.tag] = true
@@ -1286,8 +1290,9 @@ func (s *URLTest) rrStrike(ctx context.Context, c *rrCheck) {
 
 // rrRefill puts into every empty slot and every slot of a quarantined node a
 // candidate that answered its probe in this round, else one of the batches the
-// round left of its k (§5); with no answer the slot stays as it is. While a run of
-// the group holds its flag the run fills the slots itself.
+// round left of its k (§5); with no answer the slot stays as it is. The flag of the
+// run is taken for each write only: while a run holds it, the run fills the slots
+// itself and the round writes nothing.
 func (s *URLTest) rrRefill(ctx context.Context, c *rrCheck) {
 	b := s.balancer
 	var empty []string
@@ -1296,10 +1301,9 @@ func (s *URLTest) rrRefill(ctx context.Context, c *rrCheck) {
 			empty = append(empty, entry.tag)
 		}
 	}
-	if len(empty) == 0 || !s.rrTakeChecking(ctx) {
-		return // nothing to replace, or the scheduled run does the same work
+	if len(empty) == 0 {
+		return // nothing to replace
 	}
-	defer s.group.checking.Store(false)
 	c.refill, c.left = true, 0 // L3: the batches of the check count against its k
 	for _, dead := range empty {
 		for {
@@ -1317,7 +1321,12 @@ func (s *URLTest) rrRefill(ctx context.Context, c *rrCheck) {
 				}
 				continue
 			}
-			if b.replaceSlot(dead, node.Tag()) {
+			if !s.rrTakeChecking(ctx) {
+				return // a run holds the flag: the run fills the slots itself
+			}
+			replaced := b.replaceSlot(dead, node.Tag())
+			s.group.checking.Store(false)
+			if replaced {
 				s.logger.Info("round_robin: ", node.Tag(), " takes the slot of ", rrSlotName(dead))
 				break
 			}
