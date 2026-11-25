@@ -254,8 +254,15 @@ func (g *URLTestGroup) rrQueue() *rrQueue {
 // rrQueuedProbe probes member through the queue's U3 rule; the caller holds its
 // place. from is the lower bound of the start the rule asking needs.
 func (g *URLTestGroup) rrQueuedProbe(ctx context.Context, member adapter.Outbound, from time.Time) rrProbe {
+	return g.rrHealProbe(ctx, member, from, false)
+}
+
+// rrHealProbe is rrQueuedProbe; alone starts a probe of its own beside the flight
+// of the node: the decisive probe does not wait for the group's own first probe of
+// the node (the exception of U3, step 3 of §4.2).
+func (g *URLTestGroup) rrHealProbe(ctx context.Context, member adapter.Outbound, from time.Time, alone bool) rrProbe {
 	leaf := RealTag(member, N.NetworkTCP)
-	if leaf == "" {
+	if leaf == "" || alone {
 		return g.rrProbeNode(ctx, member)
 	}
 	result := g.rrQueue().probe(ctx, rrFlightKey{leaf: leaf, link: g.link}, from, func(ctx context.Context) rrProbe {

@@ -64,4 +64,24 @@ func TestRRReview9_cancelledDecisiveIsNoMiss(t *testing.T) {
 	}
 }
 
+// Step 3, U3: the decisive probe of a hung node starts H after its first probe,
+// beside it, not after the first one ended.
+func TestRRReview9_decisiveBesideFirstProbe(t *testing.T) {
+	old := rrProbeTimeoutNs.Load()
+	rrProbeTimeoutNs.Store(int64(8 * time.Second))
+	t.Cleanup(func() { rrProbeTimeoutNs.Store(old) })
+	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
+	f.nodes["c"].hold = make(chan struct{})
+	if !f.s.rrStartCheck() {
+		t.Fatal("no check")
+	}
+	time.Sleep(rrHangAfter + 1500*time.Millisecond)
+	probes := f.nodes["c"].probes.Load()
+	close(f.nodes["c"].hold)
+	waitLong(t, func() bool { return !f.s.balancer.heal.running.Load() }, 20*time.Second)
+	if probes < 2 {
+		t.Fatalf("no decisive probe of c at x+H while its first probe hangs: %d probes", probes)
+	}
+}
+
 // lx:end SPEC 138

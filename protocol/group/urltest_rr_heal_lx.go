@@ -884,8 +884,11 @@ func (c *rrCheck) settle() {
 func (c *rrCheck) launch(role rrCheckRole, index int, node adapter.Outbound, from time.Time) {
 	c.flying++
 	batch := c.batches
+	// The decisive probe of a node whose first probe still flies flies beside it from
+	// the moment of step 3, not after its end (U3).
+	alone := role == rrRoleDecisive && !c.firstEnded[index]
 	go func() {
-		probe := c.s.group.rrQueuedProbe(c.ctx, node, from)
+		probe := c.s.group.rrHealProbe(c.ctx, node, from, alone)
 		c.queue.release(1)
 		c.results <- rrCheckResult{role, index, batch, probe}
 	}()
