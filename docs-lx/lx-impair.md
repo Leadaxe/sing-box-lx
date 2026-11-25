@@ -132,7 +132,7 @@ A link key at the top level of the outbound (`"rate": "10mbit"` next to `type`) 
 | `vary` | `{"min": "3mbit", "max": "12mbit", "every": "2s"}`: every `every` the rate jumps to a uniformly drawn value in [min, max]; `false` turns the swings off | none | every 10ms..1h |
 | `outage` | `true` — the line silently goes away, `false` — it comes back | `false` | — |
 | `up`, `down` | the same link keys, `outage` included, for one direction: `up` is what this end sends, `down` what it receives | — | — |
-| `stall` | `{"every": "20s", "duration": "400ms"}`: random stops of the whole line (both directions), exponential gaps with mean `every`; `false` turns them off | none | every 100ms..24h, duration 1ms..1h |
+| `stall` | `{"every": "20s", "duration": "400ms"}`: random stops of the whole line (both directions), exponential gaps with mean `every`; opening a connection waits for a stop to end, no longer than `connect_timeout`; `false` turns them off | none | every 100ms..24h, duration 1ms..1h |
 | `reset` | `true` together with an outage that begins in the same `link_params` (`"outage": true` or a profile with one): see below | `false` | — |
 
 The link keys at the top of `link_params` apply to both directions; `up` and `down` override them for
@@ -350,11 +350,16 @@ this connection stops for `stream_stall`, and everything behind the lost segment
 apply to streams: a stream always arrives in order. During a silent outage data "in flight" freezes
 too and arrives after it.
 
-During a silent outage of sending a connection (both TCP and a UDP socket) does not open: the
-attempt waits for the outage to end, but no longer than the connect timeout (the outbound's
+During a silent outage of sending or a random `stall` a connection (both TCP and a UDP socket) does
+not open: the attempt waits for it to end, but no longer than the connect timeout (the outbound's
 `connect_timeout`, 5 s by default), and then fails with a timeout, like a handshake that gets no
-answer. An outage only on receive does not hold the dial: the connection opens and gets no answer.
-An outage with `reset` refuses at once.
+answer. A stall longer than `connect_timeout` therefore fails the opening. An outage only on receive
+does not hold the dial: the connection opens and gets no answer. An outage with `reset` refuses at
+once.
+
+A reset gives ECONNRESET with its cause: `impair: link reset by schedule at 1m0s` (a schedule
+entry), `impair: link reset by impair set` (the command), `impair: link reset by sublink [domain
+site3.test]` (a sublink with `reset`).
 
 **Closing a stream.** Data written before `Close` (including before `CloseWrite`) is not thrown
 away. `Close` returns at once and reads and writes fail after it, while what was written passes the
