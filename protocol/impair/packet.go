@@ -9,13 +9,17 @@ import (
 )
 
 // Datagram connections. Sending: WriteTo admits the datagram to the up
-// bottleneck (drop = it is silently gone, as on a real link) and the up pump
-// writes it to the carrier at its due time. Receiving: a reader goroutine
+// bottleneck (drop = it is silently gone, as on a real link); at its due
+// time the up pump hands it to the connection's own writer goroutine, which
+// writes it to the carrier, so a carrier that blocks holds back only its own
+// connection. Receiving: a reader goroutine
 // takes every datagram off the carrier as it arrives, admits it to the down
 // bottleneck (drop = gone, like a policer with a queue in front of it) and
 // the down pump hands it to ReadFrom at its due time.
 
 const rxQueue = 1024 // datagrams delivered but not yet read; beyond it they are dropped (a full socket buffer)
+
+const txQueue = 1024 // datagrams due but not yet written to the carrier; beyond it they are dropped (a full send buffer)
 
 type rxItem struct {
 	bp   *[]byte
@@ -28,6 +32,7 @@ type packetCore struct {
 	under net.PacketConn
 
 	rx        chan rxItem
+	tx        chan rxItem
 	rdone     chan struct{}
 	rerr      error
 	closed    chan struct{}
@@ -43,6 +48,7 @@ func newPacketCore(s *shaper, under net.PacketConn) *packetCore {
 		sh:           s,
 		under:        under,
 		rx:           make(chan rxItem, rxQueue),
+		tx:           make(chan rxItem, txQueue),
 		rdone:        make(chan struct{}),
 		closed:       make(chan struct{}),
 		readDeadline: makeDeadline(),
@@ -55,6 +61,7 @@ func newPacketCore(s *shaper, under net.PacketConn) *packetCore {
 		return c
 	}
 	go c.readLoop()
+	go c.writeLoop()
 	return c
 }
 
@@ -94,13 +101,34 @@ func (c *packetCore) deliverIn(bp *[]byte, n int, addr net.Addr) {
 	}
 }
 
-// writeOut is the up pump sending a datagram on the carrier.
-func (c *packetCore) writeOut(p []byte, addr net.Addr) {
+// sendOut is the up pump handing over a datagram that is due: it never
+// blocks the pump, which serves every connection of the outbound.
+func (c *packetCore) sendOut(bp *[]byte, n int, addr net.Addr) {
 	if isClosed(c.closed) {
+		putPkt(bp)
 		return
 	}
-	if _, err := c.under.WriteTo(p, addr); err != nil {
-		c.werr.Store(&err)
+	select {
+	case c.tx <- rxItem{bp: bp, n: n, addr: addr}:
+	default:
+		putPkt(bp)
+	}
+}
+
+// writeLoop writes the due datagrams of this connection to the carrier.
+func (c *packetCore) writeLoop() {
+	for {
+		select {
+		case item := <-c.tx:
+			if !isClosed(c.closed) {
+				if _, err := c.under.WriteTo((*item.bp)[:item.n], item.addr); err != nil {
+					c.werr.Store(&err)
+				}
+			}
+			putPkt(item.bp)
+		case <-c.closed:
+			return
+		}
 	}
 }
 

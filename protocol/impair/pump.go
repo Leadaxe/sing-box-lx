@@ -49,7 +49,8 @@ type pktEntry struct {
 
 // pump is the delay line of one direction's datagrams for every packet
 // connection of the outbound: a min-heap on (due, seq) and one goroutine
-// with one reusable timer. Up: writes to the carrier at the due time.
+// with one reusable timer. Up: hands the datagram to its connection's
+// writer at the due time.
 // Down: hands the datagram to its connection's reader.
 type pump struct {
 	dir  int
@@ -172,8 +173,7 @@ func (p *pump) run() {
 
 func (p *pump) deliver(e *pktEntry) {
 	if p.dir == dirUp {
-		e.pc.writeOut((*e.bp)[:e.n], e.addr)
-		putPkt(e.bp)
+		e.pc.sendOut(e.bp, e.n, e.addr)
 		return
 	}
 	e.pc.deliverIn(e.bp, e.n, e.addr)
