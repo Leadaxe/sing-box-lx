@@ -86,9 +86,9 @@ func TestRRFirstByte_success(t *testing.T) {
 	}
 }
 
-// Closed by the destination with no byte after the client sent: a failure, pending
-// on the node; a verdict probe of the node alone settles it. Closed with nothing sent, closed by us, or half-closed by us
-// first: no failure.
+// Closed by the destination with no byte after the client sent: an implicit
+// REFUSE_DST, a Q1 sign on the node. Closed with nothing sent, closed by us (CANCEL)
+// or half-closed by the client first: nothing.
 func TestRRFirstByte_silentClose(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -136,14 +136,14 @@ func TestRRFirstByte_silentClose(t *testing.T) {
 		conn.Close()
 		server.Close()
 		time.Sleep(20 * time.Millisecond)
-		// A failure starts a verdict probe of a alone; a answers it and the failure
-		// is settled. The check with a control does not run.
-		waitUntil(t, func() bool { return f.s.balancer.heal.verdicts.Load() == 0 })
-		if probed := f.probes("a") == 1; probed != c.failure {
-			t.Fatalf("%s: verdict probe %v, want %v", c.name, probed, c.failure)
+		// An implicit REFUSE_DST waits as a Q1 sign for an ANSWER via a; it starts
+		// no probe and no check (it is neither S1 nor S2). A close from our side is
+		// CANCEL, a half-closed client gives no REFUSE_DST.
+		if pending := conn.watch.track.pendingN.Load() == 1; pending != c.failure {
+			t.Fatalf("%s: Q1 sign %v, want %v", c.name, pending, c.failure)
 		}
-		if conn.watch.track.pendingN.Load() != 0 || f.s.balancer.heal.running.Load() || f.s.balancer.heal.lastCheckEnd.Load() != nil {
-			t.Fatalf("%s: the verdict settles it, no check", c.name)
+		if f.probes("a") != 0 || f.s.balancer.heal.running.Load() {
+			t.Fatalf("%s: no probe, no check", c.name)
 		}
 	}
 }

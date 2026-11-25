@@ -1,57 +1,27 @@
 package group
 
-// lx:begin SPEC 138 round_robin unfinished connections and pending failures per node
+// lx:begin SPEC 138 round_robin: what a slot knows about its node
 //
-// Every slot of a round_robin pool carries a tracker of its node (rrTrack). It lives
-// as long as the node holds a slot: setSlots and replaceSlot hand it over to the
-// same node and give a newcomer a fresh one; a node that leaves takes its pending
-// failures with it. Connections that are still running keep a reference to the
-// tracker they registered in; a tracker out of the pool is consulted by nobody.
+// The rules named here are those of SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/
+// ALGORITHM.md. Every slot of a round_robin pool carries a tracker of its node
+// (rrTrack). It lives as long as the node holds the slot: setSlots and replaceSlot
+// hand it over to the same node and give a newcomer a fresh one.
 //
-// Unfinished connections (a node that accepts and stays silent gives no failure):
-//   - dials in flight: DialContext/ListenPacket of the node has not returned. Each
-//     such dial runs on its own cancellable context (rrDialStart), derived from the
-//     caller's, never from the group's;
-//   - connections whose client sent something and got no first byte yet (TCP, a
-//     connected UDP flow, a UDP flow).
+// A tracker holds:
+//   - the unfinished exchanges through the node: TCP dials in flight, TCP
+//     connections waiting for the first byte since the client sent (the wait starts
+//     at w), UDP opens and UDP flows waiting for an answer. Each list is ordered by
+//     its time, so its oldest entry is one atomic load;
+//   - the proofs of the path through the node, (a', b') — the start and the moment
+//     of an ANSWER (A1): a first byte, a probe answer, an answer of the scheduled
+//     run. Only the front (later start, earlier answer) is kept; it answers Live
+//     (the rule of the half) and the premise of K2;
+//   - the suspicion of the slot (S1–S3): the pick goes round it while another slot
+//     is fine. It is no verdict and changes no history, key or counter;
+//   - the Q1 signs waiting for a proof via the node after them.
 //
-// Both lists are ordered by their time, so the oldest entry of each is one atomic
-// load (oldest). Each pick of a slot checks it (rrTrack.attention): an entry older
-// than rrHangAfter is a reason for a check of the node (rrHang with all its filters),
-// looked at no more often than rrHangLook per slot. A dead verdict on the node
-// cancels its dials in flight — they go the usual way of a failed open, one retry
-// through the next live slot, with no new check (errRRStruck) — and closes its
-// connections that wait for a first byte; a connection that got one is left alone.
-// The "own network" verdict and a freeze cancel and close nothing.
-//
-// Pending failures (SPEC 138 §3.10): a failure of a connection (a dial that did
-// not open, a close without a byte) waits for the verdict on the node it failed on,
-// at most rrPendingMax per node (the oldest goes) and rrPendingTTL long. "Alive"
-// comes from the first of: the first byte of a connection through the node that
-// started (was picked) after the failure, an answer of a probe of the node that
-// started after it, history of the node written after it. Every pending failure
-// older than that proof then gets what it is due (rrFailure.settle). The dead
-// verdict drops the node's pending failures; a freeze voids every pending failure
-// begun before E (rrHeal.epochEnd). A failure whose check or verdict probe cannot
-// start now asks again through checkAfter: the next pick of the node at or after
-// that time starts the check, unless the verdict came meanwhile.
-//
-// A failure that puts the site under suspicion (a close without a byte, a failed
-// open of a direct or endpoint leaf, a failed retry) starts a verdict probe at
-// once: a probe of that node alone, with the group's URL and timeout, outside the
-// check slot and its gap — at most one in flight per node and one per node every
-// rrVerdictGap, none while frozen. An answer writes the node's history and settles
-// its pending failures; silence starts the check with a control on the usual
-// terms. A failed open of a proxy leaf puts the node under suspicion and goes to
-// the check with a control at once.
-//
-// A slot under suspicion (rrTrack.suspect, §3.11): an unfinished connection through it is
-// older than rrHangAfter and the node has not proved alive since that connection
-// started (proved: the start of a later connection that got its first byte, the
-// start of a probe that answered, history written later). The pick skips such a
-// slot like a dead one while another slot is fine; the suspicion lifts with a
-// proof, the verdict of a check (dead: its connections end), or when such a
-// connection ends. It changes no history, shifts no key and counts no failure.
+// No timers: the age of an exchange is read when a pick looks at its slot (at most
+// once per rrLook) and when a probe of the node answers.
 
 import (
 	"context"
@@ -59,90 +29,54 @@ import (
 	"math"
 	"net"
 	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxtrace"
 	"github.com/sagernet/sing-box/common/urltest"
-	C "github.com/sagernet/sing-box/constant"
 	E "github.com/sagernet/sing/common/exceptions"
-	N "github.com/sagernet/sing/common/network"
 )
 
 const (
-	// rrPendingMax bounds the pending failures of one node; the oldest goes first.
-	rrPendingMax = 64
-	// rrPendingTTL — a pending failure without a verdict this long is dropped.
-	rrPendingTTL = 60 * time.Second
-	// rrVerdictWait — a failure whose check or verdict probe could not start asks
-	// again at the next pick of its node this long later, if no proof of the node
-	// has given the verdict by then.
-	rrVerdictWait = time.Second
-	// rrHangLook — the unfinished connections of a slot are looked at by a pick no
-	// more often than this.
-	rrHangLook = time.Second
-	// rrClockJump — a gap between the wall and the monotonic clock beyond this, in
-	// either direction, between two looks of the pick is a sleep the monotonic clock
-	// did not count (or a clock change): an event of the network.
+	// rrHangAfter is H: an unfinished exchange this old is a slow sign (S2).
+	rrHangAfter = 5 * time.Second
+	// rrRTO is ρ, the initial retransmission timeout (RFC 6298) of the rule of the half.
+	rrRTO = time.Second
+	// rrLook — a pick looks at the exchanges of a slot no more often than this.
+	rrLook = time.Second
+	// rrClockJump — a gap between the wall and the monotonic clock beyond this is an
+	// event (N3).
 	rrClockJump = 10 * time.Second
-	// rrSiteSilentAfter — a TCP connection through a live node still waiting for its
-	// first byte this long after the client sent is a silent site even before the
-	// client leaves; a shorter wait is a slow answer as long as it lasts.
-	rrSiteSilentAfter = 30 * time.Second
-	// rrVerdictGap — a node gets a verdict probe no more often than this.
-	rrVerdictGap = 3 * time.Second
-	// rrVerdictBurst verdict probes start per group in rrVerdictWindow at most, one
-	// in flight: without stickiness the failures spread over every node of the
-	// pool, and the limit per node alone would allow 20 probes a minute per node.
-	rrVerdictBurst  = 4
-	rrVerdictWindow = 15 * time.Second
+	// The limits of the life probe: one in flight per node, one per node every
+	// rrLifeGap, rrLifeBurst per group in rrLifeWindow; one by a UDP wait per group
+	// every rrUDPLifeGap on top.
+	rrLifeGap    = 3 * time.Second
+	rrLifeBurst  = 4
+	rrLifeWindow = 15 * time.Second
+	rrUDPLifeGap = 60 * time.Second
+	// rrPendingMax bounds the Q1 signs waiting on one node; the oldest goes first.
+	rrPendingMax = 64
+	// rrProofMax bounds the proofs kept per node; rrProofGrain is the least gap
+	// between the answers of two kept proofs, so the front spans at least 2T.
+	rrProofMax   = 64
+	rrProofGrain = 500 * time.Millisecond
 )
 
-// claimVerdict takes a verdict probe for the node of t at now: one per node every
-// rrVerdictGap, one in flight per group, rrVerdictBurst starts per group in
-// rrVerdictWindow. It reports whether the probe may start.
-func (h *rrHeal) claimVerdict(t *rrTrack, now int64) bool {
-	h.verdictAccess.Lock()
-	defer h.verdictAccess.Unlock()
-	if last := t.verdictLast.Load(); last != 0 && now-last < int64(rrVerdictGap) {
-		return false
-	}
-	if t.verdictBusy.Load() || h.verdicts.Load() > 0 {
-		return false
-	}
-	if oldest := h.verdictStarts[h.verdictNext]; oldest != 0 && now-oldest < int64(rrVerdictWindow) {
-		return false
-	}
-	h.verdictStarts[h.verdictNext] = now
-	h.verdictNext = (h.verdictNext + 1) % rrVerdictBurst
-	t.verdictLast.Store(now)
-	t.verdictBusy.Store(true)
-	h.verdicts.Add(1)
-	return true
+// rrHorizon is 2T: the life of a suspicion and the time a Q1 sign waits for its
+// proof.
+func rrHorizon() int64 {
+	return 2 * int64(rrProbeTimeout())
 }
 
-func (h *rrHeal) releaseVerdict(t *rrTrack) {
-	t.verdictBusy.Store(false)
-	h.verdicts.Add(-1)
-}
-
-// rrPendMode is how a failure asks for the verdict on its node (rrPend).
-type rrPendMode int
-
-const (
-	rrCheckNow   rrPendMode = iota // the check with a control at once: the node is under suspicion
-	rrVerdictNow                   // a verdict probe of the node alone at once: the site is under suspicion
-)
-
-// errRRStruck is the cause of a dial in flight cancelled by the dead verdict on its node.
+// errRRStruck is the cause of a dial in flight cancelled by D1 on its node.
 var errRRStruck = E.New("round_robin: the node is struck out as dead")
 
-// rrUnwatched reports a connection that takes no part in the self-heal: a
-// connection test (SPEC 139) and a delay measurement through the group
-// (urltest.URLTest of an outer group, the clash API). It is not wrapped, tracked,
-// counted or shifted and starts no check.
+// rrUnwatched reports an exchange that takes no part in the self-heal: a
+// connection test (SPEC 139) and a delay measurement through the group.
 func rrUnwatched(ctx context.Context) bool {
 	return lxtrace.IsProbe(ctx) || urltest.IsMeasureLx(ctx)
 }
@@ -152,13 +86,21 @@ func rrTime(clock int64) time.Time {
 	return rrClockBase.Add(time.Duration(clock - 1))
 }
 
-// rrKillable is an unfinished connection the dead verdict ends.
+// rrHalf is the bound of the rule of the half (§3): a proof (a', b') with a' >= w
+// and b' <= rrHalf(w, t) shows the request sent at w delivered by t.
+func rrHalf(w, t int64) int64 {
+	return (t + w - int64(rrRTO)) / 2
+}
+
+// --- unfinished exchanges ---------------------------------------------------------
+
+// rrKillable is an unfinished exchange that D1 ends.
 type rrKillable interface {
 	rrKill()
 }
 
-// rrTrackEntry is one unfinished connection in a list of a tracker; it is embedded
-// in its owner, so tracking allocates nothing.
+// rrTrackEntry is one unfinished exchange in a list of a tracker; it is embedded in
+// its owner, so tracking allocates nothing.
 type rrTrackEntry struct {
 	prev, next *rrTrackEntry
 	list       *rrTrackList
@@ -166,8 +108,8 @@ type rrTrackEntry struct {
 	owner      rrKillable
 }
 
-// rrTrackList is a list of unfinished connections ordered by since; the caller
-// holds the tracker's access.
+// rrTrackList is a list of unfinished exchanges ordered by since; the caller holds
+// the tracker's access.
 type rrTrackList struct {
 	head, tail *rrTrackEntry
 	oldest     atomic.Int64 // since of head; 0 for an empty list
@@ -203,8 +145,7 @@ func (l *rrTrackList) remove(e *rrTrackEntry) {
 	}
 }
 
-// newestBefore returns the since of the newest entry not newer than cutoff; found
-// is false for none.
+// newestBefore returns the since of the newest entry not newer than cutoff.
 func (l *rrTrackList) newestBefore(cutoff int64) (newest int64, found bool) {
 	for e := l.head; e != nil && e.since <= cutoff; e = e.next {
 		newest, found = e.since, true
@@ -225,95 +166,48 @@ func (l *rrTrackList) drain(owners []rrKillable) []rrKillable {
 	return owners
 }
 
-// rrPending is a failure waiting for the verdict on a node: as the node it failed
-// on (A), or as the node of its retry that failed too (retry).
-type rrPending struct {
-	failure *rrFailure
-	retry   bool
-	at      int64 // rrClock of the failure
+// rrProof is one proof of the path through a node: an ANSWER of an exchange that
+// started at a and answered at b (rrClock).
+type rrProof struct {
+	a, b int64
 }
 
 // rrTrack is the tracker of one pool member (see the file header).
 type rrTrack struct {
-	tag        string
-	access     sync.Mutex
-	dials      rrTrackList // dials in flight (TCP and UDP)
-	waits      rrTrackList // TCP (stream) connections: the client sent, no first byte yet
-	pwaits     rrTrackList // UDP flows: packets sent, none received — a reason for rrHang only, no suspicion
-	pending    []rrPending // ordered by at
-	pendingN   atomic.Int32
-	checkAfter atomic.Int64 // rrClock from which a pick of the node starts the check; 0 none
-	hangLook   atomic.Int64 // rrClock before which a pick does not look at the unfinished connections
-	// proved is the rrClock from which the node is known alive: the start of the
-	// latest connection that got its first byte, of the latest probe that answered,
-	// the time of history written by another run.
-	proved atomic.Int64
-	// suspectSince is the since of the newest unfinished connection older than
-	// rrHangAfter not covered by proved, found by the last look (rrOnPick); 0 none.
-	suspectSince atomic.Int64
-	// silentSince is the start of the latest connection through the node that ended
-	// in silence (a timeout) with no proof of the node while it waited: the slot
-	// stays under suspicion until the node proves alive after it (proved) or is
-	// found dead. A freeze leaves it; a new node in the slot has a new tracker.
-	silentSince atomic.Int64
-	verdictBusy atomic.Bool  // a verdict probe of the node is in flight
-	verdictLast atomic.Int64 // rrClock of the start of the last verdict probe
-	deadAt      atomic.Int64 // rrClock of the last dead verdict on the node (rrDead)
-}
-
-// markSilent records a connection through the node that started at since and ended
-// in silence with no proof of the node while it waited: the slot is suspect.
-func (t *rrTrack) markSilent(since int64) {
-	for {
-		old := t.silentSince.Load()
-		if old != 0 && old >= since || t.silentSince.CompareAndSwap(old, since) { // 0 is none
-			return
-		}
-	}
-}
-
-// markProved records that the node proved alive from at on.
-func (t *rrTrack) markProved(at int64) {
-	for {
-		old := t.proved.Load()
-		if old >= at || t.proved.CompareAndSwap(old, at) {
-			return
-		}
-	}
-}
-
-// suspect reports, with a few atomic loads, whether the pick skips the slot: an
-// unfinished connection through it is older than rrHangAfter and the node has not
-// proved alive since it started. It allocates nothing and takes no lock.
-func (t *rrTrack) suspect(now, event int64) bool {
-	if silent := t.silentSince.Load(); silent != 0 && silent >= event && t.proved.Load() < silent {
-		return true // a connection ended in silence, no proof since it started
-	}
-	cutoff := now - int64(rrHangAfter)
-	oldest := t.dials.oldest.Load()
-	if w := t.waits.oldest.Load(); w != 0 && (oldest == 0 || w < oldest) {
-		oldest = w
-	}
-	if oldest == 0 || oldest > cutoff {
-		return false
-	}
-	proved := t.proved.Load()
-	if oldest >= event && proved < oldest {
-		return true
-	}
-	// A connection that started before the last event of the network says nothing;
-	// a newer one, found by the last look, may outlast the proof.
-	since := t.suspectSince.Load()
-	return since != 0 && since >= event && since <= cutoff && proved < since
+	tag    string
+	access sync.Mutex  // the lists and pending
+	dials  rrTrackList // TCP dials in flight
+	waits  rrTrackList // TCP connections: the client sent, no first byte yet (since = w)
+	pwaits rrTrackList // UDP opens in flight and UDP flows sent with no answer
+	// pending are the Q1 signs waiting for a proof via the node after them, in the
+	// order of their outcome.
+	pending  []*rrSign
+	pendingN atomic.Int32
+	lookAt   atomic.Int64 // rrClock before which a pick does not look at the slot
+	// proved is the latest start a' of a proof of the node; math.MinInt64 for none.
+	proved      atomic.Int64
+	proofAccess sync.Mutex
+	proofs      [rrProofMax]rrProof // the front: a' and b' both ascending
+	proofN      int
+	// The suspicion (S1–S3): from the start a of the sign that set it, until the
+	// rrClock mark; a proof with a' >= a lifts it.
+	suspectFrom  atomic.Int64
+	suspectUntil atomic.Int64
+	// wantCheck: a life probe of the node had no ANSWER, and its suspicion asks for
+	// the check until a verdict comes (D4, D5).
+	wantCheck atomic.Bool
+	lifeBusy  atomic.Bool  // a life probe of the node is in flight
+	lifeLast  atomic.Int64 // rrClock of the start of its last life probe
+	deadAt    atomic.Int64 // rrClock of the last D1 on the node
 }
 
 func newRRTrack(tag string) *rrTrack {
 	t := &rrTrack{tag: tag}
-	t.proved.Store(math.MinInt64) // never: an rrClock mark may be below zero
+	t.proved.Store(math.MinInt64)
 	return t
 }
 
-// track registers an unfinished connection in list.
+// track registers an unfinished exchange in list.
 func (t *rrTrack) track(list *rrTrackList, e *rrTrackEntry, since int64, owner rrKillable) {
 	t.access.Lock()
 	defer t.access.Unlock()
@@ -327,7 +221,7 @@ func (t *rrTrack) track(list *rrTrackList, e *rrTrackEntry, since int64, owner r
 	list.push(e)
 }
 
-// untrack removes an unfinished connection; a no-op for one not registered.
+// untrack removes an unfinished exchange; a no-op for one not registered.
 func (t *rrTrack) untrack(e *rrTrackEntry) {
 	t.access.Lock()
 	defer t.access.Unlock()
@@ -336,33 +230,122 @@ func (t *rrTrack) untrack(e *rrTrackEntry) {
 	}
 }
 
-// attention reports, with a few atomic loads, whether a pick at now has work: a
-// pending failure due for a check, or an unfinished connection older than
-// rrHangAfter not looked at lately. It allocates nothing and takes no lock.
-func (t *rrTrack) attention(now, event int64) bool {
-	if due := t.checkAfter.Load(); due != 0 && now >= due {
-		return true
+// markProved moves proved to at.
+func (t *rrTrack) markProved(at int64) {
+	for {
+		old := t.proved.Load()
+		if old >= at || t.proved.CompareAndSwap(old, at) {
+			return
+		}
 	}
-	if now < t.hangLook.Load() {
+}
+
+// addProof records the proof (a, b). The front keeps both a' and b' ascending: a
+// proof with an earlier start and a later answer than another proves less. Two
+// answers closer than rrProofGrain keep the later one only, which proves less for a
+// start before it (conservative).
+func (t *rrTrack) addProof(a, b int64) {
+	t.markProved(a)
+	t.proofAccess.Lock()
+	defer t.proofAccess.Unlock()
+	n := t.proofN
+	i := sort.Search(n, func(i int) bool { return t.proofs[i].a >= a })
+	if i < n && t.proofs[i].b <= b {
+		return
+	}
+	j := i
+	for j > 0 && t.proofs[j-1].b >= b {
+		j--
+	}
+	if j == i && i == n && j >= 2 && b-t.proofs[j-2].b < int64(rrProofGrain) {
+		j-- // too close to the one before the last: it replaces the last
+	}
+	if j == i && n == rrProofMax {
+		copy(t.proofs[:], t.proofs[1:n])
+		n--
+		i--
+		j--
+	}
+	copy(t.proofs[j+1:], t.proofs[i:n])
+	t.proofs[j] = rrProof{a, b}
+	t.proofN = n - (i - j) + 1
+}
+
+// live reports whether a proof (a', b') with a' >= from and b' <= to is known.
+func (t *rrTrack) live(from, to int64) bool {
+	if t.proved.Load() < from {
 		return false
 	}
-	if silent := t.silentSince.Load(); silent != 0 && silent >= event && t.proved.Load() < silent {
+	t.proofAccess.Lock()
+	defer t.proofAccess.Unlock()
+	i := sort.Search(t.proofN, func(i int) bool { return t.proofs[i].a >= from })
+	return i < t.proofN && t.proofs[i].b <= to
+}
+
+// suspectAt sets or extends the suspicion from a sign that started at from (S1
+// after a failed life probe, S2): until 2T after now. Over a suspicion that still
+// holds the later start wins: a proof lifts it only when it covers every sign.
+func (t *rrTrack) suspectAt(from, now int64) {
+	if old := t.suspectFrom.Load(); t.suspected(now, math.MinInt64) && old > from {
+		from = old
+	}
+	t.suspectFrom.Store(from)
+	until := now + rrHorizon()
+	for {
+		old := t.suspectUntil.Load()
+		if old >= until || t.suspectUntil.CompareAndSwap(old, until) {
+			return
+		}
+	}
+}
+
+// clearSuspicion lifts the suspicion (S3: D1, D3, the scheduled run).
+func (t *rrTrack) clearSuspicion() {
+	t.suspectUntil.Store(0)
+	t.wantCheck.Store(false)
+}
+
+// suspected reports the suspicion set by a sign; a proof with a' >= a, E and the
+// term lift it (S3).
+func (t *rrTrack) suspected(now, epoch int64) bool {
+	from := t.suspectFrom.Load()
+	return now < t.suspectUntil.Load() && from >= epoch && t.proved.Load() < from
+}
+
+// suspect reports, with a few atomic loads and no lock, whether the pick goes round
+// the slot: a suspicion, or a TCP dial or wait older than H with no proof since it
+// started (S2 at once).
+func (t *rrTrack) suspect(now, epoch int64) bool {
+	if t.suspected(now, epoch) {
+		return true
+	}
+	oldest := t.dials.oldest.Load()
+	if w := t.waits.oldest.Load(); w != 0 && (oldest == 0 || w < oldest) {
+		oldest = w
+	}
+	return oldest != 0 && oldest <= now-int64(rrHangAfter) && oldest >= epoch && t.proved.Load() < oldest
+}
+
+// attention reports, with a few atomic loads, whether a pick at now has work for
+// the slot: an exchange older than H, or a suspicion asking for the check.
+func (t *rrTrack) attention(now int64) bool {
+	if now < t.lookAt.Load() {
+		return false
+	}
+	if t.wantCheck.Load() {
 		return true
 	}
 	cutoff := now - int64(rrHangAfter)
-	if d := t.dials.oldest.Load(); d != 0 && d <= cutoff {
-		return true
+	for _, list := range [3]*rrTrackList{&t.dials, &t.waits, &t.pwaits} {
+		if oldest := list.oldest.Load(); oldest != 0 && oldest <= cutoff {
+			return true
+		}
 	}
-	if w := t.waits.oldest.Load(); w != 0 && w <= cutoff {
-		return true
-	}
-	p := t.pwaits.oldest.Load()
-	return p != 0 && p <= cutoff
+	return false
 }
 
-// newestHung returns the since of the newest dial in flight or TCP connection
-// waiting for its first byte not newer than cutoff — what makes the slot suspect;
-// found is false for none.
+// newestHung returns the since of the newest TCP dial in flight or wait not newer
+// than cutoff.
 func (t *rrTrack) newestHung(cutoff int64) (int64, bool) {
 	t.access.Lock()
 	defer t.access.Unlock()
@@ -373,29 +356,26 @@ func (t *rrTrack) newestHung(cutoff int64) (int64, bool) {
 	return newest, found
 }
 
-// newestPacketWait returns the since of the newest UDP flow waiting for an answer
-// not newer than cutoff; found is false for none.
+// newestPacketWait returns the since of the newest UDP exchange waiting not newer
+// than cutoff.
 func (t *rrTrack) newestPacketWait(cutoff int64) (int64, bool) {
 	t.access.Lock()
 	defer t.access.Unlock()
 	return t.pwaits.newestBefore(cutoff)
 }
 
-// kill ends every unfinished connection of the node: the dead verdict; the
-// suspicion of the slot goes with them. A dial is
-// marked struck under access, so a dial that fails on its own meanwhile still
-// knows the verdict (rrDial.failed).
+// kill ends every unfinished exchange of the node (D1). A dial is marked struck
+// under access, so a dial that fails on its own meanwhile still knows the verdict.
 func (t *rrTrack) kill() int {
 	t.access.Lock()
 	owners := t.dials.drain(nil)
+	owners = t.pwaits.drain(owners)
 	for _, owner := range owners {
 		if dial, isDial := owner.(*rrDial); isDial {
 			dial.struck.Store(true)
 		}
 	}
 	owners = t.waits.drain(owners)
-	owners = t.pwaits.drain(owners)
-	t.suspectSince.Store(0)
 	t.access.Unlock()
 	for _, owner := range owners {
 		owner.rrKill()
@@ -403,81 +383,50 @@ func (t *rrTrack) kill() int {
 	return len(owners)
 }
 
-// addPending records a failure waiting for the verdict on the node.
-func (t *rrTrack) addPending(p rrPending) {
+// addPending records a Q1 sign waiting for a proof via the node.
+func (t *rrTrack) addPending(sign *rrSign) {
 	t.access.Lock()
 	defer t.access.Unlock()
-	t.purge(p.at)
 	if len(t.pending) >= rrPendingMax {
 		copy(t.pending, t.pending[1:])
+		t.pending[len(t.pending)-1] = nil
 		t.pending = t.pending[:len(t.pending)-1]
 	}
-	t.pending = append(t.pending, p)
+	t.pending = append(t.pending, sign)
 	t.pendingN.Store(int32(len(t.pending)))
 }
 
-// purge drops the pending failures older than rrPendingTTL at now; the caller
-// holds access.
-func (t *rrTrack) purge(now int64) {
-	expired := 0
-	for expired < len(t.pending) && now-t.pending[expired].at > int64(rrPendingTTL) {
-		expired++
-	}
-	if expired > 0 {
-		t.pending = append(t.pending[:0], t.pending[expired:]...)
-	}
-}
-
-// takeAlive removes and returns the pending failures that the proof "alive at
-// before" settles: those that happened before it, after void (the last freeze),
-// and not older than rrPendingTTL at now. The failures not newer than void are
-// dropped.
-func (t *rrTrack) takeAlive(before, void, now int64) []rrPending {
+// takeProved removes the signs a proof that started at a settles (Q1: a' >= b,
+// received within 2T of b at now) and drops those begun before epoch or too old.
+func (t *rrTrack) takeProved(a, epoch, now int64) []*rrSign {
 	t.access.Lock()
 	defer t.access.Unlock()
-	t.purge(now)
-	var settled []rrPending
+	var settled []*rrSign
 	kept := t.pending[:0]
-	for _, p := range t.pending {
+	for _, sign := range t.pending {
 		switch {
-		case p.at < void:
-		case p.at < before:
-			settled = append(settled, p)
+		case sign.b < epoch || now-sign.b > rrHorizon():
+		case sign.b <= a:
+			settled = append(settled, sign)
 		default:
-			kept = append(kept, p)
+			kept = append(kept, sign)
 		}
 	}
 	for i := len(kept); i < len(t.pending); i++ {
-		t.pending[i] = rrPending{} // no reference to a settled failure
+		t.pending[i] = nil
 	}
 	t.pending = kept
 	t.pendingN.Store(int32(len(kept)))
-	if len(kept) == 0 {
-		t.checkAfter.Store(0)
-	}
 	return settled
 }
 
-// dropPending drops every pending failure: the dead verdict, the node left the pool.
+// dropPending drops every Q1 sign of the node (D1: the signs of a dead node do not
+// count; the node left the slot).
 func (t *rrTrack) dropPending() {
 	t.access.Lock()
 	defer t.access.Unlock()
 	t.pending = nil
 	t.pendingN.Store(0)
-	t.checkAfter.Store(0)
-}
-
-// deferCheck asks the pick of the node at or after at to start the check.
-func (t *rrTrack) deferCheck(at int64) {
-	for {
-		due := t.checkAfter.Load()
-		if due != 0 && due <= at {
-			return
-		}
-		if t.checkAfter.CompareAndSwap(due, at) {
-			return
-		}
-	}
 }
 
 // --- slots ------------------------------------------------------------------------
@@ -527,7 +476,7 @@ type rrDial struct {
 	track  *rrTrack
 	ctx    context.Context
 	cancel context.CancelCauseFunc
-	struck atomic.Bool // the dead verdict took it off the list (set under track.access)
+	struck atomic.Bool // D1 took it off the list (set under track.access)
 }
 
 func (d *rrDial) rrKill() {
@@ -542,7 +491,7 @@ func (d *rrDial) opened() {
 }
 
 // failed ends the tracking of a dial that returned an error and releases its
-// context; it reports whether the dead verdict on the node cancelled it.
+// context; it reports whether D1 on the node cancelled it.
 func (d *rrDial) failed() bool {
 	if d == nil {
 		return false
@@ -564,14 +513,19 @@ func (d *rrDial) release() {
 // leaf leaf; it returns the context to dial on. Not tracked (ctx as is, nil): a
 // connection test, a node out of the pool, a nested urltest (it watches its own
 // connections) and a direct leaf (its connection is not wrapped, nothing would
-// release the context). A tracked dial is always wrapped on success (rrWatch).
-func (s *URLTest) rrTrackDial(ctx context.Context, track *rrTrack, member adapter.Outbound, leaf adapter.Outbound, since int64) (context.Context, *rrDial) {
+// release the context). A UDP open waits in pwaits: a hung UDP open makes no TCP
+// suspicion (V9). A tracked dial is always wrapped on success (rrWatch).
+func (s *URLTest) rrTrackDial(ctx context.Context, track *rrTrack, member adapter.Outbound, leaf adapter.Outbound, since int64, packet bool) (context.Context, *rrDial) {
 	if track == nil || rrUnwatched(ctx) || rrNestedURLTest(member) || rrDirectLeaf(leaf) {
 		return ctx, nil
 	}
 	dialCtx, cancel := context.WithCancelCause(ctx)
 	dial := &rrDial{track: track, ctx: dialCtx, cancel: cancel}
-	track.track(&track.dials, &dial.entry, since, dial)
+	list := &track.dials
+	if packet {
+		list = &track.pwaits
+	}
+	track.track(list, &dial.entry, since, dial)
 	return dialCtx, dial
 }
 
@@ -586,243 +540,139 @@ func (s *URLTest) rrDialStart(ctx context.Context, leaf adapter.Outbound, picked
 	if !loaded {
 		return ctx
 	}
-	ctx, picked.dial = s.rrTrackDial(ctx, picked.track, member, leaf, rrClock(picked.start))
+	ctx, picked.dial = s.rrTrackDial(ctx, picked.track, member, leaf, rrClock(picked.start), picked.packet)
 	return ctx
 }
 
 // --- the pick --------------------------------------------------------------------
 
-// rrWire connects the round_robin pick to the group: it skips the slots that failed
-// their last probe and looks after the unfinished connections and the pending
-// failures of the slot it picks.
+// rrWire connects the round_robin pick to the group.
 func (s *URLTest) rrWire() {
 	s.balancer.alive = s.slotAlive
 	s.balancer.onPick = s.rrOnPick
+	s.balancer.onPoolLook = s.rrPoolLook
 	s.balancer.onClockJump = s.rrClockJump
+	s.balancer.onRunAnswer = s.rrRunAnswer
 }
 
-// rrOnPick is the slow path of a pick whose slot has work (rrTrack.attention): a
-// pending failure due for a check, or an unfinished connection older than
-// rrHangAfter. Such a connection with no proof of the node since it started makes
-// the slot suspect; the check from a reason (rrHang) or, when that cannot run now,
-// a verdict probe of the node decides.
+// rrOnPick is the look at the slot of node tag by a pick (at most once per rrLook):
+// SILENT (§2), the slow sign of a TCP exchange older than H (S2: the life probe and
+// the suspicion at once), a UDP wait (the life probe alone, V9), and a suspicion
+// asking for the check (D4, D5).
 func (s *URLTest) rrOnPick(ctx context.Context, tag string, t *rrTrack, now int64) {
 	if rrUnwatched(ctx) || s.group.ctx.Err() != nil {
 		return
 	}
-	if due := t.checkAfter.Load(); due != 0 && now >= due && t.checkAfter.CompareAndSwap(due, 0) {
-		s.rrPendingDue(tag, t, now)
-	}
-	look := t.hangLook.Load()
-	if now < look || !t.hangLook.CompareAndSwap(look, now+int64(rrHangLook)) {
+	look := t.lookAt.Load()
+	if now < look || !t.lookAt.CompareAndSwap(look, now+int64(rrLook)) {
 		return
 	}
-	cutoff := now - int64(rrHangAfter)
-	node, loaded := s.outbound.Outbound(tag)
-	if !loaded {
-		return
-	}
-	// A TCP connection waiting through a live node for longer than rrSiteSilentAfter:
-	// the site is silent, not the node (rrSiteSilence) — its key moves on, the
-	// connection stays.
-	s.rrSiteSilence(t, now-int64(rrSiteSilentAfter))
-	event := s.balancer.heal.epoch()
-	since, found := t.newestHung(cutoff)
-	if found && since < event {
-		found = false // the newest one started before the last event of the network
-	}
-	sticky := false
-	if !found || t.proved.Load() >= since {
-		// No unfinished connection to suspect the node by; a connection that ended
-		// in silence with no proof keeps the suspicion.
-		if silent := t.silentSince.Load(); silent != 0 && silent >= event && t.proved.Load() < silent {
-			since, found, sticky = silent, true, true
-		}
-	}
-	if found && t.proved.Load() < since {
-		// A history answer written by another run started no earlier than its time
-		// minus the probe timeout: only that much is proved by it.
-		if at, written := s.rrHistoryProof(node); written {
-			t.markProved(at)
-		}
-	}
-	if !found || t.proved.Load() >= since {
-		t.suspectSince.Store(0)
-	} else {
-		if !sticky {
-			t.suspectSince.Store(since)
-		}
-		if s.balancer.heal.hangReady() && s.rrHang(tag, rrTime(since), false) {
-			return
-		}
-		// The check cannot run now: the node alone answers for itself. After a
-		// connection that ended in silence its silence hands over to the check.
-		var silent func()
-		if sticky {
-			silent = func() { s.rrStartCheck(node, false) }
-		}
-		s.rrVerdictProbe(node, t, silent)
-		return
-	}
-	// A UDP flow without an answer is no suspicion (one-way UDP is common: QUIC to a
-	// blocked address, STUN, NTP) and gets no verdict probe: only the reason for a
-	// check (rrHang), with its gap and filters.
-	if packet, waiting := t.newestPacketWait(cutoff); waiting && packet >= event && t.proved.Load() < packet && s.balancer.heal.hangReady() {
-		s.rrHang(tag, rrTime(packet), false)
-	}
-}
-
-// rrHistoryProof is the proof that history of node gives when another run wrote it
-// (the scheduled check, another group's probe): the node counts as proved alive
-// from the history's time minus C.TCPTimeout. That is the start of the probe when
-// the probe obeyed C.TCPTimeout, as the group's own probes do; a foreign probe that
-// ran longer started earlier, and the mark is then a little later than its start —
-// an approximation. written is false without history.
-func (s *URLTest) rrHistoryProof(node adapter.Outbound) (int64, bool) {
-	leaf := RealTag(node, N.NetworkTCP)
-	if leaf == "" {
-		return 0, false
-	}
-	history := s.group.history.LoadURLTestHistory(leaf)
-	if history == nil {
-		return 0, false
-	}
-	return rrClock(history.Time) - int64(C.TCPTimeout), true
-}
-
-// rrPendingDue is a pick of a node whose pending failures asked for a check: the
-// history written since settles them; otherwise the check starts, or asks again
-// rrVerdictWait later when it cannot start now.
-func (s *URLTest) rrPendingDue(tag string, t *rrTrack, now int64) {
-	node, loaded := s.outbound.Outbound(tag)
-	if !loaded {
-		return
-	}
-	if at, written := s.rrHistoryProof(node); written {
-		t.markProved(at)
-		s.rrSettleAlive(t, at)
-	}
-	if t.pendingN.Load() == 0 || s.balancer.heal.frozen() {
-		return
-	}
-	if !s.rrStartCheck(node, false) {
-		t.deferCheck(now + int64(rrVerdictWait))
-	}
-}
-
-// rrPend records failure as pending on the pool member node (retry: as the node of
-// its retry) and asks for the verdict as mode says. When neither the check nor the
-// verdict probe can start now, the next pick of the node after rrVerdictWait asks
-// again unless a first byte through the node settles the failure first.
-func (s *URLTest) rrPend(node adapter.Outbound, failure *rrFailure, retry bool, mode rrPendMode) {
-	t := s.balancer.trackOf(node.Tag())
-	if t == nil {
-		return
-	}
-	at := rrClock(time.Now())
-	t.addPending(rrPending{failure: failure, retry: retry, at: at})
-	s.rrAskVerdict(node, t, at, mode)
-}
-
-// rrAskVerdict asks for the verdict on the pool member node of t as mode says;
-// when neither the check nor the verdict probe can start now, the next pick of the
-// node after rrVerdictWait asks again.
-func (s *URLTest) rrAskVerdict(node adapter.Outbound, t *rrTrack, at int64, mode rrPendMode) {
-	switch mode {
-	case rrCheckNow:
-		if s.rrStartCheck(node, false) {
-			return
-		}
-	case rrVerdictNow:
-		if s.rrVerdictProbe(node, t, func() {
-			if !s.rrStartCheck(node, false) {
-				t.deferCheck(rrClock(time.Now()) + int64(rrVerdictWait))
-			}
-		}) {
-			return
-		}
-	}
-	t.deferCheck(at + int64(rrVerdictWait))
-}
-
-// rrVerdictProbe probes the pool member node alone, outside the check slot and its
-// gap: at most one in flight per node and one per node every rrVerdictGap, none
-// while frozen. An answer writes its history, proves the node alive from the
-// probe's start and settles its failures pending since before it; on silence
-// silent runs (nil: nothing — the check from a reason decides later). It reports
-// whether the probe started.
-func (s *URLTest) rrVerdictProbe(node adapter.Outbound, t *rrTrack, silent func()) bool {
 	heal := &s.balancer.heal
-	if t == nil || heal.frozen() || s.group.ctx.Err() != nil {
-		return false
+	node, loaded := s.outbound.Outbound(tag)
+	if !loaded || heal.frozen() {
+		return
 	}
-	if !heal.claimVerdict(t, rrClock(time.Now())) {
+	epoch := heal.epoch()
+	s.rrInspect(t, now)
+	cutoff := now - int64(rrHangAfter)
+	if since, found := t.newestHung(cutoff); found && since >= epoch && t.proved.Load() < since {
+		t.suspectAt(since, now) // S2: the bypass at once, also when the limits hold the probe back (V10)
+		s.rrLifeProbe(node, t, since, false)
+	} else if packet, waiting := t.newestPacketWait(cutoff); waiting && packet >= epoch && t.proved.Load() < packet {
+		s.rrLifeProbe(node, t, packet, true)
+	}
+	if t.wantCheck.Load() && t.suspected(now, epoch) {
+		s.rrStartCheck() // D4, D5: the suspicion stays and starts the next check
+	}
+}
+
+// rrPoolLook is the look at the whole pool by a pick (at most once a second): a
+// slot with no live node — the replacement found no candidate, or a quarantine —
+// starts the check when the gap is over (V5).
+func (s *URLTest) rrPoolLook() {
+	if !s.balancer.heal.checkReady() || s.group.checking.Load() || s.group.ctx.Err() != nil {
+		return
+	}
+	for _, entry := range s.balancer.slotsSnapshot() {
+		if entry.tag == "" || !s.slotAlive(entry.tag) {
+			s.rrStartCheck()
+			return
+		}
+	}
+}
+
+// rrLifeProbe probes node alone, outside the check and its gap (§4.2): at most one
+// in flight per node, one per node every rrLifeGap, rrLifeBurst per group in
+// rrLifeWindow, and by a UDP wait (udp) one per group every rrUDPLifeGap on top.
+// ANSWER is D3. Without it the suspicion from the sign that started at from is set
+// — not for a UDP wait (V9) — and the check starts. It reports whether the probe
+// started; a probe the limits held back starts nothing (V10).
+func (s *URLTest) rrLifeProbe(node adapter.Outbound, t *rrTrack, from int64, udp bool) bool {
+	heal := &s.balancer.heal
+	if t == nil || heal.frozen() || s.group.ctx.Err() != nil || !heal.claimLife(t, rrClock(time.Now()), udp) {
 		return false
 	}
 	go func() {
-		defer heal.releaseVerdict(t)
+		defer t.lifeBusy.Store(false)
 		ctx, cancel := context.WithCancel(s.group.ctx)
 		defer cancel()
-		probe := s.group.rrProbeNode(ctx, node, false)
-		if heal.aborted(ctx) || probe.leaf == "" {
+		probe := s.group.rrProbeNode(ctx, node)
+		// N0, and a node found dead or gone while it was probed: the outcome is no
+		// longer about this slot.
+		if ctx.Err() != nil || probe.leaf == "" || heal.frozen() || s.rrBeforeEvent(probe.started) ||
+			s.balancer.trackOf(probe.member) != t || t.deadAt.Load() >= rrClock(probe.started) {
 			return
 		}
 		if probe.answered {
-			s.rrProbeProof(probe)
-			// The node may have been found dead or left the pool while it was probed
-			// (a check, a scheduled run): its answer is no longer ours to write — it
-			// would make a replaced node look like a live candidate.
-			if s.balancer.trackOf(probe.member) != t || t.deadAt.Load() >= rrClock(probe.started) {
-				return
-			}
-			s.group.rrStore(probe)
-			s.rrSettleProbe(probe)
+			s.rrAlive(probe)
 			return
 		}
-		if silent != nil {
-			silent()
+		if !udp {
+			t.suspectAt(from, rrClock(probe.ended)) // S1: the bypass after the failed life probe
 		}
+		t.wantCheck.Store(true)
+		s.rrStartCheck()
 	}()
 	return true
 }
 
-// rrSettleAlive is the verdict "alive at before" on the node of t: every pending
-// failure before it gets what it is due.
-func (s *URLTest) rrSettleAlive(t *rrTrack, before int64) {
-	if t == nil || t.pendingN.Load() == 0 {
+// rrAlive is D3 on a probe that answered: its history is written; for a pool
+// member the suspicion lifts and the proof is recorded (rrProof).
+func (s *URLTest) rrAlive(probe rrProbe) {
+	s.group.rrStore(probe)
+	t := s.balancer.trackOf(probe.member)
+	if t == nil {
 		return
 	}
-	heal := &s.balancer.heal
-	if heal.frozen() {
+	t.clearSuspicion()
+	s.rrProof(t, rrClock(probe.started), rrClock(probe.ended))
+	s.rrInspect(t, rrClock(probe.ended)) // SILENT is read at the answer of a probe (§2)
+}
+
+// rrProof is an ANSWER via the node of t that started at a and came at b (A1): the
+// proof is kept and the Q1 signs it settles count. An exchange begun before E
+// proves nothing (I4).
+func (s *URLTest) rrProof(t *rrTrack, a, b int64) {
+	epoch := s.balancer.heal.epoch()
+	if a < epoch {
 		return
 	}
-	for _, p := range t.takeAlive(before, heal.epoch(), rrClock(time.Now())) {
-		if p.retry {
-			p.failure.setRetryAlive()
-		} else {
-			p.failure.setAlive()
+	t.addProof(a, b)
+	if t.pendingN.Load() > 0 {
+		for _, sign := range t.takeProved(a, epoch, b) {
+			sign.add(rrSignProof)
 		}
 	}
 }
 
-// rrSettleProbe is a probe of the pool member tag that answered: its pending
-// failures before the probe started are settled.
-func (s *URLTest) rrSettleProbe(probe rrProbe) {
-	if probe.answered && !probe.fresh {
-		t := s.balancer.trackOf(probe.member)
-		if t != nil {
-			t.markProved(rrClock(probe.started))
-			s.rrSiteSilence(t, rrClock(time.Now())-int64(rrSiteSilentAfter))
-		}
-		s.rrSettleAlive(t, rrClock(probe.started))
-	}
-}
-
-// rrProbeProof records the answer of a probe of a pool member as a proof of its
-// node from the probe's start (D3).
-func (s *URLTest) rrProbeProof(probe rrProbe) {
-	if t := s.balancer.trackOf(probe.member); t != nil {
-		t.markProved(rrClock(probe.started))
+// rrRunAnswer is a probe of the scheduled run that answered for tag: a proof via
+// the pool member of that tag. The start of the probe is not known; T before the
+// answer bounds it from below.
+func (s *URLTest) rrRunAnswer(tag string) {
+	if t := s.balancer.trackOf(tag); t != nil && !s.balancer.heal.frozen() {
+		now := rrClock(time.Now())
+		s.rrProof(t, now-int64(rrProbeTimeout()), now)
+		s.rrInspect(t, now)
 	}
 }
 
@@ -862,86 +712,62 @@ func (s *URLTest) rrClockJump(drift time.Duration) {
 	s.logger.Info("round_robin: the wall clock moved ", drift.Round(time.Second), " apart from the monotonic one (a sleep with no wake signal, or a clock change); self-heal frozen for ", rrHealFreeze)
 }
 
-// rrSiteSilence is the look at the TCP connections through the node of t that
-// have waited for their first byte since cutoff (rrSiteSilentAfter ago) or
-// earlier: when the node proved alive after such a connection started
-// (rrProvedDuring), the node is fine and the site is silent through it — the main
-// geo case: the site drops the packets from the node's address. Each such
-// connection moves its key on once (rrFirstByteConn.siteSilent); it is not closed
-// and gets no retry — an answer may still come. A shorter wait is a slow answer:
-// only the client leaving it (rrFirstByteConn.waitEnded) makes it silence.
-func (s *URLTest) rrSiteSilence(t *rrTrack, cutoff int64) {
-	proved := t.proved.Load()
-	if proved == math.MinInt64 || t.waits.oldest.Load() == 0 {
+// rrInspect is the look at the TCP waits of the node of t at now for SILENT (§2):
+// a wait older than T_site (= T) whose path through the node is confirmed in the
+// first half of it (Live). Each such connection gets SILENT once (rrSilent); it is
+// not closed — an answer may still come and cancel it.
+func (s *URLTest) rrInspect(t *rrTrack, now int64) {
+	cutoff := now - int64(rrProbeTimeout())
+	if oldest := t.waits.oldest.Load(); oldest == 0 || oldest > cutoff {
 		return
 	}
+	epoch := s.balancer.heal.epoch()
 	var silent []*rrFirstByteConn
 	t.access.Lock()
 	for e := t.waits.head; e != nil && e.since <= cutoff; e = e.next {
 		c, isConn := e.owner.(*rrFirstByteConn)
-		if !isConn || c.watch.packet || c.watch.start.IsZero() || c.state.Load()&(rrStateSiteSilent|rrStateGotByte) != 0 {
-			continue
-		}
-		if rrClock(c.watch.start) < s.balancer.heal.epoch() {
-			continue // started before the last event of the network: no verdict
-		}
-		if proved >= rrClock(c.watch.start) {
+		if isConn && c.state.Load()&(rrStateSilent|rrStateGotByte|rrStateDone) == 0 && rrClock(c.watch.start) >= epoch {
 			silent = append(silent, c)
 		}
 	}
 	t.access.Unlock()
 	for _, c := range silent {
-		c.siteSilent()
+		w := c.wroteAt.Load()
+		if t.live(w, rrHalf(w, now)) && c.set(rrStateSilent)&rrStateSilent == 0 {
+			s.rrSilent(c)
+		}
 	}
 }
 
-// rrSiteSilent moves the key of the connection of w on past its node: the site
-// did not answer through a live node. The usual rules of the shift hold (the
-// expected shift, no shift for a detour, the address-problem mark after the circle,
-// nothing while frozen); the failure is confirmed to the node when the key gets a
-// first byte on another slot. Without stickiness there is no key: nothing.
-func (s *URLTest) rrSiteSilent(w *rrConnWatch) {
-	b := s.balancer
-	if !w.key.valid || s.group.ctx.Err() != nil || b.heal.frozen() || s.rrBeforeEvent(w.start) || b.memory.shifts.marked(w.key.table) {
-		return
-	}
-	picked := rrPick{key: w.key, shift: w.shift, detour: w.detour}
-	if w.failure != nil {
-		picked.shift = w.failure.expectedShift() // the retry: the key as its failure left it
-	}
-	s.logger.Debug("round_robin: a connection through ", w.member, " has had no answer from ", w.key.label(b.stickyHash), " while the node is alive; the site is silent through it")
-	failure := s.rrNewFailure(picked, w.member)
-	failure.silence = true // shifts the key, confirms nothing (rrPassedNode.silent)
-	failure.setAlive()
-}
-
-// rrSilence reports whether a failed open is silence — nobody answered: a timeout
-// of the dial or the handshake, a deadline, the cancel of a hang verdict — rather
-// than an active refusal (refused, reset, a close, a proxy's "rejected"): someone
-// answered.
+// rrSilence reports whether a failed open is a timeout: nobody answered.
 func rrSilence(err error) bool {
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, errRRStruck) {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
 		return true
 	}
 	var netErr net.Error
 	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
-// rrDead is the dead verdict on the pool member tag: its pending failures are
-// dropped, its dials in flight cancelled and its connections waiting for a first
-// byte closed. t is its tracker, taken before its slot could be replaced.
-func (s *URLTest) rrDead(t *rrTrack) {
-	if t == nil {
-		return
+// rrLocalError reports LOCAL (§2): an error with no answer of the far side — no
+// route, the network or a host on the way unreachable, the interface down, the
+// address not bindable.
+func rrLocalError(err error) bool {
+	for _, errno := range [...]syscall.Errno{syscall.ENETUNREACH, syscall.EHOSTUNREACH, syscall.ENETDOWN, syscall.EHOSTDOWN, syscall.EADDRNOTAVAIL} {
+		if errors.Is(err, errno) {
+			return true
+		}
 	}
+	return false
+}
+
+// rrDead is the action of D1 on the node of t: its Q1 signs are dropped, its dials
+// in flight cancelled (they go to the retry), its waits closed (CANCEL).
+func (s *URLTest) rrDead(t *rrTrack) {
 	t.dropPending()
 	t.deadAt.Store(rrClock(time.Now()))
-	t.silentSince.Store(0) // the verdict is in
-	if s.balancer.heal.frozen() {
-		return
-	}
+	t.clearSuspicion()
 	if killed := t.kill(); killed > 0 {
-		s.logger.Info("round_robin: ", t.tag, " is dead: ", killed, " unfinished connections through it cancelled")
+		s.logger.Info("round_robin: ", t.tag, " is dead: ", killed, " unfinished exchanges through it cancelled")
 	}
 }
 

@@ -4,6 +4,7 @@ package group
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -31,19 +32,23 @@ import (
 //   - refused: probes and connections go to a closed port (RST);
 //   - siteDown: probes answer, connections fail;
 //   - hold: probes block until the channel is closed;
-//   - slow: probes take this long before they answer or fail.
+//   - slow: probes take this long before they answer or fail;
+//   - probeFails: so many next probes fail at once (an EOF), then they answer;
+//   - dialErr: connections fail with this error.
 type healNode struct {
 	adapter.Outbound
-	tag      string
-	server   string
-	refused  string
-	dead     atomic.Bool
-	siteDown atomic.Bool
-	hold     chan struct{}
-	slow     time.Duration
-	probes   atomic.Int32
-	dials    atomic.Int32
-	direct   bool
+	tag        string
+	server     string
+	refused    string
+	dead       atomic.Bool
+	siteDown   atomic.Bool
+	hold       chan struct{}
+	slow       time.Duration
+	probes     atomic.Int32
+	dials      atomic.Int32
+	direct     bool
+	probeFails atomic.Int32
+	dialErr    error
 }
 
 // Type is a proxy by default (its failed open puts the node itself under
@@ -72,8 +77,14 @@ func (n *healNode) DialContext(ctx context.Context, network string, destination 
 		if n.slow > 0 {
 			time.Sleep(n.slow)
 		}
+		if n.probeFails.Add(-1) >= 0 {
+			return nil, io.EOF
+		}
 	} else {
 		n.dials.Add(1)
+		if n.dialErr != nil {
+			return nil, n.dialErr
+		}
 	}
 	if n.refused != "" {
 		return net.Dial("tcp", n.refused)
@@ -154,27 +165,34 @@ func (s *URLTest) testPick(ctx context.Context, destination M.Socksaddr, start t
 	return rrPick{key: key, shift: s.balancer.memory.shifts.shiftOf(key.table), start: start}
 }
 
-// waitCheck waits for the background check to end and clears the probe gap. The
-// check slot is taken before the call that starts the check returns, so a check
-// that ended without a probe (and set no gap) is waited for too.
+// waitCheck waits for the check and the life probes in flight to end and clears
+// their gaps: what the passing time does.
 func (f *healFixture) waitCheck(t *testing.T) {
 	t.Helper()
-	waitUntil(t, func() bool {
-		return !f.s.balancer.heal.running.Load() && f.s.balancer.heal.verdicts.Load() == 0
-	})
-	waitUntil(t, func() bool { // a silent verdict probe hands over to the check
-		return !f.s.balancer.heal.running.Load() && f.s.balancer.heal.verdicts.Load() == 0
-	})
-	f.s.balancer.heal.lastCheckEnd.Store(nil)
-	f.s.balancer.heal.lastHangEnd.Store(nil)
-	// The gaps of the verdict probes pass too: per node and the window of the group.
 	heal := &f.s.balancer.heal
-	heal.verdictAccess.Lock()
-	heal.verdictStarts = [rrVerdictBurst]int64{}
-	heal.verdictAccess.Unlock()
+	idle := func() bool {
+		if heal.running.Load() {
+			return false
+		}
+		for _, entry := range f.s.balancer.slotsSnapshot() {
+			if entry.track != nil && entry.track.lifeBusy.Load() {
+				return false
+			}
+		}
+		return true
+	}
+	for round := 0; round < 3; round++ { // a failed life probe hands over to the check
+		waitUntil(t, idle)
+		time.Sleep(5 * time.Millisecond)
+	}
+	waitUntil(t, idle)
+	heal.lastCheckEnd.Store(nil)
+	heal.lifeAccess.Lock()
+	heal.lifeStarts, heal.udpLifeLast = [rrLifeBurst]int64{}, 0
+	heal.lifeAccess.Unlock()
 	for _, entry := range f.s.balancer.slotsSnapshot() {
 		if entry.track != nil {
-			entry.track.verdictLast.Store(0)
+			entry.track.lifeLast.Store(0)
 		}
 	}
 }
@@ -202,205 +220,6 @@ func closeConn(conn net.Conn) {
 }
 
 // --- dead node ----------------------------------------------------------------------
-
-// Pool [a,b,c], a dead: the connection opens through b, a's history is dropped and
-// its slot taken by the first answering node outside the pool; b and c keep their
-// slots. b is the control and is probed live despite its fresh history; c is not
-// probed.
-func TestRRHeal_deadNodeRetriedStruckReplaced(t *testing.T) {
-	f := newHealFixture(t, []string{"a", "b", "c", "d", "e"}, []string{"a", "b", "c"}, 0)
-	f.fresh("b", "c")
-	f.nodes["a"].dead.Store(true)
-	f.nodes["d"].dead.Store(true)
-	f.s.balancer.stickyHash = nil // counter rotation: the first pick is slot 0
-
-	conn, err := f.s.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPort("example.org", 443))
-	if err != nil {
-		t.Fatal("the connection must open through the next slot: ", err)
-	}
-	closeConn(conn)
-	if f.nodes["b"].dials.Load() != 1 {
-		t.Fatalf("retry must go through b, b dials=%d", f.nodes["b"].dials.Load())
-	}
-	if got := f.g.lastSelected.Load(); got != "b" {
-		t.Fatalf("the last pick must be the retry node, got %q", got)
-	}
-	f.waitCheck(t)
-	if f.g.history.LoadURLTestHistory("a") != nil {
-		t.Fatal("dead a must lose its history")
-	}
-	if pool := f.pool(); !samePool(pool, "e", "b", "c") {
-		t.Fatalf("a's slot must go to e (d is silent), got %v", pool)
-	}
-	// b is the control, probed live despite its fresh history, and once more after
-	// a's silence (the bracket); c, the third, is probed at the start with a and b.
-	if f.probes("b") != 2 || f.probes("c") != 0 {
-		t.Fatalf("control b is probed live twice, the third not at all (b answered in time): b=%d c=%d", f.probes("b"), f.probes("c"))
-	}
-	if h := f.g.history.LoadURLTestHistory("d"); h == nil || time.Since(h.Time) < 30*time.Second {
-		t.Fatal("the silence of a candidate is not written: d keeps its old history")
-	}
-	if h := f.g.history.LoadURLTestHistory("e"); h == nil || time.Since(h.Time) > time.Second {
-		t.Fatal("the answer of the replacement must be written")
-	}
-}
-
-// A refused connection (RST from a stopped node server) is a failure like a timeout.
-func TestRRHeal_refusedIsLikeTimeout(t *testing.T) {
-	f := newHealFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"}, 0)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.nodes["a"].refused = listener.Addr().String()
-	listener.Close()
-	f.fresh("b", "c")
-
-	conn, ok := f.fail(context.Background(), "a")
-	closeConn(conn)
-	if !ok {
-		t.Fatal("a refused connection must be retried")
-	}
-	f.waitCheck(t)
-	if f.g.history.LoadURLTestHistory("a") != nil || !samePool(f.pool(), "d", "b", "c") {
-		t.Fatalf("refused a must be struck and replaced, pool %v", f.pool())
-	}
-}
-
-// A and B silent, the third answers: both are struck. The third silent too: the
-// local network — nothing changes, the group freezes.
-func TestRRHeal_bothSilentThirdDecides(t *testing.T) {
-	f := newHealFixture(t, []string{"a", "b", "c", "d", "e"}, []string{"a", "b", "c"}, 0)
-	f.nodes["a"].dead.Store(true)
-	f.nodes["b"].dead.Store(true)
-	conn, ok := f.fail(context.Background(), "a")
-	closeConn(conn)
-	if ok {
-		t.Fatal("the retry through dead b must fail")
-	}
-	f.waitCheck(t)
-	if f.g.history.LoadURLTestHistory("a") != nil || f.g.history.LoadURLTestHistory("b") != nil {
-		t.Fatal("third c answered: a and b must both be struck")
-	}
-	if pool := f.pool(); !samePool(pool, "d", "e", "c") {
-		t.Fatalf("a and b must be replaced in their slots, got %v", pool)
-	}
-
-	g := newHealFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"}, 0)
-	for _, tag := range []string{"a", "b", "c", "d"} {
-		g.nodes[tag].dead.Store(true)
-	}
-	conn, _ = g.fail(context.Background(), "a")
-	closeConn(conn)
-	g.waitCheck(t)
-	for _, tag := range []string{"a", "b", "c"} {
-		if g.g.history.LoadURLTestHistory(tag) == nil {
-			t.Fatalf("own network: history of %s must stay", tag)
-		}
-	}
-	if !samePool(g.pool(), "a", "b", "c") || !g.s.balancer.heal.frozen() {
-		t.Fatalf("own network: slots unchanged %v and frozen %v", g.pool(), g.s.balancer.heal.frozen())
-	}
-}
-
-// A pool of one: no retry; a candidate outside the pool is the control and the
-// replacement; silent candidates change nothing.
-func TestRRHeal_singleSlotPool(t *testing.T) {
-	f := newHealFixture(t, []string{"a", "d"}, []string{"a"}, 0)
-	f.nodes["a"].dead.Store(true)
-	conn, ok := f.fail(context.Background(), "a")
-	closeConn(conn)
-	if ok {
-		t.Fatal("a pool of one has no retry")
-	}
-	f.waitCheck(t)
-	if !samePool(f.pool(), "d") || f.g.history.LoadURLTestHistory("a") != nil {
-		t.Fatalf("answering d must take a's slot, got %v", f.pool())
-	}
-
-	g := newHealFixture(t, []string{"a", "d"}, []string{"a"}, 0)
-	g.nodes["a"].dead.Store(true)
-	g.nodes["d"].dead.Store(true)
-	conn, _ = g.fail(context.Background(), "a")
-	closeConn(conn)
-	g.waitCheck(t)
-	if !samePool(g.pool(), "a") || g.g.history.LoadURLTestHistory("a") == nil {
-		t.Fatalf("silent candidates: nothing changes, got %v", g.pool())
-	}
-}
-
-// A struck node that comes back does not return to its slot.
-func TestRRHeal_revivedNodeStaysOut(t *testing.T) {
-	f := newHealFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"}, 0)
-	f.fresh("b", "c")
-	f.nodes["a"].dead.Store(true)
-	conn, _ := f.fail(context.Background(), "a")
-	closeConn(conn)
-	f.waitCheck(t)
-	if !samePool(f.pool(), "d", "b", "c") {
-		t.Fatalf("precondition: a replaced by d, got %v", f.pool())
-	}
-	f.nodes["a"].dead.Store(false)
-	f.fresh("a")
-	f.g.balancePoolFirstLive(context.Background(), 3)
-	if !samePool(f.pool(), "d", "b", "c") {
-		t.Fatalf("revived a must stay out of the pool, got %v", f.pool())
-	}
-}
-
-// pool_tolerance > 0: the replacement is the fastest out-of-pool node by history,
-// unprobed; without history it is found by probes.
-func TestRRHeal_tolerantReplacement(t *testing.T) {
-	f := newHealFixture(t, []string{"a", "b", "c", "d", "e"}, []string{"a", "b", "c"}, 50)
-	f.fresh("b", "c")
-	f.g.history.StoreURLTestHistory("d", &adapter.URLTestHistory{Time: time.Now().Add(-time.Minute), Delay: 80})
-	f.g.history.StoreURLTestHistory("e", &adapter.URLTestHistory{Time: time.Now().Add(-time.Minute), Delay: 20})
-	f.nodes["a"].dead.Store(true)
-	conn, _ := f.fail(context.Background(), "a")
-	closeConn(conn)
-	f.waitCheck(t)
-	if !samePool(f.pool(), "e", "b", "c") {
-		t.Fatalf("fastest e by history must replace a, got %v", f.pool())
-	}
-	if f.probes("d") != 0 || f.probes("e") != 0 {
-		t.Fatalf("history replacement must not probe: d=%d e=%d", f.probes("d"), f.probes("e"))
-	}
-
-	g := newHealFixture(t, []string{"a", "b", "c", "d", "e"}, []string{"a", "b", "c"}, 50)
-	g.fresh("b", "c")
-	g.g.history.DeleteURLTestHistory("d")
-	g.g.history.DeleteURLTestHistory("e")
-	g.nodes["a"].dead.Store(true)
-	g.nodes["d"].dead.Store(true)
-	conn, _ = g.fail(context.Background(), "a")
-	closeConn(conn)
-	g.waitCheck(t)
-	if !samePool(g.pool(), "e", "b", "c") || g.probes("d") != 1 || g.probes("e") != 1 {
-		t.Fatalf("no history: replacement by probes, got %v d=%d e=%d", g.pool(), g.probes("d"), g.probes("e"))
-	}
-}
-
-// A answers its probe: alive, the destination is the problem. Its fresh answer is
-// written, the pool does not change.
-func TestRRHeal_aliveNodeKept(t *testing.T) {
-	f := newHealFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"}, 0)
-	f.nodes["a"].siteDown.Store(true)
-	conn, ok := f.fail(context.Background(), "a")
-	closeConn(conn)
-	if !ok {
-		t.Fatal("the retry through b must open")
-	}
-	f.waitCheck(t)
-	if h := f.g.history.LoadURLTestHistory("a"); h == nil || time.Since(h.Time) > time.Second {
-		t.Fatal("a answered: its fresh history must be written")
-	}
-	if h := f.g.history.LoadURLTestHistory("b"); h == nil || time.Since(h.Time) > time.Second {
-		t.Fatal("b answered too: its fresh history must be written")
-	}
-	if !samePool(f.pool(), "a", "b", "c") || f.probes("d") != 0 {
-		t.Fatalf("alive a: pool unchanged and no candidate probed, got %v", f.pool())
-	}
-}
 
 // The scheduled check runs while self-heal checks strike and replace nodes: the
 // slots are never mixed up and no node sits in two slots. Meaningful under -race.
@@ -457,11 +276,10 @@ func TestRRHeal_tickDuringCheck(t *testing.T) {
 				return
 			default:
 			}
-			pool := f.pool()
-			member := f.nodes[pool[i%len(pool)]]
-			neighbour := f.nodes[pool[(i+1)%len(pool)]]
 			f.s.balancer.heal.epochEnd.Store(0)
-			f.s.rrHealCheck(member, neighbour, false)
+			if f.s.balancer.heal.running.CompareAndSwap(false, true) {
+				f.s.rrHealCheck()
+			}
 			observe()
 		}
 	}()
@@ -472,67 +290,6 @@ func TestRRHeal_tickDuringCheck(t *testing.T) {
 }
 
 // --- limits -------------------------------------------------------------------------
-
-// A hundred concurrent failures through a: one check; within the gap the retries go
-// on and no new check starts.
-func TestRRHeal_oneCheckInFlightAndGap(t *testing.T) {
-	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
-	f.nodes["a"].siteDown.Store(true)
-	f.nodes["a"].hold = make(chan struct{})
-	var wg sync.WaitGroup
-	var retried atomic.Int32
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			conn, ok := f.fail(context.Background(), "a")
-			closeConn(conn)
-			if ok {
-				retried.Add(1)
-			}
-		}()
-	}
-	wg.Wait()
-	close(f.nodes["a"].hold)
-	waitUntil(t, func() bool { return !f.s.balancer.heal.running.Load() && f.s.balancer.heal.lastCheckEnd.Load() != nil })
-	if retried.Load() != 100 {
-		t.Fatalf("every failure must be retried, got %d", retried.Load())
-	}
-	if f.probes("a") != 1 {
-		t.Fatalf("one check in flight: a probed %d times", f.probes("a"))
-	}
-	end := f.s.balancer.heal.lastCheckEnd.Load()
-	f.g.history.StoreURLTestHistory("a", &adapter.URLTestHistory{Time: time.Now().Add(-time.Minute), Delay: 100})
-	for i := 0; i < 10; i++ {
-		conn, ok := f.fail(context.Background(), "a")
-		closeConn(conn)
-		if !ok {
-			t.Fatal("retries go on in the gap")
-		}
-	}
-	time.Sleep(20 * time.Millisecond)
-	if f.probes("a") != 1 || f.s.balancer.heal.lastCheckEnd.Load() != end {
-		t.Fatalf("no new check in the gap: a probed %d times", f.probes("a"))
-	}
-}
-
-// Fresh history is no verdict any more: a failed node with history younger than
-// 30 s and a first byte of the group since is probed all the same; only a proof
-// after the failure — its byte, its probe, its history — settles the failure.
-func TestRRHeal_freshHistoryIsNoVerdict(t *testing.T) {
-	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
-	f.fresh("a", "b")
-	f.nodes["a"].siteDown.Store(true)
-	conn, _ := f.failAt(context.Background(), "a", time.Now().Add(-time.Second))
-	closeConn(conn)
-	f.waitCheck(t)
-	if f.probes("a") != 1 {
-		t.Fatalf("fresh a is probed, got %d", f.probes("a"))
-	}
-	if !samePool(f.pool(), "a", "b", "c") {
-		t.Fatalf("a answered: pool unchanged, got %v", f.pool())
-	}
-}
 
 // assertFrozen checks that a failure gets neither a retry nor a check.
 func assertFrozen(t *testing.T, f *healFixture, reason string) {
@@ -547,55 +304,6 @@ func assertFrozen(t *testing.T, f *healFixture, reason string) {
 	}
 	if f.s.balancer.heal.running.Load() || f.probes("a") != probes {
 		t.Fatalf("%s: no check while frozen", reason)
-	}
-}
-
-// Freeze: the "own network" verdict, a wake signal and the full run after a network
-// change — no retries, no probes.
-func TestRRHeal_freeze(t *testing.T) {
-	// own network
-	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
-	for _, node := range f.nodes {
-		node.dead.Store(true)
-	}
-	conn, _ := f.fail(context.Background(), "a")
-	closeConn(conn)
-	f.waitCheck(t)
-	for _, node := range f.nodes {
-		node.dead.Store(false)
-	}
-	assertFrozen(t, f, "own network")
-
-	// wake
-	w := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
-	w.nodes["a"].siteDown.Store(true)
-	w.g.pause = service.FromContext[pause.Manager](pause.WithDefaultManager(w.g.ctx))
-	w.g.rrWatchWake()
-	w.g.pause.DevicePause()
-	w.g.pause.DeviceWake()
-	assertFrozen(t, w, "device wake")
-	w.s.balancer.heal.epochEnd.Store(0)
-	w.g.pause.NetworkPause()
-	w.g.pause.NetworkWake()
-	assertFrozen(t, w, "network wake")
-
-	// the full run after a network change
-	n := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
-	n.nodes["a"].siteDown.Store(true)
-	n.nodes["c"].hold = make(chan struct{})
-	n.g.pause = service.FromContext[pause.Manager](pause.WithDefaultManager(n.g.ctx))
-	n.s.InterfaceUpdated(context.Background())
-	waitUntil(t, func() bool { return n.probes("a") == 1 && n.probes("b") == 1 && n.probes("c") == 1 })
-	assertFrozen(t, n, "network change run")
-	close(n.nodes["c"].hold)
-	if !n.s.balancer.heal.frozen() {
-		t.Fatal("the freeze of the network change signal outlives a short run")
-	}
-	n.s.balancer.heal.epochEnd.Store(0)
-	conn, ok := n.fail(context.Background(), "a")
-	closeConn(conn)
-	if !ok {
-		t.Fatal("after the network change freeze the retry is back")
 	}
 }
 
@@ -624,59 +332,6 @@ func TestRRHeal_networkChangeFreezesWithoutRun(t *testing.T) {
 	}
 	assertFrozen(t, c, "network change with a busy health-check")
 	c.g.checking.Store(false)
-}
-
-// pool_tolerance 0: the candidates outside the pool are probed in parallel batches
-// of the pool size. The first one in config order (d) is silent, the second (e)
-// answers: the replacement takes the time of one probe, not two; every answer of
-// the batch is written, the silence is not. As a control the search is the same.
-func TestRRHeal_replacementProbesInParallel(t *testing.T) {
-	const slow = 300 * time.Millisecond
-	for _, asControl := range []bool{false, true} {
-		f := newHealFixture(t, []string{"a", "b", "c", "d", "e", "x"}, []string{"a", "b", "c"}, 0)
-		f.fresh("b", "c")
-		f.g.history.DeleteURLTestHistory("a")
-		f.nodes["d"].dead.Store(true)
-		for _, tag := range []string{"d", "e", "x"} {
-			f.nodes[tag].slow = slow
-		}
-		started := time.Now()
-		answer, probed, found := f.s.rrReplace(context.Background(), rrProbe{member: "a", leaf: "a", started: time.Now()}, asControl)
-		elapsed := time.Since(started)
-		if !found || answer.member != "e" || !samePool(f.pool(), "e", "b", "c") {
-			t.Fatalf("control=%v: e must replace a, got %v (answer %q)", asControl, f.pool(), answer.member)
-		}
-		// As the control the answering candidate is probed once more (the bracket).
-		rounds, eProbes := time.Duration(1), int32(1)
-		if asControl {
-			rounds, eProbes = 2, 2
-		}
-		if elapsed >= (rounds+1)*slow {
-			t.Fatalf("control=%v: the batch must be probed in parallel, took %v", asControl, elapsed)
-		}
-		if probed != 3 || f.probes("d") != 1 || f.probes("e") != eProbes || f.probes("x") != 1 {
-			t.Fatalf("control=%v: one batch of the pool size, probed=%d d=%d e=%d x=%d", asControl, probed, f.probes("d"), f.probes("e"), f.probes("x"))
-		}
-		if h := f.g.history.LoadURLTestHistory("d"); h == nil || time.Since(h.Time) < 30*time.Second {
-			t.Fatalf("control=%v: the silence of d is not written", asControl)
-		}
-		for _, tag := range []string{"e", "x"} {
-			if h := f.g.history.LoadURLTestHistory(tag); h == nil || time.Since(h.Time) > time.Second {
-				t.Fatalf("control=%v: the answer of %s in the batch must be written", asControl, tag)
-			}
-		}
-	}
-
-	// A first batch with no answer: the next batch is probed.
-	g := newHealFixture(t, []string{"a", "b", "d", "e", "x"}, []string{"a", "b"}, 0)
-	g.fresh("b")
-	g.g.history.DeleteURLTestHistory("a")
-	g.nodes["d"].dead.Store(true)
-	g.nodes["e"].dead.Store(true)
-	answer, probed, found := g.s.rrReplace(context.Background(), rrProbe{member: "a", leaf: "a", started: time.Now()}, false)
-	if !found || answer.member != "x" || probed != 3 || !samePool(g.pool(), "x", "b") {
-		t.Fatalf("second batch: x must replace a, got %v probed=%d", g.pool(), probed)
-	}
 }
 
 // --- other --------------------------------------------------------------------------

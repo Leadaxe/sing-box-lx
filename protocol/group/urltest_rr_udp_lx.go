@@ -3,32 +3,20 @@ package group
 // lx:begin SPEC 138 round_robin self-heal for UDP (stage 3)
 //
 // UDP takes its node from the same slots as TCP (pick), so a dead or quarantined
-// node, and a slot under suspicion, is skipped for UDP too. On top of that (§3.8):
+// node, and a slot under suspicion, is skipped for UDP too. On top of that:
 //
-//   - An open that fails (ListenPacket of the node returned an error, a client
-//     cancel aside) is handled as a failed TCP dial (rrHealRetry): one retry
-//     through the next live slot that takes UDP and is no nested urltest, and the
-//     verdict on the node as for TCP (the check with a control, or a verdict probe
-//     of a direct or endpoint leaf) with the same limits, gaps and freeze. It puts the node under suspicion, not the address: a key that TCP
-//     marked "address problem" is still retried and checked. A UDP failure shifts
-//     no key. The control of the check needs TCP only (the probe is TCP); the
-//     retry needs UDP.
+//   - An open that fails is a failed open (rrHealRetry): one retry through the
+//     next usable slot that takes UDP, S1 for an active failure; a timeout of the
+//     open is a UDP wait (no suspicion for TCP, V9). UDP shifts no key, writes no
+//     K2 memory and stays out of the slot counters.
 //   - "Packets went out, no answer came": from the client's first packet until the
-//     first packet back (or the close) the flow is an unfinished connection of its
-//     node (urltest_rr_track_lx.go): a pick of the slot that finds it older than
-//     rrHangAfter, or its close from our side after that long, is a reason for a
-//     check, and the dead verdict closes it. One-way UDP is legal, so this is only a
-//     reason for a check (rrHang): no retry, no key shift, no failure counted; the probe decides
-//     (dead with an answering control → struck out and replaced; nobody answers →
-//     own network; it answers → nothing). Such flows are common, so rrHang drops
-//     the reason for a node proved alive since the flow started or answering a
-//     probe lately, and its checks keep their own gap. An interrupt of the group
-//     (rrInterrupting), its Close and a connection test are no reason. A packet
-//     counts as sent once its write succeeded.
-//   - The first packet received is the first byte: it moves the node's proof mark
-//     (rrTrack.proved) to the start of the flow. UDP stays out of the slot counters
-//     and the quarantine: no flow counted, no failure confirmed by a UDP retry.
-//
+//     first packet back (or the close) the flow is a UDP wait of its node
+//     (urltest_rr_track_lx.go). A look that finds one older than H starts a life
+//     probe of the node, at most one per group every rrUDPLifeGap, which sets no
+//     suspicion; its failure starts the check. D1 closes the flow. A packet counts
+//     as sent once its write succeeded; the close is CANCEL.
+//   - The first packet received is the ANSWER: a proof via the node.
+
 // The watch is a thin wrapper of the node's packet connection, under the group's
 // interrupt wrapper, that keeps the packet fast paths of sing (common/bufio
 // CopyPacket):
@@ -67,8 +55,8 @@ import (
 )
 
 // rrHealListen handles a failed UDP open of a round_robin group as rrHealDial does
-// a failed dial: the background check, and the packet connection of the retry
-// through the next live slot that takes UDP. ok is false when there is no retry or
+// a failed dial, with the packet connection of the retry through the next usable
+// slot that takes UDP. ok is false when there is no retry or
 // it failed too: the caller returns the error of the first node.
 func (s *URLTest) rrHealListen(ctx context.Context, destination M.Socksaddr, failed adapter.Outbound, listenErr error, picked rrPick) (net.PacketConn, bool) {
 	struck := picked.dial.failed()
@@ -81,9 +69,8 @@ func (s *URLTest) rrHealListen(ctx context.Context, destination M.Socksaddr, fai
 	if !ok {
 		return nil, false
 	}
-	// The first packet of the retry confirms the failure of the first node.
-	picked.dial = retry.dial
-	return s.rrWatchPacketFor(ctx, retry.dialer, conn, picked, retry.confirmFor, retry.failure), true
+	picked.dial, picked.start = retry.dial, retry.start
+	return s.rrWatchPacketFor(ctx, retry.dialer, conn, picked, true), true
 }
 
 // rrWatchPacket wraps an opened packet connection of a round_robin group to watch
@@ -93,12 +80,12 @@ func (s *URLTest) rrWatchPacket(ctx context.Context, dialed adapter.Outbound, co
 	if s.balancer == nil {
 		return conn
 	}
-	return s.rrWatchPacketFor(ctx, dialed, conn, picked, "", nil)
+	return s.rrWatchPacketFor(ctx, dialed, conn, picked, false)
 }
 
-func (s *URLTest) rrWatchPacketFor(ctx context.Context, dialed adapter.Outbound, conn net.PacketConn, picked rrPick, confirmFor string, failure *rrFailure) net.PacketConn {
+func (s *URLTest) rrWatchPacketFor(ctx context.Context, dialed adapter.Outbound, conn net.PacketConn, picked rrPick, retry bool) net.PacketConn {
 	picked.dial.opened()
-	watch, ok, direct := s.rrNewWatch(ctx, dialed, picked, confirmFor, failure, true)
+	watch, ok, direct := s.rrNewWatch(ctx, dialed, picked, nil, retry, true)
 	if !ok || direct {
 		picked.dial.release() // not reached for a tracked open (rrNewWatch); kept for every path
 		return conn
@@ -141,7 +128,7 @@ func (c *rrFirstPacketConn) received(err error) {
 	old := c.set(rrStateGotByte)
 	c.untrack()
 	if old&rrStateGotByte == 0 {
-		c.watch.s.rrFirstByte(c.watch)
+		c.watch.s.rrFirstByte(c.watch, nil)
 	}
 }
 
@@ -209,14 +196,10 @@ func (c *rrFirstPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	return n, err
 }
 
-// Close from our side with packets sent and none received: after a long wait a
-// reason for a check (rrHang skips an interrupt of the group and its Close).
+// Close from our side is CANCEL: nothing follows.
 func (c *rrFirstPacketConn) Close() error {
-	old := c.set(rrStateClosed)
+	c.set(rrStateClosed)
 	c.untrack()
-	if old&(rrStateClosed|rrStateGotByte) == 0 && old&rrStateWrote != 0 {
-		c.watch.s.rrHang(c.watch.member, c.watch.start, true)
-	}
 	err := c.NetPacketConn.Close()
 	c.dial.release()
 	return err

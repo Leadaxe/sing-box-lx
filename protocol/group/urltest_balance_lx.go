@@ -55,16 +55,20 @@ type balancer struct {
 	// the access lock held.
 	alive func(tag string) bool
 
-	// onPick, if set, is the slow path of a pick whose slot has work: unfinished
-	// connections older than rrHangAfter or pending failures due for a check (SPEC 138,
-	// urltest_rr_track_lx.go). The URLTest wires it to rrOnPick. now is the rrClock of
-	// the pick. Called WITHOUT the access lock held.
-	onPick func(ctx context.Context, tag string, track *rrTrack, now int64)
+	// onPick, if set, is the look at a slot whose tracker has work (SPEC 138,
+	// rrOnPick); onPoolLook the look at the whole pool, at most once a second
+	// (rrPoolLook). now is the rrClock of the pick. Called WITHOUT the access lock held.
+	onPick     func(ctx context.Context, tag string, track *rrTrack, now int64)
+	onPoolLook func()
+	poolLook   atomic.Int64 // rrClock of the next look at the pool
 
-	// onClockJump, if set, is a jump between the wall and the monotonic clock that
-	// the pick saw (SPEC 138, rrClockJump): a sleep the monotonic clock did not
-	// count, or a clock change. clockMono and clockWall are the readings of the last
-	// look, at most one per second.
+	// onRunAnswer, if set, is a probe of the scheduled run that answered (SPEC 138,
+	// rrRunAnswer).
+	onRunAnswer func(tag string)
+
+	// onClockJump, if set, is a jump between the wall and the monotonic clock (SPEC
+	// 138, rrClockLook): a sleep the monotonic clock did not count, or a clock
+	// change. clockMono and clockWall are the readings of the last look.
 	onClockJump func(drift time.Duration)
 	clockLook   atomic.Int64 // rrClock of the next look: a cheap gate on the hot path
 	clockAccess sync.Mutex   // guards the pair of readings of the last look
@@ -173,15 +177,15 @@ func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {
 // through takes the slot (hash + shift) % pool, or the next live one going round; pick
 // never changes the slots.
 func (b *balancer) pick(ctx context.Context, destination M.Socksaddr, fallback adapter.Outbound, resolve func(tag string) adapter.Outbound) adapter.Outbound {
-	node, _ := b.pickKeyed(ctx, destination, fallback, resolve)
+	node, _ := b.pickKeyed(ctx, N.NetworkTCP, destination, fallback, resolve)
 	return node
 }
 
 // pickKeyed is pick that also returns what the dial of the connection needs from
 // the pick (SPEC 138 stage 2): the shift-table key, computed once per connection,
 // the key's shift and the start of the connection.
-func (b *balancer) pickKeyed(ctx context.Context, destination M.Socksaddr, fallback adapter.Outbound, resolve func(tag string) adapter.Outbound) (adapter.Outbound, rrPick) {
-	picked := rrPick{start: time.Now()}
+func (b *balancer) pickKeyed(ctx context.Context, network string, destination M.Socksaddr, fallback adapter.Outbound, resolve func(tag string) adapter.Outbound) (adapter.Outbound, rrPick) {
+	picked := rrPick{start: time.Now(), packet: network == N.NetworkUDP}
 	b.access.Lock()
 	slots := b.slots // setSlots publishes a new slice and never mutates a published one
 	b.access.Unlock()
@@ -193,6 +197,9 @@ func (b *balancer) pickKeyed(ctx context.Context, destination M.Socksaddr, fallb
 	// past 2^31 and a signed % would produce a negative index (slice panic).
 	now := rrClock(picked.start)
 	b.rrClockLook(picked.start) // lx: SPEC 138 — N3, at most once a second
+	if look := b.poolLook.Load(); b.onPoolLook != nil && now >= look && b.poolLook.CompareAndSwap(look, now+int64(time.Second)) {
+		b.onPoolLook() // lx: SPEC 138 — a slot with no live node starts the check (V5)
+	}
 	var idx int
 	if len(b.stickyHash) > 0 {
 		// slot-hash: fixed slot index from the key; living node in its slot keeps its keys.
@@ -245,13 +252,13 @@ func (b *balancer) pickKeyed(ctx context.Context, destination M.Socksaddr, fallb
 		// confirms the suspicion.
 		if track := slots[idx].track; track != nil {
 			picked.track = track
-			if b.onPick != nil && track.attention(now, b.heal.epoch()) {
+			if b.onPick != nil && track.attention(now) {
 				b.onPick(ctx, slots[idx].tag, track, now)
 			}
 		}
 		if idx != base && b.onPick != nil {
 			for i := base; i != idx; i = (i + 1) % n {
-				if track := slots[i].track; track != nil && track.suspect(now, b.heal.epoch()) && track.attention(now, b.heal.epoch()) {
+				if track := slots[i].track; track != nil && track.suspect(now, b.heal.epoch()) && track.attention(now) {
 					b.onPick(ctx, slots[i].tag, track, now)
 				}
 			}

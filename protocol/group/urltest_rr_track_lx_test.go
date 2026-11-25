@@ -1,4 +1,4 @@
-// lx:begin SPEC 138 round_robin unfinished connections and pending failures tests
+// lx:begin SPEC 138 round_robin unfinished connections and Q1 signs tests
 
 package group
 
@@ -108,7 +108,7 @@ func TestRRTrack_hungDialCancelledByDeadVerdict(t *testing.T) {
 	if f.g.history.LoadURLTestHistory("a") != nil {
 		t.Fatal("a is struck out")
 	}
-	if f.probes("a") != 1 {
+	if f.probes("a") != 3 { // S2's life probe, the first and the decisive probe of the check
 		t.Fatalf("one check, no new one for the cancelled dial: a probed %d times", f.probes("a"))
 	}
 	if shift, _ := f.shift(key, "site.example"); shift != 0 || f.fails("a") != 0 || f.s.balancer.memory.shifts.size.Load() != 0 {
@@ -181,85 +181,16 @@ func TestRRTrack_waitingConnectionClosedByDeadVerdict(t *testing.T) {
 	}
 }
 
-// Nobody answers the check (the own network): nothing is cancelled or closed.
-func TestRRTrack_ownNetworkCancelsNothing(t *testing.T) {
-	f := newShiftFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
-	f.fb["a"].set(&f.fb["a"].stall, "site.example", true)
-	f.fb["a"].set(&f.fb["a"].mute, "mute.example", true)
-	key := f.keyOn(t, "site.example", 0)
-	waiting, err := f.s.DialContext(f.keyOn(t, "mute.example", 0), N.NetworkTCP, siteAddr("mute.example"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer waiting.Close()
-	waiting.Write([]byte("hi"))
-	ctx, cancel := context.WithCancel(key)
-	defer cancel()
-	done := f.dialAsync(ctx, "site.example")
-	track := f.s.balancer.trackOf("a")
-	waitUntil(t, func() bool { return track.dials.oldest.Load() != 0 })
-	ageTrack(track, rrHangAfter+time.Second)
-	for _, node := range f.fb {
-		node.dead.Store(true)
-	}
-	f.s.selectBalanced(key, N.NetworkTCP, siteAddr("site.example"))
-	waitUntil(t, func() bool { return f.probes("a") == 1 && !f.s.balancer.heal.running.Load() })
-	if !f.s.balancer.heal.frozen() {
-		t.Fatal("precondition: the own network verdict")
-	}
-	select {
-	case <-done:
-		t.Fatal("the own network verdict cancels no dial")
-	case <-time.After(50 * time.Millisecond):
-	}
-	inner, _ := common.Cast[*rrFirstByteConn](waiting)
-	if inner == nil || inner.state.Load()&rrStateClosed != 0 || track.waits.oldest.Load() == 0 {
-		t.Fatal("the own network verdict closes no connection")
-	}
-	cancel()
-	if result := waitDial(t, done); result.err == nil {
-		result.conn.Close()
-	}
-}
-
-// A half-close from our side before the first byte does not void the later
-// reason: the client half-closed (VLESS closes that way), then closed after the wait.
-func TestRRTrack_halfCloseKeepsReason(t *testing.T) {
-	for _, viaRoute := range []bool{false, true} {
-		f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
-		client, server := tcpPair(t)
-		go func() {
-			buffer := make([]byte, 8)
-			server.Read(buffer)
-		}()
-		conn := newRRFirstByteConn(client, &rrConnWatch{s: f.s, member: "a", track: f.s.balancer.trackOf("a"), start: time.Now().Add(-rrHangAfter - time.Second)})
-		conn.Write([]byte("hi"))
-		if viaRoute {
-			conn.LxClientFinished(true)
-		} else if err := conn.CloseWrite(); err != nil {
-			t.Fatal(err)
-		}
-		if f.s.balancer.heal.running.Load() || f.s.balancer.heal.lastHangEnd.Load() != nil {
-			t.Fatal("a half-close alone is no reason")
-		}
-		conn.Close()
-		waitUntil(t, func() bool { return f.s.balancer.heal.lastHangEnd.Load() != nil })
-		if f.probes("a") != 1 {
-			t.Fatalf("viaRoute=%v: the close after the half-close is a reason: a probed %d times", viaRoute, f.probes("a"))
-		}
-	}
-}
-
 // The tracker goes with its node: a node keeps it across slot changes, a node that
-// leaves takes its pending failures with it, a newcomer starts empty.
+// leaves takes its Q1 signs with it, a newcomer starts empty.
 func TestRRTrack_followsNode(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
 	b := f.s.balancer
 	a, bTrack := b.trackOf("a"), b.trackOf("b")
-	a.addPending(rrPending{failure: f.s.rrNewFailure(rrPick{}, "a"), at: rrClock(time.Now())})
+	a.addPending(&rrSign{node: "a", b: rrClock(time.Now())})
 	b.setSlots([]string{"d", "b", "c"})
 	if b.trackOf("a") != nil || a.pendingN.Load() != 0 || len(a.pending) != 0 {
-		t.Fatal("a node out of the pool takes its pending failures with it")
+		t.Fatal("a node out of the pool takes its Q1 signs with it")
 	}
 	if b.trackOf("b") != bTrack || b.trackOf("d") == nil {
 		t.Fatal("a node that stays keeps its tracker; a newcomer gets one")
@@ -269,9 +200,9 @@ func TestRRTrack_followsNode(t *testing.T) {
 		t.Fatal("a node back in the pool starts a fresh tracker")
 	}
 	c := b.trackOf("c")
-	c.addPending(rrPending{failure: f.s.rrNewFailure(rrPick{}, "c"), at: rrClock(time.Now())})
+	c.addPending(&rrSign{node: "c", b: rrClock(time.Now())})
 	if !b.replaceSlot("c", "d") || c.pendingN.Load() != 0 || b.trackOf("d") == nil {
-		t.Fatal("a replaced node takes its pending failures with it")
+		t.Fatal("a replaced node takes its Q1 signs with it")
 	}
 }
 
@@ -325,12 +256,12 @@ func TestRRTrack_pickAllocatesNothing(t *testing.T) {
 	track := f.s.balancer.trackOf("a")
 	var entry rrTrackEntry
 	track.track(&track.waits, &entry, rrClock(time.Now()), nopKill{})
-	if allocs := testing.AllocsPerRun(1000, func() { f.s.balancer.pickKeyed(ctx, destination, nil, resolve) }); allocs != 0 {
+	if allocs := testing.AllocsPerRun(1000, func() { f.s.balancer.pickKeyed(ctx, N.NetworkTCP, destination, nil, resolve) }); allocs != 0 {
 		t.Fatalf("pick with a young unfinished connection allocates %v", allocs)
 	}
 	ageTrack(track, rrHangAfter+time.Second)
-	track.hangLook.Store(rrClock(time.Now().Add(time.Hour)))
-	if allocs := testing.AllocsPerRun(1000, func() { f.s.balancer.pickKeyed(ctx, destination, nil, resolve) }); allocs != 0 {
+	track.lookAt.Store(rrClock(time.Now().Add(time.Hour)))
+	if allocs := testing.AllocsPerRun(1000, func() { f.s.balancer.pickKeyed(ctx, N.NetworkTCP, destination, nil, resolve) }); allocs != 0 {
 		t.Fatalf("pick with an old unfinished connection looked at lately allocates %v", allocs)
 	}
 }
@@ -340,146 +271,6 @@ type nopKill struct{}
 func (nopKill) rrKill() {}
 
 // --- III: a failure waits for the verdict on its node -----------------------------
-
-// A proof from before the failure settles nothing; one after it does.
-func TestRRPending_proofAfterFailureOnly(t *testing.T) {
-	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
-	ctx := f.keyOn(t, "blocked.example", 0)
-	picked := f.pickAt(ctx, "blocked.example", time.Now())
-	track := f.s.balancer.trackOf("a")
-	at := rrClock(time.Now())
-	track.addPending(rrPending{failure: f.s.rrNewFailure(picked, "a"), at: at})
-	f.s.rrSettleAlive(track, at-1)
-	if shift, _ := f.shift(ctx, "blocked.example"); shift != 0 || track.pendingN.Load() != 1 {
-		t.Fatal("a proof from before the failure settles nothing")
-	}
-	f.s.rrSettleAlive(track, at+1)
-	if shift, _ := f.shift(ctx, "blocked.example"); shift != 1 || track.pendingN.Load() != 0 {
-		t.Fatal("a proof after the failure settles it")
-	}
-}
-
-// A freeze voids the failures pending before it: a byte after it settles nothing.
-func TestRRPending_freezeVoids(t *testing.T) {
-	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
-	f.fb["a"].set(&f.fb["a"].silent, "blocked.example", true)
-	f.s.balancer.trackOf("a").verdictLast.Store(rrClock(time.Now())) // this test covers the byte path, not the verdict probe
-	key := f.keyOn(t, "blocked.example", 0)
-	f.dial(t, key, "blocked.example")
-	track := f.s.balancer.trackOf("a")
-	waitUntil(t, func() bool { return track.pendingN.Load() == 1 })
-	time.Sleep(time.Millisecond)
-	f.s.balancer.heal.epochEnd.Store(rrClock(time.Now())) // a freeze that has passed
-	f.dial(t, f.keyOn(t, "open.example", 0), "open.example")
-	if shift, _ := f.shift(key, "blocked.example"); shift != 0 {
-		t.Fatalf("a failure before the freeze is void, got shift %d", shift)
-	}
-	if track.pendingN.Load() != 0 {
-		t.Fatal("a void failure is dropped")
-	}
-}
-
-// The dead verdict drops the node's pending failures: no shift, no count.
-func TestRRPending_deadDropsPending(t *testing.T) {
-	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
-	f.fb["a"].set(&f.fb["a"].silent, "blocked.example", true)
-	key := f.keyOn(t, "blocked.example", 0)
-	f.dial(t, key, "blocked.example")
-	track := f.s.balancer.trackOf("a")
-	waitUntil(t, func() bool { return track.pendingN.Load() == 1 })
-	f.fb["a"].dead.Store(true)
-	track.checkAfter.Store(1) // the wait is over
-	f.s.selectBalanced(key, N.NetworkTCP, siteAddr("blocked.example"))
-	f.waitCheck(t)
-	waitUntil(t, func() bool { return samePool(f.pool(), "d", "b", "c") })
-	if track.pendingN.Load() != 0 {
-		t.Fatal("the dead verdict drops the pending failures")
-	}
-	if shift, _ := f.shift(key, "blocked.example"); shift != 0 || f.fails("a") != 0 {
-		t.Fatal("a dead node shifts and counts nothing")
-	}
-}
-
-// A close without a byte whose verdict probe cannot start (the node had one
-// lately) probes nothing at once; the next pick of the node after rrVerdictWait
-// with no verdict yet starts the check, and its answer settles it.
-func TestRRPending_deferredCheckOnNextPick(t *testing.T) {
-	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
-	f.fb["a"].set(&f.fb["a"].silent, "blocked.example", true)
-	key := f.keyOn(t, "blocked.example", 0)
-	track := f.s.balancer.trackOf("a")
-	track.verdictLast.Store(rrClock(time.Now()))
-	f.dial(t, key, "blocked.example")
-	waitUntil(t, func() bool { return track.pendingN.Load() == 1 })
-	due := track.checkAfter.Load()
-	if due == 0 || due-rrClock(time.Now()) > int64(rrVerdictWait) {
-		t.Fatalf("the failure asks for a check rrVerdictWait later, got %d", due)
-	}
-	f.s.selectBalanced(key, N.NetworkTCP, siteAddr("blocked.example"))
-	time.Sleep(20 * time.Millisecond)
-	if f.probes("a") != 0 {
-		t.Fatal("a pick sooner than rrVerdictWait starts nothing")
-	}
-	track.checkAfter.Store(1)
-	f.s.selectBalanced(key, N.NetworkTCP, siteAddr("blocked.example"))
-	f.waitCheck(t)
-	if f.probes("a") != 1 {
-		t.Fatalf("the pick after the wait starts the check, a probed %d", f.probes("a"))
-	}
-	if shift, _ := f.shift(key, "blocked.example"); shift != 1 {
-		t.Fatalf("a answered: the key shifts, got %d", shift)
-	}
-}
-
-// At most rrPendingMax failures per node, the oldest go; none older than rrPendingTTL.
-func TestRRPending_bounded(t *testing.T) {
-	track := newRRTrack("a")
-	now := rrClock(time.Now())
-	for i := 0; i < rrPendingMax+6; i++ {
-		track.addPending(rrPending{at: now + int64(i)})
-	}
-	if len(track.pending) != rrPendingMax || track.pendingN.Load() != rrPendingMax || track.pending[0].at != now+6 {
-		t.Fatalf("at most %d, the oldest go: got %d from %d", rrPendingMax, len(track.pending), track.pending[0].at-now)
-	}
-	old := newRRTrack("b")
-	old.addPending(rrPending{at: now - int64(rrPendingTTL) - 1})
-	old.addPending(rrPending{at: now})
-	if settled := old.takeAlive(now+1, math.MinInt64, now); len(settled) != 1 || settled[0].at != now {
-		t.Fatalf("a failure older than %v is dropped, got %d", rrPendingTTL, len(settled))
-	}
-}
-
-// Three failures of a confirmed by the retries, in the gap (no probe): the first
-// byte through a counts them all at once, and a goes to quarantine — no probe is
-// needed.
-func TestRRPending_quarantineWithoutProbes(t *testing.T) {
-	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
-	for _, tag := range []string{"a", "b", "c"} {
-		for i := 0; i < rrQuarantineMinConns; i++ {
-			f.s.balancer.rrCountConn(tag, &f.s.balancer.heal)
-		}
-	}
-	end := time.Now()
-	f.s.balancer.heal.lastCheckEnd.Store(&end)
-	f.s.balancer.trackOf("a").verdictLast.Store(rrClock(end)) // no verdict probe either
-	for i := 0; i < 3; i++ {
-		host := "site" + string(rune('0'+i)) + ".example"
-		f.fb["a"].set(&f.fb["a"].openFail, host, true)
-		if _, answered := f.dial(t, f.keyOn(t, host, 0), host); !answered {
-			t.Fatal("the retry answers")
-		}
-	}
-	if f.fails("a") != 0 {
-		t.Fatal("no proof yet: nothing counted")
-	}
-	f.dial(t, f.keyOn(t, "open.example", 0), "open.example")
-	if f.fails("a") != 3 || !f.s.balancer.isQuarantined("a") {
-		t.Fatalf("the first byte through a counts its three failures: got %d, quarantined %v", f.fails("a"), f.s.balancer.isQuarantined("a"))
-	}
-	if f.probes("a") != 0 {
-		t.Fatal("no probe")
-	}
-}
 
 // The pick hot path with the trackers and the pick hook wired: an IP destination,
 // a non-empty shift table, an unfinished connection younger than 5 s on the slot.
@@ -516,7 +307,7 @@ func BenchmarkRRPickTracked(b *testing.B) {
 
 // A delay measurement through the group (urltest.URLTest: an outer group's check,
 // the clash API) takes no part in the self-heal: no wrapper — the measurement's
-// start is not reset after the open — no counts, no retry, no pending failure, no
+// start is not reset after the open — no counts, no retry, no Q1 sign, no
 // check.
 func TestRRTrack_delayMeasurementUnwatched(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
@@ -553,57 +344,6 @@ func TestRRTrack_delayMeasurementUnwatched(t *testing.T) {
 	}
 }
 
-// Only a connection started after a failure proves its node alive: a byte read
-// after the failure by a connection picked before it (a byte that waited in a
-// buffer) settles nothing, and the node's byte mark keeps the start.
-func TestRRPending_proofByConnectionStart(t *testing.T) {
-	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
-	ctx := f.keyOn(t, "blocked.example", 0)
-	track := f.s.balancer.trackOf("a")
-	early := time.Now()
-	time.Sleep(time.Millisecond)
-	at := rrClock(time.Now())
-	track.addPending(rrPending{failure: f.s.rrNewFailure(f.pickAt(ctx, "blocked.example", early), "a"), at: at})
-	time.Sleep(time.Millisecond)
-	f.s.rrFirstByte(&rrConnWatch{s: f.s, member: "a", track: track, start: early})
-	if shift, _ := f.shift(ctx, "blocked.example"); shift != 0 || track.pendingN.Load() != 1 {
-		t.Fatal("a connection picked before the failure proves nothing about the time after it")
-	}
-	if f.s.balancer.rrByteSince("a", at) {
-		t.Fatal("the node's byte mark is the start of the connection")
-	}
-	f.s.rrFirstByte(&rrConnWatch{s: f.s, member: "a", track: track, start: time.Now()})
-	if shift, _ := f.shift(ctx, "blocked.example"); shift != 1 || track.pendingN.Load() != 0 {
-		t.Fatal("a connection started after the failure settles it")
-	}
-}
-
-// The copy closes the connection at the client's end of stream when the node's
-// connection has no half-close: that close is no client giving up.
-func TestRRTrack_clientEOFCloseIsNoReason(t *testing.T) {
-	for _, viaRoute := range []bool{false, true} {
-		f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
-		client, server := net.Pipe() // no half-close below
-		go func() {
-			buffer := make([]byte, 8)
-			server.Read(buffer)
-		}()
-		t.Cleanup(func() { server.Close() })
-		conn := newRRFirstByteConn(client, &rrConnWatch{s: f.s, member: "a", track: f.s.balancer.trackOf("a"), start: time.Now().Add(-rrHangAfter - time.Second)})
-		conn.Write([]byte("hi"))
-		if viaRoute {
-			conn.LxClientFinished(false) // route/conn.go before destination.Close()
-			conn.Close()
-		} else {
-			conn.CloseWrite() // the copy's half-close while the wrapper still takes writes
-		}
-		time.Sleep(20 * time.Millisecond)
-		if f.s.balancer.heal.running.Load() || f.s.balancer.heal.lastHangEnd.Load() != nil || f.probes("a") != 0 {
-			t.Fatalf("viaRoute=%v: a close at the client's end of stream is no reason", viaRoute)
-		}
-	}
-}
-
 // A tracked dial whose selector turned to a direct leaf meanwhile is still wrapped,
 // and its context is released on the close.
 func TestRRTrack_trackedDialAlwaysReleased(t *testing.T) {
@@ -614,7 +354,7 @@ func TestRRTrack_trackedDialAlwaysReleased(t *testing.T) {
 	track.track(&track.dials, &dial.entry, rrClock(time.Now()), dial)
 	client, server := net.Pipe()
 	defer server.Close()
-	conn := f.s.rrWatch(context.Background(), N.NetworkTCP, f.nodes["a"], client, rrPick{start: time.Now(), track: track, dial: dial}, "", nil)
+	conn := f.s.rrWatch(context.Background(), N.NetworkTCP, f.nodes["a"], client, rrPick{start: time.Now(), track: track, dial: dial}, nil, false)
 	if _, wrapped := conn.(*rrFirstByteConn); !wrapped {
 		t.Fatal("a tracked dial is wrapped whatever its leaf turned to")
 	}

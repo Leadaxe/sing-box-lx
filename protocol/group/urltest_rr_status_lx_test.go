@@ -13,7 +13,7 @@ func TestRRStatus_poolAndHeal(t *testing.T) {
 	b := f.s.balancer
 	for _, tag := range []string{"a", "b", "c"} {
 		for i := 0; i < 10; i++ {
-			b.rrCountConn(tag, &b.heal)
+			b.rrCountConn(tag, time.Now())
 		}
 	}
 	var verdict rrQuarantineVerdict

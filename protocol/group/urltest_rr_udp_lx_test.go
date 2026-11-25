@@ -207,7 +207,7 @@ func (f *udpFixture) counts(tag string) (conns uint32, fails uint32) {
 
 func (f *udpFixture) checkStarted() bool {
 	heal := &f.s.balancer.heal
-	return heal.running.Load() || heal.lastCheckEnd.Load() != nil || heal.lastHangEnd.Load() != nil
+	return heal.running.Load() || heal.lastCheckEnd.Load() != nil
 }
 
 // --- the shared pool ----------------------------------------------------------------
@@ -231,29 +231,6 @@ func TestRRUDP_poolSkipsDeadAndQuarantined(t *testing.T) {
 }
 
 // --- a failed open ------------------------------------------------------------------
-
-// Pool [a,b,c], a dead: the UDP flow opens through b, the check strikes a out and
-// the first answering node outside the pool takes its slot.
-func TestRRUDP_openErrorRetriesAndStrikes(t *testing.T) {
-	f := newUDPFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
-	f.udp["a"].dead.Store(true)
-	conn, err := f.listen(context.Background())
-	if err != nil {
-		t.Fatal("the UDP flow must open through the next slot: ", err)
-	}
-	exchange(t, conn)
-	conn.Close()
-	if f.listens("a") != 1 || f.listens("b") != 1 {
-		t.Fatalf("one open through a, the retry through b: a %d b %d", f.listens("a"), f.listens("b"))
-	}
-	f.waitCheck(t)
-	if f.g.history.LoadURLTestHistory("a") != nil {
-		t.Fatal("a must be struck out")
-	}
-	if !samePool(f.pool(), "d", "b", "c") {
-		t.Fatalf("d must take the slot of a, got %v", f.pool())
-	}
-}
 
 // The retry skips a slot whose node does not take UDP; a node that answers its
 // probe stays.
@@ -331,7 +308,7 @@ func TestRRUDP_keyTableUntouched(t *testing.T) {
 	f.s.balancer.stickyHash = []string{C.URLTestStickyProcess, C.URLTestStickyDomain}
 	ctx := f.keyOn(t, 0)
 	// TCP shifted the key off a: the site was refused through live a.
-	f.s.rrShiftOn(f.s.balancer.rrKeyOf(ctx, udpSite()), 0, "a", false, false)
+	f.s.rrShiftOn(f.s.balancer.rrKeyOf(ctx, udpSite()), 0, "a")
 	if shift := f.s.balancer.memory.shifts.shiftOf(f.s.balancer.rrKeyOf(ctx, udpSite()).table); shift != 1 {
 		t.Fatalf("precondition: TCP shifted the key by 1, got %d", shift)
 	}
@@ -372,103 +349,6 @@ func TestRRUDP_directLeafNotWrapped(t *testing.T) {
 
 // --- packets went out, no answer came -----------------------------------------------
 
-// A flow closed by us with packets sent and none received, rrHangAfter after its
-// pick, is a reason for a check; the probe decides. Anything short of that is no
-// reason. The reason itself retries nothing, shifts nothing and counts no failure.
-func TestRRUDP_noAnswerIsOnlyAReason(t *testing.T) {
-	old := time.Now().Add(-rrHangAfter - time.Second)
-	cases := []struct {
-		name   string
-		start  time.Time
-		send   bool
-		answer bool
-		reason bool
-	}{
-		{"sent, no answer, long wait", old, true, false, true},
-		{"sent, no answer, short wait", time.Now(), true, false, false},
-		{"nothing sent", old, false, false, false},
-		{"answered", old, true, true, false},
-	}
-	for _, c := range cases {
-		f := newUDPFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
-		f.udp["a"].dead.Store(true) // its probe is silent, b answers: dead
-		lower := newMemPacketConn(c.answer)
-		conn := f.s.rrWatchPacket(context.Background(), f.udp["a"], lower, rrPick{start: c.start})
-		if _, wrapped := conn.(*rrFirstPacketConn); !wrapped {
-			t.Fatalf("%s: precondition: watched", c.name)
-		}
-		if c.send {
-			conn.WriteTo([]byte("hi"), memAddr)
-		}
-		if c.answer {
-			buffer := make([]byte, 8)
-			conn.ReadFrom(buffer)
-		}
-		conn.Close()
-		time.Sleep(20 * time.Millisecond)
-		if started := f.checkStarted(); started != c.reason {
-			t.Fatalf("%s: check started %v, want %v", c.name, started, c.reason)
-		}
-		if !c.reason {
-			continue
-		}
-		f.waitCheck(t)
-		if f.g.history.LoadURLTestHistory("a") != nil || !samePool(f.pool(), "d", "b", "c") {
-			t.Fatalf("%s: the probe found a dead: struck out and replaced, got %v", c.name, f.pool())
-		}
-		if f.listens("b") != 0 {
-			t.Fatalf("%s: no retry", c.name)
-		}
-	}
-}
-
-// The node answers the check: nothing changes — no shift, no failure counted.
-func TestRRUDP_noAnswerAliveNodeNothingChanges(t *testing.T) {
-	f := newUDPFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
-	f.s.balancer.stickyHash = []string{C.URLTestStickyProcess, C.URLTestStickyDomain}
-	ctx := f.keyOn(t, 0)
-	picked := f.s.testPick(ctx, udpSite(), time.Now().Add(-rrHangAfter-time.Second))
-	conn := f.s.rrWatchPacket(ctx, f.udp["a"], newMemPacketConn(false), picked)
-	conn.WriteTo([]byte("hi"), memAddr)
-	conn.Close()
-	time.Sleep(20 * time.Millisecond)
-	if !f.checkStarted() {
-		t.Fatal("precondition: the check ran")
-	}
-	f.waitCheck(t)
-	if f.probes("a") != 1 || !samePool(f.pool(), "a", "b", "c") {
-		t.Fatalf("a answered its probe: kept, got %v", f.pool())
-	}
-	if _, fails := f.counts("a"); fails != 0 || f.s.balancer.memory.shifts.size.Load() != 0 {
-		t.Fatal("no failure counted and no key shifted")
-	}
-}
-
-// An interrupt of the group and its Close are no reason.
-func TestRRUDP_interruptAndCloseNoReason(t *testing.T) {
-	old := time.Now().Add(-rrHangAfter - time.Second)
-	f := newUDPFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
-	conn := f.s.rrWatchPacket(context.Background(), f.udp["a"], newMemPacketConn(false), rrPick{start: old})
-	outer := f.g.interruptGroup.NewPacketConn(conn, false)
-	outer.WriteTo([]byte("hi"), memAddr)
-	done := f.g.rrInterrupting()
-	f.g.interruptGroup.Interrupt(true)
-	done()
-	time.Sleep(20 * time.Millisecond)
-	if f.checkStarted() {
-		t.Fatal("an interrupt of the group is no reason")
-	}
-
-	conn = f.s.rrWatchPacket(context.Background(), f.udp["a"], newMemPacketConn(false), rrPick{start: old})
-	conn.WriteTo([]byte("hi"), memAddr)
-	f.g.cancel()
-	conn.Close()
-	time.Sleep(20 * time.Millisecond)
-	if f.checkStarted() {
-		t.Fatal("the group's Close is no reason")
-	}
-}
-
 // --- a connected UDP flow (DialContext "udp") ----------------------------------------
 
 // A connected UDP flow that does not open is retried as a UDP open; one whose
@@ -494,7 +374,7 @@ func TestRRUDP_connectedFlow(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		watchedConn := g.s.rrWatch(context.Background(), N.NetworkUDP, g.udp["a"], lower, rrPick{start: start}, "", nil)
+		watchedConn := g.s.rrWatch(context.Background(), N.NetworkUDP, g.udp["a"], lower, rrPick{start: start}, nil, false)
 		if _, wrapped := watchedConn.(*rrFirstByteConn); !wrapped {
 			t.Fatal("precondition: watched")
 		}
@@ -509,12 +389,8 @@ func TestRRUDP_connectedFlow(t *testing.T) {
 		}
 		watchedConn.Close()
 		time.Sleep(20 * time.Millisecond)
-		long := time.Since(start) >= rrHangAfter
-		if started := g.checkStarted(); started != long {
-			t.Fatalf("the close after %v: check started %v, want %v", time.Since(start).Round(time.Second), started, long)
-		}
-		if long {
-			g.waitCheck(t)
+		if g.checkStarted() || g.probes("a") != 0 {
+			t.Fatal("the close from our side is CANCEL: nothing follows")
 		}
 	}
 }
@@ -724,158 +600,17 @@ func TestRRUDP_concurrent(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for j := 0; j < 20; j++ {
-			done := f.g.rrInterrupting()
 			f.g.interruptGroup.Interrupt(true)
-			done()
 		}
 	}()
 	wg.Wait()
 	f.waitCheck(t)
 }
 
-// --- the rate of checks from closes without an answer -------------------------------
-
-// ageHeal moves the self-heal marks and the history d into the past: a simulated
-// clock for limits measured in tens of seconds.
-func (f *udpFixture) ageHeal(d time.Duration) {
-	heal := &f.s.balancer.heal
-	for _, mark := range []*atomic.Pointer[time.Time]{&heal.lastCheckEnd, &heal.lastHangEnd} {
-		if end := mark.Load(); end != nil {
-			aged := end.Add(-d)
-			mark.Store(&aged)
-		}
-	}
-	for tag := range f.udp {
-		if history := f.g.history.LoadURLTestHistory(tag); history != nil {
-			f.g.history.StoreURLTestHistory(tag, &adapter.URLTestHistory{Time: history.Time.Add(-d), Delay: history.Delay})
-		}
-	}
-}
-
-// A steady stream of UDP flows through a live node that get no answer (QUIC to a
-// blocked site, NTP, STUN) and are closed by the UDP timeout: one close per
-// simulated second for a simulated minute. Counts the checks it starts.
-func rrSilentStreamChecksPerMinute(t *testing.T) int32 {
-	f := newUDPFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
-	for second := 0; second < 60; second++ {
-		conn := f.s.rrWatchPacket(context.Background(), f.udp["a"], newMemPacketConn(false), rrPick{start: time.Now().Add(-rrHangAfter - time.Second)})
-		conn.WriteTo([]byte("hi"), memAddr)
-		conn.Close()
-		waitUntil(t, func() bool { return !f.s.balancer.heal.running.Load() })
-		f.ageHeal(time.Second)
-	}
-	return f.probes("a")
-}
-
-func TestRRHang_silentStreamRate(t *testing.T) {
-	checks := rrSilentStreamChecksPerMinute(t)
-	t.Logf("checks per minute from a silent UDP stream through a live node: %d", checks)
-	if checks > 1 {
-		t.Fatalf("a silent stream through a live node must not start more than one check a minute, got %d", checks)
-	}
-}
-
 // --- review fixes ---------------------------------------------------------------------
 
-// A reason for a check is dropped when the node proved alive after the connection
-// started: another connection through it got its first byte (TCP or UDP), or its
-// history was written since. The mark of another node does not count.
-func TestRRHang_skipsNodeProvedAlive(t *testing.T) {
-	old := time.Now().Add(-rrHangAfter - time.Second)
-	for _, packet := range []bool{false, true} {
-		f := newUDPFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
-		f.s.rrFirstByte(&rrConnWatch{s: f.s, member: "b", start: time.Now(), packet: packet})
-		f.s.rrHang("a", old, true)
-		if !f.checkStarted() {
-			t.Fatal("a first byte through b proves nothing about a")
-		}
-		f.waitCheck(t)
-		f.s.balancer.heal.lastHangEnd.Store(nil)
-		f.g.history.StoreURLTestHistory("a", &adapter.URLTestHistory{Time: time.Now().Add(-time.Minute), Delay: 100})
-		f.s.rrFirstByte(&rrConnWatch{s: f.s, member: "a", start: time.Now(), packet: packet})
-		f.s.rrHang("a", old, true)
-		if f.checkStarted() {
-			t.Fatalf("a first byte through a after the start proves it alive (packet %v)", packet)
-		}
-	}
-	f := newUDPFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
-	start := time.Now().Add(-rrHealFresh - 10*time.Second)
-	f.g.history.StoreURLTestHistory("a", &adapter.URLTestHistory{Time: start.Add(time.Second), Delay: 100})
-	f.s.rrHang("a", start, true)
-	if f.checkStarted() {
-		t.Fatal("history written after the start proves a alive")
-	}
-}
-
-// History younger than 30 s drops the reason: the node just answered a probe.
-func TestRRHang_skipsFreshHistory(t *testing.T) {
-	f := newUDPFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
-	// Written before the connection started, but less than 30 s ago.
-	f.g.history.StoreURLTestHistory("a", &adapter.URLTestHistory{Time: time.Now().Add(-rrHealFresh / 2), Delay: 100})
-	f.s.rrHang("a", time.Now().Add(-rrHangAfter-time.Second), true)
-	if f.checkStarted() {
-		t.Fatal("fresh history drops the reason")
-	}
-}
-
-// A check from a reason keeps its own gap and leaves the gap of the failure checks
-// alone: a failed open right after it gets its probe.
-func TestRRHang_ownGap(t *testing.T) {
-	f := newUDPFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
-	f.s.rrHang("a", time.Now().Add(-rrHangAfter-time.Second), true)
-	waitUntil(t, func() bool { return f.probes("a") == 1 && !f.s.balancer.heal.running.Load() })
-	heal := &f.s.balancer.heal
-	if heal.lastCheckEnd.Load() != nil || heal.lastHangEnd.Load() == nil {
-		t.Fatal("a check from a reason marks its own gap only")
-	}
-	f.g.history.StoreURLTestHistory("c", &adapter.URLTestHistory{Time: time.Now().Add(-time.Minute), Delay: 100})
-	cProbes := f.probes("c") // c was the third of the first check
-	f.s.rrHang("c", time.Now().Add(-rrHangAfter-time.Second), true)
-	if heal.running.Load() || f.probes("c") != cProbes {
-		t.Fatal("a second reason within rrHangGap starts no check")
-	}
-	probed := f.probes("b")
-	f.udp["b"].listenFail.Store(true)
-	f.s.balancer.rotate(context.Background()) // the next pick is slot 1: b
-	conn, err := f.listen(context.Background())
-	if err == nil {
-		conn.Close()
-	}
-	waitUntil(t, func() bool { return f.probes("b") > probed })
-}
-
-// The mark of a node's first byte goes with its counters when it leaves the pool.
-func TestRRHang_nodeMarkClearedWithSlot(t *testing.T) {
-	f := newUDPFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
-	f.s.rrFirstByte(&rrConnWatch{s: f.s, member: "a", start: time.Now()})
-	if !f.s.balancer.rrByteSince("a", 0) {
-		t.Fatal("precondition: a marked")
-	}
-	f.s.balancer.replaceSlot("a", "d")
-	if f.s.balancer.rrByteSince("a", 0) {
-		t.Fatal("the mark leaves with the node")
-	}
-}
-
-// The control of a check after a failed UDP open needs only TCP (the probe is
-// TCP); the retry needs UDP.
-func TestRRUDP_controlNeedsTCPOnly(t *testing.T) {
-	f := newUDPFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
-	f.udp["b"].tcpOnly = true
-	f.udp["a"].dead.Store(true)
-	conn, err := f.listen(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	conn.Close()
-	f.waitCheck(t)
-	if f.listens("c") != 1 || f.probes("b") != 2 || f.probes("c") != 0 { // b: the control and its bracket; c is not needed
-		t.Fatalf("retry through c, control b: listens c %d, probes b %d c %d", f.listens("c"), f.probes("b"), f.probes("c"))
-	}
-}
-
-// An address-problem mark learned by TCP does not stop the retry and the check of
-// a failed UDP open: it puts the node under suspicion, not the address.
+// A K5 mark learned by TCP does not stop the retry of a failed UDP open (UDP has
+// no key), and the node gets its life probe (S1).
 func TestRRUDP_markedKeyStillRetried(t *testing.T) {
 	f := newUDPFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
 	f.s.balancer.stickyHash = []string{C.URLTestStickyProcess, C.URLTestStickyDomain}
@@ -891,10 +626,10 @@ func TestRRUDP_markedKeyStillRetried(t *testing.T) {
 		t.Fatal("the failed UDP open of a marked key is retried: ", err)
 	}
 	conn.Close()
-	if !f.checkStarted() {
-		t.Fatal("and checked")
-	}
 	f.waitCheck(t)
+	if f.probes("a") != 1 {
+		t.Fatal("and its node gets the life probe (S1)")
+	}
 }
 
 // A packet that did not go out is no "client sent".

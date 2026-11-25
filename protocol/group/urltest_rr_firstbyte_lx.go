@@ -2,14 +2,13 @@ package group
 
 // lx:begin SPEC 138 round_robin first byte (stage 2)
 //
-// A connection of a round_robin group succeeds with the first byte that comes from
-// the destination; an opened connection is not a success yet. It fails when it ends
-// with no byte received although the client sent something (SPEC 138 §3.1.2):
-// VLESS, VMess, Trojan, Shadowsocks, a live mux session, HTTP/2 transports,
-// hysteria2 and TUIC hand out a connection before the destination answers, so a
-// dead destination shows only that way. No timer measures "no byte": a connection
-// may be silent legitimately. A close or a half-close from our side before the
-// first byte is not a failure.
+// An exchange of a round_robin connection ends with ANSWER at the first byte from
+// the destination; an opened connection is no answer yet (ALGORITHM.md §2). It is
+// an implicit REFUSE_DST when it ends with no byte although the client sent and did
+// not close its side: VLESS, VMess, Trojan, Shadowsocks, a live mux session, HTTP/2
+// transports, hysteria2 and TUIC hand out a connection before the destination
+// answers. A close from our side — the client, an interrupt of the group, D1 — is
+// CANCEL: nothing follows. No timer: SILENT is read at a look (rrInspect).
 //
 // The wrapper sits between the node's connection and the group's interrupt wrapper
 // and costs the connection no fast path once both directions have started:
@@ -42,18 +41,17 @@ package group
 //
 // Unfinished connections (urltest_rr_track_lx.go): from the client's first write
 // until the first byte, a read error or the close, the connection is listed in the
-// tracker of its node, and the dead verdict on the node closes it. The dial of the
-// connection (rrDial) lives with it: its context is released on the close.
+// tracker of its node, and D1 on the node closes it. The dial of the connection
+// (rrDial) lives with it: its context is released on the close.
 //
 // Not wrapped: a connection test (SPEC 139), a pick outside the pool, a nested
 // urltest (it watches its own connections), and a direct leaf — an unreachable
 // destination shows on its open, and the wrapper would cost it splice. Its open
 // counts as the first byte.
 //
-// A connected UDP flow (DialContext "udp") takes the same wrapper with the UDP
-// outcome of stage 3 (urltest_rr_udp_lx.go): the first packet is the first byte, a
-// read error is no failure, and only a close from our side with packets sent and
-// none received is a reason for a check.
+// A connected UDP flow (DialContext "udp") takes the same wrapper in its UDP mode
+// (urltest_rr_udp_lx.go): the first packet is the ANSWER, a read error is no
+// outcome, and a flow sent with no answer is a UDP wait.
 
 import (
 	"context"
@@ -71,8 +69,10 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
-// rrClockBase is the origin of the monotonic marks of the self-heal (rrClock).
-var rrClockBase = time.Now()
+// rrClockBase is the origin of the monotonic marks of the self-heal (rrClock), a
+// day before the start: a mark reckoned back from an early moment (a proof T before
+// an answer) stays above 0, the E of no event.
+var rrClockBase = time.Now().Add(-24 * time.Hour)
 
 // rrClock returns the monotonic time since rrClockBase; never 0, which means "never".
 func rrClock(at time.Time) int64 {
@@ -85,19 +85,15 @@ type rrConnWatch struct {
 	member string    // the pool member the connection went through
 	track  *rrTrack  // the tracker of member; nil when it holds no slot
 	start  time.Time // the start of the connection (its pick)
-	key    rrKey     // the shift-table key; invalid without stickiness
+	key    rrKey     // the shift-table key; invalid without stickiness and for UDP
 	shift  int       // the shift of the key at the pick
-	// confirmFor is the member whose failed dial this retry replaced: the first
-	// byte of the retry confirms that failure (§3.6.2, case 1). failure is that
-	// failed dial, so the key shift and the confirmation do not count it twice.
-	confirmFor string
-	failure    *rrFailure
-	// detour marks a pick moved off its slot by a suspicion: a failure there shifts
-	// no key (the key's slot was not tried).
+	// sign is the Q1 sign of the first node that the first byte of this retry
+	// completes; retry marks a retry, detour a pick moved off its slot by a
+	// suspicion: a sign on either shifts no key (§4.4).
+	sign   *rrSign
+	retry  bool
 	detour bool
-	// packet marks a UDP flow (stage 3): a read error before the first packet is
-	// no failure, only a close without an answer is a reason for a check (rrHang).
-	packet bool
+	packet bool // a UDP flow: a read error is no outcome
 }
 
 // rrWatchConn wraps an opened TCP connection of a round_robin group to watch for
@@ -107,10 +103,10 @@ func (s *URLTest) rrWatchConn(ctx context.Context, network string, dialed adapte
 	if s.balancer == nil {
 		return conn
 	}
-	return s.rrWatch(ctx, network, dialed, conn, picked, "", nil)
+	return s.rrWatch(ctx, network, dialed, conn, picked, nil, false)
 }
 
-func (s *URLTest) rrWatch(ctx context.Context, network string, dialed adapter.Outbound, conn net.Conn, picked rrPick, confirmFor string, failure *rrFailure) net.Conn {
+func (s *URLTest) rrWatch(ctx context.Context, network string, dialed adapter.Outbound, conn net.Conn, picked rrPick, sign *rrSign, retry bool) net.Conn {
 	picked.dial.opened()
 	var packet bool
 	switch N.NetworkName(network) {
@@ -121,14 +117,14 @@ func (s *URLTest) rrWatch(ctx context.Context, network string, dialed adapter.Ou
 		picked.dial.release()
 		return conn
 	}
-	watch, ok, direct := s.rrNewWatch(ctx, dialed, picked, confirmFor, failure, packet)
+	watch, ok, direct := s.rrNewWatch(ctx, dialed, picked, sign, retry, packet)
 	if !ok {
 		picked.dial.release() // not reached for a tracked dial (rrNewWatch); kept for every path
 		return conn
 	}
 	if direct {
 		if !packet {
-			s.rrFirstByte(&watch)
+			s.rrFirstByte(&watch, nil)
 		}
 		return conn
 	}
@@ -144,7 +140,7 @@ func (s *URLTest) rrWatch(ctx context.Context, network string, dialed adapter.Ou
 // carries no key: UDP shifts none (§3.8). A tracked dial (picked.dial) is always
 // watched: its wrapper releases the dial's context on the close.
 // The watch is a value: the wrapper holds it, so watching allocates nothing apart.
-func (s *URLTest) rrNewWatch(ctx context.Context, dialed adapter.Outbound, picked rrPick, confirmFor string, failure *rrFailure, packet bool) (rrConnWatch, bool, bool) {
+func (s *URLTest) rrNewWatch(ctx context.Context, dialed adapter.Outbound, picked rrPick, sign *rrSign, retry bool, packet bool) (rrConnWatch, bool, bool) {
 	tracked := picked.dial != nil
 	member := dialed.Tag() // a chain hop carries the tag of its member
 	var track *rrTrack
@@ -165,19 +161,19 @@ func (s *URLTest) rrNewWatch(ctx context.Context, dialed adapter.Outbound, picke
 		}
 	}
 	if !packet {
-		s.balancer.rrCountConn(member, &s.balancer.heal) // UDP stays out of the slot counters
+		s.balancer.rrCountConn(member, picked.start) // Q1/Q2 conns; UDP stays out
 	}
 	watch := rrConnWatch{
-		s:          s,
-		member:     member,
-		track:      track,
-		start:      picked.start,
-		detour:     picked.detour,
-		key:        picked.key,
-		shift:      picked.shift,
-		confirmFor: confirmFor,
-		failure:    failure,
-		packet:     packet,
+		s:      s,
+		member: member,
+		track:  track,
+		start:  picked.start,
+		key:    picked.key,
+		shift:  picked.shift,
+		sign:   sign,
+		retry:  retry,
+		detour: picked.detour,
+		packet: packet,
 	}
 	if packet {
 		watch.key = rrKey{}
@@ -206,11 +202,11 @@ const (
 	rrStateWrote      uint32 = 1 << iota // the client sent a byte
 	rrStateGotByte                       // the destination sent a byte
 	rrStateClosed                        // closed from our side
-	rrStateDone                          // the outcome is reported, or the dead verdict closed it
-	rrStateHalfClosed                    // half-closed from our side: a close without a byte is no failure
+	rrStateDone                          // the outcome is reported, or D1 closed it
+	rrStateHalfClosed                    // the client closed its side: a close without a byte is no REFUSE_DST
 	rrStateTracked                       // listed as waiting for its first byte (rrTrack.waits)
-	rrStateClientEOF                     // the copy closes it at the client's end of stream: no client giving up
-	rrStateSiteSilent                    // counted once as a silent site through a live node (rrSiteSilence)
+	rrStateSilent                        // SILENT given at a look (rrInspect)
+	rrStateCounted                       // its SILENT counted by Q1
 )
 
 // rrFirstByteConn watches a connection for its first byte (see the file header).
@@ -221,9 +217,12 @@ type rrFirstByteConn struct {
 	held  rrConnWatch
 	entry rrTrackEntry // in watch.track.waits while the client waits for the first byte
 	dial  *rrDial      // the tracked dial of the connection; its context is released on the close
-	// wroteAt is the rrClock of the client's first write: the wait for the first
-	// byte starts there.
+	// wroteAt is w, the rrClock of the client's first write: the wait for the
+	// first byte starts there.
 	wroteAt atomic.Int64
+	// silentShift is the shift K2 made on its SILENT, plus one; an ANSWER takes it
+	// back (rrFirstByte).
+	silentShift atomic.Int64
 }
 
 func newRRFirstByteConn(conn net.Conn, watch *rrConnWatch) *rrFirstByteConn {
@@ -268,8 +267,8 @@ func (c *rrFirstByteConn) untrack() {
 	}
 }
 
-// rrKill is the dead verdict on the node: the connection waits for a first byte
-// that will not come; it is closed, and the client retries on its own.
+// rrKill is D1 on the node: the connection waits for a first byte that will not
+// come; it is closed (CANCEL), and the client retries on its own.
 func (c *rrFirstByteConn) rrKill() {
 	c.set(rrStateDone | rrStateClosed)
 	_ = c.Conn.Close()
@@ -281,7 +280,7 @@ func (c *rrFirstByteConn) observe(n int, err error) {
 		old := c.set(rrStateGotByte | rrStateDone)
 		c.untrack()
 		if old&rrStateDone == 0 {
-			c.watch.s.rrFirstByte(c.watch)
+			c.watch.s.rrFirstByte(c.watch, c)
 		}
 		return
 	}
@@ -291,9 +290,9 @@ func (c *rrFirstByteConn) observe(n int, err error) {
 	old := c.set(rrStateDone)
 	c.untrack()
 	if old&(rrStateDone|rrStateGotByte|rrStateClosed|rrStateHalfClosed) != 0 || old&rrStateWrote == 0 {
-		return // reported already, closed or half-closed by us, or the client sent nothing
+		return // reported already, closed by us (CANCEL), half-closed, or the client sent nothing
 	}
-	c.watch.s.rrSilentClose(c.watch)
+	c.watch.s.rrSilentClose(c)
 }
 
 func (c *rrFirstByteConn) Read(p []byte) (int, error) {
@@ -371,77 +370,27 @@ func (c *rrFirstByteConn) WriteBuffer(buffer *buf.Buffer) error {
 }
 
 // LxClientFinished is the client's end of stream (route/conn.go tells it when the
-// wrapper lies on the write path): the connection may end without a byte now, and
-// that is not a failure. A half-close leaves it waiting for its first byte, and
-// its later close is still a reason (rrHang); a close at the end of stream
-// (halfClose false: the node's connection has no half-close) is none.
-func (c *rrFirstByteConn) LxClientFinished(halfClose bool) {
-	c.waitEnded(false)
-	if halfClose {
-		c.set(rrStateHalfClosed)
-	} else {
-		c.set(rrStateHalfClosed | rrStateClientEOF)
-	}
-}
-
-// waitEnded takes the moment the client stops waiting for the first byte (it
-// half-closed, or we close): after rrHangAfter or more of waiting, a node that
-// proved alive meanwhile means a silent site (rrSiteSilence: the key moves on);
-// a node that did not leaves its slot under suspicion when the connection is
-// closed (closing: the wait ended in silence). Neither for UDP, a connection that
-// got its first byte, or an interrupt of the group.
-func (c *rrFirstByteConn) waitEnded(closing bool) {
-	state := c.state.Load()
-	if c.watch.packet || state&rrStateWrote == 0 || state&(rrStateGotByte|rrStateDone) != 0 || c.watch.track == nil {
-		return
-	}
-	wrote := c.wroteAt.Load()
-	if wrote == 0 || rrClock(time.Now())-wrote < int64(rrHangAfter) || c.watch.s.balancer.heal.interrupting.Load() > 0 {
-		return
-	}
-	s := c.watch.s
-	if s.rrBeforeEvent(c.watch.start) {
-		return // started before the last event of the network: no verdict
-	}
-	if s.rrProvedDuring(c.watch.member, c.watch.start) {
-		c.siteSilent()
-	} else if closing && !c.watch.start.IsZero() && !s.balancer.heal.frozen() {
-		c.watch.track.markSilent(rrClock(c.watch.start))
-	}
-}
-
-// siteSilent counts the connection once as a silent site through a live node.
-func (c *rrFirstByteConn) siteSilent() {
-	if old := c.set(rrStateSiteSilent); old&rrStateSiteSilent == 0 {
-		c.watch.s.rrSiteSilent(c.watch)
-	}
+// wrapper lies on the write path): a close without a byte after it is no implicit
+// REFUSE_DST; the connection still waits as any other.
+func (c *rrFirstByteConn) LxClientFinished(bool) {
+	c.set(rrStateHalfClosed)
 }
 
 // CloseWrite is the half-close from the client while writes still go through the
 // wrapper. Without a half-close below it closes the connection, as the copy does
-// for a writer that has none: the client's end of stream, no client giving up.
+// for a writer that has none.
 func (c *rrFirstByteConn) CloseWrite() error {
+	c.set(rrStateHalfClosed)
 	if closer, isCloser := N.UnwrapWriter(c.Conn).(N.WriteCloser); isCloser {
-		c.set(rrStateHalfClosed)
 		return closer.CloseWrite()
 	}
-	c.set(rrStateHalfClosed | rrStateClientEOF)
 	return c.Close()
 }
 
-// Close from our side before the first byte, after the client sent something, is a
-// client that gave up: after a long wait a reason for a check (rrHang). A
-// half-close before it does not change that; a close at the client's end of
-// stream is no giving up.
+// Close from our side is CANCEL: nothing follows.
 func (c *rrFirstByteConn) Close() error {
-	if c.state.Load()&rrStateClosed == 0 {
-		c.waitEnded(true)
-	}
-	old := c.set(rrStateClosed)
+	c.set(rrStateClosed)
 	c.untrack()
-	if old&(rrStateClosed|rrStateDone|rrStateGotByte|rrStateClientEOF) == 0 && old&rrStateWrote != 0 {
-		c.watch.s.rrHang(c.watch.member, c.watch.start, true)
-	}
 	err := c.Conn.Close()
 	c.dial.release()
 	return err

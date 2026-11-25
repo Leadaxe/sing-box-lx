@@ -10,6 +10,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -213,7 +214,7 @@ func TestRRSkip_deadMemberKeptButSkipped(t *testing.T) {
 	c := &testDialNode{tag: "c"} // dead, no replacement
 	g := newPoolTestGroup(t, context.Background(), []*testDialNode{a, b, c}, 2)
 	g.balancer.setSlots([]string{"a", "b"})
-	s := &URLTest{outbound: g.outbound, group: g, balancer: g.balancer}
+	s := &URLTest{outbound: g.outbound, logger: log.NewNOPFactory().NewLogger("test"), group: g, balancer: g.balancer}
 	s.rrWire()
 
 	g.balancePoolFirstLive(context.Background(), 2)

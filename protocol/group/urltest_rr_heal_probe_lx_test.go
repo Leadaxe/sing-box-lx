@@ -80,7 +80,7 @@ func TestRRShift_connectionTestRecordsNothing_LX(t *testing.T) {
 		t.Fatalf("a connection test records nothing: shifts %d counts %d proved %v", b.memory.shifts.size.Load(), counted, provedAny(b))
 	}
 	if b.trackOf("a").pendingN.Load() != 0 || b.trackOf("b").pendingN.Load() != 0 {
-		t.Fatal("a connection test leaves no pending failure")
+		t.Fatal("a connection test leaves no Q1 sign")
 	}
 }
 

@@ -1,101 +1,41 @@
 package group
 
-// lx:begin SPEC 138 round_robin self-heal after a failed dial
+// lx:begin SPEC 138 round_robin self-heal: outcomes, the retry, the check and the replacement
 //
-// Stage 1 of SPEC 138 §3: a TCP connection of a round_robin group that does not
-// open (any error but a client cancel; a UDP open the same way, stage 3,
-// urltest_rr_udp_lx.go) is retried once through the next live
-// slot of the pool whose node is not a nested urltest (that one retries on its
-// own), and the group checks the failed node A and its neighbour B — the next
-// live slot, nested or not — in the background:
-//   - the probes do not write: a direct urltest.URLTest of the leaf (RealTag)
-//     with the group link and C.TCPTimeout; history changes only by verdict, so
-//     a blink of the local network does not strike every node at once;
-//   - the failure is pending on A until A proves alive after it (stage 2,
-//     urltest_rr_track_lx.go): the first byte of a connection through A that
-//     started after it, an answer of a probe of A that started after it, history
-//     of A written after it. A failed open of a proxy leaf puts A under suspicion
-//     and starts the check at once. A failure that puts the site under suspicion
-//     (a close without a byte, a failed open of a direct or endpoint leaf, a failed
-//     retry) starts a verdict probe of its node alone at once (rrVerdictProbe),
-//     outside the check slot and its gap; its silence starts the check. What
-//     cannot start now is asked again by the next pick of A rrVerdictWait later,
-//     unless the verdict came meanwhile.
-//     Every probe is live: A, the control — B, the third node, the candidates of
-//     a replacement search that serves as the control — history says nothing
-//     about whether the network answers now;
-//   - A, B and the third node C (the next live slot after B, else the first
-//     candidate outside the pool) are probed at once, from the start of the check:
-//     a control is worth its answer only at the time of the silence it is
-//     compared with;
-//   - A silent, B answered: A is dead — after the bracket: B answered within the
-//     first half of A's probe window and answers a second probe after A's silence
-//     (a late first answer or a silent second one is the own network coming and
-//     going: freeze), and A did not prove alive meanwhile. Its history is dropped
-//     (pick skips the slot at once) and the slot gets a replacement from outside
-//     the pool; a candidate of that replacement may count by fresh history;
-//   - A answered: A is alive, the destination is not reachable through it; its
-//     fresh answer is written, and its failures pending since before the probe
-//     shift their keys (urltest_rr_shift_lx.go);
-//   - both silent: C answered (with the bracket) → both dead; it is silent too →
-//     the local network is down, nothing changes and the group freezes;
-//   - no neighbour and C silent or none: the replacement search is the control,
-//     its answering candidate probed once more after A's silence;
-//   - a failed open that is silence (a timeout) counts against the site only if
-//     the node proved alive while that connection waited, decided at the failure;
-//     an active refusal waits for the verdict (urltest_rr_track_lx.go);
-//   - the history of a dead node is dropped only if it is not newer than the
-//     start of its probe: a scheduled check that found it alive meanwhile wins,
-//     and the verdict about that node is dropped.
+// The rules named here are those of SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/
+// ALGORITHM.md.
 //
-// A node that accepts and stays silent gives no failure at all. A pick of its slot
-// that finds an unfinished connection through it older than rrHangAfter — a dial
-// in flight, or a connection whose client sent something and got no byte — is a
-// reason for a check (urltest_rr_track_lx.go); so is a client that cancelled the
-// dial or closed such a connection after that long. No retry, shift or count
-// follows from a reason. It is dropped for a node proved alive meanwhile or with
-// fresh history, and its checks keep their own gap, rrHangGap (rrHang); when the
-// check cannot start, a verdict probe of the node alone runs instead. Until the
-// node proves alive such a slot is under suspicion, and the pick skips it while
-// another slot is fine (rrTrack.suspect). The dead
-// verdict cancels the node's dials in flight (they retry once through the next
-// live slot, with no new check) and closes its connections waiting for a first
-// byte.
-// An interrupt of the group, its Close and a connection test are no reason.
+// A failed open of a round_robin connection is classified (§2): CANCEL (the client
+// or the group gave up: nothing follows), LOCAL, an explicit REFUSE_DST (a code of
+// the node's own leaf; a refused or reset open of a leaf that goes to the site
+// itself), FAIL_NODE by an active refusal or by a timeout. Outside a freeze (N0) it
+// is retried once through the next slot with no suspicion whose leaf is no nested
+// urltest (§5); a key marked by K5 keeps only the retry of FAIL_NODE. The sign then
+// goes to its rules: S1 (a fast refusal: the life probe, the bypass only after it
+// failed), S2 (a timeout: the bypass and the life probe at once), K1 (the key
+// shifts at once), K2/K4 (the memory of a soft sign) and Q1 (the count).
 //
-// The replacement runs under URLTestGroup.checking, the flag of the scheduled
-// health-check: there is one writer of the slots at a time, and a busy flag
-// means a run is already doing that work. It changes only the dead node's slot.
+// The check (§4.2) runs one at a time per group, not earlier than rrHealGap after
+// the previous one ended, and judges the whole pool: the first probes of every
+// node; after H with no answer the candidates in batches of the pool size, at most
+// k batches (rrCandidateBatches); the first ANSWER is the control, and every node
+// that has not answered gets its decisive probe then; a decisive probe with no
+// ANSWER gets a control after it. D1 strikes a node out, D3 writes the answer,
+// D4/D5 end with no verdict and no event. Slots with no live node then get a
+// replacement: a candidate that answered its probe in this check, else up to k
+// more batches (§5). Only the check writes the slots of the self-heal, under the
+// flag of the scheduled run (URLTestGroup.checking).
 //
-// Limits (§3.7): one check in flight per group (its own flag, not checking);
-// no new checks for rrHealGap after the previous check ended (retries go on; a
-// verdict probe keeps its own gap per node, rrVerdictGap);
-// nothing at all — no retries, no probes — for rrHealFreeze after the "own
-// network" verdict, a device/network wake or a network change signal
-// (URLTest.InterfaceUpdated, whether its full run starts or not), and on top of
-// that while the full run it started is in flight. A freeze or the group's
-// Close aborts the check in flight at once: its probes run on a context the
-// freeze cancels, so it lets URLTestGroup.checking go, and the full run after
-// a network change waits for it (bounded) instead of finding the flag busy.
-// The marks of the gap and the freeze keep the monotonic clock reading.
-//
-// The replacement search with pool_tolerance 0 probes the candidates outside the
-// pool in parallel batches of the pool size, like balancePoolFirstLive, and takes
-// the first one in config order that answered.
-//
-// A connection test (SPEC 139, lxtrace.IsProbe) gets the retry, with both
-// picks in the trace (the retry stage carries fallback_for), and starts no check.
-// A delay measurement through the group (urltest.IsMeasureLx: an outer group's
-// check, the clash API) gets nothing: no retry, no watch, no check — it measures
-// the node as it is.
+// A connection test (SPEC 139, lxtrace.IsProbe) gets the retry and records nothing;
+// a delay measurement through the group (urltest.IsMeasureLx) gets nothing.
 
 import (
 	"context"
 	"errors"
 	"net"
-	"strconv"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -110,107 +50,53 @@ import (
 )
 
 const (
-	// rrHealFresh — history younger than this counts as a fresh answer for a
-	// candidate of a replacement once the failed node is proved dead, and drops a
-	// reason for a check (rrHang). The failed node and the control are always
-	// probed live.
-	rrHealFresh = 30 * time.Second
-	// rrHealGap — no new check this long after the previous check ended.
+	// rrHealGap — no new check this long after the previous one ended (T).
 	rrHealGap = 15 * time.Second
-	// rrHealFreeze — no retries, probes, counts or shifts this long after the "own
-	// network" verdict, a device or network wake, or a network change signal; after
-	// the signal also as long as the full run it started is in flight (rrNetworkRun).
+	// rrHealFreeze — the freeze of an event, N3 (T).
 	rrHealFreeze = 15 * time.Second
 	// rrHealYieldWait bounds how long the full run after a network change waits for
-	// the aborted self-heal check to end.
+	// the aborted check to end.
 	rrHealYieldWait = C.TCPTimeout
-	// rrHangAfter — an unfinished connection this old (a dial in flight, a wait for
-	// the first byte), found by a pick or given up by its client, is a reason for a
-	// check: a hanging node gives no failure. With no proof of its node since it
-	// started, it also puts its slot under suspicion (rrTrack.suspect).
-	rrHangAfter = 5 * time.Second
-	// rrHangGap — no new check from a client that gave up (rrHang) this long after
-	// the previous such check ended. A steady stream of silent UDP flows closed by
-	// their timeout would otherwise probe the nodes several times a minute.
-	rrHangGap = 60 * time.Second
+	// rrCandidateBatches is k: batches of candidates per check and per replacement.
+	rrCandidateBatches = 2
 )
 
 // rrHeal is the self-heal state of one round_robin group; it lives in the balancer.
-// The time marks are time.Now() values: they keep the monotonic clock reading, so
-// a wall clock step does not stretch the gap or the freeze.
 type rrHeal struct {
 	running      atomic.Bool                        // a check is in flight
 	lastCheckEnd atomic.Pointer[time.Time]          // end of the previous check
-	lastHangEnd  atomic.Pointer[time.Time]          // end of the previous check from a reason (rrHang)
 	abort        atomic.Pointer[context.CancelFunc] // cancels the check in flight
 	// epochEnd is E, the rrClock of the end of the last freeze (N0): while now < E
 	// nothing is inferred or done, and an exchange that started before E takes part
 	// in no rule. 0: no event yet.
-	epochEnd     atomic.Int64
-	interrupting atomic.Int32 // an interrupt of the group is closing its connections
-	verdicts     atomic.Int32 // verdict probes in flight: one per group (urltest_rr_track_lx.go)
-	// verdictAccess guards the verdict probe budget: the starts in the window and
-	// the claim of a node's probe (claimVerdict).
-	verdictAccess sync.Mutex
-	verdictStarts [rrVerdictBurst]int64
-	verdictNext   int
+	epochEnd atomic.Int64
+	// cursor is c, the position in the config from which the next check goes on
+	// with the candidates; only the holder of running moves it.
+	cursor int
+	// lifeAccess guards the budget of the life probes of the group.
+	lifeAccess  sync.Mutex
+	lifeStarts  [rrLifeBurst]int64
+	lifeNext    int
+	udpLifeLast int64
 }
 
-// rrInterrupting marks the interrupt of the group's connections (a selection
-// update) until the returned function runs: a connection it closes is no client
-// giving up. A no-op outside round_robin.
-func (g *URLTestGroup) rrInterrupting() func() {
-	if g.balancer == nil {
-		return func() {}
-	}
-	heal := &g.balancer.heal
-	heal.interrupting.Add(1)
-	return func() {
-		heal.interrupting.Add(-1)
-	}
-}
-
-// beginCheck claims the single check slot of the group, unless the previous check
-// ended less than rrHealGap ago.
-func (h *rrHeal) beginCheck() bool {
-	if end := h.lastCheckEnd.Load(); end != nil && time.Since(*end) < rrHealGap {
-		return false
-	}
-	return h.running.CompareAndSwap(false, true)
-}
-
-// beginHangCheck claims the single check slot of the group for a check from a
-// reason (rrHang), unless the previous such check ended less than rrHangGap ago.
-// It ignores the gap of the failure checks and does not set it: a reason must not
-// take the slot from the check of a real failure.
-func (h *rrHeal) beginHangCheck() bool {
-	if end := h.lastHangEnd.Load(); end != nil && time.Since(*end) < rrHangGap {
-		return false
-	}
-	return h.running.CompareAndSwap(false, true)
-}
-
-// hangReady reports, without a lock, whether a check from a reason could start now:
-// none in flight, the gap of such checks passed, not frozen.
-func (h *rrHeal) hangReady() bool {
+// checkReady reports, without a lock, whether a check could start now: none in
+// flight, not frozen, the gap over.
+func (h *rrHeal) checkReady() bool {
 	if h.running.Load() || h.frozen() {
 		return false
 	}
-	end := h.lastHangEnd.Load()
-	return end == nil || time.Since(*end) >= rrHangGap
+	end := h.lastCheckEnd.Load()
+	return end == nil || time.Since(*end) >= rrHealGap
 }
 
-// endHangCheck and endCheck end a check and start its gap — unless a freeze cut
-// it short: its probes said nothing, and the first reason after the freeze gets a
-// check at once.
-func (h *rrHeal) endHangCheck() {
-	if !h.frozen() {
-		now := time.Now()
-		h.lastHangEnd.Store(&now)
-	}
-	h.running.Store(false)
+// beginCheck claims the single check slot of the group.
+func (h *rrHeal) beginCheck() bool {
+	return h.checkReady() && h.running.CompareAndSwap(false, true)
 }
 
+// endCheck ends a check and starts its gap — unless a freeze cut it short (L3: the
+// first reason after the freeze gets a check at once).
 func (h *rrHeal) endCheck() {
 	if !h.frozen() {
 		now := time.Now()
@@ -226,8 +112,7 @@ func (h *rrHeal) epoch() int64 {
 
 // freeze is the event of N3: E := now + T, a signal during a freeze extends it
 // from its own moment. The check in flight is aborted and the gaps armed before
-// the event are dropped (L3: after the freeze the first reason gets its check at
-// once).
+// the event are dropped (L3).
 func (h *rrHeal) freeze() {
 	end := rrClock(time.Now().Add(rrHealFreeze))
 	for {
@@ -237,10 +122,9 @@ func (h *rrHeal) freeze() {
 		}
 	}
 	h.lastCheckEnd.Store(nil)
-	h.lastHangEnd.Store(nil)
-	h.verdictAccess.Lock()
-	h.verdictStarts = [rrVerdictBurst]int64{}
-	h.verdictAccess.Unlock()
+	h.lifeAccess.Lock()
+	h.lifeStarts, h.udpLifeLast = [rrLifeBurst]int64{}, 0
+	h.lifeAccess.Unlock()
 	h.abortCheck()
 }
 
@@ -256,14 +140,12 @@ func (h *rrHeal) frozen() bool {
 }
 
 // aborted reports whether the check running on ctx has to stop: the group closed
-// or the self-heal froze since it started.
+// or an event came (N0: the check ends with no verdict).
 func (h *rrHeal) aborted(ctx context.Context) bool {
 	return ctx.Err() != nil || h.frozen()
 }
 
-// yield waits, at most rrHealYieldWait, for the check in flight to end. The
-// network change that calls it has frozen the self-heal already, which aborts the
-// check and keeps a new one from starting, so the wait is short.
+// yield waits, at most rrHealYieldWait, for the check in flight to end.
 func (h *rrHeal) yield(ctx context.Context) {
 	deadline := time.Now().Add(rrHealYieldWait)
 	for h.running.Load() && ctx.Err() == nil && time.Now().Before(deadline) {
@@ -271,21 +153,45 @@ func (h *rrHeal) yield(ctx context.Context) {
 	}
 }
 
-// rrNetworkChanged freezes the self-heal for rrHealFreeze from a network change
-// signal (InterfaceUpdated). It is called before any early return there: the full
-// run may not start (device or network paused, the health-check busy), the network
-// is in flux all the same. A no-op outside round_robin.
+// claimLife takes a life probe of the node of t at now within the limits (§4.2).
+func (h *rrHeal) claimLife(t *rrTrack, now int64, udp bool) bool {
+	h.lifeAccess.Lock()
+	defer h.lifeAccess.Unlock()
+	if t.lifeBusy.Load() {
+		return false
+	}
+	if last := t.lifeLast.Load(); last != 0 && now-last < int64(rrLifeGap) {
+		return false
+	}
+	if udp && h.udpLifeLast != 0 && now-h.udpLifeLast < int64(rrUDPLifeGap) {
+		return false
+	}
+	if oldest := h.lifeStarts[h.lifeNext]; oldest != 0 && now-oldest < int64(rrLifeWindow) {
+		return false
+	}
+	h.lifeStarts[h.lifeNext] = now
+	h.lifeNext = (h.lifeNext + 1) % rrLifeBurst
+	if udp {
+		h.udpLifeLast = now
+	}
+	t.lifeLast.Store(now)
+	t.lifeBusy.Store(true)
+	return true
+}
+
+// rrNetworkChanged is the N3 event of a network change signal (InterfaceUpdated),
+// called before any early return there; it also lifts the K5 marks and the
+// quarantine. A no-op outside round_robin.
 func (s *URLTest) rrNetworkChanged() {
 	if s.balancer != nil {
 		s.balancer.heal.freeze()
-		s.balancer.rrResetMarks() // stage 2: a network change lifts the marks and the quarantine
+		s.balancer.rrResetMarks()
 	}
 }
 
-// rrNetworkRun aborts the self-heal check in flight before the full run after a
-// network change and waits (bounded) for it to end: it may hold
-// URLTestGroup.checking, and the run would then find the flag busy and skip. The
-// freeze itself is N3's (rrNetworkChanged). A no-op outside round_robin.
+// rrNetworkRun aborts the check in flight before the full run after a network
+// change and waits (bounded) for it to end: it may hold URLTestGroup.checking, and
+// the run would then find the flag busy and skip. A no-op outside round_robin.
 func (s *URLTest) rrNetworkRun() func() {
 	if s.balancer != nil {
 		s.balancer.heal.abortCheck()
@@ -294,9 +200,8 @@ func (s *URLTest) rrNetworkRun() func() {
 	return func() {}
 }
 
-// rrWatchWake freezes the self-heal on a device or network wake: the network is not
-// up yet, and a failure says nothing about the nodes. The callback is dropped when
-// the group closes.
+// rrWatchWake makes a device or network wake an event (N3). The callback is
+// dropped when the group closes.
 func (g *URLTestGroup) rrWatchWake() {
 	if g.balancer == nil || g.pause == nil {
 		return
@@ -314,13 +219,60 @@ func (g *URLTestGroup) rrWatchWake() {
 	})
 }
 
-// rrHealDial handles a failed dial of a round_robin group: it records the failure,
-// starts the check of the node when due and returns the connection of the retry
-// through the next live slot. picked is the pick of the connection: its key, the
-// key's shift then, its start and its dial. ok is false when there is no retry or
-// it failed too: the caller returns dialErr. A UDP dial (a connected UDP flow, a
-// DNS transport) is handled as a UDP open (rrHealListen): retry and check, no key
-// shift.
+// --- outcomes ----------------------------------------------------------------------
+
+// rrClass is the outcome of a failed open (§2).
+type rrClass uint8
+
+const (
+	rrCancel      rrClass = iota // CANCEL
+	rrLocal                      // LOCAL
+	rrRefused                    // REFUSE_DST, explicit
+	rrFailActive                 // FAIL_NODE, an active refusal
+	rrFailTimeout                // FAIL_NODE, a timeout of the open
+)
+
+// rrOutcome classifies a failed open through the pool member member. LOCAL is
+// checked before the timeout: some of its errors report Timeout too.
+func (s *URLTest) rrOutcome(member adapter.Outbound, err error) rrClass {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return rrCancel
+	case s.rrDestinationRefused(member, err):
+		return rrRefused
+	case rrLocalError(err):
+		return rrLocal
+	case s.rrSiteOnOpen(member) && (errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET)):
+		return rrRefused
+	case rrSilence(err):
+		return rrFailTimeout
+	}
+	return rrFailActive
+}
+
+// rrDestinationRefused reports whether err of an open through member is its own
+// leaf's answer that the destination failed (adapter.DestinationRefusedLx set by
+// the leaf itself — a refusal of a detour on the way is the route failing, П).
+func (s *URLTest) rrDestinationRefused(member adapter.Outbound, err error) bool {
+	var refused *adapter.DestinationRefusedLx
+	if !errors.As(err, &refused) {
+		return false
+	}
+	leaf := RealTag(member, N.NetworkTCP)
+	return refused.Tag != "" && (refused.Tag == leaf || refused.Tag == member.Tag())
+}
+
+// rrSiteOnOpen reports whether the leaf of node goes to the destination itself
+// when a connection opens (siteOnOpenLx).
+func (s *URLTest) rrSiteOnOpen(node adapter.Outbound) bool {
+	return siteOnOpenLx(s.ctx, s.outbound, node)
+}
+
+// --- the retry ---------------------------------------------------------------------
+
+// rrHealDial handles a failed dial of a round_robin group: the outcome goes to its
+// rules, and the connection of the retry is returned. ok is false when there is no
+// retry or it failed too: the caller returns dialErr.
 func (s *URLTest) rrHealDial(ctx context.Context, network string, destination M.Socksaddr, failed adapter.Outbound, dialErr error, picked rrPick) (net.Conn, bool) {
 	struck := picked.dial.failed()
 	switch N.NetworkName(network) {
@@ -337,181 +289,66 @@ func (s *URLTest) rrHealDial(ctx context.Context, network string, destination M.
 	if !ok {
 		return nil, false
 	}
-	// Stage 2: the first byte of the retry confirms the failure of the first node.
-	picked.dial = retry.dial
-	return s.rrWatch(ctx, network, retry.dialer, conn, picked, retry.confirmFor, retry.failure), true
+	picked.dial, picked.start = retry.dial, retry.start
+	return s.rrWatch(ctx, network, retry.dialer, conn, picked, retry.sign, true), true
 }
 
-// rrRetried is an opened retry: the chain leaf it went through, the pool member
-// whose failure it confirms ("" when none waits for it), that failure and the
-// tracked dial of the retry.
+// rrRetried is an opened retry: the chain leaf it went through, the Q1 sign of the
+// first node its first byte completes, its tracked dial and its start.
 type rrRetried struct {
-	dialer     adapter.Outbound
-	confirmFor string
-	failure    *rrFailure
-	dial       *rrDial
+	dialer adapter.Outbound
+	sign   *rrSign
+	dial   *rrDial
+	start  time.Time
 }
 
 // rrHealRetry is the part of a failed open shared by TCP and UDP (rrHealDial,
-// rrHealListen): it records the failure of the node as pending on it, starts the
-// check when due and opens the retry through the next live slot that takes
-// network, with open on the chain leaf of the retry node. ok is false when there
-// is no retry or it failed too. A UDP failure shifts no key (§3.8): its key is
-// dropped once the address-problem mark is checked. struck is a dial the dead
-// verdict on its node cancelled: the verdict is in, so it records nothing and
-// starts no check, only the retry.
+// rrHealListen): the outcome goes to its rules and the retry opens through the next
+// usable slot with open on its chain leaf (§5). struck is a dial D1 on its node
+// cancelled: it goes to the retry and records nothing. A UDP failure shifts no key
+// and is not counted.
 func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapter.Outbound, dialErr error, picked rrPick, struck bool, open func(ctx context.Context, dialer adapter.Outbound) error) (rrRetried, bool) {
 	if urltest.IsMeasureLx(ctx) {
-		return rrRetried{}, false // a delay measurement shows the node as it is: no retry, no record
+		return rrRetried{}, false // a delay measurement shows the node as it is
 	}
-	s.balancer.rrClockLook(time.Now()) // N3 before the rules
+	b := s.balancer
+	b.rrClockLook(time.Now()) // N3 before the rules
 	if errors.Is(ctx.Err(), context.Canceled) || !struck && errors.Is(dialErr, context.Canceled) {
-		// A client cancel is no failure; after a long wait it is a reason for a check.
-		if !lxtrace.IsProbe(ctx) {
-			s.rrHang(failed.Tag(), picked.start, true)
-		}
-		return rrRetried{}, false
+		return rrRetried{}, false // CANCEL: nothing follows
 	}
-	if s.balancer.heal.frozen() {
-		return rrRetried{}, false
+	if b.heal.frozen() {
+		return rrRetried{}, false // N0: no retries
 	}
-	// A UDP open that failed puts the node under suspicion, not the address: an
-	// address-problem mark learned by TCP does not stop its retry and check, and a
-	// UDP failure shifts no key and counts nothing in the slot counters (§3.8).
 	tcp := N.NetworkName(network) == N.NetworkTCP
 	if !tcp {
 		picked.key = rrKey{}
 	}
-	probe := lxtrace.IsProbe(ctx)
-	if !probe && !struck {
-		// Stage 2: an address-problem key gets no retry, no check and no shift.
-		if picked.key.valid && s.balancer.memory.shifts.marked(picked.key.table) {
-			return rrRetried{}, false
-		}
-	}
-	slots := s.balancer.slotsSnapshot()
+	slots := b.slotsSnapshot()
 	failedSlot := slotIndex(slots, failed.Tag())
-	// failed may be the chain hop of the node; the check needs the pool member.
+	// failed may be the chain hop of the node; the rules need the pool member.
 	member, loaded := s.outbound.Outbound(failed.Tag())
 	if !loaded || failedSlot < 0 && !struck {
 		return rrRetried{}, false // a fallback pick outside the pool (cold start)
 	}
-	// Stage 2: the failure is pending on the node until it proves alive or dead; a
-	// connection test leaves the counters and the shifts alone. A failed open asks
-	// for the verdict at once (rrPend): the check, or a verdict probe of a direct or
-	// endpoint leaf; when that cannot start (one in flight, the gap), the next pick
-	// of the node asks again unless a proof of the node settles the failure first.
-	var failure *rrFailure
-	// A connection that started before the last event of the network (a freeze, the
-	// network back, a sleep) gives no verdict: its failure is only a failure for the
-	// application — the retry below, no record, no check.
-	if !probe && !struck && !s.rrBeforeEvent(picked.start) {
-		if tcp {
-			s.balancer.rrCountConn(member.Tag(), &s.balancer.heal)
-		}
-		failure = s.rrNewFailure(picked, member.Tag())
-		// A proxy leaf failed between us and its server: the node itself is under
-		// suspicion, the check with a control decides. A direct or endpoint leaf went
-		// to the site itself: a verdict probe of the node alone settles it.
-		siteOnOpen := s.rrSiteOnOpen(member)
-		mode := rrCheckNow
-		if siteOnOpen {
-			mode = rrVerdictNow
-		}
-		if rrSilence(dialErr) {
-			// Silence is no answer from the site. Through a proxy leaf it never is: the
-			// open does not reach the site, a timeout speaks of the path to the node's
-			// server. Through a leaf that goes to the site itself it counts against
-			// the site only when the node proved alive while this connection waited —
-			// decided now, never by a later proof (the network may only have come back
-			// since) — and as silence: it shifts the key, it confirms no failure.
-			proved := s.rrProvedDuring(member.Tag(), picked.start)
-			if siteOnOpen && proved {
-				failure.silence = true
-				failure.setAlive()
-			} else if proved {
-				failure = nil // the path to a live node's server timed out: nothing
-			} else {
-				failure = nil
-				// Nothing proved the node alive while it was silent: the slot stays
-				// under suspicion past the end of the connection (rrTrack.silentSince) —
-				// for TCP only: a UDP open fails for reasons of its own (a server with
-				// no UDP ASSOCIATE) and must not take the node out for TCP.
-				if tcp {
-					s.rrSuspectSlot(member.Tag(), picked.start)
-				}
+	class := rrFailActive
+	var sign *rrSign
+	if !struck {
+		class = s.rrOutcome(member, dialErr)
+		if !lxtrace.IsProbe(ctx) && !s.rrBeforeEvent(picked.start) {
+			if tcp {
+				b.rrCountConn(member.Tag(), picked.start)
 			}
-			if t := s.balancer.trackOf(member.Tag()); t != nil {
-				s.rrAskVerdict(member, t, rrClock(time.Now()), mode)
-			}
-		} else {
-			// An active failure through a proxy leaf (refused, reset, EOF in the
-			// handshake) came between us and the node's server: it says nothing about
-			// the site and shifts no key; it is counted to the node when the retry
-			// gets the first byte (the node drops connections). Only the proxy's own
-			// answer that the destination failed (adapter.DestinationRefusedLx: a SOCKS
-			// failure code, an HTTP CONNECT status) puts the site under suspicion.
-			refused := s.rrDestinationRefused(member, dialErr)
-			if !siteOnOpen && !refused {
-				failure.key = rrKey{}
-				// The node failed: its slot is under suspicion from this failure on,
-				// until the node proves alive or the check decides — new connections go
-				// round it meanwhile (TCP only). A refusal the proxy reported, or one of
-				// a leaf that goes to the site itself, is an answer: no suspicion.
-				if tcp {
-					s.rrSuspectSlot(member.Tag(), picked.start)
-				}
-			}
-			if refused {
-				mode = rrVerdictNow // the proxy answered: whether the node is alive is all there is to ask
-			}
-			s.rrPend(member, failure, false, mode)
+			sign = s.rrOpenFailed(member, picked, class, tcp)
 		}
 	}
-	// A nested urltest retries on its own (SPEC 054 or this one), so it is neither
-	// retried nor taken for the retry: two attempts per call at most. A context
-	// that is already done has no time for a second attempt.
+	if (class == rrRefused || class == rrLocal) && picked.key.valid && b.memory.shifts.marked(picked.key.table) {
+		return rrRetried{}, false // K5: a marked key keeps the retry of FAIL_NODE only
+	}
+	// A nested urltest retries on its own (SPEC 054): two attempts per call at most.
 	if rrNestedURLTest(member) || ctx.Err() != nil {
 		return rrRetried{}, false
 	}
-	usable := func(tag string) bool {
-		if tag == failed.Tag() || !s.slotAlive(tag) || !s.slotSupports(tag, network) {
-			return false
-		}
-		node, loaded := s.outbound.Outbound(tag)
-		return loaded && !rrNestedURLTest(node)
-	}
-	// A slot under suspicion is no retry target while another one is (the pick skips
-	// it the same way, so the retry goes where the shifted key will go); failing that
-	// the retry goes as before.
-	now := rrClock(time.Now())
-	var retry adapter.Outbound
-	for _, strict := range [2]bool{true, false} {
-		target := func(tag string) bool {
-			if !usable(tag) {
-				return false
-			}
-			if !strict {
-				return true
-			}
-			track := s.balancer.trackOf(tag)
-			return track == nil || !track.suspect(now, s.balancer.heal.epoch())
-		}
-		if failedSlot < 0 {
-			// Struck and replaced meanwhile: the first usable slot.
-			for _, entry := range slots {
-				if target(entry.tag) {
-					retry, _ = s.outbound.Outbound(entry.tag)
-					break
-				}
-			}
-		} else if i, found := s.balancer.nextLiveSlot(slots, failedSlot, target); found {
-			retry, _ = s.outbound.Outbound(slots[i].tag)
-		}
-		if retry != nil {
-			break
-		}
-	}
+	retry := s.rrRetryTarget(slots, failedSlot, failed.Tag(), network)
 	if retry == nil {
 		return rrRetried{}, false
 	}
@@ -521,49 +358,133 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 		return rrRetried{}, false
 	}
 	retryStart := time.Now()
-	retryCtx, dial := s.rrTrackDial(ctx, s.balancer.trackOf(retry.Tag()), retry, dialer, rrClock(retryStart))
+	retryCtx, dial := s.rrTrackDial(ctx, b.trackOf(retry.Tag()), retry, dialer, rrClock(retryStart), !tcp)
 	if err = open(retryCtx, dialer); err != nil {
-		retryStruck := dial.failed()
 		s.logger.ErrorContext(ctx, "round_robin retry via ", retry.Tag(), ": ", err)
-		// A client that gave up meanwhile is no failure of the retry's node, nor is
-		// a retry cancelled by the dead verdict on its node.
-		if failure != nil && !retryStruck && !errors.Is(err, context.Canceled) && ctx.Err() == nil && !s.rrBeforeEvent(retryStart) {
-			if tcp {
-				s.balancer.rrCountConn(retry.Tag(), &s.balancer.heal)
-			}
-			failure.retryFailed(retry.Tag())
-			if !rrSilence(err) {
-				if !s.rrSiteOnOpen(retry) && !s.rrDestinationRefused(retry, err) {
-					failure.retryNoShift() // between us and the retry node's server: no shift past it
-					if tcp {
-						s.rrSuspectSlot(retry.Tag(), retryStart) // as for the first failure
-					}
-				}
-				s.rrPend(retry, failure, true, rrVerdictNow)
-			} else if s.rrProvedDuring(retry.Tag(), retryStart) {
-				if s.rrSiteOnOpen(retry) {
-					failure.setRetryAlive() // the retry's node proved alive while it waited for the site
-				}
-			} else if tcp {
-				s.rrSuspectSlot(retry.Tag(), retryStart)
-			}
+		if !dial.failed() && ctx.Err() == nil && !lxtrace.IsProbe(ctx) && !s.rrBeforeEvent(retryStart) {
+			s.rrRetryFailed(retry, retryStart, err, tcp)
 		}
 		return rrRetried{}, false
 	}
 	dial.opened()
-	// Only an opened retry moves the connection's node and Now(): a failed one
-	// leaves the first node on record.
-	s.group.balancedRetried(ctx, retry)
-	if struck {
-		s.logger.DebugContext(ctx, "round_robin: ", failed.Tag(), " struck out as dead during the dial (", network, "), retried via ", retry.Tag())
-	} else {
-		s.logger.DebugContext(ctx, "round_robin: ", failed.Tag(), " failed (", network, "), retried via ", retry.Tag())
+	s.group.balancedRetried(ctx, retry) // only an opened retry moves the connection's node
+	s.logger.DebugContext(ctx, "round_robin: ", failed.Tag(), " failed (", network, "), retried via ", retry.Tag())
+	return rrRetried{dialer: dialer, sign: sign, dial: dial, start: retryStart}, true
+}
+
+// rrRetryTarget returns the node of the retry (§5): the next slot after the failed
+// one going round (the first one when the failed node was struck and replaced
+// meanwhile) that is live, takes network, is under no suspicion and holds no
+// nested urltest.
+func (s *URLTest) rrRetryTarget(slots []slot, failedSlot int, failed string, network string) adapter.Outbound {
+	b := s.balancer
+	now, epoch := rrClock(time.Now()), b.heal.epoch()
+	n := len(slots)
+	for step := 1; step <= n; step++ {
+		entry := slots[(failedSlot+step+n)%n]
+		if failedSlot < 0 {
+			entry = slots[step-1]
+		}
+		if entry.tag == failed || !s.slotAlive(entry.tag) || !s.slotSupports(entry.tag, network) || entry.track != nil && entry.track.suspect(now, epoch) {
+			continue
+		}
+		if node, loaded := s.outbound.Outbound(entry.tag); loaded && !rrNestedURLTest(node) {
+			return node
+		}
 	}
-	retried := rrRetried{dialer: dialer, failure: failure, dial: dial}
-	if failure != nil {
-		retried.confirmFor = member.Tag()
+	return nil
+}
+
+// rrOpenFailed applies the rules to a failed open of the pick's own slot (not a
+// retry): S1, S2, K1, K2/K4 and the Q1 sign. It returns the sign the first byte of
+// the retry completes.
+func (s *URLTest) rrOpenFailed(member adapter.Outbound, picked rrPick, class rrClass, tcp bool) *rrSign {
+	t := s.balancer.trackOf(member.Tag())
+	if t == nil {
+		return nil
 	}
-	return retried, true
+	a, now := rrClock(picked.start), rrClock(time.Now())
+	eligible := tcp && !picked.detour
+	switch class {
+	case rrLocal:
+		if !s.rrSiteOnOpen(member) {
+			s.rrLifeProbe(member, t, a, false) // S1: LOCAL on the open to the proxy node's address
+		}
+		return nil
+	case rrRefused:
+		var sign *rrSign
+		if eligible && picked.key.valid && !s.balancer.memory.shifts.marked(picked.key.table) {
+			s.rrShiftOn(picked.key, picked.shift, member.Tag()) // K1: the key moves at once
+			sign = &rrSign{s: s, node: member.Tag(), key: picked.key, b: now, need: rrSignRetry}
+		}
+		s.rrLifeProbe(member, t, a, false) // S1, K1
+		return sign
+	case rrFailActive:
+		s.rrSoftSign(picked.key, picked.shift, member.Tag(), a, now, nil, eligible)
+		sign := s.rrFailSign(t, picked, member.Tag(), now, tcp) // Q1, before the probe whose answer settles it
+		s.rrLifeProbe(member, t, a, false)                      // S1
+		return sign
+	default:
+		if tcp {
+			t.suspectAt(a, now) // S2: the bypass at once
+		}
+		s.rrSoftSign(picked.key, picked.shift, member.Tag(), a, now, nil, eligible)
+		var sign *rrSign
+		if s.rrLiveOthers(member.Tag(), a, now) {
+			sign = s.rrFailSign(t, picked, member.Tag(), now, tcp) // Q1: Live(X; P \ {n})
+		}
+		s.rrLifeProbe(member, t, a, !tcp) // S2; a UDP open makes no TCP suspicion (V9)
+		return sign
+	}
+}
+
+// rrFailSign records the Q1 sign of FAIL_NODE on the node of t: it counts once the
+// retry answered and an ANSWER via the node after it came.
+func (s *URLTest) rrFailSign(t *rrTrack, picked rrPick, node string, at int64, tcp bool) *rrSign {
+	if !tcp {
+		return nil
+	}
+	sign := &rrSign{s: s, node: node, key: picked.key, b: at, need: rrSignProof | rrSignRetry}
+	t.addPending(sign)
+	return sign
+}
+
+// rrLiveOthers reports Live(X; P \ {node}) for an exchange sent at w, at now.
+func (s *URLTest) rrLiveOthers(node string, w, now int64) bool {
+	for _, entry := range s.balancer.slotsSnapshot() {
+		if entry.tag != node && entry.track != nil && entry.track.live(w, rrHalf(w, now)) {
+			return true
+		}
+	}
+	return false
+}
+
+// rrRetryFailed applies S1/S2 to a failed retry through retry: a sign of its node,
+// with no key shift and no K2 memory (§4.4: the slot of the retry), and no Q1 count
+// (a failed retry has no retry of its own).
+func (s *URLTest) rrRetryFailed(retry adapter.Outbound, start time.Time, err error, tcp bool) {
+	class := s.rrOutcome(retry, err)
+	t := s.balancer.trackOf(retry.Tag())
+	if class == rrCancel || t == nil {
+		return
+	}
+	if tcp {
+		s.balancer.rrCountConn(retry.Tag(), start)
+	}
+	a := rrClock(start)
+	switch class {
+	case rrLocal:
+		if !s.rrSiteOnOpen(retry) {
+			s.rrLifeProbe(retry, t, a, false) // S1
+		}
+	case rrFailTimeout:
+		if tcp {
+			t.suspectAt(a, rrClock(time.Now())) // S2
+		}
+		s.rrLifeProbe(retry, t, a, !tcp)
+	default:
+		s.rrLifeProbe(retry, t, a, false) // S1
+	}
 }
 
 // slotSupports reports whether a slot's node takes connections of network.
@@ -590,28 +511,21 @@ func rrNestedURLTest(node adapter.Outbound) bool {
 	}
 }
 
-// rrProbe is the outcome of one check probe.
+// --- probes ------------------------------------------------------------------------
+
+// rrProbe is the outcome of one probe.
 type rrProbe struct {
 	member   string // the pool member (or candidate) tag
 	leaf     string // the tag its history lives under (RealTag)
 	answered bool
-	fresh    bool // counted alive by fresh history, not probed
 	delay    uint16
 	err      error
-	started  time.Time // when the probe started; a newer history wins over its verdict
-	ended    time.Time // when the probe answered or gave up
+	started  time.Time
+	ended    time.Time
 }
 
-// rrControlBatch is the least batch of candidates probed at once when they are the
-// control of a node with no neighbour in the pool.
-const rrControlBatch = 4
-
-// rrThirdAfter is how long a check waits for the neighbour B to answer before it
-// probes the third node too (rrHealCheck).
-var rrThirdAfter = 300 * time.Millisecond
-
-// rrProbeTimeoutNs is the timeout of a self-heal probe: the group's (C.TCPTimeout);
-// atomic so that tests can shorten it while probes of other tests still run.
+// rrProbeTimeoutNs is T, the timeout of a probe (C.TCPTimeout); atomic so that
+// tests can shorten it while probes of other tests still run.
 var rrProbeTimeoutNs atomic.Int64
 
 func init() {
@@ -622,22 +536,19 @@ func rrProbeTimeout() time.Duration {
 	return time.Duration(rrProbeTimeoutNs.Load())
 }
 
-// rrProbeNode probes the live leaf of member without writing history. With
-// byHistory a leaf with history younger than rrHealFresh is not probed and counts
-// as an answer; that is only for the question "is this node alive" (the failed
-// node A, a candidate of a replacement once A is proved dead). A control is
-// probed with byHistory false: it has to show that the network answers now.
-func (g *URLTestGroup) rrProbeNode(ctx context.Context, member adapter.Outbound, byHistory bool) rrProbe {
-	result := rrProbe{member: member.Tag(), leaf: RealTag(member, N.NetworkTCP), started: time.Now()}
+// rrProbeNode probes the live leaf of member with the group's URL; it writes no
+// history.
+func (g *URLTestGroup) rrProbeNode(ctx context.Context, member adapter.Outbound) (result rrProbe) {
+	result = rrProbe{member: member.Tag(), leaf: RealTag(member, N.NetworkTCP), started: time.Now()}
+	defer func() {
+		result.ended = time.Now()
+		if g.balancer != nil {
+			g.balancer.rrClockLook(result.ended) // N3: the clocks are compared at every outcome
+		}
+	}()
 	if result.leaf == "" {
 		result.err = E.New("no selected node")
 		return result
-	}
-	if byHistory {
-		if history := g.freshHistory(result.leaf); history != nil {
-			result.answered, result.fresh, result.delay = true, true, history.Delay
-			return result
-		}
 	}
 	leaf, loaded := g.outbound.Outbound(result.leaf)
 	if !loaded {
@@ -658,463 +569,329 @@ func (g *URLTestGroup) rrProbeNode(ctx context.Context, member adapter.Outbound,
 		result.err = testCtx.Err()
 	}
 	result.answered = result.err == nil
-	result.ended = time.Now()
-	if g.balancer != nil {
-		g.balancer.rrClockLook(result.ended) // N3: the clocks are compared at every outcome
-	}
 	return result
 }
 
-// freshHistory returns the history of leaf if it is younger than rrHealFresh.
-func (g *URLTestGroup) freshHistory(leaf string) *adapter.URLTestHistory {
-	if history := g.history.LoadURLTestHistory(leaf); history != nil && time.Since(history.Time) < rrHealFresh {
-		return history
-	}
-	return nil
-}
-
-// rrStore writes the answer of a probe to history; a fresh or silent one is left as is.
+// rrStore writes the answer of a probe to history (D3).
 func (g *URLTestGroup) rrStore(probe rrProbe) {
-	if probe.answered && !probe.fresh {
+	if probe.answered {
 		g.history.StoreURLTestHistory(probe.leaf, &adapter.URLTestHistory{Time: time.Now(), Delay: probe.delay})
 	}
 }
 
-// rrHealCheck probes the node A and its neighbour B and acts on the verdict (SPEC
-// 138 §3.3). It owns the check slot taken by beginCheck. It runs on a context that
-// the group's Close and a freeze cancel, and stops at once then. A node that
-// answered settles its failures pending since before its probe (stage 2); a node
-// found dead drops them and loses its unfinished connections.
-func (s *URLTest) rrHealCheck(member adapter.Outbound, neighbour adapter.Outbound, hang bool) {
-	g := s.group
-	heal := &s.balancer.heal
-	// The gap bounds probes: a check that was aborted before its probes leaves no
-	// gap. A check from a reason (hang) sets its own gap only.
-	var probed bool
-	defer func() {
-		if hang {
-			heal.endHangCheck()
-		} else if probed {
-			heal.endCheck()
-		} else {
-			heal.running.Store(false)
-		}
+// --- the check (§4.2) --------------------------------------------------------------
+
+// rrStartCheck starts the check of the pool when its slot is free and the gap is
+// over; it reports whether it did.
+func (s *URLTest) rrStartCheck() bool {
+	if !s.balancer.heal.beginCheck() {
+		return false
+	}
+	go s.rrHealCheck()
+	return true
+}
+
+type rrCheckRole uint8
+
+const (
+	rrRoleFirst     rrCheckRole = iota // the first probe of a pool node (step 1)
+	rrRoleCandidate                    // a candidate of a batch (step 2, §5)
+	rrRoleDecisive                     // the decisive probe of a pool node (step 3)
+	rrRoleAfter                        // the control after (step 4)
+)
+
+type rrCheckResult struct {
+	role  rrCheckRole
+	index int // the pool node; the candidate for rrRoleCandidate
+	batch int
+	probe rrProbe
+}
+
+// rrCheck is one check in flight; only its own goroutine touches it.
+type rrCheck struct {
+	s          *URLTest
+	ctx        context.Context
+	x          time.Time // the start of the check
+	pool       []adapter.Outbound
+	size       int // |P|: the size of a batch of candidates
+	results    chan rrCheckResult
+	flying     int
+	answered   []bool // a probe of the pool node answered in this check (D3)
+	afterOK    []bool // the control after its decisive probe answered (D1)
+	control    adapter.Outbound
+	candidates []adapter.Outbound // the candidates probed, by index
+	ready      []adapter.Outbound // the candidates that answered, in order
+	seen       map[string]bool
+	batches    int // the batches of candidates of the current attempt
+	left       int // the probes of the latest batch in flight
+	refill     bool
+}
+
+func (c *rrCheck) launch(role rrCheckRole, index int, node adapter.Outbound) {
+	c.flying++
+	batch := c.batches
+	go func() {
+		c.results <- rrCheckResult{role, index, batch, c.s.group.rrProbeNode(c.ctx, node)}
 	}()
-	ctx, cancel := context.WithCancel(g.ctx)
-	heal.abort.Store(&cancel)
-	defer func() {
-		heal.abort.Store(nil)
-		cancel()
-	}()
-	if heal.aborted(ctx) {
-		return
+}
+
+// polling reports whether the candidates are still needed: no control yet, or no
+// candidate ready for the replacement.
+func (c *rrCheck) polling() bool {
+	if c.refill {
+		return len(c.ready) == 0
 	}
-	probed = true
-	// A, its neighbour B and the third node C (the next live slot after B, else the
-	// first candidate outside the pool) are probed at once, from the start of the
-	// check: a control is only worth its answer at the time of the silence it
-	// compares with (§3.3, the bracket below).
-	var neighbourTag string
-	if neighbour != nil {
-		neighbourTag = neighbour.Tag()
+	return c.control == nil
+}
+
+// nextBatch starts the next batch of candidates, at most k per attempt.
+func (c *rrCheck) nextBatch() bool {
+	if c.batches == rrCandidateBatches {
+		return false
 	}
-	third := s.rrThird(member.Tag(), neighbourTag)
-	type result struct {
-		role  int
-		probe rrProbe
+	batch := c.s.rrCandidateBatch(c.seen, c.size)
+	if len(batch) == 0 {
+		return false
 	}
-	const (
-		roleA = iota
-		roleB
-		roleC
-	)
-	results := make(chan result, 3)
-	launch := func(role int, node adapter.Outbound) {
-		go func() {
-			results <- result{role, g.rrProbeNode(ctx, node, false)}
-		}()
+	c.batches++
+	c.left = len(batch)
+	for _, node := range batch {
+		c.candidates = append(c.candidates, node)
+		c.launch(rrRoleCandidate, len(c.candidates)-1, node)
 	}
-	launch(roleA, member)
-	waiting := 1
-	if neighbour != nil {
-		launch(roleB, neighbour)
-		waiting++
-	}
-	// C is probed from the start as well, with one exception that keeps a probe: a
-	// neighbour B that answers within rrThirdAfter is the control, and C is not
-	// needed. C starts at rrThirdAfter, or as soon as B is silent, or at once with
-	// no B.
-	// With no neighbour the control is any node outside the pool that answers: the
-	// candidates are probed in parallel batches, as the replacement search does, and
-	// the first one in config order that answered is the control (and then the
-	// replacement). The first candidate alone is often dead in a subscription, and
-	// taking its silence for the own network would freeze the group again and again.
-	var cLaunched bool
-	startC := func() {
-		if third == nil || cLaunched {
-			return
-		}
-		cLaunched = true
-		waiting++
-		if neighbour != nil {
-			launch(roleC, third)
-			return
-		}
-		go func() {
-			batch := g.poolSize()
-			if batch < rrControlBatch {
-				batch = rrControlBatch
-			}
-			started := time.Now()
-			answer, chosen, _ := g.rrProbeFirstAnswer(ctx, g.rrCandidates(false), batch, false, heal)
-			if chosen == nil {
-				answer = rrProbe{member: "candidates", leaf: "candidates", err: E.New("no candidate answered"), started: started, ended: time.Now()}
-			}
-			results <- result{roleC, answer}
-		}()
-	}
-	if neighbour == nil {
-		startC()
-	}
-	thirdTimer := time.NewTimer(rrThirdAfter)
-	defer thirdTimer.Stop()
-	var probes [3]rrProbe
-	var done [3]bool
-	need := func() bool {
-		// A decides first; when A is silent, B decides; when B is silent or there is
-		// none, C. B's answer is written in any case, so it is waited for (as A is
-		// probed alongside it, that costs no time for a live pair); C only when it
-		// decides. The probes nobody waits for are cancelled with the check.
-		if !done[roleA] || neighbour != nil && !done[roleB] {
-			return true
-		}
-		if probes[roleA].answered {
-			return false
-		}
-		if neighbour != nil && probes[roleB].answered {
-			return false
-		}
-		return third != nil && !done[roleC]
-	}
-	for need() {
-		// B is silent, or A and B are in and C is what decides: C now.
-		if neighbour != nil && done[roleB] && !probes[roleB].answered {
-			startC()
-		}
-		if waiting == 0 {
-			break
-		}
-		var r result
+	return true
+}
+
+// loop takes the outcomes until nothing is in flight or done holds. A new batch of
+// candidates starts H after the previous one, or at once when the previous one
+// ended with no answer (step 2).
+func (c *rrCheck) loop(done func() bool) {
+	timer := time.NewTimer(rrHangAfter)
+	defer timer.Stop()
+	for c.flying > 0 && !done() {
 		select {
-		case r = <-results:
-		case <-thirdTimer.C:
-			// B answered in time: it is the control, C is not needed.
-			if neighbour == nil || !done[roleB] || !probes[roleB].answered {
-				startC()
+		case <-c.ctx.Done():
+			return
+		case <-timer.C:
+			if c.polling() {
+				c.nextBatch()
 			}
-			continue
+			timer.Reset(rrHangAfter)
+		case r := <-c.results:
+			c.flying--
+			c.take(r)
+			if (r.role == rrRoleFirst || r.role == rrRoleCandidate) && r.batch == c.batches {
+				c.left--
+				if c.left == 0 && c.polling() && c.nextBatch() {
+					timer.Reset(rrHangAfter)
+				}
+			}
 		}
-		waiting--
-		probes[r.role], done[r.role] = r.probe, true
+	}
+}
+
+func (c *rrCheck) take(r rrCheckResult) {
+	switch r.role {
+	case rrRoleFirst, rrRoleDecisive:
 		if r.probe.answered {
-			s.rrProbeProof(r.probe)
-		}
-	}
-	a, b, c := probes[roleA], probes[roleB], probes[roleC]
-	// A run cancelled by Close, or a freeze that came in meanwhile (a wake, a network
-	// change): the probes say nothing about the nodes.
-	if heal.aborted(ctx) || a.leaf == "" {
-		return
-	}
-	if a.answered {
-		g.rrStore(a)
-		for _, control := range []rrProbe{b, c} {
-			if control.answered {
-				g.rrStore(control)
-				s.rrSettleProbe(control)
+			if !c.answered[r.index] {
+				c.answered[r.index] = true
+				c.s.rrAlive(r.probe) // D3
 			}
+			c.found(c.pool[r.index])
+		} else if r.role == rrRoleDecisive {
+			c.launch(rrRoleAfter, r.index, c.control) // step 4: the control after, started at y
 		}
-		// A is alive: the destination is not reachable through it; its failures
-		// pending since before the probe shift their keys.
-		s.rrSettleProbe(a)
+	case rrRoleAfter:
+		if r.probe.answered {
+			c.afterOK[r.index] = true
+			c.s.rrAlive(r.probe) // D3 of the control
+		}
+	case rrRoleCandidate:
+		if r.probe.answered {
+			c.s.rrAlive(r.probe) // D3
+			node := c.candidates[r.index]
+			c.ready = append(c.ready, node)
+			c.found(node)
+		}
+	}
+}
+
+// found is an ANSWER in the check: the first one is the control (b0), and every
+// pool node that has not answered gets its decisive probe now (step 3, V7).
+func (c *rrCheck) found(node adapter.Outbound) {
+	if c.control != nil || c.refill {
 		return
 	}
-	dead := []rrProbe{a}
-	var control rrProbe
-	switch {
-	case neighbour != nil && b.answered:
-		control = b
-	case done[roleC] && c.answered:
-		control = c
-		if neighbour != nil {
-			dead = append(dead, b) // B was silent too
-		}
-	case neighbour == nil && third == nil:
-		return // nothing to compare A with: no verdict
-	case neighbour == nil && !c.answered:
-		// A pool of one: A and the candidate taken as the control are both silent —
-		// the own network, as for a larger pool. No replacement search after A's
-		// window: a network that came back meanwhile would strike live A out.
-		s.rrOwnNetwork(a, c)
-		return
-	default:
-		if neighbour != nil {
-			s.rrOwnNetwork(a, b, c)
-		} else {
-			s.rrOwnNetwork(a, c)
-		}
-		return
-	}
-	s.rrStrikeBracketed(ctx, dead, control)
-}
-
-// rrFastAnswer — a control that answered this soon after the check started proves
-// the network up for the silence it brackets; a later first answer may be the
-// network coming back during the silence (rrStrikeBracketed). A probe answer slower
-// than this may have started before the network came back (rrProbeProof).
-const rrFastAnswer = time.Second
-
-// rrFastAnswerWithin is rrFastAnswer, at most a quarter of the probe timeout.
-func rrFastAnswerWithin() time.Duration {
-	if quarter := rrProbeTimeout() / 4; quarter < rrFastAnswer {
-		return quarter
-	}
-	return rrFastAnswer
-}
-
-// rrStrikeBracketed strikes the silent nodes dead out with the control that
-// answered — only when the network was up both before and after their silence
-// (§3.3 "bracket"):
-//   - the control answered fast (rrFastAnswer from the start of the check): the
-//     network was up through the silence; a second probe of the control after
-//     the silence must answer too;
-//   - the control answered late (the network may have come back during the
-//     silence): the control and every silent node are probed again, together; the
-//     control answers and a node stays silent for the whole timeout or refuses
-//     actively → dead; a node that answers is alive. No freeze on a late first
-//     answer alone: on a slow network a dead node is struck within two timeouts.
-//
-// A silent second probe of the control is the own network: freeze. A silent node
-// that proved alive meanwhile (a first byte of a connection that started after its
-// probe) is no longer dead.
-func (s *URLTest) rrStrikeBracketed(ctx context.Context, dead []rrProbe, control rrProbe) {
-	g := s.group
-	heal := &s.balancer.heal
-	member, loaded := s.outbound.Outbound(control.member)
-	if !loaded {
-		return
-	}
-	silent := dead
-	again := make([]rrProbe, len(dead))
-	var controlAgain rrProbe
-	if control.ended.Sub(dead[0].started) <= rrFastAnswerWithin() {
-		controlAgain = g.rrProbeNode(ctx, member, false)
-	} else {
-		s.logger.Debug("round_robin: the control answered late (", rrProbeSummary(control), "); probing it and the silent nodes again")
-		var wg sync.WaitGroup
-		for i, probe := range dead {
-			node, loaded := s.outbound.Outbound(probe.member)
-			if !loaded {
-				again[i] = probe
-				continue
-			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				again[i] = g.rrProbeNode(ctx, node, false)
-			}()
-		}
-		controlAgain = g.rrProbeNode(ctx, member, false)
-		wg.Wait()
-		silent = again
-	}
-	if heal.aborted(ctx) {
-		return
-	}
-	if !controlAgain.answered {
-		s.rrOwnNetwork(append(dead, controlAgain)...)
-		return
-	}
-	struck := make([]rrProbe, 0, len(silent))
-	for _, probe := range silent {
-		if probe.answered {
-			g.rrStore(probe) // the second round: alive
-			s.rrSettleProbe(probe)
-			continue
-		}
-		if t := s.balancer.trackOf(probe.member); t != nil && t.proved.Load() >= rrClock(probe.started) {
-			s.logger.Debug("round_robin: ", probe.member, " proved alive during the check; dead verdict dropped")
-			continue
-		}
-		struck = append(struck, probe)
-	}
-	g.rrStore(controlAgain)
-	s.rrSettleProbe(controlAgain)
-	if len(struck) > 0 {
-		s.rrStrike(ctx, struck, controlAgain)
-	}
-}
-
-// rrHang is a client that gave up on a connection through member with no byte:
-// it cancelled the dial, or closed the connection after it sent something (a UDP
-// flow closed with packets sent and none received). After rrHangAfter or more
-// since the connection started it is a reason for a check: a node that accepts and
-// stays silent gives no failure at all. It is only a reason — no retry, no shift,
-// no count: the check strikes a dead node out, freezes on the own network, and
-// writes the answer of a live one. Silent flows are common (QUIC to a blocked
-// site, NTP, STUN), so the reason is dropped when the node proved alive since the
-// connection started — another connection through it got its first byte, or its
-// history was written — or when its history is younger than rrHealFresh; and the
-// checks from reasons keep their own gap, rrHangGap, without the gap of the
-// failure checks (one check in flight is shared). An interrupt of the group, its
-// Close and a connection test are no reason; the freeze holds as for failures.
-//
-// gaveUp tells a client that cancelled or closed (the log says so) from a pick
-// that found the connection still waiting (rrOnPick). It reports whether a check
-// started.
-func (s *URLTest) rrHang(member string, start time.Time, gaveUp bool) bool {
-	b := s.balancer
-	if start.IsZero() || time.Since(start) < rrHangAfter || s.group.ctx.Err() != nil || b.heal.frozen() || b.heal.interrupting.Load() > 0 || s.rrBeforeEvent(start) {
-		return false
-	}
-	node, loaded := s.outbound.Outbound(member)
-	if !loaded {
-		return false
-	}
-	if b.rrByteSince(member, rrClock(start)) {
-		return false
-	}
-	if history := s.group.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)); history != nil && (history.Time.After(start) || time.Since(history.Time) < rrHealFresh) {
-		return false
-	}
-	if !s.rrStartCheck(node, true) {
-		return false
-	}
-	if gaveUp {
-		s.logger.Debug("round_robin: the client gave up on a connection through ", member, " with no byte after ", time.Since(start).Round(time.Second), "; checking the node")
-	} else {
-		s.logger.Debug("round_robin: a connection through ", member, " has been waiting for ", time.Since(start).Round(time.Second), "; checking the node")
-	}
-	return true
-}
-
-// rrSuspectSlot puts the slot of the pool member tag under suspicion from a failed
-// connection that started at start (rrTrack.silentSince), unless the node proved
-// alive while that connection waited.
-func (s *URLTest) rrSuspectSlot(tag string, start time.Time) {
-	if start.IsZero() || s.rrProvedDuring(tag, start) {
-		return
-	}
-	if t := s.balancer.trackOf(tag); t != nil {
-		t.markSilent(rrClock(start))
-	}
-}
-
-// rrDestinationRefused reports whether err of an open through the pool member
-// member is its own leaf's answer that the destination failed
-// (adapter.DestinationRefusedLx set by the leaf itself — not by a proxy on the way
-// to the leaf's server, a detour, whose refusal is the node's path failing).
-func (s *URLTest) rrDestinationRefused(member adapter.Outbound, err error) bool {
-	var refused *adapter.DestinationRefusedLx
-	if !errors.As(err, &refused) {
-		return false
-	}
-	leaf := RealTag(member, N.NetworkTCP)
-	return refused.Tag != "" && (refused.Tag == leaf || refused.Tag == member.Tag())
-}
-
-// rrProvedDuring reports whether the pool member tag proved alive while a
-// connection that started at start waited: the proof (a first byte of a connection
-// or a probe answer) is marked with the start of what proved it, not earlier than
-// start, and it is in by now.
-func (s *URLTest) rrProvedDuring(tag string, start time.Time) bool {
-	if start.IsZero() {
-		return false
-	}
-	t := s.balancer.trackOf(tag)
-	return t != nil && t.proved.Load() >= rrClock(start)
-}
-
-// rrSiteOnOpen reports whether the leaf of node goes to the destination itself
-// when a connection opens (siteOnOpenLx): its failed dial says as much about the
-// site as about the node. A proxy leaf fails its dial between us and its server:
-// the node itself is under suspicion.
-func (s *URLTest) rrSiteOnOpen(node adapter.Outbound) bool {
-	return siteOnOpenLx(s.ctx, s.outbound, node)
-}
-
-// rrStartCheck starts the check of the pool member node and its neighbour when the
-// check slot is free; it reports whether it started one. hang is a check from a
-// reason (rrHang): it keeps its own gap.
-func (s *URLTest) rrStartCheck(node adapter.Outbound, hang bool) bool {
-	b := s.balancer
-	slots := b.slotsSnapshot()
-	index := slotIndex(slots, node.Tag())
-	if index < 0 {
-		return false
-	}
-	var neighbour adapter.Outbound
-	if i, found := b.nextLiveSlot(slots, index, func(tag string) bool {
-		return s.slotAlive(tag) && s.slotSupports(tag, N.NetworkTCP)
-	}); found {
-		neighbour, _ = s.outbound.Outbound(slots[i].tag)
-	}
-	if hang {
-		if !b.heal.beginHangCheck() {
-			return false
-		}
-	} else if !b.heal.beginCheck() {
-		return false
-	}
-	go s.rrHealCheck(node, neighbour, hang)
-	return true
-}
-
-// rrThird returns the third node of a check where A and B are both silent: the next
-// live slot after B, else the first node outside the pool (config order).
-func (s *URLTest) rrThird(failed, neighbour string) adapter.Outbound {
-	slots := s.balancer.slotsSnapshot()
-	from := -1
-	for i, entry := range slots {
-		if entry.tag == neighbour {
-			from = i
-			break
+	c.control = node
+	for i, member := range c.pool {
+		if !c.answered[i] {
+			c.launch(rrRoleDecisive, i, member)
 		}
 	}
-	if from >= 0 {
-		if i, found := s.balancer.nextLiveSlot(slots, from, func(tag string) bool {
-			return tag != failed && s.slotAlive(tag) && s.slotSupports(tag, N.NetworkTCP)
-		}); found {
-			if node, loaded := s.outbound.Outbound(slots[i].tag); loaded {
-				return node
-			}
+}
+
+// takeReady returns the next candidate that answered and may take a slot.
+func (c *rrCheck) takeReady() adapter.Outbound {
+	b := c.s.balancer
+	for len(c.ready) > 0 {
+		node := c.ready[0]
+		c.ready = c.ready[1:]
+		if !b.inPool(node.Tag()) && !b.isQuarantined(node.Tag()) {
+			return node
 		}
-	}
-	candidates := s.group.rrCandidates(false)
-	if len(candidates) > 0 {
-		return candidates[0]
 	}
 	return nil
 }
 
-// rrOwnNetwork is the verdict "nobody answered": the local network is down; nothing
-// changes — no connection is cancelled or closed — and the self-heal freezes,
-// which voids every pending failure.
-func (s *URLTest) rrOwnNetwork(probes ...rrProbe) {
-	s.balancer.heal.freeze()
-	s.logger.Debug("round_robin: no node answered the check (", rrProbeSummary(probes...), "), local network assumed down; self-heal frozen for ", rrHealFreeze)
+// rrHealCheck is the check of the pool (§4.2) followed by D1 and the replacement
+// (§5). It owns the check slot taken by beginCheck and runs on a context the
+// group's Close and an event (N0) cancel.
+func (s *URLTest) rrHealCheck() {
+	heal := &s.balancer.heal
+	ctx, cancel := context.WithCancel(s.group.ctx)
+	heal.abort.Store(&cancel)
+	defer func() {
+		heal.abort.Store(nil)
+		cancel()
+		heal.endCheck()
+	}()
+	if heal.aborted(ctx) {
+		return
+	}
+	slots := s.balancer.slotsSnapshot()
+	c := &rrCheck{s: s, ctx: ctx, x: time.Now(), size: len(slots), seen: make(map[string]bool)}
+	for _, entry := range slots {
+		if entry.tag == "" || s.balancer.isQuarantined(entry.tag) {
+			continue // V11: a quarantined node takes no part
+		}
+		if node, loaded := s.outbound.Outbound(entry.tag); loaded && common.Contains(node.Network(), N.NetworkTCP) {
+			c.pool = append(c.pool, node)
+			c.seen[node.Tag()] = true
+		}
+	}
+	c.results = make(chan rrCheckResult, 3*len(c.pool)+2*rrCandidateBatches*c.size+1)
+	c.answered, c.afterOK = make([]bool, len(c.pool)), make([]bool, len(c.pool))
+	for i, node := range c.pool {
+		c.launch(rrRoleFirst, i, node) // step 1
+	}
+	c.left = len(c.pool)
+	if c.left == 0 {
+		c.nextBatch()
+	}
+	c.loop(func() bool { return false })
+	if heal.aborted(ctx) {
+		return // N0: no verdict
+	}
+	if c.control == nil {
+		s.logger.Debug("round_robin: no probe answered the check; no verdict") // D5
+	}
+	s.rrStrike(ctx, c)
+	s.rrRefill(ctx, c)
 }
 
-// rrDropHistory drops the history of a node found dead, unless it is newer than
-// the start of the probe that found it so: a scheduled check answered for the node
-// meanwhile, and the verdict about it is dropped. It reports whether the verdict
-// stands.
-func (s *URLTest) rrDropHistory(dead rrProbe) bool {
-	if s.group.history.DeleteURLTestHistoryNotAfterLx(dead.leaf, dead.started) {
-		return true
+// rrStrike is D1 for every pool node whose decisive probe had no ANSWER while the
+// control after it answered, read at the verdict: no ANSWER via the node that
+// started at or after x (proved), no history written after x.
+func (s *URLTest) rrStrike(ctx context.Context, c *rrCheck) {
+	b := s.balancer
+	for i, node := range c.pool {
+		if c.answered[i] || !c.afterOK[i] || b.heal.aborted(ctx) {
+			continue // D3, D4, or no control (D5)
+		}
+		t := b.trackOf(node.Tag())
+		if t == nil || t.proved.Load() >= rrClock(c.x) {
+			continue
+		}
+		if !s.group.history.DeleteURLTestHistoryNotAfterLx(RealTag(node, N.NetworkTCP), c.x) {
+			continue // a scheduled run answered for the node since x: no verdict
+		}
+		b.rrForget(node.Tag())         // Q3: D1 drops the counters
+		b.memory.k2.forget(node.Tag()) // K2: D1 erases the node's records
+		s.rrDead(t)
+		s.logger.Info("round_robin: ", node.Tag(), " struck out as dead; control ", c.control.Tag())
 	}
-	s.logger.Debug("round_robin: ", dead.member, " answered a scheduled check during the self-heal probe; dead verdict dropped")
-	return false
+}
+
+// rrRefill puts into every slot with no live node (struck, quarantined, empty) a
+// candidate that answered its probe in this check, else one of up to k more
+// batches (§5); with no answer the slot stays empty until the next check.
+func (s *URLTest) rrRefill(ctx context.Context, c *rrCheck) {
+	b := s.balancer
+	var empty []string
+	for _, entry := range b.slotsSnapshot() {
+		if entry.tag == "" || !s.slotAlive(entry.tag) {
+			empty = append(empty, entry.tag)
+		}
+	}
+	if len(empty) == 0 || !s.rrTakeChecking(ctx) {
+		return // nothing to replace, or the scheduled run does the same work
+	}
+	defer s.group.checking.Store(false)
+	c.refill, c.batches, c.left = true, 0, 0
+	for _, dead := range empty {
+		for {
+			if b.heal.aborted(ctx) {
+				return
+			}
+			node := c.takeReady()
+			if node == nil {
+				if c.flying == 0 && !c.nextBatch() {
+					return // the attempt is over
+				}
+				c.loop(func() bool { return len(c.ready) > 0 })
+				continue
+			}
+			if b.replaceSlot(dead, node.Tag()) {
+				s.logger.Info("round_robin: ", node.Tag(), " replaces ", dead, " in its slot")
+				break
+			}
+		}
+	}
+}
+
+// rrCandidateBatch returns the next batch of at most size candidates not yet probed
+// in this check (§5): those with live history first, fastest first, then the rest
+// from the cursor going round in config order; the cursor moves past the last one
+// it gave (I8).
+func (s *URLTest) rrCandidateBatch(seen map[string]bool, size int) []adapter.Outbound {
+	g, b := s.group, s.balancer
+	usable := func(node adapter.Outbound) bool {
+		tag := node.Tag()
+		return !seen[tag] && !b.inPool(tag) && !b.isQuarantined(tag) && common.Contains(node.Network(), N.NetworkTCP)
+	}
+	var alive []candidate
+	byTag := make(map[string]adapter.Outbound)
+	for _, node := range g.outbounds {
+		if !usable(node) {
+			continue
+		}
+		if history := g.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)); history != nil {
+			alive = append(alive, candidate{tag: node.Tag(), delay: history.Delay, alive: true})
+			byTag[node.Tag()] = node
+		}
+	}
+	sortCandidatesByDelay(alive)
+	batch := make([]adapter.Outbound, 0, size)
+	for _, entry := range alive {
+		if len(batch) == size {
+			return batch
+		}
+		batch = append(batch, byTag[entry.tag])
+		seen[entry.tag] = true
+	}
+	n := len(g.outbounds)
+	for step := 0; step < n && len(batch) < size; step++ {
+		i := (b.heal.cursor + step) % n
+		node := g.outbounds[i]
+		if !usable(node) || byTag[node.Tag()] != nil {
+			continue
+		}
+		batch = append(batch, node)
+		seen[node.Tag()] = true
+		b.heal.cursor = (i + 1) % n
+	}
+	return batch
 }
 
 // rrTakeChecking claims URLTestGroup.checking for a slot change of the self-heal;
@@ -1129,218 +906,6 @@ func (s *URLTest) rrTakeChecking(ctx context.Context) bool {
 		return false
 	}
 	return true
-}
-
-// rrStrike is the verdict "dead": the history of every dead node is dropped (pick
-// skips its slot from now on), its pending failures are dropped, its unfinished
-// connections end (rrDead) and its slot gets a replacement.
-func (s *URLTest) rrStrike(ctx context.Context, dead []rrProbe, control rrProbe) {
-	struck := make([]rrProbe, 0, len(dead))
-	for _, probe := range dead {
-		if !s.rrDropHistory(probe) {
-			continue
-		}
-		struck = append(struck, probe)
-		s.balancer.rrForget(probe.member) // stage 2: its failures while dead do not follow it
-		s.logger.Info("round_robin: ", probe.member, " struck out as dead: ", rrProbeSummary(probe), "; control ", rrProbeSummary(control))
-		if !s.balancer.heal.aborted(ctx) {
-			s.rrDead(s.balancer.trackOf(probe.member))
-		}
-	}
-	if len(struck) == 0 || !s.rrTakeChecking(ctx) {
-		return // nothing to replace, or the scheduled health-check is running and does the same work
-	}
-	defer s.group.checking.Store(false)
-	for _, probe := range struck {
-		if s.balancer.heal.aborted(ctx) {
-			return
-		}
-		s.rrReplace(ctx, probe, false)
-	}
-}
-
-// rrReplace puts a node from outside the pool into the slot of dead (SPEC 138 §3.4).
-// It runs under URLTestGroup.checking. pool_tolerance 0 probes the candidates in
-// config order, in parallel batches of the pool size (as balancePoolFirstLive does),
-// and takes the first one in config order that answered in the first batch with an
-// answer; a candidate with fresh history counts as an answer unprobed: dead is
-// already proved dead by a live control. pool_tolerance > 0 takes the fastest one
-// by history without probes and probes only when none has history. As a control
-// (asControl) it always probes live: history of any age is no answer from the
-// network now; a candidate that answered proves dead dead, and its history is
-// dropped then (rrDropHistory: unless newer than its probe). It returns the answer
-// of the replacement, how many candidates it probed and whether a replacement took
-// the slot; an answer with found false means the verdict was dropped.
-func (s *URLTest) rrReplace(ctx context.Context, dead rrProbe, asControl bool) (rrProbe, int, bool) {
-	return s.rrReplaceNode(ctx, dead, asControl, false)
-}
-
-// rrReplaceNode is rrReplace; quarantined refills the slot of a quarantined node,
-// which keeps its history (stage 2).
-func (s *URLTest) rrReplaceNode(ctx context.Context, dead rrProbe, asControl bool, quarantined bool) (rrProbe, int, bool) {
-	g := s.group
-	if !asControl && !quarantined && g.history.LoadURLTestHistory(dead.leaf) != nil {
-		return rrProbe{}, 0, false // probed alive again since the verdict: keep it
-	}
-	tolerant := g.balancer.poolTolerance > 0 && !asControl
-	candidates := g.rrCandidates(tolerant)
-	if len(candidates) == 0 {
-		return rrProbe{}, 0, false
-	}
-	var (
-		answer rrProbe
-		chosen adapter.Outbound
-		probed int
-	)
-	if tolerant {
-		// The candidates with history come first, fastest first.
-		leaf := RealTag(candidates[0], N.NetworkTCP)
-		if history := g.history.LoadURLTestHistory(leaf); history != nil {
-			answer = rrProbe{member: candidates[0].Tag(), leaf: leaf, answered: true, fresh: true, delay: history.Delay}
-			chosen = candidates[0]
-		}
-	}
-	if chosen == nil {
-		answer, chosen, probed = g.rrProbeFirstAnswer(ctx, candidates, g.poolSize(), !asControl, &s.balancer.heal)
-		if s.balancer.heal.aborted(ctx) || chosen == nil {
-			return rrProbe{}, probed, false
-		}
-	}
-	if asControl {
-		// The bracket (rrStrikeBracketed): the candidate answered after the silence of
-		// dead; it answers once more, or the network is only coming back.
-		again := g.rrProbeNode(ctx, chosen, false)
-		if s.balancer.heal.aborted(ctx) {
-			return rrProbe{}, probed, false
-		}
-		if !again.answered {
-			return rrProbe{}, probed + 1, false
-		}
-		if t := s.balancer.trackOf(dead.member); t != nil && t.proved.Load() >= rrClock(dead.started) {
-			return again, probed, false // dead proved alive meanwhile: the verdict is dropped
-		}
-		answer = again
-	}
-	if asControl && !s.rrDropHistory(dead) {
-		return answer, probed, false
-	}
-	if g.balancer.replaceSlot(dead.member, chosen.Tag()) {
-		s.logger.Info("round_robin: ", chosen.Tag(), " replaces ", dead.member, " in its slot")
-	}
-	return answer, probed, true
-}
-
-// rrProbeFirstAnswer probes candidates in parallel batches of batchSize, in config
-// order, and returns the first one in config order that answered in the first
-// batch with any answer; it does not probe further batches then. The answers of
-// every candidate that answered in a batch are written to history, the silence is
-// not. byHistory counts fresh history as an answer (rrProbeNode). probed counts
-// the candidates actually probed (fresh history is no probe). It stops when the
-// check is aborted (ctx cancelled or the self-heal frozen).
-func (g *URLTestGroup) rrProbeFirstAnswer(ctx context.Context, candidates []adapter.Outbound, batchSize int, byHistory bool, heal *rrHeal) (rrProbe, adapter.Outbound, int) {
-	if batchSize < 1 {
-		batchSize = 1
-	}
-	var probed int
-	for start := 0; start < len(candidates); start += batchSize {
-		end := start + batchSize
-		if end > len(candidates) {
-			end = len(candidates)
-		}
-		batch := candidates[start:end]
-		answers := make([]rrProbe, len(batch))
-		var wg sync.WaitGroup
-		for i, candidate := range batch {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				answers[i] = g.rrProbeNode(ctx, candidate, byHistory)
-			}()
-		}
-		wg.Wait()
-		if heal.aborted(ctx) {
-			return rrProbe{}, nil, probed
-		}
-		first := -1
-		for i, answer := range answers {
-			if !answer.fresh {
-				probed++
-			}
-			if !answer.answered {
-				continue
-			}
-			g.rrStore(answer)
-			if first < 0 {
-				first = i
-			}
-		}
-		if first >= 0 {
-			return answers[first], batch[first], probed
-		}
-	}
-	return rrProbe{}, nil, probed
-}
-
-// rrCandidates returns the nodes outside the pool in config order; byDelay puts the
-// ones with history first, fastest first. A quarantined node is no candidate.
-func (g *URLTestGroup) rrCandidates(byDelay bool) []adapter.Outbound {
-	inPool := make(map[string]bool)
-	for _, tag := range g.balancer.poolTags() {
-		inPool[tag] = true
-	}
-	var withHistory []candidate
-	candidates := make([]adapter.Outbound, 0, len(g.outbounds))
-	for _, detour := range g.outbounds {
-		if inPool[detour.Tag()] || !common.Contains(detour.Network(), N.NetworkTCP) || g.balancer.isQuarantined(detour.Tag()) {
-			continue
-		}
-		if byDelay {
-			if history := g.history.LoadURLTestHistory(RealTag(detour, N.NetworkTCP)); history != nil {
-				withHistory = append(withHistory, candidate{tag: detour.Tag(), delay: history.Delay, alive: true})
-				continue
-			}
-		}
-		candidates = append(candidates, detour)
-	}
-	if len(withHistory) == 0 {
-		return candidates
-	}
-	sortCandidatesByDelay(withHistory)
-	ordered := make([]adapter.Outbound, 0, len(withHistory)+len(candidates))
-	for _, c := range withHistory {
-		if node, loaded := g.outbound.Outbound(c.tag); loaded {
-			ordered = append(ordered, node)
-		}
-	}
-	return append(ordered, candidates...)
-}
-
-func rrProbeSummary(probes ...rrProbe) string {
-	var summary string
-	for i, probe := range probes {
-		if probe.member == "" {
-			continue
-		}
-		if i > 0 {
-			summary += ", "
-		}
-		summary += probe.member
-		if probe.leaf != probe.member {
-			summary += " (" + probe.leaf + ")"
-		}
-		switch {
-		case probe.fresh:
-			summary += " alive by fresh history"
-		case probe.answered:
-			summary += " answered in " + strconv.Itoa(int(probe.delay)) + "ms"
-		default:
-			summary += " silent"
-			if probe.err != nil {
-				summary += ": " + probe.err.Error()
-			}
-		}
-	}
-	return summary
 }
 
 // lx:end SPEC 138

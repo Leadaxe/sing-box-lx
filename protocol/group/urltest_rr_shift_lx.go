@@ -1,47 +1,35 @@
 package group
 
-// lx:begin SPEC 138 round_robin key shift, slot counters and quarantine (stage 2)
+// lx:begin SPEC 138 round_robin: the key shift, the K2 memory, the slot counters
 //
-// Key shift (§3.5). A destination may be unreachable through one live node and
-// reachable through another. The group remembers that as one number per key, the
-// shift: the key of the table is the sticky key plus the destination (the domain,
-// else the destination IP) unless the sticky key holds it already, so one dead
-// site does not move a whole application off its node; the slot is still counted
-// from the sticky key, (hash + shift) % pool. The shift grows when a failure (a
-// dial that did not open, or a connection closed without a byte) hit a node that
-// proved alive after the failure (urltest_rr_track_lx.go): the first byte of a
-// connection through it that started after the failure, an answer of a probe of it
-// that started after the failure, or its history written after the failure. Until then the failure is
-// pending on the node; the dead verdict drops it, a freeze voids it. When the own
-// network is gone no byte comes, and nothing shifts. A
-// shifted key whose slot is dead goes to the next live slot going round, the same
-// one its retry went to. A connection remembers the shift its key was picked with;
-// its failure shifts the key only while the shift is still that one, so parallel
-// connections of a key failing on one node shift it once. A failure on a node the
-// key passed already shifts it on as any other (the pool may have been rebuilt
-// under the key). A key that failed on as many different nodes of the current pool
-// as there are live slots is marked "address problem" (the nodes it passed that
-// left the pool do not count): it goes back to its own slot and gets no retries,
-// shifts or checks by its failures until the next scheduled run, manual run or
-// network change. Unmarked shifts live until restart. The table holds 1024 keys
-// and drops the oldest one; the shift belongs to the slot, not to the node.
-// Without stickiness there is no table.
+// The rules named here are those of SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/
+// ALGORITHM.md.
 //
-// Slot counters (§3.6). Per pool member: connections and confirmed failures since
-// the node took its slot. A failure is confirmed when (1) the retry of the same
-// connection got the first byte — one to the node that failed the dial, counted
-// once that node proved alive after the failure; (2) a
-// shifted key got the first byte on another slot — one to every node it passed,
-// once, and never twice within one connection. An address-problem key confirms
-// nothing, nor does a node without history (dead). At 256 connections both
-// counters halve; the dead verdict drops them. A node with at least 8 connections,
-// 3 confirmed failures, a failure share of at least 5% and above twice the median
-// share of the other pool members with at least 8 connections goes to quarantine (no such
-// neighbour, no quarantine): the group skips
-// its slot (slotAlive) and refills it like a dead one, the node is no candidate and
-// no control; its history stays. The scheduled run, a manual run and a network
-// change lift every quarantine. Nothing is counted or shifted while the self-heal
-// is frozen; a connection test (SPEC 139) leaves all of this alone.
+// The key shift (§4.4). A destination may be unreachable through one live node and
+// reachable through another. The group keeps one number per key, the shift: the
+// key of the table is the sticky key plus the destination (the domain, else the
+// IP) unless the sticky key holds it already; the slot of the key is still counted
+// from the sticky key, (hash + shift) % pool. The key shifts past a node:
+//   - K1: at once by an explicit REFUSE_DST on the slot of the key;
+//   - K2: by the second soft sign (FAIL_NODE, implicit REFUSE_DST, SILENT) of the
+//     key on the node, both picked at the same shift on the slot of the key, the
+//     second started after the outcome of the first, with an ANSWER via the node
+//     between their starts (rrTrack.live) and none to the key. The first sign is
+//     only a record in a table of rrK2Size per group (K4); an ANSWER to the key on
+//     the node, a shift of the key (the record keeps its shift), E, the scheduled
+//     run and the node leaving the slot erase it. A SILENT that gets its ANSWER
+//     later takes back the shift that rested on it.
+// A connection shifts the key only while the shift is still the one it was picked
+// with. A sign on the slot of a retry or of a detour shifts nothing. K5: after |P|
+// shifts in a row with no ANSWER to the key it is marked "address problem": back
+// to its own slot, no K1/K2, no retry by an explicit refusal or LOCAL, until the
+// scheduled run, a manual run or a network change. UDP shifts no key, and without
+// stickiness there is no key.
+//
+// The slot counters (§4.5). Per pool member: connections and the signs counted by
+// Q1, at most once per key (no key: every sign); Q2 quarantines a node that fails
+// noticeably more often than the median of the pool; Q3 halves both counters at
+// 256 connections, and D1 and the node leaving its slot drop them. UDP stays out.
 
 import (
 	"context"
@@ -57,25 +45,6 @@ import (
 	"github.com/sagernet/sing/common"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-)
-
-const (
-	// rrShiftTableSize bounds the shift table; the oldest key goes first.
-	rrShiftTableSize = 1024
-	// rrCountHalveAt halves both slot counters when the connections reach it.
-	rrCountHalveAt = 256
-	// rrQuarantineMinFails is the least number of confirmed failures for quarantine.
-	rrQuarantineMinFails = 3
-	// rrQuarantineMinShare is the least failure share for quarantine: with no
-	// failures at the neighbours the median is 0, and "above twice the median"
-	// alone would hold for any share.
-	rrQuarantineMinShare = 0.05
-	// rrQuarantineMinConns is the least number of connections of a node whose share
-	// counts: for the quarantine candidate and for the median of its neighbours.
-	rrQuarantineMinConns = 8
-	// rrQuarantineWait bounds how long a quarantine waits for the check in flight
-	// and the gap after the previous one before it gives up the refill.
-	rrQuarantineWait = rrHealGap + C.TCPTimeout
 )
 
 // rrKey identifies a connection for the shift table.
@@ -112,9 +81,9 @@ type rrPick struct {
 	track *rrTrack // the tracker of the picked slot; nil for a pick outside the pool
 	dial  *rrDial  // the dial of the pick in flight, when tracked (rrDialStart)
 	// detour: the slot the key would take was under suspicion and the pick went to
-	// the next one instead; a failure there shifts no key — the shift counts from
-	// the slot the key takes without a suspicion, which was not tried.
+	// the next one instead; a sign there shifts no key and writes no K2 memory.
 	detour bool
+	packet bool // a UDP exchange: its dial waits in pwaits (V9)
 }
 
 const (
@@ -215,20 +184,10 @@ func (b *balancer) rrKeyOf(ctx context.Context, destination M.Socksaddr) rrKey {
 
 // --- shift table -----------------------------------------------------------------
 
-type rrPassedNode struct {
-	tag      string
-	credited bool // its failure is confirmed already (§3.6.2)
-	// silent: the key passed the node by silence alone (a silent site through a
-	// live node, a timeout of an open that went to the site): it shifts the key but
-	// confirms no failure — silence is ambiguous (a slow site, a long poll) and must
-	// not press towards quarantine.
-	silent bool
-}
-
 type rrShiftEntry struct {
 	shift  int
-	marked bool           // address problem
-	passed []rrPassedNode // the nodes the key failed on, in order
+	marked bool         // K5: an address problem
+	run    atomic.Int32 // K5: shifts in a row with no ANSWER to the key
 }
 
 // rrShiftTable is the shift table of a group: at most rrShiftTableSize keys, the
@@ -275,7 +234,7 @@ func (t *rrShiftTable) shiftOf(key uint64) int {
 	return 0
 }
 
-// marked reports whether key is an address problem.
+// marked reports whether key is an address problem (K5).
 func (t *rrShiftTable) marked(key uint64) bool {
 	if t.size.Load() == 0 {
 		return false
@@ -286,58 +245,25 @@ func (t *rrShiftTable) marked(key uint64) bool {
 	return e != nil && e.marked
 }
 
-// unmarkAll lifts every address-problem mark.
+// answered is an ANSWER to key: K5 counts the circle anew.
+func (t *rrShiftTable) answered(key uint64) {
+	if t.size.Load() == 0 {
+		return
+	}
+	t.access.RLock()
+	defer t.access.RUnlock()
+	if e := t.entries[key]; e != nil && e.run.Load() != 0 {
+		e.run.Store(0)
+	}
+}
+
+// unmarkAll lifts every K5 mark.
 func (t *rrShiftTable) unmarkAll() {
 	t.access.Lock()
 	defer t.access.Unlock()
 	for _, e := range t.entries {
 		e.marked = false
 	}
-}
-
-// markCredited records that the failure of key on tag is confirmed already.
-func (t *rrShiftTable) markCredited(key uint64, tag string) {
-	t.access.Lock()
-	defer t.access.Unlock()
-	if e := t.entries[key]; e != nil {
-		for i := range e.passed {
-			if e.passed[i].tag == tag {
-				e.passed[i].credited = true
-			}
-		}
-	}
-}
-
-// creditable returns the nodes key passed whose failures the first byte through
-// success confirms (§3.6.2, case 2), and marks them confirmed. A marked key
-// confirms nothing; nor does a first byte through a node the key passed. credited
-// is a node the same connection has confirmed already (case 1): it is marked
-// confirmed and not returned again.
-func (t *rrShiftTable) creditable(key uint64, success string, credited string) []string {
-	if t.size.Load() == 0 {
-		return nil
-	}
-	t.access.Lock()
-	defer t.access.Unlock()
-	e := t.entries[key]
-	if e == nil || e.marked {
-		return nil
-	}
-	for _, passed := range e.passed {
-		if passed.tag == success {
-			return nil
-		}
-	}
-	var tags []string
-	for i := range e.passed {
-		if !e.passed[i].credited {
-			e.passed[i].credited = true
-			if e.passed[i].tag != credited && !e.passed[i].silent {
-				tags = append(tags, e.passed[i].tag)
-			}
-		}
-	}
-	return tags
 }
 
 // firstLiveFrom returns the first usable slot going round from idx, idx included.
@@ -366,13 +292,12 @@ func (b *balancer) inPool(tag string) bool {
 	return slotIndex(b.slotsSnapshot(), tag) >= 0
 }
 
-// rrShiftOn shifts key past node, which the key failed on while node is alive.
-// expected is the shift the failed connection was picked with: another shift
-// since then means a parallel connection of the key has moved it already, and
-// nothing changes. A node the key passed already shifts it on as any other.
-// credited records the failure as confirmed already. It returns the shift of the
-// key and whether this call changed it.
-func (s *URLTest) rrShiftOn(key rrKey, expected int, node string, credited bool, silent bool) (int, bool) {
+// rrShiftOn shifts key past node (K1, K2): the slot after the node becomes the
+// slot of the key. expected is the shift the connection was picked with: another
+// shift since then means a parallel connection moved it already, and nothing
+// changes. |P| shifts in a row with no ANSWER to the key mark it (K5). It returns
+// the shift of the key and whether this call changed it.
+func (s *URLTest) rrShiftOn(key rrKey, expected int, node string) (int, bool) {
 	b := s.balancer
 	if !key.valid || b.heal.frozen() || s.group.ctx.Err() != nil {
 		return 0, false
@@ -383,15 +308,6 @@ func (s *URLTest) rrShiftOn(key rrKey, expected int, node string, credited bool,
 	if failed < 0 {
 		return 0, false
 	}
-	live := 0
-	for _, entry := range slots {
-		if s.slotAlive(entry.tag) {
-			live++
-		}
-	}
-	if live == 0 {
-		live = n
-	}
 	table := &b.memory.shifts
 	table.access.Lock()
 	e := table.entry(key.table)
@@ -400,57 +316,192 @@ func (s *URLTest) rrShiftOn(key rrKey, expected int, node string, credited bool,
 		table.access.Unlock()
 		return shift, false
 	}
-	base := int(key.sticky % uint64(n))
-	current := (base + e.shift) % n
+	current := (int(key.sticky%uint64(n)) + e.shift) % n
 	e.shift += (failed-current+n)%n + 1
-	// The circle counts the different nodes of the current pool the key passed; a
-	// node that left the pool is dropped.
-	passed := e.passed[:0]
-	known := false
-	for _, entry := range e.passed {
-		if slotIndex(slots, entry.tag) < 0 {
-			continue
-		}
-		if entry.tag == node {
-			known = true
-			entry.credited = entry.credited || credited
-			entry.silent = entry.silent && silent // an active failure there counts
-		}
-		passed = append(passed, entry)
-	}
-	if !known {
-		passed = append(passed, rrPassedNode{tag: node, credited: credited, silent: silent})
-	}
-	e.passed = passed
-	marked := len(e.passed) >= live
+	marked := e.run.Add(1) >= int32(n)
 	if marked {
-		e.marked, e.shift, e.passed = true, 0, nil
+		e.marked, e.shift = true, 0
+		e.run.Store(0)
 	}
 	shift := e.shift
 	table.access.Unlock()
 	if marked {
 		s.logger.Info("round_robin: ", key.label(b.stickyHash), " is unreachable through every node of the pool; marked as an address problem, back to its own slot")
-		return shift, true
+	} else {
+		s.logger.Debug("round_robin: ", key.label(b.stickyHash), " is unreachable through ", node, "; key shifted by ", shift)
 	}
-	s.logger.Debug("round_robin: ", key.label(b.stickyHash), " failed through live ", node, "; key shifted by ", shift)
 	return shift, true
+}
+
+// rrShiftBack takes back the shift to that K2 made on a SILENT that got its
+// ANSWER (§2), while the shift of the key is still to.
+func (s *URLTest) rrShiftBack(key rrKey, to, back int) {
+	table := &s.balancer.memory.shifts
+	table.access.Lock()
+	defer table.access.Unlock()
+	if e := table.entries[key.table]; e != nil && !e.marked && e.shift == to {
+		e.shift = back
+		if e.run.Load() > 0 {
+			e.run.Add(-1)
+		}
+	}
+}
+
+// --- the K2 memory ----------------------------------------------------------------
+
+// rrK2Size bounds the K2 memory of a group; the oldest record goes first (I7).
+const rrK2Size = 256
+
+type rrK2Key struct {
+	key  uint64 // the table key
+	node string
+}
+
+// rrK2Record is the first soft sign of a key on a node: the shift it was picked
+// with, its start and its outcome; conn is the connection when the sign is a
+// SILENT that an ANSWER may still cancel.
+type rrK2Record struct {
+	k     rrK2Key
+	s     int
+	a1    int64
+	b1    int64
+	conn  *rrFirstByteConn
+	inUse bool
+}
+
+type rrK2Table struct {
+	access sync.Mutex
+	index  map[rrK2Key]int
+	ring   [rrK2Size]rrK2Record
+	next   int
+	size   atomic.Int32
+}
+
+func (m *rrK2Table) drop(i int) {
+	delete(m.index, m.ring[i].k)
+	m.ring[i] = rrK2Record{}
+	m.size.Add(-1)
+}
+
+// sign takes a soft sign of k picked at shift s, started at a, ended at b. It
+// reports K2 with the first sign when the record of k qualifies: made after E, at
+// the same shift, the second sign started after its outcome, and an ANSWER via the
+// node t between the two starts. Otherwise the sign becomes the record (K4); a sign
+// that started before the outcome of the record is the same attempt and leaves it.
+func (m *rrK2Table) sign(k rrK2Key, s int, a, b, epoch int64, t *rrTrack, conn *rrFirstByteConn) (rrK2Record, bool) {
+	m.access.Lock()
+	defer m.access.Unlock()
+	record := rrK2Record{k: k, s: s, a1: a, b1: b, conn: conn, inUse: true}
+	if i, found := m.index[k]; found {
+		first := m.ring[i]
+		if first.a1 >= epoch && first.s == s {
+			if a <= first.b1 {
+				return rrK2Record{}, false
+			}
+			if t.live(first.a1, a) {
+				m.drop(i)
+				return first, true
+			}
+		}
+		m.ring[i] = record
+		return rrK2Record{}, false
+	}
+	if m.index == nil {
+		m.index = make(map[rrK2Key]int)
+	}
+	i := m.next
+	m.next = (m.next + 1) % rrK2Size
+	if m.ring[i].inUse {
+		delete(m.index, m.ring[i].k)
+	} else {
+		m.size.Add(1)
+	}
+	m.ring[i] = record
+	m.index[k] = i
+	return rrK2Record{}, false
+}
+
+// answered erases the record of key on node: an ANSWER to the key there.
+func (m *rrK2Table) answered(key uint64, node string) {
+	if m.size.Load() == 0 {
+		return
+	}
+	m.access.Lock()
+	defer m.access.Unlock()
+	if i, found := m.index[rrK2Key{key, node}]; found {
+		m.drop(i)
+	}
+}
+
+// keep erases the records of every node keep reports false for.
+func (m *rrK2Table) keep(keep func(node string) bool) {
+	if m.size.Load() == 0 {
+		return
+	}
+	m.access.Lock()
+	defer m.access.Unlock()
+	for i := range m.ring {
+		if m.ring[i].inUse && !keep(m.ring[i].k.node) {
+			m.drop(i)
+		}
+	}
+}
+
+// forget erases the records of node: D1, Q2.
+func (m *rrK2Table) forget(node string) {
+	m.keep(func(tag string) bool { return tag != node })
+}
+
+// rrSoftSign is a soft sign of the key on node (K2, K4): FAIL_NODE, an implicit
+// REFUSE_DST or SILENT, picked at shift, started at a, ended at at. eligible is
+// false for a sign on the slot of a retry or a detour and for UDP. conn is the
+// connection of a SILENT.
+func (s *URLTest) rrSoftSign(key rrKey, shift int, node string, a, at int64, conn *rrFirstByteConn, eligible bool) {
+	b := s.balancer
+	if !eligible || !key.valid || b.memory.shifts.marked(key.table) {
+		return
+	}
+	t := b.trackOf(node)
+	if t == nil {
+		return
+	}
+	first, fired := b.memory.k2.sign(rrK2Key{key.table, node}, shift, a, at, b.heal.epoch(), t, conn)
+	if !fired {
+		return // K4: the first sign is memory only
+	}
+	to, shifted := s.rrShiftOn(key, shift, node) // K2
+	if !shifted {
+		return
+	}
+	for _, silent := range [2]*rrFirstByteConn{first.conn, conn} {
+		if silent != nil && silent.state.Load()&rrStateSilent != 0 {
+			silent.silentShift.Store(int64(to) + 1)
+		}
+	}
 }
 
 // --- slot counters and quarantine ----------------------------------------------
 
+const (
+	// rrShiftTableSize bounds the shift table; the oldest key goes first.
+	rrShiftTableSize = 1024
+	// rrCountHalveAt halves both slot counters when the connections reach it (Q3).
+	rrCountHalveAt = 256
+	// rrQuarantineMinFails, rrQuarantineMinShare, rrQuarantineMinConns are the
+	// floors of Q2.
+	rrQuarantineMinFails = 3
+	rrQuarantineMinShare = 0.05
+	rrQuarantineMinConns = 8
+	// rrCountKeys bounds the ring of keys of a slot counter (once per key).
+	rrCountKeys = 16
+)
+
 type rrSlotCount struct {
 	conns uint32
 	fails uint32
-	// keys is the ring of the table keys whose failure counted already: a node is
-	// credited at most once per key, so one site closed only through the node (a
-	// protocol with no destination mark: SSH, a SOCKS server that closes with no
-	// code) does not take it to quarantine; it needs failures of three keys.
-	keys [rrCountKeys]uint64
-	next int
+	keys  [rrCountKeys]uint64 // the table keys counted already
+	next  int
 }
-
-// rrCountKeys bounds the ring of keys of a slot counter.
-const rrCountKeys = 16
 
 // creditedKey reports whether key counted already, and records it when not.
 func (c *rrSlotCount) creditedKey(key uint64) bool {
@@ -464,9 +515,10 @@ func (c *rrSlotCount) creditedKey(key uint64) bool {
 	return false
 }
 
-// rrMemory is the stage-2 state of a round_robin group; it lives in the balancer.
+// rrMemory is the key state of a round_robin group; it lives in the balancer.
 type rrMemory struct {
 	shifts     rrShiftTable
+	k2         rrK2Table
 	access     sync.Mutex // guards counts
 	counts     map[string]*rrSlotCount
 	quarantine atomic.Pointer[map[string]bool]
@@ -485,9 +537,8 @@ func (m *rrMemory) count(tag string) *rrSlotCount {
 	return c
 }
 
-// share returns the failure share of tag and whether it counts: a node with fewer
-// than rrQuarantineMinConns connections (a fresh replacement, a node just out of
-// quarantine) says nothing yet. The caller holds access.
+// share returns the failure share of tag and whether it counts (Q2: at least
+// rrQuarantineMinConns connections). The caller holds access.
 func (m *rrMemory) share(tag string) (float64, bool) {
 	c := m.counts[tag]
 	if c == nil || c.conns == 0 {
@@ -502,11 +553,11 @@ func (b *balancer) isQuarantined(tag string) bool {
 	return set != nil && (*set)[tag]
 }
 
-// rrCountConn counts a connection of the pool member tag. The membership is checked
-// under access: rrSlotsChanged drops the counters of a node that left the pool
-// under the same lock, so no counter outlives its node's slot.
-func (b *balancer) rrCountConn(tag string, heal *rrHeal) {
-	if heal.frozen() {
+// rrCountConn counts a TCP connection of the pool member tag that started at
+// start (conns of Q1/Q2), unless it began before E. The membership is checked
+// under access, as rrSlotsChanged drops the counters of a departed node.
+func (b *balancer) rrCountConn(tag string, start time.Time) {
+	if b.heal.frozen() || !start.IsZero() && rrClock(start) < b.heal.epoch() {
 		return
 	}
 	m := &b.memory
@@ -517,23 +568,15 @@ func (b *balancer) rrCountConn(tag string, heal *rrHeal) {
 	}
 	c := m.count(tag)
 	c.conns++
-	if c.conns >= rrCountHalveAt {
+	if c.conns >= rrCountHalveAt { // Q3
 		c.conns /= 2
 		c.fails /= 2
 	}
 }
 
-// rrByteSince reports whether a connection through the pool member tag that
-// started after clock (rrClock) got its first byte: the node's proof mark
-// (rrTrack.proved, which a probe that answered moves too). A node out of the pool
-// has no mark.
-func (b *balancer) rrByteSince(tag string, clock int64) bool {
-	t := b.trackOf(tag)
-	return t != nil && t.proved.Load() > clock
-}
-
-// rrQuarantineVerdict is the outcome of one confirmed failure.
+// rrQuarantineVerdict is the outcome of one counted sign.
 type rrQuarantineVerdict struct {
+	counted     bool
 	quarantined bool
 	fails       uint32
 	conns       uint32
@@ -541,23 +584,22 @@ type rrQuarantineVerdict struct {
 	median      float64
 }
 
-// rrCountFail counts a confirmed failure of the pool member tag and quarantines it
-// when it fails noticeably more often than the rest of the pool.
+// rrCountFail is Q1's fails(n) += 1, once per key, and Q2 on the result.
 func (b *balancer) rrCountFail(tag string, key rrKey) rrQuarantineVerdict {
 	m := &b.memory
 	m.access.Lock()
 	defer m.access.Unlock()
-	slots := b.slotsSnapshot() // under access, as in rrCountConn
+	slots := b.slotsSnapshot()
 	if slotIndex(slots, tag) < 0 {
 		return rrQuarantineVerdict{}
 	}
 	c := m.count(tag)
 	if key.valid && c.creditedKey(key.table) {
-		return rrQuarantineVerdict{} // this key counted against the node already
+		return rrQuarantineVerdict{}
 	}
 	c.fails++
 	share, counts := m.share(tag)
-	verdict := rrQuarantineVerdict{fails: c.fails, conns: c.conns, share: share}
+	verdict := rrQuarantineVerdict{counted: true, fails: c.fails, conns: c.conns, share: share}
 	if !counts || c.fails < rrQuarantineMinFails || share < rrQuarantineMinShare || b.isQuarantined(tag) {
 		return verdict
 	}
@@ -571,7 +613,7 @@ func (b *balancer) rrCountFail(tag string, key rrKey) rrQuarantineVerdict {
 		}
 	}
 	if len(others) == 0 {
-		return verdict // nobody busy enough to compare with
+		return verdict
 	}
 	verdict.median = rrMedian(others)
 	if verdict.share <= 2*verdict.median {
@@ -589,6 +631,25 @@ func (b *balancer) rrCountFail(tag string, key rrKey) rrQuarantineVerdict {
 	return verdict
 }
 
+// rrUncountFail takes back the count of a SILENT that got its ANSWER (Q1).
+func (b *balancer) rrUncountFail(tag string, key rrKey) {
+	m := &b.memory
+	m.access.Lock()
+	defer m.access.Unlock()
+	c := m.counts[tag]
+	if c == nil {
+		return
+	}
+	if c.fails > 0 {
+		c.fails--
+	}
+	for i := range c.keys {
+		if key.valid && c.keys[i] == key.table {
+			c.keys[i] = 0
+		}
+	}
+}
+
 func rrMedian(values []float64) float64 {
 	sort.Float64s(values)
 	middle := len(values) / 2
@@ -598,25 +659,32 @@ func rrMedian(values []float64) float64 {
 	return (values[middle-1] + values[middle]) / 2
 }
 
-// rrSlotsChanged drops the counters of the nodes that left the pool: a node that
-// takes a slot starts from zero. Called after the slots change, without access held.
+// rrSlotsChanged drops the counters (Q3) and the K2 records of the nodes that left
+// the pool. Called after the slots change, without access held.
 func (b *balancer) rrSlotsChanged() {
 	slots := b.slotsSnapshot()
 	m := &b.memory
 	m.access.Lock()
-	defer m.access.Unlock()
 	for tag := range m.counts {
 		if slotIndex(slots, tag) < 0 {
 			delete(m.counts, tag)
 		}
 	}
+	m.access.Unlock()
+	m.k2.keep(func(node string) bool { return slotIndex(slots, node) >= 0 })
 }
 
-// rrResetMarks lifts the address-problem marks and the quarantine: the scheduled
-// run, a manual run and a network change. A node out of quarantine starts its
-// counters from zero. The shifts stay.
+// rrResetMarks is the scheduled run, a manual run and a network change: the K5
+// marks and the quarantine lift (a node out of quarantine starts its counters from
+// zero), the K2 memory and the suspicions go (S3). The shifts stay.
 func (b *balancer) rrResetMarks() {
 	b.memory.shifts.unmarkAll()
+	b.memory.k2.keep(func(string) bool { return false })
+	for _, entry := range b.slotsSnapshot() {
+		if entry.track != nil {
+			entry.track.clearSuspicion()
+		}
+	}
 	m := &b.memory
 	// Under access: rrCountFail copies the set and stores it back under the same
 	// lock, and a swap between the two would bring a lifted quarantine back.
@@ -629,8 +697,7 @@ func (b *balancer) rrResetMarks() {
 	}
 }
 
-// rrForget drops the counters of tag: the dead verdict. The failures it collected
-// while dead say nothing about how it serves connections once it is back.
+// rrForget drops the counters of tag (Q3: D1).
 func (b *balancer) rrForget(tag string) {
 	m := &b.memory
 	m.access.Lock()
@@ -638,271 +705,134 @@ func (b *balancer) rrForget(tag string) {
 	delete(m.counts, tag)
 }
 
-// rrCreditFail counts a confirmed failure of tag; a quarantine refills its slot. A
-// node without history is dead: its failures are no measure of the node.
-func (s *URLTest) rrCreditFail(tag string) {
-	s.rrCreditFailKey(tag, rrKey{})
-}
-
-// rrCreditFailKey is rrCreditFail for a failure of the key (no key without
-// stickiness): a key counts against a node once (rrSlotCount.keys).
-func (s *URLTest) rrCreditFailKey(tag string, key rrKey) {
-	if node, loaded := s.outbound.Outbound(tag); !loaded || s.group.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)) == nil {
-		return
-	}
-	verdict := s.balancer.rrCountFail(tag, key)
-	if !verdict.quarantined {
-		return
-	}
-	s.logger.Info("round_robin: ", tag, " quarantined: ", verdict.fails, " confirmed failures of ", verdict.conns,
-		" connections (share ", strconv.FormatFloat(verdict.share, 'f', 3, 64),
-		", pool median ", strconv.FormatFloat(verdict.median, 'f', 3, 64), ")")
-	go s.rrQuarantineReplace(tag)
-}
-
-// rrQuarantineReplace refills the slot of a quarantined node (§3.4) as a check of
-// the self-heal: it waits, bounded, for the check in flight and the gap after the
-// previous one, and ends through endCheck like any check; a freeze or the group's
-// Close aborts it.
-func (s *URLTest) rrQuarantineReplace(tag string) {
-	g := s.group
-	heal := &s.balancer.heal
-	deadline := time.Now().Add(rrQuarantineWait)
-	for !heal.beginCheck() {
-		if time.Now().After(deadline) || !s.balancer.isQuarantined(tag) {
-			return
-		}
-		select {
-		case <-g.ctx.Done():
-			return
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
-	defer heal.endCheck()
-	ctx, cancel := context.WithCancel(g.ctx)
-	heal.abort.Store(&cancel)
-	defer func() {
-		heal.abort.Store(nil)
-		cancel()
-	}()
-	if !s.balancer.isQuarantined(tag) || heal.aborted(ctx) {
-		return
-	}
+// rrCreditFail counts a sign of tag by Q1 and reports whether it counted. A node
+// without history was struck out (D1): its signs do not count. A quarantine (Q2)
+// erases the node's K2 records and asks the check for the replacement (§5).
+func (s *URLTest) rrCreditFail(tag string, key rrKey) bool {
 	node, loaded := s.outbound.Outbound(tag)
-	if !loaded || !s.rrTakeChecking(ctx) {
-		return
-	}
-	defer g.checking.Store(false)
-	s.rrReplaceNode(ctx, rrProbe{member: tag, leaf: RealTag(node, N.NetworkTCP), started: time.Now()}, false, true)
-}
-
-// --- failures and their verdicts ---------------------------------------------------
-
-// rrFailure is one failure of a connection — a dial that did not open, with its
-// retry, or a close without a byte. It is pending on the node it failed on, and on
-// the node of its retry when that failed too (rrPend), until each proves alive
-// after it (rrTrack.takeAlive) or the dead verdict drops it.
-type rrFailure struct {
-	s      *URLTest
-	key    rrKey
-	member string // A, the node the connection failed on
-
-	access        sync.Mutex
-	aAlive        bool // A proved alive after the failure
-	aShifted      bool
-	confirmed     bool // the retry got the first byte: A's failure is confirmed (case 1)
-	creditPending bool // confirmed before A proved alive: counted then
-	rTag          string
-	rFailed       bool // the retry did not open either
-	rAlive        bool // the retry's node proved alive after its failure
-	rShifted      bool
-	shift         int // the key's shift this connection expects: picked with, then its own
-	// creditKey is the key of the connection for the count of the node's failures
-	// (rrCreditFailKey), kept when key is cleared (no shift).
-	creditKey rrKey
-	// silence: the failure is silence through a live node (no answer at all): it
-	// shifts the key and confirms no failure through the key's passed list.
-	silence bool
-	// rNoShift: the retry failed between us and its node's server (a proxy leaf):
-	// no shift past the retry node.
-	rNoShift bool
-}
-
-// retryNoShift records that the retry's failure shifts no key.
-func (f *rrFailure) retryNoShift() {
-	f.access.Lock()
-	defer f.access.Unlock()
-	f.rNoShift = true
-}
-
-func (s *URLTest) rrNewFailure(picked rrPick, member string) *rrFailure {
-	key := picked.key
-	if picked.detour {
-		key = rrKey{}
-	}
-	return &rrFailure{s: s, key: key, creditKey: picked.key, member: member, shift: picked.shift}
-}
-
-// expectedShift is the shift of the key as this connection left it.
-func (f *rrFailure) expectedShift() int {
-	f.access.Lock()
-	defer f.access.Unlock()
-	return f.shift
-}
-
-// setAlive is the verdict "A alive after the failure".
-func (f *rrFailure) setAlive() {
-	f.access.Lock()
-	defer f.access.Unlock()
-	f.aAlive = true
-	f.settle()
-}
-
-// setRetryAlive is the verdict "the retry's node alive after its failure".
-func (f *rrFailure) setRetryAlive() {
-	f.access.Lock()
-	defer f.access.Unlock()
-	f.rAlive = true
-	f.settle()
-}
-
-// retryFailed records that the retry through tag did not open either.
-func (f *rrFailure) retryFailed(tag string) {
-	if f == nil {
-		return
-	}
-	f.access.Lock()
-	defer f.access.Unlock()
-	f.rTag, f.rFailed = tag, true
-}
-
-// confirm is the first byte of the retry: A's failure is confirmed (case 1), so the
-// key's later first byte does not confirm it again. It reports whether the failure
-// counts now: only once A proved alive after it (settle counts it then), never when
-// A is found dead or no verdict comes.
-func (f *rrFailure) confirm() bool {
-	if f == nil {
-		return true
-	}
-	f.access.Lock()
-	defer f.access.Unlock()
-	f.confirmed = true
-	if f.aShifted && f.key.valid {
-		f.s.balancer.memory.shifts.markCredited(f.key.table, f.member)
-	}
-	if f.silence {
-		return false // silence confirms no failure, not even through the retry
-	}
-	if !f.aAlive {
-		f.creditPending = true
+	if !loaded || s.balancer.heal.frozen() || s.group.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)) == nil {
 		return false
 	}
-	return true
+	verdict := s.balancer.rrCountFail(tag, key)
+	if verdict.quarantined {
+		s.logger.Info("round_robin: ", tag, " quarantined: ", verdict.fails, " failures of ", verdict.conns,
+			" connections (share ", strconv.FormatFloat(verdict.share, 'f', 3, 64),
+			", pool median ", strconv.FormatFloat(verdict.median, 'f', 3, 64), ")")
+		s.balancer.memory.k2.forget(tag)
+		s.rrStartCheck()
+	}
+	return verdict.counted
 }
 
-// settle shifts the key once the verdicts allow: by one past A when A is alive, by
-// one more past the retry node when the retry failed too and its node is alive.
-// The caller holds access.
-func (f *rrFailure) settle() {
-	if f.aAlive && f.creditPending {
-		f.creditPending = false
-		f.s.rrCreditFailKey(f.member, f.creditKey)
-	}
-	if !f.key.valid {
-		return
-	}
-	if f.aAlive && !f.aShifted {
-		f.aShifted = true
-		if shift, shifted := f.s.rrShiftOn(f.key, f.shift, f.member, f.confirmed, f.silence); shifted {
-			f.shift = shift
+// --- Q1 signs ---------------------------------------------------------------------
+
+const (
+	rrSignProof uint32 = 1 << iota // an ANSWER via the node that started after the sign
+	rrSignRetry                    // the retry of the same connection answered
+	rrSignDone
+)
+
+// rrSign is a sign of a node waiting for what Q1 needs to count it: need holds the
+// bits that must come in (FAIL_NODE: the proof and the retry; an implicit
+// REFUSE_DST: the proof; K1: the retry).
+type rrSign struct {
+	s     *URLTest
+	node  string
+	key   rrKey
+	b     int64 // rrClock of the outcome
+	need  uint32
+	state atomic.Uint32
+}
+
+func (x *rrSign) add(bit uint32) {
+	for {
+		old := x.state.Load()
+		if old&rrSignDone != 0 {
+			return
+		}
+		next := old | bit
+		if next&x.need == x.need {
+			next |= rrSignDone
+		}
+		if x.state.CompareAndSwap(old, next) {
+			if next&rrSignDone != 0 {
+				x.s.rrCreditFail(x.node, x.key)
+			}
+			return
 		}
 	}
-	if !f.aShifted || !f.rFailed || !f.rAlive || f.rShifted || f.rNoShift {
-		return
-	}
-	f.rShifted = true
-	if shift, shifted := f.s.rrShiftOn(f.key, f.shift, f.rTag, false, f.silence); shifted {
-		f.shift = shift
-	}
 }
 
-// rrFirstByte is the success of a watched connection: the network is alive, the
-// node proved alive, and the failures this success confirms are counted (§3.6.2).
-// The proof dates from the start of the connection (its pick), not from the read:
-// a byte that waited in a buffer (the kernel, a mux session, QUIC) and was read
-// after the node died or the network went away proves nothing about the time
-// after the connection started. So only a connection started after a failure
-// settles it, as only a probe started after it does; the node's byte mark
-// (rrByteSince, the filter of rrHang) keeps the start of the connection too.
-func (s *URLTest) rrFirstByte(w *rrConnWatch) {
+// --- outcomes of a watched connection ----------------------------------------------
+
+// rrFirstByte is the ANSWER of a watched connection (A1): a proof via its node from
+// its start to now, the retry's part of a Q1 sign, the K2 record of the key on the
+// node erased, the K5 circle restarted, and the SILENT of this connection taken
+// back. c is the wrapper; nil for a direct leaf and UDP.
+func (s *URLTest) rrFirstByte(w *rrConnWatch, c *rrFirstByteConn) {
 	b := s.balancer
 	if s.group.ctx.Err() != nil {
 		return
 	}
-	b.rrClockLook(time.Now()) // N3 before the rules
-	track := w.track
-	if track == nil {
-		track = b.trackOf(w.member)
+	now := time.Now()
+	b.rrClockLook(now) // N3 before the rules
+	if b.heal.frozen() || w.start.IsZero() || s.rrBeforeEvent(w.start) {
+		return // N0, I4
 	}
-	var started int64 // no pick, no proof
-	if !w.start.IsZero() {
-		started = rrClock(w.start)
-		if track != nil {
-			track.markProved(started) // rrByteSince; lifts a suspicion of the slot (urltest_rr_track_lx.go)
-		}
+	t := w.track
+	if t == nil {
+		t = b.trackOf(w.member)
 	}
-	if b.heal.frozen() {
-		return
+	if t != nil {
+		s.rrProof(t, rrClock(w.start), rrClock(now))
 	}
-	if started != 0 && track != nil && track.pendingN.Load() > 0 {
-		s.rrSettleAlive(track, started)
-	}
-	// A connection that started before the last event of the network confirms
-	// nothing.
-	if s.rrBeforeEvent(w.start) {
-		return
-	}
-	if w.confirmFor != "" && !w.packet { // UDP stays out of the slot counters
-		if w.failure.confirm() {
-			var key rrKey
-			if w.failure != nil {
-				key = w.failure.creditKey
-			}
-			s.rrCreditFailKey(w.confirmFor, key)
-		}
+	if w.sign != nil {
+		w.sign.add(rrSignRetry)
 	}
 	if w.key.valid {
-		for _, tag := range b.memory.shifts.creditable(w.key.table, w.member, w.confirmFor) {
-			s.rrCreditFailKey(tag, w.key)
-		}
+		b.memory.k2.answered(w.key.table, w.member)
+		b.memory.shifts.answered(w.key.table)
+	}
+	if c == nil || c.state.Load()&rrStateSilent == 0 {
+		return
+	}
+	if c.state.Load()&rrStateCounted != 0 {
+		b.rrUncountFail(w.member, w.key) // Q1: an ANSWER takes the count of its SILENT back
+	}
+	if to := c.silentShift.Load(); to != 0 {
+		s.rrShiftBack(w.key, int(to-1), w.shift) // K2: the shift that rested on it goes back
 	}
 }
 
-// rrSilentClose is a connection that ended without a byte although the client
-// sent something (§3.1.2): no retry — the client sent its data to the node already
-// — and the failure is pending on the node. It puts the site under suspicion: a
-// verdict probe of the node alone starts at once (urltest_rr_track_lx.go); its
-// answer, or a first byte through the node, settles the failure, and its silence
-// starts the check with a control.
-func (s *URLTest) rrSilentClose(w *rrConnWatch) {
+// rrSilentClose is an implicit REFUSE_DST (§2): the connection ended without a byte
+// although the client sent and did not close its side. No retry — the client sent
+// its data to the node already. K2/K4 take it; Q1 counts it once an ANSWER via the
+// node after it comes — a close later than H after the send only with Live(X; {n}).
+func (s *URLTest) rrSilentClose(c *rrFirstByteConn) {
+	w := c.watch
 	b := s.balancer
-	b.rrClockLook(time.Now()) // N3 before the rules
-	if s.group.ctx.Err() != nil || b.heal.frozen() || s.rrBeforeEvent(w.start) {
-		return
-	}
-	if w.key.valid && b.memory.shifts.marked(w.key.table) {
-		return
-	}
-	member, loaded := s.outbound.Outbound(w.member)
-	if !loaded || !b.inPool(w.member) {
+	now := time.Now()
+	b.rrClockLook(now) // N3 before the rules
+	if s.group.ctx.Err() != nil || b.heal.frozen() || s.rrBeforeEvent(w.start) || w.track == nil || !b.inPool(w.member) {
 		return
 	}
 	s.logger.Debug("round_robin: a connection through ", w.member, " closed without a byte from the destination")
-	picked := rrPick{key: w.key, shift: w.shift, detour: w.detour}
-	if w.failure != nil {
-		picked.shift = w.failure.expectedShift() // the retry: the key as its failure left it
+	at, wrote := rrClock(now), c.wroteAt.Load()
+	s.rrSoftSign(w.key, w.shift, w.member, rrClock(w.start), at, nil, !w.retry && !w.detour)
+	if at-wrote < int64(rrHangAfter) || w.track.live(wrote, rrHalf(wrote, at)) {
+		w.track.addPending(&rrSign{s: s, node: w.member, key: w.key, b: at, need: rrSignProof})
 	}
-	s.rrPend(member, s.rrNewFailure(picked, w.member), false, rrVerdictNow)
+}
+
+// rrSilent is SILENT given to the connection c at a look (rrInspect): Q1 counts it
+// at once (V1), K2/K4 take it.
+func (s *URLTest) rrSilent(c *rrFirstByteConn) {
+	w := c.watch
+	s.logger.Debug("round_robin: a connection through ", w.member, " has had no answer from ", w.key.label(s.balancer.stickyHash), " for ", rrProbeTimeout(), " while the node answers")
+	if s.rrCreditFail(w.member, w.key) {
+		c.set(rrStateCounted)
+	}
+	s.rrSoftSign(w.key, w.shift, w.member, rrClock(w.start), rrClock(time.Now()), c, !w.retry && !w.detour)
 }
 
 // lx:end SPEC 138

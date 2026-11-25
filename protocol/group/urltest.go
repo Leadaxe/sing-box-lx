@@ -249,7 +249,7 @@ func (s *URLTest) CheckOutbounds() {
 // window before the first health-check fills the pool. Returns nil only when nothing usable.
 func (s *URLTest) selectBalanced(ctx context.Context, network string, destination M.Socksaddr) (adapter.Outbound, rrPick) {
 	fallback, _ := s.group.Select(network)
-	selected, picked := s.balancer.pickKeyed(ctx, destination, fallback, func(tag string) adapter.Outbound { // lx: SPEC 138 — the pick hands its key to the dial
+	selected, picked := s.balancer.pickKeyed(ctx, network, destination, fallback, func(tag string) adapter.Outbound { // lx: SPEC 138 — the pick hands its key to the dial
 		node, _ := s.outbound.Outbound(tag)
 		if node != nil && !common.Contains(node.Network(), network) {
 			return nil
@@ -800,7 +800,6 @@ func (g *URLTestGroup) performSelectionUpdate(reselect bool) {
 		selected = true
 	}
 	if updated {
-		defer g.rrInterrupting()() // lx: SPEC 138 — the connections the interrupt closes are no client giving up
 		g.interruptGroup.Interrupt(g.interruptExternalConnections)
 	}
 	if changed {

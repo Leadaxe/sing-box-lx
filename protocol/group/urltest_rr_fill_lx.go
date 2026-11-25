@@ -16,9 +16,13 @@ package group
 import N "github.com/sagernet/sing/common/network"
 
 // onProbeAliveLx is the hook of a probe that answered (urlTestBatch.onAlive): the
-// SPEC 054 proof of life, and the SPEC 019 fill of a dead slot.
+// SPEC 054 proof of life, the SPEC 138 proof of the path (rrRunAnswer), and the
+// SPEC 019 fill of a dead slot.
 func (g *URLTestGroup) onProbeAliveLx(tag string) {
 	g.penaltyReset(tag)
+	if g.balancer != nil && g.balancer.onRunAnswer != nil {
+		g.balancer.onRunAnswer(tag)
+	}
 	g.rrFillOnAlive(tag)
 }
 
