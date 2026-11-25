@@ -518,16 +518,15 @@ process: two checks are often 10–15 minutes apart. That is too rare for live t
 dies right after a check would keep its share of new connections until the next one. So a
 `round_robin` group has recovery mechanisms driven by the connections themselves. It learns about
 a dead node, a destination closed to one node and a lost local network from the failed
-connections, and handles each case in seconds.
+connections.
 
-There is nothing to configure. Download and upload speed do not change; the extra work per
-connection does not show in ordinary traffic.
+There is nothing to configure: the behaviour is always on, with no config keys.
 
 ##### What the application sees when a node fails
 
 | What happened | What the group does | What the application sees |
 |---|---|---|
-| A pool node died between checks: the server process stopped, the host went down | A connection that does not open through the node is retried through the next slot. The node is struck out, and its slot gets a replacement from outside the pool | No failed connection |
+| A pool node died between checks: the server process stopped, the host went down | A connection that does not open through the node is retried through the next slot. The node is struck out, and its slot gets a replacement from outside the pool | No failed connection. If the host is down rather than the process, the first connection waits up to 5 s for the failure, then the retry runs |
 | A node accepts connections and stays silent | After 5 s new connections skip its slot. After 20 s (the 5 s wait and the 15 s probe timeout) the node is struck out and replaced. Connections still opening through it are retried through another node; open connections still waiting for a first byte are closed | Connections that reached the node in its first 5 s wait until it is struck out or the application gives up; the application repeats a closed one |
 | A destination is unreachable through one node: a geo-restriction, the site bans the node's address | After the first failure the group checks that the node itself answers and moves this destination to the next slot. Other destinations stay on their nodes | The first request can fail (see the limits); the next ones go through another node |
 | A node answers probes but fails a noticeable share of connections | A node with at least 5 % failures and more than twice the pool median goes to quarantine: its slot is skipped and gets a replacement until the next scheduled check | Fewer failed connections |
@@ -549,7 +548,7 @@ Three setups gain the most:
 - phones and laptops: sleep and network switches strike out no nodes, so after a wake-up the
   pool is the one that worked before.
 
-Eight limits:
+Seven limits:
 
 - Only `mode: round_robin` recovers this way. `least_test` and `failover` keep their penalty and
   fallback dial on "path is dead" errors ([§3.2](#32-least_test--fastest-node)).
@@ -565,7 +564,6 @@ Eight limits:
   nodes are still skipped.
 - UDP is covered in part: a dead node is struck out for UDP too, but UDP failures move no keys and
   do not count toward quarantine.
-- There are no config keys: the behaviour is always on and cannot be tuned.
 - Each connection costs a little extra work when it opens. Download and upload speed stay at the
   level of a build without self-heal; the difference shows only in a synthetic run of thousands
   of very short connections in a row ([measurements](../SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/IMPLEMENTATION_REPORT.md)).
@@ -576,13 +574,13 @@ address problems and the freeze. The daemon's `GetPool` carries the same: per sl
 `connections` and `confirmedFailures`, per group `shiftedKeys`, `markedKeys`, `frozen` and
 `frozenSeconds`. In libbox the group fields come with `GetPoolState`
 ([§8](#8-observability-commandclient-extensions)). How the group tells the cases apart is in
-[the next part](#how-the-group-tells-a-dead-node-from-a-closed-site-and-a-lost-network).
+[the next part](#verdict-on-a-failure).
 
-##### How the group tells a dead node from a closed site and a lost network
+##### Verdict on a failure
 
 One failed connection does not tell a dead node from a destination unreachable through it or
 from a local network outage. So the group acts on what it learns about the node after the
-failure. There are no config keys.
+failure.
 
 - **Retry.** A connection that does not open through a pool node is retried once through the
   next live slot whose node is not a nested `urltest`. A connection that closes without a byte
@@ -630,11 +628,7 @@ failure. There are no config keys.
   A delay measurement through the group (an outer group's probe, Clash API) gets neither a
   retry nor a check.
 
-`sing-box api group pool <tag>` (a build with `with_lx_command`) prints the shifted keys, the
-address problems, the freeze and a slot table with `DELAY`, `STATE`
-(`live`/`dead`/`quarantined`), `CONNECTIONS` and `FAILURES`. The daemon's `GetPool` and
-`GetPoolState` carry the same fields ([§8](#8-observability-commandclient-extensions)). The
-connection list shows the node each connection went through, including a retry. The
+The connection list shows the node each connection went through, including a retry. The
 full rules are in
 [SPEC 138 §3](../SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md#3-самовосстановление-по-отказу-соединения).
 
