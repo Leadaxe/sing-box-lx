@@ -398,23 +398,6 @@ func TestRRHeal_nestedGroups(t *testing.T) {
 	}
 }
 
-// The neighbour is the next live slot going round; dead and unusable slots are
-// skipped, the failed slot itself never is the neighbour.
-func TestRRHeal_nextLiveSlot(t *testing.T) {
-	b := &balancer{}
-	b.setSlots([]string{"a", "b", "c", "d"})
-	slots := b.slotsSnapshot()
-	live := liveTags("a", "b", "d")
-	for from, want := range map[int]int{0: 1, 1: 3, 2: 3, 3: 0} {
-		if got, ok := b.nextLiveSlot(slots, from, live.alive); !ok || got != want {
-			t.Fatalf("from %d: got %d %v, want %d", from, got, ok, want)
-		}
-	}
-	if _, ok := b.nextLiveSlot(slots, 0, liveTags("a").alive); ok {
-		t.Fatal("no other live slot: no neighbour")
-	}
-}
-
 // replaceSlot writes one slot, publishes a new slice and refuses a stale request.
 func TestRRHeal_replaceSlot(t *testing.T) {
 	var changes int

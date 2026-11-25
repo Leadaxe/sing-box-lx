@@ -73,7 +73,7 @@ func TestRREpoch_C1_networkBackIsNoEvent(t *testing.T) {
 		track.track(&track.dials, &entry, rrClock(time.Now().Add(-rrHangAfter-time.Second)), nopKill{})
 	}
 	f.s.rrFirstByte(&rrConnWatch{s: f.s, member: "a", track: f.s.balancer.trackOf("a"), start: time.Now()}, nil)
-	if f.s.balancer.heal.frozen() || f.s.balancer.heal.epoch() != 0 {
+	if f.s.balancer.heal.frozen() || f.s.balancer.heal.epochEnd.Load() != 0 {
 		t.Fatal("the network back is no event")
 	}
 }

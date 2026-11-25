@@ -34,6 +34,7 @@ package group
 import (
 	"context"
 	"errors"
+	"math"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -72,7 +73,7 @@ type rrHeal struct {
 	abort        atomic.Pointer[context.CancelFunc] // cancels the check in flight
 	// epochEnd is E, the rrClock of the end of the last freeze (N0): while now < E
 	// nothing is inferred or done, and an exchange that started before E takes part
-	// in no rule. 0: no event yet.
+	// in no rule. 0: no event yet (epoch reads it as math.MinInt64).
 	epochEnd atomic.Int64
 	// cursor is c, the position in the config from which the next check goes on
 	// with the candidates; only the holder of running moves it.
@@ -124,9 +125,12 @@ func (h *rrHeal) endCheck() {
 	}
 }
 
-// epoch returns E, the end of the last freeze (rrClock; 0 for none).
+// epoch returns E, the end of the last freeze (rrClock; math.MinInt64 for none).
 func (h *rrHeal) epoch() int64 {
-	return h.epochEnd.Load()
+	if end := h.epochEnd.Load(); end != 0 {
+		return end
+	}
+	return math.MinInt64
 }
 
 // freeze is the event of N3: E := now + T, a signal during a freeze extends it

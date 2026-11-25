@@ -56,7 +56,7 @@ func TestRRAlgo_C1_networkDownAndBack(t *testing.T) {
 	}
 	heal := &f.s.balancer.heal
 	if !f.allHistory("a", "b", "c") || !samePool(f.pool(), "a", "b", "c") || f.fails("a")+f.fails("b") != 0 ||
-		f.s.balancer.memory.shifts.size.Load() != 0 || heal.epoch() != 0 {
+		f.s.balancer.memory.shifts.size.Load() != 0 || heal.epochEnd.Load() != 0 {
 		t.Fatal("I1: no strike, no shift, no count, no event while the network is down")
 	}
 	for _, node := range f.fb {
@@ -373,7 +373,7 @@ func TestRRAlgo_D5_noControlNoVerdict(t *testing.T) {
 	}
 	f.s.balancer.heal.running.Store(true)
 	f.s.rrHealCheck()
-	if !f.allHistory("a", "b", "c") || !samePool(f.pool(), "a", "b", "c") || f.s.balancer.heal.epoch() != 0 || f.s.balancer.heal.lastCheckEnd.Load() == nil {
+	if !f.allHistory("a", "b", "c") || !samePool(f.pool(), "a", "b", "c") || f.s.balancer.heal.epochEnd.Load() != 0 || f.s.balancer.heal.lastCheckEnd.Load() == nil {
 		t.Fatal("D5: nothing changes, no event, the gap holds")
 	}
 	if total := f.probes("a") + f.probes("b") + f.probes("c") + f.probes("d"); total != 4 {

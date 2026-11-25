@@ -94,7 +94,7 @@ const (
 	fnvPrime64  = 1099511628211
 )
 
-// fnvString continues an FNV-1a hash over s (hashKey is fnvString from the offset).
+// fnvString continues an FNV-1a hash over s.
 func fnvString(hash uint64, s string) uint64 {
 	for i := 0; i < len(s); i++ {
 		hash ^= uint64(s[i])
@@ -117,7 +117,9 @@ func fnvAddr(hash uint64, addr netip.Addr) uint64 {
 	return fnvBytes(hash, addr.AppendTo(scratch[:0]))
 }
 
-// stickyHashOf is hashKey(b.stickyKey(ctx, destination)) without building the key.
+// stickyHashOf is the slot hash of a connection: FNV-1a, 64 bit, over the sticky
+// components joined by NUL, each in its text form (stickyComponent) — computed
+// without building the key. The layout of the sticky slots rests on it.
 func (b *balancer) stickyHashOf(metadata *adapter.InboundContext, destination M.Socksaddr) uint64 {
 	hash := uint64(fnvOffset64)
 	for i, component := range b.stickyHash {

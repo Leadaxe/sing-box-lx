@@ -42,7 +42,8 @@ func (b *balancer) rrHealState(now time.Time) PoolHeal {
 		}
 		table.access.RUnlock()
 	}
-	if left := time.Duration(b.heal.epoch() - rrClock(now)); left > 0 {
+	if end := b.heal.epochEnd.Load(); end != 0 && end > rrClock(now) {
+		left := time.Duration(end - rrClock(now))
 		state.Frozen, state.FrozenFor = true, left
 	}
 	return state

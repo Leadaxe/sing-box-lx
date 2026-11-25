@@ -69,10 +69,10 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
-// rrClockBase is the origin of the monotonic marks of the self-heal (rrClock), a
-// day before the start: a mark reckoned back from an early moment (a proof T before
-// an answer) stays above 0, the E of no event.
-var rrClockBase = time.Now().Add(-24 * time.Hour)
+// rrClockBase is the origin of the monotonic marks of the self-heal (rrClock): the
+// start of the process. A mark reckoned back from an early moment (a proof T before
+// an answer) may be below zero; "no event" is math.MinInt64 (rrHeal.epoch), not 0.
+var rrClockBase = time.Now()
 
 // rrClock returns the monotonic time since rrClockBase; never 0, which means "never".
 func rrClock(at time.Time) int64 {

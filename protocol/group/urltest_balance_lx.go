@@ -169,20 +169,15 @@ func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {
 	return &balancer{poolSize: pool, poolTolerance: poolTolerance, stickyHash: stickyHash}, nil
 }
 
-// pick selects one node for this connection from the current pool. fallback is returned
-// when the pool is empty (start, before the first health-check fills it).
+// pickKeyed selects one node for this connection from the current pool and returns
+// what the dial of the connection needs from the pick (SPEC 138): the shift-table
+// key, computed once per connection, the key's shift and the start of the
+// connection. fallback is returned when the pool is empty (start, before the first
+// health-check fills it).
 // lx: SPEC 138 — a slot whose node failed its last probe (or is in quarantine) is skipped
 // while the pool has a live one, and a slot under suspicion (S1–S3) while the pool has a
 // slot that is neither; a shifted key takes the slot (hash + shift) % pool, or the next
-// live one going round; pick never changes the slots.
-func (b *balancer) pick(ctx context.Context, destination M.Socksaddr, fallback adapter.Outbound, resolve func(tag string) adapter.Outbound) adapter.Outbound {
-	node, _ := b.pickKeyed(ctx, N.NetworkTCP, destination, fallback, resolve)
-	return node
-}
-
-// pickKeyed is pick that also returns what the dial of the connection needs from
-// the pick (SPEC 138): the shift-table key, computed once per connection,
-// the key's shift and the start of the connection.
+// live one going round; the pick never changes the slots.
 func (b *balancer) pickKeyed(ctx context.Context, network string, destination M.Socksaddr, fallback adapter.Outbound, resolve func(tag string) adapter.Outbound) (adapter.Outbound, rrPick) {
 	picked := rrPick{start: time.Now(), packet: network == N.NetworkUDP}
 	b.access.Lock()
@@ -329,20 +324,6 @@ func (b *balancer) slotsSnapshot() []slot {
 	return b.slots
 }
 
-// nextLiveSlot returns the first slot after from, going round, whose node is usable;
-// ok is false when no other slot is. The retry and the neighbour of the self-heal
-// check (SPEC 138 §5). Called WITHOUT the access lock held.
-func (b *balancer) nextLiveSlot(slots []slot, from int, usable func(tag string) bool) (int, bool) {
-	n := len(slots)
-	for step := 1; step < n; step++ {
-		i := (from + step) % n
-		if usable(slots[i].tag) {
-			return i, true
-		}
-	}
-	return 0, false
-}
-
 // replaceSlot puts node into the slot that holds dead, leaving every other slot as
 // is (SPEC 138 §5). It does nothing and returns false when dead no longer holds a
 // slot or node already holds one: the pool changed since the caller looked at it.
@@ -403,20 +384,9 @@ func (b *balancer) setSlots(tags []string) {
 
 // --- sticky key ---------------------------------------------------------------------
 
-// stickyKey builds the binding key from the configured components, in order. An absent
-// component contributes "" (SPEC: all-empty → key "" → one fixed slot).
-func (b *balancer) stickyKey(ctx context.Context, destination M.Socksaddr) string {
-	metadata := adapter.ContextFrom(ctx)
-	var buf []byte
-	for i, component := range b.stickyHash {
-		if i > 0 {
-			buf = append(buf, 0) // NUL separator
-		}
-		buf = append(buf, stickyComponent(component, metadata, destination)...)
-	}
-	return string(buf)
-}
-
+// stickyComponent is one component of the binding key, in the text form the slot
+// hash covers (stickyHashOf). An absent component contributes "" (SPEC: all-empty →
+// key "" → one fixed slot).
 func stickyComponent(component string, metadata *adapter.InboundContext, destination M.Socksaddr) string {
 	switch component {
 	case C.URLTestStickyProcess:
@@ -455,10 +425,6 @@ func stickyComponent(component string, metadata *adapter.InboundContext, destina
 	default:
 		return ""
 	}
-}
-
-func hashKey(key string) uint64 {
-	return fnvString(fnvOffset64, key) // FNV-1a, 64 bit
 }
 
 // --- pool maintenance (pure planning, no I/O) ---------------------------------------
