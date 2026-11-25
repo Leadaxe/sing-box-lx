@@ -143,6 +143,40 @@ func TestRRUnverified_scheduledRunFirst(t *testing.T) {
 	}
 }
 
+// The scheduled run whose pool batch got no answer (the network came back during
+// it) after the manual test in an outage: the walk answers, its fill gives no
+// unverified slot away, the pool nodes are probed again with the walk as the
+// control; only a dead one loses its slot, in place.
+func TestRRUnverified_scheduledRunPoolBatchNoAnswer(t *testing.T) {
+	tags := []string{"a", "b", "c", "d", "e", "f"}
+	for _, dead := range []string{"", "b"} {
+		t.Run("dead="+dead, func(t *testing.T) {
+			f := newHealFixture(t, tags, tags[:3], 0)
+			f.manualOutage(t)
+			for tag, node := range f.nodes {
+				node.dead.Store(tag == dead)
+			}
+			for _, tag := range tags[:3] {
+				f.nodes[tag].probeFails.Store(1) // the pool batch: no answer
+			}
+			f.g.balancePool(context.Background())
+			pool := f.pool()
+			if f.s.rrSlotToVerify() {
+				t.Fatal("a mark outlived the run with an answer")
+			}
+			if dead == "" {
+				if !samePool(pool, tags[:3]...) {
+					t.Fatalf("the live pool lost a slot: %v", pool)
+				}
+				return
+			}
+			if pool[0] != "a" || pool[2] != "c" || pool[1] == "b" || pool[1] == "" {
+				t.Fatalf("the slot of the dead node was not replaced in place: %v", pool)
+			}
+		})
+	}
+}
+
 // A candidate that answers a probe of a run while the pool nodes are unverified:
 // the fill of the run gives no unverified slot away.
 func TestRRUnverified_fillSkipsUnverified(t *testing.T) {
