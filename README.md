@@ -254,7 +254,7 @@ The full list with links and what each project takes — **[docs-lx/consumers.md
 
 ## For developers: build a client, launcher or router firmware on this core
 
-A team shipping a VPN client, a desktop launcher, router firmware or a management panel gets three things from this core that matter most during development: a load balancer that heals the pool without app code, a remote management daemon with rollback, and network impairment without root to test both on a bad link before users find the bugs.
+A team shipping a VPN client, a desktop launcher, router firmware or a management panel gets three things from this core that matter most during development: a [load balancer](#a-load-balancer-with-self-healing-dead-nodes-leave-the-pool-on-their-own) that heals the pool without app code, a [remote management daemon](#a-remote-management-daemon-configs-rule-sets-and-core-updates-with-rollback) with rollback, and [network impairment](#network-impairment-without-root-emulate-a-bad-link-inside-the-binary) without root to test both on a bad link before users find the bugs.
 
 ### A load balancer with self-healing: dead nodes leave the pool on their own
 
