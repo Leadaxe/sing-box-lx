@@ -565,67 +565,21 @@ Seven limits:
 
 `sing-box api group pool <tag>` (a build with `with_lx_command`) shows the state: a slot table
 with `STATE` (`live`/`dead`/`quarantined`), `CONNECTIONS` and `FAILURES`, plus the moved keys, the
-address problems and the freeze. The daemon's `GetPool` carries the same: per slot `quarantined`,
-`connections` and `confirmedFailures`, per group `shiftedKeys`, `markedKeys`, `frozen` and
-`frozenSeconds`. In libbox the group fields come with `GetPoolState`
-([§8](#8-observability-commandclient-extensions)). How the group tells the cases apart is in
-[the next part](#verdict-on-a-failure).
+address problems and the freeze:
 
-##### Verdict on a failure
+- `quarantined` — the node fails connections more often than the rest; new connections skip it
+  until the next check or network change;
+- a moved key — a site closed to its node has moved to the next pool node;
+- an address problem — the site did not open through any pool node and went back to its own node
+  until the next check or network change;
+- the freeze — for 15 s after the network is lost, the device wakes or the network changes, the
+  group touches nothing.
 
-When a connection through a node fails, there are three possible causes: the node is dead, the
-site does not let this node in, or the local network is gone. One error does not tell them apart,
-so the group checks the node first and only then decides what to do.
-
-- **Retry.** If a connection does not open through a pool node, the group opens it once through
-  the next live node; a nested `urltest` is not used for the retry. If a connection opened, the
-  client sent something and the site closed it without a single byte back, that is a failure too,
-  but it is not retried: the data has already gone.
-- **Where the check starts.** A failure to open through a proxy node (VLESS, Trojan, Shadowsocks
-  and others) points at the node itself: the group probes it and a neighbouring pool node as a
-  control at once. Other failures point at the site: the connection closed without an answer, did
-  not open through `direct` or a tunnel (WireGuard, AWG, Tailscale and others), or the retry
-  failed. Then the group first probes that node alone, at most once in 3 s, and if it is silent,
-  probes it together with the neighbour.
-- **The node is alive** — it answered a probe or a new connection started after the failure. The
-  site is the problem: the group moves this site (its sticky key) to the next pool node. A site
-  that did not open through any live pool node is marked an address problem: it goes back to its
-  own node, and until the next scheduled run, manual run or network change the group does not
-  retry, check or move it.
-- **The node is dead** — it is silent while the neighbour answers. The group drops the node's
-  history, sends the connections still opening through it to the retry and closes those waiting
-  for a first byte. The slot gets a replacement from outside the pool at once: with
-  `pool_tolerance: 0` the first live node in config order (candidates are probed in batches of the
-  pool size), with `> 0` the fastest by history.
-- **Both are silent** — the local network is gone. The group changes nothing and freezes (see
-  Freeze below). A failure waits for an outcome at most 60 s, with at most 64 waiting failures per
-  node; without an outcome the failure changes nothing.
-- **Probes** are requests to the group `url` with a 15 s timeout; a probe writes no history. The
-  node and the neighbour are always probed afresh, not judged by past results. One check runs at a
-  time, with at least 15 s between checks; a single-node probe does not wait for that gap.
-- **A hanging node** accepts a connection and stays silent, so it gives no error. The group notices
-  it when a pick finds a connection through it unanswered for more than 5 s, or when a client gives
-  up after waiting 5 s. Then it checks the node, at most once a minute; if the check cannot start,
-  it probes that node alone. Until the node answers, new connections skip it, as long as the pool
-  has another node that is neither dead nor holding such a connection. The skip touches no
-  history, site moves or counters.
-- **Quarantine.** A node that answers probes but fails connections more often than the rest goes
-  to quarantine: from 8 connections and 3 confirmed failures, with a failure share of at least 5 %
-  and above twice the median of the rest of the pool. New connections skip it, and its slot gets
-  a replacement until the next scheduled run, manual run or network change. Its history stays.
-- **Freeze.** For 15 s after the "both are silent" outcome, a device or network wake and a network
-  change, the group retries, probes, moves and counts nothing. After a network change the freeze
-  also lasts until the end of the run.
-- **UDP** goes through the same slots. If a UDP connection does not open, the group retries it and
-  checks the node as for TCP. If a flow sent packets and got none back, the group only checks the
-  node. UDP moves no sites and does not count toward quarantine.
-- **What leaves the state alone.** A connection test
-  ([SPEC 139](../SPECS/TASKS/139-CONNECTION_TEST/SPEC.md)) gets the retry but changes nothing in
-  the group. A delay measurement through the group (an outer group's probe, Clash API) gets
-  neither a retry nor a check.
-
-The connection list shows the node each connection went through, including a retry. The
-full rules are in
+The daemon's `GetPool` carries the same: per slot `quarantined`, `connections` and
+`confirmedFailures`, per group `shiftedKeys`, `markedKeys`, `frozen` and `frozenSeconds`. In
+libbox the group fields come with `GetPoolState` ([§8](#8-observability-commandclient-extensions)).
+The connection list shows the node each connection went through, including a retry. The full
+rules are in
 [SPEC 138 §3](../SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md#3-самовосстановление-по-отказу-соединения).
 
 #### Example — urltest with round_robin
