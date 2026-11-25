@@ -12,16 +12,19 @@ import (
 )
 
 // impairOff is how a value is turned off: the config decoder drops empty
-// arrays and objects, so [] and {} cannot mean "off".
-const impairOff = `"off"`
+// arrays and objects, so [] and {} cannot mean "off": false does.
+const impairOff = `false`
 
-// impairOffOr decodes "off" into off, anything else into value; [] and {}
+// impairOffOr decodes false into off, anything else into value; true, [] and {}
 // are refused, since in a config file they would silently vanish.
 func impairOffOr(content []byte, off *bool, value any) error {
 	trimmed := bytes.TrimSpace(content)
-	if string(trimmed) == impairOff {
+	switch string(trimmed) {
+	case impairOff:
 		*off = true
 		return nil
+	case "true":
+		return E.New(`true has no meaning here: write the value, or false to turn it off`)
 	}
 	if len(trimmed) > 0 && (trimmed[0] == '[' || trimmed[0] == '{') {
 		var probe any
@@ -29,11 +32,11 @@ func impairOffOr(content []byte, off *bool, value any) error {
 			switch v := probe.(type) {
 			case []any:
 				if len(v) == 0 {
-					return E.New(`empty []: write "off" to turn it off`)
+					return E.New(`empty []: write false to turn it off`)
 				}
 			case map[string]any:
 				if len(v) == 0 {
-					return E.New(`empty {}: write "off" to turn it off`)
+					return E.New(`empty {}: write false to turn it off`)
 				}
 			}
 		}
@@ -93,7 +96,7 @@ type ImpairLinkOptions struct {
 }
 
 // ImpairVaryOptions makes the rate jump to a uniformly drawn value in
-// [min, max] every `every`; "off" turns the swings off.
+// [min, max] every `every`; false turns the swings off.
 type ImpairVaryOptions struct {
 	Min   string `json:"min,omitempty"`
 	Max   string `json:"max,omitempty"`
@@ -116,7 +119,7 @@ func (o *ImpairVaryOptions) UnmarshalJSON(content []byte) error {
 
 // ImpairStallOptions adds random silent outages of the whole line (both
 // directions): the gaps between them are exponential with mean `every`, each
-// lasts `duration`; "off" turns them off.
+// lasts `duration`; false turns them off.
 type ImpairStallOptions struct {
 	Every    string `json:"every,omitempty"`
 	Duration string `json:"duration,omitempty"`
@@ -158,7 +161,7 @@ type ImpairMatch struct {
 }
 
 // ImpairScheduleEntry changes the outbound at a moment: its line
-// (link_params), its sublinks (the whole list; "off" removes them), or
+// (link_params), its sublinks (the whole list; false removes them), or
 // both. SetImpair takes the same object without `at`.
 type ImpairScheduleEntry struct {
 	At         string             `json:"at,omitempty"`
@@ -167,7 +170,7 @@ type ImpairScheduleEntry struct {
 }
 
 // ImpairSublinkList is the sublinks of a schedule entry: a list that
-// replaces the running one, or "off" (no sublinks).
+// replaces the running one, or false (no sublinks).
 type ImpairSublinkList struct {
 	List []ImpairSublink
 	Off  bool
@@ -195,7 +198,7 @@ func (ImpairVaryOptions) DescribeSchema(builder schema.Builder) (*schema.Node, e
 		if err := builder.FlattenStruct(objectForm, reflect.TypeFor[impairVaryPlain]()); err != nil {
 			return nil, err
 		}
-		return schema.AnyOf(schema.StringConst("off"), objectForm), nil
+		return schema.AnyOf(impairOffSchema(), objectForm), nil
 	})
 }
 
@@ -205,7 +208,7 @@ func (ImpairStallOptions) DescribeSchema(builder schema.Builder) (*schema.Node, 
 		if err := builder.FlattenStruct(objectForm, reflect.TypeFor[impairStallPlain]()); err != nil {
 			return nil, err
 		}
-		return schema.AnyOf(schema.StringConst("off"), objectForm), nil
+		return schema.AnyOf(impairOffSchema(), objectForm), nil
 	})
 }
 
@@ -215,6 +218,12 @@ func (ImpairSublinkList) DescribeSchema(builder schema.Builder) (*schema.Node, e
 		if err != nil {
 			return nil, err
 		}
-		return schema.AnyOf(schema.StringConst("off"), &schema.Node{Type: "array", Items: element}), nil
+		return schema.AnyOf(impairOffSchema(), &schema.Node{Type: "array", Items: element}), nil
 	})
+}
+
+// impairOffSchema is the JSON false that turns a value off (a const false
+// would be dropped by omitempty, an enum keeps it).
+func impairOffSchema() *schema.Node {
+	return &schema.Node{Type: "boolean", Enum: []any{false}}
 }

@@ -102,7 +102,7 @@ func TestProfileTemplateAndSwitch(t *testing.T) {
 	}
 	// {} turns vary and stall off
 	setJSON(t, m, `{"link_params": {"profile": "metro"}}`)
-	setJSON(t, m, `{"link_params": {"vary": "off", "stall": "off"}}`)
+	setJSON(t, m, `{"link_params": {"vary": false, "stall": false}}`)
 	if st = m.status(); st.LinkParams.Up.Vary != "" || st.LinkParams.Stall.Every != "" || st.LinkParams.Up.Loss != "3%" {
 		t.Fatalf("vary/stall off: %+v", st.LinkParams)
 	}
@@ -282,12 +282,12 @@ func TestScheduleRepeat(t *testing.T) {
 	}
 }
 
-// A schedule entry can replace the sublinks; "off" removes them; a sublink
+// A schedule entry can replace the sublinks; false removes them; a sublink
 // change leaves the outbound's line alone.
 func TestScheduleSublinks(t *testing.T) {
 	m, clock := modelFromJSON(t, `{"link_params": {"delay": "20ms"}, "schedule": [
 	  {"at": "1s", "sublinks": [{"match": {"domain": ["a.test"]}, "link_params": {"delay": "1s"}}]},
-	  {"at": "2s", "sublinks": "off"}
+	  {"at": "2s", "sublinks": false}
 	]}`, "")
 	clock.set(1500 * time.Millisecond)
 	m.advance(clock.t)
@@ -297,11 +297,11 @@ func TestScheduleSublinks(t *testing.T) {
 	clock.set(2500 * time.Millisecond)
 	m.advance(clock.t)
 	if len(m.sublinks) != 0 {
-		t.Fatal(`"off" did not remove the sublinks`)
+		t.Fatal(`false did not remove the sublinks`)
 	}
 }
 
-// [] and {} are refused with a pointer to "off": in a config file the
+// [] and {} are refused with a pointer to false: in a config file the
 // decoder would drop them silently.
 func TestEmptyRefused(t *testing.T) {
 	for _, options := range []string{
@@ -309,9 +309,11 @@ func TestEmptyRefused(t *testing.T) {
 		`{"link_params": {"stall": {}}}`,
 		`{"schedule": [{"at": "1s", "sublinks": []}]}`,
 		`{"sublinks": [{"match": {}, "link_params": {"delay": "1ms"}}]}`,
+		`{"link_params": {"vary": true}}`,
+		`{"link_params": {"stall": "off"}}`,
 	} {
 		err := resolveJSON(options, "")
-		if err == nil || !strings.Contains(err.Error(), "off") && !strings.Contains(err.Error(), "at least one field") {
+		if err == nil {
 			t.Errorf("%s: %v", options, err)
 		}
 	}

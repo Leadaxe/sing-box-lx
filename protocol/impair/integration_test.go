@@ -715,8 +715,8 @@ func TestIntegrationSilentOutageDialTimeout(t *testing.T) {
 }
 
 // The v2 schema through the real config path (box.New): lx.impair_profiles,
-// a profile with tuning, "off" in schedule entries (the decoder re-marshals
-// outbounds and drops empty arrays and objects, so "off" is the only way to
+// a profile with tuning, false in schedule entries (the decoder re-marshals
+// outbounds and drops empty arrays and objects, so false is the only way to
 // turn a thing off), and a
 // sublink matched by port over loopback as a second stage.
 func TestIntegrationV2Config(t *testing.T) {
@@ -725,15 +725,15 @@ func TestIntegrationV2Config(t *testing.T) {
 	config := `{"log": {"disabled": true},
 	  "lx": {"impair_profiles": {
 	    "home":  {"link_params": {"delay": "10ms"}},
-	    "metro": {"link_params": {"profile": "lte-walk", "loss": "0%", "stall": "off"}}
+	    "metro": {"link_params": {"profile": "lte-walk", "loss": "0%", "stall": false}}
 	  }},
 	  "outbounds": [
 	    {"type": "impair", "tag": "line", "seed": 1,
 	     "link_params": {"profile": "home"},
 	     "sublinks": [{"match": {"port": [` + slowPort + `]}, "link_params": {"delay": "100ms"}}],
 	     "schedule": [
-	       {"at": "1h", "link_params": {"profile": "metro", "vary": "off"}},
-	       {"at": "2h", "sublinks": "off"}
+	       {"at": "1h", "link_params": {"profile": "metro", "vary": false}},
+	       {"at": "2h", "sublinks": false}
 	     ]},
 	    {"type": "direct", "tag": "direct"}
 	  ]}`
@@ -794,4 +794,17 @@ func TestIntegrationV2RejectsFlatKeys(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "rate") {
 		t.Fatalf("flat rate accepted: %v", err)
 	}
+}
+
+// false survives the config decoder in every place it turns a thing off:
+// an entry that only turns vary or stall off would be dropped as empty
+// otherwise, and the load would fail with "changes nothing".
+func TestIntegrationFalseSurvivesDecoder(t *testing.T) {
+	boxWith(t, `{"type": "impair", "tag": "x",
+	  "link_params": {"vary": {"min": "1mbit", "max": "2mbit", "every": "1s"}, "stall": {"every": "1m", "duration": "1s"}},
+	  "schedule": [
+	    {"at": "1h", "link_params": {"vary": false}},
+	    {"at": "2h", "link_params": {"stall": false}},
+	    {"at": "3h", "sublinks": false}
+	  ]}`)
 }

@@ -480,7 +480,7 @@ func (s *profileSet) resolveEntry(key string, entry *ScheduleEntry) (event, erro
 	}
 	if entry.Sublinks != nil {
 		if !entry.Sublinks.Off && len(entry.Sublinks.List) == 0 {
-			return ev, E.New(key, `.sublinks: empty: write "off" to remove the sublinks`)
+			return ev, E.New(key, `.sublinks: empty: write false to remove the sublinks`)
 		}
 		sublinks, err := s.resolveSublinks(key+".sublinks", entry.Sublinks.List)
 		if err != nil {
@@ -524,7 +524,7 @@ func resolveStall(key string, o *StallOptions) (*stallSpec, error) {
 		return nil, nil
 	}
 	if o.Every == "" || o.Duration == "" {
-		return nil, E.New(key, `: every and duration are required ("off" turns the stalls off)`)
+		return nil, E.New(key, `: every and duration are required (false turns the stalls off)`)
 	}
 	every, err := parseDuration(key+".every", o.Every, 100*time.Millisecond, 24*time.Hour)
 	if err != nil {
