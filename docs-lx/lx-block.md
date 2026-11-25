@@ -46,6 +46,7 @@ The running config (`GetRunningConfig`) returns the `lx` block canonical: empty 
 - [`lx.trusttunnel` — TrustTunnel outbounds](#lxtrusttunnel--trusttunnel-outbounds)
 - [`lx.mtu_align` — path MTU / packet-size alignment](#lxmtu_align--path-mtu--packet-size-alignment)
 - [`lx.sniff_guard` — guard against rerouting by SNI](#lxsniff_guard--guard-against-rerouting-by-sni)
+  - [ClientHello under `detour`: measurement, the old default and node keys](#clienthello-under-detour-measurement-the-old-default-and-node-keys)
 - [Removed keys](#removed-keys)
 - [Reserved: `lx.naive`](#reserved-lxnaive)
 
@@ -527,6 +528,53 @@ is checked for the section that has one.
   and needs no protection. The 200 ms wait is an Xray constant; for another sniffer tune `delay`.
 - A DPI that drops a guarded handshake (treating record splitting as a signature) is not bypassed:
   the pair moves that path's label to `clean`.
+
+### ClientHello under `detour`: measurement, the old default and node keys
+
+> ⚠️ Without the `lx.sniff_guard` block the core splits the ClientHello as upstream does:
+> only where the node sets `fragment` or `record_fragment`, under `detour` too. In earlier
+> releases a TLS-over-TCP outbound (VLESS, trojan, vmess, anytls, shadowtls, http, masque
+> `h2`, …) dialling through `detour` split its ClientHello into TLS records by default
+> (`record_fragment`). A config without the block loads with no error, and TLS nodes behind
+> relays that reroute connections by SNI stop connecting.
+
+The split protects against a relay that reads the SNI out of the ClientHello and sends the
+connection to that name instead of the node's destination. This is what Xray `sniffing` with
+`destOverride` and without `routeOnly` does. A node whose SNI is a disguise (WARP with a
+foreign name, REALITY) then gets a connection that goes elsewhere: the handshake hangs and
+dies as `tls handshake: EOF` after 12–17 s, or a foreign key arrives. Xray's TLS sniffer does
+not parse a ClientHello split into TLS records. Measured through a sniffing leg: no split ❌
+fail in 12 s; `fragment` ✅ 0.6 s; `record_fragment` ✅ 0.1 s.
+
+The [`lx.sniff_guard`](#lxsniff_guard--guard-against-rerouting-by-sni) block turns the
+protection on. The minimal block:
+
+```json
+"lx": { "sniff_guard": { "tls": { "method": "record_fragment" } } }
+```
+
+With it, a path through any relay except `ssh` and `socks` starts with the split, and the
+direct path without it. A path through `ssh` or `socks` starts without the split. The split is
+turned on there once a node on that path failed without it and then passed with it. To start
+every relay with the split, as the old default did, add
+`"detour_type": {"ssh": "suspect", "socks": "suspect"}`. The map is laid over the defaults, so
+only the entries that change need listing. Nodes whose SNI matches `server` are not guarded by
+default (`nodes.sni_mismatch`). The old default split theirs too; to split them as well, add
+`"nodes": {"sni_mismatch": false}`. Unlike the old default, the block learns from connection
+outcomes and can drop the split on a path where it gets in the way.
+
+Node-level upstream keys:
+
+- **`fragment` / `record_fragment`** on a node work as upstream, with or without the block.
+  The block overrides them only with `"override": true`.
+- **`"record_fragment": false`** — the node asks for the ClientHello in one record. Under the
+  block without `override` such a node goes unsplit on every path.
+- **REALITY nodes** — `fragment` / `record_fragment` work on them too. In upstream the REALITY
+  client builds its uTLS connection on the bare socket, and these keys are silently ignored
+  there. The hybrid ClientHello is 1.5–1.9 KB, which is two TCP segments. Whether a split
+  helps on a network that drops that first flight is a property of that network. The other
+  option is `key_share` ([§7](lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello)).
+- Only the handshake is split; the traffic after it is untouched.
 
 ## Removed keys
 

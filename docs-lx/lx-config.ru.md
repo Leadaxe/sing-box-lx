@@ -13,23 +13,18 @@
 - [Фичи и build-теги](#фичи-и-build-теги)
 - [0. Все поля разом (исчерпывающий пример)](#0-все-поля-разом-исчерпывающий-пример)
 - [1. XHTTP-транспорт](#1-xhttp-транспорт)
-  - [Пример — VLESS + XHTTP + Reality](#пример--vless--xhttp--reality)
 - [2. AmneziaWG 2.0/3.x (AWG2, AWG3)](#2-amneziawg-203x-awg2-awg3)
-  - [Пример — AmneziaWG 3.1 endpoint (экспорт Amnezia `amnezia-awg2`)](#пример--amneziawg-31-endpoint-экспорт-amnezia-amnezia-awg2)
-  - [Пример — AmneziaWG 2.0 endpoint](#пример--amneziawg-20-endpoint)
 - [3. Режимы выбора узла в urltest](#3-режимы-выбора-узла-в-urltest)
 - [4. MASQUE outbound — Cloudflare WARP](#4-masque-outbound--cloudflare-warp)
 - [5. Группа DNS-серверов](#5-группа-dns-серверов)
 - [6. VLESS `encryption` — пост-квантовый слой](#6-vless-encryption--пост-квантовый-слой)
-  - [Поле (на `vless`-outbound)](#поле-на-vless-outbound)
-  - [Пример](#пример)
 - [7. REALITY `key_share` — гибридный или классический ClientHello](#7-reality-key_share--гибридный-или-классический-clienthello)
 - [8. Наблюдаемость (расширения CommandClient)](#8-наблюдаемость-расширения-commandclient)
 - [9. ClientHello под `detour` — без дефолта](#9-clienthello-под-detour--без-дефолта)
 - [10. Outbound `chain` — виртуальная цепочка хопов из групп и узлов](#10-outbound-chain--виртуальная-цепочка-хопов-из-групп-и-узлов)
 - [11. Снифферы протоколов для трафика из LAN](#11-снифферы-протоколов-для-трафика-из-lan)
 - [12. Проверка и сборка](#12-проверка-и-сборка)
-- [13. Корневой блок `lx`](lx-block.ru.md)
+- [13. Корневой блок `lx`](#13-корневой-блок-lx)
 - [14. Tailscale: выключить Taildrop](#14-tailscale-выключить-taildrop)
 
 ---
@@ -76,151 +71,139 @@ desktop `LX_TAGS`. Он усыпляет простаивающие WireGuard/Am
 
 ## 1. XHTTP-транспорт
 
-XHTTP (в Xray — «splithttp»/«xhttp») — v2ray-транспорт: он туннелирует прокси поверх обычных
-HTTP/2-запросов. XHTTP крепится к VLESS / VMess / Trojan через общий блок `transport` и сочетается
-с TLS, включая Reality. С XTLS-Vision XHTTP несовместим; это ограничение протокола, а не
-форка. Дефолтная форма на проводе байт-в-байт совпадает с v1-клиентом, проверенным вживую.
-Каждое v2-поле включается явно (opt-in): размещение session/seq, обфускация uplink, семейство
-`x_padding_*`, переиспользование соединений `xmux`.
+XHTTP — транспорт Xray (`splithttp`/`xhttp`): прокси идёт внутри обычных HTTP-запросов, поэтому
+проходит через CDN. Он крепится к VLESS, VMess и Trojan блоком `transport` и
+сочетается с TLS и REALITY; с XTLS-Vision несовместим. Версию HTTP задаёт `tls.alpn`: по
+умолчанию HTTP/2, `["h3"]` — HTTP/3, `["http/1.1"]` — HTTP/1.1. Поля второй версии включаются
+явно; без них провод такой же, как у клиента первой версии. Нужен build-тег `with_xhttp`.
 
-Минимальный блок `transport` — просто `"type": "xhttp"` (режим `auto`). [Пример
-ниже](#пример--vless--xhttp--reality) добавляет Reality-узел с `stream-one`.
+| Ключ | По умолчанию | Что задаёт |
+|------|--------------|------------|
+| `mode` | `auto` | `auto` (`stream-one` на REALITY, иначе `packet-up`), `packet-up`, `stream-up`, `stream-one` |
+| `host` | SNI или адрес сервера | заголовок `Host` |
+| `path` | `""` | префикс пути; id сессии и номер пакета дописываются сегментами |
+| `headers` | — | дополнительные заголовки на каждом запросе |
+| `x_padding_bytes` | `"100-1000"` | длина паддинга в байтах, `"min-max"` или число |
+| `no_grpc_header` | `false` | не слать `Content-Type: application/grpc` в `stream-one` и `stream-up` |
+| `session_placement` | `path` | где id сессии: `path`, `query`, `header`, `cookie` |
+| `session_key` | `X-Session` / `x_session` | имя поля с id сессии, если он не в пути |
+| `seq_placement` | `path` | где номер пакета `packet-up`: `path`, `query`, `header`, `cookie` |
+| `seq_key` | `X-Seq` / `x_seq` | имя поля с номером пакета, если он не в пути |
+| `session_table` | — | алфавит случайного id сессии; без него id — UUID |
+| `session_length` | — | длина id сессии, `"min-max"` или `"n"`; только вместе с `session_table` |
+| `uplink_data_placement` | `auto` (= `body`) | где данные отдачи: `body`, `header`, `cookie`; последние два — только `packet-up` |
+| `uplink_data_key` | `X-Data` / `x_data` | имя заголовка или cookie с данными отдачи |
+| `uplink_chunk_size` | по размещению | размер куска данных отдачи в base64-символах, `"min-max"` |
+| `uplink_http_method` | `POST` | метод запросов отдачи; `GET` — только `packet-up` |
+| `x_padding_obfs_mode` | `false` | настраиваемый паддинг `x_padding_*` вместо паддинга в `Referer` |
+| `x_padding_placement` | `queryInHeader` | где паддинг: `cookie`, `header`, `query`, `queryInHeader` |
+| `x_padding_key` | `x_padding` | имя cookie или параметра с паддингом |
+| `x_padding_header` | `X-Padding` | имя заголовка с паддингом |
+| `x_padding_method` | `repeat-x` | `repeat-x` (символы `X`) или `tokenish` (base62) |
+| `sc_max_each_post_bytes` | `"1000000-1000000"` | порог, после которого POST отдачи делится |
+| `sc_min_posts_interval_ms` | `"30-30"` | пауза между POST отдачи, мс |
+| `xmux` | — | пул HTTP-соединений: `max_connections` (`3-3`), `max_concurrency`, `c_max_reuse_times`, `h_max_request_times` (`600-900`), `h_max_reusable_secs` (`1800-3000`), `h_keep_alive_period` |
 
-> 📖 Полный справочник полей — в
-> [protocols-transports.ru.md §1](protocols-transports.ru.md#1-xhttp-транспорт)
-> ([EN](protocols-transports.md#1-xhttp-transport)): все 26 ключей XHTTP с дефолтами,
-> семантика пула `xmux`, формы записи диапазонов и таблица диагностики.
-
-### Пример — VLESS + XHTTP + Reality
+`sc_max_concurrent_posts`, `server_max_header_bytes`, `no_sse_header`, `sc_max_buffered_posts` и
+`sc_stream_up_server_secs` принимаются для совместимости со ссылками Xray, клиент их не использует.
 
 ```jsonc
 {
-  "type": "vless",
-  "tag": "xhttp-out",
-  "server": "example.com",
-  "server_port": 443,
+  "type": "vless", "tag": "xhttp-out", "server": "example.com", "server_port": 443,
   "uuid": "00000000-0000-0000-0000-000000000000",
   "tls": {
-    "enabled": true,
-    "server_name": "example.com",
+    "enabled": true, "server_name": "example.com",
     "utls": { "enabled": true, "fingerprint": "chrome" },
     "reality": { "enabled": true, "public_key": "<reality-public-key-base64>", "short_id": "0123abcd" }
   },
-  "transport": {
-    "type": "xhttp",
-    "mode": "stream-one",
-    "host": "example.com",
-    "path": "/xhttp",
-    "x_padding_bytes": "100-1000"
-  }
+  "transport": { "type": "xhttp", "mode": "stream-one", "path": "/xhttp" }
 }
 ```
+
+📖 Каждый ключ, `xmux`, версии HTTP, примеры за CDN и диагностика — в
+[protocols-transports.ru.md §1](protocols-transports.ru.md#1-xhttp-транспорт); как устроен XHTTP —
+в [xray-protocols-explained.ru.md](xray-protocols-explained.ru.md).
 
 ---
 
 ## 2. AmneziaWG 2.0/3.x (AWG2, AWG3)
 
-AWG — это WireGuard + обфускация против DPI. Настраивается как обычный sing-box `wireguard` endpoint с дополнительными полями. С `with_awg` они передаются на устройство. Конфиг без единого AWG-поля — обычный WireGuard endpoint, поведение байт-в-байт как в upstream.
+AmneziaWG — WireGuard, который прячет форму своих пакетов от DPI: мусорные пакеты перед
+рукопожатием, паддинг, свои заголовки и приманки под другой протокол. Это обычный endpoint
+`wireguard` с дополнительными полями на корне endpoint, как в секции `[Interface]` файла
+`awg-quick`; без них endpoint работает как обычный WireGuard. Параметры не согласуются: у клиента и
+сервера они должны совпадать. AWG 3.x — контейнер Amnezia `amnezia-awg2` с `protocol_version` 3.x.
+Нужен build-тег `with_awg`.
 
-AWG2 = поля AWG1 плюс CPS-пакеты `I1`–`I5`. И клиент, и сервер должны работать на AmneziaWG с совпадающими параметрами: I-пакеты — это конфигурация, они не согласуются. Первую приманку проще задать WireSock-style сахаром `id`/`ip`/`ib`: он генерирует `i1` сам. Сахар описан в [полном справочнике](protocols-transports.ru.md#25-сахар-маскировки-id--ip--ib).
-
-AWG3 — это amneziawg-go v3.0/v3.1, контейнер Amnezia `amnezia-awg2` с `protocol_version` 3.x. Он добавляет защиту заголовка, паддинг содержимого, случайные хвосты, отключённые cookie, диапазонные тайминги и диапазонный `persistent_keepalive_interval`. Ключ защиты заголовка `header_protection_key` серверный и обязан совпасть с сервером. Все поля AWG3, как и AWG2, лежат на корне endpoint — [справочник §2.10](protocols-transports.ru.md#210-awg-3x-защита-заголовка-паддинг-хвосты-тайминги).
-
-AWG-поля лежат на корне endpoint, ни одно не на peer, как в секции `[Interface]`
-файла `awg-quick` `.conf`: junk (`jc`/`jmin`/`jmax`), паддинг handshake (`s1`–`s4`),
-magic-заголовки (`h1`–`h4`, одно значение или диапазон `"min-max"`) и CPS-приманки
-(`i1`–`i5`). AWG-endpoint нужен `mtu` ниже, чем у обычного WireGuard, потому что `s4`
-паддит каждый data-пакет. Если `s4` задан, а `mtu` нет, ядро ставит `1280`.
-
-> 📖 Полный справочник полей — в
-> [protocols-transports.ru.md §2](protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3)
-> ([EN](protocols-transports.md#2-amneziawg-203x-awg2-awg3)): каждое junk/signature/magic/CPS-поле
-> с типом и дефолтом, формат CPS-тегов, сахар маскировки `id`/`ip`/`ib` (четыре профиля, какой
-> выбрать, что попадает на провод), математика бюджета MTU, маппинг `awg.conf` 1:1 и дословные
-> ошибки валидации.
-
-### Пример — AmneziaWG 3.1 endpoint (экспорт Amnezia `amnezia-awg2`)
-
-```jsonc
-{
-  "type": "wireguard", "tag": "awg3-out", "system": false, "mtu": 1376,
-  "address": ["10.8.1.7/32"],
-  "private_key": "<client-private-key-base64>",
-  "jc": 4, "jmin": 10, "jmax": 50,
-  "s1": 55, "s2": 42, "s3": 40, "s4": 12,      // все >= 12 для защиты заголовка
-  "h1": 1, "h2": 2, "h3": 3, "h4": 4,
-  "header_protection_key": "<HeaderProtectionKey-base64>",
-  "content_padding_addition": "10-100",
-  "rekey_after_time": "100-120", "rekey_timeout": "3-7", "reject_after_time": "150-180",
-  "keepalive_timeout": "5-15", "max_handshake_attempts": "15-20",
-  "random_trailers": true, "disable_cookies": true,
-  "peers": [ { "address": "77.239.123.44", "port": 30565,
-    "public_key": "<server-public-key-base64>", "pre_shared_key": "<preshared-key-base64>",
-    "allowed_ips": ["0.0.0.0/0", "::/0"], "persistent_keepalive_interval": "25-35" } ]
-}
-```
-
-### Пример — AmneziaWG 2.0 endpoint
+| Ключ | По умолчанию | Что задаёт |
+|------|--------------|------------|
+| `jc`, `jmin`, `jmax` | `0` | число мусорных пакетов перед рукопожатием и их размер |
+| `s1`, `s2` | `0` | мусор перед сообщениями рукопожатия INIT и RESPONSE |
+| `s3`, `s4` | `0` | AWG 2.0: мусор перед cookie reply и перед каждым data-пакетом; с `s4` ядро ставит `mtu` 1280 |
+| `h1`–`h4` | `1`–`4`, как в WireGuard | magic-заголовки четырёх типов сообщений: число или диапазон `"min-max"` без пересечений |
+| `i1`–`i5` | `""` | приманки перед рукопожатием в формате тегов: `<b 0x…>`, `<r N>`, `<c>`, `<t>`, `<rc N>`, `<rd N>` |
+| `id`, `ip`, `ib` | `""` | сахар вместо ручного `i1`: приманка `quic`, `dns`, `stun` или `sip` с доменом `id` и браузером `ib` |
+| `header_protection_key` | — | AWG 3.x: ключ шифрования заголовков, задаёт сервер; при нём `s1`–`s4` не меньше 12 |
+| `content_padding_addition` | — | AWG 3.x: добавочный паддинг внутри data-пакетов, число или `"min-max"` |
+| `rekey_after_time`, `rekey_timeout`, `reject_after_time` | как в WireGuard | AWG 3.x: тайминги смены ключей, число или `"min-max"` секунд |
+| `keepalive_timeout`, `max_handshake_attempts` | как в WireGuard | AWG 3.x: таймаут keepalive и число попыток рукопожатия, число или `"min-max"` |
+| `random_trailers` | `false` | AWG 3.x: хвост случайной длины у сообщений |
+| `disable_cookies` | `false` | AWG 3.x: не слать и не требовать cookie reply |
+| `peers[].persistent_keepalive_interval` | — | keepalive пира: число секунд или, в AWG 3.x, `"min-max"` |
 
 ```jsonc
 {
-  "type": "wireguard",
-  "tag": "awg-out",
-  "system": false,
-  "mtu": 1280,
-  "address": ["10.0.0.2/32"],
-  "private_key": "<client-private-key-base64>",
-
+  "type": "wireguard", "tag": "awg-out", "mtu": 1280,
+  "address": ["10.0.0.2/32"], "private_key": "<client-private-key-base64>",
   "jc": 10, "jmin": 50, "jmax": 100,
   "s1": 20, "s2": 20, "s3": 60, "s4": 60,
-  // одиночные значения (стиль AWG 1.x) — или диапазонные заголовки AWG 2.0, напр.
-  // "h1": "43613244-384550127", "h2": "826869626-2105069164",
-  // "h3": "2124774725-2141151992", "h4": "2144594503-2146278491",
-  "h1": 1234567890, "h2": 1234567891, "h3": 1234567892, "h4": 1234567893,
-  "i1": "<b 0x000100002112a442><r 12>",
-  "i2": "<b 0x010100002112a442><r 12>",
-  "i3": "<r 24>",
-
-  "peers": [
-    {
-      "address": "server.example.com",
-      "port": 51821,
-      "public_key": "<server-public-key-base64>",
-      "pre_shared_key": "<preshared-key-base64>",
-      "allowed_ips": ["0.0.0.0/0", "::/0"],
-      "persistent_keepalive_interval": 25
-    }
-  ]
+  "h1": "43613244-384550127", "h2": "826869626-2105069164",
+  "h3": "2124774725-2141151992", "h4": "2144594503-2146278491",
+  "id": "www.google.com", "ip": "quic", "ib": "chrome",
+  "peers": [{ "address": "server.example.com", "port": 51821,
+    "public_key": "<server-public-key-base64>", "allowed_ips": ["0.0.0.0/0", "::/0"] }]
 }
 ```
 
-Подробно в [полном справочнике](protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3) разобраны три темы:
-
-- сахар маскировки `id`/`ip`/`ib` — четыре профиля приманки: `quic`/`dns`/`stun`/`sip`;
-- бюджет MTU — почему `s4` требует пониженный MTU, симптом `sendmsg: message too long`,
-  авто-дефолт `1280`, `udp_fragment` для вложенных туннелей;
-- маппинг `awg.conf` 1:1.
-
-Рантайм — `Leadaxe/wireguard-go`: sagernet/wireguard-go с обфускацией AmneziaWG, подключён сабмодулем `submodules/wireguard-go`. Как устроена фича — в [описании фичи AWG](../SPECS/FEATURES/003-AWG/FEATURE.md).
+📖 Каждый ключ, формат приманок, профили сахара, бюджет MTU, перевод `awg.conf` и пример AWG 3.1 —
+в [protocols-transports.ru.md §2](protocols-transports.ru.md#2-amneziawg-203x-awg2-awg3); как
+устроен AmneziaWG — в [amneziawg-explained.ru.md](amneziawg-explained.ru.md).
 
 ---
 
 ## 3. Режимы выбора узла в urltest
 
-Upstream `urltest` всегда выбирает узел с наименьшей задержкой. sing-box-lx добавляет ещё два
-режима:
+Upstream `urltest` всегда выбирает узел с наименьшей задержкой. Форк добавляет ещё два режима:
 
 | `mode` | Выбор | Переключение | Что проверяется каждый `interval` |
 |---|---|---|---|
 | `least_test` (по умолчанию) | самый быстрый | когда другой быстрее на `tolerance` или подключение через текущий не удалось | все узлы |
 | `round_robin` | пул живых узлов | соединения раскладываются по пулу | только пул |
-| `failover` | самый быстрый на момент выбора | только когда текущий отказал или стал вдвое медленнее остальных; дальше снова самый быстрый | только текущий узел |
+| `failover` | самый быстрый на момент выбора | только когда текущий отказал или стал вдвое медленнее остальных | только текущий узел |
 
-Поля `url`, `interval`, `idle_timeout` и `interrupt_exist_connections` работают как в апстриме.
-Поля `mode` и `balancer` работают в любой сборке; состояние пула для интерфейса (`GetPool`,
-[§8](#8-наблюдаемость-расширения-commandclient)) — в сборке с `with_lx_command`.
+`round_robin` держит сайт на своём узле (sticky-привязка) и восстанавливается от самих соединений:
+соединение, не открывшееся через мёртвый узел, открывается через соседний, а узел сразу меняется на
+живой. Поля `url`, `interval`, `idle_timeout` и `interrupt_exist_connections` работают как в
+апстриме; build-тег не нужен.
 
-Поля, как работает каждый режим, самовосстановление пула `round_robin` и примеры — в
+| Ключ | По умолчанию | Что задаёт |
+|------|--------------|------------|
+| `mode` | `least_test` | `least_test`, `round_robin` или `failover` |
+| `balancer.pool` | `3` | сколько узлов в пуле `round_robin` |
+| `balancer.pool_tolerance` | `0` | `0` — пул из живых узлов без сравнения задержек; `> 0` — самые быстрые, замена при выигрыше больше чем на столько мс |
+| `balancer.sticky_hash` | `["process","domain"]` | из чего ключ привязки потока к узлу: `process`, `domain`, `source_ip`, `dest_ip`, `dest_port`; `["none"]` отключает |
+
+```jsonc
+{
+  "type": "urltest", "tag": "auto",
+  "outbounds": ["proxy-a", "proxy-b", "proxy-c", "proxy-d", "proxy-e"],
+  "interval": "15m",
+  "mode": "round_robin",
+  "balancer": { "pool": 3, "pool_tolerance": 0 }
+}
+```
+
+📖 Как работает каждый режим, самовосстановление пула, ограничения и примеры — в
 [lx-urltest.ru.md](lx-urltest.ru.md).
 
 ---
@@ -229,148 +212,114 @@ Upstream `urltest` всегда выбирает узел с наименьше�
 
 Outbound `masque` подключается к Cloudflare WARP и другим серверам CONNECT-IP (RFC 9484): целые
 IP-пакеты идут поверх HTTP/3 или HTTP/2, а ядро поднимает на туннель свой userspace-стек, как у
-WireGuard-endpoint'а. С AWG-сахаром *masquerade* `id/ip/ib` из §2 у него общее только слово.
-Нужны теги `with_quic` и `with_gvisor`, оба есть в `LX_TAGS`. Ключи берутся готовыми из конфига:
-устройство в WARP регистрирует клиент, а не ядро.
+WireGuard-endpoint'а. Ключи берутся готовыми из конфига: устройство в WARP регистрирует клиент.
+SNI по умолчанию — `www.cloudflare.com`, сервер проверяется по закреплённому `public_key`.
+`vhttp: auto` пробует HTTP/3 и через 3 с без ответа переходит на HTTP/2. Нужен блок `dns` верхнего
+уровня и теги `with_quic` и `with_gvisor` (оба есть в `LX_TAGS`).
 
-Обязательные поля — `server`/`server_port`, пара ключей `private_key`/`public_key` и хотя бы один
-из `ip`/`ipv6`: это адрес клиента внутри туннеля, а не выходной IP. Нужен блок `dns` верхнего
-уровня: домены outbound разрешает через DNS-роутер. У остальных полей есть значения по умолчанию:
-
-| Поле | По умолчанию |
-|------|--------------|
-| `profile` | `cloudflare` |
-| `vhttp` | `auto` |
-| `tls.server_name` | `www.cloudflare.com` |
-| `mtu` | `1280` |
-| `idle_timeout` | выключен или глобальный `lx.masque.idle_timeout` ([lx-block.ru.md](lx-block.ru.md)); ключ узла сильнее глобального, `"0"` тоже |
-| `keep_alive_period` | `30s` |
-| `network_list` | `tcp+udp` |
+| Ключ | По умолчанию | Что задаёт |
+|------|--------------|------------|
+| `server`, `server_port` | обязательные | адрес эндпоинта и порт, обычно `443` |
+| `private_key`, `public_key` | обязательные для `cloudflare` | ключи из регистрации WARP, base64 от DER |
+| `ip`, `ipv6` | хотя бы один | адреса клиента внутри туннеля |
+| `profile` | `cloudflare` | `cloudflare` — WARP, `standard` — свой сервер по RFC 9484 |
+| `vhttp` | `auto` | `auto`, `h3` или `h2` |
+| `uri` | `https://cloudflareaccess.com` у `cloudflare` | адрес запроса CONNECT-IP; для `standard` обязателен |
+| `tls` | `server_name`: `www.cloudflare.com` | обычный TLS-блок: `server_name`, `disable_sni`, `insecure`, `fragment`, `record_fragment` |
+| `mtu` | `1280` | размер внутреннего пакета; на `h2` до `16000` |
+| `idle_timeout` | выключен или `lx.masque.idle_timeout` | простой, после которого туннель засыпает |
+| `keep_alive_period` | `30s` | QUIC keepalive, только `h3`; отрицательное значение выключает |
+| `network_list` | `tcp`, `udp` | какие протоколы пускать в туннель |
+| `udp_fragment` | фрагментация разрешена | `false` запрещает фрагментацию внешних датаграмм |
 
 ```jsonc
 {
-  "type": "masque",
-  "tag": "warp",
-  "server": "162.159.198.2",
-  "server_port": 443,
+  "type": "masque", "tag": "warp",
+  "server": "162.159.198.2", "server_port": 443,
   "private_key": "<base64 DER EC private key>",
   "public_key":  "<base64 DER PKIX public key>",
-  "ip":   "172.16.0.2/32",
-  "ipv6": "2606:4700:110:...::/128"
+  "ip": "172.16.0.2/32", "ipv6": "2606:4700:110:...::/128"
 }
 ```
 
-- SNI по умолчанию — `www.cloudflare.com`, а не имя эндпоинта: по имени MASQUE-эндпоинта в
-  ClientHello его режет DPI, а сервер проверяется по `public_key`.
-- `vhttp: auto` сначала пробует h3 и переходит на h2 (TCP:443), если QUIC не поднялся за 3 с, и
-  запоминает, что сработало. Это для сетей и хопов в `detour`, которые молча глотают QUIC.
-  Профиль `standard` работает только по h3 и требует `uri`.
-- Узлы над masque (через `detour`, группу или в `chain`) получают размер пакета под `mtu` сами
-  ([`lx.mtu_align`](lx-block.ru.md#lxmtu_align--выравнивание-mtu-и-размера-пакета-по-пути)): WARP теряет
-  внутренние IPv6-фрагменты. Внешний QUIC к серверу стартует с пакета `mtu + 51` байт.
-- Версию HTTP задаёт `vhttp`; поле `network` в `masque`-узле — ошибка загрузки.
-
-Проверено на устройстве в Wi-Fi и LTE, по `h3` и по `h2`, вместе со сном и восстановлением после
-обрыва.
-
-📖 Как устроено и почему — [masque-explained.ru.md](masque-explained.ru.md). Все поля, профили, примеры и частые грабли — в
-[protocols-transports.ru.md §3](protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)
-([EN](protocols-transports.md#3-masque-outbound-connect-ip--warp)).
+📖 Как устроено и почему, примеры за релеем и типовые сбои — в
+[masque-explained.ru.md](masque-explained.ru.md); ошибки загрузки и переход со старой схемы — в
+[protocols-transports.ru.md §3](protocols-transports.ru.md#3-masque-outbound-connect-ip--warp).
 
 ---
 
 ## 5. Группа DNS-серверов
 
 Тип `group` в `dns.servers[]` объединяет несколько DNS-серверов под одним тегом: если один сервер
-не отвечает, запрос уходит к другим. Режимы: `stable` держится за текущий сервер, `fastest` берёт
-тот, что чаще отвечал первым, `parallel` спрашивает всех сразу. Ключ `hosts` отвечает на
-локальные имена до обращения к сети. Build-тег не нужен.
+не отвечает, запрос уходит к другим. Группа помнит ошибки и победы серверов и выбирает среди
+чистых: `stable` держится за текущий, `fastest` берёт тот, что чаще отвечал первым, `parallel`
+спрашивает всех сразу. Ключ `hosts` отвечает на локальные имена до обращения к сети. Build-тег не
+нужен.
+
+| Ключ | По умолчанию | Что задаёт |
+|------|--------------|------------|
+| `servers` | обязательное | теги серверов группы, хотя бы один |
+| `mode` | `stable` | `stable`, `fastest` или `parallel` |
+| `error_ttl` | `2m` | сколько помнится ошибка сервера |
+| `win_ttl` | `5m` | сколько помнится победа сервера; только `fastest` |
+| `hosts` | — | теги серверов типа `hosts`, которые спрашиваются первыми |
 
 ```jsonc
 { "type": "group", "tag": "public", "servers": ["google", "cloudflare"], "mode": "stable" }
 ```
 
-Поля, как группа выбирает сервер, `hosts` и примеры — в [lx-dns-group.ru.md](lx-dns-group.ru.md).
+📖 Как группа выбирает сервер, `hosts` для адресов самих серверов и примеры — в
+[lx-dns-group.ru.md](lx-dns-group.ru.md).
 
 ## 6. VLESS `encryption` — пост-квантовый слой
 
-Плоское поле `encryption` на `vless`-outbound включает рукопожатие `mlkem768x25519plus` внутри
-VLESS. Этот слой лежит над транспортом и TLS, под VLESS-клиентом. От key exchange REALITY он не
-зависит: это другой слой. Серверы, которые требуют его (в Xray настроен `decryption`), молча
-рвут обычный VLESS. Транспорт поднимается: WS отвечает `101`, gRPC — на SETTINGS. После этого
-пир закрывает соединение без единой строки в логе ядра; этот симптом поле и лечит. В форке
-только клиентская половина: форк клиентский, серверная половина не портирована. Поле всегда в
-сборке, build-тега нет.
+Поле `encryption` на `vless`-outbound включает внутри VLESS рукопожатие `mlkem768x25519plus`. Слой
+лежит под VLESS и над транспортом, от REALITY не зависит. Сервер с настроенным `decryption` без
+этого слоя молча рвёт соединение сразу после подъёма транспорта; поле это лечит. В форке только
+клиентская половина, build-тег не нужен.
 
-### Поле (на `vless`-outbound)
-
-| Ключ | Тип | По умолчанию | Значение |
-|------|-----|--------------|----------|
-| `encryption` | string | `""` | `""`/`"none"` = слой выключен (поведение upstream байт-в-байт). Иначе — spec-строка; `check` и старт проверяют её, ошибка называет конкретный сегмент |
-
-Грамматика spec-строки (сегменты через точку):
-
-```
-mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>[.<padding>…].<ключ>[.<ключ>…]
-```
-
-- **appearance** — как слой выглядит на проводе: `native` (AEAD-заголовки в форме
-  TLSv1.3), `xorpub` (XOR по публичному ключу), `random`.
-- **rtt** — `0rtt` или `1rtt`.
-- **padding** — опциональные короткие блоки вида `100-111-1111`. Сегмент короче
-  20 символов до первого ключа читается как padding.
-- **ключ** — base64url публичного ключа X25519 (32 байта) или ML-KEM-768
-  (1184 байта); ключей может быть несколько. Рабочий ключ ML-KEM-768 — ~1579
-  символов; заметно более короткий — обрезанный ключ, а не другой формат.
-
-### Пример
+| Ключ | По умолчанию | Что задаёт |
+|------|--------------|------------|
+| `encryption` | `""` | `""` или `"none"` — слой выключен; иначе строка `mlkem768x25519plus.<native\|xorpub\|random>.<0rtt\|1rtt>[.<padding>…].<ключ>` |
 
 ```jsonc
 {
-  "type": "vless",
-  "tag": "pq-node",
-  "server": "example.com",
-  "server_port": 443,
+  "type": "vless", "tag": "pq-node", "server": "example.com", "server_port": 443,
   "uuid": "00000000-0000-0000-0000-000000000000",
   "encryption": "mlkem768x25519plus.native.0rtt.<base64url ключ ML-KEM-768>",
   "transport": { "type": "ws", "path": "/ws" }
 }
 ```
 
-Поле вышло в `v1.14.0-lx.18` и проверено на устройстве на подписке, из-за которой появилось:
-заработали 10 узлов, мёртвых без него (6 из 8 WS, 4 из 4 gRPC), в остальных группах транспортов
-ничего не изменилось. В поле встречается форма `native.0rtt`. `1rtt` с padding и
-`xorpub`/`random` парсятся и собираются, но живого сервера с ними ещё не встречали.
+> ⚠️ В подписке значение приходит как `settings.vnext[0].users[0].encryption`. Генератор конфига
+> должен переносить его в плоское поле `encryption` рядом с `uuid`.
 
-> ⚠️ В подписке значение приходит как `settings.vnext[0].users[0].encryption`. На
-> sing-box-outbound это плоское поле `encryption` рядом с `uuid`. Если билдер конфига его
-> теряет, ядру нечего включать.
+📖 Сегменты строки, ошибки загрузки и проверка на подписке — в
+[protocols-transports.ru.md §5.5](protocols-transports.ru.md#55-поле-encryption-у-vless); как
+устроен слой — в [xray-protocols-explained.ru.md §5](xray-protocols-explained.ru.md#5-vless-encryption-постквантовый-слой).
 
 ---
 
 ## 7. REALITY `key_share` — гибридный или классический ClientHello
 
-Поле `key_share` — строка в `tls.reality`, задаётся на каждом узле:
+Браузерные отпечатки `chrome`, `firefox` и `safari` шлют гибридный постквантовый key share
+`X25519MLKEM768`, и ClientHello становится втрое длиннее: два TCP-сегмента вместо одного. Новые
+серверы Xray (от v26.9.8) гибрид требуют, а в некоторых сетях такое приветствие теряется. Ядро не
+выбирает между «сервер отвергнет» и «сеть потеряет», поэтому выбор задаётся на узле.
+
+| Ключ | По умолчанию | Что задаёт |
+|------|--------------|------------|
+| `tls.reality.key_share` | `""` | `""` — как несёт отпечаток; `"classical"` — вырезать гибрид (только Xray < v26.9.8); `"hybrid"` — требовать гибрид, на отпечатке без него сразу ошибка |
 
 ```json
 "reality": { "enabled": true, "public_key": "…", "short_id": "0123abcd", "key_share": "classical" }
 ```
 
-| Значение | ClientHello | Работает против |
-|---|---|---|
-| `""` (не задано) | Как несёт отпечаток: `chrome` / `firefox` / `safari` шлют гибридный шар `X25519MLKEM768`, `edge` / `ios` / `android` / `360` / `qq` — только X25519. Ядро ничего не меняет. | любой Xray, если отпечаток несёт гибрид; иначе только Xray < v26.9.8 |
-| `"classical"` | `X25519MLKEM768` вырезан из `key_share` и `supported_groups`. Приветствие как у апстрима, на ~1,2 КБ короче (`chrome`: 594 байта вместо 1720, один TCP-сегмент вместо двух). | Только Xray < v26.9.8. Новые серверы молча отвергают приветствие без гибрида (`reality verification failed`). |
-| `"hybrid"` | Гибрид обязателен. На отпечатке без него рукопожатие сразу падает с `reality key_share "hybrid": fingerprint Edge 85 carries no X25519MLKEM768 key share`. Без этого значения сервер отказал бы молча, и отказ не отличить от чужого ключа. На `chrome` / `firefox` / `safari` ничего не меняет. | как `""` |
+Для нового сервера в такой сети остаются разрез ClientHello (`record_fragment`) и `detour`.
 
-Любое другое значение — ошибка конфига при загрузке: опечатка не должна молча становиться
-дефолтом.
-
-В некоторых сетях двухсегментное гибридное приветствие теряется, а односегментное классическое
-проходит (LxBox #142). Клиент самого Xray упирается в ту же проблему (XTLS#6256). Новые
-Xray-серверы гибрид требуют. Ядро не может выбрать за пользователя между «сервер отвергнет» и
-«сеть потеряет», поэтому выбор задаётся на узле. `classical` снижает постквантовую защиту и
-годится только для старых серверов. Для нового сервера в такой сети остаются `record_fragment`
-([§9](#9-clienthello-под-detour--без-дефолта)) и `detour`.
+📖 Какой отпечаток что шлёт, размеры приветствий и ошибки — в
+[protocols-transports.ru.md §5.2](protocols-transports.ru.md#52-отпечатки-и-гибридный-key-share); как
+устроен REALITY — в [xray-protocols-explained.ru.md §2](xray-protocols-explained.ru.md#2-reality).
 
 ---
 
@@ -406,48 +355,18 @@ sing-box api group pool auto     # пул round_robin группы auto (сбо�
 
 ## 9. ClientHello под `detour` — без дефолта
 
-> ⚠️ Без блока `lx.sniff_guard` ядро режет ClientHello как апстрим: только там, где у узла
-> задан `fragment` или `record_fragment`, через `detour` тоже. В прежних релизах
-> TLS-over-TCP outbound (VLESS, trojan, vmess, anytls, shadowtls, http, masque `h2`, …),
-> который диалит через `detour`, по умолчанию резал ClientHello на TLS-записи
-> (`record_fragment`). Конфиг без блока загружается без ошибки, а TLS-узлы через релеи,
-> которые перенаправляют соединение по SNI, перестают подниматься.
-
-Разрез защищает от релея, который читает SNI из ClientHello и отправляет соединение на это имя
-вместо назначения узла. Так работает Xray `sniffing` с `destOverride` без `routeOnly`. Узел, у
-которого SNI — маскировка (WARP с чужим именем, REALITY), получает соединение не туда: хендшейк
-висит и падает с `tls handshake: EOF` через 12–17 с, либо приходит чужой ключ. ClientHello,
-разрезанный на TLS-записи, TLS-сниффер Xray не разбирает. Замер через сниффящее плечо: без
-разреза ❌ отказ за 12 с; `fragment` ✅ 0.6 с; `record_fragment` ✅ 0.1 с.
-
-Защиту включает блок [`lx.sniff_guard`](lx-block.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni) (§13).
-Минимальный блок:
+Релей, который читает SNI из ClientHello и отправляет соединение на это имя (Xray `sniffing` с
+`destOverride` без `routeOnly`), уводит узел с маскировочным SNI (REALITY, WARP) на чужой хост.
+Разрезанный ClientHello такой релей не разбирает. Без блока `lx.sniff_guard` ядро режет ClientHello
+как апстрим — только у узлов с `fragment` или `record_fragment`. Блок включает защиту для путей
+через релеи и учится по исходам подключений; его ключи — в [§13](#13-корневой-блок-lx).
 
 ```json
 "lx": { "sniff_guard": { "tls": { "method": "record_fragment" } } }
 ```
 
-С ним путь через любой релей, кроме `ssh` и `socks`, стартует с разрезом, прямой путь — без.
-Путь через `ssh` и `socks` стартует без разреза. Разрез на нём включается, если узел на этом
-пути упал без разреза и прошёл с ним. Чтобы с разрезом стартовали все релеи, как при прежнем
-дефолте, добавьте `"detour_type": {"ssh": "suspect", "socks": "suspect"}`. Карта накладывается
-поверх дефолтов, поэтому перечислять нужно только то, что меняется. Узлы, у которых SNI
-совпадает с `server`, блок по умолчанию не защищает (`nodes.sni_mismatch`). Прежний дефолт резал
-и их; чтобы резать их тоже, добавьте `"nodes": {"sni_mismatch": false}`. В отличие от прежнего
-дефолта, блок учится по исходу подключений и может снять разрез с пути, где он мешает.
-
-Узловые ключи апстрима:
-
-- **`fragment` / `record_fragment`** у узла действуют как в апстриме, с блоком и без него.
-  Блок перекрывает их только при `"override": true`.
-- **`"record_fragment": false`** — узел просит ClientHello одной записью. Под блоком без
-  `override` такой узел идёт без разреза на любом пути.
-- **REALITY-узлы** — `fragment` / `record_fragment` действуют и на них. В апстриме
-  REALITY-клиент строит uTLS-соединение на голом сокете, и эти ключи там молча не
-  действуют. Гибридный ClientHello занимает 1,5–1,9 КБ, это два TCP-сегмента. Поможет ли
-  разрез в сети, которая теряет такой первый пакет, — свойство той сети. Второй способ —
-  `key_share` ([§7](#7-reality-key_share--гибридный-или-классический-clienthello)).
-- Разрезается только хендшейк, трафик после него не трогается.
+📖 Замер, прежний дефолт, узловые ключи и все режимы блока — в
+[lx-block.ru.md](lx-block.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni).
 
 ---
 
@@ -515,23 +434,53 @@ windows/386. Остальные фичи в нём без изменений.
 
 ## 13. Корневой блок `lx`
 
-Глобальные ручки форка живут в одном корневом блоке `lx`, сгруппированные по подсистеме. Всё, что
-описывает конкретный узел, остаётся в его объекте, как в апстриме: поля AWG — в endpoint'е, `xhttp` —
-в `transport`, собственный `idle_timeout` masque-узла — в узле. Все подблоки и ключи опциональны;
-пустой `lx` и отсутствующий равнозначны. Опечатка в имени ключа — ошибка загрузки, не тихий дефолт.
-Running-config (`GetRunningConfig`) отдаёт блок `lx` в канонической форме: пустые подблоки отброшены.
+Глобальные ручки форка живут в одном корневом блоке `lx`, по подсистемам. Всё, что описывает
+конкретный узел, остаётся в его объекте, как в апстриме. Все подблоки и ключи необязательны; пустой
+`lx` и отсутствующий равнозначны, опечатка в имени ключа — ошибка загрузки. `GetRunningConfig`
+отдаёт блок в канонической форме: пустые подблоки отброшены.
 
-Подблоки и где они описаны:
+| Ключ | По умолчанию | Что задаёт |
+|------|--------------|------------|
+| `wg.idle.suspend` | выкл | простой, после которого WG/AWG-endpoint вне активного маршрута засыпает; только мобильная сборка |
+| `wg.idle.suspend_reachable` | выкл | то же для endpoint'ов в активном маршруте; не меньше `suspend` |
+| `wg.idle.teardown` | = `suspend_reachable` | сколько endpoint спит до полной разборки; `"0"` — не разбирать |
+| `wg.idle.lazy_build` | `false` | собирать устройство при первом подключении, а не на старте |
+| `wg.idle.build_max` | `0` | не больше N собранных устройств одновременно; `0` — без потолка |
+| `wg.idle.build_overflow` | `wait` | при потолке: `wait` — ждать, `build` — собрать сверх потолка |
+| `wg.buffers.read_datagram_count` | `128` | датаграмм на одно чтение из сокета, 1–128; меньше — меньше памяти |
+| `wg.buffers.send_by_mtu` | `true` | буферы чтения по MTU туннеля; `false` — по 64 КБ, для диагностики |
+| `wg.connected_socket` | `false` | подключать сокет туннеля к адресу сервера; Linux и Android |
+| `masque.idle_timeout` | выкл | общее окно сна для узлов `masque` без своего `idle_timeout` |
+| `trusttunnel.idle_timeout` | `5m` | общее окно простоя для узлов `trusttunnel` без своего `idle_timeout` |
+| `mtu_align` | `clamp` | подгонка MTU и размера пакета узлов над туннелями: `off`, `fill`, `clamp`; объект `{mode, except}` исключает теги |
+| `sniff_guard.nodes.sni_mismatch` | `true` | защищать только узлы, у которых SNI не совпадает с `server` |
+| `sniff_guard.nodes.outbound_type` | все типы | защищать только узлы этих типов |
+| `sniff_guard.detour_type` | `direct`, `ssh`, `socks` — `clean`, остальные — `suspect` | стартовая оценка пути по типу релея: `never`, `clean`, `suspect` |
+| `sniff_guard.override` | `false` | блок сильнее узловых `fragment` и `record_fragment` |
+| `sniff_guard.tls.method` | `off` | защита TLS: `record_fragment`, `fragment`, `delay`, `off` |
+| `sniff_guard.quic.method` | `off` | защита QUIC: `decoy_first_byte`, `delay`, `off` |
+| `sniff_guard.tls/quic.delay` | `300ms` | пауза метода `delay` |
+| `sniff_guard.tls/quic.persist` | `false` | хранить оценки релеев в `experimental.cache_file` |
+| `sniff_guard.tls/quic.detour_type` | общая карта | своя карта `detour_type` для TLS или QUIC |
 
-- [`lx.wg` — endpoint'ы WireGuard / AmneziaWG](lx-block.ru.md#lxwg--endpointы-wireguard--amneziawg)
-- [`lx.masque` — MASQUE-outbound'ы](lx-block.ru.md#lxmasque--masque-outboundы)
-- [`lx.trusttunnel` — TrustTunnel-outbound'ы](lx-block.ru.md#lxtrusttunnel--trusttunnel-outboundы)
-- [`lx.mtu_align` — выравнивание MTU и размера пакета по пути](lx-block.ru.md#lxmtu_align--выравнивание-mtu-и-размера-пакета-по-пути)
-- [`lx.sniff_guard` — защита от перенаправления по SNI](lx-block.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni)
-- [Удалённые ключи](lx-block.ru.md#удалённые-ключи)
-- [Зарезервировано: `lx.naive`](lx-block.ru.md#зарезервировано-lxnaive)
+```jsonc
+"lx": {
+  "wg": { "idle": { "suspend": "30s", "suspend_reachable": "5m" } },
+  "masque": { "idle_timeout": "5m" },
+  "mtu_align": "clamp",
+  "sniff_guard": {
+    "tls":  { "method": "record_fragment" },
+    "quic": { "method": "decoy_first_byte" }
+  }
+}
+```
 
-Ключи каждого подблока, ошибки загрузки и примеры — в [lx-block.ru.md](lx-block.ru.md).
+Удалённые ключи (`lx.quic_sniff_decoy`, `lx.awg_masquerade`, плоские ключи сна `lx.wg`,
+`route.lx_idle_*`) — ошибка загрузки; что ставить вместо них — в
+[lx-block.ru.md](lx-block.ru.md#удалённые-ключи).
+
+📖 Каждый подблок с логикой, ошибками загрузки и примерами — в [lx-block.ru.md](lx-block.ru.md);
+энергомодель сна — в [lx-energy.ru.md](lx-energy.ru.md).
 
 ---
 

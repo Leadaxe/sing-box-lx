@@ -1137,6 +1137,11 @@ key share before `X25519`. The core does not substitute the fingerprint.
 `key_share`, otherwise the X25519 part of the hybrid. The client version in the session
 id is the required minimum.
 
+The choice is per node because the core cannot choose between "the server rejects" and "the
+network loses": some networks lose the two-segment hybrid hello while the one-segment classical
+hello passes (LxBox #142), Xray's own client hits the same (XTLS#6256), and new Xray servers
+require the hybrid. `classical` lowers post-quantum protection and fits old servers only.
+
 ## 5.3 ClientHello fragmentation
 
 Upstream `tls` keys; in the fork they also apply to REALITY.
@@ -1190,6 +1195,11 @@ mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>[.<padding>…].<key>[.<key
 
 Padding default when no blocks are given: lengths `100-111-1111.50-0-3333`, gaps `75-0-111`.
 The server half (`decryption`) is not ported.
+
+Verified on a device on the subscription that prompted the field (`v1.14.0-lx.18`): 10 nodes that
+were dead without it came up (6 of 8 WS, 4 of 4 gRPC), and nothing changed in the other transport
+groups. In the field the `native.0rtt` form is seen; `1rtt` with padding and `xorpub`/`random`
+parse and build, but no live server with them has been met yet.
 
 ## 5.6 `encryption` validation errors (verbatim)
 
