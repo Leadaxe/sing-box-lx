@@ -154,7 +154,7 @@ A health-check probe is an ordinary dial through the node, so it wakes a sleepin
 
 An active least_test group probes every member each `interval` and wakes sleepers. These are upstream semantics: picking the best node requires measuring all of them. Where that cost matters, pick `mode: failover`: the group holds the working node and probes only it, so the other nodes sleep for as long as the held one answers.
 
-`failover` has its own price: while the held node works, the group does not look for a faster one, and the delays of the other nodes in the UI stay as of the last full run. A held node that fails a probe or a "path is dead" dial moves the selection to the fastest live node; a manual test measures everyone and re-selects the fastest. Mode semantics: [lx-config.md](lx-config.md#3-urltest-node-selection-modes).
+`failover` has its own price: while the held node works, the group does not look for a faster one, and the delays of the other nodes in the UI stay as of the last full run. A held node that fails a probe or a "path is dead" dial moves the selection to the fastest live node; a manual test measures everyone and re-selects the fastest. Mode semantics: [lx-urltest.md](lx-urltest.md#4-failover--hold-until-it-fails).
 
 ## 7. Timelines
 

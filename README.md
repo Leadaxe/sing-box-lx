@@ -175,7 +175,7 @@ A pool server that goes down between checks drops no requests: the connection op
 
 Limits: recovery from failed connections works only in `round_robin`; the pool state for a UI (`GetPool`) is in a build with `with_lx_command`.
 
-No build tag · verified on a device with a real multi-node pool · [feature](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) · [config](docs-lx/lx-config.md#3-urltest-node-selection-modes) ([RU](docs-lx/lx-config.ru.md#3-режимы-выбора-узла-в-urltest))
+No build tag · verified on a device with a real multi-node pool · [feature](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) · [guide](docs-lx/lx-urltest.md) ([RU](docs-lx/lx-urltest.ru.md))
 
 ### A DNS server group answers from several servers as one
 

@@ -175,7 +175,7 @@ WARP работает там, где не отвечает его WireGuard-endp
 
 Ограничения: восстановление по отказам соединений работает только в `round_robin`; состояние пула для интерфейса (`GetPool`) есть в сборке с `with_lx_command`.
 
-Без build-тега · проверено на устройстве на реальном пуле из нескольких узлов · [фича](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) · [конфиг](docs-lx/lx-config.ru.md#3-режимы-выбора-узла-в-urltest) ([EN](docs-lx/lx-config.md#3-urltest-node-selection-modes))
+Без build-тега · проверено на устройстве на реальном пуле из нескольких узлов · [фича](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) · [руководство](docs-lx/lx-urltest.ru.md) ([EN](docs-lx/lx-urltest.md))
 
 ### Группа DNS-серверов отвечает как один сервер
 
