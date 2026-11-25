@@ -686,7 +686,7 @@ func (s *URLTest) rrLifeProbe(node adapter.Outbound, t *rrTrack, from int64, udp
 		if !queue.acquire(ctx, &heal.queue, 1) {
 			return
 		}
-		probe := s.group.rrQueuedProbe(ctx, node, time.Time{})
+		probe := s.group.rrSelfProbe(ctx, node, time.Time{}, false)
 		queue.release(1)
 		// N0, and a node found dead or gone while it was probed: the outcome is no
 		// longer about this slot.

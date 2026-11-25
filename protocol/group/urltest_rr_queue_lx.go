@@ -244,38 +244,30 @@ func (g *URLTestGroup) rrQueue() *rrQueue {
 	return rrQueueOf(g.history)
 }
 
-// rrQueuedProbe probes member through the queue's U3 rule; the caller holds its
-// place. from is the lower bound of the start the rule asking needs.
-func (g *URLTestGroup) rrQueuedProbe(ctx context.Context, member adapter.Outbound, from time.Time) rrProbe {
-	return g.rrHealProbe(ctx, member, from, false)
-}
-
-// rrHealProbe is rrQueuedProbe; alone starts a probe of its own beside the flight
-// of the node: the decisive probe does not wait for the group's own first probe of
-// the node (the exception of U3, step 3 of §4.2).
+// rrSelfProbe is a probe of the self-heal of member; the caller holds its place in
+// the queue. It takes the outcome of the flight of the node by U3, from being the
+// lower bound of the start the rule asking needs; alone starts a probe of its own
+// beside the flight: the decisive probe does not wait for the group's own first
+// probe of the node (the exception of U3, step 3 of §4.2).
 //
 // A probe that ended with no ANSWER (and was not cancelled) takes the liveness from
 // the history of its leaf written before it (§5): the history is not erased — that
 // would be an inference with no control (A0).
-func (g *URLTestGroup) rrHealProbe(ctx context.Context, member adapter.Outbound, from time.Time, alone bool) rrProbe {
-	result := g.rrFlightProbe(ctx, member, from, alone)
+func (g *URLTestGroup) rrSelfProbe(ctx context.Context, member adapter.Outbound, from time.Time, alone bool) rrProbe {
+	var result rrProbe
+	if leaf := RealTag(member, N.NetworkTCP); leaf == "" || alone {
+		result = g.rrProbeNode(ctx, member)
+	} else {
+		result = g.rrQueue().probe(ctx, rrFlightKey{leaf: leaf, link: g.link}, from, func(ctx context.Context) rrProbe {
+			return g.rrProbeNode(ctx, member)
+		})
+		result.member, result.leaf = member.Tag(), leaf
+		if g.balancer != nil {
+			g.balancer.rrClockLook(time.Now()) // N3: every group that takes the outcome compares its clocks
+		}
+	}
 	if g.balancer != nil && result.leaf != "" && !result.answered && !result.cancelled() {
 		g.balancer.heal.missed(result.leaf, result.ended)
-	}
-	return result
-}
-
-func (g *URLTestGroup) rrFlightProbe(ctx context.Context, member adapter.Outbound, from time.Time, alone bool) rrProbe {
-	leaf := RealTag(member, N.NetworkTCP)
-	if leaf == "" || alone {
-		return g.rrProbeNode(ctx, member)
-	}
-	result := g.rrQueue().probe(ctx, rrFlightKey{leaf: leaf, link: g.link}, from, func(ctx context.Context) rrProbe {
-		return g.rrProbeNode(ctx, member)
-	})
-	result.member, result.leaf = member.Tag(), leaf
-	if g.balancer != nil {
-		g.balancer.rrClockLook(time.Now()) // N3: every group that takes the outcome compares its clocks
 	}
 	return result
 }

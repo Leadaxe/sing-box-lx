@@ -99,14 +99,14 @@ func TestRRReview9_joinedGroupComparesClocks(t *testing.T) {
 	a.nodes["n"].hold = make(chan struct{})
 	done := make(chan struct{})
 	go func() {
-		a.g.rrQueuedProbe(context.Background(), a.nodes["n"], time.Time{})
+		a.g.rrSelfProbe(context.Background(), a.nodes["n"], time.Time{}, false)
 		close(done)
 	}()
 	waitLong(t, func() bool { return a.nodes["n"].active.Load() == 1 }, 2*time.Second)
 	now := time.Now()
 	b.s.balancer.clockMono, b.s.balancer.clockWall = rrClock(now), now.Add(-time.Minute).UnixNano()
 	joined := make(chan rrProbe, 1)
-	go func() { joined <- b.g.rrQueuedProbe(context.Background(), b.nodes["n"], time.Time{}) }()
+	go func() { joined <- b.g.rrSelfProbe(context.Background(), b.nodes["n"], time.Time{}, false) }()
 	time.Sleep(50 * time.Millisecond)
 	close(a.nodes["n"].hold)
 	<-done

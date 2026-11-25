@@ -955,7 +955,7 @@ func (c *rrCheck) launch(role rrCheckRole, index int, node adapter.Outbound, fro
 	// the moment of step 3, not after its end (U3).
 	alone := role == rrRoleDecisive && !c.firstEnded[index]
 	go func() {
-		probe := c.s.group.rrHealProbe(c.ctx, node, from, alone)
+		probe := c.s.group.rrSelfProbe(c.ctx, node, from, alone)
 		c.queue.release(1)
 		c.results <- rrCheckResult{role, index, batch, probe}
 	}()
