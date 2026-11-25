@@ -88,7 +88,7 @@ Build-тег `with_lx_chain` входит в десктопные `LX_TAGS` и �
 > (`["relay", "foreign-node"]`), фрагментация нужна на позиции 1. Для этого поставьте
 > `"strip": {"tls.fragment": false}`.
 
-`detourList` соединения ([§8](lx-config.ru.md#8-наблюдаемость-расширения-commandclient)) показывает разрешённый
+`detourList` соединения ([§8](lx-observability.ru.md)) показывает разрешённый
 путь. `GetChains` (CommandClient) и Clash API `/proxies/<tag>` → `chain` отдают состояние по
 позициям и счётчики. Состояние позиции — выбранный узел, состояние звена `starting|active|idle`,
 живые соединения, эффективный MTU и причина, что снято или переписано, последняя ошибка. Ошибки

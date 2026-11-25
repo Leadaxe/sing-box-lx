@@ -13,7 +13,7 @@ Upstream `urltest` всегда выбирает узел с наименьше�
 
 Поля `url`, `interval`, `idle_timeout` и `interrupt_exist_connections` работают как в апстриме.
 Поля `mode` и `balancer` работают в любой сборке; состояние пула для интерфейса (`GetPool`,
-[§8](lx-config.ru.md#8-наблюдаемость-расширения-commandclient)) — в сборке с `with_lx_command`.
+[§8](lx-observability.ru.md)) — в сборке с `with_lx_command`.
 
 ## Оглавление
 
@@ -157,7 +157,7 @@ Upstream `urltest` всегда выбирает узел с наименьше�
 
 То же несёт `GetPool` демона: по слоту `quarantined`, `connections` и `confirmedFailures`, по
 группе `shiftedKeys`, `markedKeys`, `frozen` и `frozenSeconds`. В libbox поля группы приходят
-через `GetPoolState` ([§8](lx-config.ru.md#8-наблюдаемость-расширения-commandclient)). Список соединений
+через `GetPoolState` ([§8](lx-observability.ru.md)). Список соединений
 показывает узел, через который соединение пошло, в том числе после повтора. Все правила — в
 [SPEC 138 §3](../SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md#3-самовосстановление-по-отказу-соединения).
 

@@ -91,7 +91,7 @@ idle-suspend like any endpoint.
 > the border (`["relay", "foreign-node"]`), the fragmentation is needed at position 1. For
 > that, set `"strip": {"tls.fragment": false}`.
 
-A connection's `detourList` ([§8](lx-config.md#8-observability-commandclient-extensions)) shows the
+A connection's `detourList` ([§8](lx-observability.md)) shows the
 resolved path. `GetChains` (CommandClient) and Clash API `/proxies/<tag>` → `chain` return the
 per-position state and counters. The state of a position is the picked node, the link state
 `starting|active|idle`, live connections, effective MTU and why, what was stripped or

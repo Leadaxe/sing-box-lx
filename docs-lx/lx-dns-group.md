@@ -107,7 +107,7 @@ group tag. Every query carries a probe trace: the path through groups, the outco
 went to everyone) and `survival` (no clean servers) flags.
 
 `GetDNSGroups` (a build with `with_lx_command`,
-[lx-config §8](lx-config.md#8-observability-commandclient-extensions)) returns for every server of
+[lx-config §8](lx-observability.md)) returns for every server of
 the group: whether it is clean, how many errors are remembered and when the last one was, how
 many wins, the time of the last answer and whether it is current.
 

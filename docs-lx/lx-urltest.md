@@ -12,7 +12,7 @@ Upstream `urltest` always selects the lowest-delay node. sing-box-lx adds two mo
 
 The `url`, `interval`, `idle_timeout` and `interrupt_exist_connections` fields work as upstream.
 The `mode` and `balancer` fields work in every build; the pool state for a UI (`GetPool`,
-[§8](lx-config.md#8-observability-commandclient-extensions)) is in a build with `with_lx_command`.
+[§8](lx-observability.md)) is in a build with `with_lx_command`.
 
 ## Table of contents
 
@@ -158,7 +158,7 @@ address problems and the freeze:
 
 The daemon's `GetPool` carries the same: per slot `quarantined`, `connections` and
 `confirmedFailures`, per group `shiftedKeys`, `markedKeys`, `frozen` and `frozenSeconds`. In
-libbox the group fields come with `GetPoolState` ([§8](lx-config.md#8-observability-commandclient-extensions)).
+libbox the group fields come with `GetPoolState` ([§8](lx-observability.md)).
 The connection list shows the node each connection went through, including a retry. The full
 rules are in
 [SPEC 138 §3](../SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md#3-самовосстановление-по-отказу-соединения).
