@@ -585,12 +585,16 @@ func (s *URLTest) rrTrackDial(ctx context.Context, track *rrTrack, member adapte
 // The context of the dial carries the mark of a round_robin open (rrMarkDial): a
 // round_robin group on the way (a detour, a member of another group) finds it and
 // leaves the retry to the outer one (§5); picked.inner records the mark found.
+// A member that is a nested urltest gets no mark: this group does not retry it
+// (rrHealRetry), the nested one does — exactly one group of the chain retries.
 func (s *URLTest) rrDialStart(ctx context.Context, leaf adapter.Outbound, picked *rrPick) context.Context {
 	if s.balancer == nil {
 		return ctx
 	}
 	picked.inner = rrInnerDial(ctx)
-	ctx = rrMarkDial(ctx)
+	if !rrNestedURLTest(leaf) {
+		ctx = rrMarkDial(ctx)
+	}
 	if picked.track == nil || picked.track.tag != leaf.Tag() {
 		return ctx
 	}

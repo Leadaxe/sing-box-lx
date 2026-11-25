@@ -7,7 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/urltest"
+	C "github.com/sagernet/sing-box/constant"
+	E "github.com/sagernet/sing/common/exceptions"
+	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 )
 
 // waitLong waits up to d for cond.
@@ -271,6 +276,34 @@ func TestRRReview9_slotWithoutHistoryIsEmpty(t *testing.T) {
 	if f.nodes["b"].probes.Load() != 0 {
 		t.Fatalf("the check probed the node of a slot without history: %d", f.nodes["b"].probes.Load())
 	}
+}
+
+// R6, §5: a round_robin group B as a member of a round_robin group A — A does not
+// retry its nested member and leaves no mark; B retries: one open and one retry.
+func TestRRReview9_nestedRoundRobinRetriesOnce(t *testing.T) {
+	a := newHealFixture(t, []string{"q"}, nil, 0)
+	b := newHealFixture(t, []string{"x", "y"}, []string{"x", "y"}, 0)
+	b.s.Adapter = outbound.NewAdapter(C.TypeURLTest, "B", []string{N.NetworkTCP}, []string{"x", "y"})
+	a.g.outbound.(*fakeManager).byTag["B"] = b.s
+	a.s.balancer.setSlots([]string{"B", "q"})
+	destination := M.ParseSocksaddrHostPort("example.org", 443)
+	pickedA := a.s.testPick(context.Background(), destination, time.Now())
+	ctx := a.s.rrDialStart(context.Background(), b.s, &pickedA)
+	if rrInnerDial(ctx) {
+		t.Fatal("the outer group marked the open of its nested round_robin member")
+	}
+	pickedB := b.s.testPick(ctx, destination, time.Now())
+	b.s.rrDialStart(ctx, b.nodes["x"], &pickedB)
+	conn, ok := b.s.rrHealDial(ctx, N.NetworkTCP, destination, b.nodes["x"], E.New("dial failed"), pickedB)
+	closeConn(conn)
+	if !ok || b.nodes["y"].dials.Load() != 1 {
+		t.Fatalf("the nested group does not retry: ok=%v y=%d", ok, b.nodes["y"].dials.Load())
+	}
+	if _, ok := a.s.rrHealDial(ctx, N.NetworkTCP, destination, b.s, E.New("dial failed"), pickedA); ok || a.nodes["q"].dials.Load() != 0 {
+		t.Fatal("the outer group retries its nested member: a second retry")
+	}
+	b.waitCheck(t)
+	a.waitCheck(t)
 }
 
 // lx:end SPEC 138

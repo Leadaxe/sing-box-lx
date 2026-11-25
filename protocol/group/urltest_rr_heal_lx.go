@@ -528,9 +528,10 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 	if (class == rrRefused || class == rrLocal) && picked.key.valid && b.memory.shifts.marked(picked.key.table) {
 		return rrRetried{}, false // K5: a marked key keeps the retry of FAIL_NODE only
 	}
-	// A nested urltest retries on its own (SPEC 054): two attempts per call at most.
-	// Only the outermost round_robin group of the chain of one open retries (§5): an
-	// inner one, found by the mark of the context, leaves it to the outer.
+	// A nested urltest retries on its own (SPEC 054, and a round_robin one by §5: its
+	// open carries no mark of this group, rrDialStart): two attempts per call at most.
+	// Otherwise only the outermost round_robin group of the chain of one open retries
+	// (§5): an inner one, found by the mark of the context, leaves it to the outer.
 	if rrNestedURLTest(member) || picked.inner || ctx.Err() != nil {
 		return rrRetried{}, false
 	}
