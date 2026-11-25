@@ -10,8 +10,10 @@ package group
 // probe takes a slot whose node is dead (no history) or empty at once, through the
 // same point write as a self-heal replacement (balancer.replaceSlot): no node in two
 // slots, a live slot is never touched, a quarantined node takes none. The run's own
-// plan at its end (balancePoolFirstLive, balancePoolTolerant, rebuildPool) still
-// sets the pool in its order — with pool_tolerance > 0 sorted by delay.
+// plan at its end (balancePoolFirstLive, balancePoolTolerant, rebuildPool) goes from
+// the slots as they stand then: a node that took a slot here keeps it (SPEC 138 §5,
+// I5), only empty and dead slots fill; with pool_tolerance > 0 a live slot changes
+// its node only for one faster by more than the tolerance.
 
 import (
 	"context"

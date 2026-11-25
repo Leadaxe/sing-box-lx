@@ -9,6 +9,7 @@ package group
 // clients (GetPool, Group.mode).
 
 import (
+	"cmp"
 	"context"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -130,9 +131,10 @@ func (g *URLTestGroup) balancePool(ctx context.Context) map[string]uint16 {
 }
 
 // balancePoolFirstLive (pool_tolerance == 0): re-test the nodes already in the pool, then walk
-// the rest in config order (rrWalkPool), and lay the pool out by planFirstLivePool: a live
-// member keeps its slot, a hole takes the next live node of the walk, and a dead member keeps
-// its slot until a live replacement is found.
+// the rest in config order (rrWalkPool), and lay the pool out by planFirstLivePool over the
+// slots as they stand at the end of the run: a live member keeps its slot (also one that took
+// it during the run), a hole takes the next live node of the walk, and a dead member keeps its
+// slot until a live replacement is found.
 func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int, lifted []string) map[string]uint16 {
 	current := g.balancer.poolTags()
 	inPool := make(map[string]bool, len(current))
@@ -154,8 +156,11 @@ func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int, lifte
 	for tag := range result {
 		live[tag] = true
 	}
+	// lx: SPEC 138 §5 — the layout goes from the slots at the end of the run: a node that
+	// took a slot during it (rrFillOnAlive) keeps that slot, only empty and dead ones fill
+	current = g.balancer.poolTags()
 	next := planFirstLivePool(current, live, fillOrder, size)
-	g.balancer.setSlots(g.balancer.rrDropStruck(next)) // lx: SPEC 138 §5 — the run puts no node struck out in its interval back
+	g.rrSetRunSlots(g.balancer.rrDropStruck(next)) // lx: SPEC 138 §5 — the run puts no node struck out in its interval back
 	return result
 }
 
@@ -206,7 +211,7 @@ func (g *URLTestGroup) balancePoolTolerant(ctx context.Context, size int) map[st
 		results[tag] = candidate{tag: tag, delay: delay, alive: ok}
 	}
 	next := planTolerantPool(g.balancer.poolTags(), results, size, g.balancer.poolTolerance)
-	g.balancer.setSlots(g.balancer.rrDropStruck(next)) // lx: SPEC 138 §5 — the run puts no node struck out in its interval back
+	g.rrSetRunSlots(g.balancer.rrDropStruck(next)) // lx: SPEC 138 §5 — the run puts no node struck out in its interval back
 	return result
 }
 
@@ -231,7 +236,7 @@ func (g *URLTestGroup) rebuildPool() {
 	}
 	current := g.balancer.poolTags()
 	if g.balancer.poolTolerance > 0 {
-		g.balancer.setSlots(planTolerantPool(current, results, size, g.balancer.poolTolerance))
+		g.rrSetRunSlots(planTolerantPool(current, results, size, g.balancer.poolTolerance))
 		return
 	}
 	inPool := make(map[string]bool, len(current))
@@ -257,7 +262,27 @@ func (g *URLTestGroup) rebuildPool() {
 	for i, c := range fillCandidates {
 		fillOrder[i] = c.tag
 	}
-	g.balancer.setSlots(planFirstLivePool(current, live, fillOrder, size))
+	g.rrSetRunSlots(planFirstLivePool(current, live, fillOrder, size))
+}
+
+// rrSetRunSlots sets the layout of a run and writes a line for every slot it changed
+// (SPEC 138 §5: every write of a slot has its line).
+func (g *URLTestGroup) rrSetRunSlots(next []string) {
+	before := g.balancer.poolTags()
+	g.balancer.setSlots(next)
+	for i, tag := range next {
+		old := ""
+		if i < len(before) {
+			old = before[i]
+		}
+		switch {
+		case tag == old:
+		case tag == "":
+			g.logger.Info("round_robin: the run leaves slot ", i, " of ", old, " empty")
+		default:
+			g.logger.Info("round_robin: the run puts ", tag, " into slot ", i, " of ", cmp.Or(old, "none"))
+		}
+	}
 }
 
 // seedPool fills the pool before the first health-check: prefer nodes with live history (the
