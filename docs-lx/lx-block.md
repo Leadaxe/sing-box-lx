@@ -147,6 +147,10 @@ Validation errors name the full key path:
 |---|---|---|---|
 | `idle_timeout` | duration ≥ 0 | off | Global idle window for every `masque` node without its own `idle_timeout`: after it the session (netstack, pumps, QUIC keepalive) is taken down and the next dial builds it again |
 
+```json
+"lx": { "masque": { "idle_timeout": "5m" } }
+```
+
 Priority: the node's `idle_timeout` > `lx.masque.idle_timeout` > off. An explicit `"0"` on a node
 keeps that node's tunnel up even when the global value is set. MASQUE builds its session lazily
 on its own, so there is no cap here.
@@ -158,6 +162,10 @@ Validation error: `lx.masque.idle_timeout must be >= 0` for a negative duration.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `idle_timeout` | duration ≥ 0 | `5m` | Global idle window for every `trusttunnel` node without its own `idle_timeout`: after it the session is closed locally and the next dial opens it again. Absent or `0` means 5 minutes |
+
+```json
+"lx": { "trusttunnel": { "idle_timeout": "10m" } }
+```
 
 Priority: the node's `idle_timeout` > `lx.trusttunnel.idle_timeout` > 5 minutes. An explicit `"0"`
 on a node disables teardown of its session whatever the global value is. Unlike `lx.masque`, a
