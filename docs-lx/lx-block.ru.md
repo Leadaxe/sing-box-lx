@@ -252,7 +252,7 @@ minimum 1280; outer packets will be fragmented`). Туннель только с
 
 `hy2` получает `initial_packet_size: 1232` (1280 − 48) и `disable_path_mtu_discovery: true`; с
 IPv4-сервером — 1252 (1280 − 28). Без выравнивания quic-go шлёт пакеты с payload 1280, по IPv6 это
-1328 байт. Туннель режет их на фрагменты, и WARP их теряет ([§4](lx-config.ru.md#4-masque-outbound--cloudflare-warp)).
+1328 байт. Туннель режет их на фрагменты, и WARP их теряет ([masque-explained.ru.md §4](masque-explained.ru.md#4-размер-пакета)).
 
 **Группы.** Под группой берётся min по всем членам на старте; при переключении селектора/urltest
 значение не пересчитывается. Размер QUIC-пакета фиксируется при создании клиента, MTU
@@ -277,7 +277,7 @@ mtu_align: wg-exit mtu 1420 → 1200 clamped (limited by warp[masque] mtu 1280 v
 - направление «сервер → клиент» — им управляет сервер.
 
 Чем masque отвечает на это снизу (внешний `InitialPacketSize` = `mtu + 51`, ICMP Packet Too Big с
-фактическим бюджетом) — в [§4](lx-config.ru.md#4-masque-outbound--cloudflare-warp).
+фактическим бюджетом) — в [masque-explained.ru.md §4](masque-explained.ru.md#4-размер-пакета).
 
 ## `lx.sniff_guard` — защита от перенаправления по SNI
 
@@ -562,7 +562,7 @@ info: путь, протокол, старое и новое состояние,
   REALITY-клиент строит uTLS-соединение на голом сокете, и эти ключи там молча не
   действуют. Гибридный ClientHello занимает 1,5–1,9 КБ, это два TCP-сегмента. Поможет ли
   разрез в сети, которая теряет такой первый пакет, — свойство той сети. Второй способ —
-  `key_share` ([§7](lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello)).
+  `key_share` ([protocols-transports.ru.md §5.2](protocols-transports.ru.md#52-отпечатки-и-гибридный-key-share)).
 - Разрезается только хендшейк, трафик после него не трогается.
 
 ## Удалённые ключи

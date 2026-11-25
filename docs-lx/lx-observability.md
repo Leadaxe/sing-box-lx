@@ -24,13 +24,13 @@ The methods the fork adds to `CommandClient`:
   The `disabled` state is set by `SetEndpointEnabled` (below;
   [lx-energy.md §12](lx-energy.md#12-a-manual-switch-turns-an-endpoint-off-without-a-config-change)).
 - **`GetPool(groupTag)`** — returns a `urltest` group's current round_robin rotation pool,
-  slot by slot ([§3](lx-config.md#3-urltest-node-selection-modes)). Per slot it also returns
+  slot by slot ([lx-urltest.md](lx-urltest.md)). Per slot it also returns
   `Quarantined`, `Connections` and `ConfirmedFailures`.
 - **`GetPoolState(groupTag)`** — returns the same slots plus the group-wide `ShiftedKeys`,
   `MarkedKeys`, `Frozen` and `FrozenSeconds`
   ([self-heal](lx-urltest.md#pool-self-heal)).
 - **`GetDNSGroups()`** — returns the live state of every DNS `group` server
-  ([§5](lx-config.md#5-dns-server-group)): per member `clean` / `liveErrors` / `lastErrorAgeMs` /
+  ([lx-dns-group.md](lx-dns-group.md)): per member `clean` / `liveErrors` / `lastErrorAgeMs` /
   `liveWins` / `current`.
 - **`GetRunningConfig()`** — returns the canonical JSON options the running box was built
   from, post-override. The result is an object with a `Content()` accessor: a bare `string`
@@ -41,7 +41,7 @@ The methods the fork adds to `CommandClient`:
   `outbound`. An `rcode` of `-1` means a lookup failure, a first-class state. An empty
   `outbound` means direct/system, also a valid state, not a bug.
 - **`GetChains()`** — returns the state of every `chain` outbound
-  ([§10](lx-config.md#10-chain-outbound--a-virtual-multi-hop-path-of-groups-and-nodes)): per position the
+  ([lx-chain.md](lx-chain.md)): per position the
   resolved node and, for positions ≥ 1, the link instance (`starting|active|idle`, live
   connections, effective MTU and why, what `strip` removed, whether `rewrite` applied, last
   error). It also returns dial, error and link counters.

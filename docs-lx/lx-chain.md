@@ -103,3 +103,20 @@ position.
 Known limits: a group at position ≥ 1 ranks its nodes by their *direct* measurements; a
 tunnel above a hop without UDP fails at dial time, and the error names both positions; nested
 `chain` is allowed only at position 0.
+
+Two more examples.
+
+A "sandwich" `WARP → foreign node → WARP`: one node on two positions is declared under two tags
+with the same credentials.
+
+```jsonc
+{ "type": "chain", "tag": "sandwich", "outbounds": ["warp-in", "node-mid", "warp-out"] }
+```
+
+A home relay at position 0 with DPI at the border: ClientHello fragmentation is needed at
+position 1, so it is not stripped.
+
+```jsonc
+{ "type": "chain", "tag": "via-home", "outbounds": ["relay", "foreign-node"],
+  "strip": { "tls.fragment": false } }
+```

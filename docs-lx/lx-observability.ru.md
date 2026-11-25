@@ -23,13 +23,13 @@ OBSERVABILITY](../SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md).
   Состояние `disabled` выставляет `SetEndpointEnabled` (ниже;
   [lx-energy.ru.md §12](lx-energy.ru.md#12-ручной-переключатель-выключает-endpoint-без-правки-конфига)).
 - **`GetPool(groupTag)`** — отдаёт текущий пул ротации round_robin группы `urltest`, слот
-  за слотом ([§3](lx-config.ru.md#3-режимы-выбора-узла-в-urltest)). По каждому слоту ещё отдаёт
+  за слотом ([lx-urltest.ru.md](lx-urltest.ru.md)). По каждому слоту ещё отдаёт
   `Quarantined`, `Connections` и `ConfirmedFailures`.
 - **`GetPoolState(groupTag)`** — отдаёт те же слоты и состояние группы: `ShiftedKeys`,
   `MarkedKeys`, `Frozen` и `FrozenSeconds`
   ([самовосстановление](lx-urltest.ru.md#самовосстановление-пула)).
 - **`GetDNSGroups()`** — отдаёт живое состояние каждого DNS-сервера `group`
-  ([§5](lx-config.ru.md#5-группа-dns-серверов)): по каждому участнику `clean` / `liveErrors` /
+  ([lx-dns-group.ru.md](lx-dns-group.ru.md)): по каждому участнику `clean` / `liveErrors` /
   `lastErrorAgeMs` / `liveWins` / `current`.
 - **`GetRunningConfig()`** — отдаёт канонический JSON options, из которых построен
   работающий box, после override. Результат — объект с аксессором `Content()`: голый
@@ -40,7 +40,7 @@ OBSERVABILITY](../SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md).
   `outbound`. `rcode` `-1` означает ошибку резолва — это полноправное состояние. Пустой
   `outbound` означает direct/system — тоже валидное состояние, не баг.
 - **`GetChains()`** — отдаёт состояние каждого outbound `chain`
-  ([§10](lx-config.ru.md#10-outbound-chain--виртуальная-цепочка-хопов-из-групп-и-узлов)): по позициям
+  ([lx-chain.ru.md](lx-chain.ru.md)): по позициям
   разрешённый узел, а для позиций ≥ 1 — звено (`starting|active|idle`, живые соединения,
   эффективный MTU и причина, что снял `strip`, применён ли `rewrite`, последняя ошибка).
   Метод отдаёт и счётчики дозвонов, ошибок и звеньев.

@@ -252,7 +252,7 @@ travels as two. A node with an explicit `initial_packet_size` is left alone enti
 
 `hy2` gets `initial_packet_size: 1232` (1280 − 48) and `disable_path_mtu_discovery: true`; with an
 IPv4 server — 1252 (1280 − 28). Without alignment quic-go sends 1280-byte payloads, 1328 bytes over
-IPv6. The tunnel splits them into fragments, and WARP drops those ([§4](lx-config.md#4-masque-outbound--cloudflare-warp)).
+IPv6. The tunnel splits them into fragments, and WARP drops those ([masque-explained.md §4](masque-explained.md#4-packet-size)).
 
 **Groups.** Under a group the min over all members is taken at start; switching the selector/urltest
 does not recompute it. The QUIC packet size is fixed when the client is created, a WG device's MTU
@@ -278,7 +278,7 @@ made for `detour`.
 - the server → client direction — the server controls it.
 
 What masque does from below (outer `InitialPacketSize` = `mtu + 51`, ICMP Packet Too Big with the
-real budget) is in [§4](lx-config.md#4-masque-outbound--cloudflare-warp).
+real budget) is in [masque-explained.md §4](masque-explained.md#4-packet-size).
 
 ## `lx.sniff_guard` — guard against rerouting by SNI
 
@@ -573,7 +573,7 @@ Node-level upstream keys:
   client builds its uTLS connection on the bare socket, and these keys are silently ignored
   there. The hybrid ClientHello is 1.5–1.9 KB, which is two TCP segments. Whether a split
   helps on a network that drops that first flight is a property of that network. The other
-  option is `key_share` ([§7](lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello)).
+  option is `key_share` ([protocols-transports.md §5.2](protocols-transports.md#52-fingerprints-and-the-hybrid-key-share)).
 - Only the handshake is split; the traffic after it is untouched.
 
 ## Removed keys
