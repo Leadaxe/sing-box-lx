@@ -55,8 +55,7 @@ Related keys:
 - `urltest` `mode: failover` — the group holds the working node and probes only it: one
   wake per `interval` instead of N.
 
-The old `route.lx_idle_*` names are unknown keys: a config with them fails to load. The full
-energy model, timelines and the recommended mobile configuration live in [lx-energy.md](lx-energy.md).
+The full energy model, timelines and the recommended mobile configuration live in [lx-energy.md](lx-energy.md).
 
 > ⚠️ All keys/UUIDs below are placeholders. Never commit real private keys / pre-shared keys to a repository.
 
