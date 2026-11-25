@@ -154,11 +154,12 @@ During a silent outage a connection (both TCP and a UDP socket) does not open: t
 the outage to end or for its own timeout, like a handshake that gets no answer. An outage with
 `reset` refuses at once.
 
-**Closing a stream.** Data the application has already written is not thrown away on `Close`: the
-close waits until it has passed the queue and the delay and gone to the carrier, and only then
-closes the carrier. The wait lasts at most 5 s, so a stalled link does not hold the close forever; what is still undelivered then is lost. A real
-TCP socket behaves the same: what was written still goes out after `close`. A scheduled outage
-with `reset` breaks the connection at once, and what was not delivered is lost.
+**Closing a stream.** Data written before `Close` (including before `CloseWrite`) is not thrown
+away: `Close` waits until it has passed the queue and the delay and gone to the carrier, and only
+then closes the carrier. This is how a real TCP close sends out its send buffer. `Close` waits at
+most 5 s: if an outage or a slow link holds it longer, the rest is lost. A scheduled outage with
+`reset` and closing the outbound itself break the connection at once. Datagrams not sent by the
+time of `Close` are lost, as is normal for UDP.
 
 **What degrading the receive side from this end does not reproduce.** The `down` direction is
 degraded after the data has crossed the real network. The real link carried it anyway, and its load
