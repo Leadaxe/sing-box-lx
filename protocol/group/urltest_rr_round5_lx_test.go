@@ -6,6 +6,7 @@ package group
 import (
 	"context"
 	"io"
+	"math"
 	"net"
 	"testing"
 	"time"
@@ -112,7 +113,7 @@ func TestRRSiteSilence_noProofNoShift(t *testing.T) {
 	if shift, _ := f.shift(key, "hole.example"); shift != 0 {
 		t.Fatalf("no proof during the wait: no shift, got %d", shift)
 	}
-	if !track.suspect(rrClock(time.Now())) {
+	if !track.suspect(rrClock(time.Now()), math.MinInt64) {
 		t.Fatal("the slot is suspect as before")
 	}
 }
@@ -173,16 +174,23 @@ func TestRRSilence_stickySuspicion(t *testing.T) {
 		result.conn.Close()
 	}
 	f.s.balancer.heal.running.Store(false)
-	if track.dials.oldest.Load() != 0 || !track.suspect(rrClock(time.Now())) {
+	heal := &f.s.balancer.heal
+	if track.dials.oldest.Load() != 0 || !track.suspect(rrClock(time.Now()), heal.event()) {
 		t.Fatal("after its silent dial ended, c stays suspect")
 	}
-	f.s.balancer.heal.freeze()
-	if !track.suspect(rrClock(time.Now())) {
-		t.Fatal("a freeze does not lift it")
-	}
 	track.markProved(rrClock(time.Now()))
-	if track.suspect(rrClock(time.Now())) {
+	if track.suspect(rrClock(time.Now()), heal.event()) {
 		t.Fatal("a proof lifts it")
+	}
+	// A connection that started before an event of the network (a freeze) gives no
+	// suspicion: the silence may have been the network's.
+	track.markSilent(rrClock(time.Now()))
+	if !track.suspect(rrClock(time.Now()), heal.event()) {
+		t.Fatal("precondition: suspect again")
+	}
+	heal.freeze()
+	if track.suspect(rrClock(time.Now()), heal.event()) {
+		t.Fatal("the connection started before the freeze: no suspicion")
 	}
 }
 
@@ -210,6 +218,8 @@ func TestRRFreeze_firstCheckAfterTheFreezeAtOnce(t *testing.T) {
 	}
 	past := time.Now().Add(-time.Second)
 	heal.frozenUntil.Store(&past) // the freeze is over
+	// ... and it was some time ago: the stalled connection below started after it.
+	heal.lastFreeze.Store(rrClock(time.Now().Add(-3 * rrHangAfter)))
 	// c stays stopped: its dial hangs, its probe is silent.
 	never := make(chan struct{})
 	defer close(never)
@@ -245,7 +255,8 @@ func TestRRStall_provedNodeIsNoStall(t *testing.T) {
 	}
 	f.s.balancer.trackOf("a").markProved(old + int64(time.Second)) // a answered a probe while it waited
 	f.s.balancer.heal.lastByte.Store(old)
-	if f.s.rrNetworkBack(rrClock(time.Now())) || f.s.balancer.heal.frozen() {
+	prover := f.s.balancer.trackOf("b") // b, stuck, gets its proof now (a slow probe answer)
+	if f.s.rrNetworkBack(rrClock(time.Now()), prover, prover.proved.Load(), true) || f.s.balancer.heal.frozen() {
 		t.Fatal("one stalled node and one that proved alive: no stall of the network")
 	}
 }

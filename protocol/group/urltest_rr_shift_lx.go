@@ -45,6 +45,7 @@ package group
 
 import (
 	"context"
+	"math"
 	"net/netip"
 	"sort"
 	"strconv"
@@ -218,6 +219,11 @@ func (b *balancer) rrKeyOf(ctx context.Context, destination M.Socksaddr) rrKey {
 type rrPassedNode struct {
 	tag      string
 	credited bool // its failure is confirmed already (§3.6.2)
+	// silent: the key passed the node by silence alone (a silent site through a
+	// live node, a timeout of an open that went to the site): it shifts the key but
+	// confirms no failure — silence is ambiguous (a slow site, a long poll) and must
+	// not press towards quarantine.
+	silent bool
 }
 
 type rrShiftEntry struct {
@@ -327,7 +333,7 @@ func (t *rrShiftTable) creditable(key uint64, success string, credited string) [
 	for i := range e.passed {
 		if !e.passed[i].credited {
 			e.passed[i].credited = true
-			if e.passed[i].tag != credited {
+			if e.passed[i].tag != credited && !e.passed[i].silent {
 				tags = append(tags, e.passed[i].tag)
 			}
 		}
@@ -367,7 +373,7 @@ func (b *balancer) inPool(tag string) bool {
 // nothing changes. A node the key passed already shifts it on as any other.
 // credited records the failure as confirmed already. It returns the shift of the
 // key and whether this call changed it.
-func (s *URLTest) rrShiftOn(key rrKey, expected int, node string, credited bool) (int, bool) {
+func (s *URLTest) rrShiftOn(key rrKey, expected int, node string, credited bool, silent bool) (int, bool) {
 	b := s.balancer
 	if !key.valid || b.heal.frozen() || s.group.ctx.Err() != nil {
 		return 0, false
@@ -409,11 +415,12 @@ func (s *URLTest) rrShiftOn(key rrKey, expected int, node string, credited bool)
 		if entry.tag == node {
 			known = true
 			entry.credited = entry.credited || credited
+			entry.silent = entry.silent && silent // an active failure there counts
 		}
 		passed = append(passed, entry)
 	}
 	if !known {
-		passed = append(passed, rrPassedNode{tag: node, credited: credited})
+		passed = append(passed, rrPassedNode{tag: node, credited: credited, silent: silent})
 	}
 	e.passed = passed
 	marked := len(e.passed) >= live
@@ -681,6 +688,9 @@ type rrFailure struct {
 	rAlive        bool // the retry's node proved alive after its failure
 	rShifted      bool
 	shift         int // the key's shift this connection expects: picked with, then its own
+	// silence: the failure is silence through a live node (no answer at all): it
+	// shifts the key and confirms no failure through the key's passed list.
+	silence bool
 }
 
 func (s *URLTest) rrNewFailure(picked rrPick, member string) *rrFailure {
@@ -758,7 +768,7 @@ func (f *rrFailure) settle() {
 	}
 	if f.aAlive && !f.aShifted {
 		f.aShifted = true
-		if shift, shifted := f.s.rrShiftOn(f.key, f.shift, f.member, f.confirmed); shifted {
+		if shift, shifted := f.s.rrShiftOn(f.key, f.shift, f.member, f.confirmed, f.silence); shifted {
 			f.shift = shift
 		}
 	}
@@ -766,7 +776,7 @@ func (f *rrFailure) settle() {
 		return
 	}
 	f.rShifted = true
-	if shift, shifted := f.s.rrShiftOn(f.key, f.shift, f.rTag, false); shifted {
+	if shift, shifted := f.s.rrShiftOn(f.key, f.shift, f.rTag, false, f.silence); shifted {
 		f.shift = shift
 	}
 }
@@ -789,6 +799,10 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch) {
 		track = b.trackOf(w.member)
 	}
 	var started int64 // no pick, no proof
+	previous := int64(math.MinInt64)
+	if track != nil {
+		previous = track.proved.Load()
+	}
 	if !w.start.IsZero() {
 		started = rrClock(w.start)
 		if track != nil {
@@ -797,7 +811,7 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch) {
 	}
 	// The first byte after the whole network stalled is the network coming back:
 	// freeze instead of verdicts (rrNetworkBack).
-	if s.rrNetworkBack(rrClock(time.Now())) || b.heal.frozen() {
+	if s.rrNetworkBack(rrClock(time.Now()), track, previous, false) || b.heal.frozen() {
 		return
 	}
 	if started != 0 && track != nil && track.pendingN.Load() > 0 {
@@ -825,7 +839,7 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch) {
 // starts the check with a control.
 func (s *URLTest) rrSilentClose(w *rrConnWatch) {
 	b := s.balancer
-	if s.group.ctx.Err() != nil || b.heal.frozen() {
+	if s.group.ctx.Err() != nil || b.heal.frozen() || s.rrBeforeEvent(w.start) {
 		return
 	}
 	if w.key.valid && b.memory.shifts.marked(w.key.table) {

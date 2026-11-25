@@ -4,6 +4,7 @@ package group
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func TestRRSuspect_hungSlotSkipped(t *testing.T) {
 	}
 	cancel()
 	<-done
-	if track.suspect(rrClock(time.Now())) {
+	if track.suspect(rrClock(time.Now()), math.MinInt64) {
 		t.Fatal("the suspicion lifts when the connection ends")
 	}
 }
@@ -73,7 +74,7 @@ func TestRRSuspect_longPollIdleAndBusy(t *testing.T) {
 	poll.Write([]byte("GET /poll"))
 	track := f.s.balancer.trackOf("a")
 	ageTrack(track, rrHangAfter+time.Second)
-	if !track.suspect(rrClock(time.Now())) {
+	if !track.suspect(rrClock(time.Now()), math.MinInt64) {
 		t.Fatal("precondition: idle a is under suspicion")
 	}
 	if selected, _ := f.s.selectBalanced(key, N.NetworkTCP, siteAddr("poll.example")); selected.Tag() == "a" {
@@ -83,7 +84,7 @@ func TestRRSuspect_longPollIdleAndBusy(t *testing.T) {
 	if f.probes("a") == 0 {
 		t.Fatal("the look at the slot probes a")
 	}
-	if track.suspect(rrClock(time.Now())) {
+	if track.suspect(rrClock(time.Now()), math.MinInt64) {
 		t.Fatal("a answered: the suspicion lifts")
 	}
 	if f.g.history.LoadURLTestHistory("a") == nil || !samePool(f.pool(), "a", "b", "c") {
@@ -112,7 +113,7 @@ func TestRRSuspect_longPollIdleAndBusy(t *testing.T) {
 		t.Fatal("precondition: busy a answers")
 	}
 	ageTrack(g.s.balancer.trackOf("a"), rrHangAfter+time.Second) // the request waits on, the other answered after it began
-	if g.s.balancer.trackOf("a").suspect(rrClock(time.Now())) {
+	if g.s.balancer.trackOf("a").suspect(rrClock(time.Now()), math.MinInt64) {
 		t.Fatal("a busy node is under no suspicion")
 	}
 	if selected, _ := g.s.selectBalanced(key, N.NetworkTCP, siteAddr("poll.example")); selected.Tag() != "a" {

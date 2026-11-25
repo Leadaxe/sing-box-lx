@@ -110,8 +110,9 @@ func TestRRReview_retryCancelledIsNoFailure(t *testing.T) {
 }
 
 // A connection that outlived a freeze (a network change, then a full run that wrote
-// fresh history to every node) has no proof of a live network by history: no shift
-// without a probe; with the check slot free, the probe decides.
+// fresh history to every node) gives no verdict at all: no shift, no check — it
+// started before an event of the network. One that started after the freeze gets
+// the probe, and the probe decides.
 func TestRRReview_freezeSinceStartNeedsProbe(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
 	f.fb["a"].set(&f.fb["a"].openFail, "blocked.example", true)
@@ -136,8 +137,14 @@ func TestRRReview_freezeSinceStartNeedsProbe(t *testing.T) {
 	conn, _ = f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], E.New("dial failed"), f.pickAt(key, "blocked.example", start))
 	closeConn(conn)
 	f.waitCheck(t)
+	if f.probes("a") != probes {
+		t.Fatal("a connection from before the freeze starts no check")
+	}
+	conn, _ = f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], E.New("dial failed"), f.pickAt(key, "blocked.example", time.Now()))
+	closeConn(conn)
+	f.waitCheck(t)
 	if f.probes("a") == probes {
-		t.Fatal("a freeze since the start: a is probed live")
+		t.Fatal("a connection after the freeze: a is probed live")
 	}
 	if shift, _ := f.shift(key, "blocked.example"); shift != 1 {
 		t.Fatalf("a answered the probe: shift 1, got %d", shift)

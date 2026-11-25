@@ -43,7 +43,13 @@ type fbNode struct {
 	release chan struct{}
 }
 
-func (n *fbNode) Type() string { return C.TypeVLESS }
+// Type is VLESS (a proxy leaf); with direct set (healNode) a direct outbound.
+func (n *fbNode) Type() string {
+	if n.direct {
+		return C.TypeDirect
+	}
+	return C.TypeVLESS
+}
 
 func (n *fbNode) releaseChan() chan struct{} {
 	n.access.Lock()
@@ -198,7 +204,7 @@ func (f *shiftFixture) pickAt(ctx context.Context, host string, start time.Time)
 
 // shiftOn is a failure on node of a connection picked with the shift expected.
 func (f *shiftFixture) shiftOn(key rrKey, expected int, node string) {
-	f.s.rrShiftOn(key, expected, node, false)
+	f.s.rrShiftOn(key, expected, node, false, false)
 }
 
 // --- the destination is unreachable through a node --------------------------------
@@ -592,7 +598,7 @@ func TestRRShift_frozenRecordsNothing(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
 	key := f.s.balancer.rrKeyOf(f.keyOn(t, "blocked.example", 0), siteAddr("blocked.example"))
 	f.s.balancer.heal.freeze()
-	f.s.rrShiftOn(key, 0, "a", false)
+	f.s.rrShiftOn(key, 0, "a", false, false)
 	f.s.balancer.rrCountConn("a", &f.s.balancer.heal)
 	f.s.rrFirstByte(&rrConnWatch{s: f.s, member: "b", key: key, confirmFor: "a"})
 	if f.s.balancer.memory.shifts.size.Load() != 0 || f.fails("a") != 0 {

@@ -399,9 +399,13 @@ func (c *rrFirstByteConn) waitEnded(closing bool) {
 	if wrote == 0 || rrClock(time.Now())-wrote < int64(rrHangAfter) || c.watch.s.balancer.heal.interrupting.Load() > 0 {
 		return
 	}
-	if c.watch.s.rrProvedDuring(c.watch.member, c.watch.start) {
+	s := c.watch.s
+	if s.rrBeforeEvent(c.watch.start) {
+		return // started before the last event of the network: no verdict
+	}
+	if s.rrProvedDuring(c.watch.member, c.watch.start) {
 		c.siteSilent()
-	} else if closing && !c.watch.start.IsZero() {
+	} else if closing && !c.watch.start.IsZero() && !s.balancer.heal.frozen() {
 		c.watch.track.markSilent(rrClock(c.watch.start))
 	}
 }

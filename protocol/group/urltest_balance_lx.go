@@ -61,6 +61,14 @@ type balancer struct {
 	// the pick. Called WITHOUT the access lock held.
 	onPick func(ctx context.Context, tag string, track *rrTrack, now int64)
 
+	// onClockJump, if set, is a jump between the wall and the monotonic clock that
+	// the pick saw (SPEC 138, rrClockJump): a sleep the monotonic clock did not
+	// count, or a clock change. clockMono and clockWall are the readings of the last
+	// look, at most one per second.
+	onClockJump func(drift time.Duration)
+	clockMono   atomic.Int64
+	clockWall   atomic.Int64
+
 	// heal is the state of the self-heal after a failed dial (SPEC 138 §3,
 	// urltest_rr_heal_lx.go).
 	heal rrHeal
@@ -182,6 +190,18 @@ func (b *balancer) pickKeyed(ctx context.Context, destination M.Socksaddr, fallb
 	// Reduce in uint64 BEFORE narrowing: int(counter) on a 32-bit platform goes negative
 	// past 2^31 and a signed % would produce a negative index (slice panic).
 	now := rrClock(picked.start)
+	// lx: SPEC 138 — at most once a second: did the wall clock run apart from the
+	// monotonic one (a sleep with no wake signal)?
+	if b.onClockJump != nil {
+		if last := b.clockMono.Load(); now-last >= int64(time.Second) && b.clockMono.CompareAndSwap(last, now) {
+			wall := picked.start.UnixNano()
+			if previousWall := b.clockWall.Swap(wall); last != 0 && previousWall != 0 {
+				if drift := time.Duration((wall - previousWall) - (now - last)); drift > rrClockJump || drift < -rrClockJump {
+					b.onClockJump(drift)
+				}
+			}
+		}
+	}
 	var idx int
 	if len(b.stickyHash) > 0 {
 		// slot-hash: fixed slot index from the key; living node in its slot keeps its keys.
@@ -217,7 +237,7 @@ func (b *balancer) pickKeyed(ctx context.Context, destination M.Socksaddr, fallb
 	// suspicion — the distribution of the keys stays as it is; failing that, the slot
 	// itself.
 	base := idx
-	if track := slots[base].track; track != nil && track.suspect(now) {
+	if track := slots[base].track; track != nil && track.suspect(now, b.heal.event()) {
 		for step := 1; step < n; step++ {
 			i := (base + step) % n
 			if b.usable(slots[i], now, true) {
@@ -240,7 +260,7 @@ func (b *balancer) pickKeyed(ctx context.Context, destination M.Socksaddr, fallb
 		}
 		if idx != base && b.onPick != nil {
 			for i := base; i != idx; i = (i + 1) % n {
-				if track := slots[i].track; track != nil && track.suspect(now) && track.attention(now) {
+				if track := slots[i].track; track != nil && track.suspect(now, b.heal.event()) && track.attention(now) {
 					b.onPick(ctx, slots[i].tag, track, now)
 				}
 			}
@@ -256,7 +276,7 @@ func (b *balancer) usable(s slot, now int64, strict bool) bool {
 	if b.alive != nil && !b.alive(s.tag) {
 		return false
 	}
-	return !strict || s.track == nil || !s.track.suspect(now)
+	return !strict || s.track == nil || !s.track.suspect(now, b.heal.event())
 }
 
 // liveSlot returns the index of the k-th live slot, k taken modulo the live count. ok is

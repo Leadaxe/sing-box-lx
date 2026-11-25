@@ -5,6 +5,7 @@ package group
 
 import (
 	"context"
+	"math"
 	"net"
 	"strconv"
 	"syscall"
@@ -27,7 +28,7 @@ func suspectNow(t *testing.T, b *balancer, tag string) *rrTrackEntry {
 	entry := &rrTrackEntry{}
 	track.track(&track.waits, entry, rrClock(time.Now().Add(-rrHangAfter-time.Second)), nopKill{})
 	track.hangLook.Store(rrClock(time.Now().Add(time.Hour)))
-	if !track.suspect(rrClock(time.Now())) {
+	if !track.suspect(rrClock(time.Now()), math.MinInt64) {
 		t.Fatal("precondition: ", tag, " under suspicion")
 	}
 	return entry
@@ -47,7 +48,7 @@ func TestRRTrack_udpWaitNoSuspicion(t *testing.T) {
 	flow.WriteTo([]byte("x"), &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9})
 	ageTrack(track, rrHangAfter+time.Second)
 	now := rrClock(time.Now())
-	if track.suspect(now) {
+	if track.suspect(now, math.MinInt64) {
 		t.Fatal("a UDP flow without an answer is no suspicion")
 	}
 	gap := time.Now()

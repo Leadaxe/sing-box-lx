@@ -20,24 +20,29 @@ func shortProbes(t *testing.T, timeout time.Duration) {
 	t.Cleanup(func() { rrProbeTimeoutNs.Store(original) })
 }
 
-// (а) A silent failure (a timeout) counts against the site only when the node proved
-// alive while that connection waited — decided at the failure, never later. An
-// active refusal waits for the verdict as before.
+// (а) A silent failure (a timeout) counts against the site only when the open went
+// to the site itself (a direct or endpoint leaf) and the node proved alive while
+// that connection waited — decided at the failure, never later. A timeout of an
+// open through a proxy leaf never does: the open does not reach the site. An active
+// refusal waits for the verdict as before.
 func TestRRSilence_decidedAtTheFailure(t *testing.T) {
 	cases := []struct {
 		name      string
+		direct    bool
 		err       error
 		proof     time.Duration // the proof mark relative to the start of the connection; 0 none
 		wantShift int
 		pending   int32
 	}{
-		{"handshake timeout, no proof", lxhandshake.ErrTimeout, 0, 0, 0},
-		{"deadline, proof before the wait", context.DeadlineExceeded, -time.Second, 0, 0},
-		{"handshake timeout, proof during the wait", lxhandshake.ErrTimeout, 100 * time.Millisecond, 1, 0},
-		{"refused: an answer, waits for the verdict", syscall.ECONNREFUSED, 0, 0, 1},
+		{"proxy, handshake timeout, no proof", false, lxhandshake.ErrTimeout, 0, 0, 0},
+		{"proxy, deadline, proof before the wait", false, context.DeadlineExceeded, -time.Second, 0, 0},
+		{"proxy, handshake timeout, proof during the wait", false, lxhandshake.ErrTimeout, 100 * time.Millisecond, 0, 0},
+		{"direct, timeout, proof during the wait", true, context.DeadlineExceeded, 100 * time.Millisecond, 1, 0},
+		{"proxy, refused: an answer, waits for the verdict", false, syscall.ECONNREFUSED, 0, 0, 1},
 	}
 	for _, c := range cases {
 		f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
+		f.fb["a"].direct = c.direct
 		f.fb["a"].set(&f.fb["a"].openFail, "blocked.example", true)
 		gap := time.Now()
 		f.s.balancer.heal.lastCheckEnd.Store(&gap) // no probe: only the rule decides
@@ -100,7 +105,8 @@ func TestRRStall_networkBackFreezes(t *testing.T) {
 	// The look at a stalled slot starts the check from a long wait; its probes hang.
 	f.s.selectBalanced(f.keyOn(t, "stall.example", 0), N.NetworkTCP, siteAddr("stall.example"))
 	waitUntil(t, func() bool { return f.probes("a") == 1 && f.s.balancer.heal.running.Load() })
-	// The network comes back: the probes answer.
+	// The network comes back: the probes, started during the stall, answer late.
+	time.Sleep(rrFastAnswer + 100*time.Millisecond)
 	close(hold)
 	waitUntil(t, func() bool { return f.s.balancer.heal.frozen() })
 	// The handshakes of the connections opened during the stall time out.
@@ -160,22 +166,23 @@ func TestRRStall_oneNodeIsNoStall(t *testing.T) {
 func TestRRBracket_lateControlStrikesNobody(t *testing.T) {
 	shortProbes(t, 400*time.Millisecond)
 	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
-	never := make(chan struct{})
-	defer close(never)
-	f.fb["a"].hold, f.fb["b"].hold = never, never
+	down := make(chan struct{})
+	f.fb["a"].hold, f.fb["b"].hold = down, down
 	f.fb["c"].slow = 350 * time.Millisecond
+	// The network comes back at the end of the first window: A and B answer from then.
+	time.AfterFunc(rrProbeTimeout()+20*time.Millisecond, func() { close(down) })
 	if !f.s.rrStartCheck(f.fb["a"], false) {
 		t.Fatal("precondition: the check starts")
 	}
 	f.waitCheck(t)
-	if f.probes("c") != 1 {
-		t.Fatalf("the third is probed with A and B from the start, c probed %d", f.probes("c"))
+	if f.probes("c") < 1 {
+		t.Fatalf("the third is probed with A and B, c probed %d", f.probes("c"))
 	}
 	if !samePool(f.pool(), "a", "b", "c") || f.g.history.LoadURLTestHistory("a") == nil || f.g.history.LoadURLTestHistory("b") == nil {
-		t.Fatalf("a control that answered only late strikes nobody, pool %v", f.pool())
+		t.Fatalf("a control that answered only late strikes nobody: A and B answer the second round, pool %v", f.pool())
 	}
-	if !f.s.balancer.heal.frozen() {
-		t.Fatal("the network came and went: freeze")
+	if f.probes("a") != 2 || f.probes("b") != 2 {
+		t.Fatalf("A and B are probed again with the control: a %d b %d", f.probes("a"), f.probes("b"))
 	}
 }
 
@@ -225,10 +232,10 @@ func TestRRBracket_silentNodeAndProofDuringSecondProbe(t *testing.T) {
 
 	g := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
 	g.fb["a"].hold = never
-	g.fb["b"].slow = 150 * time.Millisecond
+	g.fb["b"].slow = 80 * time.Millisecond // a fast control: one more probe of it after A's silence
 	checkStart := time.Now()
 	g.s.rrStartCheck(g.fb["a"], false)
-	time.AfterFunc(475*time.Millisecond, func() {
+	time.AfterFunc(440*time.Millisecond, func() {
 		// a first byte of a connection through a that started after a's probe
 		g.s.balancer.trackOf("a").markProved(rrClock(checkStart.Add(50 * time.Millisecond)))
 	})
