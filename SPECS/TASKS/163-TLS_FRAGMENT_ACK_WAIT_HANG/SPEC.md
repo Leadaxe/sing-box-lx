@@ -1,91 +1,97 @@
 # SPEC: 163 — TLS_FRAGMENT_ACK_WAIT_HANG
 
-**Фича:** [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md)
+> 🌐 Русская версия: **[SPEC.ru.md](SPEC.ru.md)**.
 
-| Поле | Значение |
-|------|----------|
-| Тип | B (bug) — апстримный: с `tls.fragment` рукопожатие не укладывается в таймаут и висит до закрытия box |
-| Статус | I (implemented) — darwin проверен тестом, Linux на стенде не проверен |
-| Источник | [issue #85](https://github.com/Leadaxe/sing-box-lx/issues/85); разбор со стороны L×Box — `LxBox/research/core-tlsfragment-ack-wait-ignores-timeout.md` |
+**Feature:** [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md)
 
-## Проблема
+| Field | Value |
+|-------|-------|
+| Type | B (bug) — upstream: with `tls.fragment` the handshake ignores its timeout and hangs until the box is closed |
+| Status | I (implemented) — darwin verified by a test, Linux not checked on a stand |
+| Source | [issue #85](https://github.com/Leadaxe/sing-box-lx/issues/85); the L×Box side of the analysis — `LxBox/research/core-tlsfragment-ack-wait-ignores-timeout.md` |
 
-Узел с `tls.fragment: true`. Сервер принял TCP-соединение, но данные не
-подтверждает: IP режут после SYN или бэкенд мёртв. Замер такого узла не
-возвращается по таймауту и висит, пока не закроют box или TCP не сдастся
-по ретрансмитам (~15 мин). Без `fragment` тот же узел падает по таймауту.
-В L×Box тест серверов подписки встаёт на одном и том же узле.
+## Problem
 
-## Где дефект
+A node with `tls.fragment: true`. The server accepts the TCP connection but
+does not acknowledge data: the IP is filtered after SYN, or the backend is
+dead. A URL test of such a node does not return by its timeout and hangs
+until the box is closed or TCP gives up on retransmissions (~15 min). Without
+`fragment` the same node fails by the timeout. In L×Box the server test of a
+subscription stalls on the same node every time.
 
-Код апстримный: `common/tlsfragment` совпадает с `upstream/stable`, в
-`upstream/testing` отличается одна посторонняя строка.
+## Where the defect is
 
-Ядро режет ClientHello на куски. Перед отправкой следующего куска
-`writeAndWaitAck` раз в 10 мс спрашивает ОС, подтверждены ли уже
-отправленные байты (Linux — `TCP_INFO.Unacked`, darwin — `SO_NWRITE`,
-Windows — ESTATS через `winiphlpapi`). Выход — всё подтверждено или
-`ctx.Done()`.
+The code is upstream's: `common/tlsfragment` is identical to
+`upstream/stable`; `upstream/testing` differs by one unrelated line.
 
-Контекст здесь — контекст TLS-конфига (`tf.NewConn(conn, c.ctx, …)` в
-`common/tls/std_client.go` и `utls_client.go`), он живёт столько же, сколько
-box. Контекст рукопожатия до цикла не доходит.
+The core splits the ClientHello into fragments. Before writing the next one,
+`writeAndWaitAck` asks the OS every 10 ms whether the bytes already written
+are acknowledged (Linux — `TCP_INFO.Unacked`, darwin — `SO_NWRITE`,
+Windows — ESTATS through `winiphlpapi`). It exits when everything is
+acknowledged or on `ctx.Done()`.
 
-Когда контекст рукопожатия истекает, crypto/tls и uTLS закрывают соединение.
-Это не спасает: цикл крутится внутри `SyscallConn().Control` и держит ссылку
-на дескриптор, а `Close` ждёт, пока ссылку отпустят. Цикл ждёт ACK, закрытие
-ждёт цикл.
+That context is the one of the TLS config (`tf.NewConn(conn, c.ctx, …)` in
+`common/tls/std_client.go` and `utls_client.go`); it lives as long as the box.
+The handshake context never reaches the loop.
 
-Путь без `*net.TCPConn` (`time.Sleep(fallbackDelay)` между кусками) не
-зависает и не затронут.
+When the handshake context expires, crypto/tls and uTLS close the
+connection. That does not help: the loop runs inside `SyscallConn().Control`
+and holds a reference on the descriptor, and `Close` waits for that reference
+to be released. The loop waits for an ACK, the close waits for the loop.
 
-## Контракт
+The path without a `*net.TCPConn` (`time.Sleep(fallbackDelay)` between
+fragments) does not hang and is not affected.
 
-- Закрытие `tf.Conn` обрывает идущее ожидание ACK до закрытия нижнего
-  соединения. Рукопожатие с истёкшим контекстом возвращается за время своего
-  таймаута, `Close` не ждёт цикл.
-- Ожидание ACK в первой записи ограничено бюджетом **10 с** на всю запись,
-  не на кусок. Когда бюджет кончился, оставшиеся куски уходят без ожидания,
-  запись завершается без ошибки, дальше рукопожатие живёт по своему дедлайну.
-- Закрытие соединения возвращает `net.ErrClosed`, отмена контекста конфига
-  (закрытие box) — его ошибку.
-- `wait_*.go` не меняются: все три платформы уже выходят по контексту,
-  который им передан.
-- Ключей конфига, build-тегов и зависимостей нет.
+## Contract
 
-## Реализация
+- Closing a `tf.Conn` ends a pending ACK wait before the underlying
+  connection is closed. A handshake whose context expired returns within its
+  timeout; `Close` does not wait for the loop.
+- The ACK wait of the first write is bounded by a budget of **10 s** for the
+  whole write, not per fragment. Once the budget is spent, the remaining
+  fragments go out without waiting, the write completes without an error,
+  and the handshake proceeds by its own deadline.
+- A closed connection returns `net.ErrClosed`; a cancelled config context
+  (box closed) returns its error.
+- `wait_*.go` are unchanged: all three platforms already stop on the context
+  they are given.
+- No config keys, build tags or dependencies.
 
-- `common/tlsfragment/conn_lx.go`: метод `Close` у `tf.Conn`, обёртка
-  `writeAndWaitAckLx` с контекстом, производным от контекста конфига, сигнала
-  закрытия и бюджета; различение причин выхода.
-- `common/tlsfragment/conn.go`: поле `lx` и вызов обёртки вместо
-  `writeAndWaitAck` (`// lx: SPEC 163`).
-- `Close` доходит до `tf.Conn` через все обёртки: `tlsspoof.Conn` и
-  `sniffGuardConn` делегируют закрытие, REALITY строит UConn поверх той же
-  обёртки (`wrapClientConn`).
+## Implementation
 
-## Условие снятия
+- `common/tlsfragment/conn_lx.go`: a `Close` method on `tf.Conn`; the
+  `writeAndWaitAckLx` wrapper with a context derived from the config
+  context, the close signal and the budget; telling the exit causes apart.
+- `common/tlsfragment/conn.go`: the `lx` field and the call of the wrapper
+  in place of `writeAndWaitAck` (`// lx: SPEC 163`).
+- `Close` reaches `tf.Conn` through every wrapper: `tlsspoof.Conn` and
+  `sniffGuardConn` delegate the close, REALITY builds its UConn on top of the
+  same wrapper (`wrapClientConn`).
 
-Апстрим начнёт прерывать ожидание ACK по контексту рукопожатия или по
-закрытию соединения (сверять `common/tlsfragment/conn.go` и `wait_*.go` на
-мерже). Тогда снять `conn_lx.go`, две вставки и тесты; перед снятием
-прогнать `conn_ackwait*_lx_test.go` на апстримном коде.
+## Removal condition
 
-## Приёмка
+Upstream starts ending the ACK wait on the handshake context or on the close
+of the connection (check `common/tlsfragment/conn.go` and `wait_*.go` on each
+merge). Then remove `conn_lx.go`, the two inserts and the tests; before
+removing, run `conn_ackwait*_lx_test.go` against the upstream code.
 
-1. `TestTLSFragmentAckWaitHonoursHandshakeContext`: пир принимает соединение и
-   не читает, окно приёма забито; рукопожатие с дедлайном 1 с возвращается
-   с ошибкой меньше чем за 3 с. Без фикса красный (не вернулось за 5 с).
-2. `TestAckWaitBudgetLx`: три куска без ACK при бюджете 500 мс — запись
-   заканчивается за [бюджет, 2×бюджет) без ошибки.
-3. Оба теста под `-race`. Только darwin: на Linux при нулевом окне
-   `TCP_INFO.Unacked` = 0 (неотправленное не считается), стенд там не
-   воспроизводит дефект. lx-ci их не гоняет — в нём нет macOS-джобы.
-4. `go vet` пакета под linux, windows, darwin; сборка `common/tls` с `LX_TAGS`.
+## Acceptance
 
-## Не проверено
+1. `TestTLSFragmentAckWaitHonoursHandshakeContext`: the peer accepts and never
+   reads, its receive window is full; a handshake with a 1 s deadline returns
+   an error in under 3 s. Red without the fix (no return within 5 s).
+2. `TestAckWaitBudgetLx`: three fragments without an ACK at a 500 ms budget —
+   the write ends within [budget, 2×budget) without an error.
+3. Both tests under `-race`. Darwin only: on Linux a zero window leaves
+   `TCP_INFO.Unacked` at 0 (unsent bytes are not counted), so the stand does
+   not reproduce the defect there. lx-ci does not run them — it has no macOS
+   job.
+4. `go vet` of the package for linux, windows, darwin; `common/tls` builds
+   with `LX_TAGS`.
 
-Linux на стенде: нужен сервер, который режет пакеты с данными после
-рукопожатия (`iptables -A INPUT -p tcp --dport 443 ! --syn -m length --length
-53:65535 -j DROP`, границу длины сверить по tcpdump), и замер узла с
-`fragment` и таймаутом 2 с.
+## Not checked
+
+Linux on a stand: it needs a server that drops data packets after the
+handshake (`iptables -A INPUT -p tcp --dport 443 ! --syn -m length --length
+53:65535 -j DROP`, check the length boundary with tcpdump) and a URL test of a
+node with `fragment` and a 2 s timeout.
