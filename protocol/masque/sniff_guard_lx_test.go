@@ -118,25 +118,34 @@ func TestAutoSilentH3LeavesPairForNextH3Leg(t *testing.T) {
 	o, node := sniffGuardOutbound(t)
 	o.autoH3Delay = 30 * time.Millisecond
 	var calls []string
-	returned := make(chan struct{}, 4)
 	silentUnprotected := func(ctx context.Context, protect bool) error {
-		defer func() { returned <- struct{}{} }()
 		if protect {
 			return nil
 		}
 		<-ctx.Done()
 		return ctx.Err()
 	}
-	o.legsForTest = guardLegs(&calls, silentUnprotected, h2Alive)
+	legs := guardLegs(&calls, silentUnprotected, h2Alive)
+	// The abandoned h3 leg leaves its pending pair when its Node.Dial returns,
+	// after connect has already returned on h2: wait for exactly that moment.
+	h3Settled := make(chan struct{}, 4)
+	legs.h3 = func(ctx context.Context, budget time.Duration) (io.Closer, masque.IpConn, error) {
+		defer func() { h3Settled <- struct{}{} }()
+		return o.connectH3WithBudget(ctx, budget)
+	}
+	legs.h2 = o.connectH2
+	o.legsForTest = legs
 
 	_, _, network, err := o.connect(context.Background(), "h3")
 	require.NoError(t, err)
 	require.Equal(t, "h2", network)
-	<-returned
-	time.Sleep(20 * time.Millisecond) // the abandoned leg settles after it returned
+	<-h3Settled
 	require.Equal(t, "h3:false,h2:false", strings.Join(calls, ","))
 
 	calls = nil
+	// The budget only has to outlast a protected leg that answers at once,
+	// however slowly the goroutine is scheduled (-race on a busy runner).
+	o.autoH3Delay = time.Second
 	_, _, network, err = o.connect(context.Background(), "h3")
 	require.NoError(t, err)
 	require.Equal(t, "h3", network)
