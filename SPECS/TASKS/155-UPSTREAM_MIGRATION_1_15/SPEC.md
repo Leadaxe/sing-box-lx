@@ -136,6 +136,8 @@
   - В `TestDevicePauseLeavesSocketOpen` первый bind порта в загруженном прогоне превышал 2 с —
     окно ожидания расширено до 10 с; причина не исследована.
   - AAR: `with_usbip` по-прежнему не включён (решение 5.5 касалось `LX_TAGS`).
+  - [SPEC 162](../162-HTTP_FORWARD_CLIENT_GONE/SPEC.md): уход клиента при обычном `http://`-запросе
+    через `http`/`mixed` — чинится на этой линии в `transport/http` (на 1.14 не чиним, 2026-11-25).
 
 - 2026-11-05 (утро): MASQUE переведён на апстримный `masque-client` с WARP-слоем
   ([110 §12](../110-MASQUE_ON_UPSTREAM_TRANSPORT/SPEC.md)); старый тип `masque` отдаёт
