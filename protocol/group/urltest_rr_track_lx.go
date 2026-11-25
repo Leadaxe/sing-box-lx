@@ -652,7 +652,9 @@ func (s *URLTest) rrPoolLook(ctx context.Context) {
 	if rrUnwatched(ctx) || !s.balancer.heal.ready(time.Now()) || s.group.checking.Load() || s.group.ctx.Err() != nil {
 		return
 	}
-	if s.rrSlotToFill() {
+	if s.rrSlotToVerify() {
+		s.rrStartRound(s.rrHealCheck) // lx: SPEC 019 — the unverified pool nodes are verified first, with a control
+	} else if s.rrSlotToFill() {
 		s.rrStartSearch()
 	}
 }

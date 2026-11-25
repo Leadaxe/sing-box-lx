@@ -213,7 +213,8 @@ func (g *URLTestGroup) probeHook(batch *rrBatch) func(tag string) {
 // answer before the first answer of the run gives back the history its failed
 // probes erased, except to a node struck out meanwhile (its D1 erased it). After
 // the first answer the earlier answer is the control: the erasure stays. The
-// manual test gives nothing back: the user asked for the state now.
+// manual test gives nothing back: the user asked for the state now; the pool
+// nodes it erased are unverified (urltest_rr_unverified_lx.go).
 func (g *URLTestGroup) rrBatchEnd(batch *rrBatch) {
 	if batch == nil {
 		return
@@ -228,7 +229,11 @@ func (g *URLTestGroup) rrBatchEnd(batch *rrBatch) {
 		g.balancer.rrRunAnswered()
 		return
 	}
-	if g.balancer.rrRunGotAnswer() || g.balancer.rrRunManual() {
+	if g.balancer.rrRunGotAnswer() {
+		return
+	}
+	if g.balancer.rrRunManual() {
+		g.rrMarkUnverified(batch) // no control: the pool nodes it erased are unverified, their slots stay
 		return
 	}
 	for member, before := range batch.before {

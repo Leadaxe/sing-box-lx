@@ -74,6 +74,10 @@ type balancer struct {
 
 	// run is the run of the group in flight (SPEC 019, urltest_rr_run_lx.go).
 	run rrRun
+
+	// unverified are the pool nodes the manual test with no answer left without
+	// history (SPEC 019, urltest_rr_unverified_lx.go).
+	unverified rrUnverified
 }
 
 // rrOwner is the self-heal of a round_robin group (SPEC 138), *URLTest: whether the

@@ -233,6 +233,7 @@ func (g *URLTestGroup) urlTestLx(ctx context.Context, force bool) (map[string]ui
 func (g *URLTestGroup) afterTestLx(force bool) {
 	if g.balancer != nil {
 		if g.balancer.rrRunEnd() { // SPEC 019 — a run with no answer lays out nothing and lifts nothing
+			g.balancer.unverified.clear() // the run probed every node with its answer as the control
 			g.rebuildPool()
 		}
 		return

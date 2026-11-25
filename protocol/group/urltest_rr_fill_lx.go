@@ -38,7 +38,8 @@ func (g *URLTestGroup) onProbeAliveLx(tag string) {
 
 // rrFillOnAlive puts the group member tag, which has just answered its probe, into
 // the first slot whose node is dead or that is empty, when it holds no slot yet. A
-// node struck out while the scheduled run runs takes no slot of that run (§5).
+// node struck out while the scheduled run runs takes no slot of that run (§5); the
+// slot of an unverified node is not given away.
 func (g *URLTestGroup) rrFillOnAlive(tag string) {
 	b := g.balancer
 	if b == nil || g.ctx.Err() != nil || b.isQuarantined(tag) || b.rrStruckInScheduledRun(tag) {
@@ -63,6 +64,9 @@ func (g *URLTestGroup) rrFillOnAlive(tag string) {
 			node, loaded := g.outbound.Outbound(entry.tag)
 			if loaded && g.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)) != nil {
 				continue // a live slot stays as it is
+			}
+			if g.rrUnverified(entry.tag) {
+				continue // the run probes its node with a control first (rrReprobePool, rebuildPool)
 			}
 		}
 		if b.replaceSlot(entry.tag, tag) {

@@ -792,7 +792,8 @@ func (s *URLTest) rrStartRound(round func()) bool {
 }
 
 // rrStartSearch starts the replacement search (§5): an empty slot or the slot of a
-// quarantined node with no replacement; no probe of a pool node, no control. With
+// quarantined node with no replacement; no probe of a pool node, no control. The
+// slot of an unverified node is no slot of the search: the check verifies it. With
 // no candidate, or while a run holds its flag (the run fills the slots itself),
 // there is nothing to probe and no round (W1).
 func (s *URLTest) rrStartSearch() bool {
@@ -810,16 +811,18 @@ func (s *URLTest) rrExtraRound() {
 			return
 		}
 	}
-	if s.rrSlotToFill() {
+	if s.rrSlotToVerify() {
+		s.rrStartRound(s.rrHealCheck)
+	} else if s.rrSlotToFill() {
 		s.rrStartSearch()
 	}
 }
 
 // rrSlotToFill reports a slot to fill (§5): empty (D1), with a quarantined node, or
-// with a node without history.
+// with a node without history that is not unverified.
 func (s *URLTest) rrSlotToFill() bool {
 	for _, entry := range s.balancer.slotsSnapshot() {
-		if s.rrSlotEmpty(entry.tag) {
+		if s.rrSlotFillable(entry.tag) {
 			return true
 		}
 	}
@@ -827,7 +830,8 @@ func (s *URLTest) rrSlotToFill() bool {
 }
 
 // rrPoolOthers reports a slot of the pool other than that of tag that is not empty
-// (Q4: "the rest of the pool").
+// (Q4: "the rest of the pool"); the slot of an unverified node, with no history, is
+// not of the rest.
 func (s *URLTest) rrPoolOthers(tag string) bool {
 	for _, entry := range s.balancer.slotsSnapshot() {
 		if entry.tag != tag && !s.rrSlotEmpty(entry.tag) {
@@ -840,7 +844,8 @@ func (s *URLTest) rrPoolOthers(tag string) bool {
 // rrSlotEmpty reports a slot the pick skips and the search fills (§5): no node, a
 // quarantined one, or one without history (a dead occupant the run left, a leaf
 // whose shared history D1 of another group erased). It is no slot of the pool for
-// the check (I9).
+// the check (I9), except the slot of an unverified node, which the search does not
+// fill either (rrSlotFillable).
 func (s *URLTest) rrSlotEmpty(tag string) bool {
 	return tag == "" || !s.slotAlive(tag)
 }
@@ -1219,8 +1224,8 @@ func (s *URLTest) rrHealRound(round func(c *rrCheck)) {
 func (s *URLTest) rrHealCheck() {
 	s.rrHealRound(func(c *rrCheck) {
 		for _, entry := range s.balancer.slotsSnapshot() {
-			if s.rrSlotEmpty(entry.tag) {
-				continue // a quarantined node or one without history takes no part; a struck one left its slot (§4.2)
+			if s.rrSlotEmpty(entry.tag) && !s.group.rrUnverified(entry.tag) {
+				continue // a quarantined node or one without history takes no part; a struck one left its slot (§4.2); an unverified one does (SPEC 019)
 			}
 			if node, loaded := s.outbound.Outbound(entry.tag); loaded && common.Contains(node.Network(), N.NetworkTCP) {
 				c.pool = append(c.pool, node)
@@ -1302,6 +1307,7 @@ func (s *URLTest) rrStrike(ctx context.Context, c *rrCheck) {
 			continue // D1: a scheduled run answered for the node since x, no verdict
 		}
 		others := s.rrPoolOthers(node.Tag())
+		b.unverified.unmark(node.Tag())
 		s.rrDead(t)             // before the slot empties: a dial in flight either still finds its slot or is marked struck (its retry)
 		b.clearSlot(node.Tag()) // R1
 		quarantined := b.rrStrikeOut(node.Tag(), others)
@@ -1321,7 +1327,7 @@ func (s *URLTest) rrRefill(ctx context.Context, c *rrCheck) {
 	b := s.balancer
 	var empty []string
 	for _, entry := range b.slotsSnapshot() {
-		if s.rrSlotEmpty(entry.tag) {
+		if s.rrSlotFillable(entry.tag) {
 			empty = append(empty, entry.tag)
 		}
 	}
@@ -1345,8 +1351,8 @@ func (s *URLTest) rrRefill(ctx context.Context, c *rrCheck) {
 				}
 				continue
 			}
-			if dead != "" && !s.rrSlotEmpty(dead) {
-				break // its node got history back meanwhile: the slot is no longer to fill
+			if dead != "" && !s.rrSlotFillable(dead) {
+				break // its node got history back meanwhile (or a manual test left it unverified): the slot is no longer to fill
 			}
 			replaced, held := s.rrWriteSlot(ctx, func() bool { return b.replaceSlot(dead, node.Tag()) })
 			if !held {

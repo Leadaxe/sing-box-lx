@@ -128,10 +128,16 @@ func (g *URLTestGroup) balancePool(ctx context.Context) map[string]uint16 {
 	if size == 0 {
 		return map[string]uint16{}
 	}
+	var result map[string]uint16
 	if g.balancer.poolTolerance > 0 {
-		return g.balancePoolTolerant(ctx, size)
+		result = g.balancePoolTolerant(ctx, size)
+	} else {
+		result = g.balancePoolFirstLive(ctx, size, lifted)
 	}
-	return g.balancePoolFirstLive(ctx, size, lifted)
+	if g.balancer.rrRunGotAnswer() {
+		g.balancer.unverified.clear() // lx: SPEC 019 — the run probed the unverified nodes with its answer as the control
+	}
+	return result
 }
 
 // balancePoolFirstLive (pool_tolerance == 0): re-test the nodes already in the pool, then walk
@@ -184,11 +190,12 @@ func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int, lifte
 // batch with no answer (their history came back): a later batch of the run answered,
 // so this probe has its control — a member that fails it loses its history and its
 // slot fills like any dead one (a pool of 1, a pool that died at once). A member that
-// answers keeps its slot (an outage at the start of the run).
+// answers keeps its slot (an outage at the start of the run). An unverified member
+// (the manual test with no answer erased its history) is probed so too.
 func (g *URLTestGroup) rrReprobePool(ctx context.Context, result map[string]uint16) {
 	var again []adapter.Outbound
 	for _, tag := range g.balancer.poolTags() {
-		if _, live := result[tag]; tag == "" || live || g.balancer.rrRunStruck(tag) || !g.rrHasHistory(tag) {
+		if _, live := result[tag]; tag == "" || live || g.balancer.rrRunStruck(tag) || !g.rrHasHistory(tag) && !g.rrUnverified(tag) {
 			continue
 		}
 		if node, loaded := g.outbound.Outbound(tag); loaded {
