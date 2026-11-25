@@ -1,6 +1,6 @@
 package group
 
-// lx:begin SPEC 138 round_robin first byte (stage 2)
+// lx:begin SPEC 138 round_robin first byte
 //
 // An exchange of a round_robin connection ends with ANSWER at the first byte from
 // the destination; an opened connection is no answer yet (ALGORITHM.md §2). It is
@@ -112,7 +112,7 @@ func (s *URLTest) rrWatch(ctx context.Context, network string, dialed adapter.Ou
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
 	case N.NetworkUDP:
-		packet = true // a connected UDP flow (stage 3): the close decides, not a read error
+		packet = true // a connected UDP flow: a read error is no outcome
 	default:
 		picked.dial.release()
 		return conn
@@ -137,7 +137,7 @@ func (s *URLTest) rrWatch(ctx context.Context, network string, dialed adapter.Ou
 // is false when there is nothing to watch: a connection test, a closed group, a pick outside
 // the pool or a nested urltest. direct reports a direct leaf, which is not wrapped:
 // for TCP its open is the first byte, for UDP the open proves nothing. A UDP watch
-// carries no key: UDP shifts none (§3.8). A tracked dial (picked.dial) is always
+// carries no key: UDP shifts none (§4.4). A tracked dial (picked.dial) is always
 // watched: its wrapper releases the dial's context on the close.
 // The watch is a value: the wrapper holds it, so watching allocates nothing apart.
 func (s *URLTest) rrNewWatch(ctx context.Context, dialed adapter.Outbound, picked rrPick, sign *rrSign, retry bool, packet bool) (rrConnWatch, bool, bool) {

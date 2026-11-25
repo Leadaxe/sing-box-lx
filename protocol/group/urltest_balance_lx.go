@@ -32,7 +32,7 @@ import (
 // slot is one fixed position in the pool. tag is the node currently occupying it.
 type slot struct {
 	tag   string
-	track *rrTrack // lx: SPEC 138 — unfinished connections and pending failures of the node (urltest_rr_track_lx.go)
+	track *rrTrack // lx: SPEC 138 — unfinished exchanges, proofs and suspicion of the node (urltest_rr_track_lx.go)
 }
 
 // balancer holds the per-group round_robin state. nil for least_test.
@@ -80,7 +80,7 @@ type balancer struct {
 	heal rrHeal
 
 	// memory is the key shift table, the slot counters and the quarantine (SPEC 138
-	// §3.5–3.6, urltest_rr_shift_lx.go).
+	// §4.4–4.5, urltest_rr_shift_lx.go).
 	memory rrMemory
 }
 
@@ -172,17 +172,16 @@ func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {
 // pick selects one node for this connection from the current pool. fallback is returned
 // when the pool is empty (start, before the first health-check fills it).
 // lx: SPEC 138 — a slot whose node failed its last probe (or is in quarantine) is skipped
-// while the pool has a live one, and a slot under suspicion (a stalled connection, no
-// later proof of its node) while the pool has a slot that is neither; a key shifted past nodes the destination is unreachable
-// through takes the slot (hash + shift) % pool, or the next live one going round; pick
-// never changes the slots.
+// while the pool has a live one, and a slot under suspicion (S1–S3) while the pool has a
+// slot that is neither; a shifted key takes the slot (hash + shift) % pool, or the next
+// live one going round; pick never changes the slots.
 func (b *balancer) pick(ctx context.Context, destination M.Socksaddr, fallback adapter.Outbound, resolve func(tag string) adapter.Outbound) adapter.Outbound {
 	node, _ := b.pickKeyed(ctx, N.NetworkTCP, destination, fallback, resolve)
 	return node
 }
 
 // pickKeyed is pick that also returns what the dial of the connection needs from
-// the pick (SPEC 138 stage 2): the shift-table key, computed once per connection,
+// the pick (SPEC 138): the shift-table key, computed once per connection,
 // the key's shift and the start of the connection.
 func (b *balancer) pickKeyed(ctx context.Context, network string, destination M.Socksaddr, fallback adapter.Outbound, resolve func(tag string) adapter.Outbound) (adapter.Outbound, rrPick) {
 	picked := rrPick{start: time.Now(), packet: network == N.NetworkUDP}
@@ -248,8 +247,7 @@ func (b *balancer) pickKeyed(ctx context.Context, network string, destination M.
 	if node := resolve(slots[idx].tag); node != nil {
 		// SPEC 138: the slot's tracker goes with the pick; a few atomic loads tell
 		// whether it has work for the slow path. The suspect slots the pick went past
-		// get their look too, at most once per rrHangLook: the look is what lifts or
-		// confirms the suspicion.
+		// get their look too, at most once per rrLook (S2, SILENT, D4/D5).
 		if track := slots[idx].track; track != nil {
 			picked.track = track
 			if b.onPick != nil && track.attention(now) {
@@ -333,7 +331,7 @@ func (b *balancer) slotsSnapshot() []slot {
 
 // nextLiveSlot returns the first slot after from, going round, whose node is usable;
 // ok is false when no other slot is. The retry and the neighbour of the self-heal
-// check (SPEC 138 §3.2–3.3). Called WITHOUT the access lock held.
+// check (SPEC 138 §5). Called WITHOUT the access lock held.
 func (b *balancer) nextLiveSlot(slots []slot, from int, usable func(tag string) bool) (int, bool) {
 	n := len(slots)
 	for step := 1; step < n; step++ {
@@ -346,7 +344,7 @@ func (b *balancer) nextLiveSlot(slots []slot, from int, usable func(tag string) 
 }
 
 // replaceSlot puts node into the slot that holds dead, leaving every other slot as
-// is (SPEC 138 §3.4). It does nothing and returns false when dead no longer holds a
+// is (SPEC 138 §5). It does nothing and returns false when dead no longer holds a
 // slot or node already holds one: the pool changed since the caller looked at it.
 func (b *balancer) replaceSlot(dead, node string) bool {
 	b.access.Lock()
@@ -371,7 +369,7 @@ func (b *balancer) replaceSlot(dead, node string) bool {
 	b.slots = next
 	b.access.Unlock()
 	if departed != nil {
-		departed.dropPending() // its pending failures leave with it
+		departed.dropPending() // its Q1 signs leave with it
 	}
 	b.rrSlotsChanged() // the new node's counters start from zero
 	// lx: SPEC 020 — same as setSlots: the active pool changed.
@@ -393,7 +391,7 @@ func (b *balancer) setSlots(tags []string) {
 	departed := departedTracks(old, b.slots)
 	b.access.Unlock()
 	for _, track := range departed {
-		track.dropPending() // lx: SPEC 138 — its pending failures leave with it
+		track.dropPending() // lx: SPEC 138 — its Q1 signs leave with it
 	}
 	b.rrSlotsChanged() // lx: SPEC 138 — a node that takes a slot starts its counters from zero
 	// lx: SPEC 020 — the active pool changed; invalidate the reachable cache.

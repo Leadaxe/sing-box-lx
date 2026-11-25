@@ -1,6 +1,6 @@
 package group
 
-// lx:begin SPEC 138 round_robin self-heal for UDP (stage 3)
+// lx:begin SPEC 138 round_robin self-heal for UDP
 //
 // UDP takes its node from the same slots as TCP (pick), so a dead or quarantined
 // node, and a slot under suspicion, is skipped for UDP too. On top of that:
@@ -155,7 +155,7 @@ func (c *rrFirstPacketConn) untrack() {
 	}
 }
 
-// rrKill is the dead verdict on the node: the flow waits for an answer that will
+// rrKill is D1 on the node: the flow waits for an answer that will
 // not come; it is closed.
 func (c *rrFirstPacketConn) rrKill() {
 	c.set(rrStateClosed)
