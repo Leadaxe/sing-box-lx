@@ -3,6 +3,7 @@ package impair
 import (
 	"math"
 	"math/rand/v2"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -78,9 +79,21 @@ type model struct {
 	links [2]link
 	cfg   *config
 
-	schedStarted bool
+	sched        []event // the running schedule: the config's, or one set by ScheduleImpair
+	schedStarted bool    // false: a first_use schedule waits for traffic
 	schedBase    int64
 	nextEvent    int
+	seed         int64
+
+	// wake tells the event loop that the next event moved (a first_use
+	// schedule started, a command changed the link). It only signals a
+	// channel, so it is called with mu held.
+	wake func()
+
+	// resetPending: a resetting outage began in an advance whose caller does
+	// not act on it (a stream's outage check, the status); the event loop's
+	// tick does.
+	resetPending bool
 
 	stallRng   *rand.Rand
 	stallStart int64
@@ -114,7 +127,7 @@ func newModel(cfg *config, now func() int64) *model {
 	if !cfg.seeded {
 		seed = rand.Int64()
 	}
-	m := &model{now: now, cfg: cfg}
+	m := &model{now: now, cfg: cfg, sched: cfg.schedule, seed: seed}
 	for dir := range m.links {
 		l := &m.links[dir]
 		l.p = cfg.dirs[dir]
@@ -138,18 +151,111 @@ func (m *model) expSample(mean time.Duration) int64 {
 	return int64(m.stallRng.ExpFloat64() * float64(mean))
 }
 
-// firstUse starts a "start": "first_use" schedule. It reports whether
-// this call started it.
-func (m *model) firstUse() bool {
+// firstUse starts a "start": "first_use" schedule on a new connection.
+func (m *model) firstUse() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.useLocked(m.now())
+	m.mu.Unlock()
+}
+
+// useLocked starts a schedule that waits for traffic: a new connection or
+// a unit of data in either direction, whichever comes first (connections
+// opened before the schedule was set may carry data for minutes without a
+// new dial).
+func (m *model) useLocked(now int64) {
 	if m.schedStarted {
-		return false
+		return
 	}
 	m.schedStarted = true
-	m.schedBase = m.now()
+	m.schedBase = now
 	m.nextCheck = 0
-	return true
+	if len(m.sched) > 0 {
+		m.note(false, "schedule starts: first traffic")
+	}
+	if m.wake != nil {
+		m.wake()
+	}
+}
+
+// applyEvent applies one change of the link (a schedule entry or a
+// SetImpair command) at now. It reports whether a resetting outage began.
+func (m *model) applyEvent(ev *event, now int64) (reset bool) {
+	for dir, on := range ev.dirs {
+		if !on {
+			continue
+		}
+		l := &m.links[dir]
+		if ev.link != nil {
+			_ = applyLink("", ev.link, &l.p) // validated by resolveEntry
+			if l.p.vary != nil && !l.p.drawNow && ev.link.Rate != "" {
+				l.varyNext = now + int64(l.p.vary.every)
+			}
+		}
+		if ev.outage != nil {
+			l.schedOutage = *ev.outage
+			l.resetOutage = *ev.outage && ev.reset
+			if l.resetOutage {
+				reset = true
+			}
+		}
+	}
+	return reset
+}
+
+// set applies a change of the link now (SetImpair), on top of whatever the
+// schedule did; the schedule keeps running.
+func (m *model) set(ev *event) (reset bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.now()
+	reset = m.advance(now)
+	if m.applyEvent(ev, now) {
+		reset = true
+	}
+	m.note(false, m.describeEvent("set", ev))
+	m.nextCheck = 0
+	if m.wake != nil {
+		m.wake()
+	}
+	return reset
+}
+
+// replaceSchedule starts a new schedule (ScheduleImpair): the link goes
+// back to the config's parameters with no outage, the random generators
+// restart from the seed (when the config sets one, so a scenario run twice
+// draws the same losses for the same traffic), and the entries count from
+// now or, with firstUse, from the next traffic. An empty schedule only
+// restores the config's link.
+func (m *model) replaceSchedule(sched []event, firstUse bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.now()
+	m.advance(now)
+	for dir := range m.links {
+		l := &m.links[dir]
+		l.p = m.cfg.dirs[dir]
+		l.schedOutage, l.resetOutage, l.geBad = false, false, false
+		if m.cfg.seeded {
+			l.rng = rand.New(rand.NewPCG(uint64(m.seed), uint64(dir+1)))
+		}
+		if l.p.vary != nil && !l.p.drawNow {
+			l.varyNext = now + int64(l.p.vary.every)
+		}
+	}
+	m.sched, m.nextEvent = sched, 0
+	m.schedStarted, m.schedBase = !firstUse, now
+	switch {
+	case len(sched) == 0:
+		m.note(false, "schedule cleared, link back to the config")
+	case firstUse:
+		m.note(false, "new schedule of "+strconv.Itoa(len(sched))+" entries, link back to the config; starts on first traffic")
+	default:
+		m.note(false, "new schedule of "+strconv.Itoa(len(sched))+" entries, link back to the config; starts now")
+	}
+	m.nextCheck = 0
+	if m.wake != nil {
+		m.wake()
+	}
 }
 
 // advance applies what became due by now: schedule entries, stall
@@ -161,34 +267,18 @@ func (m *model) advance(now int64) (reset bool) {
 	}
 	next := int64(math.MaxInt64)
 	if m.schedStarted {
-		for m.nextEvent < len(m.cfg.schedule) {
-			ev := &m.cfg.schedule[m.nextEvent]
+		for m.nextEvent < len(m.sched) {
+			ev := &m.sched[m.nextEvent]
 			at := m.schedBase + int64(ev.at)
 			if at > now {
 				next = min(next, at)
 				break
 			}
 			m.nextEvent++
-			for dir, on := range ev.dirs {
-				if !on {
-					continue
-				}
-				l := &m.links[dir]
-				if ev.link != nil {
-					_ = applyLink("", ev.link, &l.p) // validated by resolve
-					if l.p.vary != nil && !l.p.drawNow && ev.link.Rate != "" {
-						l.varyNext = now + int64(l.p.vary.every)
-					}
-				}
-				if ev.outage != nil {
-					l.schedOutage = *ev.outage
-					l.resetOutage = *ev.outage && ev.reset
-					if l.resetOutage {
-						reset = true
-					}
-				}
+			if m.applyEvent(ev, now) {
+				reset = true
 			}
-			m.note(false, m.describeEvent(ev))
+			m.note(false, m.describeEvent("schedule at "+ev.at.String(), ev))
 		}
 	}
 	if stall := m.cfg.stall; stall != nil {
@@ -228,11 +318,17 @@ func (m *model) advance(now int64) (reset bool) {
 		next = min(next, l.varyNext)
 	}
 	m.nextCheck = next
+	if reset {
+		m.resetPending = true
+		if m.wake != nil {
+			m.wake()
+		}
+	}
 	return reset
 }
 
-// describeEvent is the log line of a schedule entry just applied.
-func (m *model) describeEvent(ev *event) string {
+// describeEvent is the log line of a change just applied.
+func (m *model) describeEvent(what string, ev *event) string {
 	var parts []string
 	for dir, on := range ev.dirs {
 		if !on {
@@ -254,7 +350,7 @@ func (m *model) describeEvent(ev *event) string {
 		}
 		parts = append(parts, text)
 	}
-	return "schedule at " + ev.at.String() + ": " + strings.Join(parts, "; ")
+	return what + ": " + strings.Join(parts, "; ")
 }
 
 // nextWake is when the next logged event is due: a schedule entry or a
@@ -264,8 +360,8 @@ func (m *model) nextWake() (at int64, ok bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	at = math.MaxInt64
-	if m.schedStarted && m.nextEvent < len(m.cfg.schedule) {
-		at = m.schedBase + int64(m.cfg.schedule[m.nextEvent].at)
+	if m.schedStarted && m.nextEvent < len(m.sched) {
+		at = m.schedBase + int64(m.sched[m.nextEvent].at)
 	}
 	if m.cfg.stall != nil {
 		if m.now() < m.stallStart {
@@ -281,7 +377,8 @@ func (m *model) nextWake() (at int64, ok bool) {
 func (m *model) tick() (reset bool, logs []logEvent) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	reset = m.advance(m.now())
+	reset = m.advance(m.now()) || m.resetPending
+	m.resetPending = false
 	logs, m.logs = m.logs, nil
 	return reset, logs
 }
@@ -372,6 +469,7 @@ func (l *link) lose() bool {
 func (m *model) admitPacket(dir int, size int) (due int64, v verdict, reset bool) {
 	m.mu.Lock()
 	now := m.now()
+	m.useLocked(now)
 	reset = m.advance(now)
 	l := &m.links[dir]
 	if m.outageLocked(dir, now) {
@@ -413,6 +511,7 @@ func (m *model) admitPacket(dir int, size int) (due int64, v verdict, reset bool
 func (m *model) admitStream(dir int, st *streamState, size int) (due int64, wait time.Duration, reset bool) {
 	m.mu.Lock()
 	now := m.now()
+	m.useLocked(now)
 	reset = m.advance(now)
 	l := &m.links[dir]
 	if m.outageLocked(dir, now) {

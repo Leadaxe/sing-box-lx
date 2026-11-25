@@ -75,6 +75,14 @@ type streamConn struct {
 	under net.Conn
 	st    [2]streamState // guarded by sh.model.mu
 
+	// uclosed closes on Close: Read and Write fail from then on. closed
+	// closes when the carrier is closed: at once on a reset or the
+	// outbound's close, else once the writer has delivered what was
+	// written before Close (flush), in the background, as a TCP close
+	// returns at once and the kernel sends the send buffer.
+	uclosed   chan struct{}
+	uOnce     sync.Once
+	drainOnce sync.Once
 	closed    chan struct{}
 	closeOnce sync.Once
 	resetErr  atomic.Bool
@@ -111,6 +119,7 @@ func newStreamConn(s *shaper, under net.Conn) *streamConn {
 	c := &streamConn{
 		sh:       s,
 		under:    under,
+		uclosed:  make(chan struct{}),
 		closed:   make(chan struct{}),
 		wtimer:   newStoppedTimer(),
 		rtimer:   newStoppedTimer(),
@@ -150,7 +159,7 @@ func (c *streamConn) Write(p []byte) (int, error) {
 		n := min(len(p), segSize)
 		// room in the delay line
 		for {
-			if isClosed(c.closed) {
+			if isClosed(c.uclosed) {
 				return total, c.closedErr()
 			}
 			if isClosed(c.wDead.wait()) {
@@ -170,7 +179,7 @@ func (c *streamConn) Write(p []byte) (int, error) {
 			}
 			select {
 			case <-c.upSpace:
-			case <-c.closed:
+			case <-c.uclosed:
 			case <-c.wDead.wait():
 			}
 		}
@@ -184,8 +193,8 @@ func (c *streamConn) Write(p []byte) (int, error) {
 			if wait == 0 {
 				break
 			}
-			if !sleep(c.wtimer, wait, c.closed, c.wDead.wait(), nil) {
-				if isClosed(c.closed) {
+			if !sleep(c.wtimer, wait, c.uclosed, c.wDead.wait(), nil) {
+				if isClosed(c.uclosed) {
 					return total, c.closedErr()
 				}
 				return total, os.ErrDeadlineExceeded
@@ -382,7 +391,7 @@ func (c *streamConn) Read(p []byte) (int, error) {
 	c.rmu.Lock()
 	defer c.rmu.Unlock()
 	for {
-		if isClosed(c.closed) {
+		if isClosed(c.uclosed) {
 			return 0, c.closedErr()
 		}
 		down := c.sh.model.outage(dirDown)
@@ -416,7 +425,7 @@ func (c *streamConn) Read(p []byte) (int, error) {
 				wait = time.Duration(head.due - now)
 			}
 			c.rxMu.Unlock()
-			if !sleep(c.rtimer, wait, c.closed, c.rDead.wait(), nil) && !isClosed(c.closed) {
+			if !sleep(c.rtimer, wait, c.uclosed, c.rDead.wait(), nil) && !isClosed(c.uclosed) {
 				return 0, os.ErrDeadlineExceeded
 			}
 			continue
@@ -431,7 +440,7 @@ func (c *streamConn) Read(p []byte) (int, error) {
 		c.rxMu.Unlock()
 		select {
 		case <-c.rxSig:
-		case <-c.closed:
+		case <-c.uclosed:
 		case <-c.rDead.wait():
 			return 0, os.ErrDeadlineExceeded
 		}
@@ -441,9 +450,24 @@ func (c *streamConn) Read(p []byte) (int, error) {
 // ---- the rest of net.Conn ----
 
 func (c *streamConn) Close() error {
+	c.uOnce.Do(func() { close(c.uclosed) })
+	if c.resetErr.Load() || isClosed(c.sh.stopped) {
+		return c.closeCarrier()
+	}
+	c.drainOnce.Do(func() {
+		go func() {
+			c.flush()
+			_ = c.closeCarrier()
+		}()
+	})
+	return nil
+}
+
+// closeCarrier ends the connection's goroutines and closes the carrier.
+func (c *streamConn) closeCarrier() error {
 	var err error
 	c.closeOnce.Do(func() {
-		c.flush()
+		c.uOnce.Do(func() { close(c.uclosed) })
 		close(c.closed)
 		err = c.under.Close()
 		c.sh.unregister(c)

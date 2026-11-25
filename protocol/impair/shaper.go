@@ -39,6 +39,7 @@ type resetter interface {
 func newShaper(cfg *config, now func() int64) *shaper {
 	s := &shaper{now: now, conns: make(map[resetter]struct{}), kick: make(chan struct{}, 1), stopped: make(chan struct{})}
 	s.model = newModel(cfg, now)
+	s.model.wake = func() { signal(s.kick) }
 	s.pumps[dirUp] = newPump(dirUp, now)
 	s.pumps[dirDown] = newPump(dirDown, now)
 	return s
@@ -89,9 +90,7 @@ func (s *shaper) handleReset(reset bool) {
 // link is back or ctx ends; a resetting one fails it at once.
 func (s *shaper) beforeDial(ctx context.Context) error {
 	s.startEvents()
-	if s.model.firstUse() {
-		signal(s.kick)
-	}
+	s.model.firstUse()
 	var timer *time.Timer
 	for {
 		resetting, wait, reset := s.model.dialState()

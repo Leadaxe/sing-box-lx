@@ -268,10 +268,23 @@ func resolve(options Options) (*config, error) {
 	if options.Seed != nil {
 		cfg.seed, cfg.seeded = *options.Seed, true
 	}
+	schedule, err := resolveSchedule("schedule", options.Schedule, cfg.dirs[dirUp])
+	if err != nil {
+		return nil, err
+	}
+	cfg.schedule = schedule
+	return cfg, nil
+}
+
+// resolveSchedule checks a schedule (from the config, or from the
+// ScheduleImpair command, under the key prefix) and resolves it. base is
+// the link the keys are validated against.
+func resolveSchedule(prefix string, entries []ScheduleEntry, base params) ([]event, error) {
+	var schedule []event
 	var last time.Duration
-	for index := range options.Schedule {
-		entry := &options.Schedule[index]
-		key := "schedule[" + strconv.Itoa(index) + "]"
+	for index := range entries {
+		entry := &entries[index]
+		key := prefix + "[" + strconv.Itoa(index) + "]"
 		if entry.At == "" {
 			return nil, E.New(key, ".at is required")
 		}
@@ -283,35 +296,46 @@ func resolve(options Options) (*config, error) {
 			return nil, E.New(key, ".at ", entry.At, " is before the previous entry: list the entries in time order")
 		}
 		last = at
-		ev := event{at: at, outage: entry.Outage, reset: entry.Reset}
-		switch entry.Direction {
-		case "":
-			ev.dirs = [2]bool{true, true}
-		case "up":
-			ev.dirs[dirUp] = true
-		case "down":
-			ev.dirs[dirDown] = true
-		default:
-			return nil, E.New(key, ".direction: ", strconv.Quote(entry.Direction), ` must be "up" or "down" (absent: both)`)
+		ev, err := resolveEntry(key, entry, base)
+		if err != nil {
+			return nil, err
 		}
-		if entry.Reset && (entry.Outage == nil || !*entry.Outage) {
-			return nil, E.New(key, `.reset needs "outage": true in the same entry`)
-		}
-		if hasLink(&entry.ImpairLinkOptions) {
-			// validate against a scratch copy; the entry is applied as is at its time
-			scratch := cfg.dirs[dirUp]
-			if err = applyLink(key, &entry.ImpairLinkOptions, &scratch); err != nil {
-				return nil, err
-			}
-			link := entry.ImpairLinkOptions
-			ev.link = &link
-		}
-		if ev.link == nil && ev.outage == nil {
-			return nil, E.New(key, ": changes nothing (set a link key or outage)")
-		}
-		cfg.schedule = append(cfg.schedule, ev)
+		ev.at = at
+		schedule = append(schedule, ev)
 	}
-	return cfg, nil
+	return schedule, nil
+}
+
+// resolveEntry checks one change of the link (a schedule entry, or the
+// SetImpair command) apart from its time.
+func resolveEntry(key string, entry *ScheduleEntry, base params) (event, error) {
+	ev := event{outage: entry.Outage, reset: entry.Reset}
+	switch entry.Direction {
+	case "":
+		ev.dirs = [2]bool{true, true}
+	case "up":
+		ev.dirs[dirUp] = true
+	case "down":
+		ev.dirs[dirDown] = true
+	default:
+		return ev, E.New(key, ".direction: ", strconv.Quote(entry.Direction), ` must be "up" or "down" (absent: both)`)
+	}
+	if entry.Reset && (entry.Outage == nil || !*entry.Outage) {
+		return ev, E.New(key, `.reset needs "outage": true in the same entry`)
+	}
+	if hasLink(&entry.ImpairLinkOptions) {
+		// validate against a scratch copy; the entry is applied as is at its time
+		scratch := base
+		if err := applyLink(key, &entry.ImpairLinkOptions, &scratch); err != nil {
+			return ev, err
+		}
+		link := entry.ImpairLinkOptions
+		ev.link = &link
+	}
+	if ev.link == nil && ev.outage == nil {
+		return ev, E.New(key, ": changes nothing (set a link key or outage)")
+	}
+	return ev, nil
 }
 
 func resolveStall(o *StallOptions) (*stallSpec, error) {

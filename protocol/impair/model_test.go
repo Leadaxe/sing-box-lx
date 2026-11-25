@@ -414,3 +414,133 @@ func TestStallLogs(t *testing.T) {
 		t.Fatalf("stall end: %+v", logs)
 	}
 }
+
+func mustEvent(t *testing.T, entry ScheduleEntry) *event {
+	t.Helper()
+	ev, err := resolveEntry("entry", &entry, defaultParams())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &ev
+}
+
+func mustSchedule(t *testing.T, entries ...ScheduleEntry) []event {
+	t.Helper()
+	sched, err := resolveSchedule("schedule", entries, defaultParams())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sched
+}
+
+// set changes the link now; the config's schedule keeps running on top.
+func TestSetOnTopOfSchedule(t *testing.T) {
+	m, clock := newTestModel(t, Options{Schedule: []ScheduleEntry{{At: "2s", Outage: boolp(false)}}})
+	clock.set(time.Second)
+	if reset := m.set(mustEvent(t, ScheduleEntry{Outage: boolp(true), Reset: true})); !reset {
+		t.Fatal("set with reset did not report it")
+	}
+	if _, v, _ := m.admitPacket(dirUp, 100); v != verdictOutage {
+		t.Fatal("no outage after set")
+	}
+	if st := m.status(); !st.Up.Outage || !st.Up.Reset || st.Schedule.Applied != 0 || st.Schedule.NextAt != "2s" {
+		t.Fatalf("status after set: %+v", st)
+	}
+	clock.set(2 * time.Second)
+	if _, v, _ := m.admitPacket(dirUp, 100); v != verdictPass {
+		t.Fatal("the schedule did not end the outage at 2s")
+	}
+	_, logs := m.tick()
+	if len(logs) != 2 || logs[0].text != "set: up outage begins, connections reset; down outage begins, connections reset" || logs[1].text != "schedule at 2s: up outage ends; down outage ends" {
+		t.Fatalf("logs %+v", logs)
+	}
+}
+
+// A new schedule starts from the config's link, whatever set or the old
+// schedule left; an empty one only restores the link.
+func TestReplaceScheduleRestoresConfig(t *testing.T) {
+	m, clock := newTestModel(t, Options{ImpairLinkOptions: LinkOptions{Rate: "10mbit"}, Schedule: []ScheduleEntry{{At: "1s", Outage: boolp(true)}}})
+	m.set(mustEvent(t, ScheduleEntry{ImpairLinkOptions: LinkOptions{Rate: "1mbit", Loss: "5%"}}))
+	clock.set(1500 * time.Millisecond)
+	if !m.outage(dirUp) {
+		t.Fatal("config schedule did not run")
+	}
+	m.replaceSchedule(nil, false)
+	st := m.status()
+	if st.Up.Outage || st.Up.Rate != "10mbit" || st.Up.Loss != "0%" || st.Schedule.Entries != 0 {
+		t.Fatalf("after an empty schedule: %+v", st)
+	}
+	clock.set(10 * time.Second)
+	if m.outage(dirUp) {
+		t.Fatal("the old schedule still runs")
+	}
+	m.replaceSchedule(mustSchedule(t, ScheduleEntry{At: "1s", ImpairLinkOptions: LinkOptions{Rate: "2mbit"}}), false)
+	clock.set(10500 * time.Millisecond)
+	if st = m.status(); st.Up.Rate != "10mbit" || st.Schedule.Elapsed != "500ms" || st.Schedule.NextAt != "1s" {
+		t.Fatalf("new schedule before its entry: %+v", st)
+	}
+	clock.set(11 * time.Second)
+	if st = m.status(); st.Up.Rate != "2mbit" || st.Schedule.Applied != 1 || st.Schedule.NextAt != "" {
+		t.Fatalf("new schedule after its entry: %+v", st)
+	}
+}
+
+// first_use waits for traffic: a unit of data on a connection opened
+// before counts, not only a new connection.
+func TestReplaceScheduleFirstUseByData(t *testing.T) {
+	m, clock := newTestModel(t, Options{})
+	m.replaceSchedule(mustSchedule(t, ScheduleEntry{At: "1s", Outage: boolp(true)}), true)
+	clock.set(5 * time.Second)
+	if st := m.status(); !st.Schedule.WaitingForTraffic || st.Up.Outage {
+		t.Fatalf("before traffic: %+v", st.Schedule)
+	}
+	var st streamState
+	if _, wait, _ := m.admitStream(dirDown, &st, 1000); wait != 0 {
+		t.Fatal("first segment waited")
+	}
+	clock.set(5900 * time.Millisecond)
+	if m.outage(dirUp) {
+		t.Fatal("outage before 1s after the first data")
+	}
+	clock.set(6 * time.Second)
+	if !m.outage(dirUp) {
+		t.Fatal("no outage 1s after the first data")
+	}
+}
+
+// A resetting outage first seen by a caller that ignores the reset (a
+// stream's outage check) still reaches the event loop's tick.
+func TestResetNotLostByOutageCheck(t *testing.T) {
+	m, clock := newTestModel(t, Options{Schedule: []ScheduleEntry{{At: "1s", Outage: boolp(true), Reset: true}}})
+	clock.set(1500 * time.Millisecond)
+	if !m.outage(dirDown) {
+		t.Fatal("no outage")
+	}
+	if reset, _ := m.tick(); !reset {
+		t.Fatal("the reset was lost")
+	}
+	if reset, _ := m.tick(); reset {
+		t.Fatal("the reset was reported twice")
+	}
+}
+
+// A new schedule restarts the generators from the seed: the same scenario
+// over the same traffic draws the same losses.
+func TestReplaceScheduleReseeds(t *testing.T) {
+	m, _ := newTestModel(t, Options{ImpairLinkOptions: LinkOptions{Loss: "30%"}})
+	run := func() []verdict {
+		m.replaceSchedule(nil, false)
+		var got []verdict
+		for range 50 {
+			_, v, _ := m.admitPacket(dirUp, 100)
+			got = append(got, v)
+		}
+		return got
+	}
+	a, b := run(), run()
+	for i := range a {
+		if a[i] != b[i] {
+			t.Fatalf("draw %d differs: %v vs %v", i, a[i], b[i])
+		}
+	}
+}

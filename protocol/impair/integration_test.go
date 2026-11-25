@@ -583,8 +583,9 @@ func TestIntegrationSharedBottleneck(t *testing.T) {
 	checkRate(t, "4 tcp flows together", got.rate(500*time.Millisecond, 2500*time.Millisecond), 8e6)
 }
 
-// Close delivers what was written before it, as a TCP close sends the send
-// buffer: nothing written is lost in the delay line.
+// Close returns at once and delivers what was written before it in the
+// background, as a TCP close sends the send buffer: nothing written is lost
+// in the delay line.
 func TestIntegrationTCPCloseFlushes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("real time")
@@ -601,12 +602,72 @@ func TestIntegrationTCPCloseFlushes(t *testing.T) {
 	}
 	start := time.Now()
 	conn.Close()
-	t.Logf("close took %v", time.Since(start))
+	if took := time.Since(start); took > 50*time.Millisecond {
+		t.Errorf("close took %v, want it at once", took)
+	}
+	if _, err = conn.Write([]byte("x")); err == nil {
+		t.Error("write after close succeeded")
+	}
 	deadline := time.Now().Add(2 * time.Second)
 	for got.total() < size && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if total := got.total(); total != size {
 		t.Errorf("sink got %d bytes, want %d", total, size)
+	}
+}
+
+// The runtime control methods the StartedService commands call: JSON in the
+// config's schema in, the status JSON out, the same checks as the config.
+func TestIntegrationControl(t *testing.T) {
+	instance := boxWith(t, `{"type": "impair", "tag": "slow", "rate": "8mbit", "seed": 1}`)
+	control := outboundOf(t, instance, "slow").(interface {
+		ImpairSet(entry []byte) error
+		ImpairSchedule(entries []byte, start string) error
+		ImpairStatus() ([]byte, error)
+	})
+	status := func() impair.Status {
+		t.Helper()
+		content, err := control.ImpairStatus()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var status impair.Status
+		if err = json.Unmarshal(content, &status); err != nil {
+			t.Fatal(err)
+		}
+		return status
+	}
+	for _, bad := range []string{`{"at": "1s", "outage": true}`, `{"rate": "10mbps"}`, `{"bogus": 1}`, `{}`, `{"reset": true}`} {
+		if err := control.ImpairSet([]byte(bad)); err == nil {
+			t.Errorf("set %s accepted", bad)
+		}
+	}
+	if err := control.ImpairSet([]byte(`{"direction": "down", "outage": true}`)); err != nil {
+		t.Fatal(err)
+	}
+	if st := status(); st.Tag != "slow" || st.Up.Outage || !st.Down.Outage {
+		t.Fatalf("after set: %+v", st)
+	}
+	for _, bad := range []string{`[{"outage": true}]`, `[{"at": "2s", "outage": true}, {"at": "1s", "outage": false}]`, `{}`} {
+		if err := control.ImpairSchedule([]byte(bad), "now"); err == nil {
+			t.Errorf("schedule %s accepted", bad)
+		}
+	}
+	if err := control.ImpairSchedule([]byte(`[]`), "later"); err == nil {
+		t.Error(`start "later" accepted`)
+	}
+	if st := status(); !st.Down.Outage {
+		t.Fatal("a rejected schedule changed the link")
+	}
+	if err := control.ImpairSchedule([]byte(`[{"at": "50ms", "rate": "2mbit"}]`), "now"); err != nil {
+		t.Fatal(err)
+	}
+	if st := status(); st.Down.Outage || st.Up.Rate != "8mbit" || st.Schedule.Entries != 1 {
+		t.Fatalf("after schedule: %+v", st)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if st := status(); st.Up.Rate != "2mbit" || st.Schedule.Applied != 1 {
+		t.Fatalf("schedule did not run on its own: %+v", st)
 	}
 }
