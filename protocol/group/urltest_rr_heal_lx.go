@@ -924,8 +924,9 @@ func (s *URLTest) rrCandidateBatch(seen map[string]bool, size int) []adapter.Out
 		seen[entry.tag] = true
 	}
 	n := len(g.outbounds)
+	from := b.heal.cursor // I8: the walk goes from where the cursor stood; it moves past each one given
 	for step := 0; step < n && len(batch) < size; step++ {
-		i := (b.heal.cursor + step) % n
+		i := (from + step) % n
 		node := g.outbounds[i]
 		if !usable(node) || byTag[node.Tag()] != nil {
 			continue
