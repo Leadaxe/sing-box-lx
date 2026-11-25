@@ -54,6 +54,7 @@
 | `adapter/group_lx.go` | `GroupNow(group)` — выбор для TCP, иначе для UDP: одна сетенезависимая точка для lx-читателей (reachability SPEC 020, chain SPEC 073, статус-RPC, трасса SPEC 139) вместо удалённого `Now()` |
 | `common/trafficcontrol` | `tracker.go` строит `Chain` из `OutboundChain` (апстрим) через `displayChainLx`: группа, на которой роутер остановился, спускается до текущего выбора для отображения, как это делал `Now()`; иначе LxBox и Clash API показывали бы группу вместо узла. Обход detour-хвоста (SPEC 017) вынесен в `tracker_lx.go`; ссылку на менеджер outbound'ов менеджеру трафика даёт `box.go` (`SetOutboundManagerLx`) |
 | `route/conntest_lx.go` | `dial` первого хопа берёт пройденные группы (`via_group`) из `OutboundChain` |
+| `protocol/group/conntest_lx.go` | `deleteHistoryOnDialError`: ошибка dial в least_test и failover стирает history члена и его листа (`RealTag`). Апстрим `5372a195b` стирает history последнего звена цепочки, то есть листа, а у нас цепочка кончается на группе, и `ConnectionManager` стирает тег группы. Без этой правки член-селектор оставлял лист «живым» до следующего прогона. `route/conn.go` не тронут. Хронология — [HISTORY.md](HISTORY.md) |
 
 Остальные разрешения:
 
