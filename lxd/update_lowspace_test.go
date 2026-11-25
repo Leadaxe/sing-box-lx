@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -338,7 +339,11 @@ func TestLowSpaceRollsBack(t *testing.T) {
 			if readTarget(t, r.target) != "old core" {
 				t.Fatalf("the old binary must be back, got %q", readTarget(t, r.target))
 			}
-			if info, _ := os.Stat(r.target); info.Mode().Perm()&0o100 == 0 {
+			// Windows has no executable bit: there the restored file must be
+			// a regular file, which readTarget above already proved readable.
+			if info, err := os.Stat(r.target); err != nil || !info.Mode().IsRegular() {
+				t.Fatalf("the restored binary must be a regular file: %v", err)
+			} else if runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0 {
 				t.Fatal("the restored binary must be executable")
 			}
 			assertNoStage(t, r)
