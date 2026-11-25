@@ -6,6 +6,7 @@
 |-------|-------|
 | Type | F (feature) — runtime control surface over the `chain` outbound (SPEC 073), owner request 2026-08-25 |
 | Status | D (done) — core + RPC + libbox + unit tests green; no field run, in the field since `v1.14.0-lx.28-rc.4` with no reports, closed by the owner on 2026-09-24 |
+| Changed | [165](../165-CHAIN_DETOUR_REWRITE/SPEC.md) (2026-11-26): there are no links to warm up — `warmupError` is gone from the response, `GetChainCloneConfig` is removed (`GetOutboundConfig(tag)` replaces it), the toggle lives in the hops and also cuts the sockets the nodes above keep through them |
 | Branch | `lx` |
 | Build-tag | `with_lx_chain` (core) · `with_lx_command` (RPC surface) |
 | Related | [[SPECS/TASKS/073-CHAIN_OUTBOUND]] (the chain itself; hop-tag contract untouched) · [[SPECS/TASKS/014-CLASH_API_TO_COMMANDCLIENT_MIGRATION]] / [[SPECS/TASKS/015-COMMAND_PROTOCOL_RPC_EXTENSIONS]] (the gRPC plane the new methods live on) · [[SPECS/TASKS/037-RUNNING_CONFIG_RPC]] (serialization model reused by the clone-config snapshot) |

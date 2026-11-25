@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | R (refactor) + B (bug) — переделка механизма цепочки, переезд `strip` и `mtu_align` в общий блок, новые ручки наблюдаемости |
-| Статус | O (open) — алгоритм на утверждении владельца, кода нет |
+| Статус | I (in progress) — код в ветке `lx-spec165-chain-detour` (2026-11-26): юниты затронутых пакетов, `lx-test/chain` и стенд критерия 1 (`TestChainGroupMeasuresChainPathКритерий1`, живой WireGuard) зелёные; в `lx` не влито. Открыто: Х8 ALGORITHM ждёт решения владельца |
 | Ветка | `lx` |
 | Build-tag | `with_lx_chain` (цепочка) · `with_lx_command` (ручки конфига) |
 | Источник | [LxBox#233](https://github.com/Leadaxe/LxBox/issues/233); обсуждение с владельцем 2026-11-25/26 |
@@ -174,6 +174,9 @@
   группа на позиции ≥ 1 в двух цепочках — ошибка загрузки.
 - **Списки исходящих:** появляются хопы типа `chain-hop` с тегами `<цепочка>#<i>`;
   UI скрывает их по типу.
-- **Ручки:** `GetChainCloneConfig` удалена; новые `GetEffectiveConfig` и
-  `GetOutboundConfig(tag)`; статус цепочки — по тегу.
+- **Ручки:** `GetChainCloneConfig` и `GetChains` удалены; новые `GetEffectiveConfig`,
+  `GetOutboundConfig(tag)` (JSON-объект `tag` / `original` / `effective` / `changes`) и
+  `GetChainStatus(tag)`; в позиции статуса нет полей звеньев (`clone`, `clonesCreated`,
+  `clonesEvicted`, `liveClones`). `SetChainPositionEnabled` больше не отдаёт `warmupError`,
+  в `libbox` возвращает только ошибку.
 - **Документация LxBox:** `docs/KERNEL.md`, FEATURE 006 (обе языковые версии).
