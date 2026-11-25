@@ -15,7 +15,7 @@ import (
 // it and the commands answer InvalidArgument.
 type impairControl interface {
 	ImpairSet(entry []byte) error
-	ImpairSchedule(entries []byte, start string) error
+	ImpairSchedule(entries []byte, start string, repeat string) error
 	ImpairStatus() ([]byte, error)
 }
 
@@ -66,7 +66,7 @@ func (s *StartedService) ScheduleImpair(ctx context.Context, request *ScheduleIm
 	if err != nil {
 		return nil, err
 	}
-	if err = control.ImpairSchedule([]byte(request.Entries), request.Start); err != nil {
+	if err = control.ImpairSchedule([]byte(request.Entries), request.Start, request.Repeat); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	return impairStatus(control)

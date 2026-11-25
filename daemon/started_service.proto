@@ -1299,8 +1299,8 @@ enum TailscalePeerPath {
 // outbound's keys without a proto change.
 message SetImpairRequest {
   string outboundTag = 1;
-  // One schedule entry without "at": {"outage": true, "reset": true},
-  // {"rate": "3mbit", "direction": "down"}.
+  // One schedule entry without "at": {"link_params": {"outage": true,
+  // "reset": true}}, {"link_params": {"profile": "lte-walk"}}, {"sublinks": []}.
   string entry = 2;
 }
 
@@ -1310,6 +1310,9 @@ message ScheduleImpairRequest {
   string entries = 2;
   // "now" (default) or "first_use": count from the next traffic.
   string start = 3;
+  // The length of one round ("60s"): the schedule starts over every round;
+  // empty: it runs once.
+  string repeat = 4;
 }
 
 message ImpairStatusRequest {
@@ -1317,7 +1320,7 @@ message ImpairStatusRequest {
 }
 
 message ImpairStatus {
-  // {"tag", "up": {...}, "down": {...}, "stall", "schedule": {...}}, see
+  // {"tag", "link_params", "counters", "sublinks", "schedule"}, see
   // docs-lx/lx-impair.md.
   string json = 1;
 }

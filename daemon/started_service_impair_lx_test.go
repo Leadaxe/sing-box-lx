@@ -19,8 +19,8 @@ import (
 
 type controlledImpair struct {
 	listedOutbound
-	entry, entries, start string
-	err                   error
+	entry, entries, start, repeat string
+	err                           error
 }
 
 func (o *controlledImpair) ImpairSet(entry []byte) error {
@@ -28,8 +28,8 @@ func (o *controlledImpair) ImpairSet(entry []byte) error {
 	return o.err
 }
 
-func (o *controlledImpair) ImpairSchedule(entries []byte, start string) error {
-	o.entries, o.start = string(entries), start
+func (o *controlledImpair) ImpairSchedule(entries []byte, start string, repeat string) error {
+	o.entries, o.start, o.repeat = string(entries), start, repeat
 	return o.err
 }
 
@@ -70,8 +70,8 @@ func TestImpairCommands_LX(t *testing.T) {
 	if err != nil || impair.entry != `{"outage":true}` || response.Json != `{"tag":"slow"}` {
 		t.Fatalf("set: %v %v %q", response, err, impair.entry)
 	}
-	response, err = service.ScheduleImpair(ctx, &ScheduleImpairRequest{OutboundTag: "slow", Entries: `[]`, Start: "first_use"})
-	if err != nil || impair.entries != `[]` || impair.start != "first_use" || response.Json != `{"tag":"slow"}` {
+	response, err = service.ScheduleImpair(ctx, &ScheduleImpairRequest{OutboundTag: "slow", Entries: `[]`, Start: "first_use", Repeat: "60s"})
+	if err != nil || impair.entries != `[]` || impair.start != "first_use" || impair.repeat != "60s" || response.Json != `{"tag":"slow"}` {
 		t.Fatalf("schedule: %v %v", response, err)
 	}
 	if response, err = service.GetImpairStatus(ctx, &ImpairStatusRequest{OutboundTag: "slow"}); err != nil || response.Json != `{"tag":"slow"}` {

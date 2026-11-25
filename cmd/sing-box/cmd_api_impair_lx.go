@@ -35,11 +35,13 @@ var commandAPIImpairStatus = &cobra.Command{
 
 var commandAPIImpairSet = &cobra.Command{
 	Use:   "set <tag> <entry>",
-	Short: `Change the link now: a schedule entry without "at", e.g. '{"outage": true}'`,
-	Long: `Change the link of an impair outbound now, on top of its running schedule.
+	Short: `Change the line now: a schedule entry without "at", e.g. '{"link_params": {"outage": true}}'`,
+	Long: `Change an impair outbound now, on top of its running schedule.
 <entry> is one schedule entry without "at" (JSON, or @file, or - for stdin):
-  '{"outage": true, "reset": true}'   '{"rate": "3mbit", "loss": "2%"}'
-  '{"direction": "down", "delay": "300ms"}'`,
+  '{"link_params": {"outage": true, "reset": true}}'
+  '{"link_params": {"profile": "lte-walk", "loss": "2%"}}'
+  '{"link_params": {"down": {"delay": "300ms"}}}'
+  '{"sublinks": [{"match": {"domain": ["site3.test"]}, "link_params": {"down": {"outage": true}}}]}'`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entry, err := readImpairArgument(args[1])
@@ -52,15 +54,18 @@ var commandAPIImpairSet = &cobra.Command{
 	},
 }
 
-var commandAPIImpairScheduleStart string
+var (
+	commandAPIImpairScheduleStart  string
+	commandAPIImpairScheduleRepeat string
+)
 
 var commandAPIImpairSchedule = &cobra.Command{
 	Use:   "schedule <tag> <entries>",
-	Short: "Replace the schedule: the link goes back to the config, then the entries run",
-	Long: `Replace the schedule of an impair outbound. The link goes back to the config's
-parameters with no outage, then <entries> (a "schedule" list: JSON, or @file, or -
-for stdin) run from now, or from the next traffic with --start first_use.
-[] stops the schedule and only restores the config's link.`,
+	Short: "Replace the schedule: the line and sublinks go back to the config, then the entries run",
+	Long: `Replace the schedule of an impair outbound. The line and the sublinks go back
+to the config, then <entries> (a "schedule" list: JSON, or @file, or - for stdin)
+run from now, or from the next traffic with --start first_use, and start over
+every --repeat when it is set. [] stops the schedule and only restores the config.`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		entries, err := readImpairArgument(args[1])
@@ -68,13 +73,14 @@ for stdin) run from now, or from the next traffic with --start first_use.
 			return err
 		}
 		return runAPIImpair(func(client daemon.StartedServiceClient) (*daemon.ImpairStatus, error) {
-			return client.ScheduleImpair(globalCtx, &daemon.ScheduleImpairRequest{OutboundTag: args[0], Entries: entries, Start: commandAPIImpairScheduleStart})
+			return client.ScheduleImpair(globalCtx, &daemon.ScheduleImpairRequest{OutboundTag: args[0], Entries: entries, Start: commandAPIImpairScheduleStart, Repeat: commandAPIImpairScheduleRepeat})
 		})
 	},
 }
 
 func init() {
 	commandAPIImpairSchedule.Flags().StringVar(&commandAPIImpairScheduleStart, "start", "now", `when the entries count from: "now" or "first_use" (the next traffic)`)
+	commandAPIImpairSchedule.Flags().StringVar(&commandAPIImpairScheduleRepeat, "repeat", "", `the length of one round ("60s"): the schedule starts over every round`)
 	commandAPIImpair.AddCommand(commandAPIImpairStatus, commandAPIImpairSet, commandAPIImpairSchedule)
 	commandAPIRoot.AddCommand(commandAPIImpair)
 }

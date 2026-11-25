@@ -10613,8 +10613,8 @@ func (x *TailscaleStatusRequest) GetEndpointTag() string {
 type SetImpairRequest struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	OutboundTag string                 `protobuf:"bytes,1,opt,name=outboundTag,proto3" json:"outboundTag,omitempty"`
-	// One schedule entry without "at": {"outage": true, "reset": true},
-	// {"rate": "3mbit", "direction": "down"}.
+	// One schedule entry without "at": {"link_params": {"outage": true,
+	// "reset": true}}, {"link_params": {"profile": "lte-walk"}}, {"sublinks": []}.
 	Entry         string `protobuf:"bytes,2,opt,name=entry,proto3" json:"entry,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -10670,7 +10670,10 @@ type ScheduleImpairRequest struct {
 	// A "schedule" list; [] stops the schedule and restores the config's link.
 	Entries string `protobuf:"bytes,2,opt,name=entries,proto3" json:"entries,omitempty"`
 	// "now" (default) or "first_use": count from the next traffic.
-	Start         string `protobuf:"bytes,3,opt,name=start,proto3" json:"start,omitempty"`
+	Start string `protobuf:"bytes,3,opt,name=start,proto3" json:"start,omitempty"`
+	// The length of one round ("60s"): the schedule starts over every round;
+	// empty: it runs once.
+	Repeat        string `protobuf:"bytes,4,opt,name=repeat,proto3" json:"repeat,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -10726,6 +10729,13 @@ func (x *ScheduleImpairRequest) GetStart() string {
 	return ""
 }
 
+func (x *ScheduleImpairRequest) GetRepeat() string {
+	if x != nil {
+		return x.Repeat
+	}
+	return ""
+}
+
 type ImpairStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	OutboundTag   string                 `protobuf:"bytes,1,opt,name=outboundTag,proto3" json:"outboundTag,omitempty"`
@@ -10772,7 +10782,7 @@ func (x *ImpairStatusRequest) GetOutboundTag() string {
 
 type ImpairStatus struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// {"tag", "up": {...}, "down": {...}, "stall", "schedule": {...}}, see
+	// {"tag", "link_params", "counters", "sublinks", "schedule"}, see
 	// docs-lx/lx-impair.md.
 	Json          string `protobuf:"bytes,1,opt,name=json,proto3" json:"json,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -11685,11 +11695,12 @@ const file_daemon_started_service_proto_rawDesc = "" +
 	"\vendpointTag\x18\x01 \x01(\tR\vendpointTag\"J\n" +
 	"\x10SetImpairRequest\x12 \n" +
 	"\voutboundTag\x18\x01 \x01(\tR\voutboundTag\x12\x14\n" +
-	"\x05entry\x18\x02 \x01(\tR\x05entry\"i\n" +
+	"\x05entry\x18\x02 \x01(\tR\x05entry\"\x81\x01\n" +
 	"\x15ScheduleImpairRequest\x12 \n" +
 	"\voutboundTag\x18\x01 \x01(\tR\voutboundTag\x12\x18\n" +
 	"\aentries\x18\x02 \x01(\tR\aentries\x12\x14\n" +
-	"\x05start\x18\x03 \x01(\tR\x05start\"7\n" +
+	"\x05start\x18\x03 \x01(\tR\x05start\x12\x16\n" +
+	"\x06repeat\x18\x04 \x01(\tR\x06repeat\"7\n" +
 	"\x13ImpairStatusRequest\x12 \n" +
 	"\voutboundTag\x18\x01 \x01(\tR\voutboundTag\"\"\n" +
 	"\fImpairStatus\x12\x12\n" +
