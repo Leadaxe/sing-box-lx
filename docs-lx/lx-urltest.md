@@ -62,17 +62,18 @@ not, a startup warning says so.
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `pool` | int | `3` | how many nodes the pool holds. `0` or omitted — `3`; negative is an error. The pool holds no more nodes than `outbounds` has |
-| `pool_tolerance` | int (ms) | `0` | `0` — the pool is filled with live nodes without comparing delays, and no more nodes are checked than needed; the mode for large lists. `> 0` — every node is checked and the pool keeps the fastest `pool`; a pool node is replaced only when an outside node beats it by more than `pool_tolerance` ms |
+| `pool_tolerance` | int (ms) | `0` | `0` — the pool is filled with live nodes without comparing delays, and the check stops once it has found `pool` live nodes plus a reserve of `max(⌈pool/2⌉, 1)`; the mode for large lists. `> 0` — every node is checked and the pool keeps the fastest `pool`; a pool node is replaced only when an outside node beats it by more than `pool_tolerance` ms |
 | `sticky_hash` | string[] | `["process","domain"]` | what the binding key is built from (see [Slot-hash binding](#slot-hash-binding)): `process`, `domain`, `source_ip`, `dest_ip`, `dest_port`. Omitted or `[]` — the default. Only `["none"]` turns the binding off |
 
 > ⚠️ `"sticky_hash": []` does not turn the binding off. The sing-box config decoder reads an
 > empty array as an omitted field, that is, as `["process","domain"]`. `["none"]` turns the
 > binding off; `none` together with another component is an error.
 
-A dead pool node keeps its slot until a live replacement is found, so the pool never empties.
-While the pool has a live node, new connections skip the dead one: its sticky keys spread evenly
-over the live nodes and come back once the node answers again; without the binding the rotation
-runs over the live nodes. A quarantined node is skipped the same way. A failed connection starts
+The number of slots does not change: a dead node's slot stays empty until a live replacement is
+found, and the live nodes stay in their slots. While the pool has a live node, new connections
+skip the empty slot: its sticky keys spread evenly over the live nodes and come back once the
+slot is filled again; without the binding the rotation runs over the live nodes. A quarantined
+node is skipped the same way. A failed connection starts
 the [self-heal](#pool-self-heal).
 
 A node is live or dead by the shared history of its checks. So a manual delay test with a short
@@ -84,7 +85,9 @@ until the next pool check (at most `interval` plus the probe time).
 
 A flow's key is bound not to a node but to a slot number: `slot[hash(key) % pool]`. When the
 node in a slot changes, the replacement takes the same slot. So the keys of the other slots stay
-on their nodes, and their connections are not reopened.
+on their nodes, and their connections are not reopened. With `pool_tolerance > 0` the scheduled
+check can swap a slot's live node for a faster one — that is the point of the mode; the slot's
+keys move to the new node.
 
 By default the key is the process and the destination domain. `domain` is the domain from the
 original request, and it stays filled after the router resolves the domain to an IP. Keep
@@ -107,8 +110,22 @@ stickiness.
 One error decides nothing: silence, a node's refusal or a client leaving give only a retry
 through another slot, a probe of the node and a count. A node is struck out only when it stayed
 silent on its own probe while a control node in the same check answered. If nobody answered,
-there is no conclusion and the pool does not change. Only a node that answered its own probe
-takes an empty slot.
+there is no conclusion and the pool does not change. After a strike-out the slot stays empty until
+there is a replacement, and only a node that answered its own probe takes it. The replacement is
+looked for among the nodes outside the pool; the live pool nodes are left alone.
+
+With `pool_tolerance: 0` the scheduled check looks for live nodes not only for the pool but also
+for a reserve of `max(⌈pool/2⌉, 1)` nodes. Reserve nodes carry no traffic, but they are taken
+first for a replacement, so a slot is usually filled within a fraction of a second.
+
+While nobody answers, checks get rarer. If every candidate has been asked and none answered, the
+pause between checks grows: 15 → 30 → 60 → 120 s. Any probe answer or platform signal (a wake, a
+network change) brings it back to 15 s, and a connection opened during a long pause gives one
+extra check. The whole core runs at most 16 self-heal probes at once, and a node with the same
+probe URL is checked with one probe for all groups.
+
+If `round_robin` groups are nested (one is a node's `detour` or a member of another), only the
+outer group retries a connection, so retries do not multiply.
 
 There is nothing to configure: the behaviour is always on, with no config keys.
 
@@ -116,10 +133,10 @@ There is nothing to configure: the behaviour is always on, with no config keys.
 
 | What happened | What the group does | What the application sees |
 |---|---|---|
-| A pool node died between checks: the server process stopped, the host went down | A connection that does not open through the node is retried through another slot, and the node gets a probe. Silent while the control answered — it is struck out, and its slot gets a replacement | No failed connection. If the host is down rather than the process, the first connection waits for the failure and goes to the retry; from the fifth second of waiting new connections skip the slot |
-| A node accepts connections and stays silent | After 5 s new connections skip its slot, and the node gets a probe. About 36 s after the silence began the node is struck out and replaced. Connections still opening through it are retried through another node; open connections still waiting for a first byte are closed | Connections that reached the node in its first 5 s are lost; the application repeats a closed one |
-| A destination is unreachable through one node: a geo-restriction, the site bans the node's address | An explicit refusal from the node or the site — the connection is retried through another slot at once, and the destination moves to the next slot. A close without a code or a site silent for over 15 s — the destination moves on the second such case on the same node, if the node answered other sites in between. Other destinations stay on their nodes | On an explicit refusal — nothing; otherwise the first request can fail (see the limits), the next ones go through another node |
-| A node answers probes but fails a noticeable share of connections | A node with at least 5 % failures and more than twice the pool median goes to quarantine: its slot is skipped and gets a replacement until the next scheduled check or network change | Fewer failed connections |
+| A pool node died between checks: the server process stopped, the host went down | A connection that does not open through the node is retried through another slot, and the node gets a probe. Silent while the control answered — it is struck out, in under a second on a connection refusal; its slot gets a replacement | No failed connection. If the host is down rather than the process, the first connection waits for the failure and goes to the retry; from the fifth second of waiting new connections skip the slot |
+| A node accepts connections and stays silent | After 5 s new connections skip its slot, and the node gets a probe. About 41 s after the silence began the node is struck out and replaced. Connections still opening through it are retried through another node; open connections still waiting for a first byte are closed | Connections that reached the node in its first 5 s are lost; the application repeats a closed one |
+| A destination is unreachable through one node: a geo-restriction, the site bans the node's address | An explicit refusal from the node or the site — the connection is retried through another slot at once, and the destination moves to the next slot. A close without a code or a site silent for over 15 s — the destination moves on the second such case on the same node, if the node answered other sites in between. A SOCKS "general failure" reply and a client leaving before the answer do not move the destination. Other destinations stay on their nodes | On an explicit refusal — nothing; otherwise the first request can fail (see the limits), the next ones go through another node |
+| A node answers probes but fails a noticeable share of connections | A node with at least 5 % failures and more than twice the pool median goes to quarantine: its slot is skipped and gets a replacement until the next scheduled check or network change. A node struck out twice between scheduled checks goes to quarantine the same way. The scheduled check always probes quarantined nodes | Fewer failed connections |
 | The local network is gone: device sleep, a Wi-Fi or mobile network switch, an ISP outage | The group does not conclude "the network is down" from probes: when nobody answers, nobody is struck out. A wake, a network change or a clock jump over 10 s freezes the group for 15 s: the retry through another slot works, there are no conclusions and no records | The same pool once the network is back |
 
 Where it shows:
@@ -138,6 +155,11 @@ Limits:
   Through VLESS, Trojan, VMess and Shadowsocks such a failure shows only after the connection has
   opened, so the group does not retry it; the application does, and the destination moves to
   another node from the second failure.
+- On nodes that close connections en masse without an answer, destinations occasionally move
+  once too often.
+- A node that takes longer than 15 s on half of its probes is struck out as silent.
+- If the reserve is struck out or empty, a large group with a small pool can take minutes to find
+  a replacement.
 - A destination stays on its new slot until the core restarts. The table holds 1024 keys, and the
   oldest drops out when it is full. A destination closed through every pool node returns to its
   own slot until the next check or network change.
@@ -155,7 +177,7 @@ Limits:
 with `STATE` (`live`/`dead`/`quarantined`), `CONNECTIONS` and `FAILURES`, plus the moved keys, the
 address problems and the freeze:
 
-- `quarantined` — the node fails connections more often than the rest; new connections skip it
+- `quarantined` — the node fails connections more often than the rest or was struck out twice; new connections skip it
   until the next check or network change;
 - a moved key — a site closed to its node has moved to the next pool node;
 - an address problem — the site did not open through any pool node and went back to its own node
