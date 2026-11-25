@@ -115,6 +115,17 @@ and come back once the node answers again, without stickiness the rotation runs 
 live slots. When every slot is dead, selection is unchanged. A quarantined node (below) is
 skipped the same way.
 
+A `round_robin` pool handles node failures between checks on its own. A node that
+dies between two runs of `interval` is replaced in a fraction of a second, and the connection that
+hit it opens through the next slot: on a NanoPi stand, 30 of 30 requests went through with one
+pool node killed and the slot was refilled in 0.13 s. A node that accepts connections and stays
+silent is skipped after 5 s and replaced after 20 s. A destination closed to one node (a
+geo-restriction, the site bans the node's address) moves to another pool node after its first
+failure, while other destinations stay where they are. A loss of the local network (device sleep,
+a network switch) strikes out no node. This works only in `round_robin`, has no config keys and
+costs 7 % more CPU on a stream of short connections. The scenarios and limits are in
+[lx-config.md](../../../docs-lx/lx-config.md#the-pool-recovers-from-a-node-failure-without-waiting-for-interval).
+
 **Self-heal on a failed connection** (SPEC 138). One failed connection does not tell a dead node
 from a destination that is unreachable through it or from a local network outage, so a failure
 by itself changes neither the pool nor the history. Instead:

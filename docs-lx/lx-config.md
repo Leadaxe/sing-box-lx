@@ -71,6 +71,7 @@ energy model, timelines and the recommended mobile configuration live in [lx-ene
 - [3. urltest node selection modes](#3-urltest-node-selection-modes)
   - [3.1 Common fields](#31-common-fields)
   - [Slot-hash binding](#slot-hash-binding)
+  - [The pool recovers from a node failure without waiting for `interval`](#the-pool-recovers-from-a-node-failure-without-waiting-for-interval)
   - [Self-heal on a failed connection](#self-heal-on-a-failed-connection)
   - [Example — urltest with round_robin](#example--urltest-with-round_robin)
 - [4. MASQUE outbound — Cloudflare WARP](#4-masque-outbound--cloudflare-warp)
@@ -527,6 +528,67 @@ reads the original sniffed domain. It survives the router's domain→IP resolve,
 for normal domain traffic, not only for literal-IP destinations. For domain-based traffic keep
 `domain` in the key: a key of only `source_ip`/`dest_ip`/`dest_port` can collapse to `""` for an
 unresolved destination and stick every flow of one source to a single slot.
+
+#### The pool recovers from a node failure without waiting for `interval`
+
+A `round_robin` group learns about a dead node, a destination closed to one node and a lost
+local network from the failed connections themselves, and handles each case in seconds. The
+scheduled check runs once per `interval`, often 10–15 minutes on a large list; a node that dies
+between checks would otherwise keep its share of new connections until the next one. There is
+nothing to configure. The cost is 7 % more client CPU on a stream of short connections; download
+and upload speed do not change.
+
+| What happened | What the group does | What the application sees |
+|---|---|---|
+| A pool node died between checks: the server process stopped, the host went down | A connection that does not open through the node is retried through the next slot. The node is struck out, and its slot gets a replacement from outside the pool | No failed connection |
+| A node accepts connections and stays silent | After 5 s new connections skip its slot. After 20 s (the 5 s wait and the 15 s probe timeout) the node is struck out and replaced. Connections still opening through it are retried through another node; open connections still waiting for a first byte are closed | Connections that reached the node in its first 5 s wait until it is struck out or the application gives up; the application repeats a closed one |
+| A destination is unreachable through one node: a geo-restriction, the site bans the node's address | After the first failure the group checks that the node itself answers and moves this destination to the next slot. Other destinations stay on their nodes | The first request can fail (see the limits); the next ones go through another node |
+| A node answers probes but fails a noticeable share of connections | A node with at least 5 % failures and more than twice the pool median goes to quarantine: its slot is skipped and gets a replacement until the next scheduled check | Fewer failed connections |
+| The local network is gone: device sleep, a Wi-Fi or mobile network switch, an ISP outage | Nothing answers, so no node is struck out, and the group freezes for 15 s | The same pool once the network is back |
+
+The numbers come from a stand on a NanoPi router: five nodes, `pool: 3`, `interval: 10m`, all
+servers on loopback. With one pool node killed, 30 of 30 requests went through, and the slot got
+a replacement in 0.13 s. Release 1.14.4-lx.36 lost 10 of 30 requests on the same stand. With every
+server stopped for 20 s under load, the group struck out no node, moved no key and quarantined
+nothing.
+
+Three setups gain the most:
+
+- a pool of several servers with a rare check (`interval` of 10 minutes or more): a server that
+  goes down between checks costs a fraction of a second, not its share of connections until the
+  next check;
+- a subscription with nodes in several countries: a site closed to one country's node opens
+  through another node of the pool, and the rest of the traffic stays on its nodes;
+- phones and laptops: sleep and network switches strike out no nodes, so after a wake-up the
+  pool is the one that worked before.
+
+Eight limits:
+
+- Only `mode: round_robin` recovers this way. `least_test` and `failover` keep their penalty and
+  fallback dial on "path is dead" errors ([§3.2](#32-least_test--fastest-node)).
+- The first request to a destination closed to a node can still fail. Through VLESS, Trojan, VMess
+  and Shadowsocks the failure shows only after the connection has opened, so the group does not
+  retry it; the application does. Through `direct` and WireGuard such a request waits out two
+  timeouts in a row.
+- A silent node is replaced in 20 s, not at once.
+- A destination stays on its new slot until the core restarts. The table holds 1024 keys, and the
+  oldest drops out when it is full. A destination closed through every pool node returns to its
+  own slot until the next check.
+- With stickiness off (`sticky_hash: ["none"]`) destinations do not move; dead and quarantined
+  nodes are still skipped.
+- UDP is covered in part: a dead node is struck out for UDP too, but UDP failures move no keys and
+  do not count toward quarantine.
+- There are no config keys: the behaviour is always on and cannot be tuned.
+- On a NanoPi, 2000 short requests in a row through socks took 7 % more client CPU (17.6 s
+  against 16.4 s). Download and upload speed stay at the level of a build without self-heal.
+
+`sing-box api group pool <tag>` (a build with `with_lx_command`) shows the state: a slot table
+with `STATE` (`live`/`dead`/`quarantined`), `CONNECTIONS` and `FAILURES`, plus the moved keys, the
+address problems and the freeze. The daemon's `GetPool` carries the same: per slot `quarantined`,
+`connections` and `confirmedFailures`, per group `shiftedKeys`, `markedKeys`, `frozen` and
+`frozenSeconds`. In libbox the group fields come with `GetPoolState`
+([§8](#8-observability-commandclient-extensions)). How the group tells the cases apart is in the
+next section.
 
 #### Self-heal on a failed connection
 
