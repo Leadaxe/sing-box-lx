@@ -581,7 +581,8 @@ Eight limits:
 - There are no config keys: the behaviour is always on and cannot be tuned.
 - Each connection costs a little extra work when it opens. Download and upload speed stay at the
   level of a build without self-heal; the difference shows only in a synthetic run of thousands
-  of very short connections in a row.
+  of very short connections in a row: on a NanoPi it takes up to 8 % more CPU time to open a
+  connection, and the run itself is 1.6 % longer.
 
 `sing-box api group pool <tag>` (a build with `with_lx_command`) shows the state: a slot table
 with `STATE` (`live`/`dead`/`quarantined`), `CONNECTIONS` and `FAILURES`, plus the moved keys, the
