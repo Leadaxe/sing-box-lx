@@ -107,6 +107,34 @@ type rrHeal struct {
 	lifeStarts  [rrLifeBurst]int64
 	lifeNext    int
 	udpLifeLast int64
+	// missAt is the end of the last failed self-heal probe of a leaf: its history
+	// written before it is not live (§5).
+	missAccess sync.Mutex
+	missAt     map[string]time.Time
+}
+
+// missed records a self-heal probe of leaf that ended at at with no ANSWER.
+func (h *rrHeal) missed(leaf string, at time.Time) {
+	h.missAccess.Lock()
+	defer h.missAccess.Unlock()
+	if h.missAt == nil {
+		h.missAt = make(map[string]time.Time)
+	}
+	if at.After(h.missAt[leaf]) {
+		h.missAt[leaf] = at
+	}
+}
+
+// liveHistory reports live history of leaf (§5): written after the last failed
+// self-heal probe of the leaf.
+func (h *rrHeal) liveHistory(leaf string, history *adapter.URLTestHistory) bool {
+	if history == nil {
+		return false
+	}
+	h.missAccess.Lock()
+	at, found := h.missAt[leaf]
+	h.missAccess.Unlock()
+	return !found || history.Time.After(at)
 }
 
 // pause returns g, the current step of the pause of rounds.
@@ -1208,8 +1236,8 @@ func (s *URLTest) rrLap() bool {
 	for _, node := range g.outbounds {
 		tag := node.Tag()
 		if b.inPool(tag) || b.isQuarantined(tag) || !common.Contains(node.Network(), N.NetworkTCP) ||
-			g.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)) != nil {
-			continue // in the pool, out of reach, or polled first by its history (§5)
+			s.rrLiveHistory(node) != nil {
+			continue // in the pool, out of reach, or polled first by its live history (§5)
 		}
 		walk++
 	}
@@ -1304,6 +1332,16 @@ func rrSlotName(tag string) string {
 	return tag
 }
 
+// rrLiveHistory returns the history of the leaf of node when it is live (§5), else
+// nil.
+func (s *URLTest) rrLiveHistory(node adapter.Outbound) *adapter.URLTestHistory {
+	leaf := RealTag(node, N.NetworkTCP)
+	if history := s.group.history.LoadURLTestHistory(leaf); s.balancer.heal.liveHistory(leaf, history) {
+		return history
+	}
+	return nil
+}
+
 // rrCandidateBatch returns the next batch of at most size candidates not yet probed
 // in this round (§5): those with live history first, fastest first, then the rest
 // from the cursor going round in config order; the cursor moves past the last one
@@ -1320,7 +1358,7 @@ func (s *URLTest) rrCandidateBatch(seen map[string]bool, size int) []adapter.Out
 		if !usable(node) {
 			continue
 		}
-		if history := g.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)); history != nil {
+		if history := s.rrLiveHistory(node); history != nil {
 			alive = append(alive, candidate{tag: node.Tag(), delay: history.Delay, alive: true})
 			byTag[node.Tag()] = node
 		}

@@ -113,4 +113,34 @@ func TestRRReview9_joinedGroupComparesClocks(t *testing.T) {
 	}
 }
 
+// §5: a candidate whose probe failed loses the liveness of its history (kept, not
+// erased) and goes by the cursor: dead candidates with old history do not take every
+// batch, and the cursor reaches a live candidate with no history.
+func TestRRReview9_staleHistoryGoesByCursor(t *testing.T) {
+	tags := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
+	f := newHealFixture(t, tags, []string{"a", "b", "c"}, 0)
+	for _, tag := range []string{"a", "d", "e", "f", "g", "h", "i"} {
+		f.nodes[tag].dead.Store(true)
+	}
+	f.g.history.DeleteURLTestHistory("j") // live, but no history: reached by the cursor only
+	f.s.balancer.clearSlot("a")
+	heal := &f.s.balancer.heal
+	for round := 0; round < 4 && f.nodes["j"].probes.Load() == 0; round++ {
+		heal.lastCheckEnd.Store(nil)
+		if !f.s.rrStartSearch() {
+			t.Fatalf("round %d did not start", round)
+		}
+		waitLong(t, func() bool { return !heal.running.Load() }, 10*time.Second)
+	}
+	if f.nodes["j"].probes.Load() == 0 {
+		t.Fatal("the live candidate j is never polled: dead candidates with old history take every batch")
+	}
+	if f.g.history.LoadURLTestHistory("d") == nil {
+		t.Fatal("a failed probe of a candidate erased its history (an inference with no control)")
+	}
+	if !f.s.balancer.inPool("j") {
+		t.Fatalf("j answered and takes the empty slot: %v", f.s.balancer.poolTags())
+	}
+}
+
 // lx:end SPEC 138

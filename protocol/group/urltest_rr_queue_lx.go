@@ -260,7 +260,19 @@ func (g *URLTestGroup) rrQueuedProbe(ctx context.Context, member adapter.Outboun
 // rrHealProbe is rrQueuedProbe; alone starts a probe of its own beside the flight
 // of the node: the decisive probe does not wait for the group's own first probe of
 // the node (the exception of U3, step 3 of §4.2).
+//
+// A probe that ended with no ANSWER (and was not cancelled) takes the liveness from
+// the history of its leaf written before it (§5): the history is not erased — that
+// would be an inference with no control (A0).
 func (g *URLTestGroup) rrHealProbe(ctx context.Context, member adapter.Outbound, from time.Time, alone bool) rrProbe {
+	result := g.rrFlightProbe(ctx, member, from, alone)
+	if g.balancer != nil && result.leaf != "" && !result.answered && !result.cancelled() {
+		g.balancer.heal.missed(result.leaf, result.ended)
+	}
+	return result
+}
+
+func (g *URLTestGroup) rrFlightProbe(ctx context.Context, member adapter.Outbound, from time.Time, alone bool) rrProbe {
 	leaf := RealTag(member, N.NetworkTCP)
 	if leaf == "" || alone {
 		return g.rrProbeNode(ctx, member)
