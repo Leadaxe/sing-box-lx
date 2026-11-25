@@ -3,7 +3,6 @@ package option
 import (
 	"context"
 
-
 	"github.com/sagernet/sing-box/schema"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
