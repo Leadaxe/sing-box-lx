@@ -300,7 +300,7 @@ effect, when a chunk boundary coincides with a record boundary.
 
 ### Under `detour`, a relay can reroute the connection by SNI
 
-A separate case: a node that dials through a `detour`, a `chain` link, or a
+A separate case: a node that dials through a `detour`, a `chain` position, or a
 router with a proxy in the local network. The node in between can read the
 name out of the ClientHello and send the connection to that name instead of
 the node's destination. This is what an Xray inbound with
@@ -338,8 +338,10 @@ minimal block:
 ```
 
 - **Without the block the core behaves as upstream.** The ClientHello is
-  split only where the node sets `fragment` or `record_fragment`, through a
-  `detour` too. There is no separate default for `detour`.
+  split only where the node sets `fragment` or `record_fragment`. Under a
+  `detour` without a kernel socket below,
+  [`lx.detour.strip`](lx-block.md#lxdetourstrip--filters-for-a-node-without-a-kernel-socket)
+  drops the node's `fragment` by default; `record_fragment` stays.
 - **The block learns per path.** A path through a relay other than `ssh` and
   `socks` starts with the split, the direct path without it. A node that
   failed without the split and then passed with it turns the split on for its
@@ -351,13 +353,14 @@ minimal block:
   [SPEC 088](../SPECS/TASKS/088-REALITY_FRAGMENT_BYPASS/SPEC.md).
 - **A node's explicit value wins.** A node's `fragment` / `record_fragment`,
   `"record_fragment": false` included, work as upstream. The block overrides
-  them only with `"override": true`.
+  them only with `"override": true`; how this meets `lx.detour.strip` is in
+  [lx-block.md](lx-block.md#node-tls-keys-and-the-block).
 - **The block touches only the handshake.** Traffic after it does not change,
   and the tunnel has no permanent overhead.
 - **`h3`/QUIC** carries no TLS over TCP. It is guarded by the `quic` section
   of the same block: a one-byte decoy ahead of the first Initial.
-- **Chains.** Each [`chain`](../SPECS/FEATURES/015-CHAIN/FEATURE.md) link has
-  its own `detour`. [MASQUE](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md)
+- **Chains.** A node on a [`chain`](../SPECS/FEATURES/015-CHAIN/FEATURE.md)
+  position dials through the hop below as its `detour`. [MASQUE](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md)
   over `h2` through a detour takes the same path.
 
 Whether fragmentation helps in a network that loses the large hybrid first

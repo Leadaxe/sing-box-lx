@@ -32,7 +32,10 @@ explicitly.
   "trusttunnel": {
     "idle_timeout": "5m"
   },
-  "mtu_align": "clamp",
+  "detour": {
+    "mtu_align": "clamp",
+    "strip": true
+  },
   "sniff_guard": {
     "tls": { "method": "record_fragment" },
     "quic": { "method": "decoy_first_byte" }
@@ -45,7 +48,9 @@ explicitly.
 - [`lx.wg` — WireGuard / AmneziaWG endpoints](#lxwg--wireguard--amneziawg-endpoints)
 - [`lx.masque` — MASQUE outbounds](#lxmasque--masque-outbounds)
 - [`lx.trusttunnel` — TrustTunnel outbounds](#lxtrusttunnel--trusttunnel-outbounds)
-- [`lx.mtu_align` — path MTU / packet-size alignment](#lxmtu_align--path-mtu--packet-size-alignment)
+- [`lx.detour` — what the core does to a node under `detour`](#lxdetour--what-the-core-does-to-a-node-under-detour)
+  - [`lx.detour.mtu_align` — path MTU / packet-size alignment](#lxdetourmtu_align--path-mtu--packet-size-alignment)
+  - [`lx.detour.strip` — filters for a node without a kernel socket](#lxdetourstrip--filters-for-a-node-without-a-kernel-socket)
 - [`lx.sniff_guard` — guard against rerouting by SNI](#lxsniff_guard--guard-against-rerouting-by-sni)
   - [Node TLS keys and the block](#node-tls-keys-and-the-block)
 - [Removed keys](#removed-keys)
@@ -154,21 +159,58 @@ itself are in [protocols-transports.md §6.2](protocols-transports.md#62-outboun
 
 **Load error:** `lx.trusttunnel.idle_timeout must be >= 0` — a negative duration.
 
-## `lx.mtu_align` — path MTU / packet-size alignment
+## `lx.detour` — what the core does to a node under `detour`
 
-A node can sit right above an IP tunnel: via `detour`, via a group under `detour`, or as a
-[`chain`](lx-chain.md) link. Such a node gets a packet size that fits the tunnel: `mtu` on tunnels
+A node that dials through `detour` — directly, through a group under `detour`, or as a node taken
+over by a [`chain`](lx-chain.md) position — gets two things from the core: its packet size is
+fitted to the tunnel below (`mtu_align`), and mechanisms that need a kernel socket are filtered
+when there is none under it (`strip`). One `except_outbounds` list exempts nodes from both
+([SPEC 165](../SPECS/TASKS/165-CHAIN_DETOUR_REWRITE/SPEC.md)).
+
+```jsonc
+"lx": {
+  "detour": {
+    "mtu_align": "clamp",
+    "strip": {
+      "filters": {
+        "tls": { "fragment": true, "spoof": true, "kernel": true, "engine": true }
+      }
+    },
+    "except_outbounds": ["foreign-node"]
+  }
+}
+```
+
+The block is `true` by default: no `detour` key is the same as `"detour": true`.
+
+| Written | `mtu_align` | `strip` |
+|---|---|---|
+| no key / `true` | `clamp` | the whole catalog: all four filters |
+| `false` | `off` | none — upstream behaviour |
+| object | as written; no key → `clamp` | as written; no key → the whole catalog |
+
+| Key | Values | Absent | Meaning |
+|---|---|---|---|
+| `mtu_align` | `off`, `fill`, `clamp` | `clamp` | The alignment mode ([below](#lxdetourmtu_align--path-mtu--packet-size-alignment)) |
+| `strip` | `true`, `false`, object `{filters}` | the catalog | `true` — the catalog; `false` — nothing; an object without `filters` — the catalog |
+| `strip.filters` | `true`, `false`, object `{tls: {fragment, spoof, kernel, engine}}` | the catalog | `true` — the catalog; `false` — nothing; an object replaces the catalog whole: a filter it does not name is off, `{}` filters nothing |
+| `except_outbounds` | list of tags | none | Nodes neither aligned nor filtered |
+
+`GetEffectiveConfig` writes the block out expanded, every key and every filter explicit;
+`GetRunningConfig` returns it as written.
+
+### `lx.detour.mtu_align` — path MTU / packet-size alignment
+
+A node can sit right above an IP tunnel: via `detour`, via a group under `detour`, or as a node on a
+[`chain`](lx-chain.md) position. Such a node gets a packet size that fits the tunnel: `mtu` on tunnels
 (`wireguard`, `masque`), `initial_packet_size` plus `disable_path_mtu_discovery: true` on QUIC
 proxies (`hysteria2`, `tuic`, `hysteria`). Without it, for example, hysteria2 over WARP works
 against an IPv4 server and is silent against an IPv6 one. The size is computed once at start
 from the config, before the nodes are created. Values only go down; every changed field is
 visible in the start log with its reason.
 
-One key, two shapes:
-
 ```jsonc
-"lx": { "mtu_align": "clamp" }                                        // string — the mode
-"lx": { "mtu_align": { "mode": "clamp", "except": ["my-wg"] } }       // object — mode + exceptions
+"lx": { "detour": { "mtu_align": "clamp", "except_outbounds": ["my-wg"] } }
 ```
 
 | Mode | Field not set | Set explicitly and above the limit | Set explicitly and fits |
@@ -177,8 +219,8 @@ One key, two shapes:
 | `fill` | limit is filled in | left alone; warning "does not fit under `<tag>`" | left alone |
 | `clamp` (default) | limit is filled in | lowered to the limit; logged as configured → effective with the reason | left alone |
 
-No mode ever raises a value. `except` lists node tags that are never touched in any mode.
-Without the key the mode is `clamp`, both under `chain` and under a plain `detour`.
+No mode ever raises a value. A node in `except_outbounds` is never touched in any mode. Without
+the key the mode is `clamp`, for chain positions and under a plain `detour` alike.
 
 **Capacity of a node** — how many bytes of IP packet it carries for the node above it:
 
@@ -187,12 +229,13 @@ Without the key the mode is `clamp`, both under `chain` and under a plain `detou
 | `masque`, `wireguard` (endpoint and legacy outbound), `openvpn-client`, `openconnect` | its effective `mtu` (after its own alignment, recursively downwards) |
 | `tailscale` endpoint | `system_interface_mtu`, else 1280 |
 | `selector`, `urltest` | min over all reachable members, recursively |
-| `chain` as a `detour` target | unlimited + warning (a chain aligns itself) |
+| `chain-hop` `<chain>#<i>` | min of its position and the hop below: the position may be off or pick `direct`, and the node above must fit in every state; hop 0 — its position |
+| `chain` as a `detour` target | what its top hop carries |
 | any other node — `direct` and every proxy (vless, trojan, ss, socks, hysteria2, tuic, …), with or without `detour` | unlimited: a proxy delivers the packet of the node above whole (as a TCP stream, or by its own fragmentation), so whatever lies under its `detour` does not limit the node above |
 
-Only tunnels and groups carry a capacity upwards. The rule leaves out one case: a tunnel over
-`shadowsocks` or `socks` UDP whose own `detour` is a tunnel. Those pass datagrams through, and the
-limit below them applies; set `mtu` on the upper tunnel by hand there.
+Only tunnels, groups and chain hops carry a capacity upwards. The rule leaves out one case: a
+tunnel over `shadowsocks` or `socks` UDP whose own `detour` is a tunnel. Those pass datagrams
+through, and the limit below them applies; set `mtu` on the upper tunnel by hand there.
 
 **What the node above gets** (`ipudp` = 28 for an IPv4 server, 48 for IPv6; a domain or an
 unparsed address counts as IPv6; a WG endpoint takes its family from `peers[0].address`):
@@ -232,8 +275,8 @@ IPv6. The tunnel splits them into fragments, and WARP drops those ([masque-expla
 urltest does not recompute it. The QUIC packet size is fixed when the client is created, a WG
 device's MTU when the device is created, and a live connection does not migrate to the new path.
 The cost on a wide group member: up to 200 bytes per packet (1452 → 1252) and PMTUD off. If that
-cost matters, there are three ways out: an explicit value in `fill` mode, the tag in `except`, or
-`off` mode.
+cost matters, there are three ways out: an explicit value in `fill` mode, the tag in
+`except_outbounds`, or `off` mode.
 
 **Start log** — one Info line per changed field, warnings at Warn:
 
@@ -242,9 +285,10 @@ mtu_align: hy2 initial_packet_size → 1232 (detour warp[masque] mtu 1280 − 48
 mtu_align: wg-exit mtu 1420 → 1200 clamped (limited by warp[masque] mtu 1280 via sel −80 ipv6)
 ```
 
-For `chain` the same decision shows in `ChainInfo` (`mtu_configured` / `mtu_effective` /
-`mtu_reason` with the mode prefix `clamped:` / `filled:`). The lx RPC does not expose decisions
-made for `detour`.
+Every changed field is also a change record in `GetOutboundConfig(tag)`: `by.type` is
+`mtu_align`, with the mode, the node below, the overhead and the same reason as the log line. A
+QUIC node gets two records, `initial_packet_size` and `disable_path_mtu_discovery`
+([lx-observability.md](lx-observability.md)).
 
 **Not aligned:**
 
@@ -255,13 +299,58 @@ made for `detour`.
 What masque does from below (outer `InitialPacketSize` = `mtu + 51`, ICMP Packet Too Big with the
 real budget) is in [masque-explained.md §4](masque-explained.md#4-packet-size).
 
-**Load errors.** `sing-box check` catches all three too.
+### `lx.detour.strip` — filters for a node without a kernel socket
+
+Some TLS mechanisms of a node need the device's own TCP socket under the handshake. Through a
+tunnel or a proxy the conn under the handshake is a stream inside another connection, and there
+these mechanisms cost time or break the handshake. A filter keeps the node from using its
+mechanism on such a handshake. On the path from the relay to the server none of them does
+anything the filter takes away: the relay forwards only the real bytes.
+
+| Filter | What is not applied without a kernel socket | Why |
+|---|---|---|
+| `tls.fragment` | the node's own ClientHello split (`fragment`, `fragment_fallback_delay`); `record_fragment` stays | the split cannot wait for its pieces to be acknowledged and sleeps `fragment_fallback_delay` (500 ms) between them: 0.5–1.5 s per handshake |
+| `tls.spoof` | the forged ClientHello sent as a raw TCP packet | through ws, grpc, xhttp, httpupgrade, mux, QUIC or WireGuard it breaks every handshake; through vless/trojan over TLS it injects the decoy into the relay's stream |
+| `tls.kernel` | kTLS (`kernel_tx`, `kernel_rx`): TLS stays in user space | breaks every handshake |
+| `tls.engine` | the `apple` engine: the handshake goes through `go`, and the fingerprint becomes Go's | the macOS/iOS system TLS needs a socket and breaks the handshake |
+
+- **Which nodes.** Any node with `detour`, taken-over chain nodes included, that is not in
+  `except_outbounds`. A node without `detour` is never filtered.
+- **Per handshake.** When the conn from `detour` is a kernel socket — `detour` to `direct`, or to a
+  group that picks `direct` right now — the node's mechanisms work as configured. A node with
+  `fragment` and `detour: S`, `S = [direct, wg-relay]`: while `S` picks `direct`, the ClientHello
+  is split; after a switch to `wg-relay` the next handshake goes without the split and without the
+  500 ms pauses.
+- **`lx.sniff_guard` is stronger.** When the guard shapes this handshake itself, its shape applies
+  and the filter does not cancel it. A split dropped by the filter is not the node's choice for
+  the guard: a node without an explicit `record_fragment` can still get the guard's shape.
+- **What shows.** The node's options do not change, and filters are not in `changes`. An applied
+  filter writes one Info line per node and filter
+  (`lx.detour: <tag>: strip tls.fragment: no kernel socket under detour`) and a `detour_strip`
+  stage with the filter name in the connection test trace.
+- **Filter off or `"detour": false`** — upstream behaviour: the mechanism is tried on a conn
+  without a kernel socket and, apart from the split, fails.
+
+To keep the node's split under `detour` and filter the rest:
+
+```jsonc
+"lx": { "detour": { "strip": { "filters": { "tls": { "spoof": true, "kernel": true, "engine": true } } } } }
+```
+
+### Load errors
+
+`sing-box check` catches all of them too.
 
 | Message | Cause |
 |---|---|
-| `lx.mtu_align.mode must be "off", "fill" or "clamp"` | An unknown mode, in the string and in the object form |
-| `lx.mtu_align.except: empty tag` | An empty string in `except` |
-| `lx.mtu_align.except: unknown outbound/endpoint tag: <tags>` | The tag is neither an outbound nor an endpoint |
+| `lx.detour.mtu_align must be "off", "fill" or "clamp"` | An unknown mode |
+| `lx.detour: unknown key <key>`; the same with `lx.detour.strip`, `lx.detour.strip.filters`, `lx.detour.strip.filters.tls` | An unknown key at that level. The keys of the old chain catalog (`tls.utls`, `multiplex.padding`, `xhttp.padding`) are unknown keys too |
+| `<key> must be true, false or an object` | `lx.detour`, `strip`, `strip.filters` or `strip.filters.tls` of another type |
+| `lx.detour.strip.filters.tls.<filter> must be true or false` | A filter value that is not a boolean |
+| `lx.detour.except_outbounds must be a list of tags` | Neither a list nor a single tag |
+| `lx.detour.except_outbounds: empty tag` | An empty string in `except_outbounds` |
+| `lx.detour.except_outbounds: unknown outbound/endpoint tag: <tags>` | The tag is neither an outbound nor an endpoint |
+| `lx.mtu_align is moved to lx.detour.mtu_align (lx.mtu_align.except is lx.detour.except_outbounds)` | The old root key `lx.mtu_align` |
 
 ## `lx.sniff_guard` — guard against rerouting by SNI
 
@@ -415,7 +504,8 @@ opposite decision goes to the node's next dial on that path, if it comes within 
 Only real handshakes to which the block's decision was applied go into a pair. Not included: a
 dial that lands on an already open session (mux, the anytls pool, XHTTP, a long QUIC session of
 masque, hysteria2, tuic, trusttunnel), and a node with its own `fragment` / `record_fragment`
-under `override: false`.
+under `override: false`. A `fragment` dropped by the `lx.detour.strip` filter does not count as the
+node's own.
 
 Only nodes whose SNI differs from `server` move the label, even with the `sni_mismatch` filter
 off: a node with its own name passes a sniffing relay anyway and says nothing about the sniffer.
@@ -523,8 +613,11 @@ split and passes with it. To start every relay with the split, add
 Upstream node keys work in any state of the block:
 
 - **`fragment` / `record_fragment` / `fragment_fallback_delay`** on a node work as upstream, with
-  or without the block, under `detour` too. The block overrides them only with
-  `"override": true`: then, for a node that passed `nodes`, the block's method goes on `suspect`
+  or without the block. Under a `detour` without a kernel socket below, the `tls.fragment` filter
+  of [`lx.detour.strip`](#lxdetourstrip--filters-for-a-node-without-a-kernel-socket) drops the
+  node's `fragment` by default; `record_fragment` stays, and a node without an explicit
+  `record_fragment` is then shaped by the block as if it had no split. Otherwise the block
+  overrides them only with `"override": true`: then, for a node that passed `nodes`, the block's method goes on `suspect`
   and an unsplit ClientHello on `clean`. On a `never` path the block does nothing. QUIC has no
   node keys, so `override` has no effect there.
 - **`"record_fragment": false`** — the node asks for the ClientHello in one record. Under the
@@ -546,3 +639,6 @@ A config with any of these keys fails to load.
 | `lx.wg.idle_suspend`, `idle_suspend_reachable`, `idle_teardown`, `lazy_build`, `build_max`, `build_overflow` | the same key in `lx.wg.idle`: `idle_suspend` → `idle.suspend`, `lazy_build` → `idle.lazy_build` |
 | `route.lx_idle_suspend`, `lx_idle_suspend_reachable`, `lx_idle_teardown` | `lx.wg.idle.suspend`, `suspend_reachable`, `teardown` |
 | `network` in a `masque` node | `vhttp` |
+| `lx.mtu_align` | `lx.detour.mtu_align`; `except` → `lx.detour.except_outbounds` |
+| `idle_timeout` in a `chain` | nothing: a chain creates no link instances, a node on a position ≥ 1 dials through the hop below as itself |
+| `strip_evasion`, `strip` in a `chain` | `lx.detour.strip` |

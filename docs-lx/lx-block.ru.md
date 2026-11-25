@@ -32,7 +32,10 @@
   "trusttunnel": {
     "idle_timeout": "5m"
   },
-  "mtu_align": "clamp",
+  "detour": {
+    "mtu_align": "clamp",
+    "strip": true
+  },
   "sniff_guard": {
     "tls": { "method": "record_fragment" },
     "quic": { "method": "decoy_first_byte" }
@@ -45,7 +48,9 @@
 - [`lx.wg` — endpoint'ы WireGuard / AmneziaWG](#lxwg--endpointы-wireguard--amneziawg)
 - [`lx.masque` — MASQUE-outbound'ы](#lxmasque--masque-outboundы)
 - [`lx.trusttunnel` — TrustTunnel-outbound'ы](#lxtrusttunnel--trusttunnel-outboundы)
-- [`lx.mtu_align` — выравнивание MTU и размера пакета по пути](#lxmtu_align--выравнивание-mtu-и-размера-пакета-по-пути)
+- [`lx.detour` — что ядро делает с узлом под `detour`](#lxdetour--что-ядро-делает-с-узлом-под-detour)
+  - [`lx.detour.mtu_align` — выравнивание MTU и размера пакета по пути](#lxdetourmtu_align--выравнивание-mtu-и-размера-пакета-по-пути)
+  - [`lx.detour.strip` — фильтры для узла без сокета ядра](#lxdetourstrip--фильтры-для-узла-без-сокета-ядра)
 - [`lx.sniff_guard` — защита от перенаправления по SNI](#lxsniff_guard--защита-от-перенаправления-по-sni)
   - [Узловые ключи TLS и блок](#узловые-ключи-tls-и-блок)
 - [Удалённые ключи](#удалённые-ключи)
@@ -155,21 +160,58 @@
 
 **Ошибка загрузки:** `lx.trusttunnel.idle_timeout must be >= 0` — отрицательная длительность.
 
-## `lx.mtu_align` — выравнивание MTU и размера пакета по пути
+## `lx.detour` — что ядро делает с узлом под `detour`
 
-Узел может стоять прямо над IP-туннелем: через `detour`, через группу под `detour` или как звено
-[`chain`](lx-chain.ru.md). Такой узел получает размер пакета, который влезает в туннель: `mtu` у
+Узел, который дозванивается через `detour` — напрямую, через группу под `detour` или как узел,
+перехваченный позицией [`chain`](lx-chain.ru.md), — получает от ядра две вещи: размер пакета
+подгоняется под туннель снизу (`mtu_align`), а механизмы, которым нужен сокет ядра, фильтруются,
+когда его под узлом нет (`strip`). Один список `except_outbounds` исключает узлы из обоих
+([SPEC 165](../SPECS/TASKS/165-CHAIN_DETOUR_REWRITE/SPEC.md)).
+
+```jsonc
+"lx": {
+  "detour": {
+    "mtu_align": "clamp",
+    "strip": {
+      "filters": {
+        "tls": { "fragment": true, "spoof": true, "kernel": true, "engine": true }
+      }
+    },
+    "except_outbounds": ["foreign-node"]
+  }
+}
+```
+
+По умолчанию блок — `true`: ключа `detour` нет — то же, что `"detour": true`.
+
+| Запись | `mtu_align` | `strip` |
+|---|---|---|
+| ключа нет / `true` | `clamp` | весь каталог: все четыре фильтра |
+| `false` | `off` | ничего — поведение апстрима |
+| объект | что написано; без ключа — `clamp` | что написано; без ключа — весь каталог |
+
+| Ключ | Значения | Без ключа | Смысл |
+|---|---|---|---|
+| `mtu_align` | `off`, `fill`, `clamp` | `clamp` | Режим выравнивания ([ниже](#lxdetourmtu_align--выравнивание-mtu-и-размера-пакета-по-пути)) |
+| `strip` | `true`, `false`, объект `{filters}` | каталог | `true` — каталог; `false` — ничего; объект без `filters` — каталог |
+| `strip.filters` | `true`, `false`, объект `{tls: {fragment, spoof, kernel, engine}}` | каталог | `true` — каталог; `false` — ничего; объект целиком заменяет каталог: не названный фильтр выключен, `{}` не фильтрует ничего |
+| `except_outbounds` | список тегов | нет | Узлы, которые не выравниваются и не фильтруются |
+
+`GetEffectiveConfig` пишет блок развёрнутым, все ключи и все фильтры явно; `GetRunningConfig`
+отдаёт его как написан.
+
+### `lx.detour.mtu_align` — выравнивание MTU и размера пакета по пути
+
+Узел может стоять прямо над IP-туннелем: через `detour`, через группу под `detour` или как узел на
+позиции [`chain`](lx-chain.ru.md). Такой узел получает размер пакета, который влезает в туннель: `mtu` у
 туннелей (`wireguard`, `masque`), `initial_packet_size` плюс `disable_path_mtu_discovery: true` у
 QUIC-прокси (`hysteria2`, `tuic`, `hysteria`). Без этого, например, hysteria2 через WARP работает
 с IPv4-сервером и молчит с IPv6-сервером. Размер считается один раз на старте по конфигу, до
 создания узлов. Значения только понижаются; каждое изменённое поле видно в логе старта вместе с
 причиной.
 
-Один ключ, две формы записи:
-
 ```jsonc
-"lx": { "mtu_align": "clamp" }                                        // строка — режим
-"lx": { "mtu_align": { "mode": "clamp", "except": ["my-wg"] } }       // объект — режим + исключения
+"lx": { "detour": { "mtu_align": "clamp", "except_outbounds": ["my-wg"] } }
 ```
 
 | Режим | Поле не задано | Задано явно и больше предела | Задано явно и влезает |
@@ -178,8 +220,8 @@ QUIC-прокси (`hysteria2`, `tuic`, `hysteria`). Без этого, напр
 | `fill` | дописывается предел | не трогается; предупреждение «не влезет под `<tag>`» | не трогается |
 | `clamp` (по умолчанию) | дописывается предел | понижается до предела; в лог: configured → effective и причина | не трогается |
 
-Ни один режим не повышает значения. `except` — теги узлов, которые не трогаются ни в одном
-режиме. Без ключа действует `clamp`, и под `chain`, и под обычным `detour`.
+Ни один режим не повышает значения. Узел из `except_outbounds` не трогается ни в одном режиме. Без
+ключа действует `clamp`, и на позициях цепочек, и под обычным `detour`.
 
 **Ёмкость узла** — сколько байт IP-пакета он пронесёт для узла над собой:
 
@@ -188,12 +230,13 @@ QUIC-прокси (`hysteria2`, `tuic`, `hysteria`). Без этого, напр
 | `masque`, `wireguard` (endpoint и legacy outbound), `openvpn-client`, `openconnect` | его эффективный `mtu` (после собственного выравнивания, рекурсивно вниз) |
 | `tailscale` endpoint | `system_interface_mtu`, иначе 1280 |
 | `selector`, `urltest` | min по всем достижимым членам, рекурсивно |
-| `chain` как цель `detour` | без предела + предупреждение (цепочка выравнивает себя сама) |
+| `chain-hop` `<цепочка>#<i>` | min из своей позиции и хопа ниже: позиция может быть выключена или выбрать `direct`, и узел сверху должен влезать в любом состоянии; хоп 0 — его позиция |
+| `chain` как цель `detour` | то же, что её верхний хоп |
 | любой другой узел — `direct` и любой прокси (vless, trojan, ss, socks, hysteria2, tuic, …), с `detour` или без | без предела: прокси доставляет пакет узла над собой целиком (потоком TCP или своей нарезкой), и то, что лежит под его `detour`, верхний узел не ограничивает |
 
-Ёмкость наверх несут только туннели и группы. Исключение правило не покрывает: туннель над
-`shadowsocks` или `socks` по UDP, у которых свой `detour` на туннель. Они пропускают датаграммы
-как есть, и ограничение под ними действует; верхнему туннелю там `mtu` задаётся руками.
+Ёмкость наверх несут только туннели, группы и хопы цепочек. Исключение правило не покрывает:
+туннель над `shadowsocks` или `socks` по UDP, у которых свой `detour` на туннель. Они пропускают
+датаграммы как есть, и ограничение под ними действует; верхнему туннелю там `mtu` задаётся руками.
 
 **Что получает узел сверху** (`ipudp` = 28 для IPv4-сервера, 48 для IPv6; домен или неразобранный
 адрес считаются IPv6; у WG-endpoint семейство берётся из `peers[0].address`):
@@ -233,7 +276,7 @@ IPv4-сервером — 1252 (1280 − 28). Без выравнивания qu
 urltest значение не пересчитывается. Размер QUIC-пакета фиксируется при создании клиента, MTU
 WG-устройства — при создании устройства, и живое соединение на новый путь не переезжает. Цена на
 широком члене группы: до 200 байт на пакет (1452 → 1252) и выключенный PMTUD. Если эта цена
-мешает, есть три выхода: явное значение в режиме `fill`, тег в `except` или режим `off`.
+мешает, есть три выхода: явное значение в режиме `fill`, тег в `except_outbounds` или режим `off`.
 
 **Лог старта** — одна Info-строка на изменённое поле, предупреждения — Warn:
 
@@ -242,8 +285,10 @@ mtu_align: hy2 initial_packet_size → 1232 (detour warp[masque] mtu 1280 − 48
 mtu_align: wg-exit mtu 1420 → 1200 clamped (limited by warp[masque] mtu 1280 via sel −80 ipv6)
 ```
 
-У `chain` то же решение видно в `ChainInfo` (`mtu_configured` / `mtu_effective` / `mtu_reason`
-с префиксом режима `clamped:` / `filled:`). Решения по `detour` lx RPC не отдаёт.
+Каждое изменённое поле — ещё и запись изменения в `GetOutboundConfig(tag)`: `by.type` —
+`mtu_align`, с режимом, узлом снизу, накладными и той же причиной, что в строке лога. У QUIC-узла
+две записи: `initial_packet_size` и `disable_path_mtu_discovery`
+([lx-observability.ru.md](lx-observability.ru.md)).
 
 **Не выравниваются:**
 
@@ -254,13 +299,58 @@ mtu_align: wg-exit mtu 1420 → 1200 clamped (limited by warp[masque] mtu 1280 v
 Чем masque отвечает на это снизу (внешний `InitialPacketSize` = `mtu + 51`, ICMP Packet Too Big с
 фактическим бюджетом) — в [masque-explained.ru.md §4](masque-explained.ru.md#4-размер-пакета).
 
-**Ошибки загрузки.** Все три ловит и `sing-box check`.
+### `lx.detour.strip` — фильтры для узла без сокета ядра
+
+Части TLS-механизмов узла нужен собственный TCP-сокет устройства под рукопожатием. Через туннель
+или прокси под рукопожатием лежит поток внутри другого соединения, и там эти механизмы стоят
+времени или роняют рукопожатие. Фильтр не даёт узлу применить свой механизм на таком рукопожатии.
+На участке от релея до сервера ни один из них не делает ничего, что фильтр бы отнимал: релей
+пересылает только настоящие байты.
+
+| Фильтр | Что не применяется без сокета ядра | Почему |
+|---|---|---|
+| `tls.fragment` | собственный разрез ClientHello узла (`fragment`, `fragment_fallback_delay`); `record_fragment` остаётся | разрез не может дождаться подтверждения кусков и спит `fragment_fallback_delay` (500 мс) между ними: 0,5–1,5 с на рукопожатие |
+| `tls.spoof` | поддельный ClientHello сырым TCP-пакетом | через ws, grpc, xhttp, httpupgrade, mux, QUIC или WireGuard роняет каждое рукопожатие; через vless/trojan поверх TLS вбрасывает обманку в поток релея |
+| `tls.kernel` | kTLS (`kernel_tx`, `kernel_rx`): TLS остаётся в пространстве пользователя | роняет каждое рукопожатие |
+| `tls.engine` | движок `apple`: рукопожатие идёт через `go`, отпечаток становится отпечатком Go | системному TLS macOS/iOS нужен сокет, без него рукопожатие падает |
+
+- **Какие узлы.** Любой узел с `detour`, включая перехваченные узлы цепочек, которого нет в
+  `except_outbounds`. Узел без `detour` не фильтруется никогда.
+- **На каждом рукопожатии.** Если соединение от `detour` — сокет ядра (`detour` на `direct` или на
+  группу, которая сейчас выбрала `direct`), механизмы узла работают как в конфиге. Узел с
+  `fragment` и `detour: S`, `S = [direct, wg-relay]`: пока `S` выбирает `direct`, ClientHello
+  режется; после переключения на `wg-relay` следующее рукопожатие идёт без разреза и без пауз по
+  500 мс.
+- **`lx.sniff_guard` сильнее.** Если guard сам формирует это рукопожатие, применяется его форма, и
+  фильтр её не отменяет. Разрез, снятый фильтром, для guard'а — не выбор узла: узел без явного
+  `record_fragment` всё равно может получить форму guard'а.
+- **Что видно.** Опции узла не меняются, в `changes` фильтров нет. Применённый фильтр пишет одну
+  Info-строку на узел и фильтр
+  (`lx.detour: <tag>: strip tls.fragment: no kernel socket under detour`) и этап `detour_strip` с
+  именем фильтра в трассе проверки соединения.
+- **Фильтр выключен или `"detour": false`** — поведение апстрима: механизм пробуется на соединении
+  без сокета ядра и, кроме разреза, падает.
+
+Оставить разрез узла под `detour`, а остальное фильтровать:
+
+```jsonc
+"lx": { "detour": { "strip": { "filters": { "tls": { "spoof": true, "kernel": true, "engine": true } } } } }
+```
+
+### Ошибки загрузки
+
+Все их ловит и `sing-box check`.
 
 | Сообщение | Причина |
 |---|---|
-| `lx.mtu_align.mode must be "off", "fill" or "clamp"` | Неизвестный режим, в строковой и в объектной форме |
-| `lx.mtu_align.except: empty tag` | Пустая строка в `except` |
-| `lx.mtu_align.except: unknown outbound/endpoint tag: <теги>` | Тега нет ни среди outbound'ов, ни среди endpoint'ов |
+| `lx.detour.mtu_align must be "off", "fill" or "clamp"` | Неизвестный режим |
+| `lx.detour: unknown key <key>`; так же с `lx.detour.strip`, `lx.detour.strip.filters`, `lx.detour.strip.filters.tls` | Неизвестный ключ на этом уровне. Ключи прежнего каталога цепочки (`tls.utls`, `multiplex.padding`, `xhttp.padding`) — тоже неизвестные ключи |
+| `<key> must be true, false or an object` | `lx.detour`, `strip`, `strip.filters` или `strip.filters.tls` другого типа |
+| `lx.detour.strip.filters.tls.<filter> must be true or false` | Значение фильтра — не bool |
+| `lx.detour.except_outbounds must be a list of tags` | Ни список, ни один тег |
+| `lx.detour.except_outbounds: empty tag` | Пустая строка в `except_outbounds` |
+| `lx.detour.except_outbounds: unknown outbound/endpoint tag: <tags>` | Тег — ни outbound, ни endpoint |
+| `lx.mtu_align is moved to lx.detour.mtu_align (lx.mtu_align.except is lx.detour.except_outbounds)` | Прежний корневой ключ `lx.mtu_align` |
 
 ## `lx.sniff_guard` — защита от перенаправления по SNI
 
@@ -407,7 +497,8 @@ QUIC, XHTTP на `h3`, wireguard с QUIC-образной маскировкой
 
 В пару идут только настоящие рукопожатия, к которым применено решение блока. Не идут: дайл,
 севший на уже поднятую сессию (mux, пул anytls, XHTTP, долгая QUIC-сессия masque, hysteria2, tuic,
-trusttunnel), и узел со своими `fragment` / `record_fragment` при `override: false`.
+trusttunnel), и узел со своими `fragment` / `record_fragment` при `override: false`. `fragment`,
+снятый фильтром `lx.detour.strip`, своим для узла не считается.
 
 Двигают лейбл только узлы, у которых SNI не совпадает с `server`, даже если фильтр
 `sni_mismatch` выключен: узел с собственным именем проходит сниффящий релей и так, и о сниффере
@@ -514,7 +605,10 @@ trusttunnel), и узел со своими `fragment` / `record_fragment` пр�
 Узловые ключи апстрима работают при любом состоянии блока:
 
 - **`fragment` / `record_fragment` / `fragment_fallback_delay`** у узла действуют как в
-  апстриме, с блоком и без него, в том числе под `detour`. Блок перекрывает их только при
+  апстриме, с блоком и без него. Под `detour` без сокета ядра снизу фильтр `tls.fragment` из
+  [`lx.detour.strip`](#lxdetourstrip--фильтры-для-узла-без-сокета-ядра) по умолчанию снимает
+  `fragment` узла; `record_fragment` остаётся, а узел без явного `record_fragment` блок тогда
+  формирует так, будто разреза у него нет. В остальном блок перекрывает их только при
   `"override": true`: тогда для узла, прошедшего `nodes`, на `suspect` идёт метод блока, на
   `clean` — ClientHello без разреза. На пути `never` блок не действует. У QUIC узловых ключей
   нет, там `override` ни на что не влияет.
@@ -537,3 +631,6 @@ trusttunnel), и узел со своими `fragment` / `record_fragment` пр�
 | `lx.wg.idle_suspend`, `idle_suspend_reachable`, `idle_teardown`, `lazy_build`, `build_max`, `build_overflow` | тот же ключ в `lx.wg.idle`: `idle_suspend` → `idle.suspend`, `lazy_build` → `idle.lazy_build` |
 | `route.lx_idle_suspend`, `lx_idle_suspend_reachable`, `lx_idle_teardown` | `lx.wg.idle.suspend`, `suspend_reachable`, `teardown` |
 | `network` в `masque`-узле | `vhttp` |
+| `lx.mtu_align` | `lx.detour.mtu_align`; `except` → `lx.detour.except_outbounds` |
+| `idle_timeout` в `chain` | ничего: цепочка не создаёт звеньев, узел на позиции ≥ 1 сам дозванивается через хоп ниже |
+| `strip_evasion`, `strip` в `chain` | `lx.detour.strip` |

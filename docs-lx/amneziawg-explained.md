@@ -377,8 +377,8 @@ The core does four things by itself:
   datagram is routinely oversized. An explicit `"udp_fragment": false`
   forces DF, as vanilla sing-box does. A correct `mtu` is still preferable:
   fragmentation is a safety net.
-- In a [`chain`](../SPECS/FEATURES/015-CHAIN/FEATURE.md) the MTU of the
-  tunnel links is lowered automatically.
+- On a [`chain`](../SPECS/FEATURES/015-CHAIN/FEATURE.md) position the MTU of
+  a tunnel is lowered automatically, as under any `detour`.
 
 `jmax` is also kept below the path MTU: a junk packet longer than the MTU
 gets fragmented, and narrow paths then drop the fragments.

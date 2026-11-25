@@ -44,7 +44,7 @@
 | **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
 | **TrustTunnel** outbound and inbound | `with_trusttunnel` (+ `with_quic` for HTTP/3) | `outbounds[].type` / `inbounds[].type: "trusttunnel"`; fields — [protocols-transports.md §6](protocols-transports.md#6-trusttunnel-outbound-and-inbound), the global `lx.trusttunnel.idle_timeout` — [lx-block.md](lx-block.md#lxtrusttunnel--trusttunnel-outbounds) | desktop + mobile |
 | **Idle-suspend** | `with_lx_idle_suspend` | `lx.wg.idle.suspend` (+ `suspend_reachable`, `teardown`) | mobile only (AAR) |
-| **Root `lx` block** | — (always parsed) | `lx.wg`, `lx.masque`, `lx.trusttunnel`, `lx.mtu_align`, `lx.sniff_guard` — the fork's global knobs, [lx-block.md](lx-block.md) | desktop + mobile |
+| **Root `lx` block** | — (always parsed) | `lx.wg`, `lx.masque`, `lx.trusttunnel`, `lx.detour`, `lx.sniff_guard` — the fork's global knobs, [lx-block.md](lx-block.md) | desktop + mobile |
 | **DNS server group** | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
 | **`lxd` daemon** | `with_lxd` | not a config key — the `sing-box lxd` subcommand + `<state-dir>/daemon.json`; see [lxd-daemon.md](lxd-daemon.md) | desktop / server (not Win7, not AAR) |
@@ -348,8 +348,10 @@ config keys: the methods are in a build with `with_lx_command` (part of
 | `GetPoolState(groupTag)` | the same plus moved keys, address problems and the freeze |
 | `GetDNSGroups()` | the live state of every `group` DNS server |
 | `GetRunningConfig()` | the canonical JSON of the running config |
+| `GetEffectiveConfig()` | the same config after the lx pre-pass: chain hops added, `detour` of taken-over nodes rewritten, MTU aligned |
+| `GetOutboundConfig(tag)` | one node as written, as built, and the list of changes between them |
 | `SubscribeDNSQueries(includeAnswers, handler)` | a live stream of DNS queries |
-| `GetChains()` | the state of every `chain` outbound by position |
+| `GetChainStatus(tag)` | the state of one `chain` outbound by position |
 | `SetEndpointEnabled(tag, enabled)` | turns a WG/AWG endpoint off and on at runtime |
 
 Connections in the stream carry a `detourList` field — the path through `detour` to the final
@@ -369,7 +371,8 @@ A relay that reads the SNI from the ClientHello and sends the connection to that
 `sniffing` with `destOverride` without `routeOnly`) takes a node with a masking SNI (REALITY, WARP)
 to someone else's host. Such a relay cannot parse a split ClientHello. Without the
 `lx.sniff_guard` block the core splits the ClientHello as upstream — only on nodes with `fragment`
-or `record_fragment`. The block turns protection on for paths through relays and learns from
+or `record_fragment`; under a `detour` without a kernel socket below, the node's `fragment` is
+dropped by `lx.detour.strip` by default, `record_fragment` stays. The block turns protection on for paths through relays and learns from
 connection outcomes; its keys are in [§13](#13-the-lx-root-block).
 
 ```json
@@ -384,19 +387,20 @@ connection outcomes; its keys are in [§13](#13-the-lx-root-block).
 ## 10. `chain` outbound — a virtual multi-hop path of groups and nodes
 
 The `chain` outbound builds a multi-hop path from existing nodes and groups. Each position is chosen
-by its own group with all of its logic, and the chain follows the choice. A node at position ≥ 1
-works through its link — an instance that dials its own server through the previous position.
-Links are created on first use and removed after `idle_timeout` without connections. The links'
-MTU is fitted on its own, and one-sided anti-DPI tricks are stripped on inner positions. It needs
-the `with_lx_chain` build tag (in the desktop `LX_TAGS` and in the AAR).
+by its own group with all of its logic, and the chain follows the choice. At config load every node
+reached on a position ≥ 1, group members included, gets `detour` onto the hop of the position below,
+`<tag>#<i−1>`, an internal outbound of type `chain-hop`; the node's own `detour` is overridden. A
+node keeps one instance and one path, and a group on a position checks the instances that carry
+its traffic. MTU alignment and the strip filters of `lx.detour` act on these nodes as on any node
+under `detour`. It needs the `with_lx_chain` build tag (in the desktop `LX_TAGS` and in the AAR).
 
 | Key | Default | What it sets |
 |-----|---------|--------------|
 | `outbounds` | required | position tags in packet order, from the client to the exit; at least two, all different |
-| `idle_timeout` | `5m` | after how long a link without live connections is removed; `0` — live until shutdown |
-| `strip_evasion` | `true` | strip one-sided anti-DPI tricks from links at positions ≥ 1 |
-| `strip` | `{}` | changes to the strip list: `false` — keep, `true` — strip as well |
-| `rewrite` | `{}` | a merge-patch to the links' config by node type at positions ≥ 1 |
+| `rewrite` | `{}` | a merge-patch to the config of taken-over nodes by node type at positions ≥ 1; it cannot touch `detour` |
+| `interrupt_exist_connections` | `false` | on a position toggle, also cut the user connections through the chain |
+
+`idle_timeout`, `strip_evasion` and `strip` in a chain fail the load and name the replacement.
 
 ```jsonc
 {
@@ -407,7 +411,7 @@ the `with_lx_chain` build tag (in the desktop `LX_TAGS` and in the AAR).
 }
 ```
 
-The strip catalogue, link MTU, observability and limits are in [lx-chain.md](lx-chain.md).
+How the hops work, the load errors, the toggle, observability and limits are in [lx-chain.md](lx-chain.md).
 
 ---
 
@@ -477,7 +481,10 @@ canonical: empty sub-blocks are dropped.
 | `wg.connected_socket` | `false` | connect the tunnel socket to the server address; Linux and Android |
 | `masque.idle_timeout` | off | one sleep window for `masque` nodes without their own `idle_timeout` |
 | `trusttunnel.idle_timeout` | `5m` | one idle window for `trusttunnel` nodes without their own `idle_timeout` |
-| `mtu_align` | `clamp` | fitting MTU and packet size of nodes above tunnels: `off`, `fill`, `clamp`; the `{mode, except}` object excludes tags |
+| `detour` | `true` | what the core does to a node under `detour`: `true` — MTU alignment `clamp` and every strip filter, `false` — upstream behaviour, or an object |
+| `detour.mtu_align` | `clamp` | fitting MTU and packet size of nodes above tunnels: `off`, `fill`, `clamp` |
+| `detour.strip` | every filter | filters for a node without a kernel socket below: `true`, `false`, or `{filters: {tls: {fragment, spoof, kernel, engine}}}`; an object of filters replaces the catalog |
+| `detour.except_outbounds` | none | tags neither aligned nor filtered |
 | `sniff_guard.nodes.sni_mismatch` | `true` | protect only nodes whose SNI differs from `server` |
 | `sniff_guard.nodes.outbound_type` | every type | protect only nodes of these types |
 | `sniff_guard.detour_type` | `direct`, `ssh`, `socks` — `clean`, others — `suspect` | the starting path label by relay type: `never`, `clean`, `suspect` |
@@ -492,7 +499,7 @@ canonical: empty sub-blocks are dropped.
 "lx": {
   "wg": { "idle": { "suspend": "30s", "suspend_reachable": "5m" } },
   "masque": { "idle_timeout": "5m" },
-  "mtu_align": "clamp",
+  "detour": { "mtu_align": "clamp", "strip": true },
   "sniff_guard": {
     "tls":  { "method": "record_fragment" },
     "quic": { "method": "decoy_first_byte" }
