@@ -531,12 +531,17 @@ unresolved destination and stick every flow of one source to a single slot.
 
 #### Pool self-heal
 
-The pool recovers from a node failure without waiting for `interval`. A `round_robin` group learns about a dead node, a destination closed to one node and a lost
-local network from the failed connections themselves, and handles each case in seconds. The
-scheduled check runs once per `interval`, often 10–15 minutes on a large list; a node that dies
-between checks would otherwise keep its share of new connections until the next one. There is
-nothing to configure. Download and upload speed do not change; the extra work per connection does
-not show in ordinary traffic.
+The pool recovers from a node failure without waiting for `interval`.
+
+The scheduled check walks the nodes once per `interval`, and on a large list that is a long
+process: two checks are often 10–15 minutes apart. That is too rare for live traffic: a node that
+dies right after a check would keep its share of new connections until the next one. So a
+`round_robin` group has recovery mechanisms driven by the connections themselves. It learns about
+a dead node, a destination closed to one node and a lost local network from the failed
+connections, and handles each case in seconds.
+
+There is nothing to configure. Download and upload speed do not change; the extra work per
+connection does not show in ordinary traffic.
 
 ##### What the application sees when a node fails
 
