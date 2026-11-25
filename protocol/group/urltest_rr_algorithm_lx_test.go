@@ -27,16 +27,16 @@ func shortProbes(t *testing.T, timeout time.Duration) {
 
 // runCheck runs one check of the pool to its end and clears its pause.
 func (f *healFixture) runCheck() {
-	f.s.balancer.heal.running.Store(true)
+	f.s.balancer.heal.holdRound()
 	f.s.rrHealCheck()
-	f.s.balancer.heal.lastCheckEnd.Store(nil)
+	f.s.balancer.heal.clearPause()
 }
 
 // runSearch runs one replacement search to its end and clears its pause.
 func (f *healFixture) runSearch() {
-	f.s.balancer.heal.running.Store(true)
+	f.s.balancer.heal.holdRound()
 	f.s.rrHealSearch()
-	f.s.balancer.heal.lastCheckEnd.Store(nil)
+	f.s.balancer.heal.clearPause()
 }
 
 func (f *healFixture) allHistory(tags ...string) bool {
@@ -107,7 +107,7 @@ func TestRRAlgo_S1_noBypassBeforeTheLifeProbeFails(t *testing.T) {
 	f.nodes["a"].hold = hold
 	f.nodes["a"].dead.Store(true)
 	heal := &f.s.balancer.heal
-	heal.running.Store(true) // the check is not under test
+	heal.holdRound() // the check is not under test
 	conn, _ := f.fail(context.Background(), "a")
 	closeConn(conn)
 	track := f.s.balancer.trackOf("a")
@@ -120,7 +120,7 @@ func TestRRAlgo_S1_noBypassBeforeTheLifeProbeFails(t *testing.T) {
 	if !track.wantCheck.Load() {
 		t.Fatal("the failed life probe asks for the check")
 	}
-	heal.running.Store(false)
+	heal.dropRound()
 	f.waitCheck(t)
 }
 
@@ -380,9 +380,9 @@ func TestRRAlgo_D5_noControlNoVerdict(t *testing.T) {
 	for _, node := range f.nodes {
 		node.dead.Store(true)
 	}
-	f.s.balancer.heal.running.Store(true)
+	f.s.balancer.heal.holdRound()
 	f.s.rrHealCheck()
-	if !f.allHistory("a", "b", "c") || !samePool(f.pool(), "a", "b", "c") || f.s.balancer.heal.epochEnd.Load() != 0 || f.s.balancer.heal.lastCheckEnd.Load() == nil {
+	if !f.allHistory("a", "b", "c") || !samePool(f.pool(), "a", "b", "c") || f.s.balancer.heal.epochEnd.Load() != 0 || f.s.balancer.heal.pauseEnd() == nil {
 		t.Fatal("D5: nothing changes, no event, the gap holds")
 	}
 	if total := f.probes("a") + f.probes("b") + f.probes("c") + f.probes("d"); total != 4 {
@@ -434,7 +434,7 @@ func TestRRAlgo_I9_emptySlotStartsOnlyTheSearch(t *testing.T) {
 	f.nodes["b"].dead.Store(true) // what D1 does to b
 	f.g.history.DeleteURLTestHistory("b")
 	f.s.balancer.clearSlot("b")
-	f.s.balancer.heal.lastCheckEnd.Store(nil) // the pause is over
+	f.s.balancer.heal.clearPause() // the pause is over
 	f.s.balancer.poolLook.Store(0)
 	c, d, e := f.probes("c"), f.probes("d"), f.probes("e")
 	f.s.selectBalanced(context.Background(), N.NetworkTCP, siteAddr("site.example"))
@@ -461,7 +461,7 @@ func TestRRAlgo_V9_udpWaitNoTCPBypass(t *testing.T) {
 	ageTrack(track, rrHangAfter+time.Second)
 	f.nodes["a"].dead.Store(true)
 	heal := &f.s.balancer.heal
-	heal.running.Store(true) // the check is not under test
+	heal.holdRound() // the check is not under test
 	f.s.rrOnPick(context.Background(), "a", track, rrClock(time.Now()))
 	waitUntil(t, func() bool { return f.probes("a") == 1 && !track.lifeBusy.Load() })
 	if track.suspect(rrClock(time.Now()), heal.epoch()) || !track.wantCheck.Load() {
@@ -470,15 +470,15 @@ func TestRRAlgo_V9_udpWaitNoTCPBypass(t *testing.T) {
 	if f.s.rrLifeProbe(f.udp["b"], f.s.balancer.trackOf("b"), 0, true) {
 		t.Fatal("one UDP life probe per group per minute")
 	}
-	heal.running.Store(false)
+	heal.dropRound()
 }
 
 // S2 at a failed open by a timeout: the bypass at once; Q1 records the sign only
 // with Live(X; P \ {n}).
 func TestRRAlgo_S2_openTimeout(t *testing.T) {
 	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
-	f.s.balancer.heal.running.Store(true)
-	defer f.s.balancer.heal.running.Store(false)
+	f.s.balancer.heal.holdRound()
+	defer f.s.balancer.heal.dropRound()
 	destination := siteAddr("site.example")
 	start := time.Now().Add(-6 * time.Second)
 	timeout := os.ErrDeadlineExceeded
@@ -584,7 +584,7 @@ func (f *healFixture) groupState() rrGroupState {
 		k2:      int64(b.memory.k2.size.Load()),
 		tracks:  make(map[string][6]int64),
 		keys:    make(map[string]int64),
-		running: b.heal.running.Load(),
+		running: b.heal.roundBusy(),
 	}
 	for tag := range f.nodes {
 		state.history[tag] = f.g.history.LoadURLTestHistory(tag)

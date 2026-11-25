@@ -35,7 +35,7 @@ func countsOf(b *balancer, tag string) (conns uint32, fails uint32) {
 
 // checkAsync runs one check of the pool in the background.
 func (f *healFixture) checkAsync() chan struct{} {
-	f.s.balancer.heal.running.Store(true)
+	f.s.balancer.heal.holdRound()
 	done := make(chan struct{})
 	go func() {
 		f.s.rrHealCheck()
@@ -177,13 +177,13 @@ func TestRRCov_L3_oneCheckAndTheGap(t *testing.T) {
 		t.Fatal("the gap after a check")
 	}
 	past := time.Now().Add(-rrHealGap - time.Second)
-	heal.lastCheckEnd.Store(&past)
+	heal.setPauseEnd(&past)
 	if !heal.beginCheck() {
 		t.Fatal("the gap is over")
 	}
 	heal.freeze()
 	heal.endCheck(false, true)
-	if heal.lastCheckEnd.Load() != nil || heal.checkReady() {
+	if heal.pauseEnd() != nil || heal.checkReady() {
 		t.Fatal("a check cut by a freeze leaves no gap; nothing starts in the freeze")
 	}
 	heal.epochEnd.Store(rrClock(time.Now()))
@@ -256,7 +256,7 @@ func TestRRCov_networkRunAbortsTheCheck(t *testing.T) {
 		close(done)
 	}()
 	waitClosed(t, done)
-	if f.s.balancer.heal.running.Load() {
+	if f.s.balancer.heal.roundBusy() {
 		t.Fatal("the check ended before the run")
 	}
 }
@@ -380,8 +380,8 @@ func TestRRCov_bypassedSlotLooked(t *testing.T) {
 	now := rrClock(time.Now())
 	track.suspectAt(now, now)
 	track.wantCheck.Store(true)
-	f.s.balancer.heal.running.Store(true) // the check is not under test
-	defer f.s.balancer.heal.running.Store(false)
+	f.s.balancer.heal.holdRound() // the check is not under test
+	defer f.s.balancer.heal.dropRound()
 	node, picked := f.s.selectBalanced(f.keyOn(t, "site.example", 0), N.NetworkTCP, siteAddr("site.example"))
 	if node.Tag() == "a" || !picked.detour || track.lookAt.Load() == 0 {
 		t.Fatal("the pick goes round a and looks at it")
@@ -392,8 +392,8 @@ func TestRRCov_bypassedSlotLooked(t *testing.T) {
 // explicit refusal (K1) and a soft sign alike; on the slot of the key it does.
 func TestRRCov_signOnDetourShiftsNothing(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
-	f.s.balancer.heal.running.Store(true)
-	defer f.s.balancer.heal.running.Store(false)
+	f.s.balancer.heal.holdRound()
+	defer f.s.balancer.heal.dropRound()
 	ctx := f.keyOn(t, "site.example", 0)
 	destination := siteAddr("site.example")
 	refused := &adapter.DestinationRefusedLx{Tag: "a", Err: E.New("refused")}

@@ -207,7 +207,7 @@ func (f *udpFixture) counts(tag string) (conns uint32, fails uint32) {
 
 func (f *udpFixture) checkStarted() bool {
 	heal := &f.s.balancer.heal
-	return heal.running.Load() || heal.lastCheckEnd.Load() != nil
+	return heal.roundBusy() || heal.pauseEnd() != nil
 }
 
 // --- the shared pool ----------------------------------------------------------------

@@ -180,13 +180,6 @@ func (q *rrQueue) dispatch() {
 	}
 }
 
-// inFlight returns the places held (for tests and the status).
-func (q *rrQueue) inFlight() int {
-	q.access.Lock()
-	defer q.access.Unlock()
-	return q.held
-}
-
 // probe runs run for key, or takes the outcome of the probe of key in flight that
 // started not earlier than from (U3). The probe runs on a context that keeps the
 // values of ctx and ends when every asker gave up.

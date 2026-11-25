@@ -174,7 +174,7 @@ func (f *healFixture) waitCheck(t *testing.T) {
 	t.Helper()
 	heal := &f.s.balancer.heal
 	idle := func() bool {
-		if heal.running.Load() {
+		if heal.roundBusy() {
 			return false
 		}
 		for _, entry := range f.s.balancer.slotsSnapshot() {
@@ -189,7 +189,7 @@ func (f *healFixture) waitCheck(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	waitUntil(t, idle)
-	heal.lastCheckEnd.Store(nil)
+	heal.clearPause()
 	heal.lifeAccess.Lock()
 	heal.lifeStarts, heal.udpLifeLast = [rrLifeBurst]int64{}, 0
 	heal.lifeAccess.Unlock()
@@ -280,7 +280,7 @@ func TestRRHeal_tickDuringCheck(t *testing.T) {
 			default:
 			}
 			f.s.balancer.heal.epochEnd.Store(0)
-			if f.s.balancer.heal.running.CompareAndSwap(false, true) {
+			if f.s.balancer.heal.tryHoldRound() {
 				f.s.rrHealCheck()
 			}
 			observe()
@@ -306,7 +306,7 @@ func assertFrozen(t *testing.T, f *healFixture, reason string) {
 	if !ok || f.nodes["b"].dials.Load() != dials+1 {
 		t.Fatalf("%s: the retry goes on while frozen", reason)
 	}
-	if f.s.balancer.heal.running.Load() || f.probes("a") != probes {
+	if f.s.balancer.heal.roundBusy() || f.probes("a") != probes {
 		t.Fatalf("%s: no check while frozen", reason)
 	}
 }
@@ -353,7 +353,7 @@ func TestRRHeal_clientCancel(t *testing.T) {
 	if ok || ok2 || f.nodes["b"].dials.Load() != 0 {
 		t.Fatal("a client cancel gets no retry")
 	}
-	if f.s.balancer.heal.lastCheckEnd.Load() != nil || f.probes("a") != 0 {
+	if f.s.balancer.heal.pauseEnd() != nil || f.probes("a") != 0 {
 		t.Fatal("a client cancel starts no check")
 	}
 }

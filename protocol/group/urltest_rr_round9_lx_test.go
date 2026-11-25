@@ -29,7 +29,7 @@ func TestRR9_W2_growsOnlyAfterALap(t *testing.T) {
 			t.Fatalf("round %d: the base pause is over", i)
 		}
 		h.endRoundAt(at, false, false)
-		if h.step.Load() != 0 {
+		if h.pauseStep() != 0 {
 			t.Fatal("W2: no lap, the step stays at the base")
 		}
 		if h.readyAt(at.Add(rrHealGap - time.Millisecond)) {
@@ -42,7 +42,7 @@ func TestRR9_W2_growsOnlyAfterALap(t *testing.T) {
 			t.Fatal("the pause is over")
 		}
 		h.endRoundAt(at, false, true)
-		if got := h.step.Load(); got != min(want, rrPauseSteps) {
+		if got := h.pauseStep(); got != min(want, rrPauseSteps) {
 			t.Fatalf("W2: step %d, want %d", got, min(want, rrPauseSteps))
 		}
 		at = at.Add(h.pause())
@@ -52,7 +52,7 @@ func TestRR9_W2_growsOnlyAfterALap(t *testing.T) {
 	}
 	h.beginRoundAt(at)
 	h.endRoundAt(at, true, true)
-	if h.step.Load() != rrPauseSteps {
+	if h.pauseStep() != rrPauseSteps {
 		t.Fatal("a round with an ANSWER does not grow the step; W3 resets it at the answer")
 	}
 }
@@ -61,18 +61,18 @@ func TestRR9_W2_growsOnlyAfterALap(t *testing.T) {
 // the answer only.
 func TestRR9_W3_resetByAnswerAndSignal(t *testing.T) {
 	var h rrHeal
-	h.step.Store(rrPauseSteps)
-	h.polled.Store(7)
+	h.setPauseStep(rrPauseSteps)
+	h.setPollCount(7)
 	end := time.Now()
-	h.lastCheckEnd.Store(&end)
+	h.setPauseEnd(&end)
 	h.probeAnswered()
-	if h.step.Load() != 0 || h.polled.Load() != 0 || h.pause() != rrHealGap {
+	if h.pauseStep() != 0 || h.pollCount() != 0 || h.pause() != rrHealGap {
 		t.Fatal("W3: an ANSWER brings the base back and restarts o")
 	}
-	h.step.Store(2)
-	h.polled.Store(4)
+	h.setPauseStep(2)
+	h.setPollCount(4)
 	h.freeze()
-	if h.step.Load() != 0 || h.polled.Load() != 4 || h.lastCheckEnd.Load() != nil {
+	if h.pauseStep() != 0 || h.pollCount() != 4 || h.pauseEnd() != nil {
 		t.Fatal("W3: N3 resets the step and lifts the pause, o stays")
 	}
 }
@@ -88,16 +88,16 @@ func TestRR9_W5_oneExtraRoundPerPause(t *testing.T) {
 	if h.grantExtraAt(at.Add(time.Second)) {
 		t.Fatal("W5: no right at the base")
 	}
-	h.step.Store(2)
+	h.setPauseStep(2)
 	if !h.grantExtraAt(at.Add(time.Second)) || h.grantExtraAt(at.Add(2*time.Second)) {
 		t.Fatal("W5: one right per pause")
 	}
-	end := h.lastCheckEnd.Load()
+	end := h.pauseEnd()
 	if !h.beginRoundAt(at.Add(2 * time.Second)) {
 		t.Fatal("W5: the right gives a round inside the pause")
 	}
 	h.endRoundAt(at.Add(3*time.Second), false, true)
-	if h.lastCheckEnd.Load() != end || h.step.Load() != 2 {
+	if h.pauseEnd() != end || h.pauseStep() != 2 {
 		t.Fatal("W5: the round of the right with no ANSWER keeps the step and the end of the pause")
 	}
 	if h.readyAt(at.Add(4*time.Second)) || h.grantExtraAt(at.Add(5*time.Second)) {
@@ -113,14 +113,14 @@ func TestRR9_W5_oneExtraRoundPerPause(t *testing.T) {
 func TestRR9_W4_lifeProbeWaitsForThePause(t *testing.T) {
 	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
 	heal := &f.s.balancer.heal
-	heal.step.Store(1)
+	heal.setPauseStep(1)
 	end := time.Now()
-	heal.lastCheckEnd.Store(&end)
+	heal.setPauseEnd(&end)
 	node, _ := f.s.outbound.Outbound("a")
 	if f.s.rrLifeProbe(node, f.s.balancer.trackOf("a"), rrClock(time.Now()), false) {
 		t.Fatal("W4: no life probe while the pause above the base goes on")
 	}
-	heal.step.Store(0)
+	heal.setPauseStep(0)
 	if !f.s.rrLifeProbe(node, f.s.balancer.trackOf("a"), rrClock(time.Now()), false) {
 		t.Fatal("W4: at the base the life probe has its own limits only")
 	}
@@ -354,7 +354,7 @@ func virtualRounds(f *healFixture, origin time.Time, from, to int, firstBytes bo
 			if entry.track == nil {
 				continue
 			}
-			if !(heal.step.Load() > 0 && heal.pausing(at)) && heal.claimLife(entry.track, rrClock(at), false) {
+			if !(heal.pauseStep() > 0 && heal.pausing(at)) && heal.claimLife(entry.track, rrClock(at), false) {
 				life++
 				entry.track.lifeBusy.Store(false)
 			}
@@ -366,11 +366,11 @@ func virtualRounds(f *healFixture, origin time.Time, from, to int, firstBytes bo
 			continue
 		}
 		before := f.allProbes()
-		end := heal.lastCheckEnd.Load()
+		end := heal.pauseEnd()
 		round()
 		rounds += int(f.allProbes() - before)
-		if heal.lastCheckEnd.Load() != end {
-			heal.lastCheckEnd.Store(&at) // the round ended at its virtual second
+		if heal.pauseEnd() != end {
+			heal.setPauseEnd(&at) // the round ended at its virtual second
 		}
 	}
 	return rounds, life
@@ -410,7 +410,7 @@ func TestRR9_L3_poolOfThreeAllDead(t *testing.T) {
 	f := deadGroup(t, 503, 3)
 	rounds, life := virtualRounds(f, origin, 0, 60, true, f.s.rrHealCheck)
 	t.Logf("base: %d probes of rounds + %d life probes in a minute (L3: 52)", rounds, life)
-	if rounds+life > 4*3*(rrCandidateBatches+1)+16 || f.s.balancer.heal.step.Load() != 0 {
+	if rounds+life > 4*3*(rrCandidateBatches+1)+16 || f.s.balancer.heal.pauseStep() != 0 {
 		t.Fatalf("L3 at the base: %d + %d", rounds, life)
 	}
 
@@ -503,7 +503,7 @@ func TestRR9_L3_fiveGroupsCoreBound(t *testing.T) {
 		}
 		idle := true
 		for _, f := range fixtures {
-			if f.s.balancer.heal.running.Load() {
+			if f.s.balancer.heal.roundBusy() {
 				idle = false
 			}
 		}

@@ -81,7 +81,7 @@ func TestRRFirstByte_success(t *testing.T) {
 		t.Fatal("after the first byte: no handshake pending, reads may bypass the wrapper")
 	}
 	conn.Close()
-	if f.s.balancer.heal.lastCheckEnd.Load() != nil || f.s.balancer.heal.running.Load() {
+	if f.s.balancer.heal.pauseEnd() != nil || f.s.balancer.heal.roundBusy() {
 		t.Fatal("a success starts no check")
 	}
 }
@@ -142,7 +142,7 @@ func TestRRFirstByte_silentClose(t *testing.T) {
 		if pending := conn.watch.track.pendingN.Load() == 1; pending != c.failure {
 			t.Fatalf("%s: Q1 sign %v, want %v", c.name, pending, c.failure)
 		}
-		if f.probes("a") != 0 || f.s.balancer.heal.running.Load() {
+		if f.probes("a") != 0 || f.s.balancer.heal.roundBusy() {
 			t.Fatalf("%s: no probe, no check", c.name)
 		}
 	}
@@ -427,7 +427,7 @@ func TestRRFirstByte_directNotWrappedInterruptWorks(t *testing.T) {
 		t.Fatal("interrupting the group must close the connection")
 	}
 	time.Sleep(20 * time.Millisecond)
-	if s.s.balancer.heal.running.Load() || s.s.balancer.heal.lastCheckEnd.Load() != nil {
+	if s.s.balancer.heal.roundBusy() || s.s.balancer.heal.pauseEnd() != nil {
 		t.Fatal("an interrupt is a close by us, not a failure")
 	}
 }

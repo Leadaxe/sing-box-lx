@@ -83,7 +83,7 @@ func TestRRTrack_hungDialCancelledByDeadVerdict(t *testing.T) {
 
 	f.s.selectBalanced(key, N.NetworkTCP, siteAddr("site.example"))
 	time.Sleep(20 * time.Millisecond)
-	if f.s.balancer.heal.running.Load() || f.probes("a") != 0 {
+	if f.s.balancer.heal.roundBusy() || f.probes("a") != 0 {
 		t.Fatal("a dial in flight for less than 5 s is no reason")
 	}
 
@@ -339,7 +339,7 @@ func TestRRTrack_delayMeasurementUnwatched(t *testing.T) {
 	if counted != 0 || f.dials("b")+f.dials("c") > 1 || f.s.balancer.trackOf("a").pendingN.Load() != 0 {
 		t.Fatalf("a measurement records nothing and gets no retry: counted %d, b %d c %d", counted, f.dials("b"), f.dials("c"))
 	}
-	if f.s.balancer.heal.running.Load() || f.s.balancer.heal.lastCheckEnd.Load() != nil {
+	if f.s.balancer.heal.roundBusy() || f.s.balancer.heal.pauseEnd() != nil {
 		t.Fatal("a measurement starts no check")
 	}
 }

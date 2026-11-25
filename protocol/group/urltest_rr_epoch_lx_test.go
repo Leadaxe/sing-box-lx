@@ -22,7 +22,7 @@ func TestRREpoch_C9_firstOutcomeAfterSleepIsAnEvent(t *testing.T) {
 	if !b.heal.frozen() || b.heal.epoch() < rrClock(now) {
 		t.Fatal("the outcome compared the clocks before the rules: an event")
 	}
-	if !ok || b.trackOf("a").pendingN.Load() != 0 || b.heal.running.Load() {
+	if !ok || b.trackOf("a").pendingN.Load() != 0 || b.heal.roundBusy() {
 		t.Fatal("N0: the retry, no record, no check while frozen")
 	}
 }
@@ -40,7 +40,7 @@ func TestRREpoch_I4_startedInTheFreezeGivesNothing(t *testing.T) {
 	if !ok {
 		t.Fatal("after the freeze the retry is back")
 	}
-	if f.s.balancer.trackOf("a").pendingN.Load() != 0 || heal.running.Load() || f.probes("a") != 0 {
+	if f.s.balancer.trackOf("a").pendingN.Load() != 0 || heal.roundBusy() || f.probes("a") != 0 {
 		t.Fatal("an exchange begun before E records nothing and starts nothing")
 	}
 }

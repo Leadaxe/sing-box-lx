@@ -408,14 +408,14 @@ func TestRRShift_concurrent(t *testing.T) {
 			default:
 			}
 			f.s.balancer.rrResetMarks()
-			f.s.balancer.heal.lastCheckEnd.Store(nil)
+			f.s.balancer.heal.clearPause()
 			time.Sleep(time.Millisecond)
 		}
 	}()
 	time.Sleep(300 * time.Millisecond)
 	close(stop)
 	wg.Wait()
-	waitUntil(t, func() bool { return !f.s.balancer.heal.running.Load() && !f.g.checking.Load() })
+	waitUntil(t, func() bool { return !f.s.balancer.heal.roundBusy() && !f.g.checking.Load() })
 	pool := f.pool()
 	seen := map[string]bool{}
 	for _, tag := range pool {

@@ -113,17 +113,17 @@ func TestRRHeal_failedRetryKeepsFirstPick(t *testing.T) {
 // reading: a wall clock step does not stretch the freeze or the probe gap.
 func TestRRHeal_marksMonotonic(t *testing.T) {
 	var h rrHeal
-	h.running.Store(true)
+	h.holdRound()
 	h.endCheck(true, false)
-	check := h.lastCheckEnd.Load() // a freeze drops the gap; read it before
+	check := h.pauseEnd() // a freeze drops the gap; read it before
 	h.freeze()
-	h.running.Store(true)
+	h.holdRound()
 	h.endCheck(true, false)
-	if h.lastCheckEnd.Load() != nil {
+	if h.pauseEnd() != nil {
 		t.Fatal("a check that ends frozen sets no gap")
 	}
-	h.lastCheckEnd.Store(check)
-	for name, mark := range map[string]*time.Time{"check end": h.lastCheckEnd.Load()} {
+	h.setPauseEnd(check)
+	for name, mark := range map[string]*time.Time{"check end": h.pauseEnd()} {
 		if mark == nil || !strings.Contains(mark.String(), " m=") {
 			t.Fatalf("%s mark must keep the monotonic reading, got %v", name, mark)
 		}

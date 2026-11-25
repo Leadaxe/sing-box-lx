@@ -27,7 +27,7 @@ func TestRRHeal_connectionTestRetriesWithoutCheck_LX(t *testing.T) {
 	}
 	conn.Close()
 	time.Sleep(20 * time.Millisecond)
-	if f.s.balancer.heal.running.Load() || f.s.balancer.heal.lastCheckEnd.Load() != nil || f.probes("a") != 0 {
+	if f.s.balancer.heal.roundBusy() || f.s.balancer.heal.pauseEnd() != nil || f.probes("a") != 0 {
 		t.Fatal("a connection test must not start a check")
 	}
 	if f.g.history.LoadURLTestHistory("a") == nil || !samePool(f.pool(), "a", "b", "c") {
