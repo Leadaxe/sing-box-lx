@@ -274,21 +274,25 @@ GetPool{tag}                             → слоты балансировщи
 
 - узкое место со скоростью и очередью, задержка и джиттер, скачки скорости;
 - потери пачками (модель Гилберта) для датаграмм; на TCP-носителе потеря останавливает поток, как повторная передача;
-- случайные остановки всей линии и обрывы по расписанию, молчаливые или со сбросом соединений;
-- профили `dsl`, `lte-walk`, `wifi-lossy` как отправная точка;
+- случайные остановки всей линии и обрывы по расписанию, один раз или повторяющимся кругом, молчаливые или со сбросом соединений;
+- подлинии для части трафика: один сайт, порт, каждое N-е соединение, доля UDP-потоков — когда `impair` стоит над узлом, он видит каждый сайт;
+- профили `dsl`, `lte-walk`, `wifi-lossy` и свои в `lx.impair_profiles`, одна смена `profile` меняет всю линию;
 - `seed`: каждый прогон с теми же потерями, скачками и остановками, поэтому регрессия видна как разница сборок, а не везения.
 
 ```jsonc
-{ "type": "impair", "tag": "line-a", "profile": "lte-walk", "seed": 1, "start": "first_use",
-  "schedule": [ { "at": "60s", "outage": true, "reset": true }, { "at": "70s", "outage": false } ] }
+{ "type": "impair", "tag": "line-a", "seed": 1, "start": "first_use", "schedule_repeat": "2m",
+  "link_params": { "profile": "lte-walk" },
+  "sublinks": [ { "match": { "domain_suffix": "example.org" }, "link_params": { "loss": "30%" } } ],
+  "schedule": [ { "at": "60s", "link_params": { "outage": true, "reset": true } },
+                { "at": "70s", "link_params": { "outage": false } } ] }
 ```
 
 Эксперимент управляется на лету, без перезапуска ядра, который сбросил бы состояние групп. `sing-box api impair set` или `SetImpair` по gRPC меняют линию посреди прогона, `ScheduleImpair` заменяет расписание, а наблюдаемость показывает, как отвечают пул и соединения:
 
 ```bash
-sing-box api impair set line-a '{"outage": true, "reset": true}'   # оборвать линию сейчас
-sing-box api group pool auto                                        # что сделал балансировщик
-sing-box api impair set line-a '{"outage": false}'                  # вернуть линию
+sing-box api impair set line-a '{"link_params": {"outage": true, "reset": true}}'   # оборвать линию сейчас
+sing-box api group pool auto                                                        # что сделал балансировщик
+sing-box api impair set line-a '{"link_params": {"profile": "dsl"}}'                 # дальше ровная линия
 ```
 
 `with_lx_impair` есть в релизных бинарях и в AAR, добавляет 150 КБ и ничего не делает, пока в конфиге нет `"type": "impair"`; при старте пишет в лог предупреждение, что канал ухудшается намеренно. Ограничения: приём ухудшается после настоящей сети, поэтому сервер видит настоящее время туда-обратно.

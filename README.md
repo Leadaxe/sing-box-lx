@@ -274,21 +274,25 @@ A balancer, failover or a new transport is tested against real servers on a bad 
 
 - a bottleneck rate with a queue, delay and jitter, rate swings;
 - loss in bursts (Gilbert model) for datagrams; on a TCP carrier a loss stops the stream the way a retransmission does;
-- random stalls of the whole link and outages on a schedule, silent or with a connection reset;
-- profiles `dsl`, `lte-walk`, `wifi-lossy` as a starting point;
+- random stalls of the whole link and outages on a schedule, once or in a repeating round, silent or with a connection reset;
+- sublinks for part of the traffic: one site, a port, every N-th connection, a share of UDP flows — when `impair` stands over a node, it sees each site;
+- profiles `dsl`, `lte-walk`, `wifi-lossy` and your own in `lx.impair_profiles`, one switch of `profile` changes the whole line;
 - `seed`: the same run with the same losses, jumps and stalls every time, so a regression shows up as a difference in the build, not in luck.
 
 ```jsonc
-{ "type": "impair", "tag": "line-a", "profile": "lte-walk", "seed": 1, "start": "first_use",
-  "schedule": [ { "at": "60s", "outage": true, "reset": true }, { "at": "70s", "outage": false } ] }
+{ "type": "impair", "tag": "line-a", "seed": 1, "start": "first_use", "schedule_repeat": "2m",
+  "link_params": { "profile": "lte-walk" },
+  "sublinks": [ { "match": { "domain_suffix": "example.org" }, "link_params": { "loss": "30%" } } ],
+  "schedule": [ { "at": "60s", "link_params": { "outage": true, "reset": true } },
+                { "at": "70s", "link_params": { "outage": false } } ] }
 ```
 
 The experiment is driven at runtime, without a core restart that would reset the groups' state. `sing-box api impair set` or `SetImpair` over gRPC change the link mid-run, `ScheduleImpair` replaces the schedule, and observability shows how the pool and the connections respond:
 
 ```bash
-sing-box api impair set line-a '{"outage": true, "reset": true}'   # break the link now
-sing-box api group pool auto                                        # what the balancer did
-sing-box api impair set line-a '{"outage": false}'                  # bring the link back
+sing-box api impair set line-a '{"link_params": {"outage": true, "reset": true}}'   # break the link now
+sing-box api group pool auto                                                        # what the balancer did
+sing-box api impair set line-a '{"link_params": {"profile": "dsl"}}'                 # a steady line from now on
 ```
 
 `with_lx_impair` is in the release binaries and the AAR, adds 150 KB and does nothing until a config declares `"type": "impair"`; on start it logs a warning that the link is degraded on purpose. Limits: the receive side is degraded after the real network, so the server still sees the real round-trip time.

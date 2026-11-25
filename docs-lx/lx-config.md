@@ -526,32 +526,48 @@ With `true` the node accepts no files: the sender gets a 403 `Taildrop is disabl
 ## 15. `impair` outbound — a degraded link for testing
 
 The `impair` outbound degrades the connections that go through it on purpose: a bottleneck with a
-queue, delay and its jitter, bursty loss, rate swings, stalls and scheduled outages. It dials like
+queue, delay and its jitter, bursty loss, rate swings, stalls and outages on a schedule, for all
+connections or only some. It dials like
 `direct` or through its own `detour`, degrades both directions from one end, and needs no root and
 no netem. Use it to test balancing, failover and chains against real servers over a bad link. The
 build tag `with_lx_impair` is in the desktop `LX_TAGS` and in the AAR; until a config declares
 `"type": "impair"` it does nothing. On start `impair` logs a warning that the link is degraded on
 purpose.
 
+Outbound keys besides the dial keys of `direct`:
+
 | Key | Default | What it sets |
 |-----|---------|--------------|
-| `rate` | unlimited | bottleneck rate: `"10mbit"`, `"500kbit"`, `"unlimited"` |
-| `queue` | `"50ms"` | queue before the bottleneck: time at the current rate or a size (`"64KB"`) |
+| `link_params` | no degradation | the outbound's line: every link key lives here |
+| `sublinks` | none | a second stage for matching connections: one site, a port, a share of flows |
+| `schedule`, `schedule_repeat` | none | changes of the line and the sublinks over time; the length of a repeating round |
+| `start` | `process` | what the schedule counts from: process start or the first traffic (`first_use`) |
+| `seed` | random | the seed: the same one gives the same losses and swings |
+
+`link_params` — the same object in the outbound, a sublink, a schedule entry, `impair set` and a
+profile:
+
+| Key | Default | What it sets |
+|-----|---------|--------------|
+| `profile` | none | a template: `dsl`, `lte-walk`, `wifi-lossy` or a name from `lx.impair_profiles`; the other keys tune it |
+| `rate`, `queue` | unlimited, `"50ms"` | bottleneck rate (`"10mbit"`) and the queue before it (time or size) |
 | `delay`, `jitter` | `0` | added one-way delay and its spread |
 | `loss`, `loss_burst` | `0`, `1` | share of loss (`"0.5%"`) and mean length of a loss run |
-| `vary` | none | rate swings: `{"min", "max", "every"}` |
+| `vary`, `stall` | none | rate swings and random stops of the line; `"off"` turns them off |
+| `outage`, `reset` | `false` | the line silently goes away; `reset` breaks the connections (schedule, `impair set`, sublink only) |
 | `up`, `down` | — | the same keys for one direction |
-| `stall`, `schedule` | none | random stops of the link; changes and outages over time |
-| `profile` | none | a ready set: `dsl`, `lte-walk`, `wifi-lossy` |
-| `seed` | random | the seed: the same one gives the same losses and swings |
 
 The main placement is under a proxy node: the proxy points at `impair` with its `detour`, and the
 road to the proxy server is degraded.
 
 ```jsonc
 {"type": "vless", "tag": "via-se", "server": "se.example.net", "server_port": 443, "detour": "slow-se" /* … */},
-{"type": "impair", "tag": "slow-se", "rate": "10mbit", "delay": "20ms", "loss": "0.5%", "seed": 1}
+{"type": "impair", "tag": "slow-se", "seed": 1, "link_params": {"rate": "10mbit", "delay": "20ms", "loss": "0.5%"}}
 ```
 
-Every key with its range, how datagrams and streams are degraded, the profiles, the errors and
-recipes for `round_robin` and `failover` tests — in [lx-impair.md](lx-impair.md).
+The link changes at runtime with `sing-box api impair set|schedule|status` and the matching gRPC
+commands.
+
+Every key with its range, sublinks, the schedule, profiles, runtime control, how datagrams and
+streams are degraded, the errors and recipes for `round_robin` and `failover` tests — in
+[lx-impair.md](lx-impair.md).
