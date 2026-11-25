@@ -79,7 +79,7 @@ Load-balancing mode — how a node is chosen per connection:
   re-selects the fastest. `tolerance` is ignored (a startup warning says so); `balancer`
   must not be set.
 
-`least_connection` was considered and dropped (`round_robin` is statistically even).
+`least_connection` is rejected at load: `round_robin` already spreads connections evenly.
 
 #### balancer
 
@@ -115,15 +115,14 @@ and come back once the node answers again, without stickiness the rotation runs 
 live slots. When every slot is dead, selection is unchanged. A quarantined node (one that
 fails connections more often than the rest of the pool) is skipped the same way.
 
-A `round_robin` pool handles node failures between checks on its own. A node that
-dies between two runs of `interval` is replaced at once, and the connection that hit it opens
-through the next slot. A node that accepts connections and stays
-silent is skipped after 5 s and replaced after 20 s. A destination closed to one node (a
-geo-restriction, the site bans the node's address) moves to another pool node after its first
-failure, while other destinations stay where they are. A loss of the local network (device sleep,
-a network switch) strikes out no node. This works only in `round_robin` and has no config keys;
-download and upload speed do not change. The scenarios and limits are in
-[lx-config.md](../../../docs-lx/lx-config.md#pool-self-heal).
+A `round_robin` pool handles node failures between checks on its own. A node that dies
+between two runs of `interval` is replaced at once, and the connection that hit it opens
+through the next node. A node that accepts connections and stays silent is skipped after 5 s
+and replaced after 20 s. A site closed to one node (a geo-restriction, the site bans the
+node's address) moves to another pool node after its first failure, while the rest of the
+traffic stays on its nodes. A lost local network (device sleep, a network switch) strikes out
+no node. This works only in `round_robin` and has no config keys. The scenarios and limits are
+in [lx-config.md](../../../docs-lx/lx-config.md#pool-self-heal).
 
 Liveness is the node's shared URL test history. A manual delay test with a short timeout
 (Clash API `/proxies/{name}/delay`, the daemon's `URLTestOutbound`) that does not complete,
@@ -164,12 +163,10 @@ slot keeps all its keys when other slots change — no needless reconnects, no p
 
 !!! note
 
-    For domain-based traffic, `domain` is the natural sticky key and works out of the
-    box (it reads the sniffed domain, which survives domain→IP resolution). `dest_ip`
-    remains a valid alternative, but note it is `""` until the destination is resolved,
-    so a key of only `source_ip` / `dest_ip` / `dest_port` can collapse to one shared
-    key for an unresolved destination from a single source — correct stickiness, but
-    coarser granularity. For raw-IP destinations (no domain to sniff) use `dest_ip`.
+    Keep `domain` in the key for domain traffic: it stays filled after the router
+    resolves the domain to an IP. `dest_ip` is `""` until then, so a key of only
+    `source_ip` / `dest_ip` / `dest_port` puts every unresolved flow of one source on one
+    slot. For raw-IP destinations, which have no domain, use `dest_ip`.
 
 !!! tip
 
