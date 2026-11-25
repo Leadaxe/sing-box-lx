@@ -185,7 +185,7 @@ WARP работает там, где не отвечает его WireGuard-endp
 { "type": "group", "tag": "dns-public", "mode": "stable", "servers": ["dns-cf", "dns-google", "dns-quad9"] }
 ```
 
-Без build-тега · в релизах; полевой прогон впереди · [фича](SPECS/FEATURES/013-DNS_GROUP/FEATURE.md) · [конфиг](docs-lx/lx-config.ru.md#5-группа-dns-серверов) ([EN](docs-lx/lx-config.md#5-dns-server-group))
+Без build-тега · в релизах; полевой прогон впереди · [фича](SPECS/FEATURES/013-DNS_GROUP/FEATURE.md) · [руководство](docs-lx/lx-dns-group.ru.md) ([EN](docs-lx/lx-dns-group.md))
 
 ### Снифферы узнают WireGuard, OpenVPN, IKE, Tailscale и SIP за роутером
 

@@ -185,7 +185,7 @@ Resolution survives one public resolver going down. A `dns.servers[]` entry of `
 { "type": "group", "tag": "dns-public", "mode": "stable", "servers": ["dns-cf", "dns-google", "dns-quad9"] }
 ```
 
-No build tag · shipped; a field run is pending · [feature](SPECS/FEATURES/013-DNS_GROUP/FEATURE.md) · [config](docs-lx/lx-config.md#5-dns-server-group) ([RU](docs-lx/lx-config.ru.md#5-группа-dns-серверов))
+No build tag · shipped; a field run is pending · [feature](SPECS/FEATURES/013-DNS_GROUP/FEATURE.md) · [guide](docs-lx/lx-dns-group.md) ([RU](docs-lx/lx-dns-group.ru.md))
 
 ### Sniffers recognise WireGuard, OpenVPN, IKE, Tailscale and SIP behind a router
 

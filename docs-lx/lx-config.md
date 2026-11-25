@@ -25,10 +25,6 @@
   - [3.5 Choosing a mode](#35-choosing-a-mode)
 - [4. MASQUE outbound — Cloudflare WARP](#4-masque-outbound--cloudflare-warp)
 - [5. DNS server group](#5-dns-server-group)
-  - [Fields (a `dns.servers[]` entry)](#fields-a-dnsservers-entry)
-  - [Local names first: `hosts`](#local-names-first-hosts)
-  - [Example — resilient public DNS as the default](#example--resilient-public-dns-as-the-default)
-  - [Example — one local name for a dual-stack WireGuard server](#example--one-local-name-for-a-dual-stack-wireguard-server)
 - [6. VLESS `encryption` — post-quantum layer](#6-vless-encryption--post-quantum-layer)
   - [Field (on a `vless` outbound)](#field-on-a-vless-outbound)
   - [Example](#example)
@@ -735,144 +731,16 @@ Verified on a device on Wi-Fi and LTE, over `h3` and `h2`, with sleep and recove
 
 ## 5. DNS server group
 
-The `group` type puts several DNS servers behind one tag and picks among them by a strategy.
-It keeps one dead DNS server from killing resolution. In upstream, `dns.final` is a *default*
-server, not a fallback, and a query that a rule routes to a server fails outright on any
-network error, timeout or SERVFAIL. There is no build tag, the type is always available; a
-config without a `group` server behaves exactly like upstream. Details are in the
-[DNS_GROUP feature](../SPECS/FEATURES/013-DNS_GROUP/FEATURE.md).
-
-Servers carry no states: there is no down and no backoff. Instead the group keeps two TTL'd
-record tables. Any failed exchange writes an error record, which erases the server's live
-wins. Only the first success of a fan-out writes a win record; any success erases the
-server's live errors. A clean server is one with zero live errors. A network change clears
-both tables.
-
-### Fields (a `dns.servers[]` entry)
+The `group` type in `dns.servers[]` puts several DNS servers behind one tag: if one server does
+not answer, the query goes to the others. Modes: `stable` holds the current server, `fastest`
+takes the one that most often answered first, `parallel` asks everyone at once. The `hosts` key
+answers local names before the network is asked. No build tag is needed.
 
 ```jsonc
-{
-  "type": "group",                  // selector — must be "group"
-  "tag": "public",
-  "hosts": ["local"],               // optional: tags of hosts-type servers only.
-                                    //   Consulted first, in this order; never
-                                    //   counted as servers (no health, no fan)
-  "servers": ["google", "cloudflare", "quad9"], // required, ≥1 tags.
-                                    //   Order is not meaningful in any mode
-  "mode": "stable",                 // stable (default) | fastest | parallel
-  "error_ttl": "2m",                // default 2m: how long an error record lives
-  "win_ttl": "5m"                   // default 5m: how long a win record lives.
-                                    //   fastest only; ignored elsewhere (warning)
-}
+{ "type": "group", "tag": "public", "servers": ["google", "cloudflare"], "mode": "stable" }
 ```
 
-A failure is a transport error, a timeout or `SERVFAIL`. `NXDOMAIN` and empty answers are
-valid responses; when such an answer comes first in a fan, it counts as a win.
-
-Three modes pick the target among the clean servers:
-
-- `stable` — sticky before random: the group stays on the current server while it is clean.
-  A random re-election among the clean ones happens only when there is no clean current
-  server. There is no return to a recovered ex-target: it simply rejoins the pool.
-- `fastest` — the clean server with the most live wins. When nobody has a live win, the query
-  becomes an election fan to all clean members. Elections run one at a time (single-flight);
-  concurrent queries meanwhile go to a random clean member. Re-election happens when
-  `win_ttl` expires.
-- `parallel` — every query fans to all clean members, and no wins are recorded. By definition
-  this is N× the traffic.
-
-With no clean member, every mode makes exactly one attempt via the least dirty server and
-never fans. This is survival mode: it prevents a query storm.
-
-The single target gets a sub-deadline of half the remaining request budget; the rescue fan is
-guaranteed the rest. On target failure the query fans to the remaining clean members. The
-first success answers and becomes the current target. Stragglers are discarded: they are
-never cached, but their success still heals their server's error records. A fan member's
-failure after the request context ended is an artifact and is recorded nowhere.
-
-The DNS query stream reports the member that actually answered; cache hits and total failures
-keep the group tag. The stream also carries the probe trace and the `fanned` / `survival`
-flags. The trace is the group path inside-out, the probe outcomes
-`answered`/`timeout`/`network_error`/`servfail` and rtt. `GetDNSGroups`
-([§8](#8-observability-commandclient-extensions), `with_lx_command`) returns the live records
-per member: clean, live errors (count and age of the newest), live wins, last rtt, current
-flag.
-
-> ⚠️ On a failure any mode sends the query name to all clean members; `parallel` does it on
-> every query. Do not mix internal and public resolvers in one group.
-
-### Local names first: `hosts`
-
-The optional `hosts` key lists `hosts`-type servers that the group consults before choosing a
-target, in key order:
-
-- **Hit** — the query is A or AAAA, the member knows the name, and it answers NOERROR. That
-  answer is returned as is, and no network member is asked. An empty NOERROR also counts as a
-  hit when the entry has only the other address family: an IPv4-only name asked for AAAA gets
-  an empty answer and does not leak to the network. So `strategy: ipv6_only` on such a name
-  yields no address — the same as the OS hosts file.
-- **Miss** — unknown name, another query type, or a non-NOERROR reply: the query goes to
-  `servers` by the group's mode, unchanged.
-- `hosts` members carry no health records. They never join a fan or survival mode, never
-  become current and are absent from `GetDNSGroups`. A hit shows up as an answer from the
-  `hosts` member with one `answered` probe; a miss leaves no trace.
-- `servers` stays required and non-empty. A `hosts` (or `fakeip`) server inside `servers` is
-  rejected at load, and the error points at the `hosts` key. The key accepts only `hosts`-type
-  tags, with no duplicates and no overlap with `servers`.
-
-The key works wherever the group tag is accepted: `domain_resolver` (per node or
-`route.default_domain_resolver`), `dns.final`, rules. It exists because outbound and endpoint
-server addresses resolve through `domain_resolver`. That resolver goes straight to the server
-and bypasses DNS rules, so neither a `predefined` rule action nor a `server: hosts` rule ever
-reaches those addresses. A plain `hosts` server cannot be that resolver either, because it
-answers NXDOMAIN for every other name.
-
-### Example — resilient public DNS as the default
-
-```jsonc
-{
-  "dns": {
-    "servers": [
-      { "type": "udp", "tag": "google",     "server": "8.8.8.8" },
-      { "type": "udp", "tag": "cloudflare", "server": "1.1.1.1" },
-      { "type": "group", "tag": "public",
-        "servers": ["google", "cloudflare"],
-        "mode": "fastest", "error_ttl": "2m", "win_ttl": "5m" }
-    ],
-    "final": "public"
-  }
-}
-```
-
-### Example — one local name for a dual-stack WireGuard server
-
-A self-hosted WireGuard server (or WARP) reachable over IPv4 and IPv6 under one
-local name (issue #60):
-
-```jsonc
-{
-  "dns": {
-    "servers": [
-      { "type": "hosts", "tag": "local",
-        "predefined": { "wg.home": ["203.0.113.10", "2001:db8::10"] } },
-      { "type": "udp", "tag": "google",     "server": "8.8.8.8" },
-      { "type": "udp", "tag": "cloudflare", "server": "1.1.1.1" },
-      { "type": "group", "tag": "resolver",
-        "hosts": ["local"],
-        "servers": ["google", "cloudflare"],
-        "mode": "stable" }
-    ],
-    "final": "resolver"
-  },
-  "route": { "default_domain_resolver": { "server": "resolver", "strategy": "prefer_ipv6" } }
-}
-```
-
-`wg.home` as an endpoint's server address gets both addresses from `local`, and `strategy`
-picks the family. Every other name goes to `google` / `cloudflare` under `stable`.
-
-> ⚠️ The v1 contract (`mode: failover|race`, `interval`, `down_time`) shipped in
-> `v1.14.0-lx.16-rc.1` and is removed: configs that use it fail to load.
+The fields, how the group picks a server, `hosts` and examples are in [lx-dns-group.md](lx-dns-group.md).
 
 ## 6. VLESS `encryption` — post-quantum layer
 
