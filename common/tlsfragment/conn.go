@@ -23,6 +23,7 @@ type Conn struct {
 	splitPacket        bool
 	splitRecord        bool
 	fallbackDelay      time.Duration
+	lx                 ackWaitLx // lx: SPEC 163
 }
 
 func NewConn(conn net.Conn, ctx context.Context, splitPacket bool, splitRecord bool, fallbackDelay time.Duration) *Conn {
@@ -100,7 +101,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 				}
 				if c.splitPacket {
 					if c.tcpConn != nil && i != len(splitIndexes) {
-						err = writeAndWaitAck(c.ctx, c.tcpConn, payload, c.fallbackDelay)
+						err = c.writeAndWaitAckLx(payload) // lx: SPEC 163 — ends on Close and within a budget
 						if err != nil {
 							return
 						}
