@@ -103,16 +103,19 @@ of hundreds/thousands of nodes does not mean hundreds/thousands of URL tests.
 
 In milliseconds. Controls how the pool is filled and maintained:
 
-- `0` (default): keep the pool full of **live** nodes, delay is not ranked. The core tests
-  no more nodes than needed to refill the pool, then stops — the cheap mode for large lists.
+- `0` (default): keep the pool full of **live** nodes, delay is not ranked. The core stops
+  testing once it has found `pool` live nodes plus a reserve of `max(ceil(pool/2), 1)` — the
+  cheap mode for large lists. Reserve nodes carry no traffic; they are taken first for a
+  replacement.
 - `> 0`: test all nodes and keep the **fastest** `pool` of them. A pool member is replaced
   only when an outside node beats it by more than `pool_tolerance` ms (hysteresis against
-  churn). Testing all nodes is more expensive — suitable for smaller lists.
+  churn); the slot's keys move to the new node. Testing all nodes is more expensive —
+  suitable for smaller lists.
 
-A dead pool node keeps its slot until a live replacement is found, so the pool never empties,
-but while the pool has a live node, new connections skip the slot of a node that failed its
+The number of slots never changes: a dead node's slot stays empty until a live replacement is
+found. While the pool has a live node, new connections skip the slot of a node that failed its
 last health-check: with stickiness the keys of dead slots spread evenly over the live slots
-and come back once the node answers again, without stickiness the rotation runs over the
+and come back once the slot is filled again, without stickiness the rotation runs over the
 live slots. When every slot is dead, selection is unchanged. A quarantined node (one that
 fails connections more often than the rest of the pool) is skipped the same way.
 
@@ -120,11 +123,14 @@ A `round_robin` pool handles node failures between checks on its own. A node tha
 between two runs of `interval` is replaced at once, and the connection that hit it opens
 through the next node. A node is struck out only when it stays silent on its own probe while
 a control node answers; when nobody answers, nothing is concluded. A node that accepts
-connections and stays silent is skipped after 5 s and replaced in about 36 s. A site closed to
-one node (a geo-restriction, the site bans the node's address) moves to another pool node at
-once on an explicit refusal, otherwise on its second failure on that node, while the rest of
-the traffic stays on its nodes. A lost local network (device sleep, a network switch) strikes
-out no node. This works only in `round_robin` and has no config keys. The scenarios and limits are
+connections and stays silent is skipped after 5 s and replaced in about 41 s; a node that
+refuses connections is struck out in under a second. Only a node that answered its own probe
+fills an empty slot, and a node struck out twice between scheduled checks is quarantined. A
+site closed to one node (a geo-restriction, the site bans the node's address) moves to another
+pool node at once on an explicit refusal, otherwise on its second failure on that node, while
+the rest of the traffic stays on its nodes. A lost local network (device sleep, a network
+switch) strikes out no node; while nobody answers, the pause between checks grows from 15 s to
+120 s. This works only in `round_robin` and has no config keys. The scenarios and limits are
 in [lx-urltest.md](../../../docs-lx/lx-urltest.md#pool-self-heal).
 
 Liveness is the node's shared URL test history. A manual delay test with a short timeout
