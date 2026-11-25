@@ -125,6 +125,10 @@ type sniffGuardMultiplex struct{ inner adapter.OutboundWithMultiplex }
 
 func (s sniffGuardMultiplex) MultiplexEnabled() bool { return s.inner.MultiplexEnabled() }
 
+type sniffGuardDestinationDialer struct{ inner adapter.DestinationDialerLx }
+
+func (s sniffGuardDestinationDialer) DialsDestinationLx() bool { return s.inner.DialsDestinationLx() }
+
 // The variants: one per combination of optional interfaces that a covered
 // node type has. A combination not listed here leaves the outbound unwrapped.
 
@@ -137,6 +141,13 @@ type sniffGuardOutboundStartClose struct {
 	*sniffGuardOutbound
 	sniffGuardStarter
 	sniffGuardCloser
+}
+
+type sniffGuardOutboundStartCloseDestination struct {
+	*sniffGuardOutbound
+	sniffGuardStarter
+	sniffGuardCloser
+	sniffGuardDestinationDialer
 }
 
 type sniffGuardOutboundStartCloseListener struct {
@@ -166,6 +177,7 @@ const (
 	sniffGuardHasListener
 	sniffGuardHasKeeper
 	sniffGuardHasMultiplex
+	sniffGuardHasDestinationDialer
 )
 
 // newSniffGuardOutbound returns the wrapper of inner, or nil when inner is a
@@ -180,6 +192,7 @@ func newSniffGuardOutbound(inner adapter.Outbound, node *lxsniffguard.Node) adap
 	listener, hasListener := inner.(adapter.InterfaceUpdateListener)
 	keeper, hasKeeper := inner.(adapter.IdleConnectionKeeper)
 	multiplex, hasMultiplex := inner.(adapter.OutboundWithMultiplex)
+	destinationDialer, hasDestinationDialer := inner.(adapter.DestinationDialerLx)
 	var flags int
 	if hasStart {
 		flags |= sniffGuardHasStart
@@ -196,6 +209,9 @@ func newSniffGuardOutbound(inner adapter.Outbound, node *lxsniffguard.Node) adap
 	if hasMultiplex {
 		flags |= sniffGuardHasMultiplex
 	}
+	if hasDestinationDialer {
+		flags |= sniffGuardHasDestinationDialer
+	}
 	var wrapped adapter.Outbound
 	switch flags {
 	case 0:
@@ -204,6 +220,8 @@ func newSniffGuardOutbound(inner adapter.Outbound, node *lxsniffguard.Node) adap
 		wrapped = &sniffGuardOutboundStart{base, sniffGuardStarter{starter}}
 	case sniffGuardHasStart | sniffGuardHasClose:
 		wrapped = &sniffGuardOutboundStartClose{base, sniffGuardStarter{starter}, sniffGuardCloser{closer}}
+	case sniffGuardHasStart | sniffGuardHasClose | sniffGuardHasDestinationDialer:
+		wrapped = &sniffGuardOutboundStartCloseDestination{base, sniffGuardStarter{starter}, sniffGuardCloser{closer}, sniffGuardDestinationDialer{destinationDialer}}
 	case sniffGuardHasStart | sniffGuardHasClose | sniffGuardHasListener:
 		wrapped = &sniffGuardOutboundStartCloseListener{base, sniffGuardStarter{starter}, sniffGuardCloser{closer}, sniffGuardInterfaceListener{listener}}
 	case sniffGuardHasStart | sniffGuardHasMultiplex:
