@@ -169,13 +169,13 @@ The path shows in `detourList` and `GetChains`; the hop tags `<tag>#0`, `<tag>#1
 
 ### `urltest` balances across a pool or holds one node until it fails
 
-A group of nodes spreads connections or stays on a working node, instead of only chasing the lowest ping. `mode: round_robin` with `balancer{…}` keeps a pool with lazy health checks and sticky slots; `mode: failover` holds the node until it fails and probes only that node; `least_test` penalises a node on live dial errors and retries through the next candidate.
+A group of nodes spreads connections over several servers or holds on to one working server, instead of always picking the node with the lowest delay. `mode: round_robin` with `balancer{…}` spreads connections over a pool of live nodes and keeps each site on its own node; `mode: failover` holds the node until it fails and probes only that node; `least_test`, when a connection through a node fails to open, penalises the node and opens the connection through the next one.
 
-A pool server that goes down between checks drops no requests: the connection opens through the next node, and the dead one is replaced with a live one at once. A site closed to one node opens through another node of the pool, and the rest of the traffic stays put.
+A pool server that goes down between checks drops no requests: the connection opens through a neighbouring node, and the dead one is replaced with a live one at once. A site closed to one node opens through another node of the pool, while the rest of the traffic stays on its nodes.
 
-Limits: the modes need no build tag; the `GetPool` call for a UI needs `with_lx_command`; recovery from failed connections works only in `round_robin`.
+Limits: recovery from failed connections works only in `round_robin`; the pool state for a UI (`GetPool`) is in a build with `with_lx_command`.
 
-Verified on a device with a real multi-node pool · [feature](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) · [config](docs-lx/lx-config.md#3-urltest-node-selection-modes) ([RU](docs-lx/lx-config.ru.md#3-режимы-выбора-узла-в-urltest))
+No build tag · verified on a device with a real multi-node pool · [feature](SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md) · [config](docs-lx/lx-config.md#3-urltest-node-selection-modes) ([RU](docs-lx/lx-config.ru.md#3-режимы-выбора-узла-в-urltest))
 
 ### A DNS server group answers from several servers as one
 
