@@ -81,6 +81,7 @@ func TestLXBlockParsesEveryKey(t *testing.T) {
 		MASQUE:      LXMASQUEResolved{IdleTimeout: 2 * time.Minute},
 		TrustTunnel: LXTrustTunnelResolved{IdleTimeout: 3 * time.Minute},
 		MTUAlign:    LXMTUAlignResolved{Mode: LXMTUAlignClamp},
+		Detour:      LXDetourResolved{MTUAlign: LXMTUAlignClamp, Strip: lxDetourStripCatalog()},
 	}
 	if !reflect.DeepEqual(*resolved, want) {
 		t.Fatalf("resolved = %+v, want %+v", *resolved, want)
@@ -89,7 +90,7 @@ func TestLXBlockParsesEveryKey(t *testing.T) {
 
 func TestLXBlockEmptyEqualsAbsent(t *testing.T) {
 	t.Parallel()
-	for _, content := range []string{`{}`, `{"lx": {}}`, `{"lx": {"wg": {}, "masque": {}, "trusttunnel": {}, "mtu_align": {}}}`, `{"lx": {"mtu_align": ""}}`,
+	for _, content := range []string{`{}`, `{"lx": {}}`, `{"lx": {"wg": {}, "masque": {}, "trusttunnel": {}}}`,
 		`{"lx": {"wg": {"idle": {}, "buffers": {}}}}`,
 		`{"lx": {"wg": {"buffers": {"read_datagram_count": 128, "send_by_mtu": true}, "connected_socket": false}}}`,
 	} {
@@ -109,6 +110,7 @@ func lxDefaults() LXResolved {
 	return LXResolved{
 		WG:       LXWGResolved{ReadDatagramCount: 128},
 		MTUAlign: LXMTUAlignResolved{Mode: LXMTUAlignClamp},
+		Detour:   LXDetourResolved{MTUAlign: LXMTUAlignClamp, Strip: lxDetourStripCatalog()},
 	}
 }
 
@@ -167,7 +169,6 @@ func TestLXBlockValidation(t *testing.T) {
 		{`{"lx":{"wg":{"buffers":{"read_datagram_count":129}}}}`, "lx.wg.buffers.read_datagram_count must be between 1 and 128"},
 		{`{"lx":{"masque":{"idle_timeout":"-1s"}}}`, "lx.masque.idle_timeout must be >= 0"},
 		{`{"lx":{"trusttunnel":{"idle_timeout":"-1s"}}}`, "lx.trusttunnel.idle_timeout must be >= 0"},
-		{`{"lx":{"mtu_align":{"except":[""]}}}`, "lx.mtu_align.except: empty tag"},
 	}
 	for _, tc := range cases {
 		options := mustDecodeLXConfig(t, tc.content)
@@ -307,64 +308,84 @@ func TestMASQUEIdleTimeoutZeroIsAValue(t *testing.T) {
 	}
 }
 
-// lx: SPEC 120 — lx.mtu_align: a mode string or {mode, except}; absent,
-// empty and "" all mean clamp; an unknown mode is rejected by key name; the
-// canonical form round-trips.
-func TestLXMTUAlign(t *testing.T) {
+// lx: SPEC 165 — lx.detour (ALGORITHM Р1–Р9).
+func TestLXDetourР1toР7(t *testing.T) {
 	t.Parallel()
+	catalog := lxDetourStripCatalog()
+	none := LXDetourStripResolved{}
 	cases := []struct {
+		name    string
 		content string
-		want    LXMTUAlignResolved
+		want    LXDetourResolved
 	}{
-		{`{}`, LXMTUAlignResolved{Mode: "clamp"}},
-		{`{"lx":{"mtu_align":"clamp"}}`, LXMTUAlignResolved{Mode: "clamp"}},
-		{`{"lx":{"mtu_align":"fill"}}`, LXMTUAlignResolved{Mode: "fill"}},
-		{`{"lx":{"mtu_align":"off"}}`, LXMTUAlignResolved{Mode: "off"}},
-		{`{"lx":{"mtu_align":{"mode":"fill"}}}`, LXMTUAlignResolved{Mode: "fill"}},
-		{`{"lx":{"mtu_align":{"except":["my-wg"]}}}`, LXMTUAlignResolved{Mode: "clamp", Except: []string{"my-wg"}}},
-		{`{"lx":{"mtu_align":{"except":"my-wg"}}}`, LXMTUAlignResolved{Mode: "clamp", Except: []string{"my-wg"}}},
-		{`{"lx":{"mtu_align":{"mode":"off","except":["a","b"]}}}`, LXMTUAlignResolved{Mode: "off", Except: []string{"a", "b"}}},
+		{"Р1 absent", `{}`, LXDetourResolved{MTUAlign: "clamp", Strip: catalog}},
+		{"Р2 true", `{"lx":{"detour":true}}`, LXDetourResolved{MTUAlign: "clamp", Strip: catalog}},
+		{"Р3 false", `{"lx":{"detour":false}}`, LXDetourResolved{MTUAlign: "off", Strip: none}},
+		{"Р4 empty object", `{"lx":{"detour":{}}}`, LXDetourResolved{MTUAlign: "clamp", Strip: catalog}},
+		{"Р4 mode", `{"lx":{"detour":{"mtu_align":"fill"}}}`, LXDetourResolved{MTUAlign: "fill", Strip: catalog}},
+		{"Р5 strip false", `{"lx":{"detour":{"strip":false}}}`, LXDetourResolved{MTUAlign: "clamp", Strip: none}},
+		{"Р5 strip true", `{"lx":{"detour":{"strip":true}}}`, LXDetourResolved{MTUAlign: "clamp", Strip: catalog}},
+		{"Р5 strip without filters", `{"lx":{"detour":{"strip":{}}}}`, LXDetourResolved{MTUAlign: "clamp", Strip: catalog}},
+		{"Р6 filters false", `{"lx":{"detour":{"strip":{"filters":false}}}}`, LXDetourResolved{MTUAlign: "clamp", Strip: none}},
+		{"Р6 filters true", `{"lx":{"detour":{"strip":{"filters":true}}}}`, LXDetourResolved{MTUAlign: "clamp", Strip: catalog}},
+		{"Р6 Т8 empty filters", `{"lx":{"detour":{"strip":{"filters":{}}}}}`, LXDetourResolved{MTUAlign: "clamp", Strip: none}},
+		{"Р6 override", `{"lx":{"detour":{"strip":{"filters":{"tls":{"fragment":true,"engine":true}}}}}}`,
+			LXDetourResolved{MTUAlign: "clamp", Strip: LXDetourStripResolved{TLSFragment: true, TLSEngine: true}}},
+		{"except", `{"lx":{"detour":{"except_outbounds":["a","b"]}}}`, LXDetourResolved{MTUAlign: "clamp", Strip: catalog, ExceptOutbounds: []string{"a", "b"}}},
+		{"except string", `{"lx":{"detour":{"except_outbounds":"a"}}}`, LXDetourResolved{MTUAlign: "clamp", Strip: catalog, ExceptOutbounds: []string{"a"}}},
 	}
 	for _, tc := range cases {
 		options, resolved := mustResolveLX(t, tc.content)
-		if !reflect.DeepEqual(resolved.MTUAlign, tc.want) {
-			t.Fatalf("%s: %+v, want %+v", tc.content, resolved.MTUAlign, tc.want)
+		if !reflect.DeepEqual(resolved.Detour, tc.want) {
+			t.Fatalf("%s: %+v, want %+v", tc.name, resolved.Detour, tc.want)
 		}
-		if !reflect.DeepEqual(resolved.MTUAlignOrDefault(), tc.want) {
-			t.Fatalf("%s: accessor %+v", tc.content, resolved.MTUAlignOrDefault())
+		if want := (LXMTUAlignResolved{Mode: tc.want.MTUAlign, Except: tc.want.ExceptOutbounds}); !reflect.DeepEqual(resolved.MTUAlignOrDefault(), want) {
+			t.Fatalf("%s: mtu_align %+v", tc.name, resolved.MTUAlignOrDefault())
 		}
-		// the canonical form decodes back to the same values
+		// Н1: the running config keeps the block as written and resolves the same.
 		content, err := json.Marshal(options)
 		if err != nil {
 			t.Fatal(err)
 		}
 		again, err := ResolveLX(common.Ptr(mustDecodeLXConfig(t, string(content))))
-		if err != nil || !reflect.DeepEqual(again.MTUAlign, tc.want) {
-			t.Fatalf("%s: round trip %s → %+v %v", tc.content, content, again, err)
+		if err != nil || !reflect.DeepEqual(again.Detour, tc.want) {
+			t.Fatalf("%s: round trip %s → %+v %v", tc.name, content, again, err)
+		}
+		// Р9: the expanded form resolves the same and names every key.
+		expanded, err := json.Marshal(ExpandedLXDetour(tc.want))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"mtu_align", "except_outbounds", "fragment", "spoof", "kernel", "engine"} {
+			if !strings.Contains(string(expanded), `"`+key+`"`) {
+				t.Fatalf("%s: Р9 expanded form %s misses %s", tc.name, expanded, key)
+			}
+		}
+		var back LXDetour
+		if err := json.Unmarshal(expanded, &back); err != nil || !reflect.DeepEqual(back.Resolve(), tc.want) && len(tc.want.ExceptOutbounds) > 0 {
+			t.Fatalf("%s: expanded %s → %+v %v", tc.name, expanded, back.Resolve(), err)
 		}
 	}
-	for _, content := range []string{
-		`{"lx":{"mtu_align":"auto"}}`,
-		`{"lx":{"mtu_align":{"mode":"auto"}}}`,
-		`{"lx":{"mtu_align":{"mode":"clamp","exclude":["a"]}}}`,
-		`{"lx":{"mtu_align":1}}`,
+}
+
+func TestLXDetourР8Errors(t *testing.T) {
+	t.Parallel()
+	for content, want := range map[string]string{
+		`{"lx":{"mtu_align":"clamp"}}`:                                           "moved to lx.detour.mtu_align",
+		`{"lx":{"mtu_align":null}}`:                                              "moved to lx.detour.mtu_align",
+		`{"lx":{"detour":{"bogus":1}}}`:                                          "lx.detour: unknown key bogus",
+		`{"lx":{"detour":{"mtu_align":"auto"}}}`:                                 "lx.detour.mtu_align",
+		`{"lx":{"detour":{"strip":{"x":1}}}}`:                                    "lx.detour.strip: unknown key x",
+		`{"lx":{"detour":{"strip":{"filters":{"udp":{}}}}}}`:                     "lx.detour.strip.filters: unknown key udp",
+		`{"lx":{"detour":{"strip":{"filters":{"tls":{"utls":true}}}}}}`:          "lx.detour.strip.filters.tls: unknown key utls",
+		`{"lx":{"detour":{"strip":{"filters":{"multiplex":{"padding":true}}}}}}`: "unknown key multiplex",
+		`{"lx":{"detour":{"strip":{"filters":{"tls":{"fragment":1}}}}}}`:         "lx.detour.strip.filters.tls.fragment must be true or false",
+		`{"lx":{"detour":{"except_outbounds":[""]}}}`:                            "lx.detour.except_outbounds: empty tag",
+		`{"lx":{"detour":1}}`:                                                    "lx.detour must be true, false or an object",
 	} {
-		if _, err := decodeLXConfig(t, content); err == nil {
-			t.Fatalf("%s: must be rejected", content)
-		} else if strings.Contains(content, "auto") && !strings.Contains(err.Error(), "lx.mtu_align.mode") {
-			t.Fatalf("%s: the error must name the key, got %v", content, err)
+		if _, err := decodeLXConfig(t, content); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: want %q, got %v", content, want, err)
 		}
-	}
-	// marshal: string form without exceptions, object form with them
-	short, _ := json.Marshal(LXMTUAlign{Mode: "fill"})
-	long, _ := json.Marshal(LXMTUAlign{Mode: "fill", Except: []string{"a", "b"}})
-	if string(short) != `"fill"` || string(long) != `{"mode":"fill","except":["a","b"]}` {
-		t.Fatalf("%s %s", short, long)
-	}
-	// the struct path validates too (configs built in code)
-	bad := Options{LX: &LXOptions{MTUAlign: &LXMTUAlign{Mode: "auto"}}}
-	if _, err := ResolveLX(&bad); err == nil {
-		t.Fatal("an unknown mode must fail resolve")
 	}
 }
 

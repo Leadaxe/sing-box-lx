@@ -162,7 +162,7 @@ func (s *Selector) SelectOutbound(tag string) bool {
 
 func (s *Selector) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	// lx:begin chain
-	// SPEC 073: внутри цепочки выбранный узел подменяется его звеном для хопа.
+	// SPEC 165: носитель соединения (SPEC 060) и выбранный direct под хопом цепочки.
 	selected, err := adapter.ResolveChainLeaf(ctx, s.selected.Load())
 	if err != nil {
 		return nil, err

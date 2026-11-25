@@ -85,7 +85,7 @@ func proxyInfo(server *Server, detour adapter.Outbound) *badjson.JSONObject {
 		info.Put("all", group.All())
 	}
 	// lx:begin chain
-	// SPEC 073: путь и состояние звеньев цепочки для внешних дашбордов.
+	// SPEC 073/165: позиции цепочки и выбранные узлы для внешних дашбордов.
 	if chainStatus, isChain := detour.(adapter.ChainStatusProvider); isChain {
 		info.Put("chain", chainStatus.ChainStatus())
 	}

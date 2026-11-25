@@ -32,10 +32,9 @@
     {
       "type": "chain", "tag": "virtualisation",
       "outbounds": ["node-in", "selector-mid", "node-exit"],
-      "idle_timeout": "5m",
-      "strip": { "multiplex.padding": false },
       "rewrite": { "vless": { "tls": { "record_fragment": true } } }
     }
   ],
-  "route": { "final": "virtualisation" }
+  "route": { "final": "virtualisation" },
+  "lx": { "detour": { "strip": { "filters": { "tls": { "fragment": true } } } } }
 }
