@@ -57,13 +57,13 @@ func (u *rrUnverified) marked(tag string) bool {
 }
 
 // rrMarkUnverified marks the pool members of a batch of the manual test with no
-// answer that had history before the batch and lost it. The set only grows: a
-// second manual test in the same outage finds no history to take, and its nodes
-// stay marked.
+// answer whose history its failed probes erased. The set only grows: a second
+// manual test in the same outage finds no history to erase, and its nodes stay
+// marked.
 func (g *URLTestGroup) rrMarkUnverified(batch *rrBatch) {
 	b := g.balancer
 	var tags []string
-	for member := range batch.before {
+	for member := range batch.takeErased() {
 		if b.inPool(member) && !b.isQuarantined(member) && !g.rrHasHistory(member) {
 			tags = append(tags, member)
 		}

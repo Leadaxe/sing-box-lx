@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/interrupt"
+	"github.com/sagernet/sing-box/log"
+	N "github.com/sagernet/sing/common/network"
 )
 
 // R1: a scheduled run in a total outage (no probe of the run answers) changes
@@ -236,6 +239,47 @@ func outboundTags(outbounds []adapter.Outbound) []string {
 		tags[i] = outbound.Tag()
 	}
 	return tags
+}
+
+// R1 in a mixed config: a least_test group shares the history of the core with a
+// round_robin group. A batch of the round_robin run with no answer gives back only
+// what its own probes erased: the history the least_test group's failed probes
+// erased meanwhile stays erased, and least_test does not pick the dead node again.
+func TestRRRun_noAnswerRestoresOnlyOwnErasure(t *testing.T) {
+	tags := []string{"n0", "n1", "n2"}
+	f := newHealFixture(t, tags, tags[:2], 0)
+	least := &URLTestGroup{
+		ctx:            context.Background(),
+		outbound:       f.g.outbound,
+		logger:         log.NewNOPFactory().NewLogger("least"),
+		outbounds:      f.g.outbounds,
+		link:           f.g.link,
+		interval:       time.Minute,
+		history:        f.g.history,
+		interruptGroup: interrupt.NewGroup(),
+	}
+	for _, tag := range tags {
+		f.nodes[tag].dead.Store(true)
+	}
+	batch := f.g.rrBatchBegin(f.g.outbounds)
+	_, _ = least.urlTest(context.Background(), true) // the least_test run fails every node: its probes erase
+	if f.g.history.LoadURLTestHistory("n0") != nil {
+		t.Fatal("precondition: the least_test run erased n0")
+	}
+	f.g.rrBatchEnd(batch) // the round_robin batch ends with no answer
+	for _, tag := range tags {
+		if f.g.history.LoadURLTestHistory(tag) != nil {
+			t.Fatalf("the batch with no answer gave back the history of %s the least_test group erased", tag)
+		}
+	}
+	if selected, _ := least.Select(N.NetworkTCP); selected != nil && f.g.history.LoadURLTestHistory(selected.Tag()) != nil {
+		t.Fatalf("least_test picks %s as alive", selected.Tag())
+	}
+	f.fresh(tags...)
+	f.g.balancePool(context.Background()) // its own probes in the same outage: given back
+	if !f.allHistory(tags...) {
+		t.Fatal("the batch with no answer did not give back the history its own probes erased")
+	}
 }
 
 // lx:end SPEC 019, SPEC 138

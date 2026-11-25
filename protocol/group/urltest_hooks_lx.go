@@ -252,6 +252,7 @@ func (g *URLTestGroup) testNodes(ctx context.Context, outbounds []adapter.Outbou
 	batch := g.rrBatchBegin(outbounds)
 	defer g.rrBatchEnd(batch)
 	ctx = withProbeAlive(ctx, g.probeHook(batch))
+	ctx = withProbeFailed(ctx, g.probeFailedHook(batch))
 	if !force { // SPEC 125 — freshness from the previous tick run, not a fixed interval
 		return g.testNodesTick(ctx, outbounds)
 	}

@@ -159,42 +159,77 @@ func (b *balancer) rrDropStruck(tags []string) []string {
 	return tags
 }
 
-// rrBatch is a batch of probes of a round_robin run: the history of its leaves
-// before it, and whether a probe of it answered.
+// rrBatch is a batch of probes of a round_robin run: the leaves of its members,
+// the history its own failed probes erased, and whether a probe of it answered.
+// The history storage is one per core: a batch gives back only what its own
+// probes erased, never what another group erased meanwhile.
 type rrBatch struct {
 	start    time.Time
-	before   map[string]rrBatchLeaf // member tag → its leaf and the history of the leaf before the batch
+	leaves   map[string]string // leaf → member tag
 	nested   []*URLTest
 	answered atomic.Bool
+	access   sync.Mutex
+	erased   map[string]*adapter.URLTestHistory // leaf → the history a failed probe of the batch erased
 }
 
-type rrBatchLeaf struct {
-	leaf    string
-	history *adapter.URLTestHistory
-}
-
-// rrBatchBegin takes the history of the leaves of the members a batch probes; nil
-// outside round_robin. A nested urltest member keeps its own rules: its leaves are
-// not taken, its own run answering counts as an answer of the batch.
+// rrBatchBegin takes the leaves of the members a batch probes; nil outside
+// round_robin. A nested urltest member keeps its own rules: its leaves are not
+// taken, its own run answering counts as an answer of the batch.
 func (g *URLTestGroup) rrBatchBegin(outbounds []adapter.Outbound) *rrBatch {
 	if g.balancer == nil {
 		return nil
 	}
-	batch := &rrBatch{start: time.Now(), before: make(map[string]rrBatchLeaf, len(outbounds))}
+	batch := &rrBatch{start: time.Now(), leaves: make(map[string]string, len(outbounds))}
 	for _, detour := range outbounds {
 		if nested, isURLTest := detour.(*URLTest); isURLTest {
 			batch.nested = append(batch.nested, nested)
 			continue
 		}
-		leaf := RealTag(detour, N.NetworkTCP)
-		if leaf == "" {
-			continue
-		}
-		if history := g.history.LoadURLTestHistory(leaf); history != nil {
-			batch.before[detour.Tag()] = rrBatchLeaf{leaf: leaf, history: history}
+		if leaf := RealTag(detour, N.NetworkTCP); leaf != "" {
+			batch.leaves[leaf] = detour.Tag()
 		}
 	}
 	return batch
+}
+
+// probeFailedHook is the hook of a failed probe of the batch, called before the
+// probe erases the history of leaf: it keeps what the probe erases.
+func (g *URLTestGroup) probeFailedHook(batch *rrBatch) func(leaf string) {
+	if batch == nil {
+		return nil
+	}
+	return func(leaf string) {
+		if _, taken := batch.leaves[leaf]; !taken {
+			return
+		}
+		history := g.history.LoadURLTestHistory(leaf)
+		if history == nil {
+			return // nothing to erase: erased before, by this group or another one
+		}
+		batch.access.Lock()
+		if batch.erased == nil {
+			batch.erased = make(map[string]*adapter.URLTestHistory)
+		}
+		batch.erased[leaf] = history
+		batch.access.Unlock()
+	}
+}
+
+// takeErased returns member tag → leaf and history for what the failed probes of
+// the batch erased.
+func (batch *rrBatch) takeErased() map[string]rrBatchLeaf {
+	batch.access.Lock()
+	defer batch.access.Unlock()
+	erased := make(map[string]rrBatchLeaf, len(batch.erased))
+	for leaf, history := range batch.erased {
+		erased[batch.leaves[leaf]] = rrBatchLeaf{leaf: leaf, history: history}
+	}
+	return erased
+}
+
+type rrBatchLeaf struct {
+	leaf    string
+	history *adapter.URLTestHistory
 }
 
 // probeHook is the probe hook of the batch: it marks the answer, then runs the
@@ -210,8 +245,8 @@ func (g *URLTestGroup) probeHook(batch *rrBatch) func(tag string) {
 }
 
 // rrBatchEnd ends a batch: an answer is an answer of the run; a batch with no
-// answer before the first answer of the run gives back the history its failed
-// probes erased, except to a node struck out meanwhile (its D1 erased it). After
+// answer before the first answer of the run gives back the history its own failed
+// probes erased (not what another group sharing the leaf erased meanwhile), except to a node struck out meanwhile (its D1 erased it). After
 // the first answer the earlier answer is the control: the erasure stays. The
 // manual test gives nothing back: the user asked for the state now; the pool
 // nodes it erased are unverified (urltest_rr_unverified_lx.go).
@@ -236,11 +271,27 @@ func (g *URLTestGroup) rrBatchEnd(batch *rrBatch) {
 		g.rrMarkUnverified(batch) // no control: the pool nodes it erased are unverified, their slots stay
 		return
 	}
-	for member, before := range batch.before {
+	for member, erased := range batch.takeErased() {
 		if g.balancer.rrRunStruck(member) {
 			continue
 		}
-		g.history.RestoreURLTestHistoryLx(before.leaf, before.history)
+		g.history.RestoreURLTestHistoryLx(erased.leaf, erased.history)
+	}
+}
+
+type probeFailedKey struct{}
+
+// withProbeFailed attaches the hook the URL test batch calls for a leaf whose probe
+// failed, before it erases the history of the leaf; nil detaches the hook of an
+// outer group.
+func withProbeFailed(ctx context.Context, onFailed func(leaf string)) context.Context {
+	return context.WithValue(ctx, probeFailedKey{}, onFailed)
+}
+
+// probeFailedLx calls the hook of ctx, if any (SPEC 019).
+func probeFailedLx(ctx context.Context, leaf string) {
+	if onFailed, _ := ctx.Value(probeFailedKey{}).(func(leaf string)); onFailed != nil {
+		onFailed(leaf)
 	}
 }
 

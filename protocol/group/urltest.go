@@ -519,6 +519,7 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 						return nil, nil
 					}
 					b.logger.Debug("outbound ", tag, " unavailable: ", testResult.err)
+					probeFailedLx(b.ctx, tag) // lx: SPEC 019 — a round_robin batch keeps what its own probe erases
 					b.history.DeleteURLTestHistory(tag)
 				} else {
 					b.logger.Debug("outbound ", tag, " available: ", testResult.delay, "ms")
