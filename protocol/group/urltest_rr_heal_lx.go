@@ -895,13 +895,17 @@ type rrCheck struct {
 }
 
 // request asks the queue for n places and hands then to the loop once they are
-// granted (U1); with the round over it gets nothing to do.
+// granted (U1); with the round over it gets nothing to do. The request takes its
+// place in the line here, in the order of the calls (U1, U2: rrQueue.enqueue); only
+// the wait for the grant runs aside.
 func (c *rrCheck) request(n int, then func()) {
 	c.flying++
 	c.requests.Add(1)
+	owner := &c.s.balancer.heal.queue
+	queued := c.queue.enqueue(owner, n)
 	go func() {
 		defer c.requests.Done()
-		if !c.queue.acquire(c.ctx, &c.s.balancer.heal.queue, n) {
+		if !c.queue.await(c.ctx, owner, queued) {
 			c.grants <- func() {}
 			return
 		}

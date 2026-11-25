@@ -129,6 +129,37 @@ func TestRR9_W4_lifeProbeWaitsForThePause(t *testing.T) {
 
 // --- U: the probe queue of the core --------------------------------------------------
 
+// U1, U2: the batches of a round are granted in the order the round asked for them:
+// a part of decisive probes asked for after the first probes of a pool larger than
+// U never overtakes them (its places would wait for those first probes, which
+// would wait for its places).
+func TestRR9_U_requestsKeepTheirOrder(t *testing.T) {
+	f := newHealFixture(t, []string{"a"}, []string{"a"}, 0)
+	q := &rrQueue{flights: make(map[rrFlightKey]*rrFlight)}
+	ctx := context.Background()
+	var other rrQueueOwner
+	if !q.acquire(ctx, &other, rrQueueCap) {
+		t.Fatal("precondition: the queue is full")
+	}
+	const n = 8
+	c := &rrCheck{s: f.s, ctx: ctx, queue: q, grants: make(chan func(), n)}
+	var order []int
+	for i := range n {
+		c.request(rrQueueCap, func() { order = append(order, i) })
+	}
+	for range n {
+		q.release(rrQueueCap) // the places of the batch before: the next one is granted
+		(<-c.grants)()
+	}
+	q.release(rrQueueCap)
+	c.requests.Wait()
+	for i, got := range order {
+		if got != i {
+			t.Fatalf("the batches were granted out of the order asked: %v", order)
+		}
+	}
+}
+
 // U1, U2: at most U places held; a batch is granted whole; the groups waiting are
 // served in turn, one batch each.
 func TestRR9_U1U2_capAndTurns(t *testing.T) {

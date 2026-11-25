@@ -91,8 +91,17 @@ func rrQueueOf(history *urltest.HistoryStorage) *rrQueue {
 
 // acquire waits for places of owner (U1, U2); false when ctx ended first.
 func (q *rrQueue) acquire(ctx context.Context, owner *rrQueueOwner, places int) bool {
+	return q.await(ctx, owner, q.enqueue(owner, places))
+}
+
+// enqueue puts a request for places of owner in its line at once: the batches of a
+// group are granted in the order the group put them (U1, U2). A part of the
+// decisive probes asked for after the first probes of a pool larger than U must
+// not overtake them: its places would wait for the first probes of its own nodes,
+// which would wait for its places. nil: nothing to wait for.
+func (q *rrQueue) enqueue(owner *rrQueueOwner, places int) *rrQueueRequest {
 	if places <= 0 {
-		return true
+		return nil
 	}
 	if places > rrQueueCap {
 		places = rrQueueCap
@@ -106,6 +115,15 @@ func (q *rrQueue) acquire(ctx context.Context, owner *rrQueueOwner, places int) 
 	}
 	q.dispatch()
 	q.access.Unlock()
+	return request
+}
+
+// await waits for the places of request (enqueue); false when ctx ended first,
+// with the request out of the line or its granted places given back.
+func (q *rrQueue) await(ctx context.Context, owner *rrQueueOwner, request *rrQueueRequest) bool {
+	if request == nil {
+		return true
+	}
 	select {
 	case <-request.granted:
 		return true
@@ -114,7 +132,7 @@ func (q *rrQueue) acquire(ctx context.Context, owner *rrQueueOwner, places int) 
 	q.access.Lock()
 	defer q.access.Unlock()
 	if request.ok {
-		q.held -= places
+		q.held -= request.places
 		q.dispatch()
 		return false
 	}
