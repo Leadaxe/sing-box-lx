@@ -573,9 +573,9 @@ address problems and the freeze. The daemon's `GetPool` carries the same: per sl
 
 ##### Verdict on a failure
 
-One failed connection does not tell a dead node from a destination unreachable through it or
-from a local network outage. So the group acts on what it learns about the node after the
-failure.
+When a connection through a node fails, there are three possible causes: the node is dead, the
+site does not let this node in, or the local network is gone. One error does not tell them apart,
+so the group checks the node first and only then decides what to do.
 
 - **Retry.** A connection that does not open through a pool node is retried once through the
   next live slot whose node is not a nested `urltest`. A connection that closes without a byte
