@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | R (sync) — мерж `upstream/stable` v1.14.4 + 146 (64 коммита после нашей базы) в `lx`; два форк-сабмодуля |
-| Статус | I — мерж `eee84c384` в ветке `claude/upstream-sync-stable-979b66`, в `lx` не влит; сборки и тесты зелёные (§6), на устройстве не прогонялось |
+| Статус | I — мерж `eee84c384` и правки после него в ветке `claude/upstream-sync-stable-979b66`, в `lx` не влит; сборки и тесты зелёные (§6), на устройстве не прогонялось |
 | База | до: v1.14.4-lx.37-rc.1, merge-base `f0fbf236f` (v1.14.4 + 82); после: `upstream/stable` = `060f54a9a` (2026-11-26), дрейф 0 |
 | Связано | [154](../154-UPSTREAM_SYNC_1_14_4_PLUS_9/SPEC.md) (предыдущий синк такого же вида), [140](../140-UPSTREAM_SYNC_1_14_4/SPEC.md) (роутер разворачивает группы), [019](../019-URLTEST_MODE_STICKY/SPEC.md)/[054](../054-URLTEST_PENALTY_FAILOVER/SPEC.md)/[139](../139-CONNECTION_TEST/SPEC.md) (urltest), [157](../157-DNS_MULTIPLEXER_WRITE_LOCK/SPEC.md), [045](../045-TLS_DISABLED_NIL_DIALER_CRASH/SPEC.md), [161](../161-HTTP_CONNECT_OUTAGE_LEAK/SPEC.md), [147](../147-CACHEFILE_RELEASE_TAKEOVER/SPEC.md), [148](../148-OOM_KILLER_RUNTIME_MEMORY/SPEC.md), [069](../069-WG_V6_BIND_FAIL_KILLS_V4/SPEC.md), [130](../130-WIN7_REGISTRY_NOTIFY_THREAD_AGNOSTIC/SPEC.md), [040](../040-SINGTUN_ACCEPTLOOP_SELFHEAL/SPEC.md), [023](../023-MUSL_TOOLCHAIN_MIRROR/SPEC.md) |
 
@@ -45,12 +45,12 @@
 
 ### 3.1 Перенесённые швы
 
-- `protocol/group/urltest.go` — собран заново из апстримного файла с однострочными вставками. Выбор атомарный, поэтому `selectedAccess` SPEC 139 снят, `selectedLx`/`setSelected*Lx` — обёртки над `Load`/`Store`, `moveSelection` — `Swap`. Ошибка дозвона: апстримное условие `!E.IsClosedOrCanceled(err)`, внутри наш `deleteHistoryOnDialError` (round_robin и проба историю не трогают) и апстримный переселект; лист стирается по `RealTag`, как у апстрима (раньше мы стирали и тег члена, и лист). `performSelectionUpdate` возвращает «выбрано» и сам не уведомляет, уведомляют вызывающие; `invalidateReachability` (SPEC 020) осталось внутри. Touch/Close — апстримные: флаг `closed` закрывает ту же гонку, ради которой мы переносили замок, `closeLx` только отменяет контекст (050). Хуки батча `probeFailedLx`/`probeAliveLx` стоят на прежних местах, но запись истории теперь в конце батча — §5.
+- `protocol/group/urltest.go` — собран заново из апстримного файла с однострочными вставками. Выбор атомарный, поэтому `selectedAccess` SPEC 139 снят, `selectedLx`/`setSelected*Lx` — обёртки над `Load`/`Store`, `moveSelection` — `Swap`. Ошибка дозвона: апстримное условие `!E.IsClosedOrCanceled(err)`, внутри наш `deleteHistoryOnDialError` (round_robin и проба историю не трогают) и апстримный переселект — кроме мёртвого пути (`pathDead`), где выбор переносит SPEC 054 без `Interrupt` (§5); лист стирается по `RealTag`, как у апстрима (раньше мы стирали и тег члена, и лист). `URLTest.PerformUpdateCheck` в round_robin ничего не делает: одного выбора там нет (как в `afterTestLx`), а роутер зовёт его на каждом неудачном открытии. `performSelectionUpdate` возвращает «выбрано» и сам не уведомляет, уведомляют вызывающие; `invalidateReachability` (SPEC 020) осталось внутри. Touch/Close — апстримные: флаг `closed` закрывает ту же гонку, ради которой мы переносили замок, `closeLx` только отменяет контекст (050). Хуки батча `probeFailedLx`/`probeAliveLx` стоят на прежних местах, но запись истории теперь в конце батча — §5.
 - `adapter/outbound/manager.go` — поля апстрима + блок `chain`.
 - `common/dialer/default.go`, `resolve.go` — апстримный `DialParallelNetwork`; швы SPEC 139 на тех же вызовах (в `resolve.go` — по каждому `d.router.Lookup`).
 - `common/tls/client.go` (`dialContext` принимает `config`), `ech.go` (новый `loadECHConfigList`) — швы SPEC 139/060.
 - `dns/transport/fakeip/store.go` — пул `addressPool` апстрима; `store_lx.go` переведён на новые поля.
-- `route/conn.go`, `route/router.go` — апстримная форма, наши SPEC 139/138 и блоки SPEC 020/046.
+- `route/conn.go`, `route/router.go` — апстримная форма, наши SPEC 139/138 и блоки SPEC 020/046. Апстрим `37fffa325` в `ConnectionManager.deleteURLTestHistory` теперь не только стирает историю последнего элемента цепочки, но и зовёт `PerformUpdateCheck` каждой urltest-группы в ней. Наша цепочка кончается на urltest (SPEC 140), и неудачная проба SPEC 139 (она идёт через `RouteConnectionEx`) переизбирала бы группу, которую только наблюдает: три вызова обёрнуты в `deleteURLTestHistoryLx` (`route/conntest_lx.go`), проба группы не трогает.
 - `transport/wireguard/client_bind.go`, `endpoint.go` — детур-бинд слушает к адресу пира; таймаут дозвона SPEC 071/072 и путь сокета SPEC 060 перенесены на `ListenPacket`.
 - `protocol/shadowtls/outbound.go` — апстримное ограничение + наша строка (§3.3).
 - `experimental/cachefile/cache.go` — наш `scope.Add(c.Release)` вместо апстримного замыкания (апстрим лишь добавил проверку `nil`, `Release` её уже имеет).
@@ -84,9 +84,10 @@
 ## 5. Изменения поведения, принятые от апстрима
 
 - **least_test, отказ дозвона по таймауту.** Апстрим больше не стирает историю узла, если ошибка — закрытие, отмена или таймаут (`E.IsClosedOrCanceled` включает `DeadlineExceeded` и `ECONNRESET`). Штраф, запасной дозвон и перенос выбора SPEC 054 на таймауте работают как раньше (своя классификация `isPathDeadDialError`); остаётся лишь история до следующего прогона. Контроль в `conntest_lx_test.go` переписан под это.
-- **Переселект после стирания истории.** Апстрим сам переизбирает узел после ошибки дозвона — частично то, что делает SPEC 054 (перенос выбора); второго дозвона в том же соединении у апстрима по-прежнему нет, поэтому 054 держим.
+- **Переселект после стирания истории.** Апстрим сам переизбирает узел после ошибки дозвона — частично то, что делает SPEC 054 (перенос выбора); второго дозвона в том же соединении у апстрима по-прежнему нет, поэтому 054 держим. Переизбор идёт с `Interrupt` при смене выбора и через этот код у нас проходит каждое соединение (у апстрима роутер группу обходит). Поэтому на мёртвом пути (`pathDead`: недостижимость, у прокси-узла ещё refused и reset) апстримный переизбор не запускается — выбор переносит 054 через доказавший жизнь запасной узел, без `Interrupt`; отказ назначения на узле, который сам ходит до сайта, — апстримная реакция. Стражи — `urltest_dial_reselect_lx_test.go` через настоящий `DialContext` (красные без гейтов), и `route/conn_probe_urltest_lx_test.go` через `ConnectionManager.NewConnection`.
 - **Батч пишет историю в конце.** Заполнение мёртвого слота ответившим узлом во время прогона (SPEC 019) видит слот узла, упавшего в том же батче, живым до конца батча; дыра закрывается раскладкой в конце прогона. Тест `TestRRRun_layoutSkipsNodeStruckDuringRun` ждал сигнала «у e свежая история» посреди батча — переписан: узел `c` мёртв до прогона, ответ `e` ловится по пробе.
 - **Переключение без истории.** `performSelectionUpdate` переключает и тогда, когда `Select` вернул узел без истории (апстрим убрал проверку `exists`).
+- **Уведомления истории.** До мержа история уведомляла подписчиков на каждую запись и удаление (каждую пробу); теперь пачка пишет молча, а публичный `URLTestOutbounds` уведомляет один раз. Наши прогоны (`testNodes`, тик, failover) зовут публичную функцию — уведомление раз на пачку, всё равно реже, чем было; на приватную `urlTestOutbounds` не переведены, иначе пришлось бы уведомлять вручную в конце каждого прогона round_robin и failover.
 
 ## 6. Зависимости (раннбук §2a) и проверки
 
@@ -101,7 +102,7 @@
 
 - `go build ./...` без тегов и с `with_lx_command`; полный `LX_TAGS` (+ `with_lx_idle_suspend`) под darwin, linux, windows; android/arm64 без `with_purego`/`with_naive_outbound` (им нужен cgo, как и до синка) — зелёные.
 - `go vet` под полным набором по `./...` для darwin, linux, windows — чисто, кроме `protocol/impair/bench_test.go` под windows (`syscall.Getrusage`, SPEC 164, мержем не тронут).
-- `go test` под `LX_TAGS` (`GOTOOLCHAIN` из `go.version`, `-checklinkname=0`): все пакеты, изменённые мержем, все пакеты списка lx-ci, `./transport/...`, `./common/...`, `./experimental/clashapi/...` — зелёные. Под `-race`: `protocol/group`, `route`, `common/urltest`, `experimental/cachefile`, `dns/...`, `protocol/{dns,socks,chain}`, `adapter/...`, `service/oomkiller`. Без тегов — `protocol/group`, `route`, `common/dialer`, `transport/wireguard`, `experimental/cachefile`. Форки: `wireguard-go` `conn`/`device`, `sing-tun` пакет целиком.
+- `go test` под `LX_TAGS` (`GOTOOLCHAIN` из `go.version`, `-checklinkname=0`): все пакеты, изменённые мержем, все пакеты списка lx-ci, `./transport/...`, `./common/...`, `./experimental/clashapi/...` — зелёные. Под `-race`: `protocol/group`, `route`, `common/urltest`, `common/dialer`, `common/tls`, `experimental/cachefile`, `dns/...`, `protocol/{dns,socks,chain,http,shadowtls,wireguard}`, `transport/{wireguard,v2rayhttpupgrade}`, `adapter/...`, `service/oomkiller`. Стенд `lx-test/initerr` (тексты ошибок инициализации, SPEC 092) зелёный. Все файлы, добавленные мерж-коммитом, — апстримные. Без тегов — `protocol/group`, `route`, `common/dialer`, `transport/wireguard`, `experimental/cachefile`. Форки: `wireguard-go` `conn`/`device`, `sing-tun` пакет целиком.
 - `make -f Makefile.lx lx-check` — все конфиги `lx-test/config` проходят новую проверку `box.New` (DNS-группа, chain, AWG, XHTTP/REALITY).
 - `gofmt -l` по изменённым файлам — пусто.
 - Не гонялось: dry run релизной матрицы (тулчейн не менялся, сменились версии модулей — по раннбуку §2b нужен перед тегом), прогон на устройстве (§1.4 — сабмодули менялись), linux-only тесты исполнением (только компиляция).
@@ -113,10 +114,12 @@
 | 045 | снят (апстрим `ef408a1e1`) |
 | 157 | снят (апстрим `3d071e6e4`), стражи остаются |
 | 161, расширение | socks снят; **httpupgrade и shadowtls — предлагаю снять вместе с `common/lxhandshake`**: условия выполнены, их тесты придётся перевести на апстримный механизм, как socks |
+| 161, HTTP CONNECT | **условие выполнено** (`sing` `HandshakeTimeout`, `8a1ddcebd`); оба механизма дают таймаут — предлагаю снять, перед этим прогнать `handshake_lx_test.go` на апстримном таймауте |
+| 139, гонка выбора | снят: апстрим сделал поля выбора атомиками, `selectedAccess` удалён |
 | 147 | FakeIP-половина снята; перехват `cache.db` держим |
 | 069 | половина про порт закрыта апстримом в форке; Windows-предикат держим |
 | 130 | в форке патчить нечего — наблюдатель реестра удалён апстримом; **предлагаю закрыть** |
-| 054, 125 | держим: второй дозвон и пауза тика апстримом не закрыты (§5) |
+| 054, 125 | держим: второй дозвон и пауза тика апстримом не закрыты; строка 054 реестра поправлена — апстрим теперь переизбирает сам (§5) |
 | 029, 046, 050, 085, 099, 136, 140, 163 | держим: апстрим этого не трогал; страж 085 зелёный — BND.ADDR апстрим не нормализует |
 
 ## 8. Осталось
@@ -124,5 +127,6 @@
 - После «rc1 выпущен»: пуш форков (`wireguard-go` `5e0ba64` в `lx-awg2-v007`, `sing-tun` `53e0731` в `lx`) до суперпроекта, затем ветка `lx-sync-*` для CI; в `lx` — по слову владельца.
 - Ручной `lx-musl-toolchain-mirror.yml` после пуша (SPEC 023) и dry run релизной матрицы перед тегом.
 - Раннбук §1.4: прогон на устройстве — TUN, DNS, urltest (least_test и round_robin), WG/AWG через detour (бинд теперь слушает), Windows без IPv6.
-- Будущее влитие SPEC 165 (цепочка): этот мерж правил `protocol/chain/chain_test.go` (стенд зовёт `Initialize` в `start()`), `adapter/outbound/manager.go` и `protocol/group/selector.go` (апстримный `References()`).
+- Будущее влитие SPEC 165 (цепочка): этот мерж правил `protocol/chain/chain_test.go` (стенд зовёт `Initialize` в `start()`), `adapter/outbound/manager.go`, `protocol/group/selector.go` (апстримный `References()`), `route/conn.go`.
+- `ALGORITHM.md` SPEC 138 получил фразу о записи истории в конце пачки (факт апстрима) — на глаза владельцу.
 - Строка об апстримной базе в changelog-секции следующего тега.

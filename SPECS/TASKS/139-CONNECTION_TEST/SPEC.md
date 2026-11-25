@@ -475,7 +475,7 @@ a nil-safe call that costs one `ctx.Value` check without a trace:
 | `dns/client.go` | 5 | 1 line (`dns` stage begin in `beginExchange`), 2 lines (cache age at the cache hits of `beginExchange` and `questionCache`), 2 lines (`fresh`: `DisableCache` in `beginExchange` and `Lookup`) |
 | `common/tls/reality_client.go` | 2 | 1 line after `HandshakeContext` (the file already carries lx edits) |
 | `dns/transport/conn_pool.go` | 1, 2 | 1 field + 15 lines: probe-owned connections are not parked on release (§5.14, criterion 10); `fresh` takes a connection of its own (2 blocks of 3 lines in `acquireShared` / `acquireOrdered`); reuse marks at the pooled and joined paths (3 lines) |
-| `protocol/group/urltest.go` (hotfix) | 1 | `selectedOutbound*` behind `selectedAccess`: a data race exposed by SPEC 136, registered in [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md) |
+| `protocol/group/urltest.go` (hotfix) | 1 | `selectedOutbound*` behind `selectedAccess`: a data race exposed by SPEC 136, registered in [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md); removed by the sync [166](../166-UPSTREAM_SYNC_1_14_4_PLUS_146/SPEC.md) — upstream 37fffa325 made both fields atomic |
 | `dns/transport/fakeip/store.go` | 2 | 1 line in `Create` (pool-wrap counter; per new address one weak pointer and one map read, no trace needed) |
 | `dns/transport/https.go`, `dns/transport/quic/http3.go` | 2 | 2 lines each where the exchange takes its client: under `fresh` a one-off DoH / DoH3 client, closed after the exchange (their connections live in the HTTP client, not in the pool); 1 changed line in `https.go`: a fresh query's timeout does not reset the production client |
 
