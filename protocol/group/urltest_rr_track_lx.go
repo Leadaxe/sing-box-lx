@@ -266,7 +266,7 @@ type rrTrack struct {
 func (t *rrTrack) markSilent(since int64) {
 	for {
 		old := t.silentSince.Load()
-		if old >= since || t.silentSince.CompareAndSwap(old, since) {
+		if old != 0 && old >= since || t.silentSince.CompareAndSwap(old, since) { // 0 is none
 			return
 		}
 	}
@@ -339,14 +339,14 @@ func (t *rrTrack) untrack(e *rrTrackEntry) {
 // attention reports, with a few atomic loads, whether a pick at now has work: a
 // pending failure due for a check, or an unfinished connection older than
 // rrHangAfter not looked at lately. It allocates nothing and takes no lock.
-func (t *rrTrack) attention(now int64) bool {
+func (t *rrTrack) attention(now, event int64) bool {
 	if due := t.checkAfter.Load(); due != 0 && now >= due {
 		return true
 	}
 	if now < t.hangLook.Load() {
 		return false
 	}
-	if silent := t.silentSince.Load(); silent != 0 && t.proved.Load() < silent {
+	if silent := t.silentSince.Load(); silent != 0 && silent > event && t.proved.Load() < silent {
 		return true
 	}
 	cutoff := now - int64(rrHangAfter)
@@ -889,9 +889,12 @@ func (s *URLTest) rrNetworkBack(now int64, prover *rrTrack, proverPrevious int64
 			stuck++
 		}
 	}
-	// Signs of an outage: two or more nodes stuck at once, a probe or an open that
-	// ended in silence since the last byte, a probe answer that took long.
-	if !waiting || !(stuck >= 2 || slow || b.heal.lastSilence.Load() > previous) {
+	// An event of the network: two or more nodes stuck at once; or the node that
+	// proves alive now was stuck itself and the silence showed an outage — a probe
+	// or an open that ended in silence since the last byte, or this answer took
+	// long. A node stuck alone while another, live node gets the bytes is no event:
+	// its timeouts are its own (it may be dead), and an event would void them.
+	if !waiting || !(stuck >= 2 || proverStuck && (slow || b.heal.lastSilence.Load() > previous)) {
 		return false
 	}
 	b.heal.markEvent(now)

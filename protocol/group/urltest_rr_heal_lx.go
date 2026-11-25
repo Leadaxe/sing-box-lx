@@ -474,9 +474,11 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 			} else {
 				failure = nil
 				// Nothing proved the node alive while it was silent: the slot stays
-				// under suspicion past the end of the connection (rrTrack.silentSince).
-				if t := s.balancer.trackOf(member.Tag()); t != nil && !picked.start.IsZero() {
-					t.markSilent(rrClock(picked.start))
+				// under suspicion past the end of the connection (rrTrack.silentSince) —
+				// for TCP only: a UDP open fails for reasons of its own (a server with
+				// no UDP ASSOCIATE) and must not take the node out for TCP.
+				if tcp {
+					s.rrSuspectSlot(member.Tag(), picked.start)
 				}
 			}
 			if t := s.balancer.trackOf(member.Tag()); t != nil {
@@ -489,15 +491,19 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 			// gets the first byte (the node drops connections). Only the proxy's own
 			// answer that the destination failed (adapter.DestinationRefusedLx: a SOCKS
 			// failure code, an HTTP CONNECT status) puts the site under suspicion.
-			if !siteOnOpen && !adapter.IsDestinationRefusedLx(dialErr) {
+			refused := s.rrDestinationRefused(member, dialErr)
+			if !siteOnOpen && !refused {
 				failure.key = rrKey{}
 				// The node failed: its slot is under suspicion from this failure on,
 				// until the node proves alive or the check decides — new connections go
-				// round it meanwhile. (A refusal the proxy reported, or one of a leaf
-				// that goes to the site itself, is an answer: no suspicion.)
-				if t := s.balancer.trackOf(member.Tag()); t != nil && !picked.start.IsZero() && !s.rrProvedDuring(member.Tag(), picked.start) {
-					t.markSilent(rrClock(picked.start))
+				// round it meanwhile (TCP only). A refusal the proxy reported, or one of
+				// a leaf that goes to the site itself, is an answer: no suspicion.
+				if tcp {
+					s.rrSuspectSlot(member.Tag(), picked.start)
 				}
+			}
+			if refused {
+				mode = rrVerdictNow // the proxy answered: whether the node is alive is all there is to ask
 			}
 			s.rrPend(member, failure, false, mode)
 		}
@@ -561,22 +567,25 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 		s.logger.ErrorContext(ctx, "round_robin retry via ", retry.Tag(), ": ", err)
 		// A client that gave up meanwhile is no failure of the retry's node, nor is
 		// a retry cancelled by the dead verdict on its node.
-		if failure != nil && !retryStruck && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
+		if failure != nil && !retryStruck && !errors.Is(err, context.Canceled) && ctx.Err() == nil && !s.rrBeforeEvent(retryStart) {
 			if tcp {
 				s.balancer.rrCountConn(retry.Tag(), &s.balancer.heal)
 			}
 			failure.retryFailed(retry.Tag())
 			if !rrSilence(err) {
-				if !s.rrSiteOnOpen(retry) && !adapter.IsDestinationRefusedLx(err) {
+				if !s.rrSiteOnOpen(retry) && !s.rrDestinationRefused(retry, err) {
 					failure.retryNoShift() // between us and the retry node's server: no shift past it
+					if tcp {
+						s.rrSuspectSlot(retry.Tag(), retryStart) // as for the first failure
+					}
 				}
 				s.rrPend(retry, failure, true, rrVerdictNow)
 			} else if s.rrProvedDuring(retry.Tag(), retryStart) {
 				if s.rrSiteOnOpen(retry) {
 					failure.setRetryAlive() // the retry's node proved alive while it waited for the site
 				}
-			} else if t := s.balancer.trackOf(retry.Tag()); t != nil {
-				t.markSilent(rrClock(retryStart))
+			} else if tcp {
+				s.rrSuspectSlot(retry.Tag(), retryStart)
 			}
 		}
 		return rrRetried{}, false
@@ -632,6 +641,10 @@ type rrProbe struct {
 	started  time.Time // when the probe started; a newer history wins over its verdict
 	ended    time.Time // when the probe answered or gave up
 }
+
+// rrControlBatch is the least batch of candidates probed at once when they are the
+// control of a node with no neighbour in the pool.
+const rrControlBatch = 4
 
 // rrThirdAfter is how long a check waits for the neighbour B to answer before it
 // probes the third node too (rrHealCheck).
@@ -771,13 +784,34 @@ func (s *URLTest) rrHealCheck(member adapter.Outbound, neighbour adapter.Outboun
 	// neighbour B that answers within rrThirdAfter is the control, and C is not
 	// needed. C starts at rrThirdAfter, or as soon as B is silent, or at once with
 	// no B.
+	// With no neighbour the control is any node outside the pool that answers: the
+	// candidates are probed in parallel batches, as the replacement search does, and
+	// the first one in config order that answered is the control (and then the
+	// replacement). The first candidate alone is often dead in a subscription, and
+	// taking its silence for the own network would freeze the group again and again.
 	var cLaunched bool
 	startC := func() {
-		if third != nil && !cLaunched {
-			cLaunched = true
-			launch(roleC, third)
-			waiting++
+		if third == nil || cLaunched {
+			return
 		}
+		cLaunched = true
+		waiting++
+		if neighbour != nil {
+			launch(roleC, third)
+			return
+		}
+		go func() {
+			batch := g.poolSize()
+			if batch < rrControlBatch {
+				batch = rrControlBatch
+			}
+			started := time.Now()
+			answer, chosen, _ := g.rrProbeFirstAnswer(ctx, g.rrCandidates(false), batch, false, heal)
+			if chosen == nil {
+				answer = rrProbe{member: "candidates", leaf: "candidates", err: E.New("no candidate answered"), started: started, ended: time.Now()}
+			}
+			results <- result{roleC, answer}
+		}()
 	}
 	if neighbour == nil {
 		startC()
@@ -1006,6 +1040,31 @@ func (s *URLTest) rrHang(member string, start time.Time, gaveUp bool) bool {
 		s.logger.Debug("round_robin: a connection through ", member, " has been waiting for ", time.Since(start).Round(time.Second), "; checking the node")
 	}
 	return true
+}
+
+// rrSuspectSlot puts the slot of the pool member tag under suspicion from a failed
+// connection that started at start (rrTrack.silentSince), unless the node proved
+// alive while that connection waited.
+func (s *URLTest) rrSuspectSlot(tag string, start time.Time) {
+	if start.IsZero() || s.rrProvedDuring(tag, start) {
+		return
+	}
+	if t := s.balancer.trackOf(tag); t != nil {
+		t.markSilent(rrClock(start))
+	}
+}
+
+// rrDestinationRefused reports whether err of an open through the pool member
+// member is its own leaf's answer that the destination failed
+// (adapter.DestinationRefusedLx set by the leaf itself — not by a proxy on the way
+// to the leaf's server, a detour, whose refusal is the node's path failing).
+func (s *URLTest) rrDestinationRefused(member adapter.Outbound, err error) bool {
+	var refused *adapter.DestinationRefusedLx
+	if !errors.As(err, &refused) {
+		return false
+	}
+	leaf := RealTag(member, N.NetworkTCP)
+	return refused.Tag != "" && (refused.Tag == leaf || refused.Tag == member.Tag())
 }
 
 // rrProvedDuring reports whether the pool member tag proved alive while a

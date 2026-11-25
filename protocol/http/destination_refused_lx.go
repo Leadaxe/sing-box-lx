@@ -20,7 +20,7 @@ import (
 
 const lxUnexpectedStatus = "unexpected status: "
 
-func lxDestinationRefused(err error) error {
+func lxDestinationRefused(tag string, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -35,7 +35,7 @@ func lxDestinationRefused(err error) error {
 	}
 	switch code, _ := strconv.Atoi(status); code {
 	case 403, 502, 503, 504:
-		return &adapter.DestinationRefusedLx{Err: err}
+		return &adapter.DestinationRefusedLx{Tag: tag, Err: err}
 	}
 	return err
 }

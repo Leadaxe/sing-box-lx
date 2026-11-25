@@ -299,7 +299,7 @@ func TestRRReview_countsRecheckPoolUnderLock(t *testing.T) {
 		run  func(f *shiftFixture)
 	}{
 		{"connection", func(f *shiftFixture) { f.s.balancer.rrCountConn("a", &f.s.balancer.heal) }},
-		{"failure", func(f *shiftFixture) { f.s.balancer.rrCountFail("a") }},
+		{"failure", func(f *shiftFixture) { f.s.balancer.rrCountFail("a", rrKey{}) }},
 	} {
 		f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
 		b := f.s.balancer

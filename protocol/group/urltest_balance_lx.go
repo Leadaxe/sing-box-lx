@@ -66,8 +66,10 @@ type balancer struct {
 	// count, or a clock change. clockMono and clockWall are the readings of the last
 	// look, at most one per second.
 	onClockJump func(drift time.Duration)
-	clockMono   atomic.Int64
-	clockWall   atomic.Int64
+	clockLook   atomic.Int64 // rrClock of the next look: a cheap gate on the hot path
+	clockAccess sync.Mutex   // guards the pair of readings of the last look
+	clockMono   int64
+	clockWall   int64
 
 	// heal is the state of the self-heal after a failed dial (SPEC 138 §3,
 	// urltest_rr_heal_lx.go).
@@ -192,14 +194,18 @@ func (b *balancer) pickKeyed(ctx context.Context, destination M.Socksaddr, fallb
 	now := rrClock(picked.start)
 	// lx: SPEC 138 — at most once a second: did the wall clock run apart from the
 	// monotonic one (a sleep with no wake signal)?
-	if b.onClockJump != nil {
-		if last := b.clockMono.Load(); now-last >= int64(time.Second) && b.clockMono.CompareAndSwap(last, now) {
-			wall := picked.start.UnixNano()
-			if previousWall := b.clockWall.Swap(wall); last != 0 && previousWall != 0 {
-				if drift := time.Duration((wall - previousWall) - (now - last)); drift > rrClockJump || drift < -rrClockJump {
-					b.onClockJump(drift)
-				}
-			}
+	if b.onClockJump != nil && now >= b.clockLook.Load() && b.clockAccess.TryLock() {
+		// The pair of readings changes as one, under the lock: a look delayed between
+		// the two would compare a new monotonic reading with an old wall one.
+		var drift time.Duration
+		if b.clockMono != 0 {
+			drift = time.Duration((picked.start.UnixNano() - b.clockWall) - (now - b.clockMono))
+		}
+		b.clockMono, b.clockWall = now, picked.start.UnixNano()
+		b.clockLook.Store(now + int64(time.Second))
+		b.clockAccess.Unlock()
+		if drift > rrClockJump || drift < -rrClockJump {
+			b.onClockJump(drift)
 		}
 	}
 	var idx int
@@ -254,13 +260,13 @@ func (b *balancer) pickKeyed(ctx context.Context, destination M.Socksaddr, fallb
 		// confirms the suspicion.
 		if track := slots[idx].track; track != nil {
 			picked.track = track
-			if b.onPick != nil && track.attention(now) {
+			if b.onPick != nil && track.attention(now, b.heal.event()) {
 				b.onPick(ctx, slots[idx].tag, track, now)
 			}
 		}
 		if idx != base && b.onPick != nil {
 			for i := base; i != idx; i = (i + 1) % n {
-				if track := slots[i].track; track != nil && track.suspect(now, b.heal.event()) && track.attention(now) {
+				if track := slots[i].track; track != nil && track.suspect(now, b.heal.event()) && track.attention(now, b.heal.event()) {
 					b.onPick(ctx, slots[i].tag, track, now)
 				}
 			}

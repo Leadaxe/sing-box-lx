@@ -58,6 +58,7 @@ func TestRRStand_proxyDialFailureSettledByByte(t *testing.T) {
 	f.staleHistory("a")
 	end := time.Now()
 	f.s.balancer.heal.lastCheckEnd.Store(&end)
+	f.s.balancer.trackOf("a").verdictLast.Store(rrClock(end)) // no verdict probe either
 	key := f.keyOn(t, "blocked.example", 0)
 	if _, answered := f.dial(t, key, "blocked.example"); !answered || f.dials("b") != 1 {
 		t.Fatal("the retry through b answers")

@@ -26,9 +26,7 @@ func TestRREvent_connectionBeforeTheEventGivesNoVerdict(t *testing.T) {
 	heal.lastByte.Store(rrClock(time.Now().Add(-rrHangAfter - 2*time.Second)))
 	heal.lastSilence.Store(rrClock(time.Now().Add(-time.Second))) // a probe went silent in the outage
 	// The network is back: a new connection through a gets its first byte.
-	if _, answered := f.dial(t, f.keyOn(t, "ok.example", 0), "ok.example"); !answered {
-		t.Fatal("precondition: a serves again")
-	}
+	f.s.rrFirstByte(&rrConnWatch{s: f.s, member: "a", track: track, start: time.Now()})
 	if heal.frozen() {
 		t.Fatal("one stuck node: no freeze")
 	}
@@ -156,15 +154,15 @@ func TestRRClockJump_sleepFreezes(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
 	b := f.s.balancer
 	now := time.Now()
-	b.clockMono.Store(rrClock(now.Add(-2 * time.Second)))
-	b.clockWall.Store(now.Add(-2*time.Second - time.Minute).UnixNano()) // a minute of sleep
+	b.clockMono = rrClock(now.Add(-2 * time.Second))
+	b.clockWall = now.Add(-2*time.Second - time.Minute).UnixNano() // a minute of sleep
 	f.s.selectBalanced(f.keyOn(t, "ok.example", 0), N.NetworkTCP, siteAddr("ok.example"))
 	if !b.heal.frozen() || b.heal.event() < rrClock(now.Add(-time.Second)) {
 		t.Fatal("a sleep the monotonic clock missed is an event of the network and a freeze")
 	}
 	g := newShiftFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
-	g.s.balancer.clockMono.Store(rrClock(now.Add(-2 * time.Second)))
-	g.s.balancer.clockWall.Store(now.Add(-2 * time.Second).UnixNano())
+	g.s.balancer.clockMono = rrClock(now.Add(-2 * time.Second))
+	g.s.balancer.clockWall = now.Add(-2 * time.Second).UnixNano()
 	g.s.selectBalanced(g.keyOn(t, "ok.example", 0), N.NetworkTCP, siteAddr("ok.example"))
 	if g.s.balancer.heal.frozen() {
 		t.Fatal("the clocks in step: nothing")

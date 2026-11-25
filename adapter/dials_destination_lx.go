@@ -23,8 +23,12 @@ type DestinationDialerLx interface {
 // answered that the destination failed (a SOCKS reply with a failure code, an HTTP
 // CONNECT status such as 502): the proxy is alive and reached, the destination is
 // at fault. Every other failed open through a proxy says nothing about the
-// destination: it happened between us and the proxy's server.
+// destination: it happened between us and the proxy's server. Tag is the outbound
+// that answered so: a group takes the mark only from the leaf of its own node — a
+// proxy on the way to that leaf's server (a detour) refusing it is the node's path
+// failing, not the destination.
 type DestinationRefusedLx struct {
+	Tag string
 	Err error
 }
 

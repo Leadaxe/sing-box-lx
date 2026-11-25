@@ -461,6 +461,7 @@ func TestRRPending_quarantineWithoutProbes(t *testing.T) {
 	}
 	end := time.Now()
 	f.s.balancer.heal.lastCheckEnd.Store(&end)
+	f.s.balancer.trackOf("a").verdictLast.Store(rrClock(end)) // no verdict probe either
 	for i := 0; i < 3; i++ {
 		host := "site" + string(rune('0'+i)) + ".example"
 		f.fb["a"].set(&f.fb["a"].openFail, host, true)

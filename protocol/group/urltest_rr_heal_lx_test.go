@@ -167,6 +167,16 @@ func (f *healFixture) waitCheck(t *testing.T) {
 	})
 	f.s.balancer.heal.lastCheckEnd.Store(nil)
 	f.s.balancer.heal.lastHangEnd.Store(nil)
+	// The gaps of the verdict probes pass too: per node and the window of the group.
+	heal := &f.s.balancer.heal
+	heal.verdictAccess.Lock()
+	heal.verdictStarts = [rrVerdictBurst]int64{}
+	heal.verdictAccess.Unlock()
+	for _, entry := range f.s.balancer.slotsSnapshot() {
+		if entry.track != nil {
+			entry.track.verdictLast.Store(0)
+		}
+	}
 }
 
 func (f *healFixture) pool() []string { return f.g.balancer.poolTags() }

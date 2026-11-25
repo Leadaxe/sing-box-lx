@@ -27,13 +27,18 @@ const (
 	lxSocks4Rejected = "socks4: request rejected, code="
 )
 
-// lxDestinationRefused marks err as the destination's (adapter.DestinationRefusedLx)
-// when it is a SOCKS reply with a destination failure code.
-func lxDestinationRefused(conn net.Conn, err error) (net.Conn, error) {
+// lxDestinationRefused marks err as the destination's (adapter.DestinationRefusedLx
+// with the tag of the outbound) when it is a SOCKS reply with a destination failure
+// code.
+func (h *Outbound) lxDestinationRefused(conn net.Conn, err error) (net.Conn, error) {
+	return lxDestinationRefusedTag(h.Tag(), conn, err)
+}
+
+func lxDestinationRefusedTag(tag string, conn net.Conn, err error) (net.Conn, error) {
 	if err == nil || !lxSocksDestinationCode(err.Error()) {
 		return conn, err
 	}
-	return conn, &adapter.DestinationRefusedLx{Err: err}
+	return conn, &adapter.DestinationRefusedLx{Tag: tag, Err: err}
 }
 
 func lxSocksDestinationCode(message string) bool {

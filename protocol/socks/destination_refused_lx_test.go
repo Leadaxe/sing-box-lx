@@ -27,12 +27,16 @@ func TestLxDestinationRefused(t *testing.T) {
 		{E.Cause(io.ErrUnexpectedEOF, "read socks5 response"), false},
 		{errors.New("connection refused"), false},
 	} {
-		_, err := lxDestinationRefused(nil, c.err)
+		_, err := lxDestinationRefusedTag("s", nil, c.err)
 		if adapter.IsDestinationRefusedLx(err) != c.destination {
 			t.Fatalf("%v: destination %v, want %v", c.err, !c.destination, c.destination)
 		}
 		if !errors.Is(err, c.err) {
 			t.Fatalf("%v: the error is kept", c.err)
+		}
+		var refused *adapter.DestinationRefusedLx
+		if errors.As(err, &refused) && refused.Tag != "s" {
+			t.Fatal("the mark carries the tag of the outbound that set it")
 		}
 	}
 }

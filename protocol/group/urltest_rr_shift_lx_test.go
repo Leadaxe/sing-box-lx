@@ -89,7 +89,7 @@ func (n *fbNode) DialContext(ctx context.Context, network string, destination M.
 	if n.is(n.openFail, host) {
 		// The proxy answers that the destination failed (a SOCKS failure code, an
 		// HTTP CONNECT 502): the site's fault.
-		return nil, &adapter.DestinationRefusedLx{Err: E.New("node ", n.tag, " cannot reach ", host)}
+		return nil, &adapter.DestinationRefusedLx{Tag: n.tag, Err: E.New("node ", n.tag, " cannot reach ", host)}
 	}
 	if n.dead.Load() || n.siteDown.Load() {
 		return nil, E.New("node ", n.tag, " down")
@@ -139,10 +139,32 @@ func newShiftFixture(t *testing.T, tags []string, pool []string) *shiftFixture {
 	return &shiftFixture{healFixture: f, fb: fb}
 }
 
-// destinationRefused is the error of a proxy that answered that the destination
-// failed (adapter.DestinationRefusedLx): a failure that puts the site under suspicion.
+// destinationRefused is the error of the proxy node a that answered that the
+// destination failed (adapter.DestinationRefusedLx): the site is under suspicion.
 func destinationRefused() error {
-	return &adapter.DestinationRefusedLx{Err: E.New("dial failed: destination refused")}
+	return &adapter.DestinationRefusedLx{Tag: "a", Err: E.New("dial failed: destination refused")}
+}
+
+// settleDeferred waits for the checks and verdict probes in flight and runs the
+// checks the pending failures deferred to the next pick of their node, until none
+// is left: what the passing time and the next picks do.
+func (f *shiftFixture) settleDeferred(t *testing.T) {
+	t.Helper()
+	for round := 0; round < 10; round++ {
+		f.waitCheck(t)
+		due := false
+		for _, entry := range f.s.balancer.slotsSnapshot() {
+			if entry.track != nil && entry.track.checkAfter.Load() != 0 {
+				due = true
+				entry.track.checkAfter.Store(1)
+				f.s.rrOnPick(context.Background(), entry.tag, entry.track, rrClock(time.Now()))
+			}
+		}
+		if !due {
+			return
+		}
+	}
+	f.waitCheck(t)
 }
 
 func siteAddr(host string) M.Socksaddr {
@@ -282,9 +304,9 @@ func TestRRShift_fullCircleMarksAddress(t *testing.T) {
 	}
 	key := f.keyOn(t, "gone.example", 0)
 	f.dial(t, key, "gone.example") // a, retry b: shift 2
-	f.waitCheck(t)
+	f.settleDeferred(t)
 	f.dial(t, key, "gone.example") // c, retry a: c passed, the circle is complete
-	f.waitCheck(t)
+	f.settleDeferred(t)
 	if shift, marked := f.shift(key, "gone.example"); !marked || shift != 0 {
 		t.Fatalf("the circle must mark the key, got shift %d marked %v", shift, marked)
 	}
@@ -402,7 +424,8 @@ func TestRRShift_networkGoneNoShiftByHistory(t *testing.T) {
 	f.fb["a"].set(&f.fb["a"].openFail, "blocked.example", true)
 	key := f.keyOn(t, "blocked.example", 0)
 	end := time.Now()
-	f.s.balancer.heal.lastCheckEnd.Store(&end) // the gap: no probe now
+	f.s.balancer.heal.lastCheckEnd.Store(&end)                       // the gap: no check now
+	f.s.balancer.trackOf("a").verdictLast.Store(rrClock(time.Now())) // and no verdict probe
 	conn, _ := f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], destinationRefused(), f.pickAt(key, "blocked.example", time.Now()))
 	closeConn(conn)
 	if shift, _ := f.shift(key, "blocked.example"); shift != 0 {

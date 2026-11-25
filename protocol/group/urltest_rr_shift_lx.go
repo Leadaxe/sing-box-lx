@@ -442,6 +442,27 @@ func (s *URLTest) rrShiftOn(key rrKey, expected int, node string, credited bool,
 type rrSlotCount struct {
 	conns uint32
 	fails uint32
+	// keys is the ring of the table keys whose failure counted already: a node is
+	// credited at most once per key, so one site closed only through the node (a
+	// protocol with no destination mark: SSH, a SOCKS server that closes with no
+	// code) does not take it to quarantine; it needs failures of three keys.
+	keys [rrCountKeys]uint64
+	next int
+}
+
+// rrCountKeys bounds the ring of keys of a slot counter.
+const rrCountKeys = 16
+
+// creditedKey reports whether key counted already, and records it when not.
+func (c *rrSlotCount) creditedKey(key uint64) bool {
+	for _, known := range c.keys {
+		if known == key {
+			return true
+		}
+	}
+	c.keys[c.next] = key
+	c.next = (c.next + 1) % rrCountKeys
+	return false
 }
 
 // rrMemory is the stage-2 state of a round_robin group; it lives in the balancer.
@@ -523,7 +544,7 @@ type rrQuarantineVerdict struct {
 
 // rrCountFail counts a confirmed failure of the pool member tag and quarantines it
 // when it fails noticeably more often than the rest of the pool.
-func (b *balancer) rrCountFail(tag string) rrQuarantineVerdict {
+func (b *balancer) rrCountFail(tag string, key rrKey) rrQuarantineVerdict {
 	m := &b.memory
 	m.access.Lock()
 	defer m.access.Unlock()
@@ -532,6 +553,9 @@ func (b *balancer) rrCountFail(tag string) rrQuarantineVerdict {
 		return rrQuarantineVerdict{}
 	}
 	c := m.count(tag)
+	if key.valid && c.creditedKey(key.table) {
+		return rrQuarantineVerdict{} // this key counted against the node already
+	}
 	c.fails++
 	share, counts := m.share(tag)
 	verdict := rrQuarantineVerdict{fails: c.fails, conns: c.conns, share: share}
@@ -618,10 +642,16 @@ func (b *balancer) rrForget(tag string) {
 // rrCreditFail counts a confirmed failure of tag; a quarantine refills its slot. A
 // node without history is dead: its failures are no measure of the node.
 func (s *URLTest) rrCreditFail(tag string) {
+	s.rrCreditFailKey(tag, rrKey{})
+}
+
+// rrCreditFailKey is rrCreditFail for a failure of the key (no key without
+// stickiness): a key counts against a node once (rrSlotCount.keys).
+func (s *URLTest) rrCreditFailKey(tag string, key rrKey) {
 	if node, loaded := s.outbound.Outbound(tag); !loaded || s.group.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)) == nil {
 		return
 	}
-	verdict := s.balancer.rrCountFail(tag)
+	verdict := s.balancer.rrCountFail(tag, key)
 	if !verdict.quarantined {
 		return
 	}
@@ -688,6 +718,9 @@ type rrFailure struct {
 	rAlive        bool // the retry's node proved alive after its failure
 	rShifted      bool
 	shift         int // the key's shift this connection expects: picked with, then its own
+	// creditKey is the key of the connection for the count of the node's failures
+	// (rrCreditFailKey), kept when key is cleared (no shift).
+	creditKey rrKey
 	// silence: the failure is silence through a live node (no answer at all): it
 	// shifts the key and confirms no failure through the key's passed list.
 	silence bool
@@ -708,7 +741,7 @@ func (s *URLTest) rrNewFailure(picked rrPick, member string) *rrFailure {
 	if picked.detour {
 		key = rrKey{}
 	}
-	return &rrFailure{s: s, key: key, member: member, shift: picked.shift}
+	return &rrFailure{s: s, key: key, creditKey: picked.key, member: member, shift: picked.shift}
 }
 
 // expectedShift is the shift of the key as this connection left it.
@@ -758,6 +791,9 @@ func (f *rrFailure) confirm() bool {
 	if f.aShifted && f.key.valid {
 		f.s.balancer.memory.shifts.markCredited(f.key.table, f.member)
 	}
+	if f.silence {
+		return false // silence confirms no failure, not even through the retry
+	}
 	if !f.aAlive {
 		f.creditPending = true
 		return false
@@ -771,7 +807,7 @@ func (f *rrFailure) confirm() bool {
 func (f *rrFailure) settle() {
 	if f.aAlive && f.creditPending {
 		f.creditPending = false
-		f.s.rrCreditFail(f.member)
+		f.s.rrCreditFailKey(f.member, f.creditKey)
 	}
 	if !f.key.valid {
 		return
@@ -827,17 +863,24 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch) {
 	if started != 0 && track != nil && track.pendingN.Load() > 0 {
 		s.rrSettleAlive(track, started)
 	}
-	var credit []string
+	// A connection that started before the last event of the network confirms
+	// nothing.
+	if s.rrBeforeEvent(w.start) {
+		return
+	}
 	if w.confirmFor != "" && !w.packet { // UDP stays out of the slot counters
 		if w.failure.confirm() {
-			credit = append(credit, w.confirmFor)
+			var key rrKey
+			if w.failure != nil {
+				key = w.failure.creditKey
+			}
+			s.rrCreditFailKey(w.confirmFor, key)
 		}
 	}
 	if w.key.valid {
-		credit = append(credit, b.memory.shifts.creditable(w.key.table, w.member, w.confirmFor)...)
-	}
-	for _, tag := range credit {
-		s.rrCreditFail(tag)
+		for _, tag := range b.memory.shifts.creditable(w.key.table, w.member, w.confirmFor) {
+			s.rrCreditFailKey(tag, w.key)
+		}
 	}
 }
 

@@ -18,12 +18,12 @@ func TestRRStatus_poolAndHeal(t *testing.T) {
 	}
 	var verdict rrQuarantineVerdict
 	for i := 0; i < rrQuarantineMinFails; i++ {
-		verdict = b.rrCountFail("a")
+		verdict = b.rrCountFail("a", rrKey{})
 	}
 	if !verdict.quarantined {
 		t.Fatalf("a fails while its neighbours do not: %+v", verdict)
 	}
-	b.rrCountFail("b")
+	b.rrCountFail("b", rrKey{})
 	table := &b.memory.shifts
 	table.access.Lock()
 	table.entry(1).shift = 1

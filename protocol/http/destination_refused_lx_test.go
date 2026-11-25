@@ -24,11 +24,11 @@ func TestLxDestinationRefused(t *testing.T) {
 		{E.New("authentication required"), false},
 		{io.EOF, false},
 	} {
-		if adapter.IsDestinationRefusedLx(lxDestinationRefused(c.err)) != c.destination {
+		if adapter.IsDestinationRefusedLx(lxDestinationRefused("h", c.err)) != c.destination {
 			t.Fatalf("%v: want destination %v", c.err, c.destination)
 		}
 	}
-	if lxDestinationRefused(nil) != nil {
+	if lxDestinationRefused("h", nil) != nil {
 		t.Fatal("no error stays none")
 	}
 }
