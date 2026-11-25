@@ -108,6 +108,8 @@ type timerState struct {
 	pendingPressureBaseline bool
 	pressureBaseline        memorySample
 	pressureBaselineTime    time.Time
+	hasReset                bool
+	bestSinceReset          memorySample
 }
 
 type adaptiveTimer struct {
@@ -190,6 +192,10 @@ func (t *adaptiveTimer) poll() {
 	}
 	previousState := t.state
 	t.state = t.nextState(sample)
+	if t.hasReset {
+		t.bestSinceReset.usage = min(t.bestSinceReset.usage, sample.usage)
+		t.bestSinceReset.available = max(t.bestSinceReset.available, sample.available)
+	}
 	if t.state == pressureStateNormal {
 		t.forceMinInterval = false
 		if !t.pressureBaselineTime.IsZero() && time.Since(t.pressureBaselineTime) > t.maxInterval {
@@ -197,7 +203,7 @@ func (t *adaptiveTimer) poll() {
 		}
 	}
 	t.timer.Reset(t.intervalForState())
-	triggered = previousState != pressureStateTriggered && t.state == pressureStateTriggered
+	triggered = t.state == pressureStateTriggered && t.resetDue(sample)
 	if !triggered && !t.pressureBaselineTime.IsZero() && t.memoryLimit > 0 &&
 		sample.usage > t.pressureBaseline.usage && sample.usage < t.memoryLimit {
 		elapsed := time.Since(t.pressureBaselineTime)
@@ -212,6 +218,10 @@ func (t *adaptiveTimer) poll() {
 				t.state = pressureStateTriggered
 			}
 		}
+	}
+	if triggered {
+		t.hasReset = true
+		t.bestSinceReset = sample
 	}
 	state := t.state
 	t.access.Unlock()
@@ -255,6 +265,23 @@ func (t *adaptiveTimer) poll() {
 	}
 }
 
+func (t *adaptiveTimer) resetDue(sample memorySample) bool {
+	if !t.hasReset {
+		return true
+	}
+	switch t.policyMode {
+	case policyModeMemoryLimit, policyModeNetworkExtension:
+		return sample.usage-t.bestSinceReset.usage >= t.limitThresholds.trigger-t.limitThresholds.armed
+	case policyModeAvailable:
+		thresholds := t.availableThresholds(sample)
+		return t.bestSinceReset.available-sample.available >= thresholds.armed-thresholds.trigger
+	case policyModeRuntimeLimit: // lx: SPEC 148
+		return t.resetDueRuntimeLimit(sample)
+	default:
+		return false
+	}
+}
+
 func (t *adaptiveTimer) belowTrigger(sample memorySample) bool {
 	switch t.policyMode {
 	case policyModeMemoryLimit, policyModeNetworkExtension:
@@ -271,7 +298,7 @@ func (t *adaptiveTimer) belowTrigger(sample memorySample) bool {
 func (t *adaptiveTimer) nextState(sample memorySample) pressureState {
 	switch t.policyMode {
 	case policyModeMemoryLimit, policyModeNetworkExtension:
-		return nextPressureState(t.state,
+		return nextPressureState(
 			sample.usage >= t.limitThresholds.trigger,
 			sample.usage >= t.limitThresholds.armed,
 		)
@@ -280,7 +307,7 @@ func (t *adaptiveTimer) nextState(sample memorySample) pressureState {
 			return pressureStateNormal
 		}
 		thresholds := t.availableThresholds(sample)
-		return nextPressureState(t.state,
+		return nextPressureState(
 			sample.available <= thresholds.trigger,
 			sample.available <= thresholds.armed,
 		)
@@ -349,13 +376,7 @@ func (t *adaptiveTimer) logDetails(sample memorySample) string {
 	return ""
 }
 
-func nextPressureState(current pressureState, shouldTrigger, shouldArm bool) pressureState {
-	if current == pressureStateTriggered {
-		if shouldArm {
-			return pressureStateTriggered
-		}
-		return pressureStateNormal
-	}
+func nextPressureState(shouldTrigger, shouldArm bool) pressureState {
 	if shouldTrigger {
 		return pressureStateTriggered
 	}

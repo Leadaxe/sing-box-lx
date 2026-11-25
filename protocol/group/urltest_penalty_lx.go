@@ -227,24 +227,16 @@ func (g *URLTestGroup) pickForDialNode(network string) adapter.Outbound {
 // Без Interrupt: живые соединения не рвём; дерево достижимости (SPEC 020)
 // инвалидируется, как при любом переизборе.
 func (g *URLTestGroup) moveSelection(network string, detour adapter.Outbound) {
-	// lx: SPEC 139 — the selection is guarded by selectedAccess, not g.access:
-	// this runs on the dial path, concurrently with performSelectionUpdate and
-	// with every reader of the selection.
+	// lx: SPEC 139 — the selection is atomic (upstream 37fffa325), not under
+	// g.access: this runs on the dial path, concurrently with
+	// performSelectionUpdate and with every reader of the selection.
 	var changed bool
-	g.selectedAccess.Lock()
 	switch network {
 	case N.NetworkTCP:
-		if g.selectedOutboundTCP != detour {
-			g.selectedOutboundTCP = detour
-			changed = true
-		}
+		changed = g.selectedOutboundTCP.Swap(detour) != detour
 	case N.NetworkUDP:
-		if g.selectedOutboundUDP != detour {
-			g.selectedOutboundUDP = detour
-			changed = true
-		}
+		changed = g.selectedOutboundUDP.Swap(detour) != detour
 	}
-	g.selectedAccess.Unlock()
 	if changed {
 		g.logger.Info("lx penalty: selection moved to ", detour.Tag(), " (", network, ")")
 		invalidateReachability(g.ctx)

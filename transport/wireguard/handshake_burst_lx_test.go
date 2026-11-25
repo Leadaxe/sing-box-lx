@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"sync"
 	"testing"
 	"time"
 
@@ -183,8 +184,31 @@ func (pipeDialer) DialContext(ctx context.Context, _ string, _ M.Socksaddr) (net
 	return client, nil
 }
 
-func (pipeDialer) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
-	return nil, errors.New("not a packet dialer")
+// ListenPacket is what the detour bind dials since upstream fe7d9661e: a
+// packet conn that is no kernel socket, carried by the recorded relay.
+func (pipeDialer) ListenPacket(ctx context.Context, _ M.Socksaddr) (net.PacketConn, error) {
+	adapter.RecordCarrier(ctx, pipeCarrier{})
+	return &pipePacketConn{done: make(chan struct{})}, nil
+}
+
+type pipePacketConn struct {
+	net.PacketConn
+	done chan struct{}
+	once sync.Once
+}
+
+func (c *pipePacketConn) ReadFrom([]byte) (int, net.Addr, error) {
+	<-c.done
+	return 0, nil, net.ErrClosed
+}
+
+func (c *pipePacketConn) WriteTo(b []byte, _ net.Addr) (int, error) {
+	return len(b), nil
+}
+
+func (c *pipePacketConn) Close() error {
+	c.once.Do(func() { close(c.done) })
+	return nil
 }
 
 func TestClientBindPath(t *testing.T) {
@@ -192,7 +216,7 @@ func TestClientBindPath(t *testing.T) {
 	ctx := pause.ContextWithDefaultManager(context.Background())
 	target := netip.MustParseAddrPort("127.0.0.1:9")
 
-	kernel := NewClientBind(ctx, nil, N.SystemDialer, true, target, [3]uint8{})
+	kernel := NewClientBind(ctx, nil, N.SystemDialer, M.SocksaddrFromNetIP(target), [3]uint8{})
 	_, _, err := kernel.Open(0)
 	require.NoError(t, err)
 	t.Cleanup(func() { kernel.Close() })
@@ -204,7 +228,7 @@ func TestClientBindPath(t *testing.T) {
 	require.NotNil(t, generation)
 	require.True(t, generation == again, "one socket generation")
 
-	detour := NewClientBind(ctx, nil, pipeDialer{}, true, target, [3]uint8{})
+	detour := NewClientBind(ctx, nil, pipeDialer{}, M.SocksaddrFromNetIP(target), [3]uint8{})
 	_, _, err = detour.Open(0)
 	require.NoError(t, err)
 	t.Cleanup(func() { detour.Close() })
@@ -212,7 +236,7 @@ func TestClientBindPath(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, lxsniffguard.Path{CarrierType: "vless", CarrierTag: "relay"}, path, "a pipe-carried conn is a detour through the recorded relay")
 
-	listen := NewClientBind(ctx, nil, N.SystemDialer, false, netip.AddrPort{}, [3]uint8{})
+	listen := NewClientBind(ctx, nil, N.SystemDialer, M.Socksaddr{Addr: netip.IPv4Unspecified()}, [3]uint8{})
 	_, _, err = listen.Open(0)
 	require.NoError(t, err)
 	t.Cleanup(func() { listen.Close() })

@@ -201,6 +201,7 @@ type stand struct {
 	outbound *outbound.Manager
 	endpoint *endpoint.Manager
 	scope    *adapter.Scope
+	fallback func() (adapter.Outbound, error)
 }
 
 func newStand(t *testing.T) *stand {
@@ -285,10 +286,12 @@ func newStand(t *testing.T) *stand {
 	manager = outbound.NewManager(registry, epManager, "")
 	ctx = service.ContextWith[adapter.OutboundManager](ctx, manager)
 	ctx = service.ContextWith[adapter.EndpointManager](ctx, epManager)
-	manager.Initialize(func() (adapter.Outbound, error) {
+	// Initialize runs in start(), after the stand's outbounds exist: since
+	// upstream 9e0a6a393 it sorts them, and Start starts only what it sorted.
+	fallback := func() (adapter.Outbound, error) {
 		return registry.CreateOutbound(ctx, nil, logFactory.NewLogger("direct"), "direct", C.TypeDirect, &option.DirectOutboundOptions{})
-	})
-	return &stand{t: t, ctx: ctx, registry: fakes, outbound: manager, endpoint: epManager, scope: adapter.NewScope(ctx, logFactory.Logger())}
+	}
+	return &stand{t: t, ctx: ctx, registry: fakes, outbound: manager, endpoint: epManager, scope: adapter.NewScope(ctx, logFactory.Logger()), fallback: fallback}
 }
 
 func itoa(v int) string {
@@ -323,6 +326,9 @@ func (s *stand) chain(tag string, positions []string, mutate ...func(*option.Cha
 }
 
 func (s *stand) start() error {
+	if err := s.outbound.Initialize(s.fallback); err != nil {
+		return err
+	}
 	for _, stage := range adapter.ListStartStages {
 		if err := s.scope.Start("endpoint", s.endpoint, stage); err != nil {
 			return err

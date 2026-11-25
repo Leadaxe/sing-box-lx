@@ -148,10 +148,28 @@ func (d *defaultDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 }
 
 func (d *defaultDialer) DialTLSContext(ctx context.Context, destination M.Socksaddr) (Conn, error) {
-	return d.dialContext(ctx, destination, true)
+	tlsConn, err := d.dialContext(ctx, destination, d.config)
+	if err == nil {
+		return tlsConn, nil
+	}
+	var echErr *tls.ECHRejectionError
+	if !errors.As(err, &echErr) || len(echErr.RetryConfigList) == 0 {
+		return nil, err
+	}
+	retryConfig := d.config.Clone()
+	echTarget := retryConfig
+	if kTLSConfig, isKTLS := echTarget.(*KTLSClientConfig); isKTLS {
+		echTarget = kTLSConfig.Config
+	}
+	echConfig, isECH := echTarget.(ECHCapableConfig)
+	if !isECH {
+		return nil, err
+	}
+	echConfig.SetECHConfigList(echErr.RetryConfigList)
+	return d.dialContext(ctx, destination, retryConfig)
 }
 
-func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr, echRetry bool) (Conn, error) {
+func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr, config Config) (Conn, error) {
 	conn, err := d.dialer.DialContext(ctx, N.NetworkTCP, destination)
 	if err != nil {
 		return nil, err
@@ -159,20 +177,13 @@ func (d *defaultDialer) dialContext(ctx context.Context, destination M.Socksaddr
 	// lx:begin SPEC 139 — upstream calls aTLS.ClientHandshake directly; the stage
 	// helpers wrap it so tls.NewDialer users (VLESS, Trojan, VMess, WS, gRPC, DoT/DoH)
 	// record the `tls` stage too, not only callers of tls.ClientHandshake.
-	handshakeCtx, stage := beginHandshakeLx(ctx, d.config)
-	conn = sniffGuardConnLx(handshakeCtx, conn, d.config) // lx: SPEC 060
-	tlsConn, err := aTLS.ClientHandshake(handshakeCtx, conn, d.config)
+	handshakeCtx, stage := beginHandshakeLx(ctx, config)
+	conn = sniffGuardConnLx(handshakeCtx, conn, config) // lx: SPEC 060
+	tlsConn, err := aTLS.ClientHandshake(handshakeCtx, conn, config)
 	endHandshakeLx(handshakeCtx, stage, tlsConn, err)
 	// lx:end SPEC 139
 	if err != nil {
 		conn.Close()
-		var echErr *tls.ECHRejectionError
-		if echRetry && errors.As(err, &echErr) && len(echErr.RetryConfigList) > 0 {
-			if echConfig, isECH := d.config.(ECHCapableConfig); isECH {
-				echConfig.SetECHConfigList(echErr.RetryConfigList)
-				return d.dialContext(ctx, destination, false)
-			}
-		}
 		return nil, err
 	}
 	return tlsConn, nil

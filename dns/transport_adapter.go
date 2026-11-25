@@ -72,8 +72,8 @@ func (a *TransportAdapter) Dependencies() []string {
 	return a.dependencies
 }
 
-func (a *TransportAdapter) References() []string {
-	return a.references
+func (a *TransportAdapter) References() ([]string, []string) {
+	return a.references, nil
 }
 
 // OutboundTag is the detour tag this DNS server is bound to (lx: SPEC 018); "" = default

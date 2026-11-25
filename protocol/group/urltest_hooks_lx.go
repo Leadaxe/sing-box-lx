@@ -37,7 +37,6 @@ type lxURLTest struct {
 // lxURLTestGroup is the lx state of URLTestGroup, embedded by value for the same reason.
 type lxURLTestGroup struct {
 	cancel         context.CancelFunc        // 050 — Close cancels an in-flight run
-	selectedAccess sync.RWMutex              // SPEC 139 — guards selectedOutboundTCP/UDP for lock-free readers (urltest_selected_lx.go)
 	lastSelected   common.TypedValue[string] // SPEC 019 — Now() in balanced modes
 	balancer       *balancer                 // SPEC 019 — round_robin pool; nil for least_test
 	groupTag       string                    // SPEC 020 — set by URLTest.Start (probe gating)
@@ -177,13 +176,12 @@ func (s *URLTest) listenFailedLx(ctx context.Context, destination M.Socksaddr, o
 
 // --- URLTestGroup ----------------------------------------------------------------
 
-// closeLx runs under g.access at Close: started is cleared so a dial racing Close
-// cannot restart the ticker (Touch reads it under the lock), and the group's
-// context is cancelled before the ticker early-return (050): a run started by
-// PostStart can be in flight with no ticker armed, and that is exactly the run
-// that used to survive shutdown.
+// closeLx runs under g.access at Close: the group's context is cancelled before
+// the ticker early-return (050): a run started by PostStart can be in flight with
+// no ticker armed, and that is exactly the run that used to survive shutdown. A
+// dial racing Close cannot restart the ticker: upstream's closed flag, read by
+// Touch under the lock, covers it since 37fffa325.
 func (g *URLTestGroup) closeLx() {
-	g.started = false
 	if g.cancel != nil {
 		g.cancel()
 	}
@@ -238,7 +236,7 @@ func (g *URLTestGroup) afterTestLx(force bool) {
 		}
 		return
 	}
-	g.performSelectionUpdate(force)
+	g.performSelectionUpdate(force) // urlTest notifies after it, as upstream
 }
 
 // testNodes runs the URL test over the given outbounds (skipping fresh history unless

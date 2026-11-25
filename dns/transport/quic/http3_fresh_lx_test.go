@@ -18,7 +18,10 @@ import (
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
 	"github.com/sagernet/sing-box/common/lxtrace"
+	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/dns/transport"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 
@@ -96,12 +99,21 @@ func newDoH3TestServer(t *testing.T) *doh3TestServer {
 
 func newDoH3TestTransport(t *testing.T, s *doh3TestServer) *HTTP3Transport {
 	serverAddr := M.SocksaddrFromNetIP(netip.MustParseAddrPort(s.address))
+	// Since upstream 0cdfc45e2 the transport keeps the box TLS config, not the
+	// crypto/tls one; the test only needs the handshake to succeed.
+	tlsConfig, err := tls.NewSTDClient(context.Background(), log.NewNOPFactory().Logger(), s.address, option.OutboundTLSOptions{
+		Enabled:    true,
+		ServerName: s.client.ServerName,
+		Insecure:   true,
+		ALPN:       s.client.NextProtos,
+	})
+	require.NoError(t, err)
 	h3 := &HTTP3Transport{
 		dialer:      N.SystemDialer,
 		destination: &url.URL{Scheme: "https", Host: s.address, Path: "/dns-query"},
 		headers:     http.Header{},
 		serverAddr:  serverAddr,
-		tlsConfig:   s.client,
+		tlsConfig:   tlsConfig,
 	}
 	h3.transport = h3.newTransport()
 	t.Cleanup(func() { h3.transport.Close() })

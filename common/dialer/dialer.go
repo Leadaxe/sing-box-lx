@@ -120,16 +120,17 @@ func NewDNSQueryOptions(ctx context.Context, domainResolver *option.DomainResolv
 		}
 		dnsQueryOptions := defaultOptions.DomainResolveOptions
 		dnsQueryOptions.Transport = transport
+		dnsQueryOptions.DisableReverseMapping = true
 		return dnsQueryOptions, nil
 	}
 	if len(dnsTransport.Transports()) < 2 {
-		return adapter.DNSQueryOptions{Transport: dnsTransport.Default()}, nil
+		return adapter.DNSQueryOptions{Transport: dnsTransport.Default(), DisableReverseMapping: true}, nil
 	}
 	if newDialer {
 		return adapter.DNSQueryOptions{}, E.New("missing domain resolver for domain server address")
 	}
 	deprecated.Report(ctx, deprecated.OptionMissingDomainResolver)
-	return adapter.DNSQueryOptions{}, nil
+	return adapter.DNSQueryOptions{DisableReverseMapping: true}, nil
 }
 
 func domainResolveQueryOptions(domainResolver *option.DomainResolveOptions) adapter.DNSQueryOptions {
@@ -140,16 +141,12 @@ func domainResolveQueryOptions(domainResolver *option.DomainResolveOptions) adap
 		DisableOptimisticCache: domainResolver.DisableOptimisticCache,
 		RewriteTTL:             domainResolver.RewriteTTL,
 		ClientSubnet:           domainResolver.ClientSubnet.Build(netip.Prefix{}),
+		DisableReverseMapping:  true,
 	}
 }
 
-type ParallelInterfaceDialer interface {
-	N.Dialer
-	DialParallelInterface(ctx context.Context, network string, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error)
-	ListenSerialInterfacePacket(ctx context.Context, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, error)
-}
-
 type ParallelNetworkDialer interface {
+	N.Dialer
 	DialParallelNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error)
 	ListenSerialNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error)
 }

@@ -457,7 +457,7 @@ func TestHostsRealTransportThroughManager(t *testing.T) {
 		Servers: []string{"net"},
 		Hosts:   []string{"local"},
 	}))
-	require.NoError(t, manager.Start(adapter.StartStateStart, testScope()))
+	require.NoError(t, startTestManager(manager))
 
 	resolver, loaded := manager.Transport("resolver")
 	require.True(t, loaded)
@@ -567,7 +567,7 @@ func TestManagerValidatesHostsMembers(t *testing.T) {
 				Servers: []string{"u1"},
 				Hosts:   []string{testCase.hosts},
 			}))
-			err := manager.Start(adapter.StartStateStart, testScope())
+			err := startTestManager(manager)
 			if testCase.err == "" {
 				require.NoError(t, err)
 				return

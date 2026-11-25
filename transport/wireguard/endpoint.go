@@ -331,18 +331,16 @@ func (e *Endpoint) Start(postStart bool) error {
 		burstPath = func() (lxsniffguard.Path, any, error) { return lxsniffguard.Path{Direct: true}, nil, nil }
 	} else {
 		var (
-			isConnect   bool
-			connectAddr netip.AddrPort
+			destination = M.Socksaddr{Addr: netip.IPv4Unspecified()}
 			reserved    [3]uint8
 		)
 		if len(e.peers) == 1 {
 			reserved = e.peers[0].reserved
 			if e.peers[0].endpoint.IsValid() {
-				isConnect = true
-				connectAddr = e.peers[0].endpoint
+				destination = M.SocksaddrFromNetIP(e.peers[0].endpoint)
 			}
 		}
-		clientBind := NewClientBind(e.options.Context, e.options.Logger, e.options.Dialer, isConnect, connectAddr, reserved)
+		clientBind := NewClientBind(e.options.Context, e.options.Logger, e.options.Dialer, destination, reserved)
 		bind = clientBind
 		burstPath = clientBind.Path
 	}

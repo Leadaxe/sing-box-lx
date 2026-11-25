@@ -34,7 +34,7 @@ func (r *lxAsyncRouter) ExchangeAsync(ctx context.Context, message *mDNS.Msg, op
 }
 
 // Serves stream DNS on proxied conns through the real dns outbound, so the
-// test also fails when its NewConnection stops wrapping the conn.
+// test also fails when its NewConnection stops serializing the writes.
 type lxDNSHandler struct{}
 
 func (h *lxDNSHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {

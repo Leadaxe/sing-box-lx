@@ -14,7 +14,8 @@ import (
 	mDNS "github.com/miekg/dns"
 )
 
-// SPEC 157. hijackDNSStream must write responses through NewSerialWriteConn:
+// SPEC 157. hijackDNSStream must serialize its response writes (upstream
+// 3d071e6e4 does it since the sync of 2026-11-26; kept as a guard):
 // a proxied conn is not safe for concurrent writes. The conn below reports
 // any Write that starts while another one is in flight.
 
@@ -87,6 +88,6 @@ func TestLxHijackDNSStreamSerializesResponseWrites(t *testing.T) {
 	clientConn.Close()
 	<-done
 	if overlapConn.overlapped.Load() {
-		t.Fatal("stream DNS responses were written concurrently: hijackDNSStream lost NewSerialWriteConn")
+		t.Fatal("stream DNS responses were written concurrently: hijackDNSStream lost its write lock")
 	}
 }

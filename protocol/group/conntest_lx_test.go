@@ -29,7 +29,7 @@ func TestProbeDialLeavesPenaltiesUntouched_LX(t *testing.T) {
 	alive := &penaltyDialNode{tag: "alive", addr: "server"}
 	g := newPenaltyTestGroup(t, []*penaltyDialNode{dead, alive}, map[string]uint16{"dead": 10, "alive": 50})
 	g.groupTag = "auto"
-	g.selectedOutboundTCP = dead
+	g.selectedOutboundTCP.Store(dead)
 	s := &URLTest{outbound: g.outbound, logger: log.NewNOPFactory().NewLogger("test"), group: g}
 
 	ctx, trace := probeTrace()
@@ -47,7 +47,7 @@ func TestProbeDialLeavesPenaltiesUntouched_LX(t *testing.T) {
 	if g.history.LoadURLTestHistory("dead") == nil {
 		t.Fatal("a probe must not delete the failed node's history")
 	}
-	if g.selectedOutboundTCP != adapter.Outbound(dead) {
+	if g.selectedOutboundTCP.Load() != adapter.Outbound(dead) {
 		t.Fatal("a probe must not move the selection")
 	}
 
@@ -76,8 +76,13 @@ func TestProbeDialLeavesPenaltiesUntouched_LX(t *testing.T) {
 		t.Fatal(err)
 	}
 	conn.Close()
-	if g.penaltyOf("dead") != 1 || g.history.LoadURLTestHistory("dead") != nil || g.selectedOutboundTCP != adapter.Outbound(alive) {
-		t.Fatal("a production dial must penalize, drop the history and move the selection")
+	if g.penaltyOf("dead") != 1 || g.selectedOutboundTCP.Load() != adapter.Outbound(alive) {
+		t.Fatal("a production dial must penalize and move the selection")
+	}
+	// Upstream 37fffa325 erases the history only on a dial error that is not a
+	// close, a cancellation or a timeout; this one is a timeout.
+	if g.history.LoadURLTestHistory("dead") == nil {
+		t.Fatal("a timed-out dial keeps the history, as upstream")
 	}
 }
 

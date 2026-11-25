@@ -53,7 +53,7 @@ func TestConnectDialBounded(t *testing.T) {
 	clientBindDialTimeout = 200 * time.Millisecond
 	defer func() { clientBindDialTimeout = oldTimeout }()
 
-	bind := NewClientBind(context.Background(), logger.NOP(), blockingDialer{}, true, netip.MustParseAddrPort("127.0.0.1:443"), [3]uint8{})
+	bind := NewClientBind(context.Background(), logger.NOP(), blockingDialer{}, M.SocksaddrFromNetIP(netip.MustParseAddrPort("127.0.0.1:443")), [3]uint8{})
 	_, _, err := bind.Open(0)
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestConnectDialBounded(t *testing.T) {
 // stream is up), and be released once the wireConn closes.
 func TestConnectDialContextReleasedOnConnClose(t *testing.T) {
 	dialer := &captureDialer{}
-	bind := NewClientBind(context.Background(), logger.NOP(), dialer, true, netip.MustParseAddrPort("127.0.0.1:443"), [3]uint8{})
+	bind := NewClientBind(context.Background(), logger.NOP(), dialer, M.SocksaddrFromNetIP(netip.MustParseAddrPort("127.0.0.1:443")), [3]uint8{})
 	_, _, err := bind.Open(0)
 	if err != nil {
 		t.Fatal(err)

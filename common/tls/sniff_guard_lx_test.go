@@ -524,11 +524,12 @@ func TestLxSniffGuardECHExchangeHidesAttempt(t *testing.T) {
 		ctx:              echCtx,
 		dnsRouter:        router,
 		domainResolver:   &option.DomainResolveOptions{Server: "resolver"},
+		state:            &echClientState{entries: make(map[string]echClientEntry)},
 	}
 	dialCtx, record := adapter.ContextWithCarrierRecord(context.Background())
 	_ = node.Dial(dialCtx, func(ctx context.Context) error {
 		require.NotNil(t, lxsniffguard.AttemptFromContext(ctx))
-		_, err := config.fetchAndHandshake(ctx, nil)
+		_, err := config.loadECHConfigList(ctx) // the fetch the handshake runs (upstream 0cdfc45e2)
 		require.Error(t, err)
 		return err
 	})

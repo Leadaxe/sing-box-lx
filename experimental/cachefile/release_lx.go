@@ -9,17 +9,16 @@ package cachefile
 //
 // Every started CacheFile registers itself by path. A new instance releases
 // every other registered instance with the same path before opening the
-// database: the previous one flushes its pending FakeIP metadata, closes the
-// database and from then on answers writes with os.ErrClosed and reads with
-// zero values. The timeout loop in start() stays as the guard against a
+// database: the previous one closes the database and from then on answers
+// writes with os.ErrClosed and reads with zero values. (The FakeIP metadata
+// flush that used to live here went away with the sync of 2026-11-26: upstream
+// e13e6ce67 writes the metadata synchronously when it reserves a range and no
+// longer deletes it on read.) The timeout loop in start() stays as the guard against a
 // foreign process holding the file.
 
 import (
 	"sync"
 	"sync/atomic"
-
-	"github.com/sagernet/sing-box/adapter"
-	E "github.com/sagernet/sing/common/exceptions"
 )
 
 var (
@@ -80,64 +79,24 @@ func (c *CacheFile) isReleased() bool {
 	return c.releaseState.released.Load()
 }
 
-// Release flushes the pending FakeIP metadata, closes the database and
-// unregisters the instance. It is idempotent: later calls return nil. After
-// Release, view, batch and update return os.ErrClosed and resetDB never
-// reopens the file.
+// Release closes the database and unregisters the instance. It is idempotent:
+// later calls return nil. After Release, view, batch and update return
+// os.ErrClosed and resetDB never reopens the file.
 func (c *CacheFile) Release() error {
 	c.releaseState.access.Lock()
 	defer c.releaseState.access.Unlock()
 	if c.isReleased() {
 		return nil
 	}
-	flushErr := c.flushPendingFakeIPMetadata()
 	c.dbAccess.Lock()
 	c.releaseState.released.Store(true)
 	db := c.DB
 	c.dbAccess.Unlock()
 	unregisterCacheFile(c)
 	if db == nil {
-		return flushErr
+		return nil
 	}
 	// Not under dbAccess: bbolt Close waits for in-flight transactions, and
 	// view/batch/update take dbAccess only to read the pointer.
-	closeErr := db.Close()
-	return E.Errors(flushErr, closeErr)
-}
-
-func (c *CacheFile) flushPendingFakeIPMetadata() error {
-	c.saveMetadataAccess.Lock()
-	if c.saveMetadataTimer != nil {
-		c.saveMetadataTimer.Stop()
-	}
-	metadata := c.saveMetadata
-	c.saveMetadataAccess.Unlock()
-	if metadata == nil {
-		return nil
-	}
-	err := c.FakeIPSaveMetadata(metadata)
-	if err != nil {
-		return E.Cause(err, "save FakeIP metadata")
-	}
-	return nil
-}
-
-// seedFakeIPMetadata keeps the metadata FakeIPMetadata has just read and
-// deleted as the pending value, so Release writes it back even when this
-// session never allocates an address. Without it, a session released by a
-// takeover (its FakeIP store never closes) loses the pointer and the next one
-// resets the pool.
-func (c *CacheFile) seedFakeIPMetadata(metadata *adapter.FakeIPMetadata) {
-	c.saveMetadataAccess.Lock()
-	defer c.saveMetadataAccess.Unlock()
-	if c.saveMetadata == nil {
-		seeded := *metadata
-		c.saveMetadata = &seeded
-	}
-}
-
-func (c *CacheFile) clearPendingFakeIPMetadata() {
-	c.saveMetadataAccess.Lock()
-	defer c.saveMetadataAccess.Unlock()
-	c.saveMetadata = nil
+	return db.Close()
 }

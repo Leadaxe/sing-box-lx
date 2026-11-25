@@ -203,7 +203,7 @@ func TestPenaltyFailoverDial(t *testing.T) {
 	dead := &penaltyDialNode{tag: "dead", err: context.DeadlineExceeded}
 	alive := &penaltyDialNode{tag: "alive", addr: "server"}
 	g := newPenaltyTestGroup(t, []*penaltyDialNode{dead, alive}, map[string]uint16{"dead": 10, "alive": 50})
-	g.selectedOutboundTCP = dead
+	g.selectedOutboundTCP.Store(dead)
 
 	conn, fallback, ok := g.penaltyFailoverDial(context.Background(), N.NetworkTCP, M.Socksaddr{}, dead, context.DeadlineExceeded)
 	if !ok {
@@ -219,7 +219,7 @@ func TestPenaltyFailoverDial(t *testing.T) {
 	if g.penaltyOf("alive") != 0 {
 		t.Fatalf("successful fallback must hold 0 penalties, got %d", g.penaltyOf("alive"))
 	}
-	if g.selectedOutboundTCP != adapter.Outbound(alive) {
+	if g.selectedOutboundTCP.Load() != adapter.Outbound(alive) {
 		t.Fatal("selection must move to the fallback")
 	}
 	if alive.dials != 1 {
@@ -260,7 +260,7 @@ func TestPenaltyFailoverDial_proxyRefused(t *testing.T) {
 		dead := &penaltyDialNode{tag: "dead", typ: C.TypeTrojan, err: dialErr}
 		alive := &penaltyDialNode{tag: "alive", addr: "server"}
 		g := newPenaltyTestGroup(t, []*penaltyDialNode{dead, alive}, map[string]uint16{"dead": 10, "alive": 50})
-		g.selectedOutboundTCP = dead
+		g.selectedOutboundTCP.Store(dead)
 
 		conn, fallback, ok := g.penaltyFailoverDial(context.Background(), N.NetworkTCP, M.Socksaddr{}, dead, dialErr)
 		if !ok {
@@ -273,7 +273,7 @@ func TestPenaltyFailoverDial_proxyRefused(t *testing.T) {
 		if g.penaltyOf("dead") != 1 {
 			t.Fatalf("%v: the refused proxy node must get +1 penalty, got %d", dialErr, g.penaltyOf("dead"))
 		}
-		if g.selectedOutboundTCP != adapter.Outbound(alive) {
+		if g.selectedOutboundTCP.Load() != adapter.Outbound(alive) {
 			t.Fatalf("%v: selection must move to the fallback", dialErr)
 		}
 	}
