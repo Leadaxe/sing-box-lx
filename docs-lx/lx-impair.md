@@ -79,6 +79,20 @@ If there is a proxy, put `impair` under it. Over a proxy it works too, but it de
 content instead: UDP carried inside a vless stream loses datagrams before the proxy, which a real
 link does not do.
 
+**What `impair` sees in each placement.** The placement decides not only what is degraded but also
+which connections `impair` can tell apart.
+
+| | Under a proxy | Over an outbound |
+|---|---|---|
+| Destination of a connection | the proxy server's address and port, the same for every connection | the real destination of each connection: the site's domain, the urltest probe's address |
+| One `impair` connection is | a carrier connection to the proxy; with multiplexing it carries many user connections | one user connection or one probe |
+| Telling one site from another, a probe from traffic | impossible: everything goes to one server | possible, by the destination domain |
+
+So a scenario such as "the node fails one site" or "the node breaks connections to sites but lets
+probes through" needs the placement over an outbound: `impair` with `detour` set to the proxy node
+becomes a member of the group in place of the node. Under a proxy the whole road to the server is
+degraded, and probes and traffic suffer alike.
+
 ## Keys
 
 `impair` has every dial key `direct` has: `detour`, `bind_interface`, `routing_mark`,
