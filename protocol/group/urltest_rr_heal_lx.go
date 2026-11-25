@@ -834,6 +834,17 @@ func (s *URLTest) rrSlotToFill() bool {
 	return false
 }
 
+// rrPoolOthers reports a slot of the pool other than that of tag that is not empty
+// (Q4: "the rest of the pool").
+func (s *URLTest) rrPoolOthers(tag string) bool {
+	for _, entry := range s.balancer.slotsSnapshot() {
+		if entry.tag != tag && !s.rrSlotEmpty(entry.tag) {
+			return true
+		}
+	}
+	return false
+}
+
 // rrSlotEmpty reports a slot the pick skips and the search fills (§5): no node, a
 // quarantined one, or one without history (a dead occupant the run left, a leaf
 // whose shared history D1 of another group erased). It is no slot of the pool for
@@ -1177,13 +1188,12 @@ func (c *rrCheck) drain() {
 	c.loop(func() bool { return false })
 }
 
-// takeReady returns the next candidate that answered and may take a slot.
+// takeReady returns the next candidate that answered and still is one (rrCandidate).
 func (c *rrCheck) takeReady() adapter.Outbound {
-	b := c.s.balancer
 	for len(c.ready) > 0 {
 		node := c.ready[0]
 		c.ready = c.ready[1:]
-		if !b.inPool(node.Tag()) && !b.isQuarantined(node.Tag()) {
+		if c.s.rrCandidate(node) {
 			return node
 		}
 	}
@@ -1305,13 +1315,7 @@ func (s *URLTest) rrStrike(ctx context.Context, c *rrCheck) {
 		if !s.group.history.DeleteURLTestHistoryNotAfterLx(RealTag(node, N.NetworkTCP), c.x) {
 			continue // D1: a scheduled run answered for the node since x, no verdict
 		}
-		others := false
-		for _, entry := range b.slotsSnapshot() {
-			if entry.tag != node.Tag() && !s.rrSlotEmpty(entry.tag) {
-				others = true
-				break
-			}
-		}
+		others := s.rrPoolOthers(node.Tag())
 		b.rrForget(node.Tag())         // Q3: D1 drops the counters
 		b.memory.k2.forget(node.Tag()) // K2: D1 erases the node's records
 		s.rrDead(t)
