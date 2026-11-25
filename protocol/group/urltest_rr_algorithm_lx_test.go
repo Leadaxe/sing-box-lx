@@ -545,7 +545,7 @@ func TestSiteOnOpen_destinationDialer(t *testing.T) {
 	if g.pathDead(node, syscall.ECONNREFUSED) {
 		t.Fatal("SPEC 054: its refused open is no dead path")
 	}
-	s := &URLTest{outbound: manager, group: g, balancer: &balancer{}}
+	s := &URLTest{outbound: manager, group: g, lxURLTest: lxURLTest{balancer: &balancer{}}}
 	if s.rrOutcome(node, syscall.ECONNREFUSED) != rrRefused || s.rrOutcome(node, io.EOF) != rrFailActive {
 		t.Fatal("refused or reset at a leaf that goes to the site: explicit REFUSE_DST; anything else FAIL_NODE")
 	}

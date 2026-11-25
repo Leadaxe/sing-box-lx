@@ -446,7 +446,7 @@ func BenchmarkRRFirstByteCopy(b *testing.B) {
 			client, server := tcpPair(b)
 			var conn net.Conn = client
 			if wrap {
-				s := &URLTest{balancer: &balancer{}, group: &URLTestGroup{ctx: context.Background()}}
+				s := &URLTest{group: &URLTestGroup{ctx: context.Background()}, lxURLTest: lxURLTest{balancer: &balancer{}}}
 				conn = newRRFirstByteConn(client, &rrConnWatch{s: s, member: "a", start: time.Now()})
 			}
 			conn = interrupt.NewGroup().NewConn(conn, false)
@@ -486,7 +486,7 @@ func BenchmarkRRFirstByteUpload(b *testing.B) {
 			nodeConn, nodeFar := tcpPair(b)
 			var conn net.Conn = nodeConn
 			if wrap {
-				s := &URLTest{balancer: &balancer{}, group: &URLTestGroup{ctx: context.Background()}}
+				s := &URLTest{group: &URLTestGroup{ctx: context.Background()}, lxURLTest: lxURLTest{balancer: &balancer{}}}
 				conn = newRRFirstByteConn(nodeConn, &rrConnWatch{s: s, member: "a", start: time.Now()})
 			}
 			conn = interrupt.NewGroup().NewConn(conn, false)
@@ -518,7 +518,7 @@ func BenchmarkRRFirstByteUpload(b *testing.B) {
 
 // The per-connection cost: wrap, write, first byte, close.
 func BenchmarkRRFirstByteSetup(b *testing.B) {
-	s := &URLTest{balancer: &balancer{}, group: &URLTestGroup{ctx: context.Background()}}
+	s := &URLTest{group: &URLTestGroup{ctx: context.Background()}, lxURLTest: lxURLTest{balancer: &balancer{}}}
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		conn := newRRFirstByteConn(nopConn{}, &rrConnWatch{s: s, member: "a"})

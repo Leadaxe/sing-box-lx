@@ -126,17 +126,16 @@ func newHealFixture(t testing.TB, tags []string, pool []string, poolTolerance ui
 	}
 	g := &URLTestGroup{
 		ctx:            ctx,
-		cancel:         cancel,
 		outbound:       &fakeManager{byTag: byTag},
 		logger:         log.NewNOPFactory().NewLogger("test"),
 		outbounds:      outbounds,
 		link:           server.URL,
 		interval:       time.Minute,
 		history:        urltest.NewHistoryStorage(),
-		balancer:       &balancer{poolSize: len(pool), poolTolerance: poolTolerance},
 		interruptGroup: interrupt.NewGroup(),
+		lxURLTestGroup: lxURLTestGroup{cancel: cancel, balancer: &balancer{poolSize: len(pool), poolTolerance: poolTolerance}},
 	}
-	s := &URLTest{outbound: g.outbound, logger: log.NewNOPFactory().NewLogger("test"), group: g, balancer: g.balancer}
+	s := &URLTest{outbound: g.outbound, logger: log.NewNOPFactory().NewLogger("test"), group: g, lxURLTest: lxURLTest{balancer: g.balancer}}
 	s.rrWire()
 	g.balancer.setSlots(pool)
 	for _, tag := range tags {

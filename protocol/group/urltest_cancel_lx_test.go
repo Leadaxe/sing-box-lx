@@ -50,7 +50,7 @@ func (n *hangingDialNode) DialContext(ctx context.Context, network string, desti
 }
 
 // newHangingGroup builds a group over a single node that never answers, wired
-// the way NewURLTestGroup wires one: an owned context plus its cancel.
+// the way URLTest.Start wires one (startLx): an owned context plus its cancel.
 func newHangingGroup(t *testing.T) (*URLTestGroup, *hangingDialNode) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +62,6 @@ func newHangingGroup(t *testing.T) (*URLTestGroup, *hangingDialNode) {
 	ctx, cancel := context.WithCancel(context.Background())
 	group := &URLTestGroup{
 		ctx:            ctx,
-		cancel:         cancel,
 		outbound:       &fakeManager{byTag: map[string]adapter.Outbound{node.tag: node}},
 		logger:         logger.NOP(),
 		outbounds:      []adapter.Outbound{node},
@@ -71,6 +70,7 @@ func newHangingGroup(t *testing.T) (*URLTestGroup, *hangingDialNode) {
 		history:        urltest.NewHistoryStorage(),
 		interruptGroup: interrupt.NewGroup(),
 		close:          make(chan struct{}),
+		lxURLTestGroup: lxURLTestGroup{cancel: cancel},
 	}
 	return group, node
 }

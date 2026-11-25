@@ -122,9 +122,10 @@ func (g *URLTestGroup) penaltyResetOnDial(ctx context.Context, tag string) {
 }
 
 // deleteHistoryOnDialError is the upstream reaction of least_test to a failed
-// dial (drop the node's URL test history); a probe keeps the history.
+// dial (drop the node's URL test history); a probe keeps the history, and so does
+// round_robin: a dial error alone proves nothing (SPEC 019 v2, SPEC 138).
 func (g *URLTestGroup) deleteHistoryOnDialError(ctx context.Context, tag string) {
-	if lxtrace.IsProbe(ctx) {
+	if g.balancer != nil || lxtrace.IsProbe(ctx) {
 		return
 	}
 	g.history.DeleteURLTestHistory(tag)

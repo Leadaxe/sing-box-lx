@@ -20,7 +20,7 @@ func actualContext() (context.Context, *adapter.ActualOutboundLx) {
 func TestBalancedPickRecordsActualNode_LX(t *testing.T) {
 	a := &penaltyDialNode{tag: "a"}
 	b := &penaltyDialNode{tag: "b"}
-	g := &URLTestGroup{groupTag: "rr"}
+	g := &URLTestGroup{lxURLTestGroup: lxURLTestGroup{groupTag: "rr"}}
 
 	ctx1, cell1 := actualContext()
 	ctx2, cell2 := actualContext()

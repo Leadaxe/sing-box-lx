@@ -939,7 +939,7 @@ func TestRRCov_outcomeClassesByPlatform(t *testing.T) {
 	site := &destinationNode{tag: "m"}
 	proxy := &cycleNode{tag: "p"}
 	manager := &fakeManager{byTag: map[string]adapter.Outbound{"m": site, "p": proxy}}
-	s := &URLTest{outbound: manager, group: &URLTestGroup{ctx: context.Background(), outbound: manager}, balancer: &balancer{}}
+	s := &URLTest{outbound: manager, group: &URLTestGroup{ctx: context.Background(), outbound: manager}, lxURLTest: lxURLTest{balancer: &balancer{}}}
 	if s.rrOutcome(site, opError(syscall.Errno(10061))) != rrRefused || s.rrOutcome(site, gvisor("connection was refused")) != rrRefused {
 		t.Fatal("a refusal of a leaf that goes to the site itself: explicit REFUSE_DST, also on Windows and from gVisor")
 	}

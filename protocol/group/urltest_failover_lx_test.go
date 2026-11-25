@@ -92,7 +92,7 @@ func newFailoverTestGroup(t *testing.T, nodes ...*failoverNode) *URLTestGroup {
 		tolerance:      50,
 		history:        urltest.NewHistoryStorage(),
 		interruptGroup: interrupt.NewGroup(),
-		failover:       true,
+		lxURLTestGroup: lxURLTestGroup{failover: true},
 	}
 }
 

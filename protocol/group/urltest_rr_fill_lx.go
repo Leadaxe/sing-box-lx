@@ -20,7 +20,7 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
-// onProbeAliveLx is the hook of a probe that answered (urlTestBatch.onAlive): the
+// onProbeAliveLx is the hook of a probe that answered (probeAliveLx, urltest_hooks_lx.go): the
 // SPEC 054 proof of life, the SPEC 138 proof of the path (rrRunAnswer), and the
 // SPEC 019 fill of a dead slot.
 func (g *URLTestGroup) onProbeAliveLx(tag string) {

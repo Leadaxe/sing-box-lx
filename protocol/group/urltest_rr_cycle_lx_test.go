@@ -125,7 +125,7 @@ func BenchmarkRRConnectionCycle(b *testing.B) {
 // The wrapper is one allocation: the watch lives in it, and it reads and writes the
 // node's connection without the adapters of bufio.NewExtendedReader/Writer.
 func TestRRCycle_wrapperAllocatesOnce(t *testing.T) {
-	s := &URLTest{balancer: &balancer{}, group: &URLTestGroup{ctx: context.Background()}}
+	s := &URLTest{group: &URLTestGroup{ctx: context.Background()}, lxURLTest: lxURLTest{balancer: &balancer{}}}
 	watch := rrConnWatch{s: s, member: "a"}
 	if allocs := testing.AllocsPerRun(1000, func() {
 		newRRFirstByteConn(nopConn{}, &watch)

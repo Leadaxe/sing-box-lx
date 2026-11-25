@@ -78,8 +78,8 @@ func newPoolTestGroup(t *testing.T, ctx context.Context, nodes []*testDialNode, 
 		link:           server.URL,
 		interval:       time.Minute,
 		history:        urltest.NewHistoryStorage(),
-		balancer:       &balancer{poolSize: poolSize},
 		interruptGroup: interrupt.NewGroup(),
+		lxURLTestGroup: lxURLTestGroup{balancer: &balancer{poolSize: poolSize}},
 	}
 }
 
