@@ -563,12 +563,6 @@ Seven limits:
   level of a build without self-heal; the difference shows only in a synthetic run of thousands
   of very short connections in a row ([measurements](../SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/IMPLEMENTATION_REPORT.md)).
 
-The stand is a NanoPi router: five nodes, `pool: 3`, `interval: 10m`, all
-servers on loopback. With one pool node killed, 30 of 30 requests went through, and the slot got
-a replacement in 0.13 s. Release 1.14.4-lx.36 lost 10 of 30 requests on the same stand. With every
-server stopped for 20 s under load, the group struck out no node, moved no key and quarantined
-nothing.
-
 `sing-box api group pool <tag>` (a build with `with_lx_command`) shows the state: a slot table
 with `STATE` (`live`/`dead`/`quarantined`), `CONNECTIONS` and `FAILURES`, plus the moved keys, the
 address problems and the freeze. The daemon's `GetPool` carries the same: per slot `quarantined`,
