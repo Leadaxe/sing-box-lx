@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"os"
+	"reflect"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -530,6 +532,113 @@ func TestSiteOnOpen_destinationDialer(t *testing.T) {
 	if s.rrOutcome(proxy, os.NewSyscallError("connect", syscall.EHOSTUNREACH)) != rrLocal || s.rrOutcome(proxy, os.ErrDeadlineExceeded) != rrFailTimeout ||
 		s.rrOutcome(proxy, context.Canceled) != rrCancel {
 		t.Fatal("LOCAL, the timeout, CANCEL")
+	}
+}
+
+// rrGroupState is what the rules write: the history, the slots, the counts, the key
+// shifts and marks, the K2 memory, and per node the proofs, the answers to keys,
+// the suspicion, the Q1 signs and the life probes.
+type rrGroupState struct {
+	pool    string
+	history map[string]*adapter.URLTestHistory
+	counts  map[string]rrSlotCount
+	shifts  int64
+	k2      int64
+	tracks  map[string][6]int64
+	keys    map[string]int64
+	running bool
+}
+
+func (f *healFixture) groupState() rrGroupState {
+	b := f.s.balancer
+	state := rrGroupState{
+		pool:    strings.Join(f.pool(), ","),
+		history: make(map[string]*adapter.URLTestHistory),
+		counts:  make(map[string]rrSlotCount),
+		shifts:  int64(b.memory.shifts.size.Load()),
+		k2:      int64(b.memory.k2.size.Load()),
+		tracks:  make(map[string][6]int64),
+		keys:    make(map[string]int64),
+		running: b.heal.running.Load(),
+	}
+	for tag := range f.nodes {
+		state.history[tag] = f.g.history.LoadURLTestHistory(tag)
+	}
+	b.memory.access.Lock()
+	for tag, c := range b.memory.counts {
+		state.counts[tag] = *c
+	}
+	b.memory.access.Unlock()
+	for _, entry := range b.slotsSnapshot() {
+		track := entry.track
+		if track == nil {
+			continue
+		}
+		var want int64
+		if track.wantCheck.Load() {
+			want = 1
+		}
+		state.tracks[entry.tag] = [6]int64{track.proved.Load(), track.suspectFrom.Load(), track.suspectUntil.Load(), want, int64(track.pendingN.Load()), track.lifeLast.Load()}
+		var keys int64
+		for i := range track.keyAnswers {
+			keys += track.keyAnswers[i].Load()
+		}
+		state.keys[entry.tag] = keys
+	}
+	return state
+}
+
+// N0 (owner, 2026-11-25): in a freeze a failed open on the key's own slot —
+// FAIL_NODE, an explicit refusal, LOCAL — opens through another slot, and the group
+// writes nothing: no shift, no count, no K2 record, no suspicion, no probe, no
+// history. After the freeze the same failure goes to its rules again.
+func TestRRAlgo_N0_retryInTheFreezeChangesNothing(t *testing.T) {
+	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
+	heal := &f.s.balancer.heal
+	local := &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ENETUNREACH)}
+	key := f.keyOn(t, "site.example", 0)
+	heal.freeze()
+	before := f.groupState()
+	cases := []struct {
+		name string
+		set  func(on bool)
+	}{
+		{"FAIL_NODE", func(on bool) { f.fb["a"].siteDown.Store(on) }},
+		{"explicit REFUSE_DST", func(on bool) { f.fb["a"].set(&f.fb["a"].openFail, "site.example", on) }},
+		{"LOCAL", func(on bool) {
+			if on {
+				f.fb["a"].dialErr = local
+			} else {
+				f.fb["a"].dialErr = nil
+			}
+		}},
+	}
+	for _, c := range cases {
+		dials := f.dials("b")
+		c.set(true)
+		opened, answered := f.dial(t, key, "site.example")
+		c.set(false)
+		if !opened || !answered || f.dials("b") != dials+1 {
+			t.Fatalf("%s in a freeze: the retry through b answers", c.name)
+		}
+	}
+	time.Sleep(20 * time.Millisecond)
+	if shift, marked := f.shift(key, "site.example"); shift != 0 || marked {
+		t.Fatalf("N0: the key stays, shift %d marked %v", shift, marked)
+	}
+	if !reflect.DeepEqual(before, f.groupState()) || f.probes("a") != 0 || f.probes("b") != 0 {
+		t.Fatalf("N0: the retry writes nothing\nbefore %+v\nafter  %+v", before, f.groupState())
+	}
+	heal.epochEnd.Store(rrClock(time.Now()))
+	time.Sleep(2 * time.Millisecond)
+	f.fb["a"].siteDown.Store(true)
+	if _, answered := f.dial(t, key, "site.example"); !answered {
+		t.Fatal("after the freeze: the retry answers")
+	}
+	f.fb["a"].siteDown.Store(false)
+	f.waitCheck(t)
+	if f.probes("a") == 0 || reflect.DeepEqual(before, f.groupState()) {
+		t.Fatal("after the freeze the failure goes to its rules: the life probe")
 	}
 }
 

@@ -291,7 +291,8 @@ func TestRRHeal_tickDuringCheck(t *testing.T) {
 
 // --- limits -------------------------------------------------------------------------
 
-// assertFrozen checks that a failure gets neither a retry nor a check.
+// assertFrozen checks that a failure gets its retry and nothing else: no check, no
+// probe (N0).
 func assertFrozen(t *testing.T, f *healFixture, reason string) {
 	t.Helper()
 	dials := f.nodes["b"].dials.Load()
@@ -299,8 +300,8 @@ func assertFrozen(t *testing.T, f *healFixture, reason string) {
 	conn, ok := f.fail(context.Background(), "a")
 	closeConn(conn)
 	time.Sleep(20 * time.Millisecond)
-	if ok || f.nodes["b"].dials.Load() != dials {
-		t.Fatalf("%s: no retry while frozen", reason)
+	if !ok || f.nodes["b"].dials.Load() != dials+1 {
+		t.Fatalf("%s: the retry goes on while frozen", reason)
 	}
 	if f.s.balancer.heal.running.Load() || f.probes("a") != probes {
 		t.Fatalf("%s: no check while frozen", reason)

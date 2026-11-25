@@ -8,10 +8,11 @@ package group
 // A failed open of a round_robin connection is classified (§2): CANCEL (the client
 // or the group gave up: nothing follows), LOCAL, an explicit REFUSE_DST (a code of
 // the node's own leaf; a refused or reset open of a leaf that goes to the site
-// itself), FAIL_NODE by an active refusal or by a timeout. Outside a freeze (N0) it
-// is retried once through another slot of the pool whose leaf is no nested urltest,
-// the next one with no suspicion first, else the next one under suspicion (§5); a
-// key marked by K5 keeps only the retry of FAIL_NODE. The sign then
+// itself), FAIL_NODE by an active refusal or by a timeout. It is retried once
+// through another slot of the pool whose leaf is no nested urltest, the next one
+// with no suspicion first, else the next one under suspicion (§5); a key marked by
+// K5 keeps only the retry of FAIL_NODE. In a freeze (N0) the retry stays and nothing
+// else: the open and the retry began before E and go to no rule. The sign then
 // goes to its rules: S1 (a fast refusal: the life probe, the bypass only after it
 // failed), S2 (a timeout: the bypass and the life probe at once), K1 (the key
 // shifts at once), K2/K4 (the memory of a soft sign) and Q1 (the count).
@@ -347,9 +348,6 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 	if errors.Is(ctx.Err(), context.Canceled) || !struck && errors.Is(dialErr, context.Canceled) {
 		return rrRetried{}, false // CANCEL: nothing follows
 	}
-	if b.heal.frozen() {
-		return rrRetried{}, false // N0: no retries
-	}
 	tcp := N.NetworkName(network) == N.NetworkTCP
 	if !tcp {
 		picked.key = rrKey{}
@@ -365,7 +363,7 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 	var sign *rrSign
 	if !struck {
 		class = s.rrOutcome(member, dialErr)
-		if !lxtrace.IsProbe(ctx) && !s.rrBeforeEvent(picked.start) {
+		if !lxtrace.IsProbe(ctx) && !b.heal.frozen() && !s.rrBeforeEvent(picked.start) { // N0, I4: the retry only
 			if tcp {
 				b.rrCountConn(member.Tag(), picked.start)
 			}

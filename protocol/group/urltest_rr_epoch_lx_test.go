@@ -10,7 +10,7 @@ import (
 
 // С9: the first outcome after a sleep the monotonic clock missed — before any pick —
 // compares the clocks first (N3): the event freezes the group, and the exchange that
-// started before it takes part in no rule.
+// started before it takes part in no rule; the retry goes on.
 func TestRREpoch_C9_firstOutcomeAfterSleepIsAnEvent(t *testing.T) {
 	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
 	b := f.s.balancer
@@ -22,8 +22,8 @@ func TestRREpoch_C9_firstOutcomeAfterSleepIsAnEvent(t *testing.T) {
 	if !b.heal.frozen() || b.heal.epoch() < rrClock(now) {
 		t.Fatal("the outcome compared the clocks before the rules: an event")
 	}
-	if ok || b.trackOf("a").pendingN.Load() != 0 || b.heal.running.Load() {
-		t.Fatal("N0: no retry, no record, no check while frozen")
+	if !ok || b.trackOf("a").pendingN.Load() != 0 || b.heal.running.Load() {
+		t.Fatal("N0: the retry, no record, no check while frozen")
 	}
 }
 
