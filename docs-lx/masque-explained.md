@@ -115,7 +115,7 @@ name. For WARP that is `www.cloudflare.com` or another neutral name — someone 
 tunnel breaks or fails with "different public key".
 
 The fix on the relay is `routeOnly: true`. On the client side,
-[`lx.sniff_guard`](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni) hides the first
+[`lx.sniff_guard`](lx-block.md#lxsniff_guard--guard-against-rerouting-by-sni) hides the first
 packet from the sniffer: over HTTP/2 it splits the ClientHello, over HTTP/3 it puts a decoy byte
 ahead of the QUIC Initial.
 
@@ -166,7 +166,7 @@ Measured on a clean link on 2026-10-09: with `mtu` 1280 at most 1232 bytes of UD
 over IPv6, with `mtu` 1340 at most 1280.
 
 A node above `masque` gets its packet size fitted to `mtu` on its own:
-[`lx.mtu_align`](lx-config.md#lxmtu_align--path-mtu--packet-size-alignment) does it. By hand —
+[`lx.mtu_align`](lx-block.md#lxmtu_align--path-mtu--packet-size-alignment) does it. By hand —
 `initial_packet_size: 1232` on the QUIC node or `mtu: 1340` on `masque`; the latter needs an
 outer path of about 1440 bytes to WARP.
 

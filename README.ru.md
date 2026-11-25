@@ -148,7 +148,7 @@ WARP работает там, где не отвечает его WireGuard-endp
 
 Ограничения: выключено, пока в конфиге нет блока; значения по умолчанию выбирает приложение, которое пишет конфиг. Проверено на loopback-стендах.
 
-Без build-тега · [фича](SPECS/FEATURES/019-SNIFF_GUARD/FEATURE.md) · [конфиг](docs-lx/lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni) ([EN](docs-lx/lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni))
+Без build-тега · [фича](SPECS/FEATURES/019-SNIFF_GUARD/FEATURE.md) · [конфиг](docs-lx/lx-block.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni) ([EN](docs-lx/lx-block.md#lxsniff_guard--guard-against-rerouting-by-sni))
 
 ### `chain` собирает цепочку хопов из групп, не копируя их
 

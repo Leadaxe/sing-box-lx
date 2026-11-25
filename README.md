@@ -148,7 +148,7 @@ A REALITY or WARP node behind a `detour` relay stops looking dead. A relay or a 
 
 Limits: off until the config has the block; the defaults are the choice of the app that writes the config. Verified on loopback stands.
 
-No build tag · [feature](SPECS/FEATURES/019-SNIFF_GUARD/FEATURE.md) · [config](docs-lx/lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni) ([RU](docs-lx/lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni))
+No build tag · [feature](SPECS/FEATURES/019-SNIFF_GUARD/FEATURE.md) · [config](docs-lx/lx-block.md#lxsniff_guard--guard-against-rerouting-by-sni) ([RU](docs-lx/lx-block.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni))
 
 ### `chain` builds a multi-hop path from groups without copying them
 

@@ -82,7 +82,7 @@ The set is cached and recomputed only on events: a selector switch, a urltest au
 }
 ```
 
-The keys live in the `lx.wg.idle` block of the root `lx` block ([lx-config.md §13](lx-config.md#13-the-lx-root-block)).
+The keys live in the `lx.wg.idle` block of the root `lx` block ([lx-block.md](lx-block.md)).
 The flat `lx.wg.idle_suspend` and the rest of the old layout fail to load with an error naming the new key.
 The keys `route.lx_idle_suspend` / `route.lx_idle_suspend_reachable` / `route.lx_idle_teardown`
 were removed on 2026-11-02: a config with them fails to load as one with unknown keys.
@@ -242,7 +242,7 @@ Notes:
 
 ## 11. Lazy build and the build budget keep devices from being built for nothing
 
-Suspend and teardown free an endpoint's memory once it has been idle. At start, though, a config with a dozen AWG nodes pays for all of them at once. Each device allocates its receive batches the moment it starts: 128 × 64 KiB per receive routine on Linux and Android, where the 64 KiB segments feed GRO. At the default that is 16.4 MiB per node (≈17.5 MB measured on lx.8, before SPEC 158). `lx.wg.buffers.read_datagram_count` lowers it in any build ([lx-config.md §13](lx-config.md#13-the-lx-root-block)). Two keys keep devices from being built for nothing.
+Suspend and teardown free an endpoint's memory once it has been idle. At start, though, a config with a dozen AWG nodes pays for all of them at once. Each device allocates its receive batches the moment it starts: 128 × 64 KiB per receive routine on Linux and Android, where the 64 KiB segments feed GRO. At the default that is 16.4 MiB per node (≈17.5 MB measured on lx.8, before SPEC 158). `lx.wg.buffers.read_datagram_count` lowers it in any build ([lx-block.md](lx-block.md)). Two keys keep devices from being built for nothing.
 
 **`lx.wg.idle.lazy_build: true`** — endpoints start at level 3 (§5): the detour is resolved at start, as without the key, but the device and its netstack are not built. The first dial through the node (a user connection or a urltest probe) builds it along the same path a wake after teardown takes, and pays that cost once: the build plus the first handshake. A listen-mode endpoint (`listen_port`) is never lazy — nothing dials it. Requires `lx.wg.idle.suspend`.
 

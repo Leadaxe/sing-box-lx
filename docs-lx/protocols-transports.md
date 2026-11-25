@@ -835,8 +835,8 @@ device.
 | `ipv6` | string (CIDR) | ✅² | — | local IPv6 inside the tunnel; a bare address → `/128` |
 | `tls` | object | — | — | the standard outbound TLS block — `server_name`, `insecure`, `disable_sni`, `fragment`, `record_fragment`, `fragment_fallback_delay`, … Same container every other TLS outbound uses |
 | `uri` | string | — | per profile³ | CONNECT-IP request URI |
-| `mtu` | int | — | `1280` | userspace-stack MTU. On `h2`, max `16000` (one IP packet = one HTTP/2 DATA frame). Nodes above masque (via `detour`, a group, or as a `chain` link) get a packet size that fits this `mtu` automatically: `mtu` on tunnels, `initial_packet_size` and PMTUD off on hysteria2/tuic/hysteria (at 1280: 1232 for an IPv6 server, 1252 for IPv4; [lx-config.md §13](lx-config.md#lxmtu_align--path-mtu--packet-size-alignment)). The outer QUIC to the server starts at `mtu + 51` (clamped 1200…1452) |
-| `idle_timeout` | duration | — | inherits `lx.masque.idle_timeout`, else off | suspend the tunnel after this long with no traffic (frees the gVisor stack, pumps and QUIC keepalive); the next dial rebuilds it. Absent → the global `lx.masque.idle_timeout` ([lx-config.md §13](lx-config.md#13-the-lx-root-block)); an explicit `0` or a negative value keeps this node up whatever the global default; only a positive value enables suspend |
+| `mtu` | int | — | `1280` | userspace-stack MTU. On `h2`, max `16000` (one IP packet = one HTTP/2 DATA frame). Nodes above masque (via `detour`, a group, or as a `chain` link) get a packet size that fits this `mtu` automatically: `mtu` on tunnels, `initial_packet_size` and PMTUD off on hysteria2/tuic/hysteria (at 1280: 1232 for an IPv6 server, 1252 for IPv4; [lx-block.md](lx-block.md#lxmtu_align--path-mtu--packet-size-alignment)). The outer QUIC to the server starts at `mtu + 51` (clamped 1200…1452) |
+| `idle_timeout` | duration | — | inherits `lx.masque.idle_timeout`, else off | suspend the tunnel after this long with no traffic (frees the gVisor stack, pumps and QUIC keepalive); the next dial rebuilds it. Absent → the global `lx.masque.idle_timeout` ([lx-block.md](lx-block.md)); an explicit `0` or a negative value keeps this node up whatever the global default; only a positive value enables suspend |
 | `keep_alive_period` | duration | — | `30s` | QUIC keepalive (h3 only). A negative value disables it |
 | `network_list` | list | — | tcp+udp | L4 protocols routed through the tunnel |
 
@@ -912,7 +912,7 @@ sends no SNI at all. Why — [masque-explained §2.1](masque-explained.md#21-the
 - `h2` — HTTP/2 over TCP:443 only; one IP packet = one DATA frame, `mtu` up to 16000. On `h2` the
   ClientHello is guarded by the node's `fragment` / `record_fragment` and the `tls` section of
   `lx.sniff_guard`, on `h3` by the `quic` section
-  ([lx-config §13](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni)).
+  ([lx-block](lx-block.md#lxsniff_guard--guard-against-rerouting-by-sni)).
 
 ## 3.8 Idle-suspend & keepalive
 
@@ -1150,7 +1150,7 @@ Upstream `tls` keys; in the fork they also apply to REALITY.
 There is no default under `detour`: without the `lx.sniff_guard` block the ClientHello is
 split only where the node sets `fragment` or `record_fragment`, through a `detour` too.
 The `lx.sniff_guard` block configures protection against relays that reroute by SNI
-([lx-config §13](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni)). A node's
+([lx-block](lx-block.md#lxsniff_guard--guard-against-rerouting-by-sni)). A node's
 explicit value, `"record_fragment": false` included, wins over the block unless the block
 sets `"override": true`. Only the handshake is fragmented. How the ClientHello is split
 under `detour` overall:

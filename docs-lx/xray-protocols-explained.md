@@ -330,7 +330,7 @@ In `sing-box-lx` the protection is configured by the root `lx.sniff_guard`
 block ([FEATURE 019](../SPECS/FEATURES/019-SNIFF_GUARD/FEATURE.md)). The
 overview is in
 [lx-config §9](lx-config.md#9-clienthello-under-detour--no-default)
-and [§13](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni). The
+and [lx-block.md](lx-block.md#lxsniff_guard--guard-against-rerouting-by-sni). The
 minimal block:
 
 ```json
@@ -462,7 +462,7 @@ Key mapping:
 | `freedom` + `settings.fragment` + `sockopt.dialerProxy` | the same `tls.fragment` on the node that goes out directly | [§1.4](#14-fragmentation-cuts-the-sni-into-chunks); the helper `freedom` does not become a separate outbound |
 | `length`, `delay` / `interval`, `maxSplit` | none | the core finds boundaries by SNI and pauses by ACK ([§1.4](#14-fragmentation-cuts-the-sni-into-chunks)); there is nothing to carry over except the fact that fragmentation is on |
 | n/a | `tls.fragment_fallback_delay` | [`fragment_fallback_delay`](../docs/configuration/shared/tls.md#fragment_fallback_delay): the wait time used when the core cannot compute it itself; 500 ms by default |
-| n/a | `lx.sniff_guard`: protection against a relay that reroutes by SNI, learnt per path | [lx-config §13](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni), [§9](lx-config.md#9-clienthello-under-detour--no-default) |
+| n/a | `lx.sniff_guard`: protection against a relay that reroutes by SNI, learnt per path | [lx-block](lx-block.md#lxsniff_guard--guard-against-rerouting-by-sni), [§9](lx-config.md#9-clienthello-under-detour--no-default) |
 | n/a | `tls.reality.key_share` | ours only, [§1.3](#13-browsers-send-a-hybrid-key-share); applies to REALITY, example in [§2.8](#28-example-xray-and-sing-box-lx) |
 
 > 📖 Normative description of the Xray fields: [TLS in the Project X documentation](https://xtls.github.io/config/transport.html#tlsobject).
@@ -696,7 +696,7 @@ Key mapping:
 | `realitySettings.spiderX` | none | [§2.5](#25-the-client-recognises-its-server-by-the-hmac-in-the-certificate), [§2.6](#26-the-fork-follows-the-xray-servers-acceptance-rules-upstream-lags-behind) |
 | `realitySettings.mldsa65Verify` | none | [§2.6](#26-the-fork-follows-the-xray-servers-acceptance-rules-upstream-lags-behind) |
 | n/a | `tls.reality.key_share` | ours only: [lx-config §7](lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello), [§1.3](#13-browsers-send-a-hybrid-key-share) |
-| n/a | `tls.fragment`, `tls.record_fragment` | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment); no default under `detour`, protection is configured by `lx.sniff_guard`: [lx-config §13](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni) |
+| n/a | `tls.fragment`, `tls.record_fragment` | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment); no default under `detour`, protection is configured by `lx.sniff_guard`: [lx-block](lx-block.md#lxsniff_guard--guard-against-rerouting-by-sni) |
 
 > 📖 Normative description of the Xray fields: [REALITY in the Project X documentation](https://xtls.github.io/config/transport.html#realityobject).
 
@@ -1496,7 +1496,7 @@ submodule. For this document that is `utls-lx` ([§1.2](#12-utls-builds-the-clie
 ## See also
 
 - **[lx-config.md](lx-config.md)**: field overview by feature: [§6](lx-config.md#6-vless-encryption--post-quantum-layer) VLESS
-  `encryption`, [§7](lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello) REALITY `key_share`, [§9](lx-config.md#9-clienthello-under-detour--no-default) ClientHello under `detour`, [§13](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni) `lx.sniff_guard`.
+  `encryption`, [§7](lx-config.md#7-reality-key_share--hybrid-or-classical-clienthello) REALITY `key_share`, [§9](lx-config.md#9-clienthello-under-detour--no-default) ClientHello under `detour`, [lx-block.md](lx-block.md#lxsniff_guard--guard-against-rerouting-by-sni) `lx.sniff_guard`.
 - **[protocols-transports.md](protocols-transports.md)**: [§1](protocols-transports.md#1-xhttp-transport)
   XHTTP: every field, default and error.
 - Feature specs: [017-REALITY](../SPECS/FEATURES/017-REALITY/FEATURE.md),

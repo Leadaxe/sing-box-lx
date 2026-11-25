@@ -825,8 +825,8 @@ AmneziaWG делит параметры на серверные и клиент�
 | `ipv6` | string (CIDR) | ✅² | — | локальный IPv6 внутри туннеля; голый адрес → `/128` |
 | `tls` | object | — | — | стандартный outbound-блок TLS — `server_name`, `insecure`, `disable_sni`, `fragment`, `record_fragment`, `fragment_fallback_delay`, … Тот же контейнер, что у любого TLS-outbound |
 | `uri` | string | — | по профилю³ | CONNECT-IP request URI |
-| `mtu` | int | — | `1280` | MTU userspace-стека. На `h2` максимум `16000` (один IP-пакет = один HTTP/2 DATA frame). Узлы над masque (через `detour`, группу или как звено `chain`) получают размер пакета под этот `mtu` автоматически: у туннелей — `mtu`, у hysteria2/tuic/hysteria — `initial_packet_size` и выключенный PMTUD (при 1280: 1232 для IPv6-сервера, 1252 для IPv4; [lx-config.ru.md §13](lx-config.ru.md#lxmtu_align--выравнивание-mtu-и-размера-пакета-по-пути)). Внешний QUIC к серверу стартует с `mtu + 51` (кламп 1200…1452) |
-| `idle_timeout` | duration | — | наследует `lx.masque.idle_timeout`, иначе выкл | suspend туннеля после простоя (освобождает gVisor-стек, насосы и QUIC keepalive); следующий dial его пересобирает. Отсутствие ключа → глобальный `lx.masque.idle_timeout` ([lx-config.ru.md §13](lx-config.ru.md#13-корневой-блок-lx)); явный `0` или отрицательное держат узел поднятым при любом глобальном значении; включает только положительное значение |
+| `mtu` | int | — | `1280` | MTU userspace-стека. На `h2` максимум `16000` (один IP-пакет = один HTTP/2 DATA frame). Узлы над masque (через `detour`, группу или как звено `chain`) получают размер пакета под этот `mtu` автоматически: у туннелей — `mtu`, у hysteria2/tuic/hysteria — `initial_packet_size` и выключенный PMTUD (при 1280: 1232 для IPv6-сервера, 1252 для IPv4; [lx-block.ru.md](lx-block.ru.md#lxmtu_align--выравнивание-mtu-и-размера-пакета-по-пути)). Внешний QUIC к серверу стартует с `mtu + 51` (кламп 1200…1452) |
+| `idle_timeout` | duration | — | наследует `lx.masque.idle_timeout`, иначе выкл | suspend туннеля после простоя (освобождает gVisor-стек, насосы и QUIC keepalive); следующий dial его пересобирает. Отсутствие ключа → глобальный `lx.masque.idle_timeout` ([lx-block.ru.md](lx-block.ru.md)); явный `0` или отрицательное держат узел поднятым при любом глобальном значении; включает только положительное значение |
 | `keep_alive_period` | duration | — | `30s` | QUIC keepalive (только h3). Отрицательное значение отключает |
 | `network_list` | list | — | tcp+udp | L4-протоколы, идущие через туннель |
 
@@ -901,7 +901,7 @@ SNI вообще. Почему так — [masque-explained §2.1](masque-explai
 - `h3` — только QUIC.
 - `h2` — только HTTP/2 поверх TCP:443; один IP-пакет = один DATA-кадр, `mtu` до 16000. ClientHello
   на `h2` защищают узловые `fragment` / `record_fragment` и секция `tls` блока `lx.sniff_guard`,
-  на `h3` — секция `quic` ([lx-config §13](lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni)).
+  на `h3` — секция `quic` ([lx-block](lx-block.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni)).
 
 ## 3.8 Idle-suspend и keepalive
 
@@ -1136,7 +1136,7 @@ Xray ≥ v26.9.8 принимает только ClientHello с гибридны
 Дефолта под `detour` нет: без блока `lx.sniff_guard` ClientHello режется только там, где
 у узла задан `fragment` или `record_fragment`, через `detour` тоже. Защиту от релеев,
 которые перенаправляют по SNI, настраивает блок `lx.sniff_guard`
-([lx-config §13](lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni)). Явное
+([lx-block](lx-block.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni)). Явное
 значение узла, включая `"record_fragment": false`, сильнее блока, если в блоке не задан
 `"override": true`. Фрагментируется только рукопожатие. Как режется ClientHello под
 `detour` в целом — [lx-config §9](lx-config.ru.md#9-clienthello-под-detour--без-дефолта).

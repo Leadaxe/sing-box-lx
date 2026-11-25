@@ -111,7 +111,7 @@ CONNECT-IP на части аплинков молча уходил в тайм�
 ошибкой «different public key».
 
 Лечится на релее — `routeOnly: true`. Со стороны клиента первый пакет прячет от сниффера
-[`lx.sniff_guard`](lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni): по HTTP/2
+[`lx.sniff_guard`](lx-block.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni): по HTTP/2
 разрезает ClientHello, по HTTP/3 ставит перед QUIC Initial байт-приманку.
 
 ## 3. HTTP/3 или HTTP/2
@@ -160,7 +160,7 @@ IPv6-фрагменты теряет. Поэтому узел над `masque` �
 при `mtu` 1280 по IPv6 проходит не больше 1232 байт UDP-payload, при `mtu` 1340 — не больше 1280.
 
 Узел над `masque` получает размер пакета под `mtu` сам: это делает
-[`lx.mtu_align`](lx-config.ru.md#lxmtu_align--выравнивание-mtu-и-размера-пакета-по-пути). Вручную —
+[`lx.mtu_align`](lx-block.ru.md#lxmtu_align--выравнивание-mtu-и-размера-пакета-по-пути). Вручную —
 `initial_packet_size: 1232` у QUIC-узла или `mtu: 1340` у `masque`; второе требует внешнего пути
 около 1440 байт до WARP.
 

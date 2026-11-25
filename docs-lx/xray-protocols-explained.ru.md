@@ -319,7 +319,7 @@ ClientHello», и соединение сохраняет исходное на�
 В `sing-box-lx` защиту настраивает корневой блок `lx.sniff_guard`
 ([FEATURE 019](../SPECS/FEATURES/019-SNIFF_GUARD/FEATURE.md)). Обзор — в
 [lx-config §9](lx-config.ru.md#9-clienthello-под-detour--без-дефолта)
-и [§13](lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni).
+и [lx-block.ru.md](lx-block.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni).
 Минимальный блок:
 
 ```json
@@ -450,7 +450,7 @@ sing-box-lx — один outbound для обеих форм:
 | `freedom` + `settings.fragment` + `sockopt.dialerProxy` | то же `tls.fragment` на узле, который ходит наружу напрямую | [§1.4](#14-фрагментация-разрезает-sni-на-куски); служебный `freedom` отдельным outbound-ом не становится |
 | `length`, `delay` / `interval`, `maxSplit` | нет | границы ядро находит по SNI, паузы — по ACK ([§1.4](#14-фрагментация-разрезает-sni-на-куски)); переносить нечего, переносится только факт включения |
 | — | `tls.fragment_fallback_delay` | [`fragment_fallback_delay`](../docs/configuration/shared/tls.md#fragment_fallback_delay): время ожидания, когда ядро не может вычислить его само; по умолчанию 500 мс |
-| — | `lx.sniff_guard`: защита от релея, перенаправляющего по SNI, с обучением по путям | [lx-config §13](lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni), [§9](lx-config.ru.md#9-clienthello-под-detour--без-дефолта) |
+| — | `lx.sniff_guard`: защита от релея, перенаправляющего по SNI, с обучением по путям | [lx-block](lx-block.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni), [§9](lx-config.ru.md#9-clienthello-под-detour--без-дефолта) |
 | — | `tls.reality.key_share` | только у нас, [§1.3](#13-браузеры-шлют-гибридный-key-share); относится к REALITY, пример в [§2.8](#28-пример-xray-и-sing-box-lx) |
 
 > 📖 Нормативное описание полей Xray — [TLS в документации Project X](https://xtls.github.io/config/transport.html#tlsobject).
@@ -678,7 +678,7 @@ sing-box-lx (`outbounds[]`):
 | `realitySettings.spiderX` | нет | [§2.5](#25-клиент-узнаёт-свой-сервер-по-hmac-в-сертификате), [§2.6](#26-форк-следует-за-правилами-приёма-сервера-xray-апстрим-отстаёт) |
 | `realitySettings.mldsa65Verify` | нет | [§2.6](#26-форк-следует-за-правилами-приёма-сервера-xray-апстрим-отстаёт) |
 | — | `tls.reality.key_share` | только у нас: [lx-config §7](lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello), [§1.3](#13-браузеры-шлют-гибридный-key-share) |
-| — | `tls.fragment`, `tls.record_fragment` | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment); дефолта под `detour` нет, защиту настраивает `lx.sniff_guard` — [lx-config §13](lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni) |
+| — | `tls.fragment`, `tls.record_fragment` | [`fragment`](../docs/configuration/shared/tls.md#fragment), [`record_fragment`](../docs/configuration/shared/tls.md#record_fragment); дефолта под `detour` нет, защиту настраивает `lx.sniff_guard` — [lx-block](lx-block.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni) |
 
 > 📖 Нормативное описание полей Xray — [REALITY в документации Project X](https://xtls.github.io/config/transport.html#realityobject).
 
@@ -1462,7 +1462,7 @@ build-тегами. Обратный порт, платформы sing-box в Xr
 ## См. также
 
 - **[lx-config.ru.md](lx-config.ru.md)** — обзор полей по фичам: [§6](lx-config.ru.md#6-vless-encryption--пост-квантовый-слой) VLESS
-  `encryption`, [§7](lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello) REALITY `key_share`, [§9](lx-config.ru.md#9-clienthello-под-detour--без-дефолта) ClientHello под `detour`, [§13](lx-config.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni) `lx.sniff_guard`.
+  `encryption`, [§7](lx-config.ru.md#7-reality-key_share--гибридный-или-классический-clienthello) REALITY `key_share`, [§9](lx-config.ru.md#9-clienthello-под-detour--без-дефолта) ClientHello под `detour`, [lx-block.ru.md](lx-block.ru.md#lxsniff_guard--защита-от-перенаправления-по-sni) `lx.sniff_guard`.
 - **[protocols-transports.ru.md](protocols-transports.ru.md)** — [§1](protocols-transports.ru.md#1-xhttp-транспорт)
   XHTTP: каждое поле, дефолт, ошибка.
 - Спеки фич: [017-REALITY](../SPECS/FEATURES/017-REALITY/FEATURE.md),
