@@ -780,14 +780,14 @@ func (g *URLTestGroup) rrStore(probe rrProbe) {
 
 // --- rounds (§4.2, §5) ------------------------------------------------------------
 
-// rrStartCheck starts the check of the pool when the round of the group is free and
-// the pause is over (or the right xr of W5 is open); it reports whether it did. Only
-// a soft sign on a pool node asks for it (§4.2).
-func (s *URLTest) rrStartCheck() bool {
+// rrStartRound starts round (rrHealCheck or rrHealSearch) when the round of the
+// group is free and the pause is over (or the right xr of W5 is open); it reports
+// whether it did. Only a soft sign on a pool node asks for the check (§4.2).
+func (s *URLTest) rrStartRound(round func()) bool {
 	if !s.balancer.heal.beginRound(time.Now()) {
 		return false
 	}
-	go s.rrHealCheck()
+	go round()
 	return true
 }
 
@@ -796,11 +796,7 @@ func (s *URLTest) rrStartCheck() bool {
 // no candidate, or while a run holds its flag (the run fills the slots itself),
 // there is nothing to probe and no round (W1).
 func (s *URLTest) rrStartSearch() bool {
-	if s.group.checking.Load() || !s.rrHasCandidate() || !s.balancer.heal.beginRound(time.Now()) {
-		return false
-	}
-	go s.rrHealSearch()
-	return true
+	return !s.group.checking.Load() && s.rrHasCandidate() && s.rrStartRound(s.rrHealSearch)
 }
 
 // rrExtraRound is the round of the right xr (W5): the check when a suspicion still
@@ -810,7 +806,7 @@ func (s *URLTest) rrExtraRound() {
 	now, epoch := rrClock(time.Now()), s.balancer.heal.epoch()
 	for _, entry := range s.balancer.slotsSnapshot() {
 		if entry.track != nil && entry.track.wantCheck.Load() && entry.track.suspected(now, epoch) {
-			s.rrStartCheck()
+			s.rrStartRound(s.rrHealCheck)
 			return
 		}
 	}

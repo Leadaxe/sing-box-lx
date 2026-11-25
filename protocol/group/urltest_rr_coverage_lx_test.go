@@ -246,7 +246,7 @@ func TestRRCov_networkRunAbortsTheCheck(t *testing.T) {
 	hold := make(chan struct{})
 	defer close(hold)
 	f.nodes["a"].hold, f.nodes["b"].hold = hold, hold
-	if !f.s.rrStartCheck() {
+	if !f.s.rrStartRound(f.s.rrHealCheck) {
 		t.Fatal("precondition: the check starts")
 	}
 	waitUntil(t, func() bool { return f.probes("a") == 1 && f.probes("b") == 1 })

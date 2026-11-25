@@ -75,7 +75,7 @@ func TestRRReview9_decisiveBesideFirstProbe(t *testing.T) {
 	t.Cleanup(func() { rrProbeTimeoutNs.Store(old) })
 	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
 	f.nodes["c"].hold = make(chan struct{})
-	if !f.s.rrStartCheck() {
+	if !f.s.rrStartRound(f.s.rrHealCheck) {
 		t.Fatal("no check")
 	}
 	time.Sleep(rrHangAfter + 1500*time.Millisecond)
@@ -277,7 +277,7 @@ func TestRRReview9_slotWithoutHistoryIsEmpty(t *testing.T) {
 	}
 	f.g.history.DeleteURLTestHistory("b")
 	f.s.balancer.heal.clearPause() // the pause after the search is over
-	if !f.s.rrStartCheck() {
+	if !f.s.rrStartRound(f.s.rrHealCheck) {
 		t.Fatal("no check")
 	}
 	waitLong(t, func() bool { return !f.s.balancer.heal.roundBusy() }, 10*time.Second)

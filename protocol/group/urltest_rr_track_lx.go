@@ -640,7 +640,7 @@ func (s *URLTest) rrOnPick(ctx context.Context, tag string, t *rrTrack, now int6
 		s.rrLifeProbe(node, t, packet, true)
 	}
 	if t.wantCheck.Load() && t.suspected(now, epoch) {
-		s.rrStartCheck() // D4, D5: the suspicion stays and starts the next check
+		s.rrStartRound(s.rrHealCheck) // D4, D5: the suspicion stays and starts the next check
 	}
 }
 
@@ -698,7 +698,7 @@ func (s *URLTest) rrLifeProbe(node adapter.Outbound, t *rrTrack, from int64, udp
 			t.suspectAt(from, rrClock(probe.ended)) // S1: the bypass after the failed life probe
 		}
 		t.wantCheck.Store(true)
-		s.rrStartCheck()
+		s.rrStartRound(s.rrHealCheck)
 	}()
 	return true
 }

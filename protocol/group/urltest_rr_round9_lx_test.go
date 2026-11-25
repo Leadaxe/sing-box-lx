@@ -522,7 +522,7 @@ func TestRR9_L3_fiveGroupsCoreBound(t *testing.T) {
 	}
 	start := time.Now()
 	for _, f := range fixtures {
-		if !f.s.rrStartCheck() {
+		if !f.s.rrStartRound(f.s.rrHealCheck) {
 			t.Fatal("precondition: the checks start")
 		}
 	}
