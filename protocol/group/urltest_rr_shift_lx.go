@@ -691,6 +691,16 @@ type rrFailure struct {
 	// silence: the failure is silence through a live node (no answer at all): it
 	// shifts the key and confirms no failure through the key's passed list.
 	silence bool
+	// rNoShift: the retry failed between us and its node's server (a proxy leaf):
+	// no shift past the retry node.
+	rNoShift bool
+}
+
+// retryNoShift records that the retry's failure shifts no key.
+func (f *rrFailure) retryNoShift() {
+	f.access.Lock()
+	defer f.access.Unlock()
+	f.rNoShift = true
 }
 
 func (s *URLTest) rrNewFailure(picked rrPick, member string) *rrFailure {
@@ -772,7 +782,7 @@ func (f *rrFailure) settle() {
 			f.shift = shift
 		}
 	}
-	if !f.aShifted || !f.rFailed || !f.rAlive || f.rShifted {
+	if !f.aShifted || !f.rFailed || !f.rAlive || f.rShifted || f.rNoShift {
 		return
 	}
 	f.rShifted = true

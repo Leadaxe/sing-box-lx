@@ -65,7 +65,7 @@ func dialHTTPWithHandshakeTimeoutLx(ctx context.Context, client *sHTTP.Client, n
 	}
 	if !expired {
 		// Preserve CachedConn and any tunnel data buffered with the response.
-		return conn, err
+		return conn, lxDestinationRefused(err) // lx: SPEC 138
 	}
 	// Expiry won, even if a response arrived while the watchdog was closing
 	// the socket. Close any returned connection to release buffered data too.

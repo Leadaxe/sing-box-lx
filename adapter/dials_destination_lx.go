@@ -2,6 +2,8 @@ package adapter
 
 // lx:begin SPEC 054 / SPEC 138 an outbound that dials the destination itself
 
+import "errors"
+
 // DestinationDialerLx is implemented by an outbound that, when a connection opens,
 // goes to the destination itself through a local or userspace network stack or a
 // tunnel of its own (MASQUE CONNECT-IP over gVisor), rather than asking a proxy
@@ -14,3 +16,25 @@ type DestinationDialerLx interface {
 }
 
 // lx:end SPEC 054 / SPEC 138
+
+// lx:begin SPEC 138 a proxy that refused the destination
+
+// DestinationRefusedLx wraps the error of an open through a proxy whose server
+// answered that the destination failed (a SOCKS reply with a failure code, an HTTP
+// CONNECT status such as 502): the proxy is alive and reached, the destination is
+// at fault. Every other failed open through a proxy says nothing about the
+// destination: it happened between us and the proxy's server.
+type DestinationRefusedLx struct {
+	Err error
+}
+
+func (e *DestinationRefusedLx) Error() string { return e.Err.Error() }
+func (e *DestinationRefusedLx) Unwrap() error { return e.Err }
+
+// IsDestinationRefusedLx reports whether err carries DestinationRefusedLx.
+func IsDestinationRefusedLx(err error) bool {
+	var refused *DestinationRefusedLx
+	return errors.As(err, &refused)
+}
+
+// lx:end SPEC 138

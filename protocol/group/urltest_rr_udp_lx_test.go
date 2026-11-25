@@ -329,14 +329,9 @@ func TestRRUDP_firstPacketConfirmsRetryNoShift(t *testing.T) {
 func TestRRUDP_keyTableUntouched(t *testing.T) {
 	f := newUDPFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
 	f.s.balancer.stickyHash = []string{C.URLTestStickyProcess, C.URLTestStickyDomain}
-	f.udp["a"].siteDown.Store(true) // TCP to the site fails through a, its probe answers
 	ctx := f.keyOn(t, 0)
-	conn, err := f.s.DialContext(ctx, N.NetworkTCP, udpSite())
-	if err != nil {
-		t.Fatal("precondition: the TCP retry opens: ", err)
-	}
-	conn.Close() // no byte: the retry confirms nothing
-	f.waitCheck(t)
+	// TCP shifted the key off a: the site was refused through live a.
+	f.s.rrShiftOn(f.s.balancer.rrKeyOf(ctx, udpSite()), 0, "a", false, false)
 	if shift := f.s.balancer.memory.shifts.shiftOf(f.s.balancer.rrKeyOf(ctx, udpSite()).table); shift != 1 {
 		t.Fatalf("precondition: TCP shifted the key by 1, got %d", shift)
 	}

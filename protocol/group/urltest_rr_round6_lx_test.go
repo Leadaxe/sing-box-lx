@@ -177,12 +177,12 @@ func TestRRSiteSilence_confirmsNoFailure(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
 	f.fb["a"].set(&f.fb["a"].mute, "hole.example", true)
 	key := f.keyOn(t, "hole.example", 0)
-	_, inner := f.openHole(t, key, "hole.example")
+	hole, inner := f.openHole(t, key, "hole.example")
 	if _, answered := f.dial(t, f.keyOn(t, "ok.example", 0), "ok.example"); !answered {
 		t.Fatal("precondition: a serves")
 	}
 	agedWait(f.s.balancer.trackOf("a"), inner)
-	f.s.selectBalanced(f.keyOn(t, "ok.example", 0), N.NetworkTCP, siteAddr("ok.example"))
+	hole.Close() // the client gives up
 	if shift, _ := f.shift(key, "hole.example"); shift != 1 {
 		t.Fatal("precondition: the key moved on by silence")
 	}

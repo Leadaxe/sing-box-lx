@@ -126,7 +126,7 @@ func TestRRReview_freezeSinceStartNeedsProbe(t *testing.T) {
 	f.fresh("a", "b", "c")        // the full run after the network change
 	end := time.Now()
 	heal.lastCheckEnd.Store(&end) // the gap: no probe now
-	conn, _ := f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], E.New("dial failed"), f.pickAt(key, "blocked.example", start))
+	conn, _ := f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], destinationRefused(), f.pickAt(key, "blocked.example", start))
 	closeConn(conn)
 	if shift, _ := f.shift(key, "blocked.example"); shift != 0 {
 		t.Fatalf("a freeze since the start: no shift by history, got %d", shift)
@@ -134,13 +134,13 @@ func TestRRReview_freezeSinceStartNeedsProbe(t *testing.T) {
 
 	heal.lastCheckEnd.Store(nil)
 	probes := f.probes("a")
-	conn, _ = f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], E.New("dial failed"), f.pickAt(key, "blocked.example", start))
+	conn, _ = f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], destinationRefused(), f.pickAt(key, "blocked.example", start))
 	closeConn(conn)
 	f.waitCheck(t)
 	if f.probes("a") != probes {
 		t.Fatal("a connection from before the freeze starts no check")
 	}
-	conn, _ = f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], E.New("dial failed"), f.pickAt(key, "blocked.example", time.Now()))
+	conn, _ = f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], destinationRefused(), f.pickAt(key, "blocked.example", time.Now()))
 	closeConn(conn)
 	f.waitCheck(t)
 	if f.probes("a") == probes {

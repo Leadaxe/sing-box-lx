@@ -86,8 +86,13 @@ func (n *fbNode) DialContext(ctx context.Context, network string, destination M.
 			return nil, lxhandshake.ErrTimeout
 		}
 	}
-	if n.dead.Load() || n.siteDown.Load() || n.is(n.openFail, host) {
-		return nil, E.New("node ", n.tag, " cannot reach ", host)
+	if n.is(n.openFail, host) {
+		// The proxy answers that the destination failed (a SOCKS failure code, an
+		// HTTP CONNECT 502): the site's fault.
+		return nil, &adapter.DestinationRefusedLx{Err: E.New("node ", n.tag, " cannot reach ", host)}
+	}
+	if n.dead.Load() || n.siteDown.Load() {
+		return nil, E.New("node ", n.tag, " down")
 	}
 	client, server := net.Pipe()
 	silent, hangup, mute := n.is(n.silent, host), n.is(n.hangup, host), n.is(n.mute, host)
@@ -132,6 +137,12 @@ func newShiftFixture(t *testing.T, tags []string, pool []string) *shiftFixture {
 	}
 	f.s.balancer.stickyHash = []string{C.URLTestStickyProcess, C.URLTestStickyDomain}
 	return &shiftFixture{healFixture: f, fb: fb}
+}
+
+// destinationRefused is the error of a proxy that answered that the destination
+// failed (adapter.DestinationRefusedLx): a failure that puts the site under suspicion.
+func destinationRefused() error {
+	return &adapter.DestinationRefusedLx{Err: E.New("dial failed: destination refused")}
 }
 
 func siteAddr(host string) M.Socksaddr {
@@ -392,7 +403,7 @@ func TestRRShift_networkGoneNoShiftByHistory(t *testing.T) {
 	key := f.keyOn(t, "blocked.example", 0)
 	end := time.Now()
 	f.s.balancer.heal.lastCheckEnd.Store(&end) // the gap: no probe now
-	conn, _ := f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], E.New("dial failed"), f.pickAt(key, "blocked.example", time.Now()))
+	conn, _ := f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], destinationRefused(), f.pickAt(key, "blocked.example", time.Now()))
 	closeConn(conn)
 	if shift, _ := f.shift(key, "blocked.example"); shift != 0 {
 		t.Fatalf("fresh history from before the failure: no shift, got %d", shift)

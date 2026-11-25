@@ -87,6 +87,10 @@ const (
 	// either direction, between two looks of the pick is a sleep the monotonic clock
 	// did not count (or a clock change): an event of the network.
 	rrClockJump = 10 * time.Second
+	// rrSiteSilentAfter — a TCP connection through a live node still waiting for its
+	// first byte this long after the client sent is a silent site even before the
+	// client leaves; a shorter wait is a slow answer as long as it lasts.
+	rrSiteSilentAfter = 30 * time.Second
 	// rrVerdictGap — a node gets a verdict probe no more often than this.
 	rrVerdictGap = 3 * time.Second
 	// rrVerdictBurst verdict probes start per group in rrVerdictWindow at most, one
@@ -618,9 +622,10 @@ func (s *URLTest) rrOnPick(ctx context.Context, tag string, t *rrTrack, now int6
 	if !loaded {
 		return
 	}
-	// A TCP connection waiting through a live node: the site is silent, not the
-	// node (rrSiteSilence) — its key moves on, the connection stays.
-	s.rrSiteSilence(t, cutoff)
+	// A TCP connection waiting through a live node for longer than rrSiteSilentAfter:
+	// the site is silent, not the node (rrSiteSilence) — its key moves on, the
+	// connection stays.
+	s.rrSiteSilence(t, now-int64(rrSiteSilentAfter))
 	event := s.balancer.heal.event()
 	since, found := t.newestHung(cutoff)
 	if found && since <= event {
@@ -809,7 +814,7 @@ func (s *URLTest) rrSettleProbe(probe rrProbe) {
 		t := s.balancer.trackOf(probe.member)
 		if t != nil {
 			t.markProved(rrClock(probe.started))
-			s.rrSiteSilence(t, rrClock(time.Now())-int64(rrHangAfter))
+			s.rrSiteSilence(t, rrClock(time.Now())-int64(rrSiteSilentAfter))
 		}
 		s.rrSettleAlive(t, rrClock(probe.started))
 	}
@@ -915,12 +920,13 @@ func (s *URLTest) rrClockJump(drift time.Duration) {
 }
 
 // rrSiteSilence is the look at the TCP connections through the node of t that
-// have waited for their first byte since cutoff or earlier: when the node proved
-// alive after such a connection started (rrProvedDuring), the node is fine and the
-// site is silent through it — the main geo case: the site drops the packets from
-// the node's address. Each such connection moves its key on once
-// (rrFirstByteConn.siteSilent); it is not closed and gets no retry — an answer may
-// still come.
+// have waited for their first byte since cutoff (rrSiteSilentAfter ago) or
+// earlier: when the node proved alive after such a connection started
+// (rrProvedDuring), the node is fine and the site is silent through it — the main
+// geo case: the site drops the packets from the node's address. Each such
+// connection moves its key on once (rrFirstByteConn.siteSilent); it is not closed
+// and gets no retry — an answer may still come. A shorter wait is a slow answer:
+// only the client leaving it (rrFirstByteConn.waitEnded) makes it silence.
 func (s *URLTest) rrSiteSilence(t *rrTrack, cutoff int64) {
 	proved := t.proved.Load()
 	if proved == math.MinInt64 || t.waits.oldest.Load() == 0 {

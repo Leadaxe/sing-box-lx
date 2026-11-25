@@ -483,6 +483,22 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 				s.rrAskVerdict(member, t, rrClock(time.Now()), mode)
 			}
 		} else {
+			// An active failure through a proxy leaf (refused, reset, EOF in the
+			// handshake) came between us and the node's server: it says nothing about
+			// the site and shifts no key; it is counted to the node when the retry
+			// gets the first byte (the node drops connections). Only the proxy's own
+			// answer that the destination failed (adapter.DestinationRefusedLx: a SOCKS
+			// failure code, an HTTP CONNECT status) puts the site under suspicion.
+			if !siteOnOpen && !adapter.IsDestinationRefusedLx(dialErr) {
+				failure.key = rrKey{}
+				// The node failed: its slot is under suspicion from this failure on,
+				// until the node proves alive or the check decides — new connections go
+				// round it meanwhile. (A refusal the proxy reported, or one of a leaf
+				// that goes to the site itself, is an answer: no suspicion.)
+				if t := s.balancer.trackOf(member.Tag()); t != nil && !picked.start.IsZero() && !s.rrProvedDuring(member.Tag(), picked.start) {
+					t.markSilent(rrClock(picked.start))
+				}
+			}
 			s.rrPend(member, failure, false, mode)
 		}
 	}
@@ -551,6 +567,9 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 			}
 			failure.retryFailed(retry.Tag())
 			if !rrSilence(err) {
+				if !s.rrSiteOnOpen(retry) && !adapter.IsDestinationRefusedLx(err) {
+					failure.retryNoShift() // between us and the retry node's server: no shift past it
+				}
 				s.rrPend(retry, failure, true, rrVerdictNow)
 			} else if s.rrProvedDuring(retry.Tag(), retryStart) {
 				if s.rrSiteOnOpen(retry) {

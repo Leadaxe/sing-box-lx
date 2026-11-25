@@ -39,14 +39,14 @@ func agedWait(track *rrTrack, inner *rrFirstByteConn) {
 }
 
 // 1. Reproduction of hole_1.log: the site holds the connection with no answer while
-// the node serves other requests. The first look at the slot after rrHangAfter
-// moves the key on; the next request goes through another node. The connection
-// stays open, nobody is struck.
+// the node serves other requests. While the client waits nothing moves (a slow
+// answer is no silence); the client gives up after 8 s — the key moves on and the
+// next request goes through another node. Nobody is checked or struck.
 func TestRRSiteSilence_liveNodeUnderLoad(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
 	f.fb["a"].set(&f.fb["a"].mute, "hole.example", true)
 	key := f.keyOn(t, "hole.example", 0)
-	_, inner := f.openHole(t, key, "hole.example")
+	hole, inner := f.openHole(t, key, "hole.example")
 	track := f.s.balancer.trackOf("a")
 	// The load: another key of slot a gets its answer after the hole opened.
 	if _, answered := f.dial(t, f.keyOn(t, "ok.example", 0), "ok.example"); !answered {
@@ -54,44 +54,90 @@ func TestRRSiteSilence_liveNodeUnderLoad(t *testing.T) {
 	}
 	agedWait(track, inner)
 	f.s.selectBalanced(f.keyOn(t, "ok.example", 0), N.NetworkTCP, siteAddr("ok.example")) // a look at slot a
+	if shift, _ := f.shift(key, "hole.example"); shift != 0 {
+		t.Fatalf("a wait of 6 s is a slow answer, not silence: got shift %d", shift)
+	}
+	inner.wroteAt.Add(-int64(2 * time.Second)) // the client gives up after 8 s
+	hole.Close()
 	if shift, _ := f.shift(key, "hole.example"); shift != 1 {
-		t.Fatalf("the silent site through live a moves the key on, got shift %d", shift)
+		t.Fatalf("the client left with no byte through live a: the key moves on, got shift %d", shift)
 	}
 	if selected, _ := f.s.selectBalanced(key, N.NetworkTCP, siteAddr("hole.example")); selected.Tag() != "b" {
 		t.Fatalf("the next request of the key goes through b, got %s", selected.Tag())
 	}
-	if inner.state.Load()&rrStateClosed != 0 || f.probes("a") != 0 || !samePool(f.pool(), "a", "b", "c") {
-		t.Fatal("the connection stays open, a is not checked or struck")
-	}
-	// Once per connection.
-	track.hangLook.Store(0)
-	f.s.selectBalanced(f.keyOn(t, "ok.example", 0), N.NetworkTCP, siteAddr("ok.example"))
-	if shift, _ := f.shift(key, "hole.example"); shift != 1 {
-		t.Fatalf("one shift per connection, got %d", shift)
+	if f.probes("a") != 0 || !samePool(f.pool(), "a", "b", "c") {
+		t.Fatal("a is not checked or struck")
 	}
 }
 
 // 1. Reproduction of hole_0.log: nothing else goes through the node. Its slot is
-// suspect, the check probes it, it answers while the connection waits: the key
-// moves on.
+// suspect, the check probes it, it answers while the connection waits; the client
+// gives up after 8 s: the key moves on.
 func TestRRSiteSilence_idleNodeProbeAnswers(t *testing.T) {
 	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
 	f.fb["a"].set(&f.fb["a"].mute, "hole.example", true)
 	key := f.keyOn(t, "hole.example", 0)
-	_, inner := f.openHole(t, key, "hole.example")
+	hole, inner := f.openHole(t, key, "hole.example")
 	agedWait(f.s.balancer.trackOf("a"), inner)
 	if selected, _ := f.s.selectBalanced(key, N.NetworkTCP, siteAddr("hole.example")); selected.Tag() == "a" {
 		t.Fatal("precondition: idle a is suspect")
 	}
 	f.waitCheck(t)
-	if f.probes("a") == 0 {
-		t.Fatal("the check probes a")
+	if f.probes("a") == 0 || f.g.history.LoadURLTestHistory("a") == nil {
+		t.Fatal("the check probes a, a answers")
 	}
+	if shift, _ := f.shift(key, "hole.example"); shift != 0 {
+		t.Fatalf("the probe's answer alone moves no key, got %d", shift)
+	}
+	inner.wroteAt.Add(-int64(2 * time.Second))
+	hole.Close()
 	if shift, _ := f.shift(key, "hole.example"); shift != 1 {
-		t.Fatalf("a answered while the connection waited: the key moves on, got %d", shift)
+		t.Fatalf("a answered while the connection waited and the client left: the key moves on, got %d", shift)
 	}
-	if inner.state.Load()&rrStateClosed != 0 || f.g.history.LoadURLTestHistory("a") == nil {
-		t.Fatal("the connection stays open, a is alive")
+}
+
+// 2. A slow answer — 6, 10, 20 s — is a success: nothing moves while it waits, at
+// the looks or after a probe, nor when the answer comes and the connection ends.
+// A wait over rrSiteSilentAfter while the client still waits is silence.
+func TestRRSiteSilence_slowAnswerIsNoSilence(t *testing.T) {
+	for _, wait := range []time.Duration{6 * time.Second, 10 * time.Second, 20 * time.Second} {
+		f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
+		key := f.keyOn(t, "slow.example", 0)
+		client, server := net.Pipe()
+		go func() { _, _ = io.Copy(io.Discard, server) }()
+		track := f.s.balancer.trackOf("a")
+		start := time.Now()
+		conn := newRRFirstByteConn(client, &rrConnWatch{s: f.s, member: "a", track: track, start: start, key: f.s.balancer.rrKeyOf(key, siteAddr("slow.example"))})
+		conn.Write([]byte("GET /slow"))
+		track.markProved(rrClock(start.Add(time.Millisecond)))
+		ageTrack(track, wait)
+		conn.wroteAt.Add(-int64(wait))
+		track.hangLook.Store(0)
+		f.s.rrOnPick(context.Background(), "a", track, rrClock(time.Now()))
+		f.s.rrSettleProbe(rrProbe{member: "a", leaf: "a", answered: true, started: time.Now(), ended: time.Now()})
+		go server.Write([]byte("HTTP/1.1 200"))
+		buffer := make([]byte, 16)
+		if n, _ := conn.Read(buffer); n == 0 {
+			t.Fatal("precondition: the answer")
+		}
+		conn.Close()
+		server.Close()
+		if shift, _ := f.shift(key, "slow.example"); shift != 0 {
+			t.Fatalf("an answer after %v is a success: no shift, got %d", wait, shift)
+		}
+	}
+	f := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
+	f.fb["a"].set(&f.fb["a"].mute, "hole.example", true)
+	key := f.keyOn(t, "hole.example", 0)
+	_, inner := f.openHole(t, key, "hole.example")
+	track := f.s.balancer.trackOf("a")
+	track.markProved(rrClock(time.Now()))
+	ageTrack(track, rrSiteSilentAfter+time.Second)
+	inner.wroteAt.Add(-int64(rrSiteSilentAfter + time.Second))
+	track.hangLook.Store(0)
+	f.s.rrOnPick(context.Background(), "a", track, rrClock(time.Now()))
+	if shift, _ := f.shift(key, "hole.example"); shift != 1 {
+		t.Fatalf("a wait of 31 s with no byte through live a is silence, got %d", shift)
 	}
 }
 
