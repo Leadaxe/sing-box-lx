@@ -874,7 +874,7 @@ func TestRRUDP_controlNeedsTCPOnly(t *testing.T) {
 	}
 	conn.Close()
 	f.waitCheck(t)
-	if f.listens("c") != 1 || f.probes("b") != 2 || f.probes("c") != 1 { // b: the control and its bracket; c: the third
+	if f.listens("c") != 1 || f.probes("b") != 2 || f.probes("c") != 0 { // b: the control and its bracket; c is not needed
 		t.Fatalf("retry through c, control b: listens c %d, probes b %d c %d", f.listens("c"), f.probes("b"), f.probes("c"))
 	}
 }

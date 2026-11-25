@@ -203,24 +203,40 @@ func (h *rrHeal) hangReady() bool {
 	return end == nil || time.Since(*end) >= rrHangGap
 }
 
+// endHangCheck and endCheck end a check and start its gap — unless a freeze cut
+// it short: its probes said nothing, and the first reason after the freeze gets a
+// check at once.
 func (h *rrHeal) endHangCheck() {
-	now := time.Now()
-	h.lastHangEnd.Store(&now)
+	if !h.frozen() {
+		now := time.Now()
+		h.lastHangEnd.Store(&now)
+	}
 	h.running.Store(false)
 }
 
 func (h *rrHeal) endCheck() {
-	now := time.Now()
-	h.lastCheckEnd.Store(&now)
+	if !h.frozen() {
+		now := time.Now()
+		h.lastCheckEnd.Store(&now)
+	}
 	h.running.Store(false)
 }
 
 // freeze freezes the self-heal for rrHealFreeze and aborts the check in flight.
+// The gaps armed before it — of the checks, of the checks from a reason, of the
+// verdict probes of the group — are dropped: what they bounded happened on a
+// network that was going away, and the first reason after the freeze gets its
+// check at once.
 func (h *rrHeal) freeze() {
 	now := time.Now()
 	until := now.Add(rrHealFreeze)
 	h.frozenUntil.Store(&until)
 	h.lastFreeze.Store(rrClock(now))
+	h.lastCheckEnd.Store(nil)
+	h.lastHangEnd.Store(nil)
+	h.verdictAccess.Lock()
+	h.verdictStarts = [rrVerdictBurst]int64{}
+	h.verdictAccess.Unlock()
 	h.abortCheck()
 }
 
@@ -414,6 +430,11 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 				failure.setAlive()
 			} else {
 				failure = nil
+				// Nothing proved the node alive while it was silent: the slot stays
+				// under suspicion past the end of the connection (rrTrack.silentSince).
+				if t := s.balancer.trackOf(member.Tag()); t != nil && !picked.start.IsZero() {
+					t.markSilent(rrClock(picked.start))
+				}
 			}
 			if t := s.balancer.trackOf(member.Tag()); t != nil {
 				s.rrAskVerdict(member, t, rrClock(time.Now()), mode)
@@ -490,6 +511,8 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 				s.rrPend(retry, failure, true, rrVerdictNow)
 			} else if s.rrProvedDuring(retry.Tag(), retryStart) {
 				failure.setRetryAlive() // the retry's node proved alive while it waited
+			} else if t := s.balancer.trackOf(retry.Tag()); t != nil {
+				t.markSilent(rrClock(retryStart))
 			}
 		}
 		return rrRetried{}, false
@@ -546,9 +569,21 @@ type rrProbe struct {
 	ended    time.Time // when the probe answered or gave up
 }
 
-// rrProbeTimeout is the timeout of a self-heal probe: the group's (C.TCPTimeout); a
-// variable so that tests can shorten it.
-var rrProbeTimeout = C.TCPTimeout
+// rrThirdAfter is how long a check waits for the neighbour B to answer before it
+// probes the third node too (rrHealCheck).
+var rrThirdAfter = 300 * time.Millisecond
+
+// rrProbeTimeoutNs is the timeout of a self-heal probe: the group's (C.TCPTimeout);
+// atomic so that tests can shorten it while probes of other tests still run.
+var rrProbeTimeoutNs atomic.Int64
+
+func init() {
+	rrProbeTimeoutNs.Store(int64(C.TCPTimeout))
+}
+
+func rrProbeTimeout() time.Duration {
+	return time.Duration(rrProbeTimeoutNs.Load())
+}
 
 // rrProbeNode probes the live leaf of member without writing history. With
 // byHistory a leaf with history younger than rrHealFresh is not probed and counts
@@ -572,7 +607,7 @@ func (g *URLTestGroup) rrProbeNode(ctx context.Context, member adapter.Outbound,
 		result.err = E.New("outbound not found: ", result.leaf)
 		return result
 	}
-	testCtx, cancel := context.WithTimeout(ctx, rrProbeTimeout)
+	testCtx, cancel := context.WithTimeout(ctx, rrProbeTimeout())
 	defer cancel()
 	done := make(chan urlTestResult, 1)
 	go func() {
@@ -665,10 +700,23 @@ func (s *URLTest) rrHealCheck(member adapter.Outbound, neighbour adapter.Outboun
 		launch(roleB, neighbour)
 		waiting++
 	}
-	if third != nil {
-		launch(roleC, third)
-		waiting++
+	// C is probed from the start as well, with one exception that keeps a probe: a
+	// neighbour B that answers within rrThirdAfter is the control, and C is not
+	// needed. C starts at rrThirdAfter, or as soon as B is silent, or at once with
+	// no B.
+	var cLaunched bool
+	startC := func() {
+		if third != nil && !cLaunched {
+			cLaunched = true
+			launch(roleC, third)
+			waiting++
+		}
 	}
+	if neighbour == nil {
+		startC()
+	}
+	thirdTimer := time.NewTimer(rrThirdAfter)
+	defer thirdTimer.Stop()
 	var probes [3]rrProbe
 	var done [3]bool
 	need := func() bool {
@@ -687,8 +735,21 @@ func (s *URLTest) rrHealCheck(member adapter.Outbound, neighbour adapter.Outboun
 		}
 		return third != nil && !done[roleC]
 	}
-	for waiting > 0 && need() {
-		r := <-results
+	for need() {
+		// B is silent, or A and B are in and C is what decides: C now.
+		if neighbour != nil && done[roleB] && !probes[roleB].answered {
+			startC()
+		}
+		if waiting == 0 {
+			break
+		}
+		var r result
+		select {
+		case r = <-results:
+		case <-thirdTimer.C:
+			startC()
+			continue
+		}
 		waiting--
 		probes[r.role], done[r.role] = r.probe, true
 		// The first answer after the whole network was down is the network coming
@@ -756,7 +817,7 @@ func (s *URLTest) rrHealCheck(member adapter.Outbound, neighbour adapter.Outboun
 func (s *URLTest) rrStrikeBracketed(ctx context.Context, dead []rrProbe, control rrProbe) {
 	g := s.group
 	heal := &s.balancer.heal
-	if control.ended.Sub(dead[0].started) > rrProbeTimeout/2 {
+	if control.ended.Sub(dead[0].started) > rrProbeTimeout()/2 {
 		s.logger.Debug("round_robin: the control answered late (", rrProbeSummary(control), "); the network came back during the check")
 		s.rrOwnNetwork(append(dead, control)...)
 		return

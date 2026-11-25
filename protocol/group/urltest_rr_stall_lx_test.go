@@ -16,9 +16,8 @@ import (
 
 func shortProbes(t *testing.T, timeout time.Duration) {
 	t.Helper()
-	original := rrProbeTimeout
-	rrProbeTimeout = timeout
-	t.Cleanup(func() { rrProbeTimeout = original })
+	original := rrProbeTimeoutNs.Swap(int64(timeout))
+	t.Cleanup(func() { rrProbeTimeoutNs.Store(original) })
 }
 
 // (а) A silent failure (a timeout) counts against the site only when the node proved
@@ -222,7 +221,7 @@ func TestRRBracket_silentNodeAndProofDuringSecondProbe(t *testing.T) {
 	if f.g.history.LoadURLTestHistory("a") != nil {
 		t.Fatal("silent a is struck out")
 	}
-	t.Logf("silent node struck in %v (probe timeout %v)", elapsed, rrProbeTimeout)
+	t.Logf("silent node struck in %v (probe timeout %v)", elapsed, rrProbeTimeout())
 
 	g := newShiftFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"})
 	g.fb["a"].hold = never

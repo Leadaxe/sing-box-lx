@@ -224,8 +224,8 @@ func TestRRHeal_deadNodeRetriedStruckReplaced(t *testing.T) {
 	}
 	// b is the control, probed live despite its fresh history, and once more after
 	// a's silence (the bracket); c, the third, is probed at the start with a and b.
-	if f.probes("b") != 2 || f.probes("c") != 1 {
-		t.Fatalf("control b is probed live twice, the third once: b=%d c=%d", f.probes("b"), f.probes("c"))
+	if f.probes("b") != 2 || f.probes("c") != 0 {
+		t.Fatalf("control b is probed live twice, the third not at all (b answered in time): b=%d c=%d", f.probes("b"), f.probes("c"))
 	}
 	if h := f.g.history.LoadURLTestHistory("d"); h == nil || time.Since(h.Time) < 30*time.Second {
 		t.Fatal("the silence of a candidate is not written: d keeps its old history")

@@ -92,8 +92,10 @@ func TestRRSuspect_longPollIdleAndBusy(t *testing.T) {
 	if inner, _ := common.Cast[*rrFirstByteConn](poll); inner == nil || inner.state.Load()&rrStateClosed != 0 {
 		t.Fatal("the long request is not closed")
 	}
-	if selected, _ := f.s.selectBalanced(key, N.NetworkTCP, siteAddr("poll.example")); selected.Tag() != "a" {
-		t.Fatal("the key is back on a")
+	// The node is fine again: a key of slot a goes to a. (The long request's own key
+	// moved on: through a live node it waited for nothing — rrSiteSilence.)
+	if selected, _ := f.s.selectBalanced(f.keyOn(t, "other.example", 0), N.NetworkTCP, siteAddr("other.example")); selected.Tag() != "a" {
+		t.Fatal("a key of slot a is back on a")
 	}
 
 	// Busy: a connection started after the long request got its first byte.

@@ -243,9 +243,25 @@ type rrTrack struct {
 	// suspectSince is the since of the newest unfinished connection older than
 	// rrHangAfter not covered by proved, found by the last look (rrOnPick); 0 none.
 	suspectSince atomic.Int64
-	verdictBusy  atomic.Bool  // a verdict probe of the node is in flight
-	verdictLast  atomic.Int64 // rrClock of the start of the last verdict probe
-	deadAt       atomic.Int64 // rrClock of the last dead verdict on the node (rrDead)
+	// silentSince is the start of the latest connection through the node that ended
+	// in silence (a timeout) with no proof of the node while it waited: the slot
+	// stays under suspicion until the node proves alive after it (proved) or is
+	// found dead. A freeze leaves it; a new node in the slot has a new tracker.
+	silentSince atomic.Int64
+	verdictBusy atomic.Bool  // a verdict probe of the node is in flight
+	verdictLast atomic.Int64 // rrClock of the start of the last verdict probe
+	deadAt      atomic.Int64 // rrClock of the last dead verdict on the node (rrDead)
+}
+
+// markSilent records a connection through the node that started at since and ended
+// in silence with no proof of the node while it waited: the slot is suspect.
+func (t *rrTrack) markSilent(since int64) {
+	for {
+		old := t.silentSince.Load()
+		if old >= since || t.silentSince.CompareAndSwap(old, since) {
+			return
+		}
+	}
 }
 
 // markProved records that the node proved alive from at on.
@@ -262,6 +278,9 @@ func (t *rrTrack) markProved(at int64) {
 // unfinished connection through it is older than rrHangAfter and the node has not
 // proved alive since it started. It allocates nothing and takes no lock.
 func (t *rrTrack) suspect(now int64) bool {
+	if silent := t.silentSince.Load(); silent != 0 && t.proved.Load() < silent {
+		return true // a connection ended in silence, no proof since it started
+	}
 	cutoff := now - int64(rrHangAfter)
 	oldest := t.dials.oldest.Load()
 	if w := t.waits.oldest.Load(); w != 0 && (oldest == 0 || w < oldest) {
@@ -317,6 +336,9 @@ func (t *rrTrack) attention(now int64) bool {
 	}
 	if now < t.hangLook.Load() {
 		return false
+	}
+	if silent := t.silentSince.Load(); silent != 0 && t.proved.Load() < silent {
+		return true
 	}
 	cutoff := now - int64(rrHangAfter)
 	if d := t.dials.oldest.Load(); d != 0 && d <= cutoff {
@@ -588,7 +610,18 @@ func (s *URLTest) rrOnPick(ctx context.Context, tag string, t *rrTrack, now int6
 	if !loaded {
 		return
 	}
+	// A TCP connection waiting through a live node: the site is silent, not the
+	// node (rrSiteSilence) — its key moves on, the connection stays.
+	s.rrSiteSilence(t, cutoff)
 	since, found := t.newestHung(cutoff)
+	sticky := false
+	if !found || t.proved.Load() >= since {
+		// No unfinished connection to suspect the node by; a connection that ended
+		// in silence with no proof keeps the suspicion.
+		if silent := t.silentSince.Load(); silent != 0 && t.proved.Load() < silent {
+			since, found, sticky = silent, true, true
+		}
+	}
 	if found && t.proved.Load() < since {
 		// A history answer written by another run started no earlier than its time
 		// minus the probe timeout: only that much is proved by it.
@@ -599,11 +632,19 @@ func (s *URLTest) rrOnPick(ctx context.Context, tag string, t *rrTrack, now int6
 	if !found || t.proved.Load() >= since {
 		t.suspectSince.Store(0)
 	} else {
-		t.suspectSince.Store(since)
+		if !sticky {
+			t.suspectSince.Store(since)
+		}
 		if s.balancer.heal.hangReady() && s.rrHang(tag, rrTime(since), false) {
 			return
 		}
-		s.rrVerdictProbe(node, t, nil) // the check cannot run now: the node alone answers for itself
+		// The check cannot run now: the node alone answers for itself. After a
+		// connection that ended in silence its silence hands over to the check.
+		var silent func()
+		if sticky {
+			silent = func() { s.rrStartCheck(node, false) }
+		}
+		s.rrVerdictProbe(node, t, silent)
 		return
 	}
 	// A UDP flow without an answer is no suspicion (one-way UDP is common: QUIC to a
@@ -754,6 +795,7 @@ func (s *URLTest) rrSettleProbe(probe rrProbe) {
 		t := s.balancer.trackOf(probe.member)
 		if t != nil {
 			t.markProved(rrClock(probe.started))
+			s.rrSiteSilence(t, rrClock(time.Now())-int64(rrHangAfter))
 		}
 		s.rrSettleAlive(t, rrClock(probe.started))
 	}
@@ -788,8 +830,14 @@ func (s *URLTest) rrNetworkBack(now int64) bool {
 		if entry.track == nil {
 			continue
 		}
+		// A node that proved alive after its oldest unfinished connection started
+		// (it answered a probe meanwhile) is no part of a stall.
 		d, w := entry.track.dials.oldest.Load(), entry.track.waits.oldest.Load()
-		if (d != 0 && d <= cutoff) || (w != 0 && w <= cutoff) {
+		oldest := d
+		if w != 0 && (oldest == 0 || w < oldest) {
+			oldest = w
+		}
+		if oldest != 0 && oldest <= cutoff && entry.track.proved.Load() < oldest {
 			stalled++
 		}
 	}
@@ -799,6 +847,53 @@ func (s *URLTest) rrNetworkBack(now int64) bool {
 	b.heal.freeze()
 	s.logger.Info("round_robin: network back after a stall (", stalled, " nodes held connections with no answer); self-heal frozen for ", rrHealFreeze)
 	return true
+}
+
+// rrSiteSilence is the look at the TCP connections through the node of t that
+// have waited for their first byte since cutoff or earlier: when the node proved
+// alive after such a connection started (rrProvedDuring), the node is fine and the
+// site is silent through it — the main geo case: the site drops the packets from
+// the node's address. Each such connection moves its key on once
+// (rrFirstByteConn.siteSilent); it is not closed and gets no retry — an answer may
+// still come.
+func (s *URLTest) rrSiteSilence(t *rrTrack, cutoff int64) {
+	proved := t.proved.Load()
+	if proved == math.MinInt64 || t.waits.oldest.Load() == 0 {
+		return
+	}
+	var silent []*rrFirstByteConn
+	t.access.Lock()
+	for e := t.waits.head; e != nil && e.since <= cutoff; e = e.next {
+		c, isConn := e.owner.(*rrFirstByteConn)
+		if !isConn || c.watch.packet || c.watch.start.IsZero() || c.state.Load()&(rrStateSiteSilent|rrStateGotByte) != 0 {
+			continue
+		}
+		if proved >= rrClock(c.watch.start) {
+			silent = append(silent, c)
+		}
+	}
+	t.access.Unlock()
+	for _, c := range silent {
+		c.siteSilent()
+	}
+}
+
+// rrSiteSilent moves the key of the connection of w on past its node: the site
+// did not answer through a live node. The usual rules of the shift hold (the
+// expected shift, no shift for a detour, the address-problem mark after the circle,
+// nothing while frozen); the failure is confirmed to the node when the key gets a
+// first byte on another slot. Without stickiness there is no key: nothing.
+func (s *URLTest) rrSiteSilent(w *rrConnWatch) {
+	b := s.balancer
+	if !w.key.valid || s.group.ctx.Err() != nil || b.heal.frozen() || b.memory.shifts.marked(w.key.table) {
+		return
+	}
+	picked := rrPick{key: w.key, shift: w.shift, detour: w.detour}
+	if w.failure != nil {
+		picked.shift = w.failure.expectedShift() // the retry: the key as its failure left it
+	}
+	s.logger.Debug("round_robin: a connection through ", w.member, " has had no answer from ", w.key.label(b.stickyHash), " while the node is alive; the site is silent through it")
+	s.rrNewFailure(picked, w.member).setAlive()
 }
 
 // rrSilence reports whether a failed open is silence — nobody answered: a timeout
@@ -822,6 +917,7 @@ func (s *URLTest) rrDead(t *rrTrack) {
 	}
 	t.dropPending()
 	t.deadAt.Store(rrClock(time.Now()))
+	t.silentSince.Store(0) // the verdict is in
 	if s.balancer.heal.frozen() {
 		return
 	}

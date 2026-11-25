@@ -210,6 +210,7 @@ const (
 	rrStateHalfClosed                    // half-closed from our side: a close without a byte is no failure
 	rrStateTracked                       // listed as waiting for its first byte (rrTrack.waits)
 	rrStateClientEOF                     // the copy closes it at the client's end of stream: no client giving up
+	rrStateSiteSilent                    // counted once as a silent site through a live node (rrSiteSilence)
 )
 
 // rrFirstByteConn watches a connection for its first byte (see the file header).
@@ -220,6 +221,9 @@ type rrFirstByteConn struct {
 	held  rrConnWatch
 	entry rrTrackEntry // in watch.track.waits while the client waits for the first byte
 	dial  *rrDial      // the tracked dial of the connection; its context is released on the close
+	// wroteAt is the rrClock of the client's first write: the wait for the first
+	// byte starts there.
+	wroteAt atomic.Int64
 }
 
 func newRRFirstByteConn(conn net.Conn, watch *rrConnWatch) *rrFirstByteConn {
@@ -248,7 +252,9 @@ func (c *rrFirstByteConn) wrote() {
 	if c.watch.packet {
 		list = &c.watch.track.pwaits // a connected UDP flow: no suspicion, a reason only
 	}
-	c.watch.track.track(list, &c.entry, rrClock(time.Now()), c)
+	at := rrClock(time.Now())
+	c.wroteAt.Store(at)
+	c.watch.track.track(list, &c.entry, at, c)
 	c.set(rrStateTracked)
 	if c.state.Load()&(rrStateGotByte|rrStateClosed|rrStateDone) != 0 {
 		c.watch.track.untrack(&c.entry) // the outcome came in meanwhile
@@ -370,10 +376,40 @@ func (c *rrFirstByteConn) WriteBuffer(buffer *buf.Buffer) error {
 // its later close is still a reason (rrHang); a close at the end of stream
 // (halfClose false: the node's connection has no half-close) is none.
 func (c *rrFirstByteConn) LxClientFinished(halfClose bool) {
+	c.waitEnded(false)
 	if halfClose {
 		c.set(rrStateHalfClosed)
 	} else {
 		c.set(rrStateHalfClosed | rrStateClientEOF)
+	}
+}
+
+// waitEnded takes the moment the client stops waiting for the first byte (it
+// half-closed, or we close): after rrHangAfter or more of waiting, a node that
+// proved alive meanwhile means a silent site (rrSiteSilence: the key moves on);
+// a node that did not leaves its slot under suspicion when the connection is
+// closed (closing: the wait ended in silence). Neither for UDP, a connection that
+// got its first byte, or an interrupt of the group.
+func (c *rrFirstByteConn) waitEnded(closing bool) {
+	state := c.state.Load()
+	if c.watch.packet || state&rrStateWrote == 0 || state&(rrStateGotByte|rrStateDone) != 0 || c.watch.track == nil {
+		return
+	}
+	wrote := c.wroteAt.Load()
+	if wrote == 0 || rrClock(time.Now())-wrote < int64(rrHangAfter) || c.watch.s.balancer.heal.interrupting.Load() > 0 {
+		return
+	}
+	if c.watch.s.rrProvedDuring(c.watch.member, c.watch.start) {
+		c.siteSilent()
+	} else if closing && !c.watch.start.IsZero() {
+		c.watch.track.markSilent(rrClock(c.watch.start))
+	}
+}
+
+// siteSilent counts the connection once as a silent site through a live node.
+func (c *rrFirstByteConn) siteSilent() {
+	if old := c.set(rrStateSiteSilent); old&rrStateSiteSilent == 0 {
+		c.watch.s.rrSiteSilent(c.watch)
 	}
 }
 
@@ -394,6 +430,9 @@ func (c *rrFirstByteConn) CloseWrite() error {
 // half-close before it does not change that; a close at the client's end of
 // stream is no giving up.
 func (c *rrFirstByteConn) Close() error {
+	if c.state.Load()&rrStateClosed == 0 {
+		c.waitEnded(true)
+	}
 	old := c.set(rrStateClosed)
 	c.untrack()
 	if old&(rrStateClosed|rrStateDone|rrStateGotByte|rrStateClientEOF) == 0 && old&rrStateWrote != 0 {
