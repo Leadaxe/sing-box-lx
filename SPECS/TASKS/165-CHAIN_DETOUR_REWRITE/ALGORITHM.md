@@ -352,4 +352,4 @@ WG-туннель. Узел получает две записи `changes` по 
 
 ## 9. Константы
 
-Новых нет. Режимы `mtu_align` прежние; каталог `strip` сокращён до `tls.fragment`.
+Новых нет. Режимы `mtu_align` прежние; каталог `strip` — `tls.fragment`, `tls.spoof`, `tls.kernel`, `tls.engine`.

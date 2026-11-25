@@ -51,9 +51,6 @@ type LXDetour struct {
 type LXDetourStrip struct {
 	Bool    *bool
 	Filters *LXDetourFilters
-	// object reports the object form, which with no filters key strips
-	// nothing (Р5).
-	object bool
 }
 
 // LXDetourFilters is lx.detour.strip.filters as written.
@@ -194,7 +191,7 @@ func parseLXDetourStrip(content []byte) (*LXDetourStrip, error) {
 	if err != nil {
 		return nil, err
 	}
-	strip := &LXDetourStrip{object: true}
+	strip := &LXDetourStrip{}
 	for key, raw := range keys {
 		if key != "filters" {
 			return nil, E.New("lx.detour.strip: unknown key ", key)
@@ -387,7 +384,7 @@ func ExpandedLXDetour(resolved LXDetourResolved) *LXDetour {
 	tls := &LXDetourTLSFilters{Fragment: &strip.TLSFragment, Spoof: &strip.TLSSpoof, Kernel: &strip.TLSKernel, Engine: &strip.TLSEngine}
 	return &LXDetour{
 		MTUAlign:        resolved.MTUAlign,
-		Strip:           &LXDetourStrip{object: true, Filters: &LXDetourFilters{TLS: tls}},
+		Strip:           &LXDetourStrip{Filters: &LXDetourFilters{TLS: tls}},
 		ExceptOutbounds: except,
 		expanded:        true,
 	}
