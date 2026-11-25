@@ -509,6 +509,25 @@ func TestRRCov_Q2_medianFloorAndReset(t *testing.T) {
 	}
 }
 
+// Q2, §4.2: the median is taken over P, and a slot whose node has no history (D1
+// of another group erased the shared leaf) is an empty slot, no node of P: its
+// share stays out of the median even with counters left in it.
+func TestRRCov_Q2_medianWithoutNodeWithoutHistory(t *testing.T) {
+	f := newHealFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c", "d"}, 0)
+	b := f.s.balancer
+	for tag, counts := range map[string][2]uint32{"a": {8, 3}, "b": {10, 3}, "c": {10, 3}, "d": {10, 0}} {
+		b.memory.access.Lock()
+		c := b.memory.count(tag)
+		c.conns, c.fails = counts[0], counts[1]
+		b.memory.access.Unlock()
+	}
+	f.g.history.DeleteURLTestHistory("b")
+	// a: 4/8 = 0.5 against the median of {c, d} = 0.15; with b in it, 0.3, and no quarantine.
+	if verdict := b.rrCountFail("a", rrKey{}); !verdict.quarantined || verdict.median != 0.15 {
+		t.Fatalf("a: 4/8 against the median of c and d: %+v", verdict)
+	}
+}
+
 // Q2 → §5: a quarantine erases the K2 records of the node and starts the check;
 // the replacement puts a candidate into its slot.
 func TestRRCov_Q2_quarantineReplaced(t *testing.T) {

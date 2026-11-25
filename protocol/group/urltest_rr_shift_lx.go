@@ -608,8 +608,8 @@ func (b *balancer) rrCountFail(tag string, key rrKey) rrQuarantineVerdict {
 	}
 	others := make([]float64, 0, len(slots))
 	for _, entry := range slots {
-		if entry.tag == tag || entry.tag == "" || b.isQuarantined(entry.tag) {
-			continue // Q2: the median of the pool, quarantined nodes out of it
+		if entry.tag == tag || entry.tag == "" || b.isQuarantined(entry.tag) || b.rr != nil && !b.rr.slotAlive(entry.tag) {
+			continue // Q2: the median over P, the nodes of the pool: no quarantined node, no node without history (§4.2)
 		}
 		if other, counts := m.share(entry.tag); counts {
 			others = append(others, other)
