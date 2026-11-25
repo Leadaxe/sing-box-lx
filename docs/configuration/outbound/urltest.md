@@ -118,11 +118,13 @@ fails connections more often than the rest of the pool) is skipped the same way.
 
 A `round_robin` pool handles node failures between checks on its own. A node that dies
 between two runs of `interval` is replaced at once, and the connection that hit it opens
-through the next node. A node that accepts connections and stays silent is skipped after 5 s
-and replaced after 20 s. A site closed to one node (a geo-restriction, the site bans the
-node's address) moves to another pool node after its first failure, while the rest of the
-traffic stays on its nodes. A lost local network (device sleep, a network switch) strikes out
-no node. This works only in `round_robin` and has no config keys. The scenarios and limits are
+through the next node. A node is struck out only when it stays silent on its own probe while
+a control node answers; when nobody answers, nothing is concluded. A node that accepts
+connections and stays silent is skipped after 5 s and replaced in about 36 s. A site closed to
+one node (a geo-restriction, the site bans the node's address) moves to another pool node at
+once on an explicit refusal, otherwise on its second failure on that node, while the rest of
+the traffic stays on its nodes. A lost local network (device sleep, a network switch) strikes
+out no node. This works only in `round_robin` and has no config keys. The scenarios and limits are
 in [lx-urltest.md](../../../docs-lx/lx-urltest.md#pool-self-heal).
 
 Liveness is the node's shared URL test history. A manual delay test with a short timeout
