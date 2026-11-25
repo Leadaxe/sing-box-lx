@@ -63,7 +63,7 @@ func (d *discardStream) Write(p []byte) (int, error) {
 func (d *discardStream) RemoteAddr() net.Addr { return &net.TCPAddr{} }
 
 func benchShaper(b *testing.B, link LinkOptions) *shaper {
-	cfg, err := resolve(Options{ImpairLinkOptions: link, Seed: seed(1)})
+	cfg, err := resolve(Options{LinkParams: &LinkParams{ImpairLinkOptions: link}, Seed: seed(1)}, nil)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func benchShaper(b *testing.B, link LinkOptions) *shaper {
 func BenchmarkPacketUp(b *testing.B) {
 	s := benchShaper(b, LinkOptions{Rate: "10gbit", Queue: "10s", Jitter: "100us", Loss: "0.1%"})
 	under := &discardPacket{closed: make(chan struct{})}
-	pc := newPacketConn(s, under)
+	pc := newPacketConn(s, under, nil)
 	addr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9}
 	payload := make([]byte, 1400)
 	b.SetBytes(1400)
@@ -106,7 +106,7 @@ func BenchmarkPacketUp(b *testing.B) {
 func BenchmarkStreamUp(b *testing.B) {
 	s := benchShaper(b, LinkOptions{Rate: "10gbit", Queue: "10s", Delay: "1ms"})
 	under := &discardStream{discardPacket{closed: make(chan struct{})}}
-	c := newStreamConn(s, under)
+	c := newStreamConn(s, under, nil)
 	payload := make([]byte, 64<<10)
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
@@ -133,6 +133,6 @@ func BenchmarkAdmitPacket(b *testing.B) {
 	})
 	b.ReportAllocs()
 	for range b.N {
-		s.model.admitPacket(dirUp, 1400)
+		s.model.admitPacket(nil, dirUp, 1400)
 	}
 }

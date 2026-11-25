@@ -22,7 +22,7 @@ func newTestModel(t *testing.T, o Options) (*model, *fakeClock) {
 	if o.Seed == nil {
 		o.Seed = seed(1)
 	}
-	cfg, err := resolve(o)
+	cfg, err := resolve(o, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,15 +31,15 @@ func newTestModel(t *testing.T, o Options) (*model, *fakeClock) {
 }
 
 func TestTokenBucketRate(t *testing.T) {
-	m, _ := newTestModel(t, Options{ImpairLinkOptions: LinkOptions{Rate: "8mbit"}})
+	m, _ := newTestModel(t, Options{LinkParams: lp(LinkOptions{Rate: "8mbit"})})
 	for i := 1; i <= 10; i++ {
-		due, v, _ := m.admitPacket(dirUp, 1000) // 1000 B at 1 MB/s = 1 ms
+		due, v, _ := m.admitPacket(nil, dirUp, 1000) // 1000 B at 1 MB/s = 1 ms
 		if v != verdictPass || due != ms(float64(i)) {
 			t.Fatalf("packet %d: due %v verdict %d, want %v", i, time.Duration(due), v, time.Duration(ms(float64(i))))
 		}
 	}
 	// the other direction has its own bottleneck
-	if due, _, _ := m.admitPacket(dirDown, 1000); due != ms(1) {
+	if due, _, _ := m.admitPacket(nil, dirDown, 1000); due != ms(1) {
 		t.Fatalf("down due %v", time.Duration(due))
 	}
 }
@@ -49,10 +49,10 @@ func TestQueueTailDrop(t *testing.T) {
 		queue string
 		pass  int
 	}{{"5ms", 6}, {"3000B", 4}, {"50ms", 20}} {
-		m, _ := newTestModel(t, Options{ImpairLinkOptions: LinkOptions{Rate: "8mbit", Queue: test.queue}})
+		m, _ := newTestModel(t, Options{LinkParams: lp(LinkOptions{Rate: "8mbit", Queue: test.queue})})
 		pass := 0
 		for range 20 {
-			if _, v, _ := m.admitPacket(dirUp, 1000); v == verdictPass {
+			if _, v, _ := m.admitPacket(nil, dirUp, 1000); v == verdictPass {
 				pass++
 			}
 		}
@@ -61,26 +61,26 @@ func TestQueueTailDrop(t *testing.T) {
 		}
 	}
 	// the queue drains with time
-	m, clock := newTestModel(t, Options{ImpairLinkOptions: LinkOptions{Rate: "8mbit", Queue: "5ms"}})
+	m, clock := newTestModel(t, Options{LinkParams: lp(LinkOptions{Rate: "8mbit", Queue: "5ms"})})
 	for range 20 {
-		m.admitPacket(dirUp, 1000)
+		m.admitPacket(nil, dirUp, 1000)
 	}
 	clock.set(6 * time.Millisecond)
-	if _, v, _ := m.admitPacket(dirUp, 1000); v != verdictPass {
+	if _, v, _ := m.admitPacket(nil, dirUp, 1000); v != verdictPass {
 		t.Fatal("queue did not drain")
 	}
 }
 
 func TestDelayJitterOrder(t *testing.T) {
 	for _, reorder := range []bool{false, true} {
-		m, clock := newTestModel(t, Options{ImpairLinkOptions: LinkOptions{Delay: "20ms", Jitter: "5ms", Reorder: boolp(reorder)}})
+		m, clock := newTestModel(t, Options{LinkParams: lp(LinkOptions{Delay: "20ms", Jitter: "5ms", Reorder: boolp(reorder)})})
 		var last int64
 		inversions := 0
 		sum := 0.0
 		const n = 10000
 		for i := range n {
 			clock.set(time.Duration(i) * time.Millisecond)
-			due, v, _ := m.admitPacket(dirUp, 100)
+			due, v, _ := m.admitPacket(nil, dirUp, 100)
 			if v != verdictPass {
 				t.Fatal("dropped")
 			}
@@ -108,10 +108,10 @@ func TestDelayJitterOrder(t *testing.T) {
 }
 
 func TestLossIndependent(t *testing.T) {
-	m, _ := newTestModel(t, Options{ImpairLinkOptions: LinkOptions{Loss: "10%"}})
+	m, _ := newTestModel(t, Options{LinkParams: lp(LinkOptions{Loss: "10%"})})
 	const n = 100000
 	for range n {
-		m.admitPacket(dirUp, 100)
+		m.admitPacket(nil, dirUp, 100)
 	}
 	share := float64(m.stats(dirUp).DropLoss) / n
 	if !near(share, 0.10, 0.005) {
@@ -120,11 +120,11 @@ func TestLossIndependent(t *testing.T) {
 }
 
 func TestLossGilbertElliott(t *testing.T) {
-	m, _ := newTestModel(t, Options{ImpairLinkOptions: LinkOptions{Loss: "5%", LossBurst: floatp(4)}})
+	m, _ := newTestModel(t, Options{LinkParams: lp(LinkOptions{Loss: "5%", LossBurst: floatp(4)})})
 	const n = 400000
 	lost, bursts, run := 0, 0, 0
 	for range n {
-		_, v, _ := m.admitPacket(dirUp, 100)
+		_, v, _ := m.admitPacket(nil, dirUp, 100)
 		if v == verdictLoss {
 			lost++
 			run++
@@ -141,7 +141,7 @@ func TestLossGilbertElliott(t *testing.T) {
 }
 
 func TestVaryAndSeed(t *testing.T) {
-	opts := Options{ImpairLinkOptions: LinkOptions{Rate: "10mbit", Vary: &VaryOptions{Min: "3mbit", Max: "12mbit", Every: "2s"}}, Seed: seed(42)}
+	opts := Options{LinkParams: lp(LinkOptions{Rate: "10mbit", Vary: &VaryOptions{Min: "3mbit", Max: "12mbit", Every: "2s"}}), Seed: seed(42)}
 	a, clockA := newTestModel(t, opts)
 	b, clockB := newTestModel(t, opts)
 	if r := a.rate(dirUp); r != 10e6 {
@@ -172,7 +172,7 @@ func TestVaryAndSeed(t *testing.T) {
 		t.Fatal("directions draw the same rates")
 	}
 	// vary without a rate draws at once
-	c, _ := newTestModel(t, Options{ImpairLinkOptions: LinkOptions{Vary: &VaryOptions{Min: "3mbit", Max: "4mbit", Every: "1s"}}})
+	c, _ := newTestModel(t, Options{LinkParams: lp(LinkOptions{Vary: &VaryOptions{Min: "3mbit", Max: "4mbit", Every: "1s"}})})
 	if r := c.rate(dirUp); r < 3e6 || r > 4e6 {
 		t.Fatalf("first draw %v", r)
 	}
@@ -180,19 +180,19 @@ func TestVaryAndSeed(t *testing.T) {
 
 func TestSchedule(t *testing.T) {
 	m, clock := newTestModel(t, Options{
-		ImpairLinkOptions: LinkOptions{Rate: "8mbit"},
+		LinkParams: lp(LinkOptions{Rate: "8mbit"}),
 		Schedule: []ScheduleEntry{
-			{At: "1s", ImpairLinkOptions: LinkOptions{Loss: "100%"}},
-			{At: "2s", ImpairLinkOptions: LinkOptions{Loss: "0%", Rate: "16mbit"}},
-			{At: "3s", Outage: boolp(true)},
-			{At: "4s", Outage: boolp(false)},
-			{At: "5s", Direction: "down", Outage: boolp(true), Reset: true},
+			{At: "1s", LinkParams: lp(LinkOptions{Loss: "100%"})},
+			{At: "2s", LinkParams: lp(LinkOptions{Loss: "0%", Rate: "16mbit"})},
+			{At: "3s", LinkParams: lp(LinkOptions{Outage: boolp(true)})},
+			{At: "4s", LinkParams: lp(LinkOptions{Outage: boolp(false)})},
+			{At: "5s", LinkParams: &LinkParams{Down: &LinkOptions{Outage: boolp(true)}, Reset: true}},
 		},
 	})
 	check := func(at time.Duration, dir int, want verdict) {
 		t.Helper()
 		clock.set(at)
-		if _, v, _ := m.admitPacket(dir, 1000); v != want {
+		if _, v, _ := m.admitPacket(nil, dir, 1000); v != want {
 			t.Fatalf("at %v dir %d: verdict %d, want %d", at, dir, v, want)
 		}
 	}
@@ -206,39 +206,39 @@ func TestSchedule(t *testing.T) {
 	check(3600*time.Millisecond, dirDown, verdictOutage)
 	check(4500*time.Millisecond, dirDown, verdictPass)
 	clock.set(5 * time.Second)
-	if _, v, reset := m.admitPacket(dirUp, 1000); v != verdictPass || !reset {
+	if _, v, reset := m.admitPacket(nil, dirUp, 1000); v != verdictPass || !reset {
 		t.Fatalf("reset entry: verdict %d reset %v", v, reset)
 	}
 	check(5100*time.Millisecond, dirDown, verdictOutage)
-	if resetting, _, _ := m.dialState(); !resetting {
+	if resetting, _, _ := m.dialState(nil); !resetting {
 		t.Fatal("dial allowed during a resetting outage")
 	}
 }
 
 func TestScheduleFirstUse(t *testing.T) {
-	m, clock := newTestModel(t, Options{Start: "first_use", Schedule: []ScheduleEntry{{At: "1s", Outage: boolp(true)}}})
+	m, clock := newTestModel(t, Options{Start: "first_use", Schedule: []ScheduleEntry{{At: "1s", LinkParams: lp(LinkOptions{Outage: boolp(true)})}}})
 	clock.set(10 * time.Second)
-	if _, v, _ := m.admitPacket(dirUp, 100); v != verdictPass {
+	if _, v, _ := m.admitPacket(nil, dirUp, 100); v != verdictPass {
 		t.Fatal("schedule ran before the first use")
 	}
 	m.firstUse()
 	clock.set(10500 * time.Millisecond)
-	if _, v, _ := m.admitPacket(dirUp, 100); v != verdictPass {
+	if _, v, _ := m.admitPacket(nil, dirUp, 100); v != verdictPass {
 		t.Fatal("outage too early")
 	}
 	clock.set(11500 * time.Millisecond)
-	if _, v, _ := m.admitPacket(dirUp, 100); v != verdictOutage {
+	if _, v, _ := m.admitPacket(nil, dirUp, 100); v != verdictOutage {
 		t.Fatal("no outage 1s after the first use")
 	}
 }
 
 func TestRandomStalls(t *testing.T) {
-	m, clock := newTestModel(t, Options{Stall: &StallOptions{Every: "1s", Duration: "100ms"}})
+	m, clock := newTestModel(t, Options{LinkParams: &LinkParams{Stall: &StallOptions{Every: "1s", Duration: "100ms"}}})
 	down := 0
 	const n = 200000
 	for i := range n {
 		clock.set(time.Duration(i) * time.Millisecond)
-		if m.outage(dirUp) {
+		if m.outage(nil, dirUp) {
 			down++
 		}
 	}
@@ -249,31 +249,31 @@ func TestRandomStalls(t *testing.T) {
 }
 
 func TestStreamBackpressureAndStall(t *testing.T) {
-	m, clock := newTestModel(t, Options{ImpairLinkOptions: LinkOptions{Rate: "8mbit", Queue: "10ms"}})
-	var st streamState
+	m, clock := newTestModel(t, Options{LinkParams: lp(LinkOptions{Rate: "8mbit", Queue: "10ms"})})
+	var st streamStates
 	// 1 MB/s, segments of 1000 B: the 12th waits for the queue
 	for i := 0; i < 11; i++ {
-		if _, wait, _ := m.admitStream(dirUp, &st, 1000); wait != 0 {
+		if _, wait, _ := m.admitStream(nil, dirUp, &st, 1000); wait != 0 {
 			t.Fatalf("segment %d waits %v", i, wait)
 		}
 	}
-	_, wait, _ := m.admitStream(dirUp, &st, 1000)
+	_, wait, _ := m.admitStream(nil, dirUp, &st, 1000)
 	if wait != time.Millisecond {
 		t.Fatalf("wait %v, want 1ms", wait)
 	}
 	clock.add(wait)
-	if _, wait, _ = m.admitStream(dirUp, &st, 1000); wait != 0 {
+	if _, wait, _ = m.admitStream(nil, dirUp, &st, 1000); wait != 0 {
 		t.Fatal("still waiting after the backlog drained")
 	}
 
 	// loss as stall: 1 % per MSS, stall 300ms
-	m, clock = newTestModel(t, Options{ImpairLinkOptions: LinkOptions{Loss: "1%", StreamStall: "300ms"}})
-	st = streamState{}
+	m, clock = newTestModel(t, Options{LinkParams: lp(LinkOptions{Loss: "1%", StreamStall: "300ms"})})
+	st = streamStates{}
 	const segments = 100000
 	var last int64
 	for i := range segments {
 		clock.set(time.Duration(i) * time.Microsecond)
-		due, _, _ := m.admitStream(dirDown, &st, mss)
+		due, _, _ := m.admitStream(nil, dirDown, &st, mss)
 		if due < last {
 			t.Fatal("stream delivery out of order")
 		}
@@ -294,35 +294,35 @@ func TestStreamBackpressureAndStall(t *testing.T) {
 }
 
 func TestStreamOutageWaits(t *testing.T) {
-	m, clock := newTestModel(t, Options{Schedule: []ScheduleEntry{{At: "1s", Outage: boolp(true)}, {At: "2s", Outage: boolp(false)}}})
-	var st streamState
+	m, clock := newTestModel(t, Options{Schedule: []ScheduleEntry{{At: "1s", LinkParams: lp(LinkOptions{Outage: boolp(true)})}, {At: "2s", LinkParams: lp(LinkOptions{Outage: boolp(false)})}}})
+	var st streamStates
 	clock.set(1500 * time.Millisecond)
-	if _, wait, _ := m.admitStream(dirUp, &st, 100); wait == 0 {
+	if _, wait, _ := m.admitStream(nil, dirUp, &st, 100); wait == 0 {
 		t.Fatal("stream admitted during an outage")
 	}
-	if resetting, wait, _ := m.dialState(); resetting || wait == 0 {
+	if resetting, wait, _ := m.dialState(nil); resetting || wait == 0 {
 		t.Fatal("dial not held during a silent outage")
 	}
 	clock.set(2500 * time.Millisecond)
-	if _, wait, _ := m.admitStream(dirUp, &st, 100); wait != 0 {
+	if _, wait, _ := m.admitStream(nil, dirUp, &st, 100); wait != 0 {
 		t.Fatal("stream held after the outage")
 	}
 }
 
 func TestProfiles(t *testing.T) {
-	for name := range profiles {
-		cfg, err := resolve(Options{Profile: name})
+	for name := range builtinProfiles {
+		cfg, err := resolve(Options{LinkParams: &LinkParams{Profile: name}}, nil)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if cfg.dirs[dirUp].rate == 0 && cfg.dirs[dirUp].vary == nil {
-			t.Fatalf("%s: no rate", name)
+		if cfg.line.dirs[dirUp].rate == 0 && cfg.line.dirs[dirUp].vary == nil || cfg.line.profile != name {
+			t.Fatalf("%s: %+v", name, cfg.line)
 		}
 	}
 	// an explicit rate replaces the profile's variation
-	cfg, err := resolve(Options{Profile: "lte-walk", ImpairLinkOptions: LinkOptions{Rate: "5mbit"}})
-	if err != nil || cfg.dirs[dirDown].vary != nil || cfg.dirs[dirDown].rate != 5e6 || cfg.dirs[dirDown].delay != 35*time.Millisecond {
-		t.Fatalf("override: %+v %v", cfg.dirs[dirDown], err)
+	cfg, err := resolve(Options{LinkParams: &LinkParams{Profile: "lte-walk", ImpairLinkOptions: LinkOptions{Rate: "5mbit"}}}, nil)
+	if err != nil || cfg.line.dirs[dirDown].vary != nil || cfg.line.dirs[dirDown].rate != 5e6 || cfg.line.dirs[dirDown].delay != 35*time.Millisecond {
+		t.Fatalf("override: %+v %v", cfg.line.dirs[dirDown], err)
 	}
 }
 
@@ -331,31 +331,37 @@ func TestResolveErrors(t *testing.T) {
 		options Options
 		want    string
 	}{
-		{Options{ImpairLinkOptions: LinkOptions{Rate: "10mbps"}}, "rate"},
-		{Options{ImpairLinkOptions: LinkOptions{Rate: "1bit"}}, "8kbit..10gbit"},
-		{Options{Up: &LinkOptions{Rate: "x"}}, "up.rate"},
-		{Options{ImpairLinkOptions: LinkOptions{Queue: "10"}}, "queue"},
-		{Options{ImpairLinkOptions: LinkOptions{Queue: "100B"}}, "1500B..64MB"},
-		{Options{ImpairLinkOptions: LinkOptions{Delay: "20"}}, "delay"},
-		{Options{ImpairLinkOptions: LinkOptions{Delay: "20s"}}, "delay"},
-		{Options{ImpairLinkOptions: LinkOptions{Loss: "0.5"}}, "percentage"},
-		{Options{ImpairLinkOptions: LinkOptions{Loss: "101%"}}, "loss"},
-		{Options{ImpairLinkOptions: LinkOptions{LossBurst: floatp(0.5)}}, "loss_burst"},
-		{Options{ImpairLinkOptions: LinkOptions{Vary: &VaryOptions{Min: "5mbit", Max: "3mbit", Every: "1s"}}}, "above max"},
-		{Options{ImpairLinkOptions: LinkOptions{Vary: &VaryOptions{Min: "5mbit", Max: "6mbit"}}}, "vary: min, max and every"},
-		{Options{ImpairLinkOptions: LinkOptions{Vary: &VaryOptions{Min: "unlimited", Max: "6mbit", Every: "1s"}}}, "not \"unlimited\""},
-		{Options{Down: &LinkOptions{Vary: &VaryOptions{Min: "1mbit", Max: "6mbit", Every: "1ms"}}}, "down.vary.every"},
-		{Options{Stall: &StallOptions{Every: "1s"}}, "stall"},
+		{Options{LinkParams: lp(LinkOptions{Rate: "10mbps"})}, "rate"},
+		{Options{LinkParams: lp(LinkOptions{Rate: "1bit"})}, "8kbit..10gbit"},
+		{Options{LinkParams: &LinkParams{Up: &LinkOptions{Rate: "x"}}}, "link_params.up.rate"},
+		{Options{LinkParams: lp(LinkOptions{Queue: "10"})}, "queue"},
+		{Options{LinkParams: lp(LinkOptions{Queue: "100B"})}, "1500B..64MB"},
+		{Options{LinkParams: lp(LinkOptions{Delay: "20"})}, "delay"},
+		{Options{LinkParams: lp(LinkOptions{Delay: "20s"})}, "delay"},
+		{Options{LinkParams: lp(LinkOptions{Loss: "0.5"})}, "percentage"},
+		{Options{LinkParams: lp(LinkOptions{Loss: "101%"})}, "loss"},
+		{Options{LinkParams: lp(LinkOptions{LossBurst: floatp(0.5)})}, "loss_burst"},
+		{Options{LinkParams: lp(LinkOptions{Vary: &VaryOptions{Min: "5mbit", Max: "3mbit", Every: "1s"}})}, "above max"},
+		{Options{LinkParams: lp(LinkOptions{Vary: &VaryOptions{Min: "5mbit", Max: "6mbit"}})}, "vary: min, max and every"},
+		{Options{LinkParams: lp(LinkOptions{Vary: &VaryOptions{Min: "unlimited", Max: "6mbit", Every: "1s"}})}, "not \"unlimited\""},
+		{Options{LinkParams: &LinkParams{Down: &LinkOptions{Vary: &VaryOptions{Min: "1mbit", Max: "6mbit", Every: "1ms"}}}}, "link_params.down.vary.every"},
+		{Options{LinkParams: &LinkParams{Stall: &StallOptions{Every: "1s"}}}, "stall"},
 		{Options{Start: "later"}, "start"},
-		{Options{Profile: "5g"}, "unknown profile"},
-		{Options{Schedule: []ScheduleEntry{{Outage: boolp(true)}}}, "schedule[0].at is required"},
-		{Options{Schedule: []ScheduleEntry{{At: "2s", Outage: boolp(true)}, {At: "1s", Outage: boolp(false)}}}, "time order"},
+		{Options{LinkParams: &LinkParams{Profile: "5g"}}, "unknown profile"},
+		{Options{LinkParams: &LinkParams{ImpairLinkOptions: LinkOptions{Outage: boolp(true)}, Reset: true}}, "only a schedule entry"},
+		{Options{Schedule: []ScheduleEntry{{LinkParams: lp(LinkOptions{Outage: boolp(true)})}}}, "schedule[0].at is required"},
+		{Options{Schedule: []ScheduleEntry{{At: "2s", LinkParams: lp(LinkOptions{Outage: boolp(true)})}, {At: "1s", LinkParams: lp(LinkOptions{Outage: boolp(false)})}}}, "time order"},
 		{Options{Schedule: []ScheduleEntry{{At: "1s"}}}, "changes nothing"},
-		{Options{Schedule: []ScheduleEntry{{At: "1s", Reset: true}}}, "reset needs"},
-		{Options{Schedule: []ScheduleEntry{{At: "1s", Direction: "both", Outage: boolp(true)}}}, "direction"},
-		{Options{Schedule: []ScheduleEntry{{At: "1s", ImpairLinkOptions: LinkOptions{Rate: "fast"}}}}, "schedule[0].rate"},
+		{Options{Schedule: []ScheduleEntry{{At: "1s", LinkParams: &LinkParams{Reset: true}}}}, "changes nothing"},
+		{Options{Schedule: []ScheduleEntry{{At: "1s", LinkParams: &LinkParams{ImpairLinkOptions: LinkOptions{Delay: "1ms"}, Reset: true}}}}, "reset needs"},
+		{Options{Schedule: []ScheduleEntry{{At: "1s", LinkParams: lp(LinkOptions{Rate: "fast"})}}}, "schedule[0].link_params.rate"},
+		{Options{ScheduleRepeat: "10s", Schedule: []ScheduleEntry{{At: "10s", LinkParams: lp(LinkOptions{Delay: "1ms"})}}}, "one round"},
+		{Options{Sublinks: []SublinkOption{{LinkParams: lp(LinkOptions{Delay: "1ms"})}}}, "match is required"},
+		{Options{Sublinks: []SublinkOption{{Match: &MatchOptions{Every: 2}}}}, "link_params is required"},
+		{Options{Sublinks: []SublinkOption{{Match: &MatchOptions{Network: []string{"icmp"}}, LinkParams: lp(LinkOptions{Delay: "1ms"})}}}, "network"},
+		{Options{Sublinks: []SublinkOption{{Match: &MatchOptions{IPCIDR: []string{"10.0.0.0/33"}}, LinkParams: lp(LinkOptions{Delay: "1ms"})}}}, "ip_cidr"},
 	} {
-		_, err := resolve(test.options)
+		_, err := resolve(test.options, nil)
 		if err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Errorf("%+v: error %v, want %q", test.options, err, test.want)
 		}
@@ -378,19 +384,19 @@ func TestParsers(t *testing.T) {
 
 func TestEventLogs(t *testing.T) {
 	m, clock := newTestModel(t, Options{Schedule: []ScheduleEntry{
-		{At: "1s", Outage: boolp(true), Reset: true},
-		{At: "2s", Outage: boolp(false), Direction: "up", ImpairLinkOptions: LinkOptions{Rate: "3mbit"}},
+		{At: "1s", LinkParams: &LinkParams{ImpairLinkOptions: LinkOptions{Outage: boolp(true)}, Reset: true}},
+		{At: "2s", LinkParams: &LinkParams{Up: &LinkOptions{Outage: boolp(false), Rate: "3mbit"}}},
 	}})
 	clock.set(1500 * time.Millisecond)
 	reset, logs := m.tick()
-	if !reset || len(logs) != 1 || logs[0].debug || logs[0].text != "schedule at 1s: up outage begins, connections reset; down outage begins, connections reset" {
+	if !reset || len(logs) != 1 || logs[0].debug || logs[0].text != "schedule at 1s: up rate unlimited delay 0s outage (reset); down rate unlimited delay 0s outage (reset)" {
 		t.Fatalf("at 1.5s: reset %v, logs %+v", reset, logs)
 	}
 	if at, ok := m.nextWake(); !ok || at != int64(2*time.Second) {
 		t.Fatalf("next wake %v %v, want 2s", at, ok)
 	}
 	clock.set(2 * time.Second)
-	if _, logs = m.tick(); len(logs) != 1 || logs[0].text != "schedule at 2s: up rate 3mbit delay 0s outage ends" {
+	if _, logs = m.tick(); len(logs) != 1 || logs[0].text != "schedule at 2s: up rate 3mbit delay 0s; down rate unlimited delay 0s outage (reset)" {
 		t.Fatalf("at 2s: %+v", logs)
 	}
 	if _, ok := m.nextWake(); ok {
@@ -399,10 +405,10 @@ func TestEventLogs(t *testing.T) {
 }
 
 func TestStallLogs(t *testing.T) {
-	m, clock := newTestModel(t, Options{Stall: &StallOptions{Every: "10s", Duration: "1s"}})
+	m, clock := newTestModel(t, Options{LinkParams: &LinkParams{Stall: &StallOptions{Every: "10s", Duration: "1s"}}})
 	start, _ := m.nextWake()
 	clock.set(time.Duration(start))
-	if _, logs := m.tick(); len(logs) != 1 || !logs[0].debug || logs[0].text != "stall of the whole link for 1s" {
+	if _, logs := m.tick(); len(logs) != 1 || !logs[0].debug || logs[0].text != "stall of the whole line for 1s" {
 		t.Fatalf("stall start: %+v", logs)
 	}
 	end, _ := m.nextWake()
@@ -417,7 +423,7 @@ func TestStallLogs(t *testing.T) {
 
 func mustEvent(t *testing.T, entry ScheduleEntry) *event {
 	t.Helper()
-	ev, err := resolveEntry("entry", &entry, defaultParams())
+	ev, err := (&profileSet{}).resolveEntry("entry", &entry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +432,7 @@ func mustEvent(t *testing.T, entry ScheduleEntry) *event {
 
 func mustSchedule(t *testing.T, entries ...ScheduleEntry) []event {
 	t.Helper()
-	sched, err := resolveSchedule("schedule", entries, defaultParams())
+	sched, err := (&profileSet{}).resolveSchedule("schedule", entries, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,23 +441,23 @@ func mustSchedule(t *testing.T, entries ...ScheduleEntry) []event {
 
 // set changes the link now; the config's schedule keeps running on top.
 func TestSetOnTopOfSchedule(t *testing.T) {
-	m, clock := newTestModel(t, Options{Schedule: []ScheduleEntry{{At: "2s", Outage: boolp(false)}}})
+	m, clock := newTestModel(t, Options{Schedule: []ScheduleEntry{{At: "2s", LinkParams: lp(LinkOptions{Outage: boolp(false)})}}})
 	clock.set(time.Second)
-	if reset := m.set(mustEvent(t, ScheduleEntry{Outage: boolp(true), Reset: true})); !reset {
+	if reset := m.set(mustEvent(t, ScheduleEntry{LinkParams: &LinkParams{ImpairLinkOptions: LinkOptions{Outage: boolp(true)}, Reset: true}})); !reset {
 		t.Fatal("set with reset did not report it")
 	}
-	if _, v, _ := m.admitPacket(dirUp, 100); v != verdictOutage {
+	if _, v, _ := m.admitPacket(nil, dirUp, 100); v != verdictOutage {
 		t.Fatal("no outage after set")
 	}
-	if st := m.status(); !st.Up.Outage || !st.Up.Reset || st.Schedule.Applied != 0 || st.Schedule.NextAt != "2s" {
+	if st := m.status(); !st.LinkParams.Up.Outage || !st.LinkParams.Up.Reset || st.Schedule.Applied != 0 || st.Schedule.NextAt != "2s" {
 		t.Fatalf("status after set: %+v", st)
 	}
 	clock.set(2 * time.Second)
-	if _, v, _ := m.admitPacket(dirUp, 100); v != verdictPass {
+	if _, v, _ := m.admitPacket(nil, dirUp, 100); v != verdictPass {
 		t.Fatal("the schedule did not end the outage at 2s")
 	}
 	_, logs := m.tick()
-	if len(logs) != 2 || logs[0].text != "set: up outage begins, connections reset; down outage begins, connections reset" || logs[1].text != "schedule at 2s: up outage ends; down outage ends" {
+	if len(logs) != 2 || logs[0].text != "set: up rate unlimited delay 0s outage (reset); down rate unlimited delay 0s outage (reset)" || logs[1].text != "schedule at 2s: up rate unlimited delay 0s; down rate unlimited delay 0s" {
 		t.Fatalf("logs %+v", logs)
 	}
 }
@@ -459,28 +465,28 @@ func TestSetOnTopOfSchedule(t *testing.T) {
 // A new schedule starts from the config's link, whatever set or the old
 // schedule left; an empty one only restores the link.
 func TestReplaceScheduleRestoresConfig(t *testing.T) {
-	m, clock := newTestModel(t, Options{ImpairLinkOptions: LinkOptions{Rate: "10mbit"}, Schedule: []ScheduleEntry{{At: "1s", Outage: boolp(true)}}})
-	m.set(mustEvent(t, ScheduleEntry{ImpairLinkOptions: LinkOptions{Rate: "1mbit", Loss: "5%"}}))
+	m, clock := newTestModel(t, Options{LinkParams: lp(LinkOptions{Rate: "10mbit"}), Schedule: []ScheduleEntry{{At: "1s", LinkParams: lp(LinkOptions{Outage: boolp(true)})}}})
+	m.set(mustEvent(t, ScheduleEntry{LinkParams: lp(LinkOptions{Rate: "1mbit", Loss: "5%"})}))
 	clock.set(1500 * time.Millisecond)
-	if !m.outage(dirUp) {
+	if !m.outage(nil, dirUp) {
 		t.Fatal("config schedule did not run")
 	}
-	m.replaceSchedule(nil, false)
+	m.replaceSchedule(nil, false, 0)
 	st := m.status()
-	if st.Up.Outage || st.Up.Rate != "10mbit" || st.Up.Loss != "0%" || st.Schedule.Entries != 0 {
+	if st.LinkParams.Up.Outage || st.LinkParams.Up.Rate != "10mbit" || st.LinkParams.Up.Loss != "0%" || st.Schedule.Entries != 0 {
 		t.Fatalf("after an empty schedule: %+v", st)
 	}
 	clock.set(10 * time.Second)
-	if m.outage(dirUp) {
+	if m.outage(nil, dirUp) {
 		t.Fatal("the old schedule still runs")
 	}
-	m.replaceSchedule(mustSchedule(t, ScheduleEntry{At: "1s", ImpairLinkOptions: LinkOptions{Rate: "2mbit"}}), false)
+	m.replaceSchedule(mustSchedule(t, ScheduleEntry{At: "1s", LinkParams: lp(LinkOptions{Rate: "2mbit"})}), false, 0)
 	clock.set(10500 * time.Millisecond)
-	if st = m.status(); st.Up.Rate != "10mbit" || st.Schedule.Elapsed != "500ms" || st.Schedule.NextAt != "1s" {
+	if st = m.status(); st.LinkParams.Up.Rate != "10mbit" || st.Schedule.Elapsed != "500ms" || st.Schedule.NextAt != "1s" {
 		t.Fatalf("new schedule before its entry: %+v", st)
 	}
 	clock.set(11 * time.Second)
-	if st = m.status(); st.Up.Rate != "2mbit" || st.Schedule.Applied != 1 || st.Schedule.NextAt != "" {
+	if st = m.status(); st.LinkParams.Up.Rate != "2mbit" || st.Schedule.Applied != 1 || st.Schedule.NextAt != "" {
 		t.Fatalf("new schedule after its entry: %+v", st)
 	}
 }
@@ -489,21 +495,21 @@ func TestReplaceScheduleRestoresConfig(t *testing.T) {
 // before counts, not only a new connection.
 func TestReplaceScheduleFirstUseByData(t *testing.T) {
 	m, clock := newTestModel(t, Options{})
-	m.replaceSchedule(mustSchedule(t, ScheduleEntry{At: "1s", Outage: boolp(true)}), true)
+	m.replaceSchedule(mustSchedule(t, ScheduleEntry{At: "1s", LinkParams: lp(LinkOptions{Outage: boolp(true)})}), true, 0)
 	clock.set(5 * time.Second)
-	if st := m.status(); !st.Schedule.WaitingForTraffic || st.Up.Outage {
+	if st := m.status(); !st.Schedule.WaitingForTraffic || st.LinkParams.Up.Outage {
 		t.Fatalf("before traffic: %+v", st.Schedule)
 	}
-	var st streamState
-	if _, wait, _ := m.admitStream(dirDown, &st, 1000); wait != 0 {
+	var st streamStates
+	if _, wait, _ := m.admitStream(nil, dirDown, &st, 1000); wait != 0 {
 		t.Fatal("first segment waited")
 	}
 	clock.set(5900 * time.Millisecond)
-	if m.outage(dirUp) {
+	if m.outage(nil, dirUp) {
 		t.Fatal("outage before 1s after the first data")
 	}
 	clock.set(6 * time.Second)
-	if !m.outage(dirUp) {
+	if !m.outage(nil, dirUp) {
 		t.Fatal("no outage 1s after the first data")
 	}
 }
@@ -511,9 +517,9 @@ func TestReplaceScheduleFirstUseByData(t *testing.T) {
 // A resetting outage first seen by a caller that ignores the reset (a
 // stream's outage check) still reaches the event loop's tick.
 func TestResetNotLostByOutageCheck(t *testing.T) {
-	m, clock := newTestModel(t, Options{Schedule: []ScheduleEntry{{At: "1s", Outage: boolp(true), Reset: true}}})
+	m, clock := newTestModel(t, Options{Schedule: []ScheduleEntry{{At: "1s", LinkParams: &LinkParams{ImpairLinkOptions: LinkOptions{Outage: boolp(true)}, Reset: true}}}})
 	clock.set(1500 * time.Millisecond)
-	if !m.outage(dirDown) {
+	if !m.outage(nil, dirDown) {
 		t.Fatal("no outage")
 	}
 	if reset, _ := m.tick(); !reset {
@@ -527,12 +533,12 @@ func TestResetNotLostByOutageCheck(t *testing.T) {
 // A new schedule restarts the generators from the seed: the same scenario
 // over the same traffic draws the same losses.
 func TestReplaceScheduleReseeds(t *testing.T) {
-	m, _ := newTestModel(t, Options{ImpairLinkOptions: LinkOptions{Loss: "30%"}})
+	m, _ := newTestModel(t, Options{LinkParams: lp(LinkOptions{Loss: "30%"})})
 	run := func() []verdict {
-		m.replaceSchedule(nil, false)
+		m.replaceSchedule(nil, false, 0)
 		var got []verdict
 		for range 50 {
-			_, v, _ := m.admitPacket(dirUp, 100)
+			_, v, _ := m.admitPacket(nil, dirUp, 100)
 			got = append(got, v)
 		}
 		return got
@@ -544,3 +550,5 @@ func TestReplaceScheduleReseeds(t *testing.T) {
 		}
 	}
 }
+
+func lp(o LinkOptions) *LinkParams { return &LinkParams{ImpairLinkOptions: o} }

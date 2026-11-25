@@ -1,29 +1,84 @@
 package option
 
+import (
+	"bytes"
+	"reflect"
+
+	"github.com/sagernet/sing-box/schema"
+
+	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/json"
+	"github.com/sagernet/sing/common/json/badoption"
+)
+
+// impairOff is how a value is turned off: the config decoder drops empty
+// arrays and objects, so [] and {} cannot mean "off".
+const impairOff = `"off"`
+
+// impairOffOr decodes "off" into off, anything else into value; [] and {}
+// are refused, since in a config file they would silently vanish.
+func impairOffOr(content []byte, off *bool, value any) error {
+	trimmed := bytes.TrimSpace(content)
+	if string(trimmed) == impairOff {
+		*off = true
+		return nil
+	}
+	if len(trimmed) > 0 && (trimmed[0] == '[' || trimmed[0] == '{') {
+		var probe any
+		if json.Unmarshal(trimmed, &probe) == nil {
+			switch v := probe.(type) {
+			case []any:
+				if len(v) == 0 {
+					return E.New(`empty []: write "off" to turn it off`)
+				}
+			case map[string]any:
+				if len(v) == 0 {
+					return E.New(`empty {}: write "off" to turn it off`)
+				}
+			}
+		}
+	}
+	return json.UnmarshalDisallowUnknownFields(content, value)
+}
+
 // lx: FEATURE 020 / SPEC 164 — test outbound `impair`.
 
 // ImpairOutboundOptions is the JSON schema of the `impair` test outbound. The
 // dialer block is the one every dialing outbound has (`detour`,
-// `bind_interface`, `routing_mark`, `domain_resolver`, ...): without `detour`
-// the outbound dials the destination itself, like `direct`; with it, through
-// that outbound. The link keys at the top level apply to both directions;
-// `up` (what this end sends) and `down` (what it receives) override them per
-// direction.
+// `bind_interface`, `routing_mark`, `domain_resolver`, `connect_timeout`,
+// ...): without `detour` the outbound dials the destination itself, like
+// `direct`; with it, through that outbound.
+//
+// One object says how the link is degraded, link_params, and it is the same
+// everywhere: the outbound's own line, a sublink, a schedule entry, the
+// SetImpair command and a profile in lx.impair_profiles.
 type ImpairOutboundOptions struct {
 	DialerOptions
-	ImpairLinkOptions
-	Up       *ImpairLinkOptions    `json:"up,omitempty"`
-	Down     *ImpairLinkOptions    `json:"down,omitempty"`
-	Stall    *ImpairStallOptions   `json:"stall,omitempty"`
-	Schedule []ImpairScheduleEntry `json:"schedule,omitempty"`
-	Start    string                `json:"start,omitempty"`
-	Profile  string                `json:"profile,omitempty"`
-	Seed     *int64                `json:"seed,omitempty"`
+	LinkParams     *ImpairLinkParams     `json:"link_params,omitempty"`
+	Sublinks       []ImpairSublink       `json:"sublinks,omitempty"`
+	Schedule       []ImpairScheduleEntry `json:"schedule,omitempty"`
+	ScheduleRepeat string                `json:"schedule_repeat,omitempty"`
+	Start          string                `json:"start,omitempty"`
+	Seed           *int64                `json:"seed,omitempty"`
 }
 
-// ImpairLinkOptions are the bottleneck parameters of one direction. A key
-// left out keeps the value of the layer below (defaults < profile < top level
-// < up/down; a schedule entry changes the running value).
+// ImpairLinkParams is how a line is degraded. With `profile` the line starts
+// from that template (every other value back to its default) and the other
+// keys tune it; without it the keys change only themselves. The link keys at
+// the top apply to both directions, `up` (what this end sends) and `down`
+// (what it receives) override them per direction.
+type ImpairLinkParams struct {
+	Profile string `json:"profile,omitempty"`
+	ImpairLinkOptions
+	Up    *ImpairLinkOptions  `json:"up,omitempty"`
+	Down  *ImpairLinkOptions  `json:"down,omitempty"`
+	Stall *ImpairStallOptions `json:"stall,omitempty"`
+	// Reset breaks the connections of the line when an outage begins in the
+	// same link_params; in a sublink it refuses the matched connections.
+	Reset bool `json:"reset,omitempty"`
+}
+
+// ImpairLinkOptions are the parameters of one direction's line.
 type ImpairLinkOptions struct {
 	Rate        string             `json:"rate,omitempty"`
 	Queue       string             `json:"queue,omitempty"`
@@ -34,30 +89,132 @@ type ImpairLinkOptions struct {
 	LossBurst   *float64           `json:"loss_burst,omitempty"`
 	StreamStall string             `json:"stream_stall,omitempty"`
 	Vary        *ImpairVaryOptions `json:"vary,omitempty"`
+	Outage      *bool              `json:"outage,omitempty"`
 }
 
 // ImpairVaryOptions makes the rate jump to a uniformly drawn value in
-// [min, max] every `every`.
+// [min, max] every `every`; "off" turns the swings off.
 type ImpairVaryOptions struct {
 	Min   string `json:"min,omitempty"`
 	Max   string `json:"max,omitempty"`
 	Every string `json:"every,omitempty"`
+	Off   bool   `json:"-"`
 }
 
-// ImpairStallOptions adds random silent outages of the whole link (both
+type impairVaryPlain ImpairVaryOptions
+
+func (o ImpairVaryOptions) MarshalJSON() ([]byte, error) {
+	if o.Off {
+		return []byte(impairOff), nil
+	}
+	return json.Marshal(impairVaryPlain(o))
+}
+
+func (o *ImpairVaryOptions) UnmarshalJSON(content []byte) error {
+	return impairOffOr(content, &o.Off, (*impairVaryPlain)(o))
+}
+
+// ImpairStallOptions adds random silent outages of the whole line (both
 // directions): the gaps between them are exponential with mean `every`, each
-// lasts `duration`.
+// lasts `duration`; "off" turns them off.
 type ImpairStallOptions struct {
 	Every    string `json:"every,omitempty"`
 	Duration string `json:"duration,omitempty"`
+	Off      bool   `json:"-"`
 }
 
-// ImpairScheduleEntry changes the link at a moment: link keys, an outage
-// on/off, optionally limited to one direction.
+type impairStallPlain ImpairStallOptions
+
+func (o ImpairStallOptions) MarshalJSON() ([]byte, error) {
+	if o.Off {
+		return []byte(impairOff), nil
+	}
+	return json.Marshal(impairStallPlain(o))
+}
+
+func (o *ImpairStallOptions) UnmarshalJSON(content []byte) error {
+	return impairOffOr(content, &o.Off, (*impairStallPlain)(o))
+}
+
+// ImpairSublink is a second stage after the outbound's line for the
+// connections that match: both keys are required, and match needs at least
+// one field.
+type ImpairSublink struct {
+	Match      *ImpairMatch      `json:"match,omitempty"`
+	LinkParams *ImpairLinkParams `json:"link_params,omitempty"`
+}
+
+// ImpairMatch selects connections when they open: the fields AND together,
+// the values of one field OR. every and share pick among the connections
+// that match the other fields.
+type ImpairMatch struct {
+	Domain       badoption.Listable[string] `json:"domain,omitempty"`
+	DomainSuffix badoption.Listable[string] `json:"domain_suffix,omitempty"`
+	IPCIDR       badoption.Listable[string] `json:"ip_cidr,omitempty"`
+	Port         badoption.Listable[uint16] `json:"port,omitempty"`
+	Network      badoption.Listable[string] `json:"network,omitempty"`
+	Every        int                        `json:"every,omitempty"`
+	Share        string                     `json:"share,omitempty"`
+}
+
+// ImpairScheduleEntry changes the outbound at a moment: its line
+// (link_params), its sublinks (the whole list; "off" removes them), or
+// both. SetImpair takes the same object without `at`.
 type ImpairScheduleEntry struct {
-	At        string `json:"at,omitempty"`
-	Direction string `json:"direction,omitempty"`
-	ImpairLinkOptions
-	Outage *bool `json:"outage,omitempty"`
-	Reset  bool  `json:"reset,omitempty"`
+	At         string             `json:"at,omitempty"`
+	LinkParams *ImpairLinkParams  `json:"link_params,omitempty"`
+	Sublinks   *ImpairSublinkList `json:"sublinks,omitempty"`
+}
+
+// ImpairSublinkList is the sublinks of a schedule entry: a list that
+// replaces the running one, or "off" (no sublinks).
+type ImpairSublinkList struct {
+	List []ImpairSublink
+	Off  bool
+}
+
+func (l ImpairSublinkList) MarshalJSON() ([]byte, error) {
+	if l.Off {
+		return []byte(impairOff), nil
+	}
+	return json.Marshal(l.List)
+}
+
+func (l *ImpairSublinkList) UnmarshalJSON(content []byte) error {
+	return impairOffOr(content, &l.Off, &l.List)
+}
+
+// ImpairProfile is a named link template of lx.impair_profiles.
+type ImpairProfile struct {
+	LinkParams *ImpairLinkParams `json:"link_params,omitempty"`
+}
+
+func (ImpairVaryOptions) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("ImpairVaryOptions", func() (*schema.Node, error) {
+		objectForm := schema.StrictObject()
+		if err := builder.FlattenStruct(objectForm, reflect.TypeFor[impairVaryPlain]()); err != nil {
+			return nil, err
+		}
+		return schema.AnyOf(schema.StringConst("off"), objectForm), nil
+	})
+}
+
+func (ImpairStallOptions) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("ImpairStallOptions", func() (*schema.Node, error) {
+		objectForm := schema.StrictObject()
+		if err := builder.FlattenStruct(objectForm, reflect.TypeFor[impairStallPlain]()); err != nil {
+			return nil, err
+		}
+		return schema.AnyOf(schema.StringConst("off"), objectForm), nil
+	})
+}
+
+func (ImpairSublinkList) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("ImpairSublinkList", func() (*schema.Node, error) {
+		element, err := builder.Describe(reflect.TypeFor[ImpairSublink]())
+		if err != nil {
+			return nil, err
+		}
+		return schema.AnyOf(schema.StringConst("off"), &schema.Node{Type: "array", Items: element}), nil
+	})
 }

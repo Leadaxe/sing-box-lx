@@ -256,7 +256,7 @@ func TestIntegrationUDPRate(t *testing.T) {
 	if testing.Short() {
 		t.Skip("real time")
 	}
-	instance := boxWith(t, `{"type": "impair", "tag": "shape", "rate": "8mbit", "queue": "50ms"}`)
+	instance := boxWith(t, `{"type": "impair", "tag": "shape", "link_params": {"rate": "8mbit", "queue": "50ms"}}`)
 	out := outboundOf(t, instance, "shape")
 	sink, got := udpSink(t)
 	pc, err := out.ListenPacket(context.Background(), dest(sink.LocalAddr().String()))
@@ -301,9 +301,9 @@ func TestIntegrationUDPDelayLossOutage(t *testing.T) {
 		t.Skip("real time")
 	}
 	instance := boxWith(t,
-		`{"type": "impair", "tag": "slow", "delay": "30ms"}`,
-		`{"type": "impair", "tag": "lossy", "up": {"loss": "10%"}, "seed": 7}`,
-		`{"type": "impair", "tag": "flaky", "start": "first_use", "schedule": [{"at": "1s", "outage": true}, {"at": "2s", "outage": false}]}`)
+		`{"type": "impair", "tag": "slow", "link_params": {"delay": "30ms"}}`,
+		`{"type": "impair", "tag": "lossy", "link_params": {"up": {"loss": "10%"}}, "seed": 7}`,
+		`{"type": "impair", "tag": "flaky", "start": "first_use", "schedule": [{"at": "1s", "link_params": {"outage": true}}, {"at": "2s", "link_params": {"outage": false}}]}`)
 	echo := udpEcho(t)
 	// delay: up and down 30 ms each
 	pc, err := outboundOf(t, instance, "slow").ListenPacket(context.Background(), dest(echo.LocalAddr().String()))
@@ -373,8 +373,8 @@ func TestIntegrationTCP(t *testing.T) {
 		t.Skip("real time")
 	}
 	instance := boxWith(t,
-		`{"type": "impair", "tag": "shape", "rate": "8mbit", "queue": "50ms"}`,
-		`{"type": "impair", "tag": "slow", "delay": "30ms"}`)
+		`{"type": "impair", "tag": "shape", "link_params": {"rate": "8mbit", "queue": "50ms"}}`,
+		`{"type": "impair", "tag": "slow", "link_params": {"delay": "30ms"}}`)
 	out := outboundOf(t, instance, "shape")
 	// up
 	sinkAddr, got := tcpSink(t)
@@ -437,8 +437,8 @@ func TestIntegrationTCPOutageAndReset(t *testing.T) {
 		t.Skip("real time")
 	}
 	instance := boxWith(t,
-		`{"type": "impair", "tag": "flaky", "start": "first_use", "schedule": [{"at": "1s", "outage": true}, {"at": "2s", "outage": false}]}`,
-		`{"type": "impair", "tag": "carrier", "start": "first_use", "schedule": [{"at": "1s", "outage": true, "reset": true}, {"at": "1500ms", "outage": false}]}`)
+		`{"type": "impair", "tag": "flaky", "start": "first_use", "schedule": [{"at": "1s", "link_params": {"outage": true}}, {"at": "2s", "link_params": {"outage": false}}]}`,
+		`{"type": "impair", "tag": "carrier", "start": "first_use", "schedule": [{"at": "1s", "link_params": {"outage": true, "reset": true}}, {"at": "1500ms", "link_params": {"outage": false}}]}`)
 	sinkAddr, got := tcpSink(t)
 	conn, err := outboundOf(t, instance, "flaky").DialContext(context.Background(), "tcp", dest(sinkAddr))
 	if err != nil {
@@ -497,10 +497,10 @@ func TestIntegrationChains(t *testing.T) {
 		"log": {"disabled": true},
 		"inbounds": [{"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": `+strconv.Itoa(port)+`}],
 		"outbounds": [
-			{"type": "impair", "tag": "shape", "rate": "8mbit", "delay": "20ms"},
+			{"type": "impair", "tag": "shape", "link_params": {"rate": "8mbit", "delay": "20ms"}},
 			{"type": "socks", "tag": "via", "server": "127.0.0.1", "server_port": `+strconv.Itoa(port)+`, "detour": "shape"},
 			{"type": "socks", "tag": "proxy", "server": "127.0.0.1", "server_port": `+strconv.Itoa(port)+`},
-			{"type": "impair", "tag": "over", "detour": "proxy", "rate": "8mbit", "delay": "20ms"},
+			{"type": "impair", "tag": "over", "detour": "proxy", "link_params": {"rate": "8mbit", "delay": "20ms"}},
 			{"type": "impair", "tag": "over2", "detour": "over"},
 			{"type": "direct", "tag": "direct"}
 		],
@@ -553,7 +553,7 @@ func TestIntegrationSharedBottleneck(t *testing.T) {
 	if testing.Short() {
 		t.Skip("real time")
 	}
-	instance := boxWith(t, `{"type": "impair", "tag": "shape", "rate": "8mbit"}`)
+	instance := boxWith(t, `{"type": "impair", "tag": "shape", "link_params": {"rate": "8mbit"}}`)
 	out := outboundOf(t, instance, "shape")
 	sinkAddr, got := tcpSink(t)
 	var wg sync.WaitGroup
@@ -591,7 +591,7 @@ func TestIntegrationTCPCloseFlushes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("real time")
 	}
-	instance := boxWith(t, `{"type": "impair", "tag": "slow", "rate": "8mbit", "queue": "1s", "delay": "300ms"}`)
+	instance := boxWith(t, `{"type": "impair", "tag": "slow", "link_params": {"rate": "8mbit", "queue": "1s", "delay": "300ms"}}`)
 	sinkAddr, got := tcpSink(t)
 	conn, err := outboundOf(t, instance, "slow").DialContext(context.Background(), "tcp", dest(sinkAddr))
 	if err != nil {
@@ -621,10 +621,10 @@ func TestIntegrationTCPCloseFlushes(t *testing.T) {
 // The runtime control methods the StartedService commands call: JSON in the
 // config's schema in, the status JSON out, the same checks as the config.
 func TestIntegrationControl(t *testing.T) {
-	instance := boxWith(t, `{"type": "impair", "tag": "slow", "rate": "8mbit", "seed": 1}`)
+	instance := boxWith(t, `{"type": "impair", "tag": "slow", "link_params": {"rate": "8mbit"}, "seed": 1}`)
 	control := outboundOf(t, instance, "slow").(interface {
 		ImpairSet(entry []byte) error
-		ImpairSchedule(entries []byte, start string) error
+		ImpairSchedule(entries []byte, start string, repeat string) error
 		ImpairStatus() ([]byte, error)
 	})
 	status := func() impair.Status {
@@ -639,36 +639,36 @@ func TestIntegrationControl(t *testing.T) {
 		}
 		return status
 	}
-	for _, bad := range []string{`{"at": "1s", "outage": true}`, `{"rate": "10mbps"}`, `{"bogus": 1}`, `{}`, `{"reset": true}`} {
+	for _, bad := range []string{`{"at": "1s", "link_params": {"outage": true}}`, `{"link_params": {"rate": "10mbps"}}`, `{"bogus": 1}`, `{}`, `{"link_params": {"reset": true}}`, `{"rate": "1mbit"}`} {
 		if err := control.ImpairSet([]byte(bad)); err == nil {
 			t.Errorf("set %s accepted", bad)
 		}
 	}
-	if err := control.ImpairSet([]byte(`{"direction": "down", "outage": true}`)); err != nil {
+	if err := control.ImpairSet([]byte(`{"link_params": {"down": {"outage": true}}}`)); err != nil {
 		t.Fatal(err)
 	}
-	if st := status(); st.Tag != "slow" || st.Up.Outage || !st.Down.Outage {
+	if st := status(); st.Tag != "slow" || st.LinkParams.Up.Outage || !st.LinkParams.Down.Outage {
 		t.Fatalf("after set: %+v", st)
 	}
-	for _, bad := range []string{`[{"outage": true}]`, `[{"at": "2s", "outage": true}, {"at": "1s", "outage": false}]`, `{}`} {
-		if err := control.ImpairSchedule([]byte(bad), "now"); err == nil {
+	for _, bad := range []string{`[{"link_params": {"outage": true}}]`, `[{"at": "2s", "link_params": {"outage": true}}, {"at": "1s", "link_params": {"outage": false}}]`, `{}`} {
+		if err := control.ImpairSchedule([]byte(bad), "now", ""); err == nil {
 			t.Errorf("schedule %s accepted", bad)
 		}
 	}
-	if err := control.ImpairSchedule([]byte(`[]`), "later"); err == nil {
+	if err := control.ImpairSchedule([]byte(`[]`), "later", ""); err == nil {
 		t.Error(`start "later" accepted`)
 	}
-	if st := status(); !st.Down.Outage {
+	if st := status(); !st.LinkParams.Down.Outage {
 		t.Fatal("a rejected schedule changed the link")
 	}
-	if err := control.ImpairSchedule([]byte(`[{"at": "50ms", "rate": "2mbit"}]`), "now"); err != nil {
+	if err := control.ImpairSchedule([]byte(`[{"at": "50ms", "link_params": {"rate": "2mbit"}}]`), "now", ""); err != nil {
 		t.Fatal(err)
 	}
-	if st := status(); st.Down.Outage || st.Up.Rate != "8mbit" || st.Schedule.Entries != 1 {
+	if st := status(); st.LinkParams.Down.Outage || st.LinkParams.Up.Rate != "8mbit" || st.Schedule.Entries != 1 {
 		t.Fatalf("after schedule: %+v", st)
 	}
 	time.Sleep(150 * time.Millisecond)
-	if st := status(); st.Up.Rate != "2mbit" || st.Schedule.Applied != 1 {
+	if st := status(); st.LinkParams.Up.Rate != "2mbit" || st.Schedule.Applied != 1 {
 		t.Fatalf("schedule did not run on its own: %+v", st)
 	}
 }
@@ -677,7 +677,7 @@ func TestIntegrationControl(t *testing.T) {
 // (event loop, pumps, connections), as a core restart inside one process
 // needs.
 func TestIntegrationBoxCloseStopsImpair(t *testing.T) {
-	instance := boxWith(t, `{"type": "impair", "tag": "slow", "stall": {"every": "1s", "duration": "100ms"}}`)
+	instance := boxWith(t, `{"type": "impair", "tag": "slow", "link_params": {"stall": {"every": "1s", "duration": "100ms"}}}`)
 	out := outboundOf(t, instance, "slow")
 	if impair.Stopped(out) {
 		t.Fatal("stopped before close")
@@ -695,7 +695,7 @@ func TestIntegrationSilentOutageDialTimeout(t *testing.T) {
 	out := outboundOf(t, instance, "slow")
 	control := out.(interface{ ImpairSet(entry []byte) error })
 	sinkAddr, _ := tcpSink(t)
-	if err := control.ImpairSet([]byte(`{"outage": true}`)); err != nil {
+	if err := control.ImpairSet([]byte(`{"link_params": {"outage": true}}`)); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
@@ -704,7 +704,7 @@ func TestIntegrationSilentOutageDialTimeout(t *testing.T) {
 	if !errors.Is(err, os.ErrDeadlineExceeded) || took < 250*time.Millisecond || took > time.Second {
 		t.Fatalf("dial in a silent outage: %v after %v, want a timeout after 300ms", err, took)
 	}
-	if err = control.ImpairSet([]byte(`{"outage": false}`)); err != nil {
+	if err = control.ImpairSet([]byte(`{"link_params": {"outage": false}}`)); err != nil {
 		t.Fatal(err)
 	}
 	conn, err := out.DialContext(context.Background(), "tcp", dest(sinkAddr))
@@ -712,4 +712,86 @@ func TestIntegrationSilentOutageDialTimeout(t *testing.T) {
 		t.Fatal("dial after the outage: ", err)
 	}
 	conn.Close()
+}
+
+// The v2 schema through the real config path (box.New): lx.impair_profiles,
+// a profile with tuning, "off" in schedule entries (the decoder re-marshals
+// outbounds and drops empty arrays and objects, so "off" is the only way to
+// turn a thing off), and a
+// sublink matched by port over loopback as a second stage.
+func TestIntegrationV2Config(t *testing.T) {
+	fast, slow := tcpEcho(t), tcpEcho(t)
+	_, slowPort, _ := net.SplitHostPort(slow)
+	config := `{"log": {"disabled": true},
+	  "lx": {"impair_profiles": {
+	    "home":  {"link_params": {"delay": "10ms"}},
+	    "metro": {"link_params": {"profile": "lte-walk", "loss": "0%", "stall": "off"}}
+	  }},
+	  "outbounds": [
+	    {"type": "impair", "tag": "line", "seed": 1,
+	     "link_params": {"profile": "home"},
+	     "sublinks": [{"match": {"port": [` + slowPort + `]}, "link_params": {"delay": "100ms"}}],
+	     "schedule": [
+	       {"at": "1h", "link_params": {"profile": "metro", "vary": "off"}},
+	       {"at": "2h", "sublinks": "off"}
+	     ]},
+	    {"type": "direct", "tag": "direct"}
+	  ]}`
+	instance := startBox(t, config)
+	out := outboundOf(t, instance, "line")
+	status := func() impair.Status {
+		t.Helper()
+		content, err := out.(interface{ ImpairStatus() ([]byte, error) }).ImpairStatus()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var status impair.Status
+		if err = json.Unmarshal(content, &status); err != nil {
+			t.Fatal(err)
+		}
+		return status
+	}
+	st := status()
+	if st.LinkParams.Profile != "home" || st.LinkParams.Up.Delay != "10ms" || len(st.Sublinks) != 1 || st.Schedule.Entries != 2 {
+		t.Fatalf("loaded: %+v", st)
+	}
+	rtt := func(addr string) time.Duration {
+		t.Helper()
+		conn, err := out.DialContext(context.Background(), "tcp", dest(addr))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		buf := make([]byte, 4)
+		var best time.Duration
+		for range 5 {
+			start := time.Now()
+			conn.Write([]byte("ping"))
+			if _, err = io.ReadFull(conn, buf); err != nil {
+				t.Fatal(err)
+			}
+			if d := time.Since(start); best == 0 || d < best {
+				best = d
+			}
+		}
+		return best
+	}
+	fastRTT, slowRTT := rtt(fast), rtt(slow)
+	t.Logf("rtt line only %v, line + sublink %v", fastRTT, slowRTT)
+	if fastRTT < 20*time.Millisecond || fastRTT > 40*time.Millisecond || slowRTT < 220*time.Millisecond || slowRTT > 260*time.Millisecond {
+		t.Errorf("rtt line only %v (want ≈20ms), line + sublink %v (want ≈220ms)", fastRTT, slowRTT)
+	}
+	if st = status(); st.Sublinks[0].Matched != 1 {
+		t.Errorf("sublink matched %d connections, want 1", st.Sublinks[0].Matched)
+	}
+}
+
+// Keys of the line outside link_params are an error: the schema has one
+// place for them.
+func TestIntegrationV2RejectsFlatKeys(t *testing.T) {
+	ctx := include.Context(context.Background())
+	_, err := json.UnmarshalExtendedContext[option.Options](ctx, []byte(`{"outbounds": [{"type": "impair", "tag": "x", "rate": "1mbit"}]}`))
+	if err == nil || !strings.Contains(err.Error(), "rate") {
+		t.Fatalf("flat rate accepted: %v", err)
+	}
 }

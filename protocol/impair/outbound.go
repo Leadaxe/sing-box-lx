@@ -18,10 +18,12 @@ import (
 	"github.com/sagernet/sing-box/common/dialer"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 )
 
 // RegisterOutbound registers the `impair` outbound type.
@@ -45,7 +47,11 @@ type Outbound struct {
 
 // New is the registry constructor.
 func New(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options Options) (adapter.Outbound, error) {
-	cfg, err := resolve(options)
+	var userProfiles map[string]ProfileOption
+	if lx := service.PtrFromContext[option.LXResolved](ctx); lx != nil {
+		userProfiles = lx.ImpairProfiles
+	}
+	cfg, err := resolve(options, userProfiles)
 	if err != nil {
 		return nil, E.Cause(err, "impair")
 	}
@@ -99,20 +105,36 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 }
 
 func (h *Outbound) describe() string {
-	text := ""
-	if h.cfg.profile != "" {
-		text = "profile " + h.cfg.profile + "; "
+	text := newLine(h.cfg.line, 0, 0, 0).describe()
+	if n := len(h.cfg.sublinks); n > 0 {
+		text += "; " + strconv.Itoa(n) + " sublinks"
 	}
-	for dir := range h.cfg.dirs {
-		if dir > 0 {
-			text += "; "
+	if n := len(h.cfg.schedule); n > 0 {
+		text += "; schedule of " + strconv.Itoa(n) + " entries"
+		if h.cfg.repeat > 0 {
+			text += " repeating every " + h.cfg.repeat.String()
 		}
-		text += dirNames[dir] + " " + describeLink(&h.cfg.dirs[dir])
-	}
-	if len(h.cfg.schedule) > 0 {
-		text += "; schedule of " + strconv.Itoa(len(h.cfg.schedule)) + " entries"
 	}
 	return text
+}
+
+// connInfo is what the sublinks see of a new connection: the destination,
+// with the domain from the routing metadata when the destination is
+// already an address.
+func connInfoOf(ctx context.Context, network string, destination M.Socksaddr) connInfo {
+	info := connInfo{network: network, domain: destination.Fqdn, port: destination.Port}
+	if destination.IsIP() {
+		info.addr = destination.Addr
+	}
+	if info.domain == "" {
+		if metadata := adapter.ContextFrom(ctx); metadata != nil {
+			info.domain = metadata.Domain
+			if !info.addr.IsValid() && metadata.Destination.IsIP() {
+				info.addr = metadata.Destination.Addr
+			}
+		}
+	}
+	return info
 }
 
 // describeLink is a direction's link for the log: rate, delay, loss.
@@ -152,25 +174,27 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	if network != N.NetworkTCP && network != N.NetworkUDP {
 		return nil, E.New("impair: unsupported network ", network)
 	}
-	if err := h.shaper.beforeDial(ctx); err != nil {
+	sub := h.shaper.model.pick(connInfoOf(ctx, network, destination))
+	if err := h.shaper.beforeDial(ctx, sub); err != nil {
 		return nil, err
 	}
 	conn, err := h.dialer.DialContext(ctx, network, destination)
 	if err != nil {
 		return nil, err
 	}
-	return h.shaper.wrapConn(network, conn), nil
+	return h.shaper.wrapConn(network, conn, sub), nil
 }
 
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	if err := h.shaper.beforeDial(ctx); err != nil {
+	sub := h.shaper.model.pick(connInfoOf(ctx, N.NetworkUDP, destination))
+	if err := h.shaper.beforeDial(ctx, sub); err != nil {
 		return nil, err
 	}
 	conn, err := h.dialer.ListenPacket(ctx, destination)
 	if err != nil {
 		return nil, err
 	}
-	return newPacketConn(h.shaper, conn), nil
+	return newPacketConn(h.shaper, conn, sub), nil
 }
 
 func (h *Outbound) Close() error {

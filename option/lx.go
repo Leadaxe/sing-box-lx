@@ -26,6 +26,10 @@ type LXOptions struct {
 	// to leave alone. Absent = "clamp".
 	MTUAlign   *LXMTUAlign          `json:"mtu_align,omitempty"`
 	SniffGuard *LXSniffGuardOptions `json:"sniff_guard,omitempty"` // lx: SPEC 060
+	// ImpairProfiles are named link templates of the impair test outbound
+	// (lx: SPEC 164), shared by every impair of the config; checked by the
+	// outbounds that use them.
+	ImpairProfiles map[string]ImpairProfile `json:"impair_profiles,omitempty"`
 	// QUICSniffDecoy is removed (lx: SPEC 060): any value fails the load.
 	QUICSniffDecoy *LXRemovedQUICSniffDecoy `json:"quic_sniff_decoy,omitempty"`
 	// AWGMasquerade is removed (lx: SPEC 153 → 060): any value fails the load.
@@ -315,6 +319,8 @@ type LXResolved struct {
 	// MTUAlign always carries a mode: "clamp" when the key is absent.
 	MTUAlign   LXMTUAlignResolved
 	SniffGuard LXSniffGuardResolved // lx: SPEC 060
+	// ImpairProfiles is lx.impair_profiles as written (lx: SPEC 164).
+	ImpairProfiles map[string]ImpairProfile
 }
 
 // LXWGResolved keeps the field names of the flat layout for the idle values,
@@ -426,6 +432,7 @@ func ResolveLX(options *Options) (*LXResolved, error) {
 	resolved.SniffGuard = resolveLXSniffGuard(lx.SniffGuard)
 	lx.SniffGuard = lx.SniffGuard.canonical()
 	// lx:end SPEC 060
+	resolved.ImpairProfiles = lx.ImpairProfiles // lx: SPEC 164
 
 	if wg != (LXWGOptions{}) {
 		lx.WG = &wg
@@ -442,7 +449,7 @@ func ResolveLX(options *Options) (*LXResolved, error) {
 		lx.MTUAlign = nil
 	}
 	if lx.WG == nil && lx.MASQUE == nil && lx.TrustTunnel == nil && lx.MTUAlign == nil &&
-		lx.SniffGuard == nil { // lx: SPEC 060
+		lx.SniffGuard == nil && len(lx.ImpairProfiles) == 0 { // lx: SPEC 060, SPEC 164
 		options.LX = nil
 	} else {
 		options.LX = &lx

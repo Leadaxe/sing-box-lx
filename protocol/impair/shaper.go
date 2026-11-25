@@ -3,6 +3,7 @@ package impair
 import (
 	"context"
 	"net"
+	"net/netip"
 	"os"
 	"sync"
 	"syscall"
@@ -98,13 +99,13 @@ func (s *shaper) handleReset(reset bool) {
 // The wait is bounded by the connect timeout (connectTimeout), as a real
 // handshake that gets no answer: the dial fails with a timeout instead of
 // hanging to the end of the outage and then going out in a burst.
-func (s *shaper) beforeDial(ctx context.Context) error {
+func (s *shaper) beforeDial(ctx context.Context, sub *subline) error {
 	s.startEvents()
 	s.model.firstUse()
 	var timer *time.Timer
 	var limit <-chan time.Time
 	for {
-		resetting, wait, reset := s.model.dialState()
+		resetting, wait, reset := s.model.dialState(sub)
 		s.handleReset(reset)
 		if resetting {
 			return errLinkReset
@@ -193,12 +194,21 @@ func (s *shaper) close() {
 	s.pumps[dirDown].close()
 }
 
-// wrapConn wraps what the carrier dialler returned for network.
-func (s *shaper) wrapConn(network string, conn net.Conn) net.Conn {
+// wrapConn wraps what the carrier dialler returned for network; sub is the
+// connection's sublink (nil: the outbound's line only).
+func (s *shaper) wrapConn(network string, conn net.Conn, sub *subline) net.Conn {
 	if network == "udp" {
-		return newDatagramConn(s, conn)
+		return newDatagramConn(s, conn, sub)
 	}
-	return newStreamConn(s, conn)
+	return newStreamConn(s, conn, sub)
+}
+
+// connInfo is what a sublink matches a new connection on.
+type connInfo struct {
+	network string
+	domain  string
+	addr    netip.Addr
+	port    uint16
 }
 
 // sleep waits d, or until one of the channels is closed/signalled (nil

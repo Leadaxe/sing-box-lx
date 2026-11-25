@@ -29,6 +29,7 @@ type rxItem struct {
 
 type packetCore struct {
 	sh    *shaper
+	sub   *subline
 	under net.PacketConn
 
 	rx        chan rxItem
@@ -43,9 +44,10 @@ type packetCore struct {
 	readDeadline deadline
 }
 
-func newPacketCore(s *shaper, under net.PacketConn) *packetCore {
+func newPacketCore(s *shaper, under net.PacketConn, sub *subline) *packetCore {
 	c := &packetCore{
 		sh:           s,
+		sub:          sub,
 		under:        under,
 		rx:           make(chan rxItem, rxQueue),
 		tx:           make(chan rxItem, txQueue),
@@ -71,7 +73,7 @@ func (c *packetCore) readLoop() {
 	for {
 		n, addr, err := c.under.ReadFrom(buf)
 		if n > 0 {
-			due, v, reset := c.sh.model.admitPacket(dirDown, n)
+			due, v, reset := c.sh.model.admitPacket(c.sub, dirDown, n)
 			c.sh.handleReset(reset)
 			if v == verdictPass {
 				bp := getPkt(n)
@@ -175,7 +177,7 @@ func (c *packetCore) writeTo(p []byte, addr net.Addr) (int, error) {
 	if errp := c.werr.Swap(nil); errp != nil {
 		return 0, *errp
 	}
-	due, v, reset := c.sh.model.admitPacket(dirUp, len(p))
+	due, v, reset := c.sh.model.admitPacket(c.sub, dirUp, len(p))
 	c.sh.handleReset(reset)
 	if v != verdictPass {
 		return len(p), nil
@@ -206,8 +208,8 @@ type packetConn struct {
 	*packetCore
 }
 
-func newPacketConn(s *shaper, under net.PacketConn) *packetConn {
-	return &packetConn{newPacketCore(s, under)}
+func newPacketConn(s *shaper, under net.PacketConn, sub *subline) *packetConn {
+	return &packetConn{newPacketCore(s, under, sub)}
 }
 
 func (c *packetConn) ReadFrom(p []byte) (int, net.Addr, error) { return c.readFrom(p) }
@@ -246,8 +248,8 @@ func (c connPacket) ReadFrom(p []byte) (int, net.Addr, error) {
 
 func (c connPacket) WriteTo(p []byte, _ net.Addr) (int, error) { return c.Conn.Write(p) }
 
-func newDatagramConn(s *shaper, conn net.Conn) *datagramConn {
-	return &datagramConn{packetCore: newPacketCore(s, connPacket{conn}), conn: conn}
+func newDatagramConn(s *shaper, conn net.Conn, sub *subline) *datagramConn {
+	return &datagramConn{packetCore: newPacketCore(s, connPacket{conn}, sub), conn: conn}
 }
 
 func (c *datagramConn) Read(p []byte) (int, error) {

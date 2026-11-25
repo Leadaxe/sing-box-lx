@@ -55,14 +55,14 @@ func (s *stubPacket) SetWriteDeadline(t time.Time) error { return nil }
 // A carrier that blocks on write holds back only its own connection: the
 // up pump serves every datagram connection of the outbound.
 func TestPacketBlockedCarrierIsolated(t *testing.T) {
-	cfg, err := resolve(Options{Seed: seed(1)})
+	cfg, err := resolve(Options{Seed: seed(1)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sh := newShaper(cfg, realClock())
 	defer sh.close()
 	stuck, free := newStubPacket(true), newStubPacket(false)
-	a, b := newPacketConn(sh, stuck), newPacketConn(sh, free)
+	a, b := newPacketConn(sh, stuck, nil), newPacketConn(sh, free, nil)
 	defer a.Close()
 	defer b.Close()
 	addr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9}
@@ -88,9 +88,9 @@ func TestPacketBlockedCarrierIsolated(t *testing.T) {
 // The event loop logs schedule entries at their moment without traffic.
 func TestEventLoopLogsOnTime(t *testing.T) {
 	cfg, err := resolve(Options{Seed: seed(1), Schedule: []ScheduleEntry{
-		{At: "100ms", Outage: boolp(true)},
-		{At: "200ms", Outage: boolp(false)},
-	}})
+		{At: "100ms", LinkParams: lp(LinkOptions{Outage: boolp(true)})},
+		{At: "200ms", LinkParams: lp(LinkOptions{Outage: boolp(false)})},
+	}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestEventLoopLogsOnTime(t *testing.T) {
 	start := time.Now()
 	sh.logf = func(debug bool, text string) { got <- text }
 	sh.startEvents()
-	for _, want := range []string{"schedule at 100ms: up outage begins; down outage begins", "schedule at 200ms: up outage ends; down outage ends"} {
+	for _, want := range []string{"schedule at 100ms: up rate unlimited delay 0s outage; down rate unlimited delay 0s outage", "schedule at 200ms: up rate unlimited delay 0s; down rate unlimited delay 0s"} {
 		select {
 		case text := <-got:
 			if text != want {

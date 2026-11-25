@@ -72,8 +72,9 @@ func signal(c chan struct{}) {
 
 type streamConn struct {
 	sh    *shaper
+	sub   *subline
 	under net.Conn
-	st    [2]streamState // guarded by sh.model.mu
+	st    streamStates // guarded by sh.model.mu
 
 	// uclosed closes on Close: Read and Write fail from then on. closed
 	// closes when the carrier is closed: at once on a reset or the
@@ -115,9 +116,10 @@ type streamConn struct {
 	rDead   deadline
 }
 
-func newStreamConn(s *shaper, under net.Conn) *streamConn {
+func newStreamConn(s *shaper, under net.Conn, sub *subline) *streamConn {
 	c := &streamConn{
 		sh:       s,
+		sub:      sub,
 		under:    under,
 		uclosed:  make(chan struct{}),
 		closed:   make(chan struct{}),
@@ -188,7 +190,7 @@ func (c *streamConn) Write(p []byte) (int, error) {
 		for {
 			var wait time.Duration
 			var reset bool
-			due, wait, reset = c.sh.model.admitStream(dirUp, &c.st[dirUp], n)
+			due, wait, reset = c.sh.model.admitStream(c.sub, dirUp, &c.st, n)
 			c.sh.handleReset(reset)
 			if wait == 0 {
 				break
@@ -235,7 +237,7 @@ func (c *streamConn) writeLoop() {
 		if isClosed(c.closed) {
 			return
 		}
-		down := c.sh.model.outage(dirUp)
+		down := c.sh.model.outage(c.sub, dirUp)
 		c.upMu.Lock()
 		if c.upQ.size == 0 {
 			c.upMu.Unlock()
@@ -359,7 +361,7 @@ func (c *streamConn) readLoop() {
 			for {
 				var wait time.Duration
 				var reset bool
-				due, wait, reset = c.sh.model.admitStream(dirDown, &c.st[dirDown], n)
+				due, wait, reset = c.sh.model.admitStream(c.sub, dirDown, &c.st, n)
 				c.sh.handleReset(reset)
 				if wait == 0 {
 					break
@@ -394,7 +396,7 @@ func (c *streamConn) Read(p []byte) (int, error) {
 		if isClosed(c.uclosed) {
 			return 0, c.closedErr()
 		}
-		down := c.sh.model.outage(dirDown)
+		down := c.sh.model.outage(c.sub, dirDown)
 		c.rxMu.Lock()
 		if c.rxQ.size > 0 {
 			now := c.sh.now()

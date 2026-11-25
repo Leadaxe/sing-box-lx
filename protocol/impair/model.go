@@ -14,10 +14,11 @@ import (
 // clock, so the tests drive it with a fake clock. Times are int64
 // nanoseconds since the model's base (the outbound's creation).
 //
-// One bottleneck per direction, shared by every connection of the outbound:
+// A line has one bottleneck per direction, shared by every connection that
+// goes through it:
 //
-//	start   = max(now, nextFree)           the unit waits for the units ahead
-//	backlog = start - now                  the queueing delay it would see
+//	start   = max(arrive, nextFree)        the unit waits for the units ahead
+//	backlog = start - arrive               the queueing delay it would see
 //	backlog > queue limit                  datagram: tail drop; stream: wait (backpressure)
 //	nextFree = start + size*8/rate         it occupies the bottleneck for its transmission time
 //	due     = nextFree + delay ± jitter    when it comes out of the far end
@@ -26,6 +27,10 @@ import (
 // token bucket whose depth is one unit, with a queue in front of it. When
 // the rate changes (vary, schedule), units already admitted keep the
 // departure they were given; the new rate applies from the next unit.
+//
+// Every connection goes through the outbound's own line. A connection that
+// matched a sublink when it opened then goes through the sublink's line
+// too, as a second stage: it arrives there when it comes out of the first.
 
 // mss is the stream unit for the loss-as-stall model (a TCP segment).
 const mss = 1448
@@ -45,7 +50,7 @@ const (
 	verdictOutage
 )
 
-// Stats are the counters of one direction.
+// Stats are the counters of one direction of a line.
 type Stats struct {
 	Units, Bytes        uint64 // admitted (datagrams delivered later, stream segments)
 	DropQueue, DropLoss uint64 // datagrams dropped by the full queue, by random loss
@@ -53,6 +58,7 @@ type Stats struct {
 	Stalls              uint64 // stream stalls caused by loss
 }
 
+// link is one direction of a line.
 type link struct {
 	p           params
 	rng         *rand.Rand
@@ -60,30 +66,245 @@ type link struct {
 	lastDue     int64
 	geBad       bool
 	varyNext    int64
-	schedOutage bool
 	resetOutage bool
 	stats       Stats
 }
 
-// streamState is the per-connection, per-direction state of the stream
-// model (guarded by the model's mutex).
+// streamState is the per-connection, per-direction, per-stage state of the
+// stream model (guarded by the model's mutex).
 type streamState struct {
 	lastDue int64
 	toLoss  float64 // bytes until the next simulated loss
 	lossRef float64 // the loss rate toLoss was drawn for
 }
 
+// streamStates is a stream connection's state: [direction][stage].
+type streamStates [2][2]streamState
+
+// line is the outbound's own line or a sublink's.
+type line struct {
+	links      [2]link
+	stall      *stallSpec
+	stallRng   *rand.Rand
+	stallStart int64
+	stallEnd   int64
+	stallOn    bool // the last stall state advance saw (for the log)
+	profile    string
+}
+
+// newLine starts a line on v. stream separates the random generators of
+// the lines of one model: the outbound's line is 0.
+func newLine(v lineValues, seed int64, stream uint64, now int64) *line {
+	l := &line{}
+	for dir := range l.links {
+		l.links[dir].rng = rand.New(rand.NewPCG(uint64(seed), stream*4+uint64(dir+1)))
+	}
+	l.stallRng = rand.New(rand.NewPCG(uint64(seed), stream*4+3))
+	for dir := range l.links {
+		k := &l.links[dir]
+		k.p = v.dirs[dir]
+		if k.p.vary != nil && !k.p.drawNow {
+			k.varyNext = now + int64(k.p.vary.every)
+		}
+	}
+	l.profile = v.profile
+	l.setStall(v.stall, now)
+	return l
+}
+
+func (l *line) values() lineValues {
+	return lineValues{dirs: [2]params{l.links[dirUp].p, l.links[dirDown].p}, stall: l.stall, profile: l.profile}
+}
+
+func (l *line) expSample(mean time.Duration) int64 {
+	return int64(l.stallRng.ExpFloat64() * float64(mean))
+}
+
+func (l *line) setStall(spec *stallSpec, now int64) {
+	l.stall = spec
+	if spec != nil {
+		l.stallStart = now + l.expSample(spec.every)
+		l.stallEnd = l.stallStart + int64(spec.duration)
+	}
+}
+
+// apply applies checked link_params at now. It reports whether a resetting
+// outage began.
+func (l *line) apply(profiles *profileSet, lp *LinkParams, now int64) (reset bool) {
+	v := l.values()
+	outageSet, _ := profiles.apply("", lp, &v, 0) // checked by resolveEntry
+	switched := lp.Profile != ""
+	for dir := range l.links {
+		k := &l.links[dir]
+		k.p = v.dirs[dir]
+		if switched {
+			k.geBad = false
+		}
+		own := [2]*LinkOptions{lp.Up, lp.Down}[dir]
+		touched := switched || lp.Rate != "" || lp.Vary != nil || own != nil && (own.Rate != "" || own.Vary != nil)
+		if touched && k.p.vary != nil && !k.p.drawNow {
+			k.varyNext = now + int64(k.p.vary.every)
+		}
+		if outageSet[dir] {
+			k.resetOutage = k.p.outage && lp.Reset
+			if k.resetOutage {
+				reset = true
+			}
+		}
+		if !k.p.outage {
+			k.resetOutage = false
+		}
+	}
+	l.profile = v.profile
+	if switched || lp.Stall != nil {
+		l.setStall(v.stall, now)
+	}
+	return reset
+}
+
+// advance applies the stall boundaries and rate draws due by now and
+// reports when the next one is.
+func (l *line) advance(now int64, note func(debug bool, text string), name string) (next int64) {
+	next = math.MaxInt64
+	if stall := l.stall; stall != nil {
+		for now >= l.stallEnd {
+			l.stallStart = l.stallEnd + l.expSample(stall.every)
+			l.stallEnd = l.stallStart + int64(stall.duration)
+		}
+		if now < l.stallStart {
+			next = min(next, l.stallStart)
+		} else {
+			next = min(next, l.stallEnd)
+		}
+	}
+	if on := l.stall != nil && now >= l.stallStart; on != l.stallOn {
+		l.stallOn = on
+		if on {
+			note(true, name+"stall of the whole line for "+l.stall.duration.String())
+		} else {
+			note(true, name+"stall ends")
+		}
+	}
+	for dir := range l.links {
+		k := &l.links[dir]
+		vary := k.p.vary
+		if vary == nil {
+			continue
+		}
+		if k.p.drawNow || now >= k.varyNext {
+			k.p.rate = vary.min + k.rng.Float64()*(vary.max-vary.min)
+			if k.p.drawNow || now-k.varyNext >= int64(vary.every) {
+				k.varyNext = now + int64(vary.every)
+			} else {
+				k.varyNext += int64(vary.every)
+			}
+			k.p.drawNow = false
+		}
+		next = min(next, k.varyNext)
+	}
+	return next
+}
+
+func (l *line) stalled(now int64) bool {
+	return l.stall != nil && now >= l.stallStart && now < l.stallEnd
+}
+
+func (l *line) down(dir int, now int64) bool {
+	return l.links[dir].p.outage || l.stalled(now)
+}
+
+func (l *line) resetting() bool {
+	return l.links[dirUp].resetOutage || l.links[dirDown].resetOutage
+}
+
+// describe is the line for the log: template, both directions, stalls.
+func (l *line) describe() string {
+	var text string
+	if l.profile != "" {
+		text = "profile " + l.profile + "; "
+	}
+	for dir := range l.links {
+		if dir > 0 {
+			text += "; "
+		}
+		p := &l.links[dir].p
+		text += dirNames[dir] + " " + describeLink(p)
+		if p.outage {
+			text += " outage"
+			if l.links[dir].resetOutage {
+				text += " (reset)"
+			}
+		}
+	}
+	if l.stall != nil {
+		text += "; stall every " + l.stall.every.String() + " for " + l.stall.duration.String()
+	}
+	return text
+}
+
+// subline is a sublink at runtime: its match, its line and the state of
+// every / share.
+type subline struct {
+	spec     sublinkSpec
+	line     *line
+	seen     uint64 // connections that matched the fields
+	matched  uint64 // connections that took the sublink
+	shareRng *rand.Rand
+}
+
+func (s *subline) name() string {
+	return "sublink " + s.spec.describe() + ": "
+}
+
+func (s *sublinkSpec) describe() string {
+	var parts []string
+	o := s.option.Match
+	if len(o.Domain) > 0 {
+		parts = append(parts, "domain "+strings.Join(o.Domain, ","))
+	}
+	if len(o.DomainSuffix) > 0 {
+		parts = append(parts, "domain_suffix "+strings.Join(o.DomainSuffix, ","))
+	}
+	if len(o.IPCIDR) > 0 {
+		parts = append(parts, "ip_cidr "+strings.Join(o.IPCIDR, ","))
+	}
+	if len(o.Port) > 0 {
+		ports := make([]string, len(o.Port))
+		for i, port := range o.Port {
+			ports[i] = strconv.Itoa(int(port))
+		}
+		parts = append(parts, "port "+strings.Join(ports, ","))
+	}
+	if len(o.Network) > 0 {
+		parts = append(parts, "network "+strings.Join(o.Network, ","))
+	}
+	if o.Every > 0 {
+		parts = append(parts, "every "+strconv.Itoa(o.Every))
+	}
+	if o.Share != "" {
+		parts = append(parts, "share "+o.Share)
+	}
+	if len(parts) == 0 {
+		return "[every connection]"
+	}
+	return "[" + strings.Join(parts, " ") + "]"
+}
+
 type model struct {
-	mu    sync.Mutex
-	now   func() int64
-	links [2]link
-	cfg   *config
+	mu       sync.Mutex
+	now      func() int64
+	cfg      *config
+	line     *line
+	sublinks []*subline
 
 	sched        []event // the running schedule: the config's, or one set by ScheduleImpair
-	schedStarted bool    // false: a first_use schedule waits for traffic
+	repeat       time.Duration
+	round        int
+	schedStarted bool // false: a first_use schedule waits for traffic
 	schedBase    int64
 	nextEvent    int
 	seed         int64
+	generation   uint64 // the random stream of the next sublink
 
 	// wake tells the event loop that the next event moved (a first_use
 	// schedule started, a command changed the link). It only signals a
@@ -95,18 +316,13 @@ type model struct {
 	// tick does.
 	resetPending bool
 
-	stallRng   *rand.Rand
-	stallStart int64
-	stallEnd   int64
-
 	nextCheck int64 // before this time advance has nothing to do
 
-	stallOn bool       // the last stall state advance saw (for the log)
-	logs    []logEvent // events for the log, taken by tick
+	logs []logEvent // events for the log, taken by tick
 }
 
-// logEvent is a link event for the log: schedule entries at INFO, stall
-// boundaries at DEBUG.
+// logEvent is a link event for the log: schedule entries and commands at
+// INFO, stall boundaries at DEBUG.
 type logEvent struct {
 	debug bool
 	text  string
@@ -127,28 +343,27 @@ func newModel(cfg *config, now func() int64) *model {
 	if !cfg.seeded {
 		seed = rand.Int64()
 	}
-	m := &model{now: now, cfg: cfg, sched: cfg.schedule, seed: seed}
-	for dir := range m.links {
-		l := &m.links[dir]
-		l.p = cfg.dirs[dir]
-		l.rng = rand.New(rand.NewPCG(uint64(seed), uint64(dir+1)))
-		if l.p.vary != nil && !l.p.drawNow {
-			l.varyNext = int64(l.p.vary.every)
-		}
-	}
-	m.stallRng = rand.New(rand.NewPCG(uint64(seed), 3))
-	if cfg.stall != nil {
-		m.stallStart = m.expSample(cfg.stall.every)
-		m.stallEnd = m.stallStart + int64(cfg.stall.duration)
-	}
-	if !cfg.firstUse {
-		m.schedStarted = true
-	}
+	m := &model{now: now, cfg: cfg, seed: seed, sched: cfg.schedule, repeat: cfg.repeat}
+	m.line = newLine(cfg.line, seed, 0, 0)
+	m.sublinks = m.buildSublinks(cfg.sublinks, 0)
+	m.schedStarted = !cfg.firstUse
 	return m
 }
 
-func (m *model) expSample(mean time.Duration) int64 {
-	return int64(m.stallRng.ExpFloat64() * float64(mean))
+func (m *model) buildSublinks(specs []sublinkSpec, now int64) []*subline {
+	sublinks := make([]*subline, 0, len(specs))
+	for _, spec := range specs {
+		m.generation++
+		sub := &subline{spec: spec, line: newLine(spec.line, m.seed, m.generation, now)}
+		sub.shareRng = rand.New(rand.NewPCG(uint64(m.seed), m.generation*4))
+		if spec.reset {
+			for dir := range sub.line.links {
+				sub.line.links[dir].resetOutage = sub.line.links[dir].p.outage
+			}
+		}
+		sublinks = append(sublinks, sub)
+	}
+	return sublinks
 }
 
 // firstUse starts a "start": "first_use" schedule on a new connection.
@@ -177,33 +392,43 @@ func (m *model) useLocked(now int64) {
 	}
 }
 
-// applyEvent applies one change of the link (a schedule entry or a
-// SetImpair command) at now. It reports whether a resetting outage began.
-func (m *model) applyEvent(ev *event, now int64) (reset bool) {
-	for dir, on := range ev.dirs {
-		if !on {
+// pick finds the sublink of a new connection: the first whose fields match
+// and whose every / share select it. nil: the outbound's line only.
+func (m *model) pick(conn connInfo) *subline {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sub := range m.sublinks {
+		match := &sub.spec.match
+		if !match.fields(conn.network, conn.domain, conn.addr, conn.port) {
 			continue
 		}
-		l := &m.links[dir]
-		if ev.link != nil {
-			_ = applyLink("", ev.link, &l.p) // validated by resolveEntry
-			if l.p.vary != nil && !l.p.drawNow && ev.link.Rate != "" {
-				l.varyNext = now + int64(l.p.vary.every)
-			}
+		sub.seen++
+		if match.every > 0 && sub.seen%uint64(match.every) != 0 {
+			continue
 		}
-		if ev.outage != nil {
-			l.schedOutage = *ev.outage
-			l.resetOutage = *ev.outage && ev.reset
-			if l.resetOutage {
-				reset = true
-			}
+		if match.share > 0 && sub.shareRng.Float64() >= match.share {
+			continue
 		}
+		sub.matched++
+		return sub
+	}
+	return nil
+}
+
+// applyEvent applies a schedule entry or a SetImpair command at now. It
+// reports whether a resetting outage began on the outbound's line.
+func (m *model) applyEvent(ev *event, now int64) (reset bool) {
+	if ev.link != nil {
+		reset = m.line.apply(m.cfg.profiles, ev.link.lp, now)
+	}
+	if ev.sublinks != nil {
+		m.sublinks = m.buildSublinks(*ev.sublinks, now)
 	}
 	return reset
 }
 
-// set applies a change of the link now (SetImpair), on top of whatever the
-// schedule did; the schedule keeps running.
+// set applies a change now (SetImpair), on top of whatever the schedule
+// did; the schedule keeps running.
 func (m *model) set(ev *event) (reset bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -220,103 +445,78 @@ func (m *model) set(ev *event) (reset bool) {
 	return reset
 }
 
-// replaceSchedule starts a new schedule (ScheduleImpair): the link goes
-// back to the config's parameters with no outage, the random generators
-// restart from the seed (when the config sets one, so a scenario run twice
-// draws the same losses for the same traffic), and the entries count from
-// now or, with firstUse, from the next traffic. An empty schedule only
-// restores the config's link.
-func (m *model) replaceSchedule(sched []event, firstUse bool) {
+// replaceSchedule starts a new schedule (ScheduleImpair): the line and the
+// sublinks go back to the config, the random generators restart from the
+// seed (so a scenario run twice draws the same for the same traffic), and
+// the entries count from now or, with firstUse, from the next traffic. An
+// empty schedule only restores the config. The counters are kept.
+func (m *model) replaceSchedule(sched []event, firstUse bool, repeat time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.now()
 	m.advance(now)
-	for dir := range m.links {
-		l := &m.links[dir]
-		l.p = m.cfg.dirs[dir]
-		l.schedOutage, l.resetOutage, l.geBad = false, false, false
-		if m.cfg.seeded {
-			l.rng = rand.New(rand.NewPCG(uint64(m.seed), uint64(dir+1)))
-		}
-		if l.p.vary != nil && !l.p.drawNow {
-			l.varyNext = now + int64(l.p.vary.every)
-		}
-	}
-	m.sched, m.nextEvent = sched, 0
+	stats := [2]Stats{m.line.links[dirUp].stats, m.line.links[dirDown].stats}
+	m.line = newLine(m.cfg.line, m.seed, 0, now)
+	m.line.links[dirUp].stats, m.line.links[dirDown].stats = stats[dirUp], stats[dirDown]
+	m.generation = 0
+	m.sublinks = m.buildSublinks(m.cfg.sublinks, now)
+	m.sched, m.repeat, m.round, m.nextEvent = sched, repeat, 0, 0
 	m.schedStarted, m.schedBase = !firstUse, now
+	text := "link and sublinks back to the config"
 	switch {
 	case len(sched) == 0:
-		m.note(false, "schedule cleared, link back to the config")
+		text = "schedule cleared, " + text
 	case firstUse:
-		m.note(false, "new schedule of "+strconv.Itoa(len(sched))+" entries, link back to the config; starts on first traffic")
+		text = "new schedule of " + strconv.Itoa(len(sched)) + " entries, " + text + "; starts on first traffic"
 	default:
-		m.note(false, "new schedule of "+strconv.Itoa(len(sched))+" entries, link back to the config; starts now")
+		text = "new schedule of " + strconv.Itoa(len(sched)) + " entries, " + text + "; starts now"
 	}
+	if repeat > 0 && len(sched) > 0 {
+		text += ", repeats every " + repeat.String()
+	}
+	m.note(false, text)
 	m.nextCheck = 0
 	if m.wake != nil {
 		m.wake()
 	}
 }
 
-// advance applies what became due by now: schedule entries, stall
-// boundaries, rate draws. It reports whether a resetting outage began.
-// Called with mu held.
+// advance applies what became due by now on the outbound's line: schedule
+// entries, stall boundaries, rate draws. It reports whether a resetting
+// outage began. Called with mu held.
 func (m *model) advance(now int64) (reset bool) {
 	if now < m.nextCheck {
 		return false
 	}
 	next := int64(math.MaxInt64)
-	if m.schedStarted {
-		for m.nextEvent < len(m.sched) {
-			ev := &m.sched[m.nextEvent]
-			at := m.schedBase + int64(ev.at)
-			if at > now {
-				next = min(next, at)
+	if m.schedStarted && len(m.sched) > 0 {
+		for {
+			if m.nextEvent < len(m.sched) {
+				ev := &m.sched[m.nextEvent]
+				if at := m.schedBase + int64(ev.at); at > now {
+					next = min(next, at)
+					break
+				}
+				m.nextEvent++
+				if m.applyEvent(ev, now) {
+					reset = true
+				}
+				m.note(false, m.describeEvent("schedule at "+ev.at.String(), ev))
+				continue
+			}
+			if m.repeat <= 0 {
 				break
 			}
-			m.nextEvent++
-			if m.applyEvent(ev, now) {
-				reset = true
+			roundEnd := m.schedBase + int64(m.repeat)
+			if roundEnd > now {
+				next = min(next, roundEnd+int64(m.sched[0].at))
+				break
 			}
-			m.note(false, m.describeEvent("schedule at "+ev.at.String(), ev))
+			m.schedBase, m.nextEvent = roundEnd, 0
+			m.round++
 		}
 	}
-	if stall := m.cfg.stall; stall != nil {
-		for now >= m.stallEnd {
-			m.stallStart = m.stallEnd + m.expSample(stall.every)
-			m.stallEnd = m.stallStart + int64(stall.duration)
-		}
-		if now < m.stallStart {
-			next = min(next, m.stallStart)
-		} else {
-			next = min(next, m.stallEnd)
-		}
-		if on := now >= m.stallStart; on != m.stallOn {
-			m.stallOn = on
-			if on {
-				m.note(true, "stall of the whole link for "+stall.duration.String())
-			} else {
-				m.note(true, "stall ends")
-			}
-		}
-	}
-	for dir := range m.links {
-		l := &m.links[dir]
-		vary := l.p.vary
-		if vary == nil {
-			continue
-		}
-		if l.p.drawNow || now >= l.varyNext {
-			l.p.rate = vary.min + l.rng.Float64()*(vary.max-vary.min)
-			if l.p.drawNow || now-l.varyNext >= int64(vary.every) {
-				l.varyNext = now + int64(vary.every)
-			} else {
-				l.varyNext += int64(vary.every)
-			}
-			l.p.drawNow = false
-		}
-		next = min(next, l.varyNext)
-	}
+	next = min(next, m.line.advance(now, m.note, ""))
 	m.nextCheck = next
 	if reset {
 		m.resetPending = true
@@ -327,47 +527,49 @@ func (m *model) advance(now int64) (reset bool) {
 	return reset
 }
 
+// advanceSub brings a connection's sublink up to now.
+func (m *model) advanceSub(sub *subline, now int64) {
+	if sub != nil {
+		sub.line.advance(now, m.note, sub.name())
+	}
+}
+
 // describeEvent is the log line of a change just applied.
 func (m *model) describeEvent(what string, ev *event) string {
 	var parts []string
-	for dir, on := range ev.dirs {
-		if !on {
-			continue
+	if ev.link != nil {
+		parts = append(parts, m.line.describe())
+	}
+	if ev.sublinks != nil {
+		if len(m.sublinks) == 0 {
+			parts = append(parts, "no sublinks")
 		}
-		text := dirNames[dir]
-		if ev.link != nil {
-			text += " " + describeLink(&m.links[dir].p)
+		for _, sub := range m.sublinks {
+			parts = append(parts, "sublink "+sub.spec.describe()+" "+sub.line.describe())
 		}
-		if ev.outage != nil {
-			switch {
-			case *ev.outage && ev.reset:
-				text += " outage begins, connections reset"
-			case *ev.outage:
-				text += " outage begins"
-			default:
-				text += " outage ends"
-			}
-		}
-		parts = append(parts, text)
 	}
 	return what + ": " + strings.Join(parts, "; ")
 }
 
 // nextWake is when the next logged event is due: a schedule entry or a
-// stall boundary (not a vary draw). ok is false when nothing is pending:
-// no stall and the schedule is done or, with first_use, not started.
+// stall boundary of the outbound's line (not a vary draw). ok is false when
+// nothing is pending.
 func (m *model) nextWake() (at int64, ok bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	at = math.MaxInt64
-	if m.schedStarted && m.nextEvent < len(m.sched) {
-		at = m.schedBase + int64(m.sched[m.nextEvent].at)
+	if m.schedStarted && len(m.sched) > 0 {
+		if m.nextEvent < len(m.sched) {
+			at = m.schedBase + int64(m.sched[m.nextEvent].at)
+		} else if m.repeat > 0 {
+			at = m.schedBase + int64(m.repeat) + int64(m.sched[0].at)
+		}
 	}
-	if m.cfg.stall != nil {
-		if m.now() < m.stallStart {
-			at = min(at, m.stallStart)
+	if l := m.line; l.stall != nil {
+		if m.now() < l.stallStart {
+			at = min(at, l.stallStart)
 		} else {
-			at = min(at, m.stallEnd)
+			at = min(at, l.stallEnd)
 		}
 	}
 	return at, at != math.MaxInt64
@@ -383,38 +585,32 @@ func (m *model) tick() (reset bool, logs []logEvent) {
 	return reset, logs
 }
 
-func (m *model) stalled(now int64) bool {
-	return m.cfg.stall != nil && now >= m.stallStart && now < m.stallEnd
-}
-
-func (m *model) outageLocked(dir int, now int64) bool {
-	return m.links[dir].schedOutage || m.stalled(now)
-}
-
-// outage reports whether a direction is down now.
-func (m *model) outage(dir int) bool {
+// outage reports whether a direction is down now for a connection.
+func (m *model) outage(sub *subline, dir int) bool {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	now := m.now()
 	m.advance(now)
-	down := m.outageLocked(dir, now)
-	m.mu.Unlock()
-	return down
+	m.advanceSub(sub, now)
+	return m.line.down(dir, now) || sub != nil && sub.line.down(dir, now)
 }
 
-// dialState reports whether a new connection can be made: errLinkReset
-// during a resetting outage, wait > 0 during a silent one (the handshake
-// would go unanswered).
-func (m *model) dialState() (resetting bool, wait time.Duration, reset bool) {
+// dialState reports whether a new connection can be made: resetting during
+// a resetting outage, wait > 0 while the sending side is down (the
+// handshake gets no answer). A receive-only outage lets the connection
+// open: it just gets nothing back.
+func (m *model) dialState(sub *subline) (resetting bool, wait time.Duration, reset bool) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	now := m.now()
 	reset = m.advance(now)
-	if m.links[dirUp].resetOutage || m.links[dirDown].resetOutage {
+	m.advanceSub(sub, now)
+	if m.line.resetting() || sub != nil && sub.line.resetting() {
 		resetting = true
-	} else if m.outageLocked(dirUp, now) || m.outageLocked(dirDown, now) {
+	} else if m.line.down(dirUp, now) || sub != nil && sub.line.down(dirUp, now) {
 		wait = outagePoll
 	}
-	m.mu.Unlock()
-	return
+	return resetting, wait, reset
 }
 
 func (l *link) queueLimit() int64 {
@@ -464,98 +660,150 @@ func (l *link) lose() bool {
 	return l.geBad
 }
 
-// admitPacket runs one datagram of size bytes through a direction: the due
-// time of its delivery, or the reason it is dropped.
-func (m *model) admitPacket(dir int, size int) (due int64, v verdict, reset bool) {
-	m.mu.Lock()
-	now := m.now()
-	m.useLocked(now)
-	reset = m.advance(now)
-	l := &m.links[dir]
-	if m.outageLocked(dir, now) {
-		l.stats.DropOutage++
-		m.mu.Unlock()
-		return 0, verdictOutage, reset
+// admitPacketStage runs a datagram through one direction of a line, where
+// it arrives at arrive: the due time it comes out, or why it is dropped.
+func (l *line) admitPacketStage(dir int, now, arrive int64, size int) (int64, verdict) {
+	k := &l.links[dir]
+	if l.down(dir, now) {
+		k.stats.DropOutage++
+		return 0, verdictOutage
 	}
-	depart := now
-	if l.p.rate > 0 {
-		start := max(now, l.nextFree)
-		if start-now > l.queueLimit() {
-			l.stats.DropQueue++
-			m.mu.Unlock()
-			return 0, verdictQueue, reset
+	depart := arrive
+	if k.p.rate > 0 {
+		start := max(arrive, k.nextFree)
+		if start-arrive > k.queueLimit() {
+			k.stats.DropQueue++
+			return 0, verdictQueue
 		}
-		l.nextFree = start + l.txTime(size)
-		depart = l.nextFree
+		k.nextFree = start + k.txTime(size)
+		depart = k.nextFree
 	}
-	if l.lose() {
-		l.stats.DropLoss++
-		m.mu.Unlock()
-		return 0, verdictLoss, reset
+	if k.lose() {
+		k.stats.DropLoss++
+		return 0, verdictLoss
 	}
-	due = depart + l.delayJitter()
-	if !l.p.reorder {
-		due = max(due, l.lastDue)
-		l.lastDue = due
+	due := depart + k.delayJitter()
+	if !k.p.reorder {
+		due = max(due, k.lastDue)
+		k.lastDue = due
 	}
-	l.stats.Units++
-	l.stats.Bytes += uint64(size)
-	m.mu.Unlock()
-	return due, verdictPass, reset
+	k.stats.Units++
+	k.stats.Bytes += uint64(size)
+	return due, verdictPass
 }
 
-// admitStream runs one stream segment through a direction. A stream never
-// loses data: a full queue or an outage returns wait > 0 (try again after
-// it, which is the backpressure), and loss becomes a stall of the
-// connection's delivery (head-of-line: the segments after it wait too).
-func (m *model) admitStream(dir int, st *streamState, size int) (due int64, wait time.Duration, reset bool) {
+// admitPacket runs one datagram of size bytes through a direction: the
+// outbound's line, then the connection's sublink. It returns the due time
+// of its delivery, or the reason it is dropped.
+func (m *model) admitPacket(sub *subline, dir int, size int) (due int64, v verdict, reset bool) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	now := m.now()
 	m.useLocked(now)
 	reset = m.advance(now)
-	l := &m.links[dir]
-	if m.outageLocked(dir, now) {
-		wait = outagePoll
-		if !l.schedOutage && m.stallEnd-now < int64(wait) {
-			wait = time.Duration(m.stallEnd - now)
-		}
-		m.mu.Unlock()
-		return 0, max(wait, time.Microsecond), reset
+	due, v = m.line.admitPacketStage(dir, now, now, size)
+	if v != verdictPass || sub == nil {
+		return due, v, reset
 	}
-	depart := now
-	if l.p.rate > 0 {
-		start := max(now, l.nextFree)
-		if backlog, limit := start-now, l.queueLimit(); backlog > limit {
-			m.mu.Unlock()
-			return 0, time.Duration(backlog - limit), reset
-		}
-		l.nextFree = start + l.txTime(size)
-		depart = l.nextFree
+	m.advanceSub(sub, now)
+	due, v = sub.line.admitPacketStage(dir, now, due, size)
+	return due, v, reset
+}
+
+// outageWait is how long a stream waits before rechecking a line that is
+// down: the end of a random stall, or the outage poll.
+func (l *line) outageWait(dir int, now int64) time.Duration {
+	wait := outagePoll
+	if !l.links[dir].p.outage && l.stallEnd-now < int64(wait) {
+		wait = time.Duration(l.stallEnd - now)
 	}
-	due = depart + l.delayJitter()
-	if l.p.loss > 0 {
-		if st.lossRef != l.p.loss {
-			st.lossRef = l.p.loss
-			st.toLoss = l.rng.ExpFloat64() * mss / min(l.p.loss, 1)
+	return max(wait, time.Microsecond)
+}
+
+// backlogWait is how long a unit arriving at arrive waits before the queue
+// of one direction has room for it (0: it has room).
+func (k *link) backlogWait(arrive int64) time.Duration {
+	if k.p.rate <= 0 {
+		return 0
+	}
+	start := max(arrive, k.nextFree)
+	if backlog, limit := start-arrive, k.queueLimit(); backlog > limit {
+		return time.Duration(backlog - limit)
+	}
+	return 0
+}
+
+// commitStream admits a stream segment arriving at arrive into one
+// direction of a line and returns its due time.
+func (k *link) commitStream(arrive int64, st *streamState, size int) int64 {
+	depart := arrive
+	if k.p.rate > 0 {
+		start := max(arrive, k.nextFree)
+		k.nextFree = start + k.txTime(size)
+		depart = k.nextFree
+	}
+	due := depart + k.delayJitter()
+	if k.p.loss > 0 {
+		if st.lossRef != k.p.loss {
+			st.lossRef = k.p.loss
+			st.toLoss = k.rng.ExpFloat64() * mss / min(k.p.loss, 1)
 		}
 		st.toLoss -= float64(size)
 		if st.toLoss <= 0 {
 			// one stall however many segments of this unit were lost:
 			// they are recovered together
 			for st.toLoss <= 0 {
-				st.toLoss += l.rng.ExpFloat64() * mss / min(l.p.loss, 1)
+				st.toLoss += k.rng.ExpFloat64() * mss / min(k.p.loss, 1)
 			}
-			due += int64(l.streamStall())
-			l.stats.Stalls++
+			due += int64(k.streamStall())
+			k.stats.Stalls++
 		}
 	} else {
 		st.lossRef = 0
 	}
 	due = max(due, st.lastDue)
 	st.lastDue = due
-	l.stats.Units++
-	l.stats.Bytes += uint64(size)
-	m.mu.Unlock()
+	k.stats.Units++
+	k.stats.Bytes += uint64(size)
+	return due
+}
+
+// admitStream runs one stream segment through a direction: the outbound's
+// line, then the connection's sublink. A stream never loses data: a full
+// queue or an outage on either returns wait > 0 (try again after it, which
+// is the backpressure), and loss becomes a stall of the connection's
+// delivery (head-of-line: the segments after it wait too).
+func (m *model) admitStream(sub *subline, dir int, st *streamStates, size int) (due int64, wait time.Duration, reset bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.now()
+	m.useLocked(now)
+	reset = m.advance(now)
+	m.advanceSub(sub, now)
+	if m.line.down(dir, now) {
+		return 0, m.line.outageWait(dir, now), reset
+	}
+	if sub != nil && sub.line.down(dir, now) {
+		return 0, sub.line.outageWait(dir, now), reset
+	}
+	first := &m.line.links[dir]
+	if wait = first.backlogWait(now); wait > 0 {
+		return 0, wait, reset
+	}
+	if sub != nil {
+		// where the segment would reach the sublink, without the jitter draw
+		arrive := now + int64(first.p.delay)
+		if first.p.rate > 0 {
+			arrive += max(now, first.nextFree) - now + first.txTime(size)
+		}
+		if wait = sub.line.links[dir].backlogWait(arrive); wait > 0 {
+			return 0, wait, reset
+		}
+	}
+	due = first.commitStream(now, &st[dir][0], size)
+	if sub != nil {
+		due = sub.line.links[dir].commitStream(due, &st[dir][1], size)
+	}
 	return due, 0, reset
 }
 
@@ -569,16 +817,18 @@ func (l *link) streamStall() time.Duration {
 	return max(streamStallMin, 2*l.p.delay+4*l.p.jitter)
 }
 
+// stats are the counters of a direction of the outbound's line.
 func (m *model) stats(dir int) Stats {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.links[dir].stats
+	return m.line.links[dir].stats
 }
 
-// rate is the current rate of a direction (bit/s, 0 = unlimited).
+// rate is the current rate of a direction of the outbound's line (bit/s,
+// 0 = unlimited).
 func (m *model) rate(dir int) float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.advance(m.now())
-	return m.links[dir].p.rate
+	return m.line.links[dir].p.rate
 }
