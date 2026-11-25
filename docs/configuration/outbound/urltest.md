@@ -122,8 +122,8 @@ pool node killed and the slot was refilled in 0.13 s. A node that accepts connec
 silent is skipped after 5 s and replaced after 20 s. A destination closed to one node (a
 geo-restriction, the site bans the node's address) moves to another pool node after its first
 failure, while other destinations stay where they are. A loss of the local network (device sleep,
-a network switch) strikes out no node. This works only in `round_robin`, has no config keys and
-costs 7 % more CPU on a stream of short connections. The scenarios and limits are in
+a network switch) strikes out no node. This works only in `round_robin` and has no config keys;
+download and upload speed do not change. The scenarios and limits are in
 [lx-config.md](../../../docs-lx/lx-config.md#the-pool-recovers-from-a-node-failure-without-waiting-for-interval).
 
 **Self-heal on a failed connection** (SPEC 138). One failed connection does not tell a dead node

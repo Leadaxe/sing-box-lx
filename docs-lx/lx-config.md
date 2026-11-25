@@ -535,8 +535,8 @@ A `round_robin` group learns about a dead node, a destination closed to one node
 local network from the failed connections themselves, and handles each case in seconds. The
 scheduled check runs once per `interval`, often 10–15 minutes on a large list; a node that dies
 between checks would otherwise keep its share of new connections until the next one. There is
-nothing to configure. The cost is 7 % more client CPU on a stream of short connections; download
-and upload speed do not change.
+nothing to configure. Download and upload speed do not change; the extra work per connection does
+not show in ordinary traffic.
 
 | What happened | What the group does | What the application sees |
 |---|---|---|
@@ -579,8 +579,9 @@ Eight limits:
 - UDP is covered in part: a dead node is struck out for UDP too, but UDP failures move no keys and
   do not count toward quarantine.
 - There are no config keys: the behaviour is always on and cannot be tuned.
-- On a NanoPi, 2000 short requests in a row through socks took 7 % more client CPU (17.6 s
-  against 16.4 s). Download and upload speed stay at the level of a build without self-heal.
+- Each connection costs a little extra work when it opens. Download and upload speed stay at the
+  level of a build without self-heal; the difference shows only in a synthetic run of thousands
+  of very short connections in a row.
 
 `sing-box api group pool <tag>` (a build with `with_lx_command`) shows the state: a slot table
 with `STATE` (`live`/`dead`/`quarantined`), `CONNECTIONS` and `FAILURES`, plus the moved keys, the
