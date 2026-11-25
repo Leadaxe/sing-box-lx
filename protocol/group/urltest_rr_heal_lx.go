@@ -319,6 +319,12 @@ func (h *rrHeal) abortCheck() {
 	}
 }
 
+// counts reports whether an exchange that started at start goes to the rules: no
+// freeze now and not begun before E (N0, I4). A zero start is no exchange's.
+func (h *rrHeal) counts(start time.Time) bool {
+	return !h.frozen() && (start.IsZero() || rrClock(start) >= h.epoch())
+}
+
 // frozen reports whether now < E (N0).
 func (h *rrHeal) frozen() bool {
 	return rrClock(time.Now()) < h.epochEnd.Load()
@@ -527,11 +533,11 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 	var sign *rrSign
 	if !struck {
 		class = s.rrOutcome(member, dialErr)
-		if !lxtrace.IsProbe(ctx) && !b.heal.frozen() && !s.rrBeforeEvent(picked.start) { // N0, I4: the retry only
+		if !lxtrace.IsProbe(ctx) && b.heal.counts(picked.start) { // N0, I4: the retry only
 			if tcp {
 				b.rrCountConn(member.Tag(), picked.start)
 			}
-			sign = s.rrOpenFailed(member, picked, class, tcp)
+			sign = s.rrOpenFailed(member, picked, class, tcp, false)
 		}
 	}
 	if (class == rrRefused || class == rrLocal) && picked.key.valid && b.memory.shifts.marked(picked.key.table) {
@@ -557,8 +563,13 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 	retryCtx, dial := s.rrTrackDial(rrMarkDial(ctx), b.trackOf(retry.Tag()), retry, dialer, rrClock(retryStart), !tcp)
 	if err = open(retryCtx, dialer); err != nil {
 		s.logger.DebugContext(ctx, "round_robin retry via ", retry.Tag(), " failed: ", err)
-		if !dial.failed() && ctx.Err() == nil && !lxtrace.IsProbe(ctx) && !s.rrBeforeEvent(retryStart) {
-			s.rrRetryFailed(retry, retryStart, err, tcp)
+		if !dial.failed() && ctx.Err() == nil && !lxtrace.IsProbe(ctx) && b.heal.counts(retryStart) {
+			if class := s.rrOutcome(retry, err); class != rrCancel && b.trackOf(retry.Tag()) != nil {
+				if tcp {
+					b.rrCountConn(retry.Tag(), retryStart)
+				}
+				s.rrOpenFailed(retry, rrPick{start: retryStart}, class, tcp, true)
+			}
 		}
 		return rrRetried{}, false
 	}
@@ -600,16 +611,17 @@ func (s *URLTest) rrRetryTarget(slots []slot, failedSlot int, failed string, net
 	return suspected
 }
 
-// rrOpenFailed applies the rules to a failed open of the pick's own slot (not a
-// retry): S1, S2, K1, K2/K4 and the Q1 sign. It returns the sign the first byte of
-// the retry completes.
-func (s *URLTest) rrOpenFailed(member adapter.Outbound, picked rrPick, class rrClass, tcp bool) *rrSign {
+// rrOpenFailed applies the rules to a failed open: S1, S2, K1, K2/K4 and the Q1
+// sign. It returns the sign the first byte of the retry completes. A failed open of
+// the retry (retry) is a sign of its node with no key shift and no K2 memory (§4.4:
+// the slot of the retry) and no Q1 sign (it has no retry of its own).
+func (s *URLTest) rrOpenFailed(member adapter.Outbound, picked rrPick, class rrClass, tcp, retry bool) *rrSign {
 	t := s.balancer.trackOf(member.Tag())
 	if t == nil {
 		return nil
 	}
 	a, now := rrClock(picked.start), rrClock(time.Now())
-	eligible := tcp && !picked.detour
+	eligible := tcp && !picked.detour && !retry
 	switch class {
 	case rrLocal:
 		if !s.rrSiteOnOpen(member) {
@@ -626,8 +638,11 @@ func (s *URLTest) rrOpenFailed(member adapter.Outbound, picked rrPick, class rrC
 		return sign
 	case rrFailActive:
 		s.rrSoftSign(picked.key, picked.shift, member.Tag(), a, now, false, eligible)
-		sign := s.rrFailSign(t, picked, member.Tag(), now, tcp) // Q1, before the probe whose answer settles it
-		s.rrLifeProbe(member, t, a, false)                      // S1
+		var sign *rrSign
+		if !retry {
+			sign = s.rrFailSign(t, picked, member.Tag(), now, tcp) // Q1, before the probe whose answer settles it
+		}
+		s.rrLifeProbe(member, t, a, false) // S1
 		return sign
 	default:
 		if tcp {
@@ -635,7 +650,7 @@ func (s *URLTest) rrOpenFailed(member adapter.Outbound, picked rrPick, class rrC
 		}
 		s.rrSoftSign(picked.key, picked.shift, member.Tag(), a, now, false, eligible)
 		var sign *rrSign
-		if s.rrLiveOthers(member.Tag(), a, now) {
+		if !retry && s.rrLiveOthers(member.Tag(), a, now) {
 			sign = s.rrFailSign(t, picked, member.Tag(), now, tcp) // Q1: Live(X; P \ {n})
 		}
 		s.rrLifeProbe(member, t, a, !tcp) // S2; a UDP open makes no TCP suspicion (V9)
@@ -662,34 +677,6 @@ func (s *URLTest) rrLiveOthers(node string, w, now int64) bool {
 		}
 	}
 	return false
-}
-
-// rrRetryFailed applies S1/S2 to a failed retry through retry: a sign of its node,
-// with no key shift and no K2 memory (§4.4: the slot of the retry), and no Q1 count
-// (a failed retry has no retry of its own).
-func (s *URLTest) rrRetryFailed(retry adapter.Outbound, start time.Time, err error, tcp bool) {
-	class := s.rrOutcome(retry, err)
-	t := s.balancer.trackOf(retry.Tag())
-	if class == rrCancel || t == nil {
-		return
-	}
-	if tcp {
-		s.balancer.rrCountConn(retry.Tag(), start)
-	}
-	a := rrClock(start)
-	switch class {
-	case rrLocal:
-		if !s.rrSiteOnOpen(retry) {
-			s.rrLifeProbe(retry, t, a, false) // S1
-		}
-	case rrFailTimeout:
-		if tcp {
-			t.suspectAt(a, rrClock(time.Now())) // S2
-		}
-		s.rrLifeProbe(retry, t, a, !tcp)
-	default:
-		s.rrLifeProbe(retry, t, a, false) // S1
-	}
 }
 
 // slotSupports reports whether a slot's node takes connections of network.

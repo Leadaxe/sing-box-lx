@@ -580,7 +580,7 @@ func (b *balancer) isQuarantined(tag string) bool {
 // start (conns of Q1/Q2), unless it began before E. The membership is checked
 // under access, as rrSlotsChanged drops the counters of a departed node.
 func (b *balancer) rrCountConn(tag string, start time.Time) {
-	if b.heal.frozen() || !start.IsZero() && rrClock(start) < b.heal.epoch() {
+	if !b.heal.counts(start) {
 		return
 	}
 	m := &b.memory
@@ -860,7 +860,7 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch, c *rrFirstByteConn) {
 	}
 	now := time.Now()
 	b.rrClockLook(now) // N3 before the rules
-	if b.heal.frozen() || w.start.IsZero() || s.rrBeforeEvent(w.start) {
+	if w.start.IsZero() || !b.heal.counts(w.start) {
 		return // N0, I4
 	}
 	t := w.track
@@ -898,7 +898,7 @@ func (s *URLTest) rrSilentClose(c *rrFirstByteConn) {
 	b := s.balancer
 	now := time.Now()
 	b.rrClockLook(now) // N3 before the rules
-	if s.group.ctx.Err() != nil || b.heal.frozen() || s.rrBeforeEvent(w.start) || w.track == nil || !b.inPool(w.member) {
+	if s.group.ctx.Err() != nil || !b.heal.counts(w.start) || w.track == nil || !b.inPool(w.member) {
 		return
 	}
 	s.logger.Debug("round_robin: a connection through ", w.member, " closed without a byte from the destination")
