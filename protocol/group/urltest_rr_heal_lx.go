@@ -884,12 +884,8 @@ type rrCheck struct {
 	size       int // |P|: the size of a batch of candidates
 	results    chan rrCheckResult
 	flying     int
-	answered   []bool      // a probe of the pool node answered in this check (D3)
-	firstAt    []time.Time // the start of the first probe of the pool node
-	firstEnded []bool
-	voided     []bool // the decisive probe of the pool node was cancelled: no D1 (U3)
-	partOf     []int  // the decisive part of the pool node; -1 for none
-	waiting    []int  // pool nodes of a part whose decisive probe waits (step 3)
+	nodes      []rrPoolProbe // the probes of each pool node, by index
+	waiting    []int         // pool nodes of a part whose decisive probe waits (step 3)
 	parts      []*rrDecisivePart
 	control    adapter.Outbound
 	b0         time.Time
@@ -903,40 +899,43 @@ type rrCheck struct {
 	anyAnswer  bool // a probe of the round answered (W2)
 	// grants carries the work of the places granted by the queue to the loop: the
 	// loop never waits for places itself, since the places it waits for may be
-	// held by its own part whose probes wait for the loop. requests counts the
-	// goroutines that wait for places; a pending grant counts as flying.
-	grants   chan func()
-	requests sync.WaitGroup
+	// held by its own part whose probes wait for the loop. Its buffer holds every
+	// request of the round (the first probes, the decisive parts and k batches of
+	// candidates, each in parts of at most U), so the queue hands a grant over
+	// without waiting. A request not granted yet counts as flying; asked are the
+	// requests of the round.
+	grants chan func()
+	asked  []*rrQueueRequest
 	// reserved are the places of granted decisive parts not used yet: by a decisive
 	// probe waiting to start or by a control after.
 	reserved int
 	launched int // the probes the round started; none: no round (W1)
 }
 
-// request asks the queue for n places and hands then to the loop once they are
-// granted (U1); with the round over it gets nothing to do. The request takes its
-// place in the line here, in the order of the calls (U1, U2: rrQueue.enqueue); only
-// the wait for the grant runs aside.
-func (c *rrCheck) request(n int, then func()) {
-	c.flying++
-	c.requests.Add(1)
-	owner := &c.s.balancer.heal.queue
-	queued := c.queue.enqueue(owner, n)
-	go func() {
-		defer c.requests.Done()
-		if !c.queue.await(c.ctx, owner, queued) {
-			c.grants <- func() {}
-			return
-		}
-		c.grants <- then
-	}()
+// rrPoolProbe is what the check knows of the probes of one pool node.
+type rrPoolProbe struct {
+	answered   bool      // a probe of the node answered in this check (D3)
+	firstAt    time.Time // the start of its first probe
+	firstEnded bool
+	voided     bool // its decisive probe was cancelled: no D1 (U3)
+	part       int  // its decisive part
 }
 
-// settle ends a round: the requests still waiting give up (the context is
-// cancelled), and the places granted meanwhile go back through probes that end at
-// once.
+// request asks the queue for n places and hands then to the loop once they are
+// granted (U1). The queue hands the grant over under its lock; the buffer of grants
+// holds every request of the round, so the hand-over never waits.
+func (c *rrCheck) request(n int, then func()) {
+	c.flying++
+	c.asked = append(c.asked, c.queue.ask(&c.s.balancer.heal.queue, n, func() { c.grants <- then }))
+}
+
+// settle ends a round: the requests still waiting are withdrawn, and the places
+// granted meanwhile go back through probes that end at once.
 func (c *rrCheck) settle() {
-	c.requests.Wait()
+	for _, request := range c.asked {
+		c.queue.withdraw(&c.s.balancer.heal.queue, request)
+	}
+	c.asked = nil
 	for {
 		select {
 		case then := <-c.grants:
@@ -957,7 +956,7 @@ func (c *rrCheck) launch(role rrCheckRole, index int, node adapter.Outbound, fro
 	c.launched++
 	// The decisive probe of a node whose first probe still flies flies beside it from
 	// the moment of step 3, not after its end (U3).
-	alone := role == rrRoleDecisive && !c.firstEnded[index]
+	alone := role == rrRoleDecisive && !c.nodes[index].firstEnded
 	go func() {
 		probe := c.s.group.rrSelfProbe(c.ctx, node, from, alone)
 		c.queue.release(1)
@@ -976,7 +975,7 @@ func (c *rrCheck) launchAll(role rrCheckRole, first int, nodes []adapter.Outboun
 		c.request(end-start, func() {
 			for i := start; i < end; i++ {
 				if role == rrRoleFirst {
-					c.firstAt[first+i] = time.Now()
+					c.nodes[first+i].firstAt = time.Now()
 				}
 				c.launch(role, first+i, nodes[i], c.x, batch)
 			}
@@ -1061,10 +1060,10 @@ func (c *rrCheck) take(r rrCheckResult) {
 	}
 	switch r.role {
 	case rrRoleFirst:
-		c.firstEnded[r.index] = true
+		c.nodes[r.index].firstEnded = true
 		if r.probe.answered {
-			if !c.answered[r.index] {
-				c.answered[r.index] = true
+			if !c.nodes[r.index].answered {
+				c.nodes[r.index].answered = true
 				c.s.rrAlive(r.probe) // D3
 			}
 			c.found(c.pool[r.index])
@@ -1073,16 +1072,16 @@ func (c *rrCheck) take(r rrCheckResult) {
 			c.startDecisive()
 		}
 	case rrRoleDecisive:
-		part := c.parts[c.partOf[r.index]]
+		part := c.parts[c.nodes[r.index].part]
 		if r.probe.answered {
-			if !c.answered[r.index] {
-				c.answered[r.index] = true
+			if !c.nodes[r.index].answered {
+				c.nodes[r.index].answered = true
 				c.s.rrAlive(r.probe) // D3
 			}
 		} else {
 			part.missed = true
 		}
-		c.partDone(c.partOf[r.index])
+		c.partDone(c.nodes[r.index].part)
 	case rrRoleAfter:
 		if r.probe.answered {
 			c.parts[r.index].afterOK = true
@@ -1102,13 +1101,13 @@ func (c *rrCheck) take(r rrCheckResult) {
 func (c *rrCheck) void(r rrCheckResult) {
 	switch r.role {
 	case rrRoleFirst:
-		c.firstEnded[r.index] = true
+		c.nodes[r.index].firstEnded = true
 		if len(c.waiting) > 0 {
 			c.startDecisive()
 		}
 	case rrRoleDecisive:
-		c.voided[r.index] = true
-		c.partDone(c.partOf[r.index])
+		c.nodes[r.index].voided = true
+		c.partDone(c.nodes[r.index].part)
 	}
 }
 
@@ -1122,7 +1121,7 @@ func (c *rrCheck) found(node adapter.Outbound) {
 	c.control, c.b0 = node, time.Now()
 	var nodes []int
 	for i := range c.pool {
-		if !c.answered[i] {
+		if !c.nodes[i].answered {
 			nodes = append(nodes, i)
 		}
 	}
@@ -1131,7 +1130,7 @@ func (c *rrCheck) found(node adapter.Outbound) {
 		part := len(c.parts)
 		c.parts = append(c.parts, &rrDecisivePart{open: end - start})
 		for _, i := range nodes[start:end] {
-			c.partOf[i] = part
+			c.nodes[i].part = part
 		}
 		members := nodes[start:end]
 		c.request(end-start+1, func() {
@@ -1150,11 +1149,11 @@ func (c *rrCheck) startDecisive() {
 	kept := c.waiting[:0]
 	for _, i := range c.waiting {
 		switch {
-		case c.answered[i]:
+		case c.nodes[i].answered:
 			c.reserved--
 			c.queue.release(1)
-			c.partDone(c.partOf[i])
-		case c.firstEnded[i] || !c.firstAt[i].IsZero() && now.Sub(c.firstAt[i]) >= rrHangAfter:
+			c.partDone(c.nodes[i].part)
+		case c.nodes[i].firstEnded || !c.nodes[i].firstAt.IsZero() && now.Sub(c.nodes[i].firstAt) >= rrHangAfter:
 			c.reserved--
 			c.launch(rrRoleDecisive, i, c.pool[i], c.b0, -1)
 		default:
@@ -1235,9 +1234,7 @@ func (s *URLTest) rrHealCheck() {
 		n := len(c.pool)
 		c.results = make(chan rrCheckResult, 3*n+2*rrCandidateBatches*c.size+1)
 		c.grants = make(chan func(), 2*n+2*rrCandidateBatches*c.size+1)
-		c.answered, c.firstEnded, c.firstAt = make([]bool, n), make([]bool, n), make([]time.Time, n)
-		c.voided = make([]bool, n)
-		c.partOf = make([]int, n)
+		c.nodes = make([]rrPoolProbe, n)
 		c.launchAll(rrRoleFirst, 0, c.pool) // step 1
 		c.left = n
 		if n == 0 {
@@ -1295,10 +1292,10 @@ func (s *URLTest) rrLap() bool {
 func (s *URLTest) rrStrike(ctx context.Context, c *rrCheck) {
 	b := s.balancer
 	for i, node := range c.pool {
-		if c.answered[i] || c.voided[i] || c.control == nil || b.heal.aborted(ctx) {
+		if c.nodes[i].answered || c.nodes[i].voided || c.control == nil || b.heal.aborted(ctx) {
 			continue // D3, no outcome of the decisive probe (U3), or no control (D5)
 		}
-		if part := c.partOf[i]; part >= len(c.parts) || !c.parts[part].afterOK {
+		if part := c.nodes[i].part; part >= len(c.parts) || !c.parts[part].afterOK {
 			continue // D4
 		}
 		t := b.trackOf(node.Tag())

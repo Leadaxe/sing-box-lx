@@ -152,7 +152,6 @@ func TestRR9_U_requestsKeepTheirOrder(t *testing.T) {
 		(<-c.grants)()
 	}
 	q.release(rrQueueCap)
-	c.requests.Wait()
 	for i, got := range order {
 		if got != i {
 			t.Fatalf("the batches were granted out of the order asked: %v", order)

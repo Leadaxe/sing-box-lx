@@ -45,7 +45,7 @@ type rrQueueOwner struct {
 
 type rrQueueRequest struct {
 	places  int
-	granted chan struct{}
+	granted func() // run at the grant under access; never blocks
 	ok      bool
 }
 
@@ -91,49 +91,49 @@ func rrQueueOf(history *urltest.HistoryStorage) *rrQueue {
 
 // acquire waits for places of owner (U1, U2); false when ctx ended first.
 func (q *rrQueue) acquire(ctx context.Context, owner *rrQueueOwner, places int) bool {
-	return q.await(ctx, owner, q.enqueue(owner, places))
+	granted := make(chan struct{})
+	request := q.ask(owner, places, func() { close(granted) })
+	select {
+	case <-granted:
+		return true
+	case <-ctx.Done():
+	}
+	if !q.withdraw(owner, request) {
+		q.release(request.places) // granted meanwhile: the places go back
+	}
+	return false
 }
 
-// enqueue puts a request for places of owner in its line at once: the batches of a
-// group are granted in the order the group put them (U1, U2). A part of the
-// decisive probes asked for after the first probes of a pool larger than U must
-// not overtake them: its places would wait for the first probes of its own nodes,
-// which would wait for its places. nil: nothing to wait for.
-func (q *rrQueue) enqueue(owner *rrQueueOwner, places int) *rrQueueRequest {
+// ask asks for places of owner without waiting (U1, U2): granted runs once they are
+// granted, under the lock of the queue, and must not block. The request takes its
+// place in the line at once, in the order of the calls: a part of the decisive
+// probes asked for after the first probes of a pool larger than U must not overtake
+// them (its places would wait for the first probes of its own nodes, which would
+// wait for its places). A request not granted yet is taken back by withdraw.
+func (q *rrQueue) ask(owner *rrQueueOwner, places int, granted func()) *rrQueueRequest {
+	request := &rrQueueRequest{places: min(places, rrQueueCap), granted: granted}
 	if places <= 0 {
-		return nil
+		request.ok = true
+		granted()
+		return request
 	}
-	if places > rrQueueCap {
-		places = rrQueueCap
-	}
-	request := &rrQueueRequest{places: places, granted: make(chan struct{})}
 	q.access.Lock()
+	defer q.access.Unlock()
 	owner.waiting = append(owner.waiting, request)
 	if !owner.queued {
 		owner.queued = true
 		q.ring = append(q.ring, owner)
 	}
 	q.dispatch()
-	q.access.Unlock()
 	return request
 }
 
-// await waits for the places of request (enqueue); false when ctx ended first,
-// with the request out of the line or its granted places given back.
-func (q *rrQueue) await(ctx context.Context, owner *rrQueueOwner, request *rrQueueRequest) bool {
-	if request == nil {
-		return true
-	}
-	select {
-	case <-request.granted:
-		return true
-	case <-ctx.Done():
-	}
+// withdraw takes back a request of owner that has not been granted; false when it
+// has been: its places are held.
+func (q *rrQueue) withdraw(owner *rrQueueOwner, request *rrQueueRequest) bool {
 	q.access.Lock()
 	defer q.access.Unlock()
 	if request.ok {
-		q.held -= request.places
-		q.dispatch()
 		return false
 	}
 	for i, waiting := range owner.waiting {
@@ -152,7 +152,7 @@ func (q *rrQueue) await(ctx context.Context, owner *rrQueueOwner, request *rrQue
 		}
 	}
 	q.dispatch()
-	return false
+	return true
 }
 
 // release gives back places.
@@ -177,7 +177,7 @@ func (q *rrQueue) dispatch() {
 		}
 		q.held += request.places
 		request.ok = true
-		close(request.granted)
+		request.granted()
 		owner.waiting = owner.waiting[1:]
 		q.ring = q.ring[1:]
 		if len(owner.waiting) > 0 {

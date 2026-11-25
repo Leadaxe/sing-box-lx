@@ -56,17 +56,14 @@ func TestRRReview9_cancelledFlightNotJoined(t *testing.T) {
 // after for it and the node is not struck.
 func TestRRReview9_cancelledDecisiveIsNoMiss(t *testing.T) {
 	c := &rrCheck{
-		queue:      rrQueueOf(urltest.NewHistoryStorage()),
-		answered:   make([]bool, 1),
-		firstEnded: []bool{true},
-		voided:     make([]bool, 1),
-		partOf:     []int{0},
-		parts:      []*rrDecisivePart{{open: 1}},
-		reserved:   1,
+		queue:    rrQueueOf(urltest.NewHistoryStorage()),
+		nodes:    []rrPoolProbe{{firstEnded: true}},
+		parts:    []*rrDecisivePart{{open: 1}},
+		reserved: 1,
 	}
 	c.take(rrCheckResult{role: rrRoleDecisive, index: 0, probe: rrProbe{err: context.Canceled}})
-	if c.parts[0].missed || !c.voided[0] || c.flying != 0 {
-		t.Fatalf("a cancelled decisive probe counts as a miss: missed=%v voided=%v flying=%d", c.parts[0].missed, c.voided[0], c.flying)
+	if c.parts[0].missed || !c.nodes[0].voided || c.flying != 0 {
+		t.Fatalf("a cancelled decisive probe counts as a miss: missed=%v voided=%v flying=%d", c.parts[0].missed, c.nodes[0].voided, c.flying)
 	}
 }
 
@@ -327,7 +324,7 @@ func TestRRReview9_lateFirstPartKeepsItsBatch(t *testing.T) {
 	c := &rrCheck{
 		s: f.s, ctx: ctx, queue: f.g.rrQueue(), x: time.Now(),
 		results: make(chan rrCheckResult, 2), grants: make(chan func(), 2),
-		firstAt: make([]time.Time, 1), firstEnded: make([]bool, 1),
+		nodes: make([]rrPoolProbe, 1),
 	}
 	c.launchAll(rrRoleFirst, 0, []adapter.Outbound{f.nodes["a"]})
 	c.batches = 1 // a batch of candidates started before the part was granted
@@ -335,7 +332,6 @@ func TestRRReview9_lateFirstPartKeepsItsBatch(t *testing.T) {
 	c.flying--
 	then()
 	r := <-c.results
-	c.requests.Wait()
 	if r.batch != 0 {
 		t.Fatalf("the first probe counts against batch %d of the candidates", r.batch)
 	}
