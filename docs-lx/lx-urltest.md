@@ -11,6 +11,8 @@ Upstream `urltest` always selects the lowest-delay node. sing-box-lx adds two mo
 | `failover` | the fastest node at selection time | only when the current one fails or gets twice as slow as the others; the next one is again the fastest | only the current node |
 
 The `url`, `interval`, `idle_timeout` and `interrupt_exist_connections` fields work as upstream.
+Pick a probe `url` that the nodes do not block: as upstream, the group treats a node that does not
+pass the probe address, by a refusal or by silence, as dead, even if other traffic goes through it.
 The `mode` and `balancer` fields work in every build; the pool state for a UI (`GetPool`,
 [§8](lx-observability.md)) is in a build with `with_lx_command`.
 
