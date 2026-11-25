@@ -34,8 +34,10 @@
 
 ## Вставки в апстримные файлы
 
-Только блоки `// lx: SPEC 138`: `protocol/group/urltest.go` (`Start`, `Pool`, `DialContext`,
-`ListenPacket`, `InterfaceUpdated`, поля `PoolSlot`), `adapter/inbound.go` (поле ячейки),
+Только блоки `// lx: SPEC 138`: `protocol/group/urltest.go` — однострочные вызовы
+`urltest_hooks_lx.go` и `urltest_rr_*_lx.go` в `Start`, `DialContext`, `ListenPacket`,
+`InterfaceUpdated` (выбор с ключом, отслеживаемое открытие, наблюдение первого байта, повтор);
+состояние группы — во встроенных полях `lxURLTest` / `lxURLTestGroup`; `adapter/inbound.go` (поле ячейки),
 `route/route.go` (две строки), `route/conn.go` (одна строка), `common/trafficcontrol/tracker.go`,
 `common/urltest/urltest.go` (одна строка), `daemon/started_service.go`,
 `daemon/started_service.proto`, `protocol/socks/outbound.go`.
