@@ -553,7 +553,7 @@ profile:
 | `rate`, `queue` | unlimited, `"50ms"` | bottleneck rate (`"10mbit"`) and the queue before it (time or size) |
 | `delay`, `jitter` | `0` | added one-way delay and its spread |
 | `loss`, `loss_burst` | `0`, `1` | share of loss (`"0.5%"`) and mean length of a loss run |
-| `vary`, `stall` | none | rate swings and random stops of the line; `"off"` turns them off |
+| `vary`, `stall` | none | rate swings and random stops of the line; `false` turns them off |
 | `outage`, `reset` | `false` | the line silently goes away; `reset` breaks the connections (schedule, `impair set`, sublink only) |
 | `up`, `down` | — | the same keys for one direction |
 

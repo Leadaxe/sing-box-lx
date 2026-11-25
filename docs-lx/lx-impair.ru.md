@@ -129,10 +129,10 @@ tuic. Остальной конфиг ссылается на прокси, ка
 | `loss` | доля случайных потерь, строка с `%`: `"0.5%"` | 0 | 0%..100% |
 | `loss_burst` | средняя длина серии потерь в пакетах (модель Гилберта); 1 — независимые потери | 1 | 1..1000 |
 | `stream_stall` | на сколько поток останавливается при потере (см. ниже) | max(200ms, 2·`delay` + 4·`jitter`) | 1ms..60s |
-| `vary` | `{"min": "3mbit", "max": "12mbit", "every": "2s"}`: каждые `every` скорость прыгает в случайное значение из [min, max] (равномерно); `"off"` выключает скачки | нет | every 10ms..1h |
+| `vary` | `{"min": "3mbit", "max": "12mbit", "every": "2s"}`: каждые `every` скорость прыгает в случайное значение из [min, max] (равномерно); `false` выключает скачки | нет | every 10ms..1h |
 | `outage` | `true` — линия молча пропадает, `false` — возвращается | `false` | — |
 | `up`, `down` | те же ключи линии, включая `outage`, для одного направления: `up` — то, что этот конец отправляет, `down` — то, что получает | — | — |
-| `stall` | `{"every": "20s", "duration": "400ms"}`: случайные остановки всей линии (обе стороны), промежутки экспоненциальные со средним `every`; `"off"` выключает их | нет | every 100ms..24h, duration 1ms..1h |
+| `stall` | `{"every": "20s", "duration": "400ms"}`: случайные остановки всей линии (обе стороны), промежутки экспоненциальные со средним `every`; `false` выключает их | нет | every 100ms..24h, duration 1ms..1h |
 | `reset` | `true` вместе с обрывом, который начинается в этом же `link_params` (`"outage": true` или профиль с обрывом): см. ниже | `false` | — |
 
 Ключи линии наверху `link_params` действуют в обе стороны; `up` и `down` переопределяют их для одной.
@@ -148,9 +148,9 @@ tuic. Остальной конфиг ссылается на прокси, ка
 TCP-соединение. В подлинии он рвёт соединения подлинии и сразу отклоняет новые подошедшие; остальные
 соединения outbound'а это не трогает. В собственном `link_params` outbound'а это ошибка загрузки.
 
-**Выключить значение** — это `"off"`: `"vary": "off"`, `"stall": "off"`, а в записи расписания и в
-`impair set` — `"sublinks": "off"`. Пустые `[]` и `{}` ничего не выключают: в файле конфига декодер
-sing-box выбрасывает их, как будто ключа нет, а команда отклоняет их с подсказкой написать `"off"`.
+**Выключить значение** — это `false`: `"vary": false`, `"stall": false`, а в записи расписания и в
+`impair set` — `"sublinks": false`. Пустые `[]` и `{}` ничего не выключают: в файле конфига декодер
+sing-box выбрасывает их, как будто ключа нет, а команда отклоняет их с подсказкой написать `false`.
 
 ## Подлинии
 
@@ -194,7 +194,7 @@ sing-box выбрасывает их, как будто ключа нет, а к
 ## Расписание
 
 Запись расписания меняет outbound в момент `at`: его линию (`link_params`), его подлинии
-(`sublinks`) или и то и другое. `sublinks` заменяет весь список; `"sublinks": "off"` убирает его.
+(`sublinks`) или и то и другое. `sublinks` заменяет весь список; `"sublinks": false` убирает его.
 Запись без обоих ключей или с `link_params`, который ничего не меняет, — ошибка.
 
 ```json
@@ -204,7 +204,7 @@ sing-box выбрасывает их, как будто ключа нет, а к
   {"at": "90s",  "link_params": {"down": {"delay": "120ms"}}},
   {"at": "120s", "sublinks": [{"match": {"domain_suffix": "example.org"}, "link_params": {"loss": "30%"}}]},
   {"at": "180s", "link_params": {"outage": true, "reset": true}},
-  {"at": "190s", "link_params": {"outage": false}, "sublinks": "off"},
+  {"at": "190s", "link_params": {"outage": false}, "sublinks": false},
   {"at": "240s", "link_params": {"profile": "lte-walk"}}
 ]
 ```
@@ -270,7 +270,7 @@ sing-box api impair set slow-se '{"link_params": {"profile": "metro"}}'
 sing-box api impair set slow-se '{"link_params": {"outage": true, "reset": true}}'
 sing-box api impair set slow-se '{"link_params": {"down": {"delay": "300ms"}}}'
 sing-box api impair set slow-se '{"sublinks": [{"match": {"domain_suffix": "example.org"}, "link_params": {"loss": "30%"}}]}'
-sing-box api impair set slow-se '{"sublinks": "off"}'
+sing-box api impair set slow-se '{"sublinks": false}'
 sing-box api impair schedule slow-se --start first_use --repeat 60s '[
   {"at": "0s",  "link_params": {"loss": "2%"}},
   {"at": "30s", "link_params": {"outage": true, "reset": true}},
@@ -415,7 +415,7 @@ FATAL[0000] initialize outbound[1] impair[slow-se]: impair: lx.impair_profiles.x
 ```
 
 Команда отвечает `InvalidArgument` с тем же текстом, например
-`impair: entry: link_params.vary: empty {}: write "off" to turn it off`.
+`impair: entry: link_params.vary: empty {}: write false to turn it off`.
 
 Единицы вида `kbps`, `mbps`, `MB/s` не принимаются: разные инструменты понимают их то как биты, то
 как байты.

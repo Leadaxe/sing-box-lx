@@ -129,10 +129,10 @@ A link key at the top level of the outbound (`"rate": "10mbit"` next to `type`) 
 | `loss` | share of random loss, a string with `%`: `"0.5%"` | 0 | 0%..100% |
 | `loss_burst` | mean length of a loss run in packets (Gilbert model); 1 means independent losses | 1 | 1..1000 |
 | `stream_stall` | how long a stream stops on a loss (see below) | max(200ms, 2·`delay` + 4·`jitter`) | 1ms..60s |
-| `vary` | `{"min": "3mbit", "max": "12mbit", "every": "2s"}`: every `every` the rate jumps to a uniformly drawn value in [min, max]; `"off"` turns the swings off | none | every 10ms..1h |
+| `vary` | `{"min": "3mbit", "max": "12mbit", "every": "2s"}`: every `every` the rate jumps to a uniformly drawn value in [min, max]; `false` turns the swings off | none | every 10ms..1h |
 | `outage` | `true` — the line silently goes away, `false` — it comes back | `false` | — |
 | `up`, `down` | the same link keys, `outage` included, for one direction: `up` is what this end sends, `down` what it receives | — | — |
-| `stall` | `{"every": "20s", "duration": "400ms"}`: random stops of the whole line (both directions), exponential gaps with mean `every`; `"off"` turns them off | none | every 100ms..24h, duration 1ms..1h |
+| `stall` | `{"every": "20s", "duration": "400ms"}`: random stops of the whole line (both directions), exponential gaps with mean `every`; `false` turns them off | none | every 100ms..24h, duration 1ms..1h |
 | `reset` | `true` together with an outage that begins in the same `link_params` (`"outage": true` or a profile with one): see below | `false` | — |
 
 The link keys at the top of `link_params` apply to both directions; `up` and `down` override them for
@@ -149,10 +149,10 @@ connection. In a sublink it breaks the sublink's connections and refuses new mat
 the outbound's other connections are untouched. In the outbound's own `link_params` it is a load
 error.
 
-**Turning a value off** is written `"off"`: `"vary": "off"`, `"stall": "off"`, and in a schedule
-entry or `impair set` `"sublinks": "off"`. An empty `[]` or `{}` turns nothing off: in a config file
+**Turning a value off** is written `false`: `"vary": false`, `"stall": false`, and in a schedule
+entry or `impair set` `"sublinks": false`. An empty `[]` or `{}` turns nothing off: in a config file
 the sing-box decoder drops it as if the key were absent, and a command rejects it with a hint to
-write `"off"`.
+write `false`.
 
 ## Sublinks
 
@@ -197,7 +197,7 @@ it connects and gets no answer. Dialing waits only during an outage of sending, 
 ## Schedule
 
 A schedule entry changes the outbound at the moment `at`: its line (`link_params`), its sublinks
-(`sublinks`), or both. `sublinks` replaces the whole list; `"sublinks": "off"` removes it. An entry
+(`sublinks`), or both. `sublinks` replaces the whole list; `"sublinks": false` removes it. An entry
 without either key, or with a `link_params` that changes nothing, is an error.
 
 ```json
@@ -207,7 +207,7 @@ without either key, or with a `link_params` that changes nothing, is an error.
   {"at": "90s",  "link_params": {"down": {"delay": "120ms"}}},
   {"at": "120s", "sublinks": [{"match": {"domain_suffix": "example.org"}, "link_params": {"loss": "30%"}}]},
   {"at": "180s", "link_params": {"outage": true, "reset": true}},
-  {"at": "190s", "link_params": {"outage": false}, "sublinks": "off"},
+  {"at": "190s", "link_params": {"outage": false}, "sublinks": false},
   {"at": "240s", "link_params": {"profile": "lte-walk"}}
 ]
 ```
@@ -271,7 +271,7 @@ sing-box api impair set slow-se '{"link_params": {"profile": "metro"}}'
 sing-box api impair set slow-se '{"link_params": {"outage": true, "reset": true}}'
 sing-box api impair set slow-se '{"link_params": {"down": {"delay": "300ms"}}}'
 sing-box api impair set slow-se '{"sublinks": [{"match": {"domain_suffix": "example.org"}, "link_params": {"loss": "30%"}}]}'
-sing-box api impair set slow-se '{"sublinks": "off"}'
+sing-box api impair set slow-se '{"sublinks": false}'
 sing-box api impair schedule slow-se --start first_use --repeat 60s '[
   {"at": "0s",  "link_params": {"loss": "2%"}},
   {"at": "30s", "link_params": {"outage": true, "reset": true}},
@@ -418,7 +418,7 @@ FATAL[0000] initialize outbound[1] impair[slow-se]: impair: lx.impair_profiles.x
 ```
 
 A command answers `InvalidArgument` with the same text, for example
-`impair: entry: link_params.vary: empty {}: write "off" to turn it off`.
+`impair: entry: link_params.vary: empty {}: write false to turn it off`.
 
 Units such as `kbps`, `mbps`, `MB/s` are not accepted: different tools read them as bits or as
 bytes.
