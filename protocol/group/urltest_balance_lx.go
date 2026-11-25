@@ -472,9 +472,9 @@ type candidate struct {
 // planFirstLivePool (pool_tolerance == 0) computes slot occupancy WITHOUT ranking by delay:
 // every live slot member keeps its exact index, dead/empty slots are refilled from fillOrder
 // (live nodes not already pooled, in caller order), and any leftover hole keeps a dead member
-// so the pool never shrinks. This is the replace-in-slot twin of balancePoolFirstLive, used by
-// the manual-test rebuild path where re-ranking would needlessly relocate living nodes and
-// break their sticky bindings.
+// so the pool never shrinks. The lazy scheduled run (balancePoolFirstLive, fillOrder in walk
+// order) and the manual-test rebuild (fillOrder by delay) both lay the pool out with it:
+// re-ranking would needlessly relocate living nodes and break their sticky bindings.
 //
 // current = present slot tags (slot order). live = set of tags that tested alive now.
 // fillOrder = candidate tags to drop into holes (already filtered to non-pool, in order).
