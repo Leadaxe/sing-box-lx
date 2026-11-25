@@ -402,12 +402,25 @@ build-тег `with_lx_chain` (есть в десктопных `LX_TAGS` и в A
 
 ## 11. Снифферы протоколов для трафика из LAN
 
-Форк добавляет имена протоколов для списка `sniffer` действия `sniff` и матчера `protocol` в
-правилах: `wireguard`, `openvpn`, `ike`, `tailscale`, `sip`. `sip` ещё ставит `domain` из
-Request-URI. Снифферы узнают VPN-туннели и звонки других устройств за роутером по форме первого
-пакета. Они стоят перед апстримным uTP-сниффером, потому что тот помечает plain WireGuard как
-`bittorrent`. Считается только первый пакет потока, поэтому junk и decoy насквозь не видны.
-Порядок снифферов, ограничения и пример для роутера — в [lx-sniff.ru.md](lx-sniff.ru.md).
+Форк добавляет пять имён протоколов для списка `sniffer` действия `sniff` и для матчера `protocol`
+в правилах. Роутер узнаёт по первому пакету VPN-туннели и звонки устройств в LAN и маршрутизирует их
+правилами. Снифферы форка стоят перед апстримным сниффером uTP, иначе тот помечал бы WireGuard как
+`bittorrent`. Смотрится только первый пакет, поэтому обфусцированные туннели и RTP не распознаются.
+
+| Имя | Сеть | Что узнаёт |
+|-----|------|------------|
+| `wireguard` | UDP | рукопожатие и data-пакеты WireGuard по размеру |
+| `openvpn` | UDP, TCP | первый пакет OpenVPN: plain, tls-auth, tls-crypt |
+| `ike` | UDP | IKE (IPsec): `IKE_SA_INIT` |
+| `tailscale` | UDP | disco-пинг Tailscale; сам туннель виден как `wireguard` |
+| `sip` | UDP, TCP | запрос SIP; ставит `domain` из Request-URI |
+
+```jsonc
+{ "protocol": ["wireguard", "openvpn", "ike", "tailscale"], "outbound": "warp" }
+```
+
+📖 Признаки каждого протокола, порядок снифферов, пример для роутера и что не распознаётся — в
+[lx-sniff.ru.md](lx-sniff.ru.md).
 
 ## 12. Проверка и сборка
 
@@ -486,11 +499,12 @@ windows/386. Остальные фичи в нём без изменений.
 
 ## 14. Tailscale: выключить Taildrop
 
-Ключ `disable_taildrop` на endpoint'е `tailscale`. Без ключа Taildrop работает как в апстриме.
+| Ключ | По умолчанию | Что задаёт |
+|------|--------------|------------|
+| `disable_taildrop` | `false` | на endpoint'е `tailscale`: не принимать и не отправлять файлы Taildrop |
 
 ```json
 { "type": "tailscale", "tag": "ts", "disable_taildrop": true }
 ```
 
 С `true` узел не принимает файлы: отправитель получает ошибку 403 `Taildrop is disabled on this node`. Отправка с узла тоже отвергается, в статусе `canShareFiles = false`. Файлы, полученные раньше, остаются в `taildrop_directory`, их можно открыть и удалить. Другие устройства tailnet всё равно видят узел получателем: это задаёт админка Tailscale, а не узел.
-

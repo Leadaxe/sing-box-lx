@@ -408,12 +408,25 @@ The strip catalogue, link MTU, observability and limits are in [lx-chain.md](lx-
 
 ## 11. Protocol sniffers for LAN traffic
 
-The fork adds protocol names for the `sniffer` list of a `sniff` action and the `protocol`
-rule matcher: `wireguard`, `openvpn`, `ike`, `tailscale`, `sip`. `sip` also sets `domain` from
-the Request-URI. The sniffers recognise VPN tunnels and calls from other devices behind a
-router by the shape of the first packet. They sit before upstream's uTP sniffer, because that
-one labels plain WireGuard as `bittorrent`. Only the first packet of a flow counts, so junk
-and decoys are not seen through. Order, limits and a router example are in
+The fork adds five protocol names for the `sniffer` list of the `sniff` action and for the
+`protocol` matcher in rules. A router recognises VPN tunnels and calls of LAN devices by their
+first packet and routes them by rules. The fork's sniffers run before the upstream uTP sniffer,
+which would otherwise label WireGuard as `bittorrent`. Only the first packet is looked at, so
+obfuscated tunnels and RTP are not recognised.
+
+| Name | Network | What it recognises |
+|------|---------|--------------------|
+| `wireguard` | UDP | WireGuard handshake and data packets by size |
+| `openvpn` | UDP, TCP | the first OpenVPN packet: plain, tls-auth, tls-crypt |
+| `ike` | UDP | IKE (IPsec): `IKE_SA_INIT` |
+| `tailscale` | UDP | the Tailscale disco ping; the tunnel itself shows as `wireguard` |
+| `sip` | UDP, TCP | a SIP request; sets `domain` from the Request-URI |
+
+```jsonc
+{ "protocol": ["wireguard", "openvpn", "ike", "tailscale"], "outbound": "warp" }
+```
+
+📖 The signs of each protocol, sniffer order, a router example and what is not recognised are in
 [lx-sniff.md](lx-sniff.md).
 
 ## 12. Validate & build
@@ -493,7 +506,9 @@ sleep energy model is in [lx-energy.md](lx-energy.md).
 
 ## 14. Tailscale: turning Taildrop off
 
-The `disable_taildrop` key on a `tailscale` endpoint. Without it Taildrop works as upstream.
+| Key | Default | What it sets |
+|-----|---------|--------------|
+| `disable_taildrop` | `false` | on a `tailscale` endpoint: do not accept or send Taildrop files |
 
 ```json
 { "type": "tailscale", "tag": "ts", "disable_taildrop": true }
