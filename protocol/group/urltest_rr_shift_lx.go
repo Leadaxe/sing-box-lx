@@ -45,7 +45,6 @@ package group
 
 import (
 	"context"
-	"math"
 	"net/netip"
 	"sort"
 	"strconv"
@@ -840,24 +839,19 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch) {
 	if s.group.ctx.Err() != nil {
 		return
 	}
+	b.rrClockLook(time.Now()) // N3 before the rules
 	track := w.track
 	if track == nil {
 		track = b.trackOf(w.member)
 	}
 	var started int64 // no pick, no proof
-	previous := int64(math.MinInt64)
-	if track != nil {
-		previous = track.proved.Load()
-	}
 	if !w.start.IsZero() {
 		started = rrClock(w.start)
 		if track != nil {
 			track.markProved(started) // rrByteSince; lifts a suspicion of the slot (urltest_rr_track_lx.go)
 		}
 	}
-	// The first byte after the whole network stalled is the network coming back:
-	// freeze instead of verdicts (rrNetworkBack).
-	if s.rrNetworkBack(rrClock(time.Now()), track, previous, false) || b.heal.frozen() {
+	if b.heal.frozen() {
 		return
 	}
 	if started != 0 && track != nil && track.pendingN.Load() > 0 {
@@ -892,6 +886,7 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch) {
 // starts the check with a control.
 func (s *URLTest) rrSilentClose(w *rrConnWatch) {
 	b := s.balancer
+	b.rrClockLook(time.Now()) // N3 before the rules
 	if s.group.ctx.Err() != nil || b.heal.frozen() || s.rrBeforeEvent(w.start) {
 		return
 	}

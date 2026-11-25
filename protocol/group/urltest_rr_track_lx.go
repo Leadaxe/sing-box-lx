@@ -32,7 +32,7 @@ package group
 // started after it, history of the node written after it. Every pending failure
 // older than that proof then gets what it is due (rrFailure.settle). The dead
 // verdict drops the node's pending failures; a freeze voids every pending failure
-// older than it (rrHeal.lastFreeze). A failure whose check or verdict probe cannot
+// begun before E (rrHeal.epochEnd). A failure whose check or verdict probe cannot
 // start now asks again through checkAfter: the next pick of the node at or after
 // that time starts the check, unless the verdict came meanwhile.
 //
@@ -286,7 +286,7 @@ func (t *rrTrack) markProved(at int64) {
 // unfinished connection through it is older than rrHangAfter and the node has not
 // proved alive since it started. It allocates nothing and takes no lock.
 func (t *rrTrack) suspect(now, event int64) bool {
-	if silent := t.silentSince.Load(); silent != 0 && silent > event && t.proved.Load() < silent {
+	if silent := t.silentSince.Load(); silent != 0 && silent >= event && t.proved.Load() < silent {
 		return true // a connection ended in silence, no proof since it started
 	}
 	cutoff := now - int64(rrHangAfter)
@@ -298,13 +298,13 @@ func (t *rrTrack) suspect(now, event int64) bool {
 		return false
 	}
 	proved := t.proved.Load()
-	if oldest > event && proved < oldest {
+	if oldest >= event && proved < oldest {
 		return true
 	}
 	// A connection that started before the last event of the network says nothing;
 	// a newer one, found by the last look, may outlast the proof.
 	since := t.suspectSince.Load()
-	return since != 0 && since > event && since <= cutoff && proved < since
+	return since != 0 && since >= event && since <= cutoff && proved < since
 }
 
 func newRRTrack(tag string) *rrTrack {
@@ -346,7 +346,7 @@ func (t *rrTrack) attention(now, event int64) bool {
 	if now < t.hangLook.Load() {
 		return false
 	}
-	if silent := t.silentSince.Load(); silent != 0 && silent > event && t.proved.Load() < silent {
+	if silent := t.silentSince.Load(); silent != 0 && silent >= event && t.proved.Load() < silent {
 		return true
 	}
 	cutoff := now - int64(rrHangAfter)
@@ -440,7 +440,7 @@ func (t *rrTrack) takeAlive(before, void, now int64) []rrPending {
 	kept := t.pending[:0]
 	for _, p := range t.pending {
 		switch {
-		case p.at <= void:
+		case p.at < void:
 		case p.at < before:
 			settled = append(settled, p)
 		default:
@@ -626,16 +626,16 @@ func (s *URLTest) rrOnPick(ctx context.Context, tag string, t *rrTrack, now int6
 	// the site is silent, not the node (rrSiteSilence) — its key moves on, the
 	// connection stays.
 	s.rrSiteSilence(t, now-int64(rrSiteSilentAfter))
-	event := s.balancer.heal.event()
+	event := s.balancer.heal.epoch()
 	since, found := t.newestHung(cutoff)
-	if found && since <= event {
+	if found && since < event {
 		found = false // the newest one started before the last event of the network
 	}
 	sticky := false
 	if !found || t.proved.Load() >= since {
 		// No unfinished connection to suspect the node by; a connection that ended
 		// in silence with no proof keeps the suspicion.
-		if silent := t.silentSince.Load(); silent != 0 && silent > event && t.proved.Load() < silent {
+		if silent := t.silentSince.Load(); silent != 0 && silent >= event && t.proved.Load() < silent {
 			since, found, sticky = silent, true, true
 		}
 	}
@@ -667,7 +667,7 @@ func (s *URLTest) rrOnPick(ctx context.Context, tag string, t *rrTrack, now int6
 	// A UDP flow without an answer is no suspicion (one-way UDP is common: QUIC to a
 	// blocked address, STUN, NTP) and gets no verdict probe: only the reason for a
 	// check (rrHang), with its gap and filters.
-	if packet, waiting := t.newestPacketWait(cutoff); waiting && packet > event && t.proved.Load() < packet && s.balancer.heal.hangReady() {
+	if packet, waiting := t.newestPacketWait(cutoff); waiting && packet >= event && t.proved.Load() < packet && s.balancer.heal.hangReady() {
 		s.rrHang(tag, rrTime(packet), false)
 	}
 }
@@ -767,10 +767,8 @@ func (s *URLTest) rrVerdictProbe(node adapter.Outbound, t *rrTrack, silent func(
 		if heal.aborted(ctx) || probe.leaf == "" {
 			return
 		}
-		if probe.answered && s.rrProbeProof(probe) {
-			return // the network came back: no verdict on anyone
-		}
 		if probe.answered {
+			s.rrProbeProof(probe)
 			// The node may have been found dead or left the pool while it was probed
 			// (a check, a scheduled run): its answer is no longer ours to write — it
 			// would make a replaced node look like a live candidate.
@@ -798,7 +796,7 @@ func (s *URLTest) rrSettleAlive(t *rrTrack, before int64) {
 	if heal.frozen() {
 		return
 	}
-	for _, p := range t.takeAlive(before, heal.event(), rrClock(time.Now())) {
+	for _, p := range t.takeAlive(before, heal.epoch(), rrClock(time.Now())) {
 		if p.retry {
 			p.failure.setRetryAlive()
 		} else {
@@ -820,103 +818,45 @@ func (s *URLTest) rrSettleProbe(probe rrProbe) {
 	}
 }
 
-// rrProbeProof records the answer of a probe as a proof of its node from the
-// probe's start, then takes it as a proof of life of the group (rrNetworkBack). A
-// probe that took longer than rrFastAnswer may have started before the network came
-// back: it counts as evidence of an outage. It reports whether the self-heal froze.
-func (s *URLTest) rrProbeProof(probe rrProbe) bool {
-	t := s.balancer.trackOf(probe.member)
-	if t == nil {
-		return false // a candidate outside the pool: proves nothing about the stall
+// rrProbeProof records the answer of a probe of a pool member as a proof of its
+// node from the probe's start (D3).
+func (s *URLTest) rrProbeProof(probe rrProbe) {
+	if t := s.balancer.trackOf(probe.member); t != nil {
+		t.markProved(rrClock(probe.started))
 	}
-	previous := t.proved.Load()
-	t.markProved(rrClock(probe.started))
-	return s.rrNetworkBack(rrClock(probe.ended), t, previous, probe.ended.Sub(probe.started) > rrFastAnswerWithin())
 }
 
-// rrNetworkBack is a proof of life of the pool node of prover at now (a first
-// byte, a probe answer); proverPrevious is its proof mark before this proof, slow
-// a probe answer that took long. When it ends a silence of the whole group — no
-// first byte or answer for rrHangAfter, with connections waiting longer than that —
-// and something in that silence showed an outage (two or more nodes stuck at once,
-// a probe or an open that ended in silence after the last byte of the group, or
-// this slow answer), it is an event
-// of the network (rrHeal.markEvent): every connection that started before it gives
-// no verdict on a site or a node. When, on top of that, the prover itself was
-// stuck (no proof since its oldest unfinished connection started) and so was at
-// least one more node, the network has just come back: the self-heal freezes as on
-// any network signal, so the failures of the connections that hung through the
-// stall (their handshake timeouts arrive now) count against nobody. An answer of a
-// node that was not stuck (a control, a candidate) is no such event; one hung node
-// while the others serve bytes is no stall; neither is a pool of one. It reports
-// whether it froze.
-func (s *URLTest) rrNetworkBack(now int64, prover *rrTrack, proverPrevious int64, slow bool) bool {
-	b := s.balancer
-	previous := b.heal.lastByte.Swap(now)
-	if previous > now {
-		b.heal.lastByte.CompareAndSwap(now, previous) // a later proof got there first
-		return false
-	}
-	if previous != 0 && now-previous < int64(rrHangAfter) {
-		return false
-	}
-	if s.group.ctx.Err() != nil {
-		return false
-	}
-	cutoff := now - int64(rrHangAfter)
-	waiting, stuck, proverStuck := false, 0, false
-	for _, entry := range b.slotsSnapshot() {
-		if entry.track == nil {
-			continue
-		}
-		d, w := entry.track.dials.oldest.Load(), entry.track.waits.oldest.Load()
-		oldest := d
-		if w != 0 && (oldest == 0 || w < oldest) {
-			oldest = w
-		}
-		if oldest == 0 || oldest > cutoff {
-			continue
-		}
-		waiting = true
-		// A node that proved alive after its oldest unfinished connection started
-		// (it answered a probe meanwhile) is not stuck.
-		if entry.track == prover {
-			if proverPrevious < oldest {
-				proverStuck = true
-				stuck++
-			}
-		} else if entry.track.proved.Load() < oldest {
-			stuck++
-		}
-	}
-	// An event of the network: two or more nodes stuck at once; or the node that
-	// proves alive now was stuck itself and the silence showed an outage — a probe
-	// or an open that ended in silence since the last byte, or this answer took
-	// long. A node stuck alone while another, live node gets the bytes is no event:
-	// its timeouts are its own (it may be dead), and an event would void them.
-	if !waiting || !(stuck >= 2 || proverStuck && (slow || b.heal.lastSilence.Load() > previous)) {
-		return false
-	}
-	b.heal.markEvent(now)
-	if b.heal.frozen() || !proverStuck || stuck < 2 {
-		return false
-	}
-	b.heal.freeze()
-	s.logger.Info("round_robin: network back after a stall (", stuck, " nodes held connections with no answer); self-heal frozen for ", rrHealFreeze)
-	return true
-}
-
-// rrBeforeEvent reports whether a connection that started at start began before
-// the last event of the network (rrHeal.markEvent): it gives no verdict on a site
-// or a node — no shift, no count, no suspicion, no reason for a check.
+// rrBeforeEvent reports whether an exchange that started at start began before E
+// (N0, I4): it takes part in no rule.
 func (s *URLTest) rrBeforeEvent(start time.Time) bool {
-	return !start.IsZero() && rrClock(start) <= s.balancer.heal.event()
+	return !start.IsZero() && rrClock(start) < s.balancer.heal.epoch()
 }
 
-// rrClockJump is a jump between the wall and the monotonic clock seen by the pick
-// (balancer.onClockJump): the device slept where its monotonic clock stops in
-// sleep (darwin, linux, android) and no wake signal came, or the clock was set. An
-// event of the network and a freeze, as on a wake signal.
+// rrClockLook compares the wall and the monotonic clock (N3), at most once a
+// second: on the pick and at every outcome, before the rules. A jump beyond
+// rrClockJump either way is a sleep the monotonic clock missed (darwin, linux,
+// android with no wake signal) or a clock change: an event. Every look resets the
+// base of the comparison.
+func (b *balancer) rrClockLook(at time.Time) {
+	now := rrClock(at)
+	if b.onClockJump == nil || now < b.clockLook.Load() || !b.clockAccess.TryLock() {
+		return
+	}
+	// The pair of readings changes as one, under the lock: a look delayed between
+	// the two would compare a new monotonic reading with an old wall one.
+	var drift time.Duration
+	if b.clockMono != 0 {
+		drift = time.Duration((at.UnixNano() - b.clockWall) - (now - b.clockMono))
+	}
+	b.clockMono, b.clockWall = now, at.UnixNano()
+	b.clockLook.Store(now + int64(time.Second))
+	b.clockAccess.Unlock()
+	if drift > rrClockJump || drift < -rrClockJump {
+		b.onClockJump(drift)
+	}
+}
+
+// rrClockJump is the N3 event of a clock jump (rrClockLook).
 func (s *URLTest) rrClockJump(drift time.Duration) {
 	s.balancer.heal.freeze()
 	s.logger.Info("round_robin: the wall clock moved ", drift.Round(time.Second), " apart from the monotonic one (a sleep with no wake signal, or a clock change); self-heal frozen for ", rrHealFreeze)
@@ -942,7 +882,7 @@ func (s *URLTest) rrSiteSilence(t *rrTrack, cutoff int64) {
 		if !isConn || c.watch.packet || c.watch.start.IsZero() || c.state.Load()&(rrStateSiteSilent|rrStateGotByte) != 0 {
 			continue
 		}
-		if rrClock(c.watch.start) <= s.balancer.heal.event() {
+		if rrClock(c.watch.start) < s.balancer.heal.epoch() {
 			continue // started before the last event of the network: no verdict
 		}
 		if proved >= rrClock(c.watch.start) {

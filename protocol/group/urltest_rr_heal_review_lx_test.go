@@ -230,7 +230,7 @@ func TestRRHeal_marksMonotonic(t *testing.T) {
 		t.Fatal("a check that ends frozen sets no gap")
 	}
 	h.lastCheckEnd.Store(check)
-	for name, mark := range map[string]*time.Time{"freeze": h.frozenUntil.Load(), "check end": h.lastCheckEnd.Load()} {
+	for name, mark := range map[string]*time.Time{"check end": h.lastCheckEnd.Load()} {
 		if mark == nil || !strings.Contains(mark.String(), " m=") {
 			t.Fatalf("%s mark must keep the monotonic reading, got %v", name, mark)
 		}

@@ -32,36 +32,6 @@ func TestRRBracket_poolOfOneFirstCandidateDead(t *testing.T) {
 	}
 }
 
-// 2. Reproduction: a dead node d is stuck alone, its probe timed out; a first byte
-// through a live node ends the silence of the group. That is no event of the
-// network: d's suspicion and its failures stay. One long flow that got its byte
-// long ago and nothing waiting is no event either.
-func TestRREvent_loneStuckNodeIsNoEvent(t *testing.T) {
-	f := newShiftFixture(t, []string{"a", "b", "d"}, []string{"a", "b", "d"})
-	heal := &f.s.balancer.heal
-	dead := f.s.balancer.trackOf("d")
-	var entry rrTrackEntry
-	old := rrClock(time.Now().Add(-rrHangAfter - 2*time.Second))
-	dead.track(&dead.dials, &entry, old, nopKill{})
-	dead.markSilent(old)
-	heal.lastByte.Store(old)
-	heal.lastSilence.Store(rrClock(time.Now().Add(-time.Second))) // d's probe timed out
-	before := heal.event()
-	live := f.s.balancer.trackOf("a")
-	if f.s.rrNetworkBack(rrClock(time.Now()), live, live.proved.Load(), false) || heal.event() != before {
-		t.Fatal("a byte through a live node while one node is stuck is no event of the network")
-	}
-	if !dead.suspect(rrClock(time.Now()), heal.event()) {
-		t.Fatal("d stays suspect")
-	}
-	dead.untrack(&entry)
-	heal.lastByte.Store(old)
-	f.s.rrNetworkBack(rrClock(time.Now()), live, live.proved.Load(), true)
-	if heal.event() != before {
-		t.Fatal("nothing waiting (one long flow, its byte long ago): no event")
-	}
-}
-
 // 3. A UDP open that fails through a node leaves the slot to TCP: no suspicion.
 func TestRRUDP_failedOpenNoTCPSuspicion(t *testing.T) {
 	f := newUDPFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
@@ -135,7 +105,7 @@ func TestRREvent_firstByteBeforeTheEventConfirmsNothing(t *testing.T) {
 	start := time.Now()
 	failure := f.s.rrNewFailure(rrPick{start: start}, "a")
 	failure.setAlive()
-	f.s.balancer.heal.markEvent(rrClock(time.Now()))
+	f.s.balancer.heal.epochEnd.Store(rrClock(time.Now()))
 	f.s.rrFirstByte(&rrConnWatch{s: f.s, member: "b", start: start, confirmFor: "a", failure: failure})
 	if f.fails("a") != 0 {
 		t.Fatal("a byte of a connection from before the event confirms nothing")
@@ -151,7 +121,7 @@ func TestRRProxyFailure_retrySlotSuspect(t *testing.T) {
 	defer f.s.balancer.heal.running.Store(false)
 	f.hold("b")
 	f.dial(t, f.keyOn(t, "site.example", 0), "site.example")
-	if !f.s.balancer.trackOf("b").suspect(rrClock(time.Now()), f.s.balancer.heal.event()) {
+	if !f.s.balancer.trackOf("b").suspect(rrClock(time.Now()), f.s.balancer.heal.epoch()) {
 		t.Fatal("the failed retry's slot is suspect")
 	}
 }
@@ -164,7 +134,7 @@ func TestRRTrack_attentionIgnoresStaleSilence(t *testing.T) {
 	if !track.attention(rrClock(time.Now()), silent-1) {
 		t.Fatal("precondition: a silence after the event is work for the pick")
 	}
-	if track.attention(rrClock(time.Now()), silent) {
+	if track.attention(rrClock(time.Now()), silent+1) {
 		t.Fatal("a silence before the event is no work for the pick")
 	}
 }

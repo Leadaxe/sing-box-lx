@@ -221,21 +221,21 @@ func TestRRSilence_stickySuspicion(t *testing.T) {
 	}
 	f.s.balancer.heal.running.Store(false)
 	heal := &f.s.balancer.heal
-	if track.dials.oldest.Load() != 0 || !track.suspect(rrClock(time.Now()), heal.event()) {
+	if track.dials.oldest.Load() != 0 || !track.suspect(rrClock(time.Now()), heal.epoch()) {
 		t.Fatal("after its silent dial ended, c stays suspect")
 	}
 	track.markProved(rrClock(time.Now()))
-	if track.suspect(rrClock(time.Now()), heal.event()) {
+	if track.suspect(rrClock(time.Now()), heal.epoch()) {
 		t.Fatal("a proof lifts it")
 	}
 	// A connection that started before an event of the network (a freeze) gives no
 	// suspicion: the silence may have been the network's.
 	track.markSilent(rrClock(time.Now()))
-	if !track.suspect(rrClock(time.Now()), heal.event()) {
+	if !track.suspect(rrClock(time.Now()), heal.epoch()) {
 		t.Fatal("precondition: suspect again")
 	}
 	heal.freeze()
-	if track.suspect(rrClock(time.Now()), heal.event()) {
+	if track.suspect(rrClock(time.Now()), heal.epoch()) {
 		t.Fatal("the connection started before the freeze: no suspicion")
 	}
 }
@@ -262,10 +262,8 @@ func TestRRFreeze_firstCheckAfterTheFreezeAtOnce(t *testing.T) {
 	if heal.lastHangEnd.Load() != nil {
 		t.Fatal("a check ended by a freeze sets no gap")
 	}
-	past := time.Now().Add(-time.Second)
-	heal.frozenUntil.Store(&past) // the freeze is over
-	// ... and it was some time ago: the stalled connection below started after it.
-	heal.lastFreeze.Store(rrClock(time.Now().Add(-3 * rrHangAfter)))
+	// The freeze is over, some time ago: the stalled connection below started after it.
+	heal.epochEnd.Store(rrClock(time.Now().Add(-3 * rrHangAfter)))
 	// c stays stopped: its dial hangs, its probe is silent.
 	never := make(chan struct{})
 	defer close(never)
@@ -285,25 +283,6 @@ func TestRRFreeze_firstCheckAfterTheFreezeAtOnce(t *testing.T) {
 	waitUntil(t, func() bool { return f.g.history.LoadURLTestHistory("c") == nil })
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Fatalf("c is struck within a probe of the first look, took %v", elapsed)
-	}
-}
-
-// 3. A node that answered a probe while its connections wait is no part of a stall
-// of the network: one stalled node and one proved one — no freeze. The i1
-// reproduction (TestRRStall_networkBackFreezes) still freezes.
-func TestRRStall_provedNodeIsNoStall(t *testing.T) {
-	f := newShiftFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"})
-	old := rrClock(time.Now().Add(-rrHangAfter - 2*time.Second))
-	for _, tag := range []string{"a", "b"} {
-		track := f.s.balancer.trackOf(tag)
-		var entry rrTrackEntry
-		track.track(&track.waits, &entry, old, nopKill{})
-	}
-	f.s.balancer.trackOf("a").markProved(old + int64(time.Second)) // a answered a probe while it waited
-	f.s.balancer.heal.lastByte.Store(old)
-	prover := f.s.balancer.trackOf("b") // b, stuck, gets its proof now (a slow probe answer)
-	if f.s.rrNetworkBack(rrClock(time.Now()), prover, prover.proved.Load(), true) || f.s.balancer.heal.frozen() {
-		t.Fatal("one stalled node and one that proved alive: no stall of the network")
 	}
 }
 

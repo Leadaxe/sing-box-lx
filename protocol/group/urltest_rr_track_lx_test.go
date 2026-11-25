@@ -369,7 +369,7 @@ func TestRRPending_freezeVoids(t *testing.T) {
 	track := f.s.balancer.trackOf("a")
 	waitUntil(t, func() bool { return track.pendingN.Load() == 1 })
 	time.Sleep(time.Millisecond)
-	f.s.balancer.heal.lastFreeze.Store(rrClock(time.Now())) // a freeze that has passed
+	f.s.balancer.heal.epochEnd.Store(rrClock(time.Now())) // a freeze that has passed
 	f.dial(t, f.keyOn(t, "open.example", 0), "open.example")
 	if shift, _ := f.shift(key, "blocked.example"); shift != 0 {
 		t.Fatalf("a failure before the freeze is void, got shift %d", shift)

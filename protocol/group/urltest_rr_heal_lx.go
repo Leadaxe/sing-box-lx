@@ -41,9 +41,6 @@ package group
 //     the local network is down, nothing changes and the group freezes;
 //   - no neighbour and C silent or none: the replacement search is the control,
 //     its answering candidate probed once more after A's silence;
-//   - the first answer after a stall of the whole network (no first byte or
-//     answer for rrHangAfter, two or more nodes holding connections older than
-//     that) is the network coming back: freeze, no verdict (rrNetworkBack);
 //   - a failed open that is silence (a timeout) counts against the site only if
 //     the node proved alive while that connection waited, decided at the failure;
 //     an active refusal waits for the verdict (urltest_rr_track_lx.go);
@@ -95,7 +92,6 @@ package group
 import (
 	"context"
 	"errors"
-	"math"
 	"net"
 	"strconv"
 	"sync"
@@ -146,21 +142,12 @@ type rrHeal struct {
 	running      atomic.Bool                        // a check is in flight
 	lastCheckEnd atomic.Pointer[time.Time]          // end of the previous check
 	lastHangEnd  atomic.Pointer[time.Time]          // end of the previous check from a reason (rrHang)
-	frozenUntil  atomic.Pointer[time.Time]          // end of the freeze
-	networkRuns  atomic.Int32                       // full runs after a network change in flight
 	abort        atomic.Pointer[context.CancelFunc] // cancels the check in flight
-	// lastFreeze is the rrClock of the last event of the network (markEvent): a
-	// freeze (the own network, a wake, a network change, the network back after a
-	// stall), the end of a silence of the whole group with connections waiting and
-	// signs of an outage, a sleep the monotonic clock missed. A connection that
-	// started before it gives no verdict on a site or a node, and the failures
-	// pending before it are void.
-	lastFreeze atomic.Int64
-	// lastSilence is the rrClock of the latest probe or open of the group that
-	// ended in silence (a timeout): a sign of an outage (rrNetworkBack).
-	lastSilence  atomic.Int64
+	// epochEnd is E, the rrClock of the end of the last freeze (N0): while now < E
+	// nothing is inferred or done, and an exchange that started before E takes part
+	// in no rule. 0: no event yet.
+	epochEnd     atomic.Int64
 	interrupting atomic.Int32 // an interrupt of the group is closing its connections
-	lastByte     atomic.Int64 // rrClock of the latest first byte or probe answer of the group (rrNetworkBack)
 	verdicts     atomic.Int32 // verdict probes in flight: one per group (urltest_rr_track_lx.go)
 	// verdictAccess guards the verdict probe budget: the starts in the window and
 	// the claim of a node's probe (claimVerdict).
@@ -232,35 +219,23 @@ func (h *rrHeal) endCheck() {
 	h.running.Store(false)
 }
 
-// event returns the rrClock of the last event of the network; math.MinInt64 when
-// there was none (an rrClock mark may be below zero).
-func (h *rrHeal) event() int64 {
-	if at := h.lastFreeze.Load(); at != 0 {
-		return at
-	}
-	return math.MinInt64
+// epoch returns E, the end of the last freeze (rrClock; 0 for none).
+func (h *rrHeal) epoch() int64 {
+	return h.epochEnd.Load()
 }
 
-// markEvent moves the mark of the last event of the network to at.
-func (h *rrHeal) markEvent(at int64) {
+// freeze is the event of N3: E := now + T, a signal during a freeze extends it
+// from its own moment. The check in flight is aborted and the gaps armed before
+// the event are dropped (L3: after the freeze the first reason gets its check at
+// once).
+func (h *rrHeal) freeze() {
+	end := rrClock(time.Now().Add(rrHealFreeze))
 	for {
-		old := h.lastFreeze.Load()
-		if old >= at || h.lastFreeze.CompareAndSwap(old, at) {
-			return
+		old := h.epochEnd.Load()
+		if old >= end || h.epochEnd.CompareAndSwap(old, end) {
+			break
 		}
 	}
-}
-
-// freeze freezes the self-heal for rrHealFreeze and aborts the check in flight.
-// The gaps armed before it — of the checks, of the checks from a reason, of the
-// verdict probes of the group — are dropped: what they bounded happened on a
-// network that was going away, and the first reason after the freeze gets its
-// check at once.
-func (h *rrHeal) freeze() {
-	now := time.Now()
-	until := now.Add(rrHealFreeze)
-	h.frozenUntil.Store(&until)
-	h.markEvent(rrClock(now))
 	h.lastCheckEnd.Store(nil)
 	h.lastHangEnd.Store(nil)
 	h.verdictAccess.Lock()
@@ -275,15 +250,9 @@ func (h *rrHeal) abortCheck() {
 	}
 }
 
-// frozen reports whether the self-heal is frozen: by the "own network" verdict, a
-// wake or a network change signal, or because the full run after a network change
-// is in flight.
+// frozen reports whether now < E (N0).
 func (h *rrHeal) frozen() bool {
-	if h.networkRuns.Load() > 0 {
-		return true
-	}
-	until := h.frozenUntil.Load()
-	return until != nil && time.Now().Before(*until)
+	return rrClock(time.Now()) < h.epochEnd.Load()
 }
 
 // aborted reports whether the check running on ctx has to stop: the group closed
@@ -313,23 +282,16 @@ func (s *URLTest) rrNetworkChanged() {
 	}
 }
 
-// rrNetworkRun marks the full run after a network change (InterfaceUpdated) for the
-// time it runs, so the freeze lasts past rrHealFreeze while the run does, and waits
-// (bounded) for the self-heal check in flight to end: it may hold
-// URLTestGroup.checking, and the full run would then find the flag busy and skip.
-// The returned function ends the mark. A no-op outside round_robin.
+// rrNetworkRun aborts the self-heal check in flight before the full run after a
+// network change and waits (bounded) for it to end: it may hold
+// URLTestGroup.checking, and the run would then find the flag busy and skip. The
+// freeze itself is N3's (rrNetworkChanged). A no-op outside round_robin.
 func (s *URLTest) rrNetworkRun() func() {
-	if s.balancer == nil {
-		return func() {}
+	if s.balancer != nil {
+		s.balancer.heal.abortCheck()
+		s.balancer.heal.yield(s.group.ctx)
 	}
-	heal := &s.balancer.heal
-	heal.networkRuns.Add(1)
-	heal.markEvent(rrClock(time.Now()))
-	heal.abortCheck()
-	heal.yield(s.group.ctx)
-	return func() {
-		heal.networkRuns.Add(-1)
-	}
+	return func() {}
 }
 
 // rrWatchWake freezes the self-heal on a device or network wake: the network is not
@@ -402,6 +364,7 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 	if urltest.IsMeasureLx(ctx) {
 		return rrRetried{}, false // a delay measurement shows the node as it is: no retry, no record
 	}
+	s.balancer.rrClockLook(time.Now()) // N3 before the rules
 	if errors.Is(ctx.Err(), context.Canceled) || !struck && errors.Is(dialErr, context.Canceled) {
 		// A client cancel is no failure; after a long wait it is a reason for a check.
 		if !lxtrace.IsProbe(ctx) {
@@ -439,9 +402,6 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 	// endpoint leaf; when that cannot start (one in flight, the gap), the next pick
 	// of the node asks again unless a proof of the node settles the failure first.
 	var failure *rrFailure
-	if rrSilence(dialErr) {
-		s.balancer.heal.lastSilence.Store(rrClock(time.Now())) // a sign of an outage
-	}
 	// A connection that started before the last event of the network (a freeze, the
 	// network back, a sleep) gives no verdict: its failure is only a failure for the
 	// application — the retry below, no record, no check.
@@ -535,7 +495,7 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 				return true
 			}
 			track := s.balancer.trackOf(tag)
-			return track == nil || !track.suspect(now, s.balancer.heal.event())
+			return track == nil || !track.suspect(now, s.balancer.heal.epoch())
 		}
 		if failedSlot < 0 {
 			// Struck and replaced meanwhile: the first usable slot.
@@ -699,8 +659,8 @@ func (g *URLTestGroup) rrProbeNode(ctx context.Context, member adapter.Outbound,
 	}
 	result.answered = result.err == nil
 	result.ended = time.Now()
-	if !result.answered && rrSilence(result.err) && g.balancer != nil {
-		g.balancer.heal.lastSilence.Store(rrClock(result.ended)) // a sign of an outage
+	if g.balancer != nil {
+		g.balancer.rrClockLook(result.ended) // N3: the clocks are compared at every outcome
 	}
 	return result
 }
@@ -856,12 +816,8 @@ func (s *URLTest) rrHealCheck(member adapter.Outbound, neighbour adapter.Outboun
 		}
 		waiting--
 		probes[r.role], done[r.role] = r.probe, true
-		// The first answer of a stuck node after the whole network was down is the
-		// network coming back, not a verdict on anyone (rrNetworkBack). The proof is
-		// recorded first; an answer of a node that was not stuck (the control C, a
-		// candidate) is no such event.
-		if r.probe.answered && s.rrProbeProof(r.probe) {
-			return
+		if r.probe.answered {
+			s.rrProbeProof(r.probe)
 		}
 	}
 	a, b, c := probes[roleA], probes[roleB], probes[roleC]

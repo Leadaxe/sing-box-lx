@@ -57,14 +57,7 @@ func TestRRStatus_poolAndHeal(t *testing.T) {
 	if !heal.Frozen || heal.FrozenFor <= 0 || heal.FrozenFor > rrHealFreeze {
 		t.Fatalf("frozen: %+v", heal)
 	}
-	expired := time.Now().Add(-time.Second)
-	b.heal.frozenUntil.Store(&expired)
-	done := f.s.rrNetworkRun()
-	heal = f.s.PoolHeal()
-	if !heal.Frozen || heal.FrozenFor != 0 {
-		t.Fatalf("frozen by the network run alone: %+v", heal)
-	}
-	done()
+	b.heal.epochEnd.Store(rrClock(time.Now()))
 	if heal = f.s.PoolHeal(); heal.Frozen {
 		t.Fatalf("the freeze ended: %+v", heal)
 	}

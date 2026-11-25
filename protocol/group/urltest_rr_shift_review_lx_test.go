@@ -121,9 +121,8 @@ func TestRRReview_freezeSinceStartNeedsProbe(t *testing.T) {
 	time.Sleep(time.Millisecond)
 	heal := &f.s.balancer.heal
 	heal.freeze()
-	past := time.Now().Add(-time.Second)
-	heal.frozenUntil.Store(&past) // the freeze is over
-	f.fresh("a", "b", "c")        // the full run after the network change
+	heal.epochEnd.Store(rrClock(time.Now())) // the freeze is over
+	f.fresh("a", "b", "c")                   // the full run after the network change
 	end := time.Now()
 	heal.lastCheckEnd.Store(&end) // the gap: no probe now
 	conn, _ := f.s.rrHealDial(key, N.NetworkTCP, siteAddr("blocked.example"), f.fb["a"], destinationRefused(), f.pickAt(key, "blocked.example", start))

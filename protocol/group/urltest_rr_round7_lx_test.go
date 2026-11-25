@@ -59,7 +59,7 @@ func TestRRProxyFailure_slotSuspectAtOnce(t *testing.T) {
 	}
 	close(hold)
 	f.waitCheck(t)
-	if f.s.balancer.trackOf("a").suspect(rrClock(time.Now()), f.s.balancer.heal.event()) {
+	if f.s.balancer.trackOf("a").suspect(rrClock(time.Now()), f.s.balancer.heal.epoch()) {
 		t.Fatal("a answered its probe: the suspicion lifts")
 	}
 }

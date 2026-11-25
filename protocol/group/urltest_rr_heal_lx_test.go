@@ -460,7 +460,7 @@ func TestRRHeal_tickDuringCheck(t *testing.T) {
 			pool := f.pool()
 			member := f.nodes[pool[i%len(pool)]]
 			neighbour := f.nodes[pool[(i+1)%len(pool)]]
-			f.s.balancer.heal.frozenUntil.Store(nil)
+			f.s.balancer.heal.epochEnd.Store(0)
 			f.s.rrHealCheck(member, neighbour, false)
 			observe()
 		}
@@ -574,7 +574,7 @@ func TestRRHeal_freeze(t *testing.T) {
 	w.g.pause.DevicePause()
 	w.g.pause.DeviceWake()
 	assertFrozen(t, w, "device wake")
-	w.s.balancer.heal.frozenUntil.Store(nil)
+	w.s.balancer.heal.epochEnd.Store(0)
 	w.g.pause.NetworkPause()
 	w.g.pause.NetworkWake()
 	assertFrozen(t, w, "network wake")
@@ -588,11 +588,10 @@ func TestRRHeal_freeze(t *testing.T) {
 	waitUntil(t, func() bool { return n.probes("a") == 1 && n.probes("b") == 1 && n.probes("c") == 1 })
 	assertFrozen(t, n, "network change run")
 	close(n.nodes["c"].hold)
-	waitUntil(t, func() bool { return n.s.balancer.heal.networkRuns.Load() == 0 })
 	if !n.s.balancer.heal.frozen() {
 		t.Fatal("the freeze of the network change signal outlives a short run")
 	}
-	n.s.balancer.heal.frozenUntil.Store(nil)
+	n.s.balancer.heal.epochEnd.Store(0)
 	conn, ok := n.fail(context.Background(), "a")
 	closeConn(conn)
 	if !ok {
@@ -609,9 +608,6 @@ func TestRRHeal_networkChangeFreezesWithoutRun(t *testing.T) {
 	p.g.pause = service.FromContext[pause.Manager](pause.WithDefaultManager(p.g.ctx))
 	p.g.pause.DevicePause()
 	p.s.InterfaceUpdated(context.Background())
-	if p.s.balancer.heal.networkRuns.Load() != 0 {
-		t.Fatal("precondition: a paused device starts no run")
-	}
 	assertFrozen(t, p, "network change on a paused device")
 	if p.probes("b") != 0 || p.probes("c") != 0 {
 		t.Fatal("precondition: no run probes on a paused device")
@@ -623,7 +619,7 @@ func TestRRHeal_networkChangeFreezesWithoutRun(t *testing.T) {
 	c.g.checking.Store(true)
 	c.s.InterfaceUpdated(context.Background())
 	time.Sleep(50 * time.Millisecond)
-	if c.s.balancer.heal.networkRuns.Load() != 0 || c.probes("b") != 0 {
+	if c.probes("b") != 0 {
 		t.Fatal("precondition: a busy health-check makes the run return at once")
 	}
 	assertFrozen(t, c, "network change with a busy health-check")

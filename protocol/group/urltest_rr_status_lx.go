@@ -17,9 +17,7 @@ type PoolHeal struct {
 	ShiftedKeys int // keys of the shift table with a shift and no address-problem mark
 	MarkedKeys  int // keys marked as an address problem
 	Frozen      bool
-	// FrozenFor is what is left of the freeze; 0 while Frozen holds only
-	// because the full run after a network change is in flight.
-	FrozenFor time.Duration
+	FrozenFor   time.Duration // what is left of the freeze
 }
 
 // PoolHeal returns the group-wide self-heal state; zero outside round_robin.
@@ -44,13 +42,8 @@ func (b *balancer) rrHealState(now time.Time) PoolHeal {
 		}
 		table.access.RUnlock()
 	}
-	heal := &b.heal
-	if until := heal.frozenUntil.Load(); until != nil && now.Before(*until) {
-		state.Frozen = true
-		state.FrozenFor = until.Sub(now)
-	}
-	if heal.networkRuns.Load() > 0 {
-		state.Frozen = true
+	if left := time.Duration(b.heal.epoch() - rrClock(now)); left > 0 {
+		state.Frozen, state.FrozenFor = true, left
 	}
 	return state
 }
