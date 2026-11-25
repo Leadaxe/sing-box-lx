@@ -27,6 +27,7 @@
 | [017-REALITY](017-REALITY/FEATURE.md) | ✅ Клиент REALITY против актуального Xray: версия клиента, гибридный key share `X25519MLKEM768` на `chrome`/`firefox`/`safari` (форк-сабмодуль utls), по-узловой `tls.reality.key_share` `classical`/`hybrid`, фрагментация ClientHello в REALITY — отгружено (`lx.36` … `v1.14.1-lx.4`), стенд-верифицировано | — (внутри `with_utls`) | 053 · 083 · 086 · 087 · 088 · 089 · 090 |
 | [018-TRUSTTUNNEL](018-TRUSTTUNNEL/FEATURE.md) | ✅ Протокол TrustTunnel (AdGuard): outbound и inbound `trusttunnel`, TCP + UDP поверх HTTP/2 и HTTP/3; ядро — самостоятельный пакет в апстримной форме — в релизных бинарях с `v1.14.3-lx.21`, совместимость с официальными endpoint 1.1.0 и клиентом 1.1.11 проверена на стенде; обсуждение открыто ([#46](https://github.com/Leadaxe/sing-box-lx/issues/46)) | `with_trusttunnel` | 133 · 134 |
 | [019-SNIFF_GUARD](019-SNIFF_GUARD/FEATURE.md) | Защита TLS и QUIC от подмены назначения по SNI на релее или в локальной сети (Xray `sniffing`): разрез ClientHello, задержка, байт-приманка перед Initial; включается явно (`lx.sniff_guard`), учится по паре исходов на одном узле, какие пути защищать. Принято 2026-11-14, выйдет в `v1.14.4-lx.34`; loopback-стенды пройдены | — | 060 · 088 · 150 · 153 · 156 |
+| [020-IMPAIR](020-IMPAIR/FEATURE.md) | Тестовый outbound `impair`: ухудшает линию в самом бинарнике — узкое место с очередью, задержка и разброс, потери сериями, скачки скорости, остановки, обрывы по расписанию; без root и netem. В релизные сборки не входит | `with_lx_impair` | 164 |
 
 ## Процессные
 

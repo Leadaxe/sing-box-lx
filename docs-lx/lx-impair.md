@@ -1,0 +1,231 @@
+# sing-box-lx — the `impair` test outbound: a degraded link inside the binary
+
+> RU: [lx-impair.ru.md](lx-impair.ru.md) · Feature: [IMPAIR](../SPECS/FEATURES/020-IMPAIR/FEATURE.md)
+
+`impair` is an outbound **for testing**. It dials like `direct`, or through its own `detour`, and
+degrades everything that goes through it on purpose: a bottleneck with a queue, added delay and its
+jitter, random and bursty loss, rate swings, short stalls and scheduled outages. It needs no root and
+no netem and degrades both directions from one end.
+
+Use it to test balancing, failover, `urltest`, chains and transports against real servers when the
+real network is too fast or too even: the link is degraded inside the client binary, without a netem
+stand.
+
+It has no place in a production config. On start it always logs a warning:
+
+```text
+WARN impair outbound slow-se: traffic through the direct dialer is degraded on purpose (test tool): up rate 10mbit delay 20ms; down rate 10mbit delay 20ms
+```
+
+The build tag `with_lx_impair` is in neither `LX_TAGS` nor the AAR: release binaries do not have
+`impair`. Without the tag `"type": "impair"` is rejected at load time:
+
+```text
+FATAL[0000] initialize outbound[0] impair[slow]: impair outbound is not included in this build, rebuild with -tags with_lx_impair
+```
+
+To build a test binary:
+
+```sh
+go build -tags with_lx_impair ./cmd/sing-box
+# or the fork's full tag set plus impair
+make -f Makefile.lx lx-build LX_TAGS="$(make -s -f Makefile.lx lx-print-tags),with_lx_impair"
+```
+
+## Two placements
+
+**Under a proxy (the main one).** The proxy outbound points at `impair` with the standard `detour`
+key, and `impair` has no `detour` of its own. `impair` then dials the proxy server itself and degrades
+that carrier connection: the TCP connection to a vless, trojan or shadowsocks server, or the UDP flow
+of hysteria2 or tuic. The rest of the config refers to the proxy as it would without `impair`.
+
+```json
+{"type": "vless", "tag": "via-se", "server": "se.example.net", "server_port": 443, "detour": "slow-se", "...": "..."},
+{"type": "impair", "tag": "slow-se", "rate": "10mbit", "delay": "20ms"}
+```
+
+This is how a real link works: the slow and uneven part is the road to the proxy server, and the
+proxy's encryption and framing ride on top of it. Each proxy node gets its own `impair`.
+
+**Over an outbound.** A route rule, a group or another outbound points at `impair`, and `impair`
+points with its `detour` at the real outbound. Without `detour` it dials by itself, like `direct`.
+This placement is for an exit without a proxy (`direct`, including one with `bind_interface`), where
+there is nothing to put it under.
+
+```json
+{"type": "impair", "tag": "slow-lte", "detour": "wan-lte", "rate": "8mbit", "delay": "40ms"},
+{"type": "direct", "tag": "wan-lte", "bind_interface": "wwan0"}
+```
+
+If there is a proxy, put `impair` under it. Over a proxy it works too, but it degrades the proxy's
+content instead: UDP carried inside a vless stream loses datagrams before the proxy, which a real
+link does not do.
+
+## Keys
+
+`impair` has every dial key `direct` has: `detour`, `bind_interface`, `routing_mark`,
+`domain_resolver`, `connect_timeout`. Link keys at the top level apply to both
+directions. The `up` (what this end sends) and `down` (what it receives) objects override them for
+one direction. Layer order: defaults < `profile` < top level < `up`/`down`.
+
+| Key | Meaning | Default | Range |
+|---|---|---|---|
+| `rate` | bottleneck rate: `"10mbit"`, `"1.5mbit"`, `"500kbit"`, `"1gbit"`, `"unlimited"` | unlimited | 8kbit..10gbit |
+| `queue` | queue before the bottleneck: transmit time at the current rate (`"50ms"`) or a size (`"64KB"`, `"30000B"`; KB and MB are binary) | `"50ms"` | 1ms..10s, 1500B..64MB |
+| `delay` | added one-way delay | 0 | 0..10s |
+| `jitter` | delay spread: uniform in ±`jitter`, the delay never goes below 0 | 0 | 0..10s |
+| `reorder` | let datagrams overtake each other because of the spread | `false` (order kept) | — |
+| `loss` | share of random loss, a string with `%`: `"0.5%"` | 0 | 0%..100% |
+| `loss_burst` | mean length of a loss run in packets (Gilbert model); 1 means independent losses | 1 | 1..1000 |
+| `stream_stall` | how long a stream stops on a loss (see below) | max(200ms, 2·`delay` + 4·`jitter`) | 1ms..60s |
+| `vary` | `{"min": "3mbit", "max": "12mbit", "every": "2s"}`: every `every` the rate jumps to a uniformly drawn value in [min, max] | none | every 10ms..1h |
+| `up`, `down` | objects with the keys of the rows above | — | — |
+| `stall` | `{"every": "20s", "duration": "400ms"}`: random stops of the whole link (both directions), exponential gaps with mean `every` | none | every 100ms..24h, duration 1ms..1h |
+| `schedule` | a list of changes over time, see below | none | — |
+| `start` | what `schedule` counts from: `"process"` (outbound creation, that is process start) or `"first_use"` (the first connection through it) | `"process"` | — |
+| `profile` | a ready set: `"dsl"`, `"lte-walk"`, `"wifi-lossy"` | none | — |
+| `seed` | random seed, an integer: the same seed gives the same losses, jumps and stalls | random | — |
+
+`rate` together with `vary` in one object holds until the first jump after `every`. `vary` without
+`rate` draws the first value at once. `rate` in a higher layer (or in a schedule entry) without
+`vary` cancels the `vary` of the layer below: `"profile": "lte-walk", "rate": "5mbit"` gives a flat
+5 Mbit/s with the profile's delays and losses. The rate counts the payload of the carrier
+connection, the bytes the proxy or the application writes to the socket, without IP, UDP and TCP
+headers.
+
+`schedule` entries:
+
+| Key | Meaning |
+|---|---|
+| `at` | when, from the start point (`start`): `"15s"`; required, entries go in ascending `at` |
+| `direction` | `"up"` or `"down"`; without it, both directions |
+| link keys | `rate`, `queue`, `delay`, `jitter`, `reorder`, `loss`, `loss_burst`, `stream_stall`, `vary` — the new value from this moment |
+| `outage` | `true` — the link silently goes away, `false` — it comes back |
+| `reset` | only together with `"outage": true`: when the outage starts, every connection through `impair` is torn down (reads and writes return ECONNRESET), and no new connection opens until the outage ends. This is a carrier that drops the TCP connection |
+
+```json
+"schedule": [
+  {"at": "15s", "loss": "2%"},
+  {"at": "25s", "rate": "6mbit"},
+  {"at": "40s", "direction": "down", "delay": "120ms"},
+  {"at": "55s", "outage": true},
+  {"at": "61s", "outage": false},
+  {"at": "90s", "outage": true, "reset": true},
+  {"at": "95s", "outage": false}
+]
+```
+
+The outage key is `outage`, not `down`, because `down` is a direction. An entry that changes nothing
+is an error.
+
+## How datagrams and streams are degraded
+
+There is one bottleneck per `impair` instance and per direction. Every connection through this
+outbound shares it, as connections share a real link. Each unit of data (a datagram, or a stream
+chunk of up to 4 KB) joins the queue. Transmission starts when the bottleneck is free and ends after
+size/rate, and delivery happens `delay` ± `jitter` after the end of transmission. If the wait in the
+queue exceeds `queue`, the queue is full. A rate change (`vary`, schedule) applies from the next
+unit.
+
+**Datagrams** (`ListenPacket`, UDP connections). With a full queue the datagram is dropped from the
+tail. `loss` drops it after it has used the bottleneck. During an outage it is dropped too. The
+sender gets no error. Timed delivery is run by one goroutine per direction for the whole outbound,
+with one reused timer. On receive, datagrams that arrived on a connection and are not yet read wait
+in a queue of up to 1024; beyond that they are dropped, as with a full socket buffer.
+
+**Streams** (TCP). No data is lost. A full queue and an outage delay: `Write` waits, like a write to a
+TCP socket with a full send buffer, and reading the carrier pauses. A loss on a real TCP carrier is
+not missing data but a stop of the stream until retransmission. So `loss` on a stream works like
+this: on average every 1448/`loss` bytes (one TCP segment in `1/loss`, exponential gaps) delivery on
+this connection stops for `stream_stall`, and everything behind the lost segment waits for it
+(head-of-line blocking). Several losses in one chunk give one stop. `loss_burst` and `reorder` do not
+apply to streams: a stream always arrives in order. During a silent outage data "in flight" freezes
+too and arrives after it.
+
+During a silent outage a connection (both TCP and a UDP socket) does not open: the attempt waits for
+the outage to end or for its own timeout, like a handshake that gets no answer. An outage with
+`reset` refuses at once.
+
+**What degrading the receive side from this end does not reproduce.** The `down` direction is
+degraded after the data has crossed the real network. The real link carried it anyway, and its load
+and queue do not change.
+
+- For datagrams this works as a policer with a queue on input. The excess is dropped at the
+  receiver, and the sender learns of it only from missing acknowledgements, as it would from losses
+  on a real link. But the sender can send faster than `rate`, and the real network carries it.
+- For streams the delay reaches the sender through the TCP window. While the queue is full, `impair`
+  does not read the carrier, the kernel receive buffer fills, the window closes and the server slows
+  down. Between `impair` and the server there is then a kernel buffer of hundreds of KB that a real
+  narrow link does not have. In the first fractions of a second the server can send more, and the
+  RTT the server sees is that of the real network, not of the degraded one.
+- The `up` direction is reproduced fully: data is delayed and lost before it is sent to the network.
+
+So `impair` goes on the client, and it degrades the link in both directions. It is not needed on the
+server.
+
+## Profiles
+
+A profile is the bottom layer: any key set explicitly overrides it.
+
+| Profile | `up` | `down` | Both |
+|---|---|---|---|
+| `dsl` — a steady asymmetric wired line | `rate` 2mbit | `rate` 16mbit | `queue` 100ms, `delay` 12ms, `jitter` 1ms, no loss |
+| `lte-walk` — a mobile carrier while walking | `rate` 6mbit, `vary` 2..12mbit every 1s | `rate` 15mbit, `vary` 4..30mbit every 1s | `queue` 120ms, `delay` 35ms, `jitter` 10ms, `loss` 0.3% in runs of 3, `stall` on average every 20s for 400ms |
+| `wifi-lossy` — a congested Wi-Fi hop | — | — | `rate` 25mbit, `vary` 8..40mbit every 500ms, `queue` 40ms, `delay` 4ms, `jitter` 6ms, `loss` 2% in runs of 2 |
+
+## CPU cost
+
+The hot path does not allocate: buffers come from pools. No timer is created per packet: datagram
+delivery is run by one goroutine per direction for the whole outbound, and a stream connection has
+one goroutine per direction with a reused timer. Stream chunks ready to send are written to the
+carrier in one write. Measured on an Apple M1 Pro (`go test -bench . ./protocol/impair/`, the carrier
+is a stub, so only what `impair` adds is counted):
+
+| What | CPU | Share of a core at 10 Mbit/s |
+|---|---|---|
+| a 1400-byte datagram: model, delivery queue, delivery goroutine | ≈ 450 ns | ≈ 0.04 % |
+| a stream, 64 KB writes (4 KB chunks) | ≈ 0.9 ns per byte | ≈ 0.11 % |
+| the model alone (the verdict on one datagram) | ≈ 33 ns | — |
+
+There are no allocations per unit of data (0 allocs/op). At a real rate the datagram delivery
+goroutine wakes at most once per 250 µs and sends in one batch everything that came due in that time,
+so no more than 4000 wake-ups per second per direction. On a two-core router the cost was not measured
+separately; the estimate is an order of magnitude higher: 1 % of a core per 10 Mbit/s.
+
+## Errors
+
+Validation errors carry the sing-box prefix and the word `impair`, for example:
+
+```text
+FATAL[0000] initialize outbound[1] impair[slow-se]: impair: up.rate: invalid rate "10mbps": want a number with bit, kbit, mbit or gbit ("10mbit"), or "unlimited"
+FATAL[0000] initialize outbound[1] impair[slow-se]: impair: vary: min 12mbit is above max 3mbit
+FATAL[0000] initialize outbound[1] impair[slow-se]: impair: schedule[2].at 10s is before the previous entry: list the entries in time order
+FATAL[0000] initialize outbound[1] impair[slow-se]: impair: schedule[0].reset needs "outage": true in the same entry
+```
+
+Units such as `kbps`, `mbps`, `MB/s` are not accepted: different tools read them as bits or as
+bytes.
+
+## Recipe: a group of three proxies, each swinging within 3–12 Mbit/s
+
+Each proxy has its own `impair` and its own `seed`, so the links swing independently and
+reproducibly.
+
+```json
+{
+  "outbounds": [
+    {"type": "urltest", "tag": "auto", "outbounds": ["via-se", "via-de", "via-nl"]},
+    {"type": "vless", "tag": "via-se", "server": "<SE>", "server_port": 443, "uuid": "<UUID>", "detour": "slow-se"},
+    {"type": "vless", "tag": "via-de", "server": "<DE>", "server_port": 443, "uuid": "<UUID>", "detour": "slow-de"},
+    {"type": "vless", "tag": "via-nl", "server": "<NL>", "server_port": 443, "uuid": "<UUID>", "detour": "slow-nl"},
+    {"type": "impair", "tag": "slow-se", "rate": "10mbit", "vary": {"min": "3mbit", "max": "12mbit", "every": "2s"}, "seed": 1},
+    {"type": "impair", "tag": "slow-de", "rate": "10mbit", "vary": {"min": "3mbit", "max": "12mbit", "every": "2s"}, "seed": 2},
+    {"type": "impair", "tag": "slow-nl", "rate": "10mbit", "vary": {"min": "3mbit", "max": "12mbit", "every": "2s"}, "seed": 3},
+    {"type": "direct", "tag": "direct"}
+  ],
+  "route": {"final": "auto"}
+}
+```
+
+The other vless keys (TLS, transport) are the same as for a proxy without `impair`. The mean rate of
+each link is 7.5 Mbit/s, the middle of 3..12.

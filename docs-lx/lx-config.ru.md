@@ -6,7 +6,7 @@
 > [lx-config](lx-config.ru.md) — что есть в форке, все ключи по строке и как включить; у фич со
 > своей логикой — отдельный документ с примерами: [lx-urltest](lx-urltest.ru.md),
 > [lx-dns-group](lx-dns-group.ru.md), [lx-chain](lx-chain.ru.md), [lx-block](lx-block.ru.md),
-> [lx-sniff](lx-sniff.ru.md), [lx-energy](lx-energy.ru.md), [lx-observability](lx-observability.ru.md);
+> [lx-sniff](lx-sniff.ru.md), [lx-energy](lx-energy.ru.md), [lx-observability](lx-observability.ru.md), [lx-impair](lx-impair.ru.md);
 > [protocols-transports](protocols-transports.ru.md) — каждое поле, тип, дефолт, текст ошибки;
 > [xray-protocols-explained](xray-protocols-explained.ru.md), [amneziawg-explained](amneziawg-explained.ru.md) и [masque-explained](masque-explained.ru.md) —
 > как устроено, почему, как сделано у нас и чем отличается от ванили.

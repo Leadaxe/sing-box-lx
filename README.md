@@ -227,6 +227,18 @@ Limits: not in the Windows 7 build and not in the AAR.
 
 `with_lxd` · verified on macOS; the OpenWrt scripts are tested in the field · [feature](SPECS/FEATURES/014-LXD_DAEMON/FEATURE.md) · [operator's guide](docs-lx/lxd-daemon.md) ([RU](docs-lx/lxd-daemon.ru.md)) · [VPN on a dedicated SSID on OpenWrt](docs-lx/openwrt-vpn-ssid.md) ([RU](docs-lx/openwrt-vpn-ssid.ru.md))
 
+### `impair` degrades a link for testing
+
+A test outbound: it dials like `direct` or through its own `detour` and degrades everything that goes through it on purpose — a bottleneck with a queue, delay and jitter, bursty loss, rate swings, stalls and scheduled outages. No root and no netem, both directions from one end. Put it under a proxy node to test balancing, failover and chains against real servers over a bad link.
+
+```json
+{"type": "impair", "tag": "slow-se", "rate": "10mbit", "vary": {"min": "3mbit", "max": "12mbit", "every": "2s"}, "loss": "0.5%", "seed": 1}
+```
+
+Limits: a test tool, not in release binaries or the AAR; the receive side is degraded after the real network.
+
+`with_lx_impair` · [feature](SPECS/FEATURES/020-IMPAIR/FEATURE.md) · [config](docs-lx/lx-impair.md) ([RU](docs-lx/lx-impair.ru.md))
+
 ## Who uses it
 
 The same core and the same config JSON run in different products; mapping subscription links to config fields is each product's own job.
