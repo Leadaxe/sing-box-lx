@@ -26,7 +26,7 @@ func TestDialHistory_nestedMemberErasesLeaf(t *testing.T) {
 	g.outbound.(*fakeManager).byTag["sel"] = sel
 	g.outbound.(*fakeManager).byTag["leaf"] = leaf
 	g.history.StoreURLTestHistory("leaf", &adapter.URLTestHistory{Time: time.Now(), Delay: 10})
-	g.selectedOutboundTCP = sel
+	g.selectedOutboundTCP.Store(sel)
 	s := &URLTest{outbound: g.outbound, logger: log.NewNOPFactory().NewLogger("test"), group: g}
 	if _, err := s.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPort("example.org", 443)); err == nil {
 		t.Fatal("want the dial error")

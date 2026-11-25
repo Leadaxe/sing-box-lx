@@ -31,3 +31,15 @@ ShadowTLS v3 получил тот же таймаут, что `tls.ClientHandsh
 
 `tor`, VLESS `encryption`, `trusttunnel`, `xhttp` — у них ожидание уже ограничено своим контрактом
 или идёт не к серверу узла; причины — в SPEC.
+
+## 3. Синк upstream/stable 2026-11-26 (SPEC 166)
+
+Апстрим в тот же день ограничил рукопожатия сам: `8a1ddcebd` — SOCKS (`client.SetHandshakeTimeout`) и
+HTTP (`HandshakeTimeout`), `c7f675a68` — ShadowTLS v3 на стандартном TLS, `27c872d81` — httpupgrade и
+websocket. В SOCKS два механизма вместе ломали тип ошибки: наш контекст отменялся раньше апстримного
+таймаута, клиент `sing` возвращал `ctx.Err()`, и вместо таймаута выходил `context.Canceled` — для
+SPEC 054 это «клиент ушёл», узел без штрафа. Шов SOCKS снят на мерже, `handshake_timeout_lx_test.go`
+переведён на `client.SetHandshakeTimeout` и целиком проходит на апстримном механизме. HTTP, httpupgrade и
+ShadowTLS дают таймаут и с двумя механизмами — оставлены до решения владельца о снятии вместе с
+`common/lxhandshake`.
+

@@ -94,16 +94,6 @@ func TestTakeoverFromUnreleasedInstance(t *testing.T) {
 	require.Zero(t, registeredInstances(path))
 }
 
-func TestReleaseFlushesPendingFakeIPMetadata(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cache.db")
-	a := startTestCacheFile(t, path, nil)
-	a.FakeIPSaveMetadataAsync(testFakeIPMetadata())
-	require.NoError(t, a.Release())
-
-	b := startTestCacheFile(t, path, nil)
-	require.Equal(t, testFakeIPMetadata(), b.FakeIPMetadata())
-}
-
 func TestFakeIPMetadataSurvivesSessionWithoutAllocations(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cache.db")
 	a := startTestCacheFile(t, path, nil)

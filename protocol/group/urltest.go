@@ -111,9 +111,9 @@ func (s *URLTest) All() []string {
 func (s *URLTest) Selected(network string) adapter.Outbound {
 	var outbound adapter.Outbound
 	if network == N.NetworkUDP {
-		outbound = s.selectedNowLx(network) // lx: SPEC 019 — the last pick in round_robin; SPEC 139 — guarded read
+		outbound = s.selectedNowLx(network) // lx: SPEC 019 — the last pick in round_robin
 	} else {
-		outbound = s.selectedNowLx(network) // lx: SPEC 019 — the last pick in round_robin; SPEC 139 — guarded read
+		outbound = s.selectedNowLx(network) // lx: SPEC 019 — the last pick in round_robin
 	}
 	if outbound == nil {
 		outbound, _ = s.group.Select(network)
@@ -126,21 +126,22 @@ func (s *URLTest) AttachConnection(closer io.Closer) func() {
 	return s.group.interruptGroup.Add(closer, true)
 }
 
-func (s *URLTest) References() []string {
+func (s *URLTest) References() ([]string, []string) {
 	group := s.group
 	if group == nil {
-		return nil
+		return nil, nil
 	}
 	var references []string
-	selectedTCP, selectedUDP := group.selectedLx() // lx: SPEC 139
-	if selectedTCP != nil {                        // lx: SPEC 139
-		references = append(references, selectedTCP.Tag()) // lx: SPEC 139
+	selectedOutboundTCP := group.selectedOutboundTCP.Load()
+	selectedOutboundUDP := group.selectedOutboundUDP.Load()
+	if selectedOutboundTCP != nil {
+		references = append(references, selectedOutboundTCP.Tag())
 	}
-	if selectedUDP != nil && selectedUDP != selectedTCP { // lx: SPEC 139
-		references = append(references, selectedUDP.Tag()) // lx: SPEC 139
+	if selectedOutboundUDP != nil && selectedOutboundUDP != selectedOutboundTCP {
+		references = append(references, selectedOutboundUDP.Tag())
 	}
 	references = append(references, s.poolReferences()...) // lx: SPEC 109
-	return references
+	return references, nil
 }
 
 func (s *URLTest) URLTest(ctx context.Context) (map[string]uint16, error) {
@@ -152,7 +153,12 @@ func (s *URLTest) CheckOutbounds() {
 }
 
 func (s *URLTest) PerformUpdateCheck() {
-	s.group.performUpdateCheck()
+	if s.group.balancer != nil { // lx: SPEC 019 — round_robin keeps no single selection (afterTestLx); the router calls this on every failed open
+		return
+	}
+	if s.group.performUpdateCheck() {
+		s.group.history.NotifyUpdated()
+	}
 }
 
 func (s *URLTest) InterfaceUpdated(ctx context.Context) {
@@ -203,7 +209,11 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
 		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
-	s.group.deleteHistoryOnDialError(ctx, outbound.Tag())                                      // lx: SPEC 019, SPEC 139 — round_robin and a probe keep the history
+	if !E.IsClosedOrCanceled(err) {
+		if s.group.deleteHistoryOnDialError(ctx, RealTag(outbound, N.NetworkName(network))) && !s.group.pathDead(outbound, err) { // lx: SPEC 019, SPEC 139 — round_robin and a probe keep the history; SPEC 054 — a dead path moves the selection itself, without Interrupt
+			s.PerformUpdateCheck()
+		}
+	}
 	if retryConn, ok := s.dialFailedLx(ctx, network, destination, outbound, err, picked); ok { // lx: SPEC 054, SPEC 138 — one second attempt
 		return s.group.interruptGroup.NewConn(retryConn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
@@ -229,7 +239,11 @@ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (ne
 		return s.group.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
-	s.group.deleteHistoryOnDialError(ctx, outbound.Tag())                               // lx: SPEC 019, SPEC 139 — round_robin and a probe keep the history
+	if !E.IsClosedOrCanceled(err) {
+		if s.group.deleteHistoryOnDialError(ctx, RealTag(outbound, N.NetworkUDP)) { // lx: SPEC 019, SPEC 139 — round_robin and a probe keep the history
+			s.PerformUpdateCheck()
+		}
+	}
 	if retryConn, ok := s.listenFailedLx(ctx, destination, outbound, err, picked); ok { // lx: SPEC 138 — one second attempt
 		return s.group.interruptGroup.NewPacketConn(retryConn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
@@ -249,17 +263,18 @@ type URLTestGroup struct {
 	idleTimeout                  time.Duration
 	history                      *urltest.HistoryStorage
 	checking                     atomic.Bool
-	selectedOutboundTCP          adapter.Outbound
-	selectedOutboundUDP          adapter.Outbound
+	selectedOutboundTCP          common.TypedValue[adapter.Outbound]
+	selectedOutboundUDP          common.TypedValue[adapter.Outbound]
 	interruptGroup               *interrupt.Group
 	interruptExternalConnections bool
 	access                       sync.Mutex
 	updateAccess                 sync.Mutex
 	ticker                       *time.Ticker
 	close                        chan struct{}
-	started                      bool
+	started                      atomic.Bool
+	closed                       atomic.Bool
 	lastActive                   common.TypedValue[time.Time]
-	lxURLTestGroup               // lx: SPEC 019, SPEC 020, 050, SPEC 054, SPEC 116, SPEC 125, SPEC 126, SPEC 139 — lx state (urltest_hooks_lx.go)
+	lxURLTestGroup               // lx: SPEC 019, SPEC 020, 050, SPEC 054, SPEC 116, SPEC 125, SPEC 126 — lx state (urltest_hooks_lx.go)
 }
 
 func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManager, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, tolerance uint16, idleTimeout time.Duration, interruptExternalConnections bool) (*URLTestGroup, error) {
@@ -299,16 +314,19 @@ func NewURLTestGroup(ctx context.Context, outboundManager adapter.OutboundManage
 func (g *URLTestGroup) PostStart() {
 	g.access.Lock()
 	defer g.access.Unlock()
-	g.started = true
+	g.started.Store(true)
 	g.lastActive.Store(time.Now())
 	g.seedPool() // lx: SPEC 019 — round_robin routes from the first connection, before the first health-check
 	go g.CheckOutbounds(g.ctx, false)
 }
 
 func (g *URLTestGroup) Touch() {
-	g.access.Lock()         // lx: started is read under the lock (Close clears it): a dial racing Close cannot restart the ticker
-	defer g.access.Unlock() // lx: see above
-	if !g.started {
+	if !g.started.Load() {
+		return
+	}
+	g.access.Lock()
+	defer g.access.Unlock()
+	if g.closed.Load() {
 		return
 	}
 	if g.ticker != nil {
@@ -324,14 +342,16 @@ func (g *URLTestGroup) Touch() {
 func (g *URLTestGroup) Close() error {
 	g.access.Lock()
 	defer g.access.Unlock()
-	g.closeLx() // lx: 050 — block Touch, cancel an in-flight run
-	if g.ticker == nil {
+	g.closeLx() // lx: 050 — cancel an in-flight run
+	if g.closed.Swap(true) {
 		return nil
 	}
-	g.ticker.Stop()
-	g.ticker = nil
-	g.pause.UnregisterCallback(g.pauseCallback)
-	g.pauseCallback = nil
+	if g.ticker != nil {
+		g.ticker.Stop()
+		g.ticker = nil
+		g.pause.UnregisterCallback(g.pauseCallback)
+		g.pauseCallback = nil
+	}
 	close(g.close)
 	return nil
 }
@@ -339,21 +359,17 @@ func (g *URLTestGroup) Close() error {
 func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
 	var minDelay uint16
 	var minOutbound adapter.Outbound
-	selectedTCP, selectedUDP := g.selectedLx() // lx: SPEC 139
+	var selectedOutbound adapter.Outbound
 	switch network {
 	case N.NetworkTCP:
-		if selectedTCP != nil { // lx: SPEC 139
-			if history := g.history.LoadURLTestHistory(RealTag(selectedTCP, N.NetworkTCP)); history != nil { // lx: SPEC 139
-				minOutbound = selectedTCP // lx: SPEC 139
-				minDelay = history.Delay
-			}
-		}
+		selectedOutbound = g.selectedOutboundTCP.Load()
 	case N.NetworkUDP:
-		if selectedUDP != nil { // lx: SPEC 139
-			if history := g.history.LoadURLTestHistory(RealTag(selectedUDP, N.NetworkUDP)); history != nil { // lx: SPEC 139
-				minOutbound = selectedUDP // lx: SPEC 139
-				minDelay = history.Delay
-			}
+		selectedOutbound = g.selectedOutboundUDP.Load()
+	}
+	if selectedOutbound != nil {
+		if history := g.history.LoadURLTestHistory(RealTag(selectedOutbound, network)); history != nil {
+			minOutbound = selectedOutbound
+			minDelay = history.Delay
 		}
 	}
 	for _, detour := range g.outbounds {
@@ -428,6 +444,7 @@ func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint
 	}
 	result := g.testNodes(ctx, g.outbounds, force) // lx: SPEC 019, SPEC 054, SPEC 125 — the probe hook, the tick freshness
 	g.afterTestLx(force)                           // lx: SPEC 019 — round_robin rebuilds the pool; SPEC 116 — a forced run re-selects in failover
+	g.history.NotifyUpdated()
 	return result, nil
 }
 
@@ -446,9 +463,17 @@ type urlTestBatch struct {
 	groups   []adapter.OutboundGroup
 	access   sync.Mutex
 	result   map[string]uint16
+	stored   map[string]*adapter.URLTestHistory
+	deleted  []string
 }
 
 func URLTestOutbounds(ctx context.Context, outboundManager adapter.OutboundManager, history *urltest.HistoryStorage, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, force bool) map[string]uint16 {
+	result := urlTestOutbounds(ctx, outboundManager, history, logger, outbounds, link, interval, force)
+	history.NotifyUpdated()
+	return result
+}
+
+func urlTestOutbounds(ctx context.Context, outboundManager adapter.OutboundManager, history *urltest.HistoryStorage, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, force bool) map[string]uint16 {
 	b, ctx := batch.New(ctx, batch.WithConcurrencyNum[any](10)) // lx: 050 — the probes run on the batch context, which descends from the caller's
 	testBatch := &urlTestBatch{
 		ctx:      ctx,
@@ -458,9 +483,11 @@ func URLTestOutbounds(ctx context.Context, outboundManager adapter.OutboundManag
 		batch:    b,
 		checked:  make(map[string]bool),
 		result:   make(map[string]uint16),
+		stored:   make(map[string]*adapter.URLTestHistory),
 	}
 	testBatch.test(outbounds, link, interval, force)
 	b.Wait()
+	history.UpdateURLTestHistory(testBatch.stored, testBatch.deleted)
 	for _, outboundGroup := range testBatch.groups {
 		groupHistory := history.LoadURLTestHistory(RealTag(outboundGroup, N.NetworkTCP))
 		if groupHistory != nil {
@@ -520,17 +547,19 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 					}
 					b.logger.Debug("outbound ", tag, " unavailable: ", testResult.err)
 					probeFailedLx(b.ctx, tag) // lx: SPEC 019 — a round_robin batch keeps what its own probe erases
-					b.history.DeleteURLTestHistory(tag)
+					b.access.Lock()
+					b.deleted = append(b.deleted, tag)
+					b.access.Unlock()
 				} else {
 					b.logger.Debug("outbound ", tag, " available: ", testResult.delay, "ms")
-					b.history.StoreURLTestHistory(tag, &adapter.URLTestHistory{
+					b.access.Lock()
+					b.stored[tag] = &adapter.URLTestHistory{
 						Time:  time.Now(),
 						Delay: testResult.delay,
-					})
-					probeAliveLx(b.ctx, tag) // lx: SPEC 054 — an answer is proof of life; SPEC 019 — after the history write: the pool fill sees the node alive
-					b.access.Lock()
+					}
 					b.result[tag] = testResult.delay
 					b.access.Unlock()
+					probeAliveLx(b.ctx, tag) // lx: SPEC 054 — an answer is proof of life; SPEC 019 — a node that answers fills a dead slot
 				}
 				return nil, nil
 			})
@@ -538,30 +567,31 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval 
 	}
 }
 
-func (g *URLTestGroup) performUpdateCheck() {
-	g.performSelectionUpdate(false) // lx: SPEC 116
+func (g *URLTestGroup) performUpdateCheck() bool {
+	return g.performSelectionUpdate(false) // lx: SPEC 116
 } // lx: SPEC 116
 
-func (g *URLTestGroup) performSelectionUpdate(reselect bool) { // lx: SPEC 116 — upstream performUpdateCheck with the failover reselect flag
+func (g *URLTestGroup) performSelectionUpdate(reselect bool) bool { // lx: SPEC 116 — upstream performUpdateCheck with the failover reselect flag
 	g.updateAccess.Lock()
 	defer g.updateAccess.Unlock()
 	var (
 		updated  bool
 		selected bool
 	)
-	selectedTCP, selectedUDP := g.selectedLx()                                                                                                         // lx: SPEC 139 — the dial path (moveSelection) writes the selection outside updateAccess
-	if outbound, exists := g.selectForUpdate(N.NetworkTCP, reselect); outbound != nil && (selectedTCP == nil || (exists && outbound != selectedTCP)) { // lx: SPEC 054, SPEC 116, SPEC 139
-		if selectedTCP != nil { // lx: SPEC 139
+	selectedOutboundTCP := g.selectedOutboundTCP.Load()
+	if outbound, _ := g.selectForUpdate(N.NetworkTCP, reselect); outbound != nil && outbound != selectedOutboundTCP { // lx: SPEC 054, SPEC 116
+		if selectedOutboundTCP != nil {
 			updated = true
 		}
-		g.setSelectedTCPLx(outbound) // lx: SPEC 139
+		g.selectedOutboundTCP.Store(outbound)
 		selected = true
 	}
-	if outbound, exists := g.selectForUpdate(N.NetworkUDP, reselect); outbound != nil && (selectedUDP == nil || (exists && outbound != selectedUDP)) { // lx: SPEC 054, SPEC 116, SPEC 139
-		if selectedUDP != nil { // lx: SPEC 139
+	selectedOutboundUDP := g.selectedOutboundUDP.Load()
+	if outbound, _ := g.selectForUpdate(N.NetworkUDP, reselect); outbound != nil && outbound != selectedOutboundUDP { // lx: SPEC 054, SPEC 116
+		if selectedOutboundUDP != nil {
 			updated = true
 		}
-		g.setSelectedUDPLx(outbound) // lx: SPEC 139
+		g.selectedOutboundUDP.Store(outbound)
 		selected = true
 	}
 	if updated {
@@ -569,6 +599,6 @@ func (g *URLTestGroup) performSelectionUpdate(reselect bool) { // lx: SPEC 116 �
 	}
 	if selected {
 		invalidateReachability(g.ctx) // lx: SPEC 020 — every selection change re-shapes the active tree, the first one too
-		g.history.NotifyUpdated()
 	}
+	return selected
 }

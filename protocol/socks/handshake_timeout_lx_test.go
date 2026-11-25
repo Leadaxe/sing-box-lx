@@ -6,12 +6,10 @@ import (
 	"errors"
 	"io"
 	"net"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/lxhandshake"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
@@ -19,16 +17,19 @@ import (
 	"github.com/sagernet/sing/protocol/socks/socks5"
 )
 
-// lx: handshake-timeout — a SOCKS server that accepts the TCP connection and
-// then says nothing (on the stand: kill -STOP of the server process) kept the
-// outbound's DialContext parked in the handshake for ever. Routed connections
-// dial without a deadline, and the client's departure does not cancel the dial.
-// These tests run the real NewOutbound against loopback servers.
+// lx: handshake-timeout (SPEC 161) — a SOCKS server that accepts the TCP
+// connection and then says nothing (on the stand: kill -STOP of the server
+// process) kept the outbound's DialContext parked in the handshake for ever.
+// Since the sync of 2026-11-26 upstream bounds it (8a1ddcebd: the sing client
+// times the handshake out after its dial and honours the caller's context);
+// these tests stay as the guard of that behaviour, on the real NewOutbound
+// against loopback servers.
+
+var testHandshakeTimeout time.Duration
 
 func setHandshakeTimeout(t *testing.T, timeout time.Duration) {
-	original := lxhandshake.Timeout
-	lxhandshake.Timeout = timeout
-	t.Cleanup(func() { lxhandshake.Timeout = original })
+	testHandshakeTimeout = timeout
+	t.Cleanup(func() { testHandshakeTimeout = 0 })
 }
 
 // acceptOne starts a loopback listener whose first accepted conn is handed to
@@ -61,6 +62,9 @@ func newSOCKSOutbound(t *testing.T, listener net.Listener) adapter.Outbound {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if testHandshakeTimeout > 0 {
+		out.(*Outbound).client.SetHandshakeTimeout(testHandshakeTimeout)
 	}
 	return out
 }
@@ -128,7 +132,7 @@ func TestLxSOCKSHandshakeSilentServerTimesOut(t *testing.T) {
 			if err == nil {
 				t.Fatal("handshake with a silent server succeeded")
 			}
-			if !errors.Is(err, os.ErrDeadlineExceeded) || !errors.Is(err, lxhandshake.ErrTimeout) {
+			if !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("want a handshake timeout, got %v", err)
 			}
 			if elapsed < bound || elapsed > bound+time.Second {
@@ -234,24 +238,5 @@ func TestLxSOCKSHandshakeSuccessKeepsTunnel(t *testing.T) {
 	}
 	if string(buffer) != string(payload) {
 		t.Fatalf("read %q, want %q", buffer, payload)
-	}
-}
-
-// TestLxSOCKSHandshakeDialerWithoutContextIsTransparent: the wrapped dialer
-// called outside lxhandshake.Context behaves like the dialer it wraps.
-func TestLxSOCKSHandshakeDialerWithoutContextIsTransparent(t *testing.T) {
-	setHandshakeTimeout(t, 100*time.Millisecond)
-	listener, _ := acceptOne(t, func(conn net.Conn) {
-		_, _ = io.Copy(io.Discard, conn)
-	})
-	dialer := lxhandshake.NewDialer(N.SystemDialer)
-	conn, err := dialer.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddr(listener.Addr().String()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	time.Sleep(300 * time.Millisecond)
-	if _, err := conn.Write([]byte("still open")); err != nil {
-		t.Fatal("a plain dial through the wrapper was closed: ", err)
 	}
 }

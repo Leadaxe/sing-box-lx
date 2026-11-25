@@ -160,7 +160,7 @@ func TestPerformUpdateCheck_firstSelectionInvalidates(t *testing.T) {
 
 	g.performUpdateCheck()
 
-	if g.selectedOutboundTCP == nil || g.selectedOutboundTCP.Tag() != "a" {
+	if g.selectedOutboundTCP.Load() == nil || g.selectedOutboundTCP.Load().Tag() != "a" {
 		t.Fatal("precondition: first selection must land on a")
 	}
 	if inv.calls == 0 {

@@ -122,21 +122,16 @@ func (g *URLTestGroup) penaltyResetOnDial(ctx context.Context, tag string) {
 }
 
 // deleteHistoryOnDialError is the upstream reaction of least_test to a failed
-// dial (drop the node's URL test history); a probe keeps the history, and so does
-// round_robin: a dial error alone proves nothing (SPEC 019 v2, SPEC 138).
-// The history of the leaf goes too, as upstream 1.14.4 erases the last element of
-// a routed chain: the router cuts the chain at this group (SPEC 140), and a member
-// that is a group (a selector) keeps its history under its leaf (RealTag).
-func (g *URLTestGroup) deleteHistoryOnDialError(ctx context.Context, tag string) {
+// dial: drop the URL test history of the node's leaf (RealTag, upstream
+// 37fffa325), after which the caller re-selects. A probe keeps the history, and
+// so does round_robin: a dial error alone proves nothing (SPEC 019 v2, SPEC 138).
+// It reports whether the history went.
+func (g *URLTestGroup) deleteHistoryOnDialError(ctx context.Context, leaf string) bool {
 	if g.balancer != nil || lxtrace.IsProbe(ctx) {
-		return
+		return false
 	}
-	g.history.DeleteURLTestHistory(tag)
-	if member, loaded := g.outbound.Outbound(tag); loaded {
-		if leaf := RealTag(member, N.NetworkTCP); leaf != "" && leaf != tag {
-			g.history.DeleteURLTestHistory(leaf)
-		}
-	}
+	g.history.DeleteURLTestHistory(leaf)
+	return true
 }
 
 // rotate advances the round_robin counter (sticky off) and returns the step to

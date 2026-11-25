@@ -100,7 +100,9 @@ func TestRuntimeLimitThresholds(t *testing.T) {
 	require.Equal(t, pressureStateNormal, step(pressureStateNormal, sample(42<<20, 1<<30)))
 	require.Equal(t, pressureStateTriggered, step(pressureStateNormal, sample(195<<20, 1<<30)))
 	require.Equal(t, pressureStateArmed, step(pressureStateNormal, sample(190<<20, 1<<30)))
-	require.Equal(t, pressureStateTriggered, step(pressureStateTriggered, sample(192<<20, 1<<30)))
+	// Since upstream d31a43ff3 the state no longer sticks at triggered while above
+	// armed: a repeated reset is decided by resetDue instead.
+	require.Equal(t, pressureStateArmed, step(pressureStateTriggered, sample(192<<20, 1<<30)))
 	require.Equal(t, pressureStateNormal, step(pressureStateTriggered, sample(150<<20, 1<<30)))
 
 	// The available watch stays on: low available memory at small usage triggers.
@@ -154,4 +156,24 @@ func TestRuntimeLimitPoll(t *testing.T) {
 	state := timer.state
 	timer.access.Unlock()
 	require.Equal(t, pressureStateTriggered, state)
+}
+
+func TestRuntimeLimitResetDue(t *testing.T) {
+	timer := newRuntimeLimitTestTimer(t, option.OOMKillerServiceOptions{})
+	sample := func(usage uint64, available uint64) memorySample {
+		return memorySample{usage: usage, available: available, availableKnown: true}
+	}
+	require.True(t, timer.resetDue(sample(196<<20, 1<<30)), "the first reset is always due")
+
+	timer.hasReset = true
+	timer.bestSinceReset = sample(193<<20, 1<<30)
+	require.False(t, timer.resetDue(sample(196<<20, 1<<30)), "3 MiB above the best since the reset")
+	require.True(t, timer.resetDue(sample(198<<20, 1<<30)), "the trigger-armed distance (5 MiB) above it")
+
+	// The available condition alone makes a reset due too.
+	timer.bestSinceReset = sample(42<<20, 60<<20)
+	require.False(t, timer.resetDue(sample(42<<20, 40<<20)))
+	require.True(t, timer.resetDue(sample(42<<20, 20<<20)))
+	// Unknown available memory: only the runtime figure counts.
+	require.False(t, timer.resetDue(memorySample{usage: 42 << 20}))
 }

@@ -18,8 +18,6 @@ import (
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/service"
-	"github.com/sagernet/sing/service/pause"
 	"github.com/sagernet/wireguard-go/conn"
 )
 
@@ -34,30 +32,26 @@ var clientBindDialTimeout = C.TCPTimeout
 type ClientBind struct {
 	ctx                 context.Context
 	logger              logger.Logger
-	pauseManager        pause.Manager
 	bindCtx             context.Context
 	bindDone            context.CancelFunc
 	dialer              N.Dialer
 	reservedAccess      sync.RWMutex
 	reservedForEndpoint map[netip.AddrPort][3]uint8
 	connAccess          sync.Mutex
-	conn                atomic.Pointer[wireConn] // lx: atomic — read on the connect() fast-path is lock-free (was a data race, upstream)
+	conn                atomic.Pointer[wireConn]
 	done                chan struct{}
-	isConnect           bool
-	connectAddr         netip.AddrPort
+	destination         M.Socksaddr
 	reserved            [3]uint8
 }
 
-func NewClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, isConnect bool, connectAddr netip.AddrPort, reserved [3]uint8) *ClientBind {
+func NewClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, destination M.Socksaddr, reserved [3]uint8) *ClientBind {
 	return &ClientBind{
 		ctx:                 ctx,
 		logger:              logger,
-		pauseManager:        service.FromContext[pause.Manager](ctx),
 		dialer:              dialer,
 		reservedForEndpoint: make(map[netip.AddrPort][3]uint8),
 		done:                make(chan struct{}),
-		isConnect:           isConnect,
-		connectAddr:         connectAddr,
+		destination:         destination,
 		reserved:            reserved,
 	}
 }
@@ -82,7 +76,6 @@ func (c *ClientBind) connect() (*wireConn, error) {
 	if serverConn != nil {
 		select {
 		case <-serverConn.done:
-			serverConn = nil
 		default:
 			return serverConn, nil
 		}
@@ -98,7 +91,6 @@ func (c *ClientBind) connect() (*wireConn, error) {
 	if serverConn != nil {
 		select {
 		case <-serverConn.done:
-			serverConn = nil
 		default:
 			return serverConn, nil
 		}
@@ -121,28 +113,15 @@ func (c *ClientBind) connect() (*wireConn, error) {
 	// freeze hit).
 	dialCtx, dialCancel := context.WithTimeout(c.bindCtx, clientBindDialTimeout)
 	dialCtx, carrier := adapter.ContextWithCarrierRecord(dialCtx) // lx: SPEC 060 — which outbound carries the socket
-	if c.isConnect {
-		udpConn, err := c.dialer.DialContext(dialCtx, N.NetworkUDP, M.SocksaddrFromNetIP(c.connectAddr))
-		if err != nil {
-			dialCancel()
-			return nil, err
-		}
-		serverConn = &wireConn{
-			PacketConn: bufio.NewUnbindPacketConn(udpConn),
-			done:       make(chan struct{}),
-			path:       lxdatagram.GuardPath(udpConn, carrier), // lx: SPEC 060
-		}
-	} else {
-		udpConn, err := c.dialer.ListenPacket(dialCtx, M.Socksaddr{Addr: netip.IPv4Unspecified()})
-		if err != nil {
-			dialCancel()
-			return nil, err
-		}
-		serverConn = &wireConn{
-			PacketConn: bufio.NewPacketConn(udpConn),
-			done:       make(chan struct{}),
-			path:       lxdatagram.GuardPath(udpConn, carrier), // lx: SPEC 060
-		}
+	udpConn, err := c.dialer.ListenPacket(dialCtx, c.destination)
+	if err != nil {
+		dialCancel()
+		return nil, err
+	}
+	serverConn = &wireConn{
+		PacketConn: bufio.NewPacketConn(udpConn),
+		done:       make(chan struct{}),
+		path:       lxdatagram.GuardPath(udpConn, carrier), // lx: SPEC 060
 	}
 	// lx: SPEC 071 — release the timeout context only when this connection
 	// generation dies, NOT on return. Since SPEC 077 the XHTTP dial returns
@@ -180,7 +159,6 @@ func (c *ClientBind) receive(packets [][]byte, sizes []int, eps []conn.Endpoint)
 		}
 		c.logger.Error(E.Cause(err, "connect to server"))
 		err = nil
-		c.pauseManager.WaitActiveContext(c.bindCtx)
 		select {
 		case <-c.done:
 		case <-time.After(time.Second):
@@ -258,7 +236,7 @@ func (c *ClientBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
 				copy(buf[1:4], reserved[:])
 			}
 		}
-		_, err = udpConn.WriteToUDPAddrPort(buf, destination)
+		_, err = udpConn.WriteTo(buf, M.SocksaddrFromNetIP(destination).UDPAddr())
 		if err != nil {
 			udpConn.Close()
 			return err
@@ -287,7 +265,6 @@ func (c *ClientBind) SetReservedForEndpoint(destination netip.AddrPort, reserved
 
 type wireConn struct {
 	net.PacketConn
-	conn   net.Conn
 	access sync.Mutex
 	done   chan struct{}
 	// path records where the conn as dialled went: a kernel socket (no
@@ -307,13 +284,6 @@ func (c *ClientBind) Path() (lxsniffguard.Path, any, error) {
 		return lxsniffguard.Path{}, nil, err
 	}
 	return serverConn.path, serverConn, nil
-}
-
-func (w *wireConn) WriteToUDPAddrPort(b []byte, addr netip.AddrPort) (int, error) {
-	if w.conn != nil {
-		return w.conn.Write(b)
-	}
-	return w.PacketConn.WriteTo(b, M.SocksaddrFromNetIP(addr).UDPAddr())
 }
 
 func (w *wireConn) Close() error {

@@ -7,7 +7,6 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
-	"github.com/sagernet/sing-box/common/lxhandshake"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -56,12 +55,13 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		outboundDialer = newRelayDialer(outboundDialer, options.ServerOptions.Build()) // SPEC 085: BND.ADDR 0.0.0.0/:: → адрес сервера
 	}
 	// lx:end socks-udp-bind
-	outboundDialer = lxhandshake.NewDialer(outboundDialer) // lx: handshake-timeout — the timer starts after this dial
+	client := socks.NewClient(outboundDialer, options.ServerOptions.Build(), version, options.Username, options.Password)
+	client.SetHandshakeTimeout(C.TCPTimeout)
 	outbound := &Outbound{
 		Adapter:   outbound.NewAdapterWithDialerOptions(C.TypeSOCKS, tag, options.Network.Build(), options.DialerOptions),
 		dnsRouter: service.FromContext[adapter.DNSRouter](ctx),
 		logger:    logger,
-		client:    socks.NewClient(outboundDialer, options.ServerOptions.Build(), version, options.Username, options.Password),
+		client:    client,
 		resolve:   version == socks.Version4,
 	}
 	uotOptions := common.PtrValueOrDefault(options.UDPOverTCP)
@@ -78,10 +78,6 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	ctx, metadata := adapter.ExtendContext(ctx)
 	metadata.Outbound = h.Tag()
 	metadata.Destination = destination
-	// lx:begin handshake-timeout — bound the SOCKS handshake by C.TCPTimeout
-	ctx, cancel := lxhandshake.Context(ctx)
-	defer cancel()
-	// lx:end handshake-timeout
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
 		h.logger.InfoContext(ctx, "outbound connection to ", destination)
@@ -108,10 +104,6 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	ctx, metadata := adapter.ExtendContext(ctx)
 	metadata.Outbound = h.Tag()
 	metadata.Destination = destination
-	// lx:begin handshake-timeout — bound the SOCKS handshake by C.TCPTimeout
-	ctx, cancel := lxhandshake.Context(ctx)
-	defer cancel()
-	// lx:end handshake-timeout
 	if h.uotClient != nil {
 		h.logger.InfoContext(ctx, "outbound UoT packet connection to ", destination)
 		return h.uotClient.ListenPacket(ctx, destination)

@@ -186,16 +186,20 @@ func TestRRRun_layoutSkipsNodeStruckDuringRun(t *testing.T) {
 	f.nodes["e"].slow = 100 * time.Millisecond
 	f.nodes["f"].dead.Store(true)
 	f.nodes["f"].slow = time.Second // holds the run open after the D1
+	// c died before the run: since upstream 37fffa325 a batch writes the history
+	// of its probes only when it ends, so the hole d takes during the run has to
+	// be there before the batch starts.
+	f.g.history.DeleteURLTestHistory("c")
 	done := make(chan struct{})
 	go func() {
 		f.g.balancePool(context.Background())
 		close(done)
 	}()
-	fresh := time.Now()
 	waitUntil(t, func() bool {
-		history := f.g.history.LoadURLTestHistory("e")
-		return f.pool()[2] == "d" && history != nil && history.Time.After(fresh)
+		e := f.nodes["e"]
+		return f.pool()[2] == "d" && e.probes.Load() > 0 && e.active.Load() == 0
 	})
+	time.Sleep(100 * time.Millisecond) // e's answer completes; f still holds the run for most of a second
 	// D1 of d by a check beside the run, as rrStrike does it.
 	f.g.history.DeleteURLTestHistoryNotAfterLx("d", time.Now())
 	f.s.balancer.clearSlot("d")

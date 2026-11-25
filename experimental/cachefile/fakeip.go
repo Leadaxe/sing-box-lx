@@ -1,13 +1,12 @@
 package cachefile
 
 import (
+	"bytes"
 	"net/netip"
 	"os"
-	"time"
 
 	"github.com/sagernet/bbolt"
 	"github.com/sagernet/sing-box/adapter"
-	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 )
@@ -23,7 +22,7 @@ var (
 
 func (c *CacheFile) FakeIPMetadata() *adapter.FakeIPMetadata {
 	var metadata adapter.FakeIPMetadata
-	err := c.batch(func(tx *bbolt.Tx) error {
+	err := c.view(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(bucketFakeIP)
 		if bucket == nil {
 			return os.ErrNotExist
@@ -32,49 +31,88 @@ func (c *CacheFile) FakeIPMetadata() *adapter.FakeIPMetadata {
 		if len(metadataBinary) == 0 {
 			return os.ErrInvalid
 		}
-		err := bucket.Delete(keyMetadata)
-		if err != nil {
-			return err
-		}
 		return metadata.UnmarshalBinary(metadataBinary)
 	})
 	if err != nil {
 		return nil
 	}
-	c.seedFakeIPMetadata(&metadata) // lx: SPEC 147
 	return &metadata
 }
 
 func (c *CacheFile) FakeIPSaveMetadata(metadata *adapter.FakeIPMetadata) error {
 	return c.batch(func(tx *bbolt.Tx) error {
-		bucket, err := tx.CreateBucketIfNotExists(bucketFakeIP)
-		if err != nil {
-			return err
-		}
-		metadataBinary, err := metadata.MarshalBinary()
-		if err != nil {
-			return err
-		}
-		return bucket.Put(keyMetadata, metadataBinary)
+		return putFakeIPMetadata(tx, metadata)
 	})
 }
 
-func (c *CacheFile) FakeIPSaveMetadataAsync(metadata *adapter.FakeIPMetadata) {
-	c.saveMetadataAccess.Lock()
-	defer c.saveMetadataAccess.Unlock()
-	c.saveMetadata = metadata
-	if c.saveMetadataTimer == nil {
-		c.saveMetadataTimer = time.AfterFunc(C.FakeIPMetadataSaveInterval, func() {
-			c.saveMetadataAccess.Lock()
-			savedMetadata := c.saveMetadata
-			c.saveMetadataAccess.Unlock()
-			if savedMetadata != nil {
-				_ = c.FakeIPSaveMetadata(savedMetadata)
-			}
-		})
-	} else {
-		c.saveMetadataTimer.Reset(C.FakeIPMetadataSaveInterval)
+func (c *CacheFile) FakeIPReserve(metadata *adapter.FakeIPMetadata, current netip.Addr, reservedEnd netip.Addr) error {
+	return c.batch(func(tx *bbolt.Tx) error {
+		err := putFakeIPMetadata(tx, metadata)
+		if err != nil {
+			return err
+		}
+		return deleteFakeIPRange(tx, current, reservedEnd)
+	})
+}
+
+func putFakeIPMetadata(tx *bbolt.Tx, metadata *adapter.FakeIPMetadata) error {
+	bucket, err := tx.CreateBucketIfNotExists(bucketFakeIP)
+	if err != nil {
+		return err
 	}
+	metadataBinary, err := metadata.MarshalBinary()
+	if err != nil {
+		return err
+	}
+	return bucket.Put(keyMetadata, metadataBinary)
+}
+
+func deleteFakeIPRange(tx *bbolt.Tx, current netip.Addr, reservedEnd netip.Addr) error {
+	bucket := tx.Bucket(bucketFakeIP)
+	if bucket == nil {
+		return nil
+	}
+	var domainBucket *bbolt.Bucket
+	if current.Is4() {
+		domainBucket = tx.Bucket(bucketFakeIPDomain4)
+	} else {
+		domainBucket = tx.Bucket(bucketFakeIPDomain6)
+	}
+	from := current.AsSlice()
+	to := reservedEnd.AsSlice()
+	wrapped := bytes.Compare(to, from) <= 0
+	var addresses, domains [][]byte
+	cursor := bucket.Cursor()
+	for key, value := cursor.Seek(from); key != nil; key, value = cursor.Next() {
+		if !wrapped && bytes.Compare(key, to) > 0 {
+			break
+		}
+		if len(key) == len(from) && !bytes.Equal(key, from) {
+			addresses = append(addresses, key)
+			domains = append(domains, value)
+		}
+	}
+	if wrapped {
+		for key, value := cursor.First(); key != nil && bytes.Compare(key, to) <= 0; key, value = cursor.Next() {
+			if len(key) == len(from) {
+				addresses = append(addresses, key)
+				domains = append(domains, value)
+			}
+		}
+	}
+	for i, address := range addresses {
+		err := bucket.Delete(address)
+		if err != nil {
+			return err
+		}
+		if domainBucket != nil && bytes.Equal(domainBucket.Get(domains[i]), address) {
+			err = domainBucket.Delete(domains[i])
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (c *CacheFile) FakeIPStore(address netip.Addr, domain string) error {
@@ -96,8 +134,9 @@ func (c *CacheFile) FakeIPStore(address netip.Addr, domain string) error {
 		if err != nil {
 			return err
 		}
-		if oldDomain != nil {
-			if err := bucket.Delete(oldDomain); err != nil {
+		if oldDomain != nil && bytes.Equal(bucket.Get(oldDomain), address.AsSlice()) {
+			err = bucket.Delete(oldDomain)
+			if err != nil {
 				return err
 			}
 		}
@@ -189,7 +228,6 @@ func (c *CacheFile) FakeIPLoadDomain(domain string, isIPv6 bool) (netip.Addr, bo
 }
 
 func (c *CacheFile) FakeIPReset() error {
-	c.clearPendingFakeIPMetadata() // lx: SPEC 147
 	return c.batch(func(tx *bbolt.Tx) error {
 		for _, bucketName := range [][]byte{bucketFakeIP, bucketFakeIPDomain4, bucketFakeIPDomain6} {
 			if tx.Bucket(bucketName) == nil {

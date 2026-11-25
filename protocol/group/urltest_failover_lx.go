@@ -101,7 +101,9 @@ func (g *URLTestGroup) failoverCheck(ctx context.Context) map[string]uint16 {
 		g.failoverSlow.Store(&slow)
 		defer g.failoverSlow.Store(nil)
 	}
-	g.performSelectionUpdate(false)
+	if g.performSelectionUpdate(false) {
+		g.history.NotifyUpdated()
+	}
 	return result
 }
 

@@ -74,6 +74,15 @@ func (m *referenceNetworkManager) DefaultOptions() adapter.NetworkOptions {
 	return adapter.NetworkOptions{}
 }
 
+// Upstream 37fffa325 walks the certificate providers too.
+type referenceCertificateProviderManager struct {
+	adapter.CertificateProviderManager
+}
+
+func (m *referenceCertificateProviderManager) CertificateProviders() []adapter.CertificateProviderService {
+	return nil
+}
+
 func newReferenceTestContext(outbounds ...adapter.Outbound) context.Context {
 	ctx := context.Background()
 	ctx = service.ContextWith[adapter.OutboundManager](ctx, &referenceOutboundManager{outbounds: outbounds})
@@ -82,6 +91,7 @@ func newReferenceTestContext(outbounds ...adapter.Outbound) context.Context {
 	ctx = service.ContextWith[adapter.ServiceManager](ctx, &referenceServiceManager{})
 	ctx = service.ContextWith[adapter.DNSTransportManager](ctx, &referenceTransportManager{})
 	ctx = service.ContextWith[adapter.NetworkManager](ctx, &referenceNetworkManager{})
+	ctx = service.ContextWith[adapter.CertificateProviderManager](ctx, &referenceCertificateProviderManager{})
 	return ctx
 }
 

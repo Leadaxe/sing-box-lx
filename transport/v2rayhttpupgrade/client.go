@@ -11,7 +11,9 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxhandshake"
 	"github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -78,7 +80,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	}, nil
 }
 
-func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
+func (c *Client) DialContext(ctx context.Context) (result net.Conn, err error) {
 	conn, err := c.dialer.DialContext(ctx, N.NetworkTCP, c.serverAddr)
 	if err != nil {
 		return nil, err
@@ -95,6 +97,18 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	}
 	request.Header.Set("Connection", "Upgrade")
 	request.Header.Set("Upgrade", "websocket")
+	ctx, cancel := context.WithTimeout(ctx, C.TCPTimeout)
+	defer cancel()
+	stop := context.AfterFunc(ctx, func() {
+		conn.Close()
+	})
+	defer func() {
+		if !stop() {
+			common.Close(result)
+			result = nil
+			err = ctx.Err()
+		}
+	}()
 	err = request.Write(conn)
 	if err != nil {
 		conn.Close()
@@ -121,7 +135,7 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 			conn.Close()
 			return nil, err
 		}
-		conn = bufio.NewCachedConn(conn, buffer)
+		return bufio.NewCachedConn(conn, buffer), nil
 	}
 	if err = finishHandshake(); err != nil { // lx: handshake-timeout — the context or the backstop closed conn as the exchange ended
 		conn.Close()

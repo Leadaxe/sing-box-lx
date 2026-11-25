@@ -88,9 +88,9 @@ icon: material/new-box
   "iproute2_table_index": 2022,
   "iproute2_rule_index": 9000,
   "auto_redirect": true,
-  "auto_redirect_input_mark": "0x2023",
-  "auto_redirect_output_mark": "0x2024",
-  "auto_redirect_reset_mark": "0x2025",
+  "auto_redirect_input_mark": "0x04000000",
+  "auto_redirect_output_mark": "0x08000000",
+  "auto_redirect_reset_mark": "0x10000000",
   "auto_redirect_nfqueue": 100,
   "auto_redirect_iproute2_fallback_rule_index": 32768,
   "exclude_mptcp": false,
@@ -185,9 +185,7 @@ icon: material/new-box
   ],
   "inet6_route_exclude_address": [
     "fc00::/7"
-  ],
-  
-  ... // 监听字段
+  ]
 }
 ```
 
@@ -356,7 +354,7 @@ TUN 接口上 DNS 的处理方式。
 
 `auto_redirect` 使用的连接输入标记。
 
-默认使用 `0x2023`。
+默认使用 `0x04000000`。
 
 #### auto_redirect_output_mark
 
@@ -364,7 +362,7 @@ TUN 接口上 DNS 的处理方式。
 
 `auto_redirect` 使用的连接输出标记。
 
-默认使用 `0x2024`。
+默认使用 `0x08000000`。
 
 #### auto_redirect_reset_mark
 
@@ -372,7 +370,7 @@ TUN 接口上 DNS 的处理方式。
 
 `auto_redirect` 预匹配使用的连接重置标记。
 
-默认使用 `0x2025`。
+默认使用 `0x10000000`。
 
 #### auto_redirect_nfqueue
 
@@ -678,7 +676,3 @@ TCP/IP 栈。
 ### UDP NAT 字段
 
 参阅 [UDP NAT 字段](/zh/configuration/shared/udp-nat/)。
-
-### 监听字段
-
-参阅 [监听字段](/zh/configuration/shared/listen/)。

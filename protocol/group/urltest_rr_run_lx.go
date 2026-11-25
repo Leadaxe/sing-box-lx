@@ -282,7 +282,7 @@ func (g *URLTestGroup) rrBatchEnd(batch *rrBatch) {
 type probeFailedKey struct{}
 
 // withProbeFailed attaches the hook the URL test batch calls for a leaf whose probe
-// failed, before it erases the history of the leaf; nil detaches the hook of an
+// failed, before the batch erases the history of the leaf at its end; nil detaches the hook of an
 // outer group.
 func withProbeFailed(ctx context.Context, onFailed func(leaf string)) context.Context {
 	return context.WithValue(ctx, probeFailedKey{}, onFailed)
