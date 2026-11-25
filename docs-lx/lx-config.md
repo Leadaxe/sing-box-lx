@@ -516,9 +516,12 @@ The pool recovers from a node failure without waiting for `interval`.
 The scheduled check walks the nodes once per `interval`, and on a large list that is a long
 process: two checks are often 10–15 minutes apart. That is too rare for live traffic: a node that
 dies right after a check would keep its share of new connections until the next one. So a
-`round_robin` group has recovery mechanisms driven by the connections themselves. It learns about
-a dead node, a destination closed to one node and a lost local network from the failed
-connections.
+`round_robin` group has recovery mechanisms driven by the connections themselves. A failed node
+does not drop connections: one that does not open through the dead node opens through the next
+one, and the node is replaced with a live one at once, without waiting for the check. A site
+closed to one node moves to another node of the pool, while the rest of the traffic stays on its
+nodes by stickiness. When the local network is lost (device sleep, a Wi-Fi switch), the group
+strikes out no node, and once the network is back the pool is the same.
 
 There is nothing to configure: the behaviour is always on, with no config keys.
 
