@@ -8,59 +8,9 @@
 > [xray-protocols-explained](xray-protocols-explained.md) and [amneziawg-explained](amneziawg-explained.md) —
 > how it works, why, how the fork does it and how it differs from vanilla.
 
-`sing-box-lx` is upstream [sing-box](https://github.com/SagerNet/sing-box) plus a small set of client-side features, each gated behind a build tag:
-
-| Feature | Build tag | Where it lives in config | Included in |
-|---------|-----------|--------------------------|-------------|
-| **XHTTP** transport (Xray-compatible) | `with_xhttp` | `transport.type: "xhttp"` on a VLESS / VMess / Trojan outbound | desktop + mobile |
-| **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | extra fields on a `wireguard` endpoint | desktop + mobile |
-| **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
-| **TrustTunnel** outbound and inbound | `with_trusttunnel` (+ `with_quic` for HTTP/3) | `outbounds[].type` / `inbounds[].type: "trusttunnel"`; fields — [protocols-transports.md §6](protocols-transports.md#6-trusttunnel-outbound-and-inbound), the global `lx.trusttunnel.idle_timeout` — [§13](#lxtrusttunnel--trusttunnel-outbounds) | desktop + mobile |
-| **Idle-suspend** | `with_lx_idle_suspend` | `lx.wg.idle.suspend` (+ `suspend_reachable`, `teardown`) | mobile only (AAR) |
-| **Root `lx` block** | — (always parsed) | `lx.wg`, `lx.masque`, `lx.trusttunnel`, `lx.mtu_align`, `lx.sniff_guard` — the fork's global knobs, [§13](#13-the-lx-root-block) | desktop + mobile |
-| **DNS server group** | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
-| **VLESS `encryption`** | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
-| **`lxd` daemon** | `with_lxd` | not a config key — the `sing-box lxd` subcommand + `<state-dir>/daemon.json`; see [lxd-daemon.md](lxd-daemon.md) | desktop / server (not Win7, not AAR) |
-| **`chain` outbound** | `with_lx_chain` | `outbounds[].type: "chain"` — a multi-hop path of groups and nodes | desktop + mobile |
-
-`make -f Makefile.lx lx-build` builds the desktop/CLI binary: the output is `sing-box` with version `…-lx.N`.
-The build includes `with_xhttp` and `with_awg` (plus `with_lx_command` and `with_lxd`), but not `with_lx_idle_suspend`.
-Without a tag the feature is absent: an `xhttp` transport or an AWG field is rejected at load time with an explicit error, with no silent downgrade.
-
-The `with_lx_idle_suspend` tag is mobile-only: it is added only to the Android/iOS AAR
-(`cmd/internal/build_libbox`), not to the desktop `LX_TAGS`. The tag suspends idle and
-unreachable WireGuard/AmneziaWG endpoints and frees their recv-worker buffers. These buffers
-hold RAM and load the GC: ~8 MB per endpoint where `BatchSize=128`, that is, on Linux and Android.
-Measured on a device: 8 suspended endpoints freed 134 MB. The feature is aimed at phones with many
-idle nodes.
-
-Receive buffers are not small on every desktop: a Linux router keeps 16.4 MiB of them per tunnel
-without `detour`. `lx.wg.buffers.read_datagram_count` reduces that in any build
-([§13](#13-the-lx-root-block)).
-
-To avoid a silent mismatch, a desktop/CLI binary fails fast at start when its config has
-`lx.wg.idle.suspend` or any other key of the `lx.wg.idle` block. The error text:
-`lx.wg.idle.* is set but this build lacks
-idle-suspend support; rebuild with -tags with_lx_idle_suspend (mobile-only feature)`.
-The rest of `lx.wg` (`buffers`, `connected_socket`) works in every build.
-How the feature works is described in the [ENERGY feature](../SPECS/FEATURES/008-ENERGY/FEATURE.md).
-
-Related keys:
-
-- `lx.wg.idle.suspend_reachable` — an optional second, longer idle window. After it, reachable
-  endpoints suspend too: pool members, the selected node, final.
-- `lx.wg.idle.teardown` — the third level: how long an endpoint may sleep before a full teardown.
-  Teardown is a Close, and the gVisor netstack goes too; wake = rebuild in ~0.5–1 s.
-  Defaults to the reachable window.
-- `urltest` `mode: failover` — the group holds the working node and probes only it: one
-  wake per `interval` instead of N.
-
-The full energy model, timelines and the recommended mobile configuration live in [lx-energy.md](lx-energy.md).
-
-> ⚠️ All keys/UUIDs below are placeholders. Never commit real private keys / pre-shared keys to a repository.
-
 ## Table of contents
 
+- [Features and build tags](#features-and-build-tags)
 - [0. Every field at a glance (exhaustive example)](#0-every-field-at-a-glance-exhaustive-example)
 - [1. XHTTP transport](#1-xhttp-transport)
   - [Example — VLESS + XHTTP + Reality](#example--vless--xhttp--reality)
@@ -91,6 +41,37 @@ The full energy model, timelines and the recommended mobile configuration live i
 - [12. Validate & build](#12-validate--build)
 - [13. The `lx` root block](#13-the-lx-root-block)
 - [14. Tailscale: turning Taildrop off](#14-tailscale-turning-taildrop-off)
+
+---
+
+## Features and build tags
+
+`sing-box-lx` is upstream [sing-box](https://github.com/SagerNet/sing-box) plus a small set of client-side features, each gated behind a build tag:
+
+| Feature | Build tag | Where it lives in config | Included in |
+|---------|-----------|--------------------------|-------------|
+| **XHTTP** transport (Xray-compatible) | `with_xhttp` | `transport.type: "xhttp"` on a VLESS / VMess / Trojan outbound | desktop + mobile |
+| **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | extra fields on a `wireguard` endpoint | desktop + mobile |
+| **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
+| **TrustTunnel** outbound and inbound | `with_trusttunnel` (+ `with_quic` for HTTP/3) | `outbounds[].type` / `inbounds[].type: "trusttunnel"`; fields — [protocols-transports.md §6](protocols-transports.md#6-trusttunnel-outbound-and-inbound), the global `lx.trusttunnel.idle_timeout` — [§13](#lxtrusttunnel--trusttunnel-outbounds) | desktop + mobile |
+| **Idle-suspend** | `with_lx_idle_suspend` | `lx.wg.idle.suspend` (+ `suspend_reachable`, `teardown`) | mobile only (AAR) |
+| **Root `lx` block** | — (always parsed) | `lx.wg`, `lx.masque`, `lx.trusttunnel`, `lx.mtu_align`, `lx.sniff_guard` — the fork's global knobs, [§13](#13-the-lx-root-block) | desktop + mobile |
+| **DNS server group** | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
+| **VLESS `encryption`** | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
+| **`lxd` daemon** | `with_lxd` | not a config key — the `sing-box lxd` subcommand + `<state-dir>/daemon.json`; see [lxd-daemon.md](lxd-daemon.md) | desktop / server (not Win7, not AAR) |
+| **`chain` outbound** | `with_lx_chain` | `outbounds[].type: "chain"` — a multi-hop path of groups and nodes | desktop + mobile |
+
+`make -f Makefile.lx lx-build` builds the desktop/CLI binary: the output is `sing-box` with version `…-lx.N`.
+The build includes `with_xhttp` and `with_awg` (plus `with_lx_command` and `with_lxd`), but not `with_lx_idle_suspend`.
+Without a tag the feature is absent: an `xhttp` transport or an AWG field is rejected at load time with an explicit error, with no silent downgrade.
+
+The `with_lx_idle_suspend` tag goes only into the mobile AAR (`cmd/internal/build_libbox`), not
+into the desktop `LX_TAGS`. It suspends idle WireGuard/AmneziaWG endpoints and frees their
+receive buffers: on a device, 8 suspended endpoints freed 134 MB. The `lx.wg.idle` keys and the
+desktop binary refusing them are in [§13](#lxwg--wireguard--amneziawg-endpoints); the energy
+model and the recommended mobile configuration are in [lx-energy.md](lx-energy.md).
+
+> ⚠️ All keys/UUIDs below are placeholders. Never commit real private keys / pre-shared keys to a repository.
 
 ---
 

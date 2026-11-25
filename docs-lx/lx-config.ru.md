@@ -8,58 +8,9 @@
 > [xray-protocols-explained](xray-protocols-explained.ru.md) и [amneziawg-explained](amneziawg-explained.ru.md) —
 > как устроено, почему, как сделано у нас и чем отличается от ванили.
 
-`sing-box-lx` — это upstream [sing-box](https://github.com/SagerNet/sing-box) плюс небольшой набор клиентских фич, каждая за своим build-тегом:
-
-| Фича | Build-тег | Где живёт в конфиге | Входит в |
-|------|-----------|---------------------|----------|
-| **XHTTP** транспорт (совместим с Xray) | `with_xhttp` | `transport.type: "xhttp"` на VLESS / VMess / Trojan outbound | desktop + mobile |
-| **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | доп. поля на `wireguard` endpoint | desktop + mobile |
-| **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
-| **TrustTunnel** outbound и inbound | `with_trusttunnel` (+ `with_quic` для HTTP/3) | `outbounds[].type` / `inbounds[].type: "trusttunnel"`; поля — [protocols-transports.ru.md §6](protocols-transports.ru.md#6-trusttunnel-outbound-и-inbound), глобальный `lx.trusttunnel.idle_timeout` — [§13](#lxtrusttunnel--trusttunnel-outboundы) | desktop + mobile |
-| **Idle-suspend** | `with_lx_idle_suspend` | `lx.wg.idle.suspend` (+ `suspend_reachable`, `teardown`) | только mobile (AAR) |
-| **Корневой блок `lx`** | — (разбирается всегда) | `lx.wg`, `lx.masque`, `lx.trusttunnel`, `lx.mtu_align`, `lx.sniff_guard` — глобальные ручки форка, [§13](#13-корневой-блок-lx) | desktop + mobile |
-| **Группа DNS-серверов** | — (всегда в сборке) | `dns.servers[].type: "group"` | desktop + mobile |
-| **VLESS `encryption`** | — (всегда в сборке) | `encryption` на `vless`-outbound | desktop + mobile |
-| **Демон `lxd`** | `with_lxd` | не ключ конфига — подкоманда `sing-box lxd` + `<state-dir>/daemon.json`; см. [lxd-daemon.ru.md](lxd-daemon.ru.md) | desktop / сервер (не Win7, не AAR) |
-| **Outbound `chain`** | `with_lx_chain` | `outbounds[].type: "chain"` — многохоповый путь из групп и узлов | desktop + mobile |
-
-Desktop/CLI-бинарь собирает `make -f Makefile.lx lx-build`: на выходе `sing-box` с версией `…-lx.N`.
-В сборку входят `with_xhttp` и `with_awg` (плюс `with_lx_command` и `with_lxd`), но не `with_lx_idle_suspend`.
-Без тега фичи нет: `xhttp`-транспорт или AWG-поле отклоняются при загрузке с явной ошибкой, молчаливого отката нет.
-
-Тег `with_lx_idle_suspend` — только для mobile: он добавляется лишь в Android/iOS AAR
-(`cmd/internal/build_libbox`), не в desktop `LX_TAGS`. Тег гасит простаивающие и
-недостижимые WireGuard/AmneziaWG-эндпоинты и освобождает их recv-буферы. Эти буферы держат
-RAM и нагружают GC: ~8 МБ на эндпоинт там, где `BatchSize=128`, то есть на Linux и Android.
-Замер на устройстве: 8 усыплённых эндпоинтов освободили 134 МБ. Фича рассчитана на телефон
-с десятком простаивающих узлов.
-
-Приёмные буферы малы не на всяком десктопе: на Linux-роутере туннель без `detour` держит
-их 16,4 MiB. Это число уменьшает `lx.wg.buffers.read_datagram_count` в любой сборке
-([§13](#13-корневой-блок-lx)).
-
-Чтобы не было молчаливого расхождения, desktop/CLI-бинарь падает при старте, если в конфиге
-есть `lx.wg.idle.suspend` или любой другой ключ блока `lx.wg.idle`. Текст ошибки:
-`lx.wg.idle.* is set but this build lacks idle-suspend support; rebuild with
--tags with_lx_idle_suspend (mobile-only feature)`. Остальное в `lx.wg` (`buffers`,
-`connected_socket`) работает в любой сборке. Как устроена фича — в [описании фичи ENERGY](../SPECS/FEATURES/008-ENERGY/FEATURE.md).
-
-Смежные ключи:
-
-- `lx.wg.idle.suspend_reachable` — опциональное второе, более длинное окно простоя. После
-  него гасятся и достижимые эндпоинты: члены пула, выбранный узел, final.
-- `lx.wg.idle.teardown` — третий уровень: сколько эндпоинт может спать до полного сноса.
-  Снос — это Close, освобождается и gVisor netstack; пробуждение = rebuild за ~0.5–1 с.
-  По умолчанию равен reachable-окну.
-- `urltest` `mode: failover` — группа держится за рабочий узел и пробует только его: одно
-  пробуждение в `interval` вместо N.
-
-Полная энергомодель, таймлайны и рекомендованный мобильный конфиг — в [lx-energy.ru.md](lx-energy.ru.md).
-
-> ⚠️ Все ключи/UUID ниже — заглушки. Никогда не коммитьте реальные приватные ключи / pre-shared-ключи в репозиторий.
-
 ## Оглавление
 
+- [Фичи и build-теги](#фичи-и-build-теги)
 - [0. Все поля разом (исчерпывающий пример)](#0-все-поля-разом-исчерпывающий-пример)
 - [1. XHTTP-транспорт](#1-xhttp-транспорт)
   - [Пример — VLESS + XHTTP + Reality](#пример--vless--xhttp--reality)
@@ -90,6 +41,37 @@ RAM и нагружают GC: ~8 МБ на эндпоинт там, где `Batc
 - [12. Проверка и сборка](#12-проверка-и-сборка)
 - [13. Корневой блок `lx`](#13-корневой-блок-lx)
 - [14. Tailscale: выключить Taildrop](#14-tailscale-выключить-taildrop)
+
+---
+
+## Фичи и build-теги
+
+`sing-box-lx` — это upstream [sing-box](https://github.com/SagerNet/sing-box) плюс небольшой набор клиентских фич, каждая за своим build-тегом:
+
+| Фича | Build-тег | Где живёт в конфиге | Входит в |
+|------|-----------|---------------------|----------|
+| **XHTTP** транспорт (совместим с Xray) | `with_xhttp` | `transport.type: "xhttp"` на VLESS / VMess / Trojan outbound | desktop + mobile |
+| **AmneziaWG 2.0/3.x** (AWG2, AWG3) | `with_awg` | доп. поля на `wireguard` endpoint | desktop + mobile |
+| **MASQUE** outbound (CONNECT-IP / WARP) | `with_quic`+`with_gvisor` | `outbounds[].type: "masque"` | desktop + mobile |
+| **TrustTunnel** outbound и inbound | `with_trusttunnel` (+ `with_quic` для HTTP/3) | `outbounds[].type` / `inbounds[].type: "trusttunnel"`; поля — [protocols-transports.ru.md §6](protocols-transports.ru.md#6-trusttunnel-outbound-и-inbound), глобальный `lx.trusttunnel.idle_timeout` — [§13](#lxtrusttunnel--trusttunnel-outboundы) | desktop + mobile |
+| **Idle-suspend** | `with_lx_idle_suspend` | `lx.wg.idle.suspend` (+ `suspend_reachable`, `teardown`) | только mobile (AAR) |
+| **Корневой блок `lx`** | — (разбирается всегда) | `lx.wg`, `lx.masque`, `lx.trusttunnel`, `lx.mtu_align`, `lx.sniff_guard` — глобальные ручки форка, [§13](#13-корневой-блок-lx) | desktop + mobile |
+| **Группа DNS-серверов** | — (всегда в сборке) | `dns.servers[].type: "group"` | desktop + mobile |
+| **VLESS `encryption`** | — (всегда в сборке) | `encryption` на `vless`-outbound | desktop + mobile |
+| **Демон `lxd`** | `with_lxd` | не ключ конфига — подкоманда `sing-box lxd` + `<state-dir>/daemon.json`; см. [lxd-daemon.ru.md](lxd-daemon.ru.md) | desktop / сервер (не Win7, не AAR) |
+| **Outbound `chain`** | `with_lx_chain` | `outbounds[].type: "chain"` — многохоповый путь из групп и узлов | desktop + mobile |
+
+Desktop/CLI-бинарь собирает `make -f Makefile.lx lx-build`: на выходе `sing-box` с версией `…-lx.N`.
+В сборку входят `with_xhttp` и `with_awg` (плюс `with_lx_command` и `with_lxd`), но не `with_lx_idle_suspend`.
+Без тега фичи нет: `xhttp`-транспорт или AWG-поле отклоняются при загрузке с явной ошибкой, молчаливого отката нет.
+
+Тег `with_lx_idle_suspend` входит только в мобильный AAR (`cmd/internal/build_libbox`), не в
+desktop `LX_TAGS`. Он усыпляет простаивающие WireGuard/AmneziaWG-эндпоинты и освобождает их
+приёмные буферы: на устройстве 8 усыплённых эндпоинтов освободили 134 МБ. Ключи `lx.wg.idle` и
+отказ десктоп-бинаря на них — в [§13](#lxwg--endpointы-wireguard--amneziawg), энергомодель и
+рекомендованный мобильный конфиг — в [lx-energy.ru.md](lx-energy.ru.md).
+
+> ⚠️ Все ключи/UUID ниже — заглушки. Никогда не коммитьте реальные приватные ключи / pre-shared-ключи в репозиторий.
 
 ---
 
