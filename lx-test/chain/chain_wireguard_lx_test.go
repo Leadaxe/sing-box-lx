@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box"
+	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
@@ -138,4 +139,101 @@ func TestChainWireGuardOnPositionТ1(t *testing.T) {
 
 func parseSocks(address string) M.Socksaddr {
 	return M.ParseSocksaddr(address)
+}
+
+// TestChainGroupMeasuresChainPathКритерий1 — критерий приёмки 1: urltest на
+// позиции 1 из двух WG-узлов. Второй узел жив своим путём (detour direct), но
+// мёртв путём цепочки: shadowsocks на позиции 0 не пропускает UDP к его
+// серверу. Группа меряет путь цепочки (И3) — второй узел не проходит, выбран
+// первый. При копиях-звеньях группа мерила бы оригиналы и считала оба живыми.
+func TestChainGroupMeasuresChainPathКритерий1(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer target.Close()
+	targetPort, _ := strconv.Atoi(target.URL[len("http://127.0.0.1:"):])
+
+	server1Private, server1Public := wgKeyPair(t)
+	server2Private, server2Public := wgKeyPair(t)
+	client1Private, client1Public := wgKeyPair(t)
+	client2Private, client2Public := wgKeyPair(t)
+	inPort, wg1Port, wg2Port := freePort(t), freeUDPPort(t), freeUDPPort(t)
+	prefix := func(text string) badoption.Listable[netip.Prefix] {
+		return badoption.Listable[netip.Prefix]{netip.MustParsePrefix(text)}
+	}
+	server := func(tag, private, clientPublic string, port uint16, address, peer string) option.Endpoint {
+		return option.Endpoint{Type: C.TypeWireGuard, Tag: tag, Options: &option.WireGuardEndpointOptions{
+			Address: prefix(address), PrivateKey: private, ListenPort: port, MTU: 1300,
+			Peers: []option.WireGuardPeer{{PublicKey: clientPublic, AllowedIPs: prefix(peer)}},
+		}}
+	}
+	node := func(tag, private, serverPublic string, port uint16, address string) option.Endpoint {
+		return option.Endpoint{Type: C.TypeWireGuard, Tag: tag, Options: &option.WireGuardEndpointOptions{
+			Address: prefix(address), PrivateKey: private, MTU: 1300,
+			Peers:         []option.WireGuardPeer{{Address: "127.0.0.1", Port: port, PublicKey: serverPublic, AllowedIPs: prefix("10.77.0.1/32")}},
+			DialerOptions: option.DialerOptions{Detour: "direct"},
+		}}
+	}
+	toTarget := option.RuleAction{Action: C.RuleActionTypeRoute, RouteOptions: option.RouteActionOptions{
+		Outbound: "direct", RawRouteOptionsActionOptions: option.RawRouteOptionsActionOptions{OverrideAddress: "127.0.0.1", OverridePort: uint16(targetPort)},
+	}}
+	options := option.Options{
+		Log:      &option.LogOptions{Level: "error"},
+		Inbounds: []option.Inbound{ssServer("srv-in", inPort)},
+		Endpoints: []option.Endpoint{
+			server("wg-srv1", server1Private, client1Public, wg1Port, "10.77.0.1/32", "10.77.0.2/32"),
+			server("wg-srv2", server2Private, client2Public, wg2Port, "10.77.0.1/32", "10.77.0.3/32"),
+			node("NL-1", client1Private, server1Public, wg1Port, "10.77.0.2/32"),
+			node("NL-2", client2Private, server2Public, wg2Port, "10.77.0.3/32"),
+		},
+		Outbounds: []option.Outbound{
+			ssClient("o-in", inPort),
+			{Type: C.TypeDirect, Tag: "direct"},
+			{Type: C.TypeURLTest, Tag: "o-wg", Options: &option.URLTestOutboundOptions{
+				Outbounds: []string{"NL-2", "NL-1"}, URL: "http://10.77.0.1/", Interval: badoption.Duration(10 * time.Minute),
+			}},
+			{Type: C.TypeChain, Tag: "c-wg", Options: &option.ChainOutboundOptions{Outbounds: []string{"o-in", "o-wg"}}},
+		},
+		Route: &option.RouteOptions{
+			Final: "c-wg",
+			Rules: []option.Rule{
+				// The path of the chain does not reach the second server.
+				{Type: C.RuleTypeDefault, DefaultOptions: option.DefaultRule{
+					RawDefaultRule: option.RawDefaultRule{Inbound: []string{"srv-in"}, Port: badoption.Listable[uint16]{wg2Port}},
+					RuleAction:     option.RuleAction{Action: C.RuleActionTypeReject, RejectOptions: option.RejectActionOptions{Method: C.RuleActionRejectMethodDrop}},
+				}},
+				{Type: C.RuleTypeDefault, DefaultOptions: option.DefaultRule{
+					RawDefaultRule: option.RawDefaultRule{Inbound: []string{"srv-in"}},
+					RuleAction:     option.RuleAction{Action: C.RuleActionTypeRoute, RouteOptions: option.RouteActionOptions{Outbound: "direct"}},
+				}},
+				{Type: C.RuleTypeDefault, DefaultOptions: option.DefaultRule{
+					RawDefaultRule: option.RawDefaultRule{Inbound: []string{"wg-srv1", "wg-srv2"}},
+					RuleAction:     toTarget,
+				}},
+			},
+		},
+	}
+	instance, err := box.New(box.Options{Context: include.Context(context.Background()), Options: options})
+	require.NoError(t, err)
+	require.NoError(t, instance.Start())
+	defer instance.Close()
+
+	groupOutbound, loaded := instance.Outbound().Outbound("o-wg")
+	require.True(t, loaded)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	// The group runs its own first check at start; a manual run during it
+	// returns at once, so ask until the group answers.
+	var result map[string]uint16
+	for len(result) == 0 && ctx.Err() == nil {
+		result, _ = groupOutbound.(adapter.URLTestGroup).URLTest(ctx)
+		if len(result) == 0 {
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	_, firstAlive := result["NL-1"]
+	_, secondAlive := result["NL-2"]
+	require.True(t, firstAlive, "NL-1 is alive on the chain's path: %v", result)
+	require.False(t, secondAlive, "И3: NL-2 is dead on the chain's path and must not pass the group's check: %v", result)
+	require.Equal(t, "NL-1", adapter.GroupNow(groupOutbound.(adapter.OutboundGroup)))
 }
