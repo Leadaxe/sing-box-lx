@@ -1283,8 +1283,8 @@ func (s *URLTest) rrStrike(ctx context.Context, c *rrCheck) {
 			continue // D1: a scheduled run answered for the node since x, no verdict
 		}
 		others := s.rrPoolOthers(node.Tag())
-		b.clearSlot(node.Tag()) // R1: first, so that nothing of the node's tracker applies any more
-		s.rrDead(t)
+		s.rrDead(t)             // before the slot empties: a dial in flight either still finds its slot or is marked struck (its retry)
+		b.clearSlot(node.Tag()) // R1
 		quarantined := b.rrStrikeOut(node.Tag(), others)
 		s.logger.Info("round_robin: ", node.Tag(), " struck out as dead; control ", c.control.Tag())
 		if quarantined {
