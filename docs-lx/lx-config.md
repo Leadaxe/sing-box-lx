@@ -5,7 +5,7 @@
 > 🧭 **Where to look.** The fork's documentation has three levels, by the reader's question:
 > [lx-config](lx-config.md) — what the fork has and how to enable it;
 > [protocols-transports](protocols-transports.md) — every field, type, default, error text;
-> [xray-protocols-explained](xray-protocols-explained.md) and [amneziawg-explained](amneziawg-explained.md) —
+> [xray-protocols-explained](xray-protocols-explained.md), [amneziawg-explained](amneziawg-explained.md) and [masque-explained](masque-explained.md) —
 > how it works, why, how the fork does it and how it differs from vanilla.
 
 ## Table of contents
@@ -727,7 +727,7 @@ default:
 
 Verified on a device on Wi-Fi and LTE, over `h3` and `h2`, with sleep and recovery after a drop.
 
-📖 Every field, the profiles, choosing between h3 and h2, examples and common footguns are in
+📖 How it works and why — [masque-explained.md](masque-explained.md). Every field, the profiles, examples and common footguns are in
 [protocols-transports.md §3](protocols-transports.md#3-masque-outbound-connect-ip--warp)
 ([RU](protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)).
 

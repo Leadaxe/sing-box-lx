@@ -5,7 +5,7 @@
 > 🧭 **Где что искать.** Документация форка — три уровня, по вопросу читателя:
 > [lx-config](lx-config.ru.md) — что есть в форке и как включить;
 > [protocols-transports](protocols-transports.ru.md) — каждое поле, тип, дефолт, текст ошибки;
-> [xray-protocols-explained](xray-protocols-explained.ru.md) и [amneziawg-explained](amneziawg-explained.ru.md) —
+> [xray-protocols-explained](xray-protocols-explained.ru.md), [amneziawg-explained](amneziawg-explained.ru.md) и [masque-explained](masque-explained.ru.md) —
 > как устроено, почему, как сделано у нас и чем отличается от ванили.
 
 ## Оглавление
@@ -729,7 +729,7 @@ WireGuard-endpoint'а. С AWG-сахаром *masquerade* `id/ip/ib` из §2 у
 Проверено на устройстве в Wi-Fi и LTE, по `h3` и по `h2`, вместе со сном и восстановлением после
 обрыва.
 
-📖 Все поля, профили, выбор между h3 и h2, примеры и частые грабли — в
+📖 Как устроено и почему — [masque-explained.ru.md](masque-explained.ru.md). Все поля, профили, примеры и частые грабли — в
 [protocols-transports.ru.md §3](protocols-transports.ru.md#3-masque-outbound-connect-ip--warp)
 ([EN](protocols-transports.md#3-masque-outbound-connect-ip--warp)).
 

@@ -5,7 +5,7 @@
 > 🧭 **Where to look.** The fork's documentation has three levels, by the reader's question:
 > [lx-config](lx-config.md) — what the fork has and how to enable it;
 > [protocols-transports](protocols-transports.md) — every field, type, default, error text;
-> [xray-protocols-explained](xray-protocols-explained.md) and [amneziawg-explained](amneziawg-explained.md) —
+> [xray-protocols-explained](xray-protocols-explained.md), [amneziawg-explained](amneziawg-explained.md) and [masque-explained](masque-explained.md) —
 > how it works, why, how the fork does it and how it differs from vanilla.
 
 A reference to every field of the downstream protocol and transport features of
@@ -803,31 +803,20 @@ Notes:
 
 # 3. MASQUE outbound (CONNECT-IP / WARP)
 
-> 📖 How MASQUE/WARP is built and the decisions behind it: the feature spec [009-MASQUE_WARP](../SPECS/FEATURES/009-MASQUE_WARP/FEATURE.md). This chapter holds only fields, defaults and errors.
+> 📖 How MASQUE works and why the defaults are what they are: [masque-explained.md](masque-explained.md). This chapter holds only fields, defaults and errors.
 
 ## 3.1 What it is
 
-A `masque` outbound tunnels whole IP packets over an HTTP/3 or HTTP/2 connection
-using CONNECT-IP (RFC 9484), primarily to connect to Cloudflare WARP. This is
-CONNECT-IP, not CONNECT-UDP (RFC 9298). MASQUE is unrelated to the AWG `id/ip/ib`
-masquerade sugar in [§2.5](#25-masquerade-sugar-id--ip--ib); only the word is
-similar.
+A `masque` outbound carries whole IP packets over HTTP/3 or HTTP/2 using CONNECT-IP (RFC 9484),
+primarily for Cloudflare WARP. The build needs `with_quic` and `with_gvisor`, both in the default
+`LX_TAGS`. The core takes keys and addresses ready from the config: the client registers the
+device.
 
-The core builds a userspace gVisor stack per tunnel and routes traffic through it
-like a WireGuard endpoint. The build needs `with_quic` and `with_gvisor`, both in the
-default `LX_TAGS`. The core takes the keys ready-made from config: device
-registration (ECDSA keys, WARP enroll) is done by the client, not the core.
+> ⚠️ A top-level `dns` block is required: the outbound resolves domains through the DNS router.
+> Without it, domain traffic does not go through the tunnel (`masque: no DNS router available to resolve …`).
 
-> ⚠️ A top-level `dns` block is required. The userspace stack works at L3 and does
-> not resolve domains itself: the outbound resolves them via the DNS router before
-> dialing. Without the block, domain traffic through the tunnel fails to resolve
-> (`masque: no DNS router available to resolve …`).
-
-> ⚠️ The HTTP version is set by `vhttp`, not `network`. On every other outbound
-> `network` means L4 protocols, while older masque configs used it for `h3`/`h2`. The
-> `network` key was removed in lx.18: a config with it fails to load
-> (`unknown field "network"`). The flat TLS fields are still accepted with a
-> deprecation warning; the replacements are in the
+> ⚠️ The HTTP version is set by `vhttp`; the `network` key was removed in lx.18
+> (`unknown field "network"`). Flat TLS fields are accepted with a warning — see the
 > [migration table](#310-migrating-from-the-old-shape).
 
 ## 3.2 MASQUE-specific fields
@@ -911,66 +900,30 @@ duration string — `"30s"`, `"5m"`, `"1h30m"`. Empty = default. Negative (`"-1s
 
 ## 3.6 SNI strategy
 
-The default SNI is `www.cloudflare.com`, not the endpoint hostname. A DPI filters on
-the MASQUE endpoint's name in the ClientHello, but not on a neutral high-traffic
-host. The endpoint is authenticated by pinning `public_key`, so the SNI is free to
-differ. `tls.disable_sni: true` sends no SNI at all: some endpoints present their own
-certificate only to a ClientHello without one.
-
-`tls.server_name` can be overridden per node; LxBox rotates a pool of names. The
-endpoint's own name (`consumer-masque.cloudflareclient.com`) is deliberately not the
-default: in measurements, sending it tripped a silent CONNECT-IP timeout on Russian
-uplinks. With `www.cloudflare.com`, `yandex.ru`, `www.google.com` and other neutral
-names the same endpoint connects.
+The default SNI is `www.cloudflare.com`, not the endpoint name; the endpoint is checked against
+the pinned `public_key`. `tls.server_name` can be overridden per node. `tls.disable_sni: true`
+sends no SNI at all. Why — [masque-explained §2.1](masque-explained.md#21-the-sni-is-a-neutral-popular-host).
 
 ## 3.7 `vhttp`: auto / h3 / h2
 
-`auto` is the default: it tries `h3` (QUIC) first and falls back to `h2` when the
-QUIC handshake does not complete within 3 s. An h3 win is remembered. An h2 win is
-remembered for a window that climbs a ladder, 1 s → 10 s → 30 s → 5 min → 10 min; an
-h3 win drops the window back to the first step. When the window expires, h3 is tried
-first again. A remembered leg that stops coming up is forgotten, and the other one is
-tried in the same dial.
-
-`auto` exists for a failure that produces no error: the endpoint or a TCP-only hop in
-front of it (an HTTP CONNECT detour, a VLESS/Trojan link in a chain) silently
-swallows QUIC, and every dial hangs. A fixed `h3` is the fastest when the path is
-known-clean. On networks that filter inbound UDP:443, pin the node to `h2` (TCP:443):
-it is device-verified to work there.
-
-- On `h2`, one IP packet = one HTTP/2 DATA frame, so `mtu` may go up to 16000.
-- The `h2` path runs its TLS through the shared `common/tls` layer, so it gets
-  ClientHello fragmentation like any other TLS outbound: the node's `fragment` /
-  `record_fragment` and the `tls` section of `lx.sniff_guard`
+- `auto` (default) — `h3` first; if the QUIC handshake does not complete within 3 s, `h2`. The
+  winning version is remembered ([masque-explained §3](masque-explained.md#3-http3-or-http2)).
+- `h3` — QUIC only.
+- `h2` — HTTP/2 over TCP:443 only; one IP packet = one DATA frame, `mtu` up to 16000. On `h2` the
+  ClientHello is guarded by the node's `fragment` / `record_fragment` and the `tls` section of
+  `lx.sniff_guard`, on `h3` by the `quic` section
   ([lx-config §13](lx-config.md#lxsniff_guard--guard-against-rerouting-by-sni)).
-  The `h3` path is guarded by the `quic` section of that block instead: QUIC does not
-  carry TLS over TCP at all.
-- The first `h3` dial is slow: a cold CONNECT-IP setup takes a QUIC handshake,
-  Extended CONNECT, route advertise and the stack. A short urltest timeout may mark a
-  fresh h3 node `-1` on the first probe, though the node works afterwards.
-
-To pin a config to one leg, set one field: `"vhttp": "h3"` or `"vhttp": "h2"`.
 
 ## 3.8 Idle-suspend & keepalive
 
-- `idle_timeout` suspends the tunnel after that long with no traffic, freeing the
-  gVisor stack, the pumps and the QUIC keepalive; the next dial rebuilds it.
-  Off by default: absent, `0` and negative all keep the tunnel up until the outbound
-  is closed; only a positive value (e.g. `"5m"`) enables suspend. Waking a suspended
-  tunnel costs a full QUIC handshake, CONNECT-IP and a fresh gVisor stack on the first
-  request after the quiet spell. Suspend saves ~6 MB RSS and one keepalive packet per
-  30s; on routers and desktops the wake-up costs more. Enable suspend explicitly on
-  battery-powered hosts where that trade flips.
-- `keep_alive_period` (default `30s`, h3 only) is the QUIC keepalive interval. A
-  negative value disables it.
-- **Interaction:** with suspend off, keepalive holds the tunnel through the server's
-  idle-timeout and the provider's UDP NAT mapping. Do not disable it (`-1s`) unless
-  `idle_timeout` is short enough that the tunnel is torn down before keepalive
-  matters. Otherwise the server drops the tunnel on its own idle, and the next dial
-  pays a silent rebuild.
-- The exit IP changes after idle-suspend/reconnect: WARP anycast hands out a
-  different edge address on each new connection. The internal `ip`/`ipv6` stays
-  stable.
+- `idle_timeout` — idle time without traffic after which the tunnel closes; the next dial
+  rebuilds it. Off by default: absent, `0` and negative keep the tunnel up; only a positive value
+  (e.g. `"5m"`) enables it.
+- `keep_alive_period` (default `30s`, h3 only) — the QUIC keepalive interval; a negative value
+  disables it.
+
+The cost of sleep and how it interacts with keepalive are in
+[masque-explained §5](masque-explained.md#5-idling-and-waking).
 
 ## 3.9 Start-time validation (fail-fast)
 
