@@ -18,7 +18,8 @@ func TestLxDestinationRefused(t *testing.T) {
 		err         error
 		destination bool
 	}{
-		{E.New("socks5: request rejected, code=", byte(1)), true},
+		{E.New("socks5: request rejected, code=", byte(1)), false}, // general failure: the node's (R5)
+		{E.New("socks5: request rejected, code=", byte(2)), true},
 		{E.New("socks5: request rejected, code=", byte(5)), true},
 		{E.New("socks5: request rejected, code=", byte(7)), false},
 		{E.New("socks4: request rejected, code= ", byte(91)), true},
