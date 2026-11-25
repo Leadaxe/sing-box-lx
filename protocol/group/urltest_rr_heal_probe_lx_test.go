@@ -95,8 +95,8 @@ func TestRRTrack_connectionTestNotTracked_LX(t *testing.T) {
 	if selected == nil || picked.track == nil {
 		t.Fatal("precondition: a pick from the pool")
 	}
-	if dialCtx := f.s.rrDialStart(ctx, selected, &picked); dialCtx != ctx || picked.dial != nil {
-		t.Fatal("a connection test dials on its own context, untracked")
+	if dialCtx := f.s.rrDialStart(ctx, selected, &picked); dialCtx.Done() != ctx.Done() || picked.dial != nil || !rrInnerDial(dialCtx) {
+		t.Fatal("a connection test dials on its own context (only marked as a round_robin open), untracked")
 	}
 	plain := f.keyOn(t, "site.example", 0)
 	_, picked = f.s.selectBalanced(plain, N.NetworkTCP, siteAddr("site.example"))

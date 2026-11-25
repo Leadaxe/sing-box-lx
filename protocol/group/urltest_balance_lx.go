@@ -59,7 +59,7 @@ type balancer struct {
 	// rrOnPick); onPoolLook the look at the whole pool, at most once a second
 	// (rrPoolLook). now is the rrClock of the pick. Called WITHOUT the access lock held.
 	onPick     func(ctx context.Context, tag string, track *rrTrack, now int64)
-	onPoolLook func()
+	onPoolLook func(ctx context.Context)
 	poolLook   atomic.Int64 // rrClock of the next look at the pool
 
 	// onRunAnswer, if set, is a probe of the scheduled run that answered (SPEC 138,
@@ -191,8 +191,10 @@ func (b *balancer) pickKeyed(ctx context.Context, network string, destination M.
 	// past 2^31 and a signed % would produce a negative index (slice panic).
 	now := rrClock(picked.start)
 	b.rrClockLook(picked.start) // lx: SPEC 138 — N3, at most once a second
-	if look := b.poolLook.Load(); b.onPoolLook != nil && now >= look && b.poolLook.CompareAndSwap(look, now+int64(time.Second)) {
-		b.onPoolLook() // lx: SPEC 138 — a slot with no live node starts the check (V5)
+	// I9: the pick for a probe of another group or a delay measurement through this
+	// one starts nothing here.
+	if look := b.poolLook.Load(); b.onPoolLook != nil && !rrUnwatched(ctx) && now >= look && b.poolLook.CompareAndSwap(look, now+int64(time.Second)) {
+		b.onPoolLook(ctx) // lx: SPEC 138 — an empty or quarantined slot starts the replacement search
 	}
 	var idx int
 	if len(b.stickyHash) > 0 {
@@ -354,6 +356,32 @@ func (b *balancer) replaceSlot(dead, node string) bool {
 	}
 	b.rrSlotsChanged() // the new node's counters start from zero
 	// lx: SPEC 020 — same as setSlots: the active pool changed.
+	if b.onChange != nil {
+		b.onChange()
+	}
+	return true
+}
+
+// clearSlot empties the slot of tag, leaving every other slot as is (SPEC 138 D1:
+// the struck node leaves its slot even with no replacement). It reports whether tag
+// held a slot.
+func (b *balancer) clearSlot(tag string) bool {
+	b.access.Lock()
+	index := slotIndex(b.slots, tag)
+	if tag == "" || index < 0 {
+		b.access.Unlock()
+		return false
+	}
+	next := make([]slot, len(b.slots))
+	copy(next, b.slots)
+	departed := next[index].track
+	next[index] = slot{}
+	b.slots = next
+	b.access.Unlock()
+	if departed != nil {
+		departed.dropPending()
+	}
+	b.rrSlotsChanged()
 	if b.onChange != nil {
 		b.onChange()
 	}

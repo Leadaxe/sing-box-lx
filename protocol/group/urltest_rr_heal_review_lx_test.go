@@ -114,11 +114,11 @@ func TestRRHeal_failedRetryKeepsFirstPick(t *testing.T) {
 func TestRRHeal_marksMonotonic(t *testing.T) {
 	var h rrHeal
 	h.running.Store(true)
-	h.endCheck()
+	h.endCheck(true, false)
 	check := h.lastCheckEnd.Load() // a freeze drops the gap; read it before
 	h.freeze()
 	h.running.Store(true)
-	h.endCheck()
+	h.endCheck(true, false)
 	if h.lastCheckEnd.Load() != nil {
 		t.Fatal("a check that ends frozen sets no gap")
 	}

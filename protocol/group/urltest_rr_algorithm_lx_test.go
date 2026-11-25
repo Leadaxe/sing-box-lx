@@ -25,10 +25,17 @@ func shortProbes(t *testing.T, timeout time.Duration) {
 	t.Cleanup(func() { rrProbeTimeoutNs.Store(old) })
 }
 
-// runCheck runs one check of the pool to its end and clears its gap.
+// runCheck runs one check of the pool to its end and clears its pause.
 func (f *healFixture) runCheck() {
 	f.s.balancer.heal.running.Store(true)
 	f.s.rrHealCheck()
+	f.s.balancer.heal.lastCheckEnd.Store(nil)
+}
+
+// runSearch runs one replacement search to its end and clears its pause.
+func (f *healFixture) runSearch() {
+	f.s.balancer.heal.running.Store(true)
+	f.s.rrHealSearch()
 	f.s.balancer.heal.lastCheckEnd.Store(nil)
 }
 
@@ -409,15 +416,26 @@ func TestRRAlgo_19_cursorAndK(t *testing.T) {
 	}
 }
 
-// V5: a slot with no live node starts the check from the pick; the replacement
-// fills it.
-func TestRRAlgo_V5_emptySlotStartsTheCheck(t *testing.T) {
+// I9, R1: a pool node with no history starts nothing from the pick; an empty slot
+// (D1) starts the replacement search only — no probe of a pool node, no control —
+// and the candidate that answered its own probe fills it.
+func TestRRAlgo_I9_emptySlotStartsOnlyTheSearch(t *testing.T) {
 	f := newHealFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"}, 0)
 	f.nodes["a"].dead.Store(true)
 	f.g.history.DeleteURLTestHistory("a")
 	f.s.selectBalanced(context.Background(), N.NetworkTCP, siteAddr("site.example"))
+	time.Sleep(50 * time.Millisecond)
+	if f.s.balancer.heal.running.Load() || f.probes("a")+f.probes("b")+f.probes("c")+f.probes("d") != 0 {
+		t.Fatal("I9: no soft sign on a pool node, nothing starts")
+	}
+	f.s.balancer.clearSlot("a")
+	f.s.balancer.poolLook.Store(0)
+	f.s.selectBalanced(context.Background(), N.NetworkTCP, siteAddr("site.example"))
 	waitUntil(t, func() bool { return samePool(f.pool(), "d", "b", "c") })
 	f.waitCheck(t)
+	if f.probes("b")+f.probes("c") != 0 || f.probes("d") != 1 {
+		t.Fatalf("the search probes candidates only: b %d, c %d, d %d", f.probes("b"), f.probes("c"), f.probes("d"))
+	}
 }
 
 // V9: a UDP flow with no answer starts the life probe of its node with no bypass for

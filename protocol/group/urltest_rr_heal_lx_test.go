@@ -49,6 +49,7 @@ type healNode struct {
 	direct     bool
 	probeFails atomic.Int32
 	dialErr    error
+	active     atomic.Int32 // probes in flight through the node
 }
 
 // Type is a proxy by default (its failed open puts the node itself under
@@ -67,6 +68,8 @@ func (n *healNode) DialContext(ctx context.Context, network string, destination 
 	probe := destination.String() == n.server
 	if probe {
 		n.probes.Add(1)
+		n.active.Add(1)
+		defer n.active.Add(-1)
 		if n.hold != nil {
 			select {
 			case <-n.hold:
@@ -236,7 +239,7 @@ func TestRRHeal_tickDuringCheck(t *testing.T) {
 		}
 		seen := map[string]bool{}
 		for _, tag := range pool {
-			if seen[tag] {
+			if tag != "" && seen[tag] { // "": slots left empty by D1 (R1)
 				t.Errorf("%s in two slots: %v", tag, pool)
 			}
 			seen[tag] = true

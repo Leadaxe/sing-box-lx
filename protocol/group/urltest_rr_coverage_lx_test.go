@@ -152,27 +152,27 @@ func TestRRCov_28_34_struckLiveNodeComesBackAsCandidate(t *testing.T) {
 	f.nodes["c"].dead.Store(true)
 	f.runCheck()
 	track := f.s.balancer.trackOf("a")
-	dead := track.deadAt.Load()
-	if f.allHistory("a") || dead == 0 || !samePool(f.pool(), "a", "b") {
-		t.Fatal("D1: a struck out, left in its slot with no replacement")
+	if f.allHistory("a") || track != nil || !samePool(f.pool(), "", "b") || f.s.balancer.memory.strikes["a"] != 1 {
+		t.Fatal("D1: a struck out; it leaves its slot, empty with no replacement (R1)")
 	}
-	f.runCheck()
-	if !f.allHistory("a") || !samePool(f.pool(), "a", "b") || track.deadAt.Load() != dead || f.probes("a") != 3 {
-		t.Fatalf("a answered as a candidate and keeps its slot, no second strike: probes %d", f.probes("a"))
+	before := f.probes("b") // the control and the control after of the check
+	f.runSearch()
+	if !f.allHistory("a") || !samePool(f.pool(), "a", "b") || f.probes("a") != 3 || f.probes("b") != before {
+		t.Fatalf("the search: a answered as a candidate and takes the empty slot, b is not probed: probes %d/%d", f.probes("a"), f.probes("b")-before)
 	}
 }
 
 // --- L3 ------------------------------------------------------------------------------
 
-// L3: one check at a time, the next one not earlier than T after the end of the
-// previous; a freeze leaves no gap behind, the first reason after it gets a check
-// at once.
+// L3, W1: one round at a time, the next one not earlier than the pause after the
+// end of the previous; a freeze leaves no pause behind, the first reason after it
+// gets a round at once.
 func TestRRCov_L3_oneCheckAndTheGap(t *testing.T) {
 	var heal rrHeal
 	if !heal.beginCheck() || heal.beginCheck() {
 		t.Fatal("one check at a time")
 	}
-	heal.endCheck()
+	heal.endCheck(true, false)
 	if heal.beginCheck() {
 		t.Fatal("the gap after a check")
 	}
@@ -182,7 +182,7 @@ func TestRRCov_L3_oneCheckAndTheGap(t *testing.T) {
 		t.Fatal("the gap is over")
 	}
 	heal.freeze()
-	heal.endCheck()
+	heal.endCheck(false, true)
 	if heal.lastCheckEnd.Load() != nil || heal.checkReady() {
 		t.Fatal("a check cut by a freeze leaves no gap; nothing starts in the freeze")
 	}
@@ -216,9 +216,10 @@ func TestRRCov_L3_lifeProbeLimits(t *testing.T) {
 	}
 }
 
-// L3, §5: k batches of candidates per check, the replacement included. Two struck
-// nodes left in their slots and dead candidates: the check spends its k batches of
-// |P| (the struck nodes are candidates too), the replacement adds none.
+// L3, §5: k batches of candidates per check, the replacement included. Two dead
+// pool nodes (no history, still in their slots: pool nodes, not candidates) and dead
+// candidates: the check probes the pool and spends its k batches of |P|; the
+// replacement adds none.
 func TestRRCov_L3_oneKPerCheck(t *testing.T) {
 	tags := []string{"a", "b", "c1", "c2", "c3", "c4"}
 	f := newHealFixture(t, tags, []string{"a", "b"}, 0)
@@ -231,7 +232,7 @@ func TestRRCov_L3_oneKPerCheck(t *testing.T) {
 	for _, tag := range tags {
 		total += int(f.probes(tag))
 	}
-	if total != 2*rrCandidateBatches || f.probes("c3") != 0 || f.s.balancer.heal.cursor != 4 {
+	if total != 2+2*rrCandidateBatches || f.probes("c4") != 1 || f.s.balancer.heal.cursor != 0 {
 		t.Fatalf("k batches of 2 per check: %d probes, cursor %d", total, f.s.balancer.heal.cursor)
 	}
 }
@@ -687,8 +688,8 @@ func TestRRCov_K2_evictionAndErasure(t *testing.T) {
 	g.nodes["a"].dead.Store(true)
 	g.nodes["c"].dead.Store(true) // no replacement in this check
 	g.runCheck()
-	if g.s.balancer.memory.k2.size.Load() != 0 || g.allHistory("a") || !samePool(g.pool(), "a", "b") {
-		t.Fatal("D1 erases the K2 records of the struck node")
+	if g.s.balancer.memory.k2.size.Load() != 0 || g.allHistory("a") || !samePool(g.pool(), "", "b") {
+		t.Fatal("D1 erases the K2 records of the struck node; its slot is empty (R1)")
 	}
 	if conns, _ := countsOf(g.s.balancer, "a"); conns != 0 {
 		t.Fatal("Q3: D1 drops the counters of the node")

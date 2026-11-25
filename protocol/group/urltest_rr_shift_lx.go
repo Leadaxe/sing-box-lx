@@ -87,6 +87,9 @@ type rrPick struct {
 	// the next one instead; a sign there shifts no key and writes no K2 memory.
 	detour bool
 	packet bool // a UDP exchange: its dial waits in pwaits (V9)
+	// inner: an outer round_robin group opens this connection (rrInnerDial); the
+	// retry is that group's (§5).
+	inner bool
 }
 
 const (
@@ -540,6 +543,8 @@ type rrMemory struct {
 	access     sync.Mutex // guards counts
 	counts     map[string]*rrSlotCount
 	quarantine atomic.Pointer[map[string]bool]
+	// strikes is strikes(n) of Q4: the D1 of the node since the scheduled run.
+	strikes map[string]int
 }
 
 // count returns the counters of tag, creating them; the caller holds access.
@@ -637,6 +642,13 @@ func (b *balancer) rrCountFail(tag string, key rrKey) rrQuarantineVerdict {
 	if verdict.share <= 2*verdict.median {
 		return verdict
 	}
+	m.quarantineLocked(tag)
+	verdict.quarantined = true
+	return verdict
+}
+
+// quarantineLocked puts tag in quarantine (Q2, Q4); the caller holds access.
+func (m *rrMemory) quarantineLocked(tag string) {
 	next := make(map[string]bool)
 	if set := m.quarantine.Load(); set != nil {
 		for quarantined := range *set {
@@ -645,9 +657,38 @@ func (b *balancer) rrCountFail(tag string, key rrKey) rrQuarantineVerdict {
 	}
 	next[tag] = true
 	m.quarantine.Store(&next)
-	delete(m.counts, tag) // Q2: the counters of the node start from zero
-	verdict.quarantined = true
-	return verdict
+	delete(m.counts, tag) // the counters of the node start from zero
+}
+
+// rrQuarantine is the quarantine of Q4: the node is no candidate until the
+// scheduled run; its exits are those of Q2.
+func (b *balancer) rrQuarantine(tag string) {
+	m := &b.memory
+	m.access.Lock()
+	defer m.access.Unlock()
+	m.quarantineLocked(tag)
+}
+
+// rrStruck is strikes(n) += 1 of D1 (Q4); it returns the new count.
+func (b *balancer) rrStruck(tag string) int {
+	m := &b.memory
+	m.access.Lock()
+	defer m.access.Unlock()
+	if m.strikes == nil {
+		m.strikes = make(map[string]int)
+	}
+	m.strikes[tag]++
+	return m.strikes[tag]
+}
+
+// rrScheduledRun is the scheduled run: the marks and the quarantine lift
+// (rrResetMarks) and strikes(n) of Q4 start from zero.
+func (b *balancer) rrScheduledRun() {
+	b.rrResetMarks()
+	m := &b.memory
+	m.access.Lock()
+	m.strikes = nil
+	m.access.Unlock()
 }
 
 // rrUncountFail takes back the count of a SILENT that got its ANSWER (Q1).
@@ -738,7 +779,8 @@ func (s *URLTest) rrCreditFail(tag string, key rrKey) bool {
 			" connections (share ", strconv.FormatFloat(verdict.share, 'f', 3, 64),
 			", pool median ", strconv.FormatFloat(verdict.median, 'f', 3, 64), ")")
 		s.balancer.memory.k2.forget(tag)
-		s.rrStartCheck()
+		s.rrStartSearch() // §5: the slot of a quarantined node gets a replacement
+
 	}
 	return verdict.counted
 }
@@ -813,6 +855,9 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch, c *rrFirstByteConn) {
 	}
 	if w.key.valid {
 		b.memory.shifts.answered(w.key.table) // K5: the circle starts anew
+	}
+	if b.heal.grantExtra() {
+		s.rrExtraRound() // W5: one round at once in a pause above the base
 	}
 	if c == nil || c.state.Load()&rrStateSilent == 0 {
 		return

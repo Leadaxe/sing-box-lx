@@ -87,6 +87,24 @@ func rrUnwatched(ctx context.Context) bool {
 	return lxtrace.IsProbe(ctx) || urltest.IsMeasureLx(ctx)
 }
 
+// rrDialMark is the context key of the mark of a round_robin open (§5).
+type rrDialMark struct{}
+
+// rrMarkDial marks ctx as the open of a round_robin group.
+func rrMarkDial(ctx context.Context) context.Context {
+	if rrInnerDial(ctx) {
+		return ctx
+	}
+	return context.WithValue(ctx, rrDialMark{}, true)
+}
+
+// rrInnerDial reports an open that an outer round_robin group makes: the retry is
+// that group's.
+func rrInnerDial(ctx context.Context) bool {
+	marked, _ := ctx.Value(rrDialMark{}).(bool)
+	return marked
+}
+
 // rrTime is the time of an rrClock mark (with the monotonic reading).
 func rrTime(clock int64) time.Time {
 	return rrClockBase.Add(time.Duration(clock - 1))
@@ -564,8 +582,16 @@ func (s *URLTest) rrTrackDial(ctx context.Context, track *rrTrack, member adapte
 // rrDialStart tracks the dial of the pick (DialContext, ListenPacket) through its
 // chain leaf; it returns the context to dial on and records the dial in picked.
 // A no-op outside round_robin and for a pick outside the pool.
+// The context of the dial carries the mark of a round_robin open (rrMarkDial): a
+// round_robin group on the way (a detour, a member of another group) finds it and
+// leaves the retry to the outer one (§5); picked.inner records the mark found.
 func (s *URLTest) rrDialStart(ctx context.Context, leaf adapter.Outbound, picked *rrPick) context.Context {
-	if s.balancer == nil || picked.track == nil || picked.track.tag != leaf.Tag() {
+	if s.balancer == nil {
+		return ctx
+	}
+	picked.inner = rrInnerDial(ctx)
+	ctx = rrMarkDial(ctx)
+	if picked.track == nil || picked.track.tag != leaf.Tag() {
 		return ctx
 	}
 	member, loaded := s.outbound.Outbound(leaf.Tag())
@@ -618,18 +644,16 @@ func (s *URLTest) rrOnPick(ctx context.Context, tag string, t *rrTrack, now int6
 	}
 }
 
-// rrPoolLook is the look at the whole pool by a pick (at most once a second): a
-// slot with no live node — the replacement found no candidate, or a quarantine —
-// starts the check when the gap is over (V5).
-func (s *URLTest) rrPoolLook() {
-	if !s.balancer.heal.checkReady() || s.group.checking.Load() || s.group.ctx.Err() != nil {
+// rrPoolLook is the look at the whole pool by a pick (at most once a second): an
+// empty slot (D1 found no replacement) or the slot of a quarantined node starts the
+// replacement search when the pause is over (§4.2, W1) — the search only, never the
+// check of the pool (I9). The pick of a probe or a measurement starts nothing.
+func (s *URLTest) rrPoolLook(ctx context.Context) {
+	if rrUnwatched(ctx) || !s.balancer.heal.checkReady() || s.group.checking.Load() || s.group.ctx.Err() != nil {
 		return
 	}
-	for _, entry := range s.balancer.slotsSnapshot() {
-		if entry.tag == "" || !s.slotAlive(entry.tag) {
-			s.rrStartCheck()
-			return
-		}
+	if s.rrSlotToFill() {
+		s.rrStartSearch()
 	}
 }
 
@@ -639,16 +663,27 @@ func (s *URLTest) rrPoolLook() {
 // ANSWER is D3. Without it the suspicion from the sign that started at from is set
 // — not for a UDP wait (V9) — and the check starts. It reports whether the probe
 // started; a probe the limits held back starts nothing (V10).
+//
+// W4: while the step of the pause is above the base and the pause goes on, no life
+// probe starts. The probe takes its place in the queue of the core (§4.7); its
+// start is the moment it flies.
 func (s *URLTest) rrLifeProbe(node adapter.Outbound, t *rrTrack, from int64, udp bool) bool {
 	heal := &s.balancer.heal
-	if t == nil || heal.frozen() || s.group.ctx.Err() != nil || !heal.claimLife(t, rrClock(time.Now()), udp) {
+	now := time.Now()
+	if t == nil || heal.frozen() || s.group.ctx.Err() != nil || heal.step.Load() > 0 && heal.pausing(now) ||
+		!heal.claimLife(t, rrClock(now), udp) {
 		return false
 	}
 	go func() {
 		defer t.lifeBusy.Store(false)
 		ctx, cancel := context.WithCancel(s.group.ctx)
 		defer cancel()
-		probe := s.group.rrProbeNode(ctx, node)
+		queue := s.group.rrQueue()
+		if !queue.acquire(ctx, &heal.queue, 1) {
+			return
+		}
+		probe := s.group.rrQueuedProbe(ctx, node, time.Time{})
+		queue.release(1)
 		// N0, and a node found dead or gone while it was probed: the outcome is no
 		// longer about this slot.
 		if ctx.Err() != nil || probe.leaf == "" || heal.frozen() || s.rrBeforeEvent(probe.started) ||
@@ -672,6 +707,7 @@ func (s *URLTest) rrLifeProbe(node adapter.Outbound, t *rrTrack, from int64, udp
 // member the suspicion lifts and the proof is recorded (rrProof).
 func (s *URLTest) rrAlive(probe rrProbe) {
 	s.group.rrStore(probe)
+	s.balancer.heal.probeAnswered() // W3
 	t := s.balancer.trackOf(probe.member)
 	if t == nil {
 		return
@@ -701,7 +737,11 @@ func (s *URLTest) rrProof(t *rrTrack, a, b int64) {
 // the pool member of that tag. The start of the probe is not known; T before the
 // answer bounds it from below.
 func (s *URLTest) rrRunAnswer(tag string) {
-	if t := s.balancer.trackOf(tag); t != nil && !s.balancer.heal.frozen() {
+	if s.balancer.heal.frozen() {
+		return
+	}
+	s.balancer.heal.probeAnswered() // W3: an ANSWER of the scheduled or the manual run
+	if t := s.balancer.trackOf(tag); t != nil {
 		now := rrClock(time.Now())
 		s.rrProof(t, now-int64(rrProbeTimeout()), now)
 		s.rrInspect(t, now)
@@ -758,7 +798,7 @@ func (s *URLTest) rrInspect(t *rrTrack, now int64) {
 	t.access.Lock()
 	for e := t.waits.head; e != nil && e.since <= cutoff; e = e.next {
 		c, isConn := e.owner.(*rrFirstByteConn)
-		if isConn && c.state.Load()&(rrStateSilent|rrStateEnded) == 0 && rrClock(c.watch.start) >= epoch {
+		if isConn && c.state.Load()&(rrStateSilent|rrStateEnded|rrStateHalfClosed) == 0 && rrClock(c.watch.start) >= epoch {
 			silent = append(silent, c)
 		}
 	}
@@ -766,7 +806,7 @@ func (s *URLTest) rrInspect(t *rrTrack, now int64) {
 	for _, c := range silent {
 		// The first byte may have come since the list was read: SILENT is set only
 		// while the connection has no outcome, in one step (§2).
-		if w := c.wroteAt.Load(); t.live(w, rrHalf(w, now)) && c.setUnless(rrStateSilent, rrStateEnded) {
+		if w := c.wroteAt.Load(); t.live(w, rrHalf(w, now)) && c.setUnless(rrStateSilent, rrStateEnded|rrStateHalfClosed) {
 			s.rrSilent(c)
 		}
 	}

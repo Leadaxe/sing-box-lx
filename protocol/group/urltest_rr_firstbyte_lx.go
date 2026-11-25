@@ -394,17 +394,25 @@ func (c *rrFirstByteConn) WriteBuffer(buffer *buf.Buffer) error {
 }
 
 // LxClientFinished is the client's end of stream (route/conn.go tells it when the
-// wrapper lies on the write path): a close without a byte after it is no implicit
-// REFUSE_DST; the connection still waits as any other.
+// wrapper lies on the write path). Before the first byte from the node it is
+// CANCEL (§2): the exchange leaves the wait for SILENT, the count of Q1, the K2
+// memory and the bypass of S2 — off the list of its node. A lawful half-close
+// (the client sent its request and waits) loses its soft sign: the safe side.
 func (c *rrFirstByteConn) LxClientFinished(bool) {
-	c.set(rrStateHalfClosed)
+	c.clientFinished()
+}
+
+func (c *rrFirstByteConn) clientFinished() {
+	if c.set(rrStateHalfClosed)&(rrStateHalfClosed|rrStateGotByte) == 0 {
+		c.untrack()
+	}
 }
 
 // CloseWrite is the half-close from the client while writes still go through the
 // wrapper. Without a half-close below it closes the connection, as the copy does
 // for a writer that has none.
 func (c *rrFirstByteConn) CloseWrite() error {
-	c.set(rrStateHalfClosed)
+	c.clientFinished()
 	if closer, isCloser := N.UnwrapWriter(c.Conn).(N.WriteCloser); isCloser {
 		return closer.CloseWrite()
 	}

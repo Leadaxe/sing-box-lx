@@ -829,7 +829,7 @@ func (g *URLTestGroup) poolSize() int {
 // than needed to keep the pool full of live nodes, then applies the new slot occupancy.
 // Returns tag->delay for every node it tested live (for the URLTest map / UI).
 func (g *URLTestGroup) balancePool(ctx context.Context) map[string]uint16 {
-	g.balancer.rrResetMarks() // lx: SPEC 138 — the scheduled run lifts the address-problem marks and the quarantine
+	g.balancer.rrScheduledRun() // lx: SPEC 138 — the scheduled run lifts the address-problem marks and the quarantine, and restarts strikes(n) (Q4)
 	size := g.poolSize()
 	if size == 0 {
 		return map[string]uint16{}
