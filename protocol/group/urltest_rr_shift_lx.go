@@ -14,11 +14,14 @@ package group
 //   - K2: by the second soft sign (FAIL_NODE, implicit REFUSE_DST, SILENT) of the
 //     key on the node, both picked at the same shift on the slot of the key, the
 //     second started after the outcome of the first, with an ANSWER via the node
-//     between their starts (rrTrack.live) and none to the key. The first sign is
-//     only a record in a table of rrK2Size per group (K4); an ANSWER to the key on
-//     the node, a shift of the key (the record keeps its shift), E, the scheduled
-//     run and the node leaving the slot erase it. A SILENT that gets its ANSWER
-//     later takes back the shift that rested on it.
+//     between their starts (rrTrack.live) and no ANSWER to the key via the node
+//     that started at or after the first start, also one that came before the
+//     first outcome (rrTrack.keyAnsweredSince). The first sign is only a record in
+//     a table of rrK2Size per group (K4); a shift of the key (the record keeps its
+//     shift), E, the scheduled run and the node leaving the slot erase it, and an
+//     ANSWER to the key on the node makes it void (the cell of the key). Evidence
+//     the group no longer holds gives no shift. A SILENT that gets its ANSWER later
+//     takes back the shift that rested on it.
 // A connection shifts the key only while the shift is still the one it was picked
 // with. A sign on the slot of a retry or of a detour shifts nothing. K5: after |P|
 // shifts in a row with no ANSWER to the key it is marked "address problem": back
@@ -188,7 +191,22 @@ type rrShiftEntry struct {
 	shift  int
 	marked bool         // K5: an address problem
 	run    atomic.Int32 // K5: shifts in a row with no ANSWER to the key
+	// The current shift made by K2 from k2From to k2To (k2 set), and whether it
+	// rested on a SILENT: a cancelled SILENT takes it back (§2).
+	k2       bool
+	k2Silent bool
+	k2From   int
+	k2To     int
 }
+
+// rrShiftCause is the rule that shifts a key.
+type rrShiftCause uint8
+
+const (
+	rrShiftK1       rrShiftCause = iota // an explicit REFUSE_DST
+	rrShiftK2                           // the second soft sign
+	rrShiftK2Silent                     // the second soft sign, one of the two a SILENT
+)
 
 // rrShiftTable is the shift table of a group: at most rrShiftTableSize keys, the
 // oldest dropped first.
@@ -292,12 +310,12 @@ func (b *balancer) inPool(tag string) bool {
 	return slotIndex(b.slotsSnapshot(), tag) >= 0
 }
 
-// rrShiftOn shifts key past node (K1, K2): the slot after the node becomes the
-// slot of the key. expected is the shift the connection was picked with: another
+// rrShiftOn shifts key past node (K1, K2 by cause): the slot after the node becomes
+// the slot of the key. expected is the shift the connection was picked with: another
 // shift since then means a parallel connection moved it already, and nothing
 // changes. |P| shifts in a row with no ANSWER to the key mark it (K5). It returns
 // the shift of the key and whether this call changed it.
-func (s *URLTest) rrShiftOn(key rrKey, expected int, node string) (int, bool) {
+func (s *URLTest) rrShiftOn(key rrKey, expected int, node string, cause rrShiftCause) (int, bool) {
 	b := s.balancer
 	if !key.valid || b.heal.frozen() || s.group.ctx.Err() != nil {
 		return 0, false
@@ -318,9 +336,10 @@ func (s *URLTest) rrShiftOn(key rrKey, expected int, node string) (int, bool) {
 	}
 	current := (int(key.sticky%uint64(n)) + e.shift) % n
 	e.shift += (failed-current+n)%n + 1
+	e.k2, e.k2Silent, e.k2From, e.k2To = cause != rrShiftK1, cause == rrShiftK2Silent, expected, e.shift
 	marked := e.run.Add(1) >= int32(n)
 	if marked {
-		e.marked, e.shift = true, 0
+		e.marked, e.shift, e.k2 = true, 0, false
 		e.run.Store(0)
 	}
 	shift := e.shift
@@ -333,14 +352,18 @@ func (s *URLTest) rrShiftOn(key rrKey, expected int, node string) (int, bool) {
 	return shift, true
 }
 
-// rrShiftBack takes back the shift to that K2 made on a SILENT that got its
-// ANSWER (§2), while the shift of the key is still to.
-func (s *URLTest) rrShiftBack(key rrKey, to, back int) {
+// rrShiftBack takes back the shift K2 made from the shift from, while it is still
+// the shift of the key: a SILENT it rested on got its ANSWER (§2, silent), or an
+// ANSWER to the key since a1 came in while the shift was made (K2).
+func (s *URLTest) rrShiftBack(key rrKey, from int, silent bool) {
 	table := &s.balancer.memory.shifts
+	if table.size.Load() == 0 {
+		return
+	}
 	table.access.Lock()
 	defer table.access.Unlock()
-	if e := table.entries[key.table]; e != nil && !e.marked && e.shift == to {
-		e.shift = back
+	if e := table.entries[key.table]; e != nil && e.k2 && !e.marked && e.k2From == from && e.shift == e.k2To && (e.k2Silent || !silent) {
+		e.shift, e.k2 = from, false
 		if e.run.Load() > 0 {
 			e.run.Add(-1)
 		}
@@ -358,15 +381,16 @@ type rrK2Key struct {
 }
 
 // rrK2Record is the first soft sign of a key on a node: the shift it was picked
-// with, its start and its outcome; conn is the connection when the sign is a
-// SILENT that an ANSWER may still cancel.
+// with, its start, its outcome, the tracker of the node it was taken on and whether
+// it is a SILENT (an ANSWER may still cancel it).
 type rrK2Record struct {
-	k     rrK2Key
-	s     int
-	a1    int64
-	b1    int64
-	conn  *rrFirstByteConn
-	inUse bool
+	k      rrK2Key
+	s      int
+	a1     int64
+	b1     int64
+	track  *rrTrack
+	silent bool
+	inUse  bool
 }
 
 type rrK2Table struct {
@@ -383,27 +407,31 @@ func (m *rrK2Table) drop(i int) {
 	m.size.Add(-1)
 }
 
-// sign takes a soft sign of k picked at shift s, started at a, ended at b. It
-// reports K2 with the first sign when the record of k qualifies: made after E, at
-// the same shift, the second sign started after its outcome, and an ANSWER via the
-// node t between the two starts. Otherwise the sign becomes the record (K4); a sign
-// that started before the outcome of the record is the same attempt and leaves it.
-func (m *rrK2Table) sign(k rrK2Key, s int, a, b, epoch int64, t *rrTrack, conn *rrFirstByteConn) (rrK2Record, bool) {
+// sign takes a soft sign of k picked at shift s, started at a, ended at b, on the
+// node of t. It reports K2 with the first sign when the record of k qualifies: made
+// after E on the same tracker, at the same shift, the second sign started after its
+// outcome, an ANSWER via the node between the two starts (the front of t), and no
+// ANSWER to the key via the node that started at or after a1 (its cell). The front
+// is read before the cell: an ANSWER writes its cell before its proof, so a proof of
+// the key itself seen in the front shows in the cell too. Otherwise the sign
+// becomes the record (K4); a sign that started before the outcome of the record is
+// the same attempt and leaves it.
+func (m *rrK2Table) sign(k rrK2Key, s int, a, b, epoch int64, t *rrTrack, silent bool) (rrK2Record, bool) {
 	m.access.Lock()
 	defer m.access.Unlock()
-	record := rrK2Record{k: k, s: s, a1: a, b1: b, conn: conn, inUse: true}
+	record := rrK2Record{k: k, s: s, a1: a, b1: b, track: t, silent: silent, inUse: true}
 	if i, found := m.index[k]; found {
 		first := m.ring[i]
-		if first.a1 >= epoch && first.s == s {
+		if first.a1 >= epoch && first.s == s && first.track == t {
 			if a <= first.b1 {
-				return rrK2Record{}, false
+				return rrK2Record{}, false // K2: a parallel connection of the key is the same attempt
 			}
-			if t.live(first.a1, a) {
+			if t.live(first.a1, a) && !t.keyAnsweredSince(k.key, first.a1) {
 				m.drop(i)
 				return first, true
 			}
 		}
-		m.ring[i] = record
+		m.ring[i] = record // K4: the sign is the record now
 		return rrK2Record{}, false
 	}
 	if m.index == nil {
@@ -419,18 +447,6 @@ func (m *rrK2Table) sign(k rrK2Key, s int, a, b, epoch int64, t *rrTrack, conn *
 	m.ring[i] = record
 	m.index[k] = i
 	return rrK2Record{}, false
-}
-
-// answered erases the record of key on node: an ANSWER to the key there.
-func (m *rrK2Table) answered(key uint64, node string) {
-	if m.size.Load() == 0 {
-		return
-	}
-	m.access.Lock()
-	defer m.access.Unlock()
-	if i, found := m.index[rrK2Key{key, node}]; found {
-		m.drop(i)
-	}
 }
 
 // keep erases the records of every node keep reports false for.
@@ -453,10 +469,9 @@ func (m *rrK2Table) forget(node string) {
 }
 
 // rrSoftSign is a soft sign of the key on node (K2, K4): FAIL_NODE, an implicit
-// REFUSE_DST or SILENT, picked at shift, started at a, ended at at. eligible is
-// false for a sign on the slot of a retry or a detour and for UDP. conn is the
-// connection of a SILENT.
-func (s *URLTest) rrSoftSign(key rrKey, shift int, node string, a, at int64, conn *rrFirstByteConn, eligible bool) {
+// REFUSE_DST or SILENT (silent), picked at shift, started at a, ended at at.
+// eligible is false for a sign on the slot of a retry or a detour and for UDP.
+func (s *URLTest) rrSoftSign(key rrKey, shift int, node string, a, at int64, silent bool, eligible bool) {
 	b := s.balancer
 	if !eligible || !key.valid || b.memory.shifts.marked(key.table) {
 		return
@@ -465,18 +480,19 @@ func (s *URLTest) rrSoftSign(key rrKey, shift int, node string, a, at int64, con
 	if t == nil {
 		return
 	}
-	first, fired := b.memory.k2.sign(rrK2Key{key.table, node}, shift, a, at, b.heal.epoch(), t, conn)
+	first, fired := b.memory.k2.sign(rrK2Key{key.table, node}, shift, a, at, b.heal.epoch(), t, silent)
 	if !fired {
 		return // K4: the first sign is memory only
 	}
-	to, shifted := s.rrShiftOn(key, shift, node) // K2
-	if !shifted {
-		return
+	cause := rrShiftK2
+	if first.silent || silent {
+		cause = rrShiftK2Silent
 	}
-	for _, silent := range [2]*rrFirstByteConn{first.conn, conn} {
-		if silent != nil && silent.state.Load()&rrStateSilent != 0 {
-			silent.silentShift.Store(int64(to) + 1)
-		}
+	if _, shifted := s.rrShiftOn(key, shift, node, cause); shifted && t.keyAnsweredSince(key.table, first.a1) {
+		// K2: an ANSWER to the key since a1 — a SILENT of the two getting its answer,
+		// or another connection — came in while the shift was made; it found no
+		// shift to take back, so the shift goes back here.
+		s.rrShiftBack(key, shift, false)
 	}
 }
 
@@ -605,8 +621,8 @@ func (b *balancer) rrCountFail(tag string, key rrKey) rrQuarantineVerdict {
 	}
 	others := make([]float64, 0, len(slots))
 	for _, entry := range slots {
-		if entry.tag == tag || entry.tag == "" {
-			continue
+		if entry.tag == tag || entry.tag == "" || b.isQuarantined(entry.tag) {
+			continue // Q2: the median of the pool, quarantined nodes out of it
 		}
 		if other, counts := m.share(entry.tag); counts {
 			others = append(others, other)
@@ -627,6 +643,7 @@ func (b *balancer) rrCountFail(tag string, key rrKey) rrQuarantineVerdict {
 	}
 	next[tag] = true
 	m.quarantine.Store(&next)
+	delete(m.counts, tag) // Q2: the counters of the node start from zero
 	verdict.quarantined = true
 	return verdict
 }
@@ -784,24 +801,22 @@ func (s *URLTest) rrFirstByte(w *rrConnWatch, c *rrFirstByteConn) {
 		t = b.trackOf(w.member)
 	}
 	if t != nil {
+		if w.key.valid {
+			t.keyAnswered(w.key.table, rrClock(w.start)) // K2: before the proof (rrK2Table.sign)
+		}
 		s.rrProof(t, rrClock(w.start), rrClock(now))
 	}
 	if w.sign != nil {
 		w.sign.add(rrSignRetry)
 	}
 	if w.key.valid {
-		b.memory.k2.answered(w.key.table, w.member)
-		b.memory.shifts.answered(w.key.table)
+		b.memory.shifts.answered(w.key.table) // K5: the circle starts anew
 	}
 	if c == nil || c.state.Load()&rrStateSilent == 0 {
 		return
 	}
-	if c.state.Load()&rrStateCounted != 0 {
-		b.rrUncountFail(w.member, w.key) // Q1: an ANSWER takes the count of its SILENT back
-	}
-	if to := c.silentShift.Load(); to != 0 {
-		s.rrShiftBack(w.key, int(to-1), w.shift) // K2: the shift that rested on it goes back
-	}
+	c.settle()                          // Q1: the count of its SILENT goes back
+	s.rrShiftBack(w.key, w.shift, true) // K2: the shift that rested on it goes back
 }
 
 // rrSilentClose is an implicit REFUSE_DST (§2): the connection ended without a byte
@@ -818,7 +833,7 @@ func (s *URLTest) rrSilentClose(c *rrFirstByteConn) {
 	}
 	s.logger.Debug("round_robin: a connection through ", w.member, " closed without a byte from the destination")
 	at, wrote := rrClock(now), c.wroteAt.Load()
-	s.rrSoftSign(w.key, w.shift, w.member, rrClock(w.start), at, nil, !w.retry && !w.detour)
+	s.rrSoftSign(w.key, w.shift, w.member, rrClock(w.start), at, false, !w.retry && !w.detour)
 	if at-wrote < int64(rrHangAfter) || w.track.live(wrote, rrHalf(wrote, at)) {
 		w.track.addPending(&rrSign{s: s, node: w.member, key: w.key, b: at, need: rrSignProof})
 	}
@@ -831,8 +846,9 @@ func (s *URLTest) rrSilent(c *rrFirstByteConn) {
 	s.logger.Debug("round_robin: a connection through ", w.member, " has had no answer from ", w.key.label(s.balancer.stickyHash), " for ", rrProbeTimeout(), " while the node answers")
 	if s.rrCreditFail(w.member, w.key) {
 		c.set(rrStateCounted)
+		c.settle() // Q1: the ANSWER may have come since SILENT was given
 	}
-	s.rrSoftSign(w.key, w.shift, w.member, rrClock(w.start), rrClock(time.Now()), c, !w.retry && !w.detour)
+	s.rrSoftSign(w.key, w.shift, w.member, rrClock(w.start), rrClock(time.Now()), true, !w.retry && !w.detour)
 }
 
 // lx:end SPEC 138

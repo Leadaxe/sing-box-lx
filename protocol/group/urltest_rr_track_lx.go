@@ -15,7 +15,11 @@ package group
 //   - the proofs of the path through the node, (a', b') — the start and the moment
 //     of an ANSWER (A1): a first byte, a probe answer, an answer of the scheduled
 //     run. Only the front (later start, earlier answer) is kept; it answers Live
-//     (the rule of the half) and the premise of K2;
+//     (the rule of the half) and the premise "an ANSWER via the node between the
+//     attempts" of K2;
+//   - the latest start of an ANSWER to each key via the node, in cells by the hash
+//     of the key: the premise "no ANSWER to the key that started at or after a1" of
+//     K2. Another key in the same cell only makes K2 miss a shift (I7);
 //   - the suspicion of the slot (S1–S3): the pick goes round it while another slot
 //     is fine. It is no verdict and changes no history, key or counter;
 //   - the Q1 signs waiting for a proof via the node after them.
@@ -60,10 +64,16 @@ const (
 	rrUDPLifeGap = 60 * time.Second
 	// rrPendingMax bounds the Q1 signs waiting on one node; the oldest goes first.
 	rrPendingMax = 64
-	// rrProofMax bounds the proofs kept per node; rrProofGrain is the least gap
-	// between the answers of two kept proofs, so the front spans at least 2T.
+	// rrProofMax bounds the proofs kept per node. An append keeps every proof at
+	// least rrProofGrain after the one before the previous, so a front built by
+	// appends spans at least (rrProofMax/2 - 1) * rrProofGrain = 31 s >= 2T. A proof
+	// inserted inside the front (an earlier start and an earlier answer than the
+	// kept ones) can make it shorter; a premise whose proof dropped out then gives
+	// no inference (conservative).
 	rrProofMax   = 64
-	rrProofGrain = 500 * time.Millisecond
+	rrProofGrain = time.Second
+	// rrKeyCells is the number of cells of the latest ANSWER to a key per node (K2).
+	rrKeyCells = 256
 )
 
 // rrHorizon is 2T: the life of a suspicion and the time a Q1 sign waits for its
@@ -189,6 +199,9 @@ type rrTrack struct {
 	proofAccess sync.Mutex
 	proofs      [rrProofMax]rrProof // the front: a' and b' both ascending
 	proofN      int
+	// keyAnswers are the cells of the latest start of an ANSWER to a key via the
+	// node, by the table hash of the key (K2); 0 for none.
+	keyAnswers [rrKeyCells]atomic.Int64
 	// The suspicion (S1–S3): from the start a of the sign that set it, until the
 	// rrClock mark; a proof with a' >= a lifts it.
 	suspectFrom  atomic.Int64
@@ -261,6 +274,9 @@ func (t *rrTrack) addProof(a, b int64) {
 		j-- // too close to the one before the last: it replaces the last
 	}
 	if j == i && n == rrProofMax {
+		if i == 0 {
+			return // older than every kept proof: the front is full, it goes (conservative)
+		}
 		copy(t.proofs[:], t.proofs[1:n])
 		n--
 		i--
@@ -269,6 +285,26 @@ func (t *rrTrack) addProof(a, b int64) {
 	copy(t.proofs[j+1:], t.proofs[i:n])
 	t.proofs[j] = rrProof{a, b}
 	t.proofN = n - (i - j) + 1
+}
+
+// keyAnswered records an ANSWER to key (the table hash) via the node that started
+// at a (K2). It is written before the proof of the same ANSWER (rrProof), so a
+// reader that saw the proof sees the key too.
+func (t *rrTrack) keyAnswered(key uint64, a int64) {
+	cell := &t.keyAnswers[key%rrKeyCells]
+	for {
+		old := cell.Load()
+		if old >= a || cell.CompareAndSwap(old, a) {
+			return
+		}
+	}
+}
+
+// keyAnsweredSince reports whether key may have had an ANSWER via the node that
+// started at or after from: its cell holds such a start (of the key or of another
+// key in the same cell).
+func (t *rrTrack) keyAnsweredSince(key uint64, from int64) bool {
+	return t.keyAnswers[key%rrKeyCells].Load() >= from
 }
 
 // live reports whether a proof (a', b') with a' >= from and b' <= to is known.
@@ -726,14 +762,15 @@ func (s *URLTest) rrInspect(t *rrTrack, now int64) {
 	t.access.Lock()
 	for e := t.waits.head; e != nil && e.since <= cutoff; e = e.next {
 		c, isConn := e.owner.(*rrFirstByteConn)
-		if isConn && c.state.Load()&(rrStateSilent|rrStateGotByte|rrStateDone) == 0 && rrClock(c.watch.start) >= epoch {
+		if isConn && c.state.Load()&(rrStateSilent|rrStateEnded) == 0 && rrClock(c.watch.start) >= epoch {
 			silent = append(silent, c)
 		}
 	}
 	t.access.Unlock()
 	for _, c := range silent {
-		w := c.wroteAt.Load()
-		if t.live(w, rrHalf(w, now)) && c.set(rrStateSilent)&rrStateSilent == 0 {
+		// The first byte may have come since the list was read: SILENT is set only
+		// while the connection has no outcome, in one step (§2).
+		if w := c.wroteAt.Load(); t.live(w, rrHalf(w, now)) && c.setUnless(rrStateSilent, rrStateEnded) {
 			s.rrSilent(c)
 		}
 	}

@@ -37,7 +37,7 @@ func TestRRStatus_poolAndHeal(t *testing.T) {
 		t.Fatalf("pool: %+v", slots)
 	}
 	want := map[string]PoolSlot{
-		"a": {Quarantined: true, Conns: 10, Fails: 3},
+		"a": {Quarantined: true}, // Q2: the counters start from zero
 		"b": {Conns: 10, Fails: 1},
 		"c": {Conns: 10},
 	}

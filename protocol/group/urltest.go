@@ -281,7 +281,7 @@ func (s *URLTest) InterfaceUpdated(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		defer s.rrNetworkRun()() // lx: SPEC 138 — the self-heal is frozen for the run
+		s.rrNetworkRun() // lx: SPEC 138 — the check in flight yields to the run
 		group.CheckOutbounds(ctx, true)
 	}()
 }

@@ -308,7 +308,7 @@ func TestRRUDP_keyTableUntouched(t *testing.T) {
 	f.s.balancer.stickyHash = []string{C.URLTestStickyProcess, C.URLTestStickyDomain}
 	ctx := f.keyOn(t, 0)
 	// TCP shifted the key off a: the site was refused through live a.
-	f.s.rrShiftOn(f.s.balancer.rrKeyOf(ctx, udpSite()), 0, "a")
+	f.s.rrShiftOn(f.s.balancer.rrKeyOf(ctx, udpSite()), 0, "a", rrShiftK1)
 	if shift := f.s.balancer.memory.shifts.shiftOf(f.s.balancer.rrKeyOf(ctx, udpSite()).table); shift != 1 {
 		t.Fatalf("precondition: TCP shifted the key by 1, got %d", shift)
 	}

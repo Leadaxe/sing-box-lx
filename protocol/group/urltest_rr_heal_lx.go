@@ -9,8 +9,9 @@ package group
 // or the group gave up: nothing follows), LOCAL, an explicit REFUSE_DST (a code of
 // the node's own leaf; a refused or reset open of a leaf that goes to the site
 // itself), FAIL_NODE by an active refusal or by a timeout. Outside a freeze (N0) it
-// is retried once through the next slot with no suspicion whose leaf is no nested
-// urltest (§5); a key marked by K5 keeps only the retry of FAIL_NODE. The sign then
+// is retried once through another slot of the pool whose leaf is no nested urltest,
+// the next one with no suspicion first, else the next one under suspicion (§5); a
+// key marked by K5 keeps only the retry of FAIL_NODE. The sign then
 // goes to its rules: S1 (a fast refusal: the life probe, the bypass only after it
 // failed), S2 (a timeout: the bypass and the life probe at once), K1 (the key
 // shifts at once), K2/K4 (the memory of a soft sign) and Q1 (the count).
@@ -21,9 +22,10 @@ package group
 // k batches (rrCandidateBatches); the first ANSWER is the control, and every node
 // that has not answered gets its decisive probe then; a decisive probe with no
 // ANSWER gets a control after it. D1 strikes a node out, D3 writes the answer,
-// D4/D5 end with no verdict and no event. Slots with no live node then get a
-// replacement: a candidate that answered its probe in this check, else up to k
-// more batches (§5). Only the check writes the slots of the self-heal, under the
+// D4/D5 end with no verdict and no event. A node struck out and left in its slot
+// is no pool node: it is not judged again, only probed as a candidate. Slots with
+// no live node then get a replacement: a candidate that answered its probe in this
+// check, else the batches the check left of its k (§5). Only the check writes the slots of the self-heal, under the
 // flag of the scheduled run (URLTestGroup.checking).
 //
 // A connection test (SPEC 139, lxtrace.IsProbe) gets the retry and records nothing;
@@ -57,13 +59,16 @@ const (
 	// rrHealYieldWait bounds how long the full run after a network change waits for
 	// the aborted check to end.
 	rrHealYieldWait = C.TCPTimeout
-	// rrCandidateBatches is k: batches of candidates per check and per replacement.
+	// rrCandidateBatches is k: batches of candidates per check, its replacement
+	// included (L3).
 	rrCandidateBatches = 2
 )
 
 // rrHeal is the self-heal state of one round_robin group; it lives in the balancer.
 type rrHeal struct {
 	running      atomic.Bool                        // a check is in flight
+	checkAccess  sync.Mutex                         // guards ended
+	ended        chan struct{}                      // closed when the check in flight ends (yield)
 	lastCheckEnd atomic.Pointer[time.Time]          // end of the previous check
 	abort        atomic.Pointer[context.CancelFunc] // cancels the check in flight
 	// epochEnd is E, the rrClock of the end of the last freeze (N0): while now < E
@@ -90,9 +95,18 @@ func (h *rrHeal) checkReady() bool {
 	return end == nil || time.Since(*end) >= rrHealGap
 }
 
-// beginCheck claims the single check slot of the group.
+// beginCheck claims the single check slot of the group (L3: one at a time).
 func (h *rrHeal) beginCheck() bool {
-	return h.checkReady() && h.running.CompareAndSwap(false, true)
+	if !h.checkReady() {
+		return false
+	}
+	h.checkAccess.Lock()
+	defer h.checkAccess.Unlock()
+	if !h.running.CompareAndSwap(false, true) {
+		return false
+	}
+	h.ended = make(chan struct{})
+	return true
 }
 
 // endCheck ends a check and starts its gap — unless a freeze cut it short (L3: the
@@ -102,7 +116,13 @@ func (h *rrHeal) endCheck() {
 		now := time.Now()
 		h.lastCheckEnd.Store(&now)
 	}
+	h.checkAccess.Lock()
+	defer h.checkAccess.Unlock()
 	h.running.Store(false)
+	if h.ended != nil {
+		close(h.ended)
+		h.ended = nil
+	}
 }
 
 // epoch returns E, the end of the last freeze (rrClock; 0 for none).
@@ -147,9 +167,18 @@ func (h *rrHeal) aborted(ctx context.Context) bool {
 
 // yield waits, at most rrHealYieldWait, for the check in flight to end.
 func (h *rrHeal) yield(ctx context.Context) {
-	deadline := time.Now().Add(rrHealYieldWait)
-	for h.running.Load() && ctx.Err() == nil && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
+	h.checkAccess.Lock()
+	ended := h.ended
+	h.checkAccess.Unlock()
+	if ended == nil {
+		return
+	}
+	timer := time.NewTimer(rrHealYieldWait)
+	defer timer.Stop()
+	select {
+	case <-ended:
+	case <-ctx.Done():
+	case <-timer.C:
 	}
 }
 
@@ -192,12 +221,11 @@ func (s *URLTest) rrNetworkChanged() {
 // rrNetworkRun aborts the check in flight before the full run after a network
 // change and waits (bounded) for it to end: it may hold URLTestGroup.checking, and
 // the run would then find the flag busy and skip. A no-op outside round_robin.
-func (s *URLTest) rrNetworkRun() func() {
+func (s *URLTest) rrNetworkRun() {
 	if s.balancer != nil {
 		s.balancer.heal.abortCheck()
 		s.balancer.heal.yield(s.group.ctx)
 	}
-	return func() {}
 }
 
 // rrWatchWake makes a device or network wake an event (N3). The callback is
@@ -372,27 +400,36 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 	return rrRetried{dialer: dialer, sign: sign, dial: dial, start: retryStart}, true
 }
 
-// rrRetryTarget returns the node of the retry (§5): the next slot after the failed
-// one going round (the first one when the failed node was struck and replaced
-// meanwhile) that is live, takes network, is under no suspicion and holds no
-// nested urltest.
+// rrRetryTarget returns the node of the retry (§5): going round from the slot after
+// the failed one (from the first one when the failed node was struck and replaced
+// meanwhile), a slot that is live, takes network and holds no nested urltest — the
+// first one under no suspicion, else the first one under suspicion: the suspicion is
+// as soft for the retry as for the pick (§4.3).
 func (s *URLTest) rrRetryTarget(slots []slot, failedSlot int, failed string, network string) adapter.Outbound {
 	b := s.balancer
 	now, epoch := rrClock(time.Now()), b.heal.epoch()
 	n := len(slots)
+	var suspected adapter.Outbound
 	for step := 1; step <= n; step++ {
 		entry := slots[(failedSlot+step+n)%n]
 		if failedSlot < 0 {
 			entry = slots[step-1]
 		}
-		if entry.tag == failed || !s.slotAlive(entry.tag) || !s.slotSupports(entry.tag, network) || entry.track != nil && entry.track.suspect(now, epoch) {
+		if entry.tag == failed || !s.slotAlive(entry.tag) || !s.slotSupports(entry.tag, network) {
 			continue
 		}
-		if node, loaded := s.outbound.Outbound(entry.tag); loaded && !rrNestedURLTest(node) {
+		node, loaded := s.outbound.Outbound(entry.tag)
+		if !loaded || rrNestedURLTest(node) {
+			continue
+		}
+		if entry.track == nil || !entry.track.suspect(now, epoch) {
 			return node
 		}
+		if suspected == nil {
+			suspected = node
+		}
 	}
-	return nil
+	return suspected
 }
 
 // rrOpenFailed applies the rules to a failed open of the pick's own slot (not a
@@ -414,13 +451,13 @@ func (s *URLTest) rrOpenFailed(member adapter.Outbound, picked rrPick, class rrC
 	case rrRefused:
 		var sign *rrSign
 		if eligible && picked.key.valid && !s.balancer.memory.shifts.marked(picked.key.table) {
-			s.rrShiftOn(picked.key, picked.shift, member.Tag()) // K1: the key moves at once
+			s.rrShiftOn(picked.key, picked.shift, member.Tag(), rrShiftK1) // K1: the key moves at once
 			sign = &rrSign{s: s, node: member.Tag(), key: picked.key, b: now, need: rrSignRetry}
 		}
 		s.rrLifeProbe(member, t, a, false) // S1, K1
 		return sign
 	case rrFailActive:
-		s.rrSoftSign(picked.key, picked.shift, member.Tag(), a, now, nil, eligible)
+		s.rrSoftSign(picked.key, picked.shift, member.Tag(), a, now, false, eligible)
 		sign := s.rrFailSign(t, picked, member.Tag(), now, tcp) // Q1, before the probe whose answer settles it
 		s.rrLifeProbe(member, t, a, false)                      // S1
 		return sign
@@ -428,7 +465,7 @@ func (s *URLTest) rrOpenFailed(member adapter.Outbound, picked rrPick, class rrC
 		if tcp {
 			t.suspectAt(a, now) // S2: the bypass at once
 		}
-		s.rrSoftSign(picked.key, picked.shift, member.Tag(), a, now, nil, eligible)
+		s.rrSoftSign(picked.key, picked.shift, member.Tag(), a, now, false, eligible)
 		var sign *rrSign
 		if s.rrLiveOthers(member.Tag(), a, now) {
 			sign = s.rrFailSign(t, picked, member.Tag(), now, tcp) // Q1: Live(X; P \ {n})
@@ -762,8 +799,8 @@ func (s *URLTest) rrHealCheck() {
 	slots := s.balancer.slotsSnapshot()
 	c := &rrCheck{s: s, ctx: ctx, x: time.Now(), size: len(slots), seen: make(map[string]bool)}
 	for _, entry := range slots {
-		if entry.tag == "" || s.balancer.isQuarantined(entry.tag) {
-			continue // V11: a quarantined node takes no part
+		if entry.tag == "" || !s.slotAlive(entry.tag) {
+			continue // V11: a quarantined node takes no part; a struck one is a candidate only (§4.2)
 		}
 		if node, loaded := s.outbound.Outbound(entry.tag); loaded && common.Contains(node.Network(), N.NetworkTCP) {
 			c.pool = append(c.pool, node)
@@ -804,7 +841,7 @@ func (s *URLTest) rrStrike(ctx context.Context, c *rrCheck) {
 			continue
 		}
 		if !s.group.history.DeleteURLTestHistoryNotAfterLx(RealTag(node, N.NetworkTCP), c.x) {
-			continue // a scheduled run answered for the node since x: no verdict
+			continue // D1: a scheduled run answered for the node since x, no verdict
 		}
 		b.rrForget(node.Tag())         // Q3: D1 drops the counters
 		b.memory.k2.forget(node.Tag()) // K2: D1 erases the node's records
@@ -828,11 +865,14 @@ func (s *URLTest) rrRefill(ctx context.Context, c *rrCheck) {
 		return // nothing to replace, or the scheduled run does the same work
 	}
 	defer s.group.checking.Store(false)
-	c.refill, c.batches, c.left = true, 0, 0
+	c.refill, c.left = true, 0 // L3: the batches of the check count against its k
 	for _, dead := range empty {
 		for {
 			if b.heal.aborted(ctx) {
 				return
+			}
+			if dead != "" && s.slotAlive(dead) {
+				break // I5: the struck node answered as a candidate and holds its slot alive again
 			}
 			node := c.takeReady()
 			if node == nil {
@@ -853,12 +893,12 @@ func (s *URLTest) rrRefill(ctx context.Context, c *rrCheck) {
 // rrCandidateBatch returns the next batch of at most size candidates not yet probed
 // in this check (§5): those with live history first, fastest first, then the rest
 // from the cursor going round in config order; the cursor moves past the last one
-// it gave (I8).
+// it gave (I8). A node struck out and left in its slot is a candidate as any other.
 func (s *URLTest) rrCandidateBatch(seen map[string]bool, size int) []adapter.Outbound {
 	g, b := s.group, s.balancer
 	usable := func(node adapter.Outbound) bool {
 		tag := node.Tag()
-		return !seen[tag] && !b.inPool(tag) && !b.isQuarantined(tag) && common.Contains(node.Network(), N.NetworkTCP)
+		return !seen[tag] && !b.isQuarantined(tag) && (!b.inPool(tag) || !s.slotAlive(tag)) && common.Contains(node.Network(), N.NetworkTCP)
 	}
 	var alive []candidate
 	byTag := make(map[string]adapter.Outbound)

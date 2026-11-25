@@ -200,13 +200,17 @@ func rrDirectLeaf(node adapter.Outbound) bool {
 
 const (
 	rrStateWrote      uint32 = 1 << iota // the client sent a byte
-	rrStateGotByte                       // the destination sent a byte
-	rrStateClosed                        // closed from our side
-	rrStateDone                          // the outcome is reported, or D1 closed it
+	rrStateGotByte                       // the destination sent a byte: ANSWER
+	rrStateClosed                        // closed from our side, or by D1: CANCEL
+	rrStateFailed                        // a read error ended it before a byte
 	rrStateHalfClosed                    // the client closed its side: a close without a byte is no REFUSE_DST
 	rrStateTracked                       // listed as waiting for its first byte (rrTrack.waits)
 	rrStateSilent                        // SILENT given at a look (rrInspect)
 	rrStateCounted                       // its SILENT counted by Q1
+	rrStateUncounted                     // the count of its SILENT taken back (Q1)
+
+	// rrStateEnded: the exchange has its outcome.
+	rrStateEnded = rrStateGotByte | rrStateClosed | rrStateFailed
 )
 
 // rrFirstByteConn watches a connection for its first byte (see the file header).
@@ -220,9 +224,6 @@ type rrFirstByteConn struct {
 	// wroteAt is w, the rrClock of the client's first write: the wait for the
 	// first byte starts there.
 	wroteAt atomic.Int64
-	// silentShift is the shift K2 made on its SILENT, plus one; an ANSWER takes it
-	// back (rrFirstByte).
-	silentShift atomic.Int64
 }
 
 func newRRFirstByteConn(conn net.Conn, watch *rrConnWatch) *rrFirstByteConn {
@@ -240,11 +241,34 @@ func (c *rrFirstByteConn) set(bit uint32) uint32 {
 	}
 }
 
+// setUnless sets bit in one step while none of unless is set; it reports whether
+// this call set it.
+func (c *rrFirstByteConn) setUnless(bit, unless uint32) bool {
+	for {
+		old := c.state.Load()
+		if old&(bit|unless) != 0 {
+			return false
+		}
+		if c.state.CompareAndSwap(old, old|bit) {
+			return true
+		}
+	}
+}
+
+// settle takes back the Q1 count of a SILENT that got its ANSWER (§2). The count
+// (rrSilent) and the ANSWER (observe) race; each side calls it after setting its
+// bit, and the one that sees both takes the count back, once.
+func (c *rrFirstByteConn) settle() {
+	if c.state.Load()&(rrStateCounted|rrStateGotByte) == rrStateCounted|rrStateGotByte && c.set(rrStateUncounted)&rrStateUncounted == 0 {
+		c.watch.s.balancer.rrUncountFail(c.watch.member, c.watch.key) // Q1: an ANSWER takes the count of its SILENT back
+	}
+}
+
 // wrote takes the client's first non-empty write: the connection waits for its
 // first byte from now on, listed in the tracker of its node.
 func (c *rrFirstByteConn) wrote() {
 	old := c.set(rrStateWrote)
-	if old&(rrStateWrote|rrStateGotByte|rrStateClosed|rrStateDone) != 0 || c.watch.track == nil {
+	if old&(rrStateWrote|rrStateEnded) != 0 || c.watch.track == nil {
 		return
 	}
 	list := &c.watch.track.waits
@@ -255,7 +279,7 @@ func (c *rrFirstByteConn) wrote() {
 	c.wroteAt.Store(at)
 	c.watch.track.track(list, &c.entry, at, c)
 	c.set(rrStateTracked)
-	if c.state.Load()&(rrStateGotByte|rrStateClosed|rrStateDone) != 0 {
+	if c.state.Load()&rrStateEnded != 0 {
 		c.watch.track.untrack(&c.entry) // the outcome came in meanwhile
 	}
 }
@@ -270,16 +294,16 @@ func (c *rrFirstByteConn) untrack() {
 // rrKill is D1 on the node: the connection waits for a first byte that will not
 // come; it is closed (CANCEL), and the client retries on its own.
 func (c *rrFirstByteConn) rrKill() {
-	c.set(rrStateDone | rrStateClosed)
+	c.set(rrStateClosed)
 	_ = c.Conn.Close()
 }
 
 // observe takes the outcome of one read before the first byte.
 func (c *rrFirstByteConn) observe(n int, err error) {
 	if n > 0 {
-		old := c.set(rrStateGotByte | rrStateDone)
+		old := c.set(rrStateGotByte)
 		c.untrack()
-		if old&rrStateDone == 0 {
+		if old&rrStateEnded == 0 {
 			c.watch.s.rrFirstByte(c.watch, c)
 		}
 		return
@@ -287,9 +311,9 @@ func (c *rrFirstByteConn) observe(n int, err error) {
 	if err == nil || E.IsTimeout(err) || c.watch.packet {
 		return // a read deadline of the consumer is no outcome: still watched; UDP waits for the close
 	}
-	old := c.set(rrStateDone)
+	old := c.set(rrStateFailed)
 	c.untrack()
-	if old&(rrStateDone|rrStateGotByte|rrStateClosed|rrStateHalfClosed) != 0 || old&rrStateWrote == 0 {
+	if old&(rrStateEnded|rrStateHalfClosed) != 0 || old&rrStateWrote == 0 {
 		return // reported already, closed by us (CANCEL), half-closed, or the client sent nothing
 	}
 	c.watch.s.rrSilentClose(c)

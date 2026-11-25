@@ -207,7 +207,7 @@ func (f *shiftFixture) dials(tag string) int32 { return f.fb[tag].dials.Load() }
 
 // shiftOn is a failure on node of a connection picked with the shift expected.
 func (f *shiftFixture) shiftOn(key rrKey, expected int, node string) {
-	f.s.rrShiftOn(key, expected, node)
+	f.s.rrShiftOn(key, expected, node, rrShiftK1)
 }
 
 // --- the destination is unreachable through a node --------------------------------
