@@ -1,20 +1,21 @@
-# sing-box-lx — тестовый outbound `impair`: ухудшение линии в самом бинарнике
+# sing-box-lx — тестовый outbound `impair`: управляемо плохая линия внутри ядра
 
 > EN: [lx-impair.md](lx-impair.md) · Фича: [IMPAIR](../SPECS/FEATURES/020-IMPAIR/FEATURE.md)
 
 `impair` — outbound **для испытаний**. Соединяется он как `direct` или через свой `detour`. Всё, что
 через него проходит, он намеренно ухудшает: узкое место с очередью, добавочная задержка и её разброс,
 случайные потери и потери сериями, скачки скорости, короткие остановки и обрывы по расписанию.
-Работает без root и без netem, в обе стороны с одного конца.
+Работает без root и без netem, в обе стороны с одного конца. Что портить, насколько и когда, задаёт
+конфиг, и это можно менять, пока ядро работает; `seed` повторяет прогон один в один.
 
 Нужен, чтобы проверять балансировку, failover, `urltest`, цепочки и транспорты на настоящих серверах,
-когда настоящая сеть слишком быстрая или слишком ровная: линия ухудшается прямо в бинарнике клиента,
+когда настоящая сеть слишком быстрая или слишком ровная: линия ухудшается прямо в ядре клиента,
 стенд с netem не нужен.
 
-В рабочем конфиге ему не место. При запуске он всегда пишет предупреждение:
+В рабочем конфиге ему не место. При запуске он всегда пишет предупреждение с линией, которую строит:
 
 ```text
-WARN impair outbound slow-se: traffic through the direct dialer is degraded on purpose (test tool): up rate 10mbit delay 20ms; down rate 10mbit delay 20ms
+WARN impair outbound slow-se: traffic through the direct dialer is degraded on purpose (test tool): up rate 10mbit delay 20ms; down rate 10mbit delay 20ms; 1 sublinks; schedule of 3 entries repeating every 4m0s
 ```
 
 По ходу работы он пишет каждое событие линии в момент, когда оно происходит, есть трафик или нет:
@@ -22,9 +23,11 @@ WARN impair outbound slow-se: traffic through the direct dialer is degraded on p
 `stall` — на DEBUG. Скачки скорости `vary` в лог не идут.
 
 ```text
-INFO impair outbound slow-se: schedule at 55s: up outage begins, connections reset; down outage begins, connections reset
-INFO impair outbound slow-se: schedule at 65s: up rate 3mbit delay 20ms outage ends; down rate 3mbit delay 20ms outage ends
-DEBUG impair outbound slow-se: stall of the whole link for 2s
+INFO impair outbound slow-se: schedule at 1m0s: profile metro; up rate 2mbit..12mbit/1s delay 35ms±10ms loss 3%; down rate 4mbit..30mbit/1s delay 35ms±10ms loss 3%; stall every 3s for 500ms
+INFO impair outbound slow-se: schedule at 2m0s: profile metro; up … outage (reset); down … outage (reset); stall every 3s for 500ms
+INFO impair outbound slow-se: set: profile dsl; up rate 2mbit delay 12ms±1ms; down rate 16mbit delay 12ms±1ms
+INFO impair outbound slow-se: new schedule of 1 entries, link and sublinks back to the config; starts now, repeats every 4s
+DEBUG impair outbound slow-se: stall of the whole line for 500ms
 DEBUG impair outbound slow-se: stall ends
 ```
 
@@ -59,7 +62,7 @@ tuic. Остальной конфиг ссылается на прокси, ка
 
 ```json
 {"type": "vless", "tag": "via-se", "server": "se.example.net", "server_port": 443, "detour": "slow-se", "...": "..."},
-{"type": "impair", "tag": "slow-se", "rate": "10mbit", "delay": "20ms"}
+{"type": "impair", "tag": "slow-se", "link_params": {"rate": "10mbit", "delay": "20ms"}}
 ```
 
 Так устроена настоящая линия: медленная и неровная дорога до сервера прокси, а шифрование и
@@ -67,16 +70,17 @@ tuic. Остальной конфиг ссылается на прокси, ка
 
 **Над outbound.** Правило маршрута, группа или другой outbound ссылается на `impair`, а `impair` своим
 `detour` — на настоящий outbound. Без `detour` он соединяется сам, как `direct`. Это положение для
-выхода без прокси (`direct`, в том числе с `bind_interface`), под который нечего подложить.
+выхода без прокси (`direct`, в том числе с `bind_interface`), под который нечего подложить, и для
+испытаний, где нужно отличать сайт от сайта.
 
 ```json
-{"type": "impair", "tag": "slow-lte", "detour": "wan-lte", "rate": "8mbit", "delay": "40ms"},
+{"type": "impair", "tag": "slow-lte", "detour": "wan-lte", "link_params": {"rate": "8mbit", "delay": "40ms"}},
 {"type": "direct", "tag": "wan-lte", "bind_interface": "wwan0"}
 ```
 
-Есть прокси — ставьте `impair` под ним. Над прокси он тоже работает, но ухудшает уже содержимое
-прокси: UDP, который едет внутри потока vless, теряет датаграммы до прокси, а настоящая линия так не
-делает.
+Есть прокси, а сайты различать не нужно — ставьте `impair` под ним. Над прокси он тоже работает, но
+ухудшает уже содержимое прокси: UDP, который едет внутри потока vless, теряет датаграммы до прокси, а
+настоящая линия так не делает.
 
 **Что `impair` видит в каждом положении.** Положение решает не только то, что ухудшается, но и то,
 какие соединения `impair` различает.
@@ -85,22 +89,38 @@ tuic. Остальной конфиг ссылается на прокси, ка
 |---|---|---|
 | Назначение соединения | адрес и порт сервера прокси, у всех соединений одинаковые | настоящее назначение каждого соединения: домен сайта, адрес пробы urltest |
 | Одно соединение `impair` — это | соединение-носитель до прокси; с мультиплексом в одном носителе едут многие соединения пользователя | одно соединение пользователя или одна проба |
-| Отличить сайт от сайта, пробу от трафика | нельзя: всё идёт к одному серверу | можно, по домену назначения |
+| Отличить сайт от сайта, пробу от трафика | нельзя: всё идёт к одному серверу | можно, по домену назначения ([подлинии](#подлинии)) |
 
 Поэтому сценарий «узел отказывает одному сайту» или «узел рвёт соединения к сайтам, а пробы
 пропускает» требует положения над outbound'ом: `impair` с `detour` на прокси-узел сам становится
-членом группы вместо узла. Под прокси ухудшается вся дорога до сервера целиком, и пробы с трафиком
-страдают одинаково.
+членом группы вместо узла, а подлиния выбирает сайт. Под прокси ухудшается вся дорога до сервера
+целиком, и пробы с трафиком страдают одинаково.
 
 ## Ключи
 
-У `impair` есть все ключи соединения, что у `direct`: `detour`, `bind_interface`, `routing_mark`,
-`domain_resolver`, `connect_timeout`. Ключи линии на верхнем уровне действуют в обе стороны.
-Объекты `up` (то, что этот конец отправляет) и `down` (то, что получает) переопределяют их для одной
-стороны. Порядок слоёв: значения по умолчанию < `profile` < верхний уровень < `up`/`down`.
+У самого outbound'а ключей немного. Всё, что касается ухудшения линии, лежит в одном объекте
+`link_params`, и этот объект одинаковый в пяти местах: собственная линия outbound'а,
+[подлиния](#подлинии), запись [расписания](#расписание), команда [`impair set`](#управление-на-лету) и
+[профиль](#профили).
+
+| Ключ outbound'а | Значение | По умолчанию |
+|---|---|---|
+| ключи соединения | всё, что есть у `direct`: `detour`, `bind_interface`, `routing_mark`, `domain_resolver`, `connect_timeout` | как у `direct` |
+| `link_params` | линия outbound'а, см. ниже | без ухудшения |
+| `sublinks` | вторая ступень для подошедших соединений, см. [Подлинии](#подлинии) | нет |
+| `schedule` | изменения по времени, см. [Расписание](#расписание) | нет |
+| `schedule_repeat` | длина одного круга: расписание начинается заново каждый круг, `"60s"`; 100ms..168h | расписание идёт один раз |
+| `start` | от чего отсчитывается `schedule`: `"process"` (создание outbound, то есть старт процесса) или `"first_use"` (первый трафик через него: новое соединение или порция данных по уже открытому) | `"process"` |
+| `seed` | зерно случайности, целое: одинаковое зерно — одинаковые потери, скачки, остановки и выбор по `share` | случайное |
+
+Ключ линии на верхнем уровне outbound'а (`"rate": "10mbit"` рядом с `type`) — ошибка загрузки:
+`json: unknown field "rate"`. Ключи линии пишутся внутри `link_params`.
+
+`link_params`:
 
 | Ключ | Значение | По умолчанию | Диапазон |
 |---|---|---|---|
+| `profile` | шаблон: линия возвращается к значениям по умолчанию, на неё ложится шаблон, остальные ключи этого `link_params` его подстраивают, см. [Профили](#профили) | нет | встроенное имя или имя из `lx.impair_profiles` |
 | `rate` | скорость узкого места: `"10mbit"`, `"1.5mbit"`, `"500kbit"`, `"1gbit"`, `"unlimited"` | без ограничения | 8kbit..10gbit |
 | `queue` | очередь перед узким местом: время передачи на текущей скорости (`"50ms"`) или размер (`"64KB"`, `"30000B"`; KB и MB двоичные) | `"50ms"` | 1ms..10s, 1500B..64MB |
 | `delay` | добавочная задержка в одну сторону | 0 | 0..10s |
@@ -109,44 +129,123 @@ tuic. Остальной конфиг ссылается на прокси, ка
 | `loss` | доля случайных потерь, строка с `%`: `"0.5%"` | 0 | 0%..100% |
 | `loss_burst` | средняя длина серии потерь в пакетах (модель Гилберта); 1 — независимые потери | 1 | 1..1000 |
 | `stream_stall` | на сколько поток останавливается при потере (см. ниже) | max(200ms, 2·`delay` + 4·`jitter`) | 1ms..60s |
-| `vary` | `{"min": "3mbit", "max": "12mbit", "every": "2s"}`: каждые `every` скорость прыгает в случайное значение из [min, max] (равномерно) | нет | every 10ms..1h |
-| `up`, `down` | объекты с ключами из строк выше | — | — |
-| `stall` | `{"every": "20s", "duration": "400ms"}`: случайные остановки всей линии (обе стороны), промежутки экспоненциальные со средним `every` | нет | every 100ms..24h, duration 1ms..1h |
-| `schedule` | список изменений по времени, см. ниже | нет | — |
-| `start` | от чего отсчитывается `schedule`: `"process"` (создание outbound, то есть старт процесса) или `"first_use"` (первый трафик через него: новое соединение или порция данных по уже открытому) | `"process"` | — |
-| `profile` | готовый набор: `"dsl"`, `"lte-walk"`, `"wifi-lossy"` | нет | — |
-| `seed` | зерно случайности, целое: одинаковое зерно — одинаковые потери, скачки и остановки | случайное | — |
+| `vary` | `{"min": "3mbit", "max": "12mbit", "every": "2s"}`: каждые `every` скорость прыгает в случайное значение из [min, max] (равномерно); `"off"` выключает скачки | нет | every 10ms..1h |
+| `outage` | `true` — линия молча пропадает, `false` — возвращается | `false` | — |
+| `up`, `down` | те же ключи линии, включая `outage`, для одного направления: `up` — то, что этот конец отправляет, `down` — то, что получает | — | — |
+| `stall` | `{"every": "20s", "duration": "400ms"}`: случайные остановки всей линии (обе стороны), промежутки экспоненциальные со средним `every`; `"off"` выключает их | нет | every 100ms..24h, duration 1ms..1h |
+| `reset` | `true` вместе с обрывом, который начинается в этом же `link_params` (`"outage": true` или профиль с обрывом): см. ниже | `false` | — |
 
+Ключи линии наверху `link_params` действуют в обе стороны; `up` и `down` переопределяют их для одной.
 `rate` вместе с `vary` в одном объекте действует до первого скачка через `every`. `vary` без `rate`
-берёт первое значение сразу. `rate` в более высоком слое (или в записи расписания) без `vary`
-отменяет `vary` нижнего слоя: `"profile": "lte-walk", "rate": "5mbit"` даёт ровные 5 Мбит/с с
-задержками и потерями профиля. Скорость считается по полезной нагрузке соединения-носителя, то есть
-по байтам, которые прокси или приложение пишет в сокет, без заголовков IP, UDP и TCP.
+берёт первое значение сразу. `rate` без `vary` отменяет `vary`, который у линии уже был:
+`{"profile": "lte-walk", "rate": "5mbit"}` даёт ровные 5 Мбит/с с задержками и потерями профиля.
+Скорость считается по полезной нагрузке соединения-носителя, то есть по байтам, которые прокси или
+приложение пишет в сокет, без заголовков IP, UDP и TCP.
 
-Записи `schedule`:
+**`reset`** допустим в записи расписания, в `impair set` и в подлинии. В записи расписания и в
+`impair set` он при начале обрыва рвёт все соединения линии (чтение и запись возвращают ECONNRESET),
+и новые соединения до конца обрыва не открываются: так ведёт себя носитель, который роняет
+TCP-соединение. В подлинии он рвёт соединения подлинии и сразу отклоняет новые подошедшие; остальные
+соединения outbound'а это не трогает. В собственном `link_params` outbound'а это ошибка загрузки.
 
-| Ключ | Значение |
-|---|---|
-| `at` | когда, от начала отсчёта (`start`): `"15s"`, от 0 до `"168h"`; обязательный, записи идут по возрастанию `at` |
-| `direction` | `"up"` или `"down"`; без него — обе стороны |
-| ключи линии | `rate`, `queue`, `delay`, `jitter`, `reorder`, `loss`, `loss_burst`, `stream_stall`, `vary` — новое значение с этого момента |
-| `outage` | `true` — линия молча пропадает, `false` — возвращается |
-| `reset` | только вместе с `"outage": true`: при начале обрыва все соединения через `impair` рвутся (чтение и запись возвращают ECONNRESET), новые соединения до конца обрыва не открываются. Так ведёт себя носитель, который роняет TCP-соединение |
+**Выключить значение** — это `"off"`: `"vary": "off"`, `"stall": "off"`, а в записи расписания и в
+`impair set` — `"sublinks": "off"`. Пустые `[]` и `{}` ничего не выключают: в файле конфига декодер
+sing-box выбрасывает их, как будто ключа нет, а команда отклоняет их с подсказкой написать `"off"`.
+
+## Подлинии
+
+Подлиния ухудшает только часть соединений: один сайт, один порт, каждое десятое соединение, десятую
+часть UDP-потоков. Это **вторая ступень** после линии outbound'а, а не замена: подошедшее
+соединение проходит сначала линию outbound'а, затем свою подлинию. `link_params` подлинии
+считаются от нейтральных значений, а не от линии outbound'а, и обрыв линии outbound'а рвёт и
+соединения подлинии.
 
 ```json
-"schedule": [
-  {"at": "15s", "loss": "2%"},
-  {"at": "25s", "rate": "6mbit"},
-  {"at": "40s", "direction": "down", "delay": "120ms"},
-  {"at": "55s", "outage": true},
-  {"at": "61s", "outage": false},
-  {"at": "90s", "outage": true, "reset": true},
-  {"at": "95s", "outage": false}
+"sublinks": [
+  {"match": {"domain_suffix": "example.org"}, "link_params": {"outage": true, "reset": true}},
+  {"match": {"network": "udp", "share": "10%"}, "link_params": {"loss": "20%"}},
+  {"match": {"port": 443, "every": 5}, "link_params": {"down": {"outage": true}}}
 ]
 ```
 
-Ключ обрыва называется `outage`, а не `down`, потому что `down` — это направление. Запись, которая
-ничего не меняет, считается ошибкой.
+Оба ключа обязательны, в `match` нужно хотя бы одно поле. Поля одного `match` объединяются через И,
+значения одного поля — через ИЛИ:
+
+| Поле `match` | Чему соответствует |
+|---|---|
+| `domain`, `domain_suffix` | домен назначения, точно или по суффиксу |
+| `ip_cidr` | адрес назначения: префикс или один адрес |
+| `port` | порт назначения |
+| `network` | `"tcp"` или `"udp"` |
+| `every` | каждое N-е соединение среди подошедших по остальным полям; 1..1000000 |
+| `share` | доля соединений, подошедших по остальным полям, `"10%"`; выбор следует `seed` |
+
+Соединение выбирает подлинию при открытии: первую подошедшую или никакую. Уже открытое соединение
+остаётся на своей подлинии, даже когда список меняется. `every` и `share` считаются отдельно для
+каждой подлинии и начинаются заново, когда список заменяют.
+
+Домен берётся из метаданных маршрута, поэтому `domain` и `domain_suffix` работают, только когда
+`impair` стоит над узлом (`detour` на прокси, `impair` — член группы). Под прокси `impair` видит
+только сервер прокси, см. [Что `impair` видит](#два-положения).
+
+Обрыв только на приём (`"down": {"outage": true}`) не мешает соединению открыться: оно подключается
+и не получает ответа. Дозвон ждёт только во время обрыва отправки, и не дольше `connect_timeout`.
+
+## Расписание
+
+Запись расписания меняет outbound в момент `at`: его линию (`link_params`), его подлинии
+(`sublinks`) или и то и другое. `sublinks` заменяет весь список; `"sublinks": "off"` убирает его.
+Запись без обоих ключей или с `link_params`, который ничего не меняет, — ошибка.
+
+```json
+"schedule_repeat": "5m",
+"schedule": [
+  {"at": "60s",  "link_params": {"loss": "2%"}},
+  {"at": "90s",  "link_params": {"down": {"delay": "120ms"}}},
+  {"at": "120s", "sublinks": [{"match": {"domain_suffix": "example.org"}, "link_params": {"loss": "30%"}}]},
+  {"at": "180s", "link_params": {"outage": true, "reset": true}},
+  {"at": "190s", "link_params": {"outage": false}, "sublinks": "off"},
+  {"at": "240s", "link_params": {"profile": "lte-walk"}}
+]
+```
+
+`at` считается от начала отсчёта (`start`), от 0 до `"168h"`; записи идут по возрастанию `at`. С
+`schedule_repeat` каждое `at` должно лежать внутри одного круга (`at` < `schedule_repeat`), и
+расписание начинается заново каждый круг; без него расписание проходит один раз, и последнее
+состояние остаётся.
+
+Запись без `profile` меняет только названные ключи: запись на 90 с выше добавляет задержку на приём
+и оставляет 2 % потерь. Запись с `profile` сбрасывает всю линию к шаблону, поэтому запись на 240 с
+убирает всё, что было до неё, включая обрыв и `stall`.
+
+## Профили
+
+Профиль — шаблон для `link_params`: линия возвращается к значениям по умолчанию, на неё ложится
+шаблон, а остальные ключи того же `link_params` его подстраивают. `{"profile": "dsl", "delay": "40ms"}`
+— это линия `dsl` с задержкой 40 мс. Смена профиля сбрасывает всё прежнее, включая `stall` и
+`outage`; `link_params` без `profile` меняет только названные ключи.
+
+Встроенные профили:
+
+| Профиль | `up` | `down` | Общее |
+|---|---|---|---|
+| `dsl` — ровная асимметричная проводная линия | `rate` 2mbit | `rate` 16mbit | `queue` 100ms, `delay` 12ms, `jitter` 1ms, потерь нет |
+| `lte-walk` — мобильная связь на ходу | `rate` 6mbit, `vary` 2..12mbit каждую 1s | `rate` 15mbit, `vary` 4..30mbit каждую 1s | `queue` 120ms, `delay` 35ms, `jitter` 10ms, `loss` 0.3% сериями по 3, `stall` в среднем раз в 20s на 400ms |
+| `wifi-lossy` — перегруженный Wi-Fi | — | — | `rate` 25mbit, `vary` 8..40mbit каждые 500ms, `queue` 40ms, `delay` 4ms, `jitter` 6ms, `loss` 2% сериями по 2 |
+
+Свои профили лежат в корневом блоке `lx` и общие для всех `impair` в конфиге:
+
+```json
+"lx": {"impair_profiles": {
+  "metro":  {"link_params": {"profile": "lte-walk", "loss": "3%", "stall": {"every": "30s", "duration": "3s"}}},
+  "tunnel": {"link_params": {"profile": "metro", "outage": true}}
+}}
+```
+
+Профиль может опираться на другой (`tunnel` на `metro`, `metro` на `lte-walk`); кольцо — ошибка
+загрузки. Своё имя перекрывает встроенное с тем же именем. `reset` в профиле — ошибка загрузки:
+рвать ли соединения, решает место, где профиль применяют. Каждый профиль проверяется при загрузке,
+даже если ни одна линия его ещё не использует.
 
 ## Управление на лету
 
@@ -156,22 +255,26 @@ tuic. Остальной конфиг ссылается на прокси, ка
 
 | Команда | CLI | Что делает |
 |---|---|---|
-| `SetImpair` | `sing-box api impair set <tag> <запись>` | меняет линию сейчас, поверх идущего расписания. Запись — как в `schedule`, но без `at` |
-| `ScheduleImpair` | `sing-box api impair schedule <tag> <список> [--start now\|first_use]` | заменяет расписание: линия возвращается к параметрам из конфига без обрыва, затем записи идут от вызова (`now`) или от первого трафика (`first_use`). `[]` останавливает расписание и только возвращает линию к конфигу |
-| `GetImpairStatus` | `sing-box api impair status <tag>` | текущие параметры и счётчики по направлениям, идёт ли `stall`, где расписание |
+| `SetImpair` | `sing-box api impair set <tag> <запись>` | меняет линию или подлинии сейчас, поверх идущего расписания. Запись — как в расписании, но без `at`: `link_params`, `sublinks` или оба |
+| `ScheduleImpair` | `sing-box api impair schedule <tag> [--start now\|first_use] [--repeat 60s] <список>` | заменяет расписание: линия и подлинии возвращаются к конфигу, генераторы случайности перезапускаются от `seed`, затем записи идут от вызова (`now`) или от первого трафика (`first_use`), один раз или каждые `--repeat`. `'[]'` останавливает расписание и только возвращает конфиг |
+| `GetImpairStatus` | `sing-box api impair status <tag>` | текущая линия, счётчики по направлениям, подлинии со своими счётчиками, где расписание |
 
-Записи проверяются теми же правилами, что ключи в конфиге. Неверная запись отклоняется целиком, и
-линия остаётся как была. Каждое изменение пишется в лог, как событие расписания. Если в конфиге задан
-`seed`, новое расписание запускает генераторы случайности заново: один и тот же сценарий на том же
-трафике даёт те же потери. Аргумент CLI — JSON в строке, `@файл` или `-` (stdin).
+Записи проверяются теми же правилами, что конфиг. Неверная запись отклоняется целиком, и линия
+остаётся как была. Каждое изменение пишется в лог, как событие расписания. Если в конфиге задан
+`seed`, новое расписание на том же трафике даёт те же потери. Аргумент CLI — JSON в строке, `@файл`
+или `-` (stdin). `'[]'` у `schedule` допустим, потому что список из CLI не проходит через декодер
+конфига.
 
 ```sh
-sing-box api impair set slow-se '{"outage": true, "reset": true}'
-sing-box api impair set slow-se '{"direction": "down", "delay": "300ms"}'
-sing-box api impair schedule slow-se --start first_use '[
-  {"at": "0s",  "loss": "2%"},
-  {"at": "30s", "outage": true, "reset": true},
-  {"at": "40s", "outage": false}
+sing-box api impair set slow-se '{"link_params": {"profile": "metro"}}'
+sing-box api impair set slow-se '{"link_params": {"outage": true, "reset": true}}'
+sing-box api impair set slow-se '{"link_params": {"down": {"delay": "300ms"}}}'
+sing-box api impair set slow-se '{"sublinks": [{"match": {"domain_suffix": "example.org"}, "link_params": {"loss": "30%"}}]}'
+sing-box api impair set slow-se '{"sublinks": "off"}'
+sing-box api impair schedule slow-se --start first_use --repeat 60s '[
+  {"at": "0s",  "link_params": {"loss": "2%"}},
+  {"at": "30s", "link_params": {"outage": true, "reset": true}},
+  {"at": "40s", "link_params": {"outage": false}}
 ]'
 sing-box api impair schedule slow-se '[]'
 sing-box api impair status slow-se
@@ -180,19 +283,31 @@ sing-box api impair status slow-se
 ```json
 {
   "tag": "slow-se",
-  "up":   {"rate": "10mbit", "queue": "50ms", "delay": "20ms", "jitter": "0s", "reorder": false,
-           "loss": "2%", "loss_burst": 1, "stream_stall": "200ms", "outage": false, "reset": false,
-           "units": 1830, "bytes": 2531789, "dropped_queue": 0, "dropped_loss": 37,
-           "dropped_outage": 0, "stream_stalls": 4},
-  "down": {"...": "те же поля"},
-  "stall": false,
-  "schedule": {"entries": 3, "applied": 1, "waiting_for_traffic": false, "elapsed": "12.4s", "next_at": "30s"}
+  "link_params": {
+    "profile": "metro",
+    "up":   {"rate": "6mbit", "vary": "2mbit..12mbit/1s", "queue": "120ms", "delay": "35ms", "jitter": "10ms",
+             "reorder": false, "loss": "3%", "loss_burst": 3, "stream_stall": "200ms", "outage": false, "reset": false},
+    "down": {"...": "те же поля"},
+    "stall": {"every": "3s", "duration": "500ms", "now": false}
+  },
+  "counters": {
+    "up":   {"units": 1830, "bytes": 2531789, "dropped_queue": 0, "dropped_loss": 37, "dropped_outage": 0, "stream_stalls": 4},
+    "down": {"...": "те же поля"}
+  },
+  "sublinks": [
+    {"match": {"network": "udp", "share": "10%"}, "matched": 12,
+     "link_params": {"...": "как выше"}, "counters": {"...": "как выше"}}
+  ],
+  "schedule": {"entries": 3, "applied": 1, "repeat": "4s", "round": 1, "waiting_for_traffic": false,
+               "elapsed": "1.044s", "next_at": "2s"}
 }
 ```
 
-`schedule.waiting_for_traffic` — расписание с `first_use` ждёт первого трафика. `elapsed` и
-`next_at` считаются от начала расписания, как `at`. `vary` у направления — диапазон скачков,
-`rate` — скорость в этот момент.
+`link_params.profile` — шаблон, от которого линия построена последний раз. `vary` у направления —
+диапазон скачков, `rate` — скорость в этот момент. `stall.now` — идёт ли сейчас случайная остановка.
+`matched` у подлинии — сколько соединений она забрала. `schedule.round` — номер текущего круга
+`schedule_repeat`, с 0; `elapsed` и `next_at` считаются от начала круга, как `at`;
+`waiting_for_traffic` — расписание с `first_use` ждёт первого трафика.
 
 Команды доступны везде, где есть `StartedService`: через сервис `api` в конфиге, через `lxd` и через
 libbox. Для разработки на своей машине хватает сервиса `api` на loopback, ключи не нужны:
@@ -215,8 +330,8 @@ export BOX_API_URL=127.0.0.1:9090
 outbound, как делят настоящую линию. Каждая порция данных (датаграмма или кусок потока до 4 КБ)
 встаёт в очередь. Передача начинается, когда освободится узкое место, заканчивается через
 размер/скорость, а доставка происходит через `delay` ± `jitter` после конца передачи. Если ожидание в
-очереди больше `queue`, очередь полна. Смена скорости (`vary`, расписание) действует со следующей
-порции.
+очереди больше `queue`, очередь полна. Смена скорости (`vary`, запись расписания, `impair set`)
+действует со следующей порции. Подлиния — вторая такая же очередь за очередью outbound'а.
 
 **Датаграммы** (`ListenPacket`, UDP-соединения). При полной очереди датаграмма отбрасывается с хвоста.
 По `loss` она отбрасывается после того, как заняла узкое место. Во время обрыва отбрасывается тоже.
@@ -233,9 +348,10 @@ TCP-носителе — это не пропажа данных, а остан�
 остановку. `loss_burst` и `reorder` на потоки не действуют: поток всегда приходит по порядку. Во
 время молчаливого обрыва данные «в пути» тоже замирают и приходят после него.
 
-Соединение (и TCP, и UDP-сокет) во время молчаливого обрыва не открывается: попытка ждёт конца
-обрыва, но не дольше тайм-аута подключения (`connect_timeout` outbound'а, по умолчанию 5 с), и
-тогда отказывает по тайм-ауту, как рукопожатие без ответа. Обрыв с `reset` отказывает сразу.
+Соединение (и TCP, и UDP-сокет) во время молчаливого обрыва отправки не открывается: попытка ждёт
+конца обрыва, но не дольше тайм-аута подключения (`connect_timeout` outbound'а, по умолчанию 5 с), и
+тогда отказывает по тайм-ауту, как рукопожатие без ответа. Обрыв только на приём дозвон не держит:
+соединение открывается и не получает ответа. Обрыв с `reset` отказывает сразу.
 
 **Закрытие потока.** Данные, записанные до `Close` (в том числе до `CloseWrite`), `impair` не
 выбрасывает. `Close` возвращается сразу, чтение и запись после него отказывают, а записанное в фоне
@@ -263,16 +379,6 @@ TCP при закрытии отправляет буфер отправки. Д
 Поэтому `impair` ставят на клиенте, и он ухудшает линию в обе стороны. На сервере его ставить не
 нужно.
 
-## Профили
-
-Профиль — нижний слой: любой ключ, заданный явно, его переопределяет.
-
-| Профиль | `up` | `down` | Общее |
-|---|---|---|---|
-| `dsl` — ровная асимметричная проводная линия | `rate` 2mbit | `rate` 16mbit | `queue` 100ms, `delay` 12ms, `jitter` 1ms, потерь нет |
-| `lte-walk` — мобильная связь на ходу | `rate` 6mbit, `vary` 2..12mbit каждую 1s | `rate` 15mbit, `vary` 4..30mbit каждую 1s | `queue` 120ms, `delay` 35ms, `jitter` 10ms, `loss` 0.3% сериями по 3, `stall` в среднем раз в 20s на 400ms |
-| `wifi-lossy` — перегруженный Wi-Fi | — | — | `rate` 25mbit, `vary` 8..40mbit каждые 500ms, `queue` 40ms, `delay` 4ms, `jitter` 6ms, `loss` 2% сериями по 2 |
-
 ## Нагрузка на процессор
 
 Горячий путь не выделяет память: буферы берутся из пулов. Таймеры не заводятся на каждый пакет:
@@ -294,14 +400,22 @@ TCP при закрытии отправляет буфер отправки. Д
 
 ## Ошибки
 
-Ошибки проверки выводятся с префиксом sing-box и словом `impair`, например:
+Ошибки проверки выводятся с префиксом sing-box и словом `impair`, с путём до ключа, например:
 
 ```text
-FATAL[0000] initialize outbound[1] impair[slow-se]: impair: up.rate: invalid rate "10mbps": want a number with bit, kbit, mbit or gbit ("10mbit"), or "unlimited"
-FATAL[0000] initialize outbound[1] impair[slow-se]: impair: vary: min 12mbit is above max 3mbit
-FATAL[0000] initialize outbound[1] impair[slow-se]: impair: schedule[2].at 10s is before the previous entry: list the entries in time order
-FATAL[0000] initialize outbound[1] impair[slow-se]: impair: schedule[0].reset needs "outage": true in the same entry
+FATAL[0000] decode config at config.json: outbounds[1].rate: json: unknown field "rate"
+FATAL[0000] initialize outbound[1] impair[slow-se]: impair: link_params.rate: invalid rate "10mbps": want a number with bit, kbit, mbit or gbit ("10mbit"), or "unlimited"
+FATAL[0000] initialize outbound[1] impair[slow-se]: impair: link_params.vary: min 12mbit is above max 3mbit
+FATAL[0000] initialize outbound[1] impair[slow-se]: impair: link_params.reset: only a schedule entry, a SetImpair command or a sublink can reset
+FATAL[0000] initialize outbound[1] impair[slow-se]: impair: link_params.profile: unknown profile "nope" (known: "dsl", "lte-walk", "wifi-lossy")
+FATAL[0000] initialize outbound[1] impair[slow-se]: impair: schedule[1].at 2s is before the previous entry: list the entries in time order
+FATAL[0000] initialize outbound[1] impair[slow-se]: impair: schedule[0].at 5s is not inside one round of schedule_repeat 4s
+FATAL[0000] initialize outbound[1] impair[slow-se]: impair: sublinks[0].match is required, with at least one field
+FATAL[0000] initialize outbound[1] impair[slow-se]: impair: lx.impair_profiles.x.link_params.reset has no place in a profile
 ```
+
+Команда отвечает `InvalidArgument` с тем же текстом, например
+`impair: entry: link_params.vary: empty {}: write "off" to turn it off`.
 
 Единицы вида `kbps`, `mbps`, `MB/s` не принимаются: разные инструменты понимают их то как биты, то
 как байты.
@@ -317,9 +431,9 @@ FATAL[0000] initialize outbound[1] impair[slow-se]: impair: schedule[0].reset ne
     {"type": "vless", "tag": "via-se", "server": "<SE>", "server_port": 443, "uuid": "<UUID>", "detour": "slow-se"},
     {"type": "vless", "tag": "via-de", "server": "<DE>", "server_port": 443, "uuid": "<UUID>", "detour": "slow-de"},
     {"type": "vless", "tag": "via-nl", "server": "<NL>", "server_port": 443, "uuid": "<UUID>", "detour": "slow-nl"},
-    {"type": "impair", "tag": "slow-se", "rate": "10mbit", "vary": {"min": "3mbit", "max": "12mbit", "every": "2s"}, "seed": 1},
-    {"type": "impair", "tag": "slow-de", "rate": "10mbit", "vary": {"min": "3mbit", "max": "12mbit", "every": "2s"}, "seed": 2},
-    {"type": "impair", "tag": "slow-nl", "rate": "10mbit", "vary": {"min": "3mbit", "max": "12mbit", "every": "2s"}, "seed": 3},
+    {"type": "impair", "tag": "slow-se", "seed": 1, "link_params": {"rate": "10mbit", "vary": {"min": "3mbit", "max": "12mbit", "every": "2s"}}},
+    {"type": "impair", "tag": "slow-de", "seed": 2, "link_params": {"rate": "10mbit", "vary": {"min": "3mbit", "max": "12mbit", "every": "2s"}}},
+    {"type": "impair", "tag": "slow-nl", "seed": 3, "link_params": {"rate": "10mbit", "vary": {"min": "3mbit", "max": "12mbit", "every": "2s"}}},
     {"type": "direct", "tag": "direct"}
   ],
   "route": {"final": "auto"}
@@ -327,42 +441,88 @@ FATAL[0000] initialize outbound[1] impair[slow-se]: impair: schedule[0].reset ne
 ```
 
 Остальные ключи vless (TLS, transport) — как у прокси без `impair`. Средняя скорость каждой линии —
-в среднем 7,5 Мбит/с, середина диапазона 3..12.
+7,5 Мбит/с, середина диапазона 3..12.
 
-## Рецепты для испытаний балансировки
+## Рецепт: вечер в метро
 
-Пул `round_robin` из четырёх узлов, у каждого своя линия:
+Одна линия под прокси, поездка по кругу: поезд между станциями, тоннель без связи, станция с
+перегруженным Wi-Fi. Расписание начинается с первым трафиком и повторяется каждые 3 минуты.
 
 ```json
 {
+  "lx": {"impair_profiles": {
+    "metro":  {"link_params": {"profile": "lte-walk", "loss": "3%", "stall": {"every": "30s", "duration": "3s"}}},
+    "tunnel": {"link_params": {"profile": "metro", "outage": true}}
+  }},
   "outbounds": [
-    {"type": "urltest", "tag": "pool", "outbounds": ["via-a", "via-b", "via-c", "via-d"], "interval": "15m",
+    {"type": "vless", "tag": "via-se", "server": "<SE>", "server_port": 443, "uuid": "<UUID>", "detour": "commute"},
+    {"type": "impair", "tag": "commute", "seed": 7, "start": "first_use", "schedule_repeat": "3m",
+     "link_params": {"profile": "metro"},
+     "schedule": [
+       {"at": "0s",   "link_params": {"profile": "metro"}},
+       {"at": "100s", "link_params": {"profile": "tunnel"}},
+       {"at": "130s", "link_params": {"profile": "metro"}},
+       {"at": "150s", "link_params": {"profile": "wifi-lossy"}}
+     ]}
+  ],
+  "route": {"final": "via-se"}
+}
+```
+
+`tunnel` — это `metro` без линии: соединения висят и не рвутся, как в настоящем тоннеле. Для
+носителя, который при въезде в тоннель роняет соединение, напишите в записи на 100 с
+`{"profile": "tunnel", "reset": true}`.
+
+## Рецепты для испытаний балансировки
+
+Стенд `round_robin`, где каждый член группы — `impair` над своим узлом, поэтому `impair` видит
+назначение каждого соединения и может отказать одному сайту:
+
+```json
+{
+  "lx": {"impair_profiles": {
+    "metro": {"link_params": {"profile": "lte-walk", "loss": "3%"}}
+  }},
+  "outbounds": [
+    {"type": "urltest", "tag": "pool", "outbounds": ["node-a", "node-b", "node-c", "node-d"], "interval": "15m",
      "mode": "round_robin", "balancer": {"pool": 3}},
-    {"type": "vless", "tag": "via-a", "server": "<A>", "server_port": 443, "uuid": "<UUID>", "detour": "line-a"},
-    {"type": "vless", "tag": "via-b", "server": "<B>", "server_port": 443, "uuid": "<UUID>", "detour": "line-b"},
-    {"type": "vless", "tag": "via-c", "server": "<C>", "server_port": 443, "uuid": "<UUID>", "detour": "line-c"},
-    {"type": "vless", "tag": "via-d", "server": "<D>", "server_port": 443, "uuid": "<UUID>", "detour": "line-d"},
-    {"type": "impair", "tag": "line-a", "delay": "30ms", "seed": 1},
-    {"type": "impair", "tag": "line-b", "delay": "30ms", "loss": "5%", "seed": 2},
-    {"type": "impair", "tag": "line-c", "stall": {"every": "2m", "duration": "40s"}, "seed": 3},
-    {"type": "impair", "tag": "line-d", "delay": "2s", "jitter": "1s", "seed": 4}
+    {"type": "impair", "tag": "node-a", "detour": "via-a", "seed": 1, "link_params": {"delay": "30ms"}},
+    {"type": "impair", "tag": "node-b", "detour": "via-b", "seed": 2, "link_params": {"profile": "metro"}},
+    {"type": "impair", "tag": "node-c", "detour": "via-c", "seed": 3, "schedule_repeat": "2m",
+     "schedule": [
+       {"at": "0s",  "link_params": {"outage": false}},
+       {"at": "80s", "link_params": {"outage": true}}
+     ]},
+    {"type": "impair", "tag": "node-d", "detour": "via-d", "seed": 4,
+     "sublinks": [{"match": {"domain_suffix": "example.org"}, "link_params": {"outage": true, "reset": true}}]},
+    {"type": "vless", "tag": "via-a", "server": "<A>", "server_port": 443, "uuid": "<UUID>"},
+    {"type": "vless", "tag": "via-b", "server": "<B>", "server_port": 443, "uuid": "<UUID>"},
+    {"type": "vless", "tag": "via-c", "server": "<C>", "server_port": 443, "uuid": "<UUID>"},
+    {"type": "vless", "tag": "via-d", "server": "<D>", "server_port": 443, "uuid": "<UUID>"}
   ],
   "route": {"final": "pool"}
 }
 ```
 
-- `line-a` — ровная линия, контроль.
-- `line-b` — потери 5 %. Через TCP-носитель vless они не рвут соединения, а останавливают поток не
-  меньше чем на 200 мс в среднем раз на 29 КБ: узел работает, но медленно. Через UDP-носитель
-  (hysteria2, tuic) датаграммы теряются по-настоящему.
-- `line-c` — «мигающий» узел: в среднем раз в 2 минуты линия молча пропадает на 40 с. Узел
-  вычёркивается и возвращается, второе вычёркивание между плановыми проверками уводит его в
-  карантин ([самовосстановление пула](lx-urltest.ru.md#самовосстановление-пула)).
-- `line-d` — медленный узел у границы таймаута пробы в 15 с. Проба проходит несколько обменов туда и
-  обратно, каждый здесь стоит около 4 с, поэтому часть проб укладывается в 15 с, часть нет.
-  Число обменов зависит от протокола, поэтому `delay` подбирайте по задержке пробы на своём стенде.
+- `node-a` — ровная линия, контроль.
+- `node-b` — профиль `metro`: скачки скорости, глубокий буфер, 3 % потерь сериями. В потоке vless
+  каждая потеря останавливает поток не меньше чем на 200 мс: узел работает, но медленно.
+- `node-c` — «мигающий» узел: в каждом двухминутном круге линия работает 80 с и молча пропадает на
+  40 с. Узел вычёркивается и возвращается, второе вычёркивание между плановыми проверками уводит его
+  в карантин ([самовосстановление пула](lx-urltest.ru.md#самовосстановление-пула)).
+- `node-d` — узел отказывает одному сайту: соединения к `example.org` сразу отклоняются, остальные
+  и пробы проходят. Группа повторяет отклонённое соединение через другой узел, а со второго отказа
+  сайт переходит на следующий узел пула, остальные сайты остаются на месте
+  ([что видит приложение](lx-urltest.ru.md#что-видит-приложение-при-сбое-узла)).
 
-`failover`, у которого текущий узел сначала проседает, а потом рвёт соединения:
+Здесь `impair` стоит над узлом, поэтому ухудшает содержимое прокси, а не дорогу до сервера; для
+испытаний на TCP это одно и то же. Для медленного узла у границы таймаута пробы в 15 с поставьте
+члену `{"delay": "2s", "jitter": "1s"}`: проба проходит несколько обменов туда и обратно, каждый
+около 4 с, поэтому часть проб укладывается в 15 с, часть нет; `delay` подбирайте по задержке пробы
+на своём стенде.
+
+`failover`, у которого текущий узел сначала проседает, а потом рвёт соединения, с `impair` под
+прокси:
 
 ```json
 {
@@ -371,19 +531,19 @@ FATAL[0000] initialize outbound[1] impair[slow-se]: impair: schedule[0].reset ne
     {"type": "vless", "tag": "via-a", "server": "<A>", "server_port": 443, "uuid": "<UUID>", "detour": "line-a"},
     {"type": "vless", "tag": "via-b", "server": "<B>", "server_port": 443, "uuid": "<UUID>"},
     {"type": "impair", "tag": "line-a", "start": "first_use", "seed": 1, "schedule": [
-      {"at": "60s", "delay": "400ms"},
-      {"at": "240s", "delay": "0s"},
-      {"at": "300s", "outage": true, "reset": true},
-      {"at": "310s", "outage": false}
+      {"at": "60s",  "link_params": {"delay": "400ms"}},
+      {"at": "240s", "link_params": {"delay": "0s"}},
+      {"at": "300s", "link_params": {"outage": true, "reset": true}},
+      {"at": "310s", "link_params": {"outage": false}}
     ]}
   ],
   "route": {"final": "main"}
 }
 ```
 
-Отсчёт расписания идёт от первого трафика через `line-a` (`"start": "first_use"`). С 60-й по
-240-ю секунду к задержке в каждую сторону добавляется 400 мс. Плановая проба раз в минуту это
-видит, и если узел стал больше чем вдвое медленнее `via-b`, группа проверяет
+Отсчёт расписания идёт от первого трафика через `line-a` (`"start": "first_use"`). С 60-й по 240-ю
+секунду к задержке в каждую сторону добавляется 400 мс. Плановая проба раз в минуту это видит, и если
+узел стал больше чем вдвое медленнее `via-b`, группа проверяет
 [деградацию](lx-urltest.ru.md#4-failover--держаться-до-отказа). На 300-й секунде все соединения через
 `line-a` рвутся, и 10 с новые сразу получают отказ: группа штрафует узел и переходит на `via-b`.
 
