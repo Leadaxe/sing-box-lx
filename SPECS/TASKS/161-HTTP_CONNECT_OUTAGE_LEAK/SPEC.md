@@ -5,8 +5,8 @@
 | Поле | Значение |
 |------|----------|
 | Тип | B (bug) — неограниченное ожидание рукопожатия прокси-узла (HTTP CONNECT, SOCKS, httpupgrade, ShadowTLS v3), когда сервер принял TCP и замолчал |
-| Статус | I (implemented) — HTTP CONNECT: тесты под `-race`, сборки и стенд со Squid зелёные ([PR #73](https://github.com/Leadaxe/sing-box-lx/pull/73)), в `v1.14.4-lx.36`. SOCKS, httpupgrade, ShadowTLS v3: тесты на loopback-серверах (в том числе `-race`), в ветке `lx-spec138-rr-self-heal`; lx-ci гоняет их под `-race` |
-| Ветка | `lx` (HTTP CONNECT); `lx-spec138-rr-self-heal` (остальные рукопожатия) |
+| Статус | I (implemented) — HTTP CONNECT: тесты под `-race`, сборки и стенд со Squid зелёные ([PR #73](https://github.com/Leadaxe/sing-box-lx/pull/73)), в `v1.14.4-lx.36`. SOCKS, httpupgrade, ShadowTLS v3: тесты на loopback-серверах (в том числе `-race`), в `lx` вместе с самовосстановлением SPEC 138, не запушено и не выпущено; lx-ci гоняет их под `-race` |
+| Ветка | `lx` |
 | История | [HISTORY.md](HISTORY.md) |
 | Источник | [issue #74](https://github.com/Leadaxe/sing-box-lx/issues/74), [PR #73](https://github.com/Leadaxe/sing-box-lx/pull/73). Воспроизведение на официальном `v1.14.4-lx.33`. Остальные рукопожатия — стенд [SPEC 138](../138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md) на NanoPi: socks-сервер узла под `kill -STOP` держал открытие соединения без предела |
 
