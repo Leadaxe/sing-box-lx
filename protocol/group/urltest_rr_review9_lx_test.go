@@ -170,4 +170,52 @@ func TestRRReview9_searchLeavesManualTest(t *testing.T) {
 	waitLong(t, func() bool { return !f.s.balancer.heal.running.Load() }, 20*time.Second)
 }
 
+// W1: a search that starts while a run holds its flag probes nothing; it is no
+// round — no pause, no growth of the step.
+func TestRRReview9_searchUnderRunIsNoRound(t *testing.T) {
+	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
+	f.s.balancer.clearSlot("a") // C = {a}: it has history, so the walk is 0 and lap holds
+	heal := &f.s.balancer.heal
+	f.g.checking.Store(true) // a scheduled run in flight
+	for i := 0; i < 3; i++ {
+		heal.lastCheckEnd.Store(nil)
+		f.s.rrStartSearch()
+		waitLong(t, func() bool { return !heal.running.Load() }, 5*time.Second)
+	}
+	// The round already claimed when the run took the flag.
+	if !heal.beginCheck() {
+		t.Fatal("no round")
+	}
+	f.s.rrHealSearch()
+	f.g.checking.Store(false)
+	if f.nodes["a"].probes.Load() != 0 {
+		t.Fatalf("precondition: nothing probed, a probed %d", f.nodes["a"].probes.Load())
+	}
+	if heal.step.Load() != 0 || heal.pausing(time.Now()) {
+		t.Fatalf("rounds that probed nothing grew the step (%d) or started a pause", heal.step.Load())
+	}
+}
+
+// W1, W4: with no candidate (the third node in quarantine, the pool is the group)
+// the slot to fill starts no round, the step stays at the base and the life probes
+// of the pool go on.
+func TestRRReview9_noCandidateNoRound(t *testing.T) {
+	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
+	f.s.balancer.rrQuarantine("a")
+	heal := &f.s.balancer.heal
+	for i := 0; i < 3; i++ {
+		heal.lastCheckEnd.Store(nil) // the pause is over
+		f.s.rrPoolLook(context.Background())
+		waitLong(t, func() bool { return !heal.running.Load() }, 5*time.Second)
+	}
+	if heal.step.Load() != 0 || heal.pausing(time.Now()) {
+		t.Fatalf("searches with nothing to probe grew the step (%d) or started a pause", heal.step.Load())
+	}
+	node, _ := f.s.outbound.Outbound("b")
+	if !f.s.rrLifeProbe(node, f.s.balancer.trackOf("b"), rrClock(time.Now()), false) {
+		t.Fatal("the life probe of b did not start (W4)")
+	}
+	f.waitCheck(t)
+}
+
 // lx:end SPEC 138

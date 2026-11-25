@@ -220,6 +220,23 @@ func (h *rrHeal) endRoundAt(now time.Time, answered, lap bool) {
 		h.extra = false
 		h.pauseAccess.Unlock()
 	}
+	h.release()
+}
+
+// endIdle ends a round that started no probe (W1): it is no round — no pause, the
+// step as it was, and the right xr it took is not spent.
+func (h *rrHeal) endIdle() {
+	h.pauseAccess.Lock()
+	if h.extra {
+		h.extraTaken = false
+	}
+	h.extra = false
+	h.pauseAccess.Unlock()
+	h.release()
+}
+
+// release frees the single round of the group.
+func (h *rrHeal) release() {
 	h.checkAccess.Lock()
 	defer h.checkAccess.Unlock()
 	h.running.Store(false)
@@ -778,9 +795,11 @@ func (s *URLTest) rrStartCheck() bool {
 }
 
 // rrStartSearch starts the replacement search (§5): an empty slot or the slot of a
-// quarantined node with no replacement; no probe of a pool node, no control.
+// quarantined node with no replacement; no probe of a pool node, no control. With
+// no candidate, or while a run holds its flag (the run fills the slots itself),
+// there is nothing to probe and no round (W1).
 func (s *URLTest) rrStartSearch() bool {
-	if !s.balancer.heal.beginCheck() {
+	if s.group.checking.Load() || !s.rrHasCandidate() || !s.balancer.heal.beginCheck() {
 		return false
 	}
 	go s.rrHealSearch()
@@ -874,6 +893,7 @@ type rrCheck struct {
 	// reserved are the places of granted decisive parts not used yet: by a decisive
 	// probe waiting to start or by a control after.
 	reserved int
+	launched int // the probes the round started; none: no round (W1)
 }
 
 // request asks the queue for n places and hands then to the loop once they are
@@ -912,6 +932,7 @@ func (c *rrCheck) settle() {
 // end.
 func (c *rrCheck) launch(role rrCheckRole, index int, node adapter.Outbound, from time.Time) {
 	c.flying++
+	c.launched++
 	batch := c.batches
 	// The decisive probe of a node whose first probe still flies flies beside it from
 	// the moment of step 3, not after its end (U3).
@@ -1168,6 +1189,10 @@ func (s *URLTest) rrHealRound(round func(c *rrCheck)) {
 		heal.abort.Store(nil)
 		cancel()
 		c.settle()
+		if c.launched == 0 {
+			heal.endIdle() // W1: a round that probed nothing is no round
+			return
+		}
 		heal.endCheck(c.anyAnswer, s.rrLap())
 	}()
 	if heal.aborted(ctx) {
@@ -1238,9 +1263,7 @@ func (s *URLTest) rrLap() bool {
 	g, b := s.group, s.balancer
 	walk := 0
 	for _, node := range g.outbounds {
-		tag := node.Tag()
-		if b.inPool(tag) || b.isQuarantined(tag) || !common.Contains(node.Network(), N.NetworkTCP) ||
-			s.rrLiveHistory(node) != nil {
+		if !s.rrCandidate(node) || s.rrLiveHistory(node) != nil {
 			continue // in the pool, out of reach, or polled first by its live history (§5)
 		}
 		walk++
@@ -1358,8 +1381,7 @@ func (s *URLTest) rrLiveHistory(node adapter.Outbound) *adapter.URLTestHistory {
 func (s *URLTest) rrCandidateBatch(seen map[string]bool, size int) []adapter.Outbound {
 	g, b := s.group, s.balancer
 	usable := func(node adapter.Outbound) bool {
-		tag := node.Tag()
-		return !seen[tag] && !b.isQuarantined(tag) && !b.inPool(tag) && common.Contains(node.Network(), N.NetworkTCP)
+		return !seen[node.Tag()] && s.rrCandidate(node)
 	}
 	var alive []candidate
 	byTag := make(map[string]adapter.Outbound)
@@ -1395,6 +1417,23 @@ func (s *URLTest) rrCandidateBatch(seen map[string]bool, size int) []adapter.Out
 		b.heal.polled.Add(1)
 	}
 	return batch
+}
+
+// rrCandidate reports whether node is a candidate of C (§5): out of the pool, not
+// quarantined, taking TCP.
+func (s *URLTest) rrCandidate(node adapter.Outbound) bool {
+	b, tag := s.balancer, node.Tag()
+	return !b.isQuarantined(tag) && !b.inPool(tag) && common.Contains(node.Network(), N.NetworkTCP)
+}
+
+// rrHasCandidate reports whether C holds a candidate to probe.
+func (s *URLTest) rrHasCandidate() bool {
+	for _, node := range s.group.outbounds {
+		if s.rrCandidate(node) {
+			return true
+		}
+	}
+	return false
 }
 
 // rrTakeChecking claims URLTestGroup.checking for a slot change of the self-heal;
