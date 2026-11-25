@@ -156,7 +156,7 @@ the outage to end or for its own timeout, like a handshake that gets no answer. 
 
 **Closing a stream.** Data the application has already written is not thrown away on `Close`: the
 close waits until it has passed the queue and the delay and gone to the carrier, and only then
-closes the carrier. The wait is bounded, so a stalled link does not hold the close forever. A real
+closes the carrier. The wait lasts at most 5 s, so a stalled link does not hold the close forever; what is still undelivered then is lost. A real
 TCP socket behaves the same: what was written still goes out after `close`. A scheduled outage
 with `reset` breaks the connection at once, and what was not delivered is lost.
 
