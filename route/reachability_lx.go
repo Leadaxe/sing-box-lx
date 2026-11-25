@@ -217,7 +217,7 @@ func walkReachable(tag string, manual bool, result *reachability, resolve func(t
 	}
 
 	// An ordinary outbound routes through its static detour dependencies (a
-	// chain outbound lists its positions here).
+	// chain lists its top hop, a chain hop its position and the hop below).
 	for _, dependency := range outbound.Dependencies() {
 		walkReachable(dependency, false, result, resolve)
 	}

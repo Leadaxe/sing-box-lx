@@ -7,6 +7,7 @@ package tls
 import (
 	"context"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -128,7 +129,7 @@ func TestLxDetourС3GuardWins(t *testing.T) {
 	require.True(t, isFragment, "И7: the guard's split is not undone by the filter")
 }
 
-func TestLxDetourSpoofAndKernel(t *testing.T) {
+func TestLxDetourС2С5SpoofAndKernel(t *testing.T) {
 	ctx := lxDetourContext(lxDetourCatalog, "node")
 	config := lxDetourSTDConfig(t, ctx, false, nil)
 	marked := sniffGuardConnLx(context.Background(), lxDetourTunnelConn(t), config)
@@ -161,7 +162,7 @@ func (c *lxDetourFakeConfig) ClientHandshake(ctx context.Context, conn net.Conn)
 	return nil, nil
 }
 
-func TestLxDetourEngine(t *testing.T) {
+func TestLxDetourС2С5Engine(t *testing.T) {
 	var used string
 	apple := &lxDetourFakeConfig{name: "apple", used: &used}
 	fallback := &lxDetourFakeConfig{name: "go", used: &used}
@@ -173,6 +174,18 @@ func TestLxDetourEngine(t *testing.T) {
 	config.ctx = lxDetourContext(option.LXDetourStripResolved{TLSFragment: true}, "node")
 	_, _ = config.ClientHandshake(context.Background(), lxDetourTunnelConn(t))
 	require.Equal(t, "apple", used, "С5: tls.engine off keeps apple")
+}
+
+func TestLxDetourС4LoggedOncePerNode(t *testing.T) {
+	ctx := lxDetourContext(lxDetourCatalog, "node")
+	resolved := service.PtrFromContext[option.LXResolved](ctx)
+	resolved.DetourLogged = new(sync.Map)
+	decision := lxDetourDecideContext(ctx, lxDetourTunnelConn(t))
+	decision.applied(context.Background(), option.LXDetourStripTLSSpoof)
+	decision.applied(context.Background(), option.LXDetourStripTLSSpoof)
+	count := 0
+	resolved.DetourLogged.Range(func(key, value any) bool { count++; return true })
+	require.Equal(t, 1, count)
 }
 
 var _ = lxsniffguard.ProtoTLS

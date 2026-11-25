@@ -3,7 +3,6 @@ package option
 import (
 	"context"
 
-	"reflect"
 
 	"github.com/sagernet/sing-box/schema"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -51,17 +50,6 @@ func (o *ChainOutboundOptions) UnmarshalJSON(content []byte) error {
 }
 
 type chainOutboundOptionsPlain ChainOutboundOptions
-
-func (o ChainOutboundOptions) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
-	return builder.Define("ChainOutboundOptions", func() (*schema.Node, error) {
-		node := schema.StrictObject()
-		err := builder.FlattenStruct(node, reflect.TypeFor[chainOutboundOptionsPlain]())
-		if err != nil {
-			return nil, err
-		}
-		return node, nil
-	})
-}
 
 // ChainRewrite — карта «тип узла → JSON merge-patch» (см. ChainOutboundOptions.Rewrite).
 // Именованный тип нужен генератору `sing-box schema`: значение-патч — произвольный

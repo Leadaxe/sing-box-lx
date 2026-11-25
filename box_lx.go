@@ -2,6 +2,7 @@ package box
 
 import (
 	"context"
+	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxmtu"
@@ -48,6 +49,7 @@ func applyLXOptions(ctx context.Context, options *option.Options, logger log.Log
 		return ctx, err
 	}
 	resolved.DetourNodes = detourNodes(options, resolved.Detour)
+	resolved.DetourLogged = new(sync.Map)
 	// lx: SPEC 060 — the guard of this box, registered even when off (nil) for
 	// the same reason as resolved below.
 	guard, err := newSniffGuard(ctx, options, rawSniffGuard, resolved.SniffGuard, logger)

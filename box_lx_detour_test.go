@@ -173,7 +173,7 @@ func checkИ4(t *testing.T, run detourRun) {
 	}
 }
 
-func TestPrePassИ4EveryNode(t *testing.T) {
+func TestPrePassН1Н2И4EveryNode(t *testing.T) {
 	for name, content := range map[string]string{
 		"lxbox233":           strings.Replace(lxbox233, "%s", "", 1),
 		"lxbox233 detour":    strings.Replace(lxbox233, "%s", `, "lx": {"detour": {"mtu_align": "fill", "except_outbounds": ["NL-FREE#115"]}}`, 1),
@@ -284,6 +284,17 @@ func TestPrePassР8UnknownExcept(t *testing.T) {
 	if _, err := applyLXOptions(ctx, &options, log.NewNOPFactory().Logger()); err == nil || !strings.Contains(err.Error(), "lx.detour.except_outbounds: unknown outbound/endpoint tag: nope") {
 		t.Fatalf("Р8: %v", err)
 	}
+}
+
+func TestPrePassМ3Except(t *testing.T) {
+	content := strings.TrimSuffix(strings.TrimSpace(rewriteOverTunnel), "}") + `, "lx": {"detour": {"except_outbounds": ["wg-exit"]}}}`
+	run := runPrePass(t, content)
+	for _, change := range run.effective.Changes("wg-exit") {
+		if change.By.Type == option.LXChangeByMTUAlign {
+			t.Fatalf("М3: an excepted node is not aligned: %+v", change)
+		}
+	}
+	checkИ4(t, run)
 }
 
 func TestPrePassИ5DetourFalse(t *testing.T) {

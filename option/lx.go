@@ -2,6 +2,7 @@ package option
 
 import (
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/sagernet/sing-box/schema"
@@ -282,7 +283,10 @@ type LXResolved struct {
 	// with `detour` after the chain rewrite, not excepted. Filled by the box
 	// pre-pass; nil when every filter is off.
 	DetourNodes map[string]bool
-	SniffGuard  LXSniffGuardResolved // lx: SPEC 060
+	// DetourLogged holds the node/filter pairs already logged by the strip
+	// filters of this box; set by the box pre-pass.
+	DetourLogged *sync.Map
+	SniffGuard   LXSniffGuardResolved // lx: SPEC 060
 	// ImpairProfiles is lx.impair_profiles as written (lx: SPEC 164).
 	ImpairProfiles map[string]ImpairProfile
 }

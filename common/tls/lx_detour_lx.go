@@ -18,10 +18,10 @@ package tls
 import (
 	"context"
 	"net"
-	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxdatagram"
+	"github.com/sagernet/sing-box/common/lxsniffguard"
 	"github.com/sagernet/sing-box/common/lxtrace"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -172,18 +172,12 @@ func skipKTLSLx(conn net.Conn) bool {
 	return true
 }
 
-var lxDetourLogged sync.Map
-
-type lxDetourLogKey struct {
-	resolved *option.LXResolved
-	tag      string
-	what     string
-}
-
-// logOnce writes one line per node, box and filter.
+// logOnce writes one line per node, box and filter; the box keeps the set.
 func (d *lxDetourDecision) logOnce(filter string) {
-	if _, loaded := lxDetourLogged.LoadOrStore(lxDetourLogKey{d.resolved, d.tag, filter}, struct{}{}); loaded {
-		return
+	if d.resolved.DetourLogged != nil {
+		if _, loaded := d.resolved.DetourLogged.LoadOrStore(d.tag+"\x00"+filter, struct{}{}); loaded {
+			return
+		}
 	}
 	factory := service.FromContext[log.Factory](d.ctx)
 	if factory == nil {
@@ -222,7 +216,11 @@ func (c *lxAppleConfig) ClientHandshake(ctx context.Context, conn net.Conn) (aTL
 	decision := lxDetourDecideContext(c.ctx, conn)
 	if decision.stripEngine {
 		decision.applied(ctx, option.LXDetourStripTLSEngine)
-		return aTLS.ClientHandshake(ctx, sniffGuardConnLx(ctx, conn, c.fallback), c.fallback)
+		// The guard decided on this handshake at the outer seam already, for
+		// an engine it cannot shape; it is asked once per handshake, so the
+		// go engine only gets the lx.detour filters.
+		guardless := lxsniffguard.WithoutAttempt(ctx)
+		return aTLS.ClientHandshake(guardless, sniffGuardConnLx(guardless, conn, c.fallback), c.fallback)
 	}
 	return aTLS.ClientHandshake(ctx, conn, c.Config)
 }

@@ -3,6 +3,7 @@ package chain
 import (
 	"context"
 	"net"
+	"sync"
 	"sync/atomic"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -28,9 +29,11 @@ type Hop struct {
 	manager adapter.OutboundManager
 	options option.ChainHopOutboundOptions
 
-	chain  *Chain
-	target adapter.Outbound
-	below  *Hop
+	resolveOnce sync.Once
+	resolveErr  error
+	chain       *Chain
+	target      adapter.Outbound
+	below       *Hop
 	// isGroup: the position is a group; its pick dials through its own
 	// detour, a picked `direct` through the mark (Х8).
 	isGroup bool
@@ -56,6 +59,17 @@ func (h *Hop) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
+	return h.resolve()
+}
+
+// resolve finds the chain, the position and the hop below once: at Start, or
+// at the first dial if a node above dials before the hop has started.
+func (h *Hop) resolve() error {
+	h.resolveOnce.Do(func() { h.resolveErr = h.doResolve() })
+	return h.resolveErr
+}
+
+func (h *Hop) doResolve() error {
 	chainOutbound, loaded := h.manager.Outbound(h.options.Chain)
 	if !loaded {
 		return E.New("chain not found: ", h.options.Chain)
@@ -101,6 +115,9 @@ func (h *Hop) dialTarget(ctx context.Context) (context.Context, adapter.Outbound
 }
 
 func (h *Hop) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if err := h.resolve(); err != nil {
+		return nil, err
+	}
 	ctx, target := h.dialTarget(ctx)
 	var (
 		conn net.Conn
@@ -123,6 +140,9 @@ func (h *Hop) DialContext(ctx context.Context, network string, destination M.Soc
 }
 
 func (h *Hop) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	if err := h.resolve(); err != nil {
+		return nil, err
+	}
 	ctx, target := h.dialTarget(ctx)
 	var (
 		conn net.PacketConn
