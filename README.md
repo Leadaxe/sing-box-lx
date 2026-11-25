@@ -171,7 +171,7 @@ The path shows in `detourList` and `GetChains`; the hop tags `<tag>#0`, `<tag>#1
 
 A group of nodes spreads connections or stays on a working node, instead of only chasing the lowest ping. `mode: round_robin` with `balancer{…}` keeps a pool with lazy health checks and sticky slots; `mode: failover` holds the node until it fails and probes only that node; `least_test` penalises a node on live dial errors and retries through the next candidate.
 
-A pool server that goes down between checks drops no requests: the connection opens through the next node, and the dead one is replaced in 0.13 s (NanoPi stand, 30 of 30 requests). A site closed to one node opens through another node of the pool, and the rest of the traffic stays put.
+A pool server that goes down between checks drops no requests: the connection opens through the next node, and the dead one is replaced with a live one at once. A site closed to one node opens through another node of the pool, and the rest of the traffic stays put.
 
 Limits: the modes need no build tag; the `GetPool` call for a UI needs `with_lx_command`; recovery from failed connections works only in `round_robin`.
 
