@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/urltest"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -391,9 +392,11 @@ func deadGroup(t *testing.T, size, pool int) *healFixture {
 		tags[i] = "n" + strconv.Itoa(i)
 	}
 	f := newHealFixture(t, tags, tags[:pool], 0)
-	for _, tag := range tags {
+	for i, tag := range tags {
 		f.nodes[tag].dead.Store(true)
-		f.g.history.DeleteURLTestHistory(tag)
+		if i >= pool {
+			f.g.history.DeleteURLTestHistory(tag) // the pool died after its history (a slot without one is empty, §5)
+		}
 	}
 	return f
 }
@@ -463,6 +466,9 @@ func TestRR9_L3_poolIsTheGroupOneDead(t *testing.T) {
 func TestRR9_L3_fiveGroupsCoreBound(t *testing.T) {
 	shortProbes(t, 300*time.Millisecond)
 	shared := urltest.NewHistoryStorage()
+	for i := 0; i < 3; i++ { // the pool nodes died after their history (§5)
+		shared.StoreURLTestHistory("n"+strconv.Itoa(i), &adapter.URLTestHistory{Time: time.Now().Add(-time.Minute), Delay: 100})
+	}
 	never := make(chan struct{})
 	t.Cleanup(func() { close(never) })
 	var fixtures []*healFixture

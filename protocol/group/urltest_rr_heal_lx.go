@@ -822,14 +822,23 @@ func (s *URLTest) rrExtraRound() {
 	}
 }
 
-// rrSlotToFill reports a slot with no node (D1) or with a quarantined one (§5).
+// rrSlotToFill reports a slot to fill (§5): empty (D1), with a quarantined node, or
+// with a node without history.
 func (s *URLTest) rrSlotToFill() bool {
 	for _, entry := range s.balancer.slotsSnapshot() {
-		if entry.tag == "" || s.balancer.isQuarantined(entry.tag) {
+		if s.rrSlotEmpty(entry.tag) {
 			return true
 		}
 	}
 	return false
+}
+
+// rrSlotEmpty reports a slot the pick skips and the search fills (§5): no node, a
+// quarantined one, or one without history (a dead occupant the run left, a leaf
+// whose shared history D1 of another group erased). It is no slot of the pool for
+// the check (I9).
+func (s *URLTest) rrSlotEmpty(tag string) bool {
+	return tag == "" || !s.slotAlive(tag)
 }
 
 type rrCheckRole uint8
@@ -1206,8 +1215,8 @@ func (s *URLTest) rrHealRound(round func(c *rrCheck)) {
 func (s *URLTest) rrHealCheck() {
 	s.rrHealRound(func(c *rrCheck) {
 		for _, entry := range s.balancer.slotsSnapshot() {
-			if entry.tag == "" || s.balancer.isQuarantined(entry.tag) {
-				continue // a quarantined node takes no part; a struck one left its slot (§4.2)
+			if s.rrSlotEmpty(entry.tag) {
+				continue // a quarantined node or one without history takes no part; a struck one left its slot (§4.2)
 			}
 			if node, loaded := s.outbound.Outbound(entry.tag); loaded && common.Contains(node.Network(), N.NetworkTCP) {
 				c.pool = append(c.pool, node)
@@ -1294,7 +1303,7 @@ func (s *URLTest) rrStrike(ctx context.Context, c *rrCheck) {
 		}
 		others := false
 		for _, entry := range b.slotsSnapshot() {
-			if entry.tag != "" && entry.tag != node.Tag() && !b.isQuarantined(entry.tag) {
+			if entry.tag != node.Tag() && !s.rrSlotEmpty(entry.tag) {
 				others = true
 				break
 			}
@@ -1320,7 +1329,7 @@ func (s *URLTest) rrRefill(ctx context.Context, c *rrCheck) {
 	b := s.balancer
 	var empty []string
 	for _, entry := range b.slotsSnapshot() {
-		if entry.tag == "" || b.isQuarantined(entry.tag) {
+		if s.rrSlotEmpty(entry.tag) {
 			empty = append(empty, entry.tag)
 		}
 	}
@@ -1343,6 +1352,9 @@ func (s *URLTest) rrRefill(ctx context.Context, c *rrCheck) {
 					return
 				}
 				continue
+			}
+			if dead != "" && !s.rrSlotEmpty(dead) {
+				break // its node got history back meanwhile: the slot is no longer to fill
 			}
 			if !s.rrTakeChecking(ctx) {
 				return // a run holds the flag: the run fills the slots itself

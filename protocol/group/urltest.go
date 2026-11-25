@@ -957,7 +957,7 @@ func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int, lifte
 			}
 		}
 	}
-	g.balancer.setSlots(next)
+	g.balancer.setSlots(g.balancer.rrDropStruck(next)) // lx: SPEC 138 §5 — the run puts no node struck out in its interval back
 	return result
 }
 
@@ -975,7 +975,7 @@ func (g *URLTestGroup) balancePoolTolerant(ctx context.Context, size int) map[st
 		}
 	}
 	next := planTolerantPool(g.balancer.poolTags(), results, size, g.balancer.poolTolerance)
-	g.balancer.setSlots(next)
+	g.balancer.setSlots(g.balancer.rrDropStruck(next)) // lx: SPEC 138 §5 — the run puts no node struck out in its interval back
 	return result
 }
 

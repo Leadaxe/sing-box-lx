@@ -416,25 +416,32 @@ func TestRRAlgo_19_cursorAndK(t *testing.T) {
 	}
 }
 
-// I9, R1: a pool node with no history starts nothing from the pick; an empty slot
-// (D1) starts the replacement search only — no probe of a pool node, no control —
-// and the candidate that answered its own probe fills it.
+// I9, R1: an empty slot (D1), like a slot whose node has no history (§5), starts the
+// replacement search only — no probe of a pool node, no control — and the
+// candidate that answered its own probe fills it.
 func TestRRAlgo_I9_emptySlotStartsOnlyTheSearch(t *testing.T) {
-	f := newHealFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"}, 0)
+	f := newHealFixture(t, []string{"a", "b", "c", "d", "e"}, []string{"a", "b", "c"}, 0)
 	f.nodes["a"].dead.Store(true)
+	f.nodes["e"].dead.Store(true) // d alone answers the first search
 	f.g.history.DeleteURLTestHistory("a")
-	f.s.selectBalanced(context.Background(), N.NetworkTCP, siteAddr("site.example"))
-	time.Sleep(50 * time.Millisecond)
-	if f.s.balancer.heal.running.Load() || f.probes("a")+f.probes("b")+f.probes("c")+f.probes("d") != 0 {
-		t.Fatal("I9: no soft sign on a pool node, nothing starts")
-	}
-	f.s.balancer.clearSlot("a")
-	f.s.balancer.poolLook.Store(0)
 	f.s.selectBalanced(context.Background(), N.NetworkTCP, siteAddr("site.example"))
 	waitUntil(t, func() bool { return samePool(f.pool(), "d", "b", "c") })
 	f.waitCheck(t)
-	if f.probes("b")+f.probes("c") != 0 || f.probes("d") != 1 {
-		t.Fatalf("the search probes candidates only: b %d, c %d, d %d", f.probes("b"), f.probes("c"), f.probes("d"))
+	if f.probes("a")+f.probes("b")+f.probes("c") != 0 || f.probes("d") != 1 {
+		t.Fatalf("the slot without history: the search probes candidates only: a %d, b %d, c %d, d %d", f.probes("a"), f.probes("b"), f.probes("c"), f.probes("d"))
+	}
+	f.nodes["e"].dead.Store(false)
+	f.nodes["b"].dead.Store(true) // what D1 does to b
+	f.g.history.DeleteURLTestHistory("b")
+	f.s.balancer.clearSlot("b")
+	f.s.balancer.heal.lastCheckEnd.Store(nil) // the pause is over
+	f.s.balancer.poolLook.Store(0)
+	c, d, e := f.probes("c"), f.probes("d"), f.probes("e")
+	f.s.selectBalanced(context.Background(), N.NetworkTCP, siteAddr("site.example"))
+	waitUntil(t, func() bool { return samePool(f.pool(), "d", "e", "c") })
+	f.waitCheck(t)
+	if f.probes("c") != c || f.probes("d") != d || f.probes("e") != e+1 {
+		t.Fatalf("the empty slot: the search probes candidates only: c %d, d %d, e %d", f.probes("c")-c, f.probes("d")-d, f.probes("e")-e)
 	}
 }
 

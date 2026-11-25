@@ -218,4 +218,59 @@ func TestRRReview9_noCandidateNoRound(t *testing.T) {
 	f.waitCheck(t)
 }
 
+// §5, I9: D1 during a scheduled run — the plan of the run does not put the struck
+// node back into its slot; the slot stays empty and asks for the search.
+func TestRRReview9_runKeepsStruckNodeOut(t *testing.T) {
+	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a", "b", "c"}, 0)
+	f.nodes["c"].dead.Store(true)
+	f.nodes["c"].slow = 300 * time.Millisecond
+	done := make(chan struct{})
+	go func() {
+		f.g.CheckOutbounds(context.Background(), false) // the lazy scheduled run
+		close(done)
+	}()
+	time.Sleep(100 * time.Millisecond)
+	// What rrStrike does to c meanwhile (D1 by a check beside the run).
+	f.g.history.DeleteURLTestHistoryNotAfterLx("c", time.Now())
+	f.s.balancer.clearSlot("c")
+	f.s.balancer.rrStruck("c")
+	<-done
+	for _, tag := range f.s.balancer.poolTags() {
+		if tag == "c" {
+			t.Fatalf("the struck node is back in a slot: %v", f.s.balancer.poolTags())
+		}
+	}
+	if !f.s.rrSlotToFill() {
+		t.Fatal("the slot of the struck node is not to fill")
+	}
+}
+
+// §5, I9: a slot whose node has no history (a dead occupant the run left, a leaf
+// whose history D1 of another group erased) is an empty slot: no pool node of the
+// check, and the search replaces it.
+func TestRRReview9_slotWithoutHistoryIsEmpty(t *testing.T) {
+	f := newHealFixture(t, []string{"a", "b", "c", "d"}, []string{"a", "b", "c"}, 0)
+	f.g.history.DeleteURLTestHistory("c")
+	if !f.s.rrSlotToFill() {
+		t.Fatal("a slot with a node without history is not to fill")
+	}
+	f.s.rrPoolLook(context.Background())
+	waitLong(t, func() bool { return !f.s.balancer.heal.running.Load() }, 5*time.Second)
+	if f.nodes["c"].probes.Load() != 0 {
+		t.Fatalf("the search probed the node of the slot (I9): %d", f.nodes["c"].probes.Load())
+	}
+	if pool := f.s.balancer.poolTags(); pool[2] != "d" {
+		t.Fatalf("the candidate d does not take the slot: %v", pool)
+	}
+	f.g.history.DeleteURLTestHistory("b")
+	f.s.balancer.heal.lastCheckEnd.Store(nil) // the pause after the search is over
+	if !f.s.rrStartCheck() {
+		t.Fatal("no check")
+	}
+	waitLong(t, func() bool { return !f.s.balancer.heal.running.Load() }, 10*time.Second)
+	if f.nodes["b"].probes.Load() != 0 {
+		t.Fatalf("the check probed the node of a slot without history: %d", f.nodes["b"].probes.Load())
+	}
+}
+
 // lx:end SPEC 138

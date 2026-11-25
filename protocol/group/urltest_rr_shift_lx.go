@@ -681,6 +681,21 @@ func (b *balancer) rrStruck(tag string) int {
 	return m.strikes[tag]
 }
 
+// rrDropStruck empties, in the plan of the scheduled run, the slots of the nodes
+// struck out (D1) since the run started (§5): the run puts none of them back, its
+// slot stays empty and asks for the replacement search.
+func (b *balancer) rrDropStruck(tags []string) []string {
+	m := &b.memory
+	m.access.Lock()
+	defer m.access.Unlock()
+	for i, tag := range tags {
+		if tag != "" && m.strikes[tag] > 0 {
+			tags[i] = ""
+		}
+	}
+	return tags
+}
+
 // rrScheduledRun is the scheduled run: the marks and the quarantine lift
 // (rrResetMarks) and strikes(n) of Q4 start from zero. It returns the nodes lifted
 // from quarantine: the run probes them (§8 item 19).

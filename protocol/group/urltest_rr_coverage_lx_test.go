@@ -217,15 +217,17 @@ func TestRRCov_L3_lifeProbeLimits(t *testing.T) {
 }
 
 // L3, §5: k batches of candidates per check, the replacement included. Two dead
-// pool nodes (no history, still in their slots: pool nodes, not candidates) and dead
-// candidates: the check probes the pool and spends its k batches of |P|; the
-// replacement adds none.
+// pool nodes (old history, still in their slots: pool nodes, not candidates) and dead
+// candidates with no history: the check probes the pool and spends its k batches of
+// |P|; the replacement adds none.
 func TestRRCov_L3_oneKPerCheck(t *testing.T) {
 	tags := []string{"a", "b", "c1", "c2", "c3", "c4"}
 	f := newHealFixture(t, tags, []string{"a", "b"}, 0)
 	for _, tag := range tags {
 		f.nodes[tag].dead.Store(true)
-		f.g.history.DeleteURLTestHistory(tag)
+		if tag != "a" && tag != "b" {
+			f.g.history.DeleteURLTestHistory(tag)
+		}
 	}
 	f.runCheck()
 	total := 0
