@@ -68,14 +68,14 @@ func (h *rrHeal) clearPause() { h.setPauseEnd(nil) }
 func (h *rrHeal) pauseStep() int32 {
 	h.access.Lock()
 	defer h.access.Unlock()
-	return h.step
+	return h.step.Load()
 }
 
 // setPauseStep sets the step of the pause.
 func (h *rrHeal) setPauseStep(step int32) {
 	h.access.Lock()
 	defer h.access.Unlock()
-	h.step = step
+	h.step.Store(step)
 }
 
 // pollCount returns o.

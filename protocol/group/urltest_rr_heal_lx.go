@@ -55,11 +55,11 @@ const (
 type rrHeal struct {
 	// access guards the round in flight and the pause of rounds (§4.6).
 	access sync.Mutex
-	round  *rrRound   // the round in flight (a check or a search); nil for none
-	end    *time.Time // e, the end of the previous round (W1); nil: no pause
-	step   int32      // g = rrHealGap << step (W2)
-	polled int32      // o, the candidates the cursor gave since the last ANSWER of a probe of the group
-	right  rrRight    // xr of the pause that ends at end (W5)
+	round  *rrRound     // the round in flight (a check or a search); nil for none
+	end    *time.Time   // e, the end of the previous round (W1); nil: no pause
+	step   atomic.Int32 // g = rrHealGap << step (W2); written under access, read without it by grantExtra
+	polled int32        // o, the candidates the cursor gave since the last ANSWER of a probe of the group
+	right  rrRight      // xr of the pause that ends at end (W5)
 	// epochEnd is E, the rrClock of the end of the last freeze (N0): while now < E
 	// nothing is inferred or done, and an exchange that started before E takes part
 	// in no rule. 0: no event yet (epoch reads it as math.MinInt64).
@@ -124,7 +124,7 @@ func (h *rrHeal) liveHistory(leaf string, history *adapter.URLTestHistory) bool 
 func (h *rrHeal) pause() time.Duration {
 	h.access.Lock()
 	defer h.access.Unlock()
-	return rrHealGap << h.step
+	return rrHealGap << h.step.Load()
 }
 
 // pausing reports, at now, whether the pause after the last round still holds.
@@ -135,7 +135,7 @@ func (h *rrHeal) pausing(now time.Time) bool {
 }
 
 func (h *rrHeal) pausingLocked(now time.Time) bool {
-	return h.end != nil && now.Sub(*h.end) < rrHealGap<<h.step
+	return h.end != nil && now.Sub(*h.end) < rrHealGap<<h.step.Load()
 }
 
 // lifeHeld is W4: while the step of the pause is above the base and the pause goes
@@ -143,7 +143,7 @@ func (h *rrHeal) pausingLocked(now time.Time) bool {
 func (h *rrHeal) lifeHeld(now time.Time) bool {
 	h.access.Lock()
 	defer h.access.Unlock()
-	return h.step > 0 && h.pausingLocked(now)
+	return h.step.Load() > 0 && h.pausingLocked(now)
 }
 
 // ready reports whether a round could start at now: none in flight, not frozen, the
@@ -199,8 +199,8 @@ func (h *rrHeal) endRound(now time.Time, probed, answered, lap bool) {
 		}
 	case h.frozen():
 	case !extra || answered:
-		if !answered && lap && h.step < rrPauseSteps {
-			h.step++
+		if !answered && lap && h.step.Load() < rrPauseSteps {
+			h.step.Add(1)
 		}
 		h.end, h.right = &now, rrRightNone
 	}
@@ -224,7 +224,8 @@ func (h *rrHeal) running(cancel context.CancelFunc) {
 func (h *rrHeal) probeAnswered() {
 	h.access.Lock()
 	defer h.access.Unlock()
-	h.step, h.polled = 0, 0
+	h.step.Store(0)
+	h.polled = 0
 }
 
 // poll counts a candidate the cursor gave (o).
@@ -244,9 +245,12 @@ func (h *rrHeal) polls() int {
 // grantExtra is W5: an ANSWER of a connection of the group during a pause above
 // the base gives one round at once, once per pause. It reports a new right.
 func (h *rrHeal) grantExtra(now time.Time) bool {
+	if h.step.Load() == 0 {
+		return false // the hot path: the first byte of every watched connection
+	}
 	h.access.Lock()
 	defer h.access.Unlock()
-	if h.step == 0 || !h.pausingLocked(now) || h.right != rrRightNone {
+	if h.step.Load() == 0 || !h.pausingLocked(now) || h.right != rrRightNone {
 		return false
 	}
 	h.right = rrRightOpen
@@ -273,7 +277,8 @@ func (h *rrHeal) freeze() {
 		}
 	}
 	h.access.Lock()
-	h.end, h.step, h.right = nil, 0, rrRightNone
+	h.end, h.right = nil, rrRightNone
+	h.step.Store(0)
 	h.access.Unlock()
 	h.lifeAccess.Lock()
 	h.lifeStarts, h.udpLifeLast = [rrLifeBurst]int64{}, 0
