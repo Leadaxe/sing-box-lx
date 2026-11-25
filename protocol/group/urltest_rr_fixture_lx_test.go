@@ -6,7 +6,10 @@
 
 package group
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // roundBusy reports a round of the group in flight.
 func (h *rrHeal) roundBusy() bool {
@@ -81,11 +84,14 @@ func (h *rrHeal) setPauseStep(step int32) {
 // pollCount returns o.
 func (h *rrHeal) pollCount() int32 { return int32(h.polls()) }
 
-// setPollCount sets o.
+// setPollCount sets o to polled tags that name no node.
 func (h *rrHeal) setPollCount(polled int32) {
 	h.access.Lock()
 	defer h.access.Unlock()
-	h.polled = polled
+	h.polled = make(map[string]struct{}, polled)
+	for i := range polled {
+		h.polled[fmt.Sprint("polled-", i)] = struct{}{}
+	}
 }
 
 // rrQuarantine puts tag in quarantine as Q4 does.

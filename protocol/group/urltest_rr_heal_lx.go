@@ -55,11 +55,11 @@ const (
 type rrHeal struct {
 	// access guards the round in flight and the pause of rounds (§4.6).
 	access sync.Mutex
-	round  *rrRound     // the round in flight (a check or a search); nil for none
-	end    *time.Time   // e, the end of the previous round (W1); nil: no pause
-	step   atomic.Int32 // g = rrHealGap << step (W2); written under access, read without it by grantExtra
-	polled int32        // o, the candidates the cursor gave since the last ANSWER of a probe of the group
-	right  rrRight      // xr of the pause that ends at end (W5)
+	round  *rrRound            // the round in flight (a check or a search); nil for none
+	end    *time.Time          // e, the end of the previous round (W1); nil: no pause
+	step   atomic.Int32        // g = rrHealGap << step (W2); written under access, read without it by grantExtra
+	polled map[string]struct{} // o, the candidates polled since the last ANSWER of a probe of the group, each once
+	right  rrRight             // xr of the pause that ends at end (W5)
 	// epochEnd is E, the rrClock of the end of the last freeze (N0): while now < E
 	// nothing is inferred or done, and an exchange that started before E takes part
 	// in no rule. 0: no event yet (epoch reads it as math.MinInt64).
@@ -225,32 +225,51 @@ func (h *rrHeal) probeAnswered() {
 	h.access.Lock()
 	defer h.access.Unlock()
 	h.step.Store(0)
-	h.polled = 0
+	h.polled = nil
 }
 
-// poll counts a candidate the cursor gave (o).
-func (h *rrHeal) poll() {
+// poll adds a candidate given to a batch to o, whether the cursor gave it or its
+// live history put it first (§4.6).
+func (h *rrHeal) poll(tag string) {
 	h.access.Lock()
 	defer h.access.Unlock()
-	h.polled++
+	if h.polled == nil {
+		h.polled = make(map[string]struct{})
+	}
+	h.polled[tag] = struct{}{}
 }
 
-// polls returns o.
+// polls returns |o|.
 func (h *rrHeal) polls() int {
 	h.access.Lock()
 	defer h.access.Unlock()
-	return int(h.polled)
+	return len(h.polled)
 }
 
-// grantExtra is W5: an ANSWER of a connection of the group during a pause above
-// the base gives one round at once, once per pause. It reports a new right.
-func (h *rrHeal) grantExtra(now time.Time) bool {
+// polledAll reports whether o holds every one of tags: lap (§4.6).
+func (h *rrHeal) polledAll(tags []string) bool {
+	h.access.Lock()
+	defer h.access.Unlock()
+	for _, tag := range tags {
+		if _, polled := h.polled[tag]; !polled {
+			return false
+		}
+	}
+	return true
+}
+
+// grantExtra is W5: an ANSWER of a connection of the group picked during a pause
+// above the base gives one round at once, once per pause. A connection picked
+// before the pause began ran during the round: its answer is no news of the time
+// after it (the pick that started a search gave a second probe of the same
+// candidates at once). It reports a new right.
+func (h *rrHeal) grantExtra(now, picked time.Time) bool {
 	if h.step.Load() == 0 {
 		return false // the hot path: the first byte of every watched connection
 	}
 	h.access.Lock()
 	defer h.access.Unlock()
-	if h.step.Load() == 0 || !h.pausingLocked(now) || h.right != rrRightNone {
+	if h.step.Load() == 0 || !h.pausingLocked(now) || h.right != rrRightNone || picked.Before(*h.end) {
 		return false
 	}
 	h.right = rrRightOpen
@@ -1256,18 +1275,16 @@ func (s *URLTest) rrHealSearch() {
 	})
 }
 
-// rrLap is lap (§4.6): the cursor gave as many candidates as C holds for it since
-// the last ANSWER of a probe of the group, or C holds none.
+// rrLap is lap (§4.6): every candidate of C was polled since the last ANSWER of a
+// probe of the group — by the cursor or first by its live history — or C holds none.
 func (s *URLTest) rrLap() bool {
-	g, b := s.group, s.balancer
-	walk := 0
-	for _, node := range g.outbounds {
-		if !s.rrCandidate(node) || s.rrLiveHistory(node) != nil {
-			continue // in the pool, out of reach, or polled first by its live history (§5)
+	var candidates []string
+	for _, node := range s.group.outbounds {
+		if s.rrCandidate(node) {
+			candidates = append(candidates, node.Tag())
 		}
-		walk++
 	}
-	return b.heal.polls() >= walk
+	return s.balancer.heal.polledAll(candidates)
 }
 
 // rrStrike is D1 for every pool node whose decisive probe had no ANSWER while the
@@ -1363,7 +1380,7 @@ func (s *URLTest) rrLiveHistory(node adapter.Outbound) *adapter.URLTestHistory {
 // rrCandidateBatch returns the next batch of at most size candidates not yet probed
 // in this round (§5): those with live history first, fastest first, then the rest
 // from the cursor going round in config order; the cursor moves past the last one
-// it gave (I8), and o counts the ones it gave (§4.6).
+// it gave (I8), and o takes every one given, either way (§4.6).
 func (s *URLTest) rrCandidateBatch(seen map[string]bool, size int) []adapter.Outbound {
 	g, b := s.group, s.balancer
 	usable := func(node adapter.Outbound) bool {
@@ -1388,6 +1405,7 @@ func (s *URLTest) rrCandidateBatch(seen map[string]bool, size int) []adapter.Out
 		}
 		batch = append(batch, byTag[entry.tag])
 		seen[entry.tag] = true
+		b.heal.poll(entry.tag) // o: polled first by its live history, the cursor stays (I8)
 	}
 	n := len(g.outbounds)
 	from := b.heal.cursor // I8: the walk goes from where the cursor stood; it moves past each one given
@@ -1400,7 +1418,7 @@ func (s *URLTest) rrCandidateBatch(seen map[string]bool, size int) []adapter.Out
 		batch = append(batch, node)
 		seen[node.Tag()] = true
 		b.heal.cursor = (i + 1) % n
-		b.heal.poll()
+		b.heal.poll(node.Tag())
 	}
 	return batch
 }

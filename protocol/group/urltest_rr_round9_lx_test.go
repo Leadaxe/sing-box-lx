@@ -85,11 +85,11 @@ func TestRR9_W5_oneExtraRoundPerPause(t *testing.T) {
 	at := time.Now()
 	h.beginRound(at)
 	h.endRound(at, true, false, false)
-	if h.grantExtra(at.Add(time.Second)) {
+	if h.grantExtra(at.Add(time.Second), at.Add(time.Second)) {
 		t.Fatal("W5: no right at the base")
 	}
 	h.setPauseStep(2)
-	if !h.grantExtra(at.Add(time.Second)) || h.grantExtra(at.Add(2*time.Second)) {
+	if !h.grantExtra(at.Add(time.Second), at.Add(time.Second)) || h.grantExtra(at.Add(2*time.Second), at.Add(2*time.Second)) {
 		t.Fatal("W5: one right per pause")
 	}
 	end := h.pauseEnd()
@@ -100,7 +100,7 @@ func TestRR9_W5_oneExtraRoundPerPause(t *testing.T) {
 	if h.pauseEnd() != end || h.pauseStep() != 2 {
 		t.Fatal("W5: the round of the right with no ANSWER keeps the step and the end of the pause")
 	}
-	if h.ready(at.Add(4*time.Second)) || h.grantExtra(at.Add(5*time.Second)) {
+	if h.ready(at.Add(4*time.Second)) || h.grantExtra(at.Add(5*time.Second), at.Add(5*time.Second)) {
 		t.Fatal("W5: the second first byte of the same pause gives no round")
 	}
 	if !h.ready(at.Add(h.pause())) {
@@ -391,7 +391,7 @@ func virtualRounds(f *healFixture, origin time.Time, from, to int, firstBytes bo
 			}
 		}
 		if firstBytes {
-			heal.grantExtra(at)
+			heal.grantExtra(at, at)
 		}
 		if !heal.beginRound(at) {
 			continue
