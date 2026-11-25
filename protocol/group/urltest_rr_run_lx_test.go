@@ -56,9 +56,9 @@ func TestRRRun_noAnswerChangesNothing(t *testing.T) {
 	}
 }
 
-// R1: the manual run (and the run after a network change) with no answer neither
-// lays out nor lifts.
-func TestRRRun_manualNoAnswerChangesNothing(t *testing.T) {
+// R1: the forced run after a network change with no answer neither lays out nor
+// lifts, and erases no history.
+func TestRRRun_networkRunNoAnswerChangesNothing(t *testing.T) {
 	tags := []string{"n0", "n1", "n2", "n3", "n4"}
 	f := newHealFixture(t, tags, tags[:3], 0)
 	f.s.balancer.rrQuarantine("n4")
@@ -70,6 +70,41 @@ func TestRRRun_manualNoAnswerChangesNothing(t *testing.T) {
 	}
 	if !samePool(f.pool(), tags[:3]...) || !f.allHistory(tags...) || !f.s.balancer.isQuarantined("n4") {
 		t.Fatalf("the manual run with no answer changed the group: %v", f.pool())
+	}
+}
+
+// R1, the manual test (owner, 2026-11-26): in an outage it erases the history of
+// the nodes that failed it, as upstream, so they show as errors; it still lays out
+// nothing and lifts nothing. The scheduled run in the same outage erases nothing.
+func TestRRRun_manualNoAnswerErasesHistory(t *testing.T) {
+	tags := []string{"n0", "n1", "n2", "n3", "n4"}
+	for _, entry := range []struct {
+		name string
+		run  func(f *healFixture)
+	}{
+		{"URLTest", func(f *healFixture) { _, _ = f.g.URLTest(context.Background()) }},
+		{"CheckOutbounds", func(f *healFixture) { f.s.ctx = f.g.ctx; f.s.CheckOutbounds() }},
+	} {
+		t.Run(entry.name, func(t *testing.T) {
+			f := newHealFixture(t, tags, tags[:3], 0)
+			f.s.balancer.rrQuarantine("n4")
+			for _, tag := range tags {
+				f.nodes[tag].dead.Store(true)
+			}
+			f.g.balancePool(context.Background())
+			if !f.allHistory(tags...) {
+				t.Fatal("the scheduled run in an outage erased history")
+			}
+			entry.run(f)
+			for _, tag := range tags {
+				if f.g.history.LoadURLTestHistory(tag) != nil {
+					t.Fatalf("the manual test in an outage kept the history of %s", tag)
+				}
+			}
+			if !samePool(f.pool(), tags[:3]...) || !f.s.balancer.isQuarantined("n4") {
+				t.Fatalf("the manual test with no answer changed the layout or the quarantine: %v", f.pool())
+			}
+		})
 	}
 }
 

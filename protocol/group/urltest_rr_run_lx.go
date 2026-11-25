@@ -9,6 +9,10 @@ package group
 // network. Such a batch erases nothing: the run gives the history its probes
 // erased back (I5, ALGORITHM §5). Once a later batch answers, the run probes
 // those pool members once more, now with that answer as the control.
+// The manual test is the exception (an explicit action of the user): its batches
+// erase history as upstream, so the node that failed it shows as an error; with
+// no answer it still lays out nothing and lifts nothing. The run after a network
+// change is no manual test.
 // A run in which no probe answered changes nothing of the group: the scheduled
 // run lifts the quarantine and the marks and restarts strikes(n) at its first
 // answer, not at its start, and a run with no answer lays out no slot.
@@ -18,6 +22,7 @@ package group
 // layout, which gives the hole to the next live node instead.
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,17 +37,18 @@ type rrRun struct {
 	access    sync.Mutex
 	active    bool           // a run is in flight
 	scheduled bool           // the scheduled run: its first answer lifts (rrScheduledRun)
+	manual    bool           // the manual test: its batches with no answer erase history as upstream
 	answered  bool           // a probe of the run answered
 	struck    map[string]int // the D1 of the nodes while the run is in flight
 }
 
-// rrRunBegin begins a run; scheduled is the lazy scheduled run. It returns the
-// nodes in quarantine now: the scheduled run probes them (§8 item 19), and its
-// first answer lifts them.
-func (b *balancer) rrRunBegin(scheduled bool) []string {
+// rrRunBegin begins a run; scheduled is the lazy scheduled run, manual the manual
+// test. It returns the nodes in quarantine now: the scheduled run probes them
+// (§8 item 19), and its first answer lifts them.
+func (b *balancer) rrRunBegin(scheduled, manual bool) []string {
 	r := &b.run
 	r.access.Lock()
-	r.active, r.scheduled, r.answered, r.struck = true, scheduled, false, nil
+	r.active, r.scheduled, r.manual, r.answered, r.struck = true, scheduled, manual, false, nil
 	r.access.Unlock()
 	if !scheduled {
 		return nil
@@ -90,7 +96,7 @@ func (b *balancer) rrRunEnd() bool {
 	r.access.Lock()
 	defer r.access.Unlock()
 	answered := r.answered
-	r.active, r.scheduled, r.answered, r.struck = false, false, false, nil
+	r.active, r.scheduled, r.manual, r.answered, r.struck = false, false, false, false, nil
 	return answered
 }
 
@@ -100,6 +106,14 @@ func (b *balancer) rrRunGotAnswer() bool {
 	r.access.Lock()
 	defer r.access.Unlock()
 	return r.active && r.answered
+}
+
+// rrRunManual reports whether the run in flight is the manual test.
+func (b *balancer) rrRunManual() bool {
+	r := &b.run
+	r.access.Lock()
+	defer r.access.Unlock()
+	return r.active && r.manual
 }
 
 // rrRunStrike records a D1 of tag while a run is in flight.
@@ -198,7 +212,8 @@ func (g *URLTestGroup) probeHook(batch *rrBatch) func(tag string) {
 // rrBatchEnd ends a batch: an answer is an answer of the run; a batch with no
 // answer before the first answer of the run gives back the history its failed
 // probes erased, except to a node struck out meanwhile (its D1 erased it). After
-// the first answer the earlier answer is the control: the erasure stays.
+// the first answer the earlier answer is the control: the erasure stays. The
+// manual test gives nothing back: the user asked for the state now.
 func (g *URLTestGroup) rrBatchEnd(batch *rrBatch) {
 	if batch == nil {
 		return
@@ -213,7 +228,7 @@ func (g *URLTestGroup) rrBatchEnd(batch *rrBatch) {
 		g.balancer.rrRunAnswered()
 		return
 	}
-	if g.balancer.rrRunGotAnswer() {
+	if g.balancer.rrRunGotAnswer() || g.balancer.rrRunManual() {
 		return
 	}
 	for member, before := range batch.before {
@@ -222,6 +237,20 @@ func (g *URLTestGroup) rrBatchEnd(batch *rrBatch) {
 		}
 		g.history.RestoreURLTestHistoryLx(before.leaf, before.history)
 	}
+}
+
+// manualRunKey marks the context of the manual test of a group (URLTestGroup.URLTest,
+// URLTest.CheckOutbounds); it rides into the runs of nested groups.
+type manualRunKey struct{}
+
+func withManualRunLx(ctx context.Context) context.Context {
+	return context.WithValue(ctx, manualRunKey{}, true)
+}
+
+// manualRunLx reports whether ctx is the context of a manual test.
+func manualRunLx(ctx context.Context) bool {
+	manual, _ := ctx.Value(manualRunKey{}).(bool)
+	return manual
 }
 
 // rrHasHistory reports whether the node of the member tag has history now.

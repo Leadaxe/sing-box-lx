@@ -211,7 +211,7 @@ func (g *URLTestGroup) probeGatedLx() bool {
 func (g *URLTestGroup) urlTestLx(ctx context.Context, force bool) (map[string]uint16, bool) {
 	if force {
 		if g.balancer != nil {
-			g.balancer.rrRunBegin(false) // SPEC 019 — a manual run with no answer changes nothing (afterTestLx)
+			g.balancer.rrRunBegin(false, manualRunLx(ctx)) // SPEC 019 — a forced run with no answer lays out nothing (afterTestLx); the manual test erases history
 		}
 		return nil, false
 	}
@@ -245,7 +245,8 @@ func (g *URLTestGroup) afterTestLx(force bool) {
 // nested-group-aware batch with the probe hook (SPEC 054: an answer is proof of life
 // and resets the node's penalties; SPEC 019: a node that answers fills a dead slot
 // during the run). Shared by least_test and the round_robin pool paths. A round_robin
-// batch with no answer erases no history (SPEC 019, urltest_rr_run_lx.go).
+// batch with no answer erases no history, except in the manual test (SPEC 019,
+// urltest_rr_run_lx.go).
 func (g *URLTestGroup) testNodes(ctx context.Context, outbounds []adapter.Outbound, force bool) map[string]uint16 {
 	batch := g.rrBatchBegin(outbounds)
 	defer g.rrBatchEnd(batch)

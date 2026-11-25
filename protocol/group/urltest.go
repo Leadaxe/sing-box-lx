@@ -148,7 +148,7 @@ func (s *URLTest) URLTest(ctx context.Context) (map[string]uint16, error) {
 }
 
 func (s *URLTest) CheckOutbounds() {
-	s.group.CheckOutbounds(s.ctx, true)
+	s.group.CheckOutbounds(withManualRunLx(s.ctx), true) // lx: SPEC 019 — the manual test (daemon RPC) erases history as upstream
 }
 
 func (s *URLTest) PerformUpdateCheck() {
@@ -415,7 +415,7 @@ func (g *URLTestGroup) CheckOutbounds(ctx context.Context, force bool) {
 }
 
 func (g *URLTestGroup) URLTest(ctx context.Context) (map[string]uint16, error) {
-	return g.urlTest(ctx, true)
+	return g.urlTest(withManualRunLx(ctx), true) // lx: SPEC 019 — the manual test erases history as upstream
 }
 
 func (g *URLTestGroup) urlTest(ctx context.Context, force bool) (map[string]uint16, error) {

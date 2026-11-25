@@ -122,7 +122,7 @@ func (g *URLTestGroup) poolSize() int {
 // the marks and the quarantine and restarts strikes(n) (Q4), and only a run with an
 // answer lays the pool out.
 func (g *URLTestGroup) balancePool(ctx context.Context) map[string]uint16 {
-	lifted := g.balancer.rrRunBegin(true) // lx: SPEC 138 — the nodes in quarantine: the run probes them
+	lifted := g.balancer.rrRunBegin(true, false) // lx: SPEC 138 — the nodes in quarantine: the run probes them
 	defer g.balancer.rrRunEnd()
 	size := g.poolSize()
 	if size == 0 {
