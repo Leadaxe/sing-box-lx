@@ -210,7 +210,7 @@ func TestSchedule(t *testing.T) {
 		t.Fatalf("reset entry: verdict %d reset %v", v, reset)
 	}
 	check(5100*time.Millisecond, dirDown, verdictOutage)
-	if resetting, _, _ := m.dialState(nil); !resetting {
+	if refused, _, _ := m.dialState(nil); refused == nil {
 		t.Fatal("dial allowed during a resetting outage")
 	}
 }
@@ -300,7 +300,7 @@ func TestStreamOutageWaits(t *testing.T) {
 	if _, wait, _ := m.admitStream(nil, dirUp, &st, 100); wait == 0 {
 		t.Fatal("stream admitted during an outage")
 	}
-	if resetting, wait, _ := m.dialState(nil); resetting || wait == 0 {
+	if refused, wait, _ := m.dialState(nil); refused != nil || wait == 0 {
 		t.Fatal("dial not held during a silent outage")
 	}
 	clock.set(2500 * time.Millisecond)

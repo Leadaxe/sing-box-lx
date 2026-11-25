@@ -13,9 +13,15 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-// errLinkReset is what a connection broken by a resetting outage returns,
-// and what a dial during one fails with.
-var errLinkReset = E.Extend(syscall.ECONNRESET, "impair: link reset by schedule")
+// newResetError is what a connection broken by a resetting outage returns,
+// and what a dial during one fails with: ECONNRESET, with what began it (a
+// schedule entry, the impair set command, a sublink).
+func newResetError(cause string) error {
+	if cause == "" {
+		cause = "an outage"
+	}
+	return E.Extend(syscall.ECONNRESET, "impair: link reset by "+cause)
+}
 
 // shaper is the bottleneck of one outbound instance: the model, the two
 // datagram pumps and the set of live connections (for resets).
@@ -40,7 +46,7 @@ type shaper struct {
 }
 
 type resetter interface {
-	reset()
+	reset(err error)
 }
 
 func newShaper(cfg *config, now func() int64) *shaper {
@@ -73,8 +79,10 @@ func (s *shaper) unregister(c resetter) {
 	s.mu.Unlock()
 }
 
-// resetAll breaks every live connection (a resetting outage began).
+// resetAll breaks every live connection (a resetting outage began on the
+// outbound's line).
 func (s *shaper) resetAll() {
+	err := newResetError(s.model.resetCause())
 	s.mu.Lock()
 	conns := make([]resetter, 0, len(s.conns))
 	for c := range s.conns {
@@ -82,7 +90,7 @@ func (s *shaper) resetAll() {
 	}
 	s.mu.Unlock()
 	for _, c := range conns {
-		c.reset()
+		c.reset(err)
 	}
 }
 
@@ -105,10 +113,10 @@ func (s *shaper) beforeDial(ctx context.Context, sub *subline) error {
 	var timer *time.Timer
 	var limit <-chan time.Time
 	for {
-		resetting, wait, reset := s.model.dialState(sub)
+		refused, wait, reset := s.model.dialState(sub)
 		s.handleReset(reset)
-		if resetting {
-			return errLinkReset
+		if refused != nil {
+			return refused
 		}
 		if wait == 0 {
 			return nil

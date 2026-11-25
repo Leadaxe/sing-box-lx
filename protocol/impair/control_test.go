@@ -1,8 +1,10 @@
 package impair
 
 import (
+	"errors"
 	"net/netip"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -215,7 +217,7 @@ func TestSublinkSecondStage(t *testing.T) {
 		t.Fatal("the sublink's receive outage let a datagram in")
 	}
 	// a receive-only outage lets the connection open
-	if resetting, wait, _ := m.dialState(sub); resetting || wait != 0 {
+	if refused, wait, _ := m.dialState(sub); refused != nil || wait != 0 {
 		t.Fatal("a receive-only outage held the dial")
 	}
 	clock.set(time.Second)
@@ -231,10 +233,11 @@ func TestSublinkSecondStage(t *testing.T) {
 // reset in a sublink refuses its connections at once; the other ones dial.
 func TestSublinkResetRefuses(t *testing.T) {
 	m, _ := modelFromJSON(t, `{"sublinks": [{"match": {"domain": ["bad.test"]}, "link_params": {"outage": true, "reset": true}}]}`, "")
-	if resetting, _, _ := m.dialState(m.pick(conn("tcp", "bad.test", "", 443))); !resetting {
-		t.Fatal("sublink reset did not refuse")
+	refused, _, _ := m.dialState(m.pick(conn("tcp", "bad.test", "", 443)))
+	if !errors.Is(refused, syscall.ECONNRESET) || !strings.Contains(refused.Error(), "link reset by sublink [domain bad.test]") {
+		t.Fatalf("sublink reset: %v", refused)
 	}
-	if resetting, wait, _ := m.dialState(m.pick(conn("tcp", "good.test", "", 443))); resetting || wait != 0 {
+	if refused, wait, _ := m.dialState(m.pick(conn("tcp", "good.test", "", 443))); refused != nil || wait != 0 {
 		t.Fatal("an unmatched connection was held")
 	}
 }
@@ -316,5 +319,25 @@ func TestEmptyRefused(t *testing.T) {
 		if err == nil {
 			t.Errorf("%s: %v", options, err)
 		}
+	}
+}
+
+// The error of a reset names what began it, and the status has no profile
+// key when the line has no template.
+func TestResetCauseAndProfileOmitted(t *testing.T) {
+	m, clock := modelFromJSON(t, `{"schedule": [{"at": "1s", "link_params": {"outage": true, "reset": true}}]}`, "")
+	if content, _ := json.Marshal(m.status()); strings.Contains(string(content), `"profile"`) {
+		t.Fatalf("empty profile in the status: %s", content)
+	}
+	clock.set(1500 * time.Millisecond)
+	if refused, _, _ := m.dialState(nil); refused == nil || !strings.Contains(refused.Error(), "link reset by schedule at 1s") {
+		t.Fatalf("schedule reset: %v", refused)
+	}
+	setJSON(t, m, `{"link_params": {"outage": true, "reset": true}}`)
+	if refused, _, _ := m.dialState(nil); refused == nil || !strings.Contains(refused.Error(), "link reset by impair set") {
+		t.Fatalf("set reset: %v", refused)
+	}
+	if cause := m.resetCause(); cause != "impair set" {
+		t.Fatalf("reset cause %q", cause)
 	}
 }

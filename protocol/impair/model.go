@@ -90,6 +90,7 @@ type line struct {
 	stallEnd   int64
 	stallOn    bool // the last stall state advance saw (for the log)
 	profile    string
+	resetBy    string // what began the resetting outage: "schedule at 1m0s", "impair set", "sublink [...]"
 }
 
 // newLine starts a line on v. stream separates the random generators of
@@ -128,9 +129,9 @@ func (l *line) setStall(spec *stallSpec, now int64) {
 	}
 }
 
-// apply applies checked link_params at now. It reports whether a resetting
-// outage began.
-func (l *line) apply(profiles *profileSet, lp *LinkParams, now int64) (reset bool) {
+// apply applies checked link_params at now; cause names the change for the
+// error a reset gives. It reports whether a resetting outage began.
+func (l *line) apply(profiles *profileSet, lp *LinkParams, now int64, cause string) (reset bool) {
 	v := l.values()
 	outageSet, _ := profiles.apply("", lp, &v, 0) // checked by resolveEntry
 	switched := lp.Profile != ""
@@ -154,6 +155,9 @@ func (l *line) apply(profiles *profileSet, lp *LinkParams, now int64) (reset boo
 		if !k.p.outage {
 			k.resetOutage = false
 		}
+	}
+	if reset {
+		l.resetBy = cause
 	}
 	l.profile = v.profile
 	if switched || lp.Stall != nil {
@@ -215,6 +219,12 @@ func (l *line) down(dir int, now int64) bool {
 
 func (l *line) resetting() bool {
 	return l.links[dirUp].resetOutage || l.links[dirDown].resetOutage
+}
+
+// resetError is what a connection broken, or a dial refused, by this
+// line's resetting outage gets: ECONNRESET with the cause.
+func (l *line) resetError() error {
+	return newResetError(l.resetBy)
 }
 
 // describe is the line for the log: template, both directions, stalls.
@@ -360,6 +370,7 @@ func (m *model) buildSublinks(specs []sublinkSpec, now int64) []*subline {
 			for dir := range sub.line.links {
 				sub.line.links[dir].resetOutage = sub.line.links[dir].p.outage
 			}
+			sub.line.resetBy = "sublink " + spec.describe()
 		}
 		sublinks = append(sublinks, sub)
 	}
@@ -417,9 +428,9 @@ func (m *model) pick(conn connInfo) *subline {
 
 // applyEvent applies a schedule entry or a SetImpair command at now. It
 // reports whether a resetting outage began on the outbound's line.
-func (m *model) applyEvent(ev *event, now int64) (reset bool) {
+func (m *model) applyEvent(ev *event, now int64, cause string) (reset bool) {
 	if ev.link != nil {
-		reset = m.line.apply(m.cfg.profiles, ev.link.lp, now)
+		reset = m.line.apply(m.cfg.profiles, ev.link.lp, now, cause)
 	}
 	if ev.sublinks != nil {
 		m.sublinks = m.buildSublinks(*ev.sublinks, now)
@@ -434,7 +445,7 @@ func (m *model) set(ev *event) (reset bool) {
 	defer m.mu.Unlock()
 	now := m.now()
 	reset = m.advance(now)
-	if m.applyEvent(ev, now) {
+	if m.applyEvent(ev, now, "impair set") {
 		reset = true
 	}
 	m.note(false, m.describeEvent("set", ev))
@@ -498,7 +509,7 @@ func (m *model) advance(now int64) (reset bool) {
 					break
 				}
 				m.nextEvent++
-				if m.applyEvent(ev, now) {
+				if m.applyEvent(ev, now, "schedule at "+ev.at.String()) {
 					reset = true
 				}
 				m.note(false, m.describeEvent("schedule at "+ev.at.String(), ev))
@@ -595,22 +606,33 @@ func (m *model) outage(sub *subline, dir int) bool {
 	return m.line.down(dir, now) || sub != nil && sub.line.down(dir, now)
 }
 
-// dialState reports whether a new connection can be made: resetting during
-// a resetting outage, wait > 0 while the sending side is down (the
-// handshake gets no answer). A receive-only outage lets the connection
-// open: it just gets nothing back.
-func (m *model) dialState(sub *subline) (resetting bool, wait time.Duration, reset bool) {
+// dialState reports whether a new connection can be made: refused (the
+// error to fail it with) during a resetting outage, wait > 0 while the
+// sending side is down or the line is in a random stall (the handshake gets
+// no answer). A receive-only outage lets the connection open: it just gets
+// nothing back.
+func (m *model) dialState(sub *subline) (refused error, wait time.Duration, reset bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.now()
 	reset = m.advance(now)
 	m.advanceSub(sub, now)
-	if m.line.resetting() || sub != nil && sub.line.resetting() {
-		resetting = true
-	} else if m.line.down(dirUp, now) || sub != nil && sub.line.down(dirUp, now) {
+	switch {
+	case m.line.resetting():
+		refused = m.line.resetError()
+	case sub != nil && sub.line.resetting():
+		refused = sub.line.resetError()
+	case m.line.down(dirUp, now) || sub != nil && sub.line.down(dirUp, now):
 		wait = outagePoll
 	}
-	return resetting, wait, reset
+	return refused, wait, reset
+}
+
+// resetCause is the cause of the outbound line's resetting outage.
+func (m *model) resetCause() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.line.resetBy
 }
 
 func (l *link) queueLimit() int64 {

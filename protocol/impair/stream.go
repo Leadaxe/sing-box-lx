@@ -86,7 +86,7 @@ type streamConn struct {
 	drainOnce sync.Once
 	closed    chan struct{}
 	closeOnce sync.Once
-	resetErr  atomic.Bool
+	resetErr  atomic.Pointer[error]
 
 	// sending
 	wmu      sync.Mutex // one Write at a time
@@ -145,8 +145,8 @@ func newStreamConn(s *shaper, under net.Conn, sub *subline) *streamConn {
 }
 
 func (c *streamConn) closedErr() error {
-	if c.resetErr.Load() {
-		return errLinkReset
+	if err := c.resetErr.Load(); err != nil {
+		return *err
 	}
 	return net.ErrClosed
 }
@@ -309,7 +309,7 @@ func (c *streamConn) flush() {
 	limit := time.NewTimer(flushLimit)
 	defer limit.Stop()
 	for {
-		if c.resetErr.Load() || isClosed(c.sh.stopped) {
+		if c.resetErr.Load() != nil || isClosed(c.sh.stopped) {
 			return
 		}
 		c.upMu.Lock()
@@ -453,7 +453,7 @@ func (c *streamConn) Read(p []byte) (int, error) {
 
 func (c *streamConn) Close() error {
 	c.uOnce.Do(func() { close(c.uclosed) })
-	if c.resetErr.Load() || isClosed(c.sh.stopped) {
+	if c.resetErr.Load() != nil || isClosed(c.sh.stopped) {
 		return c.closeCarrier()
 	}
 	c.drainOnce.Do(func() {
@@ -477,8 +477,8 @@ func (c *streamConn) closeCarrier() error {
 	return err
 }
 
-func (c *streamConn) reset() {
-	c.resetErr.Store(true)
+func (c *streamConn) reset(err error) {
+	c.resetErr.Store(&err)
 	_ = c.Close()
 }
 

@@ -38,7 +38,7 @@ type packetCore struct {
 	rerr      error
 	closed    chan struct{}
 	closeOnce sync.Once
-	resetErr  atomic.Bool
+	resetErr  atomic.Pointer[error]
 	werr      atomic.Pointer[error]
 
 	readDeadline deadline
@@ -135,8 +135,8 @@ func (c *packetCore) writeLoop() {
 }
 
 func (c *packetCore) closedErr() error {
-	if c.resetErr.Load() {
-		return errLinkReset
+	if err := c.resetErr.Load(); err != nil {
+		return *err
 	}
 	return net.ErrClosed
 }
@@ -198,8 +198,8 @@ func (c *packetCore) Close() error {
 	return err
 }
 
-func (c *packetCore) reset() {
-	c.resetErr.Store(true)
+func (c *packetCore) reset(err error) {
+	c.resetErr.Store(&err)
 	_ = c.Close()
 }
 

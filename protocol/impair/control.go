@@ -87,7 +87,7 @@ type Status struct {
 // LineStatus is a line now: the template it was built from (empty: none),
 // both directions, the random stalls.
 type LineStatus struct {
-	Profile string      `json:"profile"`
+	Profile string      `json:"profile,omitempty"`
 	Up      LinkStatus  `json:"up"`
 	Down    LinkStatus  `json:"down"`
 	Stall   StallStatus `json:"stall"`
