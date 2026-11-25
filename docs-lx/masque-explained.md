@@ -12,9 +12,9 @@ Cloudflare WARP works this way, and the `masque` outbound of sing-box-lx connect
 other CONNECT-IP servers. This document explains what happens on the wire, why the defaults are
 what they are and how a node behaves behind a relay, on a poor network and after idling.
 
-Fields, defaults and error texts are not listed here: they are in the reference
-[protocols-transports §3](protocols-transports.md#3-masque-outbound-connect-ip--warp). How to
-enable it and a short example are in [lx-config §4](lx-config.md#4-masque-outbound--cloudflare-warp).
+The node keys and config examples are in [§7](#7-keys-and-examples). Load-time error texts and the
+migration table from the old config shape are in the reference
+[protocols-transports §3](protocols-transports.md#3-masque-outbound-connect-ip--warp).
 
 ## Table of contents
 
@@ -40,8 +40,15 @@ enable it and a short example are in [lx-config §4](lx-config.md#4-masque-outbo
   - [5.2 keepalive keeps the tunnel alive](#52-keepalive-keeps-the-tunnel-alive)
   - [5.3 The tunnel follows the group chosen in `detour`](#53-the-tunnel-follows-the-group-chosen-in-detour)
 - [6. MASQUE in upstream 1.15](#6-masque-in-upstream-115)
-- [7. Verification](#7-verification)
-- [8. Typical failures](#8-typical-failures)
+- [7. Keys and examples](#7-keys-and-examples)
+  - [7.1 Node keys](#71-node-keys)
+  - [7.2 WARP with the defaults](#72-warp-with-the-defaults)
+  - [7.3 HTTP/2 only, and sleep on a phone](#73-http2-only-and-sleep-on-a-phone)
+  - [7.4 WARP through a relay](#74-warp-through-a-relay)
+  - [7.5 A QUIC proxy over WARP](#75-a-quic-proxy-over-warp)
+  - [7.6 Your own RFC 9484 server](#76-your-own-rfc-9484-server)
+- [8. Verification](#8-verification)
+- [9. Typical failures](#9-typical-failures)
 
 ---
 
@@ -194,7 +201,7 @@ keepalive are freed. The next connection brings it up again — a full QUIC hand
 and a new stack on the first request. Sleep saves about 6 MB of memory and one keepalive packet
 every 30 s. On a phone that pays off; on a router or a desktop waking costs more, so there is no
 sleep by default. One window for every node is set by
-[`lx.masque.idle_timeout`](lx-config.md#lxmasque--masque-outbounds); the node's own key wins, and
+`lx.masque.idle_timeout` (§7.3); the node's own key wins, and
 `"0"` on a node keeps its tunnel up.
 
 ### 5.2 keepalive keeps the tunnel alive
@@ -221,13 +228,145 @@ neutral SNI by default.
 In the fork's stable line WARP connects through the `masque` outbound described here. On the 1.15
 line the fork moves the WARP profile onto the upstream transport; that line is not released.
 
-## 7. Verification
+## 7. Keys and examples
+
+### 7.1 Node keys
+
+| Key | Required | Default | What it sets |
+|-----|----------|---------|--------------|
+| `type` | yes | — | `"masque"` |
+| `tag` | yes | — | the node name for routes and groups |
+| `server`, `server_port` | yes | — | the endpoint address and port, usually `443` |
+| `private_key`, `public_key` | for `cloudflare` | — | keys from the WARP registration, base64 of DER (§1.3) |
+| `ip`, `ipv6` | at least one | — | the client's addresses inside the tunnel; an address without a mask becomes `/32` and `/128` |
+| `profile` | — | `cloudflare` | `cloudflare` — WARP, `standard` — your own RFC 9484 server (§1.4) |
+| `vhttp` | — | `auto` | `auto`, `h3` or `h2` (§3) |
+| `uri` | for `standard` | `https://cloudflareaccess.com` for `cloudflare` | the CONNECT-IP request address; for `standard`, the template the server publishes |
+| `tls` | — | `server_name`: `www.cloudflare.com` for `cloudflare`, `server` for `standard` | the ordinary TLS block: `server_name`, `disable_sni`, `insecure`, `fragment`, `record_fragment` (§2.1) |
+| `mtu` | — | `1280` | the inner packet size; up to `16000` on `h2` (§4) |
+| `idle_timeout` | — | off, or `lx.masque.idle_timeout` | idle time after which the tunnel sleeps; `"0"` keeps it up (§5.1) |
+| `keep_alive_period` | — | `30s` | QUIC keepalive, `h3` only; a negative value turns it off (§5.2) |
+| `network_list` | — | `tcp`, `udp` | which protocols go into the tunnel |
+| `detour` | — | — | which node or group to go through to the endpoint (§2.2, §5.3) |
+| `udp_fragment` | — | fragmentation allowed | `false` forbids fragmenting outer datagrams (§4.4) |
+
+The other dial fields (`bind_interface`, `routing_mark`, `connect_timeout`, `domain_strategy`
+and so on) work as on any outbound.
+
+Outside the node:
+
+- a top-level `dns` block is required (§1.1);
+- `lx.masque.idle_timeout` is one sleep window for every `masque` node without its own
+  `idle_timeout`.
+
+### 7.2 WARP with the defaults
+
+```jsonc
+{
+  "dns": {
+    "servers": [{ "type": "local", "tag": "local" }]
+  },
+  "outbounds": [
+    {
+      "type": "masque",
+      "tag": "warp",
+      "server": "162.159.198.2",
+      "server_port": 443,
+      "private_key": "<base64 DER EC private key>",
+      "public_key":  "<base64 DER PKIX public key>",
+      "ip":   "172.16.0.2/32",
+      "ipv6": "2606:4700:110:...::/128"
+    }
+  ],
+  "route": { "final": "warp" }
+}
+```
+
+Everything else is default: `profile: cloudflare`, `vhttp: auto`, SNI `www.cloudflare.com`, `mtu`
+1280, no sleep, a keepalive every 30 s.
+
+### 7.3 HTTP/2 only, and sleep on a phone
+
+```jsonc
+{
+  "type": "masque",
+  "tag": "warp-h2",
+  "server": "162.159.198.2",
+  "server_port": 443,
+  "vhttp": "h2",            // the network filters UDP:443
+  "idle_timeout": "5m",     // the tunnel sleeps after 5 minutes of silence
+  "private_key": "<…>", "public_key": "<…>",
+  "ip": "172.16.0.2/32", "ipv6": "2606:4700:110:...::/128"
+}
+```
+
+One sleep window for every `masque` node instead of a key on each:
+
+```jsonc
+"lx": { "masque": { "idle_timeout": "5m" } }
+```
+
+### 7.4 WARP through a relay
+
+```jsonc
+{
+  "outbounds": [
+    { "type": "vless", "tag": "relay", /* … */ },
+    {
+      "type": "masque",
+      "tag": "warp",
+      "detour": "relay",
+      "server": "162.159.198.2",
+      "server_port": 443,
+      "private_key": "<…>", "public_key": "<…>",
+      "ip": "172.16.0.2/32", "ipv6": "2606:4700:110:...::/128"
+    }
+  ],
+  "lx": {
+    "sniff_guard": {
+      "tls":  { "method": "record_fragment" },   // h2: the ClientHello is split
+      "quic": { "method": "decoy_first_byte" }   // h3: a decoy byte ahead of the QUIC Initial
+    }
+  }
+}
+```
+
+`lx.sniff_guard` is needed if the relay sniffs the SNI (§2.2). If the relay carries only TCP,
+`auto` moves to HTTP/2 on its own (§3.1).
+
+### 7.5 A QUIC proxy over WARP
+
+```jsonc
+{ "type": "hysteria2", "tag": "hy2", "server": "2001:db8::1", "detour": "warp", /* … */ }
+```
+
+The core fits the packet size of `hy2` to the `mtu` of `warp` on its own (§4.1). If alignment is
+turned off (`"lx": { "mtu_align": "off" }`), set it by hand: `"initial_packet_size": 1232`.
+
+### 7.6 Your own RFC 9484 server
+
+```jsonc
+{
+  "type": "masque",
+  "tag": "my-masque",
+  "profile": "standard",
+  "server": "masque.example.com",
+  "server_port": 443,
+  "uri": "https://masque.example.com/.well-known/masque/ip/*/*/",
+  "ip": "10.0.0.2/32"
+}
+```
+
+`standard` has no HTTP/2 and no key pinning: the server is checked by the ordinary certificate
+chain for `server`.
+
+## 8. Verification
 
 The outbound is verified on a device on Wi-Fi and LTE: traffic goes over HTTP/3 and HTTP/2, the
 tunnel sleeps and comes back up, and it recovers after a drop. The `cloudflare` profile can be
 checked only against real WARP: a synthetic stand does not reproduce its behaviour.
 
-## 8. Typical failures
+## 9. Typical failures
 
 **Domains through the tunnel do not open, the log says `masque: no DNS router available`.** The
 config has no top-level `dns` block. Add one: the outbound resolves domains before sending into
