@@ -8,3 +8,8 @@ import "github.com/sagernet/sing-box/adapter"
 func DownStats(out adapter.Outbound) Stats {
 	return out.(*Outbound).shaper.model.stats(dirDown)
 }
+
+// Stopped reports whether the outbound's shaper was closed (its Close ran).
+func Stopped(out adapter.Outbound) bool {
+	return isClosed(out.(*Outbound).shaper.stopped)
+}

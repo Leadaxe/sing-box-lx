@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -670,4 +671,45 @@ func TestIntegrationControl(t *testing.T) {
 	if st := status(); st.Up.Rate != "2mbit" || st.Schedule.Applied != 1 {
 		t.Fatalf("schedule did not run on its own: %+v", st)
 	}
+}
+
+// Close is registered in the scope: stopping the box stops the outbound
+// (event loop, pumps, connections), as a core restart inside one process
+// needs.
+func TestIntegrationBoxCloseStopsImpair(t *testing.T) {
+	instance := boxWith(t, `{"type": "impair", "tag": "slow", "stall": {"every": "1s", "duration": "100ms"}}`)
+	out := outboundOf(t, instance, "slow")
+	if impair.Stopped(out) {
+		t.Fatal("stopped before close")
+	}
+	instance.Close()
+	if !impair.Stopped(out) {
+		t.Fatal("box close did not close the impair outbound")
+	}
+}
+
+// A dial held by a silent outage fails at the connect timeout, as a
+// handshake without an answer, instead of waiting for the outage to end.
+func TestIntegrationSilentOutageDialTimeout(t *testing.T) {
+	instance := boxWith(t, `{"type": "impair", "tag": "slow", "connect_timeout": "300ms"}`)
+	out := outboundOf(t, instance, "slow")
+	control := out.(interface{ ImpairSet(entry []byte) error })
+	sinkAddr, _ := tcpSink(t)
+	if err := control.ImpairSet([]byte(`{"outage": true}`)); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	_, err := out.DialContext(context.Background(), "tcp", dest(sinkAddr))
+	took := time.Since(start)
+	if !errors.Is(err, os.ErrDeadlineExceeded) || took < 250*time.Millisecond || took > time.Second {
+		t.Fatalf("dial in a silent outage: %v after %v, want a timeout after 300ms", err, took)
+	}
+	if err = control.ImpairSet([]byte(`{"outage": false}`)); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := out.DialContext(context.Background(), "tcp", dest(sinkAddr))
+	if err != nil {
+		t.Fatal("dial after the outage: ", err)
+	}
+	conn.Close()
 }

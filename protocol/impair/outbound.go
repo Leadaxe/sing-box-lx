@@ -10,6 +10,8 @@ import (
 	"context"
 	"net"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
@@ -37,6 +39,8 @@ type Outbound struct {
 	detour string
 	cfg    *config
 	shaper *shaper
+
+	closeOnce sync.Once
 }
 
 // New is the registry constructor.
@@ -53,6 +57,9 @@ func New(ctx context.Context, router adapter.Router, logger log.ContextLogger, t
 		return nil, err
 	}
 	shaper := newShaper(cfg, realClock())
+	if options.ConnectTimeout > 0 {
+		shaper.connectTimeout = time.Duration(options.ConnectTimeout)
+	}
 	shaper.logf = func(debug bool, text string) {
 		if debug {
 			logger.Debug("impair outbound ", tag, ": ", text)
@@ -70,7 +77,15 @@ func New(ctx context.Context, router adapter.Router, logger log.ContextLogger, t
 	}, nil
 }
 
-func (h *Outbound) Start(stage adapter.StartStage, _ *adapter.Scope) error {
+// Start: Close is registered in the scope at Initialize (the upstream
+// lifecycle calls nothing else on shutdown), so a core restarted inside one
+// process (Android, the launcher, SIGHUP) stops the event loop, the pumps
+// and the connections of the old instance.
+func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateInitialize {
+		scope.Add(h.Close)
+		return nil
+	}
 	if stage != adapter.StartStateStart {
 		return nil
 	}
@@ -159,10 +174,12 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 }
 
 func (h *Outbound) Close() error {
-	for dir := range dirNames {
-		stats := h.shaper.model.stats(dir)
-		h.logger.Info("impair outbound ", h.Tag(), " ", dirNames[dir], ": ", stats.Units, " units ", stats.Bytes, " bytes; dropped queue ", stats.DropQueue, " loss ", stats.DropLoss, " outage ", stats.DropOutage, "; stream stalls ", stats.Stalls)
-	}
-	h.shaper.close()
+	h.closeOnce.Do(func() {
+		for dir := range dirNames {
+			stats := h.shaper.model.stats(dir)
+			h.logger.Info("impair outbound ", h.Tag(), " ", dirNames[dir], ": ", stats.Units, " units ", stats.Bytes, " bytes; dropped queue ", stats.DropQueue, " loss ", stats.DropLoss, " outage ", stats.DropOutage, "; stream stalls ", stats.Stalls)
+		}
+		h.shaper.close()
+	})
 	return nil
 }

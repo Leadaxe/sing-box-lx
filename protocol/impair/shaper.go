@@ -3,10 +3,12 @@ package impair
 import (
 	"context"
 	"net"
+	"os"
 	"sync"
 	"syscall"
 	"time"
 
+	C "github.com/sagernet/sing-box/constant"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
@@ -25,6 +27,10 @@ type shaper struct {
 	conns map[resetter]struct{}
 	done  bool
 
+	// connectTimeout bounds a dial held by a silent outage: the outbound's
+	// connect_timeout, else the dialer's default.
+	connectTimeout time.Duration
+
 	// logf writes a link event to the outbound's log (nil: no log).
 	logf      func(debug bool, text string)
 	eventOnce sync.Once
@@ -37,7 +43,7 @@ type resetter interface {
 }
 
 func newShaper(cfg *config, now func() int64) *shaper {
-	s := &shaper{now: now, conns: make(map[resetter]struct{}), kick: make(chan struct{}, 1), stopped: make(chan struct{})}
+	s := &shaper{now: now, connectTimeout: C.TCPConnectTimeout, conns: make(map[resetter]struct{}), kick: make(chan struct{}, 1), stopped: make(chan struct{})}
 	s.model = newModel(cfg, now)
 	s.model.wake = func() { signal(s.kick) }
 	s.pumps[dirUp] = newPump(dirUp, now)
@@ -88,10 +94,15 @@ func (s *shaper) handleReset(reset bool) {
 // beforeDial starts a first_use schedule and holds a dial while the link is
 // down: a silent outage makes it wait (an unanswered handshake) until the
 // link is back or ctx ends; a resetting one fails it at once.
+//
+// The wait is bounded by the connect timeout (connectTimeout), as a real
+// handshake that gets no answer: the dial fails with a timeout instead of
+// hanging to the end of the outage and then going out in a burst.
 func (s *shaper) beforeDial(ctx context.Context) error {
 	s.startEvents()
 	s.model.firstUse()
 	var timer *time.Timer
+	var limit <-chan time.Time
 	for {
 		resetting, wait, reset := s.model.dialState()
 		s.handleReset(reset)
@@ -100,6 +111,11 @@ func (s *shaper) beforeDial(ctx context.Context) error {
 		}
 		if wait == 0 {
 			return nil
+		}
+		if limit == nil {
+			limitTimer := time.NewTimer(s.connectTimeout)
+			defer limitTimer.Stop()
+			limit = limitTimer.C
 		}
 		if timer == nil {
 			timer = time.NewTimer(wait)
@@ -111,6 +127,8 @@ func (s *shaper) beforeDial(ctx context.Context) error {
 		case <-timer.C:
 		case <-ctx.Done():
 			return E.Cause(ctx.Err(), "impair: link down")
+		case <-limit:
+			return E.Cause(os.ErrDeadlineExceeded, "impair: link down: no answer within the connect timeout ", s.connectTimeout)
 		}
 	}
 }
