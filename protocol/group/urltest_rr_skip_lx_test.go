@@ -15,10 +15,20 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
-// aliveSet is a liveness predicate over a mutable set of live tags.
+// aliveSet is a self-heal that finds alive the nodes of a mutable set of live tags
+// and does nothing else.
 type aliveSet map[string]bool
 
-func (s aliveSet) alive(tag string) bool { return s[tag] }
+func (s aliveSet) slotAlive(tag string) bool                       { return s[tag] }
+func (aliveSet) rrOnPick(context.Context, string, *rrTrack, int64) {}
+func (aliveSet) rrPoolLook(context.Context)                        {}
+func (aliveSet) rrRunAnswer(string)                                {}
+func (aliveSet) rrClockJump(time.Duration)                         {}
+
+// allAlive finds every node alive.
+type allAlive struct{ aliveSet }
+
+func (allAlive) slotAlive(string) bool { return true }
 
 func liveTags(tags ...string) aliveSet {
 	set := make(aliveSet, len(tags))
@@ -49,7 +59,7 @@ func stickyKeysBySlot(t *testing.T, n int) [][]string {
 func TestRRSkip_counterRotatesOverLiveSlots(t *testing.T) {
 	b := rrBalancer(t, 4, []string{C.URLTestStickyNone})
 	b.setSlots([]string{"a", "b", "c", "d"})
-	b.alive = liveTags("a", "c").alive
+	b.rr = liveTags("a", "c")
 	_, resolve := resolveFrom("a", "b", "c", "d")
 	fb := &balNode{tag: "fb"}
 	count := map[string]int{}
@@ -68,7 +78,7 @@ func TestRRSkip_counterAllLiveUnchanged(t *testing.T) {
 	legacy.setSlots(slots)
 	b := rrBalancer(t, 4, []string{C.URLTestStickyNone})
 	b.setSlots(slots)
-	b.alive = liveTags(slots...).alive
+	b.rr = liveTags(slots...)
 	_, resolve := resolveFrom(slots...)
 	for i := 0; i < 100; i++ {
 		want := legacy.pick(context.Background(), M.Socksaddr{}, nil, resolve).Tag()
@@ -85,7 +95,7 @@ func TestRRSkip_stickyDeadSlotKeysSpread(t *testing.T) {
 	slots := []string{"a", "b", "c", "d"}
 	b := rrBalancer(t, 4, []string{C.URLTestStickyDomain})
 	b.setSlots(slots)
-	b.alive = liveTags("a", "d").alive
+	b.rr = liveTags("a", "d")
 	_, resolve := resolveFrom(slots...)
 	moved := map[string]int{}
 	var deadKeys int
@@ -127,7 +137,7 @@ func TestRRSkip_stickyRecovery(t *testing.T) {
 	b := rrBalancer(t, 3, []string{C.URLTestStickyDomain})
 	b.setSlots([]string{"a", "b", "c"})
 	live := liveTags("a", "c")
-	b.alive = live.alive
+	b.rr = live
 	_, resolve := resolveFrom("a", "b", "c")
 	keys := stickyKeysBySlot(t, 3)
 	pick := func(key string) string {
@@ -164,7 +174,7 @@ func TestRRSkip_allDeadKeepsLegacyPick(t *testing.T) {
 		legacy.setSlots(slots)
 		b := rrBalancer(t, 3, stickyHash)
 		b.setSlots(slots)
-		b.alive = liveTags().alive
+		b.rr = liveTags()
 		for i := 0; i < 30; i++ {
 			dst := destDomain("host" + strconv.Itoa(i) + ".example")
 			want := legacy.pick(context.Background(), dst, nil, resolve).Tag()
@@ -177,7 +187,7 @@ func TestRRSkip_allDeadKeepsLegacyPick(t *testing.T) {
 
 func TestRRSkip_emptyPoolFallback(t *testing.T) {
 	b := rrBalancer(t, 3, []string{C.URLTestStickyNone})
-	b.alive = liveTags("a").alive
+	b.rr = liveTags("a")
 	_, resolve := resolveFrom("a")
 	fb := &balNode{tag: "fb"}
 	if got := b.pick(context.Background(), M.Socksaddr{}, fb, resolve); got.Tag() != "fb" {
@@ -189,7 +199,7 @@ func TestRRSkip_emptyPoolFallback(t *testing.T) {
 func TestRRSkip_redirectedWrongNetworkFallsBack(t *testing.T) {
 	b := rrBalancer(t, 3, []string{C.URLTestStickyNone})
 	b.setSlots([]string{"a", "b", "c"})
-	b.alive = liveTags("c").alive
+	b.rr = liveTags("c")
 	_, resolveAll := resolveFrom("a", "b", "c")
 	resolve := func(tag string) adapter.Outbound {
 		if tag == "c" {

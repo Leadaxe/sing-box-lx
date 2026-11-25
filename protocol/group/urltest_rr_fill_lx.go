@@ -25,8 +25,8 @@ import (
 // SPEC 019 fill of a dead slot.
 func (g *URLTestGroup) onProbeAliveLx(tag string) {
 	g.penaltyReset(tag)
-	if g.balancer != nil && g.balancer.onRunAnswer != nil {
-		g.balancer.onRunAnswer(tag)
+	if g.balancer != nil && g.balancer.rr != nil {
+		g.balancer.rr.rrRunAnswer(tag)
 	}
 	g.rrFillOnAlive(tag)
 }

@@ -609,11 +609,7 @@ func (s *URLTest) rrDialStart(ctx context.Context, leaf adapter.Outbound, picked
 
 // rrWire connects the round_robin pick to the group.
 func (s *URLTest) rrWire() {
-	s.balancer.alive = s.slotAlive
-	s.balancer.onPick = s.rrOnPick
-	s.balancer.onPoolLook = s.rrPoolLook
-	s.balancer.onClockJump = s.rrClockJump
-	s.balancer.onRunAnswer = s.rrRunAnswer
+	s.balancer.rr = s
 }
 
 // rrOnPick is the look at the slot of node tag by a pick (at most once per rrLook):
@@ -758,7 +754,7 @@ func (s *URLTest) rrRunAnswer(tag string) {
 // base of the comparison.
 func (b *balancer) rrClockLook(at time.Time) {
 	now := rrClock(at)
-	if b.onClockJump == nil || now < b.clockLook.Load() || !b.clockAccess.TryLock() {
+	if b.rr == nil || now < b.clockLook.Load() || !b.clockAccess.TryLock() {
 		return
 	}
 	// The pair of readings changes as one, under the lock: a look delayed between
@@ -771,7 +767,7 @@ func (b *balancer) rrClockLook(at time.Time) {
 	b.clockLook.Store(now + int64(time.Second))
 	b.clockAccess.Unlock()
 	if drift > rrClockJump || drift < -rrClockJump {
-		b.onClockJump(drift)
+		b.rr.rrClockJump(drift)
 	}
 }
 

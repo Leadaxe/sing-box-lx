@@ -277,8 +277,7 @@ func (nopKill) rrKill() {}
 func BenchmarkRRPickTracked(b *testing.B) {
 	balancer := &balancer{poolSize: 3, stickyHash: []string{C.URLTestStickyProcess, C.URLTestStickyDomain}}
 	balancer.setSlots([]string{"a", "b", "c"})
-	balancer.alive = func(string) bool { return true }
-	balancer.onPick = func(context.Context, string, *rrTrack, int64) {}
+	balancer.rr = allAlive{}
 	nodes := map[string]adapter.Outbound{}
 	for _, tag := range []string{"a", "b", "c"} {
 		nodes[tag] = &healNode{tag: tag}

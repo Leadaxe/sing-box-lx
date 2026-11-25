@@ -51,26 +51,14 @@ type balancer struct {
 	// active pool just changed. Called WITHOUT the access lock held.
 	onChange func()
 
-	// alive, if set, reports whether a slot's node passed its last probe; pick skips
-	// slots that did not (SPEC 138). The URLTest wires it to slotAlive. Called WITHOUT
-	// the access lock held.
-	alive func(tag string) bool
+	// rr, if set, is the self-heal of the group (SPEC 138, rrWire): the pick skips
+	// the slots whose node it does not find alive and hands it its looks. Called
+	// WITHOUT the access lock held.
+	rr       rrOwner
+	poolLook atomic.Int64 // rrClock of the next look at the pool
 
-	// onPick, if set, is the look at a slot whose tracker has work (SPEC 138,
-	// rrOnPick); onPoolLook the look at the whole pool, at most once a second
-	// (rrPoolLook). now is the rrClock of the pick. Called WITHOUT the access lock held.
-	onPick     func(ctx context.Context, tag string, track *rrTrack, now int64)
-	onPoolLook func(ctx context.Context)
-	poolLook   atomic.Int64 // rrClock of the next look at the pool
-
-	// onRunAnswer, if set, is a probe of the scheduled run that answered (SPEC 138,
-	// rrRunAnswer).
-	onRunAnswer func(tag string)
-
-	// onClockJump, if set, is a jump between the wall and the monotonic clock (SPEC
-	// 138, rrClockLook): a sleep the monotonic clock did not count, or a clock
-	// change. clockMono and clockWall are the readings of the last look.
-	onClockJump func(drift time.Duration)
+	// The readings of the last comparison of the wall and the monotonic clock (SPEC
+	// 138, rrClockLook).
 	clockLook   atomic.Int64 // rrClock of the next look: a cheap gate on the hot path
 	clockAccess sync.Mutex   // guards the pair of readings of the last look
 	clockMono   int64
@@ -83,6 +71,20 @@ type balancer struct {
 	// memory is the key shift table, the slot counters and the quarantine (SPEC 138
 	// §4.4–4.5, urltest_rr_shift_lx.go).
 	memory rrMemory
+}
+
+// rrOwner is the self-heal of a round_robin group (SPEC 138), *URLTest: whether the
+// node of a slot is alive (slotAlive), the look of the pick at a slot whose tracker
+// has work (rrOnPick; now is the rrClock of the pick) and at the whole pool, at most
+// once a second (rrPoolLook), a probe of the scheduled run that answered
+// (rrRunAnswer), and a jump between the wall and the monotonic clock (rrClockJump):
+// a sleep the monotonic clock did not count, or a clock change.
+type rrOwner interface {
+	slotAlive(tag string) bool
+	rrOnPick(ctx context.Context, tag string, track *rrTrack, now int64)
+	rrPoolLook(ctx context.Context)
+	rrRunAnswer(tag string)
+	rrClockJump(drift time.Duration)
 }
 
 // warnLegacyTolerance reports whether the legacy urltest `tolerance` option deserves a
@@ -194,8 +196,8 @@ func (b *balancer) pickKeyed(ctx context.Context, network string, destination M.
 	b.rrClockLook(picked.start) // lx: SPEC 138 — N3, at most once a second
 	// I9: the pick for a probe of another group or a delay measurement through this
 	// one starts nothing here.
-	if look := b.poolLook.Load(); b.onPoolLook != nil && !rrUnwatched(ctx) && now >= look && b.poolLook.CompareAndSwap(look, now+int64(time.Second)) {
-		b.onPoolLook(ctx) // lx: SPEC 138 — an empty or quarantined slot starts the replacement search
+	if look := b.poolLook.Load(); b.rr != nil && !rrUnwatched(ctx) && now >= look && b.poolLook.CompareAndSwap(look, now+int64(time.Second)) {
+		b.rr.rrPoolLook(ctx) // lx: SPEC 138 — an empty or quarantined slot starts the replacement search
 	}
 	var idx int
 	if len(b.stickyHash) > 0 {
@@ -205,7 +207,7 @@ func (b *balancer) pickKeyed(ctx context.Context, network string, destination M.
 		hash := picked.key.sticky
 		shift := uint64(picked.shift)
 		idx = int((hash%uint64(n) + shift%uint64(n)) % uint64(n))
-		if b.alive != nil && !b.alive(slots[idx].tag) {
+		if b.rr != nil && !b.rr.slotAlive(slots[idx].tag) {
 			if shift > 0 {
 				// A shifted key goes on to the next live slot: where its retry went.
 				if live, ok := b.firstLiveFrom(slots, idx, now, false); ok {
@@ -220,7 +222,7 @@ func (b *balancer) pickKeyed(ctx context.Context, network string, destination M.
 		// plain round-robin over the live slots; with all of them live it is counter % n.
 		counter := b.rotate(ctx)
 		idx = int(counter % uint64(n))
-		if b.alive != nil {
+		if b.rr != nil {
 			if live, ok := b.liveSlot(slots, counter, now, false); ok {
 				idx = live
 			}
@@ -248,14 +250,14 @@ func (b *balancer) pickKeyed(ctx context.Context, network string, destination M.
 		// get their look too, at most once per rrLook (S2, SILENT, D4/D5).
 		if track := slots[idx].track; track != nil {
 			picked.track = track
-			if b.onPick != nil && track.attention(now) {
-				b.onPick(ctx, slots[idx].tag, track, now)
+			if b.rr != nil && track.attention(now) {
+				b.rr.rrOnPick(ctx, slots[idx].tag, track, now)
 			}
 		}
-		if idx != base && b.onPick != nil {
+		if idx != base && b.rr != nil {
 			for i := base; i != idx; i = (i + 1) % n {
 				if track := slots[i].track; track != nil && track.suspect(now, b.heal.epoch()) && track.attention(now) {
-					b.onPick(ctx, slots[i].tag, track, now)
+					b.rr.rrOnPick(ctx, slots[i].tag, track, now)
 				}
 			}
 		}
@@ -267,7 +269,7 @@ func (b *balancer) pickKeyed(ctx context.Context, network string, destination M.
 // usable reports whether the pick may take a slot: its node passed its last probe
 // and, when strict, the slot is not under suspicion (SPEC 138).
 func (b *balancer) usable(s slot, now int64, strict bool) bool {
-	if b.alive != nil && !b.alive(s.tag) {
+	if b.rr != nil && !b.rr.slotAlive(s.tag) {
 		return false
 	}
 	return !strict || s.track == nil || !s.track.suspect(now, b.heal.epoch())
