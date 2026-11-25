@@ -56,6 +56,11 @@
 | `route/conntest_lx.go` | `dial` первого хопа берёт пройденные группы (`via_group`) из `OutboundChain` |
 | `protocol/group/conntest_lx.go` | `deleteHistoryOnDialError`: ошибка dial в least_test и failover стирает history члена и его листа (`RealTag`). Апстрим `5372a195b` стирает history последнего звена цепочки, то есть листа, а у нас цепочка кончается на группе, и `ConnectionManager` стирает тег группы. Без этой правки член-селектор оставлял лист «живым» до следующего прогона. `route/conn.go` не тронут. Хронология — [HISTORY.md](HISTORY.md) |
 
+Обрезка цепочки на urltest-группе действует и на конфиг без lx-опций. Отличия от апстрима, которые она даёт:
+
+- **`direct` в urltest теряет сетевые опции маршрута.** Если адрес назначения уже IP или разрезолвлен, роутер дайлит через `DialSerialNetwork`/`ListenSerialNetworkPacket` и передаёт `network_strategy`, `network_type`, `fallback_network_type` и `fallback_delay` из правила. Принимает их только `ParallelNetworkDialer`, то есть `direct`. Группа им не является, поэтому опции правила до `direct` не доходят, а адреса перебираются по одному через `DialContext` вместо параллельного дайла. Собственные опции дайла у `direct` действуют. С прокси-листом разницы нет. Так же было у апстрима до `03335338a`.
+- **В power report цепочка кончается на группе.** `attribution.Chain` (`common/dialer/default.go`) строится из `OutboundChain` без `displayChainLx`, листа в ней нет. Clash API и демон лист показывают.
+
 Остальные разрешения:
 
 | Файл | Разрешение |
