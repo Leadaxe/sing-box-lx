@@ -4,9 +4,11 @@ package group
 //
 // A run of the group (scheduled, manual, after a network change) probes through
 // upstream's URLTestOutbounds, which erases the history of a node on one failed
-// probe. A batch of the run in which no probe answered has no control (A0):
-// nothing in it tells a dead node from a dead network. Such a batch erases
-// nothing: the run gives the history its probes erased back (I5, ALGORITHM §5).
+// probe. A batch of the run in which no probe answered, before any probe of the
+// run answered, has no control (A0): nothing in it tells a dead node from a dead
+// network. Such a batch erases nothing: the run gives the history its probes
+// erased back (I5, ALGORITHM §5). Once a later batch answers, the run probes
+// those pool members once more, now with that answer as the control.
 // A run in which no probe answered changes nothing of the group: the scheduled
 // run lifts the quarantine and the marks and restarts strikes(n) at its first
 // answer, not at its start, and a run with no answer lays out no slot.
@@ -194,8 +196,9 @@ func (g *URLTestGroup) probeHook(batch *rrBatch) func(tag string) {
 }
 
 // rrBatchEnd ends a batch: an answer is an answer of the run; a batch with no
-// answer gives back the history its failed probes erased, except to a node struck
-// out meanwhile (its D1 erased it).
+// answer before the first answer of the run gives back the history its failed
+// probes erased, except to a node struck out meanwhile (its D1 erased it). After
+// the first answer the earlier answer is the control: the erasure stays.
 func (g *URLTestGroup) rrBatchEnd(batch *rrBatch) {
 	if batch == nil {
 		return
@@ -208,6 +211,9 @@ func (g *URLTestGroup) rrBatchEnd(batch *rrBatch) {
 	}
 	if answered {
 		g.balancer.rrRunAnswered()
+		return
+	}
+	if g.balancer.rrRunGotAnswer() {
 		return
 	}
 	for member, before := range batch.before {

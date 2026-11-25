@@ -92,6 +92,36 @@ func TestRRRun_outageAtRunStartKeepsPool(t *testing.T) {
 	if !f.allHistory(tags[:3]...) {
 		t.Fatal("the batch with no answer erased the history of the pool")
 	}
+	for _, tag := range tags[:3] {
+		if f.probes(tag) != 2 {
+			t.Fatalf("the run probes %s again once a later batch answered: %d probes", tag, f.probes(tag))
+		}
+	}
+}
+
+// R1 with a control: the node of a pool of 1 is dead and the walk answers — the
+// probe of the node again, after that answer, fails, and the run replaces it.
+func TestRRRun_deadPoolOfOneReplaced(t *testing.T) {
+	f := newHealFixture(t, []string{"a", "b", "c"}, []string{"a"}, 0)
+	f.nodes["a"].dead.Store(true)
+	f.g.balancePool(context.Background())
+	if !samePool(f.pool(), "b") || f.g.history.LoadURLTestHistory("a") != nil {
+		t.Fatalf("the dead node of a pool of 1 stays in its slot: %v", f.pool())
+	}
+}
+
+// R1 with a control: the whole pool died at once, candidates are alive — the run
+// replaces the pool.
+func TestRRRun_deadPoolReplaced(t *testing.T) {
+	tags := []string{"a", "b", "c", "d", "e", "f"}
+	f := newHealFixture(t, tags, tags[:3], 0)
+	for _, tag := range tags[:3] {
+		f.nodes[tag].dead.Store(true)
+	}
+	f.g.balancePool(context.Background())
+	if !samePool(f.pool(), "d", "e", "f") {
+		t.Fatalf("a dead pool is replaced by the run: %v", f.pool())
+	}
 }
 
 // §5 (Ж): a node struck out in the previous interval that answers the scheduled run

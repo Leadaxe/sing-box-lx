@@ -159,6 +159,7 @@ func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int, lifte
 	if !g.balancer.rrRunGotAnswer() {
 		return result // lx: SPEC 019 — a run with no answer lays out nothing
 	}
+	g.rrReprobePool(ctx, result) // lx: SPEC 019 — the pool batch got no answer, a later one did: its control
 	// lx: SPEC 138 §5 — the layout goes from the slots at the end of the run: a node that
 	// took a slot during it (rrFillOnAlive) keeps that slot, only empty slots and slots
 	// without history fill; a node struck out during the run takes none, the hole goes to
@@ -177,6 +178,29 @@ func (g *URLTestGroup) balancePoolFirstLive(ctx context.Context, size int, lifte
 	}
 	g.rrSetRunSlots(planFirstLivePool(current, live, fillOrder, size))
 	return result
+}
+
+// rrReprobePool probes once more the pool members whose probe of the run failed in a
+// batch with no answer (their history came back): a later batch of the run answered,
+// so this probe has its control — a member that fails it loses its history and its
+// slot fills like any dead one (a pool of 1, a pool that died at once). A member that
+// answers keeps its slot (an outage at the start of the run).
+func (g *URLTestGroup) rrReprobePool(ctx context.Context, result map[string]uint16) {
+	var again []adapter.Outbound
+	for _, tag := range g.balancer.poolTags() {
+		if _, live := result[tag]; tag == "" || live || g.balancer.rrRunStruck(tag) || !g.rrHasHistory(tag) {
+			continue
+		}
+		if node, loaded := g.outbound.Outbound(tag); loaded {
+			again = append(again, node)
+		}
+	}
+	if len(again) == 0 {
+		return
+	}
+	for tag, delay := range g.testNodes(ctx, again, true) {
+		result[tag] = delay
+	}
 }
 
 // rrWalkPool walks the nodes out of the pool in config order, testing them in batches of
