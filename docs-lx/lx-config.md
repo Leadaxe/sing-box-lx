@@ -3,7 +3,10 @@
 > 🌐 Русская версия: **[lx-config.ru.md](lx-config.ru.md)**.
 
 > 🧭 **Where to look.** The fork's documentation has three levels, by the reader's question:
-> [lx-config](lx-config.md) — what the fork has and how to enable it;
+> [lx-config](lx-config.md) — what the fork has, every key in one line and how to enable it;
+> features with their own logic have a separate document with examples: [lx-urltest](lx-urltest.md),
+> [lx-dns-group](lx-dns-group.md), [lx-chain](lx-chain.md), [lx-block](lx-block.md),
+> [lx-sniff](lx-sniff.md), [lx-energy](lx-energy.md), [lx-observability](lx-observability.md);
 > [protocols-transports](protocols-transports.md) — every field, type, default, error text;
 > [xray-protocols-explained](xray-protocols-explained.md), [amneziawg-explained](amneziawg-explained.md) and [masque-explained](masque-explained.md) —
 > how it works, why, how the fork does it and how it differs from vanilla.
