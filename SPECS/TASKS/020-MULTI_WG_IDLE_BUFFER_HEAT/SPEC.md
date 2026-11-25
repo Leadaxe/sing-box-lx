@@ -65,7 +65,7 @@
 
 | Точка | Файл |
 |---|---|
-| `Selector.SelectOutbound` | `protocol/group/selector.go` |
+| `Selector.SelectOutbound` — сразу после апстримного атомарного `Swap`, только при реальной смене выбора | `protocol/group/selector.go` |
 | urltest legacy auto-switch | `protocol/group/urltest.go` |
 | перестроение пула `balancer.onChange` | `protocol/group/urltest_balance_lx.go` |
 | перезагрузка конфига/роутера | пересоздание Router |
