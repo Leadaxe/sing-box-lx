@@ -583,7 +583,7 @@ loopback. С одним убитым узлом пула прошли 30 зап�
 - Ключей конфига нет: поведение включено всегда и не настраивается.
 - На открытии каждого соединения есть небольшая добавочная работа. Скорость загрузки и отдачи —
   на уровне сборки без самовосстановления; разница видна только в синтетическом прогоне из тысяч
-  очень коротких соединений подряд ([замеры](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/IMPLEMENTATION_REPORT.md)).
+  очень коротких соединений подряд ([замеры](../SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/IMPLEMENTATION_REPORT.md)).
 
 Состояние показывает `sing-box api group pool <tag>` (сборка с `with_lx_command`): таблица слотов
 со `STATE` (`live`/`dead`/`quarantined`), `CONNECTIONS` и `FAILURES`, а также сдвинутые ключи,
