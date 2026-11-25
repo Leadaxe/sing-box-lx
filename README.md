@@ -235,7 +235,7 @@ A test outbound: it dials like `direct` or through its own `detour` and degrades
 {"type": "impair", "tag": "slow-se", "rate": "10mbit", "vary": {"min": "3mbit", "max": "12mbit", "every": "2s"}, "loss": "0.5%", "seed": 1}
 ```
 
-Limits: a test tool, not in release binaries or the AAR; the receive side is degraded after the real network.
+Limits: a test tool, inert unless a config declares it; the receive side is degraded after the real network.
 
 `with_lx_impair` · [feature](SPECS/FEATURES/020-IMPAIR/FEATURE.md) · [config](docs-lx/lx-impair.md) ([RU](docs-lx/lx-impair.ru.md))
 

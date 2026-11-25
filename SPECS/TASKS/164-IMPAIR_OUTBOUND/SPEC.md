@@ -8,7 +8,7 @@
 | Статус | I (implemented) — код, юниты модели и интеграционные тесты на loopback в дереве и зелёные; полевой проверки в этой сборке нет |
 | Ветка | `lx-spec164-impair` |
 | Issue | [issue #86](https://github.com/Leadaxe/sing-box-lx/issues/86) |
-| Build-tag | `with_lx_impair`; в `LX_TAGS` и в AAR не входит |
+| Build-tag | `with_lx_impair`; входит в `LX_TAGS` и в AAR (решение владельца 2026-11-25) |
 | Связанные | [[SPECS/TASKS/073-CHAIN_OUTBOUND]] (образец проводки outbound за тегом) · [[SPECS/TASKS/019-URLTEST_MODE_STICKY]], [[SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT]] (то, что испытывают под ухудшенной линией) |
 
 ## 0. TL;DR
@@ -17,8 +17,8 @@
 ухудшает все соединения через него в обе стороны: узкое место с очередью, задержка и разброс,
 случайные и серийные потери, скачки скорости, остановки, обрывы по расписанию. Без root и netem.
 Узкое место одно на экземпляр и направление. Датаграммы теряются, потоки
-задерживаются (потеря превращается в остановку потока, как повторная передача в TCP). В релизные
-сборки не входит. Пользовательская документация — [docs-lx/lx-impair.ru.md](../../../docs-lx/lx-impair.ru.md).
+задерживаются (потеря превращается в остановку потока, как повторная передача в TCP). В релизных
+сборках есть, без `type: impair` в конфиге ничего не делает. Пользовательская документация — [docs-lx/lx-impair.ru.md](../../../docs-lx/lx-impair.ru.md).
 
 ## 1. Проблема
 
@@ -49,7 +49,8 @@
 6. Проверка конфига: неверная единица, выход за диапазон, расписание не по возрастанию, запись без
    изменений — ошибка с именем ключа.
 7. Предупреждение в лог при старте; счётчики по направлениям при закрытии.
-8. Без тега `type: impair` отвергается ошибкой «rebuild with -tags with_lx_impair».
+8. Тег `with_lx_impair` входит в `LX_TAGS` и в AAR; сборка без тега отвергает `type: impair`
+   ошибкой «rebuild with -tags with_lx_impair».
 9. Горячий путь без выделений памяти на порцию данных и без таймера на пакет.
 
 ## 3. Критерии новой фичи (CONSTITUTION §3.1)
@@ -69,6 +70,7 @@
 | Апстримный файл | Правка | Маркер |
 |---|---|---|
 | `include/registry.go` | 3 строки: вызов `registerImpairOutbound(registry)` в `OutboundRegistry()` рядом со вставкой `chain` | `lx:begin impair` |
+| `cmd/internal/build_libbox/main.go` | 1 строка: `with_lx_impair` в `sharedTags` AAR | `lx:begin impair` |
 
 Остальное — новые файлы: пакет `protocol/impair/`, `option/impair_lx.go`, `constant/impair_lx.go`,
 `include/lx_impair.go`, `include/lx_impair_stub.go`. `go.mod` не меняется: новых зависимостей нет.
@@ -88,4 +90,5 @@
 ## 6. Условие снятия
 
 Апстрим получает outbound с тем же назначением, или фича перестаёт быть нужна стендам. Тогда пакет,
-файлы `*_lx.go`, пара `include` и вставка в `include/registry.go` удаляются целиком.
+файлы `*_lx.go`, пара `include`, вставки в `include/registry.go` и `cmd/internal/build_libbox/main.go` и тег в
+`LX_TAGS` удаляются целиком.

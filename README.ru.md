@@ -235,7 +235,7 @@ sing-box lxd --state-dir ./lxd-state -c config.json
 {"type": "impair", "tag": "slow-se", "rate": "10mbit", "vary": {"min": "3mbit", "max": "12mbit", "every": "2s"}, "loss": "0.5%", "seed": 1}
 ```
 
-Ограничения: инструмент для испытаний, в релизных бинарях и в AAR его нет; приём ухудшается после настоящей сети.
+Ограничения: инструмент для испытаний, ничего не делает, пока его нет в конфиге; приём ухудшается после настоящей сети.
 
 `with_lx_impair` · [фича](SPECS/FEATURES/020-IMPAIR/FEATURE.md) · [конфиг](docs-lx/lx-impair.ru.md) ([EN](docs-lx/lx-impair.md))
 

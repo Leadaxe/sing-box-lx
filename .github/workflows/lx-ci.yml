@@ -107,7 +107,7 @@ jobs:
         run: |
           # Only our downstream files — never the whole upstream tree.
           # Generated *.pb.go are excluded (machine output, not hand-edited).
-          files=$(git ls-files '*.go' | grep -E 'v2rayxhttp|_xhttp|_awg|_lx(_test)?\.go|_command_lx|^lxd/|trusttunnel' | grep -v '\.pb\.go' || true)
+          files=$(git ls-files '*.go' | grep -E 'v2rayxhttp|_xhttp|_awg|_lx(_test)?\.go|_command_lx|^lxd/|trusttunnel|^protocol/impair/|lx_impair' | grep -v '\.pb\.go' || true)
           echo "checking:"; echo "$files"
           if [ -n "$files" ]; then
             bad=$(gofmt -l $files)
@@ -176,6 +176,16 @@ jobs:
             -ldflags "-checklinkname=0" \
             -tags "${BASE_TAGS},with_trusttunnel" \
             ./transport/trusttunnel/ ./protocol/trusttunnel/
+
+      # impair test outbound (SPEC 164, FEATURE 020): the link model on a fake
+      # clock and the loopback integration tests (rate, delay, loss, outages,
+      # reset, Close flush, chains, the shared bottleneck) over a live box.
+      - name: go test (impair, race)
+        run: |
+          go test -race -count=1 \
+            -ldflags "-checklinkname=0" \
+            -tags "${BASE_TAGS},with_lx_impair" \
+            ./protocol/impair/
 
       # lx.sniff_guard (SPEC 060, FEATURE 019): the label store, the outbound
       # wrapper, the option block and the box-level load checks. The seams run

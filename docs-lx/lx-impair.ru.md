@@ -25,19 +25,18 @@ INFO impair outbound slow-se up: 18234 units 25317890 bytes; dropped queue 0 los
 INFO impair outbound slow-se down: 61020 units 88410332 bytes; dropped queue 7 loss 130 outage 0; stream stalls 35
 ```
 
-Build-тег `with_lx_impair` не входит ни в `LX_TAGS`, ни в AAR: в релизных бинарях `impair` нет.
-Без тега `"type": "impair"` отвергается при чтении конфига:
+Build-тег `with_lx_impair` входит в `LX_TAGS` и в AAR: в релизных бинарях для десктопа, роутеров и
+Android `impair` есть. Он добавляет около 150 КБ и ничего не делает, пока в конфиге нет
+`"type": "impair"`. Своя сборка без тега отвергает этот тип при чтении конфига:
 
 ```text
 FATAL[0000] initialize outbound[0] impair[slow]: impair outbound is not included in this build, rebuild with -tags with_lx_impair
 ```
 
-Собрать тестовый бинарь:
+Добавить его в свою сборку:
 
 ```sh
 go build -tags with_lx_impair ./cmd/sing-box
-# или полный набор тегов форка плюс impair
-make -f Makefile.lx lx-build LX_TAGS="$(make -s -f Makefile.lx lx-print-tags),with_lx_impair"
 ```
 
 ## Два положения

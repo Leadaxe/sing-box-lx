@@ -25,19 +25,18 @@ INFO impair outbound slow-se up: 18234 units 25317890 bytes; dropped queue 0 los
 INFO impair outbound slow-se down: 61020 units 88410332 bytes; dropped queue 7 loss 130 outage 0; stream stalls 35
 ```
 
-The build tag `with_lx_impair` is in neither `LX_TAGS` nor the AAR: release binaries do not have
-`impair`. Without the tag `"type": "impair"` is rejected at load time:
+The build tag `with_lx_impair` is in `LX_TAGS` and in the AAR: release binaries for desktops, routers
+and Android have `impair`. It adds about 150 KB and does nothing until a config declares
+`"type": "impair"`. A custom build without the tag rejects the type at load time:
 
 ```text
 FATAL[0000] initialize outbound[0] impair[slow]: impair outbound is not included in this build, rebuild with -tags with_lx_impair
 ```
 
-To build a test binary:
+To add it to a custom build:
 
 ```sh
 go build -tags with_lx_impair ./cmd/sing-box
-# or the fork's full tag set plus impair
-make -f Makefile.lx lx-build LX_TAGS="$(make -s -f Makefile.lx lx-print-tags),with_lx_impair"
 ```
 
 ## Two placements

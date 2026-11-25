@@ -126,6 +126,12 @@ func init() {
 	// The AAR now matches the desktop LX_TAGS set (Makefile.lx) for this tag too.
 	sharedTags = append(sharedTags, "with_trusttunnel")
 	// lx:end trusttunnel
+	// lx:begin impair
+	// The `impair` test outbound (SPEC 164, FEATURE 020) in the AAR as in the
+	// desktop LX_TAGS — owner decision 2026-11-25: a degraded link on a phone
+	// without root. Pure Go, no dependency, inert unless a config declares it.
+	sharedTags = append(sharedTags, "with_lx_impair")
+	// lx:end impair
 	darwinTags = append(darwinTags, "with_dhcp", "grpcnotrace")
 	// memcTags = append(memcTags, "with_tailscale")
 	// lx:begin tailscale
