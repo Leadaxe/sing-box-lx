@@ -447,67 +447,79 @@ The runtime is `Leadaxe/wireguard-go`: sagernet/wireguard-go with AmneziaWG obfu
 
 ## 3. urltest node selection modes
 
-Upstream `urltest` always selects the single lowest-delay node. sing-box-lx adds two
-modes next to it:
+Upstream `urltest` always selects the lowest-delay node. sing-box-lx adds two more modes:
 
-| `mode` | Selection | Switches | Probed each `interval` |
+| `mode` | Selection | Switches | Checked each `interval` |
 |---|---|---|---|
-| `least_test` (default) | the fastest node | as soon as another one is faster by `tolerance` | every node |
-| `round_robin` | a pool of live nodes | rotation over the pool | pool members (lazily) |
-| `failover` | the fastest node at selection time | only when the current one fails or degrades (> 2× slower than the others, confirmed); the next one is again the fastest | only the current node |
+| `least_test` (default) | the fastest node | when another one is faster by `tolerance` or a connection through the current one fails to open | every node |
+| `round_robin` | a pool of live nodes | connections are spread over the pool | only the pool |
+| `failover` | the fastest node at selection time | only when the current one fails or gets twice as slow as the others; the next one is again the fastest | only the current node |
 
-The common upstream fields (`url`, `interval`, `idle_timeout`, `interrupt_exist_connections`) are
-unchanged. The `mode` and `balancer` fields need no build tag. The `GetPool` CommandClient method
-needs the `with_lx_command` tag; it is described in [§8](#8-observability-commandclient-extensions).
+The `url`, `interval`, `idle_timeout` and `interrupt_exist_connections` fields work as upstream.
+The `mode` and `balancer` fields work in every build; the pool state for a UI (`GetPool`,
+[§8](#8-observability-commandclient-extensions)) is in a build with `with_lx_command`.
 
 ### 3.1 Common fields
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `mode` | string | `least_test` | `least_test` (upstream behaviour) \| `round_robin` (rotate over the pool) \| `failover` (hold the working node until it fails). `least_connection` is rejected (round_robin is statistically even) |
-| `balancer` | object | — | round_robin parameters; only valid with `mode: round_robin`, a startup error otherwise. The fields are in [§3.3](#33-round_robin--pool-with-stickiness) |
+| `mode` | string | `least_test` | `least_test` — the fastest node, as upstream; `round_robin` — a pool; `failover` — hold the working node until it fails. `least_connection` is a load error: `round_robin` already spreads connections evenly |
+| `balancer` | object | — | `round_robin` parameters; with another `mode` it is a startup error. The fields are in [§3.3](#33-round_robin--pool-with-stickiness) |
 
 ### 3.2 least_test — fastest node
 
-Upstream behaviour: every `interval` all nodes are probed, and the group switches as soon as
-another node is faster than the current one by more than `tolerance` ms (default `50`). With
-`mode` omitted the outbound behaves the same. The penalty failover on "path is dead"
-dial errors applies here too ([SPEC 054](../SPECS/TASKS/054-URLTEST_PENALTY_FAILOVER/SPEC.md)).
+Every `interval` the group checks every node and moves to another one as soon as it is faster
+than the current one by more than `tolerance` ms (default `50`). Upstream and a group without
+`mode` work the same way.
+
+The fork adds a reaction to failures. If a connection through a node fails with a "path is
+dead" error — a timeout, an unreachable host, a refused connection to a proxy node — the node
+gets a penalty, and the connection opens once through the best of the other nodes. If that
+works, the group moves to that node, and open connections stay where they are. The penalty is
+lifted when the node answers again. For `direct` and tunnels (WireGuard, AWG, Tailscale) a
+refused connection counts as the site's answer and gives no penalty.
 
 ### 3.3 round_robin — pool with stickiness
 
-`round_robin` rotates traffic over a fixed-size pool of nodes. Only the pool is health-checked,
-not every node, so the mode scales to large node lists. Selection happens once per
-connection; a UDP/QUIC session stays on its node. The upstream `tolerance` field is ignored in
-round_robin; `pool_tolerance` takes its place. While `pool_tolerance` is unset, a startup
-warning points this out.
+`round_robin` spreads connections over a pool of several live nodes. Each `interval` only the
+pool is checked, not every node, so the mode suits lists of hundreds of nodes. A node is picked
+once per connection; a UDP/QUIC session stays on its node. The upstream `tolerance` field does
+not apply here; `pool_tolerance` takes its place. If `tolerance` is set and `pool_tolerance` is
+not, a startup warning says so.
 
 #### `balancer` fields
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `pool` | int | `3` | rotation pool size. `0`/omitted → `3`; negative is an error. Effective size is `min(pool, number of outbounds)`. Only the pool is URL-tested each `interval`, so a list of hundreds of nodes does not mean hundreds of tests |
-| `pool_tolerance` | int (ms) | `0` | `0` — the pool stays full of live nodes, delay is not ranked, and no more tests run than needed; the cheap mode for large lists. `> 0` — all nodes are tested and the pool keeps the fastest `pool`. A member is replaced only when an outside node beats it by more than `pool_tolerance` ms (hysteresis). A dead pool node keeps its slot until a live replacement is found, so the pool never empties. While the pool has a live node, new connections skip the dead one: sticky keys of dead slots spread evenly over the live slots, and the plain rotation runs over live slots. A quarantined node is skipped the same way. A failed connection by itself changes neither the pool nor the history; it starts the [self-heal](#pool-self-heal). Liveness is the node's shared URL test history. So a manual delay test with a short timeout that does not complete (Clash API `/proxies/{name}/delay`, `URLTestOutbound`) and a failed dial of a `least_test` group sharing the node also take it out of rotation until the next pool health-check (at most `interval` plus the probe time) |
-| `sticky_hash` | string[] | `["process","domain"]` | components of the flow's sticky key (see [Slot-hash binding](#slot-hash-binding)). Omitted/`[]` → the default. To disable stickiness, set the sentinel `["none"]`, never a bare `[]`. Components: `process` \| `domain` \| `source_ip` \| `dest_ip` \| `dest_port` |
+| `pool` | int | `3` | how many nodes the pool holds. `0` or omitted — `3`; negative is an error. The pool holds no more nodes than `outbounds` has |
+| `pool_tolerance` | int (ms) | `0` | `0` — the pool is filled with live nodes without comparing delays, and no more nodes are checked than needed; the mode for large lists. `> 0` — every node is checked and the pool keeps the fastest `pool`; a pool node is replaced only when an outside node beats it by more than `pool_tolerance` ms |
+| `sticky_hash` | string[] | `["process","domain"]` | what the binding key is built from (see [Slot-hash binding](#slot-hash-binding)): `process`, `domain`, `source_ip`, `dest_ip`, `dest_port`. Omitted or `[]` — the default. Only `["none"]` turns the binding off |
 
-> ⚠️ `"sticky_hash": []` does not turn stickiness off. The sing-box config decoder (badjson)
-> re-marshals each outbound, and an empty JSON array does not survive the round-trip: it
-> collapses to "omitted", which means the default `["process","domain"]` with stickiness on.
-> The explicit `["none"]` sentinel turns it off. When present, it is the only element allowed:
-> mixing `none` with a real component is an error.
+> ⚠️ `"sticky_hash": []` does not turn the binding off. The sing-box config decoder reads an
+> empty array as an omitted field, that is, as `["process","domain"]`. `["none"]` turns the
+> binding off; `none` together with another component is an error.
+
+A dead pool node keeps its slot until a live replacement is found, so the pool never empties.
+While the pool has a live node, new connections skip the dead one: its sticky keys spread evenly
+over the live nodes and come back once the node answers again; without the binding the rotation
+runs over the live nodes. A quarantined node is skipped the same way. A failed connection starts
+the [self-heal](#pool-self-heal).
+
+A node is live or dead by the shared history of its checks. So a manual delay test with a short
+timeout that does not complete (Clash API `/proxies/{name}/delay`, `URLTestOutbound`) and a
+failed connection of a `least_test` group through the same node also take it out of rotation
+until the next pool check (at most `interval` plus the probe time).
 
 #### Slot-hash binding
 
-`sticky_hash` binds a flow to a fixed slot index `slot[hash(key) % pool]`, not to a node
-position; the hash is FNV-64a over the concatenated components. Slots never move, and a replacement
-node takes the exact slot it evicts. So a node that stays in its slot keeps all of its keys when
-other slots change: no needless reconnects and no per-key state.
+A flow's key is bound not to a node but to a slot number: `slot[hash(key) % pool]`. When the
+node in a slot changes, the replacement takes the same slot. So the keys of the other slots stay
+on their nodes, and their connections are not reopened.
 
-The default `["process","domain"]` binds a flow per process and per destination domain. `domain`
-reads the original sniffed domain. It survives the router's domain→IP resolve, so it is populated
-for normal domain traffic, not only for literal-IP destinations. For domain-based traffic keep
-`domain` in the key: a key of only `source_ip`/`dest_ip`/`dest_port` can collapse to `""` for an
-unresolved destination and stick every flow of one source to a single slot.
+By default the key is the process and the destination domain. `domain` is the domain from the
+original request, and it stays filled after the router resolves the domain to an IP. Keep
+`domain` in the key for domain traffic: `dest_ip` is empty until the resolve, so a key of only
+`source_ip`/`dest_ip`/`dest_port` puts every such flow of one source on one slot.
 
 #### Pool self-heal
 
@@ -543,7 +555,7 @@ Where it shows:
   choice;
 - phones and laptops — sleep and network switches do not lose the pool.
 
-Seven limits:
+Six limits:
 
 - Only `mode: round_robin` recovers this way. `least_test` and `failover` keep their penalty and
   fallback dial on "path is dead" errors ([§3.2](#32-least_test--fastest-node)).
@@ -551,7 +563,6 @@ Seven limits:
   and Shadowsocks the failure shows only after the connection has opened, so the group does not
   retry it; the application does. Through `direct` and WireGuard such a request waits out two
   timeouts in a row.
-- A silent node is replaced in 20 s, not at once.
 - A destination stays on its new slot until the core restarts. The table holds 1024 keys, and the
   oldest drops out when it is full. A destination closed through every pool node returns to its
   own slot until the next check.
@@ -599,14 +610,14 @@ rules are in
 }
 ```
 
-For a large node list, the recommended lowest-overhead setup is `pool_tolerance: 0`, a small
-`pool` and a longer `interval`.
+For a large node list, `pool_tolerance: 0`, a small `pool` and a longer `interval` give the
+fewest checks.
 
-Status: even rotation is verified locally (10/10/10 with stickiness off) and end to end on a
-device, on a real multi-node pool. Per-domain uniformity on the device is 0.95+.
+Status: even rotation is verified locally (10/10/10 with stickiness off) and on a device, on a
+real multi-node pool. Per-domain uniformity on the device is 0.95+.
 
-📖 [Full reference](../docs/configuration/outbound/urltest.md): every field, the per-component
-sticky semantics, the pool fill and maintain rules, tuning tips.
+📖 [Field reference](../docs/configuration/outbound/urltest.md): every field and the binding key
+components.
 
 ### 3.4 failover — hold until it fails
 
@@ -614,29 +625,31 @@ sticky semantics, the pool fill and maintain rules, tuning tips.
 the order of the `outbounds` list does not matter.
 
 **Hold.** While the node works the group stays on it, even if another one becomes faster. Each
-`interval` probes only the held node: one probe instead of N; the other nodes sleep.
+`interval` only that node is checked: one probe instead of checking every node.
 
-**Degradation.** If the held node answers more than 2× slower than the fastest other
-node of the same network (by its last known delay), it is probed once more at once. If it is still
-more than 2× slower, a full run follows. The group moves to the fastest node only if that node is
-more than 1.5× faster; otherwise it stays: the network got slower, not the node. No config key.
+**Degradation.** If the node answers more than 2× slower than the fastest other node of the same
+network (by its last known delay), it is checked once more at once. If it is still more than 2×
+slower, the group checks every node and moves to the fastest only if that node is more than
+1.5× faster; otherwise it stays: the network got slower, not the node. No config key.
 
 **Failure.** Two kinds:
 
-- the held node fails a probe → a full run over every node → the fastest live one;
-- a dial through it fails with a "path is dead" error → penalty and fallback dial, as in [least_test](#32-least_test--fastest-node) → the
-  selection moves without `Interrupt`.
+- the node does not answer a probe → the group checks every node and moves to the fastest live
+  one;
+- a connection through the node fails with a "path is dead" error → a penalty and one fallback
+  connection, as in [least_test](#32-least_test--fastest-node); the group moves to the fallback
+  node, and open connections stay where they are.
 
-After the move the new node becomes the held one. A degraded node (above) moves the same way.
+After the move the group holds the new node.
 
 **Manual test.** A group test from the UI, CLI (`sing-box api group urltest <tag>`) or Clash API
-is always `force`: it probes every node and re-selects the fastest. This is the only way back to
-the best node while the held one is alive.
+checks every node and picks the fastest. This is the only way back to the fastest node while the
+current one is alive.
 
 **What does not apply.** `tolerance` is ignored, and a startup warning says so. `balancer` is a
 startup error.
 
-The UI shows delays of non-held nodes as of the last full run.
+The UI shows delays of the other nodes as of the last check of every node.
 
 #### Example — urltest with failover
 
@@ -653,8 +666,8 @@ The UI shows delays of non-held nodes as of the last full run.
 }
 ```
 
-When to pick it: mobile profiles and cases where staying on a stable node matters more than an
-always-current fastest one. How many probes this saves is in [lx-energy.md §6](lx-energy.md#6-urltest-probes-wake-sleepers-so-five-mechanisms-bound-them).
+When to pick it: holding one working node matters more than always being on the fastest one —
+mobile profiles, for example. How many probes this saves is in [lx-energy.md §6](lx-energy.md#6-urltest-probes-wake-sleepers-so-five-mechanisms-bound-them).
 
 ### 3.5 Choosing a mode
 
@@ -662,10 +675,10 @@ always-current fastest one. How many probes this saves is in [lx-energy.md §6](
 |---|---|
 | fewest switches and one probe per `interval` | `failover` |
 | spreading load over several nodes | `round_robin` |
-| always the fastest node, whatever the probe cost | `least_test` |
+| always the fastest node, at the cost of checking every node | `least_test` |
 
-On energy: `least_test` wakes every node each `interval`, `round_robin` only the pool (with `pool_tolerance: 0`), `failover`
-one node; details in [lx-energy.md §6](lx-energy.md#6-urltest-probes-wake-sleepers-so-five-mechanisms-bound-them).
+On energy: `least_test` wakes every node each `interval`, `round_robin` only the pool (with
+`pool_tolerance: 0`), `failover` one node; details in [lx-energy.md §6](lx-energy.md#6-urltest-probes-wake-sleepers-so-five-mechanisms-bound-them).
 
 ---
 
