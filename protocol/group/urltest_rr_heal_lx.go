@@ -37,7 +37,6 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -270,7 +269,7 @@ func (s *URLTest) rrOutcome(member adapter.Outbound, err error) rrClass {
 		return rrRefused
 	case rrLocalError(err):
 		return rrLocal
-	case s.rrSiteOnOpen(member) && (errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET)):
+	case s.rrSiteOnOpen(member) && rrActiveRefusal(err):
 		return rrRefused
 	case rrSilence(err):
 		return rrFailTimeout

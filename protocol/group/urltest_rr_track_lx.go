@@ -29,14 +29,10 @@ package group
 
 import (
 	"context"
-	"errors"
 	"math"
-	"net"
-	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -774,27 +770,6 @@ func (s *URLTest) rrInspect(t *rrTrack, now int64) {
 			s.rrSilent(c)
 		}
 	}
-}
-
-// rrSilence reports whether a failed open is a timeout: nobody answered.
-func rrSilence(err error) bool {
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
-		return true
-	}
-	var netErr net.Error
-	return errors.As(err, &netErr) && netErr.Timeout()
-}
-
-// rrLocalError reports LOCAL (§2): an error with no answer of the far side — no
-// route, the network or a host on the way unreachable, the interface down, the
-// address not bindable.
-func rrLocalError(err error) bool {
-	for _, errno := range [...]syscall.Errno{syscall.ENETUNREACH, syscall.EHOSTUNREACH, syscall.ENETDOWN, syscall.EHOSTDOWN, syscall.EADDRNOTAVAIL} {
-		if errors.Is(err, errno) {
-			return true
-		}
-	}
-	return false
 }
 
 // rrDead is the action of D1 on the node of t: its Q1 signs are dropped, its dials
