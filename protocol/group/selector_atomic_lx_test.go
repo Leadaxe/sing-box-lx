@@ -94,8 +94,8 @@ func TestLxSelectorConcurrentSameTargetSwitchesOnce(t *testing.T) {
 	}
 }
 
-// Concurrent switches to different members: the final member is one of them and
-// every caller that actually changed the selection invalidated the cache.
+// Concurrent switches to different members: a smoke test for -race. The final
+// member is one of them, and a changed selection was invalidated at least once.
 func TestLxSelectorConcurrentDifferentTargets(t *testing.T) {
 	sel, invalidator := newSelectorWithInvalidator(t)
 
