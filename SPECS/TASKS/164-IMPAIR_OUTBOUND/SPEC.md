@@ -104,7 +104,9 @@ outbound'а только ключи дозвона `direct` (`detour`, `connect_
     список только возвращает к конфигу; `GetImpairStatus`. Запросы — JSON в схеме конфига,
     проверяются теми же правилами, неверный отклоняется целиком. Без `with_lx_impair` команды
     отвечают `InvalidArgument`, без `with_lx_command` — `Unimplemented`. CLI — `sing-box api impair
-    set|schedule|status`.
+    set|schedule|status`. В libbox — методы `CommandClient` `SetImpair`, `ScheduleImpair`,
+    `GetImpairStatus`, ответ — объект `ImpairStatus` с JSON в поле `Content` (не голая строка:
+    SPEC 037).
 15. Статус: шаблон (`profile`, нет ключа — нет шаблона) и состояние линии outbound'а (`link_params`: `up`, `down`, `stall`),
     её счётчики, каждая подлиния с `match`, числом взятых соединений, своим состоянием и
     счётчиками, положение расписания (записей, применено, длина и номер круга, ждёт ли трафика,
