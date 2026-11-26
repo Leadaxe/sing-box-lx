@@ -83,7 +83,7 @@ func mapPadding(typeName string, m map[string]any) uint32 {
 // WireGuard `address` (a string or a list of strings); masque always.
 func mapCarriesIPv6(typeName string, m map[string]any) bool {
 	switch typeName {
-	case C.TypeMASQUEClient:
+	case C.TypeMASQUE, C.TypeMASQUEClient:
 		return true
 	case C.TypeWireGuard:
 		switch address := m["address"].(type) {

@@ -157,6 +157,24 @@ func sniffGuardNodeInfo(outboundType string, rawOptions any) (info lxsniffguard.
 		salamander := options.Obfs != nil && options.Obfs.Type == C.Hysteria2ObfsTypeSalamander
 		info.SNIMismatch = !salamander && sniffGuardTLSMismatch(options.Server, options.TLS)
 		return info, true
+	case *option.MASQUEOutboundOptions:
+		if options.Profile == "" || options.Profile == "cloudflare" {
+			// WARP: the SNI is a cover name by design.
+			info.SNIMismatch = true
+			return info, true
+		}
+		tlsOptions := options.TLS
+		if (tlsOptions == nil || tlsOptions.ServerName == "") && options.SNI != "" {
+			// The deprecated flat `sni` alias.
+			merged := option.OutboundTLSOptions{ServerName: options.SNI}
+			if tlsOptions != nil {
+				merged = *tlsOptions
+				merged.ServerName = options.SNI
+			}
+			tlsOptions = &merged
+		}
+		info.SNIMismatch = sniffGuardTLSMismatch(options.Server, tlsOptions)
+		return info, true
 	case *option.MASQUEClientEndpointOptions:
 		// lx: SPEC 110 — the masque-client endpoint of the 1.15 line. WARP:
 		// the SNI is a cover name by design.
