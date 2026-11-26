@@ -202,6 +202,10 @@ func (i *Instance) registerPowerReport(ctx context.Context, reloading bool) {
 	})
 }
 
+func (i *Instance) Context() context.Context {
+	return i.ctx
+}
+
 func (i *Instance) Box() *box.Box {
 	return i.instance
 }
