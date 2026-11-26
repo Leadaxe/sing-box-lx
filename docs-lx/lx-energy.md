@@ -90,7 +90,7 @@ were removed on 2026-11-02: a config with them fails to load as one with unknown
 | | Unreachable endpoint | Reachable endpoint | Any sleeping endpoint |
 |---|---|---|---|
 | Threshold | `lx.wg.idle.suspend` (30s idle) | `lx.wg.idle.suspend_reachable` (5m idle); `0`/absent — never | `lx.wg.idle.teardown` (5m of sleep, counted from falling asleep); an explicit `0` never tears down, an absent key inherits the reachable window |
-| What happens | `Down()` — freeze | `Down()` — freeze | `Close()` — full teardown: the gVisor netstack (~6 MB/node) goes too |
+| What happens | `Down()` — freeze | `Down()` — freeze | `Close()` — full teardown: the netstack (measured ~6 MB/node on the 1.14 gVisor stack) goes too |
 | Wake | dial, +1 RTT | dial, +1 RTT | dial, rebuild ~0.5–1 s on the first request |
 
 The third level is deep sleep. A freeze (`Down`) releases recv-buffers and timers, but the netstack stays. A node that has slept through one more window is torn down entirely; nothing but its config remains. The sleep window counts from the moment of falling asleep, not from the last dial, so it does not depend on which threshold put the node to sleep. Teardown leaves live connections alone: a node with flows never falls asleep (§4), and only sleepers are torn down.
@@ -107,7 +107,7 @@ Every tick, each endpoint goes through a chain of checks, cheapest first:
 2. **Window selection**: unreachable → `lx.wg.idle.suspend`; reachable → `lx.wg.idle.suspend_reachable` (or bail out if unset).
 3. **Idle clock**: `IdleSince() < window` → too early.
 4. **Already down** (stopped or closed) → someone else's state, don't touch.
-5. **Live TCP flows**: the device gVisor stack's `CurrentEstablished` gauge > 0 → established connections exist (a download, a push socket) → don't suspend. The gate is precise, and keepalives do not affect it: a keepalive is not a TCP flow.
+5. **Live TCP flows**: the device stack's count of established TCP connections > 0 → established connections exist (a download, a push socket) → don't suspend. The gate is precise, and keepalives do not affect it: a keepalive is not a TCP flow. On the 1.15 line sing-tun's own stack has no such count: the gate reads 0 there and gate 6 alone protects established flows.
 6. **Counter delta**: rx+tx grew by ≥ 4096 bytes since the previous decision → live UDP/QUIC traffic → refresh the clock, don't suspend. The gate compares against a threshold instead of catching any change: WG keepalive (32 B/interval) and rekeys (~240 B/~2 min) move the counters forever. A `persistent_keepalive` peer must still be able to sleep, because silencing its timers is half the win. A silent QUIC flow with rare pings below the threshold will be suspended. That is an accepted trade-off: QUIC migrates or re-establishes.
 7. All quiet → `device.Down()`, log `lx idle: suspend <tag>`.
 

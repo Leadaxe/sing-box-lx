@@ -227,7 +227,7 @@ QUIC-прокси (`hysteria2`, `tuic`, `hysteria`). Без этого, напр
 
 | Узел снизу | Ёмкость |
 |---|---|
-| `masque`, `wireguard` (endpoint и legacy outbound), `openvpn-client`, `openconnect` | его эффективный `mtu` (после собственного выравнивания, рекурсивно вниз) |
+| `masque`, `masque-client`, `wireguard` (endpoint и legacy outbound), `openvpn-client`, `openconnect` | его эффективный `mtu` (после собственного выравнивания, рекурсивно вниз) |
 | `tailscale` endpoint | `system_interface_mtu`, иначе 1280 |
 | `selector`, `urltest` | min по всем достижимым членам, рекурсивно |
 | `chain-hop` `<цепочка>#<i>` | min из своей позиции и хопа ниже: позиция может быть выключена или выбрать `direct`, и узел сверху должен влезать в любом состоянии; хоп 0 — его позиция |
@@ -244,12 +244,12 @@ QUIC-прокси (`hysteria2`, `tuic`, `hysteria`). Без этого, напр
 | Узел сверху | Поле | Предел | Накладные v4 / v6 |
 |---|---|---|---|
 | `wireguard` | `mtu` | `ёмкость − 32 − s4 − ipudp` (`s4` — транспортный паддинг AmneziaWG, 0 у обычного WG) | 60 / 80 (+ `s4`) |
-| `masque` | `mtu` | `ёмкость − 51 − ipudp` | 79 / 99 |
+| `masque`, `masque-client` | `mtu` | `ёмкость − 51 − ipudp` | 79 / 99 |
 | `hysteria2`, `tuic`, `hysteria` | `initial_packet_size` (+ `disable_path_mtu_discovery: true`) | `ёмкость − ipudp`, кламп 1200…1452 | — |
 | `openvpn-client`, `openconnect` | — | не выводится; одно предупреждение, если под узлом есть ёмкость | неизвестны |
 
 **Пол IPv6.** Туннель, который несёт IPv6 внутри, никогда не выравнивается ниже 1280: это
-`wireguard`-endpoint с IPv6-префиксом в `address` и `masque` всегда. gvisor молча не поднимает
+`wireguard`-endpoint с IPv6-префиксом в `address` и `masque`/`masque-client` всегда. Пользовательский стек молча не поднимает
 IPv6 на канале с меньшим MTU, а мёртвый IPv6 внутри туннеля хуже фрагментов. Если путь оставляет
 меньше 1280, туннель получает 1280 и строку Warn (`… is above the path: … leaves 1220 bytes, below
 the IPv6 minimum 1280; outer packets will be fragmented`). Туннель только с IPv4 внутри

@@ -226,7 +226,7 @@ the key the mode is `clamp`, for chain positions and under a plain `detour` alik
 
 | Node below | Capacity |
 |---|---|
-| `masque`, `wireguard` (endpoint and legacy outbound), `openvpn-client`, `openconnect` | its effective `mtu` (after its own alignment, recursively downwards) |
+| `masque`, `masque-client`, `wireguard` (endpoint and legacy outbound), `openvpn-client`, `openconnect` | its effective `mtu` (after its own alignment, recursively downwards) |
 | `tailscale` endpoint | `system_interface_mtu`, else 1280 |
 | `selector`, `urltest` | min over all reachable members, recursively |
 | `chain-hop` `<chain>#<i>` | min of its position and the hop below: the position may be off or pick `direct`, and the node above must fit in every state; hop 0 — its position |
@@ -243,12 +243,12 @@ unparsed address counts as IPv6; a WG endpoint takes its family from `peers[0].a
 | Node above | Field | Limit | Overhead v4 / v6 |
 |---|---|---|---|
 | `wireguard` | `mtu` | `capacity − 32 − s4 − ipudp` (`s4` = AmneziaWG transport padding, 0 for plain WG) | 60 / 80 (+ `s4`) |
-| `masque` | `mtu` | `capacity − 51 − ipudp` | 79 / 99 |
+| `masque`, `masque-client` | `mtu` | `capacity − 51 − ipudp` | 79 / 99 |
 | `hysteria2`, `tuic`, `hysteria` | `initial_packet_size` (+ `disable_path_mtu_discovery: true`) | `capacity − ipudp`, clamped 1200…1452 | — |
 | `openvpn-client`, `openconnect` | — | not derived; one warning if there is capacity below the node | unknown |
 
 **IPv6 floor.** A tunnel that carries IPv6 inside is never aligned below 1280: a `wireguard`
-endpoint with an IPv6 prefix in `address`, and `masque` always. gvisor silently refuses to bring
+endpoint with an IPv6 prefix in `address`, and `masque`/`masque-client` always. The userspace stack silently refuses to bring
 up IPv6 on a link with a smaller MTU, and a dead IPv6 inside the tunnel is worse than fragments.
 When the path leaves less than 1280, the tunnel gets 1280 and a Warn line (`… is above the path:
 … leaves 1220 bytes, below the IPv6 minimum 1280; outer packets will be fragmented`). A tunnel
