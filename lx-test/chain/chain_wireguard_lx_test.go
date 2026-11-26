@@ -72,13 +72,13 @@ func TestChainWireGuardOnPositionТ1(t *testing.T) {
 		Endpoints: []option.Endpoint{
 			{Type: C.TypeWireGuard, Tag: "wg-srv", Options: &option.WireGuardEndpointOptions{
 				Address: badoption.Listable[netip.Prefix]{netip.MustParsePrefix("10.77.0.1/32")}, PrivateKey: serverPrivate, ListenPort: wgPort, MTU: 1300,
-				Peers: []option.WireGuardPeer{{PublicKey: clientPublic, AllowedIPs: badoption.Listable[netip.Prefix]{netip.MustParsePrefix("10.77.0.2/32")}}},
+				Peers: []option.WireGuardPeer{{PublicKey: clientPublic, AllowedIPs: option.LegacyListable[netip.Prefix]{netip.MustParsePrefix("10.77.0.2/32")}}},
 			}},
 			{Type: C.TypeWireGuard, Tag: "wg-node", Options: &option.WireGuardEndpointOptions{
 				Address: badoption.Listable[netip.Prefix]{netip.MustParsePrefix("10.77.0.2/32")}, PrivateKey: clientPrivate, MTU: 1300,
 				Peers: []option.WireGuardPeer{{
 					Address: "127.0.0.1", Port: wgPort, PublicKey: serverPublic,
-					AllowedIPs: badoption.Listable[netip.Prefix]{netip.MustParsePrefix("10.77.0.1/32")},
+					AllowedIPs: option.LegacyListable[netip.Prefix]{netip.MustParsePrefix("10.77.0.1/32")},
 				}},
 				// Its own detour is dead: only the chain's path works.
 				DialerOptions: option.DialerOptions{Detour: "o-dead"},
@@ -164,13 +164,13 @@ func TestChainGroupMeasuresChainPathКритерий1(t *testing.T) {
 	server := func(tag, private, clientPublic string, port uint16, address, peer string) option.Endpoint {
 		return option.Endpoint{Type: C.TypeWireGuard, Tag: tag, Options: &option.WireGuardEndpointOptions{
 			Address: prefix(address), PrivateKey: private, ListenPort: port, MTU: 1300,
-			Peers: []option.WireGuardPeer{{PublicKey: clientPublic, AllowedIPs: prefix(peer)}},
+			Peers: []option.WireGuardPeer{{PublicKey: clientPublic, AllowedIPs: option.LegacyListable[netip.Prefix](prefix(peer))}},
 		}}
 	}
 	node := func(tag, private, serverPublic string, port uint16, address string) option.Endpoint {
 		return option.Endpoint{Type: C.TypeWireGuard, Tag: tag, Options: &option.WireGuardEndpointOptions{
 			Address: prefix(address), PrivateKey: private, MTU: 1300,
-			Peers:         []option.WireGuardPeer{{Address: "127.0.0.1", Port: port, PublicKey: serverPublic, AllowedIPs: prefix("10.77.0.1/32")}},
+			Peers:         []option.WireGuardPeer{{Address: "127.0.0.1", Port: port, PublicKey: serverPublic, AllowedIPs: option.LegacyListable[netip.Prefix](prefix("10.77.0.1/32"))}},
 			DialerOptions: option.DialerOptions{Detour: "direct"},
 		}}
 	}

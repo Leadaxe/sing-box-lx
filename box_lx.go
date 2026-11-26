@@ -224,7 +224,11 @@ func copyAlignable(options *option.Options) {
 	}
 	endpoints := append([]option.Endpoint(nil), options.Endpoints...)
 	for i := range endpoints {
-		if typed, isWireGuard := endpoints[i].Options.(*option.WireGuardEndpointOptions); isWireGuard {
+		switch typed := endpoints[i].Options.(type) {
+		case *option.WireGuardEndpointOptions:
+			copied := *typed
+			endpoints[i].Options = &copied
+		case *option.MASQUEClientEndpointOptions: // 1.15 line: the alignment writes its mtu too
 			copied := *typed
 			endpoints[i].Options = &copied
 		}
