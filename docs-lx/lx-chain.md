@@ -104,8 +104,9 @@ keep through the hops; user connections through the chain are cut only with
 
 `sing-box check` catches these too. The error names the chain, the position and the node.
 
-- A rewrite conflict: a node or a group needed in two places — in two chains (any positions,
-  the entry of one and a position of another too) or on two positions ≥ 1 of one chain —
+- A rewrite conflict: a node or a group needed in two places — in two chains, when at least one
+  of the places is a position ≥ 1 (the entry of one and a position of another too; an entry
+  shared by two chains is fine) or on two positions ≥ 1 of one chain —
   through groups of any depth, every member counted. The error is
   `<tag> is needed on chain … position … and on chain … position …`. For two chains, copy the
   group and its nodes under other tags (WireGuard nodes need other keys).

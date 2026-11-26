@@ -34,6 +34,7 @@ var ignoredUnderDetour = []string{
 // (Д3): they stay as written.
 var readByProtocol = map[string]map[string]bool{
 	C.TypeAnyTLS:      {"tcp_fast_open": true},
+	C.TypeImpair:      {"connect_timeout": true}, // protocol/impair applies it itself
 	C.TypeOpenConnect: {"disable_tcp_keep_alive": true, "tcp_keep_alive": true, "tcp_keep_alive_interval": true},
 }
 

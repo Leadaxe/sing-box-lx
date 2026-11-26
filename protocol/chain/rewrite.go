@@ -55,7 +55,7 @@ type rewriter struct {
 	chains  []*rewriteEntry
 }
 
-// Rewrite runs П1–П7 and К1–К6 on options. The outbound and endpoint slices
+// Rewrite runs П1–П7 and К1–К5 on options. The outbound and endpoint slices
 // are replaced by new ones and every rewritten node gets a fresh options
 // struct, so the caller's structs are never written through. It returns the
 // changes per node tag in the order they were made.
@@ -238,13 +238,20 @@ func (r *rewriter) checkConflicts() error {
 	return nil
 }
 
-// placesConflict finds two places that need two paths: two chains, or two
-// positions >= 1 of one chain. Position 0 and a position above it of the
-// same chain is a ring, left to upstream.
+// placesConflict finds two places that need two paths: two chains with at
+// least one position >= 1, or two positions >= 1 of one chain. Position 0
+// and a position above it of the same chain is a ring, left to upstream; the
+// entries of two chains are one place each, not a conflict.
 func placesConflict(places []chainPlace) (chainPlace, chainPlace, bool) {
 	for i := range places {
 		for j := i + 1; j < len(places); j++ {
 			a, b := places[i], places[j]
+			// Position 0 is not taken over: an entry shared by two chains
+			// keeps its one own path. Two places conflict when at least one
+			// of them would set the detour.
+			if a.position == 0 && b.position == 0 {
+				continue
+			}
 			if a.chain != b.chain || a.position > 0 && b.position > 0 {
 				return a, b, true
 			}

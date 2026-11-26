@@ -22,7 +22,7 @@ const (
 	LXChangeByChainRewrite = "chain_rewrite"
 	// LXChangeByDetour: a field upstream does not apply under detour
 	// (SPEC 165 Д1).
-	LXChangeByDetour   = "detour"
+	LXChangeByDetour   = "lx.detour"
 	LXChangeByMTUAlign = "mtu_align"
 )
 

@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
@@ -15,6 +16,7 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/chain"
 	"github.com/sagernet/sing/common/json"
+	"github.com/sagernet/sing/common/json/badoption"
 	"github.com/sagernet/sing/service"
 )
 
@@ -314,7 +316,7 @@ func TestPrePassД1IgnoredUnderDetour(t *testing.T) {
 			checkИ4(t, run)
 			var fields []string
 			for _, change := range run.effective.Changes("hy2") {
-				if change.By.Type == option.LXChangeByDetour {
+				if change.By.Type == "lx.detour" { // the contract with clients, not the constant
 					if change.To != nil || change.From == nil || !strings.Contains(change.By.Reason, "common/dialer") {
 						t.Fatalf("Д1: %+v", change)
 					}
@@ -367,5 +369,34 @@ func TestPrePassИ5DetourFalse(t *testing.T) {
 	resolved := service.PtrFromContext[option.LXResolved](ctx)
 	if resolved.DetourNodes != nil || resolved.Detour.MTUAlign != option.LXMTUAlignOff {
 		t.Fatalf("И5: %+v", resolved.Detour)
+	}
+}
+
+// Д3: impair applies connect_timeout itself, under detour too.
+func TestPrePassД3ImpairConnectTimeout(t *testing.T) {
+	impair := &option.ImpairOutboundOptions{}
+	impair.Detour = "x"
+	impair.ConnectTimeout = badoption.Duration(time.Second)
+	impair.RoutingMark = 7
+	_, changes, err := withoutIgnoredDialFields(C.TypeImpair, impair)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Field != "routing_mark" {
+		t.Fatalf("Д3: impair keeps connect_timeout: %+v", changes)
+	}
+}
+
+// Л3: the warning names the nested groups of a position too.
+func TestPrePassЛ3NestedGroupsWarned(t *testing.T) {
+	logger := &mtuTestLog{Logger: log.NewNOPFactory().Logger()}
+	options := option.Options{Outbounds: []option.Outbound{
+		{Type: C.TypeSelector, Tag: "Inner", Options: &option.SelectorOutboundOptions{Outbounds: []string{"x"}}},
+		{Type: C.TypeURLTest, Tag: "Dir", Options: &option.URLTestOutboundOptions{Outbounds: []string{"Inner", "y"}}},
+		{Type: C.TypeChainHop, Tag: "c#1", Options: &option.ChainHopOutboundOptions{Chain: "c", Position: 1, Outbound: "Dir", Below: "c#0"}},
+	}}
+	warnChainGroups(&options, logger)
+	if len(logger.warn) != 1 || !strings.Contains(logger.warn[0], "Dir (c #1), Inner (c #1)") {
+		t.Fatalf("Л3: %v", logger.warn)
 	}
 }

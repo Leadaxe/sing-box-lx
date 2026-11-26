@@ -1016,6 +1016,41 @@ func TestRewriteК1Conflicts(t *testing.T) {
 	}
 }
 
+// К1: two chains sharing an entry are not a conflict — position 0 is not
+// taken over, the entry keeps its one own path.
+func TestRewriteК1SharedEntry(t *testing.T) {
+	for name, build := range map[string]func(s *stand){
+		"[A, B] + [A, C]": func(s *stand) {
+			s.fake("A")
+			s.fake("B")
+			s.fake("C")
+			s.chain("x", "A", "B")
+			s.chain("y", "A", "C")
+		},
+		"[proxy, B] + [proxy, C]": func(s *stand) {
+			s.fake("A1")
+			s.fake("A2")
+			s.fake("B")
+			s.fake("C")
+			s.selector("proxy", "A1", "A2")
+			s.chain("x", "proxy", "B")
+			s.chain("y", "proxy", "C")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newStand(t)
+			build(s)
+			s.build()
+			if s.detourOf("B") != "x#0" || s.detourOf("C") != "y#0" {
+				t.Fatalf("B %s, C %s", s.detourOf("B"), s.detourOf("C"))
+			}
+			if len(s.dial("x")) != 2 || len(s.dial("y")) != 2 {
+				t.Fatal("both chains dial through the shared entry")
+			}
+		})
+	}
+}
+
 func TestRewriteК1WithoutRingsWorks(t *testing.T) {
 	s := newStand(t)
 	s.fake("A")

@@ -237,19 +237,36 @@ func copyAlignable(options *option.Options) {
 // all their traffic goes through the chain, routes straight to them included
 // (SPEC 165 Л3, Т5).
 func warnChainGroups(options *option.Options, logger log.Logger) {
-	groups := make(map[string]bool)
+	members := make(map[string][]string)
 	for _, outbound := range options.Outbounds {
-		switch outbound.Options.(type) {
-		case *option.SelectorOutboundOptions, *option.URLTestOutboundOptions:
-			groups[outbound.Tag] = true
+		switch group := outbound.Options.(type) {
+		case *option.SelectorOutboundOptions:
+			members[outbound.Tag] = group.Outbounds
+		case *option.URLTestOutboundOptions:
+			members[outbound.Tag] = group.Outbounds
 		}
 	}
 	var taken []string
 	for _, outbound := range options.Outbounds {
 		hop, isHop := outbound.Options.(*option.ChainHopOutboundOptions)
-		if isHop && hop.Position > 0 && groups[hop.Outbound] {
-			taken = append(taken, hop.Outbound+" ("+hop.Chain+" #"+strconv.Itoa(hop.Position)+")")
+		if !isHop || hop.Position == 0 {
+			continue
 		}
+		// The group on the position and the groups nested in it.
+		seen := make(map[string]bool)
+		var walk func(tag string)
+		walk = func(tag string) {
+			groupMembers, isGroup := members[tag]
+			if !isGroup || seen[tag] {
+				return
+			}
+			seen[tag] = true
+			taken = append(taken, tag+" ("+hop.Chain+" #"+strconv.Itoa(hop.Position)+")")
+			for _, member := range groupMembers {
+				walk(member)
+			}
+		}
+		walk(hop.Outbound)
 	}
 	if len(taken) > 0 {
 		logger.Warn("chain: groups on positions >= 1 carry all their traffic through the chain, routes straight to them included: ", strings.Join(taken, ", "))
