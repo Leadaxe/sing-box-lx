@@ -1,0 +1,149 @@
+// Package masque implements a CONNECT-IP (RFC 9484) client for MASQUE
+// outbounds, primarily targeting Cloudflare WARP. It carries whole IP packets
+// over an HTTP/3 (or HTTP/2) tunnel using HTTP Datagrams and the Capsule
+// Protocol.
+//
+// This is NOT CONNECT-UDP (RFC 9298). See SPEC 021.
+//
+// The CONNECT-IP wire logic is vendored under ./connectip (ported from
+// connect-ip-go). This file holds the dialing that layers the profile quirks
+// (Cloudflare vs standard) on top.
+package masque
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/url"
+	"strings"
+
+	"github.com/sagernet/quic-go"
+	"github.com/sagernet/quic-go/http3"
+	"github.com/sagernet/sing-box/transport/masque/connectip"
+	E "github.com/sagernet/sing/common/exceptions"
+)
+
+// IpConn is the transport-agnostic surface the outbound pumps IP packets
+// through. Both the HTTP/3 connectip.Conn and the HTTP/2 shim satisfy it.
+type IpConn interface {
+	ReadPacket() (b []byte, err error)
+	WritePacket(b []byte) (icmp []byte, err error)
+	Close() error
+}
+
+// ConnectTunnelH3 establishes a CONNECT-IP tunnel over an existing HTTP/3
+// (QUIC) connection and advertises a default route so all traffic is tunnelled.
+// It returns the http3 transport (for lifetime management) and the IP conn.
+func ConnectTunnelH3(ctx context.Context, profile Profile, quicConn *quic.Conn, connectURI string) (*http3.Transport, IpConn, error) {
+	tr := &http3.Transport{
+		EnableDatagrams: true,
+		AdditionalSettings: map[uint64]uint64{
+			// The official client still advertises the deprecated
+			// SETTINGS_H3_DATAGRAM_00 (0x276); WARP expects it.
+			0x276: 1,
+		},
+		DisableCompression: true,
+	}
+
+	hconn := tr.NewClientConn(quicConn)
+
+	ipConn, err := dialCONNECTIP(ctx, profile, hconn, connectURI)
+	if err != nil {
+		_ = tr.Close()
+		// Match the inner TLS alert as a substring, not the whole formatted error:
+		// quic-go wraps it as "CRYPTO_ERROR 0x131 (remote): tls: access denied" and a
+		// version bump can reformat that wrapper without changing the alert (SPEC 022 #22).
+		if strings.Contains(err.Error(), "tls: access denied") {
+			return nil, nil, E.New("masque: login failed — verify the TLS key/cert is enrolled with Cloudflare Access")
+		}
+		// An idle timeout here means the endpoint took the QUIC connection (we
+		// could not have reached CONNECT-IP otherwise) and then answered
+		// nothing at all — seen on paths where the same endpoint serves h2 from
+		// the same address. The default wrapping buries that behind
+		// "dial connect-ip: read response: http3: parsing frame failed", which
+		// reads like a framing bug rather than a silent peer. Unlike the TLS
+		// alert above this one is a real type, so match it as one. lx.
+		var idleErr *quic.IdleTimeoutError
+		if errors.As(err, &idleErr) {
+			return nil, nil, E.Cause(err, "masque: CONNECT-IP timed out")
+		}
+		return nil, nil, E.Cause(err, "masque: dial connect-ip")
+	}
+
+	if err = advertiseDefaultRoute(ctx, ipConn); err != nil {
+		_ = ipConn.Close()
+		_ = tr.Close()
+		return nil, nil, err
+	}
+
+	return tr, ipConn, nil
+}
+
+// dialCONNECTIP sends the Extended CONNECT request and wraps the request stream
+// into a proxied IP connection.
+func dialCONNECTIP(ctx context.Context, profile Profile, conn *http3.ClientConn, connectURI string) (*connectip.Conn, error) {
+	u, err := url.Parse(connectURI)
+	if err != nil {
+		return nil, E.Cause(err, "parse connect uri")
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	case <-conn.Context().Done():
+		return nil, context.Cause(conn.Context())
+	case <-conn.ReceivedSettings():
+	}
+	settings := conn.Settings()
+	if !profile.IgnoreExtendedConnect && !settings.EnableExtendedConnect {
+		return nil, E.New("connect-ip: server didn't enable Extended CONNECT")
+	}
+	if !settings.EnableDatagrams {
+		return nil, E.New("connect-ip: server didn't enable datagrams")
+	}
+
+	rstr, err := conn.OpenRequestStream(ctx)
+	if err != nil {
+		return nil, E.Cause(err, "open request stream")
+	}
+
+	req := buildConnectIPRequest(profile, u)
+	if err = rstr.SendRequestHeader(req); err != nil {
+		return nil, E.Cause(err, "send request header")
+	}
+	rsp, err := readResponse(ctx, rstr)
+	if err != nil {
+		return nil, E.Cause(err, "read response")
+	}
+	if rsp.StatusCode < 200 || rsp.StatusCode > 299 {
+		return nil, E.New("connect-ip: server responded with ", rsp.StatusCode)
+	}
+	return connectip.NewProxiedConn(rstr), nil
+}
+
+// responseStream is the part of http3.RequestStream readResponse needs.
+type responseStream interface {
+	ReadResponse() (*http.Response, error)
+	CancelRead(errorCode quic.StreamErrorCode)
+	CancelWrite(errorCode quic.StreamErrorCode)
+}
+
+// readResponse is ReadResponse bound to ctx. lx: SPEC 108 — ReadResponse takes
+// no context, so an endpoint that completes the QUIC handshake, keeps
+// acknowledging keepalives and never answers the CONNECT held the dial for as
+// long as the connection lived: the caller's deadline did not apply, every dial
+// of the node queued behind it, and in `auto` the abandoned h3 leg leaked with
+// its QUIC connection. Cancelling the stream is what unblocks the read.
+func readResponse(ctx context.Context, stream responseStream) (*http.Response, error) {
+	stop := context.AfterFunc(ctx, func() {
+		stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeRequestCanceled))
+		stream.CancelWrite(quic.StreamErrorCode(http3.ErrCodeRequestCanceled))
+	})
+	response, err := stream.ReadResponse()
+	if !stop() {
+		// The stream is cancelled (or about to be) — unusable even if the
+		// response slipped in at the same moment.
+		return nil, context.Cause(ctx)
+	}
+	return response, err
+}

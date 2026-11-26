@@ -29,6 +29,7 @@ const (
 	TypeOpenConnect        = "openconnect"
 	TypeOpenVPNClient      = "openvpn-client"
 	TypeOpenVPNServer      = "openvpn-server"
+	TypeMASQUE             = "masque" // lx: the fork's own MASQUE outbound, next to masque-client
 	TypeMASQUEClient       = "masque-client"
 	TypeMASQUEServer       = "masque-server"
 	TypeTailscale          = "tailscale"
@@ -138,6 +139,8 @@ func ProxyDisplayName(proxyType string) string {
 		return "OpenVPN Client"
 	case TypeOpenVPNServer:
 		return "OpenVPN Server"
+	case TypeMASQUE: // lx
+		return "MASQUE"
 	case TypeMASQUEClient:
 		return "MASQUE Client"
 	case TypeMASQUEServer:

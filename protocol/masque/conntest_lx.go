@@ -1,51 +1,81 @@
 package masque
 
-// lx: SPEC 139 — connection-test stage of a dial through the masque-client
-// endpoint. The tunnel is opened by the endpoint's own loop, not by the dial,
-// so a test sees one `auth` stage:
-//
-//   - the tunnel is up: REUSED, with its age and HTTP version. The test does
-//     not open a tunnel of its own (SPEC 139 §5.6), so under `fresh` the stage
-//     is marked reuse=uncontrolled.
-//   - the tunnel is not up: the stage spans the wait for it (an on_demand
-//     endpoint is woken by the dial) and ends with the endpoint's last connect
-//     error or with the version the tunnel came up on. The QUIC handshake and
-//     the CONNECT request run inside the loop and are not split out here.
-//
-// Without a trace in ctx this costs one ctx.Value lookup.
+// lx: SPEC 139 — connection-test stages of the MASQUE tunnel: `quic` for the
+// h3 handshake and `auth` for the CONNECT-IP request with the response
+// status. The h2 leg's TCP and TLS stages come from the dialer and the shared
+// TLS client. A dial over the live tunnel records one REUSED `auth` with the
+// tunnel's age: every dial shares the tunnel, and the test does not open a
+// tunnel of its own (SPEC 139 §5.6), so under `fresh` it is marked
+// reuse=uncontrolled. Without a trace in ctx each helper costs one ctx.Value
+// lookup and records nothing.
 
 import (
 	"context"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sagernet/sing-box/common/lxtrace"
 )
 
-func (c *ClientEndpoint) waitReadyTracedLx(ctx context.Context) error {
+// traceTunnelReusedLx records a dial that goes through the live tunnel s.
+func (o *Outbound) traceTunnelReusedLx(ctx context.Context, s *session) {
 	if lxtrace.From(ctx) == nil {
-		return c.waitReady(ctx)
+		return
 	}
-	_, stage := lxtrace.Begin(ctx, "auth", c.Tag())
-	if c.client.Ready() {
-		if age, vhttp, ok := c.client.TunnelInfoLx(); ok {
-			stage.Attr("vhttp", vhttp)
-			stage.Attr("age", strconv.FormatInt(int64(age/time.Second), 10))
-		}
-		stage.Attr("tunnel", "existing")
-		if lxtrace.Fresh(ctx) {
-			stage.Attr("reuse", "uncontrolled")
-		}
-		stage.Mark(lxtrace.Reused)
+	_, stage := lxtrace.Begin(ctx, "auth", o.server.String())
+	stage.Attr("tunnel", "existing")
+	stage.Attr("age", strconv.FormatInt(int64(time.Since(s.opened)/time.Second), 10))
+	if lxtrace.Fresh(ctx) {
+		stage.Attr("reuse", "uncontrolled")
+	}
+	stage.Mark(lxtrace.Reused)
+}
+
+// beginQUICLx opens the `quic` stage of the h3 handshake; nil without a trace.
+func (o *Outbound) beginQUICLx(ctx context.Context) *lxtrace.Stage {
+	if lxtrace.From(ctx) == nil {
 		return nil
 	}
-	stage.Attr("tunnel", "new")
-	err := c.waitReady(ctx)
+	_, stage := lxtrace.Begin(ctx, "quic", o.server.String())
+	stage.Attr("sni", o.tlsConfig.ServerName)
+	return stage
+}
+
+// beginAuthLx opens the `auth` stage of the CONNECT-IP request on the vhttp
+// leg (h3 or h2); nil without a trace.
+func (o *Outbound) beginAuthLx(ctx context.Context, vhttp string) *lxtrace.Stage {
+	if lxtrace.From(ctx) == nil {
+		return nil
+	}
+	_, stage := lxtrace.Begin(ctx, "auth", o.server.String())
+	stage.Attr("vhttp", vhttp)
+	return stage
+}
+
+// endAuthLx closes the `auth` stage with the response status. transport/masque
+// accepts any 2xx without reporting the code, so success reads status=2xx; a
+// refusal carries the code from its error, and a Cloudflare Access login
+// failure (a TLS alert, no HTTP answer) reads refused=access_denied.
+func endAuthLx(stage *lxtrace.Stage, err error) {
+	if stage == nil {
+		return
+	}
 	if err == nil {
-		if _, vhttp, ok := c.client.TunnelInfoLx(); ok {
-			stage.Attr("vhttp", vhttp)
+		stage.Attr("status", "2xx")
+		stage.End(nil)
+		return
+	}
+	text := err.Error()
+	if _, status, found := strings.Cut(text, "server responded with "); found {
+		if end := strings.IndexFunc(status, func(r rune) bool { return r < '0' || r > '9' }); end >= 0 {
+			status = status[:end]
 		}
+		if status != "" {
+			stage.Attr("status", status)
+		}
+	} else if strings.Contains(text, "masque: login failed") {
+		stage.Attr("refused", "access_denied")
 	}
 	stage.End(err)
-	return err
 }

@@ -62,6 +62,7 @@ func TestLXBlockParsesEveryKey(t *testing.T) {
 			"buffers": {"read_datagram_count": 8, "send_by_mtu": false},
 			"connected_socket": true
 		},
+		"masque": {"idle_timeout": "2m"},
 		"trusttunnel": {"idle_timeout": "3m"}
 	}}`)
 	want := LXResolved{
@@ -77,6 +78,7 @@ func TestLXBlockParsesEveryKey(t *testing.T) {
 			SendFullSize:         true,
 			ConnectedSocket:      true,
 		},
+		MASQUE:      LXMASQUEResolved{IdleTimeout: 2 * time.Minute},
 		TrustTunnel: LXTrustTunnelResolved{IdleTimeout: 3 * time.Minute},
 		MTUAlign:    LXMTUAlignResolved{Mode: LXMTUAlignClamp},
 		Detour:      LXDetourResolved{MTUAlign: LXMTUAlignClamp, Strip: lxDetourStripCatalog()},
@@ -165,8 +167,7 @@ func TestLXBlockValidation(t *testing.T) {
 		{`{"lx":{"wg":{"buffers":{"read_datagram_count":0}}}}`, "lx.wg.buffers.read_datagram_count must be between 1 and 128"},
 		{`{"lx":{"wg":{"buffers":{"read_datagram_count":-1}}}}`, "lx.wg.buffers.read_datagram_count must be between 1 and 128"},
 		{`{"lx":{"wg":{"buffers":{"read_datagram_count":129}}}}`, "lx.wg.buffers.read_datagram_count must be between 1 and 128"},
-		{`{"lx":{"masque":{"idle_timeout":"-1s"}}}`, "lx.masque.idle_timeout is not supported on the 1.15 line: the masque-client endpoint has no idle timer, use its on_demand"},
-		{`{"lx":{"masque":{"idle_timeout":"5m"}}}`, "lx.masque.idle_timeout is not supported on the 1.15 line: the masque-client endpoint has no idle timer, use its on_demand"},
+		{`{"lx":{"masque":{"idle_timeout":"-1s"}}}`, "lx.masque.idle_timeout must be >= 0"},
 		{`{"lx":{"trusttunnel":{"idle_timeout":"-1s"}}}`, "lx.trusttunnel.idle_timeout must be >= 0"},
 	}
 	for _, tc := range cases {
@@ -258,13 +259,13 @@ func TestLXCanonicalForm(t *testing.T) {
 // Resolving twice is a no-op: same values, and the options are not rewritten.
 func TestLXResolveIdempotent(t *testing.T) {
 	t.Parallel()
-	options, first := mustResolveLX(t, `{"lx":{"wg":{"idle":{"suspend":"30s"},"buffers":{"read_datagram_count":8}},"trusttunnel":{"idle_timeout":"5m"}}}`)
+	options, first := mustResolveLX(t, `{"lx":{"wg":{"idle":{"suspend":"30s"},"buffers":{"read_datagram_count":8}},"masque":{"idle_timeout":"5m"}}}`)
 	lx := options.LX
 	second, err := ResolveLX(&options)
 	if err != nil || !reflect.DeepEqual(*second, *first) {
 		t.Fatalf("second resolve: %+v %v", second, err)
 	}
-	if *options.LX.WG.Idle != *lx.WG.Idle || *options.LX.WG.Buffers != *lx.WG.Buffers || *options.LX.TrustTunnel != *lx.TrustTunnel {
+	if *options.LX.WG.Idle != *lx.WG.Idle || *options.LX.WG.Buffers != *lx.WG.Buffers || *options.LX.MASQUE != *lx.MASQUE {
 		t.Fatal("a second resolve must not change the canonical options")
 	}
 }
@@ -287,7 +288,25 @@ func TestLXResolveDoesNotWriteThrough(t *testing.T) {
 	}
 }
 
-// lx: node idle_timeout left with the removed masque outbound (SPEC 155 §5.4)
+// MASQUE node idle_timeout: an explicit "0" must decode as present, so that it
+// can override the global default.
+func TestMASQUEIdleTimeoutZeroIsAValue(t *testing.T) {
+	t.Parallel()
+	var zero MASQUEOutboundOptions
+	if err := json.Unmarshal([]byte(`{"idle_timeout":"0"}`), &zero); err != nil {
+		t.Fatal(err)
+	}
+	if zero.IdleTimeout == nil || *zero.IdleTimeout != 0 {
+		t.Fatal(`an explicit "0" must decode as a present zero`)
+	}
+	var absent MASQUEOutboundOptions
+	if err := json.Unmarshal([]byte(`{}`), &absent); err != nil {
+		t.Fatal(err)
+	}
+	if absent.IdleTimeout != nil {
+		t.Fatal("an omitted idle_timeout must decode as absent")
+	}
+}
 
 // lx: SPEC 165 — lx.detour (ALGORITHM Р1–Р9).
 func TestLXDetourР1toР7(t *testing.T) {
