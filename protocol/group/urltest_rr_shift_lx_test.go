@@ -151,7 +151,7 @@ func (f *shiftFixture) keyOn(t *testing.T, host string, slot int) context.Contex
 	n := uint64(len(f.pool()))
 	destination := siteAddr(host)
 	for i := 0; i < 10000; i++ {
-		metadata := &adapter.InboundContext{ProcessInfo: &adapter.ConnectionOwner{ProcessPath: "/app/" + strconv.Itoa(i)}}
+		metadata := &adapter.InboundContext{ProcessInfo: &adapter.ConnectionOwner{ProcessPaths: []string{"/app/" + strconv.Itoa(i)}}}
 		if destination.IsFqdn() {
 			metadata.Domain = host
 		}
@@ -391,7 +391,7 @@ func TestRRShift_concurrent(t *testing.T) {
 				if i%2 == 1 {
 					host = "open" + strconv.Itoa(i%7) + ".example"
 				}
-				metadata := &adapter.InboundContext{Domain: host, ProcessInfo: &adapter.ConnectionOwner{ProcessPath: "/app/" + strconv.Itoa(i%13)}}
+				metadata := &adapter.InboundContext{Domain: host, ProcessInfo: &adapter.ConnectionOwner{ProcessPaths: []string{"/app/" + strconv.Itoa(i%13)}}}
 				f.dial(t, adapter.WithContext(context.Background(), metadata), host)
 				dials.Add(1)
 			}
@@ -445,7 +445,7 @@ func BenchmarkRRPick(b *testing.B) {
 	table.access.Lock()
 	table.entry(12345).shift = 1
 	table.access.Unlock()
-	metadata := &adapter.InboundContext{ProcessInfo: &adapter.ConnectionOwner{ProcessPath: "/usr/bin/app"}}
+	metadata := &adapter.InboundContext{ProcessInfo: &adapter.ConnectionOwner{ProcessPaths: []string{"/usr/bin/app"}}}
 	ctx := adapter.WithContext(context.Background(), metadata)
 	destination := M.ParseSocksaddrHostPort("203.0.113.7", 443)
 	b.ReportAllocs()

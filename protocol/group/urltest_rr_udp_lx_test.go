@@ -185,7 +185,7 @@ func (f *udpFixture) keyOn(t *testing.T, slot int) context.Context {
 	t.Helper()
 	n := uint64(len(f.pool()))
 	for i := 0; i < 10000; i++ {
-		metadata := &adapter.InboundContext{Domain: "example.org", ProcessInfo: &adapter.ConnectionOwner{ProcessPath: "/app/" + strconv.Itoa(i)}}
+		metadata := &adapter.InboundContext{Domain: "example.org", ProcessInfo: &adapter.ConnectionOwner{ProcessPaths: []string{"/app/" + strconv.Itoa(i)}}}
 		ctx := adapter.WithContext(context.Background(), metadata)
 		if hashKey(f.s.balancer.stickyKey(ctx, udpSite()))%n == uint64(slot) {
 			return ctx

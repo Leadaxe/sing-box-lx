@@ -33,7 +33,7 @@ type refGroup struct {
 	references []string
 }
 
-func (g *refGroup) References() []string { return g.references }
+func (g *refGroup) References() ([]string, []string) { return g.references, nil }
 
 // refEndpoint is an endpoint that always runs (no on_demand).
 type refEndpoint struct {
@@ -108,6 +108,7 @@ func runReferenceUpdate(t *testing.T, managers *refManagers, wg option.LXWGResol
 	ctx = service.ContextWith[adapter.ServiceManager](ctx, &referenceServiceManager{})
 	ctx = service.ContextWith[adapter.DNSTransportManager](ctx, &referenceTransportManager{})
 	ctx = service.ContextWith[adapter.NetworkManager](ctx, &referenceNetworkManager{})
+	ctx = service.ContextWith[adapter.CertificateProviderManager](ctx, &referenceCertificateProviderManager{})
 	router := &Router{idleSuspend: wg.IdleSuspend}
 	ctx = service.ContextWith[adapter.Router](ctx, router)
 	manager := NewReferenceManager(ctx, log.NewNOPFactory().NewLogger("test"), option.Options{

@@ -875,7 +875,7 @@ func TestRRCov_runAnswerIsAProof(t *testing.T) {
 func TestRRCov_stickyHashIsHashOfStickyKey(t *testing.T) {
 	b := &balancer{stickyHash: []string{C.URLTestStickyProcess, C.URLTestStickySourceIP, C.URLTestStickyDomain, C.URLTestStickyDestIP, C.URLTestStickyDestPort}}
 	metadata := &adapter.InboundContext{
-		ProcessInfo: &adapter.ConnectionOwner{ProcessPath: "/usr/bin/app"},
+		ProcessInfo: &adapter.ConnectionOwner{ProcessPaths: []string{"/usr/bin/app"}},
 		Source:      M.ParseSocksaddrHostPort("2001:db8::1", 5000),
 		Domain:      "example.com",
 	}

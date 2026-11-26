@@ -598,7 +598,7 @@ func (g *URLTestGroup) performSelectionUpdate(reselect bool) bool { // lx: SPEC 
 		g.interruptGroup.Interrupt(g.interruptExternalConnections)
 	}
 	if selected {
-		invalidateReachability(g.ctx) // lx: SPEC 020 — every selection change re-shapes the active tree, the first one too
+		g.history.NotifyUpdated() // lx: SPEC 020 — every selection change re-shapes the active tree, the first one too (1.15: the reference manager recomputes on a history update)
 	}
 	return selected
 }

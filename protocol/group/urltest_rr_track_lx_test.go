@@ -290,7 +290,7 @@ func BenchmarkRRPickTracked(b *testing.B) {
 	table.access.Lock()
 	table.entry(12345).shift = 1
 	table.access.Unlock()
-	metadata := &adapter.InboundContext{ProcessInfo: &adapter.ConnectionOwner{ProcessPath: "/usr/bin/app"}}
+	metadata := &adapter.InboundContext{ProcessInfo: &adapter.ConnectionOwner{ProcessPaths: []string{"/usr/bin/app"}}}
 	ctx := adapter.WithContext(context.Background(), metadata)
 	destination := M.ParseSocksaddrHostPort("203.0.113.7", 443)
 	b.ReportAllocs()
