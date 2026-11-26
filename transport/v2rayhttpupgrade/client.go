@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/lxhandshake"
 	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -85,10 +84,6 @@ func (c *Client) DialContext(ctx context.Context) (result net.Conn, err error) {
 	if err != nil {
 		return nil, err
 	}
-	// lx:begin handshake-timeout — bound the upgrade exchange by ctx and C.TCPTimeout
-	finishHandshake := lxhandshake.Guard(ctx, conn)
-	defer finishHandshake()
-	// lx:end handshake-timeout
 	request := &http.Request{
 		Method: http.MethodGet,
 		URL:    &c.requestURL,
@@ -136,10 +131,6 @@ func (c *Client) DialContext(ctx context.Context) (result net.Conn, err error) {
 			return nil, err
 		}
 		return bufio.NewCachedConn(conn, buffer), nil
-	}
-	if err = finishHandshake(); err != nil { // lx: handshake-timeout — the context or the backstop closed conn as the exchange ended
-		conn.Close()
-		return nil, err
 	}
 	return conn, nil
 }

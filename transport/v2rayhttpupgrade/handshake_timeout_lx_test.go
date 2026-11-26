@@ -7,11 +7,10 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/sagernet/sing-box/common/lxhandshake"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -20,13 +19,10 @@ import (
 // lx: handshake-timeout — the upgrade request was written and its response read
 // with neither a deadline nor a look at ctx: a server that accepted the socket
 // and stayed silent held VLESS/VMess/Trojan over httpupgrade in DialContext for
-// ever, and even cancelling the dial did not release it.
-
-func setHandshakeTimeout(t *testing.T, timeout time.Duration) {
-	original := lxhandshake.Timeout
-	lxhandshake.Timeout = timeout
-	t.Cleanup(func() { lxhandshake.Timeout = original })
-}
+// ever, and even cancelling the dial did not release it. Since the sync of
+// 2026-11-26 upstream bounds the exchange itself (27c872d81: ctx plus
+// C.TCPTimeout); these tests stay as the guard of that behaviour. The bound is
+// a constant there, so the silent-server test waits it out in full.
 
 func upgradeServer(t *testing.T, serve func(conn net.Conn, reader *bufio.Reader)) (*Client, <-chan struct{}) {
 	t.Helper()
@@ -58,8 +54,8 @@ func silentAfterRequest(conn net.Conn, reader *bufio.Reader) {
 }
 
 func TestLxHTTPUpgradeSilentServerTimesOut(t *testing.T) {
-	const bound = 300 * time.Millisecond
-	setHandshakeTimeout(t, bound)
+	t.Parallel()
+	const bound = C.TCPTimeout
 	client, done := upgradeServer(t, silentAfterRequest)
 
 	start := time.Now()
@@ -68,7 +64,7 @@ func TestLxHTTPUpgradeSilentServerTimesOut(t *testing.T) {
 	if conn != nil {
 		conn.Close()
 	}
-	if !errors.Is(err, os.ErrDeadlineExceeded) {
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want a deadline error, got %v", err)
 	}
 	if elapsed < bound || elapsed > bound+time.Second {
@@ -82,7 +78,7 @@ func TestLxHTTPUpgradeSilentServerTimesOut(t *testing.T) {
 }
 
 func TestLxHTTPUpgradeCancelReturnsImmediately(t *testing.T) {
-	setHandshakeTimeout(t, time.Minute)
+	t.Parallel()
 	client, done := upgradeServer(t, silentAfterRequest)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -121,12 +117,12 @@ func TestLxHTTPUpgradeCancelReturnsImmediately(t *testing.T) {
 }
 
 // TestLxHTTPUpgradeSuccessKeepsTunnel: an ordinary upgrade still works, bytes the
-// server sent with the response are kept, and the deadline is gone afterwards —
-// a read waiting well past the bound, after the dial context was cancelled,
+// server sent with the response are kept, and cancelling the dial context
+// afterwards does not cut the tunnel: a read that waits after the cancellation
 // still gets its data.
 func TestLxHTTPUpgradeSuccessKeepsTunnel(t *testing.T) {
+	t.Parallel()
 	const bound = 200 * time.Millisecond
-	setHandshakeTimeout(t, bound)
 	client, _ := upgradeServer(t, func(conn net.Conn, reader *bufio.Reader) {
 		request, err := http.ReadRequest(reader)
 		if err != nil {

@@ -83,7 +83,6 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 				defer cancel()
 				return defaultHandshakeFunc(ctx, conn, sessionIDGenerator)
 			}
-			tlsHandshakeFunc = boundTLSHandshakeLx(tlsHandshakeFunc, handshakeTimeout) // lx: handshake-timeout — as tls.ClientHandshake does
 		}
 	}
 	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
