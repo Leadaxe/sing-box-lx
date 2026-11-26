@@ -39,7 +39,7 @@ func parseTLSSpoofOptions(serverName string, options option.OutboundTLSOptions) 
 }
 
 func applyTLSSpoof(conn net.Conn, spoof string, method tlsspoof.Method) (net.Conn, error) {
-	if spoof == "" {
+	if spoof == "" || skipSpoofLx(conn, spoof) { // lx: SPEC 165 Я1 — no spoof without a kernel socket under detour
 		return conn, nil
 	}
 	return tlsspoof.NewConn(conn, method, spoof)
@@ -91,7 +91,7 @@ func NewClientWithOptions(options ClientOptions) (Config, error) {
 	switch options.Options.Engine {
 	case "", C.TLSEngineGo:
 	case C.TLSEngineApple:
-		return newAppleClient(options.Context, options.Logger, options.ServerAddress, options.Options, options.AllowEmptyServerName)
+		return newAppleClientLx(options) // lx: SPEC 165 — the tls.engine filter hands a handshake without a kernel socket to go
 	case C.TLSEngineWindows:
 		return newWindowsClient(options.Context, options.Logger, options.ServerAddress, options.Options, options.AllowEmptyServerName)
 	default:

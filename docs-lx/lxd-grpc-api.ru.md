@@ -53,8 +53,9 @@
 | **libbox `CommandClient`** | Android / iOS AAR (gRPC через локальный сокет) | `experimental/libbox/command_client_command_lx.go` |
 
 lx-расширения (`SubscribeDNSQueries`, `GetRules`, `GetGroups`, `GetOutbounds`,
-`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `URLTestOutbound`,
-`GetURLViaOutbound`, `GetChains`, `GetWireGuardStatus`, `GetTailscaleStatus`)
+`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetEffectiveConfig`, `GetOutboundConfig`,
+`URLTestOutbound`, `GetURLViaOutbound`, `GetChainStatus`, `GetWireGuardStatus`,
+`GetTailscaleStatus`)
 реализованы один раз в ядре и доступны через оба носителя с одной и той же семантикой полей. Поэтому таблицы полей ниже описывают
 Android-AAR так же, как удалённую lxd-машину. Различаются только обрамление на
 проводе и синтаксис вызова метода. Правила, зависящие от транспорта, отмечены
@@ -81,17 +82,17 @@ REST-ручки для профилирования самого процесс�
 
 ## RPC форка есть только в сборке с `with_lx_command`
 
-Двенадцать RPC живут внутри блока `lx:begin lx_command` … `lx:end lx_command`
+Четырнадцать RPC живут внутри блока `lx:begin lx_command` … `lx:end lx_command`
 и существуют только в сборке с `with_lx_command`:
 
 `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `SubscribeDNSQueries`,
-`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetURLViaOutbound`, `GetChains`,
-`GetWireGuardStatus`, `GetTailscaleStatus`.
+`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetEffectiveConfig`, `GetOutboundConfig`,
+`GetURLViaOutbound`, `GetChainStatus`, `GetWireGuardStatus`, `GetTailscaleStatus`.
 
 В том же блоке лежат управляющие RPC, которые этот документ не описывает:
 
-- `SetChainPositionEnabled` и `GetChainCloneConfig` — включение и выключение
-  звеньев цепочки `chain` на лету ([фича CHAIN](../SPECS/FEATURES/015-CHAIN/FEATURE.md));
+- `SetChainPositionEnabled` — включение и выключение позиций цепочки `chain`
+  на лету ([фича CHAIN](../SPECS/FEATURES/015-CHAIN/FEATURE.md));
 - `SetEndpointEnabled` — ручное включение и выключение WG/AWG- и
   Tailscale-endpoint'а, см. [lx-energy.ru.md §12](lx-energy.ru.md#12-ручной-переключатель-выключает-endpoint-без-правки-конфига);
 - `TailscaleLogin` — вход Tailscale-endpoint'а с новым auth key без перезапуска box;
@@ -298,9 +299,11 @@ ConnectionEvent  { ConnectionEventType type; string id; Connection connection;
 | `GetPool(GetPoolRequest) → PoolList` | **lx**: состояние ротации балансируемой urltest-группы |
 | `GetDNSGroups → DnsGroupList` | **lx**: полное состояние DNS-групп |
 | `GetRunningConfig → RunningConfig` | **lx**: конфиг, на котором работает ядро |
+| `GetEffectiveConfig → RunningConfig` | **lx**: тот же конфиг после lx-предобработки — хопы цепочек, переписанный `detour`, выровненный MTU, развёрнутый `lx.detour` |
+| `GetOutboundConfig(tag) → OutboundConfig` | **lx**: один узел JSON-объектом `{tag, original, effective, changes}`; неизвестный тег — `NotFound` |
 | `URLTestOutbound → delay` | **lx**: проба одного узла |
 | `GetURLViaOutbound → body` | **lx**: проба с возвратом тела ответа — какой exit-IP даёт этот узел |
-| `GetChains → ChainList` | **lx**: состояние каждого outbound'а `chain` — позиции, разрешённый узел, звено (состояние/MTU/strip/rewrite), счётчики |
+| `GetChainStatus(tag) → ChainState` | **lx**: состояние одного outbound'а `chain` — по позициям разрешённый узел, `transparent`, `disabled`, ошибки; счётчики дозвонов и ошибок |
 | `SubscribeLog → stream Log` | лог ядра, не демона; лог демона отдаёт admin REST ([lxd-daemon.ru.md](lxd-daemon.ru.md)) |
 
 `Status.trafficAvailable` отличает «нулевой трафик» от «учёт трафика
@@ -394,7 +397,15 @@ warp-статус даёт этот узел:
 (string) — каноническая сериализация опций, из которых ядро собралось
 (post-override). Она не совпадает байт-в-байт с текстом профиля, который прислал
 клиент: отличаются порядок полей, `omitempty`, `[]`→`null`. Сравнивай
-семантически, а не текстово.
+семантически, а не текстово. `GetEffectiveConfig` отдаёт то же сообщение с
+конфигом после lx-предобработки, в той же каноничной форме.
+
+**`OutboundConfig`** (`GetOutboundConfig`, **lx**): единственное поле `content`
+(string) — JSON-объект `{tag, original, effective, changes}`. `original` — узел
+как в `GetRunningConfig`, `effective` — как в `GetEffectiveConfig`; у хопа цепочки
+есть только `effective`. `changes` — список `{field, from, to, by}` в порядке
+применения, применённый к `original`, он даёт `effective`; поля — в
+[lx-observability.ru.md](lx-observability.ru.md).
 
 ## observability-api-lx
 
@@ -402,7 +413,7 @@ warp-статус даёт этот узел:
 
 ### Добавлено
 
-Двенадцать RPC за `with_lx_command`, все отсутствуют в апстриме:
+Четырнадцать RPC за `with_lx_command`, все отсутствуют в апстриме:
 
 | RPC | Зачем |
 |---|---|
@@ -413,9 +424,10 @@ warp-статус даёт этот узел:
 | `GetPool` | состояние ротации балансируемой urltest-группы |
 | `GetDNSGroups` | состояние DNS-групп |
 | `GetRunningConfig` | действующий конфиг |
+| `GetEffectiveConfig`, `GetOutboundConfig` | конфиг как собран после lx-предобработки и что изменилось в каждом узле |
 | `URLTestOutbound` | проба одного узла с возвратом задержки |
 | `GetURLViaOutbound` | проба одного узла с возвратом тела ответа |
-| `GetChains` | состояние каждого outbound'а `chain` |
+| `GetChainStatus` | состояние одного outbound'а `chain` по тегу |
 
 ### Расширено
 

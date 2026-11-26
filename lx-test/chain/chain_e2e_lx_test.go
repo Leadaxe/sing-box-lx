@@ -1,10 +1,11 @@
 //go:build with_lx_chain
 
-// lx: SPECS/TASKS/073-CHAIN_OUTBOUND — приёмочный стенд цепочки на живых
-// протоколах: три shadowsocks-сервера в одном box'е как хопы, mixed-inbound как
-// вход трафика, локальный HTTP-сервер как цель. Проверяет, что вложение
-// «in → mid → exit» реально несёт трафик, что прозрачный direct в середине
-// укорачивает путь на лету и что детур звеньев ходит через внутренние теги.
+// lx: SPECS/TASKS/073-CHAIN_OUTBOUND, 165-CHAIN_DETOUR_REWRITE — приёмочный
+// стенд цепочки на живых протоколах: три shadowsocks-сервера в одном box'е как
+// хопы, mixed-inbound как вход трафика, локальный HTTP-сервер как цель.
+// Проверяет, что вложение «in → mid → exit» реально несёт трафик, что
+// прозрачный direct в середине укорачивает путь на лету и что узлы позиций
+// ходят через хопы своим detour (перезапись SPEC 165).
 //
 // Живёт здесь, а не в test/, по той же причине, что lx-test/zombie: модуль test/
 // резолвит форк-сабмодули через прокси и не собирается.
@@ -127,8 +128,6 @@ func TestChainEndToEndShadowsocksHops(t *testing.T) {
 	pathProvider := chainOutbound.(adapter.ChainPathProvider)
 	statusProvider := chainOutbound.(adapter.ChainStatusProvider)
 
-	// Прогрев: узел на позиции 2 и селектор на позиции 1 детерминированы → два звена.
-	require.EqualValues(t, 2, statusProvider.ChainStatus().LiveClones)
 	require.Equal(t, "in,mid,exit", strings.Join(pathProvider.ChainPath(), ","))
 
 	require.Equal(t, "through-the-chain", get())
@@ -136,12 +135,15 @@ func TestChainEndToEndShadowsocksHops(t *testing.T) {
 	require.EqualValues(t, 1, status.Dials)
 	require.EqualValues(t, 0, status.Errors)
 
-	// Хопы адресуемы по тегу (URLTest по префиксу), но не в списке outbound'ов.
-	_, hopLoaded := instance.Outbound().Outbound("virt#1")
+	// Хопы — обычные исходящие типа chain-hop (SPEC 165 П1).
+	hop, hopLoaded := instance.Outbound().Outbound("virt#1")
 	require.True(t, hopLoaded)
-	for _, ob := range instance.Outbound().Outbounds() {
-		require.NotEqual(t, "virt#1", ob.Tag())
-	}
+	require.Equal(t, C.TypeChainHop, hop.Type())
+
+	// Узел позиции 2 сам ходит через хоп ниже: прямой маршрут на него идёт
+	// путём цепочки (Т5), второго экземпляра нет.
+	exit, _ := instance.Outbound().Outbound("exit")
+	require.Equal(t, []string{"virt#1"}, exit.Dependencies())
 
 	// direct в середине: путь укорачивается без перезапуска.
 	selector, _ := instance.Outbound().Outbound("sel-mid")
@@ -233,47 +235,31 @@ func TestChainRuntimeToggleEndToEnd(t *testing.T) {
 	require.Equal(t, "in,mid,exit", strings.Join(pathProvider.ChainPath(), ","))
 
 	// Disable the middle: the hop is skipped, traffic still flows.
-	warmup, err := controller.SetPositionEnabled(1, false)
-	require.NoError(t, err)
-	require.Empty(t, warmup)
+	require.NoError(t, controller.SetPositionEnabled(1, false))
 	require.Equal(t, "in,exit", strings.Join(pathProvider.ChainPath(), ","))
 	require.True(t, statusProvider.ChainStatus().Positions[1].Disabled)
 	require.Equal(t, "mid", statusProvider.ChainStatus().Positions[1].Now)
 	require.Equal(t, "through-the-chain", get())
 
 	// Disable the entry: hop 0 dials the real network via the direct fallback.
-	_, err = controller.SetPositionEnabled(0, false)
-	require.NoError(t, err)
+	require.NoError(t, controller.SetPositionEnabled(0, false))
 	require.Equal(t, "exit", strings.Join(pathProvider.ChainPath(), ","))
 	require.Equal(t, "through-the-chain", get())
 
 	// Everything disabled: the chain degenerates into direct.
-	_, err = controller.SetPositionEnabled(2, false)
-	require.NoError(t, err)
+	require.NoError(t, controller.SetPositionEnabled(2, false))
 	require.Empty(t, pathProvider.ChainPath())
 	require.Equal(t, "through-the-chain", get())
 
-	// Everything back on: full path again, links warmed up eagerly.
+	// Everything back on: full path again.
 	for position := 0; position < 3; position++ {
-		warmup, err = controller.SetPositionEnabled(position, true)
-		require.NoError(t, err)
-		require.Empty(t, warmup)
+		require.NoError(t, controller.SetPositionEnabled(position, true))
 	}
 	require.Equal(t, "in,mid,exit", strings.Join(pathProvider.ChainPath(), ","))
 	require.Equal(t, "through-the-chain", get())
 
-	// Effective link config: real transform output with the hop detour.
-	content, err := controller.CloneConfigJSON(2)
-	require.NoError(t, err)
-	require.Contains(t, content, `"type": "shadowsocks"`)
-	require.Contains(t, content, `"tag": "exit"`)
-	require.Contains(t, content, `"detour": "virt#1"`)
-	_, err = controller.CloneConfigJSON(0)
-	require.Error(t, err)
-
 	// Persistence: a disabled position survives a restart via the cache-file.
-	_, err = controller.SetPositionEnabled(1, false)
-	require.NoError(t, err)
+	require.NoError(t, controller.SetPositionEnabled(1, false))
 	instance.Close()
 	closed = true
 
@@ -297,4 +283,29 @@ func TestChainRejectsSinglePosition(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "at least 2 outbounds")
+}
+
+// SPEC 165 К1 on a real box: a ring a client built ([A, Dir{A, X}]) passes
+// the rewrite and fails the load at upstream's start-order check.
+func TestChainRingFailsAtUpstreamCheck(t *testing.T) {
+	inPort, xPort := freePort(t), freePort(t)
+	instance, err := box.New(box.Options{
+		Context: include.Context(context.Background()),
+		Options: option.Options{
+			Log: &option.LogOptions{Level: "warning"},
+			Outbounds: []option.Outbound{
+				ssClient("A", inPort),
+				ssClient("X", xPort),
+				{Type: C.TypeSelector, Tag: "Dir", Options: &option.SelectorOutboundOptions{Outbounds: []string{"A", "X"}}},
+				{Type: C.TypeChain, Tag: "c", Options: &option.ChainOutboundOptions{Outbounds: []string{"A", "Dir"}}},
+			},
+		},
+	})
+	if err == nil {
+		err = instance.Start()
+		instance.Close()
+	}
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "circular outbound dependency")
+	require.Contains(t, err.Error(), "c#0")
 }

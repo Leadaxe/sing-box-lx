@@ -52,8 +52,9 @@ is exposed over two carriers:
 | **libbox `CommandClient`** | the Android / iOS AAR (gRPC over a local socket) | `experimental/libbox/command_client_command_lx.go` |
 
 The lx extensions (`SubscribeDNSQueries`, `GetRules`, `GetGroups`, `GetOutbounds`,
-`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `URLTestOutbound`,
-`GetURLViaOutbound`, `GetChains`, `GetWireGuardStatus`, `GetTailscaleStatus`)
+`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetEffectiveConfig`, `GetOutboundConfig`,
+`URLTestOutbound`, `GetURLViaOutbound`, `GetChainStatus`, `GetWireGuardStatus`,
+`GetTailscaleStatus`)
 are implemented once in the core and reached through either carrier with the same field semantics. The field tables below
 therefore describe the Android AAR just as much as a remote lxd machine. Only the
 wire framing and the method-call syntax differ. Transport-specific rules are
@@ -80,17 +81,17 @@ documented in [lxd-daemon.md](lxd-daemon.md).
 
 ## Fork RPCs exist only in builds with `with_lx_command`
 
-Twelve RPCs live inside an `lx:begin lx_command` … `lx:end lx_command` block and
+Fourteen RPCs live inside an `lx:begin lx_command` … `lx:end lx_command` block and
 exist only when the binary is built with `with_lx_command`:
 
 `URLTestOutbound`, `GetRules`, `GetGroups`, `GetOutbounds`, `SubscribeDNSQueries`,
-`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetURLViaOutbound`, `GetChains`,
-`GetWireGuardStatus`, `GetTailscaleStatus`.
+`GetPool`, `GetDNSGroups`, `GetRunningConfig`, `GetEffectiveConfig`, `GetOutboundConfig`,
+`GetURLViaOutbound`, `GetChainStatus`, `GetWireGuardStatus`, `GetTailscaleStatus`.
 
 The same block also carries control RPCs outside this document's scope:
 
-- `SetChainPositionEnabled` and `GetChainCloneConfig` — enabling and disabling
-  hops of a `chain` at runtime ([CHAIN feature](../SPECS/FEATURES/015-CHAIN/FEATURE.md));
+- `SetChainPositionEnabled` — enabling and disabling positions of a `chain` at
+  runtime ([CHAIN feature](../SPECS/FEATURES/015-CHAIN/FEATURE.md));
 - `SetEndpointEnabled` — manual on/off of a WG/AWG or Tailscale endpoint, see
   [lx-energy.md §12](lx-energy.md#12-a-manual-switch-turns-an-endpoint-off-without-a-config-change);
 - `TailscaleLogin` — login of a Tailscale endpoint with a new auth key without a box restart;
@@ -298,9 +299,11 @@ full picture.
 | `GetPool(GetPoolRequest) → PoolList` | **lx**: rotation state of a balanced urltest group |
 | `GetDNSGroups → DnsGroupList` | **lx**: full DNS group state |
 | `GetRunningConfig → RunningConfig` | **lx**: the config the core is running |
+| `GetEffectiveConfig → RunningConfig` | **lx**: the same config after the lx pre-pass — chain hops, rewritten `detour`, aligned MTU, `lx.detour` expanded |
+| `GetOutboundConfig(tag) → OutboundConfig` | **lx**: one node as JSON `{tag, original, effective, changes}`; an unknown tag is `NotFound` |
 | `URLTestOutbound → delay` | **lx**: probe a single node |
 | `GetURLViaOutbound → body` | **lx**: probe returning the response body — which exit IP this node gives |
-| `GetChains → ChainList` | **lx**: state of every `chain` outbound — positions, resolved node, link state/MTU/strip/rewrite, counters |
+| `GetChainStatus(tag) → ChainState` | **lx**: state of one `chain` outbound — per position the resolved node, `transparent`, `disabled`, errors; dial and error counters |
 | `SubscribeLog → stream Log` | the core's log, not the daemon's; the daemon's log is served by the admin REST ([lxd-daemon.md](lxd-daemon.md)) |
 
 `Status.trafficAvailable` distinguishes "zero traffic" from "traffic accounting
@@ -395,7 +398,15 @@ gives:
 (string) — the canonical serialization of the options the core built from
 (post-override). It is not byte-identical to the profile text the client sent:
 field order, `omitempty` and `[]`→`null` differ. Compare semantically, not
-textually.
+textually. `GetEffectiveConfig` returns the same message with the config after
+the lx pre-pass, in the same canonical form.
+
+**`OutboundConfig`** (`GetOutboundConfig`, **lx**): a single `content` field
+(string), a JSON object `{tag, original, effective, changes}`. `original` is the
+node as in `GetRunningConfig`, `effective` as in `GetEffectiveConfig`; a chain hop
+has only `effective`. `changes` is a list of `{field, from, to, by}` in the order
+they were made, and applied to `original` it gives `effective`; the fields are in
+[lx-observability.md](lx-observability.md).
 
 ## observability-api-lx
 
@@ -403,7 +414,7 @@ What the fork does to this plane relative to upstream sing-box.
 
 ### Added
 
-Twelve RPCs behind `with_lx_command`, all absent upstream:
+Fourteen RPCs behind `with_lx_command`, all absent upstream:
 
 | RPC | Why |
 |---|---|
@@ -414,9 +425,10 @@ Twelve RPCs behind `with_lx_command`, all absent upstream:
 | `GetPool` | rotation state of a balanced urltest group |
 | `GetDNSGroups` | DNS group state |
 | `GetRunningConfig` | the config in effect |
+| `GetEffectiveConfig`, `GetOutboundConfig` | the config as built after the lx pre-pass, and what changed in each node |
 | `URLTestOutbound` | probe one node, get a delay |
 | `GetURLViaOutbound` | probe one node, get the response body |
-| `GetChains` | state of every `chain` outbound |
+| `GetChainStatus` | state of one `chain` outbound by tag |
 
 ### Extended
 

@@ -1,45 +1,50 @@
 package chain
 
-// lx: SPEC 073 — тесты цепочки на фейковых узлах: проверяют порядок хопов,
-// звенья (создание/прогрев/эвикшн), прозрачный direct, блок, strip/rewrite/MTU,
-// ошибки с позициями и внутренние теги хопов. Сеть не нужна.
+// lx: SPEC 165 — тесты цепочки как перезаписи `detour` на фейковых узлах.
+// Имена тестов несут номер правила ALGORITHM.md. Сеть не нужна.
 
 import (
 	"context"
 	"io"
 	"net"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/endpoint"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/interrupt"
+	"github.com/sagernet/sing-box/common/lxdatagram"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/block"
 	"github.com/sagernet/sing-box/protocol/group"
 	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/json"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 )
 
-// ---- фейковый узел ---------------------------------------------------------
+// ---- фейковые узлы ----------------------------------------------------------
 
-const typeFake = "fake"
+const (
+	typeFake   = "fake"
+	typeNoDial = "nodial"
+)
 
 type fakeOptions struct {
 	option.DialerOptions
-	Name      string                           `json:"name,omitempty"`
-	TLS       *option.OutboundTLSOptions       `json:"tls,omitempty"`
-	Multiplex *option.OutboundMultiplexOptions `json:"multiplex,omitempty"`
-	Transport *option.V2RayTransportOptions    `json:"transport,omitempty"`
+	Name   string                     `json:"name,omitempty"`
+	Lookup string                     `json:"lookup,omitempty"`
+	TLS    *option.OutboundTLSOptions `json:"tls,omitempty"`
+}
+
+type noDialOptions struct {
+	Name string `json:"name,omitempty"`
 }
 
 type traceKey struct{}
@@ -65,44 +70,13 @@ func traceOf(ctx context.Context) *trace {
 	return t
 }
 
-type fakeRegistry struct {
-	mu       sync.Mutex
-	created  []string // "tag@detour"
-	options  map[string][]fakeOptions
-	closed   map[string]int
-	closedMu sync.Mutex
-}
-
-func newFakeRegistry() *fakeRegistry {
-	return &fakeRegistry{options: make(map[string][]fakeOptions), closed: make(map[string]int)}
-}
-
-func (r *fakeRegistry) record(tag string, options fakeOptions) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.created = append(r.created, tag+"@"+options.Detour)
-	r.options[tag] = append(r.options[tag], options)
-}
-
-func (r *fakeRegistry) createdList() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return slices.Clone(r.created)
-}
-
-func (r *fakeRegistry) lastOptions(tag string) fakeOptions {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	list := r.options[tag]
-	return list[len(list)-1]
-}
-
 type fakeOutbound struct {
 	outbound.Adapter
-	registry *fakeRegistry
-	manager  adapter.OutboundManager
-	detour   string
-	name     string
+	manager adapter.OutboundManager
+	detour  string
+	// lookup is an outbound the node dials first with the same ctx, as a
+	// node resolving its server through a DNS server with a detour does.
+	lookup string
 }
 
 func (f *fakeOutbound) label() string {
@@ -112,6 +86,14 @@ func (f *fakeOutbound) label() string {
 func (f *fakeOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	if t := traceOf(ctx); t != nil {
 		t.add(f.label())
+	}
+	if f.lookup != "" {
+		resolver, _ := f.manager.Outbound(f.lookup)
+		conn, err := resolver.DialContext(ctx, network, M.ParseSocksaddr("dns.example:53"))
+		if err != nil {
+			return nil, err
+		}
+		conn.Close()
 	}
 	if f.detour == "" {
 		client, server := net.Pipe()
@@ -125,6 +107,7 @@ func (f *fakeOutbound) DialContext(ctx context.Context, network string, destinat
 	if !loaded {
 		return nil, E.New("detour not found: ", f.detour)
 	}
+	adapter.RecordCarrier(ctx, next) // as the detour dialer does
 	return next.DialContext(ctx, network, M.ParseSocksaddr(f.Tag()+".server:1"))
 }
 
@@ -142,25 +125,8 @@ func (f *fakeOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr
 	return next.ListenPacket(ctx, M.ParseSocksaddr(f.Tag()+".server:1"))
 }
 
-func (f *fakeOutbound) Close() error {
-	f.registry.closedMu.Lock()
-	f.registry.closed[f.label()]++
-	f.registry.closedMu.Unlock()
-	return nil
-}
-
-// typeNoDial — тип без dial-полей (должен отвергаться на позициях ≥ 1).
-const typeNoDial = "nodial"
-
-type noDialOptions struct {
-	Name string `json:"name,omitempty"`
-}
-
-// fakeGroup — группа типа urltest (для прогрев-детерминизма) с хуком как у настоящих.
-type fakeGroupOptions struct {
-	Outbounds []string `json:"outbounds"`
-}
-
+// fakeGroup — urltest, выбирающий на каждом соединении первого члена, как
+// round_robin: проверка Х8 без Now().
 type fakeGroup struct {
 	outbound.Adapter
 	manager adapter.OutboundManager
@@ -176,7 +142,7 @@ func (g *fakeGroup) AttachConnection(io.Closer) func() { return func() {} }
 
 func (g *fakeGroup) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	picked, _ := g.manager.Outbound(g.tags[0])
-	picked, err := adapter.ResolveChainLeaf(ctx, picked)
+	ctx, picked, err := adapter.ResolveChainLeaf(ctx, picked)
 	if err != nil {
 		return nil, err
 	}
@@ -185,821 +151,14 @@ func (g *fakeGroup) DialContext(ctx context.Context, network string, destination
 
 func (g *fakeGroup) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	picked, _ := g.manager.Outbound(g.tags[0])
-	picked, err := adapter.ResolveChainLeaf(ctx, picked)
+	ctx, picked, err := adapter.ResolveChainLeaf(ctx, picked)
 	if err != nil {
 		return nil, err
 	}
 	return picked.ListenPacket(ctx, destination)
 }
 
-// ---- стенд ------------------------------------------------------------------
-
-type stand struct {
-	t        *testing.T
-	ctx      context.Context
-	registry *fakeRegistry
-	outbound *outbound.Manager
-	endpoint *endpoint.Manager
-	scope    *adapter.Scope
-	fallback func() (adapter.Outbound, error)
-}
-
-func newStand(t *testing.T) *stand {
-	t.Helper()
-	fakes := newFakeRegistry()
-	registry := outbound.NewRegistry()
-	epRegistry := endpoint.NewRegistry()
-	var manager *outbound.Manager
-	outbound.Register[fakeOptions](registry, typeFake, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options fakeOptions) (adapter.Outbound, error) {
-		// SPEC 075: the original node builds fine, only its clone (detour set)
-		// fails — exercises the warm-up error path of the toggle.
-		if options.Name == "fail-on-clone" && options.Detour != "" {
-			return nil, E.New("clone construction failed")
-		}
-		fakes.record(tag, options)
-		return &fakeOutbound{
-			Adapter:  outbound.NewAdapterWithDialerOptions(typeFake, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
-			registry: fakes,
-			manager:  service.FromContext[adapter.OutboundManager](ctx),
-			detour:   options.Detour,
-			name:     options.Name,
-		}, nil
-	})
-	// masque под фейковым конструктором (SPEC 120): накладные по семейству сервера.
-	outbound.Register[option.MASQUEOutboundOptions](registry, C.TypeMASQUE, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.MASQUEOutboundOptions) (adapter.Outbound, error) {
-		fakes.record(tag, fakeOptions{DialerOptions: options.DialerOptions, Name: "mtu=" + itoa(int(options.MTU))})
-		return &fakeOutbound{
-			Adapter:  outbound.NewAdapterWithDialerOptions(C.TypeMASQUE, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
-			registry: fakes,
-			manager:  service.FromContext[adapter.OutboundManager](ctx),
-			detour:   options.Detour,
-		}, nil
-	})
-	// wireguard под фейковым конструктором: опции настоящие (для MTU-логики), узел фейковый.
-	outbound.Register[option.WireGuardEndpointOptions](registry, C.TypeWireGuard, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Outbound, error) {
-		fakes.record(tag, fakeOptions{DialerOptions: options.DialerOptions, Name: "mtu=" + itoa(int(options.MTU))})
-		return &fakeOutbound{
-			Adapter:  outbound.NewAdapterWithDialerOptions(C.TypeWireGuard, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
-			registry: fakes,
-			manager:  service.FromContext[adapter.OutboundManager](ctx),
-			detour:   options.Detour,
-		}, nil
-	})
-	// hysteria2 под фейковым конструктором (SPEC 120): опции настоящие, Name
-	// фиксирует initial_packet_size и флаг PMTUD, которые читал бы конструктор.
-	outbound.Register[option.Hysteria2OutboundOptions](registry, C.TypeHysteria2, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.Hysteria2OutboundOptions) (adapter.Outbound, error) {
-		fakes.record(tag, fakeOptions{DialerOptions: options.DialerOptions, Name: "ips=" + itoa(options.InitialPacketSize) + " pmtud_off=" + strconv.FormatBool(options.DisablePathMTUDiscovery)})
-		return &fakeOutbound{
-			Adapter:  outbound.NewAdapterWithDialerOptions(C.TypeHysteria2, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
-			registry: fakes,
-			manager:  service.FromContext[adapter.OutboundManager](ctx),
-			detour:   options.Detour,
-		}, nil
-	})
-	outbound.Register[noDialOptions](registry, typeNoDial, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options noDialOptions) (adapter.Outbound, error) {
-		return &fakeOutbound{Adapter: outbound.NewAdapter(typeNoDial, tag, []string{N.NetworkTCP}, nil), registry: fakes, manager: service.FromContext[adapter.OutboundManager](ctx)}, nil
-	})
-	outbound.Register[fakeGroupOptions](registry, C.TypeURLTest, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options fakeGroupOptions) (adapter.Outbound, error) {
-		return &fakeGroup{Adapter: outbound.NewAdapter(C.TypeURLTest, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.Outbounds), manager: service.FromContext[adapter.OutboundManager](ctx), tags: options.Outbounds}, nil
-	})
-	// direct под фейковым конструктором: настоящему нужен DNS-менеджер в ctx,
-	// цепочка же смотрит только на Type().
-	outbound.Register[option.DirectOutboundOptions](registry, C.TypeDirect, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.DirectOutboundOptions) (adapter.Outbound, error) {
-		return &fakeOutbound{
-			Adapter:  outbound.NewAdapter(C.TypeDirect, tag, []string{N.NetworkTCP, N.NetworkUDP}, nil),
-			registry: fakes,
-			manager:  service.FromContext[adapter.OutboundManager](ctx),
-		}, nil
-	})
-	group.RegisterSelector(registry)
-	block.RegisterOutbound(registry)
-	RegisterOutbound(registry)
-
-	logFactory := log.NewNOPFactory()
-	ctx := context.Background()
-	ctx = service.ContextWith[option.OutboundOptionsRegistry](ctx, registry)
-	ctx = service.ContextWith[adapter.OutboundRegistry](ctx, registry)
-	ctx = service.ContextWith[option.EndpointOptionsRegistry](ctx, epRegistry)
-	ctx = service.ContextWith[adapter.EndpointRegistry](ctx, epRegistry)
-	ctx = service.ContextWith[log.Factory](ctx, logFactory)
-	epManager := endpoint.NewManager(logFactory.NewLogger("endpoint"), epRegistry)
-	manager = outbound.NewManager(registry, epManager, "")
-	ctx = service.ContextWith[adapter.OutboundManager](ctx, manager)
-	ctx = service.ContextWith[adapter.EndpointManager](ctx, epManager)
-	// Initialize runs in start(), after the stand's outbounds exist: since
-	// upstream 9e0a6a393 it sorts them, and Start starts only what it sorted.
-	fallback := func() (adapter.Outbound, error) {
-		return registry.CreateOutbound(ctx, nil, logFactory.NewLogger("direct"), "direct", C.TypeDirect, &option.DirectOutboundOptions{})
-	}
-	return &stand{t: t, ctx: ctx, registry: fakes, outbound: manager, endpoint: epManager, scope: adapter.NewScope(ctx, logFactory.Logger()), fallback: fallback}
-}
-
-func itoa(v int) string {
-	return strconv.Itoa(v)
-}
-
-func (s *stand) add(tag, typeName string, options any) {
-	s.t.Helper()
-	if err := s.outbound.Create(s.ctx, nil, log.NewNOPFactory().NewLogger(tag), tag, typeName, options); err != nil {
-		s.t.Fatalf("create %s: %v", tag, err)
-	}
-}
-
-func (s *stand) fake(tag string, opts ...func(*fakeOptions)) {
-	options := fakeOptions{}
-	for _, opt := range opts {
-		opt(&options)
-	}
-	s.add(tag, typeFake, &options)
-}
-
-func (s *stand) selector(tag string, members ...string) {
-	s.add(tag, C.TypeSelector, &option.SelectorOutboundOptions{Outbounds: members})
-}
-
-func (s *stand) chain(tag string, positions []string, mutate ...func(*option.ChainOutboundOptions)) {
-	options := option.ChainOutboundOptions{Outbounds: positions}
-	for _, m := range mutate {
-		m(&options)
-	}
-	s.add(tag, C.TypeChain, &options)
-}
-
-func (s *stand) start() error {
-	if err := s.outbound.Initialize(s.fallback); err != nil {
-		return err
-	}
-	for _, stage := range adapter.ListStartStages {
-		if err := s.scope.Start("endpoint", s.endpoint, stage); err != nil {
-			return err
-		}
-		if err := s.scope.Start("outbound", s.outbound, stage); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *stand) mustStart() {
-	s.t.Helper()
-	if err := s.start(); err != nil {
-		s.t.Fatalf("start: %v", err)
-	}
-	s.t.Cleanup(func() { s.scope.Close() })
-}
-
-func (s *stand) chainOf(tag string) *Chain {
-	s.t.Helper()
-	ob, loaded := s.outbound.Outbound(tag)
-	if !loaded {
-		s.t.Fatalf("chain %s not found", tag)
-	}
-	return ob.(*Chain)
-}
-
-func (s *stand) dial(tag string) ([]string, error) {
-	ctx, tr := withTrace(s.ctx)
-	ob, _ := s.outbound.Outbound(tag)
-	conn, err := ob.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr("target.example:443"))
-	if err != nil {
-		return tr.items, err
-	}
-	conn.Close()
-	return tr.items, nil
-}
-
-func (s *stand) selectIn(groupTag, member string) {
-	s.t.Helper()
-	ob, _ := s.outbound.Outbound(groupTag)
-	if !ob.(*group.Selector).SelectOutbound(member) {
-		s.t.Fatalf("select %s in %s failed", member, groupTag)
-	}
-}
-
-func assertTrace(t *testing.T, got []string, want ...string) {
-	t.Helper()
-	if strings.Join(got, " > ") != strings.Join(want, " > ") {
-		t.Fatalf("trace mismatch:\n got  %v\n want %v", got, want)
-	}
-}
-
-func contains(list []string, item string) bool {
-	for _, it := range list {
-		if it == item {
-			return true
-		}
-	}
-	return false
-}
-
-// ---- тесты ------------------------------------------------------------------
-
-func TestChainAllNodes(t *testing.T) {
-	s := newStand(t)
-	s.fake("in")
-	s.fake("mid")
-	s.fake("exit")
-	s.chain("virt", []string{"in", "mid", "exit"})
-	s.mustStart()
-
-	// прогрев: звенья узловых позиций подняты до первого дозвона
-	created := s.registry.createdList()
-	if !contains(created, "mid@virt#0") || !contains(created, "exit@virt#1") {
-		t.Fatalf("preload missing: %v", created)
-	}
-	tr, err := s.dial("virt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// порядок пакета: exit (звено через #1) → mid (звено через #0) → in (оригинал)
-	assertTrace(t, tr, "exit[virt#1]", "mid[virt#0]", "in[]")
-	c := s.chainOf("virt")
-	if path := strings.Join(c.ChainPath(), ","); path != "in,mid,exit" {
-		t.Fatalf("path %s", path)
-	}
-	// хопы видны по тегу, но не в списке
-	if _, ok := s.outbound.Outbound("virt#1"); !ok {
-		t.Fatal("hop tag not resolvable")
-	}
-	for _, ob := range s.outbound.Outbounds() {
-		if ob.Tag() == "virt#1" {
-			t.Fatal("hop leaked into Outbounds()")
-		}
-	}
-	status := c.ChainStatus()
-	if status.LiveClones != 2 || status.Dials != 1 || status.Positions[2].Clone == nil || status.Positions[2].Clone.State != "idle" {
-		t.Fatalf("status %+v", status)
-	}
-	if status.Positions[0].Clone != nil {
-		t.Fatal("position 0 must not have a clone")
-	}
-}
-
-func TestChainAllSelectorsSwitchAndEvict(t *testing.T) {
-	s := newStand(t)
-	for _, tag := range []string{"in-a", "in-b", "mid-a", "mid-b", "exit-a", "exit-b"} {
-		s.fake(tag)
-	}
-	s.selector("sel-in", "in-a", "in-b")
-	s.selector("sel-mid", "mid-a", "mid-b")
-	s.selector("sel-exit", "exit-a", "exit-b")
-	s.chain("virt", []string{"sel-in", "sel-mid", "sel-exit"})
-	s.mustStart()
-
-	// прогрев детерминированных позиций (селекторы): mid-a@#0, exit-a@#1
-	created := s.registry.createdList()
-	if !contains(created, "mid-a@virt#0") || !contains(created, "exit-a@virt#1") {
-		t.Fatalf("preload: %v", created)
-	}
-	tr, err := s.dial("virt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertTrace(t, tr, "exit-a[virt#1]", "mid-a[virt#0]", "in-a[]")
-
-	// переключение середины: новое звено на первом дозвоне, старое остаётся
-	s.selectIn("sel-mid", "mid-b")
-	tr, err = s.dial("virt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertTrace(t, tr, "exit-a[virt#1]", "mid-b[virt#0]", "in-a[]")
-	c := s.chainOf("virt")
-	if c.ChainStatus().LiveClones != 3 {
-		t.Fatalf("expected 3 live clones, got %d", c.ChainStatus().LiveClones)
-	}
-	// переключение входа: клоны не нужны, путь меняется
-	s.selectIn("sel-in", "in-b")
-	tr, _ = s.dial("virt")
-	assertTrace(t, tr, "exit-a[virt#1]", "mid-b[virt#0]", "in-b[]")
-
-	// эвикшн: mid-a не выбирали, соединений нет → удаляется; остальные свежие
-	c.evictIdle(time.Now().Add(c.idleTimeout + time.Second))
-	status := c.ChainStatus()
-	if status.LiveClones != 0 || status.ClonesEvicted != 3 {
-		// все три звена простаивают (трассовые соединения закрыты) → все удалены
-		t.Fatalf("evict: %+v", status)
-	}
-	if s.registry.closed["mid-a[virt#0]"] != 1 {
-		t.Fatalf("mid-a clone not closed: %v", s.registry.closed)
-	}
-	// следующий дозвон пересоздаёт
-	tr, err = s.dial("virt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertTrace(t, tr, "exit-a[virt#1]", "mid-b[virt#0]", "in-b[]")
-}
-
-func TestChainLiveConnectionHoldsClone(t *testing.T) {
-	s := newStand(t)
-	s.fake("in")
-	s.fake("mid")
-	s.fake("exit")
-	s.chain("virt", []string{"in", "mid", "exit"})
-	s.mustStart()
-	c := s.chainOf("virt")
-	ctx, _ := withTrace(s.ctx)
-	conn, err := c.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr("target:1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.evictIdle(time.Now().Add(time.Hour))
-	if c.ChainStatus().LiveClones != 2 {
-		t.Fatalf("live connection must hold clones: %+v", c.ChainStatus())
-	}
-	conn.Close()
-	c.evictIdle(time.Now().Add(time.Hour))
-	if c.ChainStatus().LiveClones != 0 {
-		t.Fatalf("clones must be evicted after close: %+v", c.ChainStatus())
-	}
-}
-
-func TestChainDirectTransparentAndBlock(t *testing.T) {
-	s := newStand(t)
-	s.fake("in")
-	s.fake("mid")
-	s.fake("exit")
-	s.add("direct-out", C.TypeDirect, &option.DirectOutboundOptions{})
-	s.add("block-out", C.TypeBlock, &option.StubOptions{})
-	s.selector("sel-mid", "mid", "direct-out", "block-out")
-	s.selector("sel-exit", "exit", "direct-out")
-	s.chain("virt", []string{"in", "sel-mid", "sel-exit"})
-	s.mustStart()
-
-	tr, _ := s.dial("virt")
-	assertTrace(t, tr, "exit[virt#1]", "mid[virt#0]", "in[]")
-
-	s.selectIn("sel-mid", "direct-out")
-	tr, err := s.dial("virt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertTrace(t, tr, "exit[virt#1]", "in[]")
-	c := s.chainOf("virt")
-	if path := strings.Join(c.ChainPath(), ","); path != "in,exit" {
-		t.Fatalf("path %s", path)
-	}
-	status := c.ChainStatus()
-	if !status.Positions[1].Transparent || status.Positions[1].Clone != nil {
-		t.Fatalf("position 1 must be transparent: %+v", status.Positions[1])
-	}
-
-	s.selectIn("sel-exit", "direct-out")
-	tr, _ = s.dial("virt")
-	assertTrace(t, tr, "in[]")
-
-	s.selectIn("sel-mid", "block-out")
-	s.selectIn("sel-exit", "exit")
-	_, err = s.dial("virt")
-	if err == nil {
-		t.Fatal("block must reject")
-	}
-	if !strings.Contains(err.Error(), "chain[virt] #2 (exit) via #1 (block-out)") {
-		t.Fatalf("error must name positions: %v", err)
-	}
-}
-
-func TestChainNestedGroupsAndURLTestPreload(t *testing.T) {
-	s := newStand(t)
-	s.fake("in")
-	s.fake("mid-a")
-	s.fake("mid-b")
-	s.fake("exit")
-	s.add("ut-mid", C.TypeURLTest, &fakeGroupOptions{Outbounds: []string{"mid-a", "mid-b"}})
-	s.selector("sel-mid", "ut-mid")
-	s.chain("virt", []string{"in", "sel-mid", "exit"})
-	s.mustStart()
-
-	// urltest на пути выбора → позиция 1 не прогревается; exit прогревается
-	created := s.registry.createdList()
-	if contains(created, "mid-a@virt#0") {
-		t.Fatalf("urltest position must stay lazy: %v", created)
-	}
-	if !contains(created, "exit@virt#1") {
-		t.Fatalf("exit must preload: %v", created)
-	}
-	tr, err := s.dial("virt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertTrace(t, tr, "exit[virt#1]", "mid-a[virt#0]", "in[]")
-}
-
-func TestChainStripRewriteAndErrors(t *testing.T) {
-	withEvasion := func(o *fakeOptions) {
-		o.TLS = &option.OutboundTLSOptions{Enabled: true, ServerName: "x", Fragment: true, UTLS: &option.OutboundUTLSOptions{Enabled: true, Fingerprint: "chrome"}}
-		o.Multiplex = &option.OutboundMultiplexOptions{Enabled: true, Padding: true}
-	}
-	t.Run("default strip", func(t *testing.T) {
-		s := newStand(t)
-		s.fake("in", withEvasion)
-		s.fake("exit", withEvasion)
-		s.chain("virt", []string{"in", "exit"})
-		s.mustStart()
-		clone := s.registry.lastOptions("exit")
-		if clone.Detour != "virt#0" || clone.TLS == nil || clone.TLS.Fragment || clone.Multiplex == nil || clone.Multiplex.Padding {
-			t.Fatalf("strip not applied: %+v tls=%+v mux=%+v", clone, clone.TLS, clone.Multiplex)
-		}
-		if clone.TLS.UTLS == nil || !clone.TLS.UTLS.Enabled {
-			t.Fatal("utls must be kept by default")
-		}
-		status := s.chainOf("virt").ChainStatus()
-		if got := strings.Join(status.Positions[1].Clone.Stripped, ","); got != "tls.fragment,multiplex.padding" {
-			t.Fatalf("stripped=%s", got)
-		}
-	})
-	t.Run("strip map and rewrite", func(t *testing.T) {
-		s := newStand(t)
-		s.fake("in", withEvasion)
-		s.fake("exit", withEvasion)
-		s.chain("virt", []string{"in", "exit"}, func(o *option.ChainOutboundOptions) {
-			o.Strip = map[string]bool{"tls.fragment": false, "tls.utls": true}
-			o.Rewrite = map[string]any{typeFake: map[string]any{"name": "rewritten", "tls": map[string]any{"server_name": "patched"}}}
-		})
-		s.mustStart()
-		clone := s.registry.lastOptions("exit")
-		if !clone.TLS.Fragment || clone.TLS.UTLS != nil || clone.Multiplex.Padding || clone.Name != "rewritten" || clone.TLS.ServerName != "patched" {
-			t.Fatalf("strip/rewrite: %+v tls=%+v", clone, clone.TLS)
-		}
-		if !s.chainOf("virt").ChainStatus().Positions[1].Clone.Rewritten {
-			t.Fatal("rewritten flag")
-		}
-	})
-	t.Run("strip_evasion false", func(t *testing.T) {
-		s := newStand(t)
-		s.fake("in", withEvasion)
-		s.fake("exit", withEvasion)
-		off := false
-		s.chain("virt", []string{"in", "exit"}, func(o *option.ChainOutboundOptions) { o.StripEvasion = &off })
-		s.mustStart()
-		clone := s.registry.lastOptions("exit")
-		if !clone.TLS.Fragment || !clone.Multiplex.Padding {
-			t.Fatalf("nothing must be stripped: %+v", clone.TLS)
-		}
-	})
-	t.Run("unknown strip key", func(t *testing.T) {
-		s := newStand(t)
-		s.fake("in")
-		s.fake("exit")
-		err := s.outbound.Create(s.ctx, nil, log.NewNOPFactory().NewLogger("virt"), "virt", C.TypeChain, &option.ChainOutboundOptions{Outbounds: []string{"in", "exit"}, Strip: map[string]bool{"tls.bogus": true}})
-		if err == nil || !strings.Contains(err.Error(), "unknown key tls.bogus") {
-			t.Fatalf("expected unknown key error, got %v", err)
-		}
-	})
-	t.Run("utls strip vs reality", func(t *testing.T) {
-		s := newStand(t)
-		s.fake("in")
-		s.fake("exit", func(o *fakeOptions) {
-			o.TLS = &option.OutboundTLSOptions{Enabled: true, UTLS: &option.OutboundUTLSOptions{Enabled: true}, Reality: &option.OutboundRealityOptions{Enabled: true, PublicKey: "k"}}
-		})
-		s.chain("virt", []string{"in", "exit"}, func(o *option.ChainOutboundOptions) { o.Strip = map[string]bool{"tls.utls": true} })
-		err := s.start()
-		if err == nil || !strings.Contains(err.Error(), "requires utls") {
-			t.Fatalf("expected reality/utls start error, got %v", err)
-		}
-	})
-	t.Run("rewrite unknown field fails start", func(t *testing.T) {
-		s := newStand(t)
-		s.fake("in")
-		s.fake("exit")
-		s.chain("virt", []string{"in", "exit"}, func(o *option.ChainOutboundOptions) {
-			o.Rewrite = map[string]any{typeFake: map[string]any{"no_such_field": 1}}
-		})
-		err := s.start()
-		if err == nil || !strings.Contains(err.Error(), "dry-run") {
-			t.Fatalf("expected dry-run error, got %v", err)
-		}
-	})
-}
-
-func TestChainMTU(t *testing.T) {
-	wg := func(tag string, mtu uint32, peer string) func(*stand) {
-		return func(s *stand) {
-			s.add(tag, C.TypeWireGuard, &option.WireGuardEndpointOptions{MTU: mtu, Peers: []option.WireGuardPeer{{Address: peer, Port: 51820}}})
-		}
-	}
-	t.Run("wg over wg v4", func(t *testing.T) {
-		s := newStand(t)
-		wg("wg-in", 1408, "1.2.3.4")(s)
-		wg("wg-exit", 1408, "5.6.7.8")(s)
-		s.chain("virt", []string{"wg-in", "wg-exit"})
-		s.mustStart()
-		if got := s.registry.lastOptions("wg-exit").Name; got != "mtu=1348" {
-			t.Fatalf("mtu %s", got)
-		}
-		st := s.chainOf("virt").ChainStatus().Positions[1].Clone
-		if st.MTUConfigured != 1408 || st.MTUEffective != 1348 {
-			t.Fatalf("status %+v", st)
-		}
-	})
-	t.Run("wg over wg v6 domain", func(t *testing.T) {
-		s := newStand(t)
-		wg("wg-in", 1280, "1.2.3.4")(s)
-		wg("wg-exit", 1408, "wg.example.com")(s)
-		s.chain("virt", []string{"wg-in", "wg-exit"})
-		s.mustStart()
-		if got := s.registry.lastOptions("wg-exit").Name; got != "mtu=1200" {
-			t.Fatalf("mtu %s", got)
-		}
-	})
-	t.Run("wg over stream proxy keeps mtu", func(t *testing.T) {
-		s := newStand(t)
-		wg("wg-in", 1280, "1.2.3.4")(s)
-		s.fake("vless")
-		wg("wg-exit", 1408, "5.6.7.8")(s)
-		s.chain("virt", []string{"wg-in", "vless", "wg-exit"})
-		s.mustStart()
-		if got := s.registry.lastOptions("wg-exit").Name; got != "mtu=1408" {
-			t.Fatalf("mtu %s", got)
-		}
-	})
-	t.Run("selector below takes worst case", func(t *testing.T) {
-		s := newStand(t)
-		s.fake("vless")
-		wg("wg-mid", 1300, "1.2.3.4")(s)
-		s.selector("sel-mid", "vless", "wg-mid")
-		wg("wg-exit", 1408, "5.6.7.8")(s)
-		s.chain("virt", []string{"vless", "sel-mid", "wg-exit"})
-		s.mustStart()
-		if got := s.registry.lastOptions("wg-exit").Name; got != "mtu=1240" {
-			t.Fatalf("mtu %s", got)
-		}
-	})
-	t.Run("rewrite mtu then lower", func(t *testing.T) {
-		s := newStand(t)
-		wg("wg-in", 1408, "1.2.3.4")(s)
-		wg("wg-exit", 1408, "5.6.7.8")(s)
-		s.chain("virt", []string{"wg-in", "wg-exit"}, func(o *option.ChainOutboundOptions) {
-			o.Rewrite = map[string]any{C.TypeWireGuard: map[string]any{"mtu": 1300}}
-		})
-		s.mustStart()
-		if got := s.registry.lastOptions("wg-exit").Name; got != "mtu=1300" {
-			t.Fatalf("mtu %s", got)
-		}
-	})
-	// SPEC 120: a QUIC link over a tunnel gets initial_packet_size =
-	// capacity − ip/udp of its server, and PMTUD off with it.
-	hy2 := func(tag, server string, packetSize int) func(*stand) {
-		return func(s *stand) {
-			options := &option.Hysteria2OutboundOptions{}
-			options.Server = server
-			options.ServerPort = 443
-			options.InitialPacketSize = packetSize
-			s.add(tag, C.TypeHysteria2, options)
-		}
-	}
-	t.Run("hysteria2 over wg", func(t *testing.T) {
-		s := newStand(t)
-		wg("wg-in", 1408, "1.2.3.4")(s)
-		hy2("hy2-v6", "2606:4700:104::2", 0)(s)
-		hy2("hy2-v4", "5.6.7.8", 0)(s)
-		s.chain("v6", []string{"wg-in", "hy2-v6"})
-		s.chain("v4", []string{"wg-in", "hy2-v4"})
-		s.mustStart()
-		if got := s.registry.lastOptions("hy2-v6").Name; got != "ips=1360 pmtud_off=true" {
-			t.Fatalf("v6 %s", got)
-		}
-		if got := s.registry.lastOptions("hy2-v4").Name; got != "ips=1380 pmtud_off=true" {
-			t.Fatalf("v4 %s", got)
-		}
-		st := s.chainOf("v6").ChainStatus().Positions[1].Clone
-		if st.MTUConfigured != 0 || st.MTUEffective != 0 || !strings.HasPrefix(st.MTUReason, "initial_packet_size 1360: filled: limited by wg-in(wireguard) mtu 1408 − 48 ipv6") {
-			t.Fatalf("status %+v", st)
-		}
-	})
-	t.Run("hysteria2 over stream proxy keeps defaults", func(t *testing.T) {
-		s := newStand(t)
-		s.fake("vless")
-		hy2("hy2", "5.6.7.8", 0)(s)
-		s.chain("virt", []string{"vless", "hy2"})
-		s.mustStart()
-		if got := s.registry.lastOptions("hy2").Name; got != "ips=0 pmtud_off=false" {
-			t.Fatalf("%s", got)
-		}
-	})
-	t.Run("explicit initial_packet_size in fill is kept", func(t *testing.T) {
-		s := newStand(t)
-		s.ctx = service.ContextWithPtr(s.ctx, &option.LXResolved{MTUAlign: option.LXMTUAlignResolved{Mode: option.LXMTUAlignFill}})
-		wg("wg-in", 1408, "1.2.3.4")(s)
-		hy2("hy2", "5.6.7.8", 1400)(s)
-		s.chain("virt", []string{"wg-in", "hy2"})
-		s.mustStart()
-		if got := s.registry.lastOptions("hy2").Name; got != "ips=1400 pmtud_off=false" {
-			t.Fatalf("%s", got)
-		}
-		st := s.chainOf("virt").ChainStatus().Positions[1].Clone
-		if !strings.HasPrefix(st.MTUReason, "initial_packet_size 1400: kept (explicit, fill)") {
-			t.Fatalf("status %+v", st)
-		}
-	})
-	t.Run("mode off leaves wg mtu alone", func(t *testing.T) {
-		s := newStand(t)
-		s.ctx = service.ContextWithPtr(s.ctx, &option.LXResolved{MTUAlign: option.LXMTUAlignResolved{Mode: option.LXMTUAlignOff}})
-		wg("wg-in", 1408, "1.2.3.4")(s)
-		wg("wg-exit", 1408, "5.6.7.8")(s)
-		s.chain("virt", []string{"wg-in", "wg-exit"})
-		s.mustStart()
-		if got := s.registry.lastOptions("wg-exit").Name; got != "mtu=1408" {
-			t.Fatalf("mtu %s", got)
-		}
-	})
-	t.Run("except keeps the link", func(t *testing.T) {
-		s := newStand(t)
-		s.ctx = service.ContextWithPtr(s.ctx, &option.LXResolved{MTUAlign: option.LXMTUAlignResolved{Mode: option.LXMTUAlignClamp, Except: []string{"wg-exit"}}})
-		wg("wg-in", 1408, "1.2.3.4")(s)
-		wg("wg-exit", 1408, "5.6.7.8")(s)
-		s.chain("virt", []string{"wg-in", "wg-exit"})
-		s.mustStart()
-		if got := s.registry.lastOptions("wg-exit").Name; got != "mtu=1408" {
-			t.Fatalf("mtu %s", got)
-		}
-	})
-	t.Run("masque link overhead by family", func(t *testing.T) {
-		// masque над wg 1408: v4-сервер −79 → 1329 (дефолт 1280 влезает, не пишется);
-		// явный 1400 → 1329; v6-сервер → 1309.
-		s := newStand(t)
-		wg("wg-in", 1408, "1.2.3.4")(s)
-		s.add("warp-v4", C.TypeMASQUE, masqueOptions("162.159.192.1", 1400))
-		s.add("warp-v6", C.TypeMASQUE, masqueOptions("2606:4700:104::2", 1400))
-		s.add("warp-default", C.TypeMASQUE, masqueOptions("162.159.192.1", 0))
-		s.chain("v4", []string{"wg-in", "warp-v4"})
-		s.chain("v6", []string{"wg-in", "warp-v6"})
-		s.chain("default", []string{"wg-in", "warp-default"})
-		s.mustStart()
-		for tag, want := range map[string]string{"warp-v4": "mtu=1329", "warp-v6": "mtu=1309", "warp-default": "mtu=0"} {
-			if got := s.registry.lastOptions(tag).Name; got != want {
-				t.Fatalf("%s: %s, want %s", tag, got, want)
-			}
-		}
-		st := s.chainOf("default").ChainStatus().Positions[1].Clone
-		if st.MTUConfigured != 1280 || st.MTUEffective != 1280 || !strings.HasPrefix(st.MTUReason, "fits (") {
-			t.Fatalf("status %+v", st)
-		}
-	})
-}
-
-func masqueOptions(server string, mtu uint32) *option.MASQUEOutboundOptions {
-	options := &option.MASQUEOutboundOptions{MTU: mtu}
-	options.Server = server
-	options.ServerPort = 443
-	return options
-}
-
-func TestChainValidation(t *testing.T) {
-	t.Run("too short", func(t *testing.T) {
-		s := newStand(t)
-		s.fake("in")
-		err := s.outbound.Create(s.ctx, nil, log.NewNOPFactory().NewLogger("virt"), "virt", C.TypeChain, &option.ChainOutboundOptions{Outbounds: []string{"in"}})
-		if err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("no dial fields at position 1", func(t *testing.T) {
-		s := newStand(t)
-		s.fake("in")
-		s.add("nd", typeNoDial, &noDialOptions{})
-		s.chain("virt", []string{"in", "nd"})
-		err := s.start()
-		if err == nil || !strings.Contains(err.Error(), "no dial fields") {
-			t.Fatalf("expected no-dial error, got %v", err)
-		}
-	})
-	t.Run("no dial fields at position 0 allowed", func(t *testing.T) {
-		s := newStand(t)
-		s.add("nd", typeNoDial, &noDialOptions{})
-		s.fake("exit")
-		s.chain("virt", []string{"nd", "exit"})
-		s.mustStart()
-	})
-	t.Run("nested chain only at 0", func(t *testing.T) {
-		s := newStand(t)
-		s.fake("a")
-		s.fake("b")
-		s.fake("c")
-		s.chain("inner", []string{"a", "b"})
-		s.chain("outer-ok", []string{"inner", "c"})
-		s.mustStart()
-		if _, err := s.dial("outer-ok"); err != nil {
-			t.Fatal(err)
-		}
-	})
-	t.Run("nested chain at 1 rejected", func(t *testing.T) {
-		s := newStand(t)
-		s.fake("a")
-		s.fake("b")
-		s.fake("c")
-		s.chain("inner", []string{"a", "b"})
-		s.chain("outer-bad", []string{"c", "inner"})
-		err := s.start()
-		if err == nil || !strings.Contains(err.Error(), "nested chain") {
-			t.Fatalf("expected nested chain error, got %v", err)
-		}
-	})
-	t.Run("hop tag collision", func(t *testing.T) {
-		s := newStand(t)
-		s.fake("in")
-		s.fake("exit")
-		s.fake("virt#1")
-		s.chain("virt", []string{"in", "exit"})
-		err := s.start()
-		if err == nil || !strings.Contains(err.Error(), "reserved for chain hop") {
-			t.Fatalf("expected collision error, got %v", err)
-		}
-	})
-	t.Run("cycle through group", func(t *testing.T) {
-		s := newStand(t)
-		s.fake("in")
-		s.selector("sel", "virt")
-		s.chain("virt", []string{"in", "sel"})
-		err := s.start()
-		if err == nil {
-			t.Fatal("expected circular dependency error")
-		}
-	})
-}
-
-func TestChainCloseRemovesHopsAndClones(t *testing.T) {
-	s := newStand(t)
-	s.fake("in")
-	s.fake("exit")
-	s.chain("virt", []string{"in", "exit"})
-	if err := s.start(); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := s.outbound.Outbound("virt#0"); !ok {
-		t.Fatal("hop missing")
-	}
-	s.scope.Close()
-	if _, ok := s.outbound.Outbound("virt#0"); ok {
-		t.Fatal("hop must be removed on close")
-	}
-	if s.registry.closed["exit[virt#0]"] != 1 {
-		t.Fatalf("clone not closed: %v", s.registry.closed)
-	}
-}
-
-func TestResolveChainLeafNoop(t *testing.T) {
-	s := newStand(t)
-	s.fake("x")
-	s.selector("sel", "x")
-	s.mustStart()
-	x, _ := s.outbound.Outbound("x")
-	got, err := adapter.ResolveChainLeaf(context.Background(), x)
-	if err != nil || got != x {
-		t.Fatal("no binding must be a no-op")
-	}
-	sel, _ := s.outbound.Outbound("sel")
-	ctx := adapter.ContextWithChainHop(context.Background(), &hop{})
-	got, err = adapter.ResolveChainLeaf(ctx, sel)
-	if err != nil || got != sel {
-		t.Fatal("groups pass through the hook")
-	}
-}
-
-func TestMergePatch(t *testing.T) {
-	target := map[string]any{"a": 1, "b": map[string]any{"c": 2, "d": 3}, "e": 4}
-	mergePatch(target, map[string]any{"a": 10, "b": map[string]any{"c": nil, "x": 5}, "e": nil, "f": map[string]any{"g": 6}})
-	b := target["b"].(map[string]any)
-	if target["a"] != 10 || b["c"] != nil || b["d"] != 3 || b["x"] != 5 || target["e"] != nil || target["f"].(map[string]any)["g"] != 6 {
-		t.Fatalf("merge patch result: %v", target)
-	}
-}
-
-func TestBuildStripSet(t *testing.T) {
-	set, err := buildStripSet(true, nil)
-	if err != nil || !set["tls.fragment"] || !set["multiplex.padding"] || !set["xhttp.padding"] || set["tls.utls"] {
-		t.Fatalf("defaults: %v %v", set, err)
-	}
-	set, err = buildStripSet(false, map[string]bool{"tls.utls": true})
-	if err != nil || set["tls.fragment"] || !set["tls.utls"] {
-		t.Fatalf("patch: %v %v", set, err)
-	}
-	if _, err = buildStripSet(true, map[string]bool{"nope": true}); err == nil {
-		t.Fatal("unknown key must error")
-	}
-}
-
-func TestChainUDPPath(t *testing.T) {
-	s := newStand(t)
-	s.fake("in")
-	s.fake("mid")
-	s.fake("exit")
-	s.chain("virt", []string{"in", "mid", "exit"})
-	s.mustStart()
-	ctx, tr := withTrace(s.ctx)
-	conn, err := s.chainOf("virt").ListenPacket(ctx, M.ParseSocksaddr("1.1.1.1:53"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	conn.Close()
-	assertTrace(t, tr.items, "udp:exit[virt#1]", "udp:mid[virt#0]", "udp:in[]")
-}
-
-// ---- SPEC 075: runtime position toggle --------------------------------------
-
-// fakeDirectDialer replaces the hop-0 direct fallback in tests (the real one
-// needs a DNS transport manager in the context).
+// fakeDirectDialer replaces the direct dialer of a disabled entry (Х5).
 type fakeDirectDialer struct{}
 
 func (fakeDirectDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -1018,16 +177,11 @@ func (fakeDirectDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 	return net.ListenPacket("udp", "127.0.0.1:0")
 }
 
-// fakeDisabledStore — in-memory ChainDisabledStore; embeds a nil CacheFile so
-// it satisfies the service lookup, only the two lx methods are ever called.
+// fakeDisabledStore — in-memory ChainDisabledStore over a nil CacheFile.
 type fakeDisabledStore struct {
 	adapter.CacheFile
 	mu   sync.Mutex
 	data map[string][]string
-}
-
-func newFakeDisabledStore() *fakeDisabledStore {
-	return &fakeDisabledStore{data: make(map[string][]string)}
 }
 
 func (f *fakeDisabledStore) LoadChainDisabled(chainTag string) []string {
@@ -1043,299 +197,873 @@ func (f *fakeDisabledStore) StoreChainDisabled(chainTag string, disabledTags []s
 	return nil
 }
 
-func (s *stand) toggle(chainTag string, position int, enabled bool) string {
-	s.t.Helper()
-	warmup, err := s.chainOf(chainTag).SetPositionEnabled(position, enabled)
-	if err != nil {
-		s.t.Fatalf("toggle %s[%d]=%v: %v", chainTag, position, enabled, err)
-	}
-	return warmup
+// ---- стенд ------------------------------------------------------------------
+
+type stand struct {
+	t        *testing.T
+	ctx      context.Context
+	outbound *outbound.Manager
+	endpoint *endpoint.Manager
+	scope    *adapter.Scope
+	registry *outbound.Registry
+	options  option.Options
+	changes  map[string][]option.LXConfigChange
+	created  map[string]int
+	createMu sync.Mutex
 }
 
-func TestChainToggleMiddle(t *testing.T) {
-	s := newStand(t)
-	s.fake("in")
-	s.fake("mid")
-	s.fake("exit")
-	s.chain("virt", []string{"in", "mid", "exit"})
-	s.mustStart()
-	c := s.chainOf("virt")
-
-	tr, _ := s.dial("virt")
-	assertTrace(t, tr, "exit[virt#1]", "mid[virt#0]", "in[]")
-
-	if warmup := s.toggle("virt", 1, false); warmup != "" {
-		t.Fatalf("disable must not warm up: %s", warmup)
-	}
-	tr, err := s.dial("virt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertTrace(t, tr, "exit[virt#1]", "in[]")
-	if path := strings.Join(c.ChainPath(), ","); path != "in,exit" {
-		t.Fatalf("path %s", path)
-	}
-	status := c.ChainStatus()
-	if !status.Positions[1].Disabled || status.Positions[1].Now != "mid" {
-		t.Fatalf("position 1 must be disabled with now intact: %+v", status.Positions[1])
-	}
-	// The retired clone is never force-closed — idle eviction collects it.
-	c.evictIdle(time.Now().Add(c.idleTimeout + time.Second))
-	if s.registry.closed["mid[virt#0]"] != 1 {
-		t.Fatalf("retired clone must be evicted: %v", s.registry.closed)
-	}
-
-	// Re-enable warms the link back up eagerly.
-	if warmup := s.toggle("virt", 1, true); warmup != "" {
-		t.Fatalf("warmup: %s", warmup)
-	}
-	created := 0
-	for _, item := range s.registry.createdList() {
-		if item == "mid@virt#0" {
-			created++
+func newStand(t *testing.T) *stand {
+	t.Helper()
+	s := &stand{t: t, created: make(map[string]int)}
+	registry := outbound.NewRegistry()
+	epRegistry := endpoint.NewRegistry()
+	newFake := func(typeName string) func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.DialerOptions) (adapter.Outbound, error) {
+		return func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.DialerOptions) (adapter.Outbound, error) {
+			s.createMu.Lock()
+			s.created[tag]++
+			s.createMu.Unlock()
+			return &fakeOutbound{
+				Adapter: outbound.NewAdapterWithDialerOptions(typeName, tag, []string{N.NetworkTCP, N.NetworkUDP}, options),
+				manager: service.FromContext[adapter.OutboundManager](ctx),
+				detour:  options.Detour,
+			}, nil
 		}
 	}
-	if created != 2 {
-		t.Fatalf("enable must recreate the link eagerly, created=%d", created)
-	}
-	tr, _ = s.dial("virt")
-	assertTrace(t, tr, "exit[virt#1]", "mid[virt#0]", "in[]")
+	fake := newFake(typeFake)
+	outbound.Register[fakeOptions](registry, typeFake, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options fakeOptions) (adapter.Outbound, error) {
+		created, err := fake(ctx, router, logger, tag, options.DialerOptions)
+		if err == nil {
+			created.(*fakeOutbound).lookup = options.Lookup
+		}
+		return created, err
+	})
+	wireGuard := newFake(C.TypeWireGuard)
+	outbound.Register[option.WireGuardEndpointOptions](registry, C.TypeWireGuard, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Outbound, error) {
+		return wireGuard(ctx, router, logger, tag, options.DialerOptions)
+	})
+	outbound.Register[noDialOptions](registry, typeNoDial, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options noDialOptions) (adapter.Outbound, error) {
+		return &fakeOutbound{Adapter: outbound.NewAdapter(typeNoDial, tag, []string{N.NetworkTCP}, nil), manager: service.FromContext[adapter.OutboundManager](ctx)}, nil
+	})
+	outbound.Register[option.URLTestOutboundOptions](registry, C.TypeURLTest, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.URLTestOutboundOptions) (adapter.Outbound, error) {
+		return &fakeGroup{Adapter: outbound.NewAdapter(C.TypeURLTest, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.Outbounds), manager: service.FromContext[adapter.OutboundManager](ctx), tags: options.Outbounds}, nil
+	})
+	// direct под фейковым конструктором: настоящему нужен DNS-менеджер.
+	direct := newFake(C.TypeDirect)
+	outbound.Register[option.DirectOutboundOptions](registry, C.TypeDirect, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.DirectOutboundOptions) (adapter.Outbound, error) {
+		return direct(ctx, router, logger, tag, option.DialerOptions{})
+	})
+	group.RegisterSelector(registry)
+	block.RegisterOutbound(registry)
+	RegisterOutbound(registry)
 
-	// Toggle validation and idempotency.
-	if _, err := c.SetPositionEnabled(-1, false); err == nil {
-		t.Fatal("negative position must error")
+	logFactory := log.NewNOPFactory()
+	ctx := context.Background()
+	ctx = service.ContextWith[option.OutboundOptionsRegistry](ctx, registry)
+	ctx = service.ContextWith[adapter.OutboundRegistry](ctx, registry)
+	ctx = service.ContextWith[option.EndpointOptionsRegistry](ctx, epRegistry)
+	ctx = service.ContextWith[adapter.EndpointRegistry](ctx, epRegistry)
+	ctx = service.ContextWith[log.Factory](ctx, logFactory)
+	epManager := endpoint.NewManager(logFactory.NewLogger("endpoint"), epRegistry)
+	manager := outbound.NewManager(registry, epManager, "")
+	ctx = service.ContextWith[adapter.OutboundManager](ctx, manager)
+	ctx = service.ContextWith[adapter.EndpointManager](ctx, epManager)
+	s.ctx, s.outbound, s.endpoint, s.registry = ctx, manager, epManager, registry
+	s.scope = adapter.NewScope(ctx, logFactory.Logger())
+	return s
+}
+
+func (s *stand) add(tag, typeName string, options any) {
+	s.options.Outbounds = append(s.options.Outbounds, option.Outbound{Type: typeName, Tag: tag, Options: options})
+}
+
+func (s *stand) fake(tag string, detour ...string) *fakeOptions {
+	options := &fakeOptions{}
+	if len(detour) > 0 {
+		options.Detour = detour[0]
 	}
-	if _, err := c.SetPositionEnabled(3, false); err == nil {
-		t.Fatal("out-of-range position must error")
-	}
-	if warmup, err := c.SetPositionEnabled(1, true); err != nil || warmup != "" {
-		t.Fatalf("no-change toggle must be a silent no-op: %q %v", warmup, err)
+	s.add(tag, typeFake, options)
+	return options
+}
+
+func (s *stand) selector(tag string, members ...string) {
+	s.add(tag, C.TypeSelector, &option.SelectorOutboundOptions{Outbounds: members})
+}
+
+func (s *stand) chain(tag string, positions ...string) *option.ChainOutboundOptions {
+	options := &option.ChainOutboundOptions{Outbounds: positions}
+	s.add(tag, C.TypeChain, options)
+	return options
+}
+
+// rewrite runs the SPEC 165 rewrite on the stand's config.
+func (s *stand) rewrite() error {
+	changes, err := Rewrite(s.ctx, &s.options)
+	s.changes = changes
+	return err
+}
+
+func (s *stand) mustRewrite() {
+	s.t.Helper()
+	if err := s.rewrite(); err != nil {
+		s.t.Fatalf("rewrite: %v", err)
 	}
 }
 
-func TestChainToggleEntryAndAll(t *testing.T) {
+// buildErr rewrites and creates the outbounds; it returns the error of the
+// rewrite or of the manager's start-order check (Initialize).
+func (s *stand) buildErr() error {
+	if err := s.rewrite(); err != nil {
+		return err
+	}
+	logFactory := log.NewNOPFactory()
+	for _, item := range s.options.Outbounds {
+		if err := s.outbound.Create(s.ctx, nil, logFactory.NewLogger(item.Tag), item.Tag, item.Type, item.Options); err != nil {
+			return err
+		}
+	}
+	return s.outbound.Initialize(func() (adapter.Outbound, error) {
+		return s.registry.CreateOutbound(s.ctx, nil, logFactory.NewLogger("default"), "default-direct", C.TypeDirect, &option.DirectOutboundOptions{})
+	})
+}
+
+// build rewrites, creates every outbound and starts the managers.
+func (s *stand) build() {
+	s.t.Helper()
+	s.mustRewrite()
+	logFactory := log.NewNOPFactory()
+	for _, item := range s.options.Outbounds {
+		if err := s.outbound.Create(s.ctx, nil, logFactory.NewLogger(item.Tag), item.Tag, item.Type, item.Options); err != nil {
+			s.t.Fatalf("create %s: %v", item.Tag, err)
+		}
+	}
+	// Initialize sorts the outbounds that exist now (upstream 9e0a6a393).
+	err := s.outbound.Initialize(func() (adapter.Outbound, error) {
+		return s.registry.CreateOutbound(s.ctx, nil, logFactory.NewLogger("default"), "default-direct", C.TypeDirect, &option.DirectOutboundOptions{})
+	})
+	if err != nil {
+		s.t.Fatalf("initialize: %v", err)
+	}
+	for _, stage := range adapter.ListStartStages {
+		if err := s.scope.Start("endpoint", s.endpoint, stage); err != nil {
+			s.t.Fatalf("start: %v", err)
+		}
+		if err := s.scope.Start("outbound", s.outbound, stage); err != nil {
+			s.t.Fatalf("start: %v", err)
+		}
+	}
+	s.t.Cleanup(func() { s.scope.Close() })
+}
+
+func (s *stand) chainOf(tag string) *Chain {
+	s.t.Helper()
+	ob, loaded := s.outbound.Outbound(tag)
+	if !loaded {
+		s.t.Fatalf("chain %s not found", tag)
+	}
+	return ob.(*Chain)
+}
+
+func (s *stand) dialCtx(ctx context.Context, tag string) ([]string, error) {
+	ctx, tr := withTrace(ctx)
+	ob, _ := s.outbound.Outbound(tag)
+	conn, err := ob.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddr("target.example:443"))
+	if err != nil {
+		return tr.items, err
+	}
+	conn.Close()
+	return tr.items, nil
+}
+
+func (s *stand) dial(tag string) []string {
+	s.t.Helper()
+	items, err := s.dialCtx(s.ctx, tag)
+	if err != nil {
+		s.t.Fatalf("dial %s: %v", tag, err)
+	}
+	return items
+}
+
+func (s *stand) detourOf(tag string) string {
+	s.t.Helper()
+	for _, item := range s.options.Outbounds {
+		if item.Tag == tag {
+			if wrapper, ok := item.Options.(option.DialerOptionsWrapper); ok {
+				return wrapper.TakeDialerOptions().Detour
+			}
+			return ""
+		}
+	}
+	s.t.Fatalf("no outbound %s", tag)
+	return ""
+}
+
+func (s *stand) selectIn(groupTag, member string) {
+	s.t.Helper()
+	ob, _ := s.outbound.Outbound(groupTag)
+	if !ob.(*group.Selector).SelectOutbound(member) {
+		s.t.Fatalf("select %s in %s failed", member, groupTag)
+	}
+}
+
+func assertTrace(t *testing.T, got []string, want ...string) {
+	t.Helper()
+	if strings.Join(got, " > ") != strings.Join(want, " > ") {
+		t.Fatalf("trace mismatch:\n got  %v\n want %v", got, want)
+	}
+}
+
+func requireError(t *testing.T, err error, parts ...string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected an error with %q", parts)
+	}
+	for _, part := range parts {
+		if !strings.Contains(err.Error(), part) {
+			t.Fatalf("error %q does not contain %q", err, part)
+		}
+	}
+}
+
+// ---- 4.1 перезапись ---------------------------------------------------------
+
+func TestRewriteП1П6Hops(t *testing.T) {
 	s := newStand(t)
 	s.fake("in")
 	s.fake("mid")
 	s.fake("exit")
-	s.chain("virt", []string{"in", "mid", "exit"})
+	s.chain("virt", "in", "mid", "exit")
+	s.mustRewrite()
+	var hops []string
+	for _, item := range s.options.Outbounds {
+		if item.Type == C.TypeChainHop {
+			hop := item.Options.(*option.ChainHopOutboundOptions)
+			hops = append(hops, item.Tag+"="+hop.Outbound+"/"+hop.Below)
+		}
+	}
+	if got := strings.Join(hops, " "); got != "virt#0=in/ virt#1=mid/virt#0 virt#2=exit/virt#1" {
+		t.Fatalf("hops %s", got)
+	}
+	s.options.Outbounds = nil
+	s2 := newStand(t)
+	s2.fake("in")
+	s2.fake("exit")
+	s2.fake("virt#1")
+	s2.chain("virt", "in", "exit")
+	requireError(t, s2.rewrite(), "virt#1", "reserved")
+}
+
+func TestRewriteП2П3Detour(t *testing.T) {
+	s := newStand(t)
+	s.fake("relay")
+	s.fake("in", "relay")
+	s.fake("exit", "relay")
+	original := s.options.Outbounds[2].Options
+	s.chain("virt", "in", "exit")
+	s.mustRewrite()
+	if s.detourOf("in") != "relay" {
+		t.Fatal("П3: the entry keeps its own detour")
+	}
+	if s.detourOf("exit") != "virt#0" {
+		t.Fatalf("П2: exit detour %s", s.detourOf("exit"))
+	}
+	if original.(*fakeOptions).Detour != "relay" {
+		t.Fatal("the caller's options struct must not be written through")
+	}
+	changes := s.changes["exit"]
+	if len(changes) != 1 || changes[0].Field != "detour" || changes[0].From != "relay" || changes[0].To != "virt#0" ||
+		changes[0].By != (option.LXConfigChangeBy{Type: option.LXChangeByChain, Chain: "virt", Position: 1}) {
+		t.Fatalf("changes %+v", changes)
+	}
+	if len(s.changes["in"]) != 0 {
+		t.Fatal("П3: no change on the entry")
+	}
+}
+
+func TestRewriteП4GroupsOfAnyDepth(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.fake("a")
+	s.fake("b")
+	s.add("direct", C.TypeDirect, &option.DirectOutboundOptions{})
+	s.add("block", C.TypeBlock, &option.StubOptions{})
+	s.selector("inner", "b", "block")
+	s.selector("outer", "a", "inner", "direct")
+	s.chain("virt", "in", "outer")
+	s.mustRewrite()
+	if s.detourOf("a") != "virt#0" || s.detourOf("b") != "virt#0" {
+		t.Fatal("П2: every leaf of the group is taken over")
+	}
+	for _, item := range s.options.Outbounds {
+		if item.Tag == "outer" && !slices.Equal(item.Options.(*option.SelectorOutboundOptions).Outbounds, []string{"a", "inner", "direct"}) {
+			t.Fatal("П4: the group is not changed")
+		}
+	}
+	if _, has := s.changes["direct"]; has {
+		t.Fatal("direct is not a reachable node")
+	}
+}
+
+func TestRewriteП5Rewrite(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	exit := s.fake("exit")
+	exit.Name = "old"
+	exit.TLS = &option.OutboundTLSOptions{Enabled: true, ServerName: "a.example"}
+	s.chain("virt", "in", "exit").Rewrite = option.ChainRewrite{typeFake: map[string]any{
+		"name": nil,
+		"tls":  map[string]any{"server_name": "b.example", "insecure": true},
+	}}
+	s.mustRewrite()
+	var fields []string
+	for _, change := range s.changes["exit"] {
+		fields = append(fields, change.By.Type+":"+change.Field)
+	}
+	if got := strings.Join(fields, " "); got != "chain:detour chain_rewrite:name chain_rewrite:tls.insecure chain_rewrite:tls.server_name" {
+		t.Fatalf("changes %s", got)
+	}
+	removed := s.changes["exit"][1]
+	if removed.From != "old" || removed.To != nil || removed.By.NodeType != typeFake || removed.By.Position != 1 {
+		t.Fatalf("removal %+v", removed)
+	}
+	for _, item := range s.options.Outbounds {
+		if item.Tag == "exit" {
+			options := item.Options.(*fakeOptions)
+			if options.Name != "" || options.TLS.ServerName != "b.example" || !options.TLS.Insecure {
+				t.Fatalf("rewritten %+v", options)
+			}
+		}
+	}
+	s2 := newStand(t)
+	s2.fake("in")
+	s2.fake("exit")
+	s2.chain("virt", "in", "exit").Rewrite = option.ChainRewrite{typeFake: map[string]any{"detour": "x"}}
+	requireError(t, s2.rewrite(), "cannot change detour")
+}
+
+func TestRewriteП7RemovedChainKeys(t *testing.T) {
+	for key, text := range map[string]string{
+		`"idle_timeout": "5m"`:   "no longer creates link instances",
+		`"strip_evasion": false`: "lx.detour.strip",
+		`"strip": {}`:            "lx.detour.strip",
+		`"strip": null`:          "lx.detour.strip",
+	} {
+		var options option.ChainOutboundOptions
+		err := json.Unmarshal([]byte(`{"outbounds": ["a", "b"], `+key+`}`), &options)
+		requireError(t, err, text)
+	}
+}
+
+// ---- 4.2 конфликты ----------------------------------------------------------
+
+func TestRewriteК1TwoChains(t *testing.T) {
+	s := newStand(t)
+	s.fake("a")
+	s.fake("b")
+	s.fake("v1")
+	s.fake("v2")
+	s.selector("g", "v1", "v2")
+	s.chain("X", "a", "g")
+	s.chain("Y", "b", "g")
+	requireError(t, s.rewrite(), "g is needed on chain X position 1 and on chain Y position 1")
+}
+
+func TestRewriteК2EntryAndPosition(t *testing.T) {
+	s := newStand(t)
+	s.fake("N")
+	s.fake("A")
+	s.fake("B")
+	s.chain("X", "N", "B")
+	s.chain("Y", "A", "N")
+	requireError(t, s.rewrite(), "N is needed on chain X position 0 and on chain Y position 1")
+}
+
+func TestRewriteК3HopTypeInConfig(t *testing.T) {
+	s := newStand(t)
+	s.add("x#0", C.TypeChainHop, &option.ChainHopOutboundOptions{Chain: "x", Outbound: "a"})
+	requireError(t, s.rewrite(), "chain-hop", "internal")
+}
+
+func TestRewriteК4NestedChain(t *testing.T) {
+	s := newStand(t)
+	s.fake("a")
+	s.fake("b")
+	s.fake("c")
+	s.chain("inner", "a", "b")
+	s.chain("outer", "c", "inner")
+	requireError(t, s.rewrite(), "nested chain is only allowed on position 0")
+
+	s = newStand(t)
+	s.fake("a")
+	s.fake("b")
+	s.selector("g", "b", "self")
+	s.chain("self", "a", "g")
+	requireError(t, s.rewrite(), "contains the chain itself")
+
+	s = newStand(t)
+	s.fake("a")
+	s.fake("b")
+	s.fake("c")
+	s.chain("inner", "a", "b")
+	s.chain("outer", "inner", "c")
+	s.mustRewrite()
+	if s.detourOf("c") != "outer#0" {
+		t.Fatal("a nested chain on position 0 is allowed")
+	}
+}
+
+func TestRewriteК5NotDialable(t *testing.T) {
+	s := newStand(t)
+	s.fake("a")
+	s.add("x", typeNoDial, &noDialOptions{})
+	s.chain("virt", "a", "x")
+	requireError(t, s.rewrite(), "x (nodial) cannot dial through detour")
+}
+
+func TestRewriteК5LocalPorts(t *testing.T) {
+	port := uint16(41641)
+	for name, node := range map[string]struct {
+		typeName string
+		options  any
+		field    string
+	}{
+		"wireguard":        {C.TypeWireGuard, &option.WireGuardEndpointOptions{ListenPort: 51820}, "listen_port"},
+		"tailscale":        {C.TypeTailscale, &option.TailscaleEndpointOptions{ListenPort: port}, "listen_port"},
+		"tailscale relay":  {C.TypeTailscale, &option.TailscaleEndpointOptions{RelayServerPort: &port}, "relay_server_port"},
+		"openconnect dtls": {C.TypeOpenConnect, &option.OpenConnectEndpointOptions{DTLSLocalPort: port}, "dtls_local_port"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newStand(t)
+			s.fake("a")
+			s.add("n", node.typeName, node.options)
+			s.chain("virt", "a", "n")
+			requireError(t, s.rewrite(), "node n has "+node.field, "fixed local port")
+		})
+	}
+}
+
+// Т15: a ring through a hop is upstream's circular dependency.
+func TestRewriteК1RingThroughOwnDetour(t *testing.T) {
+	s := newStand(t)
+	s.fake("A", "N")
+	s.fake("N")
+	s.chain("C", "A", "N")
+	requireError(t, s.buildErr(), "circular outbound dependency", "C#0")
+}
+
+// ---- 4.3 хоп во время работы -------------------------------------------------
+
+func TestHopХ1Х2NodesAndGroups(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.fake("m1")
+	s.fake("m2")
+	s.selector("sel", "m1", "m2")
+	s.fake("exit")
+	s.chain("virt", "in", "sel", "exit")
+	s.build()
+	assertTrace(t, s.dial("virt"), "exit[virt#1]", "m1[virt#0]", "in[]")
+	s.selectIn("sel", "m2")
+	assertTrace(t, s.dial("virt"), "exit[virt#1]", "m2[virt#0]", "in[]")
+	// И1: one instance per node, no copies.
+	for tag, count := range s.created {
+		if count != 1 {
+			t.Fatalf("И1: %s created %d times", tag, count)
+		}
+	}
+	// T5: a route straight to a taken-over node goes the chain's path.
+	assertTrace(t, s.dial("m2"), "m2[virt#0]", "in[]")
+}
+
+func TestHopХ3Direct(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.fake("m")
+	s.add("direct", C.TypeDirect, &option.DirectOutboundOptions{})
+	s.selector("sel", "direct", "m")
+	s.fake("exit")
+	s.chain("virt", "in", "sel", "exit")
+	s.build()
+	// Т2: the selector picks direct, nothing leaves past `in`.
+	assertTrace(t, s.dial("virt"), "exit[virt#1]", "in[]")
+
+	s = newStand(t)
+	s.fake("in")
+	s.add("direct", C.TypeDirect, &option.DirectOutboundOptions{})
+	s.fake("exit")
+	s.chain("virt", "in", "direct", "exit")
+	s.build()
+	assertTrace(t, s.dial("virt"), "exit[virt#1]", "in[]")
+}
+
+func TestHopХ8DirectPickedPerConnection(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.add("direct", C.TypeDirect, &option.DirectOutboundOptions{})
+	s.fake("m")
+	s.add("pool", C.TypeURLTest, &option.URLTestOutboundOptions{Outbounds: []string{"direct", "m"}})
+	s.fake("exit")
+	s.chain("virt", "in", "pool", "exit")
+	s.build()
+	assertTrace(t, s.dial("virt"), "exit[virt#1]", "in[]")
+	// The entry hop clears the mark: a group on position 0 dials direct itself.
+	s = newStand(t)
+	s.add("direct", C.TypeDirect, &option.DirectOutboundOptions{})
+	s.fake("m")
+	s.add("pool", C.TypeURLTest, &option.URLTestOutboundOptions{Outbounds: []string{"direct", "m"}})
+	s.fake("exit")
+	s.chain("virt", "pool", "exit")
+	s.build()
+	assertTrace(t, s.dial("virt"), "exit[virt#0]", "direct[]")
+}
+
+func TestHopХ4Х5Disabled(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.fake("mid")
+	s.fake("exit")
+	s.chain("virt", "in", "mid", "exit")
+	s.build()
 	c := s.chainOf("virt")
 	c.directDialer = fakeDirectDialer{}
-	s.mustStart()
-
-	// Disabled entry: hop 0 dials the real network, upper links untouched.
-	s.toggle("virt", 0, false)
-	tr, err := s.dial("virt")
-	if err != nil {
-		t.Fatal(err)
+	c.directOnce.Do(func() {})
+	requireNoError(t, c.SetPositionEnabled(1, false))
+	assertTrace(t, s.dial("virt"), "exit[virt#1]", "in[]")
+	requireNoError(t, c.SetPositionEnabled(0, false))
+	assertTrace(t, s.dial("virt"), "exit[virt#1]", "direct-fallback")
+	if got := strings.Join(c.ChainPath(), ","); got != "exit" {
+		t.Fatalf("path %s", got)
 	}
-	assertTrace(t, tr, "exit[virt#1]", "mid[virt#0]", "direct-fallback")
-
-	// Everything disabled: the chain degenerates into direct.
-	s.toggle("virt", 1, false)
-	s.toggle("virt", 2, false)
-	tr, err = s.dial("virt")
-	if err != nil {
-		t.Fatal(err)
+	status := c.ChainStatus()
+	if !status.Positions[0].Disabled || !status.Positions[1].Disabled || status.Positions[2].Disabled {
+		t.Fatalf("status %+v", status)
 	}
-	assertTrace(t, tr, "direct-fallback")
-	if path := c.ChainPath(); len(path) != 0 {
-		t.Fatalf("all-disabled chain must have an empty path: %v", path)
-	}
-
-	// UDP goes the same way.
-	ctx, tr2 := withTrace(s.ctx)
-	pconn, err := c.ListenPacket(ctx, M.ParseSocksaddr("1.1.1.1:53"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	pconn.Close()
-	assertTrace(t, tr2.items, "udp:direct-fallback")
-
-	// Entry back on while the rest stays off: original entry, no links.
-	s.toggle("virt", 0, true)
-	tr, _ = s.dial("virt")
-	assertTrace(t, tr, "in[]")
+	requireError(t, c.SetPositionEnabled(3, false), "out of range")
 }
 
-func TestChainTogglePersistenceAndPreload(t *testing.T) {
+func requireNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHopХ6Block(t *testing.T) {
 	s := newStand(t)
-	store := newFakeDisabledStore()
-	store.data["virt"] = []string{"mid", "gone-tag"}
-	s.ctx = service.ContextWith[adapter.CacheFile](s.ctx, store)
 	s.fake("in")
-	s.fake("mid")
+	s.add("block", C.TypeBlock, &option.StubOptions{})
 	s.fake("exit")
-	s.chain("virt", []string{"in", "mid", "exit"})
-	s.mustStart()
-	c := s.chainOf("virt")
-
-	// Restored from the store: mid disabled, unknown tag ignored, preload skips
-	// the disabled position.
-	if !c.ChainStatus().Positions[1].Disabled {
-		t.Fatal("disabled set must be restored from the store")
-	}
-	created := s.registry.createdList()
-	if contains(created, "mid@virt#0") {
-		t.Fatalf("preload must skip the disabled position: %v", created)
-	}
-	if !contains(created, "exit@virt#1") {
-		t.Fatalf("preload must still warm enabled positions: %v", created)
-	}
-	tr, _ := s.dial("virt")
-	assertTrace(t, tr, "exit[virt#1]", "in[]")
-
-	// Toggles persist the tag set.
-	s.toggle("virt", 1, true)
-	if got := store.LoadChainDisabled("virt"); len(got) != 0 {
-		t.Fatalf("enable must clear the stored set: %v", got)
-	}
-	s.toggle("virt", 2, false)
-	if got := store.LoadChainDisabled("virt"); len(got) != 1 || got[0] != "exit" {
-		t.Fatalf("disable must store the position tag: %v", got)
+	s.chain("virt", "in", "block", "exit")
+	s.build()
+	_, err := s.dialCtx(s.ctx, "virt")
+	if err == nil {
+		t.Fatal("Х6: block refuses")
 	}
 }
 
-func TestChainToggleInterrupt(t *testing.T) {
+func TestHopХ7Carrier(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.fake("m1")
+	s.selector("sel", "m1")
+	s.chain("virt", "in", "sel")
+	s.build()
+	ctx, record := adapter.ContextWithCarrierRecord(s.ctx)
+	if _, err := s.dialCtx(ctx, "m1"); err != nil {
+		t.Fatal(err)
+	}
+	// m1 dials its detour virt#0: the hop is not the carrier, the node on its
+	// position is.
+	if record.Tag != "in" {
+		t.Fatalf("Х7: carrier %+v", record)
+	}
+	ctx, record = adapter.ContextWithCarrierRecord(s.ctx)
+	if _, err := s.dialCtx(ctx, "virt"); err != nil {
+		t.Fatal(err)
+	}
+	if record.Tag != "m1" {
+		t.Fatalf("Х7: the member the group picked carries the chain dial, got %+v", record)
+	}
+}
+
+func TestHopUDPPath(t *testing.T) {
 	s := newStand(t)
 	s.fake("in")
 	s.fake("mid")
 	s.fake("exit")
-	s.chain("virt", []string{"in", "mid", "exit"})
-	s.chain("virt-rip", []string{"in", "mid", "exit"}, func(o *option.ChainOutboundOptions) {
-		o.InterruptExistConnections = true
-	})
-	s.mustStart()
+	s.chain("virt", "in", "mid", "exit")
+	s.build()
+	ctx, tr := withTrace(s.ctx)
+	conn, err := s.chainOf("virt").ListenPacket(ctx, M.ParseSocksaddr("1.1.1.1:53"))
+	requireNoError(t, err)
+	conn.Close()
+	assertTrace(t, tr.items, "udp:exit[virt#1]", "udp:mid[virt#0]", "udp:in[]")
+}
 
-	openUDP := func(chainTag string, external bool) net.PacketConn {
+func TestHopToggleInterrupt(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.fake("mid")
+	s.fake("exit")
+	s.fake("in2")
+	s.fake("mid2")
+	s.fake("exit2")
+	s.chain("virt", "in", "mid", "exit")
+	s.chain("virt-rip", "in2", "mid2", "exit2").InterruptExistConnections = true
+	s.build()
+	open := func(tag string, external bool) net.PacketConn {
 		ctx := s.ctx
 		if external {
 			ctx = interrupt.ContextWithIsExternalConnection(ctx, true)
 		}
-		pconn, err := s.chainOf(chainTag).ListenPacket(ctx, M.ParseSocksaddr("1.1.1.1:53"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { pconn.Close() })
-		return pconn
+		ob, _ := s.outbound.Outbound(tag)
+		conn, err := ob.ListenPacket(ctx, M.ParseSocksaddr("1.1.1.1:53"))
+		requireNoError(t, err)
+		t.Cleanup(func() { conn.Close() })
+		return conn
 	}
-	alive := func(pconn net.PacketConn) bool {
-		_, err := pconn.WriteTo([]byte("x"), &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9})
+	alive := func(conn net.PacketConn) bool {
+		_, err := conn.WriteTo([]byte("x"), &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9})
 		return err == nil
 	}
-
-	internal := openUDP("virt", false)
-	external := openUDP("virt", true)
-	s.toggle("virt", 1, false)
-	if alive(internal) {
-		t.Fatal("internal connection must be interrupted on toggle")
+	// A node above keeps its own socket through the hop (a WG session): it
+	// is internal and goes on any toggle.
+	nodeSocket := open("exit", false)
+	external := open("virt", true)
+	requireNoError(t, s.chainOf("virt").SetPositionEnabled(1, false))
+	if alive(nodeSocket) {
+		t.Fatal("the socket of a node above must be interrupted on a toggle")
 	}
 	if !alive(external) {
-		t.Fatal("external connection must survive without interrupt_exist_connections")
+		t.Fatal("a user connection survives without interrupt_exist_connections")
 	}
-
-	externalRip := openUDP("virt-rip", true)
-	s.toggle("virt-rip", 1, false)
+	externalRip := open("virt-rip", true)
+	requireNoError(t, s.chainOf("virt-rip").SetPositionEnabled(1, false))
 	if alive(externalRip) {
-		t.Fatal("external connection must be ripped with interrupt_exist_connections")
+		t.Fatal("a user connection goes with interrupt_exist_connections")
 	}
 }
 
-func TestChainToggleWarmupError(t *testing.T) {
+func TestHopTogglePersistence(t *testing.T) {
+	store := &fakeDisabledStore{data: map[string][]string{"virt": {"mid", "gone"}}}
 	s := newStand(t)
+	s.ctx = service.ContextWith[adapter.CacheFile](s.ctx, store)
 	s.fake("in")
 	s.fake("mid")
-	s.fake("boom", func(o *fakeOptions) { o.Name = "fail-on-clone" })
 	s.fake("exit")
-	s.selector("sel-mid", "mid", "boom")
-	s.chain("virt", []string{"in", "sel-mid", "exit"})
-	s.mustStart()
-	c := s.chainOf("virt")
-
-	s.toggle("virt", 1, false)
-	s.selectIn("sel-mid", "boom")
-	warmup := s.toggle("virt", 1, true)
-	if warmup == "" {
-		t.Fatal("failed warm-up must be reported")
+	s.chain("virt", "in", "mid", "exit")
+	s.build()
+	assertTrace(t, s.dial("virt"), "exit[virt#1]", "in[]")
+	requireNoError(t, s.chainOf("virt").SetPositionEnabled(1, true))
+	if len(store.LoadChainDisabled("virt")) != 0 {
+		t.Fatal("enable persists")
 	}
-	// The flag HAS been applied regardless of the warm-up failure.
-	if c.ChainStatus().Positions[1].Disabled {
-		t.Fatal("warm-up failure must not roll the toggle back")
+	assertTrace(t, s.dial("virt"), "exit[virt#1]", "mid[virt#0]", "in[]")
+}
+
+func TestChainErrorNamesPositions(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.add("x", typeFake, &fakeOptions{DialerOptions: option.DialerOptions{}})
+	s.chain("virt", "in", "x")
+	s.build()
+	status := s.chainOf("virt").ChainStatus()
+	if status.Positions[1].Now != "x" || status.Positions[0].IsGroup {
+		t.Fatalf("status %+v", status)
 	}
 }
 
-func TestChainCloneConfigJSON(t *testing.T) {
+// С2 rests on this: the interrupt wrapper a hop puts on every conn keeps a
+// kernel socket visible, so a node over direct is not taken for a tunnel.
+func TestHopWrapperKeepsKernelSocketVisible(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	requireNoError(t, err)
+	defer listener.Close()
+	go listener.Accept()
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	requireNoError(t, err)
+	defer conn.Close()
+	group := interrupt.NewGroup()
+	if !lxdatagram.IsKernelSocket(group.NewConn(group.NewConn(conn, false), true)) {
+		t.Fatal("tcp through two hop wrappers must stay a kernel socket")
+	}
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	requireNoError(t, err)
+	defer packetConn.Close()
+	if !lxdatagram.IsKernelPacketConn(group.NewPacketConn(packetConn, false)) {
+		t.Fatal("udp through a hop wrapper must stay a kernel socket")
+	}
+}
+
+// Х8 is the chain's only: a node on a position resolving its server through
+// a DNS server whose detour is a group that picked direct goes direct, not
+// through the hop below (review 2026-11-26).
+func TestHopХ8MarkDoesNotReachNodeDials(t *testing.T) {
+	for name, position := range map[string]func(*stand){
+		"node on the position":  func(s *stand) { s.chain("virt", "in", "n") },
+		"node in a group there": func(s *stand) { s.selector("g", "n"); s.chain("virt", "in", "g") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newStand(t)
+			s.add("direct", C.TypeDirect, &option.DirectOutboundOptions{})
+			s.selector("dns-sel", "direct")
+			s.fake("in")
+			s.fake("n").Lookup = "dns-sel"
+			position(s)
+			s.build()
+			assertTrace(t, s.dial("virt"), "n[virt#0]", "direct[]", "in[]")
+		})
+	}
+}
+
+// A dial before Start resolves the chain or fails; it never panics.
+func TestChainDialBeforeStart(t *testing.T) {
 	s := newStand(t)
 	s.fake("in")
-	s.fake("mid")
 	s.fake("exit")
-	s.chain("virt", []string{"in", "mid", "exit"})
-	s.mustStart()
-	c := s.chainOf("virt")
-
-	content, err := c.CloneConfigJSON(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{`"type": "fake"`, `"tag": "mid"`, `"detour": "virt#0"`} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("clone config must contain %s:\n%s", want, content)
+	s.chain("virt", "in", "exit")
+	s.mustRewrite()
+	for _, item := range s.options.Outbounds {
+		if item.Type == C.TypeChain {
+			chain, err := NewOutbound(s.ctx, nil, log.NewNOPFactory().NewLogger("virt"), item.Tag, *item.Options.(*option.ChainOutboundOptions))
+			requireNoError(t, err)
+			_, err = chain.DialContext(s.ctx, N.NetworkTCP, M.ParseSocksaddr("target.example:443"))
+			requireError(t, err, "outbound not found")
+			_, err = chain.ListenPacket(s.ctx, M.ParseSocksaddr("1.1.1.1:53"))
+			requireError(t, err, "outbound not found")
 		}
 	}
-	if _, err := c.CloneConfigJSON(0); err == nil {
-		t.Fatal("position 0 has no link")
-	}
-	if _, err := c.CloneConfigJSON(7); err == nil {
-		t.Fatal("out-of-range must error")
-	}
-	// No live link after eviction.
-	c.evictIdle(time.Now().Add(c.idleTimeout + time.Second))
-	if _, err := c.CloneConfigJSON(1); err == nil {
-		t.Fatal("evicted link must not serve a config")
+}
+
+// К1, rings: the rewrite lets them through and upstream's start-order check
+// stops the load (circular outbound dependency, with the hop tags).
+func TestRewriteК1RingsStopAtUpstream(t *testing.T) {
+	for name, build := range map[string]func(s *stand){
+		"[A, Dir{A, X}]": func(s *stand) { s.fake("A"); s.fake("X"); s.selector("Dir", "A", "X"); s.chain("c", "A", "Dir") },
+		"[Dir{A}, A]":    func(s *stand) { s.fake("A"); s.selector("Dir", "A"); s.chain("c", "Dir", "A") },
+		"[Dir1{A, X}, B, Dir2{A, Y}]": func(s *stand) {
+			s.fake("A")
+			s.fake("B")
+			s.fake("X")
+			s.fake("Y")
+			s.selector("Dir1", "A", "X")
+			s.selector("Dir2", "A", "Y")
+			s.chain("c", "Dir1", "B", "Dir2")
+		},
+		"nested groups": func(s *stand) {
+			s.fake("A")
+			s.fake("B")
+			s.fake("X")
+			s.selector("Inner", "A")
+			s.selector("Mid", "Inner", "B")
+			s.add("Pool", C.TypeURLTest, &option.URLTestOutboundOptions{Outbounds: []string{"X", "Inner"}})
+			s.chain("c", "Mid", "Pool")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newStand(t)
+			build(s)
+			requireNoError(t, s.rewrite())
+			s = newStand(t)
+			build(s)
+			requireError(t, s.buildErr(), "circular outbound dependency", "c#")
+		})
 	}
 }
 
-// The XHTTP server validates the padding length against its own range and
-// reads it from the configured placement, so the strip may only narrow the
-// range to its lower bound.
-func TestApplyStripXHTTPPadding(t *testing.T) {
-	set := stripSet{"xhttp.padding": true}
-	for _, tc := range []struct {
-		name     string
-		padding  any
-		want     any
-		stripped bool
-	}{
-		{"default range", nil, "100", true},
-		{"empty", "", "100", true},
-		{"explicit range", "200-500", "200", true},
-		{"reversed range", "500-200", "200", true},
-		{"spaced range", " 300 - 900 ", "300", true},
-		{"single value", "150", "150", false},
-		{"unparsable", "abc", "abc", false},
+// К1, conflicts: one node or group would need two paths; the rewrite fails
+// with a short technical error.
+func TestRewriteК1Conflicts(t *testing.T) {
+	for name, build := range map[string]func(s *stand){
+		"two chains, one node": func(s *stand) {
+			s.fake("A")
+			s.fake("B")
+			s.fake("N")
+			s.chain("c1", "A", "N")
+			s.chain("c2", "B", "N")
+		},
+		"two chains, entry and position": func(s *stand) {
+			s.fake("A")
+			s.fake("N")
+			s.fake("X")
+			s.chain("c1", "N", "X")
+			s.chain("c2", "A", "N")
+		},
+		"[B, Dir1{A}, Dir2{A}]": func(s *stand) {
+			s.fake("A")
+			s.fake("B")
+			s.fake("X")
+			s.selector("Dir1", "A")
+			s.selector("Dir2", "A", "X")
+			s.chain("c", "B", "Dir1", "Dir2")
+		},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			transport := map[string]any{"type": "xhttp", "x_padding_obfs_mode": true, "x_padding_placement": "cookie"}
-			if tc.padding != nil {
-				transport["x_padding_bytes"] = tc.padding
+		t.Run(name, func(t *testing.T) {
+			s := newStand(t)
+			build(s)
+			requireError(t, s.rewrite(), "is needed on chain", "one node or group has one path")
+		})
+	}
+	for name, positions := range map[string][]string{"[A, B, A]": {"A", "B", "A"}, "[Dir, A, Dir]": {"Dir", "A", "Dir"}} {
+		t.Run(name, func(t *testing.T) {
+			s := newStand(t)
+			s.fake("A")
+			s.fake("B")
+			s.fake("X")
+			s.selector("Dir", "X")
+			s.chain("c", positions...)
+			requireError(t, s.rewrite(), "duplicate outbound", "one node or group has one path")
+		})
+	}
+}
+
+// К1: two chains sharing an entry are not a conflict — position 0 is not
+// taken over, the entry keeps its one own path.
+func TestRewriteК1SharedEntry(t *testing.T) {
+	for name, build := range map[string]func(s *stand){
+		"[A, B] + [A, C]": func(s *stand) {
+			s.fake("A")
+			s.fake("B")
+			s.fake("C")
+			s.chain("x", "A", "B")
+			s.chain("y", "A", "C")
+		},
+		"[proxy, B] + [proxy, C]": func(s *stand) {
+			s.fake("A1")
+			s.fake("A2")
+			s.fake("B")
+			s.fake("C")
+			s.selector("proxy", "A1", "A2")
+			s.chain("x", "proxy", "B")
+			s.chain("y", "proxy", "C")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newStand(t)
+			build(s)
+			s.build()
+			if s.detourOf("B") != "x#0" || s.detourOf("C") != "y#0" {
+				t.Fatalf("B %s, C %s", s.detourOf("B"), s.detourOf("C"))
 			}
-			stripped, err := applyStrip(map[string]any{"transport": transport}, set)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if transport["x_padding_bytes"] != tc.want {
-				t.Fatalf("x_padding_bytes=%v, want %v", transport["x_padding_bytes"], tc.want)
-			}
-			if got := len(stripped) == 1 && stripped[0] == "xhttp.padding"; got != tc.stripped {
-				t.Fatalf("stripped=%v, want reported=%v", stripped, tc.stripped)
-			}
-			if transport["x_padding_obfs_mode"] != true || transport["x_padding_placement"] != "cookie" {
-				t.Fatalf("padding placement is a server contract and must stay: %v", transport)
+			if len(s.dial("x")) != 2 || len(s.dial("y")) != 2 {
+				t.Fatal("both chains dial through the shared entry")
 			}
 		})
 	}
-	other := map[string]any{"type": "ws"}
-	if stripped, _ := applyStrip(map[string]any{"transport": other}, set); len(stripped) != 0 || other["x_padding_bytes"] != nil {
-		t.Fatalf("non-xhttp transport touched: %v %v", stripped, other)
-	}
+}
+
+func TestRewriteК1WithoutRingsWorks(t *testing.T) {
+	s := newStand(t)
+	s.fake("A")
+	s.fake("X")
+	s.fake("Y")
+	s.selector("Dir", "X", "Y")
+	// One position reaching a node through two branches is one place.
+	s.selector("Pair", "Dir", "X")
+	s.chain("c", "A", "Pair")
+	s.fake("B")
+	s.fake("Z")
+	s.chain("other", "B", "Z")
+	s.build()
+	assertTrace(t, s.dial("c"), "X[c#0]", "A[]")
+	assertTrace(t, s.dial("other"), "Z[other#0]", "B[]")
 }

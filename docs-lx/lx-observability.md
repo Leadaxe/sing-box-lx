@@ -35,16 +35,42 @@ The methods the fork adds to `CommandClient`:
 - **`GetRunningConfig()`** — returns the canonical JSON options the running box was built
   from, post-override. The result is an object with a `Content()` accessor: a bare `string`
   return would crash gomobile on android/arm64.
+- **`GetEffectiveConfig()`** — returns the config after the lx pre-pass, in the same canonical
+  form as `GetRunningConfig`: chain hops (type `chain-hop`) added, `detour` of the nodes on chain
+  positions rewritten, MTU aligned, `lx.detour` written out expanded
+  ([SPEC 165](../SPECS/TASKS/165-CHAIN_DETOUR_REWRITE/SPEC.md)). Same `Content()` object.
+- **`GetOutboundConfig(tag)`** — returns one outbound, endpoint, group or chain hop as a JSON
+  object `{tag, original, effective, changes}`: `original` as in `GetRunningConfig`, `effective`
+  as in `GetEffectiveConfig`. Each change is `{field, from, to, by}`: `field` is a dotted path
+  (`tls.server_name`), `from` is absent when the field was absent, `to` is absent when the field
+  was removed, and `by` names the cause — `type` (`chain`, `chain_rewrite`, `lx.detour`, `mtu_align`) with
+  `chain`, `position`, `node_type`, `mode`, `below`, `overhead`, `reason` as they apply. Changes go
+  in the order they were made (`chain` → `chain_rewrite` → `mtu_align`); applied to `original`
+  they give `effective`. A hop has only `effective`. An unknown tag is an error (`NotFound` over
+  gRPC).
+
+  ```json
+  {
+    "tag": "NL-FREE#114",
+    "original":  { "type": "wireguard", "tag": "NL-FREE#114", "detour": "o-ru" },
+    "effective": { "type": "wireguard", "tag": "NL-FREE#114", "detour": "c-proton#0" },
+    "changes": [
+      { "field": "detour", "from": "o-ru", "to": "c-proton#0",
+        "by": { "type": "chain", "chain": "c-proton", "position": 1 } }
+    ]
+  }
+  ```
 - **`SubscribeDNSQueries(includeAnswers, handler)`** — subscribes to a structured live
   DNS-query stream. Per query it delivers the `domain`, `qtype`, `rcode`, the CNAME chain and
   answers (when `includeAnswers`), process attribution, and `dnsServer` / `dnsServerType` /
   `outbound`. An `rcode` of `-1` means a lookup failure, a first-class state. An empty
   `outbound` means direct/system, also a valid state, not a bug.
-- **`GetChains()`** — returns the state of every `chain` outbound
-  ([lx-chain.md](lx-chain.md)): per position the
-  resolved node and, for positions ≥ 1, the link instance (`starting|active|idle`, live
-  connections, effective MTU and why, what `strip` removed, whether `rewrite` applied, last
-  error). It also returns dial, error and link counters.
+- **`GetChainStatus(tag)`** — returns the state of one `chain` outbound
+  ([lx-chain.md](lx-chain.md)): per position the tag, whether it is a group, the node it resolves
+  to now, `transparent` (a `direct` on position ≥ 1, the dial goes to the hop below), `disabled`
+  and its dial errors; plus the chain's dial and error counters.
+- **`SetChainPositionEnabled(chain, position, enabled)`** — switches one chain position off or on
+  at runtime; returns only an error.
 - **`SetEndpointEnabled(tag, enabled)`** — switches a WG/AWG endpoint off or on at runtime
   ([lx-energy.md §12](lx-energy.md#12-a-manual-switch-turns-an-endpoint-off-without-a-config-change)). Returns an
   `EndpointToggleResult` object whose `State` is the endpoint state after the call.

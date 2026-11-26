@@ -64,9 +64,10 @@ service StartedService {
   rpc GetDNSGroups(google.protobuf.Empty) returns (DnsGroupList) {}
   rpc GetRunningConfig(google.protobuf.Empty) returns (RunningConfig) {}
   rpc GetURLViaOutbound(GetURLViaOutboundRequest) returns (GetURLViaOutboundResponse) {}
-  rpc GetChains(google.protobuf.Empty) returns (ChainList) {}
+  rpc GetEffectiveConfig(google.protobuf.Empty) returns (RunningConfig) {}
+  rpc GetOutboundConfig(GetOutboundConfigRequest) returns (OutboundConfig) {}
+  rpc GetChainStatus(GetChainStatusRequest) returns (ChainState) {}
   rpc SetChainPositionEnabled(SetChainPositionEnabledRequest) returns (SetChainPositionEnabledResponse) {}
-  rpc GetChainCloneConfig(GetChainCloneConfigRequest) returns (RunningConfig) {}
   rpc SetEndpointEnabled(SetEndpointEnabledRequest) returns (SetEndpointEnabledResponse) {}
   // Per-endpoint status snapshots (SPEC 114, SPEC 115): one unary getter per
   // endpoint type, so GetOutbounds stays a plain node list.
@@ -1158,22 +1159,25 @@ message RunningConfig {
   string content = 1;
 }
 
-// SPEC 073 — state of every `chain` outbound: per position the resolved node
-// (`now`; `transparent` = direct at position >= 1 collapses the hop) and, for
-// positions >= 1, the live link instance ("clone") of that node: state
-// starting|active|idle, live connections, ages, effective MTU and why,
-// what `strip` removed and whether `rewrite` applied, last dial error.
-message ChainCloneState {
-  string state = 1;
-  int64 activeConns = 2;
-  int64 lastPickedAgeMs = 3;
-  int64 createdAgeMs = 4;
-  uint32 mtuConfigured = 5;
-  uint32 mtuEffective = 6;
-  string mtuReason = 7;
-  repeated string stripped = 8;
-  bool rewritten = 9;
-  string lastError = 10;
+// SPEC 165 — the config after the lx pre-pass (chain rewrite, path-MTU
+// alignment, lx.detour written out) is RunningConfig from GetEffectiveConfig.
+// GetOutboundConfig returns one node: `content` is a JSON object
+// {"tag", "original", "effective", "changes"} — original as GetRunningConfig
+// has it, effective as GetEffectiveConfig has it, changes in the order they
+// were made; a chain hop has only effective. Tags of outbounds, endpoints,
+// hops and groups are accepted; an unknown tag is NotFound.
+message GetOutboundConfigRequest {
+  string tag = 1;
+}
+message OutboundConfig {
+  string content = 1;
+}
+
+// SPEC 073 / 165 — state of one `chain` outbound by tag: per position the
+// resolved node (`now`; `transparent` = direct at position >= 1 passes the
+// dial to the hop below), the runtime toggle and the errors of its hop.
+message GetChainStatusRequest {
+  string tag = 1;
 }
 message ChainPosition {
   string tag = 1;
@@ -1181,9 +1185,9 @@ message ChainPosition {
   string now = 3;
   bool transparent = 4;
   int64 errors = 5;
-  ChainCloneState clone = 6;
+  reserved 6; // SPEC 165: the link instance (clone) is gone
   // SPEC 075 — runtime toggle: the position is excluded from the path (`now`
-  // stays filled so diagnostics can show WHAT is disabled; clone is nil).
+  // stays filled so diagnostics can show WHAT is disabled).
   bool disabled = 7;
 }
 message ChainState {
@@ -1191,34 +1195,20 @@ message ChainState {
   repeated ChainPosition positions = 2;
   int64 dials = 3;
   int64 errors = 4;
-  int64 clonesCreated = 5;
-  int64 clonesEvicted = 6;
-  int64 liveClones = 7;
-}
-message ChainList {
-  repeated ChainState chains = 1;
+  reserved 5, 6, 7; // SPEC 165: link counters are gone
 }
 
 // SPEC 075 — runtime enable/disable of one chain position (packet order,
 // 0 = entry). Any combination is valid: all positions disabled degenerates the
-// chain into direct. The flag always applies; a failed link warm-up on enable
-// is DATA (warmupError), not a status error — status errors are reserved for
-// genuine call failures (unknown chain, index out of range, service stopped).
+// chain into direct. Status errors: unknown chain, index out of range,
+// service stopped.
 message SetChainPositionEnabledRequest {
   string chainTag = 1;
   int32 position = 2;
   bool enabled = 3;
 }
 message SetChainPositionEnabledResponse {
-  string warmupError = 1; // "" = ok, or warm-up not applicable (urltest/direct/disable)
-}
-// SPEC 075 — effective post-transform options JSON ({type, tag, ...} after
-// strip/rewrite/MTU/detour) of the live link at the position's currently
-// resolved leaf. Snapshotted at clone creation (RunningConfig model, SPEC 037).
-// NotFound when no live link exists (position 0, transparent, evicted, disabled).
-message GetChainCloneConfigRequest {
-  string chainTag = 1;
-  int32 position = 2;
+  reserved 1; // SPEC 165: warmupError, there is no link to warm up
 }
 
 // SPEC 106 — manual on/off switch of a WG/AWG endpoint. Disable brings the

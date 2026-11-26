@@ -676,16 +676,6 @@ func TestResolverWarnings(t *testing.T) {
 			t.Fatalf("tuic %d", tuic.InitialPacketSize)
 		}
 	})
-	t.Run("chain as a detour target", func(t *testing.T) {
-		node := hy2("1.2.3.4", "virt", 0)
-		decisions := (&graph{}).out("warp", C.TypeMASQUE, masque("162.159.192.1", "", 0)).out("virt", C.TypeChain, &option.ChainOutboundOptions{Outbounds: []string{"warp", "warp"}}).out("hy2", C.TypeHysteria2, node).align(t, Policy{})
-		if node.InitialPacketSize != 0 {
-			t.Fatalf("%d", node.InitialPacketSize)
-		}
-		if d := findDecision(decisions, "hy2", "initial_packet_size"); d == nil || !strings.Contains(d.Warning, "chain") {
-			t.Fatalf("%+v", d)
-		}
-	})
 	t.Run("openvpn over a tunnel warns only", func(t *testing.T) {
 		ovpn := &option.OpenVPNClientEndpointOptions{}
 		ovpn.Server = "1.2.3.4"
@@ -843,5 +833,43 @@ func TestAlignMap(t *testing.T) {
 	})
 	if NumberFromMap(stdjson.Number("1.5e3")) != 1500 || NumberFromMap(int64(7)) != 7 || NumberFromMap(uint32(9)) != 9 || NumberFromMap("x") != 0 {
 		t.Fatal("number forms")
+	}
+}
+
+// lx: SPEC 165 М2 — the capacity of a chain hop is the minimum of its
+// position and the hop below: the position may be disabled or pick direct.
+// A chain as a detour target carries what its top hop carries.
+func TestResolverМ2ChainHop(t *testing.T) {
+	t.Parallel()
+	socks := &option.SOCKSOutboundOptions{}
+	socks.Server = "1.2.3.4"
+	socks.Detour = "virt#0"
+	exit := wg("5.6.7.8", "virt#1", 1420)
+	hy := hy2("9.9.9.9", "virt", 0)
+	decisions := (&graph{}).
+		out("warp", C.TypeMASQUE, masque("162.159.192.1", "", 1280)).
+		out("s5", C.TypeSOCKS, socks).
+		ep("wg-exit", C.TypeWireGuard, exit).
+		out("virt", C.TypeChain, &option.ChainOutboundOptions{Outbounds: []string{"warp", "s5", "wg-exit"}}).
+		out("virt#0", C.TypeChainHop, &option.ChainHopOutboundOptions{Chain: "virt", Position: 0, Outbound: "warp"}).
+		out("virt#1", C.TypeChainHop, &option.ChainHopOutboundOptions{Chain: "virt", Position: 1, Outbound: "s5", Below: "virt#0"}).
+		out("virt#2", C.TypeChainHop, &option.ChainHopOutboundOptions{Chain: "virt", Position: 2, Outbound: "wg-exit", Below: "virt#1"}).
+		out("hy2", C.TypeHysteria2, hy).
+		align(t, Policy{})
+	// s5 is a stream boundary, but position 1 may be disabled: then wg-exit
+	// rides on warp (1280) directly.
+	if exit.MTU >= 1280 {
+		t.Fatalf("М2: wg-exit mtu %d must fit warp", exit.MTU)
+	}
+	d := findDecision(decisions, "wg-exit", "mtu")
+	if d == nil || !strings.Contains(d.Reason, "warp") || d.Below != "virt#1" || d.Overhead == 0 {
+		t.Fatalf("М2/М4 decision %+v", d)
+	}
+	// hy2 over the chain: limited by the top hop, i.e. by wg-exit.
+	if hy.InitialPacketSize == 0 || hy.InitialPacketSize >= int(exit.MTU) {
+		t.Fatalf("chain target: hy2 initial_packet_size %d, wg-exit mtu %d", hy.InitialPacketSize, exit.MTU)
+	}
+	if q := findDecision(decisions, "hy2", "initial_packet_size"); q == nil || !q.PMTUDDisabled || q.Below != "virt" {
+		t.Fatalf("М4 QUIC decision %+v", q)
 	}
 }

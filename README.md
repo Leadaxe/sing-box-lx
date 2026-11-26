@@ -154,18 +154,17 @@ No build tag · [feature](SPECS/FEATURES/019-SNIFF_GUARD/FEATURE.md) · [config]
 
 ### `chain` builds a multi-hop path from groups without copying them
 
-Entry, middle and exit are each chosen by their own selector or `urltest`, and the path follows the choice. The `chain` outbound assembles the hops at runtime from existing groups and nodes, lowers the MTU of tunnel links automatically, and strips one-sided DPI tricks from inner links.
+Entry, middle and exit are each chosen by their own selector or `urltest`, and the path follows the choice. At config load every node on a position ≥ 1, group members included, gets `detour` onto the hop of the position below; a node keeps one instance and one path, so a group on a position checks the path its traffic takes. The MTU alignment and strip filters of `lx.detour` apply to these nodes as to any node under `detour`.
 
 ```jsonc
 {
   "type": "chain", "tag": "via-three",
   "outbounds": ["selector-in", "selector-mid", "selector-exit"],   // entry → exit
-  "idle_timeout": "5m",
-  "rewrite": { "wireguard": { "mtu": 1200 } }                      // merge-patch per node type, links only
+  "rewrite": { "wireguard": { "mtu": 1200 } }                      // merge-patch per node type, positions ≥ 1 only
 }
 ```
 
-The path shows in `detourList` and `GetChains`; the hop tags `<tag>#0`, `<tag>#1`, … give per-layer latency through URLTest. Limits: verified on a live stand with real hops; WireGuard links have not been checked on a device.
+The path shows in `detourList` and `GetChainStatus`, every change to a node in `GetOutboundConfig`; the hop tags `<tag>#0`, `<tag>#1`, … give per-layer latency through URLTest. Limits: verified on live stands with real hops; WireGuard on a chain position has not been checked on a device.
 
 `with_lx_chain` · [feature](SPECS/FEATURES/015-CHAIN/FEATURE.md) · [config](docs-lx/lx-chain.md) ([RU](docs-lx/lx-chain.ru.md))
 
@@ -252,9 +251,9 @@ A client or a panel shows the live state of the core without scraping logs or op
 
 - **Connections.** A stream of the connection table with each connection's path through groups and chains (`detourList`) and the rule that matched it (`GetRules`); closing a connection is one call.
 - **DNS.** Every query with its answers and CNAME chain (`SubscribeDNSQueries`).
-- **Groups and nodes.** `GetGroups`, the balancer slots with `live` / `dead` / `quarantined` and the moved sites (`GetPool`), chains (`GetChains`), DNS groups, the state of WireGuard / AmneziaWG and Tailscale endpoints by tag.
+- **Groups and nodes.** `GetGroups`, the balancer slots with `live` / `dead` / `quarantined` and the moved sites (`GetPool`), chains (`GetChainStatus`), DNS groups, the state of WireGuard / AmneziaWG and Tailscale endpoints by tag.
 - **Probes on demand.** The delay of one node (`URLTestOutbound`) and which exit address a node gives (`GetURLViaOutbound`).
-- **The core as a whole.** The running config (`GetRunningConfig`), the core's log, memory, goroutines, traffic.
+- **The core as a whole.** The running config as written and as built (`GetRunningConfig`, `GetEffectiveConfig`, `GetOutboundConfig`), the core's log, memory, goroutines, traffic.
 
 ```text
 SubscribeConnections{interval: 1s}       → the connection table with each connection's path

@@ -21,6 +21,9 @@ func (w *KTLSClientConfig) ClientHandshake(ctx context.Context, conn net.Conn) (
 	if err != nil {
 		return nil, err
 	}
+	if skipKTLSLx(conn) { // lx: SPEC 165 Я2 — no kTLS without a kernel socket under detour
+		return tlsConn, nil
+	}
 	kConn, err := ktls.NewConn(ctx, w.logger, tlsConn, w.kernelTx, w.kernelRx)
 	if err != nil {
 		tlsConn.Close()

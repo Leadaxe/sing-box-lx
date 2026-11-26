@@ -42,7 +42,15 @@ you need and read its document. Each comment shows the default and the allowed v
     "trusttunnel": {
       "idle_timeout": "5m"                      // default: 5m. Global idle window for trusttunnel nodes without their own key; only a node's "0" turns it off (SPEC 133)
     },
-    "mtu_align": "clamp",                       // default: clamp. off | fill | clamp, or an object {"mode", "except": [tags]} (§13)
+    "detour": {                                 // default: true (no key = true) = clamp + every strip filter; false = upstream behaviour (§13, SPEC 165)
+      "mtu_align": "clamp",                     // default: clamp. off | fill | clamp
+      "strip": {                                // default: the catalog. true | false | {"filters": …}
+        "filters": {                            // an object replaces the catalog: an unnamed filter is off
+          "tls": { "fragment": true, "spoof": true, "kernel": true, "engine": true }
+        }
+      },
+      "except_outbounds": []                    // default: none. Tags neither aligned nor filtered; an unknown tag is a load error
+    },
     "sniff_guard": {                            // default: no block = upstream behaviour. Guards the handshake against rerouting by SNI on a relay or router (§13, SPEC 060)
       "nodes": {
         "sni_mismatch": true,                   // default: true — only nodes whose SNI differs from server. false — no filter
@@ -237,6 +245,6 @@ you need and read its document. Each comment shows the default and the allowed v
 ```
 
 Field count: 26 XHTTP + 30 AmneziaWG (incl. `id`/`ip`/`ib` and the 9 AWG 3.x keys) + 1 VLESS (`encryption`) +
-5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 24 `lx` (9 `lx.wg` + `lx.masque.idle_timeout` + `lx.trusttunnel.idle_timeout` + `lx.mtu_align` + 12 `lx.sniff_guard{nodes{sni_mismatch,outbound_type},detour_type,override,tls{method,delay,persist,detour_type},quic{method,delay,persist,detour_type}}`).
+5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 26 `lx` (9 `lx.wg` + `lx.masque.idle_timeout` + `lx.trusttunnel.idle_timeout` + 3 `lx.detour{mtu_align,strip,except_outbounds}` + 12 `lx.sniff_guard{nodes{sni_mismatch,outbound_type},detour_type,override,tls{method,delay,persist,detour_type},quic{method,delay,persist,detour_type}}`).
 Mutually exclusive and ignored fields are flagged in the comments above. The feature documents give
 the per-field semantics, gotchas and live verification status: [lx-config.md](lx-config.md) and its links.

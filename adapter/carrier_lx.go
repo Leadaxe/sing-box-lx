@@ -45,9 +45,10 @@ func RecordCarrier(ctx context.Context, outbound Outbound) {
 	if _, isGroup := outbound.(OutboundGroup); isGroup {
 		return
 	}
-	// A chain (SPEC 073) is not the relay either: its entry position dials
-	// through the same group hook, which records the member picked there.
-	if _, isChain := outbound.(ChainPathProvider); isChain {
+	// A chain (SPEC 073) and its hops (SPEC 165) are not the relay either:
+	// the hop records the node of its position itself, a group on the
+	// position records its pick through the same group hook.
+	if _, isChain := outbound.(ChainPathProvider); isChain || outbound.Type() == chainTypeHop {
 		return
 	}
 	record.Type = outbound.Type()

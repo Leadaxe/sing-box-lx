@@ -127,7 +127,7 @@ HTTP/3 is faster and is tried first by default. But on some paths QUIC does not 
 there is no failure — only silence:
 
 - the endpoint silently ignores QUIC from a particular exit address;
-- the `detour` has a hop that carries only TCP: HTTP CONNECT, a VLESS or Trojan link in a chain;
+- the `detour` has a hop that carries only TCP: HTTP CONNECT, a VLESS or Trojan position below it in a chain;
 - the network filters incoming UDP:443.
 
 With `vhttp: h3` such a node hangs on every connection until the timeout. `auto` waits 3 s for the
@@ -159,14 +159,14 @@ although it works afterwards.
 ### 4.1 WARP drops inner IPv6 fragments
 
 The tunnel splits an inner packet larger than `mtu` into fragments. WARP passes IPv4 fragments
-and drops IPv6 fragments. So a node above `masque` — through a `detour`, in a group or as a `chain`
-link — whose packet does not fit `mtu` is silent over IPv6 and works over IPv4. The typical case
+and drops IPv6 fragments. So a node above `masque` — through a `detour`, in a group or on a `chain`
+position — whose packet does not fit `mtu` is silent over IPv6 and works over IPv4. The typical case
 is a QUIC proxy (Hysteria2, TUIC) with a 1280-byte packet: over IPv6 that is 1328 bytes.
 Measured on a clean link on 2026-10-09: with `mtu` 1280 at most 1232 bytes of UDP payload pass
 over IPv6, with `mtu` 1340 at most 1280.
 
 A node above `masque` gets its packet size fitted to `mtu` on its own:
-[`lx.mtu_align`](lx-block.md#lxmtu_align--path-mtu--packet-size-alignment) does it. By hand —
+[`lx.detour.mtu_align`](lx-block.md#lxdetourmtu_align--path-mtu--packet-size-alignment) does it. By hand —
 `initial_packet_size: 1232` on the QUIC node or `mtu: 1340` on `masque`; the latter needs an
 outer path of about 1440 bytes to WARP.
 
@@ -341,7 +341,7 @@ One sleep window for every `masque` node instead of a key on each:
 ```
 
 The core fits the packet size of `hy2` to the `mtu` of `warp` on its own (§4.1). If alignment is
-turned off (`"lx": { "mtu_align": "off" }`), set it by hand: `"initial_packet_size": 1232`.
+turned off (`"lx": { "detour": { "mtu_align": "off" } }`), set it by hand: `"initial_packet_size": 1232`.
 
 ### 7.6 Your own RFC 9484 server
 
@@ -380,7 +380,7 @@ and sends the connection to the neutral name. On the relay — `routeOnly: true`
 `lx.sniff_guard` (§2.2).
 
 **A QUIC node above `masque` works over IPv4 and is silent over IPv6.** Its packet does not fit
-`mtu`, and WARP drops the fragments. Check that `lx.mtu_align` is not turned off; by hand —
+`mtu`, and WARP drops the fragments. Check that `lx.detour.mtu_align` is not turned off; by hand —
 `initial_packet_size: 1232` on the node (§4.1).
 
 **A fresh node shows `-1` on its first probe and works afterwards.** The first HTTP/3 connection

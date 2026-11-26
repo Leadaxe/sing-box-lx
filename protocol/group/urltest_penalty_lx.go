@@ -264,12 +264,12 @@ func (g *URLTestGroup) penaltyFailoverDial(ctx context.Context, network string, 
 		return nil, nil, false
 	}
 	g.traceGroup(ctx, fallback, failed.Tag())
-	// lx: SPEC 073 — fallback-дайл внутри цепочки тоже идёт в звено, не в оригинал.
-	fallbackDialer, err := adapter.ResolveChainLeaf(ctx, fallback)
+	// lx: SPEC 165 — the fallback pick goes through the same hook (carrier, Х8).
+	leafCtx, fallbackDialer, err := adapter.ResolveChainLeaf(ctx, fallback)
 	if err != nil {
 		return nil, nil, false
 	}
-	conn, err := fallbackDialer.DialContext(ctx, network, destination)
+	conn, err := fallbackDialer.DialContext(leafCtx, network, destination)
 	if err != nil {
 		g.logger.Error("lx penalty: fallback via ", fallback.Tag(), ": ", E.Cause(err, "dial"))
 		if probe {

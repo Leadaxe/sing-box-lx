@@ -711,7 +711,7 @@ named and laid out the way upstream lays out a tagged protocol (`naive`,
 ## 5.3 Outbound
 
 The `trusttunnel` outbound is a node on a par with the others: TCP and UDP,
-usable in groups, under `detour` and as a `chain` link. Four rules shape
+usable in groups, under `detour` and on a `chain` position. Four rules shape
 its behaviour:
 
 - **The dial waits for the server's answer.** 200 is a connection;

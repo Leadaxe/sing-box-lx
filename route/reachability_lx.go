@@ -217,7 +217,7 @@ func walkReachable(tag string, manual bool, result *reachability, resolve func(t
 	}
 
 	// An ordinary outbound routes through its static detour dependencies (a
-	// chain outbound lists its positions here).
+	// chain lists its top hop, a chain hop its position and the hop below).
 	for _, dependency := range outbound.Dependencies() {
 		walkReachable(dependency, false, result, resolve)
 	}
@@ -331,17 +331,6 @@ func (r *Router) suspendIdleEndpoints(reachable map[string]bool) {
 	for _, outbound := range r.outbound.Outbounds() {
 		if suspendable, ok := outbound.(adapter.IdleSuspendable); ok {
 			suspend(suspendable)
-		}
-		// SPEC 073: звенья-endpoint'ы цепочек живут вне менеджера endpoint'ов —
-		// тик обязан дотянуться и до них, иначе отсидевший WG-клон держит горячий
-		// стек бесконечно. Достижимость — по тегу цепочки-владельца.
-		if holder, ok := outbound.(adapter.EndpointCloneHolder); ok {
-			for _, endpoint := range holder.CloneEndpoints() {
-				if suspendable, ok := endpoint.(adapter.IdleSuspendable); ok {
-					suspendable.SuspendIfIdle(reachable[holder.Tag()], r.idleSuspend, r.idleSuspendReachable)
-					suspendable.TeardownIfSlept(r.idleTeardown)
-				}
-			}
 		}
 	}
 }

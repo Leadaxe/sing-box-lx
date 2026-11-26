@@ -41,7 +41,15 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption`, `round_robin`-бала
     "trusttunnel": {
       "idle_timeout": "5m"                      // дефолт: 5m. Глобальное окно простоя trusttunnel-узлов без своего ключа; выключается только "0" в узле (SPEC 133)
     },
-    "mtu_align": "clamp",                       // дефолт: clamp. off | fill | clamp, либо объект {"mode", "except": [теги]} (§13)
+    "detour": {                                 // дефолт: true (нет ключа = true) = clamp + все фильтры strip; false = поведение апстрима (§13, SPEC 165)
+      "mtu_align": "clamp",                     // дефолт: clamp. off | fill | clamp
+      "strip": {                                // дефолт: каталог. true | false | {"filters": …}
+        "filters": {                            // объект заменяет каталог: не названный фильтр выключен
+          "tls": { "fragment": true, "spoof": true, "kernel": true, "engine": true }
+        }
+      },
+      "except_outbounds": []                    // дефолт: нет. Теги, которые не выравниваются и не фильтруются; неизвестный тег — ошибка загрузки
+    },
     "sniff_guard": {                            // дефолт: нет блока = поведение апстрима. Защита рукопожатия от перенаправления по SNI на релее или роутере (§13, SPEC 060)
       "nodes": {
         "sni_mismatch": true,                   // дефолт: true — только узлы, у которых SNI не совпадает с server. false — фильтра нет
@@ -236,6 +244,6 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption`, `round_robin`-бала
 ```
 
 Счёт полей: 26 XHTTP + 30 AmneziaWG (вкл. `id`/`ip`/`ib` и 9 ключей AWG 3.x) + 1 VLESS (`encryption`) +
-5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 24 `lx` (9 `lx.wg` + `lx.masque.idle_timeout` + `lx.trusttunnel.idle_timeout` + `lx.mtu_align` + 12 `lx.sniff_guard{nodes{sni_mismatch,outbound_type},detour_type,override,tls{method,delay,persist,detour_type},quic{method,delay,persist,detour_type}}`).
+5 `urltest` (`mode` + `balancer{pool,pool_tolerance,sticky_hash}`) + 26 `lx` (9 `lx.wg` + `lx.masque.idle_timeout` + `lx.trusttunnel.idle_timeout` + 3 `lx.detour{mtu_align,strip,except_outbounds}` + 12 `lx.sniff_guard{nodes{sni_mismatch,outbound_type},detour_type,override,tls{method,delay,persist,detour_type},quic{method,delay,persist,detour_type}}`).
 Взаимоисключающие и игнорируемые поля помечены в комментариях выше. Семантику каждого поля,
 подводные камни и статус живой проверки дают документы фич: [lx-config.ru.md](lx-config.ru.md) и ссылки из него.

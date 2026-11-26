@@ -154,18 +154,17 @@ WARP работает там, где не отвечает его WireGuard-endp
 
 ### `chain` собирает цепочку хопов из групп, не копируя их
 
-Вход, середину и выход выбирает свой selector или `urltest`, и цепочка идёт за этим выбором. Outbound `chain` собирает хопы в рантайме из существующих групп и узлов, сам снижает MTU туннельных звеньев и снимает с внутренних звеньев односторонние приёмы против DPI.
+Вход, середину и выход выбирает свой selector или `urltest`, и цепочка идёт за этим выбором. При загрузке конфига каждый узел на позиции ≥ 1, включая членов групп, получает `detour` на хоп позиции ниже; у узла один экземпляр и один путь, поэтому группа на позиции проверяет тот путь, которым идёт её трафик. Выравнивание MTU и фильтры strip из `lx.detour` действуют на эти узлы как на любой узел под `detour`.
 
 ```jsonc
 {
   "type": "chain", "tag": "via-three",
   "outbounds": ["selector-in", "selector-mid", "selector-exit"],   // вход → выход
-  "idle_timeout": "5m",
-  "rewrite": { "wireguard": { "mtu": 1200 } }                      // merge-patch по типу узла, только для звеньев
+  "rewrite": { "wireguard": { "mtu": 1200 } }                      // merge-patch по типу узла, только позиции ≥ 1
 }
 ```
 
-Путь виден в `detourList` и `GetChains`; теги хопов `<tag>#0`, `<tag>#1`, … дают задержку каждого слоя через URLTest. Ограничения: проверено на живом стенде с реальными хопами; WireGuard-звенья на устройстве не проверялись.
+Путь виден в `detourList` и `GetChainStatus`, каждое изменение узла — в `GetOutboundConfig`; теги хопов `<tag>#0`, `<tag>#1`, … дают задержку каждого слоя через URLTest. Ограничения: проверено на живых стендах с реальными хопами; WireGuard на позиции цепочки на устройстве не проверялся.
 
 `with_lx_chain` · [фича](SPECS/FEATURES/015-CHAIN/FEATURE.md) · [конфиг](docs-lx/lx-chain.ru.md) ([EN](docs-lx/lx-chain.md))
 
@@ -252,9 +251,9 @@ sing-box lxd --state-dir ./lxd-state -c config.json
 
 - **Соединения.** Поток таблицы соединений с путём каждого через группы и цепочки (`detourList`) и сработавшим правилом (`GetRules`); закрыть соединение — один вызов.
 - **DNS.** Каждый запрос с ответами и цепочкой CNAME (`SubscribeDNSQueries`).
-- **Группы и узлы.** `GetGroups`, слоты балансировщика с `live` / `dead` / `quarantined` и переведёнными сайтами (`GetPool`), цепочки (`GetChains`), DNS-группы, состояние endpoint'ов WireGuard / AmneziaWG и Tailscale по тегу.
+- **Группы и узлы.** `GetGroups`, слоты балансировщика с `live` / `dead` / `quarantined` и переведёнными сайтами (`GetPool`), цепочки (`GetChainStatus`), DNS-группы, состояние endpoint'ов WireGuard / AmneziaWG и Tailscale по тегу.
 - **Пробы по запросу.** Задержка одного узла (`URLTestOutbound`) и то, какой адрес выхода даёт узел (`GetURLViaOutbound`).
-- **Ядро целиком.** Работающий конфиг (`GetRunningConfig`), лог ядра, память, горутины, трафик.
+- **Ядро целиком.** Работающий конфиг как написан и как собран (`GetRunningConfig`, `GetEffectiveConfig`, `GetOutboundConfig`), лог ядра, память, горутины, трафик.
 
 ```text
 SubscribeConnections{interval: 1s}       → таблица соединений с путём каждого
