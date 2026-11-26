@@ -304,10 +304,6 @@ func (e *Endpoint) Start(postStart bool) error {
 			standardBind.SetSinglePeerMode()
 			e.connectStandardBind(standardBind) // lx: SPEC 160 — lx.wg.connected_socket
 		}
-		// lx: SPEC 158 part 2 — lx.wg.buffers.read_datagram_count
-		if err := e.tuneStandardBind(standardBind); err != nil {
-			return err
-		}
 		if egressEnabled {
 			egressPoolOptions := e.options.EgressPoolOptions
 			egressPoolOptions.Control = listenerControl

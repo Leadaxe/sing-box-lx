@@ -327,7 +327,8 @@ type LXWGResolved struct {
 	ReadDatagramCount int
 	// SendByMTU is lx.wg.buffers.send_by_mtu; false (default) is upstream's path.
 	SendByMTU bool
-	// ReceiveCopy is lx.wg.buffers.receive_copy, LXWGReceiveCopyMemory when absent.
+	// ReceiveCopy is lx.wg.buffers.receive_copy; "" (absent) means
+	// LXWGReceiveCopyMemory, so the zero value is the default behaviour.
 	ReceiveCopy     string
 	ConnectedSocket bool
 }
@@ -335,7 +336,7 @@ type LXWGResolved struct {
 // lxWGDefaults is the WG part of an absent block: the idle keys off, the
 // buffer keys at the upstream behaviour.
 func lxWGDefaults() LXWGResolved {
-	return LXWGResolved{ReadDatagramCount: lxWGReadDatagramCountMax, ReceiveCopy: LXWGReceiveCopyMemory}
+	return LXWGResolved{ReadDatagramCount: lxWGReadDatagramCountMax}
 }
 
 type LXMASQUEResolved struct {
@@ -511,7 +512,8 @@ func resolveLXValues(wg LXWGOptions, masque *LXMASQUEOptions, trustTunnel *LXTru
 		}
 		switch wg.Buffers.ReceiveCopy {
 		case "":
-		case LXWGReceiveCopyAuto, LXWGReceiveCopyMemory, LXWGReceiveCopySpeed:
+		case LXWGReceiveCopyMemory:
+		case LXWGReceiveCopyAuto, LXWGReceiveCopySpeed:
 			resolved.WG.ReceiveCopy = wg.Buffers.ReceiveCopy
 		default:
 			return nil, E.New("lx.wg.buffers.receive_copy must be auto, memory or speed")

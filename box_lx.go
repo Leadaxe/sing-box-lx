@@ -9,6 +9,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/lxmtu"
 	"github.com/sagernet/sing-box/common/lxsniffguard"
+	"github.com/sagernet/sing-box/experimental/deprecated"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -32,6 +33,10 @@ func applyLXOptions(ctx context.Context, options *option.Options, logger log.Log
 	var rawSniffGuard *option.LXSniffGuardOptions
 	if options.LX != nil {
 		rawSniffGuard = options.LX.SniffGuard
+		// lx: 1.15 line — read_datagram_count is accepted and does nothing
+		if wg := options.LX.WG; wg != nil && wg.Buffers != nil && wg.Buffers.ReadDatagramCount != nil {
+			deprecated.Report(ctx, deprecated.OptionLXWGReadDatagramCount)
+		}
 	}
 	resolved, err := option.ResolveLX(options)
 	if err != nil {

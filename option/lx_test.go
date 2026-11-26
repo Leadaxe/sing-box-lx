@@ -232,7 +232,7 @@ func TestLXCanonicalForm(t *testing.T) {
 	t.Parallel()
 	options, resolved := mustResolveLX(t, `{"route":{"final":"direct"},"lx":{"wg":{
 		"idle": {"suspend": "30s", "suspend_reachable": "5m", "teardown": "0"},
-		"buffers": {"read_datagram_count": 8, "send_by_mtu": false},
+		"buffers": {"read_datagram_count": 8, "send_by_mtu": true, "receive_copy": "speed"},
 		"connected_socket": true
 	}}}`)
 	content, err := json.Marshal(options)
@@ -242,7 +242,7 @@ func TestLXCanonicalForm(t *testing.T) {
 	text := string(content)
 	for _, fragment := range []string{
 		`"lx":{"wg":{"idle":{`, `"suspend":"30s"`, `"suspend_reachable":"5m0s"`, `"teardown":"0s"`, `"final":"direct"`,
-		`"buffers":{"read_datagram_count":8,"send_by_mtu":false}`, `"connected_socket":true`,
+		`"buffers":{"read_datagram_count":8,"send_by_mtu":true,"receive_copy":"speed"}`, `"connected_socket":true`,
 	} {
 		if !strings.Contains(text, fragment) {
 			t.Fatalf("canonical form lacks %s: %s", fragment, text)
@@ -473,7 +473,7 @@ func TestLXWGBuffers(t *testing.T) {
 	t.Parallel()
 	for _, count := range []int{1, 8, 128} {
 		options, resolved := mustResolveLX(t, `{"lx":{"wg":{"buffers":{"read_datagram_count":`+strconv.Itoa(count)+`}}}}`)
-		if resolved.WG.ReadDatagramCount != count || resolved.WG.SendByMTU || resolved.WG.ReceiveCopy != LXWGReceiveCopyMemory {
+		if resolved.WG.ReadDatagramCount != count || resolved.WG.SendByMTU || resolved.WG.ReceiveCopy != "" {
 			t.Fatalf("read_datagram_count %d: %+v", count, resolved.WG)
 		}
 		if count == 128 {
@@ -485,7 +485,7 @@ func TestLXWGBuffers(t *testing.T) {
 		}
 	}
 	options, resolved := mustResolveLX(t, `{"lx":{"wg":{"buffers":{"send_by_mtu":false,"receive_copy":"memory"}}}}`)
-	if resolved.WG.SendByMTU || resolved.WG.ReceiveCopy != LXWGReceiveCopyMemory || options.LX != nil {
+	if resolved.WG.SendByMTU || resolved.WG.ReceiveCopy != "" || options.LX != nil {
 		t.Fatal("send_by_mtu false and receive_copy memory are the defaults and must canonicalize to absent")
 	}
 	options, resolved = mustResolveLX(t, `{"lx":{"wg":{"buffers":{"send_by_mtu":true,"receive_copy":"auto"}}}}`)

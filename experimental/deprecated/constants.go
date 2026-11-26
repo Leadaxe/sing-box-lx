@@ -195,8 +195,20 @@ var OptionMASQUELegacyFields = Note{
 	EnvName:           "MASQUE_LEGACY_FIELDS",
 }
 
+// lx: 1.15 line — lx.wg.buffers.read_datagram_count does nothing since upstream
+// reads a batch into one ~128 KiB buffer: the heap of an endpoint no longer
+// grows with the batch size (owner decision 2026-11-26, SPEC 160). No
+// ScheduledVersion, for the reason given at OptionMASQUELegacyFields.
+var OptionLXWGReadDatagramCount = Note{
+	Name:              "lx-wg-read-datagram-count",
+	Description:       "lx.wg.buffers.read_datagram_count (it has no effect: a batch is read into one buffer)",
+	DeprecatedVersion: "1.15.0",
+	EnvName:           "LX_WG_READ_DATAGRAM_COUNT",
+}
+
 var Options = []Note{
 	OptionMASQUELegacyFields,
+	OptionLXWGReadDatagramCount,
 	OptionOutboundDNSRuleItem,
 	OptionMissingDomainResolver,
 	OptionLegacyDomainStrategyOptions,
