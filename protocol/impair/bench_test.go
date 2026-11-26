@@ -3,21 +3,19 @@ package impair
 import (
 	"net"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 )
 
-func cpuTime() time.Duration {
-	var usage syscall.Rusage
-	_ = syscall.Getrusage(syscall.RUSAGE_SELF, &usage)
-	return time.Duration(usage.Utime.Nano() + usage.Stime.Nano())
-}
-
 // reportCPU adds the process CPU per op and the share of one core that
-// 10 Mbit/s of this traffic costs.
+// 10 Mbit/s of this traffic costs (where the process CPU time is known,
+// see cpuTime).
 func reportCPU(b *testing.B, start time.Duration, bytesPerOp int) {
-	perOp := float64(cpuTime()-start) / float64(b.N)
+	end, ok := cpuTime()
+	if !ok {
+		return
+	}
+	perOp := float64(end-start) / float64(b.N)
 	b.ReportMetric(perOp, "cpu-ns/op")
 	opsPer10Mbit := 10e6 / 8 / float64(bytesPerOp)
 	b.ReportMetric(perOp*opsPer10Mbit/1e9*100, "core-%/10Mbit")
@@ -84,7 +82,7 @@ func BenchmarkPacketUp(b *testing.B) {
 	b.SetBytes(1400)
 	b.ReportAllocs()
 	b.ResetTimer()
-	start := cpuTime()
+	start, _ := cpuTime()
 	for i := range b.N {
 		pc.WriteTo(payload, addr)
 		if i%64 == 63 {
@@ -111,7 +109,7 @@ func BenchmarkStreamUp(b *testing.B) {
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
 	b.ResetTimer()
-	start := cpuTime()
+	start, _ := cpuTime()
 	for range b.N {
 		if _, err := c.Write(payload); err != nil {
 			b.Fatal(err)
