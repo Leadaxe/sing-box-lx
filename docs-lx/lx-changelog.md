@@ -28,6 +28,14 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### v1.14.4-lx.37-rc.3
+
+Пререлиз после `v1.14.4-lx.37-rc.2`. База та же — sing-box `v1.14.4` + 146 коммитов `upstream/stable` (`060f54a9a`), дрейф 0. Конфиг не меняется.
+
+- 🆕 **Управление `impair` на лету из Android-клиента** ([SPEC 164](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/164-IMPAIR_OUTBOUND/SPEC.md)). В `CommandClient` libbox появились `SetImpair`, `ScheduleImpair` и `GetImpairStatus` — те же операции, что у gRPC демона и `sing-box api impair`; ответ — объект `ImpairStatus` с JSON статуса. Нужны для отладочного API клиентов: менять канал тестового узла, не перезапуская ядро.
+- 🐛 **AmneziaWG: смена I1–I5 на работающем устройстве больше не гоняется с рукопожатиями.** Цепочки I1–I5 хранятся атомарно, `IpcSet` можно звать во время отправки рукопожатий (форк `wireguard-go` `0d6763b`, по мотивам amneziawg-go `735cffbcb`).
+- 🧰 Форк `wireguard-go` снова ведётся на ветке `lx`, релизная линия `lx-awg2-v007` в неё влита; пин сабмодуля и `.gitmodules` обновлены, код форка не менялся.
+
 #### v1.14.4-lx.37-rc.2
 
 Пререлиз после `v1.14.4-lx.37-rc.1`. База — sing-box `v1.14.4` + 146 коммитов `upstream/stable` (`060f54a9a`, 2026-11-26; нового тега нет), **дрейф 0** ([SPEC 166](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/166-UPSTREAM_SYNC_1_14_4_PLUS_146/SPEC.md)). Отложенный в rc.1 синк сделан. Go `go1.26.10` как у stable. Сабмодули: `wireguard-go` — `5e0ba64` (ветка `lx-awg2-v007`, принят апстримный `afd160a`), `sing-tun` — `53e0731` (принят апстримный `725b9b9`, 18 коммитов), `gvisor` и `utls` — как в rc.1. Версии модулей, отложенные в rc.1, взяты вместе с мержем: cronet-go `72c4e6f77628` (равен stable; зеркало musl-тулчейна под него собрано), `quic-go` `sing-box-mod.15`, `sing`, `sing-mux`, `sing-quic`, `sing-openvpn`, `sing-shadowtls`, `sing-snell`, `sing-vmess`, `sing-cloudflared`, `bbolt`, `netlink`, `tfo-go` v2.3.3. Наши отличия от stable прежние, с пометкой `lx:`: директива `go 1.26.0`, более новые `golang.org/x/*`, grpc v1.83.2, go-jose v4.1.4, NDK r28c. Полная релизная матрица без публикации прогнана на этих версиях (13 из 13).
