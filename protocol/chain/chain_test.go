@@ -7,7 +7,6 @@ import (
 	"context"
 	"io"
 	"net"
-	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -606,57 +605,6 @@ func TestRewriteК5LocalPorts(t *testing.T) {
 			requireError(t, s.rewrite(), "node n has "+node.field, "fixed local port")
 		})
 	}
-}
-
-func TestRewriteК5аSocketFieldsDropped(t *testing.T) {
-	mark := option.FwMark(1)
-	for name, mutate := range map[string]func(*option.DialerOptions){
-		"bind_interface":       func(o *option.DialerOptions) { o.BindInterface = "eth0" },
-		"routing_mark":         func(o *option.DialerOptions) { o.RoutingMark = mark },
-		"tcp_fast_open":        func(o *option.DialerOptions) { o.TCPFastOpen = true },
-		"tcp_multi_path":       func(o *option.DialerOptions) { o.TCPMultiPath = true },
-		"reuse_addr":           func(o *option.DialerOptions) { o.ReuseAddr = true },
-		"netns":                func(o *option.DialerOptions) { o.NetNs = "ns" },
-		"protect_path":         func(o *option.DialerOptions) { o.ProtectPath = "/p" },
-		"bind_address_no_port": func(o *option.DialerOptions) { o.BindAddressNoPort = true },
-	} {
-		t.Run(name, func(t *testing.T) {
-			s := newStand(t)
-			s.fake("a")
-			node := s.fake("n")
-			mutate(&node.DialerOptions)
-			s.chain("virt", "a", "n")
-			s.mustRewrite()
-			changes := s.changes["n"]
-			if len(changes) != 2 || changes[0].Field != "detour" || changes[1].Field != name || changes[1].From == nil || changes[1].To != nil ||
-				changes[1].By != (option.LXConfigChangeBy{Type: option.LXChangeByChain, Chain: "virt", Position: 1}) {
-				t.Fatalf("К5а: changes %+v", changes)
-			}
-			for _, item := range s.options.Outbounds {
-				if item.Tag == "n" && !reflect.DeepEqual(item.Options.(*fakeOptions).AbstractDialerOptions, option.AbstractDialerOptions{}) {
-					t.Fatalf("К5а: the field stays in effective: %+v", item.Options)
-				}
-			}
-		})
-	}
-	// Fields upstream applies under detour, and the entry, stay as written.
-	s := newStand(t)
-	entry := s.fake("a")
-	entry.BindInterface = "eth0"
-	exit := s.fake("n")
-	exit.DomainResolver = &option.DomainResolveOptions{Server: "local"}
-	exit.ConnectTimeout = 1
-	s.chain("virt", "a", "n")
-	s.mustRewrite()
-	if len(s.changes["n"]) != 1 || len(s.changes["a"]) != 0 {
-		t.Fatalf("changes %+v", s.changes)
-	}
-	// A rewrite that puts such a field back fails.
-	s = newStand(t)
-	s.fake("a")
-	s.fake("n")
-	s.chain("virt", "a", "n").Rewrite = option.ChainRewrite{typeFake: map[string]any{"tcp_fast_open": true}}
-	requireError(t, s.rewrite(), "sets tcp_fast_open")
 }
 
 func TestRewriteК6Cycle(t *testing.T) {

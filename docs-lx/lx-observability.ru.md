@@ -42,7 +42,7 @@ OBSERVABILITY](../SPECS/FEATURES/006-OBSERVABILITY/FEATURE.md).
   `{tag, original, effective, changes}`: `original` — как в `GetRunningConfig`, `effective` — как в
   `GetEffectiveConfig`. Каждое изменение — `{field, from, to, by}`: `field` — путь через точку
   (`tls.server_name`), `from` нет, если поля не было, `to` нет, если поле удалено, а `by` называет
-  причину — `type` (`chain`, `chain_rewrite`, `mtu_align`) и, где применимо, `chain`, `position`,
+  причину — `type` (`chain`, `chain_rewrite`, `detour`, `mtu_align`) и, где применимо, `chain`, `position`,
   `node_type`, `mode`, `below`, `overhead`, `reason`. Изменения идут в порядке применения
   (`chain` → `chain_rewrite` → `mtu_align`); применённые к `original`, они дают `effective`. У хопа
   есть только `effective`. Неизвестный тег — ошибка (`NotFound` в gRPC).

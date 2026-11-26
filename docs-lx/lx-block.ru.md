@@ -337,6 +337,23 @@ mtu_align: wg-exit mtu 1420 → 1200 clamped (limited by warp[masque] mtu 1280 v
 "lx": { "detour": { "strip": { "filters": { "tls": { "spoof": true, "kernel": true, "engine": true } } } } }
 ```
 
+### Что `detour` не применяет
+
+С `detour` апстрим строит dialer узла ниже и не строит собственный dialer узла
+(`common/dialer/dialer.go`, `NewWithOptions`), а поля сокета читает только собственный.
+Поэтому под `detour` эти поля не действуют и ошибок не дают. Ядро это поведение не меняет, а
+показывает: `GetOutboundConfig` отдаёт каждое поле в `changes` с `by.type: "detour"` без `to`,
+и в итоговом конфиге его нет.
+
+`bind_interface`, `inet4_bind_address`, `inet6_bind_address`, `bind_address_no_port`,
+`protect_path`, `routing_mark`, `reuse_addr`, `netns`, `connect_timeout`, `tcp_fast_open`,
+`tcp_multi_path`, `disable_tcp_keep_alive`, `tcp_keep_alive`, `tcp_keep_alive_interval`,
+`udp_fragment`, `network_strategy`, `network_type`, `fallback_network_type`, `fallback_delay`.
+
+`domain_resolver` под `detour` действует. Два исключения остаются как в апстриме: anytls с
+`tcp_fast_open` не загружается, openconnect применяет свои keepalive-поля сам. Ключа для этого
+нет: ни `"detour": false`, ни `except_outbounds` эти поля не включают.
+
 ### Ошибки загрузки
 
 Все их ловит и `sing-box check`.

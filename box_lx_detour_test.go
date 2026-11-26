@@ -297,23 +297,54 @@ func TestPrePassМ3Except(t *testing.T) {
 	checkИ4(t, run)
 }
 
-// К5а: a node of a subscription with socket fields does not fail the load;
-// the fields go with a warning and a change, and И4 holds.
-func TestPrePassК5аSocketFieldsWarnAndChange(t *testing.T) {
-	content := strings.Replace(rewriteOverTunnel, `"password": "x",`, `"password": "x", "tcp_fast_open": true, "routing_mark": 7,`, 1)
-	run := runPrePass(t, content)
-	checkИ4(t, run)
-	var fields []string
-	for _, change := range run.effective.Changes("hy2") {
-		if change.By.Type == option.LXChangeByChain && change.Field != "detour" {
-			fields = append(fields, change.Field)
-		}
+// Д1–Д4: the dial fields upstream ignores under detour leave the effective
+// config with a `detour` change, on any node with a detour, whatever
+// lx.detour says; no warning; И4 holds.
+func TestPrePassД1IgnoredUnderDetour(t *testing.T) {
+	for name, root := range map[string]string{"default": "", "detour false": `, "lx": {"detour": false}`} {
+		t.Run(name, func(t *testing.T) {
+			content := strings.Replace(issue37("2606:4700:104::1", `, "tcp_fast_open": true, "routing_mark": 7, "connect_timeout": "5s"`, root), `"server_port": 443,
+      "password"`, `"server_port": 443, "bind_interface": "eth0",
+      "password"`, 1)
+			run := runPrePass(t, content)
+			checkИ4(t, run)
+			var fields []string
+			for _, change := range run.effective.Changes("hy2") {
+				if change.By.Type == option.LXChangeByDetour {
+					if change.To != nil || change.From == nil || !strings.Contains(change.By.Reason, "common/dialer") {
+						t.Fatalf("Д1: %+v", change)
+					}
+					fields = append(fields, change.Field)
+				}
+			}
+			if strings.Join(fields, ",") != "bind_interface,routing_mark,connect_timeout,tcp_fast_open" {
+				t.Fatalf("Д1: %v", fields)
+			}
+			if len(run.logger.warn) != 0 {
+				t.Fatalf("Д4: no warning, got %v", run.logger.warn)
+			}
+			// The node without a detour keeps its fields.
+			if changes := run.effective.Changes("warp"); len(changes) != 0 && name == "detour false" {
+				t.Fatalf("no detour, no change: %+v", changes)
+			}
+		})
 	}
-	if strings.Join(fields, ",") != "routing_mark,tcp_fast_open" {
-		t.Fatalf("К5а: changes %v", fields)
+}
+
+func TestPrePassД3ReadByProtocol(t *testing.T) {
+	anytls := &option.AnyTLSOutboundOptions{}
+	anytls.Detour = "x"
+	anytls.TCPFastOpen = true
+	anytls.RoutingMark = 7
+	changed, changes, err := withoutIgnoredDialFields(C.TypeAnyTLS, anytls)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(run.logger.warn) == 0 || !strings.Contains(strings.Join(run.logger.warn, "\n"), "node hy2: routing_mark, tcp_fast_open dropped") {
-		t.Fatalf("К5а: warning %v", run.logger.warn)
+	if len(changes) != 1 || changes[0].Field != "routing_mark" || !changed.(*option.AnyTLSOutboundOptions).TCPFastOpen {
+		t.Fatalf("Д3: anytls keeps tcp_fast_open for its own error: %+v", changes)
+	}
+	if anytls.RoutingMark != 7 {
+		t.Fatal("the caller's struct is not written through")
 	}
 }
 

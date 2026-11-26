@@ -273,17 +273,6 @@ var chainLocalPortFields = map[string][]string{
 	C.TypeOpenConnect: {"dtls_local_port"},
 }
 
-// chainSocketFields are the dial fields upstream silently does not apply
-// under detour (common/dialer.NewWithOptions builds the detour dialer and
-// skips the default one). The rewrite drops them with a change record (К5а).
-// domain_resolver and fallback_delay do apply; connect_timeout, keepalive
-// and udp_fragment are read by protocols.
-var chainSocketFields = []string{
-	"bind_interface", "inet4_bind_address", "inet6_bind_address", "bind_address_no_port",
-	"protect_path", "routing_mark", "reuse_addr", "netns", "tcp_fast_open", "tcp_multi_path",
-	"network_strategy", "network_type", "fallback_network_type",
-}
-
 // checkDialable is К5: the node must be able to work through detour.
 func (r *rewriter) checkDialable(chainTag string, position int, leaf *rewriteEntry) error {
 	if _, hasDialer := leaf.options.(option.DialerOptionsWrapper); !hasDialer {
@@ -341,17 +330,6 @@ func (r *rewriter) rewriteNode(entry *rewriteEntry, place interception, rewrite 
 	}
 	changes := []option.LXConfigChange{change}
 	m["detour"] = hopTag
-	// К5а: the hop opens the node's connection, the socket fields lose
-	// their meaning; drop them so effective says what runs.
-	for _, field := range chainSocketFields {
-		if value, has := m[field]; has {
-			delete(m, field)
-			changes = append(changes, option.LXConfigChange{
-				Field: field, From: value,
-				By: option.LXConfigChangeBy{Type: option.LXChangeByChain, Chain: place.chain, Position: place.position},
-			})
-		}
-	}
 	if patch, has := rewrite[entry.typeName]; has {
 		patchMap, isObject := patch.(map[string]any)
 		if !isObject {
@@ -363,11 +341,6 @@ func (r *rewriter) rewriteNode(entry *rewriteEntry, place interception, rewrite 
 		before := flatten(m)
 		patchMap = normalizeNumbers(patchMap)
 		mergePatch(m, patchMap)
-		for _, field := range chainSocketFields {
-			if _, has := m[field]; has {
-				return nil, nil, E.New("chain ", place.chain, ": rewrite[", entry.typeName, "] sets ", field, ", which does not apply under detour")
-			}
-		}
 		for _, diff := range diffFlat(before, flatten(m)) {
 			diff.By = option.LXConfigChangeBy{Type: option.LXChangeByChainRewrite, Chain: place.chain, Position: place.position, NodeType: entry.typeName}
 			changes = append(changes, diff)

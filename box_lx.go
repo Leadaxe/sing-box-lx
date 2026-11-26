@@ -2,8 +2,6 @@ package box
 
 import (
 	"context"
-	"sort"
-	"strings"
 	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -44,8 +42,10 @@ func applyLXOptions(ctx context.Context, options *option.Options, logger log.Log
 	if changes == nil {
 		changes = make(map[string][]option.LXConfigChange)
 	}
-	warnDroppedSocketFields(changes, logger)
 	if err := checkDetourExcept(options, resolved.Detour); err != nil {
+		return ctx, err
+	}
+	if err := showIgnoredUnderDetour(options, changes); err != nil {
 		return ctx, err
 	}
 	if err := alignPathMTU(options, resolved.Detour, changes, logger); err != nil {
@@ -222,27 +222,4 @@ func copyAlignable(options *option.Options) {
 	}
 	options.Outbounds = outbounds
 	options.Endpoints = endpoints
-}
-
-// warnDroppedSocketFields writes one line per node whose socket fields the
-// chain rewrite dropped (SPEC 165 К5а).
-func warnDroppedSocketFields(changes map[string][]option.LXConfigChange, logger log.Logger) {
-	tags := make([]string, 0, len(changes))
-	for tag := range changes {
-		tags = append(tags, tag)
-	}
-	sort.Strings(tags)
-	for _, tag := range tags {
-		var fields []string
-		var chain string
-		for _, change := range changes[tag] {
-			if change.By.Type == option.LXChangeByChain && change.Field != "detour" {
-				fields = append(fields, change.Field)
-				chain = change.By.Chain
-			}
-		}
-		if len(fields) > 0 {
-			logger.Warn("chain ", chain, ": node ", tag, ": ", strings.Join(fields, ", "), " dropped: they do not apply when the hop below opens the connection")
-		}
-	}
 }

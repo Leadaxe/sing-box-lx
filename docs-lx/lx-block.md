@@ -337,6 +337,23 @@ To keep the node's split under `detour` and filter the rest:
 "lx": { "detour": { "strip": { "filters": { "tls": { "spoof": true, "kernel": true, "engine": true } } } } }
 ```
 
+### What `detour` does not apply
+
+With a `detour` upstream builds the dialer of the node below and never the node's own
+(`common/dialer/dialer.go`, `NewWithOptions`), and only the node's own dialer reads the socket
+fields. Under `detour` these fields do nothing and say nothing; the core keeps it that way and
+makes it visible: `GetOutboundConfig` shows each one in `changes` with `by.type: "detour"` and
+no `to`, and the effective config leaves it out.
+
+`bind_interface`, `inet4_bind_address`, `inet6_bind_address`, `bind_address_no_port`,
+`protect_path`, `routing_mark`, `reuse_addr`, `netns`, `connect_timeout`, `tcp_fast_open`,
+`tcp_multi_path`, `disable_tcp_keep_alive`, `tcp_keep_alive`, `tcp_keep_alive_interval`,
+`udp_fragment`, `network_strategy`, `network_type`, `fallback_network_type`, `fallback_delay`.
+
+`domain_resolver` works under `detour`. Two exceptions stay as upstream has them: anytls fails
+the load on `tcp_fast_open`, openconnect applies its keepalive fields itself. There is no key
+for this: `"detour": false` and `except_outbounds` do not make these fields work.
+
 ### Load errors
 
 `sing-box check` catches all of them too.

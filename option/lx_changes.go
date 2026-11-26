@@ -20,7 +20,10 @@ import (
 const (
 	LXChangeByChain        = "chain"
 	LXChangeByChainRewrite = "chain_rewrite"
-	LXChangeByMTUAlign     = "mtu_align"
+	// LXChangeByDetour: a field upstream does not apply under detour
+	// (SPEC 165 Д1).
+	LXChangeByDetour   = "detour"
+	LXChangeByMTUAlign = "mtu_align"
 )
 
 type LXConfigChange struct {

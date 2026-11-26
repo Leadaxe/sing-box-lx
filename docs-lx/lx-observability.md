@@ -43,7 +43,7 @@ The methods the fork adds to `CommandClient`:
   object `{tag, original, effective, changes}`: `original` as in `GetRunningConfig`, `effective`
   as in `GetEffectiveConfig`. Each change is `{field, from, to, by}`: `field` is a dotted path
   (`tls.server_name`), `from` is absent when the field was absent, `to` is absent when the field
-  was removed, and `by` names the cause — `type` (`chain`, `chain_rewrite`, `mtu_align`) with
+  was removed, and `by` names the cause — `type` (`chain`, `chain_rewrite`, `detour`, `mtu_align`) with
   `chain`, `position`, `node_type`, `mode`, `below`, `overhead`, `reason` as they apply. Changes go
   in the order they were made (`chain` → `chain_rewrite` → `mtu_align`); applied to `original`
   they give `effective`. A hop has only `effective`. An unknown tag is an error (`NotFound` over

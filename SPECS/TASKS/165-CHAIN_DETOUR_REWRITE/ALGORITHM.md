@@ -77,17 +77,8 @@
     `relay_server_port`, OpenConnect `dtls_local_port`. У MASQUE, hysteria, hysteria2,
     tuic, TrustTunnel и OpenVPN-клиента локального порта в конфиге нет;
   Ошибка называет цепочку, позицию, узел и поля.
-- **К5а. Поля соединения узла.** Поля привязки сокета, которые теряют смысл, когда
-  соединение узла открывает хоп ниже (апстрим под `detour` их молча не применяет):
-  `bind_interface`, `inet4_bind_address`, `inet6_bind_address`, `bind_address_no_port`,
-  `protect_path`, `routing_mark`, `reuse_addr`, `netns`, `tcp_fast_open`, `tcp_multi_path`,
-  `network_strategy`, `network_type`, `fallback_network_type` — не ошибка: перезапись
-  снимает поле, пишет одну строку предупреждения на узел (тег, поля) и запись `changes`
-  `{field, from, by: {type: chain, chain, position}}` без `to` — сразу после записи
-  `detour`. Один узел подписки не роняет конфиг. `rewrite`, который возвращает такое поле,
-  — ошибка. Не входят `domain_resolver` и `fallback_delay` (апстрим применяет их под
-  `detour`), `connect_timeout`, keepalive и `udp_fragment` (их читают сами протоколы).
-  Решение владельца 2026-11-26.
+- **К5а.** `rewrite` цепочки не проверяется на поля соединения: что под `detour` не
+  действует, показывает Д1 для любого узла.
 - **К6.** Цикл через перехват: `detour` узла позиции ниже (собственный, не перехваченный)
   ведёт в узел, который перехвачен на этой же или более высокой позиции. Ошибка называет
   цепочку и узлы, а не только теги хопов, как сказал бы общий порядок запуска.
@@ -156,6 +147,31 @@ uTLS, padding мультиплексора и padding XHTTP в каталог н
 - **С5.** Выключенный фильтр или `"detour": false` — поведение апстрима: механизм
   пробуется на соединении без сокета ядра и, кроме разреза, падает.
 
+### 4.4б Что `detour` не применяет
+
+Апстрим при заданном `detour` строит dialer хопа и не строит dialer узла
+(`common/dialer/dialer.go`, `NewWithOptions`: при `Detour != ""` — `NewDetour`, без
+`NewDefault`). Поля сокета читает только `NewDefault` (`common/dialer/default.go`), поэтому под
+`detour` они молча не действуют. `lx.detour` это поведение не меняет, а делает видимым.
+
+- **Д1.** У любого узла с `detour` (своим или от цепочки) поля `bind_interface`,
+  `inet4_bind_address`, `inet6_bind_address`, `bind_address_no_port`, `protect_path`,
+  `routing_mark`, `reuse_addr`, `netns`, `connect_timeout`, `tcp_fast_open`,
+  `tcp_multi_path`, `disable_tcp_keep_alive`, `tcp_keep_alive`, `tcp_keep_alive_interval`,
+  `udp_fragment`, `network_strategy`, `network_type`, `fallback_network_type`,
+  `fallback_delay` убираются из итогового конфига. Каждое — запись `changes`
+  `{field, from, by: {type: detour, reason}}` без `to`. `fallback_delay` формально уходит в
+  резолвер, но с `detour` параллельного дозвона нет и значение не используется.
+- **Д2.** Применяются под `detour` и не трогаются: `domain_resolver`, устаревший
+  `domain_strategy` (через тот же резолвер).
+- **Д3.** Где апстрим не молчит, поле остаётся как есть: anytls `tcp_fast_open` (ошибка
+  загрузки всегда, `protocol/anytls/outbound.go`), openconnect `disable_tcp_keep_alive`,
+  `tcp_keep_alive`, `tcp_keep_alive_interval` (протокол применяет их сам,
+  `protocol/openconnect/client.go`).
+- **Д4.** Ни ключа, ни выключателя: `"detour": false` и `except_outbounds` на Д1 не влияют,
+  поле не заработало бы ни при каких настройках. Предупреждений в лог нет, рантайм не
+  меняется. Решение владельца 2026-11-26.
+
 ### 4.5 `lx.detour.mtu_align`
 
 - **М1.** Правило выравнивания — как в SPEC 120/144, без изменений.
@@ -194,7 +210,7 @@ uTLS, padding мультиплексора и padding XHTTP в каталог н
 - **Н2.** `GetEffectiveConfig` — снимок после всей предобработки, в той же каноничной
   форме.
 - **Н3.** `GetOutboundConfig(tag)` — `original` (узел из Н1), `effective` (из Н2),
-  `changes` в порядке применения: П2 → П5 → М4. Одно поле, изменённое дважды, — две
+  `changes` в порядке применения: П2 → П5 → Д1 → М4. Одно поле, изменённое дважды, — две
   записи, `from` второй равно `to` первой.
 - **Н4.** У хопа есть только `effective`.
 - **Н5.** Неизвестный тег — ошибка «не найдено».
@@ -350,7 +366,8 @@ WG-туннель. Узел получает две записи `changes` по 
 - `direct` в группе на позиции ≥ 1 — хоп ниже через метку в контексте дозвона (Х8); от
   метки цепочки остаётся только это;
 - К5: фиксированный локальный порт узла на позиции ≥ 1 — ошибка загрузки; поля соединения,
-  которые под `detour` не действуют, — предупреждение и запись `changes`, не ошибка (К5а);
+  которые апстрим под `detour` тихо игнорирует, — свойство `detour`, видимое в `changes`
+  у любого узла (Д1–Д4), не ошибка и не правило цепочки;
 - статус цепочки — унарный по тегу, как статусы endpoint'ов: позиции, выбранный узел на
   каждой, выключение, счётчики ошибок; общий список `GetChains` уходит.
 
