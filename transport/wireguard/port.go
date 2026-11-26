@@ -15,7 +15,7 @@ func (e *Endpoint) PortAddresses() (netip.Addr, netip.Addr) {
 	// L3 layer (sing-tun preferred routes) may ask at any moment, including while
 	// the endpoint is torn down (tunDevice == nil). The addresses are static
 	// config anyway (options.Address), cached at construction and on rebuild.
-	return e.inet4Address, e.inet6Address
+	return e.loadPortAddresses() // issue #75
 }
 
 func (e *Endpoint) PortMTU() uint32 {
@@ -68,7 +68,7 @@ func (e *Endpoint) WritePackets(packets [][]byte) error {
 	if len(unmatchedRefs) == 0 {
 		return nil
 	}
-	state := e.returnDevice.state.Load()
+	state := e.loadReturnDevice().state.Load() // lx: issue #75
 	if state == nil {
 		return nil
 	}
@@ -77,9 +77,9 @@ func (e *Endpoint) WritePackets(packets [][]byte) error {
 		packet := packetRef.PacketSlices[0]
 		var source netip.Addr
 		if header.IPVersion(packet) == header.IPv4Version {
-			source = e.tunDevice.Inet4Address()
+			source, _ = e.loadPortAddresses() // lx: issue #75 — cached; tunDevice may be released
 		} else {
-			source = e.tunDevice.Inet6Address()
+			_, source = e.loadPortAddresses() // lx: issue #75
 		}
 		reply, replyOk := tun.BuildICMPError(packet, tun.ICMPErrorNoRoute, source, 0, state.headroom)
 		if replyOk {
@@ -101,6 +101,7 @@ func (e *Endpoint) AttachReturn(returnPath tun.Return) error {
 		returnPath: returnPath,
 		headroom:   headroom,
 	}
+	defer e.holdReturnDevice()() // lx: issue #75 — Rebuild must not swap the wrapper under the CAS
 	for {
 		currentState := e.returnDevice.state.Load()
 		if currentState != nil {
@@ -116,6 +117,7 @@ func (e *Endpoint) AttachReturn(returnPath tun.Return) error {
 }
 
 func (e *Endpoint) DetachReturn(returnPath tun.Return) error {
+	defer e.holdReturnDevice()() // lx: issue #75
 	currentState := e.returnDevice.state.Load()
 	if currentState != nil && currentState.returnPath == returnPath {
 		e.returnDevice.state.CompareAndSwap(currentState, nil)

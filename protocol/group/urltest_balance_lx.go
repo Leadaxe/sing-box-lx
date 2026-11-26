@@ -2,10 +2,11 @@ package group
 
 import (
 	"context"
-	"hash/fnv"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -31,7 +32,8 @@ import (
 
 // slot is one fixed position in the pool. tag is the node currently occupying it.
 type slot struct {
-	tag string
+	tag   string
+	track *rrTrack // lx: SPEC 138 — unfinished exchanges, proofs and suspicion of the node (urltest_rr_track_lx.go)
 }
 
 // balancer holds the per-group round_robin state. nil for least_test.
@@ -49,10 +51,47 @@ type balancer struct {
 	// active pool just changed. Called WITHOUT the access lock held.
 	onChange func()
 
-	// alive, if set, reports whether a slot's node passed its last probe; pick skips
-	// slots that did not (SPEC 138). The URLTest wires it to slotAlive. Called WITHOUT
-	// the access lock held.
-	alive func(tag string) bool
+	// rr, if set, is the self-heal of the group (SPEC 138, rrWire): the pick skips
+	// the slots whose node it does not find alive and hands it its looks. Called
+	// WITHOUT the access lock held.
+	rr       rrOwner
+	poolLook atomic.Int64 // rrClock of the next look at the pool
+
+	// The readings of the last comparison of the wall and the monotonic clock (SPEC
+	// 138, rrClockLook).
+	clockLook   atomic.Int64 // rrClock of the next look: a cheap gate on the hot path
+	clockAccess sync.Mutex   // guards the pair of readings of the last look
+	clockMono   int64
+	clockWall   int64
+
+	// heal is the state of the self-heal after a failed dial (SPEC 138 §3,
+	// urltest_rr_heal_lx.go).
+	heal rrHeal
+
+	// memory is the key shift table, the slot counters and the quarantine (SPEC 138
+	// §4.4–4.5, urltest_rr_shift_lx.go).
+	memory rrMemory
+
+	// run is the run of the group in flight (SPEC 019, urltest_rr_run_lx.go).
+	run rrRun
+
+	// unverified are the pool nodes the manual test with no answer left without
+	// history (SPEC 019, urltest_rr_unverified_lx.go).
+	unverified rrUnverified
+}
+
+// rrOwner is the self-heal of a round_robin group (SPEC 138), *URLTest: whether the
+// node of a slot is alive (slotAlive), the look of the pick at a slot whose tracker
+// has work (rrOnPick; now is the rrClock of the pick) and at the whole pool, at most
+// once a second (rrPoolLook), a probe of the scheduled run that answered
+// (rrRunAnswer), and a jump between the wall and the monotonic clock (rrClockJump):
+// a sleep the monotonic clock did not count, or a clock change.
+type rrOwner interface {
+	slotAlive(tag string) bool
+	rrOnPick(ctx context.Context, tag string, track *rrTrack, now int64)
+	rrPoolLook(ctx context.Context)
+	rrRunAnswer(tag string)
+	rrClockJump(drift time.Duration)
 }
 
 // warnLegacyTolerance reports whether the legacy urltest `tolerance` option deserves a
@@ -140,28 +179,49 @@ func newBalancer(options option.URLTestOutboundOptions) (*balancer, error) {
 	return &balancer{poolSize: pool, poolTolerance: poolTolerance, stickyHash: stickyHash}, nil
 }
 
-// pick selects one node for this connection from the current pool. fallback is returned
-// when the pool is empty (start, before the first health-check fills it).
-// lx: SPEC 138 — a slot whose node failed its last probe is skipped while the pool has a
-// live one; pick never changes the slots.
-func (b *balancer) pick(ctx context.Context, destination M.Socksaddr, fallback adapter.Outbound, resolve func(tag string) adapter.Outbound) adapter.Outbound {
+// pickKeyed selects one node for this connection from the current pool and returns
+// what the dial of the connection needs from the pick (SPEC 138): the shift-table
+// key, computed once per connection, the key's shift and the start of the
+// connection. fallback is returned when the pool is empty (start, before the first
+// health-check fills it).
+// lx: SPEC 138 — a slot whose node failed its last probe (or is in quarantine) is skipped
+// while the pool has a live one, and a slot under suspicion (S1–S3) while the pool has a
+// slot that is neither; a shifted key takes the slot (hash + shift) % pool, or the next
+// live one going round; the pick never changes the slots.
+func (b *balancer) pickKeyed(ctx context.Context, network string, destination M.Socksaddr, fallback adapter.Outbound, resolve func(tag string) adapter.Outbound) (adapter.Outbound, rrPick) {
+	picked := rrPick{start: time.Now(), packet: network == N.NetworkUDP}
 	b.access.Lock()
 	slots := b.slots // setSlots publishes a new slice and never mutates a published one
 	b.access.Unlock()
 	n := len(slots)
 	if n == 0 {
-		return fallback
+		return fallback, picked
 	}
 	// Reduce in uint64 BEFORE narrowing: int(counter) on a 32-bit platform goes negative
 	// past 2^31 and a signed % would produce a negative index (slice panic).
+	now := rrClock(picked.start)
+	b.rrClockLook(picked.start) // lx: SPEC 138 — N3, at most once a second
+	// I9: the pick for a probe of another group or a delay measurement through this
+	// one starts nothing here.
+	if look := b.poolLook.Load(); b.rr != nil && !rrUnwatched(ctx) && now >= look && b.poolLook.CompareAndSwap(look, now+int64(time.Second)) {
+		b.rr.rrPoolLook(ctx) // lx: SPEC 138 — an empty or quarantined slot starts the replacement search
+	}
 	var idx int
 	if len(b.stickyHash) > 0 {
 		// slot-hash: fixed slot index from the key; living node in its slot keeps its keys.
-		hash := hashKey(b.stickyKey(ctx, destination))
-		idx = int(hash % uint64(n))
-		if b.alive != nil && !b.alive(slots[idx].tag) {
-			// Keys of a dead slot spread over the live slots by the rest of the hash.
-			if live, ok := b.liveSlot(slots, hash/uint64(n)); ok {
+		picked.key = b.rrKeyOf(ctx, destination)
+		picked.shift = b.memory.shifts.shiftOf(picked.key.table)
+		hash := picked.key.sticky
+		shift := uint64(picked.shift)
+		idx = int((hash%uint64(n) + shift%uint64(n)) % uint64(n))
+		if b.rr != nil && !b.rr.slotAlive(slots[idx].tag) {
+			if shift > 0 {
+				// A shifted key goes on to the next live slot: where its retry went.
+				if live, ok := b.firstLiveFrom(slots, idx, now, false); ok {
+					idx = live
+				}
+			} else if live, ok := b.liveSlot(slots, hash/uint64(n), now, false); ok {
+				// Keys of a dead slot spread over the live slots by the rest of the hash.
 				idx = live
 			}
 		}
@@ -169,24 +229,65 @@ func (b *balancer) pick(ctx context.Context, destination M.Socksaddr, fallback a
 		// plain round-robin over the live slots; with all of them live it is counter % n.
 		counter := b.rotate(ctx)
 		idx = int(counter % uint64(n))
-		if b.alive != nil {
-			if live, ok := b.liveSlot(slots, counter); ok {
+		if b.rr != nil {
+			if live, ok := b.liveSlot(slots, counter, now, false); ok {
 				idx = live
 			}
 		}
 	}
-	if node := resolve(slots[idx].tag); node != nil {
-		return node
+	// lx: SPEC 138 — the slot found as before is under suspicion (an unfinished
+	// connection through it with no proof of its node since, urltest_rr_track_lx.go):
+	// the pick takes the nearest slot going round from it that is live and not under
+	// suspicion — the distribution of the keys stays as it is; failing that, the slot
+	// itself.
+	base := idx
+	if track := slots[base].track; track != nil && track.suspect(now, b.heal.epoch()) {
+		for step := 1; step < n; step++ {
+			i := (base + step) % n
+			if b.usable(slots[i], now, true) {
+				idx = i
+				picked.detour = true
+				break
+			}
+		}
 	}
-	return fallback
+	if node := resolve(slots[idx].tag); node != nil {
+		// SPEC 138: the slot's tracker goes with the pick; a few atomic loads tell
+		// whether it has work for the slow path. The suspect slots the pick went past
+		// get their look too, at most once per rrLook (S2, SILENT, D4/D5).
+		if track := slots[idx].track; track != nil {
+			picked.track = track
+			if b.rr != nil && track.attention(now) {
+				b.rr.rrOnPick(ctx, slots[idx].tag, track, now)
+			}
+		}
+		if idx != base && b.rr != nil {
+			for i := base; i != idx; i = (i + 1) % n {
+				if track := slots[i].track; track != nil && track.suspect(now, b.heal.epoch()) && track.attention(now) {
+					b.rr.rrOnPick(ctx, slots[i].tag, track, now)
+				}
+			}
+		}
+		return node, picked
+	}
+	return fallback, picked
+}
+
+// usable reports whether the pick may take a slot: its node passed its last probe
+// and, when strict, the slot is not under suspicion (SPEC 138).
+func (b *balancer) usable(s slot, now int64, strict bool) bool {
+	if b.rr != nil && !b.rr.slotAlive(s.tag) {
+		return false
+	}
+	return !strict || s.track == nil || !s.track.suspect(now, b.heal.epoch())
 }
 
 // liveSlot returns the index of the k-th live slot, k taken modulo the live count. ok is
 // false with no live slot (cold start, total outage): the caller keeps its pick.
-func (b *balancer) liveSlot(slots []slot, k uint64) (int, bool) {
+func (b *balancer) liveSlot(slots []slot, k uint64, now int64, strict bool) (int, bool) {
 	var live uint64
 	for _, s := range slots {
-		if b.alive(s.tag) {
+		if b.usable(s, now, strict) {
 			live++
 		}
 	}
@@ -195,7 +296,7 @@ func (b *balancer) liveSlot(slots []slot, k uint64) (int, bool) {
 	}
 	k %= live
 	for i, s := range slots {
-		if b.alive(s.tag) {
+		if b.usable(s, now, strict) {
 			if k == 0 {
 				return i, true
 			}
@@ -206,8 +307,12 @@ func (b *balancer) liveSlot(slots []slot, k uint64) (int, bool) {
 }
 
 // slotAlive reports whether the node in a slot has URL test history (under its RealTag),
-// i.e. its last probe answered. A tag that does not resolve counts as dead. lx: SPEC 138.
+// i.e. its last probe answered, and is not in quarantine. A tag that does not resolve
+// counts as dead. lx: SPEC 138.
 func (s *URLTest) slotAlive(tag string) bool {
+	if s.balancer != nil && s.balancer.isQuarantined(tag) {
+		return false
+	}
 	node, loaded := s.outbound.Outbound(tag)
 	return loaded && s.group.history.LoadURLTestHistory(RealTag(node, N.NetworkTCP)) != nil
 }
@@ -223,38 +328,94 @@ func (b *balancer) poolTags() []string {
 	return tags
 }
 
-// setSlots replaces the pool atomically. The health-check (urltest.go) computes the new
-// occupancy — which tag sits in which slot — and hands the ordered tag list here.
-func (b *balancer) setSlots(tags []string) {
+// slotsSnapshot returns the published slot slice. writeSlots publishes a
+// new slice and never mutates a published one, so it stays valid without the lock.
+func (b *balancer) slotsSnapshot() []slot {
 	b.access.Lock()
-	b.slots = make([]slot, len(tags))
-	for i, tag := range tags {
-		b.slots[i] = slot{tag: tag}
+	defer b.access.Unlock()
+	return b.slots
+}
+
+// replaceSlot puts node into the slot that holds dead, leaving every other slot as
+// is (SPEC 138 §5). It does nothing and returns false when dead no longer holds a
+// slot or node already holds one: the pool changed since the caller looked at it.
+func (b *balancer) replaceSlot(dead, node string) bool {
+	return b.writeSlots(func(old []slot) []slot {
+		index := -1
+		for i, s := range old {
+			if s.tag == node {
+				return nil
+			}
+			if s.tag == dead {
+				index = i
+			}
+		}
+		if index < 0 {
+			return nil
+		}
+		next := slices.Clone(old)
+		next[index] = slot{tag: node, track: newRRTrack(node)}
+		return next
+	})
+}
+
+// clearSlot empties the slot of tag, leaving every other slot as is (SPEC 138 D1:
+// the struck node leaves its slot even with no replacement). It reports whether tag
+// held a slot.
+func (b *balancer) clearSlot(tag string) bool {
+	return b.writeSlots(func(old []slot) []slot {
+		index := slotIndex(old, tag)
+		if tag == "" || index < 0 {
+			return nil
+		}
+		next := slices.Clone(old)
+		next[index] = slot{}
+		return next
+	})
+}
+
+// setSlots replaces the pool atomically. The health-check (urltest_pool_lx.go) computes the
+// new occupancy — which tag sits in which slot — and hands the ordered tag list here.
+func (b *balancer) setSlots(tags []string) {
+	b.writeSlots(func(old []slot) []slot {
+		next := make([]slot, len(tags))
+		for i, tag := range tags {
+			next[i] = slot{tag: tag, track: slotTrack(old, tag)} // lx: SPEC 138 — a node keeps its tracker
+		}
+		return next
+	})
+}
+
+// writeSlots is the one writer of the pool: change gets the published slots and returns
+// the next ones (nil: no change), which are published as a new slice — a published one is
+// never mutated. The nodes that left take their Q1 signs and their counters with them
+// (SPEC 138), and the active pool changed (SPEC 020: onChange, called outside the lock so
+// the callback never nests under it). It reports whether the pool changed.
+func (b *balancer) writeSlots(change func(old []slot) []slot) bool {
+	b.access.Lock()
+	next := change(b.slots)
+	if next == nil {
+		b.access.Unlock()
+		return false
 	}
+	departed := departedTracks(b.slots, next)
+	b.slots = next
 	b.access.Unlock()
-	// lx: SPEC 020 — the active pool changed; invalidate the reachable cache.
-	// Called outside the access lock so the callback never nests under it.
+	for _, track := range departed {
+		track.dropPending() // lx: SPEC 138 — its Q1 signs leave with it
+	}
+	b.rrSlotsChanged() // lx: SPEC 138 — a node that takes a slot starts its counters from zero
 	if b.onChange != nil {
 		b.onChange()
 	}
+	return true
 }
 
 // --- sticky key ---------------------------------------------------------------------
 
-// stickyKey builds the binding key from the configured components, in order. An absent
-// component contributes "" (SPEC: all-empty → key "" → one fixed slot).
-func (b *balancer) stickyKey(ctx context.Context, destination M.Socksaddr) string {
-	metadata := adapter.ContextFrom(ctx)
-	var buf []byte
-	for i, component := range b.stickyHash {
-		if i > 0 {
-			buf = append(buf, 0) // NUL separator
-		}
-		buf = append(buf, stickyComponent(component, metadata, destination)...)
-	}
-	return string(buf)
-}
-
+// stickyComponent is one component of the binding key, in the text form the slot
+// hash covers (stickyHashOf). An absent component contributes "" (SPEC: all-empty →
+// key "" → one fixed slot).
 func stickyComponent(component string, metadata *adapter.InboundContext, destination M.Socksaddr) string {
 	switch component {
 	case C.URLTestStickyProcess:
@@ -298,12 +459,6 @@ func stickyComponent(component string, metadata *adapter.InboundContext, destina
 	}
 }
 
-func hashKey(key string) uint64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(key))
-	return h.Sum64()
-}
-
 // --- pool maintenance (pure planning, no I/O) ---------------------------------------
 //
 // These compute the NEW slot occupancy from current slots + fresh test results, honouring
@@ -321,9 +476,9 @@ type candidate struct {
 // planFirstLivePool (pool_tolerance == 0) computes slot occupancy WITHOUT ranking by delay:
 // every live slot member keeps its exact index, dead/empty slots are refilled from fillOrder
 // (live nodes not already pooled, in caller order), and any leftover hole keeps a dead member
-// so the pool never shrinks. This is the replace-in-slot twin of balancePoolFirstLive, used by
-// the manual-test rebuild path where re-ranking would needlessly relocate living nodes and
-// break their sticky bindings.
+// so the pool never shrinks. The lazy scheduled run (balancePoolFirstLive, fillOrder in walk
+// order) and the manual-test rebuild (fillOrder by delay) both lay the pool out with it:
+// re-ranking would needlessly relocate living nodes and break their sticky bindings.
 //
 // current = present slot tags (slot order). live = set of tags that tested alive now.
 // fillOrder = candidate tags to drop into holes (already filtered to non-pool, in order).

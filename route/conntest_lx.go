@@ -89,3 +89,14 @@ func resolveSelectorsLx(ctx context.Context, outbound adapter.Outbound) (adapter
 	}
 	return outbound, via
 }
+
+// deleteURLTestHistoryLx is upstream's reaction to a failed open (erase the
+// history of the chain's last element, re-select every urltest group of the
+// chain, 37fffa325) except for a connection test: a probe changes no group
+// state (SPEC 139 §5.7).
+func (m *ConnectionManager) deleteURLTestHistoryLx(ctx context.Context, chain []adapter.Outbound, err error) {
+	if lxtrace.IsProbe(ctx) {
+		return
+	}
+	m.deleteURLTestHistory(chain, err)
+}

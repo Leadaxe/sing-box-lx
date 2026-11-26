@@ -43,8 +43,8 @@ func LxStateOf(store adapter.FakeIPStore) (LxState, bool) {
 		return LxState{}, false
 	}
 	state := LxState{
-		Inet4Range: s.inet4Range,
-		Inet6Range: s.inet6Range,
+		Inet4Range: s.inet4.addressRange,
+		Inet6Range: s.inet6.addressRange,
 	}
 	_, inMemory := s.storage.(*MemoryStorage)
 	state.Persisted = !inMemory
@@ -114,11 +114,11 @@ func lxNoteCreate(s *Store, previous4, previous6 netip.Addr) {
 	now := time.Now()
 	wraps.access.Lock()
 	defer wraps.access.Unlock()
-	if s.inet4Current != previous4 {
-		wraps.inet4.note(now, s.inet4Current.Less(previous4))
+	if s.inet4.current != previous4 {
+		wraps.inet4.note(now, s.inet4.current.Less(previous4))
 	}
-	if s.inet6Current != previous6 {
-		wraps.inet6.note(now, s.inet6Current.Less(previous6))
+	if s.inet6.current != previous6 {
+		wraps.inet6.note(now, s.inet6.current.Less(previous6))
 	}
 }
 

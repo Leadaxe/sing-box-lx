@@ -252,11 +252,11 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	return tailscaleEndpoint, nil
 }
 
-func (t *Endpoint) References() []string {
+func (t *Endpoint) References() ([]string, []string) {
 	if t.detour == "" {
-		return nil
+		return nil, nil
 	}
-	return []string{t.detour}
+	return []string{t.detour}, nil
 }
 
 func (t *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
@@ -1065,7 +1065,7 @@ func (t *peerDNSQueryHandler) HandlePeerDNSQuery(ctx context.Context, query []by
 		}
 		return nil, err
 	}
-	compressedResponse := *response
+	compressedResponse := response.Copy()
 	compressedResponse.Compress = true
 	return compressedResponse.Pack()
 }

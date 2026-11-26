@@ -2,6 +2,7 @@ package option
 
 import (
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/sagernet/sing-box/schema"
@@ -21,11 +22,17 @@ type LXOptions struct {
 	MASQUE *LXMASQUEOptions `json:"masque,omitempty"`
 	// TrustTunnel holds the trusttunnel outbound knobs (lx: SPEC 133).
 	TrustTunnel *LXTrustTunnelOptions `json:"trusttunnel,omitempty"`
-	// MTUAlign is the path-MTU alignment policy for nodes above IP tunnels
-	// (lx: SPEC 120): a mode string, or an object with the mode and the tags
-	// to leave alone. Absent = "clamp".
-	MTUAlign   *LXMTUAlign          `json:"mtu_align,omitempty"`
-	SniffGuard *LXSniffGuardOptions `json:"sniff_guard,omitempty"` // lx: SPEC 060
+	// Detour is what the core does to a node that dials through `detour`
+	// (lx: SPEC 165): the path-MTU alignment of SPEC 120 and the strip.
+	Detour *LXDetour `json:"detour,omitempty"`
+	// MovedMTUAlign is lx.mtu_align, moved to lx.detour.mtu_align (SPEC 165):
+	// any value fails the load.
+	MovedMTUAlign *LXMovedMTUAlign     `json:"mtu_align,omitempty"`
+	SniffGuard    *LXSniffGuardOptions `json:"sniff_guard,omitempty"` // lx: SPEC 060
+	// ImpairProfiles are named link templates of the impair test outbound
+	// (lx: SPEC 164), shared by every impair of the config; checked by the
+	// outbounds that use them.
+	ImpairProfiles map[string]ImpairProfile `json:"impair_profiles,omitempty"`
 	// QUICSniffDecoy is removed (lx: SPEC 060): any value fails the load.
 	QUICSniffDecoy *LXRemovedQUICSniffDecoy `json:"quic_sniff_decoy,omitempty"`
 	// AWGMasquerade is removed (lx: SPEC 153 → 060): any value fails the load.
@@ -43,6 +50,9 @@ func (o *LXOptions) UnmarshalJSON(content []byte) error {
 		}
 		if _, present := keys["awg_masquerade"]; present {
 			return E.New(errLXAWGMasqueradeRemoved)
+		}
+		if _, present := keys["mtu_align"]; present {
+			return E.New(lxDetourRemovedMTUAlign)
 		}
 	}
 	return json.UnmarshalDisallowUnknownFields(content, (*lxOptionsPlain)(o))
@@ -200,61 +210,13 @@ type LXTrustTunnelOptions struct {
 	IdleTimeout badoption.Duration `json:"idle_timeout,omitempty"`
 }
 
-// The lx.mtu_align modes (lx: SPEC 120 §2.3). The parsing side of the same
+// The lx.detour.mtu_align modes (lx: SPEC 120 §2.3, moved by SPEC 165). The parsing side of the same
 // table lives in common/lxmtu, which this package must not import.
 const (
 	LXMTUAlignOff   = "off"
 	LXMTUAlignFill  = "fill"
 	LXMTUAlignClamp = "clamp"
 )
-
-type _LXMTUAlign struct {
-	Mode   string                     `json:"mode,omitempty" enum:"off,fill,clamp"`
-	Except badoption.Listable[string] `json:"except,omitempty"`
-}
-
-// LXMTUAlign is lx.mtu_align in either of its two JSON forms: a bare mode
-// string, or {"mode": …, "except": […]}. The string form is the canonical
-// output when there are no exceptions.
-type LXMTUAlign _LXMTUAlign
-
-func (o LXMTUAlign) MarshalJSON() ([]byte, error) {
-	if len(o.Except) == 0 {
-		return json.Marshal(o.Mode)
-	}
-	return json.Marshal(_LXMTUAlign(o))
-}
-
-func (o *LXMTUAlign) UnmarshalJSON(bytes []byte) error {
-	var mode string
-	if err := json.Unmarshal(bytes, &mode); err == nil {
-		*o = LXMTUAlign{Mode: mode}
-		return validateLXMTUAlignMode(mode)
-	}
-	if err := json.UnmarshalDisallowUnknownFields(bytes, (*_LXMTUAlign)(o)); err != nil {
-		return err
-	}
-	return validateLXMTUAlignMode(o.Mode)
-}
-
-func (o LXMTUAlign) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
-	return builder.Define("LXMTUAlign", func() (*schema.Node, error) {
-		objectForm := schema.StrictObject()
-		err := builder.FlattenStruct(objectForm, reflect.TypeFor[LXMTUAlign]())
-		if err != nil {
-			return nil, err
-		}
-		return schema.AnyOf(schema.StringEnum(LXMTUAlignOff, LXMTUAlignFill, LXMTUAlignClamp), objectForm), nil
-	})
-}
-
-func validateLXMTUAlignMode(mode string) error {
-	switch mode {
-	case "", LXMTUAlignOff, LXMTUAlignFill, LXMTUAlignClamp:
-		return nil
-	}
-	return E.New(`lx.mtu_align.mode must be "off", "fill" or "clamp"`)
-}
 
 // LXRemovedAWGMasquerade is the guard on the removed lx.awg_masquerade (SPEC
 // 153, removed by SPEC 060, owner 2026-11-07): any value is a load error, so a
@@ -313,9 +275,25 @@ type LXResolved struct {
 	// TrustTunnel carries the raw global window: 0 means "unset", the outbound
 	// applies its own default.
 	TrustTunnel LXTrustTunnelResolved
-	// MTUAlign always carries a mode: "clamp" when the key is absent.
-	MTUAlign   LXMTUAlignResolved
-	SniffGuard LXSniffGuardResolved // lx: SPEC 060
+	// MTUAlign always carries a mode: "clamp" when the key is absent. It is
+	// lx.detour.mtu_align with lx.detour.except_outbounds (SPEC 165).
+	MTUAlign LXMTUAlignResolved
+	// Detour is the resolved lx.detour (SPEC 165).
+	Detour LXDetourResolved
+	// DetourNodes is the set of nodes the lx.detour.strip filters act on:
+	// with `detour` after the chain rewrite, not excepted. Filled by the box
+	// pre-pass; nil when every filter is off.
+	DetourNodes map[string]bool
+	// DetourRecordFragmentSet is the subset of DetourNodes whose TLS sets
+	// record_fragment explicitly, false included (SPEC 156): a split the
+	// filter drops leaves such a node's choice standing for the guard.
+	DetourRecordFragmentSet map[string]bool
+	// DetourLogged holds the node/filter pairs already logged by the strip
+	// filters of this box; set by the box pre-pass.
+	DetourLogged *sync.Map
+	SniffGuard   LXSniffGuardResolved // lx: SPEC 060
+	// ImpairProfiles is lx.impair_profiles as written (lx: SPEC 164).
+	ImpairProfiles map[string]ImpairProfile
 }
 
 // LXWGResolved keeps the field names of the flat layout for the idle values,
@@ -411,10 +389,15 @@ func ResolveLX(options *Options) (*LXResolved, error) {
 		wg = *lx.WG
 	}
 
-	resolved, err := resolveLXValues(wg, lx.MASQUE, lx.TrustTunnel, lx.MTUAlign)
+	resolved, err := resolveLXValues(wg, lx.MASQUE, lx.TrustTunnel)
 	if err != nil {
 		return nil, err
 	}
+	// lx:begin SPEC 165
+	resolved.Detour = lx.Detour.Resolve()
+	resolved.MTUAlign = LXMTUAlignResolved{Mode: resolved.Detour.MTUAlign, Except: resolved.Detour.ExceptOutbounds}
+	lx.MovedMTUAlign = nil
+	// lx:end SPEC 165
 	lx.AWGMasquerade = nil
 	lx.QUICSniffDecoy = nil
 	wg = canonicalLXWG(wg)
@@ -427,6 +410,7 @@ func ResolveLX(options *Options) (*LXResolved, error) {
 	resolved.SniffGuard = resolveLXSniffGuard(lx.SniffGuard)
 	lx.SniffGuard = lx.SniffGuard.canonical()
 	// lx:end SPEC 060
+	resolved.ImpairProfiles = lx.ImpairProfiles // lx: SPEC 164
 
 	if wg != (LXWGOptions{}) {
 		lx.WG = &wg
@@ -439,11 +423,8 @@ func ResolveLX(options *Options) (*LXResolved, error) {
 	if lx.TrustTunnel != nil && *lx.TrustTunnel == (LXTrustTunnelOptions{}) {
 		lx.TrustTunnel = nil
 	}
-	if lx.MTUAlign != nil && lx.MTUAlign.Mode == "" && len(lx.MTUAlign.Except) == 0 {
-		lx.MTUAlign = nil
-	}
-	if lx.WG == nil && lx.MASQUE == nil && lx.TrustTunnel == nil && lx.MTUAlign == nil &&
-		lx.SniffGuard == nil { // lx: SPEC 060
+	if lx.WG == nil && lx.MASQUE == nil && lx.TrustTunnel == nil && lx.Detour == nil &&
+		lx.SniffGuard == nil && len(lx.ImpairProfiles) == 0 { // lx: SPEC 060, SPEC 164
 		options.LX = nil
 	} else {
 		options.LX = &lx
@@ -451,25 +432,10 @@ func ResolveLX(options *Options) (*LXResolved, error) {
 	return resolved, nil
 }
 
-func resolveLXValues(wg LXWGOptions, masque *LXMASQUEOptions, trustTunnel *LXTrustTunnelOptions, mtuAlign *LXMTUAlign) (*LXResolved, error) {
+func resolveLXValues(wg LXWGOptions, masque *LXMASQUEOptions, trustTunnel *LXTrustTunnelOptions) (*LXResolved, error) {
 	var resolved LXResolved
 	resolved.MTUAlign.Mode = LXMTUAlignClamp
-	if mtuAlign != nil {
-		if err := validateLXMTUAlignMode(mtuAlign.Mode); err != nil {
-			return nil, err
-		}
-		if mtuAlign.Mode != "" {
-			resolved.MTUAlign.Mode = mtuAlign.Mode
-		}
-		for _, tag := range mtuAlign.Except {
-			if tag == "" {
-				return nil, E.New("lx.mtu_align.except: empty tag")
-			}
-		}
-		if len(mtuAlign.Except) > 0 {
-			resolved.MTUAlign.Except = append([]string(nil), mtuAlign.Except...)
-		}
-	}
+	resolved.Detour.MTUAlign = LXMTUAlignClamp
 	resolved.WG = lxWGDefaults()
 	var idle LXWGIdleOptions
 	if wg.Idle != nil {

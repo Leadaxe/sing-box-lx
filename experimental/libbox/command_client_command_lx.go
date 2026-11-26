@@ -425,10 +425,17 @@ type RuleIterator interface {
 // PoolSlot is the libbox view of one round_robin rotation-pool slot (SPEC 019 v2). Slot is
 // the fixed slot index; Tag is the node currently in it; Delay is its last test result in
 // ms (0 = dead/not-measured — a live node is clamped to >= 1 server-side).
+// Quarantined, Connections and ConfirmedFailures are the self-heal state of the node
+// (SPEC 138): taken out of rotation until the next scheduled run, manual run or network
+// change; the slot counters since the node took the slot (both halved at 256
+// connections). All zero outside round_robin and from a core without them.
 type PoolSlot struct {
-	Slot  int32
-	Tag   string
-	Delay int32
+	Slot              int32
+	Tag               string
+	Delay             int32
+	Quarantined       bool
+	Connections       int32
+	ConfirmedFailures int32
 }
 
 // PoolSlotIterator binds the pool snapshot for gomobile.
@@ -437,25 +444,61 @@ type PoolSlotIterator interface {
 	HasNext() bool
 }
 
+// PoolState is the libbox view of a round_robin pool with the group-wide self-heal
+// state (SPEC 138). ShiftedKeys: keys moved off their own slot; MarkedKeys: keys marked as
+// an address problem; Frozen: the self-heal does nothing for now, FrozenSeconds is what is
+// left of it (0 while it lasts only for the full run after a network change).
+type PoolState struct {
+	ShiftedKeys   int32
+	MarkedKeys    int32
+	Frozen        bool
+	FrozenSeconds int32
+	slots         []*PoolSlot
+}
+
+// Slots returns the slot snapshot in slot order.
+func (s *PoolState) Slots() PoolSlotIterator {
+	return newIterator(s.slots)
+}
+
 // GetPool returns the current round_robin rotation pool of a urltest group (SPEC 019 v2).
 // A non-round_robin group (selector/least_test) or unknown tag yields an empty iterator —
 // "no pool", not an error. Lets the UI show which N nodes are actually in rotation, with
 // their delays, instead of the full 1000-node config list.
 func (c *CommandClient) GetPool(groupTag string) (PoolSlotIterator, error) {
-	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (PoolSlotIterator, error) {
+	state, err := c.GetPoolState(groupTag)
+	if err != nil {
+		return nil, err
+	}
+	return state.Slots(), nil
+}
+
+// GetPoolState is GetPool with the group-wide self-heal state (SPEC 138), from the same
+// GetPool call. A non-round_robin group or unknown tag yields no slots and zero state.
+func (c *CommandClient) GetPoolState(groupTag string) (*PoolState, error) {
+	return callWithResult(c, func(ctx context.Context, client daemon.StartedServiceClient) (*PoolState, error) {
 		list, err := client.GetPool(ctx, &daemon.GetPoolRequest{GroupTag: groupTag})
 		if err != nil {
 			return nil, E.Cause(err, "get pool")
 		}
-		slots := make([]*PoolSlot, 0, len(list.Slots))
+		state := &PoolState{
+			ShiftedKeys:   int32(list.ShiftedKeys),
+			MarkedKeys:    int32(list.MarkedKeys),
+			Frozen:        list.Frozen,
+			FrozenSeconds: int32(list.FrozenSeconds),
+			slots:         make([]*PoolSlot, 0, len(list.Slots)),
+		}
 		for _, slot := range list.Slots {
-			slots = append(slots, &PoolSlot{
-				Slot:  int32(slot.Slot),
-				Tag:   slot.Tag,
-				Delay: int32(slot.Delay),
+			state.slots = append(state.slots, &PoolSlot{
+				Slot:              int32(slot.Slot),
+				Tag:               slot.Tag,
+				Delay:             int32(slot.Delay),
+				Quarantined:       slot.Quarantined,
+				Connections:       int32(slot.Connections),
+				ConfirmedFailures: int32(slot.ConfirmedFailures),
 			})
 		}
-		return newIterator(slots), nil
+		return state, nil
 	})
 }
 

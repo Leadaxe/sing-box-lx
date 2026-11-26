@@ -312,7 +312,7 @@ func (c *Client) beginExchange(ctx context.Context, transport adapter.DNSTranspo
 				ctx = c.traceCacheAge(ctx, cacheKey) // lx: SPEC 139 — cache_age of the REUSED dns stage
 				operation.release()
 				if isStale {
-					c.backgroundRefreshDNS(transport, cacheKey, message.Copy(), options, responseChecker)
+					c.backgroundRefreshDNS(transport, cacheKey, message.Copy(), options)
 				}
 				if responseChecker != nil && !responseChecker(response) {
 					logRejectedResponse(c.logger, ctx, response)
@@ -594,7 +594,7 @@ func (c *Client) questionCache(ctx context.Context, transport adapter.DNSTranspo
 		if options.DisableOptimisticCache {
 			return nil, ErrNotCached
 		}
-		c.backgroundRefreshDNS(transport, cacheKey, c.prepareExchangeMessage(message.Copy(), options), options, responseChecker)
+		c.backgroundRefreshDNS(transport, cacheKey, c.prepareExchangeMessage(message.Copy(), options), options)
 	}
 	if responseChecker != nil && !responseChecker(response) {
 		logRejectedResponse(c.logger, ctx, response)
@@ -700,7 +700,7 @@ func applyResponseOptions(question dns.Question, response *dns.Msg, options adap
 	return timeToLive
 }
 
-func (c *Client) backgroundRefreshDNS(transport adapter.DNSTransport, key dnsCacheKey, message *dns.Msg, options adapter.DNSQueryOptions, responseChecker func(response *dns.Msg) bool) {
+func (c *Client) backgroundRefreshDNS(transport adapter.DNSTransport, key dnsCacheKey, message *dns.Msg, options adapter.DNSQueryOptions) {
 	_, loaded := c.backgroundRefresh.LoadOrStore(key, struct{}{})
 	if loaded {
 		return
@@ -721,23 +721,7 @@ func (c *Client) backgroundRefreshDNS(transport adapter.DNSTransport, key dnsCac
 			}
 			return
 		}
-		if responseChecker != nil {
-			var rejected bool
-			if response.Rcode != dns.RcodeSuccess && response.Rcode != dns.RcodeNameError {
-				rejected = true
-			} else {
-				rejected = !responseChecker(response)
-			}
-			if rejected {
-				if c.logger != nil {
-					c.logger.DebugContext(ctx, "optimistic refresh rejected for ", FqdnToDomain(key.Name))
-				}
-				if c.rdrc != nil {
-					c.rdrc.SaveRDRCAsync(transport.Tag(), key.Name, key.Qtype, c.logger)
-				}
-				return
-			}
-		} else if response.Rcode != dns.RcodeSuccess && response.Rcode != dns.RcodeNameError {
+		if response.Rcode != dns.RcodeSuccess && response.Rcode != dns.RcodeNameError {
 			return
 		}
 		storeKey, storable := c.finishCacheKey(transport, key)

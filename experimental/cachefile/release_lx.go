@@ -9,13 +9,14 @@ package cachefile
 //
 // Every started CacheFile registers itself by path. A new instance releases
 // every other registered instance with the same path before opening the
-// database: the previous one stops its flush loop, flushes its pending writes,
-// closes the database and from then on answers writes with os.ErrClosed and
-// reads with zero values. The timeout loop in start() stays as the guard
-// against a foreign process holding the file.
+// database: the previous one closes the database and from then on answers
+// writes with os.ErrClosed and reads with zero values. (The FakeIP metadata
+// flush that used to live here went away with the sync of 2026-11-26: upstream
+// e13e6ce67 writes the metadata synchronously when it reserves a range and no
+// longer deletes it on read.) The timeout loop in start() stays as the guard against a
+// foreign process holding the file.
 
 import (
-	"context"
 	"sync"
 	"sync/atomic"
 )
@@ -26,10 +27,8 @@ var (
 )
 
 type cacheFileReleaseState struct {
-	access      sync.Mutex
-	released    atomic.Bool
-	cancelFlush context.CancelFunc
-	flushGroup  sync.WaitGroup
+	access   sync.Mutex
+	released atomic.Bool
 }
 
 func registerCacheFile(c *CacheFile) {
@@ -80,36 +79,15 @@ func (c *CacheFile) isReleased() bool {
 	return c.releaseState.released.Load()
 }
 
-// startFlushLoop runs the upstream flush loop under a context Release can
-// cancel, so a released instance stops flushing before its database closes,
-// also when its scope never closes.
-func (c *CacheFile) startFlushLoop(ctx context.Context) {
-	ctx, cancel := context.WithCancel(ctx)
-	c.releaseState.access.Lock()
-	c.releaseState.cancelFlush = cancel
-	c.releaseState.access.Unlock()
-	c.releaseState.flushGroup.Go(func() {
-		c.loopFlush(ctx)
-	})
-}
-
-// Release stops the flush loop, flushes the pending writes, closes the
-// database and unregisters the instance, in the order of the upstream scope
-// closers it replaces. It is idempotent: later calls return nil. After
-// Release, view, batch and update return os.ErrClosed and resetDB never
-// reopens the file.
+// Release closes the database and unregisters the instance. It is idempotent:
+// later calls return nil. After Release, view, batch and update return
+// os.ErrClosed and resetDB never reopens the file.
 func (c *CacheFile) Release() error {
 	c.releaseState.access.Lock()
 	defer c.releaseState.access.Unlock()
 	if c.isReleased() {
 		return nil
 	}
-	if c.releaseState.cancelFlush != nil {
-		c.releaseState.cancelFlush()
-	}
-	c.releaseState.flushGroup.Wait()
-	c.flushTimer.Stop()
-	c.Flush()
 	c.dbAccess.Lock()
 	c.releaseState.released.Store(true)
 	db := c.DB

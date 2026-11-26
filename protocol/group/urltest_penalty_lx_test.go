@@ -4,6 +4,7 @@ package group
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,7 @@ import (
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 )
 
 // penaltyDialNode — outbound с управляемым исходом дайла: err != nil → ошибка,
@@ -30,9 +32,15 @@ type penaltyDialNode struct {
 	addr  string
 	err   error
 	dials int
+	typ   string // "" → direct
 }
 
-func (n *penaltyDialNode) Type() string           { return C.TypeDirect }
+func (n *penaltyDialNode) Type() string {
+	if n.typ != "" {
+		return n.typ
+	}
+	return C.TypeDirect
+}
 func (n *penaltyDialNode) Tag() string            { return n.tag }
 func (n *penaltyDialNode) Network() []string      { return []string{N.NetworkTCP, N.NetworkUDP} }
 func (n *penaltyDialNode) Dependencies() []string { return nil }
@@ -75,31 +83,80 @@ func newPenaltyTestGroup(t *testing.T, nodes []*penaltyDialNode, delays map[stri
 	return g
 }
 
-// TestIsPathDeadDialError pins the error classification: only "path dead"
-// errors (timeouts, unreachable) count; destination refusals and caller
-// cancellation never do.
+// TestIsPathDeadDialError pins the error classification: timeouts and
+// unreachable count for any node; refused and reset count only for a node that
+// does not go to the destination itself on open; caller cancellation never does.
 func TestIsPathDeadDialError(t *testing.T) {
 	cases := []struct {
-		name string
-		err  error
-		want bool
+		name  string
+		err   error
+		proxy bool // want for a proxy leaf
+		site  bool // want for a direct or endpoint leaf
 	}{
-		{"ctx deadline (SPEC 052)", context.DeadlineExceeded, true},
-		{"wrapped ctx deadline", E.Cause(context.DeadlineExceeded, "dial"), true},
-		{"os deadline", &net.OpError{Op: "connect", Err: syscall.ETIMEDOUT}, true},
-		{"host unreachable", syscall.EHOSTUNREACH, true},
-		{"refused (dead site)", syscall.ECONNREFUSED, false},
-		{"reset (dead site)", syscall.ECONNRESET, false},
-		{"canceled (caller)", context.Canceled, false},
-		{"plain error", E.New("dead node"), false},
-		{"nil", nil, false},
+		{"ctx deadline (SPEC 052)", context.DeadlineExceeded, true, true},
+		{"wrapped ctx deadline", E.Cause(context.DeadlineExceeded, "dial"), true, true},
+		{"os deadline", &net.OpError{Op: "connect", Err: syscall.ETIMEDOUT}, true, true},
+		{"host unreachable", syscall.EHOSTUNREACH, true, true},
+		{"refused", syscall.ECONNREFUSED, true, false},
+		{"wrapped refused", E.Cause(&net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, "dial server"), true, false},
+		{"reset on open", syscall.ECONNRESET, true, false},
+		{"canceled (caller)", context.Canceled, false, false},
+		{"plain error", E.New("dead node"), false, false},
+		{"nil", nil, false, false},
 	}
 	for _, c := range cases {
-		if got := isPathDeadDialError(c.err); got != c.want {
-			t.Fatalf("%s: got %v, want %v", c.name, got, c.want)
+		if got := isPathDeadDialError(c.err, false); got != c.proxy {
+			t.Fatalf("%s via proxy: got %v, want %v", c.name, got, c.proxy)
+		}
+		if got := isPathDeadDialError(c.err, true); got != c.site {
+			t.Fatalf("%s via direct/endpoint: got %v, want %v", c.name, got, c.site)
 		}
 	}
 }
+
+// fakeEndpoints is an EndpointManager that knows the listed tags.
+type fakeEndpoints struct {
+	adapter.EndpointManager
+	tags map[string]bool
+}
+
+func (m *fakeEndpoints) Get(tag string) (adapter.Endpoint, bool) {
+	return nil, m.tags[tag]
+}
+
+// TestPenaltySiteOnOpen: direct and endpoint leaves go to the destination
+// themselves on open; a proxy leaf does not; a group is resolved to its leaf.
+func TestPenaltySiteOnOpen(t *testing.T) {
+	direct := &penaltyDialNode{tag: "direct"}
+	proxy := &penaltyDialNode{tag: "proxy", typ: C.TypeVLESS}
+	wg := &penaltyDialNode{tag: "wg", typ: C.TypeWireGuard}
+	g := newPenaltyTestGroup(t, []*penaltyDialNode{direct, proxy, wg}, nil)
+	g.ctx = service.ContextWith[adapter.EndpointManager](context.Background(), &fakeEndpoints{tags: map[string]bool{"wg": true}})
+	for _, c := range []struct {
+		node adapter.Outbound
+		want bool
+	}{
+		{direct, true},
+		{proxy, false},
+		{wg, true},
+		{&penaltyGroupNode{penaltyDialNode: penaltyDialNode{tag: "nested", typ: C.TypeURLTest}, selected: proxy}, false},
+		{&penaltyGroupNode{penaltyDialNode: penaltyDialNode{tag: "nested", typ: C.TypeURLTest}, selected: direct}, true},
+	} {
+		if got := penaltySiteOnOpen(g.ctx, g.outbound, c.node); got != c.want {
+			t.Fatalf("%s: got %v, want %v", c.node.Tag(), got, c.want)
+		}
+	}
+}
+
+// penaltyGroupNode is a nested group that has selected selected.
+type penaltyGroupNode struct {
+	penaltyDialNode
+	selected adapter.Outbound
+}
+
+func (n *penaltyGroupNode) All() []string                                     { return []string{n.selected.Tag()} }
+func (n *penaltyGroupNode) Selected(network string) adapter.Outbound          { return n.selected }
+func (n *penaltyGroupNode) AttachConnection(closer io.Closer) (detach func()) { return func() {} }
 
 // TestPenaltyEmergencyRanking: аварийный режим включается порогом у
 // лучшего-по-скорости и ранжирует двумя уровнями — штрафы ↑, затем задержка ↑
@@ -146,7 +203,7 @@ func TestPenaltyFailoverDial(t *testing.T) {
 	dead := &penaltyDialNode{tag: "dead", err: context.DeadlineExceeded}
 	alive := &penaltyDialNode{tag: "alive", addr: "server"}
 	g := newPenaltyTestGroup(t, []*penaltyDialNode{dead, alive}, map[string]uint16{"dead": 10, "alive": 50})
-	g.selectedOutboundTCP = dead
+	g.selectedOutboundTCP.Store(dead)
 
 	conn, fallback, ok := g.penaltyFailoverDial(context.Background(), N.NetworkTCP, M.Socksaddr{}, dead, context.DeadlineExceeded)
 	if !ok {
@@ -162,7 +219,7 @@ func TestPenaltyFailoverDial(t *testing.T) {
 	if g.penaltyOf("alive") != 0 {
 		t.Fatalf("successful fallback must hold 0 penalties, got %d", g.penaltyOf("alive"))
 	}
-	if g.selectedOutboundTCP != adapter.Outbound(alive) {
+	if g.selectedOutboundTCP.Load() != adapter.Outbound(alive) {
 		t.Fatal("selection must move to the fallback")
 	}
 	if alive.dials != 1 {
@@ -170,22 +227,55 @@ func TestPenaltyFailoverDial(t *testing.T) {
 	}
 }
 
-// TestPenaltyFailoverDial_notForDestinationErrors: RST/refused не классифицируется
-// как «путь мёртв» — ни штрафа, ни fallback'а (через другой узел тот же отказ).
+// TestPenaltyFailoverDial_notForDestinationErrors: refused/reset at a direct or
+// endpoint leaf is the site's answer — no penalty, no fallback (через другой узел
+// тот же отказ).
 func TestPenaltyFailoverDial_notForDestinationErrors(t *testing.T) {
-	dead := &penaltyDialNode{tag: "dead", err: syscall.ECONNREFUSED}
-	alive := &penaltyDialNode{tag: "alive", addr: "server"}
-	g := newPenaltyTestGroup(t, []*penaltyDialNode{dead, alive}, map[string]uint16{"dead": 10, "alive": 50})
+	for _, dialErr := range []error{syscall.ECONNREFUSED, syscall.ECONNRESET} {
+		for _, typ := range []string{C.TypeDirect, C.TypeWireGuard} {
+			dead := &penaltyDialNode{tag: "dead", typ: typ, err: dialErr}
+			alive := &penaltyDialNode{tag: "alive", addr: "server"}
+			g := newPenaltyTestGroup(t, []*penaltyDialNode{dead, alive}, map[string]uint16{"dead": 10, "alive": 50})
+			g.ctx = service.ContextWith[adapter.EndpointManager](context.Background(), &fakeEndpoints{tags: map[string]bool{"dead": typ == C.TypeWireGuard}})
 
-	_, _, ok := g.penaltyFailoverDial(context.Background(), N.NetworkTCP, M.Socksaddr{}, dead, syscall.ECONNREFUSED)
-	if ok {
-		t.Fatal("destination refusal must not trigger failover")
+			_, _, ok := g.penaltyFailoverDial(context.Background(), N.NetworkTCP, M.Socksaddr{}, dead, dialErr)
+			if ok {
+				t.Fatalf("%s %v: destination refusal must not trigger failover", typ, dialErr)
+			}
+			if g.penaltyOf("dead") != 0 {
+				t.Fatalf("%s %v: destination refusal must not penalize, got %d", typ, dialErr, g.penaltyOf("dead"))
+			}
+			if alive.dials != 0 {
+				t.Fatalf("%s %v: no fallback dial for destination errors", typ, dialErr)
+			}
+		}
 	}
-	if g.penaltyOf("dead") != 0 {
-		t.Fatalf("destination refusal must not penalize, got %d", g.penaltyOf("dead"))
-	}
-	if alive.dials != 0 {
-		t.Fatal("no fallback dial for destination errors")
+}
+
+// TestPenaltyFailoverDial_proxyRefused: refused/reset at a proxy leaf comes from
+// the node's server (its process stopped on a live host) — penalty, one fallback
+// dial, the selection moves.
+func TestPenaltyFailoverDial_proxyRefused(t *testing.T) {
+	for _, dialErr := range []error{syscall.ECONNREFUSED, E.Cause(syscall.ECONNRESET, "read handshake")} {
+		dead := &penaltyDialNode{tag: "dead", typ: C.TypeTrojan, err: dialErr}
+		alive := &penaltyDialNode{tag: "alive", addr: "server"}
+		g := newPenaltyTestGroup(t, []*penaltyDialNode{dead, alive}, map[string]uint16{"dead": 10, "alive": 50})
+		g.selectedOutboundTCP.Store(dead)
+
+		conn, fallback, ok := g.penaltyFailoverDial(context.Background(), N.NetworkTCP, M.Socksaddr{}, dead, dialErr)
+		if !ok {
+			t.Fatalf("%v: a refused proxy node must fail over", dialErr)
+		}
+		conn.Close()
+		if fallback.Tag() != "alive" || alive.dials != 1 {
+			t.Fatalf("%v: one fallback dial via alive, got %s/%d", dialErr, fallback.Tag(), alive.dials)
+		}
+		if g.penaltyOf("dead") != 1 {
+			t.Fatalf("%v: the refused proxy node must get +1 penalty, got %d", dialErr, g.penaltyOf("dead"))
+		}
+		if g.selectedOutboundTCP.Load() != adapter.Outbound(alive) {
+			t.Fatalf("%v: selection must move to the fallback", dialErr)
+		}
 	}
 }
 

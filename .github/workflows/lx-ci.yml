@@ -107,7 +107,7 @@ jobs:
         run: |
           # Only our downstream files — never the whole upstream tree.
           # Generated *.pb.go are excluded (machine output, not hand-edited).
-          files=$(git ls-files '*.go' | grep -E 'v2rayxhttp|_xhttp|_awg|_lx(_test)?\.go|_command_lx|^lxd/|trusttunnel' | grep -v '\.pb\.go' || true)
+          files=$(git ls-files '*.go' | grep -E 'v2rayxhttp|_xhttp|_awg|_lx(_test)?\.go|_command_lx|^lxd/|trusttunnel|^protocol/impair/|lx_impair' | grep -v '\.pb\.go' || true)
           echo "checking:"; echo "$files"
           if [ -n "$files" ]; then
             bad=$(gofmt -l $files)
@@ -131,10 +131,17 @@ jobs:
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd" \
             ./lxd/ ./cmd/sing-box/
 
+      - name: go test (HTTP outbound, race)
+        run: go test -race -count=1 ./protocol/http/
+
       # StartConnectionTest (SPEC 139): the trace holder, the handler, the
       # libbox client and every package that carries a `// lx: SPEC 139` stage
       # insertion or an IsProbe guard. The common/tls suite runs minutes under
       # -race, so only its REALITY verdict and lx tests run, without -race.
+      # The group's other lx code (SPEC 054/125/138) rides along: the tracker's node
+      # column (common/trafficcontrol) and the probe history (common/urltest), and
+      # the guards of the handshake bounds of the proxy nodes (socks, httpupgrade;
+      # upstream's own since SPEC 166) the self-heal relies on.
       - name: go test (SPEC 139 connection test, race)
         run: |
           go test -race -count=1 \
@@ -142,6 +149,8 @@ jobs:
             -tags "${BASE_TAGS},with_xhttp,with_awg,with_lx_command,with_lxd,with_lx_chain" \
             ./common/lxtrace/ ./common/lxdatagram/ ./common/dialer/ ./daemon/ ./experimental/libbox/ \
             ./dns/ ./dns/transport/ ./dns/transport/fakeip/ ./dns/transport/quic/ ./dns/transport/group/ ./protocol/dns/ ./service/resolved/ ./protocol/group/ ./protocol/chain/ \
+            ./common/trafficcontrol/ ./common/urltest/ \
+            ./protocol/socks/ ./transport/v2rayhttpupgrade/ \
             ./protocol/masque/... ./protocol/hysteria2/ ./protocol/tuic/ ./transport/v2rayxhttp/ ./lx-test/conntest/
           go test -count=1 \
             -ldflags "-checklinkname=0" \
@@ -167,6 +176,16 @@ jobs:
             -ldflags "-checklinkname=0" \
             -tags "${BASE_TAGS},with_trusttunnel" \
             ./transport/trusttunnel/ ./protocol/trusttunnel/
+
+      # impair test outbound (SPEC 164, FEATURE 020): the link model on a fake
+      # clock and the loopback integration tests (rate, delay, loss, outages,
+      # reset, Close flush, chains, the shared bottleneck) over a live box.
+      - name: go test (impair, race)
+        run: |
+          go test -race -count=1 \
+            -ldflags "-checklinkname=0" \
+            -tags "${BASE_TAGS},with_lx_impair" \
+            ./protocol/impair/
 
       # lx.sniff_guard (SPEC 060, FEATURE 019): the label store, the outbound
       # wrapper, the option block and the box-level load checks. The seams run

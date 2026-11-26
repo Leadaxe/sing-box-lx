@@ -4,7 +4,7 @@
 |------|----------|
 | Тип | Продуктовая фича |
 | Build-tag | `with_xhttp` |
-| Состояние | ✅ live-validated против Xray; `stream-one`/`auto`+REALITY девайс-верифицированы (`v1.14.0-lx.17`). ⚠️ `packet-up`/`stream-up` за обратным прокси залипали на дайле — устранено задачей [061](../../TASKS/061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md) — в поле с `v1.14.0-lx.30` без жалоб. Аплинк `packet-up` с 2026-10-29 конвейерный ([141](../../TASKS/141-XHTTP_PACKET_UP_PIPELINE/SPEC.md), issue #58) — 2026-10-30 проверен против живого Xray 26.3.27 (`mode: auto`, REALITY) с роутера на lx.25: A/B на одном сервере с macOS — lx.24 0,55 МБ/с, lx.25 3,7–4,6 МБ/с (×7–8), в пределах 20 % от `stream-one`; на устройстве (AAR) ещё нет. Из инспекции [142](../../TASKS/142-XHTTP_CLIENT_AUDIT/SPEC.md) в поле подтверждены §1 (живой Xray `stream-one` отвечает 400 на `packet-up`, поток закрыт за <0,5 с) и §4 |
+| Состояние | ✅ live-validated против Xray; `stream-one`/`auto`+REALITY девайс-верифицированы (`v1.14.0-lx.17`). ⚠️ `packet-up`/`stream-up` за обратным прокси залипали на дайле — устранено задачей [061](../../TASKS/061-XHTTP_DIAL_DOWNLOAD_DEADLOCK/SPEC.md) — в поле с `v1.14.0-lx.30` без жалоб. Аплинк `packet-up` с 2026-10-29 работает пайплайном ([141](../../TASKS/141-XHTTP_PACKET_UP_PIPELINE/SPEC.md), issue #58) — 2026-10-30 проверен против живого Xray 26.3.27 (`mode: auto`, REALITY) с роутера на lx.25: A/B на одном сервере с macOS — lx.24 0,55 МБ/с, lx.25 3,7–4,6 МБ/с (×7–8), в пределах 20 % от `stream-one`; на устройстве (AAR) ещё нет. Из инспекции [142](../../TASKS/142-XHTTP_CLIENT_AUDIT/SPEC.md) в поле подтверждены §1 (живой Xray `stream-one` отвечает 400 на `packet-up`, поток закрыт за <0,5 с) и §4 |
 
 ## Назначение
 
@@ -72,7 +72,7 @@ upload-POST'ы `packet-up` переиспользуют соединения.
 
 | Ключ | Тип | Дефолт | Смысл |
 |------|-----|--------|-------|
-| `uplink_data_placement` | `body` · `auto` · `header` · `cookie` | `auto` | Где переносится полезная нагрузка (не-`body` — только `packet-up`) |
+| `uplink_data_placement` | `body` · `auto` · `header` · `cookie` | `auto` | Где переносится payload (не-`body` — только `packet-up`) |
 | `uplink_data_key` | строка | `X-Data` / `x_data` | Базовое имя при переносе в заголовке/куке |
 | `uplink_chunk_size` | `"min-max"` | зависит от размещения | Размер куска нагрузки в base64-символах |
 | `uplink_http_method` | строка | `POST` | Метод запросов аплинка (`GET` — только `packet-up`) |
@@ -96,7 +96,7 @@ upload-POST'ы `packet-up` переиспользуют соединения.
 | `sc_max_each_post_bytes` | `"min-max"` | `1000000-1000000` | Размер буфера склейки записей и верхняя граница одного POST (розыгрыш один раз на поток) |
 | `sc_min_posts_interval_ms` | `"min-max"` | `30-30` | Минимальная пауза между POST (антивсплеск); записи за время паузы склеиваются в следующий POST |
 
-Аплинк `packet-up` — конвейер ([141](../../TASKS/141-XHTTP_PACKET_UP_PIPELINE/SPEC.md)):
+Аплинк `packet-up` — пайплайн ([141](../../TASKS/141-XHTTP_PACKET_UP_PIPELINE/SPEC.md)):
 записи копятся в буфере, цикл отправки забирает буфер целиком и переходит к
 следующему POST, как только тело предыдущего записано на провод
 (`httptrace.WroteRequest`), не дожидаясь ответа; ответы собираются в фоне,
@@ -246,7 +246,7 @@ XTLS/Xray-core#6376), секция хотя бы с одним полем бер
   по умолчанию, контроль перегрузки — Cubic, у Xray BBR), ECH на HTTP/3
   (узел грузится, dial отвечает ошибкой), сырые pipelined upload-POST'ы
   HTTP/1.1 без чтения ответов (на HTTP/1.1 POST'ы `packet-up` идут по одному,
-  выигрыш конвейера [141](../../TASKS/141-XHTTP_PACKET_UP_PIPELINE/SPEC.md) там — только склейка записей).
+  выигрыш пайплайна [141](../../TASKS/141-XHTTP_PACKET_UP_PIPELINE/SPEC.md) там — только склейка записей).
 - **Служебный паддинг, вставляемый сервером в `stream-up`, не вычищается** —
   если целевой сервер его шлёт, поведение нужно проверять отдельно.
 

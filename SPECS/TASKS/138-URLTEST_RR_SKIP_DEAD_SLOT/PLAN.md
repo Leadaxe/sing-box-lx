@@ -1,56 +1,43 @@
 # PLAN: 138 — URLTEST_RR_SKIP_DEAD_SLOT
 
-**Фича:** [007-URLTEST_BALANCE](../../FEATURES/007-URLTEST_BALANCE/FEATURE.md) · контракт — [SPEC.md](SPEC.md)
+**Фича:** [007-URLTEST_BALANCE](../../FEATURES/007-URLTEST_BALANCE/FEATURE.md) · контракт — [SPEC.md](SPEC.md) · правила — [ALGORITHM.md](ALGORITHM.md)
 
-## Файлы
+Как устроен код. Комментарии в коде называют правила алгоритма (D1, K2, Q1…); здесь — где что
+лежит. Состояние самовосстановления живёт в `balancer` (он есть только у `round_robin`), знание
+слота об узле — в трекере слота, который живёт, пока узел держит слот.
 
-| Файл | Что меняется |
-|------|--------------|
-| `protocol/group/urltest_balance_lx.go` | поле `alive func(tag string) bool` у `balancer` (рядом с `onChange`; `nil` — проверки нет, поведение до правки). `pick`: снимок `b.slots` под `access`, номер слота как сейчас; с закреплением — `slot[номер]` живой, иначе `liveSlot(hash / pool)`; без закрепления — `liveSlot(счётчик)`; `liveSlot(k)` — `k % число живых`-й живой слот, живых нет — `slot[номер]`. Дальше `resolve`/fallback без изменений. `(*URLTest).slotAlive(tag)`: `s.outbound.Outbound(tag)` → `s.group.history.LoadURLTestHistory(RealTag(s.outbound, node)) != nil`; нерезолвимый тег — мёртв (у `Pool()` фолбэк на сырой тег, здесь он не нужен: такой тег `resolve` всё равно отдаёт в fallback) |
-| `protocol/group/urltest.go` | `URLTest.Start`, внутри `if s.balancer != nil {` рядом с `onChange`: `s.balancer.alive = s.slotAlive // lx: SPEC 138` |
-| `protocol/group/urltest_rr_skip_lx_test.go` | тесты по SPEC §3: `pick` на `rrBalancer` с `alive` из множества тегов; живой путь — `newPoolTestGroup` + `URLTest{outbound, group, balancer}` с `alive = s.slotAlive` и реальной `HistoryStorage` |
-| `SPECS/TASKS/019-URLTEST_MODE_STICKY/SPEC.md` | «Выбор узла» — подраздел про мёртвый слот; «Замена → Следствие» и «Ошибка дайла» — ссылка; журнал п. 20; тест-план |
-| `SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md` | Data flow (ветка «узел слота мёртв → живой слот пула», строка дотеста), «Правила и гарантии», статус строки 138 |
-| `docs/configuration/outbound/urltest.md`, `docs-lx/lx-config.md`, `docs-lx/lx-config.ru.md` | фраза «A dead pool node keeps its slot…»: слот остаётся, но новые соединения его обходят, пока в пуле есть живые |
-| `SPECS/README.md`, `docs-lx/lx-changelog.md` | статус в Roadmap, запись в `#### Unreleased` |
+## protocol/group — lx-файлы
 
-## Почему поле, а не параметр `pick`
+| Файл | Что внутри |
+|------|-----------|
+| `urltest_balance_lx.go` | Пул SPEC 019 и выбор слота: `pickKeyed` отдаёт узел и `rrPick` (ключ, сдвиг, момент начала); `usable` и `liveSlot` — обход мёртвых, карантинных и, в строгом заходе, подозрительных слотов; `slotAlive` — history под `RealTag`; `slotsSnapshot`, `replaceSlot` — точечная запись слота без двух узлов в одном слоте |
+| `urltest_rr_errors_lx.go` | Классы ошибки открытия по цепочке обёрток: `LOCAL`, активный отказ, таймаут; Windows — по числу WSA-кода, gVisor — по тексту, `tun.ErrNoRoute` |
+| `urltest_rr_heal_lx.go` | Исход неоткрывшегося соединения и повтор через другой слот; проба жизни с лимитами; проверка пула (пробы пула, пачки кандидатов от курсора, контроль, решающая проба, «контроль после»), вердикты D1/D3/D4/D5; замена под флагом `checking`; эпоха заморозки и сигналы N3 (пробуждение, смена сети) |
+| `urltest_rr_track_lx.go` | `rrTrack` слота: незавершённые обмены по времени, фронт доказательств пути (правило половины), ячейки последнего ответа ключу, подозрение S1–S3, признаки Q1 в ожидании доказательства; осмотр слота на выборе; сверка настенных и монотонных часов |
+| `urltest_rr_shift_lx.go` | Ключ таблицы (sticky-ключ плюс адресат), сдвиг K1/K2, память K2 (256 записей на группу), пометка K5; счётчики слота, карантин Q2 по медиане, деление пополам Q3 |
+| `urltest_rr_firstbyte_lx.go` | Обёртка соединения до первого байта: исход `ANSWER`, неявный отказ, `CANCEL`; после первого байта и первой записи клиента уходит с пути (splice и векторные пути сохраняются) |
+| `urltest_rr_udp_lx.go` | UDP: повтор открытия, обёртка потока, ожидание «отправил, ответа нет» как повод для пробы жизни |
+| `urltest_rr_fill_lx.go` | SPEC 019: узел, ответивший на пробу во время прогона группы, встаёт в слот узла без history |
+| `urltest_rr_status_lx.go` | Снимок для `GetPool`: карантин и счётчики слотов, сдвинутые и помеченные ключи, заморозка |
+| `site_on_open_lx.go` | Ходит ли лист узла до сайта сам (`direct`, endpoint, MASQUE): от этого зависит, явный ли отказ |
 
-Тот же приём, что у `onChange`: функцию проводит `URLTest.Start`, балансировщик не знает про
-history и менеджер узлов. Сигнатура `pick` и её вызовы в тестах SPEC 019 не
-меняются: у `rrBalancer` поле пустое, и старые тесты проверяют прежнее поведение как есть.
-Правка `urltest.go` — одна строка внутри lx-блока, который уже переносится на мерже.
+## Вне protocol/group
 
-## Почему снимок слотов, а не вызов под замком
+| Файл | Зачем |
+|------|-------|
+| `protocol/socks/destination_refused_lx.go`, `protocol/http/destination_refused_lx.go` | Отказ назначения кодом SOCKS и статусом CONNECT отличается от отказа узла |
+| `adapter/dials_destination_lx.go`, `protocol/masque/dials_destination_lx.go` | MASQUE объявляет, что открывает соединения до сайта сам |
+| `adapter/actual_outbound_lx.go`, `route/group_resolve_lx.go`, `common/trafficcontrol/tracker_lx.go`, `daemon/started_service_actual_lx.go` | Ячейка фактического узла соединения: список соединений и демон показывают узел после выбора и повтора; демон повторяет «новое соединение» с приращением трафика тика |
+| `route/conn_halfclose_lx.go` | Сообщает обёртке конец потока клиента, когда она уже ушла с пути записи |
+| `common/urltest/measure_lx.go`, `common/urltest/history_lx.go` | Метка замера задержки (мимо самовосстановления); стирание history, только если запись не новее начала пробы |
+| `daemon/started_service_command_lx.go`, `experimental/libbox/command_client_command_lx.go`, `cmd/sing-box/cmd_api_group_pool_lx.go` | `GetPool`, `GetPoolState`, `sing-box api group pool` |
 
-`setSlots` публикует новый срез и опубликованный не меняет, поэтому срез, взятый под
-`access`, после отпускания замка неизменен. `alive` читает менеджер узлов и history под их
-замками — вызывать её под `access` значит вкладывать чужие замки в замок пула; файл уже держит
-это правило для `onChange` («never nests under it»). Аллокаций на соединение нет.
+## Вставки в апстримные файлы
 
-## Обход живых слотов (`liveSlot`)
-
-Два прохода по слотам: число живых `m`, затем `k % m`-й живой. Между проходами проба может
-стереть или записать history; не нашли — выбор остаётся `slot[номер]`, как сейчас. Без
-закрепления `k = счётчик`: при `m == pool` результат равен `счётчик % pool`, порядок
-ротации у здорового пула не меняется. С закреплением `liveSlot` зовётся только для мёртвого
-слота, с `k = hash / pool`: остаток хеша, которым номер слота не определяется, разносит ключи
-мёртвых слотов по живым поровну; «первый живой по кругу» сваливал бы ключи нескольких мёртвых
-подряд на один живой. Редукции — в `uint64` до сужения (32-битная защита SPEC 019 п. 19a).
-
-## Что не меняется
-
-- `planFirstLivePool`, `planTolerantPool`, `balancePool*`, `rebuildPool`, `seedPool` —
-  планирование пула и его инварианты.
-- `DialContext`/`ListenPacket`: ошибка дайла в `round_robin` не трогает пул и history.
-- `Pool()`/`GetPool`, `ActiveTags`, `poolReferences`, `Now()`.
-- `least_test` и `failover`: `balancer == nil`, `pick` не вызывается.
-
-## Проверка
-
-- `gofmt -l protocol/group/`, `go vet ./protocol/group/`,
-  `go test -count=1 -ldflags=-checklinkname=0 ./protocol/group/` (go из `go.version`);
-  `-race` — там, где есть cgo.
-- С выключенным обходом (вернуть `slot[номер]`) новые тесты падают, старые — зелёные.
-- CI `lx-ci.yml` тесты `protocol/group` не гоняет — результат прогона идёт в
-  IMPLEMENTATION_REPORT.md.
+Только блоки `// lx: SPEC 138`: `protocol/group/urltest.go` — однострочные вызовы
+`urltest_hooks_lx.go` и `urltest_rr_*_lx.go` в `Start`, `DialContext`, `ListenPacket`,
+`InterfaceUpdated` (выбор с ключом, отслеживаемое открытие, наблюдение первого байта, повтор);
+состояние группы — во встроенных полях `lxURLTest` / `lxURLTestGroup`; `adapter/inbound.go` (поле ячейки),
+`route/route.go` (две строки), `route/conn.go` (одна строка), `common/trafficcontrol/tracker.go`,
+`common/urltest/urltest.go` (одна строка), `daemon/started_service.go`,
+`daemon/started_service.proto`, `protocol/socks/outbound.go`.

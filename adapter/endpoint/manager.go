@@ -17,11 +17,6 @@ type Manager struct {
 	scope         *adapter.Scope
 	endpoints     []adapter.Endpoint
 	endpointByTag map[string]adapter.Endpoint
-	// lx:begin chain
-	// SPEC 073: опции созданных endpoint'ов по тегу — фабрика звеньев цепочки
-	// пересоздаёт endpoint из них.
-	optionsByTag map[string]managedOptions
-	// lx:end chain
 	// lx:begin fast-close
 	// SPEC 030: each endpoint runs in its own scope so Close can tear them down
 	// concurrently (see manager_close_lx.go); closers carry the tag (SPEC 030 §8)
@@ -36,8 +31,7 @@ func NewManager(logger log.ContextLogger, registry adapter.EndpointRegistry) *Ma
 	return &Manager{
 		registry:       registry,
 		endpointByTag:  make(map[string]adapter.Endpoint),
-		optionsByTag:   make(map[string]managedOptions), // lx: chain
-		logger:         logger,                          // lx: fast-close
+		logger:         logger, // lx: fast-close
 		endpointScopes: make(map[adapter.Endpoint]*adapter.Scope),
 	}
 }
@@ -95,6 +89,5 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	}
 	m.endpoints = append(m.endpoints, endpoint)
 	m.endpointByTag[tag] = endpoint
-	m.optionsByTag[tag] = managedOptions{endpointType: outboundType, options: options} // lx: chain
 	return nil
 }

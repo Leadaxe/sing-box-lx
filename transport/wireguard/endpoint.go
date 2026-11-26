@@ -62,6 +62,10 @@ type Endpoint struct {
 	session peerSession
 	// lx: SPEC 030 — pre-passes requested (endpoint_quiesce_lx.go); tests only.
 	quiesceCount atomic.Uint32
+	// lx: issue #75 — guards the load and the store of tunDevice, returnDevice,
+	// allowedIPs and the cached port addresses (device is upstream's atomic
+	// pointer); never held across a call on a device (endpoint_snapshot_lx.go).
+	deviceAccess sync.RWMutex
 }
 
 // SetResumeErrHookForTest injects a Resume failure. Test-only.
@@ -246,7 +250,7 @@ func (e *Endpoint) Teardown() {
 	e.resetSession() // lx: SPEC 145 — a rebuilt device counts from zero
 	e.stateAccess.Unlock()
 	e.closeTunDevice()
-	e.allowedIPs = nil
+	e.storeAllowedIPs(nil) // issue #75
 	if e.pauseCallback != nil {
 		e.pause.UnregisterCallback(e.pauseCallback)
 		e.pauseCallback = nil
@@ -258,7 +262,7 @@ func (e *Endpoint) Teardown() {
 // before the teardown, so a rebuild does not re-resolve unless a peer is
 // domain-based and was never resolved. lx: SPEC 020 level 3.
 func (e *Endpoint) Rebuild() error {
-	if e.tunDevice != nil {
+	if e.loadTunDevice() != nil {
 		return nil // never torn down (or already rebuilt)
 	}
 	if e.returnDevice == nil {
@@ -268,24 +272,16 @@ func (e *Endpoint) Rebuild() error {
 	if err != nil {
 		return E.Cause(err, "rebuild WireGuard device")
 	}
-	e.tunDevice = tunDevice
-	// Carry the attached L3 return path over to the fresh wrapper: sing-tun
-	// attached it once (AttachReturn) and will not re-attach after a rebuild it
-	// knows nothing about — dropping it would silently break the L3 downlink.
-	returnDevice := &returnDeviceWrapper{Device: tunDevice}
-	if previous := e.returnDevice.state.Load(); previous != nil {
-		returnDevice.state.Store(previous)
-	}
-	e.returnDevice = returnDevice
-	e.inet4Address = tunDevice.Inet4Address()
-	e.inet6Address = tunDevice.Inet6Address()
+	// The fresh return-path wrapper inherits the attached L3 return path; the
+	// swap is exclusive with AttachReturn (issue #75, endpoint_snapshot_lx.go).
+	e.installTunDevice(tunDevice)
 	e.suspended.Store(false)
 	return nil
 }
 
 // TornDown reports whether the tun device is currently released (level 3).
 func (e *Endpoint) TornDown() bool {
-	return e.tunDevice == nil
+	return e.loadTunDevice() == nil
 }
 
 // lx:end idle-suspend
@@ -337,18 +333,16 @@ func (e *Endpoint) Start(postStart bool) error {
 		burstPath = func() (lxsniffguard.Path, any, error) { return lxsniffguard.Path{Direct: true}, nil, nil }
 	} else {
 		var (
-			isConnect   bool
-			connectAddr netip.AddrPort
+			destination = M.Socksaddr{Addr: netip.IPv4Unspecified()}
 			reserved    [3]uint8
 		)
 		if len(e.peers) == 1 {
 			reserved = e.peers[0].reserved
 			if e.peers[0].endpoint.IsValid() {
-				isConnect = true
-				connectAddr = e.peers[0].endpoint
+				destination = M.SocksaddrFromNetIP(e.peers[0].endpoint)
 			}
 		}
-		clientBind := NewClientBind(e.options.Context, e.options.Logger, e.options.Dialer, isConnect, connectAddr, reserved)
+		clientBind := NewClientBind(e.options.Context, e.options.Logger, e.options.Dialer, destination, reserved)
 		bind = clientBind
 		burstPath = clientBind.Path
 	}
@@ -444,7 +438,7 @@ func (e *Endpoint) Start(postStart bool) error {
 	if e.pause != nil {
 		e.pauseCallback = e.pause.RegisterCallback(e.onPauseUpdated)
 	}
-	e.allowedIPs = wgDevice.AllowedIPs()
+	e.storeAllowedIPs(wgDevice.AllowedIPs()) // lx: issue #75
 	return nil
 }
 
@@ -452,24 +446,16 @@ func (e *Endpoint) DialContext(ctx context.Context, network string, destination 
 	if !destination.Addr.IsValid() {
 		return nil, E.Cause(os.ErrInvalid, "invalid non-IP destination")
 	}
-	// lx: SPEC 020 level 3 — a torn-down endpoint has no tun device; the protocol
-	// layer rebuilds before dialing, so reaching here means a caller bypassed it.
-	if e.tunDevice == nil {
-		return nil, E.New("WireGuard endpoint is torn down")
-	}
 	e.resume()
-	return e.tunDevice.DialContext(ctx, network, destination)
+	return e.dialTunDevice(ctx, network, destination) // lx: SPEC 020 level 3 + issue #75 — nil-safe, one read of tunDevice; upstream: e.tunDevice.DialContext
 }
 
 func (e *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	if !destination.Addr.IsValid() {
 		return nil, E.Cause(os.ErrInvalid, "invalid non-IP destination")
 	}
-	if e.tunDevice == nil { // lx: SPEC 020 level 3
-		return nil, E.New("WireGuard endpoint is torn down")
-	}
 	e.resume()
-	return e.tunDevice.ListenPacket(ctx, destination)
+	return e.listenTunDevice(ctx, destination) // lx: SPEC 020 level 3 + issue #75 — upstream: e.tunDevice.ListenPacket
 }
 
 func (e *Endpoint) SetIdle(idle bool) {
@@ -589,7 +575,7 @@ func (e *Endpoint) Resume() error {
 // stack, and 0 while the stack does not expose the counter). lx: SPEC 020 — precise, keepalive-immune "live flows" gate for the
 // idle tick.
 func (e *Endpoint) ActiveTCPFlows() uint64 {
-	if counter, ok := e.tunDevice.(interface{ CurrentEstablished() uint64 }); ok {
+	if counter, ok := e.loadTunDevice().(interface{ CurrentEstablished() uint64 }); ok { // issue #75
 		return counter.CurrentEstablished()
 	}
 	return 0
@@ -630,10 +616,11 @@ func (e *Endpoint) TransferTotals() uint64 {
 // lx:end awg
 
 func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
-	if e.allowedIPs == nil {
+	allowedIPs := e.loadAllowedIPs() // lx: issue #75 — one snapshot; upstream reads e.allowedIPs twice
+	if allowedIPs == nil {
 		return nil
 	}
-	return e.allowedIPs.LookupFromPacket(netip.Addr{}, address, nil)
+	return allowedIPs.LookupFromPacket(netip.Addr{}, address, nil)
 }
 
 func (e *Endpoint) BindUpdate() error {

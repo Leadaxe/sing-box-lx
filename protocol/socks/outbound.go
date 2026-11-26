@@ -55,11 +55,13 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		outboundDialer = newRelayDialer(outboundDialer, options.ServerOptions.Build()) // SPEC 085: BND.ADDR 0.0.0.0/:: → адрес сервера
 	}
 	// lx:end socks-udp-bind
+	client := socks.NewClient(outboundDialer, options.ServerOptions.Build(), version, options.Username, options.Password)
+	client.SetHandshakeTimeout(C.TCPTimeout)
 	outbound := &Outbound{
 		Adapter:   outbound.NewAdapterWithDialerOptions(C.TypeSOCKS, tag, options.Network.Build(), options.DialerOptions),
 		dnsRouter: service.FromContext[adapter.DNSRouter](ctx),
 		logger:    logger,
-		client:    socks.NewClient(outboundDialer, options.ServerOptions.Build(), version, options.Username, options.Password),
+		client:    client,
 		resolve:   version == socks.Version4,
 	}
 	uotOptions := common.PtrValueOrDefault(options.UDPOverTCP)
@@ -93,9 +95,9 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 		if err != nil {
 			return nil, err
 		}
-		return N.DialSerial(ctx, h.client, network, destination, destinationAddresses)
+		return h.lxDestinationRefused(N.DialSerial(ctx, h.client, network, destination, destinationAddresses)) // lx: SPEC 138 — tell the destination's refusal from the node's failure
 	}
-	return h.client.DialContext(ctx, network, destination)
+	return h.lxDestinationRefused(h.client.DialContext(ctx, network, destination)) // lx: SPEC 138 — tell the destination's refusal from the node's failure
 }
 
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {

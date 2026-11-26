@@ -15,11 +15,17 @@ package wireguard
 // merge, and the same shape bit us in the 235-commit one. A single call keeps
 // our delta small enough that an upstream change to that line conflicts loudly
 // instead of merging quietly.
+//
+// issue #75 — the field is taken out under deviceAccess and the device closed
+// outside it: a dial may be reading the field at this very moment (it holds no
+// lock once past the protocol layer's gate), and closing a netstack can wait.
 func (e *Endpoint) closeTunDevice() error {
-	if e.tunDevice == nil {
+	e.deviceAccess.Lock()
+	tunDevice := e.tunDevice
+	e.tunDevice = nil
+	e.deviceAccess.Unlock()
+	if tunDevice == nil {
 		return nil
 	}
-	err := e.tunDevice.Close()
-	e.tunDevice = nil
-	return err
+	return tunDevice.Close()
 }

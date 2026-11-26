@@ -37,6 +37,7 @@ Independent projects that ship, embed or build on this core. They are not mainta
 | [cloakwire](https://github.com/markwhite7881-cpu/cloakwire) | client for Windows, macOS and Android | bundles sing-box-lx next to Xray |
 | [GhostBox](https://github.com/Krakva1337/GhostBox) | Flutter client | builds the Android `libbox` from a pinned sing-box-lx release |
 | [vladossVPN](https://github.com/valdissor1990-ui/vladossVPN) | Android client (VLESS + XHTTP + REALITY) | pins a sing-box-lx release |
+| [Brod](https://github.com/dqzaexxpess/brod) | free VPN client for Linux, Windows and Android that gathers free subscriptions and checks the nodes on the user's own network | embeds the core as a Go module through `replace` onto a fetched sing-box-lx source tree, with its own patches on top |
 
 **Router scripts**
 

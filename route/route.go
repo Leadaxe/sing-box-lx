@@ -175,6 +175,7 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
 	}
 	metadata.RouteOutbound = selectedOutbound.Tag()
 	metadata.OutboundChain = chain
+	metadata.ActualOutboundLx = actualOutboundLx(r.trackers) // lx: SPEC 138 — before the trackers copy metadata
 	// lx:begin SPEC 139
 	if lxtrace.Routed(ctx, &metadata, selectedRule, selectedOutbound) {
 		closeRoutedLx(conn, onClose)
@@ -343,6 +344,7 @@ func (r *Router) routePacketConnection(ctx context.Context, conn N.PacketConn, m
 	}
 	metadata.RouteOutbound = selectedOutbound.Tag()
 	metadata.OutboundChain = chain
+	metadata.ActualOutboundLx = actualOutboundLx(r.trackers) // lx: SPEC 138 — before the trackers copy metadata
 	// lx:begin SPEC 139
 	if lxtrace.Routed(ctx, &metadata, selectedRule, selectedOutbound) {
 		closeRoutedLx(conn, onClose)
@@ -689,12 +691,6 @@ match:
 			applyRouteOptionsOverride(metadata, routeOptions)
 			if routeOptions.NetworkStrategy != nil {
 				metadata.NetworkStrategy = routeOptions.NetworkStrategy
-			}
-			if len(routeOptions.NetworkType) > 0 {
-				metadata.NetworkType = routeOptions.NetworkType
-			}
-			if len(routeOptions.FallbackNetworkType) > 0 {
-				metadata.FallbackNetworkType = routeOptions.FallbackNetworkType
 			}
 			if routeOptions.FallbackDelay != 0 {
 				metadata.FallbackDelay = routeOptions.FallbackDelay

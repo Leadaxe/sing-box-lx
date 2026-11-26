@@ -63,23 +63,24 @@ Only inbound connections are affected by this setting, internal connections will
 
 Load-balancing mode — how a node is chosen per connection:
 
-- `least_test` (default, also when empty): pick the lowest-delay node. This is upstream's
-  behaviour; `balancer` must not be set.
-- `round_robin`: rotate over a fixed-size **pool** of nodes (see `balancer`). Selection
-  happens once per connection; a UDP/QUIC session stays on one node. Designed to scale to
-  large node lists — only the pool is health-checked, not every node.
-- `failover` (SPEC 116): pick the lowest-delay node and **hold it until it fails**, even if
-  another node becomes faster. Each `interval` only the held node is tested. When it fails
-  a test, or a dial through it fails with a "path is dead" error, the group moves to the
-  lowest-delay live node and holds that one. A degraded node moves too (SPEC 126): when the
-  held node answers more than 2× slower than the fastest other node of the same network,
-  it is tested once more; still more than 2× slower → every node is tested, and the group
-  moves only to a node more than 1.5× faster (otherwise the whole network got slower, not
-  the node). These ratios have no config key. A manual URL test tests every node and
-  re-selects the fastest. `tolerance` is ignored (a startup warning says so); `balancer`
+- `least_test` (default, also when empty): pick the lowest-delay node, as upstream does. A
+  dial that fails with a "path is dead" error gives the node a penalty and retries once
+  through the next node ([lx-urltest.md §2](../../../docs-lx/lx-urltest.md#2-least_test--fastest-node)). `balancer`
   must not be set.
+- `round_robin`: rotate over a fixed-size **pool** of nodes (see `balancer`). Selection
+  happens once per connection; a UDP/QUIC session stays on one node. Only the pool is
+  health-checked, not every node, so the mode suits large node lists
+  ([lx-urltest.md §3](../../../docs-lx/lx-urltest.md#3-round_robin--pool-with-stickiness)).
+- `failover`: pick the fastest node and stay on it until it fails, even if another node gets
+  faster. Each `interval` only that node is tested. The group moves to the fastest live node
+  when the node fails a test, when a dial through it fails with a "path is dead" error, or
+  when it answers more than 2× slower than the fastest other node twice in a row and another
+  node is more than 1.5× faster. A manual URL test tests every node and picks the fastest.
+  `tolerance` is ignored with a startup warning; `balancer` must not be set
+  ([lx-urltest.md §4](../../../docs-lx/lx-urltest.md#4-failover--hold-until-it-fails)).
 
-`least_connection` was considered and dropped (`round_robin` is statistically even).
+`least_connection` is rejected at load: `round_robin` already spreads connections evenly.
+Which mode to pick: [lx-urltest.md §5](../../../docs-lx/lx-urltest.md#5-choosing-a-mode).
 
 #### balancer
 
@@ -102,18 +103,35 @@ of hundreds/thousands of nodes does not mean hundreds/thousands of URL tests.
 
 In milliseconds. Controls how the pool is filled and maintained:
 
-- `0` (default): keep the pool full of **live** nodes, delay is not ranked. The core tests
-  no more nodes than needed to refill the pool, then stops — the cheap mode for large lists.
+- `0` (default): keep the pool full of **live** nodes, delay is not ranked. The core stops
+  testing once it has found `pool` live nodes plus a reserve of `max(ceil(pool/2), 1)` — the
+  cheap mode for large lists. Reserve nodes carry no traffic; they are taken first for a
+  replacement.
 - `> 0`: test all nodes and keep the **fastest** `pool` of them. A pool member is replaced
   only when an outside node beats it by more than `pool_tolerance` ms (hysteresis against
-  churn). Testing all nodes is more expensive — suitable for smaller lists.
+  churn); the slot's keys move to the new node. Testing all nodes is more expensive —
+  suitable for smaller lists.
 
-A dead pool node keeps its slot until a live replacement is found, so the pool never empties,
-but while the pool has a live node, new connections skip the slot of a node that failed its
+The number of slots never changes: a dead node's slot stays empty until a live replacement is
+found. While the pool has a live node, new connections skip the slot of a node that failed its
 last health-check: with stickiness the keys of dead slots spread evenly over the live slots
-and come back once the node answers again, without stickiness the rotation runs over the
-live slots. When every slot is dead, selection is unchanged. A dial error never changes the
-pool (its cause is unknowable from one failure); only the periodic health-check does.
+and come back once the slot is filled again, without stickiness the rotation runs over the
+live slots. When every slot is dead, selection is unchanged. A quarantined node (one that
+fails connections more often than the rest of the pool) is skipped the same way.
+
+A `round_robin` pool handles node failures between checks on its own. A node that dies
+between two runs of `interval` is replaced at once, and the connection that hit it opens
+through the next node. A node is struck out only when it stays silent on its own probe while
+a control node answers; when nobody answers, nothing is concluded. A node that accepts
+connections and stays silent is skipped after 5 s and replaced in about 41 s; a node that
+refuses connections is struck out in under a second. Only a node that answered its own probe
+fills an empty slot, and a node struck out twice between scheduled checks is quarantined. A
+site closed to one node (a geo-restriction, the site bans the node's address) moves to another
+pool node at once on an explicit refusal, otherwise on its second failure on that node, while
+the rest of the traffic stays on its nodes. A lost local network (device sleep, a network
+switch) strikes out no node; while nobody answers, the pause between checks grows from 15 s to
+120 s. This works only in `round_robin` and has no config keys. The scenarios and limits are
+in [lx-urltest.md](../../../docs-lx/lx-urltest.md#pool-self-heal).
 
 Liveness is the node's shared URL test history. A manual delay test with a short timeout
 (Clash API `/proxies/{name}/delay`, the daemon's `URLTestOutbound`) that does not complete,
@@ -150,16 +168,15 @@ slot (so keyless flows do not rotate). Allowed values:
 
 Binding is to a fixed **slot index** (`slot[hash(key) % pool]`), not a node position. Since
 slots never move and a replacement takes the exact slot it evicts, a node that stays in its
-slot keeps all its keys when other slots change — no needless reconnects, no per-key state.
+slot keeps all its keys when other slots change — no needless reconnects, no per-key state
+([lx-urltest.md](../../../docs-lx/lx-urltest.md#slot-hash-binding)).
 
 !!! note
 
-    For domain-based traffic, `domain` is the natural sticky key and works out of the
-    box (it reads the sniffed domain, which survives domain→IP resolution). `dest_ip`
-    remains a valid alternative, but note it is `""` until the destination is resolved,
-    so a key of only `source_ip` / `dest_ip` / `dest_port` can collapse to one shared
-    key for an unresolved destination from a single source — correct stickiness, but
-    coarser granularity. For raw-IP destinations (no domain to sniff) use `dest_ip`.
+    Keep `domain` in the key for domain traffic: it stays filled after the router
+    resolves the domain to an IP. `dest_ip` is `""` until then, so a key of only
+    `source_ip` / `dest_ip` / `dest_port` puts every unresolved flow of one source on one
+    slot. For raw-IP destinations, which have no domain, use `dest_ip`.
 
 !!! tip
 

@@ -907,6 +907,7 @@ type connectionSnapshot struct {
 	uplink     int64
 	downlink   int64
 	hadTraffic bool
+	actualLx   *trafficcontrol.TrackerMetadata // lx: SPEC 138 — last view sent, see refreshActualLx
 }
 
 func (s *StartedService) buildInitialConnectionState(manager *trafficcontrol.Manager, snapshots map[uuid.UUID]connectionSnapshot) []*ConnectionEvent {
@@ -921,6 +922,7 @@ func (s *StartedService) buildInitialConnectionState(manager *trafficcontrol.Man
 		snapshots[metadata.ID] = connectionSnapshot{
 			uplink:   metadata.Upload.Load(),
 			downlink: metadata.Download.Load(),
+			actualLx: sentActualLx(metadata), // lx: SPEC 138
 		}
 	}
 
@@ -946,6 +948,7 @@ func (s *StartedService) applyConnectionEvent(event trafficcontrol.ConnectionEve
 		snapshots[event.ID] = connectionSnapshot{
 			uplink:   event.Metadata.Upload.Load(),
 			downlink: event.Metadata.Download.Load(),
+			actualLx: sentActualLx(event.Metadata), // lx: SPEC 138
 		}
 		return &ConnectionEvent{
 			Type:       ConnectionEventType_CONNECTION_EVENT_NEW,
@@ -991,6 +994,7 @@ func (s *StartedService) buildTrafficUpdates(manager *trafficcontrol.Manager, sn
 			snapshots[metadata.ID] = connectionSnapshot{
 				uplink:   currentUpload,
 				downlink: currentDownload,
+				actualLx: sentActualLx(metadata), // lx: SPEC 138
 			}
 			events = append(events, &ConnectionEvent{
 				Type:       ConnectionEventType_CONNECTION_EVENT_NEW,
@@ -999,6 +1003,13 @@ func (s *StartedService) buildTrafficUpdates(manager *trafficcontrol.Manager, sn
 			})
 			continue
 		}
+		// lx:begin SPEC 138 — the node a per-connection group picked became known
+		if refreshed := refreshActualLx(metadata, &snapshot); refreshed != nil {
+			snapshots[metadata.ID] = snapshot
+			events = append(events, refreshed)
+			continue
+		}
+		// lx:end SPEC 138
 		uplinkDelta := currentUpload - snapshot.uplink
 		downlinkDelta := currentDownload - snapshot.downlink
 		if uplinkDelta < 0 || downlinkDelta < 0 {

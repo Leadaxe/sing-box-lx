@@ -3,6 +3,7 @@ package urltest
 import (
 	"context"
 	"crypto/tls"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -68,6 +69,15 @@ func (s *HistoryStorage) StoreURLTestHistory(tag string, history *adapter.URLTes
 	s.access.Unlock()
 }
 
+func (s *HistoryStorage) UpdateURLTestHistory(stored map[string]*adapter.URLTestHistory, deleted []string) {
+	s.access.Lock()
+	defer s.access.Unlock()
+	for _, tag := range deleted {
+		delete(s.delayHistory, tag)
+	}
+	maps.Copy(s.delayHistory, stored)
+}
+
 func (s *HistoryStorage) notifyUpdated() {
 	for _, updateHook := range s.updateHooks {
 		updateHook.Emit(struct{}{})
@@ -117,6 +127,7 @@ func urlTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err e
 	}
 
 	start := time.Now()
+	ctx = WithMeasureLx(ctx) // lx: SPEC 138 — a round_robin group leaves the measurement out of its self-heal
 	instance, err := detour.DialContext(ctx, "tcp", M.ParseSocksaddrHostPortStr(hostname, port))
 	if err != nil {
 		return

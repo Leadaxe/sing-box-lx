@@ -3,6 +3,7 @@ package outbound
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -15,21 +16,14 @@ import (
 var _ adapter.OutboundManager = (*Manager)(nil)
 
 type Manager struct {
-	registry                adapter.OutboundRegistry
-	endpoint                adapter.EndpointManager
-	defaultTag              string
-	access                  sync.RWMutex
-	outbounds               []adapter.Outbound
-	outboundByTag           map[string]adapter.Outbound
-	defaultOutbound         adapter.Outbound
-	defaultOutboundFallback func() (adapter.Outbound, error)
-	// lx:begin chain
-	// SPEC 073: опции созданных outbound'ов по тегу (фабрика звеньев цепочки
-	// пересоздаёт узел из них) и внутренние outbound'ы (хопы цепочки) — видны
-	// Outbound(tag), не входят в Outbounds(), не стартуются/закрываются здесь.
-	optionsByTag  map[string]managedOptions
-	internalByTag map[string]adapter.Outbound
-	// lx:end chain
+	registry        adapter.OutboundRegistry
+	endpoint        adapter.EndpointManager
+	defaultTag      string
+	access          sync.RWMutex
+	outbounds       []adapter.Outbound
+	outboundByTag   map[string]adapter.Outbound
+	defaultOutbound adapter.Outbound
+	sortedOutbounds []adapter.Outbound
 }
 
 func NewManager(registry adapter.OutboundRegistry, endpoint adapter.EndpointManager, defaultTag string) *Manager {
@@ -38,45 +32,50 @@ func NewManager(registry adapter.OutboundRegistry, endpoint adapter.EndpointMana
 		endpoint:      endpoint,
 		defaultTag:    defaultTag,
 		outboundByTag: make(map[string]adapter.Outbound),
-		// lx:begin chain
-		optionsByTag:  make(map[string]managedOptions),
-		internalByTag: make(map[string]adapter.Outbound),
-		// lx:end chain
 	}
 }
 
-func (m *Manager) Initialize(defaultOutboundFallback func() (adapter.Outbound, error)) {
-	m.defaultOutboundFallback = defaultOutboundFallback
+func (m *Manager) Initialize(defaultOutboundFallback func() (adapter.Outbound, error)) error {
+	m.access.Lock()
+	defer m.access.Unlock()
+	if m.defaultTag != "" && m.defaultOutbound == nil {
+		defaultEndpoint, loaded := m.endpoint.Get(m.defaultTag)
+		if !loaded {
+			return E.New("default outbound not found: ", m.defaultTag)
+		}
+		m.defaultOutbound = defaultEndpoint
+	}
+	if m.defaultOutbound == nil {
+		directOutbound, err := defaultOutboundFallback()
+		if err != nil {
+			return E.Cause(err, "create direct outbound for fallback")
+		}
+		m.outbounds = append(m.outbounds, directOutbound)
+		m.outboundByTag[directOutbound.Tag()] = directOutbound
+		m.defaultOutbound = directOutbound
+	}
+	sortedOutbounds, err := sortOutbounds(slices.Concat(m.outbounds, common.Map(m.endpoint.Endpoints(), func(it adapter.Endpoint) adapter.Outbound { return it })))
+	if err != nil {
+		return err
+	}
+	m.sortedOutbounds = sortedOutbounds
+	return nil
 }
 
 func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
-	m.access.Lock()
-	if stage == adapter.StartStateInitialize {
-		if m.defaultTag != "" && m.defaultOutbound == nil {
-			defaultEndpoint, loaded := m.endpoint.Get(m.defaultTag)
-			if !loaded {
-				m.access.Unlock()
-				return E.New("default outbound not found: ", m.defaultTag)
+	m.access.RLock()
+	sortedOutbounds := m.sortedOutbounds
+	m.access.RUnlock()
+	for _, outbound := range sortedOutbounds {
+		if endpoint, isEndpoint := outbound.(adapter.Endpoint); isEndpoint {
+			if stage == adapter.StartStateStart {
+				err := m.endpoint.StartEndpoint(endpoint)
+				if err != nil {
+					return err
+				}
 			}
-			m.defaultOutbound = defaultEndpoint
+			continue
 		}
-		if m.defaultOutbound == nil {
-			directOutbound, err := m.defaultOutboundFallback()
-			if err != nil {
-				m.access.Unlock()
-				return E.Cause(err, "create direct outbound for fallback")
-			}
-			m.outbounds = append(m.outbounds, directOutbound)
-			m.outboundByTag[directOutbound.Tag()] = directOutbound
-			m.defaultOutbound = directOutbound
-		}
-	}
-	outbounds := m.outbounds
-	m.access.Unlock()
-	if stage == adapter.StartStateStart {
-		return m.startOutbounds(scope, append(outbounds, common.Map(m.endpoint.Endpoints(), func(it adapter.Endpoint) adapter.Outbound { return it })...))
-	}
-	for _, outbound := range outbounds {
 		lifecycle, isLifecycle := outbound.(adapter.Lifecycle)
 		if !isLifecycle {
 			continue
@@ -90,54 +89,40 @@ func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	return nil
 }
 
-func (m *Manager) startOutbounds(scope *adapter.Scope, outbounds []adapter.Outbound) error {
-	started := make(map[string]bool)
+func sortOutbounds(outbounds []adapter.Outbound) ([]adapter.Outbound, error) {
+	sortedOutbounds := make([]adapter.Outbound, 0, len(outbounds))
+	sorted := make(map[string]bool)
 	for {
 		canContinue := false
-	startOne:
-		for _, outboundToStart := range outbounds {
-			outboundTag := outboundToStart.Tag()
-			if started[outboundTag] {
+	sortOne:
+		for _, outboundToSort := range outbounds {
+			outboundTag := outboundToSort.Tag()
+			if sorted[outboundTag] {
 				continue
 			}
-			dependencies := outboundToStart.Dependencies()
+			dependencies := outboundToSort.Dependencies()
 			for _, dependency := range dependencies {
-				if !started[dependency] {
-					continue startOne
+				if !sorted[dependency] {
+					continue sortOne
 				}
 			}
-			started[outboundTag] = true
+			sorted[outboundTag] = true
 			canContinue = true
-			if endpoint, isEndpoint := outboundToStart.(adapter.Endpoint); isEndpoint {
-				err := m.endpoint.StartEndpoint(endpoint)
-				if err != nil {
-					return err
-				}
-				continue
-			}
-			lifecycle, isLifecycle := outboundToStart.(adapter.Lifecycle)
-			if !isLifecycle {
-				continue
-			}
-			name := "outbound/" + outboundToStart.Type() + "[" + outboundTag + "]"
-			err := scope.Start(name, lifecycle, adapter.StartStateStart)
-			if err != nil {
-				return err
-			}
+			sortedOutbounds = append(sortedOutbounds, outboundToSort)
 		}
-		if len(started) == len(outbounds) {
+		if len(sorted) == len(outbounds) {
 			break
 		}
 		if canContinue {
 			continue
 		}
 		currentOutbound := common.Find(outbounds, func(it adapter.Outbound) bool {
-			return !started[it.Tag()]
+			return !sorted[it.Tag()]
 		})
 		var lintOutbound func(oTree []string, oCurrent adapter.Outbound) error
 		lintOutbound = func(oTree []string, oCurrent adapter.Outbound) error {
 			problemOutboundTag := common.Find(oCurrent.Dependencies(), func(it string) bool {
-				return !started[it]
+				return !sorted[it]
 			})
 			if common.Contains(oTree, problemOutboundTag) {
 				return E.New("circular outbound dependency: ", strings.Join(oTree, " -> "), " -> ", problemOutboundTag)
@@ -150,9 +135,9 @@ func (m *Manager) startOutbounds(scope *adapter.Scope, outbounds []adapter.Outbo
 			}
 			return lintOutbound(append(oTree, problemOutboundTag), problemOutbound)
 		}
-		return lintOutbound([]string{currentOutbound.Tag()}, currentOutbound)
+		return nil, lintOutbound([]string{currentOutbound.Tag()}, currentOutbound)
 	}
-	return nil
+	return sortedOutbounds, nil
 }
 
 func (m *Manager) Outbounds() []adapter.Outbound {
@@ -168,14 +153,6 @@ func (m *Manager) Outbound(tag string) (adapter.Outbound, bool) {
 	if found {
 		return outbound, true
 	}
-	// lx:begin chain
-	m.access.RLock()
-	outbound, found = m.internalByTag[tag]
-	m.access.RUnlock()
-	if found {
-		return outbound, true
-	}
-	// lx:end chain
 	return m.endpoint.Get(tag)
 }
 
@@ -201,7 +178,6 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	}
 	m.outbounds = append(m.outbounds, outbound)
 	m.outboundByTag[tag] = outbound
-	m.optionsByTag[tag] = managedOptions{outboundType: inboundType, options: options} // lx: chain
 	if tag == m.defaultTag || (m.defaultTag == "" && m.defaultOutbound == nil) {
 		m.defaultOutbound = outbound
 	}

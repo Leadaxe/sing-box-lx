@@ -93,6 +93,7 @@ type resolvedScopeSpecification struct {
 	interfaceName  string
 	dnsOverTLSMode string
 	domains        []string
+	search         []string
 	defaultRoute   bool
 	fallback       bool
 	servers        []resolvedServerSpecification
@@ -522,13 +523,17 @@ func (t *DBusResolvedResolver) checkResolved(ctx context.Context) ([]resolvedSco
 	}
 	for _, domain := range managerDomains {
 		domainName := mDNS.Fqdn(domain.Domain)
-		if domain.InterfaceIndex == 0 {
-			globalScope.domains = append(globalScope.domains, domainName)
-			continue
+		scope := &globalScope
+		if domain.InterfaceIndex != 0 {
+			scopeIndex, loaded := linkScopeIndexes[domain.InterfaceIndex]
+			if !loaded || scopeIndex < 0 {
+				continue
+			}
+			scope = &linkScopes[scopeIndex]
 		}
-		scopeIndex, loaded := linkScopeIndexes[domain.InterfaceIndex]
-		if loaded && scopeIndex >= 0 {
-			linkScopes[scopeIndex].domains = append(linkScopes[scopeIndex].domains, domainName)
+		scope.domains = append(scope.domains, domainName)
+		if !domain.RoutingOnly && domainName != "." {
+			scope.search = append(scope.search, domainName)
 		}
 	}
 	if len(globalScope.servers) == 0 && !slices.ContainsFunc(linkScopes, func(it resolvedScopeSpecification) bool {
@@ -559,6 +564,7 @@ func (s resolvedScopeSpecification) equal(other resolvedScopeSpecification) bool
 	return s.interfaceName == other.interfaceName &&
 		s.dnsOverTLSMode == other.dnsOverTLSMode &&
 		slices.Equal(s.domains, other.domains) &&
+		slices.Equal(s.search, other.search) &&
 		s.defaultRoute == other.defaultRoute &&
 		s.fallback == other.fallback &&
 		slices.Equal(s.servers, other.servers)
@@ -569,6 +575,7 @@ func (t *DBusResolvedResolver) createResolvedServerSet(scopeSpecifications []res
 		specifications: scopeSpecifications,
 		serverScope:    adapter.NewScope(t.ctx, t.logger),
 	}
+	var search []string
 	for _, scopeSpecification := range scopeSpecifications {
 		scope, createErr := t.createResolvedScope(serverSet.serverScope, scopeSpecification)
 		if createErr != nil {
@@ -580,7 +587,9 @@ func (t *DBusResolvedResolver) createResolvedServerSet(scopeSpecifications []res
 			serverSet.serverAddresses = append(serverSet.serverAddresses, serverSpecification.address)
 			serverSet.signature = append(serverSet.signature, scopeSpecification.interfaceName+"/"+M.SocksaddrFrom(serverSpecification.address, serverSpecification.port).String())
 		}
+		search = append(search, scopeSpecification.search...)
 	}
+	serverSet.signature = append(serverSet.signature, common.Uniq(search)...)
 	return serverSet, nil
 }
 
@@ -797,7 +806,7 @@ func shouldUpdateResolvedServerSet(signal *dbus.Signal) bool {
 	}
 	for propertyName := range changedProperties {
 		switch propertyName {
-		case "DNS", "DNSEx", "DNSOverTLS":
+		case "DNS", "DNSEx", "DNSOverTLS", "Domains", "FallbackDNS":
 			return true
 		}
 	}
@@ -807,7 +816,7 @@ func shouldUpdateResolvedServerSet(signal *dbus.Signal) bool {
 	}
 	for _, propertyName := range invalidatedProperties {
 		switch propertyName {
-		case "DNS", "DNSEx", "DNSOverTLS":
+		case "DNS", "DNSEx", "DNSOverTLS", "Domains", "FallbackDNS":
 			return true
 		}
 	}

@@ -303,10 +303,6 @@ func New(options Options) (*Box, error) {
 			return nil, E.Cause(err, "initialize DNS server[", i, "] ", transportOptions.Type, "[", tag, "]")
 		}
 	}
-	err = dnsRouter.Initialize(dnsOptions.Rules)
-	if err != nil {
-		return nil, E.Cause(err, "initialize dns router")
-	}
 	for i, endpointOptions := range options.Endpoints {
 		var tag string
 		if endpointOptions.Tag != "" {
@@ -419,24 +415,6 @@ func New(options Options) (*Box, error) {
 			return nil, E.Cause(err, "initialize certificate provider[", i, "] ", certificateProviderOptions.Type, "[", tag, "]")
 		}
 	}
-	outboundManager.Initialize(func() (adapter.Outbound, error) {
-		return direct.NewOutbound(
-			ctx,
-			router,
-			logFactory.NewLogger("outbound/direct"),
-			"direct",
-			option.DirectOutboundOptions{},
-		)
-	})
-	dnsTransportManager.Initialize(func() (adapter.DNSTransport, error) {
-		return dnsTransportRegistry.CreateDNSTransport(
-			ctx,
-			logFactory.NewLogger("dns/local"),
-			"local",
-			C.DNSTypeLocal,
-			&option.LocalDNSServerOptions{},
-		)
-	})
 	httpClientManager.Initialize(func() (*httpclient.ManagedTransport, error) {
 		deprecated.Report(ctx, deprecated.OptionImplicitDefaultHTTPClient)
 		var httpClientOptions option.HTTPClientOptions
@@ -493,6 +471,38 @@ func New(options Options) (*Box, error) {
 			WriteToSystem: ntpOptions.WriteToSystem,
 		})
 		timeService.TimeService = ntpService
+	}
+	err = outboundManager.Initialize(func() (adapter.Outbound, error) {
+		return direct.NewOutbound(
+			ctx,
+			router,
+			logFactory.NewLogger("outbound/direct"),
+			"direct",
+			option.DirectOutboundOptions{},
+		)
+	})
+	if err != nil {
+		return nil, err
+	}
+	err = dnsTransportManager.Initialize(func() (adapter.DNSTransport, error) {
+		return dnsTransportRegistry.CreateDNSTransport(
+			ctx,
+			logFactory.NewLogger("dns/local"),
+			"local",
+			C.DNSTypeLocal,
+			&option.LocalDNSServerOptions{},
+		)
+	})
+	if err != nil {
+		return nil, err
+	}
+	err = dnsRouter.Initialize(dnsOptions.Rules)
+	if err != nil {
+		return nil, E.Cause(err, "initialize dns router")
+	}
+	err = router.ValidateRuleActions()
+	if err != nil {
+		return nil, E.Cause(err, "initialize router")
 	}
 	return &Box{
 		network:             networkManager,

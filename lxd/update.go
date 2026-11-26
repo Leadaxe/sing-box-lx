@@ -57,6 +57,10 @@ type UpdateOptions struct {
 	Service string
 	// StateDir locates last_good.json for the `check` of the new binary.
 	StateDir string
+	// LowSpace forces the low-space flow (update_lowspace.go) even when a
+	// second copy fits beside the binary; without it the flow is the
+	// automatic fallback of a failed room check.
+	LowSpace bool
 }
 
 // Exit codes of `lxd update`.
@@ -64,6 +68,10 @@ const (
 	UpdateExitOK         = 0 // updated, or already up to date
 	UpdateExitFailed     = 1 // nothing changed
 	UpdateExitRolledBack = 2 // the new daemon did not come up; the old binary is back
+	// UpdateExitBroken is the low-space flow's dead end: the new binary failed
+	// and the old one could not be restored from its copy. The copies stay in
+	// the stage directory and the log carries the command that restores them.
+	UpdateExitBroken = 3
 )
 
 // updateEnv is everything the flow reads from the world; tests fake it.
@@ -90,6 +98,15 @@ type updateEnv struct {
 	// over loopback. nil = the probe is unavailable; coreStatusSkip says why.
 	coreStatus     func() (CoreStatus, error)
 	coreStatusSkip string
+	// The low-space flow (update_lowspace.go). tempDir is where it stages,
+	// "" = os.TempDir(); memAvailable is the kernel's MemAvailable, ok=false
+	// when unknown; replaceProcess execs another binary in place of this
+	// process and returns only on failure.
+	tempDir        string
+	memAvailable   func() (bytes uint64, ok bool)
+	replaceProcess func(path string, argv []string) error
+	// writeBinary writes a binary to the flash, durably; nil = writeFileSynced.
+	writeBinary func(dst string, content io.Reader) error
 }
 
 // updateCoreWait bounds the wait for the core inside the restarted daemon
@@ -449,12 +466,18 @@ func runUpdate(env updateEnv, options UpdateOptions) (int, error) {
 			return E.Cause(err, "free space of ", filepath.Dir(target))
 		}
 		if free < need {
-			return E.New("need ", need>>10, " KiB free beside ", target, ", have ", free>>10)
+			return &noRoomError{E.New("need ", need>>10, " KiB free beside ", target, ", have ", free>>10)}
 		}
 		return nil
 	}
-	if err := room(targetInfo.Size()); err != nil {
-		return UpdateExitFailed, err
+	// No room for a second copy is not the end: the low-space flow keeps the
+	// copies in RAM and holds one binary on the flash at a time.
+	roomErr := room(targetInfo.Size())
+	if options.LowSpace || isNoRoom(roomErr) {
+		return runLowSpaceUpdate(env, options, asset, roomErr)
+	}
+	if roomErr != nil {
+		return UpdateExitFailed, roomErr
 	}
 	if options.DryRun {
 		env.say("dry run: would download %s into %s and restart %s via %s", asset.name, newPath, options.Service, env.initSystem)
@@ -471,23 +494,20 @@ func runUpdate(env updateEnv, options UpdateOptions) (int, error) {
 	_ = body.Close()
 	if err != nil {
 		_ = os.Remove(newPath)
+		// The running binary stood in for the new one in step 3; the tar
+		// header says the new one does not fit (a packed binary replaced by
+		// the plain one).
+		if isNoRoom(err) {
+			return runLowSpaceUpdate(env, options, asset, err)
+		}
 		return UpdateExitFailed, err
 	}
 	env.say("sha256 match")
 
 	// 5. The new binary must run here and accept the current config.
-	if output, err := env.run(newPath, "version"); err != nil {
+	if err := env.checkNewBinary(newPath, options.StateDir); err != nil {
 		_ = os.Remove(newPath)
-		return UpdateExitFailed, E.Cause(err, "the new binary does not run: ", strings.TrimSpace(output))
-	}
-	lastGood := filepath.Join(options.StateDir, "last_good.json")
-	if options.StateDir == "" {
-		env.say("no state dir given, skipping check")
-	} else if _, err := os.Stat(lastGood); err != nil {
-		env.say("no applied config, skipping check")
-	} else if output, err := env.run(newPath, "check", "--disable-color", "-c", lastGood); err != nil {
-		_ = os.Remove(newPath)
-		return UpdateExitFailed, E.Cause(err, "the new binary rejects the config: ", strings.TrimSpace(output))
+		return UpdateExitFailed, err
 	}
 
 	// 6. Swap: the hard link keeps the old inode at zero cost; the rename is
@@ -518,30 +538,8 @@ func runUpdate(env updateEnv, options UpdateOptions) (int, error) {
 		return UpdateExitOK, nil
 	}
 
-	// 8. Health: up within 15 s and still up 3 s later (a crash loop under
-	// procd flickers); otherwise the old inode goes back.
-	healthy := false
-	for i := 0; i < 15; i++ {
-		env.sleep(time.Second)
-		if _, err := env.run(running[0], running[1:]...); err == nil {
-			env.sleep(3 * time.Second)
-			if _, err := env.run(running[0], running[1:]...); err == nil {
-				healthy = true
-			}
-			break
-		}
-	}
-	failure := asset.version + " did not come up"
-	// 8b. The init's "running" is the daemon process, not the core: a daemon
-	// that lost the TUN race on restart stays up with a control channel and
-	// no VPN (seen live, 2026-10-12). Ask the daemon itself and wait for
-	// "started"; a fatal core is a health failure like a dead process.
-	if healthy {
-		if coreErr := env.waitForCore(); coreErr != nil {
-			healthy = false
-			failure = asset.version + " is up but the core did not start: " + coreErr.Error()
-		}
-	}
+	// 8. Health; otherwise the old inode goes back.
+	healthy, failure := env.waitHealthy(running, asset.version)
 	if healthy {
 		_ = os.Remove(oldPath)
 		env.say("done: %s is running", asset.version)
@@ -553,6 +551,58 @@ func runUpdate(env updateEnv, options UpdateOptions) (int, error) {
 	}
 	_, _ = env.run(restart[0], restart[1:]...)
 	return UpdateExitRolledBack, E.New(failure, ", rolled back to ", env.version)
+}
+
+// checkNewBinary is step 5: the freshly extracted binary runs on this CPU and
+// accepts the config the daemon last applied.
+func (env updateEnv) checkNewBinary(path, stateDir string) error {
+	if output, err := env.run(path, "version"); err != nil {
+		return E.Cause(err, "the new binary does not run: ", strings.TrimSpace(output))
+	}
+	lastGood := filepath.Join(stateDir, "last_good.json")
+	if stateDir == "" {
+		env.say("no state dir given, skipping check")
+	} else if _, err := os.Stat(lastGood); err != nil {
+		env.say("no applied config, skipping check")
+	} else if output, err := env.run(path, "check", "--disable-color", "-c", lastGood); err != nil {
+		return E.Cause(err, "the new binary rejects the config: ", strings.TrimSpace(output))
+	}
+	return nil
+}
+
+// waitHealthy is step 8 and 8b: the service is up within 15 s and still up
+// 3 s later (a crash loop under procd flickers), and the core inside the
+// daemon has started. failure says what went wrong when healthy is false.
+func (env updateEnv) waitHealthy(running []string, version string) (healthy bool, failure string) {
+	for i := 0; i < 15; i++ {
+		env.sleep(time.Second)
+		if _, err := env.run(running[0], running[1:]...); err == nil {
+			env.sleep(3 * time.Second)
+			if _, err := env.run(running[0], running[1:]...); err == nil {
+				healthy = true
+			}
+			break
+		}
+	}
+	if !healthy {
+		return false, version + " did not come up"
+	}
+	// 8b. The init's "running" is the daemon process, not the core: a daemon
+	// that lost the TUN race on restart stays up with a control channel and
+	// no VPN (seen live, 2026-10-12). Ask the daemon itself and wait for
+	// "started"; a fatal core is a health failure like a dead process.
+	if coreErr := env.waitForCore(); coreErr != nil {
+		return false, version + " is up but the core did not start: " + coreErr.Error()
+	}
+	return true, ""
+}
+
+// noRoomError marks a failed room check, as opposed to a statfs that failed.
+type noRoomError struct{ error }
+
+func isNoRoom(err error) bool {
+	_, short := err.(*noRoomError)
+	return short
 }
 
 // waitForCore polls /admin/status once a second for up to updateCoreWait.
@@ -657,13 +707,23 @@ func loopbackAdminAddress(listen ListenConfig) string {
 
 // Update runs `lxd update` against the real host (SPEC 129).
 func Update(options UpdateOptions, out io.Writer) (int, error) {
-	executable, err := resolveOwnExecutable()
+	env, err := hostUpdateEnv(out)
 	if err != nil {
 		return UpdateExitFailed, err
 	}
+	env.coreStatus, env.coreStatusSkip = coreProbe(options.StateDir)
+	return runUpdate(env, options)
+}
+
+// hostUpdateEnv is the real host behind updateEnv, without the core probe.
+func hostUpdateEnv(out io.Writer) (updateEnv, error) {
+	executable, err := resolveOwnExecutable()
+	if err != nil {
+		return updateEnv{}, err
+	}
 	initSystem, _ := detectInitSystem(platformInitSystemEnv())
 	client := &http.Client{Timeout: updateDownloadTimeout}
-	env := updateEnv{
+	return updateEnv{
 		goos:       runtimeGOOS,
 		euid:       os.Geteuid(),
 		executable: executable,
@@ -688,10 +748,10 @@ func Update(options UpdateOptions, out io.Writer) (int, error) {
 			}
 			return response.Body, response.ContentLength, nil
 		},
-		run:       runCombined,
-		freeBytes: freeBytes,
-		sleep:     time.Sleep,
-	}
-	env.coreStatus, env.coreStatusSkip = coreProbe(options.StateDir)
-	return runUpdate(env, options)
+		run:            runCombined,
+		freeBytes:      freeBytes,
+		sleep:          time.Sleep,
+		memAvailable:   memAvailable,
+		replaceProcess: replaceProcess,
+	}, nil
 }

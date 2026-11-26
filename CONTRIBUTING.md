@@ -88,8 +88,8 @@ agreed issue is closed regardless of code quality.
 
 Open an issue using the bug report template, with the config, version and log. If the bug
 is in upstream code, a local patch is acceptable only when reproduced in real practice (a
-device, a router, a stand with a live server), with a test and a **removal condition**: the
-upstream event after which the patch is dropped. The registry is
+device, a router, a stand with a live server) and the scenario is recognised as real, with a
+test and a **removal condition**: the upstream event after which the patch is dropped. The registry is
 [HOTFIXES](SPECS/FEATURES/004-HOTFIXES/FEATURE.md).
 
 ### I want to help with acceptance
@@ -155,6 +155,7 @@ in the delta: new files → `// lx:` edits → `go.mod`/submodules → tag wirin
 - The fork's specs and documentation: Russian. Features for an outside audience (example:
   TrustTunnel) are written in English with a Russian `.ru.md` copy next to them; both are
   edited together.
+- How to write texts: the [L×Box editorial policy](https://github.com/Leadaxe/LxBox/blob/main/docs/EDITORIAL_POLICY.ru.md) (in Russian), shared by the app and the core.
 
 ## 7. What will not happen here
 

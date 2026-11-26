@@ -94,29 +94,6 @@ func TestTakeoverFromUnreleasedInstance(t *testing.T) {
 	require.Zero(t, registeredInstances(path))
 }
 
-func TestReleaseFlushesPendingWrites(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cache.db")
-	a := startTestCacheFile(t, path, nil)
-	// Queue without flushing: FakeIPSaveMetadata and FakeIPStore flush
-	// synchronously, FakeIPStoreAsync leaves the entry to the flush loop.
-	a.pendingAccess.Lock()
-	a.pending.fakeIPMetadata = testFakeIPMetadata()
-	a.enqueueLocked(true, 0)
-	a.pendingAccess.Unlock()
-	address := netip.MustParseAddr("198.18.3.7")
-	a.FakeIPStoreAsync(address, "example.com", nil)
-	require.NoError(t, a.Release())
-
-	b := startTestCacheFile(t, path, nil)
-	require.Equal(t, testFakeIPMetadata(), b.FakeIPMetadata())
-	domain, loaded := b.FakeIPLoad(address)
-	require.True(t, loaded)
-	require.Equal(t, "example.com", domain)
-	loadedAddress, loaded := b.FakeIPLoadDomain("example.com", false)
-	require.True(t, loaded)
-	require.Equal(t, address, loadedAddress)
-}
-
 func TestFakeIPMetadataSurvivesSessionWithoutAllocations(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cache.db")
 	a := startTestCacheFile(t, path, nil)

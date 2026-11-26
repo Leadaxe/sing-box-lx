@@ -127,12 +127,12 @@ func (s *Selector) AttachConnection(closer io.Closer) func() {
 	return s.interruptGroup.Add(closer, true)
 }
 
-func (s *Selector) References() []string {
+func (s *Selector) References() ([]string, []string) {
 	selected := s.selected.Load()
 	if selected == nil {
-		return s.tags[:1]
+		return s.tags[:1], nil
 	}
-	return []string{selected.Tag()}
+	return []string{selected.Tag()}, nil
 }
 
 func (s *Selector) SelectOutbound(tag string) bool {
@@ -140,10 +140,9 @@ func (s *Selector) SelectOutbound(tag string) bool {
 	if !loaded {
 		return false
 	}
-	if s.selected.Load() == detour {
+	if s.selected.Swap(detour) == detour {
 		return true
 	}
-	s.selected.Store(detour)
 	if s.Tag() != "" {
 		cacheFile := service.FromContext[adapter.CacheFile](s.ctx)
 		if cacheFile != nil {
@@ -162,12 +161,12 @@ func (s *Selector) SelectOutbound(tag string) bool {
 
 func (s *Selector) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	// lx:begin chain
-	// SPEC 073: внутри цепочки выбранный узел подменяется его звеном для хопа.
-	selected, err := adapter.ResolveChainLeaf(ctx, s.selected.Load())
+	// SPEC 165: носитель соединения (SPEC 060) и выбранный direct под хопом цепочки.
+	leafCtx, selected, err := adapter.ResolveChainLeaf(ctx, s.selected.Load())
 	if err != nil {
 		return nil, err
 	}
-	conn, err := selected.DialContext(ctx, network, destination)
+	conn, err := selected.DialContext(leafCtx, network, destination)
 	// lx:end chain
 	if err != nil {
 		return nil, err
@@ -177,11 +176,11 @@ func (s *Selector) DialContext(ctx context.Context, network string, destination 
 
 func (s *Selector) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	// lx:begin chain
-	selected, err := adapter.ResolveChainLeaf(ctx, s.selected.Load())
+	leafCtx, selected, err := adapter.ResolveChainLeaf(ctx, s.selected.Load())
 	if err != nil {
 		return nil, err
 	}
-	conn, err := selected.ListenPacket(ctx, destination)
+	conn, err := selected.ListenPacket(leafCtx, destination)
 	// lx:end chain
 	if err != nil {
 		return nil, err

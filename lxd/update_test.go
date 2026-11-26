@@ -209,6 +209,8 @@ func (h *fakeUpdateHost) env(target string) updateEnv {
 		},
 		freeBytes: func(string) (uint64, error) { return 1 << 30, nil },
 		sleep:     func(time.Duration) {},
+		// The low-space hand-over is driven by update_lowspace_test.go.
+		replaceProcess: func(string, []string) error { return E.New("no exec on the fake host") },
 	}
 }
 
@@ -531,13 +533,14 @@ func TestUpdateKeepsUPXFlavour(t *testing.T) {
 
 // TestUpdateRoomForTheNewBinary: the running binary passes the early check,
 // but the new one is larger (a packed core replaced by the plain one) — its
-// tar header stops the update before the write, the old binary stays.
+// tar header stops the update before the write, and with no room in the temp
+// directory either the low-space flow refuses too: the old binary stays.
 func TestUpdateRoomForTheNewBinary(t *testing.T) {
 	host, target := newFakeUpdateHost(t, bytes.Repeat([]byte("x"), 64<<10), "1.14.3-lx.16")
 	env := host.env(target)
 	env.freeBytes = func(string) (uint64, error) { return 16 << 10, nil }
 	code, err := runUpdate(env, UpdateOptions{})
-	if err == nil || code != UpdateExitFailed || !strings.Contains(err.Error(), "need 70 KiB free") {
+	if err == nil || code != UpdateExitFailed || !strings.Contains(err.Error(), "low-space mode needs 70 KiB free") {
 		t.Fatalf("code %d err %v\n%s", code, err, host.out.String())
 	}
 	if readTarget(t, target) != "old core" {

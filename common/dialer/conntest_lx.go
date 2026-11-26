@@ -50,7 +50,8 @@ func (d *resolveDialer) resolverNameLx() string {
 // check. The stage ends before the caller dials, so the dial stages are its
 // siblings, not its children: the caller keeps dialing in its own ctx.
 func (d *resolveDialer) lookupLx(ctx context.Context, domain string) ([]netip.Addr, error) {
-	ctx = withoutSniffGuardLx(ctx) // lx: SPEC 060 — the DNS exchange is not the node's handshake
+	ctx = withoutSniffGuardLx(ctx)             // lx: SPEC 060 — the DNS exchange is not the node's handshake
+	ctx = adapter.WithoutActualOutboundLx(ctx) // lx: SPEC 138 — nor is a group pick of its transport the connection's
 	if lxtrace.From(ctx) == nil {
 		// Production path (SPEC 139 §5.12): one ctx.Value lookup, no resolver
 		// name built, no allocation.

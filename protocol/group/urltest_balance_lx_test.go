@@ -543,7 +543,7 @@ func TestURLTestModeReporting(t *testing.T) {
 		if err != nil {
 			t.Fatalf("mode %q: %v", tc.option, err)
 		}
-		s := &URLTest{balancer: b}
+		s := &URLTest{lxURLTest: lxURLTest{balancer: b}}
 		if got := s.Mode(); got != tc.want {
 			t.Fatalf("mode %q: Mode() = %q, want %q", tc.option, got, tc.want)
 		}
@@ -556,7 +556,7 @@ func TestPoolReferences(t *testing.T) {
 	if references := leastTest.poolReferences(); references != nil {
 		t.Fatalf("least_test must add no pool references, got %v", references)
 	}
-	roundRobin := &URLTest{balancer: &balancer{}}
+	roundRobin := &URLTest{lxURLTest: lxURLTest{balancer: &balancer{}}}
 	roundRobin.balancer.setSlots([]string{"a", "", "b"})
 	references := roundRobin.poolReferences()
 	if len(references) != 2 || references[0] != "a" || references[1] != "b" {

@@ -51,11 +51,10 @@ import (
 // ---------------------------------------------------------------------------
 
 // loopbackDialer binds ClientBind's listen socket to a FIXED loopback port so
-// the two binds can address each other by a known port. We use the non-connect
-// ClientBind path (isConnect == false), which routes outbound via
+// the two binds can address each other by a known port. ClientBind listens
+// (upstream fe7d9661e dropped the connected path) and routes outbound via
 // PacketConn.WriteTo to the wireguard-configured endpoint addr:port — matching
-// each bind's fixed listen port. (The connect path dials from an ephemeral
-// source port, so neither side would ever bind the reserved ports.)
+// each bind's fixed listen port.
 type loopbackDialer struct {
 	listenPort int
 }
@@ -200,7 +199,7 @@ func buildDevice(t *testing.T, ctx context.Context, name string, tunDev tun.Devi
 	// bind listens on a fixed loopback port and both ends can reach each other.
 	// reserved stays [0,0,0]: this is plain AmneziaWG, NOT WARP — exactly the case
 	// the pre-fix unconditional clear(b[1:4]) corrupted.
-	bind := NewClientBind(ctx, logger.NOP(), loopbackDialer{listenPort: listenPort}, false, peerAddr, [3]uint8{})
+	bind := NewClientBind(ctx, logger.NOP(), loopbackDialer{listenPort: listenPort}, M.SocksaddrFromNetIP(peerAddr), [3]uint8{})
 
 	dev := device.NewDevice(ctx, tunDev, bind, &device.Logger{
 		Verbosef: func(string, ...any) {},

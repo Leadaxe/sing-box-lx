@@ -100,6 +100,13 @@ type Decision struct {
 	Reason string
 	// Warning is a line for the Warn log, empty when there is nothing to say.
 	Warning string
+	// Below is the detour the capacity came from and Overhead the bytes
+	// subtracted from it (SPEC 165 М4, the `by` of a config change).
+	Below    string
+	Overhead int
+	// PMTUDDisabled: a QUIC decision also turned disable_path_mtu_discovery
+	// from false to true, a second changed field (SPEC 165 М4).
+	PMTUDDisabled bool
 }
 
 // Apply is the mode table of SPEC 120 §2.3 for one field. configured is the

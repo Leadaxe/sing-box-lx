@@ -54,6 +54,12 @@
 | `adapter/group_lx.go` | `GroupNow(group)` — выбор для TCP, иначе для UDP: одна сетенезависимая точка для lx-читателей (reachability SPEC 020, chain SPEC 073, статус-RPC, трасса SPEC 139) вместо удалённого `Now()` |
 | `common/trafficcontrol` | `tracker.go` строит `Chain` из `OutboundChain` (апстрим) через `displayChainLx`: группа, на которой роутер остановился, спускается до текущего выбора для отображения, как это делал `Now()`; иначе LxBox и Clash API показывали бы группу вместо узла. Обход detour-хвоста (SPEC 017) вынесен в `tracker_lx.go`; ссылку на менеджер outbound'ов менеджеру трафика даёт `box.go` (`SetOutboundManagerLx`) |
 | `route/conntest_lx.go` | `dial` первого хопа берёт пройденные группы (`via_group`) из `OutboundChain` |
+| `protocol/group/conntest_lx.go` | `deleteHistoryOnDialError`: ошибка dial в least_test и failover стирает history члена и его листа (`RealTag`). Апстрим `5372a195b` стирает history последнего звена цепочки, то есть листа, а у нас цепочка кончается на группе, и `ConnectionManager` стирает тег группы. Без этой правки член-селектор оставлял лист «живым» до следующего прогона. `route/conn.go` не тронут. Хронология — [HISTORY.md](HISTORY.md) |
+
+Обрезка цепочки на urltest-группе действует и на конфиг без lx-опций. Отличия от апстрима, которые она даёт:
+
+- **`direct` в urltest теряет сетевые опции маршрута.** Если адрес назначения уже IP или разрезолвлен, роутер дайлит через `DialSerialNetwork`/`ListenSerialNetworkPacket` и передаёт `network_strategy`, `network_type`, `fallback_network_type` и `fallback_delay` из правила. Принимает их только `ParallelNetworkDialer`, то есть `direct`. Группа им не является, поэтому опции правила до `direct` не доходят, а адреса перебираются по одному через `DialContext` вместо параллельного дайла. Собственные опции дайла у `direct` действуют. С прокси-листом разницы нет. Так же было у апстрима до `03335338a`.
+- **В power report цепочка кончается на группе.** `attribution.Chain` (`common/dialer/default.go`) строится из `OutboundChain` без `displayChainLx`, листа в ней нет. Clash API и демон лист показывают.
 
 Остальные разрешения:
 

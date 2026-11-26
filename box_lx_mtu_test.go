@@ -166,7 +166,7 @@ func TestMTUAlignIssue37(t *testing.T) {
 		}
 	})
 	t.Run("explicit 1300 in clamp → 1232", func(t *testing.T) {
-		options, logger, err := applyMTU(t, issue37("2606:4700:104::1", `, "initial_packet_size": 1300`, `, "lx": {"mtu_align": "clamp"}`))
+		options, logger, err := applyMTU(t, issue37("2606:4700:104::1", `, "initial_packet_size": 1300`, `, "lx": {"detour": {"mtu_align": "clamp"}}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -179,7 +179,7 @@ func TestMTUAlignIssue37(t *testing.T) {
 		}
 	})
 	t.Run("explicit 1300 in fill → kept + warning", func(t *testing.T) {
-		options, logger, err := applyMTU(t, issue37("2606:4700:104::1", `, "initial_packet_size": 1300`, `, "lx": {"mtu_align": {"mode": "fill"}}`))
+		options, logger, err := applyMTU(t, issue37("2606:4700:104::1", `, "initial_packet_size": 1300`, `, "lx": {"detour": {"mtu_align": "fill"}}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -192,7 +192,7 @@ func TestMTUAlignIssue37(t *testing.T) {
 		}
 	})
 	t.Run("off changes nothing and logs nothing", func(t *testing.T) {
-		options, logger, err := applyMTU(t, issue37("2606:4700:104::1", "", `, "lx": {"mtu_align": "off"}`))
+		options, logger, err := applyMTU(t, issue37("2606:4700:104::1", "", `, "lx": {"detour": {"mtu_align": "off"}}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -202,7 +202,7 @@ func TestMTUAlignIssue37(t *testing.T) {
 		}
 	})
 	t.Run("except keeps the node", func(t *testing.T) {
-		options, logger, err := applyMTU(t, issue37("2606:4700:104::1", "", `, "lx": {"mtu_align": {"except": ["hy2"]}}`))
+		options, logger, err := applyMTU(t, issue37("2606:4700:104::1", "", `, "lx": {"detour": {"except_outbounds": ["hy2"]}}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -212,7 +212,7 @@ func TestMTUAlignIssue37(t *testing.T) {
 		}
 	})
 	t.Run("unknown except tag fails start", func(t *testing.T) {
-		_, _, err := applyMTU(t, issue37("2606:4700:104::1", "", `, "lx": {"mtu_align": {"except": ["nope"]}}`))
+		_, _, err := applyMTU(t, issue37("2606:4700:104::1", "", `, "lx": {"detour": {"except_outbounds": ["nope"]}}`))
 		if err == nil || !strings.Contains(err.Error(), "nope") {
 			t.Fatalf("%v", err)
 		}

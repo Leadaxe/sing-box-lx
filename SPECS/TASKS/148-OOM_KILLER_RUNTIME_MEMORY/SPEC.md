@@ -5,7 +5,7 @@
 | Поле | Значение |
 |------|----------|
 | Тип | F (feature) — лимит памяти oom-killer по памяти Go-рантайма вместо RSS процесса (режим для ядра, встроенного в чужой процесс) + память рантайма в `Status` |
-| Статус | D (done, device-verified) — выпущена в `v1.14.4-lx.29` 2026-11-01; LxBox develop (пин d579253a) на arm64 AVD, release-APK с lx.29: без `memory threshold reached` на старте с лимитом 200, `Memory` 331 МБ против `MemoryRuntime` 50,3 МБ, переключение на Auto без рестарта. Срабатывание порога по реальной утечке — только юнит |
+| Статус | D (done, device-verified) — выпущена в `v1.14.4-lx.29` 2026-11-01; LxBox develop (пин d579253a) на arm64 AVD, release-APK с lx.29: без `memory threshold reached` на старте с лимитом 200, `Memory` 331 МБ против `MemoryRuntime` 50,3 МБ, переключение на Auto без рестарта. Срабатывание порога по реальной утечке — только юнит. Синк [166](../166-UPSTREAM_SYNC_1_14_4_PLUS_146/SPEC.md) (2026-11-26): апстрим `d31a43ff3` убрал «липкое» triggered и решает повторный сброс через `resetDue`; для `runtime_limit` добавлен `resetDueRuntimeLimit` (оба условия режима), без него второй сброс не случился бы никогда |
 | Ветка | `lx` |
 | Build-tag | — (сервис `oom-killer`, `daemon`, `libbox` собираются всегда) |
 | Источник | [#62](https://github.com/Leadaxe/sing-box-lx/issues/62) (LxBox, Android): RSS 461 МБ при лимите 200 МБ, живая Go-куча по allocs-профилю 42 МБ |

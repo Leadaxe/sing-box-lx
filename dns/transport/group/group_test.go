@@ -496,12 +496,24 @@ func newTestManager(t *testing.T, defaultTag string) (*dns.TransportManager, con
 	return manager, ctx
 }
 
+// startTestManager runs the manager as box does since upstream 4d6bcb1a5: the
+// dependency sort and its validation happen in Initialize, Start only starts.
+func startTestManager(manager *dns.TransportManager) error {
+	err := manager.Initialize(func() (adapter.DNSTransport, error) {
+		return nil, E.New("no default DNS server in the test")
+	})
+	if err != nil {
+		return err
+	}
+	return manager.Start(adapter.StartStateStart, testScope())
+}
+
 func TestManagerRejectsGroupCycle(t *testing.T) {
 	manager, ctx := newTestManager(t, "g1")
 	logger := testLogger()
 	require.NoError(t, manager.Create(ctx, logger, "g1", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"g2"}}))
 	require.NoError(t, manager.Create(ctx, logger, "g2", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"g1"}}))
-	err := manager.Start(adapter.StartStateStart, testScope())
+	err := startTestManager(manager)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "circular server dependency")
 }
@@ -509,7 +521,7 @@ func TestManagerRejectsGroupCycle(t *testing.T) {
 func TestManagerRejectsMissingMember(t *testing.T) {
 	manager, ctx := newTestManager(t, "g1")
 	require.NoError(t, manager.Create(ctx, testLogger(), "g1", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"missing"}}))
-	err := manager.Start(adapter.StartStateStart, testScope())
+	err := startTestManager(manager)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not found")
 }
@@ -530,7 +542,7 @@ func TestManagerRejectsLocalSourceMember(t *testing.T) {
 			logger := testLogger()
 			require.NoError(t, manager.Create(ctx, logger, "h", testCase.transportType, &fakeTransportOptions{}))
 			require.NoError(t, manager.Create(ctx, logger, "g1", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"h"}}))
-			err := manager.Start(adapter.StartStateStart, testScope())
+			err := startTestManager(manager)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), testCase.err)
 		})
@@ -544,7 +556,7 @@ func TestManagerStartsGroupAndNestedGroup(t *testing.T) {
 	require.NoError(t, manager.Create(ctx, logger, "u2", "fakeudp", &fakeTransportOptions{}))
 	require.NoError(t, manager.Create(ctx, logger, "inner", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"u1", "u2"}}))
 	require.NoError(t, manager.Create(ctx, logger, "outer", C.DNSTypeGroup, &option.GroupDNSServerOptions{Servers: []string{"inner", "u1"}}))
-	require.NoError(t, manager.Start(adapter.StartStateStart, testScope()))
+	require.NoError(t, startTestManager(manager))
 	outer, loaded := manager.Transport("outer")
 	require.True(t, loaded)
 	response, err := outer.Exchange(context.Background(), testQuery())

@@ -59,7 +59,7 @@ func TestCarrierRecord(t *testing.T) {
 func ResolveChainLeafRecords(t *testing.T) string {
 	t.Helper()
 	ctx, record := ContextWithCarrierRecord(context.Background())
-	leaf, err := ResolveChainLeaf(ctx, carrierStub{outboundType: "trojan"})
+	_, leaf, err := ResolveChainLeaf(ctx, carrierStub{outboundType: "trojan"})
 	if err != nil || leaf.Type() != "trojan" {
 		t.Fatalf("leaf %v err %v", leaf, err)
 	}

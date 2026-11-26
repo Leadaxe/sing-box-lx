@@ -17,6 +17,9 @@ package group
 // tick the ticker buffered during it, and the group would probe without a
 // break. A tick that comes less than interval/2 after the previous tick run
 // ended is skipped: there is always at least interval/2 of quiet.
+//
+// The mark is an rrClock reading (monotonic time since the package base): a
+// wall clock set back or forward moves neither the window nor the pause.
 
 import (
 	"context"
@@ -28,20 +31,20 @@ import (
 // testNodesTick is testNodes for a non-forced (ticker) run.
 func (g *URLTestGroup) testNodesTick(ctx context.Context, outbounds []adapter.Outbound) map[string]uint16 {
 	var lastEnd time.Time
-	if nanos := g.lastTickRunEnd.Load(); nanos != 0 {
-		lastEnd = time.Unix(0, nanos)
+	if mark := g.lastTickRunEnd.Load(); mark != 0 {
+		lastEnd = rrTime(mark)
 	}
 	window := tickFreshWindow(g.interval, lastEnd, time.Now())
-	result := urlTestOutbounds(ctx, g.outbound, g.history, g.logger, outbounds, g.link, window, false, g.penaltyReset)
-	g.lastTickRunEnd.Store(time.Now().UnixNano())
+	result := URLTestOutbounds(ctx, g.outbound, g.history, g.logger, outbounds, g.link, window, false) // ctx carries the probe hook (testNodes)
+	g.lastTickRunEnd.Store(rrClock(time.Now()))
 	return result
 }
 
 // tickTooSoon reports whether a tick run must be skipped: the previous tick run
 // ended less than interval/2 ago.
 func (g *URLTestGroup) tickTooSoon() bool {
-	nanos := g.lastTickRunEnd.Load()
-	return nanos != 0 && time.Since(time.Unix(0, nanos)) < g.interval/2
+	mark := g.lastTickRunEnd.Load()
+	return mark != 0 && time.Since(rrTime(mark)) < g.interval/2
 }
 
 // tickFreshWindow returns the freshness window for a tick run: the time since

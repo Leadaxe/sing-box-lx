@@ -80,14 +80,34 @@ func (g *URLTestGroup) traceGroup(ctx context.Context, selected adapter.Outbound
 	stage.End(nil)
 }
 
-// balancedPicked is the round_robin tail of selectBalanced: the `group` stage,
-// then the Now() update, which a probe skips.
+// balancedPicked is the round_robin tail of selectBalanced: the pick goes into
+// the connection's SPEC 138 cell, where the connection list reads it; then the
+// `group` stage, then the Now() update, which a probe skips.
 func (g *URLTestGroup) balancedPicked(ctx context.Context, selected adapter.Outbound) {
+	adapter.RecordPickLx(ctx, g.groupTag, selected)
 	if lxtrace.From(ctx) != nil {
 		g.traceGroup(ctx, selected, "")
 		if lxtrace.IsProbe(ctx) {
 			return
 		}
+	}
+	g.lastSelected.Store(selected.Tag())
+}
+
+// balancedRetrying writes the `group` stage of the SPEC 138 retry through
+// another slot before its dial: it names the node whose dial failed in
+// fallback_for, as the SPEC 054 fallback does.
+func (g *URLTestGroup) balancedRetrying(ctx context.Context, selected adapter.Outbound, failed string) {
+	g.traceGroup(ctx, selected, failed)
+}
+
+// balancedRetried records an opened SPEC 138 retry: its node replaces the first
+// one in the connection's cell and in Now() (a probe leaves Now() alone). A retry
+// that did not open is not recorded: the first node stays.
+func (g *URLTestGroup) balancedRetried(ctx context.Context, selected adapter.Outbound) {
+	adapter.RecordPickLx(ctx, g.groupTag, selected)
+	if lxtrace.From(ctx) != nil && lxtrace.IsProbe(ctx) {
+		return
 	}
 	g.lastSelected.Store(selected.Tag())
 }
@@ -102,12 +122,16 @@ func (g *URLTestGroup) penaltyResetOnDial(ctx context.Context, tag string) {
 }
 
 // deleteHistoryOnDialError is the upstream reaction of least_test to a failed
-// dial (drop the node's URL test history); a probe keeps the history.
-func (g *URLTestGroup) deleteHistoryOnDialError(ctx context.Context, tag string) {
-	if lxtrace.IsProbe(ctx) {
-		return
+// dial: drop the URL test history of the node's leaf (RealTag, upstream
+// 37fffa325), after which the caller re-selects. A probe keeps the history, and
+// so does round_robin: a dial error alone proves nothing (SPEC 019 v2, SPEC 138).
+// It reports whether the history went.
+func (g *URLTestGroup) deleteHistoryOnDialError(ctx context.Context, leaf string) bool {
+	if g.balancer != nil || lxtrace.IsProbe(ctx) {
+		return false
 	}
-	g.history.DeleteURLTestHistory(tag)
+	g.history.DeleteURLTestHistory(leaf)
+	return true
 }
 
 // rotate advances the round_robin counter (sticky off) and returns the step to

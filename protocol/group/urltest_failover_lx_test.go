@@ -92,7 +92,7 @@ func newFailoverTestGroup(t *testing.T, nodes ...*failoverNode) *URLTestGroup {
 		tolerance:      50,
 		history:        urltest.NewHistoryStorage(),
 		interruptGroup: interrupt.NewGroup(),
-		failover:       true,
+		lxURLTestGroup: lxURLTestGroup{failover: true},
 	}
 }
 
@@ -126,9 +126,9 @@ func tick(t *testing.T, g *URLTestGroup) {
 
 func assertSelected(t *testing.T, g *URLTestGroup, network string, want *failoverNode) {
 	t.Helper()
-	got := g.selectedOutboundTCP
+	got := g.selectedOutboundTCP.Load()
 	if network == N.NetworkUDP {
-		got = g.selectedOutboundUDP
+		got = g.selectedOutboundUDP.Load()
 	}
 	if got == nil || got.Tag() != want.tag {
 		var gotTag string

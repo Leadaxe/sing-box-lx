@@ -13,29 +13,33 @@ TrustTunnel is the AdGuard VPN protocol, open-sourced in November 2025
 under the Apache-2.0 licence. From the outside it is ordinary HTTPS to a
 real domain: HTTP/2 over TLS or HTTP/3 over QUIC. Inside there is a proxy
 `CONNECT` with Basic authorization for every TCP connection, and a separate
-stream for UDP. Vanilla sing-box does not support the protocol; the request
+stream for UDP. Vanilla sing-box does not support the protocol: the request
 [SagerNet/sing-box#3723](https://github.com/SagerNet/sing-box/issues/3723)
-has been open since January 2026 with no maintainer response. `sing-box-lx`
+has been open since January 2026, and the maintainers have not replied. `sing-box-lx`
 carries both halves: an outbound that connects to a server, and an inbound
 that turns sing-box itself into a server for the official clients.
 
-This document answers three questions. **How the protocol works**: what it
-does to the bytes on the wire, where it sits among its neighbours and what
-an intermediary can see. **How the fork implements it**: where the code
-lives, which decisions were made and what has been verified. **How to use
-it**: which transport to pick, what a server needs and where DNS behaves in
-a non-obvious way. Fields, defaults and error texts are not listed here.
-For those, see
-[protocols-transports §6](protocols-transports.md#6-trusttunnel-outbound-and-inbound)
-(parameter reference and key-mapping tables). The current state of the
-area is in the feature spec
+This document answers three questions:
+
+- **How the protocol works:** what it does to the bytes on the wire, where
+  it sits among its neighbours and what an intermediary can see.
+- **How the fork implements it:** where the code lives, which decisions
+  were made and what has been verified.
+- **How to use it:** which transport to pick, what a server needs and where
+  DNS behaves in a non-obvious way.
+
+Fields, defaults and error texts are not listed here. They are in the
+reference
+[protocols-transports §6](protocols-transports.md#6-trusttunnel-outbound-and-inbound),
+together with the key-mapping tables. The current state of the area is
+described in the feature spec
 [018-TRUSTTUNNEL](../SPECS/FEATURES/018-TRUSTTUNNEL/FEATURE.md).
 
 Audience: a user who has a TrustTunnel node or a `tt://` link, and an
 operator deciding whether to run a server on the official endpoint or on
-sing-box. TLS knowledge at the level of "there is a ClientHello, there is a
-certificate" and HTTP knowledge at the level of "there is a method and
-there are headers" is assumed.
+sing-box. You need to know TLS at the level of "there is a ClientHello,
+there is a certificate" and HTTP at the level of "there is a method and
+there are headers".
 
 Callouts in the text are marked by type:
 
@@ -44,62 +48,62 @@ Callouts in the text are marked by type:
 - 🧭 TL;DR: the section's conclusion in a few sentences;
 - 📖 normative source.
 
-> The `trusttunnel` type ships in the desktop and router release binaries
-> since lx.21. The Android AAR does not carry it
-> ([§5.1](#51-status-and-builds)).
+The `trusttunnel` type ships in the desktop and router release binaries
+since lx.21. The Android AAR does not carry it
+([§5.1](#51-status-and-builds)).
 
 ## Table of contents
 
-- [§0 What TrustTunnel is](#0-what-trusttunnel-is)
-  - [0.1 The project and its parts](#01-the-project-and-its-parts)
+- [0. What TrustTunnel is](#0-what-trusttunnel-is)
+  - [0.1 Every part of the project is open under Apache-2.0](#01-every-part-of-the-project-is-open-under-apache-20)
   - [0.2 A proxy, not a VPN](#02-a-proxy-not-a-vpn)
-  - [0.3 A protocol without AdGuard's network](#03-a-protocol-without-adguards-network)
-- [§1 What it looks like on the wire](#1-what-it-looks-like-on-the-wire)
+  - [0.3 The protocol is open, AdGuard's network is not](#03-the-protocol-is-open-adguards-network-is-not)
+- [1. What it looks like on the wire](#1-what-it-looks-like-on-the-wire)
   - [1.1 Transport: HTTP/2 or HTTP/3](#11-transport-http2-or-http3)
   - [1.2 One session, many streams](#12-one-session-many-streams)
   - [1.3 TCP: a plain CONNECT](#13-tcp-a-plain-connect)
   - [1.4 UDP: the _udp2 stream and its frames](#14-udp-the-_udp2-stream-and-its-frames)
   - [1.5 The service streams _check and _icmp](#15-the-service-streams-_check-and-_icmp)
   - [1.6 Authorization and server answers](#16-authorization-and-server-answers)
-  - [1.7 user-agent: who is knocking](#17-user-agent-who-is-knocking)
+  - [1.7 user-agent names the platform and the application](#17-user-agent-names-the-platform-and-the-application)
   - [1.8 The server: SNI routing and limits](#18-the-server-sni-routing-and-limits)
-- [§2 Where it sits among protocols](#2-where-it-sits-among-protocols)
-- [§3 Detectability: what an intermediary sees](#3-detectability-what-an-intermediary-sees)
+- [2. Where it sits among protocols](#2-where-it-sits-among-protocols)
+- [3. Detectability: what an intermediary sees](#3-detectability-what-an-intermediary-sees)
   - [3.1 TLS-in-TLS without padding](#31-tls-in-tls-without-padding)
-  - [3.2 Fingerprints](#32-fingerprints)
-  - [3.3 Active probing of the server](#33-active-probing-of-the-server)
-  - [3.4 client_random rules](#34-client_random-rules)
-- [§4 The session model](#4-the-session-model)
-  - [4.1 How the official client keeps its session](#41-how-the-official-client-keeps-its-session)
-  - [4.2 How our node keeps its session](#42-how-our-node-keeps-its-session)
+  - [3.2 The fingerprint depends on the client and the transport](#32-the-fingerprint-depends-on-the-client-and-the-transport)
+  - [3.3 Active probing finds the proxy by its CONNECT answer](#33-active-probing-finds-the-proxy-by-its-connect-answer)
+  - [3.4 We do not support client_random rules](#34-we-do-not-support-client_random-rules)
+- [4. The session model](#4-the-session-model)
+  - [4.1 The official client keeps its session alive with packets and checks](#41-the-official-client-keeps-its-session-alive-with-packets-and-checks)
+  - [4.2 Our node closes an idle session and rebuilds it on dial](#42-our-node-closes-an-idle-session-and-rebuilds-it-on-dial)
   - [4.3 Three approaches side by side](#43-three-approaches-side-by-side)
-  - [4.4 What this means for the battery and for groups](#44-what-this-means-for-the-battery-and-for-groups)
-- [§5 The implementation in sing-box-lx](#5-the-implementation-in-sing-box-lx)
+  - [4.4 An idle node stays silent, and groups see a failure at once](#44-an-idle-node-stays-silent-and-groups-see-a-failure-at-once)
+- [5. The implementation in sing-box-lx](#5-the-implementation-in-sing-box-lx)
   - [5.1 Status and builds](#51-status-and-builds)
-  - [5.2 Two layers](#52-two-layers)
+  - [5.2 The protocol core does not depend on sing-box](#52-the-protocol-core-does-not-depend-on-sing-box)
   - [5.3 Outbound](#53-outbound)
   - [5.4 Inbound](#54-inbound)
   - [5.5 What was verified on the stand](#55-what-was-verified-on-the-stand)
   - [5.6 What is not supported](#56-what-is-not-supported)
   - [5.7 Examples](#57-examples)
-- [§6 Practical guidance](#6-practical-guidance)
-  - [6.1 HTTP/2 or HTTP/3](#61-http2-or-http3)
+- [6. Practical guidance](#6-practical-guidance)
+  - [6.1 HTTP/2 by default, HTTP/3 on lossy networks](#61-http2-by-default-http3-on-lossy-networks)
   - [6.2 SNI and the certificate](#62-sni-and-the-certificate)
-  - [6.3 Private networks on the inbound](#63-private-networks-on-the-inbound)
-  - [6.4 DNS for UDP: a resolver through the node](#64-dns-for-udp-a-resolver-through-the-node)
+  - [6.3 A route rule closes private networks on the inbound](#63-a-route-rule-closes-private-networks-on-the-inbound)
+  - [6.4 Resolve UDP destinations through the node](#64-resolve-udp-destinations-through-the-node)
   - [6.5 Typical failures](#65-typical-failures)
-- [§7 Glossary](#7-glossary)
+- [7. Glossary](#7-glossary)
 - [See also](#see-also)
 
 ---
 
 # 0. What TrustTunnel is
 
-## 0.1 The project and its parts
+## 0.1 Every part of the project is open under Apache-2.0
 
 The protocol was developed at AdGuard VPN and is published by the
-[TrustTunnel](https://github.com/TrustTunnel) organization on GitHub.
-Everything in it is open under Apache-2.0:
+[TrustTunnel](https://github.com/TrustTunnel) organization on GitHub. All
+four of its parts are open under Apache-2.0:
 
 | Part | Repository | What it is |
 |---|---|---|
@@ -108,9 +112,9 @@ Everything in it is open under Apache-2.0:
 | Client libraries and CLI | `TrustTunnel/TrustTunnelClient` | C++ libraries and the CLI client `trusttunnel_client` for Linux, macOS and Windows; runs as a system-wide tunnel over TUN or as a SOCKS5 proxy |
 | App | `TrustTunnel/TrustTunnelFlutterClient` | A Flutter GUI for iOS and Android, in the App Store and Google Play |
 
-Third-party implementations already exist around the official parts:
-mihomo, husi, Shadowrocket and Surge support the protocol, and there are
-the Go library `sing-trusttunnel` and the sing-box-extended fork. The
+Third-party implementations support the protocol too: mihomo, husi,
+Shadowrocket, Surge, the Go library `sing-trusttunnel` and the
+sing-box-extended fork. The
 normative source for the wire format is `PROTOCOL.md`, the endpoint code
 and the official client, not the third-party implementations.
 
@@ -124,17 +128,16 @@ and the official client, not the third-party implementations.
 
 The official apps present TrustTunnel as a VPN: they bring up a TUN,
 change routes and the system DNS, and keep a kill switch. The protocol
-itself, however, works at the level of connections, not IP packets. Each
+itself works at the level of connections, not IP packets. Each
 TCP connection of an application becomes a separate request "connect me to
 `host:port`", and each UDP datagram travels in a frame with addresses
 inside. The server gives the client no address, accepts no IP packets from
 it and never dials towards it. The TUN in the official client is local
-plumbing that assembles connections from packets, which is what sing-box
-does as well.
+plumbing: it assembles connections from packets, just as sing-box does.
 
 > 🧭 **TL;DR:** TrustTunnel is closer to NaïveProxy and HTTPS proxies than
 > to WireGuard. The difference between a proxy and a VPN is covered in the
-> [xray-protocols-explained disclaimer](xray-protocols-explained.md#disclaimer-how-a-proxy-differs-from-a-vpn).
+> [xray-protocols-explained disclaimer](xray-protocols-explained.md#a-proxy-carries-connections-a-vpn-carries-ip-packets).
 
 | | TrustTunnel | WireGuard, AmneziaWG, MASQUE CONNECT-IP |
 |---|---|---|
@@ -144,17 +147,19 @@ does as well.
 | Client address inside the tunnel | none | yes |
 | Place in sing-box | outbound and inbound | endpoint |
 
-This is also why the sing-box form was chosen: `trusttunnel` is an
-outbound and an inbound, like `naive` and `anytls`, not an endpoint like
-WireGuard or the upstream `masque-server`, which terminate IP packets
-([SPEC 134 §0](../SPECS/TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md)).
+That is why `trusttunnel` in sing-box is an outbound and an inbound, like
+`naive` and `anytls`. An endpoint in sing-box is the form for what
+terminates IP packets: WireGuard, the upstream `masque-server`. The choice
+is discussed in the
+[inbound spec](../SPECS/TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md), §0.
 
-## 0.3 A protocol without AdGuard's network
+## 0.3 The protocol is open, AdGuard's network is not
 
 AdGuard stresses that TrustTunnel is independent of the AdGuard VPN
 service. What is open is the protocol and its implementation, not access to
-AdGuard's servers: there is no free way into AdGuard's network through a
-third-party client, and nothing here works the way WARP is open to `wgcf`.
+AdGuard's servers. There is no free way into AdGuard's network through a
+third-party client: the scheme that opens WARP to `wgcf` does not work
+here.
 A TrustTunnel node for sing-box-lx is a server of your own: the official
 endpoint on your machine, a third-party provider's server, or our inbound
 ([§5.4](#54-inbound)).
@@ -177,8 +182,8 @@ and to send SNI.
 
 The official client has an `auto` mode: it tries HTTP/3 first, starts
 HTTP/2 in parallel after one second, and keeps whichever session opens
-first. For such a client, a server that offers only one of the two is
-normal.
+first. Such a client therefore also works with a server that offers only
+one of the two transports.
 
 > ⚠️ The 131072-byte stream window in `PROTOCOL.md` is the official
 > client's tuning (Chrome's constant), not a protocol requirement. HTTP/2
@@ -186,8 +191,8 @@ normal.
 
 ## 1.2 One session, many streams
 
-A **session** is one HTTP/2 or HTTP/3 connection between client and
-server. Inside it live **streams**, one per task:
+A session is one HTTP/2 or HTTP/3 connection between client and
+server. Inside it live streams, one per task:
 
 ```
 client                                                  endpoint
@@ -222,14 +227,13 @@ proxy-authorization: Basic <base64(user:pass)>
 
 `:authority` is `host:port`, with IPv6 in square brackets
 (`[2001:db8::1]:443`). The port is mandatory: a `CONNECT` without a port is
-a request error on the endpoint. A domain in `:authority` goes as is and is
-resolved **on the server**, with its DNS.
+a request error on the endpoint. A domain in `:authority` goes as is, and
+the server resolves it with its own DNS.
 
 A 200 answer turns the stream into a raw bidirectional channel to the
-target. When it arrives matters: the official endpoint answers 200 only
-**after** the connection to the target is established. The client
-therefore learns about a failed connect right from the answer, not on the
-first read. Any other code is a refusal; details are in
+target. The official endpoint answers 200 only after the connection to
+the target is established. The client therefore learns about a failed
+connect right from the answer, not on the first read. Any other code is a refusal; details are in
 [§1.6](#16-authorization-and-server-answers).
 
 Closing the stream closes the connection: `END_STREAM` or `FIN` for a
@@ -274,24 +278,24 @@ server → client:
 The server tracks UDP "connections" by the 4-tuple of source, source port,
 destination and destination port within the stream, and forgets them after
 inactivity: 120 s per the specification, 300 s in the endpoint's default
-config. A zero source is acceptable: mihomo and our outbound send one, and
-then all datagrams of one sing-box UDP session to one destination fall into
-one flow on the server.
+config. A zero source is acceptable, and mihomo and our outbound send
+one. All datagrams of one sing-box UDP session to one destination then fall
+into one flow on the server.
 
-> ⚠️ **IPv6 inside `::/96` cannot be carried over UDP.** In the frame
-> format, 12 zero bytes mean IPv4, so an address of the form `::a.b.c.d`,
-> including `::1`, decodes as IPv4. The specification makes an exception
-> for `::1`, but the official endpoint decodes such addresses the same way
-> our code does. Public addresses never hit this; loopback stands do.
+> ⚠️ An IPv6 address inside `::/96` cannot be carried over UDP. In the
+> frame format, 12 zero bytes mean IPv4, so an address of the form
+> `::a.b.c.d`, including `::1`, decodes as IPv4. The specification makes an
+> exception for `::1`, but the official endpoint decodes such addresses the
+> same way our code does. Public addresses do not fall into this range;
+> addresses of loopback stands do.
 
 ## 1.5 The service streams _check and _icmp
 
 `CONNECT _check` asks whether the session is alive. A server with valid
-authorization answers 200 at once and closes the stream; 407 means an
-authorization refusal, and anything else that the session is probably
+authorization answers 200 at once and closes the stream. A 407 means an
+authorization refusal, anything else that the session is probably
 unhealthy. When and why a client sends `_check` is covered in
-[§4](#4-the-session-model): this is the main place where implementations
-differ.
+[§4](#4-the-session-model): this is where implementations differ most.
 
 `CONNECT _icmp` opens a stream for ICMP echo. Its frames carry an
 identifier, the destination address, a sequence number and the TTL, but
@@ -309,13 +313,13 @@ Every `CONNECT`, including `_udp2` and `_check`, carries
 handshake: the credentials travel in every request, and the outer TLS is
 the only thing that keeps them confidential.
 
-> ⚠️ The official endpoint compares the header value **as a string** with
-> the standard base64 **with padding**. Any other encoding of the same
-> credentials is a refusal with the correct password. Our outbound encodes
-> in the standard way; our inbound parses the header and compares the
-> pair, so it also accepts a non-standard encoding.
+> ⚠️ The official endpoint compares the header value as a string with
+> the standard base64 with padding. It refuses the same credentials in any
+> other encoding, even though the password is correct. Our outbound encodes
+> in the standard way. Our inbound parses the header and compares the pair,
+> so it also accepts a non-standard encoding.
 
-Answers:
+Response codes:
 
 | Answer | When | Also in the answer |
 |---|---|---|
@@ -327,12 +331,12 @@ Answers:
 | 502 + `X-Warning: 310 - …` | the server's DNS returned a non-routable address | `X-Adguard-Vpn-Error: <hostname>` |
 | 502 + `X-Warning: 311 - …` | the server's DNS returned loopback | `X-Adguard-Vpn-Error: <hostname>` |
 
-Per the specification, a client that gets 407 must close its session and
+On a 407, the specification requires the client to close its session and
 authenticate again. The server can also refuse at the session level: a
 GOAWAY on HTTP/2 or an HTTP/3 connection error with code `0x1F`,
 "authentication required".
 
-## 1.7 user-agent: who is knocking
+## 1.7 user-agent names the platform and the application
 
 The specification sets `user-agent: <platform> <application>`. The
 official client writes the platform as one of `Windows`, `iOS`, `Mac`,
@@ -343,22 +347,22 @@ the stand, client 1.1.11 on macOS sent `Mac trusttunnel_client` on
 stream gets `<platform> _udp2`, the `_icmp` stream `<platform> _icmp`.
 
 The endpoint does not require the header, but it logs it and passes it to
-a SOCKS5 upstream in the extended-auth mode. It is a client identity that
-the operator sees, not a technical detail.
+a SOCKS5 upstream in the extended-auth mode. The header tells the
+operator which client is connecting.
 
-> 🔀 Our outbound introduces itself as `<platform> sing-box-lx`, with the
-> platform taken from the build's OS, and puts the same string
-> `sing-box-lx` into the `app` field of every UDP frame. The originating
-> process name is never sent, even when sing-box knows it.
+> 🔀 Our outbound introduces itself as `<platform> sing-box-lx`; the
+> platform is taken from the build's OS. It puts the same string
+> `sing-box-lx` into the `app` field of every UDP frame. The outbound does
+> not send the originating process name, even when sing-box knows it.
 
 ## 1.8 The server: SNI routing and limits
 
-The official endpoint picks a handler **by SNI only**. `hosts.toml` has the
+The official endpoint picks a handler by SNI only. `hosts.toml` has the
 main tunnel hosts (`main_hosts`) and optional hosts for reachability
 checks, speed tests and a reverse proxy. A ClientHello without SNI or with
 an unknown one is dropped at the TLS level, without any HTTP answer.
 
-The defaults a client feels:
+The defaults that affect the client:
 
 | Endpoint setting | Default | What the client sees |
 |---|---|---|
@@ -374,7 +378,7 @@ The defaults a client feels:
 
 # 2. Where it sits among protocols
 
-In essence TrustTunnel is an HTTPS proxy with `CONNECT`, packaged to look
+TrustTunnel is an HTTPS proxy with `CONNECT`, packaged to look
 like ordinary HTTPS to a website from the outside. Its closest relative is
 NaïveProxy: the same `CONNECT` over HTTP/2 or HTTP/3 with Basic
 authorization. The table puts it next to protocols that solve a similar
@@ -415,17 +419,18 @@ What follows from the table:
 # 3. Detectability: what an intermediary sees
 
 There are three intermediaries, as in
-[xray-protocols-explained §0](xray-protocols-explained.md#0-the-whole-picture-layers-and-threats):
+[xray-protocols-explained §0](xray-protocols-explained.md#0-each-layer-guards-against-its-own-middlebox):
 a passive classifier that looks at the shape of traffic; active probing,
 where the intermediary connects to the server itself; and recording
-traffic for later. Against the third, TrustTunnel has nothing of its own
-beyond the outer TLS or QUIC. Against the first two it has something, but
-less than protocols designed for it.
+traffic for later. Against recording, TrustTunnel has nothing of its own
+beyond the outer TLS or QUIC. Against the classifier and active probing it
+has some protection, but less than protocols designed for these threats.
 
 > 🧭 **TL;DR:** TrustTunnel hides in the shape of HTTPS, but it does not
 > hide TLS-in-TLS, and it does not hide the proxy from someone who sends it
-> a `CONNECT`. The official client's fingerprint is Chrome; ours is Chrome
-> only in part on HTTP/2 with uTLS, and quic-go on HTTP/3.
+> a `CONNECT`. The official client's fingerprint is Chrome. Our outbound
+> looks like Chrome only in part on HTTP/2 with uTLS; on HTTP/3 its
+> fingerprint is quic-go.
 
 ## 3.1 TLS-in-TLS without padding
 
@@ -434,14 +439,14 @@ the stream travels a second TLS handshake: the ClientHello to the target
 site, the server's answer, the certificates. A classifier does not need to
 decrypt them: the sizes and rhythm of the outer TLS records repeat the
 shape of the nested handshake. This signal is covered in
-[xray-protocols-explained §3.1](xray-protocols-explained.md#31-the-tls-in-tls-problem).
+[xray-protocols-explained §3.1](xray-protocols-explained.md#31-tls-inside-tls-is-recognisable-by-the-shape-of-its-records).
 
 The protocol has no padding and no mechanism like Vision, so this signal
 is visible on both transports and in every implementation, the official
 one included. The specification itself admits that traffic patterns may
 remain distinguishable.
 
-## 3.2 Fingerprints
+## 3.2 The fingerprint depends on the client and the transport
 
 | What | Official client | Our outbound, HTTP/2 | Our outbound, HTTP/3 |
 |---|---|---|---|
@@ -463,18 +468,18 @@ Where each signal is visible:
 - **QUIC** in our HTTP/3 is quic-go throughout: the Initial, the
   ClientHello and the HTTP/3 SETTINGS.
 
-> 🔀 Details and limits are in
-> [SPEC 133 R13](../SPECS/TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md). The
-> HTTP/2 fingerprint is pinned by the `TestHTTP2Preface` test, so an `x/net`
-> update cannot change it unnoticed.
+> 🔀 The HTTP/2 fingerprint is covered by the `TestHTTP2Preface` test, so
+> an `x/net` update cannot change it unnoticed. Details and the limits of
+> the imitation are in the
+> [outbound spec](../SPECS/TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md), R13.
 
-The official client also has an `anti_dpi` option: a 25 ms delay between
+The official client has an `anti_dpi` option: a 25 ms delay between
 the first byte of the ClientHello and the rest. We have no separate key for
-it; the closest built-in equivalent is `tls.fragment` of the shared TLS
+it. The closest built-in equivalent is `tls.fragment` of the shared TLS
 layer, but that is a different split
 ([protocols-transports §6.5](protocols-transports.md#65-outbound-key-mapping)).
 
-## 3.3 Active probing of the server
+## 3.3 Active probing finds the proxy by its CONNECT answer
 
 An active prober connects to a suspicious address itself and looks at the
 answer.
@@ -482,7 +487,7 @@ answer.
 **The official endpoint.** With an unknown SNI the prober gets a TLS drop
 and nothing else. With the right SNI and no credentials it gets, by
 default, 407 with `proxy-authenticate` to any request, a plain `GET`
-included. That is an outright admission that a proxy lives there. The
+included. Such an answer says outright that a proxy lives there. The
 operator can change it:
 
 - `auth_failure_status_code` and `non_connect_auth_failure_status_code`
@@ -499,31 +504,34 @@ served: on the stand `curl --http1.1` got a closed connection. 407 is sent
 only to a `CONNECT` with wrong credentials. A scanner that sends `GET` sees
 an empty web server.
 
-> ⚠️ Neither hides the proxy from a prober that knows the protocol. A
-> `CONNECT` without authorization gets 407 by default from both the
-> endpoint and our inbound. The endpoint can be switched to 403, 404 or
-> 405 for `CONNECT` as well; our inbound always answers 407 to `CONNECT`,
-> and our outbound treats any of these codes as an authorization refusal.
-> Deeper camouflage, such as a hand-off to a real site like `fallback` on
-> `trojan` and `vless`, is a separate question
-> ([SPEC 134 Q4](../SPECS/TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md)).
+> ⚠️ Neither the endpoint nor our inbound hides the proxy from a prober
+> that knows the protocol. A `CONNECT` without authorization gets 407 by
+> default from both. The endpoint can be switched to 403, 404 or 405 for
+> `CONNECT` as well. Our inbound always answers 407 to `CONNECT`. Our
+> outbound treats any of these codes as an authorization refusal. Deeper
+> camouflage, such as a hand-off to a real site like `fallback` on `trojan`
+> and `vless`, is discussed separately in the
+> [inbound spec](../SPECS/TASKS/134-TRUSTTUNNEL_INBOUND/SPEC.md), Q4.
 
-## 3.4 client_random rules
+## 3.4 We do not support client_random rules
 
 The endpoint has a filter at the TLS level, before any HTTP: the rules
-file `rules.toml`. A rule can require a client address from a subnet
-(`cidr`), a given start of the `client_random` field in the ClientHello
-(`client_random_prefix`, a prefix or a prefix with a mask), or proof of
-knowing a key (`client_random_auth_key`). Rules are evaluated in order and
-the first match decides; if none matches, the connection is allowed.
+file `rules.toml`. A rule can require one of three things from the client:
 
-The key variant works like this. The 32 bytes of `client_random` are split
-in half: the first 16 are random in every handshake, the last 16 are
+- `cidr`: an address from a subnet;
+- `client_random_prefix`: a given start of the `client_random` field in the
+  ClientHello, a prefix or a prefix with a mask;
+- `client_random_auth_key`: proof of knowing a key.
+
+Rules are evaluated in order, and the first match decides. If none matches,
+the connection is allowed.
+
+In the key variant the 32 bytes of `client_random` are split in half: the first 16 are random in every handshake, the last 16 are
 derived from the first, a shared key and the SNI. To an observer the
 ClientHello stays random, while the server checks it deterministically and
 silently drops strangers. This resembles how REALITY hides its secret in
 the session id
-([xray-protocols-explained §2.3](xray-protocols-explained.md#23-how-the-server-recognises-its-own-clients-session-id)).
+([xray-protocols-explained §2.3](xray-protocols-explained.md#23-the-server-recognises-its-own-clients-by-the-session-id)).
 If the file has even one key rule, connections without SNI are refused
 outright.
 
@@ -538,12 +546,12 @@ needs to put its own value there.
 - The official client itself can do it only on AdGuard-patched OpenSSL;
   its MIPS builds lack the feature.
 
-> ⚠️ **The refusal is indistinguishable from a wrong SNI.** A server with a
-> `client_random` rule drops TLS without a word, and from the client side it
-> looks exactly like an unknown name. The only way to tell is the export:
+> ⚠️ A refusal by a `client_random` rule is indistinguishable from a wrong
+> SNI: the server silently drops TLS, as it does for an unknown name. The
+> only way to tell is the export:
 > if the config or the `tt://` link has `client_random_prefix` or
 > `client_random_auth_key`, the node will not work here. Support is a
-> separate task when a real request appears, and for HTTP/2 only.
+> separate task once a real request comes in, and for HTTP/2 only.
 
 ---
 
@@ -559,14 +567,14 @@ questions, and implementations answer them differently.
 > node sends not a single packet, and groups see a node failure at dial
 > time, not on a timer.
 
-## 4.1 How the official client keeps its session
+## 4.1 The official client keeps its session alive with packets and checks
 
 - **HTTP/3:** while idle the client sends ACK-eliciting packets every 30 s
   (its `timeout`, the connection timeout). The specification's QUIC idle
   timeout is `2 × (connection timeout + health check timeout)`, 74 s by
   default, so without these packets the session would expire while idle.
-- **HTTP/2:** relies on `_check` health checks. This is **not a timer**.
-  The check is triggered by tunnel events: a new connection opened, a
+- **HTTP/2:** relies on `_check` health checks. This is not a timer: the
+  check is triggered by tunnel events: a new connection opened, a
   connection migrating between upstreams, a flow-control update while the
   client waits for data from the server, an ICMP request, wake-up after
   sleep (forced). Checks are throttled to one per 30 s, and the answer
@@ -578,22 +586,23 @@ questions, and implementations answer them differently.
 > turned them into a timer: a check every 7 s while connections are kept
 > idle.
 
-## 4.2 How our node keeps its session
+## 4.2 Our node closes an idle session and rebuilds it on dial
 
 - **Lazy opening.** The constructor only validates the config; the session
   opens on the first request.
 - **No keepalive.** No HTTP/2 PING, no QUIC keepalive. The client's QUIC
   idle timeout is 600 s, the same limit after which the server closes the
   session.
-- **Idle teardown.** After `idle_timeout` (5 minutes by default, global
-  default `lx.trusttunnel.idle_timeout`) without requests and without open
-  streams, the node closes the session itself. On the stand HTTP/3 closed
+- **Idle teardown.** If `idle_timeout` passes with no requests and no open
+  streams, the node closes the session itself. The default is 5 minutes;
+  `lx.trusttunnel.idle_timeout` sets the global default. On the stand HTTP/3 closed
   silently, and HTTP/2 with one TLS alert in each direction when the
   connection closed. `"0"` disables teardown.
-- **Transparent rebuild.** A dial that finds the session dead (closed by
-  the server, GOAWAY, QUIC idle timeout) or stale (silent for longer than
-  the idle window, for example after the device slept) rebuilds it and
-  repeats the `CONNECT` once within the same deadline. On a stale session
+- **Transparent rebuild.** If a dial finds the session dead or stale, it
+  rebuilds the session and repeats the `CONNECT` once within the same
+  deadline. A dead session was closed by the server, got a GOAWAY or hit the
+  QUIC idle timeout. A stale one has been silent for longer than the idle
+  window, for example after the device slept. On a stale session
   the `CONNECT` gets 3 s, not the whole deadline: if NAT forgot the
   connection while idle, the dial does not hang until the router's
   timeout.
@@ -629,12 +638,12 @@ to the server is obtained, before the `CONNECT` answer. A 407 or 502
 surfaces on the first read, and a group does not see that the node failed
 ([SPEC 133 §7 Q1](../SPECS/TASKS/133-TRUSTTUNNEL_OUTBOUND/SPEC.md)).
 
-## 4.4 What this means for the battery and for groups
+## 4.4 An idle node stays silent, and groups see a failure at once
 
 **Battery.** A packet while idle wakes the radio. A packet every 30
 seconds is two wake-ups a minute all night, even when the user is doing
-nothing. The rule of the [ENERGY](../SPECS/FEATURES/008-ENERGY/FEATURE.md)
-feature is that an idle node sends nothing, whatever the config. The price
+nothing. Under the [ENERGY](../SPECS/FEATURES/008-ENERGY/FEATURE.md)
+feature rule, an idle node sends nothing, whatever the config. The price
 is that the first dial after a long idle opens a new session: one TLS or
 QUIC handshake. The Android AAR does not carry TrustTunnel yet, but a
 laptop on battery pays for wake-ups the same way. The whole energy model is
@@ -670,7 +679,7 @@ on sing-box-lx and already carried the protocol in its fork
 ([PR #45](https://github.com/Leadaxe/sing-box-lx/pull/45)). Upstream has
 the protocol in none of its branches (checked 2026-10-15).
 
-## 5.2 Two layers
+## 5.2 The protocol core does not depend on sing-box
 
 The implementation is our own, without a third-party library, and is split
 into two layers:
@@ -684,8 +693,8 @@ into two layers:
 
 The core boundary is the main architectural decision. A package with no
 dependency on sing-box internals can be lifted into its own `sing-*` style
-module, sent upstream, or taken by husi and NekoBox as is. A review that
-finds a sing-box type in the core is a review that fails.
+module, sent upstream, or taken by husi and NekoBox as is. If a review
+finds a sing-box type in the core, the review fails.
 
 Edits to upstream files are 10 lines in marked `// lx:` blocks: 6 in
 `include/registry.go` (outbound and inbound registration) and 4 in
@@ -702,7 +711,7 @@ named and laid out the way upstream lays out a tagged protocol (`naive`,
 ## 5.3 Outbound
 
 The `trusttunnel` outbound is a node on a par with the others: TCP and UDP,
-usable in groups, under `detour` and as a `chain` link. The essentials of
+usable in groups, under `detour` and on a `chain` position. Four rules shape
 its behaviour:
 
 - **The dial waits for the server's answer.** 200 is a connection;
@@ -718,9 +727,9 @@ its behaviour:
   unresolved and are resolved there. A UDP frame carries an IP only, so the
   domain of a UDP destination is resolved locally: the node's
   `domain_resolver`, else `route.default_domain_resolver`, else the DNS
-  rules ([§6.4](#64-dns-for-udp-a-resolver-through-the-node)).
+  rules ([§6.4](#64-resolve-udp-destinations-through-the-node)).
 - **The session** follows the rules of
-  [§4.2](#42-how-our-node-keeps-its-session).
+  [§4.2](#42-our-node-closes-an-idle-session-and-rebuilds-it-on-dial).
 
 ## 5.4 Inbound
 
@@ -748,7 +757,7 @@ a domain). What sets it apart from the official endpoint:
   HTTP/2, 4096 on HTTP/3, a 600 s session idle timeout, 0-RTT off.
 - **UDP source.** The official client puts the real source into the frame,
   our outbound and mihomo a zero one. A zero source is replaced by the
-  session address, so `source_ip` route rules keep meaning the client. The
+  session address, so `source_ip` route rules match the client. The
   `app` field is read, length-checked and ignored.
 - **Authorization refusal** is 407 with
   `proxy-authenticate: Basic realm=Authorization Required`; the log line
@@ -762,9 +771,9 @@ a domain). What sets it apart from the official endpoint:
 ## 5.5 What was verified on the stand
 
 The stand [`lx-test/trusttunnel/`](../lx-test/trusttunnel/README.md) runs
-on loopback with the **official** binaries: endpoint 1.1.0 and CLI client
-1.1.11, with release signatures checked. Taken on it (2026-10-15 and
-2026-10-16):
+on loopback with the official binaries: endpoint 1.1.0 and CLI client
+1.1.11, with release signatures checked. Pairings verified on it on
+2026-10-15 and 2026-10-16:
 
 | Direction | HTTP/2 | HTTP/3 |
 |---|---|---|
@@ -772,7 +781,7 @@ on loopback with the **official** binaries: endpoint 1.1.0 and CLI client
 | Official client → our inbound | yes | yes |
 | Our outbound → our inbound | yes | yes |
 
-In addition:
+Also verified there:
 
 - UDP through `_udp2`, including DNS queries and a 9100-byte datagram
   echoed there and back, in every direction. The ceiling here is the
@@ -802,11 +811,11 @@ timeout of the inbound over HTTP/3.
 | What | Why |
 |---|---|
 | ICMP (`_icmp`) | In the sing-box core this is a separate ICMP routing path; deferred until requested. The inbound answers `_icmp` with 404, and an official client with ICMP enabled keeps working over TCP and UDP |
-| `client_random` rules | Needs control over `client_random` in the TLS stack ([§3.4](#34-client_random-rules)) |
-| `upstream_protocol: auto` | One transport per node (`quic`); "auto" is a `urltest` group of two nodes ([§6.1](#61-http2-or-http3)) |
+| `client_random` rules | Needs control over `client_random` in the TLS stack ([§3.4](#34-we-do-not-support-client_random-rules)) |
+| `upstream_protocol: auto` | One transport per node (`quic`); "auto" is a `urltest` group of two nodes ([§6.1](#61-http2-by-default-http3-on-lossy-networks)) |
 | `tt://` links and subscriptions | The core receives ready JSON; import is the job of the launcher and LxBox. The inbound does not serve a subscription |
 | Reverse proxy, reachability-check and speed-test hosts, SOCKS5 upstream | These are the product around the tunnel, not the protocol |
-| Several sessions per node, a pool | One session by design ([§4.2](#42-how-our-node-keeps-its-session)) |
+| Several sessions per node, a pool | One session by design ([§4.2](#42-our-node-closes-an-idle-session-and-rebuilds-it-on-dial)) |
 | `anti_dpi` as a separate key | The closest equivalent is `tls.fragment` |
 | HTTP/2 without TLS (h2c) behind a terminating proxy | `tls.enabled: false` is an error; to be opened on request |
 
@@ -860,15 +869,15 @@ Converting the official client's config (TOML, the endpoint's export, a
 `tt://` link) and sing-box-extended configs is covered by the tables in
 [§6.5 for the outbound](protocols-transports.md#65-outbound-key-mapping)
 and [§6.8 for the inbound](protocols-transports.md#68-inbound-key-mapping).
-The key schema matches husi, so its configs are read without renaming; the
-differences are the added `idle_timeout` and an empty `password`, which is
-an error here.
+The key schema matches husi, so its configs are read without renaming.
+There are two differences: `idle_timeout` is added, and an empty `password`
+is an error here.
 
 ---
 
 # 6. Practical guidance
 
-## 6.1 HTTP/2 or HTTP/3
+## 6.1 HTTP/2 by default, HTTP/3 on lossy networks
 
 | | HTTP/2 (`quic: false`) | HTTP/3 (`quic: true`) |
 |---|---|---|
@@ -878,12 +887,11 @@ an error here.
 | Network change | a new session | a new session (migration is off on the endpoint) |
 | Congestion control | the OS's TCP | `quic_congestion_control`: `bbr` by default, `cubic`, `reno` |
 
-The practical rule: HTTP/2 with `utls` `chrome` by default, HTTP/3 where
-the network loses packets but lets UDP through. If you do not know which is
-better on a given network, put two nodes for the same server into a
-`urltest` group. That replaces the official client's `auto` mode: the
-client picks a transport at connection time, the group picks by
-measurements.
+Use HTTP/2 with `utls` `chrome` by default, and HTTP/3 where the network
+loses packets but lets UDP through. If you do not know which is better on a
+given network, put two nodes for the same server into a `urltest` group.
+This replaces the official client's `auto` mode: the client picks a
+transport at connection time, the group picks by measurements.
 
 ```json
 {
@@ -898,8 +906,8 @@ measurements.
 - **The SNI must match the server's host.** On the official endpoint that
   is the `hostname` of `main_hosts`. From an export, `tls.server_name`
   takes `custom_sni` if it is set, else `hostname`.
-- **Is `server` an IP address?** Then `tls.server_name` is mandatory,
-  otherwise the node does not start.
+- **`server` given as an IP address**: then `tls.server_name` is
+  mandatory, otherwise the node does not start.
 - **A self-signed certificate.** The endpoint wizard can issue one and
   embed it into the export. In sing-box it goes into `tls.certificate` as
   PEM. A `tt://` link carries the chain as DER, the TOML export as PEM; the
@@ -911,7 +919,7 @@ measurements.
   send in SNI. The official clients verify the certificate: with a
   self-signed one, give it to them in their config (`certificate`).
 
-## 6.3 Private networks on the inbound
+## 6.3 A route rule closes private networks on the inbound
 
 By default the official endpoint does not let clients into its private
 network (`allow_private_network_connections = false`). Our inbound has no
@@ -936,7 +944,7 @@ or the DNS `strategy`, the UDP flow inactivity is `udp_timeout` of a
 `route-options` rule. The full table is
 [protocols-transports §6.8](protocols-transports.md#68-inbound-key-mapping).
 
-## 6.4 DNS for UDP: a resolver through the node
+## 6.4 Resolve UDP destinations through the node
 
 TCP and UDP of the same node resolve domains in different places
 ([§5.3](#53-outbound)): TCP with the server's DNS, UDP locally. If the
@@ -980,14 +988,14 @@ the node:
 > resolve it: connecting to the node needs the address, and the address
 > needs the connection. In that case give `server` as an IP address with
 > `tls.server_name`, as above, or resolve UDP destinations earlier, with a
-> `resolve` route action on a DNS server that goes through the node (this
-> is how the stand is set up).
+> `resolve` route action on a DNS server that goes through the node. This
+> is how the stand is set up.
 
 ## 6.5 Typical failures
 
 | Symptom | Cause | What to do |
 |---|---|---|
-| TLS drops at once, no HTTP answer, nothing useful in the log | The SNI did not match the server's host; or the server has `client_random` rules | Compare `tls.server_name` with `hostname`/`custom_sni` of the export; if the export has `client_random_*`, the node is not supported ([§3.4](#34-client_random-rules)) |
+| TLS drops at once, no HTTP answer, nothing useful in the log | The SNI did not match the server's host; or the server has `client_random` rules | Compare `tls.server_name` with `hostname`/`custom_sni` of the export; if the export has `client_random_*`, the node is not supported ([§3.4](#34-we-do-not-support-client_random-rules)) |
 | `tls.server_name is required when server is an IP address…` at start | `server` is an IP address | Add `tls.server_name` |
 | `trusttunnel: server responded 407 Proxy Authentication Required` | Wrong `username`/`password` | Compare with the export; the session is already closed, the next dial opens a new one |
 | `502 Bad Gateway: 300 - …` to an address in a local network | The endpoint refuses private networks; or an `ip_is_private` rule on our inbound | Expected; allow it on the server if needed |

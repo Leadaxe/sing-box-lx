@@ -72,7 +72,22 @@ func (t *adaptiveTimer) nextStateRuntimeLimit(sample memorySample) pressureState
 		shouldTrigger = shouldTrigger || sample.available <= thresholds.trigger
 		shouldArm = shouldArm || sample.available <= thresholds.armed
 	}
-	return nextPressureState(t.state, shouldTrigger, shouldArm)
+	return nextPressureState(shouldTrigger, shouldArm)
+}
+
+// resetDueRuntimeLimit is upstream's resetDue (d31a43ff3) for runtime_limit:
+// after a reset that left memory above armed, the next reset is due once either
+// condition of the mode has worsened by the trigger–armed distance since the
+// best sample after that reset.
+func (t *adaptiveTimer) resetDueRuntimeLimit(sample memorySample) bool {
+	if sample.usage-t.bestSinceReset.usage >= t.limitThresholds.trigger-t.limitThresholds.armed {
+		return true
+	}
+	if !sample.availableKnown {
+		return false
+	}
+	thresholds := t.availableThresholdsRuntimeLimit(sample)
+	return t.bestSinceReset.available-sample.available >= thresholds.armed-thresholds.trigger
 }
 
 func (t *adaptiveTimer) belowTriggerRuntimeLimit(sample memorySample) bool {

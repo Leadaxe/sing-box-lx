@@ -87,7 +87,7 @@ func (r *Resolver) Validate() error {
 		return nil
 	}
 	sort.Strings(unknown)
-	return E.New("lx.mtu_align.except: unknown outbound/endpoint tag: ", strings.Join(unknown, ", "))
+	return E.New("lx.detour.except_outbounds: unknown outbound/endpoint tag: ", strings.Join(unknown, ", "))
 }
 
 // Align aligns every node and returns the decisions in config order. In
@@ -150,7 +150,30 @@ func (r *Resolver) capacityOf(tag string) capacity {
 	case *option.URLTestOutboundOptions:
 		return r.groupCapacity(n, options.Outbounds)
 	case *option.ChainOutboundOptions:
-		return capacity{value: Unlimited, warning: "chain " + tag + " as a detour target aligns its own links; nodes above it are not aligned"}
+		// lx: SPEC 165 — a chain carries what its top hop carries.
+		if len(options.Outbounds) == 0 {
+			return capacity{value: Unlimited}
+		}
+		value, reason, warning := r.Capacity(tag + "#" + strconv.Itoa(len(options.Outbounds)-1))
+		return capacity{value: value, reason: reason, warning: warning}
+	case *option.ChainHopOutboundOptions:
+		// lx: SPEC 165 М2 — the position may be disabled or pick direct, then
+		// the hop below carries the packet: the minimum works in every state.
+		value, reason, warning := r.Capacity(options.Outbound)
+		result := capacity{value: value, reason: reason, warning: warning}
+		if options.Below != "" {
+			belowValue, belowReason, belowWarning := r.Capacity(options.Below)
+			if belowValue < result.value {
+				result = capacity{value: belowValue, reason: belowReason}
+			}
+			if result.value == Unlimited && result.warning == "" {
+				result.warning = belowWarning
+			}
+		}
+		if result.value != Unlimited {
+			result.warning = ""
+		}
+		return result
 	}
 	// lx: SPEC 144 §2.1 — every other node is a boundary. A proxy delivers
 	// the packet of the node above whole, as a byte stream (TCP re-segments
@@ -350,6 +373,7 @@ func (r *Resolver) alignOf(tag string) uint32 {
 	}
 	limit := value - overhead
 	reason = "detour " + reason + " " + OverheadText(overhead, server, padding)
+	below := detour
 	if limit <= 0 {
 		r.record(tag, Decision{
 			Tag: tag, Field: "mtu", Configured: mtu, Effective: mtu, Explicit: explicit,
@@ -362,6 +386,7 @@ func (r *Resolver) alignOf(tag string) uint32 {
 		reason += "; floor " + strconv.Itoa(IPv6MinimumMTU)
 	}
 	decision := r.policy.Apply(tag, "mtu", mtu, explicit, uint32(size), reason)
+	decision.Below, decision.Overhead = below, overhead // lx: SPEC 165 М4
 	if decision.Changed {
 		setTunnelMTU(n, decision.Effective)
 	}
@@ -394,8 +419,10 @@ func (r *Resolver) alignQUIC(n *node, quic *option.QUICOptions, server string) {
 	configured := uint32(quic.InitialPacketSize)
 	decision := r.policy.Apply(n.tag, "initial_packet_size", configured, configured != 0, uint32(size),
 		"detour "+reason+" − "+strconv.Itoa(overhead)+" "+Family(server))
+	decision.Below, decision.Overhead = detour, overhead // lx: SPEC 165 М4
 	if decision.Changed {
 		quic.InitialPacketSize = int(decision.Effective)
+		decision.PMTUDDisabled = !quic.DisablePathMTUDiscovery
 		quic.DisablePathMTUDiscovery = true
 		decision.Reason += "; pmtud off"
 	}

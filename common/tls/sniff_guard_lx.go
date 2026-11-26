@@ -36,6 +36,9 @@ type sniffGuardNode struct {
 	// `record_fragment: false` is a choice too (SPEC 156).
 	chosen        bool
 	fallbackDelay time.Duration
+	// ctx is the build context of the node's TLS config: its tag and the
+	// box's lx values (SPEC 165).
+	ctx context.Context
 }
 
 // sniffGuardEngine is implemented by the client configs whose ClientHello the
@@ -46,7 +49,7 @@ type sniffGuardEngine interface {
 }
 
 func (c *STDClientConfig) sniffGuardNodeLx() sniffGuardNode {
-	return sniffGuardNode{c.fragment, c.recordFragment, c.fragmentChosen, c.fragmentFallbackDelay}
+	return sniffGuardNode{c.fragment, c.recordFragment, c.fragmentChosen, c.fragmentFallbackDelay, c.ctx}
 }
 
 // sniffGuardNodeOf returns the fragment keys of the engine under config, seen
@@ -94,13 +97,37 @@ func withoutSniffGuardLx(ctx context.Context) context.Context {
 
 // sniffGuardConnLx returns the conn the handshake writes its ClientHello to.
 // It calls Attempt.Decide exactly once when the dial carries an Attempt and
-// returns conn itself whenever the guard does not intervene.
+// returns conn itself whenever neither the guard nor lx.detour.strip (SPEC
+// 165) intervenes. The tls.fragment filter drops the node's split here, below
+// the guard's decision (С3); the tls.spoof and tls.kernel mark rides on the
+// returned conn.
 func sniffGuardConnLx(ctx context.Context, conn net.Conn, config Config) net.Conn {
+	node, shapeable := sniffGuardNodeOf(config)
+	detour := lxDetourDecide(node, conn)
+	detour.handshake = ctx
+	if detour.stripFragment {
+		detour.applied(ctx, option.LXDetourStripTLSFragment)
+	}
+	return detour.mark(sniffGuardShapeLx(ctx, conn, detour.strippedNode(node), shapeable, detour.stripFragment))
+}
+
+// lxDetourStripConn is the handshake with the node's split dropped: the
+// engine skips its own fragment wrapper, record_fragment is kept (С2).
+func lxDetourStripConn(ctx context.Context, conn net.Conn, node sniffGuardNode) net.Conn {
+	if node.recordFragment {
+		return &sniffGuardConn{Conn: tf.NewConn(conn, ctx, false, true, node.fallbackDelay)}
+	}
+	return &sniffGuardConn{Conn: conn}
+}
+
+func sniffGuardShapeLx(ctx context.Context, conn net.Conn, node sniffGuardNode, shapeable bool, stripped bool) net.Conn {
 	attempt := lxsniffguard.AttemptFromContext(ctx)
 	if attempt == nil {
+		if stripped {
+			return lxDetourStripConn(ctx, conn, node)
+		}
 		return conn
 	}
-	node, shapeable := sniffGuardNodeOf(config)
 	applicable := shapeable && (!node.chosen || attempt.Override())
 	decision := attempt.Decide(lxsniffguard.ProtoTLS, sniffGuardPath(ctx, conn), applicable)
 	if !decision.Protect {
@@ -108,6 +135,9 @@ func sniffGuardConnLx(ctx context.Context, conn net.Conn, config Config) net.Con
 			// The path is clean and the block overrides the node: no split,
 			// whatever the node asked for.
 			return &sniffGuardConn{Conn: conn}
+		}
+		if stripped {
+			return lxDetourStripConn(ctx, conn, node)
 		}
 		return conn
 	}
@@ -135,6 +165,8 @@ func sniffGuardShapedLx(conn net.Conn) bool {
 // embedded conn writes it.
 type sniffGuardConn struct {
 	net.Conn
+	// kernelOnly is the lx.detour skip_kernel_only mark (SPEC 165).
+	kernelOnly *lxDetourDecision
 }
 
 func (c *sniffGuardConn) ReaderReplaceable() bool {

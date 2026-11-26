@@ -14,6 +14,7 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-shadowtls"
 	"github.com/sagernet/sing/common"
+	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
@@ -38,6 +39,9 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if options.Version == 0 {
 		options.Version = 1
 	}
+	if options.Version != 2 && options.TLS.ECH != nil && options.TLS.ECH.Enabled {
+		return nil, E.New("ECH is only supported in ShadowTLS v2")
+	}
 
 	if options.Version == 1 {
 		options.TLS.MinVersion = "1.2"
@@ -61,17 +65,24 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			return common.Error(tls.ClientHandshake(ctx, conn, tlsConfig))
 		}
 	case 3:
-		if idConfig, loaded := tlsConfig.(tls.WithSessionIDGenerator); loaded {
+		if _, loaded := tlsConfig.(tls.WithSessionIDGenerator); loaded {
 			tlsHandshakeFunc = func(ctx context.Context, conn net.Conn, sessionIDGenerator shadowtls.TLSSessionIDGeneratorFunc) error {
-				idConfig.SetSessionIDGenerator(sessionIDGenerator)
-				return common.Error(tls.ClientHandshake(ctx, conn, tlsConfig))
+				handshakeConfig := tlsConfig.Clone()
+				handshakeConfig.(tls.WithSessionIDGenerator).SetSessionIDGenerator(sessionIDGenerator)
+				return common.Error(tls.ClientHandshake(ctx, conn, handshakeConfig))
 			}
 		} else {
 			stdTLSConfig, err := tlsConfig.STDConfig()
 			if err != nil {
 				return nil, err
 			}
-			tlsHandshakeFunc = shadowtls.DefaultTLSHandshakeFunc(options.Password, stdTLSConfig)
+			defaultHandshakeFunc := shadowtls.DefaultTLSHandshakeFunc(options.Password, stdTLSConfig)
+			handshakeTimeout := tlsConfig.HandshakeTimeout()
+			tlsHandshakeFunc = func(ctx context.Context, conn net.Conn, sessionIDGenerator shadowtls.TLSSessionIDGeneratorFunc) error {
+				ctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+				defer cancel()
+				return defaultHandshakeFunc(ctx, conn, sessionIDGenerator)
+			}
 		}
 	}
 	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())

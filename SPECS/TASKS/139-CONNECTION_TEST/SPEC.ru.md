@@ -471,7 +471,7 @@ handler и stub в `daemon/*_lx.go`, клиент в `experimental/libbox/*_lx.g
 | `dns/client.go` | 5 | 1 строка (begin стадии `dns` в `beginExchange`), 2 строки (возраст записи кэша при попадании в `beginExchange` и `questionCache`), 2 строки (`fresh`: `DisableCache` в `beginExchange` и `Lookup`) |
 | `common/tls/reality_client.go` | 2 | 1 строка после `HandshakeContext` (файл уже несёт lx-правки) |
 | `dns/transport/conn_pool.go` | 1, 2 | 1 поле + 15 строк: соединения, открытые пробой, не паркуются при release (§5.14, критерий 10); `fresh` берёт собственное соединение (2 блока по 3 строки в `acquireShared` / `acquireOrdered`); пометки переиспользования на путях pooled и joined (3 строки) |
-| `protocol/group/urltest.go` (хотфикс) | 1 | `selectedOutbound*` под `selectedAccess`: гонка данных, вскрытая SPEC 136, внесена в [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md) |
+| `protocol/group/urltest.go` (хотфикс) | 1 | `selectedOutbound*` под `selectedAccess`: гонка данных, вскрытая SPEC 136, внесена в [HOTFIXES](../../FEATURES/004-HOTFIXES/FEATURE.md); снято синком [166](../166-UPSTREAM_SYNC_1_14_4_PLUS_146/SPEC.md) — апстрим 37fffa325 сделал оба поля атомиками |
 | `dns/transport/fakeip/store.go` | 2 | 1 строка в `Create` (счётчик оборота пула; на каждый новый адрес — один weak-указатель и одно чтение карты, без трассы) |
 | `dns/transport/https.go`, `dns/transport/quic/http3.go` | 2 | по 2 строки там, где обмен берёт клиента: при `fresh` — одноразовый клиент DoH / DoH3, закрываемый после обмена (их соединения живут в HTTP-клиенте, а не в пуле); 1 изменённая строка в `https.go`: таймаут fresh-запроса не сбрасывает боевой клиент |
 

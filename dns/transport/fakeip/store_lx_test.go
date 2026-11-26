@@ -23,7 +23,10 @@ func newLxTestStore(t *testing.T, inet4, inet6 string) *Store {
 	if inet6 != "" {
 		inet6Range = netip.MustParsePrefix(inet6)
 	}
-	store := NewStore(context.Background(), logger.NOP(), inet4Range, inet6Range)
+	store, err := NewStore(context.Background(), logger.NOP(), inet4Range, inet6Range)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := store.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +107,11 @@ func TestLxStoreReadsDoNotAllocate(t *testing.T) {
 		t.Fatalf("state = %+v", state)
 	}
 	// Not started, or not this package's store: no view.
-	if _, loaded := LxStateOf(NewStore(context.Background(), logger.NOP(), netip.MustParsePrefix("198.18.0.0/15"), netip.Prefix{})); loaded {
+	unstarted, err := NewStore(context.Background(), logger.NOP(), netip.MustParsePrefix("198.18.0.0/15"), netip.Prefix{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, loaded := LxStateOf(unstarted); loaded {
 		t.Fatal("a store that has not started has no view")
 	}
 	if _, loaded := LxStateOf(nil); loaded {

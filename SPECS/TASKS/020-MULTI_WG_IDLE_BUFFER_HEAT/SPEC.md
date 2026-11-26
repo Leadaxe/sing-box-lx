@@ -75,7 +75,7 @@ clash-режима, паузу и пробуждение устройства; �
 
 | Событие | Кто уведомляет |
 |---|---|
-| `Selector.SelectOutbound` | апстрим (`history.NotifyUpdated`) |
+| `Selector.SelectOutbound` | апстрим: `history.NotifyUpdated` сразу после атомарного `Swap`, только при реальной смене выбора |
 | выбор urltest, включая первый | апстрим |
 | перестроение пула `round_robin` | `balancer.onChange` → `history.NotifyUpdated` (наш код SPEC 019) |
 | перенос выбора штрафом SPEC 054 | `history.NotifyUpdated` (наш код) |

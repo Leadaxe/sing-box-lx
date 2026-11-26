@@ -1,18 +1,17 @@
-# FEATURE 015 — CHAIN — a virtual multi-hop path of groups and nodes / виртуальная цепочка хопов из групп и узлов
+# FEATURE 015 — CHAIN — a multi-hop path of groups and nodes / цепочка хопов из групп и узлов
 
 | Field / Поле | Value / Значение |
 |--------------|------------------|
 | Type / Тип | Product feature / Продуктовая фича |
-| Build tag | `with_lx_chain` (chain state in the UI — behind `with_lx_command`, see [OBSERVABILITY](../006-OBSERVABILITY/FEATURE.md)) / (состояние цепочки в UI — за `with_lx_command`) |
-| State / Состояние | ✅ Done (D): unit tests + acceptance stand on live shadowsocks hops; WireGuard links not run in the field, in production since `v1.14.0-lx.27-rc.5` with no reports (closed by the owner, 2026-09-24) / Готово (D): юниты + приёмочный стенд на живых shadowsocks-хопах; WG-звенья в поле не гонялись, в проде с `v1.14.0-lx.27-rc.5` без жалоб (закрыто владельцем 2026-09-24) — [073](../../TASKS/073-CHAIN_OUTBOUND/SPEC.md), [075](../../TASKS/075-CHAIN_POSITION_TOGGLE/SPEC.md) |
+| Build tag | `with_lx_chain` (chain state and the config handles — behind `with_lx_command`, see [OBSERVABILITY](../006-OBSERVABILITY/FEATURE.md)) / (состояние цепочки и ручки конфига — за `with_lx_command`) |
+| State / Состояние | 🔄 Model rewritten by [165](../../TASKS/165-CHAIN_DETOUR_REWRITE/SPEC.md): code on a branch, unit tests and the live stands `lx-test/chain` (shadowsocks hops, WireGuard on a position) green; not released yet / Модель переписана задачей [165](../../TASKS/165-CHAIN_DETOUR_REWRITE/SPEC.md): код в ветке, юниты и живые стенды `lx-test/chain` (shadowsocks-хопы, WireGuard на позиции) зелёные; в релиз ещё не вошла. Before / До: [073](../../TASKS/073-CHAIN_OUTBOUND/SPEC.md) (link instances, see its HISTORY), [075](../../TASKS/075-CHAIN_POSITION_TOGGLE/SPEC.md) |
 
 > **Language.** This document carries both languages in one file: the two blocks below hold the
 > same content, not a word-by-word translation. The tables and code blocks are shared and live
-> in the English block to avoid drift between two copies of the same field list.
+> in the English block.
 >
 > **Язык.** Документ билингвальный: два блока ниже несут одно и то же содержание, а не пословный
-> перевод. Таблицы и блоки кода общие и живут в английском блоке — чтобы два экземпляра одного
-> списка полей не разъезжались.
+> перевод. Таблицы и блоки кода общие и живут в английском блоке.
 
 ---
 
@@ -21,17 +20,11 @@
 
 ## Purpose
 
-A multi-hop route `client → hop 1 → hop 2 → … → destination` can only be assembled by hand today:
-the exit node is given a `detour` onto the entry node, and the relation is baked into the nodes
-themselves. A node needed in two roles (on its own and as a link) has to be duplicated in the
-config; a group (`selector`, `urltest`) cannot be a link at all — a `detour` onto a group
-redirects one node, but gives no way to choose *what that node goes through*.
-
-The feature adds an outbound of type `chain`: an ordered list of positions, each of which is a
-node **or a group**. The chain is assembled at runtime from what the groups picked right now; node
-configs are not duplicated; switching a group at any position changes the path without a restart.
-From the outside a chain is an ordinary outbound — it can go into a route, into a `selector`, into
-a `urltest`.
+A multi-hop route `client → hop 1 → hop 2 → … → destination` by hand means giving every node a
+`detour` onto the one below, and a group (`selector`, `urltest`) cannot be "the hop below" for a
+whole set of nodes at once. An outbound of type `chain` is an ordered list of positions, each a
+node, an endpoint **or a group**; switching a group on any position changes the path without a
+restart. From the outside a chain is an ordinary outbound.
 
 ## Controlled parameters
 
@@ -40,154 +33,91 @@ a `urltest`.
   "type": "chain",
   "tag": "virtualisation",
   "outbounds": ["selector-in", "selector-mid", "selector-exit"],
-  "idle_timeout": "5m",
-  "strip_evasion": true,
-  "strip": { "multiplex.padding": false, "tls.utls": true },
-  "rewrite": { "wireguard": { "mtu": 1200 } }
+  "rewrite": { "wireguard": { "mtu": 1200 } },
+  "interrupt_exist_connections": false
 }
 ```
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
-| `outbounds` | list of tags, ≥ 2, **all distinct** | required | Chain positions **in packet order**: `[0]` is the first hop from the client (it touches the real network), the last one is the node whose address the destination sees. Any position may be a node, an endpoint or a group of any nesting. Repeating a tag is a start error — to use one node at several positions, give it a tag per position (see the rules below) |
-| `idle_timeout` | duration | `5m` | How long a runtime link instance may sit unused before it is removed; `0` — keep until stop |
-| `strip_evasion` | bool | `true` | Strip one-sided DPI tricks (catalog below) from links at positions ≥ 1 |
-| `strip` | map key → bool | `{}` | Patch over the catalog: `false` — keep, `true` — strip additionally. An unknown key is a start error |
-| `rewrite` | map node type → JSON patch | `{}` | JSON merge-patch over the config of a node of that type; applies to links (positions ≥ 1) |
+| `outbounds` | list of tags, ≥ 2, all distinct | required | Positions **in packet order**: `[0]` is the entry (it touches the real network), the last one is the node whose address the destination sees |
+| `rewrite` | map node type → JSON merge-patch | `{}` | Applied to every node a position ≥ 1 takes over; it cannot touch `detour` |
+| `interrupt_exist_connections` | bool | `false` | On a position toggle, also cut the user connections through the chain (selector semantics); the sockets the nodes keep through the hops are always cut |
 
-The position order is the one thing to remember: **not** "who goes through whom", as with
-`detour`, but "in what order the packet travels".
+`idle_timeout`, `strip_evasion` and `strip` of the old link model fail the load and say what
+replaced them. What the core does to a node under `detour` — the MTU alignment and the strip
+filters — lives in the root block `lx.detour` ([SPEC 165 §2.1](../../TASKS/165-CHAIN_DETOUR_REWRITE/SPEC.md)):
 
-### `strip` catalog
+```json
+"lx": { "detour": {
+  "mtu_align": "clamp",
+  "strip": { "filters": { "tls": { "fragment": true, "spoof": true, "kernel": true, "engine": true } } },
+  "except_outbounds": ["foreign-node"]
+} }
+```
 
-| Key | By default | What is removed | Why it is one-sided |
-|-----|------------|-----------------|---------------------|
-| `tls.fragment` | stripped | packet-level ClientHello fragmentation (`fragment`, `fragment_fallback_delay`) | the server never sees it; inside a tunnel it only adds latency and failure points. **`record_fragment` is not touched** — under `detour` it is switched on automatically as a path fix (see [HOTFIXES / 060](../004-HOTFIXES/FEATURE.md)) and is not subject to stripping |
-| `multiplex.padding` | stripped | multiplexer padding | requested by the client; a server that supports it accepts traffic without it just the same |
-| `xhttp.padding` | stripped | XHTTP padding — `x_padding_bytes` is pinned to the lower bound of the node's range (`100` when unset); placement and obfs mode are kept | any length inside the range is valid for the server. The server rejects a length outside its range with 400 and reads the padding from the configured placement, so the strip never goes below the lower bound and leaves `x_padding_obfs_mode` alone |
-| `tls.utls` | **not** stripped | ClientHello fingerprint imitation | not a source of failures; can be stripped via `strip`, except on nodes with `reality` (where it is mandatory — start error) |
+| `lx.detour` | `mtu_align` | `strip` |
+|-------------|-------------|---------|
+| absent / `true` | `clamp` | the whole catalog |
+| `false` | `off` | none — upstream behaviour |
+| object | as written, absent → `clamp` | as written, absent → the catalog; an object of `filters` replaces the catalog whole |
 
-The catalog deliberately **excludes** parameters that are contracts with the server: `flow`,
-`obfs`, `shadowtls`, `plugin`, `udp_over_tcp`, `ech`, transport paths and hosts. The chain never
-touches those.
-
-### Build
-
-Tag `with_lx_chain`; without it `type: chain` is rejected when the config is read, and the rest of
-the core behaves exactly like upstream. Exposing chain state to the client is part of
-[OBSERVABILITY](../006-OBSERVABILITY/FEATURE.md), behind its `with_lx_command` tag.
-
-## Inputs
-
-- The chain config and the configs of the nodes/groups named by the position tags (the chain reads
-  them without modifying the originals).
-- The current pick of every group at a position — whatever that group would choose for an ordinary
-  connection, with all of its logic (manual selection, health check, sticky, penalties, fallback).
-- Connections from the router (TCP/UDP) — as for any outbound.
-
-## Outputs
-
-- On the wire: a single nested connection — the transport of position 0 carries the transport of
-  position 1, which carries position 2, and so on to the destination. Each next hop is the payload
-  of the previous one.
-- Observability: the resolved path of a connection (which node at which position) in the tail of
-  `detourList`; chain state per position — the picked node, the link state (none / starting /
-  active / suspended / idle), live connections, effective MTU and what was stripped or rewritten;
-  counters for dials, per-position errors, link creations and removals.
-- Dial errors name the position and what they went through:
-  `chain[tag] #2 (warp-exit) via #1 (node-m): …`.
-
-## Data flow
+## How it works
 
 ```
-config ──► START
-   │  validation: ≥2 positions, tags exist, link types at positions ≥1 are
-   │  allowed (node with dial fields | direct | block | a group of those);
-   │  strip/rewrite apply to EVERY reachable node (dry run);
-   │  a cycle "group contains the chain" — rejected
-   │  warm-up: links of deterministic positions (nodes, selectors — not urltest)
-   ▼
-connection ──► POSITION n−1 (exit)
-   │  node ───────► its LINK (runtime instance "node through position n−2")
-   │  group ──────► the group picks by its own logic ──► LINK of the picked node
-   │  direct ─────► transparent: straight to position n−2 (the hop is "off")
-   │  block ──────► connection rejected
-   ▼  ... the link dials ITS OWN server through position i−1 ...
-POSITION 0 (entry) ──► the original as is: its dial fields, its network, no link
-   ▼
-the destination sees the exit node's address
-
-LINK = (position, node): created on first pick (or by warm-up), config = original
-   − strip + rewrite, then MTU lowered by the overhead of IP tunnels below it;
-   same tag as the original (so the group's history/penalties/sticky keep working);
-   lives while it has connections OR was picked within idle_timeout; a sleeping
-   WireGuard link of a chain obeys the ENERGY rules
-GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
+config load (lx pre-pass, before any node is created)
+   chain C = [P0, P1, …, Pn−1]
+   ├─ hops C#0 … C#n−1 appended as outbounds of type chain-hop
+   ├─ every node reached on Pi, i ≥ 1 (group members of any depth, not direct/block)
+   │    gets detour = C#(i−1); its own detour is overridden; rewrite by type applied
+   ├─ conflicts fail the load (node taken over twice, taken over and on an entry,
+   │    nested chain above position 0, node without detour support,
+   │    WireGuard with listen_port; a ring is upstream's circular dependency)
+   └─ then path-MTU alignment (lx.detour.mtu_align), then the sniff guard graph
+runtime
+   C ──► C#(n−1) ──► Pn−1 (node: dials itself, its detour is C#(n−2);
+                          group: picks by its own logic, the pick goes its detour)
+        C#i: position disabled → C#(i−1); P0 disabled → the kernel's direct dialer;
+             direct on Pi (i ≥ 1) → C#(i−1); block → refused
 ```
 
 ## Rules and guarantees
 
-- **Order = packet order.** `outbounds[0]` is the entry, the last one is the exit.
-- **Position 0 is never modified.** Its dial fields (`bind_interface`, `routing_mark`, …) apply;
-  neither `strip`, nor `rewrite`, nor the MTU adjustment touch it.
-- **Groups are not copied.** All selection logic stays with the original group: manual selection,
-  health check, sticky, penalties and fallback, `interrupt_exist_connections`. Switching a group
-  with that flag also cuts the chain's connections that went through it, including the tunnels of
-  links above — they come back up through the new pick.
-- **A link = the original minus the DPI garb, plus `rewrite`, with an aligned MTU / packet size.**
-  The order of transformations is fixed: `strip` → `rewrite` → MTU. The MTU rule is the shared
-  mechanism of [SPEC 120](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) (`lx.mtu_align`, capacity model
-  amended by [SPEC 144](../../TASKS/144-MTU_ALIGN_STREAM_BOUNDARY/SPEC.md); the line starts at
-  [SPEC 028](../../TASKS/028-NESTED_TUNNEL_UDP_FRAGMENT/SPEC.md)), the same one
-  that acts under a plain `detour`: `mtu` in a node's config means "as a standalone node"; the chain
-  only **lowers** it by the exact overhead of the IP tunnels below the link (WireGuard inside an IP
-  tunnel −60/−80 by the server's address family, MASQUE −79/−99); QUIC links (hysteria2, tuic,
-  hysteria) get `initial_packet_size` that fits the hop below plus `disable_path_mtu_discovery:
-  true`; over stream and datagram proxies nothing changes. The mode (`clamp` default, `fill`,
-  `off`) and `except` apply to links as they do to `detour`. Under a group the worst case over
-  all its members is taken — so a link is not rebuilt when a group below switches.
-- **Transparent `direct`.** At a position ≥ 1 `direct` means "no hop here": the path shortens by
-  that position. `direct` as a member of a selector is a runtime off-switch for the position.
-  `block` is terminal at any position.
-- **Lazy creation, deterministic warm-up.** Links are created on the first pick of a node; at start
-  only the links of positions whose pick is known are raised (nodes, selectors of any nesting
-  without a urltest on the path). A warm-up failure is a start failure.
-- **Removal by idleness, not by switching.** A link is removed only when it has zero live
-  connections **and** was not picked for longer than `idle_timeout`; a live stream through the old
-  pick keeps its link. A sleeping tunnel of a link is an ENERGY state, not a removal.
-- **One node at several positions needs one tag per position.** A repeated tag is
-  rejected at start (`duplicate outbound in chain`) — in a list read as a path a repeat is
-  almost always a typo. The deliberate case (a "sandwich" such as `WARP → someone else's
-  node → WARP`, where the outer layers hide the middle one from your address and the
-  destination from the middle one) is expressed by declaring the node twice under different
-  tags; the two declarations may carry identical credentials. Each position then gets its
-  own link with its own detour, because a link is keyed by (position, node).
-- **Fail-fast at start:** an unknown `strip` key; a `rewrite` that does not decode into the config
-  of at least one reachable node; `tls.utls: true` on a node with `reality`; a disallowed type at a
-  position ≥ 1; a chain tag colliding with user tags; a cycle through groups.
-- **Internal tags.** The chain reserves tags of the form `<tag>#<i>`; they are addressable for
-  latency probing per path prefix, but are not part of the outbound lists.
+- **One instance, one path.** A node has one instance; a route straight to a taken-over node goes
+  the chain's path. A group on a position checks the very instances that carry its traffic: a
+  node dead on the chain's path leaves the pool even if it is alive on its own `detour`
+  (LxBox#233).
+- **Position 0 is not rewritten**: its nodes go their own way.
+- **Groups are not rewritten**, only their leaves; all selection logic stays with the group.
+- **`direct` on a position ≥ 1** — a position or a group pick — passes the dial to the hop below:
+  no traffic leaves past the positions below.
+- **Every change is recorded.** `GetOutboundConfig(tag)` returns `original` (as written),
+  `effective` (after the pre-pass) and `changes` (`chain`, `chain_rewrite`, `lx.detour`, `mtu_align`, in that
+  order); applied to `original` they give `effective`. `GetEffectiveConfig` returns the whole
+  effective config, hops included.
+- **MTU.** The alignment of [SPEC 120](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) /
+  [144](../../TASKS/144-MTU_ALIGN_STREAM_BOUNDARY/SPEC.md) applies to taken-over nodes like to any
+  `detour`; a hop carries `min(position, hop below)`, so a node above fits whether the position
+  is on, off or picks `direct`.
+- **Strip filters** act on any node with `detour`, per handshake, only when its conn is not a
+  kernel socket: `tls.fragment` (the split sleeps 500 ms per piece inside a tunnel;
+  `record_fragment` stays), `tls.spoof`, `tls.kernel` (kTLS), `tls.engine` (`apple` → `go`).
+  The decision of `lx.sniff_guard` is stronger than the filter.
+- **Runtime toggle** of any position (`SetChainPositionEnabled`), persisted in the cache file.
+- **Hop tags** `<chain>#<i>` are a public contract; UIs hide the `chain-hop` type.
 
 ## Boundaries
 
-- **A group at a position ≥ 1 ranks its nodes by direct measurements**, not "through the hops
-  below". Per-layer path latency comes from probing the internal tags `<tag>#0`, `#1`, …. Passive
-  feedback and penalties from the chain's dials are attributed to the node's tag — shared between
-  its direct and its chained role.
-- **UDP capability of the hop below is not checked statically**: a tunnel at position i above a
-  node without UDP at position i−1 produces a dial error naming both positions, not a start error.
-- **Sticky urltest at a position ≥ 1** is keyed by the address of the server of the node above it,
-  not by the final destination.
-- **A nested chain** is allowed only at position 0.
-- **DPI between hops** (`["domestic-relay", "foreign-node"]`) needs
-  `"strip": {"tls.fragment": false}` — the default assumes DPI between the client and the entry.
-- **A tunnel over a proxy** (vless, trojan, hysteria2, tuic, ss, …) keeps the configured `mtu` —
-  a proxy delivers the link's packet whole, as a stream or by its own fragmentation, so whatever
-  lies under the proxy does not limit the link (SPEC 144); exactly as with a plain `detour`.
-- **The first dial to a new pick** pays for creating the link synchronously (for WireGuard — stack
-  start plus handshake).
-- Server side, per-position overrides outside `rewrite`-by-type, and limits on the number of links
-  are deliberately not done.
+- A chain has no rings: a ring is a plain detour cycle after the rewrite, and upstream's
+  start-order check fails the load (`circular outbound dependency`, hop tags included);
+  `[A, Dir{A, X}]` is one. The core itself checks only rewrite conflicts — a node or a group in
+  two chains or on two positions >= 1 of one chain. Clients build chains without either.
+- A taken-over node cannot carry a fixed local port: the load fails (ALGORITHM К5). Socket
+  options upstream ignores under any `detour` (`bind_interface`, `routing_mark`,
+  `tcp_fast_open`, …) do nothing here too; `GetOutboundConfig` shows them as `lx.detour` changes
+  (Д1).
+- UDP capability of the hop below is not checked statically: a dial error names the positions.
+- A nested chain is allowed only on position 0.
 
 </details>
 
@@ -196,150 +126,70 @@ GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
 
 ## Назначение
 
-Многохоповый маршрут `клиент → хоп 1 → хоп 2 → … → цель` сегодня собирается только вручную:
-узлу-выходу прописывается `detour` на узел-вход, и связь зашивается в сами узлы. Узел, нужный
-в двух ролях (сам по себе и как звено), приходится дублировать в конфиге; группа (`selector`,
-`urltest`) звеном быть не может вовсе — `detour` на группу переадресует один узел, но не даёт
-выбирать, *через что* этот узел идёт.
-
-Фича добавляет outbound типа `chain`: упорядоченный список позиций, каждая из которых — узел
-**или группа**. Цепочка собирается в рантайме из того, что группы выбрали прямо сейчас; конфиг
-узлов не дублируется; переключение группы на любой позиции меняет путь без перезапуска. Снаружи
-цепочка — обычный outbound: её можно положить в маршрут, в `selector`, в `urltest`.
+Многохоповый маршрут `клиент → хоп 1 → хоп 2 → … → цель` вручную — это `detour` каждому узлу на
+узел ниже, и группа (`selector`, `urltest`) не может быть «хопом ниже» сразу для набора узлов.
+Outbound типа `chain` — упорядоченный список позиций, каждая из которых узел, endpoint **или
+группа**; переключение группы на любой позиции меняет путь без перезапуска. Снаружи цепочка —
+обычный outbound.
 
 ## Контролируемые параметры
 
-Поля и их значения — в таблице английского блока (`outbounds`, `idle_timeout`, `strip_evasion`,
-`strip`, `rewrite`), пример конфига — там же.
+Поля, пример и таблица `lx.detour` — в английском блоке.
 
-- `outbounds` — позиции **в порядке пакета**: `[0]` — первый хоп от клиента (касается реальной
-  сети), последний — узел, чей адрес видит цель. Любая позиция — узел, endpoint или группа любой
-  вложенности.
-- `idle_timeout` — сколько рантайм-звено может простаивать до удаления; `0` — жить до остановки.
-- `strip_evasion` — снимать у звеньев на позициях ≥ 1 односторонние DPI-приёмы (каталог ниже).
-- `strip` — патч к каталогу: `false` — не снимать, `true` — снимать дополнительно; неизвестный
-  ключ — ошибка старта.
-- `rewrite` — JSON merge-patch поверх конфига узла данного типа; действует на звеньях (позиции ≥ 1).
+- `outbounds` — позиции **в порядке пакета**: `[0]` — вход, касается реальной сети, последний —
+  узел, чей адрес видит цель.
+- `rewrite` — JSON merge-patch по типу узла для всех узлов, которые перехватывают позиции ≥ 1;
+  `detour` им менять нельзя.
+- `interrupt_exist_connections` — при переключении позиции рвать и пользовательские соединения
+  через цепочку; сокеты, которые узлы держат через хопы, рвутся всегда.
 
-Порядок позиций — единственное, что нужно запомнить: **не** «кто через кого», как у `detour`,
-а «в каком порядке идёт пакет».
+`idle_timeout`, `strip_evasion` и `strip` прежней модели звеньев — ошибки загрузки с указанием,
+что их заменило. Что ядро делает с узлом под `detour` — выравнивание MTU и фильтры `strip` —
+живёт в корневом блоке `lx.detour`: без ключа и `true` — `clamp` и весь каталог, `false` —
+поведение апстрима, объект — что написано.
 
-### Каталог `strip`
+## Как работает
 
-- `tls.fragment` — снимается по умолчанию: пакетная фрагментация ClientHello (`fragment`,
-  `fragment_fallback_delay`). Сервер её не видит; внутри туннеля она даёт лишь задержки и точки
-  отказа. **`record_fragment` не трогается** — под `detour` он включается автоматически как защита
-  пути (см. [HOTFIXES / 060](../004-HOTFIXES/FEATURE.md)) и снятию не подлежит.
-- `multiplex.padding` — снимается: паддинг запрашивается клиентом, сервер одинаково принимает
-  трафик и без него.
-- `xhttp.padding` — снимается: `x_padding_bytes` фиксируется на нижней границе диапазона узла
-  (`100`, если диапазон не задан); размещение и обфус-режим остаются как в конфиге. Сервер
-  принимает любую длину внутри своего диапазона, длину вне его отклоняет ответом 400, а паддинг
-  читает из настроенного размещения, поэтому ниже нижней границы strip не опускается и
-  `x_padding_obfs_mode` не трогает.
-- `tls.utls` — **не** снимается по умолчанию: имитация отпечатка ClientHello не источник отказов.
-  Снять можно через `strip`, кроме узлов с `reality` (там utls обязателен — ошибка старта).
-
-В каталог намеренно **не входят** параметры-контракты с сервером: `flow`, `obfs`, `shadowtls`,
-`plugin`, `udp_over_tcp`, `ech`, пути и хосты транспортов. Их цепочка не трогает никогда.
-
-### Сборка
-
-Тег `with_lx_chain`; без него `type: chain` отвергается на чтении конфига, остальное ядро ведёт
-себя в точности как upstream. Выдача состояния цепочки клиенту — часть
-[OBSERVABILITY](../006-OBSERVABILITY/FEATURE.md), за её тегом `with_lx_command`.
-
-## Входы
-
-- Конфиг цепочки и конфиги узлов/групп по тегам позиций (цепочка читает их, не меняя оригиналов).
-- Текущий выбор каждой группы на позиции — то, что группа выбрала бы для обычного соединения, со
-  всей её логикой (ручной выбор, health-check, sticky, штрафы, fallback).
-- Соединения из маршрутизатора (TCP/UDP) — как у любого outbound.
-
-## Выходы
-
-- Провод: одно вложенное соединение — транспорт позиции 0 несёт транспорт позиции 1, тот —
-  позиции 2, и так до цели. Каждый следующий хоп — полезная нагрузка предыдущего.
-- Наблюдаемость: разрешённый путь соединения (какой узел на какой позиции) в хвосте `detourList`;
-  состояние цепочки по позициям — выбранный узел, состояние звена (нет / поднимается / активно /
-  уснуло / простаивает), живые соединения, эффективный MTU и что снято/переписано; счётчики
-  дозвонов, ошибок по позициям, созданий и удалений звеньев.
-- Ошибки дозвона — с указанием позиции и пары «через что»:
-  `chain[tag] #2 (warp-exit) via #1 (node-m): …`.
-
-## Data flow
-
-Схема — в английском блоке выше (диаграмма общая). Ключевое:
-
-- **Звено** = пара (позиция, узел): создаётся при первом выборе или прогревом; конфиг = оригинал
-  − `strip` + `rewrite`, затем MTU понижен на накладные IP-туннелей под ним; тег совпадает с
-  оригиналом (поэтому история/штрафы/sticky группы продолжают работать); живёт, пока есть
-  соединения ИЛИ его выбирали в пределах `idle_timeout`; уснувшее WG-звено подчиняется правилам
-  ENERGY.
-- **Группы не копируются никогда**; звенья существуют только у узлов на позициях ≥ 1.
-- Позиция 0 — оригинал как есть: его dial-поля, его сеть, без звена.
+При загрузке конфига, до создания узлов, цепочка добавляет хопы `<цепочка>#<i>` (тип
+`chain-hop`) и каждому узлу, до которого доходит позиция `i ≥ 1` (члены групп любой вложенности,
+кроме `direct` и `block`), ставит `detour` на хоп позиции ниже; собственный `detour` узла
+перекрывается, `rewrite` применяется по типу. Конфликты — ошибки загрузки. Затем идут выравнивание
+MTU и граф носителей `sniff_guard`. Во время работы цепочка дозванивается через верхний хоп; хоп
+идёт в свою позицию, узел позиции — своим `detour` в хоп ниже. Выключенная позиция пропускается,
+выключенный вход — прямой dialer ядра, `direct` на позиции ≥ 1 — хоп ниже, `block` — отказ.
 
 ## Правила и гарантии
 
-- **Порядок = порядок пакета.** `outbounds[0]` — вход, последний — выход.
-- **Позиция 0 не изменяется.** Её dial-поля (`bind_interface`, `routing_mark`, …) действуют; ни
-  `strip`, ни `rewrite`, ни подгонка MTU её не касаются.
-- **Группы не копируются.** Вся логика выбора — оригинальной группы: ручной выбор, health-check,
-  sticky, штрафы и fallback, `interrupt_exist_connections`. Переключение группы с этим флагом рвёт
-  и соединения цепочки, прошедшие через неё, включая туннели звеньев выше — они переподнимаются
-  через новый выбор.
-- **Звено = оригинал минус DPI-обвес плюс `rewrite`, с выровненным MTU / размером пакета.**
-  Порядок преобразований фиксирован: `strip` → `rewrite` → MTU. Правило MTU — общий механизм
-  [SPEC 120](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) (`lx.mtu_align`, модель ёмкости поправлена
-  [SPEC 144](../../TASKS/144-MTU_ALIGN_STREAM_BOUNDARY/SPEC.md); начало линии —
-  [SPEC 028](../../TASKS/028-NESTED_TUNNEL_UDP_FRAGMENT/SPEC.md)), тот же, что действует под
-  обычным `detour`: `mtu` в конфиге узла трактуется как «MTU как самостоятельного»; цепочка только
-  **понижает** его на точные накладные IP-туннелей под звеном (WireGuard внутри IP-туннеля −60/−80
-  по семейству адреса сервера, MASQUE −79/−99); QUIC-звенья (hysteria2, tuic, hysteria) получают
-  `initial_packet_size` под ёмкость хопа ниже и `disable_path_mtu_discovery: true`; над потоковыми
-  и датаграммными прокси ничего не меняется. Режим (`clamp` по умолчанию, `fill`, `off`) и
-  `except` действуют на звенья так же, как на `detour`. Под группой берётся худший случай по всем
-  её участникам — звено не пересоздаётся при переключении группы ниже.
-- **Прозрачный `direct`.** На позиции ≥ 1 `direct` — «хопа нет»: путь укорачивается на эту
-  позицию. `direct` участником селектора = выключатель позиции на лету. `block` — терминален на
-  любой позиции.
-- **Ленивое создание, детерминированный прогрев.** Звенья создаются при первом выборе узла; на
-  старте поднимаются только звенья позиций, чей выбор известен (узлы, селекторы любой вложенности
-  без urltest на пути). Ошибка прогрева = ошибка старта.
-- **Удаление по простою, не по переключению.** Звено удаляется только при нуле живых соединений
-  **и** отсутствии выбора дольше `idle_timeout`; живой поток через старый выбор держит звено.
-  Уснувший туннель звена — состояние ENERGY, не удаление.
-- **Один узел на нескольких позициях — по тегу на позицию.** Повтор тега отвергается на
-  старте (`duplicate outbound in chain`): в списке, который читается как путь, повтор почти
-  всегда описка. Осознанный случай — «сэндвич» вида `WARP → чужой узел → WARP`, где внешние
-  слои прячут середину от вашего адреса, а цель — от середины, — выражается вторым
-  объявлением узла под другим тегом; учётные данные в обоих объявлениях могут совпадать.
-  Каждая позиция получит своё звено со своим detour, потому что звено ключуется парой
-  (позиция, узел).
-- **Fail-fast на старте:** неизвестный ключ `strip`; `rewrite`, который не декодируется в конфиг
-  хотя бы одного достижимого узла; `tls.utls: true` при узле с `reality`; недопустимый тип на
-  позиции ≥ 1; коллизия тега цепочки с пользовательскими тегами; цикл через группы.
-- **Внутренние теги.** Цепочка резервирует теги вида `<tag>#<i>`; они адресуемы для проверки
-  задержки по префиксу пути, но не входят в списки outbound'ов.
+- **Один экземпляр, один путь.** Прямой маршрут на перехваченный узел идёт путём цепочки.
+  Группа на позиции проверяет те экземпляры, что несут трафик: узел, мёртвый путём цепочки,
+  уходит из пула, даже если жив своим `detour` (LxBox#233).
+- **Позиция 0 не перезаписывается**, **группы не перезаписываются** — меняются только листья.
+- **`direct` на позиции ≥ 1** — позицией или выбором группы — передаёт дозвон хопу ниже: мимо
+  нижних позиций трафик не уходит.
+- **Каждое изменение записано.** `GetOutboundConfig(tag)` отдаёт `original`, `effective` и
+  `changes` (`chain`, `chain_rewrite`, `lx.detour`, `mtu_align`); применённые к `original`, они дают
+  `effective`. `GetEffectiveConfig` — весь итоговый конфиг вместе с хопами.
+- **MTU** — общее выравнивание SPEC 120/144; ёмкость хопа — `min(позиция, хоп ниже)`, чтобы узел
+  над ним работал при включённой, выключенной позиции и при выбранном `direct`.
+- **Фильтры `strip`** — на любом узле с `detour`, на каждом рукопожатии, только без настоящего
+  сокета ядра: разрез ClientHello, `tls.spoof`, kTLS, движок `apple` → `go`. Решение
+  `sniff_guard` сильнее фильтра.
+- **Выключение позиции на лету** (`SetChainPositionEnabled`), с сохранением в cache-file.
+- **Теги хопов** `<цепочка>#<i>` — публичный контракт; UI скрывает тип `chain-hop`.
 
 ## Границы
 
-- **Группа на позиции ≥ 1 ранжирует по прямым замерам** своих узлов, не «через нижние хопы».
-  Задержку пути по слоям даёт проверка внутренних тегов `<tag>#0`, `#1`, …. Пассивный фидбек и
-  штрафы от дозвонов цепочки приписываются тегу узла — общему для прямой и цепочечной роли.
-- **UDP-способность нижнего хопа не проверяется статически**: туннель на позиции i над узлом без
-  UDP на позиции i−1 даёт ошибку дозвона с указанием позиций, не ошибку старта.
-- **Sticky urltest на позиции ≥ 1** ключуется адресом сервера узла над ней, не конечной целью.
-- **Вложенная цепочка** допустима только на позиции 0.
-- **DPI между хопами** (`["domestic-relay", "foreign-node"]`) требует
-  `"strip": {"tls.fragment": false}` — дефолт рассчитан на DPI между клиентом и входом.
-- **Туннель над прокси** (vless, trojan, hysteria2, tuic, ss, …) сохраняет `mtu` конфига —
-  прокси доставляет пакет звена целиком, потоком или своей нарезкой, и то, что лежит под
-  прокси, звено не ограничивает (SPEC 144); как и при обычном `detour`.
-- **Первый дозвон к новому выбору** платит создание звена синхронно (для WireGuard — старт стека
-  и хендшейк).
-- Серверная сторона, per-позиционные переопределения вне `rewrite`-по-типу, лимиты числа звеньев —
-  намеренно не делаем.
+- Колец в цепочке нет: после перезаписи кольцо — обычный цикл `detour`, и апстримная
+  проверка порядка запуска валит загрузку (`circular outbound dependency`, с тегами хопов);
+  `[A, Dir{A, X}]` — кольцо. Ядро само проверяет только конфликт перезаписи — узел или группа
+  в двух цепочках или на двух позициях ≥ 1 одной цепочки. Клиенты собирают цепочки без того
+  и другого.
+- У перехваченного узла не может быть фиксированного локального порта: загрузка падает
+  (ALGORITHM К5). Опции сокета, которые апстрим под любым `detour` игнорирует
+  (`bind_interface`, `routing_mark`, `tcp_fast_open`, …), не действуют и здесь;
+  `GetOutboundConfig` показывает их записями `lx.detour` (Д1).
+- UDP-способность хопа ниже статически не проверяется: ошибка дозвона называет позиции.
+- Вложенная цепочка — только на позиции 0.
 
 </details>
 
@@ -349,7 +199,8 @@ GROUPS ARE NEVER COPIED; links exist only for nodes at positions ≥ 1
 
 | Task / Задача | What it delivers / Что даёт |
 |---------------|-----------------------------|
-| [073](../../TASKS/073-CHAIN_OUTBOUND/SPEC.md) | Outbound `chain`: group positions, runtime links, transparent `direct`, warm-up/idleness, MTU, `strip`/`rewrite`, observability / Outbound `chain`: позиции-группы, рантайм-звенья, прозрачный `direct`, прогрев/простой, MTU, `strip`/`rewrite`, наблюдаемость |
-| [075](../../TASKS/075-CHAIN_POSITION_TOGGLE/SPEC.md) | Runtime enable/disable of any position over gRPC (`SetChainPositionEnabled`), cache-file persistence, selector-style connection interrupt, effective link config (`GetChainCloneConfig`), `disabled` in diagnostics / Runtime вкл/выкл любой позиции по gRPC, персистентность в cache-file, разрыв соединений по селекторной модели, эффективный конфиг звена, `disabled` в диагностике |
-| [120](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) | One MTU/packet-size alignment for `chain` links **and** plain `detour`: capacity of the node below → `mtu` of tunnels, `initial_packet_size` (+ PMTUD off) of QUIC proxies; `lx.mtu_align` = `off`/`fill`/`clamp` (default) with `except`; masque outer QUIC starts at `mtu + 51` / Единое выравнивание MTU и размера пакета для звеньев `chain` **и** обычного `detour`: ёмкость узла снизу → `mtu` туннелей, `initial_packet_size` (+ PMTUD off) QUIC-прокси; `lx.mtu_align` = `off`/`fill`/`clamp` (дефолт) с `except`; внешний QUIC masque стартует с `mtu + 51` |
-| [144](../../TASKS/144-MTU_ALIGN_STREAM_BOUNDARY/SPEC.md) | Alignment fixes: only IP tunnels and groups carry a capacity upwards, any other node is a boundary (a proxy delivers the packet whole; no per-protocol table); IP tunnels with IPv6 inside never go below 1280; AWG `s4` counts in the overhead / Поправки выравнивания: ёмкость наверх несут только IP-туннели и группы, любой другой узел — граница (прокси доставляет пакет целиком; таблицы по протоколам нет); IP-туннели с IPv6 внутри не ниже 1280; `s4` AWG в накладных |
+| [073](../../TASKS/073-CHAIN_OUTBOUND/SPEC.md) | First model: runtime link instances per position; replaced by 165, see its HISTORY / Первая модель: рантайм-звенья по позициям; заменена задачей 165, см. её HISTORY |
+| [075](../../TASKS/075-CHAIN_POSITION_TOGGLE/SPEC.md) | Runtime enable/disable of any position, cache-file persistence, selector-style interrupt / Вкл/выкл позиции на лету, сохранение в cache-file, разрыв по селекторной модели |
+| [120](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) | Path-MTU alignment under `detour` (now `lx.detour.mtu_align`) / Выравнивание MTU под `detour` (теперь `lx.detour.mtu_align`) |
+| [144](../../TASKS/144-MTU_ALIGN_STREAM_BOUNDARY/SPEC.md) | Only IP tunnels and groups carry a capacity upwards; IPv6 floor 1280; AWG `s4` / Ёмкость наверх несут только IP-туннели и группы; пол IPv6 1280; `s4` AWG |
+| [165](../../TASKS/165-CHAIN_DETOUR_REWRITE/SPEC.md) | Chain as a rewrite of `detour`, `lx.detour` (mtu_align + strip filters), `GetEffectiveConfig` / `GetOutboundConfig` / Цепочка как перезапись `detour`, `lx.detour`, ручки итогового конфига |
