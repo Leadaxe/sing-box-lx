@@ -26,6 +26,7 @@ type upstreamConn struct {
 	destination M.Socksaddr
 	done        chan struct{}
 	err         error
+	serverSide  net.Conn // lx: SPEC 162 — the routed end of the pipe, see closeHard
 }
 
 func (c *upstreamConn) closed() bool {
@@ -89,11 +90,15 @@ func (c *serverConn) serveForward(ctx context.Context, request *http.Request, so
 	}
 
 	upstream := c.openUpstream(ctx, source, destination)
+	watch := newForwardWatch(c.conn, c.reader.Reader, upstream) // lx: SPEC 162
+	defer watch.stop()                                          // lx: SPEC 162
 	writeDone := make(chan error, 1)
 	go func() {
 		err := request.Write(upstream)
 		if err != nil {
 			upstream.Close()
+		} else {
+			watch.start() // lx: SPEC 162 — the request is written, the client is not read until the response
 		}
 		writeDone <- err
 	}()
@@ -102,6 +107,11 @@ func (c *serverConn) serveForward(ctx context.Context, request *http.Request, so
 	for {
 		var err error
 		response, err = upstream.readResponse(request)
+		if err != nil && watch.clientGone() { // lx: SPEC 162 — no 502 into a closed socket
+			c.closeUpstream()
+			c.finishRequestWrite(writeDone)
+			return requestClose, net.ErrClosed
+		}
 		if err != nil {
 			c.closeUpstream()
 			writeErr := c.finishRequestWrite(writeDone)
@@ -135,6 +145,7 @@ func (c *serverConn) serveForward(ctx context.Context, request *http.Request, so
 			c.finishRequestWrite(writeDone)
 			return requestClose, E.New("unexpected 101 response")
 		}
+		watch.stop() // lx: SPEC 162 — after 101 the relay reads the client
 		return c.relayUpgrade(ctx, response, writeDone)
 	}
 

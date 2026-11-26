@@ -9,12 +9,12 @@
 
 Реализация (после перехода на 1.15, ветка `lx-1.15`):
 
-- [ ] Сверить номера строк `forward.go`, `server_h2.go` с текущим `upstream/testing`.
-- [ ] Тест «GET к молчащему узлу» — подтвердить красный.
-- [ ] `transport/http/forward_watch_lx.go` и вставки `// lx: SPEC 162`.
-- [ ] Остальные тесты из PLAN под `-race`; пакет в lx-ci.
+- [x] Сверить номера строк `forward.go`, `server_h2.go` с текущим `upstream/testing` (`3e6a65787`).
+- [x] Тест «GET к молчащему узлу» — красный без сторожа, зелёный с ним.
+- [x] `transport/http/forward_watch_lx.go` и вставки `// lx: SPEC 162`.
+- [x] Тесты под `-race`: уход клиента, keep-alive, pipelining, соединение без дедлайнов; пакет в lx-ci. Не написаны: POST 1 МБ, Upgrade до 101, клиент по TLS.
 - [ ] Решить с владельцем: жёсткий разрыв трубы и в HTTP/2 / HTTP/3.
 - [ ] Стенд на loopback: `mixed` + `direct` + молчащий сервер.
-- [ ] Сборка с `LX_TAGS` и без тегов.
+- [x] Сборка с `LX_TAGS` и без тегов.
 - [ ] Реестр HOTFIXES, Roadmap, changelog, IMPLEMENTATION_REPORT.
 - [ ] Ответ в issue #84 со ссылкой на коммит.

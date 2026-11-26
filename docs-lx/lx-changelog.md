@@ -66,6 +66,10 @@ required for stable tags); this changelog section is the fallback used for pre-r
 
 #### `lx-1.15` после v1.15.0-lx.1-rc.1 (не выпущено)
 
+- 🐛 **HTTP-прокси замечает уход клиента при обычном `http://`-запросе** ([SPEC 162](../SPECS/TASKS/162-HTTP_FORWARD_CLIENT_GONE/SPEC.md),
+  [issue #84](https://github.com/Leadaxe/sing-box-lx/issues/84)). Пока прокси ждёт ответа сайта, он в
+  фоне следит за сокетом клиента; если клиент ушёл, соединение через узел закрывается целиком, без
+  ответа 502 и без ERROR в логе.
 - 📌 **Синк `upstream/testing` `3e6a65787`**: Go 1.26 (`go.version` go1.26.11), quic-go 0.66, tailscale
   1.106.1, форк `wireguard-go` на `dev` апстрима `5825d80` (slab-буферы, малые буферы для пакетов,
   датаплейн по очередям). Нога Windows 7 в релизе собирается Go 1.27.4 по скрипту апстрима.

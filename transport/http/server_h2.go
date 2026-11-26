@@ -267,6 +267,7 @@ func newUpstreamConn(ctx context.Context, handler Handler, source M.Socksaddr, d
 		source:      source,
 		destination: destination,
 		done:        make(chan struct{}),
+		serverSide:  serverSide, // lx: SPEC 162
 	}
 	go handler.NewConnectionEx(ctx, serverSide, source, destination, N.OnceClose(func(it error) {
 		upstream.err = it
