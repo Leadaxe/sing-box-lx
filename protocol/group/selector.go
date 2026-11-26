@@ -163,11 +163,11 @@ func (s *Selector) SelectOutbound(tag string) bool {
 func (s *Selector) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	// lx:begin chain
 	// SPEC 165: носитель соединения (SPEC 060) и выбранный direct под хопом цепочки.
-	selected, err := adapter.ResolveChainLeaf(ctx, s.selected.Load())
+	leafCtx, selected, err := adapter.ResolveChainLeaf(ctx, s.selected.Load())
 	if err != nil {
 		return nil, err
 	}
-	conn, err := selected.DialContext(ctx, network, destination)
+	conn, err := selected.DialContext(leafCtx, network, destination)
 	// lx:end chain
 	if err != nil {
 		return nil, err
@@ -177,11 +177,11 @@ func (s *Selector) DialContext(ctx context.Context, network string, destination 
 
 func (s *Selector) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	// lx:begin chain
-	selected, err := adapter.ResolveChainLeaf(ctx, s.selected.Load())
+	leafCtx, selected, err := adapter.ResolveChainLeaf(ctx, s.selected.Load())
 	if err != nil {
 		return nil, err
 	}
-	conn, err := selected.ListenPacket(ctx, destination)
+	conn, err := selected.ListenPacket(leafCtx, destination)
 	// lx:end chain
 	if err != nil {
 		return nil, err

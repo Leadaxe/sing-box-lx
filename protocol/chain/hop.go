@@ -81,11 +81,12 @@ func (h *Hop) doResolve() error {
 	if err := chain.resolve(); err != nil {
 		return E.Cause(err, "chain ", chain.Tag())
 	}
+	state := chain.state.Load()
 	h.chain = chain
-	h.target = chain.targets[h.options.Position]
+	h.target = state.targets[h.options.Position]
 	_, h.isGroup = h.target.(adapter.OutboundGroup)
 	if h.options.Position > 0 {
-		h.below = chain.hops[h.options.Position-1]
+		h.below = state.hops[h.options.Position-1]
 	}
 	return nil
 }
@@ -103,9 +104,13 @@ func (h *Hop) dialTarget(ctx context.Context) (context.Context, adapter.Outbound
 	if index > 0 && h.target.Type() == C.TypeDirect {
 		return ctx, h.below // Х3
 	}
-	if h.below != nil {
-		ctx = adapter.ContextWithChainDirect(ctx, h.below) // Х8
+	if h.isGroup && h.below != nil {
+		// Х8: a direct the group picks goes to the hop below; the hook
+		// clears the mark once a node is picked.
+		ctx = adapter.ContextWithChainDirect(ctx, h.below)
 	} else {
+		// A node dials as itself: its own dials (DNS of its server) are not
+		// the chain's.
 		ctx = adapter.ContextWithChainDirect(ctx, nil)
 	}
 	if !h.isGroup {

@@ -125,11 +125,11 @@ func (s *URLTest) pickLx(ctx context.Context, network string, destination M.Sock
 // returns the context of the open: a round_robin open in flight is tracked and the
 // dead verdict cancels it (SPEC 138). Only the open gets that context.
 func (s *URLTest) dialStartLx(ctx context.Context, outbound adapter.Outbound, picked *rrPick) (adapter.Outbound, context.Context, error) {
-	leaf, err := adapter.ResolveChainLeaf(ctx, outbound)
+	leafCtx, leaf, err := adapter.ResolveChainLeaf(ctx, outbound)
 	if err != nil {
 		return nil, nil, err
 	}
-	return leaf, s.rrDialStart(ctx, leaf, picked), nil
+	return leaf, s.rrDialStart(leafCtx, leaf, picked), nil
 }
 
 // dialedLx takes a dial that opened: in least_test it is the proof of life of the

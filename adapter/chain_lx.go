@@ -23,20 +23,26 @@ func ContextWithChainDirect(ctx context.Context, below Outbound) context.Context
 }
 
 // ResolveChainLeaf — хук в точках, где группа дозванивается до выбранного
-// участника. Записывает носителя соединения (SPEC 060, ALGORITHM Х7) и,
-// если дозвон идёт через хоп позиции ≥ 1, подменяет выбранный `direct` хопом
-// ниже (Х8). Других подмен нет: выбранный узел идёт сам, своим detour.
-func ResolveChainLeaf(ctx context.Context, picked Outbound) (Outbound, error) {
+// участника; дозвон идёт возвращённым контекстом. Записывает носителя
+// соединения (SPEC 060, ALGORITHM Х7) и, если дозвон идёт через хоп позиции
+// ≥ 1, подменяет выбранный `direct` хопом ниже (Х8). Других подмен нет:
+// выбранный узел идёт сам, своим detour, и без метки — его собственные
+// дозвоны (DNS своего сервера) к цепочке не относятся. Метка остаётся только
+// для вложенной группы.
+func ResolveChainLeaf(ctx context.Context, picked Outbound) (context.Context, Outbound, error) {
 	if picked == nil {
-		return picked, nil
+		return ctx, picked, nil
 	}
 	if picked.Type() == chainTypeDirect {
 		if below, _ := ctx.Value(chainDirectKey{}).(Outbound); below != nil {
-			return below, nil
+			return ctx, below, nil
 		}
 	}
 	RecordCarrier(ctx, picked) // lx: SPEC 060 — the member the group picked carries the dial
-	return picked, nil
+	if _, isGroup := picked.(OutboundGroup); isGroup {
+		return ctx, picked, nil
+	}
+	return ContextWithChainDirect(ctx, nil), picked, nil
 }
 
 // The type names the seams compare with; constant imports adapter-free

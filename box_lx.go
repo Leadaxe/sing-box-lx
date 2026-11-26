@@ -2,6 +2,8 @@ package box
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -42,6 +44,7 @@ func applyLXOptions(ctx context.Context, options *option.Options, logger log.Log
 	if changes == nil {
 		changes = make(map[string][]option.LXConfigChange)
 	}
+	warnChainGroups(options, logger)
 	if err := checkDetourExcept(options, resolved.Detour); err != nil {
 		return ctx, err
 	}
@@ -222,4 +225,27 @@ func copyAlignable(options *option.Options) {
 	}
 	options.Outbounds = outbounds
 	options.Endpoints = endpoints
+}
+
+// warnChainGroups writes one line naming the groups on chain positions >= 1:
+// all their traffic goes through the chain, routes straight to them included
+// (SPEC 165 Л3, Т5).
+func warnChainGroups(options *option.Options, logger log.Logger) {
+	groups := make(map[string]bool)
+	for _, outbound := range options.Outbounds {
+		switch outbound.Options.(type) {
+		case *option.SelectorOutboundOptions, *option.URLTestOutboundOptions:
+			groups[outbound.Tag] = true
+		}
+	}
+	var taken []string
+	for _, outbound := range options.Outbounds {
+		hop, isHop := outbound.Options.(*option.ChainHopOutboundOptions)
+		if isHop && hop.Position > 0 && groups[hop.Outbound] {
+			taken = append(taken, hop.Outbound+" ("+hop.Chain+" #"+strconv.Itoa(hop.Position)+")")
+		}
+	}
+	if len(taken) > 0 {
+		logger.Warn("chain: groups on positions >= 1 carry all their traffic through the chain, routes straight to them included: ", strings.Join(taken, ", "))
+	}
 }

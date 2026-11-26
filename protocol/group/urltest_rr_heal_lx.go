@@ -555,12 +555,12 @@ func (s *URLTest) rrHealRetry(ctx context.Context, network string, failed adapte
 		return rrRetried{}, false
 	}
 	s.group.balancedRetrying(ctx, retry, failed.Tag())
-	dialer, err := adapter.ResolveChainLeaf(ctx, retry)
+	leafCtx, dialer, err := adapter.ResolveChainLeaf(ctx, retry)
 	if err != nil {
 		return rrRetried{}, false
 	}
 	retryStart := time.Now()
-	retryCtx, dial := s.rrTrackDial(rrMarkDial(ctx), b.trackOf(retry.Tag()), retry, dialer, rrClock(retryStart), !tcp)
+	retryCtx, dial := s.rrTrackDial(rrMarkDial(leafCtx), b.trackOf(retry.Tag()), retry, dialer, rrClock(retryStart), !tcp)
 	if err = open(retryCtx, dialer); err != nil {
 		s.logger.DebugContext(ctx, "round_robin retry via ", retry.Tag(), " failed: ", err)
 		if !dial.failed() && ctx.Err() == nil && !lxtrace.IsProbe(ctx) && b.heal.counts(retryStart) {

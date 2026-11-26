@@ -67,11 +67,16 @@ type Chain struct {
 	interruptGroup    *interrupt.Group
 	interruptExternal bool
 
-	access  sync.Mutex
-	targets []adapter.Outbound
-	hops    []*Hop
+	access sync.Mutex
+	// state is set once by resolve; readers (status, path, dials) load it.
+	state atomic.Pointer[chainState]
 
 	stats chainStats
+}
+
+type chainState struct {
+	targets []adapter.Outbound
+	hops    []*Hop
 }
 
 type chainStats struct {
@@ -110,7 +115,7 @@ func (c *Chain) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 func (c *Chain) resolve() error {
 	c.access.Lock()
 	defer c.access.Unlock()
-	if c.hops != nil {
+	if c.state.Load() != nil {
 		return nil
 	}
 	targets := make([]adapter.Outbound, len(c.tags))
@@ -131,15 +136,18 @@ func (c *Chain) resolve() error {
 		}
 		hops[i] = hop
 	}
-	c.targets = targets
-	c.hops = hops
+	c.state.Store(&chainState{targets: targets, hops: hops})
 	return nil
 }
 
 func (c *Chain) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if err := c.resolve(); err != nil {
+		return nil, err
+	}
 	c.stats.dials.Add(1)
 	c.traceChain(ctx) // SPEC 139
-	conn, err := c.hops[len(c.hops)-1].DialContext(ctx, network, destination)
+	hops := c.state.Load().hops
+	conn, err := hops[len(hops)-1].DialContext(ctx, network, destination)
 	if err != nil {
 		c.stats.errors.Add(1)
 		return nil, err
@@ -150,9 +158,13 @@ func (c *Chain) DialContext(ctx context.Context, network string, destination M.S
 }
 
 func (c *Chain) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	if err := c.resolve(); err != nil {
+		return nil, err
+	}
 	c.stats.dials.Add(1)
 	c.traceChain(ctx) // SPEC 139
-	conn, err := c.hops[len(c.hops)-1].ListenPacket(ctx, destination)
+	hops := c.state.Load().hops
+	conn, err := hops[len(hops)-1].ListenPacket(ctx, destination)
 	if err != nil {
 		c.stats.errors.Add(1)
 		return nil, err
@@ -176,9 +188,9 @@ func (c *Chain) NewPacketConnection(ctx context.Context, conn N.PacketConn, meta
 
 // resolvedLeaf — узел, который позиция выберет сейчас (через Now() групп), или
 // nil, если группа без выбора.
-func (c *Chain) resolvedLeaf(position int) adapter.Outbound {
+func (c *Chain) resolvedLeaf(state *chainState, position int) adapter.Outbound {
 	seen := make(map[string]bool)
-	target := c.targets[position]
+	target := state.targets[position]
 	for target != nil {
 		group, isGroup := target.(adapter.OutboundGroup)
 		if !isGroup {
@@ -199,8 +211,8 @@ func (c *Chain) resolvedLeaf(position int) adapter.Outbound {
 }
 
 func (c *Chain) resolvedLeafTag(position int) string {
-	if c.targets != nil {
-		if leaf := c.resolvedLeaf(position); leaf != nil {
+	if state := c.state.Load(); state != nil {
+		if leaf := c.resolvedLeaf(state, position); leaf != nil {
 			return leaf.Tag()
 		}
 	}
@@ -209,7 +221,8 @@ func (c *Chain) resolvedLeafTag(position int) string {
 
 // ChainPath — путь по непрозрачным позициям в порядке пакета.
 func (c *Chain) ChainPath() []string {
-	if c.targets == nil {
+	state := c.state.Load()
+	if state == nil {
 		return slices.Clone(c.tags)
 	}
 	path := make([]string, 0, len(c.tags))
@@ -218,7 +231,7 @@ func (c *Chain) ChainPath() []string {
 		if c.positionDisabled(i) {
 			continue
 		}
-		leaf := c.resolvedLeaf(i)
+		leaf := c.resolvedLeaf(state, i)
 		if leaf == nil {
 			path = append(path, c.tags[i])
 			continue
@@ -324,15 +337,16 @@ func (c *Chain) ChainStatus() adapter.ChainStatus {
 		Dials:  c.stats.dials.Load(),
 		Errors: c.stats.errors.Load(),
 	}
+	state := c.state.Load()
 	for i := range c.tags {
 		position := adapter.ChainPositionStatus{Tag: c.tags[i], Disabled: c.positionDisabled(i)}
-		if c.targets == nil {
+		if state == nil {
 			status.Positions = append(status.Positions, position)
 			continue
 		}
-		_, position.IsGroup = c.targets[i].(adapter.OutboundGroup)
-		position.Errors = c.hops[i].errors.Load()
-		if leaf := c.resolvedLeaf(i); leaf != nil {
+		_, position.IsGroup = state.targets[i].(adapter.OutboundGroup)
+		position.Errors = state.hops[i].errors.Load()
+		if leaf := c.resolvedLeaf(state, i); leaf != nil {
 			position.Now = leaf.Tag()
 			position.Transparent = i > 0 && leaf.Type() == C.TypeDirect
 		}

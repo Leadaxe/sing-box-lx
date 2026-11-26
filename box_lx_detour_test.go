@@ -178,6 +178,7 @@ func TestPrePassН1Н2И4EveryNode(t *testing.T) {
 		"lxbox233":           strings.Replace(lxbox233, "%s", "", 1),
 		"lxbox233 detour":    strings.Replace(lxbox233, "%s", `, "lx": {"detour": {"mtu_align": "fill", "except_outbounds": ["NL-FREE#115"]}}`, 1),
 		"rewrite+align":      rewriteOverTunnel,
+		"rewrite zero value": strings.Replace(rewriteOverTunnel, `"rewrite": {"wireguard": {"mtu": 1300}}`, `"rewrite": {"wireguard": {"mtu": 1300}, "hysteria2": {"tls": {"insecure": false, "utls": {"enabled": false}}}}`, 1),
 		"issue37":            issue37("2606:4700:104::1", "", ""),
 		"issue37 off":        issue37("2606:4700:104::1", "", `, "lx": {"detour": false}`),
 		"issue37 explicit":   issue37("2606:4700:104::1", `, "initial_packet_size": 1300`, ""),
@@ -206,6 +207,9 @@ func TestPrePassТ1LxBox233(t *testing.T) {
 	}
 	if changes := run.effective.Changes("o-proton"); len(changes) != 0 {
 		t.Fatal("П4: the group is not changed")
+	}
+	if len(run.logger.warn) != 1 || !strings.Contains(run.logger.warn[0], "o-proton (c-proton #1)") {
+		t.Fatalf("Л3: one warning naming the group, got %v", run.logger.warn)
 	}
 }
 

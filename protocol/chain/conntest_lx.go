@@ -11,7 +11,7 @@ import (
 // traceChain writes the `chain` stage of a connection test (SPEC 139 §4): the
 // position count and the nodes the positions resolve to now (ChainPath, which
 // skips disabled positions). The stage ends at once: the hops are dialed
-// through the groups and links below it, and their own stages (group, detour,
+// through the groups and nodes below it, and their own stages (group, detour,
 // dial) follow as its siblings under the same parent. Without a trace it costs
 // one ctx.Value lookup.
 func (c *Chain) traceChain(ctx context.Context) {

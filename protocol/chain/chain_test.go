@@ -38,8 +38,9 @@ const (
 
 type fakeOptions struct {
 	option.DialerOptions
-	Name string                     `json:"name,omitempty"`
-	TLS  *option.OutboundTLSOptions `json:"tls,omitempty"`
+	Name   string                     `json:"name,omitempty"`
+	Lookup string                     `json:"lookup,omitempty"`
+	TLS    *option.OutboundTLSOptions `json:"tls,omitempty"`
 }
 
 type noDialOptions struct {
@@ -73,6 +74,9 @@ type fakeOutbound struct {
 	outbound.Adapter
 	manager adapter.OutboundManager
 	detour  string
+	// lookup is an outbound the node dials first with the same ctx, as a
+	// node resolving its server through a DNS server with a detour does.
+	lookup string
 }
 
 func (f *fakeOutbound) label() string {
@@ -82,6 +86,14 @@ func (f *fakeOutbound) label() string {
 func (f *fakeOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	if t := traceOf(ctx); t != nil {
 		t.add(f.label())
+	}
+	if f.lookup != "" {
+		resolver, _ := f.manager.Outbound(f.lookup)
+		conn, err := resolver.DialContext(ctx, network, M.ParseSocksaddr("dns.example:53"))
+		if err != nil {
+			return nil, err
+		}
+		conn.Close()
 	}
 	if f.detour == "" {
 		client, server := net.Pipe()
@@ -130,7 +142,7 @@ func (g *fakeGroup) AttachConnection(io.Closer) func() { return func() {} }
 
 func (g *fakeGroup) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	picked, _ := g.manager.Outbound(g.tags[0])
-	picked, err := adapter.ResolveChainLeaf(ctx, picked)
+	ctx, picked, err := adapter.ResolveChainLeaf(ctx, picked)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +151,7 @@ func (g *fakeGroup) DialContext(ctx context.Context, network string, destination
 
 func (g *fakeGroup) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	picked, _ := g.manager.Outbound(g.tags[0])
-	picked, err := adapter.ResolveChainLeaf(ctx, picked)
+	ctx, picked, err := adapter.ResolveChainLeaf(ctx, picked)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +231,11 @@ func newStand(t *testing.T) *stand {
 	}
 	fake := newFake(typeFake)
 	outbound.Register[fakeOptions](registry, typeFake, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options fakeOptions) (adapter.Outbound, error) {
-		return fake(ctx, router, logger, tag, options.DialerOptions)
+		created, err := fake(ctx, router, logger, tag, options.DialerOptions)
+		if err == nil {
+			created.(*fakeOutbound).lookup = options.Lookup
+		}
+		return created, err
 	})
 	wireGuard := newFake(C.TypeWireGuard)
 	outbound.Register[option.WireGuardEndpointOptions](registry, C.TypeWireGuard, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Outbound, error) {
@@ -856,5 +872,45 @@ func TestHopWrapperKeepsKernelSocketVisible(t *testing.T) {
 	defer packetConn.Close()
 	if !lxdatagram.IsKernelPacketConn(group.NewPacketConn(packetConn, false)) {
 		t.Fatal("udp through a hop wrapper must stay a kernel socket")
+	}
+}
+
+// Х8 is the chain's only: a node on a position resolving its server through
+// a DNS server whose detour is a group that picked direct goes direct, not
+// through the hop below (review 2026-11-26).
+func TestHopХ8MarkDoesNotReachNodeDials(t *testing.T) {
+	for name, position := range map[string]func(*stand){
+		"node on the position":  func(s *stand) { s.chain("virt", "in", "n") },
+		"node in a group there": func(s *stand) { s.selector("g", "n"); s.chain("virt", "in", "g") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newStand(t)
+			s.add("direct", C.TypeDirect, &option.DirectOutboundOptions{})
+			s.selector("dns-sel", "direct")
+			s.fake("in")
+			s.fake("n").Lookup = "dns-sel"
+			position(s)
+			s.build()
+			assertTrace(t, s.dial("virt"), "n[virt#0]", "direct[]", "in[]")
+		})
+	}
+}
+
+// A dial before Start resolves the chain or fails; it never panics.
+func TestChainDialBeforeStart(t *testing.T) {
+	s := newStand(t)
+	s.fake("in")
+	s.fake("exit")
+	s.chain("virt", "in", "exit")
+	s.mustRewrite()
+	for _, item := range s.options.Outbounds {
+		if item.Type == C.TypeChain {
+			chain, err := NewOutbound(s.ctx, nil, log.NewNOPFactory().NewLogger("virt"), item.Tag, *item.Options.(*option.ChainOutboundOptions))
+			requireNoError(t, err)
+			_, err = chain.DialContext(s.ctx, N.NetworkTCP, M.ParseSocksaddr("target.example:443"))
+			requireError(t, err, "outbound not found")
+			_, err = chain.ListenPacket(s.ctx, M.ParseSocksaddr("1.1.1.1:53"))
+			requireError(t, err, "outbound not found")
+		}
 	}
 }

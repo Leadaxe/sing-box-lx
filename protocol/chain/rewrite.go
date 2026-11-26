@@ -341,10 +341,22 @@ func (r *rewriter) rewriteNode(entry *rewriteEntry, place interception, rewrite 
 		before := flatten(m)
 		patchMap = normalizeNumbers(patchMap)
 		mergePatch(m, patchMap)
-		for _, diff := range diffFlat(before, flatten(m)) {
+		rewritten, err := mapToOptions(r.ctx, entry.typeName, m, entry.isEndpoint)
+		if err != nil {
+			return nil, nil, E.Cause(err, "chain ", place.chain, ": position ", place.position, ": ", entry.tag)
+		}
+		// The difference is taken after the typed round trip: the canonical
+		// form drops what the patch set to a zero value, and the changes must
+		// give the effective config (И4).
+		after, err := optionsToMap(r.ctx, rewritten)
+		if err != nil {
+			return nil, nil, E.Cause(err, "chain ", place.chain, ": serialize options of ", entry.tag)
+		}
+		for _, diff := range diffFlat(before, flatten(after)) {
 			diff.By = option.LXConfigChangeBy{Type: option.LXChangeByChainRewrite, Chain: place.chain, Position: place.position, NodeType: entry.typeName}
 			changes = append(changes, diff)
 		}
+		return rewritten, changes, nil
 	}
 	rewritten, err := mapToOptions(r.ctx, entry.typeName, m, entry.isEndpoint)
 	if err != nil {
