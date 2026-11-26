@@ -43,7 +43,7 @@ what the core strips from a node under `detour` is set in
 [`lx.detour.strip`](lx-block.md#lxdetour--what-the-core-does-to-a-node-under-detour).
 
 Tags in `outbounds` must be distinct: a repeat fails the load with
-`chain <tag>: duplicate outbound <tag> (position <i>): a chain has no rings`, because in a list read as a path it is
+`chain <tag>: duplicate outbound <tag> (position <i>): one node or group has one path`, because in a list read as a path it is
 almost always a typo. To place the same node at several positions on purpose, declare it once per
 position under different tags; the declarations may carry identical credentials. This is how the
 "sandwich" `WARP → someone else's node → WARP` is built: the outer layers hide the middle node
@@ -104,17 +104,19 @@ keep through the hops; user connections through the chain are cut only with
 
 `sing-box check` catches these too. The error names the chain, the position and the node.
 
-- A ring: a node or a group reachable in more than one place of the chains — two positions of
-  one chain or two chains — through groups of any depth, every member counted (the groups'
-  picks do not matter). `[A, Dir{A, X}]` is a ring too. Build the upper position from a copy of
-  the group without the nodes below; for two chains, copy the group and its nodes under other
-  tags (WireGuard nodes need other keys).
+- A rewrite conflict: a node or a group needed in two places — in two chains (any positions,
+  the entry of one and a position of another too) or on two positions ≥ 1 of one chain —
+  through groups of any depth, every member counted. The error is
+  `<tag> is needed on chain … position … and on chain … position …`. For two chains, copy the
+  group and its nodes under other tags (WireGuard nodes need other keys).
 - A nested `chain` above position 0, or a position that contains the chain itself.
 - A node type that cannot dial through `detour`.
 - A node on position ≥ 1 with a fixed local port: WireGuard `listen_port`, Tailscale
   `listen_port` / `relay_server_port`, OpenConnect `dtls_local_port`. Socket options are not an
   error: they do nothing under `detour`, as upstream has it.
-- A `detour` cycle through a hop, for example `[A, N]` where `A` has its own `detour: N`.
+- A ring — a `detour` cycle through a hop: `[A, Dir{A, X}]` (A on the entry and in the group
+  above) or `[A, N]` where `A` has its own `detour: N`. Upstream's start-order check reports it:
+  `circular outbound dependency` with the hop tags `<tag>#<i>`.
 - A `rewrite` that touches `detour`, a `rewrite` value that is not an object, or a patch that
   leaves an unknown field in the node.
 

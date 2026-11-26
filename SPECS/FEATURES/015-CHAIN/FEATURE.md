@@ -72,7 +72,7 @@ config load (lx pre-pass, before any node is created)
    │    gets detour = C#(i−1); its own detour is overridden; rewrite by type applied
    ├─ conflicts fail the load (node taken over twice, taken over and on an entry,
    │    nested chain above position 0, node without detour support,
-   │    WireGuard with listen_port, detour cycle through a hop)
+   │    WireGuard with listen_port; a ring is upstream's circular dependency)
    └─ then path-MTU alignment (lx.detour.mtu_align), then the sniff guard graph
 runtime
    C ──► C#(n−1) ──► Pn−1 (node: dials itself, its detour is C#(n−2);
@@ -108,10 +108,10 @@ runtime
 
 ## Boundaries
 
-- A chain has no rings: a node or a group reachable in more than one place of the chains (two
-  positions of one chain or two chains, through groups of any depth, every member counted)
-  fails the load. `[A, Dir{A, X}]` fails too; build the upper position from a copy of the
-  group without the nodes below, and a node used in two chains as two declarations.
+- A chain has no rings: a ring is a plain detour cycle after the rewrite, and upstream's
+  start-order check fails the load (`circular outbound dependency`, hop tags included);
+  `[A, Dir{A, X}]` is one. The core itself checks only rewrite conflicts — a node or a group in
+  two chains or on two positions >= 1 of one chain. Clients build chains without either.
 - A taken-over node cannot carry a fixed local port: the load fails (ALGORITHM К5). Socket
   options upstream ignores under any `detour` (`bind_interface`, `routing_mark`,
   `tcp_fast_open`, …) do nothing here too; `GetOutboundConfig` shows them as `lx.detour` changes
@@ -179,10 +179,11 @@ MTU и граф носителей `sniff_guard`. Во время работы �
 
 ## Границы
 
-- Колец в цепочке нет: узел или группа, достижимые больше чем в одном месте цепочек (на двух
-  позициях одной цепочки или в двух цепочках, через группы любой вложенности, по всем
-  членам), — ошибка загрузки. `[A, Dir{A, X}]` — тоже; верхнюю позицию собирают из копии
-  группы без узлов ниже, узел для двух цепочек объявляют дважды.
+- Колец в цепочке нет: после перезаписи кольцо — обычный цикл `detour`, и апстримная
+  проверка порядка запуска валит загрузку (`circular outbound dependency`, с тегами хопов);
+  `[A, Dir{A, X}]` — кольцо. Ядро само проверяет только конфликт перезаписи — узел или группа
+  в двух цепочках или на двух позициях ≥ 1 одной цепочки. Клиенты собирают цепочки без того
+  и другого.
 - У перехваченного узла не может быть фиксированного локального порта: загрузка падает
   (ALGORITHM К5). Опции сокета, которые апстрим под любым `detour` игнорирует
   (`bind_interface`, `routing_mark`, `tcp_fast_open`, …), не действуют и здесь;

@@ -309,6 +309,23 @@ func (s *stand) mustRewrite() {
 	}
 }
 
+// buildErr rewrites and creates the outbounds; it returns the error of the
+// rewrite or of the manager's start-order check (Initialize).
+func (s *stand) buildErr() error {
+	if err := s.rewrite(); err != nil {
+		return err
+	}
+	logFactory := log.NewNOPFactory()
+	for _, item := range s.options.Outbounds {
+		if err := s.outbound.Create(s.ctx, nil, logFactory.NewLogger(item.Tag), item.Tag, item.Type, item.Options); err != nil {
+			return err
+		}
+	}
+	return s.outbound.Initialize(func() (adapter.Outbound, error) {
+		return s.registry.CreateOutbound(s.ctx, nil, logFactory.NewLogger("default"), "default-direct", C.TypeDirect, &option.DirectOutboundOptions{})
+	})
+}
+
 // build rewrites, creates every outbound and starts the managers.
 func (s *stand) build() {
 	s.t.Helper()
@@ -547,7 +564,7 @@ func TestRewriteК1TwoChains(t *testing.T) {
 	s.selector("g", "v1", "v2")
 	s.chain("X", "a", "g")
 	s.chain("Y", "b", "g")
-	requireError(t, s.rewrite(), "group g", "chain X position 1", "chain Y position 1", "no rings")
+	requireError(t, s.rewrite(), "g is needed on chain X position 1 and on chain Y position 1")
 }
 
 func TestRewriteК2EntryAndPosition(t *testing.T) {
@@ -557,7 +574,7 @@ func TestRewriteК2EntryAndPosition(t *testing.T) {
 	s.fake("B")
 	s.chain("X", "N", "B")
 	s.chain("Y", "A", "N")
-	requireError(t, s.rewrite(), "node N", "chain Y", "chain X")
+	requireError(t, s.rewrite(), "N is needed on chain X position 0 and on chain Y position 1")
 }
 
 func TestRewriteК3HopTypeInConfig(t *testing.T) {
@@ -624,12 +641,13 @@ func TestRewriteК5LocalPorts(t *testing.T) {
 	}
 }
 
-func TestRewriteК6Cycle(t *testing.T) {
+// Т15: a ring through a hop is upstream's circular dependency.
+func TestRewriteК1RingThroughOwnDetour(t *testing.T) {
 	s := newStand(t)
 	s.fake("A", "N")
 	s.fake("N")
 	s.chain("C", "A", "N")
-	requireError(t, s.rewrite(), "chain C", "detour cycle", "A", "N")
+	requireError(t, s.buildErr(), "circular outbound dependency", "C#0")
 }
 
 // ---- 4.3 хоп во время работы -------------------------------------------------
@@ -916,7 +934,9 @@ func TestChainDialBeforeStart(t *testing.T) {
 	}
 }
 
-func TestRewriteК1NoRings(t *testing.T) {
+// К1, rings: the rewrite lets them through and upstream's start-order check
+// stops the load (circular outbound dependency, with the hop tags).
+func TestRewriteК1RingsStopAtUpstream(t *testing.T) {
 	for name, build := range map[string]func(s *stand){
 		"[A, Dir{A, X}]": func(s *stand) { s.fake("A"); s.fake("X"); s.selector("Dir", "A", "X"); s.chain("c", "A", "Dir") },
 		"[Dir{A}, A]":    func(s *stand) { s.fake("A"); s.selector("Dir", "A"); s.chain("c", "Dir", "A") },
@@ -938,6 +958,22 @@ func TestRewriteК1NoRings(t *testing.T) {
 			s.add("Pool", C.TypeURLTest, &option.URLTestOutboundOptions{Outbounds: []string{"X", "Inner"}})
 			s.chain("c", "Mid", "Pool")
 		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newStand(t)
+			build(s)
+			requireNoError(t, s.rewrite())
+			s = newStand(t)
+			build(s)
+			requireError(t, s.buildErr(), "circular outbound dependency", "c#")
+		})
+	}
+}
+
+// К1, conflicts: one node or group would need two paths; the rewrite fails
+// with a short technical error.
+func TestRewriteК1Conflicts(t *testing.T) {
+	for name, build := range map[string]func(s *stand){
 		"two chains, one node": func(s *stand) {
 			s.fake("A")
 			s.fake("B")
@@ -952,11 +988,19 @@ func TestRewriteК1NoRings(t *testing.T) {
 			s.chain("c1", "N", "X")
 			s.chain("c2", "A", "N")
 		},
+		"[B, Dir1{A}, Dir2{A}]": func(s *stand) {
+			s.fake("A")
+			s.fake("B")
+			s.fake("X")
+			s.selector("Dir1", "A")
+			s.selector("Dir2", "A", "X")
+			s.chain("c", "B", "Dir1", "Dir2")
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := newStand(t)
 			build(s)
-			requireError(t, s.rewrite(), "is reachable in", "no rings")
+			requireError(t, s.rewrite(), "is needed on chain", "one node or group has one path")
 		})
 	}
 	for name, positions := range map[string][]string{"[A, B, A]": {"A", "B", "A"}, "[Dir, A, Dir]": {"Dir", "A", "Dir"}} {
@@ -967,7 +1011,7 @@ func TestRewriteК1NoRings(t *testing.T) {
 			s.fake("X")
 			s.selector("Dir", "X")
 			s.chain("c", positions...)
-			requireError(t, s.rewrite(), "duplicate outbound")
+			requireError(t, s.rewrite(), "duplicate outbound", "one node or group has one path")
 		})
 	}
 }

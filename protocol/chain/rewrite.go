@@ -102,7 +102,7 @@ func (r *rewriter) run() (map[string][]option.LXConfigChange, error) {
 			return nil, err
 		}
 	}
-	if err := r.checkNoRings(); err != nil {
+	if err := r.checkConflicts(); err != nil {
 		return nil, err
 	}
 	intercepted := make(map[string]interception)
@@ -168,9 +168,6 @@ func (r *rewriter) run() (map[string][]option.LXConfigChange, error) {
 			r.entries[hopTag] = &rewriteEntry{tag: hopTag, typeName: C.TypeChainHop, options: hop}
 		}
 	}
-	if err := r.checkCycles(); err != nil {
-		return nil, err
-	}
 	r.options.Outbounds = outbounds
 	r.options.Endpoints = endpoints
 	return changes, nil
@@ -188,7 +185,7 @@ func (r *rewriter) validatePositions(chainTag string, positions []string) error 
 		case position == chainTag:
 			return E.New("chain ", chainTag, ": position ", i, " is the chain itself")
 		case seen[position]:
-			return E.New("chain ", chainTag, ": duplicate outbound ", position, " (position ", i, "): a chain has no rings")
+			return E.New("chain ", chainTag, ": duplicate outbound ", position, " (position ", i, "): one node or group has one path")
 		}
 		seen[position] = true
 		if r.entries[position] == nil {
@@ -204,10 +201,13 @@ type chainPlace struct {
 	position int
 }
 
-// checkNoRings is К1: every node and group stands in one place of the chains
-// at most, counting every member of every group of any depth (the groups'
-// picks are not taken into account). direct and block hold no place.
-func (r *rewriter) checkNoRings() error {
+// checkConflicts is the core's part of К1: a node or group that needs two
+// paths — reachable in two chains (any positions), or on two positions >= 1
+// of one chain. Reachability counts every member of every group of any depth,
+// not the groups' picks; direct and block have no path. A ring (a node that
+// closes its own detour through a hop) is not checked here: upstream's
+// start-order check reports it as a circular outbound dependency.
+func (r *rewriter) checkConflicts() error {
 	places := make(map[string][]chainPlace)
 	var order []string
 	for _, chainEntry := range r.chains {
@@ -228,21 +228,29 @@ func (r *rewriter) checkNoRings() error {
 		}
 	}
 	for _, tag := range order {
-		if len(places[tag]) < 2 {
+		first, second, conflict := placesConflict(places[tag])
+		if !conflict {
 			continue
 		}
-		kind := "node"
-		if _, isGroup := groupMembers(r.entries[tag].options); isGroup {
-			kind = "group"
-		}
-		described := make([]string, 0, len(places[tag]))
-		for _, place := range places[tag] {
-			described = append(described, "chain "+place.chain+" position "+strconv.Itoa(place.position))
-		}
-		return E.New(kind, " ", tag, " is reachable in ", strings.Join(described, " and "),
-			": a node or group can stand in one place of the chains only, a chain has no rings")
+		return E.New(tag, " is needed on chain ", first.chain, " position ", first.position,
+			" and on chain ", second.chain, " position ", second.position, ": one node or group has one path")
 	}
 	return nil
+}
+
+// placesConflict finds two places that need two paths: two chains, or two
+// positions >= 1 of one chain. Position 0 and a position above it of the
+// same chain is a ring, left to upstream.
+func placesConflict(places []chainPlace) (chainPlace, chainPlace, bool) {
+	for i := range places {
+		for j := i + 1; j < len(places); j++ {
+			a, b := places[i], places[j]
+			if a.chain != b.chain || a.position > 0 && b.position > 0 {
+				return a, b, true
+			}
+		}
+	}
+	return chainPlace{}, chainPlace{}, false
 }
 
 // reach calls visit with tag and every tag reachable from it through groups.
@@ -421,94 +429,6 @@ func (r *rewriter) rewriteNode(entry *rewriteEntry, place interception, rewrite 
 		return nil, nil, E.Cause(err, "chain ", place.chain, ": position ", place.position, ": ", entry.tag)
 	}
 	return rewritten, changes, nil
-}
-
-// checkCycles is К6: a cycle through the rewritten detour graph is reported
-// with the chain and the nodes on it, not only hop tags.
-func (r *rewriter) checkCycles() error {
-	const (
-		unvisited = iota
-		visiting
-		done
-	)
-	state := make(map[string]int, len(r.entries))
-	var stack []string
-	var visit func(tag string) []string
-	visit = func(tag string) []string {
-		entry := r.entries[tag]
-		if entry == nil {
-			return nil
-		}
-		switch state[tag] {
-		case visiting:
-			start := 0
-			for i, onStack := range stack {
-				if onStack == tag {
-					start = i
-				}
-			}
-			return append(append([]string(nil), stack[start:]...), tag)
-		case done:
-			return nil
-		}
-		state[tag] = visiting
-		stack = append(stack, tag)
-		for _, next := range dependenciesOf(entry) {
-			if cycle := visit(next); cycle != nil {
-				return cycle
-			}
-		}
-		stack = stack[:len(stack)-1]
-		state[tag] = done
-		return nil
-	}
-	for _, entry := range r.order {
-		cycle := visit(entry.tag)
-		if cycle == nil {
-			continue
-		}
-		var chainTag string
-		var nodes []string
-		for _, tag := range cycle {
-			if hop, isHop := r.entries[tag].options.(*option.ChainHopOutboundOptions); isHop {
-				if chainTag == "" {
-					chainTag = hop.Chain
-				}
-				continue
-			}
-			nodes = append(nodes, tag)
-		}
-		if chainTag == "" {
-			// Not ours: the start-up dependency check reports it.
-			continue
-		}
-		return E.New("chain ", chainTag, ": detour cycle through ", strings.Join(nodes, " → "))
-	}
-	return nil
-}
-
-func dependenciesOf(entry *rewriteEntry) []string {
-	switch options := entry.options.(type) {
-	case *option.ChainHopOutboundOptions:
-		if options.Below != "" {
-			return []string{options.Outbound, options.Below}
-		}
-		return []string{options.Outbound}
-	case *option.ChainOutboundOptions:
-		if len(options.Outbounds) == 0 {
-			return nil
-		}
-		return []string{HopTag(entry.tag, len(options.Outbounds)-1)}
-	}
-	if members, isGroup := groupMembers(entry.options); isGroup {
-		return members
-	}
-	if wrapper, ok := entry.options.(option.DialerOptionsWrapper); ok {
-		if detour := wrapper.TakeDialerOptions().Detour; detour != "" {
-			return []string{detour}
-		}
-	}
-	return nil
 }
 
 // flatten maps every leaf of m (a non-object value) to its dotted path.

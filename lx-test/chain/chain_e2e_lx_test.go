@@ -284,3 +284,28 @@ func TestChainRejectsSinglePosition(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "at least 2 outbounds")
 }
+
+// SPEC 165 К1 on a real box: a ring a client built ([A, Dir{A, X}]) passes
+// the rewrite and fails the load at upstream's start-order check.
+func TestChainRingFailsAtUpstreamCheck(t *testing.T) {
+	inPort, xPort := freePort(t), freePort(t)
+	instance, err := box.New(box.Options{
+		Context: include.Context(context.Background()),
+		Options: option.Options{
+			Log: &option.LogOptions{Level: "warning"},
+			Outbounds: []option.Outbound{
+				ssClient("A", inPort),
+				ssClient("X", xPort),
+				{Type: C.TypeSelector, Tag: "Dir", Options: &option.SelectorOutboundOptions{Outbounds: []string{"A", "X"}}},
+				{Type: C.TypeChain, Tag: "c", Options: &option.ChainOutboundOptions{Outbounds: []string{"A", "Dir"}}},
+			},
+		},
+	})
+	if err == nil {
+		err = instance.Start()
+		instance.Close()
+	}
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "circular outbound dependency")
+	require.Contains(t, err.Error(), "c#0")
+}
