@@ -116,6 +116,7 @@ type Endpoint struct {
 	onDemand          bool
 	suspendAccess     sync.Mutex
 	idleRequested     atomic.Bool
+	suspendPending    atomic.Bool
 	resumeDone        chan struct{}
 	resumePending     atomic.Bool
 	suspended         atomic.Bool
@@ -636,10 +637,14 @@ func (t *Endpoint) OnDemand() bool {
 }
 
 func (t *Endpoint) SetKeepIdleConnections(keep bool) {
-	t.idleRequested.Store(!keep)
+	wasIdleRequested := t.idleRequested.Swap(!keep)
 	if !keep {
 		t.suspendAccess.Lock()
-		t.suspendLocked()
+		if t.resumeDone == nil {
+			t.suspendLocked()
+		} else if !wasIdleRequested {
+			t.suspendPending.Store(true)
+		}
 		t.suspendAccess.Unlock()
 		return
 	}
@@ -660,11 +665,11 @@ func (t *Endpoint) requestResume() {
 }
 
 func (t *Endpoint) suspendIfRequested() {
-	if !t.idleRequested.Load() {
+	if !t.suspendPending.Load() {
 		return
 	}
 	t.suspendAccess.Lock()
-	if t.idleRequested.Load() {
+	if t.suspendPending.Load() && t.idleRequested.Load() {
 		t.suspendLocked()
 	}
 	t.suspendAccess.Unlock()
@@ -676,8 +681,10 @@ func (t *Endpoint) suspendLocked() {
 	}
 	localBackend := t.localBackend.Load()
 	if localBackend == nil || localBackend.State() != ipn.Running {
+		t.suspendPending.Store(true)
 		return
 	}
+	t.suspendPending.Store(false)
 	_, err := localBackend.EditPrefs(&ipn.MaskedPrefs{
 		Prefs:          ipn.Prefs{WantRunning: false},
 		WantRunningSet: true,
@@ -690,7 +697,6 @@ func (t *Endpoint) suspendLocked() {
 }
 
 func (t *Endpoint) resume(ctx context.Context) error {
-	t.idleRequested.Store(false)
 	if !t.suspended.Load() {
 		return nil
 	}
@@ -747,7 +753,7 @@ func (t *Endpoint) awaitRunning(localBackend *ipnlocal.LocalBackend, resumeDone 
 	t.resumeDone = nil
 	if running {
 		t.suspended.Store(false)
-		if t.idleRequested.Load() {
+		if t.suspendPending.Load() && t.idleRequested.Load() {
 			t.suspendLocked()
 		}
 	} else {

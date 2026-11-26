@@ -2,8 +2,6 @@ package httpclient
 
 import (
 	"context"
-	stdTLS "crypto/tls"
-	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -20,18 +18,8 @@ func dialTLS(ctx context.Context, rawDialer N.Dialer, baseTLSConfig tls.Config, 
 	if baseTLSConfig == nil {
 		return nil, E.New("TLS transport unavailable")
 	}
-	tlsConfig := baseTLSConfig.Clone()
-	if tlsConfig.ServerName() == "" && destination.IsValid() {
-		tlsConfig.SetServerName(destination.AddrString())
-	}
-	tlsConfig.SetNextProtos(nextProtos)
-	conn, err := rawDialer.DialContext(ctx, N.NetworkTCP, destination)
+	tlsConn, err := tls.NewDialer(rawDialer, prepareTLSConfig(baseTLSConfig, destination, nextProtos)).DialTLSContext(ctx, destination)
 	if err != nil {
-		return nil, err
-	}
-	tlsConn, err := tls.ClientHandshake(ctx, conn, tlsConfig)
-	if err != nil {
-		conn.Close()
 		return nil, err
 	}
 	if expectProto != "" && tlsConn.ConnectionState().NegotiatedProtocol != expectProto {
@@ -59,20 +47,16 @@ func requestReplayable(request *http.Request) bool {
 	return request.Body == nil || request.Body == http.NoBody || request.GetBody != nil
 }
 
-func cloneRequestForRetry(request *http.Request) *http.Request {
+func cloneRequestForRetry(request *http.Request) (*http.Request, error) {
 	cloned := request.Clone(request.Context())
 	if request.Body != nil && request.Body != http.NoBody && request.GetBody != nil {
-		cloned.Body = mustGetBody(request)
+		body, err := request.GetBody()
+		if err != nil {
+			return nil, E.Cause(err, "get request body")
+		}
+		cloned.Body = body
 	}
-	return cloned
-}
-
-func mustGetBody(request *http.Request) io.ReadCloser {
-	body, err := request.GetBody()
-	if err != nil {
-		panic(err)
-	}
-	return body
+	return cloned, nil
 }
 
 func requestAuthority(request *http.Request) string {
@@ -103,14 +87,11 @@ func requestAuthority(request *http.Request) string {
 	return net.JoinHostPort(host, port)
 }
 
-func buildSTDTLSConfig(baseTLSConfig tls.Config, destination M.Socksaddr, nextProtos []string) (*stdTLS.Config, error) {
-	if baseTLSConfig == nil {
-		return nil, nil
-	}
+func prepareTLSConfig(baseTLSConfig tls.Config, destination M.Socksaddr, nextProtos []string) tls.Config {
 	tlsConfig := baseTLSConfig.Clone()
 	if tlsConfig.ServerName() == "" && destination.IsValid() {
 		tlsConfig.SetServerName(destination.AddrString())
 	}
 	tlsConfig.SetNextProtos(nextProtos)
-	return tlsConfig.STDConfig()
+	return tlsConfig
 }

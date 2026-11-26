@@ -86,7 +86,7 @@ func (w *systemStackDevice) isLocalDestination(packet []byte) bool {
 		return true
 	}
 	for _, prefix := range w.options.Address {
-		if prefix.Contains(destination) {
+		if destination == prefix.Addr() {
 			return true
 		}
 	}

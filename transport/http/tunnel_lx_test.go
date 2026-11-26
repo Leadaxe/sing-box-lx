@@ -38,6 +38,8 @@ func (c *fakeHTTP3Client) OpenTunnel(ctx context.Context, request tunnelRequest)
 	return c.openStream, nil
 }
 
+func (c *fakeHTTP3Client) CloseIdleConnections() {}
+
 func (c *fakeHTTP3Client) ResetConnection() {}
 
 func (c *fakeHTTP3Client) Close() error { return nil }

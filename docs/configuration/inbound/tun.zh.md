@@ -6,6 +6,7 @@ icon: material/new-box
 
     :material-plus: [auto_redirect_tproxy_mark](#auto_redirect_tproxy_mark)  
     :material-plus: [multi_queue](#multi_queue)  
+    :material-alert: [route_address_set](#route_address_set)  
     :material-delete-clock: [stack](#stack)
 
 !!! quote "sing-box 1.14.0 中的更改"
@@ -94,10 +95,10 @@ icon: material/new-box
   "iproute2_table_index": 2022,
   "iproute2_rule_index": 9000,
   "auto_redirect": true,
-  "auto_redirect_input_mark": "0x2023",
-  "auto_redirect_output_mark": "0x2024",
-  "auto_redirect_reset_mark": "0x2025",
-  "auto_redirect_tproxy_mark": "0x2026",
+  "auto_redirect_input_mark": "0x04000000",
+  "auto_redirect_output_mark": "0x08000000",
+  "auto_redirect_reset_mark": "0x10000000",
+  "auto_redirect_tproxy_mark": "0x0c000000",
   "auto_redirect_nfqueue": 100,
   "auto_redirect_iproute2_fallback_rule_index": 32768,
   "exclude_mptcp": false,
@@ -193,9 +194,7 @@ icon: material/new-box
   ],
   "inet6_route_exclude_address": [
     "fc00::/7"
-  ],
-  
-  ... // 监听字段
+  ]
 }
 ```
 
@@ -365,7 +364,7 @@ TUN 接口上 DNS 的处理方式。
 
 `auto_redirect` 使用的连接输入标记。
 
-默认使用 `0x2023`（Android 上为 `0x400000`）。
+默认使用 `0x04000000`。
 
 #### auto_redirect_output_mark
 
@@ -373,7 +372,7 @@ TUN 接口上 DNS 的处理方式。
 
 `auto_redirect` 使用的连接输出标记。
 
-默认使用 `0x2024`（Android 上为 `0x200000`）。
+默认使用 `0x08000000`。
 
 #### auto_redirect_reset_mark
 
@@ -381,7 +380,7 @@ TUN 接口上 DNS 的处理方式。
 
 `auto_redirect` 预匹配使用的连接重置标记。
 
-默认使用 `0x2025`（Android 上为 `0x600000`）。
+默认使用 `0x10000000`。
 
 #### auto_redirect_tproxy_mark
 
@@ -389,7 +388,7 @@ TUN 接口上 DNS 的处理方式。
 
 `auto_redirect` iptables 后端为 IPv6 TCP 使用的连接 TPROXY 标记。
 
-默认使用 `0x2026`（Android 上为 `0x800000`）。
+默认使用 `0x0c000000`。
 
 #### auto_redirect_nfqueue
 
@@ -507,7 +506,7 @@ TUN 接口上 DNS 的处理方式。
     
         仅支持 Linux，且需要 `auto_route` 和 `auto_redirect` 已启用。
     
-    在预匹配中匹配指定规则集中的目标 IP CIDR 规则。
+    在预匹配中匹配指定规则集中的目标 IP CIDR 规则和 `route_address`。
     不匹配的流量将绕过 sing-box 路由。
 
 === "`auto_redirect` 未启用"
@@ -562,6 +561,8 @@ TUN 接口上 DNS 的处理方式。
 !!! quote "sing-box 1.15.0 中的更改"
 
     自 1.15.0 起，sing-tun 使用自有 TCP/IP stack，极限性能、能效以及内存占用均大幅领先于所有旧实现。
+
+    :material-delete-alert: `gvisor` 和 `mixed` 栈需要 `with_gvisor` [构建标记](/zh/installation/build-from-source/#构建标记)，该标记已不再默认启用。
 
 !!! quote "sing-box 1.8.0 中的更改"
 
@@ -711,7 +712,3 @@ TCP/IP 栈。
 ### UDP NAT 字段
 
 参阅 [UDP NAT 字段](/zh/configuration/shared/udp-nat/)。
-
-### 监听字段
-
-参阅 [监听字段](/zh/configuration/shared/listen/)。

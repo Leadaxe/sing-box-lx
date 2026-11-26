@@ -176,12 +176,8 @@ func (c *Client) connect() (bool, error) {
 	current := &clientSession{client: c}
 	c.access.Lock()
 	if c.suspended || c.restarting {
-		suspended := c.suspended
 		c.access.Unlock()
 		stream.Close()
-		if suspended {
-			c.httpClient.ResetConnections()
-		}
 		return false, nil
 	}
 	current.session = newSession(c.ctx, stream, current, c.handler.FrontHeadroom)
@@ -262,7 +258,7 @@ func (c *Client) Suspend() {
 	}
 	c.notifyStateLocked()
 	c.access.Unlock()
-	c.httpClient.ResetConnections()
+	c.httpClient.SetKeepIdleConnections(false)
 }
 
 func (c *Client) Resume() {
@@ -273,6 +269,7 @@ func (c *Client) Resume() {
 	}
 	c.suspended = false
 	c.lastError = nil
+	c.httpClient.SetKeepIdleConnections(true)
 	c.notifyStateLocked()
 }
 

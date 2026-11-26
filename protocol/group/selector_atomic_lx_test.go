@@ -1,31 +1,40 @@
 // lx: Selector.SelectOutbound must switch with one atomic Swap, as upstream
 // does, and fire the SPEC 020 reachability invalidation once per real switch.
+// On the 1.15 line the invalidation is upstream's URL test history update the
+// reference manager listens to.
 
 package group
 
 import (
 	"sync"
-	"sync/atomic"
 	"testing"
 
-	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing/service"
+	"github.com/sagernet/sing-box/common/urltest"
+	"github.com/sagernet/sing/common/observable"
 )
 
-type countingInvalidator struct {
-	calls atomic.Int32
+// emitCount counts the history updates a subscriber has buffered.
+type emitCount struct {
+	subscriber *observable.Subscriber[struct{}]
 }
 
-func (c *countingInvalidator) InvalidateReachability() {
-	c.calls.Add(1)
+func (c emitCount) Load() int32 {
+	subscription, _ := c.subscriber.Subscription()
+	return int32(len(subscription))
+}
+
+type countingInvalidator struct {
+	calls emitCount
 }
 
 func newSelectorWithInvalidator(t *testing.T) (*Selector, *countingInvalidator) {
 	t.Helper()
 	sel, _, _ := newSelectorUnderTest(t, false)
-	invalidator := &countingInvalidator{}
-	sel.ctx = service.ContextWith[adapter.ReachabilityInvalidator](sel.ctx, invalidator)
-	return sel, invalidator
+	history := urltest.NewHistoryStorage()
+	subscriber := observable.NewSubscriber[struct{}](1 << 16)
+	history.AddUpdateHook(subscriber)
+	sel.history = history
+	return sel, &countingInvalidator{calls: emitCount{subscriber: subscriber}}
 }
 
 func TestLxSelectorInvalidatesOnRealSwitchOnly(t *testing.T) {

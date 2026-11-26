@@ -20,13 +20,14 @@ func (c *CacheFile) RDRCTimeout() time.Duration {
 
 func (c *CacheFile) LoadRDRC(transportName string, qName string, qType uint16) (rejected bool) {
 	key := saveCacheKey{transportName, qName, qType}
+	now := time.Now()
 	c.pendingAccess.RLock()
-	_, rejected = c.pending.rdrc[key]
-	if !rejected && c.writing != nil {
-		_, rejected = c.writing.rdrc[key]
+	expiresAt, loaded := c.pending.rdrc[key]
+	if !loaded && c.writing != nil {
+		expiresAt, loaded = c.writing.rdrc[key]
 	}
 	c.pendingAccess.RUnlock()
-	if rejected {
+	if loaded && now.Before(expiresAt) {
 		return true
 	}
 	err := c.view(func(tx *bbolt.Tx) error {
@@ -38,8 +39,7 @@ func (c *CacheFile) LoadRDRC(transportName string, qName string, qType uint16) (
 		if len(content) < 8 {
 			return nil
 		}
-		expiresAt := time.Unix(int64(binary.BigEndian.Uint64(content)), 0)
-		rejected = time.Now().Before(expiresAt)
+		rejected = now.Before(time.Unix(int64(binary.BigEndian.Uint64(content)), 0))
 		return nil
 	})
 	if err != nil {
@@ -63,9 +63,9 @@ func (c *CacheFile) queueRDRC(transportName string, qName string, qType uint16) 
 	c.pendingAccess.Lock()
 	defer c.pendingAccess.Unlock()
 	_, loaded := c.pending.rdrc[key]
+	c.pending.rdrc[key] = time.Now().Add(c.rdrcTimeout)
 	if loaded {
 		return
 	}
-	c.pending.rdrc[key] = struct{}{}
 	c.enqueueLocked(true, len(qName))
 }

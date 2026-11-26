@@ -38,6 +38,7 @@ type session struct {
 	reader         *std_bufio.Reader
 	handler        sessionHandler
 	packetHeadroom func() int
+	stopClose      func() bool
 	writeAccess    sync.Mutex
 	rawCapsules    bool // lx: SPEC 110 — stream capsules carry the bare IP packet
 }
@@ -54,14 +55,14 @@ func newSession(ctx context.Context, stream io.ReadWriteCloser, handler sessionH
 		handler:        handler,
 		packetHeadroom: packetHeadroom,
 	}
+	current.stopClose = context.AfterFunc(sessionCtx, func() {
+		stream.Close()
+	})
 	return current
 }
 
 func (s *session) run() error {
-	stop := context.AfterFunc(s.ctx, func() {
-		s.stream.Close()
-	})
-	defer stop()
+	defer s.stopClose()
 	var loops sync.WaitGroup
 	if s.datagrams != nil {
 		loops.Go(s.loopDatagram)

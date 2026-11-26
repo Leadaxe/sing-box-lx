@@ -49,16 +49,14 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		return nil, E.Cause(err, "build cloudflared tunnel dialer")
 	}
 	dnsRouter := service.FromContext[adapter.DNSRouter](ctx)
-	controlResolver := newRouterResolver(dnsRouter, controlDialer.(dialer.ResolveDialer).QueryOptions())
-	tunnelResolver := newRouterResolver(dnsRouter, tunnelDialer.(dialer.ResolveDialer).QueryOptions())
 
 	service, err := cloudflared.NewService(cloudflared.ServiceOptions{
 		Logger:           logger,
 		ConnectionDialer: &routerDialer{ctx: ctx, router: router, tag: tag},
 		ControlDialer:    controlDialer,
 		TunnelDialer:     tunnelDialer,
-		ControlResolver:  controlResolver,
-		TunnelResolver:   tunnelResolver,
+		ControlResolver:  &routerResolver{dnsRouter: dnsRouter, queryOptions: controlDialer.(dialer.ResolveDialer).QueryOptions()},
+		TunnelResolver:   &routerResolver{dnsRouter: dnsRouter, queryOptions: tunnelDialer.(dialer.ResolveDialer).QueryOptions()},
 		ICMPHandler:      &icmpRouterHandler{router: router, logger: logger, tag: tag},
 		ConnContext: func(connCtx context.Context) context.Context {
 			return adapter.WithContext(connCtx, &adapter.InboundContext{
@@ -79,17 +77,25 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		return nil, err
 	}
 
+	var dnsReferences []string
+	for _, dialerOptions := range []option.DialerOptions{options.ControlDialer, options.TunnelDialer} {
+		if dialerOptions.DomainResolver != nil && dialerOptions.DomainResolver.Server != "" {
+			dnsReferences = append(dnsReferences, dialerOptions.DomainResolver.Server)
+		}
+	}
 	return &Inbound{
-		Adapter:    inbound.NewAdapter(C.TypeCloudflared, tag),
-		service:    service,
-		references: common.FilterNotDefault([]string{options.ControlDialer.Detour, options.TunnelDialer.Detour}),
+		Adapter:       inbound.NewAdapter(C.TypeCloudflared, tag),
+		service:       service,
+		references:    common.FilterNotDefault([]string{options.ControlDialer.Detour, options.TunnelDialer.Detour}),
+		dnsReferences: dnsReferences,
 	}, nil
 }
 
 type Inbound struct {
 	inbound.Adapter
-	service    *cloudflared.Service
-	references []string
+	service       *cloudflared.Service
+	references    []string
+	dnsReferences []string
 }
 
 func (i *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
@@ -114,7 +120,7 @@ type routerDialer struct {
 // (router_pipe.go dialRouterTCPWithMetadata, origin_dial.go dialWarpPacketConnection), while the
 // routing and the outbound dial behind the pipe are still in progress, so only its deadline is
 // honoured, and only until the outbound handshake is reported.
-func (d *routerDialer) routeContext(ctx context.Context) (context.Context, func(), func()) {
+func (d *routerDialer) routeContext(ctx context.Context) (context.Context, func(), N.CloseHandlerFunc) {
 	routeCtx, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
 	stopShutdown := context.AfterFunc(d.ctx, func() {
 		cancel(context.Cause(d.ctx))
@@ -130,7 +136,7 @@ func (d *routerDialer) routeContext(ctx context.Context) (context.Context, func(
 			connectTimeout.Stop()
 		}
 	}
-	closed := func() {
+	closed := func(error) {
 		connected()
 		stopShutdown()
 	}
@@ -193,10 +199,7 @@ func (d *routerDialer) newMetadata(network string, destination M.Socksaddr) adap
 func (d *routerDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	input, output := pipe.Pipe()
 	routeCtx, connected, closed := d.routeContext(ctx)
-	go d.router.RouteConnectionEx(routeCtx, &routedConn{Conn: output, connected: connected}, d.newMetadata(N.NetworkTCP, destination), N.OnceClose(func(it error) {
-		closed()
-		input.Close()
-	}))
+	go d.router.RouteConnectionEx(routeCtx, &routedConn{Conn: output, connected: connected}, d.newMetadata(N.NetworkTCP, destination), closed)
 	return input, nil
 }
 
@@ -204,10 +207,7 @@ func (d *routerDialer) ListenPacket(ctx context.Context, destination M.Socksaddr
 	input, output := pipe.Pipe()
 	routeCtx, connected, closed := d.routeContext(ctx)
 	routerConn := &routedPacketConn{PacketConn: bufio.NewUnbindPacketConn(output), connected: connected}
-	go d.router.RoutePacketConnectionEx(routeCtx, routerConn, d.newMetadata(N.NetworkUDP, destination), N.OnceClose(func(it error) {
-		closed()
-		input.Close()
-	}))
+	go d.router.RoutePacketConnectionEx(routeCtx, routerConn, d.newMetadata(N.NetworkUDP, destination), closed)
 	return bufio.NewUnbindPacketConn(input), nil
 }
 
@@ -259,8 +259,8 @@ func (h *icmpRouterHandler) RouteICMPFlow(source netip.Addr, destination netip.A
 	}
 }
 
-func (i *Inbound) References() []string {
-	return i.references
+func (i *Inbound) References() ([]string, []string) {
+	return i.references, i.dnsReferences
 }
 
 var (

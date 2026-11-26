@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"slices"
+	"sync/atomic"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/inbound"
@@ -52,7 +53,7 @@ type TailcatInbound struct {
 	presharedKey device.NoisePresharedKey
 	users        map[key.NodePublic]string
 	derp         *tailcatDERP
-	node         *tailcatNode
+	node         atomic.Pointer[tailcatNode]
 }
 
 func NewTailcatInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.TailcatInboundOptions) (adapter.Inbound, error) {
@@ -116,11 +117,11 @@ func (i *TailcatInbound) UserPublicKeys() []key.NodePublic {
 	return slices.Collect(maps.Keys(i.users))
 }
 
-func (i *TailcatInbound) References() []string {
+func (i *TailcatInbound) References() ([]string, []string) {
 	if i.detour == "" {
-		return nil
+		return nil, nil
 	}
-	return []string{i.detour}
+	return []string{i.detour}, nil
 }
 
 func (i *TailcatInbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
@@ -161,38 +162,36 @@ func (i *TailcatInbound) Start(stage adapter.StartStage, scope *adapter.Scope) e
 		node.close()
 		return nil
 	})
-	err = node.start()
-	if err != nil {
-		return err
-	}
-	i.node = node
-	return nil
+	i.node.Store(node)
+	return node.start()
 }
 
 func (i *TailcatInbound) InterfaceUpdated(ctx context.Context) {
-	if i.node != nil {
-		i.node.interfaceUpdated()
+	node := i.node.Load()
+	if node != nil {
+		node.interfaceUpdated()
 	}
 }
 
 // Connections to the server's own address are served locally, like the
 // Tailscale endpoint does; everything else is exit-node traffic, whose
 // IPv4 destinations arrive NAT64-mapped.
-func (i *TailcatInbound) rewriteDestination(destination netip.Addr) netip.Addr {
-	if destination == i.node.address {
+func (i *TailcatInbound) rewriteDestination(node *tailcatNode, destination netip.Addr) netip.Addr {
+	if destination == node.address {
 		return netip.IPv6Loopback()
 	}
 	return tailcatUnmapNAT64(destination)
 }
 
 func (i *TailcatInbound) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
-	if i.rewriteDestination(destination.Addr()) != destination.Addr() {
+	node := i.node.Load()
+	if i.rewriteDestination(node, destination.Addr()) != destination.Addr() {
 		return tun.FlowVerdict{Action: tun.ActionAccept}
 	}
 	return adapter.JudgeFlow(i.router, adapter.InboundContext{
 		Inbound:     i.Tag(),
 		InboundType: i.Type(),
-		User:        i.node.userName(source.Addr()),
+		User:        node.userName(source.Addr()),
 	}, network, source, destination, firstPacket)
 }
 
@@ -204,7 +203,7 @@ func (i *TailcatInbound) NewDNSPacket(payload []byte, source M.Socksaddr, destin
 	metadata.Network = N.NetworkUDP
 	metadata.Source = source
 	metadata.Destination = destination
-	metadata.User = i.node.userName(source.Addr)
+	metadata.User = i.node.Load().userName(source.Addr)
 	metadata.Protocol = C.ProtocolDNS
 	i.logger.InfoContext(ctx, "inbound DNS packet from ", source)
 	i.router.HijackDNSPacket(ctx, payload, writer, metadata)
@@ -216,8 +215,9 @@ func (i *TailcatInbound) NewConnectionEx(ctx context.Context, conn net.Conn, sou
 	metadata.Inbound = i.Tag()
 	metadata.InboundType = i.Type()
 	metadata.Source = source
-	metadata.User = i.node.userName(source.Addr)
-	rewritten := i.rewriteDestination(destination.Addr)
+	node := i.node.Load()
+	metadata.User = node.userName(source.Addr)
+	rewritten := i.rewriteDestination(node, destination.Addr)
 	if rewritten != destination.Addr {
 		metadata.OriginDestination = destination
 		destination.Addr = rewritten
@@ -234,8 +234,9 @@ func (i *TailcatInbound) NewPacketConnectionEx(ctx context.Context, conn N.Packe
 	metadata.Inbound = i.Tag()
 	metadata.InboundType = i.Type()
 	metadata.Source = source
-	metadata.User = i.node.userName(source.Addr)
-	rewritten := i.rewriteDestination(destination.Addr)
+	node := i.node.Load()
+	metadata.User = node.userName(source.Addr)
+	rewritten := i.rewriteDestination(node, destination.Addr)
 	if rewritten != destination.Addr {
 		metadata.OriginDestination = destination
 		destination.Addr = rewritten

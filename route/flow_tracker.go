@@ -55,6 +55,7 @@ func (t *multiFlowTracker) CloseFlow(reason tun.FlowCloseReason) {
 type flowInterrupter struct {
 	groups   []adapter.OutboundGroup
 	removers []func()
+	closed   bool
 }
 
 func newFlowInterrupter(chain []adapter.Outbound) *flowInterrupter {
@@ -78,6 +79,9 @@ func (c flowCloser) Close() error {
 }
 
 func (t *flowInterrupter) AttachFlow(handle tun.FlowHandle) {
+	if t.closed {
+		return
+	}
 	closer := flowCloser{handle}
 	for _, group := range t.groups {
 		t.removers = append(t.removers, group.AttachConnection(closer))
@@ -94,6 +98,7 @@ func (t *flowInterrupter) FlowEstablished() {
 }
 
 func (t *flowInterrupter) CloseFlow(reason tun.FlowCloseReason) {
+	t.closed = true
 	for _, remove := range t.removers {
 		remove()
 	}

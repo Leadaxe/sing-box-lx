@@ -138,15 +138,8 @@ func (t *Transport) Start(stage adapter.StartStage, scope *adapter.Scope) error 
 func (t *Transport) Reset() {
 	t.refreshAccess.Lock()
 	defer t.refreshAccess.Unlock()
-	state := t.savedState.Load()
-	if state == nil {
-		return
-	}
-	t.savedState.Store(&transportState{
-		search:  state.search,
-		servers: state.servers,
-	})
-	if state.serverScope != nil {
+	state := t.savedState.Swap(nil)
+	if state != nil && state.serverScope != nil {
 		state.serverScope.Close()
 	}
 }
@@ -171,7 +164,7 @@ func (t *Transport) SearchDomains() []string {
 
 func (t *Transport) Environment() []string {
 	state := t.savedState.Load()
-	if state == nil {
+	if state == nil || state.lastError != nil {
 		return nil
 	}
 	environment := make([]string, 0, len(state.servers)+len(state.search))
@@ -198,15 +191,7 @@ func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg,
 
 func (t *Transport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
 	state := t.savedState.Load()
-	if state == nil {
-		go t.exchangeCold(ctx, message, callback)
-		return
-	}
-	if state.lastError != nil {
-		callback(nil, E.Cause(state.lastError, "dhcp: fetch DNS servers"))
-		return
-	}
-	if len(state.serverTransports) == 0 {
+	if state == nil || len(state.serverTransports) == 0 {
 		go t.exchangeCold(ctx, message, callback)
 		return
 	}
@@ -253,9 +238,10 @@ func (t *Transport) fetch(ctx context.Context) error {
 	state := t.savedState.Load()
 	if state != nil {
 		if state.lastError != nil {
-			return state.lastError
-		}
-		if time.Since(state.updatedAt) < C.DHCPTTL {
+			if time.Since(state.updatedAt) < C.DHCPTimeout {
+				return state.lastError
+			}
+		} else if time.Since(state.updatedAt) < C.DHCPTTL {
 			return nil
 		}
 	}
@@ -264,9 +250,10 @@ func (t *Transport) fetch(ctx context.Context) error {
 	state = t.savedState.Load()
 	if state != nil {
 		if state.lastError != nil {
-			return state.lastError
-		}
-		if time.Since(state.updatedAt) < C.DHCPTTL {
+			if time.Since(state.updatedAt) < C.DHCPTimeout {
+				return state.lastError
+			}
+		} else if time.Since(state.updatedAt) < C.DHCPTTL {
 			return nil
 		}
 	}
@@ -347,18 +334,13 @@ func (t *Transport) updateServersLocked(ctx context.Context) error {
 }
 
 func (t *Transport) storeFailureLocked(err error) {
-	newState := &transportState{
+	previousState := t.savedState.Swap(&transportState{
 		updatedAt: time.Now(),
 		lastError: err,
+	})
+	if previousState != nil && previousState.serverScope != nil {
+		previousState.serverScope.Close()
 	}
-	previousState := t.savedState.Load()
-	if previousState != nil {
-		newState.search = previousState.search
-		newState.servers = previousState.servers
-		newState.serverTransports = previousState.serverTransports
-		newState.serverScope = previousState.serverScope
-	}
-	t.savedState.Store(newState)
 }
 
 func (t *Transport) interfaceUpdated(ctx context.Context) {
@@ -373,6 +355,10 @@ func (t *Transport) interfaceUpdated(ctx context.Context) {
 	go func() {
 		defer updateCancel()
 		t.refreshAccess.Lock()
+		previousState := t.savedState.Swap(nil)
+		if previousState != nil && previousState.serverScope != nil {
+			previousState.serverScope.Close()
+		}
 		err := t.updateServersLocked(updateContext)
 		t.refreshAccess.Unlock()
 		if err == nil || updateContext.Err() != nil {
@@ -475,9 +461,6 @@ func (t *Transport) fetchServersResponse(iface *control.Interface, packetConn ne
 func (t *Transport) recreateServersLocked(iface *control.Interface, dhcpPacket *dhcpv4.DHCPv4) error {
 	previousState := t.savedState.Load()
 	newState := &transportState{updatedAt: time.Now()}
-	if previousState != nil {
-		newState.search = previousState.search
-	}
 	searchList := dhcpPacket.DomainSearch()
 	if searchList != nil && len(searchList.Labels) > 0 {
 		newState.search = common.Filter(common.Map(searchList.Labels, mDNS.Fqdn), func(it string) bool {

@@ -56,9 +56,8 @@ type queryMultiplexer struct {
 
 type multiplexConn struct {
 	net.Conn
-	readEpoch atomic.Uint64
-	// lx: SPEC 157 — serializes query writes on the shared conn
 	writeAccess sync.Mutex
+	readEpoch   atomic.Uint64
 }
 
 type queryMultiplexerReadError struct {
@@ -331,8 +330,6 @@ func (m *queryMultiplexer) exchangeAsync(ctx context.Context, message *mDNS.Msg,
 			callback(nil, err)
 			return
 		}
-		// lx: SPEC 157 — proxy conns (VLESS, sing-mux, Shadowsocks) are not safe
-		// for concurrent writes: their first Write carries the protocol header
 		conn.writeAccess.Lock()
 		writeErr := m.options.write(conn, message, queryId)
 		conn.writeAccess.Unlock()

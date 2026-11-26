@@ -96,7 +96,8 @@ func countSelectionRefs(manualSeeds []string, referenced map[string]bool, resolv
 			continue
 		}
 		manual := outbound.Type() == C.TypeSelector
-		for _, reference := range referrer.References() {
+		outboundReferences, _ := referrer.References()
+		for _, reference := range outboundReferences {
 			count(reference, manual)
 		}
 	}

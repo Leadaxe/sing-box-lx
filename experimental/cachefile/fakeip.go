@@ -40,13 +40,23 @@ func (c *CacheFile) FakeIPMetadata() *adapter.FakeIPMetadata {
 }
 
 func (c *CacheFile) FakeIPSaveMetadata(metadata *adapter.FakeIPMetadata) error {
+	c.queueFakeIPMetadata(metadata)
+	return c.flush(nil)
+}
+
+func (c *CacheFile) FakeIPReserve(metadata *adapter.FakeIPMetadata, current netip.Addr, reservedEnd netip.Addr) error {
+	c.queueFakeIPMetadata(metadata)
+	return c.flush(func(tx *bbolt.Tx) error {
+		return deleteFakeIPRange(tx, current, reservedEnd)
+	})
+}
+
+func (c *CacheFile) queueFakeIPMetadata(metadata *adapter.FakeIPMetadata) {
 	c.pendingAccess.Lock()
+	defer c.pendingAccess.Unlock()
 	added := c.pending.fakeIPMetadata == nil
 	c.pending.fakeIPMetadata = metadata
 	c.enqueueLocked(added, 0)
-	c.pendingAccess.Unlock()
-	c.Flush()
-	return nil
 }
 
 func putFakeIPMetadata(tx *bbolt.Tx, metadata *adapter.FakeIPMetadata) error {
@@ -61,10 +71,57 @@ func putFakeIPMetadata(tx *bbolt.Tx, metadata *adapter.FakeIPMetadata) error {
 	return bucket.Put(keyMetadata, metadataBinary)
 }
 
+func deleteFakeIPRange(tx *bbolt.Tx, current netip.Addr, reservedEnd netip.Addr) error {
+	bucket := tx.Bucket(bucketFakeIP)
+	if bucket == nil {
+		return nil
+	}
+	var domainBucket *bbolt.Bucket
+	if current.Is4() {
+		domainBucket = tx.Bucket(bucketFakeIPDomain4)
+	} else {
+		domainBucket = tx.Bucket(bucketFakeIPDomain6)
+	}
+	from := current.AsSlice()
+	to := reservedEnd.AsSlice()
+	wrapped := bytes.Compare(to, from) <= 0
+	var addresses, domains [][]byte
+	cursor := bucket.Cursor()
+	for key, value := cursor.Seek(from); key != nil; key, value = cursor.Next() {
+		if !wrapped && bytes.Compare(key, to) > 0 {
+			break
+		}
+		if len(key) == len(from) && !bytes.Equal(key, from) {
+			addresses = append(addresses, key)
+			domains = append(domains, value)
+		}
+	}
+	if wrapped {
+		for key, value := cursor.First(); key != nil && bytes.Compare(key, to) <= 0; key, value = cursor.Next() {
+			if len(key) == len(from) {
+				addresses = append(addresses, key)
+				domains = append(domains, value)
+			}
+		}
+	}
+	for i, address := range addresses {
+		err := bucket.Delete(address)
+		if err != nil {
+			return err
+		}
+		if domainBucket != nil && bytes.Equal(domainBucket.Get(domains[i]), address) {
+			err = domainBucket.Delete(domains[i])
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (c *CacheFile) FakeIPStore(address netip.Addr, domain string) error {
 	c.queueFakeIP(address, domain)
-	c.Flush()
-	return nil
+	return c.flush(nil)
 }
 
 func (c *CacheFile) FakeIPStoreAsync(address netip.Addr, domain string, logger logger.Logger) {
@@ -73,6 +130,10 @@ func (c *CacheFile) FakeIPStoreAsync(address netip.Addr, domain string, logger l
 
 func (c *CacheFile) queueFakeIP(address netip.Addr, domain string) {
 	oldDomain, loaded := c.FakeIPLoad(address)
+	if loaded {
+		oldAddress, _ := c.FakeIPLoadDomain(oldDomain, address.Is6())
+		loaded = oldAddress == address
+	}
 	c.pendingAccess.Lock()
 	defer c.pendingAccess.Unlock()
 	if loaded {

@@ -17,6 +17,7 @@ type FakeIPStore interface {
 type FakeIPStorage interface {
 	FakeIPMetadata() *FakeIPMetadata
 	FakeIPSaveMetadata(metadata *FakeIPMetadata) error
+	FakeIPReserve(metadata *FakeIPMetadata, current netip.Addr, reservedEnd netip.Addr) error
 	FakeIPStore(address netip.Addr, domain string) error
 	FakeIPStoreAsync(address netip.Addr, domain string, logger logger.Logger)
 	FakeIPLoad(address netip.Addr) (string, bool)

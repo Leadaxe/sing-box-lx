@@ -15,7 +15,7 @@ const defaultBufferSize = 1024 * 1024
 
 type pendingWrites struct {
 	dnsCache       map[saveCacheKey]saveDNSCacheEntry
-	rdrc           map[saveCacheKey]struct{}
+	rdrc           map[saveCacheKey]time.Time
 	fakeIPDomain   map[netip.Addr]string
 	fakeIPAddress4 map[string]netip.Addr
 	fakeIPAddress6 map[string]netip.Addr
@@ -27,7 +27,7 @@ type pendingWrites struct {
 func newPendingWrites() *pendingWrites {
 	return &pendingWrites{
 		dnsCache:       make(map[saveCacheKey]saveDNSCacheEntry),
-		rdrc:           make(map[saveCacheKey]struct{}),
+		rdrc:           make(map[saveCacheKey]time.Time),
 		fakeIPDomain:   make(map[netip.Addr]string),
 		fakeIPAddress4: make(map[string]netip.Addr),
 		fakeIPAddress6: make(map[string]netip.Addr),
@@ -63,26 +63,35 @@ func (c *CacheFile) loopFlush(ctx context.Context) {
 }
 
 func (c *CacheFile) Flush() {
+	err := c.flush(nil)
+	if err != nil {
+		c.logger.Warn("save cache: ", err)
+	}
+}
+
+func (c *CacheFile) flush(extraWrite func(tx *bbolt.Tx) error) error {
 	c.flushAccess.Lock()
 	defer c.flushAccess.Unlock()
 	c.pendingAccess.Lock()
-	if c.pending.count == 0 {
+	if c.pending.count == 0 && extraWrite == nil {
 		c.pendingAccess.Unlock()
-		return
+		return nil
 	}
 	writing := c.pending
 	c.writing = writing
 	c.pending = newPendingWrites()
 	c.pendingAccess.Unlock()
 	err := c.update(func(tx *bbolt.Tx) error {
-		return c.writePending(tx, writing)
+		err := c.writePending(tx, writing)
+		if err != nil || extraWrite == nil {
+			return err
+		}
+		return extraWrite(tx)
 	})
-	if err != nil {
-		c.logger.Warn("save cache: ", err)
-	}
 	c.pendingAccess.Lock()
 	c.writing = nil
 	c.pendingAccess.Unlock()
+	return err
 }
 
 func (c *CacheFile) writePending(tx *bbolt.Tx, pending *pendingWrites) error {
@@ -103,10 +112,10 @@ func (c *CacheFile) writePending(tx *bbolt.Tx, pending *pendingWrites) error {
 		if err != nil {
 			return err
 		}
-		expiresAt := make([]byte, 8)
-		binary.BigEndian.PutUint64(expiresAt, uint64(time.Now().Add(c.rdrcTimeout).Unix()))
-		for key := range pending.rdrc {
-			err = putCacheEntry(bucket, key, expiresAt)
+		for key, expiresAt := range pending.rdrc {
+			expiresAtBytes := make([]byte, 8)
+			binary.BigEndian.PutUint64(expiresAtBytes, uint64(expiresAt.Unix()))
+			err = putCacheEntry(bucket, key, expiresAtBytes)
 			if err != nil {
 				return err
 			}

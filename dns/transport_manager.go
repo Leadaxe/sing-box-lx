@@ -16,15 +16,15 @@ import (
 var _ adapter.DNSTransportManager = (*TransportManager)(nil)
 
 type TransportManager struct {
-	registry                 adapter.DNSTransportRegistry
-	outbound                 adapter.OutboundManager
-	defaultTag               string
-	access                   sync.RWMutex
-	transports               []adapter.DNSTransport
-	transportByTag           map[string]adapter.DNSTransport
-	defaultTransport         adapter.DNSTransport
-	defaultTransportFallback func() (adapter.DNSTransport, error)
-	fakeIPTransport          adapter.FakeIPTransport
+	registry         adapter.DNSTransportRegistry
+	outbound         adapter.OutboundManager
+	defaultTag       string
+	access           sync.RWMutex
+	transports       []adapter.DNSTransport
+	transportByTag   map[string]adapter.DNSTransport
+	defaultTransport adapter.DNSTransport
+	fakeIPTransport  adapter.FakeIPTransport
+	sortedTransports []adapter.DNSTransport
 }
 
 func NewTransportManager(registry adapter.DNSTransportRegistry, outbound adapter.OutboundManager, defaultTag string) *TransportManager {
@@ -36,34 +36,34 @@ func NewTransportManager(registry adapter.DNSTransportRegistry, outbound adapter
 	}
 }
 
-func (m *TransportManager) Initialize(defaultTransportFallback func() (adapter.DNSTransport, error)) {
-	m.defaultTransportFallback = defaultTransportFallback
+func (m *TransportManager) Initialize(defaultTransportFallback func() (adapter.DNSTransport, error)) error {
+	m.access.Lock()
+	defer m.access.Unlock()
+	if m.defaultTag != "" && m.defaultTransport == nil {
+		return E.New("default DNS server not found: ", m.defaultTag)
+	}
+	if m.defaultTransport == nil {
+		defaultTransport, err := defaultTransportFallback()
+		if err != nil {
+			return E.Cause(err, "default DNS server fallback")
+		}
+		m.transports = append(m.transports, defaultTransport)
+		m.transportByTag[defaultTransport.Tag()] = defaultTransport
+		m.defaultTransport = defaultTransport
+	}
+	sortedTransports, err := m.sortTransports(m.transports)
+	if err != nil {
+		return err
+	}
+	m.sortedTransports = sortedTransports
+	return nil
 }
 
 func (m *TransportManager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
-	m.access.Lock()
-	if stage == adapter.StartStateInitialize {
-		if m.defaultTag != "" && m.defaultTransport == nil {
-			m.access.Unlock()
-			return E.New("default DNS server not found: ", m.defaultTag)
-		}
-		if m.defaultTransport == nil {
-			defaultTransport, err := m.defaultTransportFallback()
-			if err != nil {
-				m.access.Unlock()
-				return E.Cause(err, "default DNS server fallback")
-			}
-			m.transports = append(m.transports, defaultTransport)
-			m.transportByTag[defaultTransport.Tag()] = defaultTransport
-			m.defaultTransport = defaultTransport
-		}
-	}
-	transports := m.transports
-	m.access.Unlock()
-	if stage == adapter.StartStateStart {
-		return m.startTransports(scope, transports)
-	}
-	for _, transport := range transports {
+	m.access.RLock()
+	sortedTransports := m.sortedTransports
+	m.access.RUnlock()
+	for _, transport := range sortedTransports {
 		name := "dns/" + transport.Type() + "[" + transport.Tag() + "]"
 		err := scope.Start(name, transport, stage)
 		if err != nil {
@@ -73,58 +73,53 @@ func (m *TransportManager) Start(stage adapter.StartStage, scope *adapter.Scope)
 	return nil
 }
 
-func (m *TransportManager) startTransports(scope *adapter.Scope, transports []adapter.DNSTransport) error {
-	started := make(map[string]bool)
+func (m *TransportManager) sortTransports(transports []adapter.DNSTransport) ([]adapter.DNSTransport, error) {
+	sortedTransports := make([]adapter.DNSTransport, 0, len(transports))
+	sorted := make(map[string]bool)
 	for {
 		canContinue := false
-	startOne:
-		for _, transportToStart := range transports {
-			transportTag := transportToStart.Tag()
-			if started[transportTag] {
+	sortOne:
+		for _, transportToSort := range transports {
+			transportTag := transportToSort.Tag()
+			if sorted[transportTag] {
 				continue
 			}
-			dependencies := transportToStart.Dependencies()
+			dependencies := transportToSort.Dependencies()
 			for _, dependency := range dependencies {
-				if !started[dependency] {
-					continue startOne
+				if !sorted[dependency] {
+					continue sortOne
 				}
 			}
-			started[transportTag] = true
+			sorted[transportTag] = true
 			canContinue = true
-			name := "dns/" + transportToStart.Type() + "[" + transportTag + "]"
-			err := scope.Start(name, transportToStart, adapter.StartStateStart)
-			if err != nil {
-				return err
-			}
+			sortedTransports = append(sortedTransports, transportToSort)
 		}
-		if len(started) == len(transports) {
+		if len(sorted) == len(transports) {
 			break
 		}
 		if canContinue {
 			continue
 		}
 		currentTransport := common.Find(transports, func(it adapter.DNSTransport) bool {
-			return !started[it.Tag()]
+			return !sorted[it.Tag()]
 		})
 		var lintTransport func(oTree []string, oCurrent adapter.DNSTransport) error
 		lintTransport = func(oTree []string, oCurrent adapter.DNSTransport) error {
 			problemTransportTag := common.Find(oCurrent.Dependencies(), func(it string) bool {
-				return !started[it]
+				return !sorted[it]
 			})
 			if common.Contains(oTree, problemTransportTag) {
 				return E.New("circular server dependency: ", strings.Join(oTree, " -> "), " -> ", problemTransportTag)
 			}
-			m.access.Lock()
 			problemTransport := m.transportByTag[problemTransportTag]
-			m.access.Unlock()
 			if problemTransport == nil {
 				return E.New("dependency[", problemTransportTag, "] not found for server[", oCurrent.Tag(), "]")
 			}
 			return lintTransport(append(oTree, problemTransportTag), problemTransport)
 		}
-		return lintTransport([]string{currentTransport.Tag()}, currentTransport)
+		return nil, lintTransport([]string{currentTransport.Tag()}, currentTransport)
 	}
-	return nil
+	return sortedTransports, nil
 }
 
 func (m *TransportManager) Transports() []adapter.DNSTransport {
