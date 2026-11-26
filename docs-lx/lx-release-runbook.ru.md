@@ -373,6 +373,10 @@ git merge upstream/stable             # ручной merge, НЕ rebase
   1.45 ГБ на каждый CI-клон. Новый пин вливается новым снапшот-коммитом, патч
   накладывается поверх, red/green-тест едет вместе с ним. Подробности — SPEC 048 §6.
 - `cmd/internal/build_libbox/main.go` — единственная правка upstream-файла в CI-зоне, по `// lx`-маркеру.
+- `common/dialer/dialer.go` / `default.go` — если апстрим поменял, какие поля dial `NewWithOptions`
+  применяет под `detour`, обновить список Д1 SPEC 165 (`box_lx_detour.go`, `ignoredUnderDetour`,
+  `readByProtocol`). Устаревший список ошибается только в показе `GetOutboundConfig`, поведение
+  остаётся за апстримом.
 - `box.go`, `dns/client*.go`, `route/route.go`, `common/trafficcontrol/tracker.go` — несут lx-наблюдаемость
   поверх upstream-логики. При конфликте сохранить upstream-поведение резолва и роутинга; наши
   emit/Detour аддитивны (см. аудит чистоты, коммит 3505beb6).

@@ -48,7 +48,9 @@ func applyLXOptions(ctx context.Context, options *option.Options, logger log.Log
 	if err := checkDetourExcept(options, resolved.Detour); err != nil {
 		return ctx, err
 	}
-	if err := showIgnoredUnderDetour(options, changes); err != nil {
+	// Д1: recorded now, in the order of the changes; taken out of the
+	// effective view only, the options go to upstream as they are.
+	if err := recordIgnoredUnderDetour(options, changes); err != nil {
 		return ctx, err
 	}
 	if err := alignPathMTU(options, resolved.Detour, changes, logger); err != nil {
@@ -64,7 +66,11 @@ func applyLXOptions(ctx context.Context, options *option.Options, logger log.Log
 		return ctx, err
 	}
 	expandLXDetour(options, resolved.Detour)
-	service.MustRegister[*option.LXEffectiveConfig](ctx, option.NewLXEffectiveConfig(*options, changes))
+	view, err := withoutIgnoredUnderDetour(*options)
+	if err != nil {
+		return ctx, err
+	}
+	service.MustRegister[*option.LXEffectiveConfig](ctx, option.NewLXEffectiveConfig(view, changes))
 	ctx = lxsniffguard.ContextWith(ctx, guard)
 	ctx = service.ContextWithPtr(ctx, resolved)
 	// lx: SPEC 097 — a fresh build-budget slot per box; the WG endpoints fill

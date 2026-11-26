@@ -96,7 +96,7 @@
 ```
 
 Принимает теги исходящих, endpoint'ов, хопов и групп. У хопа нет `original` и `changes`.
-`by.type` — закрытый список: `chain`, `chain_rewrite`, `detour` (поля, которые апстрим под `detour` не применяет, ALGORITHM Д1), `mtu_align`.
+`by.type` — закрытый список: `chain`, `chain_rewrite`, `lx.detour` (поля, которые апстрим под `detour` не применяет, ALGORITHM Д1), `mtu_align`.
 
 ### 2.3 Фильтры `strip`
 
@@ -117,7 +117,7 @@
   `routing_mark`, `reuse_addr`, `udp_fragment`, `connect_timeout`, `netns`,
   `protect_path` молча не применяются, а параллельный дозвон по адресам выключен. После
   перехвата это касается и узлов на позициях ≥ 1; `GetOutboundConfig` показывает такие
-  поля в `changes` с `by.type: detour` (ALGORITHM Д1). Фиксированный локальный порт — ошибка
+  поля в `changes` с `by.type: lx.detour` (ALGORITHM Д1). Фиксированный локальный порт — ошибка
   загрузки (К5). Решения владельца 2026-11-26.
 - **QUIC поверх туннеля.** `initial_packet_size` и выключение PMTUD для узлов над
   IP-туннелем выставляет выравнивание MTU (`lx.detour.mtu_align`, бывший
@@ -176,7 +176,7 @@
   (WireGuard `listen_port`, Tailscale `listen_port` / `relay_server_port`, OpenConnect
   `dtls_local_port`). Поля сокета, которые апстрим под `detour` тихо не применяет
   (`bind_interface`, `routing_mark`, `tcp_fast_open` и др., ALGORITHM Д1), ошибкой не
-  становятся: у любого узла с `detour` они видны в `changes` с `by.type: detour`.
+  становятся: у любого узла с `detour` они видны в `changes` с `by.type: lx.detour`.
 - **Поведение:** узлы на позициях ≥ 1 цепочки ходят путём цепочки везде, включая прямые
   маршруты и ручную диагностику; собственный `detour` такого узла перекрывается. Узел или
   группа на позиции ≥ 1 в двух цепочках — ошибка загрузки.

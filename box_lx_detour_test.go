@@ -302,7 +302,7 @@ func TestPrePassМ3Except(t *testing.T) {
 }
 
 // Д1–Д4: the dial fields upstream ignores under detour leave the effective
-// config with a `detour` change, on any node with a detour, whatever
+// view with an `lx.detour` change, on any node with a detour, whatever
 // lx.detour says; no warning; И4 holds.
 func TestPrePassД1IgnoredUnderDetour(t *testing.T) {
 	for name, root := range map[string]string{"default": "", "detour false": `, "lx": {"detour": false}`} {
@@ -326,6 +326,16 @@ func TestPrePassД1IgnoredUnderDetour(t *testing.T) {
 			}
 			if len(run.logger.warn) != 0 {
 				t.Fatalf("Д4: no warning, got %v", run.logger.warn)
+			}
+			// Upstream gets the node as written; only the effective view
+			// leaves the fields out.
+			node := outboundOptions[option.Hysteria2OutboundOptions](t, run.options, "hy2")
+			if !node.TCPFastOpen || node.RoutingMark != 7 || node.BindInterface != "eth0" {
+				t.Fatalf("Д1: the options that go to upstream must stay as written: %+v", node.DialerOptions)
+			}
+			effective, _ := run.effective.Content()
+			if strings.Contains(effective, "tcp_fast_open") || strings.Contains(effective, "routing_mark") {
+				t.Fatal("Д1: the effective view leaves the fields out")
 			}
 			// The node without a detour keeps its fields.
 			if changes := run.effective.Changes("warp"); len(changes) != 0 && name == "detour false" {

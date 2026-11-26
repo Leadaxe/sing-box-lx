@@ -70,7 +70,7 @@ Build-тег `with_lx_chain` входит в десктопные `LX_TAGS` и �
 её трафик: узел, мёртвый на пути цепочки, уходит из пула, даже если на своём `detour` он бы
 работал. Апстрим не применяет опции сокета узла под `detour`, поэтому `bind_interface`,
 `routing_mark`, `tcp_fast_open` и подобные у перехваченного узла не действуют, как под любым
-`detour`; `GetOutboundConfig` показывает их записями `detour`
+`detour`; `GetOutboundConfig` показывает их записями `lx.detour`
 ([lx-block](lx-block.ru.md#что-detour-не-применяет)). `domain_resolver` продолжает действовать.
 
 Хопы — обычные исходящие: они видны в списках исходящих (`GetOutbounds`, Clash API) с типом
@@ -131,7 +131,7 @@ Build-тег `with_lx_chain` входит в десктопные `LX_TAGS` и �
   трогаются никогда.
 - **Порядок** для перехваченного узла: `detour` → `rewrite` → MTU. Каждое изменённое поле — запись
   изменения. `GetOutboundConfig(tag)` отдаёт узел как написан (`original`), как собран
-  (`effective`) и список `changes`, у каждой записи `by.type` — `chain`, `chain_rewrite`, `detour` или
+  (`effective`) и список `changes`, у каждой записи `by.type` — `chain`, `chain_rewrite`, `lx.detour` или
   `mtu_align`; применённые к `original`, они дают `effective`. `GetEffectiveConfig` отдаёт весь
   собранный конфиг вместе с хопами ([lx-observability.ru.md](lx-observability.ru.md)).
 

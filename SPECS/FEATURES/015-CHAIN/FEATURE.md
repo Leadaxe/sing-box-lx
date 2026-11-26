@@ -92,7 +92,7 @@ runtime
 - **`direct` on a position ≥ 1** — a position or a group pick — passes the dial to the hop below:
   no traffic leaves past the positions below.
 - **Every change is recorded.** `GetOutboundConfig(tag)` returns `original` (as written),
-  `effective` (after the pre-pass) and `changes` (`chain`, `chain_rewrite`, `detour`, `mtu_align`, in that
+  `effective` (after the pre-pass) and `changes` (`chain`, `chain_rewrite`, `lx.detour`, `mtu_align`, in that
   order); applied to `original` they give `effective`. `GetEffectiveConfig` returns the whole
   effective config, hops included.
 - **MTU.** The alignment of [SPEC 120](../../TASKS/120-PATH_MTU_ALIGN/SPEC.md) /
@@ -112,7 +112,7 @@ runtime
   declare it twice under different tags.
 - A taken-over node cannot carry a fixed local port: the load fails (ALGORITHM К5). Socket
   options upstream ignores under any `detour` (`bind_interface`, `routing_mark`,
-  `tcp_fast_open`, …) do nothing here too; `GetOutboundConfig` shows them as `detour` changes
+  `tcp_fast_open`, …) do nothing here too; `GetOutboundConfig` shows them as `lx.detour` changes
   (Д1).
 - UDP capability of the hop below is not checked statically: a dial error names the positions.
 - A nested chain is allowed only on position 0.
@@ -165,7 +165,7 @@ MTU и граф носителей `sniff_guard`. Во время работы �
 - **`direct` на позиции ≥ 1** — позицией или выбором группы — передаёт дозвон хопу ниже: мимо
   нижних позиций трафик не уходит.
 - **Каждое изменение записано.** `GetOutboundConfig(tag)` отдаёт `original`, `effective` и
-  `changes` (`chain`, `chain_rewrite`, `detour`, `mtu_align`); применённые к `original`, они дают
+  `changes` (`chain`, `chain_rewrite`, `lx.detour`, `mtu_align`); применённые к `original`, они дают
   `effective`. `GetEffectiveConfig` — весь итоговый конфиг вместе с хопами.
 - **MTU** — общее выравнивание SPEC 120/144; ёмкость хопа — `min(позиция, хоп ниже)`, чтобы узел
   над ним работал при включённой, выключенной позиции и при выбранном `direct`.
@@ -182,7 +182,7 @@ MTU и граф носителей `sniff_guard`. Во время работы �
 - У перехваченного узла не может быть фиксированного локального порта: загрузка падает
   (ALGORITHM К5). Опции сокета, которые апстрим под любым `detour` игнорирует
   (`bind_interface`, `routing_mark`, `tcp_fast_open`, …), не действуют и здесь;
-  `GetOutboundConfig` показывает их записями `detour` (Д1).
+  `GetOutboundConfig` показывает их записями `lx.detour` (Д1).
 - UDP-способность хопа ниже статически не проверяется: ошибка дозвона называет позиции.
 - Вложенная цепочка — только на позиции 0.
 

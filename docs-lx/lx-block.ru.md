@@ -342,8 +342,8 @@ mtu_align: wg-exit mtu 1420 → 1200 clamped (limited by warp[masque] mtu 1280 v
 С `detour` апстрим строит dialer узла ниже и не строит собственный dialer узла
 (`common/dialer/dialer.go`, `NewWithOptions`), а поля сокета читает только собственный.
 Поэтому под `detour` эти поля не действуют и ошибок не дают. Ядро это поведение не меняет, а
-показывает: `GetOutboundConfig` отдаёт каждое поле в `changes` с `by.type: "detour"` без `to`,
-и в итоговом конфиге его нет.
+показывает: `GetOutboundConfig` отдаёт каждое поле в `changes` с `by.type: "lx.detour"` без `to`,
+и в представлении итогового конфига его нет; в апстрим опции узла уходят как написаны.
 
 `bind_interface`, `inet4_bind_address`, `inet6_bind_address`, `bind_address_no_port`,
 `protect_path`, `routing_mark`, `reuse_addr`, `netns`, `connect_timeout`, `tcp_fast_open`,

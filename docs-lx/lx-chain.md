@@ -72,7 +72,7 @@ path too, and so does a manual check of the node from a UI. A group on position 
 very instances that carry its traffic: a node dead on the chain's path leaves the pool even if
 it would work on its own `detour`. Upstream does not apply a node's socket options under
 `detour`, so `bind_interface`, `routing_mark`, `tcp_fast_open` and the like of a taken-over node
-do nothing, as under any `detour`; `GetOutboundConfig` shows them as `detour` changes
+do nothing, as under any `detour`; `GetOutboundConfig` shows them as `lx.detour` changes
 ([lx-block](lx-block.md#what-detour-does-not-apply)). `domain_resolver` keeps working.
 
 Hops are ordinary outbounds: they show in outbound lists (`GetOutbounds`, Clash API) with the
@@ -134,7 +134,7 @@ keep through the hops; user connections through the chain are cut only with
   paths — are never touched.
 - **Order** for a taken-over node: `detour` → `rewrite` → MTU. Every changed field is a change
   record. `GetOutboundConfig(tag)` returns the node as written (`original`), as built
-  (`effective`) and the list of `changes`, each with `by.type` `chain`, `chain_rewrite`, `detour` or
+  (`effective`) and the list of `changes`, each with `by.type` `chain`, `chain_rewrite`, `lx.detour` or
   `mtu_align`; applied to `original` they give `effective`. `GetEffectiveConfig` returns the whole
   config as built, hops included ([lx-observability.md](lx-observability.md)).
 

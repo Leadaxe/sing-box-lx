@@ -15,8 +15,10 @@ import (
 // (common/dialer/dialer.go NewWithOptions: Detour != "" → NewDetour, no
 // NewDefault), and only NewDefault (common/dialer/default.go) reads the
 // socket fields. They do nothing under detour and say nothing. The pre-pass
-// does not change that; it takes them out of the effective config with a
-// `detour` change, so GetOutboundConfig shows what runs.
+// does not change that: the options go to upstream as written. Only the
+// effective view leaves them out, with an `lx.detour` change, so
+// GetOutboundConfig shows what runs. After an upstream merge, check this list
+// against common/dialer (lx-release-runbook §3).
 
 // ignoredUnderDetour are the dial fields upstream does not apply under
 // detour (Д1). domain_resolver and domain_strategy do apply (Д2).
@@ -37,34 +39,54 @@ var readByProtocol = map[string]map[string]bool{
 
 const ignoredUnderDetourReason = "not applied under detour (common/dialer NewWithOptions builds the detour dialer only)"
 
-// showIgnoredUnderDetour applies Д1 to every node with a detour. A node it
-// changes gets a fresh copy of its options struct.
-func showIgnoredUnderDetour(options *option.Options, changes map[string][]option.LXConfigChange) error {
+// recordIgnoredUnderDetour writes the Д1 changes of every node with a
+// detour. The options are not touched: what upstream gets is the config as
+// it is, the behaviour is upstream's.
+func recordIgnoredUnderDetour(options *option.Options, changes map[string][]option.LXConfigChange) error {
+	for _, outbound := range options.Outbounds {
+		_, nodeChanges, err := withoutIgnoredDialFields(outbound.Type, outbound.Options)
+		if err != nil {
+			return E.Cause(err, "outbound ", outbound.Tag)
+		}
+		changes[outbound.Tag] = append(changes[outbound.Tag], nodeChanges...)
+	}
+	for _, endpoint := range options.Endpoints {
+		_, nodeChanges, err := withoutIgnoredDialFields(endpoint.Type, endpoint.Options)
+		if err != nil {
+			return E.Cause(err, "endpoint ", endpoint.Tag)
+		}
+		changes[endpoint.Tag] = append(changes[endpoint.Tag], nodeChanges...)
+	}
+	return nil
+}
+
+// withoutIgnoredUnderDetour is the effective view of options (Н2): a copy in
+// which the nodes with a detour lack the fields of Д1. options is not
+// written through.
+func withoutIgnoredUnderDetour(options option.Options) (option.Options, error) {
 	outbounds := append([]option.Outbound(nil), options.Outbounds...)
 	for i := range outbounds {
-		changed, nodeChanges, err := withoutIgnoredDialFields(outbounds[i].Type, outbounds[i].Options)
+		changed, _, err := withoutIgnoredDialFields(outbounds[i].Type, outbounds[i].Options)
 		if err != nil {
-			return E.Cause(err, "outbound ", outbounds[i].Tag)
+			return options, E.Cause(err, "outbound ", outbounds[i].Tag)
 		}
 		if changed != nil {
 			outbounds[i].Options = changed
-			changes[outbounds[i].Tag] = append(changes[outbounds[i].Tag], nodeChanges...)
 		}
 	}
 	endpoints := append([]option.Endpoint(nil), options.Endpoints...)
 	for i := range endpoints {
-		changed, nodeChanges, err := withoutIgnoredDialFields(endpoints[i].Type, endpoints[i].Options)
+		changed, _, err := withoutIgnoredDialFields(endpoints[i].Type, endpoints[i].Options)
 		if err != nil {
-			return E.Cause(err, "endpoint ", endpoints[i].Tag)
+			return options, E.Cause(err, "endpoint ", endpoints[i].Tag)
 		}
 		if changed != nil {
 			endpoints[i].Options = changed
-			changes[endpoints[i].Tag] = append(changes[endpoints[i].Tag], nodeChanges...)
 		}
 	}
 	options.Outbounds = outbounds
 	options.Endpoints = endpoints
-	return nil
+	return options, nil
 }
 
 // withoutIgnoredDialFields returns a copy of options without the fields of

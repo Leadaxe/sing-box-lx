@@ -159,8 +159,10 @@ uTLS, padding мультиплексора и padding XHTTP в каталог н
   `routing_mark`, `reuse_addr`, `netns`, `connect_timeout`, `tcp_fast_open`,
   `tcp_multi_path`, `disable_tcp_keep_alive`, `tcp_keep_alive`, `tcp_keep_alive_interval`,
   `udp_fragment`, `network_strategy`, `network_type`, `fallback_network_type`,
-  `fallback_delay` убираются из итогового конфига. Каждое — запись `changes`
-  `{field, from, by: {type: detour, reason}}` без `to`. `fallback_delay` формально уходит в
+  `fallback_delay` убираются из представления итогового конфига (`effective` в
+  `GetEffectiveConfig` / `GetOutboundConfig`); опции, которые уходят в апстримный код, не
+  меняются, поведение целиком за апстримом. Каждое поле — запись `changes`
+  `{field, from, by: {type: lx.detour, reason}}` без `to`. `fallback_delay` формально уходит в
   резолвер, но с `detour` параллельного дозвона нет и значение не используется.
 - **Д2.** Применяются под `detour` и не трогаются: `domain_resolver`, устаревший
   `domain_strategy` (через тот же резолвер).
@@ -171,6 +173,9 @@ uTLS, padding мультиплексора и padding XHTTP в каталог н
 - **Д4.** Ни ключа, ни выключателя: `"detour": false` и `except_outbounds` на Д1 не влияют,
   поле не заработало бы ни при каких настройках. Предупреждений в лог нет, рантайм не
   меняется. Решение владельца 2026-11-26.
+- **Д5.** Список Д1 сверяется с `common/dialer` на каждом мерже апстрима
+  (`docs-lx/lx-release-runbook.md` §3). Устаревший список ошибается только в показе:
+  поведение остаётся за апстримом.
 
 ### 4.5 `lx.detour.mtu_align`
 

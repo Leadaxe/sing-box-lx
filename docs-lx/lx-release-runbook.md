@@ -371,6 +371,10 @@ semantics, accept upstream logic.
   history is 1.45 GB per CI clone. A new pin lands as a new snapshot commit, the patch is applied
   on top, and the red/green test travels with it. Details in SPEC 048 §6.
 - `cmd/internal/build_libbox/main.go` — the only upstream-file edit in the CI zone, marked `// lx`.
+- `common/dialer/dialer.go` / `default.go` — if upstream changed which dial fields `NewWithOptions`
+  applies under `detour`, update the list of SPEC 165 Д1 (`box_lx_detour.go`,
+  `ignoredUnderDetour`, `readByProtocol`). A stale list only misreports `GetOutboundConfig`;
+  behaviour stays upstream's.
 - `box.go`, `dns/client*.go`, `route/route.go`, `common/trafficcontrol/tracker.go` — these carry lx
   observability on top of upstream logic. On conflict keep upstream resolve and routing behaviour;
   our emit/Detour bits are additive (see the purity audit, commit 3505beb6).
