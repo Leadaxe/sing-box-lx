@@ -11,14 +11,19 @@ package masque
 // sends are queued for Read, and Write feeds the stack.
 
 import (
+	"context"
+	"net"
 	"net/netip"
 	"os"
 	"sync"
 
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/transport/device"
 	"github.com/sagernet/sing-box/transport/wireguard"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
+	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 	wgDevice "github.com/sagernet/wireguard-go/device"
 	wgTun "github.com/sagernet/wireguard-go/tun"
 )
@@ -109,6 +114,21 @@ func (d *tunnelDevice) Write(bufs [][]byte, offset int) (int, error) {
 	return len(bufs), nil
 }
 
+// DialContext bounds the connect of a TCP dial as the WireGuard stack device
+// does (SPEC 052, transport/wireguard/connect_deadline_lx.go): the stack's own
+// SYN retries are the only other bound, and a silent tunnel would hold the
+// dial for minutes.
+func (d *tunnelDevice) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if N.NetworkName(network) == N.NetworkTCP {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, C.TCPTimeout)
+		defer cancel()
+	}
+	return d.Device.DialContext(ctx, network, destination)
+}
+
+// Close leaves the batch a reader holds to that reader: Read returns
+// os.ErrClosed from then on, and the garbage collector takes the buffers.
 func (d *tunnelDevice) Close() error {
 	d.closeOnce.Do(func() {
 		close(d.closed)
@@ -119,8 +139,6 @@ func (d *tunnelDevice) Close() error {
 		case packetBuffers := <-d.outbound:
 			buf.ReleaseMulti(packetBuffers)
 		default:
-			buf.ReleaseMulti(d.pending)
-			d.pending = nil
 			return err
 		}
 	}

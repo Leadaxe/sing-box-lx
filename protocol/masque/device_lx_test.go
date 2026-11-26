@@ -121,3 +121,35 @@ func onesComplementSum(data []byte) uint16 {
 	}
 	return uint16(sum)
 }
+
+// Close while a reader waits in Read: the reader gets os.ErrClosed, under -race.
+func TestTunnelDeviceCloseDuringRead(t *testing.T) {
+	device, err := newTunnelDevice(wireguard.DeviceOptions{
+		Context: context.Background(),
+		Logger:  log.NewNOPFactory().NewLogger("masque"),
+		MTU:     1280,
+		Address: []netip.Prefix{netip.MustParsePrefix("172.16.0.2/32")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = device.Start(); err != nil {
+		t.Fatal(err)
+	}
+	readErr := make(chan error, 1)
+	go func() {
+		bufs := [][]byte{make([]byte, 1500)}
+		_, err := device.Read(bufs, make([]int, 1), 0)
+		readErr <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	_ = device.Close()
+	select {
+	case err = <-readErr:
+		if err == nil {
+			t.Fatal("Read after Close returned no error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Read did not return after Close")
+	}
+}
