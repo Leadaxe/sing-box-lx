@@ -914,3 +914,24 @@ func TestChainDialBeforeStart(t *testing.T) {
 		}
 	}
 }
+
+func TestRewriteК2аNodeTwiceOnOneChain(t *testing.T) {
+	s := newStand(t)
+	s.fake("A")
+	s.fake("B")
+	s.selector("Entry", "A", "B")
+	s.chain("virt", "Entry", "A")
+	requireError(t, s.rewrite(), "node A stands on positions 0 and 1", "one node instance")
+	s = newStand(t)
+	s.fake("A")
+	s.fake("B")
+	s.chain("virt", "A", "B", "A")
+	requireError(t, s.rewrite(), "duplicate outbound A")
+	// A node on position 0 inside a group above is К2 until the owner decides.
+	s = newStand(t)
+	s.fake("A")
+	s.fake("X")
+	s.selector("Dir", "A", "X")
+	s.chain("virt", "A", "Dir")
+	requireError(t, s.rewrite(), "node A", "entry (position 0)")
+}

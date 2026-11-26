@@ -111,11 +111,25 @@ func (r *rewriter) run() (map[string][]option.LXConfigChange, error) {
 				return nil, E.New("chain ", chainTag, ": tag ", hopTag, " is reserved for the chain hop but already used")
 			}
 		}
+		// below: every tag (node or group) reachable on the positions under
+		// the current one, with its position (К2а).
+		below := make(map[string]int)
 		for i, position := range positions {
+			if _, isGroup := groupMembers(r.entries[position].options); !isGroup {
+				if at, isBelow := below[position]; isBelow {
+					return nil, E.New("chain ", chainTag, ": node ", position, " stands on positions ", at, " and ", i,
+						": one node instance cannot stand on two positions of a chain")
+				}
+			}
 			leaves, err := r.leavesOf(chainTag, i, position)
 			if err != nil {
 				return nil, err
 			}
+			r.reach(position, func(tag string) {
+				if _, seen := below[tag]; !seen {
+					below[tag] = i
+				}
+			})
 			for _, leaf := range leaves {
 				if i == 0 {
 					entryOf[leaf.tag] = append(entryOf[leaf.tag], chainTag)
@@ -206,6 +220,27 @@ func (r *rewriter) validatePositions(chainTag string, positions []string) error 
 		}
 	}
 	return nil
+}
+
+// reach calls visit with tag and every tag reachable from it through groups.
+func (r *rewriter) reach(tag string, visit func(string)) {
+	seen := make(map[string]bool)
+	var walk func(string)
+	walk = func(tag string) {
+		if seen[tag] {
+			return
+		}
+		seen[tag] = true
+		visit(tag)
+		if entry := r.entries[tag]; entry != nil {
+			if members, isGroup := groupMembers(entry.options); isGroup {
+				for _, member := range members {
+					walk(member)
+				}
+			}
+		}
+	}
+	walk(tag)
 }
 
 // groupMembers returns the members of a group node, ok false for a non-group.
