@@ -110,8 +110,9 @@ runtime
 
 - A node or a group can be taken over by one chain position only; to use a node in two chains,
   declare it twice under different tags.
-- The network options of a taken-over node (`bind_interface`, `routing_mark`, `tcp_fast_open`, …)
-  do not apply: upstream ignores them under `detour`.
+- A taken-over node cannot carry a fixed local port or socket options upstream ignores under
+  `detour` (`bind_interface`, `routing_mark`, `tcp_fast_open`, …): the load fails and lists the
+  fields (ALGORITHM К5).
 - UDP capability of the hop below is not checked statically: a dial error names the positions.
 - A nested chain is allowed only on position 0.
 
@@ -177,8 +178,9 @@ MTU и граф носителей `sniff_guard`. Во время работы �
 
 - Узел или группу перехватывает одна позиция одной цепочки; для двух цепочек узел объявляется
   дважды под разными тегами.
-- Сетевые опции перехваченного узла (`bind_interface`, `routing_mark`, `tcp_fast_open`, …) не
-  действуют: апстрим игнорирует их под `detour`.
+- У перехваченного узла не может быть фиксированного локального порта и опций сокета, которые
+  апстрим под `detour` игнорирует (`bind_interface`, `routing_mark`, `tcp_fast_open`, …): загрузка
+  падает и называет поля (ALGORITHM К5).
 - UDP-способность хопа ниже статически не проверяется: ошибка дозвона называет позиции.
 - Вложенная цепочка — только на позиции 0.
 

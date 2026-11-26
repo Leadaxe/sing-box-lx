@@ -37,8 +37,13 @@ type lxDetourDecision struct {
 	stripSpoof    bool
 	stripKernel   bool
 	stripEngine   bool
-	resolved      *option.LXResolved
-	ctx           context.Context
+	// recordFragmentSet: the node sets record_fragment explicitly (SPEC 156).
+	recordFragmentSet bool
+	resolved          *option.LXResolved
+	// ctx is the build context of the node's TLS config; handshake the
+	// context of the handshake, for its trace.
+	ctx       context.Context
+	handshake context.Context
 }
 
 // lxDetourDecide decides for the handshake of node over conn. A node outside
@@ -73,6 +78,8 @@ func lxDetourDecideContext(ctx context.Context, conn net.Conn) lxDetourDecision 
 		stripEngine:   strip.TLSEngine,
 		resolved:      resolved,
 		ctx:           ctx,
+
+		recordFragmentSet: resolved.DetourRecordFragmentSet[tag],
 	}
 }
 
@@ -83,7 +90,7 @@ func (d lxDetourDecision) strippedNode(node sniffGuardNode) sniffGuardNode {
 		return node
 	}
 	node.fragment = false
-	node.chosen = node.recordFragment
+	node.chosen = d.recordFragmentSet
 	return node
 }
 
@@ -91,7 +98,7 @@ func (d lxDetourDecision) strippedNode(node sniffGuardNode) sniffGuardNode {
 // observability and once per node in the log (С4).
 func (d *lxDetourDecision) applied(ctx context.Context, filter string) {
 	d.logOnce(filter)
-	if lxtrace.From(ctx) == nil {
+	if ctx == nil || lxtrace.From(ctx) == nil {
 		return
 	}
 	_, stage := lxtrace.Begin(ctx, "detour_strip", d.tag)
@@ -157,7 +164,7 @@ func skipSpoofLx(conn net.Conn, spoof string) bool {
 	if decision == nil || !decision.stripSpoof {
 		return false
 	}
-	decision.applied(decision.ctx, option.LXDetourStripTLSSpoof)
+	decision.applied(decision.handshake, option.LXDetourStripTLSSpoof)
 	return true
 }
 
@@ -168,7 +175,7 @@ func skipKTLSLx(conn net.Conn) bool {
 	if decision == nil || !decision.stripKernel {
 		return false
 	}
-	decision.applied(decision.ctx, option.LXDetourStripTLSKernel)
+	decision.applied(decision.handshake, option.LXDetourStripTLSKernel)
 	return true
 }
 

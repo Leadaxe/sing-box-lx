@@ -104,6 +104,7 @@ func withoutSniffGuardLx(ctx context.Context) context.Context {
 func sniffGuardConnLx(ctx context.Context, conn net.Conn, config Config) net.Conn {
 	node, shapeable := sniffGuardNodeOf(config)
 	detour := lxDetourDecide(node, conn)
+	detour.handshake = ctx
 	if detour.stripFragment {
 		detour.applied(ctx, option.LXDetourStripTLSFragment)
 	}

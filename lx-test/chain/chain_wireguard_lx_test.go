@@ -192,7 +192,9 @@ func TestChainGroupMeasuresChainPathКритерий1(t *testing.T) {
 			{Type: C.TypeURLTest, Tag: "o-wg", Options: &option.URLTestOutboundOptions{
 				Outbounds: []string{"NL-2", "NL-1"}, URL: "http://10.77.0.1/", Interval: badoption.Duration(10 * time.Minute),
 			}},
-			{Type: C.TypeChain, Tag: "c-wg", Options: &option.ChainOutboundOptions{Outbounds: []string{"o-in", "o-wg"}}},
+			// The entry is a group, as o-direct in LxBox#233.
+			{Type: C.TypeSelector, Tag: "o-entry", Options: &option.SelectorOutboundOptions{Outbounds: []string{"o-in"}}},
+			{Type: C.TypeChain, Tag: "c-wg", Options: &option.ChainOutboundOptions{Outbounds: []string{"o-entry", "o-wg"}}},
 		},
 		Route: &option.RouteOptions{
 			Final: "c-wg",

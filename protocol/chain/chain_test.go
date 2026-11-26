@@ -16,6 +16,7 @@ import (
 	"github.com/sagernet/sing-box/adapter/endpoint"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/interrupt"
+	"github.com/sagernet/sing-box/common/lxdatagram"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -864,5 +865,27 @@ func TestChainErrorNamesPositions(t *testing.T) {
 	status := s.chainOf("virt").ChainStatus()
 	if status.Positions[1].Now != "x" || status.Positions[0].IsGroup {
 		t.Fatalf("status %+v", status)
+	}
+}
+
+// С2 rests on this: the interrupt wrapper a hop puts on every conn keeps a
+// kernel socket visible, so a node over direct is not taken for a tunnel.
+func TestHopWrapperKeepsKernelSocketVisible(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	requireNoError(t, err)
+	defer listener.Close()
+	go listener.Accept()
+	conn, err := net.Dial("tcp", listener.Addr().String())
+	requireNoError(t, err)
+	defer conn.Close()
+	group := interrupt.NewGroup()
+	if !lxdatagram.IsKernelSocket(group.NewConn(group.NewConn(conn, false), true)) {
+		t.Fatal("tcp through two hop wrappers must stay a kernel socket")
+	}
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	requireNoError(t, err)
+	defer packetConn.Close()
+	if !lxdatagram.IsKernelPacketConn(group.NewPacketConn(packetConn, false)) {
+		t.Fatal("udp through a hop wrapper must stay a kernel socket")
 	}
 }

@@ -129,6 +129,27 @@ func TestLxDetourС3GuardWins(t *testing.T) {
 	require.True(t, isFragment, "И7: the guard's split is not undone by the filter")
 }
 
+// С3 with SPEC 156: an explicit record_fragment is the node's choice, the
+// guard leaves it alone after the filter dropped the split.
+func TestLxDetourС3ExplicitRecordFragmentStands(t *testing.T) {
+	node := lxGuardNode(t, option.LXSniffGuardTLSFragment, option.LXSniffGuardSuspect, false)
+	ctx := lxDetourContext(lxDetourCatalog, "node")
+	service.PtrFromContext[option.LXResolved](ctx).DetourRecordFragmentSet = map[string]bool{"node": true}
+	off := false
+	config := lxDetourSTDConfig(t, ctx, true, &off)
+	var shaped net.Conn
+	dialCtx, record := adapter.ContextWithCarrierRecord(context.Background())
+	record.Type, record.Tag = "vless", "relay"
+	_ = node.Dial(dialCtx, func(ctx context.Context) error {
+		shaped = sniffGuardConnLx(ctx, lxDetourTunnelConn(t), config)
+		return nil
+	})
+	guarded, isShaped := shaped.(*sniffGuardConn)
+	require.True(t, isShaped)
+	_, isFragment := guarded.Conn.(*tf.Conn)
+	require.False(t, isFragment, "the explicit record_fragment: false stands")
+}
+
 func TestLxDetourС2С5SpoofAndKernel(t *testing.T) {
 	ctx := lxDetourContext(lxDetourCatalog, "node")
 	config := lxDetourSTDConfig(t, ctx, false, nil)

@@ -49,6 +49,7 @@ func applyLXOptions(ctx context.Context, options *option.Options, logger log.Log
 		return ctx, err
 	}
 	resolved.DetourNodes = detourNodes(options, resolved.Detour)
+	resolved.DetourRecordFragmentSet = recordFragmentSet(options, resolved.DetourNodes)
 	resolved.DetourLogged = new(sync.Map)
 	// lx: SPEC 060 — the guard of this box, registered even when off (nil) for
 	// the same reason as resolved below.
@@ -108,6 +109,26 @@ func detourNodes(options *option.Options, detour option.LXDetourResolved) map[st
 		add(endpoint.Tag, endpoint.Options)
 	}
 	return nodes
+}
+
+// recordFragmentSet is the nodes of nodes whose top-level TLS has an explicit
+// record_fragment (SPEC 165 С3 with SPEC 156).
+func recordFragmentSet(options *option.Options, nodes map[string]bool) map[string]bool {
+	if len(nodes) == 0 {
+		return nil
+	}
+	set := make(map[string]bool)
+	for _, outbound := range options.Outbounds {
+		if !nodes[outbound.Tag] {
+			continue
+		}
+		if wrapper, ok := outbound.Options.(option.OutboundTLSOptionsWrapper); ok {
+			if tls := wrapper.TakeOutboundTLSOptions(); tls != nil && tls.RecordFragment != nil {
+				set[outbound.Tag] = true
+			}
+		}
+	}
+	return set
 }
 
 // expandLXDetour writes lx.detour expanded into the effective config (Р9).

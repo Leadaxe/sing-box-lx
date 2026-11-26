@@ -283,6 +283,10 @@ type LXResolved struct {
 	// with `detour` after the chain rewrite, not excepted. Filled by the box
 	// pre-pass; nil when every filter is off.
 	DetourNodes map[string]bool
+	// DetourRecordFragmentSet is the subset of DetourNodes whose TLS sets
+	// record_fragment explicitly, false included (SPEC 156): a split the
+	// filter drops leaves such a node's choice standing for the guard.
+	DetourRecordFragmentSet map[string]bool
 	// DetourLogged holds the node/filter pairs already logged by the strip
 	// filters of this box; set by the box pre-pass.
 	DetourLogged *sync.Map
