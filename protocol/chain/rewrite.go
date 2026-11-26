@@ -5,6 +5,7 @@ import (
 	"context"
 	stdjson "encoding/json"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -96,50 +97,34 @@ func (r *rewriter) chainOptions(entry *rewriteEntry) *option.ChainOutboundOption
 }
 
 func (r *rewriter) run() (map[string][]option.LXConfigChange, error) {
+	for _, chainEntry := range r.chains {
+		if err := r.validatePositions(chainEntry.tag, r.chainOptions(chainEntry).Outbounds); err != nil {
+			return nil, err
+		}
+	}
+	if err := r.checkNoRings(); err != nil {
+		return nil, err
+	}
 	intercepted := make(map[string]interception)
-	entryOf := make(map[string][]string) // node tag -> chains reaching it on position 0
 	var interceptOrder []string
 	for _, chainEntry := range r.chains {
 		chainTag := chainEntry.tag
 		positions := r.chainOptions(chainEntry).Outbounds
-		if err := r.validatePositions(chainTag, positions); err != nil {
-			return nil, err
-		}
 		for i := range positions {
 			hopTag := HopTag(chainTag, i)
 			if _, taken := r.entries[hopTag]; taken {
 				return nil, E.New("chain ", chainTag, ": tag ", hopTag, " is reserved for the chain hop but already used")
 			}
 		}
-		// below: every tag (node or group) reachable on the positions under
-		// the current one, with its position (К2а).
-		below := make(map[string]int)
 		for i, position := range positions {
-			if _, isGroup := groupMembers(r.entries[position].options); !isGroup {
-				if at, isBelow := below[position]; isBelow {
-					return nil, E.New("chain ", chainTag, ": node ", position, " stands on positions ", at, " and ", i,
-						": one node instance cannot stand on two positions of a chain")
-				}
-			}
 			leaves, err := r.leavesOf(chainTag, i, position)
 			if err != nil {
 				return nil, err
 			}
-			r.reach(position, func(tag string) {
-				if _, seen := below[tag]; !seen {
-					below[tag] = i
-				}
-			})
+			if i == 0 {
+				continue // П3: the entry is not taken over
+			}
 			for _, leaf := range leaves {
-				if i == 0 {
-					entryOf[leaf.tag] = append(entryOf[leaf.tag], chainTag)
-					continue
-				}
-				if previous, loaded := intercepted[leaf.tag]; loaded {
-					// К1
-					return nil, E.New("node ", leaf.tag, " is on position ", previous.position, " of chain ", previous.chain,
-						" and on position ", i, " of chain ", chainTag, ": a node can be taken over by one chain position only")
-				}
 				if err := r.checkDialable(chainTag, i, leaf); err != nil {
 					return nil, err
 				}
@@ -148,15 +133,6 @@ func (r *rewriter) run() (map[string][]option.LXConfigChange, error) {
 			}
 		}
 	}
-	// К2
-	for _, tag := range interceptOrder {
-		if chains := entryOf[tag]; len(chains) > 0 {
-			place := intercepted[tag]
-			return nil, E.New("node ", tag, " is on position ", place.position, " of chain ", place.chain,
-				" and on the entry (position 0) of chain ", chains[0], ": a node taken over by a chain cannot be an entry")
-		}
-	}
-
 	outbounds := append([]option.Outbound(nil), r.options.Outbounds...)
 	endpoints := append([]option.Endpoint(nil), r.options.Endpoints...)
 	changes := make(map[string][]option.LXConfigChange)
@@ -212,12 +188,59 @@ func (r *rewriter) validatePositions(chainTag string, positions []string) error 
 		case position == chainTag:
 			return E.New("chain ", chainTag, ": position ", i, " is the chain itself")
 		case seen[position]:
-			return E.New("chain ", chainTag, ": duplicate outbound ", position, " (position ", i, ")")
+			return E.New("chain ", chainTag, ": duplicate outbound ", position, " (position ", i, "): a chain has no rings")
 		}
 		seen[position] = true
 		if r.entries[position] == nil {
 			return E.New("chain ", chainTag, ": position ", i, ": outbound not found: ", position)
 		}
+	}
+	return nil
+}
+
+// chainPlace is one place of the chains: a position of a chain.
+type chainPlace struct {
+	chain    string
+	position int
+}
+
+// checkNoRings is К1: every node and group stands in one place of the chains
+// at most, counting every member of every group of any depth (the groups'
+// picks are not taken into account). direct and block hold no place.
+func (r *rewriter) checkNoRings() error {
+	places := make(map[string][]chainPlace)
+	var order []string
+	for _, chainEntry := range r.chains {
+		for i, position := range r.chainOptions(chainEntry).Outbounds {
+			place := chainPlace{chain: chainEntry.tag, position: i}
+			r.reach(position, func(tag string) {
+				entry := r.entries[tag]
+				if entry == nil || entry.typeName == C.TypeDirect || entry.typeName == C.TypeBlock {
+					return
+				}
+				if len(places[tag]) == 0 {
+					order = append(order, tag)
+				}
+				if !slices.Contains(places[tag], place) {
+					places[tag] = append(places[tag], place)
+				}
+			})
+		}
+	}
+	for _, tag := range order {
+		if len(places[tag]) < 2 {
+			continue
+		}
+		kind := "node"
+		if _, isGroup := groupMembers(r.entries[tag].options); isGroup {
+			kind = "group"
+		}
+		described := make([]string, 0, len(places[tag]))
+		for _, place := range places[tag] {
+			described = append(described, "chain "+place.chain+" position "+strconv.Itoa(place.position))
+		}
+		return E.New(kind, " ", tag, " is reachable in ", strings.Join(described, " and "),
+			": a node or group can stand in one place of the chains only, a chain has no rings")
 	}
 	return nil
 }

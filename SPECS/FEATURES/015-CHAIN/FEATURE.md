@@ -108,8 +108,10 @@ runtime
 
 ## Boundaries
 
-- A node or a group can be taken over by one chain position only; to use a node in two chains,
-  declare it twice under different tags.
+- A chain has no rings: a node or a group reachable in more than one place of the chains (two
+  positions of one chain or two chains, through groups of any depth, every member counted)
+  fails the load. `[A, Dir{A, X}]` fails too; build the upper position from a copy of the
+  group without the nodes below, and a node used in two chains as two declarations.
 - A taken-over node cannot carry a fixed local port: the load fails (ALGORITHM К5). Socket
   options upstream ignores under any `detour` (`bind_interface`, `routing_mark`,
   `tcp_fast_open`, …) do nothing here too; `GetOutboundConfig` shows them as `lx.detour` changes
@@ -177,8 +179,10 @@ MTU и граф носителей `sniff_guard`. Во время работы �
 
 ## Границы
 
-- Узел или группу перехватывает одна позиция одной цепочки; для двух цепочек узел объявляется
-  дважды под разными тегами.
+- Колец в цепочке нет: узел или группа, достижимые больше чем в одном месте цепочек (на двух
+  позициях одной цепочки или в двух цепочках, через группы любой вложенности, по всем
+  членам), — ошибка загрузки. `[A, Dir{A, X}]` — тоже; верхнюю позицию собирают из копии
+  группы без узлов ниже, узел для двух цепочек объявляют дважды.
 - У перехваченного узла не может быть фиксированного локального порта: загрузка падает
   (ALGORITHM К5). Опции сокета, которые апстрим под любым `detour` игнорирует
   (`bind_interface`, `routing_mark`, `tcp_fast_open`, …), не действуют и здесь;

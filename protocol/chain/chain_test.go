@@ -547,7 +547,7 @@ func TestRewriteК1TwoChains(t *testing.T) {
 	s.selector("g", "v1", "v2")
 	s.chain("X", "a", "g")
 	s.chain("Y", "b", "g")
-	requireError(t, s.rewrite(), "node v1", "chain X", "chain Y")
+	requireError(t, s.rewrite(), "group g", "chain X position 1", "chain Y position 1", "no rings")
 }
 
 func TestRewriteК2EntryAndPosition(t *testing.T) {
@@ -577,7 +577,8 @@ func TestRewriteК4NestedChain(t *testing.T) {
 
 	s = newStand(t)
 	s.fake("a")
-	s.selector("g", "a", "self")
+	s.fake("b")
+	s.selector("g", "b", "self")
 	s.chain("self", "a", "g")
 	requireError(t, s.rewrite(), "contains the chain itself")
 
@@ -915,23 +916,75 @@ func TestChainDialBeforeStart(t *testing.T) {
 	}
 }
 
-func TestRewriteК2аNodeTwiceOnOneChain(t *testing.T) {
+func TestRewriteК1NoRings(t *testing.T) {
+	for name, build := range map[string]func(s *stand){
+		"[A, Dir{A, X}]": func(s *stand) { s.fake("A"); s.fake("X"); s.selector("Dir", "A", "X"); s.chain("c", "A", "Dir") },
+		"[Dir{A}, A]":    func(s *stand) { s.fake("A"); s.selector("Dir", "A"); s.chain("c", "Dir", "A") },
+		"[Dir1{A, X}, B, Dir2{A, Y}]": func(s *stand) {
+			s.fake("A")
+			s.fake("B")
+			s.fake("X")
+			s.fake("Y")
+			s.selector("Dir1", "A", "X")
+			s.selector("Dir2", "A", "Y")
+			s.chain("c", "Dir1", "B", "Dir2")
+		},
+		"nested groups": func(s *stand) {
+			s.fake("A")
+			s.fake("B")
+			s.fake("X")
+			s.selector("Inner", "A")
+			s.selector("Mid", "Inner", "B")
+			s.add("Pool", C.TypeURLTest, &option.URLTestOutboundOptions{Outbounds: []string{"X", "Inner"}})
+			s.chain("c", "Mid", "Pool")
+		},
+		"two chains, one node": func(s *stand) {
+			s.fake("A")
+			s.fake("B")
+			s.fake("N")
+			s.chain("c1", "A", "N")
+			s.chain("c2", "B", "N")
+		},
+		"two chains, entry and position": func(s *stand) {
+			s.fake("A")
+			s.fake("N")
+			s.fake("X")
+			s.chain("c1", "N", "X")
+			s.chain("c2", "A", "N")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newStand(t)
+			build(s)
+			requireError(t, s.rewrite(), "is reachable in", "no rings")
+		})
+	}
+	for name, positions := range map[string][]string{"[A, B, A]": {"A", "B", "A"}, "[Dir, A, Dir]": {"Dir", "A", "Dir"}} {
+		t.Run(name, func(t *testing.T) {
+			s := newStand(t)
+			s.fake("A")
+			s.fake("B")
+			s.fake("X")
+			s.selector("Dir", "X")
+			s.chain("c", positions...)
+			requireError(t, s.rewrite(), "duplicate outbound")
+		})
+	}
+}
+
+func TestRewriteК1WithoutRingsWorks(t *testing.T) {
 	s := newStand(t)
 	s.fake("A")
-	s.fake("B")
-	s.selector("Entry", "A", "B")
-	s.chain("virt", "Entry", "A")
-	requireError(t, s.rewrite(), "node A stands on positions 0 and 1", "one node instance")
-	s = newStand(t)
-	s.fake("A")
-	s.fake("B")
-	s.chain("virt", "A", "B", "A")
-	requireError(t, s.rewrite(), "duplicate outbound A")
-	// A node on position 0 inside a group above is К2 until the owner decides.
-	s = newStand(t)
-	s.fake("A")
 	s.fake("X")
-	s.selector("Dir", "A", "X")
-	s.chain("virt", "A", "Dir")
-	requireError(t, s.rewrite(), "node A", "entry (position 0)")
+	s.fake("Y")
+	s.selector("Dir", "X", "Y")
+	// One position reaching a node through two branches is one place.
+	s.selector("Pair", "Dir", "X")
+	s.chain("c", "A", "Pair")
+	s.fake("B")
+	s.fake("Z")
+	s.chain("other", "B", "Z")
+	s.build()
+	assertTrace(t, s.dial("c"), "X[c#0]", "A[]")
+	assertTrace(t, s.dial("other"), "Z[other#0]", "B[]")
 }
