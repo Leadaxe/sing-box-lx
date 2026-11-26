@@ -124,7 +124,7 @@ func (c *packetCore) writeLoop() {
 		case item := <-c.tx:
 			if !isClosed(c.closed) {
 				if _, err := c.under.WriteTo((*item.bp)[:item.n], item.addr); err != nil {
-					c.werr.Store(&err)
+					c.storeWriteErr(err)
 				}
 			}
 			putPkt(item.bp)
@@ -132,6 +132,13 @@ func (c *packetCore) writeLoop() {
 			return
 		}
 	}
+}
+
+// storeWriteErr keeps a carrier write error for the next WriteTo. Its own
+// function, so the error moves to the heap only when there is one: taking
+// its address in writeLoop made every datagram allocate.
+func (c *packetCore) storeWriteErr(err error) {
+	c.werr.Store(&err)
 }
 
 func (c *packetCore) closedErr() error {
