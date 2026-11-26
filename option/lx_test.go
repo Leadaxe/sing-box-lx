@@ -93,7 +93,7 @@ func TestLXBlockEmptyEqualsAbsent(t *testing.T) {
 	t.Parallel()
 	for _, content := range []string{`{}`, `{"lx": {}}`, `{"lx": {"wg": {}, "masque": {}, "trusttunnel": {}}}`,
 		`{"lx": {"wg": {"idle": {}, "buffers": {}}}}`,
-		`{"lx": {"wg": {"buffers": {"read_datagram_count": 128, "send_by_mtu": true}, "connected_socket": false}}}`,
+		`{"lx": {"wg": {"buffers": {"read_datagram_count": 128, "send_by_mtu": false, "receive_copy": "memory"}, "connected_socket": false}}}`,
 	} {
 		options, resolved := mustResolveLX(t, content)
 		if !reflect.DeepEqual(*resolved, lxDefaults()) {
