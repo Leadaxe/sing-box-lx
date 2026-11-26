@@ -48,6 +48,7 @@
 | **DNS server group** | — (always built) | `dns.servers[].type: "group"` | desktop + mobile |
 | **VLESS `encryption`** | — (always built) | `encryption` on a `vless` outbound | desktop + mobile |
 | **`lxd` daemon** | `with_lxd` | not a config key — the `sing-box lxd` subcommand + `<state-dir>/daemon.json`; see [lxd-daemon.md](lxd-daemon.md) | desktop / server (not Win7, not AAR) |
+| **`urltest` load balancer**: `round_robin`, `failover` | — (always built) | `mode` and `balancer` on `urltest`: a pool with stickiness and self-heal, or holding a node until it fails — [§3](#3-urltest-node-selection-modes) | desktop + mobile |
 | **`chain` outbound** | `with_lx_chain` | `outbounds[].type: "chain"` — a multi-hop path of groups and nodes | desktop + mobile |
 | **`impair` outbound** | `with_lx_impair` | `outbounds[].type: "impair"` — a link degraded on purpose for testing, [§15](#15-impair-outbound--a-degraded-link-for-testing) | desktop + mobile |
 
@@ -210,8 +211,25 @@ the node is replaced with a live one at once. The `url`, `interval`, `idle_timeo
 }
 ```
 
-📖 How each mode works, the pool self-heal, limits and examples are in
-[lx-urltest.md](lx-urltest.md).
+**`round_robin` self-heal** works between scheduled checks and has no config keys:
+
+- a connection that does not open through a node is retried once through another slot;
+- a node that refuses connections is struck out in under a second; a node that accepts and stays
+  silent is skipped by new connections from the 5th second and struck out in 41 s;
+- a node is struck out only when it stays silent on its own probe while a control node answers:
+  device sleep and network changes leave the pool alone;
+- only a node that answered its probe takes an empty slot; the scheduled check keeps a reserve of
+  `max(⌈pool/2⌉, 1)` live nodes outside the pool, and they are taken first;
+- a site closed to one node moves to the next node of the pool; a node that breaks connections more
+  often than the rest or is struck out twice between checks goes to quarantine.
+
+Pool state: `sing-box api group pool <tag>` and `GetPool` (a build with `with_lx_command`,
+[§8](#8-observability-commandclient-extensions)).
+
+📖 How each mode works — [lx-urltest.md](lx-urltest.md); [pool self-heal](lx-urltest.md#pool-self-heal)
+with failure scenarios and limits; [`failover`](lx-urltest.md#4-failover--hold-until-it-fails); the
+feature — [URLTEST_BALANCE](../SPECS/FEATURES/007-URLTEST_BALANCE/FEATURE.md); the self-heal rules —
+[SPEC 138](../SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md).
 
 ---
 
