@@ -28,9 +28,16 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
-#### Не выпущено
+#### v1.14.4-lx.37
 
-- 🔄 **Синк `upstream/stable` до `a459df92d` (+4 коммита к `060f54a9a`):** HTTP-клиент через туннель и проверка разбора конфига в libbox; починка сессий OpenConnect через `detour`; ускорение XOR в salamander у hysteria2; отключение DNS over TLS на TUN-линке для systemd-resolved. Форк `sing-tun` слит с апстримным `adc31e26d330` (`9204da0`), патчи self-heal сохранены.
+Стабильный релиз после `v1.14.4-lx.36`; сводка `rc.1`–`rc.3` и синка до `a459df92d`. Пользовательские заметки — [releases/v1.14.4-lx.37.md](releases/v1.14.4-lx.37.md). База — sing-box `v1.14.4` + 150 коммитов `upstream/stable` (`a459df92d`), дрейф 0. Go `go1.26.10`.
+
+- ⚠️ **Ломающие изменения конфига** ([SPEC 165](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/165-CHAIN_DETOUR_REWRITE/SPEC.md) §5): цепочка — перезапись `detour`, `idle_timeout`/`strip`/`strip_evasion` цепочки и корневой `lx.mtu_align` — ошибки загрузки, вместо них блок `lx.detour`; удалены `GetChainCloneConfig` и `GetChains`. Подробности — в секции `rc.2`.
+- 🐛 **`round_robin` самовосстанавливается по отказу соединения** ([SPEC 138](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/138-URLTEST_RR_SKIP_DEAD_SLOT/SPEC.md)); `least_test`/`failover`: отказ прокси-узла — «путь мёртв» ([SPEC 054](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/054-URLTEST_PENALTY_FAILOVER/SPEC.md)).
+- ✨ **Тестовый outbound `impair`** с управлением на лету, в стандартных сборках и AAR ([SPEC 164](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/164-IMPAIR_OUTBOUND/SPEC.md)).
+- 🐛 `tls.fragment`: рукопожатие с неподтверждающим сервером укладывается в таймаут ([SPEC 163](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/163-TLS_FRAGMENT_ACK_WAIT_HANG/SPEC.md)); AmneziaWG I1–I5 без гонки с рукопожатиями; атомарный `selector`.
+- 🔄 **Синк `upstream/stable` до `a459df92d`** ([SPEC 166](https://github.com/Leadaxe/sing-box-lx/blob/lx/SPECS/TASKS/166-UPSTREAM_SYNC_1_14_4_PLUS_146/SPEC.md)): сняты хотфиксы, закрытые апстримом; `sing-tun` слит с `adc31e26d330`, `wireguard-go` — снова на ветке `lx`.
+- 🆕 `GetEffectiveConfig`, `GetOutboundConfig(tag)`; `sing-box api group pool`; `SetImpair`/`ScheduleImpair`/`GetImpairStatus` в libbox.
 
 #### v1.14.4-lx.37-rc.3
 
