@@ -127,7 +127,7 @@
 ## 8. Осталось
 
 - Форки запушены в релизные ветки по слову владельца (fast-forward): `wireguard-go` `lx-awg2-v007` → `5e0ba64`, `sing-tun` `lx` → `53e0731`; суперпроект — в `lx-sync-stable-20261126`, lx-ci 45723785661 зелёный. В `lx` вливает рецензент SPEC 138 первым, поверх — SPEC 165.
-- Dry run релизной матрицы перед тегом (зеркало musl прогнано).
+- ~~Dry run релизной матрицы~~ — lx-release 45727871619 на `768b1ceaa` (tag `v1.14.4-lx.37-rc.2-dryrun`): 13 сборок зелёные, AAR `libbox.aar`; все на go1.26.10, Win7 (`windows/386`) — на своём патченном тулчейне; publish пропущен, релиза и тега нет, Latest — `v1.14.4-lx.36`. Зеркало musl прогнано.
 - Раннбук §1.4, остаток: Android, Windows без IPv6.
 - Будущее влитие SPEC 165 (цепочка): этот мерж правил `protocol/chain/chain_test.go` (стенд зовёт `Initialize` в `start()`), `adapter/outbound/manager.go`, `protocol/group/selector.go` (апстримный `References()`), `route/conn.go`.
 - `ALGORITHM.md` SPEC 138 получил фразу о записи истории в конце пачки (факт апстрима) — на глаза владельцу.
