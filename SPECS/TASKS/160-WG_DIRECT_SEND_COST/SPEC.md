@@ -153,6 +153,15 @@ hardware. It has its own record: [issue #81](https://github.com/Leadaxe/sing-box
 Upstream (`sagernet/wireguard-go`) stops zeroing the whole set on return — or the socket layer is
 replaced by another one.
 
+**Met on the 1.15 line.** `sagernet/wireguard-go` `dev` has it since `983dd16` (tailscale/wireguard-go
+PR #87, 2026-08-18): `messagePool.putMessages(msgs, usedMsgs)` zeroes only `(*msgs)[:usedMsgs]`. By
+owner decision of 2026-11-26, the merge of the fork's `lx-1.15` with that `dev` takes upstream's form
+and removes ours: the condition in `StdNetBind.putMessages` (`messageUntouched`) and `lx_messages.go`
+with their tests. Whether upstream's retry without coalescing still carries the segment list of the
+failed attempt ([issue #81](https://github.com/Leadaxe/sing-box-lx/issues/81)) is checked in that
+merge. The `lx` line keeps the insertion: its pin `afd160a` does not have the change.
+`lx.wg.connected_socket` (§3) stays ours on both lines: upstream has no counterpart.
+
 ## 3. Second cause: unconnected socket
 
 The socket of a tunnel without `detour` is not connected to the server address. Every datagram
