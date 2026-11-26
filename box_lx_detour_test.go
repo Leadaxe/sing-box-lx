@@ -297,6 +297,26 @@ func TestPrePassМ3Except(t *testing.T) {
 	checkИ4(t, run)
 }
 
+// К5а: a node of a subscription with socket fields does not fail the load;
+// the fields go with a warning and a change, and И4 holds.
+func TestPrePassК5аSocketFieldsWarnAndChange(t *testing.T) {
+	content := strings.Replace(rewriteOverTunnel, `"password": "x",`, `"password": "x", "tcp_fast_open": true, "routing_mark": 7,`, 1)
+	run := runPrePass(t, content)
+	checkИ4(t, run)
+	var fields []string
+	for _, change := range run.effective.Changes("hy2") {
+		if change.By.Type == option.LXChangeByChain && change.Field != "detour" {
+			fields = append(fields, change.Field)
+		}
+	}
+	if strings.Join(fields, ",") != "routing_mark,tcp_fast_open" {
+		t.Fatalf("К5а: changes %v", fields)
+	}
+	if len(run.logger.warn) == 0 || !strings.Contains(strings.Join(run.logger.warn, "\n"), "node hy2: routing_mark, tcp_fast_open dropped") {
+		t.Fatalf("К5а: warning %v", run.logger.warn)
+	}
+}
+
 func TestPrePassИ5DetourFalse(t *testing.T) {
 	ctx := mustPrePassContext(t, strings.Replace(lxbox233, "%s", `, "lx": {"detour": false}`, 1))
 	resolved := service.PtrFromContext[option.LXResolved](ctx)

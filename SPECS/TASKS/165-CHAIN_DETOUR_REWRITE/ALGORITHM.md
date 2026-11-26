@@ -76,14 +76,18 @@
     с `detour`, ошибка перезаписи раньше и называет цепочку), Tailscale `listen_port` и
     `relay_server_port`, OpenConnect `dtls_local_port`. У MASQUE, hysteria, hysteria2,
     tuic, TrustTunnel и OpenVPN-клиента локального порта в конфиге нет;
-  - поля привязки сокета, которые апстрим под `detour` молча не применяет (сокет узла
-    открывает хоп): `bind_interface`, `inet4_bind_address`, `inet6_bind_address`,
-    `bind_address_no_port`, `protect_path`, `routing_mark`, `reuse_addr`, `netns`,
-    `tcp_fast_open`, `tcp_multi_path`, `network_strategy`, `network_type`,
-    `fallback_network_type`. Не входят `domain_resolver` и `fallback_delay` (апстрим
-    применяет их и под `detour`), `connect_timeout`, keepalive и `udp_fragment` (их читают
-    сами протоколы).
   Ошибка называет цепочку, позицию, узел и поля.
+- **К5а. Поля соединения узла.** Поля привязки сокета, которые теряют смысл, когда
+  соединение узла открывает хоп ниже (апстрим под `detour` их молча не применяет):
+  `bind_interface`, `inet4_bind_address`, `inet6_bind_address`, `bind_address_no_port`,
+  `protect_path`, `routing_mark`, `reuse_addr`, `netns`, `tcp_fast_open`, `tcp_multi_path`,
+  `network_strategy`, `network_type`, `fallback_network_type` — не ошибка: перезапись
+  снимает поле, пишет одну строку предупреждения на узел (тег, поля) и запись `changes`
+  `{field, from, by: {type: chain, chain, position}}` без `to` — сразу после записи
+  `detour`. Один узел подписки не роняет конфиг. `rewrite`, который возвращает такое поле,
+  — ошибка. Не входят `domain_resolver` и `fallback_delay` (апстрим применяет их под
+  `detour`), `connect_timeout`, keepalive и `udp_fragment` (их читают сами протоколы).
+  Решение владельца 2026-11-26.
 - **К6.** Цикл через перехват: `detour` узла позиции ниже (собственный, не перехваченный)
   ведёт в узел, который перехвачен на этой же или более высокой позиции. Ошибка называет
   цепочку и узлы, а не только теги хопов, как сказал бы общий порядок запуска.
@@ -345,8 +349,8 @@ WG-туннель. Узел получает две записи `changes` по 
   padding убраны: за туннелем их видят релей и сеть до сервера;
 - `direct` в группе на позиции ≥ 1 — хоп ниже через метку в контексте дозвона (Х8); от
   метки цепочки остаётся только это;
-- К5 обобщён на фиксированные локальные порты и поля привязки сокета, которые апстрим под
-  `detour` не применяет;
+- К5: фиксированный локальный порт узла на позиции ≥ 1 — ошибка загрузки; поля соединения,
+  которые под `detour` не действуют, — предупреждение и запись `changes`, не ошибка (К5а);
 - статус цепочки — унарный по тегу, как статусы endpoint'ов: позиции, выбранный узел на
   каждой, выключение, счётчики ошибок; общий список `GetChains` уходит.
 

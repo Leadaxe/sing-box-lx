@@ -71,8 +71,9 @@ A node keeps one instance and one path. A route straight to a taken-over node go
 path too, and so does a manual check of the node from a UI. A group on position ≥ 1 checks the
 very instances that carry its traffic: a node dead on the chain's path leaves the pool even if
 it would work on its own `detour`. Upstream does not apply a node's socket options under
-`detour`, so a taken-over node with `bind_interface`, `routing_mark`, `tcp_fast_open` and the like
-fails the load (see below) instead of losing them silently. `domain_resolver` keeps working.
+`detour`, so the rewrite drops `bind_interface`, `routing_mark`, `tcp_fast_open` and the like
+from a taken-over node: one warning line per node, and a `chain` change without `to` in
+`GetOutboundConfig`. `domain_resolver` keeps working.
 
 Hops are ordinary outbounds: they show in outbound lists (`GetOutbounds`, Clash API) with the
 type `chain-hop`, and UIs hide them by type. A config that declares the type `chain-hop` itself,
@@ -109,12 +110,12 @@ keep through the hops; user connections through the chain are cut only with
 - A node taken over by one chain and reached on the entry (position 0) of another.
 - A nested `chain` above position 0, or a position that contains the chain itself.
 - A node type that cannot dial through `detour`.
-- A node on position ≥ 1 with a fixed local port — WireGuard `listen_port`, Tailscale
-  `listen_port` / `relay_server_port`, OpenConnect `dtls_local_port` — or with socket options
-  upstream does not apply under `detour`: `bind_interface`, `inet4_bind_address`,
-  `inet6_bind_address`, `bind_address_no_port`, `protect_path`, `routing_mark`, `reuse_addr`,
-  `netns`, `tcp_fast_open`, `tcp_multi_path`, `network_strategy`, `network_type`,
-  `fallback_network_type`. The error lists the fields.
+- A node on position ≥ 1 with a fixed local port: WireGuard `listen_port`, Tailscale
+  `listen_port` / `relay_server_port`, OpenConnect `dtls_local_port`. Socket options
+  (`bind_interface`, `inet4_bind_address`, `inet6_bind_address`, `bind_address_no_port`,
+  `protect_path`, `routing_mark`, `reuse_addr`, `netns`, `tcp_fast_open`, `tcp_multi_path`,
+  `network_strategy`, `network_type`, `fallback_network_type`) are not an error: they are
+  dropped with a warning, and a `rewrite` that sets one back fails.
 - A `detour` cycle through a hop, for example `[A, N]` where `A` has its own `detour: N`.
 - A `rewrite` that touches `detour`, a `rewrite` value that is not an object, or a patch that
   leaves an unknown field in the node.

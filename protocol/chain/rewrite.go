@@ -275,8 +275,9 @@ var chainLocalPortFields = map[string][]string{
 
 // chainSocketFields are the dial fields upstream silently does not apply
 // under detour (common/dialer.NewWithOptions builds the detour dialer and
-// skips the default one). domain_resolver and fallback_delay do apply;
-// connect_timeout, keepalive and udp_fragment are read by protocols.
+// skips the default one). The rewrite drops them with a change record (К5а).
+// domain_resolver and fallback_delay do apply; connect_timeout, keepalive
+// and udp_fragment are read by protocols.
 var chainSocketFields = []string{
 	"bind_interface", "inet4_bind_address", "inet6_bind_address", "bind_address_no_port",
 	"protect_path", "routing_mark", "reuse_addr", "netns", "tcp_fast_open", "tcp_multi_path",
@@ -292,24 +293,15 @@ func (r *rewriter) checkDialable(chainTag string, position int, leaf *rewriteEnt
 	if err != nil {
 		return E.Cause(err, "chain ", chainTag, ": serialize options of ", leaf.tag)
 	}
-	var ports, socket []string
+	var ports []string
 	for _, field := range chainLocalPortFields[leaf.typeName] {
 		if value, has := m[field]; has && !isZeroJSON(value) {
 			ports = append(ports, field)
 		}
 	}
-	for _, field := range chainSocketFields {
-		if value, has := m[field]; has && !isZeroJSON(value) {
-			socket = append(socket, field)
-		}
-	}
 	if len(ports) > 0 {
 		return E.New("chain ", chainTag, ": position ", position, ": node ", leaf.tag, " has ", strings.Join(ports, ", "),
 			": a fixed local port does not work with detour, and the chain gives the node one")
-	}
-	if len(socket) > 0 {
-		return E.New("chain ", chainTag, ": position ", position, ": node ", leaf.tag, " has ", strings.Join(socket, ", "),
-			": these socket options do not apply under detour, and the chain gives the node one")
 	}
 	return nil
 }
@@ -349,6 +341,17 @@ func (r *rewriter) rewriteNode(entry *rewriteEntry, place interception, rewrite 
 	}
 	changes := []option.LXConfigChange{change}
 	m["detour"] = hopTag
+	// К5а: the hop opens the node's connection, the socket fields lose
+	// their meaning; drop them so effective says what runs.
+	for _, field := range chainSocketFields {
+		if value, has := m[field]; has {
+			delete(m, field)
+			changes = append(changes, option.LXConfigChange{
+				Field: field, From: value,
+				By: option.LXConfigChangeBy{Type: option.LXChangeByChain, Chain: place.chain, Position: place.position},
+			})
+		}
+	}
 	if patch, has := rewrite[entry.typeName]; has {
 		patchMap, isObject := patch.(map[string]any)
 		if !isObject {
@@ -360,6 +363,11 @@ func (r *rewriter) rewriteNode(entry *rewriteEntry, place interception, rewrite 
 		before := flatten(m)
 		patchMap = normalizeNumbers(patchMap)
 		mergePatch(m, patchMap)
+		for _, field := range chainSocketFields {
+			if _, has := m[field]; has {
+				return nil, nil, E.New("chain ", place.chain, ": rewrite[", entry.typeName, "] sets ", field, ", which does not apply under detour")
+			}
+		}
 		for _, diff := range diffFlat(before, flatten(m)) {
 			diff.By = option.LXConfigChangeBy{Type: option.LXChangeByChainRewrite, Chain: place.chain, Position: place.position, NodeType: entry.typeName}
 			changes = append(changes, diff)
