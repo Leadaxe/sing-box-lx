@@ -981,3 +981,25 @@ Fork `wireguard-go` (branch `lx-awg2-v007`, [PR #7](https://github.com/Leadaxe/w
 
 The core: `option/lx.go` (the `buffers` block), `transport/wireguard/tuning_lx.go` and two
 insertions in `transport/wireguard/endpoint.go`; the `submodules/wireguard-go` gitlink.
+
+## 10. Line 1.15
+
+On the 1.15 line the fork sits on upstream wireguard-go `5825d80`, which reads a TUN or socket
+batch into one shared slab of about 128 KiB and copies packets that fit into 2 KiB small
+buffers. The old `device/lx_packet_sized.go` mechanism is replaced by the settings below.
+
+- `lx.wg.buffers.send_by_mtu`, default `false` = upstream's algorithm (read into the shared slab,
+  then copy into a small buffer). `true` = a stack that hands over one packet per read reads it
+  straight into a buffer of its own, sized for the MTU plus the AmneziaWG layout (S4 in front,
+  AWG 3.x tail behind), no copy. The default is chosen by measurement on NanoPi at the normal MTU
+  and at mtu 9000.
+- `lx.wg.buffers.receive_copy`: `auto` | `memory` | `speed`, default `memory`. `auto` is as
+  upstream (a received transport message is copied into a small buffer on darwin/ios only),
+  `memory` copies on every platform, `speed` never copies. A TUN that merges written packets in
+  place keeps the slab regardless. Any other value: `lx.wg.buffers.receive_copy must be auto,
+  memory or speed`.
+- While an AWG layout is in use (`s4 > 0`, `content_padding_addition` or `random_trailers`),
+  every outbound packet sits in a buffer of its own laid out behind S4 with room for the tail (a
+  small buffer when it fits, otherwise a sized one), because packets in the shared slab are only
+  64 bytes apart. Plain WireGuard keeps upstream's path.
+- `read_datagram_count` is deprecated and has no effect (see SPEC 160 §4).

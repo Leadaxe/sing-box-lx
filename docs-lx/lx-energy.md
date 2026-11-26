@@ -242,7 +242,7 @@ Notes:
 
 ## 11. Lazy build and the build budget keep devices from being built for nothing
 
-Suspend and teardown free an endpoint's memory once it has been idle. At start, though, a config with a dozen AWG nodes pays for all of them at once. Each device allocates its receive batches the moment it starts: 128 × 64 KiB per receive routine on Linux and Android, where the 64 KiB segments feed GRO. At the default that is 16.4 MiB per node (≈17.5 MB measured on lx.8, before SPEC 158). `lx.wg.buffers.read_datagram_count` lowers it in any build ([lx-block.md](lx-block.md)). Two keys keep devices from being built for nothing.
+Suspend and teardown free an endpoint's memory once it has been idle. At start, though, a config with a dozen AWG nodes pays for all of them at once. Each device allocates its receive buffers the moment it starts. On the 1.15 line a batch is read into one buffer of about 128 KiB per receive routine, so the cost no longer grows with the batch size; `lx.wg.buffers.read_datagram_count` is deprecated and has no effect there ([lx-block.md](lx-block.md)). (On the 1.14 line it was 128 × 64 KiB per routine, 16.4 MiB per node at the default, ≈17.5 MB measured on lx.8, before SPEC 158.) Two keys keep devices from being built for nothing.
 
 **`lx.wg.idle.lazy_build: true`** — endpoints start at level 3 (§5): the detour is resolved at start, as without the key, but the device and its netstack are not built. The first dial through the node (a user connection or a urltest probe) builds it along the same path a wake after teardown takes, and pays that cost once: the build plus the first handshake. A listen-mode endpoint (`listen_port`) is never lazy — nothing dials it. Requires `lx.wg.idle.suspend`.
 

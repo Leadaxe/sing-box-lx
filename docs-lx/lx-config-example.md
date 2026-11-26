@@ -31,8 +31,8 @@ you need and read its document. Each comment shows the default and the allowed v
         "build_overflow": "wait"                // default: wait. wait | build (SPEC 097)
       },
       "buffers": {                              // any build (SPEC 158)
-        "read_datagram_count": 8,               // default: 128. 1–128 datagrams reserved per socket read
-        "send_by_mtu": true                     // default: true. false = 64 KiB stack-read buffers (diagnostics)
+        "send_by_mtu": false,                   // default: false = upstream's algorithm. true = read a single packet into an MTU-sized buffer
+        "receive_copy": "memory"                // default: memory. auto (as upstream) | memory | speed
       },
       "connected_socket": true                  // default: false. Connect the tunnel socket in single-peer mode (SPEC 160)
     },

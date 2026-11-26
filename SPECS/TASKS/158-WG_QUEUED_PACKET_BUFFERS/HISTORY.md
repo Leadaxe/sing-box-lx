@@ -114,3 +114,13 @@ What changed in the problem statement along the way:
   before part 1: at that time the "pool" in the profile was the buffers that travelled with
   packets. After part 1 the read batch became the main permanent holder (SPEC §9.5.1). This has
   not been measured on a device.
+
+## 2026-11-26. Line 1.15: upstream's slab
+
+Upstream wireguard-go `5825d80` reads a batch into one shared ~128 KiB slab and copies packets
+that fit into 2 KiB small buffers. On the 1.15 line `send_by_mtu` therefore defaults to `false`
+(upstream's algorithm) and `true` keeps our read-into-own-buffer path for comparison on NanoPi at
+the normal MTU and at mtu 9000; the owner then decides the default. `receive_copy` is new
+(`auto` | `memory` | `speed`, default `memory`). `read_datagram_count` became a no-op with a
+deprecation warning: an endpoint's heap no longer grows with the batch size. Current state:
+[SPEC.md §10](SPEC.md).

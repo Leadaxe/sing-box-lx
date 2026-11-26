@@ -21,8 +21,8 @@ explicitly.
       "build_overflow": "wait"
     },
     "buffers": {
-      "read_datagram_count": 8,
-      "send_by_mtu": true
+      "send_by_mtu": true,
+      "receive_copy": "memory"
     },
     "connected_socket": true
   },
@@ -73,8 +73,9 @@ refuses to start if `idle` sets anything that takes effect: an idle window, an e
 | `idle.lazy_build` | bool | `false` | Endpoints start torn down; the device is built on the first dial. Requires `idle.suspend` |
 | `idle.build_max` | integer ≥ 0 | `0` = no cap | At most N devices built at once |
 | `idle.build_overflow` | `wait` \| `build` | `wait` | When all `build_max` devices carry live connections: wait within the dial deadline, or build above the cap with a warning |
-| `buffers.read_datagram_count` | integer 1–128 | `128`, as upstream | How many datagrams are reserved per socket read. Linux and Android, tunnels without `detour` |
-| `buffers.send_by_mtu` | bool | `true` | Size the buffers read from the stack by the tunnel MTU instead of 64 KiB. `false` is for diagnostics |
+| `buffers.read_datagram_count` | integer 1–128 | `128` | Deprecated: accepted, does nothing on the 1.15 line, a warning is printed |
+| `buffers.send_by_mtu` | bool | `false` | `false` — upstream's algorithm (read into the shared slab, copy into a small buffer). `true` — read a single packet straight into a buffer sized for the MTU plus the AWG layout, no copy |
+| `buffers.receive_copy` | `auto` \| `memory` \| `speed` | `memory` | Copy a received transport message into a small buffer: `auto` as upstream (darwin/ios only), `memory` on every platform, `speed` never |
 | `connected_socket` | bool | `false` | Connect the tunnel socket to the server address in single-peer mode. Linux and Android |
 
 **Sleep and device builds.** Timelines for the idle keys and the recommended mobile configuration
@@ -92,18 +93,24 @@ are in [lx-energy.md](lx-energy.md), the victim order for `build_max` in
 **The tunnel socket.** `buffers` and `connected_socket` apply only to a tunnel without `detour`:
 a tunnel through `detour` has no socket of its own.
 
-- `buffers.read_datagram_count`. A tunnel keeps a 64 KiB buffer per datagram it may read at once,
-  in each of its two receive routines (IPv4 and IPv6), for as long as it is up: 16.4 MiB at 128,
-  about 1 MiB at 8. An idle tunnel takes almost no physical memory, but the Go heap grows: it
-  counts toward the runtime memory limit, pushes garbage collection further out, and the buffers
-  become physical with the first traffic. The more tunnels, the smaller the value: `8` for a
-  tunnel or two on a weak machine, `1` or `2` for tens and hundreds; speed at `1` is not measured
-  on the release build. Below 128 the socket is created without receive coalescing (UDP GRO);
-  send coalescing (UDP GSO) stays. On fast links and a real NIC the batch and GRO may pay off, so
-  the default stays as upstream. Accepted and ignored on macOS and Windows.
-  [Measurements](../SPECS/TASKS/158-WG_QUEUED_PACKET_BUFFERS/SPEC.md).
-- `buffers.send_by_mtu: false` brings back 64 KiB buffers read from the stack. It is for
-  narrowing down a problem, to rule the MTU-sized buffers out.
+- `buffers.read_datagram_count`: deprecated, accepted and does nothing on the 1.15 line; loading a
+  config with it prints a deprecation warning. Upstream now reads a batch into one buffer of about
+  128 KiB, so an endpoint's heap no longer grows with the batch size (the former 16.4 MiB per
+  node at 128 is gone). The 1–128 range check stays.
+- `buffers.send_by_mtu`. `false` (default) is upstream's algorithm: a batch is read into the
+  shared slab, then each packet is copied into a small buffer. `true` is ours: a stack that hands
+  over one packet per read reads it straight into a buffer of its own, sized for the tunnel MTU
+  plus the AmneziaWG layout (S4 in front, AWG 3.x tail behind), with no copy. The default is
+  to be chosen by measurement on NanoPi at the normal MTU and at mtu 9000.
+- `buffers.receive_copy` says whether a received transport message is copied into a small buffer.
+  `auto` is as upstream (copied on darwin and ios only); `memory` (default) copies on every
+  platform; `speed` never copies. A TUN that merges written packets in place keeps the slab
+  regardless of the value.
+- While an AmneziaWG layout is in use (`s4 > 0`, `content_padding_addition` or `random_trailers`),
+  every outbound packet sits in a buffer of its own laid out behind S4 with room for the tail (a
+  small buffer when it fits, otherwise a sized one), because packets in the shared slab are only
+  64 bytes apart. Plain WireGuard keeps upstream's path.
+  [Details](../SPECS/TASKS/158-WG_QUEUED_PACKET_BUFFERS/SPEC.md).
 - `connected_socket` applies to a tunnel with one peer, a fixed server address and no
   `listen_port`. The socket is connected to the server, so the kernel keeps the route instead of
   looking it up per datagram; on a weak board that is a few percent of upload
@@ -124,6 +131,7 @@ a tunnel through `detour` has no socket of its own.
 | `lx.wg.idle.<key> must be >= 0` | A negative duration or `build_max` |
 | `lx.wg.idle.build_overflow must be "wait" or "build"` | An unknown value |
 | `lx.wg.buffers.read_datagram_count must be between 1 and 128` | `0`, a negative value or above 128 |
+| `lx.wg.buffers.receive_copy must be auto, memory or speed` | An unknown value |
 | `lx.wg.<old key> is moved to lx.wg.idle.<new key>` | A flat key of the old layout, see [Removed keys](#removed-keys) |
 
 ## `lx.masque` — MASQUE outbounds

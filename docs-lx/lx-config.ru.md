@@ -530,8 +530,9 @@ windows/386. Остальные фичи в нём без изменений.
 | `wg.idle.lazy_build` | `false` | собирать устройство при первом подключении, а не на старте |
 | `wg.idle.build_max` | `0` | не больше N собранных устройств одновременно; `0` — без потолка |
 | `wg.idle.build_overflow` | `wait` | при потолке: `wait` — ждать, `build` — собрать сверх потолка |
-| `wg.buffers.read_datagram_count` | `128` | датаграмм на одно чтение из сокета, 1–128; меньше — меньше памяти |
-| `wg.buffers.send_by_mtu` | `true` | буферы чтения по MTU туннеля; `false` — по 64 КБ, для диагностики |
+| `wg.buffers.read_datagram_count` | `128` | устарел, 1–128; на линии 1.15 ничего не делает, печатается предупреждение |
+| `wg.buffers.send_by_mtu` | `false` | `false` — алгоритм апстрима (общий slab, копирование в малый буфер); `true` — одиночный пакет читается прямо в буфер по MTU |
+| `wg.buffers.receive_copy` | `memory` | `auto` \| `memory` \| `speed`: копировать принятое сообщение в малый буфер (`auto` как в апстриме — только darwin/ios; `memory` — везде; `speed` — никогда) |
 | `wg.connected_socket` | `false` | подключать сокет туннеля к адресу сервера; Linux и Android |
 | `masque.idle_timeout` | выкл | общее окно сна для outbound'ов `masque` без своего `idle_timeout`; не для `masque-client`, он засыпает по `on_demand` |
 | `trusttunnel.idle_timeout` | `5m` | общее окно простоя для узлов `trusttunnel` без своего `idle_timeout` |

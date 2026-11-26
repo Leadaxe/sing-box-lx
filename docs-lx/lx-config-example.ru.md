@@ -30,8 +30,8 @@ masquerade-сахар `id`/`ip`/`ib`, VLESS `encryption`, `round_robin`-бала
         "build_overflow": "wait"                // дефолт: wait. wait | build (SPEC 097)
       },
       "buffers": {                              // любая сборка (SPEC 158)
-        "read_datagram_count": 8,               // дефолт: 128. 1–128 датаграмм на одно чтение из сокета
-        "send_by_mtu": true                     // дефолт: true. false = буферы чтения из стека по 64 КБ (диагностика)
+        "send_by_mtu": false,                   // дефолт: false = алгоритм апстрима. true = одиночный пакет читается в буфер по MTU
+        "receive_copy": "memory"                // дефолт: memory. auto (как в апстриме) | memory | speed
       },
       "connected_socket": true                  // дефолт: false. Подключённый сокет туннеля в режиме одного пира (SPEC 160)
     },

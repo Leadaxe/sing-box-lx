@@ -261,6 +261,10 @@ Because of the first two points the fix goes behind a switch and is off by defau
   A server that does not answer handshakes gives a disconnect line every few seconds, hence the
   debug level.
 
+- On line 1.15 `lx.wg.buffers.read_datagram_count` is deprecated and has no effect: upstream
+  reads a batch into one ~128 KiB buffer. Loading a config with it prints a deprecation warning
+  (`lx-wg-read-datagram-count`). The `read_datagram_count: 8` row in §1.1 describes the 1.14 line.
+
 ## 5. Decisions and rationale
 
 **D1. One task for both causes.** They were found in one analysis, sit in one layer and together

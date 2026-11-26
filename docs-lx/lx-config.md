@@ -538,8 +538,9 @@ canonical: empty sub-blocks are dropped.
 | `wg.idle.lazy_build` | `false` | build the device on first connection, not at start |
 | `wg.idle.build_max` | `0` | at most N built devices at once; `0` — no cap |
 | `wg.idle.build_overflow` | `wait` | at the cap: `wait` — wait, `build` — build past the cap |
-| `wg.buffers.read_datagram_count` | `128` | datagrams per socket read, 1–128; fewer — less memory |
-| `wg.buffers.send_by_mtu` | `true` | read buffers by the tunnel MTU; `false` — 64 KB, for diagnostics |
+| `wg.buffers.read_datagram_count` | `128` | deprecated, 1–128; does nothing on the 1.15 line, a warning is printed |
+| `wg.buffers.send_by_mtu` | `false` | `false` — upstream's algorithm (shared slab, copy into a small buffer); `true` — a single packet is read straight into a buffer sized by the MTU |
+| `wg.buffers.receive_copy` | `memory` | `auto` \| `memory` \| `speed`: copy a received message into a small buffer (`auto` as upstream — darwin/ios only; `memory` — everywhere; `speed` — never) |
 | `wg.connected_socket` | `false` | connect the tunnel socket to the server address; Linux and Android |
 | `masque.idle_timeout` | off | one sleep window for `masque` outbounds without their own `idle_timeout`; not for `masque-client`, which sleeps by `on_demand` |
 | `trusttunnel.idle_timeout` | `5m` | one idle window for `trusttunnel` nodes without their own `idle_timeout` |
