@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/common/lxhandshake"
 	C "github.com/sagernet/sing-box/constant"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -39,7 +38,7 @@ type fbNode struct {
 	hangup   map[string]bool
 	mute     map[string]bool
 	stall    map[string]bool
-	// release ends the stalled dials with a handshake timeout (lxhandshake.ErrTimeout)
+	// release ends the stalled dials with a handshake timeout (context.DeadlineExceeded, as the upstream clients return)
 	release chan struct{}
 }
 
@@ -86,7 +85,7 @@ func (n *fbNode) DialContext(ctx context.Context, network string, destination M.
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-n.releaseChan():
-			return nil, lxhandshake.ErrTimeout
+			return nil, context.DeadlineExceeded
 		}
 	}
 	if n.is(n.openFail, host) {

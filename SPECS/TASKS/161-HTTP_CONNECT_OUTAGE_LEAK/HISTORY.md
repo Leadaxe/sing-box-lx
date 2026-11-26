@@ -40,6 +40,10 @@ websocket. В SOCKS два механизма вместе ломали тип �
 таймаута, клиент `sing` возвращал `ctx.Err()`, и вместо таймаута выходил `context.Canceled` — для
 SPEC 054 это «клиент ушёл», узел без штрафа. Шов SOCKS снят на мерже, `handshake_timeout_lx_test.go`
 переведён на `client.SetHandshakeTimeout` и целиком проходит на апстримном механизме. HTTP, httpupgrade и
-ShadowTLS дают таймаут и с двумя механизмами — оставлены до решения владельца о снятии вместе с
-`common/lxhandshake`.
+ShadowTLS дают таймаут и с двумя механизмами; владелец в тот же день решил снять и их. Удалены
+`protocol/http/handshake_lx.go`, `common/lxhandshake/`, `protocol/shadowtls/handshake_lx.go`, швы в
+`protocol/http/outbound.go`, `transport/v2rayhttpupgrade/client.go`, `protocol/shadowtls/outbound.go` —
+файлы равны апстримным. Тест HTTP укорачивает приватный `handshakeTimeout` клиента `sing` (апстрим
+ставит константу); тест httpupgrade ждёт честные 15 с — там предел встроен в `DialContext`. Issue
+об этих таймаутах у апстрима не было, в коммитах ссылок на нас нет.
 

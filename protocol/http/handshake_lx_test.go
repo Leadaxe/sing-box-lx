@@ -7,12 +7,13 @@ import (
 	"io"
 	"net"
 	stdHTTP "net/http"
-	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
@@ -21,13 +22,24 @@ import (
 	"github.com/sagernet/sing/service"
 )
 
+// SPEC 161. Since the sync of 2026-11-26 the CONNECT bound is upstream's own
+// (sing 963f5b53e, HandshakeTimeout = C.TCPTimeout set by NewOutbound, started
+// after the underlying dial); these tests stay as the guard of that behaviour.
+// setHandshakeTimeout shortens the client's private bound so they run fast.
+func setHandshakeTimeout(t *testing.T, out adapter.Outbound, timeout time.Duration) {
+	t.Helper()
+	field := reflect.ValueOf(out.(*Outbound).client).Elem().FieldByName("handshakeTimeout")
+	if !field.IsValid() {
+		t.Fatal("sing HTTP client has no handshakeTimeout field any more")
+	}
+	reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Set(reflect.ValueOf(timeout))
+}
+
 // TestLxHTTPConnectOutage exercises the real outbound and real TCP sockets. A
 // successful TCP dial must not leave CONNECT waiting forever, and a successful
 // CONNECT must not leave a timer that later closes the established tunnel.
 func TestLxHTTPConnectOutage(t *testing.T) {
-	originalTimeout := httpConnectHandshakeTimeoutLx
-	httpConnectHandshakeTimeoutLx = 500 * time.Millisecond
-	t.Cleanup(func() { httpConnectHandshakeTimeoutLx = originalTimeout })
+	const httpConnectHandshakeTimeoutLx = 500 * time.Millisecond
 
 	for _, mode := range []string{"silent", "partial", "cancel", "deadline", "503", "tunnel-survives"} {
 		mode := mode
@@ -106,6 +118,7 @@ func TestLxHTTPConnectOutage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			setHandshakeTimeout(t, out, httpConnectHandshakeTimeoutLx)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			if mode == "deadline" {
@@ -186,8 +199,8 @@ func TestLxHTTPConnectOutage(t *testing.T) {
 				}
 				switch mode {
 				case "silent", "partial":
-					if !errors.Is(response.err, os.ErrDeadlineExceeded) || !strings.Contains(response.err.Error(), "CONNECT handshake timeout") {
-						t.Fatal("expected a named CONNECT timeout, got: ", response.err)
+					if !errors.Is(response.err, context.DeadlineExceeded) {
+						t.Fatal("expected a CONNECT timeout, got: ", response.err)
 					}
 				case "cancel":
 					if !errors.Is(response.err, context.Canceled) {
@@ -198,7 +211,7 @@ func TestLxHTTPConnectOutage(t *testing.T) {
 						t.Fatal("caller deadline was lost: ", response.err)
 					}
 				case "503":
-					if errors.Is(response.err, os.ErrDeadlineExceeded) || !strings.Contains(response.err.Error(), "503 Service Unavailable") {
+					if errors.Is(response.err, context.DeadlineExceeded) || !strings.Contains(response.err.Error(), "503 Service Unavailable") {
 						t.Fatal("expected the proxy's 503 error, got: ", response.err)
 					}
 				}
@@ -245,12 +258,9 @@ func (d httpOutageDetour) DialContext(ctx context.Context, network string, desti
 
 // TestLxHTTPConnectWatchdogRace answers CONNECT right at the watchdog's expiry.
 // Whichever side wins, the caller gets either a working tunnel with its
-// buffered bytes or a named timeout and no connection, never a closed tunnel.
+// buffered bytes or a timeout and no connection, never a closed tunnel.
 func TestLxHTTPConnectWatchdogRace(t *testing.T) {
-	originalTimeout := httpConnectHandshakeTimeoutLx
 	const timeout = 20 * time.Millisecond
-	httpConnectHandshakeTimeoutLx = timeout
-	t.Cleanup(func() { httpConnectHandshakeTimeoutLx = originalTimeout })
 
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -287,6 +297,7 @@ func TestLxHTTPConnectWatchdogRace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	setHandshakeTimeout(t, out, timeout)
 	var (
 		group     sync.WaitGroup
 		tunnels   atomic.Int32
@@ -309,7 +320,7 @@ func TestLxHTTPConnectWatchdogRace(t *testing.T) {
 				if conn != nil {
 					reportErr("error returned together with a connection")
 				}
-				if !errors.Is(err, os.ErrDeadlineExceeded) || !strings.Contains(err.Error(), "CONNECT handshake timeout") {
+				if !errors.Is(err, context.DeadlineExceeded) {
 					reportErr("unexpected error: " + err.Error())
 				}
 				timeouts.Add(1)

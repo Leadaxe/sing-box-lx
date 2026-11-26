@@ -140,8 +140,8 @@ jobs:
       # -race, so only its REALITY verdict and lx tests run, without -race.
       # The group's other lx code (SPEC 054/125/138) rides along: the tracker's node
       # column (common/trafficcontrol) and the probe history (common/urltest), and
-      # the SPEC 161 handshake bounds of the proxy nodes (common/lxhandshake, socks,
-      # httpupgrade, shadowtls v3) the self-heal relies on.
+      # the guards of the handshake bounds of the proxy nodes (socks, httpupgrade;
+      # upstream's own since SPEC 166) the self-heal relies on.
       - name: go test (SPEC 139 connection test, race)
         run: |
           go test -race -count=1 \
@@ -150,7 +150,7 @@ jobs:
             ./common/lxtrace/ ./common/lxdatagram/ ./common/dialer/ ./daemon/ ./experimental/libbox/ \
             ./dns/ ./dns/transport/ ./dns/transport/fakeip/ ./dns/transport/quic/ ./dns/transport/group/ ./protocol/dns/ ./service/resolved/ ./protocol/group/ ./protocol/chain/ \
             ./common/trafficcontrol/ ./common/urltest/ \
-            ./common/lxhandshake/ ./protocol/socks/ ./transport/v2rayhttpupgrade/ ./protocol/shadowtls/ \
+            ./protocol/socks/ ./transport/v2rayhttpupgrade/ \
             ./protocol/masque/... ./protocol/hysteria2/ ./protocol/tuic/ ./transport/v2rayxhttp/ ./lx-test/conntest/
           go test -count=1 \
             -ldflags "-checklinkname=0" \
