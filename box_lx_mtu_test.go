@@ -32,6 +32,7 @@ func mtuTestContext() context.Context {
 	direct.RegisterOutbound(outboundRegistry)
 	group.RegisterSelector(outboundRegistry)
 	group.RegisterURLTest(outboundRegistry)
+	masque.RegisterOutbound(outboundRegistry)
 	endpointRegistry := endpoint.NewRegistry()
 	wireguard.RegisterEndpoint(endpointRegistry)
 	masque.RegisterEndpoint(endpointRegistry)
