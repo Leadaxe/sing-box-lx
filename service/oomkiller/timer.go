@@ -293,6 +293,8 @@ func (t *adaptiveTimer) resetDue(sample memorySample) bool {
 	case policyModeAvailable:
 		thresholds := t.availableThresholds(sample)
 		return t.bestSinceReset.available-sample.available >= thresholds.armed-thresholds.trigger
+	case policyModeRuntimeLimit: // lx: SPEC 148
+		return t.resetDueRuntimeLimit(sample)
 	default:
 		return false
 	}
