@@ -218,8 +218,8 @@ replace github.com/sagernet/wireguard-go => ./submodules/wireguard-go
 // lx:end awg
 
 // lx:begin singtun-selfheal (SPECS/TASKS/040)
-// Fork of sing-tun based on upstream d67734281390 (the go.mod revision) plus the
-// three post-base fixes cherry-picked from sagernet/main (2ce8e08, ac90f98,
+// Fork of sing-tun merged with upstream adc31e26d330 (the go.mod revision, kept
+// current by merging the stable pin) plus the three post-base fixes cherry-picked from sagernet/main (2ce8e08, ac90f98,
 // a95f1ae), with a single-file patch: system-stack acceptLoop self-heal — on an
 // unexpected Accept error the listener is logged (errno names the killer) and
 // recreated instead of the loop silently dying forever (every new TCP → instant

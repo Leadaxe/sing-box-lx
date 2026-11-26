@@ -28,6 +28,10 @@ required for stable tags); this changelog section is the fallback used for pre-r
 > тогда. Пользовательские ноты билингвальны там, где это важно, — в
 > [`releases/`](releases/).
 
+#### Не выпущено
+
+- 🔄 **Синк `upstream/stable` до `a459df92d` (+4 коммита к `060f54a9a`):** HTTP-клиент через туннель и проверка разбора конфига в libbox; починка сессий OpenConnect через `detour`; ускорение XOR в salamander у hysteria2; отключение DNS over TLS на TUN-линке для systemd-resolved. Форк `sing-tun` слит с апстримным `adc31e26d330` (`9204da0`), патчи self-heal сохранены.
+
 #### v1.14.4-lx.37-rc.3
 
 Пререлиз после `v1.14.4-lx.37-rc.2`. База та же — sing-box `v1.14.4` + 146 коммитов `upstream/stable` (`060f54a9a`), дрейф 0. Конфиг не меняется.
