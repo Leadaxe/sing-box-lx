@@ -104,13 +104,12 @@ func newChannelTUN(name string, mtu int) *channelTUN {
 
 func (t *channelTUN) File() *os.File { return nil }
 
-func (t *channelTUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
+func (t *channelTUN) Read(slab []byte, packets []tun.ReadPacket) (int, error) {
 	select {
 	case <-t.closed:
 		return 0, os.ErrClosed
 	case pkt := <-t.inbound:
-		n := copy(bufs[0][offset:], pkt)
-		sizes[0] = n
+		packets[0] = tun.ReadPacket{Offset: tun.ReadPacketSpacing, Size: copy(slab[tun.ReadPacketSpacing:], pkt)}
 		return 1, nil
 	}
 }

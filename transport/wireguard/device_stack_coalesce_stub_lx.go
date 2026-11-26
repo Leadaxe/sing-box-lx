@@ -5,7 +5,7 @@ package wireguard
 // writes batches to the device directly.
 type CoalescingWriter struct{}
 
-func NewCoalescingWriter(device Device) *CoalescingWriter {
+func NewCoalescingWriter(device any) *CoalescingWriter {
 	return nil
 }
 

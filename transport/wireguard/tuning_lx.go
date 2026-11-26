@@ -47,11 +47,19 @@ func (e *Endpoint) connectStandardBind(bind *conn.StdNetBind) {
 	}
 }
 
-// tuneDevice applies lx.wg.buffers.send_by_mtu: false puts the TUN read loop
-// back on full-size buffers, to rule the sized ones out when a problem is
-// being narrowed down.
+// tuneDevice applies lx.wg.buffers.send_by_mtu and receive_copy (1.15 line,
+// SPEC 158): send_by_mtu reads a one-packet stack straight into a buffer of
+// the packet's own, receive_copy decides whether a received message leaves
+// the read slab for a small buffer.
 func (e *Endpoint) tuneDevice(wgDevice *device.Device) {
-	if e.lxTuning().SendFullSize {
-		wgDevice.DisablePacketSizedTunReads()
+	tuning := e.lxTuning()
+	wgDevice.SetTunReadsByMTU(tuning.SendByMTU)
+	switch tuning.ReceiveCopy {
+	case option.LXWGReceiveCopyAuto:
+		wgDevice.SetReceiveCopy(device.ReceiveCopyAuto)
+	case option.LXWGReceiveCopySpeed:
+		wgDevice.SetReceiveCopy(device.ReceiveCopySpeed)
+	default:
+		wgDevice.SetReceiveCopy(device.ReceiveCopyMemory)
 	}
 }

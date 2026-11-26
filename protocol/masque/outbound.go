@@ -152,7 +152,7 @@ type autoMemory struct {
 
 // session is one established MASQUE tunnel with its userspace stack and pumps.
 type session struct {
-	device wireguard.Device
+	device tunnelStack // lx: 1.15 line — upstream wireguard.Device, see device_lx.go
 	closer io.Closer
 	ipConn masque.IpConn
 	ctx    context.Context

@@ -2,6 +2,14 @@
 icon: material/alert-decagram
 ---
 
+#### 1.15.0-alpha.14
+
+* Drop support for go1.25 **1**
+
+**1**:
+
+Due to maintenance difficulties, sing-box 1.15.0 requires at least Go 1.26.11 to compile.
+
 #### 1.15.0-alpha.13
 
 * Fixes and improvements

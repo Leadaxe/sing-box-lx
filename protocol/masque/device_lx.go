@@ -24,8 +24,6 @@ import (
 	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	wgDevice "github.com/sagernet/wireguard-go/device"
-	wgTun "github.com/sagernet/wireguard-go/tun"
 )
 
 // tunnelDeviceBatchSize is how many packets one Read returns at most.
@@ -42,9 +40,21 @@ type tunnelDevice struct {
 	closeOnce    sync.Once
 }
 
-var _ wireguard.Device = (*tunnelDevice)(nil)
+// tunnelStack is what the outbound needs from its stack: packets out of it in
+// batches and into it, dials and listens through it. Read keeps the shape the
+// 1.14 WireGuard device had, which the pump is written against.
+type tunnelStack interface {
+	N.Dialer
+	Start() error
+	Close() error
+	BatchSize() int
+	Read(bufs [][]byte, sizes []int, offset int) (int, error)
+	Write(bufs [][]byte, offset int) (int, error)
+}
 
-func newTunnelDevice(options wireguard.DeviceOptions) (wireguard.Device, error) {
+var _ tunnelStack = (*tunnelDevice)(nil)
+
+func newTunnelDevice(options wireguard.DeviceOptions) (tunnelStack, error) {
 	stackDevice, err := device.New(device.Options{
 		Context: options.Context,
 		Logger:  options.Logger,
@@ -144,19 +154,7 @@ func (d *tunnelDevice) Close() error {
 	}
 }
 
-func (d *tunnelDevice) File() *os.File { return nil }
-
-func (d *tunnelDevice) Flush() error { return nil }
-
-func (d *tunnelDevice) MTU() (int, error) { return int(d.mtu), nil }
-
-func (d *tunnelDevice) Name() (string, error) { return "sing-box", nil }
-
-func (d *tunnelDevice) Events() <-chan wgTun.Event { return nil }
-
 func (d *tunnelDevice) BatchSize() int { return tunnelDeviceBatchSize }
-
-func (d *tunnelDevice) SetDevice(*wgDevice.Device, []*wgDevice.Peer) {}
 
 func (d *tunnelDevice) Inet4Address() netip.Addr { return d.inet4Address }
 

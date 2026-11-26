@@ -18,7 +18,7 @@ import (
 // sends comes out of Read, and a packet given to Write reaches that dial.
 func TestTunnelDeviceCarriesPacketsBothWays(t *testing.T) {
 	local := netip.MustParseAddr("172.16.0.2")
-	device, err := newTunnelDevice(wireguard.DeviceOptions{
+	stack, err := newTunnelDevice(wireguard.DeviceOptions{
 		Context: context.Background(),
 		Logger:  log.NewNOPFactory().NewLogger("masque"),
 		MTU:     1280,
@@ -27,6 +27,7 @@ func TestTunnelDeviceCarriesPacketsBothWays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	device := stack.(*tunnelDevice)
 	defer device.Close()
 	if err = device.Start(); err != nil {
 		t.Fatal(err)

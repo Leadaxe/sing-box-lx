@@ -61,7 +61,7 @@ func newFakeDevice() *fakeDevice {
 }
 
 func (d *fakeDevice) File() *os.File { return nil }
-func (d *fakeDevice) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
+func (d *fakeDevice) Read(slab []byte, packets []wgTun.ReadPacket) (int, error) {
 	<-d.closed
 	return 0, os.ErrClosed
 }
@@ -144,7 +144,7 @@ func TestLazyEndpoint_placeholderDeviceSafe(t *testing.T) {
 	if _, err := wrapper.Write([][]byte{{1}}, 0); err == nil {
 		t.Fatal("the placeholder must refuse writes")
 	}
-	if _, err := wrapper.Read([][]byte{{1}}, []int{0}, 0); err == nil {
+	if _, err := wrapper.Read(make([]byte, 256), make([]wgTun.ReadPacket, 1)); err == nil {
 		t.Fatal("the placeholder must refuse reads")
 	}
 	if _, ok := <-wrapper.Events(); ok {

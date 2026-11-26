@@ -70,7 +70,7 @@ type fakeTunDevice struct {
 }
 
 func (d *fakeTunDevice) File() *os.File { return nil }
-func (d *fakeTunDevice) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
+func (d *fakeTunDevice) Read(slab []byte, packets []wgTun.ReadPacket) (int, error) {
 	<-d.closed
 	return 0, os.ErrClosed
 }

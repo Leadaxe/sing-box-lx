@@ -185,10 +185,24 @@ type LXWGBuffersOptions struct {
 	// ReadDatagramCount is the number of datagrams reserved per socket read,
 	// 1–128; absent = 128, as upstream.
 	ReadDatagramCount *int `json:"read_datagram_count,omitempty"`
-	// SendByMTU sizes the buffers read from the stack by the tunnel MTU
-	// instead of 64 KiB; absent = true. false is a diagnostic switch.
+	// SendByMTU makes a one-packet stack read straight into a buffer of the
+	// packet's own, sized for the MTU and the AWG layout. Absent = false:
+	// upstream's read into the shared slab and its copy into a small buffer
+	// (1.15 line, owner decision 2026-11-26; to be measured, then a default).
 	SendByMTU *bool `json:"send_by_mtu,omitempty"`
+	// ReceiveCopy is whether a received transport message is copied out of
+	// the read slab into a small buffer before it is queued: "auto" as
+	// upstream (darwin/ios), "memory" on every platform, "speed" never.
+	// Absent = "memory" (1.15 line, owner decision 2026-11-26).
+	ReceiveCopy string `json:"receive_copy,omitempty"`
 }
+
+// lx.wg.buffers.receive_copy values.
+const (
+	LXWGReceiveCopyAuto   = "auto"
+	LXWGReceiveCopyMemory = "memory"
+	LXWGReceiveCopySpeed  = "speed"
+)
 
 // lxWGReadDatagramCountMax is the upstream batch size and the default.
 const lxWGReadDatagramCountMax = 128
@@ -311,16 +325,17 @@ type LXWGResolved struct {
 	BuildOverflow   LXBuildOverflow
 	// ReadDatagramCount is 128 when lx.wg.buffers.read_datagram_count is absent.
 	ReadDatagramCount int
-	// SendFullSize is lx.wg.buffers.send_by_mtu set to false. It is the
-	// inverse of the key so that the zero value is the default behaviour.
-	SendFullSize    bool
+	// SendByMTU is lx.wg.buffers.send_by_mtu; false (default) is upstream's path.
+	SendByMTU bool
+	// ReceiveCopy is lx.wg.buffers.receive_copy, LXWGReceiveCopyMemory when absent.
+	ReceiveCopy     string
 	ConnectedSocket bool
 }
 
 // lxWGDefaults is the WG part of an absent block: the idle keys off, the
 // buffer keys at the upstream behaviour.
 func lxWGDefaults() LXWGResolved {
-	return LXWGResolved{ReadDatagramCount: lxWGReadDatagramCountMax}
+	return LXWGResolved{ReadDatagramCount: lxWGReadDatagramCountMax, ReceiveCopy: LXWGReceiveCopyMemory}
 }
 
 type LXMASQUEResolved struct {
@@ -492,7 +507,14 @@ func resolveLXValues(wg LXWGOptions, masque *LXMASQUEOptions, trustTunnel *LXTru
 			resolved.WG.ReadDatagramCount = *count
 		}
 		if wg.Buffers.SendByMTU != nil {
-			resolved.WG.SendFullSize = !*wg.Buffers.SendByMTU
+			resolved.WG.SendByMTU = *wg.Buffers.SendByMTU
+		}
+		switch wg.Buffers.ReceiveCopy {
+		case "":
+		case LXWGReceiveCopyAuto, LXWGReceiveCopyMemory, LXWGReceiveCopySpeed:
+			resolved.WG.ReceiveCopy = wg.Buffers.ReceiveCopy
+		default:
+			return nil, E.New("lx.wg.buffers.receive_copy must be auto, memory or speed")
 		}
 	}
 	resolved.WG.ConnectedSocket = wg.ConnectedSocket
@@ -525,8 +547,11 @@ func canonicalLXWG(wg LXWGOptions) LXWGOptions {
 		if buffers.ReadDatagramCount != nil && *buffers.ReadDatagramCount == lxWGReadDatagramCountMax {
 			buffers.ReadDatagramCount = nil
 		}
-		if buffers.SendByMTU != nil && *buffers.SendByMTU {
+		if buffers.SendByMTU != nil && !*buffers.SendByMTU {
 			buffers.SendByMTU = nil
+		}
+		if buffers.ReceiveCopy == LXWGReceiveCopyMemory {
+			buffers.ReceiveCopy = ""
 		}
 		if buffers != (LXWGBuffersOptions{}) {
 			canonical.Buffers = &buffers

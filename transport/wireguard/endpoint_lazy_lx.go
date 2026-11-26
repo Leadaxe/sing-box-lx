@@ -69,7 +69,7 @@ var _ Device = unbuiltDevice{}
 
 func (unbuiltDevice) File() *os.File { return nil }
 
-func (unbuiltDevice) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
+func (unbuiltDevice) Read(slab []byte, packets []wgTun.ReadPacket) (int, error) {
 	return 0, os.ErrClosed
 }
 

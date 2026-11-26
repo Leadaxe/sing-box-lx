@@ -59,7 +59,7 @@ func TestLXBlockParsesEveryKey(t *testing.T) {
 				"build_max": 4,
 				"build_overflow": "build"
 			},
-			"buffers": {"read_datagram_count": 8, "send_by_mtu": false},
+			"buffers": {"read_datagram_count": 8, "send_by_mtu": true, "receive_copy": "speed"},
 			"connected_socket": true
 		},
 		"masque": {"idle_timeout": "2m"},
@@ -75,7 +75,8 @@ func TestLXBlockParsesEveryKey(t *testing.T) {
 			BuildMax:             4,
 			BuildOverflow:        LXBuildOverflowBuild,
 			ReadDatagramCount:    8,
-			SendFullSize:         true,
+			SendByMTU:            true,
+			ReceiveCopy:          LXWGReceiveCopySpeed,
 			ConnectedSocket:      true,
 		},
 		MASQUE:      LXMASQUEResolved{IdleTimeout: 2 * time.Minute},
@@ -165,6 +166,7 @@ func TestLXBlockValidation(t *testing.T) {
 		{`{"lx":{"wg":{"idle":{"build_max":-1}}}}`, "lx.wg.idle.build_max must be >= 0"},
 		{`{"lx":{"wg":{"idle":{"build_overflow":"drop"}}}}`, `lx.wg.idle.build_overflow must be "wait" or "build"`},
 		{`{"lx":{"wg":{"buffers":{"read_datagram_count":0}}}}`, "lx.wg.buffers.read_datagram_count must be between 1 and 128"},
+		{`{"lx":{"wg":{"buffers":{"receive_copy":"fast"}}}}`, "lx.wg.buffers.receive_copy must be auto, memory or speed"},
 		{`{"lx":{"wg":{"buffers":{"read_datagram_count":-1}}}}`, "lx.wg.buffers.read_datagram_count must be between 1 and 128"},
 		{`{"lx":{"wg":{"buffers":{"read_datagram_count":129}}}}`, "lx.wg.buffers.read_datagram_count must be between 1 and 128"},
 		{`{"lx":{"masque":{"idle_timeout":"-1s"}}}`, "lx.masque.idle_timeout must be >= 0"},
@@ -465,12 +467,13 @@ func TestLXWGIdleResolvesAsFlat(t *testing.T) {
 }
 
 // lx: SPEC 158 §9.1 — lx.wg.buffers: 1–128, the defaults written out
-// canonicalize away, send_by_mtu false is kept.
+// canonicalize away. Line 1.15: send_by_mtu false and receive_copy memory are
+// the defaults.
 func TestLXWGBuffers(t *testing.T) {
 	t.Parallel()
 	for _, count := range []int{1, 8, 128} {
 		options, resolved := mustResolveLX(t, `{"lx":{"wg":{"buffers":{"read_datagram_count":`+strconv.Itoa(count)+`}}}}`)
-		if resolved.WG.ReadDatagramCount != count || resolved.WG.SendFullSize {
+		if resolved.WG.ReadDatagramCount != count || resolved.WG.SendByMTU || resolved.WG.ReceiveCopy != LXWGReceiveCopyMemory {
 			t.Fatalf("read_datagram_count %d: %+v", count, resolved.WG)
 		}
 		if count == 128 {
@@ -481,16 +484,16 @@ func TestLXWGBuffers(t *testing.T) {
 			t.Fatalf("read_datagram_count %d must stay in the canonical block", count)
 		}
 	}
-	options, resolved := mustResolveLX(t, `{"lx":{"wg":{"buffers":{"send_by_mtu":true}}}}`)
-	if resolved.WG.SendFullSize || options.LX != nil {
-		t.Fatal("send_by_mtu true is the default and must canonicalize to absent")
+	options, resolved := mustResolveLX(t, `{"lx":{"wg":{"buffers":{"send_by_mtu":false,"receive_copy":"memory"}}}}`)
+	if resolved.WG.SendByMTU || resolved.WG.ReceiveCopy != LXWGReceiveCopyMemory || options.LX != nil {
+		t.Fatal("send_by_mtu false and receive_copy memory are the defaults and must canonicalize to absent")
 	}
-	options, resolved = mustResolveLX(t, `{"lx":{"wg":{"buffers":{"send_by_mtu":false}}}}`)
-	if !resolved.WG.SendFullSize || resolved.WG.ReadDatagramCount != 128 {
-		t.Fatalf("send_by_mtu false: %+v", resolved.WG)
+	options, resolved = mustResolveLX(t, `{"lx":{"wg":{"buffers":{"send_by_mtu":true,"receive_copy":"auto"}}}}`)
+	if !resolved.WG.SendByMTU || resolved.WG.ReceiveCopy != LXWGReceiveCopyAuto || resolved.WG.ReadDatagramCount != 128 {
+		t.Fatalf("send_by_mtu true, receive_copy auto: %+v", resolved.WG)
 	}
-	if options.LX.WG.Buffers.SendByMTU == nil || *options.LX.WG.Buffers.SendByMTU {
-		t.Fatal("send_by_mtu false must stay in the canonical block")
+	if options.LX.WG.Buffers.SendByMTU == nil || !*options.LX.WG.Buffers.SendByMTU || options.LX.WG.Buffers.ReceiveCopy != LXWGReceiveCopyAuto {
+		t.Fatal("non-default buffer keys must stay in the canonical block")
 	}
 }
 
