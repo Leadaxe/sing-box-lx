@@ -324,6 +324,15 @@ export BOX_API_URL=127.0.0.1:9090
 есть в сборке с `with_lx_command`. В сборке без `with_lx_impair` outbound'а `impair` нет, и команды
 отвечают `InvalidArgument` («not an impair outbound»).
 
+В приложении на libbox (Android, iOS) команды — методы `CommandClient`; ответ — объект
+`ImpairStatus` с JSON состояния в поле `Content`:
+
+```java
+ImpairStatus setImpair(String outboundTag, String entry) throws Exception;
+ImpairStatus scheduleImpair(String outboundTag, String entries, String start, String repeat) throws Exception;
+ImpairStatus getImpairStatus(String outboundTag) throws Exception;
+```
+
 ## Как ухудшаются датаграммы и потоки
 
 Узкое место одно на экземпляр `impair` и на направление. Его делят все соединения через этот

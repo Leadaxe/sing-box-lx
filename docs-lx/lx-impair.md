@@ -326,6 +326,15 @@ Without `secret` the service lets in anyone who reaches the port, so listen on `
 The commands are in builds with `with_lx_command`. A build without `with_lx_impair` has no `impair`
 outbound, and the commands answer `InvalidArgument` ("not an impair outbound").
 
+In an app on libbox (Android, iOS) the commands are methods of `CommandClient`; the answer is an
+`ImpairStatus` object with the status JSON in its `Content` field:
+
+```java
+ImpairStatus setImpair(String outboundTag, String entry) throws Exception;
+ImpairStatus scheduleImpair(String outboundTag, String entries, String start, String repeat) throws Exception;
+ImpairStatus getImpairStatus(String outboundTag) throws Exception;
+```
+
 ## How datagrams and streams are degraded
 
 There is one bottleneck per `impair` instance and per direction. Every connection through this
